@@ -65,6 +65,7 @@ impl<'h> Cx<'h> {
             asyncs: FxHashMap::default(),
             by_ref_params: FxHashSet::default(),
             lay: Layouts::default(),
+            glue_slots: Default::default(),
             locs: None,
             debug: None,
             tracked: FxHashMap::default(),
@@ -134,6 +135,7 @@ impl<'h> Cx<'h> {
 
     pub(super) fn finish(mut self) -> vir::Program {
         self.fill_registry();
+        self.prune_glue_slots();
         let mut funcs: Vec<Function> = self
             .funcs
             .into_iter()
@@ -251,6 +253,7 @@ impl<'h> Cx<'h> {
         if self.funcs[fid.0 as usize].is_some() || !self.building.insert(fid) {
             return;
         }
+        self.glue_slots.enter(fid);
         let outer = self.cur_def;
         if let Some(d) = work_def(work).filter(|d| self.hir.unchecked.contains(d)) {
             let name = &self.fn_def(d).name;
@@ -294,6 +297,7 @@ impl<'h> Cx<'h> {
         super::lower_profile::leave(prof, &func);
         self.funcs[fid.0 as usize] = Some(func);
         self.building.remove(&fid);
+        self.glue_slots.leave();
     }
 
     /// Instance of a user function with concrete type args.

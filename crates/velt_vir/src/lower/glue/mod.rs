@@ -50,6 +50,7 @@ mod format_promise;
 mod generic_slots;
 mod literals;
 mod many;
+mod slot_uses;
 mod thunk;
 mod trace;
 mod transfer;
@@ -59,6 +60,7 @@ mod vtable;
 pub(super) use generic_slots::{GenericSlot, SlotKey};
 #[cfg(test)]
 pub(crate) use literals::{inspect_key, inspect_quote};
+pub(super) use slot_uses::GlueSlots;
 pub(super) use vtable::{VtableKey, SLOT_GENERIC_TABLE, SLOT_GENERIC_TYPE};
 
 use velt_sema::hir::{TyId, TyKind};

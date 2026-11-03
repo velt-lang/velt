@@ -466,6 +466,8 @@ struct Cx<'h> {
     /// callbacks update the locked value in place.
     by_ref_params: FxHashSet<(DefId, Vec<TyId>)>,
     lay: layout::Layouts,
+    /// Class tables and the glue slots code dispatches (glue/slot_uses.rs).
+    glue_slots: glue::GlueSlots,
     /// Line tables when lowering with a source map (`lower_with`).
     locs: Option<srcloc::LocMap>,
     /// Debug types of source variables (`LowerOptions::debug_info`, debug_vars.rs).
