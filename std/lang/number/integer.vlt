@@ -12,7 +12,10 @@ import {
   strbufPushAsciiWord,
   strbufPushAsciiWords,
 } from "velt/lang/intrinsics";
-import { MINUS } from "velt/lang/number/text";
+
+// The byte `-`, as velt/lang/number/text has it: not imported from there, so that a program that
+// prints only integers doesn't load the float printer's text helpers.
+const MINUS: u64 = 0x2d;
 
 declare function velt_rt_math_clz64(x: u64): u64;
 
@@ -288,21 +291,24 @@ export function i64Text(v: i64): string {
   noInline();
   const neg = v < 0;
   const a = neg ? ~(v as u64) + 1 : v as u64;
-  if (oneWord(a, neg)) {
-    const w = shortWords(a, neg);
-    return strAsciiWords(w.w0, 0, 0, w.len);
-  }
-  return longText(a, neg);
+  return text(a, neg);
 }
 
 /** `String(v)`. */
 export function u64Text(v: u64): string {
   noInline();
-  if (v < 100000000) {
-    const w = shortWords(v, false);
+  return text(v, false);
+}
+
+// The text of `a`, after a `-` when `neg`: up to 8 bytes as one word here (the entry points'
+// common case, inlined into each), longer text by `longText`.
+function text(a: u64, neg: bool): string {
+  inline();
+  if (oneWord(a, neg)) {
+    const w = shortWords(a, neg);
     return strAsciiWords(w.w0, 0, 0, w.len);
   }
-  return longText(v, false);
+  return longText(a, neg);
 }
 
 // Whether the text of `a`, after a `-` when `neg`, is at most 8 bytes: one word.
@@ -326,6 +332,20 @@ export function pushI64(buf: string, v: i64): void {
   noInline();
   const neg = v < 0;
   const a = neg ? ~(v as u64) + 1 : v as u64;
+  push(buf, a, neg);
+}
+
+/** Appends `String(v)` to the builder `buf`, as `pushI64`. */
+export function pushU64(buf: string, v: u64): void {
+  noInline();
+  push(buf, v, false);
+}
+
+// Appends the text of `a`, after a `-` when `neg`, as `text` makes it (inlined into each entry
+// point). The builder is passed on with locals only after it (CLAUDE.md "the string builder
+// passed as a `string`").
+function push(buf: string, a: u64, neg: bool): void {
+  inline();
   if (oneWord(a, neg)) {
     const w = shortWords(a, neg);
     const w0 = w.w0;
@@ -334,19 +354,6 @@ export function pushI64(buf: string, v: i64): void {
     return;
   }
   pushLong(buf, a, neg);
-}
-
-/** Appends `String(v)` to the builder `buf`, as `pushI64`. */
-export function pushU64(buf: string, v: u64): void {
-  noInline();
-  if (v < 100000000) {
-    const w = shortWords(v, false);
-    const w0 = w.w0;
-    const len = w.len;
-    strbufPushAsciiWord(buf, w0, len);
-    return;
-  }
-  pushLong(buf, v, false);
 }
 
 // Appends `a` past one word (9 bytes and more), after a `-` when `neg`: out of the entry points,

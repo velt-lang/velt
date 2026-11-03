@@ -27,6 +27,8 @@ use std::path::{Path, PathBuf};
 use velt_syntax::ast;
 use velt_syntax::visit::{self, Visit};
 
+mod float_operands;
+
 /// A global module: its file and the names that load it.
 pub(super) struct Global {
     pub file: PathBuf,
@@ -57,6 +59,7 @@ pub(super) fn global_modules(std_root: &Path) -> Vec<Global> {
                     (THIS_FN_LINE, THIS_FN),
                     (ASYNC_HOST_LINE, ASYNC_HOST),
                     (NUMBER_TEXT_LINE, NUMBER_TEXT),
+                    (FLOAT_OPERAND_LINE, FLOAT_OPERAND),
                 ];
                 names.extend(
                     marked
@@ -153,7 +156,16 @@ pub(super) fn names_global(src: &str, module: &ast::Module, name: &str) -> bool 
         || (name == THIS_FN && mentions(src, "this") && has_this_fn(module))
         || (name == ASYNC_HOST && mentions(src, "host") && has_async_host(module))
         || (name == NUMBER_TEXT && may_print(src) && has_text_conversion(module))
+        || (name == FLOAT_OPERAND && may_print(src) && float_operands::has_float_conversion(module))
 }
+
+/// The trigger of a global for a module that converts to text an operand that may be a float
+/// (`float_operands`, docs/internals/design/lazy-std.md "Float operands"). No source can mention
+/// it as a word.
+const FLOAT_OPERAND: &str = "<conversion operand may be a float>";
+
+/// The line that marks such a global ([`FLOAT_OPERAND`]).
+const FLOAT_OPERAND_LINE: &str = "// load for: a conversion operand may be a float";
 
 /// The trigger of the global holding the hooks for a number in a template or `String()`
 /// (std/prelude/global/number_text.vlt: std's number printing). No source can mention it as a

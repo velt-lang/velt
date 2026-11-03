@@ -4,8 +4,8 @@
 //! digits, so they become the integer formatters (`…_i64`) of `x as i64`: no conversion to
 //! `f64` and no test in the runtime once `x` is an integer. `console.log` prints `-0` as `-0`,
 //! so there `x` must not be `-0` either (`` `${-0}` `` is `0`, which the integer prints).
-//! std's own formatters in Velt pair up the same way: a call of the hook `numberText` or
-//! `numberPush` (std/lang/hooks/number.vlt) becomes one of `intText` or `intPush`.
+//! std's own formatters in Velt pair up the same way: a call of the hook `numberText`,
+//! `numberPush`, `floatText` or `floatPush` becomes one of `intText` or `intPush`.
 
 use velt_vir::vir::Place;
 use velt_vir::vir::{Callee, ExternFn, ExternId, FuncId, Function, Local, LocalDecl, Operand};
@@ -56,13 +56,21 @@ pub(crate) fn declare(externs: &mut Vec<ExternFn>) {
 
 /// The float formatters' hooks and their integer twins: (float one, integer one), each taking
 /// the number where the externs above take it.
-const HOOK_PAIRS: [(&str, &str); 2] = [
+const HOOK_PAIRS: [(&str, &str); 4] = [
     (
         velt_common::std_hook!(number_push),
         velt_common::std_hook!(int_push),
     ),
     (
         velt_common::std_hook!(number_text),
+        velt_common::std_hook!(int_text),
+    ),
+    (
+        velt_common::std_hook!(float_push),
+        velt_common::std_hook!(int_push),
+    ),
+    (
+        velt_common::std_hook!(float_text),
         velt_common::std_hook!(int_text),
     ),
 ];

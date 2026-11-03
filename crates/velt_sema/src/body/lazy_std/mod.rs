@@ -35,6 +35,8 @@ use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo, FnKind};
 use crate::hir::{self, Callee, DefId, ExprKind as E, TyId, TyKind};
 
+mod number_text;
+
 /// Std modules (path prefixes) checked whole: lowering looks up their definitions by name
 /// (`velt_vir` `STABLE_SORT`, the proxy and typed-array glue, the epoch sections' `pin`,
 /// `unpin` and `retire`, `this_fn`'s glue, the `HostRef` hooks of host function calls) and calls
@@ -467,24 +469,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
             cx.note_dyn_members();
         }
         impl_methods(cx, &mut sc.found);
-        let texts = std::mem::take(&mut sc.texts);
-        let number = !cx.lazy.number_text && texts.iter().any(|&t| is_number_text(cx, t));
-        let float = !cx.lazy.float_text && texts.iter().any(|&t| may_hold_float(cx, t));
-        for (now, names) in [
-            (number, velt_common::std_hooks::ON_DEMAND_TEXT),
-            (float, velt_common::std_hooks::ON_DEMAND_FLOAT),
-        ] {
-            if !now {
-                continue;
-            }
-            for q in velt_common::std_hooks::on_demand(names) {
-                if let Some(crate::ctx::Item::Def(d)) = cx.std_def(&q) {
-                    sc.found.push(d);
-                }
-            }
-        }
-        cx.lazy.number_text |= number;
-        cx.lazy.float_text |= float;
+        number_text::reach_hooks(cx, std::mem::take(&mut sc.texts), &mut sc.found);
         let mut checked = false;
         for d in std::mem::take(&mut sc.found) {
             if !deferred(cx, d) {
@@ -509,32 +494,6 @@ pub(crate) fn reach(cx: &mut Ctx) {
             break;
         }
     }
-}
-
-/// May the text of a value of type `t` need std's integer printing: is it anything but a
-/// string or a boolean?
-fn is_number_text(cx: &Ctx, t: TyId) -> bool {
-    !matches!(
-        cx.ty.kind(t),
-        TyKind::Bool
-            | TyKind::Str
-            | TyKind::Literal(hir::LitValue::Bool(_) | hir::LitValue::Str(_))
-    )
-}
-
-/// Can a value of type `t` hold a float, so that its text may need std's float printing? Only
-/// integers, booleans and strings are known not to; anything else (an object, an array, `any`,
-/// a type parameter) may, and is printed through glue that can reach a float.
-fn may_hold_float(cx: &Ctx, t: TyId) -> bool {
-    !matches!(
-        cx.ty.kind(t),
-        TyKind::Int(_)
-            | TyKind::Bool
-            | TyKind::Str
-            | TyKind::Literal(
-                hir::LitValue::Int(..) | hir::LitValue::Bool(_) | hir::LitValue::Str(_)
-            )
-    )
 }
 
 /// Record the types `todo` and their parts as met; each class or struct met for the first time

@@ -173,7 +173,19 @@ impl Loader {
             // which is what these tests write.
             let number_text =
                 text.contains("// load for: a number converted to text") && src.contains("${");
+            // The float printer's global (`// load for: a conversion operand may be a float`),
+            // approximated as the driver's loader would see this test's sources: a template with
+            // a float literal, `/` or `Math.` somewhere in the source.
+            let float_text = text.contains("// load for: a conversion operand may be a float")
+                && src.contains("${")
+                && (src.contains('/')
+                    || src.contains("Math.")
+                    || src
+                        .as_bytes()
+                        .windows(3)
+                        .any(|w| w[0].is_ascii_digit() && w[1] == b'.' && w[2].is_ascii_digit()));
             if number_text
+                || float_text
                 || reexports(&text)
                     .iter()
                     .any(|n| !own.contains(n) && mentions(&src, n))

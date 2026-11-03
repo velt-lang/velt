@@ -18,6 +18,10 @@ const INT_PUSH: &str = velt_common::std_hook!(int_push);
 const UINT_PUSH: &str = velt_common::std_hook!(uint_push);
 const NUMBER_PUSH: &str = velt_common::std_hook!(number_push);
 pub(super) const NUMBER_TEXT: &str = velt_common::std_hook!(number_text);
+/// The float hooks of std's own float printing, preferred where the program loaded them
+/// (`float_push`/`float_text`; otherwise `number_push`/`number_text`, then the runtime).
+const FLOAT_PUSH: &str = velt_common::std_hook!(float_push);
+pub(super) const FLOAT_TEXT: &str = velt_common::std_hook!(float_text);
 pub(super) const INT_TEXT: &str = velt_common::std_hook!(int_text);
 pub(super) const UINT_TEXT: &str = velt_common::std_hook!(uint_text);
 
@@ -481,7 +485,10 @@ impl FnLower<'_, '_> {
         match self.cx.kind(ty) {
             TyKind::Float(_) => {
                 let v = self.float_as_f64(v, ty);
-                if !self.call_number_hook(NUMBER_PUSH, vec![b.clone(), v.clone()], None) {
+                let args = || vec![b.clone(), v.clone()];
+                if !self.call_number_hook(FLOAT_PUSH, args(), None)
+                    && !self.call_number_hook(NUMBER_PUSH, args(), None)
+                {
                     self.call_rt(Rt::StrbufPushF64, vec![b, v], None);
                 }
             }

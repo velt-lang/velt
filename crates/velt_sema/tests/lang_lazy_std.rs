@@ -438,9 +438,10 @@ fn number_printing_is_checked_once_the_program_prints_a_number() {
     // veltc's loader), so in a plain program they may be missing altogether.
     let int_hook = "std/lang/hooks/number_text::intPush";
     let int_body = "std/lang/number/integer::pushI64";
-    let float_hook = "std/lang/hooks/number_text::numberPush";
+    let number_hook = "std/lang/hooks/number_text::numberPush";
+    let float_hook = "std/lang/hooks/number_float::floatPush";
     let float_body = "std/lang/number/format::pushF64";
-    let all = [int_hook, int_body, float_hook, float_body];
+    let all = [int_hook, int_body, number_hook, float_hook, float_body];
     // Is `f` in `p` with its body checked?
     let checked = |p: &Program, f: &str| {
         p.defs
@@ -456,8 +457,22 @@ fn number_printing_is_checked_once_the_program_prints_a_number() {
     for f in [int_hook, int_body] {
         assert!(checked(&ints, f), "{f} is not checked");
     }
-    for f in [float_hook, float_body] {
+    for f in [number_hook, float_hook, float_body] {
         assert!(!checked(&ints, f), "{f} is checked for an integer");
+    }
+    // A float through a `number` parameter, which nothing in the source marks as one: the float
+    // printer is not loaded (velt/lang/hooks/number_float), and `numberPush` prints it.
+    let unmarked = ok_src(
+        "function show(x: number): string {\n  return `x=${x}`;\n}\nfunction main() {\n  console.log(show(7));\n}\n",
+    );
+    for f in [int_hook, int_body, number_hook] {
+        assert!(checked(&unmarked, f), "{f} is not checked");
+    }
+    for f in [float_hook, float_body] {
+        assert!(
+            !checked(&unmarked, f),
+            "{f} is checked without a float operand"
+        );
     }
     let floats = ok_src("function main() {\n  const x = 0.5;\n  console.log(`x=${x}`);\n}\n");
     for f in all {

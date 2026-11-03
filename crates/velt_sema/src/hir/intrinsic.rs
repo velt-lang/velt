@@ -380,14 +380,17 @@ pub enum Intrinsic {
     /// `len` must be 0 (equality compares the words). No call: the string's inline form
     /// (rt_abi.md "Strings") written as three words.
     StrAsciiWords,
-    /// std only: `(buf: string, w0: u64, w1: u64, w2: u64, len: usize)`: appends the first `len`
-    /// (at most 24) bytes of the words, ASCII, to the builder `buf` (a `string` that is a
-    /// `velt_rt_strbuf_*` builder, which the call writes): the three words are stored after its
-    /// text when its heap buffer has room for 24 more bytes, else `velt_rt_strbuf_push_bytes`.
+    /// std only: `(buf: Mut<string>, w0: u64, w1: u64, w2: u64, len: usize)`: appends the first
+    /// `len` (at most 24) bytes of the words, ASCII, to the builder `buf` (a `velt_rt_strbuf_*`
+    /// builder, which the call writes): the three words are stored after its text when its plain
+    /// heap buffer has room for 24 more bytes; an inline ASCII builder that still fits gets them
+    /// shifted in and OR'd; anything else calls `velt_rt_strbuf_push_words` with them by value.
     StrbufPushAsciiWords,
-    /// std only: `(buf: string, w: u64, len: usize)`: appends the first `len` (at most 8) bytes
-    /// of `w`, ASCII, to the builder `buf`: one word, so each fast path touches at most two of
-    /// the builder's words (`StrbufPushAsciiWords` for up to 24).
+    /// std only: `(buf: Mut<string>, w: u64, len: usize)`: appends the first `len` (at most 8)
+    /// bytes of `w`, ASCII, to the builder `buf`: an inline ASCII builder of fewer than 16 bytes
+    /// gets the word stored where its text ends, in the builder itself, and byte 23 raised; a
+    /// plain heap builder with room for 8 more bytes gets it stored after its text; anything else
+    /// calls `velt_rt_strbuf_push_words` (`StrbufPushAsciiWords` for up to 24).
     StrbufPushAsciiWord,
     /// std only: `noInline()`, a statement: the function whose body it is in is never inlined
     /// (#1884; lowering sets `vir::Inline::Never`). No code.

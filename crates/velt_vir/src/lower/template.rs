@@ -758,8 +758,15 @@ impl FnLower<'_, '_> {
             }
             TyKind::Float(_) => {
                 let v = self.float_as_f64(v, aty);
-                let hook = super::strbuf::NUMBER_TEXT;
-                if !self.call_number_hook(hook, vec![v.clone()], Some(Place::local(out))) {
+                let out_place = || Some(Place::local(out));
+                let full = super::strbuf::FLOAT_TEXT;
+                if !self.call_number_hook(full, vec![v.clone()], out_place())
+                    && !self.call_number_hook(
+                        super::strbuf::NUMBER_TEXT,
+                        vec![v.clone()],
+                        out_place(),
+                    )
+                {
                     self.call_rt(Rt::StrFromF64, vec![v, o], None);
                 }
             }

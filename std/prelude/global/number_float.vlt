@@ -1,0 +1,7 @@
+// Global (loaded when a module converts to text an operand that may be a float: a float literal,
+// `/`, `**`, `Math.*`, `as f32`/`as f64`, or a variable declared or initialized as one, inside a
+// template's expression, `String(…)`, `.toString(…)` or `+` with a string; docs/internals/design/
+// lazy-std.md "Float operands"): velt/lang/hooks/number_float, std's float printing, which
+// lowering prefers to the runtime's. It names nothing a program can use.
+// load for: a conversion operand may be a float
+import "velt/lang/hooks/number_float";

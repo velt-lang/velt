@@ -84,3 +84,30 @@ fn a_builder_param_that_is_appended_to_is_not_readonly() {
     }
     assert!(seen > 0, "no pushF64\n{vir}");
 }
+
+#[test]
+fn a_float_the_trigger_misses_takes_the_runtime_printer() {
+    // `tests/golden/lang/float_text_miss.vlt`: its floats reach `${x}` and `String(x)` in a
+    // module whose conversions nothing marks as floats, so std's float printer
+    // (velt/lang/hooks/number_float) is not loaded, and the golden checks Node's output. Here: the
+    // float hooks are absent, and the conversions go through `numberPush`/`numberText` to the
+    // runtime's printer (whole numbers to std's integer printing).
+    let vir = release_vir("lang/float_text_miss.vlt");
+    let header = |l: &&str| l.starts_with("fn#");
+    assert!(
+        !vir.lines()
+            .filter(header)
+            .any(|l| l.contains("number_float")
+                || l.contains("N9floatPush")
+                || l.contains("N9floatText")
+                || l.contains("N7f64Text")),
+        "std's float printer is compiled in\n{vir}"
+    );
+    for runtime in ["velt_rt_strbuf_push_f64", "velt_rt_str_from_f64"] {
+        assert!(
+            vir.lines()
+                .any(|l| !l.starts_with("fn#") && l.contains(runtime)),
+            "no call of `{runtime}`\n{vir}"
+        );
+    }
+}

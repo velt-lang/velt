@@ -122,11 +122,19 @@ hooks! {
     int_push => lang_hooks_number_text, "intPush", "(string, i64) -> void", lowered;
     /// An unsigned integer appended to a builder.
     uint_push => lang_hooks_number_text, "uintPush", "(string, u64) -> void", lowered;
-    /// `String(x)` of a float (`velt_vir` `template.rs`); `velt_opt` numrep turns a call with a
+    /// `String(x)` of a float (`velt_vir` `template.rs`): a whole number by std's integer
+    /// printing, anything else by the runtime's printer. `velt_opt` numrep turns a call with a
     /// whole `x` into one of `int_text`.
     number_text => lang_hooks_number_text, "numberText", "(f64) -> string", lowered;
-    /// A float appended to a builder; numrep turns a call with a whole `x` into `int_push`.
+    /// A float appended to a builder, as `number_text`; numrep turns a call with a whole `x` into
+    /// `int_push`.
     number_push => lang_hooks_number_text, "numberPush", "(string, f64) -> void", lowered;
+    /// `String(x)` of a float, all of it by std's printing (velt/lang/number/format): lowering
+    /// calls it instead of `number_text` where its module is loaded (std/prelude/global/
+    /// number_float.vlt, for a program that converts an operand that may be a float).
+    float_text => lang_hooks_number_float, "floatText", "(f64) -> string", lowered;
+    /// A float appended to a builder, as `float_text`.
+    float_push => lang_hooks_number_float, "floatPush", "(string, f64) -> void", lowered;
 
     // process.vlt: the builtin `process` namespace (`velt_sema` `process.rs`).
     /// `process.stdout.write(s)` / `process.stderr.write(s)`.
@@ -469,9 +477,10 @@ pub fn find(qualified: &str) -> Option<&'static Hook> {
 /// Lowering calls the runtime's printer where one is unchecked.
 pub const ON_DEMAND_TEXT: &[&str] = &["int_text", "uint_text", "int_push", "uint_push"];
 
-/// The same, once the program's own code converts a value that may hold a float to text: std's
-/// float printing (velt/lang/number/format, `shortest`, the table of powers of ten).
-pub const ON_DEMAND_FLOAT: &[&str] = &["number_text", "number_push"];
+/// The same, once the program's own code converts a value that may hold a float to text: the
+/// float hooks, whose whole numbers take std's integer printing, and, where the program loaded it,
+/// std's float printing (velt/lang/number/format, `shortest`, the table of powers of ten).
+pub const ON_DEMAND_FLOAT: &[&str] = &["number_text", "number_push", "float_text", "float_push"];
 
 /// Is the hook with qualified name `qualified` one of [`ON_DEMAND_TEXT`] or [`ON_DEMAND_FLOAT`]?
 pub fn is_on_demand(qualified: &str) -> bool {
