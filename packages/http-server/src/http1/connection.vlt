@@ -5,7 +5,7 @@
 // the client asks for it (h2/).
 
 import { TcpStream } from "velt/net";
-import { AbortSignal } from "velt/task";
+import { AbortSignal, catchPanic, PanicError } from "velt/task";
 import { statusText } from "velt/net/http";
 import { BadRequest } from "./bad_request";
 import { H2Options } from "../h2/options";
@@ -121,7 +121,8 @@ export async function connection<E>(
           }
           let failed = false;
           try {
-            await handler(req, res);
+            // A panic in the handler is this request's failure, not the server's (#2008).
+            await catchPanic(() => handler(req, res));
           } catch (e) {
             failed = true;
             if (req.bodyTooLarge() || req.timedOut() || req.bodyMalformed()) {
@@ -138,10 +139,17 @@ export async function connection<E>(
                 res.status(500);
                 res.send("Internal Server Error");
               }
-              console.error("request handler failed:", e);
+              // A panic's message was printed when it happened.
+              if (!(e instanceof PanicError)) {
+                console.error("request handler failed:", e);
+              }
             }
             // Otherwise the client went away while the response was being written (a streamed
             // one): nothing can be sent, and it is not the handler's failure.
+          }
+          if (res.cutOff()) {
+            // Its response failed after the head (`fail`): it can't be finished.
+            failed = true;
           }
           if (res.upgraded()) {
             // The connection is the handler's now (also if it failed after switching).

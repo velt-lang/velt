@@ -22,14 +22,14 @@ struct Rejected {
 }
 
 // async function make(n) { throw n; } — rejects in its first run, before any suspension.
-unsafe extern "C" fn make_poll(s: *mut u8, _: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn make_poll(s: *mut u8, _: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Rejected);
     st.tag = 1;
     st.value = st.value * 10 + 1;
     READY
 }
 
-unsafe extern "C" fn make_drop(_: *mut u8) {}
+unsafe extern "C-unwind" fn make_drop(_: *mut u8) {}
 
 /// Reports of unhandled rejections, by the value rejected with (each test its own values).
 static REPORTS: [AtomicUsize; 2] = [AtomicUsize::new(0), AtomicUsize::new(0)];
@@ -37,7 +37,7 @@ static REPORTS: [AtomicUsize; 2] = [AtomicUsize::new(0), AtomicUsize::new(0)];
 /// The unclaimed-result glue compiled code passes to `velt_rt_fut_start_rejecting`: a deferred
 /// rejection waits for the checkpoint, any other one is reported (counted here instead of
 /// printed with an exit).
-unsafe extern "C" fn report(slot: *mut u8) {
+unsafe extern "C-unwind" fn report(slot: *mut u8) {
     let r = &*(slot as *const Rejected);
     if r.tag == 0 || velt_rt_unhandled_defer() != 0 {
         return;
@@ -51,7 +51,7 @@ fn reports(n: i64) -> usize {
 
 /// Task A: `const p = make(n); spawn(use(p));` — starts the promise, which rejects at once, and
 /// hands it to another task (`p` here; transfer glue is null: nothing counted in the result).
-unsafe extern "C" fn start_and_hand_over(s: *mut u8, _: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn start_and_hand_over(s: *mut u8, _: *mut c_void) -> u32 {
     let st = &mut *(s as *mut [i64; 2]);
     let init = Rejected {
         tag: 0,
@@ -73,7 +73,7 @@ fn hand_over(n: i64) -> *mut VeltFut {
 }
 
 /// Task B: `await p` — claims the rejection (the value it rejected with).
-unsafe extern "C" fn claim(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn claim(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut [i64; 2]);
     let f = st[1] as *mut VeltFut;
     assert_eq!(
@@ -89,7 +89,7 @@ unsafe extern "C" fn claim(s: *mut u8, cx: *mut c_void) -> u32 {
 }
 
 /// Task B: drops `p` unawaited.
-unsafe extern "C" fn give_up(s: *mut u8, _: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn give_up(s: *mut u8, _: *mut c_void) -> u32 {
     velt_rt_fut_drop((*(s as *mut [i64; 2]))[1] as *mut VeltFut);
     READY
 }

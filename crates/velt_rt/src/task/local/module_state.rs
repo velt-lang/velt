@@ -39,14 +39,14 @@ pub struct ModuleDesc {
     pub align: u64,
     /// Evaluates the initializers in module order and writes every slot but the root file's,
     /// which its `main` initializes, calling `velt_rt_module_ready` after each.
-    pub init: unsafe extern "C" fn(*mut u8),
+    pub init: unsafe extern "C-unwind" fn(*mut u8),
     /// Drops every slot (the state tuple's drop glue).
-    pub drop: unsafe extern "C" fn(*mut u8),
+    pub drop: unsafe extern "C-unwind" fn(*mut u8),
     /// Each slot's name, NUL-terminated, in slot order.
     pub names: *const u8,
     /// Initializes the root file's slots, for a block of code swapped in (`velt dev`), whose
     /// `main` does not run again; `None` when `init` writes every slot.
-    pub rest: Option<unsafe extern "C" fn(*mut u8)>,
+    pub rest: Option<unsafe extern "C-unwind" fn(*mut u8)>,
 }
 
 /// The module lock.
@@ -186,13 +186,41 @@ pub(crate) fn mutex_unlocked() {
     }
 }
 
+/// This thread's runtime-level holds: how it holds the module lock and how many `Mutex`es it
+/// counts. Saved when a poll that catches panics starts (node/panicked.rs).
+#[derive(Clone, Copy)]
+pub(crate) struct Holds {
+    held: u8,
+    mutexes: u32,
+}
+
+/// This thread's holds now.
+pub(crate) fn holds() -> Holds {
+    Holds {
+        held: HELD.with(Cell::get),
+        mutexes: MUTEXES.with(Cell::get),
+    }
+}
+
+/// A panic was caught in a poll that started with `saved`: the code it abandoned never ran its
+/// unlocks (`velt_rt_mutex_unlock`, [`velt_rt_module_with_end`]), so the `Mutex` count goes back,
+/// and the module lock taken for its `with` is released. The program's `Mutex` itself stays
+/// locked (documented with `catchPanic`); the runtime's bookkeeping must not stay wrong, or a
+/// later module-state access would end in an ICE and other threads would wait for good.
+pub(crate) fn restore_holds(saved: Holds) {
+    MUTEXES.with(|m| m.set(saved.mutexes));
+    if saved.held != IN_WITH {
+        release(IN_WITH);
+    }
+}
+
 /// Before a `Mutex` or `RwLock` is locked for a callback that may reach a declared function's
 /// properties held as `any` (fn_props.rs; the compiler decides which): take the module lock
 /// unless this thread holds it, until [`velt_rt_module_with_end`] after the unlock. The callback
 /// then never waits for the module lock while it holds the `Mutex`, which a thread holding the
 /// module lock may be waiting for. Whether it took it (1), for the end.
 #[no_mangle]
-pub extern "C" fn velt_rt_module_with() -> u8 {
+pub extern "C-unwind" fn velt_rt_module_with() -> u8 {
     HELD.with(|h| match h.get() {
         NOT_HELD => {
             take_for_with(h);
@@ -205,7 +233,7 @@ pub extern "C" fn velt_rt_module_with() -> u8 {
 /// After the unlock that followed [`velt_rt_module_with`], with what it answered: the module
 /// lock it took goes, unless the callback reached module state (the poll keeps it then).
 #[no_mangle]
-pub extern "C" fn velt_rt_module_with_end(took: u8) {
+pub extern "C-unwind" fn velt_rt_module_with_end(took: u8) {
     if took != 0 {
         release(IN_WITH);
     }
@@ -344,7 +372,10 @@ fn layout(d: &ModuleDesc) -> Layout {
 /// # Safety
 /// `desc` must point to the program's module descriptor.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_module_state(desc: *const ModuleDesc, slot: u64) -> *mut u8 {
+pub unsafe extern "C-unwind" fn velt_rt_module_state(
+    desc: *const ModuleDesc,
+    slot: u64,
+) -> *mut u8 {
     lock_for_access();
     block(desc, slot)
 }
@@ -403,7 +434,7 @@ unsafe fn lock_for_access() {
 /// # Safety
 /// `desc` must point to the program's module descriptor.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_module_block(desc: *const ModuleDesc) -> *mut u8 {
+pub unsafe extern "C-unwind" fn velt_rt_module_block(desc: *const ModuleDesc) -> *mut u8 {
     lock_for_access();
     if let Some((p, _)) = find(desc) {
         return p;
@@ -416,7 +447,7 @@ pub unsafe extern "C" fn velt_rt_module_block(desc: *const ModuleDesc) -> *mut u
 /// # Safety
 /// `state` must be a block being initialized (`ModuleDesc::init`), with the lock held.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_module_ready(state: *mut u8, n: u64) {
+pub unsafe extern "C-unwind" fn velt_rt_module_ready(state: *mut u8, n: u64) {
     if let Some(b) = (*BLOCKS.0.get()).iter_mut().find(|b| b.p == state) {
         b.ready = n;
     }

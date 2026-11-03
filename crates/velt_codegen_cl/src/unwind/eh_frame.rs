@@ -20,7 +20,7 @@ use cranelift_object::object::{
 };
 use cranelift_object::ObjectProduct;
 
-use super::FunctionUnwind;
+use super::{FunctionUnwind, Unwind};
 use crate::CodegenResult;
 
 /// Append an eh_frame section covering every function with SystemV unwind info.
@@ -32,7 +32,9 @@ pub(super) fn add_eh_frame(
     let systemv: Vec<_> = infos
         .iter()
         .filter_map(|(id, _, info)| match info {
-            UnwindInfo::SystemV(info) => Some((product.function_symbol(*id), info)),
+            Unwind::Cranelift(UnwindInfo::SystemV(info)) => {
+                Some((product.function_symbol(*id), info))
+            }
             _ => None,
         })
         .collect();

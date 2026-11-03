@@ -32,13 +32,13 @@ unsafe fn free_box(b: *mut i64) {
 }
 
 /// Share glue of the result slot: another reference to the result (here a copy of the box).
-unsafe extern "C" fn share_result(src: *const u8, dst: *mut u8) {
+unsafe extern "C-unwind" fn share_result(src: *const u8, dst: *mut u8) {
     let b = *(src as *const *mut i64);
     (dst as *mut *mut i64).write(new_box(*b));
 }
 
 /// Drop glue of the result slot.
-unsafe extern "C" fn drop_result(slot: *mut u8) {
+unsafe extern "C-unwind" fn drop_result(slot: *mut u8) {
     free_box(*(slot as *const *mut i64));
 }
 
@@ -51,7 +51,7 @@ struct Value {
     y: *mut VeltFut,
 }
 
-unsafe extern "C" fn value_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn value_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Value);
     if st.tag == 0 {
         st.y = velt_rt_yield_now_fut();
@@ -67,7 +67,7 @@ unsafe extern "C" fn value_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     READY
 }
 
-unsafe extern "C" fn value_drop(s: *mut u8) {
+unsafe extern "C-unwind" fn value_drop(s: *mut u8) {
     let st = &mut *(s as *mut Value);
     if !st.y.is_null() {
         velt_rt_fut_drop(st.y);
@@ -119,7 +119,7 @@ struct AwaitBoth {
     a: i64,
 }
 
-unsafe extern "C" fn await_both_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn await_both_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut AwaitBoth);
     if st.tag == 0 {
         st.p = value(7);
@@ -164,7 +164,7 @@ struct DropUnsettled {
     y: *mut VeltFut,
 }
 
-unsafe extern "C" fn drop_unsettled_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn drop_unsettled_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut DropUnsettled);
     if st.tag == 0 {
         let p = value(5);

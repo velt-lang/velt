@@ -15,6 +15,7 @@
 export { AbortController } from "velt/task/controller";
 export { AbortError } from "velt/task/errors";
 export { ScopeOptions, TaskScope, taskScope } from "velt/task/scope";
+export { catchPanic, PanicError } from "velt/task/panic";
 export { AbortSignal } from "velt/task/signal";
 export { timeout, TimeoutError } from "velt/task/timeout";
 export { currentWorker, SpawnOptions, workerCount } from "velt/task/workers";

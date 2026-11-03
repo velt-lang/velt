@@ -36,6 +36,7 @@ use futures_util::task::AtomicWaker;
 
 mod loc;
 mod owner;
+mod panicked;
 mod transfer;
 mod waker;
 
@@ -45,6 +46,9 @@ pub(super) use self::waker::{local_awaiter, queue};
 pub(super) use self::loc::of as loc_of;
 pub(super) use self::owner::{deliver_unadopted, is_done, poll_unadopted};
 use self::owner::{started_drop, started_poll};
+pub(super) use self::panicked::{
+    catch_panics, catches_here, is_panicked, panic_message, panicked_message,
+};
 use self::transfer::run_transfer;
 use self::waker::NODE_WAKER;
 use super::set::Shared;
@@ -77,6 +81,11 @@ const HANDED_OVER: u32 = 1024;
 /// It stands for another promise (a converted one, `velt_rt_fut_alias`): its owner's drop ends
 /// that (task/identity.rs).
 const ALIASED: u32 = 2048;
+/// Its poll catches Velt panics (`catchPanic`, panic.rs), also when nothing up the stack does.
+const CATCHES: u32 = 4096;
+/// A Velt panic stopped at its poll: it counts as finished, its state and result slot are never
+/// touched again, and the node is never freed ([`panicked`]). Its owner's await raises the panic.
+const PANICKED: u32 = 8192;
 
 /// `owner` bit of a lazy node: its state finished (it is polled by its owner only).
 const OWNER_DONE: u32 = 1;
@@ -235,11 +244,11 @@ pub(super) unsafe fn next_slot<'a>(f: *mut VeltFut) -> &'a AtomicPtr<VeltFut> {
 pub(super) unsafe fn is_lazy(f: *mut VeltFut) -> bool {
     std::ptr::fn_addr_eq(
         (*f).poll,
-        lazy_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32,
+        lazy_poll as unsafe extern "C-unwind" fn(*mut VeltFut, *mut c_void) -> u32,
     )
 }
 
-unsafe extern "C" fn lazy_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn lazy_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     let h = head(f);
     if h.owner.get() & OWNER_DONE != 0 {
         return READY;
@@ -257,7 +266,7 @@ unsafe extern "C" fn lazy_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     r
 }
 
-unsafe extern "C" fn lazy_drop(f: *mut VeltFut) {
+unsafe extern "C-unwind" fn lazy_drop(f: *mut VeltFut) {
     let h = head(f);
     forget_alias(f, h.flags.load(Ordering::Relaxed));
     if h.owner.get() & OWNER_DONE == 0 {
@@ -347,7 +356,9 @@ pub(super) unsafe fn mark_started(
     let h = head_mut(f);
     h.set = Arc::as_ptr(shared);
     h.result_drop = AtomicPtr::new(drop_fn_ptr(result_drop));
-    h.flags.store(STARTED, Ordering::Relaxed);
+    // A node `catchPanic` guards keeps catching.
+    let catches = h.flags.load(Ordering::Relaxed) & CATCHES;
+    h.flags.store(STARTED | catches, Ordering::Relaxed);
     (*f).poll = started_poll;
     (*f).drop = started_drop;
 }
@@ -360,7 +371,9 @@ pub(super) unsafe fn poll_state(f: *mut VeltFut, word: *const u32) -> bool {
     let mut cx = Context::from_waker(&w);
     let h = head(f);
     loc::polled(f, || {
-        (h.poll)(state(f), crate::task::raw_cx_with(&mut cx, word).ptr()) == READY
+        panicked::caught(f, || {
+            (h.poll)(state(f), crate::task::raw_cx_with(&mut cx, word).ptr()) == READY
+        })
     })
 }
 
@@ -380,7 +393,9 @@ pub(super) unsafe fn poll_first(f: *mut VeltFut, word: *const u32) -> bool {
     });
     let mut first = std::pin::pin!(crate::task::coop::unconstrained(first));
     loc::polled(f, || {
-        first.as_mut().poll(&mut Context::from_waker(&w)).is_ready()
+        panicked::caught(f, || {
+            first.as_mut().poll(&mut Context::from_waker(&w)).is_ready()
+        })
     })
 }
 
@@ -492,6 +507,10 @@ fn drop_fn_ptr(d: Option<ResultDropFn>) -> *mut () {
 /// Dispose of the unclaimed result of `f`; an unhandled rejection may wait for the task's
 /// microtasks (unhandled.rs).
 unsafe fn drop_result(f: *mut VeltFut) {
+    if panicked::is_panicked(f) {
+        // Its slot holds nothing (panicked.rs).
+        return;
+    }
     let d = head(f).result_drop.load(Ordering::Acquire);
     if !d.is_null() {
         // SAFETY: only ever stored from a `ResultDropFn` (`drop_fn_ptr`).
@@ -502,6 +521,9 @@ unsafe fn drop_result(f: *mut VeltFut) {
 
 /// Dispose of the unclaimed result of `f` now (a deferred rejection is reported).
 pub(super) unsafe fn drop_result_now(f: *mut VeltFut) {
+    if panicked::is_panicked(f) {
+        return;
+    }
     let d = head(f).result_drop.load(Ordering::Acquire);
     if !d.is_null() {
         // SAFETY: only ever stored from a `ResultDropFn` (`drop_fn_ptr`).
@@ -514,7 +536,8 @@ pub(super) unsafe fn drop_result_now(f: *mut VeltFut) {
 /// JS attaching handlers): an unclaimed result is dropped with `quiet_drop` from now on instead
 /// of being reported as an unhandled rejection. No-op for any other future.
 pub(super) unsafe fn mark_handled(f: *mut VeltFut, quiet_drop: Option<ResultDropFn>) {
-    if !is_started(f) {
+    // A panicked node's slot holds nothing to drop (panicked.rs).
+    if !is_started(f) || panicked::is_panicked(f) {
         return;
     }
     let h = head(f);
@@ -527,6 +550,9 @@ pub(super) unsafe fn mark_handled(f: *mut VeltFut, quiet_drop: Option<ResultDrop
 /// (`velt_rt_fut_peek`)? A started node that finished, or a lazy one its owner polled to the
 /// end; false for any other future.
 pub(super) unsafe fn peek(f: *mut VeltFut) -> bool {
+    if panicked::is_panicked(f) {
+        return false;
+    }
     if is_lazy(f) {
         return head(f).owner.get() & OWNER_DONE != 0;
     }
@@ -578,6 +604,6 @@ pub(super) unsafe fn is_adopted(f: *mut VeltFut) -> bool {
 pub(super) unsafe fn is_started(f: *mut VeltFut) -> bool {
     std::ptr::fn_addr_eq(
         (*f).poll,
-        started_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32,
+        started_poll as unsafe extern "C-unwind" fn(*mut VeltFut, *mut c_void) -> u32,
     )
 }

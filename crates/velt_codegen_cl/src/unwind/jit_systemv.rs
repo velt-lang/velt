@@ -17,7 +17,7 @@ use cranelift_codegen::isa::unwind::UnwindInfo;
 use cranelift_jit::JITModule;
 use cranelift_module::Module;
 
-use super::FunctionUnwind;
+use super::{FunctionUnwind, Unwind};
 use crate::CodegenResult;
 
 extern "C" {
@@ -55,7 +55,7 @@ fn eh_frame(module: &JITModule, infos: &[FunctionUnwind]) -> CodegenResult<Optio
     let cie_id = table.add_cie(cie);
     let mut any = false;
     for (id, _, info) in infos {
-        let UnwindInfo::SystemV(info) = info else {
+        let Unwind::Cranelift(UnwindInfo::SystemV(info)) = info else {
             continue;
         };
         let code = module.get_finalized_function(*id) as u64;

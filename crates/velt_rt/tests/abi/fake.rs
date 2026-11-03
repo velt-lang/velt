@@ -21,7 +21,7 @@ pub struct Awaiter<R> {
 }
 
 /// Poll function of [`Awaiter`]: one await of a heap future, then move its result out.
-pub unsafe extern "C" fn awaiter_poll<R>(s: *mut u8, cx: *mut c_void) -> u32 {
+pub unsafe extern "C-unwind" fn awaiter_poll<R>(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Awaiter<R>);
     if velt_rt_fut_poll(st.fut, cx) == PENDING {
         return PENDING;

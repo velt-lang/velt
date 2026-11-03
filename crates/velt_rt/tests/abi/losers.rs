@@ -23,7 +23,7 @@ struct Waiter {
     done: *const AtomicUsize,
 }
 
-unsafe extern "C" fn waiter_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn waiter_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Waiter);
     if velt_rt_fut_poll(st.wait, cx) == PENDING {
         return PENDING;
@@ -34,7 +34,7 @@ unsafe extern "C" fn waiter_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     READY
 }
 
-unsafe extern "C" fn waiter_drop(s: *mut u8) {
+unsafe extern "C-unwind" fn waiter_drop(s: *mut u8) {
     let st = &mut *(s as *mut Waiter);
     if st.tag == 0 {
         velt_rt_fut_drop(st.wait);
@@ -68,7 +68,7 @@ static FINISHED_BY_ROUND: AtomicUsize = AtomicUsize::new(0);
 // The rejecting sibling resolves the waiter's promise and throws: the waiter is ready when the
 // owner gives it up. Its step was queued by `resolve`, before the owner's `await` step
 // (`velt_rt_await_tick`, as compiled code takes it), so it finishes before the next round.
-unsafe extern "C" fn loop_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn loop_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut [u64; 3]);
     loop {
         if st[2] != 0 {
@@ -117,7 +117,7 @@ static FINISHED_BEFORE_OWNER_WENT_ON: AtomicUsize = AtomicUsize::new(usize::MAX)
 
 // The same round once, after something yielded in this poll: the loser waits for the task's
 // next poll (a yield is a macrotask in JS terms; nothing of its poll runs early).
-unsafe extern "C" fn yielded_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn yielded_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut [i64; 2]);
     if st[1] == 0 {
         st[1] = 1;

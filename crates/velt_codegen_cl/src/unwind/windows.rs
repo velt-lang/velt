@@ -12,7 +12,7 @@ use cranelift_object::object::write::{Object, Relocation, SectionId, SymbolId};
 use cranelift_object::object::{self, Architecture, RelocationFlags, SectionKind};
 use cranelift_object::ObjectProduct;
 
-use super::FunctionUnwind;
+use super::{FunctionUnwind, Unwind};
 use crate::CodegenResult;
 
 /// One function's `.xdata` record, ready to append.
@@ -30,12 +30,8 @@ pub(super) fn add_windows_unwind_info(
     let mut records = Vec::new();
     for (id, size, info) in infos {
         let xdata = match info {
-            UnwindInfo::WindowsX64(info) => {
-                let mut record = vec![0u8; info.emit_size()];
-                info.emit(&mut record);
-                record
-            }
-            UnwindInfo::WindowsArm64(info) => arm64_xdata(info, *size)?,
+            Unwind::WindowsX64(record) => record.clone(),
+            Unwind::Cranelift(UnwindInfo::WindowsArm64(info)) => arm64_xdata(info, *size)?,
             _ => continue,
         };
         let symbol = product.function_symbol(*id);

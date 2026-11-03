@@ -59,7 +59,7 @@ unsafe fn tail<'a>(f: *mut VeltFut) -> &'a mut Tail {
     &mut *((f as *mut u8).sub(TAIL) as *mut Tail)
 }
 
-unsafe extern "C" fn race_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn race_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     let t = tail(f);
     let slot = (f as *mut u8).add(FUT_RESULT_OFFSET);
     match t.children.as_ref() {
@@ -221,7 +221,7 @@ unsafe fn win(t: &mut Tail, i: usize, cx: *mut c_void) -> u32 {
     READY
 }
 
-unsafe extern "C" fn race_drop(f: *mut VeltFut) {
+unsafe extern "C-unwind" fn race_drop(f: *mut VeltFut) {
     let t = tail(f);
     let l = layout(t.result_size);
     drop_in_order(t.children.take());
@@ -281,7 +281,7 @@ unsafe fn new_race(
 /// If `f` is a race, mark each of its children to transfer its result with `transfer`
 /// (`velt_rt_fut_transfer`): the winner's result is a child's. Whether `f` was one.
 pub(super) unsafe fn pass_transfer(f: *mut VeltFut, transfer: Option<ResultDropFn>) -> bool {
-    let race = race_poll as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32;
+    let race = race_poll as unsafe extern "C-unwind" fn(*mut VeltFut, *mut c_void) -> u32;
     if !std::ptr::fn_addr_eq((*f).poll, race) {
         return false;
     }
@@ -297,7 +297,7 @@ pub(super) unsafe fn pass_transfer(f: *mut VeltFut, transfer: Option<ResultDropF
 /// and returns a future whose result slot (offset 16) receives the `result_size`-byte result of
 /// the first child to finish. The other children are dropped then (see the module docs).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_race(
+pub unsafe extern "C-unwind" fn velt_rt_race(
     futs: *const *mut VeltFut,
     n: u64,
     result_size: u64,
@@ -311,7 +311,7 @@ pub unsafe extern "C" fn velt_rt_race(
 /// in which case its rejection is the result. `n == 0` never completes (`Promise.any([])` is
 /// rejected by the caller).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_race_ok(
+pub unsafe extern "C-unwind" fn velt_rt_race_ok(
     futs: *const *mut VeltFut,
     n: u64,
     result_size: u64,

@@ -63,7 +63,7 @@ fn collect(dir: &Path, names: &mut Vec<String>) {
     }
 }
 
-/// `NAME` of each `#[no_mangle]` followed by `pub [unsafe] extern "C" fn NAME`. `main` is the
+/// `NAME` of each `#[no_mangle]` followed by `pub [unsafe] extern "C" fn NAME` (or `"C-unwind"`). `main` is the
 /// process entry, not part of the ABI the generated code calls. Comments don't count: a
 /// `// SAFETY:` line between the attribute and the function keeps it, and a commented-out
 /// function is not exported (the change planner, crates/xtask, treats comment edits as such).
@@ -79,7 +79,11 @@ pub(crate) fn exported_functions(text: &str) -> Vec<String> {
             continue;
         }
         pending = false;
-        let Some((_, rest)) = line.split_once("extern \"C\" fn ") else {
+        // `C-unwind`: the functions a Velt panic unwinds through (src/panic.rs).
+        let Some((_, rest)) = line
+            .split_once("extern \"C\" fn ")
+            .or_else(|| line.split_once("extern \"C-unwind\" fn "))
+        else {
             continue;
         };
         let name: String = rest

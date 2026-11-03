@@ -337,6 +337,11 @@ function leakedBlocks(stderr: string): number | null {
   if (at < 0 || !stderr.includes("rc stats:")) {
     return null;
   }
+  // A caught panic leaks what the panicked code held (`catchPanic`): no leak check then.
+  const caught = stderr.lastIndexOf(" panics caught=");
+  if (caught > at && !stderr.slice(caught + 15).startsWith("0")) {
+    return 0;
+  }
   const field = stderr.slice(at + 8).split(" ")[0];
   const counts = field.split("/");
   if (counts.length != 2) {

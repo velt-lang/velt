@@ -16,7 +16,9 @@
 //! once no task is left that could make them so ([`freeze`]). `channel
 //! leftovers=<n>`: values still queued in channels when `main` returned normally, which the
 //! runtime dropped then (https://veltlang.com/docs/std/sync/channel/); a leak check passes with them, so the count keeps
-//! them visible.
+//! them visible. `panics caught=<n>`: Velt panics stopped at a promise that catches them
+//! (`catchPanic`, panic.rs): each leaks what the panicked code held, so a leak check of such a run
+//! cannot pass and is skipped.
 
 #[cfg(debug_assertions)]
 mod counters {
@@ -212,14 +214,15 @@ pub fn report() {
         use std::sync::atomic::Ordering::Relaxed;
         let blocks = BLOCKS.get();
         eprintln!(
-            "rc stats: retain={} release={} alloc={} free={} blocks={}/{} channel leftovers={}",
+            "rc stats: retain={} release={} alloc={} free={} blocks={}/{} channel leftovers={} panics caught={}",
             RETAIN.load(Relaxed),
             RELEASE.load(Relaxed),
             ALLOC.load(Relaxed),
             FREE.load(Relaxed),
             blocks.allocated,
             blocks.freed,
-            CHANNEL_LEFTOVERS.load(Relaxed)
+            CHANNEL_LEFTOVERS.load(Relaxed),
+            crate::panic::caught_count()
         );
     }
 }

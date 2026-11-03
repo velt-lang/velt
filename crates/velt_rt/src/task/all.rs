@@ -35,7 +35,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll};
 
 /// Drops one result value in place: `void result_drop(void* slot)`.
-pub type ResultDropFn = unsafe extern "C" fn(slot: *mut u8);
+pub type ResultDropFn = unsafe extern "C-unwind" fn(slot: *mut u8);
 
 /// One child: polls the `VeltFut`, copies its result to `dst` when ready, frees it on drop.
 /// Resolves to its index so the join can record which result slots are initialized.
@@ -151,7 +151,7 @@ impl Drop for FinishedResults {
 /// dropped. The returned `VeltFut` has an empty (unit) result. Same as
 /// [`velt_rt_all_with_drop`] with no result drop function (results that need no drop).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_all(
+pub unsafe extern "C-unwind" fn velt_rt_all(
     futs: *const *mut VeltFut,
     n: u64,
     result_size: u64,
@@ -164,7 +164,7 @@ pub unsafe extern "C" fn velt_rt_all(
 /// completes, `result_drop(results + i * result_size)` runs for every child `i` that had already
 /// finished (the pending children are cancelled through their own drop). Null = nothing to drop.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_all_with_drop(
+pub unsafe extern "C-unwind" fn velt_rt_all_with_drop(
     futs: *const *mut VeltFut,
     n: u64,
     result_size: u64,
@@ -181,7 +181,7 @@ pub unsafe extern "C" fn velt_rt_all_with_drop(
 /// children are dropped (started promises keep running; the caller marked them handled with
 /// `velt_rt_futs_handled`). So the caller sees a rejection as an `Err` tag in slot 0 (`n > 0`).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_all_or_reject(
+pub unsafe extern "C-unwind" fn velt_rt_all_or_reject(
     futs: *const *mut VeltFut,
     n: u64,
     result_size: u64,

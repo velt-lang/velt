@@ -38,7 +38,7 @@ static WAITS: AtomicU64 = AtomicU64::new(1);
 
 /// A new, closed latch (released with [`velt_rt_latch_free`]).
 #[no_mangle]
-pub extern "C" fn velt_rt_latch_new() -> Handle<Latch> {
+pub extern "C-unwind" fn velt_rt_latch_new() -> Handle<Latch> {
     Handle::from_arc(Arc::new(Latch::default()))
 }
 
@@ -47,7 +47,7 @@ pub extern "C" fn velt_rt_latch_new() -> Handle<Latch> {
 /// # Safety
 /// `h` must be a live latch handle, not used afterwards.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_latch_free(h: Handle<Latch>) {
+pub unsafe extern "C-unwind" fn velt_rt_latch_free(h: Handle<Latch>) {
     h.release();
 }
 
@@ -59,7 +59,7 @@ pub unsafe extern "C" fn velt_rt_latch_free(h: Handle<Latch>) {
 /// # Safety
 /// `h` must be a live latch handle.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_latch_open(h: Handle<Latch>) {
+pub unsafe extern "C-unwind" fn velt_rt_latch_open(h: Handle<Latch>) {
     let l = h.obj();
     crate::io::publish_before_handoff();
     if l.open.swap(true, Ordering::AcqRel) {
@@ -141,7 +141,7 @@ impl Drop for Wait {
 /// # Safety
 /// `h` must be a live latch handle.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_latch_wait(h: Handle<Latch>) -> *mut VeltFut {
+pub unsafe extern "C-unwind" fn velt_rt_latch_wait(h: Handle<Latch>) -> *mut VeltFut {
     new_inner_leaf(Wait {
         latch: h.clone_arc(),
         id: 0,

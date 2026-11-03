@@ -484,8 +484,7 @@ pub(crate) fn unwind_info<M: Module>(
     let Some(code) = ctx.compiled_code() else {
         return Ok(None);
     };
-    let info = code
-        .create_unwind_info(module.isa())
-        .map_err(|e| format!("codegen: unwind info for `{symbol}`: {e:?}"))?;
+    let info = crate::unwind::function_unwind(code, module.isa())
+        .map_err(|e| format!("codegen: unwind info for `{symbol}`: {e}"))?;
     Ok(info.map(|info| (id, code.code_info().total_size, info)))
 }

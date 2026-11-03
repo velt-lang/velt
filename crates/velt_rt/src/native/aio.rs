@@ -128,7 +128,7 @@ pub unsafe extern "C" fn fut_poll_in(
     f
 }
 
-unsafe extern "C" fn poll_native(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn poll_native(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     let m = meta(f);
     if m.state.is_null() {
         return READY;
@@ -144,7 +144,7 @@ unsafe extern "C" fn poll_native(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     r
 }
 
-unsafe extern "C" fn drop_native(f: *mut VeltFut) {
+unsafe extern "C-unwind" fn drop_native(f: *mut VeltFut) {
     let base = (f as *mut u8).sub(META) as *mut PollMeta;
     let m = base.read();
     if !m.state.is_null() {

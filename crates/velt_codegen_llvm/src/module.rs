@@ -159,8 +159,8 @@ pub(crate) fn emit_unit(
         "\nattributes {FN_ATTRS} = {{ {} }}",
         target.function_attributes().join(" ")
     );
-    let _ = writeln!(out, "attributes {EXTERN_ATTRS} = {{ nounwind }}");
-    let _ = writeln!(out, "attributes {NORETURN_ATTRS} = {{ noreturn nounwind }}");
+    let _ = writeln!(out, "attributes {EXTERN_ATTRS} = {{ \"velt-extern\" }}");
+    let _ = writeln!(out, "attributes {NORETURN_ATTRS} = {{ noreturn }}");
     let _ = writeln!(
         out,
         "attributes {PURE_ATTRS} = {{ nounwind willreturn memory(none) }}"

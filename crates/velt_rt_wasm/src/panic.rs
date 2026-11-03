@@ -92,6 +92,43 @@ pub extern "C" fn velt_rt_throw_loc() -> *const VeltStr {
     THROW_LOC.with(|c| c.get())
 }
 
+// `catchPanic` (`velt/task`, #2008): WebAssembly does not unwind, so no promise catches a panic
+// here; a panic ends the program as before. `velt_rt_catch_take` reports that no promise took
+// the arming, so std's `catchPanic` only awaits the body's promise and never calls the other
+// functions.
+
+/// Panics stopped at a catching promise (velt_rt's str/stats.rs, compiled here): none.
+#[cfg(debug_assertions)]
+pub(crate) fn caught_count() -> u64 {
+    0
+}
+
+/// Arms nothing: no promise catches panics in WebAssembly.
+#[no_mangle]
+pub extern "C" fn velt_rt_catch_arm() {}
+
+/// No promise took the arming (0).
+#[no_mangle]
+pub extern "C" fn velt_rt_catch_take() -> u64 {
+    0
+}
+
+/// Never called (`velt_rt_catch_take` returns 0).
+#[no_mangle]
+pub extern "C" fn velt_rt_catch_settled(_h: u64) -> *mut crate::task::VeltFut {
+    fatal("velt_rt_catch_settled: no promise catches panics in WebAssembly")
+}
+
+/// Never called (`velt_rt_catch_take` returns 0).
+#[no_mangle]
+pub extern "C" fn velt_rt_catch_message(_h: u64, _out: *mut VeltStr) {
+    fatal("velt_rt_catch_message: no promise catches panics in WebAssembly")
+}
+
+/// Never called with a handle (`velt_rt_catch_take` returns 0).
+#[no_mangle]
+pub extern "C" fn velt_rt_catch_free(_h: u64) {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

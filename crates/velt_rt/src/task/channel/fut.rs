@@ -103,11 +103,11 @@ impl StaticDone {
     }
 }
 
-unsafe extern "C" fn static_poll(_: *mut VeltFut, _: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn static_poll(_: *mut VeltFut, _: *mut c_void) -> u32 {
     READY
 }
 
-unsafe extern "C" fn static_drop(_: *mut VeltFut) {}
+unsafe extern "C-unwind" fn static_drop(_: *mut VeltFut) {}
 
 /// `send` finished: queued (`true`) or the channel was closed (`false`).
 pub(super) static SENT: StaticDone = StaticDone {
@@ -125,7 +125,7 @@ pub(super) static NOT_SENT: StaticDone = StaticDone {
     result: [0; 16],
 };
 
-unsafe extern "C" fn op_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn op_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     let t = tail(f);
     let Some(op) = t.op.as_mut() else {
         return READY;
@@ -139,7 +139,7 @@ unsafe extern "C" fn op_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     }
 }
 
-unsafe extern "C" fn op_drop(f: *mut VeltFut) {
+unsafe extern "C-unwind" fn op_drop(f: *mut VeltFut) {
     let t = tail(f);
     let l = layout(t.slot_size);
     std::ptr::drop_in_place(t);

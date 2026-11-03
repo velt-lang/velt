@@ -73,14 +73,14 @@ pub fn keep_alive_release() {
 /// `velt_rt_keep_alive_acquire()`: take a keep-alive reference for a ref'd timer
 /// (std/prelude/timers.vlt), released with [`velt_rt_keep_alive_release`].
 #[no_mangle]
-pub extern "C" fn velt_rt_keep_alive_acquire() {
+pub extern "C-unwind" fn velt_rt_keep_alive_acquire() {
     keep_alive_acquire();
 }
 
 /// `velt_rt_keep_alive_release()`: release a reference taken with
 /// [`velt_rt_keep_alive_acquire`].
 #[no_mangle]
-pub extern "C" fn velt_rt_keep_alive_release() {
+pub extern "C-unwind" fn velt_rt_keep_alive_release() {
     keep_alive_release();
 }
 
@@ -88,7 +88,7 @@ pub extern "C" fn velt_rt_keep_alive_release() {
 /// leaf completes with 1 once the process is ending (quiet.rs `UnrefDue`, which may wait for the
 /// last worker to park first), as Node exits without running it (std/prelude/timers.vlt).
 #[no_mangle]
-pub extern "C" fn velt_rt_timer_unref_due() -> *mut super::VeltFut {
+pub extern "C-unwind" fn velt_rt_timer_unref_due() -> *mut super::VeltFut {
     super::leaf::new_inner_leaf(super::quiet::UnrefDue::new(&QUIET))
 }
 
@@ -195,13 +195,13 @@ fn backend() -> Backend {
 /// task (`spawn(…, { worker })`). The default executor keeps pinned tasks on their workers
 /// itself, so nothing changes; kept for the programs compiled to call it.
 #[no_mangle]
-pub extern "C" fn velt_rt_set_scheduler(kind: u32) {
+pub extern "C-unwind" fn velt_rt_set_scheduler(kind: u32) {
     let _ = kind;
 }
 
 /// `workerCount()`: the per-core workers, or the stealing runtime's worker threads.
 #[no_mangle]
-pub extern "C" fn velt_rt_worker_count() -> u64 {
+pub extern "C-unwind" fn velt_rt_worker_count() -> u64 {
     match backend() {
         Backend::PerCore => tokio_backend::workers().len() as u64,
         Backend::Stealing => worker_count() as u64,
@@ -212,7 +212,7 @@ pub extern "C" fn velt_rt_worker_count() -> u64 {
 /// `currentWorker()`: the per-core worker running this task. With the stealing scheduler, an
 /// index for this worker thread, which a task may leave at any `await`.
 #[no_mangle]
-pub extern "C" fn velt_rt_current_worker() -> u64 {
+pub extern "C-unwind" fn velt_rt_current_worker() -> u64 {
     if let Some(i) = current_worker() {
         return i as u64;
     }
@@ -235,7 +235,7 @@ pub extern "C" fn velt_rt_current_worker() -> u64 {
 /// calls this right before the spawn). Out of range is a panic. With the stealing scheduler the
 /// task is spawned as usual (tasks there may run on any worker).
 #[no_mangle]
-pub extern "C" fn velt_rt_spawn_target(worker: i64) {
+pub extern "C-unwind" fn velt_rt_spawn_target(worker: i64) {
     let n = velt_rt_worker_count();
     if worker < 0 || worker as u64 >= n {
         let s = if n == 1 { "" } else { "s" };
@@ -363,7 +363,7 @@ pub(crate) fn alive_tasks() -> usize {
 }
 
 /// Drop fn for a root state that always runs to completion (never cancelled).
-unsafe extern "C" fn never_dropped(_: *mut u8) {}
+unsafe extern "C-unwind" fn never_dropped(_: *mut u8) {}
 
 /// Run the compiled future `(poll, state)` to completion on the runtime's workers and return when
 /// it is `READY`; the result is then at offset 0 of `state`, which stays owned by the caller.
@@ -372,7 +372,7 @@ unsafe extern "C" fn never_dropped(_: *mut u8) {}
 /// (it waits for a promise nobody can settle any more, and nothing else can happen: quiet.rs),
 /// the program ends here, as Node exits with `main`'s promise pending.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
+pub unsafe extern "C-unwind" fn velt_rt_block_on(poll: PollFn, state: *mut u8) {
     // The module state initialized before `main` is the tasks' from now on.
     super::local::module_release_outside();
     // What the modules' top-level code printed on this thread comes before anything `main`

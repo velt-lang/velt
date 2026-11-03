@@ -1,0 +1,45 @@
+// `catchPanic` (#2008): a panic inside a `Mutex.with` callback that can reach a function's
+// properties through `any` (so the callback holds the module lock) leaves the runtime's own
+// bookkeeping as it was: later module-state access and tasks on other threads go on. The
+// program's `Mutex` stays locked, as documented; nothing here uses it again.
+import { catchPanic, PanicError } from "velt/task";
+
+function decl(): number {
+  return 1;
+}
+
+let counter = 0;
+
+async function body(m: shared<Mutex<number>>): Promise<string> {
+  await yieldNow();
+  m.with((v) => {
+    const d: any = decl;
+    d.x = 5;
+    const e: number[] = [];
+    return v + e[3]!;
+  });
+  return "ok";
+}
+
+async function touch(i: number): Promise<number> {
+  await yieldNow();
+  counter += i;
+  return counter;
+}
+
+async function main() {
+  const m = shared(new Mutex<number>(0));
+  try {
+    console.log(await catchPanic(() => body(m)));
+  } catch (e) {
+    console.log("caught", e instanceof PanicError);
+  }
+  const hs: Promise<number>[] = [];
+  for (let i = 0; i < 8; i++) {
+    hs.push(spawn(touch(i)));
+  }
+  for (const h of hs) {
+    await h;
+  }
+  console.log("touched", counter);
+}

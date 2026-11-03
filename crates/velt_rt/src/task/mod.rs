@@ -39,18 +39,18 @@ pub const READY: u32 = 1;
 pub const FUT_RESULT_OFFSET: usize = 16;
 
 /// Compiled state-machine poll function: `uint32_t poll(void* state, void* cx)`.
-pub type PollFn = unsafe extern "C" fn(state: *mut u8, cx: *mut c_void) -> u32;
+pub type PollFn = unsafe extern "C-unwind" fn(state: *mut u8, cx: *mut c_void) -> u32;
 /// Compiled state-machine drop function: drops the live locals of the current suspension point.
 /// Never drops the result slot (it is moved out by whoever observes `READY`).
-pub type DropFn = unsafe extern "C" fn(state: *mut u8);
+pub type DropFn = unsafe extern "C-unwind" fn(state: *mut u8);
 
 /// Header of every heap future owned by generated code. The result slot follows at offset 16.
 #[repr(C)]
 pub struct VeltFut {
     /// Poll this future; same return convention as [`PollFn`].
-    pub poll: unsafe extern "C" fn(f: *mut VeltFut, cx: *mut c_void) -> u32,
+    pub poll: unsafe extern "C-unwind" fn(f: *mut VeltFut, cx: *mut c_void) -> u32,
     /// Cancel (if still running) and free the future. Never drops the result slot.
-    pub drop: unsafe extern "C" fn(f: *mut VeltFut),
+    pub drop: unsafe extern "C-unwind" fn(f: *mut VeltFut),
 }
 
 const _: () = assert!(std::mem::size_of::<VeltFut>() == FUT_RESULT_OFFSET);
@@ -113,20 +113,20 @@ pub(crate) fn raw_cx_with<'a, 'b>(cx: &'a mut Context<'b>, word: *const u32) -> 
 
 /// Poll a heap future: `(f->poll)(f, cx)`.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+pub unsafe extern "C-unwind" fn velt_rt_fut_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     ((*f).poll)(f, cx)
 }
 
 /// Drop a heap future: `(f->drop)(f)`. Cancels it if still running; never drops the result slot.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_drop(f: *mut VeltFut) {
+pub unsafe extern "C-unwind" fn velt_rt_fut_drop(f: *mut VeltFut) {
     ((*f).drop)(f)
 }
 
 /// `await yieldNow()`: schedule the current task again. Generated code calls this and then returns
 /// `PENDING`; the task is re-polled after other ready tasks had a turn. Allocation-free.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_yield_now(cx: *mut c_void) {
+pub unsafe extern "C-unwind" fn velt_rt_yield_now(cx: *mut c_void) {
     local::note_yield();
     context(cx).waker().wake_by_ref();
 }
@@ -134,7 +134,7 @@ pub unsafe extern "C" fn velt_rt_yield_now(cx: *mut c_void) {
 /// `yieldNow()` as a heap future (for when the promise is stored or passed to `Promise.all`
 /// instead of awaited directly). Result: none.
 #[no_mangle]
-pub extern "C" fn velt_rt_yield_now_fut() -> *mut VeltFut {
+pub extern "C-unwind" fn velt_rt_yield_now_fut() -> *mut VeltFut {
     leaf::new_inner_leaf(async {
         local::note_yield();
         coop::yield_now().await

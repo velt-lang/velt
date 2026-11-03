@@ -33,3 +33,13 @@ export declare function velt_rt_group_free(g: u64);
 export declare function velt_rt_worker_count(): u64;
 
 export declare function velt_rt_current_worker(): u64;
+
+export declare function velt_rt_catch_arm();
+
+export declare function velt_rt_catch_take(): u64;
+
+export declare async function velt_rt_catch_settled(h: u64): Promise<bool>;
+
+export declare function velt_rt_catch_message(h: u64): string;
+
+export declare function velt_rt_catch_free(h: u64);

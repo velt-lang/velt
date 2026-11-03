@@ -1,0 +1,9 @@
+value 20
+index PanicError: index out of bounds: the len is 2 but the index is 5
+early PanicError: before the first await
+rejects other error: refused
+awaited PanicError: in a promise it awaits
+comparator PanicError: index out of bounds: the len is 0 but the index is 4
+nested inner catchPanic: true
+not its own 20
+still running

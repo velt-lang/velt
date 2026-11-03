@@ -155,7 +155,7 @@ struct JoinObj<const R: usize> {
     claimed: bool,
 }
 
-unsafe extern "C" fn join_poll<const R: usize>(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn join_poll<const R: usize>(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     let obj = &mut *(f as *mut JoinObj<R>);
     match Pin::new(&mut obj.handle).poll(context(cx)) {
         Poll::Pending => PENDING,
@@ -172,7 +172,7 @@ unsafe extern "C" fn join_poll<const R: usize>(f: *mut VeltFut, cx: *mut c_void)
     }
 }
 
-unsafe extern "C" fn join_drop<const R: usize>(f: *mut VeltFut) {
+unsafe extern "C-unwind" fn join_drop<const R: usize>(f: *mut VeltFut) {
     // Dropping the JoinHandle detaches the task (it keeps running, like an unawaited
     // spawned promise); tokio then drops its output, which disposes of an unclaimed result (and
     // reports an error in it, unless the handle was handled).
@@ -205,7 +205,7 @@ unsafe extern "C" fn join_drop<const R: usize>(f: *mut VeltFut) {
 /// dropped with `quiet` (null: nothing to drop), not reported as an unhandled rejection.
 pub(crate) unsafe fn mark_join_handled(f: *mut VeltFut, quiet: Option<ResultDropFn>) {
     unsafe fn mark<const R: usize>(f: *mut VeltFut, quiet: Option<ResultDropFn>) -> bool {
-        let poll = join_poll::<R> as unsafe extern "C" fn(*mut VeltFut, *mut c_void) -> u32;
+        let poll = join_poll::<R> as unsafe extern "C-unwind" fn(*mut VeltFut, *mut c_void) -> u32;
         if !std::ptr::fn_addr_eq((*f).poll, poll) {
             return false;
         }
@@ -268,7 +268,7 @@ fn spawn_sized<B: TaskBody>(
 /// Dropping the handle detaches the task; a result it never claims is dropped with
 /// `result_drop` (null: nothing to drop).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_spawn(
+pub unsafe extern "C-unwind" fn velt_rt_spawn(
     poll: PollFn,
     drop: DropFn,
     state: *const u8,
@@ -298,7 +298,7 @@ pub unsafe extern "C" fn velt_rt_spawn(
 /// As `velt_rt_spawn`; `result_transfer` must accept the task's result slot.
 #[no_mangle]
 #[allow(clippy::too_many_arguments)] // the C ABI: velt_rt_spawn plus the transfer glue
-pub unsafe extern "C" fn velt_rt_spawn_transfer(
+pub unsafe extern "C-unwind" fn velt_rt_spawn_transfer(
     poll: PollFn,
     drop: DropFn,
     state: *const u8,
@@ -320,7 +320,7 @@ pub unsafe extern "C" fn velt_rt_spawn_transfer(
 /// `spawn(p)` for a promise that is already a heap future (a leaf, a boxed compiled future, another
 /// join handle): ownership of `f` moves to the task. Returns a join handle like `velt_rt_spawn`.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_spawn_fut(
+pub unsafe extern "C-unwind" fn velt_rt_spawn_fut(
     f: *mut VeltFut,
     result_size: u64,
     result_drop: Option<ResultDropFn>,
@@ -338,7 +338,7 @@ pub unsafe extern "C" fn velt_rt_spawn_fut(
 
 /// Spawn without a join handle (`spawn(f())` whose result is unused): one allocation.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_spawn_detached(
+pub unsafe extern "C-unwind" fn velt_rt_spawn_detached(
     poll: PollFn,
     drop: DropFn,
     state: *const u8,
@@ -362,11 +362,11 @@ mod tests {
     use crate::task::READY;
     use std::ffi::c_void;
 
-    unsafe extern "C" fn done(_: *mut u8, _: *mut c_void) -> u32 {
+    unsafe extern "C-unwind" fn done(_: *mut u8, _: *mut c_void) -> u32 {
         READY
     }
 
-    unsafe extern "C" fn nothing(_: *mut u8) {}
+    unsafe extern "C-unwind" fn nothing(_: *mut u8) {}
 
     #[test]
     fn spawning_publishes_this_threads_output_first() {

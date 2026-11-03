@@ -1,9 +1,18 @@
 // Requests and responses over velt/net/http's HTTP/2 server, seen as frames: heads, bodies both
 // ways, streamed responses, HEAD, trailers, 100-continue and the request API.
+import { BodyStream } from "velt/net/http";
+import { utf8Encode } from "velt/encoding";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
 import { HttpRequest } from "../../src/request";
 import { HttpResponse } from "../../src/response";
 import { bytes, Client, endOf, startServer, TestServer } from "./_h2";
+
+/// A body source that yields one chunk, then fails (#2008 review round 2).
+async function* throwingBody(): AsyncGenerator<u8[]> {
+  yield utf8Encode("a");
+  await yieldNow();
+  throw new Error("body source fails (expected in this test)");
+}
 
 async function handler(req: HttpRequest, res: HttpResponse) {
   if (req.pathIs("/echo")) {
@@ -28,6 +37,16 @@ async function handler(req: HttpRequest, res: HttpResponse) {
     await out.write("a");
     await out.write(bytes("bc"));
     await out.end();
+  } else if (req.pathIs("/stream-panic") || req.pathIs("/stream-throw")) {
+    const out = await res.stream();
+    await out.write("a");
+    if (req.pathIs("/stream-panic")) {
+      const none: i64[] = [];
+      await out.write(`${none[2]!}`);
+    }
+    throw new Error("mid-stream (expected in this test)");
+  } else if (req.pathIs("/body-throw")) {
+    await res.sendStream(BodyStream.from(throwingBody()), "text/plain");
   } else if (req.pathIs("/trailers")) {
     res.addTrailers([["Grpc-Status", "0"]]);
     res.send("x");
@@ -44,6 +63,9 @@ async function handler(req: HttpRequest, res: HttpResponse) {
     res.send("ignored");
   } else if (req.pathIs("/throw")) {
     throw new Error("boom (expected in this test)");
+  } else if (req.pathIs("/panic")) {
+    const xs: i64[] = [];
+    res.header("x-seen", `${xs[3]!}`);
   } else if (req.pathIs("/silent")) {
     // Nothing: an empty 200.
   } else {
@@ -183,6 +205,46 @@ describe("HTTP/2 exchanges", () => {
     await c.flush();
     expect(await c.until(endOf(1))).toBe(
       "HEADERS 1 :status=500\nDATA 1 es 21:Internal Server Error",
+    );
+    c.close();
+  });
+
+  it(
+    "answers a handler that panics with 500 and keeps the connection's other streams",
+    async () => {
+      // #2008: the panic fails its own stream; the next stream on the same connection is served.
+      const c = await Client.open(port);
+      c.get(1, "/panic");
+      c.get(3, "/silent");
+      await c.flush();
+      expect(await c.until(endOf(3))).toBe(
+        "HEADERS 1 :status=500\nDATA 1 es 21:Internal Server Error\nHEADERS 3 es :status=200",
+      );
+      c.close();
+    },
+  );
+
+  it("resets a stream whose handler fails after its head went out", async () => {
+    // #2008 review: a cut-off body must not end with END_STREAM, or the client takes it as
+    // complete; a panic and a thrown error alike.
+    for (const path of ["/stream-panic", "/stream-throw"]) {
+      const c = await Client.open(port);
+      c.get(1, path);
+      await c.flush();
+      expect(await c.until((f) => f.id == 1 && f.type == 3)).toBe(
+        "HEADERS 1 :status=200\nDATA 1 1:a\nRST 1 INTERNAL_ERROR",
+      );
+      c.close();
+    }
+  });
+
+  it("resets a stream whose body source throws after the head", async () => {
+    // #2008 review round 2: `sendStream` over a source that fails must not end the stream.
+    const c = await Client.open(port);
+    c.get(1, "/body-throw");
+    await c.flush();
+    expect(await c.until((f) => f.id == 1 && f.type == 3)).toBe(
+      "HEADERS 1 :status=200\nDATA 1 1:a\nRST 1 INTERNAL_ERROR",
     );
     c.close();
   });

@@ -46,10 +46,10 @@ use super::all::ResultDropFn;
 use super::{context, raw_cx, VeltFut, FUT_RESULT_OFFSET, PENDING, READY};
 
 /// Compiled share glue of a result slot: writes another reference to `*src` into `dst`.
-pub type ShareFn = unsafe extern "C" fn(src: *const u8, dst: *mut u8);
+pub type ShareFn = unsafe extern "C-unwind" fn(src: *const u8, dst: *mut u8);
 
-type FutPoll = unsafe extern "C" fn(f: *mut VeltFut, cx: *mut c_void) -> u32;
-type FutDrop = unsafe extern "C" fn(f: *mut VeltFut);
+type FutPoll = unsafe extern "C-unwind" fn(f: *mut VeltFut, cx: *mut c_void) -> u32;
+type FutDrop = unsafe extern "C-unwind" fn(f: *mut VeltFut);
 
 /// The side record of a shared future.
 pub(super) struct Hub {
@@ -90,6 +90,9 @@ struct HubState {
     /// A holder that is not a converted promise's view took the settled result (identity.rs):
     /// someone handled the promise.
     claimed: bool,
+    /// The original panicked (`catchPanic`, panic.rs): it settled with this message and no
+    /// result, and every holder's await raises it.
+    panic: Option<Box<[u8]>>,
 }
 
 /// The hubs of the shared original futures, by address.
@@ -188,7 +191,7 @@ pub(crate) unsafe fn is_shared(f: *mut VeltFut) -> bool {
 /// # Safety
 /// `f` must be null or a live heap future held by the caller; the glue must match its result.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_share(
+pub unsafe extern "C-unwind" fn velt_rt_fut_share(
     f: *mut VeltFut,
     result_size: u64,
     share: Option<ShareFn>,
@@ -223,6 +226,7 @@ pub unsafe extern "C" fn velt_rt_fut_share(
                 loc: ThrowLoc::NONE,
                 waiters: Vec::new(),
                 claimed: false,
+                panic: None,
             }),
         });
         HUBS.lock()
@@ -286,7 +290,7 @@ unsafe fn slot(f: *mut VeltFut) -> *mut u8 {
 }
 
 /// `poll` of every holder, the original future and the handles alike.
-unsafe extern "C" fn holder_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn holder_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
     if let Some((p, size)) = forwarded(f) {
         if super::velt_rt_fut_poll(p, cx) != READY {
             return PENDING;
@@ -298,7 +302,7 @@ unsafe extern "C" fn holder_poll(f: *mut VeltFut, cx: *mut c_void) -> u32 {
 }
 
 /// `drop` of every holder: a handle also frees its own block.
-unsafe extern "C" fn holder_drop(f: *mut VeltFut) {
+unsafe extern "C-unwind" fn holder_drop(f: *mut VeltFut) {
     let fwd = FORWARDS
         .lock()
         .as_mut()
@@ -449,7 +453,7 @@ unsafe fn new_proxy(h: Arc<Hub>, transfer: Option<ResultDropFn>) -> *mut VeltFut
 }
 
 /// Poll of a proxy ([`hand_over`]): awaits its role, then moves the result into its state.
-unsafe extern "C" fn proxy_poll(state: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn proxy_poll(state: *mut u8, cx: *mut c_void) -> u32 {
     let role = *(state as *mut *mut VeltFut);
     if super::velt_rt_fut_poll(role, cx) != READY {
         return PENDING;
@@ -461,7 +465,7 @@ unsafe extern "C" fn proxy_poll(state: *mut u8, cx: *mut c_void) -> u32 {
 }
 
 /// Drop of a proxy that has not settled: its role goes away.
-unsafe extern "C" fn proxy_drop(state: *mut u8) {
+unsafe extern "C-unwind" fn proxy_drop(state: *mut u8) {
     super::velt_rt_fut_drop(*(state as *mut *mut VeltFut));
 }
 
@@ -536,8 +540,28 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
             }
             drop(st);
             // The first waiter drives the original future (no lock held: it runs compiled
-            // code).
-            if (h.poll)(h.orig, cx) != READY {
+            // code). A panic in it settles the promise for every holder (each one's await
+            // raises it), not only for the driver, whose poll it unwinds.
+            if crate::panic::catching() {
+                match crate::panic::catch(|| (h.poll)(h.orig, cx)) {
+                    Ok(r) if r != READY => return PENDING,
+                    Ok(_) => {}
+                    Err(msg) => {
+                        let mut st = h.st.lock();
+                        st.panic = Some(msg.clone());
+                        st.done = true;
+                        st.seq = SETTLES.fetch_add(1, Ordering::Relaxed);
+                        let wake: Vec<Waker> = std::mem::take(&mut st.waiters)
+                            .into_iter()
+                            .filter(|(x, ..)| *x != me)
+                            .map(|(_, w, _)| w)
+                            .collect();
+                        drop(st);
+                        wake.into_iter().for_each(Waker::wake);
+                        crate::panic::raise(&msg)
+                    }
+                }
+            } else if (h.poll)(h.orig, cx) != READY {
                 return PENDING;
             }
             st = h.st.lock();
@@ -574,6 +598,11 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
     if f == h.orig || !is_view(f) {
         st.claimed = true;
     }
+    if let Some(msg) = st.panic.clone() {
+        // The lock goes before the unwind (it would be poisoned otherwise).
+        drop(st);
+        crate::panic::raise(&msg)
+    }
     let result = st.result.as_ptr() as *const u8;
     let loc = st.loc;
     drop(st);
@@ -591,6 +620,16 @@ unsafe fn poll_holder(h: &Arc<Hub>, f: *mut VeltFut, cx: *mut c_void) -> u32 {
 /// both.
 unsafe fn keep_result(h: &Hub, st: &mut HubState) {
     // A started original keeps where it threw; one its first waiter drove threw on this thread.
+    if h.node {
+        if let Some(msg) = super::local::node_panic(h.orig) {
+            // It panicked: no result to keep; each holder's await raises the panic.
+            super::local::deliver_unadopted(h.orig);
+            st.panic = Some(msg);
+            st.done = true;
+            st.seq = SETTLES.fetch_add(1, Ordering::Relaxed);
+            return;
+        }
+    }
     st.loc = if h.node {
         super::local::deliver_unadopted(h.orig);
         super::local::node_loc(h.orig)
@@ -663,7 +702,8 @@ unsafe fn release(h: Arc<Hub>, f: *mut VeltFut) {
         }
         return;
     }
-    let done = st.done;
+    // A panicked original left no result to drop.
+    let done = st.done && st.panic.is_none();
     let mut result = std::mem::take(&mut st.result);
     let loc = st.loc;
     drop(st);
@@ -717,8 +757,9 @@ pub(crate) unsafe fn peek(f: *mut VeltFut) -> bool {
         settle(&h);
     }
     let st = h.st.lock();
-    if st.done {
+    // A panicked original has no result to show: it reads as pending.
+    if st.done && st.panic.is_none() {
         std::ptr::copy_nonoverlapping(st.result.as_ptr() as *const u8, slot(f), h.size);
     }
-    st.done
+    st.done && st.panic.is_none()
 }

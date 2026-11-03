@@ -28,7 +28,7 @@ struct AddAfter {
     sleep: *mut VeltFut,
 }
 
-unsafe extern "C" fn add_after_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn add_after_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut AddAfter);
     loop {
         match st.tag {
@@ -52,7 +52,7 @@ unsafe extern "C" fn add_after_poll(s: *mut u8, cx: *mut c_void) -> u32 {
 
 static ADD_AFTER_DROPS: AtomicUsize = AtomicUsize::new(0);
 
-unsafe extern "C" fn add_after_drop(s: *mut u8) {
+unsafe extern "C-unwind" fn add_after_drop(s: *mut u8) {
     let st = &mut *(s as *mut AddAfter);
     ADD_AFTER_DROPS.fetch_add(1, Ordering::SeqCst);
     if st.tag == 1 {
@@ -80,7 +80,7 @@ struct Outer {
     child: AddAfter,
 }
 
-unsafe extern "C" fn outer_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn outer_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Outer);
     loop {
         match st.tag {
@@ -131,7 +131,7 @@ struct Square {
     i: i64,
 }
 
-unsafe extern "C" fn square_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn square_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Square);
     if st.tag == 0 {
         st.tag = 1;
@@ -142,7 +142,7 @@ unsafe extern "C" fn square_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     READY
 }
 
-unsafe extern "C" fn no_drop(_: *mut u8) {}
+unsafe extern "C-unwind" fn no_drop(_: *mut u8) {}
 
 // async function fanout(n): i64 { const hs = range(n).map(i => spawn(square(i))); let s = 0; for (h of hs) s += await h; return s; }
 #[repr(C)]
@@ -154,7 +154,7 @@ pub struct Fanout {
     handles: Vec<*mut VeltFut>,
 }
 
-pub unsafe extern "C" fn fanout_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+pub unsafe extern "C-unwind" fn fanout_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Fanout);
     if st.tag == 0 {
         for i in 0..st.n {
@@ -220,7 +220,7 @@ struct Sleeper {
     sleep: *mut VeltFut,
 }
 
-unsafe extern "C" fn sleeper_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn sleeper_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Sleeper);
     if st.tag == 0 {
         // A fixed deadline, not `velt_rt_sleep(ms)`: the order of the deadlines must not depend
@@ -238,7 +238,7 @@ unsafe extern "C" fn sleeper_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     READY
 }
 
-unsafe extern "C" fn sleeper_drop(s: *mut u8) {
+unsafe extern "C-unwind" fn sleeper_drop(s: *mut u8) {
     let st = &mut *(s as *mut Sleeper);
     if st.tag == 1 {
         velt_rt_fut_drop(st.sleep);
@@ -253,7 +253,7 @@ struct Deadlines {
     next: usize,
 }
 
-unsafe extern "C" fn deadlines_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn deadlines_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Deadlines);
     if st.tag == 0 {
         let base = std::time::Instant::now();
@@ -305,7 +305,7 @@ fn sleeps_complete_in_deadline_order() {
 
 static DETACHED_DONE: AtomicUsize = AtomicUsize::new(0);
 
-unsafe extern "C" fn detached_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn detached_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     if add_after_poll(s, cx) == PENDING {
         return PENDING;
     }
@@ -380,7 +380,7 @@ struct PollOnce {
     fut: *mut VeltFut,
 }
 
-unsafe extern "C" fn poll_once_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn poll_once_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut PollOnce);
     st.result = velt_rt_fut_poll(st.fut, cx);
     velt_rt_fut_drop(st.fut);
@@ -432,7 +432,7 @@ fn spawn_fut_runs_existing_heap_futures() {
 static RESULT_DROPS: AtomicUsize = AtomicUsize::new(0);
 static RESULT_DROP_SUM: AtomicUsize = AtomicUsize::new(0);
 
-unsafe extern "C" fn count_result_drop(slot: *mut u8) {
+unsafe extern "C-unwind" fn count_result_drop(slot: *mut u8) {
     RESULT_DROPS.fetch_add(1, Ordering::SeqCst);
     RESULT_DROP_SUM.fetch_add(*(slot as *const i64) as usize, Ordering::SeqCst);
 }
@@ -460,7 +460,7 @@ struct CancelAll {
     sleep: *mut VeltFut,
 }
 
-unsafe extern "C" fn cancel_all_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn cancel_all_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut CancelAll);
     if st.tag == 0 {
         st.result[0] = velt_rt_fut_poll(st.all, cx);
@@ -530,7 +530,7 @@ struct Counted {
     polls: &'static AtomicUsize,
 }
 
-unsafe extern "C" fn counted_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn counted_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Counted);
     st.polls.fetch_add(1, Ordering::Relaxed);
     if velt_rt_fut_poll(st.inner, cx) == PENDING {
@@ -542,7 +542,7 @@ unsafe extern "C" fn counted_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     READY
 }
 
-unsafe extern "C" fn counted_drop(s: *mut u8) {
+unsafe extern "C-unwind" fn counted_drop(s: *mut u8) {
     let st = &mut *(s as *mut Counted);
     if !st.inner.is_null() {
         velt_rt_fut_drop(st.inner);

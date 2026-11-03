@@ -2,6 +2,8 @@
 //! unwinder-based tools (debuggers, profilers, `std::backtrace`, crash reporters) stop at the
 //! first generated frame:
 //! - `windows`: `.pdata`/`.xdata` for x86_64 and arm64 COFF;
+//! - `winx64`: the x86_64 `.xdata` records themselves (written here: Cranelift's put the
+//!   register saves in the wrong place, which a structured exception restores from);
 //! - `eh_frame`: DWARF CFI in `.eh_frame` (ELF) or `__TEXT,__eh_frame` (Mach-O; ld64 derives
 //!   the compact unwind table from it);
 //! - `jit_windows`: the same Windows x64 records for JIT code, registered at run time;
@@ -20,9 +22,32 @@ pub(crate) mod jit_systemv;
 #[cfg(all(windows, target_arch = "x86_64"))]
 pub(crate) mod jit_windows;
 mod windows;
+mod winx64;
 
 /// Unwind info for one defined function: (function, code size in bytes, info).
-pub(crate) type FunctionUnwind = (FuncId, u32, UnwindInfo);
+pub(crate) type FunctionUnwind = (FuncId, u32, Unwind);
+
+/// A function's unwind info: Cranelift's, or (Windows x64) the `UNWIND_INFO` record written
+/// by [`winx64`], whose save offsets are right where Cranelift's are not.
+pub(crate) enum Unwind {
+    Cranelift(UnwindInfo),
+    WindowsX64(Vec<u8>),
+}
+
+/// The unwind info of compiled `code` for `isa`, if it has any.
+pub(crate) fn function_unwind(
+    code: &cranelift_codegen::CompiledCode,
+    isa: &dyn TargetIsa,
+) -> CodegenResult<Option<Unwind>> {
+    let info = code.create_unwind_info(isa).map_err(|e| format!("{e:?}"))?;
+    Ok(match info {
+        Some(UnwindInfo::WindowsX64(_)) => Some(Unwind::WindowsX64(winx64::record(
+            &code.buffer.unwind_info,
+        )?)),
+        Some(info) => Some(Unwind::Cranelift(info)),
+        None => None,
+    })
+}
 
 /// Append the unwind sections the object format uses for `infos` (collected by `build_module`).
 pub(crate) fn add_unwind_info(

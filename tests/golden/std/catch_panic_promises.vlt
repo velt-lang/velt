@@ -1,0 +1,86 @@
+// `catchPanic` (#2008): a promise that panicked has no result, on every path that reads one:
+// a shared promise awaited twice, `Promise.all` over its waiters, `Promise.allSettled` over it
+// after it panicked, and the loser of a race that panics after the race was decided (dropped
+// unpolled). Each panic reaches the `catchPanic` (or is dropped with the loser); none reads a
+// result that was never written.
+import { catchPanic, PanicError } from "velt/task";
+
+class Box {
+  v: string;
+  constructor(v: string) {
+    this.v = v;
+  }
+}
+
+async function bad(): Promise<Box> {
+  await yieldNow();
+  panic("bad promise");
+  return new Box("never");
+}
+
+async function good(): Promise<Box> {
+  await yieldNow();
+  return new Box("good");
+}
+
+async function waiter(p: Promise<Box>): Promise<string> {
+  return (await p).v;
+}
+
+async function twice(): Promise<string> {
+  const p = bad();
+  const a = await p;
+  const b = await p;
+  return a.v + b.v;
+}
+
+async function both(): Promise<string> {
+  const p = bad();
+  const r = await Promise.all([waiter(p), waiter(p)]);
+  return r.join(",");
+}
+
+async function settled(): Promise<string> {
+  const p = bad();
+  for (let i = 0; i < 4; i++) {
+    await yieldNow();
+  }
+  const r = await Promise.allSettled([good(), p]);
+  return `${r.length}`;
+}
+
+async function slowPanic(): Promise<string> {
+  for (let i = 0; i < 3; i++) {
+    await yieldNow();
+  }
+  panic("loser panics");
+  return "never";
+}
+
+async function fast(): Promise<string> {
+  return "fast";
+}
+
+async function race(): Promise<string> {
+  const r = await Promise.race([fast(), slowPanic()]);
+  for (let i = 0; i < 6; i++) {
+    await yieldNow();
+  }
+  return r;
+}
+
+async function report(name: string, body: () => Promise<string, Error>) {
+  try {
+    console.log(name, "result", await catchPanic(body));
+  } catch (e) {
+    console.log(name, "caught", e instanceof PanicError);
+  }
+}
+
+async function main() {
+  await report("twice", () => twice());
+  await report("all", () => both());
+  await report("allSettled", () => settled());
+  await report("race", () => race());
+  console.log("done");
+}

@@ -841,7 +841,7 @@ message). Allocation sites are not recorded. The first violation prints `velt de
 ## Control [M1]
 | Symbol | Signature | Notes |
 |---|---|---|
-| `velt_rt_panic` | `(const VeltStr* msg) -> noreturn` | flush stdout, print `panic: <msg>\n` to stderr, exit 101 |
+| `velt_rt_panic` | `(const VeltStr* msg) -> noreturn` | flush stdout, print `panic: <msg>\n` to stderr, exit 101; inside a promise that catches panics, unwind to it instead (`extern "C-unwind"`, rt_abi_async.md §1.5) |
 | `velt_rt_exit` | `(int32_t code) -> noreturn` | flush stdout, exit |
 | `velt_rt_uncaught_report` | `(void)` | called before an `Uncaught …` report is written (the report then ends the process): returns on the first thread to report (and on it again); any other thread waits until the process ends, so one report is printed (#1497). (additive) |
 | `velt_rt_set_throw_loc` | `(const VeltStr* loc)` | per-thread slot: where the error being thrown comes from (static ` at <path>:<line>:<col>` string, or null) |

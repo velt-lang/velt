@@ -48,6 +48,8 @@ export class Http1Response extends HttpResponse implements BodySink {
   http11: bool = true;
   /// A response was started.
   done: bool = false;
+  /// The handler's response was cut off (`fail`): the connection closes without its end.
+  private cut: bool = false;
   /** A streamed body is being written, chunked (HTTP/1.1) or until the connection closes. */
   streaming: bool = false;
   chunked: bool = false;
@@ -139,7 +141,11 @@ export class Http1Response extends HttpResponse implements BodySink {
         await this.piece(chunk);
       }
     } catch (e) {
-      // The client went away (or the source failed): nothing more can be sent.
+      // The client went away, or the source failed: nothing more can be sent, and the
+      // connection closes without the body's end (the client sees it cut off).
+      if (!this.clientGone()) {
+        console.error("request handler failed: the response body failed:", e);
+      }
       this.streaming = false;
       this.keepAlive = false;
       return;
@@ -208,6 +214,19 @@ export class Http1Response extends HttpResponse implements BodySink {
     return this.done;
   }
 
+  /** See `HttpResponse.fail`: the connection closes without the body's end. */
+  fail() {
+    if (this.done) {
+      this.cut = true;
+      this.keepAlive = false;
+    }
+  }
+
+  /** Whether the handler's response was cut off (`fail`, internal). */
+  cutOff(): bool {
+    return this.cut;
+  }
+
   /** The connection closes after this response (an error response to bad input). */
   closeAfter() {
     this.keepAlive = false;
@@ -234,6 +253,7 @@ export class Http1Response extends HttpResponse implements BodySink {
     this.done = false;
     this.streaming = false;
     this.chunked = false;
+    this.cut = false;
   }
 
   /**

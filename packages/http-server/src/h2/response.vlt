@@ -6,6 +6,7 @@
 
 import { IoError } from "velt/io";
 import { BodyStream } from "velt/net/http";
+import { INTERNAL_ERROR } from "velt/net/http/h2";
 import { AbortSignal } from "velt/task";
 import { TcpStream } from "velt/net";
 import { EventStream } from "../event_stream";
@@ -15,6 +16,7 @@ import { HttpResponse } from "../response";
 import { H2Connection } from "./connection";
 import { endBody, sendBytes, sendText, writeHead } from "./outbound";
 import { H2Stream } from "./stream";
+import { streamError } from "./streams";
 import { openTunnel } from "./tunnel";
 
 /// How many bytes of a streamed body may wait to be sent before `piece` waits.
@@ -189,6 +191,12 @@ export class H2Response extends HttpResponse implements BodySink {
         await this.piece(chunk);
       }
     } catch (e) {
+      // The client reset the stream: nothing more can be sent. The source failed: the stream
+      // is reset, not ended, so the client doesn't take the body so far for the whole one.
+      if (!this.s.reset) {
+        console.error("request handler failed: the response body failed:", e);
+        this.fail();
+      }
       return;
     }
     await this.finishStream();
@@ -242,6 +250,20 @@ export class H2Response extends HttpResponse implements BodySink {
   /** Whether a streamed body is still open (internal). */
   streamOpen(): bool {
     return this.streaming;
+  }
+
+  /**
+   * See `HttpResponse.fail`: the stream is reset (INTERNAL_ERROR, RFC 9113 §5.4.2). Not a
+   * tunnel (`upgrade`): that stream is the handler's, also when `serve` then fails to write the
+   * upgrade's `Response` over the 200 already sent.
+   */
+  fail() {
+    const s = this.s;
+    if (!this.done || s.reset || s.localEnded || s.tunnel != null) {
+      return;
+    }
+    this.streaming = false;
+    streamError(this.c, s.id, INTERNAL_ERROR);
   }
 
   /// After the handler returned (internal): an empty 200 if it sent nothing, the end of a body

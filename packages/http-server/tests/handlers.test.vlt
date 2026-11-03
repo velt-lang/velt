@@ -3,7 +3,9 @@
 // velt/net/http.
 import { serve, HttpServer, ServeInfo } from "../src/lib";
 import { HttpRequest, HttpResponse, serveHttp } from "../src/lib";
+import { utf8Encode } from "velt/encoding";
 import { IoError } from "velt/io";
+import { BodyStream } from "velt/net/http";
 import { connect } from "velt/net";
 import { AbortError } from "velt/task";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
@@ -50,6 +52,102 @@ describe("a handler that throws", () => {
 
   it("leaves the server serving", async () => {
     expect(await get(port, "/home")).toBe("200 hello /home");
+  });
+});
+
+/// A body source that yields one chunk, then fails (#2008 review round 2).
+async function* throwingBody(): AsyncGenerator<u8[]> {
+  yield utf8Encode("a");
+  await yieldNow();
+  throw new Error("body source fails (expected in this test)");
+}
+
+describe("a handler that panics", () => {
+  // #2008: a panic in a request handler (an index out of bounds, `panic(msg)`) answers that
+  // request with a 500 and the server keeps serving, as a thrown error does. The panic's message
+  // is printed to stderr when it happens.
+  let port = 0;
+  let rawPort = 0;
+  let close = () => {};
+  beforeAll(async () => {
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const path = new URL(req.url).pathname;
+      const xs: i64[] = [1, 2, 3];
+      if (path == "/index") {
+        return new Response(`${xs[7]!}`);
+      }
+      if (path == "/body-throw") {
+        return new Response(BodyStream.from(throwingBody()));
+      }
+      if (path == "/later") {
+        await yieldNow();
+        panic("after an await (expected in this test)");
+      }
+      return new Response(`hello ${path} ${xs.length}`);
+    });
+    const raw = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+      if (req.path() == "/half") {
+        // The head and the first chunk went out: the response can't become a 500.
+        const out = await res.stream();
+        await out.write("partial");
+        await yieldNow();
+        panic("mid-stream (expected in this test)");
+      }
+      if (req.path() == "/panic") {
+        await yieldNow();
+        panic("raw handler (expected in this test)");
+      }
+      res.send(`raw ${req.path()}`);
+    });
+    port = server.port;
+    rawPort = raw.port;
+    close = () => {
+      server.close();
+      raw.close();
+    };
+  });
+  afterAll(() => close());
+
+  it("answers an index out of bounds with 500", async () => {
+    expect(await get(port, "/index")).toBe("500 Internal Server Error");
+  });
+
+  it("answers a panic after an await with 500", async () => {
+    expect(await get(port, "/later")).toBe("500 Internal Server Error");
+  });
+
+  it("leaves the server serving", async () => {
+    expect(await get(port, "/home")).toBe("200 hello /home 3");
+    expect(await get(port, "/index")).toBe("500 Internal Server Error");
+    expect(await get(port, "/home")).toBe("200 hello /home 3");
+  });
+
+  it("answers a serveHttp handler that panics with 500", async () => {
+    expect(await get(rawPort, "/panic")).toBe("500 Internal Server Error");
+    expect(await get(rawPort, "/ok")).toBe("200 raw /ok");
+  });
+
+  it("cuts off a body whose source throws after the head, and keeps serving", async () => {
+    // #2008 review round 2: HTTP/1.1 closes the connection without the body's end.
+    let failed = false;
+    try {
+      await get(port, "/body-throw");
+    } catch (e) {
+      failed = true;
+    }
+    expect(failed).toBe(true);
+    expect(await get(port, "/home")).toBe("200 hello /home 3");
+  });
+
+  it("closes a streamed response that panics, and keeps serving", async () => {
+    let failed = false;
+    try {
+      await get(rawPort, "/half");
+    } catch (e) {
+      failed = true;
+    }
+    expect(failed).toBe(true);
+    expect(await get(rawPort, "/ok")).toBe("200 raw /ok");
   });
 });
 

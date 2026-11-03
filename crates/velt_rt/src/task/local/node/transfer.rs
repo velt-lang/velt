@@ -26,6 +26,9 @@ use crate::task::VeltFut;
 
 /// Apply node `f`'s result transfer, if it has one (on the task that finished it).
 pub(super) unsafe fn run_transfer(f: *mut VeltFut) {
+    if super::panicked::is_panicked(f) {
+        return;
+    }
     let t = head(f).transfer.load(Ordering::Acquire);
     if !t.is_null() {
         // SAFETY: only ever stored from a `ResultDropFn` (`set_transfer`).
@@ -40,7 +43,8 @@ pub(super) unsafe fn run_transfer(f: *mut VeltFut) {
 /// it crossed, so it was transferred as it finished). No-op for any other future.
 pub(in crate::task::local) unsafe fn set_transfer(f: *mut VeltFut, t: ResultDropFn) {
     let lazy = is_lazy(f);
-    if !lazy && !is_started(f) {
+    // A panicked node has no result to transfer (panicked.rs).
+    if (!lazy && !is_started(f)) || super::panicked::is_panicked(f) {
         return;
     }
     let h = head(f);

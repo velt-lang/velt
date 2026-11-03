@@ -39,6 +39,14 @@ export abstract class HttpResponse {
    */
   abstract addTrailers(trailers: [string, string][]): void;
 
+  /**
+   * The handler failed after the head went out (internal): the response is cut off so the
+   * client sees a failed one, not a short body taken as complete. HTTP/1.1 closes the
+   * connection without ending the body, HTTP/2 resets the stream (INTERNAL_ERROR). No-op before
+   * the head or after the body ended.
+   */
+  abstract fail(): void;
+
   /** Writes the response with body `body` (default type `text/plain; charset=utf-8`). */
   abstract send(body: string): void;
 

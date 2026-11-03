@@ -82,6 +82,9 @@ serves each connection; requests on one connection are answered in order.
 - A handler that throws gets a 500 (the error is printed to stderr); one that returns without
   sending gets an empty 200. A handler that throws because the client went away while its
   response was being written (a streamed one) is not logged: nothing can be sent.
+- A handler that panics gets a 500 as well (its message was printed when it panicked), or, when
+  its response is already streaming, a closed connection (HTTP/2: a reset stream); the server
+  keeps serving. See `serve` in the README for what a panic leaves behind.
 - A connection with a body still to come gets the responses to the requests before it first, so
   a client that waits for them (or for `100 Continue`) sends it.
 - Accepting stops only with `close()`: when it fails otherwise (out of file descriptors), the

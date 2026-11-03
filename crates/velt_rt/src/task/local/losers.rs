@@ -30,7 +30,10 @@ use crate::task::VeltFut;
 /// result (null if nothing to drop). Anything else (a runtime leaf, a join handle) is dropped as
 /// by `velt_rt_fut_drop`.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_fut_detach(f: *mut VeltFut, quiet_drop: Option<ResultDropFn>) {
+pub unsafe extern "C-unwind" fn velt_rt_fut_detach(
+    f: *mut VeltFut,
+    quiet_drop: Option<ResultDropFn>,
+) {
     let tcx = CURRENT.with(Cell::get);
     let mut fresh = false;
     if (node::is_lazy(f) || node::is_started(f)) && node::is_aliased(f) {

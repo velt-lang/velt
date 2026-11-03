@@ -1,0 +1,53 @@
+// velt/task (internal): `catchPanic`, a promise whose panics are caught, and its `PanicError`.
+
+import {
+  velt_rt_catch_arm,
+  velt_rt_catch_free,
+  velt_rt_catch_message,
+  velt_rt_catch_settled,
+  velt_rt_catch_take,
+} from "velt/task/rt";
+
+/** Thrown by `catchPanic` when the code it ran panicked; `message` is the panic's message. */
+export class PanicError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "PanicError";
+  }
+}
+
+/**
+ * Calls `body` and awaits the promise it returns. A panic in the code that promise runs (an
+ * index out of bounds, `panic(msg)`, also in promises it starts and awaits) throws `PanicError`
+ * here instead of ending the process; its message is printed to stderr when it happens, as an
+ * uncaught one is. A promise started there that panics and is never awaited by anyone is
+ * printed and then dropped with its panic: it doesn't end the process.
+ *
+ * What the panicked code was doing is abandoned, not undone: its memory is leaked (nothing it
+ * held is dropped), a `Mutex` it held stays locked, and an object it was changing keeps the
+ * change half made. Use it at a boundary where the work can be thrown away, such as one request
+ * of a server (`http-server` answers 500). The guarded promise is the first one started after
+ * `body` is called, so `body` should be the async call itself (`() => handle(req)`): a body
+ * that returns a promise it did not make (`() => p`) catches nothing, and a non-async body that
+ * starts another promise before the one it returns guards that other one instead. A panic in a
+ * task the body `spawn`s ends the process, as before.
+ */
+export async function catchPanic<T, E>(
+  body: () => Promise<T, E>,
+): Promise<T> throws E | PanicError {
+  velt_rt_catch_arm();
+  // Storing the promise starts it, which takes the arming (task/local/catch.rs).
+  const p = body();
+  const h = velt_rt_catch_take();
+  if (h == 0) {
+    return await p;
+  }
+  const panicked = await velt_rt_catch_settled(h);
+  if (panicked) {
+    const msg = velt_rt_catch_message(h);
+    velt_rt_catch_free(h);
+    throw new PanicError(msg);
+  }
+  velt_rt_catch_free(h);
+  return await p;
+}

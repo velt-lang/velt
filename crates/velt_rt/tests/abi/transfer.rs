@@ -26,7 +26,7 @@ static SEEN: Mutex<Vec<(i64, u64)>> = Mutex::new(Vec::new());
 const TAGGED: i64 = 1000;
 
 /// Fake transfer glue for an `i64` result: records it and adds [`TAGGED`].
-unsafe extern "C" fn tag(slot: *mut u8) {
+unsafe extern "C-unwind" fn tag(slot: *mut u8) {
     let v = &mut *(slot as *mut i64);
     SEEN.lock().unwrap().push((*v, velt_rt_task_id()));
     *v += TAGGED;
@@ -47,7 +47,7 @@ struct Job {
     sleep: *mut VeltFut,
 }
 
-unsafe extern "C" fn job_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn job_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut Job);
     if st.tag == 0 && st.ms > 0 {
         st.sleep = velt_rt_sleep(st.ms);
@@ -64,7 +64,7 @@ unsafe extern "C" fn job_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     READY
 }
 
-unsafe extern "C" fn job_drop(s: *mut u8) {
+unsafe extern "C-unwind" fn job_drop(s: *mut u8) {
     let st = &mut *(s as *mut Job);
     if st.tag == 1 {
         velt_rt_fut_drop(st.sleep);
@@ -113,7 +113,7 @@ struct HandOn {
     ran_at_mark: usize,
 }
 
-unsafe extern "C" fn hand_on_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn hand_on_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut HandOn);
     if st.tag == 0 {
         st.task = velt_rt_task_id();
@@ -203,7 +203,7 @@ fn a_second_mark_does_not_transfer_again() {
 static GLUE_JOBS_DONE: AtomicUsize = AtomicUsize::new(0);
 
 // async function counted(): void { await sleep(5); GLUE_JOBS_DONE++; }
-unsafe extern "C" fn counted_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn counted_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let sleep = &mut *(s.add(8) as *mut *mut VeltFut);
     if sleep.is_null() {
         *sleep = velt_rt_sleep(5);
@@ -217,7 +217,7 @@ unsafe extern "C" fn counted_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     READY
 }
 
-unsafe extern "C" fn counted_drop(s: *mut u8) {
+unsafe extern "C-unwind" fn counted_drop(s: *mut u8) {
     let sleep = *(s.add(8) as *const *mut VeltFut);
     if !sleep.is_null() {
         velt_rt_fut_drop(sleep);
@@ -226,7 +226,7 @@ unsafe extern "C" fn counted_drop(s: *mut u8) {
 
 /// Transfer glue that, like a resource's own `clone()` might, starts a promise and drops it
 /// unawaited (it must still run to completion), then tags the result.
-unsafe extern "C" fn start_job_and_tag(slot: *mut u8) {
+unsafe extern "C-unwind" fn start_job_and_tag(slot: *mut u8) {
     let state = [0u64; 2];
     let f = velt_rt_fut_box(
         counted_poll,
@@ -254,7 +254,7 @@ fn wait_for_glue_jobs(n: usize) {
 
 // async function main() { const p = job(id, 10) (started); mark p with `start_job_and_tag`;
 //   return await p; }
-unsafe extern "C" fn glue_starts_poll(s: *mut u8, cx: *mut c_void) -> u32 {
+unsafe extern "C-unwind" fn glue_starts_poll(s: *mut u8, cx: *mut c_void) -> u32 {
     let st = &mut *(s as *mut [i64; 2]);
     if st[1] == 0 {
         let f = started_job(501, 10);

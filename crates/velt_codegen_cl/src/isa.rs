@@ -6,8 +6,10 @@
 //! - stack probes: always inline (no dependency on `__chkstk`/`__rust_probestack`); required on
 //!   Windows where the guard page must be touched in order, and harmless elsewhere.
 //! - frame pointers preserved on all targets: an Apple ABI requirement, and cheap elsewhere
-//!   (Cranelift already keeps them in non-leaf functions) so profilers/debuggers can walk the
-//!   stack on ELF/Mach-O, where no `.eh_frame` is emitted yet.
+//!   (Cranelift already keeps them in non-leaf functions) so profilers and debuggers that walk
+//!   frame pointers see every frame. Unwind tables are emitted too (`crate::unwind`: `.eh_frame`
+//!   on ELF and Mach-O, `.pdata`/`.xdata` on Windows): a caught Velt panic unwinds through them
+//!   (`catchPanic`, velt_rt panic.rs).
 //! - the CPU (`--cpu`, `crate::cpu`): x86_64 code is for `cpu::DEFAULT_X86_CPU` unless another
 //!   one is asked for.
 
@@ -44,10 +46,18 @@ pub(crate) fn make_isa(
         cpu::check_cpu(target, c).map_err(|e| format!("codegen: {e}"))?;
     }
     cpu::configure(&mut isa_builder, cpu)?;
-    if jit && matches!(isa_builder.triple().architecture, Architecture::Aarch64(_)) {
-        // The host's flags sign return addresses on macOS (pointer authentication), and stack
-        // walks through JIT frames then stop on some Apple CPUs: JIT code keeps the host's
-        // instructions but plain return addresses, as before it used the host's flags.
+    let arm64 = matches!(isa_builder.triple().architecture, Architecture::Aarch64(_));
+    let apple = matches!(
+        isa_builder.triple().operating_system,
+        OperatingSystem::Darwin(_) | OperatingSystem::MacOSX(_)
+    );
+    if arm64 && (jit || apple) {
+        // A native CPU's flags sign return addresses (pointer authentication). Apple's arm64 ABI
+        // (not arm64e) has no signed return addresses: clang emits none, and macOS 26's unwinder
+        // can't read the rule Cranelift writes for them (`DW_CFA_val_expression` of
+        // RA_SIGN_STATE, register 34), so a caught panic (#2008) failed to unwind there, and
+        // stack walks through JIT frames stopped on some Apple CPUs. Code for Apple targets, and
+        // JIT code anywhere, keeps the CPU's other instructions with plain return addresses.
         set(&mut isa_builder, "sign_return_address", "false")?;
     }
     let triple = isa_builder.triple().clone();
