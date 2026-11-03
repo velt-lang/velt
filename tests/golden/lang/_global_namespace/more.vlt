@@ -1,0 +1,10 @@
+// More members of the global namespace `UI`, as a sigx renderer adds `JSX.IntrinsicElements`.
+export {};
+
+declare global {
+  namespace UI {
+    interface Intrinsics {
+      box: { label?: string };
+    }
+  }
+}

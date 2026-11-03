@@ -1,0 +1,12 @@
+// A namespace in `declare global { … }` is global, as in TypeScript: another module names its
+// members (`UI.Element`, `UI.Intrinsics`) without importing them, whichever module declares
+// each. sigx's packages share their `JSX` types so.
+import "./_global_namespace/ui";
+import "./_global_namespace/more";
+
+function show(e: UI.Element, a: UI.Attributes, i: UI.Intrinsics): string {
+  return `${e.tag} ${a.key ?? "-"} ${i.box.label ?? "-"}`;
+}
+
+console.log(show({ tag: "div" }, { key: "k" }, { box: { label: "l" } }));
+console.log(show({ tag: "p" }, {}, { box: {} }));
