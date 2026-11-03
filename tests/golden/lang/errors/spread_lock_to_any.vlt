@@ -1,0 +1,13 @@
+// A value whose type holds a lock (an `AbortSignal` field) still cannot convert to `any`,
+// also in a program that makes proxies and spreads such values (#924).
+interface Options {
+  template: string;
+  signal?: AbortSignal;
+}
+const state = new Proxy({ count: 1 } as Record<string, number>, {});
+console.log(state["count"]);
+function copy(o: Options): Options {
+  return { ...o };
+}
+const held: any = copy({ template: "x" });
+console.log(held);

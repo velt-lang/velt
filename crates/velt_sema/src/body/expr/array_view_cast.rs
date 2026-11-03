@@ -46,6 +46,41 @@ impl FnCx<'_, '_> {
         self.try_coerce(v, target).map_err(|_| orig)
     }
 
+    /// An existing array `h` (a variable or a field, `vnode.children`) where an `any[]` or
+    /// `unknown[]` (or a nullable or union with one) is expected (#924): TypeScript passes the one array, so this is the view
+    /// `h as any[]` makes, not a copy. A value stored through the view converts back to the
+    /// array's element type when it is written (a `TypeError` if it is not one). `Err(h)`
+    /// for another value or expected type.
+    pub(super) fn dynamic_array_view(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let TyKind::Array(se) = self.cx.ty.kind(h.ty).clone() else {
+            return Err(h);
+        };
+        // Also as the array member of a nullable or union (`children: any[] | null`).
+        let te = match self.array_member(exp).map(|a| self.cx.ty.kind(a).clone()) {
+            Some(TyKind::Array(te)) => te,
+            _ => return Err(h),
+        };
+        let dynamic_elem = matches!(
+            self.cx.dynamic(te),
+            Some(crate::any::Dynamic::Any | crate::any::Dynamic::Unknown)
+        );
+        // An array of a type parameter's values converts per instantiation: not a view.
+        if !dynamic_elem
+            || self.cx.dynamic(se).is_some()
+            || self.cx.has_type_params(se)
+            || !crate::body::places::is_place(&h)
+            || self.cx.holds_lock(se)
+        {
+            return Err(h);
+        }
+        let span = h.span;
+        self.array_view_cast(h, exp, span)
+    }
+
     /// A conversion of an `any` to `t` here: when `t` holds an array, the view it may make reads
     /// that array's members through `any`, so the `any` tables need the member slots.
     pub(super) fn note_array_view_target(&mut self, t: TyId) {

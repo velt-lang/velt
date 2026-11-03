@@ -1,0 +1,37 @@
+// check: no leaks
+// An existing array where an `any[]` or `unknown[]` parameter is expected (#924): TypeScript
+// passes the one array, so the parameter is a view of it, not a copy. A write through the view
+// reaches the array (sigx's `allChildrenAreLeaves(vnode.children)`).
+type VNode = { type: string; children: VNode[]; text?: string };
+
+function allLeaves(children: any[]): boolean {
+  for (const child of children) {
+    if (child == null || typeof child === "string" || typeof child === "number") {
+      continue;
+    }
+    return (child as VNode).children.length === 0;
+  }
+  return true;
+}
+
+function count(xs: unknown[]): number {
+  return xs.length;
+}
+
+function addLeaf(xs: any[], type: string): void {
+  xs.push({ type, children: [] });
+}
+
+const root: VNode = { type: "div", children: [{ type: "span", children: [] }] };
+console.log(allLeaves(root.children), count(root.children));
+addLeaf(root.children, "b");
+console.log(root.children.length, root.children[1].type, count(root.children));
+const nested: VNode = { type: "ul", children: [root] };
+console.log(allLeaves(nested.children));
+const names = ["a", "b"];
+console.log(count(names), allLeaves(names));
+
+function maybeCount(xs: any[] | null): number {
+  return xs === null ? -1 : xs.length;
+}
+console.log(maybeCount(root.children), maybeCount(null));

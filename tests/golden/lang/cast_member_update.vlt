@@ -1,0 +1,20 @@
+// check: no leaks
+// `(x as M).f++` and `(x as M).f += v`, where `M` is another form of `x`'s object type, update
+// `x` itself, as `(x as M).f = v` does and as in Node (#1185).
+interface C {
+  n: number;
+}
+
+function bump(c: C): number {
+  return ++(c as { n: number }).n;
+}
+
+const c: C = { n: 1 };
+(c as { n: number }).n++;
+(c as { n: number }).n += 2;
+console.log(c.n);
+(c as { n: number }).n = 10;
+console.log(c.n, bump(c), c.n);
+const box = { inner: { n: 0 } as C };
+(box.inner as { n: number }).n -= 3;
+console.log(box.inner.n);

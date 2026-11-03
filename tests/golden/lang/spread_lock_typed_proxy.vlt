@@ -1,0 +1,20 @@
+// A spread of a typed proxy whose type holds a lock (an `AbortSignal` field, #924, #823): the
+// spread tests the proxy tag before converting, and a proxy stops with the same error as a
+// proxy of any other object type. Node copies what the traps give (`{ name: "trapped" }`).
+interface Opts {
+  name: string;
+  signal?: AbortSignal;
+}
+
+function main(): void {
+  const raw = new Proxy({ name: "x" } as Record<string, string>, {
+    get(t, k) {
+      return "trapped";
+    },
+  });
+  const a: any = raw;
+  const o: Opts = a;
+  console.log(o.name);
+  const c = { ...o };
+  console.log(c.name);
+}

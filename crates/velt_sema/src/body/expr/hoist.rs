@@ -44,6 +44,14 @@ impl FnCx<'_, '_> {
         if is_place(base) {
             return self.hoist_indices(base, stmts);
         }
+        // `(c as { n: number }).n += 2`: an object type seen as another form of its own layout
+        // is the same object, so the update writes `c`, as `=` does (a temporary would be a
+        // copy of it).
+        if let H::Upcast(inner) = &mut base.kind {
+            if is_place(inner) && self.same_layout(inner.ty, base.ty) {
+                return self.hoist_indices(inner, stmts);
+            }
+        }
         let (ty, span) = (base.ty, base.span);
         let tmp = self.new_local("<object>", ty, true, span, LocalKind::Temp);
         let mode = self.use_mode(ty, Want::BorrowMut);
@@ -125,6 +133,28 @@ impl FnCx<'_, '_> {
         };
         stmts.push(hir::Stmt { kind, span });
         true
+    }
+
+    /// Are `from` and `to` two object types (not classes) with the same field names, so that
+    /// an `Upcast` between them keeps the one object (velt_vir's `part_copy` copies only to
+    /// fewer fields)?
+    fn same_layout(&self, from: hir::TyId, to: hir::TyId) -> bool {
+        let (hir::TyKind::Adt(a, _), hir::TyKind::Adt(b, _)) =
+            (self.cx.ty.kind(from), self.cx.ty.kind(to))
+        else {
+            return false;
+        };
+        let (Some(fa), Some(fb)) = (self.cx.adt(*a), self.cx.adt(*b)) else {
+            return false;
+        };
+        let class = |k| k == hir::AdtKind::Class;
+        !class(fa.kind)
+            && !class(fb.kind)
+            && fa.fields.len() == fb.fields.len()
+            && fb
+                .fields
+                .iter()
+                .all(|f| fa.fields.iter().any(|g| g.name == f.name))
     }
 
     /// Is a value of type `t` an object another reference shares: an array, a class instance,

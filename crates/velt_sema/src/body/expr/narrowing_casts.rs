@@ -2,6 +2,8 @@
 //! `x: T | null` (or `| undefined`), `u as A` with `u` a union that has the member `A`, and
 //! `u as A | B` (also with `| undefined`) with `u` a union that has those members and more,
 //! and a tuple as a tuple whose elements are each one of these (or an `any` as a static type).
+//! `x as V` of a `U | undefined` where `U` and `V` differ only in `any` and `unknown`
+//! (`Record<string, unknown>` and `Record<string, any>`) checks `x` present, then views it.
 //! TypeScript trusts them; Velt checks them, as it checks `x!`: the value is `T`'s, or the
 //! program panics (`type assertion failed: …`). A value of the wrong type never reads as `T`.
 //!
@@ -79,7 +81,10 @@ impl FnCx<'_, '_> {
         }
         match (t.nothing_of(h.ty), t.core(h.ty)) {
             (Some(n), Some(core)) => {
-                if core != target && !self.has_member(core, target) {
+                // `props as Record<string, any>` of a `Record<string, unknown> | undefined`
+                // (#930): checked present, then the same value as the other view.
+                let view = self.cx.same_but_any_unknown(core, target);
+                if core != target && !view && !self.has_member(core, target) {
                     return Err(h);
                 }
                 let msg = format!(
@@ -89,6 +94,9 @@ impl FnCx<'_, '_> {
                 let present = self.checked_present(h, &msg, None, false, span);
                 if present.ty == target {
                     return Ok(present);
+                }
+                if view {
+                    return self.try_coerce(present, target);
                 }
                 self.member_assertion(present, target, span)
             }

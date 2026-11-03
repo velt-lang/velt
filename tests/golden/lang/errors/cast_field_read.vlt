@@ -1,0 +1,8 @@
+// `(x as M).f` where `x`'s own field `f` does not convert to `M`'s stays an error, as in tsc
+// (TS2352: the types are not comparable) (#1185).
+interface Ctx {
+  name: string;
+  parent: Ctx | null;
+}
+const c: Ctx = { name: "a", parent: null };
+console.log((c as { parent?: number }).parent);

@@ -1,0 +1,49 @@
+// check: no leaks
+// `(x as M).f` of a value that declares the field `f` itself reads `x.f`, converted to `M`'s
+// field type (#1185, sigx's `getParentInstanceId`): TypeScript's assertion converts nothing,
+// so the read sees the value's own field, here a context at other type arguments.
+interface SetupContext {
+  id: number;
+}
+interface Ctx<TEl = string, TProps extends Record<string, any> = {}, TRef = any>
+  extends SetupContext {
+  el: TEl;
+  props: TProps;
+  parent: Ctx | null;
+  update(): void;
+}
+
+function parentId(ctx: Ctx<any, any, any> | null | undefined): number | null {
+  if (!ctx) return null;
+  const parent = (ctx as { parent?: Ctx<any, any, any> | null }).parent;
+  if (!parent) return null;
+  return parent.id;
+}
+
+function maybeParentId(ctx: Ctx<any, any, any> | undefined): number | undefined {
+  return (ctx as { parent?: Ctx<any, any, any> | null } | undefined)?.parent?.id;
+}
+
+function mk(id: number, parent: Ctx | null): Ctx {
+  return {
+    id,
+    el: "e",
+    props: {},
+    parent,
+    update() {
+      console.log("update", id);
+    },
+  };
+}
+
+const root = mk(1, null);
+const child = mk(2, root);
+console.log(parentId(child), parentId(root), parentId(null));
+console.log(maybeParentId(child), maybeParentId(root), maybeParentId(undefined));
+type Point = { x: number; y: number; label?: string };
+const p: Point = { x: 1, y: 2 };
+console.log((p as { x: number }).x, (p as { label?: string }).label ?? "none");
+function xOf(q: Point | undefined): number {
+  return (q as { x: number } | undefined)?.x ?? -1;
+}
+console.log(xOf(p), xOf(undefined));

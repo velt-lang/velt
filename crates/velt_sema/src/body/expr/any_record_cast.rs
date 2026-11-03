@@ -1,4 +1,5 @@
-//! `(x as Record<K, V>)[k]` and `(x as Record<K, V>).name` on an `any` `x`, read or written.
+//! `(x as Record<K, V>)[k]` and `(x as Record<K, V>).name` on an `any` (or `object`) `x`, read
+//! or written.
 //! TypeScript's assertion converts nothing: the key is read from or written to `x` itself. Velt
 //! reads and writes it through `x` as an `any` (`dynamic_write`, `dynamic_member`), so a write
 //! reaches the object `x` holds, as in Node, where converting `x` to the record first would
@@ -36,7 +37,9 @@ impl FnCx<'_, '_> {
         }
         let (_, v) = self.record_args(target)?;
         let t = self.trial_type(expr)?;
-        (self.cx.dynamic(t) == Some(Dynamic::Any)).then_some((&**expr, v))
+        // An `object` too (`(obj as Record<string, T>)[key]` with `obj: object`, #930): it holds
+        // an object, read as an `any` reads it.
+        matches!(self.cx.dynamic(t), Some(Dynamic::Any | Dynamic::Object)).then_some((&**expr, v))
     }
 
     /// The assignment target `(x as Record<K, V>)[k]` / `.name` on an `any` `x`: `x` as the
@@ -46,7 +49,7 @@ impl FnCx<'_, '_> {
         object: &ast::Expr,
     ) -> Option<Option<super::assign::AssignTarget>> {
         let (x, v) = self.any_as_record(object)?;
-        let obj = self.expr(x, None, Want::Borrow);
+        let obj = self.record_receiver(x);
         match self.dynamic_write_receiver(obj) {
             Ok(d) => Some(d.map(|d| super::assign::AssignTarget::Dynamic(d, Some(v)))),
             Err(_) => None,
@@ -96,16 +99,18 @@ impl FnCx<'_, '_> {
         let (x, v) = self.any_as_record(object)?;
         let read = match (key, optional) {
             // `(x as Record<K, V>)?.name`: `x?.name` on the `any`.
-            (AnyRecordKey::Name(prop), true) => self.member(x, prop, true, None, want, span),
+            (AnyRecordKey::Name(prop), true) if self.trial_type(x) == self.any_ty() => {
+                self.member(x, prop, true, None, want, span)
+            }
             (_, true) => return None,
             (AnyRecordKey::Index(index), false) => {
-                let obj = self.expr(x, None, Want::Borrow);
+                let obj = self.record_receiver(x);
                 match self.dynamic_index(obj, index, want, span) {
                     Ok(h) | Err(h) => h,
                 }
             }
             (AnyRecordKey::Name(prop), false) => {
-                let obj = self.expr(x, None, Want::Borrow);
+                let obj = self.record_receiver(x);
                 match self.dynamic_get(obj, &prop.name, want, span) {
                     Ok(h) | Err(h) => h,
                 }
@@ -123,6 +128,22 @@ impl FnCx<'_, '_> {
             None => self.cx.ty.option_of(v, hir::Nothing::Undefined),
         };
         Some(self.intrinsic(Intrinsic::AnyTo, vec![read], ty, span))
+    }
+
+    /// `x` of `x as Record<K, V>`, checked, as the `any` whose members are read or written: an
+    /// `object` is the same value as an `any`.
+    fn record_receiver(&mut self, x: &ast::Expr) -> hir::Expr {
+        let obj = self.expr(x, None, Want::Borrow);
+        if self.cx.dynamic(obj.ty) != Some(Dynamic::Object) {
+            return obj;
+        }
+        let Some(any) = self.any_ty() else {
+            return obj;
+        };
+        let obj = self.share_if_place(obj);
+        match self.coerce_dynamic(obj, any, false) {
+            Ok(h) | Err(h) => h,
+        }
     }
 }
 

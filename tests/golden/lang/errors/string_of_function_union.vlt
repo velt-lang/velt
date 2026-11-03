@@ -1,0 +1,6 @@
+// `String(x)` of a union with a function member stays an error: Node writes a function's
+// source text (#930).
+function text(x: number | (() => number)): string {
+  return String(x);
+}
+console.log(text(1));

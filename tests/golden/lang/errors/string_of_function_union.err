@@ -1,0 +1,2 @@
+string_of_function_union.vlt:4:17
+error: cannot format a value of type `f64 | () => f64` in `String(x)`
