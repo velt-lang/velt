@@ -128,6 +128,9 @@ pub(crate) enum Glue {
     /// `(desc)`, never returning: the `TypeError` of a value that is not a number, for
     /// `AnyNumericOrError` (any_number.rs).
     AnyNumberError,
+    /// `(data, desc, out)`: the slow path of an `any` converted to the type, taking the `any`
+    /// and writing the value or stopping with the `TypeError` (any_unbox_slow.rs).
+    AnyUnbox,
     JsText,
     ViewDrop,
     MirrorDrop,
@@ -195,6 +198,7 @@ impl Glue {
             Glue::AnyNumeric => "anynumeric",
             Glue::AnyNumericOrError => "anynumericorerror",
             Glue::AnyNumberError => "anynumbererror",
+            Glue::AnyUnbox => "anyunbox",
             Glue::JsText => "jstext",
             Glue::ViewDrop => "viewdrop",
             Glue::MirrorDrop => "mirrordrop",
@@ -239,7 +243,7 @@ impl Glue {
             Glue::AnyReflect => (vec![Ptr, U64, U64, Ptr, Ptr], U64),
             Glue::ProxyGet | Glue::ProxySet => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::AnyIface | Glue::AnyNumeric => (vec![Ptr, Ptr, Ptr], Bool),
-            Glue::AnyNumericOrError => (vec![Ptr, Ptr, Ptr], Unit),
+            Glue::AnyNumericOrError | Glue::AnyUnbox => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::AnyNumberError => (vec![Ptr], Unit),
             Glue::JsText => (vec![Ptr, Ptr], Unit),
         }
@@ -300,6 +304,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::AnyNumeric => lw.any_numeric_body(args[0], args[1], args[2], ty, false),
             Glue::AnyNumericOrError => lw.any_numeric_body(args[0], args[1], args[2], ty, true),
             Glue::AnyNumberError => lw.any_type_error(a(0), ty),
+            Glue::AnyUnbox => lw.any_unbox_body(args[0], args[1], args[2], ty),
             Glue::JsText => lw.js_text_body(args[0], a(1), ty),
             Glue::ViewDrop => lw.view_drop_body(args[0], ty),
             Glue::MirrorDrop => {
