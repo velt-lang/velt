@@ -7,7 +7,7 @@ use velt_vir::vir::{self, Callee, Const, Operand, Rvalue, Stmt, Terminator};
 
 /// Program entities a function or static refers to.
 #[derive(Default)]
-pub(super) struct Refs {
+pub(crate) struct Refs {
     /// Functions called directly.
     pub calls: BTreeSet<usize>,
     /// Functions whose address is taken.
@@ -25,11 +25,11 @@ impl Refs {
     }
 
     /// Functions called or whose address is taken.
-    pub fn funcs(&self) -> impl Iterator<Item = usize> + '_ {
+    pub(crate) fn funcs(&self) -> impl Iterator<Item = usize> + '_ {
         self.calls.iter().chain(&self.addresses).copied()
     }
 
-    pub fn of_function(f: &vir::Function) -> Refs {
+    pub(crate) fn of_function(f: &vir::Function) -> Refs {
         let mut r = Refs::default();
         for b in &f.blocks {
             b.stmts.iter().for_each(|s| r.stmt(s));
@@ -53,7 +53,7 @@ impl Refs {
         r
     }
 
-    pub fn of_static(s: &vir::StaticData) -> Refs {
+    pub(crate) fn of_static(s: &vir::StaticData) -> Refs {
         let mut r = Refs::default();
         for (_, target) in &s.relocs {
             r.constant(target);
