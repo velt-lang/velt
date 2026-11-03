@@ -80,24 +80,38 @@ pub(crate) struct Plan {
 /// most to a split (cross-unit calls in their hot loops); every benchmark program stays one unit
 /// (the largest, `bench/sort.vlt`, has about 4 000 statements).
 const MIN_UNIT_WEIGHT: usize = 16_000;
-/// At most this many units when the count is chosen from the size. Programs split into 4 run as
-/// fast as in one unit (within ±3 %, bench/RESULTS.md); in 8, binary-trees and fib ran 5 % slower
-/// (the same machine code, placed differently).
+/// At most this many units when the count is chosen from the size, up to `MAX_UNIT_WEIGHT`
+/// statements per unit. Programs split into 4 run as fast as in one unit (within ±3 %,
+/// bench/RESULTS.md); in 8, binary-trees and fib ran 5 % slower (the same machine code, placed
+/// differently).
 const MAX_UNITS: usize = 4;
+/// Larger programs get units of at most this many statements (about 600,000 IR lines; clang takes
+/// minutes on one), so that one clang process does not take the whole build: sigx's small-page,
+/// 22 million IR lines in 4 units, spent 907 of its 1,091 seconds of code generation in one.
+/// Every benchmark program is far below (`MIN_UNIT_WEIGHT`).
+const MAX_UNIT_WEIGHT: usize = 200_000;
+/// ...at most this many of them.
+const MAX_LARGE_UNITS: usize = 16;
 
 /// Number of units for `program`: `requested` (at least 1, at most one per function), else one
-/// per `MIN_UNIT_WEIGHT` statements, at most `MAX_UNITS`, one below twice that. The count depends
-/// on the program only, never on the machine, so the objects are the same everywhere.
+/// per `MIN_UNIT_WEIGHT` statements, at most `MAX_UNITS`, one below twice that; a program too
+/// large for `MAX_UNITS` units of `MAX_UNIT_WEIGHT` gets units of that weight, at most
+/// `MAX_LARGE_UNITS`. The count depends on the program only, never on the machine, so the objects
+/// are the same everywhere.
 pub(crate) fn unit_count(program: &vir::Program, requested: Option<usize>) -> usize {
-    let count = requested.unwrap_or_else(|| {
-        let total: usize = program.funcs.iter().map(weight).sum();
-        if total < 2 * MIN_UNIT_WEIGHT {
-            1
-        } else {
-            (total / MIN_UNIT_WEIGHT).min(MAX_UNITS)
-        }
-    });
+    let count = requested.unwrap_or_else(|| count_for(program.funcs.iter().map(weight).sum()));
     count.min(program.funcs.len()).max(1)
+}
+
+/// [`unit_count`] of a program of `total` statements.
+pub(crate) fn count_for(total: usize) -> usize {
+    if total < 2 * MIN_UNIT_WEIGHT {
+        1
+    } else if total <= MAX_UNITS * MAX_UNIT_WEIGHT {
+        (total / MIN_UNIT_WEIGHT).min(MAX_UNITS)
+    } else {
+        total.div_ceil(MAX_UNIT_WEIGHT).min(MAX_LARGE_UNITS)
+    }
 }
 
 /// Split `program` into (at most) `count` units of similar weight (see `place`).

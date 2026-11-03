@@ -176,3 +176,25 @@ fn deep_chains_are_placed() {
     let plan = plan(&p, 4);
     assert_eq!(plan.units.len(), 4);
 }
+
+/// One component holding most of the program (sigx's any glue and vtables tie half of its IR
+/// into one) is cut into pieces: the units stay balanced, where it used to be one unit.
+#[test]
+fn large_components_are_cut() {
+    // `velt_main` calls `c1`; `c1` … `c40` call each other in a ring, 1,000 statements each.
+    let n = 40;
+    let mut specs = vec![spec("main", 10, &[1])];
+    specs.extend((1..=n).map(|i| spec(&format!("c{i}"), 1_000, &[i % n + 1])));
+    let p = program(&specs);
+    let plan = plan(&p, 4);
+    let weights = unit_weights(&p, &plan);
+    let total: usize = weights.iter().sum();
+    assert_eq!(weights.len(), 4);
+    for w in &weights {
+        assert!(*w * 4 <= total * 3 / 2, "unbalanced: {weights:?}");
+    }
+    // The pieces are runs of the ring in program order.
+    let owner = owners(&plan, p.funcs.len());
+    let changes = owner.windows(2).filter(|w| w[0] != w[1]).count();
+    assert!(changes <= 4, "{owner:?}");
+}
