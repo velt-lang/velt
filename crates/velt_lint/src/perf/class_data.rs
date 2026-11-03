@@ -323,9 +323,10 @@ fn check(
     let message = format!("`{name}` only holds data: each instance is a separate heap allocation");
     if item.exported && !cx.whole_package {
         // Files that import it are not loaded here: their uses would stay classes.
-        notes.push(format!(
+        notes.push(
             "`velt check --perf --fix=review` in the package rewrites it with every file that uses it"
-        ));
+                .to_string(),
+        );
         return Some(Finding {
             code: CODE,
             span: c.name.span,
