@@ -141,7 +141,11 @@ export class Http1Response extends HttpResponse implements BodySink {
         await this.piece(chunk);
       }
     } catch (e) {
-      // The client went away (or the source failed): nothing more can be sent.
+      // The client went away, or the source failed: nothing more can be sent, and the
+      // connection closes without the body's end (the client sees it cut off).
+      if (!this.clientGone()) {
+        console.error("request handler failed: the response body failed:", e);
+      }
       this.streaming = false;
       this.keepAlive = false;
       return;

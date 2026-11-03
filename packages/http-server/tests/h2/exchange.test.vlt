@@ -1,9 +1,18 @@
 // Requests and responses over velt/net/http's HTTP/2 server, seen as frames: heads, bodies both
 // ways, streamed responses, HEAD, trailers, 100-continue and the request API.
+import { BodyStream } from "velt/net/http";
+import { utf8Encode } from "velt/encoding";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
 import { HttpRequest } from "../../src/request";
 import { HttpResponse } from "../../src/response";
 import { bytes, Client, endOf, startServer, TestServer } from "./_h2";
+
+/// A body source that yields one chunk, then fails (#2008 review round 2).
+async function* throwingBody(): AsyncGenerator<u8[]> {
+  yield utf8Encode("a");
+  await yieldNow();
+  throw new Error("body source fails (expected in this test)");
+}
 
 async function handler(req: HttpRequest, res: HttpResponse) {
   if (req.pathIs("/echo")) {
@@ -36,6 +45,8 @@ async function handler(req: HttpRequest, res: HttpResponse) {
       await out.write(`${none[2]!}`);
     }
     throw new Error("mid-stream (expected in this test)");
+  } else if (req.pathIs("/body-throw")) {
+    await res.sendStream(BodyStream.from(throwingBody()), "text/plain");
   } else if (req.pathIs("/trailers")) {
     res.addTrailers([["Grpc-Status", "0"]]);
     res.send("x");
@@ -225,6 +236,17 @@ describe("HTTP/2 exchanges", () => {
       );
       c.close();
     }
+  });
+
+  it("resets a stream whose body source throws after the head", async () => {
+    // #2008 review round 2: `sendStream` over a source that fails must not end the stream.
+    const c = await Client.open(port);
+    c.get(1, "/body-throw");
+    await c.flush();
+    expect(await c.until((f) => f.id == 1 && f.type == 3)).toBe(
+      "HEADERS 1 :status=200\nDATA 1 1:a\nRST 1 INTERNAL_ERROR",
+    );
+    c.close();
   });
 
   it("sends trailers after a body, whole or streamed", async () => {

@@ -191,6 +191,12 @@ export class H2Response extends HttpResponse implements BodySink {
         await this.piece(chunk);
       }
     } catch (e) {
+      // The client reset the stream: nothing more can be sent. The source failed: the stream
+      // is reset, not ended, so the client doesn't take the body so far for the whole one.
+      if (!this.s.reset) {
+        console.error("request handler failed: the response body failed:", e);
+        this.fail();
+      }
       return;
     }
     await this.finishStream();
