@@ -26,6 +26,37 @@ use crate::SourceModule;
 /// namespace body they are visible in.
 pub(crate) type Private = FxHashMap<String, Span>;
 
+/// The namespaces declared in a `declare global { … }`, by name, with the modules declaring
+/// them ([`global_namespaces`]).
+pub(crate) type GlobalNamespaces = FxHashMap<String, Vec<usize>>;
+
+/// The namespaces each module declares in `declare global { … }`. As in TypeScript they are
+/// global: a path `N.T` that a module does not resolve itself names the member `T` of the
+/// global namespace `N` declared in another module ([`lookup`]). sigx declares its `JSX` types
+/// so (`JSX.IntrinsicAttributes` in runtime-core, `JSX.IntrinsicElements` in a renderer).
+pub(crate) fn global_namespaces(modules: &[SourceModule]) -> GlobalNamespaces {
+    let mut out = GlobalNamespaces::default();
+    for (m, module) in modules.iter().enumerate() {
+        for item in &module.ast.items {
+            let ast::ItemKind::Augment(a) = &item.kind else {
+                continue;
+            };
+            if a.module.is_some() {
+                continue;
+            }
+            for i in &a.items {
+                if let ast::ItemKind::Namespace(n) = &i.kind {
+                    let modules = out.entry(n.name.name.clone()).or_default();
+                    if !modules.contains(&m) {
+                        modules.push(m);
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
 /// The modules with their namespaces flattened, or `None` when no module has one; with each
 /// module's private members and the errors found (a namespace named like an import).
 pub(crate) fn flatten(
@@ -153,7 +184,29 @@ pub(crate) fn lookup(cx: &Ctx, module: usize, path: &[ast::Ident], at: Span) -> 
     if private.is_some_and(|b| !(b.file == at.file && b.lo <= at.lo && at.hi <= b.hi)) {
         return None;
     }
-    cx.scopes[module].items.get(&key).copied()
+    if let Some(item) = cx.scopes[module].items.get(&key) {
+        return Some(*item);
+    }
+    // A member of a global namespace another module declares (every member of a `declare
+    // global` namespace is exported from it, so none is private).
+    let declaring = cx.global_namespaces.get(&path[0].name)?;
+    // A namespace the module declares or imports itself hides the global one (TS2694); the
+    // implicit `JSX` of a runtime's exports does not (`docs/internals/contracts/jsx.md`).
+    let prefix = format!("{}.", path[0].name);
+    let implicit = path[0].name == "JSX" && cx.modules[module].jsx_runtime.is_some();
+    if !implicit
+        && !declaring.contains(&module)
+        && cx.scopes[module]
+            .items
+            .keys()
+            .any(|k| k.starts_with(&prefix))
+    {
+        return None;
+    }
+    declaring
+        .iter()
+        .filter(|&&m| m != module)
+        .find_map(|&m| cx.scopes[m].items.get(&key).copied())
 }
 
 fn flatten_items(mut items: Vec<ast::Item>, private: &mut Private) -> Vec<ast::Item> {

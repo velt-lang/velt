@@ -1,0 +1,1 @@
+global_namespace_hidden.vlt:8:12: error: namespace `N` has no exported member `T`

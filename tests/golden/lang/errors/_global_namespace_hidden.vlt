@@ -1,0 +1,6 @@
+declare global {
+  namespace N {
+    type T = string;
+  }
+}
+export const x = 1;

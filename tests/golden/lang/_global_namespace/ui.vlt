@@ -1,0 +1,11 @@
+// A global namespace of types, as sigx's runtime-core declares `JSX`.
+export type Node = { tag: string };
+
+declare global {
+  namespace UI {
+    type Element = Node;
+    interface Attributes {
+      key?: string;
+    }
+  }
+}
