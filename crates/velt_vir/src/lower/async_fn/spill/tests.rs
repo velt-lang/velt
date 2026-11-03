@@ -491,3 +491,28 @@ fn interference_matches_all_pairs_over_the_swept_liveness() {
         }
     }
 }
+
+#[test]
+fn the_lowest_free_offset_is_the_one_searching_again_after_each_bump_finds() {
+    let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+    let mut rnd = move |m: u32| {
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        (x % u64::from(m)) as u32
+    };
+    for _ in 0..3000 {
+        let busy: Vec<(u32, u32)> = (0..rnd(12)).map(|_| (rnd(64), rnd(24))).collect();
+        let (base, align, size) = (rnd(16), 1 << rnd(4), rnd(20));
+        // The search the layout did before: any overlapping one, bump past it, again.
+        let mut off = base.next_multiple_of(align);
+        while let Some(&(o, os)) = busy.iter().find(|&&(o, os)| off < o + os && o < off + size) {
+            off = (o + os).next_multiple_of(align);
+        }
+        let got = super::lowest_free(base, align, size, busy.clone());
+        assert_eq!(
+            got, off,
+            "base {base} align {align} size {size} busy {busy:?}"
+        );
+    }
+}
