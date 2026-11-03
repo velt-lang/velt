@@ -18,6 +18,7 @@
 //! - `debug`: `!dbg` metadata (CodeView on Windows, DWARF elsewhere) when the VIR carries
 //!   source locations (`vir::Program::files`; debug builds and `velt build -g`).
 //! - `units`: splitting large programs into codegen units compiled in parallel.
+//! - `inlining`: caps on how much LLVM's inliner grows a function.
 //! - `clang`: locating `clang` and running it on the emitted IR.
 //! - `llc`: locating LLVM's `opt`/`llc` and running them for the WebAssembly targets.
 
@@ -35,6 +36,7 @@ mod clang;
 mod debug;
 mod function;
 mod half;
+mod inlining;
 mod llc;
 mod module;
 mod rounding;

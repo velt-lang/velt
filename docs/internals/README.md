@@ -104,7 +104,10 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    `numrep`, and removal of unused functions (`dead_funcs`).
 6. **Generate code**: Cranelift for debug builds and the `velt dev` JIT; textual LLVM IR,
    compiled by clang (`-O3`, or `VELT_LLVM_OPT`, for release builds; unoptimized for `--backend
-   llvm`) and, for WebAssembly, by LLVM's `opt` and `llc`.
+   llvm`) and, for WebAssembly, by LLVM's `opt` and `llc`. Large programs are split into codegen
+   units that clang compiles in parallel (`velt_codegen_llvm::units`). Calls that would grow a
+   function past velt_opt's caller limit are `noinline` (`velt_codegen_llvm::inlining`), so LLVM's
+   inliner never merges a program into one huge function.
 7. **Link** (`velt_link`): the toolchain's bundled lld with a link kit for the target, else the
    system linker (MSVC `link.exe`, or `cc`), with the runtime library ([Linking](linking.md)).
 

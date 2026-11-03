@@ -130,6 +130,7 @@ pub(crate) fn emit_unit(
     let mut intrinsics = Intrinsics::default();
     let mut debug = DebugInfo::new(program, optimized);
     let mut bodies = String::new();
+    let caps = crate::inlining::Caps::of(program);
     let own = unit.defines.iter().map(|&i| {
         let other_units = shared.funcs.get(i).copied().unwrap_or(false);
         let how = if other_units {
@@ -145,8 +146,16 @@ pub(crate) fn emit_unit(
             .funcs
             .get(i)
             .ok_or_else(|| format!("ICE: unit defines unknown function #{i}"))?;
-        let text = emit_function(program, func, how, &mut intrinsics, debug.as_mut(), target)
-            .map_err(|e| format!("codegen: in function `{}`: {e}", func.symbol))?;
+        let text = emit_function(
+            program,
+            (func, i),
+            how,
+            &caps,
+            &mut intrinsics,
+            debug.as_mut(),
+            target,
+        )
+        .map_err(|e| format!("codegen: in function `{}`: {e}", func.symbol))?;
         bodies.push('\n');
         bodies.push_str(&text);
     }
