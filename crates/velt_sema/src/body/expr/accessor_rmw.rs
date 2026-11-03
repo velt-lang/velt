@@ -97,10 +97,15 @@ impl FnCx<'_, '_> {
             name: NEW.into(),
             span,
         }));
+        let mut computed = None;
         let (value, cond) = match rmw {
-            Rmw::Compound(op, v) => (binary(op, old_ref(), v.clone(), span), None),
+            Rmw::Compound(op, v) => {
+                let new = self.rmw_compound_value(op, (old, OLD), old_ty, v, span);
+                computed = Some(new);
+                (old_ref(), None)
+            }
             Rmw::Update(op, _) => {
-                if !self.cx.ty.is_numeric(old_ty) {
+                if !self.cx.ty.is_numeric(old_ty) && !self.operator_type(old_ty) {
                     let opname = if op == ast::UpdateOp::Inc { "++" } else { "--" };
                     let tn = self.cx.display(old_ty);
                     self.cx
@@ -130,7 +135,10 @@ impl FnCx<'_, '_> {
             Rmw::Logical(op, v) => (v.clone(), Some(self.decides(op, old_ref(), span))),
         };
         let mut set = vec![];
-        let new_val = self.expr(&value, Some(old_ty), Want::Move);
+        let new_val = match computed {
+            Some(new) => new,
+            None => self.expr(&value, Some(old_ty), Want::Move),
+        };
         let new = self.bind_temp(NEW, new_val, &mut set);
         let call = self.setter_call(recv, prop, &new_ref, span);
         set.push(stmt(hir::StmtKind::Expr(call), span));

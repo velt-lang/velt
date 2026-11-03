@@ -1,0 +1,75 @@
+// Indexing through `[Symbol.index]` / `[Symbol.setIndex]` (#2050): reads, writes, compound
+// assignment (in place with the element's `[Symbol.opAssign]`), `++`, `?.[]`, the index
+// evaluated once, and a key naming a member staying property access.
+
+class Grid {
+  cells: f64[];
+  constructor(public w: usize, h: usize) {
+    this.cells = Array.from({ length: Number(w * h) }, () => 0);
+  }
+  [Symbol.index](i: usize): f64 { return this.cells[i]; }
+  [Symbol.setIndex](i: usize, v: f64): void { this.cells[i] = v; }
+}
+
+// String keys, and a member `size` that `t["size"]` still names.
+class Table {
+  size = 0;
+  #m = new Map<string, i64>();
+  [Symbol.index](k: string): i64 { return this.#m.get(k) ?? -1; }
+  [Symbol.setIndex](k: string, v: i64): void {
+    if (!this.#m.has(k)) {
+      this.size++;
+    }
+    this.#m.set(k, v);
+  }
+}
+
+// Elements that change in place with `+=`.
+class Acc {
+  constructor(public v: i64) {}
+  [Symbol.addAssign](k: i64): void { this.v += k; }
+}
+class Accs {
+  items = [new Acc(1), new Acc(2)];
+  writes = 0;
+  [Symbol.index](i: usize): Acc { return this.items[i]; }
+  [Symbol.setIndex](i: usize, a: Acc): void {
+    this.items[i] = a;
+    this.writes++;
+  }
+}
+
+// Read-only.
+class Squares {
+  [Symbol.index](i: i64): i64 { return i * i; }
+}
+
+let calls = 0;
+function at(i: usize): usize {
+  calls++;
+  return i;
+}
+
+const g = new Grid(2, 2);
+g[0] = 1.5;
+g[at(3)] = 4;
+g[at(3)] += 1;
+g[1]++;
+console.log(g[0], g[1], g[3], calls);
+
+const t = new Table();
+t["a"] = 10;
+const key = "b";
+t[key] = 20;
+t["a"] += 5;
+console.log(t["a"], t[key], t["zz"], t["size"], t.size);
+
+const accs = new Accs();
+accs[1] += 40;
+console.log(accs[1].v, accs.writes);
+
+const sq = new Squares();
+console.log(sq[7]);
+
+const maybe: Squares | null = null;
+console.log(maybe?.[3] ?? "none");

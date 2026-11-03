@@ -18,3 +18,9 @@ const w = new W(2);
 const p = v * v;
 const q = 2 - v;
 const r = v + w;
+
+class Squares {
+  [Symbol.index](i: i64): i64 { return i * i; }
+}
+const sq = new Squares();
+sq[1] = 2;

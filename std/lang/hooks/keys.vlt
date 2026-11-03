@@ -14,10 +14,6 @@ import { Symbol } from "velt/lang/symbol";
 export const INSPECT = Symbol.for("nodejs.util.inspect.custom");
 /** Typed arrays: the kind of a class's elements, which a subclass may override. */
 export const TYPED_ARRAY_KIND = Symbol.for("velt.typedArray.kind");
-/** `xs[i]` of a std class indexed like an array (a typed array, a regex match). */
-export const INDEX = Symbol("index");
-/** `xs[i] = v` of a std class indexed like an array. */
-export const SET_INDEX = Symbol("setIndex");
 /** `xs[i]` of an array where JS reads `undefined` past the end. */
 export const ARRAY_GET = Symbol("arrayGet");
 /** Typed arrays: element `i` as a number (in range). */

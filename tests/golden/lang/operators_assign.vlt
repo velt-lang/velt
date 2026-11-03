@@ -1,0 +1,91 @@
+// Compound assignment and `++`/`--` through operator methods (#2050): in place with
+// `[Symbol.opAssign]`, else `a = a op b`; the target is evaluated once; a postfix `a++` whose
+// value is used keeps the old object.
+
+// In place: one object, changed by `+=` (other references see it).
+class Acc {
+  calls = 0;
+  constructor(public v: f64) {}
+  [Symbol.add](o: Acc): Acc { return new Acc(this.v + o.v); }
+  [Symbol.addAssign](o: Acc): void {
+    this.v += o.v;
+    this.calls++;
+  }
+}
+
+// Rebuilt: `p += q` is `p = p + q`, a new value each time.
+struct P {
+  x: i64;
+  y: i64;
+  [Symbol.add](o: P): P { return { x: this.x + o.x, y: this.y + o.y }; }
+}
+
+class Counter {
+  constructor(public n: i64) {}
+  [Symbol.add](k: i64): Counter { return new Counter(this.n + k); }
+  [Symbol.sub](k: i64): Counter { return new Counter(this.n - k); }
+  [Symbol.addAssign](k: i64): void { this.n += k; }
+}
+
+class Holder {
+  items: P[] = [{ x: 0, y: 0 }, { x: 10, y: 10 }];
+  acc = new Acc(0);
+}
+
+let idx = 0;
+function next(): number {
+  console.log(`next ${idx}`);
+  return idx++;
+}
+
+let a = new Acc(1);
+const alias = a;
+a += new Acc(2);
+console.log(a.v, alias.v, a.calls);
+
+// `x += x`: the method sees `other` change as it writes `this`.
+a += a;
+console.log(a.v);
+
+let p: P = { x: 1, y: 2 };
+const before = p;
+p += { x: 10, y: 20 };
+console.log(p.x, p.y, before.x);
+
+const h = new Holder();
+h.items[next()] += { x: 1, y: 1 };
+h.items[1] += { x: 5, y: 5 };
+console.log(h.items[0].x, h.items[1].y);
+h.acc += new Acc(7);
+console.log(h.acc.v);
+
+let c = new Counter(5);
+c++;
+++c;
+console.log(c.n);
+const old = c++;
+console.log(old.n, c.n);
+const pre = ++c;
+console.log(pre.n, c.n);
+c--;
+console.log(c.n);
+
+// The target's indices come first, then the value: `f(0)` before `f(1)`, aliased or not.
+function f(n: number): number {
+  console.log(`f${n}`);
+  return n;
+}
+const ps: P[] = [{ x: 1, y: 1 }, { x: 2, y: 2 }];
+ps[f(0)] += ps[f(1)];
+const accs = [new Acc(1), new Acc(2)];
+accs[f(0)] += accs[f(1)];
+console.log(ps[0].x, accs[0].v);
+
+// A prefix `++` without `[Symbol.addAssign]` gives the new value.
+class Step {
+  constructor(public n: i64) {}
+  [Symbol.add](k: i64): Step { return new Step(this.n + k); }
+}
+let s = new Step(1);
+const s2 = ++s;
+console.log(s2.n, s.n);

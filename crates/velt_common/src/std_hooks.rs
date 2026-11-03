@@ -348,13 +348,10 @@ keys! {
     // class implements it with `const custom = Symbol.for("nodejs.util.inspect.custom")` and a
     // method `[custom]()` (`velt_sema` `hooks.rs`).
     inspect => "INSPECT", "nodejs.util.inspect.custom", registered;
-    // Typed arrays: the kind a class's elements are (a subclass may override it), and the
-    // indexer protocol `xs[i]` / `xs[i] = v` compiles to (`velt_sema` `indexers.rs`).
+    // Typed arrays: the kind a class's elements are (a subclass may override it).
     typed_array_kind => "TYPED_ARRAY_KIND", "velt.typedArray.kind", registered;
-    index => "INDEX", "index";
     // Arrays: `xs[i]` that reads `undefined` past the end, as JS (`velt_sema` `indexers.rs`).
     array_get => "ARRAY_GET", "arrayGet";
-    set_index => "SET_INDEX", "setIndex";
     // JsonValue: what `console.log` prints a value from (`velt_vir` `glue/format.rs`), what
     // appends one's text (velt/encoding/json/append) and what decoders read one with
     // (velt/encoding/json/generate/read_value).
