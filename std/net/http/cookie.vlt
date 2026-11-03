@@ -6,7 +6,6 @@ import { Headers } from "velt/net/http/fetch/headers";
 import {
   allOf,
   COOKIE_OCTET,
-  isCookieValue,
   isDigits,
   isToken,
   skipSpace,
@@ -36,9 +35,11 @@ export interface Cookie {
 }
 
 /**
- * The cookies of `headers`' `Cookie` header, by name. A name sent twice keeps its first value
- * (browsers send the most specific cookie first); a pair that isn't `name=value` with a valid
- * name is skipped, as are surrounding spaces and the quotes of a quoted value.
+ * The cookies of `headers`' `Cookie` header, by name, as the `cookie` package (1.x) and Deno read
+ * them. A name sent twice keeps its first value (browsers send the most specific cookie first);
+ * a pair that isn't `name=value` with a token for a name and RFC 6265 cookie-octets for a value
+ * (plain, or between double quotes, which stay part of the value) is skipped, and surrounding
+ * spaces are removed. Values are not URL-decoded, and non-ASCII values are skipped.
  */
 export function getCookies(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {};
@@ -65,15 +66,12 @@ export function getCookies(headers: Headers): Record<string, string> {
     if (eq >= 0) {
       const ns = skipSpace(h, i, eq);
       const ne = trimSpace(h, ns, eq);
-      let vs = skipSpace(h, eq + 1, end);
-      let ve = trimSpace(h, vs, end);
-      if (ve - vs >= 2 && h.charCodeAt(vs) == 0x22 && h.charCodeAt(ve - 1) == 0x22) {
-        vs++;
-        ve--;
-      }
-      if (ne > ns && allOf(h, ns, ne, TOKEN) && allOf(h, vs, ve, COOKIE_OCTET)) {
+      const vs = skipSpace(h, eq + 1, end);
+      const ve = trimSpace(h, vs, end);
+      if (ne > ns && allOf(h, ns, ne, TOKEN) && isValueAt(h, vs, ve)) {
         const name = h.slice(ns, ne);
-        if (!(name in out)) {
+        // An own key: `in` would also see `Object.prototype`'s (`constructor`, `toString`).
+        if (!Object.hasOwn(out, name)) {
           out[name] = h.slice(vs, ve);
         }
       }
@@ -85,11 +83,13 @@ export function getCookies(headers: Headers): Record<string, string> {
 
 /**
  * Adds a `Set-Cookie` header for `cookie` to `headers` (each cookie is a header of its own).
- * Throws `TypeError` for a name that isn't a token, a value with characters a cookie can't
- * carry (spaces, `"`, `,`, `;`, `\`, control characters), a `domain` or `path` with `;` or a
- * control character, a `maxAge` that isn't a whole number 0 or more, and `partitioned`,
- * `sameSite: "None"`, `__Secure-` or `__Host-` without `secure` (`__Host-` also needs path `/`
- * and no domain), as browsers would drop such a cookie.
+ * Throws `TypeError` for what browsers would drop or misread: a name that isn't a token; a value
+ * with characters a cookie can't carry (spaces, `"` other than around the whole value, `,`,
+ * `;`, `\`, control characters, non-ASCII); a `domain`, `path` or `unparsed` attribute with `;`,
+ * a control character or non-ASCII (a domain may not start with `-` or end with `.` or `-`);
+ * a `maxAge` that isn't a whole number from 0 to `Number.MAX_SAFE_INTEGER`; an `expires` that
+ * isn't a valid date; and `partitioned`, `sameSite: "None"`, `__Secure-` or `__Host-` without
+ * `secure` (`__Host-` also needs path `/` and no domain).
  */
 export function setCookie(headers: Headers, cookie: Cookie) {
   headers.append("set-cookie", serialize(cookie));
@@ -117,11 +117,12 @@ export function getSetCookies(headers: Headers): Cookie[] {
 
 // The `Set-Cookie` value of `c` (Deno's attribute order).
 function serialize(c: Cookie): string {
+  // Inputs appear in messages through `JSON.stringify`, so a CR/LF in one can't forge a log line.
   if (!isToken(c.name)) {
-    throw new TypeError(`Invalid cookie name: "${c.name}"`);
+    throw new TypeError(`Invalid cookie name: ${JSON.stringify(c.name)}`);
   }
-  if (!isCookieValue(c.value)) {
-    throw new TypeError(`Invalid cookie value for "${c.name}"`);
+  if (!isValueAt(c.value, 0, c.value.length as i64)) {
+    throw new TypeError(`Invalid cookie value for ${JSON.stringify(c.name)}`);
   }
   const secure = c.secure ?? false;
   if (c.name.startsWith("__Secure-") && !secure) {
@@ -147,14 +148,17 @@ function serialize(c: Cookie): string {
   }
   const maxAge = c.maxAge;
   if (maxAge != null) {
-    if (!Number.isInteger(maxAge) || maxAge < 0) {
-      throw new TypeError("Max-Age must be a whole number, 0 or more");
+    if (!Number.isSafeInteger(maxAge) || maxAge < 0) {
+      throw new TypeError("Max-Age must be a whole number from 0 to Number.MAX_SAFE_INTEGER");
     }
     out += `; Max-Age=${maxAge}`;
   }
   const domain = c.domain;
   if (domain != null) {
     checkAttribute("Domain", domain);
+    if (domain.startsWith("-") || domain.endsWith(".") || domain.endsWith("-")) {
+      throw new TypeError(`Invalid cookie Domain: ${JSON.stringify(domain)}`);
+    }
     out += `; Domain=${domain}`;
   }
   const sameSite = c.sameSite;
@@ -172,9 +176,15 @@ function serialize(c: Cookie): string {
   const expires = c.expires;
   if (expires != null) {
     const date = expires instanceof Date ? expires : new Date(expires);
+    if (Number.isNaN(date.getTime())) {
+      throw new TypeError("Expires must be a valid date");
+    }
     out += `; Expires=${date.toUTCString()}`;
   }
   for (const extra of c.unparsed ?? []) {
+    if (extra == "") {
+      continue;
+    }
     checkAttribute("attribute", extra);
     out += `; ${extra}`;
   }
@@ -203,6 +213,7 @@ function parseSetCookie(line: string): Cookie | null {
     const at = attr.indexOf("=");
     const key = (at < 0 ? attr : attr.slice(0, at)).trim().toLowerCase();
     const val = at < 0 ? "" : attr.slice(at + 1).trim();
+    const time = key == "expires" ? Date.parse(val) : NaN;
     if (key == "secure") {
       c.secure = true;
     } else if (key == "httponly") {
@@ -211,8 +222,8 @@ function parseSetCookie(line: string): Cookie | null {
       c.partitioned = true;
     } else if (key == "max-age" && isDigits(val)) {
       c.maxAge = Number(val);
-    } else if (key == "expires" && !Number.isNaN(Date.parse(val))) {
-      c.expires = new Date(Date.parse(val));
+    } else if (key == "expires" && !Number.isNaN(time)) {
+      c.expires = new Date(time);
     } else if (key == "domain") {
       c.domain = val;
     } else if (key == "path") {
@@ -228,12 +239,21 @@ function parseSetCookie(line: string): Cookie | null {
   return c;
 }
 
-// A `Domain`, `Path` or extra attribute: no `;` and no control characters.
+// A cookie value in `s[from..to)` (RFC 6265 `cookie-value`): cookie-octets, or cookie-octets
+// between double quotes.
+function isValueAt(s: string, from: i64, to: i64): bool {
+  if (to - from >= 2 && s.charCodeAt(from) == 0x22 && s.charCodeAt(to - 1) == 0x22) {
+    return allOf(s, from + 1, to - 1, COOKIE_OCTET);
+  }
+  return allOf(s, from, to, COOKIE_OCTET);
+}
+
+// A `Domain`, `Path` or extra attribute (RFC 6265 `av-octet`): printable ASCII but `;`.
 function checkAttribute(what: string, s: string) {
   for (let i: i64 = 0; i < (s.length as i64); i++) {
     const c = s.charCodeAt(i);
-    if (c < 0x20 || c == 0x7f || c == 0x3b) {
-      throw new TypeError(`Invalid cookie ${what}: "${s}"`);
+    if (c < 0x20 || c > 0x7e || c == 0x3b) {
+      throw new TypeError(`Invalid cookie ${what}: ${JSON.stringify(s)}`);
     }
   }
 }

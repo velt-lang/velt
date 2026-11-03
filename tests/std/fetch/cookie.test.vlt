@@ -1,6 +1,7 @@
 // velt/net/http's cookies (#2076): `getCookies` reads a `Cookie` header, `setCookie` and
 // `deleteCookie` write `Set-Cookie`, `getSetCookies` reads them back. Expected values follow the
-// `cookie` npm package and Deno's std `http/cookie` on the same inputs.
+// `cookie` npm package (1.x) and Deno's std `http/cookie` on the same inputs, except where
+// `setCookie` refuses what they pass through (documented on it).
 import { Cookie, deleteCookie, getCookies, getSetCookies, setCookie } from "velt/net/http";
 import { describe, expect, it } from "velt/test";
 
@@ -24,9 +25,19 @@ function throws(c: Cookie): string {
 }
 
 describe("getCookies", () => {
-  it("parses name=value pairs, trimming spaces and quotes", () => {
+  it("parses name=value pairs, trimming spaces and keeping a value's quotes", () => {
     const got = getCookies(cookieHeader("a=1; b = two ;c=\"quoted\"; d=x=y"));
-    expect(JSON.stringify(got)).toBe('{"a":"1","b":"two","c":"quoted","d":"x=y"}');
+    expect(JSON.stringify(got)).toBe('{"a":"1","b":"two","c":"\\"quoted\\"","d":"x=y"}');
+  });
+
+  it("keeps cookies named after Object.prototype's members", () => {
+    const got = getCookies(
+      cookieHeader("__proto__=x; constructor=y; toString=z; hasOwnProperty=w; a=1"),
+    );
+    expect(Object.keys(got).length).toBe(5);
+    expect(`${got["constructor"]} ${got["toString"]} ${got["hasOwnProperty"]} ${got["a"]}`).toBe(
+      "y z w 1",
+    );
   });
 
   it("keeps a repeated name's first value and skips pairs that don't parse", () => {
@@ -85,6 +96,35 @@ describe("setCookie", () => {
     ).toBe(
       "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,no error",
     );
+  });
+
+  it("refuses attributes browsers can't parse", () => {
+    expect(
+      [
+        throws({ name: "a", value: "1", expires: NaN }),
+        throws({ name: "a", value: "1", expires: new Date("garbage") }),
+        throws({ name: "a", value: "1", maxAge: 1e21 }),
+        throws({ name: "a", value: "1", domain: "x\u2028y" }),
+        throws({ name: "a", value: "1", domain: "-x.com" }),
+        throws({ name: "a", value: "1", domain: "x.com." }),
+        throws({ name: "a", value: "1", path: "/\u00e9" }),
+        throws({ name: "a", value: "1", unparsed: ["X=\u010a"] }),
+        throws({ name: "a", value: "\"quoted\"" }),
+      ].join(","),
+    ).toBe(
+      "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,no error",
+    );
+  });
+
+  it("skips empty extra attributes and quotes the input in messages", () => {
+    expect(setOne({ name: "a", value: "1", unparsed: ["", "X=1"] })).toBe("a=1; X=1");
+    let message = "";
+    try {
+      setOne({ name: "a", value: "1", domain: "x\r\nX-Evil: 1" });
+    } catch (e) {
+      message = (e as Error).message;
+    }
+    expect(message.includes("\r\n")).toBe(false);
   });
 });
 
