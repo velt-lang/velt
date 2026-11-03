@@ -1,0 +1,631 @@
+# Design: native code through `declare c` and `unsafe`
+
+Status: **accepted** (design review on #2187, round 2, 2026-11-03), revision 6: rebuilt around
+the owner's decisions of 2026-11-03 (`unsafe` blocks and functions; declarations checked against
+C headers; one way to call native code, Rust included; `declare system` folded in;
+`NativeHandle`; `Completion<R>`; Velt's reactor in `velt.h` for Rust crates). Area 12 of #1866; also what GUI bindings, llama.cpp, BLAS and
+the database drivers need.
+
+**One way to call native code.** `declare c` inside `unsafe` is the only mechanism, whatever
+language the library is written in: the platform's C library, bundled C, C++ or Zig sources, a
+Rust crate, or a system library. The parts:
+
+1. **`declare c("lib")` declarations**, checked against the library's C headers per target. The
+   manifest names each library's source per target. libc is the library `c`; `declare system`
+   goes.
+2. **`unsafe { … }` blocks and `unsafe function`s** mark every call into native code and every
+   raw operation, each with a `// SAFETY:` comment. Only packages the root lists in
+   `allowNative` (and std) may contain them, and raw pointers never reach user code.
+3. **`NativeHandle<T>`**: a native object's pointer with its release, counting calls in flight,
+   so release can't run under a call (.NET's `SafeHandle`).
+4. **`PinnedBuffer<T>`**: memory lent to native code past one call, with leases the ownership
+   checker treats like borrows.
+5. **`NativeCallback<F>`**: Velt functions handed to C, which run through the executor.
+6. **Async**: `declare c async` runs a blocking call on the library's pool; `Completion<R>` lets
+   native code complete a promise later from any thread, without holding one.
+7. **Per-platform backends** as conditional imports: Accelerate, OpenBLAS or MKL behind one
+   package.
+
+## Problem
+
+Velt reaches native code today in two ways, neither general:
+
+- **A package's Rust crate** (`native` in `package.vlt`, native_abi.md), with a Velt-specific
+  ABI: `VeltStr`/`VeltArray`/`IoResult` out-pointers, handle tables, `velt_p__` exports and
+  their signature records, a function table into the runtime. The glue is code on the hot path
+  that the compiler can't see: `packages/sqlite` ships rows and parameters through cursors,
+  sinks, an `Arc`, a `Mutex` and (in places) JSON, and `bench/db/RESULTS.md` measured
+  0.29–0.91× of rusqlite, which makes the same C calls without the layers. Every author needs
+  cargo, and what crosses is what the ABI knows: no callbacks, no pointers C keeps, no structs
+  by value.
+- **`declare system function`** (#1716) binds libc through a signature table inside the
+  compiler: safe, but closed to every other library.
+
+A third-party C library has no table in the compiler: the declaration itself is the statement
+of the C signature, and a wrong one corrupts memory. So the design has three parts: **what
+crosses** (types and lowering), **checking the declaration against the library's headers**, and
+**marking and confining the code that relies on it** (`unsafe`, `allowNative`).
+
+## Example: SQLite
+
+```ts planned
+import { CFunction, CString, NativeHandle, Out, Ptr, StrBytes, byteLength, readUtf8 } from "velt/ffi";
+
+declare c type sqlite3;
+declare c type sqlite3_stmt;
+type Destructor = (p: Ptr<void>) => void;
+
+declare c("sqlite3") function sqlite3_prepare_v3(db: Ptr<sqlite3>, sql: StrBytes, nByte: i32,
+  flags: u32, stmt: Out<Ptr<sqlite3_stmt> | null>, tail: null): i32;
+declare c("sqlite3") function sqlite3_bind_text(stmt: Ptr<sqlite3_stmt>, i: i32,
+  text: StrBytes, n: i32, destructor: CFunction<Destructor> | null): i32;
+declare c("sqlite3") function sqlite3_step(stmt: Ptr<sqlite3_stmt>): i32;
+declare c("sqlite3") function sqlite3_column_text(stmt: Ptr<sqlite3_stmt>, col: i32): Ptr<u8> | null;
+declare c("sqlite3") function sqlite3_column_bytes(stmt: Ptr<sqlite3_stmt>, col: i32): i32;
+declare c("sqlite3") function sqlite3_finalize(stmt: Ptr<sqlite3_stmt>): i32;
+declare c const SQLITE_TRANSIENT: CFunction<Destructor>;   // the value comes from sqlite3.h
+
+export class Statement {
+  #stmt: NativeHandle<sqlite3_stmt>;
+
+  // ...made from sqlite3_prepare_v3's Out:
+  //   new NativeHandle(stmt, p => unsafe { sqlite3_finalize(p) })
+
+  bindText(i: i32, s: string): void {
+    // SAFETY: SQLITE_TRANSIENT makes SQLite copy the text before the call returns.
+    check(unsafe { sqlite3_bind_text(this.#stmt, i, s, byteLength(s) as i32, SQLITE_TRANSIENT) });
+  }
+
+  text(col: i32): string {
+    // SAFETY: the column's text is valid until the next step, reset or finalize of the
+    // statement, and is copied before this method returns.
+    return unsafe {
+      const p = sqlite3_column_text(this.#stmt, col);
+      p === null ? "" : readUtf8(p, sqlite3_column_bytes(this.#stmt, col) as usize)
+    };
+  }
+}
+```
+
+Each call is one direct C call: no export of a Rust crate, no handle table, no lock, and the
+string goes without a copy. The `unsafe` blocks are the package's whole trusted base, each with
+its reason; the exported class is the safe API.
+
+## Declarations
+
+`declare c("<library>") function name(params): R;` is a declaration kind of its own in the AST,
+HIR and VIR (like `declare host("m")`, `declare intrinsic` and `declare generated("m")`). The
+keyword is `c` because it names the ABI, which every language here speaks.
+
+- `<library>` is a **logical name** that the manifest maps to a library per target (below);
+  `"c"` is the platform's C library. The compiler never names a platform or a library.
+- The link symbol is `name`; a `$suffix` is ignored, so one module can declare one symbol with
+  several signatures (`objc_msgSend$rect`, `objc_msgSend$void`).
+- **`declare c type sqlite3;`** declares a type that exists only behind pointers: `Ptr<sqlite3>`
+  and `Ptr<sqlite3_stmt>` are different types, and a misspelled name is an error with a
+  did-you-mean. `Ptr<u8>`, `Ptr<f32>` point at scalars; `Ptr<void>` is `void *`.
+- **`declare c struct S { … }`**: a C struct (below).
+- **`declare c const NAME: T;`**: a constant whose value comes from the headers per target (a
+  macro or an enumerator, evaluated by clang), never written by the binding: a wrong flag is as
+  unsafe as a wrong signature (`SQLITE_STATIC` for `SQLITE_TRANSIENT` is a use-after-free).
+- `declare c("m") async function` returns a `Promise`: a blocking call on the library's pool, or
+  a non-blocking one when it has a `Completion<R>` parameter (see "Async").
+- Variadic functions are declared with their fixed parameters and `...args: CVarArgs` (scalars
+  and `Ptr`s, C's default promotions, the target's variadic convention: Apple arm64 passes them
+  on the stack, unlike AAPCS64).
+- A declaration is allowed on every target; a reachable call where the manifest maps no library
+  for the target is an error naming the target and the caller, so portable code chooses per
+  platform with conditional imports.
+
+Declaring is safe; calling needs `unsafe`.
+
+## `unsafe` blocks and functions
+
+The trusted code is marked where a reviewer finds it, as in Rust and C#. A `.vlt` file is Velt,
+which already has much that tsc doesn't accept (`declare c`, `f16`, operator methods, `spawn`,
+`shared`): the goal is the best language that looks like TypeScript, with no workarounds.
+
+```ts planned
+// SAFETY: `p` comes from sqlite3_prepare_v3 and the handle runs this once.
+const release = (p: Ptr<sqlite3_stmt>) => unsafe { sqlite3_finalize(p) };
+
+// SAFETY: callers pass a buffer of at least `n` floats.
+unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
+```
+
+- **Syntax.** `unsafe { … }` is a block statement, read like `try { … }`. In expression position
+  it evaluates to its last expression (`const rc = unsafe { sqlite3_step(s) };`). `unsafe` is a
+  modifier on functions, methods and arrow functions, read like `async`, and an `unsafe`
+  function's body is an unsafe block. It is a contextual keyword: `unsafe` stays usable as an
+  identifier where neither `{` nor a function follows it.
+- **What requires `unsafe`** (an error elsewhere, naming the operation, with `unsafe { … }` as
+  the fix): calling a `declare c` function; the raw `velt/ffi` operations (`Ptr` reads and writes
+  at an offset, `readUtf8`/`readCString`/`readBytes` from a `Ptr`, reading a `CFunction` from C
+  memory and calling it, `NativeCallback`'s `.fn`/`.context`, `PinnedBuffer`'s `lend()` and
+  `lendOwned()`, `NativeHandle`'s `use()`); calling an `unsafe function`.
+- **What stays safe**: making a `CString`, `Out`, `PinnedBuffer` (and its `.view`), a
+  `NativeCallback` or a `NativeHandle`'s `dispose()`; passing a `string` as `StrBytes`;
+  everything type-checked.
+- **`// SAFETY:` comments.** Each unsafe block and unsafe function needs one, directly before
+  it, stating why it is sound. Missing, it is a lint error in packages and std (Clippy's
+  `undocumented_unsafe_blocks`). This is what makes the audit possible.
+- **Where.** `unsafe` is allowed only in packages with `native.c` that the root lists in
+  `allowNative`, and in std (the root of trust). Elsewhere it is an error (`unsafe code needs a
+  native package`), so user programs never contain it.
+- **Listing.** `velt check` lists each package's unsafe blocks and functions (file and line)
+  next to its `allowNative` entry, so an audit reads exactly those places.
+- **Tooling**: `--ts-compat` reports `unsafe` as Velt-only; the editor highlights it; `velt fmt`
+  formats it. It is a language addition: an entry in the reference and a docs-sync issue.
+
+## What crosses
+
+| Velt | C | Notes |
+|---|---|---|
+| `bool`, `i8`…`i64`, `u8`…`u64`, `isize`, `usize`, `f32`, `f64` | `_Bool`, `int8_t`…, `ssize_t`, `size_t`, `float`, `double` | by value |
+| `Ptr<T>`, `Ptr<T> \| null` | `T *` | an address; `null` is `NULL` (same word) |
+| `NativeHandle<T>` (argument for a `Ptr<T>` parameter) | `T *` | holds an in-flight reference for the call (below) |
+| `null` (as a parameter type) | any pointer | always `NULL` |
+| `readonly u8[]`, `u8[]`, typed arrays, views (#1718) | `const T *` / `T *` | the first element's address, borrowed for the call; the binding passes the length |
+| `StrBytes` | `const char *` | a `string`'s UTF-8 bytes, borrowed, no NUL; the binding passes `byteLength(s)` |
+| `CString` | `const char *` | an owned NUL-terminated copy (`new CString(s)`, one allocation, reusable) |
+| `CStr` (callback parameters only) | `const char *` | copied into a `string` by the trampoline |
+| `Out<T>` | `T *` | a stack slot the call writes, copied back |
+| a `declare c struct` | by value, or `S *` as `Out<S>` / `Ref<S>` | the target's C layout and calling convention |
+| `CFunction<F>` | function pointer | a `NativeCallback`'s `.fn`, or one read from C memory |
+| `CallbackContext` | `void *` | a `NativeCallback`'s `.context` |
+| `Lease<T>` | `T *` | a `PinnedBuffer`'s lease |
+| `Completion<R>` | `VeltCompletion *` | completes the async call's promise (below) |
+| `void` | `void` | |
+
+- **No hidden conversions**: a `string` crosses only as a `StrBytes` parameter (the declaration
+  says so) or through a `CString` the binding made; no call allocates on the common path.
+- **Strings to C without a copy.** Velt strings are stored as UTF-8 (canonical WTF-8, rt_abi.md
+  "Strings"), so a `StrBytes` argument is the string's own bytes. A string whose header says it
+  may hold a lone surrogate is copied first with U+FFFD for each (the rule of every other
+  output); U+FFFD is 3 bytes like the surrogate, so `byteLength(s)` stays exact. Well-formed
+  strings never copy. This is what `sqlite3_bind_text` takes and what rusqlite passes from a
+  `&str`.
+- **Empty arrays** cross as a non-null address aligned for the element type; only `null` is
+  `NULL`.
+- **Strings from C** are read explicitly (and unsafely): `readUtf8(p, len)`, `readCString(p)`,
+  `readBytes(p, len, into)` copy; invalid UTF-8 becomes U+FFFD. C keeps ownership of `p`.
+
+### Errors: `errno` and `GetLastError`
+
+Lowering captures `errno` (`*__error()` / `*__errno_location()`) into the function's hidden error
+local right after every `declare c` call, and `GetLastError()` the same way on Windows; no
+runtime code between the call and the check can overwrite it. `lastOsError()` reads the local,
+so its adjacency is a compiler guarantee. An async call captures the error on its thread and
+carries it back with the result. One load per call.
+
+### C structs
+
+```ts planned
+declare c struct CGPoint { x: f64; y: f64; }
+declare c struct CGRect { origin: CGPoint; size: CGSize; }
+declare c("objc") function objc_msgSend$frame(obj: Ptr<NSView>, sel: Ptr<SEL>): CGRect;
+```
+
+Fields in C order with C-crossable types (scalars, `Ptr`, other C structs; fixed arrays as tuples
+until `T[N]`, #1866 area 4); in Velt a plain value struct, never counted. Passing and returning
+by value follows the target's convention (SysV x86-64 INTEGER/SSE eightbytes, AAPCS64
+homogeneous float aggregates, Win64 by reference over 8 bytes, `sret`, Apple arm64 variadics).
+**One table-driven classifier**, a port of rustc's `rustc_target::abi::call`, serves both
+backends, and a **differential ABI test** (abi-cafe style: generated C functions over many
+struct shapes, compiled with the system C compiler, called from both backends, every field
+compared, every CI target) is step 4's entry criterion.
+
+## Checking declarations against C headers
+
+Wherever headers exist, every declaration is checked against them, so a wrong `int` for
+`size_t` or a wrong struct is a build error, not memory corruption.
+
+```ts planned
+native: { c: {
+  sqlite3: { sources: ["native/sqlite3.c"], headers: ["native/sqlite3.h"] },
+  cblas: { system: { darwin: "framework:Accelerate", linux: "openblas" },
+           headers: { darwin: ["Accelerate/Accelerate.h"], linux: ["cblas.h"] } },
+} }
+```
+
+- **When**: `velt native build` (every publish), CI, and a package author's local build parse
+  the headers with the pinned `zig cc -Xclang -ast-dump=json`, **once per target**, since types
+  differ by target (`long` is 32 bits on Win64). System headers come from zig's libc headers or
+  a pinned SDK.
+- **Functions** must exist in the headers. Parameters and results compare by the C type each
+  Velt type maps to, after typedefs resolve:
+
+  | Velt | Matches |
+  |---|---|
+  | `i8`…`u64`, `f32`, `f64` | the C type of that width and signedness; a C enum by its underlying type |
+  | `bool` | `_Bool` / `bool` only |
+  | `isize`, `usize` | `ssize_t`, `ptrdiff_t`, `intptr_t` / `size_t`, `uintptr_t`, which require them (never `i64`/`u64`), so a declaration right on one target is right on all |
+  | `Ptr<T>`, `Out<T>`, `Lease<T>` | `T *`, `T` the C type of that name |
+  | read-only arrays, `StrBytes`, `CString`, read-only leases | `const T *` (a non-const `T *` is accepted: many APIs omit `const`) |
+  | written arrays, `Out<T>`, mutable leases | non-const `T *` only |
+  | `CFunction<F>` | a function pointer matching `F`, compared recursively |
+  | `CallbackContext`, `Ptr<void>`, `null` | `void *` (`null`: any pointer) |
+
+  Variadics match exactly.
+- **Structs**: names, order, types, size, alignment and offsets per target. **Constants**: their
+  values, recorded per target.
+- **A mismatch is a build error** naming the declaration and the header line:
+  `\`sqlite3_bind_text\` parameter 4 is \`int\` in sqlite3.h:4581; \`n: i64\` declares
+  \`int64_t\`: use \`i32\``.
+- **Rust crates** are checked against a header the build generates from the crate's
+  `extern "C"` exports (cbindgen-style, or from the SDK's derive); Zig against `zig build`'s
+  emitted header. libc is checked against each CI target's libc headers in Velt's CI (std's
+  declarations), replacing the compiler's table.
+- **Installs check what was checked**: `native.json` records a digest of the checked
+  declarations per target, and the compiler compares it with what it compiles. Users never run
+  clang.
+- **No headers** (a binary-only SDK): `unchecked: true` on the library's entry, shown in
+  `allowNative`'s error and `velt check`.
+
+What stays trusted is what no header expresses, and it lives in the `unsafe` blocks with their
+stated reasons: lease lifetimes, what a returned pointer points to and how long it lives, raw
+reads.
+
+## Native objects: `NativeHandle<T>`
+
+A class that holds a bare `Ptr` and frees it in `[Symbol.dispose]()` lets `dispose()` run while
+an async call on that pointer is still on a pool thread: a use-after-free in the binding, the
+hazard leases settle for buffers. `NativeHandle<T>` (velt/ffi, after .NET's `SafeHandle`) holds
+the pointer and its release:
+
+- `new NativeHandle(ptr, release)` takes ownership; `release` runs **exactly once**.
+- **It counts calls in flight** (an atomic count). Passing a handle where a `declare c` parameter
+  takes `Ptr<T>` takes a reference for the call: a synchronous call holds it for its duration,
+  an async call **moves it into the call** and the pool thread (or the completion) releases it
+  when C is done, whatever happens to the awaiting task, as for leases. `handle.use(p => …)`
+  (unsafe) lends the raw pointer to a synchronous closure under a reference, for raw reads.
+- `dispose()` marks the handle closed; the release runs when the last in-flight call ends.
+- Using a closed handle throws `HandleClosed`, a catchable error, never a use-after-free.
+
+The bindings of steps 3 and 6 (SQLite, llama.cpp) hold their handles in it, not in bare `Ptr`
+fields.
+
+## Callbacks: `NativeCallback<F>`
+
+```ts planned
+type LogFn = (level: i32, text: CStr, ctx: CallbackContext) => void;
+declare c("llama") function llama_log_set(cb: CFunction<LogFn> | null, ctx: CallbackContext | null): void;
+
+export function onLog(handler: (level: i32, text: string) => void): Disposable {
+  const cb = new NativeCallback<LogFn>((level, text) => handler(level, text),
+    { queue: { capacity: 256, whenFull: "drop" } });
+  // SAFETY: llama keeps the pointers until llama_log_set is called again; `cb` outlives that
+  // because the returned disposable unregisters it first.
+  unsafe { llama_log_set(cb.fn, cb.context); }
+  return cb;
+}
+```
+
+`new NativeCallback<F>(closure, options?)` owns a closure and gives `.fn`, a trampoline the
+compiler emits for `F`, and `.context`, the user data C passes back; `F` names that parameter
+with the type `CallbackContext`, and the closure sees the others. A call after dispose stops the
+program with a message (the context is a key with a generation). APIs without user data
+(`atexit`, signal handlers) use `NativeCallback.static(f)` with a module-level function.
+
+- **Captures follow `spawn`'s transfer rules** (moved in, or `shared`), so a callback can never
+  reach what the caller lent to the C call it runs inside. Rules keyed to a call's parameters
+  can't be complete: `gtk_main` takes no function but runs every registered handler. Results
+  are collected through a `Channel` (a handle copies share), a read-only table goes in as
+  `shared`, and hot paths step and read directly instead of collecting through callbacks.
+- **Through the executor, keyed by task.** A call into C records "task T is inside a C call on
+  this thread" (two stores); the trampoline reads it (one load). **At once** when T is the
+  callback's owner: a nested turn of the parked task (`qsort`, `sqlite3_exec`, a GTK signal
+  under `gtk_main`), and the result goes back to C. **Queued** otherwise (C's own threads, or
+  after the call returned): the arguments go into the callback's ring and the owner runs the
+  closure when next polled, wherever it runs. Only an `F` returning `void` may be queued (else
+  the program stops with a message); arguments are scalars, `Ptr`s and copied `CStr`s. A live
+  callback holds a keep-alive reference.
+- **Bounded rings.** Each callback gets a fixed ring at construction; the trampoline uses
+  atomics only (no allocation, no lock: real-time audio threads can call it). Options:
+  `capacity` (default 1024), `bytes` for copied strings (64 KiB), `whenFull`: `"drop"` (default,
+  counted in `cb.dropped`, with a one-time stderr warning on the first drop), `"overwrite"` or
+  `"latest"`. Completions are async calls or `Completion<R>`, never droppable messages.
+- A result-returning callback called on its owner's thread with no C call active stops the
+  program, until the main-thread loop (step 9) may relax it.
+- Errors and panics never unwind into C: an error escaping a callback is a panic, which aborts
+  in a trampoline. Hot reload goes through a slot per trampoline, so stored pointers stay valid.
+
+## Buffers C keeps: `PinnedBuffer<T>` and leases
+
+```ts planned
+declare c("llama") async function llama_decode_into(
+  ctx: Ptr<llama_context>, batch: Ptr<llama_batch>, logits: Lease<f32>): i32;
+
+const logits = new PinnedBuffer<f32>(vocab);
+// SAFETY: llama writes `logits` only during this call; the lease is released when it returns.
+await unsafe { llama_decode_into(this.#ctx, batch, logits.lend()) };
+const top = argmax(logits.view);
+```
+
+A pinned buffer is a block outside the counted heap with its own atomic count; it never moves or
+grows. Elements are numeric or C structs. Velt reads and writes it through `.view`; native code
+gets it only through a lease:
+
+| Lease | Checked | Enforced by |
+|---|---|---|
+| for a synchronous call (`lend()`, `lendReadonly()`) | compile time | the ownership checker: a mutable or shared borrow of the buffer |
+| moved into an async call | run time, only after a cancellation | the lease's count keeps the memory; `.view` stops the program while the block is lent; `await buf.returned()` waits |
+| owned (`lendOwned(buf)`), e.g. in a field | compile time | the buffer moves into the lease; `end()` gives it back |
+
+An async lease is released by the pool thread (or the completion) when C is done, whatever
+happened to the task; a test cancels during a long call and checks under the debug allocator
+that the buffer outlives it. Ending a synchronous or owned lease no earlier than C's last use is
+the statement its `unsafe` block's `SAFETY` comment makes.
+
+## Async
+
+Two forms, both `declare c async`, both cancellation-safe by one rule: **what C keeps is moved
+into the call** (`CString`, leases, handles' references, the completion), and released when C
+is done, whatever happens to the awaiting task. Arguments are scalars, `Ptr`s and moved values;
+no borrowed array or `StrBytes` (`StrBytes is borrowed for a synchronous call; an async call
+takes a CString`).
+
+**Blocking calls on the library's pool** (`llama_decode`, hundreds of milliseconds). Each library
+has its own pool, not the runtime's blocking pool, so file I/O never starves: `threads` in the
+package's manifest (default the core count), overridden by the root (`nativeThreads: { llama: 8
+}`) and at run time (`VELT_NATIVE_THREADS_LLAMA`). Calls past the limit wait in order; no thread
+is spawned past it; a cancelled waiting call leaves the queue and releases what it holds.
+
+**Non-blocking calls with `Completion<R>`** (network drivers):
+
+```ts planned
+declare c("pg") async function pg_query(conn: Ptr<pg_conn>, sql: CString, done: Completion<PgRows>): void;
+// Velt sees it as: (conn, sql) => Promise<PgRows>
+```
+
+The C function takes the completion and returns at once; native code completes it later, from
+any thread, through the small public `velt.h`:
+
+```c
+void velt_complete(VeltCompletion *done, const void *result);  // R, size and layout from the declaration
+void velt_fail(VeltCompletion *done, const char *code, const uint8_t *msg, size_t len);  // IoError
+bool velt_cancelled(const VeltCompletion *done);               // the awaiting task went away
+void *velt_alloc(size_t size, size_t align);                   // for owned results (u8[], string)
+```
+
+`R` is a C-crossable value, or an owned `u8[]`/`string` whose buffer native code made with
+`velt_alloc` (adopted without a copy; a `string` is UTF-8-checked). Each completion is completed
+or failed exactly once (twice is a fatal error, never a use of freed memory); a cancelled task's
+late completion is dropped, freeing an owned result; `velt_cancelled` lets native code stop
+early. It is today's `VeltFut`/`Completer` made a public C API.
+
+## Write effects (#854, #2180)
+
+A `declare c` function's write-effect summary comes from its declaration: scalars, read-only
+arrays, `StrBytes`, `CString`, read-only leases and handles write nothing (a handle's object is
+native memory); written arrays, `Out`, `Ref` and mutable leases write their argument. Callbacks
+add nothing (their captures are their own), so a C call is never an unknown callee.
+
+## The trust boundary
+
+- **`allowNative`.** Installing or building with a package that has native code is an error
+  until the root's `package.vlt` lists it (`allowNative: ["sqlite", "llama"]`), recorded in
+  `velt.lock.json`. The error names the dependency chain and prints the exact line to add. It is
+  an error from the start (owner: no outside users yet); the PR that adds it updates the
+  templates, examples and playground so `main` stays green.
+- **`unsafe`** only in `allowNative` packages and std (above).
+- **Raw types and unsafe functions stay among native packages.** `Ptr`, `CFunction`,
+  `CallbackContext`, `Lease`, `declare c type`s and `unsafe function`s can be imported only by
+  `allowNative` packages: a binding may build on a lower-level binding, and user code never sees
+  them. Exported classes hold them privately (`#stmt: NativeHandle<sqlite3_stmt>`).
+- **`velt check`** lists, per package: its libraries (and `unchecked` ones), and its unsafe blocks
+  and functions by file and line (#1773).
+
+## Where libraries come from
+
+Every library is a logical name in `native.c`, with one source per target:
+
+```ts planned
+native: {
+  c: {
+    sqlite3: { sources: ["native/sqlite3.c"], headers: ["native/sqlite3.h"],
+               defines: { SQLITE_THREADSAFE: "2" } },
+    pgwire: { crate: "native/" },                                  // Rust, built with cargo
+    cblas: { system: { darwin: "framework:Accelerate", linux: "openblas", win32: "mkl_rt" } },
+  },
+  targets: [ /* as today */ ],
+}
+```
+
+- **`sources`** (C, C++, Zig): built by `velt native build` with the pinned `zig cc`/`zig c++`,
+  which cross-compiles every target from one machine, reproducibly (fixed flags, paths and
+  timestamps), so the registry or any CI can rebuild a bundle and check its checksum. Apple
+  frameworks are the exception: linking them needs the macOS SDK, which can't be redistributed,
+  so their macOS bundles are built on a macOS host or with an SDK the publisher supplies
+  (`--macos-sdk <path>`).
+- **`crate`** (Rust): built with cargo per target; exports `#[no_mangle] pub extern "C"`
+  functions, declared with `declare c` like any library.
+- **`system`**: the platform's library (`-lsqlite3`), a framework, or an import library, keyed by
+  the build conditions packages already use for conditional imports.
+- All of them get the same prebuilt bundles per target, checksums, cache, header check,
+  `allowNative` and listing. Users never need a C compiler or cargo. Release builds link
+  statically, debug builds the shared library, the dev JIT `dlopen`s it.
+- **`c`, the C library**, is predefined: libc, libSystem, or the UCRT on Windows; WASI's libc on
+  `wasm32-wasip1` where system functions exist today.
+
+### Rust is a source language, not an ABI
+
+`velt_native` (the Rust SDK) shrinks to a convenience crate: `#[repr(C)]` types matching Velt's C
+types (`StrBytes`, slices, `Completion`), a derive that writes the C signatures and the header the
+check reads, and safe wrappers of `velt.h` (`velt_complete`). The Velt-specific native ABI
+(`VeltStr`/`VeltArray`/`IoResult` out-pointers, handle tables, the `velt_p__` prefix and
+signature records, the runtime function table) is retired; native_abi.md is replaced by this
+design's contract.
+
+### `declare system` becomes `declare c("c")`
+
+libc is a library like any other: std's system functions become `declare c("c")` declarations,
+checked against each CI target's libc headers instead of the compiler's table, which goes
+(`velt_vir/src/system/`). The guards the table enforced (`fcntl`'s commands, `CreateFileW` without
+`FILE_FLAG_OVERLAPPED`, paths with exactly one trailing 0, a buffer's length taken from the
+array) move into std's Velt wrappers around the `unsafe` calls, where their `SAFETY` comments
+state them; `velt/fs`'s public API is unchanged. std may use `unsafe` without `allowNative`.
+
+## Per-platform backends
+
+- **Same C API, different library**: one logical library mapped per target (CBLAS on
+  Accelerate, OpenBLAS or MKL), one set of declarations.
+- **Different APIs**: conditional imports. Each variant declares its own library's functions and
+  exports the same names and signatures (the variant check verifies it):
+  `"#backend": { darwin: "./src/backend/accelerate.vlt", linux: "./src/backend/openblas.vlt",
+  win32: "./src/backend/mkl.vlt" }`. Only the chosen variant's libraries link.
+- Choosing between libraries on one platform needs a user-set condition (Node's `--conditions`),
+  a separate change to the build CLI and lock file.
+
+## C++
+
+C++ libraries are reached through their C API (llama.cpp, ONNX Runtime, LLVM-C, wgpu-native all
+have one), with the C++ standard library linked per target. A C++-only library gets a small
+`extern "C"` wrapper in the package's sources that catches every exception; one escaping into
+Velt is undefined behavior. Direct C++ interop (mangled names, classes, templates) is a non-goal.
+
+## Prior art: .NET
+
+C# arrived at nearly the same shape: `unsafe` blocks and methods allowed per project
+(`AllowUnsafeBlocks`), `[LibraryImport]` declarations, per-platform library resolution,
+`Memory<T>.Pin()` for buffers past a call, `SetLastError`, unmanaged function pointers and
+`SafeHandle`, which this design takes as `NativeHandle`. Where .NET is weaker, this design is
+stricter: no run-time marshalling layer, borrows checked at compile time instead of `fixed`
+scopes trusted by convention, and the consumer's explicit `allowNative`.
+
+## How it compiles
+
+- **syntax/sema**: `unsafe` blocks, functions and their checks; the `SAFETY` lint; the crossing
+  types; the trust boundary; `NativeCallback` captures under the transfer rules; effect
+  summaries; leases as borrows (synchronous) or moves (async).
+- **VIR**: a `CCall` to a `CFn` (symbol, C signature, library); lowering takes addresses of
+  borrowed arrays and strings, makes `Out`/struct temporaries, takes handle references, records
+  the task, captures `errno`, and emits trampolines; `declare c async` lowers to a pool call or a
+  completion.
+- **codegen**: a direct call with the target's C convention in both backends, aggregates by the
+  shared classifier.
+- **link**: the libraries' archives or shared libraries and the system libraries.
+- **WebAssembly**: no libraries but `c` under WASI in the first steps.
+
+## Cost
+
+A `declare c` call costs a C-to-C call plus two thread-local stores (the task record) and one
+load (`errno`). `StrBytes`, borrowed arrays and synchronous leases cost nothing at run time; a
+handle argument one atomic increment and decrement; `Out<T>` a stack slot. A queued callback a
+few atomics and a copy into its ring.
+
+Gates: `packages/sqlite` on `declare c` reaches rusqlite on every `bench/db` SQLite workload and
+beats better-sqlite3 (per workload, instructions and wall clock, arm64 and x86-64); Postgres and
+Redis within ±3% of today or faster after their move (and the Velt drivers of the follow-up
+track matching or beating them); std's file I/O unchanged after the libc
+fold; every other benchmark within 3%.
+
+## Diagnostics
+
+- `calling \`sqlite3_step\` is unsafe: wrap it in \`unsafe { … }\` with a \`// SAFETY:\` comment`.
+- `this unsafe block has no \`// SAFETY:\` comment saying why it is sound`.
+- `unsafe code needs a native package: \`unsafe\` is allowed only in packages with \`native.c\``.
+- `package \`llama\` (through \`chat-kit\` → \`llama\`) has native code; add it to \`allowNative\`
+  in package.vlt: allowNative: ["llama"]`.
+- `\`Ptr<sqlite3>\` can't be imported here: raw pointers stay among native packages`.
+- `\`sqlite3_bind_text\` parameter 4 is \`int\` in sqlite3.h:4581; \`n: i64\` declares
+  \`int64_t\`: use \`i32\``.
+- `\`sqlite3_bindtext\` is not declared in sqlite3.h; did you mean \`sqlite3_bind_text\`?`
+- `\`string\` cannot be passed to C here: declare the parameter \`StrBytes\` or pass a
+  \`CString\``; `\`StrBytes\` is borrowed for a synchronous call; an async call takes a
+  \`CString\``.
+- `this native callback captures \`rows\`, which its creator still uses; move it in or make it
+  \`shared\``.
+- `\`logits\` is lent to native code until \`lease\` ends (line 12); it can't be read here`.
+- `the statement handle was closed` (`HandleClosed`, at run time).
+- `\`sqlite3_open_v2\` has no library on \`wasm32-wasip1\``, naming the caller.
+
+## Steps
+
+1. **The language**: `unsafe` blocks and functions, the `SAFETY` lint, the trust boundary and
+   `allowNative` (templates, examples and playground updated); `declare c`, `declare c type`,
+   `declare c const`; scalars, `Ptr`, `null`, arrays and views, `StrBytes`, `CString`, `Out`, raw
+   reads; `errno` capture; system libraries; the header check with the digest and `unchecked`;
+   effect summaries; `velt check`'s listing; LLVM, Cranelift and the dev JIT; the reference entry
+   and its docs-sync issue.
+2. **libc**: std's `declare system` uses become `declare c("c")` with the guards in Velt, checked
+   against each CI target's headers; the compiler's table goes. Gate: file I/O unchanged.
+3. **Bundled sources and SQLite**: `sources` built and cross-built reproducibly with `zig cc`,
+   checked against their headers; `NativeHandle`; `packages/sqlite` moves onto `declare c` and is
+   gated against rusqlite and better-sqlite3; its Rust crate is deleted.
+4. **C structs**, entered by the differential ABI test passing in both backends on every target.
+5. **`NativeCallback`**: task-keyed delivery, bounded rings, transfer-checked captures (the
+   `Channel` idiom documented), `CFunction`.
+6. **Async**: library pools, `PinnedBuffer` and leases, `Completion<R>` and `velt.h`; a llama.cpp
+   package as the worked example (tokens/s against `llama-cli`, thread counts reported).
+7. **Rust through `declare c`**: `crate` libraries with generated headers and the slimmed
+   `velt_native`; Velt's reactor in `velt.h` with the SDK's `AsyncRead`/`AsyncWrite` and spawner;
+   `packages/postgres` and `packages/redis` move to `declare c` and the reactor API (gate: ±3% of
+   today or faster on their `bench/db` rows), with one worked example of an off-the-shelf
+   trait-based crate; then the Velt-specific native ABI, native_abi.md and their tests are
+   removed.
+8. **Per-platform backends**: a BLAS package on Accelerate, OpenBLAS and MKL, benchmarked on
+   `sgemm` against each library called from C.
+9. **The main thread**: a task pinned to the process's main thread, driven by a platform loop in
+   turns as #1737 drives the WebAssembly executor; for GUI bindings. Designed with the GUI work.
+10. **Bindings from headers**: a source generator (`declare generated`) in a package that reads
+    clang's JSON AST and writes declarations that pass the check by construction.
+
+## Rust crates on Velt's scheduler (step 7)
+
+Today's Rust drivers (`packages/postgres`, `packages/redis`) run on Velt's scheduler through the
+native ABI's async I/O part (`velt_native::net::TcpStream`, `velt_native::rt::spawn`: the
+program's own sockets, timers and tasks, polled inline by the awaiting task). With that ABI
+retired, `velt.h` keeps them there (owner, 2026-11-03: option (a); no option may regress
+performance):
+
+- **Velt's reactor as public C.** `velt.h` exposes registering a socket with the current
+  worker's I/O driver (readiness, read and write), wakers, spawning onto the program's scheduler,
+  and timers: the async I/O part of today's Rust-only ABI made public C, the same move as
+  `Completion`.
+- **The Rust SDK** (`velt_native`) wraps it and implements the standard async traits on top:
+  `tokio::io::AsyncRead`/`AsyncWrite` and `futures::io` for Velt sockets, plus a spawner. Crates
+  generic over those traits rather than tied to tokio's runtime then run on Velt's scheduler with
+  no thread hops: `tokio-postgres` through `connect_raw(stream)`, hyper on any `AsyncRead +
+  AsyncWrite`, most protocol crates that take a stream. Wrapping a Rust crate stays the quick way,
+  and stays fast.
+- **Crates hard-wired to `tokio::spawn`/`tokio::net`** fall back to their own runtime and
+  `Completion` (option (b), a fallback only). The guide documents the cost (two thread hops per
+  call) and how to avoid it: the crate's trait-based or `connect_raw`-style API, or a small
+  adapter.
+- **Cancellation**: a socket or task registered through the API belongs to the awaiting task's
+  scope and is closed or cancelled with it, by the rule of `Completion` and leases; late events
+  after cancellation are dropped, never delivered to freed state.
+- **Gate before the old ABI is removed**: the Rust `packages/postgres` and `packages/redis`,
+  ported to `declare c` and the public reactor API, run within ±3% of today on the `bench/db`
+  Postgres and Redis rows; plus one worked example of an off-the-shelf trait-based crate wrapped
+  this way.
+
+## Follow-up track: first-party drivers in Velt
+
+Separate from this design's steps and not a step-7 blocker (owner, 2026-11-03: option (c)):
+Postgres and Redis clients written in plain Velt on `velt/net`, as Node's `pg` and `ioredis` are
+plain JavaScript: protocol clients, not database rewrites. They run in the task with no FFI and
+no thread hops, and prove that `velt/net` and Velt's async carry real database protocols.
+
+- Redis's RESP first (small), then Postgres: startup, SCRAM, the extended query protocol, type
+  codecs, TLS, COPY.
+- **Gate**: match or beat the Rust drivers on the same `bench/db` rows. When a Velt driver
+  passes, the Rust one is retired.
+
+## Decisions
+
+- `declare c("lib")` (it names the ABI); one way to call native code, Rust included; `declare
+  system` folds into `declare c("c")` (owner).
+- `unsafe` blocks and functions with `SAFETY` comments, only in `allowNative` packages and std
+  (owner); `unsafe` functions and raw types importable only by `allowNative` packages.
+- Declarations checked against headers from step 1; `unchecked: true` without headers (owner).
+- `NativeHandle` after .NET's `SafeHandle` (owner).
+- `Completion<R>` and a public `velt.h` for non-blocking async (owner).
+- Rust drivers' I/O: Velt's reactor in `velt.h` with the SDK's async traits (step 7), own runtime
+  only as a documented fallback; first-party drivers in Velt as a separate track (owner).
+- `allowNative` is an install error from the start, no warning release (owner).
+- Re-entrancy: callback captures follow the transfer rules; async leases, handle references and
+  completions move into the call (review).
+- User-set build conditions: a separate change. A result-returning callback with no active C
+  call stops the program until step 9.

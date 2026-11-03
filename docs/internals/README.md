@@ -188,7 +188,11 @@ Decisions and their rationale, including what is still planned:
   `Pick<T, K>`, `keyof T`, `T[K]` and `T & U` in generic code, reduced before monomorphization
   (accepted, issues #350 and #395).
 - [Native code in packages](design/native-packages.md): a `native/` Rust crate in a package, prebuilt
-  per-target binaries and the runtime function table.
+  per-target binaries and the runtime function table (the current ABI; replaced by
+  [`declare c`](design/c-ffi.md) once its step 7 lands).
+- [Native code through `declare c` and `unsafe`](design/c-ffi.md): one way to call C, C++, Zig,
+  Rust and the platform's C library, checked against C headers, with handles, leases, callbacks
+  and completions (accepted, issue #2187; replaces the native-packages ABI).
 - [Data models shared with TypeScript](design/shared-models.md): field-only interfaces as object
   types, `readonly` fields in object types, `Partial`/`Required`/`Readonly`/`Pick`/`Omit`
   (implemented, issue #326).
