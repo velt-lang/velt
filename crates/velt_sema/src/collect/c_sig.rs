@@ -195,21 +195,26 @@ fn is_str_bytes(cx: &Ctx, module: usize, t: &ast::TypeExpr) -> bool {
     let ast::TypeExprKind::Named { path, args } = &t.kind else {
         return false;
     };
-    let (scope, name) = match path.as_slice() {
-        [n] => (module, n),
+    if !args.is_empty() {
+        return false;
+    }
+    let item = match path.as_slice() {
+        [n] => cx.scopes[module].items.get(&n.name).copied(),
+        // `ffi.StrBytes`: what the namespace's module exports under the name.
         [ns, n] => match cx.scopes[module].namespaces.get(&ns.name) {
-            Some(&m) => (m, n),
+            Some(&m) => super::exports::export_of(cx, m, &n.name),
             None => return false,
         },
         _ => return false,
     };
-    if !args.is_empty() || name.name != "StrBytes" {
-        return false;
-    }
-    match cx.scopes[scope].items.get(&name.name) {
+    // By the alias's own declaration, so a renamed import (`StrBytes as SB`) is it too.
+    match item {
         Some(crate::ctx::Item::Alias(a)) => {
-            let m = cx.aliases[*a as usize].module;
-            cx.modules[m].is_std && cx.modules[m].path == STR_BYTES_MODULE
+            let alias = &cx.aliases[a as usize];
+            let m = alias.module;
+            alias.decl.name.name == "StrBytes"
+                && cx.modules[m].is_std
+                && cx.modules[m].path == STR_BYTES_MODULE
         }
         _ => false,
     }

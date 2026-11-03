@@ -6,10 +6,14 @@ import { describe, expect, it } from "velt/test";
 import { Ptr, StrBytes, byteLength } from "velt/ffi";
 import { ptrAddress, ptrAddressOrZero, ptrOf, ptrOrNull } from "velt/ffi/ptr";
 import { strBytesOf } from "velt/ffi/str_bytes";
+import * as ffi from "velt/ffi";
+import { StrBytes as Text } from "velt/ffi";
 
 declare c type FILE;
 
 declare c("c") function memcmp(a: StrBytes, b: StrBytes, n: usize): i32;
+// The same C function through a namespace and a renamed import of `StrBytes`.
+declare c("c") function memcmp$ns(a: ffi.StrBytes, b: Text, n: usize): i32;
 declare c("c") function malloc(n: usize): Ptr<u8> | null;
 declare c("c") function free(p: Ptr<u8> | null): void;
 
@@ -45,5 +49,6 @@ describe("velt/ffi strings", () => {
     expect(byteLength(strBytesOf(lone))).toBe(byteLength(lone));
     // SAFETY: both strings have `byteLength` bytes.
     expect(unsafe { memcmp(lone, "a\u{fffd}b", byteLength(lone)) }).toBe(0);
+    expect(unsafe { memcmp$ns("abc", "abd", 3) } < 0).toBe(true);
   });
 });
