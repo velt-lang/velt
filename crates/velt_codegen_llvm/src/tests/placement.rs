@@ -198,3 +198,44 @@ fn large_components_are_cut() {
     let changes = owner.windows(2).filter(|w| w[0] != w[1]).count();
     assert!(changes <= 4, "{owner:?}");
 }
+
+/// The small members of a cut component (drop, `any` and share glue) go with their first caller:
+/// cut in program order, they landed in other units than their hot callers.
+#[test]
+fn helpers_of_a_cut_component_follow_their_callers() {
+    // `c1` … `c40` (1,000 statements) call each other in a ring through helpers `h1` … `h40`
+    // (10 statements), which come after all of them in the program: `c<i>` calls `h<i>`, which
+    // calls `c<i+1>`.
+    let n = 40;
+    let mut specs = vec![spec("main", 10, &[1])];
+    specs.extend((1..=n).map(|i| spec(&format!("c{i}"), 1_000, &[n + i])));
+    specs.extend((1..=n).map(|i| spec(&format!("h{i}"), 10, &[i % n + 1])));
+    let p = program(&specs);
+    let plan = plan(&p, 4);
+    let owner = owners(&plan, p.funcs.len());
+    for i in 1..=n {
+        assert_eq!(owner[n + i], owner[i], "h{i} is not with c{i}: {owner:?}");
+    }
+    let weights = unit_weights(&p, &plan);
+    let total: usize = weights.iter().sum();
+    for w in &weights {
+        assert!(*w * 4 <= total * 3 / 2, "unbalanced: {weights:?}");
+    }
+}
+
+/// A helper that is a component of its own (drop or `any` glue, which calls nothing back) goes
+/// with its first caller even when the caller's piece of a cut component is full.
+#[test]
+fn leaf_helpers_follow_their_callers_into_full_pieces() {
+    // The ring `c1` … `c40` (1,000 statements), each also calling its leaf `l<i>` (100).
+    let n = 40;
+    let mut specs = vec![spec("main", 10, &[1])];
+    specs.extend((1..=n).map(|i| spec(&format!("c{i}"), 1_000, &[i % n + 1, n + i])));
+    specs.extend((1..=n).map(|i| spec(&format!("l{i}"), 100, &[])));
+    let p = program(&specs);
+    let plan = plan(&p, 4);
+    let owner = owners(&plan, p.funcs.len());
+    for i in 1..=n {
+        assert_eq!(owner[n + i], owner[i], "l{i} is not with c{i}: {owner:?}");
+    }
+}

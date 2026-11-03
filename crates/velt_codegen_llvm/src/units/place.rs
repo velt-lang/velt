@@ -12,6 +12,12 @@
 //! component heavier than that cap is cut into pieces of at most the cap, in program order, each
 //! a group: one component can hold most of a program (sigx's any glue and vtables tie 3,691
 //! functions, half of its IR, into one), and left whole it made one unit four times the others.
+//! Only its larger members are cut that way; each small member (helpers such as drop, `any`
+//! and share glue) goes to the piece of its first caller in the component, and so does a helper
+//! that is a component of its own, even into a full piece. Cut in program order, the helpers of
+//! sigx's large-table landed in other units than their hot callers: LLVM then could not see that
+//! temporaries do not escape, and the scenario ran 2.2% more instructions, 420,000 more
+//! allocations among them.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -25,6 +31,8 @@ use super::graph::{components, successors, Refs};
 /// once `velt_opt` has inlined `Map.upsert` into it) then landed in another unit than the
 /// `Map.lookup` its hot loop calls, 12 % slower.
 const SMALL_COMPONENT_WEIGHT: usize = 2_000;
+/// Members of a cut component of at most this weight go with their first caller in it.
+const HELPER_WEIGHT: usize = 200;
 
 /// The unit of every function (`0..count`; every unit below the largest one defines at least
 /// one function).
@@ -62,6 +70,8 @@ fn groups(
     let mut pos = vec![usize::MAX; succ.len()];
     let mut group = vec![usize::MAX; succ.len()];
     let mut group_weight: Vec<usize> = Vec::new();
+    // Per group: a piece of a cut component (module docs).
+    let mut piece: Vec<bool> = Vec::new();
     let mut parent: Vec<Option<usize>> = Vec::new();
     for c in callers_first(&succ, &comp, &members) {
         let nodes = &members[c];
@@ -73,11 +83,17 @@ fn groups(
             .iter()
             .flat_map(|&v| preds[v].iter().copied())
             .min_by_key(|&p| (pos[p], p));
+        // A helper joins its first referrer's group even when the group is full: pieces of a
+        // cut component are filled up to the cap, and the drop and `any` glue their functions
+        // call (components of their own) must not land in another unit (module docs).
         let joined = first.map(|p| group[p]).filter(|&g| {
-            !exported && weight <= SMALL_COMPONENT_WEIGHT && group_weight[g] + weight <= cap
+            !exported
+                && weight <= SMALL_COMPONENT_WEIGHT
+                && (group_weight[g] + weight <= cap || (weight <= HELPER_WEIGHT && piece[g]))
         });
         let g = joined.unwrap_or_else(|| {
             group_weight.push(0);
+            piece.push(false);
             parent.push(first.map(|p| group[p]));
             group_weight.len() - 1
         });
@@ -89,27 +105,84 @@ fn groups(
             .or(first.map(|p| pos[p]))
             .unwrap_or(usize::MAX);
         // The component's statics go with its first group; its functions fill groups of at most
-        // `cap` in program order (all of them the first group, unless the component is larger).
+        // `cap` in program order (all of them the first group, unless the component is larger,
+        // when its small members follow their callers: module docs).
+        let cut = weight > cap && nodes.iter().any(|&v| v < n && weights[v] > HELPER_WEIGHT);
+        if cut {
+            piece[g] = true;
+        }
+        let helper = |v: usize| cut && weights[v] <= HELPER_WEIGHT;
         let mut current = g;
         for &v in nodes {
-            if v < n {
+            if v >= n {
+                group[v] = g;
+                pos[v] = static_pos;
+            } else if !helper(v) {
                 let w = weights[v];
-                if weight > cap && group_weight[current] > 0 && group_weight[current] + w > cap {
+                if cut && group_weight[current] > 0 && group_weight[current] + w > cap {
                     group_weight.push(0);
+                    piece.push(true);
                     parent.push(first.map(|p| group[p]));
                     current = group_weight.len() - 1;
                 }
                 group_weight[current] += w;
                 group[v] = current;
                 pos[v] = v;
-            } else {
-                group[v] = g;
-                pos[v] = static_pos;
+            }
+        }
+        if cut {
+            place_helpers(nodes, n, &succ, &helper, &mut group, &mut pos);
+            for &v in nodes.iter().filter(|&&v| v < n && helper(v)) {
+                let h = match group[v] {
+                    usize::MAX => g,
+                    h => h,
+                };
+                group[v] = h;
+                pos[v] = v;
+                group_weight[h] += weights[v];
             }
         }
     }
     group.truncate(n);
     (group, parent)
+}
+
+/// The group of each helper of a cut component (`nodes`, functions below `n`): the group of its
+/// first referrer in the component that has one, repeated while helpers place helpers. Helpers no
+/// placed member refers to keep `usize::MAX`.
+fn place_helpers(
+    nodes: &[usize],
+    n: usize,
+    succ: &[Vec<usize>],
+    helper: &impl Fn(usize) -> bool,
+    group: &mut [usize],
+    pos: &mut [usize],
+) {
+    // Per helper: its referrers in the component, in program order.
+    let mut referrers: std::collections::BTreeMap<usize, Vec<usize>> = Default::default();
+    for &r in nodes.iter().filter(|&&r| r < n) {
+        for &w in &succ[r] {
+            if w < n && helper(w) && w != r && nodes.binary_search(&w).is_ok() {
+                referrers.entry(w).or_default().push(r);
+            }
+        }
+    }
+    loop {
+        let mut placed = false;
+        for (&v, rs) in &referrers {
+            if group[v] != usize::MAX {
+                continue;
+            }
+            if let Some(&r) = rs.iter().find(|&&r| group[r] != usize::MAX) {
+                group[v] = group[r];
+                pos[v] = v;
+                placed = true;
+            }
+        }
+        if !placed {
+            return;
+        }
+    }
 }
 
 /// For every node, the nodes of other components that refer to it.
