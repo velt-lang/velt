@@ -77,6 +77,10 @@ pub(crate) fn check(cx: &mut Ctx) {
 }
 
 fn report(cx: &mut Ctx, d: DefId, c: &FreshCheck) {
+    if let Some(e) = crate::collect::c_sig::ptr_conversion(cx, c.from, c.to, c.span) {
+        cx.error(e);
+        return;
+    }
     let name = match cx.adt(d) {
         Some(a) => format!("new {}", a.name),
         None => cx.fn_info(d).name.clone(),

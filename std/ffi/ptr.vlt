@@ -25,7 +25,10 @@ export struct Ptr<T> {
   }
 }
 
-/** The `Ptr` a C function returned (never 0: std only, lowering calls it). */
+/**
+ * The `Ptr` a C function declared to return `Ptr<T>` returned (std only, lowering calls it
+ * after stopping the program on NULL).
+ */
 export function ptrOf<T>(address: usize): Ptr<T> {
   // SAFETY: the C function's declaration says it returns a pointer to a `T`; the header check
   // holds the declaration to the C function's.

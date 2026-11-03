@@ -645,7 +645,10 @@ Step 1 lands in layers, each its own pull request:
    `declare c type`, arrays of numbers and views of bytes as buffers (read at the call, after
    every argument), `StrBytes` (a well-formed string's own bytes; a std hook makes the U+FFFD
    copy otherwise) and `byteLength`. Lowering converts pointers through std hooks
-   (std/ffi/ptr.vlt), which LLVM inlines.
+   (std/ffi/ptr.vlt), which LLVM inlines. A `declare c type` can't be made with `new`; an empty
+   array reaches C as a dangling non-null address; a `Ptr<T>` result (not `| null`) that is NULL
+   stops the program, naming the C function, since C has no non-null pointer type a header
+   could state.
 4. `CString`, `Out<T>` and the raw reads (`readUtf8`, `readCString`, `readBytes`).
 5. The trust boundary: `native.c` libraries per target, `allowNative`, the export rule for raw
    types, the `SAFETY` lint and `velt check`'s listing.

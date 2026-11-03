@@ -228,6 +228,30 @@ fn is_number(cx: &Ctx, ty: TyId) -> bool {
     )
 }
 
+/// The error for using a `Ptr<A>` where a `Ptr<B>` is expected (`expected`; `from` the value's
+/// type), or `None` when `expected` is no `Ptr`: pointers to different C types never convert
+/// implicitly, so the messages of other types' conversions don't fit.
+pub(crate) fn ptr_conversion(
+    cx: &Ctx,
+    from: TyId,
+    expected: TyId,
+    at: velt_common::Span,
+) -> Option<Diagnostic> {
+    if !is_ptr(cx, expected) {
+        return None;
+    }
+    let (f, e) = (cx.display(from), cx.display(expected));
+    let target = match cx.ty.kind(expected) {
+        TyKind::Adt(_, args) if args.len() == 1 => cx.display(args[0]),
+        _ => "T".into(),
+    };
+    Some(
+        Diagnostic::error(format!("a `{f}` is not a `{e}`"), at).with_note(format!(
+            "pointers to different C types never convert implicitly: in `unsafe` code, `Ptr.at<{target}>(Ptr.addressOf(p))` makes one, stating that a `{target}` is at that address"
+        )),
+    )
+}
+
 /// Is `ty` std's `Ptr<T>`?
 fn is_ptr(cx: &Ctx, ty: TyId) -> bool {
     match cx.ty.kind(ty) {

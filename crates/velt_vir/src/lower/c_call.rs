@@ -9,7 +9,7 @@ use velt_sema::hir::{self, CTy, DefId, IntTy, TyId, TyKind};
 use super::system::Arg;
 use super::{cint, ice, unit, FnLower};
 use crate::system;
-use crate::vir::{self, Operand, Place, Rvalue, Ty, STR_AGG};
+use crate::vir::{self, BinOp, Operand, Place, Rvalue, Ty, STR_AGG};
 
 /// std's hooks that turn a `Ptr` into its address and back (std/ffi/ptr.vlt).
 const PTR_OF: &str = velt_common::std_hook!(ffi_ptr_of);
@@ -108,7 +108,10 @@ impl FnLower<'_, '_> {
         for v in vals {
             cargs.push(match v {
                 CArg::Ready(o) => o,
-                CArg::Buffer(arg) => self.buffer(Some(arg)).0,
+                CArg::Buffer(arg) => {
+                    let p = self.buffer(Some(arg)).0;
+                    self.never_null(p)
+                }
                 CArg::Str(s) => {
                     let p = self.operand_place(s, Ty::Agg(STR_AGG));
                     self.str_data(&p)
@@ -171,6 +174,12 @@ impl FnLower<'_, '_> {
         match c.ret {
             CTy::Ptr { nullable } => {
                 let addr = self.rvalue_temp(Ty::U64, Rvalue::Cast(result, Ty::U64));
+                if !nullable {
+                    // C has no non-null pointer type, so the header check can't see this: a NULL
+                    // where the declaration says `Ptr<T>` stops the program here, not where the
+                    // pointer is used.
+                    self.null_result_check(&symbol, addr.clone());
+                }
                 let hook = if nullable { PTR_OR_NULL } else { PTR_OF };
                 let targ = self.ptr_target(ret);
                 {
@@ -180,6 +189,35 @@ impl FnLower<'_, '_> {
             }
             _ => result,
         }
+    }
+
+    /// Stops the program when `addr` (a `Ptr<T>` result of C function `symbol`) is NULL.
+    fn null_result_check(&mut self, symbol: &str, addr: Operand) {
+        let null = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, addr, cint(0, Ty::U64)));
+        let (bad, ok) = (self.new_block(), self.new_block());
+        self.branch(null, bad, ok);
+        self.switch_to(bad);
+        let name = base_symbol(symbol);
+        self.panic_msg(&format!(
+            "C function `{name}` returned NULL, but its declaration's result is `Ptr<T>`: declare it `Ptr<T> | null`"
+        ));
+        self.terminate(vir::Terminator::Unreachable);
+        self.switch_to(ok);
+    }
+
+    /// `p`, or a dangling address aligned for any element (16) where it is null: an empty array
+    /// literal holds a null data pointer, and C's `memcpy`, `memset` or `fwrite` given NULL is
+    /// undefined behaviour even for a length of 0. No branch.
+    fn never_null(&mut self, p: Operand) -> Operand {
+        let p = self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64));
+        let null = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, p.clone(), cint(0, Ty::U64)),
+        );
+        let null = self.rvalue_temp(Ty::U64, Rvalue::Cast(null, Ty::U64));
+        let dangling = self.u64_op(BinOp::Shl, null, cint(4, Ty::U64));
+        let p = self.u64_op(BinOp::BitOr, p, dangling);
+        self.rvalue_temp(Ty::Ptr, Rvalue::Cast(p, Ty::Ptr))
     }
 
     /// The `T` of `Ptr<T>` or `Ptr<T> | null` (type `t`).

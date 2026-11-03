@@ -366,3 +366,54 @@ fn pointer_types_and_strings_are_checked() {
         assert!(out.contains(want), "missing `{want}` in:\n{out}");
     }
 }
+
+/// A `declare c type` exists only behind a `Ptr`: `new` on it is an error, in its package and
+/// in a program importing it; pointers to different C types never convert implicitly; a
+/// read-only array passed for a buffer C writes names the C function.
+#[test]
+fn c_types_are_only_behind_pointers() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { Ptr } from \"velt/ffi\";\n\nexport declare c type FILE;\n\ndeclare c(\"c\") function malloc(n: usize): Ptr<u8> | null;\ndeclare c(\"c\") function fclose(f: Ptr<FILE>): i32;\ndeclare c(\"c\") function memset(dst: u8[], c: i32, n: usize): Ptr<u8>;\n\nconst FIXED: readonly u8[] = [1, 2];\n\nexport function f(): void {\n  const mine = new FILE();\n  // SAFETY: only types are checked here.\n  unsafe {\n    const p = malloc(1);\n    if (p !== null) {\n      fclose(p);\n    }\n    memset(FIXED, 0, 2);\n  }\n}\n",
+        "import { f, FILE } from \"cmath\";\n\nfunction main() {\n  const theirs = new FILE();\n  f();\n}\n",
+    );
+    let out = check(dir.path());
+    assert_eq!(
+        out.matches("`FILE` is a C type: it exists only behind a `Ptr<FILE>`")
+            .count(),
+        2,
+        "{out}"
+    );
+    assert!(out.contains("a `Ptr<u8>` is not a `Ptr<FILE>`"), "{out}");
+    assert!(out.contains("`Ptr.at<FILE>(Ptr.addressOf(p))`"), "{out}");
+    assert!(out.contains("a buffer the C function writes"), "{out}");
+}
+
+/// An empty array reaches C as a non-null address (C's `memset` and `memcpy` given NULL are
+/// undefined behaviour even for 0 bytes): a `[]` literal holds a null data pointer, an emptied
+/// array a dangling one. A C function declared to return `Ptr<T>` that returns NULL stops the
+/// program, naming it.
+#[test]
+fn empty_arrays_are_never_null_and_a_null_ptr_result_is_caught() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { Ptr } from \"velt/ffi\";\n\ndeclare c(\"c\") function memset(dst: u8[], c: i32, n: usize): Ptr<u8> | null;\ndeclare c(\"c\") function getenv$wrong(name: u8[]): Ptr<u8>;\n\nexport function nonNull(): [bool, bool] {\n  const e: u8[] = [];\n  const g: u8[] = [1];\n  g.pop();\n  // SAFETY: 0 bytes are written.\n  return unsafe { [memset(e, 0, 0) !== null, memset(g, 0, 0) !== null] };\n}\n\nexport function wrong(): void {\n  const name: u8[] = [0x56, 0x45, 0x4c, 0x54, 0x5f, 0x4e, 0x4f, 0x53, 0x55, 0x43, 0x48, 0];\n  // SAFETY: the name is NUL-terminated; the declaration's `Ptr<u8>` result is wrong on purpose.\n  unsafe { getenv$wrong(name); }\n}\n",
+        "import { nonNull, wrong } from \"cmath\";\n\nfunction main() {\n  console.log(nonNull());\n  wrong();\n}\n",
+    );
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let o = velt(dir.path(), args);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "[ true, true ]\n",
+            "{stderr}"
+        );
+        assert!(!o.status.success(), "{stderr}");
+        assert!(
+            stderr.contains("C function `getenv` returned NULL, but its declaration's result is `Ptr<T>`: declare it `Ptr<T> | null`"),
+            "{stderr}"
+        );
+    }
+}
