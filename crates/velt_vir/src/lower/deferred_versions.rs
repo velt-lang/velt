@@ -17,9 +17,12 @@
 //!   (boxing/tuples.rs `callee_writes`) follows the call graph of the functions built so far.
 //!   A version adds calls of nothing but `velt_rt_array_view_cold`, which calls nothing back,
 //!   and keeps every call the loop had, so the analysis sees the same callees either way.
+//!   Meanwhile the function stands in the program as just those calls (each block that ends in
+//!   one, and the calls its sections will make): its state is kept once, not also as a body.
 //! - Poll functions are always versioned in `finish`: their state layout (async_fn/spill) is
 //!   computed from the versioned body.
 
+use super::epoch_sections::{PIN, UNPIN};
 use super::rt::Rt;
 use super::view_unswitch::ViewLoops;
 use super::{ice, Cx, FnLower, LkMode};
@@ -46,16 +49,52 @@ pub(super) struct Deferred {
 
 impl FnLower<'_, '_> {
     /// Keep this function's state to version its view loops once the counted types are
-    /// complete (a facts-only pass), and declare what the versions will call.
-    pub(super) fn defer_versions(&mut self, symbol: &str, params: usize) {
+    /// complete (a facts-only pass), and declare what the versions will call. Returns the blocks
+    /// the function stands as meanwhile (its calls), or `None` when it has no loop to version.
+    pub(super) fn defer_versions(
+        &mut self,
+        symbol: &str,
+        params: usize,
+    ) -> Option<Vec<BasicBlock>> {
         let versions = self.view_loop_versions();
         if versions.is_empty() {
-            return;
+            return None;
         }
         // A loop versioned for a box calls `velt_rt_array_view_cold` (view_unswitch.rs
         // `version`): declared here, it has the id it would have had.
         if versions.iter().any(|v| !v.boxes.is_empty()) {
             self.cx.rt(Rt::ArrayViewCold);
+        }
+        // The calls the function makes: those of its live blocks, and those its sections will
+        // make (epoch_sections.rs, which asks for `unpin` and then `pin` whatever it places).
+        let calls = |t: &Option<vir::Terminator>| matches!(t, Some(vir::Terminator::Call { .. }));
+        let mut stands: Vec<BasicBlock> = (self.blocks.iter().zip(&self.live))
+            .filter(|((_, t), &live)| live && calls(t))
+            .map(|((_, t), _)| BasicBlock {
+                stmts: vec![],
+                term: t
+                    .clone()
+                    .unwrap_or_else(|| ice("a call without its terminator")),
+            })
+            .collect();
+        if self.ref_loads && !self.epoch_exempt {
+            let returns = (self.blocks.iter().zip(&self.live))
+                .any(|((_, t), &live)| live && matches!(t, Some(vir::Terminator::Return(_))));
+            let unpin = self.epoch_fn(UNPIN);
+            let pin = self.epoch_fn(PIN);
+            let call = |f| BasicBlock {
+                stmts: vec![],
+                term: vir::Terminator::Call {
+                    callee: vir::Callee::Func(f),
+                    args: vec![],
+                    dest: None,
+                    next: BlockId(0),
+                },
+            };
+            if returns {
+                stands.push(call(unpin));
+            }
+            stands.push(call(pin));
         }
         let d = Deferred {
             symbol: symbol.to_string(),
@@ -64,13 +103,14 @@ impl FnLower<'_, '_> {
             mode: self.mode,
             ref_loads: self.ref_loads,
             epoch_exempt: self.epoch_exempt,
-            locals: self.locals.clone(),
-            blocks: self.blocks.clone(),
-            block_locs: self.block_locs.clone(),
-            live: self.live.clone(),
+            locals: std::mem::take(&mut self.locals),
+            blocks: std::mem::take(&mut self.blocks),
+            block_locs: std::mem::take(&mut self.block_locs),
+            live: std::mem::take(&mut self.live),
             view_loops: std::mem::take(&mut self.view_loops),
         };
         self.cx.deferred_new.push(d);
+        Some(stands)
     }
 }
 
@@ -79,7 +119,10 @@ impl Cx<'_> {
     pub(super) fn claim_deferred(&mut self, fid: FuncId, mark: usize) {
         let mut mine = self.deferred_new.split_off(mark);
         match mine.len() {
-            0 => {}
+            // A function built again (any_iface.rs) may not defer this time.
+            0 => {
+                self.deferred.remove(&fid);
+            }
             1 => {
                 self.deferred.insert(fid, mine.remove(0));
             }
@@ -114,6 +157,12 @@ impl Cx<'_> {
             let f = self.funcs[fid.0 as usize]
                 .as_mut()
                 .unwrap_or_else(|| ice("a deferred function was not built"));
+            if !f.symbol.starts_with(&d.symbol) {
+                ice(format_args!(
+                    "deferred `{}` stands for `{}`",
+                    d.symbol, f.symbol
+                ));
+            }
             f.locals = locals;
             f.blocks = blocks;
             f.locs = locs;

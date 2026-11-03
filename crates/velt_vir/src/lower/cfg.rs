@@ -187,7 +187,12 @@ impl FnLower<'_, '_> {
             self.cx.versioned += usize::from(self.has_view_loops());
             self.version_view_loops(params.len());
         } else if self.has_view_loops() {
-            self.defer_versions(&symbol, params.len());
+            if let Some(blocks) = self.defer_versions(&symbol, params.len()) {
+                return Function {
+                    blocks,
+                    ..Function::new(symbol, params, ret, Linkage::Internal)
+                };
+            }
         }
         self.place_sections();
         let (locals, blocks, locs) = self.into_parts(&symbol);

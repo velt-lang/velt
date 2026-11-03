@@ -87,6 +87,17 @@ impl Term {
 /// The most nodes a term kept for a local has.
 const MAX_TERM: u32 = 48;
 
+thread_local! {
+    /// Terms kept at the ends of blocks by [`FnLower::plain_flow`] (`VELT_LOWER_PROFILE`; tests
+    /// bound it).
+    static TERMS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The terms kept since the last call (and start counting again).
+pub(super) fn take_terms() -> usize {
+    TERMS.with(|t| t.replace(0))
+}
+
 /// The most rounds [`FnLower::plain_headers`] takes before it proves nothing.
 const MAX_ROUNDS: u32 = 8;
 
@@ -338,6 +349,7 @@ impl FnLower<'_, '_> {
                 }
                 None => {}
             }
+            TERMS.with(|t| t.set(t.get() + k.env.len()));
             outs.insert(b, k);
             for (s, k) in edges {
                 if s == h || !inside.contains(&s) {
