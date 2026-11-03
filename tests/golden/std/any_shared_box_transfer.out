@@ -1,0 +1,4 @@
+string:a string long enough to live on the heap, not inline number:4.25 string:a string long enough to live on the heap, not inline 
+3 true 5.25
+string:only one reference to this heap string, sent as it is 
+consumers on another worker: true

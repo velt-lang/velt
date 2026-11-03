@@ -208,7 +208,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
 
     /// `(data) -> data'` of an interface value whose implementor is `ty`: class objects and
     /// boxed values are their own data pointer; other data is a heap box only this interface
-    /// value owns (share.rs copies it), transferred in place.
+    /// value owns (share.rs copies it), transferred in place, or a primitive's shared box
+    /// (any_borrowed.rs), first copied when other references share it.
     pub(super) fn dyn_transfer_body(&mut self, data: vir::Local, ty: TyId) {
         self.check_if_tagged(data, |lw, d| {
             let dp = Place::local(lw.copy_to_temp(d, Ty::Ptr));
@@ -222,6 +223,9 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if self.cx.is_class(ty) || self.cx.boxed(ty) {
             self.transfer_in_place(Place::local(data), ty);
         } else {
+            if self.cx.shared_dyn_box(ty) {
+                self.unshare_dyn_box(data, ty);
+            }
             let p = self.deref_param(data, ty);
             self.transfer_in_place(p, ty);
         }
