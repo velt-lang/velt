@@ -8,9 +8,12 @@
 //!   `jsxTemplate` call when the runtime supports precompilation ([`precompile`]);
 //! - component `<Card a={x}>…</Card>` → `jsxComponent(Card, { a: x, children }, key, "m#Card")` or
 //!   `jsxAsyncComponent` ([`component`], [`props`]);
-//! - children → [`children`]; `key` → [`key`].
+//! - children → [`children`]; `key` → [`key`];
+//! - with TypeScript's automatic runtime (`jsx(type, props, key)`), each of them one `jsx` call
+//!   ([`automatic`]).
 
 mod attrs;
+mod automatic;
 mod children;
 mod component;
 mod component_call;
@@ -46,6 +49,10 @@ impl FnCx<'_, '_> {
     pub(super) fn jsx_element(&mut self, p: &Provider, el: &ast::JsxElement) -> hir::Expr {
         let mark = self.cx.rec_mark();
         let h = match &el.name {
+            _ if p.automatic.is_some() => {
+                let a = p.automatic.as_ref().expect("ICE: an automatic runtime");
+                self.jsx_automatic(p, a, el)
+            }
             None => self.jsx_fragment(p, el),
             Some(name) => match intrinsic_tag(name) {
                 Some(tag) => {

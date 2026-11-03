@@ -492,7 +492,9 @@ impl Ctx<'_> {
         let droppable = |cx: &Self, t: TyId, ops: &[(TyId, Span)]| match cx.dynamic(t) {
             Some(Dynamic::Unknown) => true,
             Some(Dynamic::Object) => others_are_objects(cx, ops),
-            _ => false,
+            // An interface without members (`interface Extensions {}`, which declarations
+            // merge into) adds nothing to an object type, as in TypeScript.
+            _ => cx.empty_iface(t) && others_are_objects(cx, ops),
         };
         let mut i = 0;
         while i < operands.len() && operands.len() > 1 {

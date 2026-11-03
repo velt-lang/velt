@@ -13,6 +13,9 @@ The import source of a file is, in order:
 2. `jsx: { importSource: "<source>" }` in the package's `package.vlt` (manifest.md);
 3. `std/jsx`.
 
+A runtime with `jsx` and no `jsxComponent` is an automatic runtime ("Automatic runtimes"
+below); everything else here is the Velt contract.
+
 A module that contains JSX implicitly imports `<source>/jsx-runtime` (a package path like
 `sigx/jsx-runtime` or `std/jsx/jsx-runtime`). Its exports are visible in types as the namespace
 `JSX` (`JSX.Element`, `JSX.IntrinsicElements`, …) in that module, exactly as if the file had
@@ -37,6 +40,44 @@ compile-time shapes), so the compiler does the part TS leaves to the runtime:
   on the server;
 - there is no `jsxs`: children are always passed as an array, so the static/dynamic child
   distinction TS uses for key warnings carries no information here.
+
+## Automatic runtimes (TypeScript's `react-jsx`, additive)
+A runtime that exports a function `jsx` and **no** `jsxComponent` is TypeScript's automatic
+runtime, as React's and sigx's are: `tsc` with `"jsx": "react-jsx"` compiles against it
+unchanged, and so does Velt. Every element is one call of its `jsx`, as `tsc` emits it:
+
+```ts ignore
+<box a={x}>c</box>   // jsx("box", { a: x, children: c }, key)
+<Card a={x} />       // jsx(Card, { a: x }, key): the component as it is
+<>c</>               // jsx(Fragment, { children: c }, key)
+```
+- **Exports.** `jsx(type, props, key?)` (two or three parameters) and a value `Fragment`, the
+  `type` of a fragment (sigx: `Symbol.for("sigx.Fragment")`). `jsxs`, `jsxDEV` and anything else
+  are ignored. The `props` parameter is a `Record<string, V>`, an index signature
+  (`{ children?: JSXChildren; [key: string]: any }`, also with `| null`) or `any`.
+- **Types.** `JSX.Element`, `JSX.IntrinsicElements` (required) and
+  `JSX.ElementChildrenAttribute` (optional), named from the module as `JSX.X`: the runtime's
+  exports, else the global namespace `JSX` that a `declare global { namespace JSX { … } }` of
+  any module of the program declares (sigx declares `Element` and `IntrinsicAttributes` in
+  runtime-core and `IntrinsicElements` in each renderer). Without `JSX.Element`, an element
+  has `jsx`'s result type.
+- **Checking** is `tsc`'s: intrinsic attributes against `JSX.IntrinsicElements[tag]` (a field
+  written optional, `children?: any`, need not be given), component attributes against the
+  component's props (missing and unknown props, contextual types of arrow functions, generic
+  components, children into the children field). A component may be a function with
+  properties (sigx's `component(…)`): its call signature gives the props, and an intersection
+  with an interface without members (`P & ComponentAttributeExtensions`) is `P`.
+- **Props object.** The attributes written, in source order, then `children` (one child is the
+  child itself, several an array, none leaves the key out) are set into a new `Record<string,
+  V>` converted to `V`: a new object per element, as in TypeScript. `key` is removed and passed
+  as `jsx`'s third argument as written (`undefined` without one).
+- **The component** is passed as itself (no adapter), so its properties stay (sigx tells
+  components by `__setup`), and a runtime that keeps it in an `any` may call it.
+- Not in this mode: the precompile lowering, `jsxComponentAttributes`, and attributes of
+  `JSX.IntrinsicAttributes` besides `key` (an attribute not in the props is an error).
+
+The goldens `lang/jsx_automatic_runtime` (a sigx-shaped runtime, output equal to Node's through
+esbuild's automatic transform) and `lang/errors/jsx_automatic_props` check it.
 
 ## Compatibility rule
 A component written in the TS/Velt common subset (docs/internals/design/tsx.md, "Sharing components with

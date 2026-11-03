@@ -1,0 +1,15 @@
+// The JSX types in the global namespace, as sigx's runtime-core and renderers declare them.
+import type { VNode } from "./jsx-runtime";
+
+declare global {
+  namespace JSX {
+    type Element = VNode;
+    interface IntrinsicElements {
+      box: { label?: string; border?: "single" | "double"; children?: any };
+      text: { color?: string; bold?: boolean; children?: any };
+    }
+    interface ElementChildrenAttribute {
+      children: {};
+    }
+  }
+}

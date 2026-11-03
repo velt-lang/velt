@@ -307,14 +307,19 @@ impl FnCx<'_, '_> {
         self.try_coerce(probe, to).is_ok()
     }
 
-    fn component(&mut self, name: &ast::JsxName, tag: &str) -> Option<Component> {
+    pub(super) fn component(&mut self, name: &ast::JsxName, tag: &str) -> Option<Component> {
         let callee = callee_ast(name);
         if let Some((d, id_span)) = self.named_fn(&callee) {
             self.cx.rec_ref(id_span, Target::Def(d));
             return self.fn_component(d, callee, tag);
         }
         let value = self.expr(&callee, None, Want::Borrow);
-        let TyKind::FnPtr { params, ret, .. } = self.cx.ty.kind(value.ty).clone() else {
+        // A function with properties (sigx's `component(…)`: a call signature, `__setup`, …)
+        // is a component by its call signature. It is passed as it is, converted to the
+        // runtime's component type like any argument: a runtime that takes `any` keeps its
+        // properties, one that takes `(props: P) => Element` gets its function.
+        let fn_ty = self.cx.call_type(value.ty).unwrap_or(value.ty);
+        let TyKind::FnPtr { params, ret, .. } = self.cx.ty.kind(fn_ty).clone() else {
             if !self.cx.ty.is_bottom(value.ty) {
                 let shown = self.cx.display(value.ty);
                 self.not_component(
@@ -330,6 +335,9 @@ impl FnCx<'_, '_> {
             self.not_component(tag, name.span(), why);
             return None;
         };
+        // A generic call signature's props written as an intersection (sigx's
+        // `StripForJSX<…> & JSX.IntrinsicAttributes & { ref?: … }`) are known parts by now.
+        let props = self.cx.reduce_known_intersection(props);
         Some(Component {
             func: ComponentFn::Value(value),
             props,

@@ -196,8 +196,19 @@ impl FnCx<'_, '_> {
                 absent_if_null: e.absent_if_null,
             })
             .collect();
+        let props = match &p.automatic {
+            // TypeScript's automatic runtime takes the props written, as a record.
+            Some(a) => {
+                let entries = (filled.fields.iter().map(|(n, _)| n.clone()))
+                    .zip(values)
+                    .filter_map(|(n, v)| Some((n, v?)))
+                    .collect();
+                self.props_record(a, entries, el.span)
+            }
+            None => self.finish_struct(d, slots, values, None, el.span),
+        };
         Some(ElementProps {
-            props: self.finish_struct(d, slots, values, None, el.span),
+            props,
             type_args,
             key,
             extra,

@@ -99,11 +99,19 @@ impl FnCx<'_, '_> {
         Some(out)
     }
 
-    /// TS2741 for every attribute the tag requires (a field that is not `T | null`) but `el`
-    /// does not give.
+    /// TS2741 for every attribute the tag requires (a field that is not `T | null` nor written
+    /// optional, `children?: any`) but `el` does not give.
     fn missing_attrs(&mut self, tag: &TagAttrs, given: &[Attr], span: Span) {
-        for (name, ty) in &tag.fields {
-            if self.cx.ty.opt_payload(*ty).is_some() || given.iter().any(|a| a.name == *name) {
+        let optional: Vec<bool> = self
+            .cx
+            .adt(tag.def)
+            .map(|a| a.fields.iter().map(|f| f.optional).collect())
+            .unwrap_or_default();
+        for (i, (name, ty)) in tag.fields.iter().enumerate() {
+            if self.cx.ty.opt_payload(*ty).is_some()
+                || optional.get(i).copied().unwrap_or(false)
+                || given.iter().any(|a| a.name == *name)
+            {
                 continue;
             }
             let given: Vec<String> = given
