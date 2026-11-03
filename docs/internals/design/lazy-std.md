@@ -89,6 +89,36 @@ The editor's analysis (`ide::check_for_ide`) checks everything, since hover, go-
 diagnostics in std files need it. `VELT_EAGER_STD=1` turns laziness off for the command line too,
 to compare.
 
+## Loading on demand: `// load for:` predicates
+
+Checking on demand still parses every module a program loads, and parsing and collecting std code
+costs about as much as checking it. So some of std is not loaded at all unless a program may need
+it: a global module under `std/prelude/global/` whose header names a condition
+(crates/veltc/src/loader/globals). Besides the conditions on words (`export { … }` names, `// load
+when <module> uses: <words>`), a header may name a *predicate* on a module's syntax, evaluated by
+the loader before any types are known. Each predicate is generic: it says what a module does,
+never which std module that loads; the header's imports say that.
+
+- `// load for: a number converted to text`: a template literal with an expression,
+  `String(…)`, a `.toString(…)` call, or `+` / `+=` with a string literal or a template.
+- `// load for: a conversion operand may be a float` (**Float operands**): a conversion as above
+  whose operand looks like a float that is not a whole number:
+  - a float literal (`1.5`, `1e-3`), `/` or `**` anywhere in it, a member or call of `Math`, or a
+    cast to a float type (`f64`, `f32`, `f16`, `bf16`);
+  - a variable or parameter declared with a float type, or initialized from such an expression
+    (scopes are not told apart);
+  - an array literal with such an element, and a `for … of` variable over one.
+
+  `std/prelude/global/number_float.vlt` uses it to load std's float printer (the shortest
+  digits, `velt/lang/hooks/number_float`), which lowering prefers to the runtime's.
+
+A predicate only decides what is loaded: a program it misses still compiles and prints the same,
+by a slower path (a float the float-operand test misses is printed by the runtime's printer:
+`tests/golden/lang/float_text_miss.vlt`, and `crates/veltc/tests/number_format_vir.rs` checks
+which path runs), and one it wrongly matches only costs loading time. The principled fix is
+loading after sema finds the use (std modules loaded lazily), which would retire the syntactic
+test.
+
 ## Diagnostics
 
 Std code has no errors, so no message changes. A user module's own code is always checked, and

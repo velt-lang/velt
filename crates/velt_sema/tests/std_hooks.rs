@@ -10,10 +10,12 @@ use velt_sema::hir::{Def, FloatTy, IntTy, Nothing, Program, TyId, TyKind};
 
 /// A program that loads every module defining a hook: the prelude loads `velt/lang/hooks`, and
 /// the others come with what they implement (`Proxy`, `Set`, `Uint8Array`, `RegExp`, `JSON`; the globals
-/// velt/lang/this_fn, velt/lang/record/reflect and velt/lang/hooks/any_record, which the driver's
-/// loader adds for what a module uses, and this test's loader does not).
+/// velt/lang/this_fn, velt/lang/record/reflect, velt/lang/hooks/any_record and
+/// velt/lang/hooks/number_text and number_float, which the driver's loader adds for what a module
+/// uses, and this test's loader does not).
 const LOADS_ALL: &str = "import \"velt/lang/this_fn\";\nimport \"velt/lang/record/reflect\";\n\
-    import \"velt/lang/hooks/any_record\";\nimport \"velt/host\";\n\
+    import \"velt/lang/hooks/any_record\";\nimport \"velt/lang/hooks/number_text\";\n\
+    import \"velt/lang/hooks/number_float\";\nimport \"velt/host\";\n\
     import \"velt/test/registry\";\nimport \"velt/test/run\";\nimport \"velt/host/promise\";\n\
     function main() {\n  const p = new Proxy({}, {});\n  const s = new Set<number>();\n  \
     const b = new Uint8Array(1);\n  const r = new RegExp(\"a\");\n  \

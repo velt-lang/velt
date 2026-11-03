@@ -98,7 +98,7 @@ pub(crate) struct Env<'p> {
     /// Facts about parameters that every call passes a constant (`params`).
     params: params::ParamFacts,
     /// Number formatters and their integer twins (`print`).
-    formatters: Vec<(ExternId, ExternId, bool)>,
+    formatters: Vec<(Callee, Callee, bool, usize)>,
 }
 
 impl<'p> Env<'p> {
@@ -125,7 +125,7 @@ impl<'p> Env<'p> {
             array,
             field_tys,
             params: params::of(funcs, statics),
-            formatters: print::pairs(externs),
+            formatters: print::pairs(externs, funcs),
         }
     }
 

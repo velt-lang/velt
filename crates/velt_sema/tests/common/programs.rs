@@ -168,9 +168,27 @@ impl Loader {
             }
             let text = std::fs::read_to_string(&f).unwrap();
             let own = bound(&self.modules[m].ast);
-            if reexports(&text)
-                .iter()
-                .any(|n| !own.contains(n) && mentions(&src, n))
+            // The global the driver loads for a module that may convert a number to text
+            // (veltc's loader, `has_text_conversion`): here, for a template with an expression,
+            // which is what these tests write.
+            let number_text =
+                text.contains("// load for: a number converted to text") && src.contains("${");
+            // The float printer's global (`// load for: a conversion operand may be a float`),
+            // approximated as the driver's loader would see this test's sources: a template with
+            // a float literal, `/` or `Math.` somewhere in the source.
+            let float_text = text.contains("// load for: a conversion operand may be a float")
+                && src.contains("${")
+                && (src.contains('/')
+                    || src.contains("Math.")
+                    || src
+                        .as_bytes()
+                        .windows(3)
+                        .any(|w| w[0].is_ascii_digit() && w[1] == b'.' && w[2].is_ascii_digit()));
+            if number_text
+                || float_text
+                || reexports(&text)
+                    .iter()
+                    .any(|n| !own.contains(n) && mentions(&src, n))
             {
                 let i = self.add(&canonical, &f, text);
                 queue.push_back(i);

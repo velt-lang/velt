@@ -114,6 +114,27 @@ hooks! {
     float_index => lang_hooks_number, "floatIndex", "(f64) -> usize", lowered;
     /// A float position argument (`xs.at(i)`, `s.slice(i)`).
     float_position => lang_hooks_number, "floatPosition", "(f64) -> usize";
+    /// `String(v)` of a signed integer: `${v}` alone, `v.toString()` (`velt_vir` `template.rs`).
+    int_text => lang_hooks_number_text, "intText", "(i64) -> string", lowered;
+    /// `String(v)` of an unsigned integer.
+    uint_text => lang_hooks_number_text, "uintText", "(u64) -> string", lowered;
+    /// A signed integer appended to a builder: a template's `${v}` (`velt_vir` `strbuf.rs`).
+    int_push => lang_hooks_number_text, "intPush", "(string, i64) -> void", lowered;
+    /// An unsigned integer appended to a builder.
+    uint_push => lang_hooks_number_text, "uintPush", "(string, u64) -> void", lowered;
+    /// `String(x)` of a float (`velt_vir` `template.rs`): a whole number by std's integer
+    /// printing, anything else by the runtime's printer. `velt_opt` numrep turns a call with a
+    /// whole `x` into one of `int_text`.
+    number_text => lang_hooks_number_text, "numberText", "(f64) -> string", lowered;
+    /// A float appended to a builder, as `number_text`; numrep turns a call with a whole `x` into
+    /// `int_push`.
+    number_push => lang_hooks_number_text, "numberPush", "(string, f64) -> void", lowered;
+    /// `String(x)` of a float, all of it by std's printing (velt/lang/number/format): lowering
+    /// calls it instead of `number_text` where its module is loaded (std/prelude/global/
+    /// number_float.vlt, for a program that converts an operand that may be a float).
+    float_text => lang_hooks_number_float, "floatText", "(f64) -> string", lowered;
+    /// A float appended to a builder, as `float_text`.
+    float_push => lang_hooks_number_float, "floatPush", "(string, f64) -> void", lowered;
 
     // process.vlt: the builtin `process` namespace (`velt_sema` `process.rs`).
     /// `process.stdout.write(s)` / `process.stderr.write(s)`.
@@ -448,6 +469,31 @@ pub fn find(qualified: &str) -> Option<&'static Hook> {
     HOOKS
         .iter()
         .find(|h| h.item == item && crate::std_modules::rel(h.module_entry) == Some(rel))
+}
+
+/// Lowered hooks that sema checks only once the program's own code converts a value that is not
+/// a string or a boolean to text (`velt_sema` `lazy_std`), by their entries' names: std's integer
+/// printing (velt/lang/number/integer), which a program that prints no number does not check.
+/// Lowering calls the runtime's printer where one is unchecked.
+pub const ON_DEMAND_TEXT: &[&str] = &["int_text", "uint_text", "int_push", "uint_push"];
+
+/// The same, once the program's own code converts a value that may hold a float to text: the
+/// float hooks, whose whole numbers take std's integer printing, and, where the program loaded it,
+/// std's float printing (velt/lang/number/format, `shortest`, the table of powers of ten).
+pub const ON_DEMAND_FLOAT: &[&str] = &["number_text", "number_push", "float_text", "float_push"];
+
+/// Is the hook with qualified name `qualified` one of [`ON_DEMAND_TEXT`] or [`ON_DEMAND_FLOAT`]?
+pub fn is_on_demand(qualified: &str) -> bool {
+    find(qualified)
+        .is_some_and(|h| ON_DEMAND_TEXT.contains(&h.name) || ON_DEMAND_FLOAT.contains(&h.name))
+}
+
+/// The qualified names of the hooks named in `names` ([`ON_DEMAND_TEXT`], [`ON_DEMAND_FLOAT`]).
+pub fn on_demand(names: &'static [&'static str]) -> impl Iterator<Item = String> {
+    HOOKS
+        .iter()
+        .filter(move |h| names.contains(&h.name))
+        .map(Hook::qualified)
 }
 
 /// Is the definition with qualified name `qualified` a hook lowering calls by name?

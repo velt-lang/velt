@@ -106,10 +106,13 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("strLoadU8x16", Op(I::StrLoadU8x16)),
     ("targetFeature", TargetFeature),
     // string.vlt
+    ("strAsciiWords", Op(I::StrAsciiWords)),
     ("strByteAt", Op(I::StrByteAt)),
     ("strByteLen", Op(I::StrByteLen)),
     ("strCharCodeAt", Op(I::StrCharCodeAt)),
     ("strLen", Op(I::StrLen)),
+    ("strbufPushAsciiWord", Op(I::StrbufPushAsciiWord)),
+    ("strbufPushAsciiWords", Op(I::StrbufPushAsciiWords)),
     // symbol.vlt
     ("symbolRegistry", Op(I::SymbolRegistry)),
     ("symbolStatic", Op(I::SymbolStatic)),

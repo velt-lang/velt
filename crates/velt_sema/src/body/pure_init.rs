@@ -607,6 +607,9 @@ fn effect_of(i: Intrinsic) -> Option<String> {
         | I::StrCharCodeAt
         | I::StrByteAt
         | I::Inline
+        | I::StrAsciiWords
+        | I::StrbufPushAsciiWords
+        | I::StrbufPushAsciiWord
         | I::NoInline
         | I::StrLoadU8x16
         | I::StrLoadPartialU8x16
