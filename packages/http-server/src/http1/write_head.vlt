@@ -9,9 +9,16 @@ const SP: u8 = 32;
 
 /**
  * Writes the head of `r`: content type `parts.types[type]` (or `custom` when `type` < 0) unless
- * the handler set one; `length` < 0 starts a streamed body. Throws if a response was started.
+ * the handler set one; `length` < 0 starts a streamed body, chunked, and `length` >= 0 with
+ * `streamed` one of that length. Throws if a response was started.
  */
-export function writeHead(r: Http1Response, type: i64, custom: string | null, length: i64) {
+export function writeHead(
+  r: Http1Response,
+  type: i64,
+  custom: string | null,
+  length: i64,
+  streamed: bool = false,
+) {
   if (r.done) {
     throw new Error("the response was already sent");
   }
@@ -23,7 +30,7 @@ export function writeHead(r: Http1Response, type: i64, custom: string | null, le
   // stays open. A head written at once stays buffered until the handler returns, so a read
   // before that still sends its 100 ahead of it.
   const req = r.request;
-  if (length < 0 && req.expectsContinue && !req.continueSent) {
+  if ((length < 0 || streamed) && req.expectsContinue && !req.continueSent) {
     req.continueSent = true;
     const continue_ = p.continue_;
     out.bytes(continue_);
@@ -64,12 +71,14 @@ export function writeHead(r: Http1Response, type: i64, custom: string | null, le
   }
   if (noContent) {
     // Neither a length nor chunks: a streamed body is dropped.
-    r.streaming = length < 0;
+    r.streaming = length < 0 || streamed;
     r.chunked = false;
   } else if (length >= 0) {
     const lengthHead = p.lengthHead;
     out.bytes(lengthHead);
     out.number(r.headOnly && r.headLength >= 0 ? r.headLength : length);
+    r.streaming = streamed;
+    r.chunked = false;
   } else {
     r.streaming = true;
     r.chunked = r.http11;

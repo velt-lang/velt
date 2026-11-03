@@ -73,8 +73,13 @@ export abstract class HttpResponse {
    * [velt/jsx](jsx.md): the markup above a pending async component reaches the client while it
    * loads. A client that goes away ends it quietly (the source is closed, so rendering stops;
    * `signal()` is aborted).
+   *
+   * With `length`, the body's size known in advance (a file's), it goes out with that
+   * `Content-Length` instead of chunks, so the client knows how much is coming. A source that
+   * ends short of it or goes past it cuts the response off, as a failed body does. Over HTTP/1.1
+   * a response with trailers is chunked anyway (trailers need chunks).
    */
-  abstract sendStream(body: BodyStream, type?: string): Promise<void>;
+  abstract sendStream(body: BodyStream, type?: string, length?: number): Promise<void>;
 
   /**
    * Starts a Server-Sent Events response (`text/event-stream`, not cached): `send` writes an
