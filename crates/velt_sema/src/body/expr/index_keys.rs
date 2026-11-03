@@ -83,6 +83,9 @@ impl FnCx<'_, '_> {
         }
         let tn = self.cx.display(t);
         let fix = "to index an element of an element, write `a[i][j]`";
+        let comma =
+            "in TypeScript `a[x, j]` is the comma operator: it evaluates `x` and reads `a[j]`; \
+                     Velt has no comma operator, so evaluate `x` first and write `a[j]`";
         if !self.has_indexer(t) {
             self.check_keys(keys);
             self.cx.error(
@@ -90,7 +93,8 @@ impl FnCx<'_, '_> {
                     format!("`{tn}` has no indexer taking several keys: an index with several keys calls `[Symbol.index]`"),
                     span,
                 )
-                .with_note(fix),
+                .with_note(fix)
+                .with_note(comma),
             );
             return false;
         }
@@ -104,7 +108,8 @@ impl FnCx<'_, '_> {
                     ),
                     span,
                 )
-                .with_note(fix),
+                .with_note(fix)
+                .with_note(comma),
             );
             return false;
         }

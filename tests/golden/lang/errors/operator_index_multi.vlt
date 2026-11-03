@@ -12,6 +12,12 @@ let d: any = {};
 const e = d[0, 1];
 const s = "abc";
 const f = s[0, 1];
+// Valid TypeScript (the comma operator: `f()`, then `xs[1]`), an error here.
+function sideEffect(): usize {
+  console.log("f");
+  return 0;
+}
+const k = xs[sideEffect(), 1];
 
 class One {
   [Symbol.index](i: usize): f64 { return 0; }

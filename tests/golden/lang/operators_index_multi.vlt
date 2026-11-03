@@ -90,3 +90,26 @@ let none: Matrix | null = null;
 console.log(none?.[key(7), key(8)]);
 none = m;
 console.log(none?.[key(0), key(0)]);
+
+// An assignment used as a value whose target goes through a narrowed object keeps every key;
+// a chained one evaluates the outer keys, then the inner keys, then the value.
+interface Holder {
+  m: Matrix | null;
+}
+interface Outer {
+  b: Holder | null;
+}
+function change(): f64 {
+  console.log("change");
+  return 3;
+}
+const hb: Holder | null = { m: new Matrix(2, 2) };
+if (hb !== null && hb.m !== null) {
+  const y = (hb.m[key(0), key(1)] = change());
+  console.log(y, hb.m[0, 1]);
+}
+const st: Outer = { b: { m: new Matrix(2, 2) } };
+if (st.b !== null && st.b.m !== null) {
+  st.b.m[key(1), key(0)] = st.b.m[key(0), key(1)] = change();
+  console.log(st.b.m[1, 0], st.b.m[0, 1]);
+}

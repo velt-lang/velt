@@ -501,7 +501,12 @@ pub(super) fn pure_indexes(e: &ast::Expr) -> bool {
         ast::ExprKind::Member { object, .. }
         | ast::ExprKind::NonNull(object)
         | ast::ExprKind::Cast { expr: object, .. } => pure_indexes(object),
-        ast::ExprKind::Index { object, index, .. } => is_pure_value(index) && pure_indexes(object),
+        ast::ExprKind::Index {
+            object,
+            index,
+            more,
+            ..
+        } => is_pure_value(index) && more.iter().all(is_pure_value) && pure_indexes(object),
         _ => true,
     }
 }
@@ -512,8 +517,16 @@ fn has_path_index(e: &ast::Expr) -> bool {
         ast::ExprKind::Member { object, .. }
         | ast::ExprKind::NonNull(object)
         | ast::ExprKind::Cast { expr: object, .. } => has_path_index(object),
-        ast::ExprKind::Index { object, index, .. } => {
-            !(is_literal(index) || is_hoisted(index)) || has_path_index(object)
+        ast::ExprKind::Index {
+            object,
+            index,
+            more,
+            ..
+        } => {
+            std::iter::once(index.as_ref())
+                .chain(more)
+                .any(|k| !(is_literal(k) || is_hoisted(k)))
+                || has_path_index(object)
         }
         _ => false,
     }

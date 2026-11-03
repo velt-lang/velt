@@ -94,7 +94,12 @@ fn peekable(e: &ast::Expr) -> bool {
     match &bare(e).kind {
         ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
         ast::ExprKind::Member { object, .. } => peekable(object),
-        ast::ExprKind::Index { object, index, .. } => peekable(object) && is_pure_value(index),
+        ast::ExprKind::Index {
+            object,
+            index,
+            more,
+            ..
+        } => peekable(object) && is_pure_value(index) && more.iter().all(is_pure_value),
         ast::ExprKind::Call { callee, args, .. } => {
             is_plain_path(callee) && args.iter().all(is_pure_value)
         }
@@ -153,8 +158,13 @@ fn pure_below(target: &ast::Expr, depth: usize) -> bool {
         ast::ExprKind::Member { object, .. }
         | ast::ExprKind::NonNull(object)
         | ast::ExprKind::Cast { expr: object, .. } => pure_below(object, depth - 1),
-        ast::ExprKind::Index { object, index, .. } => {
-            is_pure_value(index) && pure_below(object, depth - 1)
+        ast::ExprKind::Index {
+            object,
+            index,
+            more,
+            ..
+        } => {
+            is_pure_value(index) && more.iter().all(is_pure_value) && pure_below(object, depth - 1)
         }
         _ => false,
     }
@@ -553,12 +563,15 @@ impl FnCx<'_, '_> {
                 optional,
             },
             ast::ExprKind::Index {
-                index, optional, ..
+                index,
+                more,
+                optional,
+                ..
             } => ast::ExprKind::Index {
                 object: bound,
                 index,
                 optional,
-                more: Vec::new(),
+                more,
             },
             k => k,
         };
