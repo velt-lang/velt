@@ -109,6 +109,10 @@ fn sources(dir: &Path, out: &mut Vec<(String, String)>) {
 /// kept: the item ends at the first `;` outside brackets or at the `}` that closes its first `{`
 /// (a `mod tests { … }`, a `mod tests;`, a `use`, a function). String and character literals
 /// and comments are skipped while counting.
+///
+/// A small hand scanner, not a Rust lexer: it handles strings, characters and line comments, but
+/// not raw strings (`r#"…"#`) or block comments holding braces, so a test item containing one
+/// can end early and expose test text to the scan: a false failure, never a false pass.
 fn without_tests(src: &str) -> String {
     const MARK: &str = "#[cfg(test)]";
     let mut out = String::with_capacity(src.len());
