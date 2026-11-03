@@ -29,6 +29,7 @@ mod plan;
 mod pr_lint;
 mod pr_size;
 mod precheck;
+mod read_by_tests;
 mod repeat;
 mod timing_lint;
 

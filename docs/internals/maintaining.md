@@ -148,7 +148,9 @@ not a reason for another round.
   Windows, the WebAssembly goldens on Windows and macOS (built once per OS, then run in shards,
   as in the queue), and the `tsc` oracle for
   `velt check --ts-compat` (`crates/velt_tscompat/tests/oracle.rs` against the `typescript`
-  pinned in `tests/tscompat-oracle`), and the benchmark guard
+  pinned in `tests/tscompat-oracle`), a Worker under workerd with its start-up and CPU budgets
+  (`crates/veltc/tests/workerd.rs` with `VELT_WORKERD_TIMINGS=1`, the Miniflare pinned in
+  `tests/workerd`), and the benchmark guard
   (`bench/nightly.sh`: the instructions each benchmark executes, counted with valgrind, against
   the last run that passed, `compile/check_all_std` per code line of `std/`; more than 3% more
   fails and opens, or comments on, the issue "nightly benchmarks regressed" with the benchmarks
@@ -157,7 +159,7 @@ not a reason for another round.
   job); fix failures first ("A red nightly" below).
   An intended slowdown is accepted with `gh workflow run nightly -f only=bench -f
   bench_baseline=accept`. Run one part alone with `gh workflow run nightly -f only=stress` (or
-  `gate`, `oracle`, `bench`, `wasm`).
+  `gate`, `oracle`, `workerd`, `bench`, `wasm`).
 - A push to `main` (the `main` jobs in `ci.yml`) runs the whole gate on Windows and macOS when
   the queue checked the change on Linux only, and opens or updates the issue "main fails on
   <OS>" when that fails; fix it first. A commit the queue tested on every OS skips them, unless

@@ -251,9 +251,20 @@ jobs:
         with:
           fetch-depth: 2
       - uses: ./.github/actions/setup
+      # The pinned Miniflare and workerd, so the Worker test (crates/veltc/tests/workerd.rs) runs
+      # under workerd here (VELT_WORKERD below); its timings run nightly.
+      - name: npm ci (tests/workerd, Linux)
+        if: runner.os == 'Linux'
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}/tests/workerd
+        # No install scripts: workerd's would fetch its binary outside the lockfile's hashes; the
+        # lockfile's platform package has it.
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: cargo xtask check --full --part lint,test
         shell: bash
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        env:
+          # The Worker test fails instead of skipping when the packages are missing (Linux).
+          VELT_WORKERD: ${{ runner.os == 'Linux' && '1' || '' }}
         run: cargo xtask check --full --part lint,test --base HEAD^1
       - if: failure()
         uses: ./.github/actions/fail-fast

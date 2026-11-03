@@ -21,7 +21,7 @@ on:
       only:
         description: Run only one job (all = every job, flake included).
         type: choice
-        options: [all, gate, stress, oracle, bench, wasm, flake, cache]
+        options: [all, gate, stress, oracle, workerd, bench, wasm, flake, cache]
         default: all
       bench_baseline:
         description: >-
@@ -195,6 +195,31 @@ jobs:
         run: cargo test -p veltc --test ts_compat behaviour_samples -- --nocapture
       - name: the `velt` type package under tsc
         run: cargo test -p veltc --test ts_compat type_package -- --nocapture
+
+  # A `velt build --host host-cloudflare` Worker under workerd, the open-source Workers runtime,
+  # through the Miniflare tests/workerd pins (crates/veltc/tests/workerd.rs): requests in, the
+  # expected answers out, with packages/cloudflare's bindings against workerd's local R2, D1, KV,
+  # cache and Durable Objects; the Worker's size, start-up time and CPU per request against
+  # budgets. The pull request gate skips it without the packages; VELT_WORKERD_TIMINGS=1 makes
+  # missing packages a failure and runs the timings (one test at a time: a build beside them
+  # would distort them, as a busy gate would).
+  workerd:
+    if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'workerd')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      VELT_WORKERD_TIMINGS: "1"
+    steps:
+      - uses: actions/checkout@v4
+      # node, and LLVM's opt/llc and the WebAssembly target with the toolchain.
+      - uses: ./.github/actions/setup
+      - name: npm ci (the pinned Miniflare and workerd)
+        working-directory: tests/workerd
+        # No install scripts: workerd's would fetch its binary outside the lockfile's hashes; the
+        # lockfile's platform package has it.
+        run: npm ci --ignore-scripts --no-audit --no-fund
+      - name: the Worker under workerd
+        run: cargo test -p veltc --test workerd -- --nocapture --test-threads=1
 
   # Instructions per benchmark (bench/nightly.sh: valgrind, so the counts don't depend on how busy
   # the runner is) against the counts of the last run that passed, kept in the Actions cache. More
