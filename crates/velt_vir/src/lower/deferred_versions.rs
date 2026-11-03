@@ -96,6 +96,15 @@ impl FnLower<'_, '_> {
             }
             stands.push(call(pin));
         }
+        // The state waits for the rest of the pass: keep it without the room its vectors grew.
+        self.locals.shrink_to_fit();
+        self.blocks.shrink_to_fit();
+        self.block_locs.shrink_to_fit();
+        self.live.shrink_to_fit();
+        for ((stmts, _), (locs, _)) in self.blocks.iter_mut().zip(self.block_locs.iter_mut()) {
+            stmts.shrink_to_fit();
+            locs.shrink_to_fit();
+        }
         let d = Deferred {
             symbol: symbol.to_string(),
             params,
