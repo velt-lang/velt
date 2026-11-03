@@ -45,6 +45,7 @@ import * as std_net_http_h2 from "velt/net/http/h2";
 import * as std_net_udp from "velt/net/udp";
 import * as std_net_url from "velt/net/url";
 import * as std_net_websocket from "velt/net/websocket";
+import * as std_ops from "velt/ops";
 import * as std_os from "velt/os";
 import * as std_package from "velt/package";
 import * as std_path from "velt/path";
