@@ -26,8 +26,11 @@ pub(super) fn side_effect_free(e: &ast::Expr) -> bool {
         ast::ExprKind::Index {
             object,
             index,
+            more,
             optional: false,
-        } if super::member::literal_key(index).is_some() => side_effect_free(object),
+        } if more.is_empty() && super::member::literal_key(index).is_some() => {
+            side_effect_free(object)
+        }
         _ => false,
     }
 }
@@ -49,8 +52,9 @@ impl FnCx<'_, '_> {
             ast::ExprKind::Index {
                 object,
                 index,
+                more,
                 optional: false,
-            } => match self.symbol_key_of(index) {
+            } if more.is_empty() => match self.symbol_key_of(index) {
                 Some(name) => Some((
                     object,
                     ast::Ident {

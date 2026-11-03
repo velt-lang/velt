@@ -193,6 +193,7 @@ impl FnCx<'_, '_> {
                             object: Box::new(tmp.clone()),
                             index: Box::new(at),
                             optional: false,
+                            more: Vec::new(),
                         };
                         (p, mk(read, p.span))
                     })
@@ -213,6 +214,7 @@ impl FnCx<'_, '_> {
                             object: Box::new(tmp.clone()),
                             index: Box::new(mk(E::Ident(k), key.span)),
                             optional: false,
+                            more: Vec::new(),
                         },
                         KeyRead::Member(k) => E::Member {
                             object: Box::new(tmp.clone()),
@@ -369,6 +371,7 @@ impl FnCx<'_, '_> {
                             span,
                         )),
                         optional: false,
+                        more: Vec::new(),
                     },
                     span,
                 );

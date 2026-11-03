@@ -124,7 +124,14 @@ fn expr(e: &ast::Expr) -> Option<Span> {
         E::Call { callee, args, .. } => expr(callee).or_else(|| args.iter().find_map(expr)),
         E::New { args, .. } => args.iter().find_map(expr),
         E::Yield { arg, .. } => arg.as_deref().and_then(expr),
-        E::Index { object, index, .. } => expr(object).or_else(|| expr(index)),
+        E::Index {
+            object,
+            index,
+            more,
+            ..
+        } => expr(object)
+            .or_else(|| expr(index))
+            .or_else(|| more.iter().find_map(expr)),
         E::Arrow { body, .. } => match body {
             ast::ArrowBody::Expr(x) => expr(x),
             ast::ArrowBody::Block(b) => block(b),

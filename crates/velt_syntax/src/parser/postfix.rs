@@ -44,8 +44,10 @@ impl<'a> Parser<'a> {
                 }
                 Tok::LBracket => {
                     self.warn_continuation();
+                    let (index, more) = self.parse_index()?;
                     ExprKind::Index {
-                        index: Box::new(self.parse_index()?),
+                        index: Box::new(index),
+                        more,
                         object: Box::new(e),
                         optional: false,
                     }
@@ -93,11 +95,31 @@ impl<'a> Parser<'a> {
     }
 
     /// `[ index ]`
-    fn parse_index(&mut self) -> PResult<Expr> {
+    /// `[index]` or `[index, more…]`: the keys of an operator indexer with several keys
+    /// (`m[i, j]`, design operators.md). Velt has no comma operator, so a comma here always
+    /// separates keys; a trailing comma and a spread are errors, as in a JS member access.
+    fn parse_index(&mut self) -> PResult<(Expr, Vec<Expr>)> {
         self.bump(); // [
         let index = self.allow_in(|p| p.parse_expr())?;
+        let mut more = vec![];
+        while self.eat(Tok::Comma) {
+            if self.at(Tok::RBracket) {
+                let span = self.cur_span();
+                self.error(
+                    "expected an index after `,`: an index has no trailing comma",
+                    span,
+                );
+                return Err(Fail);
+            }
+            if self.at(Tok::DotDotDot) {
+                let span = self.cur_span();
+                self.error("an index cannot be spread: write each key", span);
+                return Err(Fail);
+            }
+            more.push(self.allow_in(|p| p.parse_expr())?);
+        }
         self.expect(Tok::RBracket)?;
-        Ok(index)
+        Ok((index, more))
     }
 
     /// Consumes `++` / `--` and returns the matching operator.
@@ -122,11 +144,15 @@ impl<'a> Parser<'a> {
                 args: self.parse_args()?,
                 optional: true,
             }),
-            Tok::LBracket => Ok(ExprKind::Index {
-                index: Box::new(self.parse_index()?),
-                object,
-                optional: true,
-            }),
+            Tok::LBracket => {
+                let (index, more) = self.parse_index()?;
+                Ok(ExprKind::Index {
+                    index: Box::new(index),
+                    more,
+                    object,
+                    optional: true,
+                })
+            }
             Tok::PrivateName => {
                 // TS18030.
                 let span = self.cur_span();

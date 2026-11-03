@@ -92,8 +92,9 @@ pub(super) fn is_pure_place(e: &ast::Expr) -> bool {
         ast::ExprKind::Index {
             object,
             index,
+            more,
             optional: false,
-        } => is_pure_place(object) && is_pure_value(index),
+        } => is_pure_place(object) && is_pure_value(index) && more.iter().all(is_pure_value),
         ast::ExprKind::Member {
             object,
             optional: false,
@@ -312,8 +313,9 @@ impl crate::body::FnCx<'_, '_> {
             ast::ExprKind::Index {
                 object,
                 index,
+                more,
                 optional: false,
-            } => (object, Some(index), None),
+            } if more.is_empty() => (object, Some(index), None),
             ast::ExprKind::Member {
                 object,
                 prop,
@@ -412,21 +414,23 @@ impl crate::body::FnCx<'_, '_> {
             ast::ExprKind::Index {
                 object,
                 index,
+                more,
                 optional: false,
             } => {
                 let object = Box::new(self.bind_root(object, all, lets));
-                let keep = match all {
-                    true => is_literal(index) || is_hoisted(index),
-                    false => is_pure_value(index),
+                // Each key in order, held unless reading it again has no effect.
+                let mut key = |s: &mut Self, k: &ast::Expr| match all {
+                    true if is_literal(k) || is_hoisted(k) => k.clone(),
+                    false if is_pure_value(k) => k.clone(),
+                    _ => s.bind_hoisted(k, lets),
                 };
-                let index = match keep {
-                    true => index.clone(),
-                    false => Box::new(self.bind_hoisted(index, lets)),
-                };
+                let index = Box::new(key(self, index));
+                let more = more.iter().map(|k| key(self, k)).collect();
                 ast::ExprKind::Index {
                     object,
                     index,
                     optional: false,
+                    more,
                 }
             }
             _ => return e.clone(),

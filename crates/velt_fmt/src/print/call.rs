@@ -87,9 +87,14 @@ impl<'a> Printer<'a> {
     }
 
     /// `[index]` / `?.[index]`.
-    pub(super) fn index_suffix(&mut self, index: &Expr, optional: bool) -> Doc {
+    /// `[index]`, `?.[index]`, `[i, j]`.
+    pub(super) fn index_suffix(&mut self, index: &Expr, more: &[Expr], optional: bool) -> Doc {
         let open = if optional { "?.[" } else { "[" };
-        cat![open, self.expr(index), "]"]
+        let mut keys = self.expr(index);
+        for k in more {
+            keys = cat![keys, ", ", self.expr(k)];
+        }
+        cat![open, keys, "]"]
     }
 }
 

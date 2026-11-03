@@ -185,6 +185,7 @@ fn arg_expr(a: &Arg, span: Span) -> ast::Expr {
                 object: Box::new(rest_ident(span)),
                 index: Box::new(int(*k, span)),
                 optional: false,
+                more: Vec::new(),
             },
             span,
         ),

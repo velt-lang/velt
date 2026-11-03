@@ -1,0 +1,4 @@
+// An index has no trailing comma and no spread, as in a JavaScript member access (#2179).
+const xs = [1, 2];
+const a = xs[0,];
+const b = xs[0, ...xs];

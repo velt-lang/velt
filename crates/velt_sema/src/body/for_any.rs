@@ -79,6 +79,7 @@ impl FnCx<'_, '_> {
             object: Box::new(syn.name(&syn.array)),
             index: Box::new(syn.name(&index)),
             optional: false,
+            more: Vec::new(),
         });
         let decl = syn.stmt(ast::StmtKind::Var(ast::VarDecl {
             kind: p.kind,

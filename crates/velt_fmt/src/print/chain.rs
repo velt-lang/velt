@@ -138,8 +138,11 @@ impl<'a> Printer<'a> {
             },
             Link::Index(e) => match &e.kind {
                 ExprKind::Index {
-                    index, optional, ..
-                } => self.index_suffix(index, *optional),
+                    index,
+                    more,
+                    optional,
+                    ..
+                } => self.index_suffix(index, more, *optional),
                 _ => nil(),
             },
             Link::NonNull(_) => text("!"),

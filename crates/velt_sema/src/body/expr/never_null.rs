@@ -130,11 +130,15 @@ impl FnCx<'_, '_> {
         let E::Index {
             object,
             index,
+            more,
             optional: false,
         } = &e.kind
         else {
             return None;
         };
+        if !more.is_empty() {
+            return None;
+        }
         // What is indexed, and by what (checked again below: errors are reported there).
         let mark = self.cx.diags.len();
         let base = self.expr(object, None, Want::Borrow);
@@ -198,6 +202,7 @@ impl FnCx<'_, '_> {
                 object: Box::new(arr),
                 index: Box::new(k),
                 optional: false,
+                more: Vec::new(),
             },
             sp,
         );

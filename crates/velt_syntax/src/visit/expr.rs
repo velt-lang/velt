@@ -69,9 +69,17 @@ fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
         E::New { args, .. } => args.iter().for_each(f),
         E::Yield { arg: Some(a), .. } => f(a),
         E::Yield { arg: None, .. } => {}
-        E::Index { object, index, .. } => {
+        E::Index {
+            object,
+            index,
+            more,
+            ..
+        } => {
             f(object);
             f(index);
+            for k in more {
+                f(k);
+            }
         }
         E::Object(props) | E::StructLit { props, .. } => {
             for p in props {

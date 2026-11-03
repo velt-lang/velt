@@ -81,6 +81,7 @@ impl FnCx<'_, '_> {
                         object: Box::new(mk(E::Ident(rest.clone()), span)),
                         index: Box::new(mk(E::Lit(ast::Lit::Str(key.clone())), span)),
                         optional: false,
+                        more: Vec::new(),
                     },
                     span,
                 );

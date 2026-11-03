@@ -1,8 +1,8 @@
 # Design: operator overloading
 
 Status: **accepted** (issue #2050, maintainer review 2026-11-02, its points written in below);
-built by a stack of five pull requests (steps 1–2, 3–4, 5, 6 and 7 below); step 8 (`a[i, j]`)
-waits for its `ast::ExprKind::Index` change. Area 2 of #1866.
+built by a stack of five pull requests (steps 1–2, 3–4, 5, 6 and 7 below) and, for step 8
+(`a[i, j]`, design #2179), a sixth. Area 2 of #1866.
 
 ## Problem
 
@@ -131,7 +131,16 @@ with a member `x` and `[Symbol.index](k: string)`, `a["x"]` is the member and `a
 indexer. When both methods exist, `setIndex`'s value is of the type `index` returns. A type with
 `index` only is read-only. The typed arrays and `RegExpMatch` use the public keys now.
 
-`a[i, j]` (step 8) passes several arguments; on arrays it is an error with the fix `a[i][j]`.
+**`m[i, j]` (step 8, #2179) passes several keys:** `m[Symbol.index](i, j)`, and
+`m[Symbol.setIndex](i, j, v)` as a target, with `op=`, `++`, `--` and `?.[i, j]` as for one key.
+The object is evaluated first, then each key once, left to right, then the value; `m?.[f(), g()]`
+evaluates no key when `m` is null or undefined, as JavaScript short-circuits the chain, and
+`m[i, j] op= m[i, j]` is well defined, as `v += v` is. Several keys always call the indexer (the
+member-key rule needs one key). `[Symbol.setIndex]` takes `[Symbol.index]`'s keys, of the same
+types position by position, and then the value. Every other type (arrays, tuples, strings,
+`Map`s, records, typed arrays, `any`, an indexer taking one key) is an error with the fix
+`a[i][j]`: in TypeScript `a[i, j]` is the comma operator, which reads `a[j]`. `velt/ops` has no
+interfaces with several keys; a plain interface declaring the indexer serves generic code.
 
 ### Generic code
 
@@ -177,6 +186,7 @@ intrinsic and no runtime function was added.
 | Scalar operands of vectors | `body/expr/operator_simd.rs` |
 | `a op= b`, `++`/`--`; `opAssign` in read-then-writes | `body/expr/operator_assign.rs` (hooked in `assign.rs`, `accessor_rmw.rs`, `indexers.rs`) |
 | `[]` | `body/expr/indexers.rs` (`indexes_through`; std's `INDEX` keys removed) |
+| `[i, j]` | `ast::ExprKind::Index`'s `more` (the keys after the first; the AST cache format is `vast` 4), `parser/postfix.rs`, `body/expr/index_keys.rs`, the key check in `collect/operators.rs` (`same_keys`) |
 | std | `std/ops` and `std/simd/ops_*.vlt` (generated: `scripts/gen-ops.py`, `scripts/gen-simd-ops.py`), `std/math/bigint_ops.vlt`, `std/time/duration.vlt` |
 | Tooling | hover and go-to-definition on the operator (the call's name span is the operator); `--ts-compat` rule `operator` |
 
@@ -236,7 +246,8 @@ before `numrep` runs; release inlines them anyway.
 7. Tooling and docs: hover and go-to-definition, `--ts-compat` rule `operator`, this note,
    ts-alignment.md §4, std-layout.md §3, the website's docs (docs-sync issue).
 8. `a[i, j]`: an additive change of `ast::ExprKind::Index` (a list; a one-element list keeps
-   today's encoding cost) in its own pull request.
+   today's encoding cost) in its own pull request (design #2179: a field `more: Vec<Expr>` next
+   to `index`, which doesn't grow `ExprKind`).
 
 ## Decisions (review of #2050, 2026-11-02)
 

@@ -195,6 +195,7 @@ impl FnCx<'_, '_> {
                     object: Box::new(base),
                     index: k.clone(),
                     optional: false,
+                    more: Vec::new(),
                 },
                 Key::Member(p) => ast::ExprKind::Member {
                     object: Box::new(base),

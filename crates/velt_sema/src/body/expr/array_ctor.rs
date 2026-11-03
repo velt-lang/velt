@@ -366,6 +366,7 @@ fn first_of(e: &ast::Expr) -> ast::Expr {
             object: Box::new(e.clone()),
             index: Box::new(zero),
             optional: false,
+            more: Vec::new(),
         },
         span: e.span,
     }

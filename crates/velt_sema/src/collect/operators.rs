@@ -275,6 +275,46 @@ fn op_symbol(op: BinaryOp) -> &'static str {
     }
 }
 
+/// `[Symbol.setIndex]` takes `[Symbol.index]`'s keys, of the same types position by position,
+/// and then the value (`m[i, j] op= v` reads and writes one element); reported when not.
+fn same_keys(cx: &mut Ctx, get: DefId, set: DefId) -> bool {
+    let keys =
+        |cx: &Ctx, d: DefId| -> Vec<TyId> { cx.fn_info(d).params.iter().map(|p| p.ty).collect() };
+    let (read, write) = (keys(cx, get), keys(cx, set));
+    let span = cx.fn_info(set).name_span;
+    // Too few parameters is the shape error `shape_error` reports.
+    let Some((_, write)) = write.split_last() else {
+        return true;
+    };
+    if read.len() != write.len() {
+        let n = read.len();
+        let keys = if n == 1 { "key" } else { "keys" };
+        cx.error(
+            Diagnostic::error(
+                format!("`{SET_INDEX}` takes `{INDEX}`'s {n} {keys} and then the value, not {} {}", write.len(), if write.len() == 1 { "key" } else { "keys" }),
+                span,
+            )
+            .with_note(format!("`a[…] op= v` reads the element with `{INDEX}` and writes it back with `{SET_INDEX}` at the same keys")),
+        );
+        return false;
+    }
+    for (n, (r, w)) in read.iter().zip(write).enumerate() {
+        if r == w || cx.ty.is_bottom(*r) || cx.ty.is_bottom(*w) {
+            continue;
+        }
+        let (rn, wn) = (cx.display(*r), cx.display(*w));
+        cx.error(
+            Diagnostic::error(
+                format!("`{SET_INDEX}`'s key {} must be a `{rn}`, as `{INDEX}`'s is, not a `{wn}`", n + 1),
+                span,
+            )
+            .with_note(format!("`a[…] op= v` reads the element with `{INDEX}` and writes it back with `{SET_INDEX}` at the same keys")),
+        );
+        return false;
+    }
+    true
+}
+
 /// `[Symbol.setIndex]`'s value is of the type `[Symbol.index]` returns, so `a[i] op= v` reads
 /// and writes one type.
 fn index_pair(cx: &mut Ctx, o: &Owner) {
@@ -287,6 +327,9 @@ fn index_pair(cx: &mut Ctx, o: &Owner) {
     let (Some(get), Some(set)) = (def(INDEX), def(SET_INDEX)) else {
         return;
     };
+    if !same_keys(cx, get, set) {
+        return;
+    }
     let read = cx.fn_info(get).ret;
     let Some(value) = cx.fn_info(set).params.last().map(|p| p.ty) else {
         return;

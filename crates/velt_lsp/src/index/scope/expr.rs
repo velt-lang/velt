@@ -87,9 +87,17 @@ impl<'a> Walker<'a> {
                 self.expr(then);
                 self.expr(els);
             }
-            ast::ExprKind::Index { object, index, .. } => {
+            ast::ExprKind::Index {
+                object,
+                index,
+                more,
+                ..
+            } => {
                 self.expr(object);
                 self.expr(index);
+                for k in more {
+                    self.expr(k);
+                }
             }
             _ => {}
         }

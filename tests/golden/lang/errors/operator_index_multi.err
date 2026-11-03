@@ -1,0 +1,22 @@
+operator_index_multi.vlt:32:3: error: `[Symbol.setIndex]` takes `[Symbol.index]`'s 2 keys and then the value, not 1 key
+note: `a[…] op= v` reads the element with `[Symbol.index]` and writes it back with `[Symbol.setIndex]` at the same keys
+operator_index_multi.vlt:36:3: error: `[Symbol.setIndex]`'s key 2 must be a `usize`, as `[Symbol.index]`'s is, not a `string`
+note: `a[…] op= v` reads the element with `[Symbol.index]` and writes it back with `[Symbol.setIndex]` at the same keys
+operator_index_multi.vlt:5:11: error: `f64[][]` has no indexer taking several keys: an index with several keys calls `[Symbol.index]`
+note: to index an element of an element, write `a[i][j]`
+operator_index_multi.vlt:6:1: error: `f64[][]` has no indexer taking several keys: an index with several keys calls `[Symbol.index]`
+note: to index an element of an element, write `a[i][j]`
+operator_index_multi.vlt:8:11: error: `Map<string, f64>` has no indexer taking several keys: an index with several keys calls `[Symbol.index]`
+note: to index an element of an element, write `a[i][j]`
+operator_index_multi.vlt:10:11: error: `Uint8Array`'s `[Symbol.index]` takes one key, not 2
+note: to index an element of an element, write `a[i][j]`
+operator_index_multi.vlt:12:11: error: `any` has no indexer taking several keys: an index with several keys calls `[Symbol.index]`
+note: to index an element of an element, write `a[i][j]`
+operator_index_multi.vlt:14:11: error: `string` has no indexer taking several keys: an index with several keys calls `[Symbol.index]`
+note: to index an element of an element, write `a[i][j]`
+operator_index_multi.vlt:19:11: error: `One`'s `[Symbol.index]` takes one key, not 2
+note: to index an element of an element, write `a[i][j]`
+operator_index_multi.vlt:25:16: error: mismatched types
+note: expected usize, found string
+operator_index_multi.vlt:26:1: error: cannot assign through `[]`: `Two` has `[Symbol.index]` but no `[Symbol.setIndex]`
+operator_index_multi.vlt:27:1: error: `delete` removes one key: an index with several keys calls an indexer, which deletes nothing

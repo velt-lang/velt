@@ -121,11 +121,13 @@ fn replace(target: &ast::Expr, depth: usize, with: &ast::Expr) -> ast::Expr {
         ast::ExprKind::Index {
             object,
             index,
+            more,
             optional,
         } => ast::ExprKind::Index {
             object: Box::new(replace(object, depth - 1, with)),
             index: index.clone(),
             optional: *optional,
+            more: more.clone(),
         },
         ast::ExprKind::NonNull(x) => ast::ExprKind::NonNull(Box::new(replace(x, depth - 1, with))),
         ast::ExprKind::Cast { expr, ty } => ast::ExprKind::Cast {
@@ -441,17 +443,22 @@ impl FnCx<'_, '_> {
             ast::ExprKind::Index {
                 object,
                 index,
+                more,
                 optional: false,
             } => {
                 let object = Box::new(self.hoist_held(object, h, stmts));
-                let index = match h.keeps(index, top) {
-                    true => index.clone(),
-                    false => Box::new(self.bind_hoisted(index, stmts)),
+                // Each key in order, held unless it can be read again.
+                let mut key = |s: &mut Self, k: &ast::Expr| match h.keeps(k, top) {
+                    true => k.clone(),
+                    false => s.bind_hoisted(k, stmts),
                 };
+                let index = Box::new(key(self, index));
+                let more = more.iter().map(|k| key(self, k)).collect();
                 ast::ExprKind::Index {
                     object,
                     index,
                     optional: false,
+                    more,
                 }
             }
             _ if top || (!h.strict && peekable(b)) || is_plain_path(b) => return e.clone(),
@@ -551,6 +558,7 @@ impl FnCx<'_, '_> {
                 object: bound,
                 index,
                 optional,
+                more: Vec::new(),
             },
             k => k,
         };
@@ -586,11 +594,13 @@ impl FnCx<'_, '_> {
             ast::ExprKind::Index {
                 object,
                 index,
+                more,
                 optional,
             } => ast::ExprKind::Index {
                 object: Box::new(self.bind_shared_in(object, stmts)?),
                 index: index.clone(),
                 optional: *optional,
+                more: more.clone(),
             },
             _ => return None,
         };

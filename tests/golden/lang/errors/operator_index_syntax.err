@@ -1,0 +1,2 @@
+operator_index_syntax.vlt:3:16: error: expected an index after `,`: an index has no trailing comma
+operator_index_syntax.vlt:4:17: error: an index cannot be spread: write each key

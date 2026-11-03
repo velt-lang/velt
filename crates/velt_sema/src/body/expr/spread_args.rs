@@ -303,8 +303,10 @@ impl FnCx<'_, '_> {
             ast::ExprKind::Index {
                 object,
                 index,
+                more,
                 optional: false,
-            } if matches!(index.kind, ast::ExprKind::Lit(ast::Lit::Int { .. }))
+            } if more.is_empty()
+                && matches!(index.kind, ast::ExprKind::Lit(ast::Lit::Int { .. }))
                 && super::setters::side_effect_free(object) =>
             {
                 let h = self.trial_expr(e);
@@ -442,6 +444,7 @@ fn index(object: &ast::Expr, k: usize) -> ast::Expr {
             object: Box::new(object.clone()),
             index: Box::new(lit),
             optional: false,
+            more: Vec::new(),
         },
         span,
     }

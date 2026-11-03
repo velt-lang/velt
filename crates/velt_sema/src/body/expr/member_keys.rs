@@ -14,8 +14,9 @@ pub(crate) fn member_view(e: &ast::Expr) -> Option<(&ast::Expr, ast::Ident)> {
         ast::ExprKind::Index {
             object,
             index,
+            more,
             optional: false,
-        } => Some((
+        } if more.is_empty() => Some((
             object,
             ast::Ident {
                 name: literal_key(index)?,
