@@ -222,10 +222,14 @@ pub(super) fn to_json(m: &Manifest) -> Value {
             .iter()
             .map(|(code, level)| (code.clone(), json!(level.name())))
             .collect();
-        out.insert(
-            "lint".into(),
-            json!({ "perf": lint.perf.map(|l| l.name()), "rules": rules }),
-        );
+        let mut o = Map::new();
+        if let Some(perf) = lint.perf {
+            o.insert("perf".into(), json!(perf.name()));
+        }
+        if !rules.is_empty() {
+            o.insert("rules".into(), Value::Object(rules));
+        }
+        out.insert("lint".into(), Value::Object(o));
     }
     if let Some(build) = &m.build {
         let mut o = Map::new();

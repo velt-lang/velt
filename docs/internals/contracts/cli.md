@@ -209,7 +209,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   token. `logout` removes the entry. Writes to a registry server (`publish`, `yank`, `owner
   add|remove`) send `$VELT_REGISTRY_TOKEN` if set, else the token stored for exactly that
   registry, else none. A token is never sent (nor stored) for a plain `http://` URL whose host is
-  not loopback (a host part with `@`, `?`, `#` or `` is never loopback); that is an error.
+  not loopback (a host part with `@`, `?`, `#` or `\` is never loopback); that is an error.
 - `search <text> [--json]` (additive): `name  version  description` lines on stdout (columns
   aligned; the description cut to the terminal's width with `…`, not cut when stdout is not a
   terminal) for the packages of the package's registry (or `$VELT_REGISTRY`) that match the text
@@ -479,7 +479,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   marker columns (`*` default, `>` selected here); `--available` prints the index's versions,
   newest first, `  (installed)` after installed ones and `  (yanked: <why>)` after yanked ones.
   Reading the index refuses one whose `generated` is older than `<root>/index-seen`, and prints
-  `velt: a newer velt launcher (<v>) is available (this one is <own>): run `velt toolchain self-update`` on stderr when its `launcher` is newer than
+  `velt: a newer velt launcher (<v>) is available (this one is <own>): run \`velt toolchain self-update\`` on stderr when its `launcher` is newer than
   the running launcher. `install --from <file> [--unverified] [--default]`
   (`velt_toolchain::release::install_toolchain_from_file`): `<file>` must be named
   `velt-<semver>-<host>.tar.gz`; unless `--unverified` (a warning on stderr), `SHA256SUMS` and

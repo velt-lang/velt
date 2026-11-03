@@ -157,8 +157,8 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "check",
         summary: "Type-check a file or the current package without building it",
         usage: &[
-            "check [<file.vlt>] [--target <triple>] [--perf [--deps]] [--fix[=review]] [--json] [--locked] [-v]",
-            "check --ts-compat [<file|dir>...] [--fix[=review]] [--json] [--locked] [-v]",
+            "check [<file.vlt>] [--target <triple>] [--perf [--deps]] [--fix[=safe|review]] [--json] [--locked] [-v]",
+            "check --ts-compat [<file|dir>...] [--fix[=safe|review]] [--json] [--locked] [-v]",
             "check --std [--json] [-v]",
             "check (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<check options>]",
         ],
@@ -197,7 +197,7 @@ pub const COMMANDS: &[CommandHelp] = &[
             ),
             ("--deps", "with `--perf`: also list what the optimizer could not do in dependencies"),
             (
-                "--fix[=review]",
+                "--fix[=safe|review]",
                 "apply the findings' fixes that keep the behaviour (`review`: also those that may \
                  change it), then check again",
             ),

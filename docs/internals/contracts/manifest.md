@@ -388,7 +388,8 @@ lint: { perf: "warn", rules: { "perf/number-double": "off", "ts-compat/default-s
 - The reader's errors, at the value: `lint`, or `rules`, not an object; a level that is not a
   string or not one of the four; an unknown key in `lint`. It doesn't check that a code names a
   rule (`velt check` warns about one that doesn't).
-- `to_vlt` writes `lint` before `build`; `velt manifest --json` prints `{"perf", "rules"}`.
+- `to_vlt` writes `lint` before `build`; `velt manifest --json` prints `{"perf", "rules"}`, each
+  only when set.
 
 ## Native libraries (additive)
 Contract: [native_abi.md](native_abi.md).
