@@ -111,6 +111,11 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// Are there loops [`Self::version_view_loops`] would version?
+    pub(super) fn has_view_loops(&self) -> bool {
+        !self.view_loops.tests.is_empty()
+    }
+
     /// The first block of a loop about to be lowered (for [`Self::note_loop`]).
     pub(super) fn loop_start(&self) -> u32 {
         self.blocks.len() as u32

@@ -187,9 +187,21 @@ pub(crate) use glue::{inspect_key, inspect_quote};
 /// and the closure computed after a pass already contains everything its facts imply.
 const MAX_BOXING_PASSES: usize = 8;
 
+/// Passes `lower_program` may take: the fixpoint's, one more without the `await` steps, and one
+/// more lowering the whole program after facts-only passes.
+const MAX_PASSES: usize = MAX_BOXING_PASSES + 2;
+
 /// Lower a whole checked program (see [`crate::lower`]). Lowering repeats while a pass finds
 /// shares of types that were not counted yet (boxing/); the type table carries over, so type
 /// ids in the counted set stay valid.
+///
+/// The passes until the counted types stop growing only find them (`Cx::facts_only`): their
+/// functions leave out the versions of view loops, which find no shares and were most of a
+/// pass's time in large programs with array views. When such a pass left a version out, the
+/// program is lowered once more, whole, with the counted types it found. That pass is the one
+/// the fixpoint would have ended with: the facts-only passes intern the same types in the same
+/// order (versioning interns none), so the type table it starts from gives every type the same
+/// id.
 pub(crate) fn lower_program(
     hir: &hir::Program,
     opts: &LowerOptions,
@@ -197,8 +209,11 @@ pub(crate) fn lower_program(
     let mut types = hir.types.clone();
     let mut counted = boxing::Boxing::initial(hir);
     let mut no_await_steps = false;
+    // `VELT_LOWER_WHOLE`: every pass whole, as before facts-only passes (tests compare both).
+    let mut facts_only = std::env::var_os("VELT_LOWER_WHOLE").is_none();
+    let profile = std::env::var_os("VELT_LOWER_PROFILE").is_some();
     // One more pass when the `await` steps turn out to be unobservable (await_order.rs).
-    for pass in 0..=MAX_BOXING_PASSES {
+    for pass in 0..MAX_PASSES {
         lower_profile::start_pass();
         let pass_start = std::time::Instant::now();
         let mut cx = Cx::new(hir, types, counted.clone());
@@ -208,6 +223,7 @@ pub(crate) fn lower_program(
             .target
             .map_or_else(crate::system::host_triple, str::to_string);
         cx.no_await_steps = no_await_steps;
+        cx.facts_only = facts_only;
         cx.locs = opts
             .source_map
             .map(|sm| srcloc::LocMap::new(sm, opts.std_root));
@@ -231,8 +247,19 @@ pub(crate) fn lower_program(
         cx.build_iface_glues();
         lower_profile::end_pass(pass, pass_start.elapsed());
         let next = cx.close_boxing();
-        if std::env::var_os("VELT_LOWER_PROFILE").is_some() && next != counted {
+        if profile {
+            let kind = if facts_only { "facts only" } else { "whole" };
+            let n = cx.versioned;
+            eprintln!("velt-lower: pass {pass} {kind}: view loops versioned in {n} functions");
+        }
+        if profile && next != counted {
             eprintln!("velt-lower: pass {pass} grew: {}", counted.changes(&next));
+        }
+        if next == counted && cx.left_out {
+            // The counted types are complete; lower the program with them, whole.
+            facts_only = false;
+            types = cx.types;
+            continue;
         }
         if next == counted {
             if cx.facts.unmet {
@@ -416,6 +443,14 @@ struct Cx<'h> {
     /// Lower no `await` steps (async_fn/await_order.rs): the program was lowered once and
     /// nothing in it can make a task's await word non-0.
     no_await_steps: bool,
+    /// This pass only finds the counted types (`lower_program`): functions leave out the work
+    /// that finds none, the versions of their view loops (view_unswitch.rs).
+    facts_only: bool,
+    /// A function of this facts-only pass left its view loops unversioned: the pass's
+    /// functions are not the program's.
+    left_out: bool,
+    /// The functions whose view loops this pass versioned (`VELT_LOWER_PROFILE`).
+    versioned: usize,
     /// Copy of the HIR type table, extended with substituted (monomorphic) types.
     types: TyTable,
     aggs: Vec<AggLayout>,

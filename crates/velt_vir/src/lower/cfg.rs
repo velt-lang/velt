@@ -181,7 +181,14 @@ impl FnLower<'_, '_> {
             self.check_half_bits(&symbol);
         }
         self.build_div_zero_blocks();
-        self.version_view_loops(params.len());
+        if !self.cx.facts_only || self.asyncx.is_some() {
+            // A poll function's body is analysed for its state (async_fn/spill), which the
+            // calls creating it build: it is always whole.
+            self.cx.versioned += usize::from(self.has_view_loops());
+            self.version_view_loops(params.len());
+        } else if self.has_view_loops() {
+            self.cx.left_out = true;
+        }
         self.place_sections();
         let mut remap = vec![None; self.blocks.len()];
         for (n, (i, _)) in self
