@@ -4,13 +4,26 @@
 // `101 Switching Protocols` (`switchingProtocols`).
 import { utf8Encode } from "velt/encoding";
 import { IoError } from "velt/io";
-import { BodyKind, RequestSource, requestSource, responseParts, serverRequest, statusText, switchingProtocols } from "velt/net/http";
+import {
+  BodyKind,
+  RequestSource,
+  requestSource,
+  responseParts,
+  serverRequest,
+  statusText,
+  switchingProtocols,
+} from "velt/net/http";
+import { AbortSignal } from "velt/task";
 import { describe, expect, it } from "velt/test";
 
 /** A request held in memory, counting what the `Request` asked it for. */
 class Memory implements RequestSource {
   asked: string[] = [];
   private pieces: u8[][];
+
+  signal(): AbortSignal | null {
+    return null;
+  }
 
   constructor(pieces: u8[][]) {
     this.pieces = pieces;

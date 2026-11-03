@@ -235,7 +235,11 @@ export class Request {
     return s == null ? "follow" : s.redirect;
   }
 
-  /** The signal passed in `init`; without one, a signal that is never aborted (as in JS). */
+  /**
+   * The signal passed in `init`. A request a server received (`serverRequest`) has its server's
+   * signal: aborted when the client goes away or the server closes, as in Deno and Bun. Otherwise
+   * a signal that is never aborted (as in JS).
+   */
   get signal(): AbortSignal {
     const given = this.givenSignal();
     if (given != null) {
@@ -246,7 +250,9 @@ export class Request {
     if (known != null) {
       return known;
     }
-    const made = new AbortController().signal;
+    const source = this.fromServer();
+    const fromServer = source == null ? null : source.signal();
+    const made = fromServer ?? new AbortController().signal;
     e.idle = made;
     return made;
   }

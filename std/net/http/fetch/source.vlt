@@ -4,6 +4,7 @@
 // servers hand their handlers a `Request`.
 
 import { IoError } from "velt/io/error";
+import { AbortSignal } from "velt/task/signal";
 import { Request } from "velt/net/http/fetch/request";
 
 /**
@@ -26,6 +27,12 @@ export interface RequestSource {
   read(): Promise<u8[] | null, IoError>;
   /** The rest of the body. */
   body(): Promise<u8[], IoError>;
+  /**
+   * Aborted when the client can no longer be answered (it went away, or reset its HTTP/2
+   * stream) or the server closes: the request's `signal`. Null when the server can't tell; the
+   * `Request`'s signal is then never aborted.
+   */
+  signal(): AbortSignal | null;
 }
 
 /** The `Request` a handler reads for a request a server received from `source`. */

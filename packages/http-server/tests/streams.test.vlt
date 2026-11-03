@@ -1,6 +1,7 @@
 // Streamed bodies: a response written while the client reads it (velt/http's `BodyStream`, and
 // velt/net/http's `res.stream()` and Server-Sent Events), and an upload read piece by piece.
-import { channel } from "velt/sync";
+import { Channel, channel } from "velt/sync";
+import { AbortSignal, timeout } from "velt/task";
 import { utf8Encode } from "velt/encoding";
 import { BodyStream } from "velt/net/http";
 import { serve } from "../src/lib";
@@ -111,6 +112,44 @@ async function raw(port: number, text: string): Promise<string> {
   c.close();
   return all.replace(/Date: [^\r]*\r\n/g, "");
 }
+
+// An endless streamed body (#2074): written until the client goes away.
+async function* endless(): AsyncGenerator<u8[]> {
+  const chunk = utf8Encode("x".repeat(4096));
+  while (true) {
+    yield chunk;
+    await yieldNow();
+  }
+}
+
+async function reportAbort(signal: AbortSignal, seen: Channel<string>) {
+  await signal.whenAborted();
+  await seen.send(`aborted ${signal.aborted}`);
+}
+
+describe("a received Request's signal", () => {
+  it("aborts when the client goes away during the response (HTTP/1.1)", async () => {
+    // #2074: `serve`'s `Request` has the connection's signal, as `serveHttp`'s `res.signal()`.
+    const seen = channel<string>();
+    const server = await serve({ port: 0 }, (req: Request): Response => {
+      spawn(reportAbort(req.signal, seen));
+      return new Response(BodyStream.from(endless()));
+    });
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
+      await c.readString();
+      c.close();
+      expect(await timeout(seen.receive(), 5000)).toBe("aborted true");
+    } finally {
+      server.close();
+    }
+  });
+
+  it("is never aborted for a request made with new Request", async () => {
+    expect(new Request("http://x/").signal.aborted).toBe(false);
+  });
+});
 
 describe("velt/net/http streaming", () => {
   // velt/net/http streaming: a response written piece by piece (chunked; to an HTTP/1.0
