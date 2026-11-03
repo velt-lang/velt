@@ -21,6 +21,7 @@ pub(crate) const PORTABLE_CRATES: &[&str] = &[
     "velt_lsp",
     "velt_doc",
     "velt_tscompat",
+    "velt_lint",
     "velt_registry",
     "velt_http",
     "velt_rt_wasm",

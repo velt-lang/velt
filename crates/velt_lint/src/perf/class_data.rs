@@ -311,6 +311,29 @@ fn check(
         }
     }
     let name = &c.name.name;
+    let mut notes = vec![
+        format!(
+            "an object type (`type {name} = {{ … }}`) stores its fields inline, so an array of \
+             them is one block"
+        ),
+        "values of an object type are copied, not shared: nothing here assigns a field \
+         outside the constructor, compares two or uses `instanceof`, so nothing can tell"
+            .into(),
+    ];
+    let message = format!("`{name}` only holds data: each instance is a separate heap allocation");
+    if item.exported && !cx.whole_package {
+        // Files that import it are not loaded here: their uses would stay classes.
+        notes.push(format!(
+            "`velt check --perf --fix=review` in the package rewrites it with every file that uses it"
+        ));
+        return Some(Finding {
+            code: CODE,
+            span: c.name.span,
+            message,
+            notes,
+            fixes: vec![],
+        });
+    }
     let mut edits = vec![(item.span, shape.alias(name, item.exported))];
     for (span, args) in news {
         let args: Vec<&str> = args.iter().map(|a| cx.text(*a)).collect();
@@ -326,16 +349,8 @@ fn check(
     Some(Finding {
         code: CODE,
         span: c.name.span,
-        message: format!("`{name}` only holds data: each instance is a separate heap allocation"),
-        notes: vec![
-            format!(
-                "an object type (`type {name} = {{ … }}`) stores its fields inline, so an array of \
-                 them is one block"
-            ),
-            "values of an object type are copied, not shared: nothing here assigns a field \
-             outside the constructor, compares two or uses `instanceof`, so nothing can tell"
-                .into(),
-        ],
+        message,
+        notes,
         fixes: vec![ProfiledFix {
             fix: Fix {
                 title: format!("make `{name}` an object type"),

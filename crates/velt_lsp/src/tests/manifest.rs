@@ -76,6 +76,7 @@ fn completion_and_hover_come_from_the_schema() {
             "jsx",
             "define",
             "tsCompat",
+            "lint",
             "build"
         ]
     );

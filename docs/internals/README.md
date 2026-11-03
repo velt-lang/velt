@@ -143,6 +143,7 @@ SQLite, PostgreSQL, Redis). `velt_rt_wasm` is its single-threaded WebAssembly co
 | `velt_lsp` | language server |
 | `velt_doc` | API docs and the docs website |
 | `velt_tscompat` | `velt check --ts-compat`: the lint for code shared with TypeScript |
+| `velt_lint` | lint profiles, levels, `velt-allow` comments and fixes; the `perf/…` rules of `velt check --perf` |
 | `velt_native`, `velt_native_macros` | the Rust side of a package's native library, and its `#[export]` attribute |
 | `vpm`, `velt_registry` | package manager, registry server |
 | `velt_http` | a minimal HTTP/1.1 server and client for the developer tools |
@@ -242,7 +243,7 @@ Decisions and their rationale, including what is still planned:
   reference, and the checklist for adding one (proposed, issue #1981).
 - [Lint profiles](design/lint-profiles.md): a profile per source file (portable, native,
   dependency), performance findings from patterns and from what the optimizer could not do,
-  fixes that never cross a stricter boundary, `velt check --perf` and `--fix` (proposed).
+  fixes that never cross a stricter boundary, `velt check --perf` and `--fix` (steps 1–4 built).
 
 ## Testing
 

@@ -380,7 +380,7 @@ type Props = {
             diagnostics: vec![],
             loaded_cleanly: false,
             ide: None,
-            ts_compat: vec![],
+            lint: vec![],
             docs: Cache::default(),
         };
         (analysis, file)

@@ -58,6 +58,8 @@ pub(super) fn findings(
     package: &Package,
 ) -> Vec<Diagnostic> {
     let analysis = velt_sema::ide::check_for_ide(&loaded.modules, loaded.root);
+    // `velt check` of a package loads all of its modules; of a file, its imports only.
+    let whole_package = args.input.is_none() && args.ts_compat.is_none();
     let mut diags = velt_lint::perf::lint(
         &loaded.modules,
         &sess.sm,
@@ -66,6 +68,7 @@ pub(super) fn findings(
         &package.profiles,
         &package.levels,
         &|_| true,
+        whole_package,
     );
     let evidence_ran = args.perf && checked;
     if evidence_ran {

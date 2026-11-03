@@ -3,8 +3,8 @@
 ```
 velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple> | --host <package>] [--cpu <name>] [--emit vir|llvm|obj|exe] [--locked] [--no-generators] [--json] [-v] [--timings]
 velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>] [--backend cranelift|llvm] [--locked] [--no-generators] [-- <program args>...]
-velt check [<file.vlt>] [--target <triple>] [--json] [--locked] [--no-generators] [-v]
-velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]
+velt check [<file.vlt>] [--target <triple>] [--perf [--deps]] [--fix[=safe|review]] [--json] [--locked] [--no-generators] [-v]
+velt check --ts-compat [<file|dir>...] [--fix[=safe|review]] [--json] [--locked] [-v]
 velt dev   [<file.vlt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]
 velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] [--jobs <n>] [--watch]
 velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] --no-run [--json]
@@ -209,7 +209,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   token. `logout` removes the entry. Writes to a registry server (`publish`, `yank`, `owner
   add|remove`) send `$VELT_REGISTRY_TOKEN` if set, else the token stored for exactly that
   registry, else none. A token is never sent (nor stored) for a plain `http://` URL whose host is
-  not loopback (a host part with `@`, `?`, `#` or `\` is never loopback); that is an error.
+  not loopback (a host part with `@`, `?`, `#` or `` is never loopback); that is an error.
 - `search <text> [--json]` (additive): `name  version  description` lines on stdout (columns
   aligned; the description cut to the terminal's width with `…`, not cut when stdout is not a
   terminal) for the packages of the package's registry (or `$VELT_REGISTRY`) that match the text
@@ -244,8 +244,11 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `location` is `{"file", "line", "column", "endLine", "endColumn"}` (1-based; columns count
   bytes, as in the text output) or `null`. A non-source failure (unreadable input, broken
   package) is an error diagnostic with `location: null`. `-v` prints stage timings to stderr.
-  Additive: every JSON diagnostic also has `"code"` and `"fix"`, both `null` except for
-  `--ts-compat` findings.
+  Additive: every JSON diagnostic also has `"code"` (the lint rule, `null` for the check's own
+  diagnostics; changed: a ts-compat finding's is `ts-compat/<rule>`, formerly `<rule>`),
+  `"fixes"` (each `{"title", "applicability": "safe"|"review", "edits": [{"location",
+  "replacement"}]}`; empty for none) and `"fix"` (the first fix when it is one edit, as
+  `{"location", "replacement", "title"}`, else `null`).
 - `check --ts-compat <file|dir>...` (additive): checks exactly the given files (a directory: its
   source modules, found as for a package, recursively; a directory without any is an error; an
   explicit `.d.ts` path is an error) in one front-end run, the first as the root and the rest as
@@ -268,7 +271,36 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   no `package.vlt` …"), when the manifest has no `tsCompat` ("package `<name>` has no `tsCompat`
   folders to lint …"), when a listed folder is not a directory ("package `<name>`: `tsCompat`
   folder `<dir>` does not exist" / "is not a folder"), or when the folders hold no source
-  module. Plain `velt check` never lints, `tsCompat` or not.
+  module. Plain `velt check` never runs the ts-compat rules, `tsCompat` or not.
+- Lint rules (additive; docs/internals/design/lint-profiles.md). Each source file has a profile:
+  portable (in a `tsCompat` folder), native (the package's other files, or every user file
+  outside a package) or dependency (other packages', std's: never reported or fixed). The
+  `perf/…` rules (`velt_lint::PERF_RULES`) have the level `lint` in `package.vlt` sets
+  ([manifest.md](manifest.md)), `hint` by default. Plain `velt check` runs the rules on the
+  syntax tree and types only when one of them is at `warn` or `deny`; `--perf` runs them at any
+  level but `off`, and the rules on the optimized program too, which build the program up to
+  optimized VIR (a release build with line information, no code generation; a program that does
+  not build gives a note without location instead). A hint is a `note`, `warn` a warning,
+  `deny` an error (exit 1). In a portable file only fixes that stay TypeScript are kept, and a
+  finding left without one is a note. Findings follow the check's diagnostics, ordered by file
+  and position; each is a diagnostic whose notes end with a note naming its first fix
+  and the flag that applies it (`fix: <title> (…--fix)`, or `--fix=review`), then
+  `<family>(<rule>)`. `--deps` (only with
+  `--perf`) adds the optimizer's findings in dependencies as notes without fixes. A
+  `// velt-allow(<code>[, <code>…]): <reason>` comment suppresses those codes on the next line
+  with code (alone on its line) or on its own line (after code); `velt-allow-file(…)` in the
+  whole file; `<family>/*` covers a family. A warning reports an allow without a reason, of an
+  unknown code, or (for rules that ran) that suppressed nothing; a `lint.rules` code that is no
+  rule is a warning without location. The ts-compat findings honour the same comments and
+  levels (`lint.rules` may set `ts-compat/<rule>`).
+- `--fix` (`=safe`, the default) / `--fix=review` (additive): check and lint, apply the first fix
+  of each diagnostic that the mode allows (Safe; Review too) whose edits overlap no fix applied
+  before, then check again. If the files no longer check (more errors than before), every fix
+  is undone and they are applied one at a time, keeping each after which they still check. It
+  prints `velt: fixed <n> problem(s) in <m> file(s)` (or `velt: nothing to fix`) and one `velt:
+  not applied, the program did not check after it: <title> (<message>)` per undone fix to
+  stderr, then the check and lint of the result as without `--fix`. JSON: the report of the
+  result with `"fixed": {"fixes", "files", "undone": [string]}`. Not with `--std`.
 - Linking (additive): debug builds (no `--release`) link the runtime as a
   shared library (`libvelt_rt_shared.so` / `.dylib`, `velt_rt_shared.dll` + `.dll.lib`) found
   next to `velt`, its parent directory or `<prefix>/lib`, with an rpath to it (Windows: the DLL is
@@ -447,7 +479,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   marker columns (`*` default, `>` selected here); `--available` prints the index's versions,
   newest first, `  (installed)` after installed ones and `  (yanked: <why>)` after yanked ones.
   Reading the index refuses one whose `generated` is older than `<root>/index-seen`, and prints
-  `velt: a newer velt launcher (<v>) is available (this one is <own>): run \`velt toolchain self-update\`` on stderr when its `launcher` is newer than
+  `velt: a newer velt launcher (<v>) is available (this one is <own>): run `velt toolchain self-update`` on stderr when its `launcher` is newer than
   the running launcher. `install --from <file> [--unverified] [--default]`
   (`velt_toolchain::release::install_toolchain_from_file`): `<file>` must be named
   `velt-<semver>-<host>.tar.gz`; unless `--unverified` (a warning on stderr), `SHA256SUMS` and

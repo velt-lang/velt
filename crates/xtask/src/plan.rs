@@ -38,7 +38,8 @@ const PIPELINE: &[&str] = &[
 const TOOLING: &[(&str, &[&str])] = &[
     ("velt_lsp", &[]),
     ("velt_doc", &[]),
-    ("velt_tscompat", &["ts_compat"]),
+    ("velt_tscompat", &["ts_compat", "lint"]),
+    ("velt_lint", &["lint", "ts_compat"]),
     ("velt_fmt", &["templates", "cli_package"]),
     (
         "vpm",
@@ -50,6 +51,8 @@ const TOOLING: &[(&str, &[&str])] = &[
             "install_layout",
             // `velt check --ts-compat` in a package reads `tsCompat` from the manifest.
             "ts_compat",
+            // `velt check --perf` reads `lint` and `tsCompat` from the manifest.
+            "lint",
             // `velt test --locked` resolves each example app as a package.
             "example_apps",
             // `velt test` in each of the repository's packages (path dependencies, native code).

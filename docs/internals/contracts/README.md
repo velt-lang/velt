@@ -39,6 +39,13 @@ velt build main.vlt
       └─ velt_link::link  (+ velt_rt staticlib)       → executable
 ```
 Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exit code 1 on errors.
+A `velt_common::Diagnostic` may carry a lint `code` (`Option<Box<str>>`: `perf/number-double`,
+`ts-compat/bool-type`; `None` for the compiler's own) and `fixes: Vec<Fix>` (changed: both
+added, docs/internals/design/lint-profiles.md). A `Fix` is a `title`, `edits: Vec<(Span,
+String)>` (replacements, possibly in several files, applied together or not at all) and an
+`applicability`: `Safe` (the program behaves the same; `velt check --fix` and editors' "fix all"
+apply it) or `Review` (it may change what the program does; `--fix=review`). `render` does not
+print them; a lint adds its code as the last note (`perf(number-double)`).
 
 ## Program loader (crate boundary, #2197)
 `crates/velt_loader` loads a program: the root file and every module it needs (the prelude, the

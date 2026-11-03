@@ -112,7 +112,8 @@ fn finding(
     if item.unbounded {
         notes.push(format!(
             "an integer type holds it exactly: `{name}: i64` (it wraps past 2^63 where a `number` \
-             loses precision past 2^53); in TypeScript too, `(…) | 0` keeps it a 32-bit integer"
+             loses precision past 2^53; where it meets a `number`, `as number` converts it); in \
+             TypeScript too, `(…) | 0` keeps it a 32-bit integer"
         ));
         if let Some(fix) = decl.and_then(|d| annotate(module, src, d)) {
             fixes.push(ProfiledFix {

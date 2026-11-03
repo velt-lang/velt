@@ -1,15 +1,15 @@
 //! Code actions: quick fixes for compiler diagnostics and for a few patterns TypeScript habits
 //! produce.
 //!
-//! Compiler diagnostics carry no machine-readable fix-its yet (`velt_common::Diagnostic` has only
-//! a message, labels and notes), so each fix recognizes its diagnostic by message/notes and builds
-//! the replacement from the AST and sema's types:
+//! Lint findings carry their fixes (`velt_common::Diagnostic::fixes`, [`crate::lint::fixes`]);
+//! most compiler diagnostics don't yet, so each of these fixes recognizes its diagnostic by
+//! message/notes and builds the replacement from the AST and sema's types:
 //! - [`fixits`]: `mut` removal, a non-`bool` condition → an explicit comparison,
 //!   `async` for a method whose promise must carry its errors;
 //! - [`exports`]: `export default` → a named export;
 //! - [`promise`]: a floating promise (a promise-typed expression statement, a compiler error) →
 //!   `await` it or `spawn` it;
-//! - the TypeScript-compatibility findings' own fixes ([`crate::ts_compat::fixes`]).
+//! - the fixes diagnostics carry: the lint findings' (TypeScript compatibility, `perf/…`).
 //!
 //! A fix that applies to several places of the document also comes as "fix all in file"
 //! ([`fix_all_like`]), and every preferred fix of the document as one `source.fixAll` action
@@ -23,7 +23,8 @@ use velt_common::{Diagnostic, Span};
 
 use crate::analysis::Analysis;
 
-/// One quick fix: text edits in the document, and the diagnostic it resolves (if any).
+/// One quick fix: text edits (in the document, or in other loaded files too), and the
+/// diagnostic it resolves (if any).
 #[derive(Debug)]
 pub struct Fix {
     /// Title shown in the editor's light-bulb menu.
@@ -57,7 +58,7 @@ pub fn fixes(analysis: &Analysis, lo: u32, hi: u32) -> Vec<Fix> {
         }));
     }
     out.extend(promise::fixes(analysis, lo, hi));
-    out.extend(crate::ts_compat::fixes(analysis, lo, hi));
+    out.extend(crate::lint::fixes(analysis, lo, hi));
     out
 }
 

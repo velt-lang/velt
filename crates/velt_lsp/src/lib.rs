@@ -9,7 +9,7 @@
 //! ([`imports`]): the exports of the module inside `import { … }`, module specifiers after
 //! `from "`, and auto-import of exported names that are not imported yet. Documents in a package's
 //! `tsCompat` folders also get the TypeScript-compatibility lint's findings and fixes
-//! ([`ts_compat`]).
+//! ([`lint`]).
 //! Program loading is injected through [`ProgramLoader`] (the CLI's loader lives in `veltc`, which
 //! depends on this crate). Editor queries come from sema's IDE API ([`sema_query`] over
 //! `velt_sema::ide`, which answers even when the program has errors); the AST-based [`index`]
@@ -34,6 +34,7 @@ mod index;
 mod inlay_hints;
 mod jsx_completion;
 mod line_index;
+mod lint;
 mod manifest;
 mod references;
 mod registry;
@@ -44,7 +45,6 @@ mod signature;
 mod signature_help;
 mod symbols;
 mod text_scan;
-mod ts_compat;
 mod workspace_symbols;
 
 #[cfg(test)]

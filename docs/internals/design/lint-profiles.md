@@ -1,8 +1,9 @@
 # Design: lint profiles, and performance findings for native code
 
-Status: proposed. Related: #1247 (`velt check --fix`), #51 (fix-its for TS idioms), #991
-(ts-compat follow-ups); the performance issues the first rules come from are listed under
-[Rules](#rules).
+Status: steps 1 to 4 built (`velt_lint`, `velt check --perf` and `--fix`, the editor's hints and
+quick fixes); steps 5 and 6 proposed. Related: #1247 (`velt check --fix`), #51 (fix-its for TS
+idioms), #991 (ts-compat follow-ups); the performance issues the first rules come from are listed
+under [Rules](#rules). What changed while building it is in [Decisions](#decisions).
 
 ## Problem
 
@@ -63,10 +64,10 @@ note, never as a warning, because the author can't act on it without breaking th
 portable fix is also held to the subset: the `tsc` oracle (`velt_tscompat/tests/oracle.rs`) gets
 each portable fix's output as a sample.
 
-Example: a class that only holds data and is never compared by identity.
-- native: `struct` (Review: copies instead of shares, sema checks the uses first).
-- portable: a field-only interface (shared-models.md §1: stored inline, no vtable) and object
-  literals at the construction sites (Review).
+Example: a class that only holds data and is never compared by identity becomes an object type
+(stored inline) with object literals at the construction sites (Review: copies instead of
+shares; the rule checks the uses first). That is TypeScript too, so a portable file gets it; a
+`struct` (step 6) would be native only.
 
 ### 3. Fixes never cross a stricter boundary
 
@@ -117,63 +118,99 @@ lint: {                                     // optional (additive)
 
 ### 6. Commands and the editor
 
-- `velt check --perf [paths]`: runs the evidence rules too (the pipeline costs about as much as a
-  release build without codegen).
-- `velt check --fix`: applies the Safe fixes of all findings, ts-compat included (#1247);
-  `--fix=review` also applies the Review ones. It prints a diff summary and changes no file it
-  can't parse back.
-- Language server: pattern findings as you type, their fixes as quick fixes (by code, not by
-  message text), Safe ones in "fix all". Evidence findings when the file is saved, in the
-  background, with a setting to turn that off.
-- Multi-file refactors in the language server, each checked by sema before it is offered:
-  class → `struct`, class → field-only interface, `number` → an integer type for a whole function
-  when the numbers report shows the values are integers.
+- `velt check --perf [<file>]`: runs the evidence rules too (the pipeline costs about as much
+  as a release build without codegen).
+- `velt check --fix`: applies the Safe fixes of all findings, ts-compat included;
+  `--fix=review` also applies the Review ones. It checks the program again and undoes a fix
+  after which it no longer checks, then prints what it fixed and what is left.
+- Language server: pattern findings as you type, their fixes as quick fixes (from the
+  diagnostics' fixes, not their message text), Safe ones in "fix all". Evidence findings only in
+  `velt check --perf` for now (open question 3).
+- Multi-file refactors: the class → object type fix rewrites every `new` in the package. Still
+  proposed (step 6): class → `struct`, and `number` → an integer type for a whole function when
+  the numbers report shows the values are integers.
 
 ## Rules
 
-The first rules each come from a measured cost. Each rule lands with a benchmark showing what its
-fix gains (CONTRIBUTING.md), and a test that fails without the rule.
+Each rule comes from a measured cost: the TypeScript form against the Velt form, release builds
+with the release runtime, instructions retired (cachegrind) on Linux x86-64. A measured pattern
+that turned out to be fast already got no rule (below). Each rule has a test that fails without
+it (`crates/veltc/tests/lint.rs`, `crates/velt_lsp/src/tests/perf.rs`).
 
-| Code | Kind | Finds | Native fix | Portable fix | From |
+| Code | Kind | Finds | Native fix | Portable fix | Measured |
 |---|---|---|---|---|---|
-| `perf/string-append-loop` | pattern | `s += x` / `s = s + x` in a loop | `StringBuilder` (Safe) | note only | #379 |
-| `perf/dynamic-record` | pattern | `Record<string, any>` or `any` data read in a loop | a typed object type or `Map<K, V>` (Review) | a field-only interface (Review) | #2058 |
-| `perf/class-as-data` | pattern | a class with only fields, never compared by identity | `struct` (Review) | field-only interface (Review) | shared-models.md |
-| `perf/number-double` | evidence | a `number` in a loop that stays a double, with the optimizer's reason | an integer type (Review: overflow) | note only | #732, #769 |
-| `perf/heap-value` | evidence | a value that stays on the heap, with why (e.g. passed to a union parameter) | per cause | note only | #2119 |
-| `perf/dynamic-call` | evidence | a call the optimizer could not make direct | note | note | `vtable_loads` |
-| `perf/kept-clone` | evidence | a copy the optimizer could not remove | note | note | `gated_clones` |
+| `perf/dynamic-record` | pattern | a `Record<string, any>` (or `any`) parameter read with constant keys | an object type of the keys read with `as T` (Review) | the same (TypeScript) | 1 894M → 7M (#2058) |
+| `perf/class-as-data` | pattern | a class with only fields and a constructor that stores its parameters, whose instances nothing could tell from copies (no field assigned outside the constructor, no comparison, `instanceof`, `Map`/`Set` key or use as a value) | `type C = { … }`, each `new C(…)` → `{ … } as C`, in every file (Review) | the same (TypeScript) | 259M → 79M |
+| `perf/foreach-capture` | pattern | `xs.forEach(cb)` on an array whose callback assigns a variable of the enclosing function, which then lives in a heap cell | `for (const x of xs) { … }` (Safe; Review when the body names the array; none with a `return`) | the same (TypeScript) | 111M → 33M |
+| `perf/number-double` | evidence | a `number` in a loop that the optimizer keeps as a double, with its reason | `let k: i64` when every value is a whole number nothing bounds (Review) | note only (`\| 0` named) | 1 101M → 621M |
+
+Measured and left without a rule, because Velt already makes the TypeScript form as fast:
+`JSON.parse(s) as T` (the same instructions as `JSON.parse<T>(s)`), `s += x`, `` s = `${s}…` ``
+and `this.out += s` in a loop (linear since #381), `xs.forEach` whose callback assigns nothing
+outside it and `xs.reduce` (as fast as `for…of`). Not yet: values kept on the heap (#2119), calls
+left dynamic and copies left in place, which need the optimizer to say where it gave up (step 5).
 
 ## Compiler changes
 
-1. **Contract change, `velt_common::Diagnostic`:** gains `code: Option<&'static str>` and
-   `fixes: Vec<Fix>` (the type above). `--json` (contracts/cli.md) already prints `code` and
-   `fix` for ts-compat findings; it moves to the general fields, and the old field stays for one
-   release.
-2. **A lint crate:** `velt_tscompat` becomes `velt_lint`, with a rule registry (code, family,
-   kind, default level), the file-to-profile map (`vpm::sources::in_folder`, as `tsCompat` uses
-   today), levels from `lint`, and the suppression comments. The ts-compat rules move in
-   unchanged.
-3. **`velt_opt`:** a `remarks(program) -> Vec<Remark>` entry point beside `number_report`, which
-   collects the optimizer's failures (narrowing, heap SROA, devirtualization, clone removal)
-   with their VIR places. The lint crate turns them into findings; `velt_opt` doesn't know about
-   profiles.
-4. **Manifest (additive):** `lint` in `package.vlt` (contracts/manifest.md, `vpm::manifest`).
-5. **Language server:** code actions by code; evidence findings on save.
+1. **Contract change, `velt_common::Diagnostic`:** gains `code: Option<Box<str>>` and
+   `fixes: Vec<Fix>` (`Fix { title, edits, applicability }`, `Applicability::{Safe, Review}`;
+   docs/internals/contracts/README.md). `--json` (contracts/cli.md) prints every fix as
+   `fixes`; `fix` stays, the first fix when it is one edit.
+2. **`velt_lint`:** the rule registry (`PERF_RULES`: code, kind, summary), the file-to-profile
+   map (`Profiles`, `vpm::sources::in_folder` as `tsCompat` uses it), levels from `lint`
+   (`Levels`), the suppression comments (`allow`), fix selection and application (`fix`), the
+   pattern rules (`perf`) and the evidence rules (`evidence`, on plain records veltc makes from
+   the optimizer's reports, so the crate needs no optimizer). `velt_tscompat` is unchanged.
+3. **`velt_opt`:** `Unnarrowed::why` says the reason's kind (`UnnarrowedWhy`), so a rule can tell
+   an unbounded integer (an `i64` holds it) from a fraction. Step 5 adds `remarks(program)` for
+   the other passes.
+4. **Manifest (additive):** `lint` in `package.vlt` (contracts/manifest.md, `vpm::manifest`,
+   std's `Lint` and `LintLevel` types).
+5. **Language server:** lint findings published with the document's diagnostics, quick fixes
+   from the diagnostics' fixes (edits in other files go to those files), Safe ones preferred.
+6. **veltc:** `velt check --perf [--deps]`, `--fix[=review]` (`commands/lint.rs`); the check
+   driver returns the loaded modules with its outcome (`driver::check_with_modules`), so the
+   lint reuses the check's front end.
 
 ## Implementation order
 
-Each step is useful alone.
+Each step is useful alone. Steps 1 to 4 are built.
 
-1. `Diagnostic` codes and fixes; `velt check --fix`; the language server's code actions by code
-   (closes #1247).
+1. `Diagnostic` codes and fixes; `velt check --fix`; the language server's code actions from
+   the diagnostics' fixes (#1247's machinery; its `undefined` migration fixes are its own).
 2. The lint crate: registry, profiles, levels, suppression, `lint` in the manifest. ts-compat
    moves in.
 3. The pattern rules: `perf/string-append-loop`, `perf/class-as-data`, `perf/dynamic-record`.
 4. Evidence: `velt_opt::remarks`, `velt check --perf`, `perf/number-double` (replacing the
    report's renderer), placement across boundaries (§3), `--deps`.
-5. The other evidence rules, and the portable fixes in the `tsc` oracle.
+5. The other evidence rules (`velt_opt::remarks`: heap SROA, devirtualization, clone removal
+   saying where they gave up), and the portable fixes in the `tsc` oracle.
 6. The multi-file refactors in the language server.
+
+## Decisions
+
+Made while building steps 1 to 4:
+
+- **No new crate rename.** `velt_tscompat` keeps its rules and `Finding`; `velt_lint` turns its
+  findings into diagnostics (`velt_lint::ts_compat`) and adds profiles, levels, suppression and
+  the `perf/…` rules, so the oracle tests and the rules stay where they are.
+- **`Diagnostic::code` is `Option<Box<str>>`.** A `String` grew `Diagnostic` past clippy's
+  `result_large_err` limit for the `Result`s it travels in.
+- **The JSON `code` is the whole code**, `ts-compat/bool-type` (was `bool-type`): the same string
+  `velt-allow` and `lint.rules` take. The editor keeps `velt ts-compat` / `velt perf` as the
+  source and the rule as the code, as the note shows it (`perf(foreach-capture)`).
+- **Hints are notes.** `Severity` has no hint; the editor shows a `perf/…` note as a hint.
+- **`--fix` checks again.** A fix that makes the program fail to check is undone (all are tried
+  together first, then one at a time): Review fixes such as an `i64` that meets a `number` are
+  offered without proof and kept only if the program still checks.
+- **Evidence only in `velt check --perf`**, not in the editor, for now (open question 3): it
+  builds the program, and the editor's analysis is of one document and its imports.
+- **A fix that rewrites the uses of an exported definition needs the whole package.** The editor
+  loads a document's imports, not the files that import it, so it reports an exported data
+  class without the fix and names `velt check --perf --fix=review`, which loads every module.
+- **Evidence placement.** The optimized program names a source line and column; the finding is
+  placed at the local's declaration (from the checker's analysis), the loop's line in a note.
+  `velt check --perf` builds with line information (`-g`), which changes no optimization.
 
 ## Open questions
 

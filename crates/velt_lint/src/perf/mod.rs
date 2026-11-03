@@ -20,6 +20,9 @@ pub(crate) struct Cx<'a> {
     pub sm: &'a SourceMap,
     pub analysis: &'a ide::Analysis,
     pub module: &'a SourceModule,
+    /// Every module of the package is loaded (`velt check` of a package), so a fix may rewrite
+    /// every use of an exported definition; the editor loads a document's imports only.
+    pub whole_package: bool,
 }
 
 impl Cx<'_> {
@@ -57,7 +60,9 @@ pub fn file_profiles(
 
 /// The pattern rules' findings in the modules `lint` selects that have no error in
 /// `diagnostics`, as diagnostics at the package's levels (suppressions not applied yet:
-/// [`crate::finish`] does that for every family at once).
+/// [`crate::finish`] does that for every family at once). `whole_package`: every module of the
+/// package is among `modules` ([`Cx::whole_package`]).
+#[allow(clippy::too_many_arguments)]
 pub fn lint(
     modules: &[SourceModule],
     sm: &SourceMap,
@@ -66,6 +71,7 @@ pub fn lint(
     profiles: &Profiles,
     levels: &Levels,
     lint: &dyn Fn(FileId) -> bool,
+    whole_package: bool,
 ) -> Vec<Diagnostic> {
     let profile_of = file_profiles(modules, sm, profiles);
     let failed: HashSet<FileId> = diagnostics
@@ -91,6 +97,7 @@ pub fn lint(
             sm,
             analysis,
             module,
+            whole_package,
         };
         let mut found: Vec<Finding> = vec![];
         if on(foreach::CODE) {

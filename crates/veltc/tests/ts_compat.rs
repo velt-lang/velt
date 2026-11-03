@@ -35,13 +35,20 @@ fn write(dir: &Path, rel: &str, text: &str) {
     std::fs::write(path, text).unwrap();
 }
 
-/// The `code`s of the diagnostics in a `--json` report (`null` for the check's own).
+/// The rule of a JSON diagnostic's `code` (`ts-compat/bool-type` → `bool-type`; `-` for none).
+fn rule(code: &Value) -> String {
+    let code = code.as_str().unwrap_or("-");
+    code.strip_prefix("ts-compat/").unwrap_or(code).to_string()
+}
+
+/// The rules of the diagnostics in a `--json` report (`-` for the check's own): their `code`s,
+/// `ts-compat/<rule>`, without the family.
 fn codes(report: &Value) -> Vec<String> {
     report["diagnostics"]
         .as_array()
         .unwrap()
         .iter()
-        .map(|d| d["code"].as_str().unwrap_or("-").to_string())
+        .map(|d| rule(&d["code"]))
         .collect()
 }
 
@@ -198,6 +205,10 @@ fn json_adds_code_and_fix() {
     assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
     let report = json(&o);
     assert_eq!(codes(&report), ["velt-number-type", "bool-type"]);
+    assert_eq!(
+        report["diagnostics"][0]["code"],
+        "ts-compat/velt-number-type"
+    );
     assert_eq!(report["errors"], 2);
     let d = &report["diagnostics"][1];
     assert_eq!(d["location"]["column"], 28);
@@ -279,10 +290,7 @@ fn a_file_failing_the_check_is_not_linted() {
         .map(|d| {
             let file = d["location"]["file"].as_str().unwrap();
             let name = Path::new(file).file_name().unwrap().to_string_lossy();
-            (
-                name.into_owned(),
-                d["code"].as_str().unwrap_or("-").to_string(),
-            )
+            (name.into_owned(), rule(&d["code"]))
         })
         .collect();
     assert_eq!(
@@ -451,10 +459,7 @@ fn files_and_codes(report: &Value) -> Vec<(String, String)> {
         .map(|d| {
             let file = d["location"]["file"].as_str().unwrap_or("-");
             let name = Path::new(file).file_name().unwrap().to_string_lossy();
-            (
-                name.into_owned(),
-                d["code"].as_str().unwrap_or("-").to_string(),
-            )
+            (name.into_owned(), rule(&d["code"]))
         })
         .collect()
 }

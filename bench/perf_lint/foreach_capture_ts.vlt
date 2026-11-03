@@ -1,0 +1,11 @@
+// perf/foreach-capture, the TypeScript form: a `forEach` callback that assigns `total`, kept in a heap cell.
+// The pair is measured in README.md.
+function main() {
+  const xs: number[] = [];
+  for (let i = 0; i < 1000; i++) xs.push(i * 0.5);
+  let total = 0.0;
+  for (let r = 0; r < 20000; r++) {
+    xs.forEach((x) => { total += x; });
+  }
+  console.log(total);
+}
