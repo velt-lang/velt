@@ -13,6 +13,9 @@ use super::Facts;
 use crate::lower::fresh_fns::FnKey;
 use crate::vir::FuncId;
 
+/// A set of type pairs to add to, and the set to add.
+type PairSets<'a> = (&'a mut FxHashSet<(TyId, TyId)>, &'a FxHashSet<(TyId, TyId)>);
+
 /// Moves the entries of `from` that `pick` names into `to`.
 fn take<T: Clone + Eq + Hash>(
     from: &mut FxHashSet<T>,
@@ -167,7 +170,7 @@ impl Facts {
         for (to, from) in sets {
             to.extend(from.iter().map(m));
         }
-        let pairs: [(&mut FxHashSet<(TyId, TyId)>, &FxHashSet<(TyId, TyId)>); 3] = [
+        let pairs: [PairSets; 3] = [
             (&mut self.projections, &other.projections),
             (&mut self.upcasts, &other.upcasts),
             (&mut self.proxy_casts, &other.proxy_casts),

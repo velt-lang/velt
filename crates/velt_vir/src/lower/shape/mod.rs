@@ -357,9 +357,8 @@ impl Cx<'_> {
             .collect();
         let mut map = FxHashMap::default();
         for t in super::boxing::Facts::types_of(&facts) {
-            if !map.contains_key(&t) {
-                let c = self.replace_tys(t, &ph);
-                map.insert(t, c);
+            if let std::collections::hash_map::Entry::Vacant(e) = map.entry(t) {
+                e.insert(self.replace_tys(t, &ph));
             }
         }
         let shared: Vec<TyId> = (facts.shared_types().iter())
