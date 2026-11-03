@@ -14,7 +14,9 @@
 //! - `cargo clippy -p <changed crates and their dependents> --all-targets -- -D warnings`, or
 //!   `--workspace` when the build configuration changed;
 //! - `cargo fmt` and clippy of `tests/difftest` when it changed;
-//! - the timing lint (crates/xtask/src/timing_lint.rs) on the changed test files and goldens.
+//! - the timing lint (crates/xtask/src/timing_lint.rs) on the changed test files and goldens;
+//! - the std hook table's tests when std, the table or the sources its guard reads changed
+//!   (crates/xtask/src/hook_tests.rs).
 //!
 //! Every check runs, and the summary lists each failure with how to fix it.
 
@@ -26,6 +28,7 @@ use std::time::Instant;
 use crate::check::{cargo, exe, show, target_dir, workspace_args};
 use crate::file_size;
 use crate::graph::Graph;
+use crate::hook_tests::HookTests;
 use crate::plan::DIFFTEST;
 use crate::timing_lint;
 
@@ -108,6 +111,8 @@ pub struct Selection {
     pub std_lint: StdLint,
     /// Changed test files and goldens the timing lint covers.
     pub timed: Vec<String>,
+    /// The std hook table's tests.
+    pub hooks: HookTests,
 }
 
 /// What `std-lint` checks.
@@ -129,6 +134,7 @@ pub fn select(graph: &Graph, paths: &[String], exists: impl Fn(&str) -> bool) ->
         difftest: false,
         std_lint: StdLint::None,
         timed: vec![],
+        hooks: HookTests::default(),
     };
     let mut changed = BTreeSet::new();
     let mut formatted = BTreeSet::new();
@@ -158,6 +164,7 @@ pub fn select(graph: &Graph, paths: &[String], exists: impl Fn(&str) -> bool) ->
             path.strip_prefix(d)
                 .is_some_and(|rest| rest.starts_with('/'))
         });
+        sel.hooks.add(path);
         if path.starts_with(STD_LINT) {
             sel.std_lint = StdLint::All;
         }
@@ -266,6 +273,9 @@ pub fn run(root: &Path, sel: &Selection, reason: &str) -> Result<(), String> {
     file_sizes(&mut r, &sel.sized);
     timing(&mut r, &sel.timed);
     clippy(&mut r, &sel.clippy);
+    for (name, args, fix) in sel.hooks.commands() {
+        r.step(name, &mut cargo(&args), fix);
+    }
     if sel.difftest {
         let manifest = root.join(DIFFTEST).join("Cargo.toml");
         let mut fmt = cargo(&["fmt", "--check", "--manifest-path"]);
