@@ -186,7 +186,6 @@ enum Outcome {
 }
 
 /// Translate and compile `func` (declared as `id`), on any thread.
-#[allow(clippy::too_many_arguments)]
 fn compile_function(
     target: &Target,
     program: &vir::Program,
