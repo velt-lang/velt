@@ -115,6 +115,13 @@ fn assignment_and_ternary() {
     check("a ? x = 1 : y", "(? a (= x 1) y)");
     assert!(errors("function f() { 1 = 2; }")[0].contains("invalid assignment target"));
     assert!(errors("function f() { a + b = 2; }")[0].contains("invalid assignment target"));
+    // A non-null assertion on a target is one (#1569); the AST keeps it for `velt fmt`.
+    check("x! = 1", "(= (! x) 1)");
+    check("a[i]! += 1", "(+= (! ([] a i)) 1)");
+    check("(o.f)! ??= 2", "(??= (! (paren (. o f))) 2)");
+    check("a[i]!++", "(++post (! ([] a i)))");
+    assert!(errors("function f() { f()! = 2; }")[0].contains("invalid assignment target"));
+    assert!(errors("function f() { [a, b]! = c; }")[0].contains("invalid assignment target"));
 }
 
 #[test]

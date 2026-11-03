@@ -37,6 +37,7 @@ mod alias_expand;
 mod anon;
 mod any;
 mod any_iface_sites;
+mod asserted_targets;
 mod assigned_fields;
 mod ast_walk;
 mod atomic_copies;
@@ -261,6 +262,8 @@ fn check_timed(
     let rewrite_start = std::time::Instant::now();
     let chunks = module_chunks::split(modules, root);
     let modules = chunks.modules.as_deref().unwrap_or(modules);
+    let asserted = asserted_targets::rewrite(modules);
+    let modules = asserted.as_deref().unwrap_or(modules);
     let mut merge_diags = chunks.diags.clone();
     merge_diags.extend(call_sigs::check(modules));
     let (flat, ns_private, diags) = namespaces::flatten(modules);
