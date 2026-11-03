@@ -535,6 +535,11 @@ pub(crate) unsafe fn await_unadopted(f: *mut VeltFut, cx: *mut std::ffi::c_void)
     node::poll_unadopted(f, cx)
 }
 
+/// The panic message of started promise `f` if it panicked (node/panicked.rs): it has no result.
+pub(crate) unsafe fn node_panic(f: *mut VeltFut) -> Option<Box<[u8]>> {
+    node::panicked_message(f)
+}
+
 /// The owner of finished started promise `f` claims its result.
 pub(crate) unsafe fn deliver_unadopted(f: *mut VeltFut) {
     node::deliver_unadopted(f)

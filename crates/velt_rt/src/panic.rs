@@ -112,7 +112,8 @@ pub(crate) fn count_caught() {
     CAUGHT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
 }
 
-/// How many Velt panics were stopped at a catching promise.
+/// How many Velt panics were stopped at a catching promise (the debug runtime's report).
+#[cfg(debug_assertions)]
 pub(crate) fn caught_count() -> u64 {
     CAUGHT.load(std::sync::atomic::Ordering::Relaxed)
 }

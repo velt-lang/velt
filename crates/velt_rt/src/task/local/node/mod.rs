@@ -46,7 +46,9 @@ pub(super) use self::waker::{local_awaiter, queue};
 pub(super) use self::loc::of as loc_of;
 pub(super) use self::owner::{deliver_unadopted, is_done, poll_unadopted};
 use self::owner::{started_drop, started_poll};
-pub(super) use self::panicked::{catch_panics, catches_here, is_panicked, panic_message};
+pub(super) use self::panicked::{
+    catch_panics, catches_here, is_panicked, panic_message, panicked_message,
+};
 use self::transfer::run_transfer;
 use self::waker::NODE_WAKER;
 use super::set::Shared;
@@ -505,6 +507,10 @@ fn drop_fn_ptr(d: Option<ResultDropFn>) -> *mut () {
 /// Dispose of the unclaimed result of `f`; an unhandled rejection may wait for the task's
 /// microtasks (unhandled.rs).
 unsafe fn drop_result(f: *mut VeltFut) {
+    if panicked::is_panicked(f) {
+        // Its slot holds nothing (panicked.rs).
+        return;
+    }
     let d = head(f).result_drop.load(Ordering::Acquire);
     if !d.is_null() {
         // SAFETY: only ever stored from a `ResultDropFn` (`drop_fn_ptr`).
@@ -515,6 +521,9 @@ unsafe fn drop_result(f: *mut VeltFut) {
 
 /// Dispose of the unclaimed result of `f` now (a deferred rejection is reported).
 pub(super) unsafe fn drop_result_now(f: *mut VeltFut) {
+    if panicked::is_panicked(f) {
+        return;
+    }
     let d = head(f).result_drop.load(Ordering::Acquire);
     if !d.is_null() {
         // SAFETY: only ever stored from a `ResultDropFn` (`drop_fn_ptr`).
@@ -527,7 +536,8 @@ pub(super) unsafe fn drop_result_now(f: *mut VeltFut) {
 /// JS attaching handlers): an unclaimed result is dropped with `quiet_drop` from now on instead
 /// of being reported as an unhandled rejection. No-op for any other future.
 pub(super) unsafe fn mark_handled(f: *mut VeltFut, quiet_drop: Option<ResultDropFn>) {
-    if !is_started(f) {
+    // A panicked node's slot holds nothing to drop (panicked.rs).
+    if !is_started(f) || panicked::is_panicked(f) {
         return;
     }
     let h = head(f);

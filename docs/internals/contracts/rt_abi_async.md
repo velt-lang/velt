@@ -280,7 +280,13 @@ A promise catches when `catchPanic` marked it (below) or when it was started, or
 a catching poll runs up the stack. A panic stopped at its poll marks it panicked: it counts as
 finished, its result slot is never read, transferred or dropped, its state is leaked, and the
 node is never freed. Its owner's await raises the panic again (unwinding further or ending the
-process), so a panic travels through `await`s as through calls. WebAssembly does not unwind: there
+process), so a panic travels through `await`s as through calls. Every path that reads a finished node's result
+slot checks for it: a shared promise's holders raise it (§1.2; a holder that drives a lazy
+original catches it for all of them), combinators that poll it raise it, and its result is never
+dropped, transferred or handed to `mark_handled`'s quiet drop. A catching poll also records the
+thread's runtime-level holds (the `Mutex` count and how the module lock is held, §9) and puts
+them back when it catches, releasing a module lock taken for a `with`; the program's own `Mutex`
+stays locked. WebAssembly does not unwind: there
 a panic always ends the program (velt_rt_wasm defines the functions below as no-ops).
 
 | Function | Signature | Semantics |
@@ -292,7 +298,8 @@ a panic always ends the program (velt_rt_wasm defines the functions below as no-
 | `velt_rt_catch_free` | `(u64 h) -> void` | releases `h` (0 is ignored) |
 
 std's `catchPanic(body)` (std/task/panic.vlt) arms, calls `body` and stores its promise (which
-starts it and takes the arming before its first poll), takes the handle, awaits `settled`, and
+starts it and takes the arming before its first poll; the first promise started after arming
+takes it), takes the handle, awaits `settled`, and
 throws `PanicError(message)` or awaits the promise. Arming and taking happen in one poll with no
 `await` between them.
 

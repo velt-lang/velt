@@ -31,9 +31,12 @@ pub(in crate::task::local) unsafe fn caught(f: *mut VeltFut, poll: impl FnOnce()
         return poll();
     }
     let _catching = crate::panic::Catching::enter();
+    let holds = super::super::module_state::holds();
     match crate::panic::catch(poll) {
         Ok(done) => done,
         Err(msg) => {
+            // What the panicked code took of the runtime's own and can no longer give back.
+            super::super::module_state::restore_holds(holds);
             mark(f, msg);
             true
         }
@@ -83,6 +86,15 @@ pub(in crate::task::local) unsafe fn panic_message(f: *mut VeltFut) -> Box<[u8]>
         .as_ref()
         .and_then(|m| m.get(&(f as usize)).cloned())
         .unwrap_or_default()
+}
+
+/// The message of node `f` if it panicked (a shared promise's hub, task/shared.rs).
+pub(in crate::task::local) unsafe fn panicked_message(f: *mut VeltFut) -> Option<Box<[u8]>> {
+    if is_panicked(f) {
+        Some(panic_message(f))
+    } else {
+        None
+    }
 }
 
 /// The owner awaits panicked node `f`: the await panics with its message.

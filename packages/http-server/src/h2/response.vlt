@@ -6,6 +6,7 @@
 
 import { IoError } from "velt/io";
 import { BodyStream } from "velt/net/http";
+import { INTERNAL_ERROR } from "velt/net/http/h2";
 import { AbortSignal } from "velt/task";
 import { TcpStream } from "velt/net";
 import { EventStream } from "../event_stream";
@@ -15,6 +16,7 @@ import { HttpResponse } from "../response";
 import { H2Connection } from "./connection";
 import { endBody, sendBytes, sendText, writeHead } from "./outbound";
 import { H2Stream } from "./stream";
+import { streamError } from "./streams";
 import { openTunnel } from "./tunnel";
 
 /// How many bytes of a streamed body may wait to be sent before `piece` waits.
@@ -242,6 +244,18 @@ export class H2Response extends HttpResponse implements BodySink {
   /** Whether a streamed body is still open (internal). */
   streamOpen(): bool {
     return this.streaming;
+  }
+
+  /// The handler failed after the head went out (internal): what was sent is not the whole
+  /// response, so the stream is reset (INTERNAL_ERROR, RFC 9113 §5.4.2) instead of ended, and
+  /// the client sees a failed response, not a short body taken as complete.
+  fail() {
+    const s = this.s;
+    if (!this.done || s.reset || s.localEnded) {
+      return;
+    }
+    this.streaming = false;
+    streamError(this.c, s.id, INTERNAL_ERROR);
   }
 
   /// After the handler returned (internal): an empty 200 if it sent nothing, the end of a body

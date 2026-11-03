@@ -39,6 +39,9 @@ export async function serveH2<E>(
           if (!res.sent()) {
             res.status(500);
             res.send("Internal Server Error");
+          } else {
+            // The head went out: the stream is reset, not ended as if complete.
+            res.fail();
           }
           // A panic's message was printed when it happened.
           if (!(e instanceof PanicError)) {

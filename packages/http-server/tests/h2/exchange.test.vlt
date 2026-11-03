@@ -28,6 +28,14 @@ async function handler(req: HttpRequest, res: HttpResponse) {
     await out.write("a");
     await out.write(bytes("bc"));
     await out.end();
+  } else if (req.pathIs("/stream-panic") || req.pathIs("/stream-throw")) {
+    const out = await res.stream();
+    await out.write("a");
+    if (req.pathIs("/stream-panic")) {
+      const none: i64[] = [];
+      await out.write(`${none[2]!}`);
+    }
+    throw new Error("mid-stream (expected in this test)");
   } else if (req.pathIs("/trailers")) {
     res.addTrailers([["Grpc-Status", "0"]]);
     res.send("x");
@@ -204,6 +212,20 @@ describe("HTTP/2 exchanges", () => {
       c.close();
     },
   );
+
+  it("resets a stream whose handler fails after its head went out", async () => {
+    // #2008 review: a cut-off body must not end with END_STREAM, or the client takes it as
+    // complete; a panic and a thrown error alike.
+    for (const path of ["/stream-panic", "/stream-throw"]) {
+      const c = await Client.open(port);
+      c.get(1, path);
+      await c.flush();
+      expect(await c.until((f) => f.id == 1 && f.type == 3)).toBe(
+        "HEADERS 1 :status=200\nDATA 1 1:a\nRST 1 INTERNAL_ERROR",
+      );
+      c.close();
+    }
+  });
 
   it("sends trailers after a body, whole or streamed", async () => {
     const c = await Client.open(port);

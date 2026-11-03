@@ -51,7 +51,11 @@ export async function serve<E, F>(
       if (!out.sent()) {
         console.error("request handler failed: the response could not be written:", e);
         failed(out);
+        return;
       }
+      // The head went out and the body failed: the server cuts the response off (HTTP/1.1
+      // closes the connection, HTTP/2 resets the stream), as for a panic there.
+      throw e;
     }
   });
 }

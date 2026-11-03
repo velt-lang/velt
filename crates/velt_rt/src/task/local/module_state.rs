@@ -186,6 +186,34 @@ pub(crate) fn mutex_unlocked() {
     }
 }
 
+/// This thread's runtime-level holds: how it holds the module lock and how many `Mutex`es it
+/// counts. Saved when a poll that catches panics starts (node/panicked.rs).
+#[derive(Clone, Copy)]
+pub(crate) struct Holds {
+    held: u8,
+    mutexes: u32,
+}
+
+/// This thread's holds now.
+pub(crate) fn holds() -> Holds {
+    Holds {
+        held: HELD.with(Cell::get),
+        mutexes: MUTEXES.with(Cell::get),
+    }
+}
+
+/// A panic was caught in a poll that started with `saved`: the code it abandoned never ran its
+/// unlocks (`velt_rt_mutex_unlock`, [`velt_rt_module_with_end`]), so the `Mutex` count goes back,
+/// and the module lock taken for its `with` is released. The program's `Mutex` itself stays
+/// locked (documented with `catchPanic`); the runtime's bookkeeping must not stay wrong, or a
+/// later module-state access would end in an ICE and other threads would wait for good.
+pub(crate) fn restore_holds(saved: Holds) {
+    MUTEXES.with(|m| m.set(saved.mutexes));
+    if saved.held != IN_WITH {
+        release(IN_WITH);
+    }
+}
+
 /// Before a `Mutex` or `RwLock` is locked for a callback that may reach a declared function's
 /// properties held as `any` (fn_props.rs; the compiler decides which): take the module lock
 /// unless this thread holds it, until [`velt_rt_module_with_end`] after the unlock. The callback

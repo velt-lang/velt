@@ -98,6 +98,7 @@ pub extern "C" fn velt_rt_throw_loc() -> *const VeltStr {
 // functions.
 
 /// Panics stopped at a catching promise (velt_rt's str/stats.rs, compiled here): none.
+#[cfg(debug_assertions)]
 pub(crate) fn caught_count() -> u64 {
     0
 }

@@ -6,8 +6,10 @@
 //! - stack probes: always inline (no dependency on `__chkstk`/`__rust_probestack`); required on
 //!   Windows where the guard page must be touched in order, and harmless elsewhere.
 //! - frame pointers preserved on all targets: an Apple ABI requirement, and cheap elsewhere
-//!   (Cranelift already keeps them in non-leaf functions) so profilers/debuggers can walk the
-//!   stack on ELF/Mach-O, where no `.eh_frame` is emitted yet.
+//!   (Cranelift already keeps them in non-leaf functions) so profilers and debuggers that walk
+//!   frame pointers see every frame. Unwind tables are emitted too (`crate::unwind`: `.eh_frame`
+//!   on ELF and Mach-O, `.pdata`/`.xdata` on Windows): a caught Velt panic unwinds through them
+//!   (`catchPanic`, velt_rt panic.rs).
 //! - the CPU (`--cpu`, `crate::cpu`): x86_64 code is for `cpu::DEFAULT_X86_CPU` unless another
 //!   one is asked for.
 
