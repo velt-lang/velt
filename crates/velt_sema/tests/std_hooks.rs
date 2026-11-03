@@ -21,8 +21,126 @@ const LOADS_ALL: &str = "import \"velt/lang/this_fn\";\nimport \"velt/lang/recor
     const b = new Uint8Array(1);\n  const r = new RegExp(\"a\");\n  \
     const j = JSON.parse<i64>(\"1\");\n  const v: JsonValue = JsonValue.of(1);\n}\n";
 
-/// Does HIR type `t` match the table's `want`? A mismatch is described in `why`.
-fn same(p: &Program, t: TyId, want: &T, why: &mut String) -> bool {
+/// The type arguments a generic union's payloads are read under: its payload `Param(i)` is
+/// `args[i]`, itself read under `outer` (sema renumbers a union definition's parameters,
+/// `unions.rs`: the `B | string` of a hook is the definition `T0 | string` applied to `[B]`).
+struct Env<'a> {
+    args: &'a [TyId],
+    outer: Option<&'a Env<'a>>,
+}
+
+/// `t` with the type parameters of the unions around it replaced by their arguments.
+fn resolve<'a>(
+    p: &'a Program,
+    mut t: TyId,
+    mut env: Option<&'a Env<'a>>,
+) -> (TyId, Option<&'a Env<'a>>) {
+    while let (TyKind::Param(i), Some(e)) = (p.types.kind(t), env) {
+        let Some(&a) = e.args.get(*i as usize) else {
+            break;
+        };
+        (t, env) = (a, e.outer);
+    }
+    (t, env)
+}
+
+/// A union's members: each variant's one payload (`None` when `d` is not a union).
+fn union_members(p: &Program, d: DefId) -> Option<Vec<TyId>> {
+    match p.def(d) {
+        Def::Enum(e) if e.is_union => (e.variants.iter())
+            .map(|v| match v.payload.as_slice() {
+                [x] => Some(*x),
+                _ => None,
+            })
+            .collect(),
+        _ => None,
+    }
+}
+
+/// The last segment of the name of class, interface or enum `d`.
+fn short_name(p: &Program, d: DefId) -> &str {
+    let name = match p.def(d) {
+        Def::Adt(a) => a.name.as_str(),
+        Def::Enum(e) => e.name.as_str(),
+        Def::Interface(i) => i.name.as_str(),
+        _ => "",
+    };
+    name.rsplit("::").next().unwrap_or(name)
+}
+
+/// HIR type `t` in the table's notation (`T`'s `Display`); a type the notation has no spelling
+/// for in Velt's.
+fn show(p: &Program, t: TyId, env: Option<&Env>) -> String {
+    let (t, env) = resolve(p, t, env);
+    let list = |ts: &[TyId], env: Option<&Env>| -> String {
+        ts.iter()
+            .map(|t| show(p, *t, env))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    match p.types.kind(t) {
+        TyKind::Int(i) => format!("{i:?}").to_lowercase(),
+        TyKind::Float(f) => format!("{f:?}").to_lowercase(),
+        TyKind::Bool => "bool".into(),
+        TyKind::Str => "string".into(),
+        TyKind::Unit => "void".into(),
+        TyKind::Never => "never".into(),
+        TyKind::Symbol => "symbol".into(),
+        TyKind::Error => "<error>".into(),
+        TyKind::Param(i) => T::Param(*i).to_string(),
+        TyKind::Array(e) => format!("[{}]", show(p, *e, env)),
+        TyKind::Map(k, v) => format!("Map({}, {})", show(p, *k, env), show(p, *v, env)),
+        TyKind::Tuple(xs) => format!("tuple({})", list(xs, env)),
+        TyKind::Option(x, Nothing::Null) => format!("or_null({})", show(p, *x, env)),
+        TyKind::Option(x, Nothing::Undefined) => format!("or_undefined({})", show(p, *x, env)),
+        TyKind::Option(x, Nothing::Both) => format!("{} | null | undefined", show(p, *x, env)),
+        TyKind::Result(x, e) => format!("Result<{}, {}>", show(p, *x, env), show(p, *e, env)),
+        TyKind::Promise(x, e) => format!("Promise({}, {})", show(p, *x, env), show(p, *e, env)),
+        TyKind::Shared(x) => format!("Shared<{}>", show(p, *x, env)),
+        TyKind::FnPtr {
+            params,
+            ret,
+            throws,
+            rest,
+        } => {
+            let kind = if *rest { "FnRest" } else { "Fn" };
+            let mut s = format!("{kind}(({}) -> {}", list(params, env), show(p, *ret, env));
+            if !matches!(p.types.kind(*throws), TyKind::Never) {
+                s += &format!(" throws {}", show(p, *throws, env));
+            }
+            s + ")"
+        }
+        TyKind::Closure(_) => "a closure".into(),
+        TyKind::Adt(d, args) => match union_members(p, *d) {
+            Some(ms) => {
+                let inner = Env { args, outer: env };
+                format!("union({})", list(&ms, Some(&inner)))
+            }
+            None => named(p, *d, args, env),
+        },
+        TyKind::Dyn(d, args) => named(p, *d, args, env),
+        TyKind::Literal(v) => format!("the literal type {v:?}"),
+        TyKind::Simd(s) => format!("{s:?}").to_lowercase(),
+        TyKind::Op(op, args) => format!("{op:?}<{}>", list(args, env)),
+    }
+}
+
+fn named(p: &Program, d: DefId, args: &[TyId], env: Option<&Env>) -> String {
+    let n = short_name(p, d);
+    match args {
+        [] if n.starts_with('{') => format!("object({n:?})"),
+        [] => n.to_string(),
+        _ => {
+            let args: Vec<String> = args.iter().map(|t| show(p, *t, env)).collect();
+            format!("{n}({})", args.join(", "))
+        }
+    }
+}
+
+/// Does HIR type `t` (read under `env`) match the table's `want`? The innermost mismatch is
+/// described in `why`.
+fn same(p: &Program, t: TyId, env: Option<&Env>, want: &T, why: &mut String) -> bool {
+    let (t, env) = resolve(p, t, env);
     let k = p.types.kind(t);
     let ok = match (want, k) {
         (T::I8, TyKind::Int(IntTy::I8))
@@ -43,11 +161,13 @@ fn same(p: &Program, t: TyId, want: &T, why: &mut String) -> bool {
         | (T::Never, TyKind::Never)
         | (T::Symbol, TyKind::Symbol) => true,
         (T::Param(i), TyKind::Param(j)) => i == j,
-        (T::Array(e), TyKind::Array(x)) => same(p, *x, e, why),
-        (T::Promise(a, b), TyKind::Promise(x, y)) => same(p, *x, a, why) && same(p, *y, b, why),
-        (T::Tuple(ws), TyKind::Tuple(xs)) => all(p, xs, ws, why),
-        (T::OrNull(w), TyKind::Option(x, Nothing::Null)) => same(p, *x, w, why),
-        (T::OrUndefined(w), TyKind::Option(x, Nothing::Undefined)) => same(p, *x, w, why),
+        (T::Array(e), TyKind::Array(x)) => same(p, *x, env, e, why),
+        (T::Promise(a, b), TyKind::Promise(x, y)) => {
+            same(p, *x, env, a, why) && same(p, *y, env, b, why)
+        }
+        (T::Tuple(ws), TyKind::Tuple(xs)) => all(p, xs, env, ws, why),
+        (T::OrNull(w), TyKind::Option(x, Nothing::Null)) => same(p, *x, env, w, why),
+        (T::OrUndefined(w), TyKind::Option(x, Nothing::Undefined)) => same(p, *x, env, w, why),
         (
             T::Fn {
                 params,
@@ -64,39 +184,27 @@ fn same(p: &Program, t: TyId, want: &T, why: &mut String) -> bool {
         ) => {
             let never = T::Never;
             rest == rest_
-                && all(p, xs, params, why)
-                && same(p, *r, ret, why)
-                && same(p, *e, throws.unwrap_or(&never), why)
+                && all(p, xs, env, params, why)
+                && same(p, *r, env, ret, why)
+                && same(p, *e, env, throws.unwrap_or(&never), why)
         }
-        (T::Union(ws), TyKind::Adt(d, _)) => match p.def(*d) {
-            Def::Enum(e) if e.is_union => {
-                e.variants.len() == ws.len()
-                    && e.variants
-                        .iter()
-                        .zip(ws.iter())
-                        .all(|(v, w)| matches!(v.payload.as_slice(), [x] if same(p, *x, w, why)))
-            }
-            _ => false,
+        (T::Union(ws), TyKind::Adt(d, args)) => match union_members(p, *d) {
+            Some(ms) => all(p, &ms, Some(&Env { args, outer: env }), ws, why),
+            None => false,
         },
         (T::Named(n, ws), TyKind::Adt(d, args) | TyKind::Dyn(d, args)) => {
-            let name = match p.def(*d) {
-                Def::Adt(a) => a.name.as_str(),
-                Def::Enum(e) if !e.is_union => e.name.as_str(),
-                Def::Interface(i) => i.name.as_str(),
-                _ => "",
-            };
-            name.rsplit("::").next() == Some(*n) && all(p, args, ws, why)
+            union_members(p, *d).is_none() && short_name(p, *d) == *n && all(p, args, env, ws, why)
         }
         _ => false,
     };
     if !ok && why.is_empty() {
-        *why = format!("`{want}` is `{k:?}` there");
+        *why = format!("`{want}` is `{}` there", show(p, t, env));
     }
     ok
 }
 
-fn all(p: &Program, ts: &[TyId], ws: &[T], why: &mut String) -> bool {
-    ts.len() == ws.len() && ts.iter().zip(ws).all(|(t, w)| same(p, *t, w, why))
+fn all(p: &Program, ts: &[TyId], env: Option<&Env>, ws: &[T], why: &mut String) -> bool {
+    ts.len() == ws.len() && ts.iter().zip(ws).all(|(t, w)| same(p, *t, env, w, why))
 }
 
 /// How the definition named `qualified` differs from the table's `sig`: `None` when it matches,
@@ -123,11 +231,11 @@ fn differs(p: &Program, qualified: &str, sig: &Sig, lowered: bool) -> Option<Str
     }
     let mut why = String::new();
     for (n, (x, w)) in f.params.iter().zip(s.params).enumerate() {
-        if !same(p, x.ty, &w.ty, &mut why) {
+        if !same(p, x.ty, None, &w.ty, &mut why) {
             return Some(format!("parameter {}: {why}", n + 1));
         }
     }
-    if !same(p, f.ret, &s.ret, &mut why) {
+    if !same(p, f.ret, None, &s.ret, &mut why) {
         return Some(format!("result: {why}"));
     }
     let throws = f
@@ -136,12 +244,14 @@ fn differs(p: &Program, qualified: &str, sig: &Sig, lowered: bool) -> Option<Str
     match (throws, &s.throws) {
         (None, None) => {}
         (Some(t), Some(w)) => {
-            if !same(p, t, w, &mut why) {
+            if !same(p, t, None, w, &mut why) {
                 return Some(format!("throws: {why}"));
             }
         }
-        (Some(_), None) => return Some("throws, where the table says it does not".to_string()),
-        (None, Some(_)) => return Some("does not throw, where the table says it does".to_string()),
+        (Some(t), None) => {
+            return Some(format!("throws `{}`, the table has none", show(p, t, None)))
+        }
+        (None, Some(w)) => return Some(format!("throws nothing, the table has `{w}`")),
     }
     // Sema infers modes from bodies, which it checks for the hooks code reaches: the lowered
     // ones always are (velt_common `hook_sig.rs`).
@@ -241,4 +351,42 @@ fn every_key_names_a_method_of_std() {
         velt_common::std_key!(map_cursor),
         velt_sema::property_order::symbol_key_name("mapCursor", 1)
     );
+}
+
+/// A generic union is compared with its type arguments: sema's definition of `B | string` is
+/// `T0 | string` applied to `[B]`, so the table's `union(B, string)` matches and `union(A, string)`
+/// does not (no hook takes a generic union today).
+#[test]
+fn a_generic_union_is_compared_with_its_type_arguments() {
+    let p = ok_src("function f<A, B>(a: A, x: B | string): void {}\nfunction main() {}\n");
+    let f = (p.defs.iter())
+        .find_map(|d| match d {
+            Def::Fn(f) if f.name == "f" => Some(f),
+            _ => None,
+        })
+        .expect("f");
+    let x = f.params[1].ty;
+    // The order sema lists the members in (its canonical order).
+    let b_first = same(
+        &p,
+        x,
+        None,
+        &T::Union(&[T::Param(1), T::Str]),
+        &mut String::new(),
+    );
+    let (right, wrong): (&[T], &[T]) = if b_first {
+        (&[T::Param(1), T::Str], &[T::Param(0), T::Str])
+    } else {
+        (&[T::Str, T::Param(1)], &[T::Str, T::Param(0)])
+    };
+    assert!(same(&p, x, None, &T::Union(right), &mut String::new()));
+    let mut why = String::new();
+    assert!(!same(&p, x, None, &T::Union(wrong), &mut why));
+    let shown = if b_first {
+        "union(B, string)"
+    } else {
+        "union(string, B)"
+    };
+    assert_eq!(why, "`A` is `B` there");
+    assert_eq!(show(&p, x, None), shown);
 }
