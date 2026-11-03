@@ -1,0 +1,90 @@
+// An interface method whose result is written `AsyncGenerator<T>` (or `Generator<T>`) without
+// Velt's error type takes the generator an object literal returns for it (#2084): from an arrow,
+// a method, or a function named in the literal, what the generator throws is inferred where the
+// result is written, and a `for await` over the method's result throws that. So does an array of
+// such generators in a field of an interface with methods.
+interface Renderer {
+  chunks(n: number): AsyncGenerator<string>;
+  rows(n: number): AsyncGenerator<string>;
+  named(n: number): AsyncGenerator<string>;
+  count(n: number): Generator<number>;
+}
+
+interface Context {
+  pending: AsyncGenerator<string>[];
+  label(): string;
+}
+
+async function* parts(n: number): AsyncGenerator<string> {
+  if (n < 0) {
+    throw new RangeError("negative");
+  }
+  yield "part " + n;
+}
+
+function* numbers(n: number): Generator<number> {
+  if (n < 0) {
+    throw new RangeError("no numbers");
+  }
+  yield n;
+}
+
+function create(): Renderer {
+  function named(n: number): AsyncGenerator<string> {
+    return parts(n * 10);
+  }
+  return {
+    chunks: (n) => parts(n),
+    rows(n) {
+      return parts(n + 1);
+    },
+    named,
+    count: (n) => numbers(n),
+  };
+}
+
+function start(ctx: Context, n: number): void {
+  const pump = (async function* () {
+    if (n < 0) {
+      throw new RangeError("stream failed");
+    }
+    yield "stream " + n;
+  })();
+  ctx.pending.push(pump);
+}
+
+async function drain(label: string, g: AsyncGenerator<string>): Promise<void> {
+  try {
+    for await (const c of g) {
+      console.log(label, c);
+    }
+  } catch (err) {
+    console.log(label, "caught", (err as Error).message);
+  }
+}
+
+async function main() {
+  const r = create();
+  await drain("chunks", r.chunks(1));
+  await drain("chunks", r.chunks(-1));
+  await drain("rows", r.rows(2));
+  await drain("rows", r.rows(-5));
+  await drain("named", r.named(3));
+  await drain("named", r.named(-1));
+  for (const x of r.count(4)) {
+    console.log("count", x);
+  }
+  try {
+    for (const x of r.count(-1)) {
+      console.log("count", x);
+    }
+  } catch (err) {
+    console.log("count caught", (err as Error).message);
+  }
+  const ctx: Context = { pending: [], label: () => "ctx" };
+  start(ctx, 1);
+  start(ctx, -1);
+  for (const g of ctx.pending) {
+    await drain(ctx.label(), g);
+  }
+}

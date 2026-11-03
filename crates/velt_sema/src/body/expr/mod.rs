@@ -179,6 +179,7 @@ mod regex_args;
 mod rest_shapes;
 mod setters;
 mod simd_call;
+mod slot_results;
 pub(crate) mod spawn_promises;
 mod spread;
 mod spread_args;
