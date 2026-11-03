@@ -1564,6 +1564,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "velt_lint"
+version = "0.5.0"
+dependencies = [
+ "velt_common",
+ "velt_sema",
+ "velt_syntax",
+ "velt_tscompat",
+ "vpm",
+]
+
+[[package]]
 name = "velt_loader"
 version = "0.5.0"
 dependencies = [
@@ -1840,6 +1851,7 @@ dependencies = [
  "velt_fmt",
  "velt_http",
  "velt_link",
+ "velt_lint",
  "velt_loader",
  "velt_lsp",
  "velt_opt",

@@ -21,6 +21,7 @@ vpm = { path = "crates/vpm" }
 velt_fmt = { path = "crates/velt_fmt" }
 velt_lsp = { path = "crates/velt_lsp" }
 velt_tscompat = { path = "crates/velt_tscompat" }
+velt_lint = { path = "crates/velt_lint" }
 velt_toolchain = { path = "crates/velt_toolchain" }
 velt_build_cache = { path = "crates/velt_build_cache" }
 

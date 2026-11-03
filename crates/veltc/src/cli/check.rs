@@ -27,10 +27,28 @@ pub struct CheckArgs {
     /// `--target <triple>`: check for that target (the `#name` variants it selects, the system
     /// functions it has); `None` → the host.
     pub target: Option<String>,
+    /// `--perf`: run every `perf/…` rule, those on the optimized program too, and show their
+    /// hints.
+    pub perf: bool,
+    /// `--deps` (with `--perf`): also list what the optimizer could not do in dependencies.
+    pub deps: bool,
+    /// `--fix` / `--fix=review`: apply the findings' fixes (`Safe`: only those that keep the
+    /// behaviour), then check again.
+    pub fix: Option<FixMode>,
 }
 
-/// Parse `velt check [<file.vlt>] [--target <triple>] [--json] [--locked] [-v]`, `velt check
-/// --std` and `velt check --ts-compat [<file|dir>...] [--json] [--locked] [-v]`.
+/// Which fixes `velt check --fix` applies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum FixMode {
+    /// `--fix`: the fixes that keep the program's behaviour.
+    Safe,
+    /// `--fix=review`: also those that may change it.
+    Review,
+}
+
+/// Parse `velt check [<file.vlt>] [--target <triple>] [--perf [--deps]] [--fix[=review]]
+/// [--json] [--locked] [-v]`, `velt check --std` and `velt check --ts-compat [<file|dir>...]
+/// [--fix[=review]] [--json] [--locked] [-v]`.
 pub(super) fn parse_check(args: Vec<OsString>) -> Result<Command, String> {
     let mut c = CheckArgs::default();
     let mut ts_compat = false;
@@ -51,12 +69,30 @@ pub(super) fn parse_check(args: Vec<OsString>) -> Result<Command, String> {
             "--no-generators" => c.no_generators = true,
             "--std" => c.std = true,
             "--ts-compat" => ts_compat = true,
+            "--perf" => c.perf = true,
+            "--deps" => c.deps = true,
+            "--fix" | "--fix=safe" => c.fix = Some(FixMode::Safe),
+            "--fix=review" => c.fix = Some(FixMode::Review),
+            s if s.starts_with("--fix=") => {
+                return Err(format!(
+                    "`--fix` takes `safe` or `review`, not `{}`",
+                    &s["--fix=".len()..]
+                ))
+            }
             "-v" | "--verbose" => c.verbose = true,
             s if s.starts_with('-') && s.len() > 1 => {
                 return Err(super::unknown_option("check", s))
             }
             _ => paths.push(PathBuf::from(arg)),
         }
+    }
+    if c.deps && !c.perf {
+        return Err(
+            "`--deps` lists the optimizer's findings in dependencies: use it with `--perf`".into(),
+        );
+    }
+    if c.std && (c.perf || c.fix.is_some()) {
+        return Err("`velt check --std` runs no lint rules (`--perf`, `--fix`)".into());
     }
     if ts_compat {
         c.ts_compat = Some(paths);
@@ -115,6 +151,35 @@ mod tests {
         assert!(p(&["check", "--target"])
             .unwrap_err()
             .contains("expects a value"));
+    }
+
+    #[test]
+    fn lint_flags() {
+        assert_eq!(
+            p(&["check", "--perf", "--deps", "--fix=review"]).unwrap(),
+            Command::Check(CheckArgs {
+                perf: true,
+                deps: true,
+                fix: Some(FixMode::Review),
+                ..CheckArgs::default()
+            })
+        );
+        assert_eq!(
+            p(&["check", "--fix"]).unwrap(),
+            Command::Check(CheckArgs {
+                fix: Some(FixMode::Safe),
+                ..CheckArgs::default()
+            })
+        );
+        assert!(p(&["check", "--fix=all"])
+            .unwrap_err()
+            .contains("`safe` or `review`"));
+        assert!(p(&["check", "--deps"])
+            .unwrap_err()
+            .contains("with `--perf`"));
+        assert!(p(&["check", "--std", "--perf"])
+            .unwrap_err()
+            .contains("no lint rules"));
     }
 
     #[test]

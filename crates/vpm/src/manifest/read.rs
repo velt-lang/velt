@@ -15,6 +15,7 @@
 //!   jsx: { importSource: "sigx" },
 //!   native: { targets: ["x86_64-unknown-linux-gnu"] },
 //!   tsCompat: ["src/models"],
+//!   lint: { perf: "warn" },
 //!   build: { cpu: "x86-64-v3" },
 //! };
 //! ```
@@ -321,6 +322,7 @@ impl Reader<'_> {
             jsx: None,
             define: BTreeMap::new(),
             ts_compat: vec![],
+            lint: None,
             build: None,
         };
         let Some(fields) = self.object(value, "the manifest") else {
@@ -377,6 +379,7 @@ impl Reader<'_> {
                 "define" => manifest.define = self.define(v),
                 "native" => manifest.native = self.native(v),
                 "tsCompat" => manifest.ts_compat = self.ts_compat(v),
+                "lint" => manifest.lint = self.lint(v),
                 "build" => manifest.build = self.build(v),
                 _ => self.unknown_key(key, schema::PACKAGE),
             }
@@ -655,6 +658,7 @@ pub(crate) fn edit_distance(a: &str, b: &str) -> usize {
 mod host;
 mod host_modules;
 mod imports;
+mod lint;
 mod native;
 #[cfg(test)]
 mod tests;

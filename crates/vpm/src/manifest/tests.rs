@@ -265,6 +265,7 @@ fn std_package_types_match_the_schema() {
         ("Jsx", schema::JSX),
         ("Native", schema::NATIVE),
         ("Build", schema::BUILD),
+        ("Lint", schema::LINT),
         ("Workspace", schema::WORKSPACE),
     ] {
         assert_eq!(declared(name), expected(fields), "`{name}` in std/package/");

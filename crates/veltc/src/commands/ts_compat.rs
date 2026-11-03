@@ -7,7 +7,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
-use velt_common::{Diagnostic, Severity};
 use velt_tscompat::{canonical, Finding};
 
 use super::test::discover;
@@ -196,16 +195,4 @@ fn expand(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     let mut seen = HashSet::new();
     files.retain(|f| seen.insert(canonical(f)));
     Ok(files)
-}
-
-/// `f` as a diagnostic, its code in the last note: `ts-compat(<code>)`.
-pub(super) fn diagnostic(f: &Finding) -> Diagnostic {
-    let mut d = Diagnostic::error(f.message.clone(), f.span);
-    if f.severity == velt_tscompat::Severity::Warning {
-        d.severity = Severity::Warning;
-    }
-    for note in &f.notes {
-        d = d.with_note(note.clone());
-    }
-    d.with_note(format!("ts-compat({})", f.code))
 }

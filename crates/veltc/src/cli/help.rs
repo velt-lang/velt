@@ -157,8 +157,8 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "check",
         summary: "Type-check a file or the current package without building it",
         usage: &[
-            "check [<file.vlt>] [--target <triple>] [--json] [--locked] [-v]",
-            "check --ts-compat [<file|dir>...] [--json] [--locked] [-v]",
+            "check [<file.vlt>] [--target <triple>] [--perf [--deps]] [--fix[=review]] [--json] [--locked] [-v]",
+            "check --ts-compat [<file|dir>...] [--fix[=review]] [--json] [--locked] [-v]",
             "check --std [--json] [-v]",
             "check (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<check options>]",
         ],
@@ -170,7 +170,13 @@ pub const COMMANDS: &[CommandHelp] = &[
                 `src/lib.vlt`, with no `main`). With `--ts-compat`, checks the given files \
                 (directories: their `.vlt`, `.ts` and `.tsx` files), or without paths the \
                 folders the package's `tsCompat` lists, then reports what in them `tsc` would \
-                reject or run differently, for code shared with TypeScript. With `--std`, checks \
+                reject or run differently, for code shared with TypeScript. With `--perf`, also \
+                reports what costs speed: TypeScript habits with a faster Velt form, and the \
+                `number` variables the optimizer keeps as doubles (it optimizes the program, \
+                without generating code). `--fix` applies the findings' fixes that keep the \
+                program's behaviour, checks again and undoes a fix that breaks it; \
+                `--fix=review` applies those that may change it too. Files in `tsCompat` \
+                folders only get fixes that stay TypeScript. With `--std`, checks \
                 every file of the standard library and every definition in it, also those no \
                 program reaches (for the standard library's own development).",
         options: &[
@@ -183,6 +189,17 @@ pub const COMMANDS: &[CommandHelp] = &[
                 "--ts-compat [<file|dir>...]",
                 "lint the given files and directories (default: the package's `tsCompat` \
                  folders) for the TypeScript/Velt common subset",
+            ),
+            (
+                "--perf",
+                "also report what costs speed (the `perf/…` rules), with hints; `lint` in \
+                 package.vlt sets how loud they are",
+            ),
+            ("--deps", "with `--perf`: also list what the optimizer could not do in dependencies"),
+            (
+                "--fix[=review]",
+                "apply the findings' fixes that keep the behaviour (`review`: also those that may \
+                 change it), then check again",
             ),
             ("--std", "check all of the standard library ($VELT_STD), every definition"),
             (
@@ -199,6 +216,8 @@ pub const COMMANDS: &[CommandHelp] = &[
             ("velt check app.vlt --json", "machine-readable diagnostics for one file"),
             ("velt check --ts-compat src/models", "check code shared with a TypeScript client"),
             ("velt check --ts-compat", "lint the folders `tsCompat` lists in package.vlt"),
+            ("velt check --perf", "also report what costs speed, with fixes"),
+            ("velt check --perf --fix", "apply the fixes that keep the behaviour"),
         ],
     },
     CommandHelp {
