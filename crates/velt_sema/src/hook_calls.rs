@@ -4,9 +4,24 @@
 //! table, and `velt_sema`'s test `std_hooks.rs` checks it against std.
 //!
 //! A builder takes each argument as the hook's parameter type ([`ty`]'s markers, which the call
-//! site names: `ty::Any::of(v)`), so a call with the wrong arity or a wrong type does not
-//! compile; a generic hook takes its type arguments first. The arguments are source to check
-//! (`ast::Expr`) or checked HIR (`hir::Expr`), the same for all of a call ([`Form`]): checked
+//! site names: `ty::Any::of(v)`); a generic hook takes its type arguments first. What that
+//! checks, and what it does not:
+//!
+//! - **At compile time:** the arity, the order and kind of the markers and, for HIR, the number
+//!   of type arguments (`[TyId; N]`). A swap of two markers or a missing argument does not
+//!   compile (`velt_sema::hook_args`'s doctests).
+//! - **Not by the types:** the expression inside a marker (`ty::Any::of(site)` compiles whatever
+//!   `site` is), the source form's type-argument count (`Vec<ast::TypeExpr>`), and the result
+//!   type given to [`Call::emit`] / [`Call::plain`] (the `R` of [`Call`] does not constrain it).
+//! - **Source arguments** are checked by sema as the call they become, so a wrong expression
+//!   there is a diagnostic.
+//! - **HIR arguments** are checked when the call is built: [`Call::emit`] and [`Call::plain`]
+//!   `debug_assert!` that each argument's type, and the result type they are given, are the
+//!   hook's under the type arguments (`fits`), as velt_vir's `operand_fits` does for lowering.
+//!   A parameter or result whose type mentions a type parameter other than as the whole type
+//!   (`A[]`, `Promise<A>`) is not compared, and an argument of type `never` fits anything.
+//!
+//! The arguments are source to check (`ast::Expr`) or checked HIR (`hir::Expr`), the same for all of a call ([`Form`]): checked
 //! HIR carries each argument's use (a borrow, a move) itself, so the table's passing modes are
 //! not applied here. The builder returns a [`Call`], which the site emits as it needs:
 //!
@@ -15,8 +30,7 @@
 //! - HIR: [`Call::emit`] (its errors tracked as any call's) and [`Call::plain`] (no throw source;
 //!   `None` when std lacks the hook, which each site handles as it did before).
 //!
-//! Builders are `#[inline]` and allocate only the call's argument list. `velt_sema::hook_args`'s
-//! doctest shows that a call with the wrong argument types does not compile.
+//! Builders are `#[inline]` and allocate only the call's argument list.
 
 use std::marker::PhantomData;
 
@@ -25,7 +39,7 @@ use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
 use crate::ctx::Ctx;
-use crate::hir::{self, Callee, ExprKind as H, TyId};
+use crate::hir::{self, Callee, DefId, ExprKind as H, TyId, TyKind};
 
 /// The marker types of the hooks' type language (velt_common `hook_sig.rs`): what a builder's
 /// argument or result is. A std class is the marker of its name, without its type arguments;
@@ -228,6 +242,51 @@ impl<R> Call<R, ast::Expr> {
     }
 }
 
+/// Whether a value of type `got` is what a hook's parameter or result of declared type `decl`
+/// is under `targs`: `decl` itself, or the type argument when `decl` is a type parameter. A
+/// `decl` that mentions a type parameter deeper (`A[]`) is not compared (comparing it would
+/// intern the substituted type, which a debug check must not do); `never` (an argument that
+/// does not return) fits anything.
+fn fits(cx: &Ctx<'_>, decl: TyId, got: TyId, targs: &[TyId]) -> bool {
+    if got == decl || got == cx.ty.never {
+        return true;
+    }
+    if let TyKind::Param(i) = cx.ty.kind(decl) {
+        return targs.get(*i as usize).is_none_or(|t| *t == got);
+    }
+    let mut generic = false;
+    cx.ty
+        .visit(decl, &mut |k| generic |= matches!(k, TyKind::Param(_)));
+    generic
+}
+
+/// `debug_assert!`s that a HIR call of hook `d` passes arguments and expects a result of the
+/// hook's types ([`fits`]): a marker that holds the wrong expression is an ICE, not a wrong call.
+fn debug_check(cx: &Ctx<'_>, d: DefId, name: &str, targs: &[TyId], args: &[hir::Expr], ret: TyId) {
+    if !cfg!(debug_assertions) {
+        return;
+    }
+    let f = cx.fn_info(d);
+    debug_assert_eq!(
+        f.params.len(),
+        args.len(),
+        "ICE: `{name}` called with {} arguments, the hook takes {}",
+        args.len(),
+        f.params.len()
+    );
+    for (i, (p, a)) in f.params.iter().zip(args).enumerate() {
+        debug_assert!(
+            fits(cx, p.ty, a.ty, targs),
+            "ICE: argument {i} of `{name}` is not of its parameter's type (the marker and the \
+             expression of a hook call disagree)"
+        );
+    }
+    debug_assert!(
+        fits(cx, f.ret, ret, targs),
+        "ICE: `{name}` emitted with a result type that is not the hook's"
+    );
+}
+
 impl<R> Call<R, hir::Expr> {
     /// The call, of type `ret`; it throws what the hook throws, as any call does. std without
     /// the hook is an ICE.
@@ -235,6 +294,7 @@ impl<R> Call<R, hir::Expr> {
     pub(crate) fn emit(self, cx: &mut FnCx<'_, '_>, ret: TyId, span: Span) -> hir::Expr {
         let d = (cx.cx.prelude_fn(self.name))
             .unwrap_or_else(|| panic!("ICE: the prelude without `{}`", self.name));
+        debug_check(cx.cx, d, self.name, &self.targs, &self.args, ret);
         cx.call_throws(d, &self.targs, ret, span);
         let kind = H::Call {
             callee: Callee::Def(d, self.targs),
@@ -248,6 +308,7 @@ impl<R> Call<R, hir::Expr> {
     #[inline]
     pub(crate) fn plain(self, cx: &Ctx<'_>, ret: TyId, span: Span) -> Option<hir::Expr> {
         let d = cx.prelude_fn(self.name)?;
+        debug_check(cx, d, self.name, &self.targs, &self.args, ret);
         let kind = H::Call {
             callee: Callee::Def(d, self.targs),
             args: self.args,
