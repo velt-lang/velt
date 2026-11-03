@@ -191,7 +191,9 @@ impl<'h> Cx<'h> {
         if let Some(id) = self.shape_work(&work, mode) {
             return id;
         }
-        let shared = self.shapes.on.then(|| work.clone());
+        // A shared instance's work, kept to register it once it has its id (shape/).
+        let shared =
+            (!self.shapes.no_placeholders() && self.work_names_shared(&work)).then(|| work.clone());
         // Without a lock set every function counts the same way: one version.
         let fixed = matches!(
             work,

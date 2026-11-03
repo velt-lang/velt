@@ -54,8 +54,10 @@ impl Cx<'_> {
     /// `t` with each placeholder replaced by its representative, when that type exists:
     /// the type whose answers every shape question gives for `t` (module docs). `t` itself
     /// otherwise. Each type asked about is remembered for `verify`.
+    #[inline]
     pub(in crate::lower) fn ph_rep(&self, t: TyId) -> TyId {
-        if !self.mentions_ph(t) {
+        // Most programs make no placeholder: nothing to look up, on lowering's hottest paths.
+        if self.shapes.no_placeholders() || !self.mentions_ph(t) {
             return t;
         }
         self.shapes.asked.borrow_mut().insert(t);

@@ -115,6 +115,13 @@ pub(super) struct Shapes {
 }
 
 impl Shapes {
+    /// No placeholder exists in this pass (no shared instance): every shape question is the
+    /// question itself.
+    #[inline]
+    pub(super) fn no_placeholders(&self) -> bool {
+        self.ph.is_empty()
+    }
+
     /// Shared instances made in this pass, and the per-type instances they stand for.
     pub(super) fn counts(&self) -> (usize, usize) {
         let per_type = self.insts.values().map(|i| i.dicts.len()).sum();
@@ -134,13 +141,16 @@ pub(super) fn wanted(debug_build: bool) -> bool {
 
 impl Cx<'_> {
     /// Is `t` a placeholder type?
+    #[inline]
     pub(super) fn is_ph(&self, t: TyId) -> bool {
-        matches!(self.types.kind(t), TyKind::Param(n) if *n >= SHAPE_BASE)
+        !self.shapes.no_placeholders()
+            && matches!(self.types.kind(t), TyKind::Param(n) if *n >= SHAPE_BASE)
     }
 
     /// Does `t` mention a placeholder?
+    #[inline]
     pub(super) fn mentions_ph(&self, t: TyId) -> bool {
-        mentions(&self.shapes, &self.types, t)
+        !self.shapes.no_placeholders() && mentions(&self.shapes, &self.types, t)
     }
 
     /// The placeholder for concrete type `t` at type-argument position `pos`, made when new;
@@ -214,6 +224,7 @@ impl Cx<'_> {
     /// `func_in`'s view of `work` in a pass that shares: `Some(id)` for a pseudo id (work at a
     /// placeholder type inside a shared instance), `None` to build `work` as usual. A shared
     /// instance itself is registered (`register_inst`) once it has its id.
+    #[inline]
     pub(super) fn shape_work(&mut self, work: &Work, mode: LkMode) -> Option<FuncId> {
         if self.shapes.ph.is_empty() || !self.work_mentions_ph(work) {
             return None;
@@ -250,6 +261,11 @@ impl Cx<'_> {
                     .any(|(k, &p)| p == t && k.1 == i as u32)
         });
         (self.shares(*d) && canonical).then(|| (*d, targs.clone()))
+    }
+
+    /// Whether `work` is a shared instance (`register_inst` then records it).
+    pub(super) fn work_names_shared(&self, work: &Work) -> bool {
+        self.shared_inst_key(work).is_some()
     }
 
     /// Record shared instance `id` for `work` (after `func_in` made its id).
