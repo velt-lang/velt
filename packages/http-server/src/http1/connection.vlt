@@ -147,6 +147,10 @@ export async function connection<E>(
             // Otherwise the client went away while the response was being written (a streamed
             // one): nothing can be sent, and it is not the handler's failure.
           }
+          if (res.cutOff()) {
+            // Its response failed after the head (`fail`): it can't be finished.
+            failed = true;
+          }
           if (res.upgraded()) {
             // The connection is the handler's now (also if it failed after switching).
             return;

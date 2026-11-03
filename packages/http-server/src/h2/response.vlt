@@ -246,12 +246,14 @@ export class H2Response extends HttpResponse implements BodySink {
     return this.streaming;
   }
 
-  /// The handler failed after the head went out (internal): what was sent is not the whole
-  /// response, so the stream is reset (INTERNAL_ERROR, RFC 9113 §5.4.2) instead of ended, and
-  /// the client sees a failed response, not a short body taken as complete.
+  /**
+   * See `HttpResponse.fail`: the stream is reset (INTERNAL_ERROR, RFC 9113 §5.4.2). Not a
+   * tunnel (`upgrade`): that stream is the handler's, also when `serve` then fails to write the
+   * upgrade's `Response` over the 200 already sent.
+   */
   fail() {
     const s = this.s;
-    if (!this.done || s.reset || s.localEnded) {
+    if (!this.done || s.reset || s.localEnded || s.tunnel != null) {
       return;
     }
     this.streaming = false;

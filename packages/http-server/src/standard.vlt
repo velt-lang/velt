@@ -53,9 +53,11 @@ export async function serve<E, F>(
         failed(out);
         return;
       }
-      // The head went out and the body failed: the server cuts the response off (HTTP/1.1
-      // closes the connection, HTTP/2 resets the stream), as for a panic there.
-      throw e;
+      // The head went out and the body failed: the response is cut off (HTTP/1.1 closes the
+      // connection, HTTP/2 resets the stream), as for a panic there, so the client doesn't take
+      // what it got for the whole body. (Not rethrown: the handler's type stays non-throwing.)
+      console.error("request handler failed: the response body could not be written:", e);
+      out.fail();
     }
   });
 }
