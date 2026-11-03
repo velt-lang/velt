@@ -1,0 +1,32 @@
+// Promises spread into an array of promises that may reject with more (#2085): each element
+// converts as a promise pushed there does, from an array and from a `Map`'s values alike.
+async function parse(s: string): Promise<number> {
+  if (s === "") {
+    throw new RangeError("empty");
+  }
+  return s.length;
+}
+
+async function load(s: string): Promise<number> {
+  if (s === "x") {
+    throw new TypeError("bad name");
+  }
+  return s.length * 10;
+}
+
+async function main() {
+  const parsed = new Map<string, Promise<number>>();
+  parsed.set("a", parse("ab"));
+  parsed.set("b", parse(""));
+  const more: Promise<number>[] = [parse("abc")];
+  const all: Promise<number>[] = [...parsed.values(), ...more];
+  all.push(load("x"));
+  all.push(load("yz"));
+  for (const p of all) {
+    try {
+      console.log(await p);
+    } catch (err) {
+      console.log("caught", (err as Error).message);
+    }
+  }
+}

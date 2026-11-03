@@ -1,0 +1,7 @@
+use none
+use 1
+lit 2
+undef none
+null object object
+false true true
+1 true undefined

@@ -157,6 +157,7 @@ impl FnCx<'_, '_> {
                     et == elem
                         || (self.cx.ty.is_int(et) && self.float_elem(elem).is_some())
                         || self.cx.unify_err_vars(et, elem)
+                        || self.widens_at_run_time(et, elem)
                 }
             };
             if !fits {
@@ -383,6 +384,13 @@ impl FnCx<'_, '_> {
             || self.cx.unify_err_vars(et, elem)
             || self.converts_to(et, elem)
             || self.widens(et, elem)
+            || self.widens_at_run_time(et, elem)
+    }
+
+    /// Promises and generators spread into an array of a wider error type convert one by one
+    /// (`Intrinsic::PromiseWiden`, `generator_widen`), as each element pushed would.
+    fn widens_at_run_time(&mut self, et: TyId, elem: TyId) -> bool {
+        self.widens_promise(et, elem) || self.generator_widens(et, elem)
     }
 
     /// The float type of an array element type `number` or `number | null` (integers spread

@@ -300,7 +300,7 @@ impl FnCx<'_, '_> {
                     }
                     let (h, this) = match v {
                         Some(v) => self.slot_fn(v, exp, (iface, slot), dyn_ty),
-                        None => (self.prop_value(&key, v, Some(exp)), false),
+                        None => (self.slot_shorthand(&key, exp, (iface, slot)), false),
                     };
                     let h = self.overload_impl_results(&methods, &m.name, (h, v), key.span);
                     let h = self.fit_fn(h, m, this.then_some(dyn_ty));
@@ -696,11 +696,11 @@ impl FnCx<'_, '_> {
         exp: TyId,
         (iface, slot): (DefId, usize),
     ) -> hir::Expr {
-        let slot = Some((iface, slot as u32, e.span));
-        let saved = std::mem::replace(&mut self.literal_slot, slot);
+        let at = Some((iface, slot as u32, e.span));
+        let saved = std::mem::replace(&mut self.literal_slot, at);
         let h = self.expr(e, Some(exp), Want::Move);
         self.literal_slot = saved;
-        h
+        self.bind_slot_result(Some(e), h, (iface, slot))
     }
 
     /// A closure written at `span` throws what `srcs` throw: for the interface slot it fills, if

@@ -206,6 +206,20 @@ impl crate::body::FnCx<'_, '_> {
                 let f = self.cx.fn_info(*g);
                 self.cx.site_in(f.ret_span?, f.ret)
             }
+            // A field read through an interface value: its getter slot follows the methods.
+            H::Call {
+                callee: crate::hir::Callee::Dyn { slot, .. },
+                args,
+            } => {
+                let TyKind::Dyn(d, _) = self.cx.ty.kind(args.first()?.ty) else {
+                    return None;
+                };
+                let info = self.cx.iface(*d)?;
+                let f = info
+                    .fields
+                    .get((*slot as usize).checked_sub(info.methods.len())?)?;
+                (self.cx.decl_site(f.span, f.declared)).or_else(|| self.cx.decl_site(f.span, h.ty))
+            }
             _ => None,
         }
     }

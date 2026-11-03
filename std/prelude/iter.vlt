@@ -210,3 +210,28 @@ export class Generator<T, E = never, N = never> implements Iterator<T, E>, Itera
     generatorReturn(this);
   }
 }
+
+// A generator as one of a wider error type (`Generator<T, E>` where a `Generator<T, F>` is
+// expected, `F` allowing every `E`): its results are laid out by the error type, so the compiler
+// passes its values through a generator of the wider type, as it widens a promise. Only what the
+// inner generator throws converts to `F`: an error a caller injects with `throw()` is not the
+// inner one's, so it leaves the wrapper as it came (`Generator.throw` rethrows it), and the inner
+// generator is closed.
+function* generatorWiden<T, E, F>(g: Generator<T, E>): Generator<T, F> {
+  while (true) {
+    const r = generatorWidenStep<T, E, F>(g);
+    if (r.done) {
+      return;
+    }
+    yield r.value;
+  }
+}
+
+// The next result of `g` (`generatorWiden`), what it throws converted to `F`.
+function generatorWidenStep<T, E, F>(g: Generator<T, E>): IteratorResult<T> throws F {
+  try {
+    return g.next();
+  } catch (e) {
+    throw e as F;
+  }
+}

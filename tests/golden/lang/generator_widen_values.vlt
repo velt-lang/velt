@@ -1,0 +1,23 @@
+// A generator that throws nothing widens to a generator type that throws only when it yields
+// the same values (#2085): one of strings is no generator of numbers, as in TypeScript.
+async function* quiet(): AsyncGenerator<string> {
+  yield "q";
+}
+
+async function* loud(n: number): AsyncGenerator<number> {
+  if (n < 0) {
+    throw new RangeError("loud failed");
+  }
+  yield n;
+}
+
+async function drain(g: AsyncGenerator<number>): Promise<void> {
+  for await (const c of g) {
+    console.log(c);
+  }
+}
+
+async function main() {
+  await drain(loud(1));
+  await drain(quiet());
+}

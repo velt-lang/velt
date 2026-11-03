@@ -527,8 +527,13 @@ impl FnCx<'_, '_> {
             TyKind::Tuple(es) => es.clone(),
             _ => return false,
         };
+        // An element of a dynamic type, or that or a nothing (`(object | null)[]`, #2144).
+        let dynamic = |s: &Self, e: TyId| {
+            let core = s.cx.ty.opt_payload(e).unwrap_or(e);
+            s.cx.dynamic(core).is_some()
+        };
         elems
             .into_iter()
-            .any(|e| self.cx.dynamic(e).is_some() || self.holds_dynamic_depth(e, depth + 1))
+            .any(|e| dynamic(self, e) || self.holds_dynamic_depth(e, depth + 1))
     }
 }

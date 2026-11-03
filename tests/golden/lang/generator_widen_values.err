@@ -1,0 +1,2 @@
+mismatched types
+expected AsyncGenerator<f64, RangeError>, found AsyncGenerator<string, never>

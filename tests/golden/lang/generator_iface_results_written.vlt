@@ -1,0 +1,17 @@
+// An interface method's result written with Velt's error type says what its generator throws:
+// an object literal's arrow returning a generator that throws something else is not one
+// (`AsyncGenerator<T>` without it infers that, #2084).
+class NotFound extends Error {}
+
+interface Source {
+  rows(n: number): AsyncGenerator<string, NotFound>;
+}
+
+async function* rows(n: number): AsyncGenerator<string> {
+  if (n < 0) {
+    throw new RangeError("negative");
+  }
+  yield "row";
+}
+
+const source: Source = { rows: (n) => rows(n) };

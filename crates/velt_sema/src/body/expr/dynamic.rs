@@ -283,11 +283,24 @@ impl FnCx<'_, '_> {
 
     /// `h` as an `any` (`unknown`) when it is an `any | null` (`unknown | null`): the value,
     /// or the dynamic `null` / `undefined` for the nothing (TypeScript has no `any | null`).
-    pub(crate) fn collapse_dynamic_option(&mut self, mut h: hir::Expr) -> hir::Expr {
+    /// An `object | undefined` stays itself: a plain `object` takes no nothing (#2144).
+    pub(crate) fn collapse_dynamic_option(&mut self, h: hir::Expr) -> hir::Expr {
+        self.collapse_option(h, false)
+    }
+
+    /// `h` as an `object` holding its nothing when it is an `object | null` (or `| undefined`):
+    /// what a type assertion of it converts (`o as Point`, `o as object`), since TypeScript
+    /// keeps the value as it is.
+    pub(crate) fn collapse_object_option(&mut self, h: hir::Expr) -> hir::Expr {
+        self.collapse_option(h, true)
+    }
+
+    fn collapse_option(&mut self, mut h: hir::Expr, objects: bool) -> hir::Expr {
         let Some(payload) = self.cx.ty.opt_payload(h.ty) else {
             return h;
         };
-        if self.cx.dynamic(payload).is_none() {
+        let d = self.cx.dynamic(payload);
+        if d.is_none() || (d == Some(Dynamic::Object)) != objects {
             return h;
         }
         // A Velt-only standard library result that is `null` when absent (`Channel.receive` of

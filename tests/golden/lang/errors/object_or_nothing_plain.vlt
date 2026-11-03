@@ -1,0 +1,8 @@
+// An `object | undefined` is no `object`: tsc rejects storing it in one without a test (TS2322),
+// and so does Velt (#2144).
+function pick(n: number): object | undefined {
+  return n > 0 ? [n] : undefined;
+}
+
+const o: object = pick(1);
+console.log(o);
