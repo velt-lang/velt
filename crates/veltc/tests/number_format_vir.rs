@@ -41,19 +41,15 @@ fn numbers_print_without_the_runtime_and_floats_through_one_function() {
             hot.push(line);
         }
     }
-    for runtime in [
-        "velt_rt_str_from_f64",
-        // Not `velt_rt_strbuf_push_f64`: `StringBuilder.appendNumber` and the JSON writer (the
-        // golden's builder and JSON section, inlined into `main`) send a float that is not a
-        // whole number to the runtime's printer by design, since std's float printer is not
-        // loaded for them. Templates and `String()` take std's: the float formatter is checked
-        // below.
-    ] {
-        assert!(
-            !hot.iter().any(|l| l.contains(runtime)),
-            "a call of `{runtime}`\n{vir}"
-        );
-    }
+    // Not `velt_rt_strbuf_push_f64`: `StringBuilder.appendNumber` and the JSON writer (the
+    // golden's builder and JSON section, inlined into `main`) send a float that is not a whole
+    // number to the runtime's printer by design, since std's float printer is not loaded for
+    // them. Templates and `String()` take std's: the float formatter is checked below.
+    let runtime = "velt_rt_str_from_f64";
+    assert!(
+        !hot.iter().any(|l| l.contains(runtime)),
+        "a call of `{runtime}`\n{vir}"
+    );
     let float_fns: Vec<&str> = vir
         .lines()
         .filter(|l| l.starts_with("fn#") && (l.contains("N7f64Text") || l.contains("N7pushF64")))
