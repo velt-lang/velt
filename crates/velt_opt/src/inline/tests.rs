@@ -514,3 +514,39 @@ fn always_inline_callee_is_inlined_whatever_its_size() {
         assert_eq!(calls_to(&p.funcs[2], small), 0, "{marker:?}");
     }
 }
+
+/// Room under the caller limit goes to the calls in loops first: a `main` near the limit that
+/// calls a single-call helper before its loop takes in the loop's callee, and the helper stays a
+/// call (it used to be the other way round: bench/json/navigate).
+#[test]
+fn loop_calls_get_the_room_first() {
+    let mut pb = ProgramBuilder::new();
+    let once = pb.add(adder("once", 1_900, Linkage::Internal));
+    let hot = pb.add(adder("hot", 500, Linkage::Internal));
+    let main = {
+        let mut fb = FuncBuilder::export("main", &[], Ty::I64);
+        let acc = fb.local(Ty::I64);
+        let more = fb.local(Ty::Bool);
+        let entry = fb.block();
+        for k in 0..8_000 {
+            fb.assign(entry, acc, Rvalue::Use(int(k, Ty::I64)));
+        }
+        let entry = fb.call(entry, Callee::Func(once), vec![copy_local(acc)], Some(acc));
+        let (head, body, exit) = (fb.block(), fb.block(), fb.block());
+        fb.goto(entry, head);
+        fb.assign(head, more, bin(BinOp::Lt, copy_local(acc), int(100, Ty::I64)));
+        fb.branch(head, more, body, exit);
+        let mut b = body;
+        for _ in 0..2 {
+            b = fb.call(b, Callee::Func(hot), vec![copy_local(acc)], Some(acc));
+        }
+        fb.goto(b, head);
+        fb.ret(exit, copy_local(acc));
+        pb.add(fb.finish())
+    };
+    let mut p = pb.finish();
+    inline(&mut p);
+    let main = &p.funcs[main.0 as usize];
+    assert_eq!(calls_to(main, hot), 0, "the loop's callee is inlined");
+    assert_eq!(calls_to(main, once), 1, "the helper before the loop stays a call");
+}

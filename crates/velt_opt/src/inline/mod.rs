@@ -13,6 +13,11 @@
 //!   instance per call site, track_caller.rs in velt_vir, so they meet the single-site rule;
 //!   this rule gives every program's loops the same, its own modules' functions included.)
 //!
+//! A caller's call sites are taken in two passes: those in its loops first, then the others.
+//! Room under `CALLER_LIMIT` is what a call inlined outside a loop takes from one inside: a
+//! single-call helper inlined into a `main` near the limit kept the call in its benchmark loop
+//! out (bench/json/navigate, 1.2% more instructions).
+//!
 //! Functions that never return normally (panic helpers, and `never` functions that throw) are
 //! never inlined: their calls are cold.
 //!
@@ -67,6 +72,9 @@ const RECURSIVE_COST: u64 = 200;
 const CALLER_LIMIT: u64 = 10_000;
 /// Growth allowed on top of the program's size: the program may at most double, plus this.
 const BUDGET_SLACK: u64 = 2_000;
+
+/// Whether call sites in loops are considered before the others (module docs).
+const LOOPS_FIRST: bool = true;
 
 /// Size estimate: statements plus terminators.
 pub(crate) fn cost(func: &Function) -> u64 {
@@ -364,14 +372,26 @@ fn inline_into(
     let mut from: Vec<Vec<FuncId>> = vec![vec![]; in_loop.len()];
     // The recursive functions this caller gets copies of in this round.
     let mut copied: Vec<FuncId> = vec![];
+    // Per block: whether its call was considered already (module docs: loops first).
+    let mut done = vec![false; in_loop.len()];
     let mut changed = false;
     let mut bi = 0;
-    while bi < program.funcs[fi].blocks.len() {
-        let here = bi;
-        bi += 1;
-        if !scan[here] {
+    let mut loops_first = LOOPS_FIRST;
+    loop {
+        if bi >= program.funcs[fi].blocks.len() {
+            if !loops_first {
+                break;
+            }
+            loops_first = false;
+            bi = 0;
             continue;
         }
+        let here = bi;
+        bi += 1;
+        if !scan[here] || done[here] || (loops_first && !in_loop[here]) {
+            continue;
+        }
+        done[here] = true;
         let Terminator::Call {
             callee: Callee::Func(callee),
             args,
@@ -425,6 +445,7 @@ fn inline_into(
         let grown = program.funcs[fi].blocks.len();
         in_loop.resize(grown, in_loop[here]);
         scan.resize(grown, in_loop[here]);
+        done.resize(grown, false);
         from.resize(grown, brings);
         caller_cost += cost(&body);
         changed = true;
