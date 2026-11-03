@@ -1,0 +1,8 @@
+import type { Package } from "velt/package";
+
+export const pkg: Package = {
+  name: "registry-core",
+  version: "0.1.0",
+  description: "The package registry's rules and request handling in Velt, over pluggable storage",
+  entry: "src/lib.vlt",
+};

@@ -1,0 +1,11 @@
+import type { Package } from "velt/package";
+
+// Runs packages/registry-core over the cases crates/veltc/tests/registry_core.rs writes.
+export const pkg: Package = {
+  name: "driver",
+  version: "0.1.0",
+  dependencies: {
+    // packages/registry-core, copied beside the driver by the test.
+    "registry-core": { path: "../registry-core" },
+  },
+};

@@ -1815,6 +1815,7 @@ dependencies = [
  "lsp-server",
  "lsp-types",
  "notify",
+ "semver",
  "serde_json",
  "tar",
  "tempfile",

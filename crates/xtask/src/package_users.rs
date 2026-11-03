@@ -55,6 +55,13 @@ pub(crate) const USERS: &[Users] = &[
         goldens: &[],
         binaries: &["cloudflare", "workerd", "docs"],
     },
+    // Its rules against vpm's (`registry_core` copies it beside its driver) and the
+    // documentation (`docs` compiles snippets against every package without native code).
+    Users {
+        package: "registry-core",
+        goldens: &[],
+        binaries: &["registry_core", "docs"],
+    },
     // The database benchmarks (bench/db, bench/sqlite, bench/web, ...).
     Users {
         package: "sqlite",

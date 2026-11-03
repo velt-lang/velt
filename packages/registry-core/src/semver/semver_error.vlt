@@ -1,0 +1,4 @@
+// registry-core (internal): the error of a string that is not a semver version.
+
+/** Why a text is not a semver version, as the `semver` crate words it. */
+export class SemverError extends Error {}

@@ -44,6 +44,8 @@ libc = "0.2.189"
 windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Security", "Win32_System_Console", "Win32_System_Diagnostics_Debug", "Win32_System_JobObjects", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_System_Memory", "Win32_System_Threading"] }
 
 [dev-dependencies]
+# The `semver` crate vpm uses, as the oracle for registry-core's versions (tests/registry_core.rs).
+semver = "1.0.28"
 # Target packs (.tar.gz) for the `velt target add` tests.
 flate2 = "1.1.10"
 tar = "0.4"
