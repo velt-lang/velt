@@ -151,10 +151,16 @@ impl Cx<'_> {
             let Some(func) = &self.funcs[f.0 as usize] else {
                 return false;
             };
+            // A shared instance (shape/) calls, through its dictionaries, the functions they
+            // hold: those of every instance it stands for.
+            let shared = self.shape_callees(f);
+            let dict_calls = shared.is_some();
+            work.extend(shared.into_iter().flatten());
             for b in &func.blocks {
                 if let Terminator::Call { callee, .. } = &b.term {
                     match callee {
                         Callee::Func(g) => work.push(*g),
+                        Callee::Ptr { .. } if dict_calls => {}
                         Callee::Extern(e) if !calls_back(&self.externs[e.0 as usize]) => {}
                         _ => return false,
                     }

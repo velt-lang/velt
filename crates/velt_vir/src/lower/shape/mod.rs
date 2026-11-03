@@ -77,8 +77,11 @@ pub(super) struct Inst {
     targs: Vec<TyId>,
     entries: Vec<Entry>,
     index: FxHashMap<Entry, u32>,
-    /// Each dictionary made for it, with its concrete type arguments.
-    dicts: Vec<(StaticId, Vec<TyId>)>,
+    /// Each dictionary made for it, with its concrete type arguments and the user code that
+    /// asked for it (the site its replayed shares report).
+    dicts: Vec<(StaticId, Vec<TyId>, velt_common::Span)>,
+    /// The facts its body recorded over placeholders in this pass, replayed per dictionary.
+    facts: Option<super::boxing::Facts>,
     /// The dictionary parameter, once declared (abi.rs).
     pub(super) param: Option<crate::vir::Local>,
     /// How many arguments follow the dictionary: the caller's location of a caller-tracking
@@ -91,8 +94,11 @@ pub(super) struct Inst {
 pub(super) struct Shapes {
     /// Sharing is on in this pass.
     pub(super) on: bool,
-    /// Sharing is on in the pass that lowers the program whole.
+    /// Sharing is wanted (debug builds, `VELT_SHAPES`).
     pub(super) wanted: bool,
+    /// A `ToAny` / `FromAny` glue is being built: its code is what the shared std body would
+    /// have written at its site, std code for what lowering notes (`note_array_view`).
+    pub(super) std_glue: bool,
     ph: Vec<Ph>,
     ph_of: FxHashMap<(Key, u32), TyId>,
     pub(super) insts: FxHashMap<FuncId, Inst>,
@@ -132,29 +138,7 @@ impl Cx<'_> {
 
     /// Does `t` mention a placeholder?
     pub(super) fn mentions_ph(&self, t: TyId) -> bool {
-        if self.shapes.ph.is_empty() {
-            return false;
-        }
-        if let Some(&m) = self.shapes.mentions.borrow().get(&t) {
-            return m;
-        }
-        let mut stack = vec![t];
-        let mut found = false;
-        let mut seen = rustc_hash::FxHashSet::default();
-        while let Some(x) = stack.pop() {
-            if !seen.insert(x) {
-                continue;
-            }
-            match self.types.kind(x) {
-                TyKind::Param(n) if *n >= SHAPE_BASE => {
-                    found = true;
-                    break;
-                }
-                k => stack.extend(parts(k)),
-            }
-        }
-        self.shapes.mentions.borrow_mut().insert(t, found);
-        found
+        mentions(&self.shapes, &self.types, t)
     }
 
     /// The placeholder for concrete type `t` at type-argument position `pos`, made when new;
@@ -206,8 +190,6 @@ impl Cx<'_> {
             return None;
         }
         if !self.shapes.on {
-            // A facts-only pass: the program is lowered whole once more, sharing.
-            self.left_out |= self.shapes.wanted && self.facts_only;
             return None;
         }
         let mut phs = Vec::with_capacity(targs.len());
@@ -287,37 +269,89 @@ impl Cx<'_> {
                 entries: vec![],
                 index: FxHashMap::default(),
                 dicts: vec![],
+                facts: None,
                 param: None,
             };
             self.shapes.insts.insert(id, inst);
         }
     }
 
-    /// Before shared instance `fid` is lowered: it is the current one, and the facts its body
-    /// records are set aside (module docs); `None` for any other function.
-    pub(super) fn start_shared(&mut self, fid: FuncId) -> Option<super::boxing::Facts> {
+    /// Before shared instance `fid` is lowered: it is the current one. `false` for any other
+    /// function.
+    pub(super) fn start_shared(&mut self, fid: FuncId) -> bool {
         if !self.shapes.insts.contains_key(&fid) {
-            return None;
+            return false;
         }
         self.shapes.current.push(fid);
-        Some(std::mem::take(&mut self.facts))
+        true
     }
 
-    /// After a function is lowered: a shared instance gets its facts back and its pseudo ids
-    /// rewritten (rewrite.rs).
+    /// After a function is lowered: a shared instance gets its pseudo ids rewritten
+    /// (rewrite.rs), and the facts its body recorded over placeholders are taken out of the
+    /// pass's and replayed for each of its dictionaries (`replay`; boxing/replay.rs).
     pub(super) fn finish_shared(
         &mut self,
         fid: FuncId,
         mut func: crate::vir::Function,
-        outer: Option<super::boxing::Facts>,
+        shared: bool,
     ) -> crate::vir::Function {
-        let Some(facts) = outer else {
+        if !shared {
             return func;
-        };
-        self.facts = facts;
+        }
         self.shapes.current.pop();
         self.shape_rewrite(fid, &mut func);
+        let facts = {
+            let shapes = &self.shapes;
+            let types = &self.types;
+            let ph = |t: TyId| mentions(shapes, types, t);
+            self.facts.take_types(&ph)
+        };
+        if facts.by_function() {
+            ice("a shared body records facts per function, which are not replayed");
+        }
+        self.shapes.insts.get_mut(&fid).expect("ICE: shared").facts = Some(facts);
+        let dicts: Vec<(Vec<TyId>, velt_common::Span)> = (self.shapes.insts[&fid].dicts.iter())
+            .map(|(_, t, s)| (t.clone(), *s))
+            .collect();
+        for (targs, site) in dicts {
+            self.replay(fid, &targs, site);
+        }
         func
+    }
+
+    /// The facts shared instance `inst`'s body recorded, for its dictionary of `targs`, added
+    /// to the pass's.
+    pub(super) fn replay(&mut self, inst: FuncId, targs: &[TyId], site: velt_common::Span) {
+        let Some(facts) = self
+            .shapes
+            .insts
+            .get_mut(&inst)
+            .and_then(|i| i.facts.take())
+        else {
+            return;
+        };
+        let ph: Vec<(TyId, TyId)> = (self.shapes.insts[&inst].targs.iter().copied())
+            .zip(targs.iter().copied())
+            .collect();
+        let mut map = FxHashMap::default();
+        for t in super::boxing::Facts::types_of(&facts) {
+            if !map.contains_key(&t) {
+                let c = self.replace_tys(t, &ph);
+                map.insert(t, c);
+            }
+        }
+        let shared: Vec<TyId> = (facts.shared_types().iter())
+            .filter_map(|t| map.get(t).copied())
+            .collect();
+        self.facts.add_mapped(&facts, &map);
+        if site != velt_common::Span::DUMMY {
+            let outer = std::mem::replace(&mut self.user_site, site);
+            for t in shared {
+                self.note_share_site(t);
+            }
+            self.user_site = outer;
+        }
+        self.shapes.insts.get_mut(&inst).expect("ICE: shared").facts = Some(facts);
     }
 
     /// `args` of a call of shared instance `inst` with its dictionary `dict` put in its place,
@@ -344,6 +378,33 @@ impl Cx<'_> {
         let inst = self.shapes.insts.get(&cur)?;
         (inst.def == def && inst.targs == targs && inst.param.is_none()).then_some(cur)
     }
+}
+
+/// Does `t` mention a placeholder (`Cx::mentions_ph`, for borrows that keep `Cx` apart)?
+fn mentions(shapes: &Shapes, types: &velt_sema::hir::TyTable, t: TyId) -> bool {
+    if shapes.ph.is_empty() {
+        return false;
+    }
+    if let Some(&m) = shapes.mentions.borrow().get(&t) {
+        return m;
+    }
+    let mut stack = vec![t];
+    let mut found = false;
+    let mut seen = rustc_hash::FxHashSet::default();
+    while let Some(x) = stack.pop() {
+        if !seen.insert(x) {
+            continue;
+        }
+        match types.kind(x) {
+            TyKind::Param(n) if *n >= SHAPE_BASE => {
+                found = true;
+                break;
+            }
+            k => stack.extend(parts(k)),
+        }
+    }
+    shapes.mentions.borrow_mut().insert(t, found);
+    found
 }
 
 /// The types a `Work` names (those that can mention a placeholder).

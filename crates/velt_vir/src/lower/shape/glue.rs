@@ -71,6 +71,7 @@ impl FnLower<'_, '_> {
         ty: TyId,
         g: Glue,
     ) {
+        let outer = std::mem::replace(&mut self.cx.shapes.std_glue, true);
         let any = self.cx.any_ty();
         let imp = self
             .cx
@@ -93,6 +94,7 @@ impl FnLower<'_, '_> {
         }
         self.pop_scope();
         self.terminate(Terminator::Return(unit()));
+        self.cx.shapes.std_glue = outer;
     }
 
     /// `Glue::FromAny` of `ty`: `any_to` of an `any` after it is evaluated.
@@ -102,6 +104,7 @@ impl FnLower<'_, '_> {
         out: vir::Local,
         ty: TyId,
     ) {
+        let outer = std::mem::replace(&mut self.cx.shapes.std_glue, true);
         let any = self.cx.any_ty();
         let av = self.cx.ty(any);
         let p = Place::local(self.temp(av));
@@ -119,5 +122,6 @@ impl FnLower<'_, '_> {
         }
         self.pop_scope();
         self.terminate(Terminator::Return(unit()));
+        self.cx.shapes.std_glue = outer;
     }
 }

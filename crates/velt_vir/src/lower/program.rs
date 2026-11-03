@@ -281,7 +281,7 @@ impl<'h> Cx<'h> {
         let outer_mode = std::mem::take(&mut self.cur_mode);
         let outer_tuples = self.start_fn_tuples();
         let prof = super::lower_profile::enter();
-        let outer_facts = self.start_shared(fid);
+        let shared = self.start_shared(fid);
         let func = match work {
             Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => {
                 let deep = matches!(work, Work::ReadOwn(w) if matches!(**w, Work::Deferred(_)));
@@ -304,7 +304,7 @@ impl<'h> Cx<'h> {
             }
             _ => super::FnLower::build(self, work),
         };
-        let func = self.finish_shared(fid, func, outer_facts);
+        let func = self.finish_shared(fid, func, shared);
         self.cur_mode = outer_mode;
         self.cur_def = outer;
         self.user_site = outer_site;

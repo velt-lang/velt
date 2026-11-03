@@ -226,7 +226,7 @@ pub(crate) fn lower_program(
         cx.no_await_steps = no_await_steps;
         cx.facts_only = facts_only;
         cx.shapes.wanted = shape::wanted(opts.shapes);
-        cx.shapes.on = !facts_only && cx.shapes.wanted;
+        cx.shapes.on = cx.shapes.wanted;
         cx.locs = opts
             .source_map
             .map(|sm| srcloc::LocMap::new(sm, opts.std_root));

@@ -11,6 +11,7 @@
 mod kinds;
 mod locks;
 mod module_reach;
+mod replay;
 mod transfers;
 mod tuples;
 mod weak;
@@ -301,15 +302,15 @@ pub(super) struct Facts {
 impl Cx<'_> {
     /// Record that a value of type `t` is shared.
     pub(super) fn note_share(&mut self, t: TyId) {
-        if self.mentions_ph(t) {
-            return;
-        }
         self.facts.shares.insert(t);
-        self.note_share_site(t);
+        // A shared body's are replayed with the site of the code its dictionary is for (shape/).
+        if !self.mentions_ph(t) {
+            self.note_share_site(t);
+        }
     }
 
     /// The user code sharing `t` now, if it is the first (`counted_atomic_diagnostics`).
-    fn note_share_site(&mut self, t: TyId) {
+    pub(super) fn note_share_site(&mut self, t: TyId) {
         if self.user_site != velt_common::Span::DUMMY {
             self.share_sites.entry(t).or_insert(self.user_site);
         }

@@ -26,15 +26,18 @@ impl Cx<'_> {
         let id = StaticId(self.statics.len() as u32 - 1);
         self.shapes.dicts.insert((inst, targs.clone()), id);
         let entries = self.shapes.insts[&inst].entries.clone();
+        let site = self.user_site;
         self.shapes
             .insts
             .get_mut(&inst)
             .expect("ICE: registered")
             .dicts
-            .push((id, targs.clone()));
+            .push((id, targs.clone(), site));
         for e in &entries {
             self.push_dict_entry(id, inst, &targs, e);
         }
+        // The body may be lowered already: its facts, for these types.
+        self.replay(inst, &targs, site);
         id
     }
 
@@ -61,10 +64,29 @@ impl Cx<'_> {
         it.entries.push(entry.clone());
         it.index.insert(entry.clone(), i);
         let dicts = it.dicts.clone();
-        for (id, targs) in dicts {
+        for (id, targs, _) in dicts {
             self.push_dict_entry(id, inst, &targs, &entry);
         }
         i
+    }
+
+    /// The functions the dictionaries of shared instance `f` hold, which its body calls
+    /// through them; `None` when `f` is not a shared instance.
+    pub(in crate::lower) fn shape_callees(&self, f: FuncId) -> Option<Vec<FuncId>> {
+        let inst = self.shapes.insts.get(&f)?;
+        let mut out = vec![];
+        for (id, _, _) in &inst.dicts {
+            for (_, c) in &self.statics[id.0 as usize].relocs {
+                if let Const::Func(g) = c {
+                    out.push(*g);
+                }
+            }
+        }
+        out.extend(inst.entries.iter().filter_map(|e| match e {
+            Entry::Dict(g) => Some(*g),
+            Entry::Code(..) => None,
+        }));
+        Some(out)
     }
 
     /// The (dictionary entry index) a pseudo id stands for, if it is one.

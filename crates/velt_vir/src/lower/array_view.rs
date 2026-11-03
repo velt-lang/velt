@@ -102,12 +102,14 @@ impl Cx<'_> {
 
     /// Record an `AnyTo` to the array type `t` (not counted in the standard library).
     pub(super) fn note_array_view(&mut self, t: TyId) {
-        let std = self.cur_def.is_some_and(|d| match self.hir.def(d) {
-            hir::Def::Fn(f) => f
-                .name
-                .starts_with(velt_common::std_modules::CANONICAL_PREFIX),
-            _ => false,
-        });
+        // The conversions of a shared std body's glue are the std body's (shape/glue.rs).
+        let std = self.shapes.std_glue
+            || self.cur_def.is_some_and(|d| match self.hir.def(d) {
+                hir::Def::Fn(f) => f
+                    .name
+                    .starts_with(velt_common::std_modules::CANONICAL_PREFIX),
+                _ => false,
+            });
         let TyKind::Array(mut e) = self.types.kind(t).clone() else {
             return;
         };
