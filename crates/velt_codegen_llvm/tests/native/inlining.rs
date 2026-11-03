@@ -62,6 +62,8 @@ fn large_single_calls_stay_calls() {
         .filter(|n| n.starts_with("capped_run_"))
         .count();
     // velt_main (a few statements) may take in 7 of them (7 × 1,401 within the caller limit of
-    // 10,000); the other 17 stay functions of their own. Without the caps, LLVM inlined all 24.
+    // 10,000); the other 17 stay functions of their own. Without the caps, clang 23 crashes
+    // (SIGSEGV) on this module at the default 8 MB stack, and only with an unlimited stack does it
+    // compile it, inlining all 24.
     assert!(defined >= 17, "{defined} of 24 kept");
 }

@@ -16,12 +16,13 @@
 //!   (LLVM's ordinary inlining, which grows a caller in proportion to its own size);
 //! - a function that can grow past that limit by itself is `noinline` (every call of it would be).
 //!
-//! So no function grows in LLVM past `CALLER_LIMIT` plus its small callees. Callees below the
-//! limit stay LLVM's to inline: a single-call helper of a hot loop (`setMembers` of the JSON tape
-//! parser) is inlined as before. Calls within a
-//! recursive cycle are left to LLVM, which does not grow functions through them. The sizes are
-//! velt_opt's cost (statements and blocks) of the optimized VIR this backend translates, so the
-//! caps hold whatever velt_opt did before.
+//! So no function grows in LLVM past `CALLER_LIMIT` plus its small callees. A call that fits
+//! under the limit stays LLVM's to inline; one that does not stays a call even in a hot loop
+//! (`main` → `parseWith` in bench/json/parse_value: out of line, `parseWith` no longer gets its
+//! constant arguments folded in, 1.9% more instructions). Calls within a recursive cycle are left
+//! to LLVM, which does not grow functions through them. The sizes are velt_opt's cost (statements
+//! and blocks) of the optimized VIR this backend translates, so the caps hold whatever velt_opt
+//! did before.
 
 use velt_vir::vir::{self, Callee, Inline, Terminator};
 
