@@ -420,6 +420,7 @@ impl<'h> Cx<'h> {
             align,
             relocs: vec![],
             mutable: None,
+            ..Default::default()
         });
         self.static_map.insert(key, id);
         id
@@ -444,6 +445,7 @@ impl<'h> Cx<'h> {
             align: 8,
             relocs: vec![(0, vir::Const::Static(text))],
             mutable: None,
+            ..Default::default()
         });
         self.str_objects.insert(s.to_string(), id);
         id

@@ -59,6 +59,13 @@
 //!     backend emits it inline. It reads only its operands and never touches memory, panics or
 //!     unwinds. A math operation is never a direct call of its runtime function (checked by
 //!     `verify`; an indirect call through its address, a function value, is an ordinary call).
+//! 13. Static symbols (additive, #2189): `StaticData::symbol` is `None` (the static is private
+//!     to the program's objects) unless `linkage` is `Export` (defined here, visible to the
+//!     link's other objects under the symbol) or `Import` (defined by another object of the link
+//!     under the symbol; its `bytes`, `relocs` and `mutable` are its contents there, which code
+//!     may read, as LLVM's `available_externally`, but are never emitted). Symbols are unique in
+//!     a program. An `Import` static's relocations name only `Export`/`Import` functions and
+//!     statics, and externs (checked by `verify`).
 
 use std::fmt;
 
@@ -213,11 +220,12 @@ impl Program {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Linkage {
     /// Visible to the linker (e.g. `velt_main`, poll fns referenced by rt).
     Export,
     /// Local to the object file.
+    #[default]
     Internal,
     /// Defined by another object of the link (invariant 11): declared, never emitted.
     Import,
@@ -382,7 +390,7 @@ pub struct ExternFn {
 }
 
 /// Read-only data (string literal bytes, vtables, …), or a word the program writes.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub struct StaticData {
     pub bytes: Vec<u8>,
     pub align: u32,
@@ -398,6 +406,12 @@ pub struct StaticData {
     /// name and value type (`tls::stable_id`), so an edit changing the type gets a new word.
     /// It is one aligned word (1, 2, 4 or 8 bytes). Every other static is read-only (`None`).
     pub mutable: Option<u64>,
+    /// The static's symbol (invariant 13): `None` unless `linkage` is `Export` or `Import`.
+    pub symbol: Option<String>,
+    /// `Internal` (the default): private to the program's objects. `Export`: defined here,
+    /// visible to the link's other objects under `symbol`. `Import`: defined by another object
+    /// under `symbol`, with the contents above for reading only (invariant 13).
+    pub linkage: Linkage,
 }
 
 #[derive(Clone, Debug)]

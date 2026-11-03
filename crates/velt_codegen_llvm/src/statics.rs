@@ -21,9 +21,12 @@ pub(crate) enum StaticDefinition {
     Import,
 }
 
-/// Name of static `i`.
-pub(crate) fn static_name(i: usize) -> String {
-    format!("@.s{i}")
+/// Name of static `i`: its symbol (vir invariant 13), else `.s<i>`.
+pub(crate) fn static_name(program: &vir::Program, i: usize) -> String {
+    match program.statics.get(i).and_then(|s| s.symbol.as_deref()) {
+        Some(symbol) => global_name(symbol),
+        None => format!("@.s{i}"),
+    }
 }
 
 /// The global definition of static `index`, a constant except a static atomic's word.
@@ -35,6 +38,13 @@ pub(crate) fn static_data(
     how: StaticDefinition,
     wide_pointer_slots: bool,
 ) -> CodegenResult<String> {
+    // A named static (vir invariant 13) is the link's one copy: another object refers to it
+    // (`Export`) or defines it (`Import`, whose contents are here for reading only).
+    let how = match data.linkage {
+        vir::Linkage::Import => StaticDefinition::Import,
+        vir::Linkage::Export if how == StaticDefinition::Own => StaticDefinition::Shared,
+        _ => how,
+    };
     let linkage = match how {
         StaticDefinition::Own => "private",
         StaticDefinition::Shared => "hidden",
@@ -47,7 +57,7 @@ pub(crate) fn static_data(
             data.align
         );
     }
-    let name = static_name(index);
+    let name = static_name(program, index);
     // A static atomic's word: written through atomic instructions, so neither constant nor
     // merged with equal data.
     if data.mutable.is_some() {
@@ -126,7 +136,7 @@ fn target_name(program: &vir::Program, target: &vir::Const) -> CodegenResult<Str
             None => bail!("unknown extern #{}", id.0),
         },
         vir::Const::Static(id) if (id.0 as usize) < program.statics.len() => {
-            static_name(id.0 as usize)
+            static_name(program, id.0 as usize)
         }
         vir::Const::Static(id) => bail!("unknown static #{}", id.0),
         other => bail!("relocation target {other} is not an address"),

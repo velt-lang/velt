@@ -151,6 +151,7 @@ impl ProgramBuilder {
             align,
             relocs,
             mutable: None,
+            ..Default::default()
         });
         StaticId(self.p.statics.len() as u32 - 1)
     }

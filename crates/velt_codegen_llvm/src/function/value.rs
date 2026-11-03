@@ -59,7 +59,7 @@ impl Emitter<'_> {
                 if id.0 as usize >= self.program.statics.len() {
                     bail!("unknown static #{}", id.0)
                 }
-                static_name(id.0 as usize)
+                static_name(self.program, id.0 as usize)
             }
             Const::Func(id) => match self.program.funcs.get(id.0 as usize) {
                 Some(f) => global_name(&f.symbol),

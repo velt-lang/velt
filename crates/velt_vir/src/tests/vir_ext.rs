@@ -201,12 +201,14 @@ pub(super) fn vtable_program() -> Program {
                     (16, Const::Static(StaticId(1))),
                 ],
                 mutable: None,
+                ..Default::default()
             },
             StaticData {
                 bytes: b"hi".to_vec(),
                 align: 1,
                 relocs: vec![],
                 mutable: None,
+                ..Default::default()
             },
         ],
         ..Default::default()
@@ -274,4 +276,36 @@ fn verify_rejects_mistyped_mem_statements() {
         overlapping: false,
     };
     expect_err(&p, "memcopy source has type I64, expected Ptr");
+}
+
+/// Invariant 13: a symbol exactly for `Export`/`Import` statics, unique, and an imported
+/// static's relocations name only what another object can see.
+#[test]
+fn verify_checks_static_symbols() {
+    let named = |p: &mut Program, s: usize, sym: &str, linkage: Linkage| {
+        p.statics[s].symbol = Some(sym.into());
+        p.statics[s].linkage = linkage;
+    };
+    let mut ok = vtable_program();
+    named(&mut ok, 0, "_Vsvt", Linkage::Export);
+    named(&mut ok, 1, "_Vshi", Linkage::Import);
+    crate::verify(&ok).unwrap();
+    let mut internal = vtable_program();
+    internal.statics[0].symbol = Some("_Vsvt".into());
+    expect_err(&internal, "internal with a symbol");
+    let mut unnamed = vtable_program();
+    unnamed.statics[0].linkage = Linkage::Export;
+    expect_err(&unnamed, "Export without a symbol");
+    let mut twice = ok.clone();
+    named(&mut twice, 1, "_Vsvt", Linkage::Export);
+    expect_err(&twice, "is not unique");
+    // Imported, it points at internal functions and an internal static.
+    let mut hidden = vtable_program();
+    named(&mut hidden, 0, "_Vsvt", Linkage::Import);
+    expect_err(&hidden, "names an internal definition");
+    for f in &mut hidden.funcs[1..] {
+        f.linkage = Linkage::Export;
+    }
+    named(&mut hidden, 1, "_Vshi", Linkage::Export);
+    crate::verify(&hidden).unwrap();
 }

@@ -292,12 +292,20 @@ fn declare_all<M: Module>(
     for (i, s) in program.statics.iter().enumerate() {
         // A static atomic's word, in a `velt dev` version: the session's (dev/mod.rs), so
         // every version changes the same one.
-        let declared = match (s.mutable, naming) {
-            (Some(id), Naming::Dev(_)) => {
+        let declared = match (s.mutable, naming, &s.symbol) {
+            (Some(id), Naming::Dev(_), _) => {
                 let sym = velt_vir::atomic::static_symbol(id);
                 module.declare_data(&sym, Linkage::Import, true, false)
             }
-            (mutable, _) => module.declare_anonymous_data(mutable.is_some(), false),
+            // A named static (vir invariant 13): the link's one copy, under its symbol.
+            (mutable, _, Some(sym)) => {
+                let linkage = match s.linkage {
+                    vir::Linkage::Import => Linkage::Import,
+                    _ => Linkage::Hidden,
+                };
+                module.declare_data(sym, linkage, mutable.is_some(), false)
+            }
+            (mutable, _, None) => module.declare_anonymous_data(mutable.is_some(), false),
         };
         statics.push(declared.map_err(|e| format!("codegen: declaring static #{i}: {e}"))?);
     }
@@ -308,7 +316,8 @@ fn declare_all<M: Module>(
     };
     // Defined after all declarations: relocations may point at any function, extern or static.
     for (i, s) in program.statics.iter().enumerate() {
-        if s.mutable.is_none() || !matches!(naming, Naming::Dev(_)) {
+        let dev_word = s.mutable.is_some() && matches!(naming, Naming::Dev(_));
+        if !dev_word && s.linkage != vir::Linkage::Import {
             define_static(module, &targets, i, s)?;
         }
     }

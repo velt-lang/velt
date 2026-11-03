@@ -22,6 +22,7 @@
 mod compile;
 mod key;
 mod select;
+mod statics;
 
 use std::collections::HashSet;
 use std::path::PathBuf;
@@ -135,18 +136,19 @@ pub(super) fn split(
     let Some(cache) = crate::build_cache::cache() else {
         return plan;
     };
+    let canon = Canon::new(program, Mode::Link);
+    let names = statics::Names::new(program, &canon);
     if stats() {
         eprintln!(
             "velt: std cache: std statements by reason: {:?}",
-            select::reasons(program)
+            select::reasons(program, &names)
         );
     }
-    let candidates = select::candidates(program);
+    let candidates = select::candidates(program, &names);
     if candidates.is_empty() {
         return plan;
     }
     let inputs = key::Inputs::of(opts, cg);
-    let canon = Canon::new(program, Mode::Link);
     let looked_up: Vec<(usize, Key, Option<PathBuf>)> = (candidates.iter())
         .map(|&i| {
             let set = select::inlinable(program, i);
@@ -176,7 +178,7 @@ pub(super) fn split(
     for (i, key, found) in looked_up {
         let object = match found {
             Some(_) => Object::Found(key),
-            None => Object::Compile(key, compile::program_of(program, i)),
+            None => Object::Compile(key, compile::program_of(program, i, &names)),
         };
         let symbol = program.funcs[i].symbol.clone();
         let mut calls: Vec<String> = (select::inlinable(program, i).into_iter())
@@ -194,6 +196,18 @@ pub(super) fn split(
     }
     let mut taken: Vec<usize> = taken.into_iter().collect();
     taken.sort_unstable();
+    for &i in &taken {
+        let reached = statics::reached(program, &select::inlinable(program, i));
+        statics::export(program, &names, &reached);
+    }
+    if stats() {
+        let named = program
+            .statics
+            .iter()
+            .filter(|s| s.symbol.is_some())
+            .count();
+        eprintln!("velt: std cache: {named} statics named");
+    }
     take_out(program, &taken);
     plan
 }

@@ -369,8 +369,11 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - Std cache (additive, #1728 step 3; off by default). Release executables (`--emit exe`) built by
   LLVM without debug info (`-g`), with `VELT_STD_OBJECT=1`,
   take std functions out of the program: each std function that is not small (40 statements),
-  not a `$dup` rename, reaches no static with relocations or written (named by it or by a small
-  function it may inline) and makes no indirect call is keyed by BLAKE3 over `velt std function
+  not a `$dup` rename, reaches only statics with relocations or written (named by it or by a
+  small function it may inline, and what their relocations reach) that can be named (no other
+  static of the program has the same contents: such statics become `Export` statics named
+  `_Vs<content fingerprint>`, vir.rs invariant 13, and the functions their relocations name
+  are exported) and makes no indirect call is keyed by BLAKE3 over `velt std function
   1`, `build_cache::compiler_identity()` (version line, executable size and time), clang's path,
   size and time, clang's optimization flag (`VELT_LLVM_OPT`), the target, the CPU and the
   optimization level; then, for it and each small internal function it reaches through small

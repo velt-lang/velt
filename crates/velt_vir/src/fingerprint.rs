@@ -96,6 +96,12 @@ impl<'p> Canon<'p> {
         canon
     }
 
+    /// The fingerprint of static `id`'s contents: its bytes, alignment, writability and what
+    /// its relocations point at, by content.
+    pub fn static_fingerprint(&self, id: StaticId) -> Fingerprint {
+        self.statics.get(id.0 as usize).copied().unwrap_or(0)
+    }
+
     /// The structural spelling of aggregate `id` (hot reload: state machines by name only).
     pub fn agg(&self, id: AggId) -> &str {
         self.aggs.get(id.0 as usize).map_or("?", String::as_str)
@@ -179,6 +185,10 @@ impl<'p> Canon<'p> {
         // Static atomics with the same starting value are different words.
         if let Some(id) = data.mutable {
             let _ = write!(out, " M{id:x}");
+        }
+        // A named static (invariant 13) is that symbol's copy.
+        if let Some(symbol) = &data.symbol {
+            let _ = write!(out, " {symbol} {:?}", data.linkage);
         }
         for (offset, target) in &data.relocs {
             let _ = write!(out, " @{offset}=");

@@ -275,3 +275,51 @@ fn an_edited_program_compiles_no_std_code_again() {
     assert!(generated(&warm), "{}", text(&warm.stderr));
     assert_eq!(run(dir, "a2"), "edited\n2 5 a\n");
 }
+
+/// Std code that reaches statics with identity (the JSON reader's type descriptors and tables)
+/// is served too: the statics are named and the cached objects use the program's copies. The
+/// program prints what a build without the cache prints, cold and warm.
+#[test]
+fn code_reaching_statics_with_identity_is_served() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    let all = [("VELT_STD_OBJECT_MIN_MISSES", "1")];
+    std::fs::write(dir.join("a.vlt"), JSON_PROGRAM).unwrap();
+    let cold = build(dir, "a.vlt", "a1", &cache, &all);
+    let err = text(&cold.stderr);
+    let named: usize = (err.lines())
+        .find_map(|l| {
+            l.strip_prefix("velt: std cache: ")?
+                .strip_suffix(" statics named")
+        })
+        .and_then(|n| n.parse().ok())
+        .unwrap_or_else(|| {
+            panic!(
+                "no count of named statics in
+{err}"
+            )
+        });
+    assert!(named > 0, "{err}");
+    let by_reason = (err.lines())
+        .find(|l| l.contains("by reason"))
+        .unwrap_or_else(|| panic!("{err}"));
+    assert!(!by_reason.contains("statics with identity"), "{by_reason}");
+    assert_eq!(
+        run(dir, "a1"),
+        "2 5 a
+"
+    );
+    let warm = build(dir, "a.vlt", "a2", &cache, &all);
+    assert_eq!(
+        counts(&warm),
+        (counts(&cold).1, 0),
+        "{}",
+        text(&warm.stderr)
+    );
+    assert_eq!(
+        run(dir, "a2"),
+        "2 5 a
+"
+    );
+}
