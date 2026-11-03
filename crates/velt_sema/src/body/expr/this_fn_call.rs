@@ -19,6 +19,7 @@ use super::setters::synth;
 use crate::any::Dynamic;
 use crate::body::FnCx;
 use crate::hir;
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 impl FnCx<'_, '_> {
     /// Does the call `callee(..)` go through `callOn` (module docs)? Only in a user module of
@@ -147,11 +148,10 @@ impl FnCx<'_, '_> {
             // not reach into another (`arr[0]` and `arr`).
             let f = lw.expr(&read, None, crate::body::Want::Borrow);
             lw.with_temp("<method>", f, callee.span, span, |lw, f| match optional {
-                false => lw.prelude_fn_call(
-                    velt_common::std_hook!(call_on),
-                    vec![f.clone(), o.clone(), list],
-                    span,
-                ),
+                false => {
+                    let (f, o) = (ty::Any::of(f.clone()), ty::Any::of(o.clone()));
+                    hooks::call_on(f, o, ty::Array::<ty::Any>::of(list)).check(lw, span)
+                }
                 true => {
                     let thunk = synth(
                         ast::ExprKind::Arrow {
@@ -164,11 +164,8 @@ impl FnCx<'_, '_> {
                         },
                         span,
                     );
-                    lw.prelude_fn_call(
-                        velt_common::std_hook!(call_opt_on),
-                        vec![f.clone(), o.clone(), thunk],
-                        span,
-                    )
+                    let (f, o) = (ty::Any::of(f.clone()), ty::Any::of(o.clone()));
+                    hooks::call_opt_on(f, o, ty::Func::of(thunk)).check(lw, span)
                 }
             })
         };

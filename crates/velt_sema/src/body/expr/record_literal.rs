@@ -14,6 +14,7 @@ use super::record::RecordKey;
 use super::setters::synth;
 use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, DefId, ExprKind as H, StmtKind as S, TyId, TyKind, UseMode};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 impl FnCx<'_, '_> {
     /// Reports why an object literal cannot build a `Record<k, ...>`, if it cannot: a bad key, an
@@ -458,15 +459,12 @@ impl FnCx<'_, '_> {
                 e.span,
             )
         };
-        let call = synth(
-            ast::ExprKind::Call {
-                callee: Box::new(ident(self.proxy_op(velt_common::std_hook!(spread_any)))),
-                type_args: vec![],
-                args: vec![ident(&name), e.clone()],
-                optional: false,
-            },
-            e.span,
-        );
+        let (r, v) = (ty::Record::of(ident(&name)), ty::Any::of(e.clone()));
+        let call = match self.uses_proxy() {
+            true => hooks::spread_any_proxy(r, v),
+            false => hooks::spread_any(r, v),
+        };
+        let call = call.ast(e.span);
         // The keys and values are read through the value's descriptor.
         self.note_dyn_members();
         Some(self.expr(&call, None, crate::body::Want::Move))

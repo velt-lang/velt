@@ -13,7 +13,8 @@ use velt_common::Span;
 
 use crate::body::{FnCx, LocalKind};
 use crate::ctx::Item;
-use crate::hir::{self, Callee, DefId, ExprKind as H, Intrinsic, StmtKind as S, TyId, UseMode};
+use crate::hir::{self, Callee, ExprKind as H, Intrinsic, StmtKind as S, TyId, UseMode};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 impl FnCx<'_, '_> {
     /// Check an `await`'s operand (at `span`) with `f`: the top-level `await`s in it restore
@@ -36,11 +37,11 @@ impl FnCx<'_, '_> {
             false => None,
         };
         let awaited = self.mk(H::Await(Box::new(operand)), ty, span);
-        let Some(Item::Def(at)) = at else {
+        let Some(Item::Def(_)) = at else {
             return awaited;
         };
         let unit = self.cx.ty.unit;
-        let mut stmts = vec![self.store_site(at, span)];
+        let mut stmts = vec![self.store_site(span)];
         let Some(&outer) = self.f.top_level_outer.last() else {
             let value = self.value_of(&mut stmts, awaited, span);
             let block = hir::Block { stmts, value, span };
@@ -66,7 +67,7 @@ impl FnCx<'_, '_> {
                 Some(v)
             }
         };
-        stmts.push(self.store_site(at, outer));
+        stmts.push(self.store_site(outer));
         let value = value.map(|v| Box::new(self.mk(H::Local(v, UseMode::Move), ty, span)));
         let block = hir::Block { stmts, value, span };
         self.mk(H::Block(block), ty, span)
@@ -91,19 +92,17 @@ impl FnCx<'_, '_> {
     }
 
     /// `topLevelAwaitAt("<path:line:col of span>");`
-    fn store_site(&mut self, at: DefId, span: Span) -> hir::Stmt {
+    fn store_site(&mut self, span: Span) -> hir::Stmt {
         let (str_, unit) = (self.cx.ty.str_, self.cx.ty.unit);
         let site = H::Call {
             callee: Callee::Intrinsic(Intrinsic::SourceLocation),
             args: vec![],
         };
         let site = self.mk(site, str_, span);
-        let store = H::Call {
-            callee: Callee::Def(at, vec![]),
-            args: vec![site],
-        };
+        let store = (hooks::top_level_await_at(ty::Str::of(site)).plain(self.cx, unit, span))
+            .unwrap_or_else(|| panic!("ICE: `topLevelAwaitAt` is gone"));
         hir::Stmt {
-            kind: S::Expr(self.mk(store, unit, span)),
+            kind: S::Expr(store),
             span,
         }
     }
