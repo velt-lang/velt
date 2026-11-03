@@ -20,14 +20,13 @@
 
 use velt_sema::hir::{self, Nothing, TyId, TyKind};
 
-use super::any::{SLOT_NUMBER, TAG_NULL, TAG_NUMBER, TAG_STRING, TAG_UNDEFINED};
+use super::any::{SLOT_NUMBER, TAG_NUMBER, TAG_STRING};
 use super::any_proxy::ProxyKey;
 use super::glue::{Glue, VtableKey};
 use super::operand::proj;
-use super::rt::Rt;
 use super::{cint, ice, Cx, FnLower, Work};
 use crate::vir::{
-    self, BinOp, Callee, Const, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG,
+    self, BinOp, Callee, Const, Operand, Place, Proj, Rvalue, Terminator, Ty,
 };
 
 pub(super) const SLOT_GET: i128 = 5;
@@ -286,58 +285,6 @@ impl FnLower<'_, '_> {
     /// number key (formatted only on that path).
     pub(super) fn any_nullish_check(&mut self, desc: &Operand, key: NullKey<'_>) {
         self.any_nullish_check_as(desc, key, false);
-    }
-
-    /// `any_nullish_check`; `setting`: for a write (`Cannot set properties of undefined
-    /// (setting 'k')`).
-    pub(super) fn any_nullish_check_as(&mut self, desc: &Operand, key: NullKey<'_>, setting: bool) {
-        let tag = self.any_tag_of(desc.clone());
-        let one = cint(TAG_NULL as i128, Ty::U64);
-        let nil = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Le, tag.clone(), one));
-        let (bad, ok) = (self.new_block(), self.new_block());
-        self.branch(nil, bad, ok);
-        self.switch_to(bad);
-        let undef = cint(TAG_UNDEFINED as i128, Ty::U64);
-        let is_undef = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, tag, undef));
-        let (u, n) = (self.new_block(), self.new_block());
-        self.branch(is_undef, u, n);
-        for (b, word) in [(u, "undefined"), (n, "null")] {
-            self.switch_to(b);
-            let (verb, ing) = if setting {
-                ("set", "setting")
-            } else {
-                ("read", "reading")
-            };
-            let head = format!("TypeError: Cannot {verb} properties of {word}");
-            let k = match key {
-                NullKey::Str(k) => k.clone(),
-                NullKey::Num(i) => {
-                    let ks = self.temp(Ty::Agg(STR_AGG));
-                    let ka = self.addr(Place::local(ks));
-                    self.call_rt(Rt::StrFromF64, vec![i.clone(), ka.clone()], None);
-                    ka
-                }
-            };
-            self.panic_with_key(&format!("{head} ({ing} '"), &k, "')");
-            self.terminate(Terminator::Unreachable);
-        }
-        self.switch_to(ok);
-    }
-
-    /// Stop with `before` + the string at address `key` + `after`.
-    pub(super) fn panic_with_key(&mut self, before: &str, key: &Operand, after: &str) {
-        let s = Ty::Agg(STR_AGG);
-        let a = self.str_lit(before);
-        let a = self.operand_addr(a, s);
-        let ab = self.temp(s);
-        let abp = self.addr(Place::local(ab));
-        self.call_rt(Rt::StrConcat, vec![a, key.clone(), abp.clone()], None);
-        let c = self.str_lit(after);
-        let c = self.operand_addr(c, s);
-        let all = self.temp(s);
-        let allp = self.addr(Place::local(all));
-        self.call_rt(Rt::StrConcat, vec![abp, c, allp.clone()], None);
-        self.call_rt(Rt::Panic, vec![allp], None);
     }
 
     /// After a slot call: a `TypeError` for a status other than `ST_OK`. `not_fn`: the callee's

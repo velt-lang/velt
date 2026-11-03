@@ -192,6 +192,8 @@ impl<'h> Cx<'h> {
                 | Work::ArrayGrow
                 | Work::ArrayTooLong
                 | Work::KeyIn
+                | Work::PanicKey
+                | Work::AnyNullish(_)
                 | Work::Oob(_)
         ) || !self.has_lock_set();
         let work = self.generated_instance(work);

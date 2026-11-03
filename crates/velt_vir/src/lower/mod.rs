@@ -26,6 +26,7 @@ mod any_args;
 mod any_array_proto;
 mod any_builtin;
 mod any_checks;
+mod any_cold;
 mod any_delete;
 mod any_eq;
 mod any_errors;
@@ -337,6 +338,12 @@ enum Work {
     /// string objects at `table` (any_keys_in.rs), shared by the `any` glue testing a key against a
     /// fixed list of names.
     KeyIn,
+    /// `(before: ptr, key: ptr, after: ptr)`, never returning: the `TypeError` of an operation
+    /// through `any`, its text around the key (any_cold.rs).
+    PanicKey,
+    /// `(tag: u64, key: ptr)`, never returning: the `TypeError` of a member read (`true`: write)
+    /// of `undefined` or `null` (any_cold.rs).
+    AnyNullish(bool),
     /// The exported `velt_main() -> i32` entry (entry.rs).
     Main,
     /// `(state: ptr, cx: ptr) -> u32`: the task root that runs a synchronous `main` which reaches
