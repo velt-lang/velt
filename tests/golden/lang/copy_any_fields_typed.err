@@ -1,0 +1,2 @@
+mismatched types
+expected Binding<f64>, found Binding<string>

@@ -1,0 +1,8 @@
+// Only an `any` field converts this way: `Binding<string>` is not a `Binding<number>` (#2145).
+interface Binding<T = any> {
+  value: T;
+}
+
+const text: Binding<string> = { value: "a" };
+const num: Binding<number> = text;
+console.log(num.value);
