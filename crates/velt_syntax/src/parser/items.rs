@@ -376,7 +376,7 @@ impl<'a> Parser<'a> {
     fn next_fn_has_body(&mut self) -> bool {
         let snap = self.snapshot();
         self.speculating += 1;
-        while matches!(self.nth(0), Tok::Kw(Kw::Export | Kw::Async)) || self.at_word("unsafe") {
+        while matches!(self.nth(0), Tok::Kw(Kw::Export | Kw::Async)) || self.at_unsafe_fn() {
             self.bump();
         }
         let lo = self.cur_lo();
