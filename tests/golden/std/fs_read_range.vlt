@@ -1,0 +1,64 @@
+// openRead(path, { start, end }): a range of a file (both ends included, as Node's
+// createReadStream and HTTP's Range), and FileReader.openedStats() of the opened file.
+import { openRead, readFile, remove, rename, writeFile } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+
+async function readAll(path: string, start?: u64, end?: u64): Promise<string> {
+  const r = await openRead(path, { start, end });
+  let out = "";
+  let chunk = await r.readString(3);
+  while (chunk != "") {
+    out += chunk;
+    chunk = await r.readString(3);
+  }
+  r.close();
+  return out;
+}
+
+async function main() {
+  const path = `${tmpdir()}/velt-fs-range-${uuidv4()}.txt`;
+  await writeFile(path, "0123456789abcdefghij");
+
+  console.log(await readAll(path, 0, 9)); // the first ten bytes
+  console.log(await readAll(path, 5)); // from byte 5 to the end
+  console.log(await readAll(path, undefined, 3)); // the first four
+  console.log(await readAll(path, 19, 19)); // the last byte alone
+  console.log(await readAll(path, 15, 1000)); // an end past the file stops at its end
+  console.log(JSON.stringify(await readAll(path, 20))); // a start at the end reads nothing
+  console.log(JSON.stringify(await readAll(path, 500, 600))); // so does one past it
+  console.log(JSON.stringify(await readAll(path, 5, 4))); // and an end before the start
+  console.log(await readAll(path, 0, 18446744073709551615u64)); // the largest end: all of it
+
+  // Lines and bytes stop at the end of the range too.
+  await writeFile(path, "one\ntwo\nthree\nfour\n");
+  const lines = await openRead(path, { start: 4, end: 12 });
+  let line = await lines.readLine();
+  while (line != null) {
+    console.log("line:", line);
+    line = await lines.readLine();
+  }
+  lines.close();
+  const bytes = await openRead(path, { start: 8, end: 9 });
+  console.log(await bytes.read(), (await bytes.read()).length);
+  bytes.close();
+
+  // openedStats() describes the file opened, even after its path names another one.
+  const r = await openRead(path, { start: 2, end: 3 });
+  const other = `${path}.other`;
+  await writeFile(other, "a much longer file than the first one");
+  await rename(other, path);
+  const s = r.openedStats();
+  console.log("open file:", s.size, s.isFile(), s.mtimeMs > 0);
+  console.log("its range:", JSON.stringify(await r.readString()));
+  r.close();
+  console.log("the path now:", (await readFile(path)).length);
+
+  await remove(path);
+  try {
+    const missing = await openRead(path, { start: 1 });
+    missing.close();
+  } catch (e) {
+    console.log(e.code);
+  }
+}

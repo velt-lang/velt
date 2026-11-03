@@ -1,0 +1,39 @@
+// requires: symlinks
+// realpath / realpathSync: every symlink, "." and ".." resolved, as Node's fs.realpath.
+import { mkdir, realpath, realpathSync, remove, symlink, writeFile } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+
+async function main() {
+  // The temporary directory may itself be behind a symlink (macOS's /var is /private/var).
+  const base = await realpath(tmpdir());
+  const dir = `${base}/velt-realpath-${uuidv4()}`;
+  await mkdir(`${dir}/root/sub`, { recursive: true });
+  await mkdir(`${dir}/outside`);
+  await writeFile(`${dir}/root/sub/a.txt`, "a");
+  await writeFile(`${dir}/outside/secret.txt`, "s");
+  await symlink("sub", `${dir}/root/link_dir`);
+  await symlink("../outside/secret.txt", `${dir}/root/escape`);
+  await symlink("nowhere", `${dir}/root/dangling`);
+
+  const show = (p: string) => (p.startsWith(dir) ? "<dir>" + p.slice(dir.length) : p);
+  const slash = (p: string) => p.replaceAll("\\", "/");
+  console.log(slash(show(await realpath(`${dir}/root/sub/a.txt`))));
+  console.log(slash(show(await realpath(`${dir}/root/link_dir/a.txt`))));
+  console.log(slash(show(await realpath(`${dir}/root/sub/../sub/./a.txt`))));
+  console.log(slash(show(await realpath(`${dir}/root/escape`))));
+  console.log(slash(show(realpathSync(`${dir}/root/link_dir`))));
+  for (const missing of [`${dir}/root/dangling`, `${dir}/root/none.txt`]) {
+    try {
+      await realpath(missing);
+    } catch (e) {
+      console.log(e.code);
+    }
+    try {
+      realpathSync(missing);
+    } catch (e) {
+      console.log("sync", e.code);
+    }
+  }
+  await remove(dir, { recursive: true });
+}

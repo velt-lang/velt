@@ -1,6 +1,7 @@
 //! `std/fs_stream`: files read and written in chunks, for data too large to hold at once.
 //!
-//! A reader is a buffered `std::fs::File` behind a mutex; reads run on tokio's blocking pool
+//! A reader is a buffered `std::fs::File` behind a mutex, limited to a range of the file when
+//! it was opened with one (`openRead(path, { start, end })`); reads run on tokio's blocking pool
 //! (like the rest of std/fs) and return one chunk, one UTF-8 text chunk (characters split
 //! across chunks are completed on the next read) or one line. Like stdin's read-ahead, a line
 //! already in the reader's buffer is returned without the hop to the blocking pool. A writer is a `BufWriter`: `write`
@@ -10,7 +11,7 @@
 //! tables (`crate::registry`); in-flight operations hold their own `Arc`, and a released handle
 //! (through any copy of the Velt struct) fails with `EBADF`.
 
-use super::ops::{data_arg, open, path_arg};
+use super::ops::{data_arg, open, path_arg, stats_of, VeltStat};
 use crate::bytes::VeltBytes;
 use crate::net::tcp::DEFAULT_READ;
 use crate::net::utf8::Utf8Decoder;
@@ -21,15 +22,20 @@ use crate::str::VeltStr;
 use crate::task::leaf::{blocking_leaf, new_leaf, run_blocking};
 use crate::task::VeltFut;
 use std::fs::{File, OpenOptions};
-use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
+use std::io::{self, BufRead, BufReader, BufWriter, Read, Seek, SeekFrom, Take, Write};
 use std::sync::{Mutex, MutexGuard};
 
 /// Buffer size of readers and writers.
 const BUFFER: usize = 64 * 1024;
 
+/// The file under a reader: the whole file, or the range it was opened with.
+type Source = BufReader<Take<File>>;
+
 /// An open file being read.
 pub struct ReaderObj {
-    inner: Mutex<(BufReader<File>, Utf8Decoder)>,
+    inner: Mutex<(Source, Utf8Decoder)>,
+    /// The file's metadata when it was opened (`fstat` in the same hop as the open).
+    opened: VeltStat,
 }
 
 /// An open file being written; `None` once closed.
@@ -53,19 +59,70 @@ fn lock<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 /// `openRead(path)` → `IoResult<VeltFileReader*>`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_open_read(path: *const VeltStr) -> *mut VeltFut {
-    let p = path_arg(path);
+    open_reader(path_arg(path), 0, u64::MAX)
+}
+
+/// `openRead(path, { start, end })` → `IoResult<VeltFileReader*>`: reads bytes `start..=end`
+/// (inclusive, as Node's `createReadStream`; `end` `u64::MAX` = to the end of the file), then
+/// reports the end of the file. `end < start` reads nothing (std checks the arguments). A
+/// `start` past the end of the file reads nothing.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fs_open_read_range(
+    path: *const VeltStr,
+    start: u64,
+    end: u64,
+) -> *mut VeltFut {
+    open_reader(path_arg(path), start, end)
+}
+
+fn open_reader(p: std::path::PathBuf, start: u64, end: u64) -> *mut VeltFut {
     blocking_leaf(move || {
-        let opened =
-            open(&p, OpenOptions::new().read(true)).map_err(|e| fs_error(e, "open", &p, None));
-        IoResult::from_io(opened, |f| {
+        // No file has a byte past `i64::MAX` (where `lseek` stops): such a start reads nothing.
+        let beyond = start > i64::MAX as u64;
+        let opened = open(&p, OpenOptions::new().read(true)).and_then(|mut f| {
+            let meta = f.metadata()?;
+            if start > 0 && !beyond {
+                f.seek(SeekFrom::Start(start))?;
+            }
+            Ok((f, stats_of(meta)))
+        });
+        let opened = opened.map_err(|e| fs_error(e, "open", &p, None));
+        let limit = if beyond {
+            0
+        } else if end == u64::MAX {
+            u64::MAX
+        } else {
+            (end + 1).saturating_sub(start)
+        };
+        IoResult::from_io(opened, |(f, meta)| {
             READERS.insert(ReaderObj {
-                inner: Mutex::new((BufReader::with_capacity(BUFFER, f), Utf8Decoder::default())),
+                inner: Mutex::new((
+                    BufReader::with_capacity(BUFFER, f.take(limit)),
+                    Utf8Decoder::default(),
+                )),
+                opened: meta,
             })
         })
     })
 }
 
-fn read_chunk(r: &mut BufReader<File>, max: u64) -> io::Result<Vec<u8>> {
+/// `openedStats()` → `IoResult<VeltStat>`: the file's metadata when it was opened (taken with
+/// the open, so this costs no I/O): the size and modification time of the file this reader
+/// reads, even if its path names another one now. The size is the whole file's, whatever range
+/// the reader was opened with. `EBADF` once closed.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fs_reader_opened_stats(
+    r: ReaderHandle,
+    out: *mut IoResult<VeltStat>,
+) {
+    match READERS.get(r) {
+        Some(obj) => IoResult::ok(obj.opened),
+        None => crate::registry::closed(),
+    }
+    .write_to(out);
+}
+
+fn read_chunk(r: &mut Source, max: u64) -> io::Result<Vec<u8>> {
     let size = if max == 0 {
         DEFAULT_READ
     } else {
@@ -148,7 +205,7 @@ fn buffered_line(obj: &ReaderObj) -> Option<LineRead> {
 }
 
 /// Reads the next line, blocking.
-fn read_line(r: &mut BufReader<File>) -> LineRead {
+fn read_line(r: &mut Source) -> LineRead {
     let mut buf = Vec::new();
     let res = r.read_until(b'\n', &mut buf);
     let eof = matches!(res, Ok(0)) as u8;
@@ -268,8 +325,13 @@ mod tests {
         let path = std::env::temp_dir().join(format!("velt-readline-{}", std::process::id()));
         std::fs::write(&path, data).unwrap();
         let file = File::open(&path).unwrap();
+        let opened = stats_of(file.metadata().unwrap());
         let obj = ReaderObj {
-            inner: Mutex::new((BufReader::with_capacity(8, file), Utf8Decoder::default())),
+            inner: Mutex::new((
+                BufReader::with_capacity(8, file.take(u64::MAX)),
+                Utf8Decoder::default(),
+            )),
+            opened,
         };
         let mut out = vec![];
         loop {

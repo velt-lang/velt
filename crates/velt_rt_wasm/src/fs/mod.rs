@@ -84,6 +84,13 @@ pub unsafe extern "C" fn velt_rt_fs_readlink(path: *const VeltStr) -> *mut VeltF
     ready_leaf(move || ops::readlink(p))
 }
 
+/// `realpath(path)` → `IoResult<VeltStr>`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fs_realpath(path: *const VeltStr) -> *mut VeltFut {
+    let p = path_arg(path);
+    ready_leaf(move || ops::realpath(p))
+}
+
 /// `symlink(target, path)` → `IoResult<()>`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_symlink(

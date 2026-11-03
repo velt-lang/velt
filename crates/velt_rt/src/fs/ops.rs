@@ -188,7 +188,7 @@ pub fn read_dir_typed(path: PathBuf) -> IoResult<VeltDirents> {
 }
 
 /// `Stats` of metadata (`is_symlink` is only ever set for `lstat`'s).
-fn stats_of(m: fs::Metadata) -> VeltStat {
+pub fn stats_of(m: fs::Metadata) -> VeltStat {
     VeltStat {
         size: m.len(),
         mtime_ms: m
@@ -199,6 +199,33 @@ fn stats_of(m: fs::Metadata) -> VeltStat {
         is_file: m.is_file() as u8,
         is_dir: m.is_dir() as u8,
         is_symlink: m.file_type().is_symlink() as u8,
+    }
+}
+
+/// `realpath(path)`: the absolute path of `path` with every symlink, `.` and `..` resolved
+/// (Node's `fs.realpath`); a path that doesn't exist is `ENOENT`. Windows' extended-length
+/// prefix (`\\?\`) is dropped where the path doesn't need it, as Node gives `C:\dir\file`.
+pub fn realpath(path: PathBuf) -> IoResult<VeltStr> {
+    let r = fs::canonicalize(&path).map_err(at("realpath", &path));
+    IoResult::from_io(r, |p| {
+        VeltStr::from_vec(name_text(plain_path(p).into_os_string()).into_bytes())
+    })
+}
+
+/// `\\?\C:\x` as `C:\x` and `\\?\UNC\server\share` as `\\server\share` (what `canonicalize`
+/// returns on Windows); any other path as it is.
+fn plain_path(p: PathBuf) -> PathBuf {
+    let Some(s) = p.to_str() else {
+        return p;
+    };
+    if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+        return PathBuf::from(format!(r"\\{rest}"));
+    }
+    match s.strip_prefix(r"\\?\") {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') && rest.len() < 260 => {
+            PathBuf::from(rest)
+        }
+        _ => p,
     }
 }
 
@@ -324,4 +351,23 @@ pub fn copy(from: PathBuf, to: PathBuf) -> IoResult<()> {
 /// `exists(path)`: 1 if anything (file, directory, valid symlink) is there.
 pub fn exists(path: PathBuf) -> u8 {
     path.try_exists().unwrap_or(false) as u8
+}
+
+#[cfg(test)]
+mod tests {
+    use super::plain_path;
+    use std::path::PathBuf;
+
+    #[test]
+    fn windows_extended_prefixes_are_dropped_where_not_needed() {
+        let plain = |s: &str| plain_path(PathBuf::from(s)).to_string_lossy().into_owned();
+        assert_eq!(plain(r"\\?\C:\dir\f.txt"), r"C:\dir\f.txt");
+        assert_eq!(plain(r"\\?\UNC\server\share\f"), r"\\server\share\f");
+        assert_eq!(plain("/private/var/f"), "/private/var/f");
+        // A path too long for the plain form keeps its prefix, as does a volume GUID path.
+        let long = format!(r"\\?\C:\{}", "d".repeat(300));
+        assert_eq!(plain(&long), long);
+        let volume = r"\\?\Volume{0b1c}\f";
+        assert_eq!(plain(volume), volume);
+    }
 }

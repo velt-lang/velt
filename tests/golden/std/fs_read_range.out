@@ -1,0 +1,16 @@
+0123456789
+56789abcdefghij
+0123
+j
+fghij
+""
+""
+""
+0123456789abcdefghij
+line: two
+line: three
+[ 116, 104 ] 0
+open file: 19 true true
+its range: "e\n"
+the path now: 37
+ENOENT
