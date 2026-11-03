@@ -66,6 +66,7 @@ impl<'a> Printer<'a> {
                     (true, _, true) => "async system ",
                     (true, _, false) => "system ",
                     // `declare intrinsic function` is never async (it parses only so).
+                    (false, true, _) if sig.is_unsafe => "unsafe intrinsic ",
                     (false, true, _) => "intrinsic ",
                     (false, false, true) => "async ",
                     (false, false, false) => "",

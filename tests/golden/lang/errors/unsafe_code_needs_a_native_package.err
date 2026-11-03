@@ -1,0 +1,4 @@
+unsafe_code_needs_a_native_package.vlt:6:17
+error: unsafe function `raw` needs a native package
+unsafe_code_needs_a_native_package.vlt:12:15
+error: `unsafe` code needs a native package

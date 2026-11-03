@@ -49,9 +49,11 @@ impl FnCx<'_, '_> {
                 return self.error_expr(span);
             }
         };
+        let what = format!("intrinsic `{}`", self.cx.fn_info(d).name);
+        self.check_unsafe_call(d, &what, span);
         let f = self.cx.fn_info(d);
         let c = Callable {
-            what: format!("intrinsic `{}`", f.name),
+            what,
             params: f.params.clone(),
             ret: f.ret,
             slot_names: f.generics.names.clone(),

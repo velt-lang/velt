@@ -107,6 +107,7 @@ pub(crate) fn fn_placeholder<'m>(
         host: None,
         c: None,
         intrinsic: None,
+        unsafe_intrinsic: false,
         is_generator: false,
         is_async_gen: false,
         soft_moves: vec![],
@@ -201,6 +202,7 @@ pub(super) fn new_def<'m>(
             );
             if s.is_intrinsic {
                 info.intrinsic = Some(crate::intrinsic_decls::declare(cx, m, s));
+                info.unsafe_intrinsic = s.is_unsafe;
             }
             (&s.name, DefInfo::Fn(Box::new(info)))
         }

@@ -29,8 +29,9 @@ export function written(text: string): i64 {
       fputc(ch.charCodeAt(0) as i32, f);
     }
   }
-  // SAFETY: `f` is open; it is closed once, and freeing NULL does nothing.
+  // SAFETY: `f` is open.
   const n = unsafe { ftell(f) };
+  // SAFETY: `f` is open and closed once; freeing NULL does nothing.
   unsafe {
     fclose(f);
     const m = malloc(16);

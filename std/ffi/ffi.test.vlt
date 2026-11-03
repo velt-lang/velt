@@ -41,6 +41,7 @@ describe("velt/ffi pointers", () => {
     // SAFETY: malloc returns memory or NULL, freed once.
     const p = unsafe { malloc(32) };
     expect(p !== null).toBe(true);
+    // SAFETY: `p` came from malloc (or is NULL, which free ignores).
     unsafe {
       free(p);
     }
@@ -61,6 +62,7 @@ describe("velt/ffi strings", () => {
     expect(byteLength(strBytesOf(lone))).toBe(byteLength(lone));
     // SAFETY: both strings have `byteLength` bytes.
     expect(unsafe { memcmp(lone, "a\u{fffd}b", byteLength(lone)) }).toBe(0);
+    // SAFETY: both strings have 3 bytes.
     expect(unsafe { memcmp$ns("abc", "abd", 3) } < 0).toBe(true);
   });
 });
@@ -74,11 +76,15 @@ describe("velt/ffi C strings and reads", () => {
     const p = unsafe { malloc(7) };
     expect(p !== null).toBe(true);
     if (p !== null) {
+      // SAFETY: `p` has 7 bytes, `c` 6 and its NUL.
       unsafe {
         memcpy(p, c, 7);
       }
+      // SAFETY: `p` holds the copy, NUL-terminated.
       expect(unsafe { readCString(p) }).toBe("héllo");
+      // SAFETY: the copy has 7 bytes.
       expect(unsafe { readBytes(p, 3) }.join(",")).toBe("104,195,169");
+      // SAFETY: `p` came from malloc and is freed once.
       unsafe {
         free(p);
       }

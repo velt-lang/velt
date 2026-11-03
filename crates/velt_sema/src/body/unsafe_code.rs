@@ -88,10 +88,12 @@ impl FnCx<'_, '_> {
     }
 }
 
-/// Is `d` an unsafe function or method (`unsafe function`, `unsafe m()`)?
+/// Is `d` an unsafe function or method (`unsafe function`, `unsafe m()`, a C function, `declare
+/// unsafe intrinsic function`)?
 pub(crate) fn unsafe_fn(cx: &Ctx, d: DefId) -> bool {
     let f = cx.fn_info(d);
     f.c.is_some()
+        || f.unsafe_intrinsic
         || f.source
             .is_some_and(|src| crate::body::defaults::fn_sig_ast(src).is_unsafe)
 }

@@ -189,3 +189,29 @@ fn which_functions_in_an_unsafe_block_are_unsafe_code() {
     ));
     assert!(e.contains("calling unsafe function `raw`"), "{e}");
 }
+
+/// `src` checked as std code (only std may import the intrinsics); the rendered diagnostics.
+fn std_diagnostics(src: &str) -> String {
+    let mut l = common::programs::load_src(src);
+    let root = l.root;
+    l.modules[root].is_std = true;
+    let (_, d) = l.check();
+    l.render(&d)
+}
+
+#[test]
+fn an_unsafe_intrinsic_needs_unsafe_code() {
+    // `declare unsafe intrinsic function addressLoad` (std/lang/intrinsics/address.vlt).
+    let import = "import { addressLoad } from \"velt/lang/intrinsics\";";
+    let e = std_diagnostics(&format!(
+        "{import} function main() {{ console.log(addressLoad<u8>(8)); }}"
+    ));
+    assert!(
+        e.contains("calling unsafe intrinsic `addressLoad` needs an `unsafe` block or function"),
+        "{e}"
+    );
+    let ok = std_diagnostics(&format!(
+        "{import} function main() {{ if (false) {{ console.log(unsafe {{ addressLoad<u8>(8) }}); }} }}"
+    ));
+    assert!(!ok.contains("error"), "{ok}");
+}

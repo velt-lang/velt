@@ -2,6 +2,6 @@
 // (docs/internals/design/c-ffi.md). The public surface is velt/ffi's unsafe functions.
 
 /**
- * The `T` (a number type or `bool`) at `address`, unchecked: the caller knows a `T` is there.
+ * The `T` (a number type or `bool`) at `address`, unchecked. Unsafe: a `T` must be there.
  */
-export declare intrinsic function addressLoad<T>(address: usize): T;
+export declare unsafe intrinsic function addressLoad<T>(address: usize): T;

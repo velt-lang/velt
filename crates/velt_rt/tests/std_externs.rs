@@ -117,6 +117,7 @@ fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
             if [
                 "declare system ",
                 "declare intrinsic ",
+                "declare unsafe intrinsic ",
                 "declare generated(",
                 "declare host(",
                 "declare c(",

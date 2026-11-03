@@ -323,6 +323,12 @@ fn sema_stage(
     let packages = opts.packages.as_ref();
     sess.no_generators |= opts.no_generators;
     let hir = crate::generate::check(sess, &loaded.modules, loaded.root, sema_opts, packages);
+    crate::native::check_trust(
+        &loaded.modules,
+        &sess.sm,
+        opts.packages.as_ref(),
+        &mut sess.diagnostics,
+    );
     if let Some(hir) = &hir {
         let std_root = loader::std_root();
         let std_files = loaded
