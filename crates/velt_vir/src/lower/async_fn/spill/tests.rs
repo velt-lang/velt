@@ -5,7 +5,7 @@
 
 use super::super::{DONE, PLACEHOLDER};
 use super::flow::{live_in_at, maybe_written, Bits, Susp, Universe, WORDS};
-use super::overlap::ROW_UNIONS;
+use super::overlap::{interference, interference_reference, ROW_UNIONS};
 use crate::lower::successors;
 use crate::vir::{
     BasicBlock, BlockId, Callee, Const, FuncId, Function, Linkage, Local, LocalDecl, Operand,
@@ -460,4 +460,34 @@ fn blocks_laid_out_against_the_flow_cost_linear_work() {
         large <= 5 * small,
         "work grew {large} / {small} for 4× the code"
     );
+}
+
+#[test]
+fn interference_matches_all_pairs_over_the_swept_liveness() {
+    for seed in 0..300 {
+        let f = random_fn(seed + 3000, 1 + seed as usize % 29, 2 + seed as usize % 60);
+        let (nb, n) = (f.blocks.len(), f.locals.len());
+        let s = Susp {
+            extra: vec![(seed as usize % nb, (seed as usize * 3) % nb)],
+            starts: vec![1 % nb],
+            inputs: vec![seed as usize % n],
+        };
+        // Every local spilled, or two thirds of them.
+        let mut spilled = Bits::new(n);
+        (0..n)
+            .filter(|l| seed % 2 == 0 || l % 3 != 1)
+            .for_each(|l| spilled.set(l));
+        let pts = super::pts::points_to(&f);
+        let got = interference(&f, &pts, &spilled, &s);
+        let want = interference_reference(&f, &pts, &spilled, &s);
+        for a in 0..n {
+            for b in 0..n {
+                assert_eq!(
+                    got.conflict(a, b),
+                    want.conflict(a, b),
+                    "seed {seed} locals {a} {b}"
+                );
+            }
+        }
+    }
 }

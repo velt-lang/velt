@@ -31,7 +31,8 @@ thread_local! {
     pub(super) static ROW_UNIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
-/// Which spilled locals interfere (symmetric), over the universe of the spilled locals.
+/// Which spilled locals interfere, over the universe of the spilled locals. Each pair is kept
+/// in one of the two locals' sets (see [`interference`]); [`Interference::conflict`] is symmetric.
 pub(super) struct Interference {
     u: Universe,
     sets: Vec<Bits>,
@@ -254,4 +255,77 @@ fn written_in(f: &Function, s: &Susp, u: &Universe) -> Vec<Bits> {
         ins[to].union(&out[from]);
     }
     ins
+}
+
+/// The interference as defined before it was computed incrementally (tests compare the two):
+/// the extended liveness swept over every block until nothing changes, and every pair of the
+/// locals occupying their storage recorded at every unit.
+#[cfg(test)]
+pub(super) fn interference_reference(
+    f: &Function,
+    pts: &[Set],
+    spilled: &Bits,
+    s: &Susp,
+) -> Interference {
+    let u = Universe::of_set(f.locals.len(), spilled);
+    let n = u.len();
+    let mut reach = Reach {
+        pts,
+        u: &u,
+        memo: FxHashMap::default(),
+    };
+    let units: Vec<Vec<Unit>> = (0..f.blocks.len())
+        .map(|b| block_units(f, b, &mut reach))
+        .collect();
+    let nb = f.blocks.len();
+    let mut succs: Vec<Vec<usize>> = (f.blocks.iter())
+        .map(|blk| successors(&blk.term).iter().map(|s| s.0 as usize).collect())
+        .collect();
+    for &(from, to) in &s.extra {
+        succs[from].push(to);
+    }
+    let mut live_in = vec![Bits::new(n); nb];
+    let mut live_out = vec![Bits::new(n); nb];
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for b in (0..nb).rev() {
+            let mut o = Bits::new(n);
+            for &s in &succs[b] {
+                o.union(&live_in[s]);
+            }
+            let mut l = o.clone();
+            for x in units[b].iter().rev() {
+                l = x.live_before(&l);
+            }
+            live_out[b] = o;
+            if l != live_in[b] {
+                live_in[b] = l;
+                changed = true;
+            }
+        }
+    }
+    let written_in = written_in(f, s, &u);
+    let mut interf = vec![Bits::new(n); n];
+    for (b, us) in units.iter().enumerate() {
+        let mut after = vec![Bits::new(n); us.len()];
+        let mut live = live_out[b].clone();
+        for (i, x) in us.iter().enumerate().rev() {
+            after[i] = live.clone();
+            live = x.live_before(&live);
+        }
+        let mut w = written_in[b].clone();
+        for (x, after) in us.iter().zip(after) {
+            let mut occ = x.live_before(&after);
+            occ.union(&after);
+            w.union(&x.writes);
+            w.union(&x.addrs);
+            occ.intersect(&w);
+            occ.union(&x.writes);
+            for y in occ.iter() {
+                interf[y].union(&occ);
+            }
+        }
+    }
+    Interference { u, sets: interf }
 }
