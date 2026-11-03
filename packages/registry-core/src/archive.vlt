@@ -1,0 +1,240 @@
+// registry-core (internal): the package archive a registry receives and serves
+// (crates/vpm/src/archive.rs): the package's files in one byte stream,
+//
+//     VELTPKG1\n
+//     <relative path>\n<byte length>\n<bytes>      (repeated, paths sorted)
+//
+// and its content checksum, which equals the one `velt` computes over the package's directory.
+// Reading accepts only safe relative paths (no `..`, `.`, empty segments, `\` or `:`), so an
+// archive can't name anything outside its package; which paths a package may hold is
+// `checkPackagePaths`'s.
+
+import { sha256 } from "velt/crypto";
+import { hexEncode, utf8Decode, utf8Encode } from "velt/encoding";
+import { ArchiveError } from "./archive_error";
+
+/** The first bytes of every archive. */
+const MAGIC = "VELTPKG1\n";
+
+/** The manifest's file name. */
+export const MANIFEST_FILE = "package.vlt";
+/** The manifest file of packages written by an older velt, refused. */
+export const LEGACY_MANIFEST_FILE = "velt.toml";
+/** The directory of a package's sources. */
+export const SRC_DIR = "src";
+
+/** One file of an archive: its `/`-separated path in the package, and its bytes. */
+export struct ArchiveEntry {
+  path: string;
+  bytes: u8[];
+}
+
+/** Whether `path` is a safe relative path: no `\`, `:`, empty, `.` or `..` segments. */
+export function isSafePath(path: string): bool {
+  if (path.includes("\\") || path.includes(":")) {
+    return false;
+  }
+  for (const segment of path.split("/")) {
+    if (segment.length == 0 || segment == "." || segment == "..") {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * A length line as Rust's `usize` parse reads it: an optional `+`, then decimal digits (leading
+ * zeros allowed), at most `u64`'s largest. -1 when it isn't one; a length past `i64`'s largest
+ * (which no archive holds) is read as that.
+ */
+function parseLength(text: string): i64 {
+  const digits = text.startsWith("+") ? text.slice(1) : text;
+  if (digits.length == 0) {
+    return -1;
+  }
+  let significant = "";
+  for (const c of digits) {
+    if (c < "0" || c > "9") {
+      return -1;
+    }
+    if (significant.length > 0 || c != "0") {
+      significant += c;
+    }
+  }
+  const max = "18446744073709551615";
+  if (significant.length > max.length || (significant.length == max.length && significant > max)) {
+    return -1;
+  }
+  if (
+    significant.length >= 19 && (significant.length > 19 || significant > "9223372036854775807")
+  ) {
+    return 9_223_372_036_854_775_807;
+  }
+  let value: i64 = 0;
+  for (const c of significant) {
+    const d = ((c.codePointAt(0) ?? 48) - 48) as i64;
+    value = value * 10 + d;
+  }
+  return value;
+}
+
+/**
+ * The entries of `archive`, in their order, when each path is safe and `allowed` accepts it;
+ * throws `ArchiveError` for a malformed archive or a disallowed path (what `allowed` throws, it
+ * throws). Like vpm, it reads duplicate paths and paths out of order as they come: a registry
+ * that stores archives without unpacking them must decide about those itself.
+ */
+export function readArchive(archive: u8[], allowed: (path: string) => bool): ArchiveEntry[] {
+  const magic = utf8Encode(MAGIC);
+  if (archive.length < magic.length) {
+    throw new ArchiveError("not a Velt package archive");
+  }
+  for (let i = 0; i < magic.length; i++) {
+    if (archive[i] != magic[i]) {
+      throw new ArchiveError("not a Velt package archive");
+    }
+  }
+  const entries: ArchiveEntry[] = [];
+  let at = magic.length as i64;
+  const end = archive.length as i64;
+  while (at < end) {
+    const pathEnd: i64 = archive.indexOf(10, at);
+    if (pathEnd < 0) {
+      throw new ArchiveError("corrupt archive: missing newline");
+    }
+    const path = text(archive.slice(at, pathEnd), "corrupt archive: bad path");
+    const lengthEnd: i64 = archive.indexOf(10, pathEnd + 1);
+    if (lengthEnd < 0) {
+      throw new ArchiveError("corrupt archive: missing newline");
+    }
+    // vpm reads both lines with one function, whose message names the path.
+    const length = parseLength(
+      text(archive.slice(pathEnd + 1, lengthEnd), "corrupt archive: bad path"),
+    );
+    if (length < 0) {
+      throw new ArchiveError("corrupt archive: bad length");
+    }
+    const start = lengthEnd + 1;
+    if (end - start < length) {
+      throw new ArchiveError("corrupt archive: truncated file");
+    }
+    if (!isSafePath(path) || !allowed(path)) {
+      throw new ArchiveError(`archive contains a disallowed path \`${path}\``);
+    }
+    entries.push({ path, bytes: archive.slice(start, start + length) });
+    at = start + length;
+  }
+  return entries;
+}
+
+/** `bytes` as UTF-8 text; throws `ArchiveError` with `message` when they aren't. */
+function text(bytes: u8[], message: string): string {
+  try {
+    return utf8Decode(bytes);
+  } catch (e) {
+    throw new ArchiveError(message);
+  }
+}
+
+/**
+ * Checks that a package archive's entries are what a package may hold: `package.vlt`, files
+ * under `src/`, and files under its native crate's directory (`nativeDir`, the manifest's
+ * `native.path`, when it has one). Throws `ArchiveError` otherwise, or for a `velt.toml`.
+ */
+export function checkPackagePaths(entries: ArchiveEntry[], nativeDir: string | null): void {
+  for (const e of entries) {
+    if (e.path == LEGACY_MANIFEST_FILE) {
+      throw new ArchiveError(
+        "cannot use this package archive: it was published with a `velt.toml`, which this velt no longer reads (the manifest is `package.vlt`); its author must publish a new version",
+      );
+    }
+    const allowed =
+      e.path == MANIFEST_FILE ||
+      e.path.startsWith(`${SRC_DIR}/`) ||
+      (nativeDir != null && e.path.startsWith(`${nativeDir}/`));
+    if (!allowed) {
+      throw new ArchiveError(`archive contains a disallowed path \`${e.path}\``);
+    }
+  }
+}
+
+/**
+ * The archive of `entries`, written in their order (sort them by path first). Throws
+ * `ArchiveError` for a path `readArchive` would refuse, so it never writes an archive that can't
+ * be read back.
+ */
+export function packArchive(entries: ArchiveEntry[]): u8[] {
+  const magic = utf8Encode(MAGIC);
+  const heads: u8[][] = [];
+  let total = magic.length;
+  for (const e of entries) {
+    if (!isSafePath(e.path) || e.path.includes("\n")) {
+      throw new ArchiveError(`archive contains a disallowed path \`${e.path}\``);
+    }
+    const head = utf8Encode(`${e.path}\n${e.bytes.length}\n`);
+    heads.push(head);
+    total += head.length + e.bytes.length;
+  }
+  // One buffer of the final size: an archive may be tens of megabytes.
+  const out = Buffer.allocUnsafe(total);
+  out.set(magic, 0);
+  let at = magic.length;
+  for (let i = 0; i < entries.length; i++) {
+    out.set(heads[i], at);
+    at += heads[i].length;
+    out.set(entries[i].bytes, at);
+    at += entries[i].bytes.length;
+  }
+  return out;
+}
+
+/** The order of two byte strings: byte by byte, a prefix first. */
+function compareBytes(a: u8[], b: u8[]): i32 {
+  const n = a.length < b.length ? a.length : b.length;
+  for (let i = 0; i < n; i++) {
+    if (a[i] != b[i]) {
+      return a[i] < b[i] ? -1 : 1;
+    }
+  }
+  return a.length < b.length ? -1 : a.length > b.length ? 1 : 0;
+}
+
+/** One entry with its path's UTF-8 bytes, for sorting as vpm does. */
+struct Keyed {
+  key: u8[];
+  entry: ArchiveEntry;
+}
+
+/**
+ * `sha256:<hex>` over `entries` sorted by path: for each, its path, a NUL, its length as 8
+ * little-endian bytes and its bytes. The checksum `velt` records for a package's contents.
+ */
+export function contentChecksum(entries: ArchiveEntry[]): string {
+  // vpm sorts by the paths' UTF-8 bytes; strings compare by UTF-16 code units, which order a
+  // character above U+FFFF before one in U+E000..U+FFFF.
+  const keyed: Keyed[] = entries.map(
+    (e: ArchiveEntry): Keyed => ({ key: utf8Encode(e.path), entry: e }),
+  );
+  keyed.sort((a: Keyed, b: Keyed): i32 => compareBytes(a.key, b.key));
+  let total = 0;
+  for (const k of keyed) {
+    total += k.key.length + 9 + k.entry.bytes.length;
+  }
+  const data = Buffer.allocUnsafe(total);
+  let at = 0;
+  for (const k of keyed) {
+    data.set(k.key, at);
+    at += k.key.length;
+    data[at] = 0;
+    at++;
+    let n = k.entry.bytes.length as u64;
+    for (let i = 0; i < 8; i++) {
+      data[at] = (n & 255) as u8;
+      at++;
+      n = n >> 8;
+    }
+    data.set(k.entry.bytes, at);
+    at += k.entry.bytes.length;
+  }
+  return `sha256:${hexEncode(sha256(data))}`;
+}

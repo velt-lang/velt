@@ -1,0 +1,83 @@
+// Runs packages/registry-core over the cases crates/veltc/tests/registry_core.rs writes, so the
+// test can compare each answer with vpm's (and the Rust `semver` crate's): `driver <cases>`,
+// where each line of the file <cases> is a kind and its arguments, hex-encoded and separated by
+// tabs. Prints one line per case, fields separated by tabs, text hex-encoded:
+//
+//     name <n>        pkg dep user (1 or 0 each), then checkUserName's message (empty when valid)
+//     version <v>     ok <canonical text>, or err <message>
+//     compare <a> <b> -1, 0 or 1
+//     archive <a>     ok <content checksum>, or err <message> (a package archive without native code)
+
+import { hexDecode, hexEncode, utf8Decode, utf8Encode } from "velt/encoding";
+import { readFileSync } from "velt/fs";
+import { args } from "velt/process";
+import {
+  ArchiveError,
+  checkPackagePaths,
+  checkUserName,
+  contentChecksum,
+  isValidDependencyName,
+  isValidPackageName,
+  isValidUserName,
+  readArchive,
+  SemverError,
+  Version,
+} from "registry-core";
+
+function flag(b: bool): string {
+  return b ? "1" : "0";
+}
+
+function hex(text: string): string {
+  return hexEncode(utf8Encode(text));
+}
+
+function text(field: string): string {
+  return utf8Decode(hexDecode(field));
+}
+
+function answer(fields: string[]): string {
+  const kind = fields[0];
+  if (kind == "name") {
+    const n = text(fields[1]);
+    const user = checkUserName(n) ?? "";
+    return [
+      flag(isValidPackageName(n)),
+      flag(isValidDependencyName(n)),
+      flag(isValidUserName(n)),
+      hex(user),
+    ].join("\t");
+  }
+  if (kind == "version") {
+    try {
+      return `ok\t${hex(Version.parse(text(fields[1])).toString())}`;
+    } catch (e) {
+      return e instanceof SemverError ? `err\t${hex(e.message)}` : `crash\t${hex(e.message)}`;
+    }
+  }
+  if (kind == "compare") {
+    const c = Version.parse(text(fields[1])).compare(Version.parse(text(fields[2])));
+    return c < 0 ? "-1" : c > 0 ? "1" : "0";
+  }
+  if (kind == "archive") {
+    try {
+      const entries = readArchive(hexDecode(fields[1]), (p: string): bool => true);
+      checkPackagePaths(entries, null);
+      return `ok\t${hex(contentChecksum(entries))}`;
+    } catch (e) {
+      return e instanceof ArchiveError ? `err\t${hex(e.message)}` : `crash\t${hex(e.message)}`;
+    }
+  }
+  return `unknown ${kind}`;
+}
+
+function main() {
+  const lines = readFileSync(args()[0]).split("\n");
+  const out: string[] = [];
+  for (const line of lines) {
+    if (line.length > 0) {
+      out.push(answer(line.split("\t")));
+    }
+  }
+  console.log(out.join("\n"));
+}

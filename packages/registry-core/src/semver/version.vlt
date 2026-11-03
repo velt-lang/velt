@@ -1,0 +1,391 @@
+// registry-core (internal): a semver version (https://semver.org), parsed and ordered as the Rust
+// `semver` crate does for vpm, so the registry and `velt` agree on which strings are versions and
+// which version is newest. A valid version's text is its canonical form (no leading zeros, no
+// `v`, no spaces), so two versions are equal exactly when their texts are.
+
+import { SemverError } from "./semver_error";
+
+/** The largest value of a version number (`u64`). */
+const U64_MAX = "18446744073709551615";
+
+/** A parsed semver version. */
+export class Version {
+  readonly major: u64;
+  readonly minor: u64;
+  readonly patch: u64;
+  /** The pre-release identifiers after `-`, joined by `.` (empty for a release). */
+  readonly pre: string;
+  /** The build metadata after `+` (empty when there is none). */
+  readonly build: string;
+
+  // Private: a version is only ever parsed, so its text is canonical.
+  private constructor(major: u64, minor: u64, patch: u64, pre: string, build: string) {
+    this.major = major;
+    this.minor = minor;
+    this.patch = patch;
+    this.pre = pre;
+    this.build = build;
+  }
+
+  /** `text` as a version; throws `SemverError` when it isn't one. */
+  static parse(text: string): Version {
+    if (text.length == 0) {
+      throw new SemverError("empty string, expected a semver version");
+    }
+    const p = new Parser(text);
+    const major = p.number("major version number");
+    p.dot("major version number");
+    const minor = p.number("minor version number");
+    p.dot("minor version number");
+    const patch = p.number("patch version number");
+    let position = "patch version number";
+    let pre = "";
+    if (p.eat("-")) {
+      position = "pre-release identifier";
+      pre = p.identifier(true);
+      if (pre.length == 0) {
+        throw new SemverError("empty identifier segment in pre-release identifier");
+      }
+    }
+    let build = "";
+    if (p.eat("+")) {
+      position = "build metadata";
+      build = p.identifier(false);
+      if (build.length == 0) {
+        throw new SemverError("empty identifier segment in build metadata");
+      }
+    }
+    if (!p.done()) {
+      throw new SemverError(`unexpected character ${p.peek()} after ${position}`);
+    }
+    return new Version(major, minor, patch, pre, build);
+  }
+
+  /** Whether `text` is a semver version. */
+  static isValid(text: string): bool {
+    try {
+      Version.parse(text);
+      return true;
+    } catch (e) {
+      if (e instanceof SemverError) {
+        return false;
+      }
+      throw e;
+    }
+  }
+
+  /** Whether this is a pre-release (`1.0.0-rc.1`). */
+  isPrerelease(): bool {
+    return this.pre.length > 0;
+  }
+
+  toString(): string {
+    let text = `${this.major}.${this.minor}.${this.patch}`;
+    if (this.pre.length > 0) {
+      text += `-${this.pre}`;
+    }
+    if (this.build.length > 0) {
+      text += `+${this.build}`;
+    }
+    return text;
+  }
+
+  /** Negative, zero or positive as this version orders before, with or after `other`. */
+  compare(other: Version): i32 {
+    if (this.major != other.major) {
+      return this.major < other.major ? -1 : 1;
+    }
+    if (this.minor != other.minor) {
+      return this.minor < other.minor ? -1 : 1;
+    }
+    if (this.patch != other.patch) {
+      return this.patch < other.patch ? -1 : 1;
+    }
+    const pre = comparePre(this.pre, other.pre);
+    if (pre != 0) {
+      return pre;
+    }
+    return compareBuild(this.build, other.build);
+  }
+}
+
+/** The order of two strings of ASCII characters. */
+function asciiCompare(a: string, b: string): i32 {
+  return a < b ? -1 : a > b ? 1 : 0;
+}
+
+function allDigits(s: string): bool {
+  for (const c of s) {
+    if (c < "0" || c > "9") {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Pre-releases: a release orders after every pre-release; identifiers compare one by one,
+ * numeric ones numerically and before the others, the others in ASCII order; more identifiers
+ * order after fewer.
+ */
+function comparePre(a: string, b: string): i32 {
+  if (a == b) {
+    return 0;
+  }
+  if (a.length == 0) {
+    return 1;
+  }
+  if (b.length == 0) {
+    return -1;
+  }
+  const left = a.split(".");
+  const right = b.split(".");
+  for (let i = 0; i < left.length; i++) {
+    if (i >= right.length) {
+      return 1;
+    }
+    const l = left[i];
+    const r = right[i];
+    const ln = allDigits(l);
+    const rn = allDigits(r);
+    let order: i32 = 0;
+    if (ln && rn) {
+      order = l.length != r.length ? (l.length < r.length ? -1 : 1) : asciiCompare(l, r);
+    } else if (ln) {
+      return -1;
+    } else if (rn) {
+      return 1;
+    } else {
+      order = asciiCompare(l, r);
+    }
+    if (order != 0) {
+      return order;
+    }
+  }
+  return right.length > left.length ? -1 : 0;
+}
+
+/** `s` without its leading zeros. */
+function trimZeros(s: string): string {
+  let i = 0;
+  while (i < s.length && s.slice(i, i + 1) == "0") {
+    i++;
+  }
+  return s.slice(i);
+}
+
+/**
+ * Build metadata, as the `semver` crate orders it: none before any; identifiers one by one,
+ * numeric ones by value then by length (`0 < 00 < 1 < 01`) and before the others, the others in
+ * ASCII order; more identifiers order after fewer.
+ */
+function compareBuild(a: string, b: string): i32 {
+  if (a == b) {
+    return 0;
+  }
+  if (a.length == 0) {
+    return -1;
+  }
+  if (b.length == 0) {
+    return 1;
+  }
+  const left = a.split(".");
+  const right = b.split(".");
+  for (let i = 0; i < left.length; i++) {
+    if (i >= right.length) {
+      return 1;
+    }
+    const l = left[i];
+    const r = right[i];
+    const ln = allDigits(l);
+    const rn = allDigits(r);
+    let order: i32 = 0;
+    if (ln && rn) {
+      const lv = trimZeros(l);
+      const rv = trimZeros(r);
+      if (lv.length != rv.length) {
+        order = lv.length < rv.length ? -1 : 1;
+      } else {
+        order = asciiCompare(lv, rv);
+        if (order == 0 && l.length != r.length) {
+          order = l.length < r.length ? -1 : 1;
+        }
+      }
+    } else if (ln) {
+      return -1;
+    } else if (rn) {
+      return 1;
+    } else {
+      order = asciiCompare(l, r);
+    }
+    if (order != 0) {
+      return order;
+    }
+  }
+  return right.length > left.length ? -1 : 0;
+}
+
+/** Reads a version's text from the start. */
+class Parser {
+  private text: string;
+  private at = 0;
+
+  constructor(text: string) {
+    this.text = text;
+  }
+
+  done(): bool {
+    return this.at >= this.text.length;
+  }
+
+  /** The next character (a whole code point), quoted as the `semver` crate's messages quote it. */
+  peek(): string {
+    return quoted(this.text.codePointAt(this.at) ?? 0);
+  }
+
+  eat(c: string): bool {
+    if (!this.done() && this.text.slice(this.at, this.at + 1) == c) {
+      this.at++;
+      return true;
+    }
+    return false;
+  }
+
+  /** A version number: digits without a leading zero, at most `u64`'s largest. */
+  number(position: string): u64 {
+    const start = this.at;
+    while (!this.done()) {
+      const c = this.text.slice(this.at, this.at + 1);
+      if (c < "0" || c > "9") {
+        break;
+      }
+      if (this.at > start && this.text.slice(start, start + 1) == "0") {
+        throw new SemverError(`invalid leading zero in ${position}`);
+      }
+      this.at++;
+    }
+    const digits = this.text.slice(start, this.at);
+    if (digits.length == 0) {
+      if (this.done()) {
+        throw new SemverError(`unexpected end of input while parsing ${position}`);
+      }
+      throw new SemverError(`unexpected character ${this.peek()} while parsing ${position}`);
+    }
+    if (digits.length > U64_MAX.length || (digits.length == U64_MAX.length && digits > U64_MAX)) {
+      throw new SemverError(`value of ${position} exceeds u64::MAX`);
+    }
+    return parseU64(digits);
+  }
+
+  dot(position: string): void {
+    if (this.eat(".")) {
+      return;
+    }
+    if (this.done()) {
+      throw new SemverError(`unexpected end of input while parsing ${position}`);
+    }
+    throw new SemverError(`unexpected character ${this.peek()} after ${position}`);
+  }
+
+  /**
+   * Dot-separated identifiers of ASCII letters, digits and `-`, none empty; in a pre-release
+   * (`pre`) a numeric identifier has no leading zero. Stops at any other character.
+   */
+  identifier(pre: bool): string {
+    const what = pre ? "pre-release identifier" : "build metadata";
+    const start = this.at;
+    let segment = this.at;
+    let nondigit = false;
+    for (;;) {
+      const c = this.done() ? "" : this.text.slice(this.at, this.at + 1);
+      const letter = (c >= "A" && c <= "Z") || (c >= "a" && c <= "z") || c == "-";
+      const digit = c >= "0" && c <= "9" && c.length == 1;
+      if (c.length == 1 && (letter || digit)) {
+        nondigit = nondigit || letter;
+        this.at++;
+        continue;
+      }
+      const length = this.at - segment;
+      if (length == 0) {
+        if (this.at == start && c != ".") {
+          return "";
+        }
+        throw new SemverError(`empty identifier segment in ${what}`);
+      }
+      if (pre && length > 1 && !nondigit && this.text.slice(segment, segment + 1) == "0") {
+        throw new SemverError(`invalid leading zero in ${what}`);
+      }
+      if (c == ".") {
+        this.at++;
+        segment = this.at;
+        nondigit = false;
+        continue;
+      }
+      return this.text.slice(start, this.at);
+    }
+  }
+}
+
+/** Decimal digits (at most `u64`'s largest) as a `u64`. */
+function parseU64(digits: string): u64 {
+  let value: u64 = 0;
+  for (const c of digits) {
+    const d = ((c.codePointAt(0) ?? 48) - 48) as u64;
+    value = value * 10 + d;
+  }
+  return value;
+}
+
+/**
+ * Whether Rust's `{:?}` writes character `c` as `\u{…}`: controls, invisible format characters,
+ * spaces other than U+0020, line and paragraph separators, surrogates, private-use characters and
+ * the common combining marks. Rust decides with full Unicode tables, which std doesn't have, so a
+ * rarer unprintable or unassigned character is written as it is here (the difference is only in
+ * an error message).
+ */
+function escapedByRust(c: number): bool {
+  return (
+    c < 0x20 ||
+    (c >= 0x7f && c <= 0xa0) ||
+    c == 0xad ||
+    (c >= 0x300 && c <= 0x36f) ||
+    c == 0x61c ||
+    c == 0x1680 ||
+    c == 0x180e ||
+    (c >= 0x2000 && c <= 0x200f) ||
+    (c >= 0x2028 && c <= 0x202f) ||
+    (c >= 0x205f && c <= 0x2064) ||
+    (c >= 0x2066 && c <= 0x206f) ||
+    c == 0x3000 ||
+    (c >= 0xd800 && c <= 0xf8ff) ||
+    c == 0xfeff ||
+    (c >= 0xfff9 && c <= 0xfffb) ||
+    c >= 0xf0000
+  );
+}
+
+/** Character `c` in single quotes, escaped as the `semver` crate's messages write it. */
+function quoted(c: number): string {
+  if (c == 0) {
+    return "'\\0'";
+  }
+  if (c == 9) {
+    return "'\\t'";
+  }
+  if (c == 10) {
+    return "'\\n'";
+  }
+  if (c == 13) {
+    return "'\\r'";
+  }
+  if (c == 39) {
+    return "'\\''";
+  }
+  if (c == 92) {
+    return "'\\\\'";
+  }
+  if (escapedByRust(c)) {
+    return `'\\u{${c.toString(16)}}'`;
+  }
+  return `'${String.fromCodePoint(c)}'`;
+}

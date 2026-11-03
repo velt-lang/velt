@@ -1,0 +1,4 @@
+// registry-core (internal): the error of a package archive that can't be used.
+
+/** An archive that is malformed or holds a path it may not. */
+export class ArchiveError extends Error {}

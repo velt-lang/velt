@@ -1,0 +1,99 @@
+// The name rules (src/names.vlt). crates/veltc/tests/registry_core.rs compares them with vpm's
+// over many more names.
+import { describe, expect, it } from "velt/test";
+import {
+  checkName,
+  checkUserName,
+  isValidDependencyName,
+  isValidPackageName,
+  isValidUserName,
+  isWindowsDeviceName,
+  normalizedName,
+  splitScoped,
+} from "../src/names";
+
+describe("package names", () => {
+  it("accepts lowercase words joined by single separators", () => {
+    for (const name of ["a", "json", "my-pkg", "my_pkg", "a1-b2_c3", "http2"]) {
+      expect(isValidPackageName(name)).toBe(true);
+    }
+  });
+
+  it("refuses everything else", () => {
+    for (const name of [
+      "",
+      "A",
+      "1a",
+      "my--pkg",
+      "my__pkg",
+      "my-_pkg",
+      "pkg-",
+      "-pkg",
+      "my.pkg",
+      "é",
+    ]) {
+      expect(isValidPackageName(name)).toBe(false);
+    }
+  });
+
+  it("refuses reserved, native-prefix and device names", () => {
+    for (const name of [
+      "std",
+      "velt",
+      "rt",
+      "sig",
+      "native",
+      "rt-str",
+      "sig_x",
+      "con",
+      "nul",
+      "com1",
+      "lpt9",
+    ]) {
+      expect(isValidPackageName(name)).toBe(false);
+    }
+    expect(isValidPackageName("rtx")).toBe(true);
+    expect(isValidPackageName("console")).toBe(true);
+  });
+
+  it("explains a refusal", () => {
+    expect(checkName("json")).toBe(null);
+    expect(checkName("std") ?? "").toContain("reserved for the standard library");
+    expect(checkName("CON") ?? "").toContain("device name on Windows");
+    expect(checkName("rt-str") ?? "").toContain("velt_rt_");
+    expect(checkName("My") ?? "").toContain("invalid package name");
+    expect(checkName("@a/b")).toBe(null);
+    expect(checkName("@A/b") ?? "").toContain("invalid scoped package name");
+  });
+});
+
+describe("other names", () => {
+  it("scoped dependency names", () => {
+    expect(splitScoped("@sigx/reactivity")).toEqual(["sigx", "reactivity"]);
+    expect(splitScoped("json")).toBe(null);
+    expect(isValidDependencyName("@sigx/reactivity")).toBe(true);
+    expect(isValidDependencyName("@1x/y")).toBe(true);
+    expect(isValidDependencyName("@x/con")).toBe(false);
+    expect(isValidDependencyName("@x")).toBe(false);
+    expect(isValidDependencyName("@x/y/z")).toBe(false);
+  });
+
+  it("user names", () => {
+    expect(isValidUserName("ada")).toBe(true);
+    expect(isValidUserName("a--b_")).toBe(true);
+    expect(isValidUserName("rt")).toBe(true);
+    expect(isValidUserName("1ada")).toBe(false);
+    expect(isValidUserName("Com3")).toBe(false);
+    expect(checkUserName("Ada") ?? "").toContain("invalid user name");
+  });
+
+  it("device names in any ASCII case", () => {
+    expect(isWindowsDeviceName("CoM7")).toBe(true);
+    expect(isWindowsDeviceName("com")).toBe(false);
+    expect(isWindowsDeviceName("com10")).toBe(false);
+  });
+
+  it("normalizes separators", () => {
+    expect(normalizedName("my-pkg")).toBe("my_pkg");
+  });
+});
