@@ -1,0 +1,59 @@
+// A plugin hook found by a computed key through `any` (`(plugin as any)[hook]?.(ctx)`), as
+// plugin systems dispatch them (#854): a function read from an `any` is one of the methods or
+// function-valued fields of the values the program converts to `any`, and none of them changes
+// what the render context holds. Prints what Node prints.
+import { serve } from "http-server";
+
+class App {
+  name: string = "app";
+  plugins: string[] = ["a"];
+}
+
+class RenderCtx {
+  app: App;
+  out: string[] = [];
+  constructor(app: App) {
+    this.app = app;
+  }
+  emit(s: string): void {
+    this.out.push(s);
+  }
+}
+
+const seo = {
+  name: "seo",
+  setup: (c: RenderCtx): void => {
+    c.out.push("s");
+  },
+  render: (c: RenderCtx): void => {
+    c.out.push("r");
+  },
+};
+
+const plugins: any[] = [seo as any, { name: "plain" } as any];
+
+function render(app: App): string {
+  const ctx = new RenderCtx(app);
+  ctx.emit(app.name);
+  for (const hook of ["setup", "render"]) {
+    for (const plugin of plugins) {
+      const f = plugin[hook];
+      if (typeof f === "function") {
+        f(ctx);
+      }
+    }
+  }
+  ctx.emit(`${ctx.app.plugins.length}`);
+  return ctx.out.join("");
+}
+
+async function main() {
+  const app = new App();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(render(app));
+  });
+  const r = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await r.text());
+  await server.shutdown();
+}
+

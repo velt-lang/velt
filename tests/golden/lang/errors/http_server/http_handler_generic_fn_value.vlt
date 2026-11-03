@@ -1,0 +1,29 @@
+// A generic function stored as a value of a concrete function type (`popAll<T>` in a
+// `Map<string, (xs: string[], v: string) => void>`) is among what a call through that type may
+// run (#854): its `T[]` unifies with `string[]`, and it changes the captured list.
+import { serve } from "http-server";
+
+class App {
+  name: string = "app";
+  plugins: string[] = ["a"];
+}
+
+class Lists {
+  items: string[] = ["a"];
+}
+
+function popAll<T>(xs: T[], v: T): void {
+  xs.pop();
+}
+
+const table = new Map<string, (xs: string[], v: string) => void>();
+table.set("p", popAll);
+
+async function main() {
+  const l = new Lists();
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    table.get("p")!(l.items, "x");
+    return new Response("x");
+  });
+  await s.shutdown();
+}

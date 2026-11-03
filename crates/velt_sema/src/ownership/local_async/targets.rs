@@ -11,12 +11,18 @@
 use rustc_hash::FxHashMap;
 
 use crate::ctx::Ctx;
-use crate::hir::{AdtKind, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyKind};
+use crate::hir::{AdtKind, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
 use crate::ownership::local_closures::walk::{self, Visit};
 
 /// A method a call may run, and how many of the call's arguments it does not take first (1
 /// for a literal's function, which takes no `this`).
 pub(super) type Target = (DefId, usize);
+
+/// [`method_targets`] found so far, per kind of call, interface or class, and slot.
+type TargetCache = FxHashMap<(u8, u32, u32), Option<Vec<Target>>>;
+
+/// [`value_targets`] found so far.
+type ValueCache = FxHashMap<(Vec<TyId>, bool, usize), Option<Vec<Target>>>;
 
 /// The functions the literals of each object type store in each field: `None` when one stores
 /// a value that is not a closure or a named function, or a spread makes such an object.
@@ -28,6 +34,34 @@ pub(super) struct Literals {
     /// Interfaces the program converts an `any` to: what it holds may implement them in ways
     /// not listed here.
     from_any: Vec<DefId>,
+    /// The function values the program makes (closures, named functions used as values).
+    values: Vec<DefId>,
+    /// The types the program converts to a dynamic value (`any`, `unknown`, `object`,
+    /// `Function`): a function read from one may be one of their methods.
+    to_any: Vec<TyId>,
+    /// A host or native extern may hand the program a function, an `any` or an interface value
+    /// made outside it.
+    outside: bool,
+    /// The program or a package stores through an `any` somewhere (`o[k] = v`, `self.out = v`):
+    /// without one, nothing is fed by key (keyed.rs).
+    stores_by_key: bool,
+    /// [`method_targets`] per kind of call (0 bound, 1 interface, 2 virtual), the interface or
+    /// class, and the slot: a virtual call's are found by a walk over every class.
+    targets: std::cell::RefCell<TargetCache>,
+    /// Each class's direct subclasses.
+    subclasses: FxHashMap<DefId, Vec<DefId>>,
+    /// [`value_targets`] per call shape (the parameters wanted, read from an `any`, operands in
+    /// front), so that each is found once, not at every call of that shape.
+    by_shape: std::cell::RefCell<ValueCache>,
+    /// [`held_adts`], found once.
+    held: std::cell::RefCell<Option<Vec<DefId>>>,
+    /// The program's and packages' calls, for keyed.rs: (caller, callee) for a direct call, a
+    /// constructor and a closure made; a dispatched call with its receiver's type; the
+    /// functions that call through a function value; and those that store through an `any`.
+    pub(super) calls: Vec<(DefId, DefId)>,
+    pub(super) dispatch: Vec<(DefId, Callee, Option<TyId>)>,
+    pub(super) through_values: Vec<DefId>,
+    pub(super) store_sites: Vec<DefId>,
 }
 
 impl Literals {
@@ -50,26 +84,118 @@ impl Literals {
     pub(super) fn scan(cx: &Ctx) -> Literals {
         let mut out = Literals::default();
         for (i, d) in cx.defs.iter().enumerate() {
+            let def = DefId(i as u32);
+            // Function values std makes reach the program only through std's API; they come
+            // with its declared effects (step 2), not with this join.
+            let std = match cx.try_fn(def) {
+                Some(info) => cx.scopes[info.module].is_std,
+                None => cx.global(def).is_some_and(|g| cx.scopes[g.module].is_std),
+            };
             match d {
-                Some(Def::Fn(f)) => walk::block(&f.body.block, &mut Scan(cx, &mut out)),
-                Some(Def::Global(g)) => walk::expr(&g.init, &mut Scan(cx, &mut out)),
+                Some(Def::Fn(f)) => {
+                    let me = (!std).then_some(def);
+                    walk::block(&f.body.block, &mut Scan(cx, &mut out, std, me));
+                }
+                Some(Def::Global(g)) => walk::expr(&g.init, &mut Scan(cx, &mut out, std, None)),
                 // A module constant's initializer is kept with its info until the end.
                 _ => {
-                    if let Some(init) = cx.global(DefId(i as u32)).and_then(|g| g.init.as_ref()) {
-                        walk::expr(init, &mut Scan(cx, &mut out));
+                    if let Some(init) = cx.global(def).and_then(|g| g.init.as_ref()) {
+                        walk::expr(init, &mut Scan(cx, &mut out, std, None));
+                    }
+                    if let Some(Def::ExternFn(x)) = d {
+                        out.outside |= from_outside(cx, DefId(i as u32), x);
                     }
                 }
             }
         }
+        out.scan_initializers(cx);
+        // The classes, from sema's information: `cx.defs` holds no ADT yet at this point.
+        for (i, info) in cx.info.iter().enumerate() {
+            let crate::defs::DefInfo::Adt(a) = info else {
+                continue;
+            };
+            if let Some(TyKind::Adt(b, _)) = a.base.map(|b| cx.ty.kind(b).clone()) {
+                out.subclasses.entry(b).or_default().push(DefId(i as u32));
+            }
+        }
         out
+    }
+
+    /// Scan the initializers each class gives its own fields (`setup: F = (xs) => …`), and those
+    /// it gives fields it inherits: they make function values and convert values too.
+    fn scan_initializers(&mut self, cx: &Ctx) {
+        for info in &cx.info {
+            let crate::defs::DefInfo::Adt(a) = info else {
+                continue;
+            };
+            let std = cx.scopes[a.module].is_std;
+            let own = (a.fields.iter().skip(a.own_fields_start)).filter_map(|f| f.default.as_ref());
+            let redefined = a.redefined.iter().filter_map(|r| r.init.as_ref());
+            for init in own.chain(redefined) {
+                walk::expr(init, &mut Scan(cx, self, std, None));
+            }
+        }
+    }
+
+    /// Class `d` and every class that extends it, directly or not.
+    pub(super) fn below(&self, d: DefId) -> Vec<DefId> {
+        let mut out = vec![];
+        let mut work = vec![d];
+        let mut seen = rustc_hash::FxHashSet::default();
+        while let Some(c) = work.pop() {
+            if seen.insert(c) {
+                out.push(c);
+                work.extend(self.subclasses.get(&c).into_iter().flatten().copied());
+            }
+        }
+        out
+    }
+
+    /// The function values the program and its packages make.
+    pub(super) fn values(&self) -> &[DefId] {
+        &self.values
+    }
+
+    /// Does the program or a package store through an `any` anywhere?
+    pub(super) fn stores_by_key(&self) -> bool {
+        self.stores_by_key
     }
 }
 
-struct Scan<'a>(&'a Ctx<'a>, &'a mut Literals);
+/// The scan of one definition's body; `.2`: the definition is std's; `.3`: the function whose
+/// body it is, when it is the program's or a package's.
+struct Scan<'a>(&'a Ctx<'a>, &'a mut Literals, bool, Option<DefId>);
 
 impl Visit for Scan<'_> {
     fn expr(&mut self, e: &Expr) {
+        if let Some(me) = self.3 {
+            match &e.kind {
+                E::New { def, .. } => {
+                    if let Some(c) = super::reach::constructor(self.0, *def) {
+                        self.1.calls.push((me, c));
+                    }
+                }
+                E::Closure(k) => self.1.calls.push((me, *k)),
+                E::Call { callee, args } => match callee {
+                    Callee::Def(d, _) => self.1.calls.push((me, *d)),
+                    Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. } => {
+                        let recv = args.first().map(|a| a.ty);
+                        self.1.dispatch.push((me, callee.clone(), recv));
+                    }
+                    Callee::Indirect(_) => self.1.through_values.push(me),
+                    Callee::Intrinsic(Intrinsic::AnySet) => self.1.store_sites.push(me),
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
         match &e.kind {
+            E::Closure(g) | E::FnRef(g, _) if !self.2 => self.1.values.push(*g),
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::AnySet),
+                ..
+            } if !self.2 => self.1.stores_by_key = true,
+            E::ToDyn { expr, .. } if self.0.dynamic(e.ty).is_some() => self.1.to_any.push(expr.ty),
             E::AdtLit { def, fields, .. } => {
                 if !self.0.adt(*def).is_some_and(object_type) {
                     return;
@@ -126,7 +252,45 @@ pub(super) fn method_targets(
     callee: &Callee,
     args: &[Expr],
 ) -> Option<Vec<Target>> {
-    let receiver = || args.first().map(|a| cx.ty.kind(a.ty).clone());
+    targets_for(cx, lits, callee, args.first().map(|a| a.ty))
+}
+
+/// [`method_targets`] of a call whose receiver (`args[0]`) has type `recv`.
+pub(super) fn targets_for(
+    cx: &Ctx,
+    lits: &Literals,
+    callee: &Callee,
+    recv: Option<TyId>,
+) -> Option<Vec<Target>> {
+    let receiver = || recv.map(|t| cx.ty.kind(t).clone());
+    let key = match callee {
+        Callee::ParamMethod { iface, slot, .. } => Some((0, iface.0, *slot)),
+        Callee::Dyn { slot, .. } => match receiver() {
+            Some(TyKind::Dyn(iface, _)) => Some((1, iface.0, *slot)),
+            _ => None,
+        },
+        Callee::Virtual { slot } => match receiver() {
+            Some(TyKind::Adt(class, _)) => Some((2, class.0, *slot)),
+            _ => None,
+        },
+        _ => None,
+    };
+    let key = key?;
+    if let Some(t) = lits.targets.borrow().get(&key) {
+        return t.clone();
+    }
+    let t = find_targets(cx, lits, callee, recv);
+    lits.targets.borrow_mut().insert(key, t.clone());
+    t
+}
+
+fn find_targets(
+    cx: &Ctx,
+    lits: &Literals,
+    callee: &Callee,
+    recv: Option<TyId>,
+) -> Option<Vec<Target>> {
+    let receiver = || recv.map(|t| cx.ty.kind(t).clone());
     let out = match callee {
         Callee::ParamMethod { iface, slot, .. } => implementations(cx, lits, *iface, *slot)?,
         Callee::Dyn { slot, .. } => match receiver() {
@@ -137,13 +301,12 @@ pub(super) fn method_targets(
             let Some(TyKind::Adt(class, _)) = receiver() else {
                 return None;
             };
-            let mut out = vec![];
-            for (i, d) in cx.defs.iter().enumerate() {
-                let Some(Def::Adt(a)) = d else { continue };
-                if descends(cx, DefId(i as u32), class) {
-                    out.extend(a.vtable.get(*slot as usize).map(|&m| (m, 0)));
-                }
-            }
+            // The class and its subclasses, through the map the scan built.
+            let mut out: Vec<Target> = (lits.below(class).into_iter())
+                .filter_map(|c| cx.adt(c)?.vtable.get(*slot as usize).map(|&m| (m, 0)))
+                .collect();
+            out.sort_by_key(|t| t.0 .0);
+            out.dedup();
             out
         }
         _ => return None,
@@ -222,4 +385,166 @@ fn descends(cx: &Ctx, d: DefId, base: DefId) -> bool {
         d = b;
     }
     false
+}
+
+/// Can extern `d` hand the program a value made outside it that may be a function: a host
+/// import, or a package's native function returning an `any`, a function or an interface value?
+/// std's own externs return data.
+fn from_outside(cx: &Ctx, d: DefId, x: &crate::hir::ExternFnDef) -> bool {
+    if x.host.is_some() {
+        return true;
+    }
+    let std = cx.try_fn(d).is_some_and(|i| cx.scopes[i.module].is_std);
+    let open = cx.dynamic(x.ret).is_some()
+        || matches!(cx.ty.kind(x.ret), TyKind::FnPtr { .. } | TyKind::Dyn(..));
+    !std && open
+}
+
+/// The ADTs a value of an open type may be an object of when its object is not known: those the
+/// program converts to a dynamic value, and the ones their fields hold, transitively (an object
+/// reached through a member of a converted value: `o.inner.out = v`, `h.inner.run`).
+pub(super) fn held_adts(cx: &mut Ctx, lits: &Literals) -> Vec<DefId> {
+    if let Some(t) = &*lits.held.borrow() {
+        return t.clone();
+    }
+    let mut seen: rustc_hash::FxHashSet<TyId> = rustc_hash::FxHashSet::default();
+    let mut work: Vec<TyId> = lits.to_any.clone();
+    let mut out = vec![];
+    while let Some(t) = work.pop() {
+        if !seen.insert(t) {
+            continue;
+        }
+        match cx.ty.kind(t).clone() {
+            TyKind::Adt(d, args) => {
+                out.push(d);
+                let below: Vec<DefId> = lits.below(d).into_iter().filter(|&c| c != d).collect();
+                work.extend(super::types::adt_parts_below(cx, d, &args, &below));
+            }
+            k => work.extend(crate::types::children(&k)),
+        }
+    }
+    out.sort_by_key(|d| d.0);
+    out.dedup();
+    *lits.held.borrow_mut() = Some(out.clone());
+    out
+}
+
+/// The functions a call through a function value may run (#854; write-effects.md "Function
+/// values"): the program's function values that take as many arguments, each of a type that
+/// accepts the call's (`want`: the function type's parameters, or for a function read from an
+/// `any` the arguments' types before they were converted). For one read from an `any`
+/// (`from_any`), also the methods of the classes the program converts to `any` and of the
+/// classes those hold ([`held_adts`]), bound to their object. `skip`: the call's operands in front of the arguments. `None` when a value made
+/// outside the program may be called.
+pub(super) fn value_targets(
+    cx: &mut Ctx,
+    lits: &Literals,
+    want: &[TyId],
+    from_any: bool,
+    skip: usize,
+) -> Option<Vec<Target>> {
+    if lits.outside {
+        return None;
+    }
+    let key = (want.to_vec(), from_any, skip);
+    if let Some(t) = lits.by_shape.borrow().get(&key) {
+        return t.clone();
+    }
+    // The classes a value read from an `any` may be an object of: those converted, and what
+    // they hold (`h.inner.run` of a converted `Holder`).
+    let held = match from_any {
+        true => held_adts(cx, lits),
+        false => vec![],
+    };
+    let t = find_values(cx, lits, want, &held, skip);
+    lits.by_shape.borrow_mut().insert(key, t.clone());
+    t
+}
+
+fn find_values(
+    cx: &Ctx,
+    lits: &Literals,
+    want: &[TyId],
+    held: &[DefId],
+    skip: usize,
+) -> Option<Vec<Target>> {
+    let mut out: Vec<Target> = vec![];
+    let fits = |ps: &[crate::hir::Param]| {
+        ps.len() == want.len() && ps.iter().zip(want).all(|(p, &w)| accepts(cx, p.ty, w))
+    };
+    let mut seen = rustc_hash::FxHashSet::default();
+    for &g in &lits.values {
+        if !seen.insert(g) {
+            continue;
+        }
+        let Some(Def::Fn(f)) = &cx.defs[g.0 as usize] else {
+            continue;
+        };
+        if fits(&f.params[f.captures.len()..]) {
+            out.push((g, skip));
+        }
+    }
+    {
+        for c in held {
+            // Its methods, also those no subclass overrides (not in the vtable).
+            let mut methods: Vec<DefId> = (cx.adt(*c).into_iter())
+                .flat_map(|a| a.methods.values().filter(|m| !m.is_static).map(|m| m.def))
+                .collect();
+            if let Some(a) = cx.adt(*c) {
+                methods.extend(a.vtable.iter().copied());
+            }
+            methods.sort_by_key(|m| m.0);
+            for m in methods {
+                let Some(Def::Fn(f)) = &cx.defs[m.0 as usize] else {
+                    continue;
+                };
+                // A bound method: its `this` is the object, not one of the call's operands.
+                if seen.insert(m) && !f.params.is_empty() && fits(&f.params[1..]) {
+                    out.push((m, skip - 1));
+                }
+            }
+        }
+    }
+    Some(out)
+}
+
+/// Can a parameter of type `p` be given a value of type `a`? The types unify: the same type,
+/// either open (a type parameter, `any`, `unknown`, `object`) at any depth (`T[]` and `string[]`,
+/// `Map<K, V>` and `Map<string, App>`), an interface `a` implements, or a base class of `a`.
+fn accepts(cx: &Ctx, p: TyId, a: TyId) -> bool {
+    unify(cx, p, a, 0)
+}
+
+fn unify(cx: &Ctx, p: TyId, a: TyId, depth: u32) -> bool {
+    // Deep enough: count it as a match (the join may only grow).
+    if depth > 8 {
+        return true;
+    }
+    let strip = |t: TyId| match cx.ty.kind(t) {
+        TyKind::Option(inner, _) => *inner,
+        _ => t,
+    };
+    let (p, a) = (strip(p), strip(a));
+    let open = |t: TyId| matches!(cx.ty.kind(t), TyKind::Param(_)) || cx.dynamic(t).is_some();
+    if p == a || open(p) || open(a) {
+        return true;
+    }
+    let (kp, ka) = (cx.ty.kind(p).clone(), cx.ty.kind(a).clone());
+    match (&kp, &ka) {
+        (TyKind::Dyn(iface, _), TyKind::Dyn(other, _)) => iface == other,
+        (TyKind::Dyn(iface, _), _) => cx.impls.iter().any(|i| i.iface == *iface && i.ty == a),
+        (TyKind::Adt(pd, pa), TyKind::Adt(ad, aa)) if pd == ad => {
+            pa.len() == aa.len() && pa.iter().zip(aa).all(|(x, y)| unify(cx, *x, *y, depth + 1))
+        }
+        (TyKind::Adt(pd, _), TyKind::Adt(ad, _)) => descends(cx, *ad, *pd),
+        _ if std::mem::discriminant(&kp) == std::mem::discriminant(&ka) => {
+            let (cp, ca) = (crate::types::children(&kp), crate::types::children(&ka));
+            cp.len() == ca.len()
+                && cp
+                    .iter()
+                    .zip(&ca)
+                    .all(|(x, y)| unify(cx, *x, *y, depth + 1))
+        }
+        _ => false,
+    }
 }

@@ -92,9 +92,23 @@ pub(crate) fn check_crossing_changes(cx: &mut Ctx) {
     if list.is_empty() {
         return;
     }
+    // A callback that captures nothing of the program's (`async () => new Response(…)`) has
+    // nothing to change: the scans below are skipped when no callback captures anything.
+    let captures = list.iter().any(|x| match &cx.defs[x.closure.0 as usize] {
+        Some(Def::Fn(f)) => {
+            (f.captures.iter()).any(|c| !f.body.locals[c.inner.0 as usize].name.starts_with('#'))
+        }
+        _ => false,
+    });
+    if !captures {
+        return;
+    }
     // Before any body is taken out of `cx.defs` below, so that every store is seen.
-    let fed = std::rc::Rc::new(super::fed::fed_fields(cx));
     let lits = std::rc::Rc::new(super::targets::Literals::scan(cx));
+    let roots: Vec<DefId> = list.iter().map(|x| x.closure).collect();
+    let keyed = super::keyed::keyed_fields(cx, &lits, &roots);
+    let fed = std::rc::Rc::new(super::fed::fed_fields(cx, keyed.keys().copied().collect()));
+    let fed_sites = std::rc::Rc::new(keyed);
     let mut reported: FxHashSet<(DefId, String)> = FxHashSet::default();
     for x in list {
         let Some(Def::Fn(f)) = cx.defs[x.closure.0 as usize].take() else {
@@ -104,6 +118,7 @@ pub(crate) fn check_crossing_changes(cx: &mut Ctx) {
         // call) is not reused for the next callback.
         let mut memo = Memo {
             fed: fed.clone(),
+            fed_sites: fed_sites.clone(),
             lits: lits.clone(),
             ..Memo::default()
         };
@@ -139,13 +154,21 @@ pub(crate) fn check_crossing_changes(cx: &mut Ctx) {
         } else {
             "closure"
         };
-        for (cap, at, place, via) in found {
+        for (cap, at, place, via, site) in found {
             let local = &f.body.locals[cap.0 as usize];
             let (name, ty) = (local.name.clone(), local.ty);
             if !reported.insert((x.closure, name.clone())) {
                 continue;
             }
-            report(cx, what, &name, ty, at, &place, via.as_deref(), &x);
+            report(
+                cx,
+                what,
+                &name,
+                ty,
+                at,
+                (&place, via.as_deref(), site.as_ref()),
+                &x,
+            );
         }
         cx.defs[x.closure.0 as usize] = Some(Def::Fn(f));
     }
@@ -158,8 +181,7 @@ fn report(
     name: &str,
     ty: TyId,
     at: Span,
-    place: &str,
-    via: Option<&str>,
+    (place, via, site): (&str, Option<&str>, Option<&super::keyed::Site>),
     x: &Crossing,
 ) {
     // `place` starts with the capture when it is written through it directly (`c.count`), and
@@ -181,11 +203,22 @@ fn report(
         None => String::new(),
     };
     let fix = share_fix(cx, name, ty);
-    let d = Diagnostic::error(
-        format!("this {what} changes {field}{through}, so it must stay on the task that created it"),
-        at,
-    )
-    .with_label(x.at, x.label.clone())
+    // A field of a new value fed by key: name the value and where it was stored, not a field
+    // the captured value does not have (#2081).
+    let msg = match site {
+        Some(s) => format!(
+            "this {what} changes `{place}`, which may be a value reached from captured `{name}`: {} stores one there by key, so it must stay on the task that created it",
+            s.text
+        ),
+        None => format!(
+            "this {what} changes {field}{through}, so it must stay on the task that created it"
+        ),
+    };
+    let mut d = Diagnostic::error(msg, at).with_label(x.at, x.label.clone());
+    if let Some(s) = site {
+        d = d.with_label(s.span, format!("stored here: {}", s.text));
+    }
+    let d = d
     .with_note(format!(
         "each call runs on another thread with its own copy of `{name}`, so the change would be lost: {fix}"
     ));
@@ -217,10 +250,21 @@ pub(super) struct Memo {
     pub fed: std::rc::Rc<Option<FxHashSet<super::fed::Field>>>,
     /// The functions object literals store in their fields (targets.rs), found once per check.
     pub lits: std::rc::Rc<super::targets::Literals>,
+    /// Where each field fed by key was first fed (keyed.rs), for the error.
+    pub fed_sites: std::rc::Rc<FxHashMap<super::fed::Field, super::keyed::Site>>,
+    /// The site of the field fed by key that the last [`super::reach::reaches`] went through.
+    pub via_site: Option<super::keyed::Site>,
 }
 
 /// One change found in a body: (root, where, the place written, the call it goes through).
-type Found = (LocalId, Span, String, Option<String>);
+/// The last part: where a field fed by key on the way got the captured value (keyed.rs).
+type Found = (
+    LocalId,
+    Span,
+    String,
+    Option<String>,
+    Option<super::keyed::Site>,
+);
 
 /// The changes body `f` makes to what the locals of `roots` (each standing for a root of the
 /// callback being checked) reach, first one per root. `params`: closures whose parameters stand
@@ -255,30 +299,33 @@ fn changes(
                 };
                 // Only a write into a captured object (or one reached from it) is lost; a new
                 // object's own fields are the request's (`ctx.depth++` on `new Ctx(app)`).
+                memo.via_site = None;
                 let Some((r, true)) = reaches(cx, base, &taint, memo) else {
                     continue;
                 };
+                let site = memo.via_site.take();
                 if !out.iter().any(|x| x.0 == r.local) {
-                    out.push((r.local, span, text(cx, &names, &place), None));
+                    out.push((r.local, span, text(cx, &names, &place), None, site));
                 }
             }
             Event::Call(callee, args, span) => {
-                let mut reached: Vec<(usize, Root, bool)> = vec![];
+                let mut reached: Vec<(usize, Root, bool, Option<super::keyed::Site>)> = vec![];
                 for (i, a) in args.iter().enumerate() {
+                    memo.via_site = None;
                     if let Some((r, direct)) = reaches(cx, a, &taint, memo) {
-                        reached.push((i, r, direct));
+                        reached.push((i, r, direct, memo.via_site.take()));
                     }
                 }
                 // A closure given to a call with a reached argument may be handed what that
                 // argument holds (`users.forEach((u) => …)`).
-                if let Some(&(_, r, _)) = reached.first() {
+                if let Some(&(_, r, _, _)) = reached.first() {
                     for a in &args {
                         if let E::Closure(k) = a.kind {
                             passed.entry(k).or_insert(r);
                         }
                     }
                 }
-                for (i, r, direct) in reached {
+                for (i, r, direct, site) in reached {
                     let a = &args[i];
                     // A loop's own iterator advancing (`for (const x of m)`): its position is
                     // the loop's, not what it walks.
@@ -292,7 +339,7 @@ fn changes(
                     else {
                         continue;
                     };
-                    out.push((r.local, span, place, Some(via)));
+                    out.push((r.local, span, place, Some(via), site));
                 }
             }
             Event::New(class, args, span) => {
@@ -305,9 +352,11 @@ fn changes(
                     continue;
                 }
                 for (i, a) in args.iter().enumerate() {
+                    memo.via_site = None;
                     let Some((r, direct)) = reaches(cx, a, &taint, memo) else {
                         continue;
                     };
+                    let site = memo.via_site.take();
                     if out.iter().any(|x| x.0 == r.local) {
                         continue;
                     }
@@ -322,7 +371,7 @@ fn changes(
                         None => base.clone(),
                     };
                     let name = cx.adt(class).map(|a| a.name.clone()).unwrap_or_default();
-                    out.push((r.local, span, place, Some(format!("new {name}(…)"))));
+                    out.push((r.local, span, place, Some(format!("new {name}(…)")), site));
                 }
             }
             Event::Closure(k) => {
@@ -418,6 +467,32 @@ fn call_changes(
         Callee::Intrinsic(
             Intrinsic::AnySet | Intrinsic::AnySetIndex | Intrinsic::AnyDelete | Intrinsic::AnyCall,
         ) if i == 0 && direct => Some((base.to_string(), format!("{base}.… = …"))),
+        // A call through a function value (`hooks[0](ctx)`, `plugin.server?.setup?.(ctx)`), or
+        // of a function read from an `any` (`f(ctx)` of `f = plugin[hook]`): any of the
+        // program's function values that accept the arguments may run, each followed; one made
+        // outside the program (a host's, a native package's) may change anything it is given,
+        // the captured value or a new value holding it (write-effects.md "Function values").
+        Callee::Indirect(fv) => {
+            let via = format!("…({base})");
+            let want: Vec<TyId> = match cx.ty.kind(fv.ty) {
+                TyKind::FnPtr { params, .. } => params.clone(),
+                _ => args.iter().map(|a| a.ty).collect(),
+            };
+            let lits = memo.lits.clone();
+            match super::targets::value_targets(cx, &lits, &want, false, 0) {
+                None => Some((base.to_string(), via)),
+                Some(t) => follow(cx, &t, (i, direct, root_ty), (base, via), depth, memo),
+            }
+        }
+        Callee::Intrinsic(Intrinsic::AnyApply) if i >= 2 => {
+            let via = format!("…({base})");
+            let want: Vec<TyId> = args[2..].iter().map(|a| unconverted(a).ty).collect();
+            let lits = memo.lits.clone();
+            match super::targets::value_targets(cx, &lits, &want, true, 2) {
+                None => Some((base.to_string(), via)),
+                Some(t) => follow(cx, &t, (i, direct, root_ty), (base, via), depth, memo),
+            }
+        }
         // An operation of the compiler's on a new value (`out.push(x)`) changes only it.
         Callee::Intrinsic(_) if mutable && direct => {
             Some((base.to_string(), format!("{base}.…(…)")))
@@ -449,6 +524,14 @@ fn call_changes(
     }
 }
 
+/// The value `a` was before it was converted to an `any` for a call through one.
+fn unconverted(a: &Expr) -> &Expr {
+    match &a.kind {
+        E::ToDyn { expr, .. } => unconverted(expr),
+        _ => a,
+    }
+}
+
 /// Does one of the methods a call may run (`targets`, from targets.rs) change its argument `i`
 /// (written `base`; `direct`: it may be the captured value itself, else a new value that may
 /// hold it)? The place as the caller sees it, and the call as written (`via`).
@@ -465,6 +548,21 @@ fn follow(
         let Some(k) = i.checked_sub(skip) else {
             continue;
         };
+        // A package's function (a value from its code in a route table) is judged as a direct
+        // call of it is: by whether it changes that parameter. A function used as a value never
+        // has a `BorrowMut` parameter, so the parameter's own flag says it.
+        if in_library(cx, g) {
+            let Some(Def::Fn(f)) = &cx.defs[g.0 as usize] else {
+                continue;
+            };
+            let changed = (f.params.get(f.captures.len() + k)).is_some_and(|p| {
+                p.mode == PassMode::BorrowMut || f.body.locals[p.local.0 as usize].mutable
+            });
+            if changed && direct {
+                return Some((base.to_string(), via));
+            }
+            continue;
+        }
         if let Some(written) = callee_changes(cx, g, k, (direct, root_ty), depth + 1, memo) {
             let place = match written.split_once('.') {
                 Some((_, rest)) => format!("{base}.{rest}"),

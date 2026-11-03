@@ -1,0 +1,97 @@
+// A call through a function value runs one of the program's functions that accept its
+// arguments (#854; write-effects.md "Function values"): a route table, a middleware array, a
+// callback parameter, a local arrow and a function in an object, each changing the captured
+// counter it is given, change the request's copy where Node changes the shared object, so each
+// is an error, and so are a package's function in a route table and a generic function stored
+// as a value of a concrete type. A function value that only reads what it is given compiles
+// (`show`).
+import { serve } from "http-server";
+import { touch } from "effects-helpers";
+
+class Counter {
+  hits: number = 0;
+}
+
+type Touch = (c: Counter) => void;
+
+const routes = new Map<string, Touch>();
+routes.set("/", (c: Counter) => {
+  c.hits++;
+});
+
+const middleware: Touch[] = [(c: Counter) => {
+  c.hits += 2;
+}];
+
+function withCallback(c: Counter, f: Touch): void {
+  f(c);
+}
+
+const helpers = {
+  touch: (c: Counter): void => {
+    c.hits += 3;
+  },
+};
+
+const show = (n: number): string => `${n}`;
+
+class Lists {
+  items: string[] = ["a"];
+}
+
+const pkgRoutes: ((xs: string[]) => void)[] = [touch];
+
+function popAll<T>(xs: T[], v: T): void {
+  xs.pop();
+}
+
+const table = new Map<string, (xs: string[], v: string) => void>();
+table.set("p", popAll);
+
+async function main() {
+  const c1 = new Counter();
+  const s1 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    routes.get("/")!(c1);
+    return new Response(show(1));
+  });
+  const c2 = new Counter();
+  const s2 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    for (const m of middleware) {
+      m(c2);
+    }
+    return new Response("2");
+  });
+  const c3 = new Counter();
+  const s3 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    withCallback(c3, (c: Counter) => {
+      c.hits++;
+    });
+    return new Response("3");
+  });
+  const c4 = new Counter();
+  const s4 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const touch = (s: Counter) => {
+      s.hits++;
+    };
+    touch(c4);
+    return new Response("4");
+  });
+  const c5 = new Counter();
+  const s5 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    helpers.touch(c5);
+    return new Response(show(c5.hits));
+  });
+  const l6 = new Lists();
+  const s6 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    pkgRoutes[0](l6.items);
+    return new Response("6");
+  });
+  const l7 = new Lists();
+  const s7 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    table.get("p")!(l7.items, "x");
+    return new Response("7");
+  });
+  for (const s of [s1, s2, s3, s4, s5, s6, s7]) {
+    await s.shutdown();
+  }
+}

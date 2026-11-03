@@ -1,0 +1,25 @@
+// A function value made by a class's field initializer (#854): `hooks.setup` is the closure
+// `Hooks` gives its `setup` field, which pushes to the list it is given, so calling it with the
+// captured `app.plugins` changes the request's copy of it.
+import { serve } from "http-server";
+
+class App {
+  plugins: string[] = ["a"];
+}
+
+class Hooks {
+  setup: (xs: string[]) => void = (xs: string[]): void => {
+    xs.push("s");
+  };
+}
+
+const hooks = new Hooks();
+
+async function main() {
+  const app = new App();
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    hooks.setup(app.plugins);
+    return new Response("4");
+  });
+  await s.shutdown();
+}

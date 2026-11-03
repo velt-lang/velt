@@ -1,0 +1,55 @@
+// A generic `emit` running hooks given as a parameter (#854): the call through `hs` is
+// resolved at each caller against the hooks it passes, so a closure of another type that
+// changes its argument (`bump`) does not make the render context's hooks count as changing
+// what it holds. Prints what Node prints.
+import { serve } from "http-server";
+
+class App {
+  name: string = "app";
+  plugins: string[] = ["a"];
+}
+
+class RenderCtx {
+  app: App;
+  out: string[] = [];
+  constructor(app: App) {
+    this.app = app;
+  }
+  emit(s: string): void {
+    this.out.push(s);
+  }
+}
+
+class Counter {
+  n: number = 0;
+}
+
+function emit<T>(hs: ((p: T) => void)[], p: T): void {
+  for (const h of hs) {
+    h(p);
+  }
+}
+
+const hooks: ((c: RenderCtx) => void)[] = [(c: RenderCtx) => { c.out.push("h"); }];
+const bumpers: ((c: Counter) => void)[] = [(c: Counter) => { c.n++; }];
+
+function render(app: App): string {
+  const ctx = new RenderCtx(app);
+  ctx.emit(app.name);
+  emit(hooks, ctx);
+  ctx.emit(`${ctx.app.plugins.length}`);
+  return ctx.out.join("");
+}
+
+async function main() {
+  const k = new Counter();
+  emit(bumpers, k);
+  console.log(k.n);
+  const app = new App();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(render(app));
+  });
+  const r = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await r.text());
+  await server.shutdown();
+}

@@ -1,0 +1,53 @@
+// A store by key into a new object the handler makes, which holds the captured `app` (#854):
+// an async helper storing `v` into the `o` it is given, and a closure kept in a field doing the
+// same. The new object's `out` is then the captured list, and `c.out.push` changes the
+// request's copy of it, so each is an error (the second through the call of the field's
+// function as well).
+import { serve } from "http-server";
+
+class App {
+  name: string = "app";
+  plugins: string[] = ["a"];
+}
+
+async function fillAsync(o: any, v: any): Promise<void> {
+  o.out = v;
+}
+
+class Fresh {
+  app: App;
+  out: string[] = [];
+  constructor(a: App) {
+    this.app = a;
+  }
+}
+
+class FreshHook {
+  app: App;
+  out: string[] = [];
+  hook: (o: any, v: any) => void = (o: any, v: any): void => {
+    o.out = v;
+  };
+  constructor(a: App) {
+    this.app = a;
+  }
+}
+
+async function main() {
+  const a = new App();
+  const s1 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new Fresh(a);
+    await fillAsync(c, a.plugins);
+    c.out.push("x");
+    return new Response("1");
+  });
+  const b = new App();
+  const s2 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new FreshHook(b);
+    c.hook(c, b.plugins);
+    c.out.push("x");
+    return new Response("2");
+  });
+  await s1.shutdown();
+  await s2.shutdown();
+}

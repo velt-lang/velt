@@ -1,0 +1,10 @@
+// Helpers a dependency exports: a store by key into the object it is given, and a function that
+// changes the list it is given, for a route table.
+export function setKey(o: any, k: string, v: any): void {
+  const key = k + "";
+  o[key] = v;
+}
+
+export function touch(xs: string[]): void {
+  xs.push("x");
+}
