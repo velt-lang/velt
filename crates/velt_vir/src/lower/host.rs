@@ -13,22 +13,22 @@
 
 use velt_sema::hir::{self, DefId, HostTy, IntTy, TyId, TyKind};
 
+use super::hook_calls::{self as hooks, ty, HookTy};
 use super::rt::Rt;
 use super::system::Arg;
 use super::{ice, unit, Cx, FnLower};
 use crate::vir::{self, HostImport, HostValue, Operand, Place, Rvalue, Ty};
 
-/// std's hooks that make a `HostRef` of a slot and read the slot of one.
-const REF_OF: &str = velt_common::std_hook!(host_ref_of);
-const REF_OR_NULL: &str = velt_common::std_hook!(host_ref_or_null);
-const REF_HANDLE: &str = velt_common::std_hook!(host_ref_handle);
-
-/// What a host promise's leaf yields, and std's hooks awaiting it.
+/// What a host promise's leaf yields (std's hooks awaiting it: `host_await` & co.).
 const SETTLED: &str = velt_common::std_hook!(host_settled);
-const AWAIT: &str = velt_common::std_hook!(host_await);
-const AWAIT_VOID: &str = velt_common::std_hook!(host_await_void);
-const AWAIT_REF: &str = velt_common::std_hook!(host_await_ref);
-const AWAIT_REF_OR_NULL: &str = velt_common::std_hook!(host_await_ref_or_null);
+
+/// Which of std's hooks awaits a host promise.
+enum Await {
+    Value(TyId),
+    Void,
+    Ref,
+    RefOrNull,
+}
 
 /// Does `target` run under a JS host, which provides host functions? Only the browser flavor of
 /// WebAssembly does; native targets and WASI hosts do not.
@@ -149,19 +149,19 @@ impl FnLower<'_, '_> {
         let args = vec![Operand::Copy(Place::local(id))];
         self.call_rt(Rt::HostPromise, args, Some(Place::local(leaf)));
         let ret = self.sub(ret);
-        let (hook, targs, wire) = match t {
-            HostTy::Void => (AWAIT_VOID, vec![], self.cx.intern(TyKind::Bool)),
+        let (hook, wire) = match t {
+            HostTy::Void => (Await::Void, self.cx.intern(TyKind::Bool)),
             HostTy::Ref { nullable } => {
                 let hook = if nullable {
-                    AWAIT_REF_OR_NULL
+                    Await::RefOrNull
                 } else {
-                    AWAIT_REF
+                    Await::Ref
                 };
-                (hook, vec![], self.cx.intern(TyKind::Int(IntTy::U32)))
+                (hook, self.cx.intern(TyKind::Int(IntTy::U32)))
             }
             _ => {
                 let value = self.cx.promise_result(ret);
-                (AWAIT, vec![value], value)
+                (Await::Value(value), value)
             }
         };
         let settled = hook_def(self.cx, SETTLED);
@@ -175,16 +175,17 @@ impl FnLower<'_, '_> {
                 self.take_temp(p);
             }
         }
-        let f = self
-            .cx
-            .func_for_direct(hook_def(self.cx, hook), targs, self.mode);
         let out = self.temp(Ty::Ptr);
-        self.call(
-            vir::Callee::Func(f),
-            vec![fut],
-            Some(Place::local(out)),
-            false,
-        );
+        let dest = Place::local(out);
+        type Leaf = ty::Promise<ty::HostSettled>;
+        match hook {
+            Await::Value(v) => hooks::host_await(self, [v], Leaf::moved(fut)).emit_to(self, dest),
+            Await::Void => hooks::host_await_void(self, Leaf::moved(fut)).emit_to(self, dest),
+            Await::Ref => hooks::host_await_ref(self, Leaf::moved(fut)).emit_to(self, dest),
+            Await::RefOrNull => {
+                hooks::host_await_ref_or_null(self, Leaf::moved(fut)).emit_to(self, dest)
+            }
+        }
         self.owned_result(Some(out), ret)
     }
 
@@ -202,7 +203,8 @@ impl FnLower<'_, '_> {
                 params.push(Ty::Ptr);
             }
             (HostTy::Ref { .. }, Arg::Value(place, _)) => {
-                let slot = self.hook_call(REF_HANDLE, Operand::Copy(place), Ty::U32);
+                let r = ty::OrNull::<ty::HostRef>::arg(Operand::Copy(place));
+                let slot = hooks::host_ref_handle(self, r).emit(self).op();
                 argv.push(slot);
                 params.push(Ty::U32);
             }
@@ -256,12 +258,12 @@ impl FnLower<'_, '_> {
                     Some(Place::local(slot)),
                     false,
                 );
-                let hook = if nullable { REF_OR_NULL } else { REF_OF };
-                let r = self.hook_call(hook, Operand::Copy(Place::local(slot)), Ty::Ptr);
-                let Operand::Copy(p) = r else {
-                    ice("a hook's result is a temporary")
+                let slot = ty::U32::arg(Operand::Copy(Place::local(slot)));
+                let r = match nullable {
+                    true => hooks::host_ref_or_null(self, slot).emit(self).place(),
+                    false => hooks::host_ref_of(self, slot).emit(self).place(),
                 };
-                self.owned_result(Some(p.local), ret)
+                self.owned_result(Some(r.local), ret)
             }
             _ => {
                 let vt = self.cx.ty(ret);
@@ -296,21 +298,6 @@ impl FnLower<'_, '_> {
         self.owned_result(Some(native), rt)
     }
 
-    /// A call of std's `HostRef` hook `qualified` with the one argument `arg`, into a temporary
-    /// of type `ret`.
-    fn hook_call(&mut self, qualified: &str, arg: Operand, ret: Ty) -> Operand {
-        let d = hook_def(self.cx, qualified);
-        let f = self.cx.func_for_direct(d, vec![], self.mode);
-        let out = self.temp(ret);
-        self.call(
-            vir::Callee::Func(f),
-            vec![arg],
-            Some(Place::local(out)),
-            false,
-        );
-        Operand::Copy(Place::local(out))
-    }
-
     /// A value standing for the result of a call that is an error on this target (the program
     /// does not compile).
     fn unavailable_result(&mut self, ret: TyId) -> Operand {
@@ -328,7 +315,7 @@ impl Cx<'_> {
     }
 }
 
-/// The definition of std's host hook `qualified` (velt/host is checked whole when loaded).
+/// The definition of std's host class `qualified` (velt/host is checked whole when loaded).
 fn hook_def(cx: &Cx<'_>, qualified: &str) -> DefId {
     cx.prelude_def(qualified)
         .unwrap_or_else(|| ice(format_args!("no `{qualified}` in velt/host")))

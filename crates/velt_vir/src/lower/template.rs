@@ -15,6 +15,7 @@
 
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
+use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
 use super::rt::Rt;
 use super::sequence::{may_move_local, root_local, Later};
@@ -745,29 +746,35 @@ impl FnLower<'_, '_> {
         let o = self.addr(Place::local(out));
         let from = self.cx.ty(aty);
         match kind {
+            // std's number printing, as `push_scalar` (strbuf.rs) appends it.
             TyKind::Int(it) => {
-                let (w, hook, r) = if it.is_signed() {
-                    (Ty::I64, super::strbuf::INT_TEXT, Rt::StrFromI64)
+                let (call, v, r) = if it.is_signed() {
+                    let v = self.cast_to(v, from, Ty::I64);
+                    (
+                        hooks::int_text(self, ty::I64::arg(v.clone())),
+                        v,
+                        Rt::StrFromI64,
+                    )
                 } else {
-                    (Ty::U64, super::strbuf::UINT_TEXT, Rt::StrFromU64)
+                    let v = self.cast_to(v, from, Ty::U64);
+                    (
+                        hooks::uint_text(self, ty::U64::arg(v.clone())),
+                        v,
+                        Rt::StrFromU64,
+                    )
                 };
-                let v = self.cast_to(v, from, w);
-                if !self.call_number_hook(hook, vec![v.clone()], Some(Place::local(out))) {
-                    self.call_rt(r, vec![v, o], None);
+                match call {
+                    Some(c) => c.emit_to(self, Place::local(out)),
+                    None => self.call_rt(r, vec![v, o], None),
                 }
             }
             TyKind::Float(_) => {
                 let v = self.float_as_f64(v, aty);
-                let out_place = || Some(Place::local(out));
-                let full = super::strbuf::FLOAT_TEXT;
-                if !self.call_number_hook(full, vec![v.clone()], out_place())
-                    && !self.call_number_hook(
-                        super::strbuf::NUMBER_TEXT,
-                        vec![v.clone()],
-                        out_place(),
-                    )
-                {
-                    self.call_rt(Rt::StrFromF64, vec![v, o], None);
+                let call = hooks::float_text(self, ty::F64::arg(v.clone()))
+                    .or_else(|| hooks::number_text(self, ty::F64::arg(v.clone())));
+                match call {
+                    Some(c) => c.emit_to(self, Place::local(out)),
+                    None => self.call_rt(Rt::StrFromF64, vec![v, o], None),
                 }
             }
             TyKind::Bool => self.call_rt(Rt::StrFromBool, vec![v, o], None),
