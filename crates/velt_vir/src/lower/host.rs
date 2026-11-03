@@ -178,6 +178,8 @@ impl FnLower<'_, '_> {
         let out = self.temp(Ty::Ptr);
         let dest = Place::local(out);
         type Leaf = ty::Promise<ty::HostSettled>;
+        // The await hooks are `async function`s: a call yields their promise and never throws
+        // (the `IoError` surfaces at the `await`, `call_sig`), so `emit_to` is the right form.
         match hook {
             Await::Value(v) => hooks::host_await(self, [v], Leaf::moved(fut)).emit_to(self, dest),
             Await::Void => hooks::host_await_void(self, Leaf::moved(fut)).emit_to(self, dest),
