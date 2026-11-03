@@ -157,11 +157,13 @@ impl Reads {
                         prop,
                         optional: false,
                     } => Some((prop.name.clone(), self.is_param(object)?)),
+                    // One key: `p["k"]` (`m[i, j]` is an operator indexer, not a record).
                     ExprKind::Index {
                         object,
                         index,
+                        more,
                         optional: false,
-                    } => match &index.kind {
+                    } if more.is_empty() => match &index.kind {
                         ExprKind::Lit(Lit::Str(k)) => Some((k.clone(), self.is_param(object)?)),
                         _ => None,
                     },
