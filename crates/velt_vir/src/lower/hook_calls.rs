@@ -198,14 +198,16 @@ impl<R> Call<R> {
         args: [Passed; N],
     ) -> Self {
         let params = &lw.cx.fn_def(def).params;
-        debug_assert_eq!(
+        // The table and std are checked against each other by velt_sema's `std_hooks` test;
+        // these checks keep a drift from building a wrong call in a release compiler too.
+        assert_eq!(
             params.len(),
             N,
             "ICE: hook arity differs from its table entry"
         );
         let mut argv = Vec::with_capacity(N + 1);
         for (Passed(how, mode), p) in args.into_iter().zip(params) {
-            debug_assert!(
+            assert!(
                 matches!(
                     (mode, p.mode),
                     (Mode::Value, PassMode::Copy)
