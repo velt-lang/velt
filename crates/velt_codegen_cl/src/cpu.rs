@@ -498,24 +498,25 @@ mod tests {
         );
     }
 
-    /// JIT code doesn't sign return addresses: the host's flags do on macOS, and backtraces then
-    /// stopped in JIT frames on the CI's Apple CPUs (`backtrace_walks_through_jit_frames`).
+    /// JIT code, and any code for Apple arm64, doesn't sign return addresses: Apple's arm64 ABI
+    /// has none, macOS 26's unwinder can't read Cranelift's rule for them (a caught panic aborted
+    /// with `failed to initiate panic, error 3`, #2008), and backtraces stopped in JIT frames on
+    /// the CI's Apple CPUs (`backtrace_walks_through_jit_frames`).
     #[test]
-    fn jit_code_has_plain_return_addresses() {
-        let signs = |jit| {
-            let isa = crate::isa::make_isa(&crate::host_triple(), Some("native"), false, jit);
-            let isa = isa.unwrap();
+    fn apple_and_jit_code_have_plain_return_addresses() {
+        let signs = |target: &str, cpu: &str, jit| {
+            let isa = crate::isa::make_isa(target, Some(cpu), false, jit).unwrap();
             let flags = isa.isa_flags();
             flags
                 .iter()
                 .any(|f| f.name == "sign_return_address" && f.as_bool() == Some(true))
         };
-        assert!(!signs(true));
-        if cfg!(all(target_os = "macos", target_arch = "aarch64")) {
-            assert!(
-                signs(false),
-                "the host's flags sign them in objects, as on main"
-            );
+        // apple-m1 has pointer authentication: its flags would sign return addresses.
+        assert!(!signs("aarch64-apple-darwin", "apple-m1", false));
+        assert!(!signs("aarch64-apple-darwin", "apple-m1", true));
+        assert!(!signs(&crate::host_triple(), "native", true));
+        if cfg!(target_os = "macos") {
+            assert!(!signs(&crate::host_triple(), "native", false));
         }
     }
 
