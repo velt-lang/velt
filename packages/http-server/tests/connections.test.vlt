@@ -163,23 +163,26 @@ describe("velt/net/http's idle timeout", () => {
     });
     const c = await connect(`127.0.0.1:${server.port}`);
     try {
-      // Busy: a request held for three times the timeout, however long that really takes; it
-      // is answered on the same connection.
+      // Busy: a request held for three times the timeout, however long that really takes.
       await c.write("GET /held HTTP/1.1\r\nHost: x\r\n\r\n");
       await timeout(arrivals(g), 5000);
       // timing: the idle timeout is the subject; a request stays in flight past it.
       await delay(900);
-      open(g);
-      expect((await timeout(c.readString(), 5000)).startsWith("HTTP/1.1 200")).toBe(true);
-      // And the next one too, sent at once. The connection is idle from the end of its
-      // response, which comes after this moment however late this side runs: so it closes at
-      // least idleTimeout after it (less the timer granularity, about 15 ms on Windows).
-      const idleFrom = Date.now();
+      // The next request is sent while the first is still held (pipelined), so the server has
+      // it when it finishes the first: the connection is never idle between the two, however
+      // late this side runs. (Sent after the first's response, it had to arrive within
+      // idleTimeout of it, #2045.)
       await c.write("GET / HTTP/1.1\r\nHost: x\r\n\r\n");
-      expect((await timeout(c.readString(), 5000)).startsWith("HTTP/1.1 200")).toBe(true);
-      // Then idle: closed, and no sooner than the timeout.
-      expect(await timeout(readAll(c), 10000)).toBe("");
-      expect(Date.now() - idleFrom >= 280).toBe(true);
+      // Both are answered on the same connection. It is idle from the end of the second
+      // response, which comes after this moment: so it closes at least idleTimeout after it
+      // (less the timer granularity, about 15 ms on Windows).
+      const idleFrom = Date.now();
+      open(g);
+      const text = await timeout(readAll(c), 10000);
+      const closedAfter = Date.now() - idleFrom;
+      expect(text.split("HTTP/1.1 200 OK").length).toBe(3);
+      expect(text.endsWith("\r\n\r\nok")).toBe(true);
+      expect(closedAfter >= 280).toBe(true);
     } finally {
       c.close();
       server.close();
