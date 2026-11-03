@@ -676,6 +676,9 @@ pub const DELETED: &[&str] = &[
     "velt_rt_str_from_u64",
     "velt_rt_strbuf_push_i64",
     "velt_rt_strbuf_push_u64",
+    // #2197: `console.log` of an integer (std/lang/hooks/number_text).
+    "velt_rt_write_i64",
+    "velt_rt_write_u64",
 ];
 
 /// The hook whose qualified name is `qualified` (`std/lang/hooks/number::f64ToString`).

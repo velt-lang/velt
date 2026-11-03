@@ -161,8 +161,8 @@ impl ProgramBuilder {
         use Ty::*;
         let rt = Rt {
             write_str: pb.ext("velt_rt_write_str", &[U32, Ptr], Unit, false),
-            write_i64: pb.ext("velt_rt_write_i64", &[U32, I64], Unit, false),
-            write_u64: pb.ext("velt_rt_write_u64", &[U32, U64], Unit, false),
+            write_i64: pb.ext("velt_test_write_i64", &[U32, I64], Unit, false),
+            write_u64: pb.ext("velt_test_write_u64", &[U32, U64], Unit, false),
             write_f64: pb.ext("velt_rt_write_f64", &[U32, F64], Unit, false),
             write_bool: pb.ext("velt_rt_write_bool", &[U32, Bool], Unit, false),
             write_byte: pb.ext("velt_rt_write_byte", &[U32, U8], Unit, false),

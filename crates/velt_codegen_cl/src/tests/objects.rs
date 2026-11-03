@@ -542,7 +542,7 @@ fn data_relocations_for_all_targets() {
             let relocs = data_relocations(&file);
             // Vtable: add, mul, write_i64; holder: pointer to the digits static.
             assert_eq!(relocs.len(), 4, "{ctx}: {relocs:?}");
-            let write_i64 = obj_name(fmt, "velt_rt_write_i64");
+            let write_i64 = obj_name(fmt, "velt_test_write_i64");
             assert!(
                 relocs
                     .iter()

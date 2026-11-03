@@ -24,7 +24,7 @@ static OUT: Mutex<Vec<u8>> = Mutex::new(Vec::new());
 extern "C" { fn velt_main() -> i32; }
 
 #[no_mangle]
-pub extern "C" fn velt_rt_write_i64(_stream: u32, v: i64) {
+pub extern "C" fn velt_test_write_i64(_stream: u32, v: i64) {
     write!(OUT.lock().unwrap(), "{v}").unwrap();
 }
 
@@ -87,7 +87,7 @@ fn build_object(triple: &str) -> Vec<u8> {
     sig_i64.params.push(AbiParam::new(types::I32));
     sig_i64.params.push(AbiParam::new(types::I64));
     let write_i64 = module
-        .declare_function("velt_rt_write_i64", Linkage::Import, &sig_i64)
+        .declare_function("velt_test_write_i64", Linkage::Import, &sig_i64)
         .unwrap();
 
     let mut sig_byte = module.make_signature();
@@ -264,7 +264,7 @@ fn link_and_run_on_host() {
     })
     .unwrap_err();
     assert!(
-        err.contains("velt_rt_write_i64"),
+        err.contains("velt_test_write_i64"),
         "linker error should name the missing symbol:\n{err}"
     );
     std::env::remove_var("VELT_LINKER");

@@ -161,8 +161,8 @@ pub(super) fn call_capturing(main: extern "C" fn() -> i32) -> (i32, String) {
 pub(super) fn stub_symbols() -> [(&'static str, *const u8); 27] {
     [
         ("velt_rt_write_str", rt_write_str as *const u8),
-        ("velt_rt_write_i64", rt_write_i64 as *const u8),
-        ("velt_rt_write_u64", rt_write_u64 as *const u8),
+        ("velt_test_write_i64", rt_write_i64 as *const u8),
+        ("velt_test_write_u64", rt_write_u64 as *const u8),
         ("velt_rt_write_f64", rt_write_f64 as *const u8),
         ("velt_rt_write_bool", rt_write_bool as *const u8),
         ("velt_rt_write_byte", rt_write_byte as *const u8),
@@ -310,8 +310,8 @@ fn backtrace_walks_through_jit_frames() {
         std::hint::black_box(main())
     }
     let mut symbols = stub_symbols();
-    let slot = symbols.iter_mut().find(|(n, _)| *n == "velt_rt_write_i64");
-    slot.expect("stub for velt_rt_write_i64").1 = write_i64_tracing as *const u8;
+    let slot = symbols.iter_mut().find(|(n, _)| *n == "velt_test_write_i64");
+    slot.expect("stub for velt_test_write_i64").1 = write_i64_tracing as *const u8;
     let mut session = crate::DevSession::new(&symbols);
     let fib = programs::all().into_iter().find(|p| p.name == "fib");
     let program = session.load(&fib.expect("fib program").program).unwrap();
