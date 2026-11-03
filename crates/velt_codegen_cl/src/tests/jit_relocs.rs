@@ -35,10 +35,14 @@ impl CodeReloc {
 /// Relocations in the code of `program` compiled as for the JIT.
 fn jit_code_relocations(program: &velt_vir::vir::Program, optimize: bool) -> Vec<CodeReloc> {
     let isa = crate::isa::make_isa(&crate::host_triple(), None, optimize, true).unwrap();
-    let builder =
-        ObjectBuilder::new(isa, "jit", cranelift_module::default_libcall_names()).unwrap();
+    let builder = ObjectBuilder::new(
+        isa.clone(),
+        "jit",
+        cranelift_module::default_libcall_names(),
+    )
+    .unwrap();
     let mut module = ObjectModule::new(builder);
-    build_module(&mut module, program, &Naming::Program).unwrap();
+    build_module(&mut module, &*isa, program, &Naming::Program).unwrap();
     let bytes = module.finish().emit().unwrap();
     let file = object::File::parse(&*bytes).unwrap();
     let mut out = vec![];

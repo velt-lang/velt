@@ -6,13 +6,12 @@
 
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{self, types, InstBuilder};
-use cranelift_module::Module;
 use velt_vir::simd::Lanes;
 
 use super::place::mem_flags;
 use super::Translator;
 
-impl<M: Module> Translator<'_, '_, M> {
+impl Translator<'_, '_> {
     /// The vector of the `count` elements from `at` of `array`, zeros above them.
     pub(super) fn simd_load_partial(
         &mut self,

@@ -3,11 +3,10 @@
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{self, types, InstBuilder};
-use cranelift_module::{Linkage, Module};
 use velt_vir::vir::{BinOp, Operand, Ty};
 
-use super::Translator;
-use crate::abi::{as_int, make_signature, scalar_type};
+use super::{LibFunction, Translator};
+use crate::abi::{as_int, scalar_type};
 use crate::CodegenResult;
 
 /// Integer comparison condition for `op`, or `None` if `op` is not a comparison.
@@ -41,7 +40,7 @@ fn float_cc(op: BinOp) -> Option<FloatCC> {
     })
 }
 
-impl<M: Module> Translator<'_, '_, M> {
+impl Translator<'_, '_> {
     pub(super) fn binary(
         &mut self,
         op: BinOp,
@@ -166,31 +165,21 @@ impl<M: Module> Translator<'_, '_, M> {
         }
     }
 
-    /// `fmod`/`fmodf` from the C library (Cranelift has no float remainder instruction).
+    /// `fmod`/`fmodf` from the C library (Cranelift has no float remainder instruction). Workers
+    /// translate functions in parallel against a module they cannot declare into, so a function
+    /// needing one not yet declared stops: the module declares it and translates it again.
     fn fmod_ref(&mut self, ty: Ty) -> CodegenResult<ir::FuncRef> {
-        let is_f32 = ty == Ty::F32;
-        let cached = if is_f32 {
-            self.libs.fmodf
+        let lib = if ty == Ty::F32 {
+            LibFunction::Fmodf
         } else {
-            self.libs.fmod
+            LibFunction::Fmod
         };
-        let id = match cached {
-            Some(id) => id,
+        match self.module.lib(lib) {
+            Some(id) => Ok(self.func_ref(id)),
             None => {
-                let name = if is_f32 { "fmodf" } else { "fmod" };
-                let sig = make_signature(self.decls.call_conv, &[ty, ty], ty)?;
-                let id = self
-                    .module
-                    .declare_function(name, Linkage::Import, &sig)
-                    .map_err(|e| format!("declaring `{name}`: {e}"))?;
-                if is_f32 {
-                    self.libs.fmodf = Some(id);
-                } else {
-                    self.libs.fmod = Some(id);
-                }
-                id
+                self.needs = Some(lib);
+                bail!("`{}` is not declared yet", lib.name())
             }
-        };
-        Ok(self.func_ref(id))
+        }
     }
 }

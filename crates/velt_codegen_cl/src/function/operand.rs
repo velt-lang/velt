@@ -1,14 +1,14 @@
 //! Operands: place reads, constants, and symbol references (functions, externs, statics).
 
 use cranelift_codegen::ir::{self, types, InstBuilder};
-use cranelift_module::{FuncId, Module};
+use cranelift_module::FuncId;
 use velt_vir::vir::{self, Const, Operand, StaticId, Ty};
 
 use super::{Translator, Val};
 use crate::abi::cl_type;
 use crate::CodegenResult;
 
-impl<M: Module> Translator<'_, '_, M> {
+impl Translator<'_, '_> {
     /// Evaluate an operand; aggregates evaluate to their address.
     pub(super) fn operand(&mut self, op: &Operand) -> CodegenResult<(Val, Ty)> {
         match op {

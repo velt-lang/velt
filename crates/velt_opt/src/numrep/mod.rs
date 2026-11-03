@@ -94,7 +94,7 @@ pub(crate) struct Env<'p> {
     /// The arrays' aggregate: its field 1 is a length, below 2^53.
     array: Option<AggId>,
     /// Per aggregate, its field types: the type of a value read from a field.
-    field_tys: std::rc::Rc<[Vec<Ty>]>,
+    field_tys: std::sync::Arc<[Vec<Ty>]>,
     /// Facts about parameters that every call passes a constant (`params`).
     params: params::ParamFacts,
     /// Number formatters and their integer twins (`print`).

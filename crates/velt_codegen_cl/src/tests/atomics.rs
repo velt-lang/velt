@@ -149,14 +149,19 @@ const VALUES: [u64; 10] = [
 fn mismatches(target: &str, optimize: bool) -> Vec<String> {
     let calls = calls();
     let isa = crate::isa::make_isa(target, None, optimize, true).expect("ISA");
-    let mut jb = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+    let mut jb = JITBuilder::with_isa(isa.clone(), cranelift_module::default_libcall_names());
     for (name, p) in super::jit::stub_symbols() {
         jb.symbol(name, p);
     }
     let mut module = JITModule::new(jb);
     let program = program(&calls);
-    let built = crate::module::build_module(&mut module, &program, &crate::module::Naming::Program)
-        .expect("build");
+    let built = crate::module::build_module(
+        &mut module,
+        &*isa,
+        &program,
+        &crate::module::Naming::Program,
+    )
+    .expect("build");
     for e in program
         .externs
         .iter()
@@ -260,14 +265,19 @@ fn threaded_totals(target: &str, optimize: bool) -> [u64; 4] {
         },
     ];
     let isa = crate::isa::make_isa(target, None, optimize, true).expect("ISA");
-    let mut jb = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+    let mut jb = JITBuilder::with_isa(isa.clone(), cranelift_module::default_libcall_names());
     for (name, p) in super::jit::stub_symbols() {
         jb.symbol(name, p);
     }
     let mut module = JITModule::new(jb);
     let program = program(&calls);
-    let built = crate::module::build_module(&mut module, &program, &crate::module::Naming::Program)
-        .expect("build");
+    let built = crate::module::build_module(
+        &mut module,
+        &*isa,
+        &program,
+        &crate::module::Naming::Program,
+    )
+    .expect("build");
     module.finalize_definitions().expect("finalize");
     type Entry = extern "C" fn(*mut u64, u64, u64) -> u64;
     let f: Vec<usize> = (0..calls.len())

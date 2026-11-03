@@ -12,7 +12,6 @@
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{self, types, AtomicRmwOp, InstBuilder, MemFlags};
 use cranelift_codegen::isa::TargetIsa;
-use cranelift_module::Module;
 use target_lexicon::Architecture;
 use velt_vir::atomic::{AtomicCall, Rmw};
 use velt_vir::vir::{Callee, Ty};
@@ -51,7 +50,7 @@ fn ll_sc_loops(isa: &dyn TargetIsa) -> bool {
             .any(|f| f.name == "has_lse" && f.as_bool() == Some(true))
 }
 
-impl<M: Module> Translator<'_, '_, M> {
+impl Translator<'_, '_> {
     /// Emit the atomic extern `callee` inline, if it is one with the expected signature
     /// (`values`: the word's address first).
     pub(super) fn inline_atomic(

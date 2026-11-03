@@ -455,13 +455,18 @@ fn no_debug_info_without_locations() {
 fn jit_image_describes_the_code() {
     let program = located_fib();
     let isa = crate::isa::make_isa(&crate::host_triple(), None, false, true).unwrap();
-    let mut jb = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+    let mut jb = JITBuilder::with_isa(isa.clone(), cranelift_module::default_libcall_names());
     for (name, p) in super::jit::stub_symbols() {
         jb.symbol(name, p);
     }
     let mut module = JITModule::new(jb);
-    let built = crate::module::build_module(&mut module, &program, &crate::module::Naming::Program)
-        .unwrap();
+    let built = crate::module::build_module(
+        &mut module,
+        &*isa,
+        &program,
+        &crate::module::Naming::Program,
+    )
+    .unwrap();
     module.finalize_definitions().unwrap();
     assert_eq!(built.lines.len(), program.funcs.len());
     let addresses: Vec<u64> = (built.lines.iter())

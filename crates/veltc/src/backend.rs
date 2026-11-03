@@ -57,7 +57,8 @@ impl Backend {
     }
 
     /// Generate the object files for `program`, appending the time of the backend's steps to
-    /// `timings` where it reports them (LLVM: printing the IR, then clang). Cranelift makes one
+    /// `timings` (Cranelift: declaring, the functions, defining them, the object; LLVM: printing
+    /// the IR, then clang). Cranelift makes one
     /// object; LLVM one per codegen unit (`units`, see `velt_codegen_llvm::emit_objects_timed`).
     /// Both go through the machine's build cache (`build_cache`); the stats say how much came
     /// from it (Cranelift: functions; LLVM: codegen units), `None` without a cache.
@@ -73,7 +74,8 @@ impl Backend {
             Backend::Cranelift => {
                 let cache = cache.map(crate::build_cache::Functions);
                 let cache = cache.as_ref().map(|c| c as &dyn CodeCache);
-                let (obj, stats) = velt_codegen_cl::emit_object_cached(program, opts, cache)?;
+                let (obj, stats) =
+                    velt_codegen_cl::emit_object_timed(program, opts, cache, timings)?;
                 Ok((vec![obj], cache.map(|_| stats)))
             }
             Backend::Llvm => {

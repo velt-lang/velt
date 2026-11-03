@@ -6,8 +6,10 @@
 //! calls and addresses go to a function's trampoline, and only the functions that changed are
 //! translated (dev/).
 
+use std::time::{Duration, Instant};
+
 use cranelift_codegen::ir::UserFuncName;
-use cranelift_codegen::isa::CallConv;
+use cranelift_codegen::isa::{CallConv, TargetIsa};
 use cranelift_codegen::Context;
 use cranelift_frontend::FunctionBuilderContext;
 use cranelift_module::{DataDescription, DataId, FuncId, Linkage, Module, ModuleReloc};
@@ -16,9 +18,10 @@ use target_lexicon::BinaryFormat;
 use velt_vir::vir;
 
 use crate::abi::{make_signature, validate_aggregates};
-use crate::cache::{compile_all, CacheStats, CodeCache};
+use crate::cache::{compile_one, CacheStats, CodeCache};
 use crate::debug_info::FunctionLines;
-use crate::function::{translate_function, LibFunctions};
+use crate::function::{translate_function, LibFunction, Target, Translation};
+use crate::parallel;
 use crate::unwind::FunctionUnwind;
 use crate::CodegenResult;
 
@@ -37,6 +40,8 @@ pub(crate) struct Built {
     pub lines: Vec<FunctionLines>,
     /// How many functions came from the cache.
     pub cache: CacheStats,
+    /// The time of each step: declaring, translating and compiling (on every core), defining.
+    pub timings: Vec<(&'static str, Duration)>,
 }
 
 /// Module-level ids of the program's entities, indexed by VIR id.
@@ -73,84 +78,144 @@ pub(crate) struct DevFunction {
     pub code: Option<String>,
 }
 
-/// Declare and define everything in `program` inside `module`.
+/// Declare and define everything in `program` inside `module`, whose ISA is `isa`.
 pub(crate) fn build_module<M: Module>(
     module: &mut M,
+    isa: &dyn TargetIsa,
     program: &vir::Program,
     naming: &Naming,
 ) -> CodegenResult<Built> {
-    build_module_cached(module, program, naming, None)
+    build_module_cached(module, isa, program, naming, None, parallel::jobs())
 }
 
-/// [`build_module`], compiling the functions on every core and through `cache` (see `cache`).
-/// Functions translated and compiled together: enough to keep every core busy, few enough that
-/// their contexts take little memory (all of a 30 000-function program's took a gigabyte).
-const BATCH: usize = 1024;
-
+/// [`build_module`], translating and compiling the functions on `jobs` threads and through
+/// `cache` (see `cache`).
 pub(crate) fn build_module_cached<M: Module>(
     module: &mut M,
+    isa: &dyn TargetIsa,
     program: &vir::Program,
     naming: &Naming,
     cache: Option<&dyn CodeCache>,
+    jobs: usize,
 ) -> CodegenResult<Built> {
+    let start = Instant::now();
     validate_aggregates(program)?;
     let (decls, defs) = declare_all(module, program, naming)?;
+    let target = Target::of(isa, module);
+    let declared = start.elapsed();
 
-    // In batches, so that only one batch's contexts (IR and code) are alive at a time: translate
-    // its functions (sequential: it declares into the module), compile them (in parallel,
-    // through the cache), and define their code in order.
-    let mut libs = LibFunctions::default();
-    let mut builder_ctx = FunctionBuilderContext::new();
+    // Workers translate and compile against `target`, a copy of the declarations, while this
+    // thread defines the code in the module in the functions' order: the object does not
+    // depend on the number of workers or on which one compiled what.
+    let start = Instant::now();
+    let mut defining = Duration::ZERO;
     let mut stats = CacheStats::default();
     let mut unwind = Vec::new();
     let mut lines = Vec::new();
     let defined: Vec<(FuncId, &vir::Function)> = (program.funcs.iter().enumerate())
         .filter_map(|(i, func)| Some((defs[i]?, func)))
         .collect();
-    for batch in defined.chunks(BATCH) {
-        let mut translated = Vec::with_capacity(batch.len());
-        for &(id, func) in batch {
-            let mut ctx = module.make_context();
-            ctx.func.signature = make_signature(decls.call_conv, &func.params, func.ret)?;
-            ctx.func.name = UserFuncName::user(0, id.as_u32());
-            let srclocs = translate_function(
-                module,
-                program,
-                &decls,
-                &mut libs,
-                func,
-                &mut ctx.func,
-                &mut builder_ctx,
-            )
-            .map_err(|e| format!("codegen: in function `{}`: {e}", func.symbol))?;
-            translated.push((ctx, srclocs));
-        }
-        let symbols: Vec<&str> = batch.iter().map(|(_, f)| f.symbol.as_str()).collect();
-        let mut ctxs: Vec<Context> = translated
-            .iter_mut()
-            .map(|t| take_context(&mut t.0))
-            .collect();
-        stats.add(compile_all(module.isa(), &mut ctxs, &symbols, cache)?);
-        for ((&(id, func), (_, srclocs)), ctx) in batch.iter().zip(&translated).zip(&ctxs) {
-            define_compiled(module, id, ctx, &func.symbol)?;
-            unwind.extend(unwind_info(module, id, ctx, &func.symbol)?);
-            if !program.files.is_empty() {
-                lines.extend(FunctionLines::new(id, func, ctx, srclocs));
+    let compile = |builder_ctx: &mut FunctionBuilderContext, i: usize| {
+        let (id, func) = defined[i];
+        compile_function(&target, program, &decls, id, func, builder_ctx, cache)
+    };
+    let mut own_builder_ctx = FunctionBuilderContext::new();
+    let define = |i: usize, outcome: CodegenResult<Outcome>| -> CodegenResult<()> {
+        let (id, func) = defined[i];
+        let mut outcome = outcome?;
+        // A function calling a C library function the module has not declared: declare it here
+        // (in the functions' order, so its id does not depend on the workers either) and
+        // compile the function again.
+        while let Outcome::NeedsLib(lib) = outcome {
+            if target.lib(lib).is_none() {
+                let ty = lib.ty();
+                let sig = make_signature(decls.call_conv, &[ty, ty], ty)?;
+                let id = module
+                    .declare_function(lib.name(), Linkage::Import, &sig)
+                    .map_err(|e| format!("codegen: declaring `{}`: {e}", lib.name()))?;
+                target.add_lib(lib, id, sig);
             }
+            outcome = compile(&mut own_builder_ctx, i)?;
         }
-    }
+        let Outcome::Compiled(compiled) = outcome else {
+            unreachable!("ICE: a function still needs a C library function");
+        };
+        let start = Instant::now();
+        define_compiled(module, id, &compiled.ctx, &func.symbol)?;
+        defining += start.elapsed();
+        stats.add(CacheStats::of(&[compiled.hit]));
+        unwind.extend(compiled.unwind);
+        lines.extend(compiled.lines);
+        Ok(())
+    };
+    parallel::ordered(
+        defined.len(),
+        jobs,
+        FunctionBuilderContext::new,
+        compile,
+        define,
+    )?;
+    let compiling = start.elapsed();
     Ok(Built {
         funcs: defs,
         references: decls.funcs,
         unwind,
         lines,
         cache: stats,
+        timings: vec![
+            ("declare", declared),
+            ("functions", compiling),
+            ("define", defining),
+        ],
     })
 }
 
-/// The context in `slot`, leaving an empty one.
-fn take_context(slot: &mut Context) -> Context {
-    std::mem::replace(slot, Context::new())
+/// A function translated and compiled by a worker, ready to define.
+struct Compiled {
+    ctx: Context,
+    /// Its code came from the cache.
+    hit: bool,
+    unwind: Option<FunctionUnwind>,
+    lines: Option<FunctionLines>,
+}
+
+enum Outcome {
+    Compiled(Box<Compiled>),
+    /// It calls a C library function the module has not declared yet.
+    NeedsLib(LibFunction),
+}
+
+/// Translate and compile `func` (declared as `id`), on any thread.
+fn compile_function(
+    target: &Target,
+    program: &vir::Program,
+    decls: &Declarations,
+    id: FuncId,
+    func: &vir::Function,
+    builder_ctx: &mut FunctionBuilderContext,
+    cache: Option<&dyn CodeCache>,
+) -> CodegenResult<Outcome> {
+    let mut ctx = Context::new();
+    ctx.func.signature = make_signature(decls.call_conv, &func.params, func.ret)?;
+    ctx.func.name = UserFuncName::user(0, id.as_u32());
+    let translated = translate_function(target, program, decls, func, &mut ctx.func, builder_ctx)
+        .map_err(|e| format!("codegen: in function `{}`: {e}", func.symbol))?;
+    let srclocs = match translated {
+        Translation::Done(srclocs) => srclocs,
+        Translation::NeedsLib(lib) => return Ok(Outcome::NeedsLib(lib)),
+    };
+    let hit = compile_one(target.isa(), &mut ctx, &func.symbol, cache)?;
+    let unwind = unwind_info(target.isa(), id, &ctx, &func.symbol)?;
+    let lines = match program.files.is_empty() {
+        true => None,
+        false => FunctionLines::new(id, func, &ctx, &srclocs),
+    };
+    Ok(Outcome::Compiled(Box::new(Compiled {
+        ctx,
+        hit,
+        unwind,
+        lines,
+    })))
 }
 
 /// Declarations of everything, plus the ids of the function code this module defines.
@@ -449,7 +514,7 @@ pub(crate) fn define<M: Module>(
     ctx: &mut Context,
     symbol: &str,
 ) -> CodegenResult<()> {
-    crate::cache::compile_all(module.isa(), std::slice::from_mut(ctx), &[symbol], None)?;
+    compile_one(module.isa(), ctx, symbol, None)?;
     define_compiled(module, id, ctx, symbol)
 }
 
@@ -475,8 +540,8 @@ fn define_compiled<M: Module>(
         .map_err(|e| format!("codegen: defining function `{symbol}` failed: {e:?}"))
 }
 
-pub(crate) fn unwind_info<M: Module>(
-    module: &M,
+pub(crate) fn unwind_info(
+    isa: &dyn TargetIsa,
     id: FuncId,
     ctx: &Context,
     symbol: &str,
@@ -484,7 +549,7 @@ pub(crate) fn unwind_info<M: Module>(
     let Some(code) = ctx.compiled_code() else {
         return Ok(None);
     };
-    let info = crate::unwind::function_unwind(code, module.isa())
+    let info = crate::unwind::function_unwind(code, isa)
         .map_err(|e| format!("codegen: unwind info for `{symbol}`: {e}"))?;
     Ok(info.map(|info| (id, code.code_info().total_size, info)))
 }

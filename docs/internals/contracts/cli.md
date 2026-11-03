@@ -315,7 +315,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   (the default) and no `--report` skip parsing, checking and codegen when `<exe>.build-stamp`
   matches: the compiler (version, executable size and time), the options, a generated root's
   source, the `VELT_*` environment (but `VELT_BUILD_CACHE*`, `VELT_BUILD_STAMP`,
-  `VELT_CACHE_STATS`, `VELT_TEST_PLAN`), clang for LLVM builds, every file the build read (the
+  `VELT_CACHE_STATS`, `VELT_TEST_PLAN`, `VELT_JOBS`), clang for LLVM builds, every file the build read (the
   session's source map and the configuration files module resolution read) by content hash (the
   size and time it had when it was read first, not recorded when it was modified less than 2 s
   before it was read, and not trusted when not older than the stamp), what
@@ -477,7 +477,11 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `[a-z][a-z0-9._-]*`) requires `<prefix>/bin/velt` and writes the absolute prefix to
   `<root>/links/<name>`.
 - `--emit vir` prints VIR (`Display`) to stdout and stops. `-v` prints per-stage timings;
-  `--timings` adds each optimizer pass and, with the LLVM backend, IR printing and clang.
+  `--timings` adds each optimizer pass and, with the LLVM backend, IR printing and clang (with
+  Cranelift: `verify`, `declare`, `functions`, `define`, `object`). Debug builds run the
+  optimizer's per-function passes and Cranelift's translation and compilation on
+  `$VELT_JOBS` threads (a positive number, at most 4 per core; default: the available parallelism), summing a pass's
+  time over the threads; the object is the same bytes on any number of threads.
 - Debug info: debug builds always carry it; `-g` keeps it in a `--release` build (and links with
   debug settings: PDB on Windows, no `-s` strip on Linux). With the LLVM backend it is full line
   info (`.vlt` file:line in debuggers and symbolizers); with Cranelift, DWARF line tables in ELF,

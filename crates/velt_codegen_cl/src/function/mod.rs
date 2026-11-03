@@ -36,6 +36,7 @@ mod slots_tests;
 mod stmt;
 #[cfg(test)]
 mod storage_tests;
+mod target;
 mod terminator;
 mod tls;
 
@@ -45,7 +46,7 @@ use cranelift_codegen::entity::EntityRef;
 use cranelift_codegen::ir::{self, InstBuilder, StackSlotData, StackSlotKey, StackSlotKind};
 use cranelift_codegen::isa::TargetFrontendConfig;
 use cranelift_frontend::{FunctionBuilder, FunctionBuilderContext, Variable};
-use cranelift_module::{DataId, FuncId, Module};
+use cranelift_module::{DataId, FuncId};
 use target_lexicon::{Architecture, BinaryFormat};
 use velt_vir::vir::{self, BlockId, Place, Proj, Rvalue, SrcLoc, Stmt, Terminator, Ty};
 
@@ -53,12 +54,7 @@ use crate::abi::{scalar_type, size_align};
 use crate::module::Declarations;
 use crate::CodegenResult;
 
-/// C library functions imported on demand (float remainder), shared across functions.
-#[derive(Default)]
-pub(crate) struct LibFunctions {
-    fmod: Option<FuncId>,
-    fmodf: Option<FuncId>,
-}
+pub(crate) use target::{LibFunction, Target};
 
 /// Where a local lives.
 #[derive(Clone, Copy)]
@@ -100,11 +96,13 @@ enum Val {
 }
 
 /// Per-function translation state.
-struct Translator<'a, 'b, M: Module> {
-    module: &'a mut M,
+struct Translator<'a, 'b> {
+    module: &'a Target<'a>,
     program: &'a vir::Program,
     decls: &'a Declarations,
-    libs: &'a mut LibFunctions,
+    /// A C library function the module has not declared yet, which the function calls (the
+    /// translation then fails, see `Translation::NeedsLib`).
+    needs: Option<LibFunction>,
     function: &'a vir::Function,
     builder: FunctionBuilder<'b>,
     frontend_config: TargetFrontendConfig,
@@ -142,36 +140,49 @@ struct Shadows {
     by_var: FxHashMap<usize, ir::StackSlot>,
 }
 
-/// Translate `function` into `func` (whose signature and name are already set). Returns the
-/// source locations its instructions carry (Cranelift `SourceLoc` *n* is entry *n*; empty
-/// without debug info).
-pub(crate) fn translate_function<M: Module>(
-    module: &mut M,
+/// The outcome of [`translate_function`].
+pub(crate) enum Translation {
+    /// The source locations the instructions carry (Cranelift `SourceLoc` *n* is entry *n*;
+    /// empty without debug info).
+    Done(Vec<SrcLoc>),
+    /// The function calls this C library function, which the module must declare first.
+    NeedsLib(LibFunction),
+}
+
+/// Translate `function` into `func` (whose signature and name are already set).
+pub(crate) fn translate_function(
+    module: &Target,
     program: &vir::Program,
     decls: &Declarations,
-    libs: &mut LibFunctions,
     function: &vir::Function,
     func: &mut ir::Function,
     builder_ctx: &mut FunctionBuilderContext,
-) -> CodegenResult<Vec<SrcLoc>> {
+) -> CodegenResult<Translation> {
     check_shape(function)?;
     let in_memory = memory_locals(function)?;
     let mut single = single_assignments(function, &in_memory);
     let (signature, name) = (func.signature.clone(), func.name.clone());
     loop {
-        let (demote, srclocs) = translate_once(
+        let attempt = translate_once(
             module,
             program,
             decls,
-            libs,
             function,
             func,
             builder_ctx,
             &in_memory,
             &single,
         )?;
+        let (demote, srclocs) = match attempt {
+            Ok(done) => done,
+            Err(lib) => {
+                // The builder stopped half-way: its context is not reusable as it is.
+                *builder_ctx = FunctionBuilderContext::new();
+                return Ok(Translation::NeedsLib(lib));
+            }
+        };
         if demote.is_empty() {
-            return Ok(srclocs);
+            return Ok(Translation::Done(srclocs));
         }
         for local in demote {
             single[local as usize] = false;
@@ -182,20 +193,23 @@ pub(crate) fn translate_function<M: Module>(
     }
 }
 
+/// The single-assignment locals to translate again as variables, and the source locations.
+type Attempt = (Vec<u32>, Vec<SrcLoc>);
+
 /// One translation attempt; returns the single-assignment locals that must become variables
-/// (then `func` holds a finished but meaningless body), and the source location table.
+/// (then `func` holds a finished but meaningless body), and the source location table; or the
+/// C library function it needs declared.
 #[allow(clippy::too_many_arguments)]
-fn translate_once<M: Module>(
-    module: &mut M,
+fn translate_once(
+    module: &Target,
     program: &vir::Program,
     decls: &Declarations,
-    libs: &mut LibFunctions,
     function: &vir::Function,
     func: &mut ir::Function,
     builder_ctx: &mut FunctionBuilderContext,
     in_memory: &[bool],
     single: &[bool],
-) -> CodegenResult<(Vec<u32>, Vec<SrcLoc>)> {
+) -> CodegenResult<Result<Attempt, LibFunction>> {
     let frontend_config = module.target_config();
     let triple = module.isa().triple();
     let far_addresses = matches!(triple.architecture, Architecture::Aarch64(_))
@@ -210,7 +224,7 @@ fn translate_once<M: Module>(
         module,
         program,
         decls,
-        libs,
+        needs: None,
         function,
         builder,
         frontend_config,
@@ -228,13 +242,19 @@ fn translate_once<M: Module>(
         srcloc_ids: FxHashMap::default(),
         shadows,
     };
-    translator.run()?;
+    if let Err(e) = translator.run() {
+        // Not an error of the function: the module declares the function and translates again.
+        if let Some(lib) = translator.needs {
+            return Ok(Err(lib));
+        }
+        return Err(e);
+    }
     translator.builder.seal_all_blocks();
     translator.builder.finalize();
     let mut demote = translator.demote;
     demote.sort_unstable();
     demote.dedup();
-    Ok((demote, translator.srclocs))
+    Ok(Ok((demote, translator.srclocs)))
 }
 
 fn check_shape(function: &vir::Function) -> CodegenResult<()> {
@@ -388,7 +408,7 @@ fn allocate_locals(
     Ok((storage, shadows))
 }
 
-impl<M: Module> Translator<'_, '_, M> {
+impl Translator<'_, '_> {
     fn run(&mut self) -> CodegenResult<()> {
         // A separate entry block: VIR block 0 may be a loop header, and Cranelift's entry
         // block cannot have predecessors.

@@ -5,7 +5,8 @@
 //! - `isa`: target triple → configured Cranelift ISA (PIC, stack probes, frame pointers); `cpu`:
 //!   the CPU it is for (`--cpu`) and the features code for it needs.
 //! - `module`: `build_module<M: Module>` declares/defines a whole program in any Cranelift
-//!   module (the object backend and the JIT share the exact same path).
+//!   module (the object backend and the JIT share the exact same path); `parallel`: its
+//!   functions translated and compiled on every core, defined in order.
 //! - `dev`: [`DevSession`], the in-process JIT behind `velt dev`, with hot swap; `c_symbols`:
 //!   the C library functions it resolves by address; `jit_memory`: one contiguous arena per JIT
 //!   module.
@@ -15,6 +16,8 @@
 //! - `debug_info`: DWARF line tables (objects, and JIT code through the GDB JIT interface).
 //! - `unwind`: unwind tables (Windows x64/arm64 `.pdata`/`.xdata`, ELF/Mach-O eh_frame), and their
 //!   run-time registration for JIT code.
+
+use std::time::{Duration, Instant};
 
 use cranelift_object::{ObjectBuilder, ObjectModule};
 use velt_vir::vir;
@@ -37,6 +40,7 @@ mod function;
 mod isa;
 mod jit_memory;
 mod module;
+mod parallel;
 mod tls;
 mod unwind;
 #[cfg(windows)]
@@ -81,7 +85,31 @@ pub fn emit_object_cached(
     opts: &CodegenOptions,
     cache: Option<&dyn CodeCache>,
 ) -> Result<(Vec<u8>, CacheStats), String> {
-    if let Err(errs) = velt_vir::verify(program) {
+    emit_object_timed(program, opts, cache, &mut Vec::new())
+}
+
+/// [`emit_object_cached`], appending the time of each step to `timings` (`velt build --timings`).
+pub fn emit_object_timed(
+    program: &vir::Program,
+    opts: &CodegenOptions,
+    cache: Option<&dyn CodeCache>,
+    timings: &mut Vec<(&'static str, Duration)>,
+) -> Result<(Vec<u8>, CacheStats), String> {
+    emit_object_on(program, opts, cache, timings, parallel::jobs())
+}
+
+/// [`emit_object_timed`] on `jobs` threads.
+fn emit_object_on(
+    program: &vir::Program,
+    opts: &CodegenOptions,
+    cache: Option<&dyn CodeCache>,
+    timings: &mut Vec<(&'static str, Duration)>,
+    jobs: usize,
+) -> Result<(Vec<u8>, CacheStats), String> {
+    let start = Instant::now();
+    let verified = velt_vir::verify(program);
+    timings.push(("verify", start.elapsed()));
+    if let Err(errs) = verified {
         return Err(format!("invalid VIR:\n  {}", errs.join("\n  ")));
     }
     let isa = isa::make_isa(&opts.target, opts.cpu.as_deref(), opts.optimize, false)?;
@@ -92,13 +120,23 @@ pub fn emit_object_cached(
     )
     .map_err(|e| format!("codegen: cannot create object builder: {e}"))?;
     let mut module = ObjectModule::new(builder);
-    let built = module::build_module_cached(&mut module, program, &module::Naming::Program, cache)?;
+    let built = module::build_module_cached(
+        &mut module,
+        &*isa,
+        program,
+        &module::Naming::Program,
+        cache,
+        jobs,
+    )?;
+    timings.extend_from_slice(&built.timings);
+    let start = Instant::now();
     let mut product = module.finish();
     unwind::add_unwind_info(&mut product, &*isa, &built.unwind)?;
     debug_info::object::add_debug_info(&mut product, program, &built.lines)?;
     let obj = product
         .emit()
         .map_err(|e| format!("codegen: cannot write object file: {e}"))?;
+    timings.push(("object", start.elapsed()));
     Ok((obj, built.cache))
 }
 

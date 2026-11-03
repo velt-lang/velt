@@ -3,14 +3,13 @@
 //! defines them as functions instead and calls stay calls.
 
 use cranelift_codegen::ir::{self, types, InstBuilder, MemFlags};
-use cranelift_module::Module;
 use velt_vir::tls::TlsCall;
 use velt_vir::vir::Callee;
 
 use super::simd::Inlined;
 use super::Translator;
 
-impl<M: Module> Translator<'_, '_, M> {
+impl Translator<'_, '_> {
     /// Emit the thread-local extern `callee` inline, if it is one and the module has its data.
     pub(super) fn inline_tls(&mut self, callee: &Callee, values: &[ir::Value]) -> Option<Inlined> {
         let Callee::Extern(id) = callee else {

@@ -13,14 +13,13 @@
 use cranelift_codegen::ir::condcodes::FloatCC;
 use cranelift_codegen::ir::{self, types::F64, types::I64, InstBuilder};
 use cranelift_codegen::isa::TargetIsa;
-use cranelift_module::Module;
 use target_lexicon::Architecture;
 
 use super::Translator;
 
 pub(super) use velt_vir::math::Rounding;
 
-impl<M: Module> Translator<'_, '_, M> {
+impl Translator<'_, '_> {
     /// `x` (an `f64`) rounded as `how` says.
     pub(super) fn round_f64(&mut self, x: ir::Value, how: Rounding) -> ir::Value {
         if how == Rounding::Round {

@@ -1,15 +1,12 @@
 //! Compiling a module's functions on every core, through a cache of compiled code shared between
 //! builds ([`CodeCache`]).
 //!
-//! Translation into Cranelift IR stays sequential (it declares into the module); compilation,
-//! most of the backend's time, runs per function on worker threads. Cranelift keys a cached
+//! Functions translate and compile on worker threads (module.rs, parallel.rs). Cranelift keys a cached
 //! function by its IR with the names it refers to left out, so a function compiles once per
 //! machine however many programs contain it (std's functions and generic instances); the key
 //! covers the target and every setting, and Cranelift rejects entries of another version.
 
 use std::borrow::Cow;
-use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::{Mutex, PoisonError};
 
 use cranelift_codegen::control::ControlPlane;
 use cranelift_codegen::incremental_cache::CacheKvStore;
@@ -53,72 +50,8 @@ impl CacheStats {
     }
 }
 
-/// Below this many functions a module compiles on the calling thread: starting threads costs
-/// more than it saves.
-const PARALLEL_MIN_FUNCTIONS: usize = 32;
-
-/// Compile every context's function for `isa`, through `cache` when there is one; on every core
-/// for larger modules. The compiled code is left in each context. An error names the function.
-pub(crate) fn compile_all(
-    isa: &dyn TargetIsa,
-    ctxs: &mut [Context],
-    symbols: &[&str],
-    cache: Option<&dyn CodeCache>,
-) -> CodegenResult<CacheStats> {
-    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
-    let workers = if ctxs.len() < PARALLEL_MIN_FUNCTIONS {
-        1
-    } else {
-        cores.min(ctxs.len())
-    };
-    let hits = AtomicUsize::new(0);
-    let compile = |ctx: &mut Context, symbol: &str| -> CodegenResult<()> {
-        let hit = compile_one(isa, ctx, symbol, cache)?;
-        if hit {
-            hits.fetch_add(1, Ordering::Relaxed);
-        }
-        Ok(())
-    };
-    if workers == 1 {
-        for (ctx, symbol) in ctxs.iter_mut().zip(symbols) {
-            compile(ctx, symbol)?;
-        }
-    } else {
-        // Workers take the next function left, so a few large ones don't serialize the rest.
-        let queue = Mutex::new(ctxs.iter_mut().zip(symbols).enumerate());
-        let first_error = Mutex::new(None::<(usize, String)>);
-        std::thread::scope(|scope| {
-            for _ in 0..workers {
-                scope.spawn(|| loop {
-                    let next = queue.lock().unwrap_or_else(PoisonError::into_inner).next();
-                    let Some((i, (ctx, symbol))) = next else {
-                        return;
-                    };
-                    if let Err(e) = compile(ctx, symbol) {
-                        let mut first = first_error.lock().unwrap_or_else(PoisonError::into_inner);
-                        if first.as_ref().is_none_or(|(j, _)| i < *j) {
-                            *first = Some((i, e));
-                        }
-                    }
-                });
-            }
-        });
-        let first = first_error
-            .into_inner()
-            .unwrap_or_else(PoisonError::into_inner);
-        if let Some((_, e)) = first {
-            return Err(e);
-        }
-    }
-    let hits = hits.into_inner();
-    Ok(CacheStats {
-        hits,
-        misses: ctxs.len() - hits,
-    })
-}
-
 /// Compile `ctx`'s function; whether it came from the cache.
-fn compile_one(
+pub(crate) fn compile_one(
     isa: &dyn TargetIsa,
     ctx: &mut Context,
     symbol: &str,
@@ -168,6 +101,7 @@ impl Store<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
 
     #[derive(Default)]
     struct Map(Mutex<std::collections::HashMap<Vec<u8>, Vec<u8>>>);
