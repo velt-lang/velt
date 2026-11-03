@@ -210,6 +210,9 @@ Decisions and their rationale, including what is still planned:
 - [HTTP/2](design/http2.md): the HTTP/2 server written in Velt behind `serveHttp`: frames,
   HPACK, streams and flow control on one task per connection, ALPN and h2c, limits against
   rapid reset and its relatives, benchmarks against hyper.
+- [Declared write effects](design/write-effects.md): effect summaries over access paths
+  (writes, stores, returns, calls), inferred for programs and declared by doc tags in std, behind
+  the HTTP handler (#854) and `spawn` (#2014) errors for changes made to a copy (proposed).
 - [Source generators](design/source-generators.md): generic functions whose bodies a library's
   generator, written in Velt, produces per type at compile time from a read-only type model;
   std's JSON, equality, clone and inspect move onto it (proposed).
