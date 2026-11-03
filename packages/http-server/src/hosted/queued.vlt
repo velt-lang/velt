@@ -7,6 +7,7 @@ import { IoError } from "velt/io";
 import { HostRef } from "velt/host";
 import * as worker from "velt/host/worker";
 import { RequestSource } from "velt/net/http";
+import { AbortSignal } from "velt/task";
 import { Peer } from "../serve_info";
 
 /** The server side of a `Request` a JS host queued (internal). */
@@ -70,6 +71,11 @@ export class QueuedRequest implements RequestSource, Peer {
       }
     }
     return this.fields;
+  }
+
+  /** Null: the host doesn't say when its client goes away (the request's signal never aborts). */
+  signal(): AbortSignal | null {
+    return null;
   }
 
   hasBody(): bool {

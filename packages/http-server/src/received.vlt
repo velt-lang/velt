@@ -7,6 +7,7 @@
 
 import { IoError } from "velt/io";
 import { TcpStream } from "velt/net";
+import { AbortSignal } from "velt/task";
 import { RequestSource } from "velt/net/http";
 import { HttpRequest } from "./request";
 import { HttpResponse } from "./response";
@@ -26,6 +27,14 @@ export class Received implements RequestSource, Peer {
     this.res = res;
     const host = req.header("host") ?? "localhost";
     this.origin = (secure ? "https://" : "http://") + host;
+  }
+
+  /**
+   * The response's signal (`HttpResponse.signal`): aborted when the client can no longer be
+   * written to (HTTP/1.1) or resets its stream (HTTP/2), or the server closes.
+   */
+  signal(): AbortSignal | null {
+    return this.res.signal();
   }
 
   /** The handler returned: the request may no longer be read. */

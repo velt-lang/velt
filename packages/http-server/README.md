@@ -190,6 +190,11 @@ request lazily: a handler pays only for what it reads.
   [`BodyStream`](https://veltlang.com/docs/std/net/http/#bodystream), `null` for a request without a body), so an
   upload need not be held in memory. A body is read once; a read that fails (the client went away)
   throws `IoError`.
+- `req.signal` is aborted when the client can no longer be answered, as in Deno and Bun: over
+  HTTP/2 when it resets its stream, over HTTP/1.1 when writing the response to it fails, and when
+  the server closes. Pass it to the work done for the request (`fetch(url, { signal: req.signal })`)
+  so that work stops with the client. Take it before the handler returns if a streamed body or a
+  spawned task uses it.
 - A `Request` is valid until its handler settles: what the handler read stays readable, but
   reading something new afterwards (in a streamed body or a spawned task) stops the program
   with a clear error. Read what outlives the handler first (`const url = req.url`).

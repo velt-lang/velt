@@ -2,10 +2,37 @@
 // method, URL and headers (a field sent several times joined with ", ", as `Headers.get` reads
 // it), and the `Response` it returns becomes the stream's HEADERS and DATA.
 import { serve } from "../../src/lib";
+import { channel } from "velt/sync";
+import { timeout } from "velt/task";
 import { describe, expect, it } from "velt/test";
 import { Client, endOf } from "./_h2";
 
 describe("serve over HTTP/2", () => {
+  it("aborts the handler's req.signal when the client resets its stream", async () => {
+    // #2074: the stream's reset reaches the web-standard `Request` as in Deno and Bun.
+    const seen = channel<string>();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
+      await seen.send("started");
+      await signal.whenAborted();
+      await seen.send(`aborted ${signal.aborted}`);
+      return new Response("late");
+    });
+    const c = await Client.open(server.port);
+    try {
+      c.get(1, "/wait");
+      await c.flush();
+      expect(await timeout(seen.receive(), 5000)).toBe("started");
+      // RST_STREAM (type 3) with CANCEL (8).
+      c.frame(3, 0, 1, [0, 0, 0, 8]);
+      await c.flush();
+      expect(await timeout(seen.receive(), 5000)).toBe("aborted true");
+    } finally {
+      c.close();
+      server.close();
+    }
+  });
+
   it("gives the handler the stream's request as a Request", async () => {
     const server = await serve({ port: 0 }, (req: Request): Response => {
       const h = req.headers;
