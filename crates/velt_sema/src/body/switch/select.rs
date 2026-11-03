@@ -65,7 +65,10 @@ impl FnCx<'_, '_> {
                 None => self.guard_sel(s, test),
             },
             // A union value compares with any value `===` accepts (`case y:` with `y: "y"`).
-            (ScrutKind::Union, None) => self.guard_sel(s, test),
+            (ScrutKind::Union, None) => match self.unique_sel(s, test) {
+                Some(sel) => sel,
+                None => self.guard_sel(s, test),
+            },
             (ScrutKind::Discriminant(_) | ScrutKind::TypeOf, None) => self.key_guard_sel(s, test),
             (ScrutKind::Plain, None) => self.guard_sel(s, test),
         }
@@ -341,6 +344,51 @@ impl FnCx<'_, '_> {
     }
 
     /// `case expr:` compared with `==`: the scrutinee is bound and tested in a guard.
+    /// `case K:` for a constant `K` of a `unique symbol` type on a union with the member
+    /// `typeof K`: that member, its value compared with `K` (two such members are one `symbol`
+    /// member once lowered). It selects the member's slot as `x === K` narrows to it.
+    fn unique_sel(&mut self, s: &Scrut, test: &ast::Expr) -> Option<Sel> {
+        let d = self.unique_symbol_named(test)?;
+        let span = test.span;
+        let sty = s.expr.ty;
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
+        let Some(crate::unique_symbols::UniqueAt::Member(v)) = self.cx.unique_symbol_in(sty, d)
+        else {
+            return None;
+        };
+        let (def, _) = self.cx.union_def(inner)?;
+        let u = self.cx.unique_symbols[&d];
+        // Checked as a value too, so the constant counts as used (captures, editors).
+        self.expr(test, None, Want::Borrow);
+        let mode = if self.cx.is_copy(u) {
+            UseMode::Copy
+        } else {
+            UseMode::Borrow
+        };
+        let l = self.new_local("<case>", u, false, span, LocalKind::Bind);
+        let read = self.mk(hir::ExprKind::Local(l, mode), u, span);
+        let guard = self.is_unique_symbol(read, d);
+        let bind = self.pat(P::Binding(l, mode), u, span);
+        let variant = P::Variant {
+            def,
+            variant: v,
+            args: vec![bind],
+        };
+        let mut pat = self.pat(variant, inner, span);
+        if inner != sty {
+            pat = self.present_pat(pat, sty, span);
+        }
+        let hits: Vec<usize> = (0..s.slots.len())
+            .filter(|&k| s.slots[k].variant == Some(v))
+            .collect();
+        Some(Sel {
+            pat,
+            guard: Some(guard),
+            touched: hits.clone(),
+            covered: hits,
+        })
+    }
+
     fn guard_sel(&mut self, s: &Scrut, test: &ast::Expr) -> Sel {
         let (ty, span) = (s.expr.ty, test.span);
         let mode = if self.cx.is_copy(ty) {

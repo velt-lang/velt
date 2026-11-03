@@ -362,7 +362,8 @@ impl FnCx<'_, '_> {
         let (other, lit) = match (literal_of(lhs), literal_of(rhs)) {
             (None, Some(l)) => (lhs, l),
             (Some(l), None) => (rhs, l),
-            _ => return (vec![], vec![]),
+            // `x === K` for a constant `K` of a `unique symbol` type.
+            _ => return self.unique_symbol_facts(lhs, rhs).unwrap_or_default(),
         };
         if let ast::Lit::Bool(b) = lit.lit {
             if let Some(facts) = self.destructured_facts(other, b) {

@@ -683,6 +683,16 @@ impl FnCx<'_, '_> {
                 return Ok(h);
             }
         }
+        // A symbol as a union whose one symbol member is `typeof K`: checked to be `K`.
+        let inner = match self.symbol_as_unique_member(inner, target) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
+        // `x as Suspend` for `x: { p } | symbol`: its symbol checked the same way.
+        let inner = match self.union_as_unique_members(inner, target) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
         // `x as object` of an unbounded `T` (issue #926): checked at run time.
         self.object_view_cast(inner, target, span)
             .or_else(|h| self.try_coerce(h, target))
@@ -707,6 +717,11 @@ impl FnCx<'_, '_> {
         let inner = self.expr(expr, Some(base), want);
         let inner = self.unbrand(inner);
         match self.try_coerce(inner, base) {
+            // `s as typeof K` (a `unique symbol`): checked, since only `K` has that type.
+            Ok(h) if self.unique_symbol_of(target).is_some() => {
+                let d = self.unique_symbol_of(target).expect("ICE: unique symbol");
+                self.checked_unique(h, d, target)
+            }
             Ok(mut h) => {
                 h.ty = target;
                 h

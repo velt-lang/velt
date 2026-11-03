@@ -1,0 +1,9 @@
+flush done n=1 null symbol Symbol(done) n=2
+2 0
+done flush n=3
+Symbol(flush) promise null
+flush
+value 5
+flush
+k done flush undefined
+other false

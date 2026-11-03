@@ -34,7 +34,7 @@ impl FnCx<'_, '_> {
     /// Does a single value of type `from` convert to `to` (as `try_coerce` converts it: to a
     /// nullable, a union, a base class, an interface it implements, a literal's base)?
     pub(crate) fn converts_to(&mut self, from: TyId, to: TyId) -> bool {
-        if from == to || self.cx.ty.is_bottom(from) {
+        if from == to || self.cx.ty.is_bottom(from) || self.cx.widens_unique(from, to) {
             return true;
         }
         if let Some(p) = self.cx.ty.opt_payload(to) {

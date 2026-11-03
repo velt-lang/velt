@@ -1,0 +1,8 @@
+// A shared `Suspend[]` is not a `Loose[]`: a plain symbol stored through the `Loose[]` would
+// be a `Suspend` that is not `FLUSH`. TypeScript allows it; a copy converts (#923).
+const FLUSH = Symbol("flush");
+type Suspend = { p: number } | typeof FLUSH;
+type Loose = { p: number } | symbol;
+const sus: Suspend[] = [FLUSH, { p: 1 }];
+const loose: Loose[] = sus;
+console.log(loose.length);

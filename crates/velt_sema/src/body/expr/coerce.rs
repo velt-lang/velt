@@ -29,6 +29,12 @@ impl FnCx<'_, '_> {
 
     /// Like [`coerce`](Self::coerce) without reporting; `Err` gives the expression back.
     pub fn try_coerce(&mut self, mut h: hir::Expr, exp: TyId) -> Result<hir::Expr, hir::Expr> {
+        // `K` (a constant holding a fresh symbol) where its `typeof K` is expected.
+        h = self.unique_symbol_value(h, exp);
+        // `{ p } | typeof K` where `{ p } | symbol` is expected: one layout once lowered.
+        if self.cx.widens_unique(h.ty, exp) {
+            return Ok(self.unique_retype(h, exp));
+        }
         // A record is a view of itself with named members (`crate::index_signatures`).
         if self
             .cx

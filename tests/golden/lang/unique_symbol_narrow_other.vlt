@@ -1,0 +1,23 @@
+// `x === FLUSH` drops only the member `typeof FLUSH`: another unique symbol, or a plain
+// `symbol` (which may hold any symbol), stays in the other branch, as in TypeScript.
+const FLUSH = Symbol("flush");
+const DONE = Symbol("done");
+
+type Step = { n: number } | typeof FLUSH | typeof DONE;
+type Loose = { n: number } | symbol;
+
+function label(s: Step): number {
+  if (s === FLUSH) {
+    return 0;
+  }
+  return s.n;
+}
+
+function loose(s: Loose): number {
+  if (s === FLUSH) {
+    return 0;
+  }
+  return s.n;
+}
+
+console.log(label({ n: 1 }), loose({ n: 2 }));

@@ -1,0 +1,95 @@
+// A module constant holding a fresh symbol has a type of its own (`typeof FLUSH`, TypeScript's
+// `unique symbol`): on a union with that member, `x === FLUSH` narrows both branches (#1254).
+const FLUSH = Symbol("flush");
+const DONE: unique symbol = Symbol("done");
+
+type Suspend = { p: Promise<number> } | typeof FLUSH;
+type Step = { n: number } | typeof FLUSH | typeof DONE;
+
+async function step(s: Suspend): Promise<number> {
+  if (s === FLUSH) {
+    return 0;
+  }
+  return await s.p;
+}
+
+function label(s: Step): string {
+  if (s === DONE) {
+    return "done";
+  } else if (FLUSH === s) {
+    return "flush";
+  }
+  return `n=${s.n}`;
+}
+
+function size(s: Suspend | null): string {
+  if (s !== FLUSH) {
+    return s === null ? "null" : "promise";
+  }
+  return s.toString();
+}
+
+function* walk(): Generator<Suspend, void, unknown> {
+  yield FLUSH;
+  yield { p: Promise.resolve(5) };
+  yield FLUSH;
+}
+
+function pick(flag: boolean): typeof FLUSH | undefined {
+  return flag ? FLUSH : undefined;
+}
+
+async function main() {
+  console.log(await step({ p: Promise.resolve(2) }), await step(FLUSH));
+  console.log(label(DONE), label(FLUSH), label({ n: 3 }));
+  console.log(size(FLUSH), size({ p: Promise.resolve(1) }), size(null));
+  const gen = walk();
+  let r = gen.next();
+  while (!r.done) {
+    const s = r.value;
+    if (s === FLUSH) {
+      console.log("flush");
+    } else {
+      console.log("value", await s.p);
+    }
+    r = gen.next();
+  }
+  // A `typeof FLUSH` is used as the symbol it is.
+  const seen = new Map<symbol, string>();
+  const k = pick(true);
+  if (k !== undefined) {
+    seen.set(k, "k");
+  }
+  seen.set(DONE, "done");
+  console.log(seen.get(FLUSH), seen.get(DONE), FLUSH.description, pick(false));
+  // `let` takes another symbol later, as TypeScript widens `FLUSH` there.
+  let any = FLUSH;
+  any = Symbol("other");
+  console.log(any.description, any === FLUSH);
+}
+
+// `case FLUSH:` narrows as `s === FLUSH` does, in the case, the ones it falls into and `default`.
+function sw(s: Step): string {
+  switch (s) {
+    case FLUSH:
+      return "flush";
+    case DONE:
+      return "done";
+    default:
+      return `n=${s.n}`;
+  }
+}
+
+function swNull(s: Step | null): string {
+  switch (s) {
+    case null:
+      return "null";
+    case FLUSH:
+    case DONE:
+      return `symbol ${String(s)}`;
+  }
+  return `n=${s.n}`;
+}
+
+console.log(sw(FLUSH), sw(DONE), sw({ n: 1 }), swNull(null), swNull(DONE), swNull({ n: 2 }));
+main();

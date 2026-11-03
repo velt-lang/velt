@@ -343,7 +343,10 @@ impl FnCx<'_, '_> {
                 .filter(|t| self.cx.ty.is_numeric(*t) || *t == self.cx.ty.str_)
         };
         let lit_eq = matches!(op, B::Eq | B::NotEq)
-            .then(|| self.literal_eq(lhs, rhs, op == B::NotEq, span))
+            .then(|| {
+                (self.unique_symbol_eq(lhs, rhs, op == B::NotEq, span))
+                    .or_else(|| self.literal_eq(lhs, rhs, op == B::NotEq, span))
+            })
             .flatten();
         let (l, r) = match lit_eq {
             Some(LitEq::Done(h)) => return h,

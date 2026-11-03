@@ -1,0 +1,34 @@
+// Only `K` has the type `typeof K` (a `unique symbol`), and a union narrowed by `x === K`
+// relies on it: a symbol or an `any` converted to that type is checked to be `K` (#923).
+// TypeScript does not check such an assertion; Velt stops with a `TypeError` where it fails.
+const FLUSH = Symbol("flush");
+const TEXT = Symbol.for("text");
+
+type Kind = string | typeof FLUSH | typeof TEXT;
+type Suspend = { p: number } | typeof FLUSH;
+
+function kind(t: any): string {
+  const k = t as Kind;
+  if (k === FLUSH) {
+    return "flush";
+  }
+  if (k === TEXT) {
+    return "text";
+  }
+  return `tag ${k}`;
+}
+
+function step(x: symbol): string {
+  const s = x as Suspend;
+  if (s === FLUSH) {
+    return "flush";
+  }
+  return `p ${s.p}`;
+}
+
+console.log(kind(FLUSH), kind(TEXT), kind("div"));
+console.log(step(FLUSH));
+const loose: any = TEXT;
+const text: typeof TEXT = loose;
+console.log(text.description);
+console.log(step(Symbol("other")));
