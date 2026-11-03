@@ -4,7 +4,7 @@
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{self, types, InstBuilder, MemFlags, StackSlotData, StackSlotKind};
 use cranelift_module::Module;
-use velt_vir::simd::{reversed_bytes, ExtOp, Lanes, MaskOp, Op, SimdCall};
+use velt_vir::simd::{reversed_bytes, sum_wide_lane, ExtOp, Lanes, MaskOp, Op, SimdCall};
 use velt_vir::vir::{Callee, Const, Operand, Ty};
 
 use super::place::mem_flags;
@@ -162,6 +162,10 @@ impl<M: Module> Translator<'_, '_, M> {
             }
             Op::Fits => return Inlined::Value(self.simd_fits(lanes, values[0], values[1])),
             Op::Lane => return Inlined::Value(self.simd_lane(lanes, &args[1], values)),
+            Op::Sum | Op::SumWide => {
+                let x = self.lanes_of(values[0], ty);
+                return Inlined::Value(self.simd_sum(lanes, op == Op::SumWide, x));
+            }
             Op::Splat => self.builder.ins().splat(ty, values[0]),
             Op::Index => self.simd_index(lanes),
             // Cranelift has no `undef`: a racing load is just the bytes the CPU read.
@@ -413,6 +417,29 @@ impl<M: Module> Translator<'_, '_, M> {
         let slot = self.simd_spill(x);
         let p = self.simd_lane_addr(lanes, slot, values[1]);
         self.builder.ins().load(ty.lane_type(), mem_flags(), p, 0)
+    }
+
+    /// The lanes of `x` added one by one, in the lane type (wrapping) or extended to
+    /// `sum_wide_lane` first.
+    fn simd_sum(&mut self, lanes: Lanes, wide: bool, x: ir::Value) -> ir::Value {
+        let to = match wide {
+            true => vector_type(sum_wide_lane(lanes)).lane_type(),
+            false => vector_type(lanes).lane_type(),
+        };
+        let mut total = None;
+        for k in 0..lanes.count() as u8 {
+            let mut v = self.builder.ins().extractlane(x, k);
+            if wide && lanes.is_signed() {
+                v = self.builder.ins().sextend(to, v);
+            } else if wide {
+                v = self.builder.ins().uextend(to, v);
+            }
+            total = Some(match total {
+                Some(t) => self.builder.ins().iadd(t, v),
+                None => v,
+            });
+        }
+        total.expect("ICE: a vector has lanes")
     }
 
     fn simd_with_lane(&mut self, lanes: Lanes, index: &Operand, values: &[ir::Value]) -> ir::Value {

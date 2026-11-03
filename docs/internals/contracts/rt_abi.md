@@ -446,6 +446,12 @@ rounding on every target: the FMA instruction where the CPU has it, and otherwis
 `_mul_add_fast` may fuse or not, whichever is faster (LLVM's `llvm.fmuladd`; a multiply and an add
 in Cranelift).
 
+`velt_simd_<type>_sum` [additive] (integer lanes, `(v) -> lane`) adds the lanes in the lane type,
+wrapping; `velt_simd_<type>_sum_wide` [additive] (8-, 16- and 32-bit integer lanes) adds them
+extended to `velt_vir::simd::sum_wide_lane`: 32 bits for 8- and 16-bit lanes, 64 for 32-bit ones,
+with the lanes' signedness, so it never overflows. LLVM emits `llvm.vector.reduce.add` (of the
+extended vector); Cranelift adds the lanes one by one.
+
 **CPU extensions (#1330).** `velt_simd_u32x4_<op>` for the SHA instructions (`sha1c`, `sha1p`,
 `sha1m`, `sha1h`, `sha1su0`, `sha1su1`, `sha256h`, `sha256h2`, `sha256su0`, `sha256su1` on
 aarch64; `sha256rnds2`, `sha256msg1`, `sha256msg2`, `sha1rnds4_<0-3>`, `sha1nexte`, `sha1msg1`,

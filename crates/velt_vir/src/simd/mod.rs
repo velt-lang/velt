@@ -198,6 +198,12 @@ pub enum Op {
     Ge,
     /// `(mask, a, b) -> v`: the lanes of `a` where the mask is set, of `b` elsewhere.
     Select,
+    /// `(v) -> lane`: the sum of the lanes in the lane type, wrapping (what adding them one by
+    /// one with `+` gives). Integers.
+    Sum,
+    /// `(v) -> wider lane`: the sum of the lanes widened (8- and 16-bit lanes to 32 bits, 32-bit
+    /// ones to 64), which never overflows. 8-, 16- and 32-bit integers.
+    SumWide,
     /// `(acc, a, b) -> v` on `i32x4`, `a` and `b` being `i8x16`: each lane of `acc` plus the sum
     /// of the four products of the signed bytes in the same quarter of `a` and `b` (bytes
     /// `4k..4k + 3` for lane `k`), exactly (no saturation): Arm's `sdot`.
@@ -335,6 +341,8 @@ impl SimdCall {
                 Op::LoadPartial => (vec![Ptr, U64, U64], V128),
                 Op::StorePartial => (vec![V128, Ptr, U64, U64], Unit),
                 Op::Lane => (vec![V128, U64], lanes.scalar()),
+                Op::Sum => (vec![V128], lanes.scalar()),
+                Op::SumWide => (vec![V128], sum_wide_lane(lanes).scalar()),
                 Op::WithLane => (vec![V128, U64, lanes.scalar()], V128),
                 Op::Neg
                 | Op::Abs
@@ -352,6 +360,18 @@ impl SimdCall {
                 _ => (vec![V128, V128], V128),
             },
         }
+    }
+}
+
+/// The lane type `Op::SumWide` sums `lanes` in: 32 bits for 8- and 16-bit lanes (as `sdot`
+/// accumulates bytes), 64 for 32-bit ones, with the same signedness.
+pub fn sum_wide_lane(lanes: Lanes) -> Lanes {
+    match lanes {
+        Lanes::I8 | Lanes::I16 => Lanes::I32,
+        Lanes::U8 | Lanes::U16 => Lanes::U32,
+        Lanes::I32 => Lanes::I64,
+        Lanes::U32 => Lanes::U64,
+        _ => panic!("ICE: sum_wide of {}", lanes.name()),
     }
 }
 
@@ -461,6 +481,8 @@ fn vector_op(name: &str) -> Option<Op> {
         "gt" => Op::Gt,
         "ge" => Op::Ge,
         "select" => Op::Select,
+        "sum" => Op::Sum,
+        "sum_wide" => Op::SumWide,
         "dot_add" => Op::DotAdd,
         "mul_add" => Op::MulAdd,
         "mul_add_fast" => Op::MulAddFast,
@@ -482,6 +504,8 @@ fn supported(lanes: Lanes, op: Op) -> bool {
     let bits = lanes.bits();
     match op {
         Op::DotAdd => lanes == Lanes::I32,
+        Op::Sum => !float,
+        Op::SumWide => !float && bits <= 32,
         Op::Div | Op::Sqrt | Op::MulAdd | Op::MulAddFast => float,
         Op::Mul => float || bits != 8,
         Op::Neg => float || lanes.is_signed(),
@@ -595,6 +619,32 @@ mod tests {
             Some(SimdCall::Vector(Lanes::I32, Op::DotAdd))
         );
         assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_dot_add"), None);
+        let sig = |s: &str| SimdCall::of_symbol(s).map(SimdCall::signature);
+        assert_eq!(sig("velt_simd_i8x16_sum"), Some((vec![Ty::V128], Ty::I8)));
+        assert_eq!(sig("velt_simd_u64x2_sum"), Some((vec![Ty::V128], Ty::U64)));
+        assert_eq!(
+            sig("velt_simd_i8x16_sum_wide"),
+            Some((vec![Ty::V128], Ty::I32))
+        );
+        assert_eq!(
+            sig("velt_simd_u16x8_sum_wide"),
+            Some((vec![Ty::V128], Ty::U32))
+        );
+        assert_eq!(
+            sig("velt_simd_i32x4_sum_wide"),
+            Some((vec![Ty::V128], Ty::I64))
+        );
+        assert_eq!(
+            sig("velt_simd_u32x4_sum_wide"),
+            Some((vec![Ty::V128], Ty::U64))
+        );
+        for missing in [
+            "velt_simd_i64x2_sum_wide",
+            "velt_simd_f32x4_sum",
+            "velt_simd_f64x2_sum_wide",
+        ] {
+            assert_eq!(SimdCall::of_symbol(missing), None, "{missing}");
+        }
         assert_eq!(SimdCall::of_symbol("velt_simd_i16x8_dot_add"), None);
         assert_eq!(
             SimdCall::of_symbol("velt_simd_f64x2_mul_add"),

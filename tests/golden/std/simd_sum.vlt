@@ -1,0 +1,172 @@
+// Integer vector `sum()` (wrapping in the lane type, as a chain of lane `+`) and `sumWide()`
+// (widened: 8- and 16-bit lanes to 32 bits, 32-bit lanes to 64, never overflowing), on edge
+// vectors: every lane at the type's minimum, every lane at its maximum, alternating, and a
+// ramp. The expected values come from outside the compiler (Python); a scalar loop checks
+// pseudo-random vectors.
+import { i8x16, u8x16, i16x8, u16x8, i32x4, u32x4, i64x2, u64x2 } from "velt/simd";
+
+function bytes() {
+  const cases: i8[][] = [
+    [-128, -128, -128, -128, -128, -128, -128, -128, -128, -128, -128, -128, -128, -128, -128, -128],
+    [127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127, 127],
+    [-128, 127, -128, 127, -128, 127, -128, 127, -128, 127, -128, 127, -128, 127, -128, 127],
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+  ];
+  for (const c of cases) {
+    const v = i8x16.load(c);
+    console.log("i8x16", v.sum(), v.sumWide());
+  }
+  const ucases: u8[][] = [
+    [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    [255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255, 255],
+    [0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255, 0, 255],
+    [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15],
+  ];
+  for (const c of ucases) {
+    const v = u8x16.load(c);
+    console.log("u8x16", v.sum(), v.sumWide());
+  }
+}
+
+function halves() {
+  const cases: i16[][] = [
+    [-32768, -32768, -32768, -32768, -32768, -32768, -32768, -32768],
+    [32767, 32767, 32767, 32767, 32767, 32767, 32767, 32767],
+    [-32768, 32767, -32768, 32767, -32768, 32767, -32768, 32767],
+    [0, 1, 2, 3, 4, 5, 6, 7],
+  ];
+  for (const c of cases) {
+    const v = i16x8.load(c);
+    console.log("i16x8", v.sum(), v.sumWide());
+  }
+  const ucases: u16[][] = [
+    [0, 0, 0, 0, 0, 0, 0, 0],
+    [65535, 65535, 65535, 65535, 65535, 65535, 65535, 65535],
+    [0, 65535, 0, 65535, 0, 65535, 0, 65535],
+    [0, 1, 2, 3, 4, 5, 6, 7],
+  ];
+  for (const c of ucases) {
+    const v = u16x8.load(c);
+    console.log("u16x8", v.sum(), v.sumWide());
+  }
+}
+
+function words() {
+  const cases: i32[][] = [
+    [-2147483648, -2147483648, -2147483648, -2147483648],
+    [2147483647, 2147483647, 2147483647, 2147483647],
+    [-2147483648, 2147483647, -2147483648, 2147483647],
+    [0, 1, 2, 3],
+  ];
+  for (const c of cases) {
+    const v = i32x4.load(c);
+    console.log("i32x4", v.sum(), v.sumWide());
+  }
+  const ucases: u32[][] = [
+    [0, 0, 0, 0],
+    [4294967295, 4294967295, 4294967295, 4294967295],
+    [0, 4294967295, 0, 4294967295],
+    [0, 1, 2, 3],
+  ];
+  for (const c of ucases) {
+    const v = u32x4.load(c);
+    console.log("u32x4", v.sum(), v.sumWide());
+  }
+  const big: i64 = 9223372036854775807;
+  console.log("i64x2", i64x2.splat(big).sum(), i64x2.splat(-big - 1).sum());
+  console.log("u64x2", u64x2.splat(18446744073709551615).sum());
+}
+
+let seed: u32 = 2463534242;
+
+function next(): u8 {
+  seed = seed ^ (seed << 13);
+  seed = seed ^ (seed >>> 17);
+  seed = seed ^ (seed << 5);
+  return (seed & 255) as u8;
+}
+
+// Each sum against the scalar chain it is defined as, over pseudo-random lanes.
+function random() {
+  const bs: i8[] = [];
+  const us: u8[] = [];
+  const hs: i16[] = [];
+  const uh: u16[] = [];
+  let wrong = 0;
+  for (let round = 0; round < 1000; round++) {
+    bs.length = 0;
+    us.length = 0;
+    hs.length = 0;
+    uh.length = 0;
+    for (let i = 0; i < 16; i++) {
+      const b = next();
+      bs.push(b as i8);
+      us.push(b);
+    }
+    for (let i = 0; i < 8; i++) {
+      const hi = next() as u16;
+      const lo = next() as u16;
+      hs.push(((hi << 8) | lo) as i16);
+      uh.push((lo << 8) | hi);
+    }
+    const a = i8x16.load(bs);
+    const u = u8x16.load(us);
+    let s8: i8 = 0;
+    let w8: i32 = 0;
+    let su: u8 = 0;
+    let wu: u32 = 0;
+    for (let i: usize = 0; i < 16; i++) {
+      s8 = s8 + a.lane(i);
+      w8 += a.lane(i) as i32;
+      su = su + u.lane(i);
+      wu += u.lane(i) as u32;
+    }
+    if (a.sum() != s8 || a.sumWide() != w8 || u.sum() != su || u.sumWide() != wu) wrong++;
+    const h = i16x8.load(hs);
+    const g = u16x8.load(uh);
+    let s16: i16 = 0;
+    let w16: i32 = 0;
+    let sg: u16 = 0;
+    let wg: u32 = 0;
+    for (let i: usize = 0; i < 8; i++) {
+      s16 = s16 + h.lane(i);
+      w16 += h.lane(i) as i32;
+      sg = sg + g.lane(i);
+      wg += g.lane(i) as u32;
+    }
+    if (h.sum() != s16 || h.sumWide() != w16 || g.sum() != sg || g.sumWide() != wg) wrong++;
+  }
+  for (let round = 0; round < 1000; round++) {
+    const ws: i32[] = [];
+    const vs: u32[] = [];
+    const ls: i64[] = [];
+    for (let i = 0; i < 4; i++) {
+      const w = ((next() as u32) << 24) | ((next() as u32) << 16) | ((next() as u32) << 8) | (next() as u32);
+      ws.push(w as i32);
+      vs.push(w);
+      ls.push(((w as u64) << 32 | (next() as u64)) as i64);
+    }
+    const a = i32x4.load(ws);
+    const u = u32x4.load(vs);
+    const l = i64x2.load(ls);
+    const q = u64x2.load([ls[2] as u64, ls[3] as u64]);
+    let s32: i32 = 0;
+    let w32: i64 = 0;
+    let su: u32 = 0;
+    let wu: u64 = 0;
+    for (let i: usize = 0; i < 4; i++) {
+      s32 = s32 + a.lane(i);
+      w32 += a.lane(i) as i64;
+      su = su + u.lane(i);
+      wu += u.lane(i) as u64;
+    }
+    if (a.sum() != s32 || a.sumWide() != w32 || u.sum() != su || u.sumWide() != wu) wrong++;
+    if (l.sum() != l.lane(0) + l.lane(1) || q.sum() != q.lane(0) + q.lane(1)) wrong++;
+  }
+  console.log("random mismatches", wrong);
+}
+
+bytes();
+halves();
+words();
+random();
