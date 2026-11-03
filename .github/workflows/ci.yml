@@ -256,7 +256,9 @@ jobs:
       - name: npm ci (tests/workerd, Linux)
         if: runner.os == 'Linux'
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}/tests/workerd
-        run: npm ci --no-audit --no-fund
+        # No install scripts: workerd's would fetch its binary outside the lockfile's hashes; the
+        # lockfile's platform package has it.
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: cargo xtask check --full --part lint,test
         shell: bash
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}

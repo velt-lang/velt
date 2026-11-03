@@ -215,7 +215,9 @@ jobs:
       - uses: ./.github/actions/setup
       - name: npm ci (the pinned Miniflare and workerd)
         working-directory: tests/workerd
-        run: npm ci --no-audit --no-fund
+        # No install scripts: workerd's would fetch its binary outside the lockfile's hashes; the
+        # lockfile's platform package has it.
+        run: npm ci --ignore-scripts --no-audit --no-fund
       - name: the Worker under workerd
         run: cargo test -p veltc --test workerd -- --nocapture --test-threads=1
 

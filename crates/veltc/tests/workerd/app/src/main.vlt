@@ -30,6 +30,7 @@ function code(e: Error): string {
 async function* parts(): AsyncGenerator<u8[], never> {
   for (const p of ["one ", "two ", "three"]) {
     yield utf8Encode(p);
+    // timing: each chunk on a turn of its own, so the body streams; nothing orders by it.
     await sleep(1);
   }
 }

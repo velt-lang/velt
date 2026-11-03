@@ -13,6 +13,7 @@
 //! running tests side by side, are not the Worker's.
 
 mod no_window;
+mod runtime_support;
 mod wasm_tools;
 mod work_dir;
 mod worker_size;
@@ -29,10 +30,12 @@ const APP_BUDGET: usize = 668_000;
 /// The most CPU milliseconds under node, all its threads, from importing the release Worker
 /// (compiling its module, the glue, `main`) to its first answer: a quarter of Workers' start-up
 /// limit (1 second of CPU for the top-level code under workerd), as a guard against regressions.
-/// Measured: 54-60 ms on an M-series Mac under load.
+/// Measured: 62-78 ms on a Linux x86-64 builder (the nightly job's platform), 54-60 ms on an
+/// M-series Mac under load.
 const STARTUP_BUDGET: f64 = 250.0;
 /// The most CPU milliseconds per request under node, at the median, for `/hello` and `/json`: a
-/// 5th of what Workers' Free plan allows (10 ms). Measured: 0.09-0.19 ms on the same machine.
+/// 5th of what Workers' Free plan allows (10 ms). Measured: 0.17-0.27 ms on the Linux builder,
+/// 0.09-0.19 ms on the Mac.
 const CPU_BUDGET: f64 = 2.0;
 
 /// Whether the environment variable `name` is 1.
@@ -63,6 +66,8 @@ fn fixtures(name: &str) -> Option<(PathBuf, PathBuf)> {
         return None;
     }
     build_runtime(&root, TRIPLE);
+    // The native runtime too: `req.json<T>()`'s generator runs natively while `velt build` compiles.
+    runtime_support::build_native_runtime(&root);
     let work =
         work_dir::work_dir(&root, "workerd-work").join(format!("{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&work);
