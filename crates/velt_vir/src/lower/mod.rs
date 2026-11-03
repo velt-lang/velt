@@ -154,6 +154,7 @@ mod types;
 mod upcast;
 mod view_unswitch;
 mod view_unswitch_addrs;
+mod view_unswitch_index;
 mod view_unswitch_plain;
 mod weak;
 mod weak_object;

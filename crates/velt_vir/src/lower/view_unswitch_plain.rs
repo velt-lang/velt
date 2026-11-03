@@ -22,6 +22,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use velt_sema::hir::DefId;
 
 use super::view_unswitch::Tests;
+use super::view_unswitch_index::LoopIndex;
 use super::FnLower;
 use crate::vir::{self, BinOp, BlockId, Const, Local, Operand, Place, Proj, Rvalue, Terminator};
 use crate::vir::{Ty, UnOp};
@@ -61,7 +62,7 @@ impl Term {
 
     /// Does the value depend on memory (a read through a pointer, or a local whose address is
     /// taken, which a store through a pointer or a call may change)?
-    fn reads_memory(&self, ls: &Locals) -> bool {
+    fn reads_memory(&self, ls: &Locals<'_>) -> bool {
         self.any(&|t| match t {
             Term::Proj(_, Proj::Deref(_)) => true,
             Term::Local(l) => ls.addressed.contains(l),
@@ -102,11 +103,11 @@ pub(super) fn take_terms() -> usize {
 const MAX_ROUNDS: u32 = 8;
 
 /// The function's locals as [`Known`] sees them.
-struct Locals {
+struct Locals<'a> {
     /// Those whose own address is taken.
-    addressed: FxHashSet<Local>,
-    /// Those (not parameters, nor addressed) assigned in one place only: a term for one of them
-    /// is its assignment's, the same on every way there.
+    addressed: &'a FxHashSet<Local>,
+    /// Those of `relevant` (not parameters, nor addressed) assigned in one place only: a term
+    /// for one of them is its assignment's, the same on every way there.
     once: FxHashSet<Local>,
     /// The locals whose terms a test's header can be built from: the tests, the locals their
     /// headers' places start at, and those the assignments of these read, transitively. Only
@@ -131,12 +132,12 @@ impl Known {
         env != self.env.len() || plain != self.plain.len()
     }
 
-    fn forget_memory(&mut self, ls: &Locals) {
+    fn forget_memory(&mut self, ls: &Locals<'_>) {
         self.env.retain(|_, t| !t.reads_memory(ls));
         self.plain.retain(|t| !t.reads_memory(ls));
     }
 
-    fn forget_local(&mut self, l: Local, ls: &Locals) {
+    fn forget_local(&mut self, l: Local, ls: &Locals<'_>) {
         self.env.remove(&l);
         self.env.retain(|_, t| !t.mentions(l));
         self.plain.retain(|t| !t.mentions(l));
@@ -146,7 +147,7 @@ impl Known {
     }
 
     /// A write to `p`.
-    fn write(&mut self, p: &Place, ls: &Locals) {
+    fn write(&mut self, p: &Place, ls: &Locals<'_>) {
         match p.proj.iter().any(|x| matches!(x, Proj::Deref(_))) {
             true => self.forget_memory(ls),
             false => self.forget_local(p.local, ls),
@@ -177,7 +178,7 @@ impl Known {
     }
 
     /// After a write to `p`: the local holds `t` (when it is assigned only there).
-    fn define(&mut self, p: &Place, t: Option<Term>, ls: &Locals) {
+    fn define(&mut self, p: &Place, t: Option<Term>, ls: &Locals<'_>) {
         let keep = |t: &Term| {
             p.proj.is_empty()
                 && ls.once.contains(&p.local)
@@ -190,7 +191,7 @@ impl Known {
         }
     }
 
-    fn stmt(&mut self, s: &vir::Stmt, ls: &Locals) {
+    fn stmt(&mut self, s: &vir::Stmt, ls: &Locals<'_>) {
         match s {
             vir::Stmt::Assign(p, rv) => {
                 let t = self.rvalue(rv);
@@ -221,6 +222,7 @@ impl FnLower<'_, '_> {
         region: &[BlockId],
         tests: &Tests,
         params: usize,
+        idx: &LoopIndex,
     ) -> Proven {
         let mut proven = Proven {
             tests: FxHashSet::default(),
@@ -229,7 +231,7 @@ impl FnLower<'_, '_> {
         if tests.leave.is_empty() && tests.slows.is_empty() {
             return proven;
         }
-        let ls = self.locals_seen(params);
+        let ls = self.locals_seen(params, idx);
         let cond = |b: BlockId| match &self.blocks[b.0 as usize].1 {
             Some(Terminator::Branch {
                 cond: Operand::Copy(Place { local, proj }),
@@ -288,7 +290,7 @@ impl FnLower<'_, '_> {
         region: &[BlockId],
         tests: &Tests,
         slows: &FxHashSet<BlockId>,
-        ls: &Locals,
+        ls: &Locals<'_>,
     ) -> FxHashMap<BlockId, Known> {
         let inside: FxHashSet<BlockId> = region.iter().copied().collect();
         let mut ins: FxHashMap<BlockId, Known> = FxHashMap::default();
@@ -386,69 +388,23 @@ impl FnLower<'_, '_> {
         numbers.then_some(def)
     }
 
-    /// The function's locals for [`Known`]: those whose own address is taken, and those
-    /// assigned once.
-    fn locals_seen(&self, params: usize) -> Locals {
-        let mut addressed = FxHashSet::default();
-        let mut sites: FxHashMap<Local, u32> = FxHashMap::default();
-        // Per local assigned as a whole: the locals its (last) assignment reads.
-        let mut reads: FxHashMap<Local, Vec<Local>> = FxHashMap::default();
-        let mut assign = |p: &Place, from: Vec<Local>| {
-            if !matches!(p.proj.first(), Some(Proj::Deref(_))) {
-                *sites.entry(p.local).or_default() += 1;
-            }
-            if p.proj.is_empty() {
-                reads.insert(p.local, from);
-            }
+    /// The function's locals for [`Known`] (from `idx`, which has seen every block): those whose
+    /// own address is taken, the relevant ones, and those of them assigned once.
+    fn locals_seen<'a>(&self, params: usize, idx: &'a LoopIndex) -> Locals<'a> {
+        let is_once = |l: &Local| {
+            idx.sites.get(l) == Some(&1) && l.0 as usize >= params && !idx.addressed.contains(l)
         };
-        let locals = |os: &mut dyn Iterator<Item = &Operand>| -> Vec<Local> {
-            os.filter_map(|o| match o {
-                Operand::Copy(p) => Some(p.local),
-                Operand::Const(..) => None,
-            })
-            .collect()
-        };
-        for (stmts, term) in &self.blocks {
-            for s in stmts {
-                if let vir::Stmt::Assign(p, rv) = s {
-                    let from = match rv {
-                        Rvalue::Use(o) | Rvalue::Unary(_, o) | Rvalue::Cast(o, _) => {
-                            locals(&mut std::iter::once(o))
-                        }
-                        Rvalue::Binary(_, a, b) => locals(&mut [a, b].into_iter()),
-                        Rvalue::AddrOf(_) | Rvalue::Aggregate(..) | Rvalue::Intrinsic(..) => vec![],
-                    };
-                    assign(p, from);
-                    if let Rvalue::AddrOf(a) = rv {
-                        if !matches!(a.proj.first(), Some(Proj::Deref(_))) {
-                            addressed.insert(a.local);
-                        }
-                    }
-                }
-            }
-            if let Some(Terminator::Call {
-                dest: Some(p),
-                args,
-                ..
-            }) = term
-            {
-                assign(p, locals(&mut args.iter()));
-            }
-        }
-        let once: FxHashSet<Local> = (sites.into_iter())
-            .filter(|&(l, n)| n == 1 && l.0 as usize >= params && !addressed.contains(&l))
-            .map(|(l, _)| l)
-            .collect();
         let hdrs = self.view_loops.hdrs.iter();
         let mut work: Vec<Local> = hdrs.flat_map(|(c, p)| [*c, p.local]).collect();
-        let mut relevant = FxHashSet::default();
+        let (mut relevant, mut once) = (FxHashSet::default(), FxHashSet::default());
         while let Some(l) = work.pop() {
-            if relevant.insert(l) && once.contains(&l) {
-                work.extend(reads.get(&l).into_iter().flatten().copied());
+            if relevant.insert(l) && is_once(&l) {
+                once.insert(l);
+                work.extend(idx.reads.get(&l).into_iter().flatten().copied());
             }
         }
         Locals {
-            addressed,
+            addressed: &idx.addressed,
             once,
             relevant,
         }

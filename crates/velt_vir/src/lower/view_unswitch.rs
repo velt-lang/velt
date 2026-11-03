@@ -39,6 +39,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::rt::Rt;
+use super::view_unswitch_index::{live_preds, LoopIndex};
 use super::FnLower;
 use crate::vir::{self, BlockId, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -137,8 +138,13 @@ impl FnLower<'_, '_> {
         }
         let versions = self.view_loop_versions();
         self.view_loops.loops.clear();
+        if versions.is_empty() {
+            return;
+        }
+        let mut idx = LoopIndex::new(&self.blocks, &self.live);
         for v in versions {
-            self.version(v.h, &v.region, &v.boxes, &v.tests, params);
+            self.version(v.h, &v.region, &v.boxes, &v.tests, params, &mut idx);
+            idx.update(&self.blocks, &self.live);
         }
     }
 
@@ -154,9 +160,10 @@ impl FnLower<'_, '_> {
         let mut tested: FxHashSet<Local> = self.view_loops.tests.iter().map(|x| x.0).collect();
         tested.extend(self.view_loops.slows.iter().copied());
         let uses = self.test_uses(&tested);
+        let preds = live_preds(&self.blocks, &self.live);
         let mut handled: FxHashSet<Local> = FxHashSet::default();
         for (h, first, end) in loops {
-            let Some(region) = self.natural_loop(h, first, end) else {
+            let Some(region) = self.natural_loop(h, first, end, &preds) else {
                 continue;
             };
             let used_here = |t: &Local| {
@@ -212,7 +219,13 @@ impl FnLower<'_, '_> {
 
     /// The blocks of the loop with header `h` among the live blocks `first..end`: those
     /// reached from `h` that reach `h` again, when the loop is entered only through `h`.
-    fn natural_loop(&self, h: BlockId, first: u32, end: u32) -> Option<Vec<BlockId>> {
+    fn natural_loop(
+        &self,
+        h: BlockId,
+        first: u32,
+        end: u32,
+        preds: &[Vec<BlockId>],
+    ) -> Option<Vec<BlockId>> {
         let inr = |b: BlockId| b.0 >= first && b.0 < end && self.live[b.0 as usize];
         if !inr(h) {
             return None;
@@ -245,14 +258,9 @@ impl FnLower<'_, '_> {
         if !fwd.iter().any(|&b| succ(b).contains(&h)) {
             return None;
         }
-        // Entered only through the header.
-        for (i, (_, t)) in self.blocks.iter().enumerate() {
-            let b = BlockId(i as u32);
-            if !self.live[i] || back.contains(&b) {
-                continue;
-            }
-            let into = t.iter().flat_map(super::cfg::successors);
-            if into.filter(|s| back.contains(s)).any(|s| s != h) {
+        // Entered only through the header: no live block outside jumps to another of its blocks.
+        for &b in back.iter().filter(|&&b| b != h) {
+            if preds[b.0 as usize].iter().any(|p| !back.contains(p)) {
                 return None;
             }
         }
@@ -339,6 +347,7 @@ impl FnLower<'_, '_> {
         boxes: &[(Local, Ty)],
         tests: &Tests,
         params: usize,
+        idx: &mut LoopIndex,
     ) {
         let Tests {
             plain,
@@ -346,7 +355,6 @@ impl FnLower<'_, '_> {
             slows,
         } = tests;
         let inside: FxHashSet<BlockId> = region.iter().copied().collect();
-        let copies = self.blocks.len();
         let mut map = FxHashMap::default();
         for b in self.loop_rpo(h, &inside) {
             let c = self.new_block();
@@ -369,15 +377,8 @@ impl FnLower<'_, '_> {
                 _ => None,
             })
             .collect();
-        for (i, (stmts, term)) in self.blocks.iter_mut().enumerate().take(copies) {
-            if self.live[i] && !inside.contains(&BlockId(i as u32)) {
-                let mut note = |l: &mut Local| {
-                    outside.insert(*l);
-                };
-                stmts.iter_mut().for_each(|s| stmt_locals(s, &mut note));
-                term.iter_mut().for_each(|t| term_locals(t, &mut note));
-            }
-        }
+        // Those the live blocks outside the loop mention (view_unswitch_index.rs).
+        outside.extend(idx.shared(region));
         let mut fresh = FxHashMap::default();
         let mut copied = vec![];
         for &b in region {
@@ -402,7 +403,7 @@ impl FnLower<'_, '_> {
         // Where the copy goes on in the original, the original's locals take the values of the
         // copy's that are live there (and assigned on every way there).
         let renamed: FxHashSet<Local> = fresh.keys().copied().collect();
-        let proven = self.plain_headers(h, region, tests, params);
+        let proven = self.plain_headers(h, region, tests, params, idx);
         let (live, set) = match leave.is_empty() && slows.is_empty() {
             true => (FxHashMap::default(), FxHashMap::default()),
             false => (
@@ -471,15 +472,14 @@ impl FnLower<'_, '_> {
         }
         // The test before the loop, entered by every jump into it from outside.
         let entry = self.new_block();
-        for i in 0..copies {
-            if !self.live[i] || inside.contains(&BlockId(i as u32)) {
-                continue;
-            }
-            if let Some(t) = self.blocks[i].1.take() {
+        let into = idx.entries(&self.blocks, &self.live, h, &inside);
+        for &p in &into {
+            if let Some(t) = self.blocks[p.0 as usize].1.take() {
                 let t = super::cfg::remap_term(t, |s| if s == h { entry } else { s });
-                self.blocks[i].1 = Some(t);
+                self.blocks[p.0 as usize].1 = Some(t);
             }
         }
+        idx.jump(&into, entry);
         self.live[entry.0 as usize] = true;
         self.loc = self.block_locs[h.0 as usize].1;
         let mut at = entry;
@@ -659,7 +659,7 @@ fn is_local(o: &Operand, l: Local) -> bool {
 }
 
 /// Visit every local `s` mentions.
-fn stmt_locals(s: &mut vir::Stmt, f: &mut impl FnMut(&mut Local)) {
+pub(super) fn stmt_locals(s: &mut vir::Stmt, f: &mut impl FnMut(&mut Local)) {
     match s {
         vir::Stmt::Assign(p, rv) => {
             f(&mut p.local);
@@ -694,7 +694,7 @@ fn stmt_locals(s: &mut vir::Stmt, f: &mut impl FnMut(&mut Local)) {
 }
 
 /// Visit every local `t` mentions.
-fn term_locals(t: &mut Terminator, f: &mut impl FnMut(&mut Local)) {
+pub(super) fn term_locals(t: &mut Terminator, f: &mut impl FnMut(&mut Local)) {
     match t {
         Terminator::Branch { cond: o, .. }
         | Terminator::Switch { value: o, .. }
