@@ -1,6 +1,6 @@
 //! The compiler's memory at the end of each stage, for `velt build --timings`: the resident set
-//! and its peak so far, as mimalloc (the compiler's allocator, through `velt_rt_host`) reports
-//! them. A stage that keeps an earlier stage's data alive shows as a resident set that does not
+//! and its peak so far (the peak as mimalloc, the compiler's allocator through `velt_rt_host`,
+//! reports it). A stage that keeps an earlier stage's data alive shows as a resident set that does not
 //! go down after it.
 
 use std::sync::{Arc, Mutex};
@@ -78,11 +78,17 @@ pub fn read() -> Option<Reading> {
             page_faults: *mut usize,
         );
     }
-    let (mut rss, mut peak) = (0usize, 0usize);
+    let mut peak = 0usize;
     let null = std::ptr::null_mut();
     // SAFETY: mimalloc writes only the outputs that are not null.
-    unsafe { mi_process_info(null, null, null, &mut rss, &mut peak, null, null, null) };
-    (rss > 0).then_some(Reading { rss, peak })
+    unsafe { mi_process_info(null, null, null, null, &mut peak, null, null, null) };
+    // The resident set as the OS counts it (mimalloc's current figure is its committed memory
+    // on some systems).
+    let rss = usize::try_from(velt_rt_host::memory_usage::velt_rt_memory_rss()).unwrap_or(0);
+    (rss > 0).then_some(Reading {
+        rss,
+        peak: peak.max(rss),
+    })
 }
 
 /// `rss 812 MB, peak 900 MB` (whole megabytes).
