@@ -503,7 +503,7 @@ fn has_break(s: &ast::Stmt) -> bool {
         | A::DoWhile { body, .. }
         | A::For { body, .. }
         | A::ForOf { body, .. } => body.stmts.iter().any(has_break),
-        A::Block(b) => b.stmts.iter().any(has_break),
+        A::Block(b) | A::Unsafe(b) => b.stmts.iter().any(has_break),
         A::Labeled { body, .. } => has_break(body),
         A::Switch { cases, .. } => cases.iter().any(|c| c.body.iter().any(has_break)),
         A::Try {
@@ -537,7 +537,7 @@ fn has_finally(s: &ast::Stmt) -> bool {
         | A::DoWhile { body, .. }
         | A::For { body, .. }
         | A::ForOf { body, .. } => any(body),
-        A::Block(b) => any(b),
+        A::Block(b) | A::Unsafe(b) => any(b),
         A::Labeled { body, .. } => has_finally(body),
         A::Switch { cases, .. } => cases.iter().any(|c| c.body.iter().any(has_finally)),
         _ => false,

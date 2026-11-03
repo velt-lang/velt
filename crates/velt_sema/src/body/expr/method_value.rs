@@ -134,6 +134,15 @@ impl FnCx<'_, '_> {
         if self.own_literal_iface(obj.ty) {
             return self.detached_literal_method(prop, span);
         }
+        // An unsafe method is no value (a function type can't say it is unsafe), reported once
+        // here rather than at the call the bound value makes.
+        if let Some(Resolved::Def { def, .. } | Resolved::Virtual { def, .. }) =
+            self.resolve_method(obj.ty, &prop.name)
+        {
+            if self.reject_unsafe_value(def, &prop.name, prop.span) {
+                return self.error_expr(span);
+            }
+        }
         // Each call of an `Atomic` method is the instruction its ordering names (atomic.rs).
         if self.cx.atomic_value(obj.ty).is_some() {
             self.cx.error(

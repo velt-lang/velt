@@ -48,6 +48,7 @@ fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
         | E::InstanceOf { expr, .. }
         | E::Paren(expr)
         | E::NonNull(expr)
+        | E::Unsafe(expr)
         | E::Member { object: expr, .. } => f(expr),
         E::Binary { lhs, rhs, .. } => {
             f(lhs);

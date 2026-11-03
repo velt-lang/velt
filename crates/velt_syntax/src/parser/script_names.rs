@@ -278,7 +278,7 @@ impl Names {
                     n.block(body);
                 });
             }
-            StmtKind::Block(b) => self.block(b),
+            StmtKind::Block(b) | StmtKind::Unsafe(b) => self.block(b),
             StmtKind::Labeled { body, .. } => self.stmt(body),
             StmtKind::Switch {
                 discriminant,
@@ -360,6 +360,7 @@ impl Names {
             | ExprKind::InstanceOf { expr, .. }
             | ExprKind::Paren(expr)
             | ExprKind::NonNull(expr)
+            | ExprKind::Unsafe(expr)
             | ExprKind::Member { object: expr, .. } => self.expr(expr),
             ExprKind::Binary { lhs, rhs, .. }
             | ExprKind::Assign {

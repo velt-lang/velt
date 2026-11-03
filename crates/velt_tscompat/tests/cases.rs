@@ -256,3 +256,13 @@ fn an_operator_method_note_names_its_symbol() {
          (JavaScript's `a + b` converts objects to primitives)"
     );
 }
+
+/// `unsafe` is valid Velt only in a native package, so it has no case file.
+#[test]
+fn unsafe_code_is_reported() {
+    let src = "unsafe function raw(n: number): number { return n; }\nfunction f(n: number): number { unsafe { n = raw(n); } return unsafe { raw(n) }; }\n";
+    let findings = lint_syntax(Path::new("unsafe.vlt"), src);
+    let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
+    assert_eq!(codes, ["unsafe", "unsafe", "unsafe"]);
+    assert_eq!(findings[0].span, Span::new(FileId(0), 0, 6));
+}

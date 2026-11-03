@@ -120,7 +120,7 @@ impl Scan {
                 self.expr(iter);
                 self.block(body);
             }
-            S::Block(b) => self.block(b),
+            S::Block(b) | S::Unsafe(b) => self.block(b),
             S::Labeled { body, .. } => self.stmt(body),
             S::Switch {
                 discriminant,
@@ -279,7 +279,7 @@ fn stmt_returns_value(s: &ast::Stmt) -> bool {
             returns_value(body)
         }
         S::ForOf { body, .. } => returns_value(body),
-        S::Block(b) => returns_value(b),
+        S::Block(b) | S::Unsafe(b) => returns_value(b),
         S::Labeled { body, .. } => stmt_returns_value(body),
         S::Switch { cases, .. } => cases.iter().any(|c| c.body.iter().any(stmt_returns_value)),
         S::Try {

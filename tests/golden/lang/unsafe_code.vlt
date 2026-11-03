@@ -1,0 +1,41 @@
+// `unsafe` blocks, expressions and functions (docs/internals/design/c-ffi.md). Here they only
+// mark code; calling native code is what will need them.
+
+// SAFETY: callers pass a non-negative `n`.
+unsafe function raw(n: i64): i64 {
+  return n * 2;
+}
+
+class Buf {
+  items: i64[] = [1, 2, 3];
+
+  // SAFETY: `i` is below the length.
+  unsafe at(i: i64): i64 {
+    return this.items[i];
+  }
+}
+
+function pick(n: i64): i64 {
+  if (n > 0) {
+    // SAFETY: `n` is positive.
+    unsafe {
+      return raw(n);
+    }
+  }
+  return 0;
+}
+
+function main() {
+  const b = new Buf();
+  // SAFETY: 1 is below the length.
+  const x = unsafe { b.at(1) };
+  // SAFETY: 3 is non-negative.
+  unsafe {
+    console.log(raw(3), x);
+  }
+  // SAFETY: the arrow is called with lengths.
+  const twice = (n: i64) => unsafe { raw(n) };
+  console.log(twice(b.items.length), pick(5), pick(-1));
+  const unsafe = "still a name";
+  console.log(unsafe);
+}

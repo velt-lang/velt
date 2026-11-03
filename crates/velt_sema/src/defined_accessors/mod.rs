@@ -302,7 +302,7 @@ impl Bodies<'_> {
                 self.expr(iter);
                 self.nested_stmts(&mut body.stmts);
             }
-            S::Block(b) => self.nested_stmts(&mut b.stmts),
+            S::Block(b) | S::Unsafe(b) => self.nested_stmts(&mut b.stmts),
             S::Labeled { body, .. } => self.nested(body),
             S::Switch {
                 discriminant,

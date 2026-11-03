@@ -34,7 +34,7 @@ use velt_common::{FileId, Span};
 use crate::ast;
 
 /// The version of the encoding: the first bytes of every encoded module.
-pub const FORMAT: &[u8; 8] = b"vast\x00\x00\x00\x03";
+pub const FORMAT: &[u8; 8] = b"vast\x00\x00\x00\x04";
 
 /// How deeply decoded nodes may nest: far more than a parse produces (the parser stops at 256
 /// syntactic levels, each a handful of nodes), so only a damaged value reaches it.

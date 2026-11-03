@@ -48,6 +48,7 @@ pub(crate) mod ret_infer;
 pub(crate) mod shapes;
 pub(crate) mod sigs;
 pub(crate) mod static_this;
+mod unsafe_methods;
 
 use crate::ctx::Ctx;
 use crate::hir::DefId;

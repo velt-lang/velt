@@ -292,6 +292,7 @@ pub fn sx(e: &Expr) -> String {
         ExprKind::Ident(i) => i.name.clone(),
         ExprKind::This => "this".into(),
         ExprKind::Super => "super".into(),
+        ExprKind::Unsafe(e) => format!("(unsafe {})", sx(e)),
         ExprKind::Unary { op, expr } => {
             let o = match op {
                 UnaryOp::Neg => "-",

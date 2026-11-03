@@ -33,6 +33,8 @@ pub(crate) struct Lifted {
     pub local_fns: FxHashSet<Span>,
     /// Name spans of every function made from a generic arrow, module-level ones included.
     pub all_fns: FxHashSet<Span>,
+    /// Name spans of the local ones made inside unsafe code, whose bodies stay unsafe code.
+    pub unsafe_fns: FxHashSet<Span>,
 }
 
 /// The modules with their liftable generic arrow constants rewritten into functions, or `None`
@@ -95,12 +97,14 @@ pub(crate) fn lift(modules: &[SourceModule]) -> Option<Lifted> {
             jsx_runtime: m.jsx_runtime.clone(),
         })
         .collect();
+    let unsafe_fns = locals.unsafe_lifted.into_iter().collect();
     let local_fns: FxHashSet<Span> = locals.lifted.into_iter().collect();
     let all_fns = local_fns.iter().copied().chain(module_fns).collect();
     Some(Lifted {
         modules,
         local_fns,
         all_fns,
+        unsafe_fns,
     })
 }
 
@@ -227,6 +231,7 @@ fn lifted_arrow(v: &ast::VarDecl, rest: bool) -> Option<ast::FnDecl> {
         ret: ret.clone(),
         throws: throws.clone(),
         is_async: *is_async,
+        is_unsafe: false,
         is_system: false,
         is_intrinsic: false,
         generator: None,

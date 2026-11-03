@@ -1,0 +1,13 @@
+// `unsafe` marks Velt code that calls native code; TypeScript has no such keyword, so `tsc`
+// reads `unsafe` as an identifier and stops at what follows it.
+
+export unsafe function raw(n: number): number {
+  return n;
+}
+
+export function caller(n: number): number {
+  unsafe {
+    n = raw(n);
+  }
+  return unsafe { raw(n) };
+}

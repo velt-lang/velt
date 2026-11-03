@@ -308,7 +308,7 @@ fn walk_stmt<'m>(s: &'m ast::Stmt, scope: Span, f: &mut dyn FnMut(Found<'m>)) {
             walk_expr(iter, f);
             walk_block(body, f);
         }
-        S::Block(b) => walk_block(b, f),
+        S::Block(b) | S::Unsafe(b) => walk_block(b, f),
         S::Switch {
             discriminant,
             cases,

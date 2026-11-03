@@ -63,7 +63,7 @@ structs! {
     GenericParam { name, bounds, default }
     Param { name, pattern, ty, default, optional, rest, span }
     FnSig {
-        name, generics, params, ret, throws, is_async, is_system, is_intrinsic, generator, host,
+        name, generics, params, ret, throws, is_async, is_unsafe, is_system, is_intrinsic, generator, host,
         is_generator, this_param, span,
     }
     GeneratorSpec { spec, span }
@@ -172,6 +172,7 @@ enums! {
         14 => Try { body, catch, finally },
         15 => Item(a),
         16 => Empty,
+        17 => Unsafe(a),
     }
     Lit {
         0 => Int { value, suffix },
@@ -258,6 +259,7 @@ enums! {
         24 => Paren(a),
         25 => NonNull(a),
         26 => Jsx(a),
+        27 => Unsafe(a),
     }
     PatternKind {
         0 => Ident(a),

@@ -204,6 +204,10 @@ impl<'a> Printer<'a> {
                 if m.is_override {
                     mods.push_str("override ");
                 }
+                // Before `get` / `set`, which must come right before the name.
+                if m.decl.sig.is_unsafe {
+                    mods.push_str("unsafe ");
+                }
                 if m.is_getter && self.abstract_property(m) {
                     return self.abstract_property_decl(m, mods);
                 }
@@ -218,7 +222,7 @@ impl<'a> Printer<'a> {
                     let sig = self.fn_sig(&m.decl.sig, "", m.decl.sig.span.hi);
                     return cat![mods, sig, ";"];
                 }
-                self.fn_decl_with(&m.decl, "", &mods)
+                self.fn_decl_mods(&m.decl, "", &mods, false)
             }
             Member::CallSig(s) => cat![self.call_sig(s), ";"],
             Member::InterfaceMethod(m) => {

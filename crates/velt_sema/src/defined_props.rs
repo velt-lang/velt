@@ -443,7 +443,7 @@ fn add_nested(stmts: &mut [ast::Stmt], adds: &[(String, ast::Ident, ast::TypeExp
     for s in stmts {
         match &mut s.kind {
             ast::StmtKind::Item(item) => add_members(item, adds),
-            ast::StmtKind::Block(b) => add_nested(&mut b.stmts, adds),
+            ast::StmtKind::Block(b) | ast::StmtKind::Unsafe(b) => add_nested(&mut b.stmts, adds),
             _ => {}
         }
     }

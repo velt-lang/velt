@@ -498,6 +498,7 @@ fn this_result_ok(cx: &mut Ctx, own: TyId, base: TyId) -> bool {
 }
 
 fn check_override_sig(cx: &mut Ctx, m: MethodRef, base: &Found, name: &velt_syntax::ast::Ident) {
+    super::unsafe_methods::overrides(cx, m.def, base.def());
     let (mp, mr, mg) = {
         let f = cx.fn_info(m.def);
         let ps = f.params.iter().map(|p| p.ty).collect::<Vec<_>>();

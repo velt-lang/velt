@@ -91,6 +91,7 @@ impl<'a> Walker<'a> {
                 self.expr(object);
                 self.expr(index);
             }
+            ast::ExprKind::Unsafe(inner) => self.expr(inner),
             _ => {}
         }
     }

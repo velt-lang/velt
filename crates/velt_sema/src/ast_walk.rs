@@ -18,6 +18,7 @@ pub(crate) fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
         | E::InstanceOf { expr, .. }
         | E::Paren(expr)
         | E::NonNull(expr)
+        | E::Unsafe(expr)
         | E::Member { object: expr, .. } => f(expr),
         E::Binary { lhs, rhs, .. } => {
             f(lhs);
@@ -99,6 +100,7 @@ pub(crate) fn children_mut(e: &mut ast::Expr, f: &mut dyn FnMut(&mut ast::Expr))
         | E::Cast { expr, .. }
         | E::InstanceOf { expr, .. }
         | E::NonNull(expr)
+        | E::Unsafe(expr)
         | E::Paren(expr)
         | E::Member { object: expr, .. } => f(expr),
         E::Binary { lhs: a, rhs: b, .. }

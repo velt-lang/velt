@@ -288,7 +288,7 @@ impl<'a> Walker<'a> {
                 self.block(&body.stmts);
                 self.unbind(&names);
             }
-            S::Block(b) => self.block(&b.stmts),
+            S::Block(b) | S::Unsafe(b) => self.block(&b.stmts),
             S::Labeled { body, .. } => self.stmt(body),
             S::Switch {
                 discriminant,

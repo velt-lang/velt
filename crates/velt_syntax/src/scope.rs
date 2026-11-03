@@ -376,7 +376,7 @@ impl<'a> Walker<'a, '_> {
                 self.block(&body.stmts);
                 self.scopes.pop();
             }
-            StmtKind::Block(b) => self.block(&b.stmts),
+            StmtKind::Block(b) | StmtKind::Unsafe(b) => self.block(&b.stmts),
             StmtKind::Labeled { body, .. } => self.stmt(body),
             StmtKind::Switch {
                 discriminant,
@@ -436,6 +436,7 @@ impl<'a> Walker<'a, '_> {
             | E::Await(expr)
             | E::Paren(expr)
             | E::NonNull(expr)
+            | E::Unsafe(expr)
             | E::Member { object: expr, .. } => self.expr(expr),
             E::Cast { expr, ty } | E::InstanceOf { expr, ty } => {
                 self.expr(expr);

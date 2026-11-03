@@ -65,7 +65,7 @@ impl Found {
                 }
                 self.stmts(&body.stmts, true);
             }
-            S::Block(b) => self.stmts(&b.stmts, in_loop),
+            S::Block(b) | S::Unsafe(b) => self.stmts(&b.stmts, in_loop),
             S::Labeled { body, .. } => self.stmt(body, in_loop),
             S::Switch { cases, .. } => cases.iter().for_each(|c| self.stmts(&c.body, in_loop)),
             S::Try {
@@ -379,7 +379,7 @@ fn nested(s: &mut ast::Stmt, plans: &FxHashMap<(String, String), Plan>, skipped:
         }
         S::While { body, .. } | S::DoWhile { body, .. } | S::ForOf { body, .. } => block(body),
         S::For { body, .. } => block(body),
-        S::Block(b) => block(b),
+        S::Block(b) | S::Unsafe(b) => block(b),
         S::Labeled { body, .. } => nested(body, plans, skipped),
         S::Switch { cases, .. } => cases
             .iter_mut()

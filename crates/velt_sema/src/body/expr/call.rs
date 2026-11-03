@@ -203,6 +203,7 @@ impl FnCx<'_, '_> {
 
     /// The signature of function `d` called at `span` (its result inferred first if needed).
     pub(crate) fn fn_callable(&mut self, d: DefId, what: String, span: Span) -> Callable {
+        self.check_unsafe_call(d, &what, span);
         crate::body::defaults::param_defaults(self.cx, d);
         let ret = crate::body::returns::ret_of(self.cx, d, span);
         let async_call = self.rejects_through_promise(d);

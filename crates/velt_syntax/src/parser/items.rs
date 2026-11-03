@@ -121,14 +121,15 @@ impl<'a> Parser<'a> {
                 }
                 ItemKind::Import(self.parse_import()?)
             }
-            Some(Kw::Function) => ItemKind::Function(self.parse_fn_decl(lo, false)?),
+            Some(Kw::Function) => ItemKind::Function(self.parse_fn_decl(lo, false, false)?),
             Some(Kw::Async) if self.at_async_function() => {
                 self.bump();
-                ItemKind::Function(self.parse_fn_decl(lo, true)?)
+                ItemKind::Function(self.parse_fn_decl(lo, true, false)?)
             }
             Some(Kw::Struct) => ItemKind::Struct(self.parse_type_decl(false)?),
             Some(Kw::Class) => ItemKind::Class(self.parse_type_decl(true)?),
             None if self.at_abstract_class() => ItemKind::Class(self.parse_abstract_class()?),
+            None if self.at_unsafe_fn() => ItemKind::Function(self.parse_unsafe_fn(lo)?),
             Some(Kw::Interface) => self.parse_interface()?,
             Some(Kw::Enum) => ItemKind::Enum(self.parse_enum()?),
             Some(Kw::Type) if Self::is_ident_like(self.nth(1)) => self.parse_type_alias_item()?,
@@ -279,33 +280,40 @@ impl<'a> Parser<'a> {
     /// signature ending in `;` (or a line break: automatic semicolon insertion) is a
     /// TypeScript-form overload: the declarations of the same name that follow it, up to the one
     /// with a body, are parsed with it (`FnDecl::overloads`).
-    fn parse_fn_decl(&mut self, lo: u32, is_async: bool) -> PResult<FnDecl> {
+    pub(super) fn parse_fn_decl(
+        &mut self,
+        lo: u32,
+        is_async: bool,
+        is_unsafe: bool,
+    ) -> PResult<FnDecl> {
         let mut sig = self.parse_fn_sig(lo, is_async)?;
+        sig.is_unsafe = is_unsafe;
         let mut exported = self.text(lo, self.src.len() as u32).starts_with("export");
         let mut sigs: Vec<(FnSig, bool)> = vec![];
         while self.eat_signature_end() {
             self.signature_defaults(&sig);
-            let (next_exported, next_async) = match self.at_function_after(&sig.name.name) {
-                Some(Ok(next)) => next,
-                Some(Err(other)) if self.next_fn_has_body() => {
-                    self.wrong_implementation_name(&sig.name, other);
-                    return Err(Fail);
-                }
-                Some(Err(_)) | None => {
-                    self.missing_implementation(&sig.name);
-                    return Err(Fail);
-                }
-            };
+            let (next_exported, next_unsafe, next_async) =
+                match self.at_function_after(&sig.name.name) {
+                    Some(Ok(next)) => next,
+                    Some(Err(other)) if self.next_fn_has_body() => {
+                        self.wrong_implementation_name(&sig.name, other);
+                        return Err(Fail);
+                    }
+                    Some(Err(_)) | None => {
+                        self.missing_implementation(&sig.name);
+                        return Err(Fail);
+                    }
+                };
             let next_lo = self.cur_lo();
-            if next_exported {
-                self.bump();
-            }
-            if next_async {
-                self.bump();
+            for skip in [next_exported, next_unsafe, next_async] {
+                if skip {
+                    self.bump();
+                }
             }
             sigs.push((sig, exported));
             exported = next_exported;
             sig = self.parse_fn_sig(next_lo, next_async)?;
+            sig.is_unsafe = next_unsafe;
         }
         let this_param = self.this_param.take();
         let body = self.parse_fn_body()?;
@@ -318,6 +326,7 @@ impl<'a> Parser<'a> {
         if this_param.is_some() && sig.this_param.is_none() {
             self.check_fn_this(this_param, &body, false);
         }
+        self.overloads_agree_on_unsafe(sigs.iter().map(|(s, _)| s), &sig);
         // TypeScript's TS2383, at each signature exported differently from the implementation.
         for (s, e) in &sigs {
             if *e != exported {
@@ -334,13 +343,15 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// After an overload signature of `name`: is the next item `[export] [async] function`,
+    /// After an overload signature of `name`: is the next item `[export] [unsafe] [async] function`,
     /// `Ok` with whether it is exported and `async` when it is named `name`, `Err` with its name
     /// when it has another?
-    fn at_function_after(&mut self, name: &str) -> Option<Result<(bool, bool), Span>> {
+    fn at_function_after(&mut self, name: &str) -> Option<Result<(bool, bool, bool), Span>> {
         let mut k = 0;
         let exported = self.nth(k) == Tok::Kw(Kw::Export);
         k += usize::from(exported);
+        let is_unsafe = self.nth_word(k, "unsafe") && !self.line_break_after(k);
+        k += usize::from(is_unsafe);
         let is_async = self.nth(k) == Tok::Kw(Kw::Async);
         k += usize::from(is_async);
         if self.nth(k) != Tok::Kw(Kw::Function) {
@@ -355,7 +366,7 @@ impl<'a> Parser<'a> {
         }
         let t = self.tok(self.pos + k);
         match self.text(t.lo, t.hi) == name {
-            true => Some(Ok((exported, is_async))),
+            true => Some(Ok((exported, is_unsafe, is_async))),
             false => Some(Err(Span::new(self.file, t.lo, t.hi))),
         }
     }
@@ -365,7 +376,7 @@ impl<'a> Parser<'a> {
     fn next_fn_has_body(&mut self) -> bool {
         let snap = self.snapshot();
         self.speculating += 1;
-        while matches!(self.nth(0), Tok::Kw(Kw::Export | Kw::Async)) {
+        while matches!(self.nth(0), Tok::Kw(Kw::Export | Kw::Async)) || self.at_unsafe_fn() {
             self.bump();
         }
         let lo = self.cur_lo();
@@ -441,6 +452,7 @@ impl<'a> Parser<'a> {
             ret,
             throws,
             is_async,
+            is_unsafe: false,
             is_system: false,
             is_intrinsic: false,
             generator: None,

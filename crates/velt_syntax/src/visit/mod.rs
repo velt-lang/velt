@@ -199,7 +199,7 @@ pub(crate) fn walk_stmt<'a>(s: &'a ast::Stmt, v: &mut dyn Visit<'a>) {
             walk_expr(iter, v);
             walk_block(body, v);
         }
-        S::Block(b) => walk_block(b, v),
+        S::Block(b) | S::Unsafe(b) => walk_block(b, v),
         S::Labeled { body, .. } => walk_stmt(body, v),
         S::Switch {
             discriminant,

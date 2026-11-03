@@ -71,6 +71,7 @@ impl<'a> Printer<'a> {
                 catch,
                 finally,
             } => self.try_stmt(body, catch.as_ref(), finally.as_ref()),
+            StmtKind::Unsafe(b) => cat!["unsafe ", self.block(b)],
             StmtKind::Item(item) => self.item(item),
             StmtKind::Empty => ";".into(),
         }

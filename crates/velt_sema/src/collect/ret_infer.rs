@@ -29,7 +29,7 @@ pub(crate) fn stmt_returns_value(s: &ast::Stmt) -> bool {
         K::Return(e) => e.is_some(),
         K::If { then, els, .. } => block(then) || els.as_deref().is_some_and(stmt_returns_value),
         K::While { body, .. } | K::DoWhile { body, .. } | K::ForOf { body, .. } => block(body),
-        K::For { body, .. } | K::Block(body) => block(body),
+        K::For { body, .. } | K::Block(body) | K::Unsafe(body) => block(body),
         K::Labeled { body, .. } => stmt_returns_value(body),
         K::Switch { cases, .. } => cases.iter().any(|c| c.body.iter().any(stmt_returns_value)),
         K::Try {

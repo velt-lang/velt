@@ -75,7 +75,8 @@ fn insertion_points(src: &str) -> Vec<(usize, bool, usize)> {
 /// insertion ends a statement at a line break after `return`, `throw`, `break`, `continue`,
 /// `yield` and `async`, and before `=>`, postfix `++` / `--`, a non-null `!`, `as`,
 /// `satisfies`, the type arguments of a type and a conditional type's `extends`; a modifier other than `static`, `get` and `set` before a line
-/// break is a name, and so are `type`, `interface`, `declare` and `namespace` (and `abstract` before `class`).
+/// break is a name, and so are `type`, `interface`, `declare` and `namespace` (and `abstract` before `class`,
+/// `unsafe` before `{`, `function` or a method).
 fn restricted(before: &str, after: &str) -> bool {
     let word_start = before
         .rfind(|c: char| !(c.is_alphanumeric() || c == '_' || c == '$'))
@@ -100,6 +101,7 @@ fn restricted(before: &str, after: &str) -> bool {
             | "declare"
             | "override"
             | "abstract"
+            | "unsafe"
             | "type"
             | "interface"
             | "namespace"

@@ -83,6 +83,7 @@ const CLAIMS: &[(&str, Claim)] = &[
     ("velt-global", Claim::Rejected),
     ("velt-member", Claim::Rejected),
     ("catch-unknown", Claim::Rejected),
+    ("unsafe", Claim::Rejected),
 ];
 
 /// Behaviour samples `tsc` accepts because it ignores the construct: `(code, TS error, why)`.
