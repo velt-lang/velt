@@ -5,6 +5,13 @@
 //! `__truncdfhf2`) LLVM would emit for `half` there. bf16 always takes the sequences: x86's
 //! AVX512-BF16 conversion flushes subnormals, and Arm's `bfcvt` needs FEAT_BF16, which not every
 //! arm64 CPU has.
+//!
+//! f64 narrows through f32 rounded to odd (`@velt.f64_to_f32.odd`) wherever there is no f64 -> f16
+//! instruction: the f32 keeps a sticky bit, and with f32's 24 bits at least two more than the 11 of
+//! f16 (8 of bf16), rounding that f32 to nearest-even gives the single rounding of the f64, at
+//! every magnitude (f32's range covers both formats' subnormals and overflow). So x86 with F16C
+//! narrows with `vcvtps2ph`, and the other paths with the 32-bit sequences, which vectorize where
+//! the 64-bit ones don't (#2191).
 
 use velt_vir::math::MathOp;
 
@@ -15,8 +22,8 @@ use crate::runtime::InlineHelper;
 pub(crate) enum HalfNative {
     /// None: every conversion is the integer sequence.
     None,
-    /// f16 <-> f32 (x86 with F16C); f64 -> f16 is the sequence (x86 has no instruction for it,
-    /// and through f32 it would round twice).
+    /// f16 <-> f32 (x86 with F16C); f64 -> f16 goes through f32 rounded to odd (x86 has no
+    /// instruction for it).
     F32,
     /// f16 <-> f32 and f64 -> f16 (arm64).
     All,
@@ -31,10 +38,20 @@ pub(crate) fn helper(op: MathOp, native: HalfNative) -> Option<InlineHelper> {
         MathOp::F32ToF16 if f32_native => ("@velt.f32_to_f16", &[F32_TO_F16]),
         MathOp::F32ToF16 => ("@velt.f32_to_f16.soft", &[F32_TO_F16_SOFT]),
         MathOp::F64ToF16 if native == HalfNative::All => ("@velt.f64_to_f16", &[F64_TO_F16]),
-        MathOp::F64ToF16 => ("@velt.f64_to_f16.soft", &[F64_TO_F16_SOFT]),
+        MathOp::F64ToF16 if f32_native => (
+            "@velt.f64_to_f16.odd",
+            &[F64_TO_F32_ODD, F32_TO_F16, F64_TO_F16_ODD],
+        ),
+        MathOp::F64ToF16 => (
+            "@velt.f64_to_f16.odd_soft",
+            &[F64_TO_F32_ODD, F32_TO_F16_SOFT, F64_TO_F16_ODD_SOFT],
+        ),
         MathOp::Bf16ToF32 => ("@velt.bf16_to_f32", &[BF16_TO_F32]),
         MathOp::F32ToBf16 => ("@velt.f32_to_bf16", &[F32_TO_BF16]),
-        MathOp::F64ToBf16 => ("@velt.f64_to_bf16.soft", &[F64_TO_BF16_SOFT]),
+        MathOp::F64ToBf16 => (
+            "@velt.f64_to_bf16.odd",
+            &[F64_TO_F32_ODD, F32_TO_BF16, F64_TO_BF16_ODD],
+        ),
         MathOp::U64ToBf16 => ("@velt.u64_to_bf16", &[CTLZ_DECL, U64_TO_BF16]),
         // The value is its bits.
         MathOp::F16Bits | MathOp::BitsF16 | MathOp::Bf16Bits | MathOp::BitsBf16 => {
@@ -120,31 +137,39 @@ const F32_TO_F16_SOFT: &str =
   %r = trunc i32 %r4 to i16
   ret i16 %r
 }";
-const F64_TO_F16_SOFT: &str =
-    "define internal i16 @velt.f64_to_f16.soft(double %x) alwaysinline nounwind {
-  %b = bitcast double %x to i64
-  %hi = lshr i64 %b, 48
-  %sign = and i64 %hi, 32768
-  %a = and i64 %b, 9223372036854775807
-  %n1 = lshr i64 %a, 42
-  %n2 = and i64 %n1, 1023
-  %nan = or i64 %n2, 32256
-  %fa = bitcast i64 %a to double
-  %sum = fadd double %fa, 0x41B0000000000000
-  %sb = bitcast double %sum to i64
-  %small = sub i64 %sb, 4733283208366391296
-  %odd = and i64 %n1, 1
-  %t1 = add i64 %a, -4539626225366204417
-  %t2 = add i64 %t1, %odd
-  %normal = lshr i64 %t2, 42
-  %is_small = icmp ult i64 %a, 4544132024016830464
-  %r1 = select i1 %is_small, i64 %small, i64 %normal
-  %is_inf = icmp uge i64 %a, 4679237813814689792
-  %r2 = select i1 %is_inf, i64 31744, i64 %r1
-  %is_nan = icmp ugt i64 %a, 9218868437227405312
-  %r3 = select i1 %is_nan, i64 %nan, i64 %r2
-  %r4 = or i64 %r3, %sign
-  %r = trunc i64 %r4 to i16
+/// f64 to f32 rounded to odd: truncated toward zero, then the last bit set when that dropped
+/// anything. `fptrunc` rounds to nearest; when that was inexact, one ulp back toward zero if it
+/// rounded away (the widened result's bits above the f64's: the signs are equal, so the unsigned
+/// order of the bits is the order of the magnitudes; an overflow to infinity becomes the largest
+/// finite f32), then the last bit set. No select, so no branch, and it vectorizes. A NaN is
+/// never inexact (`one`), so it stays the quiet NaN `fptrunc` gives, with the payload's top bits.
+const F64_TO_F32_ODD: &str =
+    "define internal float @velt.f64_to_f32.odd(double %x) alwaysinline nounwind {
+  %t = fptrunc double %x to float
+  %back = fpext float %t to double
+  %inexact = fcmp one double %back, %x
+  %bb = bitcast double %back to i64
+  %bx = bitcast double %x to i64
+  %above = icmp ugt i64 %bb, %bx
+  %away = and i1 %inexact, %above
+  %tb = bitcast float %t to i32
+  %dec = zext i1 %away to i32
+  %tz = sub i32 %tb, %dec
+  %odd = zext i1 %inexact to i32
+  %r = or i32 %tz, %odd
+  %f = bitcast i32 %r to float
+  ret float %f
+}";
+const F64_TO_F16_ODD: &str =
+    "define internal i16 @velt.f64_to_f16.odd(double %x) alwaysinline nounwind {
+  %f = call float @velt.f64_to_f32.odd(double %x)
+  %r = call i16 @velt.f32_to_f16(float %f)
+  ret i16 %r
+}";
+const F64_TO_F16_ODD_SOFT: &str =
+    "define internal i16 @velt.f64_to_f16.odd_soft(double %x) alwaysinline nounwind {
+  %f = call float @velt.f64_to_f32.odd(double %x)
+  %r = call i16 @velt.f32_to_f16.soft(float %f)
   ret i16 %r
 }";
 const BF16_TO_F32: &str =
@@ -172,31 +197,10 @@ const F32_TO_BF16: &str = "define internal i16 @velt.f32_to_bf16(float %f) alway
   %r = trunc i32 %r1 to i16
   ret i16 %r
 }";
-const F64_TO_BF16_SOFT: &str =
-    "define internal i16 @velt.f64_to_bf16.soft(double %x) alwaysinline nounwind {
-  %b = bitcast double %x to i64
-  %hi = lshr i64 %b, 48
-  %sign = and i64 %hi, 32768
-  %a = and i64 %b, 9223372036854775807
-  %n1 = lshr i64 %a, 45
-  %n2 = and i64 %n1, 127
-  %nan = or i64 %n2, 32704
-  %fa = bitcast i64 %a to double
-  %sum = fadd double %fa, 0x3AE0000000000000
-  %sb = bitcast double %sum to i64
-  %small = sub i64 %sb, 4242390848983007232
-  %odd = and i64 %n1, 1
-  %t1 = add i64 %a, -4035207673937920001
-  %t2 = add i64 %t1, %odd
-  %normal = lshr i64 %t2, 45
-  %is_small = icmp ult i64 %a, 4039728865751334912
-  %r1 = select i1 %is_small, i64 %small, i64 %normal
-  %is_inf = icmp uge i64 %a, 5183625578917396480
-  %r2 = select i1 %is_inf, i64 32640, i64 %r1
-  %is_nan = icmp ugt i64 %a, 9218868437227405312
-  %r3 = select i1 %is_nan, i64 %nan, i64 %r2
-  %r4 = or i64 %r3, %sign
-  %r = trunc i64 %r4 to i16
+const F64_TO_BF16_ODD: &str =
+    "define internal i16 @velt.f64_to_bf16.odd(double %x) alwaysinline nounwind {
+  %f = call float @velt.f64_to_f32.odd(double %x)
+  %r = call i16 @velt.f32_to_bf16(float %f)
   ret i16 %r
 }";
 const CTLZ_DECL: &str = "declare i64 @llvm.ctlz.i64(i64, i1)";

@@ -52,8 +52,8 @@ impl FnCx<'_, '_> {
             }
             (ScrutKind::TypeOf, Some(l)) => self.typeof_sel(s, &l, test.span),
             (ScrutKind::Union, Some(l)) => self.union_lit_sel(s, &l, test.span),
-            // An `f16`/`bf16` compares as `==` does, by value in `f32` (#2049), not by a pattern
-            // on its bits.
+            // An `f16`/`bf16` compares as `==` does, by its value as a number (#2049), not by a
+            // pattern on its bits.
             (ScrutKind::Plain, Some(_)) if self.cx.ty.is_storage_float(s.expr.ty) => {
                 self.guard_sel(s, test)
             }
@@ -351,8 +351,8 @@ impl FnCx<'_, '_> {
         let l = self.new_local("<case>", ty, false, span, LocalKind::Bind);
         // Converted to the discriminant's type where it can be (`case 1:` on a `u8`); otherwise
         // the values compare like `===` does (`case t:` with `t: string | null`, #337).
-        // An `f16`/`bf16` compares as `==` does (#2049): with a literal case (an `f64`) or a
-        // number in `f64`, exactly; with another storage float or an `f32` in `f32`.
+        // An `f16`/`bf16` compares as `==` does (#2049): widened to `f64`, exactly, whatever the
+        // case is.
         if self.cx.ty.is_storage_float(ty) {
             let f64_ = self.cx.ty.f64;
             let v = self.expr(test, Some(f64_), Want::Borrow);

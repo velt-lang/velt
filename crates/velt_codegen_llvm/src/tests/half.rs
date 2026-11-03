@@ -252,6 +252,9 @@ fn half_helpers_match_the_reference_bit_for_bit() {
     run(&clang, &dir, HalfNative::None, &[], &inputs);
     if cfg!(target_arch = "aarch64") {
         run(&clang, &dir, HalfNative::All, &[], &inputs);
+        // F16C's helpers are `fptrunc`/`fpext` through `half`, which arm64 runs as `fcvt`
+        // with the same rounding: the f64 path through f32 rounded to odd runs here too.
+        run(&clang, &dir, HalfNative::F32, &[], &inputs);
     }
     #[cfg(target_arch = "x86_64")]
     if std::arch::is_x86_feature_detected!("f16c") {
@@ -279,7 +282,7 @@ fn half_native_follows_the_target() {
     assert_eq!(t("wasm32-wasip1", None), HalfNative::None);
     assert_eq!(
         helper(MathOp::F64ToF16, HalfNative::F32).map(|h| h.0),
-        Some("@velt.f64_to_f16.soft")
+        Some("@velt.f64_to_f16.odd")
     );
     assert_eq!(
         helper(MathOp::F32ToF16, HalfNative::F32).map(|h| h.0),
