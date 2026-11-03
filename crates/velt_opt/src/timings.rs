@@ -30,6 +30,16 @@ impl PassTimings {
         r
     }
 
+    /// Add `other`'s times (another thread's share of the same passes).
+    pub(crate) fn add(&mut self, other: &PassTimings) {
+        for &(name, d) in &other.totals {
+            match self.totals.iter_mut().find(|(n, _)| *n == name) {
+                Some((_, total)) => *total += d,
+                None => self.totals.push((name, d)),
+            }
+        }
+    }
+
     /// `(pass, total time)` in first-run order.
     pub fn entries(&self) -> &[(&'static str, Duration)] {
         &self.totals

@@ -119,6 +119,7 @@ mod module_state;
 mod noalias;
 mod null_exits;
 mod numrep;
+mod parallel;
 mod scc;
 mod simplify_cfg;
 mod srclocs;
@@ -200,12 +201,17 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
                 &program.aggs,
                 &program.statics,
             );
-            for func in with_bodies(&mut program.funcs) {
+            // Each function on its own, on every core: the passes read only `env` and the
+            // aggregates. A pass's time is then the sum over the threads.
+            let mut bodies: Vec<&mut vir::Function> = with_bodies(&mut program.funcs).collect();
+            let aggs = &program.aggs;
+            let per_thread = parallel::for_each(&mut bodies, PassTimings::new, |t, func| {
                 t.time("simplify_cfg", || simplify_cfg::run(func));
                 if t.time("numrep", || numrep::run(&env, func)) {
-                    numrep_cleanup(&program.aggs, func, t);
+                    numrep_cleanup(aggs, func, t);
                 }
-            }
+            });
+            per_thread.iter().for_each(|thread| t.add(thread));
         }
         OptLevel::Speed => {
             t.time("dead_funcs", || dead_funcs::run(program));

@@ -81,7 +81,7 @@ pub(super) struct Flow {
     /// The arrays' aggregate (`Env::array`).
     array: Option<AggId>,
     /// Per aggregate, its field types (`Env::field_tys`).
-    field_tys: std::rc::Rc<[Vec<Ty>]>,
+    field_tys: std::sync::Arc<[Vec<Ty>]>,
     /// Per tracked local: facts that hold for every value it takes (`counter`), met with its
     /// facts wherever it changes.
     caps: Vec<Option<Fact>>,
