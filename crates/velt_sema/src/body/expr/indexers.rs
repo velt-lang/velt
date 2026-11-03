@@ -248,7 +248,7 @@ impl FnCx<'_, '_> {
             // `xs[i] = v` as a statement: one call, its arguments evaluated in JS's order.
             None if !as_value && one && is_pure_value(value) => {
                 let prop = ident(SET_INDEX, span);
-                let args = [keys[0].clone(), value.clone()];
+                let args = [ast::Expr::clone(keys[0]), value.clone()];
                 self.method_call_on(obj, &prop, &[], &args, None, span)
             }
             // Otherwise the object, the index and the value are evaluated first, in that order

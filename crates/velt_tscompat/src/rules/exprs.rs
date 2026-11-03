@@ -39,7 +39,7 @@ pub(super) fn expr(e: &ast::Expr, cx: &mut Cx) -> Option<Span> {
             "`a[i, j]` calls an operator indexer with several keys: TypeScript has no operator overloading".to_string(),
             &[
                 "in TypeScript, `a[i, j]` is the comma operator: it reads `a[j]`, and `tsc` rejects an `i` without side effects (TS2695)",
-                "call the method by its name (`m.at(i, j)`)",
+                "write a method with a name (`get(i, j)`) and call it",
             ],
         ),
         _ => {}
