@@ -16,8 +16,8 @@
 //!
 //! Each entry gives the hook's signature in a small type language (`sig(<A>(&string, i64) ->
 //! void)`, or `class`; [`crate::hook_sig`]), which the table turns into a [`Sig`]: `velt_sema`'s
-//! test of this table loads every hook module of std and walks each entry's definition against
-//! it (types, type parameters, `throws` and, for lowered hooks, passing modes), so renaming or
+//! test of this table checks every hook module of std whole and walks each entry's definition
+//! against it (types, type parameters, `throws` and passing modes), so renaming or
 //! changing a hook fails the build, not a program. `velt_vir` generates a typed call builder for
 //! each lowered function hook from the same tokens ([`std_hook_table!`]).
 //! `lowered` marks the hooks lowering, the optimizer or a backend call: nothing in the checked
@@ -157,11 +157,11 @@ macro_rules! hooks {
 hooks! {
     // array.vlt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
-    array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, A) -> [A]);
+    array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, &A) -> [A]);
     /// `new Array<T>(x).fill(v)` with an `x` that is no number.
-    array_one => lang_hooks_array, "arrayOne", sig(<A, B>(A, B) -> B);
+    array_one => lang_hooks_array, "arrayOne", sig(<A, B>(&A, move B) -> B);
     /// `Array.from({ length: n }, f)`.
-    array_from_length => lang_hooks_array, "arrayFromLength", sig(<A, B>(i64, Fn((i64) -> A throws B)) -> [A]);
+    array_from_length => lang_hooks_array, "arrayFromLength", sig(<A, B>(i64, &Fn((i64) -> A throws B)) -> [A] throws B);
 
     // number.vlt: numbers as text, and the conversions of a float index.
     /// `n.toString(radix)` of a float (`velt_sema` `builtins.rs`).
@@ -209,9 +209,9 @@ hooks! {
 
     // process.vlt: the builtin `process` namespace (`velt_sema` `process.rs`).
     /// `process.stdout.write(s)` / `process.stderr.write(s)`.
-    process_write => lang_hooks_process, "processWrite", sig((u32, string) -> bool);
+    process_write => lang_hooks_process, "processWrite", sig((u32, &string) -> bool);
     /// `process.env.NAME` / `process.env[name]`.
-    process_env => lang_hooks_process, "processEnv", sig((string) -> or_undefined(string));
+    process_env => lang_hooks_process, "processEnv", sig((&string) -> or_undefined(string));
     /// `process.argv`.
     process_argv => lang_hooks_process, "processArgv", sig(() -> [string]);
     /// The mark of the top-level `await`s after it (`velt_sema` `top_level_await.rs`); lowering
@@ -220,24 +220,24 @@ hooks! {
 
     // syntax.vlt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
     /// `value satisfies T`.
-    satisfies => lang_hooks_syntax, "satisfies", sig(<A>(A) -> A);
+    satisfies => lang_hooks_syntax, "satisfies", sig(<A>(move A) -> A);
     /// A getter in an object literal.
-    object_get => lang_hooks_syntax, "objectGet", sig(<A>(Fn(() -> A)) -> A);
+    object_get => lang_hooks_syntax, "objectGet", sig(<A>(&Fn(() -> A)) -> A);
     /// A setter in an object literal.
-    object_set => lang_hooks_syntax, "objectSet", sig(<A>(Fn((A) -> void)) -> Fn((A) -> void));
+    object_set => lang_hooks_syntax, "objectSet", sig(<A>(move Fn((A) -> void)) -> Fn((A) -> void));
     /// `{ [key]: value }` with a key known only at run time.
-    computed_key => lang_hooks_syntax, "computedKey", sig(<A>(string, A) -> Record(string, A));
+    computed_key => lang_hooks_syntax, "computedKey", sig(<A>(move string, move A) -> Record(string, A));
 
     // adapt.vlt: interface adapters of `unknown[]` and `Map<unknown, unknown>` (`velt_sema`
     // `iface_adapt.rs`).
     /// The `unknown[]` copy of an array an adapter passes for an `unknown[]` parameter.
-    unknown_array_in => lang_hooks_adapt, "unknownArrayIn", sig((unknown) -> [unknown]);
+    unknown_array_in => lang_hooks_adapt, "unknownArrayIn", sig((&unknown) -> [unknown]);
     /// The elements of that copy written back into the array after the call.
-    unknown_array_out => lang_hooks_adapt, "unknownArrayOut", sig((unknown, [unknown]) -> void);
+    unknown_array_out => lang_hooks_adapt, "unknownArrayOut", sig((&unknown, &[unknown]) -> void);
     /// The `Map<unknown, unknown>` copy of a map an adapter passes for such a parameter.
-    unknown_map_in => lang_hooks_adapt, "unknownMapIn", sig((unknown) -> Map(unknown, unknown));
+    unknown_map_in => lang_hooks_adapt, "unknownMapIn", sig((&unknown) -> Map(unknown, unknown));
     /// The entries of that copy written back into the map after the call.
-    unknown_map_out => lang_hooks_adapt, "unknownMapOut", sig((unknown, Map(unknown, unknown)) -> void);
+    unknown_map_out => lang_hooks_adapt, "unknownMapOut", sig((&unknown, move Map(unknown, unknown)) -> void);
 
     // any_text.vlt: the text of an `any` (`velt_sema` `any_text.rs`); lowering keeps one instance of
     // each and passes the call site (`velt_vir` `track_caller.rs`).
@@ -256,43 +256,43 @@ hooks! {
     /// `String(v)` of an `any` holding no class instance with `toString()` or `[Symbol.toPrimitive]`.
     any_text => lang_hooks_any_text, "anyText", sig((move any, &string) -> string), lowered;
     /// `String(r)` of an `any` holding a record, where `Object.create(null)` is called.
-    any_record_text => lang_hooks_any_text, "anyRecordText", sig((any, string) -> string);
+    any_record_text => lang_hooks_any_text, "anyRecordText", sig((move any, &string) -> string);
     /// `r + ""` of an `any` holding a record, where `Object.create(null)` is called.
-    any_record_concat => lang_hooks_any_text, "anyRecordConcat", sig((any, string) -> string);
+    any_record_concat => lang_hooks_any_text, "anyRecordConcat", sig((move any, &string) -> string);
     /// `xs.join(sep)` and `String(xs)` of an array of `any`, `unknown` or `object` values.
     any_join => lang_hooks_any_text, "anyJoin", sig((move any, &string, &string) -> string), lowered;
     /// `xs.join(sep)` of an `any` `xs` (`velt_sema` `dynamic_member.rs`).
-    any_join_method => lang_hooks_any_text, "anyJoinMethod", sig((any, any, string) -> any);
+    any_join_method => lang_hooks_any_text, "anyJoinMethod", sig((move any, move any, &string) -> any);
     /// `any_join` with the arrays being joined around it, so a cycle prints as empty text.
     any_join_seen => lang_hooks_any_text, "anyJoinSeen", sig((move any, &string, &mut [any], &string) -> string), lowered;
 
     // any_object.vlt: `Object.*`, spreads, prototypes and `delete` of an `any`.
     /// `{ ...o }` of an `any` in an object literal (`velt_sema` `record_literal.rs`).
-    spread_any => lang_hooks_any_object, "spreadAny", sig((Record(string, any), any) -> void);
+    spread_any => lang_hooks_any_object, "spreadAny", sig((&mut Record(string, any), &any) -> void);
     /// `Object.hasOwn(o, k)` of an `any` (`velt_sema` `object_own.rs`).
-    any_has_own => lang_hooks_any_object, "anyHasOwn", sig((any, union(string, symbol)) -> bool);
+    any_has_own => lang_hooks_any_object, "anyHasOwn", sig((&any, &union(string, symbol)) -> bool);
     /// Member `k` (one of `Object.keys(o)`) of an `any`: std's `spreadAny` & co. call it, not the compiler.
-    any_member => lang_hooks_any_object, "anyMember", sig((any, string) -> any);
+    any_member => lang_hooks_any_object, "anyMember", sig((&any, &string) -> any);
     /// `Object.values(o)` of an `any` (`velt_sema` `object_keys.rs`).
-    any_values => lang_hooks_any_object, "anyValues", sig((any) -> [any]);
+    any_values => lang_hooks_any_object, "anyValues", sig((&any) -> [any]);
     /// `Object.entries(o)` of an `any` (`velt_sema` `object_keys.rs`).
-    any_entries => lang_hooks_any_object, "anyEntries", sig((any) -> [tuple(string, any)]);
+    any_entries => lang_hooks_any_object, "anyEntries", sig((&any) -> [tuple(string, any)]);
     /// `Object.getPrototypeOf(v)` of an `any` holding no class instance (`object_prototypes.rs`).
-    any_prototype => lang_hooks_any_object, "anyPrototype", sig((any) -> or_null(ObjectPrototype));
+    any_prototype => lang_hooks_any_object, "anyPrototype", sig((&any) -> or_null(ObjectPrototype));
     /// `Object.getPrototypeOf(r)` of an `any` holding a record.
-    any_record_prototype => lang_hooks_any_object, "anyRecordPrototype", sig((any) -> or_null(ObjectPrototype));
+    any_record_prototype => lang_hooks_any_object, "anyRecordPrototype", sig((&any) -> or_null(ObjectPrototype));
     /// `Object.getPrototypeOf(v)` of an instance of a class Velt doesn't name: an error.
-    any_prototype_unsupported => lang_hooks_any_object, "anyPrototypeUnsupported", sig((string) -> or_null(ObjectPrototype));
+    any_prototype_unsupported => lang_hooks_any_object, "anyPrototypeUnsupported", sig((&string) -> or_null(ObjectPrototype));
     /// `Object.prototype.toString.call(v)` of an `any` holding no class instance (`object_own.rs`).
-    any_object_tag => lang_hooks_any_object, "anyObjectTag", sig((any) -> string);
+    any_object_tag => lang_hooks_any_object, "anyObjectTag", sig((&any) -> string);
     /// `Object.prototype.toString.call(v)` of an instance whose tag Velt doesn't know: an error.
-    any_tag_unsupported => lang_hooks_any_object, "anyTagUnsupported", sig((string) -> string);
+    any_tag_unsupported => lang_hooks_any_object, "anyTagUnsupported", sig((&string) -> string);
     /// `v.constructor.name` of an `any` holding no class instance (`velt_sema` `ctor_name.rs`).
-    any_ctor_name => lang_hooks_any_object, "anyCtorName", sig((any) -> string);
+    any_ctor_name => lang_hooks_any_object, "anyCtorName", sig((&any) -> string);
     /// `v.constructor.name` of an instance whose constructor Velt doesn't name: an error.
-    any_ctor_name_unsupported => lang_hooks_any_object, "anyCtorNameUnsupported", sig((string) -> string);
+    any_ctor_name_unsupported => lang_hooks_any_object, "anyCtorNameUnsupported", sig((&string) -> string);
     /// `delete o.k` / `delete o[k]` of an `any` that is no proxy (`velt_sema` `proxy.rs`).
-    any_delete_member => lang_hooks_any_object, "anyDeleteMember", sig((any, any) -> bool);
+    any_delete_member => lang_hooks_any_object, "anyDeleteMember", sig((&any, &any) -> bool);
     /// `Object.prototype.hasOwnProperty` as a value (`object_prototypes.rs`, `velt_vir` `any_proxy.rs`).
     has_own_property => lang_hooks_any_object, "HasOwnProperty", class, lowered;
 
@@ -312,13 +312,13 @@ hooks! {
     /// What a `valueOf()`, `toString()` or `[Symbol.toPrimitive]` returned, checked a primitive.
     any_prim_keep => lang_hooks_any_ops, "anyPrimKeep", sig((move any, &string) -> any), lowered;
     /// A method's result when it is a primitive, else the next method's (`velt_sema` `any_prim.rs`).
-    any_prim_then => lang_hooks_any_ops, "anyPrimThen", sig((any, Fn(() -> any)) -> any);
+    any_prim_then => lang_hooks_any_ops, "anyPrimThen", sig((move any, &Fn(() -> any)) -> any);
     /// `ToNumber` of an object an `any` holds, for `-`, `*`, `<`, `+x` (`dynamic_arith.rs`).
-    any_object_number => lang_hooks_any_ops, "anyObjectNumber", sig((any, string) -> f64);
+    any_object_number => lang_hooks_any_ops, "anyObjectNumber", sig((&any, &string) -> f64);
     /// `a + b` of dynamic values one of which holds a string or an object (`dynamic_arith.rs`).
-    any_add => lang_hooks_any_ops, "anyAdd", sig((any, any, string) -> any);
+    any_add => lang_hooks_any_ops, "anyAdd", sig((move any, move any, &string) -> any);
     /// `<`, `>`, `<=`, `>=` of dynamic values one of which holds an object (`dynamic_relational.rs`).
-    any_relational => lang_hooks_any_ops, "anyRelational", sig((any, any, i64, string) -> bool);
+    any_relational => lang_hooks_any_ops, "anyRelational", sig((move any, move any, i64, &string) -> bool);
     /// `a == b` of an object and a primitive (`velt_vir` `any_eq.rs`).
     any_loose_eq => lang_hooks_any_ops, "anyLooseEq", sig((&any, &any, &string) -> bool), lowered;
 
@@ -328,17 +328,17 @@ hooks! {
     /// A class used as a value (`velt_sema` `ctor_objects.rs`; printed by `glue/format.rs`).
     class_object => lang_hooks_class_object, "classObject", sig((&string, &string) -> FnRest(([ClassMarker(string)]) -> any)), lowered;
     /// `class_object` of a class with static fields or accessors.
-    class_object_statics => lang_hooks_class_object, "classObjectStatics", sig((string, string) -> FnRest(([ClassMarker(bool)]) -> any));
+    class_object_statics => lang_hooks_class_object, "classObjectStatics", sig((&string, &string) -> FnRest(([ClassMarker(bool)]) -> any));
     /// `v.constructor` of an `any` holding no class instance (`velt_sema` `ctor_objects.rs`).
-    any_ctor => lang_hooks_class_object, "anyCtor", sig((any, any, any, any, any, any, any) -> any);
+    any_ctor => lang_hooks_class_object, "anyCtor", sig((&any, move any, move any, move any, move any, move any, move any) -> any);
     /// `r.constructor` of an `any` holding a record.
-    any_record_ctor => lang_hooks_class_object, "anyRecordCtor", sig((any, any) -> any);
+    any_record_ctor => lang_hooks_class_object, "anyRecordCtor", sig((move any, move any) -> any);
     /// `v.constructor` of an `any` without an own `constructor`: sema writes the class dispatch.
-    any_constructor => lang_hooks_class_object, "anyConstructor", sig((any) -> any);
+    any_constructor => lang_hooks_class_object, "anyConstructor", sig((&any) -> any);
     /// `v.constructor` of an instance of a class declared in a function.
-    any_ctor_local => lang_hooks_class_object, "anyCtorLocal", sig((string) -> any);
+    any_ctor_local => lang_hooks_class_object, "anyCtorLocal", sig((&string) -> any);
     /// `v.constructor` of an instance of a std class JavaScript doesn't name: an error.
-    any_ctor_unsupported => lang_hooks_class_object, "anyCtorUnsupported", sig((string) -> any);
+    any_ctor_unsupported => lang_hooks_class_object, "anyCtorUnsupported", sig((&string) -> any);
 
     // array_view.vlt: an `any` holding an array viewed as `T[]` (`velt_vir` `array_view.rs`).
     /// One view's state: the original array and the mirror of its elements as `T`.
@@ -365,20 +365,20 @@ hooks! {
 
     // record.vlt: `k in r` for a key known only at run time, and `===` on prototypes.
     /// `a === b` on prototypes (`velt_sema` `object_prototypes.rs`).
-    prototype_same => lang_hooks_record, "prototypeSame", sig((or_null(ObjectPrototype), or_null(ObjectPrototype)) -> bool);
+    prototype_same => lang_hooks_record, "prototypeSame", sig((&or_null(ObjectPrototype), &or_null(ObjectPrototype)) -> bool);
     /// `key in p` of a prototype for a key known only at run time (`velt_sema` `in_keys.rs`).
-    prototype_in => lang_hooks_record, "prototypeIn", sig((string, ObjectPrototype) -> bool);
+    prototype_in => lang_hooks_record, "prototypeIn", sig((&string, &ObjectPrototype) -> bool);
     /// `k in r` of a record for a key known only at run time (`velt_sema` `in_keys.rs`).
-    record_in => lang_hooks_record, "recordIn", sig(<A>(string, Record(string, A)) -> bool);
+    record_in => lang_hooks_record, "recordIn", sig(<A>(&string, &Record(string, A)) -> bool);
     /// `record_in` in a program that calls `Object.create(null)`.
-    record_in_maybe_null_proto => lang_hooks_record, "recordInMaybeNullProto", sig(<A>(string, Record(string, A)) -> bool);
+    record_in_maybe_null_proto => lang_hooks_record, "recordInMaybeNullProto", sig(<A>(&string, &Record(string, A)) -> bool);
     // error.vlt: the first line of the report of an uncaught error (`velt_vir` `entry.rs`).
     /// The first line of Node's report of an uncaught error (`E [TypeError]: m`).
     uncaught_header => lang_hooks_error, "uncaughtHeader", sig((&Error, &string) -> string), lowered;
 
     // string.vlt: the characters a `for...of` over a string iterates.
     /// The code points `for (const c of s)` iterates (`velt_sema` `loops.rs`).
-    string_code_points => lang_hooks_string, "stringCodePoints", sig((string) -> [string]);
+    string_code_points => lang_hooks_string, "stringCodePoints", sig((&string) -> [string]);
 
     // iter.vlt, async_iter.vlt: iterable object literals.
     /// `{ async *[Symbol.asyncIterator]() { … } }` (`velt_sema` `object_method.rs`).
@@ -389,58 +389,58 @@ hooks! {
     // json.vlt: `JSON.parse(text) as T`, loaded with the global `JSON`
     // (std/prelude/global/json.vlt).
     /// `JSON.parse(text)` with its type from the context (`velt_sema` `static_call.rs`).
-    json_parse_from_context => lang_hooks_json, "jsonParseFromContext", sig(<A>(string, or_null(object("{ unknownKeys?: \"ignore\" | \"reject\", maxDepth?: i64, comments?: \"error\" | \"skip\", trailingCommas?: boolean }"))) -> A);
+    json_parse_from_context => lang_hooks_json, "jsonParseFromContext", sig(<A>(&string, &or_null(object("{ unknownKeys?: \"ignore\" | \"reject\", maxDepth?: i64, comments?: \"error\" | \"skip\", trailingCommas?: boolean }"))) -> A throws JsonError);
 
     // proxy.vlt: the operations on `any` that ask a proxy, used once a program has loaded `Proxy`
     // (std/prelude/global/proxy.vlt).
     /// `delete o.k` / `delete o[k]` of an `any`: a proxy's `deleteProperty` trap (`proxy.rs`).
-    any_delete_proxy => lang_hooks_proxy, "anyDeleteProxy", sig((any, any) -> bool);
+    any_delete_proxy => lang_hooks_proxy, "anyDeleteProxy", sig((&any, move any) -> bool);
     /// `delete o[KEY]` of an `any` with a symbol constant `KEY` (`velt_sema` `proxy.rs`).
-    any_delete_sym => lang_hooks_proxy, "anyDeleteSym", sig((any, string, symbol) -> bool);
+    any_delete_sym => lang_hooks_proxy, "anyDeleteSym", sig((&any, move string, symbol) -> bool);
     /// `Object.entries(o)` of an `any` that may be a proxy.
-    any_entries_proxy => lang_hooks_proxy, "anyEntriesProxy", sig((any) -> [tuple(string, any)]);
+    any_entries_proxy => lang_hooks_proxy, "anyEntriesProxy", sig((move any) -> [tuple(string, any)]);
     /// Whether `for (const k in o)` of an `any` visits `k` at its turn (`for_in_proxy.rs`).
-    any_for_in_has => lang_hooks_proxy, "anyForInHas", sig((any, string) -> bool);
+    any_for_in_has => lang_hooks_proxy, "anyForInHas", sig((&any, move string) -> bool);
     /// The keys `for (const k in o)` of an `any` visits (`velt_sema` `for_in_proxy.rs`).
-    any_for_in_keys => lang_hooks_proxy, "anyForInKeys", sig((any) -> [string]);
+    any_for_in_keys => lang_hooks_proxy, "anyForInKeys", sig((&any) -> [string]);
     /// `o[k]` of an `any` with a key that may be a symbol (`dynamic_member.rs`, `dynamic_write.rs`).
-    any_get_key => lang_hooks_proxy, "anyGetKey", sig((any, any) -> any);
+    any_get_key => lang_hooks_proxy, "anyGetKey", sig((move any, &any) -> any);
     /// `o[KEY]` of an `any` with a symbol constant `KEY` (`dynamic_member.rs`, `dynamic_write.rs`).
-    any_get_sym => lang_hooks_proxy, "anyGetSym", sig((any, string, symbol) -> any);
+    any_get_sym => lang_hooks_proxy, "anyGetSym", sig((move any, &string, symbol) -> any);
     /// `k in o` of an `any` with a key that may be a symbol (`velt_sema` `proxy.rs`).
-    any_has_key => lang_hooks_proxy, "anyHasKey", sig((any, any) -> bool);
+    any_has_key => lang_hooks_proxy, "anyHasKey", sig((&any, &any) -> bool);
     /// `Object.hasOwn(o, k)` of an `any` that may be a proxy.
-    any_has_own_proxy => lang_hooks_proxy, "anyHasOwnProxy", sig((any, union(string, symbol)) -> bool);
+    any_has_own_proxy => lang_hooks_proxy, "anyHasOwnProxy", sig((move any, move union(string, symbol)) -> bool);
     /// `Object.hasOwn(o, KEY)` of an `any` with a symbol constant `KEY` (`object_own.rs`).
-    any_has_own_sym => lang_hooks_proxy, "anyHasOwnSym", sig((any, string, symbol) -> bool);
+    any_has_own_sym => lang_hooks_proxy, "anyHasOwnSym", sig((&any, &string, symbol) -> bool);
     /// `KEY in o` of an `any` with a symbol constant `KEY` (`velt_sema` `proxy.rs`).
-    any_has_sym => lang_hooks_proxy, "anyHasSym", sig((any, string, symbol) -> bool);
+    any_has_sym => lang_hooks_proxy, "anyHasSym", sig((&any, &string, symbol) -> bool);
     /// `Array.isArray(o)` of an `any` where proxies exist (`object_builtins.rs`, `dynamic*.rs`).
-    any_is_array_proxy => lang_hooks_proxy, "anyIsArrayProxy", sig((any) -> bool);
+    any_is_array_proxy => lang_hooks_proxy, "anyIsArrayProxy", sig((&any) -> bool);
     /// `o[k] = v` of an `any` with a key that may be a symbol (`velt_sema` `dynamic_write.rs`).
-    any_set_key => lang_hooks_proxy, "anySetKey", sig((any, any, any) -> void);
+    any_set_key => lang_hooks_proxy, "anySetKey", sig((move any, &any, move any) -> void);
     /// `o[KEY] = v` of an `any` with a symbol constant `KEY` (`velt_sema` `dynamic_write.rs`).
-    any_set_sym => lang_hooks_proxy, "anySetSym", sig((any, string, symbol, any) -> void);
+    any_set_sym => lang_hooks_proxy, "anySetSym", sig((move any, &string, symbol, move any) -> void);
     /// `Object.values(o)` of an `any` that may be a proxy.
-    any_values_proxy => lang_hooks_proxy, "anyValuesProxy", sig((any) -> [any]);
+    any_values_proxy => lang_hooks_proxy, "anyValuesProxy", sig((move any) -> [any]);
     /// `o.key` of a class getter on an instance brand holding a typed proxy (`proxy_getters.rs`).
-    brand_getter_read => lang_hooks_proxy, "brandGetterRead", sig((any, string) -> any);
+    brand_getter_read => lang_hooks_proxy, "brandGetterRead", sig((move any, move string) -> any);
     /// `has_own_property` where proxies exist (`velt_sema` `proxy.rs`, `velt_vir` `any_proxy.rs`).
     has_own_property_proxy => lang_hooks_proxy, "HasOwnPropertyProxy", class, lowered;
     /// A typed proxy as the `any` it is (`velt_sema` `for_in_proxy.rs`).
-    proxy_any => lang_hooks_proxy, "proxyAny", sig((any) -> any);
+    proxy_any => lang_hooks_proxy, "proxyAny", sig((move any) -> any);
     /// `"k" in x` of a typed proxy: its `has` trap (`velt_sema` `proxy.rs`).
-    proxy_has => lang_hooks_proxy, "proxyHas", sig((any, string) -> bool);
+    proxy_has => lang_hooks_proxy, "proxyHas", sig((&any, move string) -> bool);
     /// `Object.hasOwn(x, k)` of a typed proxy: its `getOwnPropertyDescriptor` trap.
-    proxy_has_own_of => lang_hooks_proxy, "proxyHasOwnOf", sig((any, string) -> bool);
+    proxy_has_own_of => lang_hooks_proxy, "proxyHasOwnOf", sig((move any, move string) -> bool);
     /// `Object.keys(x)` of a typed proxy: the keys its traps list (`velt_sema` `proxy.rs`).
-    proxy_keys_of => lang_hooks_proxy, "proxyKeysOf", sig((any) -> [string]);
+    proxy_keys_of => lang_hooks_proxy, "proxyKeysOf", sig((&any) -> [string]);
     /// `new Proxy(target, handler)` with a handler typed `any` (`velt_sema` `proxy.rs`).
-    proxy_new_any => lang_hooks_proxy, "proxyNewAny", sig((any, any) -> any);
+    proxy_new_any => lang_hooks_proxy, "proxyNewAny", sig((move any, move any) -> any);
     /// `{ ...x }` of an object in a program that makes proxies: a typed proxy is not supported.
-    proxy_spread_check => lang_hooks_proxy, "proxySpreadCheck", sig((any) -> void);
+    proxy_spread_check => lang_hooks_proxy, "proxySpreadCheck", sig((&any) -> void);
     /// `{ ...o }` of an `any` that may be a proxy: its enumerable own entries.
-    spread_any_proxy => lang_hooks_proxy, "spreadAnyProxy", sig((Record(string, any), any) -> void);
+    spread_any_proxy => lang_hooks_proxy, "spreadAnyProxy", sig((&mut Record(string, any), move any) -> void);
 
     // Outside lang/hooks, defined where what they need is (none is exported to programs):
     // lang/proxy/array.vlt: an array method read through a proxy.
@@ -451,56 +451,56 @@ hooks! {
 
     // lang/this_fn: a function whose `this` is bound at the call (a global loaded on demand).
     /// `o.m(...args)` of a member read other than as a slot (`object_call_on.rs`, `this_fn_call.rs`).
-    call_on => lang_this_fn, "callOn", sig((any, any, [any]) -> any);
+    call_on => lang_this_fn, "callOn", sig((&any, move any, move [any]) -> any);
     /// `o.m?.(...args)` (`velt_sema` `this_fn_call.rs`).
-    call_opt_on => lang_this_fn, "callOptOn", sig((any, any, Fn(() -> [any])) -> any);
+    call_opt_on => lang_this_fn, "callOptOn", sig((&any, move any, &Fn(() -> [any])) -> any);
     /// A function value whose `this` is bound at the call (`this_fn_expr.rs`, `velt_vir` `this_fn.rs`).
     this_fn => lang_this_fn, "ThisFn", class, lowered;
 
     // collections/set.vlt: the adapter of `Set<unknown>` (not exported).
     /// The `Set<unknown>` copy of a set an interface adapter passes (`velt_sema` `iface_adapt.rs`).
-    unknown_set_in => collections_set, "unknownSetIn", sig((unknown) -> Set(unknown));
+    unknown_set_in => collections_set, "unknownSetIn", sig((&unknown) -> Set(unknown));
     /// The elements of that copy written back into the set after the call.
-    unknown_set_out => collections_set, "unknownSetOut", sig((unknown, Set(unknown)) -> void);
+    unknown_set_out => collections_set, "unknownSetOut", sig((&unknown, &Set(unknown)) -> void);
 
     // text/regex/string_methods.vlt: the string methods called with a `RegExp` (`velt_sema`
     // `regex_args.rs`), loaded with `RegExp`.
     /// `s.replace(re, replacement)`.
-    replace_reg_exp => text_regex_string_methods, "replaceRegExp", sig((string, RegExp, string) -> string);
+    replace_reg_exp => text_regex_string_methods, "replaceRegExp", sig((&string, &RegExp, &string) -> string);
     /// `s.replace(re, (match, …) => …)`, the function adapted by sema.
-    replace_reg_exp_calling => text_regex_string_methods, "replaceRegExpCalling", sig(<A>(string, RegExp, Fn((RegExpMatch, string) -> string throws A)) -> string);
+    replace_reg_exp_calling => text_regex_string_methods, "replaceRegExpCalling", sig(<A>(&mut string, &mut RegExp, &Fn((RegExpMatch, string) -> string throws A)) -> string throws A);
     /// `s.replaceAll(re, replacement)`.
-    replace_all_reg_exp => text_regex_string_methods, "replaceAllRegExp", sig((string, RegExp, string) -> string);
+    replace_all_reg_exp => text_regex_string_methods, "replaceAllRegExp", sig((&string, &RegExp, &string) -> string);
     /// `s.replaceAll(re, (match, …) => …)`.
-    replace_all_reg_exp_calling => text_regex_string_methods, "replaceAllRegExpCalling", sig(<A>(string, RegExp, Fn((RegExpMatch, string) -> string throws A)) -> string);
+    replace_all_reg_exp_calling => text_regex_string_methods, "replaceAllRegExpCalling", sig(<A>(&mut string, &mut RegExp, &Fn((RegExpMatch, string) -> string throws A)) -> string throws A);
     /// `s.match(re)`.
-    match_reg_exp => text_regex_string_methods, "matchRegExp", sig((string, RegExp) -> or_null([string]));
+    match_reg_exp => text_regex_string_methods, "matchRegExp", sig((&string, &RegExp) -> or_null([string]));
     /// `s.matchAll(re)`.
-    match_all_reg_exp => text_regex_string_methods, "matchAllRegExp", sig((string, RegExp) -> [RegExpMatch]);
+    match_all_reg_exp => text_regex_string_methods, "matchAllRegExp", sig((&string, &RegExp) -> [RegExpMatch]);
     /// `s.search(re)`.
-    search_reg_exp => text_regex_string_methods, "searchRegExp", sig((string, RegExp) -> i64);
+    search_reg_exp => text_regex_string_methods, "searchRegExp", sig((&string, &RegExp) -> i64);
     /// `s.split(re, limit)`.
-    split_reg_exp => text_regex_string_methods, "splitRegExp", sig((string, RegExp, or_undefined(f64)) -> [string]);
+    split_reg_exp => text_regex_string_methods, "splitRegExp", sig((&string, &RegExp, or_undefined(f64)) -> [string]);
 
     // test/registry.vlt, test/run.vlt: what `velt test`'s generated `main` calls (veltc
     // `commands/test/harness.rs`; the loader lets only the harness import these files).
     /// Starts the registrations of the next test file.
     register_file => test_registry, "registerFile", sig((i64) -> void);
     /// Registers a test function of the current file.
-    register_test => test_registry, "registerTest", sig((string, Fn(() -> void throws unknown)) -> void);
+    register_test => test_registry, "registerTest", sig((move string, move Fn(() -> void throws unknown)) -> void);
     /// Registers an `async` test function of the current file.
-    register_async_test => test_registry, "registerAsyncTest", sig(<A>(string, Fn(() -> Promise(A, unknown))) -> void);
+    register_async_test => test_registry, "registerAsyncTest", sig(<A>(move string, move Fn(() -> Promise(A, unknown))) -> void);
     /// Runs the registered tests: the entry of a test program.
     run_registered => test_run, "runRegistered", sig(() -> void throws union(IoError, JsonError));
 
     // The record a JSON decoder generated by velt/encoding/json makes of a map
     // (std/encoding/json/generated.vlt imports it for the code it generates).
     /// A record of a map's entries in its order (code generated by velt/encoding/json).
-    record_from_map => lang_hooks_record, "recordFromMap", sig(<A, B>(Map(A, B)) -> Record(A, B));
+    record_from_map => lang_hooks_record, "recordFromMap", sig(<A, B>(move Map(A, B)) -> Record(A, B));
     // The map of a record's entries the comparisons velt/lang/equal generates compare
     // (std/lang/equal/generated.vlt imports it for the code it generates).
     /// The map of a record's string-keyed entries (code generated by velt/lang/equal).
-    record_entries_of => lang_hooks_record, "recordEntriesOf", sig(<A, B>(Record(A, B)) -> Map(A, B));
+    record_entries_of => lang_hooks_record, "recordEntriesOf", sig(<A, B>(&Record(A, B)) -> Map(A, B));
 
     // lang/typed_array/buffer_view.vlt: the bytes of a typed array.
     /// The bytes a typed array or `DataView` passed to a system function views (`system_views.rs`).

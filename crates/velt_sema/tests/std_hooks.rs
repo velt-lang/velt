@@ -1,10 +1,14 @@
 //! The compiler's hooks (velt_common `std_hooks.rs`, docs/internals/design/std-layout.md §10b):
 //! every entry of the table names a definition of std with the signature the table gives
 //! (compared structurally: velt_common `hook_sig.rs`), and no program can name one.
+//!
+//! The signatures are compared on a program checked with every std body (`velt check --std`,
+//! `CheckOptions::eager_std`): what a hook throws and how it takes each parameter are inferred
+//! from its body, which lazy std leaves unchecked for a hook no code reaches.
 
 mod common;
 
-use common::programs::{err_src, ok_src};
+use common::programs::{err_src, load_src, ok_src, Loaded};
 use velt_common::std_hooks::{Mode, Sig, HOOKS, T};
 use velt_sema::hir::{Def, DefId, FloatTy, IntTy, Nothing, PassMode, Program, TyId, TyKind};
 
@@ -20,6 +24,38 @@ const LOADS_ALL: &str = "import \"velt/lang/this_fn\";\nimport \"velt/lang/recor
     function main() {\n  const p = new Proxy({}, {});\n  const s = new Set<number>();\n  \
     const b = new Uint8Array(1);\n  const r = new RegExp(\"a\");\n  \
     const j = JSON.parse<i64>(\"1\");\n  const v: JsonValue = JsonValue.of(1);\n}\n";
+
+/// Check `l` with every std body (`velt check --std`), requiring success.
+fn check_eager(l: &Loaded) -> Program {
+    let opts = velt_sema::CheckOptions {
+        eager_std: true,
+        ..Default::default()
+    };
+    let (p, d) = velt_sema::check_with(&l.modules, l.root, opts);
+    assert!(
+        p.is_some() && d.iter().all(|d| !d.is_error()),
+        "unexpected diagnostics:\n{}",
+        l.render(&d)
+    );
+    let p = p.unwrap();
+    assert!(
+        p.unchecked.is_empty(),
+        "eager std left definitions unchecked"
+    );
+    p
+}
+
+/// Replace loaded std module `module` (`std/lang/hooks/process`) by `edit` of its source.
+fn edit_module(l: &mut Loaded, module: &str, edit: impl FnOnce(&str) -> String) {
+    let m = (l.modules.iter().position(|m| m.path == module))
+        .unwrap_or_else(|| panic!("`{module}` is not loaded"));
+    let src = edit(&l.sm.get(l.modules[m].file).src);
+    let id = l.sm.add(format!("{module}.vlt"), src.clone());
+    let (ast, diags) = velt_syntax::parse_file(id, &src);
+    assert!(diags.is_empty(), "the edit of `{module}` does not parse");
+    l.modules[m].file = id;
+    l.modules[m].ast = ast;
+}
 
 /// The type arguments a generic union's payloads are read under: its payload `Param(i)` is
 /// `args[i]`, itself read under `outer` (sema renumbers a union definition's parameters,
@@ -208,14 +244,15 @@ fn all(p: &Program, ts: &[TyId], env: Option<&Env>, ws: &[T], why: &mut String) 
 }
 
 /// How the definition named `qualified` differs from the table's `sig`: `None` when it matches,
-/// what differs otherwise (a missing definition included).
-fn differs(p: &Program, qualified: &str, sig: &Sig, lowered: bool) -> Option<String> {
-    let found = p.defs.iter().enumerate().find(|(_, d)| match d {
+/// what differs otherwise (a missing definition included). `p` is checked whole
+/// ([`check_eager`]): every hook's `throws` and parameter modes are inferred from its body.
+fn differs(p: &Program, qualified: &str, sig: &Sig) -> Option<String> {
+    let found = p.defs.iter().find(|d| match d {
         Def::Fn(f) => f.name == qualified,
         Def::Adt(a) => a.name == qualified,
         _ => false,
     });
-    let Some((i, d)) = found else {
+    let Some(d) = found else {
         return Some("no such definition".to_string());
     };
     let (f, s) = match (d, sig) {
@@ -253,18 +290,6 @@ fn differs(p: &Program, qualified: &str, sig: &Sig, lowered: bool) -> Option<Str
         }
         (None, Some(w)) => return Some(format!("throws nothing, the table has `{w}`")),
     }
-    // Sema infers modes from bodies, which it checks for the hooks code reaches: the lowered
-    // ones always are (velt_common `hook_sig.rs`).
-    if !lowered {
-        return s
-            .params
-            .iter()
-            .any(|w| w.mode != Mode::Value)
-            .then(|| "a mode on a hook that is not lowered (not compared)".to_string());
-    }
-    if p.unchecked.contains(&DefId(i as u32)) {
-        return Some("lowered, but left unchecked".to_string());
-    }
     for (n, (x, w)) in f.params.iter().zip(s.params).enumerate() {
         let ok = matches!(
             (x.mode, w.mode),
@@ -280,20 +305,67 @@ fn differs(p: &Program, qualified: &str, sig: &Sig, lowered: bool) -> Option<Str
     None
 }
 
-#[test]
-fn every_hook_resolves_with_its_signature() {
-    let p = ok_src(LOADS_ALL);
+/// Every entry of the table that differs from `p`'s definition, described.
+fn wrong_hooks(p: &Program) -> Vec<String> {
     let mut wrong = vec![];
     for h in HOOKS {
         let q = h.qualified();
-        if let Some(why) = differs(&p, &q, &h.sig, h.lowered) {
+        if let Some(why) = differs(p, &q, &h.sig) {
             wrong.push(format!("{}: `{q}` is not `{}`: {why}", h.name, h.sig));
         }
     }
+    wrong
+}
+
+#[test]
+fn every_hook_resolves_with_its_signature() {
+    let wrong = wrong_hooks(&check_eager(&load_src(LOADS_ALL)));
     assert!(
         wrong.is_empty(),
         "velt_common std_hooks.rs:\n{}",
         wrong.join("\n")
+    );
+}
+
+/// Lazy std checks every lowered hook (lowering calls it; velt_common `hook_sig.rs`).
+#[test]
+fn lazy_std_checks_every_lowered_hook() {
+    let p = ok_src(LOADS_ALL);
+    for h in HOOKS.iter().filter(|h| h.lowered) {
+        let q = h.qualified();
+        let i = p
+            .defs
+            .iter()
+            .position(|d| matches!(d, Def::Fn(f) if f.name == q));
+        if let Some(i) = i {
+            assert!(
+                !p.unchecked.contains(&DefId(i as u32)),
+                "{}: lowered, but left unchecked",
+                h.name
+            );
+        }
+    }
+}
+
+/// A hook no code reaches is compared by its body too: lazy std leaves `processWrite` unchecked,
+/// and a `throws` there (inferred from its body) differs from its entry.
+#[test]
+fn a_throws_on_a_hook_no_code_reaches_differs() {
+    let mut l = load_src(LOADS_ALL);
+    edit_module(&mut l, "std/lang/hooks/process", |src| {
+        let old = "s: string): bool {\n";
+        assert!(src.contains(old), "processWrite's signature moved");
+        src.replace(
+            old,
+            "s: string): bool throws RangeError {\n  if (stream > 2) {\n    \
+             throw new RangeError(\"stream\");\n  }\n",
+        )
+    });
+    let wrong = wrong_hooks(&check_eager(&l));
+    assert_eq!(
+        wrong,
+        ["process_write: `std/lang/hooks/process::processWrite` is not `(u32, &string) -> bool`: \
+          throws `RangeError`, the table has none"],
     );
 }
 

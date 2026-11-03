@@ -22,11 +22,10 @@
 //!
 //! A signature is `sig(<A, B>(P, …) -> R throws E)`: the type parameters and `throws` are
 //! optional. A parameter is written with its passing mode as sema infers it: `T` for a `Copy`
-//! value, `&T` borrowed, `&mut T` borrowed mutably, `move T` owned (the callee drops it). Only
-//! the `lowered` entries give modes: sema infers a mode from the body, and checks the bodies of
-//! only the hooks that some code reaches (lazy std), which the lowered ones always are; the
-//! others write every parameter plainly and the test does not compare their modes. A class is
-//! `class`.
+//! value, `&T` borrowed, `&mut T` borrowed mutably, `move T` owned (the callee drops it). Sema
+//! infers modes and `throws` from a hook's body, so `velt_sema`'s test compares them on a program
+//! checked with every std body (`velt check --std`): lazy std leaves the body of a hook no code
+//! reaches unchecked. A class is `class`.
 //!
 //! ```
 //! use velt_common::hook_sig::{Mode, Sig, T};
@@ -73,7 +72,7 @@ pub struct Param {
 /// A parameter's passing mode (`velt_sema` `hir::PassMode`), as the table writes it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Mode {
-    /// Written plainly: a `Copy` value in a lowered hook, not compared in the others.
+    /// Written plainly: a `Copy` value.
     Value,
     /// `&T`.
     Borrow,
