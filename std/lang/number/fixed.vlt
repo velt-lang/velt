@@ -1,0 +1,151 @@
+// velt/lang/number (internal): `x.toFixed(digits)` in Velt (#1982). The integer nearest
+// `|x| * 10^digits`, an exact tie away from zero, is exact on 128 bits for up to 19 digits:
+// `|x|` is `m / 2^s` with `m` below 2^53, so it is `m * 10^digits` (two words) shifted right by
+// `s`, plus one when the bits shifted out are at least half. Its digits get the point and the
+// sign in four words (velt/lang/number/text) and are stored as an inline string. More digits,
+// and the few values whose result needs more than 64 bits, take the runtime's exact printer, as
+// do 1e21 and up (`String(x)`): this module is imported by the prelude, so it keeps to
+// velt/lang/number's integer and text helpers.
+
+import { noInline, strAsciiWords } from "velt/lang/intrinsics";
+import { intWords } from "velt/lang/number/integer";
+import { between, DOT, insert, MINUS, moved, or, shift, Text, ZEROS } from "velt/lang/number/text";
+
+declare function velt_rt_f64_to_fixed(x: f64, digits: i64): string;
+declare function velt_rt_math_umulh(a: u64, b: u64): u64;
+
+// 10^0 to 10^19.
+const POW10: u64[] = [
+  1,
+  10,
+  100,
+  1000,
+  10000,
+  100000,
+  1000000,
+  10000000,
+  100000000,
+  1000000000,
+  10000000000,
+  100000000000,
+  1000000000000,
+  10000000000000,
+  100000000000000,
+  1000000000000000,
+  10000000000000000,
+  100000000000000000,
+  1000000000000000000,
+  10000000000000000000,
+];
+
+const MAX: u64 = 0xffffffffffffffff;
+
+// The integer nearest `|x| * 10^digits` (an exact tie up), `a` = `|x|` below 1e21, `digits` 0
+// to 19; MAX when it needs more than 64 bits (or is MAX).
+function scaled(a: f64, digits: i64): u64 {
+  const bits = a.toBits();
+  const be = ((bits >> 52) & 0x7ff) as i64;
+  const frac = bits & 0xfffffffffffff;
+  const m = be == 0 ? frac : frac | 0x10000000000000;
+  // a = m / 2^s.
+  const s: i64 = be == 0 ? 1074 : 1075 - be;
+  const p = POW10[digits as usize];
+  if (s <= 0) {
+    // A whole number: m * 2^-s, then times 10^digits.
+    if (s < -11) {
+      return MAX;
+    }
+    const whole = m << ((-s) as u64);
+    if (velt_rt_math_umulh(whole, p) != 0) {
+      return MAX;
+    }
+    return whole * p;
+  }
+  if (s >= 128) {
+    // Below 2^117 / 2^128: nearer 0 than 1.
+    return 0;
+  }
+  const hi = velt_rt_math_umulh(m, p);
+  const lo = m * p;
+  if (s < 64) {
+    const sh = s as u64;
+    if ((hi >> sh) != 0) {
+      return MAX;
+    }
+    const q = (lo >> sh) | ((hi << 1) << (63 - sh));
+    const half = (1 as u64) << (sh - 1);
+    return (lo & ((half << 1) - 1)) >= half ? q + 1 : q;
+  }
+  if (s == 64) {
+    return lo >= 0x8000000000000000 ? hi + 1 : hi;
+  }
+  // s from 65 to 127: what is shifted out is the low `s - 64` bits of `hi`, then all of `lo`.
+  const t = (s - 64) as u64;
+  const half = (1 as u64) << (t - 1);
+  const q = hi >> t;
+  return (hi & ((half << 1) - 1)) >= half ? q + 1 : q;
+}
+
+/**
+ * `x.toFixed(digits)` (`digits` 0 to 100): `digits` decimals, rounded to the nearest and an exact
+ * tie away from zero; `String(x)` from 1e21 up and for NaN and the infinities. A call, not a
+ * copy at each use.
+ */
+export function fixedText(x: f64, digits: i64): string {
+  noInline();
+  const neg = x < 0;
+  const a = neg ? -x : x;
+  if (!(a < 1e21)) {
+    // `String(x)` (and NaN), as the runtime's printer writes it: not `f64Text`, whose shortest-digits
+    // search and table every program would then check, since the prelude's `toFixed` is here.
+    return velt_rt_f64_to_fixed(x, digits);
+  }
+  if (digits > 19) {
+    return velt_rt_f64_to_fixed(x, digits);
+  }
+  const n = scaled(a, digits);
+  if (n == MAX) {
+    return velt_rt_f64_to_fixed(x, digits);
+  }
+  const f = decimalText(neg, n, digits);
+  const t = f.t;
+  const len = f.len;
+  return strAsciiWords(t.w0, t.w1, t.w2, len as usize);
+}
+
+/** The text of a decimal, `n / 10^digits` with a sign, and its length (at most 22 bytes). */
+export struct DecimalText {
+  t: Text;
+  len: i64;
+}
+
+/**
+ * `n / 10^digits` (`digits` 0 to 19) with a `-` when `neg`: the integer part (at least one digit)
+ * and then, when `digits` is above 0, a point and exactly `digits` digits, leading zeros
+ * included: `toFixed`'s text, and JSON's short decimals (velt/encoding/json).
+ */
+export function decimalText(neg: bool, n: u64, digits: i64): DecimalText {
+  const d = intWords(n, false);
+  const k = d.len as i64;
+  let t = Text { w0: d.w0, w1: d.w1, w2: d.w2, w3: 0 };
+  let len = k;
+  if (digits > 0) {
+    if (k > digits) {
+      t = insert(t, k - digits, DOT);
+      len = k + 1;
+    } else {
+      // `0.`, zeros, then the digits.
+      const p = 2 + digits - k;
+      const zeros = between(Text { w0: 0, w1: 0, w2: 0, w3: 0 }, 0, p, ZEROS);
+      // Byte 1 of the zeros becomes the point.
+      const head = Text { w0: zeros.w0 ^ ((0x30 ^ DOT) << 8), w1: zeros.w1, w2: zeros.w2, w3: 0 };
+      t = or(moved(t, p), head);
+      len = k + p;
+    }
+  }
+  if (neg) {
+    t = or(shift(t, 1), Text { w0: MINUS, w1: 0, w2: 0, w3: 0 });
+    len++;
+  }
+  return DecimalText { t, len };
+}

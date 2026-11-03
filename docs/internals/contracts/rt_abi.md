@@ -879,7 +879,9 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   `parse(s, radix)`, `clone`, `assign(dst, a)`, `neg(dst, a)`, `op(dst, a, b, op: u32): bool` and
   `op_i64(dst, a, k: i64, op: u32): bool` (false: division by zero or a negative or huge shift; `dst` unchanged), `cmp`/`cmp_i64` (−1/0/1),
   `to_i64`, `to_f64`, `to_string(a, radix)`. `op` codes are defined in `std/math/bigint.vlt`.
-- Numbers: `velt_rt_f64_to_fixed(x: f64, digits: i64): string` (JS `toFixed` rounding),
+- Numbers: `velt_rt_f64_to_fixed(x: f64, digits: i64): string` (JS `toFixed` rounding; std's
+  `toFixed` (velt/lang/number/fixed) calls it only for more than 19 digits, a result past 64
+  bits, and 1e21 and up),
   `velt_rt_f64_to_exponential(x: f64, digits: i64): string` (JS `toExponential`; `digits < 0`:
   omitted), `velt_rt_f64_to_precision(x: f64, precision: i64): string` (JS `toPrecision`),
   `velt_rt_f64_to_radix(x: f64, radix: i64): string` (JS `toString(radix)` with V8's digits, for

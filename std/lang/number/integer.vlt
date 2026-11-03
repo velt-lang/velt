@@ -11,6 +11,7 @@ import {
   strAsciiWords,
   strbufPushAsciiWord,
   strbufPushAsciiWords,
+  trunc,
 } from "velt/lang/intrinsics";
 
 // The byte `-`, as velt/lang/number/text has it: not imported from there, so that a program that
@@ -366,4 +367,9 @@ function pushLong(buf: string, a: u64, neg: bool): void {
   const w2 = w.w2;
   const len = w.len;
   strbufPushAsciiWords(buf, w0, w1, w2, len);
+}
+
+/** Is `x` a whole number below 2^53 in magnitude (`-0` included)? Its text is `x as i64`'s. */
+export function isWhole(x: f64): bool {
+  return x == trunc(x) && x < 9007199254740992.0 && x > -9007199254740992.0;
 }
