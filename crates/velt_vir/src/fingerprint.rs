@@ -34,10 +34,13 @@
 //!   operands (closures, glue pointers) and in relocations of the statics it reaches, internal
 //!   functions included (closures, glue, generic instances, and small functions the object
 //!   build inlined into its copy). And statics compared or written by address: statics are
-//!   equal by contents, but the object's copy of a static is another address than the
+//!   equal by contents, but a copy of a static in another object is another address than the
 //!   program's, so a static atomic (`StaticData::mutable`, such as the words of
-//!   std/sync/epoch/reclaim.vlt) or a table compared by address would be two words or two tables
-//!   ([`Canon::reaches_mutable_static`]; std-object.md "Identity of statics").
+//!   std/sync/epoch/reclaim.vlt) or a table compared by address would be two words or two
+//!   tables. The std cache doesn't copy them: it names them (vir.rs invariant 13), and linked
+//!   code uses the program's one copy (std-object.md "Identity of statics").
+//!   [`Canon::reaches_mutable_static`] tells whether code reaches such a word, for a cache that
+//!   copies code instead of naming its statics; no build uses it.
 //!
 //! Fingerprints are std's SipHash with fixed keys: the same for one compiler binary, which is all
 //! either use needs (a session; a std object is keyed by the compiler that built it).
@@ -96,8 +99,9 @@ impl<'p> Canon<'p> {
         canon
     }
 
-    /// The fingerprint of static `id`'s contents: its bytes, alignment, writability and what
-    /// its relocations point at, by content.
+    /// The fingerprint of static `id`: its bytes, alignment, writability and what its
+    /// relocations point at, by content, and its symbol and linkage when it has them (vir.rs
+    /// invariant 13). Before any static is named, this is its contents alone.
     pub fn static_fingerprint(&self, id: StaticId) -> Fingerprint {
         self.statics.get(id.0 as usize).copied().unwrap_or(0)
     }

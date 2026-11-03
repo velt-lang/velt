@@ -294,22 +294,13 @@ fn code_reaching_statics_with_identity_is_served() {
                 .strip_suffix(" statics named")
         })
         .and_then(|n| n.parse().ok())
-        .unwrap_or_else(|| {
-            panic!(
-                "no count of named statics in
-{err}"
-            )
-        });
+        .unwrap_or_else(|| panic!("no count of named statics in\n{err}"));
     assert!(named > 0, "{err}");
     let by_reason = (err.lines())
         .find(|l| l.contains("by reason"))
         .unwrap_or_else(|| panic!("{err}"));
     assert!(!by_reason.contains("statics with identity"), "{by_reason}");
-    assert_eq!(
-        run(dir, "a1"),
-        "2 5 a
-"
-    );
+    assert_eq!(run(dir, "a1"), "2 5 a\n");
     let warm = build(dir, "a.vlt", "a2", &cache, &all);
     assert_eq!(
         counts(&warm),
@@ -317,9 +308,32 @@ fn code_reaching_statics_with_identity_is_served() {
         "{}",
         text(&warm.stderr)
     );
+    assert_eq!(run(dir, "a2"), "2 5 a\n");
+}
+
+/// In a build that clang compiles as several units, the statics only served code uses are
+/// still defined by the program: no unit's bodies reach them any more, but the cached objects
+/// refer to them (`velt_codegen_llvm` units: an `Export` static gets an owner). Cold and warm
+/// builds link and print what a build without the cache prints.
+#[test]
+fn named_statics_are_defined_in_a_build_of_several_units() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    let units = [
+        ("VELT_STD_OBJECT_MIN_MISSES", "1"),
+        ("VELT_CODEGEN_UNITS", "4"),
+    ];
+    std::fs::write(dir.join("a.vlt"), JSON_PROGRAM).unwrap();
+    let cold = build(dir, "a.vlt", "a1", &cache, &units);
+    assert!(counts(&cold).1 > 0, "{}", text(&cold.stderr));
+    assert_eq!(run(dir, "a1"), "2 5 a\n");
+    let warm = build(dir, "a.vlt", "a2", &cache, &units);
     assert_eq!(
-        run(dir, "a2"),
-        "2 5 a
-"
+        counts(&warm),
+        (counts(&cold).1, 0),
+        "{}",
+        text(&warm.stderr)
     );
+    assert_eq!(run(dir, "a2"), "2 5 a\n");
 }

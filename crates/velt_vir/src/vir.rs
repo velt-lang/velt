@@ -63,9 +63,9 @@
 //!     to the program's objects) unless `linkage` is `Export` (defined here, visible to the
 //!     link's other objects under the symbol) or `Import` (defined by another object of the link
 //!     under the symbol; its `bytes`, `relocs` and `mutable` are its contents there, which code
-//!     may read, as LLVM's `available_externally`, but are never emitted). Symbols are unique in
-//!     a program. An `Import` static's relocations name only `Export`/`Import` functions and
-//!     statics, and externs (checked by `verify`).
+//!     may read, as LLVM's `available_externally`, but are never emitted). Symbols are unique
+//!     among the program's statics, functions and externs. An `Import` static's relocations
+//!     name only `Export`/`Import` functions and statics, and externs (checked by `verify`).
 
 use std::fmt;
 

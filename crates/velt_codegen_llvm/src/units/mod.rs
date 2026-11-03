@@ -210,11 +210,78 @@ fn assemble(program: &vir::Program, refs: &References, owner: &[usize]) -> Plan 
             }
         }
     }
+    own_exported_statics(
+        program,
+        static_refs,
+        owner,
+        &imported,
+        &mut units[0],
+        &mut static_owner,
+        &mut static_shared,
+        &mut exported,
+    );
     let shared = Shared {
         funcs: exported,
         statics: static_shared,
     };
     Plan { units, shared }
+}
+
+/// An `Export` static (vir.rs invariant 13) is defined by the program even when none of its
+/// bodies reach it: other objects of the link use it (the std cache's served functions, whose
+/// bodies are gone). Unit 0 defines each such static and what its relocations reach that no
+/// unit defines; it declares the functions they name, which become shared.
+#[allow(clippy::too_many_arguments)]
+fn own_exported_statics(
+    program: &vir::Program,
+    static_refs: &[Refs],
+    owner: &[usize],
+    imported: &[bool],
+    unit: &mut Unit,
+    static_owner: &mut [Option<usize>],
+    static_shared: &mut [bool],
+    exported: &mut [bool],
+) {
+    let mut pending: Vec<usize> = (0..program.statics.len())
+        .filter(|&s| {
+            program.statics[s].linkage == vir::Linkage::Export && static_owner[s].is_none()
+        })
+        .collect();
+    if pending.is_empty() {
+        return;
+    }
+    let mut placed = BTreeSet::new();
+    while let Some(s) = pending.pop() {
+        match static_owner[s] {
+            None => {
+                static_owner[s] = Some(0);
+                unit.statics.push(s);
+            }
+            Some(0) => {}
+            Some(_) => {
+                if !unit.static_imports.contains(&s) {
+                    static_shared[s] = true;
+                    unit.static_imports.push(s);
+                }
+                continue;
+            }
+        }
+        if placed.insert(s) {
+            pending.extend(static_refs[s].statics.iter().copied());
+        }
+    }
+    let mut declares: BTreeSet<usize> = unit.declares.iter().copied().collect();
+    for &s in &placed {
+        for f in static_refs[s].funcs() {
+            if owner[f] != 0 || imported[f] {
+                exported[f] |= !imported[f];
+                if !unit.imports.contains(&f) {
+                    declares.insert(f);
+                }
+            }
+        }
+    }
+    unit.declares = declares.into_iter().collect();
 }
 
 /// Size of a function for balancing: statements plus terminators.

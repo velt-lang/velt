@@ -225,7 +225,12 @@ fn check_symbols(p: &Program, errs: &mut Vec<String>) {
 
 /// Alignment and relocation rules of `StaticData` (see its docs in vir.rs).
 fn check_statics(p: &Program, errs: &mut Vec<String>) {
-    let mut symbols = std::collections::HashSet::new();
+    // A static's symbol shares the link's namespace with the functions and externs.
+    let mut symbols: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    if p.statics.iter().any(|s| s.symbol.is_some()) {
+        symbols.extend(p.funcs.iter().map(|f| f.symbol.as_str()));
+        symbols.extend(p.externs.iter().map(|e| e.symbol.as_str()));
+    }
     for (i, s) in p.statics.iter().enumerate() {
         if !s.align.is_power_of_two() {
             errs.push(format!("static#{i}: bad alignment {}", s.align));

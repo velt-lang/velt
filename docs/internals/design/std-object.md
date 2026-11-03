@@ -262,10 +262,12 @@ of its own (rt_abi.md "Module state"), so an object's std module-level `let` wou
 second block. Std has no module-level `let` today, so this is for later. Static atomics
 (`StaticData::mutable`, such as the four words of `std/sync/epoch/reclaim.vlt`) are written by address,
 and a second copy would be a second word. Fingerprints compare statics by contents, so they do not
-catch any of this; `Canon::reaches_mutable_static` (`crates/velt_vir/src/fingerprint.rs`) finds
-the functions that reach a static atomic. A function that refers
-to any of these statics does not go into the object in the first version: two copies, the
-program's and the object's, would compare unequal. The object build marks these functions. A later version can give such statics one symbol, defined once, as codegen units do.
+catch any of this. Two copies, the program's and the object's, would compare unequal, so the
+first version kept every function that refers to such a static in the program. Now such
+statics have one symbol, defined once by the program, as codegen units do: the std cache names
+them by their contents (vir.rs invariant 13, "The std cache" above), and the cached objects
+refer to the program's copy. Only two statics of one program with the same contents can't be
+named, and the code reaching them stays in the program.
 
 ## Symbols and linkage
 

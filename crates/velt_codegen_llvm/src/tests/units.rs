@@ -270,3 +270,50 @@ fn exported_functions_are_declared_dso_local() {
         );
     }
 }
+
+/// An `Export` static (vir.rs invariant 13) that no function of the program names, because the
+/// code using it is another object's (a std cache function), is still defined: by unit 0, with
+/// the static its relocation points at, and the function it names is declared there and shared.
+#[test]
+fn exported_statics_no_body_reaches_are_defined() {
+    let mut p = program();
+    let a = FuncId(0);
+    let target = p.statics.len() as u32;
+    p.statics.push(StaticData {
+        bytes: vec![0; 16],
+        align: 8,
+        relocs: vec![
+            (0, Const::Func(a)),
+            (8, Const::Static(StaticId(target + 1))),
+        ],
+        symbol: Some("_Vsdesc".into()),
+        linkage: Linkage::Export,
+        ..Default::default()
+    });
+    p.statics.push(StaticData {
+        bytes: b"name".to_vec(),
+        align: 1,
+        symbol: Some("_Vsname".into()),
+        linkage: Linkage::Export,
+        ..Default::default()
+    });
+    velt_vir::verify(&p).unwrap();
+    // `a` is in unit 0 here; place it in unit 1 so unit 0 must declare it.
+    let plan = plan_placed(&p, &[1, 1, 1, 2]);
+    let (desc, name) = (target as usize, target as usize + 1);
+    let owners: Vec<usize> = (plan.units.iter().enumerate())
+        .filter(|(_, u)| u.statics.contains(&desc))
+        .map(|(n, _)| n)
+        .collect();
+    assert_eq!(owners, [0], "{:?}", plan.units);
+    assert!(plan.units[0].statics.contains(&name));
+    assert!(plan.units[0].declares.contains(&0), "{:?}", plan.units[0]);
+    assert!(
+        plan.shared.funcs[0],
+        "`a` is called from another unit's static"
+    );
+    let triple = normalize("x86_64-unknown-linux-gnu").unwrap();
+    let ir = emit_unit(&p, &triple, true, &plan.units[0], &plan.shared).unwrap();
+    assert!(ir.contains("@\"_Vsdesc\" = hidden"), "{ir}");
+    assert!(ir.contains("@\"_Vsname\" = hidden"), "{ir}");
+}

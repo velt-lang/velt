@@ -282,9 +282,9 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   "The std cache"): a static is private to the program's objects (`Internal`, no symbol, as
   before) unless it is `Export` (defined here, visible to the link's other objects under its
   symbol) or `Import` (defined by another object under its symbol; its `bytes`, `relocs` and
-  `mutable` are its contents there, for reading only). Symbols are unique in a program, and an
-  `Import` static's relocations name only `Export`/`Import` functions and statics or externs
-  (both checked by `verify`).
+  `mutable` are its contents there, for reading only). Symbols are unique among the program's
+  statics, functions and externs, and an `Import` static's relocations name only
+  `Export`/`Import` functions and statics or externs (both checked by `verify`).
 - Backends: LLVM emits a named static under its symbol, `hidden` (`Export`) or
   `available_externally hidden` (`Import`), in every unit that refers to it, as units already
   share statics under `.s<n>`; Cranelift declares it as `Hidden` or `Import` data under its

@@ -299,6 +299,11 @@ fn verify_checks_static_symbols() {
     let mut twice = ok.clone();
     named(&mut twice, 1, "_Vsvt", Linkage::Export);
     expect_err(&twice, "is not unique");
+    // Functions share the namespace: a static named like one is a clash too.
+    let mut clash = ok.clone();
+    let f1 = clash.funcs[1].symbol.clone();
+    named(&mut clash, 1, &f1, Linkage::Export);
+    expect_err(&clash, "is not unique");
     // Imported, it points at internal functions and an internal static.
     let mut hidden = vtable_program();
     named(&mut hidden, 0, "_Vsvt", Linkage::Import);
