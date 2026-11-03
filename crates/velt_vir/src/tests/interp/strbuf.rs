@@ -29,8 +29,7 @@ impl Interp<'_> {
     fn buf_push(&mut self, b: u64, more: &[u8]) {
         let mut bytes = self.str_bytes(b);
         bytes.extend_from_slice(more);
-        let (p, cap) = (self.read_u64(b), self.read_u64(b + 16));
-        if cap > 0 {
+        if let Some(p) = self.str_heap(b) {
             self.heap_free(p);
         }
         self.new_str(b, &bytes);
@@ -67,8 +66,7 @@ impl Interp<'_> {
                 self.buf_push(a[0], text.as_bytes());
             }
             "velt_rt_strbuf_drop" => {
-                let (p, _, cap) = self.str_header(a[0]);
-                if cap > 0 {
+                if let Some(p) = self.str_heap(a[0]) {
                     self.heap_free(p);
                 }
                 self.write_bytes(a[0], &[0; 24]);
@@ -87,6 +85,12 @@ impl Interp<'_> {
                 self.buf_push(a[0], text);
             }
             "velt_rt_strbuf_push_byte" => self.buf_push(a[0], &[a[1] as u8]),
+            // The first `n` bytes of three words, byte `i` in bits `8 * (i % 8)` of word `i / 8`
+            // (std's `strbufPushAsciiWords` where the builder has no room inline).
+            "velt_rt_strbuf_push_words" => {
+                let words: Vec<u8> = a[1..4].iter().flat_map(|w| w.to_le_bytes()).collect();
+                self.buf_push(a[0], &words[..a[4] as usize]);
+            }
             "velt_rt_strbuf_push_inspect_str" => {
                 let s = self.str_bytes(a[1]);
                 let q = crate::lower::inspect_quote(&String::from_utf8_lossy(&s));

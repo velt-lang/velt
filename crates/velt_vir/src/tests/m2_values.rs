@@ -235,6 +235,9 @@ fn dyn_values_clone_print_and_enum_eq() {
 #[test]
 fn void_fields_are_zero_sized() {
     // `struct R<T> { code: i32; message: string; value: T }` used as `R<void>` (`IoResult<void>`).
+    // Its `message` is printed, not the struct: an integer as text needs std's hooks (#2197),
+    // which a hand-built program has not (a `void` field's value can't be written in Velt yet,
+    // #930).
     let mut pb = PB::new();
     let t = pb.t;
     let p0 = pb.param(0);
@@ -273,7 +276,7 @@ fn void_fields_are_zero_sized() {
         se(assign(field(f.bm(b), 2, U::Copy, t.unit), unit(), t)),
         se(print(
             vec![
-                f.bw(a),
+                field(f.bw(a), 1, U::Borrow, t.str),
                 cmp(B::Eq, f.bw(a), f.bw(b), t),
                 field(f.bw(b), 2, U::Copy, t.unit),
                 f.cp(v),
@@ -287,8 +290,5 @@ fn void_fields_are_zero_sized() {
     let layout = vir.aggs.iter().find(|a| a.name == "R").expect("R layout");
     assert_eq!((layout.size, layout.fields.len()), (32, 2));
     let out = run(&prog);
-    assert_eq!(
-        out.stdout,
-        "R { code: 0, message: 'ok', value: undefined } true undefined undefined\n"
-    );
+    assert_eq!(out.stdout, "ok true undefined undefined\n");
 }

@@ -1,6 +1,6 @@
 //! Control flow, evaluation order, entry point, noreturn intrinsics and the calling convention.
 
-use velt_sema::hir::{BinOp as B, Intrinsic, PassMode};
+use velt_sema::hir::{BinOp as B, Intrinsic};
 
 use super::builder::*;
 use super::{lower_ok, run};
@@ -124,7 +124,7 @@ fn main_returning_i32_and_print_to_stderr() {
 
 #[test]
 fn signatures_are_scalar_only() {
-    let v = lower_ok(&super::goldens::strings());
+    let v = super::lower_src(&super::goldens::strings_src());
     for f in &v.funcs {
         assert!(f.params.iter().all(|t| t.is_scalar()));
         assert!(!matches!(f.ret, Ty::Agg(_)));
@@ -143,7 +143,7 @@ fn signatures_are_scalar_only() {
 #[test]
 fn lowering_is_deterministic() {
     for p in [
-        super::goldens::strings(),
+        super::std_src::check_src(&super::goldens::strings_src()),
         super::goldens::control(),
         super::goldens::functions(),
     ] {
@@ -151,38 +151,21 @@ fn lowering_is_deterministic() {
     }
 }
 
+/// `join` takes `a` owned (it may return it) and `b` borrowed; its result comes back through the
+/// out-pointer. Its arguments are heap strings (too long to be inline), which the interpreter
+/// checks are freed once.
 #[test]
 fn owned_and_borrowed_params_with_string_return() {
-    let mut pb = PB::new();
-    let t = pb.t;
-    let mut f = FB::new("join", t.str);
-    let a = f.param("a", t.str, PassMode::Owned);
-    let b = f.param("b", t.str, PassMode::Borrow);
-    let body = vec![
-        if_(
-            cmp(
-                B::Eq,
-                intr(Intrinsic::StrLen, vec![f.bw(b)], t.usize),
-                int(0, t.usize),
-                t,
-            ),
-            vec![ret(Some(f.mv(a)))],
-            None,
-        ),
-        ret(Some(concat(f.bw(a), f.bw(b), t))),
-    ];
-    let join = pb.add_fn(f.build(body));
-    let m = FB::new("main", t.unit);
-    pb.add_main(m.build(vec![
-        se(print(
-            vec![call(join, vec![to_s(int(1, t.i64), t), s("", t)], t.str)],
-            t,
-        )),
-        se(print(
-            vec![call(join, vec![to_s(int(1, t.i64), t), s("-2", t)], t.str)],
-            t,
-        )),
-    ]));
-    let out = run(&pb.finish());
-    assert_eq!(out.stdout, "1\n1-2\n");
+    let src = "function join(a: string, b: string): string {\n  if (b.length == 0) {\n    \
+               return a;\n  }\n  return a + b;\n}\n\nfunction main() {\n  \
+               const long = \"a string too long to be inline\";\n  \
+               console.log(join(long + \"!\", \"\"));\n  console.log(join(long + \"?\", \"-2\"));\n}\n";
+    let v = super::lower_src(src);
+    let join = super::user_fn(&v, "join");
+    assert_eq!(join.params, vec![Ty::Ptr, Ty::Ptr, Ty::Ptr], "{v}");
+    assert_eq!(join.ret, Ty::Unit);
+    let out = super::run_src(src);
+    let long = "a string too long to be inline";
+    assert_eq!(out.stdout, format!("{long}!\n{long}?-2\n"));
+    assert!(out.frees >= 2, "frees: {}", out.frees);
 }

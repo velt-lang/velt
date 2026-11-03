@@ -3,7 +3,7 @@
 //! of an array literal runs inline — embedded children polled in place, no `velt_rt_all` —
 //! with exact cleanup when cancelled halfway.
 
-use velt_sema::hir::{Intrinsic as I, PassMode, Program, UseMode as U};
+use velt_sema::hir::{Intrinsic as I, PassMode, Program};
 
 use super::builder::*;
 use super::builder_m2::*;
@@ -157,64 +157,27 @@ fn unobservable_await_steps_are_not_lowered() {
     );
 }
 
-/// ```text
-/// async function tagged(ms: i64, s: string): Promise<string> { await sleep(ms); return s + "!"; }
-/// async function both() {
-///   const p = tagged(3, "c");                    // a promise value (heap future)
-///   const r = await Promise.all([tagged(1, "a"), p, tagged(5, "b")]);
-///   console.log(r[0], r[1], r[2]);
-/// }
-/// ```
-fn all_program() -> Program {
-    let mut pb = PB::new();
-    let t = pb.t;
-    let (ps, pv) = (pb.promise(t.str), pb.promise(t.unit));
-    let (aps, sa) = (pb.arr(ps), pb.arr(t.str));
-    let psa = pb.promise(sa);
-    let tagged = {
-        let mut f = FB::new("tagged", ps);
-        let ms = f.param("ms", t.i64, PassMode::Copy);
-        let s_ = f.param("s", t.str, PassMode::Owned);
-        let body = vec![
-            se(await_(sleep(f.cp(ms), pv), t.unit)),
-            ret(Some(concat(f.bw(s_), s("!", t), t))),
-        ];
-        pb.add_fn(f.build_async(body))
-    };
-    let both = {
-        let mut f = FB::new("both", pv);
-        let p = f.local("p", ps);
-        let r = f.local("r", sa);
-        let tg = |ms, v: &str| call(tagged, vec![int(ms, t.i64), s(v, t)], ps);
-        let at = |f: &FB, i| index(f.bw(r), int(i, t.usize), U::Borrow, t.str);
-        let body = vec![
-            let_(p, tg(3, "c")),
-            let_(
-                r,
-                await_(
-                    promise_all(array(vec![tg(1, "a"), f.mv(p), tg(5, "b")], aps), psa),
-                    sa,
-                ),
-            ),
-            se(print(vec![at(&f, 0), at(&f, 1), at(&f, 2)], t)),
-        ];
-        pb.add_fn(f.build_async(body))
-    };
-    main_awaiting_value(&mut pb, both);
-    pb.finish()
-}
-
+/// `Promise.all` over an array literal awaits its elements in place (no `velt_rt_all`); dropping
+/// `both` part way through drops what it holds. Its result array is indexed (the out-of-bounds
+/// report prints the index through std's hooks, #2197): Velt source loaded with the real std.
+/// (`main` keeps `both()` as a value, so `both` keeps the function that makes its future, which
+/// the cancellation runs start from; an awaited call is embedded in `main`'s state machine.)
 #[test]
 fn promise_all_of_literal_is_inline() {
-    let p = all_program();
-    let v = lower_ok(&p);
+    let src =
+        "async function tagged(ms: i64, s: string): Promise<string> {\n  await sleep(ms);\n  \
+               return s + \"!\";\n}\n\nasync function both() {\n  const p = tagged(3, \"c\");\n  \
+               const r = await Promise.all([tagged(1, \"a\"), p, tagged(5, \"b\")]);\n  \
+               console.log(r[0], r[1], r[2]);\n}\n\n\
+               async function main() {\n  const p = both();\n  await p;\n}\n";
+    let v = super::lower_src(src);
     assert!(
         !v.externs
             .iter()
             .any(|e| e.symbol == "velt_rt_all" || e.symbol == "velt_rt_all_with_drop"),
         "{v}"
     );
-    let out = run(&p);
+    let out = super::run_src(src);
     assert_eq!(out.stdout, "a! c! b!\n");
     // Cancelled before start, with all pending, with `a` finished (its result is dropped), with
     // `a` and `c` finished; then run to completion.
