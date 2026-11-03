@@ -13,7 +13,7 @@ function main() {
     console.log("set");
   }
   console.log(a);
-  const sum = a + b;
+  const sum = a % b;
   const made = u8x16.nope(1);
   const added = u8x16.add(a, b);
   const signed: i8x16 = a;

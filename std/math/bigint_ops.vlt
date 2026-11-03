@@ -1,0 +1,85 @@
+// velt/math (internal): the operators of `BigInt` (design operators.md): `a + b` is `a.add(b)`,
+// `a += b` is `a.addAssign(b)`, in place, and so on. Both operands are BigInts, as in JavaScript
+// (which throws on `b + 3`) and TypeScript (TS2365): mixed arithmetic is the named twins
+// (`addInt`, `mulIntAssign`, ...), which skip building a BigInt for the small operand. Shift
+// counts are an `i64`. Division truncates and `%` takes the dividend's sign, like JS; dividing by
+// zero and a negative shift count panic with a RangeError.
+
+import { BigInt } from "velt/math/bigint";
+
+extend BigInt {
+  /** `this + other`. */
+  [Symbol.add](other: BigInt): BigInt {
+    return this.add(other);
+  }
+
+  /** `this - other`. */
+  [Symbol.sub](other: BigInt): BigInt {
+    return this.sub(other);
+  }
+
+  /** `this * other`. */
+  [Symbol.mul](other: BigInt): BigInt {
+    return this.mul(other);
+  }
+
+  /** `this / other`, truncated. */
+  [Symbol.div](other: BigInt): BigInt {
+    return this.div(other);
+  }
+
+  /** `this % other`, with the sign of `this`. */
+  [Symbol.rem](other: BigInt): BigInt {
+    return this.rem(other);
+  }
+
+  /** `this << n` (`n` >= 0). */
+  [Symbol.shl](n: i64): BigInt {
+    return this.shl(n);
+  }
+
+  /** `this >> n` (`n` >= 0; rounds toward -Infinity, like JS). */
+  [Symbol.shr](n: i64): BigInt {
+    return this.shr(n);
+  }
+
+  /** `-this`. */
+  [Symbol.neg](): BigInt {
+    return this.neg();
+  }
+
+  /** `this += other`, in place. */
+  [Symbol.addAssign](other: BigInt): void {
+    this.addAssign(other);
+  }
+
+  /** `this -= other`, in place. */
+  [Symbol.subAssign](other: BigInt): void {
+    this.subAssign(other);
+  }
+
+  /** `this *= other`, in place. */
+  [Symbol.mulAssign](other: BigInt): void {
+    this.mulAssign(other);
+  }
+
+  /** `this /= other`, in place, truncated. */
+  [Symbol.divAssign](other: BigInt): void {
+    this.divAssign(other);
+  }
+
+  /** `this %= other`, in place, with the sign of `this`. */
+  [Symbol.remAssign](other: BigInt): void {
+    this.remAssign(other);
+  }
+
+  /** `this <<= n`, in place. */
+  [Symbol.shlAssign](n: i64): void {
+    this.shlAssign(n);
+  }
+
+  /** `this >>= n`, in place. */
+  [Symbol.shrAssign](n: i64): void {
+    this.shrAssign(n);
+  }
+}

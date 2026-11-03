@@ -147,6 +147,8 @@ mod object_prototypes;
 mod object_text;
 mod object_view_cast;
 mod operator_assign;
+mod operator_bigint;
+mod operator_simd;
 mod operators;
 mod ops;
 mod optional_fn_call;

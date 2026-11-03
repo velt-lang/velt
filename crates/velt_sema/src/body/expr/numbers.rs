@@ -20,7 +20,12 @@ use crate::hir::{self, DefId, ExprKind as H, Intrinsic, LocalId, TyId, TyKind, U
 /// Is `name` (`u8x16.lane`) a method of a SIMD type? Those are Velt's own API: a lane of a
 /// `u8x16` is a `u8`, not a number.
 pub(super) fn is_simd_method(name: &str) -> bool {
-    name.rsplit_once('.').is_some_and(|(owner, _)| {
+    // A computed key has dots of its own (`f32x4.[Symbol.index]`).
+    let split = match name.ends_with(']') {
+        true => name.rfind(".[").map(|i| (&name[..i], &name[i + 1..])),
+        false => name.rsplit_once('.'),
+    };
+    split.is_some_and(|(owner, _)| {
         let owner = owner.rsplit(':').next().unwrap_or(owner);
         hir::SimdTy::named(owner).is_some()
     })

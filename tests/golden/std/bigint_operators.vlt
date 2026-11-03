@@ -1,0 +1,19 @@
+// `BigInt`'s operators (#2050): BigInt operands on both sides, as in JavaScript, in place with
+// `+=`, and `x += x` / `x *= x` with the operand the target itself.
+import { BigInt } from "velt/math";
+const n = (k: i64): BigInt => new BigInt(k);
+let x = BigInt.parse("123456789012345678901234567890");
+const y = n(7);
+console.log((x + y).toString(), (x - n(1)).toString(), (n(2) * y).toString(), (x / y).toString(), (x % n(1000)).toString());
+console.log((-y).toString(), (y << 70).toString(), (x >> 64).toString(), (n(100) - y).toString());
+x += x;
+console.log(x.toString());
+x *= x;
+console.log(x.toString());
+let f = n(1);
+for (let i: i64 = 1; i <= 25; i++) f *= n(i);
+console.log(f.toString());
+f %= n(1000007);
+console.log(f.toString());
+f %= n(-97);
+console.log(f.toString());

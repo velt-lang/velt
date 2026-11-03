@@ -725,9 +725,18 @@ fn extension<'m>(cx: &mut Ctx<'m>, m: usize, e: &'m ast::ExtendDecl, used: &mut 
     let prefix = format!("{}{}", module_prefix(cx, m), cx.display(target));
     cx.display_params = saved;
     let mut methods = FxHashMap::default();
+    // A static named as an instance method (the two forms of an operator method,
+    // `[Symbol.mul](k)` and `static [Symbol.mul](k, v)`) has a key of its own, as in a class.
+    let instance: rustc_hash::FxHashSet<&str> = (e.methods.iter())
+        .filter(|m| !m.is_static && !m.is_setter)
+        .map(|m| m.decl.sig.name.name.as_str())
+        .collect();
     for meth in &e.methods {
         let name = &meth.decl.sig.name;
-        let key = cx.method_key(m, name, meth.is_setter);
+        let key = match meth.is_static && instance.contains(&name.name.as_str()) {
+            true => static_key(&name.name),
+            false => cx.method_key(m, name, meth.is_setter),
+        };
         let mut full = format!("{prefix}.{key}");
         let mut n = 2;
         while !used.insert(full.clone()) {

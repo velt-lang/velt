@@ -4,3 +4,5 @@
 export { BigInt } from "velt/math/bigint";
 export { BigIntError } from "velt/math/errors";
 export { clamp, fib, gcd, isPrime, lcm } from "velt/math/integer";
+// `BigInt`'s operators: `a + b`, `a += b`, …
+import "velt/math/bigint_ops";

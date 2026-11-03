@@ -1,0 +1,12 @@
+operator_bigint.vlt:7:11: error: BigInt arithmetic takes BigInt operands, not a `f64`
+note: write `b + new BigInt(3)`, or `b.addInt(3)` for the fast form
+operator_bigint.vlt:8:11: error: BigInt arithmetic takes BigInt operands, not a `f64`
+note: write `new BigInt(3) * b`, or `b.mulInt(3)` for the fast form
+operator_bigint.vlt:9:11: error: BigInt arithmetic takes BigInt operands, not a `f64`
+note: write `new BigInt(3) - b`
+operator_bigint.vlt:10:11: error: BigInt arithmetic takes BigInt operands, not a `i64`
+note: write `b - new BigInt(3)`, or `b.subInt(3)` for the fast form
+operator_bigint.vlt:12:1: error: BigInt arithmetic takes BigInt operands, not a `f64`
+note: write `b += new BigInt(3)`, or `b.addIntAssign(3)` for the fast form
+operator_bigint.vlt:13:1: error: BigInt arithmetic takes BigInt operands, not a `i64`
+note: write `b %= new BigInt(3)`
