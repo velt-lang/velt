@@ -2,11 +2,11 @@
 //!
 //! Inside a shared instance, every question about a placeholder that lowering answers from
 //! layout or ownership is answered for the representative (`Cx::ph_rep` at the top of those
-//! queries), and the counted-types sets hold each type built from a placeholder where they
-//! hold the same type built from the representative (`mirror`). So the key is every answer
+//! queries, for a placeholder and for every type built from one). So the key is every answer
 //! such code may depend on for the type itself and for the derived types the shared helpers
-//! use (`T[]`); `verify` checks, at the end of the pass, that every member of each shape gives
-//! the representative's answers for every type built from its placeholder.
+//! use (`T[]`); `shapes_close` checks, at the end of the pass, that every member of each shape
+//! gives the representative's answers for every type built from a placeholder that was asked
+//! about.
 
 use rustc_hash::FxHashSet;
 use velt_sema::hir::{TyId, TyKind};
@@ -25,6 +25,8 @@ enum Lay {
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(in crate::lower) struct Key {
     lay: Lay,
+    /// The storage float it is (`Cx::half`), which arithmetic on it converts through.
+    half: Option<String>,
     /// `ShareKind` as a number, and the bits shared code may branch on.
     share: u8,
     bits: u32,
@@ -33,14 +35,55 @@ pub(in crate::lower) struct Key {
 }
 
 impl Cx<'_> {
-    /// The representative of placeholder `t`, or `t` itself.
+    /// `t` with each placeholder replaced by its representative, when that type exists:
+    /// the type whose answers every shape question gives for `t` (module docs). `t` itself
+    /// otherwise. Each type asked about is remembered for `verify`.
     pub(in crate::lower) fn ph_rep(&self, t: TyId) -> TyId {
-        match self.types.kind(t) {
-            TyKind::Param(n) if *n >= super::SHAPE_BASE => {
-                self.shapes.ph[(*n - super::SHAPE_BASE) as usize].rep
-            }
-            _ => t,
+        if !self.mentions_ph(t) {
+            return t;
         }
+        self.shapes.asked.borrow_mut().insert(t);
+        self.rep_of(t).unwrap_or(t)
+    }
+
+    /// [`ph_rep`](Self::ph_rep) without interning: `None` when a part of the result was never
+    /// interned (then no counted-types set holds it either).
+    fn rep_of(&self, t: TyId) -> Option<TyId> {
+        let k = self.types.kind(t);
+        if let TyKind::Param(n) = k {
+            if *n >= super::SHAPE_BASE {
+                return Some(self.shapes.ph[(*n - super::SHAPE_BASE) as usize].rep);
+            }
+        }
+        if !self.mentions_ph(t) {
+            return Some(t);
+        }
+        let r = |x: &TyId| self.rep_of(*x);
+        let rs = |xs: &Vec<TyId>| xs.iter().map(r).collect::<Option<Vec<TyId>>>();
+        let k = match k {
+            TyKind::Adt(d, a) => TyKind::Adt(*d, rs(a)?),
+            TyKind::Dyn(d, a) => TyKind::Dyn(*d, rs(a)?),
+            TyKind::Tuple(a) => TyKind::Tuple(rs(a)?),
+            TyKind::Array(e) => TyKind::Array(r(e)?),
+            TyKind::Option(e, n) => TyKind::Option(r(e)?, *n),
+            TyKind::Shared(e) => TyKind::Shared(r(e)?),
+            TyKind::Map(a, b) => TyKind::Map(r(a)?, r(b)?),
+            TyKind::Result(a, b) => TyKind::Result(r(a)?, r(b)?),
+            TyKind::Promise(a, b) => TyKind::Promise(r(a)?, r(b)?),
+            TyKind::FnPtr {
+                params,
+                ret,
+                throws,
+                rest,
+            } => TyKind::FnPtr {
+                params: rs(params)?,
+                ret: r(ret)?,
+                throws: r(throws)?,
+                rest: *rest,
+            },
+            _ => return Some(t),
+        };
+        self.types.get(&k)
     }
 
     /// The shape key of concrete `t`, or `None` when `t` is not shared in this step.
@@ -62,11 +105,13 @@ impl Cx<'_> {
             s => Lay::Scalar(s),
         };
         let share = self.share_kind(t) as u8;
+        let half = self.half(t).map(|f| format!("{f:?}"));
         let bits = self.bits(t);
         let arr = self.intern(TyKind::Array(t));
         let array = self.bits(arr) | u32::from(self.array_view(arr)) << 16;
         Some(Key {
             lay,
+            half,
             share,
             bits,
             array,
@@ -141,53 +186,30 @@ impl Cx<'_> {
         self.intern(k)
     }
 
-    /// Put each type built from representative `rep` that a counted-types set holds into it
-    /// again, built from placeholder `p` instead.
-    pub(super) fn mirror(&mut self, p: TyId, rep: TyId) {
-        let sets = self.boxing.ty_sets().len();
-        for i in 0..sets {
-            let members: Vec<TyId> = self.boxing.ty_sets()[i].iter().copied().collect();
-            for m in members {
-                let m2 = self.replace_tys(m, &[(rep, p)]);
-                if m2 != m && self.boxing.ty_sets_mut()[i].insert(m2) {
-                    self.shapes.mirrored.push((i, m2));
-                }
-            }
-        }
-    }
-
-    /// Take the placeholders' entries out of the counted-types sets again (before the pass
-    /// closes its facts) after checking that every member of every shape agrees with the
-    /// representative on each type built from the placeholder (module docs).
+    /// At the end of the pass: every member of every shape gives the representative's answers
+    /// for each type built from a placeholder that shared code asked about (module docs).
     pub(in crate::lower) fn shapes_close(&mut self) {
-        self.verify();
-        for (i, t) in std::mem::take(&mut self.shapes.mirrored) {
-            self.boxing.ty_sets_mut()[i].remove(&t);
-        }
-    }
-
-    fn verify(&mut self) {
-        let n = self.types.len();
-        let derived: Vec<TyId> = (0..n as u32)
-            .map(TyId)
-            .filter(|&t| self.mentions_ph(t) && !self.is_ph(t))
-            .collect();
+        let mut derived: Vec<TyId> = self.shapes.asked.borrow().iter().copied().collect();
+        derived.sort_by_key(|t| t.0);
         for i in 0..self.shapes.ph.len() {
             let (p, rep) = (self.shapes.ph[i].ty, self.shapes.ph[i].rep);
             let members = self.shapes.ph[i].members.clone();
             for &d in &derived {
                 let rest: Vec<(TyId, TyId)> = self.shapes.ph.iter().map(|q| (q.ty, q.rep)).collect();
-                let want = self.replace_tys(d, &rest);
-                let want = self.set_answers(want);
+                let want_ty = self.replace_tys(d, &rest);
+                let want = self.set_answers(want_ty);
                 for &m in &members {
                     let mut map = rest.clone();
                     map[i] = (p, m);
                     let got = self.replace_tys(d, &map);
-                    if self.set_answers(got) != want {
+                    let have = self.set_answers(got);
+                    if have != want {
                         let (a, b) = (self.type_name(rep), self.type_name(m));
+                        let (x, y) = (self.type_name(want_ty), self.type_name(got));
                         ice(format_args!(
-                            "shape of `{a}` and `{b}` differs for a type built from them: \
-                             the shape key is missing a question"
+                            "shape of `{a}` and `{b}` differs for a type built from them \
+                             (`{x}`: {want:?}, `{y}`: {have:?}): the shape key is missing a \
+                             question"
                         ));
                     }
                 }

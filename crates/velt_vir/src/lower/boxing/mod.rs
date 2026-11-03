@@ -137,23 +137,6 @@ impl Boxing {
         ]
     }
 
-    /// [`ty_sets`](Self::ty_sets), to change.
-    pub(super) fn ty_sets_mut(&mut self) -> [&mut FxHashSet<TyId>; 11] {
-        [
-            &mut self.boxes,
-            &mut self.interior,
-            &mut self.identity_dyns,
-            &mut self.transferred,
-            &mut self.weak,
-            &mut self.dyn_types,
-            &mut self.proxy_types,
-            &mut self.array_views,
-            &mut self.lock_values,
-            &mut self.lock_boxes,
-            &mut self.lock_exclusive,
-        ]
-    }
-
     /// The counted types before any share is observed: the recursive object types, and the
     /// object types sema relies on being counted (`hir::Program::counted_objects`).
     pub(super) fn initial(hir: &hir::Program) -> Boxing {

@@ -36,6 +36,23 @@ impl Cx<'_> {
             kind: DebugKind::Opaque(Ty::Unit),
         });
         d.memo.insert(t, id);
+        // A type built from a placeholder (shape/): what shared code knows of it, its words,
+        // named after its layout; the frame's `$types` names the concrete types.
+        if self.mentions_ph(t) {
+            let vt = self.ty(t);
+            let name = match vt {
+                Ty::Agg(a) => {
+                    let l = &self.aggs[a.0 as usize];
+                    format!("~agg({}, {})", l.size, l.align)
+                }
+                v => format!("~{v}"),
+            };
+            self.debug_types().types[id.0 as usize] = DebugTy {
+                name,
+                kind: DebugKind::Opaque(vt),
+            };
+            return id;
+        }
         let name = self.debug_name(t);
         let kind = self.debug_kind(t);
         self.debug_types().types[id.0 as usize] = DebugTy { name, kind };

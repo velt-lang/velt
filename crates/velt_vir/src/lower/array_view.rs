@@ -88,7 +88,7 @@ fn view_key(t: TyId) -> Operand {
 impl Cx<'_> {
     /// May a value of the array type `t` be a view?
     pub(super) fn array_view(&self, t: TyId) -> bool {
-        !self.boxing.array_views.is_empty() && self.boxing.array_views.contains(&t)
+        !self.boxing.array_views.is_empty() && self.boxing.array_views.contains(&self.ph_rep(t))
     }
 
     /// May an array of elements `e` be a view?

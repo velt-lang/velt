@@ -5,12 +5,11 @@
 //! *shape* of its type arguments (key.rs), passing a dictionary of the type-specific code as a
 //! hidden last parameter. The shared instance is lowered with a *placeholder* for each shared
 //! type argument: a `TyKind::Param` at `SHAPE_BASE` or above, which HIR never holds.
-//! - Layout and ownership questions about a placeholder, or a type built from one, are answered
-//!   for its representative: the first concrete type of the shape (`Cx::shape_rep`), and the
-//!   counted-types sets hold the placeholder's derived types where they hold the
-//!   representative's (`mirror`). Every type built from a placeholder is checked against every
-//!   member of the shape at the end of the pass (`verify`): a key too coarse is an ICE, never
-//!   wrong code.
+//! - Layout and ownership questions (the shape questions) about a placeholder, or a type built
+//!   from one, are answered for the same type built from its representative, the first
+//!   concrete type of the shape (`Cx::ph_rep`). Every type asked about this way is checked
+//!   against every member of the shape at the end of the pass (`shapes_close`): a key too
+//!   coarse is an ICE, never wrong code.
 //! - Any other question about a placeholder (`Cx::kind`) is an ICE.
 //! - A function the shared body needs at a placeholder type (glue, a generic callee) gets a
 //!   pseudo id (`PSEUDO_BASE` and up) instead of being built; after the body is lowered, the
@@ -98,9 +97,8 @@ pub(super) struct Shapes {
     dicts: FxHashMap<(FuncId, Vec<TyId>), StaticId>,
     /// Memo of `mentions_ph`.
     mentions: std::cell::RefCell<FxHashMap<TyId, bool>>,
-    /// Counted-types set entries added for placeholders (`mirror`), removed before the pass
-    /// closes its facts.
-    mirrored: Vec<(usize, TyId)>,
+    /// The types built from placeholders that shape questions were asked about (key.rs).
+    asked: std::cell::RefCell<rustc_hash::FxHashSet<TyId>>,
 }
 
 impl Shapes {
@@ -154,15 +152,6 @@ impl Cx<'_> {
         found
     }
 
-    /// `t` with each placeholder replaced by its representative, when it mentions one.
-    pub(super) fn shape_rep(&mut self, t: TyId) -> Option<TyId> {
-        if !self.mentions_ph(t) {
-            return None;
-        }
-        let map: Vec<(TyId, TyId)> = self.shapes.ph.iter().map(|p| (p.ty, p.rep)).collect();
-        Some(self.replace_tys(t, &map))
-    }
-
     /// The placeholder for concrete type `t` at type-argument position `pos`, made when new;
     /// `None` when `t` is not shared (key.rs).
     fn placeholder(&mut self, t: TyId, pos: u32) -> Option<TyId> {
@@ -182,7 +171,6 @@ impl Cx<'_> {
             members: vec![t],
         });
         self.shapes.ph_of.insert((key, pos), p);
-        self.mirror(p, t);
         Some(p)
     }
 

@@ -228,6 +228,7 @@ impl Cx<'_> {
 
     /// May `read` on an `RwLock` of `v` run beside other readers (module docs)?
     pub(in crate::lower) fn shared_reads(&self, v: TyId) -> bool {
+        let v = self.ph_rep(v);
         self.boxing.lock_values.contains(&v) && !self.boxing.lock_exclusive.contains(&v)
     }
 }

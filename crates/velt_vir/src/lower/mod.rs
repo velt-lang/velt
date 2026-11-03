@@ -256,6 +256,10 @@ pub(crate) fn lower_program(
             let n = cx.versioned;
             eprintln!("velt-lower: pass {pass} {kind}: view loops versioned in {n} functions");
         }
+        if profile && cx.shapes.on {
+            let (shared, per_type) = cx.shapes.counts();
+            eprintln!("velt-lower: pass {pass}: {shared} shared instances for {per_type} per type");
+        }
         if profile && next != counted {
             eprintln!("velt-lower: pass {pass} grew: {}", counted.changes(&next));
         }

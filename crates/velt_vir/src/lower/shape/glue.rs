@@ -85,6 +85,10 @@ impl FnLower<'_, '_> {
             false => self.value_to_dyn(v, ty, any, imp),
         };
         if !self.dead() {
+            // The value goes to the caller: not dropped with this scope's temporaries.
+            if let Operand::Copy(p) = &r {
+                self.take_temp(p);
+            }
             self.assign(dest, Rvalue::Use(r));
         }
         self.pop_scope();
@@ -102,6 +106,10 @@ impl FnLower<'_, '_> {
         self.push_scope(ScopeKind::Temps);
         let r = self.any_unbox(&p, any, ty);
         if !self.dead() {
+            // The value goes to the caller: not dropped with this scope's temporaries.
+            if let Operand::Copy(p) = &r {
+                self.take_temp(p);
+            }
             self.assign(dest, Rvalue::Use(r));
         }
         self.pop_scope();

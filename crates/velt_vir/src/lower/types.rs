@@ -92,6 +92,9 @@ impl<'h> Cx<'h> {
         if let Some(&c) = self.anon.memo.get(&t) {
             return c;
         }
+        if self.is_ph(t) {
+            return t;
+        }
         let c = |cx: &mut Self, x: TyId| cx.canon(x);
         let k = match self.kind(t) {
             TyKind::Adt(d, args) => TyKind::Adt(d, args.iter().map(|&a| c(self, a)).collect()),
@@ -626,7 +629,7 @@ impl<'h> Cx<'h> {
             && a.fields.get(2).is_some_and(|f| f.name == "entryValues");
         // An `Atomic<string>`'s word points to a box holding the string (atomic_str.rs).
         if args.len() == 1
-            && matches!(self.kind(args[0]), TyKind::Str)
+            && matches!(self.kind(self.ph_rep(args[0])), TyKind::Str)
             && super::atomic::is_atomic(self, d)
         {
             return vec![self.intern(TyKind::Shared(args[0]))];
