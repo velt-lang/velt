@@ -37,6 +37,7 @@ fn stmt(s: &ast::Stmt, out: &mut Vec<String>) {
     match &s.kind {
         S::Expr(e) => out.push(sx(e)),
         S::Var(v) => out.extend(v.init.as_ref().map(sx)),
+        S::Block(b) | S::Unsafe(b) => b.stmts.iter().for_each(|s| stmt(s, out)),
         S::For { update, body, .. } => {
             out.extend(update.as_ref().map(sx));
             body.stmts.iter().for_each(|s| stmt(s, out));
@@ -55,7 +56,15 @@ fn sx(e: &ast::Expr) -> String {
         E::Paren(x) => sx(x),
         E::NonNull(x) => format!("{}!", sx(x)),
         E::Member { object, prop, .. } => format!("{}.{}", sx(object), prop.name),
-        E::Index { object, index, .. } => format!("{}[{}]", sx(object), sx(index)),
+        E::Index {
+            object,
+            index,
+            more,
+            ..
+        } => {
+            let keys: Vec<String> = std::iter::once(&**index).chain(more).map(sx).collect();
+            format!("{}[{}]", sx(object), keys.join(", "))
+        }
         E::Call { callee, args, .. } => {
             let args: Vec<String> = args.iter().map(sx).collect();
             format!("{}({})", sx(callee), args.join(", "))
@@ -166,4 +175,17 @@ fn modules_without_asserted_targets_are_not_copied() {
     // Std is not rewritten.
     let m = module("function f() { x! = 1; }", true);
     assert!(rewrite(&[m]).is_none());
+}
+
+/// An operator indexer with several keys (`m[i, j]`), and a target in an `unsafe` block.
+#[test]
+fn several_keys_and_unsafe_blocks() {
+    assert_eq!(
+        rewritten("m[i, j]! += 1; m[i, f()]! += 1; unsafe { x! += 1; }").unwrap(),
+        [
+            "(= m[i, j] (Add m[i, j]! 1))",
+            "(Add= m[i, f()] 1)",
+            "(= x (Add x! 1))"
+        ]
+    );
 }

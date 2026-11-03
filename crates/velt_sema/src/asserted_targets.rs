@@ -11,7 +11,8 @@
 //!   optional field, a `T | undefined` variable) reads and writes as in TypeScript. A getter
 //!   and a setter each run once, as for `e op= v`.
 //! - Otherwise (`a[next()]! += 1`, a postfix `e!++` used as a value) the assertion is dropped:
-//!   `e op= v`, exact when `e`'s type has no nothing in it (an array element).
+//!   `e op= v`, exact when `e`'s type includes neither `null` nor `undefined` (an array
+//!   element); on a nullable target it is the usual type error.
 //!
 //! The parser keeps the assertion in the AST, so `velt fmt` prints what was written. Std has no
 //! such targets and is not rewritten.
@@ -70,8 +71,9 @@ fn pure(e: &ast::Expr) -> bool {
         E::Index {
             object,
             index,
+            more,
             optional: false,
-        } => pure(object) && pure(index),
+        } => pure(object) && pure(index) && more.iter().all(pure),
         _ => false,
     }
 }
@@ -252,7 +254,7 @@ fn stmt(s: &mut ast::Stmt) {
             expr(iter, false);
             block(body);
         }
-        S::Block(b) => block(b),
+        S::Block(b) | S::Unsafe(b) => block(b),
         S::Labeled { body, .. } => stmt(body),
         S::Switch {
             discriminant,
