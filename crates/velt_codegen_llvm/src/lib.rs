@@ -147,10 +147,12 @@ pub fn emit_objects_cached(
     types::validate_aggregates(program)?;
     let start = Instant::now();
     let plan = units::plan(program, count);
+    let caps = inlining::Caps::of(program);
     timings.push(("units", start.elapsed()));
     let start = Instant::now();
     let compile = |unit: &units::Unit| -> Result<(Vec<u8>, bool, Duration), String> {
-        let ir = module::emit_unit(program, &triple, opts.optimize, unit, &plan.shared)?;
+        let ir =
+            module::emit_unit_capped(program, &triple, opts.optimize, unit, &plan.shared, &caps)?;
         let start = Instant::now();
         let (obj, hit) = clang::compile_cached(&ir, &triple, opts.optimize, cache)?;
         Ok((obj, hit, start.elapsed()))

@@ -28,9 +28,9 @@ use velt_vir::vir::{self, Callee, Inline, Terminator};
 use crate::units::components;
 
 /// A call is not inlined when it would take its caller past this size (velt_opt's
-/// `CALLER_LIMIT`)...
+/// `CALLER_LIMIT`; a test holds the two equal)...
 pub(crate) const CALLER_LIMIT: u64 = 10_000;
-/// ...unless the callee is at most this big (velt_opt's `SMALL_COST`).
+/// ...unless the callee is at most this big (velt_opt's `SMALL_COST`, held equal the same way).
 pub(crate) const SMALL: u64 = 40;
 
 /// Size estimate of `func`: statements plus terminators (velt_opt's `inline::cost`).

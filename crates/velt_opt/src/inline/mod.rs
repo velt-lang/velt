@@ -51,7 +51,7 @@ use crate::visit::successors;
 /// Callees at most this big are always inlined.
 const TRIVIAL_COST: u64 = 8;
 /// Callees at most this big are inlined while the growth budget lasts.
-const SMALL_COST: u64 = 40;
+pub const SMALL_COST: u64 = 40;
 /// Leaf callees (no calls but of functions that never return) at most this big count as small:
 /// the call is all they add, and inlined, what they compute (a decoded value and its length
 /// returned through memory) becomes locals of the caller.
@@ -64,7 +64,7 @@ const LOOP_COST: u64 = 1_000;
 /// growth budget lasts).
 const RECURSIVE_COST: u64 = 200;
 /// Callers are not grown past this size (keeps compile time and register pressure sane).
-const CALLER_LIMIT: u64 = 10_000;
+pub const CALLER_LIMIT: u64 = 10_000;
 /// Growth allowed on top of the program's size: the program may at most double, plus this.
 const BUDGET_SLACK: u64 = 2_000;
 

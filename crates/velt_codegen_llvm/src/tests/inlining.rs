@@ -188,3 +188,10 @@ fn no_function_grows_past_the_limit() {
         );
     }
 }
+
+/// The caps mirror velt_opt's inliner: the same caller limit and small-callee size.
+#[test]
+fn limits_are_velt_opts() {
+    assert_eq!(CALLER_LIMIT, velt_opt::INLINE_CALLER_LIMIT);
+    assert_eq!(SMALL, velt_opt::INLINE_SMALL_COST);
+}
