@@ -12,6 +12,7 @@ mod jit;
 mod jit_relocs;
 mod link;
 mod objects;
+mod parallel;
 mod rounding;
 mod static_atomic;
 mod tls;

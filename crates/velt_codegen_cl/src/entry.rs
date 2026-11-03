@@ -65,7 +65,7 @@ pub(crate) fn emit_entry_object(target: &str) -> CodegenResult<Vec<u8>> {
     b.finalize();
 
     define(&mut module, main, &mut ctx, "main")?;
-    let unwind = unwind_info(&module, main, &ctx, "main")?;
+    let unwind = unwind_info(module.isa(), main, &ctx, "main")?;
     let mut product = module.finish();
     unwind::add_unwind_info(&mut product, &*isa, &Vec::from_iter(unwind))?;
     product

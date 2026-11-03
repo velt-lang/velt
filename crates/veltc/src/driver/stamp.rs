@@ -121,6 +121,8 @@ const IGNORED_ENV: &[&str] = &[
     "VELT_CACHE_STATS",
     "VELT_BUILD_STAMP",
     "VELT_TEST_PLAN",
+    // The number of threads: debug builds make the same object on any number.
+    "VELT_JOBS",
 ];
 
 /// Note (in [`vpm::probe`]) what the package graph of `opts` was made from: the directories

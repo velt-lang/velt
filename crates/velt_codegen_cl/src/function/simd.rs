@@ -3,7 +3,6 @@
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::{self, types, InstBuilder, MemFlags, StackSlotData, StackSlotKind};
-use cranelift_module::Module;
 use velt_vir::simd::{reversed_bytes, sum_wide_lane, ExtOp, Lanes, MaskOp, Op, SimdCall};
 use velt_vir::vir::{Callee, Const, Operand, Ty};
 
@@ -54,7 +53,7 @@ pub(super) fn has_byte_shuffles(isa: &dyn cranelift_codegen::isa::TargetIsa) -> 
         .any(|f| f.name == "has_ssse3" && f.as_bool() == Some(true))
 }
 
-impl<M: Module> Translator<'_, '_, M> {
+impl Translator<'_, '_> {
     /// The all-zero vector.
     pub(super) fn zero_vector(&mut self) -> ir::Value {
         let zero = self.builder.func.dfg.constants.insert(vec![0u8; 16].into());

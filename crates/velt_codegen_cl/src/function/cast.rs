@@ -3,14 +3,13 @@
 
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::{self, types, InstBuilder};
-use cranelift_module::Module;
 use velt_vir::vir::Ty;
 
 use super::Translator;
 use crate::abi::{as_int, cl_type, int_bits};
 use crate::CodegenResult;
 
-impl<M: Module> Translator<'_, '_, M> {
+impl Translator<'_, '_> {
     pub(super) fn cast(&mut self, v: ir::Value, from: Ty, to: Ty) -> CodegenResult<ir::Value> {
         if from == to {
             return Ok(v);

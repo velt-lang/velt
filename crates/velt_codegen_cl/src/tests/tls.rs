@@ -52,7 +52,7 @@ fn program() -> Program {
 #[test]
 fn thread_keys_keep_one_value_per_thread() {
     let isa = crate::isa::make_isa("", None, false, true).expect("ISA");
-    let mut jb = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+    let mut jb = JITBuilder::with_isa(isa.clone(), cranelift_module::default_libcall_names());
     #[cfg(unix)]
     jb.symbol_lookup_fn(Box::new(crate::c_symbols::lookup));
     #[cfg(windows)]
@@ -62,8 +62,13 @@ fn thread_keys_keep_one_value_per_thread() {
     }
     let mut module = JITModule::new(jb);
     let program = program();
-    let built = crate::module::build_module(&mut module, &program, &crate::module::Naming::Program)
-        .expect("build");
+    let built = crate::module::build_module(
+        &mut module,
+        &*isa,
+        &program,
+        &crate::module::Naming::Program,
+    )
+    .expect("build");
     module.finalize_definitions().expect("finalize");
     type Get = extern "C" fn() -> u64;
     type Set = extern "C" fn(u64) -> u64;

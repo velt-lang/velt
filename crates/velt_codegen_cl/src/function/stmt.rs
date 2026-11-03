@@ -2,7 +2,6 @@
 //! (libc `memcpy`/`memmove`/`memset` for runtime lengths), unary ops.
 
 use cranelift_codegen::ir::{self, types, InstBuilder};
-use cranelift_module::Module;
 use velt_vir::vir::{AggId, Callee, ExternId, Intrinsic, Operand, Place, Rvalue, Stmt, Ty, UnOp};
 
 use super::place::add_offset;
@@ -13,7 +12,7 @@ use crate::CodegenResult;
 /// `MemCopy`s up to this size are inlined as loads/stores.
 const INLINE_COPY_LIMIT: u64 = 64;
 
-impl<M: Module> Translator<'_, '_, M> {
+impl Translator<'_, '_> {
     pub(super) fn stmt(&mut self, s: &Stmt) -> CodegenResult<()> {
         match s {
             Stmt::Nop => Ok(()),

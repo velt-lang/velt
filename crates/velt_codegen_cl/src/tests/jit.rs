@@ -128,13 +128,14 @@ extern "C" fn c_trunc(x: f64) -> f64 {
 /// JIT-compile `program` for the host, run `velt_main`, return (exit code, stdout).
 pub(crate) fn run(program: &vir::Program, optimize: bool) -> Result<(i32, String), String> {
     let isa = crate::isa::make_isa(&crate::host_triple(), None, optimize, true)?;
-    let mut jb = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+    let mut jb = JITBuilder::with_isa(isa.clone(), cranelift_module::default_libcall_names());
     for (name, p) in stub_symbols() {
         jb.symbol(name, p);
     }
     jb.memory_provider(crate::jit_memory::arena(16 << 20)?);
     let mut module = JITModule::new(jb);
-    let built = crate::module::build_module(&mut module, program, &crate::module::Naming::Program)?;
+    let built =
+        crate::module::build_module(&mut module, &*isa, program, &crate::module::Naming::Program)?;
     module.finalize_definitions().map_err(|e| e.to_string())?;
     let main_idx = program
         .funcs

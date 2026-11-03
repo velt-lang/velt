@@ -6,12 +6,11 @@
 use cranelift_codegen::ir::condcodes::IntCC;
 use cranelift_codegen::ir::types::{F32, F64, I16, I32, I64};
 use cranelift_codegen::ir::{self, InstBuilder, MemFlags};
-use cranelift_module::Module;
 use velt_vir::math::MathOp;
 
 use super::Translator;
 
-impl<M: Module> Translator<'_, '_, M> {
+impl Translator<'_, '_> {
     /// The conversion `op` of `x`, if `op` is one.
     pub(super) fn half_conversion(&mut self, op: MathOp, x: ir::Value) -> Option<ir::Value> {
         Some(match op {

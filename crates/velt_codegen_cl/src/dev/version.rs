@@ -57,7 +57,7 @@ pub(crate) fn compile(
     let start = Instant::now();
     // JIT code runs on this machine: its own CPU features.
     let isa = crate::isa::make_isa(&crate::host_triple(), Some("native"), false, true)?;
-    let mut builder = JITBuilder::with_isa(isa, cranelift_module::default_libcall_names());
+    let mut builder = JITBuilder::with_isa(isa.clone(), cranelift_module::default_libcall_names());
     for (name, address) in runtime.iter().chain(imports) {
         builder.symbol(name.clone(), *address as *const u8);
     }
@@ -67,7 +67,7 @@ pub(crate) fn compile(
     builder.symbol_lookup_fn(Box::new(crate::win_symbols::lookup));
     builder.memory_provider(crate::jit_memory::arena(arena_size(program, names, first))?);
     let mut module = JITModule::new(builder);
-    let built = build_module(&mut module, program, &Naming::Dev(names))?;
+    let built = build_module(&mut module, &*isa, program, &Naming::Dev(names))?;
     #[cfg(all(windows, target_arch = "x86_64"))]
     let unwind = crate::unwind::jit_windows::JitUnwind::stage(&mut module, &built.unwind)?;
     timings.push(("compile", start.elapsed()));

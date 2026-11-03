@@ -4,7 +4,6 @@ use rustc_hash::FxHashSet;
 
 use cranelift_codegen::ir::{self, InstBuilder, TrapCode};
 use cranelift_frontend::Switch;
-use cranelift_module::Module;
 use velt_vir::math::MathOp;
 use velt_vir::vir::{BlockId, Callee, Operand, Place, Terminator, Ty};
 
@@ -13,7 +12,7 @@ use super::{Translator, Val};
 use crate::abi::{as_int, int_bits, make_signature};
 use crate::CodegenResult;
 
-impl<M: Module> Translator<'_, '_, M> {
+impl Translator<'_, '_> {
     pub(super) fn terminator(&mut self, t: &Terminator) -> CodegenResult<()> {
         match t {
             Terminator::Goto(target) => {

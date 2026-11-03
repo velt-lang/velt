@@ -2,7 +2,6 @@
 
 use cranelift_codegen::entity::EntityRef;
 use cranelift_codegen::ir::{self, types, InstBuilder, MemFlags};
-use cranelift_module::Module;
 use velt_vir::vir::{AggId, Place, Proj, Ty};
 
 use super::{Loc, Storage, Translator, Val};
@@ -22,7 +21,7 @@ pub(super) fn add_offset(offset: i32, field_offset: u32) -> CodegenResult<i32> {
     }
 }
 
-impl<M: Module> Translator<'_, '_, M> {
+impl Translator<'_, '_> {
     pub(super) fn place(&mut self, p: &Place) -> CodegenResult<Loc> {
         let index = p.local.0 as usize;
         let Some(decl) = self.function.locals.get(index) else {

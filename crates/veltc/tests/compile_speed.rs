@@ -460,3 +460,37 @@ fn debug_builds_use_the_shared_runtime_when_built() {
     let run = crate::no_window::command(&exe).output().unwrap();
     assert_eq!(text(&run.stdout), "shared\n", "{}", text(&run.stderr));
 }
+
+/// Debug builds translate and compile their functions on `VELT_JOBS` threads (every core by
+/// default): the object is the same bytes on any number of them, `fmod` imports and line
+/// tables included.
+#[test]
+fn debug_objects_are_the_same_on_any_number_of_threads() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let mut src = String::from("class Shape {\n  constructor(public w: number) {}\n}\n");
+    for i in 0..40 {
+        src.push_str(&format!(
+            "function f{i}(xs: number[], s: Shape): string {{\n  let t = s.w % {m};\n  \
+             for (const x of xs) {{ t += x % 7; }}\n  return `f{i}=${{t}}`;\n}}\n",
+            m = i + 2
+        ));
+    }
+    src.push_str("function main() {\n  const xs = [1, 2, 3];\n");
+    for i in 0..40 {
+        src.push_str(&format!("  console.log(f{i}(xs, new Shape({i})));\n"));
+    }
+    src.push_str("}\n");
+    std::fs::write(dir.join("p.vlt"), src).unwrap();
+    let object = |jobs: &str| {
+        let out = format!("p{jobs}.o");
+        let env = [("VELT_JOBS", jobs), ("VELT_BUILD_CACHE", "off")];
+        let o = velt(dir, &["build", "--emit", "obj", "p.vlt", "-o", &out], &env);
+        assert!(o.status.success(), "{}", text(&o.stderr));
+        std::fs::read(dir.join(&out)).unwrap()
+    };
+    let one = object("1");
+    for jobs in ["2", "5", "16"] {
+        assert!(object(jobs) == one, "{jobs} threads made another object");
+    }
+}
