@@ -127,7 +127,7 @@ pub(super) fn successors(funcs: &[Refs], statics: &[Refs]) -> Vec<Vec<usize>> {
 /// Strongly connected components (Tarjan's algorithm, iterative, so deep call chains cannot
 /// overflow the stack): the component of every node, numbered so that a component comes after
 /// every component it reaches (callees before callers), and the number of components.
-pub(super) fn components(succ: &[Vec<usize>]) -> (Vec<usize>, usize) {
+pub(crate) fn components(succ: &[Vec<usize>]) -> (Vec<usize>, usize) {
     let mut t = Tarjan {
         index: vec![UNVISITED; succ.len()],
         low: vec![0; succ.len()],

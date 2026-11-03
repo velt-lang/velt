@@ -21,6 +21,7 @@ use std::fmt::Write;
 use velt_vir::vir::{self, Ty};
 
 use crate::debug::{DebugInfo, FnDebug};
+use crate::inlining::Caps;
 use crate::module::{define_prefix, definition_params, Definition, Intrinsics, FN_ATTRS};
 use crate::target::Target;
 use crate::tbaa::Access;
@@ -109,13 +110,18 @@ struct Emitter<'a> {
     /// function then asks for the SIMD instructions, the ones without vectors too, because a
     /// vector is passed differently with and without them.
     uses_simd: bool,
+    /// The blocks whose call stays a call (`noinline`: `inlining::Caps`; ascending).
+    kept_calls: &'a [usize],
+    /// The block being translated.
+    block: usize,
 }
 
 /// Translate `function` into a complete `define ... { ... }` text.
 pub(crate) fn emit_function(
     program: &vir::Program,
-    function: &vir::Function,
+    (function, index): (&vir::Function, usize),
     how: Definition,
+    caps: &Caps,
     intrinsics: &mut Intrinsics,
     debug: Option<&mut DebugInfo>,
     target: &Target,
@@ -151,6 +157,8 @@ pub(crate) fn emit_function(
             .externs
             .iter()
             .any(|e| e.symbol.starts_with("velt_simd_")),
+        kept_calls: caps.kept(index),
+        block: 0,
     };
     emitter.set_location(function.first_loc());
     emitter.entry_block()?;
@@ -163,6 +171,7 @@ pub(crate) fn emit_function(
                 .map_err(|e| format!("bb{bi} stmt {si} ({s:?}): {e}"))?;
         }
         emitter.set_location(function.term_loc(bi));
+        emitter.block = bi;
         emitter
             .terminator(&block.term)
             .map_err(|e| format!("bb{bi} terminator ({:?}): {e}", block.term))?;
@@ -183,7 +192,7 @@ pub(crate) fn emit_function(
         define_prefix(function, how)?,
         global_name(&function.symbol),
         definition_params(function)?,
-        cold_attrs(function),
+        inline_attrs(function, caps.too_large(index)),
         emitter.body
     ))
 }
@@ -335,12 +344,15 @@ impl Emitter<'_> {
 /// are not rare, so not `cold`), and `inline()` gives `alwaysinline`. A function that never
 /// returns stays `cold noinline` even when marked `inline()`: the two attributes conflict, and its
 /// calls are rare.
-fn cold_attrs(function: &vir::Function) -> &'static str {
+///
+/// An unmarked function that can grow too large to inline (`inlining::Caps`) gets `noinline`.
+fn inline_attrs(function: &vir::Function, too_large: bool) -> &'static str {
     let returns = (function.blocks.iter()).any(|b| matches!(b.term, vir::Terminator::Return(_)));
     if function.cold || !returns {
         return " cold noinline";
     }
     match function.inline {
+        vir::Inline::Default if too_large => " noinline",
         vir::Inline::Default => "",
         vir::Inline::Always => " alwaysinline",
         vir::Inline::Never => " noinline",

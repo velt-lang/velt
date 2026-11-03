@@ -18,6 +18,7 @@
 //! - `debug`: `!dbg` metadata (CodeView on Windows, DWARF elsewhere) when the VIR carries
 //!   source locations (`vir::Program::files`; debug builds and `velt build -g`).
 //! - `units`: splitting large programs into codegen units compiled in parallel.
+//! - `inlining`: caps on how much LLVM's inliner grows a function.
 //! - `clang`: locating `clang` and running it on the emitted IR.
 //! - `llc`: locating LLVM's `opt`/`llc` and running them for the WebAssembly targets.
 
@@ -35,6 +36,7 @@ mod clang;
 mod debug;
 mod function;
 mod half;
+mod inlining;
 mod llc;
 mod module;
 mod rounding;
@@ -145,10 +147,12 @@ pub fn emit_objects_cached(
     types::validate_aggregates(program)?;
     let start = Instant::now();
     let plan = units::plan(program, count);
+    let caps = inlining::Caps::of(program);
     timings.push(("units", start.elapsed()));
     let start = Instant::now();
     let compile = |unit: &units::Unit| -> Result<(Vec<u8>, bool, Duration), String> {
-        let ir = module::emit_unit(program, &triple, opts.optimize, unit, &plan.shared)?;
+        let ir =
+            module::emit_unit_capped(program, &triple, opts.optimize, unit, &plan.shared, &caps)?;
         let start = Instant::now();
         let (obj, hit) = clang::compile_cached(&ir, &triple, opts.optimize, cache)?;
         Ok((obj, hit, start.elapsed()))

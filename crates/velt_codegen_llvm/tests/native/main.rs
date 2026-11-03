@@ -10,6 +10,7 @@ mod common;
 #[path = "../../../velt_opt/tests/corpus/mod.rs"]
 mod corpus;
 mod harness;
+mod inlining;
 mod random;
 mod rounding;
 

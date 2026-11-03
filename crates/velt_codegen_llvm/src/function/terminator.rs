@@ -159,7 +159,8 @@ impl Emitter<'_> {
             },
         };
         let mut text = format!("call {} {target}({})", abi_ret(ret)?, values.join(", "));
-        if self.enters_gated(callee) {
+        let kept = self.kept_calls.binary_search(&self.block).is_ok();
+        if kept || self.enters_gated(callee) {
             text.push_str(" noinline");
         }
         if ret == Ty::Unit {

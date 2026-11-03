@@ -129,6 +129,9 @@ mod visit;
 mod vtable_loads;
 
 pub use callgraph::used_externs;
+/// The inliner's caller limit and small-callee size, which the LLVM backend's caps on LLVM's
+/// inlining mirror (`velt_codegen_llvm::inlining`, whose tests hold them equal).
+pub use inline::{CALLER_LIMIT as INLINE_CALLER_LIMIT, SMALL_COST as INLINE_SMALL_COST};
 pub use numrep::Unnarrowed;
 pub use timings::PassTimings;
 

@@ -462,6 +462,7 @@ fn param_attributes_become_llvm_attributes() {
 
 mod atomics;
 mod half;
+mod inlining;
 mod placement;
 mod tbaa;
 mod units;
