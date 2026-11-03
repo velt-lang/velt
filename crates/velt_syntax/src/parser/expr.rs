@@ -56,6 +56,7 @@ impl<'a> Parser<'a> {
         let Some((op, ntoks)) = self.peek_assign_op() else {
             return Ok(lhs);
         };
+        let lhs = super::postfix::unassert_target(lhs);
         if !is_assignable(&lhs) {
             self.error("invalid assignment target", lhs.span);
         }

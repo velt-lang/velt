@@ -205,3 +205,17 @@ fn delete_is_a_contextual_prefix_operator() {
     check("delete + 1", "(+ delete 1)");
     check("m.delete(k)", "(call (. m delete) [k])");
 }
+
+#[test]
+fn non_null_assertions_on_assignment_targets_are_dropped() {
+    // TypeScript emits `w[i]! -= n` as `w[i] -= n` (sigx terminal-zero `tableLayout.ts`).
+    check("w[i]! -= n", "(-= ([] w i) n)");
+    check("x! = 1", "(= x 1)");
+    check("o.a!.b! = 1", "(= (. (! (. o a)) b) 1)");
+    check("(w[i]!) += 1", "(+= (paren ([] w i)) 1)");
+    // `++`/`--` keep the assertion: sema reads the target through it.
+    check("h[k]!++", "(++post (! ([] h k)))");
+    // An assertion read on the right stays.
+    check("x = y!", "(= x (! y))");
+    assert!(errors("function f() { g()! = 2; }")[0].contains("invalid assignment target"));
+}
