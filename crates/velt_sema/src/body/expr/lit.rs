@@ -619,7 +619,9 @@ impl FnCx<'_, '_> {
         // `toString()`, not as `console.log` prints it. So is a list of them (`any[]`), each
         // element as `String(x)` writes it (`[[1, 2], {}]` is `1,2,[object Object]`).
         // A literal with accessors too (`[object Object]`), through `any`.
+        // An `object | undefined` as the `object` holding its nothing (#2144).
         let h = self.literal_iface_as_any(h);
+        let h = self.collapse_object_option(h);
         let dynamic = matches!(
             self.cx.dynamic(h.ty),
             Some(Dynamic::Any | Dynamic::Unknown | Dynamic::Object)

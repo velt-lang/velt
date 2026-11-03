@@ -1,0 +1,18 @@
+// `String(o)`, template literals, `+` and `join` of an `object | undefined` / `object | null`
+// write the object as JavaScript's `String(x)` does (`[object Object]`, `1,2`) and the nothing
+// as `undefined` / `null` (#2144), as for a plain `object`.
+function f(o: object | undefined): string {
+  return String(o) + "|" + `${o}` + "|" + ("" + o) + "|" + [o].join();
+}
+
+function g(o: object | null): string {
+  return String(o) + "|" + `${o}` + "|" + ("x" + o);
+}
+
+const k = { k: 1 };
+console.log(f(undefined), f(k), f([1, 2]));
+console.log(g(null), g(k), g([3]));
+const opt: object | undefined = Math.random() < 2 ? k : undefined;
+console.log(`${opt}`, String(opt), opt + "!");
+const arr: (object | null)[] = [k, null];
+console.log(arr.join("/"), `${arr}`, String(arr));
