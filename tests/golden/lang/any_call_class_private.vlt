@@ -1,0 +1,11 @@
+// A class's private `#call` is no function: only a function with properties holds one.
+class A {
+  #call: () => number = () => 1;
+}
+const x: any = new A();
+try {
+  x();
+  console.log("called");
+} catch (e) {
+  console.log("TypeError");
+}

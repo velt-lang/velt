@@ -1,0 +1,15 @@
+// A function with properties held in an `any` is called like any function, as a renderer calls
+// a component it received as a value (sigx's `component(…)`: a function with `__setup`).
+type P = { n: number };
+
+const plain = (p: P): string => `plain ${p.n}`;
+const withProps = Object.assign((p: P): string => `called ${p.n}`, { __setup: "C" });
+
+function call(f: any, n: number): string {
+  return `${typeof f} ${"__setup" in f} ${f({ n })}`;
+}
+
+console.log(call(plain, 1));
+console.log(call(withProps, 2));
+const held: any = withProps;
+console.log(held.__setup, held({ n: 3 }));
