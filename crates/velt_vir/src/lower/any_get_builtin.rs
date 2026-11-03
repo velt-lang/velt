@@ -38,11 +38,9 @@ impl FnLower<'_, '_> {
         if indexed {
             self.digit_key_unsupported(key);
         }
-        for name in names.iter().chain(OBJECT_PROTO.iter()) {
-            let next = self.on_key(key, name);
-            self.ret_status(ST_UNSUPPORTED);
-            self.switch_to(next);
-        }
+        let next = self.on_keys(key, &[names, &OBJECT_PROTO].concat());
+        self.ret_status(ST_UNSUPPORTED);
+        self.switch_to(next);
         self.any_nothing_into(Nothing::Undefined, out);
         self.ret_status(super::any_member::ST_OK);
         true

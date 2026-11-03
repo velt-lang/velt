@@ -71,6 +71,7 @@ impl<'h> Cx<'h> {
             tracked_size: FxHashMap::default(),
             quiet: FxHashMap::default(),
             str_objects: FxHashMap::default(),
+            key_tables: FxHashMap::default(),
             symbol_records: Default::default(),
             boxing,
             facts: Default::default(),
@@ -190,6 +191,7 @@ impl<'h> Cx<'h> {
                 | Work::StaticsDrop
                 | Work::ArrayGrow
                 | Work::ArrayTooLong
+                | Work::KeyIn
                 | Work::Oob(_)
         ) || !self.has_lock_set();
         let work = self.generated_instance(work);

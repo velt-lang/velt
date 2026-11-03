@@ -169,28 +169,25 @@ impl FnLower<'_, '_> {
                 let n = Operand::Copy(proj(&arr, Proj::Field(1)));
                 let n = self.rvalue_temp(Ty::U64, Rvalue::Cast(n, Ty::U64));
                 // `length` first: the common test costs one comparison.
-                self.has_names(key, &["length"], HAS_YES);
+                self.has_names(key, &[&["length"]], HAS_YES);
                 self.has_index_key(key, n, HAS_YES, HAS_NO);
-                self.has_names(key, ARRAY_PROTO, HAS_YES);
-                self.has_names(key, &OBJECT_PROTO, HAS_YES);
+                self.has_names(key, &[ARRAY_PROTO, &OBJECT_PROTO], HAS_YES);
                 self.ret_status(HAS_NO);
             }
             TyKind::Tuple(es) => {
-                self.has_names(key, &["length"], HAS_YES);
+                self.has_names(key, &[&["length"]], HAS_YES);
                 self.has_index_key(key, cint(es.len() as i128, Ty::U64), HAS_YES, HAS_NO);
-                self.has_names(key, ARRAY_PROTO, HAS_YES);
-                self.has_names(key, &OBJECT_PROTO, HAS_YES);
+                self.has_names(key, &[ARRAY_PROTO, &OBJECT_PROTO], HAS_YES);
                 self.ret_status(HAS_NO);
             }
             TyKind::FnPtr { .. } | TyKind::Closure(_) => {
-                self.has_names(key, FN_PROTO_NAMES, HAS_YES);
-                self.has_names(key, FN_OWN_UNKNOWN, HAS_UNSUPPORTED);
-                self.has_names(key, &OBJECT_PROTO, HAS_YES);
+                self.has_names(key, &[FN_PROTO_NAMES], HAS_YES);
+                self.has_names(key, &[FN_OWN_UNKNOWN], HAS_UNSUPPORTED);
+                self.has_names(key, &[&OBJECT_PROTO], HAS_YES);
                 self.ret_status(HAS_NO);
             }
             TyKind::Promise(..) => {
-                self.has_names(key, PROMISE_PROTO, HAS_YES);
-                self.has_names(key, &OBJECT_PROTO, HAS_YES);
+                self.has_names(key, &[PROMISE_PROTO, &OBJECT_PROTO], HAS_YES);
                 self.ret_status(HAS_NO);
             }
             TyKind::Str | TyKind::Bool | TyKind::Int(_) | TyKind::Float(_) | TyKind::Symbol => {
@@ -289,10 +286,10 @@ impl FnLower<'_, '_> {
                 let n = self.rvalue_temp(Ty::U64, Rvalue::Cast(Operand::Copy(n), Ty::U64));
                 self.has_index_key(key, n, HAS_YES, HAS_NO);
             }
-            self.has_names(key, b.names, HAS_YES);
-            self.has_names(key, b.extra, HAS_YES);
+            self.has_names(key, &[b.names, b.extra, &OBJECT_PROTO], HAS_YES);
+        } else {
+            self.has_names(key, &[&OBJECT_PROTO], HAS_YES);
         }
-        self.has_names(key, &OBJECT_PROTO, HAS_YES);
         self.ret_status(HAS_NO)
     }
 

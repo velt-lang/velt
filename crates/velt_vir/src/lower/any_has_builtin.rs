@@ -311,13 +311,12 @@ impl FnLower<'_, '_> {
         None
     }
 
-    /// Answer `yes` for each of `names`; continues in the block for another key.
-    pub(super) fn has_names(&mut self, key: vir::Local, names: &[&str], yes: i128) {
-        for name in names {
-            let next = self.on_key(key, name);
-            self.ret_status(yes);
-            self.switch_to(next);
-        }
+    /// Answer `yes` for each name of the `lists`; continues in the block for another key.
+    pub(super) fn has_names(&mut self, key: vir::Local, lists: &[&[&str]], yes: i128) {
+        let names = lists.concat();
+        let next = self.on_keys(key, &names);
+        self.ret_status(yes);
+        self.switch_to(next);
     }
 
     /// For a key that starts with a digit: answer `yes` when it is an element index below the

@@ -298,11 +298,9 @@ impl FnLower<'_, '_> {
         let Some(r) = self.record_get_ready(ty) else {
             return self.ret_status(ST_UNSUPPORTED);
         };
-        for name in OBJECT_PROTO {
-            let next = self.on_key(key, name);
-            self.ret_status(ST_UNSUPPORTED);
-            self.switch_to(next);
-        }
+        let next = self.on_keys(key, &OBJECT_PROTO);
+        self.ret_status(ST_UNSUPPORTED);
+        self.switch_to(next);
         self.record_get_into(&r, (data, key), out, ty);
         self.ret_status(ST_OK);
     }
@@ -357,11 +355,9 @@ impl FnLower<'_, '_> {
         };
         // The members every object has (later): one shared exit for all of them.
         let unsupported = self.new_block();
-        for name in OBJECT_PROTO {
-            let next = self.on_key(key, name);
-            self.goto(unsupported);
-            self.switch_to(next);
-        }
+        let next = self.on_keys(key, &OBJECT_PROTO);
+        self.goto(unsupported);
+        self.switch_to(next);
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
         let held = Place::local(self.temp(avt));

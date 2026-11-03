@@ -185,11 +185,9 @@ impl FnLower<'_, '_> {
             }
             self.switch_to(next);
         }
-        for name in OBJECT_PROTO {
-            let next = self.on_key(key, name);
-            self.any_set_refuse(v, ST_UNSUPPORTED);
-            self.switch_to(next);
-        }
+        let next = self.on_keys(key, &OBJECT_PROTO);
+        self.any_set_refuse(v, ST_UNSUPPORTED);
+        self.switch_to(next);
         self.any_set_refuse(v, ST_MISSING);
     }
 

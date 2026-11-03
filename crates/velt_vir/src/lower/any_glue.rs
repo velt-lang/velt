@@ -558,11 +558,9 @@ impl FnLower<'_, '_> {
 
     /// A key the fixed shape does not have: `undefined`, unless every object has it.
     fn any_get_fallback(&mut self, key: vir::Local, out: &Place) {
-        for name in OBJECT_PROTO {
-            let next = self.on_key(key, name);
-            self.ret_status(ST_UNSUPPORTED);
-            self.switch_to(next);
-        }
+        let next = self.on_keys(key, &OBJECT_PROTO);
+        self.ret_status(ST_UNSUPPORTED);
+        self.switch_to(next);
         self.any_nothing_into(Nothing::Undefined, out);
         self.ret_status(ST_OK);
     }
@@ -721,12 +719,10 @@ impl FnLower<'_, '_> {
             }
             self.switch_to(next);
         }
-        for name in OBJECT_PROTO {
-            let next = self.on_key(key, name);
-            self.any_drop_args(argv, 0, argc);
-            self.ret_status(ST_UNSUPPORTED);
-            self.switch_to(next);
-        }
+        let next = self.on_keys(key, &OBJECT_PROTO);
+        self.any_drop_args(argv, 0, argc);
+        self.ret_status(ST_UNSUPPORTED);
+        self.switch_to(next);
         self.any_drop_args(argv, 0, argc);
         self.ret_status(ST_NOT_FN);
     }

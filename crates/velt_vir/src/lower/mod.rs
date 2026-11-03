@@ -38,6 +38,7 @@ mod any_has;
 mod any_has_builtin;
 mod any_iface;
 mod any_keys;
+mod any_keys_in;
 mod any_member;
 mod any_not_fn;
 mod any_number;
@@ -332,6 +333,10 @@ enum Work {
     /// `()`: the panic of an array that would grow past `MAX_ARRAY_LEN` (never returns, so its
     /// calls stay cold and small).
     ArrayTooLong,
+    /// `(key: ptr, table: ptr, n: u64) -> bool`: whether the string at `key` is one of the `n`
+    /// string objects at `table` (any_keys_in.rs), shared by the `any` glue testing a key against a
+    /// fixed list of names.
+    KeyIn,
     /// The exported `velt_main() -> i32` entry (entry.rs).
     Main,
     /// `(state: ptr, cx: ptr) -> u32`: the task root that runs a synchronous `main` which reaches
@@ -479,6 +484,8 @@ struct Cx<'h> {
     quiet: FxHashMap<(DefId, quiet::Quiet), bool>,
     /// Interned static `VeltStr` objects (`static_str_object`).
     str_objects: FxHashMap<String, StaticId>,
+    /// Static tables of string objects for `Work::KeyIn` (any_keys_in.rs), by their names.
+    key_tables: FxHashMap<Vec<String>, StaticId>,
     /// The records of the compiler's symbols (`Intrinsic::SymbolStatic`, symbols.rs).
     symbol_records: symbols::SymbolRecords,
     /// Types whose values carry a reference count in this pass (boxing/).

@@ -119,12 +119,10 @@ impl FnLower<'_, '_> {
             self.call_builtin(def, &targs, this, (argv, argc), &outp, None);
             self.switch_to(next);
         }
-        for name in missing {
-            let next = self.on_key(key, name);
-            self.any_drop_args(argv, 0, argc);
-            self.ret_status(ST_UNSUPPORTED);
-            self.switch_to(next);
-        }
+        let next = self.on_keys(key, &missing);
+        self.any_drop_args(argv, 0, argc);
+        self.ret_status(ST_UNSUPPORTED);
+        self.switch_to(next);
         self.any_drop_args(argv, 0, argc);
         self.ret_status(ST_NOT_FN);
     }
