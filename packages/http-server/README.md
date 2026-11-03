@@ -234,10 +234,11 @@ is built on this.
 
 ## On a JS host (`velt build --host`)
 
-The same program serves on a JavaScript platform: with a host package whose condition is
-`workers` (packages/host-cloudflare, for Cloudflare Workers), `velt build --host host-cloudflare`
-builds `serve` over the host's request queue (std's `velt/host/worker`) instead of a TCP listener
-(src/hosted/standard.vlt, chosen by `imports` in package.vlt). The handler, its `Request` and
+The same program serves on a JavaScript platform: on a `velt build --host <package>` build (the
+first host package is packages/host-cloudflare, for Cloudflare Workers), `serve` runs over the
+host's request queue (std's `velt/host/worker`) instead of a TCP listener: the JS-host variant,
+src/hosted/standard.vlt, which `imports` in package.vlt picks by the built-in condition `js`, so
+it serves on every host package's platform. The handler, its `Request` and
 `Response` and `ServeInfo` are the same:
 
 - `serve` returns at once and `main` may return after it; `main` may also await anything first (a

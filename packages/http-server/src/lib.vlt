@@ -13,7 +13,7 @@ export { serveHttp } from "./serve";
 export { NetAddr, ServeInfo } from "./serve_info";
 export { HttpServeOptions } from "./serve_options";
 export { HttpServer } from "./server";
-// `serve`: natively over TCP (standard.vlt); on a `--host` build, over the host's request queue
-// (hosted/standard.vlt).
+// `serve`: natively over TCP (standard.vlt); on a JS host (`js`, every `--host` build), over the
+// host's request queue (hosted/standard.vlt).
 export { serve } from "#standard";
 export { ConnectionUpgrade, isUpgradeRequest, upgradeConnection } from "./upgrade";

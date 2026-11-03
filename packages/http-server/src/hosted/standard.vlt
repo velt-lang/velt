@@ -1,5 +1,5 @@
-// http-server (internal): `serve` on a JS host (`velt build --host <package>`, the variant the
-// host's condition selects). A host package's entry queues each request the platform hands it,
+// http-server (internal): `serve` on a JS host (`velt build --host <package>`: the variant the
+// built-in condition `js` selects, which every host build has). A host package's entry queues each request the platform hands it,
 // and the program takes them with std's velt/host/worker, as the native server accepts
 // connections: `serve` starts that accept loop in the background and returns, so `main` may
 // await anything before it calls `serve`, and the handler and its `Request` and `Response` are

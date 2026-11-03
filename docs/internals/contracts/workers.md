@@ -6,7 +6,7 @@ no platform: a platform is a package (packages/host-cloudflare is the first), an
 needs no compiler change. This is the contract between the build (`crates/veltc/src/commands/
 host.rs`, `driver/host_modules.rs`), host packages (`vpm::host`, manifest.md's `host`), the
 glue's host-neutral server core (`crates/velt_rt_wasm/js/velt_serve.mjs`), and the Velt code
-that serves through `velt:worker` (packages/http-server's `workers` variant, #1786) or binds a
+that serves through `velt:worker` (packages/http-server's JS-host variant, condition `js`, #1786) or binds a
 platform's services (packages/cloudflare, #1738).
 
 ## The build
@@ -132,7 +132,7 @@ Requests arrive like connections on a listener. `serve(request, platform)` puts 
 a queue; the program takes requests with `accept()`, in the order they came, and answers each.
 `main` may await anything before it accepts; a request waits in the queue until then. Std
 declares the functions, in `velt/host/worker` (std/host/worker/requests.vlt), and programs
-import them from there (packages/http-server's `workers` variant will):
+import them from there (packages/http-server's JS-host variant does, condition `js`):
 
 ```ts ignore
 declare host("velt:worker") async function accept(): Promise<HostRef>;

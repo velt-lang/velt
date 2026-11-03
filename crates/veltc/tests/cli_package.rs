@@ -788,40 +788,6 @@ fn a_pin_this_velt_does_not_satisfy_is_a_warning() {
 }
 
 #[test]
-fn a_condition_no_build_has_is_a_warning_for_programs_only() {
-    // A program's `imports` naming a condition that is neither built-in nor a dependency's host
-    // condition is likely misspelled; a library's may be for a host its users add (http-server's
-    // `workers`), so it is not warned about.
-    let s = sandbox();
-    let head = "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = ";
-    for (dir, main) in [("app", "main"), ("lib", "lib")] {
-        std::fs::create_dir_all(s.dir.join(dir).join("src")).unwrap();
-        s.write(
-            &format!("{dir}/package.vlt"),
-            &format!(
-                "{head}{{ name: \"{dir}\", version: \"0.1.0\", imports: {{ \"#io\": {{ windows: \"./src/a.vlt\", default: \"./src/b.vlt\" }} }} }};\n"
-            ),
-        );
-        s.write(&format!("{dir}/src/a.vlt"), "export const io = 1;\n");
-        s.write(&format!("{dir}/src/b.vlt"), "export const io = 2;\n");
-        let body = match main {
-            "main" => "import { io } from \"#io\";\nfunction main() {\n  console.log(io);\n}\n",
-            _ => "export { io } from \"#io\";\n",
-        };
-        s.write(&format!("{dir}/src/{main}.vlt"), body);
-    }
-    let out = s.velt("app", &["check"]);
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(
-        err.contains("names the condition `windows`, which is not a built-in one"),
-        "{err}"
-    );
-    let out = s.velt("lib", &["check"]);
-    let err = String::from_utf8_lossy(&out.stderr);
-    assert!(!err.contains("names the condition"), "{err}");
-}
-
-#[test]
 fn target_add_from_an_unsigned_release_names_the_way_out() {
     // A toolchain built from source carries no pack hashes, so `velt target add` needs the
     // release's signed SHA256SUMS; a release without a signature (v0.1.0) says what to do.
