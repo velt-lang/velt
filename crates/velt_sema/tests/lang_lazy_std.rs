@@ -430,12 +430,11 @@ fn the_record_hooks_are_checked_only_for_a_program_that_may_convert_to_a_record(
 
 #[test]
 fn number_printing_is_checked_once_the_program_prints_a_number() {
-    // The hooks lowering calls for a number in a template or `String()` are on demand
-    // (velt_common `std_hooks::ON_DEMAND_TEXT` / `ON_DEMAND_FLOAT`): checked once the
-    // program's own code converts a number, or a value that may hold a float, to text. Std's
-    // own conversions don't count (the prelude is checked whatever the program uses). The
-    // driver loads their module only for a program that may convert one (a template here:
-    // veltc's loader), so in a plain program they may be missing altogether.
+    // The integer hooks lowering calls for a number in a template or `String()` are checked in
+    // every program: lowering has no runtime fallback for them (#2197). The float ones are on
+    // demand (velt_common `std_hooks::ON_DEMAND_FLOAT`): checked once the program's own code
+    // converts a value that may hold a float to text. Std's own conversions don't count (the
+    // prelude is checked whatever the program uses).
     let int_hook = "std/lang/hooks/number_text::intPush";
     let int_body = "std/lang/number/integer::pushI64";
     let number_hook = "std/lang/hooks/number_text::numberPush";
@@ -450,7 +449,10 @@ fn number_printing_is_checked_once_the_program_prints_a_number() {
             && !unchecked(p).contains(&f.to_string())
     };
     let plain = ok_src("function main() {\n  console.log(\"hi\");\n}\n");
-    for f in all {
+    for f in [int_hook, int_body] {
+        assert!(checked(&plain, f), "{f} is not checked in a plain program");
+    }
+    for f in [number_hook, float_hook, float_body] {
         assert!(!checked(&plain, f), "{f} is checked in a plain program");
     }
     let ints = ok_src("function main() {\n  const n: i64 = 7;\n  console.log(`n=${n}`);\n}\n");

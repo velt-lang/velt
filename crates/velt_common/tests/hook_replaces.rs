@@ -25,30 +25,17 @@ const EMITTERS: &[&str] = &[
 #[rustfmt::skip]
 const ALLOWED: &[(&str, &str, usize, &str)] = &[
     // The runtime calls lowering can emit (`Rt` and its symbols).
-    ("velt_vir/src/lower/rt.rs", "velt_rt_str_from_i64", 3, DECLARED),
-    ("velt_vir/src/lower/rt.rs", "velt_rt_str_from_u64", 3, DECLARED),
     ("velt_vir/src/lower/rt.rs", "velt_rt_str_from_f64", 3, DECLARED),
-    ("velt_vir/src/lower/rt.rs", "velt_rt_strbuf_push_i64", 3, DECLARED),
-    ("velt_vir/src/lower/rt.rs", "velt_rt_strbuf_push_u64", 3, DECLARED),
     ("velt_vir/src/lower/rt.rs", "velt_rt_strbuf_push_f64", 3, DECLARED),
-    // The fallbacks when a number hook is missing or unchecked.
-    ("velt_vir/src/lower/template.rs", "velt_rt_str_from_i64", 1, FALLBACK),
-    ("velt_vir/src/lower/template.rs", "velt_rt_str_from_u64", 1, FALLBACK),
+    // The fallbacks when a float hook is missing or unchecked.
     ("velt_vir/src/lower/template.rs", "velt_rt_str_from_f64", 1, FALLBACK),
-    ("velt_vir/src/lower/strbuf.rs", "velt_rt_strbuf_push_i64", 1, FALLBACK),
-    ("velt_vir/src/lower/strbuf.rs", "velt_rt_strbuf_push_u64", 1, FALLBACK),
     ("velt_vir/src/lower/strbuf.rs", "velt_rt_strbuf_push_f64", 1, FALLBACK),
     // Emitters with no hook in between.
-    ("velt_vir/src/lower/strbuf.rs", "velt_rt_strbuf_push_i64", 1, DISCRIMINANT),
     ("velt_vir/src/lower/glue/literals.rs", "velt_rt_strbuf_push_f64", 1, FLOAT_LITERAL),
     ("velt_vir/src/lower/any_member.rs", "velt_rt_str_from_f64", 1, NUMERIC_KEY),
     ("velt_vir/src/lower/any_has.rs", "velt_rt_str_from_f64", 1, NUMERIC_KEY),
     ("velt_vir/src/lower/any_proxy.rs", "velt_rt_str_from_f64", 1, NUMERIC_KEY),
     ("velt_vir/src/lower/proxy_throws.rs", "velt_rt_str_from_f64", 1, NUMERIC_KEY),
-    ("velt_vir/src/lower/any_has_builtin.rs", "velt_rt_str_from_u64", 1, NUMERIC_KEY),
-    ("velt_vir/src/lower/any_keys.rs", "velt_rt_str_from_u64", 1, INDEX_KEYS),
-    ("velt_vir/src/lower/array/builtins.rs", "velt_rt_str_from_u64", 2, OUT_OF_BOUNDS),
-    ("velt_vir/src/lower/array/builtins.rs", "velt_rt_str_from_i64", 1, OUT_OF_BOUNDS),
     // The optimizer's knowledge of the externs, which goes with their last call.
     ("velt_opt/src/numrep/print.rs", "velt_rt_strbuf_push_f64", 1, NUMREP),
     ("velt_opt/src/numrep/print.rs", "velt_rt_strbuf_push_i64", 1, NUMREP),
@@ -60,12 +47,9 @@ const ALLOWED: &[(&str, &str, usize, &str)] = &[
 ];
 
 const DECLARED: &str = "the `Rt` call's declaration and its symbol";
-const FALLBACK: &str = "fallback when the hook is unchecked, #2197";
-const DISCRIMINANT: &str = "an enum's discriminant as text, no hook yet: #2197 PR 4";
+const FALLBACK: &str = "fallback when the float hook is unchecked: #2161";
 const FLOAT_LITERAL: &str = "`console.log` of a float literal, no hook yet: #2197 PR 4";
 const NUMERIC_KEY: &str = "a numeric key of an `any` as text, no hook yet: #2197 PR 4";
-const INDEX_KEYS: &str = "an array's index keys as text, no hook yet: #2197 PR 4";
-const OUT_OF_BOUNDS: &str = "the out-of-bounds message, no hook yet: #2197 PR 4";
 const NUMREP: &str = "numrep rewrites a call of the float extern into the integer one";
 const NO_FREE: &str = "the externs whose call frees nothing (borrowed copies)";
 

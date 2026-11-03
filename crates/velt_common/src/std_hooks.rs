@@ -65,8 +65,8 @@ pub struct Hook {
     /// counts is that the compiler no longer calls it in the hook's place.
     pub replaces: &'static [&'static str],
     /// Lowering calls the runtime instead when the hook is missing or left unchecked (it is
-    /// one of [`ON_DEMAND_TEXT`] / [`ON_DEMAND_FLOAT`]): its `velt_vir` builder returns an
-    /// `Option`. Every other lowered hook missing is an internal compiler error.
+    /// one of [`ON_DEMAND_FLOAT`]): its `velt_vir` builder returns an `Option`. Every other
+    /// lowered hook missing is an internal compiler error.
     pub fallback: bool,
     /// The program of `bench/stdport/` (`int_to_string` for `bench/stdport/int_to_string.vlt`)
     /// that measures this hook against the Rust it replaced, if one does.
@@ -178,16 +178,16 @@ hooks! {
     /// A float position argument (`xs.at(i)`, `s.slice(i)`).
     float_position => lang_hooks_number, "floatPosition", sig((f64) -> usize);
     /// `String(v)` of a signed integer: `${v}` alone, `v.toString()` (`velt_vir` `template.rs`).
-    int_text => lang_hooks_number_text, "intText", sig((i64) -> string), lowered, fallback,
+    int_text => lang_hooks_number_text, "intText", sig((i64) -> string), lowered,
         replaces("velt_rt_str_from_i64"), bench("int_to_string");
     /// `String(v)` of an unsigned integer.
-    uint_text => lang_hooks_number_text, "uintText", sig((u64) -> string), lowered, fallback,
+    uint_text => lang_hooks_number_text, "uintText", sig((u64) -> string), lowered,
         replaces("velt_rt_str_from_u64"), bench("int_to_string");
     /// A signed integer appended to a builder: a template's `${v}` (`velt_vir` `strbuf.rs`).
-    int_push => lang_hooks_number_text, "intPush", sig((&mut string, i64) -> void), lowered, fallback,
+    int_push => lang_hooks_number_text, "intPush", sig((&mut string, i64) -> void), lowered,
         replaces("velt_rt_strbuf_push_i64"), bench("int_to_string");
     /// An unsigned integer appended to a builder.
-    uint_push => lang_hooks_number_text, "uintPush", sig((&mut string, u64) -> void), lowered, fallback,
+    uint_push => lang_hooks_number_text, "uintPush", sig((&mut string, u64) -> void), lowered,
         replaces("velt_rt_strbuf_push_u64"), bench("int_to_string");
     /// `String(x)` of a float (`velt_vir` `template.rs`): a whole number by std's integer
     /// printing, anything else by the runtime's printer. `velt_opt` numrep turns a call with a
@@ -661,24 +661,20 @@ pub fn find(qualified: &str) -> Option<&'static Hook> {
         .find(|h| h.item == item && crate::std_modules::rel(h.module_entry) == Some(rel))
 }
 
-/// Lowered hooks that sema checks only once the program's own code converts a value that is not
-/// a string or a boolean to text (`velt_sema` `lazy_std`), by their entries' names: std's integer
-/// printing (velt/lang/number/integer), which a program that prints no number does not check.
-/// Lowering calls the runtime's printer where one is unchecked.
-pub const ON_DEMAND_TEXT: &[&str] = &["int_text", "uint_text", "int_push", "uint_push"];
-
-/// The same, once the program's own code converts a value that may hold a float to text: the
-/// float hooks, whose whole numbers take std's integer printing, and, where the program loaded it,
-/// std's float printing (velt/lang/number/format, `shortest`, the table of powers of ten).
+/// Lowered hooks that sema checks only once the program's own code converts a value that may hold
+/// a float to text (`velt_sema` `lazy_std`), by their entries' names: the float hooks, whose whole
+/// numbers take std's integer printing, and, where the program loaded it, std's float printing
+/// (velt/lang/number/format, `shortest`, the table of powers of ten). Lowering calls the runtime's
+/// printer where one is unchecked. The integer hooks (`int_text`, `int_push`, …) are not on
+/// demand: the prelude loads them and sema checks them in every program (#2197).
 pub const ON_DEMAND_FLOAT: &[&str] = &["number_text", "number_push", "float_text", "float_push"];
 
-/// Is the hook with qualified name `qualified` one of [`ON_DEMAND_TEXT`] or [`ON_DEMAND_FLOAT`]?
+/// Is the hook with qualified name `qualified` one of [`ON_DEMAND_FLOAT`]?
 pub fn is_on_demand(qualified: &str) -> bool {
-    find(qualified)
-        .is_some_and(|h| ON_DEMAND_TEXT.contains(&h.name) || ON_DEMAND_FLOAT.contains(&h.name))
+    find(qualified).is_some_and(|h| ON_DEMAND_FLOAT.contains(&h.name))
 }
 
-/// The qualified names of the hooks named in `names` ([`ON_DEMAND_TEXT`], [`ON_DEMAND_FLOAT`]).
+/// The qualified names of the hooks named in `names` ([`ON_DEMAND_FLOAT`]).
 pub fn on_demand(names: &'static [&'static str]) -> impl Iterator<Item = String> {
     HOOKS
         .iter()
@@ -721,7 +717,7 @@ mod tests {
     fn the_fallback_hooks_are_the_on_demand_ones() {
         // An unchecked hook is missing to lowering: only these may be, and lowering falls back.
         for h in HOOKS {
-            let on_demand = ON_DEMAND_TEXT.contains(&h.name) || ON_DEMAND_FLOAT.contains(&h.name);
+            let on_demand = ON_DEMAND_FLOAT.contains(&h.name);
             assert_eq!(h.fallback, on_demand, "{}", h.name);
             assert!(!h.fallback || h.lowered, "{}", h.name);
         }

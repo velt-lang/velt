@@ -1,12 +1,13 @@
 // velt/lang/hooks (internal): the compiler's hooks for a number in a template or `String()`
-// (std-layout.md §10b), on std's integer printing (velt/lang/number/integer). Loaded only by a
-// program whose own code may convert a number to text (std/prelude/global/number_text.vlt,
-// crates/velt_loader/src/globals), and checked only once it does (velt_common
-// `std_hooks::ON_DEMAND_TEXT`, `ON_DEMAND_FLOAT`). A float that is not a whole number goes to the
-// runtime's printer here: std's float printer (velt/lang/hooks/number_float, which lowering
-// prefers) is loaded only for a program that converts an operand that may be a float
-// (std/prelude/global/number_float.vlt). Where lowering needs a hook the program lacks, it calls
-// the runtime.
+// (std-layout.md §10b), on std's integer printing (velt/lang/number/integer). The prelude loads
+// them with the other hooks (velt/lang/hooks/index.vlt) and sema checks the integer ones in every
+// program: lowering converts every integer to text through them, with no runtime fallback
+// (#2197). The float ones are checked only once the program's own code converts a value that
+// may hold a float (velt_common `std_hooks::ON_DEMAND_FLOAT`). A float that is not a whole
+// number goes to the runtime's printer here: std's float printer (velt/lang/hooks/number_float,
+// which lowering prefers) is loaded only for a program that converts an operand that may be a
+// float (std/prelude/global/number_float.vlt). Where lowering needs a float hook the program
+// lacks, it calls the runtime.
 
 import { trunc } from "velt/lang/intrinsics";
 import { i64Text, pushI64, pushU64, u64Text } from "velt/lang/number/integer";

@@ -1,6 +1,7 @@
 //! Generated functions shared by all arrays: buffer growth (`ArrayGrow`) and the bounds-check
 //! panic (`Oob`), which formats `index out of bounds: the len is L but the index is I`.
 
+use crate::lower::hook_calls::{self as hooks, ty, HookTy};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, unit, Cx, FnLower, ScopeKind};
@@ -85,22 +86,18 @@ impl<'c, 'h> FnLower<'c, 'h> {
         lw.push_scope(ScopeKind::Block);
         let str_ty = lw.cx.str_ty();
         let mut parts = vec![];
-        for (text, num, rt) in [
-            ("index out of bounds: the len is ", len, Rt::StrFromU64),
-            (
-                " but the index is ",
-                idx,
-                if signed {
-                    Rt::StrFromI64
-                } else {
-                    Rt::StrFromU64
-                },
-            ),
+        for (text, num, signed) in [
+            ("index out of bounds: the len is ", len, false),
+            (" but the index is ", idx, signed),
         ] {
             parts.push(lw.str_lit(text));
             let s = lw.temp(Ty::Agg(crate::vir::STR_AGG));
-            let o = lw.addr(Place::local(s));
-            lw.call_rt(rt, vec![Operand::Copy(Place::local(num)), o], None);
+            let n = Operand::Copy(Place::local(num));
+            let call = match signed {
+                true => hooks::int_text(&mut lw, ty::I64::arg(n)),
+                false => hooks::uint_text(&mut lw, ty::U64::arg(n)),
+            };
+            call.emit_to(&mut lw, Place::local(s));
             parts.push(Operand::Copy(Place::local(s)));
         }
         let str_vt = Ty::Agg(crate::vir::STR_AGG);

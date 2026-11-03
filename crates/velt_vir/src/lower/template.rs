@@ -747,26 +747,13 @@ impl FnLower<'_, '_> {
         let from = self.cx.ty(aty);
         match kind {
             // std's number printing, as `push_scalar` (strbuf.rs) appends it.
-            TyKind::Int(it) => {
-                let (call, v, r) = if it.is_signed() {
-                    let v = self.cast_to(v, from, Ty::I64);
-                    (
-                        hooks::int_text(self, ty::I64::arg(v.clone())),
-                        v,
-                        Rt::StrFromI64,
-                    )
-                } else {
-                    let v = self.cast_to(v, from, Ty::U64);
-                    (
-                        hooks::uint_text(self, ty::U64::arg(v.clone())),
-                        v,
-                        Rt::StrFromU64,
-                    )
-                };
-                match call {
-                    Some(c) => c.emit_to(self, Place::local(out)),
-                    None => self.call_rt(r, vec![v, o], None),
-                }
+            TyKind::Int(it) if it.is_signed() => {
+                let v = self.cast_to(v, from, Ty::I64);
+                hooks::int_text(self, ty::I64::arg(v)).emit_to(self, Place::local(out));
+            }
+            TyKind::Int(_) => {
+                let v = self.cast_to(v, from, Ty::U64);
+                hooks::uint_text(self, ty::U64::arg(v)).emit_to(self, Place::local(out));
             }
             TyKind::Float(_) => {
                 let v = self.float_as_f64(v, aty);
