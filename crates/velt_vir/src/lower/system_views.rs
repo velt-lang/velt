@@ -176,7 +176,7 @@ impl FnLower<'_, '_> {
 
     /// The place of field `name` of the object of class type `t` whose pointer is at `obj`, and
     /// the field's type.
-    fn class_field(&mut self, obj: &Place, t: TyId, name: &str) -> (Place, TyId) {
+    pub(super) fn class_field(&mut self, obj: &Place, t: TyId, name: &str) -> (Place, TyId) {
         let hir::TyKind::Adt(d, _) = self.cx.kind(t) else {
             ice("a view is a class")
         };

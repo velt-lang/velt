@@ -65,6 +65,14 @@ pub enum CTy {
     Buf {
         readonly: bool,
     },
+    /// velt/ffi's `CString` (parameters only): the address of its NUL-terminated bytes.
+    CString,
+    /// velt/ffi's `Out<T>`, `T` a number type or `bool` (parameters only): the address of its
+    /// `value`, which C writes.
+    Out,
+    /// velt/ffi's `OutPtr<T>` (parameters only): the address of the pointer it holds, which C
+    /// writes (`T **`).
+    OutPtr,
     /// `void` (results only).
     Void,
 }

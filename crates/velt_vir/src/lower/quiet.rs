@@ -209,6 +209,7 @@ fn pure_intrinsic(i: hir::Intrinsic) -> bool {
             | I::StrByteLen
             | I::StrCharCodeAt
             | I::StrByteAt
+            | I::AddressLoad
             | I::Inline
             | I::StrAsciiWords
             | I::NoInline

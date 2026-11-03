@@ -7,6 +7,7 @@
 // checking that the two name the same set. std code imports them like any function; programs
 // and packages cannot (`velt/lang` is internal), so they use the public APIs instead.
 
+export { addressLoad } from "velt/lang/intrinsics/address";
 export {
   anyDelete,
   anyToPrimitive,

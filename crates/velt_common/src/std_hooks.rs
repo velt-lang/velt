@@ -514,6 +514,8 @@ hooks! {
     ffi_ptr_address_or_zero => ffi_ptr, "ptrAddressOrZero", sig(<A>(&or_null(Ptr(A))) -> usize), lowered;
     // ffi/str_bytes.vlt: the string whose bytes a `StrBytes` argument passes.
     ffi_str_bytes_of => ffi_str_bytes, "strBytesOf", sig((move string) -> string), lowered;
+    // ffi/c_string.vlt: the bytes a `CString` argument passes.
+    ffi_c_string_bytes => ffi_c_string, "cStringBytes", sig((&CString) -> [u8]), lowered;
 
     // host/host_ref.vlt: a `HostRef` from and to a host function (velt_vir's lower/host.rs).
     /// The `HostRef` of the slot a host function returned.

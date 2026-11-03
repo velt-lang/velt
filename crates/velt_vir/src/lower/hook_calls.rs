@@ -51,6 +51,7 @@ pub mod ty {
     markers!(
         ArrayView,
         BufferView,
+        CString,
         ClassMarker,
         Error,
         HostRef,

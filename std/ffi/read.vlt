@@ -1,0 +1,40 @@
+// velt/ffi (internal): reading C memory into Velt values: bytes, UTF-8 text and NUL-terminated
+// strings at a pointer. Each is an unsafe function: nothing checks that the memory is there.
+
+import { utf8DecodeLossy } from "velt/encoding/utf8";
+import { addressLoad } from "velt/lang/intrinsics";
+import { Ptr } from "velt/ffi/ptr";
+
+declare c("c") function strlen(s: Ptr<u8>): usize;
+
+/**
+ * A copy of the `len` bytes at `p`. Unsafe: `p` must point at `len` readable bytes, which C
+ * doesn't change during the copy.
+ */
+export unsafe function readBytes(p: Ptr<u8>, len: usize): u8[] {
+  const at = Ptr.addressOf(p);
+  const out: u8[] = new Array<u8>(len).fill(0);
+  for (let i: usize = 0; i < len; i++) {
+    out[i] = addressLoad<u8>(at + i);
+  }
+  return out;
+}
+
+/**
+ * The text of the `len` bytes of UTF-8 at `p`, copied; an invalid sequence becomes U+FFFD. Unsafe:
+ * as `readBytes`.
+ */
+export unsafe function readUtf8(p: Ptr<u8>, len: usize): string {
+  // SAFETY: the caller's statement about `p` and `len`.
+  return utf8DecodeLossy(unsafe { readBytes(p, len) });
+}
+
+/**
+ * The text of the NUL-terminated UTF-8 string at `p`, copied; an invalid sequence becomes U+FFFD.
+ * Unsafe: `p` must point at a NUL-terminated string.
+ */
+export unsafe function readCString(p: Ptr<u8>): string {
+  // SAFETY: `p` points at a NUL-terminated string (the caller's statement), so `strlen` stops
+  // at its NUL and the bytes before it are readable.
+  return unsafe { readUtf8(p, strlen(p)) };
+}

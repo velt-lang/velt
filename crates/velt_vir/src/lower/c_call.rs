@@ -17,6 +17,7 @@ const PTR_OR_NULL: &str = velt_common::std_hook!(ffi_ptr_or_null);
 const PTR_ADDRESS: &str = velt_common::std_hook!(ffi_ptr_address);
 const PTR_ADDRESS_OR_ZERO: &str = velt_common::std_hook!(ffi_ptr_address_or_zero);
 const STR_BYTES_OF: &str = velt_common::std_hook!(ffi_str_bytes_of);
+const C_STRING_BYTES: &str = velt_common::std_hook!(ffi_c_string_bytes);
 
 /// An argument evaluated, before the call reads what it needs of it.
 enum CArg {
@@ -27,6 +28,8 @@ enum CArg {
     Buffer(Arg),
     /// A string (a `StrBytes` argument, well-formed): where its bytes are is read at the call.
     Str(Operand),
+    /// An object (`Out`, `OutPtr`): the address of its field `name` is taken at the call.
+    Field(Place, TyId, &'static str),
 }
 
 impl FnLower<'_, '_> {
@@ -79,6 +82,26 @@ impl FnLower<'_, '_> {
                 vals.push(CArg::Str(s));
                 continue;
             }
+            if let CTy::CString = t {
+                // Its bytes (read-only, NUL-terminated), held for the statement. A proxy's `get`
+                // trap could give other bytes, without the NUL: refused, as for `Out`'s field.
+                let v = self.expr(a);
+                let obj = self.operand_place(v, Ty::Ptr);
+                self.proxy_guard(&obj);
+                let d = self.ffi_hook(C_STRING_BYTES);
+                let bytes = self.call_def(d, vec![], vec![Operand::Copy(obj)], &[]);
+                let bt = self.cx.fn_def(d).ret;
+                let vt = self.cx.ty(bt);
+                vals.push(CArg::Buffer(Arg::Value(self.operand_place(bytes, vt), bt)));
+                continue;
+            }
+            if let CTy::Out | CTy::OutPtr = t {
+                let v = self.expr(a);
+                let obj = self.operand_place(v, Ty::Ptr);
+                let field = if *t == CTy::Out { "value" } else { "address" };
+                vals.push(CArg::Field(obj, self.sub(a.ty), field));
+                continue;
+            }
             let v = match t {
                 CTy::Ptr { nullable } => {
                     let hook = if *nullable {
@@ -115,6 +138,10 @@ impl FnLower<'_, '_> {
                 CArg::Str(s) => {
                     let p = self.operand_place(s, Ty::Agg(STR_AGG));
                     self.str_data(&p)
+                }
+                CArg::Field(obj, t, name) => {
+                    let (field, _) = self.class_field(&obj, t, name);
+                    self.addr(field)
                 }
             });
         }
@@ -263,7 +290,13 @@ fn c_vir(t: CTy) -> Ty {
         CTy::F32 => Ty::F32,
         CTy::F64 => Ty::F64,
         CTy::Bool => Ty::Bool,
-        CTy::Ptr { .. } | CTy::Null | CTy::StrBytes | CTy::Buf { .. } => Ty::Ptr,
+        CTy::Ptr { .. }
+        | CTy::Null
+        | CTy::StrBytes
+        | CTy::Buf { .. }
+        | CTy::CString
+        | CTy::Out
+        | CTy::OutPtr => Ty::Ptr,
         CTy::Void => Ty::Unit,
     }
 }
@@ -298,6 +331,9 @@ fn c_name(t: CTy) -> &'static str {
         CTy::StrBytes => "StrBytes",
         CTy::Buf { readonly: true } => "readonly array",
         CTy::Buf { readonly: false } => "array",
+        CTy::CString => "CString",
+        CTy::Out => "Out",
+        CTy::OutPtr => "OutPtr",
         CTy::Void => "void",
     }
 }
