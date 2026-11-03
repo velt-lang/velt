@@ -477,8 +477,48 @@ impl FnLower<'_, '_> {
         }
         let fvt = self.cx.ty(from);
         let p = Place::local(self.copy_to_temp(v, fvt));
+        if self.unboxes_through_glue(from, ty) {
+            let vt = self.cx.ty(ty);
+            let out = Place::local(self.temp(vt));
+            let src = self.addr(p);
+            let dst = self.addr(out.clone());
+            self.call_glue(Glue::AnyUnbox, ty, vec![src, dst]);
+            return self.own_value(Operand::Copy(out), ty);
+        }
         let r = self.any_unbox(&p, from, ty);
         self.own_value(r, ty)
+    }
+
+    /// Whether `x as ty` of an `any` (`from`) calls the type's `Glue::AnyUnbox` instead of
+    /// converting inline: for the types whose conversion checks members, elements or union
+    /// members (an object type is thousands of statements once its members' types are checked
+    /// too), when the error names no conversion text (`any_context`). One copy per type then
+    /// serves every conversion to it: the array-view helpers alone converted each element type
+    /// at five places per type.
+    fn unboxes_through_glue(&mut self, from: TyId, ty: TyId) -> bool {
+        if self.any_context.is_some() {
+            return false;
+        }
+        if from != self.cx.any_ty() {
+            return false;
+        }
+        let structured = |k: &TyKind| matches!(k, TyKind::Adt(..) | TyKind::Array(_) | TyKind::Tuple(_));
+        let kind = self.cx.kind(ty);
+        let big = match &kind {
+            TyKind::Option(inner, _) => structured(&self.cx.kind(*inner)),
+            k => structured(k),
+        };
+        big && !self.cx.is_class(ty) && !self.is_enum(ty)
+    }
+
+    /// `Glue::AnyUnbox` of `ty`: the `any` at `src` as a `ty`, into `*dst`.
+    pub(super) fn any_unbox_body(&mut self, src: vir::Local, dst: vir::Local, ty: TyId) {
+        let any = self.cx.any_ty();
+        let p = self.deref_param(src, any);
+        let r = self.any_unbox(&p, any, ty);
+        let out = self.deref_param(dst, ty);
+        self.assign(out, Rvalue::Use(r));
+        self.terminate(Terminator::Return(super::unit()));
     }
 
     /// Does a value of the concrete type `t` need unpacking or checking on its way into
