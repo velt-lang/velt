@@ -6,6 +6,7 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use crate::body::switch::cases::source_text;
 use crate::body::FnCx;
 use crate::hir::{LitValue, TyId, TyKind};
 
@@ -20,6 +21,25 @@ fn arithmetic(op: ast::BinaryOp) -> Option<(&'static str, &'static str)> {
         B::Rem => ("%", "rem"),
         _ => return None,
     })
+}
+
+/// Does `source_text` write `e` as it is: a name, `this`, a field path or a number literal?
+/// (Anything else it calls "the value", which a variable could be named too.)
+fn quotable(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Paren(inner) => quotable(inner),
+        ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
+        ast::ExprKind::Member { object, .. } => quotable(object),
+        ast::ExprKind::Lit(ast::Lit::Int { .. } | ast::Lit::Float { .. }) => true,
+        ast::ExprKind::Unary {
+            op: ast::UnaryOp::Neg,
+            expr,
+        } => matches!(
+            &expr.kind,
+            ast::ExprKind::Lit(ast::Lit::Int { .. } | ast::Lit::Float { .. })
+        ),
+        _ => false,
+    }
 }
 
 impl FnCx<'_, '_> {
@@ -48,6 +68,7 @@ impl FnCx<'_, '_> {
         &mut self,
         op: ast::BinaryOp,
         (l, r): (TyId, TyId),
+        (lhs, rhs): (&ast::Expr, &ast::Expr),
         assign: bool,
         span: Span,
     ) -> bool {
@@ -64,22 +85,29 @@ impl FnCx<'_, '_> {
         } else {
             sym.to_string()
         };
+        // The operands as written (`w`, `k`, `3`), or `b` and `k` for anything longer.
+        let (big_e, num_e) = if left { (lhs, rhs) } else { (rhs, lhs) };
+        let text = |e: &ast::Expr, other: &str| match quotable(e) {
+            true => source_text(e),
+            false => other.to_string(),
+        };
+        let (b, k) = (text(big_e, "b"), text(num_e, "k"));
         let (fix, fast) = match (left, assign) {
             (true, false) => (
-                format!("b {sym} new BigInt(3)"),
-                format!("b.{method}Int(3)"),
+                format!("{b} {sym} new BigInt({k})"),
+                format!("{b}.{method}Int({k})"),
             ),
             (true, true) if method != "rem" => (
-                format!("b {sym} new BigInt(3)"),
-                format!("b.{method}IntAssign(3)"),
+                format!("{b} {sym} new BigInt({k})"),
+                format!("{b}.{method}IntAssign({k})"),
             ),
-            (true, true) => (format!("b {sym} new BigInt(3)"), String::new()),
+            (true, true) => (format!("{b} {sym} new BigInt({k})"), String::new()),
             // `+` and `*` commute: the twin on the BigInt.
             (false, _) if matches!(method, "add" | "mul") => (
-                format!("new BigInt(3) {sym} b"),
-                format!("b.{method}Int(3)"),
+                format!("new BigInt({k}) {sym} {b}"),
+                format!("{b}.{method}Int({k})"),
             ),
-            (false, _) => (format!("new BigInt(3) {sym} b"), String::new()),
+            (false, _) => (format!("new BigInt({k}) {sym} {b}"), String::new()),
         };
         let d = Diagnostic::error(
             format!("BigInt arithmetic takes BigInt operands, not a `{shown}`"),

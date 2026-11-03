@@ -171,7 +171,7 @@ impl FnCx<'_, '_> {
         if !self.operator_type(l.ty) && !self.operator_type(r.ty) {
             return Err(Box::new((l, r)));
         }
-        if self.bigint_mixed(op, (l.ty, r.ty), false, span) {
+        if self.bigint_mixed(op, (l.ty, r.ty), (lhs, rhs), false, span) {
             return Ok(self.error_expr(span));
         }
         // A vector and a scalar for it: the scalar splatted (`operator_simd.rs`).

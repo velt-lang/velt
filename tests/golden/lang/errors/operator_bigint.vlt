@@ -1,9 +1,14 @@
 // A number operand of a BigInt operator is an error, in both directions, as in JavaScript and
-// TypeScript; the note names the fix (#2096). Shift counts are `i64`s.
+// TypeScript; the note names the fix with the operands as written (#2096). Shift counts are
+// `i64`s.
 import { BigInt } from "velt/math";
 
 const b = new BigInt(7);
 const k: i64 = 2;
+const total_value: i64 = 5;
+const t = b + total_value;
+const value: i64 = 4;
+const u = b * value;
 const x = b + 3;
 const y = 3 * b;
 const z = 10 - b;
@@ -12,3 +17,6 @@ let w = new BigInt(1);
 w += 3;
 w %= k;
 const s = b << 3;
+// An operand longer than a name or a literal is written as `b` / `k` in the note.
+function mk(): BigInt { return new BigInt(1); }
+const m = mk() * (k + 1);

@@ -77,7 +77,9 @@ impl FnCx<'_, '_> {
             true => Some(self.cx.ty.f64),
             false => self.peek_ty(value),
         };
-        if value_ty.is_some_and(|v| self.bigint_mixed(op, (place.ty, v), true, span)) {
+        if value_ty
+            .is_some_and(|v| self.bigint_mixed(op, (place.ty, v), (target, value), true, span))
+        {
             return Ok(self.error_expr(span));
         }
         // The place's indices are evaluated once, first (`arr[f(0)] += arr[f(1)]` calls `f(0)`
