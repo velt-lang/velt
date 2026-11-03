@@ -1,28 +1,34 @@
-//! The storage floats `f16` and `bf16` (#2049): what converts implicitly (widening to `f32`,
-//! `f64`, `number`) and what needs `as` (narrowing, between the two), the literal range, and the
-//! operators that reject them.
+//! The storage floats `f16` and `bf16` (#2049): a `number` with 16-bit storage, as a
+//! `Float16Array` element is in JavaScript. Reading one widens it to `number` (and to `f32`/`f64`
+//! implicitly), so every operator computes in f64 and gives a `number`; storing into one rounds
+//! once (`=` and compound assignment), and only `as` narrows a value into one.
 
 mod common;
 
 use common::programs::{err_src, ok_src};
 
 #[test]
-fn storage_floats_widen_implicitly_and_compute_in_f32() {
+fn storage_floats_widen_implicitly_and_compute_as_numbers() {
     ok_src(
         "function main() {
            const w: f16 = 0.1;
            const b: bf16 = -2;
            const x: f32 = w;
            const y: number = b;
-           const p: f32 = w * w;
+           const p: number = w * w;
            const q: number = w * 2.5;
            const c: boolean = w < b;
+           const k: number = w | 0;
+           const plus: number = +w;
            let s: f32 = 0;
            s += w;
            const n: f16 = -w as f16;
-           console.log(x, y, p, q, c, s, n, w as bf16, b as f16, 300 as f16, w as i32);
+           console.log(x, y, p, q, c, k, plus, s, n, w as bf16, b as f16, 300 as f16, w as i32);
          }",
     );
+    // Arithmetic gives a `number`, which needs `as` into an `f32` as into an `f16`.
+    let r = err_src("function main() { const w: f16 = 1; const v: f32 = w * w; }");
+    assert!(r.contains("expected f32, found f64"), "{r}");
 }
 
 #[test]
@@ -42,9 +48,12 @@ fn narrowing_needs_as() {
         r.contains("`f16` and `bf16` don't convert to each other implicitly"),
         "{r}"
     );
-    // The result of arithmetic is an `f32`.
+    // The result of arithmetic is a `number`.
     let r = err_src("function main() { const w: f16 = 1; const v: f16 = w + w; }");
-    assert!(r.contains("write `as f16`"), "{r}");
+    assert!(
+        r.contains("`f64` doesn't convert to `f16` implicitly: write `as f16`"),
+        "{r}"
+    );
 }
 
 #[test]
@@ -58,31 +67,30 @@ fn a_literal_that_rounds_to_infinity_is_an_error() {
     ok_src("function main() { const h: f16 = 65519; const g: f16 = -65519.9; console.log(h, g); }");
     let r = err_src("function main() { const h: f16 = 65520; }");
     assert!(r.contains("literal out of range for `f16`"), "{r}");
+    // An assignment used as a value checks its literal as the statement does, and a right side
+    // that is not a plain literal needs `as` there too.
+    let r = err_src("function main() { let x: f16 = 0; const r = (x = 70000); }");
+    assert!(r.contains("literal out of range for `f16`"), "{r}");
+    let r = err_src("function main() { let x: f16 = 0; const r = (x = 0.1 + 0.2); }");
+    assert!(r.contains("expected f16, found f64"), "{r}");
 }
 
 #[test]
-fn bitwise_operators_reject_storage_floats() {
-    let r = err_src("function main() { const w: f16 = 1; const k = w & 1; }");
-    assert!(
-        r.contains("bitwise operators take integers, not `f16`"),
-        "{r}"
-    );
-    let r = err_src("function main() { const w: bf16 = 1; const k = 1 << w; }");
-    assert!(
-        r.contains("bitwise operators take integers, not `bf16`"),
-        "{r}"
-    );
-}
-
-#[test]
-fn compound_assignment_takes_the_type_or_a_literal() {
+fn compound_assignment_takes_a_number() {
     ok_src(
         "function main() {
            let a: f16 = 1;
            const w: f16 = 0.5;
+           const x: f32 = 2;
+           const n = 2.5;
+           const i: i32 = 3;
+           const b: bf16 = 1;
            a += w;
-           a *= 2;
-           a -= 0.1;
+           a *= x;
+           a -= n;
+           a /= i;
+           a += b;
+           a |= 4;
            a++;
            --a;
            let s: f32 = 0;
@@ -90,22 +98,9 @@ fn compound_assignment_takes_the_type_or_a_literal() {
            console.log(a, s);
          }",
     );
-    let r = err_src("function main() { let a: f16 = 1; const x: f32 = 2; a += x; }");
-    assert!(
-        r.contains("an `f32` doesn't convert to `f16` implicitly"),
-        "{r}"
-    );
-    assert!(r.contains("write `x = (x op v) as f16`"), "{r}");
-    let r = err_src("function main() { let a: bf16 = 1; const w: f16 = 1; a *= w; }");
-    assert!(
-        r.contains("an `f16` doesn't convert to `bf16` implicitly"),
-        "{r}"
-    );
-    let r = err_src("function main() { let a: f16 = 1; a |= 1; }");
-    assert!(
-        r.contains("bitwise operators take integers, not `f16`"),
-        "{r}"
-    );
+    // A value that doesn't convert to `number` exactly needs `as number`, as for `n += v`.
+    let r = err_src("function main() { let a: f16 = 1; const big: i64 = 2; a += big; }");
+    assert!(r.contains("found i64"), "{r}");
 }
 
 #[test]

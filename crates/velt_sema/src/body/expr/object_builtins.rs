@@ -381,10 +381,7 @@ impl FnCx<'_, '_> {
             );
             return self.expr(&eq, None, Want::Move);
         }
-        // A comparison: a literal beside an `f16`/`bf16` is an `f64` (#2049).
-        let outer = std::mem::replace(&mut self.comparing, true);
         let (l, r) = self.operands(a, b, None, Want::Borrow);
-        self.comparing = outer;
         if self.cx.ty.is_bottom(l.ty) || self.cx.ty.is_bottom(r.ty) {
             return self.error_expr(span);
         }

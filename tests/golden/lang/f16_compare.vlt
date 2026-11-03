@@ -1,8 +1,8 @@
-// Comparisons of `f16`/`bf16` (#2049): with a literal, a `number` or an `f64` both sides widen
-// to `f64`, exactly, so the answer is JavaScript's for a `Float16Array` element (even for a
-// literal within half an `f32` step of the value); with an `f32` or another storage float they
-// compare in `f32`, exactly too. Arithmetic keeps the `f32` literal and result. A union with an
-// `f16` member compares by value across its members. The expected output is Node's, with real
+// Comparisons of `f16`/`bf16` (#2049): one is read as the `number` it is, so a comparison with
+// a literal, a `number`, an `f32` or another storage float is exact and the answer is
+// JavaScript's for a `Float16Array` element (even for a literal within half an `f32` step of the
+// value); arithmetic is the f64 arithmetic. A union with an `f16` member compares by value
+// across its members. The expected output is Node's, with real
 // `Float16Array` elements (bf16: an exact round-to-nearest-even reference).
 function tick(tag: string, v: number): number {
   console.log("eval", tag);
@@ -31,7 +31,7 @@ function main() {
   // With an `f32` (exact in f32): 1.00000001 as an f32 is 1.
   const f: f32 = 1.00000001;
   console.log(one == f, one < f);
-  // Arithmetic runs in f32, with the literal an f32: the f32 product is 1.
+  // Arithmetic runs in f64, as in JS.
   console.log(one * 1.00000001, (one * 1.00000001) as f16);
   // Unions with a storage member compare by value across members.
   const u: f16 | f32 = 1.5 as f16;
