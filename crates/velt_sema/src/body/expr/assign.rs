@@ -4,6 +4,7 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
+use super::accessor_rmw::Rmw;
 use super::any_text::Hint;
 use super::dynamic_arith::DynRmw;
 use super::ops::hir_binop;
@@ -308,8 +309,13 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> (hir::Expr, bool) {
         // The target's hidden statements (`assign_receiver`) run before the assignment.
-        let ((h, valued), temps) =
-            self.target_scope(|cx| cx.assign_as_here(op, target, value, as_value, span));
+        let rmw = !matches!(
+            op,
+            None | Some(ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish)
+        );
+        let ((h, valued), temps) = self.with_asserted(rmw, span, |cx| {
+            cx.target_scope(|cx| cx.assign_as_here(op, target, value, as_value, span))
+        });
         (self.with_lets(temps, h), valued)
     }
 
@@ -373,6 +379,24 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> (hir::Expr, bool) {
         let e = match self.assign_target(target, span) {
+            // `e! op= v` on a target that may be nullish reads it as `e!` (`asserted_rmw.rs`).
+            Some(AssignTarget::Place(place)) if op.is_some() && self.take_asserted(place.ty) => {
+                let rmw = Rmw::Compound(op.expect("ICE: checked above"), value);
+                return (
+                    self.asserted_place_rmw(place, rmw, as_value, span),
+                    as_value,
+                );
+            }
+            Some(AssignTarget::Record(obj)) if op.is_some() && self.asserted_target => {
+                let rmw = Rmw::Compound(op.expect("ICE: checked above"), value);
+                match self.asserted_record_rmw(obj, target, rmw, as_value, span) {
+                    Ok(h) => return (h, as_value),
+                    Err(obj) => {
+                        let (object, key) = super::record::record_parts(target);
+                        self.record_assign(obj, object, key, op, target, value, span)
+                    }
+                }
+            }
             // Used as a value, an `f16`/`bf16` place's assignment gives the unrounded number.
             Some(AssignTarget::Place(place))
                 if as_value && self.cx.ty.is_storage_float(place.ty) =>
@@ -596,7 +620,9 @@ impl FnCx<'_, '_> {
         as_value: bool,
         span: Span,
     ) -> hir::Expr {
-        let (h, temps) = self.target_scope(|cx| cx.update_here(op, prefix, target, as_value, span));
+        let (h, temps) = self.with_asserted(true, span, |cx| {
+            cx.target_scope(|cx| cx.update_here(op, prefix, target, as_value, span))
+        });
         self.with_lets(temps, h)
     }
 
@@ -616,12 +642,21 @@ impl FnCx<'_, '_> {
             return h;
         }
         let place = match self.assign_target(target, span) {
+            // `e!++` on a target that may be nullish reads it as `e!` (`asserted_rmw.rs`).
+            Some(AssignTarget::Place(place)) if self.take_asserted(place.ty) => {
+                let rmw = Rmw::Update(op, prefix);
+                return self.asserted_place_rmw(place, rmw, as_value, span);
+            }
             Some(AssignTarget::Place(place)) => place,
             Some(AssignTarget::Setter(obj)) => {
                 return self.setter_update(obj, op, prefix, target, as_value, span)
             }
             Some(AssignTarget::Record(obj)) => {
-                return self.record_update(obj, op, target, as_value, span)
+                let rmw = Rmw::Update(op, prefix);
+                return match self.asserted_record_rmw(obj, target, rmw, as_value, span) {
+                    Ok(h) => h,
+                    Err(obj) => self.record_update(obj, op, target, as_value, span),
+                };
             }
             Some(AssignTarget::Indexer(obj)) => {
                 return self.indexer_update(obj, op, prefix, target, as_value, span)

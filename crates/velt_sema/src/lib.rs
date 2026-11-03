@@ -263,7 +263,7 @@ fn check_timed(
     let chunks = module_chunks::split(modules, root);
     let modules = chunks.modules.as_deref().unwrap_or(modules);
     let asserted = asserted_targets::rewrite(modules);
-    let modules = asserted.as_deref().unwrap_or(modules);
+    let modules = asserted.modules.as_deref().unwrap_or(modules);
     let mut merge_diags = chunks.diags.clone();
     merge_diags.extend(call_sigs::check(modules));
     let (flat, ns_private, diags) = namespaces::flatten(modules);
@@ -341,6 +341,7 @@ fn check_timed(
             .collect();
         cx.diags.extend(merge_diags.iter().cloned());
         cx.promoted_consts = chunks.promoted.clone();
+        cx.asserted_rmw = asserted.rmw.clone();
         if let Some(c) = &closures {
             cx.diags.extend(c.diags.iter().cloned());
             cx.kept_nested = c.kept.clone();

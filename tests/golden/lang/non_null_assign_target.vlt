@@ -1,7 +1,8 @@
 // A non-null assertion as an assignment target (#1569): `x! = v`, `a[i]! += 1`, `o.f!++`. The
 // assertion only types the target; the write goes to it, as in Node. A compound assignment or
 // an update reads the target asserted, so a key that may be missing, an optional field and a
-// `T | undefined` variable work too.
+// `T | undefined` variable work too. The target's object and indices are evaluated once: a
+// getter on its path runs once, and a key with an effect is read and written once.
 
 // The issue's snippet.
 const a: number[] = [1, 2, 3];
@@ -96,3 +97,74 @@ function see(): void {
 see();
 see();
 console.log(seen);
+
+// A getter on the target's path runs once.
+let reads = 0;
+
+class Box {
+  r: number | undefined = 1;
+}
+
+class H {
+  private b: Box = new Box();
+  get q(): Box {
+    reads++;
+    return this.b;
+  }
+}
+
+const hh = new H();
+hh.q.r! += 1;
+console.log(hh.q.r, reads);
+
+class W {
+  private _m: Record<string, number> = { a: 0 };
+  hits = 0;
+  get m(): Record<string, number> {
+    this.hits++;
+    return this._m;
+  }
+  add(k: string): void {
+    this.m[k]! += 1;
+  }
+}
+
+const w = new W();
+w.add("a");
+console.log(w.m["a"], w.hits);
+
+// A nullable target whose key has an effect, and postfix updates used as values.
+const counts2: Record<string, number> = { a: 1, b: 5 };
+let keyCalls = 0;
+const key = (): string => {
+  keyCalls++;
+  return "a";
+};
+counts2[key()]! += 1;
+const kb = "b";
+const prev = counts2[kb]!++;
+console.log(counts2["a"], keyCalls, prev, counts2["b"]);
+const st: Stats = { hits: 7 };
+const before = st.hits!++;
+const after = ++st.hits!;
+const sum = (st.hits! += 10);
+console.log(before, after, sum, st.hits);
+let u: number | undefined = 3;
+const m1 = u!--;
+console.log(m1, u);
+
+// Strings and the index evaluated before the right side.
+const names: Record<string, string> = { x: "a" };
+names["x"]! += "b";
+const opt: { t?: string } = { t: "p" };
+opt.t! += "q";
+const v2 = (opt.t! += "r");
+console.log(names["x"], opt.t, v2);
+const vs: (number | undefined)[] = [10, 20];
+let vi = 0;
+const bump = (): number => {
+  vi = 1;
+  return 5;
+};
+vs[vi]! += bump();
+console.log(vs.join(","), vi);
