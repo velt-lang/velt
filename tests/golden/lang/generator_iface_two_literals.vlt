@@ -1,0 +1,78 @@
+// An interface method implemented by two object literals whose generators throw different
+// errors (#2084, #2085): the method's result takes both, and each literal's generator widens to
+// it at run time, async and sync alike, as TypeScript accepts.
+interface Src {
+  items(n: number): AsyncGenerator<string>;
+}
+
+interface Nums {
+  count(n: number): Generator<number>;
+}
+
+async function* a(n: number): AsyncGenerator<string> {
+  if (n < 0) {
+    throw new RangeError("a neg");
+  }
+  yield "a" + n;
+}
+
+async function* b(n: number): AsyncGenerator<string> {
+  if (n < 0) {
+    throw new TypeError("b neg");
+  }
+  yield "b" + n;
+}
+
+function* c(n: number): Generator<number> {
+  if (n < 0) {
+    throw new RangeError("c neg");
+  }
+  yield n;
+}
+
+function* d(n: number): Generator<number> {
+  if (n < 0) {
+    throw new TypeError("d neg");
+  }
+  yield n * 10;
+}
+
+const s1: Src = { items: (n) => a(n) };
+const s2: Src = {
+  items(n) {
+    return b(n);
+  },
+};
+const n1: Nums = { count: (n) => c(n) };
+const n2: Nums = { count: (n) => (n > 5 ? c(n) : d(n)) };
+
+async function drain(s: Src, n: number): Promise<void> {
+  try {
+    for await (const x of s.items(n)) {
+      console.log(x);
+    }
+  } catch (e) {
+    console.log("caught", (e as Error).message, e instanceof TypeError);
+  }
+}
+
+function sum(s: Nums, n: number): void {
+  try {
+    for (const x of s.count(n)) {
+      console.log(x);
+    }
+  } catch (e) {
+    console.log("caught", (e as Error).message, e instanceof RangeError);
+  }
+}
+
+async function main(): Promise<void> {
+  await drain(s1, -1);
+  await drain(s2, -2);
+  await drain(s1, 1);
+  await drain(s2, 2);
+  sum(n1, -1);
+  sum(n2, -1);
+  sum(n2, 3);
+  sum(n2, 7);
+}
