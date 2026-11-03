@@ -426,7 +426,7 @@ code-wise but doesn't say which type was meant. Debug builds name the types too:
 - the dictionary parameter is described to the debugger as a variable `$types`, listing the
   type arguments by name through the debug-variable support (`debug-variables.md`).
 
-A frame then shows `arrayViewSync<~rc>` with `$types = [Item]`. The prototype checks this with a
+A frame then shows `arrayViewSync<~rc>` with `$types = [Node]`. The prototype checks this with a
 case in `crates/veltc/tests/debugger.rs`, next to the existing debug-variable cases. Release strips
 symbols at link time, as it does today. Panic messages carry source locations, not function
 names, and are unaffected.
@@ -435,20 +435,21 @@ names, and are unaffected.
 - **The bars.** Every golden passes, with output byte-identical between debug, where sharing is
   on, and release, where it is off.
 - **`VELT_SHAPES=all`.** Shares every instance the scan accepts, including the families release
-  doesn't share yet, and runs the whole golden suite in debug and release. This runs in CI as
-  one job, so each leak or scan bug shows up as an ICE or a wrong output, not in a user's
-  program.
+  doesn't share yet, and runs the whole golden suite in debug and release. This is proposed as
+  one more CI job, so each leak or scan bug shows up as an ICE or a wrong output, not in a
+  user's program.
 - **`VELT_SHAPES=check`.** Compares the counted-types facts both ways (section 1).
 - **New goldens, each run with Node,** for what crosses a shared instance:
-  - a view of class objects, counted and single-owner, printed and converted wrongly (the
-    `TypeError` text);
+  - views of class objects (counted and single-owner), of two object types of one size with
+    different fields, and of a union, each printed and converted wrongly (the `TypeError`
+    text);
   - `Map` and `Set` keys of several class types;
   - a shared method reached through an interface slot;
   - a generic method called through an interface from shared code;
   - function values of instances compared.
 - **Unit tests in `velt_vir`.** The shape of each type kind, and a placeholder's per-type query
   ICEing. Each test is checked to fail with the key broken on purpose: `~rc` and `~own` merged,
-  or the niche bit dropped.
+  the niche bit dropped, or `~agg` keyed by size without alignment.
 
 ## 5. Measurement plan
 
@@ -523,10 +524,12 @@ New counters in `VELT_LOWER_PROFILE`:
 - the instances the scan rejected, by reason, so the next family's work starts from data.
 
 Expected effect, to check against these numbers: the helpers' instances drop to one per shape
-used. That is one to three on small-page (`~rc` for JSX nodes, `~str`, maybe `~f64`), against
-one per element type today. Their share of the IR goes from 3.32M lines toward the size of
-those few instances plus the dictionaries (a few words per type). The `as T` slow paths were
-already moved out by #2268, and they move into the type tables' `AnyUnbox` entries unchanged.
+used, against one per element type today. Small-page's element types are mostly object types
+and unions, so its shapes are the sizes among them, plus `~str` and the pointer classes. Its
+3.32M lines of helpers go toward that many families of about 13k release IR lines each, plus
+the dictionaries (a few words per type). The `as T` slow paths move into the type tables'
+`AnyUnbox` entries unchanged. The number of distinct aggregate sizes is the figure that decides
+how close it gets (open question 4).
 
 ## Order of work
 
@@ -591,3 +594,10 @@ hidden parameter in `abi.rs`, and `Cx::ty`'s placeholder case in `types.rs`. `as
    symbols are stable. Dictionaries are data rebuilt per version. Step 2 adds a `velt dev` test
    with a view across a reload, to confirm that a reloaded caller passes the new version's
    dictionary.
+4. **Aggregates of many sizes.** `~agg` is keyed by size, so a program whose view element types
+   are object types of twenty sizes gets twenty instances. If small-page's counters show that,
+   a size class merges them: values kept in slots of the class's size (16, 32, 64, 128 bytes …)
+   and copied by the dictionary's exact size, with one instance per class. Locals and array
+   strides then differ from the per-type layout, so arrays of `T` inside shared code would still
+   use the exact stride, read from the dictionary. That is more change than step 2 needs. It is
+   decided by the counters, not up front.
