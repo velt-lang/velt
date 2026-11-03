@@ -75,6 +75,7 @@ mod closure;
 mod console;
 mod ctor_init;
 mod debug_vars;
+mod deferred_versions;
 mod dispatch;
 mod drops;
 mod entry;
@@ -187,9 +188,8 @@ pub(crate) use glue::{inspect_key, inspect_quote};
 /// and the closure computed after a pass already contains everything its facts imply.
 const MAX_BOXING_PASSES: usize = 8;
 
-/// Passes `lower_program` may take: the fixpoint's, one more without the `await` steps, and one
-/// more lowering the whole program after facts-only passes.
-const MAX_PASSES: usize = MAX_BOXING_PASSES + 2;
+/// Passes `lower_program` may take: the fixpoint's, and one more without the `await` steps.
+const MAX_PASSES: usize = MAX_BOXING_PASSES + 1;
 
 /// Lower a whole checked program (see [`crate::lower`]). Lowering repeats while a pass finds
 /// shares of types that were not counted yet (boxing/); the type table carries over, so type
@@ -197,11 +197,9 @@ const MAX_PASSES: usize = MAX_BOXING_PASSES + 2;
 ///
 /// The passes until the counted types stop growing only find them (`Cx::facts_only`): their
 /// functions leave out the versions of view loops, which find no shares and were most of a
-/// pass's time in large programs with array views. When such a pass left a version out, the
-/// program is lowered once more, whole, with the counted types it found. That pass is the one
-/// the fixpoint would have ended with: the facts-only passes intern the same types in the same
-/// order (versioning interns none), so the type table it starts from gives every type the same
-/// id.
+/// pass's time in large programs with array views. The pass that finds no more is the program:
+/// the functions it left unversioned are versioned then (deferred_versions.rs), each as its
+/// own `finish` would have.
 pub(crate) fn lower_program(
     hir: &hir::Program,
     opts: &LowerOptions,
@@ -210,7 +208,7 @@ pub(crate) fn lower_program(
     let mut counted = boxing::Boxing::initial(hir);
     let mut no_await_steps = false;
     // `VELT_LOWER_WHOLE`: every pass whole, as before facts-only passes (tests compare both).
-    let mut facts_only = std::env::var_os("VELT_LOWER_WHOLE").is_none();
+    let facts_only = std::env::var_os("VELT_LOWER_WHOLE").is_none();
     let profile = std::env::var_os("VELT_LOWER_PROFILE").is_some();
     // One more pass when the `await` steps turn out to be unobservable (await_order.rs).
     for pass in 0..MAX_PASSES {
@@ -247,6 +245,11 @@ pub(crate) fn lower_program(
         cx.build_iface_glues();
         lower_profile::end_pass(pass, pass_start.elapsed());
         let next = cx.close_boxing();
+        if next == counted {
+            // The counted types are complete: this pass's functions are the program's, once
+            // those left unversioned are versioned.
+            cx.version_deferred();
+        }
         if profile {
             let kind = if facts_only { "facts only" } else { "whole" };
             let n = cx.versioned;
@@ -254,12 +257,6 @@ pub(crate) fn lower_program(
         }
         if profile && next != counted {
             eprintln!("velt-lower: pass {pass} grew: {}", counted.changes(&next));
-        }
-        if next == counted && cx.left_out {
-            // The counted types are complete; lower the program with them, whole.
-            facts_only = false;
-            types = cx.types;
-            continue;
         }
         if next == counted {
             if cx.facts.unmet {
@@ -446,9 +443,10 @@ struct Cx<'h> {
     /// This pass only finds the counted types (`lower_program`): functions leave out the work
     /// that finds none, the versions of their view loops (view_unswitch.rs).
     facts_only: bool,
-    /// A function of this facts-only pass left its view loops unversioned: the pass's
-    /// functions are not the program's.
-    left_out: bool,
+    /// The functions of this facts-only pass whose view loops are left to version once the
+    /// counted types are complete, and those of the functions being built (deferred_versions.rs).
+    deferred: FxHashMap<FuncId, deferred_versions::Deferred>,
+    deferred_new: Vec<deferred_versions::Deferred>,
     /// The functions whose view loops this pass versioned (`VELT_LOWER_PROFILE`).
     versioned: usize,
     /// Copy of the HIR type table, extended with substituted (monomorphic) types.
