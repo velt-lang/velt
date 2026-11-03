@@ -137,10 +137,23 @@ declare async function velt_rt_latch_wait(latch: u64): Promise<void>;
 // An async generator as one of a wider error type (`AsyncGenerator<T, E>` where an
 // `AsyncGenerator<T, F>` is expected, `F` allowing every `E`): its results are laid out by the
 // error type, so the compiler passes its values through a generator of the wider type, as it
-// widens a promise; what it throws converts to `F`.
+// widens a promise. Only what the inner generator throws converts to `F` (`generatorWiden`).
 async function* asyncGeneratorWiden<T, E, F>(g: AsyncGenerator<T, E>): AsyncGenerator<T, F> {
+  while (true) {
+    const r = await asyncGeneratorWidenStep<T, E, F>(g);
+    if (r.done) {
+      return;
+    }
+    yield r.value;
+  }
+}
+
+// The next result of `g` (`asyncGeneratorWiden`), what it throws converted to `F`.
+async function asyncGeneratorWidenStep<T, E, F>(
+  g: AsyncGenerator<T, E>,
+): Promise<IteratorResult<T>, F> {
   try {
-    yield* g;
+    return await g.next();
   } catch (e) {
     throw e as F;
   }

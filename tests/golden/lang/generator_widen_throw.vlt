@@ -1,0 +1,37 @@
+// An error a caller injects with `throw()` into a widened generator (#2085) reaches the caller
+// as it was thrown, whatever the generator's error type: only what the generator itself throws
+// takes the wider type. A `finally` of the inner generator runs before the caller sees it.
+function* r(n: number): Generator<number> {
+  if (n < 0) {
+    throw new RangeError("r");
+  }
+  yield n;
+}
+
+function* q(): Generator<number> {
+  yield 1;
+  yield 2;
+}
+
+function* closing(): Generator<number> {
+  try {
+    yield 1;
+  } finally {
+    console.log("closing done");
+  }
+}
+
+function poke(g: Generator<number>): string {
+  try {
+    g.next();
+    g.throw(new SyntaxError("boom"));
+    return "no throw";
+  } catch (x) {
+    return "caught " + (x instanceof SyntaxError) + " " + (x as Error).message;
+  }
+}
+
+console.log(poke(r(-1)));
+console.log(poke(r(1)));
+console.log(poke(q()));
+console.log(poke(closing()));
