@@ -41,8 +41,8 @@
 pub use crate::hook_sig::{FnSig, Mode, Param, Sig, T};
 
 /// One hook: its entry name, its module's canonical path, its name there, its signature, whether
-/// lowering calls it (and falls back when it is missing), the runtime externs it replaces and the
-/// benchmark that measures it.
+/// lowering calls it, whether lowering may find it missing and fall back to the runtime
+/// (`fallback`), the runtime externs it replaces and the benchmark that measures it.
 #[derive(Clone, Copy, Debug)]
 pub struct Hook {
     /// The entry's name (`f64_to_string`).

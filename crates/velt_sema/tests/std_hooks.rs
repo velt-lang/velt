@@ -135,8 +135,13 @@ fn differs(p: &Program, qualified: &str, sig: &Sig, lowered: bool) -> Option<Str
         .filter(|t| !matches!(p.types.kind(*t), TyKind::Never));
     match (throws, &s.throws) {
         (None, None) => {}
-        (Some(t), Some(w)) if same(p, t, w, &mut why) => {}
-        _ => return Some(format!("throws: {why}")),
+        (Some(t), Some(w)) => {
+            if !same(p, t, w, &mut why) {
+                return Some(format!("throws: {why}"));
+            }
+        }
+        (Some(_), None) => return Some("throws, where the table says it does not".to_string()),
+        (None, Some(_)) => return Some("does not throw, where the table says it does".to_string()),
     }
     // Sema infers modes from bodies, which it checks for the hooks code reaches: the lowered
     // ones always are (velt_common `hook_sig.rs`).
