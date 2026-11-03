@@ -4,6 +4,7 @@
 
 use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
+use super::hook_calls::{self as hooks, ty, Construct, HookTy};
 use super::rt::Rt;
 use super::{cint, unit, FnLower};
 use crate::vir::{Operand, Ty, STR_AGG};
@@ -106,22 +107,26 @@ impl FnLower<'_, '_> {
         );
     }
 
-    /// Scalars (ints, floats, bool) in JS formatting.
+    /// Scalars (ints, floats, bool) in JS formatting: numbers through std's writers
+    /// (std/lang/hooks/number_text.velt), a bool by the runtime.
     fn write_scalar(&mut self, stream: Operand, v: Operand, ty: TyId) {
         let from = self.cx.ty(ty);
         match self.cx.kind(ty) {
             TyKind::Float(_) => {
                 let v = self.float_as_f64(v, ty);
-                self.call_rt(Rt::WriteF64, vec![stream, v], None);
+                _ = hooks::number_write(self, Construct::Format, ty::U32::arg(stream), ty::F64::arg(v))
+                    .emit(self);
             }
             TyKind::Bool => self.call_rt(Rt::WriteBool, vec![stream, v], None),
             TyKind::Int(it) if !it.is_signed() => {
                 let v = self.cast_to(v, from, Ty::U64);
-                self.call_rt(Rt::WriteU64, vec![stream, v], None);
+                _ = hooks::uint_write(self, Construct::Format, ty::U32::arg(stream), ty::U64::arg(v))
+                    .emit(self);
             }
             _ => {
                 let v = self.cast_to(v, from, Ty::I64);
-                self.call_rt(Rt::WriteI64, vec![stream, v], None);
+                _ = hooks::int_write(self, Construct::Format, ty::U32::arg(stream), ty::I64::arg(v))
+                    .emit(self);
             }
         }
     }

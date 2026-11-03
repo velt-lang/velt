@@ -25,6 +25,9 @@ pub(super) fn evaluate(cx: &mut Ctx, w: &Walk) {
     for &t in &w.formats {
         present |= format_bit(cx, t);
     }
+    if w.prints_float {
+        present |= Construct::Format.bit();
+    }
     cx.lazy.live.present |= present;
 }
 
