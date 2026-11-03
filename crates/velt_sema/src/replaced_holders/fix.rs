@@ -121,8 +121,15 @@ fn source(e: &ast::Expr, depth: u32) -> Option<String> {
         A::Index {
             object,
             index,
+            more,
             optional,
-        } => format!("{}{}[{}]", s(object)?, q(*optional), s(index)?),
+        } => {
+            let mut keys = s(index)?;
+            for k in more {
+                keys = format!("{keys}, {}", s(k)?);
+            }
+            format!("{}{}[{keys}]", s(object)?, q(*optional))
+        }
         A::Call {
             callee,
             type_args,

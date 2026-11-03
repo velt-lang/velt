@@ -1,0 +1,115 @@
+// `m[i, j]`: an operator indexer with several keys (#2179, design operators.md step 8). The
+// object, then each key once, left to right, then the value; `?.[…]` evaluates no key when
+// the object is null; a value reading the same element is well defined, as for `v += v`.
+
+class Matrix implements Grid {
+  data: f64[] = [];
+  constructor(public rows: usize, public cols: usize) {
+    for (let i: usize = 0; i < rows * cols; i++) this.data.push(0);
+  }
+  [Symbol.index](i: usize, j: usize): f64 { return this.data[i * this.cols + j]; }
+  [Symbol.setIndex](i: usize, j: usize, v: f64): void { this.data[i * this.cols + j] = v; }
+}
+
+// An element type with an in-place `+=`: `g[i, j] += x` changes the element itself.
+class Cell {
+  constructor(public v: f64) {}
+  [Symbol.add](o: Cell): Cell { return new Cell(this.v + o.v); }
+  [Symbol.addAssign](o: Cell): void { this.v += o.v; }
+}
+
+class Cells {
+  items: Cell[] = [new Cell(1), new Cell(2), new Cell(3), new Cell(4)];
+  [Symbol.index](i: usize, j: usize): Cell { return this.items[i * 2 + j]; }
+  [Symbol.setIndex](i: usize, j: usize, v: Cell): void { this.items[i * 2 + j] = v; }
+}
+
+// A struct with three keys.
+struct Cube {
+  side: i64;
+  [Symbol.index](x: i64, y: i64, z: i64): i64 { return (x * this.side + y) * this.side + z; }
+}
+
+// Generic code: a type parameter bounded by an interface with a two-key indexer.
+interface Grid {
+  [Symbol.index](i: usize, j: usize): f64;
+}
+function trace<G extends Grid>(g: G, n: usize): f64 {
+  let t = 0.0;
+  for (let i: usize = 0; i < n; i++) t += g[i, i];
+  return t;
+}
+
+function key(n: usize): usize {
+  console.log(`key ${n}`);
+  return n;
+}
+function val(x: f64): f64 {
+  console.log(`value ${x}`);
+  return x;
+}
+
+const m = new Matrix(2, 2);
+m[0, 0] = 1;
+m[0, 1] = 2;
+m[1, 0] = 3;
+m[1, 1] = 4;
+console.log(m[0, 0], m[0, 1], m[1, 0], m[1, 1]);
+console.log(m[1, 0] === m[Symbol.index](1, 0), trace(m, 2));
+
+// Evaluation order: the keys left to right, then the value; each once.
+m[key(0), key(1)] = val(10);
+m[key(1), key(0)] += val(5);
+console.log(m[0, 1], m[1, 0]);
+
+// `++` and `--`, prefix and postfix, and an assignment used as a value.
+const i: usize = 1;
+const j: usize = 1;
+m[i, j]++;
+const old = m[i, j]--;
+console.log(old, m[i, j], ++m[i, j], (m[0, 0] = 7));
+
+// The value reads the element being written.
+m[i, j] *= m[i, j];
+m[0, 0] += m[0, 0] + m[i, j];
+console.log(m[i, j], m[0, 0]);
+
+// In place on the element: the same `Cell` object, changed.
+const cells = new Cells();
+const first = cells[0, 0];
+cells[0, 0] += cells[1, 1];
+console.log(first.v, cells[0, 0] === first);
+cells[1, 0] = cells[1, 0] + cells[1, 0];
+console.log(cells[1, 0].v);
+
+const cube: Cube = { side: 3 };
+console.log(cube[1, 2, 0], cube[2, 2, 2]);
+
+// `?.[…]` on null evaluates no key.
+let none: Matrix | null = null;
+console.log(none?.[key(7), key(8)]);
+none = m;
+console.log(none?.[key(0), key(0)]);
+
+// An assignment used as a value whose target goes through a narrowed object keeps every key;
+// a chained one evaluates the outer keys, then the inner keys, then the value.
+interface Holder {
+  m: Matrix | null;
+}
+interface Outer {
+  b: Holder | null;
+}
+function change(): f64 {
+  console.log("change");
+  return 3;
+}
+const hb: Holder | null = { m: new Matrix(2, 2) };
+if (hb !== null && hb.m !== null) {
+  const y = (hb.m[key(0), key(1)] = change());
+  console.log(y, hb.m[0, 1]);
+}
+const st: Outer = { b: { m: new Matrix(2, 2) } };
+if (st.b !== null && st.b.m !== null) {
+  st.b.m[key(1), key(0)] = st.b.m[key(0), key(1)] = change();
+  console.log(st.b.m[1, 0], st.b.m[0, 1]);
+}

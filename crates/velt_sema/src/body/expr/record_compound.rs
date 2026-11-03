@@ -98,8 +98,9 @@ fn expr_text(e: &ast::Expr) -> Option<String> {
         A::Index {
             object,
             index,
+            more,
             optional: false,
-        } => format!("{}[{}]", expr_text(object)?, expr_text(index)?),
+        } if more.is_empty() => format!("{}[{}]", expr_text(object)?, expr_text(index)?),
         A::Lit(ast::Lit::Int { value, suffix }) => {
             format!("{value}{}", suffix.as_deref().unwrap_or(""))
         }

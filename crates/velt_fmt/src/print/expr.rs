@@ -90,10 +90,11 @@ impl<'a> Printer<'a> {
             ExprKind::Index {
                 object,
                 index,
+                more,
                 optional,
             } => {
                 let object = self.expr(object);
-                cat![object, self.index_suffix(index, *optional)]
+                cat![object, self.index_suffix(index, more, *optional)]
             }
             ExprKind::Arrow {
                 type_params,

@@ -38,9 +38,15 @@ pub(crate) fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
             args.iter().for_each(f);
         }
         E::New { args, .. } => args.iter().for_each(f),
-        E::Index { object, index, .. } => {
+        E::Index {
+            object,
+            index,
+            more,
+            ..
+        } => {
             f(object);
             f(index);
+            more.iter().for_each(f);
         }
         E::Arrow { body, .. } => {
             if let ast::ArrowBody::Expr(x) = body {
@@ -108,14 +114,19 @@ pub(crate) fn children_mut(e: &mut ast::Expr, f: &mut dyn FnMut(&mut ast::Expr))
             target: a,
             value: b,
             ..
-        }
-        | E::Index {
-            object: a,
-            index: b,
-            ..
         } => {
             f(a);
             f(b);
+        }
+        E::Index {
+            object,
+            index,
+            more,
+            ..
+        } => {
+            f(object);
+            f(index);
+            more.iter_mut().for_each(f);
         }
         E::Cond { cond, then, els } => {
             f(cond);

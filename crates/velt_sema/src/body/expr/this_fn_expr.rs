@@ -217,6 +217,7 @@ impl FnCx<'_, '_> {
                         object: Box::new(args()),
                         index: Box::new(at.clone()),
                         optional: false,
+                        more: Vec::new(),
                     },
                     p.span,
                 );

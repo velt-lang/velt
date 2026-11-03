@@ -473,6 +473,7 @@ fn index(object: &Expr, k: usize) -> Expr {
             object: Box::new(object.clone()),
             index: Box::new(int(k, span)),
             optional: false,
+            more: Vec::new(),
         },
         span,
     )

@@ -70,3 +70,49 @@ fn an_operator_leads_to_its_method() {
     assert_eq!(text, "```velt\n(method) V.[Symbol.add](o: V): V\n```");
     client.shutdown();
 }
+
+const GRID: &str = r#"class Grid {
+  [Symbol.index](i: usize, j: usize): f64 {
+    return 0;
+  }
+  [Symbol.setIndex](i: usize, j: usize, v: f64): void {}
+}
+
+function main() {
+  const g = new Grid();
+  const row: usize = 0;
+  const col: usize = 1;
+  g[row, col] = g[col, row] + 1;
+  console.log(g[row, col]);
+}
+"#;
+
+/// A variable used as a second or later key (`g[row, col]`) is found and renamed there too.
+#[test]
+fn rename_covers_every_key_of_an_index() {
+    let mut client = Client::start();
+    let app = uri("grid_app.vlt");
+    client.open(&app, GRID);
+    assert_eq!(
+        client.diagnostics(&app)["diagnostics"],
+        serde_json::json!([])
+    );
+    let (line, col) = pos_of(GRID, "col: usize = 1", 0);
+    let mut params = at(&app, line, col);
+    params["newName"] = serde_json::json!("column");
+    let edit = client.request("textDocument/rename", params);
+    let edits = edit["changes"][app.as_str()].as_array().unwrap();
+    assert_eq!(edits.len(), 4, "the declaration and three keys: {edits:?}");
+    // The brackets of a read (here the space between the keys) lead to `[Symbol.index]`, as for one key.
+    let (line, col) = pos_of(GRID, "g[row, col]);", 6);
+    let loc = client.request("textDocument/definition", at(&app, line, col));
+    let start = &loc["range"]["start"];
+    assert_eq!(
+        (
+            start["line"].as_u64().unwrap() as u32,
+            start["character"].as_u64().unwrap() as u32
+        ),
+        pos_of(GRID, "[Symbol.index]", 0)
+    );
+    client.shutdown();
+}

@@ -28,6 +28,7 @@ fn keyed(object: &ast::Expr, key: &str, span: Span) -> ast::Expr {
             object: Box::new(object.clone()),
             index: Box::new(index),
             optional: false,
+            more: Vec::new(),
         },
         span,
     )
@@ -41,6 +42,7 @@ fn indexed(object: &ast::Expr, key: &ast::Expr, span: Span) -> ast::Expr {
             object,
             index,
             optional: false,
+            more: Vec::new(),
         },
         span,
     )
@@ -180,11 +182,15 @@ impl FnCx<'_, '_> {
         let ast::ExprKind::Index {
             object,
             index,
+            more,
             optional: false,
         } = &strip_parens(target).kind
         else {
             return None;
         };
+        if !more.is_empty() {
+            return None;
+        }
         if op.is_none() {
             if let Some(h) = self.generic_key_write(object, index, value, span) {
                 return Some(h);
@@ -234,11 +240,15 @@ impl FnCx<'_, '_> {
         let ast::ExprKind::Index {
             object,
             index,
+            more,
             optional: false,
         } = &strip_parens(target).kind
         else {
             return None;
         };
+        if !more.is_empty() {
+            return None;
+        }
         let redo = |s: &mut Self, key: &ast::Expr| {
             s.update(
                 op,

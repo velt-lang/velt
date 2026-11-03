@@ -295,6 +295,7 @@ impl FnCx<'_, '_> {
                             span,
                         )),
                         optional: false,
+                        more: Vec::new(),
                     },
                     false => ast::ExprKind::Member {
                         object: Box::new(target_read),
@@ -491,6 +492,7 @@ impl FnCx<'_, '_> {
                         index.span,
                     )),
                     optional: false,
+                    more: Vec::new(),
                 }
             }
             _ => return e.clone(),

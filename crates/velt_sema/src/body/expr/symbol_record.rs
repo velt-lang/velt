@@ -84,6 +84,7 @@ impl FnCx<'_, '_> {
                 object: Box::new(synth(ast::ExprKind::Paren(Box::new(cast)), object.span)),
                 index: Box::new(index.clone()),
                 optional: false,
+                more: Vec::new(),
             },
             span,
         );

@@ -637,11 +637,14 @@ pub enum ExprKind {
         prop: Ident,
         optional: bool,
     },
-    /// `obj[index]`
+    /// `obj[index]`, `obj[index, more…]` (an operator indexer with several keys,
+    /// `m[Symbol.index](i, j)`).
     /// `optional` for `obj?.[index]`.
     Index {
         object: Box<Expr>,
         index: Box<Expr>,
+        /// The keys after the first: `[j]` of `m[i, j]`; empty for `a[i]` (no allocation).
+        more: Vec<Expr>,
         optional: bool,
     },
     Arrow {

@@ -89,6 +89,12 @@ switch (s.kind) { case "circle": return s.r; case "rect": return s.w * s.h; }
 - **Operators** (implemented, #2050): operator methods keyed by well-known symbols
   (`[Symbol.add](other)` for `a + b`, operators.md); an `extend` block may add them to a class,
   struct or vector, never to a type whose operators are built in.
+- **`m[i, j]`** (implemented, #2179): an operator indexer with several keys. In TypeScript
+  `a[i, j]` is the comma operator: it reads `a[j]` and evaluates `i` for its effects, and `tsc`
+  rejects it only when `i` has none (TS2695), so `arr[f(), j]` is valid TypeScript meaning
+  `arr[j]`. It never parsed in Velt; on arrays and the other built-in types it is now an error
+  with the fix `a[i][j]` rather than a different meaning, and `--ts-compat` reports every use
+  (rule `operator`).
 
 ### Retroactive implements: the rules
 

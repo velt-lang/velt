@@ -495,7 +495,12 @@ impl<'a> Walk<'a> {
                 Some(t) => (t, prop.name.clone()),
                 None => return false,
             },
-            E::Index { object, index, .. } => match (self.base(object), self.key(index)) {
+            E::Index {
+                object,
+                index,
+                more,
+                ..
+            } if more.is_empty() => match (self.base(object), self.key(index)) {
                 (Some(t), Some(k)) => (t, k),
                 (Some(Some(t)), None) if !written => {
                     let Some((k, keys)) = self.listed(&t, index) else {

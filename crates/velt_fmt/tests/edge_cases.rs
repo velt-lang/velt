@@ -31,6 +31,7 @@ fn expressions() {
   const cmp = a >= b && c <= d && e > f && g < h;
   super.method(1); this.x.y().z;
   const nested = [[1, 2], [3, 4]];
+  m[i, j] = m[a[i], b[j, k]] + n?.[i, j];
   const tpl = `${a}${`${b}`}`;
 }",
     );

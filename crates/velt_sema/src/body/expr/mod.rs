@@ -108,6 +108,7 @@ mod iface_overload_impls;
 mod iface_write;
 mod in_keys;
 mod in_place_chain;
+mod index_keys;
 mod indexers;
 mod int32;
 mod intrinsics;
@@ -393,8 +394,12 @@ impl FnCx<'_, '_> {
             A::Index {
                 object,
                 index,
+                more,
                 optional,
-            } => self.index_expr(object, index, *optional, exp, want, span),
+            } => match more.is_empty() {
+                true => self.index_expr(object, index, *optional, exp, want, span),
+                false => self.multi_index_expr(object, index, more, *optional, span),
+            },
             A::Arrow { .. } => self.closure(e, exp, true),
             A::Function(d) => self.function_expr(d, exp, span),
             A::Array(elems) => self.array_lit(elems, exp, span),

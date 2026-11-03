@@ -54,6 +54,7 @@ function* gen(this: Foo, [a, b = 2]: [i32, i32], { c, d: { e } }: O, ...rest: st
   for (const x of xs) { switch (x) { case 1: case 2: break; default: throw new Error(`e${x}!`); } }
   do { x >>>= 1; x ??= y; } while (!(x instanceof Y) && typeof x !== "string");
   try { f?.(a)?.b?.[c]!; } catch (e) { void delete r[k]; } finally { --x; x++; }
+  m[a[i], b[j, k]] += n?.[i, j];
   const o = { a, b: 1, ...c, m() { return this; } };
   const p = Point { x: 1, y: 2 };
   let [h, , ...t] = xs as number[];
@@ -179,4 +180,11 @@ fn every_std_file_round_trips() {
             assert!(dump(&decoded) == dump(&parsed), "{}", path.display());
         }
     });
+}
+
+/// `Index` gained `more` (the keys after the first) without growing `ExprKind`, so `a[i]`
+/// costs what it did (#2179).
+#[test]
+fn an_index_with_several_keys_does_not_grow_expressions() {
+    assert!(std::mem::size_of::<crate::ast::ExprKind>() <= 256);
 }

@@ -148,6 +148,7 @@ pub(crate) fn rest_adapter(
                 object: Box::new(read("rest#")),
                 index: Box::new(int(k)),
                 optional: false,
+                more: Vec::new(),
             });
             let undefined = expr(ast::ExprKind::Lit(ast::Lit::Undefined));
             let unknown = ast::TypeExpr {

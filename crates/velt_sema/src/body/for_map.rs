@@ -154,8 +154,9 @@ fn liftable(e: &ast::Expr) -> bool {
         E::Index {
             object,
             index,
+            more,
             optional: false,
-        } => liftable(object) && liftable(index),
+        } => liftable(object) && liftable(index) && more.iter().all(liftable),
         E::Call {
             callee,
             args,

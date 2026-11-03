@@ -1,0 +1,43 @@
+// Indexes with several keys a type doesn't take, and the declaration rule for the keys of
+// `[Symbol.setIndex]` (#2179).
+
+const xs = [[1, 2], [3, 4]];
+const a = xs[0, 1];
+xs[0, 1] = 5;
+const mp = new Map<string, number>();
+const b = mp["x", "y"];
+const bytes = new Uint8Array(4);
+const c = bytes[0, 1];
+let d: any = {};
+const e = d[0, 1];
+const s = "abc";
+const f = s[0, 1];
+// Valid TypeScript (the comma operator: `f()`, then `xs[1]`), an error here.
+function sideEffect(): usize {
+  console.log("f");
+  return 0;
+}
+const k = xs[sideEffect(), 1];
+
+class One {
+  [Symbol.index](i: usize): f64 { return 0; }
+}
+const g = new One()[0, 1];
+
+class Two {
+  [Symbol.index](i: usize, j: usize): f64 { return 0; }
+}
+const t = new Two();
+const h = t[0, "x"];
+t[0, 1] = 2;
+delete t[0, 1];
+
+// `[Symbol.setIndex]` takes `[Symbol.index]`'s keys, of the same types, then the value.
+class FewerKeys {
+  [Symbol.index](i: usize, j: usize): f64 { return 0; }
+  [Symbol.setIndex](i: usize, v: f64): void {}
+}
+class OtherKey {
+  [Symbol.index](i: usize, j: usize): f64 { return 0; }
+  [Symbol.setIndex](i: usize, j: string, v: f64): void {}
+}

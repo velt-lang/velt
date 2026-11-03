@@ -129,9 +129,10 @@ impl FnCx<'_, '_> {
     ) -> hir::Expr {
         let build = |lw: &mut Self, o: &ast::Expr| {
             let read = match &callee.kind {
-                ast::ExprKind::Index { index, .. } => ast::ExprKind::Index {
+                ast::ExprKind::Index { index, more, .. } => ast::ExprKind::Index {
                     object: Box::new(o.clone()),
                     index: index.clone(),
+                    more: more.clone(),
                     optional: false,
                 },
                 ast::ExprKind::Member { prop, .. } => ast::ExprKind::Member {

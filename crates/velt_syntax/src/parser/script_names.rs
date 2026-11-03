@@ -367,14 +367,19 @@ impl Names {
                 target: lhs,
                 value: rhs,
                 ..
-            }
-            | ExprKind::Index {
-                object: lhs,
-                index: rhs,
-                ..
             } => {
                 self.expr(lhs);
                 self.expr(rhs);
+            }
+            ExprKind::Index {
+                object,
+                index,
+                more,
+                ..
+            } => {
+                self.expr(object);
+                self.expr(index);
+                more.iter().for_each(|k| self.expr(k));
             }
             ExprKind::Cond { cond, then, els } => {
                 self.expr(cond);

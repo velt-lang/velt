@@ -58,6 +58,7 @@ impl FnCx<'_, '_> {
                 object: object.clone(),
                 index: Box::new(k.clone()),
                 optional: false,
+                more: Vec::new(),
             },
             span: callee.span,
         };

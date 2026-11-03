@@ -17,3 +17,17 @@ export interface Summable<T> {
   [Symbol.add](other: T): T;
   //~^ operator
 }
+
+
+// An index with several keys calls an operator indexer.
+export function corner(m: Grid): number {
+  return m[0, 1];
+  //~^ operator
+}
+
+export class Grid {
+  [Symbol.index](i: number, j: number): number {
+    //~^ operator
+    return i + j;
+  }
+}

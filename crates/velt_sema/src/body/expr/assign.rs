@@ -85,7 +85,14 @@ impl FnCx<'_, '_> {
             ast::ExprKind::Index {
                 object,
                 index,
+                more,
                 optional: false,
+            } if !more.is_empty() => return self.multi_index_target(object, index, more, span),
+            ast::ExprKind::Index {
+                object,
+                index,
+                optional: false,
+                ..
             } => {
                 if let Some(t) = self.any_as_record_target(object) {
                     if t.is_none() {

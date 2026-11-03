@@ -19,6 +19,7 @@ fn element(t: &ast::Expr, i: usize, span: Span) -> ast::Expr {
         object: Box::new(t.clone()),
         index: Box::new(synth(ast::ExprKind::Lit(index), span)),
         optional: false,
+        more: Vec::new(),
     };
     synth(kind, span)
 }

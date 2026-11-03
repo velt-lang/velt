@@ -90,9 +90,18 @@ impl Walk<'_> {
             asserted |= matches!(target.kind, E::NonNull(_));
             target = x;
         }
-        let E::Index { object, index, .. } = &target.kind else {
+        let E::Index {
+            object,
+            index,
+            more,
+            ..
+        } = &target.kind
+        else {
             return None;
         };
+        if !more.is_empty() {
+            return None;
+        }
         if self.key(index).is_some() {
             return None;
         }
@@ -203,7 +212,12 @@ impl Walk<'_> {
                 let k = synth(E::Lit(ast::Lit::Str(prop.name.clone())), prop.span);
                 (object, k)
             }
-            E::Index { object, index, .. } => match self.key(index) {
+            E::Index {
+                object,
+                index,
+                more,
+                ..
+            } if more.is_empty() => match self.key(index) {
                 Some(k) => (object, synth(E::Lit(ast::Lit::Str(k)), index.span)),
                 None => (object, (**index).clone()),
             },

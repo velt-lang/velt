@@ -245,7 +245,7 @@ enums! {
         10 => Call { callee, type_args, args, optional },
         11 => New { class, args },
         12 => Member { object, prop, optional },
-        13 => Index { object, index, optional },
+        13 => Index { object, index, more, optional },
         14 => Arrow { type_params, params, ret, throws, body, is_async },
         15 => Function(a),
         16 => Array(a),

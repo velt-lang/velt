@@ -1,5 +1,6 @@
 //! Rules on expressions: literal suffixes (`number-suffix`), `as` casts to integer types
-//! (`int-cast`), named object literals (`struct`) and `throws` on arrows.
+//! (`int-cast`), named object literals (`struct`), `throws` on arrows and indexes with several
+//! keys (`operator`).
 
 use velt_common::Span;
 use velt_syntax::ast::{self, ExprKind as E};
@@ -31,6 +32,16 @@ pub(super) fn expr(e: &ast::Expr, cx: &mut Cx) -> Option<Span> {
             throws: Some(throws),
             ..
         } => decls::throws(throws, true, cx),
+        // `m[i, j]`: an operator indexer with several keys.
+        E::Index { more, .. } if !more.is_empty() => cx.error(
+            "operator",
+            e.span,
+            "`a[i, j]` calls an operator indexer with several keys: TypeScript has no operator overloading".to_string(),
+            &[
+                "in TypeScript, `a[i, j]` is the comma operator: it reads `a[j]`, and `tsc` rejects an `i` without side effects (TS2695)",
+                "write a method with a name (`get(i, j)`) and call it",
+            ],
+        ),
         _ => {}
     }
     None

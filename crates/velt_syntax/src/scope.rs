@@ -471,9 +471,17 @@ impl<'a> Walker<'a, '_> {
                     self.expr(a);
                 }
             }
-            E::Index { object, index, .. } => {
+            E::Index {
+                object,
+                index,
+                more,
+                ..
+            } => {
                 self.expr(object);
                 self.expr(index);
+                for k in more {
+                    self.expr(k);
+                }
             }
             E::Object(props) | E::StructLit { props, .. } => {
                 for p in props {

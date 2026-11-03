@@ -101,8 +101,9 @@ impl FnCx<'_, '_> {
             ast::ExprKind::Index {
                 object,
                 index,
+                more,
                 optional,
-            } if self.symbol_key_of(index).is_some() => {
+            } if more.is_empty() && self.symbol_key_of(index).is_some() => {
                 let prop = ast::Ident {
                     name: self.symbol_key_of(index).unwrap_or_default(),
                     span: index.span,

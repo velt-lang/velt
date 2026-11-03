@@ -264,14 +264,22 @@ impl FnCx<'_, '_> {
             ast::ExprKind::Index {
                 object,
                 index,
+                more,
                 optional: false,
-            } => (object, RecordKey::Index(index)),
+            } if more.is_empty() => (object, RecordKey::Index(index)),
             ast::ExprKind::Member {
                 object,
                 prop,
                 optional: false,
             } => (object, RecordKey::Name(prop)),
             ast::ExprKind::Paren(inner) => return self.delete_expr(inner, span),
+            ast::ExprKind::Index { .. } => {
+                self.cx.err(
+                    "`delete` removes one key: an index with several keys calls an indexer, which deletes nothing",
+                    span,
+                );
+                return self.error_expr(span);
+            }
             _ => {
                 self.cx.err(
                     "`delete` removes a key from a `Record`: write `delete r[k]`",

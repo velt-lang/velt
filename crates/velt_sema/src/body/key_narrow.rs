@@ -21,11 +21,15 @@ impl FnCx<'_, '_> {
         let ast::ExprKind::Index {
             object,
             index,
+            more,
             optional: false,
         } = &e.kind
         else {
             return None;
         };
+        if !more.is_empty() {
+            return None;
+        }
         // A `const` holding one literal key is that key (`o[K]` reads as `o.k`, `member`).
         if let Some(name) = self.single_key(index) {
             let span = index.span;
