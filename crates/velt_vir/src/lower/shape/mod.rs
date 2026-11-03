@@ -55,6 +55,8 @@ const SHARED: &[&str] = &[
 /// shape at that position.
 struct Ph {
     ty: TyId,
+    /// Its name in symbols and debug types (`ph_name`).
+    name: String,
     rep: TyId,
     members: Vec<TyId>,
 }
@@ -168,13 +170,21 @@ impl Cx<'_> {
         }
         let n = SHAPE_BASE + self.shapes.ph.len() as u32;
         let p = self.intern(TyKind::Param(n));
+        let name = key.name();
         self.shapes.ph.push(Ph {
+            name,
             ty: p,
             rep: t,
             members: vec![t],
         });
         self.shapes.ph_of.insert((key, pos), p);
         Some(p)
+    }
+
+    /// The name of placeholder `p`: its layout and a hash of the rest of its key, stable
+    /// across edits that keep its shape (symbols name it; `velt dev` matches by symbol).
+    pub(super) fn ph_name(&self, p: TyId) -> String {
+        self.shapes.ph[self.ph_index(p)].name.clone()
     }
 
     fn ph_index(&self, p: TyId) -> usize {
@@ -247,7 +257,12 @@ impl Cx<'_> {
             _ => return None,
         };
         let canonical = targs.iter().enumerate().all(|(i, &t)| {
-            self.is_ph(t) && self.shapes.ph_of.iter().any(|(k, &p)| p == t && k.1 == i as u32)
+            self.is_ph(t)
+                && self
+                    .shapes
+                    .ph_of
+                    .iter()
+                    .any(|(k, &p)| p == t && k.1 == i as u32)
         });
         (self.shares(*d) && canonical).then(|| (*d, targs.clone()))
     }
@@ -307,7 +322,12 @@ impl Cx<'_> {
 
     /// `args` of a call of shared instance `inst` with its dictionary `dict` put in its place,
     /// after the user's arguments (abi.rs `declare_locals`).
-    pub(super) fn with_dict(&self, inst: FuncId, args: &mut Vec<crate::vir::Operand>, dict: crate::vir::Operand) {
+    pub(super) fn with_dict(
+        &self,
+        inst: FuncId,
+        args: &mut Vec<crate::vir::Operand>,
+        dict: crate::vir::Operand,
+    ) {
         let at = args.len() - self.shapes.insts[&inst].trailing;
         args.insert(at, dict);
     }

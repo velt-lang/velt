@@ -5,8 +5,8 @@
 use super::super::{ice, Cx};
 use super::Entry;
 use crate::vir::{
-    AggLayout, BinOp, BasicBlock, Callee, Const, FuncId, Function, LocalDecl, Operand, Place,
-    Proj, Rvalue, SrcLoc, Stmt, Terminator, Ty,
+    AggLayout, BasicBlock, BinOp, Callee, Const, FuncId, Function, LocalDecl, Operand, Place, Proj,
+    Rvalue, SrcLoc, Stmt, Terminator, Ty,
 };
 
 impl Cx<'_> {
@@ -26,7 +26,9 @@ impl Cx<'_> {
             for (i, mut s) in block.stmts.into_iter().enumerate() {
                 let at = bl.get(i).copied().flatten();
                 let mut pre = vec![];
-                self.stmt_funcs(&mut s, &mut |cx, f| cx.load_entry(inst, dict, f, func, &mut pre));
+                self.stmt_funcs(&mut s, &mut |cx, f| {
+                    cx.load_entry(inst, dict, f, func, &mut pre)
+                });
                 push_all(&mut stmts, &mut new_locs, pre, at);
                 stmts.push(s);
                 new_locs.push(at);
@@ -48,17 +50,15 @@ impl Cx<'_> {
             .flat_map(|s| &s.relocs)
             .find(|(_, c)| matches!(c, Const::Func(f) if self.pseudo_of(*f).is_some()))
         {
-            ice(format_args!("a static refers to code at a placeholder type: {bad:?}"));
+            ice(format_args!(
+                "a static refers to code at a placeholder type: {bad:?}"
+            ));
         }
     }
 
     /// Calls `each` on every pseudo function id the operands of `s` use, replacing it by
     /// the operand `each` returns.
-    fn stmt_funcs(
-        &mut self,
-        s: &mut Stmt,
-        each: &mut dyn FnMut(&mut Self, FuncId) -> Operand,
-    ) {
+    fn stmt_funcs(&mut self, s: &mut Stmt, each: &mut dyn FnMut(&mut Self, FuncId) -> Operand) {
         let mut ops: Vec<&mut Operand> = vec![];
         match s {
             Stmt::Assign(_, rv) => rvalue_ops(rv, &mut ops),
@@ -193,7 +193,12 @@ fn load(func: &mut Function, dict: crate::vir::Local, i: u32, pre: &mut Vec<Stmt
     Operand::Copy(Place::local(val))
 }
 
-fn push_all(stmts: &mut Vec<Stmt>, locs: &mut Vec<Option<SrcLoc>>, pre: Vec<Stmt>, at: Option<SrcLoc>) {
+fn push_all(
+    stmts: &mut Vec<Stmt>,
+    locs: &mut Vec<Option<SrcLoc>>,
+    pre: Vec<Stmt>,
+    at: Option<SrcLoc>,
+) {
     for s in pre {
         stmts.push(s);
         locs.push(at);

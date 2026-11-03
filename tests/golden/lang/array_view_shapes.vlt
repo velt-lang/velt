@@ -1,0 +1,56 @@
+// check: no leaks
+// Array views (#1485) of element types that share code by shape (shape-sharing.md): object
+// types of one size with different fields, classes and nullable classes, a union and strings.
+// Each view reads, writes, pushes and prints through the shared helpers, and every element
+// type keeps its own conversions and printing.
+type A = { a: number; b: string };
+type B = { c: string; d: number };
+type U = A | string | number;
+
+class P {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+class Q {
+  s: string;
+  constructor(s: string) {
+    this.s = s;
+  }
+}
+
+function make(xs: any[]): any {
+  return xs;
+}
+
+const a: A = { a: 1, b: "x" };
+const b: B = { c: "y", d: 2 };
+const va = make([a, a]) as A[];
+const vb = make([b]) as B[];
+console.log(va.length, va[0].a + va[1].b, vb[0].c, vb[0].d);
+va.push({ a: 3, b: "z" });
+vb[0] = { c: "w", d: 4 };
+console.log(va, vb);
+
+const vp = make([new P(1), new P(2)]) as P[];
+const vq = make([new Q("q"), null]) as (Q | null)[];
+let sum = 0;
+for (const p of vp) {
+  sum += p.n;
+}
+console.log(sum, vq[0]?.s, vq[1] === null, vq.length);
+vq.push(new Q("r"));
+console.log(vp, vq);
+
+const vu = make([a, "s", 5]) as U[];
+for (const u of vu) {
+  console.log(typeof u, u);
+}
+vu[1] = "t";
+console.log(vu);
+
+const raw: any = ["k", "l"];
+const vs = raw as string[];
+vs.push("m");
+console.log(vs.join(""), raw.length, raw);

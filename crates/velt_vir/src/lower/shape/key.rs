@@ -34,6 +34,22 @@ pub(in crate::lower) struct Key {
     array: u32,
 }
 
+impl Key {
+    /// `~` and the layout (`~f64`, `~agg64x8`), then a hash of the other answers.
+    pub(super) fn name(&self) -> String {
+        let lay = match &self.lay {
+            Lay::Scalar(t) => format!("{t}"),
+            Lay::Agg(s, a) => format!("agg{s}x{a}"),
+        };
+        // FNV-1a of the answers: the same in every build of the same compiler.
+        let text = format!("{:?}{}{}{}", self.half, self.share, self.bits, self.array);
+        let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
+            (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
+        });
+        format!("~{lay}.{:x}", h & 0xffff_ffff)
+    }
+}
+
 impl Cx<'_> {
     /// `t` with each placeholder replaced by its representative, when that type exists:
     /// the type whose answers every shape question gives for `t` (module docs). `t` itself
@@ -88,11 +104,17 @@ impl Cx<'_> {
 
     /// The shape key of concrete `t`, or `None` when `t` is not shared in this step.
     pub(super) fn shape_key(&mut self, t: TyId) -> Option<Key> {
-        let shareable = match self.kind(t) {
-            TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Str => true,
-            TyKind::Adt(..) | TyKind::Array(_) | TyKind::Option(..) | TyKind::Tuple(_) => true,
-            _ => false,
-        };
+        let shareable = matches!(
+            self.kind(t),
+            TyKind::Int(_)
+                | TyKind::Float(_)
+                | TyKind::Bool
+                | TyKind::Str
+                | TyKind::Adt(..)
+                | TyKind::Array(_)
+                | TyKind::Option(..)
+                | TyKind::Tuple(_)
+        );
         if !shareable || self.mentions_any_param(t) || self.is_dynamic(t) {
             return None;
         }
@@ -195,7 +217,8 @@ impl Cx<'_> {
             let (p, rep) = (self.shapes.ph[i].ty, self.shapes.ph[i].rep);
             let members = self.shapes.ph[i].members.clone();
             for &d in &derived {
-                let rest: Vec<(TyId, TyId)> = self.shapes.ph.iter().map(|q| (q.ty, q.rep)).collect();
+                let rest: Vec<(TyId, TyId)> =
+                    self.shapes.ph.iter().map(|q| (q.ty, q.rep)).collect();
                 let want_ty = self.replace_tys(d, &rest);
                 let want = self.set_answers(want_ty);
                 for &m in &members {
@@ -219,7 +242,12 @@ impl Cx<'_> {
 
     /// Which counted-types sets hold `t`, and the answers of `bits`.
     fn set_answers(&mut self, t: TyId) -> (Vec<bool>, u32) {
-        let sets = self.boxing.ty_sets().iter().map(|s| s.contains(&t)).collect();
+        let sets = self
+            .boxing
+            .ty_sets()
+            .iter()
+            .map(|s| s.contains(&t))
+            .collect();
         (sets, self.bits(t))
     }
 }

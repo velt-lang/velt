@@ -49,7 +49,11 @@ impl Cx<'_> {
 
     /// The index of `entry` in `inst`'s dictionaries, appended to each when new.
     pub(super) fn entry_index(&mut self, inst: FuncId, entry: Entry) -> u32 {
-        let it = self.shapes.insts.get_mut(&inst).expect("ICE: shared instance");
+        let it = self
+            .shapes
+            .insts
+            .get_mut(&inst)
+            .expect("ICE: shared instance");
         if let Some(&i) = it.index.get(&entry) {
             return i;
         }

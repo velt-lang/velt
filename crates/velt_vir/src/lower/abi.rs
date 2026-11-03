@@ -359,7 +359,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
             params.push(Ty::Ptr);
             attrs.push(ParamAttrs::default());
             let l = self.new_local(Ty::Ptr, Some("$types".into()));
-            self.cx.shapes.insts.get_mut(&inst).expect("ICE: shared").param = Some(l);
+            self.cx
+                .shapes
+                .insts
+                .get_mut(&inst)
+                .expect("ICE: shared")
+                .param = Some(l);
         }
         // An instance that takes its caller's location: the pointer to it (track_caller.rs).
         if self.caller_loc == Some(super::srcloc::ARG_LOC) {

@@ -34,10 +34,7 @@ impl FnLower<'_, '_> {
         let src = self.copy_to_temp(v, vt);
         let avt = self.cx.ty(any);
         let out = self.temp(avt);
-        let args = vec![
-            self.addr(Place::local(src)),
-            self.addr(Place::local(out)),
-        ];
+        let args = vec![self.addr(Place::local(src)), self.addr(Place::local(out))];
         let f = self.cx.func_direct(Work::Glue(g, cty), self.mode);
         self.call(Callee::Func(f), args, None, false);
         Operand::Copy(Place::local(out))
@@ -58,17 +55,16 @@ impl FnLower<'_, '_> {
         let fvt = self.cx.ty(from);
         let src = self.copy_to_temp(v, fvt);
         let out = self.temp(vt);
-        let args = vec![
-            self.addr(Place::local(src)),
-            self.addr(Place::local(out)),
-        ];
-        let f = self.cx.func_direct(Work::Glue(Glue::FromAny, ty), self.mode);
+        let args = vec![self.addr(Place::local(src)), self.addr(Place::local(out))];
+        let f = self
+            .cx
+            .func_direct(Work::Glue(Glue::FromAny, ty), self.mode);
         self.call(Callee::Func(f), args, None, false);
         self.own_value(Operand::Copy(Place::local(out)), ty)
     }
 
     /// `Glue::ToAny` / `ToAnyParam` of `ty`: `make_dyn` after its operand is evaluated.
-    pub(in crate::lower) fn to_any_body(
+    pub(in crate::lower) fn glue_to_any_body(
         &mut self,
         src: vir::Local,
         out: vir::Local,
@@ -76,7 +72,11 @@ impl FnLower<'_, '_> {
         g: Glue,
     ) {
         let any = self.cx.any_ty();
-        let imp = self.cx.hir.any_impl.unwrap_or_else(|| ice("`any` without its impl"));
+        let imp = self
+            .cx
+            .hir
+            .any_impl
+            .unwrap_or_else(|| ice("`any` without its impl"));
         let v = Operand::Copy(self.deref_param(src, ty));
         let dest = self.deref_param(out, any);
         self.push_scope(ScopeKind::Temps);
@@ -96,7 +96,12 @@ impl FnLower<'_, '_> {
     }
 
     /// `Glue::FromAny` of `ty`: `any_to` of an `any` after it is evaluated.
-    pub(in crate::lower) fn from_any_body(&mut self, src: vir::Local, out: vir::Local, ty: TyId) {
+    pub(in crate::lower) fn glue_from_any_body(
+        &mut self,
+        src: vir::Local,
+        out: vir::Local,
+        ty: TyId,
+    ) {
         let any = self.cx.any_ty();
         let av = self.cx.ty(any);
         let p = Place::local(self.temp(av));

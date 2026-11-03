@@ -317,8 +317,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 lw.mirror_drop = true;
                 lw.drop_body(args[0], ty);
             }
-            Glue::ToAny | Glue::ToAnyParam => lw.to_any_body(args[0], args[1], ty, g),
-            Glue::FromAny => lw.from_any_body(args[0], args[1], ty),
+            Glue::ToAny | Glue::ToAnyParam => lw.glue_to_any_body(args[0], args[1], ty, g),
+            Glue::FromAny => lw.glue_from_any_body(args[0], args[1], ty),
         }
         let sym = format!("_G{}_{}", g.name(), lw.cx.type_symbol(ty));
         lw.finish(sym, params, ret)
