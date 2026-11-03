@@ -506,6 +506,14 @@ hooks! {
     /// The bytes a typed array or `DataView` passed to a system function views (`system_views.rs`).
     view_bytes => lang_typed_array_buffer_view, "viewBytes", sig((&BufferView) -> usize), lowered;
 
+    // ffi/ptr.vlt: a `Ptr` from and to a C function (velt_vir's lower/c_call.rs).
+    ffi_ptr_of => ffi_ptr, "ptrOf", "<A>(usize) -> Ptr<A>", lowered;
+    ffi_ptr_or_null => ffi_ptr, "ptrOrNull", "<A>(usize) -> Ptr<A> | null", lowered;
+    ffi_ptr_address => ffi_ptr, "ptrAddress", "<A>(Ptr<A>) -> usize", lowered;
+    ffi_ptr_address_or_zero => ffi_ptr, "ptrAddressOrZero", "<A>(Ptr<A> | null) -> usize", lowered;
+    // ffi/str_bytes.vlt: the string whose bytes a `StrBytes` argument passes.
+    ffi_str_bytes_of => ffi_str_bytes, "strBytesOf", "(string) -> string", lowered;
+
     // host/host_ref.vlt: a `HostRef` from and to a host function (velt_vir's lower/host.rs).
     /// The `HostRef` of the slot a host function returned.
     host_ref_of => host_host_ref, "hostRefOf", sig((u32) -> HostRef), lowered;

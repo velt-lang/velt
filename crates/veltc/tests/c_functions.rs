@@ -243,12 +243,12 @@ fn what_cant_cross_and_unknown_libraries_are_errors() {
     let dir = test_dir::TestDir::new();
     project(
         dir.path(),
-        "declare c(\"c\") function puts(s: string): i32;\ndeclare c(\"c\") async function later(): void;\n\nexport const x = 1;\n",
+        "declare c(\"c\") function puts(s: string): i32;\ndeclare c(\"c\") async function later(): Promise<void>;\n\nexport const x = 1;\n",
         "import { x } from \"cmath\";\n\nfunction main() {\n  console.log(x);\n}\n",
     );
     let out = check(dir.path());
     for want in [
-        "parameter `s` of C function `puts` has type `string`, which cannot cross to C",
+        "`string` cannot be passed to C: declare parameter `s` of `puts` as `StrBytes`",
         "C function `later` can't be `async` yet",
     ] {
         assert!(out.contains(want), "missing `{want}` in:\n{out}");
@@ -307,4 +307,62 @@ fn velt_dev_calls_c_functions_and_reports_a_missing_one() {
     let err = dev.stderr_since(reload_support::Mark::default()).join("\n");
     assert!(err.contains("lib.vlt:1:1)"), "{err}");
     assert!(!err.contains("panicked"), "{err}");
+}
+
+const POINTERS: &str = include_str!("c_functions/pointers.vlt");
+
+/// Pointers to C types (`declare c type`), `Ptr<T> | null` and `null`, arrays of numbers and
+/// byte views as buffers, and strings as `StrBytes` (a lone surrogate passes as U+FFFD), in
+/// debug and release builds.
+#[test]
+fn pointers_buffers_and_strings_cross() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        POINTERS,
+        "import { written, same, filled, copied, roundTrip, equal } from \"cmath\";\n\nfunction main() {\n  console.log(written(\"abc\"), same(\"hello\", \"help\", 3), same(\"hello\", \"help\", 4));\n  console.log(filled(4).join(\",\"), copied([1.5, 2.5, -3]).join(\",\"), roundTrip([1, 2, 3, 250]).join(\",\"));\n  console.log(equal(\"héllo\", \"héllo\"), equal(\"a\" + String.fromCharCode(0xd800), \"a\\u{fffd}\"));\n  const long = \"a string far longer than an inline one, \".repeat(3);\n  console.log(equal(long, long), equal(long + \"x\", long + \"y\"), equal(`${long}é`, long + \"é\"));\n}\n",
+    );
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let o = velt(dir.path(), args);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "velt {args:?} failed:\n{stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "3 true false\n7,7,7,7 1.5,2.5,-3 1,2,3,250\ntrue true\ntrue false true\n",
+            "velt {args:?}:\n{stderr}"
+        );
+    }
+}
+
+/// Only velt/ffi's `StrBytes` passes a string's bytes: a look-alike alias of `string` is a
+/// `string` (and velt/ffi's hooks may not even be loaded).
+#[test]
+fn a_look_alike_str_bytes_is_a_string() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "type StrBytes = string;\n\ndeclare c(\"c\") function memcmp(a: StrBytes, b: StrBytes, n: usize): i32;\n\nexport function f(): i32 {\n  // SAFETY: both have a byte.\n  return unsafe { memcmp(\"a\", \"b\", 1) };\n}\n",
+        "import { f } from \"cmath\";\n\nfunction main() {\n  console.log(f());\n}\n",
+    );
+    let out = check(dir.path());
+    assert!(out.contains("`string` cannot be passed to C"), "{out}");
+    assert!(!out.contains("ICE"), "{out}");
+}
+
+#[test]
+fn pointer_types_and_strings_are_checked() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { Ptr } from \"velt/ffi\";\n\ndeclare c type FILE;\n\ndeclare c(\"c\") function fclose(f: Ptr<FILE>): i32;\ndeclare c(\"c\") function malloc(n: usize): Ptr<u8> | null;\ndeclare c(\"c\") function puts(s: string): i32;\n\nexport function f(): void {\n  // SAFETY: only types are checked here.\n  unsafe {\n    const p = malloc(1);\n    if (p !== null) {\n      fclose(p);\n    }\n  }\n  const forged = Ptr.at<FILE>(8);\n}\n",
+        "import { f } from \"cmath\";\n\nfunction main() {\n  f();\n}\n",
+    );
+    let out = check(dir.path());
+    for want in [
+        "`string` cannot be passed to C: declare parameter `s` of `puts` as `StrBytes`",
+        "`Ptr<u8>`",
+        "calling unsafe",
+    ] {
+        assert!(out.contains(want), "missing `{want}` in:\n{out}");
+    }
 }

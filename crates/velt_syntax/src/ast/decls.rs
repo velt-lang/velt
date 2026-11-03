@@ -55,6 +55,10 @@ pub struct TypeDecl {
     pub methods: Vec<Method>,
     /// `abstract class`: cannot be instantiated with `new`; may declare abstract methods.
     pub is_abstract: bool,
+    /// `declare c type name;`: a C type that exists only behind pointers (`Ptr<name>`,
+    /// docs/internals/design/c-ffi.md), a class with no members that nothing can construct.
+    /// Additive.
+    pub c_type: bool,
 }
 
 /// Who may call a class's constructor (TypeScript's rules, https://veltlang.com/docs/reference/classes/): anyone;

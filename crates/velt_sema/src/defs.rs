@@ -301,12 +301,17 @@ impl FnInfo<'_> {
             };
             return Some(h.params.iter().map(unwritten).collect());
         }
+        if let Some(c) = &self.c {
+            let unwritten =
+                |t: &crate::hir::CTy| !matches!(t, crate::hir::CTy::Buf { readonly: false });
+            return Some(c.params.iter().map(unwritten).collect());
+        }
         self.system.clone()
     }
 
-    /// Is this a system or host function ([`Self::buffer_params`])?
+    /// Is this a system, host or C function ([`Self::buffer_params`])?
     pub fn has_buffer_params(&self) -> bool {
-        self.system.is_some() || self.host.is_some()
+        self.system.is_some() || self.host.is_some() || self.c.is_some()
     }
 
     /// Is this a function declared with a `this` parameter (`function f(this: T)`), whose
