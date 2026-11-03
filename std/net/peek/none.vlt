@@ -1,0 +1,10 @@
+// velt/net (internal): `peekSocket` where the program has no sockets of its own (WebAssembly):
+// no look is possible. A variant of `#socket-peek` (std/imports.vlt); the variants export the
+// same API.
+
+import { PEEK_UNKNOWN } from "velt/net/peek/state";
+
+/** No look is possible here: always `PEEK_UNKNOWN`. */
+export function peekSocket(handle: i64): i32 {
+  return PEEK_UNKNOWN;
+}

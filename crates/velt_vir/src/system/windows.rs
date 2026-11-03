@@ -239,6 +239,28 @@ static TABLE: &[Func] = &[
         },
         after: After::None,
     },
+    // A Winsock socket (`SOCKET`, a `usize`): `MSG_PEEK` looks at what arrived without taking
+    // it (velt/net's `TcpStream.closedByPeer`); `lastOsError()` reads `WSAGetLastError()`,
+    // which is `GetLastError()`.
+    Func {
+        name: "recv",
+        symbol: "recv",
+        params: &[
+            int("s", "SOCKET", Int::USize),
+            Param::Buf {
+                name: "buf",
+                written: true,
+                len: Int::I32,
+            },
+            int("flags", "int", Int::I32),
+        ],
+        variadic: 3,
+        ret: Ret::Int {
+            c: "int",
+            ty: Int::I32,
+        },
+        after: After::None,
+    },
 ];
 
 pub(super) fn table() -> &'static [Func] {

@@ -214,6 +214,21 @@ macro_rules! posix_table {
                 SSIZE,
             ),
             simple("fsync", &[FD], INT),
+            // A socket: `MSG_PEEK` looks at what arrived without taking it (velt/net's
+            // `TcpStream.closedByPeer`).
+            simple(
+                "recv",
+                &[
+                    int("socket", "int", Int::I32),
+                    Param::Buf {
+                        name: "buf",
+                        written: true,
+                        len: Int::USize,
+                    },
+                    int("flags", "int", Int::I32),
+                ],
+                SSIZE,
+            ),
             simple("fdatasync", &[FD], INT),
             simple("ftruncate", &[FD, int("length", "off_t", Int::I64)], INT),
             simple(

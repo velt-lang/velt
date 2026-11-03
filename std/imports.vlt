@@ -13,4 +13,11 @@ export const imports: Imports = {
     js: "./net/http/fetch/client/transport/js.vlt",
     default: "./net/http/fetch/client/transport/native.vlt",
   },
+  // A look at what arrived on a socket without taking it (`TcpStream.closedByPeer`): `recv` with
+  // `MSG_PEEK` through system functions; none on WebAssembly.
+  "#socket-peek": {
+    win32: "./net/peek/windows.vlt",
+    wasm: "./net/peek/none.vlt",
+    default: "./net/peek/posix.vlt",
+  },
 };

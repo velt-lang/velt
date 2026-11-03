@@ -46,6 +46,14 @@ pub unsafe extern "C" fn velt_rt_tcp_try_read_into(
     out.write(r);
 }
 
+/// The operating system's handle of plain TCP stream `s` (a file descriptor or a Winsock
+/// `SOCKET`), or -1 (another transport, an aborted or unknown stream): what std's system
+/// functions on sockets take (`TcpStream.osHandle()`). The stream keeps owning it.
+#[no_mangle]
+pub extern "C" fn velt_rt_tcp_os_handle(s: StreamHandle) -> i64 {
+    STREAMS.get(s).map_or(-1, |obj| obj.os_handle())
+}
+
 /// `velt_rt_tcp_readable(s)` → `IoResult<()>` once a `velt_rt_tcp_try_read_into` may find
 /// data, the end of the stream or an error (it may also find nothing yet: try again).
 #[no_mangle]

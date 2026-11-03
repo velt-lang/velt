@@ -9,6 +9,7 @@ import {
   velt_rt_tcp_abort,
   velt_rt_tcp_alpn,
   velt_rt_tcp_close,
+  velt_rt_tcp_os_handle,
   velt_rt_tcp_drained,
   velt_rt_tcp_park,
   velt_rt_tcp_peer_addr,
@@ -27,6 +28,8 @@ import {
 } from "velt/net/rt";
 import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 import { AbortSignal } from "velt/task";
+import { peekSocket } from "#socket-peek";
+import { PEEK_CLOSED, PEEK_OPEN } from "velt/net/peek/state";
 
 /** A connected TCP stream. */
 export struct TcpStream {
@@ -118,6 +121,30 @@ export struct TcpStream {
   async readableWithin(ms: number, signal: AbortSignal | null = null): Promise<bool> {
     const h = signal == null ? 0u64 : signal.handle();
     return unwrapIo(await velt_rt_tcp_readable_within(this.handle, ms as i64, h)) == 1;
+  }
+
+  /**
+   * The operating system's handle of this stream: a file descriptor, a `SOCKET` on Windows, for
+   * system functions that take one (https://veltlang.com/docs/reference/system-functions/); -1
+   * for a TLS stream or a closed one. The stream keeps owning it: don't close it.
+   */
+  osHandle(): i64 {
+    return velt_rt_tcp_os_handle(this.handle);
+  }
+
+  /**
+   * Whether the peer closed (or reset) the connection, found by a look at what arrived without
+   * taking it or waiting (`recv` with `MSG_PEEK`): true when it did, false when nothing has
+   * arrived yet, null when that can't be told (bytes wait to be read, and what follows them
+   * can't be seen; a TLS stream). A server checks a client it is still working for after
+   * `readable()` resolves (http-server's request signal).
+   */
+  closedByPeer(): bool | null {
+    const state = peekSocket(this.osHandle());
+    if (state == PEEK_CLOSED) {
+      return true;
+    }
+    return state == PEEK_OPEN ? false : null;
   }
 
   /** The protocol TLS's ALPN chose (`"h2"`), or null (none, not TLS); waits for the handshake. */

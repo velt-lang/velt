@@ -1,0 +1,40 @@
+// velt/net (internal): `peekSocket` on macOS and Linux: `recv` with `MSG_PEEK | MSG_DONTWAIT`
+// looks at what arrived on a socket without taking it or waiting. A variant of `#socket-peek`
+// (std/imports.vlt); the variants export the same API.
+
+import { platform } from "velt/os/machine";
+import { lastOsError } from "velt/os/rt";
+import { PEEK_CLOSED, PEEK_OPEN, PEEK_UNKNOWN } from "velt/net/peek/state";
+
+declare system function recv(socket: i32, buf: u8[], flags: i32): isize;
+
+const MSG_PEEK: i32 = 2;
+
+/**
+ * What a look at socket `handle` (a file descriptor; -1: none) finds: `PEEK_OPEN` when nothing
+ * arrived yet, `PEEK_CLOSED` when the peer closed or reset the connection, `PEEK_UNKNOWN` when
+ * bytes wait (they come first) or no look is possible.
+ */
+export function peekSocket(handle: i64): i32 {
+  if (handle < 0) {
+    return PEEK_UNKNOWN;
+  }
+  const darwin = platform() == "darwin";
+  // `MSG_DONTWAIT`, and `EAGAIN` (`EWOULDBLOCK` is the same number on both).
+  const dontWait: i32 = darwin ? 0x80 : 0x40;
+  const wouldBlock: i32 = darwin ? 35 : 11;
+  const one: u8[] = [0];
+  const n = recv(handle as i32, one, MSG_PEEK | dontWait);
+  if (n > 0) {
+    return PEEK_UNKNOWN;
+  }
+  if (n == 0) {
+    return PEEK_CLOSED;
+  }
+  const err = lastOsError();
+  if (err == wouldBlock) {
+    return PEEK_OPEN;
+  }
+  // `EINTR` (4): interrupted, so nothing was learned.
+  return err == 4 ? PEEK_UNKNOWN : PEEK_CLOSED;
+}

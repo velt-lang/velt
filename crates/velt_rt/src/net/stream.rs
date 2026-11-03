@@ -349,6 +349,31 @@ impl StreamObj {
         Ok(n)
     }
 
+    /// The operating system's handle of a plain TCP stream (a file descriptor, a Winsock
+    /// `SOCKET`), for system functions std calls on it (`TcpStream.osHandle()`); -1 for another
+    /// transport (TLS) or a stream that was aborted.
+    pub(crate) fn os_handle(&self) -> i64 {
+        if self.aborted.load(Ordering::Acquire) {
+            return -1;
+        }
+        match &self.io {
+            Io::Tcp(stream) => {
+                let sock = stream.sock_ref();
+                #[cfg(unix)]
+                {
+                    use std::os::fd::AsRawFd;
+                    sock.as_raw_fd() as i64
+                }
+                #[cfg(windows)]
+                {
+                    use std::os::windows::io::AsRawSocket;
+                    sock.as_raw_socket() as i64
+                }
+            }
+            Io::Lazy(_) => -1,
+        }
+    }
+
     /// Whether an idle stream (one parked between requests) can carry another request: nothing
     /// has arrived on it, not even its end. A raw socket is asked with a system call; another
     /// transport (TLS) is polled for input once without waiting, which reads its records (a

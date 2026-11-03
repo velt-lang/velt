@@ -21,6 +21,8 @@ export declare function velt_rt_tcp_try_read_into(
   end: u64,
 ): IoResult<i64>;
 export declare async function velt_rt_tcp_readable(s: u64): Promise<IoStatus>;
+
+export declare function velt_rt_tcp_os_handle(s: u64): i64;
 export declare function velt_rt_tcp_write_later(s: u64, data: string): IoResult<u64>;
 export declare function velt_rt_tcp_write_later_range(
   s: u64,

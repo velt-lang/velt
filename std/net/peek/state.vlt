@@ -1,0 +1,9 @@
+// velt/net (internal): what a look at a socket found (`peekSocket`, the variants of
+// `#socket-peek` in std/imports.vlt), for `TcpStream.closedByPeer`.
+
+/** Nothing has arrived yet: the peer may still send. */
+export const PEEK_OPEN: i32 = 0;
+/** The peer closed the connection or reset it. */
+export const PEEK_CLOSED: i32 = 1;
+/** Unknown: bytes wait to be read (what follows them can't be seen), or no look is possible. */
+export const PEEK_UNKNOWN: i32 = 2;
