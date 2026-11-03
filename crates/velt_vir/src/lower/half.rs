@@ -68,6 +68,75 @@ impl FnLower<'_, '_> {
         self.half_math(op, vec![v])
     }
 
+    /// `inner as to`: through the conversion operations when either is an `f16`/`bf16`
+    /// (`num_cast`), after the fast path below.
+    pub(super) fn cast_expr(&mut self, inner: &hir::Expr, to: TyId) -> Operand {
+        if let Some(v) = self.half_fast(inner, to) {
+            return v;
+        }
+        let v = self.expr(inner);
+        if self.half_of(inner.ty).is_some() || self.half_of(to).is_some() {
+            return self.num_cast(v, inner.ty, to);
+        }
+        let (from, vto) = (self.vty(inner.ty), self.vty(to));
+        self.cast_to(v, from, vto)
+    }
+
+    /// One `+ - * /` of two values of the storage float `to`, or one and a literal exact in
+    /// it, rounded into `to` (#2191, owner decision): computed in f32 and narrowed f32 -> `to`,
+    /// one instruction where the target has it, instead of in f64 and narrowed through f32
+    /// rounded to odd. Exact by theorem: rounding twice through a format of p' >= 2p + 2 bits
+    /// is innocuous for one basic operation on p-bit operands (Figueroa 1995), and f32 has 24
+    /// bits against f16's 11 and bf16's 8. Checked exhaustively over every pair of 16-bit
+    /// patterns of both formats (`tests/half_fast.rs`). `None`
+    /// for anything else: another operator, a `number` operand, a literal the format cannot
+    /// hold (`x * 0.999`), or a chain of operations.
+    fn half_fast(&mut self, e: &hir::Expr, to: TyId) -> Option<Operand> {
+        let h = self.half_of(to)?;
+        let hir::ExprKind::Binary { op, lhs, rhs } = &e.kind else {
+            return None;
+        };
+        let arith = matches!(
+            op,
+            hir::BinOp::Add | hir::BinOp::Sub | hir::BinOp::Mul | hir::BinOp::Div
+        );
+        if !arith || self.vty(e.ty) != Ty::F64 {
+            return None;
+        }
+        let (a, b) = (self.fast_operand(lhs, h)?, self.fast_operand(rhs, h)?);
+        let x = self.fast_value(lhs, a, h);
+        let y = self.fast_value(rhs, b, h);
+        let r = self.rvalue_temp(Ty::F32, Rvalue::Binary(super::ops::arith_op(*op), x, y));
+        Some(self.narrow_half(r, Ty::F32, h))
+    }
+
+    /// What `half_fast` takes as an operand: a value of the storage float `h` widened to a
+    /// number (`None` inside), or a literal exact in `h` (its value).
+    fn fast_operand(&mut self, e: &hir::Expr, h: FloatTy) -> Option<Option<f64>> {
+        if let hir::ExprKind::Cast(inner) = &e.kind {
+            return (self.half_of(inner.ty) == Some(h)).then_some(None);
+        }
+        let v = literal_value(e)?;
+        let bits = match h {
+            FloatTy::F16 => half::f16_to_f32(half::f64_to_f16(v.to_bits())),
+            _ => half::bf16_to_f32(half::f64_to_bf16(v.to_bits())),
+        };
+        let exact = f64::from(f32::from_bits(bits)).to_bits() == v.to_bits();
+        exact.then_some(Some(v))
+    }
+
+    /// The f32 operand `fast_operand` described: the value widened, or the literal.
+    fn fast_value(&mut self, e: &hir::Expr, lit: Option<f64>, h: FloatTy) -> Operand {
+        match (lit, &e.kind) {
+            (Some(v), _) => Operand::Const(Const::Float(v), Ty::F32),
+            (None, hir::ExprKind::Cast(inner)) => {
+                let v = self.expr(inner);
+                self.widen_half(v, h)
+            }
+            _ => ice("a fast storage-float operand that is neither"),
+        }
+    }
+
     /// `v` (a value of HIR type `from`) converted to HIR type `to` with `as` semantics, either
     /// of them possibly a storage float: through `f32` from one, rounded once into one.
     pub(super) fn num_cast(&mut self, v: Operand, from: TyId, to: TyId) -> Operand {
@@ -210,4 +279,17 @@ pub(super) fn half_lit(f: f64, h: FloatTy) -> Operand {
         _ => half::f64_to_bf16(f.to_bits()),
     };
     cint(i128::from(bits), Ty::U16)
+}
+
+/// The value of a number literal, possibly negated.
+fn literal_value(e: &hir::Expr) -> Option<f64> {
+    match &e.kind {
+        hir::ExprKind::Lit(hir::Lit::Float(f)) => Some(*f),
+        hir::ExprKind::Lit(hir::Lit::Int(n)) => Some(*n as f64),
+        hir::ExprKind::Unary {
+            op: hir::UnOp::Neg,
+            expr,
+        } => literal_value(expr).map(|v| -v),
+        _ => None,
+    }
 }

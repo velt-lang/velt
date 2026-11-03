@@ -220,15 +220,7 @@ impl FnLower<'_, '_> {
                 self.super_call = prev;
                 v
             }
-            K::Cast(inner) => {
-                let v = self.expr(inner);
-                // Through the conversion operations to or from an `f16`/`bf16` (`half.rs`).
-                if self.half_of(inner.ty).is_some() || self.half_of(e.ty).is_some() {
-                    return self.num_cast(v, inner.ty, e.ty);
-                }
-                let (from, to) = (self.vty(inner.ty), self.vty(e.ty));
-                self.cast_to(v, from, to)
-            }
+            K::Cast(inner) => self.cast_expr(inner, e.ty),
             // The text of a type parameter's value: the branch this instantiation takes, as
             // if it were the expression (no join temporary).
             K::If { cond, then, els } if super::template::is_holds_dynamic(cond) => {

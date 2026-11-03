@@ -20,7 +20,7 @@ fn cmp_op(op: hir::BinOp) -> Option<vir::BinOp> {
     })
 }
 
-fn arith_op(op: hir::BinOp) -> vir::BinOp {
+pub(super) fn arith_op(op: hir::BinOp) -> vir::BinOp {
     use hir::BinOp as B;
     match op {
         B::Add => vir::BinOp::Add,
