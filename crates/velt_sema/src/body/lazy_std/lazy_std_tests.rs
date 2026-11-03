@@ -170,7 +170,9 @@ fn helpers_by_name_and_by_family() {
     assert!(!is_helper("Number"));
 }
 
-/// The `std_hook!(<entry>)` uses in the Rust sources under `dir`, outside tests.
+/// The hooks named in the Rust sources under `dir`, outside tests: `std_hook!(<entry>)`, and
+/// calls of `velt_vir`'s typed builders, `hooks::<entry>(` (lower/hook_calls.rs, which names
+/// each through a macro variable, `std_hook!($name)`, skipped here).
 fn hook_uses(dir: &std::path::Path, out: &mut Vec<String>) {
     for entry in std::fs::read_dir(dir).expect("source directory") {
         let path = entry.expect("source entry").path();
@@ -187,12 +189,20 @@ fn hook_uses(dir: &std::path::Path, out: &mut Vec<String>) {
         }
         let src = std::fs::read_to_string(&path).expect("source file");
         let src = src.split("#[cfg(test)]").next().unwrap_or_default();
-        for (i, m) in src.match_indices("std_hook!(") {
-            let name: String = src[i + m.len()..]
-                .chars()
-                .take_while(|c| c.is_ascii_alphanumeric() || *c == '_')
-                .collect();
-            out.push(name);
+        let ident = |c: char| c.is_ascii_alphanumeric() || c == '_';
+        for pat in ["std_hook!(", "hooks::"] {
+            for (i, m) in src.match_indices(pat) {
+                // `hooks::` alone, not `std_hooks::`.
+                if src[..i].chars().next_back().is_some_and(ident) {
+                    continue;
+                }
+                let rest = &src[i + m.len()..];
+                let name: String = rest.chars().take_while(|&c| ident(c)).collect();
+                let call = pat == "std_hook!(" || rest[name.len()..].starts_with('(');
+                if !name.is_empty() && call {
+                    out.push(name);
+                }
+            }
         }
     }
 }
