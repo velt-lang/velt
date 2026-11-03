@@ -6,20 +6,24 @@
 //     name <n>        pkg dep user (1 or 0 each), then checkUserName's message (empty when valid)
 //     version <v>     ok <canonical text>, or err <message>
 //     compare <a> <b> -1, 0 or 1
-//     archive <a>     ok <content checksum>, or err <message> (a package archive without native code)
+//     archive <a>     ok <content checksum>, or err <message>
+//     manifest <m>    ok <the manifest's JSON>, or err
+//     requirement <r> ok or err
 
 import { hexDecode, hexEncode, utf8Decode, utf8Encode } from "velt/encoding";
 import { readFileSync } from "velt/fs";
 import { args } from "velt/process";
 import {
   ArchiveError,
-  checkPackagePaths,
   checkUserName,
   contentChecksum,
   isValidDependencyName,
   isValidPackageName,
+  isValidRequirement,
   isValidUserName,
-  readArchive,
+  ManifestError,
+  readManifest,
+  readPackageArchive,
   SemverError,
   Version,
 } from "registry-core";
@@ -61,12 +65,21 @@ function answer(fields: string[]): string {
   }
   if (kind == "archive") {
     try {
-      const entries = readArchive(hexDecode(fields[1]), (p: string): bool => true);
-      checkPackagePaths(entries, null);
+      const entries = readPackageArchive(hexDecode(fields[1]));
       return `ok\t${hex(contentChecksum(entries))}`;
     } catch (e) {
       return e instanceof ArchiveError ? `err\t${hex(e.message)}` : `crash\t${hex(e.message)}`;
     }
+  }
+  if (kind == "manifest") {
+    try {
+      return `ok\t${hex(readManifest(text(fields[1])).toJson())}`;
+    } catch (e) {
+      return e instanceof ManifestError ? "err" : `crash\t${hex(e.message)}`;
+    }
+  }
+  if (kind == "requirement") {
+    return isValidRequirement(text(fields[1])) ? "ok" : "err";
   }
   return `unknown ${kind}`;
 }

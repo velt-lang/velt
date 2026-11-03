@@ -1,0 +1,92 @@
+// registry-core (internal): `tsCompat`'s folders (crates/vpm/src/manifest/read/ts_compat.rs): each
+// a path inside the package, listed once, and not inside or around one listed before, ignoring
+// case. vpm compares each new folder with every earlier one; an upload controls the list, so here
+// the accepted folders form a tree of their lowercased `/`-separated parts, and one walk down it
+// answers all three questions in time linear in the folder's length.
+
+/** The folders accepted so far, and the check of the next one. */
+export class TsCompatFolders {
+  /** The accepted folders, as written. */
+  folders: string[] = [];
+  /** A node's child by `${node}/${part}`; node 0 is the root. */
+  private children: Map<string, i64> = new Map();
+  /** For each node, the first accepted folder that ends there, or -1. */
+  private ends: i64[] = [-1];
+  /** For each node, the first accepted folder strictly below it, or -1. */
+  private below: i64[] = [-1];
+
+  /**
+   * Why `dir` can't be listed after the accepted folders, naming the first earlier folder it
+   * clashes with as vpm does; or null, and `dir` is accepted.
+   */
+  add(dir: string): string | null {
+    const inside =
+      !dir.includes("\\") &&
+      !dir.includes(":") &&
+      dir.split("/").every((s: string): bool => s.length > 0 && s != "." && s != "..");
+    if (!inside) {
+      return `\`tsCompat\` folder \`${dir}\` must be a \`/\`-separated path inside the package, relative to its root (such as \`src/models\`: no \`.\` or \`..\` parts, no leading or trailing \`/\`)`;
+    }
+    // Lowercased as a whole, as vpm does, so a final sigma before `/` lowers the same way.
+    const parts = dir.toLowerCase().split("/");
+    let node: i64 = 0;
+    let around: i64 = -1;
+    let same: i64 = -1;
+    let within: i64 = -1;
+    for (let k = 0; k < parts.length; k++) {
+      const child = this.children.get(`${node}/${parts[k]}`);
+      if (child == undefined) {
+        break;
+      }
+      node = child;
+      if (k + 1 < parts.length) {
+        if (this.ends[node] >= 0) {
+          around = this.ends[node];
+        }
+      } else {
+        same = this.ends[node];
+        within = this.below[node];
+      }
+    }
+    if (same >= 0) {
+      const e = this.folders[same];
+      return e == dir
+        ? `\`tsCompat\` lists \`${dir}\` twice`
+        : `\`tsCompat\` lists \`${dir}\` and \`${e}\`, which differ only in case (the same folder on case-insensitive file systems); keep one of them`;
+    }
+    // No accepted folder is inside another, so at most one is around `dir`, and never one around
+    // it and one within it at once: vpm's first clash is that one, or the first folder within.
+    if (around >= 0) {
+      return `\`${dir}\` is inside \`${this.folders[around]}\`, which \`tsCompat\` already lists`;
+    }
+    if (within >= 0) {
+      return `\`${dir}\` contains \`${this.folders[within]}\`, which \`tsCompat\` already lists; keep one of them`;
+    }
+    this.accept(dir, parts);
+    return null;
+  }
+
+  private accept(dir: string, parts: string[]): void {
+    const index: i64 = this.folders.length;
+    this.folders.push(dir);
+    let node: i64 = 0;
+    for (const part of parts) {
+      if (node != 0 && this.below[node] < 0) {
+        this.below[node] = index;
+      }
+      const key = `${node}/${part}`;
+      const child = this.children.get(key);
+      if (child == undefined) {
+        const fresh: i64 = this.ends.length;
+        this.ends.push(-1);
+        this.below.push(-1);
+        this.children.set(key, fresh);
+        node = fresh;
+      } else {
+        node = child;
+      }
+    }
+    // Not listed before, or `add` would have refused it.
+    this.ends[node] = index;
+  }
+}

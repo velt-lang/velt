@@ -1,0 +1,117 @@
+// registry-core (internal): the key a number literal stands for in an object literal, as the
+// Velt parser reads it (crates/velt_syntax/src/parser/primary.rs `number_key`): `String` of the
+// number, so `{ 0x10: v }`, `{ 1.50: v }` and `{ 1e3: v }` have the keys "16", "1.5" and "1000".
+// A literal with a type suffix (`1u8`), or past `u128`, is no key.
+
+/** The largest `u128`, in decimal. */
+const U128_MAX = "340282366920938463463374607431768211455";
+
+/** `digits` without leading zeros ("" for zero). */
+function significant(digits: string): string {
+  let i = 0;
+  while (i < digits.length && digits.slice(i, i + 1) == "0") {
+    i++;
+  }
+  return digits.slice(i);
+}
+
+/** Whether `s` holds only characters of `allowed`. */
+function only(s: string, allowed: string): bool {
+  for (const c of s) {
+    if (!allowed.includes(c)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** The value of `digits` in `radix` as the nearest double, or -1 past `u128`. */
+function radixValue(digits: string, radix: number): number {
+  // Bits per digit: a value fits `u128` when its significant digits do.
+  const sig = significant(digits);
+  const bits = radix == 16 ? 4 : radix == 8 ? 3 : 1;
+  if (sig.length * bits > 128) {
+    if (radix != 8 || sig.length * bits > 129 || sig.slice(0, 1) > "3") {
+      return -1;
+    }
+  }
+  return Number(toDecimal(sig, radix));
+}
+
+/** `digits` in `radix` written in decimal (exactly: limbs of 7 decimal digits). */
+function toDecimal(digits: string, radix: number): string {
+  const limbs: number[] = [0];
+  for (const c of digits) {
+    let carry = parseInt(c, 16);
+    for (let i = 0; i < limbs.length; i++) {
+      const v = limbs[i] * radix + carry;
+      limbs[i] = v % 10_000_000;
+      carry = Math.floor(v / 10_000_000);
+    }
+    while (carry > 0) {
+      limbs.push(carry % 10_000_000);
+      carry = Math.floor(carry / 10_000_000);
+    }
+  }
+  let out = String(limbs[limbs.length - 1]);
+  for (let i = limbs.length - 2; i >= 0; i--) {
+    out += String(limbs[i]).padStart(7, "0");
+  }
+  return out;
+}
+
+/** The key the number literal's digits `text` (`_` separators included, no suffix) stand for, or null. */
+export function numberKey(text: string): string | null {
+  const lower = text.toLowerCase();
+  if (lower.startsWith("0x") || lower.startsWith("0o") || lower.startsWith("0b")) {
+    const radix = lower.startsWith("0x") ? 16 : lower.startsWith("0o") ? 8 : 2;
+    const digits = text.slice(2).replaceAll("_", "");
+    const allowed = radix == 16 ? "0123456789abcdefABCDEF" : radix == 8 ? "01234567" : "01";
+    if (digits.length == 0 || !only(digits, allowed)) {
+      return null;
+    }
+    const value = radixValue(digits, radix);
+    return value < 0 ? null : String(value);
+  }
+  // Decimal: digits, an optional fraction and exponent; nothing glued after (no suffix).
+  const clean = text.replaceAll("_", "");
+  let i = 0;
+  const digit = (k: number): bool => {
+    const c = clean.slice(k, k + 1);
+    return c >= "0" && c <= "9" && c.length == 1;
+  };
+  while (digit(i)) {
+    i++;
+  }
+  let float = false;
+  if (clean.slice(i, i + 1) == "." && digit(i + 1)) {
+    float = true;
+    i++;
+    while (digit(i)) {
+      i++;
+    }
+  }
+  const e = clean.slice(i, i + 1);
+  if (e == "e" || e == "E") {
+    float = true;
+    i++;
+    if (clean.slice(i, i + 1) == "+" || clean.slice(i, i + 1) == "-") {
+      i++;
+    }
+    while (digit(i)) {
+      i++;
+    }
+  }
+  if (i != clean.length) {
+    return null;
+  }
+  const source = clean.startsWith(".") ? `0${clean}` : clean;
+  if (float) {
+    return String(Number(source));
+  }
+  const sig = significant(source);
+  if (sig.length > U128_MAX.length || (sig.length == U128_MAX.length && sig > U128_MAX)) {
+    return null;
+  }
+  return String(Number(sig.length == 0 ? "0" : sig));
+}

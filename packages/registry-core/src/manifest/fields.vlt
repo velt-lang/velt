@@ -1,0 +1,242 @@
+// registry-core (internal): the checks of `package.vlt`'s compound fields that need more than one
+// value (crates/vpm/src/manifest/mod.rs `check_dependency`, crates/vpm/src/git.rs, `define`
+// literals).
+
+import { anyChar, componentsNormal, isControl, isWhitespace, trim } from "./chars";
+import { Dependency } from "./dependency";
+import { isValidRequirement } from "../semver/requirement";
+import { splitScoped } from "../names";
+
+function gitUrlOk(url: string): string | null {
+  const schemes = ["https://", "http://", "ssh://", "git://", "file://"];
+  const colon = url.indexOf(":");
+  const scp =
+    colon >= 0 &&
+    url.slice(0, colon).includes("@") &&
+    !url.slice(0, colon).includes("/") &&
+    colon + 1 < url.length;
+  const ok =
+    (schemes.some((s: string): bool => url.startsWith(s)) || scp) &&
+    !url.startsWith("-") &&
+    !anyChar(url, (c: number): bool => isWhitespace(c) || isControl(c) || c == 35 || c == 63);
+  if (!ok) {
+    return `\`${url}\` is not a git repository URL (https://…, ssh://…, git@host:path or file://…, without \`?\` or \`#\`)`;
+  }
+  const sep = url.indexOf("://");
+  if (sep >= 0) {
+    const scheme = url.slice(0, sep);
+    const rest = url.slice(sep + 3);
+    const slash = rest.indexOf("/");
+    const authority = slash >= 0 ? rest.slice(0, slash) : rest;
+    const at = authority.lastIndexOf("@");
+    if (at >= 0) {
+      const info = authority.slice(0, at);
+      if (info.includes(":") || scheme.startsWith("http")) {
+        return "a git URL can't hold credentials (they would be printed and written to velt.lock.json); let git supply them with a credential helper (`git config credential.helper`) or use an SSH URL";
+      }
+    }
+  }
+  return null;
+}
+
+function isCommit(s: string): bool {
+  return (s.length == 40 || s.length == 64) && /^[0-9a-f]+$/.test(s);
+}
+
+/** `git`'s fields of a dependency (crates/vpm/src/git.rs `check_fields`). */
+function gitFields(name: string, d: Dependency): string | null {
+  const given: string[] = [];
+  if (d.branch != null) {
+    given.push("branch");
+  }
+  if (d.tag != null) {
+    given.push("tag");
+  }
+  if (d.rev != null) {
+    given.push("rev");
+  }
+  const url = d.git;
+  if (url == null) {
+    return given.length > 0
+      ? `dependency \`${name}\`: \`${given[0]}\` needs a \`git\` repository`
+      : null;
+  }
+  const bad = gitUrlOk(url);
+  if (bad != null) {
+    return `dependency \`${name}\`: ${bad}`;
+  }
+  if (given.length > 1) {
+    return `dependency \`${name}\`: \`${given[0]}\` and \`${given[1]}\` both name a commit; keep one`;
+  }
+  const rev = d.rev;
+  if (rev != null && !isCommit(rev)) {
+    return `dependency \`${name}\`: \`rev\` must be a full commit hash in lowercase hex (40 digits, or 64 for SHA-256), not \`${rev}\``;
+  }
+  const refs: [string, string | null][] = [
+    ["branch", d.branch],
+    ["tag", d.tag],
+  ];
+  for (const [key, value] of refs) {
+    if (
+      value != null && (value.length == 0 || value.startsWith("-") || anyChar(value, isWhitespace))
+    ) {
+      return `dependency \`${name}\`: \`${key}\` \`${value}\` is not a git ref name`;
+    }
+  }
+  const path = d.path;
+  if (path != null) {
+    const inside =
+      path
+        .split("/")
+        .every(
+          (s: string): bool =>
+            s.length > 0 && s != "." && s != ".." && !s.includes("\\") && !s.includes(":"),
+        ) &&
+      componentsNormal(path, false);
+    if (!inside) {
+      return `dependency \`${name}\`: with \`git\`, \`path\` is a \`/\`-separated directory inside the repository, not \`${path}\``;
+    }
+  }
+  return null;
+}
+
+/** One dependency (crates/vpm/src/manifest/mod.rs `check_dependency`). */
+export function checkDependency(name: string, d: Dependency): string | null {
+  if (d.simple == "workspace") {
+    return null;
+  }
+  const version = d.simple ?? d.version;
+  if (version == "workspace") {
+    return `dependency \`${name}\`: \`"workspace"\` is written as the whole value (\`${name}: "workspace"\`), not as a \`version\``;
+  }
+  if (d.simple == null) {
+    const bad = gitFields(name, d);
+    if (bad != null) {
+      return bad;
+    }
+  }
+  if (version == null && d.path == null && d.git == null) {
+    return `dependency \`${name}\` needs a \`version\`, a \`path\` or a \`git\` repository`;
+  }
+  if (splitScoped(name) != null && d.path == null && d.git == null) {
+    return `dependency \`${name}\` needs a \`path\`: registries hold unscoped packages only`;
+  }
+  if (version != null && !isValidRequirement(version)) {
+    return `dependency \`${name}\`: invalid version requirement \`${version}\``;
+  }
+  return null;
+}
+
+/** A JSON string, strictly (as `serde_json` reads one into a `String`). */
+function isJsonString(t: string): bool {
+  if (!t.startsWith("\"") || t.length < 2) {
+    return false;
+  }
+  const cps: number[] = [];
+  for (const c of t) {
+    cps.push(c.codePointAt(0) ?? 0);
+  }
+  let i = 1;
+  while (i < cps.length) {
+    const c = cps[i];
+    if (c == 34) {
+      return i == cps.length - 1;
+    }
+    if (c < 0x20) {
+      return false;
+    }
+    if (c == 92) {
+      const e = i + 1 < cps.length ? cps[i + 1] : -1;
+      if (e == 117) {
+        const hi = hex4(cps, i + 2);
+        if (hi < 0) {
+          return false;
+        }
+        i += 6;
+        if (hi >= 0xd800 && hi <= 0xdbff) {
+          // A leading surrogate needs its trailing one, written as an escape.
+          if (!(i + 1 < cps.length && cps[i] == 92 && cps[i + 1] == 117)) {
+            return false;
+          }
+          const lo = hex4(cps, i + 2);
+          if (lo < 0xdc00 || lo > 0xdfff) {
+            return false;
+          }
+          i += 6;
+        } else if (hi >= 0xdc00 && hi <= 0xdfff) {
+          return false;
+        }
+        continue;
+      }
+      if (![34, 92, 47, 98, 102, 110, 114, 116].includes(e)) {
+        return false;
+      }
+      i += 2;
+      continue;
+    }
+    i++;
+  }
+  return false;
+}
+
+function hex4(cps: number[], at: number): number {
+  let v = 0;
+  for (let k = 0; k < 4; k++) {
+    if (at + k >= cps.length) {
+      return -1;
+    }
+    const c = cps[at + k];
+    const d =
+      c >= 48 && c <= 57 ? c - 48 : c >= 97 && c <= 102 ? c - 87 : c >= 65 && c <= 70 ? c - 55 : -1;
+    if (d < 0) {
+      return -1;
+    }
+    v = v * 16 + d;
+  }
+  return v;
+}
+
+/** Whether a `define` value is a literal (crates/vpm/src/manifest/mod.rs `define_literal`). */
+export function isDefineLiteral(text: string): bool {
+  const t = trim(text);
+  if (t == "true" || t == "false" || t == "null") {
+    return true;
+  }
+  if (t.startsWith("\"")) {
+    return isJsonString(t);
+  }
+  if (t.length >= 2 && t.startsWith("'") && t.endsWith("'")) {
+    const inner = t.slice(1, t.length - 1);
+    return !inner.includes("'") && !inner.includes("\\");
+  }
+  // A number Rust's `f64` parse reads, starting with a digit, and finite: `digits(.digits?)?`
+  // then `(e|E)(+|-)?digits`, checked by hand (a regex literal is built again on every call).
+  let i = digitsEnd(t, 0);
+  if (i == 0) {
+    return false;
+  }
+  if (i < t.length && t.charCodeAt(i) == 46) {
+    i = digitsEnd(t, i + 1);
+  }
+  if (i < t.length && (t.charCodeAt(i) == 69 || t.charCodeAt(i) == 101)) {
+    let j = i + 1;
+    if (j < t.length && (t.charCodeAt(j) == 43 || t.charCodeAt(j) == 45)) {
+      j++;
+    }
+    const end = digitsEnd(t, j);
+    if (end == j) {
+      return false;
+    }
+    i = end;
+  }
+  return i == t.length && Number.isFinite(Number(t));
+}
+
+/** The index after the ASCII digits of `t` from `from`. */
+function digitsEnd(t: string, from: i64): i64 {
+  let i = from;
+  while (i < t.length && t.charCodeAt(i) >= 48 && t.charCodeAt(i) <= 57) {
+    i++;
+  }
+  return i;
+}

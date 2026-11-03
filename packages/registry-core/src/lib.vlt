@@ -1,6 +1,7 @@
 // registry-core: the package registry's rules in Velt (#1740, #1325): package and user names,
-// semver versions, and the package archive with its content checksum, as `velt` and vpm define
-// them. Request handling over pluggable storage is a later step of #1740.
+// semver versions and requirements, `package.vlt` as vpm reads it, and the package archive with
+// its content checksum, as `velt` and vpm define them. Request handling over pluggable storage is
+// a later step of #1740.
 
 export {
   checkDependencyName,
@@ -28,3 +29,12 @@ export {
   readArchive,
   SRC_DIR,
 } from "./archive";
+export { isValidRequirement } from "./semver/requirement";
+export { Dependency } from "./manifest/dependency";
+export { HostConfig } from "./manifest/host_config";
+export { Manifest } from "./manifest/manifest";
+export { NativeConfig } from "./manifest/native_config";
+export { Variant } from "./manifest/variant";
+export { ManifestError } from "./manifest/manifest_error";
+export { readManifest } from "./manifest/decode";
+export { readPackageArchive } from "./package_archive";

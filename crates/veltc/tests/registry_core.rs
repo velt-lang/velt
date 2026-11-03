@@ -8,6 +8,10 @@
 //! covers each rule, versions assembled from every kind of part, every pair of an ordered list,
 //! and every prefix of a valid archive.
 
+#[path = "registry_core/drift.rs"]
+mod drift;
+#[path = "registry_core/manifests.rs"]
+mod manifests;
 mod no_window;
 mod runtime_support;
 // Only `root` and `copy_dir`.
@@ -86,6 +90,81 @@ fn archive_case(archive: &[u8]) -> Case {
             Err(e) => format!("err\t{}", hex(e.as_bytes())),
         },
     }
+}
+
+fn manifest_case(src: &str) -> Case {
+    Case {
+        line: format!("manifest\t{}", hex(src.as_bytes())),
+        want: match vpm::manifest::Manifest::parse(src) {
+            Ok(m) => format!("ok\t{}", hex(m.to_json().to_string().as_bytes())),
+            Err(_) => "err".to_string(),
+        },
+    }
+}
+
+fn requirement_case(req: &str) -> Case {
+    Case {
+        line: format!("requirement\t{}", hex(req.as_bytes())),
+        want: if semver::VersionReq::parse(req).is_ok() {
+            "ok"
+        } else {
+            "err"
+        }
+        .to_string(),
+    }
+}
+
+fn manifests() -> Vec<Case> {
+    let mut all = manifests::whole();
+    all.extend(manifests::mutations());
+    all.extend(drift::keyword_cases(&root()));
+    all.extend(drift::ts_compat_cases());
+    all.extend(drift::big_cases());
+    all.extend(drift::fuzz_cases(4000));
+    all.iter().map(|m| manifest_case(m)).collect()
+}
+
+/// Requirements assembled from operators, versions with wildcards, and separators.
+fn requirements() -> Vec<Case> {
+    let ops = [
+        "", "=", ">", ">=", "<", "<=", "~", "^", "= ", ">=  ", "=>", "~>", "!",
+    ];
+    let versions = [
+        "1",
+        "1.2",
+        "1.2.3",
+        "1.*",
+        "1.x",
+        "1.2.X",
+        "1.*.3",
+        "1.2.3-rc.1",
+        "1.2-rc",
+        "1.2.3+b",
+        "01",
+        "1.02",
+        "*",
+        "x",
+        "1.2.3-01",
+        "1.2.3-",
+        "18446744073709551616",
+        "",
+    ];
+    let mut reqs = vec![];
+    for op in ops {
+        for v in versions {
+            reqs.push(format!("{op}{v}"));
+        }
+    }
+    for r in [
+        "*", " * ", "*, 1", "* 1", "x", "X", ">=1, <2", ">=1,<2", ">=1 ,<2", ">=1 <2", ">=1,",
+        ",1", "1,,2", "1 || 2", "  ^1.2  ", "1.2.3 ", "	1", "1	", "1, x", "v1",
+    ] {
+        reqs.push(r.to_string());
+    }
+    let many = |n: usize| vec![">=1"; n].join(", ");
+    reqs.push(many(32));
+    reqs.push(many(33));
+    reqs.iter().map(|r| requirement_case(r)).collect()
 }
 
 /// Every string of up to `len` characters over `alphabet`.
@@ -395,6 +474,24 @@ fn archives() -> Vec<Case> {
         ("src/a\u{0}b", b"d"),
         ("src/z", b""),
     ]));
+    // A native crate directory: allowed only when the manifest declares it.
+    let native: &[u8] =
+        b"export const pkg: Package = { name: \"p\", version: \"1.0.0\", native: { path: \"crate\" } };";
+    all.push(archive(&[
+        ("crate/Cargo.toml", b""),
+        ("package.vlt", native),
+    ]));
+    all.push(archive(&[
+        ("native/Cargo.toml", b""),
+        ("package.vlt", native),
+    ]));
+    all.push(archive(&[
+        ("native/Cargo.toml", b""),
+        (
+            "package.vlt",
+            b"export const pkg: Package = { name: \"p\", version: \"1.0.0\", native: {} };",
+        ),
+    ]));
     // Every prefix cutting a 4-byte character.
     let wide = archive(&[("package.vlt", manifest), ("src/\u{1f600}", b"x")]);
     for end in wide.len() - 8..wide.len() {
@@ -449,6 +546,21 @@ fn run(work: &Path, cases: &[Case]) -> Vec<String> {
         .collect()
 }
 
+/// A manifest answer's JSON written as `serde_json` writes the Rust side's (object keys sorted),
+/// so the two compare as values.
+fn normalize_manifest(line: &str, got: String) -> String {
+    if !line.starts_with("manifest\t") {
+        return got;
+    }
+    let Some(json) = got.strip_prefix("ok\t") else {
+        return got;
+    };
+    match serde_json::from_str::<serde_json::Value>(&unhex(json)) {
+        Ok(v) => format!("ok\t{}", hex(v.to_string().as_bytes())),
+        Err(e) => format!("bad-json\t{}", hex(e.to_string().as_bytes())),
+    }
+}
+
 /// The cases whose answers differ, readably.
 fn disagreements(cases: &[Case], got: &[String]) -> Vec<String> {
     assert_eq!(got.len(), cases.len(), "one answer per case");
@@ -488,7 +600,13 @@ fn registry_core_agrees_with_vpm() {
     let counts = [cases.len()];
     cases.extend(versions());
     cases.extend(archives());
-    let got = run(&work, &cases);
+    cases.extend(requirements());
+    cases.extend(manifests());
+    let got: Vec<String> = run(&work, &cases)
+        .into_iter()
+        .zip(&cases)
+        .map(|(g, c)| normalize_manifest(&c.line, g))
+        .collect();
     let wrong = disagreements(&cases, &got);
     assert!(
         wrong.is_empty(),

@@ -1,0 +1,84 @@
+// registry-core (internal): the character classes and path rules vpm's manifest checks use,
+// with Rust's definitions: `char::is_whitespace` (Unicode White_Space), `char::is_control`
+// (category Cc), `str::trim`, and `Path::components` on Unix.
+
+/** Rust's `char::is_whitespace`: Unicode's White_Space characters. */
+export function isWhitespace(c: number): bool {
+  return (
+    (c >= 9 && c <= 13) ||
+    c == 32 ||
+    c == 0x85 ||
+    c == 0xa0 ||
+    c == 0x1680 ||
+    (c >= 0x2000 && c <= 0x200a) ||
+    c == 0x2028 ||
+    c == 0x2029 ||
+    c == 0x202f ||
+    c == 0x205f ||
+    c == 0x3000
+  );
+}
+
+/** Rust's `char::is_control`: category Cc. */
+export function isControl(c: number): bool {
+  return c <= 0x1f || (c >= 0x7f && c <= 0x9f);
+}
+
+/** The code points of `s`. */
+export function codePoints(s: string): number[] {
+  const out: number[] = [];
+  for (const c of s) {
+    out.push(c.codePointAt(0) ?? 0);
+  }
+  return out;
+}
+
+/** Whether any character of `s` passes `test`. */
+export function anyChar(s: string, test: (c: number) => bool): bool {
+  for (const c of codePoints(s)) {
+    if (test(c)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Rust's `str::trim`: `s` without leading and trailing White_Space. */
+export function trim(s: string): string {
+  const cps = codePoints(s);
+  let start = 0;
+  let end = cps.length;
+  while (start < end && isWhitespace(cps[start])) {
+    start++;
+  }
+  while (end > start && isWhitespace(cps[end - 1])) {
+    end--;
+  }
+  let out = "";
+  for (let i = start; i < end; i++) {
+    out += String.fromCodePoint(cps[i]);
+  }
+  return out;
+}
+
+/**
+ * Whether every component of `path`, as Rust's `Path::components` splits it on Unix, is a
+ * normal name (`Component::Normal`), allowing a leading `.` when `curDir`: no root, no `..`.
+ * Empty segments and `.` after the first are not components there.
+ */
+export function componentsNormal(path: string, curDir: bool): bool {
+  if (path.startsWith("/")) {
+    return false;
+  }
+  const segments = path.split("/");
+  for (let i = 0; i < segments.length; i++) {
+    const s = segments[i];
+    if (s == "..") {
+      return false;
+    }
+    if (s == "." && i == 0 && !curDir) {
+      return false;
+    }
+  }
+  return true;
+}
