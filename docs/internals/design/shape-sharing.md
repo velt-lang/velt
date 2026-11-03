@@ -510,9 +510,9 @@ What this says for the prototype:
   is rule 1's *inline* read for release.
 
 **Scale 10k, debug:** the build takes 1.05 s (lower 138 ms, codegen 528 ms; `-v`). The generic
-instances are user code, 121 instances each of `common.count`, `first` and five `Box<T>`
+instances are user code, 121 instances each of `common.count`, `first` and four `Box<T>`
 methods, one per generated class. They come to 17,182 of 194,664 VIR body lines (8.8%), and
-sharing makes them 7 instances, or 14 if the classes split between `~rc` and `~own`. In release
+sharing makes them 6 instances, or 12 if the classes split between `~rc` and `~own`. In release
 all of them are inlined into their callers, and none is left in the IR, so the release scale
 numbers should not move. That makes them a check that release is unchanged, not a target.
 
