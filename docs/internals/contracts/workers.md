@@ -6,8 +6,8 @@ no platform: a platform is a package (packages/host-cloudflare is the first), an
 needs no compiler change. This is the contract between the build (`crates/veltc/src/commands/
 host.rs`, `driver/host_modules.rs`), host packages (`vpm::host`, manifest.md's `host`), the
 glue's host-neutral server core (`crates/velt_rt_wasm/js/velt_serve.mjs`), and the Velt code
-that serves through `velt:worker` (packages/http-server's JS-host variant, condition `js`, #1786) or binds a
-platform's services (packages/cloudflare, #1738).
+that serves through `velt:worker` (packages/http-server's JS-host variant, condition `js`,
+#1786) or binds a platform's services (packages/cloudflare, #1738).
 
 ## The build
 
