@@ -73,7 +73,10 @@ mod global_this;
 #[cfg(test)]
 mod hasher_tests;
 mod holds_promise;
+mod hook_calls;
 mod hooks;
+#[doc(hidden)]
+pub use hook_calls::hook_args;
 pub use hooks::NAMES as HOOK_NAMES;
 pub mod ide;
 mod iface_overloads;

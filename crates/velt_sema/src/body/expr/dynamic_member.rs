@@ -12,6 +12,7 @@ use crate::any::Dynamic;
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H, Intrinsic, Lit, Nothing, TyId, TyKind, UseMode};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 impl FnCx<'_, '_> {
     /// A member of an `any` is read, called or written here: lowering adds the member slots
@@ -268,12 +269,8 @@ impl FnCx<'_, '_> {
             }
             // A proxy's `get` trap sees the symbol itself (`anyGetSym`).
             let sym = self.expr(index, None, Want::Borrow);
-            return Ok(self.prelude_hir_call(
-                velt_common::std_hook!(any_get_sym),
-                vec![obj, key, sym],
-                any,
-                span,
-            ));
+            let call = hooks::any_get_sym(ty::Any::of(obj), ty::Str::of(key), ty::Symbol::of(sym));
+            return Ok(call.emit(self, any, span));
         }
         let k = self.expr(index, None, Want::Borrow);
         let Some(any) = any else {
@@ -303,12 +300,8 @@ impl FnCx<'_, '_> {
             let k = self.coerce(k, any);
             if self.uses_proxy() {
                 // A proxy's `get` trap and a record's symbol table see the symbol.
-                return Ok(self.prelude_hir_call(
-                    velt_common::std_hook!(any_get_key),
-                    vec![obj, k],
-                    any,
-                    span,
-                ));
+                let call = hooks::any_get_key(ty::Any::of(obj), ty::Any::of(k));
+                return Ok(call.emit(self, any, span));
             }
             return Ok(self.any_op(Intrinsic::AnyGet, vec![obj, k], any, span));
         }
@@ -354,11 +347,9 @@ impl FnCx<'_, '_> {
             return Ok(self.with_temp("<list>", recv, span, span, |lw, v| {
                 let undefined = || synth(ast::ExprKind::Lit(ast::Lit::Undefined), span);
                 let sep = args.first().cloned().unwrap_or_else(undefined);
-                lw.text_helper_call(
-                    velt_common::std_hook!(any_join_method),
-                    vec![v.clone(), sep],
-                    span,
-                )
+                let site = super::any_text::text_site_arg(span);
+                let call = hooks::any_join_method(ty::Any::of(v.clone()), ty::Any::of(sep), site);
+                lw.text_helper_call(call, span)
             }));
         }
         let key = self.key_lit(&prop.name, prop.span);

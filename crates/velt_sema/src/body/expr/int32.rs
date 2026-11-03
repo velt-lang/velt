@@ -22,6 +22,7 @@ use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
 use crate::hir::{self, BinOp, ExprKind as H, IntTy, TyId, TyKind, UnOp};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 /// The value of a float literal, possibly negated.
 fn literal_value(h: &hir::Expr) -> Option<f64> {
@@ -269,12 +270,8 @@ impl FnCx<'_, '_> {
             rhs,
         } = x.kind
         {
-            return match self.helper_call(
-                velt_common::std_hook!(mul_to_int32),
-                vec![*lhs, *rhs],
-                i32_,
-                span,
-            ) {
+            let call = hooks::mul_to_int32(ty::F64::of(*lhs), ty::F64::of(*rhs));
+            return match call.plain(self.cx, i32_, span) {
                 Some(call) => call,
                 None => self.error_expr(span),
             };

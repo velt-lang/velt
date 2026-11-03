@@ -38,6 +38,7 @@ use super::setters::synth;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
 use crate::hir::{self, ExprKind as H, Intrinsic, TyId, TyKind};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 /// The functions of JavaScript's `Object` that Velt doesn't have yet (`keys`, `values`,
 /// `entries` and the ones here are handled).
@@ -312,12 +313,7 @@ impl FnCx<'_, '_> {
             // An `any` / `unknown` of any expression shape: whether the value held is an array
             // (or a proxy of one).
             if self.uses_proxy() && !self.cx.scopes[self.module].is_std {
-                return self.prelude_hir_call(
-                    velt_common::std_hook!(any_is_array_proxy),
-                    vec![s],
-                    b,
-                    span,
-                );
+                return hooks::any_is_array_proxy(ty::Any::of(s)).emit(self, b, span);
             }
             return self.intrinsic(hir::Intrinsic::AnyIsArray, vec![s], b, span);
         }
@@ -326,12 +322,7 @@ impl FnCx<'_, '_> {
             // is an array, at run time.
             if let Ok(boxed) = self.generic_as_any(s.clone()) {
                 if self.uses_proxy() && !self.cx.scopes[self.module].is_std {
-                    return self.prelude_hir_call(
-                        velt_common::std_hook!(any_is_array_proxy),
-                        vec![boxed],
-                        b,
-                        span,
-                    );
+                    return hooks::any_is_array_proxy(ty::Any::of(boxed)).emit(self, b, span);
                 }
                 return self.intrinsic(hir::Intrinsic::AnyIsArray, vec![boxed], b, span);
             }

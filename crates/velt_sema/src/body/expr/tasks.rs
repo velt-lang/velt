@@ -239,7 +239,7 @@ impl FnCx<'_, '_> {
     /// `Promise.allSettled(ps)` / `Promise.any(ps)`: calls of the prelude's `promiseAllSettled` /
     /// `promiseAny` (std/prelude/promise.vlt), so a directly awaited `Promise.any` throws like
     /// any async call.
-    pub(super) fn prelude_call(
+    pub(crate) fn prelude_call(
         &mut self,
         name: &str,
         what: &str,
@@ -362,7 +362,7 @@ impl FnCx<'_, '_> {
     /// A call of `d<targs>` (result type `ret`) may throw here. An async function's errors
     /// surface where its promise is awaited: the promise's type carries them (`ret` is
     /// `Promise<T, E>`, built from what `d` was known to throw; checked after inference).
-    pub(super) fn call_throws(&mut self, d: DefId, targs: &[TyId], ret: TyId, span: Span) {
+    pub(crate) fn call_throws(&mut self, d: DefId, targs: &[TyId], ret: TyId, span: Span) {
         let f = self.cx.fn_info(d);
         if f.kind == FnKind::Extern || f.is_generator {
             // A generator's errors come out of `next()`, not out of the call creating it.

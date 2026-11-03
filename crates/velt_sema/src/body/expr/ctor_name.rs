@@ -12,6 +12,7 @@ use super::setters::synth;
 use crate::any::Dynamic;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, AdtKind, DefId};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 /// The standard library's classes whose instances JavaScript gives a constructor of the same
 /// name.
@@ -107,17 +108,13 @@ impl FnCx<'_, '_> {
         self.dynamic_class_match(
             s,
             str_,
-            velt_common::std_hook!(any_ctor_name),
+            |v| hooks::any_ctor_name(ty::Any::of(v)),
             |lw, c, _| match lw.class_ctor_name(c) {
                 Some(n) => lw.str_lit(&n, span),
                 None => {
                     let name = lw.cx.adt(c).map_or(String::new(), |a| a.name.clone());
                     let lit = synth(ast::ExprKind::Lit(ast::Lit::Str(name)), span);
-                    lw.prelude_fn_call(
-                        velt_common::std_hook!(any_ctor_name_unsupported),
-                        vec![lit],
-                        span,
-                    )
+                    hooks::any_ctor_name_unsupported(ty::Str::of(lit)).check(lw, span)
                 }
             },
             span,
