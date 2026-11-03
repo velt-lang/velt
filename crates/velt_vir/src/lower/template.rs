@@ -755,7 +755,7 @@ impl FnLower<'_, '_> {
                 self.call_rt(r, vec![v, o], None);
             }
             TyKind::Float(_) => {
-                let v = self.cast_to(v, from, Ty::F64);
+                let v = self.float_as_f64(v, aty);
                 self.call_rt(Rt::StrFromF64, vec![v, o], None);
             }
             TyKind::Bool => self.call_rt(Rt::StrFromBool, vec![v, o], None),

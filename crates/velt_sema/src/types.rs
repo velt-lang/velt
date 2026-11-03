@@ -113,8 +113,16 @@ impl Types {
         matches!(self.kind(t), TyKind::Int(_))
     }
 
+    /// `f32` or `f64` (`number`): a float arithmetic runs in. The storage floats (`f16`,
+    /// `bf16`) are not, so code written for floats rejects them until it handles them
+    /// ([`Types::is_storage_float`]) instead of treating their bits as a float.
     pub fn is_float(&self, t: TyId) -> bool {
-        matches!(self.kind(t), TyKind::Float(_))
+        matches!(self.kind(t), TyKind::Float(f) if !f.is_storage())
+    }
+
+    /// `f16` or `bf16` (#2049).
+    pub fn is_storage_float(&self, t: TyId) -> bool {
+        matches!(self.kind(t), TyKind::Float(f) if f.is_storage())
     }
 
     pub fn is_numeric(&self, t: TyId) -> bool {
@@ -377,6 +385,8 @@ impl Types {
             "u64" => TyKind::Int(IntTy::U64),
             "usize" => TyKind::Int(IntTy::USize),
             "f32" => TyKind::Float(FloatTy::F32),
+            "f16" => TyKind::Float(FloatTy::F16),
+            "bf16" => TyKind::Float(FloatTy::BF16),
             "f64" | "number" => TyKind::Float(FloatTy::F64),
             // `boolean` is TypeScript's name, so code can be shared with `tsc` (#353).
             "bool" | "boolean" => TyKind::Bool,
@@ -404,6 +414,8 @@ pub(crate) fn velt_only_type_name(name: &str) -> bool {
             | "u32"
             | "u64"
             | "usize"
+            | "f16"
+            | "bf16"
             | "f32"
             | "f64"
             | "bool"

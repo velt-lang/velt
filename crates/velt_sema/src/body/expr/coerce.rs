@@ -334,9 +334,16 @@ impl FnCx<'_, '_> {
         if let TyKind::Dyn(iface, args) = self.cx.ty.kind(exp).clone() {
             return self.dyn_value(h, exp, iface, &args);
         }
-        // `i8`..`i32`, `u8`..`u32` and `f32` are numbers too (exactly).
+        // `i8`..`i32`, `u8`..`u32`, `f32`, `f16` and `bf16` are numbers too (exactly).
         if exp == self.cx.ty.f64 && self.exact_in_number(h.ty) {
             return Ok(self.int_to_float(h, exp));
+        }
+        // An `f16` or `bf16` is an `f32` too, exactly (#2049); never the other way round.
+        if matches!(self.cx.ty.kind(exp), TyKind::Float(hir::FloatTy::F32))
+            && self.cx.ty.is_storage_float(h.ty)
+        {
+            let span = h.span;
+            return Ok(self.mk(H::Cast(Box::new(h)), exp, span));
         }
         if self.adapting
             && matches!(self.cx.ty.kind(h.ty), TyKind::FnPtr { .. })

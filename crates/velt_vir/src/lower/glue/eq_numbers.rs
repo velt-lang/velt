@@ -36,6 +36,11 @@ impl FnLower<'_, '_> {
             .filter(|&t| !self.cx.is_unit(t))
             .collect();
         if let [t] = parts[..] {
+            // An `f16`/`bf16` is a number member too, held as its bits: `number_value` widens it
+            // to the `f32` it is (#2049), exactly.
+            if self.half_of(t).is_some() {
+                return Some((Ty::F32, None));
+            }
             return matches!(self.cx.kind(t), TyKind::Int(_) | TyKind::Float(_))
                 .then(|| (self.cx.ty(t), None));
         }
@@ -66,7 +71,13 @@ impl FnLower<'_, '_> {
         let (t, c) = self.number_member(ty, v)?;
         let x = match c {
             Some(c) => c,
-            None => Operand::Copy(parts.first()?.0.clone()),
+            None => {
+                let (p, pt) = parts.first()?.clone();
+                match self.half_of(pt) {
+                    Some(h) => self.widen_half(Operand::Copy(p), h),
+                    None => Operand::Copy(p),
+                }
+            }
         };
         Some((x, t))
     }

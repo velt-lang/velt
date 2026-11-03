@@ -125,10 +125,10 @@ impl FnCx<'_, '_> {
         let members = self.cx.union_members(u)?;
         let numbers: Vec<(u32, TyId)> = (0..members.len() as u32)
             .map(|i| (i, members[i as usize]))
-            .filter(|&(_, m)| self.cx.ty.is_numeric(m) || self.lit_num(m).is_some())
+            .filter(|&(_, m)| self.number_like(m) || self.lit_num(m).is_some())
             .collect();
         // A union of literal types only (`1 | 2 | 3`) holds each value once.
-        let plain = numbers.iter().any(|&(_, m)| self.cx.ty.is_numeric(m));
+        let plain = numbers.iter().any(|&(_, m)| self.number_like(m));
         if numbers.len() < 2 || !plain {
             return None;
         }
@@ -232,12 +232,21 @@ impl FnCx<'_, '_> {
         }
     }
 
+    /// A number type, an `f16`/`bf16` included (#2049).
+    fn number_like(&self, m: TyId) -> bool {
+        self.cx.ty.is_numeric(m) || self.cx.ty.is_storage_float(m)
+    }
+
     /// `n` rounded to float type `m`, as a plain float type takes a literal it doesn't hold
     /// exactly (`0.1` as an `f32`); `None` for other types and for a value out of `m`'s range.
+    /// Not into an `f16`/`bf16`: a comparison with one is exact (#2049), so `u == 0.1` is false.
     fn number_rounded(&mut self, n: Num, m: TyId) -> Option<hir::Lit> {
         let TyKind::Float(ft) = self.cx.ty.kind(m) else {
             return None;
         };
+        if ft.is_storage() {
+            return None;
+        }
         let f = match n {
             Num::Int(n) => n as f64,
             Num::Float(f) => f,
@@ -276,7 +285,19 @@ impl FnCx<'_, '_> {
                     Num::Int(n) => (n as f64 as i128 == n).then_some(n as f64)?,
                     Num::Float(f) => f,
                 };
-                let fits = ft == FloatTy::F64 || f as f32 as f64 == f;
+                let fits = match ft {
+                    FloatTy::F64 => true,
+                    FloatTy::F32 => f as f32 as f64 == f,
+                    // Held exactly: the value comes back from its bits (`-0` too).
+                    FloatTy::F16 => {
+                        let b = velt_common::half::f64_to_f16(f.to_bits());
+                        f64::from(f32::from_bits(velt_common::half::f16_to_f32(b))) == f
+                    }
+                    FloatTy::BF16 => {
+                        let b = velt_common::half::f64_to_bf16(f.to_bits());
+                        f64::from(f32::from_bits(velt_common::half::bf16_to_f32(b))) == f
+                    }
+                };
                 fits.then_some(hir::Lit::Float(f))
             }
             _ => None,

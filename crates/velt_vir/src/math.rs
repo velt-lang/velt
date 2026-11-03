@@ -13,7 +13,8 @@
 
 use crate::vir::{ExternFn, Ty};
 
-pub mod half;
+/// The f16/bf16 conversions' reference (`velt_common::half`, which sema shares for literals).
+pub use velt_common::half;
 
 /// A scalar math operation of the runtime.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

@@ -223,8 +223,11 @@ impl FnLower<'_, '_> {
 
     /// `x != 0 && x == x`: neither `0`, `-0` nor `NaN`.
     fn float_truthy_into(&mut self, out: &Place, p: &Place, t: TyId) {
-        let vt = self.cx.ty(t);
-        let x = Operand::Copy(p.clone());
+        // An `f16`/`bf16`: its value, widened from its bits (#2049).
+        let (vt, x) = match self.half_of(t) {
+            Some(h) => (Ty::F32, self.widen_half(Operand::Copy(p.clone()), h)),
+            None => (self.cx.ty(t), Operand::Copy(p.clone())),
+        };
         let zero = Operand::Const(Const::Float(0.0), vt);
         let nonzero = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, x.clone(), zero));
         let (test, falsy, done) = (self.new_block(), self.new_block(), self.new_block());

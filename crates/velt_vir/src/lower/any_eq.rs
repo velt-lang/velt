@@ -126,8 +126,13 @@ impl FnLower<'_, '_> {
             // Numbers of every width hash their value as a float (`1` as `i32` is `1`).
             TyKind::Int(_) | TyKind::Float(_) => {
                 let p = self.deref_param(data, ty);
-                let vt = self.cx.ty(ty);
-                let f = self.cast_to(Operand::Copy(p), vt, Ty::F64);
+                let f = match self.cx.kind(ty) {
+                    TyKind::Float(_) => self.float_as_f64(Operand::Copy(p), ty),
+                    _ => {
+                        let vt = self.cx.ty(ty);
+                        self.cast_to(Operand::Copy(p), vt, Ty::F64)
+                    }
+                };
                 let x = self.key_float_bits(f, Ty::F64);
                 self.fx_combine(zero, x)
             }

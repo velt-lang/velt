@@ -181,8 +181,7 @@ impl FnLower<'_, '_> {
 
     /// Append the float `v` of type `ty` the way `console.log` prints it (`-0` is `-0`).
     pub(super) fn push_inspect_float(&mut self, buf: &Operand, v: Operand, ty: TyId) {
-        let from = self.cx.ty(ty);
-        let v = self.cast_to(v, from, Ty::F64);
+        let v = self.float_as_f64(v, ty);
         self.call_rt(Rt::StrbufPushInspectF64, vec![buf.clone(), v], None);
     }
 
@@ -192,7 +191,7 @@ impl FnLower<'_, '_> {
         let b = buf.clone();
         match self.cx.kind(ty) {
             TyKind::Float(_) => {
-                let v = self.cast_to(v, from, Ty::F64);
+                let v = self.float_as_f64(v, ty);
                 self.call_rt(Rt::StrbufPushF64, vec![b, v], None);
             }
             TyKind::Bool => self.call_rt(Rt::StrbufPushBool, vec![b, v], None),

@@ -54,15 +54,17 @@ impl FnLower<'_, '_> {
             _ => None,
         };
         let id = found.map(|(name, ty, init)| {
-            let vt = match self.cx.kind(ty) {
-                TyKind::Adt(_, targs) if targs.len() == 1 => self.cx.ty(targs[0]),
+            let (vt, half) = match self.cx.kind(ty) {
+                TyKind::Adt(_, targs) if targs.len() == 1 => {
+                    (self.cx.ty(targs[0]), self.cx.half(targs[0]))
+                }
                 k => super::ice(format_args!("static atomic of type {k:?}")),
             };
             let bits = match vt {
                 Ty::Bool => 8,
                 t => t.scalar_size().unwrap_or(8) * 8,
             };
-            let w = literal_word(&init, vt, bits);
+            let w = literal_word(&init, vt, half, bits);
             let bytes = w.to_le_bytes()[..(bits / 8) as usize].to_vec();
             let id = StaticId(self.cx.statics.len() as u32);
             self.cx.statics.push(StaticData {

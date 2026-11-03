@@ -13,7 +13,8 @@ use crate::sig::Printer;
 
 /// Velt's numeric types, all `number` in TypeScript.
 pub(crate) const NUMBERS: &[&str] = &[
-    "i8", "i16", "i32", "i64", "isize", "u8", "u16", "u32", "u64", "usize", "f32", "f64", "number",
+    "i8", "i16", "i32", "i64", "isize", "u8", "u16", "u32", "u64", "usize", "f16", "bf16", "f32",
+    "f64", "number",
 ];
 
 /// Velt's types whose second type argument is the error type, which TypeScript leaves out

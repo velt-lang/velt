@@ -48,6 +48,11 @@ impl FnLower<'_, '_> {
         result_ty: TyId,
     ) -> Operand {
         let t = self.vty(operand_ty);
+        // Sema widens the operands of every operator on an `f16`/`bf16` (#2049): an operator on
+        // one here would compute on its bits.
+        if self.half_of(operand_ty).is_some() {
+            super::ice("a binary operator on a storage float (sema widens its operands)");
+        }
         if matches!(self.kind(operand_ty), TyKind::Str) {
             return self.str_binop(op, l, r, result_ty);
         }

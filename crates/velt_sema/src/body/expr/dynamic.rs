@@ -42,6 +42,10 @@ impl FnCx<'_, '_> {
         if from.is_some() && exp == self.cx.ty.never {
             return Ok(self.dynamic_to_never(h));
         }
+        // Into an `f16`/`bf16`: not yet (#2049), implicitly or with `as` (`any_as_storage`).
+        if from.is_some() && self.cx.ty.is_storage_float(exp) {
+            return Ok(self.any_as_storage(exp, h.span));
+        }
         match (from, to) {
             (None, None) => Err(h),
             (None, Some(d)) if !self.takes_static(d, h.ty) => Err(h),

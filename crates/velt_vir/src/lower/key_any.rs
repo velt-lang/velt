@@ -174,6 +174,10 @@ impl FnLower<'_, '_> {
                 let kp = self.place_of(kv, kty);
                 return AnyKey::Str(self.addr(kp));
             }
+            // An `f16`/`bf16` key is its value, widened from its bits (#2049).
+            TyKind::Float(_) if self.half_of(kty).is_some() => {
+                return AnyKey::Num(self.float_as_f64(kv, kty));
+            }
             TyKind::Float(_) | TyKind::Int(_) => {
                 return AnyKey::Num(self.rvalue_temp(Ty::F64, Rvalue::Cast(kv, Ty::F64)));
             }

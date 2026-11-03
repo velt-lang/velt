@@ -381,7 +381,10 @@ impl FnCx<'_, '_> {
             );
             return self.expr(&eq, None, Want::Move);
         }
+        // A comparison: a literal beside an `f16`/`bf16` is an `f64` (#2049).
+        let outer = std::mem::replace(&mut self.comparing, true);
         let (l, r) = self.operands(a, b, None, Want::Borrow);
+        self.comparing = outer;
         if self.cx.ty.is_bottom(l.ty) || self.cx.ty.is_bottom(r.ty) {
             return self.error_expr(span);
         }
@@ -401,6 +404,8 @@ impl FnCx<'_, '_> {
             (l, r)
         };
         let (l, r) = self.mix_numbers(l, r);
+        // An `f16`/`bf16` is compared as the `f32` it widens to, as the operators do (#2049).
+        let (l, r) = (self.storage_widened(l), self.storage_widened(r));
         if l.ty != r.ty {
             // Values of unrelated types are never the same value: both are evaluated, in order.
             let stmts = [l, r]

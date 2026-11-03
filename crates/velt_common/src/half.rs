@@ -5,6 +5,9 @@
 //! payload and sets the quiet bit. These bits are what Arm's `fcvt` and `bfcvt` and x86's F16C
 //! give (checked on hardware), so code from either backend agrees with them.
 //!
+//! It lives here so sema can round `f16`/`bf16` literals exactly as the backends convert values
+//! (`velt_vir::math::half` re-exports it; the math operations are `velt_vir::math::MathOp`).
+//!
 //! Each function is written as the backends emit it where the CPU has no instruction: every
 //! path computed, one picked by selects, no branch (so loops of it vectorize), and the
 //! subnormal range rounded by an exact float addition of a power of two whose ulp is the

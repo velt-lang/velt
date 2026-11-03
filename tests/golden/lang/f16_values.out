@@ -1,0 +1,7 @@
+true true -1 0 2
+true false false true false true
+zero nan one and a half false 3
+3 true true
+0.0999755859375 -0 true number
+[ 0, 1.1015625, 2.203125, 3.296875, 4.40625 ] 5 11.0078125 0,1.1015625,2.203125,3.296875,4.40625
+ffft

@@ -50,8 +50,7 @@ impl Ctx<'_> {
         }
         match self.ty.kind(t) {
             TyKind::Int(i) => int_name(*i).to_string(),
-            TyKind::Float(crate::hir::FloatTy::F32) => "f32".into(),
-            TyKind::Float(crate::hir::FloatTy::F64) => "f64".into(),
+            TyKind::Float(f) => crate::generated::spell::float_name(*f).into(),
             TyKind::Bool => "boolean".into(),
             TyKind::Str => "string".into(),
             TyKind::Symbol => "symbol".into(),

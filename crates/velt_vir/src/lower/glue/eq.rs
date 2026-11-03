@@ -86,6 +86,19 @@ impl FnLower<'_, '_> {
                 self.ref_identity(a, b, ty)
             }
             TyKind::Promise(..) => self.promise_identity(a, b),
+            // An `f16`/`bf16` compares by value, never by its bits (#2049): widened to `f32`,
+            // then as an `f32` (`-0` is `0`; NaN is itself only as a key or in value mode).
+            TyKind::Float(f) if f.is_storage() => {
+                let x = self.widen_half(Operand::Copy(a.clone()), f);
+                let y = self.widen_half(Operand::Copy(b.clone()), f);
+                if self.key_mode {
+                    self.same_value_zero(x, y)
+                } else if self.value_mode {
+                    self.same_value(x, y, Ty::F32)
+                } else {
+                    self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x, y))
+                }
+            }
             _ if self.key_mode && vt.is_float() => {
                 let (x, y) = (Operand::Copy(a.clone()), Operand::Copy(b.clone()));
                 self.same_value_zero(x, y)
@@ -158,6 +171,12 @@ impl FnLower<'_, '_> {
                 let env = Operand::Copy(proj(place, Proj::Field(1)));
                 let env = self.cast_to(env, Ty::Ptr, Ty::U64);
                 self.fx_combine(h, env)
+            }
+            // By value, as the key equality above: the widened `f32`'s key bits.
+            TyKind::Float(f) if f.is_storage() => {
+                let w = self.widen_half(Operand::Copy(place.clone()), f);
+                let x = self.key_float_bits(w, Ty::F32);
+                self.fx_combine(cint(0, Ty::U64), x)
             }
             _ if vt.is_float() => {
                 let x = self.key_float_bits(Operand::Copy(place.clone()), vt);

@@ -198,7 +198,8 @@ impl FnLower<'_, '_> {
                 // A float casts as `as` casts it (truncating, saturating: `NaN` is 0); a
                 // narrower integer goes through `i64` (exact), so that it wraps as `300 as u8`.
                 let fl = self.new_block();
-                for k in [FloatTy::F64, FloatTy::F32] {
+                // An `f16`/`bf16` held is a float too (its number slot widens it, #2049).
+                for k in [FloatTy::F64, FloatTy::F32, FloatTy::F16, FloatTy::BF16] {
                     let Some(t) = held(self, TyKind::Float(k)) else {
                         continue;
                     };

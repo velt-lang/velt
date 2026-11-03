@@ -42,7 +42,7 @@ export function writeLiteral(out: Output, t: Type): void {
 export function writeValue(out: Output, model: Model, id: i64, v: string, key: string): void {
   const t = model.type(id);
   if (t.kind == "number") {
-    if (t.repr == "f64" || t.repr == "f32") {
+    if (t.repr == "f64" || t.repr == "f32" || t.repr == "f16" || t.repr == "bf16") {
       out.line(`appendJsonNumber(w, ${v} as f64);`);
     } else if (t.repr.startsWith("u")) {
       out.line(`appendJsonUint(w, ${v} as u64);`);

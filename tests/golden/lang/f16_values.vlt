@@ -1,0 +1,34 @@
+// `f16` and `bf16` values compare and hash by value, never by their bits (#2049): `-0` is `0`
+// for `==`, `includes`, `indexOf` and as a key; NaN finds NaN only where JS's SameValueZero
+// does (`includes`, keys); `Object.is` tells `-0` from `0`. Arrays are packed (2 bytes per
+// element) and print their values; an `any` holds the value. The expected output is Node's,
+// with each `f16` a `Math.f16round`ed number.
+function main() {
+  const nan = (0 / 0) as f16;
+  const nz: f16 = -0;
+  const z: f16 = 0;
+  const xs: f16[] = [z, nan, 1.5, 65504];
+  console.log(xs.includes(nan), xs.includes(nz), xs.indexOf(nan), xs.indexOf(nz), xs.lastIndexOf(1.5));
+  console.log(nz == z, nz != z, Object.is(nz, z), Object.is(nan, nan), nan == nan, nan != nan);
+  const m = new Map<f16, string>();
+  m.set(nz, "zero");
+  m.set(nan, "nan");
+  m.set(1.5, "one and a half");
+  console.log(m.get(z), m.get(nan), m.get(1.5 as f16), m.has(0.1 as f16), m.size);
+  const s = new Set<bf16>([0.1, 0.1 as bf16, -0, 0, (0 / 0) as bf16, (0 / 0) as bf16]);
+  console.log(s.size, s.has(0), s.has(0.10009765625 as bf16));
+  const a: any = 0.1 as f16;
+  const b: any = -0 as bf16;
+  console.log(a, b, a == 0.0999755859375, typeof a);
+  const ws: bf16[] = [];
+  for (let i = 0; i < 5; i++) {
+    ws.push((i * 1.1) as bf16);
+  }
+  let sum: f32 = 0;
+  for (const w of ws) {
+    sum += w;
+  }
+  console.log(ws, ws.length, sum, `${ws}`);
+  const truthy = [z, nz, nan, 1 as f16].map((v) => (v ? "t" : "f")).join("");
+  console.log(truthy);
+}

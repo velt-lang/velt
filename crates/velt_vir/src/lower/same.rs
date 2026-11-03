@@ -58,9 +58,12 @@ impl FnLower<'_, '_> {
     /// types compare their parts as `===` does; so does a union, whose `NaN`s are equal
     /// (Bool operand).
     pub(super) fn includes_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
+        // An `f16`/`bf16` (a `u16` in VIR) is a number too: its NaN finds NaN.
         let keyed = match self.cx.kind(ty) {
-            TyKind::Option(inner, _) => self.cx.ty(inner).is_float(),
-            _ => self.cx.ty(ty).is_float() || self.cx.is_dynamic(ty),
+            TyKind::Option(inner, _) => {
+                self.cx.ty(inner).is_float() || self.half_of(inner).is_some()
+            }
+            _ => self.cx.ty(ty).is_float() || self.half_of(ty).is_some() || self.cx.is_dynamic(ty),
         };
         if keyed {
             return self.key_same_values(a, b, ty);

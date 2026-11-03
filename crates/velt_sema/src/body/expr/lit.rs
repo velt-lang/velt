@@ -87,13 +87,13 @@ impl FnCx<'_, '_> {
                 None => return self.error_expr(span),
             },
             None => exp
-                .filter(|e| self.cx.ty.is_numeric(*e))
+                .filter(|e| self.cx.ty.is_numeric(*e) || self.cx.ty.is_storage_float(*e))
                 .unwrap_or(self.cx.ty.f64),
         };
         if suffix.is_none() && ty == self.cx.ty.f64 {
             self.literal_number_lit(span);
         }
-        if self.cx.ty.is_float(ty) {
+        if self.storage_literal(value as f64, ty, span) || self.cx.ty.is_float(ty) {
             return self.mk(H::Lit(hir::Lit::Float(value as f64)), ty, span);
         }
         let it = self.cx.ty.int_ty(ty).expect("ICE: int literal type");
@@ -128,9 +128,10 @@ impl FnCx<'_, '_> {
                 None => return self.error_expr(span),
             },
             None => exp
-                .filter(|e| self.cx.ty.is_float(*e))
+                .filter(|e| self.cx.ty.is_float(*e) || self.cx.ty.is_storage_float(*e))
                 .unwrap_or(self.cx.ty.f64),
         };
+        self.storage_literal(value, ty, span);
         self.mk(H::Lit(hir::Lit::Float(value)), ty, span)
     }
 

@@ -135,7 +135,7 @@ impl FnCx<'_, '_> {
             self.union_member(t, |s, m| s.cx.ty.is_numeric(m))
                 .unwrap_or(t)
         });
-        let num_exp = exp.filter(|t| self.cx.ty.is_numeric(*t));
+        let num_exp = exp.filter(|t| self.cx.ty.is_numeric(*t) || self.cx.ty.is_storage_float(*t));
         let (uop, inner) = match op {
             ast::UnaryOp::TypeOf => return self.typeof_value(operand, span),
             ast::UnaryOp::Delete => return self.delete_expr(operand, span),
@@ -169,8 +169,15 @@ impl FnCx<'_, '_> {
                     Err(inner) => inner,
                 };
                 self.literal_use_arith(&inner);
+                // `-x` on an `f16`/`bf16` runs in `f32` (#2049); a negated literal stays a
+                // literal of the type (`const w: f16 = -1.5`), which lowering rounds.
+                let inner = match &inner.kind {
+                    H::Lit(_) => inner,
+                    _ => self.storage_widened(inner),
+                };
                 let t = inner.ty;
                 let ok = self.cx.ty.is_bottom(t)
+                    || self.cx.ty.is_storage_float(t)
                     || self.cx.ty.is_float(t)
                     || self.cx.ty.int_ty(t).is_some_and(|i| i.is_signed());
                 if !ok {
@@ -232,9 +239,12 @@ impl FnCx<'_, '_> {
         hint: Option<TyId>,
         want: Want,
     ) -> (hir::Expr, hir::Expr) {
+        let storage_hint = self.storage_literal_hint();
         let pick = |s: &Self, first: &hir::Expr| {
             if s.cx.ty.is_bottom(first.ty) {
                 hint
+            } else if s.cx.ty.is_storage_float(first.ty) {
+                storage_hint
             } else {
                 Some(first.ty)
             }
@@ -340,11 +350,13 @@ impl FnCx<'_, '_> {
                     self.cast_member_numbers
                         .extend(super::cast_member::number_operands(lhs, rhs));
                 }
-                let lr = self.checked_operands(op, lhs, rhs, hint);
+                let lr = self.comparing_in(is_comparison(op), |s| {
+                    s.checked_operands(op, lhs, rhs, hint)
+                });
                 self.cast_member_numbers.truncate(mark);
                 lr
             }
-            None => self.operands(lhs, rhs, hint, Want::Borrow),
+            None => self.comparing_in(true, |s| s.operands(lhs, rhs, hint, Want::Borrow)),
         };
         // An `any` or `unknown` operand, by its checked type (a variable, a field, an element,
         // a call, a capture).
@@ -433,6 +445,9 @@ impl FnCx<'_, '_> {
             (l, r)
         };
         let (l, r) = self.std_int_operands(l, r);
+        if let Some(e) = self.storage_bitwise(op, &l, &r, span) {
+            return e;
+        }
         // Bitwise operators on numbers: JS's 32-bit semantics (`int32.rs`).
         if let Some(bop) = self.js_bitwise_applies(op, &l, &r) {
             return self.js_bitwise(bop, l, r, span);
@@ -443,6 +458,9 @@ impl FnCx<'_, '_> {
             (l, r)
         };
         let (l, r) = self.mix_numbers(l, r);
+        // Arithmetic and comparisons on `f16`/`bf16` run in `f32`: no operator has a storage
+        // operand (#2049).
+        let (l, r) = (self.storage_widened(l), self.storage_widened(r));
         let bop = hir_binop(op).expect("ICE: logical op in binary");
         if let Some(found) = self.param_ordering(bop, l.ty, r.ty) {
             return self.compare_via(found, bop, l, r, span);

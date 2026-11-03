@@ -157,6 +157,14 @@ impl FnLower<'_, '_> {
 
     pub(super) fn lit(&mut self, l: &hir::Lit, ty: TyId) -> Operand {
         let t = self.vty(ty);
+        // A storage float literal: the bits of its f64 value rounded once (#2049).
+        if let Some(h) = self.half_of(ty) {
+            match l {
+                hir::Lit::Int(n) => return super::half::half_lit(*n as f64, h),
+                hir::Lit::Float(f) => return super::half::half_lit(*f, h),
+                _ => {}
+            }
+        }
         match l {
             hir::Lit::Int(n) if t.is_float() => Operand::Const(Const::Float(*n as f64), t),
             hir::Lit::Int(n) => cint(wrap_int(*n as i128, t), t),

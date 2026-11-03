@@ -489,6 +489,8 @@ impl<'h> Cx<'h> {
             TyKind::Int(i) => int_ty(i),
             TyKind::Float(FloatTy::F32) => Ty::F32,
             TyKind::Float(FloatTy::F64) => Ty::F64,
+            // A storage float is its bit pattern (#2049, `half.rs`).
+            TyKind::Float(FloatTy::F16 | FloatTy::BF16) => Ty::U16,
             TyKind::Bool => Ty::Bool,
             TyKind::Str => Ty::Agg(STR_AGG),
             // The address of a symbol record (rt_abi.md "Symbols"), never null.

@@ -106,8 +106,13 @@ impl FnLower<'_, '_> {
                 // A number held at another width (`size` read through `any`) is a `number`.
                 TyKind::Int(_) | TyKind::Float(_) if ty != f64_ => {
                     let vp = self.any_value_place(data, ty);
-                    let from = self.cx.ty(ty);
-                    self.cast_to(Operand::Copy(vp), from, Ty::F64)
+                    match self.cx.kind(ty) {
+                        TyKind::Float(_) => self.float_as_f64(Operand::Copy(vp), ty),
+                        _ => {
+                            let from = self.cx.ty(ty);
+                            self.cast_to(Operand::Copy(vp), from, Ty::F64)
+                        }
+                    }
                 }
                 _ => self.builtin_this(data, ty, def),
             };
