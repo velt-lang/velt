@@ -1,0 +1,37 @@
+// velt/lang/proxy (internal): the array methods a proxy of an array runs generically and
+// `Array.prototype[key]` gives through `any` (array.vlt's `ArrayMethod`), and the arguments a
+// bound one passes.
+
+/** Is `key` one of the array methods `Array.prototype[key]` gives through `any`? */
+export function arrayMethodName(key: string): boolean {
+  return key === "push" ||
+    key === "pop" ||
+    key === "shift" ||
+    key === "unshift" ||
+    key === "splice" ||
+    key === "map" ||
+    key === "filter" ||
+    key === "forEach" ||
+    key === "some" ||
+    key === "every" ||
+    key === "find" ||
+    key === "includes" ||
+    key === "indexOf" ||
+    key === "lastIndexOf" ||
+    key === "join" ||
+    key === "slice" ||
+    key === "reverse" ||
+    key === "sort";
+}
+
+/** The elements of `a`, then those of `b`. */
+export function concatArgs(a: any[], b: any[]): any[] {
+  const all: any[] = [];
+  for (const x of a) {
+    all.push(x);
+  }
+  for (const x of b) {
+    all.push(x);
+  }
+  return all;
+}

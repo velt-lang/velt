@@ -1,1 +1,12 @@
 before
+[ 'a', 'b' ]
+color:red;font-size:12;
+span color:blue;
+plain
+6
+[ 'x', 'y', 'label' ] 3 p
+one:1;two:2;
+7
+11
+0:x;1:y;
+""

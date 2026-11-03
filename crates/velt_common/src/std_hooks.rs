@@ -174,6 +174,12 @@ hooks! {
     any_delete_member => lang_hooks_any_object, "anyDeleteMember", "(any, any) -> bool";
     has_own_property => lang_hooks_any_object, "HasOwnProperty", "class", lowered;
 
+    // any_record.vlt: an `any` holding another object converted to a record (`velt_vir`
+    // `any_to_record.rs`), loaded for a program that mentions `Record`
+    // (std/prelude/global/record_any.vlt).
+    any_to_record_any => lang_hooks_any_record, "anyToRecordAny", "(any) -> Record<string, any>", lowered;
+    any_to_record => lang_hooks_any_record, "anyToRecord", "<A>(any) -> Record<string, A>", lowered;
+
     // any_ops.vlt: operators on `any` values holding objects (`ToPrimitive` first).
     any_primitive => lang_hooks_any_ops, "anyPrimitive", "(any, string, string) -> any", lowered;
     any_primitive_plain => lang_hooks_any_ops, "anyPrimitivePlain", "(any, string, string) -> any", lowered;
@@ -257,6 +263,8 @@ hooks! {
     // Outside lang/hooks, defined where what they need is (none is exported to programs):
     // lang/proxy/array.vlt: an array method read through a proxy.
     array_method => lang_proxy_array, "ArrayMethod", "class", lowered;
+    /// `Array.prototype[key]` read through `any` (`velt_vir` `any_get_body`).
+    array_prototype_member => lang_proxy_array_apply, "arrayPrototypeMember", "(string) -> any", lowered;
 
     // lang/this_fn: a function whose `this` is bound at the call (a global loaded on demand).
     call_on => lang_this_fn, "callOn", "(any, any, any[]) -> any";

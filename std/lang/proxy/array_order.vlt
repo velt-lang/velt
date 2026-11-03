@@ -2,6 +2,7 @@
 // Node's order of trap calls.
 
 import { Proxy } from "velt/lang/proxy";
+import { anyString } from "velt/lang/hooks/any_text";
 import { arraySet, trapDelete, trapGet, trapHas } from "velt/lang/proxy/array";
 
 /** `reverse` of the proxy `p`: each pair of elements from the ends, through the traps. */
@@ -50,12 +51,14 @@ export function proxySort(p: Proxy, o: any, len: number, cmp: any): any {
   }
   items.sort((a: any, b: any): number => {
     if (cmp === undefined) {
-      const x = String(a);
-      const y = String(b);
+      // `ToString` as user code writes it (`String(o)` of an object is `[object Object]`).
+      const x = anyString(a, "");
+      const y = anyString(b, "");
       return x < y ? -1 : x > y ? 1 : 0;
     }
-    const r = cmp(a, b);
-    return typeof r === "number" ? (r as number) : 0;
+    // The comparator's result is `ToNumber`ed; `NaN` counts as equal.
+    const n: number = +cmp(a, b);
+    return n !== n ? 0 : n;
   });
   const n = items.length as number;
   for (let j = 0; j < n; j++) {

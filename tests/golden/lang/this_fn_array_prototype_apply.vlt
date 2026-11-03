@@ -1,0 +1,77 @@
+// Array methods read from `Array.prototype` through `any` and called with an explicit `this`
+// (#942, #823), as a reactive library instruments a proxied array's methods: a function
+// expression taking `this` calls `original.apply(this, arguments)`, so the method runs on the
+// proxy through its traps; `.call(this, ...args)` and `.apply(raw, args)` on a plain array too.
+let batches = 0;
+const log: string[] = [];
+const inst: Record<string, Function> = {};
+["push", "pop", "shift", "unshift", "splice", "sort", "reverse"].forEach((method) => {
+  const original = (Array.prototype as any)[method];
+  inst[method] = function (this: any) {
+    batches++;
+    try {
+      return original.apply(this, arguments);
+    } finally {
+      log.push(method + "/" + arguments.length);
+    }
+  };
+});
+(["includes", "indexOf", "lastIndexOf"] as const).forEach((method) => {
+  inst[method] = function (this: any, ...args: any[]) {
+    const raw = this.__raw as any[];
+    const result = (Array.prototype as any)[method].apply(this, args);
+    if (result !== -1 && result !== false) {
+      return result;
+    }
+    return (Array.prototype as any)[method].apply(raw, args);
+  };
+});
+inst.at2 = function (this: any, i: number) {
+  return (Array.prototype as any).slice.call(this, i, i + 1);
+};
+const keys = new Set(Object.keys(inst));
+
+function reactive(target: any[]): any {
+  return new Proxy(target, {
+    get(obj: any, prop: any, receiver: any): any {
+      if (prop === "__raw") {
+        return obj;
+      }
+      if (typeof prop === "string" && keys.has(prop)) {
+        return inst[prop];
+      }
+      return Reflect.get(obj, prop, receiver);
+    },
+    set(obj: any, prop: any, value: any, receiver: any): boolean {
+      log.push("set " + String(prop));
+      return Reflect.set(obj, prop, value, receiver);
+    },
+  });
+}
+
+function main() {
+  const target: any[] = [1, 2];
+  const p = reactive(target);
+  console.log(p.push(3, 4), p.length, target);
+  console.log(p.pop(), p.shift(), p.unshift(0), target);
+  console.log(p.splice(1, 1, "x", "y"), target);
+  console.log(p.indexOf("y"), p.includes(9), p.includes(0));
+  console.log(p.at2(1));
+  console.log(p.reverse() === target, target);
+  console.log(p.lastIndexOf(3), p.lastIndexOf("y", -3), p.lastIndexOf(0, -2), p.lastIndexOf(9));
+  console.log(p.sort() === p, target);
+  console.log(p.sort((a: any, b: any) => (String(a) < String(b) ? 1 : -1)) === p, target);
+  console.log(batches, log.join(" "));
+  // The method itself, on a plain array and on the proxy.
+  const push = (Array.prototype as any).push;
+  const plain: number[] = [7];
+  console.log(push.call(plain, 8, 9), plain, push.apply(p, [10]), target);
+  const join = (Array.prototype as any).join;
+  console.log(join.bind(plain)("+"), join.bind(p, "/")());
+  const sort = (Array.prototype as any).sort;
+  const words = ["b", "c", "a"];
+  console.log(sort.call(words), sort.apply([10, 9, 1], []), (Array.prototype as any).lastIndexOf.call(words, "a"));
+  console.log(typeof push, (Array.prototype as any).nope);
+}
+
+main();

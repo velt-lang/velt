@@ -1,0 +1,17 @@
+// A record of arrays converted back from an `any` (#1219), read with `?? []`: the `[]` (a
+// `never[]` where nothing gives it a type) becomes an empty array of the record's element type,
+// also where that array type may be a view (an `any` converted to it).
+function main() {
+  const r: Record<string, number[]> = { a: [1] };
+  const nest: any = r;
+  const nr = nest as Record<string, number[]>;
+  console.log(JSON.stringify(nr["a"] ?? []));
+  console.log(JSON.stringify(nr["b"] ?? []));
+  const xs: any = [2, 3];
+  const ys = xs as number[];
+  const more = r["z"] ?? [];
+  more.push(4);
+  console.log(JSON.stringify(r["a"] ?? []), ys.length, more);
+}
+
+main();

@@ -1,0 +1,8 @@
+// An object converted through `any` to a record whose values are a union: each value converts
+// to the union (#1219).
+function main() {
+  const conv = ({ s: "str", t: 1 } as any) as Record<string, string | number>;
+  console.log(Object.keys(conv), conv.s, conv.t);
+}
+
+main();

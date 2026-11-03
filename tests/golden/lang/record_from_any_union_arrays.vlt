@@ -1,0 +1,10 @@
+// An object converted through `any` to a record of arrays of a union (#1219), read with
+// `?? []`: the empty array becomes one of the union's arrays.
+function main() {
+  const nest: any = { a: [1, "x"] };
+  const nr = nest as Record<string, (string | number)[]>;
+  console.log(JSON.stringify(nr["a"] ?? []));
+  console.log(JSON.stringify(nr["b"] ?? []));
+}
+
+main();

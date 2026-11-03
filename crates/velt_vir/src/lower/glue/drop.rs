@@ -17,6 +17,28 @@ impl FnLower<'_, '_> {
         &mut self,
         place: &Place,
         ty: TyId,
+        each: impl FnMut(&mut Self, u32, Vec<(Place, TyId)>),
+    ) {
+        self.each_variant(place, ty, false, each);
+    }
+
+    /// [`Self::for_each_variant`] where each case produces a value the code after the join
+    /// uses: a tag outside the variants (none occurs) is unreachable rather than a jump to the
+    /// join, so that no path reaches it without the value.
+    pub(in crate::lower) fn for_each_variant_total(
+        &mut self,
+        place: &Place,
+        ty: TyId,
+        each: impl FnMut(&mut Self, u32, Vec<(Place, TyId)>),
+    ) {
+        self.each_variant(place, ty, true, each);
+    }
+
+    fn each_variant(
+        &mut self,
+        place: &Place,
+        ty: TyId,
+        total: bool,
         mut each: impl FnMut(&mut Self, u32, Vec<(Place, TyId)>),
     ) {
         let n = match self.cx.kind(ty) {
@@ -30,11 +52,19 @@ impl FnLower<'_, '_> {
             cases.push((v as i128, *b));
         }
         let tag = Operand::Copy(proj(place, Proj::Field(0)));
+        let default = match total {
+            false => join,
+            true => self.new_block(),
+        };
         self.terminate(Terminator::Switch {
             value: tag,
             cases,
-            default: join,
+            default,
         });
+        if total {
+            self.switch_to(default);
+            self.terminate(Terminator::Unreachable);
+        }
         for (v, b) in blocks.into_iter().enumerate() {
             self.switch_to(b);
             let view = self.cx.view(ty, v as u32);
