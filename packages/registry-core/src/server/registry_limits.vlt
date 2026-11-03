@@ -1,0 +1,9 @@
+// registry-core: how large an upload a `Registry` accepts.
+
+/** The limits of an upload; the defaults are the Rust server's (`MAX_ARCHIVE`) and #2225's. */
+export class RegistryLimits {
+  /** The largest archive accepted, in bytes (64 MiB): a larger body answers 413. */
+  maxArchiveBytes: i64 = 64 * 1024 * 1024;
+  /** The most files an archive may hold. */
+  maxEntries: i64 = 10000;
+}

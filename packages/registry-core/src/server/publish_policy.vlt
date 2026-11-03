@@ -1,0 +1,108 @@
+// registry-core (internal): what the registry refuses at publish beyond what an archive may be
+// (#2225). `readArchive` accepts these, as vpm's reader does, but a client unpacking them on
+// Windows or macOS would write one file over another (so the unpacked package no longer matches
+// its checksum) or write to a device. The registry refuses them once, here.
+
+import { ArchiveEntry } from "../archive";
+import { isWindowsDeviceName } from "../names";
+import { compareUtf8 } from "./json_text";
+
+/** How much of a path a refusal shows (the rest is cut, so an answer stays small). */
+export const SHOWN_PATH_CHARS = 100;
+
+/** `path` as a refusal shows it: control characters escaped, at most `SHOWN_PATH_CHARS` long. */
+export function shownPath(path: string): string {
+  let out = "";
+  let n = 0;
+  for (const c of path) {
+    if (n == SHOWN_PATH_CHARS) {
+      return `${out}…`;
+    }
+    const code = c.charCodeAt(0);
+    out += code < 32 || code == 127 ? `\\x${code < 16 ? "0" : ""}${code.toString(16)}` : c;
+    n++;
+  }
+  return out;
+}
+
+function hasControl(path: string): bool {
+  for (const c of path) {
+    const code = c.charCodeAt(0);
+    if (code < 32 || code == 127) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Why one segment of a path can't be a file or directory name on Windows, or null.
+function segmentProblem(segment: string): string | null {
+  if (segment.endsWith(".") || segment.endsWith(" ")) {
+    return "ends with a dot or a space, which Windows drops from file names";
+  }
+  const dot = segment.indexOf(".");
+  if (isWindowsDeviceName(dot < 0 ? segment : segment.slice(0, dot))) {
+    return "names a device on Windows (`con`, `nul`, `com1`, …)";
+  }
+  return null;
+}
+
+/**
+ * Why the registry refuses an archive with `entries` (read by `readPackageArchive`), or null:
+ * more than `maxEntries` files, paths out of order or twice, control characters, two paths that
+ * differ only in case (one file on Windows and macOS), a file that is also a directory, and names
+ * Windows can't hold.
+ */
+export function publishPathProblem(entries: ArchiveEntry[], maxEntries: i64): string | null {
+  if (entries.length > maxEntries) {
+    return `the archive has ${entries.length} files; a package may have at most ${maxEntries}`;
+  }
+  // Lowercased file and directory paths → the path as written, and whether it is a directory.
+  const seen: Map<string, string> = new Map();
+  const dirs: Set<string> = new Set();
+  for (let i = 0; i < entries.length; i++) {
+    const path = entries[i].path;
+    if (hasControl(path)) {
+      return `the archive has a path with a control character, \`${shownPath(path)}\``;
+    }
+    if (i > 0) {
+      const order = compareUtf8(entries[i - 1].path, path);
+      if (order == 0) {
+        return `the archive has \`${shownPath(path)}\` twice`;
+      }
+      if (order > 0) {
+        return `the archive's paths are not sorted: \`${shownPath(path)}\` comes after \`${shownPath(entries[i - 1].path)}\``;
+      }
+    }
+    const segments = path.split("/");
+    for (const segment of segments) {
+      const problem = segmentProblem(segment);
+      if (problem != null) {
+        return `the archive has \`${shownPath(path)}\`, whose name \`${shownPath(segment)}\` ${problem}`;
+      }
+    }
+    // Each directory on the way, then the file itself.
+    let prefix = "";
+    for (let s = 0; s < segments.length; s++) {
+      prefix = s == 0 ? segments[0] : `${prefix}/${segments[s]}`;
+      const isDir = s < segments.length - 1;
+      const key = prefix.toLowerCase();
+      const earlier = seen.get(key);
+      if (earlier == null) {
+        seen.set(key, prefix);
+        if (isDir) {
+          dirs.add(key);
+        }
+        continue;
+      }
+      if (isDir && dirs.has(key) && earlier == prefix) {
+        continue;
+      }
+      if (earlier == prefix || isDir != dirs.has(key)) {
+        return `the archive has \`${shownPath(prefix)}\` as a file and as a directory`;
+      }
+      return `the archive has \`${shownPath(earlier)}\` and \`${shownPath(prefix)}\`, which differ only in case: one file on Windows and macOS`;
+    }
+  }
+  return null;
+}

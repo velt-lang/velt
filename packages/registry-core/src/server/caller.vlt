@@ -1,0 +1,34 @@
+// registry-core: who sent a request, as an `AuthProvider` tells.
+
+/** The sender of a request. */
+export class Caller {
+  /** The user's name; null for anyone (an open registry) and for nobody (`refused`). */
+  readonly user: string | null;
+  /** The registry has users and the request named none of them: writes answer 401. */
+  readonly refused: bool;
+
+  private constructor(user: string | null, refused: bool) {
+    this.user = user;
+    this.refused = refused;
+  }
+
+  /** Anyone: the registry is open (it has no users), so every request may write. */
+  static anyone(): Caller {
+    return new Caller(null, false);
+  }
+
+  /** The user `name`, whose token the request carries. */
+  static ofUser(name: string): Caller {
+    return new Caller(name, false);
+  }
+
+  /** Nobody the registry knows: it has users, and the request's token is none of theirs. */
+  static nobody(): Caller {
+    return new Caller(null, true);
+  }
+
+  /** Whether the registry is open (no users), so owners are not enforced. */
+  isAnyone(): bool {
+    return this.user == null && !this.refused;
+  }
+}

@@ -1,0 +1,8 @@
+// registry-core: what a CDN in front of the registry must forget after a write (#1325's
+// `CachePurge`): nothing natively, Cloudflare's purge on Cloudflare.
+
+/** Drops cached answers once what they show has changed. */
+export interface CachePurge {
+  /** Forgets the cached answers to `paths` (`/api/v1/<name>/index`, …). */
+  purge(paths: string[]): Promise<void>;
+}

@@ -1,0 +1,66 @@
+// registry-core (internal): the public reads: the listing at `/`, a package's index, and a
+// version's archive (crates/velt_registry/src/lib.rs and packages.rs).
+
+import { NATIVE_TARGETS } from "../manifest/checks";
+import { isValidPackageName } from "../names";
+import { Version } from "../semver/version";
+import { archive, json, text } from "./answer";
+import { compareUtf8 } from "./json_text";
+import { RegistryStores } from "./registry_stores";
+
+/** `GET /`: how many packages, then their names, one per line. */
+export async function listing(stores: RegistryStores): Promise<Response> {
+  const names = await stores.db.packageNames();
+  names.sort(compareUtf8);
+  let out = `Velt package registry: ${names.length} packages\n`;
+  for (const n of names) {
+    out += `${n}\n`;
+  }
+  return text(200, out);
+}
+
+/** `GET /api/v1/<name>/index`: the package's `index.json`. */
+export async function index(stores: RegistryStores, name: string): Promise<Response> {
+  if (!isValidPackageName(name)) {
+    return text(400, "invalid package name");
+  }
+  const found = await stores.db.index(name);
+  if (found == null) {
+    return text(404, `no package \`${name}\``);
+  }
+  return json(found.toJson());
+}
+
+/** `GET /api/v1/<name>/<version>`: the version's archive (yanked ones too). */
+export async function download(
+  stores: RegistryStores,
+  name: string,
+  version: string,
+): Promise<Response> {
+  if (!isValidPackageName(name) || !Version.isValid(version)) {
+    return text(400, "invalid package name or version");
+  }
+  const entry = (await stores.db.index(name))?.entry(Version.parse(version).toString()) ?? null;
+  if (entry == null) {
+    return text(404, `no \`${name}\` ${version}`);
+  }
+  const bytes = await stores.blobs.get(entry.checksum);
+  if (bytes == null) {
+    return text(
+      500,
+      `the archive of \`${name}\` ${entry.version} is missing from the registry's store`,
+    );
+  }
+  return archive(bytes);
+}
+
+/**
+ * `GET` and `PUT /api/v1/<name>/<version>/native/<target>`: native libraries, which this
+ * registry doesn't take yet (their checks read the libraries' export tables, #1740 step 1d).
+ */
+export function native(name: string, version: string, target: string): Response {
+  if (!isValidPackageName(name) || !Version.isValid(version) || !NATIVE_TARGETS.includes(target)) {
+    return text(400, "invalid package name, version or target");
+  }
+  return text(501, "this registry does not serve native libraries yet");
+}

@@ -1,0 +1,42 @@
+// registry-core: a `MetadataDb` in memory, for tests and for trying a registry out.
+
+import { PackageIndex } from "../server/package_index";
+import { MetadataDb } from "../stores/metadata_db";
+
+/** Indexes and owners in maps; it hands out and keeps copies, as a database would. */
+export class MemoryMetadataDb implements MetadataDb {
+  private indexes: Map<string, PackageIndex> = new Map();
+  private ownerLists: Map<string, string[]> = new Map();
+
+  async index(name: string): Promise<PackageIndex | null> {
+    return this.indexes.get(name)?.copy() ?? null;
+  }
+
+  async putIndex(name: string, index: PackageIndex): Promise<void> {
+    this.indexes.set(name, index.copy());
+  }
+
+  async packageNames(): Promise<string[]> {
+    const names: string[] = [];
+    for (const [name, _] of this.indexes) {
+      names.push(name);
+    }
+    return names;
+  }
+
+  async searchCandidates(terms: string[]): Promise<PackageIndex[]> {
+    const out: PackageIndex[] = [];
+    for (const [_, index] of this.indexes) {
+      out.push(index.copy());
+    }
+    return out;
+  }
+
+  async owners(name: string): Promise<string[]> {
+    return [...(this.ownerLists.get(name) ?? [])];
+  }
+
+  async putOwners(name: string, owners: string[]): Promise<void> {
+    this.ownerLists.set(name, [...owners]);
+  }
+}

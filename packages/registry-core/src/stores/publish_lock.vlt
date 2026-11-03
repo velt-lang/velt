@@ -1,0 +1,14 @@
+// registry-core: writes to one package one at a time (#1325's `PublishLock`): a file lock
+// natively, a Durable Object on Cloudflare.
+
+import { HeldLock } from "./held_lock";
+
+/**
+ * Serializes the writes to a package. The handler takes the lock of a package's
+ * `normalizedName` for every write to it, so `my-pkg` and `my_pkg` (one name, as the registry
+ * counts them) are never published side by side.
+ */
+export interface PublishLock {
+  /** Waits until no other holder has `key`'s lock, then holds it. */
+  acquire(key: string): Promise<HeldLock>;
+}

@@ -1,0 +1,34 @@
+// registry-core (internal): the answers the handler sends, with the content types of the Rust
+// server's (velt_http's `Response::text` and `Response::bytes`).
+
+/** A `text/plain` answer. */
+export function text(status: i64, body: string): Response {
+  return new Response(body, {
+    status: status as f64,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+  });
+}
+
+/** A JSON answer of `body` (JSON text already). */
+export function json(body: string): Response {
+  return new Response(body, { status: 200, headers: { "content-type": "application/json" } });
+}
+
+/** An archive. */
+export function archive(body: u8[]): Response {
+  return new Response(body, {
+    status: 200,
+    headers: { "content-type": "application/octet-stream" },
+  });
+}
+
+/** How long a message from a parity reader may be in an answer (it may quote a whole path). */
+const MAX_MESSAGE_CHARS = 400;
+
+/** A 400 with `message`, cut to `MAX_MESSAGE_CHARS` (a refusal can quote what was sent). */
+export function refused(message: string): Response {
+  if (message.length <= MAX_MESSAGE_CHARS) {
+    return text(400, message);
+  }
+  return text(400, `${message.slice(0, MAX_MESSAGE_CHARS)}…`);
+}

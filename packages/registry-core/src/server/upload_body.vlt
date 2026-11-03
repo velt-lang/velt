@@ -1,0 +1,66 @@
+// registry-core (internal): an upload's body, read whole up to a limit (the Rust server's
+// `Server::start(…, MAX_ARCHIVE)`), so a larger one is refused before it is held in memory.
+
+import { Refusal } from "./refusal";
+
+function tooLarge(max: i64): Refusal {
+  return new Refusal(413, `the upload is larger than ${max} bytes`);
+}
+
+// The `Content-Length` a request declares, or -1 when it declares none it can be held to (the
+// server reading the body enforces the length; this only refuses a body announced too large).
+function declaredLength(header: string | null): i64 {
+  if (header == null) {
+    return -1;
+  }
+  let n: i64 = 0;
+  const digits = header.trim();
+  if (digits.length == 0) {
+    return -1;
+  }
+  for (const c of digits) {
+    if (c < "0" || c > "9") {
+      return -1;
+    }
+    // Saturates far above any limit, so a long run of digits can't overflow.
+    n = n > 1000000000000 ? n : n * 10 + (c.charCodeAt(0) - 48);
+  }
+  return n;
+}
+
+/** The bytes of `req`'s body; throws the 413 when it has more than `max`. */
+export async function uploadBody(req: Request, max: i64): Promise<u8[]> {
+  if (declaredLength(req.headers.get("content-length")) > max) {
+    throw tooLarge(max);
+  }
+  const body = req.body;
+  if (body == null) {
+    return [];
+  }
+  const chunks: u8[][] = [];
+  let total = 0;
+  const reader = body.getReader();
+  for (;;) {
+    const r = await reader.read();
+    if (r.done) {
+      break;
+    }
+    const chunk = r.value.toBytes();
+    total += chunk.length;
+    if (total > max) {
+      await reader.cancel();
+      throw tooLarge(max);
+    }
+    chunks.push(chunk);
+  }
+  if (chunks.length == 1) {
+    return chunks[0];
+  }
+  const out = Buffer.allocUnsafe(total);
+  let at = 0;
+  for (const c of chunks) {
+    out.set(c, at);
+    at += c.length;
+  }
+  return out;
+}

@@ -1,0 +1,43 @@
+// registry-core (internal): `PUT` and `DELETE /api/v1/<name>/<version>/yank` (crates/vpm's
+// `yank_local`, behind the Rust server's checks). A yanked version stays downloadable, so
+// lockfiles that pin it keep installing; only its index entry's `yanked` changes.
+
+import { isValidPackageName } from "../names";
+import { Version } from "../semver/version";
+import { ownerOf } from "./access";
+import { text } from "./answer";
+import { RegistryStores } from "./registry_stores";
+
+/** The path whose cached answers show package `name`'s index. */
+export function indexPath(name: string): string {
+  return `/api/v1/${name}/index`;
+}
+
+/** Yanks (`yanked`) or unyanks package `name`'s `version`. */
+export async function yank(
+  stores: RegistryStores,
+  req: Request,
+  name: string,
+  version: string,
+  yanked: bool,
+): Promise<Response> {
+  if (!isValidPackageName(name) || !Version.isValid(version)) {
+    return text(400, "invalid package name or version");
+  }
+  await ownerOf(stores, req, name);
+  const index = await stores.db.index(name);
+  if (index == null) {
+    return text(404, `\`${name}\` is not in the registry`);
+  }
+  const normal = Version.parse(version).toString();
+  const entry = index.entry(normal);
+  if (entry == null) {
+    return text(404, `\`${name}\` ${normal} is not published`);
+  }
+  if (entry.yanked != yanked) {
+    entry.yanked = yanked;
+    await stores.db.putIndex(name, index);
+    await stores.purge.purge([indexPath(name)]);
+  }
+  return text(200, `${yanked ? "yanked" : "unyanked"} \`${name}\` ${version}\n`);
+}
