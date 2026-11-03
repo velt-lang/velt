@@ -29,8 +29,16 @@ pub(super) fn size(f: &vir::Function) -> usize {
     f.blocks.iter().map(|b| b.stmts.len() + 1).sum()
 }
 
+/// Where the source map holds what std's generators wrote for a program (veltc's
+/// `generate::GENERATED_DIR`, then the generator's std path).
+const GENERATED_STD: &str = "<generated>/std/";
+
+/// Whether `f` is std's code: defined in std, or written for this program by one of std's
+/// generators (`JSON.parse<T>`'s reader of `T`). Generated code is served like a generic
+/// instance: its key is its code, so a program that generates the same code links it.
 fn is_std(f: &vir::Function) -> bool {
-    velt_common::std_modules::is_std(&velt_vir::mangle::demangle(&f.symbol))
+    let name = velt_vir::mangle::demangle(&f.symbol);
+    velt_common::std_modules::is_std(&name) || name.starts_with(GENERATED_STD)
 }
 
 /// The functions of `program` the cache serves.

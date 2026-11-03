@@ -228,3 +228,50 @@ fn only_release_executables_use_the_std_cache() {
         );
     }
 }
+
+/// A program whose std code includes what a std generator wrote for it: `JSON.parse<Item[]>`'s
+/// reader of `Item`.
+const JSON_PROGRAM: &str = "struct Item {
+  id: i64;
+  name: string;
+  tags: string[];
+}
+
+function main() {
+  const items = JSON.parse<Item[]>(`[{\"id\":1,\"name\":\"a\",\"tags\":[\"x\",\"y\"]},{\"id\":2,\"name\":\"b\",\"tags\":[]}]`);
+  let n: i64 = 0;
+  for (const it of items) n += it.id + (it.tags.length as i64);
+  console.log(items.length, n, items[0].name);
+}
+";
+
+/// Editing the program's own code compiles none of its std code again: the second build finds
+/// every std function the first compiled, the code std's JSON generator wrote for the program
+/// among them, and compiles nothing (counted, not timed).
+#[test]
+fn an_edited_program_compiles_no_std_code_again() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    let cache = dir.join("cache");
+    let all = [("VELT_STD_OBJECT_MIN_MISSES", "1")];
+    std::fs::write(dir.join("a.vlt"), JSON_PROGRAM).unwrap();
+    let cold = build(dir, "a.vlt", "a1", &cache, &all);
+    let (found, compiled) = counts(&cold);
+    assert!(found == 0 && compiled > 0, "{}", text(&cold.stderr));
+    // Mangled `<generated>`: a function std's generator wrote is served.
+    let generated = |o: &Output| {
+        (text(&o.stderr).lines())
+            .any(|l| l.contains("std cache: links") && l.contains("_3cgenerated_3e"))
+    };
+    assert!(generated(&cold), "{}", text(&cold.stderr));
+    assert_eq!(run(dir, "a1"), "2 5 a\n");
+    let edited = JSON_PROGRAM.replace(
+        "function main() {\n",
+        "function main() {\n  console.log(\"edited\");\n",
+    );
+    std::fs::write(dir.join("a.vlt"), edited).unwrap();
+    let warm = build(dir, "a.vlt", "a2", &cache, &all);
+    assert_eq!(counts(&warm), (compiled, 0), "{}", text(&warm.stderr));
+    assert!(generated(&warm), "{}", text(&warm.stderr));
+    assert_eq!(run(dir, "a2"), "edited\n2 5 a\n");
+}

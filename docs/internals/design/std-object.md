@@ -62,6 +62,11 @@ is exactly what it would have compiled (measurements on #1728). So step 3 is a c
 functions in `velt_build_cache` (kind `stdfn`, file entries), for release builds behind
 `VELT_STD_OBJECT=1` (`crates/veltc/src/driver/std_cache/`):
 
+- Std's code includes what std's generators write for a program (`<generated>/std/…` in the
+  source map: `JSON.parse<T>`'s reader of `T`). It is served like a generic instance: an
+  edited program that generates the same code links it, and `bench/json/parse_typed.vlt`
+  rebuilt after an edit of `main` costs 13% fewer instructions than with std's own code alone
+  (#2189).
 - After lowering, each std function the cache serves gets a key: its canonical code
   (`velt_vir::fingerprint`, `Mode::Link`) and parameter attributes, those of every small function
   it may inline, and who compiles it for what (`build_cache::compiler_identity`, clang, target,
