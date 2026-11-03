@@ -1,0 +1,128 @@
+// `Math.sqrt` of an `f16` (or a `bf16`) stored into the same format: the compiler computes the
+// square root in f32 and narrows once (#2049), which rounds as the f64 square root narrowed once
+// does, because f32 has at least 2p + 2 bits. The sweep runs every pattern of both formats (NaNs,
+// negatives, -0, subnormals, infinities) through an assignment, an argument, an element store
+// and a return, each `Math.sqrt(x) as f16` written inline so that each takes the fast path, and
+// hashes the bits; the square root of a chain (`a * 1.0001`) and a chain on the root (`* 0.5`)
+// stay on the exact path. The expected output is Node's (`Float16Array`; bf16: an exact
+// round-to-nearest-even reference). A NaN hashes as one pattern.
+function bits16(x: f16): number {
+  return x != x ? 0x7e00 : x.toBits() as number;
+}
+
+function bitsBf16(x: bf16): number {
+  return x != x ? 0x7fc0 : x.toBits() as number;
+}
+
+function mix(h: number, x: number): number {
+  return (h * 31 + x) % 4294967296;
+}
+
+function rootF16(x: f16): f16 {
+  return Math.sqrt(x) as f16;
+}
+
+function rootBf16(x: bf16): bf16 {
+  return Math.sqrt(x) as bf16;
+}
+
+function sweepF16(): string {
+  let h = 0;
+  let exact = 0;
+  const xs: f16[] = [0, 0];
+  for (let i = 0; i < 65536; i++) {
+    const a = f16.fromBits(i as u16);
+    let y: f16 = 0;
+    y = Math.sqrt(a) as f16;
+    h = mix(h, bits16(y));
+    h = mix(h, bits16(Math.sqrt(a) as f16));
+    xs[0] = a;
+    xs[1] = Math.sqrt(xs[0]) as f16;
+    h = mix(h, bits16(xs[1]));
+    const z = rootF16(a);
+    h = mix(h, bits16(z));
+    y = Math.sqrt(a * 1.0001) as f16;
+    exact = mix(exact, bits16(y));
+    y = (Math.sqrt(a) * 0.5) as f16;
+    exact = mix(exact, bits16(y));
+  }
+  return `${h.toString(16)} ${exact.toString(16)}`;
+}
+
+function sweepBf16(): string {
+  let h = 0;
+  let exact = 0;
+  const xs: bf16[] = [0, 0];
+  for (let i = 0; i < 65536; i++) {
+    const a = bf16.fromBits(i as u16);
+    let y: bf16 = 0;
+    y = Math.sqrt(a) as bf16;
+    h = mix(h, bitsBf16(y));
+    h = mix(h, bitsBf16(Math.sqrt(a) as bf16));
+    xs[0] = a;
+    xs[1] = Math.sqrt(xs[0]) as bf16;
+    h = mix(h, bitsBf16(xs[1]));
+    const z = rootBf16(a);
+    h = mix(h, bitsBf16(z));
+    y = Math.sqrt(a * 1.0001) as bf16;
+    exact = mix(exact, bitsBf16(y));
+    y = (Math.sqrt(a) * 0.5) as bf16;
+    exact = mix(exact, bitsBf16(y));
+  }
+  return `${h.toString(16)} ${exact.toString(16)}`;
+}
+
+// Single values: zeros, the smallest subnormal, the largest subnormal, the smallest normal, 1, 2,
+// 4, the largest finite, the infinities, -1 and a NaN.
+const PICK: u16[] = [
+  0x0000,
+  0x8000,
+  0x0001,
+  0x03ff,
+  0x0400,
+  0x3c00,
+  0x4000,
+  0x4400,
+  0x7bff,
+  0x7c00,
+  0xfc00,
+  0xbc00,
+  0x7e00,
+];
+const PICK_BF16: u16[] = [
+  0x0000,
+  0x8000,
+  0x0001,
+  0x007f,
+  0x0080,
+  0x3f80,
+  0x4000,
+  0x7f7f,
+  0x7f80,
+  0xff80,
+  0xbf80,
+  0x7fc0,
+];
+
+function picks(): string {
+  const out: string[] = [];
+  for (const b of PICK) {
+    const r = Math.sqrt(f16.fromBits(b)) as f16;
+    out.push(bits16(r).toString(16));
+  }
+  return out.join(" ");
+}
+
+function picksBf16(): string {
+  const out: string[] = [];
+  for (const b of PICK_BF16) {
+    const r = Math.sqrt(bf16.fromBits(b)) as bf16;
+    out.push(bitsBf16(r).toString(16));
+  }
+  return out.join(" ");
+}
+
+console.log("f16", sweepF16());
+console.log("bf16", sweepBf16());
+console.log(picks());
+console.log(picksBf16());

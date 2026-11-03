@@ -94,8 +94,9 @@ fn goldens_split_into_codegen_units() {
 /// path and `fmod` fallback), the int32 operators (`@velt.to_int32`, `mul_int32`, `add_int32`,
 /// `clz32`) and the string helpers (`@velt.str_drop`, `str_eq`, `str_cmp`, `str_slice`,
 /// `str_hash`: keys hashed inline and by the runtime must agree), with `charCodeAt` and the `Map` probes
-/// `velt_opt` merges alongside. Each helper is defined in every codegen unit that uses it, so
-/// each golden also runs split into two units.
+/// `velt_opt` merges alongside, and the f16/bf16 square root (`@velt.sqrt_f32` and the
+/// narrowing helpers). Each helper is defined in every codegen unit that uses it, so each golden
+/// also runs split into two units.
 #[test]
 fn inline_helpers_with_llvm() {
     if !velt_codegen_llvm::available() {
@@ -115,6 +116,7 @@ fn inline_helpers_with_llvm() {
         "lang/char_code_at",
         "lang/map_string_keys",
         "lang/map_probe_reuse",
+        "lang/f16_sqrt",
     ]
     .iter()
     .map(|name| root.join("tests/golden").join(format!("{name}.vlt")))

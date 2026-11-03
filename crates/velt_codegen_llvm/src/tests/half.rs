@@ -289,3 +289,43 @@ fn half_native_follows_the_target() {
         Some("@velt.f32_to_f16")
     );
 }
+
+/// `velt_math_sqrt_f32` is `llvm.sqrt.f32` through an inline helper, never a call of its
+/// declaration (no runtime defines it): `Math.sqrt` of an f16 stored to an f16 is `fcvt s, h`, `fsqrt s`,
+/// `fcvt h, s` on arm64.
+#[test]
+fn f32_sqrt_is_the_llvm_intrinsic() {
+    use super::builder::*;
+    use velt_vir::vir::Ty::{F32, I32, U16};
+    use velt_vir::vir::{Intrinsic, Rvalue};
+    let mut pb = ProgramBuilder::new();
+    let mut fb = FuncBuilder::export("velt_main", &[], I32);
+    let (x, w, r, h) = (fb.local(U16), fb.local(F32), fb.local(F32), fb.local(U16));
+    let b = fb.block();
+    fb.assign(b, x, Rvalue::Use(int(0x4400, U16)));
+    for (op, dst, src) in [
+        (MathOp::F16ToF32, w, x),
+        (MathOp::SqrtF32, r, w),
+        (MathOp::F32ToF16, h, r),
+    ] {
+        let (params, ret) = op.signature();
+        pb.ext(op.symbol(), params, ret, false);
+        fb.assign(
+            b,
+            dst,
+            Rvalue::Intrinsic(Intrinsic::Math(op), vec![copy_local(src)]),
+        );
+    }
+    fb.ret(b, int(0, I32));
+    pb.add(fb.finish());
+    let ir = crate::emit_ir(&pb.finish(), "aarch64-apple-darwin").expect("IR");
+    for needle in [
+        "declare float @llvm.sqrt.f32(float)",
+        "define internal float @velt.sqrt_f32(float %x) alwaysinline nounwind {",
+        "call float @llvm.sqrt.f32(float %x)",
+        "call float @velt.sqrt_f32(float %",
+    ] {
+        assert!(ir.contains(needle), "missing `{needle}` in\n{ir}");
+    }
+    assert!(!ir.contains("call float @\"velt_math_sqrt_f32\""), "{ir}");
+}

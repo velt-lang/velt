@@ -150,6 +150,13 @@ const BITS_F32: &str = "define internal float @velt.bits_f32(i32 %b) alwaysinlin
   ret float %r
 }";
 
+/// The f32 square root (`velt_math_sqrt_f32`): `llvm.sqrt.f32`, one `fsqrt s` / `sqrtss`.
+const SQRT_F32_DECL: &str = "declare float @llvm.sqrt.f32(float)";
+const SQRT_F32: &str = "define internal float @velt.sqrt_f32(float %x) alwaysinline nounwind {
+  %r = call float @llvm.sqrt.f32(float %x)
+  ret float %r
+}";
+
 /// A runtime math function the backend calls through a helper defined in the module instead:
 /// the helper's name and its definition (with what it declares). The helper has the
 /// operation's signature (`MathOp::signature`).
@@ -167,6 +174,7 @@ pub(crate) fn inline_helper(op: MathOp) -> Option<InlineHelper> {
         MathOp::BitsF64 => ("@velt.bits_f64", &[BITS_F64]),
         MathOp::F32Bits => ("@velt.f32_bits", &[F32_BITS]),
         MathOp::BitsF32 => ("@velt.bits_f32", &[BITS_F32]),
+        MathOp::SqrtF32 => ("@velt.sqrt_f32", &[SQRT_F32_DECL, SQRT_F32]),
         _ => return None,
     })
 }

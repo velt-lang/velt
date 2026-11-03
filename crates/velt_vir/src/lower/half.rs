@@ -83,31 +83,83 @@ impl FnLower<'_, '_> {
     }
 
     /// One `+ - * /` of two values of the storage float `to`, or one and a literal exact in
-    /// it, rounded into `to` (#2191, owner decision): computed in f32 and narrowed f32 -> `to`,
-    /// one instruction where the target has it, instead of in f64 and narrowed through f32
-    /// rounded to odd. Exact by theorem: rounding twice through a format of p' >= 2p + 2 bits
-    /// is innocuous for one basic operation on p-bit operands (Figueroa 1995), and f32 has 24
-    /// bits against f16's 11 and bf16's 8. Checked exhaustively over every pair of 16-bit
-    /// patterns of both formats (`tests/half_fast.rs`). `None`
-    /// for anything else: another operator, a `number` operand, a literal the format cannot
-    /// hold (`x * 0.999`), or a chain of operations.
+    /// it, or the `Math.sqrt` of one, rounded into `to` (#2191, #2049, owner decisions):
+    /// computed in f32 and narrowed f32 -> `to`, one instruction where the target has it,
+    /// instead of in f64 and narrowed through f32 rounded to odd. Exact by theorem: rounding
+    /// twice through a format of p' >= 2p + 2 bits is innocuous for one basic operation (square
+    /// root included) on p-bit operands (Figueroa 1995), and f32 has 24 bits against f16's 11
+    /// and bf16's 8. Checked exhaustively over every pair of 16-bit patterns of both formats,
+    /// and every pattern for the square root (`tests/half_fast.rs`). `None` for anything else:
+    /// another operator or math function, a `number` operand, a literal the format cannot hold
+    /// (`x * 0.999`), or a chain of operations.
     fn half_fast(&mut self, e: &hir::Expr, to: TyId) -> Option<Operand> {
         let h = self.half_of(to)?;
-        let hir::ExprKind::Binary { op, lhs, rhs } = &e.kind else {
-            return None;
-        };
-        let arith = matches!(
-            op,
-            hir::BinOp::Add | hir::BinOp::Sub | hir::BinOp::Mul | hir::BinOp::Div
-        );
-        if !arith || self.vty(e.ty) != Ty::F64 {
+        if self.vty(e.ty) != Ty::F64 {
             return None;
         }
-        let (a, b) = (self.fast_operand(lhs, h)?, self.fast_operand(rhs, h)?);
-        let x = self.fast_value(lhs, a, h);
-        let y = self.fast_value(rhs, b, h);
-        let r = self.rvalue_temp(Ty::F32, Rvalue::Binary(super::ops::arith_op(*op), x, y));
+        let r = match &e.kind {
+            hir::ExprKind::Binary { op, lhs, rhs } => {
+                let arith = matches!(
+                    op,
+                    hir::BinOp::Add | hir::BinOp::Sub | hir::BinOp::Mul | hir::BinOp::Div
+                );
+                if !arith {
+                    return None;
+                }
+                let (a, b) = (self.fast_operand(lhs, h)?, self.fast_operand(rhs, h)?);
+                let x = self.fast_value(lhs, a, h);
+                let y = self.fast_value(rhs, b, h);
+                self.rvalue_temp(Ty::F32, Rvalue::Binary(super::ops::arith_op(*op), x, y))
+            }
+            hir::ExprKind::Call { callee, args } => {
+                // `Math.sqrt` gives its argument's type: a `number` here.
+                let [arg] = args.as_slice() else {
+                    return None;
+                };
+                if !self.is_sqrt(callee) || self.vty(arg.ty) != Ty::F64 {
+                    return None;
+                }
+                let a = self.fast_operand(arg, h)?;
+                let x = self.fast_value(arg, a, h);
+                self.half_math(MathOp::SqrtF32, vec![x])
+            }
+            _ => return None,
+        };
         Some(self.narrow_half(r, Ty::F32, h))
+    }
+
+    /// Whether a call of `callee` with one `number` is its square root: the intrinsic, or a
+    /// function whose body is only `return sqrt(x)` of its one parameter (the prelude's
+    /// `Math.sqrt`, inlined into the caller during lowering).
+    fn is_sqrt(&self, callee: &hir::Callee) -> bool {
+        let d = match callee {
+            hir::Callee::Intrinsic(hir::Intrinsic::Sqrt) => return true,
+            hir::Callee::Def(d, targs) if targs.is_empty() => *d,
+            _ => return false,
+        };
+        let hir::Def::Fn(f) = self.cx.hir.def(d) else {
+            return false;
+        };
+        if f.params.len() != 1 || f.generics != 0 || !f.captures.is_empty() || f.is_async {
+            return false;
+        }
+        let block = &f.body.block;
+        let [hir::Stmt {
+            kind: hir::StmtKind::Return(Some(r)),
+            ..
+        }] = block.stmts.as_slice()
+        else {
+            return false;
+        };
+        let hir::ExprKind::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::Sqrt),
+            args,
+        } = &r.kind
+        else {
+            return false;
+        };
+        block.value.is_none()
+            && matches!(args.as_slice(), [hir::Expr { kind: hir::ExprKind::Local(l, _), .. }] if l.0 == 0)
     }
 
     /// What `half_fast` takes as an operand: a value of the storage float `h` widened to a
