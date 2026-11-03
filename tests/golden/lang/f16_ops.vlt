@@ -1,5 +1,6 @@
 // `f16`/`bf16` operations beyond the basics (#2049): compound assignment and `++`/`--` compute
-// in `f32` and round back once (a literal right side takes the place's type); `toBits` and
+// in `f32` and round back once, so `x op= v` is `x = (x op v) as f16` (a literal right side
+// is an `f32`, the type the operation runs in); `toBits` and
 // `fromBits` are the bit patterns; `sort()` and `compareTo` order by value with NaN last; `+w`,
 // `Number(w)`, `w.toString()` read the value; `x as f16` on an `any` takes the number it holds;
 // a literal compared with an `f16 | string` is exact. The expected output is Node's (a
@@ -47,6 +48,14 @@ function main() {
   a += 0.1;
   a -= -2;
   console.log(a);
+  // `x += 0.1` repeated is `x = (x + 0.1) as f16` repeated, step by step, as in JS.
+  let x: f16 = 0;
+  const steps: f16[] = [];
+  for (let i = 0; i < 12; i++) {
+    x += 0.1;
+    steps.push(x);
+  }
+  console.log(steps);
   const xs: f16[] = [1, 2, 3];
   let k = 0;
   xs[k++] += 0.5;
