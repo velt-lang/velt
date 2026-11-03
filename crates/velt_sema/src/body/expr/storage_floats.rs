@@ -148,8 +148,12 @@ impl FnCx<'_, '_> {
             return Err(recv);
         }
         let mut stmts = Vec::new();
-        // The receiver first (a place reads in place), then the argument.
-        let recv = match crate::body::places::is_place(&recv) {
+        // The receiver first, then the argument, as in JS: a place whose evaluation changes
+        // nothing reads in place; anything else (`arrs[f()]`) is evaluated into a temporary
+        // here, before the argument, even where the argument isn't held.
+        let pure =
+            crate::body::places::is_place(&recv) && !crate::effects::may_change_memory(&recv);
+        let recv = match pure {
             true => recv,
             false => {
                 let id = self.temp_ident("<recv>", recv, &mut stmts);
