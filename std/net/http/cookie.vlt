@@ -32,24 +32,43 @@ export interface Cookie {
  */
 export function getCookies(headers: Headers): Record<string, string> {
   const out: Record<string, string> = {};
-  const header = headers.get("cookie");
-  if (header == null) {
+  const h = headers.get("cookie");
+  if (h == null) {
     return out;
   }
-  for (const pair of header.split(";")) {
-    const eq = pair.indexOf("=");
-    if (eq < 0) {
-      continue;
+  // One pass over the header by index: each name and value is copied once, into `out`.
+  const n = h.length as i64;
+  let i: i64 = 0;
+  while (i < n) {
+    let end = i;
+    let eq: i64 = -1;
+    while (end < n) {
+      const c = h.charCodeAt(end);
+      if (c == 0x3b) {
+        break;
+      }
+      if (c == 0x3d && eq < 0) {
+        eq = end;
+      }
+      end++;
     }
-    const name = pair.slice(0, eq).trim();
-    let value = pair.slice(eq + 1).trim();
-    if (value.length >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
-      value = value.slice(1, -1);
+    if (eq >= 0) {
+      const ns = skipSpace(h, i, eq);
+      const ne = trimSpace(h, ns, eq);
+      let vs = skipSpace(h, eq + 1, end);
+      let ve = trimSpace(h, vs, end);
+      if (ve - vs >= 2 && h.charCodeAt(vs) == 0x22 && h.charCodeAt(ve - 1) == 0x22) {
+        vs++;
+        ve--;
+      }
+      if (ne > ns && allOf(h, ns, ne, TOKEN) && allOf(h, vs, ve, COOKIE_OCTET)) {
+        const name = h.slice(ns, ne);
+        if (!(name in out)) {
+          out[name] = h.slice(vs, ve);
+        }
+      }
     }
-    if (!isToken(name) || !isCookieValue(value) || name in out) {
-      continue;
-    }
-    out[name] = value;
+    i = end + 1;
   }
   return out;
 }
@@ -213,34 +232,305 @@ function isDigits(s: string): bool {
   return true;
 }
 
-// RFC 7230 `token`: a cookie name.
-function isToken(s: string): bool {
-  if (s.length == 0) {
-    return false;
-  }
-  for (let i: i64 = 0; i < (s.length as i64); i++) {
+// Which ASCII characters may appear in a `token` (RFC 7230: a cookie name) and in a cookie
+// value (RFC 6265 `cookie-octet`: printable ASCII except space, `"`, `,`, `;` and `\`); 1 = yes.
+// Array literals of numbers are static data: no allocation per call.
+const TOKEN: u8[] = [
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  1,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  0,
+  1,
+  1,
+  0,
+  1,
+  1,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  0,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  1,
+  0,
+  1,
+  0,
+];
+const COOKIE_OCTET: u8[] = [
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  1,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+];
+
+// Whether every character of `s[from..to)` is one `table` allows (ASCII only).
+function allOf(s: string, from: i64, to: i64, table: u8[]): bool {
+  for (let i = from; i < to; i++) {
     const c = s.charCodeAt(i);
-    const ok =
-      (c >= 0x30 && c <= 0x39) ||
-      (c >= 0x41 && c <= 0x5a) ||
-      (c >= 0x61 && c <= 0x7a) ||
-      "!#$%&'*+-.^_`|~".includes(s.charAt(i));
-    if (!ok) {
+    if (c >= 128 || table[c as usize] == 0) {
       return false;
     }
   }
   return true;
 }
 
-// RFC 6265 `cookie-octet`s: printable ASCII except space, `"`, `,`, `;` and `\`.
+function isToken(s: string): bool {
+  return s.length > 0 && allOf(s, 0, s.length as i64, TOKEN);
+}
+
 function isCookieValue(s: string): bool {
-  for (let i: i64 = 0; i < (s.length as i64); i++) {
-    const c = s.charCodeAt(i);
-    if (c < 0x21 || c > 0x7e || c == 0x22 || c == 0x2c || c == 0x3b || c == 0x5c) {
-      return false;
-    }
+  return allOf(s, 0, s.length as i64, COOKIE_OCTET);
+}
+
+// The first index in `[from, to)` that isn't a space or tab (`to` if none).
+function skipSpace(s: string, from: i64, to: i64): i64 {
+  let i = from;
+  while (i < to && (s.charCodeAt(i) == 0x20 || s.charCodeAt(i) == 0x09)) {
+    i++;
   }
-  return true;
+  return i;
+}
+
+// The end of `[from, to)` without trailing spaces and tabs.
+function trimSpace(s: string, from: i64, to: i64): i64 {
+  let e = to;
+  while (e > from && (s.charCodeAt(e - 1) == 0x20 || s.charCodeAt(e - 1) == 0x09)) {
+    e--;
+  }
+  return e;
 }
 
 // A `Domain`, `Path` or extra attribute: no `;` and no control characters.
