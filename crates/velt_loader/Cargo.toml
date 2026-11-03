@@ -1,0 +1,22 @@
+[package]
+name = "velt_loader"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+velt_common.workspace = true
+velt_syntax.workspace = true
+# `SourceModule`, what the loader hands sema.
+velt_sema.workspace = true
+# Packages, npm resolution, conditional imports and every file system read (`vpm::probe`).
+vpm.workspace = true
+# The parsed std modules kept across builds (std_ast.rs).
+velt_build_cache.workspace = true
+# This machine's triple, the conditions of a build for no `target`.
+velt_toolchain.workspace = true
+# Content hashes of std sources, the keys of their cached parses (std_ast.rs).
+crc32fast = "1.5"
+foldhash = "0.2"
+
+[dev-dependencies]
+tempfile = "3.27.0"

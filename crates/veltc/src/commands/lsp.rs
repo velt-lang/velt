@@ -12,7 +12,7 @@ use velt_lsp::{LoadedProgram, ModuleEntry, ProgramLoader, SlowJob};
 use velt_sema::SourceModule;
 use vpm::{InstallOptions, PackageGraph};
 
-use crate::loader::{self, LoadOptions};
+use velt_loader::{self as loader, LoadOptions};
 
 #[path = "lsp_packages.rs"]
 mod packages;
@@ -160,6 +160,8 @@ impl ProgramLoader for CliLoader {
             target: graph.as_deref().and_then(|g| variant_target(g, root)),
             host_condition: None,
             check_variants: true,
+            extra_roots: &[],
+            std_ast_cache: crate::build_cache::std_ast_cache(),
         };
         let loaded = loader::load_program(sm, root, opts, diags)?;
         Ok(LoadedProgram {

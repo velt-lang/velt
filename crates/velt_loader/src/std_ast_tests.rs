@@ -196,15 +196,47 @@ fn an_unsaved_buffer_is_neither_read_nor_stored() {
     // An entry under A's key that decodes to B: reading it would show.
     let planted = velt_syntax::encode_module(&parse_source(FileId(1), B, false).0, FileId(1));
     cache.put_key(KIND, &key(&p, A, false), &planted);
-    let (m, _) = parse_in(Some(&cache), &p, FileId(1), A, false, false);
+    let parser = StdParser {
+        cache: Some((&cache, p.clone())),
+    };
+    let (m, _) = parser.parse(FileId(1), A, false, false);
     assert_eq!(dump(&m), fresh(A, FileId(1)));
     // Not stored.
-    let (m, _) = parse_in(Some(&cache), &p, FileId(1), B, false, false);
+    let (m, _) = parser.parse(FileId(1), B, false, false);
     assert_eq!(dump(&m), fresh(B, FileId(1)));
     assert!(Cache::new(tmp.path(), u64::MAX)
         .get_key(KIND, &key(&p, B, false))
         .is_none());
     // The same source read from disk does use the cache.
-    let (m, _) = parse_in(Some(&cache), &p, FileId(1), A, false, true);
+    let (m, _) = parser.parse(FileId(1), A, false, true);
     assert_eq!(dump(&m), fresh(B, FileId(1)));
+}
+
+/// A load's parser keys entries by the compiler it is given: the same compiler finds what it
+/// stored, another one parses afresh.
+#[test]
+fn the_parser_of_a_load_keys_by_its_compiler() {
+    let tmp = tempfile::tempdir().unwrap();
+    let cache = Cache::new(tmp.path(), u64::MAX);
+    let with = |compiler: u8| {
+        StdParser::new(Some(StdAstCache {
+            cache: &cache,
+            compiler: velt_build_cache::Key([compiler; 32]),
+        }))
+    };
+    let StdParser {
+        cache: Some((_, p1)),
+    } = with(1)
+    else {
+        panic!("a cache was given");
+    };
+    // An entry under A's key for compiler 1 that decodes to B: reading it would show.
+    let planted = velt_syntax::encode_module(&parse_source(FileId(1), B, false).0, FileId(1));
+    cache.put_key(KIND, &key(&p1, A, false), &planted);
+    let (m, _) = with(1).parse(FileId(1), A, false, true);
+    assert_eq!(dump(&m), fresh(B, FileId(1)));
+    let (m, _) = with(2).parse(FileId(1), A, false, true);
+    assert_eq!(dump(&m), fresh(A, FileId(1)));
+    let (m, _) = StdParser::new(None).parse(FileId(1), A, false, true);
+    assert_eq!(dump(&m), fresh(A, FileId(1)));
 }

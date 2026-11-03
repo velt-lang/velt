@@ -94,7 +94,7 @@ to compare.
 Checking on demand still parses every module a program loads, and parsing and collecting std code
 costs about as much as checking it. So some of std is not loaded at all unless a program may need
 it: a global module under `std/prelude/global/` whose header names a condition
-(crates/veltc/src/loader/globals). Besides the conditions on words (`export { … }` names, `// load
+(crates/velt_loader/src/globals). Besides the conditions on words (`export { … }` names, `// load
 when <module> uses: <words>`), a header may name a *predicate* on a module's syntax, evaluated by
 the loader before any types are known. Each predicate is generic: it says what a module does,
 never which std module that loads; the header's imports say that.

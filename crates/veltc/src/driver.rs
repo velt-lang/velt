@@ -12,7 +12,7 @@ use velt_vir::vir;
 
 use crate::backend::Backend;
 use crate::cli::Emit;
-use crate::loader::{self, LoadOptions};
+use velt_loader::{self as loader, LoadOptions};
 
 mod cpu_check;
 mod host_modules;
@@ -317,15 +317,11 @@ fn load_modules(
         target: Some(opts.target()),
         host_condition: opts.host.as_ref().map(|h| h.config.condition.clone()),
         check_variants: opts.check_variants,
+        extra_roots: &scope.extra_roots,
+        std_ast_cache: crate::build_cache::std_ast_cache(),
     };
-    let loaded = loader::load_with_roots(
-        &mut sess.sm,
-        &opts.input,
-        &scope.extra_roots,
-        load,
-        &mut sess.diagnostics,
-    )
-    .map_err(BuildError::Failed)?;
+    let loaded = loader::load_program(&mut sess.sm, &opts.input, load, &mut sess.diagnostics)
+        .map_err(BuildError::Failed)?;
     sess.record("parse", t);
     Ok(loaded)
 }

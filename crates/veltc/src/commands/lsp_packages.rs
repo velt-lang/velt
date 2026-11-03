@@ -6,7 +6,7 @@ use std::path::Path;
 use velt_lsp::ModuleEntry;
 use vpm::PackageGraph;
 
-use crate::loader;
+use velt_loader as loader;
 
 /// A target whose build uses `file`, when it is a variant of a `#name` of its package that the
 /// host's build does not use (`vpm::imports::target_selecting`).

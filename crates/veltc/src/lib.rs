@@ -14,7 +14,6 @@ pub mod dev;
 pub mod driver;
 pub mod generate;
 pub mod link;
-pub mod loader;
 #[cfg(test)]
 mod math_fold_tests;
 pub mod native;

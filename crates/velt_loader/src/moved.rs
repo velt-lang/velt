@@ -3,11 +3,11 @@
 //! velt/<old>`, so a program written for the old layout is told the new import.
 
 /// Where the std docs are published (an installed toolchain has no `docs/`).
-pub const STD_DOCS_URL: &str = "https://veltlang.com/docs/std/";
+pub(crate) const STD_DOCS_URL: &str = "https://veltlang.com/docs/std/";
 
 /// Where an old module went.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Moved {
+pub(crate) enum Moved {
     /// To this module (`velt/encoding/json`).
     Module(&'static str),
     /// Its names are globals now: no import.
@@ -116,7 +116,7 @@ const MOVED: &[(&str, Moved)] = &[
 
 /// Where old module `old` went, and whether `old` is a file inside the module the table names
 /// (`fetch/response` went with `fetch`).
-pub fn moved(old: &str) -> Option<(Moved, bool)> {
+pub(crate) fn moved(old: &str) -> Option<(Moved, bool)> {
     if let Some((_, m)) = MOVED.iter().find(|(o, _)| *o == old) {
         return Some((*m, false));
     }
@@ -137,7 +137,7 @@ fn package_url(name: &str) -> String {
 /// What became of old module `old`, as a sentence about `written` (the specifier as written):
 /// `None` when `old` was no module, or still is `velt/<old>` (or a file of that module, which
 /// a `velt/` specifier that is not found names wrongly, not an old one).
-pub fn now(old: &str, written: &str) -> Option<String> {
+pub(crate) fn now(old: &str, written: &str) -> Option<String> {
     let (moved, nested) = moved(old)?;
     let stayed = |m: &str| {
         let rel = m.strip_prefix("velt/").unwrap_or(m);

@@ -7,7 +7,7 @@ use velt_vir::vir;
 /// Variables of the standard library (inlined into user code) are left out.
 pub fn render(program: &vir::Program) -> String {
     let slashes = |s: &str| s.replace('\\', "/");
-    let std_root = crate::loader::std_root().map(|p| slashes(&p.to_string_lossy()));
+    let std_root = velt_loader::std_root().map(|p| slashes(&p.to_string_lossy()));
     let in_std = |file: &str| {
         std_root
             .as_deref()

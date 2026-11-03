@@ -41,6 +41,14 @@ pub fn compiler_identity() -> velt_build_cache::Key {
     h.finish()
 }
 
+/// The cache as the loader keeps std's parsed modules in it (`None` when it is turned off).
+pub fn std_ast_cache() -> Option<velt_loader::StdAstCache<'static>> {
+    static COMPILER: OnceLock<velt_build_cache::Key> = OnceLock::new();
+    let cache = cache()?;
+    let compiler = *COMPILER.get_or_init(compiler_identity);
+    Some(velt_loader::StdAstCache { cache, compiler })
+}
+
 /// The cache's directory, `None` when it is turned off.
 pub fn root() -> Option<PathBuf> {
     match std::env::var_os("VELT_BUILD_CACHE") {

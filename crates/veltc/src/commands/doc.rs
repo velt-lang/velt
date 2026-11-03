@@ -54,7 +54,7 @@ fn types_command(args: &DocArgs) -> Result<(), String> {
                 .into(),
         );
     }
-    let root = crate::loader::std_root().ok_or("cannot find the standard library; set VELT_STD")?;
+    let root = velt_loader::std_root().ok_or("cannot find the standard library; set VELT_STD")?;
     let inputs = velt_doc::inputs_from_dir(&root, "std")?;
     let out = args
         .output
@@ -93,7 +93,7 @@ fn collect(args: &DocArgs) -> Result<Collected, String> {
     let default_out = PathBuf::from("target").join("doc");
     if args.std {
         let root =
-            crate::loader::std_root().ok_or("cannot find the standard library; set VELT_STD")?;
+            velt_loader::std_root().ok_or("cannot find the standard library; set VELT_STD")?;
         let intro =
             "`import { … } from \"velt/<module>\"`; `std/prelude/*` is available everywhere.";
         let inputs = under("std", velt_doc::inputs_from_dir(&root, "std")?);

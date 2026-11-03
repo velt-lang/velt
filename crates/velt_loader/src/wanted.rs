@@ -135,7 +135,7 @@ impl super::Loader<'_, '_> {
             Ok(src) => {
                 let on_disk = !self.overlay.contains_key(&key);
                 let no_file = super::std_ast::NO_FILE;
-                let (module, _) = super::std_ast::parse(no_file, &src, false, on_disk);
+                let (module, _) = self.std_parser.parse(no_file, &src, false, on_disk);
                 has_effects(&module)
             }
             Err(_) => true,

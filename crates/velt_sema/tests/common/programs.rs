@@ -198,7 +198,7 @@ impl Loader {
 }
 
 /// The names module `m` imports or declares at its top level (they hide a global), as the
-/// driver's loader counts them (`veltc::loader::globals::bound_names`).
+/// driver's loader counts them (`velt_loader`'s `globals::bound_names`).
 fn bound(m: &ast::Module) -> Vec<String> {
     let mut names = vec![];
     for item in &m.items {

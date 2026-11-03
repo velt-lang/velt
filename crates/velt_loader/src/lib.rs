@@ -1,11 +1,19 @@
-//! Module loading: root file → every module the program needs, parsed, as [`SourceModule`]s for sema.
+//! The program loader: root file → every module the program needs, parsed, as [`SourceModule`]s
+//! for sema. `velt build`, `check`, `test`, `run` and the language server load through it, and
+//! so can tests and tools that must see the program (and std) exactly as `velt build` does,
+//! without the rest of the compiler.
+//!
+//! The crate's API is [`load_program`] (a root, [`LoadOptions`] → [`Loaded`] modules, problems
+//! in the caller's diagnostics) and the resolution rules a tool needs to agree with it
+//! ([`std_root`], [`prelude_files`], [`in_std`], [`resolve_spec`], [`resolve_module`],
+//! [`module_path`]); docs/internals/contracts/README.md "Program loader".
 //!
 //! Order of the result: the prelude (`std/prelude/*.vlt` in the order `std/prelude/index.vlt`
-//! lists them, canonical `"std/prelude/<name>"`), then
-//! the root (`"main"`), then imported modules in breadth-first discovery order, then any extra
-//! roots ([`load_with_roots`]) not loaded yet, each followed by what it imports. A global loaded on
-//! demand (`std/prelude/global/*.vlt`, [`globals`]) joins that order where a module first
-//! mentions one of its names. Specifiers resolve as
+//! lists them, canonical `"std/prelude/<name>"`), then the root (`"main"`), then imported modules
+//! in breadth-first discovery order, then any extra roots ([`LoadOptions::extra_roots`]) not
+//! loaded yet, each followed by what it imports. A global loaded on demand
+//! (`std/prelude/global/*.vlt`, [`globals`]) joins that order where a module first mentions one
+//! of its names. Specifiers resolve as
 //! - `"./x"`, `"../x"` → `x.vlt`, `x.ts` or `x.tsx`, else the folder module `x/index.vlt`,
 //!   `x/index.ts` or `x/index.tsx`, relative to the importing file (two of a kind existing at once
 //!   is an ambiguity error); `"./x.ts"` (any source extension) names exactly that file, and
@@ -49,6 +57,7 @@ mod import_meta;
 mod jsx;
 mod locate;
 mod moved;
+mod paths;
 mod pick;
 mod resolve;
 mod signature;
@@ -66,14 +75,29 @@ use velt_common::{std_modules, Diagnostic, Diagnostics, SourceMap, Span};
 use velt_sema::SourceModule;
 use velt_syntax::ast;
 
-pub use locate::{module_path, Origin, PackageImports, PackageResolver};
+use locate::Origin;
+pub use locate::{module_path, PackageImports, PackageResolver};
+use paths::{file_key, is_std_path, shown_in_package, shown_path};
 pub use resolve::resolve_module;
 pub use spec::{resolve_spec, ModuleRef};
+pub use std_ast::StdAstCache;
 pub use std_root::{in_std, prelude_files, std_root};
 
 /// Inputs of [`load_program`] besides the root path.
 #[derive(Default)]
 pub struct LoadOptions<'a> {
+    /// Further files loaded as if the root imported them (`velt check` in a package loads every
+    /// module under `src/` and `tests/`), so modules they share with the root and with each
+    /// other are loaded once. Their canonical paths are relative to the root's directory, like
+    /// the root's own relative imports. A module loaded for an extra root whose module path is
+    /// taken or reserved gets a fallback path no import can name ([`Loader::fallback_name`]):
+    /// those paths differ from the ones `velt build` and `velt test` give the module, so a clash
+    /// here is not one there. An extra root that cannot be read is reported in the diagnostics,
+    /// located in that file.
+    pub extra_roots: &'a [PathBuf],
+    /// The build cache std's parsed modules are kept in across builds ([`std_ast`]; `None`:
+    /// every std file is parsed).
+    pub std_ast_cache: Option<StdAstCache<'a>>,
     /// Standard library root (`None` → `std/` imports fail and no prelude is loaded).
     pub std_root: Option<PathBuf>,
     /// Package dependency lookup (`None` → every package import is "not a dependency").
@@ -106,29 +130,12 @@ pub struct Loaded {
     pub root: usize,
 }
 
-/// Read and parse the root file and everything it imports. Failing to read the root is returned
-/// as `Err(message)`; syntax and import problems go into `diags` (the caller decides whether to stop).
+/// Read and parse the root file, the extra roots ([`LoadOptions::extra_roots`]) and everything
+/// they import. Failing to read the root is returned as `Err(message)`; syntax and import
+/// problems go into `diags` (the caller decides whether to stop).
 pub fn load_program(
     sm: &mut SourceMap,
     root: &Path,
-    opts: LoadOptions,
-    diags: &mut Diagnostics,
-) -> Result<Loaded, String> {
-    load_with_roots(sm, root, &[], opts, diags)
-}
-
-/// [`load_program`] plus `extra_roots`: further files loaded as if the root imported them
-/// (`velt check` in a package loads every module under `src/` and `tests/`), so modules they
-/// share with the root and with each other are loaded once. Their canonical paths are relative
-/// to the root's directory, like the root's own relative imports. A module loaded for an extra
-/// root whose module path is taken or reserved gets a fallback path no import can name
-/// ([`Loader::fallback_name`]): those paths differ from the ones `velt build` and `velt test`
-/// give the module, so a clash here is not one there. An extra root that cannot be read is
-/// reported in `diags`, located in that file.
-pub fn load_with_roots(
-    sm: &mut SourceMap,
-    root: &Path,
-    extra_roots: &[PathBuf],
     opts: LoadOptions,
     diags: &mut Diagnostics,
 ) -> Result<Loaded, String> {
@@ -140,6 +147,7 @@ pub fn load_with_roots(
         sm,
         diags,
         opts: &opts,
+        std_parser: std_ast::StdParser::new(opts.std_ast_cache),
         overlay,
         modules: vec![],
         origins: vec![],
@@ -175,7 +183,7 @@ pub fn load_with_roots(
             }
             Err(e) => loader.diags.push(Diagnostic::error(e, Span::DUMMY)),
         }
-        loader.globals = globals::global_modules(std);
+        loader.globals = globals::global_modules(std, &loader.std_parser);
     }
     let src = match &opts.root_source {
         Some(src) => src.clone(),
@@ -207,7 +215,7 @@ pub fn load_with_roots(
     let mut queue: VecDeque<usize> = (0..loader.modules.len()).collect();
     loader.resolve_all(&mut queue);
     loader.extra_phase = true;
-    for file in extra_roots {
+    for file in opts.extra_roots {
         loader.add_extra_root(file, &origin, &mut queue);
         loader.resolve_all(&mut queue);
     }
@@ -224,6 +232,8 @@ struct Loader<'a, 'o> {
     sm: &'a mut SourceMap,
     diags: &'a mut Diagnostics,
     opts: &'a LoadOptions<'o>,
+    /// How std files are parsed: through [`LoadOptions::std_ast_cache`] or not ([`std_ast`]).
+    std_parser: std_ast::StdParser<'o>,
     /// [`LoadOptions::overlay`] keyed by [`file_key`].
     overlay: HashMap<PathBuf, String>,
     modules: Vec<SourceModule>,
@@ -354,7 +364,7 @@ impl Loader<'_, '_> {
         let mut ast = if is_std {
             let src = &self.sm.get(file).src;
             let on_disk = !self.overlay.contains_key(&key);
-            let (ast, parse_diags) = std_ast::parse(file, src, plain_ts, on_disk);
+            let (ast, parse_diags) = self.std_parser.parse(file, src, plain_ts, on_disk);
             self.diags.extend(parse_diags);
             ast
         } else {
@@ -742,47 +752,6 @@ impl Loader<'_, '_> {
             .fold(Diagnostic::error(msg, span), Diagnostic::with_note);
         self.diags.push(d);
         None
-    }
-}
-
-/// Whether canonical module path `path` is in the standard library's namespace (`std`, `std/…`).
-fn is_std_path(path: &str) -> bool {
-    path == "std" || std_modules::is_std(path)
-}
-
-/// `file` as shown in a message: relative to its package's root (the directory with
-/// `package.vlt`), or as given outside a package.
-fn shown_in_package(file: &Path) -> String {
-    let dir = file.parent().unwrap_or(Path::new(""));
-    match vpm::manifest::find_package_root(dir) {
-        Some(root) => vpm::relpath::relative(&vpm::relpath::absolute(file), &root),
-        None => file.display().to_string(),
-    }
-}
-
-/// Identity of a file for deduplication (canonical path when it exists). A file that does not
-/// exist (a virtual root: the generator host beside std's modules, `velt test`'s harness) is
-/// named below its directory's canonical path, so it compares with the keys of real files and
-/// of the std root: on Windows a canonical path is a verbatim one (`\\?\C:\…`), and on any
-/// system the directory may be reached through a link.
-fn file_key(path: &Path) -> PathBuf {
-    if let Ok(p) = std::fs::canonicalize(path) {
-        return p;
-    }
-    let abs = vpm::relpath::absolute(path);
-    match (abs.parent(), abs.file_name()) {
-        (Some(dir), Some(name)) => std::fs::canonicalize(dir).map_or(abs.clone(), |d| d.join(name)),
-        _ => abs,
-    }
-}
-
-/// How a message names `file`, a candidate for an import in directory `dir`: relative to `dir`
-/// for relative (and path alias) imports (`dup.ts`, `../lib/x.vlt`), the full path otherwise.
-fn shown_path(file: &Path, dir: &Path, relative: bool) -> String {
-    if relative {
-        vpm::relpath::relative(file, dir)
-    } else {
-        file.display().to_string()
     }
 }
 

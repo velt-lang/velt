@@ -515,7 +515,11 @@ fn extra_roots_load_once_after_the_root_program() {
     let mut sm = SourceMap::new();
     let mut diags = vec![];
     let extra = [a, lib, test, root.clone(), main];
-    let l = load_with_roots(&mut sm, &root, &extra, LoadOptions::default(), &mut diags).unwrap();
+    let opts = LoadOptions {
+        extra_roots: &extra,
+        ..LoadOptions::default()
+    };
+    let l = load_program(&mut sm, &root, opts, &mut diags).unwrap();
     assert!(diags.is_empty(), "{:?}", messages(&diags));
     assert_eq!(
         paths(&l),
@@ -546,7 +550,11 @@ fn extra_roots_with_taken_or_reserved_paths_get_fallback_names() {
     let mut sm = SourceMap::new();
     let mut diags = vec![];
     let extra = [main.clone(), std, b];
-    let l = load_with_roots(&mut sm, &root, &extra, LoadOptions::default(), &mut diags).unwrap();
+    let opts = LoadOptions {
+        extra_roots: &extra,
+        ..LoadOptions::default()
+    };
+    let l = load_program(&mut sm, &root, opts, &mut diags).unwrap();
     assert!(diags.is_empty(), "{:?}", messages(&diags));
     assert_eq!(paths(&l), ["main", "#main", "#std/x", "b", "#main#2"]);
     // The relative import finds the extra root by its file, under its fallback name.
@@ -565,7 +573,11 @@ fn unreadable_extra_roots_are_reported_in_their_file() {
     let mut sm = SourceMap::new();
     let mut diags = vec![];
     let extra = [gone.clone()];
-    let l = load_with_roots(&mut sm, &root, &extra, LoadOptions::default(), &mut diags).unwrap();
+    let opts = LoadOptions {
+        extra_roots: &extra,
+        ..LoadOptions::default()
+    };
+    let l = load_program(&mut sm, &root, opts, &mut diags).unwrap();
     assert_eq!(paths(&l), ["main"]);
     let msgs = messages(&diags);
     assert_eq!(msgs.len(), 1, "{msgs:?}");

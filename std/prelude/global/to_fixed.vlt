@@ -1,4 +1,4 @@
-// Global, conditional (crates/veltc/src/loader/globals.rs): `x.toFixed(digits)`
+// Global, conditional (crates/velt_loader/src/globals): `x.toFixed(digits)`
 // (velt/lang/number/to_fixed), std's number formatter, for a program that mentions `toFixed`;
 // other programs don't load the formatter for it.
 // load when std/prelude/number uses: toFixed

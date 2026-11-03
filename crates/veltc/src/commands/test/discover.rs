@@ -14,11 +14,9 @@ use velt_syntax::ast;
 /// How test files are named, for messages.
 pub const TEST_FILES: &str = "*.test.vlt, *.test.ts, *.test.tsx";
 
-/// Whether a file named `name` is a test file: a source module (`vpm::sources`) whose name
-/// without the extension ends in `.test`.
-pub fn is_test_file(name: &str) -> bool {
-    vpm::sources::strip_source_extension(name).is_some_and(|stem| stem.ends_with(".test"))
-}
+/// Whether a file named `name` is a test file (the rule lives with the other source-file rules,
+/// where the loader finds it too).
+pub use vpm::sources::is_test_file;
 
 /// Test files under `path` (recursively, as [`vpm::sources::walks_into`] walks: skipping
 /// `target/`, `node_modules/`, hidden and symlinked directories and nested packages), sorted. An explicitly named file is used even without the `.test` suffix.

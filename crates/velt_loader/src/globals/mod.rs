@@ -27,6 +27,8 @@ use std::path::{Path, PathBuf};
 use velt_syntax::ast;
 use velt_syntax::visit::{self, Visit};
 
+use super::std_ast::StdParser;
+
 mod float_operands;
 
 /// A global module: its file and the names that load it.
@@ -39,7 +41,7 @@ pub(super) struct Global {
 }
 
 /// The global modules under `<std>/prelude/global/`, sorted by file name (empty if none).
-pub(super) fn global_modules(std_root: &Path) -> Vec<Global> {
+pub(super) fn global_modules(std_root: &Path, parser: &StdParser) -> Vec<Global> {
     let Ok(entries) = vpm::probe::read_dir(&std_root.join("prelude").join("global")) else {
         return vec![];
     };
@@ -53,7 +55,7 @@ pub(super) fn global_modules(std_root: &Path) -> Vec<Global> {
         .into_iter()
         .filter_map(|file| {
             let src = vpm::probe::read_to_string(&file).ok()?;
-            let mut names = reexported_names(&src);
+            let mut names = reexported_names(&src, parser);
             if names.is_empty() {
                 let marked = [
                     (THIS_FN_LINE, THIS_FN),
@@ -75,8 +77,8 @@ pub(super) fn global_modules(std_root: &Path) -> Vec<Global> {
 }
 
 /// The names a global module's `export { … } from "…"` items re-export (under their aliases).
-fn reexported_names(src: &str) -> Vec<String> {
-    let (module, _) = super::std_ast::parse(super::std_ast::NO_FILE, src, false, true);
+fn reexported_names(src: &str, parser: &StdParser) -> Vec<String> {
+    let (module, _) = parser.parse(super::std_ast::NO_FILE, src, false, true);
     let mut names = vec![];
     for item in &module.items {
         if let ast::ItemKind::Import(imp) = &item.kind {
@@ -437,7 +439,10 @@ mod tests {
     fn names_are_the_reexports() {
         let src = "// globals\nexport { fetch, Response as R } from \"velt/net/http\";\n\
                    export { URL } from \"velt/net/url\";\n";
-        assert_eq!(reexported_names(src), ["fetch", "R", "URL"]);
+        assert_eq!(
+            reexported_names(src, &StdParser::default()),
+            ["fetch", "R", "URL"]
+        );
     }
 
     #[test]
@@ -450,19 +455,19 @@ mod tests {
                 vec!["bytes".into(), "arrayBuffer".into()]
             ))
         );
-        assert!(reexported_names(src).is_empty());
+        assert!(reexported_names(src, &StdParser::default()).is_empty());
         assert_eq!(load_when("export { A } from \"velt/a\";\n"), None);
     }
 
     #[test]
     fn lists_global_modules_sorted() {
         let tmp = tempfile::tempdir().unwrap();
-        assert!(global_modules(tmp.path()).is_empty());
+        assert!(global_modules(tmp.path(), &StdParser::default()).is_empty());
         let dir = tmp.path().join("prelude/global");
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("b.vlt"), "export { B } from \"velt/b\";\n").unwrap();
         std::fs::write(dir.join("a.vlt"), "export { A } from \"velt/a\";\n").unwrap();
-        let g = global_modules(tmp.path());
+        let g = global_modules(tmp.path(), &StdParser::default());
         assert_eq!(g.len(), 2);
         assert_eq!(g[0].names, ["A"]);
         assert_eq!(g[1].file, dir.join("b.vlt"));
@@ -475,7 +480,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let src = format!("{THIS_FN_LINE}\nimport \"velt/lang/this_fn\";\n");
         std::fs::write(dir.join("this_fn.vlt"), src).unwrap();
-        let g = global_modules(tmp.path());
+        let g = global_modules(tmp.path(), &StdParser::default());
         assert_eq!(g[0].names, [THIS_FN]);
         let parse = |src: &str| {
             let mut sm = SourceMap::new();
@@ -496,7 +501,10 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         let src = format!("{ASYNC_HOST_LINE}\nimport \"velt/host/promise\";\n");
         std::fs::write(dir.join("host_async.vlt"), src).unwrap();
-        assert_eq!(global_modules(tmp.path())[0].names, [ASYNC_HOST]);
+        assert_eq!(
+            global_modules(tmp.path(), &StdParser::default())[0].names,
+            [ASYNC_HOST]
+        );
         let parse = |src: &str| {
             let mut sm = SourceMap::new();
             let file = sm.add(Path::new("main.vlt"), src.to_string());

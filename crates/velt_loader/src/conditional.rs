@@ -34,7 +34,7 @@ pub(super) struct Resolved {
 pub(super) fn build_conditions(target: Option<&str>, host: Option<&str>) -> Vec<String> {
     match target {
         Some(triple) => imports::conditions(triple, host),
-        None => imports::conditions(&velt_codegen_cl::host_triple(), host),
+        None => imports::conditions(&velt_toolchain::release::host_triple(), host),
     }
 }
 

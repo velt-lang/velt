@@ -14,12 +14,14 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
       ─▶ object file ─▶ velt_link (bundled lld or system linker) + velt_rt (runtime static library)
 ```
 
-1. **Load**: the driver (`veltc`) reads the root file, follows imports (relative, `velt/` std,
-   `paths` aliases, package dependencies through `vpm`), and loads the prelude.
+1. **Load** (`velt_loader`, called by the driver in `veltc`): reads the root file, follows
+   imports (relative, `velt/` std, `paths` aliases, package dependencies through `vpm`), and
+   loads the prelude and the globals a program mentions. Tests and tools that must see a program
+   as `velt build` does load it through the same crate, without the backends.
 2. **Parse** (`velt_syntax`): a hand-written lexer and Pratt parser with error recovery; one
    `ast::Module` per file. std's files are parsed once per compiler: the loader keeps their
    modules in the build cache in a compact form (`velt_syntax::encode_module`,
-   `veltc/src/loader/std_ast.rs`), which decodes in about a third of a parse.
+   `velt_loader/src/std_ast.rs`), which decodes in about a third of a parse.
 3. **Check** (`velt_sema`): name resolution, type checking with literal and union types,
    narrowing, generics, ownership and mutation inference over the whole program, exclusive-access
    checks, thread-safety checks, typed `throws` inference, and JSON code generation checks. The
@@ -120,6 +122,7 @@ SQLite, PostgreSQL, Redis). `velt_rt_wasm` is its single-threaded WebAssembly co
 | `velt_common` | spans, source maps, diagnostics |
 | `velt_syntax` | lexer, parser, AST |
 | `velt_sema` | semantic analysis, HIR, the editor query API |
+| `velt_loader` | the program loader: root file → every module the program needs (std, packages, npm sources), parsed |
 | `velt_vir` | HIR → VIR lowering, VIR verifier |
 | `velt_opt` | VIR optimizer and interpreter |
 | `velt_codegen_cl` | Cranelift backend (objects and JIT, hot swap) |
