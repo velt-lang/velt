@@ -13,9 +13,11 @@ pub struct HookTests {
     pub guard: bool,
 }
 
-/// The table and the std module table it names modules by.
+/// The table, the type language its signatures are written in (whose macros build every
+/// `Sig`) and the std module table it names modules by.
 const TABLE: &[&str] = &[
     "crates/velt_common/src/std_hooks.rs",
+    "crates/velt_common/src/hook_sig.rs",
     "crates/velt_common/src/std_modules.rs",
 ];
 
@@ -83,6 +85,7 @@ mod tests {
             guard: true,
         };
         assert_eq!(of(&["crates/velt_common/src/std_hooks.rs"]), both);
+        assert_eq!(of(&["crates/velt_common/src/hook_sig.rs"]), both);
         let std = of(&["std/lang/hooks/number_text.vlt"]);
         assert_eq!((std.signatures, std.guard), (true, false));
         for path in [
