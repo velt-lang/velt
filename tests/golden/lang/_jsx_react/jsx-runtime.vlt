@@ -1,0 +1,24 @@
+// React's shape: `jsx` and its own `jsxs`, `Fragment` a symbol, `key?: any`, and the `JSX` types in
+// the runtime's exported namespace, where `tsc` looks first.
+export const Fragment = Symbol.for("react.fragment");
+
+export type Node = { factory: string; type: any; props: any; key: any };
+
+export function jsx(type: any, config: any, maybeKey?: any): Node {
+  return { factory: "jsx", type, props: config, key: maybeKey };
+}
+
+export function jsxs(type: any, config: any, maybeKey?: any): Node {
+  return { factory: "jsxs", type, props: config, key: maybeKey };
+}
+
+export namespace JSX {
+  export type Element = Node;
+  export interface IntrinsicElements {
+    box: { key?: any; a?: string; b?: string; c?: string; n?: string | null; children?: any };
+    list: { children: number[] };
+  }
+  export interface ElementChildrenAttribute {
+    children: {};
+  }
+}

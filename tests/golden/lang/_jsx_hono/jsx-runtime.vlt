@@ -1,0 +1,32 @@
+// Hono's and Preact's shape: functions held in constants, `Fragment` a function, an index signature
+// for every tag, and `jsxDEV`, `jsxTemplate`, `jsxAttr` and `jsxEscape` beside them, which the
+// automatic transform does not call.
+export type Props = Record<string, any>;
+export type Node = { tag: any; props: Props; key: any; via: string };
+
+export const jsx = (tag: any, props: Props, key?: string): Node => ({ tag, props, key, via: "jsx" });
+export const jsxs = (tag: any, props: Props, key?: string): Node => ({ tag, props, key, via: "jsxs" });
+export const jsxDEV = (tag: any, props: Props, key?: string): Node => ({ tag, props, key, via: "dev" });
+
+export function Fragment(props: { children?: string }): any {
+  return props.children;
+}
+
+export function jsxTemplate(strings: string[], ...values: any[]): string {
+  return strings.join("?");
+}
+export function jsxAttr(name: string, value: any): string {
+  return name;
+}
+export function jsxEscape(value: any): string {
+  return String(value);
+}
+
+declare global {
+  namespace JSX {
+    type Element = Node;
+    interface IntrinsicElements {
+      [tag: string]: Props;
+    }
+  }
+}

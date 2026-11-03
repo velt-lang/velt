@@ -238,7 +238,7 @@ impl FnCx<'_, '_> {
     /// [`spread_source`](Self::spread_source), with whether each field is optional;
     /// `record_ok`: a `Record` source gives no fields (else it is reported: its entries are no
     /// fields of an object type).
-    fn spread_fields(
+    pub(super) fn spread_fields(
         &mut self,
         e: &ast::Expr,
         hint: Option<TyId>,
@@ -570,16 +570,7 @@ impl FnCx<'_, '_> {
             Value::Prop(k, value) => (self.prop_value(&k, value, Some(fty)), None),
             Value::Held(.., h) => (self.coerce(h, fty), None),
             Value::Read(h, src) | Value::Over(h, src, _) => {
-                let guard = match src.place {
-                    _ if src.guard.is_some() => src.guard,
-                    Some(p) if src.presence => {
-                        let b = self.cx.ty.bool_;
-                        Some(self.intrinsic(hir::Intrinsic::FieldPresent, vec![p], b, span))
-                    }
-                    // A class's optional field is always present: copied, `undefined` too.
-                    Some(p) if src.optional && !src.own => Some(self.null_test(p, false, span)),
-                    _ => None,
-                };
+                let guard = self.source_guard(&src, span);
                 (self.coerce(h, fty), guard)
             }
         };
@@ -617,6 +608,21 @@ impl FnCx<'_, '_> {
                 els: None,
             },
             span,
+        }
+    }
+
+    /// When a spread field is there, if that depends on the value: its source is present, and so
+    /// is an optional field.
+    pub(super) fn source_guard(&mut self, src: &Src, span: Span) -> Option<hir::Expr> {
+        match src.place.clone() {
+            _ if src.guard.is_some() => src.guard.clone(),
+            Some(p) if src.presence => {
+                let b = self.cx.ty.bool_;
+                Some(self.intrinsic(hir::Intrinsic::FieldPresent, vec![p], b, span))
+            }
+            // A class's optional field is always present: copied, `undefined` too.
+            Some(p) if src.optional && !src.own => Some(self.null_test(p, false, span)),
+            _ => None,
         }
     }
 

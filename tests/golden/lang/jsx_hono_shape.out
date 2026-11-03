@@ -1,0 +1,9 @@
+jsx(div {id=a} undefined)
+jsx(anything {goes=here n=1 data-x=y children=text} undefined)
+jsxs(ul {children=[1,2]} undefined)
+jsx(Fragment {children=one} undefined)
+jsxs(Fragment {children=[1,2]} undefined)
+jsx(div {} k)
+jsxs(fn {title=t children=[1,2]} undefined)
+jsx(div {title=t children=[1,2]} undefined)
+made

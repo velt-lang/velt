@@ -528,6 +528,9 @@ impl<'a> Walker<'a, '_> {
     }
 
     fn jsx(&mut self, el: &'a JsxElement) {
+        if let Some(id) = el.tag_root() {
+            self.reference(id);
+        }
         for attr in &el.attrs {
             match attr {
                 JsxAttr::Spread { expr, .. }

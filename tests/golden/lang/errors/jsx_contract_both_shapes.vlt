@@ -1,0 +1,2 @@
+/** @jsxImportSource ./_jsx_both_shapes */
+const a = <div />;

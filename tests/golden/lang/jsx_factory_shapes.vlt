@@ -1,0 +1,10 @@
+/** @jsxImportSource ./_jsx_fragment_generic */
+// A generic `Fragment` is at `unknown`; `...rest` gets the key, or nothing.
+const f = <>made</>;
+console.log(f.rest.length, typeof f.type, f.type(f.props));
+const a = <box />;
+console.log(a.rest.length);
+const k = <box key="k" />;
+console.log(k.rest.length, k.rest[0]);
+const n = <box>{1}{2}</box>;
+console.log(n.rest.length, n.props.children.length);

@@ -1,0 +1,7 @@
+jsx(box {x=1} k)
+eval b
+eval spread
+eval k
+eval c
+jsx(box {b=b a=s c=c} k)
+jsx(box {a=1} k)

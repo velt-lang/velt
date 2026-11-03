@@ -1,0 +1,11 @@
+import type { Node } from "./jsx-runtime";
+
+export function show(v: any): string {
+  if (v === null || v === undefined || typeof v !== "object") return String(v);
+  if (Array.isArray(v)) return "[" + v.map((x: any) => show(x)).join(",") + "]";
+  const n = v as Node;
+  const props = n.props as any;
+  const keys = Object.keys(props).map((k: string) => k + "=" + show(props[k])).join(" ");
+  const type = typeof n.type === "function" ? "fn" : String(n.type);
+  return n.factory + "(" + type + " {" + keys + "} " + String(n.key) + ")";
+}

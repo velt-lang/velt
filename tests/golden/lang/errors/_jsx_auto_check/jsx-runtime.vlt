@@ -1,0 +1,21 @@
+// `JSX.ElementChildrenAttribute`, an index-less tag table with custom elements.
+export function jsx(type: any, props: any, key?: any): any {
+  return type;
+}
+export function jsxs(type: any, props: any, key?: any): any {
+  return type;
+}
+declare global {
+  namespace JSX {
+    type Element = any;
+    interface IntrinsicElements {
+      box: { a?: string; children?: any };
+      "my-el": { a: string };
+      "my-fn": { on?: (e: number) => number };
+      "svg:rect": { w?: number };
+    }
+    interface ElementChildrenAttribute {
+      children: {};
+    }
+  }
+}

@@ -1,0 +1,26 @@
+/** @jsxImportSource ./_jsx_typed */
+// `type` as a union of what it may be: strings, symbols and functions, generic ones among them at
+// the type arguments inferred from their props. A type parameter nothing gives a value is `unknown`.
+import type { Node } from "./_jsx_typed/jsx-runtime";
+
+function show(n: Node): string {
+  const keys = Object.keys(n.props).map((k: string) => k + "=" + JSON.stringify(n.props[k])).join(" ");
+  const type = typeof n.type === "function" ? "fn" : String(n.type);
+  return type + " {" + keys + "} " + String(n.key);
+}
+
+function G<T>(p: { a: T }): Node { return <box />; }
+function O<T>(p: { a?: T }): Node { return <box />; }
+function W<T extends object>(p: T): Node { return <box />; }
+function Plain(p: { a: string }): Node { return <box a={p.a} />; }
+
+console.log(show(<box a="1" />));
+console.log(show(<G a="1" />));
+console.log(show(<G a={2} key="k" />));
+console.log(show(<O />));
+console.log(show(<W x="1" y={2} />));
+console.log(show(<Plain a="p" />));
+console.log(show(<box>{"a"}{"b"}</box>));
+console.log(show(<>{"a"}</>));
+const made = <G a="called" />;
+console.log(typeof made.type);

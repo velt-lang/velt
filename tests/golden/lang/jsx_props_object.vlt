@@ -1,0 +1,8 @@
+/** @jsxImportSource ./_jsx_object */
+// A runtime whose `props` is an `object`, and a key `jsx` does not take: evaluated, then dropped.
+function t(s: string): string {
+  console.log("eval " + s);
+  return s;
+}
+console.log(<box a="1" />);
+console.log(<box key={t("k")} a={t("a")} />);

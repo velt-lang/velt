@@ -432,6 +432,9 @@ impl Names {
     }
 
     fn jsx(&mut self, el: &JsxElement) {
+        if let Some(id) = el.tag_root() {
+            self.use_name(&id.name, id.span);
+        }
         for a in &el.attrs {
             match a {
                 JsxAttr::Named { value, .. } => match value {

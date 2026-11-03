@@ -1,0 +1,78 @@
+/** @jsxImportSource ./_jsx_react */
+// A runtime shaped like React's, through TypeScript's automatic transform: `jsxs` where `tsc` calls
+// it, a spread child flattened, attributes and spreads in source order, an absent optional spread
+// field not copied, `undefined` kept, and a key of any type.
+import { show } from "./_jsx_react/show";
+
+function t(s: string): string {
+  console.log("eval " + s);
+  return s;
+}
+function o(): { a: string } {
+  console.log("eval spread");
+  return { a: "s" };
+}
+
+// `jsx` for no child and one; `jsxs` for several, and for one spread child.
+const xs = [1, 2];
+console.log(show(<box />));
+console.log(show(<box>{1}</box>));
+console.log(show(<box>{/* none */}{1}</box>));
+console.log(show(<box>{1}{2}</box>));
+console.log(show(<>{1}{2}</>));
+console.log(show(<>one</>));
+console.log(show(<box>{...xs}</box>));
+console.log(show(<box>{1}{...xs}{3}</box>));
+console.log(show(<list>{1}{2}</list>));
+
+// Source order of the keys and of evaluation.
+function C(p: { b?: string; a?: string; c?: string; children?: any }): any { return null; }
+console.log(show(<C a="1" b="2" />));
+console.log(show(<C a="1">kid</C>));
+console.log(show(<C b="x" {...{ a: "s" }} c="y" />));
+console.log(show(<box b={t("b")} {...o()} c={t("c")} />));
+console.log(show(<C b={t("b")} {...o()} c={t("c")} />));
+
+// An absent optional spread field is no key and keeps an earlier value.
+const s: { a?: string } = {};
+const full: { a?: string } = { a: "full" };
+console.log(show(<box a="1" {...s} />));
+console.log(show(<C a="1" {...s} />));
+console.log(show(<box {...s} />));
+console.log(show(<box a="1" {...full} />));
+
+// Every field of a spread source is copied.
+const rec: Record<string, string> = { r: "1" };
+const held: any = { h: 2, a: "x" };
+console.log(show(<C {...{ a: "x", z: 1 }} />));
+console.log(show(<box {...rec} />));
+console.log(show(<box {...{ a: "x", z: 1 }} />));
+console.log(show(<box {...{ a: "x", key: "in-props" }} />));
+console.log(show(<box {...held} />));
+console.log(show(<C {...held} c="y" />));
+
+// `undefined` stays `undefined` where the field also takes `null`.
+function U(p: { a?: string | null }): any { return null; }
+console.log(show(<U a={undefined} />));
+console.log(show(<U a={null} />));
+console.log(show(<box n={undefined} />));
+
+// The key: absent, as written, `null` kept.
+console.log(show(<box key="k" />));
+console.log(show(<box key={1} />));
+console.log(show(<box key={null} />));
+
+// Components with props of a dynamic or record type, and generic ones.
+function D(p: any): any { return null; }
+function R(p: Record<string, any>): any { return null; }
+function G<T>(p: { a: T; children?: any }): any { return null; }
+console.log(show(<D x="1" y={2} />));
+console.log(show(<R x="1">kid</R>));
+console.log(show(<G a="1" />));
+console.log(show(<G<number> a={1}>{1}{2}</G>));
+
+// Several children into `any` and `unknown`.
+function A(p: { children?: any }): any { return null; }
+function K(p: { children?: unknown }): any { return null; }
+console.log(show(<A>{1}{2}</A>));
+console.log(show(<K>{"a"}{"b"}</K>));

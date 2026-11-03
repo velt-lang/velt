@@ -1,0 +1,3 @@
+/** @jsxImportSource ./_jsx_auto_any */
+// A factory is called with what each element gives: it needs a function type, unlike in `tsc`.
+const a = <div />;

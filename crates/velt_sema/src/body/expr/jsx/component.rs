@@ -52,7 +52,7 @@ impl FnCx<'_, '_> {
         name: &ast::JsxName,
     ) -> hir::Expr {
         let tag = name.to_source();
-        let resolved = self.component(name, &tag).and_then(|c| {
+        let resolved = self.component(name, &tag, false).and_then(|c| {
             let rt = self.component_runtime_fn(p, &c, &tag, name.span())?;
             Some((c, rt))
         });
@@ -307,14 +307,38 @@ impl FnCx<'_, '_> {
         self.try_coerce(probe, to).is_ok()
     }
 
-    fn component(&mut self, name: &ast::JsxName, tag: &str) -> Option<Component> {
+    /// The component tag `name` denotes. With an `automatic` runtime, as in TypeScript, a tag of
+    /// type `any` or holding a string is one too, with props of type `any`, and a component may
+    /// take more than its props.
+    pub(super) fn component(
+        &mut self,
+        name: &ast::JsxName,
+        tag: &str,
+        automatic: bool,
+    ) -> Option<Component> {
         let callee = callee_ast(name);
         if let Some((d, id_span)) = self.named_fn(&callee) {
             self.cx.rec_ref(id_span, Target::Def(d));
-            return self.fn_component(d, callee, tag);
+            return self.fn_component(d, callee, tag, automatic);
         }
         let value = self.expr(&callee, None, Want::Borrow);
-        let TyKind::FnPtr { params, ret, .. } = self.cx.ty.kind(value.ty).clone() else {
+        if automatic && self.open_tag(value.ty) {
+            let any = self.any_ty()?;
+            return Some(Component {
+                props: any,
+                ret: any,
+                func: ComponentFn::Value(value),
+                slot_names: vec![],
+                is_async: false,
+                identity: format!("{}#{tag}", self.cx.modules[self.module].path),
+            });
+        }
+        // A function with properties (sigx's `component(…)`: a call signature, `__setup`, …)
+        // is a component by its call signature. It is passed as it is, converted to the
+        // runtime's component type like any argument: a runtime that takes `any` keeps its
+        // properties, one that takes `(props: P) => Element` gets its function.
+        let fn_ty = self.cx.call_type(value.ty).unwrap_or(value.ty);
+        let TyKind::FnPtr { params, ret, .. } = self.cx.ty.kind(fn_ty).clone() else {
             if !self.cx.ty.is_bottom(value.ty) {
                 let shown = self.cx.display(value.ty);
                 self.not_component(
@@ -325,11 +349,19 @@ impl FnCx<'_, '_> {
             }
             return None;
         };
-        let [props] = params[..] else {
-            let why = "a component takes one parameter, its props".to_string();
-            self.not_component(tag, name.span(), why);
-            return None;
+        let props = match params[..] {
+            [props] => props,
+            [props, ..] if automatic => props,
+            [] if automatic => self.cx.anon_type(&[], self.module),
+            _ => {
+                let why = "a component takes one parameter, its props".to_string();
+                self.not_component(tag, name.span(), why);
+                return None;
+            }
         };
+        // A generic call signature's props written as an intersection (sigx's
+        // `StripForJSX<…> & JSX.IntrinsicAttributes & { ref?: … }`) are known parts by now.
+        let props = self.cx.reduce_known_intersection(props);
         Some(Component {
             func: ComponentFn::Value(value),
             props,
@@ -340,8 +372,29 @@ impl FnCx<'_, '_> {
         })
     }
 
+    /// Is `t` the type of a tag whose props `tsc` does not check: `any`, a `string`, a string
+    /// literal, or a union of those and functions?
+    fn open_tag(&mut self, t: TyId) -> bool {
+        let one = |fx: &Self, m: TyId| {
+            m == fx.cx.ty.str_
+                || fx.cx.dynamic(m) == Some(crate::any::Dynamic::Any)
+                || matches!(fx.cx.lit_value(m), Some(hir::LitValue::Str(_)))
+        };
+        if one(self, t) {
+            return true;
+        }
+        let Some(members) = self.cx.union_members(t) else {
+            return false;
+        };
+        members.iter().any(|m| one(self, *m))
+            && members.iter().all(|m| {
+                let f = self.cx.call_type(*m).unwrap_or(*m);
+                one(self, *m) || matches!(self.cx.ty.kind(f), TyKind::FnPtr { .. })
+            })
+    }
+
     /// The named (non-extern) function `callee` denotes, with the span naming it.
-    fn named_fn(&mut self, callee: &ast::Expr) -> Option<(DefId, Span)> {
+    pub(super) fn named_fn(&mut self, callee: &ast::Expr) -> Option<(DefId, Span)> {
         let id = match &callee.kind {
             ast::ExprKind::Ident(id) => id.clone(),
             _ => match self.without_namespace(callee)?.kind {
@@ -360,12 +413,18 @@ impl FnCx<'_, '_> {
         }
     }
 
-    fn fn_component(&mut self, def: DefId, callee: ast::Expr, tag: &str) -> Option<Component> {
+    fn fn_component(
+        &mut self,
+        def: DefId,
+        callee: ast::Expr,
+        tag: &str,
+        automatic: bool,
+    ) -> Option<Component> {
         let c = self.fn_callable(def, String::new(), callee.span);
         let f = self.cx.fn_info(def);
         let simple = f.name.rsplit("::").next().unwrap_or(&f.name).to_string();
         let identity = format!("{}#{simple}", self.cx.modules[f.module].path);
-        if c.params.len() > 1 {
+        if c.params.len() > 1 && !automatic {
             let why = "a component takes one parameter, its props".to_string();
             self.not_component(tag, callee.span, why);
             return None;

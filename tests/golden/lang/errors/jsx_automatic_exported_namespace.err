@@ -1,0 +1,3 @@
+jsx_automatic_exported_namespace.vlt:12:12: error: Property 'mine' does not exist on type 'JSX.IntrinsicElements'.
+jsx_automatic_exported_namespace.vlt:17:12: error: 'S' cannot be used as a JSX component.
+jsx_automatic_exported_namespace.vlt:18:12: error: 'P' cannot be used as a JSX component.

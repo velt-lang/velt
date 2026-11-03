@@ -1,0 +1,14 @@
+// @jsxImportSource ./_jsx_automatic
+// TypeScript's automatic runtime checks attributes as tsc does: against the tag's
+// `JSX.IntrinsicElements` entry and against the component's props.
+import { component } from "./_jsx_automatic/component";
+import type { VNode } from "./_jsx_automatic/jsx-runtime";
+
+const Card = component<{ title: string }>((p): VNode => <box label={p.title} />, "Card");
+
+function main() {
+  const a = <box lable="x" />;
+  const b = <text bold="yes" />;
+  const c = <Card />;
+  const d = <Card title="t" extra={1} />;
+}

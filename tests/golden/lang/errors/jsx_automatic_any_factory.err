@@ -1,0 +1,1 @@
+jsx_automatic_any_factory.vlt:3:11: error: `jsx` of the JSX provider '_jsx_auto_any' is not a function (it has type `any`)

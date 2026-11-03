@@ -83,6 +83,14 @@ impl FnCx<'_, '_> {
             };
             let mut h = self.payload_expr(inner, hint, Want::Borrow);
             h = self.read_shared(h);
+            // `[...x]` of an `any`: an array, converted as `x as any[]` is (what `for...of`
+            // through `any` iterates). Another value is a `TypeError` (#924).
+            if self.cx.dynamic(h.ty) == Some(crate::any::Dynamic::Any) {
+                let elems = self.cx.ty.array(h.ty);
+                h = match self.try_coerce(h, elems) {
+                    Ok(h) | Err(h) => h,
+                };
+            }
             if self.cx.ty.array_elem(h.ty).is_none() {
                 match self.spread_iterable(h, inner) {
                     // A string's characters, a `Map`'s entries: spread as that array.
@@ -152,7 +160,11 @@ impl FnCx<'_, '_> {
             // Function types that differ only in their error-set variables are one
             // (`throws::vars`).
             let fits = match is_array {
-                true => self.spread_fits(et, elem),
+                // An `any` element converts at run time, as a value does.
+                true => {
+                    self.spread_fits(et, elem)
+                        || self.cx.dynamic(et) == Some(crate::any::Dynamic::Any)
+                }
                 false => {
                     et == elem
                         || (self.cx.ty.is_int(et) && self.float_elem(elem).is_some())

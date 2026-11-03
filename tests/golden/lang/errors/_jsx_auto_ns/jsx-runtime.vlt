@@ -1,0 +1,10 @@
+// A runtime exporting its `JSX` namespace, which `tsc` reads alone.
+export function jsx(type: any, props: any, key?: any): any {
+  return type;
+}
+export namespace JSX {
+  export type Element = number;
+  export interface IntrinsicElements {
+    box: { a?: string };
+  }
+}

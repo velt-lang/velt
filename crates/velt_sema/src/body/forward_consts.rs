@@ -372,6 +372,14 @@ impl<'a> Walker<'a> {
     fn expr(&mut self, e: &ast::Expr) {
         match &e.kind {
             E::Ident(id) => self.name(&id.name),
+            E::Jsx(el) => {
+                let mut roots = vec![];
+                crate::ast_walk::jsx_tag_roots(el, &mut |id| roots.push(id));
+                for id in roots {
+                    self.name(&id.name);
+                }
+                crate::ast_walk::children(e, &mut |c| self.expr(c));
+            }
             E::Arrow { params, body, .. } => {
                 let mut names: Vec<&ast::Ident> = vec![];
                 for p in params {

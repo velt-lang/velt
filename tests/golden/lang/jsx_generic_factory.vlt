@@ -1,0 +1,4 @@
+/** @jsxImportSource ./_jsx_generic */
+// `jsx<P>(type, props: P, key?, source?)`, as `tsc` compiles against it.
+console.log(<box a="1" />);
+console.log(<box key="k">one</box>);

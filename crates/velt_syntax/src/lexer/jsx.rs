@@ -200,13 +200,13 @@ pub(crate) fn clean_text(raw: &str) -> String {
         .unwrap_or(0);
     let mut out = String::new();
     for (i, line) in lines.iter().enumerate() {
-        let spaced = line.replace('\t', " ");
-        let mut trimmed = spaced.as_str();
+        // As `tsc` and esbuild do: a tab inside a line stays one.
+        let mut trimmed = *line;
         if i != 0 {
-            trimmed = trimmed.trim_start_matches(' ');
+            trimmed = trimmed.trim_start_matches([' ', '\t']);
         }
         if i != lines.len() - 1 {
-            trimmed = trimmed.trim_end_matches(' ');
+            trimmed = trimmed.trim_end_matches([' ', '\t']);
         }
         if !trimmed.is_empty() {
             out.push_str(trimmed);
@@ -232,6 +232,6 @@ mod tests {
         assert_eq!(clean_text(" "), " ");
         assert_eq!(clean_text("a \n "), "a");
         assert_eq!(clean_text("\r\n a\r\n\tb \r\n"), "a b");
-        assert_eq!(clean_text("x\t\ty"), "x  y");
+        assert_eq!(clean_text("x\t\ty"), "x\t\ty");
     }
 }

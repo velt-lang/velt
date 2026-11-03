@@ -1,0 +1,2 @@
+// `jsx` held as an `any`.
+export const jsx: any = (type: any, props: any): any => type;

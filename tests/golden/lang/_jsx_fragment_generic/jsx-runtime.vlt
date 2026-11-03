@@ -1,0 +1,16 @@
+// A generic `Fragment`, and a `jsx` with a rest parameter where `key` would be.
+export function Fragment<T>(p: { children?: T }): any {
+  return p.children;
+}
+export function jsx(type: any, props: any, ...rest: any[]): any {
+  return { type, props, rest };
+}
+export const jsxs = jsx;
+declare global {
+  namespace JSX {
+    type Element = any;
+    interface IntrinsicElements {
+      box: { key?: any; children?: any };
+    }
+  }
+}

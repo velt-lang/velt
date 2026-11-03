@@ -1,0 +1,16 @@
+div{a=x z=1 children=[1,2]}null
+fn{a=x z=1 children=[1,2]}null
+div{r=1 children=[1,2]}null
+div{a=o y=2 children=[1,2]}null
+div{children=[1,2]}null
+div{a=x z=1}null
+div{r=1}null
+div{}null
+fn{a=1}k
+fn{}3
+fn{}null
+Symbol(sg.Fragment){children=1}null
+Symbol(sg.Fragment){children=[1,2]}null
+div{children=[1,[2,3]]}null
+div{style={"color":"red"} onClick=function data-x=1 children=[null,false,t]}null
+div{a=undefined b=null c=undefined d=true}null
