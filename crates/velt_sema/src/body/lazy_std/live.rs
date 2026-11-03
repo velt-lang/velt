@@ -118,6 +118,8 @@ struct Walk {
     texts: Vec<TyId>,
     /// Values formatted as `console.log` prints them.
     formats: Vec<TyId>,
+    /// `console.log` or `console.error` of a float.
+    prints_float: bool,
     /// The interfaces whose methods it calls on a type parameter's value.
     ifaces: Vec<DefId>,
     /// The kinds ([`kind_bit`]) of its scalar types, which are not recorded as types.
@@ -541,7 +543,15 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             args,
         } => w.texts.extend(args.iter().map(|a| a.ty)),
         E::Call {
-            callee: Callee::Intrinsic(I::Print | I::PrintErr | I::Inspect | I::ErrorText),
+            callee: Callee::Intrinsic(I::Print | I::PrintErr),
+            args,
+        } => {
+            // A float is written by `numberWrite`, whose code holds the integer writer.
+            w.prints_float |= (args.iter()).any(|a| matches!(ty.kind(a.ty), TyKind::Float(_)));
+            w.formats.extend(args.iter().map(|a| a.ty));
+        }
+        E::Call {
+            callee: Callee::Intrinsic(I::Inspect | I::ErrorText),
             args,
         } => w.formats.extend(args.iter().map(|a| a.ty)),
         E::Call {
