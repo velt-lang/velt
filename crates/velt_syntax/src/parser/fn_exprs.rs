@@ -75,6 +75,7 @@ impl<'a> Parser<'a> {
                         ret,
                         throws,
                         is_async,
+                        is_unsafe: false,
                         is_system: false,
                         is_intrinsic: false,
                         generator: None,

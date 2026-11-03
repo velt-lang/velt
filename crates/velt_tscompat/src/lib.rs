@@ -49,6 +49,7 @@ pub const RULES: &[&str] = &[
     "velt-global",
     "velt-member",
     "catch-unknown",
+    "unsafe",
 ];
 
 /// How serious a [`Finding`] is.

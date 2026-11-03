@@ -138,6 +138,7 @@ impl<'a> Printer<'a> {
             }
             ExprKind::Paren(inner) => self.paren(inner),
             ExprKind::NonNull(inner) => cat![self.expr(inner), "!"],
+            ExprKind::Unsafe(inner) => group(cat!["unsafe { ", self.expr(inner), " }"]),
             ExprKind::Jsx(element) => self.jsx_element(element),
         }
     }

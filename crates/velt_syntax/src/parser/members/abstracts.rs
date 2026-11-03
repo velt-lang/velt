@@ -153,6 +153,7 @@ impl<'a> Parser<'a> {
             (mods.is_static, "static"),
             (mods.is_private, "private"),
             (mods.is_async, "async"),
+            (mods.is_unsafe, "unsafe"),
         ]
         .into_iter()
         .find_map(|(on, word)| on.then_some(word));
@@ -169,6 +170,7 @@ impl<'a> Parser<'a> {
             ret,
             throws: None,
             is_async: false,
+            is_unsafe: false,
             is_system: false,
             is_intrinsic: false,
             generator: None,

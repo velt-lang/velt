@@ -308,6 +308,9 @@ pub(crate) struct Ctx<'m> {
     pub generic_arrow_fns: FxHashSet<Span>,
     /// Name spans of every function made from a generic arrow (diagnostics show arrows).
     pub generic_arrow_all: FxHashSet<Span>,
+    /// Name spans of the functions made from local arrows inside unsafe code: their bodies are
+    /// unsafe code (`body::unsafe_code`).
+    pub unsafe_arrow_fns: FxHashSet<Span>,
     /// Why recursive aliases were not rewritten (`recursive_aliases::Blocked`).
     pub alias_blocked: crate::recursive_aliases::Blocked,
     /// Name spans of capturing nested functions reported by `crate::nested_closures`.
@@ -557,6 +560,7 @@ impl<'m> Ctx<'m> {
             copy_uses: vec![],
             unwraps: vec![],
             generic_arrow_fns: FxHashSet::default(),
+            unsafe_arrow_fns: FxHashSet::default(),
             kept_nested: FxHashSet::default(),
             late_consts: FxHashSet::default(),
             generator_values: FxHashMap::default(),

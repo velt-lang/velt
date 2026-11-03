@@ -93,6 +93,8 @@ pub(crate) use readonly_arrays::is_readonly_array;
 pub(crate) use readonly_arrays::{is_readonly_type, NUMBER_RECORD};
 pub(crate) use stmt::closure_def;
 pub(crate) mod switch;
+mod unsafe_code;
+pub(crate) use unsafe_code::unsafe_fn;
 mod untyped_let;
 mod using;
 mod yield_infer;
@@ -329,6 +331,10 @@ pub(crate) struct FnCx<'a, 'm> {
     pub system_args: bool,
     /// Checking the `Object.keys(x)` of a plain value inside the typed proxy hooks (`proxy.rs`).
     pub proxy_keys_inner: bool,
+    /// How many `unsafe { … }` blocks and expressions enclose the code being
+    /// checked, lexically: closures inside one are unsafe code too, a nested function
+    /// declaration is not (`unsafe_code.rs`).
+    pub unsafe_depth: u32,
     /// The explicit type arguments of the call about to be checked (at the first span): the
     /// slot each fills and its span, where a type bound it breaks is reported (`tsc` TS2344).
     pub explicit_type_spans: Option<(Span, Vec<(usize, Span)>)>,
@@ -432,6 +438,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             weak_key_args: false,
             system_args: false,
             proxy_keys_inner: false,
+            unsafe_depth: 0,
             explicit_type_spans: None,
             optional_slots: vec![],
             refused_reads: vec![],

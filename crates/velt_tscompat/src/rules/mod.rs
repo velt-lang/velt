@@ -69,6 +69,10 @@ impl<'a> Visit<'a> for Walk<'a> {
 
     fn function(&mut self, sig: &'a ast::FnSig, _body: &'a ast::Block) {
         self.bodied_return(sig.ret.as_ref());
+        if sig.is_unsafe {
+            let at = self.cx.keyword(sig.span, "unsafe");
+            unsafe_code(at, &mut self.cx);
+        }
         decls::operator_method(&sig.name, &mut self.cx);
         decls::throws_clause(sig, true, &mut self.cx);
     }
@@ -81,6 +85,10 @@ impl<'a> Visit<'a> for Walk<'a> {
                 catch: Some((Some(pattern), _)),
                 ..
             } => visit::walk_pattern(pattern, self),
+            ast::StmtKind::Unsafe(_) => {
+                let at = self.cx.keyword(s.span, "unsafe");
+                unsafe_code(at, &mut self.cx);
+            }
             _ => {}
         }
     }
@@ -92,6 +100,10 @@ impl<'a> Visit<'a> for Walk<'a> {
     fn expr(&mut self, e: &'a ast::Expr) {
         if let Some(target) = exprs::expr(e, &mut self.cx) {
             self.cast_targets.insert((target.lo, target.hi));
+        }
+        if let ast::ExprKind::Unsafe(_) = &e.kind {
+            let at = self.cx.keyword(e.span, "unsafe");
+            unsafe_code(at, &mut self.cx);
         }
         if let ast::ExprKind::Arrow { params, ret, .. } = &e.kind {
             self.bodied_return(ret.as_ref());
@@ -107,4 +119,15 @@ impl<'a> Visit<'a> for Walk<'a> {
             types::ty(t, &mut self.cx);
         }
     }
+}
+
+/// `unsafe { … }` and unsafe functions: Velt's marking of code that calls native code
+/// (docs/internals/design/c-ffi.md), which TypeScript doesn't have.
+fn unsafe_code(at: velt_common::Span, cx: &mut Cx) {
+    cx.error(
+        "unsafe",
+        at,
+        "`unsafe` is not TypeScript syntax: it marks Velt code that calls native code".to_string(),
+        &["native code is only reachable from Velt; keep it out of code shared with TypeScript"],
+    );
 }

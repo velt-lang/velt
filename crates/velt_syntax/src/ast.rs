@@ -160,6 +160,9 @@ pub struct FnSig {
     /// `throws A | B` after the return type; `None`: the thrown types are inferred.
     pub throws: Option<TypeExpr>,
     pub is_async: bool,
+    /// `unsafe function f()` / `unsafe m()`: calling it needs an `unsafe` block or function, and
+    /// its body is one (docs/internals/design/c-ffi.md). Additive.
+    pub is_unsafe: bool,
     /// `declare system function`: a function of the platform's C library, checked against the
     /// compiler's table of system functions (https://veltlang.com/docs/reference/system-functions/). Always `false`
     /// for anything but a `declare` item.
@@ -423,6 +426,9 @@ pub enum StmtKind {
         catch: Option<(Option<Pattern>, Block)>,
         finally: Option<Block>,
     },
+    /// `unsafe { … }`: a block whose code may call unsafe functions and do raw operations
+    /// (docs/internals/design/c-ffi.md). Additive.
+    Unsafe(Block),
     /// Nested function/struct/etc. declarations inside a block.
     Item(Box<Item>),
     Empty,
@@ -683,6 +689,9 @@ pub enum ExprKind {
     Paren(Box<Expr>),
     /// `x!`: the value of `x`, which must not be `null` (checked: a `null` panics).
     NonNull(Box<Expr>),
+    /// `unsafe { expr }` in expression position: `expr`, checked as code in an `unsafe` block
+    /// (docs/internals/design/c-ffi.md). Additive.
+    Unsafe(Box<Expr>),
     /// A JSX element or fragment: `<div class="a">{x}</div>`, `<></>`. Parentheses around an
     /// element are not kept (`(<a />)` is just the element).
     Jsx(Box<JsxElement>),

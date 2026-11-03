@@ -31,7 +31,9 @@ fn collect_returns<'a>(stmts: &'a [ast::Stmt], out: &mut Vec<&'a ast::Expr>) {
             S::While { body, .. } | S::DoWhile { body, .. } | S::For { body, .. } => {
                 collect_returns(&body.stmts, out)
             }
-            S::ForOf { body, .. } | S::Block(body) => collect_returns(&body.stmts, out),
+            S::ForOf { body, .. } | S::Block(body) | S::Unsafe(body) => {
+                collect_returns(&body.stmts, out)
+            }
             S::Labeled { body, .. } => collect_returns(std::slice::from_ref(body), out),
             S::Switch { cases, .. } => cases.iter().for_each(|c| collect_returns(&c.body, out)),
             S::Try {

@@ -104,7 +104,7 @@ fn stmt_has(s: &ast::Stmt, t: &Scan) -> bool {
                 || block_has(body, t)
         }
         S::ForOf { iter, body, .. } => expr_has(iter, t) || block_has(body, t),
-        S::Block(b) => block_has(b, t),
+        S::Block(b) | S::Unsafe(b) => block_has(b, t),
         S::Labeled { body, .. } => stmt_has(body, t),
         S::Switch {
             discriminant,
@@ -154,6 +154,11 @@ fn expr_has(e: &ast::Expr, t: &Scan) -> bool {
 /// the functions it creates.
 pub(super) struct Rewriter<'t, 'm> {
     pub lifted: Vec<Span>,
+    /// The functions it created inside unsafe code (an `unsafe` block or an unsafe function):
+    /// their bodies stay unsafe code (`body::unsafe_code`).
+    pub unsafe_lifted: Vec<Span>,
+    /// How many unsafe blocks and functions enclose the statement being rewritten.
+    unsafe_depth: u32,
     /// The module of the item being rewritten.
     pub module: usize,
     types: &'t GenericFnTypes<'m>,
@@ -171,6 +176,8 @@ impl<'t, 'm> Rewriter<'t, 'm> {
     pub(super) fn new(types: &'t GenericFnTypes<'m>) -> Self {
         Rewriter {
             lifted: vec![],
+            unsafe_lifted: vec![],
+            unsafe_depth: 0,
             module: 0,
             types,
             outer_free: None,
@@ -264,7 +271,10 @@ impl<'t, 'm> Rewriter<'t, 'm> {
         for e in f.sig.params.iter_mut().filter_map(|p| p.default.as_mut()) {
             self.expr(e);
         }
+        // A nested function declaration is not unsafe code (unless it is an unsafe function).
+        let depth = std::mem::replace(&mut self.unsafe_depth, u32::from(f.sig.is_unsafe));
         self.block(&mut f.body);
+        self.unsafe_depth = depth;
     }
 
     fn block(&mut self, b: &mut ast::Block) {
@@ -286,6 +296,15 @@ impl<'t, 'm> Rewriter<'t, 'm> {
                 true => None,
                 false => arrow_function(v).or_else(typed),
             };
+            let recursive = match lifted {
+                None => recursive_arrow(v),
+                Some(_) => None,
+            };
+            if let Some(f) = lifted.as_ref().or(recursive.as_ref()) {
+                if self.unsafe_depth > 0 {
+                    self.unsafe_lifted.push(f.sig.name.span);
+                }
+            }
             if let Some(f) = lifted {
                 self.lifted.push(f.sig.name.span);
                 let item = ast::Item {
@@ -294,7 +313,7 @@ impl<'t, 'm> Rewriter<'t, 'm> {
                     span: s.span,
                 };
                 s.kind = S::Item(Box::new(item));
-            } else if let Some(f) = recursive_arrow(v) {
+            } else if let Some(f) = recursive {
                 // A nested function, which may capture locals (`crate::nested_closures`).
                 let item = ast::Item {
                     kind: I::Function(f),
@@ -340,6 +359,11 @@ impl<'t, 'm> Rewriter<'t, 'm> {
                 self.block(body);
             }
             S::Block(b) => self.block(b),
+            S::Unsafe(b) => {
+                self.unsafe_depth += 1;
+                self.block(b);
+                self.unsafe_depth -= 1;
+            }
             S::Labeled { body, .. } => self.inside(body),
             S::Switch {
                 discriminant,

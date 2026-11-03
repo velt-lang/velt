@@ -28,6 +28,8 @@ pub(super) struct Modifiers {
     is_declare: bool,
     /// `abstract name(): T;`: a method without a body (in an `abstract class`).
     is_abstract: bool,
+    /// `unsafe name() { … }`: an unsafe method (docs/internals/design/c-ffi.md).
+    is_unsafe: bool,
 }
 
 impl Modifiers {
@@ -41,6 +43,7 @@ impl Modifiers {
             || self.is_setter
             || self.is_declare
             || self.is_abstract
+            || self.is_unsafe
     }
 
     fn ctor_visibility(&self) -> CtorVisibility {
@@ -99,6 +102,7 @@ impl<'a> Parser<'a> {
                 // `override` is contextual (not in the keyword list), so it arrives as an identifier.
                 None if self.at_word("override") => &mut m.is_override,
                 None if self.at_word("abstract") => &mut m.is_abstract,
+                None if self.at_word("unsafe") => &mut m.is_unsafe,
                 None if self.at_word("private") && !m.is_public && !m.is_protected => {
                     &mut m.is_private
                 }
@@ -186,7 +190,9 @@ impl<'a> Parser<'a> {
                 name.span,
             );
         }
-        let sig = self.parse_sig_rest(lo, name, mods.is_async, star.is_some())?;
+        let mut sig = self.parse_sig_rest(lo, name, mods.is_async, star.is_some())?;
+        sig.is_unsafe = mods.is_unsafe;
+        self.unsafe_symbol_method(&sig);
         self.check_accessor(&sig, &mods);
         if mods.is_abstract {
             return self.abstract_method(sig, &mods);
@@ -238,6 +244,7 @@ impl<'a> Parser<'a> {
                         sig.name.span,
                     );
                 }
+                self.overloads_agree_on_unsafe([&sig], &m.decl.sig);
                 m.decl.overloads.insert(0, sig);
                 Ok(Member::Method(m))
             }
@@ -328,9 +335,9 @@ impl<'a> Parser<'a> {
             self.error_expected(if optional { "`:`" } else { "`:` or `(`" });
             return Err(Fail);
         }
-        if mods.is_async || mods.is_override || mods.is_getter || mods.is_setter {
+        if mods.is_async || mods.is_override || mods.is_getter || mods.is_setter || mods.is_unsafe {
             self.error(
-                "`async`, `override`, `get` and `set` are not allowed on fields",
+                "`async`, `override`, `get`, `set` and `unsafe` are not allowed on fields",
                 name.span,
             );
         }
@@ -420,6 +427,7 @@ impl<'a> Parser<'a> {
             ret: None,
             throws,
             is_async: false,
+            is_unsafe: false,
             is_system: false,
             is_intrinsic: false,
             generator: None,

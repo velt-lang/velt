@@ -72,7 +72,7 @@ impl Walk {
                     w.block(body);
                 });
             }
-            S::Block(b) => self.block(b),
+            S::Block(b) | S::Unsafe(b) => self.block(b),
             S::Switch {
                 discriminant,
                 cases,

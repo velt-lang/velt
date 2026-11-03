@@ -421,6 +421,7 @@ pub(super) fn check_method_sig(
             f.is_generator,
         )
     };
+    super::unsafe_methods::implements(cx, def, &format!("`{iname}.{}`", m.name));
     let iface_args = own_generics_match(cx, def, owner_args.len(), m, iface_args, iname)?;
     let iface_args = &iface_args[..];
     let ps: Vec<TyId> = ps.into_iter().map(|t| cx.subst(t, owner_args)).collect();

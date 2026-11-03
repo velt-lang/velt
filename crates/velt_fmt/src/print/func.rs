@@ -20,10 +20,22 @@ impl<'a> Printer<'a> {
     /// [`fn_decl`](Self::fn_decl) after `mods` (`export `, `static `, ...), which its overload
     /// signatures (`FnDecl::overloads`, each on a line of its own before it) repeat.
     pub(super) fn fn_decl_with(&mut self, f: &FnDecl, keyword: &str, mods: &str) -> Doc {
+        self.fn_decl_mods(f, keyword, mods, true)
+    }
+
+    /// [`fn_decl_with`](Self::fn_decl_with), printing `unsafe` itself (`own_unsafe`) or not (a
+    /// method's `mods` hold it, before `get` / `set`).
+    pub(super) fn fn_decl_mods(
+        &mut self,
+        f: &FnDecl,
+        keyword: &str,
+        mods: &str,
+        own_unsafe: bool,
+    ) -> Doc {
         let mut out = vec![];
         for (k, o) in f.overloads.iter().enumerate() {
             let sig = self.fn_sig(o, keyword, o.span.hi);
-            let asyncness = if o.is_async { "async " } else { "" };
+            let asyncness = fn_mods(o, own_unsafe);
             out.push(cat![mods.to_string(), asyncness, sig, ";"]);
             // Comments after a signature: on its line, then on lines of their own.
             let next = f.overloads.get(k + 1).unwrap_or(&f.sig).span.lo;
@@ -36,7 +48,7 @@ impl<'a> Printer<'a> {
                 out.push(hardline());
             }
         }
-        let asyncness = if f.sig.is_async { "async " } else { "" };
+        let asyncness = fn_mods(&f.sig, own_unsafe);
         let sig = self.fn_sig(&f.sig, keyword, f.body.span.lo);
         out.push(cat![
             mods.to_string(),
@@ -280,5 +292,16 @@ pub(super) fn breaks_itself(e: &Expr) -> bool {
             matches!(inner.kind, Call { .. }) && breaks_itself(inner)
         }
         _ => false,
+    }
+}
+
+/// The modifiers a function's signature puts before its keyword: `unsafe ` (when `own_unsafe`),
+/// `async `, both (`unsafe async `) or none.
+fn fn_mods(sig: &FnSig, own_unsafe: bool) -> &'static str {
+    match (sig.is_unsafe && own_unsafe, sig.is_async) {
+        (true, true) => "unsafe async ",
+        (true, false) => "unsafe ",
+        (false, true) => "async ",
+        (false, false) => "",
     }
 }

@@ -179,7 +179,7 @@ fn super_on_every_path(s: &ast::Stmt) -> bool {
             els: Some(els),
             ..
         } => once_in(&then.stmts) && super_on_every_path(els),
-        ast::StmtKind::Block(b) => once_in(&b.stmts),
+        ast::StmtKind::Block(b) | ast::StmtKind::Unsafe(b) => once_in(&b.stmts),
         _ => false,
     }
 }
@@ -200,7 +200,7 @@ fn super_sites(s: &ast::Stmt, out: &mut Vec<velt_common::Span>) {
             super_sites(els, out);
             vec![&then.stmts]
         }
-        ast::StmtKind::Block(b) => vec![&b.stmts],
+        ast::StmtKind::Block(b) | ast::StmtKind::Unsafe(b) => vec![&b.stmts],
         _ => return,
     };
     for st in branches.into_iter().flatten() {

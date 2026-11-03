@@ -529,3 +529,45 @@ fn generator_methods_in_object_literals_stay_methods() {
 ",
     );
 }
+
+#[test]
+fn unsafe_blocks_expressions_and_functions() {
+    assert_fmt(
+        "unsafe   function raw(p:i64):i64{ return p }\nexport unsafe async function later(){}\nclass C { static  unsafe make(): i64 { return 0 } }\nfunction f() { unsafe { g(); }\n const rc = unsafe {  step(s)  };\n const r = (p: i64) => unsafe { fin(p) }; }\n",
+        "unsafe function raw(p: i64): i64 {
+  return p;
+}
+
+export unsafe async function later() {}
+
+class C {
+  static unsafe make(): i64 {
+    return 0;
+  }
+}
+
+function f() {
+  unsafe {
+    g();
+  }
+  const rc = unsafe { step(s) };
+  const r = (p: i64) => unsafe { fin(p) };
+}
+",
+    );
+}
+
+#[test]
+fn unsafe_accessors_and_abstract_methods_keep_their_modifier() {
+    assert_fmt(
+        "abstract class C { abstract unsafe m(): void; unsafe get x(): i64 { return 0 } static unsafe async run() {} }\n",
+        "abstract class C {
+  abstract unsafe m(): void;
+  unsafe get x(): i64 {
+    return 0;
+  }
+  static unsafe async run() {}
+}
+",
+    );
+}

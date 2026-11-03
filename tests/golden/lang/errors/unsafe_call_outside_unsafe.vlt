@@ -1,0 +1,10 @@
+// Calling an unsafe function needs an `unsafe` block or function around the call.
+
+// SAFETY: callers pass a non-negative `n`.
+unsafe function raw(n: i64): i64 {
+  return n * 2;
+}
+
+function main() {
+  console.log(raw(3));
+}

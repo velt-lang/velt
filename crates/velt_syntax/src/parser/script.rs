@@ -54,6 +54,7 @@ impl Parser<'_> {
                     || self.at_namespace(0)
                     || self.at_var_decl()
                     || self.at_abstract_class()
+                    || self.at_unsafe_fn()
             }
             _ => false,
         }
@@ -95,6 +96,7 @@ impl Parser<'_> {
             ret: None,
             throws: None,
             is_async,
+            is_unsafe: false,
             is_system: false,
             is_intrinsic: false,
             generator: None,

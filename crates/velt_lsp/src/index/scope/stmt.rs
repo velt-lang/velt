@@ -110,7 +110,7 @@ impl<'a> Walker<'a> {
                     w.block(body);
                 });
             }
-            ast::StmtKind::Block(b) => self.block(b),
+            ast::StmtKind::Block(b) | ast::StmtKind::Unsafe(b) => self.block(b),
             ast::StmtKind::Switch {
                 discriminant,
                 cases,

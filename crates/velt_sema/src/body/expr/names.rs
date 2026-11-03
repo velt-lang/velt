@@ -548,7 +548,10 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         }
-        if self.gated_value(d, &id.name, span) || self.type_test_value(d, &id.name, span) {
+        if self.gated_value(d, &id.name, span)
+            || self.type_test_value(d, &id.name, span)
+            || self.reject_unsafe_value(d, &id.name, span)
+        {
             return self.error_expr(span);
         }
         let f = self.cx.fn_info(d);
@@ -583,6 +586,7 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        self.reject_unsafe_value(d, name, span);
         let f = self.cx.fn_info(d);
         let (params, is_async) = (
             f.params.iter().map(|p| p.ty).collect::<Vec<_>>(),

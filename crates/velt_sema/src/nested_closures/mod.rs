@@ -598,7 +598,7 @@ impl Rw {
                 self.expr(iter, locals);
                 self.block(&mut body.stmts, locals);
             }
-            S::Block(b) => self.block(&mut b.stmts, locals),
+            S::Block(b) | S::Unsafe(b) => self.block(&mut b.stmts, locals),
             S::Labeled { body, .. } => self.stmt(body, locals),
             S::Switch {
                 discriminant,

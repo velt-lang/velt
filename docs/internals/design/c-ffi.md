@@ -79,10 +79,10 @@ export class Statement {
   text(col: i32): string {
     // SAFETY: the column's text is valid until the next step, reset or finalize of the
     // statement, and is copied before this method returns.
-    return unsafe {
+    unsafe {
       const p = sqlite3_column_text(this.#stmt, col);
-      p === null ? "" : readUtf8(p, sqlite3_column_bytes(this.#stmt, col) as usize)
-    };
+      return p === null ? "" : readUtf8(p, sqlite3_column_bytes(this.#stmt, col) as usize);
+    }
   }
 }
 ```
@@ -127,17 +127,24 @@ which already has much that tsc doesn't accept (`declare c`, `f16`, operator met
 
 ```ts planned
 // SAFETY: `p` comes from sqlite3_prepare_v3 and the handle runs this once.
-const release = (p: Ptr<sqlite3_stmt>) => unsafe { sqlite3_finalize(p) };
+const release = (p: Ptr<sqlite3_stmt>) => unsafe { sqlite3_finalize(p) };   // an unsafe expression
 
 // SAFETY: callers pass a buffer of at least `n` floats.
 unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
 ```
 
 - **Syntax.** `unsafe { … }` is a block statement, read like `try { … }`. In expression position
-  it evaluates to its last expression (`const rc = unsafe { sqlite3_step(s) };`). `unsafe` is a
-  modifier on functions, methods and arrow functions, read like `async`, and an `unsafe`
-  function's body is an unsafe block. It is a contextual keyword: `unsafe` stays usable as an
-  identifier where neither `{` nor a function follows it.
+  `unsafe { expr }` holds one expression and evaluates to it (`const rc = unsafe {
+  sqlite3_step(s) };`, `p => unsafe { sqlite3_finalize(p) }`). `unsafe` is a modifier on
+  functions and methods, read like `async` (`unsafe function`, `unsafe async function`,
+  `static unsafe m()`), and an `unsafe` function's body is an unsafe block. Unsafe contexts are
+  lexical: a closure written inside one is unsafe code, a nested function declaration is not.
+  It is a contextual keyword: `unsafe` stays usable as an identifier where neither `{` nor a
+  function follows it on the same line.
+- **Unsafe functions are not values.** A function type can't say it is unsafe, so an unsafe
+  function used as a value (not called) is an error; a safe arrow calling it in an `unsafe`
+  expression is the value. `unsafe` on arrow functions waits for unsafe function types, which
+  nothing needs yet.
 - **What requires `unsafe`** (an error elsewhere, naming the operation, with `unsafe { … }` as
   the fix): calling a `declare c` function; the raw `velt/ffi` operations (`Ptr` reads and writes
   at an offset, `readUtf8`/`readCString`/`readBytes` from a `Ptr`, reading a `CFunction` from C

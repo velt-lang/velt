@@ -1,0 +1,2 @@
+unsafe_call_outside_unsafe.vlt:9:15
+error: calling unsafe function `raw` needs an `unsafe` block or function

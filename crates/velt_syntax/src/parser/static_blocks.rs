@@ -91,7 +91,8 @@ fn returns_in(s: &Stmt, out: &mut Vec<velt_common::Span>) {
         | StmtKind::DoWhile { body, .. }
         | StmtKind::ForOf { body, .. }
         | StmtKind::For { body, .. }
-        | StmtKind::Block(body) => block(body, out),
+        | StmtKind::Block(body)
+        | StmtKind::Unsafe(body) => block(body, out),
         StmtKind::Labeled { body, .. } => returns_in(body, out),
         StmtKind::Switch { cases, .. } => {
             for c in cases {

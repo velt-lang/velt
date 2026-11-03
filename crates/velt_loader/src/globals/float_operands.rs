@@ -128,6 +128,7 @@ fn floaty(e: &ast::Expr, names: &HashSet<String>) -> bool {
         ast::ExprKind::Unary { expr, .. }
         | ast::ExprKind::Paren(expr)
         | ast::ExprKind::NonNull(expr)
+        | ast::ExprKind::Unsafe(expr)
         | ast::ExprKind::Await(expr) => floaty(expr, names),
         ast::ExprKind::Cond { then, els, .. } => floaty(then, names) || floaty(els, names),
         // An array holding one (`const xs = [1.5, 2]`, iterated by `for … of`).

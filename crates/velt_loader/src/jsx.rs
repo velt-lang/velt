@@ -79,7 +79,7 @@ fn stmt(s: &ast::Stmt) -> Option<Span> {
             .or_else(|| update.as_ref().and_then(expr))
             .or_else(|| block(body)),
         S::ForOf { iter, body, .. } => expr(iter).or_else(|| block(body)),
-        S::Block(b) => block(b),
+        S::Block(b) | S::Unsafe(b) => block(b),
         S::Labeled { body, .. } => stmt(body),
         S::Switch {
             discriminant,
@@ -117,6 +117,7 @@ fn expr(e: &ast::Expr) -> Option<Span> {
         | E::InstanceOf { expr: x, .. }
         | E::Paren(x)
         | E::NonNull(x)
+        | E::Unsafe(x)
         | E::Member { object: x, .. } => expr(x),
         E::Binary { lhs, rhs, .. } => expr(lhs).or_else(|| expr(rhs)),
         E::Assign { target, value, .. } => expr(target).or_else(|| expr(value)),

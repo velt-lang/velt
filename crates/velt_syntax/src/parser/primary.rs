@@ -52,6 +52,7 @@ impl<'a> Parser<'a> {
                 self.parse_fn_expr(lo, true)?
             }
             Tok::Ident if self.at_word("super") => self.parse_super(),
+            Tok::Ident if self.at_unsafe_block() => self.parse_unsafe_expr()?,
             Tok::Ident if self.at_word("match") && self.is_removed_match() => {
                 self.diags.push(
                     velt_common::Diagnostic::error("`match` is not supported", span).with_note(

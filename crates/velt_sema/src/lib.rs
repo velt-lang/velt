@@ -322,6 +322,7 @@ fn check_timed(
         if let Some(l) = &lifted {
             cx.generic_arrow_fns = l.local_fns.clone();
             cx.generic_arrow_all = l.all_fns.clone();
+            cx.unsafe_arrow_fns = l.unsafe_fns.clone();
         }
         if let Some(o) = &overloaded {
             cx.has_overloads = true;

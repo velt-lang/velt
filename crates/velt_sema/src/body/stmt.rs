@@ -159,10 +159,8 @@ impl FnCx<'_, '_> {
                 discriminant,
                 cases,
             } => self.switch_stmt(discriminant, cases, None, span, out),
-            A::Block(b) => {
-                let b = self.block(b);
-                Self::push(out, S::Block(b), span);
-            }
+            A::Block(b) => self.block_stmt(b, false, span, out),
+            A::Unsafe(b) => self.block_stmt(b, true, span, out),
             A::Labeled { label, body } => match body.kind {
                 A::While { .. } | A::DoWhile { .. } | A::For { .. } | A::ForOf { .. } => {
                     self.loop_stmt(body, Some(label), out)

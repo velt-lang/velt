@@ -93,6 +93,7 @@ pub(super) fn recursive_arrow(v: &ast::VarDecl) -> Option<ast::FnDecl> {
             ret,
             throws,
             is_async: *is_async,
+            is_unsafe: false,
             is_system: false,
             is_intrinsic: false,
             generator: None,
