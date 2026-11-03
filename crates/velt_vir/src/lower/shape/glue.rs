@@ -37,7 +37,9 @@ impl FnLower<'_, '_> {
         let args = vec![self.addr(Place::local(src)), self.addr(Place::local(out))];
         let f = self.cx.func_direct(Work::Glue(g, cty), self.mode);
         self.call(Callee::Func(f), args, None, false);
-        Operand::Copy(Place::local(out))
+        // An owned temporary, as `make_dyn` gives: the consumer takes it (a `let`) or it is
+        // dropped with the statement's temporaries; a plain local would read as borrowed.
+        self.own_value(Operand::Copy(Place::local(out)), ty)
     }
 
     /// `any_to` of `a` (an `any`) as `ty`, a type built from a placeholder, in a shared
