@@ -32,6 +32,8 @@ mod pr_size;
 mod precheck;
 mod read_by_tests;
 mod repeat;
+#[cfg(test)]
+mod requeue_tests;
 mod timing_lint;
 
 use std::path::{Path, PathBuf};

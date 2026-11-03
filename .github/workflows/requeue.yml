@@ -1,0 +1,69 @@
+# A merge queue run of `ci` that failed for GitHub's infrastructure only, not for a check (#2101):
+# a macOS job no hosted runner ever picked up ("The job was not acquired by Runner of type hosted
+# even after multiple attempts", four times on 2026-11-02 and three on 2026-11-03), or an internal
+# error of GitHub Actions. The queue drops the pull request either way; this puts it back, at
+# most twice per head commit, and says so on the pull request.
+#
+# scripts/requeue/requeue.py decides from the run's jobs and their annotations: every job that
+# failed or was cancelled, besides the summaries (`ci`, `golden (<os>) / goldens`), must carry one
+# of GitHub's own failure annotations and no failed step. A failed test, a time limit or the
+# fail-fast cancellation that follows a failure keeps the pull request out. The decision is tested
+# on saved real runs (scripts/requeue/fixtures, crates/xtask/src/requeue_tests.rs).
+# scripts/requeue/enqueue.sh re-queues: only the commit the queue tested, only when the pull
+# request is open and not queued again already.
+#
+# The token: events the workflow's own GITHUB_TOKEN causes start no workflow runs (GitHub's rule,
+# with exceptions the docs list, the merge queue not among them), so a pull request it enqueues
+# may wait in the queue without its checks. Set the secret MERGE_QUEUE_TOKEN (a fine-grained
+# token of a maintainer, or a GitHub App's, for this repository with "Pull requests" and
+# "Contents" read and write) and it enqueues with that instead; without it, enqueue.sh warns on
+# the pull request when no `ci` run started for the entry.
+name: requeue
+
+on:
+  workflow_run:
+    workflows: [ci]
+    types: [completed]
+
+permissions: {}
+
+jobs:
+  requeue:
+    if: >-
+      github.event.workflow_run.event == 'merge_group' &&
+      (github.event.workflow_run.conclusion == 'failure' ||
+      github.event.workflow_run.conclusion == 'cancelled')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      # The run's jobs, and their annotations (check runs).
+      actions: read
+      checks: read
+      # The scripts, from the default branch (a `workflow_run` workflow runs from there).
+      contents: read
+      # The comment on the pull request, and the enqueue without MERGE_QUEUE_TOKEN.
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: scripts/requeue
+      - id: decide
+        name: did the run fail for the infrastructure only
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          ATTEMPT: ${{ github.event.workflow_run.run_attempt }}
+        run: |
+          python3 -I scripts/requeue/requeue.py fetch "$RUN_ID" "$ATTEMPT" > "$RUNNER_TEMP/run.json"
+          python3 -I scripts/requeue/requeue.py decide "$RUNNER_TEMP/run.json" "$GITHUB_OUTPUT"
+      - if: steps.decide.outputs.requeue == 'true'
+        name: re-queue the pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          QUEUE_TOKEN: ${{ secrets.MERGE_QUEUE_TOKEN || github.token }}
+          QUEUE_TOKEN_IS_SECRET: ${{ secrets.MERGE_QUEUE_TOKEN != '' }}
+          PR: ${{ steps.decide.outputs.pr }}
+          WHY: ${{ steps.decide.outputs.why }}
+          RUN_URL: ${{ github.event.workflow_run.html_url }}
+          RUN_CREATED: ${{ github.event.workflow_run.created_at }}
+        run: bash scripts/requeue/enqueue.sh

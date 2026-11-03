@@ -1,0 +1,32 @@
+{
+ "id": 41332184046,
+ "attempt": 1,
+ "event": "merge_group",
+ "conclusion": "failure",
+ "head_branch": "gh-readonly-queue/main/pr-1988-d5f7df2ed7c62cfa7635b3db843efe994387a0de",
+ "jobs": [
+  {"id": 124924422899, "name": "queue-plan", "conclusion": "success", "runner_name": "GitHub Actions 1000032996", "failed_steps": []},
+  {"id": 124924424146, "name": "windows (changed tests under load, packages)", "conclusion": "skipped", "runner_name": "", "failed_steps": []},
+  {"id": 124924424200, "name": "main-plan", "conclusion": "skipped", "runner_name": "", "failed_steps": []},
+  {"id": 124924424222, "name": "matrix.part", "conclusion": "skipped", "runner_name": "", "failed_steps": []},
+  {"id": 124924424382, "name": "pr-plan", "conclusion": "skipped", "runner_name": "", "failed_steps": []},
+  {"id": 124924424417, "name": "lint (${{ matrix.os }})", "conclusion": "skipped", "runner_name": "", "failed_steps": []},
+  {"id": 124924424426, "name": "main (${{ matrix.os }})", "conclusion": "skipped", "runner_name": "", "failed_steps": []},
+  {"id": 124924538913, "name": "check (windows-latest)", "conclusion": "cancelled", "runner_name": "GitHub Actions 1000032998", "failed_steps": [], "annotations": [{"level": "failure", "message": "GitHub Actions has encountered an internal error when running your job."}]},
+  {"id": 124924538936, "name": "check (macos-latest)", "conclusion": "cancelled", "runner_name": "GitHub Actions 1000032997", "failed_steps": [], "annotations": [{"level": "failure", "message": "GitHub Actions has encountered an internal error when running your job."}]},
+  {"id": 124924538982, "name": "check (ubuntu-latest)", "conclusion": "cancelled", "runner_name": "GitHub Actions 1000033003", "failed_steps": [], "annotations": [{"level": "failure", "message": "GitHub Actions has encountered an internal error when running your job."}]},
+  {"id": 124924539287, "name": "golden (ubuntu-latest) / build", "conclusion": "success", "runner_name": "GitHub Actions 1000033001", "failed_steps": []},
+  {"id": 124924539328, "name": "golden (windows-latest) / build", "conclusion": "success", "runner_name": "GitHub Actions 1000033000", "failed_steps": []},
+  {"id": 124924539356, "name": "golden (macos-latest) / build", "conclusion": "success", "runner_name": "GitHub Actions 1000032999", "failed_steps": []},
+  {"id": 124925617683, "name": "golden (ubuntu-latest) / shard 1/2", "conclusion": "cancelled", "runner_name": "GitHub Actions 1000033011", "failed_steps": [], "annotations": [{"level": "failure", "message": "GitHub Actions has encountered an internal error when running your job."}]},
+  {"id": 124925617785, "name": "golden (ubuntu-latest) / shard 2/2", "conclusion": "cancelled", "runner_name": "GitHub Actions 1000033018", "failed_steps": [], "annotations": [{"level": "failure", "message": "GitHub Actions has encountered an internal error when running your job."}]},
+  {"id": 124925619090, "name": "golden (ubuntu-latest) / wasm shard ${{ matrix.shard }}", "conclusion": "skipped", "runner_name": "", "failed_steps": []},
+  {"id": 124926177287, "name": "golden (macos-latest) / shard 1/2", "conclusion": "cancelled", "runner_name": "GitHub Actions 1000033017", "failed_steps": [], "annotations": [{"level": "failure", "message": "GitHub Actions has encountered an internal error when running your job."}]},
+  {"id": 124926177309, "name": "golden (macos-latest) / shard 2/2", "conclusion": "cancelled", "runner_name": "GitHub Actions 1000033020", "failed_steps": [], "annotations": [{"level": "failure", "message": "GitHub Actions has encountered an internal error when running your job."}]},
+  {"id": 124926178396, "name": "golden (macos-latest) / wasm shard ${{ matrix.shard }}", "conclusion": "skipped", "runner_name": "", "failed_steps": []},
+  {"id": 124926392315, "name": "golden (windows-latest) / shard 2/3", "conclusion": "cancelled", "runner_name": "GitHub Actions 1000033024", "failed_steps": [], "annotations": [{"level": "failure", "message": "GitHub Actions has encountered an internal error when running your job."}]},
+  {"id": 124926392341, "name": "golden (windows-latest) / shard 3/3", "conclusion": "cancelled", "runner_name": "GitHub Actions 1000033025", "failed_steps": [], "annotations": [{"level": "failure", "message": "GitHub Actions has encountered an internal error when running your job."}]},
+  {"id": 124926392366, "name": "golden (windows-latest) / shard 1/3", "conclusion": "cancelled", "runner_name": "", "failed_steps": [], "annotations": [{"level": "failure", "message": "GitHub Actions has encountered an internal error when running your job."}]},
+  {"id": 124926393343, "name": "golden (windows-latest) / wasm shard ${{ matrix.shard }}", "conclusion": "skipped", "runner_name": "", "failed_steps": []}
+ ]
+}

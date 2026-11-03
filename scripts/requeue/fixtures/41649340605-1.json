@@ -1,0 +1,22 @@
+{
+ "id": 41649340605,
+ "attempt": "1",
+ "event": "pull_request",
+ "conclusion": "failure",
+ "head_branch": "idle-2045",
+ "jobs": [
+  {"id": 125963067215, "name": "golden", "conclusion": "success", "runner_name": "GitHub Actions 1000037573", "failed_steps": []},
+  {"id": 125963067386, "name": "lint", "conclusion": "success", "runner_name": "GitHub Actions 1000037583", "failed_steps": []},
+  {"id": 125963067495, "name": "test", "conclusion": "success", "runner_name": "GitHub Actions 1000037584", "failed_steps": []},
+  {"id": 125963067625, "name": "pr-plan", "conclusion": "success", "runner_name": "GitHub Actions 1000037585", "failed_steps": []},
+  {"id": 125963069208, "name": "golden (${{ matrix.os }})", "conclusion": "skipped", "runner_name": "", "failed_steps": []},
+  {"id": 125963069263, "name": "main-plan", "conclusion": "skipped", "runner_name": "", "failed_steps": []},
+  {"id": 125963069549, "name": "main (${{ matrix.os }})", "conclusion": "skipped", "runner_name": "", "failed_steps": []},
+  {"id": 125963069894, "name": "queue-plan", "conclusion": "skipped", "runner_name": "", "failed_steps": []},
+  {"id": 125963070351, "name": "check (${{ matrix.os }})", "conclusion": "skipped", "runner_name": "", "failed_steps": []},
+  {"id": 125967301101, "name": "windows (changed tests under load, packages)", "conclusion": "success", "runner_name": "GitHub Actions 1000037592", "failed_steps": []},
+  {"id": 125967301554, "name": "lint (windows-latest)", "conclusion": "success", "runner_name": "GitHub Actions 1000037594", "failed_steps": []},
+  {"id": 125967301731, "name": "lint (macos-latest)", "conclusion": "cancelled", "runner_name": "", "failed_steps": [], "annotations": [{"level": "failure", "message": "The job was not acquired by Runner of type hosted even after multiple attempts"}]},
+  {"id": 125980684935, "name": "ci", "conclusion": "failure", "runner_name": "GitHub Actions 1000037705", "failed_steps": ["every gate that ran passed"], "annotations": [{"level": "failure", "message": "Process completed with exit code 1."}]}
+ ]
+}

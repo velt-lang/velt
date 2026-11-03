@@ -318,3 +318,12 @@ one failure can cancel and fail the runs behind it. For each `QUEUE FAIL`:
      the issue's, not a reason to hold the pull request.
 3. A failure that a run created before the culprit was dequeued can still arrive afterwards;
    check the queue (`gh api graphql` on `mergeQueue`) before acting on it twice.
+
+A run that failed for GitHub's infrastructure only (a job no hosted runner picked up: "The job
+was not acquired by Runner of type hosted even after multiple attempts", or an internal error of
+GitHub Actions, and no other failure) needs no triage: the `requeue` workflow
+(.github/workflows/requeue.yml) puts the pull request back into the queue, at most twice per head
+commit, and comments on it. Re-queue by hand only when it says it gave up or could not enqueue.
+`python3 -I scripts/requeue/requeue.py <run id>` prints its decision for any run; a new
+infrastructure signature goes into `INFRASTRUCTURE` there with a saved run in
+scripts/requeue/fixtures and a case in crates/xtask/src/requeue_tests.rs.
