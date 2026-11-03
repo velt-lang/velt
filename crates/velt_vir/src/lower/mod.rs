@@ -87,6 +87,7 @@ mod for_of;
 mod for_of_shared;
 mod foreign;
 mod frame_envs;
+mod lower_profile;
 mod state;
 use state::{DropEntry, LInfo, LState, Scope, ScopeKind};
 mod fresh_fns;
@@ -151,6 +152,7 @@ mod type_tests;
 mod types;
 mod upcast;
 mod view_unswitch;
+mod view_unswitch_addrs;
 mod view_unswitch_plain;
 mod weak;
 mod weak_object;
@@ -196,7 +198,9 @@ pub(crate) fn lower_program(
     let mut counted = boxing::Boxing::initial(hir);
     let mut no_await_steps = false;
     // One more pass when the `await` steps turn out to be unobservable (await_order.rs).
-    for _ in 0..=MAX_BOXING_PASSES {
+    for pass in 0..=MAX_BOXING_PASSES {
+        lower_profile::start_pass();
+        let pass_start = std::time::Instant::now();
         let mut cx = Cx::new(hir, types, counted.clone());
         cx.native_inits = opts.native_inits.to_vec();
         cx.cell_checks = opts.cell_checks;
@@ -225,7 +229,11 @@ pub(crate) fn lower_program(
             cx.build_now(fid, &work);
         }
         cx.build_iface_glues();
+        lower_profile::end_pass(pass, pass_start.elapsed());
         let next = cx.close_boxing();
+        if std::env::var_os("VELT_LOWER_PROFILE").is_some() && next != counted {
+            eprintln!("velt-lower: pass {pass} grew: {}", counted.changes(&next));
+        }
         if next == counted {
             if cx.facts.unmet {
                 ice("a shared type was not counted");

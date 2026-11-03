@@ -10,7 +10,7 @@
 //! lowered once more as a copy without the view side, which the original loop, kept for views,
 //! still has.
 //! - A test of a box held in a local the loop does not change (by assignment, or through the
-//!   local's address, which must not escape: `addresses`) is false in the copy, and a
+//!   local's address, which must not escape: view_unswitch_addrs.rs) is false in the copy, and a
 //!   test before the loop picks the copy when the box is not a view. That is sound because the
 //!   bit of a box never gets set once the box exists: a view is made only as a new box
 //!   (`array_view_new`), and a plain array stays plain whatever is done to it (a push
@@ -136,15 +136,7 @@ impl FnLower<'_, '_> {
         // The blocks using each test (the copies made below are in no loop's range).
         let mut tested: FxHashSet<Local> = self.view_loops.tests.iter().map(|x| x.0).collect();
         tested.extend(self.view_loops.slows.iter().copied());
-        let mut uses: FxHashMap<Local, FxHashSet<BlockId>> = FxHashMap::default();
-        for i in 0..self.blocks.len() {
-            let b = BlockId(i as u32);
-            for &t in &tested {
-                if self.block_uses(b, t) {
-                    uses.entry(t).or_default().insert(b);
-                }
-            }
-        }
+        let uses = self.test_uses(&tested);
         let mut handled: FxHashSet<Local> = FxHashSet::default();
         for (h, first, end) in loops {
             let Some(region) = self.natural_loop(h, first, end) else {
@@ -277,15 +269,6 @@ impl FnLower<'_, '_> {
         post
     }
 
-    /// Does block `b` assign the test `t` or branch on it?
-    fn block_uses(&self, b: BlockId, t: Local) -> bool {
-        let (stmts, term) = &self.blocks[b.0 as usize];
-        let assigns = stmts
-            .iter()
-            .any(|s| matches!(s, vir::Stmt::Assign(p, _) if p.local == t && p.proj.is_empty()));
-        assigns || matches!(term, Some(Terminator::Branch { cond, .. }) if is_local(cond, t))
-    }
-
     /// Does block `b` assign the local `l` (as a whole)?
     fn block_assigns(&self, b: BlockId, l: Local) -> bool {
         let (stmts, term) = &self.blocks[b.0 as usize];
@@ -294,92 +277,6 @@ impl FnLower<'_, '_> {
             .iter()
             .any(|s| matches!(s, vir::Stmt::Assign(p, _) if whole(p)))
             || matches!(term, Some(Terminator::Call { dest: Some(p), .. }) if whole(p))
-    }
-
-    /// The locals whose own address is taken, each with the locals holding that address
-    /// (through whole-local copies), or `None` when the address escapes: any other use of a
-    /// holder than a whole-local copy or an access through it (a store into a projected place,
-    /// an aggregate, cast or arithmetic operand, a call argument, a return, a derived address)
-    /// may let code the loop calls reach the local.
-    fn addresses(&self) -> FxHashMap<Local, Option<Vec<Local>>> {
-        let mut out: FxHashMap<Local, Option<Vec<Local>>> = FxHashMap::default();
-        let stmts = || self.blocks.iter().flat_map(|(s, _)| s.iter());
-        for s in stmts() {
-            let vir::Stmt::Assign(d, Rvalue::AddrOf(p)) = s else {
-                continue;
-            };
-            if matches!(p.proj.first(), Some(Proj::Deref(_))) {
-                continue;
-            }
-            let held = out.entry(p.local).or_insert_with(|| Some(vec![]));
-            match (d.proj.is_empty(), held) {
-                (true, Some(v)) => v.push(d.local),
-                (_, held) => *held = None,
-            }
-        }
-        for held in out.values_mut() {
-            if let Some(v) = held {
-                if self.address_escapes(v) {
-                    *held = None;
-                }
-            }
-        }
-        out
-    }
-
-    /// Follow the whole-local copies of the addresses in `v` (adding the copies to it), and
-    /// tell whether any holder is used in another way than [`Self::addresses`] allows.
-    fn address_escapes(&self, v: &mut Vec<Local>) -> bool {
-        let whole = |o: &Operand, v: &[Local]| matches!(o, Operand::Copy(p) if p.proj.is_empty() && v.contains(&p.local));
-        let mut i = 0;
-        while i < v.len() {
-            i = v.len();
-            for (stmts, term) in &self.blocks {
-                for s in stmts {
-                    match s {
-                        vir::Stmt::Assign(d, Rvalue::Use(o)) if whole(o, v) => {
-                            if !d.proj.is_empty() {
-                                return true;
-                            }
-                            if !v.contains(&d.local) {
-                                v.push(d.local);
-                            }
-                        }
-                        vir::Stmt::Assign(_, Rvalue::AddrOf(p)) if v.contains(&p.local) => {
-                            return true;
-                        }
-                        vir::Stmt::Assign(_, Rvalue::Unary(_, o) | Rvalue::Cast(o, _))
-                            if whole(o, v) =>
-                        {
-                            return true;
-                        }
-                        vir::Stmt::Assign(_, Rvalue::Binary(_, a, b))
-                            if whole(a, v) || whole(b, v) =>
-                        {
-                            return true;
-                        }
-                        vir::Stmt::Assign(_, Rvalue::Aggregate(_, os))
-                            if os.iter().any(|o| whole(o, v)) =>
-                        {
-                            return true;
-                        }
-                        _ => {}
-                    }
-                }
-                match term {
-                    Some(Terminator::Call { callee, args, .. }) => {
-                        let target =
-                            matches!(callee, vir::Callee::Ptr { target, .. } if whole(target, v));
-                        if target || args.iter().any(|o| whole(o, v)) {
-                            return true;
-                        }
-                    }
-                    Some(Terminator::Return(o)) if whole(o, v) => return true,
-                    _ => {}
-                }
-            }
-        }
-        false
     }
 
     /// Might the loop `region` change the local `l` through its address?

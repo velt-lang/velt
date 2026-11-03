@@ -31,7 +31,10 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    self-referential class drops its chain in a loop, `lower/glue/drop_chain.rs`; other drops
    that can nest are bounded by the runtime, `lower/glue/drop_depth.rs`), async
    functions as state machines, errors as result returns, with source locations for debug info
-   and panic messages. VIR is a typed, MIR-like control-flow graph with a verifier.
+   and panic messages. VIR is a typed, MIR-like control-flow graph with a verifier. The
+   program is lowered again while a pass finds types that must be counted (`lower/boxing/`);
+   `VELT_LOWER_PROFILE=1` prints each pass's time, what it found, and its slowest functions
+   (their own time, with their size) to stderr.
 5. **Optimize** (`velt_opt`, release builds): inlining, constant folding, copy propagation,
    scalar replacement of aggregates, closure specialization, dead-code elimination, CFG
    simplification, Map probe reuse (a `get` and `set` of the same key probe once), module state

@@ -25,6 +25,12 @@ use super::pts::{reach, Set};
 use crate::lower::successors;
 use crate::vir::{Function, Stmt};
 
+#[cfg(test)]
+thread_local! {
+    /// Interference rows grown by [`interference`], which tests bound.
+    pub(super) static ROW_UNIONS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 /// Which spilled locals interfere (symmetric), over the universe of the spilled locals.
 pub(super) struct Interference {
     u: Universe,
@@ -32,10 +38,11 @@ pub(super) struct Interference {
 }
 
 impl Interference {
-    /// Do spilled locals `a` and `b` interfere?
+    /// Do spilled locals `a` and `b` interfere? A pair is recorded in the set of the one that
+    /// became occupied second (see [`interference`]), so both sets are asked.
     pub(super) fn conflict(&self, a: usize, b: usize) -> bool {
         match (self.u.index(a), self.u.index(b)) {
-            (Some(i), Some(j)) => self.sets[i].get(j),
+            (Some(i), Some(j)) => self.sets[i].get(j) || self.sets[j].get(i),
             _ => false,
         }
     }
@@ -63,6 +70,10 @@ pub(super) fn interference(f: &Function, pts: &[Set], spilled: &Bits, s: &Susp) 
             live = u.live_before(&live);
         }
         let mut w = written_in[b].clone();
+        // The locals occupying their storage at the previous unit of the block: every pair of
+        // them is recorded already, so a unit records only the pairs with a local new there.
+        // (Recording all pairs at every unit cost units × occupied × spilled.)
+        let mut prev = Bits::new(n);
         for (u, after) in us.iter().zip(after) {
             let mut occ = u.live_before(&after);
             occ.union(&after);
@@ -70,9 +81,14 @@ pub(super) fn interference(f: &Function, pts: &[Set], spilled: &Bits, s: &Susp) 
             w.union(&u.addrs);
             occ.intersect(&w);
             occ.union(&u.writes);
-            for x in occ.iter() {
+            let mut new = occ.clone();
+            new.minus(&prev);
+            for x in new.iter() {
+                #[cfg(test)]
+                ROW_UNIONS.with(|r| r.set(r.get() + 1));
                 interf[x].union(&occ);
             }
+            prev = occ;
         }
     }
     Interference { u, sets: interf }
@@ -190,24 +206,36 @@ fn live_out(f: &Function, units: &[Vec<Unit>], extra: &[(usize, usize)], n: usiz
     for &(from, to) in extra {
         succs[from].push(to);
     }
+    let mut preds: Vec<Vec<usize>> = vec![vec![]; nb];
+    for (b, ss) in succs.iter().enumerate() {
+        for &s in ss {
+            preds[s].push(b);
+        }
+    }
     let mut live_in = vec![Bits::new(n); nb];
     let mut out = vec![Bits::new(n); nb];
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for b in (0..nb).rev() {
-            let mut o = Bits::new(n);
-            for &s in &succs[b] {
-                o.union(&live_in[s]);
-            }
-            let mut l = o.clone();
-            for u in units[b].iter().rev() {
-                l = u.live_before(&l);
-            }
-            out[b] = o;
-            if l != live_in[b] {
-                live_in[b] = l;
-                changed = true;
+    // A worklist, last block first: a block is visited again only when a successor's live-in
+    // set grew (sweeping every block until nothing changed cost sweeps × instructions).
+    let mut queued = vec![true; nb];
+    let mut work: std::collections::VecDeque<usize> = (0..nb).rev().collect();
+    while let Some(b) = work.pop_front() {
+        queued[b] = false;
+        let mut o = Bits::new(n);
+        for &s in &succs[b] {
+            o.union(&live_in[s]);
+        }
+        let mut l = o.clone();
+        for u in units[b].iter().rev() {
+            l = u.live_before(&l);
+        }
+        out[b] = o;
+        if l != live_in[b] {
+            live_in[b] = l;
+            for &p in &preds[b] {
+                if !queued[p] {
+                    queued[p] = true;
+                    work.push_back(p);
+                }
             }
         }
     }

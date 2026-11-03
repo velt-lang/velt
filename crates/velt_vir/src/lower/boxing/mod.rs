@@ -615,3 +615,53 @@ impl Cx<'_> {
         }
     }
 }
+
+impl Boxing {
+    /// The fields that differ from `next`, each with its size here and there (`VELT_LOWER_PROFILE`).
+    pub(super) fn changes(&self, next: &Boxing) -> String {
+        let mut out = vec![];
+        macro_rules! field {
+            ($($f:ident),*) => {$(
+                if self.$f != next.$f {
+                    let size = |d: String| d.matches(',').count() + 1;
+                    out.push(format!("{} {}->{}", stringify!($f), size(format!("{:?}", self.$f)), size(format!("{:?}", next.$f))));
+                }
+            )*};
+        }
+        field!(
+            roots,
+            boxes,
+            interior,
+            identity_dyns,
+            any_identity,
+            fn_identity,
+            generic_any,
+            any_writes,
+            fn_props,
+            any_has,
+            any_delete,
+            any_keys,
+            any_reflect,
+            any_number,
+            any_call_keys,
+            recursive,
+            transferred,
+            weak_roots,
+            weak,
+            weak_object,
+            dyn_types,
+            dyn_to_any,
+            proxy_roots,
+            proxy_types,
+            proxy_class,
+            proxy_traced,
+            array_views,
+            lock_values,
+            lock_roots,
+            lock_boxes,
+            lock_exclusive,
+            read_indirect
+        );
+        out.join(", ")
+    }
+}

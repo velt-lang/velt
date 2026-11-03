@@ -1,9 +1,11 @@
 //! The spill analysis on hand-built poll functions: the per-local liveness agrees with the
 //! classic dense fixpoint, maybe-written over a subset of the locals is the full analysis
-//! restricted to it, and a long function with one suspension costs work linear in its size.
+//! restricted to it, and a long function with one suspension costs work linear in its size,
+//! also with many locals held across it.
 
 use super::super::{DONE, PLACEHOLDER};
 use super::flow::{live_in_at, maybe_written, Bits, Susp, Universe, WORDS};
+use super::overlap::ROW_UNIONS;
 use crate::lower::successors;
 use crate::vir::{
     BasicBlock, BlockId, Callee, Const, FuncId, Function, Linkage, Local, LocalDecl, Operand,
@@ -177,6 +179,63 @@ fn liveness_is_reported_only_for_the_queried_blocks() {
     }
 }
 
+/// Maybe-written by the plain fixpoint over the semantic edges, over all locals.
+fn edge_fixpoint_written(f: &Function, s: &Susp) -> Vec<Vec<usize>> {
+    let n = f.locals.len();
+    let mut out: Vec<Vec<bool>> = vec![vec![false; n]; f.blocks.len()];
+    for (b, blk) in f.blocks.iter().enumerate() {
+        let mut accs = vec![];
+        blk.stmts
+            .iter()
+            .for_each(|st| super::flow::stmt_acc(st, &mut accs));
+        super::flow::term_acc(&blk.term, &mut accs);
+        for a in accs {
+            if let super::flow::Acc::Write(p) | super::flow::Acc::Addr(p) = a {
+                if !super::flow::has_deref(p) {
+                    out[b][p.local.0 as usize] = true;
+                }
+            }
+        }
+    }
+    for &b in &s.starts {
+        s.inputs.iter().for_each(|&l| out[b][l] = true);
+    }
+    let edges = super::flow::semantic_edges(f, &s.extra);
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for &(from, to) in &edges {
+            let src = out[from].clone();
+            for (dst, &w) in out[to].iter_mut().zip(&src) {
+                if w && !*dst {
+                    *dst = true;
+                    changed = true;
+                }
+            }
+        }
+    }
+    let set = |v: &Vec<bool>| (0..n).filter(|&l| v[l]).collect();
+    out.iter().map(set).collect()
+}
+
+#[test]
+fn maybe_written_matches_the_edge_fixpoint() {
+    for seed in 0..300 {
+        let f = random_fn(seed + 2000, 1 + seed as usize % 29, 2 + seed as usize % 70);
+        let (nb, n) = (f.blocks.len(), f.locals.len());
+        let s = Susp {
+            extra: vec![(seed as usize % nb, (seed as usize * 5) % nb)],
+            starts: vec![1 % nb],
+            inputs: vec![seed as usize % n],
+        };
+        let mut all = Bits::new(n);
+        (0..n).for_each(|l| all.set(l));
+        let got = maybe_written(&f, &s, &Universe::of_set(n, &all));
+        let got: Vec<Vec<usize>> = got.iter().map(|b| b.iter().collect()).collect();
+        assert_eq!(got, edge_fixpoint_written(&f, &s), "seed {seed}");
+    }
+}
+
 #[test]
 fn maybe_written_over_a_subset_is_the_full_analysis_restricted() {
     for seed in 0..200 {
@@ -285,4 +344,120 @@ fn a_long_function_with_one_await_costs_linear_work() {
         "work grew {large} / {small} for 4× the code"
     );
     assert!(large < 64 * 4000, "{large} words for 4000 calls");
+}
+
+/// `x_0 = 0; … x_{k-1} = k-1; n other statements; await …; f(x_0, …, x_{k-1})`: k locals held
+/// across one suspension, all occupying their storage over the n statements before it.
+fn wide_poll(k: usize, n: usize) -> Function {
+    // Locals: 0 state, 1 cx, 2 a scratch local, then x_i = 3 + i.
+    let x = |i: usize| 3 + i;
+    let mut first: Vec<Stmt> = (0..k)
+        .map(|i| Stmt::Assign(local(x(i)), Rvalue::Use(int(i as i128, Ty::I64))))
+        .collect();
+    first.extend((0..n).map(|i| Stmt::Assign(local(2), Rvalue::Use(int(i as i128, Ty::I64)))));
+    let blocks = vec![
+        block(
+            vec![],
+            Terminator::Switch {
+                value: Operand::Copy(tag()),
+                cases: vec![(0, BlockId(1)), (1, BlockId(3))],
+                default: BlockId(5),
+            },
+        ),
+        block(first, Terminator::Goto(BlockId(2))),
+        block(
+            vec![Stmt::Assign(tag(), Rvalue::Use(int(1, Ty::U32)))],
+            Terminator::Return(int(0, Ty::U32)),
+        ),
+        block(
+            vec![],
+            Terminator::Call {
+                callee: Callee::Func(FuncId(0)),
+                args: (0..k).map(|i| copy(x(i))).collect(),
+                dest: None,
+                next: BlockId(4),
+            },
+        ),
+        block(
+            vec![Stmt::Assign(tag(), Rvalue::Use(int(DONE, Ty::U32)))],
+            Terminator::Return(int(0, Ty::U32)),
+        ),
+        block(vec![], Terminator::Unreachable),
+    ];
+    func(3 + k, blocks)
+}
+
+#[test]
+fn interference_of_many_held_locals_grows_each_row_once() {
+    let (k, n) = (64, 2000);
+    ROW_UNIONS.with(|r| r.set(0));
+    let (spilled, interf) = super::analyse(&wide_poll(k, n), &[]);
+    let rows = ROW_UNIONS.with(|r| r.get());
+    assert_eq!(
+        spilled.iter().collect::<Vec<_>>(),
+        (3..3 + k).collect::<Vec<_>>()
+    );
+    for a in 3..3 + k {
+        for b in 3..3 + k {
+            assert!(
+                interf.conflict(a, b),
+                "x{} and x{} are held together",
+                a - 3,
+                b - 3
+            );
+        }
+    }
+    // Each local becomes occupied once in the first block and is held again at the start of
+    // each later block: rows grow about k × blocks times, not k × statements.
+    assert!(
+        rows <= 8 * k,
+        "{rows} row unions for {k} locals over {n} statements"
+    );
+}
+
+/// `x = 5; then n blocks laid out against the control flow (each jumps to the block before it);
+/// await …; return x`: the dataflow must not take a sweep of the whole function per block.
+fn reversed_chain(n: usize) -> Function {
+    let (susp, resume) = (n + 2, n + 3);
+    let mut blocks = vec![
+        block(
+            vec![],
+            Terminator::Switch {
+                value: Operand::Copy(tag()),
+                cases: vec![(0, BlockId(1)), (1, BlockId(resume as u32))],
+                default: BlockId(resume as u32 + 1),
+            },
+        ),
+        block(
+            vec![Stmt::Assign(local(2), Rvalue::Use(int(5, Ty::I64)))],
+            Terminator::Goto(BlockId(n as u32 + 1)),
+        ),
+    ];
+    for k in 2..=n + 1 {
+        let next = if k == 2 { susp } else { k - 1 };
+        blocks.push(block(vec![], Terminator::Goto(BlockId(next as u32))));
+    }
+    blocks.push(block(
+        vec![Stmt::Assign(tag(), Rvalue::Use(int(1, Ty::U32)))],
+        Terminator::Return(int(0, Ty::U32)),
+    ));
+    blocks.push(block(
+        vec![Stmt::Assign(tag(), Rvalue::Use(int(DONE, Ty::U32)))],
+        Terminator::Return(copy(2)),
+    ));
+    blocks.push(block(vec![], Terminator::Unreachable));
+    func(3, blocks)
+}
+
+#[test]
+fn blocks_laid_out_against_the_flow_cost_linear_work() {
+    let (small, s1) = analysis_work(&reversed_chain(1000));
+    let (large, s4) = analysis_work(&reversed_chain(4000));
+    assert_eq!(s1, [2]);
+    assert_eq!(s4, [2]);
+    // Four times the code: linear work grows about 4×, a sweep per block 16×.
+    assert!(
+        large <= 5 * small,
+        "work grew {large} / {small} for 4× the code"
+    );
 }
