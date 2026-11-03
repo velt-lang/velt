@@ -392,6 +392,8 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         // only, and their optimizations stay as they are.
         debug_info: !opts.release && opts.debug_vars && line_info,
         target: Some(&target),
+        // Generic instances shared by shape: debug builds only, for now (shape-sharing.md).
+        shapes: !opts.release,
     };
     let mut program = match velt_vir::lower_checked(&hir, &lower_opts) {
         Ok(p) => p,

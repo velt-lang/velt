@@ -449,6 +449,9 @@ impl FnLower<'_, '_> {
         let from = self.sub(a.ty);
         let written = ty;
         let ty = self.sub(ty);
+        if self.cx.mentions_ph(ty) {
+            return self.shape_any_to(a, ty);
+        }
         if let Some(v) = self.unboxed_own(a, ty) {
             return v;
         }

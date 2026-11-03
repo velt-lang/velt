@@ -187,6 +187,7 @@ impl Cx<'_> {
         if self.boxing.lock_roots.is_empty() && self.boxing.lock_boxes.is_empty() {
             return false;
         }
+        let t = self.ph_rep(t);
         match self.types.kind(t) {
             TyKind::Adt(d, _) if self.is_class(t) => {
                 self.boxing.lock_roots.contains(&self.class_root(*d))
@@ -227,6 +228,7 @@ impl Cx<'_> {
 
     /// May `read` on an `RwLock` of `v` run beside other readers (module docs)?
     pub(in crate::lower) fn shared_reads(&self, v: TyId) -> bool {
+        let v = self.ph_rep(v);
         self.boxing.lock_values.contains(&v) && !self.boxing.lock_exclusive.contains(&v)
     }
 }

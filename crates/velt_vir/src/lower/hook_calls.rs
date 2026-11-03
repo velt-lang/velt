@@ -38,7 +38,7 @@ use velt_common::std_hooks::Mode;
 use velt_sema::hir::{DefId, PassMode, TyId};
 
 use super::{ice, unit, FnLower};
-use crate::vir::{Callee, Operand, Place, Proj, Ty};
+use crate::vir::{Callee, Const, FuncId, Operand, Place, Proj, StaticId, Ty};
 
 /// The marker types of the hooks' type language (velt_common `hook_sig.rs`): what a builder's
 /// argument or result is. A std class is the marker of its name; type arguments are given to the
@@ -221,6 +221,32 @@ impl<R> Val<R> {
     }
 }
 
+/// The function a hook call goes to: one instance per shape with its dictionary when the hook is
+/// shared in this pass (shape/), else the instance of these type arguments. [`Call::emit_std`]
+/// and [`Call::emit_owned`] always call the latter, so a hook they emit stays per type.
+struct Target(FuncId, Option<StaticId>);
+
+impl Target {
+    #[inline]
+    fn of(lw: &mut FnLower<'_, '_>, def: DefId, targs: Vec<TyId>) -> Self {
+        match lw.cx.shared_call(def, &targs, lw.mode) {
+            Some((f, dict)) => Target(f, Some(dict)),
+            None => Target(lw.cx.func_for_direct(def, targs, lw.mode), None),
+        }
+    }
+
+    /// The call, with every argument in `argv` (an out-pointer too).
+    #[inline]
+    fn call(self, lw: &mut FnLower<'_, '_>, mut argv: Vec<Operand>, dest: Option<Place>) {
+        let Target(f, dict) = self;
+        if let Some(d) = dict {
+            let d = Operand::Const(Const::Static(d), Ty::Ptr);
+            lw.cx.with_dict(f, &mut argv, d);
+        }
+        lw.call(Callee::Func(f), argv, dest, false);
+    }
+}
+
 impl<R> Call<R> {
     /// The call of hook `name` (a fallback hook): `None` when std lacks it or sema left it
     /// unchecked.
@@ -350,23 +376,23 @@ impl<R> Call<R> {
     #[inline]
     pub(super) fn emit(self, lw: &mut FnLower<'_, '_>) -> Val<R> {
         let (_, vt) = self.ret(lw);
-        let f = lw.cx.func_for_direct(self.def, self.targs, lw.mode);
+        let f = Target::of(lw, self.def, self.targs);
         let mut argv = self.argv;
         let res = match vt {
             Ty::Unit => {
-                lw.call(Callee::Func(f), argv, None, false);
+                f.call(lw, argv, None);
                 return Val(unit(), PhantomData);
             }
             Ty::Agg(_) => {
                 let out = lw.temp(vt);
                 let a = lw.addr(Place::local(out));
                 argv.push(a);
-                lw.call(Callee::Func(f), argv, None, false);
+                f.call(lw, argv, None);
                 out
             }
             _ => {
                 let out = lw.temp(vt);
-                lw.call(Callee::Func(f), argv, Some(Place::local(out)), false);
+                f.call(lw, argv, Some(Place::local(out)));
                 out
             }
         };
@@ -377,16 +403,16 @@ impl<R> Call<R> {
     #[inline]
     pub(super) fn emit_to(self, lw: &mut FnLower<'_, '_>, dest: Place) {
         let (_, vt) = self.ret(lw);
-        let f = lw.cx.func_for_direct(self.def, self.targs, lw.mode);
+        let f = Target::of(lw, self.def, self.targs);
         let mut argv = self.argv;
         match vt {
             Ty::Unit => ice("a hook without a result written to a place"),
             Ty::Agg(_) => {
                 let a = lw.addr(dest);
                 argv.push(a);
-                lw.call(Callee::Func(f), argv, None, false);
+                f.call(lw, argv, None);
             }
-            _ => lw.call(Callee::Func(f), argv, Some(dest), false),
+            _ => f.call(lw, argv, Some(dest)),
         }
     }
 

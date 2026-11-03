@@ -157,6 +157,7 @@ impl Cx<'_> {
                 self.type_key_in(*throws, env, stack)
             ),
             TyKind::Closure(d) => format!("closure {}", self.def_name(*d)),
+            TyKind::Param(_) if self.is_ph(t) => self.ph_name(t),
             TyKind::Param(n) => env
                 .get(*n as usize)
                 .cloned()

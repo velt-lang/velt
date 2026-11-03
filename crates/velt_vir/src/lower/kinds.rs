@@ -24,7 +24,7 @@ pub(super) enum ThunkKind {
 
 /// When a function runs in velt_rt's read mode (boxing/locks.rs), which decides how it counts
 /// and writes lock-set objects (rc.rs).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Default)]
 pub(crate) enum LkMode {
     /// Never: inline counts.
     #[default]

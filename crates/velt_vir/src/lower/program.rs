@@ -83,6 +83,7 @@ impl<'h> Cx<'h> {
             symbol_records: Default::default(),
             boxing,
             facts: Default::default(),
+            shapes: Default::default(),
             iface_impls: None,
             ext_memo: Default::default(),
             exists_memo: Default::default(),
@@ -186,8 +187,20 @@ impl<'h> Cx<'h> {
         }
     }
 
+    /// `func_in` for shape/: the function for `work` in mode `mode`.
+    pub(super) fn func_in_mode(&mut self, work: Work, mode: super::LkMode) -> FuncId {
+        self.func_in(work, mode)
+    }
+
     fn func_in(&mut self, work: Work, mode: super::LkMode) -> FuncId {
         use super::LkMode as M;
+        // At a placeholder type inside a shared instance: a dictionary entry (shape/).
+        if let Some(id) = self.shape_work(&work, mode) {
+            return id;
+        }
+        // A shared instance's work, kept to register it once it has its id (shape/).
+        let shared =
+            (!self.shapes.no_placeholders() && self.work_names_shared(&work)).then(|| work.clone());
         // Without a lock set every function counts the same way: one version.
         let fixed = matches!(
             work,
@@ -219,6 +232,9 @@ impl<'h> Cx<'h> {
             self.fn_sites.insert(id, self.user_site);
         }
         self.queue.push_back((id, work));
+        if let Some(w) = shared {
+            self.register_inst(id, &w);
+        }
         id
     }
 
@@ -276,6 +292,7 @@ impl<'h> Cx<'h> {
         let outer_mode = std::mem::take(&mut self.cur_mode);
         let outer_tuples = self.start_fn_tuples();
         let prof = super::lower_profile::enter();
+        let shared = self.start_shared(fid);
         let func = match work {
             Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => {
                 let deep = matches!(work, Work::ReadOwn(w) if matches!(**w, Work::Deferred(_)));
@@ -298,6 +315,7 @@ impl<'h> Cx<'h> {
             }
             _ => super::FnLower::build(self, work),
         };
+        let func = self.finish_shared(fid, func, shared);
         self.cur_mode = outer_mode;
         self.cur_def = outer;
         self.user_site = outer_site;
@@ -458,7 +476,7 @@ impl<'h> Cx<'h> {
 
 /// The function `work` builds an instance (or a part) of.
 /// The function and type arguments `work` builds code for.
-fn work_target(work: &mut Work) -> Option<(&mut DefId, &mut Vec<TyId>)> {
+pub(super) fn work_target(work: &mut Work) -> Option<(&mut DefId, &mut Vec<TyId>)> {
     match work {
         Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => work_target(w),
         Work::Fn(d, a)
