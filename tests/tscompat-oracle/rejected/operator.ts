@@ -9,8 +9,14 @@ export class Vec {
   }
 }
 
-// An index with several keys (an operator indexer in Velt) is the comma operator in
+// An index with several keys (`g[0, 1]`, an operator indexer in Velt) is the comma operator in
 // TypeScript, and `tsc` rejects a left operand without side effects (TS2695).
-export function corner(m: number[]): number {
-  return m[0, 1];
+export class Grid {
+  [Symbol.index](i: number, j: number): number {
+    return i + j;
+  }
+}
+
+export function corner(g: Grid): number {
+  return g[0, 1];
 }
