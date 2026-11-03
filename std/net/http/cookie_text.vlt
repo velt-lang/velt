@@ -1,0 +1,323 @@
+// velt/net/http (internal): the character classes and scanning helpers of cookies
+// (std/net/http/cookie.vlt): RFC 7230 tokens, RFC 6265 cookie-octets, spaces and digits.
+
+/**
+ * One or more ASCII digits.
+ */
+export function isDigits(s: string): bool {
+  if (s.length == 0) {
+    return false;
+  }
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x30 || c > 0x39) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Which ASCII characters may appear in a `token` (RFC 7230: a cookie name) and in a cookie
+ * value (RFC 6265 `cookie-octet`: printable ASCII except space, `"`, `,`, `;` and `\`); 1 = yes.
+ * Array literals of numbers are static data: no allocation per call.
+ */
+export const TOKEN: u8[] = [
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  1,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  0,
+  1,
+  1,
+  0,
+  1,
+  1,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  0,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  1,
+  0,
+  1,
+  0,
+];
+export const COOKIE_OCTET: u8[] = [
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  1,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  1,
+  0,
+];
+
+/**
+ * Whether every character of `s[from..to)` is one `table` allows (ASCII only).
+ */
+export function allOf(s: string, from: i64, to: i64, table: u8[]): bool {
+  for (let i = from; i < to; i++) {
+    const c = s.charCodeAt(i);
+    if (c >= 128 || table[c as usize] == 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+export function isToken(s: string): bool {
+  return s.length > 0 && allOf(s, 0, s.length as i64, TOKEN);
+}
+
+/**
+ * The first index in `[from, to)` that isn't a space or tab (`to` if none).
+ */
+export function skipSpace(s: string, from: i64, to: i64): i64 {
+  let i = from;
+  while (i < to && (s.charCodeAt(i) == 0x20 || s.charCodeAt(i) == 0x09)) {
+    i++;
+  }
+  return i;
+}
+
+/**
+ * The end of `[from, to)` without trailing spaces and tabs.
+ */
+export function trimSpace(s: string, from: i64, to: i64): i64 {
+  let e = to;
+  while (e > from && (s.charCodeAt(e - 1) == 0x20 || s.charCodeAt(e - 1) == 0x09)) {
+    e--;
+  }
+  return e;
+}
