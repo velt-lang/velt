@@ -190,6 +190,17 @@ hooks! {
     /// An unsigned integer appended to a builder.
     uint_push => lang_hooks_number_text, "uintPush", sig((&mut string, u64) -> void), lowered,
         replaces("velt_rt_strbuf_push_u64"), bench("int_to_string");
+    /// A signed integer written to a stream: a `console.log` argument (`velt_vir` `console.rs`).
+    int_write => lang_hooks_number_text, "intWrite", sig((u32, i64) -> void), lowered,
+        replaces("velt_rt_write_i64");
+    /// An unsigned integer written to a stream.
+    uint_write => lang_hooks_number_text, "uintWrite", sig((u32, u64) -> void), lowered,
+        replaces("velt_rt_write_u64");
+    /// A float written to a stream as `console.log` prints it: a whole number other than `-0` by
+    /// `int_write`, anything else by the runtime's printer. `velt_opt` numrep turns a call with a
+    /// whole `x` that is not `-0` into one of `int_write`.
+    number_write => lang_hooks_number_text, "numberWrite", sig((u32, f64) -> void), lowered,
+        replaces("velt_rt_write_f64");
     /// `String(x)` of a float (`velt_vir` `template.rs`): a whole number by std's integer
     /// printing, anything else by the runtime's printer. `velt_opt` numrep turns a call with a
     /// whole `x` into one of `int_text`.

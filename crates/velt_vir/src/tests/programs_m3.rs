@@ -1,7 +1,7 @@
-//! HIR programs shared by the interpreter tests and the native tests (`tests/native.rs`
-//! includes this file): the M3 golden `tasks` and std-like wrappers over `declare async
-//! function` rt externs. (`async_basic` and `tcp_echo` print numbers through std's hooks, #2197:
-//! their tests load the golden sources with the real std, std_src.rs.)
+//! HIR programs of the interpreter tests: the M3 golden `tasks` and std-like wrappers over
+//! `declare async function` rt externs. (The native tests, `tests/native.rs`, link the real
+//! runtime, which prints no integer: they load the golden sources with the real std, std_src.rs,
+//! #2197.)
 
 use velt_sema::hir::{
     AdtKind, BinOp as B, Capture, Def, DefId, ExternFnDef, Intrinsic as I, PassMode, Program, TyId,
