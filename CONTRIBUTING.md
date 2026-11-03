@@ -141,7 +141,10 @@ files changed since the merge base with `origin/main` (plus uncommitted and untr
 when anything under `std/`, `examples/` or `packages/` changed or the formatter (`velt_fmt`) or a crate it depends on
 did, the file-size rule (below) on the changed Rust files, and clippy with
 `-D warnings` on the changed crates and the crates depending on them (`tests/difftest` too when
-it changed), and the timing lint (above) on the changed test files and goldens. It runs every check and then lists what failed with how to fix it; warm, it takes
+it changed), the timing lint (above) on the changed test files and goldens, and the std hook table's tests
+(`cargo test -p velt_sema --test std_hooks` when `std/` or the table changed,
+`-p velt_common --test hook_replaces` when the compiler crates, the runtime or `bench/stdport/`
+did). It runs every check and then lists what failed with how to fix it; warm, it takes
 well under a minute. `cargo xtask install-hooks` installs a git `pre-push` hook that runs it
 before every push; worktrees share the clone's hooks, so once per clone is enough. The hook never
 replaces a `pre-push` hook it didn't install (`--force` does, keeping the old one as

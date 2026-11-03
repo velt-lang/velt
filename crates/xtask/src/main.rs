@@ -21,6 +21,7 @@ mod doctests;
 mod file_size;
 mod golden_archive;
 mod graph;
+mod hook_tests;
 mod hooks;
 mod junit;
 mod os;
@@ -48,8 +49,8 @@ Commands:
               (changed since the merge base with --base, plus uncommitted and untracked files)
   affected    Print the plan `check` would run, and why
   precheck    The fast checks most failed pull requests miss, on the changed files only:
-              cargo fmt, velt fmt (std/, examples/), the file-size rule, and clippy of the
-              changed crates and their dependents
+              cargo fmt, velt fmt (std/, examples/), the file-size rule, clippy of the
+              changed crates and their dependents, and the std hook table's tests
   repeat      Run each test file the changes add or edit (velt test files, goldens) many times at
               once, on twice as many threads as there are cores, and fail naming the file and
               the repetition that failed (crates/xtask/src/repeat.rs)
