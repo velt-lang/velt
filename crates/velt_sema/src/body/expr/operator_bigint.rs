@@ -69,7 +69,7 @@ impl FnCx<'_, '_> {
         // The operands as written (`w`, `k`, `3`), or `b` and `k` for anything longer.
         let (big_e, num_e) = if left { (lhs, rhs) } else { (rhs, lhs) };
         let text = |e: &ast::Expr, other: &str| match source_text(e) {
-            t if t.ends_with("value") => other.to_string(),
+            t if t == "the value" || t == "value" => other.to_string(),
             t => t,
         };
         let (b, k) = (text(big_e, "b"), text(num_e, "k"));
