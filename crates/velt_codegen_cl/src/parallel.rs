@@ -13,8 +13,9 @@ use std::sync::{mpsc, Condvar, Mutex, PoisonError};
 pub(crate) const PARALLEL_MIN_ITEMS: usize = 32;
 
 /// How far workers may run ahead of the consumer: bounds the results held at once (a function's
-/// IR and code), while leaving room around a slow item.
-const WINDOW: usize = 2048;
+/// IR and code: as many as the batches of 1024 functions compiled before held), while leaving
+/// room around a slow item.
+const WINDOW: usize = 1024;
 
 /// Stack of a worker thread: room for deep translations.
 const WORKER_STACK_BYTES: usize = 32 << 20;
