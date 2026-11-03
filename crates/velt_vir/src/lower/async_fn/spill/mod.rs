@@ -184,13 +184,15 @@ fn layout(
     let mut placed: Vec<(usize, u32, u32)> = vec![];
     let mut end = base;
     for (a, s, l) in locals {
-        let mut off = base.next_multiple_of(a);
-        while let Some(&(_, o, os)) = placed
-            .iter()
-            .find(|&&(p, o, os)| interf.conflict(l, p) && off < o + os && o < off + s)
-        {
-            off = (o + os).next_multiple_of(a);
-        }
+        // The lowest offset past every placed local `l` interferes with that overlaps it. One
+        // sweep over those in offset order finds it: a local starting past the offset ends the
+        // sweep's bumps, and a bump never makes one before it overlap again. (Searching all
+        // placed locals again after each bump cost locals² × bumps.)
+        let busy: Vec<(u32, u32)> = (placed.iter())
+            .filter(|&&(p, ..)| interf.conflict(l, p))
+            .map(|&(_, o, os)| (o, os))
+            .collect();
+        let off = lowest_free(base, a, s, busy);
         placed.push((l, off, s));
         map.insert(Local(l as u32), fields.len() as u32);
         fields.push((f.locals[l].ty, off));
@@ -204,6 +206,19 @@ fn layout(
         fields,
     });
     (agg, map)
+}
+
+/// The lowest offset from `base`, a multiple of `align`, where `size` bytes overlap none of
+/// `busy` (offset, size).
+fn lowest_free(base: u32, align: u32, size: u32, mut busy: Vec<(u32, u32)>) -> u32 {
+    busy.sort_unstable();
+    let mut off = base.next_multiple_of(align);
+    for (o, os) in busy {
+        if off < o + os && o < off + size {
+            off = (o + os).next_multiple_of(align);
+        }
+    }
+    off
 }
 
 /// Move spilled locals into the state, patch the placeholder type, renumber the rest.

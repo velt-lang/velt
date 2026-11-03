@@ -213,6 +213,20 @@ fn live_out(f: &Function, units: &[Vec<Unit>], extra: &[(usize, usize)], n: usiz
             preds[s].push(b);
         }
     }
+    // Per block: the locals its units read before writing them whole, and those they write
+    // whole (`live_in = gen ∪ (live_out − kill)`), so a visit costs the block's successors, not
+    // its units.
+    let summary: Vec<(Bits, Bits)> = (units.iter())
+        .map(|us| {
+            let (mut gen, mut kill) = (Bits::new(n), Bits::new(n));
+            for u in us.iter().rev() {
+                gen.minus(&u.kills);
+                gen.union(&u.uses);
+                kill.union(&u.kills);
+            }
+            (gen, kill)
+        })
+        .collect();
     let mut live_in = vec![Bits::new(n); nb];
     let mut out = vec![Bits::new(n); nb];
     // A worklist, last block first: a block is visited again only when a successor's live-in
@@ -226,9 +240,8 @@ fn live_out(f: &Function, units: &[Vec<Unit>], extra: &[(usize, usize)], n: usiz
             o.union(&live_in[s]);
         }
         let mut l = o.clone();
-        for u in units[b].iter().rev() {
-            l = u.live_before(&l);
-        }
+        l.minus(&summary[b].1);
+        l.union(&summary[b].0);
         out[b] = o;
         if l != live_in[b] {
             live_in[b] = l;
