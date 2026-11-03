@@ -337,6 +337,39 @@ fn objects_describe_variables() {
     }
 }
 
+/// A build that is done with its program lets the backend free each function's code once it is
+/// compiled, before the object and its debug information are written: the object is the same, line
+/// tables and variables included, and the program keeps only its declarations.
+#[test]
+fn freeing_the_code_after_compiling_writes_the_same_object() {
+    for program in [fib_with_variables(), located_fib()] {
+        for (triple, _, _) in TARGETS {
+            let opts = CodegenOptions {
+                target: triple.into(),
+                optimize: false,
+                cpu: None,
+            };
+            let kept = emit_object(&program, &opts).unwrap();
+            let mut freed = program.clone();
+            let (bytes, _) =
+                crate::emit_object_freeing(&mut freed, &opts, None, &mut Vec::new()).unwrap();
+            assert!(bytes == kept, "{triple}: the objects differ");
+            assert!(freed
+                .funcs
+                .iter()
+                .all(|f| f.blocks.is_empty() && f.locs.is_empty()));
+            assert_eq!(freed.funcs.len(), program.funcs.len());
+            let locals = |p: &Program| {
+                format!(
+                    "{:?}",
+                    p.funcs.iter().map(|f| &f.locals).collect::<Vec<_>>()
+                )
+            };
+            assert_eq!(locals(&freed), locals(&program));
+        }
+    }
+}
+
 /// A compiled function of `n` variables declared one per line from line 10 on, each in scope to
 /// the function's end, with `rows` as its line rows: (code offset, line, 0 for none).
 fn declarations(n: u32, rows: &[(u32, u32)], size: u32) -> crate::debug_info::FunctionLines {

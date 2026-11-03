@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
+use sha2::{Digest, Sha256};
+
 use crate::target::Target;
 use crate::CodegenResult;
 
@@ -220,9 +222,10 @@ fn parse_version(text: &str) -> Option<ClangVersion> {
 
 /// Compile `ir` to an object file for `target` and return its bytes; from `cache` when this clang
 /// compiled the same IR with the same flags before (on this machine, in any build), else storing
-/// it there.
+/// it there. The IR is freed once clang has read it, before clang compiles it: a unit's text is
+/// large, and several units are compiled at once.
 pub(crate) fn compile_cached(
-    ir: &str,
+    ir: String,
     target: &Target,
     optimize: bool,
     cache: Option<&dyn velt_codegen_cl::CodeCache>,
@@ -248,7 +251,8 @@ pub(crate) fn compile_cached(
     }
     args.extend(["-", "-o", "-"].map(String::from));
     // The key: this clang (path, size and time of its executable), its arguments (`-march=native`
-    // means this machine's CPU: the cache is the machine's), and the IR.
+    // means this machine's CPU: the cache is the machine's), and the IR, hashed as it is read (a
+    // key of 32 bytes is the cache's key as it is), so the IR is not copied into it.
     let key = cache.map(|_| {
         let meta = std::fs::metadata(&clang).ok();
         let stamp = meta.map(|m| (m.len(), m.modified().ok()));
@@ -256,10 +260,11 @@ pub(crate) fn compile_cached(
             "clang {clang:?} {stamp:?} {args:?} {}",
             velt_codegen_cl::host_triple()
         );
-        let mut key = id.into_bytes();
-        key.push(0);
-        key.extend_from_slice(ir.as_bytes());
-        key
+        let mut key = Sha256::new();
+        key.update(id.as_bytes());
+        key.update([0]);
+        key.update(ir.as_bytes());
+        <[u8; 32]>::from(key.finalize())
     });
     if let (Some(cache), Some(key)) = (cache, &key) {
         if let Some(obj) = cache.get(key) {
@@ -268,7 +273,7 @@ pub(crate) fn compile_cached(
     }
     let mut cmd = Command::new(&clang);
     cmd.args(&args);
-    let obj = run_piped(cmd, ir.as_bytes(), "clang")
+    let obj = run_piped(cmd, ir.into_bytes(), "clang")
         .map_err(|e| unknown_cpu(e, target.cpu.as_deref()))?;
     if let (Some(cache), Some(key)) = (cache, &key) {
         cache.put(key, &obj);
@@ -367,8 +372,13 @@ fn unknown_cpu(err: String, cpu: Option<&str>) -> String {
 /// Run an LLVM tool that reads its input from stdin and writes its output to stdout (`-` for
 /// both), and return the output. Nothing goes through files: a scratch file just written by a
 /// tool could be unreadable for a moment on Windows (another process, a virus scanner, still
-/// holding it), and a scratch path can collide with one a crashed process left behind.
-pub(crate) fn run_piped(mut cmd: Command, input: &[u8], name: &str) -> CodegenResult<Vec<u8>> {
+/// holding it), and a scratch path can collide with one a crashed process left behind. An owned
+/// `input` is freed as soon as the tool has read it.
+pub(crate) fn run_piped(
+    mut cmd: Command,
+    input: impl AsRef<[u8]> + Send,
+    name: &str,
+) -> CodegenResult<Vec<u8>> {
     let program = cmd.get_program().to_owned();
     let mut child = cmd
         .stdin(Stdio::piped())
@@ -385,7 +395,8 @@ pub(crate) fn run_piped(mut cmd: Command, input: &[u8], name: &str) -> CodegenRe
     // Feed the input from another thread while the output is read here: a tool may write
     // before it has read everything, and both pipes have small buffers.
     let (out, fed) = std::thread::scope(|scope| {
-        let feeder = scope.spawn(move || stdin.write_all(input));
+        // `stdin` is closed and `input` freed when the feeder is done.
+        let feeder = scope.spawn(move || stdin.write_all(input.as_ref()));
         let out = child.wait_with_output();
         let fed = feeder.join().expect("ICE: the stdin feeder panicked");
         out.map(|out| (out, fed))

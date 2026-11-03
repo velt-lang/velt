@@ -101,7 +101,7 @@ fn emit_object_cached(
     } else {
         (
             "clang",
-            clang::compile_cached(&ir, &triple, opts.optimize, cache),
+            clang::compile_cached(ir, &triple, opts.optimize, cache),
         )
     };
     timings.push((step, start.elapsed()));
@@ -154,7 +154,7 @@ pub fn emit_objects_cached(
         let ir =
             module::emit_unit_capped(program, &triple, opts.optimize, unit, &plan.shared, &caps)?;
         let start = Instant::now();
-        let (obj, hit) = clang::compile_cached(&ir, &triple, opts.optimize, cache)?;
+        let (obj, hit) = clang::compile_cached(ir, &triple, opts.optimize, cache)?;
         Ok((obj, hit, start.elapsed()))
     };
     let results = parallel(&plan.units, compile);

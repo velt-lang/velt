@@ -16,6 +16,7 @@ use velt_loader::{self as loader, LoadOptions};
 
 mod cpu_check;
 mod host_modules;
+pub(crate) mod memory;
 mod output;
 pub(crate) mod outside;
 mod pipeline;
@@ -173,6 +174,10 @@ pub struct Session {
     pub diagnostics: Diagnostics,
     /// Per-stage wall-clock times.
     pub timings: Vec<(&'static str, Duration)>,
+    /// The compiler's memory at the end of each stage, printed with `--timings`.
+    pub memory: Vec<(&'static str, memory::Reading)>,
+    /// When each stage ended and when its data was freed.
+    pub lifetimes: memory::Lifetimes,
     /// Breakdown of some stages: `(stage, step, time)` (optimizer passes, codegen steps).
     pub details: Vec<(&'static str, &'static str, Duration)>,
     /// Print [`Session::details`] under their stage (`--timings`).
@@ -241,7 +246,10 @@ impl Session {
                 _ if name == "stamp" && !self.timings.iter().any(|(n, _)| *n == "parse") => {
                     s.push_str("  (unchanged: nothing to compile)\n");
                 }
-                _ => s.push('\n'),
+                _ => match self.memory.iter().find(|(n, _)| *n == name) {
+                    Some((_, r)) => s.push_str(&format!("  ({})\n", memory::render(*r))),
+                    None => s.push('\n'),
+                },
             }
             let steps = self.details.iter().filter(|(stage, ..)| *stage == name);
             for (_, step, d) in steps.filter(|_| self.show_details) {
@@ -255,7 +263,16 @@ impl Session {
     }
 
     fn record(&mut self, stage: &'static str, start: Instant) {
-        self.timings.push((stage, start.elapsed()));
+        self.record_time(stage, start.elapsed());
+    }
+
+    /// Record that `stage` took `d`, and the memory at its end for `--timings`.
+    pub(crate) fn record_time(&mut self, stage: &'static str, d: Duration) {
+        self.timings.push((stage, d));
+        self.lifetimes.push(stage);
+        if let Some(r) = memory::read().filter(|_| self.show_details) {
+            self.memory.push((stage, r));
+        }
     }
 
     /// Record the breakdown `steps` of `stage` (printed under it with `--timings`).
@@ -371,7 +388,11 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         extra_roots: vec![],
         eager_std: false,
     };
-    let hir = check_program(sess, opts, &scope)?;
+    let hir = memory::Noted::new(
+        check_program(sess, opts, &scope)?,
+        "hir freed",
+        &sess.lifetimes,
+    );
 
     let t = Instant::now();
     let std_root = loader::std_root();
@@ -405,6 +426,8 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         }
     };
     host_modules::check_build(sess, opts, &hir, &program)?;
+    // Nothing after lowering reads the HIR: freed before the VIR is verified and optimized.
+    drop(hir);
     if !line_info && !opts.report_numbers {
         // Panic messages already carry their locations; only debug info needs these.
         program.files.clear();
@@ -606,7 +629,7 @@ fn build_on_current_thread(
         }),
         None => (compile_to_vir(sess, opts), vpm::probe::Seen::default()),
     };
-    let mut program = program?;
+    let mut program = memory::Noted::new(program?, "vir freed", &sess.lifetimes);
     check_generator_host(sess, &program)?;
     // For the stamp: what the program reaches outside itself (`velt test` keeps a result only
     // for a program that reaches nothing).
@@ -649,8 +672,11 @@ fn build_on_current_thread(
         codegen_units()
     };
     let (objects, cached) = backend
-        .emit_objects(&program, &cg, units, &mut steps)
+        .emit_objects(&mut program, &cg, units, &mut steps)
         .map_err(|e| BuildError::Failed(format!("code generation failed: {e}")))?;
+    // The objects are all the rest of the build needs: the VIR is freed before they are written
+    // and linked.
+    drop(program);
     sess.record("codegen", t);
     sess.cached = cached.map(|c| match backend {
         Backend::Cranelift => (c.hits, c.hits + c.misses, "functions"),
@@ -660,9 +686,10 @@ fn build_on_current_thread(
 
     let t = Instant::now();
     let mut object_paths = Vec::with_capacity(objects.len());
-    for (i, obj) in objects.iter().enumerate() {
+    // Each object is freed once written: the linker reads them from their files.
+    for (i, obj) in objects.into_iter().enumerate() {
         let path = paths.unit_object(i);
-        write_file(&path, obj)?;
+        write_file(&path, &obj)?;
         object_paths.push(path);
     }
     sess.record("write", t);
@@ -670,7 +697,7 @@ fn build_on_current_thread(
         // `-o lib.o` must not delete a `lib.cgu1.o` of the user's.
         return Ok(Artifact::Object(paths.object));
     }
-    paths.remove_unit_objects_from(objects.len());
+    paths.remove_unit_objects_from(object_paths.len());
 
     // The std cache's objects are in place (`std_cache::link`); a build without them leaves
     // none of an earlier one's.

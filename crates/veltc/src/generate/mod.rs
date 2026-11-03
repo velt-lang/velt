@@ -89,7 +89,7 @@ fn check_without_generators(
     let t = Instant::now();
     let (out, diags) =
         velt_sema::check_generating(modules, root, opts, &GenInput::default(), &[], None);
-    sess.timings.push(("sema", t.elapsed()));
+    sess.record_time("sema", t.elapsed());
     sess.diagnostics.extend(diags);
     let demand = match out {
         Some(Checked::Program(p)) => return Some(*p),
@@ -151,7 +151,7 @@ fn check_offered(
     };
     let t = Instant::now();
     let (out, diags) = velt_sema::check_generating(all, root, opts, &input, sources, None);
-    sess.timings.push(("sema", t.elapsed()));
+    sess.record_time("sema", t.elapsed());
     match out {
         Some(Checked::Program(p)) if !diags.iter().any(Diagnostic::is_error) => {
             sess.diagnostics.extend(diags);
@@ -212,10 +212,9 @@ fn rounds(
         sess.diagnostics.extend(diags);
         sess.generator_reports.extend(blamed);
         let sema = t.elapsed().saturating_sub(spent);
-        sess.timings
-            .push((if round == 1 { "sema" } else { "sema (again)" }, sema));
+        sess.record_time(if round == 1 { "sema" } else { "sema (again)" }, sema);
         if !spent.is_zero() {
-            sess.timings.push(("generate", spent));
+            sess.record_time("generate", spent);
         }
         let demand = match out {
             Some(Checked::Program(p)) => return Some(*p),
@@ -241,7 +240,7 @@ fn rounds(
         }
         let t = Instant::now();
         let generated = generate_now(sess, st, current, &demand, packages);
-        sess.timings.push(("generate", t.elapsed()));
+        sess.record_time("generate", t.elapsed());
         generated?;
         if let Some(next) = with_generated(current, st) {
             owned = Some(next);
