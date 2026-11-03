@@ -49,6 +49,8 @@ const SHARED: &[&str] = &[
     velt_common::std_hook!(array_view_flush_from),
     velt_common::std_hook!(array_view_flush_at),
     velt_common::std_hook!(array_view_len),
+    // What they call at their element type: dropping the mirror's tail.
+    "std/prelude/array_edit::T[].truncate",
 ];
 
 /// One placeholder: its type, the shape's representative and every concrete type of the
@@ -235,7 +237,8 @@ impl Cx<'_> {
         };
         let (d, targs) = match inner {
             Work::Fn(d, targs) => (d, targs),
-            Work::Tracked(d, targs, at) if *at == super::srcloc::ARG_LOC => (d, targs),
+            // A caller-tracking instance: its site is the same for every shape.
+            Work::Tracked(d, targs, _) => (d, targs),
             _ => return None,
         };
         let canonical = targs.iter().enumerate().all(|(i, &t)| {
@@ -255,9 +258,12 @@ impl Cx<'_> {
             return;
         }
         if let Some((def, targs)) = self.shared_inst_key(work) {
-            let tracked = matches!(work, Work::Tracked(..))
+            // Only an instance taking its caller's location has the parameter (track_caller.rs).
+            let arg_loc =
+                |w: &Work| matches!(w, Work::Tracked(_, _, at) if *at == super::srcloc::ARG_LOC);
+            let tracked = arg_loc(work)
                 || matches!(work, Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w)
-                    | Work::Deferred(w) if matches!(**w, Work::Tracked(..)));
+                    | Work::Deferred(w) if arg_loc(w));
             let f = self.fn_def(def);
             let throws = self.fn_throws(f, &targs);
             let ret = self.subst(f.ret, &targs);
