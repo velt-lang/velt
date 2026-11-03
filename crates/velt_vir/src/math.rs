@@ -86,11 +86,15 @@ pub enum MathOp {
     Bf16Bits,
     /// `(u16) -> u16`: the `bf16` with those bits (the identity).
     BitsBf16,
+    /// `(f32) -> f32`: the correctly rounded square root of an `f32` (no runtime function).
+    /// Lowering emits it for `Math.sqrt` of an `f16`/`bf16` stored to the same format, where it
+    /// rounds as the f64 square root does (`lower/half.rs`).
+    SqrtF32,
 }
 
 impl MathOp {
     /// Every operation.
-    pub const ALL: [MathOp; 32] = [
+    pub const ALL: [MathOp; 33] = [
         MathOp::Sqrt,
         MathOp::Floor,
         MathOp::Ceil,
@@ -123,6 +127,7 @@ impl MathOp {
         MathOp::BitsF16,
         MathOp::Bf16Bits,
         MathOp::BitsBf16,
+        MathOp::SqrtF32,
     ];
 
     /// The runtime function's symbol.
@@ -160,6 +165,7 @@ impl MathOp {
             MathOp::BitsF16 => "velt_math_bits_f16",
             MathOp::Bf16Bits => "velt_math_bf16_bits",
             MathOp::BitsBf16 => "velt_math_bits_bf16",
+            MathOp::SqrtF32 => "velt_math_sqrt_f32",
         }
     }
 
@@ -215,6 +221,7 @@ impl MathOp {
             MathOp::Clz64 | MathOp::Ctz64 | MathOp::Popcount64 => (&[U64], U64),
             MathOp::F32Bits => (&[F32], U32),
             MathOp::BitsF32 => (&[U32], F32),
+            MathOp::SqrtF32 => (&[F32], F32),
             MathOp::F16ToF32 | MathOp::Bf16ToF32 => (&[U16], F32),
             MathOp::F32ToF16 | MathOp::F32ToBf16 => (&[F32], U16),
             MathOp::F64ToF16 | MathOp::F64ToBf16 => (&[F64], U16),
@@ -319,6 +326,12 @@ impl MathOp {
                 } else {
                     half::f64_to_bf16(b)
                 }))
+            }
+            // Rust's `f32::sqrt` is IEEE 754's, correctly rounded; a NaN is not folded.
+            MathOp::SqrtF32 => {
+                let x = f32::from_bits(u(0).filter(|&b| b >> 32 == 0)? as u32);
+                let r = x.sqrt();
+                (!x.is_nan() && !r.is_nan()).then_some(u64::from(r.to_bits()))
             }
             MathOp::I64ToBf16 => Some(u64::from(half::i64_to_bf16(u(0)? as i64))),
             MathOp::U64ToBf16 => Some(u64::from(half::u64_to_bf16(u(0)?))),
@@ -526,6 +539,23 @@ mod tests {
         }
         assert_eq!(MathOp::BitsF32.eval(&[1 << 32]), None);
         assert_eq!(MathOp::F32Bits.eval(&[]), None);
+    }
+
+    /// The f32 square root folds correctly rounded, keeps -0, and leaves a NaN (an argument
+    /// or the result of a negative one) unfolded.
+    #[test]
+    fn f32_sqrt_folds() {
+        let f = |x: f32| u64::from(x.to_bits());
+        let op = MathOp::SqrtF32;
+        assert!(!op.has_runtime_function());
+        assert_eq!(op.eval(&[f(16.0)]), Some(f(4.0)));
+        assert_eq!(op.eval(&[f(2.0)]), Some(f(std::f32::consts::SQRT_2)));
+        assert_eq!(op.eval(&[f(-0.0)]), Some(f(-0.0)));
+        assert_eq!(op.eval(&[f(f32::INFINITY)]), Some(f(f32::INFINITY)));
+        assert_eq!(op.eval(&[f(1e-45)]), Some(f(1e-45f32.sqrt())));
+        assert_eq!(op.eval(&[f(-1.0)]), None);
+        assert_eq!(op.eval(&[f(f32::NAN)]), None);
+        assert_eq!(op.eval(&[1 << 32]), None);
     }
 
     #[test]

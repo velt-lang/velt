@@ -197,7 +197,7 @@ impl<M: Module> Translator<'_, '_, M> {
         }
         let flags = ir::MemFlags::new();
         Some(match op {
-            MathOp::Sqrt => self.builder.ins().sqrt(args[0]),
+            MathOp::Sqrt | MathOp::SqrtF32 => self.builder.ins().sqrt(args[0]),
             MathOp::Abs => self.builder.ins().fabs(args[0]),
             MathOp::Clz32 | MathOp::Clz64 => self.builder.ins().clz(args[0]),
             MathOp::Ctz64 => self.builder.ins().ctz(args[0]),

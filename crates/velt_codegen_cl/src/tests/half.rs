@@ -2,8 +2,9 @@
 //! baseline ISA, optimized and not, against `velt_vir::math::half` bit for bit: every 16-bit
 //! pattern widened; every f16 and bf16 value, its neighbours, the midpoints between neighbours
 //! and one ulp either side, narrowed from f32 and f64; integers at every power of two and the
-//! bf16 midpoints there. No runtime defines these operations, so a call left in the code would
-//! fail to resolve.
+//! bf16 midpoints there; and the f32 square root (`velt_math_sqrt_f32`) of all those f32s against
+//! Rust's. No runtime defines these operations, so a call left in the code would fail to
+//! resolve.
 
 use cranelift_jit::{JITBuilder, JITModule};
 use velt_vir::math::{half, MathOp};
@@ -11,7 +12,7 @@ use velt_vir::vir::{Intrinsic, Program, Rvalue, Terminator};
 
 use super::{copy_local, FuncBuilder, ProgramBuilder};
 
-const OPS: [MathOp; 8] = [
+const OPS: [MathOp; 9] = [
     MathOp::F16ToF32,
     MathOp::Bf16ToF32,
     MathOp::F32ToF16,
@@ -20,6 +21,7 @@ const OPS: [MathOp; 8] = [
     MathOp::F64ToBf16,
     MathOp::U64ToBf16,
     MathOp::I64ToBf16,
+    MathOp::SqrtF32,
 ];
 
 /// One function `x -> op(x)` per entry of `OPS`, in order.
@@ -160,6 +162,18 @@ fn mismatches(target: &str, optimize: bool) -> Vec<String> {
                 signed(x as i64).into(),
                 half::i64_to_bf16(x as i64).into(),
             );
+        }
+        let sqrt: extern "C" fn(f32) -> f32 =
+            std::mem::transmute::<*const u8, extern "C" fn(f32) -> f32>(code(8));
+        for &x in &f {
+            let (got, want) = (sqrt(f32::from_bits(x)), f32::from_bits(x).sqrt());
+            // Which NaN a negative argument gives is the hardware's.
+            let (got, want) = if got.is_nan() && want.is_nan() {
+                (0, 0)
+            } else {
+                (got.to_bits(), want.to_bits())
+            };
+            check(OPS[8], x.into(), got.into(), want.into());
         }
     }
     unsafe { module.free_memory() };
