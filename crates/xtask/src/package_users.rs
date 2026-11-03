@@ -1,6 +1,6 @@
 //! What uses the repository's packages (`packages/<name>/`) outside `packages/`: the programs and
 //! documents that depend on a package by path, whose tests a change to the package selects
-//! besides the packages' own (crates/xtask/src/plan.rs, `READ_BY_TESTS`).
+//! besides the packages' own (crates/xtask/src/read_by_tests.rs).
 //!
 //! The table is kept by hand and checked against the repository: [`tests`] finds every
 //! `package.vlt` outside `packages/` with a path dependency on a package, every Rust test that
@@ -35,22 +35,25 @@ pub(crate) const USERS: &[Users] = &[
             "docs",
             "reload",
             "templates",
-            // `serve` on a `--host` build (`workers` copies its sources beside its fixtures).
+            // `serve` on a `--host` build (`workers` and `workerd` copy its sources beside their
+            // fixtures).
             "workers",
+            "workerd",
         ],
     },
-    // `--host` builds (`workers` and `cloudflare` copy it beside their fixtures) and the
-    // documentation.
+    // `--host` builds (`workers`, `cloudflare` and `workerd` copy it beside their fixtures) and
+    // the documentation.
     Users {
         package: "host-cloudflare",
         goldens: &[],
-        binaries: &["workers", "cloudflare", "docs"],
+        binaries: &["workers", "cloudflare", "workerd", "docs"],
     },
-    // Its bindings in a Worker (`cloudflare` copies it beside its fixtures) and the documentation.
+    // Its bindings in a Worker (`cloudflare` and `workerd` copy it beside their fixtures) and the
+    // documentation.
     Users {
         package: "cloudflare",
         goldens: &[],
-        binaries: &["cloudflare", "docs"],
+        binaries: &["cloudflare", "workerd", "docs"],
     },
     // The database benchmarks (bench/db, bench/sqlite, bench/web, ...).
     Users {

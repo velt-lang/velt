@@ -1,0 +1,194 @@
+// A Worker under workerd, the open-source Workers runtime (crates/veltc/tests/workerd.rs):
+// packages/http-server's `serve` answering text, JSON and streamed bodies, a handler that throws,
+// a `fetch` of another service, and each of packages/cloudflare's bindings against workerd's own
+// local R2, D1, KV, cache and Durable Objects. run.mjs prints what each path answers.
+
+import { utf8Encode } from "velt/encoding";
+import { IoError } from "velt/io";
+import { BodyStream } from "velt/net/http";
+import { serve } from "http-server";
+import { caches, d1Database, durableObjectNamespace, kvNamespace, r2Bucket } from "cloudflare";
+
+class Oops extends Error {}
+
+struct Greet {
+  name: string;
+  times: i64;
+}
+
+struct Row {
+  id: i64;
+  name: string;
+  blob: u8[] | null;
+}
+
+/** The `IoError` code of `e`, else what it is. */
+function code(e: Error): string {
+  return e instanceof IoError ? e.code : `not an IoError: ${e.message}`;
+}
+
+async function* parts(): AsyncGenerator<u8[], never> {
+  for (const p of ["one ", "two ", "three"]) {
+    yield utf8Encode(p);
+    await sleep(1);
+  }
+}
+
+async function r2(): Promise<string[]> {
+  const out: string[] = [];
+  const b = r2Bucket("BUCKET");
+  const put = await b.put("notes/a.txt", "hello", {
+    httpMetadata: { contentType: "text/plain" },
+    customMetadata: { by: "velt" },
+  });
+  out.push(`put ${put?.key} ${put?.size}`);
+  const twice = await b.put("notes/a.txt", "again", { onlyIf: { etagDoesNotMatch: "*" } });
+  out.push(`put if absent, present: ${twice == null}`);
+  const swapped = await b.put("notes/a.txt", "swapped", { onlyIf: { etagMatches: put?.etag } });
+  out.push(`put if etag, current: ${swapped?.size}`);
+  await b.put("notes/b.bin", [0, 1, 2, 255]);
+  const got = await b.get("notes/a.txt");
+  if (got != null) {
+    // A put without metadata replaced it.
+    const type = got.httpMetadata.contentType ?? "none";
+    out.push(`get ${type} by=${got.customMetadata["by"] ?? "none"} ${await got.text()}`);
+  }
+  const bin = await b.get("notes/b.bin");
+  if (bin != null) {
+    out.push(`bytes ${await bin.bytes()}`);
+  }
+  out.push(`missing ${(await b.get("nope")) == null}`);
+  const page = await b.list({ prefix: "notes/" });
+  out.push(`list ${page.objects.map((o) => `${o.key}:${o.size}`)} truncated ${page.truncated}`);
+  await b.delete(["notes/a.txt", "notes/b.bin"]);
+  out.push(`deleted ${(await b.head("notes/a.txt")) == null}`);
+  return out;
+}
+
+async function d1(): Promise<string[]> {
+  const out: string[] = [];
+  const db = d1Database("DB");
+  await db.exec("CREATE TABLE IF NOT EXISTS t (id INTEGER PRIMARY KEY, name TEXT, blob BLOB)");
+  const ins = await db
+    .prepare("INSERT INTO t (name, blob) VALUES (?, ?)")
+    .bind("Ada", [1, 2, 3])
+    .run();
+  out.push(`run changes ${ins.meta.changes} last_row_id ${ins.meta.last_row_id}`);
+  const batch = await db.batch([
+    db.prepare("INSERT INTO t (name, blob) VALUES (?, ?)").bind("Bo", null),
+    db.prepare("SELECT id, name, blob FROM t ORDER BY id"),
+  ]);
+  out.push(`batch ${batch.length}`);
+  const rows = await db.prepare("SELECT id, name, blob FROM t ORDER BY id").all<Row>();
+  for (const r of rows.results) {
+    out.push(`row ${r.id} ${r.name} ${r.blob}`);
+  }
+  const bo = await db
+    .prepare("SELECT id, name, blob FROM t WHERE name = ?")
+    .bind("Bo")
+    .first<Row>();
+  out.push(`first ${bo?.id} ${bo?.name}`);
+  try {
+    await db.prepare("SELECT * FROM nope").all<Row>();
+  } catch (e) {
+    out.push(`no table: ${code(e)}`);
+  }
+  return out;
+}
+
+async function kv(): Promise<string[]> {
+  const out: string[] = [];
+  const ns = kvNamespace("KV");
+  await ns.put("greeting", "hej");
+  await ns.put("raw", [7, 8, 9]);
+  out.push(
+    `get ${await ns.get("greeting")} ${await ns.getBytes("raw")} ${await ns.get("missing")}`,
+  );
+  out.push(`list ${(await ns.list({})).keys.map((k) => k.name)}`);
+  out.push(`prefixed ${(await ns.list({ prefix: "r" })).keys.map((k) => k.name)}`);
+  await ns.delete("greeting");
+  out.push(`deleted ${await ns.get("greeting")}`);
+  return out;
+}
+
+async function cache(): Promise<string[]> {
+  const out: string[] = [];
+  const c = caches.default;
+  out.push(`miss ${(await c.match("https://w.test/page")) == null}`);
+  await c.put(
+    "https://w.test/page",
+    new Response("cached page", { status: 200, headers: { "cache-control": "max-age=60" } }),
+  );
+  const hit = await c.match(new Request("https://w.test/page"));
+  if (hit != null) {
+    out.push(`hit ${hit.status} ${await hit.text()}`);
+  }
+  out.push(
+    `delete ${await c.delete("https://w.test/page")} ${await c.delete("https://w.test/page")}`,
+  );
+  return out;
+}
+
+async function durable(): Promise<string[]> {
+  const out: string[] = [];
+  const ns = durableObjectNamespace("COUNTER");
+  const id = ns.idFromName("room-1");
+  out.push(`id ${id.toString().length} same ${id.equals(ns.idFromName("room-1"))}`);
+  const stub = ns.get(id);
+  for (let i = 0; i < 2; i++) {
+    const res = await stub.fetch("https://do.test/count");
+    out.push(`count ${res.status} ${await res.text()}`);
+  }
+  const again = ns.get(ns.idFromString(id.toString()));
+  const posted = await again.fetch("https://do.test/echo", { method: "POST", body: "ping" });
+  out.push(`posted ${posted.status} ${await posted.text()}`);
+  return out;
+}
+
+async function lines(f: () => Promise<string[]>): Promise<Response> {
+  return new Response((await f()).join("\n"));
+}
+
+async function handle(req: Request): Promise<Response> {
+  const path = new URL(req.url).pathname;
+  if (path == "/hello") {
+    return new Response("hello from Velt");
+  }
+  if (path == "/json") {
+    const g = await req.json<Greet>();
+    return Response.json({ greeting: `hej ${g.name}`, times: g.times * 2 });
+  }
+  if (path == "/echo") {
+    return new Response(`${req.method} ${(await req.text()).length} bytes`);
+  }
+  if (path == "/stream") {
+    return new Response(BodyStream.from(parts()));
+  }
+  if (path == "/throw") {
+    throw new Oops("the handler failed");
+  }
+  if (path == "/upstream") {
+    const res = await fetch("https://upstream.test/data");
+    return new Response(`upstream ${res.status}: ${await res.text()}`);
+  }
+  if (path == "/r2") {
+    return lines(r2);
+  }
+  if (path == "/d1") {
+    return lines(d1);
+  }
+  if (path == "/kv") {
+    return lines(kv);
+  }
+  if (path == "/cache") {
+    return lines(cache);
+  }
+  if (path == "/durable") {
+    return lines(durable);
+  }
+  return new Response(`no ${path}`, { status: 404 });
+}
+
+async function main() {
+  await serve({ port: 8080 }, handle);
+}

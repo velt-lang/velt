@@ -1,0 +1,15 @@
+import type { Package } from "velt/package";
+
+// A Worker run under workerd (crates/veltc/tests/workerd.rs): packages/http-server's `serve` with
+// packages/cloudflare's bindings.
+export const pkg: Package = {
+  name: "app",
+  version: "0.1.0",
+  dependencies: {
+    // packages/http-server, packages/cloudflare and packages/host-cloudflare, copied beside the
+    // fixture by the test.
+    "http-server": { path: "../http-server" },
+    cloudflare: { path: "../cloudflare" },
+    "host-cloudflare": { path: "../host-cloudflare" },
+  },
+};

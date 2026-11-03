@@ -1,0 +1,9 @@
+{
+  "name": "velt-workerd",
+  "private": true,
+  "description": "The pinned Workers runtime (workerd, through Miniflare) that runs the Worker tests (crates/veltc/tests/workerd.rs).",
+  "license": "MIT OR Apache-2.0",
+  "devDependencies": {
+    "miniflare": "5.20261012.1-beta"
+  }
+}

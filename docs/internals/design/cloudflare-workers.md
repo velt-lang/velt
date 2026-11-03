@@ -306,10 +306,23 @@ Settled in #1736:
   and a small accept loop with a package host module 117,799 bytes; the tests' budgets are 1.5
   times these.
 
-- **Checked on workerd** (wrangler 4.120's, by hand; CI runs it in #1739): requests queued while
-  `main` awaits, overlapping handlers that sleep, streamed responses, a body read after a
-  second, work after the answer, and a panic with a request in flight (both 500, the next
-  request on a new instance).
+- **Checked on workerd** (wrangler 4.120's, by hand): requests queued while `main` awaits,
+  overlapping handlers that sleep, streamed responses, a body read after a second, work after
+  the answer, and a panic with a request in flight (both 500, the next request on a new
+  instance).
+- **workerd in CI** (#1739): `crates/veltc/tests/workerd.rs` uploads a release and a debug build
+  of `app/` (packages/http-server's `serve` with packages/cloudflare's bindings) to workerd
+  through the Miniflare `tests/workerd` pins, as `wrangler deploy` uploads modules, and checks the
+  answers: text, JSON, a 100 kB body, a streamed response, a handler that throws, a `fetch` of
+  another service, eight requests at once, and R2, D1, KV, the cache and a Durable Object stub
+  against workerd's local bindings. The Linux merge queue job runs it (`npm ci` there, and
+  `VELT_WORKERD=1`, which fails the test without the packages); elsewhere it is skipped without
+  them. The nightly `workerd` job runs it with `VELT_WORKERD_TIMINGS=1`, which also times the
+  release build under node, not workerd (`tests/workerd/cpu.mjs`): the CPU from importing the
+  Worker to its first answer within 250 ms, a quarter of Workers' limit of 1 second for the
+  top-level code (measured 54-60 ms), and the median CPU per request of a text and a
+  JSON handler within 2 ms, a fifth of the Free plan's 10 ms (measured 0.1-0.2 ms). The
+  Worker is 445,105 bytes gzipped; its budget is 1.5 times that.
 
 Still open: Durable Objects written in Velt (a class exported to the glue) rather than only
 stubs; `velt check` and the editor with `--host` (a variant only a host's condition selects is

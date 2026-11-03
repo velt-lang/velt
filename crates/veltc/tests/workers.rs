@@ -13,10 +13,12 @@
 mod no_window;
 mod wasm_tools;
 mod work_dir;
+mod worker_size;
 
 use std::path::{Path, PathBuf};
 
 use wasm_tools::{build_runtime, copy_dir, for_node, missing_tools, root};
+use worker_size::within_budget;
 
 const TRIPLE: &str = "wasm32-unknown-unknown";
 
@@ -93,37 +95,6 @@ fn drive(work: &Path, dir: &Path, args: &[&str], worker: &str, scenario: &str) {
         "{scenario} {args:?}: exit {:?}\n--- want ---\n{want}--- got ---\n{got}--- stderr ---\n{}",
         o.status.code(),
         String::from_utf8_lossy(&o.stderr)
-    );
-}
-
-/// The Worker's files in `dir`, gzipped one by one.
-fn gzipped(dir: &Path) -> usize {
-    use std::io::Write;
-    let mut total = 0;
-    for entry in std::fs::read_dir(dir).expect("worker dir").flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            total += gzipped(&path);
-            continue;
-        }
-        let ext = path.extension().and_then(|e| e.to_str());
-        if matches!(ext, Some("wasm" | "mjs")) {
-            let bytes = std::fs::read(&path).expect("read");
-            let mut gz = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
-            gz.write_all(&bytes).expect("gzip");
-            total += gz.finish().expect("gzip").len();
-        }
-    }
-    total
-}
-
-fn within_budget(worker: &Path, budget: usize) {
-    let size = gzipped(worker);
-    eprintln!("{}: {size} bytes gzipped", worker.display());
-    assert!(
-        size <= budget,
-        "{}: {size} bytes gzipped, over the budget of {budget}",
-        worker.display()
     );
 }
 

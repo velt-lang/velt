@@ -1,0 +1,45 @@
+GET /hello: 200 text/plain;charset=UTF-8
+hello from Velt
+POST /json: 200 application/json
+{"greeting":"hej Ada","times":42}
+PUT /echo: 200 text/plain;charset=UTF-8
+PUT 100000 bytes
+GET /stream: 200 application/octet-stream
+one two three
+GET /throw: 500 text/plain; charset=utf-8
+Internal Server Error
+GET /missing: 404 text/plain;charset=UTF-8
+no /missing
+GET /upstream: 200 text/plain;charset=UTF-8
+upstream 200: data at /data
+concurrent: POST 0 bytes, POST 1 bytes, POST 2 bytes, POST 3 bytes, POST 4 bytes, POST 5 bytes, POST 6 bytes, POST 7 bytes
+GET /r2: 200 text/plain;charset=UTF-8
+put notes/a.txt 5
+put if absent, present: true
+put if etag, current: 7
+get none by=none swapped
+bytes 0,1,2,255
+missing true
+list notes/a.txt:7,notes/b.bin:4 truncated false
+deleted true
+GET /d1: 200 text/plain;charset=UTF-8
+run changes 1 last_row_id 1
+batch 2
+row 1 Ada 1,2,3
+row 2 Bo null
+first 2 Bo
+no table: Error
+GET /kv: 200 text/plain;charset=UTF-8
+get hej 7,8,9 null
+list greeting,raw
+prefixed raw
+deleted null
+GET /cache: 200 text/plain;charset=UTF-8
+miss true
+hit 200 cached page
+delete true false
+GET /durable: 200 text/plain;charset=UTF-8
+id 64 same true
+count 200 1
+count 200 2
+posted 201 POST ping
