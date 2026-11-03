@@ -1,16 +1,18 @@
 operator_bigint.vlt:9:11: error: BigInt arithmetic takes BigInt operands, not a `i64`
 note: write `b + new BigInt(total_value)`, or `b.addInt(total_value)` for the fast form
-operator_bigint.vlt:10:11: error: BigInt arithmetic takes BigInt operands, not a `f64`
-note: write `b + new BigInt(3)`, or `b.addInt(3)` for the fast form
-operator_bigint.vlt:11:11: error: BigInt arithmetic takes BigInt operands, not a `f64`
-note: write `new BigInt(3) * b`, or `b.mulInt(3)` for the fast form
+operator_bigint.vlt:11:11: error: BigInt arithmetic takes BigInt operands, not a `i64`
+note: write `b * new BigInt(value)`, or `b.mulInt(value)` for the fast form
 operator_bigint.vlt:12:11: error: BigInt arithmetic takes BigInt operands, not a `f64`
+note: write `b + new BigInt(3)`, or `b.addInt(3)` for the fast form
+operator_bigint.vlt:13:11: error: BigInt arithmetic takes BigInt operands, not a `f64`
+note: write `new BigInt(3) * b`, or `b.mulInt(3)` for the fast form
+operator_bigint.vlt:14:11: error: BigInt arithmetic takes BigInt operands, not a `f64`
 note: write `new BigInt(10) - b`
-operator_bigint.vlt:13:11: error: BigInt arithmetic takes BigInt operands, not a `i64`
+operator_bigint.vlt:15:11: error: BigInt arithmetic takes BigInt operands, not a `i64`
 note: write `b - new BigInt(k)`, or `b.subInt(k)` for the fast form
-operator_bigint.vlt:15:1: error: BigInt arithmetic takes BigInt operands, not a `f64`
+operator_bigint.vlt:17:1: error: BigInt arithmetic takes BigInt operands, not a `f64`
 note: write `w += new BigInt(3)`, or `w.addIntAssign(3)` for the fast form
-operator_bigint.vlt:16:1: error: BigInt arithmetic takes BigInt operands, not a `i64`
+operator_bigint.vlt:18:1: error: BigInt arithmetic takes BigInt operands, not a `i64`
 note: write `w %= new BigInt(k)`
-operator_bigint.vlt:20:11: error: BigInt arithmetic takes BigInt operands, not a `i64`
+operator_bigint.vlt:22:11: error: BigInt arithmetic takes BigInt operands, not a `i64`
 note: write `b * new BigInt(k)`, or `b.mulInt(k)` for the fast form

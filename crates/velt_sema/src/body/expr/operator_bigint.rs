@@ -23,6 +23,25 @@ fn arithmetic(op: ast::BinaryOp) -> Option<(&'static str, &'static str)> {
     })
 }
 
+/// Does `source_text` write `e` as it is: a name, `this`, a field path or a number literal?
+/// (Anything else it calls "the value", which a variable could be named too.)
+fn quotable(e: &ast::Expr) -> bool {
+    match &e.kind {
+        ast::ExprKind::Paren(inner) => quotable(inner),
+        ast::ExprKind::Ident(_) | ast::ExprKind::This => true,
+        ast::ExprKind::Member { object, .. } => quotable(object),
+        ast::ExprKind::Lit(ast::Lit::Int { .. } | ast::Lit::Float { .. }) => true,
+        ast::ExprKind::Unary {
+            op: ast::UnaryOp::Neg,
+            expr,
+        } => matches!(
+            &expr.kind,
+            ast::ExprKind::Lit(ast::Lit::Int { .. } | ast::Lit::Float { .. })
+        ),
+        _ => false,
+    }
+}
+
 impl FnCx<'_, '_> {
     /// Is `t` `velt/math`'s `BigInt`?
     fn is_bigint(&self, t: TyId) -> bool {
@@ -68,9 +87,9 @@ impl FnCx<'_, '_> {
         };
         // The operands as written (`w`, `k`, `3`), or `b` and `k` for anything longer.
         let (big_e, num_e) = if left { (lhs, rhs) } else { (rhs, lhs) };
-        let text = |e: &ast::Expr, other: &str| match source_text(e) {
-            t if t == "the value" || t == "value" => other.to_string(),
-            t => t,
+        let text = |e: &ast::Expr, other: &str| match quotable(e) {
+            true => source_text(e),
+            false => other.to_string(),
         };
         let (b, k) = (text(big_e, "b"), text(num_e, "k"));
         let (fix, fast) = match (left, assign) {
