@@ -122,7 +122,7 @@ Declaring is safe; calling needs `unsafe`.
 ## `unsafe` blocks and functions
 
 The trusted code is marked where a reviewer finds it, as in Rust and C#. A `.vlt` file is Velt,
-which already has much tsc doesn't accept (`declare c`, `f16`, operator methods, `spawn`,
+which already has much that tsc doesn't accept (`declare c`, `f16`, operator methods, `spawn`,
 `shared`): the goal is the best language that looks like TypeScript, with no workarounds.
 
 ```ts planned
