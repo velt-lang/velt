@@ -106,6 +106,24 @@ extend f32 {
   }
 }
 
+extend f16 {
+  /** As `f32`'s `compareTo`, on the values (NaN last, equal to itself; `-0` equals `0`). */
+  compareTo(other: f16): i64 {
+    const a: f32 = this;
+    const b: f32 = other;
+    return a.compareTo(b);
+  }
+}
+
+extend bf16 {
+  /** As `f32`'s `compareTo`, on the values (NaN last, equal to itself; `-0` equals `0`). */
+  compareTo(other: bf16): i64 {
+    const a: f32 = this;
+    const b: f32 = other;
+    return a.compareTo(b);
+  }
+}
+
 extend f64 {
   /**
    * -1, 0 or 1: whether `this` is less than, equal to or greater than `other`, with NaN after

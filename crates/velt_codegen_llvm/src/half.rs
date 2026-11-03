@@ -36,6 +36,10 @@ pub(crate) fn helper(op: MathOp, native: HalfNative) -> Option<InlineHelper> {
         MathOp::F32ToBf16 => ("@velt.f32_to_bf16", &[F32_TO_BF16]),
         MathOp::F64ToBf16 => ("@velt.f64_to_bf16.soft", &[F64_TO_BF16_SOFT]),
         MathOp::U64ToBf16 => ("@velt.u64_to_bf16", &[CTLZ_DECL, U64_TO_BF16]),
+        // The value is its bits.
+        MathOp::F16Bits | MathOp::BitsF16 | MathOp::Bf16Bits | MathOp::BitsBf16 => {
+            ("@velt.half_bits", &[HALF_BITS])
+        }
         MathOp::I64ToBf16 => (
             "@velt.i64_to_bf16",
             &[CTLZ_DECL, U64_TO_BF16, ABS_DECL, I64_TO_BF16],
@@ -229,4 +233,8 @@ const I64_TO_BF16: &str = "define internal i16 @velt.i64_to_bf16(i64 %i) alwaysi
   %s = or i16 %b, -32768
   %r = select i1 %neg, i16 %s, i16 %b
   ret i16 %r
+}";
+/// `w.toBits()` / `f16.fromBits(b)` and the bf16 ones: the value is its bits.
+const HALF_BITS: &str = "define internal i16 @velt.half_bits(i16 %x) alwaysinline nounwind {
+  ret i16 %x
 }";

@@ -73,3 +73,47 @@ fn bitwise_operators_reject_storage_floats() {
         "{r}"
     );
 }
+
+#[test]
+fn compound_assignment_takes_the_type_or_a_literal() {
+    ok_src(
+        "function main() {
+           let a: f16 = 1;
+           const w: f16 = 0.5;
+           a += w;
+           a *= 2;
+           a -= 0.1;
+           a++;
+           --a;
+           let s: f32 = 0;
+           s += w;
+           console.log(a, s);
+         }",
+    );
+    let r = err_src("function main() { let a: f16 = 1; const x: f32 = 2; a += x; }");
+    assert!(
+        r.contains("an `f32` doesn't convert to `f16` implicitly"),
+        "{r}"
+    );
+    assert!(r.contains("write `x = (x op v) as f16`"), "{r}");
+    let r = err_src("function main() { let a: bf16 = 1; const w: f16 = 1; a *= w; }");
+    assert!(
+        r.contains("an `f16` doesn't convert to `bf16` implicitly"),
+        "{r}"
+    );
+    let r = err_src("function main() { let a: f16 = 1; a |= 1; }");
+    assert!(
+        r.contains("bitwise operators take integers, not `f16`"),
+        "{r}"
+    );
+}
+
+#[test]
+fn an_any_converts_only_with_as() {
+    ok_src("function main() { const a: any = 1.5; const w = a as f16; console.log(w); }");
+    let r = err_src("function main() { const a: any = 1.5; const w: f16 = a; }");
+    assert!(
+        r.contains("an `any` doesn't convert to `f16` implicitly: write `x as f16`"),
+        "{r}"
+    );
+}

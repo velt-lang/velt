@@ -109,7 +109,7 @@ fn owner_of_extend(target: &ast::TypeExpr) -> &'static str {
             "string" => "string",
             "bool" | "boolean" => "boolean",
             "i8" | "i16" | "i32" | "i64" | "isize" | "u8" | "u16" | "u32" | "u64" | "usize"
-            | "f32" | "f64" | "number" => "number",
+            | "f16" | "bf16" | "f32" | "f64" | "number" => "number",
             "Map" => "Map",
             "IterableIterator" => "IterableIterator",
             "IteratorObject" => "IteratorObject",

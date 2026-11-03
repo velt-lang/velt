@@ -78,11 +78,19 @@ pub enum MathOp {
     /// `(u64) -> u16`: the bits of the bf16 nearest the integer, rounded once (no runtime
     /// function).
     U64ToBf16,
+    /// `(u16) -> u16`: an `f16`'s bits, `w.toBits()` (the identity: the value is its bits).
+    F16Bits,
+    /// `(u16) -> u16`: the `f16` with those bits, `f16.fromBits(b)` (the identity).
+    BitsF16,
+    /// `(u16) -> u16`: a `bf16`'s bits (the identity).
+    Bf16Bits,
+    /// `(u16) -> u16`: the `bf16` with those bits (the identity).
+    BitsBf16,
 }
 
 impl MathOp {
     /// Every operation.
-    pub const ALL: [MathOp; 28] = [
+    pub const ALL: [MathOp; 32] = [
         MathOp::Sqrt,
         MathOp::Floor,
         MathOp::Ceil,
@@ -111,6 +119,10 @@ impl MathOp {
         MathOp::F64ToBf16,
         MathOp::I64ToBf16,
         MathOp::U64ToBf16,
+        MathOp::F16Bits,
+        MathOp::BitsF16,
+        MathOp::Bf16Bits,
+        MathOp::BitsBf16,
     ];
 
     /// The runtime function's symbol.
@@ -144,6 +156,10 @@ impl MathOp {
             MathOp::F64ToBf16 => "velt_math_f64_to_bf16",
             MathOp::I64ToBf16 => "velt_math_i64_to_bf16",
             MathOp::U64ToBf16 => "velt_math_u64_to_bf16",
+            MathOp::F16Bits => "velt_math_f16_bits",
+            MathOp::BitsF16 => "velt_math_bits_f16",
+            MathOp::Bf16Bits => "velt_math_bf16_bits",
+            MathOp::BitsBf16 => "velt_math_bits_bf16",
         }
     }
 
@@ -204,6 +220,9 @@ impl MathOp {
             MathOp::F64ToF16 | MathOp::F64ToBf16 => (&[F64], U16),
             MathOp::I64ToBf16 => (&[I64], U16),
             MathOp::U64ToBf16 => (&[U64], U16),
+            MathOp::F16Bits | MathOp::BitsF16 | MathOp::Bf16Bits | MathOp::BitsBf16 => {
+                (&[U16], U16)
+            }
         }
     }
 
@@ -303,6 +322,10 @@ impl MathOp {
             }
             MathOp::I64ToBf16 => Some(u64::from(half::i64_to_bf16(u(0)? as i64))),
             MathOp::U64ToBf16 => Some(u64::from(half::u64_to_bf16(u(0)?))),
+            // The value of an `f16`/`bf16` is its bits: these name the reinterpretation.
+            MathOp::F16Bits | MathOp::BitsF16 | MathOp::Bf16Bits | MathOp::BitsBf16 => {
+                u(0).filter(|&b| b >> 16 == 0)
+            }
         }
     }
 }

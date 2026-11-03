@@ -65,11 +65,25 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// `x as f16` on an `any` (or `unknown`): not supported yet (the `any` part of #2049 checks
-    /// for a number and rounds).
+    /// `x as f16` on an `any` (or `unknown`): the number it holds (`TypeError` otherwise),
+    /// rounded once (#2049).
+    pub(super) fn any_as_storage_cast(
+        &mut self,
+        inner: hir::Expr,
+        target: TyId,
+        span: Span,
+    ) -> hir::Expr {
+        let f64_ = self.cx.ty.f64;
+        let n = self.cast_dynamic(inner, f64_);
+        self.mk(H::Cast(Box::new(n)), target, span)
+    }
+
+    /// An `any` (or `unknown`) where an `f16`/`bf16` is expected: narrowing needs `as` (#2049),
+    /// which checks that it holds a number and rounds it.
     pub(super) fn any_as_storage(&mut self, target: TyId, span: Span) -> hir::Expr {
         let d = self.cx.display(target);
-        let msg = format!("an `any` doesn't convert to `{d}` yet: write `(x as number) as {d}`");
+        let msg =
+            format!("an `any` doesn't convert to `{d}` implicitly: write `x as {d}` (rounds)");
         self.cx.err(msg, span);
         self.error_expr(span)
     }
@@ -99,6 +113,68 @@ impl FnCx<'_, '_> {
                 )),
         );
         Some(self.error_expr(span))
+    }
+
+    /// `place op= v` (or `place++`, `v` the `f32` 1) on an `f16`/`bf16` place (#2049): the place
+    /// is read, both sides widen to `f32`, the operation runs there and its result rounds back
+    /// once. The place's object and indices are evaluated once, before `v`. `v` is an `f16`/
+    /// `bf16` of the place's own type or a literal (typed as it, as `=` types one); a wider value
+    /// needs the cast, as for `=`. `None` after reporting.
+    pub(super) fn storage_rmw(
+        &mut self,
+        place: hir::Expr,
+        op: hir::BinOp,
+        v: hir::Expr,
+        stmts: &mut Vec<hir::Stmt>,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let lty = place.ty;
+        let f32_ = self
+            .cx
+            .ty
+            .primitive("f32")
+            .expect("ICE: f32 is a primitive");
+        // A literal on the right is typed as the place (`=`'s rule), so only the place's type
+        // passes; an `f32` (`0.1f32` too) needs the cast.
+        if v.ty != lty && !self.cx.ty.is_bottom(v.ty) {
+            let (t, vt) = (self.cx.display(lty), self.cx.display(v.ty));
+            self.cx.error(
+                Diagnostic::error(
+                    format!("an `{vt}` doesn't convert to `{t}` implicitly"),
+                    span,
+                )
+                .with_note(format!(
+                    "compound assignment on an `{t}` takes an `{t}` or a literal: write `x = (x op v) as {t}` (rounds once)"
+                )),
+            );
+            return None;
+        }
+        let mut place = place;
+        self.hoist_indices(&mut place, stmts);
+        // As the number path: the object a narrowed field held before `v` (#1280).
+        self.hoist_checked_object(&mut place, &v, stmts);
+        let cur = self.place_read(&place, crate::body::Want::Borrow);
+        let (l, r) = (self.storage_widened(cur), self.storage_widened(v));
+        let wide = match op {
+            hir::BinOp::Div => self.divide(l, r, f32_, span),
+            _ => {
+                let kind = H::Binary {
+                    op,
+                    lhs: Box::new(l),
+                    rhs: Box::new(r),
+                };
+                self.mk(kind, f32_, span)
+            }
+        };
+        let narrowed = self.mk(H::Cast(Box::new(wide)), lty, span);
+        // A held tuple `v` cleared is reported as on the number path (#1352).
+        let narrowed = self.held_rechecked(narrowed);
+        let unit = self.cx.ty.unit;
+        let kind = H::Assign {
+            place: Box::new(place),
+            value: Box::new(narrowed),
+        };
+        Some(self.mk(kind, unit, span))
     }
 
     /// The search and key methods of a collection of `f16`/`bf16` values (`includes`,

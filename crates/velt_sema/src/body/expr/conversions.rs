@@ -58,7 +58,7 @@ impl FnCx<'_, '_> {
             };
             return self.mk(kind, f64, span);
         }
-        if ty.is_numeric(t) {
+        if ty.is_numeric(t) || ty.is_storage_float(t) {
             return match self.try_coerce(h, f64) {
                 Ok(h) => h,
                 Err(h) => self.mk(H::Cast(Box::new(h)), f64, span),

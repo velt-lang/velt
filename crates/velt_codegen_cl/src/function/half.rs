@@ -29,6 +29,8 @@ impl<M: Module> Translator<'_, '_, M> {
                 self.builder.ins().select(neg, signed, bits)
             }
             MathOp::U64ToBf16 => self.u64_to_bf16(x),
+            // The value is its bits.
+            MathOp::F16Bits | MathOp::BitsF16 | MathOp::Bf16Bits | MathOp::BitsBf16 => x,
             _ => return None,
         })
     }

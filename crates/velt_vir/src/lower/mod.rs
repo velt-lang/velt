@@ -535,6 +535,9 @@ struct FnLower<'c, 'h> {
     inline: crate::vir::Inline,
     locals: Vec<LocalDecl>,
     blocks: Vec<(Vec<vir::Stmt>, Option<Terminator>)>,
+    /// The locals that hold an `f16`/`bf16` value (its bits), recorded in debug builds of the
+    /// compiler for the check that no arithmetic, comparison or switch reads them (`half.rs`).
+    half_locals: rustc_hash::FxHashSet<u32>,
     /// Source locations parallel to `blocks`: per statement, and of the terminator.
     block_locs: Vec<(Vec<Option<SrcLoc>>, Option<SrcLoc>)>,
     /// Location recorded for statements emitted now (srcloc.rs).

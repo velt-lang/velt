@@ -51,6 +51,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             inline: crate::vir::Inline::Default,
             locals: vec![],
             blocks: vec![],
+            half_locals: Default::default(),
             block_locs: vec![],
             loc: None,
             caller_loc: None,

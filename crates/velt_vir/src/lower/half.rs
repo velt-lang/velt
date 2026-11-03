@@ -157,6 +157,52 @@ impl FnLower<'_, '_> {
     }
 }
 
+impl FnLower<'_, '_> {
+    /// Records that `v`, the value of an expression of HIR type `t`, is a storage float's bits
+    /// when it is a local (debug builds of the compiler).
+    pub(super) fn note_half(&mut self, t: TyId, v: &Operand) {
+        if let Operand::Copy(p) = v {
+            if p.proj.is_empty() && self.half_of(t).is_some() {
+                self.half_locals.insert(p.local.0);
+            }
+        }
+    }
+
+    /// The check of #2049's "bits are never compared" (debug builds of the compiler, so every
+    /// test and golden runs it): no arithmetic, comparison, unary operator, numeric cast or
+    /// switch reads a local recorded by [`note_half`](Self::note_half). Its reads go through
+    /// the conversion operations (`widen_half`), loads, stores, calls and aggregates.
+    pub(super) fn check_half_bits(&self, symbol: &str) {
+        use crate::vir::{Stmt, Terminator};
+        if self.half_locals.is_empty() {
+            return;
+        }
+        let bits = |o: &Operand| matches!(o, Operand::Copy(p) if p.proj.is_empty() && self.half_locals.contains(&p.local.0));
+        for (stmts, term) in &self.blocks {
+            for st in stmts {
+                let Stmt::Assign(_, rv) = st else {
+                    continue;
+                };
+                let bad = match rv {
+                    Rvalue::Binary(_, a, b) => bits(a) || bits(b),
+                    Rvalue::Unary(_, a) | Rvalue::Cast(a, _) => bits(a),
+                    _ => false,
+                };
+                if bad {
+                    ice(format_args!(
+                        "{symbol}: an operator reads an f16/bf16's bits as a number: {rv:?}"
+                    ));
+                }
+            }
+            if let Some(Terminator::Switch { value, .. }) = term {
+                if bits(value) {
+                    ice(format_args!("{symbol}: a switch on an f16/bf16's bits"));
+                }
+            }
+        }
+    }
+}
+
 /// The bits of the literal `f` (its f64 value, negated or not) rounded once to `h`.
 pub(super) fn half_lit(f: f64, h: FloatTy) -> Operand {
     let bits = match h {
