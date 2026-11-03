@@ -23,11 +23,7 @@ function target(url: string): [string, string] {
   if (start < 0) {
     return ["/", ""];
   }
-  let rest = url.slice(start);
-  const hash = rest.indexOf("#");
-  if (hash >= 0) {
-    rest = rest.slice(0, hash);
-  }
+  const rest = url.slice(start);
   const q = rest.indexOf("?");
   return q < 0 ? [rest, ""] : [rest.slice(0, q), rest.slice(q + 1)];
 }

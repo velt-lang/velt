@@ -18,12 +18,18 @@ import {
 /** A registry and its stores. */
 export class TestRegistry {
   auth: TokenAuth = new TokenAuth();
-  db: MemoryMetadataDb = new MemoryMetadataDb();
-  blobs: MemoryBlobStore = new MemoryBlobStore();
+  db: MemoryMetadataDb;
+  blobs: MemoryBlobStore;
   purge: RecordingCachePurge = new RecordingCachePurge();
   registry: Registry;
 
-  constructor(limits: RegistryLimits = new RegistryLimits()) {
+  constructor(
+    limits: RegistryLimits = new RegistryLimits(),
+    db: MemoryMetadataDb = new MemoryMetadataDb(),
+    blobs: MemoryBlobStore = new MemoryBlobStore(),
+  ) {
+    this.db = db;
+    this.blobs = blobs;
     const stores: RegistryStores = {
       blobs: this.blobs,
       db: this.db,

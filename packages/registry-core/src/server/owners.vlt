@@ -64,5 +64,6 @@ export async function changeOwners(
     owners.splice(owners.indexOf(user), 1);
   }
   await stores.db.putOwners(name, owners);
+  await stores.purge.purge([`/api/v1/${name}/owners`]);
   return text(200, `owners of \`${name}\`: ${owners.join(", ")}\n`);
 }

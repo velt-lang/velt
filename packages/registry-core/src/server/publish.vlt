@@ -24,7 +24,7 @@ import { publishPathProblem } from "./publish_policy";
 import { Refusal } from "./refusal";
 import { RegistryLimits } from "./registry_limits";
 import { RegistryStores } from "./registry_stores";
-import { uploadBody } from "./upload_body";
+import { declaredLength, tooLarge, uploadBody } from "./upload_body";
 import { indexPath } from "./yank";
 
 // The archive's entries and checksum, after the checks of its format, checksum and the publish
@@ -168,7 +168,7 @@ async function store(
     }
     throw e;
   }
-  await stores.purge.purge([indexPath(name)]);
+  await stores.purge.purge([indexPath(name), `/api/v1/${name}/${entry.version}`, "/"]);
 }
 
 /** Publishes package `name` `version` from the archive in `req`'s body. */
@@ -181,6 +181,11 @@ export async function publish(
 ): Promise<Response> {
   if (!isValidPackageName(name) || !Version.isValid(version)) {
     return text(400, "invalid package name or version");
+  }
+  // A body announced too large is refused before anything else, as the Rust server's HTTP
+  // layer refuses it before its handler runs; one that only turns out too large, once read.
+  if (declaredLength(req.headers.get("content-length")) > limits.maxArchiveBytes) {
+    throw tooLarge(limits.maxArchiveBytes);
   }
   const caller = await ownerOf(stores, req, name);
   const body = await uploadBody(req, limits.maxArchiveBytes);

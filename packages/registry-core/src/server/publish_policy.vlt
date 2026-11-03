@@ -1,7 +1,10 @@
 // registry-core (internal): what the registry refuses at publish beyond what an archive may be
 // (#2225). `readArchive` accepts these, as vpm's reader does, but a client unpacking them on
 // Windows or macOS would write one file over another (so the unpacked package no longer matches
-// its checksum) or write to a device. The registry refuses them once, here.
+// its checksum) or write to a device, and a `target` or `.git` directory is left out of the
+// checksum a client computes. The registry refuses them once, here. (Two spellings of a name
+// that differ only in Unicode normalization, one file on macOS, are not refused yet: std has no
+// normalization.)
 
 import { ArchiveEntry } from "../archive";
 import { isWindowsDeviceName } from "../names";
@@ -35,14 +38,99 @@ function hasControl(path: string): bool {
   return false;
 }
 
+// Device names Windows has beyond `isWindowsDeviceName`'s (which matches vpm's rule for package
+// names): `COM¹`–`COM³`, `LPT¹`–`LPT³`, `CONIN$` and `CONOUT$`.
+function isOtherDeviceName(stem: string): bool {
+  const lower = stem.toLowerCase();
+  if (lower == "conin$" || lower == "conout$") {
+    return true;
+  }
+  if (lower.length != 4 || !(lower.startsWith("com") || lower.startsWith("lpt"))) {
+    return false;
+  }
+  const last = lower.charAt(3);
+  return last == "\u00b9" || last == "\u00b2" || last == "\u00b3";
+}
+
 // Why one segment of a path can't be a file or directory name on Windows, or null.
 function segmentProblem(segment: string): string | null {
   if (segment.endsWith(".") || segment.endsWith(" ")) {
     return "ends with a dot or a space, which Windows drops from file names";
   }
   const dot = segment.indexOf(".");
-  if (isWindowsDeviceName(dot < 0 ? segment : segment.slice(0, dot))) {
+  const stem = dot < 0 ? segment : segment.slice(0, dot);
+  if (isWindowsDeviceName(stem) || isOtherDeviceName(stem)) {
     return "names a device on Windows (`con`, `nul`, `com1`, …)";
+  }
+  return null;
+}
+
+/** Directories a package never holds (vpm's `SKIPPED_DIRS`: `velt publish` leaves them out). */
+const SKIPPED_DIRS: string[] = ["target", ".git"];
+
+// A file or directory seen so far: its id (a directory's children are keyed by it), its name as
+// written, and whether it is a directory.
+struct Node {
+  id: i64;
+  name: string;
+  isDir: bool;
+}
+
+// The first `n` segments of `segments`, with the last of them written as `last`.
+function prefix(segments: string[], n: i64, last: string): string {
+  const parts = segments.slice(0, n - 1);
+  parts.push(last);
+  return parts.join("/");
+}
+
+// Why the path `path` (after `previous`, null for the first) is refused, or null. `nodes` holds
+// every file and directory seen, keyed by `<parent id>/<lowercased name>`, so each path costs
+// time in proportion to its length however deep it is.
+function pathProblem(
+  path: string,
+  previous: string | null,
+  nodes: Map<string, Node>,
+): string | null {
+  if (hasControl(path)) {
+    return `the archive has a path with a control character, \`${shownPath(path)}\``;
+  }
+  if (previous != null) {
+    const order = compareUtf8(previous, path);
+    if (order == 0) {
+      return `the archive has \`${shownPath(path)}\` twice`;
+    }
+    if (order > 0) {
+      return `the archive's paths are not sorted: \`${shownPath(path)}\` comes after \`${shownPath(previous)}\``;
+    }
+  }
+  const segments = path.split("/");
+  let parent: i64 = 0;
+  for (let s: i64 = 0; s < segments.length; s++) {
+    const segment = segments[s];
+    const isDir = s < segments.length - 1;
+    const problem = segmentProblem(segment);
+    if (problem != null) {
+      return `the archive has \`${shownPath(path)}\`, whose name \`${shownPath(segment)}\` ${problem}`;
+    }
+    if (isDir && SKIPPED_DIRS.includes(segment)) {
+      return `the archive has \`${shownPath(path)}\`, inside a \`${segment}\` directory, which \`velt publish\` never sends`;
+    }
+    const key = `${parent}/${segment.toLowerCase()}`;
+    const found = nodes.get(key);
+    if (found == null) {
+      const id = (nodes.size as i64) + 1;
+      nodes.set(key, { id, name: segment, isDir });
+      parent = id;
+      continue;
+    }
+    if (found.name != segment) {
+      const earlier = prefix(segments, s + 1, found.name);
+      return `the archive has \`${shownPath(earlier)}\` and \`${shownPath(prefix(segments, s + 1, segment))}\`, which differ only in case: one file on Windows and macOS`;
+    }
+    if (!isDir || !found.isDir) {
+      return `the archive has \`${shownPath(prefix(segments, s + 1, segment))}\` as a file and as a directory`;
+    }
+    parent = found.id;
   }
   return null;
 }
@@ -50,58 +138,18 @@ function segmentProblem(segment: string): string | null {
 /**
  * Why the registry refuses an archive with `entries` (read by `readPackageArchive`), or null:
  * more than `maxEntries` files, paths out of order or twice, control characters, two paths that
- * differ only in case (one file on Windows and macOS), a file that is also a directory, and names
- * Windows can't hold.
+ * differ only in case (one file on Windows and macOS), a file that is also a directory, names
+ * Windows can't hold, and `target` or `.git` directories.
  */
 export function publishPathProblem(entries: ArchiveEntry[], maxEntries: i64): string | null {
   if (entries.length > maxEntries) {
     return `the archive has ${entries.length} files; a package may have at most ${maxEntries}`;
   }
-  // Lowercased file and directory paths → the path as written, and whether it is a directory.
-  const seen: Map<string, string> = new Map();
-  const dirs: Set<string> = new Set();
+  const nodes: Map<string, Node> = new Map();
   for (let i = 0; i < entries.length; i++) {
-    const path = entries[i].path;
-    if (hasControl(path)) {
-      return `the archive has a path with a control character, \`${shownPath(path)}\``;
-    }
-    if (i > 0) {
-      const order = compareUtf8(entries[i - 1].path, path);
-      if (order == 0) {
-        return `the archive has \`${shownPath(path)}\` twice`;
-      }
-      if (order > 0) {
-        return `the archive's paths are not sorted: \`${shownPath(path)}\` comes after \`${shownPath(entries[i - 1].path)}\``;
-      }
-    }
-    const segments = path.split("/");
-    for (const segment of segments) {
-      const problem = segmentProblem(segment);
-      if (problem != null) {
-        return `the archive has \`${shownPath(path)}\`, whose name \`${shownPath(segment)}\` ${problem}`;
-      }
-    }
-    // Each directory on the way, then the file itself.
-    let prefix = "";
-    for (let s = 0; s < segments.length; s++) {
-      prefix = s == 0 ? segments[0] : `${prefix}/${segments[s]}`;
-      const isDir = s < segments.length - 1;
-      const key = prefix.toLowerCase();
-      const earlier = seen.get(key);
-      if (earlier == null) {
-        seen.set(key, prefix);
-        if (isDir) {
-          dirs.add(key);
-        }
-        continue;
-      }
-      if (isDir && dirs.has(key) && earlier == prefix) {
-        continue;
-      }
-      if (earlier == prefix || isDir != dirs.has(key)) {
-        return `the archive has \`${shownPath(prefix)}\` as a file and as a directory`;
-      }
-      return `the archive has \`${shownPath(earlier)}\` and \`${shownPath(prefix)}\`, which differ only in case: one file on Windows and macOS`;
+    const problem = pathProblem(entries[i].path, i == 0 ? null : entries[i - 1].path, nodes);
+    if (problem != null) {
+      return problem;
     }
   }
   return null;

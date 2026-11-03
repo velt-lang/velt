@@ -1,0 +1,113 @@
+// The registry over stores that wait, fail or lose data (src/server/registry.vlt, publish.vlt):
+// writes to one package hold its lock, a failed write takes its owner claim back, a failing
+// store answers 500, and what the cache in front is told to forget.
+import { channel, Channel } from "velt/sync";
+import { describe, expect, it } from "velt/test";
+import {
+  MemoryBlobStore,
+  MemoryMetadataDb,
+  PackageIndex,
+  RegistryLimits,
+  StoreError,
+} from "../src/lib";
+import { Answer, TestRegistry } from "./_registry";
+
+// A database whose `packageNames` waits for a token from `gate` (while it is set).
+class GatedDb extends MemoryMetadataDb {
+  gate: Channel<bool> | null = null;
+
+  override async packageNames(): Promise<string[]> {
+    const gate = this.gate;
+    if (gate != null) {
+      await gate.receive();
+    }
+    return await super.packageNames();
+  }
+}
+
+// A database whose `putIndex` fails.
+class FailingDb extends MemoryMetadataDb {
+  override async putIndex(name: string, index: PackageIndex): Promise<void> {
+    throw new StoreError("the database is down");
+  }
+}
+
+// A blob store that has lost every blob.
+class EmptyBlobs extends MemoryBlobStore {
+  override async get(key: string): Promise<u8[] | null> {
+    return null;
+  }
+}
+
+describe("stores", () => {
+  it("publish one name's spellings one at a time", async () => {
+    const db = new GatedDb();
+    const gate = channel<bool>(2);
+    db.gate = gate;
+    const r = new TestRegistry(new RegistryLimits(), db);
+    // Both reach the name check before either is let through; without the lock both would
+    // find the name free.
+    const first = r.publish("my-pkg", "1.0.0");
+    const second = r.publish("my_pkg", "1.0.0");
+    gate.trySend(true);
+    gate.trySend(true);
+    const answers: Answer[] = [await first, await second];
+    expect(answers.map((a: Answer): i64 => a.status)).toEqual([201, 400]);
+  });
+
+  it("take an owner claim back when the index can't be written", async () => {
+    const r = new TestRegistry(new RegistryLimits(), new FailingDb());
+    const alice = r.user("alice");
+    const failed = await r.publish("lib", "1.0.0", alice);
+    expect(failed.status).toBe(500);
+    expect(failed.text).toBe("the database is down");
+    expect(await r.db.owners("lib")).toEqual([]);
+  });
+
+  it("answer 500 for an archive the blob store lost", async () => {
+    const r = new TestRegistry(new RegistryLimits(), new MemoryMetadataDb(), new EmptyBlobs());
+    expect((await r.publish("lib", "1.0.0")).status).toBe(201);
+    const lost = await r.call("GET", "lib/1.0.0");
+    expect(lost.status).toBe(500);
+    expect(lost.text).toContain("missing from the registry's store");
+  });
+});
+
+describe("caches and choices", () => {
+  it("purge what a write changed, and nothing for a yank that changes nothing", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    r.user("bob");
+    await r.publish("lib", "1.0.0", alice);
+    expect(r.purge.purged).toEqual(["/api/v1/lib/index", "/api/v1/lib/1.0.0", "/"]);
+    r.purge.purged = [];
+    await r.call("PUT", "lib/1.0.0/yank", alice);
+    await r.call("PUT", "lib/1.0.0/yank", alice);
+    expect(r.purge.purged).toEqual(["/api/v1/lib/index"]);
+    r.purge.purged = [];
+    await r.call("PUT", "lib/owners/bob", alice);
+    expect(r.purge.purged).toEqual(["/api/v1/lib/owners"]);
+  });
+
+  it("show a stable version before a newer pre-release, and no package all yanked", async () => {
+    const r = new TestRegistry();
+    await r.publish("lib", "1.0.0");
+    await r.publish("lib", "2.0.0-rc.1");
+    expect((await r.call("GET", "search?q=lib")).text).toContain(`"version":"1.0.0"`);
+    await r.call("PUT", "lib/1.0.0/yank");
+    expect((await r.call("GET", "search?q=lib")).text).toContain(`"version":"2.0.0-rc.1"`);
+    await r.call("PUT", "lib/2.0.0-rc.1/yank");
+    expect((await r.call("GET", "search?q=lib")).text).toBe(`{"packages":[]}`);
+  });
+
+  it("refuse a body announced too large before anything else", async () => {
+    const limits = new RegistryLimits();
+    limits.maxArchiveBytes = 1000;
+    const r = new TestRegistry(limits);
+    r.user("alice");
+    const headers: [string, string][] = [["content-length", "1001"]];
+    const answer = await r.send("PUT", "/api/v1/lib/1.0.0", headers, null);
+    expect(answer.status).toBe(413);
+    expect(answer.text).toBe("the upload is larger than 1000 bytes");
+  });
+});

@@ -22,6 +22,15 @@ async function publishWith(
 }
 
 describe("the publish policy", () => {
+  it("checks a deep path in time proportional to its length", async () => {
+    // 20,000 directories: each prefix rebuilt as a string would be some 400 MB of keys.
+    const r = new TestRegistry();
+    const deep = `src/${"a/".repeat(20000)}x.vlt`;
+    expect(await publishWith(r, [file(deep, ""), file(`src/${"a/".repeat(19999)}y.vlt`, "")])).toBe(
+      "201 published `p` 1.0.0\n",
+    );
+  });
+
   it("refuses paths a client could not unpack faithfully", async () => {
     const r = new TestRegistry();
     const cases: [ArchiveEntry[], string][] = [
@@ -61,13 +70,39 @@ describe("the publish policy", () => {
         [file("src/b /c.vlt", "")],
         "400 the archive has `src/b /c.vlt`, whose name `b ` ends with a dot or a space, which Windows drops from file names",
       ],
+      [
+        [file("src/COM\u00b9.vlt", "")],
+        "400 the archive has `src/COM\u00b9.vlt`, whose name `COM\u00b9.vlt` names a device on Windows (`con`, `nul`, `com1`, …)",
+      ],
+      [
+        [file("src/conin$", "")],
+        "400 the archive has `src/conin$`, whose name `conin$` names a device on Windows (`con`, `nul`, `com1`, …)",
+      ],
+      [
+        [file("src/A/x.vlt", ""), file("src/a", "")],
+        "400 the archive has `src/A` and `src/a`, which differ only in case: one file on Windows and macOS",
+      ],
+      [
+        [file("src/target/x.vlt", "")],
+        "400 the archive has `src/target/x.vlt`, inside a `target` directory, which `velt publish` never sends",
+      ],
+      [
+        [file("src/x/.git/HEAD", "")],
+        "400 the archive has `src/x/.git/HEAD`, inside a `.git` directory, which `velt publish` never sends",
+      ],
     ];
     for (const [extra, expected] of cases) {
       expect(await publishWith(r, extra)).toBe(expected);
     }
     expect(r.blobs.size).toBe(0);
     // What is close to them but fine.
-    const fine = [file("src/a.b.vlt", ""), file("src/console.vlt", ""), file("src/m/x.vlt", "")];
+    const fine = [
+      file("src/a.b.vlt", ""),
+      file("src/com4\u00b9.vlt", ""),
+      file("src/console.vlt", ""),
+      file("src/m/x.vlt", ""),
+      file("src/target.vlt", ""),
+    ];
     expect(await publishWith(r, fine)).toBe("201 published `p` 1.0.0\n");
   });
 

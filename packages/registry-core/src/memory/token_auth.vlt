@@ -19,14 +19,21 @@ export class TokenAuth implements AuthProvider {
   /** User name → token hash; null while the registry is open. */
   private users: Map<string, string> | null = null;
 
-  /** Adds (or replaces) user `name` with the token whose hash is `hash`; closes the registry. */
+  /**
+   * Adds user `name`, or gives it a new token, with the token whose hash is `hash`; closes the
+   * registry.
+   */
   setUser(name: string, hash: string): void {
     const users = this.users ?? new Map<string, string>();
     users.set(name, hash);
     this.users = users;
   }
 
-  /** Removes user `name`; the registry stays closed even with no users left. */
+  /**
+   * Removes user `name`; the registry stays closed even with no users left. The user's place in
+   * owner lists is the `MetadataDb`'s: an administrator removing a user drops it there too, as
+   * `velt registry user remove` does, so a new user of that name owns nothing.
+   */
   removeUser(name: string): void {
     this.users?.delete(name);
   }

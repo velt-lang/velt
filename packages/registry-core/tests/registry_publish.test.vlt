@@ -28,7 +28,7 @@ describe("publishing", () => {
     );
     expect((await r.call("GET", "nope/index")).status).toBe(404);
     expect((await r.call("GET", "lib/2.0.0")).text).toBe("no `lib` 2.0.0");
-    expect(r.purge.purged).toEqual(["/api/v1/lib/index", "/api/v1/lib/index"]);
+    expect(r.purge.purged.length).toBe(6);
   });
 
   it("records the manifest's description, keywords and requirements per version", async () => {

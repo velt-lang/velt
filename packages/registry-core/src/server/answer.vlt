@@ -30,5 +30,8 @@ export function refused(message: string): Response {
   if (message.length <= MAX_MESSAGE_CHARS) {
     return text(400, message);
   }
-  return text(400, `${message.slice(0, MAX_MESSAGE_CHARS)}…`);
+  // Not between the two halves of a character outside the BMP.
+  const code = message.charCodeAt(MAX_MESSAGE_CHARS - 1);
+  const end = code >= 0xd800 && code <= 0xdbff ? MAX_MESSAGE_CHARS - 1 : MAX_MESSAGE_CHARS;
+  return text(400, `${message.slice(0, end)}…`);
 }

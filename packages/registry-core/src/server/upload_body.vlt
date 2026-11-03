@@ -3,13 +3,16 @@
 
 import { Refusal } from "./refusal";
 
-function tooLarge(max: i64): Refusal {
+/** The 413 for a body over `max` bytes. */
+export function tooLarge(max: i64): Refusal {
   return new Refusal(413, `the upload is larger than ${max} bytes`);
 }
 
-// The `Content-Length` a request declares, or -1 when it declares none it can be held to (the
-// server reading the body enforces the length; this only refuses a body announced too large).
-function declaredLength(header: string | null): i64 {
+/**
+ * The `Content-Length` a request declares, or -1 when it declares none it can be held to (the
+ * server reading the body enforces the length; this only refuses a body announced too large).
+ */
+export function declaredLength(header: string | null): i64 {
   if (header == null) {
     return -1;
   }
