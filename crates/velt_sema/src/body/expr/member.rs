@@ -641,6 +641,10 @@ impl FnCx<'_, '_> {
         if let Some(h) = self.empty_as_deferred(expr, target, span) {
             return h;
         }
+        // `{ hasValue: v.hasValue, … } as ValuePresence<T>`: the member chosen at run time.
+        if let Some(h) = self.discriminated_cast(expr, target, span) {
+            return h;
+        }
         // A narrowed `any` / `unknown` converts as the value it holds, which TypeScript allows
         // where the narrowed type would not cast (`isComponent(t)`, then `t as Function`).
         let path = matches!(
@@ -660,58 +664,34 @@ impl FnCx<'_, '_> {
             false => self.collapse_object_option(inner),
         };
         (self.dynamic_raw, self.asserted_fn) = (saved, outer);
+        match self.assert_value(inner, target, span) {
+            Ok(h) => h,
+            Err(h) => self.cast_error(h, target, span),
+        }
+    }
+
+    /// Checked value `inner` asserted to `target` (`x as T` once `x` is checked), or `Err`
+    /// with it when the assertion is not allowed.
+    pub(super) fn assert_value(
+        &mut self,
+        inner: hir::Expr,
+        target: TyId,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
         if self.cx.dynamic(inner.ty).is_some() {
             if let Ok(h) = self.coerce_dynamic(inner.clone(), target, true) {
-                return h;
+                return Ok(h);
             }
         }
         // `x as object` of an unbounded `T` (issue #926): checked at run time.
-        let coerced = self
-            .object_view_cast(inner, target, span)
+        self.object_view_cast(inner, target, span)
             .or_else(|h| self.try_coerce(h, target))
             .or_else(|h| self.param_as_object(h, target))
             .or_else(|h| self.param_as_object_part(h, target))
             .or_else(|h| self.narrowing_assertion(h, target, span))
             .or_else(|h| self.union_view_cast(h, target, span))
             .or_else(|h| self.array_view_cast(h, target, span))
-            .or_else(|h| self.generic_assertion(h, target));
-        match coerced {
-            Ok(h) => h,
-            Err(h) => {
-                let nothings = (self.cx.ty.nothing_of(h.ty), self.cx.ty.nothing_of(target));
-                if let (Some(from), Some(to)) = nothings {
-                    if !from.within(to) && !self.cx.ty.has_error(h.ty) {
-                        // TypeScript keeps the value (`undefined` stays `undefined`); the type
-                        // `T | null | undefined` that could hold it comes with phase 1b.
-                        let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
-                        self.cx.error(
-                            Diagnostic::error(
-                                format!("a cast from `{s}` to `{d}` is not supported yet (#930)"),
-                                span,
-                            )
-                            .with_note(format!(
-                                "the value would stay `{}`, which `{d}` cannot hold yet; convert it instead (`x ?? {}`)",
-                                from.word(),
-                                to.word()
-                            )),
-                        );
-                        return self.error_expr(span);
-                    }
-                }
-                if !self.cx.ty.has_error(h.ty) {
-                    let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
-                    let diag = Diagnostic::error(format!("cannot cast `{s}` as `{d}`"), span);
-                    let mut diag = self.cx.with_layout_note(diag, target);
-                    if self.cx.has_literal_member(target) {
-                        diag = diag.with_note(
-                            "a value takes a literal type after a test that narrows it (`if (k === \"a\")`)",
-                        );
-                    }
-                    self.cx.error(diag);
-                }
-                self.error_expr(span)
-            }
-        }
+            .or_else(|h| self.generic_assertion(h, target))
     }
 
     /// `x as UserId`: brands a value of the brand's primitive `base` (or one that converts to

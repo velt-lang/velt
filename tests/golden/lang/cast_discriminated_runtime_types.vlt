@@ -1,0 +1,9 @@
+// A property the chosen member cannot hold is still not asserted to it: a `string` is not a
+// `number` (#2146), as TypeScript reports for the whole assertion.
+type ValuePresence<T> = { value: T; hasValue: true } | { value: null; hasValue: false };
+
+function wrap(flag: boolean): ValuePresence<number> {
+  return { value: "text", hasValue: flag } as ValuePresence<number>;
+}
+
+console.log(wrap(true).hasValue);
