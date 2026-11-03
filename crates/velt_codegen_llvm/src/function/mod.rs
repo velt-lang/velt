@@ -330,10 +330,19 @@ impl Emitter<'_> {
 /// callers and they stay cheap to inline. "Never returns" stands for "its calls are rare", not
 /// "its body is cold": a hot `for (;;)` worker loop that ends in `process.exit` gets these too.
 /// Only its call sites are affected (without a profile LLVM does not shrink a cold body).
+///
+/// Otherwise std's markers (`Function::inline`): `noInline()` gives `noinline` alone (its calls
+/// are not rare, so not `cold`), and `inline()` gives `alwaysinline`. A function that never
+/// returns stays `cold noinline` even when marked `inline()`: the two attributes conflict, and its
+/// calls are rare.
 fn cold_attrs(function: &vir::Function) -> &'static str {
     let returns = (function.blocks.iter()).any(|b| matches!(b.term, vir::Terminator::Return(_)));
-    match function.cold || !returns {
-        true => " cold noinline",
-        false => "",
+    if function.cold || !returns {
+        return " cold noinline";
+    }
+    match function.inline {
+        vir::Inline::Default => "",
+        vir::Inline::Always => " alwaysinline",
+        vir::Inline::Never => " noinline",
     }
 }

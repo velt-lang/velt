@@ -30,6 +30,7 @@ fn func(locals: usize, blocks: Vec<BasicBlock>) -> Function {
         is_poll: false,
         cold: false,
         target: None,
+        inline: crate::vir::Inline::Default,
     }
 }
 

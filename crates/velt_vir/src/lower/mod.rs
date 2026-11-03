@@ -548,6 +548,8 @@ struct FnLower<'c, 'h> {
     targs: Vec<TyId>,
     /// Building a glue function: its comparisons are counted where it is called (fresh_fns.rs).
     glue: bool,
+    /// The body's marker, `inline()` or `noInline()` (`Function::inline`).
+    inline: crate::vir::Inline,
     locals: Vec<LocalDecl>,
     blocks: Vec<(Vec<vir::Stmt>, Option<Terminator>)>,
     /// Source locations parallel to `blocks`: per statement, and of the terminator.

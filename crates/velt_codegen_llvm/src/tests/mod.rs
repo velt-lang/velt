@@ -116,6 +116,35 @@ fn functions_that_never_return_are_cold() {
 }
 
 #[test]
+fn inline_markers_give_their_attributes() {
+    // std's markers (`Function::inline`): `inline()` is `alwaysinline`, `noInline()` is
+    // `noinline` without `cold`; a function that never returns stays `cold noinline` even when
+    // marked `inline()` (the attributes conflict).
+    let mut p = sample();
+    for (name, marker, cold) in [
+        ("always", Inline::Always, false),
+        ("never", Inline::Never, false),
+        ("both", Inline::Always, true),
+    ] {
+        let mut fb = FuncBuilder::internal(name, &[Ptr], Unit);
+        let b = fb.block();
+        fb.ret(b, Operand::Const(Const::Unit, Unit));
+        let mut f = fb.finish();
+        f.inline = marker;
+        f.cold = cold;
+        p.funcs.push(f);
+    }
+    let ir = emit_ir(&p, "x86_64-unknown-linux-gnu").expect("emit_ir");
+    for needle in [
+        "define internal void @\"always\"(ptr %p0) #0 alwaysinline {",
+        "define internal void @\"never\"(ptr %p0) #0 noinline {",
+        "define internal void @\"both\"(ptr %p0) #0 cold noinline {",
+    ] {
+        assert!(ir.contains(needle), "missing `{needle}` in\n{ir}");
+    }
+}
+
+#[test]
 fn operations_follow_vir_semantics() {
     let ir = ir();
     for needle in [

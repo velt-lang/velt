@@ -14,7 +14,13 @@
 //!   this rule gives every program's loops the same, its own modules' functions included.)
 //!
 //! Functions that never return normally (panic helpers, and `never` functions that throw) are
-//! never inlined: their calls are cold. A gated
+//! never inlined: their calls are cold.
+//!
+//! std's markers override the rules (`Function::inline`): a function marked `noInline()`
+//! (`Inline::Never`, #1884) is never inlined, and one marked `inline()` (`Inline::Always`) is
+//! inlined at every call site, whatever its size and the caller's, without charging the budget:
+//! std puts it only on small entry points whose callers are hot. Sema rejects `inline()` on a
+//! recursive function; should one reach here, the recursion rules below still apply to it. A gated
 //! function (`Function::target`) is never inlined into a function of another target, or into an
 //! ordinary one; an ordinary function may be inlined into a gated one.
 //! Recursive functions (members of a cycle) are never inlined within their cycle (that would
@@ -36,7 +42,7 @@
 mod splice;
 
 use rustc_hash::FxHashMap;
-use velt_vir::vir::{Callee, FuncId, Function, Program, Rvalue, Stmt, Terminator};
+use velt_vir::vir::{Callee, FuncId, Function, Inline, Program, Rvalue, Stmt, Terminator};
 
 use crate::callgraph::{direct_calls, CallGraph};
 use crate::scc::on_cycle;
@@ -191,6 +197,7 @@ pub(crate) fn std_forwarders(funcs: &[Function], helpers: &mut [bool]) {
                 && f.linkage == velt_vir::vir::Linkage::Internal
                 && !never_returns(f)
                 && f.target.is_none()
+                && f.inline != Inline::Never
                 && cost(f) <= TRIVIAL_COST
         })
         .collect();
@@ -247,7 +254,7 @@ fn decide(
 ) -> Option<Decision> {
     let ci = callee.0 as usize;
     let target = program.funcs.get(ci)?;
-    if target.blocks.is_empty() || never_returns(target) {
+    if target.blocks.is_empty() || never_returns(target) || target.inline == Inline::Never {
         return None;
     }
     let recursive = state.recursive[ci];
@@ -271,7 +278,7 @@ fn decide(
         }
     }
     let size = cost(target);
-    if size <= TRIVIAL_COST {
+    if size <= TRIVIAL_COST || (target.inline == Inline::Always && !recursive) {
         return Some(Decision::Free);
     }
     if site.caller_cost + size > CALLER_LIMIT {

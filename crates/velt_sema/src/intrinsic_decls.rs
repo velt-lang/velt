@@ -94,6 +94,9 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("identity", Op(I::Identity)),
     ("isTypedProxy", Op(I::IsTypedProxy)),
     ("toAny", Op(I::ToAny)),
+    // inline.vlt
+    ("inline", Op(I::Inline)),
+    ("noInline", Op(I::NoInline)),
     // report.vlt
     ("errorText", Op(I::ErrorText)),
     ("inspect", Op(I::Inspect)),

@@ -49,13 +49,18 @@ impl fmt::Display for Program {
             let open = if func.blocks.is_empty() { "" } else { " {" };
             writeln!(
                 f,
-                "fn#{} {} {}({}) -> {}{}{open}",
+                "fn#{} {} {}({}) -> {}{}{}{open}",
                 i,
                 link,
                 func.symbol,
                 fmt_tys(&func.params),
                 func.ret,
-                if func.cold { " cold" } else { "" }
+                if func.cold { " cold" } else { "" },
+                match func.inline {
+                    crate::vir::Inline::Default => "",
+                    crate::vir::Inline::Always => " alwaysinline",
+                    crate::vir::Inline::Never => " noinline",
+                }
             )?;
             if open.is_empty() {
                 continue;

@@ -307,6 +307,7 @@ mod tests {
             is_poll: false,
             target: None,
             cold: false,
+            inline: velt_vir::vir::Inline::Default,
         }
     }
 
