@@ -2,17 +2,30 @@
 //! function hook, generated from the table's signatures ([`velt_common::std_hook_table!`]): the
 //! signature is written once, there, and `velt_sema`'s test checks it against std.
 //!
-//! A builder takes each argument as the hook's parameter type ([`ty`]'s markers, which the call
-//! site names: `ty::Str::arg(buf)`), so a call with the wrong arity or a wrong type does not
-//! compile. It finds the definition, applies the passing modes (an owned parameter is given a
+//! A builder takes each argument wrapped in a marker of the hook's parameter type ([`ty`]'s
+//! markers, which the call site names: `ty::Str::arg(buf)`). What the Rust compiler checks, so
+//! that a call site that gets one of them wrong does not build:
+//! - the arity;
+//! - the order and kind of the markers (`ty::I64` where the table has `i64`, `ty::Array<ty::Gen>`
+//!   where it has `[A]`);
+//! - [`Arg`] for a `Copy` or borrowed parameter and [`Own`] for an owned one;
+//! - the number of type arguments (`[TyId; N]`);
+//! - the result's marker (the `R` of [`Call<R>`] and [`Val<R>`]).
+//!
+//! What it does not check: that the operand inside a marker has that type. `ty::Str::arg(v)` is
+//! the call site's assertion that `v` is a string's address, so `ty::I64::arg(s),
+//! ty::Str::arg(n)` with the operands swapped compiles. A debug build of the compiler (the one
+//! the golden tests run) checks it instead: [`Call::with`] asserts that each operand's VIR type
+//! is the parameter's (`Ptr` for an aggregate, which is passed by its address).
+//!
+//! A builder finds the definition, applies the passing modes (an owned parameter is given a
 //! moved value or a share of a borrowed one: [`Own`]) and returns a [`Call`], which emits the call
 //! the way the site needs it ([`Call::emit`], [`Call::emit_to`], [`Call::emit_std`],
 //! [`Call::emit_owned`]). A hook lowering cannot do without is an ICE when std lacks it; a
 //! `fallback` hook's builder returns `None` when it is missing or unchecked, and the caller calls
 //! the runtime instead. Builders are `#[inline]` and allocate only the call's argument list.
 //!
-//! `velt_vir::hook_args`'s doctest shows that a call with the wrong argument types does not
-//! compile.
+//! `velt_vir::hook_args`'s doctest shows that a call with the wrong markers does not compile.
 
 use std::marker::PhantomData;
 
@@ -20,7 +33,7 @@ use velt_common::std_hooks::Mode;
 use velt_sema::hir::{DefId, PassMode, TyId};
 
 use super::{ice, unit, FnLower};
-use crate::vir::{Callee, Operand, Place, Ty};
+use crate::vir::{Callee, Operand, Place, Proj, Ty};
 
 /// The marker types of the hooks' type language (velt_common `hook_sig.rs`): what a builder's
 /// argument or result is. A std class is the marker of its name; type arguments are given to the
@@ -146,6 +159,43 @@ pub(super) struct Call<R> {
     _r: PhantomData<fn() -> R>,
 }
 
+/// Whether `op` has the VIR type a parameter of HIR type `param` (under `targs`) is passed as:
+/// its own, `Ptr` for an aggregate (passed by address). An operand whose type the projections
+/// do not determine passes.
+fn operand_fits(lw: &mut FnLower<'_, '_>, op: &Operand, param: TyId, targs: &[TyId]) -> bool {
+    let t = lw.cx.subst(param, targs);
+    let want = match lw.cx.ty(t) {
+        Ty::Agg(_) => Ty::Ptr,
+        vt => vt,
+    };
+    let got = match op {
+        Operand::Const(_, t) => *t,
+        Operand::Copy(pl) => {
+            let mut t = lw.locals[pl.local.0 as usize].ty;
+            for pr in &pl.proj {
+                t = match (pr, t) {
+                    (Proj::Field(n), Ty::Agg(a)) => {
+                        match lw
+                            .cx
+                            .aggs
+                            .get(a.0 as usize)
+                            .and_then(|l| l.fields.get(*n as usize))
+                        {
+                            Some(f) => f.0,
+                            None => return true,
+                        }
+                    }
+                    (Proj::Deref(to), _) => *to,
+                    (Proj::Cast(a), _) => Ty::Agg(*a),
+                    _ => return true,
+                };
+            }
+            t
+        }
+    };
+    got == want
+}
+
 /// A hook call's result, of type `R`.
 pub(super) struct Val<R>(Operand, PhantomData<fn() -> R>);
 
@@ -218,7 +268,15 @@ impl<R> Call<R> {
                 "ICE: a hook's passing mode differs from its table entry"
             );
             argv.push(match how {
-                How::As(op) => op,
+                How::As(op) => {
+                    debug_assert!(
+                        operand_fits(lw, &op, p.ty, &targs),
+                        "ICE: an argument of `{}` is not of its parameter's type (the marker \
+                         and the operand of a hook call disagree)",
+                        lw.cx.fn_def(def).name
+                    );
+                    op
+                }
                 How::Share(place) => {
                     let t = lw.cx.subst(p.ty, &targs);
                     let v = lw.share_value(Operand::Copy(place), t);
