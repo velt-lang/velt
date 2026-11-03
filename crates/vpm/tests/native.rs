@@ -150,6 +150,8 @@ fn native_packages_end_to_end() {
     // The lockfile pins both targets.
     let lock = Lockfile::read(&app).unwrap().unwrap();
     assert_eq!(lock.get("db").unwrap().native, entry.native);
+    // It records what the program allows.
+    assert_eq!(lock.allow_native, ["db"]);
 
     // Without a target nothing native is provided.
     let plain = install(&app, &loc, InstallOptions::default()).unwrap();

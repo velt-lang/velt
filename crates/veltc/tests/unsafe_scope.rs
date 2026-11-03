@@ -226,3 +226,44 @@ fn unsafe_code_in_a_package_needs_a_safety_comment() {
     );
     assert_eq!(out.matches("needs a").count(), 3, "{out}");
 }
+
+/// `velt check` lists each allowed package with native code: its C libraries and its unsafe
+/// code by file and line (`--json` too). The lockfile records what the program allows.
+#[test]
+fn velt_check_lists_the_allowed_native_code() {
+    let dir = test_dir::TestDir::new();
+    let native = ", native: { c: { m: { system: { default: \"m\" } } } }";
+    project(dir.path(), UNSAFE_CODE, native, DEMO, ALLOW);
+    assert_eq!(
+        passes(dir.path(), &["check"]),
+        "Native code the program allows (allowNative):\n  \
+         bind: C libraries m (m); 6 places of unsafe code\n    \
+         src/lib.vlt:2   unsafe function `raw`\n    \
+         src/lib.vlt:10  unsafe function `at`\n    \
+         src/lib.vlt:18  unsafe block\n    \
+         src/lib.vlt:28  unsafe expression\n    \
+         src/lib.vlt:30  unsafe block\n    \
+         src/lib.vlt:34  unsafe expression\n"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&passes(dir.path(), &["check", "--json"])).unwrap();
+    assert_eq!(json["native"][0]["package"], "bind");
+    assert_eq!(
+        json["native"][0]["unsafe"][1]["what"],
+        "unsafe function `at`"
+    );
+    let lock = std::fs::read_to_string(dir.path().join("app/velt.lock.json")).unwrap();
+    assert!(
+        lock.contains("\"allowNative\": [\n    \"bind\"\n  ]"),
+        "{lock}"
+    );
+    // Nothing is listed for a program without native packages.
+    project(
+        dir.path(),
+        "export function demo(): void {}\n",
+        "",
+        DEMO,
+        "",
+    );
+    assert_eq!(passes(dir.path(), &["check"]), "");
+}

@@ -148,7 +148,10 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
     let existing = Lockfile::read(&root)?;
     let prefer = if opts.update { None } else { existing.as_ref() };
     let resolution = resolve(&root, &manifest, loc, prefer)?;
-    let lockfile = to_lockfile(&resolution, &root, &[]);
+    let mut lockfile = to_lockfile(&resolution, &root, &[]);
+    lockfile.allow_native = manifest.allow_native.clone();
+    lockfile.allow_native.sort();
+    lockfile.allow_native.dedup();
     let (lockfile, lock_changed) = settle_lock(
         existing.as_ref(),
         lockfile,

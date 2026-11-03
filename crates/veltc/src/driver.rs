@@ -204,6 +204,9 @@ pub struct Session {
     /// The system libraries of the C libraries the program's `declare c` functions name
     /// (`crate::native::c_links`: `sqlite3`, `framework:Accelerate`), set by the check.
     pub c_libs: Vec<String>,
+    /// The packages with native code the program allows, and their unsafe code (set by the
+    /// check; `velt check` lists them).
+    pub native: Vec<crate::native::NativePackage>,
 }
 
 impl Session {
@@ -323,10 +326,11 @@ fn sema_stage(
     let packages = opts.packages.as_ref();
     sess.no_generators |= opts.no_generators;
     let hir = crate::generate::check(sess, &loaded.modules, loaded.root, sema_opts, packages);
-    crate::native::check_trust(
+    sess.native = crate::native::check_trust(
         &loaded.modules,
         &sess.sm,
         opts.packages.as_ref(),
+        &opts.target(),
         &mut sess.diagnostics,
     );
     if let Some(hir) = &hir {

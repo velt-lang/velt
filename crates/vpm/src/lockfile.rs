@@ -5,6 +5,7 @@
 //! {
 //!   "version": 1,
 //!   "velt": "0.2.0",
+//!   "allowNative": ["sqlite"],
 //!   "packages": [
 //!     {
 //!       "name": "json",
@@ -31,6 +32,8 @@
 //! ([`crate::install`]). The velt launcher runs that version in the package, when the pin
 //! accepts it, so every machine builds a commit with the same compiler; `--locked` fails on
 //! another. Optional: a lock without it is still format 1.
+//! `allowNative` is the root package's list (package.vlt), sorted and without duplicates; a
+//! workspace's lock has none (each member is checked when it builds). Optional, like `velt`.
 //! Path sources are relative to the root package, `/`-separated. The root package itself is not
 //! listed (its dependencies come from package.vlt). A workspace has one lockfile, at its root,
 //! for all its members ([`crate::workspace`]): they are listed, as
@@ -57,6 +60,10 @@ pub struct Lockfile {
     /// The toolchain version that builds the package.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub velt: Option<String>,
+    /// The root package's `allowNative`, sorted: the packages whose native code the program
+    /// allows, so a change of trust shows in the lockfile's diff.
+    #[serde(default, rename = "allowNative", skip_serializing_if = "Vec::is_empty")]
+    pub allow_native: Vec<String>,
     /// Resolved packages, sorted by name.
     #[serde(default)]
     pub packages: Vec<LockedPackage>,
@@ -95,6 +102,7 @@ impl Lockfile {
         Lockfile {
             version: FORMAT_VERSION,
             velt: None,
+            allow_native: Vec::new(),
             packages,
         }
     }
@@ -200,6 +208,17 @@ mod tests {
             "{text}"
         );
         assert_eq!(Lockfile::parse(&text).unwrap(), pinned);
+        // The root's `allowNative`, when it lists any, follows the toolchain.
+        let mut trusting = pinned.clone();
+        trusting.allow_native = vec!["sqlite".into()];
+        let text = trusting.to_json();
+        assert!(
+            text.contains(
+                "\"velt\": \"0.2.0\",\n  \"allowNative\": [\n    \"sqlite\"\n  ],\n  \"packages\""
+            ),
+            "{text}"
+        );
+        assert_eq!(Lockfile::parse(&text).unwrap(), trusting);
     }
 
     #[test]
