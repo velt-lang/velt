@@ -270,9 +270,12 @@ impl FnCx<'_, '_> {
             let f64_ = self.cx.ty.f64;
             return self.int_to_float(v, f64_);
         }
-        // An `f16`/`bf16` added to an `f32` place is an `f32` (`sum += w`, #2049).
-        if matches!(self.cx.ty.kind(place.ty), TyKind::Float(hir::FloatTy::F32)) {
-            return self.storage_widened(v);
+        // An `f16`/`bf16` added to an `f32` place converts to `f32`, exactly (`sum += w`, #2049).
+        if matches!(self.cx.ty.kind(place.ty), TyKind::Float(hir::FloatTy::F32))
+            && self.cx.ty.is_storage_float(v.ty)
+        {
+            let span = v.span;
+            return self.mk(H::Cast(Box::new(v)), place.ty, span);
         }
         v
     }

@@ -43,6 +43,11 @@ fn js_to_int32(x: f64) -> i32 {
     x.trunc().rem_euclid(4_294_967_296.0) as u32 as i32
 }
 
+/// Whether `op` is a bitwise operator (`& | ^ << >> >>>`).
+pub(super) fn is_bitwise(op: ast::BinaryOp) -> bool {
+    bitwise_op(op).is_some()
+}
+
 fn bitwise_op(op: ast::BinaryOp) -> Option<BinOp> {
     use ast::BinaryOp as B;
     Some(match op {

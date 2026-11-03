@@ -1,0 +1,87 @@
+// The bitwise operators on an `f16`/`bf16` read it as the number it is and convert that with
+// ToInt32, as JavaScript does with a `Float16Array` element (#2049); a compound assignment
+// stores the result rounded once. The sweep covers all 65,536 patterns of both formats and
+// hashes every result; the expected output is Node's, from the same sweep over a
+// `Float16Array` (bf16: an exact round-to-nearest-even reference). Then the values of
+// `||=` and `&&=` used as expressions: the number read, or the right side unrounded.
+function bits16(x: f16): number {
+  return x != x ? 0x7e00 : x.toBits() as number;
+}
+
+function bitsBf16(x: bf16): number {
+  return x != x ? 0x7fc0 : x.toBits() as number;
+}
+
+function mix(h: number, x: number): number {
+  return (h * 31 + (x >>> 0)) % 4294967296;
+}
+
+function sweepF16(): string {
+  let ops = 0;
+  let stores = 0;
+  for (let i = 0; i < 65536; i++) {
+    const x = f16.fromBits(i as u16);
+    ops = mix(ops, x | 0);
+    ops = mix(ops, x >> 1);
+    ops = mix(ops, x >>> 3);
+    ops = mix(ops, ~x);
+    ops = mix(ops, x & 0xff);
+    ops = mix(ops, x ^ -1);
+    ops = mix(ops, x << 10);
+    let y = x;
+    y <<= 10;
+    stores = mix(stores, bits16(y));
+    y = x;
+    y >>>= 0;
+    stores = mix(stores, bits16(y));
+    y = x;
+    y |= 1;
+    y ^= 0x55;
+    stores = mix(stores, bits16(y));
+    y = x;
+    y &= -4;
+    y >>= 2;
+    stores = mix(stores, bits16(y));
+  }
+  return `${ops.toString(16)} ${stores.toString(16)}`;
+}
+
+function sweepBf16(): string {
+  let ops = 0;
+  let stores = 0;
+  for (let i = 0; i < 65536; i++) {
+    const x = bf16.fromBits(i as u16);
+    ops = mix(ops, x | 0);
+    ops = mix(ops, x >>> 3);
+    ops = mix(ops, ~x);
+    let y = x;
+    y <<= 10;
+    stores = mix(stores, bitsBf16(y));
+    y = x;
+    y >>>= 0;
+    stores = mix(stores, bitsBf16(y));
+    y = x;
+    y &= -4;
+    y >>= 2;
+    stores = mix(stores, bitsBf16(y));
+  }
+  return `${ops.toString(16)} ${stores.toString(16)}`;
+}
+
+function logical() {
+  let z: f16 = 0;
+  const a = (z ||= 0.1);
+  let y: f16 = 1;
+  const b = (y &&= 0.3);
+  let q: f16 = 2;
+  const c = (q ||= 0.1);
+  const d = (q &&= 0);
+  const xs: f16[] = [0, 1];
+  const g = (xs[0] ||= 0.7);
+  const h = (xs[1] &&= 0.7);
+  console.log(a, z, b, y, c, d, q, g, h, xs[0], xs[1]);
+}
+
+console.log("f16", sweepF16());
+console.log("bf16", sweepBf16());
+logical();

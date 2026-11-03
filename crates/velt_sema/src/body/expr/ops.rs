@@ -196,6 +196,8 @@ impl FnCx<'_, '_> {
                 if !number && !self.cx.ty.is_bottom(inner.ty) {
                     return self.unary_error("+", inner.ty, span);
                 }
+                // `+w` on an `f16`/`bf16` is the `number` it is (#2049).
+                let mut inner = self.storage_widened(inner);
                 inner.span = span;
                 return inner;
             }
@@ -212,6 +214,7 @@ impl FnCx<'_, '_> {
                     Err(inner) => inner,
                 };
                 self.literal_use_number(&inner);
+                let inner = self.storage_widened(inner);
                 // `~x` on a number is JS's: ToInt32, then a 32-bit not (`int32.rs`).
                 if self.js_bitnot_applies(&inner) {
                     return self.js_bitnot(inner, span);
@@ -352,13 +355,11 @@ impl FnCx<'_, '_> {
                     self.cast_member_numbers
                         .extend(super::cast_member::number_operands(lhs, rhs));
                 }
-                let lr = self.comparing_in(is_comparison(op), |s| {
-                    s.checked_operands(op, lhs, rhs, hint)
-                });
+                let lr = self.checked_operands(op, lhs, rhs, hint);
                 self.cast_member_numbers.truncate(mark);
                 lr
             }
-            None => self.comparing_in(true, |s| s.operands(lhs, rhs, hint, Want::Borrow)),
+            None => self.operands(lhs, rhs, hint, Want::Borrow),
         };
         // An `any` or `unknown` operand, by its checked type (a variable, a field, an element,
         // a call, a capture).
@@ -447,9 +448,9 @@ impl FnCx<'_, '_> {
             (l, r)
         };
         let (l, r) = self.std_int_operands(l, r);
-        if let Some(e) = self.storage_bitwise(op, &l, &r, span) {
-            return e;
-        }
+        // An `f16`/`bf16` operand is read as a `number` (#2049): every operator, bitwise ones
+        // with JS's ToInt32, computes on the f64 it widens to.
+        let (l, r) = (self.storage_widened(l), self.storage_widened(r));
         // Bitwise operators on numbers: JS's 32-bit semantics (`int32.rs`).
         if let Some(bop) = self.js_bitwise_applies(op, &l, &r) {
             return self.js_bitwise(bop, l, r, span);
@@ -460,9 +461,6 @@ impl FnCx<'_, '_> {
             (l, r)
         };
         let (l, r) = self.mix_numbers(l, r);
-        // Arithmetic and comparisons on `f16`/`bf16` run in `f32`: no operator has a storage
-        // operand (#2049).
-        let (l, r) = (self.storage_widened(l), self.storage_widened(r));
         let bop = hir_binop(op).expect("ICE: logical op in binary");
         if let Some(found) = self.param_ordering(bop, l.ty, r.ty) {
             return self.compare_via(found, bop, l, r, span);

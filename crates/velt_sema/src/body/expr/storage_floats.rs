@@ -1,6 +1,8 @@
-//! The storage floats `f16` and `bf16` in expressions (#2049): arithmetic on them runs in
-//! `f32` (every operator widens a storage operand first), a literal of one is its f64 value
-//! rounded once (an error where that is infinite), and only `as` narrows into one.
+//! The storage floats `f16` and `bf16` in expressions (#2049): an `f16`/`bf16` is a `number`
+//! with 16-bit storage, as a `Float16Array` element is in JavaScript. Reading one widens it to
+//! `number` (f64, exactly), so every operator computes in f64 and gives a `number`; storing
+//! into one rounds once (`=`, compound assignment); a literal of one is its f64 value rounded
+//! once (an error where that is infinite), and only `as` narrows a value into one.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -9,19 +11,14 @@ use crate::body::FnCx;
 use crate::hir::{self, ExprKind as H, TyId, TyKind};
 
 impl FnCx<'_, '_> {
-    /// `h` widened to `f32` if it is an `f16` or `bf16` (exact), the type arithmetic on it runs
-    /// in (#2049); `h` as it is otherwise.
+    /// `h` widened to `number` (f64, exactly) if it is an `f16` or `bf16`: what reading one
+    /// gives (#2049); `h` as it is otherwise.
     pub(crate) fn storage_widened(&mut self, h: hir::Expr) -> hir::Expr {
         if !self.cx.ty.is_storage_float(h.ty) {
             return h;
         }
-        let f32_ = self
-            .cx
-            .ty
-            .primitive("f32")
-            .expect("ICE: f32 is a primitive");
-        let span = h.span;
-        self.mk(H::Cast(Box::new(h)), f32_, span)
+        let (f64_, span) = (self.cx.ty.f64, h.span);
+        self.mk(H::Cast(Box::new(h)), f64_, span)
     }
 
     /// Whether a literal of type `ty` is one of a storage float, reporting it if it rounds to
@@ -88,85 +85,82 @@ impl FnCx<'_, '_> {
         self.error_expr(span)
     }
 
-    /// A bitwise operator with an `f16`/`bf16` operand: an error (#2049), reported before
-    /// the JS ToInt32 path that `number` operands take.
-    pub(super) fn storage_bitwise(
-        &mut self,
-        op: ast::BinaryOp,
-        l: &hir::Expr,
-        r: &hir::Expr,
-        span: Span,
-    ) -> Option<hir::Expr> {
-        use ast::BinaryOp as B;
-        let bitwise = matches!(
-            op,
-            B::BitAnd | B::BitOr | B::BitXor | B::Shl | B::Shr | B::UShr
-        );
-        let h = [l, r]
-            .into_iter()
-            .find(|h| bitwise && self.cx.ty.is_storage_float(h.ty))?;
-        let t = self.cx.display(h.ty);
-        self.cx.error(
-            Diagnostic::error(format!("bitwise operators take integers, not `{t}`"), span)
-                .with_note(format!(
-                    "an `{t}` is a float: convert it to an integer type with `as` first"
-                )),
-        );
-        Some(self.error_expr(span))
-    }
-
-    /// `place op= v` (or `place++`) on an `f16`/`bf16` place (#2049): the place is read, both
-    /// sides widen to `f32`, the operation runs there and its result rounds back once, so it is
-    /// `place = (place op v) as f16`. The place's object and indices are evaluated once, before
-    /// `v`. `v` is of the place's own type or a literal (an `f32`); a wider value needs the
-    /// cast, as for `=`. `None` after reporting.
+    /// `place op= v` (or `place++`) on an `f16`/`bf16` place (#2049): `place = (place op v) as
+    /// f16`, the place read as a `number` and the operation in f64 (bitwise operators with JS's
+    /// ToInt32), the result rounded once on the store, as a `Float16Array` element's compound
+    /// assignment does. The place's object and indices are evaluated once, before `v`. `v` is
+    /// any value that converts to `number` exactly. `None` after reporting.
     pub(super) fn storage_rmw(
         &mut self,
         place: hir::Expr,
-        op: hir::BinOp,
+        op: ast::BinaryOp,
         v: hir::Expr,
         stmts: &mut Vec<hir::Stmt>,
         span: Span,
     ) -> Option<hir::Expr> {
+        self.storage_rmw_kept(place, op, v, stmts, false, span)
+            .map(|(a, _)| a)
+    }
+
+    /// [`Self::storage_rmw`]; with `keep`, the f64 result is bound to a temporary (in `stmts`)
+    /// and returned too: the value of the compound assignment used as an expression, which JS
+    /// gives unrounded.
+    pub(super) fn storage_rmw_kept(
+        &mut self,
+        place: hir::Expr,
+        op: ast::BinaryOp,
+        v: hir::Expr,
+        stmts: &mut Vec<hir::Stmt>,
+        keep: bool,
+        span: Span,
+    ) -> Option<(hir::Expr, Option<hir::LocalId>)> {
         let lty = place.ty;
-        let f32_ = self
-            .cx
-            .ty
-            .primitive("f32")
-            .expect("ICE: f32 is a primitive");
-        // The place's type, or a literal (an `f32`, the type the operation runs in); another
-        // `f32`, a `number` or the other storage type needs the cast.
-        let literal = matches!(&v.kind, H::Lit(_))
-            || matches!(&v.kind, H::Unary { expr, .. } if matches!(expr.kind, H::Lit(_)));
-        if v.ty != lty && !(literal && v.ty == f32_) && !self.cx.ty.is_bottom(v.ty) {
-            let (t, vt) = (self.cx.display(lty), self.cx.display(v.ty));
-            self.cx.error(
-                Diagnostic::error(
-                    format!("an `{vt}` doesn't convert to `{t}` implicitly"),
-                    span,
-                )
-                .with_note(format!(
-                    "compound assignment on an `{t}` takes an `{t}` or a literal: write `x = (x op v) as {t}` (rounds once)"
-                )),
+        let f64_ = self.cx.ty.f64;
+        let v = self.storage_widened(v);
+        let v = if v.ty == f64_ || self.cx.ty.is_bottom(v.ty) {
+            v
+        } else if self.exact_in_number(v.ty) {
+            self.int_to_float(v, f64_)
+        } else {
+            let vt = self.cx.display(v.ty);
+            let mut d = Diagnostic::error(
+                format!("mismatched types: expected number, found {vt}"),
+                span,
             );
+            if let Some(note) = self.number_note(f64_, v.ty) {
+                d = d.with_note(note);
+            }
+            self.cx.error(d);
             return None;
-        }
+        };
         let mut place = place;
         self.hoist_indices(&mut place, stmts);
         // As the number path: the object a narrowed field held before `v` (#1280).
         self.hoist_checked_object(&mut place, &v, stmts);
         let cur = self.place_read(&place, crate::body::Want::Borrow);
-        let (l, r) = (self.storage_widened(cur), self.storage_widened(v));
-        let wide = match op {
-            hir::BinOp::Div => self.divide(l, r, f32_, span),
-            _ => {
+        let cur = self.storage_widened(cur);
+        let wide = match super::ops::hir_binop(op) {
+            _ if super::int32::is_bitwise(op) => self.js_bitwise_assign(op, cur, v, span),
+            Some(hir::BinOp::Div) => self.divide(cur, v, f64_, span),
+            Some(op) => {
                 let kind = H::Binary {
                     op,
-                    lhs: Box::new(l),
-                    rhs: Box::new(r),
+                    lhs: Box::new(cur),
+                    rhs: Box::new(v),
                 };
-                self.mk(kind, f32_, span)
+                self.mk(kind, f64_, span)
             }
+            None => return None,
+        };
+        let (wide, kept) = match keep {
+            true => {
+                let l = self.bind_temp("<result>", wide, stmts);
+                (
+                    self.mk(H::Local(l, hir::UseMode::Copy), f64_, span),
+                    Some(l),
+                )
+            }
+            false => (wide, None),
         };
         let narrowed = self.mk(H::Cast(Box::new(wide)), lty, span);
         // A held tuple `v` cleared is reported as on the number path (#1352).
@@ -176,7 +170,97 @@ impl FnCx<'_, '_> {
             place: Box::new(place),
             value: Box::new(narrowed),
         };
-        Some(self.mk(kind, unit, span))
+        Some((self.mk(kind, unit, span), kept))
+    }
+
+    /// `w = L` (a number literal) or `w op= v` on an `f16`/`bf16` place used as a value (#2049):
+    /// the value is the `number` before the store rounds it, as JS gives for a `Float16Array`
+    /// element (`(e[0] = 0.1)` is 0.1). `Err(place)` for any other `=`, whose value (of the
+    /// place's type) reads back the same.
+    pub(super) fn storage_assign_value(
+        &mut self,
+        place: hir::Expr,
+        op: Option<ast::BinaryOp>,
+        value: &ast::Expr,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let f64_ = self.cx.ty.f64;
+        let lty = place.ty;
+        let mut stmts = Vec::new();
+        let kept = match op {
+            None if plain_literal(value).is_some() => {
+                if let Some(n) = plain_literal(value) {
+                    self.storage_literal_range(n, lty, value.span);
+                }
+                let v = self.expr(value, Some(f64_), crate::body::Want::Borrow);
+                let l = self.bind_temp("<assigned>", v, &mut stmts);
+                let read = self.mk(H::Local(l, hir::UseMode::Copy), f64_, span);
+                let stored = self.mk(H::Cast(Box::new(read)), lty, span);
+                let unit = self.cx.ty.unit;
+                let kind = H::Assign {
+                    place: Box::new(place),
+                    value: Box::new(stored),
+                };
+                let assign = self.mk(kind, unit, span);
+                stmts.push(hir::Stmt {
+                    kind: hir::StmtKind::Expr(assign),
+                    span,
+                });
+                l
+            }
+            Some(op)
+                if !matches!(
+                    op,
+                    ast::BinaryOp::And | ast::BinaryOp::Or | ast::BinaryOp::Nullish
+                ) =>
+            {
+                let v = self.expr(value, Some(f64_), crate::body::Want::Borrow);
+                if self.cx.dynamic(v.ty).is_some() {
+                    return Ok(self.any_as_storage(lty, span));
+                }
+                let Some((assign, Some(l))) =
+                    self.storage_rmw_kept(place, op, v, &mut stmts, true, span)
+                else {
+                    return Ok(self.error_expr(span));
+                };
+                stmts.push(hir::Stmt {
+                    kind: hir::StmtKind::Expr(assign),
+                    span,
+                });
+                l
+            }
+            _ => return Err(place),
+        };
+        let value = self.mk(H::Local(kept, hir::UseMode::Copy), f64_, span);
+        Ok(self.with_temps_value(stmts, value))
+    }
+
+    /// `w ||= v` (also `&&=`, `??=`) on an `f16`/`bf16` place without effects, used as a value:
+    /// `w || (w = v)` as JS defines it, so the value is the `number` read from `w`, or `v`
+    /// before the store rounds it (#2049).
+    pub(super) fn storage_logical_value(
+        &mut self,
+        op: ast::BinaryOp,
+        target: &ast::Expr,
+        value: &ast::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let synthetic = |kind| ast::Expr {
+            id: ast::NodeId(u32::MAX),
+            kind,
+            span,
+        };
+        let assign = synthetic(ast::ExprKind::Assign {
+            op: None,
+            target: Box::new(target.clone()),
+            value: Box::new(value.clone()),
+        });
+        let either = synthetic(ast::ExprKind::Binary {
+            op,
+            lhs: Box::new(target.clone()),
+            rhs: Box::new(synthetic(ast::ExprKind::Paren(Box::new(assign)))),
+        });
+        self.expr(&either, None, crate::body::Want::Borrow)
     }
 
     /// The search and key methods of a collection of `f16`/`bf16` values (`includes`,
@@ -306,21 +390,79 @@ impl FnCx<'_, '_> {
         Ok(self.with_temps_value(stmts, h))
     }
 
-    /// The type a literal beside an `f16`/`bf16` takes in `operands`: `f32`, the type arithmetic
-    /// on it runs in, or `f64` in a comparison (`comparing`), which is then exact (#2049): `w ==
-    /// 0.1` compares as JS compares a `Float16Array` element with the number.
+    /// The type a literal beside an `f16`/`bf16` takes in `operands`: `number`, as every
+    /// operator reads the storage float as one (#2049).
     pub(super) fn storage_literal_hint(&mut self) -> Option<TyId> {
-        match self.comparing {
-            true => Some(self.cx.ty.f64),
-            false => self.cx.ty.primitive("f32"),
-        }
+        Some(self.cx.ty.f64)
     }
 
-    /// `f` with `comparing` set to `on` (a comparison's operands), restored after.
-    pub(super) fn comparing_in<R>(&mut self, on: bool, f: impl FnOnce(&mut Self) -> R) -> R {
-        let outer = std::mem::replace(&mut self.comparing, on);
-        let r = f(self);
-        self.comparing = outer;
-        r
+    /// `++w`/`w--` on an `f16`/`bf16` place used as a value (#2049): the old value read as a
+    /// `number`, the new one `old ± 1` in f64 stored rounded once, and the expression's value
+    /// the new number (prefix) or the old one (postfix), as JS gives for a `Float16Array`
+    /// element. The place's object and indices are evaluated once.
+    pub(super) fn storage_update_value(
+        &mut self,
+        place: hir::Expr,
+        op: ast::BinaryOp,
+        prefix: bool,
+        span: Span,
+    ) -> hir::Expr {
+        let (lty, f64_) = (place.ty, self.cx.ty.f64);
+        let mut place = place;
+        let mut stmts = Vec::new();
+        self.hoist_indices(&mut place, &mut stmts);
+        let read = self.place_read(&place, crate::body::Want::Borrow);
+        let old = self.storage_widened(read);
+        let old = self.bind_temp("<old>", old, &mut stmts);
+        let get = |s: &mut Self, l| s.mk(H::Local(l, hir::UseMode::Copy), f64_, span);
+        let one = self.mk(H::Lit(hir::Lit::Float(1.0)), f64_, span);
+        let bop = super::ops::hir_binop(op).expect("ICE: ++ is + or -");
+        let lhs = get(self, old);
+        let kind = H::Binary {
+            op: bop,
+            lhs: Box::new(lhs),
+            rhs: Box::new(one),
+        };
+        let new = self.mk(kind, f64_, span);
+        let new = self.bind_temp("<new>", new, &mut stmts);
+        let stored = get(self, new);
+        let stored = self.mk(H::Cast(Box::new(stored)), lty, span);
+        let unit = self.cx.ty.unit;
+        let kind = H::Assign {
+            place: Box::new(place),
+            value: Box::new(stored),
+        };
+        let assign = self.mk(kind, unit, span);
+        stmts.push(hir::Stmt {
+            kind: hir::StmtKind::Expr(assign),
+            span,
+        });
+        let value = get(self, if prefix { new } else { old });
+        self.with_temps_value(stmts, value)
+    }
+}
+
+/// The value of a number literal without a suffix, possibly negated or in parentheses: what
+/// `w = L` used as a value yields unrounded.
+fn plain_literal(e: &ast::Expr) -> Option<f64> {
+    match &e.kind {
+        ast::ExprKind::Lit(ast::Lit::Int {
+            value,
+            suffix: None,
+        }) => Some(*value as f64),
+        ast::ExprKind::Lit(ast::Lit::Float {
+            value,
+            suffix: None,
+        }) => Some(*value),
+        ast::ExprKind::Unary {
+            op: ast::UnaryOp::Neg,
+            expr,
+        } => plain_literal(expr).map(|v| -v),
+        ast::ExprKind::Unary {
+            op: ast::UnaryOp::Plus,
+            expr,
+        }
+        | ast::ExprKind::Paren(expr) => plain_literal(expr),
+        _ => None,
     }
 }

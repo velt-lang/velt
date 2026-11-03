@@ -1,7 +1,6 @@
 // `f16` and `bf16` (#2049): storage types that compute in `f32`. A literal and `as` round once
-// to nearest even; values widen to `f32` and `number` exactly; arithmetic runs in `f32`, with a
-// literal beside a storage float an `f32` too, and a comparison with a literal in `f64` (the
-// boundary cases are in `f16_compare`). The expected output was made
+// to nearest even; values widen to `f32` and `number` exactly; every operator reads one as the
+// `number` it is (f64), as JavaScript reads a `Float16Array` element. The expected output was made
 // with Node's `Math.f16round` / `Math.fround` (and an exact round-to-nearest-even for bf16).
 function main() {
   // Literals: the f64 value rounded once.
@@ -27,12 +26,11 @@ function main() {
   const big: i64 = 4503599627370497;
   console.log(small as f16, small as bf16, big as bf16, (-big) as bf16);
   console.log((2.5 as f16) as u8, (-3.75 as bf16) as i32, (300.5 as f16) as i64);
-  // Arithmetic runs in `f32`; the result is an `f32` (`as f16` rounds it back).
+  // Arithmetic runs in f64; the result is a `number` (`as f16` rounds it back).
   const a: f16 = 1.1;
   const b: f16 = 2.2;
   console.log(a + b, a * b, b / a, a - b, -a, (a * b) as f16);
-  // Arithmetic with a literal runs in `f32`; a comparison with one is exact, as JS compares a
-  // `Float16Array` element.
+  // With a literal: the f64 arithmetic and comparison, as JS does with a `Float16Array` element.
   console.log(tenth == 0.1, tenth < 0.1, tenth > 0.0999, tenth * 0.1, tenth + 1);
   const close: f16 = 0.0999755859375;
   console.log(close == tenth, close == 0.0999755859375, btenth == 0.10009765625);

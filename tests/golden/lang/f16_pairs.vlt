@@ -1,0 +1,77 @@
+// One `+ - * /` of two `f16` (or two `bf16`) values, or of one and a literal the format holds
+// exactly, stored into the format: the compiler computes it in f32 and narrows once (#2191),
+// which rounds as computing in f64 and narrowing once does, because f32 has at least 2p + 2
+// bits. The sweep runs pairs of patterns from across each format, through compound assignment,
+// `as` and element stores, and hashes the bits; the expected output is Node's (`Float16Array`;
+// bf16: an exact round-to-nearest-even reference). A NaN hashes as one pattern.
+function bits16(x: f16): number {
+  return x != x ? 0x7e00 : x.toBits() as number;
+}
+
+function bitsBf16(x: bf16): number {
+  return x != x ? 0x7fc0 : x.toBits() as number;
+}
+
+function mix(h: number, x: number): number {
+  return (h * 31 + x) % 4294967296;
+}
+
+function pairsF16(): string {
+  let h = 0;
+  const xs: f16[] = [0, 0, 0, 0];
+  for (let i = 0; i < 65536; i += 61) {
+    const a = f16.fromBits(i as u16);
+    for (let j = 0; j < 65536; j += 67) {
+      const b = f16.fromBits(j as u16);
+      let y = a;
+      y += b;
+      h = mix(h, bits16(y));
+      y = a;
+      y -= b;
+      h = mix(h, bits16(y));
+      h = mix(h, bits16((a * b) as f16));
+      xs[0] = a;
+      xs[1] = b;
+      xs[0] /= xs[1];
+      h = mix(h, bits16(xs[0]));
+    }
+    let z = a;
+    z *= 0.5;
+    h = mix(h, bits16(z));
+    z = a;
+    z /= -3;
+    h = mix(h, bits16(z));
+    h = mix(h, bits16((a + 65504) as f16));
+    // Literals the format cannot hold stay on the exact path.
+    z = a;
+    z += 1.0001;
+    h = mix(h, bits16(z));
+    z = a;
+    z /= 0.3;
+    h = mix(h, bits16(z));
+    h = mix(h, bits16((a * 0.999) as f16));
+  }
+  return h.toString(16);
+}
+
+function pairsBf16(): string {
+  let h = 0;
+  for (let i = 0; i < 65536; i += 251) {
+    const a = bf16.fromBits(i as u16);
+    for (let j = 0; j < 65536; j += 257) {
+      const b = bf16.fromBits(j as u16);
+      h = mix(h, bitsBf16((a + b) as bf16));
+      h = mix(h, bitsBf16((a - b) as bf16));
+      let y = a;
+      y *= b;
+      h = mix(h, bitsBf16(y));
+      y = a;
+      y /= b;
+      h = mix(h, bitsBf16(y));
+    }
+  }
+  return h.toString(16);
+}
+
+console.log("f16", pairsF16());
+console.log("bf16", pairsBf16());

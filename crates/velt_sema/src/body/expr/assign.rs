@@ -343,6 +343,13 @@ impl FnCx<'_, '_> {
                 let e = self.record_logical(obj, object, key, op, value, as_value, span);
                 return (e, as_value);
             }
+            if as_value && super::assign_paths::is_pure_place(target) {
+                if let Some(AssignTarget::Place(p)) = &checked {
+                    if self.cx.ty.is_storage_float(p.ty) {
+                        return (self.storage_logical_value(op, target, value, span), true);
+                    }
+                }
+            }
             (self.logical_assign(op, checked, target, value, span), false)
         } else {
             self.plain_or_compound_assign(op, target, value, as_value, span)
@@ -359,6 +366,15 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> (hir::Expr, bool) {
         let e = match self.assign_target(target, span) {
+            // Used as a value, an `f16`/`bf16` place's assignment gives the unrounded number.
+            Some(AssignTarget::Place(place))
+                if as_value && self.cx.ty.is_storage_float(place.ty) =>
+            {
+                match self.storage_assign_value(place, op, value, span) {
+                    Ok(h) => return (h, true),
+                    Err(place) => self.place_assign(place, op, target, value, span),
+                }
+            }
             Some(AssignTarget::Place(place)) => self.place_assign(place, op, target, value, span),
             Some(AssignTarget::Setter(obj)) => {
                 let e = self.setter_assign(obj, op, target, value, as_value, span);
@@ -499,11 +515,11 @@ impl FnCx<'_, '_> {
             let assign = self.mk(kind, unit, span);
             return self.with_temps(stmts, assign);
         }
-        // On an `f16`/`bf16` place a literal on the right is an `f32`, the type the operation
-        // runs in, so `x op= L` is `x = (x op L) as f16` (#2049; `=` keeps the f16 literal).
+        // On an `f16`/`bf16` place the right side is a `number`: `x op= v` is `x = (x op v) as
+        // f16`, computed in f64 (#2049; `=` alone types a literal as the place).
         let storage = self.cx.ty.is_storage_float(lty);
         let hint = match storage {
-            true => self.cx.ty.primitive("f32"),
+            true => Some(self.cx.ty.f64),
             false => Some(lty),
         };
         let v = self.expr(value, hint, Want::Borrow);
@@ -512,15 +528,10 @@ impl FnCx<'_, '_> {
         if storage && self.cx.dynamic(v.ty).is_some() {
             return self.any_as_storage(lty, span);
         }
-        // On an `f16`/`bf16`: computed in `f32`, rounded back once (#2049).
+        // On an `f16`/`bf16`: computed as a `number`, rounded once on the store (#2049).
         if storage {
-            let Some(bop) =
-                hir_binop(op).filter(|_| self.storage_bitwise(op, &place, &v, span).is_none())
-            else {
-                return self.error_expr(span);
-            };
             let mut stmts = Vec::new();
-            return match self.storage_rmw(place, bop, v, &mut stmts, span) {
+            return match self.storage_rmw(place, op, v, &mut stmts, span) {
                 Some(assign) => self.with_temps(stmts, assign),
                 None => self.error_expr(span),
             };
@@ -631,28 +642,25 @@ impl FnCx<'_, '_> {
         let lty = place.ty;
         self.literal_use_arith(&place);
         let opname = if op == ast::UpdateOp::Inc { "++" } else { "--" };
-        // `w++` on an `f16`/`bf16`: `w += 1`, computed in `f32` (#2049).
+        // `w++` on an `f16`/`bf16`: `w += 1`, computed in f64 and rounded once (#2049).
         if self.cx.ty.is_storage_float(lty) {
-            let one = self.mk(H::Lit(hir::Lit::Float(1.0)), lty, span);
+            let f64_ = self.cx.ty.f64;
+            let one = self.mk(H::Lit(hir::Lit::Float(1.0)), f64_, span);
             let bop = if op == ast::UpdateOp::Inc {
-                BinOp::Add
+                ast::BinaryOp::Add
             } else {
-                BinOp::Sub
+                ast::BinaryOp::Sub
             };
-            let mut place = place;
             let mut stmts = Vec::new();
             if as_value {
-                self.hoist_indices(&mut place, &mut stmts);
+                // As in JS: `++w` is the f64 result, `w++` the old value; the place stores the
+                // result rounded (`Float16Array`'s `++e[0]` is `e[0] + 1`, unrounded).
+                return self.storage_update_value(place, bop, prefix, span);
             }
-            let read = self.place_read(&place, Want::Borrow);
             let Some(ca) = self.storage_rmw(place, bop, one, &mut stmts, span) else {
                 return self.error_expr(span);
             };
-            if !as_value {
-                return self.with_temps(stmts, ca);
-            }
-            let value = self.update_value(ca, read, prefix, span);
-            return self.with_temps_value(stmts, value);
+            return self.with_temps(stmts, ca);
         }
         if !self.cx.ty.is_numeric(lty) {
             if !self.cx.ty.is_bottom(lty) {

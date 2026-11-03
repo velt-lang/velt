@@ -1,0 +1,82 @@
+// An `f16`/`bf16` is a `number` with 16-bit storage (#2049): every operator reads it as the f64
+// it is, and a store rounds once, as JavaScript does with a `Float16Array` element. The sweep
+// runs every operator against literals that round differently (ties, values f32 would round
+// first) over all 65,536 patterns of both formats, through compound assignment, `as`, and the
+// comparisons, and hashes the bits of every result. The expected output is Node's, from the
+// same sweep over a `Float16Array` (bf16: an exact round-to-nearest-even reference); equal
+// hashes mean no pattern differs. A NaN hashes as one pattern: which NaN encoding a store
+// writes is the implementation's, in JS as here (Node writes 0x7e00; Velt keeps the payload,
+// as the conversion instructions do).
+function bits16(x: f16): u32 {
+  return x != x ? 0x7e00 : x.toBits() as u32;
+}
+
+function bitsBf16(x: bf16): u32 {
+  return x != x ? 0x7fc0 : x.toBits() as u32;
+}
+const LITERALS: number[] = [0.1, 0.3, 0.001, 100.7, 1.0001, -2.5, 3, 65504, 1e-7];
+
+function hashF16(op: string, lit: number): string {
+  let h: u32 = 0;
+  let lt = 0;
+  let eq = 0;
+  for (let i = 0; i < 65536; i++) {
+    const x = f16.fromBits(i as u16);
+    let y = x;
+    if (op == "+") {
+      y += lit;
+    } else if (op == "-") {
+      y -= lit;
+    } else if (op == "*") {
+      y *= lit;
+    } else if (op == "/") {
+      y /= lit;
+    } else {
+      y %= lit;
+    }
+    const z = (op == "+" ? x + lit : op == "-" ? x - lit : op == "*" ? x * lit : op == "/" ? x / lit : x % lit) as f16;
+    h = h * 31 + bits16(y);
+    h = h * 31 + bits16(z);
+    if (x < lit) {
+      lt++;
+    }
+    if (x == lit) {
+      eq++;
+    }
+  }
+  return `${h.toString(16)} ${lt} ${eq}`;
+}
+
+function hashBf16(op: string, lit: number): string {
+  let h: u32 = 0;
+  for (let i = 0; i < 65536; i++) {
+    const x = bf16.fromBits(i as u16);
+    let y = x;
+    if (op == "+") {
+      y += lit;
+    } else if (op == "*") {
+      y *= lit;
+    } else {
+      y /= lit;
+    }
+    h = h * 31 + bitsBf16(y);
+  }
+  return h.toString(16);
+}
+
+function main() {
+  for (const op of ["+", "-", "*", "/", "%"]) {
+    const row: string[] = [];
+    for (const lit of LITERALS) {
+      row.push(hashF16(op, lit));
+    }
+    console.log(op, row.join(" | "));
+  }
+  for (const op of ["+", "*", "/"]) {
+    const row: string[] = [];
+    for (const lit of LITERALS) {
+      row.push(hashBf16(op, lit));
+    }
+    console.log("bf16", op, row.join(" "));
+  }
+}
