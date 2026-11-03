@@ -37,7 +37,8 @@ impl<'h> Cx<'h> {
             system_aggs: FxHashMap::default(),
             no_await_steps: false,
             facts_only: false,
-            left_out: false,
+            deferred: FxHashMap::default(),
+            deferred_new: vec![],
             versioned: 0,
             types,
             aggs: vec![AggLayout {
@@ -260,6 +261,7 @@ impl<'h> Cx<'h> {
             return;
         }
         self.glue_slots.enter(fid);
+        let deferred_mark = self.deferred_new.len();
         let outer = self.cur_def;
         if let Some(d) = work_def(work).filter(|d| self.hir.unchecked.contains(d)) {
             let name = &self.fn_def(d).name;
@@ -304,6 +306,7 @@ impl<'h> Cx<'h> {
         self.funcs[fid.0 as usize] = Some(func);
         self.building.remove(&fid);
         self.glue_slots.leave();
+        self.claim_deferred(fid, deferred_mark);
     }
 
     /// Instance of a user function with concrete type args.

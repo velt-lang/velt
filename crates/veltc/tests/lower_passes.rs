@@ -1,7 +1,8 @@
 //! The counted-types fixpoint's passes (velt_vir `lower_program`): the passes until the counted
-//! types stop growing only find them and leave out the versions of view loops, and one more
-//! pass lowers the program whole. Its VIR is the VIR of lowering every pass whole
-//! (`VELT_LOWER_WHOLE`), and the view loops are versioned in that last pass only.
+//! types stop growing only find them and leave out the versions of view loops, which are made
+//! once the last pass is done (deferred_versions.rs), with no pass more. The VIR is the VIR of
+//! lowering every pass whole (`VELT_LOWER_WHOLE`), and the view loops are versioned in the last
+//! pass only.
 
 mod no_window;
 mod test_dir;
@@ -73,17 +74,20 @@ fn view_loops_are_versioned_in_the_last_pass_only() {
     let ps = passes(&err);
     assert!(
         ps.len() >= 2,
-        "expected facts-only passes and a whole one:\n{err}"
+        "expected passes that grow the counted types:\n{err}"
     );
     let (last, earlier) = ps.split_last().unwrap();
     assert!(
-        last.0 && last.1 > 0,
+        !last.0 && last.1 > 0,
         "the last pass versions the loops:\n{err}"
     );
     for (whole, n) in earlier {
         assert!(!whole && *n == 0, "an earlier pass versioned loops:\n{err}");
     }
-    let (all_whole, _) = lower(VIEWS, &[("VELT_LOWER_WHOLE", "1")]);
+    let whole_env = [("VELT_LOWER_WHOLE", "1"), ("VELT_LOWER_PROFILE", "1")];
+    let (all_whole, err_whole) = lower(VIEWS, &whole_env);
+    let n_whole = passes(&err_whole).len();
+    assert_eq!(ps.len(), n_whole, "a pass more:\n{err}\n{err_whole}");
     assert!(
         vir == all_whole,
         "the VIR differs from lowering every pass whole"

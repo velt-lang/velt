@@ -135,7 +135,19 @@ impl FnLower<'_, '_> {
         if self.view_loops.tests.is_empty() {
             return;
         }
-        let mut loops = std::mem::take(&mut self.view_loops.loops);
+        let versions = self.view_loop_versions();
+        self.view_loops.loops.clear();
+        for v in versions {
+            self.version(v.h, &v.region, &v.boxes, &v.tests, params);
+        }
+    }
+
+    /// The loops [`Self::version_view_loops`] versions, in order. Versioning one changes no
+    /// fact the choice of a later one reads (those blocks are outside its range, and the
+    /// copies come after every range), so they are all chosen first.
+    pub(super) fn view_loop_versions(&self) -> Vec<Version> {
+        let mut out = vec![];
+        let mut loops = self.view_loops.loops.clone();
         loops.sort_by_key(|&(_, first, end)| (first, std::cmp::Reverse(end)));
         let addrs = self.addresses();
         // The blocks using each test (the copies made below are in no loop's range).
@@ -188,8 +200,14 @@ impl FnLower<'_, '_> {
                 leave,
                 slows,
             };
-            self.version(h, &region, &boxes, &tests, params);
+            out.push(Version {
+                h,
+                region,
+                boxes,
+                tests,
+            });
         }
+        out
     }
 
     /// The blocks of the loop with header `h` among the live blocks `first..end`: those
@@ -577,6 +595,14 @@ impl FnLower<'_, '_> {
         }
         out
     }
+}
+
+/// A loop to version: its header, its blocks, the boxes tested before it, and its tests.
+pub(super) struct Version {
+    h: BlockId,
+    region: Vec<BlockId>,
+    pub(super) boxes: Vec<(Local, Ty)>,
+    tests: Tests,
 }
 
 /// The tests in a loop's copy: false there (`plain`), going on in the original when true
