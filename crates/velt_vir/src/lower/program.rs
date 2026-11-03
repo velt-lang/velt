@@ -33,6 +33,9 @@ impl<'h> Cx<'h> {
             std_calls: FxHashMap::default(),
             system_aggs: FxHashMap::default(),
             no_await_steps: false,
+            facts_only: false,
+            left_out: false,
+            versioned: 0,
             types,
             aggs: vec![AggLayout {
                 name: "string".into(),
