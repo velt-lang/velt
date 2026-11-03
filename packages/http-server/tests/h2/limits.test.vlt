@@ -422,13 +422,15 @@ describe("HTTP/2 limits", () => {
       c.frame(6, 0, 0, [0, 0, 0, 0, 0, 0, 0, 1]);
       await c.flush();
       expect(await timeout(c.until((f) => f.type == 6), 5000)).toBe("");
+      // Idle from the end of the response, which comes after this moment however late this
+      // side runs: the GOAWAY comes no sooner than the timeout after it (less the timer
+      // granularity, about 15 ms on Windows), and comes. (Measured from after the response
+      // arrived, a client that read it late saw less than the timeout, #2045.)
+      const idleFrom = Date.now();
       open(g);
       expect(await timeout(c.until(endOf(1)), 5000)).toBe("HEADERS 1 :status=200\nDATA 1 es 2:ok");
-      // Idle from the end of the response: the GOAWAY comes no sooner than the timeout (a
-      // little less as measured here, from after the response arrived), and comes.
-      const idleFrom = Date.now();
       expect(await timeout(c.until(goaway), 10000)).toBe("GOAWAY 1 NO_ERROR");
-      expect(Date.now() - idleFrom >= 250).toBe(true);
+      expect(Date.now() - idleFrom >= 280).toBe(true);
       expect(await timeout(c.until((f) => false), 10000)).toBe("EOF");
     } finally {
       shut(g);
