@@ -17,6 +17,7 @@ import "./error";
 import "./iter";
 import "./keys";
 import "./number";
+import "./number_text";
 import "./process";
 import "./record";
 import "./string";

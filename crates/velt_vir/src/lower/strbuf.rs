@@ -443,7 +443,8 @@ impl FnLower<'_, '_> {
         let b = buf.clone();
         match self.cx.kind(ty) {
             // std's number printing (velt_common `std_hooks.rs`): its own float printing where
-            // the program loaded it, then `number_push`; the runtime where neither is checked.
+            // the program loaded it, then `number_push`; the runtime where neither is checked
+            // (the float hooks are checked on demand).
             TyKind::Float(_) => {
                 let v = self.float_as_f64(v, ty);
                 let args = || (ty::Str::arg(b.clone()), ty::F64::arg(v.clone()));
@@ -458,23 +459,15 @@ impl FnLower<'_, '_> {
                 }
             }
             TyKind::Bool => self.call_rt(Rt::StrbufPushBool, vec![b, v], None),
+            // std's integer printing, which every program has (#2197).
             TyKind::Int(it) if !it.is_signed() => {
                 let v = self.cast_to(v, from, Ty::U64);
-                match hooks::uint_push(self, ty::Str::arg(b.clone()), ty::U64::arg(v.clone())) {
-                    Some(c) => _ = c.emit(self),
-                    None => self.call_rt(Rt::StrbufPushU64, vec![b, v], None),
-                }
+                _ = hooks::uint_push(self, ty::Str::arg(b), ty::U64::arg(v)).emit(self);
             }
-            TyKind::Int(_) => {
-                let v = self.cast_to(v, from, Ty::I64);
-                match hooks::int_push(self, ty::Str::arg(b.clone()), ty::I64::arg(v.clone())) {
-                    Some(c) => _ = c.emit(self),
-                    None => self.call_rt(Rt::StrbufPushI64, vec![b, v], None),
-                }
-            }
+            // An integer, or a C-like enum's discriminant.
             _ => {
                 let v = self.cast_to(v, from, Ty::I64);
-                self.call_rt(Rt::StrbufPushI64, vec![b, v], None);
+                _ = hooks::int_push(self, ty::Str::arg(b), ty::I64::arg(v)).emit(self);
             }
         }
     }
