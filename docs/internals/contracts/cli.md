@@ -290,8 +290,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `// velt-allow(<code>[, <code>…]): <reason>` comment suppresses those codes on the next line
   with code (alone on its line) or on its own line (after code); `velt-allow-file(…)` in the
   whole file; `<family>/*` covers a family. A warning reports an allow without a reason, of an
-  unknown code, or (for rules that ran) that suppressed nothing; a `lint.rules` code that is no
-  rule is a warning without location. The ts-compat findings honour the same comments and
+  unknown code, or that suppressed nothing although its rules ran (for `<family>/*`: one of
+  the family's rules); a `lint.rules` code that is no rule is a warning without location. The ts-compat findings honour the same comments and
   levels (`lint.rules` may set `ts-compat/<rule>`).
 - `--fix` (`=safe`, the default) / `--fix=review` (additive): check and lint, apply the first fix
   of each diagnostic that the mode allows (Safe; Review too) whose edits overlap no fix applied

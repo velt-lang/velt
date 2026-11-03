@@ -110,7 +110,10 @@ impl Allows {
     pub fn finish(self, ran: &dyn Fn(&str) -> bool) -> Vec<Diagnostic> {
         let mut out = self.problems;
         for a in self.allows.iter().filter(|a| !a.used) {
-            if a.codes.iter().all(|c| rules::is_known(c) && ran(c)) {
+            if a.codes
+                .iter()
+                .all(|c| rules::is_known(c) && ran_any(c, ran))
+            {
                 out.push(Diagnostic::warning(
                     format!(
                         "this `velt-allow({})` suppresses nothing",
@@ -156,6 +159,18 @@ impl Allows {
         self.lines
             .partition_point(|&s| s <= offset)
             .saturating_sub(1)
+    }
+}
+
+/// Whether a rule `pattern` covers ran: the rule itself, or for `family/*` any of the family's.
+fn ran_any(pattern: &str, ran: &dyn Fn(&str) -> bool) -> bool {
+    match pattern.strip_suffix("/*") {
+        Some("perf") => rules::PERF_RULES.iter().any(|r| ran(r.code)),
+        Some("ts-compat") => velt_tscompat::RULES
+            .iter()
+            .any(|r| ran(&rules::ts_compat_code(r))),
+        Some(_) => false,
+        None => ran(pattern),
     }
 }
 
@@ -217,6 +232,18 @@ mod tests {
                 "this `velt-allow(perf/number-double)` suppresses nothing",
             ]
         );
+    }
+
+    /// A family's wildcard that covers nothing is unused once one of its rules ran.
+    #[test]
+    fn an_unused_wildcard_is_reported() {
+        let src = "// velt-allow(perf/*): the whole family\nconst y = 1;\n";
+        let allows = Allows::parse(FileId(0), src);
+        let ran = |c: &str| c == "perf/foreach-capture";
+        let messages: Vec<String> = allows.finish(&ran).into_iter().map(|d| d.message).collect();
+        assert_eq!(messages, ["this `velt-allow(perf/*)` suppresses nothing"]);
+        let allows = Allows::parse(FileId(0), src);
+        assert!(allows.finish(&|c| c.starts_with("ts-compat/")).is_empty());
     }
 
     #[test]

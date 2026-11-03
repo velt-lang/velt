@@ -3,6 +3,9 @@
 //! lives in a heap cell that every read and write goes through, in the loop and after it.
 //! `for (const x of xs) { … }` runs the same body in place (measured: a third of the
 //! instructions for a sum over a number array). The rewrite is TypeScript too.
+//!
+//! Only locals and parameters count as outer variables: a module-level `let` lives in module
+//! state whether a closure assigns it or not, so a callback assigning one is not reported.
 
 use velt_common::{Applicability, Fix, Span};
 use velt_sema::ide::{DefKind, TypeView};
@@ -152,8 +155,9 @@ fn returns(stmts: &[ast::Stmt]) -> bool {
 }
 
 /// `for (const x of xs) { … }` for the statement `stmt`, when the callback has one plain
-/// parameter and no `return`. Safe unless the body names the array's variable (it might change
-/// the array while it is walked, which `forEach` and `for…of` see differently).
+/// parameter and no `return`. `forEach` visits the elements there when it starts and `for…of`
+/// also those added while it walks, so the fix is Safe only when the body provably changes no
+/// array ([`changes_nothing`]); otherwise it is Review.
 fn rewrite(cx: &Cx, stmt: Span, object: &ast::Expr, arrow: &ast::Expr) -> Option<ProfiledFix> {
     let ExprKind::Arrow { params, body, .. } = &arrow.kind else {
         return None;
@@ -182,7 +186,8 @@ fn rewrite(cx: &Cx, stmt: Span, object: &ast::Expr, arrow: &ast::Expr) -> Option
         };
         any_expr(arrow, &named)
     });
-    let applicability = match touches_array || root.is_none() {
+    let safe = !touches_array && root.is_some() && changes_nothing(arrow, binding);
+    let applicability = match !safe {
         true => Applicability::Review,
         false => Applicability::Safe,
     };
@@ -196,6 +201,23 @@ fn rewrite(cx: &Cx, stmt: Span, object: &ast::Expr, arrow: &ast::Expr) -> Option
             applicability,
         ),
         portable: true,
+    })
+}
+
+/// Whether the callback `arrow` (with the parameter `param`) can change no array: no call or
+/// `new` (a function or method could push to the array, also through an
+/// alias), no assignment to a member or an element (`ys[n] = v` grows an alias), and no member
+/// read but of the parameter (a getter runs code).
+fn changes_nothing(arrow: &ast::Expr, param: &str) -> bool {
+    let param_member =
+        |object: &ast::Expr| matches!(&object.kind, ExprKind::Ident(id) if id.name == param);
+    !any_expr(arrow, &|e| match &e.kind {
+        ExprKind::Call { .. } | ExprKind::New { .. } => true,
+        ExprKind::Assign { target, .. } | ExprKind::Update { target, .. } => {
+            !matches!(target.kind, ExprKind::Ident(_))
+        }
+        ExprKind::Member { object, .. } | ExprKind::Index { object, .. } => !param_member(object),
+        _ => false,
     })
 }
 

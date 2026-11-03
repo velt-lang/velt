@@ -178,20 +178,20 @@ pub(super) fn apply(
         .map(|f| (sess.sm.get(*f).path.clone(), sess.sm.get(*f).src.as_str()))
         .collect();
     let write = |edits: &velt_lint::fix::Edits| -> Result<(), String> {
-        for (file, list) in edits {
-            let f = sess.sm.get(*file);
-            let text = velt_lint::fix::apply(&f.src, list);
-            std::fs::write(&f.path, text)
-                .map_err(|e| format!("cannot write `{}`: {e}", f.path.display()))?;
-        }
-        Ok(())
+        let texts: Vec<(PathBuf, String)> = edits
+            .iter()
+            .map(|(file, list)| {
+                let f = sess.sm.get(*file);
+                (f.path.clone(), velt_lint::fix::apply(&f.src, list))
+            })
+            .collect();
+        write_all(&texts, &originals)
     };
     let restore = || -> Result<(), String> {
-        for (path, src) in &originals {
-            std::fs::write(path, src)
-                .map_err(|e| format!("cannot write `{}`: {e}", path.display()))?;
-        }
-        Ok(())
+        let texts: Vec<(PathBuf, String)> = (originals.iter())
+            .map(|(path, src)| (path.clone(), src.to_string()))
+            .collect();
+        write_all(&texts, &[])
     };
     write(&edits)?;
     if recheck() {
@@ -235,4 +235,41 @@ pub(super) fn apply(
         files: edits.len(),
         undone,
     })
+}
+
+/// Write each of `texts` (path, new text). All or nothing: when one write fails, every file of
+/// `originals` (path, text before the fixes) is written back, so a fix that edits several files
+/// is never left half applied, and the error says so.
+fn write_all(texts: &[(PathBuf, String)], originals: &[(PathBuf, &str)]) -> Result<(), String> {
+    for (path, text) in texts {
+        if let Err(e) = std::fs::write(path, text) {
+            let restored = originals
+                .iter()
+                .all(|(p, src)| std::fs::write(p, src).is_ok());
+            let state = match restored {
+                true => "no file was changed",
+                false => "some files could not be written back: check them",
+            };
+            return Err(format!("cannot write `{}`: {e}; {state}", path.display()));
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A write that fails after another succeeded puts the first file back.
+    #[test]
+    fn a_failed_write_changes_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.vlt");
+        std::fs::write(&a, "before").unwrap();
+        let missing = dir.path().join("no-such-dir").join("b.vlt");
+        let texts = [(a.clone(), "after".to_string()), (missing, "x".to_string())];
+        let err = write_all(&texts, &[(a.clone(), "before")]).unwrap_err();
+        assert!(err.contains("no file was changed"), "{err}");
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "before");
+    }
 }

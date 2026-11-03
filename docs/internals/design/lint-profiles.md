@@ -141,7 +141,7 @@ it (`crates/veltc/tests/lint.rs`, `crates/velt_lsp/src/tests/perf.rs`).
 |---|---|---|---|---|---|
 | `perf/dynamic-record` | pattern | a `Record<string, any>` (or `any`) parameter read with constant keys | an object type of the keys read with `as T` (Review) | the same (TypeScript) | 1 894M → 7M (#2058) |
 | `perf/class-as-data` | pattern | a class with only fields and a constructor that stores its parameters, whose instances nothing could tell from copies (no field assigned outside the constructor, no comparison, `instanceof`, `Map`/`Set` key or use as a value) | `type C = { … }`, each `new C(…)` → `{ … } as C`, in every file (Review) | the same (TypeScript) | 259M → 79M |
-| `perf/foreach-capture` | pattern | `xs.forEach(cb)` on an array whose callback assigns a variable of the enclosing function, which then lives in a heap cell | `for (const x of xs) { … }` (Safe; Review when the body names the array; none with a `return`) | the same (TypeScript) | 111M → 33M |
+| `perf/foreach-capture` | pattern | `xs.forEach(cb)` on an array whose callback assigns a variable of the enclosing function, which then lives in a heap cell | `for (const x of xs) { … }` (Safe only when the body can change no array: no call or `new`, no member or element assignment, member reads only of the element; Review otherwise; none with a `return`) | the same (TypeScript) | 111M → 33M |
 | `perf/number-double` | evidence | a `number` in a loop that the optimizer keeps as a double, with its reason | `let k: i64` when every value is a whole number nothing bounds (Review) | note only (`\| 0` named) | 1 101M → 621M |
 
 Measured and left without a rule, because Velt already makes the TypeScript form as fast:

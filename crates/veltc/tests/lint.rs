@@ -218,6 +218,40 @@ fn fix_applies_safe_fixes_and_review_the_rest() {
     assert_eq!(stderr(&o), "velt: nothing to fix\n");
 }
 
+/// `forEach` visits the elements there when it starts, `for…of` also those added on the way, so
+/// the rewrite is Safe only when the body can change no array. A body that calls a function
+/// growing the array, grows it through an alias, or calls a method of its owner gets a Review
+/// fix, which `--fix` leaves alone (each program prints 6 with `forEach`, 26 with `for…of`).
+#[test]
+fn a_foreach_body_that_may_grow_the_array_gets_a_review_fix() {
+    let programs = [
+        "function main() {\n  const xs = [1, 2, 3];\n  let sum = 0;\n  const grow = () => { if (xs.length < 5) xs.push(10); };\n  xs.forEach((x) => { sum += x; grow(); });\n  console.log(sum);\n}\n",
+        "function main() {\n  const xs = [1, 2, 3];\n  const ys = xs;\n  let sum = 0;\n  xs.forEach((x) => { sum += x; if (ys.length < 5) ys.push(10); });\n  console.log(sum);\n}\n",
+        "class Bag {\n  items: number[] = [1, 2, 3];\n  add(): void { if (this.items.length < 5) this.items.push(10); }\n}\nfunction main() {\n  const b = new Bag();\n  const items = b.items;\n  let sum = 0;\n  items.forEach((x) => { sum += x; b.add(); });\n  console.log(sum);\n}\n",
+    ];
+    for src in programs {
+        let tmp = test_dir::TestDir::new();
+        let dir = tmp.path();
+        write(dir, "main.vlt", src);
+        let o = velt(dir, &["check", "main.vlt", "--perf", "--json"]);
+        let report: Value = serde_json::from_slice(&o.stdout).unwrap();
+        let d = report["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|d| d["code"] == "perf/foreach-capture")
+            .unwrap_or_else(|| panic!("no finding: {report:#}"));
+        assert_eq!(d["fixes"][0]["applicability"], "review", "{src}");
+        let o = velt(dir, &["check", "main.vlt", "--fix"]);
+        assert_eq!(
+            stderr(&o).lines().next(),
+            Some("velt: nothing to fix"),
+            "{src}"
+        );
+        assert_eq!(read(dir, "main.vlt"), src);
+    }
+}
+
 /// A fix after which the program no longer checks is undone: typing the record parameter breaks
 /// the caller that passes a dynamic record.
 #[test]
