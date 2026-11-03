@@ -117,3 +117,39 @@ fn a_program_without_view_loops_is_lowered_as_before() {
         "the VIR differs from lowering every pass whole"
     );
 }
+
+/// The terms the copies' dataflow kept in the last pass (`VELT_LOWER_PROFILE`).
+fn terms_kept(stderr: &str) -> usize {
+    let last = stderr
+        .lines()
+        .rfind(|l| l.contains(" functions, ") && l.ends_with(" terms kept"))
+        .unwrap_or_else(|| panic!("no pass line:\n{stderr}"));
+    let (_, rest) = last.rsplit_once(", ").unwrap();
+    rest.split(' ').next().unwrap().parse().unwrap()
+}
+
+/// A view loop whose body computes `n` temporaries none of its tests reads.
+fn long_loop(n: usize) -> String {
+    let body: String = (0..n)
+        .map(|k| format!("    t += x * {} + i * {};\n", k + 2, k + 1))
+        .collect();
+    format!(
+        "function sum(xs: number[]): number {{\n  let t = 0;\n  for (let i = 0; i < xs.length; i++) {{\n    const x = xs[i];\n{body}  }}\n  return t;\n}}\n\nconst raw: any = [1, 2, 3];\nconst v = raw as number[];\nconsole.log(sum(v), sum([4, 5]));\n"
+    )
+}
+
+#[test]
+fn a_copy_keeps_only_the_terms_its_tests_need() {
+    let env = [("VELT_LOWER_PROFILE", "1")];
+    let (_, small) = lower(&long_loop(10), &env);
+    let (_, large) = lower(&long_loop(200), &env);
+    let (s, l) = (terms_kept(&small), terms_kept(&large));
+    assert!(s > 0, "no terms kept:\n{small}");
+    // Twenty times the temporaries in the same blocks: the terms the tests need stay as many
+    // (keeping every once-assigned local's term grows them by a third on this program, most of
+    // whose terms are the prelude's).
+    assert!(
+        l <= s + s / 10,
+        "terms grew {l} / {s} for 20× the temporaries"
+    );
+}

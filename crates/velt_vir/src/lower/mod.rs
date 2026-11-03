@@ -255,8 +255,10 @@ pub(crate) fn lower_program(
         }
         if profile {
             let kind = if facts_only { "facts only" } else { "whole" };
-            let n = cx.versioned;
-            eprintln!("velt-lower: pass {pass} {kind}: view loops versioned in {n} functions");
+            let (n, t) = (cx.versioned, view_unswitch_plain::take_terms());
+            eprintln!(
+                "velt-lower: pass {pass} {kind}: view loops versioned in {n} functions, {t} terms kept"
+            );
         }
         if profile && next != counted {
             eprintln!("velt-lower: pass {pass} grew: {}", counted.changes(&next));

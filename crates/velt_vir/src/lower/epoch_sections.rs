@@ -70,7 +70,7 @@ impl FnLower<'_, '_> {
         self.call(Callee::Func(f), vec![], None, false);
     }
 
-    fn epoch_fn(&mut self, name: &str) -> crate::vir::FuncId {
+    pub(super) fn epoch_fn(&mut self, name: &str) -> crate::vir::FuncId {
         let d = self
             .cx
             .prelude_def(name)
