@@ -751,6 +751,14 @@ impl FnLower<'_, '_> {
             TyKind::Adt(..) if self.cx.is_this_fn(ty) || self.cx.is_array_method(ty) => {
                 self.this_fn_apply_body((data, argv, argc, out), ty)
             }
+            // A function with properties (sigx's `component(…)`, hir_encodings.md "Functions with
+            // properties") calls the function in its first field, the hidden `#call`.
+            TyKind::Adt(d, _) if self.member_fields(d).first().is_some_and(|f| f == "#call") => {
+                let fty = self.cx.member_ty(ty, 0);
+                let vp = self.any_value_place(data, ty);
+                let fp = self.field_place(&vp, ty, 0);
+                self.any_apply_value(&fp, fty, true, argv, argc, &outp);
+            }
             _ => {
                 self.any_drop_args(argv, 0, argc);
                 self.ret_status(ST_NOT_FN);
