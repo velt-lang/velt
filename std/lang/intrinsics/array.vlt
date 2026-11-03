@@ -73,11 +73,12 @@ export declare intrinsic function arrayMove<T>(
 ): void;
 
 /**
- * Writes the bytes `src[s..s + n * size)` as the bits of `dst[d..d + n)`, where `size` is the
- * byte size of a `T` (both ranges bounds-checked): the target's byte order, which is
- * little-endian on every target. `T` must own nothing (a number type), and `dst` and `src` must
- * be different arrays: one memcpy, as `f16FromBytes` (std/half/bytes.vlt) needs. The caller
- * keeps `d + n` and `s + n * size` from overflowing, as for `arrayMove`.
+ * Copies `n * sizeof(T)` bytes of `src`, starting at byte index `s` (not an element index), as
+ * the bits of `dst[d..d + n)`: the bytes `src[s..s + n * sizeof(T))`, in the target's byte
+ * order, which is little-endian on every target. Both ranges are bounds-checked. `T` must own
+ * nothing (a number type), and `dst` and `src` must be different arrays: one memcpy, as
+ * `f16FromBytes` (std/half/bytes.vlt) needs. The caller keeps `d + n` and `s + n * sizeof(T)`
+ * from overflowing, as for `arrayMove`.
  */
 export declare intrinsic function arrayCopyBytes<T>(
   dst: Mut<T[]>,
