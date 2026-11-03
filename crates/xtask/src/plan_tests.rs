@@ -70,13 +70,13 @@ fn prose_and_editor_files_select_nothing() {
 fn a_pipeline_crate_runs_its_dependents_and_every_end_to_end_test() {
     let p = plan(&["crates/velt_sema/src/check.rs"]);
     assert!(!p.full && p.rust);
-    assert_eq!(p.packages, set(&["velt_lsp", "velt_sema"]));
+    assert_eq!(p.packages, set(&["velt_common", "velt_lsp", "velt_sema"]));
     assert_eq!(p.veltc, Veltc::All);
     assert_eq!(p.goldens, Goldens::All);
     assert_eq!(
         p.filterset().unwrap(),
-        "(package(velt_lsp) | package(velt_sema) | package(veltc)) - binary_id(veltc::golden) \
-         - binary_id(veltc::wasm_goldens)"
+        "(package(velt_common) | package(velt_lsp) | package(velt_sema) | package(veltc)) - \
+         binary_id(veltc::golden) - binary_id(veltc::wasm_goldens)"
     );
 }
 
@@ -86,7 +86,13 @@ fn the_runtime_has_no_dependents_but_runs_every_end_to_end_test() {
     // The crates compiling the runtime's sources run their tests too.
     assert_eq!(
         p.packages,
-        set(&["velt_rt", "velt_rt_host", "velt_rt_shared", "velt_rt_wasm"])
+        set(&[
+            "velt_common",
+            "velt_rt",
+            "velt_rt_host",
+            "velt_rt_shared",
+            "velt_rt_wasm"
+        ])
     );
     assert_eq!(p.veltc, Veltc::All);
     assert_eq!(p.goldens, Goldens::All);
@@ -288,7 +294,7 @@ fn internals_docs_run_only_the_tests_that_read_them() {
 #[test]
 fn benchmarks_are_compiled_when_they_the_compiler_or_std_change() {
     let p = plan(&["bench/db/velt/postgres.vlt"]);
-    assert_eq!(p.packages, set(&["velt_sema"]));
+    assert_eq!(p.packages, set(&["velt_common", "velt_sema"]));
     assert_eq!(p.veltc, Veltc::Some(set(&["bench_programs"])));
     assert_eq!(p.goldens, Goldens::None);
     assert!(p.filterset().unwrap().contains("binary(bench_programs)"));
@@ -462,6 +468,7 @@ fn comment_only_changes_check_the_crate_alone_on_linux() {
     assert_eq!(
         p.packages,
         set(&[
+            "velt_common",
             "velt_rt",
             "velt_rt_host",
             "velt_rt_shared",
@@ -504,7 +511,13 @@ fn a_comment_only_runtime_change_runs_the_runtime_crates_tests() {
     let p = Plan::for_changes(&graph(), &paths, &paths.iter().cloned().collect());
     assert_eq!(
         p.packages,
-        set(&["velt_rt", "velt_rt_host", "velt_rt_shared", "velt_rt_wasm"])
+        set(&[
+            "velt_common",
+            "velt_rt",
+            "velt_rt_host",
+            "velt_rt_shared",
+            "velt_rt_wasm"
+        ])
     );
     assert_eq!(p.goldens, Goldens::None);
     assert_eq!(p.other_os, None);

@@ -78,15 +78,27 @@ const TOOLING: &[(&str, &[&str])] = &[
 /// Packages that compile or read a crate's sources by path, which the dependency graph doesn't
 /// show (`[lib] path`, `build = …`, `#[path]`, tests reading the sources as text): a change to
 /// the crate, comments included, runs their tests too.
+///
+/// velt_common's `hook_replaces` test reads the sources of the crates that emit code (a use of a
+/// runtime extern a std hook replaces) and velt_rt's (the externs' definitions), #2197.
 const SHARED_SOURCES: &[(&str, &[&str])] = &[
     (
         "velt_rt",
-        &["velt_rt_host", "velt_rt_shared", "velt_rt_wasm"],
+        &[
+            "velt_rt_host",
+            "velt_rt_shared",
+            "velt_rt_wasm",
+            "velt_common",
+        ],
     ),
     // velt_rt's std_externs test reads velt_rt_wasm's `extern "C"` definitions.
     ("velt_rt_wasm", &["velt_rt"]),
     // velt_codegen_llvm's tests build their programs with velt_opt's test builders.
-    ("velt_opt", &["velt_codegen_llvm"]),
+    ("velt_opt", &["velt_codegen_llvm", "velt_common"]),
+    ("velt_sema", &["velt_common"]),
+    ("velt_vir", &["velt_common"]),
+    ("velt_codegen_llvm", &["velt_common"]),
+    ("velt_codegen_cl", &["velt_common"]),
 ];
 
 /// `vpm` resolves imports and packages for every program, so it runs the goldens too.

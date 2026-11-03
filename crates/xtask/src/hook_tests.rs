@@ -113,4 +113,54 @@ mod tests {
             2
         );
     }
+
+    /// CI selects the guard for the same sources (crates/xtask/src/plan.rs `SHARED_SOURCES`,
+    /// read_by_tests.rs `bench/`), even for a comment-only change.
+    #[test]
+    fn ci_runs_the_guard_with_the_sources_it_reads() {
+        use crate::graph::Graph;
+        use crate::plan::Plan;
+        let krate = |dir: &str, dep: &str| {
+            let deps = match dep {
+                "" => String::new(),
+                d => format!("{d}.workspace = true\n"),
+            };
+            let toml = format!("[package]\nname = \"{dir}\"\n\n[dependencies]\n{deps}");
+            (dir.to_string(), toml)
+        };
+        let g = Graph::from_manifests(&[
+            krate("velt_common", ""),
+            krate("velt_sema", "velt_common"),
+            krate("velt_vir", "velt_sema"),
+            krate("velt_opt", "velt_vir"),
+            krate("velt_codegen_llvm", "velt_opt"),
+            krate("velt_codegen_cl", "velt_vir"),
+            krate("velt_rt", ""),
+            krate("velt_lsp", "velt_sema"),
+            krate("veltc", "velt_lsp"),
+        ]);
+        for path in [
+            "crates/velt_sema/src/check.rs",
+            "crates/velt_vir/src/lower/strbuf.rs",
+            "crates/velt_opt/src/numrep/print.rs",
+            "crates/velt_codegen_llvm/src/lib.rs",
+            "crates/velt_codegen_cl/src/lib.rs",
+            "crates/velt_rt/src/strbuf.rs",
+            "bench/stdport/int_to_string.vlt",
+        ] {
+            let paths = vec![path.to_string()];
+            let p = Plan::for_paths(&g, &paths);
+            assert!(
+                !p.full && p.packages.contains("velt_common"),
+                "{path}: {p:?}"
+            );
+            let comments = Plan::for_changes(&g, &paths, &paths.iter().cloned().collect());
+            assert!(
+                comments.packages.contains("velt_common"),
+                "{path} (comments)"
+            );
+        }
+        let lsp = Plan::for_paths(&g, &["crates/velt_lsp/src/hover.rs".to_string()]);
+        assert!(!lsp.packages.contains("velt_common"));
+    }
 }

@@ -9,8 +9,9 @@ pub(crate) const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
     ("docs/internals/contracts/", &["velt_rt_host"], &[]),
     // `docs` compiles the README's examples.
     ("README.md", &[], &["docs"]),
-    // velt_sema's scaling test reads bench/compile; `bench_programs` compiles every program.
-    ("bench/", &["velt_sema"], &["bench_programs"]),
+    // velt_sema's scaling test reads bench/compile, velt_common's hook_replaces bench/stdport;
+    // `bench_programs` compiles every program.
+    ("bench/", &["velt_common", "velt_sema"], &["bench_programs"]),
     ("fuzz/", &["velt_fmt"], &[]),
     // The `tsc` oracle's samples and configuration: velt_tscompat's tests read them (and skip
     // the `tsc` run without its Node packages), `veltc`'s check that the samples are valid Velt.
