@@ -53,7 +53,7 @@ mod units;
 #[cfg(test)]
 mod tests;
 
-pub use clang::{available, find_clang, opt_flag, rejected_clang};
+pub use clang::{available, find_clang, opt_flag, rejected_clang, set_probe_memo};
 pub use llc::{find_wasm_tools, LlvmTools};
 pub use target::is_wasm;
 /// Options for [`emit_object`]: the same struct as the Cranelift backend's, so the driver can

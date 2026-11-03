@@ -109,6 +109,45 @@ fn candidates() -> Vec<PathBuf> {
     list
 }
 
+/// Where `clang --version`'s answers are kept across processes ([`set_probe_memo`]).
+static PROBE_MEMO: OnceLock<&'static dyn velt_codegen_cl::CodeCache> = OnceLock::new();
+
+/// Keep the answers of `clang --version` in `memo` (veltc's build cache), keyed by the
+/// executable's path, size and modification time: starting clang to ask costs about 30M
+/// instructions, which every release build paid before compiling anything. Set once, before the
+/// first search; later calls are ignored.
+pub fn set_probe_memo(memo: &'static dyn velt_codegen_cl::CodeCache) {
+    let _ = PROBE_MEMO.set(memo);
+}
+
+/// The memo key of candidate `clang`: its resolved path (a bare name is looked up on `PATH`),
+/// size and modification time. `None` when it can't be found or read, so it is asked.
+fn probe_key(clang: &Path) -> Option<Vec<u8>> {
+    let path = resolve(clang)?;
+    let path = path.canonicalize().unwrap_or(path);
+    let meta = std::fs::metadata(&path).ok()?;
+    let time = (meta.modified().ok())
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())?
+        .as_nanos();
+    let mut key = b"velt clang --version 1-".to_vec();
+    key.extend_from_slice(path.to_string_lossy().as_bytes());
+    key.push(0);
+    key.extend_from_slice(&meta.len().to_le_bytes());
+    key.extend_from_slice(&time.to_le_bytes());
+    Some(key)
+}
+
+/// `clang` as a file: itself when it names a directory, else the first match on `PATH`.
+fn resolve(clang: &Path) -> Option<PathBuf> {
+    if clang.components().count() > 1 {
+        return clang.is_file().then(|| clang.to_path_buf());
+    }
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(clang))
+        .find(|p| p.is_file())
+}
+
 /// Whether a clang candidate can compile the backend's IR.
 enum Probe {
     Usable,
@@ -118,13 +157,25 @@ enum Probe {
 }
 
 fn probe(clang: &Path) -> Probe {
-    let Ok(out) = Command::new(clang).arg("--version").output() else {
-        return Probe::Missing;
+    let key = probe_key(clang);
+    let memo = PROBE_MEMO.get();
+    let cached = (key.as_ref().zip(memo)).and_then(|(k, m)| m.get(k));
+    let banner = match cached {
+        Some(banner) => banner,
+        None => {
+            let Ok(out) = Command::new(clang).arg("--version").output() else {
+                return Probe::Missing;
+            };
+            if !out.status.success() {
+                return Probe::Missing;
+            }
+            if let Some((k, m)) = key.as_ref().zip(memo) {
+                m.put(k, &out.stdout);
+            }
+            out.stdout
+        }
     };
-    if !out.status.success() {
-        return Probe::Missing;
-    }
-    match parse_version(&String::from_utf8_lossy(&out.stdout)) {
+    match parse_version(&String::from_utf8_lossy(&banner)) {
         Some(v) if v.major < v.min_major() => Probe::TooOld(v.describe()),
         // An unrecognized version banner gets the benefit of the doubt.
         _ => Probe::Usable,
@@ -384,6 +435,51 @@ mod tests {
 
     fn usable(banner: &str) -> Option<bool> {
         parse_version(banner).map(|v| v.major >= v.min_major())
+    }
+
+    use velt_codegen_cl::CodeCache as _;
+
+    /// A memo held in memory.
+    struct Memo(Mutex<HashMap<Vec<u8>, Vec<u8>>>);
+
+    impl velt_codegen_cl::CodeCache for Memo {
+        fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
+            self.0.lock().unwrap().get(key).cloned()
+        }
+
+        fn put(&self, key: &[u8], value: &[u8]) {
+            self.0.lock().unwrap().insert(key.to_vec(), value.to_vec());
+        }
+    }
+
+    /// With a memo, a candidate whose answer is known is not started: a file that can't run
+    /// counts as the clang the memo says it is. Its key follows the file: another size is
+    /// another key, so a replaced clang is asked again.
+    #[test]
+    fn a_known_clang_is_not_started_again() {
+        static MEMO: OnceLock<Memo> = OnceLock::new();
+        let memo = MEMO.get_or_init(|| Memo(Mutex::default()));
+        set_probe_memo(memo);
+        let dir = std::env::temp_dir().join(format!("velt-probe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let fake = dir.join("not-a-clang");
+        std::fs::write(&fake, b"not a program").unwrap();
+        assert!(
+            matches!(probe(&fake), Probe::Missing),
+            "nothing known: it is run"
+        );
+        let key = probe_key(&fake).unwrap();
+        memo.put(
+            &key,
+            b"clang version 18.1.8 (https://github.com/llvm/llvm-project)\n",
+        );
+        assert!(matches!(probe(&fake), Probe::Usable), "known: not run");
+        memo.put(&key, b"clang version 14.0.0\n");
+        assert!(matches!(probe(&fake), Probe::TooOld(_)));
+        std::fs::write(&fake, b"another, longer file").unwrap();
+        assert_ne!(probe_key(&fake).unwrap(), key, "replaced: asked again");
+        assert!(probe_key(&dir.join("missing")).is_none());
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

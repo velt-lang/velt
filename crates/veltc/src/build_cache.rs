@@ -119,6 +119,23 @@ impl velt_codegen_cl::CodeCache for Objects {
     }
 }
 
+/// `clang --version`'s answers (`velt_codegen_llvm::set_probe_memo`), keyed by clang's path,
+/// size and time: a release build no longer starts clang to find out which one it has. The cache
+/// is opened only when the backend first asks.
+pub struct ClangProbes;
+
+impl velt_codegen_cl::CodeCache for ClangProbes {
+    fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
+        cache()?.get("clang-probe", key)
+    }
+
+    fn put(&self, key: &[u8], value: &[u8]) {
+        if let Some(cache) = cache() {
+            cache.put("clang-probe", key, value);
+        }
+    }
+}
+
 /// Keep the cache under its limit, after a build that stored entries (at most hourly).
 pub fn collect_garbage_if_due() {
     if let Some(cache) = cache() {
