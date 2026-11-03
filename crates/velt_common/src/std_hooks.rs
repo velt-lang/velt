@@ -26,11 +26,12 @@
 //! The table is also the port tracker of moving the runtime's work into std (#2196): an entry's
 //! `replaces(…)` names the runtime externs (`velt_rt_*`) whose job the hook does, which the
 //! compiler must no longer call in the hook's place, and `bench(…)` names the program of
-//! `bench/stdport/` that measures the hook against the Rust it replaced. `velt_common`'s test
-//! `hook_replaces.rs` checks that each named extern is defined by the runtime and each program
-//! exists, and lists every place in the compiler's sources that still names a replaced extern
-//! (a fallback, or an emitter with no hook yet: #2197); a new one fails, and so does a listed
-//! one that is gone, so the list only shrinks.
+//! `bench/stdport/` that measures the hook against the Rust it replaced. Once nothing calls a
+//! replaced extern any more, its Rust is deleted and it moves to [`DELETED`]. `velt_common`'s
+//! test `hook_replaces.rs` checks that each named extern is defined by the runtime or listed as
+//! deleted (and then named nowhere), that each program exists, and lists every place in the
+//! compiler's sources that still names a replaced extern (a fallback, or an emitter with no hook
+//! yet: #2197); a new one fails, and so does a listed one that is gone, so the list only shrinks.
 //!
 //! ```
 //! use velt_common::{std_hook, std_hook_name};
@@ -651,6 +652,20 @@ keys! {
     proxy_array_call => "PROXY_ARRAY_CALL", "proxyArrayCall";
     proxy_has_own => "PROXY_HAS_OWN", "proxyHasOwn";
 }
+
+/// The externs of [`Hook::replaces`] that the runtime no longer defines: the hooks took their job
+/// over everywhere and their Rust was deleted (#2196's port tracker: an entry here is a finished
+/// port). `velt_common`'s test `hook_replaces.rs` checks that every replaced extern is defined by
+/// `velt_rt` unless it is listed here, and that one listed here is defined nowhere and named by
+/// no compiler source, runtime or std file. The entries keep their place in `replaces(…)` as the
+/// record of what the hook replaced.
+pub const DELETED: &[&str] = &[
+    // #2197: integers as text (std/lang/hooks/number_text, velt/lang/number/integer).
+    "velt_rt_str_from_i64",
+    "velt_rt_str_from_u64",
+    "velt_rt_strbuf_push_i64",
+    "velt_rt_strbuf_push_u64",
+];
 
 /// The hook whose qualified name is `qualified` (`std/lang/hooks/number::f64ToString`).
 pub fn find(qualified: &str) -> Option<&'static Hook> {

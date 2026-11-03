@@ -55,8 +55,6 @@ impl Interp<'_> {
                 };
                 self.buf_push(a[0], &s);
             }
-            "velt_rt_strbuf_push_i64" => self.buf_push(a[0], (a[1] as i64).to_string().as_bytes()),
-            "velt_rt_strbuf_push_u64" => self.buf_push(a[0], a[1].to_string().as_bytes()),
             "velt_rt_strbuf_push_f64" => {
                 let text = js_num(f64::from_bits(a[1]));
                 self.buf_push(a[0], text.as_bytes());

@@ -36,7 +36,7 @@ fn builder_1m_small_pushes() {
         let mut cap = heap_capacity(&b);
         for i in 0..1_000_000i64 {
             velt_rt_strbuf_push_str(&mut b, &part);
-            velt_rt_strbuf_push_i64(&mut b, i & 7);
+            velt_rt_strbuf_push_byte(&mut b, b'0' + (i & 7) as u8);
             let now = heap_capacity(&b);
             if now != cap {
                 grows += 1;

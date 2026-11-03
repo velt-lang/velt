@@ -63,17 +63,7 @@ pub unsafe extern "C" fn velt_rt_str_join(
     write_out(out, VeltStr::join(parts, &*sep));
 }
 
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_str_from_i64(v: i64, out: *mut VeltStr) {
-    let mut b = itoa::Buffer::new();
-    write_out(out, VeltStr::from_bytes(b.format(v).as_bytes()));
-}
-
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_str_from_u64(v: u64, out: *mut VeltStr) {
-    let mut b = itoa::Buffer::new();
-    write_out(out, VeltStr::from_bytes(b.format(v).as_bytes()));
-}
+// No integer to string here: an integer's text is std's (velt/lang/hooks/number_text, #2197).
 
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_str_from_f64(v: f64, out: *mut VeltStr) {
@@ -320,10 +310,6 @@ mod tests {
 
     #[test]
     fn from_numbers() {
-        let s = call(|o| unsafe { velt_rt_str_from_i64(i64::MIN, o) });
-        assert!(s.is_inline() && text(&s) == "-9223372036854775808");
-        let s = call(|o| unsafe { velt_rt_str_from_u64(u64::MAX, o) });
-        assert_eq!(text(&s), "18446744073709551615");
         for (v, want) in [
             (1e21, "1e+21"),
             (-0.0, "0"),

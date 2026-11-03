@@ -1,11 +1,12 @@
-//! Numbers printed as integers. `velt_rt_strbuf_push_f64(b, x)` (a template's `${x}`),
-//! `velt_rt_str_from_f64(x, out)` (`x.toString()`, a template that is just `${x}`) and
-//! `velt_rt_write_f64(s, x)` (`console.log(x)`) of a whole `x` below 2^53 print its integer
-//! digits, so they become the integer formatters (`…_i64`) of `x as i64`: no conversion to
-//! `f64` and no test in the runtime once `x` is an integer. `console.log` prints `-0` as `-0`,
-//! so there `x` must not be `-0` either (`` `${-0}` `` is `0`, which the integer prints).
-//! std's own formatters in Velt pair up the same way: a call of the hook `numberText`,
-//! `numberPush`, `floatText` or `floatPush` becomes one of `intText` or `intPush`.
+//! Numbers printed as integers. `velt_rt_write_f64(s, x)` (`console.log(x)`) of a whole `x`
+//! below 2^53 prints its integer digits, so it becomes `velt_rt_write_i64` of `x as i64`: no
+//! conversion to `f64` and no test in the runtime once `x` is an integer. `console.log` prints
+//! `-0` as `-0`, so `x` must not be `-0` either. std's own formatters in Velt pair up the same
+//! way: a call of the hook `numberText`, `numberPush`, `floatText` or `floatPush` becomes one of
+//! `intText` or `intPush` (`` `${-0}` `` is `0`, which the integer prints). The runtime's float
+//! printers (`velt_rt_str_from_f64`, `velt_rt_strbuf_push_f64`) have no integer twin left: the
+//! runtime prints no integer for a template or `String()` (#2197), and prints a whole float's
+//! digits itself.
 
 use velt_vir::vir::Place;
 use velt_vir::vir::{Callee, ExternFn, ExternId, FuncId, Function, Local, LocalDecl, Operand};
@@ -17,26 +18,12 @@ use crate::srclocs::push_stmt;
 
 /// (float formatter, integer formatter, whether the float one prints `-0` as `-0`, the
 /// formatters' parameters with the number's as `I64`).
-const PAIRS: [(&str, &str, bool, [Ty; 2]); 3] = [
-    (
-        "velt_rt_strbuf_push_f64",
-        "velt_rt_strbuf_push_i64",
-        false,
-        [Ty::Ptr, Ty::I64],
-    ),
-    (
-        "velt_rt_str_from_f64",
-        "velt_rt_str_from_i64",
-        false,
-        [Ty::I64, Ty::Ptr],
-    ),
-    (
-        "velt_rt_write_f64",
-        "velt_rt_write_i64",
-        true,
-        [Ty::U32, Ty::I64],
-    ),
-];
+const PAIRS: [(&str, &str, bool, [Ty; 2]); 1] = [(
+    "velt_rt_write_f64",
+    "velt_rt_write_i64",
+    true,
+    [Ty::U32, Ty::I64],
+)];
 
 /// Declares the integer formatter of each float formatter the program calls.
 pub(crate) fn declare(externs: &mut Vec<ExternFn>) {
