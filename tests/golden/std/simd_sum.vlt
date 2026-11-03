@@ -1,7 +1,8 @@
 // Integer vector `sum()` (wrapping in the lane type, as a chain of lane `+`) and `sumWide()`
-// (at twice the width, 8-bit lanes at 32, which never overflows), on edge vectors: every lane
-// at the type's minimum, every lane at its maximum, alternating, and a ramp. The expected
-// values come from outside the compiler (Python); a scalar loop checks pseudo-random vectors.
+// (widened: 8- and 16-bit lanes to 32 bits, 32-bit lanes to 64, never overflowing), on edge
+// vectors: every lane at the type's minimum, every lane at its maximum, alternating, and a
+// ramp. The expected values come from outside the compiler (Python); a scalar loop checks
+// pseudo-random vectors.
 import { i8x16, u8x16, i16x8, u16x8, i32x4, u32x4, i64x2, u64x2 } from "velt/simd";
 
 function bytes() {
@@ -101,10 +102,12 @@ function random() {
       const b = next();
       bs.push(b as i8);
       us.push(b);
-      const lo = next() as u16;
+    }
+    for (let i = 0; i < 8; i++) {
       const hi = next() as u16;
-      hs.push(((b as u16) << 8 | lo) as i16);
-      uh.push(((b as u16) << 8) | hi);
+      const lo = next() as u16;
+      hs.push(((hi << 8) | lo) as i16);
+      uh.push((lo << 8) | hi);
     }
     const a = i8x16.load(bs);
     const u = u8x16.load(us);

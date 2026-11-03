@@ -201,8 +201,8 @@ pub enum Op {
     /// `(v) -> lane`: the sum of the lanes in the lane type, wrapping (what adding them one by
     /// one with `+` gives). Integers.
     Sum,
-    /// `(v) -> wider lane`: the sum of the lanes at twice the lane width (8-bit lanes at 32),
-    /// which never overflows. 8-, 16- and 32-bit integers.
+    /// `(v) -> wider lane`: the sum of the lanes widened (8- and 16-bit lanes to 32 bits, 32-bit
+    /// ones to 64), which never overflows. 8-, 16- and 32-bit integers.
     SumWide,
     /// `(acc, a, b) -> v` on `i32x4`, `a` and `b` being `i8x16`: each lane of `acc` plus the sum
     /// of the four products of the signed bytes in the same quarter of `a` and `b` (bytes
