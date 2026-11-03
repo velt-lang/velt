@@ -1,0 +1,33 @@
+// A handler may change a new object it makes from a captured one (#854): `new RenderCtx(app)`
+// is the request's own, so `ctx.depth++` changes nothing captured (sigx's SSR shape). Only a
+// write through a field holding the captured value would be lost (`ctx.app.n++` is an error,
+// lang/errors/http_server/http_handler_changes_through_call). Prints what Node prints.
+import { serve } from "http-server";
+
+class App {
+  name: string = "app";
+}
+
+class RenderCtx {
+  app: App;
+  depth: number = 0;
+  constructor(app: App) {
+    this.app = app;
+  }
+}
+
+function renderToString(app: App): string {
+  const ctx = new RenderCtx(app);
+  ctx.depth++;
+  return `${ctx.app.name}${ctx.depth}`;
+}
+
+async function main() {
+  const app = new App();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(renderToString(app));
+  });
+  const r = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await r.text());
+  await server.shutdown();
+}

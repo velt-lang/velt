@@ -163,7 +163,7 @@ impl FnLower<'_, '_> {
         let p = vec![Ty::Ptr, Ty::Ptr, Ty::U64, Ty::Ptr];
         let st = self.any_slot(desc, SLOT_APPLY, vec![data, buf, argc, oa], p);
         let what = format!("TypeError: calling '{name}' through a proxy is not supported for this value yet (#823)");
-        self.any_status_check(st, (&what, None, ""), Some(name));
+        self.any_status_check(st, (&what, None, ""), Some((name, false)));
         self.drop_glue(fa.clone(), any);
         match res {
             None => self.drop_glue(out, any),

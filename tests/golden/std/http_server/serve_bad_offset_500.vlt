@@ -1,0 +1,19 @@
+// A handler that writes request data past the end of a buffer gets a 500, and the server goes
+// on serving: `u8[]`'s `write` throws a RangeError for an offset out of range, as Node's
+// `buf.write` does, where it used to stop the whole program with a panic (#1565).
+import { serve } from "http-server";
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const buf: u8[] = Buffer.alloc(4);
+    const at = (new URL(req.url).pathname.length - 1) * 9;
+    buf.write("ab", at);
+    return new Response("ok");
+  });
+  const base = `http://127.0.0.1:${server.port}`;
+  const bad = await fetch(`${base}/x`);
+  console.log("bad", bad.status);
+  const good = await fetch(`${base}`);
+  console.log("good", good.status);
+  await server.shutdown();
+}

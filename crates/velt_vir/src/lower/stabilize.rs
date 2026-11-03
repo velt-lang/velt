@@ -350,7 +350,12 @@ impl FnLower<'_, '_> {
             K::Lit(_) | K::Local(..) | K::FnRef(..) | K::Closure(_) => true,
             K::Upcast(base) => !self.part_copy_upcast(e) && self.runs_no_code(base),
             K::Field { base, .. } | K::Cast(base) | K::WrapSome(base) => self.runs_no_code(base),
-            K::Index { base, index, .. } => self.runs_no_code(base) && self.runs_no_code(index),
+            // An element of an array view may be converted into the view's mirror first,
+            // which moves the mirror's buffer (array_view.rs).
+            K::Index { base, index, .. } => {
+                let bty = self.sub(base.ty);
+                !self.cx.array_view(bty) && self.runs_no_code(base) && self.runs_no_code(index)
+            }
             _ => false,
         }
     }

@@ -1,0 +1,29 @@
+write past end RangeError The value of "offset" is out of range. It must be >= 0 && <= 4. Received 9
+0
+write at end ok
+write far RangeError The value of "offset" is out of range. It must be >= 0 && <= 4. Received 12_345_678_901
+set RangeError offset is out of bounds
+set fast path RangeError offset is out of bounds
+copy targetStart RangeError The value of "targetStart" is out of range. It must be >= 0. Received -1
+copy sourceStart RangeError The value of "sourceStart" is out of range. It must be >= 0 && <= 4. Received 9
+copy negative sourceStart RangeError The value of "sourceStart" is out of range. It must be >= 0 && <= 4. Received -1
+copy sourceEnd RangeError The value of "sourceEnd" is out of range. It must be >= 0. Received -1
+0
+copy past target ok
+write -1 RangeError The value of "offset" is out of range. It must be >= 0 && <= 4. Received -1
+write NaN RangeError The value of "offset" is out of range. It must be an integer. Received NaN
+write 1.5 RangeError The value of "offset" is out of range. It must be an integer. Received 1.5
+write Infinity RangeError The value of "offset" is out of range. It must be an integer. Received Infinity
+write 2**64 RangeError The value of "offset" is out of range. It must be >= 0 && <= 4. Received 18_446_744_073_709_552_000
+set -1 RangeError offset is out of bounds
+set Infinity RangeError offset is out of bounds
+set NaN ok
+set 1.5 ok
+7,8,0,0
+copy targetStart -0.5 RangeError The value of "targetStart" is out of range. It must be >= 0. Received -1
+3
+copy targetStart 1.5 ok
+4
+copy sourceStart NaN ok
+7,8,0,0
+0,0,0,0 47

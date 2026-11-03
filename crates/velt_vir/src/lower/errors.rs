@@ -214,7 +214,9 @@ impl FnLower<'_, '_> {
         let err_ty = local.map(|l| self.info[l.0 as usize].ty);
         let err_ty = self.cx.error_ty(err_ty);
         let Some(err_ty) = err_ty else {
+            self.push_scope(ScopeKind::CatchesNothing);
             self.block(body);
+            self.pop_scope();
             self.goto(after);
             return;
         };

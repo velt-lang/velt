@@ -71,7 +71,7 @@ function far(): u8[] {
   const out = Buffer.alloc(n + 2048);
   const head = noise(1024, 2);
   out.set(head, 0);
-  out.set(head, n + 1024);
+  out.set(head, (n + 1024) as number);
   return out;
 }
 
@@ -89,7 +89,7 @@ function same(a: u8[], b: u8[]): bool {
 
 // Decodes `input` fed `step` bytes at a time, reading at most `max` bytes per call; also
 // reports the largest chunk read.
-function streamed(input: u8[], step: usize, max: i64): u8[] throws CompressError {
+function streamed(input: u8[], step: usize, max: i64): u8[] throws CompressError | RangeError {
   const d = new BrotliDecoder();
   const parts: u8[][] = [];
   let total: usize = 0;
@@ -116,7 +116,7 @@ function streamed(input: u8[], step: usize, max: i64): u8[] throws CompressError
   const out = Buffer.alloc(total);
   let at: usize = 0;
   for (const part of parts) {
-    out.set(part, at);
+    out.set(part, at as number);
     at += part.length;
   }
   console.log(`  streamed ${total} bytes in ${parts.length} chunks of at most ${largest}`);

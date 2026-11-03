@@ -1,0 +1,27 @@
+// A call through `any` that holds no function, inside a `try` whose `catch` keeps its `never`
+// variable (its body rethrows the variable, which would make the function throw a `TypeError`),
+// stops the program with Node's message (#1422): the `TypeError` does not skip that `catch` for
+// the outer one, whose body Node does not run here (Node prints `inner f is not a function`).
+const f: any = undefined;
+function check(ok: boolean): void {
+  if (!ok) {
+    throw new Error("not ok");
+  }
+}
+function run(): void {
+  try {
+    check(true);
+    try {
+      f();
+    } catch (e) {
+      if (!(e instanceof TypeError)) {
+        throw e;
+      }
+      console.log("inner", e.message);
+    }
+  } catch (e2) {
+    console.log("outer", e2.message);
+  }
+}
+console.log("before");
+run();

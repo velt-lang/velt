@@ -2,6 +2,7 @@
 // the header of a frame to send. Not part of the public API.
 
 import { utf8Encode } from "velt/encoding";
+import { setBytes } from "velt/lang/bytes/copy";
 
 export const OP_CONT: i64 = 0;
 export const OP_TEXT: i64 = 1;
@@ -188,6 +189,6 @@ export function closePayload(code: i64, reason: string = ""): u8[] {
   const out = Buffer.alloc((2 + end) as usize);
   out[0] = ((code >> 8) & 0xff) as u8;
   out[1] = (code & 0xff) as u8;
-  out.set(end == (text.length as i64) ? text : text.slice(0, end), 2);
+  setBytes(out, end == (text.length as i64) ? text : text.slice(0, end), 2);
   return out;
 }

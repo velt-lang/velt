@@ -653,6 +653,8 @@ impl FnCx<'_, '_> {
             .is_some_and(|d| d != crate::any::Dynamic::Unknown)
         {
             let (l, mode) = self.option_binding(&s, s.ty, "<chain>", false);
+            let text = self.callee_text(&s);
+            self.f.chain_texts.push((l, text));
             let use_mode = match mode {
                 UseMode::Move => UseMode::Borrow,
                 m => m,

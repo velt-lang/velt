@@ -1,0 +1,211 @@
+// A tuple bound to a second name is the same array, as in JavaScript (#1423): a write through
+// either name is seen through the other. A tuple type that is written in place and copied is
+// counted, so its copies share one tuple.
+function optional(): void {
+  let a: [number, string] | undefined = [1, "a"];
+  const b = a!;
+  b[0] = 7;
+  const c = a;
+  c![1] = "q";
+  console.log(a![0], a![1], b[1]);
+}
+
+function numbers(): void {
+  const u: [number, number] = [1, 2];
+  const w = u;
+  w[1] = 9;
+  u[0] += 5;
+  console.log(u[0], u[1], w[0], w[1]);
+}
+
+interface Box {
+  pair: [string, number];
+}
+
+function inObject(): void {
+  const box: Box = { pair: ["x", 1] };
+  const p = box.pair;
+  p[1] = 2;
+  const copy = { ...box };
+  copy.pair[0] = "y";
+  console.log(box.pair[0], box.pair[1], p[0]);
+}
+
+function elements(): void {
+  const xs: [number, string][] = [[1, "one"]];
+  const e = xs[0];
+  e[0] = 4;
+  const ys = [e];
+  ys[0][1] = "four";
+  console.log(xs[0][0], xs[0][1], e[1]);
+}
+
+function bump(t: [number, string]): void {
+  t[0] += 1;
+}
+
+let tp: [number, string] = [1, "a"];
+const t = tp;
+t[0] = 5;
+bump(tp);
+console.log(tp[0], t[0]);
+optional();
+numbers();
+inObject();
+elements();
+
+// Tuples nothing writes in place stay values; copies of them read the same.
+const pairs: [number, number][] = [[1, 2], [3, 4]];
+const first = pairs[0];
+console.log(first[0] + first[1], pairs.length);
+
+// A closure or callback that changes an element of a tuple it is passed changes that tuple.
+type Pair = [number, number];
+function callbacks(): void {
+  const t: Pair = [1, 2];
+  const set = (p: Pair): void => {
+    p[0] = 9;
+  };
+  set(t);
+  const ps: Pair[] = [[1, 1], [2, 2]];
+  ps.forEach((p) => {
+    p[1] = 0;
+  });
+  const firsts = ps.map((p) => {
+    p[0] += 10;
+    return p[0];
+  });
+  apply(t, (p) => {
+    p[1] = 7;
+  });
+  console.log(t[0], t[1], ps[0][0], ps[0][1], ps[1][1], firsts.join(","));
+}
+
+function apply(p: Pair, f: (p: Pair) => void): void {
+  f(p);
+}
+
+callbacks();
+
+// Destructuring and parameters that only read a tuple see the same values, written before or
+// while they hold it. A read-only parameter stored, returned, passed on or captured by a
+// closure is the caller's tuple. (Each shape has a tuple type of its own, so that no other
+// shape decides how it is stored.)
+type Quad = [number, number, number, number];
+
+function norm(p: Quad): number {
+  return p[0] * p[0] + p[1] * p[1];
+}
+
+type Triple = [number, number, number];
+
+function keep(p: Triple, into: Triple[]): void {
+  into.push(p);
+}
+
+type Flags = [boolean, boolean];
+
+function same(p: Flags): Flags {
+  return p;
+}
+
+type Marks = [boolean, number, boolean];
+
+function markVia(p: Marks): void {
+  mark(p);
+}
+
+function mark(q: Marks): void {
+  q[1] = 100;
+}
+
+type Tagged = [boolean, number, number];
+
+function untag(p: Tagged): () => void {
+  return () => {
+    p[1] = -1;
+  };
+}
+
+type Seen = [number, boolean, number];
+
+function later(p: Seen): () => number {
+  return () => p[0];
+}
+
+type Counter = [boolean, number];
+
+function countAfter(p: Counter, f: () => void): number {
+  f();
+  return p[1];
+}
+
+type Cell = [number, boolean];
+const cells: Cell[] = [[1, true]];
+
+function poke(): void {
+  cells[0][0] = 3;
+}
+
+function readAround(p: Cell): number {
+  const before = p[0];
+  poke();
+  return before * 10 + p[0];
+}
+
+type Slot = [boolean, boolean, number];
+
+function readOwnWrite(p: Slot, all: Slot[]): number {
+  const before = p[2];
+  all[0][2] = 3;
+  return before * 10 + p[2];
+}
+
+type Bits = [boolean, boolean, boolean];
+type Kept = [number, boolean, boolean];
+
+function readers(): void {
+  const quads: Quad[] = [[1, 2, 0, 0], [3, 4, 0, 0]];
+  let s = 0;
+  for (let i = 0; i < quads.length; i++) {
+    const [a, b] = quads[i];
+    s += a * b + norm(quads[i]);
+  }
+  quads[0][0] = 10;
+  const [a0, b0] = quads[0];
+  const triples: Triple[] = [[1, 2, 3]];
+  const kept: Triple[] = [];
+  keep(triples[0], kept);
+  kept[0][0] = 30;
+  const flags: Flags[] = [[true, true]];
+  const r = same(flags[0]);
+  r[1] = false;
+  const marks: Marks[] = [[true, 1, true]];
+  markVia(marks[0]);
+  const tags: Tagged[] = [[true, 1, 2]];
+  untag(tags[0])();
+  const seens: Seen[] = [[1, true, 2]];
+  const read = later(seens[0]);
+  seens[0][0] = 5;
+  const counters: Counter[] = [[true, 1]];
+  const seen = countAfter(counters[0], () => {
+    counters[0][1] = 2;
+  });
+  console.log(s, a0, b0, triples[0][0], flags[0][1], marks[0][1], tags[0][1], read(), seen);
+  const nested: [[number, boolean, string], boolean][] = [[[7, true, "y"], true]];
+  const [inner, flag] = nested[0];
+  nested[0][0][0] = 70;
+  const named: [Bits, string][] = [[[true, true, true], "x"]];
+  for (const [p, l] of named) {
+    p[1] = false;
+    console.log(l);
+  }
+  const bits: Kept[] = [[1, true, true]];
+  const [...rest] = bits;
+  rest[0][2] = false;
+  const slots: Slot[] = [[true, true, 1]];
+  console.log(inner.join(":"), flag, named[0][0][1], bits[0][2]);
+  console.log(readAround(cells[0]), readOwnWrite(slots[0], slots));
+}
+
+readers();

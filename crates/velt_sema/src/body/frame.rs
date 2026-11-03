@@ -130,6 +130,12 @@ pub(crate) struct Frame {
     /// Each `catch` variable used only as `throw e`, with the throw sources of its `try` body:
     /// rethrowing it throws what they throw (`expr::errors`).
     pub caught: Vec<(LocalId, Vec<ThrowSrc>)>,
+    /// The temporaries of optional chains on an `any` (`o.m?.()`), with how a `TypeError`
+    /// names the value each holds (`o.m`; dynamic_member.rs `callee_text`).
+    pub chain_texts: Vec<(LocalId, String)>,
+    /// How many calls through `any` this function's user code has made so far (a `try` whose
+    /// body makes one may catch Node's `TypeError`, `expr::catch_any`).
+    pub any_calls: u32,
     pub uncaught: Vec<ThrowSrc>,
     /// `super(...)` is allowed here: a root-level statement of a constructor that is the call
     /// itself, before any other `super(...)` (`stmt` sets it; the call takes it).
@@ -255,6 +261,8 @@ impl Frame {
             member_reads: Default::default(),
             tries: vec![],
             caught: vec![],
+            chain_texts: vec![],
+            any_calls: 0,
             uncaught: vec![],
             super_ok: false,
             super_called: false,

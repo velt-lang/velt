@@ -295,63 +295,82 @@ fn reassigned_slots(hir: &hir::Program) -> FxHashSet<hir::DefId> {
     if hir.module_state.is_none() {
         return out;
     }
-    for def in &hir.defs {
-        match def {
-            hir::Def::Fn(f) => block(&f.body.block, &mut out),
-            hir::Def::Global(g) => expr(&g.init, &mut out),
-            _ => {}
+    walk_writes(hir, &mut |_, e| {
+        if let E::Assign { place, .. } | E::CompoundAssign { place, .. } = &e.kind {
+            if let E::Global(d) = place.kind {
+                out.insert(d);
+            }
         }
-    }
+    });
     out
 }
 
-fn block(b: &hir::Block, out: &mut FxHashSet<hir::DefId>) {
+/// Call `f` with every expression of every function body and global initializer that may
+/// write a place (an assignment, a compound assignment, a call, an `await`), and the definition it is in
+/// (each closure's body is a function of its own, walked with the others).
+pub(super) fn walk_writes(hir: &hir::Program, f: &mut dyn FnMut(hir::DefId, &hir::Expr)) {
+    for (i, def) in hir.defs.iter().enumerate() {
+        let d = hir::DefId(i as u32);
+        let mut g = |e: &hir::Expr| f(d, e);
+        match def {
+            hir::Def::Fn(fd) => block(&fd.body.block, &mut g),
+            hir::Def::Global(gd) => expr(&gd.init, &mut g),
+            _ => {}
+        }
+    }
+}
+
+/// [`walk_writes`] over one expression.
+pub(super) fn walk_expr_writes(e: &hir::Expr, f: &mut dyn FnMut(&hir::Expr)) {
+    expr(e, f);
+}
+
+fn block(b: &hir::Block, f: &mut dyn FnMut(&hir::Expr)) {
     for s in &b.stmts {
         match &s.kind {
-            S::Let { init, .. } => init.iter().for_each(|e| expr(e, out)),
-            S::LetPat { init, .. } | S::Expr(init) | S::Return(Some(init)) => expr(init, out),
+            S::Let { init, .. } => init.iter().for_each(|e| expr(e, f)),
+            S::LetPat { init, .. } | S::Expr(init) | S::Return(Some(init)) => expr(init, f),
             S::Return(None) | S::Break(_) | S::Continue(_) => {}
             S::If { cond, then, els } => {
-                expr(cond, out);
-                block(then, out);
-                els.iter().for_each(|b| block(b, out));
+                expr(cond, f);
+                block(then, f);
+                els.iter().for_each(|b| block(b, f));
             }
             S::While {
                 cond, body, step, ..
             } => {
-                expr(cond, out);
-                block(body, out);
-                step.iter().for_each(|e| expr(e, out));
+                expr(cond, f);
+                block(body, f);
+                step.iter().for_each(|e| expr(e, f));
             }
             S::ForOf { iter, body, .. } => {
-                expr(iter, out);
-                block(body, out);
+                expr(iter, f);
+                block(body, f);
             }
             S::Try {
                 body,
                 catch,
                 finally,
             } => {
-                block(body, out);
-                catch.iter().for_each(|(_, b)| block(b, out));
-                finally.iter().for_each(|b| block(b, out));
+                block(body, f);
+                catch.iter().for_each(|(_, b)| block(b, f));
+                finally.iter().for_each(|b| block(b, f));
             }
-            S::Block(b) => block(b, out),
+            S::Block(b) => block(b, f),
         }
     }
-    b.value.iter().for_each(|e| expr(e, out));
+    b.value.iter().for_each(|e| expr(e, f));
 }
 
-fn expr(e: &hir::Expr, out: &mut FxHashSet<hir::DefId>) {
+fn expr(e: &hir::Expr, f: &mut dyn FnMut(&hir::Expr)) {
     match &e.kind {
-        E::Assign { place, .. } | E::CompoundAssign { place, .. } => {
-            if let E::Global(d) = place.kind {
-                out.insert(d);
-            }
-        }
-        // A closure's body is a function of its own, walked with the others.
-        E::Block(b) => return block(b, out),
+        E::Assign { .. }
+        | E::CompoundAssign { .. }
+        | E::Call { .. }
+        | E::Await(_)
+        | E::New { .. } => f(e),
+        E::Block(b) => return block(b, f),
         _ => {}
     }
-    super::frame_envs::children(e, &mut |x| expr(x, out));
+    super::frame_envs::children(e, &mut |x| expr(x, f));
 }

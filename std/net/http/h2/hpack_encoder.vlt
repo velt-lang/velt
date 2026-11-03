@@ -11,6 +11,7 @@
 import { FrameWriter } from "velt/net/http/h2/frame_writer";
 import { huffmanEncode, huffmanLength } from "velt/net/http/h2/huffman";
 import { staticNameIndex, staticStatusIndex } from "velt/net/http/h2/hpack_static";
+import { copyBytes, writeUtf8 } from "velt/lang/bytes/copy";
 
 /// A field larger than this (name + value + 32) is not added to the table: it would evict much
 /// for little.
@@ -95,7 +96,7 @@ export class HpackEncoder {
     out.byte(28 - 15);
     const digits = `${n}`;
     out.byte(digits.length as i64);
-    out.length += out.buf.write(digits, out.length as usize) as i64;
+    out.length += writeUtf8(out.buf, digits, out.length as usize) as i64;
   }
 
   /// Field `name: value` (`name` in lowercase).
@@ -147,7 +148,7 @@ export class HpackEncoder {
       this.scratch = Buffer.alloc((n * 2) as usize);
     }
     const scratch = this.scratch;
-    scratch.write(s, 0);
+    writeUtf8(scratch, s, 0);
     const h = huffmanLength(scratch, 0, n);
     out.reserve(6 + n);
     if (h < n) {
@@ -155,7 +156,7 @@ export class HpackEncoder {
       out.length = huffmanEncode(scratch, 0, n, out.buf, out.length);
     } else {
       integer(out, 0, 7, n);
-      scratch.copy(out.buf, out.length, 0, n);
+      copyBytes(scratch, out.buf, out.length, 0, n);
       out.length += n;
     }
   }

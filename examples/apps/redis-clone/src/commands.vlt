@@ -4,6 +4,7 @@ import { CommandError, Db, notInteger } from "./db";
 import { MemberSet, Scored, ZSet } from "./structs";
 import { Deque } from "velt/collections";
 import { Writer } from "./resp";
+import { setBytes } from "./bytes";
 
 const MAX: i64 = 9223372036854775807;
 const MIN: i64 = -9223372036854775807 - 1;
@@ -717,8 +718,8 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
         out.integer(args[2].length as i64);
       } else {
         const joined = Buffer.alloc(cur.length + args[2].length);
-        joined.set(cur, 0);
-        joined.set(args[2], cur.length as usize);
+        setBytes(joined, cur, 0);
+        setBytes(joined, args[2], cur.length as usize);
         db.setString(key, joined, true);
         out.integer(joined.length as i64);
       }
@@ -1199,7 +1200,7 @@ function run(db: Db, name: string, args: u8[][], out: Writer) {
   const detail = Buffer.alloc(total as usize);
   let at: i64 = 0;
   for (const p of parts) {
-    detail.set(p, at as usize);
+    setBytes(detail, p, at as usize);
     at += p.length as i64;
   }
   throw new CommandError(utf8DecodeLossy(detail), detail);

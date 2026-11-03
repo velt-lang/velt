@@ -1,0 +1,51 @@
+http_handler_changes_through_call.vlt:88:82: error: this async closure changes `count` of captured `c` (`c.handle(…)` changes `c.count`), so it must stay on the task that created it
+http_handler_changes_through_call.vlt:88:20: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `c`, so the change would be lost: share the object, `const c = shared(new Mutex(new C(…)))` changed with `c.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`
+http_handler_changes_through_call.vlt:91:11: error: this async closure changes `hits` of captured `d` (`d.later(…)` changes `d.hits`), so it must stay on the task that created it
+http_handler_changes_through_call.vlt:90:20: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `d`, so the change would be lost: share the object, `const d = shared(new Mutex(new C(…)))` changed with `d.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`
+http_handler_changes_through_call.vlt:96:5: error: this closure changes `n` of captured `t` (`bump(…)` changes `t.n`), so it must stay on the task that created it
+http_handler_changes_through_call.vlt:95:20: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `t`, so the change would be lost: share the object, `const t = shared(new Mutex(new Totals(…)))` changed with `t.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`
+http_handler_changes_through_call.vlt:102:7: error: this async closure changes `n` of captured `u` (`bump(…)` changes `u.n`), so it must stay on the task that created it
+http_handler_changes_through_call.vlt:100:20: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `u`, so the change would be lost: share the object, `const u = shared(new Mutex(new Totals(…)))` changed with `u.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`
+http_handler_changes_through_call.vlt:111:5: error: this async closure changes `visits` of a value reached from captured `users`, so it must stay on the task that created it
+http_handler_changes_through_call.vlt:110:20: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `users`, so the change would be lost: share the object, `const users = shared(new Mutex(new Map<string, User>(…)))` changed with `users.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`
+http_handler_changes_through_call.vlt:118:7: error: this async closure changes `visits` of a value reached from captured `list`, so it must stay on the task that created it
+http_handler_changes_through_call.vlt:115:20: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `list`, so the change would be lost: share the value, `const list = shared(new Mutex(…))` changed with `list.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`
+http_handler_changes_through_call.vlt:125:7: error: this async closure changes `n` of a value reached from captured `all` (through `x.inc(…)`), so it must stay on the task that created it
+http_handler_changes_through_call.vlt:123:20: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `all`, so the change would be lost: share the value, `const all = shared(new Mutex(…))` changed with `all.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`
+http_handler_changes_through_call.vlt:132:5: error: this async closure changes `n` of a value reached from captured `a` (through `….inc(…)`), so it must stay on the task that created it
+http_handler_changes_through_call.vlt:131:20: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `a`, so the change would be lost: share the object, `const a = shared(new Mutex(new Totals(…)))` changed with `a.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`
+http_handler_changes_through_call.vlt:137:5: error: this async closure changes `n` of a value reached from captured `maybe` (through `….inc(…)`), so it must stay on the task that created it
+http_handler_changes_through_call.vlt:136:20: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `maybe`, so the change would be lost: share the value, `const maybe = shared(new Mutex(…))` changed with `maybe.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`
+http_handler_changes_through_call.vlt:142:5: error: this async closure changes captured `dynamic` (`dynamic.… = …` changes `dynamic`), so it must stay on the task that created it
+http_handler_changes_through_call.vlt:141:21: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `dynamic`, so the change would be lost: share the value, `const dynamic = shared(new Mutex(…))` changed with `dynamic.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`
+http_handler_changes_through_call.vlt:148:5: error: this async closure changes captured `seen` (`seen.set(…)` changes `seen`), so it must stay on the task that created it
+http_handler_changes_through_call.vlt:147:21: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `seen`, so the change would be lost: share the object, `const seen = shared(new Mutex(new Map<string, f64>(…)))` changed with `seen.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`
+http_handler_changes_through_call.vlt:149:5: error: this async closure changes captured `tree` (`tree.set(…)` changes `tree`), so it must stay on the task that created it
+http_handler_changes_through_call.vlt:147:21: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `tree`, so the change would be lost: share the object, `const tree = shared(new Mutex(new BTreeMap<string, f64>(…)))` changed with `tree.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`
+http_handler_changes_through_call.vlt:154:5: error: this async closure changes captured `counter` (`counter.…(…)` changes `counter`), so it must stay on the task that created it
+http_handler_changes_through_call.vlt:153:21: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `counter`, so the change would be lost: share the value, `const counter = shared(new Mutex(…))` changed with `counter.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`
+http_handler_changes_through_call.vlt:162:5: error: this async closure changes `n` of a value reached from captured `held`, so it must stay on the task that created it
+http_handler_changes_through_call.vlt:159:21: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `held`, so the change would be lost: share the object, `const held = shared(new Mutex(new Totals(…)))` changed with `held.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`
+http_handler_changes_through_call.vlt:167:15: error: this async closure changes `n` of captured `counted` (`new CountingToo(…)` changes `counted.n`), so it must stay on the task that created it
+http_handler_changes_through_call.vlt:166:21: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `counted`, so the change would be lost: share the object, `const counted = shared(new Mutex(new Totals(…)))` changed with `counted.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`
+http_handler_changes_through_call.vlt:172:5: error: this async closure changes `visits` of a value reached from captured `people`, so it must stay on the task that created it
+http_handler_changes_through_call.vlt:171:21: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `people`, so the change would be lost: share the value, `const people = shared(new Mutex(…))` changed with `people.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`
+http_handler_changes_through_call.vlt:179:5: error: this async closure changes `visits` of a value reached from captured `rows`, so it must stay on the task that created it
+http_handler_changes_through_call.vlt:176:21: but it is passed here to a function that runs it on other threads
+  = note: each call runs on another thread with its own copy of `rows`, so the change would be lost: share the value, `const rows = shared(new Mutex(…))` changed with `rows.with(…)`, or keep what changes in a `shared(...)` or an `Atomic`

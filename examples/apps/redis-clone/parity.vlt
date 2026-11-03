@@ -79,7 +79,7 @@ class ReplyReader {
       }
       const merged = Buffer.alloc(this.buf.length + data.length);
       merged.set(this.buf, 0);
-      merged.set(data, this.buf.length as usize);
+      merged.set(data, this.buf.length);
       this.buf = merged;
     }
   }

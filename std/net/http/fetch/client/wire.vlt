@@ -11,6 +11,7 @@
 
 import { IoError } from "velt/io/error";
 import { Target } from "velt/net/http/fetch/client/target";
+import { setBytes, writeUtf8 } from "velt/lang/bytes/copy";
 
 /** A request body this small is sent in the same write as the head. */
 const INLINE_BODY: i64 = 65536;
@@ -79,7 +80,7 @@ class Writer {
     if (this.at + n > (this.data.length as i64)) {
       this.grow(n);
     }
-    this.data.write(s, this.at as usize);
+    writeUtf8(this.data, s, this.at as usize);
     this.at += n;
   }
 
@@ -88,7 +89,7 @@ class Writer {
     if (this.at + n > (this.data.length as i64)) {
       this.grow(n);
     }
-    this.data.set(b, this.at as usize);
+    setBytes(this.data, b, this.at as usize);
     this.at += n;
   }
 
@@ -98,7 +99,7 @@ class Writer {
       size = this.at + n;
     }
     const bigger: u8[] = Buffer.allocUnsafe(size as usize);
-    bigger.set(this.data, 0);
+    setBytes(bigger, this.data, 0);
     this.data = bigger;
   }
 }

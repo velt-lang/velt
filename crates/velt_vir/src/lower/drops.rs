@@ -28,7 +28,7 @@ impl FnLower<'_, '_> {
             self.drop_entry(d);
         }
         if let ScopeKind::Finally(Some(b)) = s.kind {
-            self.block(&b);
+            self.finally_body(&b);
         }
     }
 
@@ -62,8 +62,16 @@ impl FnLower<'_, '_> {
             return;
         };
         let Some(b) = fin.take() else { return };
-        self.block(&b);
+        self.finally_body(&b);
         self.scopes[i].kind = ScopeKind::Finally(Some(b));
+    }
+
+    /// Lower a `finally` block: only the scopes it pushes itself enclose the code in it
+    /// (`finally_floor`; the `try`s around it are left on this edge).
+    fn finally_body(&mut self, b: &velt_sema::hir::Block) {
+        let floor = std::mem::replace(&mut self.finally_floor, self.scopes.len());
+        self.block(b);
+        self.finally_floor = floor;
     }
 
     fn innermost(&mut self) -> &mut Scope {

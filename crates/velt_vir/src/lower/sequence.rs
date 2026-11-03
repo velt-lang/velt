@@ -104,12 +104,22 @@ pub(super) fn may_move_local(e: &hir::Expr, l: hir::LocalId) -> bool {
 /// may write those in cells); `changed_hold` asks it only of a variable outside a cell, where
 /// a call through a function value (`hooks[0](acc, nums[0]())`) cannot assign it.
 /// Conservative: shapes not listed may.
-fn assigns_local(e: &hir::Expr, l: hir::LocalId) -> bool {
+pub(super) fn assigns_local(e: &hir::Expr, l: hir::LocalId) -> bool {
     use hir::ExprKind as K;
     match &e.kind {
         K::Lit(_) | K::Global(_) | K::FnRef(..) | K::Local(..) | K::Closure(_) => false,
         K::Assign { place, value } | K::CompoundAssign { place, value, .. } => {
             root_local(place) == Some(l) || assigns_local(place, l) || assigns_local(value, l)
+        }
+        // `i++` is `{ let t = i; i += 1; t }`.
+        K::Block(b) => {
+            b.stmts.iter().any(|st| match &st.kind {
+                hir::StmtKind::Let { init, .. } => {
+                    init.as_ref().is_some_and(|x| assigns_local(x, l))
+                }
+                hir::StmtKind::Expr(x) => assigns_local(x, l),
+                _ => true,
+            }) || b.value.as_deref().is_some_and(|x| assigns_local(x, l))
         }
         _ => any_operand(e, &mut |x| assigns_local(x, l)).unwrap_or(true),
     }
@@ -119,7 +129,7 @@ fn assigns_local(e: &hir::Expr, l: hir::LocalId) -> bool {
 /// does ([`may_move_local`], [`assigns_local`]): unary and binary operators, casts and wraps,
 /// field and index reads, conditionals, array literals and calls (their arguments, and the
 /// function value of an indirect call)? `None` for any other shape.
-fn any_operand(e: &hir::Expr, f: &mut dyn FnMut(&hir::Expr) -> bool) -> Option<bool> {
+pub(super) fn any_operand(e: &hir::Expr, f: &mut dyn FnMut(&hir::Expr) -> bool) -> Option<bool> {
     use hir::ExprKind as K;
     Some(match &e.kind {
         K::Unary { expr: x, .. }
@@ -230,10 +240,13 @@ fn writes_local(e: &hir::Expr) -> bool {
 
 impl FnLower<'_, '_> {
     /// [`Later::of`] in this program: a field read on a proxiable type (#823, proxy_typed.rs)
-    /// may run a `get` trap, user code that may change any memory, like an `any` member read.
+    /// may run a `get` trap, user code that may change any memory, like an `any` member read;
+    /// an element read of an array view type (array_view.rs) may convert the element into the
+    /// view's mirror, which moves the mirror's buffer and so the elements read before it
+    /// (#1942).
     pub(super) fn later_of(&mut self, e: &hir::Expr) -> Later {
         let mut l = Later::of(e);
-        if !l.memory && self.reads_proxy(e) {
+        if !l.memory && self.read_runs_code(e) {
             l.memory = true;
         }
         l
@@ -242,11 +255,11 @@ impl FnLower<'_, '_> {
     /// [`later_each`] with [`later_of`](Self::later_of).
     pub(super) fn later_each(&mut self, es: &[hir::Expr]) -> Vec<Later> {
         let mut out = later_each(es);
-        if self.cx.has_proxies() {
+        if self.reads_may_run_code() {
             let mut acc = false;
             for (i, e) in es.iter().enumerate().rev() {
                 out[i].memory |= acc;
-                acc = acc || self.reads_proxy(e);
+                acc = acc || self.read_runs_code(e);
             }
         }
         out
@@ -262,17 +275,33 @@ impl FnLower<'_, '_> {
         self.later_of(e).memory
     }
 
-    /// Does evaluating `e` read a field of a proxiable type? Only the shapes
-    /// `may_change_memory` looks into: it answers yes for the others already.
-    fn reads_proxy(&mut self, e: &hir::Expr) -> bool {
-        use hir::ExprKind as K;
-        if !self.cx.has_proxies() {
+    /// May a read in this program run code ([`Self::read_runs_code`])?
+    pub(super) fn reads_may_run_code(&self) -> bool {
+        self.cx.has_proxies() || !self.cx.boxing.array_views.is_empty()
+    }
+
+    /// Does evaluating `e` read a field of a proxiable type, or an element of an array view
+    /// type ([`Self::later_of`])? Only the shapes `may_change_memory` looks into: it answers
+    /// yes for the others already.
+    fn read_runs_code(&mut self, e: &hir::Expr) -> bool {
+        if !self.reads_may_run_code() {
             return false;
         }
+        self.reads_proxy_or_view(e)
+    }
+
+    fn reads_proxy_or_view(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
         match &e.kind {
             K::Field { base, .. } => {
                 let bt = self.sub(base.ty);
-                self.cx.proxiable(bt) || self.reads_proxy(base)
+                self.cx.proxiable(bt) || self.reads_proxy_or_view(base)
+            }
+            K::Index { base, index, .. } => {
+                let bt = self.sub(base.ty);
+                self.cx.array_view(bt)
+                    || self.reads_proxy_or_view(base)
+                    || self.reads_proxy_or_view(index)
             }
             K::Unary { expr: x, .. }
             | K::Cast(x)
@@ -280,19 +309,19 @@ impl FnLower<'_, '_> {
             | K::Upcast(x)
             | K::Downcast(x)
             | K::UnwrapSome(x, _)
-            | K::UnwrapVariant { expr: x, .. } => self.reads_proxy(x),
-            K::Index {
-                base: a, index: b, ..
+            | K::UnwrapVariant { expr: x, .. } => self.reads_proxy_or_view(x),
+            K::Binary { lhs: a, rhs: b, .. } | K::Logical { lhs: a, rhs: b, .. } => {
+                self.reads_proxy_or_view(a) || self.reads_proxy_or_view(b)
             }
-            | K::Binary { lhs: a, rhs: b, .. }
-            | K::Logical { lhs: a, rhs: b, .. } => self.reads_proxy(a) || self.reads_proxy(b),
             K::If { cond, then, els } => {
-                self.reads_proxy(cond) || self.reads_proxy(then) || self.reads_proxy(els)
+                self.reads_proxy_or_view(cond)
+                    || self.reads_proxy_or_view(then)
+                    || self.reads_proxy_or_view(els)
             }
             K::Call {
                 callee: hir::Callee::Intrinsic(_),
                 args,
-            } => args.iter().any(|a| self.reads_proxy(a)),
+            } => args.iter().any(|a| self.reads_proxy_or_view(a)),
             _ => false,
         }
     }
@@ -437,7 +466,7 @@ impl FnLower<'_, '_> {
     /// standard-library function whose arguments are all numbers, booleans or strings
     /// (`Math.sqrt(4)`, `x.toFixed(2)`, `String(n)`) reaches no such object: it is handed no
     /// reference to one, and the library sees none of the program's variables.
-    fn reaches_objects(&mut self, e: &hir::Expr) -> bool {
+    pub(super) fn reaches_objects(&mut self, e: &hir::Expr) -> bool {
         use hir::ExprKind as K;
         if !self.may_change_memory(e) {
             return false;
@@ -469,7 +498,7 @@ impl FnLower<'_, '_> {
                 .any(|a| velt_sema::effects::writes_place(a) || self.reaches_objects(a)),
             // A new array (`Math.max(1, 2)`'s rest param, `[1, 2].length`): its elements.
             K::ArrayLit(es) => es.iter().any(|x| self.reaches_objects(x)),
-            K::Field { base, .. } => self.reads_proxy(e) || self.reaches_objects(base),
+            K::Field { base, .. } => self.read_runs_code(e) || self.reaches_objects(base),
             _ => true,
         }
     }

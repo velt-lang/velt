@@ -13,6 +13,7 @@ import { DynamicTable } from "velt/net/http/h2/hpack_table";
 import { FieldList } from "velt/net/http/h2/field_list";
 import { huffmanDecode } from "velt/net/http/h2/huffman";
 import { STATIC_COUNT, staticName, staticValue } from "velt/net/http/h2/hpack_static";
+import { copyBytes } from "velt/lang/bytes/copy";
 
 /// The largest integer a block may hold (a length or an index): beyond it the block is refused.
 const MAX_INT: i64 = 0x7fffffff;
@@ -163,7 +164,7 @@ export class HpackDecoder {
     this.pos += len;
     if (!huffman) {
       out.reserve(len);
-      this.src.copy(out.buf, out.length, start, this.pos);
+      copyBytes(this.src, out.buf, out.length, start, this.pos);
       out.length += len;
       return true;
     }

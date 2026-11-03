@@ -73,9 +73,56 @@ key that does not parse) throws `IoError`.
   captured, so a handler (and the callbacks it reaches) must not change a variable it captured:
   `(req) => { count++; … }` is a compile error at the `serve` call, with the `shared(...)` fix,
   as for any library function that runs a callback on other threads
-  ([Async](https://veltlang.com/docs/reference/async/#tasks)). Changing an object's fields through a captured
-  variable changes that request's copy, not the caller's object (unlike Node, which shares it;
-  #854). A captured resource (`[Symbol.dispose]`) needs a `clone()`, or capture it as
+  ([Async](https://veltlang.com/docs/reference/async/#tasks)). Neither may it change a captured
+  object, in the handler itself (`c.count++`) or through what it calls: each request would change
+  its own copy, where Node changes the one object, so the compiler reports such a change, naming
+  the field, with the fix: share the object, `const c = shared(new Mutex(new C()))`, and change
+  it with `c.with((v) => v.handle(path))`, or keep what changes in a `shared(...)` or an
+  `Atomic`. Reported: a method that changes its receiver (`c.handle(req)` doing
+  `this.count++`, also `async`), a function changing an object it is given, a closure the
+  handler makes, a value reached from a capture (`users.get(id)!.visits++`, `find`'s result, an
+  element in a `for…of` loop, an alias, an optional chain, a conditional, an `any`), a
+  collection's own methods (`m.set(k, v)`, `xs.push(x)`, `BTreeMap.set`) and an interface or
+  overridden method that changes its object. Reading a captured object is fine.
+
+  Known limits (#854): the check does not see every change, and these still change only the
+  request's copy, silently; use `shared(...)`, an `Atomic` or a `Mutex` for state requests
+  must share:
+  - an element of a spread copy (`[...list][0].visits++`, `const xs = [...list]; xs[0]…`) and
+    a captured value stored in a local container first (`p.rows = list; p.rows[0].visits++`,
+    `picked.push(list[0])`, `byName.set(k, u)` then `byName.get(k)!.visits++`);
+  - typed arrays and other library writes into a buffer: `hist[1]++` on a captured
+    `Int32Array`, `fill`, `sort`, `reverse`, `copyWithin`, `subarray().fill`, a view over a
+    captured buffer (`new Uint8Array(b.buffer)`), I/O that reads into a captured buffer;
+  - calls through a function value: a route table (`Map<string, handler>`), a middleware array,
+    a callback parameter, even a local arrow (`const touch = (s) => { s.hits++; }; touch(c)`) or
+    a function in an object (`helpers.touch(c)`) (a callback that assigns a *variable* it
+    captured is reported, below);
+  - a field of a new object filled from the captured value by key: through an `any`
+    (`const self: any = this; self.out = this.app.plugins`), `Reflect.set(this, "out", …)`, or
+    a helper or generic function that stores by key into the object it is given (also one
+    called through an interface or taken as a function value), then `ctx.out.push(…)`;
+  - a `RegExp` with the `g` or `y` flag used with `test` or `exec` (its `lastIndex`), and the
+    caches of `Headers` and `URLSearchParams` reads, which each request keeps for itself;
+  - a library `struct` (a handle such as `Channel` or `TcpStream`, whose copies share what they
+    handle, but also a plain one such as `Duration`), and a chain of calls deeper than 48.
+
+  A new object the handler makes is its own, also when it holds a captured value: `new
+  Ctx(app)` then `ctx.depth++` or `ctx.out.push(s)` (a field only ever filled with new values,
+  such as `out: string[] = []`), the same object handed to a callback or to an interface
+  method, `{ ...cfg }` then a write, `new Map(cfg.headers)` then `set`, and the result of a
+  function the compiler sees returns a new value (`makeCtx(cfg)`). A write through a part of it
+  that may hold the captured value (`ctx.app.n++`, or a field some code fills from it by
+  assignment, a literal or a spread) is reported, and so is an element of a copy
+  (`list.filter(…)[0].visits++`, `slice`, `map`, `concat`, `toSorted`).
+
+  It also reports some changes that are safe: through an element of a new object's list whose
+  type could hold the captured value though it does not, through a field that some other code
+  fills from a value that is not new, to the result of an overridden or interface method or of
+  a factory that keeps what it returns, and through an interface or overridden method called on
+  a new object when one of the methods the call may run changes what that object holds.
+
+  A captured resource (`[Symbol.dispose]`) needs a `clone()`, or capture it as
   `shared(new Mutex(…))`.
 - That includes a variable assigned by a sync callback the handler calls: a function value
   stored in something it captured (`i.onChange("x")` with `i.onChange = (v) => { last = v; }`),

@@ -13,16 +13,19 @@ impl FnLower<'_, '_> {
     /// dropping anywhere).
     pub(super) fn consume(&mut self, e: &hir::Expr) -> Operand {
         use hir::ExprKind as K;
+        let read = std::mem::take(&mut self.read_copy);
         if let K::Upcast(inner) = &e.kind {
             let (from, to) = (self.sub(inner.ty), self.sub(e.ty));
             // An interface upcast builds a new interface value, and an object type as one with
             // some of its fields a copy of them (`expr`, below).
             if self.upcast_slot(from, to).is_none() && !self.part_copy(from, to) {
                 self.cx.note_proxy_cast(from, to);
+                self.read_copy = read;
                 return self.consume(inner);
             }
         }
         if let K::Downcast(inner) = &e.kind {
+            self.read_copy = read;
             let v = self.consume(inner);
             let owned = matches!(inner.kind, K::Local(_, hir::UseMode::Move));
             return self.downcast_value(v, inner.ty, owned);
@@ -44,6 +47,11 @@ impl FnLower<'_, '_> {
             return self.clone_value(v, ty);
         }
         let v = self.expr(e);
+        let named = !read && self.copies_place(e);
+        if named {
+            let ty = self.sub(e.ty);
+            self.cx.note_tuple_copy(ty);
+        }
         if self.dead() || !self.needs_drop(e.ty) {
             return v;
         }
@@ -66,7 +74,7 @@ impl FnLower<'_, '_> {
                 // nothing was transferred, so the consumer gets another reference (#1140).
                 _ if self.borrowed_root(e) => {
                     let ty = self.sub(e.ty);
-                    self.share_value(v, ty)
+                    self.share_value_as(v, ty, !read)
                 }
                 _ => v,
             },
@@ -75,9 +83,39 @@ impl FnLower<'_, '_> {
                 // A borrowed place used as an owned value: another reference to it (JS).
                 _ => {
                     let ty = self.sub(e.ty);
-                    self.share_value(v, ty)
+                    self.share_value_as(v, ty, !read)
                 }
             },
+        }
+    }
+
+    /// `consume` for an owner that only reads the value: a tuple copied out of a place for it
+    /// is not a second name for that tuple (boxing/tuples.rs). The owner is a destructuring
+    /// pattern (its bindings are recorded as they bind, pattern.rs `bind_local`) or a `Copy`
+    /// parameter (one the callee changes is recorded by the callee, abi.rs
+    /// `copy_modified_param`; one it stores or returns, where it is consumed again).
+    pub(super) fn consume_read(&mut self, e: &hir::Expr) -> Operand {
+        self.read_copy = true;
+        let v = self.consume(e);
+        self.read_copy = false;
+        v
+    }
+
+    /// Is `e` read out of a place that keeps its value, so that consuming it copies the value
+    /// (a tuple in it becomes a second tuple: boxing/tuples.rs)? A variable it moves out of
+    /// gives its value away.
+    fn copies_place(&self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Local(id, UseMode::Move) => !self.info[id.0 as usize].droppable,
+            K::Cast(x) | K::Upcast(x) => self.copies_place(x),
+            K::Local(..)
+            | K::Global(_)
+            | K::Field { .. }
+            | K::Index { .. }
+            | K::UnwrapSome(..)
+            | K::UnwrapVariant { .. } => true,
+            _ => false,
         }
     }
 

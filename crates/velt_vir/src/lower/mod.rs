@@ -39,6 +39,7 @@ mod any_has_builtin;
 mod any_iface;
 mod any_keys;
 mod any_member;
+mod any_not_fn;
 mod any_number;
 mod any_object_fill;
 mod any_proxy;
@@ -95,11 +96,13 @@ mod hand_result;
 mod hooks;
 mod host;
 mod impl_lookup;
+mod index_order;
 mod intrinsics;
 mod js_string;
 mod json;
 mod key_any;
 mod keys;
+mod kinds;
 mod layout;
 mod leave_levels;
 mod literal_accessors;
@@ -152,12 +155,16 @@ mod weak;
 mod weak_object;
 mod weak_view;
 mod widen;
+mod write_effects;
 
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::VecDeque;
 use std::rc::Rc;
 
 use velt_sema::hir::{self, DefId, LocalId, TyId, TyTable};
+
+pub(super) use kinds::LkMode;
+use kinds::ThunkKind;
 
 use crate::vir::{
     self, AggLayout, BlockId, Const, ExternFn, ExternId, FuncId, Function, Local, LocalDecl,
@@ -266,43 +273,6 @@ fn cint(v: i128, ty: Ty) -> Operand {
 
 fn cfunc(f: FuncId) -> Operand {
     Operand::Const(Const::Func(f), Ty::Ptr)
-}
-
-/// How a borrow-ABI entry point adapts its first `Ptr` argument (see glue/thunk.rs).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-enum ThunkKind {
-    /// First param is a closure env pointer that the target (a named function) ignores. With
-    /// an error type: the function value's type allows more errors than the target throws,
-    /// so the thunk returns `Result<ret, E>` and converts the target's result (or errors).
-    Env(Option<TyId>),
-    /// First param is the receiver's data pointer (Dyn data / class object) → target's `this`.
-    SelfData,
-    /// First param is the data pointer of an interface value holding a closure (a generic
-    /// closure as a generic function value, glue/generic_slots.rs): the closure's code runs
-    /// with the closure's env.
-    BoxedClosure,
-    /// The code of a method read as a value through `any` (a typed proxy's `get` trap answers
-    /// a method call with it, proxy_method.rs): the method's parameters after a closure env;
-    /// called on its own (without the proxy as `this`) it throws a `TypeError`.
-    Unbound,
-}
-
-/// When a function runs in velt_rt's read mode (boxing/locks.rs), which decides how it counts
-/// and writes lock-set objects (rc.rs).
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub(super) enum LkMode {
-    /// Never: inline counts.
-    #[default]
-    Plain,
-    /// Always (code only a `read` callback calls directly): read mode's inline rules.
-    Read,
-    /// Either: asks the thread once (`velt_rt_lk_mode`).
-    Checked,
-    /// Plain's counts, in code that changes the caller's containers inside a `read` callback
-    /// (`Work::Deferred`): an object of the lock set whose last reference goes is freed once the
-    /// thread's reads end (velt_rt `velt_rt_free_after_reads`), since a reader may still point
-    /// at it without counting it (read mode cannot tell it from the store's).
-    Deferred,
 }
 
 /// A function the lowering must build; each distinct `Work` becomes exactly one VIR function.
@@ -442,13 +412,23 @@ struct Cx<'h> {
     aggs: Vec<AggLayout>,
     externs: Vec<ExternFn>,
     extern_map: FxHashMap<String, ExternId>,
+    /// The tuple types the function being built writes in place, and those of its `Copy`
+    /// parameters it only reads (boxing/tuples.rs).
+    cur_tuple_writes: Vec<TyId>,
+    cur_read_params: Vec<TyId>,
     statics: Vec<StaticData>,
     /// The module state's descriptor, once a slot is used (module_state.rs).
     module_desc: Option<StaticId>,
     /// The module state slots some code assigns as a whole, once asked (module_state.rs).
     reassigned_slots: Option<FxHashSet<hir::DefId>>,
+    /// The fields of object types some code assigns, once asked (index_order.rs).
+    assigned_fields: Option<index_order::AssignedFields>,
+    /// What each function may store, with what it calls, once asked (write_effects.rs).
+    fn_writes: Option<write_effects::FnWrites>,
     /// The prelude's `Error` class, once looked up (js_string.rs).
     prelude_error: Option<Option<hir::DefId>>,
+    /// The prelude's `TypeError` class, once looked up (any_not_fn.rs).
+    prelude_type_error: Option<Option<hir::DefId>>,
     /// The prelude's top-level `await` mark and what it forwards to (async_fn/suspend.rs).
     tla_marks: Option<[Option<hir::DefId>; 2]>,
     static_map: FxHashMap<(Vec<u8>, u32), StaticId>,
@@ -656,6 +636,12 @@ struct FnLower<'c, 'h> {
     pending_borrows: Vec<stabilize::PendingBorrow>,
     /// While binding a pattern inside a counted value: owned bindings take shares (pattern.rs).
     share_binds: bool,
+    /// Set by `consume_read` for the `consume` it calls: the new owner only reads the value, so
+    /// copying a tuple out of a place there is not a second name for it (boxing/tuples.rs).
+    read_copy: bool,
+    /// While binding a pattern to a copy of the value destructured (matching.rs `let_pat`): a
+    /// binding by reference into it names a copy of the part (pattern.rs `bind_local`).
+    binds_copy: bool,
     /// While binding a destructuring `const` of a place others may change (matching.rs
     /// `let_pat`): bindings by reference take owned shares instead (pattern.rs).
     stable_binds: bool,
@@ -711,6 +697,14 @@ struct FnLower<'c, 'h> {
     /// The body of a function of a user module or of std/proxy: its operations on `any` throw
     /// what a proxy's trap throws, as velt_sema counts them (proxy_throws.rs).
     proxy_routes: bool,
+    /// While a `finally` block is lowered, the number of scopes outside it: a `try` among them
+    /// does not enclose its code (any_not_fn.rs).
+    finally_floor: usize,
+    /// The held bases of the assignment target being formed, by the address of their HIR
+    /// expression (index_order.rs `target_base`).
+    held_targets: Vec<(usize, Operand)>,
+    /// The body of a function of a user module (not the standard library's).
+    user_body: bool,
     /// How many objects are being built from a record's or object's members around this
     /// conversion (`any_record_fill`, `any_object_fill`): a member is filled the same way up to
     /// `any_record::FILL_DEPTH` deep, so a type that contains itself ends.

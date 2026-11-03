@@ -11,6 +11,7 @@ import { TcpStream } from "velt/net";
 import { AbortController, AbortSignal } from "velt/task";
 import { FieldList } from "velt/net/http/h2";
 import { RequestFields } from "./validate";
+import { copyBytes } from "../bytes";
 
 // States (RFC 9113 §5.1). A stream the server knows is open or half-closed; an idle one has no
 // object, a closed one is forgotten.
@@ -195,10 +196,10 @@ export class H2Stream {
         size *= 2;
       }
       const grown: u8[] = Buffer.alloc(size as usize);
-      this.out.copy(grown, 0, 0, this.outEnd);
+      copyBytes(this.out, grown, 0, 0, this.outEnd);
       this.out = grown;
     }
-    src.copy(this.out, this.outEnd, start, end);
+    copyBytes(src, this.out, this.outEnd, start, end);
     this.outEnd += n;
   }
 

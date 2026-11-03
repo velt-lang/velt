@@ -1,0 +1,238 @@
+// A field of a new value is the request's own only while nothing stores a value that is not
+// new in it (#854): each handler here changes a list that holds the captured `app`'s
+// `plugins`, put there by the constructor, by a later assignment, by a method, or by a
+// literal, so each change would go to a per-request copy and is an error. So is an interface
+// method an object literal implements that changes the captured value through the new object
+// (`lit.render(c)` doing `c.app.plugins.push`), next to a class implementation that does not,
+// and one a literal or a class alone implements (the call does not borrow `c` mutably: it only
+// reads `c.app` to change what it points to). A call whose methods are not all known reports
+// too: an interface converted from `any`, a literal storing a parameter (a generic factory), a
+// literal whose method is replaced later, and a literal a factory in another module builds,
+// each through an interface of its own. The same shapes with
+// a field only ever set to `[]` compile (std/http_server/handler_new_ctx_own_list).
+import { serve } from "http-server";
+import { Box, BoxCtx, makeRunner } from "./_own_field_fed_lib";
+
+class App {
+  name: string = "app";
+  plugins: string[] = ["a"];
+}
+
+class FromCtor {
+  app: App;
+  out: string[];
+  constructor(app: App) {
+    this.app = app;
+    this.out = app.plugins;
+  }
+}
+
+class Assigned {
+  app: App;
+  list: string[] = [];
+  constructor(app: App) {
+    this.app = app;
+  }
+}
+
+class ByMethod {
+  app: App;
+  items: string[] = [];
+  constructor(app: App) {
+    this.app = app;
+  }
+  use(): void {
+    this.items = this.app.plugins;
+  }
+  emit(s: string): void {
+    this.items.push(s);
+  }
+}
+
+class Holder {
+  app: App;
+  out: string[] = [];
+  constructor(app: App) {
+    this.app = app;
+  }
+}
+
+interface Plugin {
+  render(c: Holder): void;
+}
+
+class Quiet implements Plugin {
+  render(c: Holder): void {
+    c.out.push("q");
+  }
+}
+
+const quiet: Plugin = new Quiet();
+const lit: Plugin = {
+  render(c: Holder): void {
+    c.app.plugins.push("l");
+  },
+};
+
+interface Hook {
+  run(c: Holder): void;
+}
+
+const onlyLit: Hook = {
+  run(c: Holder): void {
+    c.app.plugins.push("o");
+  },
+};
+
+interface Tap {
+  tap(c: Holder): void;
+}
+
+class Tapper implements Tap {
+  tap(c: Holder): void {
+    c.app.plugins.push("t");
+  }
+}
+
+const tapper: Tap = new Tapper();
+
+interface PA {
+  render(c: Holder): void;
+}
+
+class QuietA implements PA {
+  render(c: Holder): void {
+    console.log(c.out.length);
+  }
+}
+
+const quietA: PA = new QuietA();
+const rawAny: any = {
+  render(c: Holder): void {
+    c.app.plugins.push("a");
+  },
+};
+const fromAny: PA = rawAny as PA;
+
+interface PB {
+  render(c: Holder): void;
+}
+
+function mkG(f: (c: Holder) => void): PB {
+  return { render: f };
+}
+
+const generic: PB = mkG((c: Holder) => {
+  c.app.plugins.push("g");
+});
+
+interface PC {
+  render(c: Holder): void;
+}
+
+const laterObj = {
+  render: (c: Holder): void => {
+    c.out.push("x");
+  },
+};
+
+function replaceLater(): void {
+  laterObj.render = (c: Holder): void => {
+    c.app.plugins.push("l");
+  };
+}
+
+const later: PC = laterObj;
+
+const runner = makeRunner();
+
+function fromCtor(app: App): string {
+  const c = new FromCtor(app);
+  c.out.push("x");
+  return "";
+}
+
+function assigned(app: App): string {
+  const c = new Assigned(app);
+  c.list = app.plugins;
+  c.list.push("x");
+  return "";
+}
+
+function byMethod(app: App): string {
+  const c = new ByMethod(app);
+  c.use();
+  c.emit("x");
+  return "";
+}
+
+function literal(app: App): string {
+  const st = { app, buf: app.plugins };
+  st.buf.push("x");
+  return "";
+}
+
+async function main() {
+  const a1 = new App();
+  const s1 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(fromCtor(a1));
+  });
+  const a2 = new App();
+  const s2 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(assigned(a2));
+  });
+  const a3 = new App();
+  const s3 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(byMethod(a3));
+  });
+  const a4 = new App();
+  const s4 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(literal(a4));
+  });
+  const a5 = new App();
+  const s5 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new Holder(a5);
+    lit.render(c);
+    return new Response("ok");
+  });
+  const a6 = new App();
+  const s6 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new Holder(a6);
+    onlyLit.run(c);
+    return new Response("ok");
+  });
+  const a7 = new App();
+  const s7 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new Holder(a7);
+    tapper.tap(c);
+    return new Response("ok");
+  });
+  const a8 = new App();
+  const s8 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new Holder(a8);
+    fromAny.render(c);
+    return new Response("ok");
+  });
+  const a9 = new App();
+  const s9 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new Holder(a9);
+    generic.render(c);
+    return new Response("ok");
+  });
+  replaceLater();
+  const a10 = new App();
+  const s10 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new Holder(a10);
+    later.render(c);
+    return new Response("ok");
+  });
+  const box = new Box();
+  const s11 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new BoxCtx(box);
+    runner.run(c);
+    return new Response("ok");
+  });
+  for (const x of [s1, s2, s3, s4, s5, s6, s7, s8, s9, s10, s11]) {
+    await x.shutdown();
+  }
+}

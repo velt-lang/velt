@@ -1,0 +1,38 @@
+// http-server (internal): copying into the server's own buffers. `u8[]`'s `set`, `copy` and
+// `write` throw a `RangeError` for an offset out of range, since their offsets usually come from
+// outside a program; the server makes room before it copies, so an offset out of range here is
+// a bug in the server: these forms stop the program instead, and the functions calling them
+// keep their error types.
+
+/** `d.set(src, offset)`. */
+export function setBytes(d: u8[], src: u8[], offset: usize) {
+  try {
+    d.set(src, offset as number);
+  } catch (e) {
+    panic(`ICE: http-server: ${e.message}`);
+  }
+}
+
+/** `src.copy(target, targetStart, sourceStart, sourceEnd)`. */
+export function copyBytes(
+  src: u8[],
+  target: u8[],
+  targetStart: i64 = 0,
+  sourceStart: i64 = 0,
+  sourceEnd: i64 = 9223372036854775807,
+): i64 {
+  try {
+    return src.copy(target, targetStart as number, sourceStart as number, sourceEnd as number);
+  } catch (e) {
+    panic(`ICE: http-server: ${e.message}`);
+  }
+}
+
+/** `d.write(s, offset)`. */
+export function writeUtf8(d: u8[], s: string, offset: usize = 0): usize {
+  try {
+    return d.write(s, offset as number);
+  } catch (e) {
+    panic(`ICE: http-server: ${e.message}`);
+  }
+}

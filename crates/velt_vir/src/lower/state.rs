@@ -86,6 +86,10 @@ pub(super) enum ScopeKind {
     /// `Uncaught …` and ends the process with 1, as Node stops at an error thrown while it
     /// evaluates a module (module_state.rs).
     Uncaught,
+    /// Inside a `try` body whose `catch` takes nothing (its variable is `never`): Node's
+    /// `TypeError` for a call through `any` stops here rather than skip this `catch` for an
+    /// outer one (any_not_fn.rs).
+    CatchesNothing,
 }
 
 pub(super) struct Scope {

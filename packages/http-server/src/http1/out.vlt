@@ -3,6 +3,7 @@
 // write (`Http1Response.flush`). Also the encoding of a chunked body's framing.
 
 import { checkField } from "../fields";
+import { copyBytes, setBytes, writeUtf8 } from "../bytes";
 
 const CR: u8 = 13;
 const LF: u8 = 10;
@@ -24,7 +25,7 @@ export class Out {
       size *= 2;
     }
     const grown: u8[] = Buffer.alloc(size as usize);
-    grown.set(this.buf.slice(0, this.length), 0);
+    setBytes(grown, this.buf.slice(0, this.length), 0);
     this.buf = grown;
   }
 
@@ -36,7 +37,7 @@ export class Out {
   /// The UTF-8 bytes of `s`, `n` of them (`Buffer.byteLength(s)`).
   textOf(s: string, n: i64) {
     this.reserve(n);
-    this.buf.write(s, this.length as usize);
+    writeUtf8(this.buf, s, this.length as usize);
     this.length += n;
   }
 
@@ -44,14 +45,14 @@ export class Out {
   bytes(b: u8[]) {
     const n = b.length as i64;
     this.reserve(n);
-    this.buf.set(b, this.length as usize);
+    setBytes(this.buf, b, this.length as usize);
     this.length += n;
   }
 
   /// The first `n` bytes of `b`.
   bytesOf(b: u8[], n: i64) {
     this.reserve(n);
-    b.copy(this.buf, this.length, 0, n);
+    copyBytes(b, this.buf, this.length, 0, n);
     this.length += n;
   }
 

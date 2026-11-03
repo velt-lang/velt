@@ -8,6 +8,7 @@
 // way; the methods here are for the headers.
 
 import { u8x16 } from "velt/simd";
+import { setBytes } from "velt/lang/bytes/copy";
 
 /**
  * Zero bytes kept after the input. A step of the command loop starts at most 8 bytes past the
@@ -102,7 +103,7 @@ export class Bits {
     const drop = this.avail - keep;
     if (keep + chunk.length + PAD > this.buf.length) {
       const grown = Buffer.alloc(2 * (keep + chunk.length) + PAD);
-      grown.set(this.buf.slice(drop as i64, this.avail as i64));
+      setBytes(grown, this.buf.slice(drop as i64, this.avail as i64), 0);
       this.buf = grown;
     } else if (drop > 0) {
       // Bytes past the input must stay zero: clear what the move leaves behind.
@@ -111,7 +112,7 @@ export class Bits {
     }
     this.pos -= drop;
     this.avail = keep;
-    this.buf.set(chunk, this.avail);
+    setBytes(this.buf, chunk, this.avail);
     this.avail += chunk.length;
   }
 }

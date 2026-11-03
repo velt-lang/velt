@@ -1,0 +1,28 @@
+caught TypeError
+true o.missing is not a function TypeError: o.missing is not a function
+bare catch
+unused
+TypeError: f is not a function called TypeError: f is not a function
+caught TypeError o.missing is not a function
+caught true TypeError: o.a is not a function
+optional call of nothing: no call
+caught o.a is not a function
+inner finally
+record: TypeError
+module value: g is not a function
+narrowed f is not a function
+kept TypeError f is not a function
+cast 19 TypeError
+annotated f is not a function
+returns o.run is not a function
+-1
+go: o.go is not a function
+wrapped: f is not a function
+finally TypeError
+done
+arr[0] is not a function
+o[key] is not a function
+arr[-1] is not a function
+o.b is not a function
+arr[1e+21] is not a function
+arr[0] is not a function

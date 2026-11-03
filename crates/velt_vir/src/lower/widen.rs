@@ -83,7 +83,7 @@ impl FnLower<'_, '_> {
     }
 
     /// The variant of union `u` that holds `any` / `unknown`, if one does.
-    fn dynamic_member(&mut self, u: TyId) -> Option<u32> {
+    pub(super) fn dynamic_member(&mut self, u: TyId) -> Option<u32> {
         let n = self.union_len(u);
         (0..n).find(|&k| {
             let p = self.cx.variant_tys(u, k)[0];

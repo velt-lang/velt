@@ -2,6 +2,7 @@
 // that arrives in pieces (std/encoding/utf8). Public APIs only, as a package would write them.
 
 import { validPrefix } from "velt/encoding/utf8";
+import { writeUtf8 } from "velt/lang/bytes/copy";
 
 /**
  * How many of the bytes in [start, end) are well-formed UTF-8: all of them, fewer when they end
@@ -37,7 +38,7 @@ function relative(i: i64, n: usize): usize {
 
 /** Copies the UTF-8 bytes of `s` to `dst[offset..]` (they must fit). */
 export function setText(dst: u8[], s: string, offset: i64) {
-  if (dst.write(s, offset as usize) != Buffer.byteLength(s)) {
+  if (writeUtf8(dst, s, offset as usize) != Buffer.byteLength(s)) {
     panic("internal error: a WebSocket frame was sized wrong");
   }
 }

@@ -30,6 +30,7 @@ import {
   VIEW_EMPTY_TEXT,
   VIEW_SIZE,
 } from "velt/lang/hooks/keys";
+import { setBytes } from "velt/lang/bytes/copy";
 
 /**
  * An array of 8-bit unsigned integers (bytes) in an `ArrayBuffer` (JS `Uint8Array`): `new Uint8Array(n)` (`n` zeros),
@@ -464,9 +465,9 @@ export class Uint8Array extends TypedArray implements Iterable<number> {
         const o = src.off as i64;
         this.buf.bytes.copyWithin(to as i64, o, o + ((n * 1) as i64));
       } else if (src.off == 0 && src.len * 1 == (src.buf.bytes.length as usize)) {
-        this.buf.bytes.set(src.buf.bytes, to);
+        setBytes(this.buf.bytes, src.buf.bytes, to);
       } else {
-        this.buf.bytes.set(src.bytesCopy(), to);
+        setBytes(this.buf.bytes, src.bytesCopy(), to);
       }
       return;
     }

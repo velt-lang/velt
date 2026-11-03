@@ -1,0 +1,91 @@
+// velt/lang/bytes (internal): copying into byte arrays at positions the standard library
+// computed itself. `u8[]`'s `set`, `copy` and `write` throw a `RangeError` for an offset out of
+// range, as Node does, since their offsets usually come from outside the program (the standard
+// library's conventions, https://veltlang.com/docs/std/); std's own buffers (a protocol's read and write buffers, a decoder's output)
+// make room before they copy, so an offset out of range there is a bug in std: these forms panic
+// instead, and the functions calling them keep their error types.
+
+import { strByteLen } from "velt/lang/intrinsics";
+import { copyText, replaceLoneSurrogates, writeText } from "velt/lang/bytes/text";
+
+declare function velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool;
+declare function velt_rt_bytes_copy(
+  dst: u8[],
+  src: u8[],
+  targetStart: i64,
+  sourceStart: i64,
+  sourceEnd: i64,
+): i64;
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
+
+/**
+ * `d.set(src, offset)`: copies `src` into `d` from `offset` (it fits; a panic otherwise). 16 to
+ * 64 bytes (a digest, a key, a header) are two or four 16-byte chunks, the last ones ending at
+ * `src`'s end (they overlap the first when `n` is not a multiple of 16), with no call into the
+ * runtime.
+ */
+export function setBytes(d: u8[], src: u8[], offset: usize) {
+  const n = src.length;
+  if (n >= 16 && n <= 64 && offset <= d.length && n <= d.length - offset) {
+    const at = offset as u64;
+    const last = (n - 16) as u64;
+    if (n <= 32) {
+      const a = velt_simd_u8x16_load(src, 0);
+      const b = velt_simd_u8x16_load(src, last);
+      velt_simd_u8x16_store(a, d, at);
+      velt_simd_u8x16_store(b, d, at + last);
+    } else {
+      const a = velt_simd_u8x16_load(src, 0);
+      const b = velt_simd_u8x16_load(src, 16);
+      const c = velt_simd_u8x16_load(src, last - 16);
+      const e = velt_simd_u8x16_load(src, last);
+      velt_simd_u8x16_store(a, d, at);
+      velt_simd_u8x16_store(b, d, at + 16);
+      velt_simd_u8x16_store(c, d, at + last - 16);
+      velt_simd_u8x16_store(e, d, at + last);
+    }
+    return;
+  }
+  if (!velt_rt_bytes_set(d, src, offset as u64)) {
+    panic("RangeError: offset is out of bounds");
+  }
+}
+
+/**
+ * `src.copy(target, targetStart, sourceStart, sourceEnd)`: the bytes in [sourceStart,
+ * sourceEnd) of `src` into `target` at `targetStart`, as many as fit; returns their number. A
+ * negative position or a `sourceStart` past the end panics.
+ */
+export function copyBytes(
+  src: u8[],
+  target: u8[],
+  targetStart: i64 = 0,
+  sourceStart: i64 = 0,
+  sourceEnd: i64 = 9223372036854775807,
+): i64 {
+  const n = velt_rt_bytes_copy(target, src, targetStart, sourceStart, sourceEnd);
+  if (n < 0) {
+    panic("RangeError: copy: a position is out of range");
+  }
+  return n;
+}
+
+/**
+ * `d.write(s, offset)`: the UTF-8 bytes of `s` into `d` from `offset`, the whole characters that
+ * fit (a lone surrogate as U+FFFD); returns how many bytes were written. An `offset` past the end
+ * panics.
+ */
+export function writeUtf8(d: u8[], s: string, offset: usize = 0): usize {
+  const n = strByteLen(s);
+  if (offset <= d.length && n <= d.length - offset) {
+    if (copyText(d, s, offset, n)) {
+      replaceLoneSurrogates(d, offset, n);
+    }
+    return n;
+  }
+  if (offset > d.length) {
+    panic("RangeError: offset is out of bounds");
+  }
+  return writeText(d, s, offset, n);
+}

@@ -1,0 +1,26 @@
+// A handler may change what a captured factory's method makes (#854): `fac.make()` returns a new
+// object, so `c.n++` changes nothing captured.
+import { serve } from "http-server";
+
+class Ctx {
+  n: number = 0;
+}
+
+class Factory {
+  made: number = 0;
+  make(): Ctx {
+    return new Ctx();
+  }
+}
+
+async function main() {
+  const fac = new Factory();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = fac.make();
+    c.n++;
+    return new Response(`${c.n} ${fac.made}`);
+  });
+  const r = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await r.text());
+  await server.shutdown();
+}

@@ -13,6 +13,7 @@ import { mask8x16, u8x16 } from "velt/simd";
 import { BadRequest } from "./bad_request";
 import { isTchar } from "../fields";
 import { BODY_BUFFERED, BODY_CHUNKED, BODY_LENGTH, BODY_NONE, Head } from "./head";
+import { setBytes } from "../bytes";
 
 const CR: u8 = 13;
 const LF: u8 = 10;
@@ -58,7 +59,7 @@ function byteClasses(): u8[] {
 /// The lowercase name `s` (at most 16 bytes) as a vector, for `HeadParser`'s compares.
 function nameVector(s: string): u8x16 {
   const b: u8[] = Buffer.alloc(16);
-  b.set(utf8Encode(s), 0);
+  setBytes(b, utf8Encode(s), 0);
   return u8x16.load(b, 0);
 }
 

@@ -10,20 +10,14 @@
 
 import { strByteLen } from "velt/lang/intrinsics";
 import { indexOfByte, xorMaskRange } from "velt/lang/bytes/search";
-import {
-  byteLengthIn,
-  copyText,
-  replaceLoneSurrogates,
-  textEquals,
-  writeText,
-} from "velt/lang/bytes/text";
+import { byteLengthIn, received, textEquals } from "velt/lang/bytes/text";
+import { setBytes, writeUtf8 } from "velt/lang/bytes/copy";
 
 // Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
 
 declare function velt_rt_bytes_zeroed(n: u64): u8[];
 declare function velt_rt_bytes_uninit(n: u64): u8[];
 declare function velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64;
-declare function velt_rt_bytes_set(dst: u8[], src: u8[], offset: u64): bool;
 declare function velt_rt_bytes_copy(
   dst: u8[],
   src: u8[],
@@ -36,8 +30,6 @@ declare function velt_rt_bytes_fill(b: u8[], byte: u8, start: i64, end: i64);
 declare function velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[];
 declare function velt_rt_bytes_concat(a: u8[], b: u8[]): u8[];
 declare function velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string;
-declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
-declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
 declare function velt_simd_mask8x16_first(m: mask8x16): u64;
 
 // Position `i` in an array of `n` elements as JS reads it: a negative one counts from the end,
@@ -57,6 +49,34 @@ function clamped(i: i64, n: usize): usize {
     return 0;
   }
   return (i as usize) < n ? i as usize : n;
+}
+
+// `write`'s `offset` that is not a whole number from 0 to `n` (cold): Node's
+// `ERR_OUT_OF_RANGE` message.
+function writeOutOfRange(offset: number, n: usize): never {
+  const must = Number.isInteger(offset) ? `>= 0 && <= ${n}` : "an integer";
+  throw new RangeError(
+    `The value of "offset" is out of range. It must be ${must}. Received ${received(offset)}`,
+  );
+}
+
+// A position of `copy` as Node reads it (its `toInteger`): a whole number as it is, a fraction
+// rounded down, `NaN` and a number beyond the safe integers 0.
+function copyPosition(n: number): number {
+  if (Number.isInteger(n)) {
+    return n;
+  }
+  if (Number.isNaN(n) || n < -9007199254740991 || n > 9007199254740991) {
+    return 0;
+  }
+  return Math.floor(n);
+}
+
+// `copy`'s position `name` out of range (cold): Node's `ERR_OUT_OF_RANGE` message.
+function copyOutOfRange(name: string, must: string, n: number): never {
+  throw new RangeError(
+    `The value of "${name}" is out of range. It must be ${must}. Received ${received(n)}`,
+  );
 }
 
 /** Node's `Buffer` constructors (static only; buffers are `u8[]`). */
@@ -111,57 +131,54 @@ extend Array<u8> {
   }
 
   /**
-   * Copies `src` into this array starting at `offset` (JS `typedArray.set(src, offset)`); the
-   * array does not grow, so `src` must fit (panics with a RangeError otherwise, as JS throws).
+   * Copies `src` into this array starting at `offset` (JS `typedArray.set(src, offset)`, which
+   * reads `offset` as an integer: a fraction is truncated, `NaN` is 0); the array does not grow,
+   * so `src` must fit: throws a `RangeError` otherwise (a negative or infinite `offset` too), as
+   * JS does.
    */
-  set(src: u8[], offset: usize = 0) {
-    // 16 to 64 bytes (a digest, a key, a header): two or four 16-byte chunks, the last ones
-    // ending at `src`'s end (they overlap the first when `n` is not a multiple of 16), with no
-    // call into the runtime.
-    const n = src.length;
-    if (n >= 16 && n <= 64 && offset <= this.length && n <= this.length - offset) {
-      const at = offset as u64;
-      const last = (n - 16) as u64;
-      if (n <= 32) {
-        const a = velt_simd_u8x16_load(src, 0);
-        const b = velt_simd_u8x16_load(src, last);
-        velt_simd_u8x16_store(a, this, at);
-        velt_simd_u8x16_store(b, this, at + last);
-      } else {
-        const a = velt_simd_u8x16_load(src, 0);
-        const b = velt_simd_u8x16_load(src, 16);
-        const c = velt_simd_u8x16_load(src, last - 16);
-        const d = velt_simd_u8x16_load(src, last);
-        velt_simd_u8x16_store(a, this, at);
-        velt_simd_u8x16_store(b, this, at + 16);
-        velt_simd_u8x16_store(c, this, at + last - 16);
-        velt_simd_u8x16_store(d, this, at + last);
-      }
-      return;
+  set(src: u8[], offset: number = 0) {
+    const at = Number.isNaN(offset) ? 0 : Math.trunc(offset);
+    const n = this.length as number;
+    if (!(at >= 0 && at <= n && (src.length as number) <= n - at)) {
+      throw new RangeError("offset is out of bounds");
     }
-    if (!velt_rt_bytes_set(this, src, offset as u64)) {
-      panic("RangeError: offset is out of bounds");
-    }
+    setBytes(this, src, at as usize);
   }
 
   /**
    * Copies the bytes in [sourceStart, sourceEnd) of this array into `target` at `targetStart`,
    * as Node's `buf.copy(target, targetStart, sourceStart, sourceEnd)`: as many as fit there, and
-   * returns their number; `sourceEnd` past the end is the end. A RangeError panic for a negative
-   * position or a `sourceStart` past the end, as Node throws. One copy, no intermediate array:
-   * moving bytes between a protocol's buffers (within one array, `copyWithin`).
+   * returns their number; `sourceEnd` past the end is the end. Positions are read as Node reads
+   * them (a fraction rounded down, `NaN` 0), and a negative one or a `sourceStart` past the end
+   * throws a `RangeError` with Node's message. One copy, no intermediate array: moving bytes
+   * between a protocol's buffers (within one array, `copyWithin`).
    */
-  copy(
-    target: u8[],
-    targetStart: i64 = 0,
-    sourceStart: i64 = 0,
-    sourceEnd: i64 = 9223372036854775807,
-  ): i64 {
-    const n = velt_rt_bytes_copy(target, this, targetStart, sourceStart, sourceEnd);
-    if (n < 0) {
-      panic("RangeError: copy: a position is out of range");
+  copy(target: u8[], targetStart: number = 0, sourceStart: number = 0, sourceEnd?: number): i64 {
+    const n = this.length;
+    const ts = copyPosition(targetStart);
+    if (ts < 0) {
+      copyOutOfRange("targetStart", ">= 0", ts);
     }
-    return n;
+    const ss = copyPosition(sourceStart);
+    if (ss < 0 || ss > (n as number)) {
+      copyOutOfRange("sourceStart", `>= 0 && <= ${n}`, ss);
+    }
+    let se = n as number;
+    if (sourceEnd != null) {
+      se = copyPosition(sourceEnd);
+      if (se < 0) {
+        copyOutOfRange("sourceEnd", ">= 0", se);
+      }
+    }
+    // Past `i64`'s range is past any array's end.
+    const big = 9.2e18;
+    return velt_rt_bytes_copy(
+      target,
+      this,
+      ts > big ? 9223372036854775807 : ts as i64,
+      ss as i64,
+      se > big ? 9223372036854775807 : se as i64,
+    );
   }
 
   /** Copies the bytes in [start, end) to position `target` (JS `copyWithin`; overlap is fine). */
@@ -190,20 +207,16 @@ extend Array<u8> {
   /**
    * Writes the UTF-8 bytes of `s` at `offset` and returns how many were written, as Node's
    * `buf.write(s, offset)`: the array does not grow, so only the whole characters that fit are
-   * written (a lone surrogate as U+FFFD). Panics with a RangeError when `offset` is past the
-   * end, as Node throws. One copy, no intermediate array.
+   * written (a lone surrogate as U+FFFD). Throws a `RangeError` with Node's message when
+   * `offset` is not a whole number from 0 to the array's length. One copy, no intermediate
+   * array.
    */
-  write(s: string, offset: usize = 0): usize {
-    const n = strByteLen(s);
-    // Room for all of it (the usual case): one pass, and a second only over text holding a
-    // byte `ED` (never ASCII).
-    if (offset <= this.length && n <= this.length - offset) {
-      if (copyText(this, s, offset, n)) {
-        replaceLoneSurrogates(this, offset, n);
-      }
-      return n;
+  write(s: string, offset: number = 0): usize {
+    // Also false for `NaN`.
+    if (!(offset >= 0 && offset <= (this.length as number) && Number.isInteger(offset))) {
+      writeOutOfRange(offset, this.length);
     }
-    return writeText(this, s, offset, n);
+    return writeUtf8(this, s, offset as usize);
   }
 
   /**

@@ -55,6 +55,22 @@ pub(crate) struct ObjectImpls {
     /// The setters of fields read and written as a plain assignment converts them
     /// (`Ctx::assign_setter`).
     pub assign_setters: FxHashSet<DefId>,
+    /// The functions made for the implementations (their methods, accessors, the closures in
+    /// them, and those of the implementations they convert through): an implementation made
+    /// inside a check that is rolled back (`Ctx::assigns` tries a conversion) stays, so its
+    /// functions stay too (`body::recheck`).
+    kept_fns: FxHashSet<DefId>,
+    /// The checks deferred while making them (`Ctx::throw_checks`, `Ctx::fresh_checks`), set
+    /// aside so that a rollback keeps them with the functions; run with the others.
+    pub(crate) throw_checks: Vec<crate::throws::ThrowCheck>,
+    pub(crate) fresh_checks: Vec<crate::fresh_returns::FreshCheck>,
+}
+
+impl ObjectImpls {
+    /// Is `d` a function of an implementation made for an object type?
+    pub(crate) fn keeps(&self, d: DefId) -> bool {
+        !self.kept_fns.is_empty() && self.kept_fns.contains(&d)
+    }
 }
 
 /// What fills one slot of the implementation.
@@ -259,9 +275,26 @@ impl Ctx<'_> {
         if let Some(made) = self.object_impls.made.get(&key) {
             return *made;
         }
+        let (fns, throws, fresh) = (
+            self.fn_defs.len(),
+            self.throw_checks.len(),
+            self.fresh_checks.len(),
+        );
         let made = self
             .object_impl_plan(d, self_ty, iface, args, dynamic)
             .map(|(plan, setters)| self.build_object_impl(d, self_ty, iface, args, plan, setters));
+        if made.is_some() {
+            let new = self.fn_defs.get(fns..).unwrap_or_default().to_vec();
+            self.object_impls.kept_fns.extend(new);
+            let throws = self
+                .throw_checks
+                .split_off(throws.min(self.throw_checks.len()));
+            self.object_impls.throw_checks.extend(throws);
+            let fresh = self
+                .fresh_checks
+                .split_off(fresh.min(self.fresh_checks.len()));
+            self.object_impls.fresh_checks.extend(fresh);
+        }
         self.object_impls.made.insert(key, made);
         made
     }
@@ -578,24 +611,49 @@ pub(crate) fn make_dynamic_object_impls(cx: &mut Ctx) {
             cx.note_dyn_object_target(t);
         }
     }
-    let targets = std::mem::take(&mut cx.object_impls.targets);
-    if targets.is_empty() {
-        return;
+    // The implementations made convert values themselves: a method whose function returns an
+    // `any` converts its result to the interface's result type (`mk(): L3` filled by
+    // `mk() { return inner(); }`), a new target, and an object literal they hold may be a new
+    // source. Each pair is made once, until no new ones appear (#1952). A target whose type
+    // arguments grew without end (`next(): N<T[]>` in `N<T>` makes `N<number[]>`, then
+    // `N<number[][]>`, ...) is not made, as such a source is not (`note_dyn_object_source`):
+    // converting to it stays a `TypeError`.
+    let mut targets: Vec<(DefId, Vec<TyId>)> = vec![];
+    let mut done: FxHashSet<(TyId, DefId, Vec<TyId>)> = FxHashSet::default();
+    loop {
+        for t in std::mem::take(&mut cx.object_impls.targets) {
+            if !targets.contains(&t) && !cx.ty.args_too_deep(&t.1) {
+                targets.push(t);
+            }
+        }
+        let sources = cx.object_impls.sources.clone();
+        let mut made_any = false;
+        for t in sources {
+            for (iface, args) in targets.clone() {
+                if done.insert((t, iface, args.clone())) {
+                    made_any = true;
+                    dynamic_object_impl(cx, t, iface, &args);
+                }
+            }
+        }
+        if !made_any {
+            return;
+        }
     }
-    let sources = cx.object_impls.sources.clone();
-    for t in sources {
-        for (iface, args) in &targets {
-            match cx.ty.kind(t).clone() {
-                TyKind::Dyn(have, from) => {
-                    if have != *iface && cx.iface_upcast((have, &from), (*iface, args)) {
-                        cx.generic_called.upcasts.insert((have, *iface));
-                    }
-                }
-                _ => {
-                    if cx.object_iface_impl(t, *iface, args).is_none() {
-                        cx.object_iface_impl_of(t, *iface, args, true);
-                    }
-                }
+}
+
+/// The implementation of `iface<args>` for the object type (or literal interface value) `t`
+/// held by an `any`, when it fits ([`make_dynamic_object_impls`]).
+fn dynamic_object_impl(cx: &mut Ctx, t: TyId, iface: DefId, args: &[TyId]) {
+    match cx.ty.kind(t).clone() {
+        TyKind::Dyn(have, from) => {
+            if have != iface && cx.iface_upcast((have, &from), (iface, args)) {
+                cx.generic_called.upcasts.insert((have, iface));
+            }
+        }
+        _ => {
+            if cx.object_iface_impl(t, iface, args).is_none() {
+                cx.object_iface_impl_of(t, iface, args, true);
             }
         }
     }

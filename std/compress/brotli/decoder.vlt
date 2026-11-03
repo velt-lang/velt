@@ -28,6 +28,7 @@ import {
 } from "velt/compress/brotli/cursor";
 import { State } from "velt/compress/brotli/state";
 import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { setBytes } from "velt/lang/bytes/copy";
 
 /** `run` stopped because the output reached its limit. */
 export const FULL: i64 = 0;
@@ -246,7 +247,7 @@ export class Decoder {
       }
       const grown: u8[] = arrayWithCapacity(size);
       arraySetLen(grown, size);
-      grown.set(s.out);
+      setBytes(grown, s.out, 0);
       s.out = grown;
     }
     return end;

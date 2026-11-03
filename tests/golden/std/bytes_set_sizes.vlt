@@ -19,7 +19,7 @@ function main() {
       for (let i: usize = 0; i < n; i++) {
         want[at + i] = src[i];
       }
-      dst.set(src, at);
+      dst.set(src, at as number);
       for (let i: usize = 0; i < 110; i++) {
         if (dst[i] != want[i]) {
           console.log("mismatch", n, offset, i, dst[i], want[i]);
@@ -36,5 +36,9 @@ function main() {
   console.log(full.join(","));
   // One byte past the end: a RangeError, also for a fast-path size.
   const small: u8[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-  small.set(twenty, 1);
+  try {
+    small.set(twenty, 1);
+  } catch (e) {
+    console.log(e instanceof RangeError, e.message, small[0]);
+  }
 }

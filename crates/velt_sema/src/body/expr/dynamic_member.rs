@@ -372,6 +372,7 @@ impl FnCx<'_, '_> {
             return Ok(self.error_expr(span));
         };
         all.extend(boxed);
+        self.note_any_call();
         Ok(self.intrinsic(Intrinsic::AnyCall, all, any, span))
     }
 
@@ -554,6 +555,7 @@ impl FnCx<'_, '_> {
             return Ok(self.error_expr(span));
         };
         all.extend(boxed);
+        self.note_any_call();
         Ok(self.intrinsic(Intrinsic::AnyApply, all, any, span))
     }
 
@@ -590,23 +592,54 @@ impl FnCx<'_, '_> {
         Some(out)
     }
 
-    /// How a `TypeError` names the callee `h` (`f`, `o.f`), as Node does.
-    fn callee_text(&self, h: &hir::Expr) -> String {
+    /// How a `TypeError` names the callee `h` (`f`, `o.f`, `a[0]`, `o[k]`), as Node does.
+    pub(crate) fn callee_text(&self, h: &hir::Expr) -> String {
+        self.value_text(h)
+            .unwrap_or_else(|| "the value".to_string())
+    }
+
+    /// [`callee_text`](Self::callee_text) of a variable, a literal or a member of one (`None`
+    /// for anything else, which Node prints as source text).
+    fn value_text(&self, h: &hir::Expr) -> Option<String> {
         match &h.kind {
-            H::Local(l, _) => self.f.locals[l.0 as usize].name.clone(),
-            H::Call {
-                callee: hir::Callee::Intrinsic(Intrinsic::AnyGet),
-                args,
-            } => match args.as_slice() {
-                [o, hir::Expr {
-                    kind: H::Lit(Lit::Str(k)),
-                    ..
-                }] => {
-                    format!("{}.{k}", self.callee_text(o))
+            H::Local(l, _) => match self.f.chain_texts.iter().find(|(c, _)| c == l) {
+                Some((_, text)) => Some(text.clone()),
+                // A temporary (`<chain@…>`) has no name in the source.
+                None => {
+                    Some(self.f.locals[l.0 as usize].name.clone()).filter(|n| !n.starts_with('<'))
                 }
-                _ => "the value".to_string(),
             },
-            _ => "the value".to_string(),
+            H::Global(d) => match self.cx.info.get(d.0 as usize) {
+                Some(crate::defs::DefInfo::Global(g)) => Some(g.name.clone()),
+                _ => None,
+            },
+            H::Lit(Lit::Int(n)) => Some(n.to_string()),
+            H::Lit(Lit::Float(f)) => Some(js_number(*f)),
+            H::Lit(Lit::Bool(b)) => Some(b.to_string()),
+            H::Unary {
+                op: hir::UnOp::Neg,
+                expr,
+            } => match self.value_text(expr)? {
+                zero if zero == "0" => Some(zero),
+                t => Some(format!("-{t}")),
+            },
+            H::Cast(x) => self.value_text(x),
+            H::Call {
+                callee: hir::Callee::Intrinsic(i @ (Intrinsic::AnyGet | Intrinsic::AnyIndex)),
+                args,
+            } => {
+                let [o, k] = args.as_slice() else {
+                    return None;
+                };
+                // A string key reads as a member, as Node prints it (`o["a"]`: `o.a`).
+                match &k.kind {
+                    H::Lit(Lit::Str(k)) if *i == Intrinsic::AnyGet => {
+                        Some(format!("{}.{k}", self.callee_text(o)))
+                    }
+                    _ => Some(format!("{}[{}]", self.value_text(o)?, self.value_text(k)?)),
+                }
+            }
+            _ => None,
         }
     }
 
@@ -690,3 +723,18 @@ const ARRAY_RESULTS: &[&str] = &[
     "toSpliced",
     "with",
 ];
+
+/// A non-negative number as JavaScript prints it (`String(n)`): `1e+21`, `1e-7`, `0.5`, `3`.
+fn js_number(f: f64) -> String {
+    if f == 0.0 {
+        return "0".into();
+    }
+    if !(1e-6..1e21).contains(&f.abs()) {
+        let t = format!("{f:e}");
+        return match t.split_once('e') {
+            Some((m, e)) if !e.starts_with('-') => format!("{m}e+{e}"),
+            _ => t,
+        };
+    }
+    f.to_string()
+}

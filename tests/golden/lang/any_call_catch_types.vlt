@@ -1,0 +1,267 @@
+// Calls through `any` inside a `try` leave the `catch` variable's type as the `try` body's
+// other errors make it (#1422): these programs compile and run as before. A `catch` whose
+// `try` throws nothing else keeps its `never` variable where a `TypeError` would type a use of
+// it differently (a rethrow, a use as another type).
+class HttpError extends Error {
+  status: number;
+  constructor(status: number) {
+    super("http " + status);
+    this.status = status;
+  }
+}
+
+function fetchish(f: any, fail: boolean): number {
+  try {
+    f();
+    if (fail) {
+      throw new HttpError(503);
+    }
+    return 0;
+  } catch (e) {
+    return e.status;
+  }
+}
+console.log(fetchish(() => 1, false), fetchish(() => 1, true));
+
+class Other {}
+function narrow(f: any): string {
+  try {
+    f();
+    throw new HttpError(404);
+  } catch (e) {
+    if (e instanceof HttpError) {
+      return "http " + e.status;
+    }
+    return "other";
+  }
+}
+console.log(narrow(() => 1));
+
+function text(f: any): string {
+  try {
+    f();
+    throw "plain";
+  } catch (e) {
+    return (e as string).toUpperCase();
+  }
+}
+console.log(text(() => 1));
+
+const cmp: any = (a: number, b: number) => a - b;
+const xs = [3, 1, 2];
+xs.sort((a, b) => {
+  try {
+    return cmp(a, b) as number;
+  } catch (e) {
+    throw e;
+  }
+});
+console.log(xs.join(","));
+const unused = new Other();
+console.log(unused instanceof Other);
+
+const ok: any = (a: number, b: number) => a - b;
+
+function rethrows(): number[] {
+  const xs = [3, 1, 2];
+  xs.sort((a, b) => {
+    try {
+      return ok(a, b) as number;
+    } catch (e) {
+      throw e;
+    }
+  });
+  return xs;
+}
+
+function asOther(): string {
+  try {
+    ok(1, 2);
+  } catch (e) {
+    const s: string = e;
+    return s;
+  }
+  return "no error";
+}
+
+function returned(): number {
+  try {
+    return ok(5, 2) as number;
+  } catch (e) {
+    return e;
+  }
+}
+
+function textLength(): number {
+  try {
+    ok(1, 1);
+  } catch (e) {
+    return e.message.length * 2;
+  }
+  return 0;
+}
+
+console.log(rethrows().join(","), asOther(), returned(), textLength());
+
+// A `catch` that ends the path at a `never` variable's use: what the `try` assigns stays
+// assigned after it.
+const inc: any = (n: number) => n + 1;
+function assigned(): number {
+  let x: number;
+  try {
+    x = inc(1) as number;
+  } catch (e) {
+    console.log(e.message);
+  }
+  return x;
+}
+class Num {
+  n: number = 1;
+}
+function assignedObject(): number {
+  const p: Num | null = new Num();
+  let q: Num;
+  try {
+    inc(1);
+    q = p!;
+  } catch (e) {
+    console.log(e.message);
+  }
+  const r = q;
+  return r.n;
+}
+console.log(assigned(), assignedObject());
+
+// A catch that uses the error only in a shorthand property (`{ e }`) uses it: it keeps `never`.
+const errs: { e: Error }[] = [];
+function shorthand(): string {
+  let result: string;
+  try {
+    result = "v" + (inc(1) as number);
+  } catch (e) {
+    errs.push({ e });
+  }
+  return result;
+}
+function shorthandTyped(): string {
+  try {
+    inc(1);
+  } catch (e) {
+    const o: { e: number } = { e };
+    console.log(o.e);
+  }
+  return "ok";
+}
+console.log(shorthand(), errs.length, shorthandTyped());
+
+// A `catch` whose body would check differently with a `TypeError` variable than with a `never`
+// one (whose first use ends the path) keeps `never`: code after the use that reads a `let` the
+// `try` may leave unassigned, a `try` body that never ends, a `break` past an assignment, a
+// returned value of an inferred result type, a `let` without a value, an assignment in the
+// `try` the code after it reads, a `continue`, a rethrow. (`narrowsParam` takes the
+// `TypeError`: a parameter is always assigned, and its body checks the same either way.)
+function readsLet(): number {
+  let y: number;
+  try {
+    inc(1);
+  } catch (e) {
+    console.log((e as Error).message);
+    console.log(y);
+  }
+  y = 1;
+  return y;
+}
+function endless(): number {
+  try {
+    while (true) {
+      inc(1);
+      return 1;
+    }
+  } catch (e) {
+    const m = e.message;
+    console.log(m);
+  }
+}
+function breaks(): number {
+  let x: number;
+  while (true) {
+    try {
+      inc(1);
+    } catch (e) {
+      console.log((e as Error).message);
+      break;
+    }
+    x = 2;
+    break;
+  }
+  return x;
+}
+function inferred() {
+  try {
+    inc(1);
+    return 1;
+  } catch (e) {
+    return e;
+  }
+}
+function unassignedLet(): number {
+  try {
+    inc(1);
+  } catch (e) {
+    const t: TypeError = e;
+    console.log(t.message);
+    let w: number;
+    console.log(w);
+  }
+  return 1;
+}
+function assignedKept(): number {
+  let x: number;
+  try {
+    x = inc(1) as number;
+  } catch (e) {
+    const m = (e as Error).message;
+    console.log(m);
+  } finally {
+    console.log("finally");
+  }
+  return x;
+}
+function narrowsParam(p: string | null): number {
+  try {
+    inc(1);
+  } catch (e) {
+    if (p === null) {
+      const m = e.message;
+      console.log(m);
+    }
+    console.log(p!.length);
+  }
+  return p === null ? 0 : p.length;
+}
+function continues(): number {
+  let total = 0;
+  for (const v of [1, 2]) {
+    try {
+      total += inc(v) as number;
+    } catch (e) {
+      const t = e as Error;
+      console.log(t.message);
+      continue;
+    }
+  }
+  return total;
+}
+function rethrowsOther(): string {
+  try {
+    inc(1);
+  } catch (e) {
+    if (!(e instanceof TypeError)) {
+      throw e;
+    }
+    return e.name;
+  }
+  return "none";
+}
+console.log(readsLet(), endless(), breaks(), inferred(), unassignedLet(), assignedKept());
+console.log(narrowsParam("ab"), continues(), rethrowsOther());

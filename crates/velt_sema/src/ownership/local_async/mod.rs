@@ -36,7 +36,11 @@
 //! once panics in the many-threads check (glue/many.rs).
 
 mod callbacks;
+mod changes;
+mod fed;
 mod graph;
+mod reach;
+mod targets;
 mod types;
 
 use rustc_hash::FxHashMap;
@@ -48,9 +52,12 @@ use crate::hir::{Def, DefId, TyId, TyKind};
 
 use graph::{Boundary, Graph, Node, Why, CROSSES, INDIRECT, STORED};
 
+pub(crate) use changes::{check_crossing_changes, Crossing};
+
 /// Decide which async closures are local, mark them (`FnDef::shares_captures`), and report the
 /// non-local ones that modify a captured variable.
 pub(crate) fn infer_local_async(cx: &mut Ctx) {
+    cx.crossing_callbacks.clear();
     let g = graph::build(cx);
     let mut p = Propagation::new(&g);
     for &(n, f, why) in &g.seeds {
@@ -117,6 +124,18 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
         if let Some(w) = to_std {
             let copied = crate::ownership::Copied::Crossing(w.span, reaches(cx, &w));
             crate::ownership::check_copied_closure(cx, c, &copied);
+            // Changes through calls are known once mutation inference ran (`changes`).
+            // A callback wrapper the compiler made around an async closure (`body/expr/callback.rs`)
+            // is checked through that closure.
+            let wrapper = cx.callback_wrappers.contains_key(&c);
+            if !wrapper && !cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_library) {
+                let label = reaches(cx, &w);
+                cx.crossing_callbacks.push(Crossing {
+                    closure: c,
+                    at: w.span,
+                    label,
+                });
+            }
         }
     }
 }

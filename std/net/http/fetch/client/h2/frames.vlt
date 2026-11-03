@@ -45,6 +45,7 @@ import { ClientSession } from "velt/net/http/fetch/client/h2/session";
 import { pump, pumpAll } from "velt/net/http/fetch/client/h2/outbound";
 import { ClientStream } from "velt/net/http/fetch/client/h2/stream";
 import { applySettings } from "velt/net/http/fetch/client/h2/settings";
+import { copyBytes } from "velt/lang/bytes/copy";
 
 /// Processes the complete frames in `s.rbuf[s.rpos..s.rlen)`.
 export function frames(s: ClientSession) {
@@ -240,10 +241,10 @@ function headers(s: ClientSession, type: i64, flags: i64, id: i64, p: i64, len: 
   }
   if (s.blockLength + n > (s.block.length as i64)) {
     const grown: u8[] = Buffer.alloc(((s.blockLength + n) * 2) as usize);
-    s.block.copy(grown, 0, 0, s.blockLength);
+    copyBytes(s.block, grown, 0, 0, s.blockLength);
     s.block = grown;
   }
-  s.rbuf.copy(s.block, s.blockLength, start, end);
+  copyBytes(s.rbuf, s.block, s.blockLength, start, end);
   s.blockLength += n;
   if ((flags & END_HEADERS) != 0) {
     s.blockStream = 0;

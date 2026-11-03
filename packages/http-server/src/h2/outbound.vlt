@@ -9,6 +9,7 @@
 import { DATA, END_STREAM, HEADER_LENGTH } from "velt/net/http/h2";
 import { H2Connection } from "./connection";
 import { CLOSED, H2Stream } from "./stream";
+import { writeUtf8 } from "../bytes";
 
 /**
  * Writes the response head of `s`: `:status`, `server`, `date`, `content-type` (when not empty),
@@ -75,7 +76,7 @@ export function sendText(c: H2Connection, s: H2Stream, text: string, n: i64, end
     const out = c.out;
     out.reserve(HEADER_LENGTH + n);
     out.header(n, DATA, end ? endFlag(s) : 0, s.id);
-    out.buf.write(text, out.length as usize);
+    writeUtf8(out.buf, text, out.length as usize);
     out.length += n;
     s.sendWindow -= n;
     c.sendWindow -= n;
@@ -85,7 +86,7 @@ export function sendText(c: H2Connection, s: H2Stream, text: string, n: i64, end
     return;
   }
   const bytes: u8[] = Buffer.allocUnsafe(n as usize);
-  bytes.write(text, 0);
+  writeUtf8(bytes, text, 0);
   sendBytes(c, s, bytes, 0, n, end);
 }
 

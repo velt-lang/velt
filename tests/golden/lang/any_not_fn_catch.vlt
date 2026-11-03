@@ -1,0 +1,223 @@
+// Calling an `any` that holds no function throws Node's `TypeError` to a `catch` of the same
+// function that takes one (#1422): a `catch` whose `try` throws nothing else and whose body
+// checks the same with a `TypeError` variable (using it as an error, printing it), and one
+// whose `try` throws an `Error` too. `f is not a function` for a value called,
+// `o.m is not a function` for a missing method or a member that holds no function, the name of
+// an optional chain's member (`o.m?.()`) and an element as written (`arr[0]`).
+const fn0: any = undefined;
+try {
+  fn0();
+} catch (e) {
+  console.log("caught", (e as Error).name);
+}
+
+function onlyAny(o: any): void {
+  try {
+    o.missing();
+  } catch (e) {
+    console.log(e instanceof TypeError, `${e.message}`, String(e));
+  }
+  try {
+    o.x();
+  } catch {
+    console.log("bare catch");
+  }
+  try {
+    o.y();
+  } catch (err) {
+    console.log("unused");
+  }
+}
+onlyAny({ x: 1 });
+
+function check(ok: boolean): void {
+  if (!ok) {
+    throw new Error("not ok");
+  }
+}
+
+function call(f: any): string {
+  try {
+    check(true);
+    f();
+    return "called";
+  } catch (e) {
+    return `${e.name}: ${e.message}`;
+  }
+}
+
+const o: any = { a: 1 };
+function members(): void {
+  try {
+    check(true);
+    o.missing();
+  } catch (e) {
+    console.log("caught", e.name, e.message);
+  }
+  try {
+    check(true);
+    o.a(2);
+  } catch (e) {
+    console.log("caught", e instanceof TypeError, String(e));
+  }
+  try {
+    check(true);
+    o.m?.();
+    console.log("optional call of nothing: no call");
+    o.a?.();
+  } catch (e) {
+    console.log("caught", e.message);
+  }
+}
+
+const r: Record<string, any> = {};
+function record(): void {
+  try {
+    check(true);
+    try {
+      r.f();
+    } finally {
+      console.log("inner finally");
+    }
+  } catch (e) {
+    console.log("record:", e.name);
+  }
+}
+
+console.log(call(null), call(() => 1), call(5));
+members();
+record();
+
+const g: any = undefined;
+function moduleValue(): void {
+  try {
+    check(true);
+    g();
+  } catch (e) {
+    console.log("module value:", e.message);
+  }
+}
+moduleValue();
+
+// A `catch` whose `try` throws nothing else takes the `TypeError` wherever its body checks the
+// same with it as with a `never` variable: narrowing it, casting it, keeping it in a constant,
+// reading parameters and constants, returning, throwing another error, a `finally` block.
+function narrowed(f: any): void {
+  try {
+    f();
+  } catch (e) {
+    if (e instanceof TypeError) {
+      console.log("narrowed", e.message);
+    } else {
+      console.log("other");
+    }
+  }
+}
+function kept(f: any): void {
+  try {
+    f();
+  } catch (e) {
+    const err = e as Error;
+    console.log("kept", err.name, err.message);
+  }
+}
+function castText(f: any): void {
+  try {
+    f();
+  } catch (e) {
+    const m = (e as Error).message;
+    console.log("cast", m.length, (e as Error).name);
+  }
+}
+function annotated(f: any): void {
+  try {
+    f();
+  } catch (e: unknown) {
+    if (e instanceof Error) {
+      console.log("annotated", e.message);
+    }
+  }
+}
+function returns(o: any): number {
+  try {
+    return o.run() as number;
+  } catch (e) {
+    console.log("returns", (e as Error).message);
+    return -1;
+  }
+}
+const seen: string[] = [];
+function reads(label: string, o: any): void {
+  try {
+    o.go();
+  } catch (e) {
+    seen.push(label + ": " + (e as Error).message);
+  }
+}
+function wraps(f: any): void {
+  try {
+    try {
+      f();
+    } catch (e) {
+      throw new Error("wrapped: " + (e as Error).message);
+    }
+  } catch (e2) {
+    console.log(e2.message);
+  }
+}
+function withFinally(f: any): void {
+  try {
+    f();
+  } catch (e) {
+    const t = e as TypeError;
+    console.log("finally", t.name);
+  } finally {
+    console.log("done");
+  }
+}
+narrowed(undefined);
+kept(null);
+castText(1);
+annotated(undefined);
+console.log(returns({}));
+reads("go", {});
+console.log(seen.join("; "));
+wraps(undefined);
+withFinally(undefined);
+
+// Node names an element callee as written: `arr[0]`, `o[key]`, a string key as a member.
+const arr: any = [1];
+const key = "k";
+function elements(): void {
+  try {
+    arr[0]();
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+  try {
+    o[key]();
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+  try {
+    arr[-1]();
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+  try {
+    o["b"]();
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+  try {
+    arr[1e21]();
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+  try {
+    arr[-0]();
+  } catch (e) {
+    console.log((e as Error).message);
+  }
+}
+elements();

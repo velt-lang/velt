@@ -14,6 +14,7 @@ import {
   WINDOW_UPDATE,
   ACK,
 } from "velt/net/http/h2/frame";
+import { copyBytes, setBytes, writeUtf8 } from "velt/lang/bytes/copy";
 
 /// An output buffer of frames.
 export class FrameWriter {
@@ -30,7 +31,7 @@ export class FrameWriter {
       size *= 2;
     }
     const grown: u8[] = Buffer.alloc(size as usize);
-    grown.set(this.buf.slice(0, this.length), 0);
+    setBytes(grown, this.buf.slice(0, this.length), 0);
     this.buf = grown;
   }
 
@@ -102,7 +103,7 @@ export class FrameWriter {
     this.header(8 + n, GOAWAY, 0, 0);
     this.u32(lastStream & 0x7fffffff);
     this.u32(code);
-    this.buf.write(debug, this.length as usize);
+    writeUtf8(this.buf, debug, this.length as usize);
     this.length += n;
   }
 
@@ -126,7 +127,7 @@ export class FrameWriter {
     this.reserve(HEADER_LENGTH + n);
     this.header(n, 0, flags, stream);
     if (n > 0) {
-      src.copy(this.buf, this.length, start, end);
+      copyBytes(src, this.buf, this.length, start, end);
       this.length += n;
     }
   }
@@ -167,7 +168,7 @@ export class FrameWriter {
       const type = first ? HEADERS : CONTINUATION;
       const f = (first ? flags : 0) | (last ? END_HEADERS : 0);
       this.header(n, type, f, stream);
-      block.copy(this.buf, this.length, off, off + n);
+      copyBytes(block, this.buf, this.length, off, off + n);
       this.length += n;
       off += n;
       first = false;

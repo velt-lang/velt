@@ -143,14 +143,18 @@ impl Mark {
         cx.fresh_checks.truncate(m.fresh_checks);
         cx.object_copies.rollback(m.object_copies);
         cx.fn_values.truncate(m.fn_values);
-        for d in cx.fn_defs.split_off(m.fn_defs) {
+        let fns = cx.fn_defs.split_off(m.fn_defs);
+        for d in keep_impl_fns(cx, fns) {
             drop_orphan(cx, d);
         }
         for c in cx
             .closure_defs
             .split_off(m.closures.min(cx.closure_defs.len()))
         {
-            cx.callback_wrappers.remove(&c);
+            match cx.object_impls.keeps(c) {
+                true => cx.closure_defs.push(c),
+                false => _ = cx.callback_wrappers.remove(&c),
+            }
         }
         cx.rec.reported.truncate(m.reported);
         let kept = cx.kept_consts.split_off(m.kept.min(cx.kept_consts.len()));
@@ -237,7 +241,14 @@ impl Mark {
         );
         keep_ranges(&mut cx.fn_values, m.fn_values, &ranges(|l| l.fn_values));
         let own_fns = keep_ranges(&mut cx.fn_defs, m.fn_defs, &ranges(|l| l.fn_defs));
-        let own_closures = keep_ranges(&mut cx.closure_defs, m.closures, &ranges(|l| l.closures));
+        let own_fns = keep_impl_fns(cx, own_fns);
+        let mut own_closures =
+            keep_ranges(&mut cx.closure_defs, m.closures, &ranges(|l| l.closures));
+        let kept: Vec<DefId> = (own_closures.iter().copied())
+            .filter(|c| cx.object_impls.keeps(*c))
+            .collect();
+        own_closures.retain(|c| !kept.contains(c));
+        cx.closure_defs.extend(kept);
         for c in &own_closures {
             cx.callback_wrappers.remove(c);
         }
@@ -275,6 +286,17 @@ impl Mark {
             };
         }
     }
+}
+
+/// Of the functions `fns` created since a mark being rolled back, those of the interface
+/// implementations made for object types meanwhile (`crate::object_ifaces`) stay: the
+/// implementations do (`Ctx::object_iface_impl` finds them again, and so does `find_impl`), so
+/// their functions stay defined (#1952). They go back to `cx.fn_defs`; the others are returned.
+fn keep_impl_fns(cx: &mut Ctx, fns: Vec<DefId>) -> Vec<DefId> {
+    let (kept, dropped): (Vec<DefId>, Vec<DefId>) =
+        fns.into_iter().partition(|d| cx.object_impls.keeps(*d));
+    cx.fn_defs.extend(kept);
+    dropped
 }
 
 /// The function `d`, created by a check that was rolled back, is referenced by nothing: its

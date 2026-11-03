@@ -35,6 +35,7 @@ import {
   Work,
 } from "velt/compress/inflate/huffman";
 import { CODE_ORDER } from "velt/compress/inflate/tables";
+import { setBytes } from "velt/lang/bytes/copy";
 
 /** Where the block decoder is. */
 const HEADER: i64 = 0;
@@ -127,7 +128,7 @@ export class Blocks extends Bits {
       size = need;
     }
     const bigger: u8[] = Buffer.allocUnsafe(size as usize);
-    bigger.set(this.out, 0);
+    setBytes(bigger, this.out, 0);
     this.out = bigger;
   }
 
@@ -251,7 +252,7 @@ export class Blocks extends Bits {
       n = limit - this.op;
     }
     if (n > 0) {
-      this.out.set(this.inp.slice(this.ip, this.ip + n), this.op as usize);
+      setBytes(this.out, this.inp.slice(this.ip, this.ip + n), this.op as usize);
       this.ip += n;
       this.op += n;
       this.stored -= n;

@@ -339,6 +339,9 @@ pub(crate) struct Ctx<'m> {
     /// Captured variables reported as modified by a closure that crosses threads, with the
     /// closure's span: the move analysis doesn't report the follow-on "use of moved value".
     pub reported_captures: Vec<(String, velt_common::Span)>,
+    /// Callbacks a library runs on other threads, checked for changes through calls once
+    /// mutation inference is done (`ownership::local_async::changes`).
+    pub crossing_callbacks: Vec<crate::ownership::Crossing>,
     /// Side tables for [`crate::ide`] (`None` when compiling).
     pub ide: Option<Box<crate::ide::record::Recorder>>,
     /// Memoized `Ctx::is_shared_value` answers (asked for every local of every body).
@@ -568,6 +571,7 @@ impl<'m> Ctx<'m> {
             jsx_providers: FxHashMap::default(),
             callback_wrappers: Default::default(),
             reported_captures: vec![],
+            crossing_callbacks: vec![],
             ide: None,
             recovered: FxHashMap::default(),
             poisoned: FxHashSet::default(),
@@ -736,38 +740,6 @@ impl<'m> Ctx<'m> {
             }
         }
         false
-    }
-
-    /// Name lookup at module level: own items and imports, then the prelude.
-    /// A module-level name that is only a type does not hide a prelude value of its name
-    /// (`type Map = …` next to `new Map()`, `crate::type_meanings`).
-    pub fn lookup_item(&self, module: usize, name: &str) -> Option<Item> {
-        let own = self.scopes[module].items.get(name).copied();
-        let Some(it) = own else {
-            return self.prelude_or_hook(name);
-        };
-        match self.meaning(it) {
-            crate::type_meanings::Meaning::Type => self.global_value(name).unwrap_or(own),
-            _ => own,
-        }
-    }
-
-    /// Name lookup at a source position of `module`: the innermost nested item whose block
-    /// contains `at`, then module level.
-    /// A nested type that is only a type (an interface, a type alias) does not hide a value of
-    /// its name further out (`crate::type_meanings`).
-    pub fn lookup_item_at(&self, module: usize, name: &str, at: Span) -> Option<Item> {
-        let file = self.modules[module].file;
-        let mut nested = self
-            .nested
-            .iter()
-            .filter(|n| n.module == module && n.name == name && at.file == file)
-            .filter(|n| n.lo <= at.lo && at.hi <= n.hi)
-            .peekable();
-        if nested.peek().is_none() {
-            return self.lookup_item(module, name);
-        }
-        self.nested_value_item(nested.collect(), module, name)
     }
 
     /// A string or `string | null`: a value whose copy is a refcount increment at most, so moves

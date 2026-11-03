@@ -30,6 +30,9 @@ pub mod hir;
 pub mod js_protos;
 
 mod absent_fields;
+mod ctx_lookup;
+mod reserved;
+pub(crate) use reserved::{reserved_key, reserved_key_message, reserved_prefixes};
 mod alias_expand;
 mod anon;
 mod any;
@@ -600,6 +603,9 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
         ownership::infer_local_async(cx)
     });
     timings::pass("ownership::infer_modes", || ownership::infer_modes(cx));
+    timings::pass("ownership::check_crossing_changes", || {
+        ownership::check_crossing_changes(cx)
+    });
     timings::pass("throws::infer_all", || throws::infer_all(cx));
     // The program is checked again with the error types of function types written without
     // `throws` that this check found (`throws::fn_types`): the rest would be redone.
@@ -715,38 +721,6 @@ fn check_main(
         ok = false;
     }
     ok.then_some(id)
-}
-
-/// Is `name` a property name a quoted key may not use: Velt's encodings of ES private names
-/// (`#x`) and symbol keys (`[Symbol.iterator]`, and names starting with the noncharacter U+FFFF:
-/// `property_order::SYMBOL_KEY_PREFIX`), or `__proto__`? Other names (`"[x]"`, `"[Symbol(k)]"`)
-/// are ordinary keys: a computed key `[KEY]` is told apart by its span
-/// (`symbols::is_computed_key`).
-pub(crate) fn reserved_key(name: &str) -> bool {
-    name.starts_with('#')
-        || name.starts_with("[Symbol.")
-        || name.starts_with(property_order::SYMBOL_KEY_PREFIX)
-        || name == "__proto__"
-}
-
-/// Why property name `name` (a [`reserved_key`]) is not supported.
-pub(crate) fn reserved_key_message(name: &str) -> String {
-    if name == "__proto__" {
-        return "the property name \"__proto__\" is not supported: in JavaScript it sets the object's prototype and creates no property".to_string();
-    }
-    format!(
-        "the property name {name:?} is not supported: Velt uses names starting with {} for private names and symbol keys",
-        reserved_prefixes(name)
-    )
-}
-
-/// The reserved prefixes a message about property name `name` lists: U+FFFF too when `name`
-/// starts with it (the key names of symbol constants).
-pub(crate) fn reserved_prefixes(name: &str) -> &'static str {
-    match name.starts_with(property_order::SYMBOL_KEY_PREFIX) {
-        true => "`#`, `[Symbol.` and U+FFFF",
-        false => "`#` and `[Symbol.`",
-    }
 }
 
 /// Does `module` call `Object.create(null)`? Then records may have no prototype, which `in`,

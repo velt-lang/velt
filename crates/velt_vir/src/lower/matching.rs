@@ -227,7 +227,8 @@ impl FnLower<'_, '_> {
             && binds_by_ref(pat)
             && (self.cx.counted(ty) || self.through_counted(init, ty) || self.in_shared_cell(init));
         self.push_scope(ScopeKind::Temps);
-        let v = self.consume(init);
+        // Each binding records whether it names a tuple (pattern.rs `bind_local`).
+        let v = self.consume_read(init);
         self.pop_scope();
         if self.dead() {
             return;
@@ -239,7 +240,9 @@ impl FnLower<'_, '_> {
         let s = self.copy_to_temp(v, vt);
         let sp = Place::local(s);
         let outer = std::mem::replace(&mut self.stable_binds, stable);
+        let outer_copy = std::mem::replace(&mut self.binds_copy, true);
         self.bind_pat(pat, &sp, ty, true);
+        self.binds_copy = outer_copy;
         self.stable_binds = outer;
         self.own_rest(sp, ty, Rc::new(pat.clone()));
     }

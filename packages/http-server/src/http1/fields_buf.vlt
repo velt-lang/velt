@@ -2,6 +2,7 @@
 // (`name: value\r\n` each): a response's headers, and its trailers.
 
 import { checkField } from "../fields";
+import { copyBytes, writeUtf8 } from "../bytes";
 
 const CR: u8 = 13;
 const LF: u8 = 10;
@@ -25,16 +26,16 @@ export class FieldBuf {
     const n = nameLength + (Buffer.byteLength(value) as i64) + 4;
     if (this.length + n > (this.buf.length as i64)) {
       const grown: u8[] = Buffer.alloc(((this.length + n) * 2) as usize);
-      this.buf.copy(grown, 0, 0, this.length);
+      copyBytes(this.buf, grown, 0, 0, this.length);
       this.buf = grown;
     }
     const b = this.buf;
     const start = this.length;
-    let at = start + (b.write(name, start as usize) as i64);
+    let at = start + (writeUtf8(b, name, start as usize) as i64);
     b[at] = 58;
     b[at + 1] = 32;
     const valueStart = at + 2;
-    at = valueStart + (b.write(value, valueStart as usize) as i64);
+    at = valueStart + (writeUtf8(b, value, valueStart as usize) as i64);
     checkField(b, start, start + nameLength, valueStart, at);
     b[at] = CR;
     b[at + 1] = LF;

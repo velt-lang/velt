@@ -1,0 +1,27 @@
+// An object literal's own list is the request's even when the captured class has a list field
+// of the same type (#854): `st.buf` is a new array, so `st.buf.push(…)` and `st.depth++` change
+// nothing captured, while `st.app` is the captured value. Prints what Node prints.
+import { serve } from "http-server";
+
+class App {
+  name: string = "app";
+  plugins: string[] = ["a", "b"];
+}
+
+function render(app: App): string {
+  const st = { depth: 0, app, buf: [] as string[] };
+  st.buf.push(st.app.name);
+  st.depth++;
+  st.buf.push(`${st.depth}${st.app.plugins.length}`);
+  return st.buf.join(":");
+}
+
+async function main() {
+  const app = new App();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(render(app));
+  });
+  const r = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await r.text());
+  await server.shutdown();
+}

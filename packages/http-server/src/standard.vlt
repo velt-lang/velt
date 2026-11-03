@@ -18,7 +18,13 @@ import { ServeInfo } from "./serve_info";
  * Binds `host:port` (default host 127.0.0.1; port 0 picks a free port) and serves `handler` in
  * the background. The handler returns a `Response`, or a promise of one (an `async` handler), as
  * in Deno and Bun; its second argument says who connected (`info.remoteAddr`). Handlers run
- * concurrently, so like spawned tasks they must not change captured variables (use `shared`). A
+ * concurrently, each request with its own copy of what the handler captured, so they must not
+ * change captured variables or objects: the compiler reports such a change, also through a
+ * method or function the handler calls, with the `shared(...)` fix. It does not see every change
+ * (README.md "Known limits": spread copies' elements, captured values put in local containers,
+ * typed arrays and buffers written by library code, calls through function values, a `/g`
+ * regex's `lastIndex`); those still change only the request's copy, so keep state requests must
+ * share in `shared(...)`, an `Atomic` or a `Mutex`. A
  * handler that throws, or whose promise rejects, gets a 500 response, and the error is printed
  * to stderr (as Deno and Bun do). The request is valid while the handler runs: a streamed body
  * that reads it later stops the program, so read what the body needs before returning.
