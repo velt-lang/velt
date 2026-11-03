@@ -1,5 +1,5 @@
 //! Rules on declarations TypeScript doesn't have (`struct`, `extend`, `interface-body`,
-//! `throws`) or runs differently (`declare-fn`).
+//! `throws`, `operator`) or runs differently (`declare-fn`).
 
 use velt_common::Span;
 use velt_syntax::ast::{self, ItemKind as I};
@@ -89,6 +89,7 @@ pub(super) fn item(item: &ast::Item, cx: &mut Cx) {
 /// functions, checked by [`throws_clause`] as such).
 fn interface(i: &ast::InterfaceDecl, cx: &mut Cx) {
     for m in &i.methods {
+        operator_method(&m.sig.name, cx);
         if m.body.is_some() {
             cx.error(
                 "interface-body",
@@ -147,4 +148,37 @@ pub(super) fn throws(t: &ast::TypeExpr, fixable: bool, cx: &mut Cx) {
     } else {
         cx.error("throws", clause, message, notes);
     }
+}
+
+/// `operator`: a method keyed by one of Velt's operator symbols (`[Symbol.add](other)`, which
+/// `a + b` calls; design operators.md). A use of an operator method needs its declaration,
+/// here or in a module the other rules report (`velt-import`, `outside-import`), so reporting
+/// the declarations reports every shared file whose operators would not compile.
+pub(super) fn operator_method(name: &ast::Ident, cx: &mut Cx) {
+    let Some(key) = name
+        .name
+        .strip_prefix("[Symbol.")
+        .and_then(|k| k.strip_suffix(']'))
+    else {
+        return;
+    };
+    if !velt_syntax::OPERATOR_SYMBOLS.contains(&key) {
+        return;
+    }
+    let unknown = format!(
+        "`tsc` knows no `Symbol.{key}`, and an operator on objects is a type error there \
+         (JavaScript's `a + b` converts objects to primitives)"
+    );
+    cx.error(
+        "operator",
+        name.span,
+        format!(
+            "`{}` is a Velt operator method: TypeScript has no operator overloading",
+            name.name
+        ),
+        &[
+            &unknown,
+            "write a method with a name (`add(other)`) and call it",
+        ],
+    );
 }

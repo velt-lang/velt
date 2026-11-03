@@ -69,6 +69,7 @@ impl<'a> Visit<'a> for Walk<'a> {
 
     fn function(&mut self, sig: &'a ast::FnSig, _body: &'a ast::Block) {
         self.bodied_return(sig.ret.as_ref());
+        decls::operator_method(&sig.name, &mut self.cx);
         decls::throws_clause(sig, true, &mut self.cx);
     }
 

@@ -1,0 +1,19 @@
+// Operator methods (`a + b` calls `[Symbol.add]`) are Velt-only.
+
+export class Vec {
+  constructor(public x: number) {}
+
+  [Symbol.add](other: Vec): Vec {
+    //~^ operator
+    return new Vec(this.x + other.x);
+  }
+
+  add(other: Vec): Vec {
+    return new Vec(this.x + other.x);
+  }
+}
+
+export interface Summable<T> {
+  [Symbol.add](other: T): T;
+  //~^ operator
+}

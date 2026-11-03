@@ -244,3 +244,15 @@ fn a_large_integer_literal_has_no_fix_and_says_why() {
     let findings = lint_source(Path::new("edge.vlt"), "const edge = 9007199254740992i64;\n");
     assert!(findings[0].fix.is_some());
 }
+
+#[test]
+fn an_operator_method_note_names_its_symbol() {
+    let src = "class V {\n  [Symbol.mul](o: V): V { return o; }\n}\n";
+    let findings = lint_syntax(Path::new("op.vlt"), src);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(
+        findings[0].notes[0],
+        "`tsc` knows no `Symbol.mul`, and an operator on objects is a type error there \
+         (JavaScript's `a + b` converts objects to primitives)"
+    );
+}
