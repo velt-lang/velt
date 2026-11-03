@@ -654,6 +654,11 @@ impl FnCx<'_, '_> {
             && matches!(self.cx.ty.kind(target), TyKind::FnPtr { .. });
         let outer = std::mem::replace(&mut self.asserted_fn, asserted.then_some(arrow.span));
         let inner = self.expr(expr, Some(target), want);
+        // An `object | null` converts as the `object` holding its nothing (#2144).
+        let inner = match inner.ty == target {
+            true => inner,
+            false => self.collapse_object_option(inner),
+        };
         (self.dynamic_raw, self.asserted_fn) = (saved, outer);
         if self.cx.dynamic(inner.ty).is_some() {
             if let Ok(h) = self.coerce_dynamic(inner.clone(), target, true) {

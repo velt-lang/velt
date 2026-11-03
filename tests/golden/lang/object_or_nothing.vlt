@@ -1,0 +1,45 @@
+// `object | undefined` and `object | null` take an object or that nothing, kept apart from a
+// plain `object` (#2144): an optional value of an object type passes for such a parameter,
+// as in TypeScript, and a test narrows it back to `object`.
+interface Opts {
+  key?: string;
+}
+
+class Point {
+  x = 1;
+}
+
+function warn(name: string, options: object | undefined): void {
+  if (!options) {
+    console.log(name, "none");
+    return;
+  }
+  console.log(name, Object.keys(options).length);
+}
+
+function show(o: object | null): string {
+  if (o === null) {
+    return "null";
+  }
+  return typeof o;
+}
+
+function pick(n: number): object | undefined {
+  return n > 0 ? new Point() : undefined;
+}
+
+function use(opts?: Opts): void {
+  warn("use", opts);
+}
+
+use();
+use({ key: "k" });
+warn("lit", { a: 1, b: 2 });
+warn("undef", undefined);
+console.log(show(null), show(new Point()), show([1, 2]));
+const p = pick(1);
+const q = pick(0);
+console.log(p === undefined, q === undefined, p !== undefined && p instanceof Point);
+const back = pick(2) as Point;
+const fallback: object = pick(0) ?? [0];
+console.log(back.x, Array.isArray(fallback), pick(0));

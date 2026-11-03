@@ -87,7 +87,14 @@ impl Ctx<'_> {
             }
         }
         if let Some(t) = self.narrow_dynamic_union(&flat) {
-            return t;
+            // `object | undefined` (or `| null`) keeps its nothing apart, so a plain `object`
+            // takes no nothing while `object | undefined` takes `T | undefined` (#2144).
+            return match nothing {
+                Some(n) if self.dynamic(t) == Some(crate::any::Dynamic::Object) => {
+                    self.ty.option_of(t, n)
+                }
+                _ => t,
+            };
         }
         // `T | void` is `T | undefined`: a `void` function's value is `undefined` (issue #930).
         let unit = self.ty.unit;
