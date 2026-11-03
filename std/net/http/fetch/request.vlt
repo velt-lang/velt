@@ -119,10 +119,7 @@ export class Request {
   private copy(input: Request) throws IoError {
     this.#target = input.url;
     this.#verb = input.method;
-    const given = input.#extra;
-    if (given != null && given.sending != null) {
-      this.extra().sending = given.sending;
-    }
+    this.carry(input);
     this.#fields = new Headers(input.headers);
     if (!input.hasBody()) {
       return;
@@ -142,6 +139,21 @@ export class Request {
     input.extra().used = true;
   }
 
+  // The redirect mode, CA and signal of `input` (`new Request(input)`, `clone()`), as the Fetch
+  // standard copies them: a received request's server signal too, so a copy made in a handler
+  // still stops with the client.
+  private carry(input: Request) {
+    const given = input.#extra;
+    if (given != null && given.sending != null && given.sending.signal != null) {
+      this.extra().sending = given.sending;
+      return;
+    }
+    const signal = input.givenSignal();
+    if (signal != null || (given != null && given.sending != null)) {
+      this.extra().sending = new Sending(input.redirect, signal, input.ca());
+    }
+  }
+
   /**
    * A copy of the request whose body can be read on its own: a streamed or received body is
    * teed, each chunk going to both. Throws `IoError` "EINVAL" (JS: `TypeError`) when the body
@@ -154,10 +166,7 @@ export class Request {
     const r = new Request(this.url);
     r.#verb = this.method;
     r.#fields = new Headers(this.headers);
-    const given = this.#extra;
-    if (given != null && given.sending != null) {
-      r.extra().sending = given.sending;
-    }
+    r.carry(this);
     if (!this.hasBody()) {
       return r;
     }
@@ -250,17 +259,21 @@ export class Request {
     if (known != null) {
       return known;
     }
-    const source = this.fromServer();
-    const fromServer = source == null ? null : source.signal();
-    const made = fromServer ?? new AbortController().signal;
+    const made = new AbortController().signal;
     e.idle = made;
     return made;
   }
 
-  // The signal passed in `init`, null without one (std only: `fetch` races only that one).
+  // The signal that can abort the request, null without one (std only: `fetch` races only
+  // that one): the one passed in `init` (or carried over from the request it was made from),
+  // else a received request's server signal.
   private givenSignal(): AbortSignal | null {
     const s = this.sending();
-    return s == null ? null : s.signal;
+    if (s != null && s.signal != null) {
+      return s.signal;
+    }
+    const source = this.fromServer();
+    return source == null ? null : source.signal();
   }
 
   // `body` is in velt/net/http/fetch/streams, loaded with the streams it gives

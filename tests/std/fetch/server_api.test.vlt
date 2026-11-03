@@ -13,16 +13,18 @@ import {
   statusText,
   switchingProtocols,
 } from "velt/net/http";
-import { AbortSignal } from "velt/task";
+import { AbortController, AbortSignal } from "velt/task";
 import { describe, expect, it } from "velt/test";
 
 /** A request held in memory, counting what the `Request` asked it for. */
 class Memory implements RequestSource {
   asked: string[] = [];
   private pieces: u8[][];
+  /** The server's signal for this request (null: it can't tell). */
+  stop: AbortSignal | null = null;
 
   signal(): AbortSignal | null {
-    return null;
+    return this.stop;
   }
 
   constructor(pieces: u8[][]) {
@@ -96,6 +98,39 @@ describe("serverRequest", () => {
     const source = new Memory([]);
     expect(requestSource(serverRequest(source)) === source).toBe(true);
     expect(requestSource(new Request("http://example.test/")) == null).toBe(true);
+  });
+});
+
+describe("a received request's signal", () => {
+  it("is the source's, and a copy made from the request keeps it", () => {
+    // #2074: `new Request(req)` and `clone()` carry the signal over, as the Fetch standard does.
+    const src = new Memory([]);
+    const stop = new AbortController();
+    src.stop = stop.signal;
+    const req = serverRequest(src);
+    const copy = new Request(req, { headers: { "x-extra": "1" } });
+    const cloned = req.clone();
+    const own = new AbortController();
+    const given = new Request(req, { signal: own.signal });
+    expect([req.signal.aborted, copy.signal.aborted, cloned.signal.aborted]).toEqual([
+      false,
+      false,
+      false,
+    ]);
+    stop.abort();
+    expect([req.signal.aborted, copy.signal.aborted, cloned.signal.aborted]).toEqual([
+      true,
+      true,
+      true,
+    ]);
+    // A signal passed in `init` replaces it.
+    expect(given.signal.aborted).toBe(false);
+  });
+
+  it("is never aborted when the source can't tell", () => {
+    const req = serverRequest(new Memory([]));
+    expect(req.signal.aborted).toBe(false);
+    expect(new Request(req).signal.aborted).toBe(false);
   });
 });
 
