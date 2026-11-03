@@ -79,6 +79,9 @@ pub(super) struct Inst {
     dicts: Vec<(StaticId, Vec<TyId>)>,
     /// The dictionary parameter, once declared (abi.rs).
     pub(super) param: Option<crate::vir::Local>,
+    /// How many arguments follow the dictionary: the caller's location of a caller-tracking
+    /// instance, and the out-pointer of an aggregate return.
+    trailing: usize,
 }
 
 /// The shape-sharing state of one pass.
@@ -238,8 +241,10 @@ impl Cx<'_> {
             Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w) | Work::Deferred(w) => w,
             w => w,
         };
-        let Work::Fn(d, targs) = inner else {
-            return None;
+        let (d, targs) = match inner {
+            Work::Fn(d, targs) => (d, targs),
+            Work::Tracked(d, targs, at) if *at == super::srcloc::ARG_LOC => (d, targs),
+            _ => return None,
         };
         let canonical = targs.iter().enumerate().all(|(i, &t)| {
             self.is_ph(t) && self.shapes.ph_of.iter().any(|(k, &p)| p == t && k.1 == i as u32)
@@ -253,7 +258,15 @@ impl Cx<'_> {
             return;
         }
         if let Some((def, targs)) = self.shared_inst_key(work) {
+            let tracked = matches!(work, Work::Tracked(..))
+                || matches!(work, Work::Checked(w) | Work::Read(w) | Work::ReadOwn(w)
+                    | Work::Deferred(w) if matches!(**w, Work::Tracked(..)));
+            let f = self.fn_def(def);
+            let throws = self.fn_throws(f, &targs);
+            let ret = self.subst(f.ret, &targs);
+            let out = self.ret_abi(ret, throws).out.is_some();
             let inst = Inst {
+                trailing: usize::from(tracked) + usize::from(out),
                 def,
                 targs,
                 entries: vec![],
@@ -290,6 +303,13 @@ impl Cx<'_> {
         self.shapes.current.pop();
         self.shape_rewrite(fid, &mut func);
         func
+    }
+
+    /// `args` of a call of shared instance `inst` with its dictionary `dict` put in its place,
+    /// after the user's arguments (abi.rs `declare_locals`).
+    pub(super) fn with_dict(&self, inst: FuncId, args: &mut Vec<crate::vir::Operand>, dict: crate::vir::Operand) {
+        let at = args.len() - self.shapes.insts[&inst].trailing;
+        args.insert(at, dict);
     }
 
     /// Does `work` mention a placeholder type?

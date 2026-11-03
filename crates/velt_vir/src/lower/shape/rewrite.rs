@@ -120,7 +120,8 @@ impl Cx<'_> {
             };
         } else if self.shapes.insts.contains_key(&f) {
             let i = self.entry_index(inst, Entry::Dict(f));
-            args.push(load(func, dict, i, pre));
+            let d = load(func, dict, i, pre);
+            self.with_dict(f, args, d);
         }
     }
 

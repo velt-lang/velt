@@ -203,7 +203,8 @@ impl FnLower<'_, '_> {
         // One instance per shape, given the dictionary of these type arguments (shape/).
         let f = match self.cx.shared_call(d, &targs, self.mode) {
             Some((f, dict)) => {
-                args.push(Operand::Const(crate::vir::Const::Static(dict), Ty::Ptr));
+                let d = Operand::Const(crate::vir::Const::Static(dict), Ty::Ptr);
+                self.cx.with_dict(f, &mut args, d);
                 f
             }
             None => self.cx.func_for_direct(d, targs, self.mode),
