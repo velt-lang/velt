@@ -1,0 +1,8 @@
+f16 65536 65536 65536 mismatches 0 0 0
+f16 NaNs 0x7fc02000 0xffcaa000 0x7e01 0xfe55
+f16 rounding 190464 mismatches 0
+f16 into mismatches 0
+bf16 65536 65536 65536 mismatches 0 0 0
+bf16 NaNs 0x7fc10000 0xffd50000 0x7fc1 0xffd5
+bf16 rounding 195840 mismatches 0
+bf16 into mismatches 0

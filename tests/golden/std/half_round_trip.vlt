@@ -1,0 +1,202 @@
+// velt/half over every 16-bit pattern (#2049): `f16FromBytes`/`bf16FromBytes` keep each
+// little-endian pattern, `widenF16`/`widenBf16` give the exact f32 (checked against the bits a
+// reference written here with integer code gives, a NaN quieted with its payload kept), and
+// narrowing back gives the pattern again (a signalling NaN comes back quiet). Narrowing also
+// rounds once to nearest even: the midpoint between two neighbours, and one f32 step either side
+// of it, for every finite pair. The `Into` forms write from an offset and nothing else.
+
+import {
+  bf16FromBytes,
+  f16FromBytes,
+  narrowBf16,
+  narrowBf16Into,
+  narrowF16,
+  narrowF16Into,
+  widenBf16,
+  widenBf16Into,
+  widenF16,
+  widenF16Into,
+} from "velt/half";
+
+// The f32 bits of the f16 `h`, by integer code.
+function refF16(h: u32): u32 {
+  const sign = (h & 0x8000) << 16;
+  const e = (h >> 10) & 0x1f;
+  let m = h & 0x3ff;
+  if (e == 0x1f) {
+    const quiet: u32 = m != 0 ? 0x400000 : 0;
+    return sign | 0x7f800000 | (m << 13) | quiet;
+  }
+  if (e == 0) {
+    if (m == 0) {
+      return sign;
+    }
+    let ex: u32 = 113;
+    while ((m & 0x400) == 0) {
+      m <<= 1;
+      ex -= 1;
+    }
+    return sign | (ex << 23) | ((m & 0x3ff) << 13);
+  }
+  return sign | ((e + 112) << 23) | (m << 13);
+}
+
+// The f32 bits of the bf16 `b`.
+function refBf16(b: u32): u32 {
+  const x = b << 16;
+  const nan = (x & 0x7fffffff) > 0x7f800000;
+  return nan ? x | 0x400000 : x;
+}
+
+const SIGNS: u32[] = [0, 0x8000];
+
+function hex(x: u32): string {
+  return "0x" + x.toString(16);
+}
+
+// Every pattern, low byte first.
+function allPatterns(): u8[] {
+  const bytes: u8[] = Buffer.alloc(2 * 65536);
+  for (let p: usize = 0; p < 65536; p++) {
+    bytes[2 * p] = (p & 0xff) as u8;
+    bytes[2 * p + 1] = (p >> 8) as u8;
+  }
+  return bytes;
+}
+
+// The value of the f32 with bits `x`.
+function val(x: u32): number {
+  return f32.fromBits(x) as number;
+}
+
+// The midpoint between the neighbours `va` and `vb` (both positive or both negative; `vb` the
+// next value after the largest finite one at the top) and one f32 step below and above it, with
+// the patterns they must round to.
+function addMidpoints(va: number, vb: number, pa: u16, pb: u16, xs: f32[], want: u16[]) {
+  const mid = ((va + vb) / 2) as f32;
+  const bits = mid.toBits();
+  const even = (pa & 1) == 0 ? pa : pb;
+  // `a` is nearer zero, so the f32 below the midpoint in magnitude rounds to `pa`.
+  xs.push(mid);
+  want.push(even);
+  xs.push(f32.fromBits(bits - 1));
+  want.push(pa);
+  xs.push(f32.fromBits(bits + 1));
+  want.push(pb);
+}
+
+function checkF16(bytes: u8[]) {
+  const ws = f16FromBytes(bytes);
+  let load = 0;
+  let widen = 0;
+  let back = 0;
+  const xs = widenF16(ws);
+  for (let p: usize = 0; p < 65536; p++) {
+    load += ws[p].toBits() as usize == p ? 0 : 1;
+    widen += xs[p].toBits() == refF16(p as u32) ? 0 : 1;
+  }
+  const ns = narrowF16(xs);
+  for (let p: usize = 0; p < 65536; p++) {
+    const sig = (p & 0x7c00) == 0x7c00 && (p & 0x3ff) != 0 && (p & 0x200) == 0;
+    const want = sig ? p | 0x200 : p;
+    back += ns[p].toBits() as usize == want ? 0 : 1;
+  }
+  console.log("f16", ws.length, xs.length, ns.length, "mismatches", load, widen, back);
+  console.log(
+    "f16 NaNs",
+    hex(xs[0x7c01].toBits()),
+    hex(xs[0xfe55].toBits()),
+    hex(ns[0x7c01].toBits() as u32),
+    hex(ns[0xfe55].toBits() as u32),
+  );
+  // Rounding: every pair of finite neighbours of each sign.
+  const mids: f32[] = [];
+  const want: u16[] = [];
+  for (let p: u32 = 0; p < 0x7c00; p++) {
+    for (const s of SIGNS) {
+      const pa = p | s;
+      const top = p == 0x7bff ? (s == 0 ? 65536 : -65536) : val(refF16(pa + 1));
+      addMidpoints(val(refF16(pa)), top, pa as u16, (pa + 1) as u16, mids, want);
+    }
+  }
+  const rounded = narrowF16(mids);
+  let wrong = 0;
+  for (let i: usize = 0; i < mids.length; i++) {
+    wrong += rounded[i].toBits() == want[i] ? 0 : 1;
+  }
+  console.log("f16 rounding", mids.length, "mismatches", wrong);
+  // The `Into` forms, from index 5 of a longer array.
+  const wide: f32[] = new Array<f32>(65536 + 9).fill(-1);
+  widenF16Into(ws, wide, 5);
+  const narrow: f16[] = new Array<f16>(65536 + 9).fill(-2);
+  narrowF16Into(xs, narrow, 5);
+  let into = 0;
+  for (let i: usize = 0; i < wide.length; i++) {
+    const inside = i >= 5 && i < 65536 + 5;
+    const w = inside ? refF16((i - 5) as u32) : (-1 as f32).toBits();
+    into += wide[i].toBits() == w ? 0 : 1;
+    const n = inside ? ns[i - 5].toBits() : (-2 as f16).toBits();
+    into += narrow[i].toBits() == n ? 0 : 1;
+  }
+  console.log("f16 into mismatches", into);
+}
+
+function checkBf16(bytes: u8[]) {
+  const ws = bf16FromBytes(bytes);
+  let load = 0;
+  let widen = 0;
+  let back = 0;
+  const xs = widenBf16(ws);
+  for (let p: usize = 0; p < 65536; p++) {
+    load += ws[p].toBits() as usize == p ? 0 : 1;
+    widen += xs[p].toBits() == refBf16(p as u32) ? 0 : 1;
+  }
+  const ns = narrowBf16(xs);
+  for (let p: usize = 0; p < 65536; p++) {
+    const sig = (p & 0x7f80) == 0x7f80 && (p & 0x7f) != 0 && (p & 0x40) == 0;
+    const want = sig ? p | 0x40 : p;
+    back += ns[p].toBits() as usize == want ? 0 : 1;
+  }
+  console.log("bf16", ws.length, xs.length, ns.length, "mismatches", load, widen, back);
+  console.log(
+    "bf16 NaNs",
+    hex(xs[0x7f81].toBits()),
+    hex(xs[0xffd5].toBits()),
+    hex(ns[0x7f81].toBits() as u32),
+    hex(ns[0xffd5].toBits() as u32),
+  );
+  const mids: f32[] = [];
+  const want: u16[] = [];
+  for (let p: u32 = 0; p < 0x7f80; p++) {
+    for (const s of SIGNS) {
+      const pa = p | s;
+      const top = p == 0x7f7f ? (s == 0 ? 2 ** 128 : -(2 ** 128)) : val(refBf16(pa + 1));
+      addMidpoints(val(refBf16(pa)), top, pa as u16, (pa + 1) as u16, mids, want);
+    }
+  }
+  const rounded = narrowBf16(mids);
+  let wrong = 0;
+  for (let i: usize = 0; i < mids.length; i++) {
+    wrong += rounded[i].toBits() == want[i] ? 0 : 1;
+  }
+  console.log("bf16 rounding", mids.length, "mismatches", wrong);
+  const wide: f32[] = new Array<f32>(65536 + 9).fill(-1);
+  widenBf16Into(ws, wide, 5);
+  const narrow: bf16[] = new Array<bf16>(65536 + 9).fill(-2);
+  narrowBf16Into(xs, narrow, 5);
+  let into = 0;
+  for (let i: usize = 0; i < wide.length; i++) {
+    const inside = i >= 5 && i < 65536 + 5;
+    const w = inside ? refBf16((i - 5) as u32) : (-1 as f32).toBits();
+    into += wide[i].toBits() == w ? 0 : 1;
+    const n = inside ? ns[i - 5].toBits() : (-2 as bf16).toBits();
+    into += narrow[i].toBits() == n ? 0 : 1;
+  }
+  console.log("bf16 into mismatches", into);
+}
+
+function main() {
+  const bytes = allPatterns();
+  checkF16(bytes);
+  checkBf16(bytes);
+}

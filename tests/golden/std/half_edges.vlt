@@ -1,0 +1,155 @@
+// velt/half at the edges (#2049): every count around the vector widths (0, 1, 7, 8, 9, 15, 16,
+// 17, …), odd byte lengths (the last byte is not read), odd starting bytes, `at` at and near
+// the end, and the `Into` forms writing exactly their range.
+
+import {
+  bf16FromBytes,
+  f16FromBytes,
+  narrowBf16,
+  narrowBf16Into,
+  narrowF16,
+  narrowF16Into,
+  widenBf16,
+  widenBf16Into,
+  widenF16,
+  widenF16Into,
+} from "velt/half";
+
+// Each side of the vector widths and unrolled loop steps of every target.
+const SMALL: usize[] = [0, 1, 2, 3, 4, 5, 7, 8, 9, 15, 16, 17];
+const COUNTS: usize[] = SMALL.concat([31, 32, 33, 63, 64, 65, 127, 128, 129]);
+
+const AT: usize[] = [0, 1, 2, 3];
+const EXTRA: usize[] = [0, 1];
+const INTO_AT: usize[] = [0, 1, 3];
+const AFTER: usize[] = [0, 1, 5];
+
+// `len` bytes, each different from its neighbours.
+function bytesOf(len: usize): u8[] {
+  const b: u8[] = Buffer.alloc(len);
+  for (let i: usize = 0; i < len; i++) {
+    b[i] = ((i * 37 + 11) & 0xff) as u8;
+  }
+  return b;
+}
+
+// The pattern of value `k` read from byte `at` of `b`, little-endian.
+function patternAt(b: u8[], at: usize, k: usize): u16 {
+  return (b[at + 2 * k] as u16) | ((b[at + 2 * k + 1] as u16) << 8);
+}
+
+// Whether `ws` is the `count` patterns of `b` from `at`.
+function sameF16(ws: f16[], b: u8[], at: usize, count: usize): bool {
+  if (ws.length != count) {
+    return false;
+  }
+  for (let k: usize = 0; k < count; k++) {
+    if (ws[k].toBits() != patternAt(b, at, k)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function sameBf16(ws: bf16[], b: u8[], at: usize, count: usize): bool {
+  if (ws.length != count) {
+    return false;
+  }
+  for (let k: usize = 0; k < count; k++) {
+    if (ws[k].toBits() != patternAt(b, at, k)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function loads() {
+  let cases = 0;
+  const bad: string[] = [];
+  for (const count of COUNTS) {
+    for (const at of AT) {
+      for (const extra of EXTRA) {
+        const b = bytesOf(at + 2 * count + extra);
+        cases++;
+        if (!sameF16(f16FromBytes(b, at, count), b, at, count)) {
+          bad.push(`f16 count ${count} at ${at} extra ${extra}`);
+        }
+        // The default count: the whole patterns after `at`.
+        if (!sameF16(f16FromBytes(b, at), b, at, count)) {
+          bad.push(`f16 default count ${count} at ${at} extra ${extra}`);
+        }
+        if (!sameBf16(bf16FromBytes(b, at, count), b, at, count)) {
+          bad.push(`bf16 count ${count} at ${at} extra ${extra}`);
+        }
+        if (!sameBf16(bf16FromBytes(b, at), b, at, count)) {
+          bad.push(`bf16 default count ${count} at ${at} extra ${extra}`);
+        }
+      }
+    }
+  }
+  console.log("loads", cases, "bad", bad);
+  // `at` at and near the end of 9 bytes.
+  const b = bytesOf(9);
+  console.log(
+    f16FromBytes(b).length,
+    f16FromBytes(b, 7).length,
+    f16FromBytes(b, 8).length,
+    f16FromBytes(b, 9).length,
+    f16FromBytes(b, 9, 0).length,
+    f16FromBytes(b, 7, 1)[0].toBits() == patternAt(b, 7, 0),
+    bf16FromBytes(b, 8).length,
+    f16FromBytes([]).length,
+  );
+}
+
+function intos() {
+  let cases = 0;
+  const bad: string[] = [];
+  for (const count of COUNTS) {
+    const b = bytesOf(2 * count);
+    const ws = f16FromBytes(b);
+    const bs = bf16FromBytes(b);
+    const xs = widenF16(ws);
+    const ys = widenBf16(bs);
+    // Narrowing back gives the patterns, a signalling NaN quieted.
+    const back = narrowF16(xs);
+    const backB = narrowBf16(ys);
+    for (const at of INTO_AT) {
+      for (const after of AFTER) {
+        cases++;
+        const len = at + count + after;
+        const wide: f32[] = new Array<f32>(len).fill(7);
+        widenF16Into(ws, wide, at);
+        const wideB: f32[] = new Array<f32>(len).fill(7);
+        widenBf16Into(bs, wideB, at);
+        const narrow: f16[] = new Array<f16>(len).fill(7);
+        narrowF16Into(xs, narrow, at);
+        const narrowB: bf16[] = new Array<bf16>(len).fill(7);
+        narrowBf16Into(ys, narrowB, at);
+        for (let i: usize = 0; i < len; i++) {
+          const inside = i >= at && i < at + count;
+          const k = i - (inside ? at : 0);
+          const ok =
+            wide[i].toBits() == (inside ? xs[k] : 7 as f32).toBits() &&
+            wideB[i].toBits() == (inside ? ys[k] : 7 as f32).toBits() &&
+            narrow[i].toBits() == (inside ? back[k] : 7 as f16).toBits() &&
+            narrowB[i].toBits() == (inside ? backB[k] : 7 as bf16).toBits();
+          if (!ok) {
+            bad.push(`count ${count} at ${at} after ${after} index ${i}`);
+            break;
+          }
+        }
+      }
+    }
+    // The allocating forms: as long as their input.
+    if (back.length != count || backB.length != count || xs.length != count || ys.length != count) {
+      bad.push(`count ${count} lengths`);
+    }
+  }
+  console.log("intos", cases, "bad", bad);
+}
+
+function main() {
+  loads();
+  intos();
+}

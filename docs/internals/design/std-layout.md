@@ -104,6 +104,7 @@ have their own docs page.
 | `velt/encoding/json` | `Value` and the JSON engine (json, json/*) |
 | `velt/encoding/csv` | `parseCsv`, `stringifyCsv`, `CsvError` (csv) |
 | `velt/fs` | file system, `FileReader`, `FileWriter` (fs, fs_stream) |
+| `velt/half` | `f16[]`/`bf16[]` in bulk: `f16FromBytes`, `widenF16`, `narrowF16` and the bf16 forms (half) |
 | `velt/hash` | stable non-cryptographic hash (hash) |
 | `velt/host` | `HostRef`, the JS values host functions pass |
 | `velt/io` | `IoError`, WHATWG streams (io, streams) |

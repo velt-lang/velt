@@ -1,5 +1,6 @@
 //! Array intrinsics: `length`, `push` (amortized growth), `pop`, `reserve` (exact growth), and the `std/` helpers
-//! `arrayWithCapacity`, `arraySwap`, `arrayRemove`, `arrayTruncate`, `arrayMove` and `arraySetLen` (velt/lang/intrinsics).
+//! `arrayWithCapacity`, `arraySwap`, `arrayRemove`, `arrayTruncate`, `arrayMove`,
+//! `arrayCopyBytes` and `arraySetLen` (velt/lang/intrinsics).
 
 use crate::lower::async_fn::BoxHold;
 use velt_sema::hir::{self, TyId};
@@ -25,8 +26,8 @@ impl FnLower<'_, '_> {
             let cap = self.cast_to(cap, cty, Ty::U64);
             return self.with_capacity(cap, ty);
         }
-        if i == I::ArrayMove {
-            return self.array_move(args);
+        if i == I::ArrayMove || i == I::ArrayCopyBytes {
+            return self.array_move(args, i == I::ArrayCopyBytes);
         }
         let aty = self.sub(args[0].ty);
         if i == I::ArrayLen {
@@ -349,7 +350,9 @@ impl FnLower<'_, '_> {
     /// `arrayMove(dst, d, src, s, n)`: `dst[d..d + n)` = the bits of
     /// `src[s..s + n)`, both ranges bounds-checked; no drop of what `dst` held, no share of
     /// what `src` holds. A literal `n` of 1 is one element copy, anything else one memcpy.
-    fn array_move(&mut self, args: &[hir::Expr]) -> Operand {
+    /// With `bytes` it is `arrayCopyBytes(dst, d, src, s, n)`: `src` is a `u8[]`, and its
+    /// range is the `n * size` bytes from `s`, `size` the byte size of `dst`'s element.
+    fn array_move(&mut self, args: &[hir::Expr], bytes: bool) -> Operand {
         let [dst, d, src, s, n] = args else {
             ice(format_args!(
                 "ArrayMove called with {} arguments",
@@ -358,9 +361,17 @@ impl FnLower<'_, '_> {
         };
         let (dty, sty) = (self.sub(dst.ty), self.sub(src.ty));
         let elem = self.elem_ty(dty);
+        let src_elem = self.elem_ty(sty);
+        if bytes && self.cx.needs_drop(elem) {
+            ice("arrayCopyBytes into an array whose elements own something");
+        }
+        let what = match bytes {
+            true => "loading 16-bit floats from bytes",
+            false => "sorting with a comparison function",
+        };
         let dv = self.expr(dst);
         let darr = self.place_of(dv, dty);
-        self.view_unsupported(&darr, dty, "sorting with a comparison function");
+        self.view_unsupported(&darr, dty, what);
         if self.cx.lock_counted(dty) && !self.captured_root(dst) {
             self.write_barrier(Operand::Copy(darr.clone()), dty);
         }
@@ -369,7 +380,7 @@ impl FnLower<'_, '_> {
         let id = self.freeze(id, d.ty);
         let sv = self.expr(src);
         let sarr = self.place_of(sv, sty);
-        self.view_unsupported(&sarr, sty, "sorting with a comparison function");
+        self.view_unsupported(&sarr, sty, what);
         if self.cx.lock_counted(sty) {
             self.write_barrier(Operand::Copy(sarr.clone()), sty);
         }
@@ -377,7 +388,7 @@ impl FnLower<'_, '_> {
         let (is, ts) = (self.expr(s), self.vty(s.ty));
         let is = self.freeze(is, s.ty);
         let (nv, nt) = (self.expr(n), self.vty(n.ty));
-        if matches!(nv, Operand::Const(vir::Const::Int(1), _)) {
+        if !bytes && matches!(nv, Operand::Const(vir::Const::Int(1), _)) {
             let pd = self.elem_place_checked(&darr, dty, id, td);
             let ps = self.elem_place_checked(&sarr, sty, is, ts);
             self.assign(pd, Rvalue::Use(Operand::Copy(ps)));
@@ -397,6 +408,11 @@ impl FnLower<'_, '_> {
         self.branch(some, copy_bb, join);
         self.switch_to(copy_bb);
         // The last element of each range is in bounds, so all of it is.
+        let (stride, _) = self.stride(elem);
+        let size = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::Mul, count.clone(), cint(stride as i128, Ty::U64)),
+        );
         let back = self.rvalue_temp(
             Ty::U64,
             Rvalue::Binary(BinOp::Sub, count.clone(), cint(1, Ty::U64)),
@@ -405,18 +421,20 @@ impl FnLower<'_, '_> {
             Ty::U64,
             Rvalue::Binary(BinOp::Add, id.clone(), back.clone()),
         );
-        let last_s = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Add, is.clone(), back));
+        let back_s = match bytes {
+            true => self.rvalue_temp(
+                Ty::U64,
+                Rvalue::Binary(BinOp::Sub, size.clone(), cint(1, Ty::U64)),
+            ),
+            false => back,
+        };
+        let last_s = self.rvalue_temp(Ty::U64, Rvalue::Binary(BinOp::Add, is.clone(), back_s));
         self.elem_place_checked(&darr, dty, last_d, Ty::U64);
         self.elem_place_checked(&sarr, sty, last_s, Ty::U64);
         let pd = self.elem_place(&darr, id, elem);
-        let ps = self.elem_place(&sarr, is, elem);
-        let (stride, _) = self.stride(elem);
-        let bytes = self.rvalue_temp(
-            Ty::U64,
-            Rvalue::Binary(BinOp::Mul, count, cint(stride as i128, Ty::U64)),
-        );
+        let ps = self.elem_place(&sarr, is, src_elem);
         let (pd, ps) = (self.addr(pd), self.addr(ps));
-        self.mem_copy_dyn(pd, ps, bytes, false);
+        self.mem_copy_dyn(pd, ps, size, false);
         self.goto(join);
         self.switch_to(join);
         unit()

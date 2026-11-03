@@ -1,0 +1,10 @@
+// `bf16FromBytes` panics with a RangeError when `at` is past the end of the bytes (#2049); at the
+// end it gives no values.
+
+import { bf16FromBytes } from "velt/half";
+
+function main() {
+  const b: u8[] = Buffer.alloc(6);
+  console.log(bf16FromBytes(b, 6).length);
+  console.log(bf16FromBytes(b, 7).length);
+}

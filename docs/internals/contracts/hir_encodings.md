@@ -607,6 +607,10 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
   ownership: the std code keeps every element owned by exactly one array, cuts stale copies off
   before an array is dropped, and keeps the elements out of any array a callback could reach
   through an alias while it runs.
+  `Intrinsic::ArrayCopyBytes(dst, d, src, s, n)` (std only, std/half/bytes.vlt): the bytes
+  `src[s..s + n * size(T))` of a `u8[]` copied as the bits of `dst[d..d + n)`, a different array
+  whose element type owns nothing (both ranges bounds-checked; one memcpy, in the target's byte
+  order). An element type that owns something is an ICE.
   `Intrinsic::ArrayReserve(xs, extra)` (sema's array spreads): room for `extra` more elements,
   the buffer reallocated to exactly `len + extra` when the capacity is smaller (no doubling).
   `Intrinsic::NeedsDrop(value)` (std only, value borrowed and not evaluated): a constant `bool`,
@@ -1484,7 +1488,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   (`arrayViewFlushAt`), the new tail or length for `push` / `pop` / `truncate`
   (`arrayViewFlushFrom`), else all of it (`arrayViewFlush`). A call of
   `std/sort/stable::stableSort` on a view sorts a copy of the mirror instead
-  (`arrayViewSort`); `ArrayMove` / `ArraySetLen` on a view stop with a `TypeError`. The
+  (`arrayViewSort`); `ArrayMove` / `ArraySetLen` / `ArrayCopyBytes` on a view stop with a `TypeError`. The
   runtime's table of array views (rt_abi.md "Views") keeps one live view per (original, view
   type), so two conversions give one box. A view converts to `any` as `__target`, drops by
   leaving the table and releasing the view object, and deep-copies or transfers as a plain

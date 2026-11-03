@@ -1,0 +1,33 @@
+// velt/half: `f16[]` and `bf16[]` in bulk: loading them from bytes, and widening them to and
+// narrowing them from `f32[]`, at the speed of the CPU's conversion instructions.
+// https://veltlang.com/docs/std/half/.
+//
+//   import { f16FromBytes, widenF16 } from "velt/half";
+//   const xs: f32[] = widenF16(f16FromBytes(bytes));
+//
+// Bytes are little-endian, as model files (safetensors, GGUF) store them. A default x86-64 build
+// (x86-64-v2) converts f16 with SSE4.1 integer code, about 40 instructions per 4 values;
+// `--cpu x86-64-v3` (or `native`) uses F16C, one instruction per 8 (run-time dispatch is #2241).
+// arm64 always has the instructions. The bytes are a `u8[]` (as `readFileBytes` and `Buffer`
+// give them); an `any` array viewed as `u8[]` stops with a TypeError (#1485).
+
+/** The 16-bit patterns in `bytes` (little-endian) from byte `at` on, as an `f16[]`: one copy. */
+export { f16FromBytes } from "velt/half/bytes";
+/** The 16-bit patterns in `bytes` (little-endian) from byte `at` on, as a `bf16[]`: one copy. */
+export { bf16FromBytes } from "velt/half/bytes";
+/** Each `f16` as an `f32`, exactly. */
+export { widenF16 } from "velt/half/widen";
+/** Each `f16` as an `f32` into an existing `f32[]` from index `at`, allocating nothing. */
+export { widenF16Into } from "velt/half/widen";
+/** Each `bf16` as an `f32`, exactly. */
+export { widenBf16 } from "velt/half/widen";
+/** Each `bf16` as an `f32` into an existing `f32[]` from index `at`, allocating nothing. */
+export { widenBf16Into } from "velt/half/widen";
+/** Each `f32` rounded once to the nearest `f16`. */
+export { narrowF16 } from "velt/half/narrow";
+/** Each `f32` rounded to `f16` into an existing `f16[]` from index `at`, allocating nothing. */
+export { narrowF16Into } from "velt/half/narrow";
+/** Each `f32` rounded once to the nearest `bf16`. */
+export { narrowBf16 } from "velt/half/narrow";
+/** Each `f32` rounded to `bf16` into an existing `bf16[]` from index `at`, allocating nothing. */
+export { narrowBf16Into } from "velt/half/narrow";

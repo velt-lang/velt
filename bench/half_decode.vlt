@@ -1,0 +1,85 @@
+// velt/half in bulk (#2049): a 64 MB buffer of f16 (or bf16) patterns loaded with
+// `f16FromBytes` and widened to `f32[]`, the narrow direction, and `memcpy` of the same bytes as
+// the bar. Measure instructions retired (`/usr/bin/time -l` on macOS, `perf stat -e
+// instructions:u` on Linux), one mode per run, and subtract the setup:
+//   memcpy, load, decode, bdecode:        minus `none`
+//   decodeInto, narrow, narrowInto:       minus `setup1`
+//   bnarrow:                              minus `bsetup1`
+// Each mode runs 10 times; divide by 10. Build with `--release`, and on x86 once more with
+// `--cpu x86-64-v3` (F16C) to compare with the default x86-64-v2 build.
+import {
+  f16FromBytes,
+  narrowF16,
+  narrowF16Into,
+  widenF16,
+  widenF16Into,
+  bf16FromBytes,
+  widenBf16,
+  narrowBf16,
+} from "velt/half";
+
+function main() {
+  const mode = process.argv[2];
+  const reps: usize = 10;
+  const n: usize = 64 * 1024 * 1024;
+  const bytes: u8[] = Buffer.alloc(n);
+  for (let i: usize = 0; i < n; i += 2) {
+    bytes[i] = (i * 7) as u8;
+    bytes[i + 1] = ((i >> 9) & 0x3b) as u8;
+  }
+  let sum: number = 0;
+  if (mode == "memcpy") {
+    for (let r: usize = 0; r < reps; r++) {
+      const c = bytes.slice();
+      sum += c[r] as number;
+    }
+  } else if (mode == "load") {
+    for (let r: usize = 0; r < reps; r++) {
+      const ws = f16FromBytes(bytes);
+      sum += ws[r] as number;
+    }
+  } else if (mode == "decode") {
+    for (let r: usize = 0; r < reps; r++) {
+      const xs = widenF16(f16FromBytes(bytes));
+      sum += xs[r] as number;
+    }
+  } else if (mode == "decodeInto") {
+    const ws = f16FromBytes(bytes);
+    const xs: f32[] = widenF16(ws);
+    for (let r: usize = 0; r < reps; r++) {
+      widenF16Into(ws, xs, 0);
+      sum += xs[r] as number;
+    }
+  } else if (mode == "narrow") {
+    const xs = widenF16(f16FromBytes(bytes));
+    for (let r: usize = 0; r < reps; r++) {
+      const ws = narrowF16(xs);
+      sum += ws[r] as number;
+    }
+  } else if (mode == "narrowInto") {
+    const xs = widenF16(f16FromBytes(bytes));
+    const ws = f16FromBytes(bytes);
+    for (let r: usize = 0; r < reps; r++) {
+      narrowF16Into(xs, ws, 0);
+      sum += ws[r] as number;
+    }
+  } else if (mode == "bdecode") {
+    for (let r: usize = 0; r < reps; r++) {
+      const xs = widenBf16(bf16FromBytes(bytes));
+      sum += xs[r] as number;
+    }
+  } else if (mode == "bnarrow") {
+    const xs = widenBf16(bf16FromBytes(bytes));
+    for (let r: usize = 0; r < reps; r++) {
+      const ws = narrowBf16(xs);
+      sum += ws[r] as number;
+    }
+  } else if (mode == "setup1") {
+    const xs = widenF16(f16FromBytes(bytes));
+    sum += xs[0] as number;
+  } else if (mode == "bsetup1") {
+    const xs = widenBf16(bf16FromBytes(bytes));
+    sum += xs[0] as number;
+  }
+  console.log(mode, sum);
+}

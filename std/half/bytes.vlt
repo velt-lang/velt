@@ -1,0 +1,47 @@
+// velt/half (internal): `f16[]` and `bf16[]` from bytes, one copy.
+
+import { arrayCopyBytes, arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+
+/**
+ * The `count` little-endian 16-bit patterns in `bytes` from byte `at` on, as a packed `f16[]`:
+ * one copy of `2 * count` bytes, every pattern kept (NaN payloads too). `count` defaults to
+ * all the whole patterns after `at`, so an odd byte left over is not read. Panics with a
+ * RangeError when `at + 2 * count` passes the end of `bytes`, as `u8x16.load` does. For
+ * big-endian data, swap each pair first (`u16x8.reverseBytes`, or by hand).
+ */
+export function f16FromBytes(bytes: u8[], at: usize = 0, count: usize | null = null): f16[] {
+  const n = halfCount(bytes, at, count, "f16FromBytes");
+  const out: f16[] = arrayWithCapacity(n);
+  arraySetLen(out, n);
+  arrayCopyBytes(out, 0, bytes, at, n);
+  return out;
+}
+
+/**
+ * As `f16FromBytes`, for `bf16` (the top 16 bits of an `f32`): the `count` little-endian
+ * patterns from byte `at` on, one copy.
+ */
+export function bf16FromBytes(bytes: u8[], at: usize = 0, count: usize | null = null): bf16[] {
+  const n = halfCount(bytes, at, count, "bf16FromBytes");
+  const out: bf16[] = arrayWithCapacity(n);
+  arraySetLen(out, n);
+  arrayCopyBytes(out, 0, bytes, at, n);
+  return out;
+}
+
+// The number of 16-bit patterns to read: `count`, or every whole one after `at`; a RangeError
+// when they do not fit.
+function halfCount(bytes: u8[], at: usize, count: usize | null, what: string): usize {
+  const len = bytes.length;
+  if (at > len) {
+    panic(`RangeError: ${what}: position ${at} is past the end (${len} bytes)`);
+  }
+  const room = (len - at) / 2;
+  if (count == null) {
+    return room;
+  }
+  if (count > room) {
+    panic(`RangeError: ${what}: ${count} values from byte ${at} pass the end (${len} bytes)`);
+  }
+  return count;
+}
