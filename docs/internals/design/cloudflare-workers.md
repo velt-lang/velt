@@ -200,13 +200,24 @@ are in the contract.
 
 ## 6. `serve` on Workers (#1786, #1787)
 
-`packages/http-server` gets a `workers` variant of `serve` (a conditional import, section 3):
+`packages/http-server` gets a JS-host variant of `serve` (a conditional import, section 3):
 an accept loop that awaits a host promise the glue settles per request, and a `RequestSource`
 that streams the request body. The handler, `Request` and `Response` are the same as natively.
-The variant is chosen by the host package's condition (`workers`), so http-server names a
-condition, never a platform. The glue answers each JS `Request` with the `Response` the loop
+The variant is chosen by the built-in condition `js`, which every `--host` build has (std's
+`#http-transport` does the same), so http-server names no platform and serves on every host
+package's. The glue answers each JS `Request` with the `Response` the loop
 hands back for it; a task that outlives its response is kept alive with the adapter's
 `waitUntil` (`ctx.waitUntil()` on Workers).
+
+As built: `imports: { "#standard": { js: "./src/hosted/standard.vlt", default: … } }`.
+`serve` spawns the accept loop over std's `velt/host/worker` in a task scope and returns an
+`HttpServer` (which holds a close callback, not a `TcpListener`), so `main` may await before
+`serve` and return after it (#1787: the runtime keeps the program while the loop's task waits).
+Each request is a `RequestSource` (`QueuedRequest`) whose `read` is one `velt:worker` `read`, so
+the body streams (#1786); `hasBody` and the client's address come from the new `velt:worker`
+functions `hasBody` and `remoteAddr` (the adapter passes the address: host-cloudflare's
+`cf-connecting-ip`). The response is one `respond`, or `respondStream` with a `write` per chunk.
+A release build of the test's server is 309,826 bytes gzipped.
 
 ## 7. `packages/cloudflare` (#1738)
 
@@ -266,7 +277,7 @@ no compiler or runtime change and names nothing the compiler knows.
 | 3 | lang/loader | conditional imports, with the check that variants export the same API | — | — |
 | 4 | std | `fetch` on JS hosts | 2, 3 | #1785 |
 | 5 | tooling | `velt build --host <package>`, host packages (host-cloudflare); packages ship JS host modules | 2 | #1736 |
-| 6 | package | `packages/http-server`'s `workers` variant of `serve` | 3, 5 | #1786, #1787 |
+| 6 | package | `packages/http-server`'s JS-host variant of `serve` | 3, 5 | #1786, #1787 |
 | 7 | package | `packages/cloudflare` | 5 | #1738 |
 | 8 | app | the registry Worker | 6, 7 | #1740 |
 | 9 | CI | `workerd` in CI, size and CPU budgets | 6 | #1739 |

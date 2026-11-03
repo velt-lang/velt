@@ -11,7 +11,9 @@ describe("the entry", () => {
     for (const file of ["./program.wasm", "./velt_serve.mjs", "./velt_modules.mjs"]) {
       expect(entry.includes(`"${file}"`)).toBe(true);
     }
-    expect(entry.includes("server.serve(request, { context: { env, ctx }")).toBe(true);
+    expect(entry.includes("server.serve(request, {")).toBe(true);
+    expect(entry.includes("context: { env, ctx }")).toBe(true);
+    expect(entry.includes("cf-connecting-ip")).toBe(true);
     expect(entry.includes("ctx.waitUntil(p)")).toBe(true);
   });
 });

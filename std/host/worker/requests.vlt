@@ -16,6 +16,13 @@ export declare host("velt:worker") function method(req: HostRef): string;
 export declare host("velt:worker") function url(req: HostRef): string;
 /** The request's header fields as `name: value` lines joined by `\n` (names lowercase). */
 export declare host("velt:worker") function headers(req: HostRef): string;
+/**
+ * The client's address as the host package's entry knows it: `host:port` (`[v6]:port` for an IPv6
+ * address, port 0 when unknown), empty when the platform doesn't say.
+ */
+export declare host("velt:worker") function remoteAddr(req: HostRef): string;
+/** Whether the request has a body (a `GET` has none). */
+export declare host("velt:worker") function hasBody(req: HostRef): bool;
 /** The next piece of the request's body, never empty; empty at its end. */
 export declare host("velt:worker") async function read(req: HostRef): Promise<u8[]>;
 /** Answer the request with a whole body (`headers` as `name: value` lines; empty: no body). */

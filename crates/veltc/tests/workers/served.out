@@ -1,0 +1,30 @@
+main awaits before serving
+a request waits while main does
+main returns, serving (port 0)
+hello: 200 content-type=text/plain;charset=UTF-8 | Hello, Ada: GET from 203.0.113.7 | waitUntil 0
+hello: 200 content-type=text/plain;charset=UTF-8 | Hello, Bo: POST from 2001:db8::1 | waitUntil 0
+pieces: 201 content-type=text/plain;charset=UTF-8 | 3 pieces of 2|1|3 bytes | waitUntil 0
+text: 200 content-type=text/plain;charset=UTF-8 | got "plain" | waitUntil 0
+text: 200 content-type=text/plain;charset=UTF-8 | got "" | waitUntil 0
+json: 200 content-type=application/json x-kind=json | {"ok":true,"n":2} | waitUntil 0
+stream: 200 content-type=application/octet-stream | one two three | waitUntil 1
+log: request handler failed: Oops { message: 'the handler failed' }
+throw: 500 content-type=text/plain; charset=utf-8 | Internal Server Error | waitUntil 0
+missing: 404 content-type=text/plain;charset=UTF-8 | no /missing | waitUntil 0
+hello: 200 content-type=text/plain;charset=UTF-8 | Hello, Cy: GET from  | waitUntil 0
+slow: 200 content-type=text/plain;charset=UTF-8 | slow at last | waitUntil 0
+bytes: 200 content-type=application/octet-stream | raw | waitUntil 0
+log: request handler failed: the response could not be written: TypeError { message: 'invalid character in header x-a' }
+inject: 500 content-type=text/plain; charset=utf-8 | Internal Server Error | waitUntil 0
+text: 413 content-type=text/plain; charset=utf-8 | Payload Too Large | waitUntil 0
+log: request handler failed: IoError {
+log:   message: 'request body larger than 64 bytes',
+log:   code: 'EMSGSIZE'
+log: }
+text: 500 content-type=text/plain; charset=utf-8 | Internal Server Error | waitUntil 0
+log: velt: the program ended with exit code 0, and the next request starts a new instance
+close: 200 content-type=text/plain;charset=UTF-8 | closing | waitUntil 0
+main awaits before serving
+main returns, serving (port 0)
+hello: 200 content-type=text/plain;charset=UTF-8 | Hello, Di: GET from  | waitUntil 0
+instances 2

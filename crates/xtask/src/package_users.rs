@@ -27,8 +27,17 @@ pub(crate) const USERS: &[Users] = &[
         // (`bench_programs` compiles them), the documentation (`docs` compiles its snippets
         // against the packages without native code, and reads packages/http-server's README and
         // docs), and tests that write manifests depending on it: hot reload's servers (`reload`)
-        // and the `api` and `websocket` templates' projects (`templates`).
-        binaries: &["std_tests", "bench_programs", "docs", "reload", "templates"],
+        // and the `api` and `websocket` templates' projects (`templates`), and the `--host` builds
+        // of `serve` (`workers`).
+        binaries: &[
+            "std_tests",
+            "bench_programs",
+            "docs",
+            "reload",
+            "templates",
+            // `serve` on a `--host` build (`workers` copies its sources beside its fixtures).
+            "workers",
+        ],
     },
     // `--host` builds (`workers` and `cloudflare` copy it beside their fixtures) and the
     // documentation.

@@ -6,7 +6,7 @@ no platform: a platform is a package (packages/host-cloudflare is the first), an
 needs no compiler change. This is the contract between the build (`crates/veltc/src/commands/
 host.rs`, `driver/host_modules.rs`), host packages (`vpm::host`, manifest.md's `host`), the
 glue's host-neutral server core (`crates/velt_rt_wasm/js/velt_serve.mjs`), and the Velt code
-that serves through `velt:worker` (packages/http-server's `workers` variant, #1786) or binds a
+that serves through `velt:worker` (packages/http-server's JS-host variant, condition `js`, #1786) or binds a
 platform's services (packages/cloudflare, #1738).
 
 ## The build
@@ -60,7 +60,11 @@ import { modules } from "./velt_modules.mjs";
 const server = createServer(module, { modules });
 export default {
   fetch: (request, env, ctx) =>
-    server.serve(request, { context: { env, ctx }, waitUntil: (p) => ctx.waitUntil(p) }),
+    server.serve(request, {
+      context: { env, ctx },
+      waitUntil: (p) => ctx.waitUntil(p),
+      remoteAddr: request.headers.get("cf-connecting-ip") ?? "",
+    }),
 };
 ```
 
@@ -70,6 +74,8 @@ export default {
   takes a Fetch `Request` and answers with a promise of a `Response`. `platform.context` is the
   request's context as the platform has it; `platform.waitUntil(p)` (optional) keeps the
   request's handler alive after its answer, for platforms that end it with the answer.
+  `platform.remoteAddr` (optional) is the client's address as the platform gives it (a host name
+  or `host:port`; host-cloudflare's: `cf-connecting-ip`), which `velt:worker`.`remoteAddr` reports.
   `modules` maps each package host module's name to its file's default export, a function
   called once per instance with `host`, whose properties are those of the `context` of the
   request whose context runs the program now (packages/host-cloudflare's: `host.env`,
@@ -85,8 +91,10 @@ export default {
   500 "the program does not accept requests", logged once. Any other end (code 0 after it
   accepted, a panic's 101, a trap's 134, `process.exit(n)`, an uncaught error's 1), a host
   function that throws, or a failed instantiation discards the instance (an exception that
-  unwinds through the module leaves it unusable): every request in flight gets a 500, the cause
-  is logged, and the next request instantiates the module again.
+  unwinds through the module leaves it unusable): every request in flight that was not
+  answered gets a 500 (one answered whose body is still being written is cut off), the cause is
+  logged with the number of those 500s (left out when there are none, as when a server closed
+  and its handlers finished), and the next request instantiates the module again.
 - Contexts. Some platforms (Cloudflare's Workers) tie I/O (a request's body, a `Response`, a stream, a timer, a fetch) to
   the request whose handler made it, cancel a request whose handler waits on nothing of its
   own, and end a request's context, with what it started, once its response and its
@@ -124,13 +132,15 @@ Requests arrive like connections on a listener. `serve(request, platform)` puts 
 a queue; the program takes requests with `accept()`, in the order they came, and answers each.
 `main` may await anything before it accepts; a request waits in the queue until then. Std
 declares the functions, in `velt/host/worker` (std/host/worker/requests.vlt), and programs
-import them from there (packages/http-server's `workers` variant will):
+import them from there (packages/http-server's JS-host variant does, condition `js`):
 
 ```ts ignore
 declare host("velt:worker") async function accept(): Promise<HostRef>;
 declare host("velt:worker") function method(req: HostRef): string;
 declare host("velt:worker") function url(req: HostRef): string;
 declare host("velt:worker") function headers(req: HostRef): string;
+declare host("velt:worker") function remoteAddr(req: HostRef): string;
+declare host("velt:worker") function hasBody(req: HostRef): bool;
 declare host("velt:worker") async function read(req: HostRef): Promise<u8[]>;
 declare host("velt:worker") function respond(req: HostRef, status: u16, headers: string, body: readonly u8[]): void;
 declare host("velt:worker") function respondStream(req: HostRef, status: u16, headers: string): HostRef;
@@ -141,6 +151,9 @@ declare host("velt:worker") async function close(stream: HostRef): Promise<void>
 - `accept()` settles with the next request (a `HostRef` of the glue's request).
 - `method`, `url`: the request's. `headers`: its header fields as `name: value` lines joined by
   `\n` (names lowercase, as `Headers` iterates them; `set-cookie` once per value).
+- `remoteAddr(req)`: the client's address, `host:port` (`[v6]:port`; port 0 when the platform
+  gave none), empty when the adapter passed none. `hasBody(req)`: whether the request has a body
+  (the `Request`'s `body` is not null).
 - `read(req)`: the next piece of the body, never empty; empty at its end (and for a request
   without a body, or once its answer is complete). A rejection is the stream's error.
 - `respond(req, status, headers, body)`: the answer with a whole body (`headers` in the same

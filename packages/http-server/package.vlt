@@ -4,4 +4,7 @@ export const pkg: Package = {
   name: "http-server",
   version: "0.1.0",
   description: "An HTTP/1.1 and HTTP/2 server written in Velt, with web-standard handlers",
+  // `serve` takes its requests from the JS host's queue on a `velt build --host` build (the
+  // built-in condition `js`, which every host build has); natively, from its own TCP listener.
+  imports: { "#standard": { js: "./src/hosted/standard.vlt", default: "./src/standard.vlt" } },
 };

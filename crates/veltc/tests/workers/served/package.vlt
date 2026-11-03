@@ -1,0 +1,13 @@
+import type { Package } from "velt/package";
+
+// packages/http-server's `serve` on a `--host host-cloudflare` build (crates/veltc/tests/workers.rs).
+export const pkg: Package = {
+  name: "served",
+  version: "0.1.0",
+  dependencies: {
+    probe: { path: "../probe" },
+    // packages/http-server and packages/host-cloudflare, copied beside the fixtures by the test.
+    "http-server": { path: "../http-server" },
+    "host-cloudflare": { path: "../host-cloudflare" },
+  },
+};

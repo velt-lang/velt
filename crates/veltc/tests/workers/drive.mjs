@@ -250,6 +250,61 @@ const scenarios = {
     await send("nothing");
     await twice;
   },
+  // served/: packages/http-server's `serve`. `main` awaits a gate first, then returns after
+  // `serve`; Workers give the client's IP in `cf-connecting-ip`.
+  async served() {
+    const ip = { "cf-connecting-ip": "203.0.113.7" };
+    const first = send("hello", { headers: { "x-name": "Ada", ...ip } });
+    await env.gates.reached("start");
+    console.log("a request waits while main does");
+    env.gates.open("start");
+    await first;
+    await send("hello", { method: "POST", headers: { "x-name": "Bo", "cf-connecting-ip": "2001:db8::1" } });
+    const pieces = ["ab", "c", "def"];
+    let at = 0;
+    const body = new ReadableStream({
+      async pull(c) {
+        // One piece at a time, each after the handler took the last.
+        if (at < pieces.length) c.enqueue(encoder.encode(pieces[at++]));
+        else c.close();
+      },
+    });
+    await send("pieces", { method: "POST", body, duplex: "half" });
+    await send("text", { method: "POST", body: "plain" });
+    await send("text");
+    await send("json");
+    await send("stream");
+    await send("throw");
+    await send("missing", { headers: ip });
+
+    // Handlers run concurrently: one waits at a gate while another is answered.
+    const slow = send("slow");
+    await env.gates.reached("slow");
+    await send("hello", { headers: { "x-name": "Cy" } });
+    env.gates.open("slow");
+    await slow;
+    await send("bytes");
+    await send("inject");
+    // `maxBodySize: 64`: a body declared larger is refused before the handler; one that turns
+    // out larger fails the handler's read.
+    // (Workers give an incoming request's `content-length`; a `Request` made here needs it said.)
+    await send("text", { method: "POST", body: "x".repeat(100), headers: { "content-length": "100" } });
+    let big = 0;
+    const stream = new ReadableStream({
+      pull(c) {
+        if (big++ < 3) c.enqueue(encoder.encode("y".repeat(40)));
+        else c.close();
+      },
+    });
+    await send("text", { method: "POST", body: stream, duplex: "half" });
+
+    // `close()`: the program ends once its handlers finished; the next request starts it again.
+    await send("close");
+    const again = send("hello", { headers: { "x-name": "Di" } });
+    await env.gates.reached("start");
+    env.gates.open("start");
+    await again;
+  },
   // bare/: an accept loop over std alone.
   async bare() {
     await send("x");

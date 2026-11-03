@@ -1,8 +1,6 @@
 // http-server (internal): `ServeInfo`, what `serve` tells a handler about a request beyond the
 // `Request` itself (Deno's `ServeHandlerInfo`), and `NetAddr`, the address a connection came from.
 
-import { Received } from "./received";
-
 /** An address a connection came from (Deno's `NetAddr`). */
 export interface NetAddr {
   /** "tcp" */
@@ -12,11 +10,17 @@ export interface NetAddr {
   port: number;
 }
 
+/** Where a request came from: the server's view of it that `ServeInfo` reads. */
+export interface Peer {
+  /** `host:port`, `[v6]:port` for an IPv6 address; empty when unknown. */
+  remoteAddr(): string;
+}
+
 /** What `serve` knows about a request beyond the `Request`: a handler's second argument. */
 export class ServeInfo {
-  private received: Received;
+  private received: Peer;
 
-  constructor(received: Received) {
+  constructor(received: Peer) {
     this.received = received;
   }
 

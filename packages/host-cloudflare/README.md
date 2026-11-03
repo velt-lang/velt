@@ -13,7 +13,8 @@ the host modules of the packages it uses, this package's `worker.mjs` (the Worke
 it.
 
 The program serves requests with an accept loop over `velt/host/worker` (packages/http-server's
-`workers` variant does this for `serve`). Its `#name` imports may choose a `workers` variant.
+JS-host variant, chosen by the built-in condition `js`, does this for `serve`). Its `#name`
+imports may also choose a variant for this host alone with its condition, `workers`.
 Host modules see each request's `env` and `ctx` as `host.env` and `host.ctx`.
 
 This package is all Velt knows about Cloudflare: its `package.vlt`'s `host` gives the target, the

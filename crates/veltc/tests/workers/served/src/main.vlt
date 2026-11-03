@@ -1,0 +1,83 @@
+// packages/http-server's `serve` on a JS host: the same program as natively. `main` awaits a gate
+// before it serves (#1787) and returns after `serve`; request bodies stream from the host as the
+// handler reads them (#1786), up to `maxBodySize`; responses are text, JSON, bytes or streamed,
+// headers checked as natively; handlers run concurrently; a handler that throws gets a 500;
+// `close()` ends the program once its handlers finished, and the next request starts it again.
+
+import { utf8Encode } from "velt/encoding";
+import { BodyStream } from "velt/net/http";
+import { HttpServer, serve, ServeInfo } from "http-server";
+import { greet, waitFor } from "probe";
+
+class Oops extends Error {}
+
+/** The server, for `/close`. */
+const servers: HttpServer[] = [];
+
+async function* parts(): AsyncGenerator<u8[], never> {
+  for (const p of ["one ", "two ", "three"]) {
+    yield utf8Encode(p);
+    await sleep(1);
+  }
+}
+
+async function handle(req: Request, info: ServeInfo): Promise<Response> {
+  const path = new URL(req.url).pathname;
+  if (path == "/hello") {
+    const name = req.headers.get("x-name") ?? "nobody";
+    return new Response(`${greet(name)}: ${req.method} from ${info.remoteAddr.hostname}`);
+  }
+  if (path == "/pieces") {
+    // The body as it arrives: one read per piece the client sent (their sizes).
+    const seen: string[] = [];
+    const body = req.body;
+    if (body != null) {
+      for await (const chunk of body) {
+        seen.push(`${chunk.length}`);
+      }
+    }
+    return new Response(`${seen.length} pieces of ${seen.join("|")} bytes`, { status: 201 });
+  }
+  if (path == "/text") {
+    return new Response(`got "${await req.text()}"`);
+  }
+  if (path == "/json") {
+    const res = Response.json({ ok: true, n: 2 });
+    res.headers.set("x-kind", "json");
+    return res;
+  }
+  if (path == "/stream") {
+    return new Response(BodyStream.from(parts()));
+  }
+  if (path == "/throw") {
+    throw new Oops("the handler failed");
+  }
+  if (path == "/slow") {
+    await waitFor("slow");
+    return new Response("slow at last");
+  }
+  if (path == "/bytes") {
+    return new Response(utf8Encode("raw"));
+  }
+  if (path == "/inject") {
+    const res = new Response("injected?");
+    res.headers.set("x-a", "1\nset-cookie: evil=1");
+    return res;
+  }
+  if (path == "/close") {
+    const server = servers.pop();
+    if (server != null) {
+      server.close();
+    }
+    return new Response("closing");
+  }
+  return new Response(`no ${path}`, { status: 404 });
+}
+
+async function main() {
+  console.log("main awaits before serving");
+  await waitFor("start");
+  const server = await serve({ port: 8080, maxBodySize: 64 }, handle);
+  console.log(`main returns, serving (port ${server.port})`);
+  servers.push(server);
+}

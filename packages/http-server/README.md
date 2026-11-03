@@ -232,6 +232,34 @@ RFC 8441, [docs/websocket.md](docs/websocket.md)). `head` holds what the client 
 request, already in the new protocol (Node's `head`). [`http-server/websocket`](docs/websocket.md)
 is built on this.
 
+## On a JS host (`velt build --host`)
+
+The same program serves on a JavaScript platform: on a `velt build --host <package>` build (the
+first host package is packages/host-cloudflare, for Cloudflare Workers), `serve` runs over the
+host's request queue (std's `velt/host/worker`) instead of a TCP listener: the JS-host variant,
+src/hosted/standard.vlt, which `imports` in package.vlt picks by the built-in condition `js`, so
+it serves on every host package's platform. The handler, its `Request` and
+`Response` and `ServeInfo` are the same:
+
+- `serve` returns at once and `main` may return after it; `main` may also await anything first (a
+  database check, a fetch), and requests wait in the host's queue until it serves.
+- A request's body streams from the host as the handler reads it (`req.body`, `req.text()`), so an
+  upload is never held whole before the handler sees it. A streamed `Response` body is written
+  to the host as it is produced.
+- `opts` names no address there (the platform routes the requests; `server.port` is 0); of its
+  limits only `maxBodySize` applies (413 when the request's `content-length` is larger, before the
+  handler runs; `IoError` "EMSGSIZE" from the body's readers when it turns out larger), the rest
+  and TLS are the platform's. `info.remoteAddr` is what the host package's entry gives
+  (host-cloudflare: `cf-connecting-ip`, port 0).
+- Headers are checked as natively (a line break in a value answers 500), and a body without a
+  `content-type` gets `text/plain; charset=utf-8` (text) or `application/octet-stream` (bytes,
+  streams).
+- `close()` stops taking requests at once (requests stay in the host's queue); once the handlers in
+  flight finished the program has nothing left to do and ends, and the host starts it again
+  (`main` runs again) for the next request. `shutdown()` waits for those handlers.
+- A handler that throws gets a 500, logged, as natively. Upgrades (`upgradeConnection`) and
+  `serveHttp` are native only.
+
 ## `HttpServer`
 
 `HttpServer { port: number }`: `close()` stops accepting, lets in-flight requests finish and closes
