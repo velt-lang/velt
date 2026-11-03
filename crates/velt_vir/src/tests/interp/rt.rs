@@ -77,9 +77,22 @@ impl Interp<'_> {
         )
     }
 
-    /// The bytes of the string at `a` (static or heap form: `w1` is `units << 32 | len`).
+    /// The heap buffer the string at `a` owns: `None` for the static form (`w2 == 0`) and the
+    /// inline one (byte 23 at least `0x80`: `w2`'s sign bit, rt_abi.md), which std's
+    /// `strAsciiWords` makes (integers as text, velt/lang/number/integer).
+    pub(super) fn str_heap(&mut self, a: u64) -> Option<u64> {
+        let (p, _, w2) = self.str_header(a);
+        ((w2 as i64) > 0).then_some(p)
+    }
+
+    /// The bytes of the string at `a` (static or heap form: `w1` is `units << 32 | len`; inline:
+    /// the bytes themselves, byte 23 is `0x80 | len`).
     pub(super) fn str_bytes(&mut self, a: u64) -> Vec<u8> {
-        let (p, w1, _) = self.str_header(a);
+        let (p, w1, w2) = self.str_header(a);
+        if (w2 as i64) < 0 {
+            let len = (w2 >> 56) & 0x1f;
+            return self.read_bytes(a, len as usize);
+        }
         let len = w1 & 0xffff_ffff;
         if len == 0 {
             return vec![];
@@ -126,9 +139,9 @@ impl Interp<'_> {
                 self.new_str(a[1], if a[0] & 1 == 1 { b"true" } else { b"false" })
             }
             "velt_rt_str_clone" | "velt_rt_str_own" => self.str_clone(a[0], a[1]),
+            "velt_rt_statics_drop" => self.statics_drop = Some(a[0]),
             "velt_rt_str_drop" => {
-                let (p, _, cap) = self.str_header(a[0]);
-                if cap > 0 {
+                if let Some(p) = self.str_heap(a[0]) {
                     self.heap_free(p);
                 }
                 self.write_bytes(a[0], &[0; 24]);
@@ -202,6 +215,12 @@ impl Interp<'_> {
             "velt_rt_drop_queue" => self.drop_queue(a[0], a[1]),
             "velt_rt_drop_drain" => self.drop_drain()?,
             m if m.starts_with("velt_atomic_") => return Ok(self.atomic(m, a)),
+            // Bit-level helpers std's number printing declares (velt/lang/number).
+            "velt_rt_math_f64_bits" | "velt_rt_math_bits_f64" => return Ok(a[0]),
+            "velt_rt_math_clz64" => return Ok(a[0].leading_zeros() as u64),
+            "velt_rt_math_ctz64" => return Ok(a[0].trailing_zeros() as u64),
+            "velt_rt_math_popcount64" => return Ok(a[0].count_ones() as u64),
+            "velt_rt_math_umulh" => return Ok(((a[0] as u128 * a[1] as u128) >> 64) as u64),
             m if m.starts_with("velt_rt_math_") => {
                 return Ok(math(m, f64::from_bits(a[0])).to_bits())
             }
@@ -227,9 +246,9 @@ impl Interp<'_> {
         q
     }
 
-    /// Deep copy; static strings (`cap == 0`) stay static.
+    /// Deep copy; static and inline strings are copied bitwise.
     fn str_clone(&mut self, src: u64, dst: u64) {
-        if self.str_header(src).2 == 0 {
+        if self.str_heap(src).is_none() {
             let b = self.read_bytes(src, 24);
             self.write_bytes(dst, &b);
         } else {

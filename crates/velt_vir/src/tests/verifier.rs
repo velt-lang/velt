@@ -97,7 +97,7 @@ fn verify_rejects_misplaced_param_attrs() {
         noalias: true,
         ..ParamAttrs::default()
     };
-    let mut p = lower_ok(&super::m2_arrays::arrays());
+    let mut p = super::lower_src(super::m2_arrays::ARRAYS);
     let fi = p
         .funcs
         .iter()

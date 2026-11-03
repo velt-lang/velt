@@ -130,16 +130,6 @@ pub(super) fn field(base: Expr, index: u32, mode: UseMode, ty: TyId) -> Expr {
         ty,
     )
 }
-pub(super) fn index(base: Expr, i: Expr, mode: UseMode, ty: TyId) -> Expr {
-    ex(
-        ExprKind::Index {
-            base: bx(base),
-            index: bx(i),
-            mode,
-        },
-        ty,
-    )
-}
 pub(super) fn adt_lit(def: DefId, fields: Vec<Expr>, ty: TyId) -> Expr {
     ex(
         ExprKind::AdtLit {
@@ -175,14 +165,8 @@ pub(super) fn new_obj(def: DefId, args: Vec<Expr>, ty: TyId) -> Expr {
         ty,
     )
 }
-pub(super) fn upcast(e: Expr, ty: TyId) -> Expr {
-    ex(ExprKind::Upcast(bx(e)), ty)
-}
 pub(super) fn wrap_some(e: Expr, ty: TyId) -> Expr {
     ex(ExprKind::WrapSome(bx(e)), ty)
-}
-pub(super) fn unwrap_some(e: Expr, mode: UseMode, ty: TyId) -> Expr {
-    ex(ExprKind::UnwrapSome(bx(e), mode), ty)
 }
 pub(super) fn null(ty: TyId) -> Expr {
     ex(ExprKind::Lit(Lit::Null), ty)
@@ -249,9 +233,6 @@ pub(super) fn for_of(binding: Pat, iter: Expr, body: Vec<Stmt>) -> Stmt {
         consume: false,
         share_elems: false,
     })
-}
-pub(super) fn let_pat(p: Pat, init: Expr) -> Stmt {
-    super::builder::st(StmtKind::LetPat { pat: p, init })
 }
 pub(super) fn try_(
     body: Vec<Stmt>,
