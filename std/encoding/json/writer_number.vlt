@@ -2,9 +2,10 @@
 // decimal, other `f64`s in their shortest round-tripping form with JavaScript's exponent rules.
 
 import { strbufPushAsciiWords } from "velt/lang/intrinsics";
-import { decimalText } from "velt/lang/number/fixed";
-import { isWhole, pushF64 } from "velt/lang/number/format";
-import { pushI64 } from "velt/lang/number/integer";
+import { isWhole, pushI64, pushU64 } from "velt/lang/number/integer";
+
+declare function velt_rt_strbuf_push_byte(out: string, byte: u8);
+declare function velt_rt_strbuf_push_f64(out: string, v: f64);
 
 // `null`, as the words `strbufPushAsciiWords` takes.
 const NULL_TEXT: u64 = 0x6c6c756e;
@@ -66,20 +67,43 @@ export function writeF64(out: string, x: f64): void {
     pushI64(out, x as i64);
     return;
   }
-  // A short decimal (`123.5`, `0.25`): its digits from one multiply and one divide, laid out
-  // as `toFixed` lays them out, without the shortest-digits search.
+  // A short decimal (`123.5`, `0.25`): its digits from one multiply and one divide, without the
+  // shortest-digits search.
   const d = shortNumber(x);
   if (d.ok) {
-    const f = decimalText(d.neg, d.m, d.k as i64);
-    const t = f.t;
-    const w0 = t.w0;
-    const w1 = t.w1;
-    const w2 = t.w2;
-    const len = f.len as usize;
-    strbufPushAsciiWords(out, w0, w1, w2, len);
+    writeDecimal(out, d.neg, d.m, d.k);
     return;
   }
-  pushF64(out, x);
+  // Any other double: the runtime's shortest digits (std's float printer, velt/lang/number/format,
+  // is not loaded for JSON).
+  velt_rt_strbuf_push_f64(out, x);
+}
+
+// `m / 10^k` (`k` below 16), after a `-` when `neg` and `m` is not 0: the whole part, the point and
+// the fraction with its leading zeros. The parts go through std's integer printing (only locals
+// follow the builder: CLAUDE.md "the string builder passed as a `string`").
+function writeDecimal(out: string, neg: bool, m: u64, k: usize) {
+  if (neg && m != 0) {
+    velt_rt_strbuf_push_byte(out, 45);
+  }
+  if (k == 0) {
+    pushU64(out, m);
+    return;
+  }
+  const p = POW10_U[k];
+  const whole = m / p;
+  pushU64(out, whole);
+  velt_rt_strbuf_push_byte(out, 46);
+  const frac = m % p;
+  // Leading zeros of the fraction: its digits are fewer than `k`.
+  let width: usize = 1;
+  while (width < k && frac >= POW10_U[width]) {
+    width++;
+  }
+  for (let z = width; z < k; z++) {
+    velt_rt_strbuf_push_byte(out, 48);
+  }
+  pushU64(out, frac);
 }
 
 /** A double as `m / 10^k` with a sign, when JSON writes it from those digits (`ok`). */

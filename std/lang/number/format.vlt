@@ -5,8 +5,8 @@
 // (`noInline()`), and checked only in programs that convert a value that may hold a float to
 // text (velt_common `std_hooks::ON_DEMAND`).
 
-import { noInline, strAsciiWords, strbufPushAsciiWords, trunc } from "velt/lang/intrinsics";
-import { digitCount, digits8, intWords, pushI64 } from "velt/lang/number/integer";
+import { noInline, strAsciiWords, strbufPushAsciiWords } from "velt/lang/intrinsics";
+import { digitCount, digits8, intWords } from "velt/lang/number/integer";
 import { shortest } from "velt/lang/number/shortest";
 import {
   between,
@@ -166,18 +166,4 @@ export function pushF64(buf: string, x: f64): void {
   const rest = (f.len - 24) as usize;
   strbufPushAsciiWords(buf, w0, w1, w2, 24);
   strbufPushAsciiWords(buf, w3, 0, 0, rest);
-}
-
-/** Is `x` a whole number below 2^53 in magnitude (`-0` included)? Its text is the integer's. */
-export function isWhole(x: f64): bool {
-  return x == trunc(x) && x < 9007199254740992.0 && x > -9007199254740992.0;
-}
-
-/** Appends `String(x)` of any float to the builder `buf`: a whole number as its integer. */
-export function pushNumber(buf: string, x: f64): void {
-  if (isWhole(x)) {
-    pushI64(buf, x as i64);
-    return;
-  }
-  pushF64(buf, x);
 }
