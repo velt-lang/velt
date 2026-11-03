@@ -61,19 +61,31 @@ Every shape has a class, and a class determines everything that is compiled inli
 | `~rc` | `Ptr`, null niche | counted class objects and counted boxes (arrays, object types) outside the lock set | count increment and decrement, `===` (identity), move | drop when the count reaches zero, format, clone, transfer, trace, `any` table, from `any`, structural eq and hash |
 | `~rc.lk` | `Ptr`, null niche | as `~rc`, in the lock set (`boxing/locks.rs`) | as `~rc`, through `velt_rt_lk_*` | as `~rc`, plus the type word the `_of` variants take |
 | `~own` | `Ptr`, null niche | uncounted class objects (one owner) | move | drop (frees), format, clone, transfer, … |
-| `~shared` | `Ptr`, null niche | `shared<T>` | atomic count | drop of the last reference, format |
+| `~shared` | `Ptr`, null niche | `shared<T>` | move | share (its atomic count), drop, format |
 | `~promise` | `Ptr`, no niche | `Promise<T, E>` | move | drop, format |
 | `~str` | `Agg(STR_AGG)` | `string` | everything string code does today | format (quoted inside containers) |
 | `~arr` | `Agg(array_agg)` | uncounted arrays | header moves, `length` | drop, clone and format (each walks the elements), `any` table, from `any` |
 | `~fn` | `Agg(closure_agg)` | function values | share and drop (through the environment's own header) | format, `any` table, `===` when the program compares functions |
 | `~dyn` | `Agg(dyn_agg)` | interface values | share, drop and format (through the vtable) | `===` (`identity_dyns`), `any` table |
 | `~unit` | `Unit` | `void`, `never`, literal types | nothing, since the value has no bits | format, `any` table |
+| `~agg(s, a)` | `Agg` of size *s*, alignment *a* | value types that own parts: object types never changed in place, tuples, unions, `T \| null` without a niche, `Result` | move (a copy of *s* bytes) | share, drop, format, eq, hash, `any` table, from `any`, … |
+| `~agg.plain(s, a)` | as `~agg` | as `~agg`, owning nothing (`ShareKind::Plain`) | move, share (both a copy), no drop | format, eq, hash, `any` table, from `any`, … |
 
-Per-type value aggregates are not shapes in the first steps: object types, tuples, unions,
-`T | null` without a niche, `Result`. Their layouts are per `TyId` today (`value_agg`). An
-instance whose type argument is one of them stays per type until the aggregate step (order of
-work, step 5). That step adds `~agg(size, align, bitwise)`, keyed by layout, where *bitwise*
-means no drop and equality and hash by bytes, as Go's shapes are keyed by layout.
+**Aggregates.** Value types are keyed by size and alignment only. Every aggregate operation
+in shared code is either a copy of the whole value or goes through the dictionary. Lowering
+copies aggregates with `memcpy` (`Operand::Copy` of an `Agg` place), passes them by pointer and
+returns them through an out-pointer. Shared code never reads one of their fields, tags or
+presence flags. So two aggregates of one size and alignment run the same code whatever their
+fields are. Go needs the pointer layout too, for its collector; Velt doesn't. Derived types
+follow: `T | undefined` of an aggregate is `{ some: bool, value: T }` (`value_agg`), and an
+array's stride is the size rounded to the alignment, so both depend only on *s* and *a*. Inside
+a shared instance, a value of `~agg(s, a)` has a lowering-made `AggLayout` of *s* bytes in words
+of *a*: one per shape, not one per type.
+
+Aggregates are in the first step because they are the prototype's case. In #2271's repro, `Item`
+(an object type) is `~agg(64, 8)`, and sigx's `JSXChild` (`VNode | string | number | … |
+JSXChild[]`) is a union, also an aggregate. A prototype limited to pointers and scalars would
+share nothing there.
 
 ### Point 1 of #2271
 
@@ -91,7 +103,22 @@ those facts already follow from the class:
   their own code (`~str` is one type);
 - structural `Eq` and `Hash` are calls in per-type code too.
 
-The aggregate step is where a bit pays, and it adds one there (`bitwise`).
+The one exception is aggregates: an aggregate that owns nothing copies and drops with no code at
+all, so `~agg.plain` is its own shape. Equality and hash of aggregates go through the
+dictionary in both cases. Bitwise comparison would be wrong for floats (`NaN`, `-0`) and
+padding, and per-type code calls `Eq` and `Hash` glue for them too.
+
+**The key covers the derived types too.** The counted-types passes decide per `TyId`: whether
+an array type or an object type is a counted box is in `Boxing::boxes`, keyed by the type, so
+`A[]` can be counted while `B[]` is not. The helpers store a `T[]` in `ArrayView<T>`, so the shape
+of `T` alone doesn't fix their code. The key of an instance is therefore the shapes of its
+*footprint*: every type in the body that mentions a type parameter (`T`, `T[]`,
+`T | undefined`, `ArrayView<T>`, a callee's type arguments). The footprint is collected once per
+definition by the scan below. Two lists of type arguments share an instance when every
+footprint type has the same shape under both. Usually that is the same as "the parameters have
+the same shapes". When it isn't, the result is two instances, never wrong code. Class
+hierarchies are counted per root definition (`Boxing::roots`), so `ArrayView<A>` and
+`ArrayView<B>` always agree.
 
 **Shapes are per type parameter.** Each type argument is a shape or stays concrete. Debug
 replaces every eligible one. Release may keep an argument concrete when its operations are hot
@@ -123,10 +150,12 @@ fewer passes.
 
 The instance key stays `Work::Fn(def, targs)`. For a shared instance, each shared argument in
 `targs` is a *shape placeholder*: a `TyKind::Param` with an index above `SHAPE_BASE`, interned
-once per shape by lowering, so it is a `TyId` like any other. HIR never contains one. This gives
+by lowering, so it is a `TyId` like any other. HIR never contains one. This gives
 three properties without touching the HIR contract:
 - **Memo tables stay correct.** `drop_memo`, `value_agg`, vtable and glue keys are keyed by
-  `TyId`, and a placeholder always denotes one shape.
+  `TyId`. A placeholder is interned per instance key and parameter, so it and every type built
+  from it (`Array(placeholder)`) always denote the same footprint shapes. The shape queries on
+  such a derived type read the instance's footprint.
 - **`FnLower::sub` is the one place where instance types enter lowering.** It substitutes the
   placeholders exactly as it substitutes concrete arguments today.
 - **Leaks fail loudly.** Every lowering path that asks a per-type question of a placeholder
@@ -325,10 +354,11 @@ Three rules decide it. The first two are local and cheap to compute:
    call: a drop when the count reaches zero, clone, format, transfer, the `AnyUnbox` slow path,
    a call of a sub-dictionary's callee. An *inline* read is one the per-type instance would have
    compiled inline: a type predicate turned into a branch, a descriptor compared on the fast
-   path of `as T`. An instance with only call reads is shared in release. Only a call through a
+   path of `as T`, the share or drop of a small `~agg` (its parts' counts, written out). An instance with only call reads is shared in release. Only a call through a
    pointer is lost, and the callee is out of line in both versions. For the classes of section
-   1, almost every read is a call. The fast-path descriptor is the exception, and it costs one
-   load that LLVM hoists out of the loop.
+   1, almost every read is a call. The exceptions are the fast-path descriptor, which costs one
+   load that LLVM hoists out of the loop, and the share and drop of aggregates, which rule 2
+   covers.
 2. **Hot sites get a per-type copy back.** An instance with inline reads is shared too, and
    `velt_opt`'s specializer (section 2) clones it with the constant dictionary at a call site in
    a loop when the callee is under its size limit. A shared instance that only one dictionary
@@ -447,7 +477,7 @@ already moved out by #2268, and they move into the type tables' `AnyUnbox` entri
 2. **Prototype, debug only, the array-view sync helpers.** It covers `arrayViewSync`,
    `arrayViewSyncAt`, `arrayViewSyncLen`, `arrayViewFlush`, `arrayViewFlushFrom`,
    `arrayViewFlushAt` and `arrayViewLen` (not `arrayViewSort`, whose closure and comparator
-   wait for closures). The classes are the scalars, `~rc`, `~own`, `~str` and `~arr`. It
+   wait for closures). The classes are the scalars, `~rc`, `~own`, `~str`, `~arr` and `~agg`. It
    includes:
    - the placeholder types;
    - the type tables;
@@ -469,8 +499,8 @@ already moved out by #2268, and they move into the type tables' `AnyUnbox` entri
    generic, then user generics.** Debug first, then release family by family through the gate.
    Generic closures (the dictionary as an implicit capture), async functions and generators
    come in this step.
-5. **Aggregate shapes** (`~agg(size, align, bitwise)`), and glue shared by shape: the drop,
-   clone and format of `Map<K, V>` objects themselves.
+5. **Glue shared by shape:** the drop, clone and format of `Map<K, V>` objects themselves, and
+   of arrays of aggregates, with the element glue from the type table.
 6. **Std ships compiled shape instances** (package-cache.md layers 2 and 3).
 
 ## Who owns what step 2 touches
