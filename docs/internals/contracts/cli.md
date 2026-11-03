@@ -479,7 +479,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `--timings` adds each optimizer pass and, with the LLVM backend, IR printing and clang (with
   Cranelift: `verify`, `declare`, `functions`, `define`, `object`). Debug builds run the
   optimizer's per-function passes and Cranelift's translation and compilation on
-  `$VELT_JOBS` threads (a positive number; default: the available parallelism), summing a pass's
+  `$VELT_JOBS` threads (a positive number, at most 4 per core; default: the available parallelism), summing a pass's
   time over the threads; the object is the same bytes on any number of threads.
 - Debug info: debug builds always carry it; `-g` keeps it in a `--release` build (and links with
   debug settings: PDB on Windows, no `-s` strip on Linux). With the LLVM backend it is full line

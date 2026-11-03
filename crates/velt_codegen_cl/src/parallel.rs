@@ -20,19 +20,24 @@ const WINDOW: usize = 1024;
 /// Stack of a worker thread: room for deep translations.
 const WORKER_STACK_BYTES: usize = 32 << 20;
 
-/// The number of threads to work on: `VELT_JOBS` when it is a positive number, else the
-/// machine's available parallelism.
+/// The number of threads to work on: `VELT_JOBS` when it is a positive number (at most
+/// [`MAX_JOBS_PER_CORE`] per core: each thread reserves a large stack), else the machine's
+/// available parallelism.
 pub(crate) fn jobs() -> usize {
     let cores = || std::thread::available_parallelism().map_or(1, |n| n.get());
     jobs_from(std::env::var("VELT_JOBS").ok().as_deref(), cores)
 }
 
 fn jobs_from(var: Option<&str>, cores: impl FnOnce() -> usize) -> usize {
+    let cores = cores();
     match var.map(str::trim).and_then(|v| v.parse::<usize>().ok()) {
-        Some(n) if n > 0 => n,
-        _ => cores(),
+        Some(n) if n > 0 => n.min(cores * MAX_JOBS_PER_CORE),
+        _ => cores,
     }
 }
+
+/// The most threads `VELT_JOBS` may ask for, per core.
+const MAX_JOBS_PER_CORE: usize = 4;
 
 /// `work(state, i)` for every `i` in `0..n` on up to `jobs` threads, each with its own `state()`;
 /// `consume(i, result)` on the calling thread in the order of `i`. Stops at the first error of
@@ -71,7 +76,7 @@ where
     };
     std::thread::scope(|scope| {
         let (tx, rx) = mpsc::channel::<(usize, R)>();
-        let mut spawned = 0;
+        let mut spawned = Vec::with_capacity(workers);
         for _ in 0..workers {
             let tx = tx.clone();
             let (next, stop, consumed, advanced) = (&next, &stop, &consumed, &advanced);
@@ -99,9 +104,12 @@ where
                 .name("velt-codegen".into())
                 .stack_size(WORKER_STACK_BYTES)
                 .spawn_scoped(scope, worker);
-            spawned += usize::from(started.is_ok());
+            spawned.extend(started.ok());
         }
         drop(tx);
+        // A panic here (in `consume`) stops the workers too: those waiting for the window would
+        // otherwise wait forever, and the scope would never end.
+        let stop_on_panic = OnPanic(&halt);
         let mut early = BTreeMap::new();
         let mut expected = 0;
         let mut drain = || -> Result<(), E> {
@@ -117,11 +125,19 @@ where
             Ok(())
         };
         let drained = drain();
+        drop(stop_on_panic);
         halt();
         drop(rx);
+        // A worker's panic goes on with its own message (an ICE names what failed).
+        let none_started = spawned.is_empty();
+        for handle in spawned {
+            if let Err(panic) = handle.join() {
+                std::panic::resume_unwind(panic);
+            }
+        }
         drained?;
-        // No worker started (or one panicked, which the scope re-raises): finish here.
-        if spawned == 0 {
+        // No worker started: finish here.
+        if none_started {
             let mut s = state();
             for i in expected..n {
                 consume(i, work(&mut s, i))?;
@@ -149,6 +165,7 @@ mod tests {
     #[test]
     fn velt_jobs_overrides_the_cores_when_positive() {
         assert_eq!(jobs_from(Some("3"), || 8), 3);
+        assert_eq!(jobs_from(Some("99999"), || 8), 32);
         assert_eq!(jobs_from(Some(" 1 "), || 8), 1);
         assert_eq!(jobs_from(Some("0"), || 8), 8);
         assert_eq!(jobs_from(Some("many"), || 8), 8);
@@ -183,6 +200,60 @@ mod tests {
             .unwrap();
             assert_eq!(seen, (0..n).collect::<Vec<_>>(), "{jobs} jobs");
         }
+    }
+
+    /// `f` on another thread, with how it ended (its panic's message); `None` when it has not
+    /// ended after 60 s (a hang).
+    fn ended_within_a_minute(f: impl FnOnce() + Send + 'static) -> Option<Result<(), String>> {
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(f));
+            let message = |p: Box<dyn std::any::Any + Send>| match p.downcast::<&str>() {
+                Ok(s) => s.to_string(),
+                Err(p) => p.downcast::<String>().map_or_else(|_| "?".into(), |s| *s),
+            };
+            let _ = tx.send(r.map_err(message));
+        });
+        rx.recv_timeout(std::time::Duration::from_secs(60)).ok()
+    }
+
+    /// A panic while consuming ends the work, with workers waiting for the window (more items
+    /// than it): they are woken and stop instead of waiting forever.
+    #[test]
+    fn a_panic_while_consuming_stops_the_workers() {
+        let ended = ended_within_a_minute(|| {
+            let _ = ordered(
+                5 * WINDOW,
+                4,
+                || (),
+                |_, i| i,
+                |i, _| -> Result<(), ()> {
+                    assert!(i != 10, "consume failed at 10");
+                    Ok(())
+                },
+            );
+        });
+        let ended = ended.expect("ordered hung after a panic in consume");
+        assert_eq!(ended, Err("consume failed at 10".into()));
+    }
+
+    /// A worker's panic reaches the caller with its own message.
+    #[test]
+    fn a_worker_panic_keeps_its_message() {
+        let ended = ended_within_a_minute(|| {
+            let _ = ordered(
+                5 * WINDOW,
+                4,
+                || (),
+                |_, i| {
+                    assert!(i != 700, "work failed at 700");
+                    i
+                },
+                |_, _| Ok::<(), ()>(()),
+            );
+        });
+        let ended = ended.expect("ordered hung after a panic in a worker");
+        assert_eq!(ended, Err("work failed at 700".into()));
     }
 
     /// The first error stops the work and is returned; nothing after it is consumed.
