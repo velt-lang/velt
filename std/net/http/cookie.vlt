@@ -1,0 +1,254 @@
+// velt/net/http (internal): cookies (RFC 6265): `getCookies` reads a request's `Cookie` header,
+// `setCookie` and `deleteCookie` add `Set-Cookie` headers to a response's, `getSetCookies` reads
+// them back. Deno's std `http/cookie` shapes, on plain `Headers`, so clients use them too.
+
+import { Headers } from "velt/net/http/fetch/headers";
+
+/** A cookie to set, or one read back from a `Set-Cookie` header (`getSetCookies`). */
+export interface Cookie {
+  name: string;
+  value: string;
+  /** When it expires: a `Date`, or milliseconds since the epoch. */
+  expires?: Date | number;
+  /** Seconds until it expires (a whole number, 0 or more); wins over `expires` in browsers. */
+  maxAge?: number;
+  domain?: string;
+  path?: string;
+  /** Sent only over HTTPS. Required by `partitioned`, `sameSite: "None"` and the prefixes. */
+  secure?: bool;
+  /** Not readable from JavaScript in the browser. */
+  httpOnly?: bool;
+  /** Kept per top-level site (CHIPS); needs `secure`. */
+  partitioned?: bool;
+  sameSite?: "Strict" | "Lax" | "None";
+  /** Attributes this parser doesn't know, as written (`getSetCookies`), or to add as they are. */
+  unparsed?: string[];
+}
+
+/**
+ * The cookies of `headers`' `Cookie` header, by name. A name sent twice keeps its first value
+ * (browsers send the most specific cookie first); a pair that isn't `name=value` with a valid
+ * name is skipped, as are surrounding spaces and the quotes of a quoted value.
+ */
+export function getCookies(headers: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  const header = headers.get("cookie");
+  if (header == null) {
+    return out;
+  }
+  for (const pair of header.split(";")) {
+    const eq = pair.indexOf("=");
+    if (eq < 0) {
+      continue;
+    }
+    const name = pair.slice(0, eq).trim();
+    let value = pair.slice(eq + 1).trim();
+    if (value.length >= 2 && value.startsWith("\"") && value.endsWith("\"")) {
+      value = value.slice(1, -1);
+    }
+    if (!isToken(name) || !isCookieValue(value) || name in out) {
+      continue;
+    }
+    out[name] = value;
+  }
+  return out;
+}
+
+/**
+ * Adds a `Set-Cookie` header for `cookie` to `headers` (each cookie is a header of its own).
+ * Throws `TypeError` for a name that isn't a token, a value with characters a cookie can't
+ * carry (spaces, `"`, `,`, `;`, `\`, control characters), a `domain` or `path` with `;` or a
+ * control character, a `maxAge` that isn't a whole number 0 or more, and `partitioned`,
+ * `sameSite: "None"`, `__Secure-` or `__Host-` without `secure` (`__Host-` also needs path `/`
+ * and no domain), as browsers would drop such a cookie.
+ */
+export function setCookie(headers: Headers, cookie: Cookie) {
+  headers.append("set-cookie", serialize(cookie));
+}
+
+/**
+ * Adds a `Set-Cookie` header that removes cookie `name`: an empty value that expired at the
+ * epoch, with the `path` and `domain` it was set with (a cookie is removed only with those).
+ */
+export function deleteCookie(headers: Headers, name: string, path?: string, domain?: string) {
+  setCookie(headers, { name, value: "", expires: 0, path, domain });
+}
+
+/** The cookies `headers`' `Set-Cookie` headers set, in order (a header that doesn't parse is skipped). */
+export function getSetCookies(headers: Headers): Cookie[] {
+  const out: Cookie[] = [];
+  for (const line of headers.getSetCookie()) {
+    const c = parseSetCookie(line);
+    if (c != null) {
+      out.push(c);
+    }
+  }
+  return out;
+}
+
+// The `Set-Cookie` value of `c` (Deno's attribute order).
+function serialize(c: Cookie): string {
+  if (!isToken(c.name)) {
+    throw new TypeError(`Invalid cookie name: "${c.name}"`);
+  }
+  if (!isCookieValue(c.value)) {
+    throw new TypeError(`Invalid cookie value for "${c.name}"`);
+  }
+  const secure = c.secure ?? false;
+  if (c.name.startsWith("__Secure-") && !secure) {
+    throw new TypeError("A __Secure- cookie needs secure");
+  }
+  if (c.name.startsWith("__Host-")) {
+    if (!secure || c.path != "/" || c.domain != null) {
+      throw new TypeError("A __Host- cookie needs secure, path \"/\" and no domain");
+    }
+  }
+  let out = `${c.name}=${c.value}`;
+  if (secure) {
+    out += "; Secure";
+  }
+  if (c.httpOnly ?? false) {
+    out += "; HttpOnly";
+  }
+  if (c.partitioned ?? false) {
+    if (!secure) {
+      throw new TypeError("A partitioned cookie needs secure");
+    }
+    out += "; Partitioned";
+  }
+  const maxAge = c.maxAge;
+  if (maxAge != null) {
+    if (!Number.isInteger(maxAge) || maxAge < 0) {
+      throw new TypeError("Max-Age must be a whole number, 0 or more");
+    }
+    out += `; Max-Age=${maxAge}`;
+  }
+  const domain = c.domain;
+  if (domain != null) {
+    checkAttribute("Domain", domain);
+    out += `; Domain=${domain}`;
+  }
+  const sameSite = c.sameSite;
+  if (sameSite != null) {
+    if (sameSite == "None" && !secure) {
+      throw new TypeError("SameSite=None needs secure");
+    }
+    out += `; SameSite=${sameSite}`;
+  }
+  const path = c.path;
+  if (path != null) {
+    checkAttribute("Path", path);
+    out += `; Path=${path}`;
+  }
+  const expires = c.expires;
+  if (expires != null) {
+    const date = expires instanceof Date ? expires : new Date(expires);
+    out += `; Expires=${date.toUTCString()}`;
+  }
+  for (const extra of c.unparsed ?? []) {
+    checkAttribute("attribute", extra);
+    out += `; ${extra}`;
+  }
+  return out;
+}
+
+// One `Set-Cookie` value as a `Cookie`, or null when its first pair isn't a valid `name=value`.
+function parseSetCookie(line: string): Cookie | null {
+  const parts = line.split(";");
+  const first = parts[0];
+  const eq = first.indexOf("=");
+  if (eq < 0) {
+    return null;
+  }
+  const name = first.slice(0, eq).trim();
+  const value = first.slice(eq + 1).trim();
+  if (!isToken(name)) {
+    return null;
+  }
+  const c: Cookie = { name, value };
+  for (let i: usize = 1; i < parts.length; i++) {
+    const attr = parts[i].trim();
+    if (attr == "") {
+      continue;
+    }
+    const at = attr.indexOf("=");
+    const key = (at < 0 ? attr : attr.slice(0, at)).trim().toLowerCase();
+    const val = at < 0 ? "" : attr.slice(at + 1).trim();
+    if (key == "secure") {
+      c.secure = true;
+    } else if (key == "httponly") {
+      c.httpOnly = true;
+    } else if (key == "partitioned") {
+      c.partitioned = true;
+    } else if (key == "max-age" && isDigits(val)) {
+      c.maxAge = Number(val);
+    } else if (key == "expires" && !Number.isNaN(Date.parse(val))) {
+      c.expires = new Date(Date.parse(val));
+    } else if (key == "domain") {
+      c.domain = val;
+    } else if (key == "path") {
+      c.path = val;
+    } else if (key == "samesite" && (val == "Strict" || val == "Lax" || val == "None")) {
+      c.sameSite = val == "Strict" ? "Strict" : val == "Lax" ? "Lax" : "None";
+    } else {
+      const unparsed = c.unparsed ?? [];
+      unparsed.push(attr);
+      c.unparsed = unparsed;
+    }
+  }
+  return c;
+}
+
+// One or more ASCII digits.
+function isDigits(s: string): bool {
+  if (s.length == 0) {
+    return false;
+  }
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x30 || c > 0x39) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// RFC 7230 `token`: a cookie name.
+function isToken(s: string): bool {
+  if (s.length == 0) {
+    return false;
+  }
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i);
+    const ok =
+      (c >= 0x30 && c <= 0x39) ||
+      (c >= 0x41 && c <= 0x5a) ||
+      (c >= 0x61 && c <= 0x7a) ||
+      "!#$%&'*+-.^_`|~".includes(s.charAt(i));
+    if (!ok) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// RFC 6265 `cookie-octet`s: printable ASCII except space, `"`, `,`, `;` and `\`.
+function isCookieValue(s: string): bool {
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x21 || c > 0x7e || c == 0x22 || c == 0x2c || c == 0x3b || c == 0x5c) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// A `Domain`, `Path` or extra attribute: no `;` and no control characters.
+function checkAttribute(what: string, s: string) {
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const c = s.charCodeAt(i);
+    if (c < 0x20 || c == 0x7f || c == 0x3b) {
+      throw new TypeError(`Invalid cookie ${what}: "${s}"`);
+    }
+  }
+}

@@ -16,6 +16,7 @@ export {
   Response,
   ResponseInit,
 } from "velt/net/http/fetch/fetch";
+export { Cookie, deleteCookie, getCookies, getSetCookies, setCookie } from "velt/net/http/cookie";
 export { RequestSource, requestSource, serverRequest } from "velt/net/http/fetch/source";
 export { statusText } from "velt/net/http/fetch/status";
 export {

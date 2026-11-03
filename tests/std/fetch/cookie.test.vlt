@@ -1,0 +1,123 @@
+// velt/net/http's cookies (#2076): `getCookies` reads a `Cookie` header, `setCookie` and
+// `deleteCookie` write `Set-Cookie`, `getSetCookies` reads them back. Expected values follow the
+// `cookie` npm package and Deno's std `http/cookie` on the same inputs.
+import { Cookie, deleteCookie, getCookies, getSetCookies, setCookie } from "velt/net/http";
+import { describe, expect, it } from "velt/test";
+
+function cookieHeader(value: string): Headers {
+  return new Headers({ cookie: value });
+}
+
+function setOne(c: Cookie): string {
+  const h = new Headers();
+  setCookie(h, c);
+  return h.getSetCookie().join("|");
+}
+
+function throws(c: Cookie): string {
+  try {
+    setOne(c);
+    return "no error";
+  } catch (e) {
+    return (e as Error).name;
+  }
+}
+
+describe("getCookies", () => {
+  it("parses name=value pairs, trimming spaces and quotes", () => {
+    const got = getCookies(cookieHeader("a=1; b = two ;c=\"quoted\"; d=x=y"));
+    expect(JSON.stringify(got)).toBe('{"a":"1","b":"two","c":"quoted","d":"x=y"}');
+  });
+
+  it("keeps a repeated name's first value and skips pairs that don't parse", () => {
+    const got = getCookies(cookieHeader("a=1; a=2; novalue; bad name=3; =empty; e=; f=\u0001"));
+    expect(JSON.stringify(got)).toBe('{"a":"1","e":""}');
+  });
+
+  it("is empty without a Cookie header", () => {
+    expect(JSON.stringify(getCookies(new Headers()))).toBe("{}");
+  });
+});
+
+describe("setCookie", () => {
+  it("writes the attributes in Deno's order", () => {
+    expect(
+      setOne({
+        name: "id",
+        value: "a3fWa",
+        secure: true,
+        httpOnly: true,
+        partitioned: true,
+        maxAge: 3600,
+        domain: "example.com",
+        sameSite: "Lax",
+        path: "/",
+        expires: Date.UTC(2026, 0, 2, 3, 4, 5),
+        unparsed: ["Priority=High"],
+      }),
+    ).toBe(
+      "id=a3fWa; Secure; HttpOnly; Partitioned; Max-Age=3600; Domain=example.com; SameSite=Lax; Path=/; Expires=Fri, 02 Jan 2026 03:04:05 GMT; Priority=High",
+    );
+  });
+
+  it("adds one header per cookie", () => {
+    const h = new Headers();
+    setCookie(h, { name: "a", value: "1" });
+    setCookie(h, { name: "b", value: "2", path: "/x" });
+    expect(h.getSetCookie()).toEqual(["a=1", "b=2; Path=/x"]);
+  });
+
+  it("refuses what browsers would drop", () => {
+    expect(
+      [
+        throws({ name: "bad name", value: "1" }),
+        throws({ name: "a", value: "has space" }),
+        throws({ name: "a", value: "semi;colon" }),
+        throws({ name: "a", value: "1", maxAge: -1 }),
+        throws({ name: "a", value: "1", maxAge: 1.5 }),
+        throws({ name: "a", value: "1", path: "/x;y" }),
+        throws({ name: "a", value: "1", partitioned: true }),
+        throws({ name: "a", value: "1", sameSite: "None" }),
+        throws({ name: "__Secure-a", value: "1" }),
+        throws({ name: "__Host-a", value: "1", secure: true, path: "/x" }),
+        throws({ name: "__Host-a", value: "1", secure: true, path: "/" }),
+      ].join(","),
+    ).toBe(
+      "TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,TypeError,no error",
+    );
+  });
+});
+
+describe("deleteCookie", () => {
+  it("sets an empty value that expired at the epoch, with the path and domain", () => {
+    const h = new Headers();
+    deleteCookie(h, "id", "/app", "example.com");
+    expect(h.getSetCookie()).toEqual([
+      "id=; Domain=example.com; Path=/app; Expires=Thu, 01 Jan 1970 00:00:00 GMT",
+    ]);
+  });
+});
+
+describe("getSetCookies", () => {
+  it("reads back what setCookie wrote, and keeps attributes it doesn't know", () => {
+    const h = new Headers();
+    setCookie(h, {
+      name: "id",
+      value: "x",
+      secure: true,
+      httpOnly: true,
+      maxAge: 60,
+      sameSite: "Strict",
+      path: "/",
+      expires: 0,
+      unparsed: ["Priority=High"],
+    });
+    h.append("set-cookie", "not a cookie");
+    const got = getSetCookies(h);
+    expect(got.length).toBe(1);
+    const c = got[0];
+    expect(
+      `${c.name} ${c.value} ${c.secure} ${c.httpOnly} ${c.maxAge} ${c.sameSite} ${c.path} ${(c.expires as Date).getTime()} ${c.unparsed}`,
+    ).toBe("id x true true 60 Strict / 0 Priority=High");
+  });
+});
