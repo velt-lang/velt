@@ -1,0 +1,15 @@
+// `widenF16Into` panics with a RangeError when the values do not fit from `at` (#2049): 3 values
+// fit from index 2 of 5, not from index 3. Nothing is written by the call that panics.
+
+import { f16FromBytes, narrowBf16Into, widenF16Into } from "velt/half";
+
+function main() {
+  const ws = f16FromBytes(Buffer.alloc(6));
+  const xs: f32[] = [9, 9, 9, 9, 9];
+  widenF16Into(ws, xs, 2);
+  console.log(xs);
+  const bs: bf16[] = [1, 1];
+  narrowBf16Into([], bs, 2);
+  console.log(bs);
+  widenF16Into(ws, xs, 3);
+}

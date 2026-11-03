@@ -57,6 +57,11 @@ pub enum Intrinsic {
     /// shared, and `src` keeps stale copies. A raw move for algorithms that keep every element
     /// owned exactly once themselves (the stable sort's scratch buffer, std/lang/sort/stable.vlt).
     ArrayMove,
+    /// std only: `(dst (modified), d: usize, src: borrow u8[], s: usize, n: usize)` — the bytes
+    /// `src[s..s + n * size)` written as the bits of `dst[d..d + n)`, `size` the byte size of
+    /// `dst`'s element, which owns nothing (both ranges bounds-checked; one memcpy). The bulk
+    /// load of `velt/half` (`f16FromBytes`, std/half/bytes.vlt). Additive.
+    ArrayCopyBytes,
     /// std only: `(xs (modified), len: usize)` set the length to `len` (growing the capacity
     /// when it is smaller) without dropping or initializing any element: slots past the old
     /// length must be written (`ArrayMove`) before they are read, and slots that are not owned

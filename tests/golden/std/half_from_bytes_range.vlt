@@ -1,0 +1,10 @@
+// `f16FromBytes` panics with a RangeError when the values asked for pass the end of the bytes
+// (#2049), as `u8x16.load` does: here 4 values (8 bytes) from byte 3 of 10.
+
+import { f16FromBytes } from "velt/half";
+
+function main() {
+  const b: u8[] = Buffer.alloc(10);
+  console.log(f16FromBytes(b, 2, 4).length);
+  console.log(f16FromBytes(b, 3, 4).length);
+}

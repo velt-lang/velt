@@ -14,6 +14,7 @@ export {
   proxyArrayHole,
 } from "velt/lang/intrinsics/any";
 export {
+  arrayCopyBytes,
   arrayMove,
   arrayPrefetch,
   arrayRemove,

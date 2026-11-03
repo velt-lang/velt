@@ -593,6 +593,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::ArrayRemove
         | I::ArrayTruncate
         | I::ArrayMove
+        | I::ArrayCopyBytes
         | I::ArraySetLen
         | I::ArrayReserve
         | I::ArrayPrefetch
