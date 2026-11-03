@@ -95,6 +95,7 @@ mod frozen;
 mod glue;
 mod half;
 mod hand_result;
+pub(crate) mod hook_calls;
 mod hooks;
 mod host;
 mod impl_lookup;

@@ -12,13 +12,11 @@
 
 use velt_sema::hir::{self, Callee as HCallee, Intrinsic, TyId};
 
+use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
 use super::system::Arg;
 use super::{cint, ice, FnLower};
-use crate::vir::{BinOp, Callee, Operand, Place, Proj, Rvalue, Terminator, Ty};
-
-/// The std function giving a view's length in bytes (std/lang/typed_array/buffer_view.vlt).
-const VIEW_BYTES: &str = velt_common::std_hook!(view_bytes);
+use crate::vir::{BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 impl FnLower<'_, '_> {
     /// The bytes of `a`, when it is a view: `None` for a `u8[]` (the caller takes its header).
@@ -106,14 +104,9 @@ impl FnLower<'_, '_> {
         // program forged by overriding `[RECORD_SIZE]()` or with a constructor of its own can make
         // this huge or `off` wrap; the two checks below are non-wrapping, so the range stays
         // inside the buffer's own bytes whatever the view claims.
-        let d = self
-            .cx
-            .prelude_def(VIEW_BYTES)
-            .unwrap_or_else(|| ice("no `viewBytes` in std/lang/typed_array/buffer_view"));
-        let f = self.cx.func_for_direct(d, vec![], self.mode);
-        let n = Place::local(self.temp(Ty::U64));
-        self.call(Callee::Func(f), vec![v], Some(n.clone()), false);
-        let n = Operand::Copy(n);
+        let n = hooks::view_bytes(self, ty::BufferView::arg(v))
+            .emit(self)
+            .op();
         // `off <= blen && n <= blen - off`, checked without the addition that could wrap: the
         // start is inside the buffer, and the length fits what is left after it.
         let (ok, bad, span) = (self.new_block(), self.new_block(), self.new_block());
