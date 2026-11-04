@@ -4,7 +4,7 @@
 //! without a declaration (`panic`, `sleep`, `xs.push`, `new Mutex`, …) have their signature here
 //! ([`FnCx::intrinsic_sig`]), as a callable generic over `T = Param(0)`.
 
-use velt_common::Span;
+use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::args::Callable;
@@ -79,11 +79,38 @@ impl FnCx<'_, '_> {
         if matches!(i, Intrinsic::Inline | Intrinsic::NoInline) {
             self.inline_marker(i, span);
         }
+        if i == Intrinsic::ArrayCopyBytes {
+            if let Some(&t) = ck.type_args.first() {
+                self.bytes_elem_check(t, span);
+            }
+        }
         let e = self.intrinsic(i, ck.args, ck.ret, span);
         if i == Intrinsic::SpawnHandled {
             self.spawned_promises(&e);
         }
         e
+    }
+
+    /// `arrayCopyBytes<T>` writes raw bytes as `T`s, so `T` must be a number type or `bool`: a
+    /// type that owns nothing and holds no address (for `bool`, the std caller keeps each byte 0
+    /// or 1). Anything else (a string, an object, a pointer-like type to come) is an error here,
+    /// not an ICE in lowering. A type parameter of a generic std function passes: sema checks the
+    /// body once, and lowering checks each instance (an element that owns something is an ICE).
+    fn bytes_elem_check(&mut self, t: TyId, span: Span) {
+        let ty = &self.cx.ty;
+        if ty.is_bottom(t)
+            || matches!(ty.kind(t), TyKind::Param(_))
+            || ty.is_numeric(t)
+            || ty.is_storage_float(t)
+            || matches!(ty.kind(t), TyKind::Bool)
+        {
+            return;
+        }
+        let shown = self.cx.display(t);
+        self.cx.error(
+            Diagnostic::error("`arrayCopyBytes` writes bytes into an array of numbers", span)
+                .with_note(format!("its element type must be a number type or `bool`, found {shown}")),
+        );
     }
 
     /// `(x: T) -> C<T>`, `x` copied: the constructor of the prelude's struct `C` holding one
