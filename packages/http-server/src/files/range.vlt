@@ -8,7 +8,7 @@ export struct ByteRange {
   end: u64;
 }
 
-/** The largest position read (15 digits): any larger one is past every body. */
+/** The largest position read (15 significant digits): any larger one is past every body. */
 const MAX_DIGITS: usize = 15;
 
 /**
@@ -103,9 +103,14 @@ struct Digits {
   next: usize;
 }
 
-/// The digits from `from` on; a number of more than 15 digits reads as the largest u64.
+/// The digits from `from` on; a number of more than 15 digits (leading zeros don't count) reads
+/// as the largest u64.
 function digits(h: string, from: usize): Digits {
   let i = from;
+  while (i < h.length && h.charCodeAt(i as i64) == 48) {
+    i++;
+  }
+  const significant = i;
   let v: u64 = 0;
   while (i < h.length) {
     const d = h.charCodeAt(i as i64) - 48;
@@ -114,7 +119,7 @@ function digits(h: string, from: usize): Digits {
     }
     v = v * 10 + (d as u64);
     i++;
-    if (i - from > MAX_DIGITS) {
+    if (i - significant > MAX_DIGITS) {
       v = -1 as u64;
       while (i < h.length && h.charCodeAt(i as i64) >= 48 && h.charCodeAt(i as i64) <= 57) {
         i++;

@@ -1,6 +1,7 @@
 // Files (#2077): `parseRange`, `evaluateConditions`, `ifRangeMatches` and `resolveUnder` on
 // their own, then `serveFile` over HTTP/1.1 and HTTP/2 as a client sees it: validators, 304 and
-// 412, 206 and 416, If-Range, HEAD, 404/405, and a large file streamed with its length.
+// 412, 206 and 416, If-Range, HEAD, 404/405, a large file streamed with its length, and files
+// that change or go away while they are served.
 import {
   evaluateConditions,
   ifRangeMatches,
@@ -10,11 +11,19 @@ import {
   serveFile,
   Validators,
 } from "../src/lib";
+import { realPathAllowed, relativePath } from "../src/files/resolve";
+import { sameFile, validatorsOf } from "../src/files/serve_file";
+import { IoError } from "velt/io";
+import { BodyStream, responseParts } from "velt/net/http";
 import { mkdir, realpath, remove, symlink, writeFile } from "velt/fs";
 import { tmpdir } from "velt/os";
+import { AbortError } from "velt/task";
 import { uuidv4 } from "velt/random/uuid";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
 import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
+
+// The file served, with a text that shows which bytes a range got.
+const TEXT = "0123456789abcdefghijklmnopqrstuvwxyz";
 
 function range(header: string | null, size: u64): string {
   const r = parseRange(header, size);
@@ -36,6 +45,22 @@ describe("parseRange", () => {
     expect(range("bytes=-500", 100)).toBe("0-99");
     expect(range("Bytes= 1-2 ", 100)).toBe("1-2");
     expect(range("bytes=0-99999999999999999999", 100)).toBe("0-99");
+  });
+
+  it("doesn't count leading zeros as digits", () => {
+    expect(range("bytes=0000000000000000001-0000000000000000002", 100)).toBe("1-2");
+    expect(range("bytes=000-000", 100)).toBe("0-0");
+    expect(range("bytes=00000000000000000000-", 100)).toBe("0-99");
+    expect(range("bytes=-0000000000000000005", 100)).toBe("95-99");
+    expect(range("bytes=-0000000000000000000", 100)).toBe("unsatisfiable");
+  });
+
+  it("reads a number too large for a position as past every body", () => {
+    // 2^64: read digit by digit it would wrap to 0.
+    expect(range("bytes=18446744073709551616-", 100)).toBe("unsatisfiable");
+    expect(range("bytes=0-18446744073709551616", 100)).toBe("0-99");
+    expect(range("bytes=-18446744073709551616", 100)).toBe("0-99");
+    expect(range("bytes=000018446744073709551616-", 100)).toBe("unsatisfiable");
   });
 
   it("says when no byte of the body is in the range", () => {
@@ -84,6 +109,17 @@ describe("evaluateConditions", () => {
     expect(at("GET", "if-modified-since", "not a date")).toBe(0);
   });
 
+  it("takes the three forms of an HTTP-date, and ignores any other date", () => {
+    expect(at("GET", "if-modified-since", "Wednesday, 21-Oct-15 07:28:00 GMT")).toBe(304);
+    expect(at("GET", "if-modified-since", "Wed Oct 21 07:28:00 2015")).toBe(304);
+    // `Date.parse` reads these, but they aren't HTTP-dates (RFC 9110 §13.1.3).
+    expect(at("GET", "if-modified-since", "2100")).toBe(0);
+    expect(at("GET", "if-modified-since", "2100-01-01T00:00:00Z")).toBe(0);
+    expect(at("PUT", "if-unmodified-since", "1990")).toBe(0);
+    const date = request("GET", [["if-range", "2015-10-21T07:28:00Z"]]);
+    expect(ifRangeMatches(date, v)).toBe(false);
+  });
+
   it(
     "answers 412 to a failed If-Match or If-Unmodified-Since, and If-None-Match on a write",
     () => {
@@ -119,6 +155,75 @@ describe("evaluateConditions", () => {
   });
 });
 
+describe("the rules of a URL path", () => {
+  const windows = (p: string) => relativePath(p, true, false);
+  const posix = (p: string) => relativePath(p, false, false);
+
+  it("refuses a `:` on Windows: drive letters and alternate data streams", () => {
+    for (const p of ["/C:/x", "/C%3a/x", "/C%3A/x", "/f.txt::$DATA", "/f.txt%3a%3a$DATA", "/a:b"]) {
+      expect(windows(p)).toBe(null);
+    }
+    expect(posix("/C:/x")).toBe("C:/x");
+  });
+
+  it("refuses backslashes, so a UNC form stays a path under the root", () => {
+    expect(windows("/\\\\server\\share")).toBe(null);
+    expect(windows("/%5c%5cserver%5cshare")).toBe(null);
+    expect(windows("//server/share/x")).toBe("server/share/x");
+  });
+
+  it("refuses a segment ending in a dot or a space on Windows, which names another file", () => {
+    for (const p of ["/f.txt.", "/f.txt%20", "/f.txt...", "/f.txt%20.", "/sub./f", "/sub%20/f"]) {
+      expect(windows(p)).toBe(null);
+    }
+    expect(relativePath("/.env.", true, true)).toBe(null);
+    expect(windows("/f.txt/.")).toBe(null);
+    expect(posix("/f.txt/.")).toBe("f.txt/.");
+    expect(windows("/./sub/./f.txt")).toBe("./sub/./f.txt");
+    expect(windows("/sub/")).toBe("sub/");
+    expect(windows("/a%20b/c.d")).toBe("a b/c.d");
+    expect(posix("/f.txt.")).toBe("f.txt.");
+    expect(posix("/f.txt%20")).toBe("f.txt ");
+  });
+
+  it("refuses dotfiles unless they are allowed", () => {
+    for (const p of ["/.env", "/.git/config", "/%2eenv", "/%2Egit/config", "/sub/.x", "/..."]) {
+      expect(posix(p)).toBe(null);
+      expect(windows(p)).toBe(null);
+    }
+    expect(relativePath("/.well-known/x", false, true)).toBe(".well-known/x");
+    expect(relativePath("/.well-known/x", true, true)).toBe(".well-known/x");
+    expect(posix("/./a.b/c.")).toBe("./a.b/c.");
+  });
+
+  it("refuses `..` with dotfiles allowed too", () => {
+    for (const p of ["/../x", "/%2e%2e/x", "/.%2E/x", "/a/.."]) {
+      expect(relativePath(p, false, true)).toBe(null);
+    }
+  });
+
+  it("keeps a real path below the root, not one that only starts like it", () => {
+    expect(realPathAllowed("/s/root", "/s/root", false, false)).toBe(true);
+    expect(realPathAllowed("/s/root/a/b", "/s/root", false, false)).toBe(true);
+    expect(realPathAllowed("/s/root-evil/a", "/s/root", false, false)).toBe(false);
+    expect(realPathAllowed("/s/rootfile", "/s/root", false, false)).toBe(false);
+    expect(realPathAllowed("/s", "/s/root", false, false)).toBe(false);
+    expect(realPathAllowed("/a", "/", false, false)).toBe(true);
+    expect(realPathAllowed("C:\\s\\root\\a", "C:\\s\\root", true, false)).toBe(true);
+    expect(realPathAllowed("C:\\s\\root-evil\\a", "C:\\s\\root", true, false)).toBe(false);
+    expect(realPathAllowed("C:\\a", "C:\\", true, false)).toBe(true);
+  });
+
+  it("refuses a dotfile in the real path below the root, not above it", () => {
+    expect(realPathAllowed("/s/root/.env", "/s/root", false, false)).toBe(false);
+    expect(realPathAllowed("/s/root/a/.git/b", "/s/root", false, false)).toBe(false);
+    expect(realPathAllowed("C:\\s\\root\\.env", "C:\\s\\root", true, false)).toBe(false);
+    expect(realPathAllowed("/s/root/.env", "/s/root", false, true)).toBe(true);
+    expect(realPathAllowed("/.s/root/a.b", "/.s/root", false, false)).toBe(true);
+    expect(realPathAllowed("/s/root/a.b/c.", "/s/root", false, false)).toBe(true);
+  });
+});
+
 describe("resolveUnder", () => {
   let dir = "";
   let links = true;
@@ -128,9 +233,21 @@ describe("resolveUnder", () => {
     await mkdir(`${dir}/outside`);
     await writeFile(`${dir}/root/sub/a b.txt`, "a");
     await writeFile(`${dir}/outside/secret.txt`, "s");
+    await mkdir(`${dir}/root-evil`);
+    await mkdir(`${dir}/root/.git`);
+    await mkdir(`${dir}/root/.well-known`);
+    await mkdir(`${dir}/.hidden/root`, { recursive: true });
+    await writeFile(`${dir}/root-evil/secret.txt`, "s");
+    await writeFile(`${dir}/root/f.txt`, "f");
+    await writeFile(`${dir}/root/.env`, "e");
+    await writeFile(`${dir}/root/.git/config`, "c");
+    await writeFile(`${dir}/root/.well-known/x`, "x");
+    await writeFile(`${dir}/.hidden/root/a.txt`, "a");
     try {
       await symlink("sub", `${dir}/root/inner`);
       await symlink("../outside", `${dir}/root/escape`);
+      await symlink("../root-evil", `${dir}/root/evil`);
+      await symlink(".env", `${dir}/root/visible`);
     } catch (e) {
       links = false; // Windows without Developer Mode
     }
@@ -164,12 +281,113 @@ describe("resolveUnder", () => {
     expect(await under("/sub/%zz")).toBe(null);
     if (links) {
       expect(await under("/escape/secret.txt")).toBe(null);
+      // The sibling's name starts with the root's.
+      expect(await under("/evil/secret.txt")).toBe(null);
+    }
+  });
+
+  it("refuses dotfiles by default, and with the option finds them", async () => {
+    expect(await under("/.env")).toBe(null);
+    expect(await under("/.git/config")).toBe(null);
+    expect(await under("/%2eenv")).toBe(null);
+    if (links) {
+      expect(await under("/visible")).toBe(null);
+    }
+    const allowed = async (p: string) => {
+      const r = await resolveUnder(`${dir}/root`, p, { dotfiles: true });
+      return r == null ? null : r.replaceAll("\\", "/").slice(dir.length);
+    };
+    expect(await allowed("/.env")).toBe("/root/.env");
+    expect(await allowed("/.well-known/x")).toBe("/root/.well-known/x");
+    expect(await allowed("/../outside/secret.txt")).toBe(null);
+    if (links) {
+      expect(await allowed("/visible")).toBe("/root/.env");
+    }
+  });
+
+  it("doesn't mind a dot in the path above the root", async () => {
+    const r = await resolveUnder(`${dir}/.hidden/root`, "/a.txt");
+    expect(r == null ? null : r.replaceAll("\\", "/").slice(dir.length)).toBe(
+      "/.hidden/root/a.txt",
+    );
+  });
+
+  // Each of these names another name of a file on Windows, and no file elsewhere.
+  it("finds no file by a name that is an alias on Windows", async () => {
+    expect(await under("/f.txt")).toBe("/root/f.txt");
+    for (const p of [
+      "/f.txt.",
+      "/f.txt%20",
+      "/f.txt...",
+      "/f.txt/.",
+      "/.env.",
+      "/sub./a%20b.txt",
+      "/f.txt::$DATA",
+      "/f.txt%3a%3a$DATA",
+      "/C:/x",
+      "/C%3a/x",
+    ]) {
+      expect(await under(p)).toBe(null);
     }
   });
 });
 
-// The file served, with a text that shows which bytes a range got.
-const TEXT = "0123456789abcdefghijklmnopqrstuvwxyz";
+describe("the validators of a file", () => {
+  it("are Express's: the time rounded to the millisecond, as Node's stat.mtime", () => {
+    // `etag` and `stat.mtime` in Node: W/"16-18bcfe56801" for an mtimeMs of 1700000000000.6.
+    expect(validatorsOf(22, 1700000000000.6).etag).toBe("W/\"16-18bcfe56801\"");
+    expect(validatorsOf(22, 1700000000000.5).etag).toBe("W/\"16-18bcfe56801\"");
+    expect(validatorsOf(22, 1700000000000.4).etag).toBe("W/\"16-18bcfe56800\"");
+    expect(validatorsOf(22, 1700000000000).etag).toBe("W/\"16-18bcfe56800\"");
+  });
+
+  it("round Last-Modified with it, also over a second", () => {
+    expect(validatorsOf(1, 1700000000999.6).lastModified).toBe(1700000001000);
+    expect(validatorsOf(1, 1700000000999.4).lastModified).toBe(1700000000999);
+  });
+
+  it("are checked against the file opened, by size and by the unrounded time", () => {
+    expect(sameFile(36, 1000.25, 36, 1000.25)).toBe(true);
+    expect(sameFile(37, 1000.25, 36, 1000.25)).toBe(false);
+    expect(sameFile(36, 1000.5, 36, 1000.25)).toBe(false);
+  });
+});
+
+describe("a response from serveFile", () => {
+  it("holds the file only once its body is read", async () => {
+    const dir = `${await realpath(tmpdir())}/velt-serve-open-${uuidv4()}`;
+    await mkdir(dir);
+    const path = `${dir}/f.txt`;
+    await writeFile(path, TEXT);
+    const r = await serveFile(request("GET", []), path);
+    expect(r.status).toBe(200);
+    // Not opened yet, so the removed file is what its body finds; an open file would be read.
+    await remove(path);
+    let failed = false;
+    try {
+      await r.bytes();
+    } catch (e) {
+      failed = true;
+    }
+    expect(failed).toBe(true);
+    await remove(dir, { recursive: true });
+  });
+});
+
+/// The body of `r`, whose first chunk is read before `change` runs: the file is open by then.
+async function* afterFirstChunk(
+  r: Response,
+  change: () => Promise<void>,
+): AsyncGenerator<u8[], IoError | AbortError> {
+  let first = true;
+  for await (const chunk of responseParts(r).stream!) {
+    yield chunk;
+    if (first) {
+      first = false;
+      await change();
+    }
+  }
+}
 
 for (const protocol of ["HTTP/1.1", "HTTP/2"]) {
   describe(`serveFile over ${protocol}`, () => {
@@ -189,9 +407,22 @@ for (const protocol of ["HTTP/1.1", "HTTP/2"]) {
         h2 ? { port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } } : { port: 0 },
         async (req: Request): Promise<Response> => {
           const name = new URL(req.url).pathname.slice(1);
-          return await serveFile(req, `${dir}/${name}`, {
-            headers: [["cache-control", "no-cache"]],
-          });
+          const path = `${dir}/${name}`;
+          const r = await serveFile(req, path, { headers: [["cache-control", "no-cache"]] });
+          // Files that change once they were looked at, with no race: the body isn't read yet.
+          if (name == "longer.txt") {
+            await writeFile(path, TEXT + TEXT);
+          } else if (name == "shorter.txt") {
+            await writeFile(path, "short");
+          } else if (name == "removed.txt" && r.status == 200) {
+            await remove(path);
+          } else if (name == "truncated.bin") {
+            const body = afterFirstChunk(r, async () => {
+              await writeFile(path, "short");
+            });
+            return new Response(BodyStream.from(body), { status: r.status, headers: r.headers });
+          }
+          return r;
         },
       );
       base = h2 ? `https://localhost:${server.port}` : `http://127.0.0.1:${server.port}`;
@@ -231,6 +462,36 @@ for (const protocol of ["HTTP/1.1", "HTTP/2"]) {
       expect(failed.status).toBe(412);
     });
 
+    it("sends options.headers with a 304, not with a 412 or 416", async () => {
+      const first = await get("/f.txt");
+      await first.text();
+      const etag = first.headers.get("etag")!;
+      const same = await get("/f.txt", { headers: { "if-none-match": etag } });
+      expect(same.status).toBe(304);
+      expect(same.headers.get("cache-control")).toBe("no-cache");
+      const failed = await get("/f.txt", { headers: { "if-match": "\"other\"" } });
+      expect(failed.status).toBe(412);
+      expect(failed.headers.get("cache-control")).toBe(null);
+      expect(failed.headers.get("etag")).toBe(etag);
+      const past = await get("/f.txt", { headers: { range: "bytes=36-" } });
+      expect(past.status).toBe(416);
+      expect(past.headers.get("cache-control")).toBe(null);
+      expect(past.headers.get("accept-ranges")).toBe("bytes");
+      const part = await get("/f.txt", { headers: { range: "bytes=0-1" } });
+      expect(part.status).toBe(206);
+      expect(part.headers.get("cache-control")).toBe("no-cache");
+      await part.text();
+    });
+
+    it("reads a range with leading zeros", async () => {
+      const part = await get("/f.txt", {
+        headers: { range: "bytes=0000000000000000001-0000000000000000002" },
+      });
+      expect(part.status).toBe(206);
+      expect(part.headers.get("content-range")).toBe("bytes 1-2/36");
+      expect(await part.text()).toBe("12");
+    });
+
     it("answers a range with 206, and one past the end with 416", async () => {
       const part = await get("/f.txt", { headers: { range: "bytes=10-15" } });
       expect(part.status).toBe(206);
@@ -266,6 +527,11 @@ for (const protocol of ["HTTP/1.1", "HTTP/2"]) {
       expect(r.status).toBe(200);
       expect(r.headers.get("content-length")).toBe("36");
       expect(await r.text()).toBe("");
+      // `Range` is defined for GET only (RFC 9110 §14.2).
+      const ranged = await get("/f.txt", { method: "HEAD", headers: { range: "bytes=0-1" } });
+      expect(ranged.status).toBe(200);
+      expect(ranged.headers.get("content-range")).toBe(null);
+      expect(ranged.headers.get("content-length")).toBe("36");
     });
 
     it("answers 404 for no file or a directory, and 405 for a write", async () => {
@@ -283,6 +549,37 @@ for (const protocol of ["HTTP/1.1", "HTTP/2"]) {
       const part = await get("/big.bin", { headers: { range: "bytes=1048576-" } });
       expect(part.headers.get("content-range")).toBe("bytes 1048576-3145744/3145745");
       expect((await part.bytes()).length).toBe(2097169);
+    });
+
+    // What a client gets of `path`: "cut off" for a response that failed.
+    const outcome = async (path: string): Promise<string> => {
+      try {
+        const r = await get(path);
+        return `${r.status} ${(await r.bytes()).length}`;
+      } catch (e) {
+        return "cut off";
+      }
+    };
+
+    it("cuts the response off when the file changed before the body is read", async () => {
+      for (const name of ["longer.txt", "shorter.txt"]) {
+        await writeFile(`${dir}/${name}`, TEXT);
+        expect(await outcome(`/${name}`)).toBe("cut off");
+        // Once the file holds still it is served again.
+        expect(await outcome(`/f.txt`)).toBe("200 36");
+      }
+    });
+
+    it("cuts the response off when the file is gone before the body is read", async () => {
+      await writeFile(`${dir}/removed.txt`, TEXT);
+      expect(await outcome("/removed.txt")).toBe("cut off");
+      expect(await outcome("/removed.txt")).toBe("404 9");
+    });
+
+    it("cuts the response off when the file is truncated after it was opened", async () => {
+      await writeFile(`${dir}/truncated.bin`, "x".repeat(1024 * 1024));
+      expect(await outcome("/truncated.bin")).toBe("cut off");
+      expect(await outcome("/f.txt")).toBe("200 36");
     });
   });
 }

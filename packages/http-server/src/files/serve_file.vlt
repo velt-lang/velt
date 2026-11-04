@@ -2,18 +2,18 @@
 // conditional requests (304, 412), a byte range (206, 416), HEAD, and the body streamed with
 // backpressure and its length.
 
-import { FileReader, openRead, stat, Stats } from "velt/fs";
+import { openRead, stat, Stats } from "velt/fs";
 import { IoError } from "velt/io";
 import { BodyStream } from "velt/net/http";
 import { evaluateConditions, ifRangeMatches, Validators } from "./conditions";
 import { contentType } from "./content_type";
-import { parseRange } from "./range";
+import { ByteRange, parseRange } from "./range";
 
 /** The options of `serveFile`. */
 export struct ServeFileOptions {
   /** The `Content-Type` (default: from the file's extension, `contentType`). */
   contentType?: string;
-  /** Headers for every answer but an error, such as `Cache-Control`. */
+  /** Headers for a 200, 206 or 304, not for an error (412, 416), such as `Cache-Control`. */
   headers?: [string, string][];
 }
 
@@ -28,9 +28,11 @@ export struct ServeFileOptions {
  * - 404 when there is no such file (or it is a directory), 405 with `Allow` for a method other
  *   than GET and HEAD, 500 when the file can't be read.
  *
- * The response's size and validators are those of the file that is sent: a file replaced while
- * the request is answered is looked at again. `path` is used as given: map a URL to it with
- * `resolveUnder`, which keeps requests inside a root directory.
+ * The file is opened when the body is first read, so a response that is never sent holds nothing.
+ * The head's size and validators are those of the file sent: a file that changed since it was
+ * looked at, or changes or disappears while it is sent, cuts the response off, so the client sees
+ * a failed response, not a wrong one. `path` is used as given: map a URL to it with `resolveUnder`,
+ * which keeps requests inside a root directory.
  */
 export async function serveFile(
   req: Request,
@@ -41,87 +43,101 @@ export async function serveFile(
   if (method != "GET" && method != "HEAD") {
     return new Response("Method Not Allowed", { status: 405, headers: { allow: "GET, HEAD" } });
   }
-  for (let attempt = 0; attempt < 3; attempt++) {
-    let info: Stats;
-    try {
-      info = await stat(path);
-    } catch (e) {
-      return failure(e);
-    }
-    if (!info.isFile()) {
-      return status(404);
-    }
-    const size = info.size;
-    const v: Validators = { etag: weakTag(info), lastModified: info.mtimeMs };
-    const headers = new Headers();
-    headers.set("etag", v.etag!);
-    headers.set("last-modified", new Date(info.mtimeMs).toUTCString());
-    for (const h of options.headers ?? []) {
-      headers.append(h[0], h[1]);
-    }
-    const cond = evaluateConditions(req, v);
-    if (cond != 0) {
-      return new Response(null, { status: cond, headers });
-    }
-    headers.set("content-type", options.contentType ?? contentType(path));
-    headers.set("accept-ranges", "bytes");
-    let code = 200;
-    let start: u64 = 0;
-    let end: u64 = size == 0 ? 0 : size - 1;
-    if (method == "GET" && ifRangeMatches(req, v)) {
-      const range = parseRange(req.headers.get("range"), size);
-      if (typeof range == "string") {
-        // "unsatisfiable"
-        headers.set("content-range", `bytes */${size}`);
-        return new Response(null, { status: 416, headers });
-      } else if (range != null) {
-        code = 206;
-        start = range.start;
-        end = range.end;
-        headers.set("content-range", `bytes ${start}-${end}/${size}`);
-      }
-    }
-    const length = size == 0 ? 0 : end - start + 1;
-    headers.set("content-length", `${length}`);
-    if (method == "HEAD" || length == 0) {
-      return new Response(null, { status: code, headers });
-    }
-    let reader: FileReader;
-    try {
-      reader = await openRead(path, code == 206 ? { start, end } : {});
-    } catch (e) {
-      return failure(e);
-    }
-    // The file opened must be the one looked at: a replaced one is looked at again.
-    const opened = reader.openedStats();
-    if (opened.size != size || opened.mtimeMs != info.mtimeMs) {
-      reader.close();
-      continue;
-    }
-    return new Response(BodyStream.from(chunks(reader, length)), { status: code, headers });
+  let info: Stats;
+  try {
+    info = await stat(path);
+  } catch (e) {
+    return failure(e);
   }
-  return status(503);
+  if (!info.isFile()) {
+    return status(404);
+  }
+  const size = info.size;
+  const v = validatorsOf(size, info.mtimeMs);
+  const headers = new Headers();
+  headers.set("etag", v.etag!);
+  headers.set("last-modified", new Date(v.lastModified!).toUTCString());
+  const cond = evaluateConditions(req, v);
+  if (cond == 412) {
+    return new Response(null, { status: 412, headers });
+  }
+  let code = 200;
+  let start: u64 = 0;
+  let end: u64 = size == 0 ? 0 : size - 1;
+  if (cond == 0 && method == "GET" && ifRangeMatches(req, v)) {
+    const range = parseRange(req.headers.get("range"), size);
+    if (typeof range == "string") {
+      // "unsatisfiable"
+      headers.set("accept-ranges", "bytes");
+      headers.set("content-range", `bytes */${size}`);
+      return new Response(null, { status: 416, headers });
+    } else if (range != null) {
+      code = 206;
+      start = range.start;
+      end = range.end;
+      headers.set("content-range", `bytes ${start}-${end}/${size}`);
+    }
+  }
+  for (const h of options.headers ?? []) {
+    headers.append(h[0], h[1]);
+  }
+  if (cond != 0) {
+    return new Response(null, { status: cond, headers });
+  }
+  headers.set("content-type", options.contentType ?? contentType(path));
+  headers.set("accept-ranges", "bytes");
+  const length = size == 0 ? 0 : end - start + 1;
+  headers.set("content-length", `${length}`);
+  if (method == "HEAD" || length == 0) {
+    return new Response(null, { status: code, headers });
+  }
+  const part: ByteRange | null = code == 206 ? { start, end } : null;
+  return new Response(BodyStream.from(chunks(path, part, length, size, info.mtimeMs)), {
+    status: code,
+    headers,
+  });
 }
 
-/// The file's weak entity tag, as Express's `etag` makes it: size and mtime, in hex.
-function weakTag(info: Stats): string {
-  const size = (info.size as number).toString(16);
-  const mtime = Math.floor(info.mtimeMs).toString(16);
-  return `W/"${size}-${mtime}"`;
+/// A file's validators, byte-identical to Express's: the time is rounded to the millisecond, as
+/// Node's `stat.mtime` has `mtimeMs`, and the weak entity tag is its size and that time, in hex.
+export function validatorsOf(size: u64, mtimeMs: f64): Validators {
+  const modified = Math.round(mtimeMs);
+  const hexSize = (size as number).toString(16);
+  return { etag: `W/"${hexSize}-${modified.toString(16)}"`, lastModified: modified };
+}
+
+/// Whether a file opened, of `openedSize` and `openedMtimeMs`, is the one looked at to write the
+/// head.
+export function sameFile(openedSize: u64, openedMtimeMs: f64, size: u64, mtimeMs: f64): bool {
+  return openedSize == size && openedMtimeMs == mtimeMs;
 }
 
 /// The largest chunk read at once.
 const CHUNK: u64 = 65536;
 
 /**
- * The `length` bytes of `r`, read in chunks of at most 64 KiB, each no larger than what is left
- * (so a small file is one read of its size); the file is closed after the last byte, with no
- * read for the end, or when the client goes away. A file cut short since it was opened ends the
- * body early, which cuts the response off (its Content-Length isn't met).
+ * The `length` bytes of the file at `path` (the whole of it, or `part`) that was `size` bytes and
+ * last changed at `mtimeMs` when the head was written, read in chunks of at most 64 KiB, each no
+ * larger than what is left (so a small file is one read of its size). It is opened by the first
+ * read and closed after the last byte, with no read for the end, or when the client goes away. A
+ * generator that was never started has opened nothing. A failure here, another file than the one
+ * looked at, or one cut short since it was opened (which ends the body early) cuts the response
+ * off: the head is out or on its way.
  */
-async function* chunks(r: FileReader, length: u64): AsyncGenerator<u8[], IoError> {
-  let left = length;
+async function* chunks(
+  path: string,
+  part: ByteRange | null,
+  length: u64,
+  size: u64,
+  mtimeMs: f64,
+): AsyncGenerator<u8[], IoError> {
+  const r = await openRead(path, part != null ? { start: part.start, end: part.end } : {});
   try {
+    const opened = r.openedStats();
+    if (!sameFile(opened.size, opened.mtimeMs, size, mtimeMs)) {
+      throw new IoError("ESTALE", `${path} changed while it was being served`);
+    }
+    let left = length;
     while (left > 0) {
       const b = await r.read(left < CHUNK ? left : CHUNK);
       if (b.length == 0) {
@@ -146,7 +162,5 @@ function failure(e: IoError): Response {
 
 /// A plain-text response with the status's reason phrase.
 function status(code: number): Response {
-  const text =
-    code == 404 ? "Not Found" : code == 503 ? "Service Unavailable" : "Internal Server Error";
-  return new Response(text, { status: code });
+  return new Response(code == 404 ? "Not Found" : "Internal Server Error", { status: code });
 }

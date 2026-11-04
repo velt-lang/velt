@@ -4,37 +4,85 @@
 import { realpath } from "velt/fs";
 import { platform } from "velt/os";
 
+/** The options of `resolveUnder`. */
+export struct ResolveOptions {
+  /**
+   * Whether a path with a segment starting with `.` (`/.env`, `/.git/config`, `/.well-known/x`)
+   * may be served (default: no, as Express's `send`).
+   */
+  dotfiles?: bool;
+}
+
 /**
  * The real path of the file or directory URL path `urlPath` (a `URL`'s `pathname`, still
  * percent-encoded) names under directory `root`, or null when there is none or it would lie
- * outside `root`. Refused: `..` segments, encoded separators (`%2F`, `%5C`), NUL (`%00`),
- * backslashes, invalid percent-encoding, a `:` in a segment on Windows (drive letters and
- * alternate data streams), and a symlink whose target is outside `root` (both are resolved
- * with `realpath` and compared). A path that doesn't exist is null too.
+ * outside `root`. Refused:
+ * - `..` segments, encoded separators (`%2F`, `%5C`), NUL (`%00`), backslashes and invalid
+ *   percent-encoding;
+ * - dotfiles: a segment starting with `.` below `root`, in the URL or in the real path (so a
+ *   symlink to `.env` as well), unless `options.dotfiles` allows them;
+ * - on Windows, a `:` in a segment (drive letters and alternate data streams), and a segment
+ *   ending in a dot or a space, which Windows would resolve to the name without them (`f.txt.`
+ *   and `f.txt/.` are `f.txt`), past any filter a handler keeps by name;
+ * - a symlink whose target is outside `root` (both are resolved with `realpath` and compared).
  *
- * Between this check and opening the file a symlink could still be swapped in; serve a root
- * whose contents an attacker can't write.
+ * A path that doesn't exist is null too. Between this check and opening the file a symlink could
+ * still be swapped in; serve a root whose contents an attacker can't write.
  */
-export async function resolveUnder(root: string, urlPath: string): Promise<string | null> {
-  const rel = relativePath(urlPath);
+export async function resolveUnder(
+  root: string,
+  urlPath: string,
+  options: ResolveOptions = {},
+): Promise<string | null> {
+  const windows = platform() == "win32";
+  const dotfiles = options.dotfiles ?? false;
+  const rel = relativePath(urlPath, windows, dotfiles);
   if (rel == null) {
     return null;
   }
   try {
     const top = await realpath(root);
     const real = await realpath(rel == "" ? top : `${top}/${rel}`);
-    if (real == top) {
-      return real;
-    }
-    const sep = platform() == "win32" ? "\\" : "/";
-    return real.startsWith(top.endsWith(sep) ? top : top + sep) ? real : null;
+    return realPathAllowed(real, top, windows, dotfiles) ? real : null;
   } catch (e) {
     return null;
   }
 }
 
-/// `urlPath` decoded and checked, without its leading "/"; null when it is refused.
-function relativePath(urlPath: string): string | null {
+/**
+ * Whether `real` is `top` or below it, with no segment below `top` starting with `.` unless
+ * `dotfiles`. Both are real paths, with the platform's separators.
+ */
+export function realPathAllowed(real: string, top: string, windows: bool, dotfiles: bool): bool {
+  if (real == top) {
+    return true;
+  }
+  const sep = windows ? "\\" : "/";
+  const prefix = top.endsWith(sep) ? top : top + sep;
+  if (!real.startsWith(prefix)) {
+    return false;
+  }
+  if (dotfiles) {
+    return true;
+  }
+  const code = sep.charCodeAt(0);
+  const n = real.length;
+  let first = true;
+  for (let i = prefix.length; i < n; i++) {
+    const c = real.charCodeAt(i as i64);
+    if (first && c == 46) {
+      return false;
+    }
+    first = c == code;
+  }
+  return true;
+}
+
+/**
+ * `urlPath` decoded and checked, without its leading "/"; null when it is refused. `windows` says
+ * which platform's rules apply.
+ */
+export function relativePath(urlPath: string, windows: bool, dotfiles: bool): string | null {
   // Encoded separators and NUL: refused before decoding hides them.
   const n = urlPath.length;
   for (let i: usize = 0; i + 2 < n; i++) {
@@ -54,13 +102,11 @@ function relativePath(urlPath: string): string | null {
       return null;
     }
   }
-  const windows = platform() == "win32";
   let start: usize = 0;
   const m = decoded.length;
   while (start < m && decoded.charCodeAt(start as i64) == 47) {
     start++;
   }
-  // Each segment: no "..", no backslash or NUL, no ":" on Windows.
   let segment = start;
   for (let i = start; i <= m; i++) {
     const c = i < m ? decoded.charCodeAt(i as i64) : 47;
@@ -68,15 +114,36 @@ function relativePath(urlPath: string): string | null {
       return null;
     }
     if (c == 47) {
-      if (
-        i - segment == 2 &&
-        decoded.charCodeAt(segment as i64) == 46 &&
-        decoded.charCodeAt((segment + 1) as i64) == 46
-      ) {
+      if (!segmentAllowed(decoded, segment, i, windows, dotfiles)) {
         return null;
+      }
+      if (windows && i == m && i - segment == 1 && decoded.charCodeAt(segment as i64) == 46) {
+        return null; // a last ".": Windows reads "f.txt/." as the file
       }
       segment = i + 1;
     }
   }
   return start == 0 ? decoded : decoded.slice(start as i64);
+}
+
+/// Whether the segment of `path` from `start` up to `end` may be looked up. "." stays: it names
+/// the directory it is in.
+function segmentAllowed(
+  path: string,
+  start: usize,
+  end: usize,
+  windows: bool,
+  dotfiles: bool,
+): bool {
+  const length = end - start;
+  if (length == 0 || (length == 1 && path.charCodeAt(start as i64) == 46)) {
+    return true;
+  }
+  if (path.charCodeAt(start as i64) == 46) {
+    if (!dotfiles || (length == 2 && path.charCodeAt((start + 1) as i64) == 46)) {
+      return false; // a dotfile, or ".."
+    }
+  }
+  const last = path.charCodeAt((end - 1) as i64);
+  return !windows || (last != 46 && last != 32);
 }

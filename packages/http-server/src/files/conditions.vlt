@@ -16,8 +16,9 @@ export struct Validators {
  * `If-Match` fails (else when `If-Unmodified-Since` does), 304 when `If-None-Match` matches a
  * GET or HEAD (412 for other methods), else 304 when a GET or HEAD wasn't modified since
  * `If-Modified-Since`; 0 when the request goes on. `If-Match` compares strongly, so a weak tag
- * never matches it; `If-None-Match` weakly. A date that doesn't parse is ignored, as is
- * `If-Modified-Since` next to `If-None-Match`. Dates compare to the second.
+ * never matches it; `If-None-Match` weakly. A value that isn't an HTTP-date is ignored (RFC 9110
+ * §13.1.3, §13.1.4), as is `If-Modified-Since` next to `If-None-Match`. Dates compare to the
+ * second.
  */
 export function evaluateConditions(req: Request, v: Validators): number {
   const h = req.headers;
@@ -31,7 +32,7 @@ export function evaluateConditions(req: Request, v: Validators): number {
   } else {
     const since = h.get("if-unmodified-since");
     if (since != null) {
-      const date = Date.parse(since) / 1000;
+      const date = httpDate(since) / 1000;
       if (!isNaN(date) && !isNaN(modified) && modified > date) {
         return 412;
       }
@@ -47,7 +48,7 @@ export function evaluateConditions(req: Request, v: Validators): number {
   if (read) {
     const since = h.get("if-modified-since");
     if (since != null) {
-      const date = Date.parse(since) / 1000;
+      const date = httpDate(since) / 1000;
       if (!isNaN(date) && !isNaN(modified) && modified <= date) {
         return 304;
       }
@@ -72,10 +73,25 @@ export function ifRangeMatches(req: Request, v: Validators): bool {
     const etag = v.etag;
     return etag != null && !t.startsWith("W/") && !etag.startsWith("W/") && t == etag;
   }
-  const date = Date.parse(t);
+  const date = httpDate(t);
   return v.lastModified != undefined &&
     !isNaN(date) &&
     Math.floor(v.lastModified / 1000) == date / 1000;
+}
+
+/**
+ * An HTTP-date in milliseconds since the epoch, NaN for any other value (`Date.parse` takes much
+ * more than RFC 9110 §5.6.7's three forms, `2100` among them): `Sun, 06 Nov 1994 08:49:37 GMT`,
+ * `Sunday, 06-Nov-94 08:49:37 GMT` or `Sun Nov  6 08:49:37 1994`.
+ */
+function httpDate(value: string): number {
+  const n = value.length;
+  const comma = value.indexOf(",");
+  const form =
+    value.endsWith(" GMT")
+      ? (n == 29 && comma == 3) || (comma >= 6 && comma <= 9 && n == comma + 24)
+      : n == 24 && comma < 0 && value.charCodeAt(3) == 32 && value.charCodeAt(7) == 32;
+  return form ? Date.parse(value) : NaN;
 }
 
 /**

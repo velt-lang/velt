@@ -260,13 +260,22 @@ async function main() {
 - HEAD, 404 for no file or a directory, 405 for other methods;
 - the body read as the client takes it, with its `Content-Length`.
 
-`options` sets the `contentType` (default: from the extension, `contentType(path)`) and extra
-`headers` (`Cache-Control`). The pieces are exported for other bodies: `parseRange(header,
-size)`, `evaluateConditions(req, validators)` and `ifRangeMatches(req, validators)`.
+The file is opened when the body is first read, so a response you don't send holds nothing. The
+head describes the file as it was looked at: if the file changes or goes away before its last
+byte is sent, the response is cut off, and the client sees a failed response, not a wrong one.
 
-`resolveUnder(root, urlPath)` maps a URL path to a file under `root`. It refuses `..`, encoded
-separators, NUL and symlinks that lead out of `root`, and gives null for those and for a missing
-file.
+`options` sets the `contentType` (default: from the extension, `contentType(path)`) and extra
+`headers` for a 200, 206 or 304 (`Cache-Control`; not for a 412 or 416, which a cache mustn't
+keep). The pieces are exported for other bodies: `parseRange(header, size)`,
+`evaluateConditions(req, validators)` and `ifRangeMatches(req, validators)`.
+
+`resolveUnder(root, urlPath, options?)` maps a URL path to a file under `root`. It gives null for
+a missing file and for what it refuses:
+- `..`, encoded separators, NUL and symlinks that lead out of `root`;
+- dotfiles (`/.env`, `/.git/config`, a symlink to one), as Express's `send` does. Pass
+  `{ dotfiles: true }` to serve them, for `/.well-known/` and the like;
+- on Windows, a `:` in a segment (drive letters, alternate data streams) and a segment ending in
+  a dot or a space, which Windows reads as the name without them (`/f.txt.` is `f.txt`).
 
 ```ts
 import { resolveUnder, serve, serveFile } from "http-server";

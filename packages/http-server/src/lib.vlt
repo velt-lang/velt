@@ -10,7 +10,7 @@ export { EventStream } from "./event_stream";
 export { evaluateConditions, ifRangeMatches, Validators } from "./files/conditions";
 export { contentType } from "./files/content_type";
 export { ByteRange, parseRange } from "./files/range";
-export { resolveUnder } from "./files/resolve";
+export { ResolveOptions, resolveUnder } from "./files/resolve";
 export { serveFile, ServeFileOptions } from "./files/serve_file";
 export { HttpStream } from "./http_stream";
 export { HttpRequest } from "./request";
