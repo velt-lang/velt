@@ -1,0 +1,5 @@
+// A default or an object rest in a module-level destructuring declaration is not supported yet:
+// when a default applies depends on the field's type.
+const opts = { a: 1, b: 2 };
+const { a = 5 } = opts;
+const { b, ...rest } = opts;
