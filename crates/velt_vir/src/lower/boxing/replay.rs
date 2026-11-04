@@ -89,14 +89,19 @@ impl Facts {
             &one,
         );
         take(&mut self.lock_values, &mut out.lock_values, &one);
-        for m in [&mut self.fn_tuple_writes, &mut self.fn_read_params] {
-            let picked: Vec<FuncId> = (m.iter())
+        let by_fn = [
+            (&mut self.fn_tuple_writes, &mut out.fn_tuple_writes),
+            (&mut self.fn_read_params, &mut out.fn_read_params),
+        ];
+        for (from, to) in by_fn {
+            let picked: Vec<FuncId> = (from.iter())
                 .filter(|(_, ts)| ts.iter().any(|&t| ph(t)))
                 .map(|(f, _)| *f)
                 .collect();
             for f in picked {
-                m.remove(&f);
-                out.fn_read_params.entry(f).or_default();
+                if let Some(ts) = from.remove(&f) {
+                    to.insert(f, ts);
+                }
             }
         }
         out
