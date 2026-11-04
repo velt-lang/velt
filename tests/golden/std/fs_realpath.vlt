@@ -16,13 +16,18 @@ async function main() {
   await symlink("../outside/secret.txt", `${dir}/root/escape`);
   await symlink("nowhere", `${dir}/root/dangling`);
 
-  const show = (p: string) => (p.startsWith(dir) ? "<dir>" + p.slice(dir.length) : p);
+  // Windows returns backslashes and `dir` was joined with "/": compare with both normalized.
   const slash = (p: string) => p.replaceAll("\\", "/");
-  console.log(slash(show(await realpath(`${dir}/root/sub/a.txt`))));
-  console.log(slash(show(await realpath(`${dir}/root/link_dir/a.txt`))));
-  console.log(slash(show(await realpath(`${dir}/root/sub/../sub/./a.txt`))));
-  console.log(slash(show(await realpath(`${dir}/root/escape`))));
-  console.log(slash(show(realpathSync(`${dir}/root/link_dir`))));
+  const at = slash(dir);
+  const show = (p: string) => {
+    const s = slash(p);
+    return s.startsWith(at) ? "<dir>" + s.slice(at.length) : s;
+  };
+  console.log(show(await realpath(`${dir}/root/sub/a.txt`)));
+  console.log(show(await realpath(`${dir}/root/link_dir/a.txt`)));
+  console.log(show(await realpath(`${dir}/root/sub/../sub/./a.txt`)));
+  console.log(show(await realpath(`${dir}/root/escape`)));
+  console.log(show(realpathSync(`${dir}/root/link_dir`)));
   for (const missing of [`${dir}/root/dangling`, `${dir}/root/none.txt`]) {
     try {
       await realpath(missing);
