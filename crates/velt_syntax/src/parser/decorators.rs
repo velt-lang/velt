@@ -18,7 +18,8 @@ impl<'a> Parser<'a> {
         Ok(out)
     }
 
-    /// At `@`. TC39's grammar: a member chain, a call of one, or a parenthesized expression.
+    /// At `@`. TC39's grammar: a member chain, a call of one, or a parenthesized expression, and
+    /// TypeScript's type arguments on the call.
     fn parse_decorator(&mut self) -> PResult<Decorator> {
         let lo = self.cur_lo();
         self.bump(); // @
@@ -47,15 +48,25 @@ impl<'a> Parser<'a> {
             };
             expr = self.mk_expr(kind, self.span_from(lo));
         }
+        let type_args = match self.at(Tok::Lt) {
+            true => self.parse_type_args()?,
+            false => vec![],
+        };
         if self.at(Tok::LParen) {
             let args = self.parse_args()?;
             let kind = ExprKind::Call {
                 callee: Box::new(expr),
-                type_args: vec![],
+                type_args,
                 args,
                 optional: false,
             };
             expr = self.mk_expr(kind, self.span_from(lo));
+        } else if let Some(t) = type_args.first() {
+            // TypeScript's TS1146: type arguments only come with a call.
+            self.error(
+                "a decorator's type arguments must be followed by its arguments: `@x<T>(…)`",
+                t.span,
+            );
         }
         Ok(expr)
     }

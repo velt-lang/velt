@@ -2,8 +2,8 @@
 //! lists, generic parameter lists and arrow functions.
 
 use velt_syntax::ast::{
-    is_method_this, ArrowBody, ArrowParam, Expr, FnDecl, FnSig, GenericParam, Ident, Param,
-    Pattern, TypeExpr,
+    is_method_this, ArrowBody, ArrowParam, Decorator, Expr, FnDecl, FnSig, GenericParam, Ident,
+    Param, Pattern, TypeExpr,
 };
 
 use super::lists::delimited;
@@ -20,17 +20,19 @@ impl<'a> Printer<'a> {
     /// [`fn_decl`](Self::fn_decl) after `mods` (`export `, `static `, ...), which its overload
     /// signatures (`FnDecl::overloads`, each on a line of its own before it) repeat.
     pub(super) fn fn_decl_with(&mut self, f: &FnDecl, keyword: &str, mods: &str) -> Doc {
-        self.fn_decl_mods(f, keyword, mods, true)
+        self.fn_decl_mods(f, keyword, mods, true, &[])
     }
 
     /// [`fn_decl_with`](Self::fn_decl_with), printing `unsafe` itself (`own_unsafe`) or not (a
-    /// method's `mods` hold it, before `get` / `set`).
+    /// method's `mods` hold it, before `get` / `set`). `decorators` go on the implementation:
+    /// TypeScript refuses a decorator on a method's overload signature (TS1249).
     pub(super) fn fn_decl_mods(
         &mut self,
         f: &FnDecl,
         keyword: &str,
         mods: &str,
         own_unsafe: bool,
+        decorators: &[Decorator],
     ) -> Doc {
         let mut out = vec![];
         for (k, o) in f.overloads.iter().enumerate() {
@@ -48,9 +50,11 @@ impl<'a> Printer<'a> {
                 out.push(hardline());
             }
         }
+        let decorators = self.decorators(decorators);
         let asyncness = fn_mods(&f.sig, own_unsafe);
         let sig = self.fn_sig(&f.sig, keyword, f.body.span.lo);
         out.push(cat![
+            decorators,
             mods.to_string(),
             asyncness,
             sig,

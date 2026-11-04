@@ -509,3 +509,20 @@ fn a_comment_after_a_parameter_decorator_leaves_the_parameter_alone() {
     assert_eq!(got.matches("// why").count(), 1, "{got}");
 }
 
+#[test]
+fn a_method_decorator_stays_on_the_implementation() {
+    let want =
+        "class D {\n  m(x: number): void;\n  m(x: string): void;\n  @logged\n  m(x: any) {}\n}\n";
+    round_trips(want);
+    let on_one_line =
+        "class D {\n  m(x: number): void;\n  m(x: string): void;\n  @logged m(x: any) {}\n}\n";
+    assert_eq!(formats_stably(on_one_line), want);
+    // Velt reads it from the first signature too, and TypeScript refuses it there (TS1249).
+    let on_the_first =
+        "class D {\n  @logged m(x: number): void;\n  m(x: string): void;\n  m(x: any) {}\n}\n";
+    assert_eq!(formats_stably(on_the_first), want);
+    // Modifiers stay after the decorator, and comments where they were.
+    round_trips("class D {\n  // a\n  static m(x: number): void;\n  // b\n  @logged\n  static m(x: any) {}\n}\n");
+    round_trips("abstract class D {\n  @logged\n  abstract m(x: number): void;\n}\n");
+}
+
