@@ -234,7 +234,7 @@ function smallDigits(v: u64, n: u64): u64 {
  * into every caller (`inline()`): the entry points' common case, whose three-word result would
  * otherwise go through memory.
  */
-function shortWords(v: u64, neg: bool): Words {
+export function shortWords(v: u64, neg: bool): Words {
   inline();
   if (v < 10000) {
     // Up to four digits (counters, coordinates, indexes).
@@ -269,7 +269,7 @@ function longNegative(v: u64): Words {
 // of which the first `24 - len` are dropped. At least four are (the text is at most 20 bytes):
 // with a minus, the last one dropped becomes it. The first group is below 1845, so at most four
 // digits: two lookups, in the upper half of its word, and its lower half is never read.
-function longWords(v: u64, neg: bool): Words {
+export function longWords(v: u64, neg: bool): Words {
   inline();
   const n = digitCount(v);
   const len = neg ? n + 1 : n;
