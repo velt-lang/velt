@@ -65,13 +65,10 @@ fn each_construct_demands_its_hooks() {
         ("  const n: i32 = 7;\n  console.log(n);", &["int_push", "uint_push"]),
         // IndexCheck: the out-of-bounds message of an index.
         ("  const xs = [\"a\"];\n  const i: i64 = 0;\n  const s = xs[i];\n  if (s == \"b\") {\n    return;\n  }", &["int_text", "uint_text"]),
-        // Format: the table of a class with a number in it (its `format` slot).
-        ("  const p = new P();\n  if (p.x == 2) {\n    return;\n  }", &["int_push", "uint_push"]),
         // Dynamic: numeric keys of an `any`.
         ("  const a: any = \"s\";\n  if (a == \"t\") {\n    return;\n  }", &["uint_text", "int_push", "uint_push"]),
     ] {
-        let src = format!("class P {{\n  x = 1;\n}}\nfunction main() {{\n{body}\n}}\n");
-        let p = ok_src(&src);
+        let p = main_of(body);
         let got = demanded(&p);
         for w in want {
             assert!(got.contains(w), "{w} not demanded by\n{body}\n(demanded: {got:?})");
@@ -107,6 +104,26 @@ fn a_hook_lowering_calls_where_sema_checked_it_is_live() {
     let p = main_of("  const x: number = 7;\n  console.log(`x=${x}`);");
     let got = demanded(&p);
     for w in ["int_text", "uint_text"] {
+        assert!(got.contains(&w), "{w} not demanded: {got:?}");
+    }
+}
+
+#[test]
+fn an_integer_thrown_and_not_caught_demands_its_printing() {
+    for src in [
+        "function main() { throw 5 as i32; }\n",
+        "async function main() { throw 5 as i32; }\n",
+    ] {
+        let got = demanded(&ok_src(src));
+        assert!(got.contains(&"int_push"), "{src}: {got:?}");
+    }
+}
+
+#[test]
+fn a_class_with_a_number_in_it_demands_its_format_slot() {
+    let p = ok_src("class P {\n  x = 1;\n}\nfunction main() {\n  const p = new P();\n  if (p.x == 2) {\n    return;\n  }\n}\n");
+    let got = demanded(&p);
+    for w in ["int_push", "uint_push"] {
         assert!(got.contains(&w), "{w} not demanded: {got:?}");
     }
 }

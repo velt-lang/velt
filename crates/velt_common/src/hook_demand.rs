@@ -8,7 +8,8 @@
 //! methods of a type in live code), with the operand's type, and demands each hook one of whose
 //! constructs occurs; a hook whose entry lists no construct is always demanded. It checks the
 //! demanded hooks, and leaves the others unchecked. Lowering's builder of a hook with constructs
-//! (`velt_vir` `lower/hook_calls.rs`) asserts, in release compilers too, that sema demanded it:
+//! (`velt_vir` `lower/hook_calls.rs`) asserts, in release compilers too, that its entry lists the
+//! construct and that sema demanded it:
 //! `ICE: hook <name> reached by lowering but not demanded by sema (construct <c>)` names the
 //! construct missing from the table.
 //!
@@ -155,13 +156,19 @@ mod tests {
 
     #[test]
     fn the_integer_hooks_are_demanded_by_their_constructs() {
-        let by = |c: Construct| HookSet::demanded_by(c.bit());
-        assert!(by(Construct::TextInt).contains(hook_index::int_text));
-        assert!(by(Construct::TextInt).contains(hook_index::int_push));
-        assert!(!by(Construct::TextInt).contains(hook_index::uint_text));
-        assert!(by(Construct::IndexCheck).contains(hook_index::uint_text));
-        assert!(!by(Construct::IndexCheck).contains(hook_index::int_push));
-        assert!(by(Construct::Format).contains(hook_index::uint_push));
-        assert!(by(Construct::Dynamic).contains(hook_index::uint_text));
+        use crate::std_hooks::hook_index::{int_push, int_text, uint_push, uint_text};
+        // Every entry of the table, and that nothing else demands these hooks.
+        for (c, hooks) in [
+            (Construct::TextInt, &[int_text, int_push][..]),
+            (Construct::TextUint, &[uint_text, uint_push]),
+            (Construct::Format, &[int_push, uint_push]),
+            (Construct::IndexCheck, &[int_text, uint_text]),
+            (Construct::Dynamic, &[uint_text, int_push, uint_push]),
+        ] {
+            let by = HookSet::demanded_by(c.bit());
+            for hook in [int_text, uint_text, int_push, uint_push] {
+                assert_eq!(by.contains(hook), hooks.contains(&hook), "{}", c.name());
+            }
+        }
     }
 }

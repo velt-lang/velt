@@ -1,7 +1,8 @@
 //! The live set, and the hooks its constructs demand (#2161 step 2; velt_common
 //! `hook_demand.rs`). Lowering builds what `main` reaches, the definitions it looks up by name,
 //! and the glue of the types in that code; it may call a hook from any of it, std's code
-//! included. *Live* code over-approximates that: the program's own definitions, the std
+//! included. *Live* code aims to cover that, and doesn't yet cover all of it (below): the
+//! program's own definitions, the std
 //! definitions lowering looks up by name ([`super::is_helper`], [`super::EAGER`]), the hooks
 //! demanded so far, and, closed over, every definition live code names (a call, a function
 //! value, a closure, a constant), the methods of each class or struct a live type mentions
@@ -9,6 +10,11 @@
 //! interface implementations of the live types. What [`super::reach`] checks only because
 //! checked code names it (the prelude's methods, a module checked whole) is not live until
 //! live code reaches it.
+//!
+//! Lowering also builds functions that are not live here (`T[].truncate`, the `arrayView*` hooks,
+//! `errorText`, `uncaughtHeader`, `Generator.*`, the any-to-interface adapters; #2161). That is
+//! harmless for the integer hooks only because any construct brings all of them through their
+//! std code: this must be fixed before a hook with a narrower demand gets `constructs(…)`.
 //!
 //! The constructs of `hook_demand::Construct` are evaluated on live code with the operand's
 //! type, and a hook one of whose constructs occurs is demanded: [`step`] adds it to what
@@ -87,6 +93,8 @@ struct Walk {
 /// The hooks lowering may call (`hir::Program::hooks_demanded`): those the constructs of live
 /// code demand; every hook when nothing is deferred (laziness off).
 pub(crate) fn demanded(cx: &Ctx) -> HookSet {
+    #[cfg(test)]
+    tests::PRESENT.set((cx.lazy.live.present, cx.lazy.live.impls.len()));
     match cx.lazy.modules.is_empty() {
         true => HookSet::all(),
         false => HookSet::demanded_by(cx.lazy.live.present),
@@ -646,3 +654,7 @@ const GATE_KINDS: u32 = (1 << 21) | (1 << 22) | DYNAMIC | (1 << 24) | (1 << 25) 
 
 /// The bit of a dynamic type (`any`, `unknown`, `object`, `Function`) among [`kind_bit`]'s.
 const DYNAMIC: u32 = 1 << 23;
+
+#[cfg(test)]
+#[path = "live_tests.rs"]
+mod tests;

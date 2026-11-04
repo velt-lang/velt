@@ -924,10 +924,13 @@ definitions and, closed over, the std definitions they name, the methods of the 
 the implementations they call, and the std functions lowering looks up by name for a value live
 code has. `Program::hooks_demanded` (a `HookSet`, one bit per table entry) lists the hooks sema
 demanded: those with a construct in live code, and every hook whose entry lists none. Lowering
-may call a hook with constructs only where it is in `hooks_demanded`; its builder checks that,
-in release compilers too (`ICE: hook <name> reached by lowering but not demanded by sema
-(construct <c>)`), so a construct missing from the table is reported as such. A program checked
-with laziness off demands every hook.
+may call a hook with constructs only for a construct its entry lists and where it is in
+`hooks_demanded`; its builder checks both, in release compilers too (`ICE: hook <name> called for
+a construct its table entry doesn't list`, `ICE: hook <name> reached by lowering but not demanded
+by sema (construct <c>)`), so a construct missing from the table is reported as such. A program
+checked with laziness off demands every hook. Lowering also builds some functions that are not
+live (#2161): for the integer hooks that is harmless, since any construct brings all of them
+through their std code. It must be fixed before a hook with a narrower demand lists constructs.
 
 ## Symbols
 

@@ -25,3 +25,11 @@ fn a_hook_sema_did_not_demand_is_an_ice() {
     p.hooks_demanded = Default::default();
     lower_ok(&p);
 }
+
+/// Sema's demand must cover what lowering prints an uncaught throw with (#2312's review: without
+/// it, an ICE on these one-line programs that no golden shows).
+#[test]
+fn an_integer_thrown_and_not_caught_lowers() {
+    lower_src("function main() { throw 5 as i32; }\n");
+    lower_src("async function main() { throw 5 as i32; }\n");
+}

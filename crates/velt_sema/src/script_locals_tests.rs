@@ -3,7 +3,7 @@
 
 #[allow(dead_code)]
 #[path = "../tests/common/programs.rs"]
-mod programs;
+pub(crate) mod programs;
 
 use crate::{CheckOptions, SEMA_STACK_BUDGET, SEMA_STACK_BYTES};
 

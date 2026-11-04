@@ -248,8 +248,9 @@ impl<R> Call<R> {
         Self::with(lw, def, targs, args)
     }
 
-    /// The call of hook `name` (entry `index` of the table) for construct `c`: sema must have
-    /// demanded it, which a release compiler checks too (a construct missing from the table).
+    /// The call of hook `name` (entry `index` of the table) for construct `c`: the entry must
+    /// list `c` and sema must have demanded it, which a release compiler checks too (a construct
+    /// missing from the table).
     #[inline]
     fn demanded<const N: usize>(
         lw: &mut FnLower<'_, '_>,
@@ -259,10 +260,17 @@ impl<R> Call<R> {
         targs: Vec<TyId>,
         args: [Passed; N],
     ) -> Self {
+        let hook = &velt_common::std_hooks::HOOKS[index];
+        assert!(
+            hook.constructs.contains(&c),
+            "ICE: hook {} called for a construct its table entry doesn't list (construct {})",
+            hook.name,
+            c.name()
+        );
         assert!(
             lw.cx.hir.hooks_demanded.contains(index),
             "ICE: hook {} reached by lowering but not demanded by sema (construct {})",
-            velt_common::std_hooks::HOOKS[index].name,
+            hook.name,
             c.name()
         );
         Self::must(lw, name, targs, args)
