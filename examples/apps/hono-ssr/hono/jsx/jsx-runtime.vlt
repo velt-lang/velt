@@ -1,0 +1,177 @@
+// hono/jsx/jsx-runtime (Velt): the JSX provider (velt docs/internals/contracts/jsx.md) whose
+// output matches hono/jsx's server rendering byte for byte: `className` and `htmlFor` become
+// `class` and `for`, boolean attributes render as `name=""`, empty void elements as `<br/>`,
+// `& < > " '` are escaped (`&#39;` for the apostrophe), event handlers render nothing.
+
+import { escapeHtml } from "velt/text";
+import type { IntrinsicElements as Html } from "velt/jsx";
+import { Builder, Element, RenderError } from "./node";
+import { renderStyle } from "./style";
+import type { AttrValue, Child, Handler, Node } from "./node";
+
+export { Element } from "./node";
+export type { AttrValue, Child, Handler, Node } from "./node";
+
+export type ElementChildrenAttribute = { children: Child };
+
+type Events = { onClick?: Handler; onInput?: Handler; onChange?: Handler; onSubmit?: Handler };
+
+/** The HTML tags (velt/jsx's attribute types), with React-style names and event handlers. */
+export type IntrinsicElements = Html & {
+  a: Events & { className?: string };
+  button: Events & { className?: string };
+  div: Events & { className?: string };
+  form: Events & { className?: string };
+  header: { className?: string };
+  input: Events & { className?: string };
+  label: { htmlFor?: string; className?: string };
+  li: Events & { className?: string };
+  p: { className?: string };
+  section: { className?: string };
+  span: { className?: string };
+  ul: { className?: string };
+};
+
+// hono/jsx/base.ts `emptyTags`: rendered `<br/>` when they have no children.
+const EMPTY_TAGS = " area base br col embed hr img input keygen link meta param source track wbr ";
+
+// hono/jsx/base.ts `booleanAttributes`: `true` renders `name=""`, `false` nothing. Any other
+// attribute renders a boolean as text (`data-x="true"`).
+const BOOLEAN_ATTRIBUTES =
+  " allowfullscreen async autofocus autoplay checked controls default defer disabled download formnovalidate hidden inert ismap itemscope loop multiple muted nomodule novalidate open playsinline readonly required reversed selected ";
+
+// hono/jsx/utils.ts `normalizeIntrinsicElementKey`.
+function attrName(name: string): string {
+  switch (name) {
+    case "className":
+      return "class";
+    case "htmlFor":
+      return "for";
+    case "crossOrigin":
+      return "crossorigin";
+    case "httpEquiv":
+      return "http-equiv";
+    case "itemProp":
+      return "itemprop";
+    case "fetchPriority":
+      return "fetchpriority";
+    case "noModule":
+      return "nomodule";
+    case "formAction":
+      return "formaction";
+  }
+  return name;
+}
+
+/** ` name="value"` as hono/jsx renders it, or nothing. */
+export function attr(raw: string, v: AttrValue): string {
+  const name = attrName(raw);
+  if (typeof v === "string") {
+    return ` ${name}="${escapeHtml(v)}"`;
+  } else if (typeof v === "boolean") {
+    if (BOOLEAN_ATTRIBUTES.includes(` ${name} `)) {
+      return v ? ` ${name}=""` : "";
+    }
+    return ` ${name}="${v}"`;
+  } else if (typeof v === "number") {
+    return ` ${name}="${v}"`;
+  } else if (typeof v === "function" || v == null) {
+    // An event handler runs in the browser; `null` omits the attribute.
+    return "";
+  } else if (name == "style") {
+    return ` style="${escapeHtml(renderStyle(v))}"`;
+  }
+  // Hono renders any other object with its `toString()`.
+  return ` ${name}="[object Object]"`;
+}
+
+function addNode(b: Builder, c: Node) {
+  if (c == null || typeof c === "boolean") {
+    return;
+  } else if (c instanceof Element) {
+    b.element(c);
+  } else if (typeof c === "string") {
+    b.markup(escapeHtml(c));
+  } else {
+    b.markup(`${c}`);
+  }
+}
+
+function addChild(b: Builder, c: Child) {
+  if (Array.isArray(c)) {
+    for (const e of c) {
+      addNode(b, e);
+    }
+  } else {
+    addNode(b, c);
+  }
+}
+
+/** An intrinsic element `<tag names[i]=values[i]…>children</tag>`. */
+export function jsx(
+  tag: string,
+  names: string[],
+  values: AttrValue[],
+  children: Child[],
+  key: string | null,
+): Element {
+  let open = `<${tag}`;
+  for (let i = 0; i < names.length; i++) {
+    open += attr(names[i], values[i]);
+  }
+  if (children.length == 0 && EMPTY_TAGS.includes(` ${tag} `)) {
+    return new Element(`${open}/>`);
+  }
+  const b = new Builder();
+  b.markup(`${open}>`);
+  for (const c of children) {
+    addChild(b, c);
+  }
+  b.markup(`</${tag}>`);
+  return b.el;
+}
+
+/** `<>children</>`: the children's markup, nothing around it. */
+export function Fragment(children: Child[], key: string | null): Element {
+  const b = new Builder();
+  for (const c of children) {
+    addChild(b, c);
+  }
+  return b.el;
+}
+
+/** `<Card …/>`: Hono calls a function component with its props; nothing marks it in the HTML. */
+export function jsxComponent<P>(
+  component: (props: P) => Element,
+  props: P,
+  key: string | null,
+  name: string,
+): Element {
+  return component(props);
+}
+
+/**
+ * `<Posts …/>` for an async component: started now, so siblings load concurrently, and awaited
+ * by `renderToString` in document order, as Hono awaits it. The error type is fixed to `Error`:
+ * a generic `E` is not inferred for a component that cannot fail in a package provider (#2259).
+ */
+export function jsxAsyncComponent<P>(
+  component: (props: P) => Promise<Element, Error>,
+  props: P,
+  key: string | null,
+  name: string,
+): Element {
+  const b = new Builder();
+  b.wait(settle(component(props), name));
+  return b.el;
+}
+
+// The component's promise with its error turned into a `RenderError` (an Element holds one error
+// type).
+async function settle(p: Promise<Element, Error>, name: string): Promise<Element, RenderError> {
+  try {
+    return await p;
+  } catch (e) {
+    throw new RenderError(name, `Component ${name} failed: ${e}`);
+  }
+}

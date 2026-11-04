@@ -1,0 +1,18 @@
+// A scripted session against the real server (golden: demo.out). demo.out is also what
+// reference/render.tsx prints when real Hono on Node renders the same pages
+// (`npm run reference`, README), so the golden checks that the HTML is byte-identical.
+import { startServer } from "./src/server";
+import { PATHS } from "./src/shared/paths";
+
+async function main() {
+  const server = await startServer(0);
+  for (const path of PATHS) {
+    const res = await fetch(`http://127.0.0.1:${server.port}${path}`);
+    const status = res.status;
+    const type = res.headers.get("content-type") ?? "-";
+    const body = await res.text();
+    console.log(`GET ${path} -> ${status} (${type})`);
+    console.log(body);
+  }
+  server.close();
+}

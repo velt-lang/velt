@@ -1,0 +1,8 @@
+// hono/html (Velt): `raw`, markup inserted as it is.
+
+import { Element } from "./jsx/node";
+
+/** `html` inserted without escaping. Never pass it text from users. */
+export function raw(html: string): Element {
+  return new Element(html);
+}
