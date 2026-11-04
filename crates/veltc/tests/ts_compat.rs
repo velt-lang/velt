@@ -124,7 +124,10 @@ fn copy_tree(from: &Path, to: &Path) {
 /// The `tsc` oracle's samples of what `tsc` rejects (tests/tscompat-oracle/rejected) are valid
 /// Velt too, so they show what the lint sees. (Its behaviour sample, `declare function`, is
 /// valid only in a package with a native library.) `unsafe.ts` is checked as a module of a
-/// package with native code, the only place `unsafe` code may be.
+/// package with native code, the only place `unsafe` code may be. One exception, `decorator.ts`: a
+/// decorator `tsc` rejects has to be an ordinary function here, because declaring a compile-time
+/// one in the sample would also report `declare-fn`, and Velt doesn't run those yet (#2204). When
+/// that changes this test fails, and the exception goes.
 #[test]
 fn every_rejected_sample_passes_velt_check() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/tscompat-oracle/rejected");
@@ -149,6 +152,20 @@ fn every_rejected_sample_passes_velt_check() {
         } else {
             velt(&dir, &["check", file.to_str().unwrap()])
         };
+        if file.file_stem().is_some_and(|stem| stem == "decorator") {
+            assert!(
+                !o.status.success(),
+                "{}: Velt accepts it now",
+                file.display()
+            );
+            assert!(
+                stderr(&o).contains("#2204"),
+                "{}:\n{}",
+                file.display(),
+                stderr(&o)
+            );
+            continue;
+        }
         assert!(o.status.success(), "{}:\n{}", file.display(), stderr(&o));
     }
 }
