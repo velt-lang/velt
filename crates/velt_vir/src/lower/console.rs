@@ -1,6 +1,7 @@
 //! `console.log` / `console.error`. Lines made only of numbers, bools and strings are written
-//! piecewise straight to the stream (the fast path: no builder, no allocation); any other line
-//! is formatted by the shared format glue (glue/format.rs) into one builder and written at once.
+//! piecewise straight to the stream (the fast path: no builder, no allocation), a number in one
+//! write with the space or newline after it; any other line is formatted by the shared format
+//! glue (glue/format.rs) into one builder and written at once.
 
 use velt_sema::hir::{self, LitValue, TyId, TyKind};
 
@@ -54,12 +55,12 @@ impl FnLower<'_, '_> {
     }
 
     fn print_direct(&mut self, stream: Operand, vals: Vec<(Operand, TyId)>) {
+        let count = vals.len();
         for (k, (v, t)) in vals.into_iter().enumerate() {
-            if k > 0 {
-                self.write_byte(&stream, b' ');
-            }
+            let end = if k + 1 == count { b'
+' } else { b' ' };
             if let Some((p, n)) = self.option_scalar(t) {
-                self.write_option(&stream, v, t, p, n);
+                self.write_option(&stream, v, t, p, n, end);
                 continue;
             }
             match self.cx.kind(t) {
@@ -75,10 +76,18 @@ impl FnLower<'_, '_> {
                 TyKind::Literal(LitValue::Bool(b)) => {
                     self.write_text(&stream, if b { "true" } else { "false" })
                 }
-                _ => self.write_scalar(stream.clone(), v, t),
+                TyKind::Bool => self.call_rt(Rt::WriteBool, vec![stream.clone(), v], None),
+                // A number is written with the byte after it, in one write.
+                _ => {
+                    self.write_number(stream.clone(), v, t, end);
+                    continue;
+                }
             }
+            self.write_byte(&stream, end);
         }
-        self.write_byte(&stream, b'\n');
+        if count == 0 {
+            self.write_byte(&stream, b'\n');
+        }
     }
 
     /// Format the whole line into one builder, write it, free the builder.
@@ -104,15 +113,21 @@ impl FnLower<'_, '_> {
         self.call_rt(Rt::StrbufDrop, vec![bp], None);
     }
 
-    /// Write the number, string or boolean at `place` (of type `ty`) as `console.log` does.
-    pub(super) fn write_payload(&mut self, stream: &Operand, place: Place, ty: TyId) {
+    /// Write the number, string or boolean at `place` (of type `ty`) as `console.log` does, and
+    /// the byte `end` after it: a number in one write with it.
+    pub(super) fn write_payload(&mut self, stream: &Operand, place: Place, ty: TyId, end: u8) {
         match self.cx.kind(ty) {
             TyKind::Str => {
                 let a = self.addr(place);
                 self.call_rt(Rt::WriteStr, vec![stream.clone(), a], None);
             }
-            _ => self.write_scalar(stream.clone(), Operand::Copy(place), ty),
+            TyKind::Bool => {
+                let v = Operand::Copy(place);
+                self.call_rt(Rt::WriteBool, vec![stream.clone(), v], None);
+            }
+            _ => return self.write_number(stream.clone(), Operand::Copy(place), ty, end),
         }
+        self.write_byte(stream, end);
     }
 
     fn write_byte(&mut self, stream: &Operand, b: u8) {
@@ -123,26 +138,24 @@ impl FnLower<'_, '_> {
         );
     }
 
-    /// Scalars (ints, floats, bool) in JS formatting: numbers through std's writers
-    /// (std/lang/hooks/number_text.velt), a bool by the runtime.
-    fn write_scalar(&mut self, stream: Operand, v: Operand, ty: TyId) {
-        let from = self.cx.ty(ty);
-        match self.cx.kind(ty) {
+    /// A number in JS formatting and the byte after it, through std's writers
+    /// (std/lang/hooks/number_text.velt).
+    fn write_number(&mut self, stream: Operand, v: Operand, t: TyId, end: u8) {
+        let (s, from) = (ty::U32::arg(stream), self.cx.ty(t));
+        let e = ty::U8::arg(cint(end as i128, Ty::U8));
+        let c = Construct::Format;
+        match self.cx.kind(t) {
             TyKind::Float(_) => {
-                let v = self.float_as_f64(v, ty);
-                _ = hooks::number_write(self, Construct::Format, ty::U32::arg(stream), ty::F64::arg(v))
-                    .emit(self);
+                let v = self.float_as_f64(v, t);
+                _ = hooks::number_write(self, c, s, ty::F64::arg(v), e).emit(self);
             }
-            TyKind::Bool => self.call_rt(Rt::WriteBool, vec![stream, v], None),
             TyKind::Int(it) if !it.is_signed() => {
                 let v = self.cast_to(v, from, Ty::U64);
-                _ = hooks::uint_write(self, Construct::Format, ty::U32::arg(stream), ty::U64::arg(v))
-                    .emit(self);
+                _ = hooks::uint_write(self, c, s, ty::U64::arg(v), e).emit(self);
             }
             _ => {
                 let v = self.cast_to(v, from, Ty::I64);
-                _ = hooks::int_write(self, Construct::Format, ty::U32::arg(stream), ty::I64::arg(v))
-                    .emit(self);
+                _ = hooks::int_write(self, c, s, ty::I64::arg(v), e).emit(self);
             }
         }
     }

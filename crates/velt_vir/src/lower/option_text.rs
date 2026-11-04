@@ -46,7 +46,8 @@ impl FnLower<'_, '_> {
         self.switch_to(done);
     }
 
-    /// `console.log`'s text of the option `v` (`option_scalar`: payload `p`, nothing `n`).
+    /// `console.log`'s text of the option `v` (`option_scalar`: payload `p`, nothing `n`), and the
+    /// byte `end` after it.
     pub(super) fn write_option(
         &mut self,
         stream: &Operand,
@@ -54,12 +55,16 @@ impl FnLower<'_, '_> {
         t: TyId,
         p: TyId,
         n: Nothing,
+        end: u8,
     ) {
         self.option_split(
             v,
             t,
-            |lw, payload| lw.write_payload(stream, payload, p),
-            |lw| lw.write_text(stream, n.word()),
+            |lw, payload| lw.write_payload(stream, payload, p, end),
+            |lw| {
+                lw.write_text(stream, n.word());
+                lw.write_byte(stream, end);
+            },
         );
     }
 

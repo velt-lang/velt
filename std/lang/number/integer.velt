@@ -235,7 +235,7 @@ function smallDigits(v: u64, n: u64): u64 {
  * otherwise go through memory.
  */
 @inline
-function shortWords(v: u64, neg: bool): Words {
+export function shortWords(v: u64, neg: bool): Words {
   if (v < 10000) {
     // Up to four digits (counters, coordinates, indexes).
     const n = smallCount(v);
@@ -270,7 +270,7 @@ function longNegative(v: u64): Words {
 // with a minus, the last one dropped becomes it. The first group is below 1845, so at most four
 // digits: two lookups, in the upper half of its word, and its lower half is never read.
 @inline
-function longWords(v: u64, neg: bool): Words {
+export function longWords(v: u64, neg: bool): Words {
   const n = digitCount(v);
   const len = neg ? n + 1 : n;
   const lo = v % 100000000;

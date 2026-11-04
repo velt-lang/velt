@@ -11,11 +11,13 @@
 
 import { trunc } from "velt/lang/intrinsics";
 import { i64Text, pushI64, pushU64, u64Text } from "velt/lang/number/integer";
+import { i64Ended, u64Ended } from "velt/lang/number/integer_write";
 
 declare function velt_rt_str_from_f64(x: f64): string;
 declare function velt_rt_strbuf_push_f64(buf: string, x: f64);
 declare function velt_rt_write_str(stream: u32, s: string);
 declare function velt_rt_write_f64(stream: u32, x: f64);
+declare function velt_rt_write_byte(stream: u32, b: u8);
 
 /** `String(v)` of a signed integer (a template's `${v}`, `v.toString()`): lowering calls it. */
 export function intText(v: i64): string {
@@ -38,29 +40,31 @@ export function uintPush(buf: string, v: u64): void {
 }
 
 /**
- * Writes `String(v)` of a signed integer to standard output (`stream` 1) or standard error (2):
- * a `console.log` argument. The text is at most 20 digits and a sign, held inline: no allocation.
+ * Writes `String(v)` of a signed integer and the byte `end` (the space or newline after a
+ * `console.log` argument) to standard output (`stream` 1) or standard error (2), in one write. The
+ * text is at most 20 digits, a sign and that byte, held inline: no allocation.
  */
-export function intWrite(stream: u32, v: i64): void {
-  velt_rt_write_str(stream, i64Text(v));
+export function intWrite(stream: u32, v: i64, end: u8): void {
+  velt_rt_write_str(stream, i64Ended(v, end));
 }
 
-/** Writes `String(v)` of an unsigned integer to `stream`, as `intWrite`. */
-export function uintWrite(stream: u32, v: u64): void {
-  velt_rt_write_str(stream, u64Text(v));
+/** Writes `String(v)` of an unsigned integer and `end` to `stream`, as `intWrite`. */
+export function uintWrite(stream: u32, v: u64, end: u8): void {
+  velt_rt_write_str(stream, u64Ended(v, end));
 }
 
 /**
- * Writes a float as `console.log` prints it to `stream`: a whole number below 2^53 other than
- * `-0` by `intWrite` (which `velt_opt` numrep calls directly when it knows `x` is one), anything
- * else (`-0`, `0.5`, `1e+21`, `NaN`) by the runtime's printer.
+ * Writes a float as `console.log` prints it and `end` to `stream`: a whole number below 2^53 other
+ * than `-0` by `intWrite` (which `velt_opt` numrep calls directly when it knows `x` is one),
+ * anything else (`-0`, `0.5`, `1e+21`, `NaN`) by the runtime's printer.
  */
-export function numberWrite(stream: u32, x: f64): void {
+export function numberWrite(stream: u32, x: f64, end: u8): void {
   if (whole(x) && (x != 0.0 || 1.0 / x > 0.0)) {
-    intWrite(stream, x as i64);
+    intWrite(stream, x as i64, end);
     return;
   }
   velt_rt_write_f64(stream, x);
+  velt_rt_write_byte(stream, end);
 }
 
 /** Is `x` a whole number below 2^53 in magnitude (`-0` included)? Its text is the integer's. */

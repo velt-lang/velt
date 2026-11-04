@@ -221,19 +221,20 @@ hooks! {
     uint_push => lang_hooks_number_text, "uintPush", sig((&mut string, u64) -> void), lowered,
         replaces("velt_rt_strbuf_push_u64"), bench("int_to_string"),
         constructs(TextUint, Format, Dynamic);
-    /// A signed integer written to a stream: a `console.log` argument (`velt_vir` `console.rs`).
-    /// `Format`, like `int_push`, which prints it when the line isn't all scalars: the same
-    /// demand, not a narrower one (`hook_demand.rs`).
-    int_write => lang_hooks_number_text, "intWrite", sig((u32, i64) -> void), lowered,
+    /// A signed integer and the byte after it (a space or the newline) written to a stream in one
+    /// write: a `console.log` argument (`velt_vir` `console.rs`). `Format`, like `int_push`, which
+    /// prints it when the line isn't all scalars: the same demand, not a narrower one
+    /// (`hook_demand.rs`).
+    int_write => lang_hooks_number_text, "intWrite", sig((u32, i64, u8) -> void), lowered,
         replaces("velt_rt_write_i64"), constructs(Format);
-    /// An unsigned integer written to a stream.
-    uint_write => lang_hooks_number_text, "uintWrite", sig((u32, u64) -> void), lowered,
+    /// An unsigned integer and the byte after it, as `int_write`.
+    uint_write => lang_hooks_number_text, "uintWrite", sig((u32, u64, u8) -> void), lowered,
         replaces("velt_rt_write_u64"), constructs(Format);
-    /// A float written to a stream as `console.log` prints it: a whole number other than `-0` by
+    /// A float as `console.log` prints it and the byte after it: a whole number other than `-0` by
     /// `int_write`, anything else by the runtime's printer. `velt_opt` numrep turns a call with a
     /// whole `x` that is not `-0` into one of `int_write`. Sema counts a printed float as
     /// `Format` (`live.rs`), since this hook's code holds the integer writer.
-    number_write => lang_hooks_number_text, "numberWrite", sig((u32, f64) -> void), lowered,
+    number_write => lang_hooks_number_text, "numberWrite", sig((u32, f64, u8) -> void), lowered,
         replaces("velt_rt_write_f64"), constructs(Format);
     /// `String(x)` of a float (`velt_vir` `template.rs`): a whole number by std's integer
     /// printing, anything else by the runtime's printer. `velt_opt` numrep turns a call with a

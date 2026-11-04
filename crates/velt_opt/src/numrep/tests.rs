@@ -522,7 +522,7 @@ fn formatted_program(x_is: Printed) -> Program {
     };
     f.assign(b0, x, value);
     let write = FuncId(1);
-    let args = vec![int(1, Ty::U32), copy_local(x)];
+    let args = vec![int(1, Ty::U32), copy_local(x), int(10, Ty::U8)];
     let b1 = f.call(b0, Callee::Func(write), args, None);
     f.ret(b1, Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit));
     pb.add(f.finish());
@@ -531,7 +531,7 @@ fn formatted_program(x_is: Printed) -> Program {
         (velt_common::std_hook!(int_write), Ty::I64),
     ] {
         let symbol = velt_vir::mangle::mangle(hook);
-        let mut h = FuncBuilder::internal(&symbol, &[Ty::U32, ty], Ty::Unit);
+        let mut h = FuncBuilder::internal(&symbol, &[Ty::U32, ty, Ty::U8], Ty::Unit);
         let b = h.block();
         h.ret(b, Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit));
         pb.add(h.finish());
