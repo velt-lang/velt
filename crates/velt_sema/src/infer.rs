@@ -364,11 +364,11 @@ impl Ctx<'_> {
     /// An error type (`throws` of a function type, rejection of a promise): unlike other
     /// positions, `never` binds a parameter (the function does not throw).
     fn match_error(&mut self, pat: TyId, actual: TyId, slots: &mut [Option<TyId>]) -> bool {
-        match self.ty.kind(pat) {
-            TyKind::Param(i) if actual == self.ty.never && (*i as usize) < slots.len() => {
-                match slots[*i as usize] {
+        match self.error_param(pat) {
+            Some(i) if actual == self.ty.never && (i as usize) < slots.len() => {
+                match slots[i as usize] {
                     None => {
-                        slots[*i as usize] = Some(actual);
+                        slots[i as usize] = Some(actual);
                         true
                     }
                     Some(t) => t == actual,
@@ -376,6 +376,26 @@ impl Ctx<'_> {
             }
             _ => self.match_ty(pat, actual, slots),
         }
+    }
+
+    /// The type parameter an error type is: `E` itself, or an error set of `E` and error-set
+    /// variables, as a function type written without `throws` outside std makes of it
+    /// (`(props: P) => Promise<T, E>` in a package's signature, #2259).
+    fn error_param(&mut self, pat: TyId) -> Option<u32> {
+        if let TyKind::Param(i) = self.ty.kind(pat) {
+            return Some(*i);
+        }
+        // Its other members are error-set variables (`throws::vars`), which a function that
+        // throws nothing leaves empty.
+        let mut param = None;
+        for m in self.union_members(pat)? {
+            match self.ty.kind(m) {
+                TyKind::Param(i) if param.is_none() => param = Some(*i),
+                _ if self.err_var(m).is_some() => {}
+                _ => return None,
+            }
+        }
+        param
     }
 
     /// A member value against a generic union pattern (`{ kind: "some"; value: 5 }` for

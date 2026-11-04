@@ -1,0 +1,23 @@
+// A JSX provider outside std that declares `jsxAsyncComponent` with the contract's generic
+// error type, `<P, E>` (docs/internals/contracts/jsx.md "Required exports"), as a framework's
+// package does. Rendering goes through std/jsx.
+
+import * as std from "velt/jsx/jsx-runtime";
+
+export { Element } from "velt/jsx/jsx-runtime";
+export type {
+  AttrValue,
+  Child,
+  ElementChildrenAttribute,
+  IntrinsicElements,
+} from "velt/jsx/jsx-runtime";
+export { jsx, Fragment, jsxComponent } from "velt/jsx/jsx-runtime";
+
+export function jsxAsyncComponent<P, E>(
+  component: (props: P) => Promise<std.Element, E>,
+  props: P,
+  key: string | null,
+  name: string,
+): std.Element {
+  return std.jsxAsyncComponent(component, props, key, name);
+}
