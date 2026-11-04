@@ -55,6 +55,8 @@ fi
 # `fetch` client against a server in the same process, over loopback: its count repeats to within
 # about 0.2% (#601). bench/fetch/tls_h2 stays out: a throughput benchmark of HTTP/2 against
 # HTTP/1.1 over TLS, 40,000 requests by default, compared by hand (docs/internals/design/http2.md).
+# Each runs with no arguments: one that takes a mode on its command line lives in a directory not
+# listed here (bench/half, bench/shared; a test in crates/veltc/tests/bench_programs.rs checks).
 BENCHES=("$ROOT"/bench/*.vlt "$ROOT"/bench/iter/*.vlt "$ROOT"/bench/json/*.vlt
   "$ROOT"/bench/strings_utf16/*.vlt "$ROOT"/bench/stdport/*.vlt "$ROOT"/bench/spread_order/*.vlt
   "$ROOT"/bench/fetch/loopback.vlt)

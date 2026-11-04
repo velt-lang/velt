@@ -5,6 +5,7 @@
 //   memcpy, load, decode, bdecode:        minus `none`
 //   decodeInto, narrow, narrowInto:       minus `setup1`
 //   bnarrow:                              minus `bsetup1`
+// Run by hand with a mode on the command line, so not in bench/nightly.sh's top-level glob.
 // Each mode runs 10 times; divide by 10. Build with `--release`, and on x86 once more with
 // `--cpu x86-64-v3` (F16C) to compare with the default x86-64-v2 build.
 import {

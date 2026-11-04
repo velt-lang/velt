@@ -128,6 +128,53 @@ fn weak_without_weak_collections(path: &Path, vir: &velt_vir::vir::Program) -> O
     })
 }
 
+/// The programs `bench/nightly.sh` lists with `"$ROOT"/bench/<path>`.
+fn nightly_programs(root: &Path) -> Vec<PathBuf> {
+    let script = std::fs::read_to_string(root.join("bench/nightly.sh")).expect("bench/nightly.sh");
+    let mut out = vec![];
+    for (at, _) in script.match_indices("\"$ROOT\"/bench/") {
+        let rest = &script[at + "\"$ROOT\"/".len()..];
+        let word = &rest[..rest.find([' ', ')', '\n']).unwrap_or(rest.len())];
+        match word.strip_suffix("*.vlt") {
+            Some(dir) => {
+                let entries = std::fs::read_dir(root.join(dir)).expect("a listed directory");
+                out.extend(
+                    entries
+                        .map(|e| e.expect("directory entry").path())
+                        .filter(|p| p.extension().is_some_and(|e| e == "vlt")),
+                );
+            }
+            None => out.push(root.join(word)),
+        }
+    }
+    out
+}
+
+/// The nightly guard runs each program with no arguments and stops at the first that fails, so
+/// one that indexes `process.argv` without a default leaves every later benchmark unmeasured.
+/// Such a program belongs in a directory the guard does not list.
+#[test]
+fn nightly_benchmarks_need_no_arguments() {
+    let root = &root();
+    let all = nightly_programs(root);
+    assert!(all.len() > 50, "only {} programs found", all.len());
+    let failures: Vec<String> = all
+        .iter()
+        .filter(|path| {
+            std::fs::read_to_string(path)
+                .unwrap_or_default()
+                .lines()
+                .any(|l| l.contains("process.argv[") && !l.contains("??"))
+        })
+        .map(|path| path.display().to_string())
+        .collect();
+    assert!(
+        failures.is_empty(),
+        "benchmarks bench/nightly.sh runs with no arguments read one without a default:\n{}",
+        failures.join("\n")
+    );
+}
+
 #[test]
 fn bench_programs_compile() {
     let root = &root();
