@@ -103,9 +103,10 @@ every type in its body that mentions one of its type parameters: `T`, `T[]`, `T 
 - **The key.** The key of a type argument is the answers to the shape questions, plus its
   layout and membership in each counted-types set, for the type itself and for every type of
   the footprint. In step 2 every shared definition is one of the array-view helpers, whose
-  footprint is `T` and `T[]` (the helpers build no other type from `T`), so the key covers
-  those two. A view of `T[]` or of `T | null` is the helpers instantiated at that type, with
-  its own key. The families of step 4 build other types from their parameters: there the
+  key covers `T` and `T[]`. The helpers also ask about `ArrayView<T>`, which the key leaves
+  out: no program is known where it differs while `T[]` agrees, and the end-of-pass check
+  would catch one. A view of `T[]` or of `T | null` is the helpers instantiated at that type,
+  with its own key. The families of step 4 build other types from their parameters: there the
   footprint is collected per definition by a HIR scan (memoized per `DefId`), and the key
   covers it.
 - **Placeholders are per key and parameter position.** Two definitions share a placeholder

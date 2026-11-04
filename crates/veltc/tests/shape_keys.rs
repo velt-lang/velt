@@ -106,7 +106,7 @@ fn a_fact_per_function_in_a_shared_body_is_an_ice() {
     }
     let (ok, _, err) = run(TREES, &[("VELT_SHAPES_TEST_DROP", "per-function")]);
     assert!(
-        !ok && err.contains("a shared body records facts per function"),
+        !ok && err.contains("a shared body's own facts per function are not replayed"),
         "the per-function guard must fire:\n{err}"
     );
 }

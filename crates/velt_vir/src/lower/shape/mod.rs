@@ -357,7 +357,7 @@ impl Cx<'_> {
         }
         let own = self.cur_tuple_writes.iter().chain(&self.cur_read_params);
         if own.copied().any(|t| self.mentions_ph(t)) {
-            ice("a shared body records facts per function, which are not replayed");
+            ice("a shared body's own facts per function are not replayed");
         }
         self.shape_rewrite(fid, &mut func);
         let facts = {
@@ -367,7 +367,7 @@ impl Cx<'_> {
             self.facts.take_types(&ph)
         };
         if facts.by_function() {
-            ice("a shared body records facts per function, which are not replayed");
+            ice("a fact kept per function names a placeholder, which is not replayed");
         }
         self.shapes.insts.get_mut(&fid).expect("ICE: shared").facts = Some(facts);
         let dicts: Vec<(Vec<TyId>, velt_common::Span)> = (self.shapes.insts[&fid].dicts.iter())

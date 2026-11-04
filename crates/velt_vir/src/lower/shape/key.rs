@@ -159,9 +159,11 @@ impl Cx<'_> {
         })
     }
 
-    /// `t` and the type built from it the shared helpers ask about: `T[]`, the mirror. A
-    /// nested view's element (`string[]` in `string[][][]`) differs from another at this
-    /// level, and so does a recursive object type holding an array of itself.
+    /// `t` and `T[]`, the mirror. A nested view's element (`string[]` in `string[][][]`)
+    /// differs from another at this level, and so does a recursive object type holding an
+    /// array of itself. The helpers also ask about `ArrayView<T>`, which is left out of the
+    /// key: no program is known where it differs while `T[]` agrees, and the end-of-pass check
+    /// (`shapes_close`) catches one that does.
     fn footprint(&mut self, t: TyId) -> Vec<TyId> {
         let arr = self.intern(TyKind::Array(t));
         match dropped("array") {
