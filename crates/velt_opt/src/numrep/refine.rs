@@ -68,6 +68,10 @@ pub(super) fn condition(func: &Function, b: usize) -> Option<Condition> {
                     negated,
                 });
             }
+            Rvalue::Binary(join @ (BinOp::BitAnd | BinOp::BitOr), p, q) => {
+                return signed_bound(&block.stmts[..at], *join, p, q, &block.stmts[at + 1..])
+                    .map(|c| Condition { negated, ..c });
+            }
             _ => return None,
         }
         // The copied local must still hold its value where the condition reads it.
@@ -80,6 +84,49 @@ pub(super) fn condition(func: &Function, b: usize) -> Option<Condition> {
         end = at;
     }
     None
+}
+
+/// `int_compare`'s form of `x op y` for an unsigned `x` and a signed `y`, the join `join` of
+/// `sign = y test 0` and `cmp = x op (y as u64)` (`before` holds their definitions, `after` the
+/// statements after the join), read back as `x op y`: the form is exactly that comparison (a
+/// negative `y` decides it through `sign`, any other through `cmp`), so both edges refine.
+fn signed_bound(
+    before: &[Stmt],
+    join: BinOp,
+    p: &Operand,
+    q: &Operand,
+    after: &[Stmt],
+) -> Option<Condition> {
+    let def = |op: &Operand| {
+        let Operand::Copy(l) = op else { return None };
+        if !l.proj.is_empty() {
+            return None;
+        }
+        last_def(before, l.local, before.len())
+    };
+    let (_, Rvalue::Binary(test, Operand::Copy(ys), Operand::Const(_, Ty::I64))) = def(p)? else {
+        return None;
+    };
+    let (_, Rvalue::Binary(op, x, Operand::Copy(yu))) = def(q)? else {
+        return None;
+    };
+    let (_, Rvalue::Cast(Operand::Copy(src), Ty::U64)) = def(&Operand::Copy(yu.clone()))? else {
+        return None;
+    };
+    let y = Operand::Copy(ys.clone());
+    if src != ys
+        || (*test, join) != super::int_compare::sign_test(*op)
+        || assigned_in(after, x)
+        || assigned_in(after, &y)
+    {
+        return None;
+    }
+    Some(Condition {
+        op: *op,
+        lhs: x.clone(),
+        rhs: y,
+        negated: false,
+    })
 }
 
 /// How `op` was made from the local [`converted_from`] finds.

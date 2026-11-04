@@ -19,7 +19,6 @@ use velt_vir::vir::{
 
 use super::fact::{self, Fact};
 use super::flow::{is_comparison, operand_ty, Flow, State};
-use super::int_compare;
 use super::refine;
 use super::Env;
 use crate::srclocs::push_stmt;
@@ -28,21 +27,14 @@ use crate::srclocs::push_stmt;
 pub(super) fn run(env: &Env, flow: &Flow, func: &mut Function) -> bool {
     let mut changed = false;
     let mut st: State = flow.scratch();
-    let mut later = vec![];
     for bi in 0..func.blocks.len() {
         if !flow.load(bi, &mut st) {
             continue;
         }
         let mut remainders = vec![];
-        let mut compares = vec![];
-        let mut conv = int_compare::Conversions::default();
         for si in 0..func.blocks[bi].stmts.len() {
             if integer_remainder(flow, func, &st, &func.blocks[bi].stmts[si]) {
                 remainders.push(si);
-            }
-            let s = &func.blocks[bi].stmts[si];
-            if let Some(p) = int_compare::plan(flow, func, &st, &conv, si, s) {
-                compares.push(p);
             }
             changed |= constant_params(flow, func, &st, bi, si);
             if let Some(v) = decided(flow, func, &st, &func.blocks[bi].stmts[si]) {
@@ -57,23 +49,13 @@ pub(super) fn run(env: &Env, flow: &Flow, func: &mut Function) -> bool {
                     changed = true;
                 }
             }
-            conv.note(func, &func.blocks[bi].stmts[si]);
             flow.transfer(&mut st, func, &func.blocks[bi].stmts[si]);
         }
         if !remainders.is_empty() {
-            let new = remainders_as_integers(func, bi, &remainders);
-            compares.iter_mut().for_each(|p| p.moved(&new));
+            remainders_as_integers(func, bi, &remainders);
             changed = true;
         }
-        if !compares.is_empty() {
-            // After every block: the new locals have no facts.
-            later.push((bi, compares));
-        }
         changed |= terminator(env, flow, func, bi, &st);
-    }
-    for (bi, compares) in later {
-        int_compare::rewrite(func, bi, compares);
-        changed = true;
     }
     changed
 }
@@ -96,9 +78,8 @@ fn integer_remainder(flow: &Flow, func: &Function, st: &State, s: &Stmt) -> bool
     whole(x) && whole(y) && x.lo >= 0.0 && !x.neg_zero && !y.may_be_zero()
 }
 
-/// Rewrite the remainders at `at` (statement indexes of block `bi`) into integer ones; returns
-/// each statement's new index (a remainder's, that of the first statement replacing it).
-fn remainders_as_integers(func: &mut Function, bi: usize, at: &[usize]) -> Vec<usize> {
+/// Rewrite the remainders at `at` (statement indexes of block `bi`) into integer ones.
+fn remainders_as_integers(func: &mut Function, bi: usize, at: &[usize]) {
     let fresh = |func: &mut Function| {
         func.locals.push(LocalDecl::new(Ty::I64, None));
         Local(func.locals.len() as u32 - 1)
@@ -109,11 +90,9 @@ fn remainders_as_integers(func: &mut Function, bi: usize, at: &[usize]) -> Vec<u
     }
     let mut si = 0;
     let mut next = 0;
-    let mut new = Vec::with_capacity(func.blocks[bi].stmts.len());
     crate::srclocs::rewrite_stmts(func, bi, |s, out| {
         let i = si;
         si += 1;
-        new.push(out.len());
         if at.get(next) != Some(&i) {
             out.push(s);
             return;
@@ -142,7 +121,6 @@ fn remainders_as_integers(func: &mut Function, bi: usize, at: &[usize]) -> Vec<u
             Rvalue::Cast(Operand::Copy(Place::local(tr)), Ty::F64),
         ));
     });
-    new
 }
 
 /// A parameter that every call sets to the same constant (`params`) is that constant where it

@@ -1,0 +1,93 @@
+// An integer compared with a whole double below 2^53 (an array length, `length - 15`, a
+// negative or `-0` constant, 2^53 - 1): `numrep` makes these comparisons in integers
+// (`int_compare`), testing the bound's sign for an unsigned integer. Each line is the six
+// comparisons `x op n` then the six `n op x`, as 1 and 0, for one integer type and bound,
+// over the integers listed; the expected output is the comparisons made in doubles, computed
+// outside the compiler (Python).
+
+function bits(c: bool): string {
+  return c ? "1" : "0";
+}
+
+function both(x: number, n: number): string {
+  return (
+    bits(x < n) +
+    bits(x <= n) +
+    bits(x > n) +
+    bits(x >= n) +
+    bits(x == n) +
+    bits(x != n) +
+    "/" +
+    bits(n < x) +
+    bits(n <= x) +
+    bits(n > x) +
+    bits(n >= x) +
+    bits(n == x) +
+    bits(n != x)
+  );
+}
+
+function unsigned64(xs: u64[], n: number): string {
+  let out = "";
+  for (let i: usize = 0; i < xs.length; i++) {
+    out += " " + both(xs[i] as number, n);
+  }
+  return out;
+}
+
+function signed64(xs: i64[], n: number): string {
+  let out = "";
+  for (let i: usize = 0; i < xs.length; i++) {
+    out += " " + both(xs[i] as number, n);
+  }
+  return out;
+}
+
+function bytes(xs: u8[], n: number): string {
+  let out = "";
+  for (let i: usize = 0; i < xs.length; i++) {
+    out += " " + both(xs[i] as number, n);
+  }
+  return out;
+}
+
+function main() {
+  const a: f64[] = [];
+  for (let i = 0; i < 20; i++) {
+    a.push(i);
+  }
+  const empty: f64[] = [];
+  const bounds: number[] = [a.length, a.length - 15, empty.length - 15, -3, -0, 9007199254740991];
+  const names = ["length", "length - 15", "0 - 15", "-3", "-0", "2^53 - 1"];
+  const u: u64[] = [
+    0,
+    1,
+    5,
+    19,
+    20,
+    21,
+    9007199254740991,
+    9007199254740992,
+    9007199254740993,
+    18446744073709551615,
+  ];
+  const s: i64[] = [
+    -9007199254740993,
+    -9007199254740992,
+    -15,
+    -3,
+    -1,
+    0,
+    5,
+    20,
+    9007199254740991,
+    9007199254740993,
+  ];
+  const b: u8[] = [0, 3, 5, 20, 255];
+  for (let k = 0; k < bounds.length; k++) {
+    const n = bounds[k];
+    console.log("u64 vs " + names[k] + ":" + unsigned64(u, n));
+    console.log("i64 vs " + names[k] + ":" + signed64(s, n));
+    console.log("u8 vs " + names[k] + ":" + bytes(b, n));
+  }
+}
