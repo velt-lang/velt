@@ -1,5 +1,5 @@
 // Type parameter defaults and `infer` in a generic call, as TypeScript infers them.
-// - Before an arrow with an untyped parameter is checked, the type parameters in its parameter
+// - Before an arrow without parameter types is checked, the type parameters in its parameter
 //   types that nothing inferred take their defaults: `component(({ signal }) => …)` types
 //   `ctx` from `T = {}` (sigx's `component<TCombined = {}, …>`). One only in the result still
 //   comes from what the arrow returns.
@@ -26,6 +26,7 @@ function component<T extends Record<string, any> = {}, S = ExtractSlots<T>>(
 
 const Plain = component(({ count }) => () => `plain with ${count} props`);
 const Typed = component<{ name: string }>((ctx) => () => `hello ${ctx.props.name}`);
+const Bare = component(() => () => "no parameters");
 
 function make<T = string>(f: (n: number) => T): T {
   return f(21);
@@ -37,6 +38,6 @@ const empty: Omit<unknown, never> = {};
 const anything: ExtractSlots<{}> = "unknown holds a string";
 
 console.log(Plain({}));
-console.log(Typed({ name: "ada" }));
+console.log(Typed({ name: "ada" }), Bare({}));
 console.log(make((n) => n * 2), make((n) => `#${n}`));
 console.log(none.length, JSON.stringify(empty), anything);
