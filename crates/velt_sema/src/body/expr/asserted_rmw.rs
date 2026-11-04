@@ -13,9 +13,12 @@
 //!   <new> or <old> }                     // the value, where one is wanted
 //! ```
 //!
-//! A target whose type has no nothing in it is an ordinary compound assignment (the assertion
-//! has no effect there), and so are the targets with rules of their own (indexers, `any`
-//! receivers); a setter's is in `accessor_rmw`.
+//! On an `f16` / `bf16` target the new value is a `number`, rounded once on the store, and the
+//! value of the assignment is the unrounded one, as for `e op= v` (`storage_floats.rs`).
+//!
+//! A target whose type has neither `null` nor `undefined` in it is an ordinary compound
+//! assignment (the assertion has no effect there), and so are the targets with rules of their
+//! own (indexers, `any` receivers); a setter's is in `accessor_rmw`.
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -29,6 +32,7 @@ use crate::hir::{self, ExprKind as H, LocalId, TyId};
 const OLD: &str = "<asserted old>";
 const NEW: &str = "<asserted new>";
 const KEY: &str = "<asserted key>";
+const STORE: &str = "<asserted store>";
 /// The message of a failed assertion, as for `e!` elsewhere (`matching::non_null`).
 pub(super) const ASSERT_MSG: &str = "non-null assertion failed: the value is null";
 
@@ -42,7 +46,8 @@ struct Bound {
 
 impl FnCx<'_, '_> {
     /// Is the compound assignment or update being checked one whose target was asserted, and
-    /// does the target's type, `ty`, have a nothing in it? The mark is used up either way.
+    /// does the target's type, `ty`, have `null` or `undefined` in it? The mark is used up
+    /// either way.
     pub(super) fn take_asserted(&mut self, ty: TyId) -> bool {
         std::mem::take(&mut self.asserted_target) && self.cx.ty.opt_payload(ty).is_some()
     }
@@ -81,6 +86,7 @@ impl FnCx<'_, '_> {
         };
         let reread = place.clone();
         let new = self.read_temp(b.new, b.new_ty, span);
+        let new = self.storage_rounded(new, place.ty);
         let value = self.coerce(new, place.ty);
         let kind = H::Assign {
             place: Box::new(place),
@@ -139,7 +145,16 @@ impl FnCx<'_, '_> {
             self.pop_scope();
             return Ok(self.error_expr(span));
         };
-        let new_ref = ident(NEW, span);
+        // An `f16` / `bf16` value is stored rounded (the value of the assignment is not).
+        let new_ref = match self.record_args(obj.ty) {
+            Some((_, v)) if self.cx.ty.is_storage_float(v) => {
+                let new = self.read_temp(b.new, b.new_ty, span);
+                let rounded = self.storage_rounded(new, v);
+                self.bind_temp(STORE, rounded, &mut stmts);
+                ident(STORE, span)
+            }
+            _ => ident(NEW, span),
+        };
         let reread = obj.clone();
         let set = self.record_assign(obj, object, key, None, target, &new_ref, span);
         stmts.push(hir::Stmt {
@@ -171,7 +186,8 @@ impl FnCx<'_, '_> {
         let new_ast = match *rmw {
             Rmw::Compound(op, v) => binary(op, ident(OLD, span), v.clone(), span),
             Rmw::Update(op, _) => {
-                if !self.cx.ty.is_numeric(old_ty) && !self.operator_type(old_ty) {
+                let numeric = self.cx.ty.is_numeric(old_ty) || self.cx.ty.is_storage_float(old_ty);
+                if !numeric && !self.operator_type(old_ty) {
                     if !self.cx.ty.is_bottom(old_ty) {
                         let opname = if op == ast::UpdateOp::Inc { "++" } else { "--" };
                         let tn = self.cx.display(old_ty);
@@ -224,6 +240,17 @@ impl FnCx<'_, '_> {
         }
         let read = reread(self);
         self.checked_present(read, ASSERT_MSG, None, false, span)
+    }
+
+    /// The new value `new` (a `number` on a storage float) rounded once to the `f16` / `bf16`
+    /// that `ty` (the target's type, nullable) holds; `new` as it is on other targets.
+    fn storage_rounded(&mut self, new: hir::Expr, ty: TyId) -> hir::Expr {
+        let held = self.cx.ty.opt_payload(ty).unwrap_or(ty);
+        if !self.cx.ty.is_storage_float(held) || new.ty == held {
+            return new;
+        }
+        let span = new.span;
+        self.mk(H::Cast(Box::new(new)), held, span)
     }
 
     fn asserted_block(
