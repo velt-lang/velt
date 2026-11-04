@@ -13,8 +13,10 @@
 //! run them in the order it polls them, not in timer order. So firing stops at the first timer
 //! whose waiter was woken already, and that timer is held back. While the poll goes on, a leaf
 //! that is polled and finds itself next in timer order fires itself and is ready at once: no timer
-//! before it is still to be seen, and no microtask waits (the await word is 0), so this is where
-//! its turn comes (Node's timer phase, which drains the microtasks between timers). Timers polled
+//! before it is still to be seen, no microtask waits (the await word is 0) and no microtask's job
+//! is running, so this is where its turn comes (Node's timer phase, which drains the microtasks
+//! between timers). A timer not due when firing stopped never fires itself: the leaf after the due
+//! ones in a join would finish before its deadline. Timers polled
 //! in timer order, the usual case, so all fire in the one poll of their waiter. What is still
 //! due when the poll ends gets the next poll ([`Timers::end_poll`]).
 //!
@@ -115,33 +117,41 @@ impl Queue {
         r
     }
 
-    /// The first key (dropping the tombstones in front of the deque).
-    fn first_key(&mut self) -> Option<Key> {
+    /// The first entry (dropping the tombstones in front of the deque).
+    #[inline]
+    fn first(&mut self) -> Option<(&Key, &Registered)> {
         while self.tail.front().is_some_and(|(_, r)| r.is_none()) {
             self.tail.pop_front();
             self.dead -= 1;
         }
-        match (self.tail.front(), self.rest.first_key_value()) {
-            (Some((a, _)), Some((b, _))) => Some(*a.min(b)),
-            (Some((a, _)), None) => Some(*a),
-            (None, Some((b, _))) => Some(*b),
-            (None, None) => None,
+        let tail = self.tail.front().and_then(|(k, r)| Some((k, r.as_ref()?)));
+        if self.rest.is_empty() {
+            return tail;
+        }
+        match (tail, self.rest.first_key_value()) {
+            (Some(a), Some(b)) => Some(if a.0 < b.0 { a } else { b }),
+            (a, b) => a.or(b),
         }
     }
 
-    /// The waker of the first entry, at `key` ([`Queue::first_key`]).
-    fn first_waker(&self, key: &Key) -> &Waker {
-        match self.tail.front() {
-            Some((k, Some(r))) if k == key => &r.waker,
-            _ => &self.rest[key].waker,
-        }
+    /// Is the leaf of `key` the first entry? (Its address tells it: a leaf is in the queue once.)
+    #[inline]
+    fn is_first(&mut self, key: &Key) -> bool {
+        self.first().is_some_and(|(k, _)| k.2 == key.2)
     }
 
-    /// Remove the first entry, at `key` ([`Queue::first_key`]).
-    fn pop_first(&mut self, key: &Key) -> Registered {
-        let r = match self.tail.front() {
-            Some((k, _)) if k == key => self.tail.pop_front().and_then(|(_, r)| r),
-            _ => self.rest.remove(key),
+    /// Remove the first entry, right after [`Queue::first`] found one.
+    #[inline]
+    fn pop_first(&mut self) -> Registered {
+        let in_tail = self.rest.is_empty()
+            || match (self.tail.front(), self.rest.first_key_value()) {
+                (Some((a, _)), Some((b, _))) => a < b,
+                (a, _) => a.is_some(),
+            };
+        let r = if in_tail {
+            self.tail.pop_front().and_then(|(_, r)| r)
+        } else {
+            self.rest.pop_first().map(|(_, r)| r)
         };
         self.live -= 1;
         r.expect("ICE: the first timer is registered")
@@ -178,14 +188,20 @@ impl Timers {
 
     /// A registered leaf polled again: wake it through `waker` from now on, or, when a timer was
     /// held back and this one's turn has come, fire it (true; see the module docs).
-    fn update(&self, key: &Key, waker: &Waker) -> bool {
+    /// `turn_free`: nothing keeps a timer's turn from coming (micro.rs `timer_turn_free`).
+    fn update(&self, key: &Key, waker: &Waker, turn_free: bool) -> bool {
         let mut s = self.state.lock();
-        if s.held.is_some_and(|now| key.0 <= now)
+        if turn_free
+            && s.held.is_some_and(|now| key.0 <= now)
             && self.unseen.load(Ordering::Relaxed) == 0
-            && s.queue.first_key() == Some(*key)
-            && super::micro::step_free()
+            && s.queue.is_first(key)
         {
-            let r = s.queue.pop_first(key);
+            let r = s.queue.pop_first();
+            if s.queue.is_empty() {
+                // Nothing is left for the end of the poll to see to.
+                s.held = None;
+                self.held.store(false, Ordering::Relaxed);
+            }
             drop(s);
             drop(r);
             return true;
@@ -209,8 +225,7 @@ impl Timers {
                 fired,
             },
         );
-        let earliest = s.queue.first_key() == Some(key);
-        if earliest
+        if s.queue.is_first(&key)
             && s.armed.as_ref().is_none_or(|(_, at)| *at != key.0)
             && arm(&mut s.armed, key.0, task)
         {
@@ -230,7 +245,7 @@ impl Timers {
     /// Is a registered timer due now?
     pub(crate) fn has_due(&self) -> bool {
         let mut s = self.state.lock();
-        s.queue.first_key().is_some_and(|k| k.0 <= Instant::now())
+        s.queue.first().is_some_and(|(k, _)| k.0 <= Instant::now())
     }
 
     /// Wake the due timers, in order, up to the first that wakes a waiter already woken here (it
@@ -247,18 +262,17 @@ impl Timers {
             let mut due = std::mem::take(&mut s.due);
             let mut now = Instant::now();
             let mut root_woken = false;
-            while let Some(key) = s.queue.first_key() {
+            while let Some((key, first)) = s.queue.first() {
                 let at = key.0;
                 if at <= now {
-                    let waker = s.queue.first_waker(&key);
-                    let root = waker.will_wake(task);
-                    if (root && root_woken) || (!root && !node::firing_start(waker)) {
+                    let root = first.waker.will_wake(task);
+                    if (root && root_woken) || (!root && !node::firing_start(&first.waker)) {
                         s.held = Some(now);
                         self.held.store(true, Ordering::Relaxed);
                         break;
                     }
                     root_woken |= root;
-                    let r = s.queue.pop_first(&key);
+                    let r = s.queue.pop_first();
                     // SAFETY: registered leaves are live (they deregister, under this lock,
                     // before being freed).
                     unsafe { (*r.fired).store(true, Ordering::Release) };
@@ -292,14 +306,15 @@ impl Timers {
     /// the tokio timer (it wakes `task`) is armed for anything later, unless it is already: a timer
     /// registered during this poll has seen to that itself.
     pub(crate) fn end_poll(&self, task: &Waker) {
-        if !self.held.swap(false, Ordering::Relaxed) {
+        if !self.held.load(Ordering::Relaxed) {
             return;
         }
+        self.held.store(false, Ordering::Relaxed);
         let mut s = self.state.lock();
         let held = s.held.take();
-        if let Some(key) = s.queue.first_key() {
-            let armed = s.armed.as_ref().is_some_and(|(_, at)| *at == key.0);
-            if held.is_some_and(|now| key.0 <= now) || (!armed && arm(&mut s.armed, key.0, task)) {
+        if let Some(at) = s.queue.first().map(|(k, _)| k.0) {
+            let armed = s.armed.as_ref().is_some_and(|(_, a)| *a == at);
+            if held.is_some_and(|now| at <= now) || (!armed && arm(&mut s.armed, at, task)) {
                 task.wake_by_ref();
             }
         }
@@ -338,7 +353,7 @@ pub(crate) struct TimerLeaf {
 impl TimerLeaf {
     /// A timer due at `deadline`, created now (by the task being polled, if any).
     pub(crate) fn new(deadline: Instant) -> TimerLeaf {
-        let seq = super::with_timers(|t, _| t.next_seq()).unwrap_or(0);
+        let seq = super::with_timers(|t, _, _| t.next_seq()).unwrap_or(0);
         TimerLeaf {
             deadline,
             seq,
@@ -363,10 +378,10 @@ impl Future for TimerLeaf {
             }
             return Poll::Ready(());
         }
-        let in_task = super::with_timers(|timers, task| {
+        let in_task = super::with_timers(|timers, task, tcx| {
             if let Some((t, key)) = &this.registered {
                 if Arc::ptr_eq(t, timers) {
-                    if !t.update(key, cx.waker()) {
+                    if !t.update(key, cx.waker(), super::micro::timer_turn_free(tcx)) {
                         return Poll::Pending;
                     }
                     this.fired.store(true, Ordering::Release);

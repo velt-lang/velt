@@ -80,6 +80,8 @@ struct TaskCx {
     /// leaves hold its waker): it is not resumed again before the task's next poll, which its
     /// wake brings. A promise it merely started yields on its own waker.
     root_yielded: Cell<bool>,
+    /// Microtask jobs under way, one inside the other (micro.rs `timer_turn_free`).
+    micro_jobs: Cell<u32>,
     /// The task's await word (micro.rs): its queued microtasks plus the synchronous runs under
     /// way. Generated code reads it through `cx` (`await_word`).
     word: Cell<u32>,
@@ -152,16 +154,16 @@ fn next_turn(turn: u32) -> u32 {
 }
 
 /// Run `f` with the timers of the task being polled, created on first use; `None` outside a task.
-/// `f` also gets the task's waker.
-fn with_timers<R>(f: impl FnOnce(&Arc<Timers>, &Waker) -> R) -> Option<R> {
+/// `f` also gets the task's waker and context.
+fn with_timers<R>(f: impl FnOnce(&Arc<Timers>, &Waker, &TaskCx) -> R) -> Option<R> {
     let tcx = CURRENT.with(Cell::get);
     if tcx.is_null() {
         return None;
     }
     // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`); `timers` points into the
     // task's own `SetPtr`, which only this task's polls touch.
-    let (timers, task) = unsafe { (&mut *(*tcx).timers, &*(*tcx).waker) };
-    Some(f(timers.get_or_insert_with(Default::default), task))
+    let (timers, task, tcx) = unsafe { (&mut *(*tcx).timers, &*(*tcx).waker, &*tcx) };
+    Some(f(timers.get_or_insert_with(Default::default), task, tcx))
 }
 
 /// Run local promise `f` of the task being polled now (queued if it is being polled already, or
@@ -234,6 +236,7 @@ impl SetPtr {
             turn: self.3,
             yielded: Cell::new(false),
             root_yielded: Cell::new(false),
+            micro_jobs: Cell::new(0),
             word: Cell::new(self.0.as_ref().map_or(0, |s| s.micro.len() as u32)),
             credit: Cell::new(false),
         };
