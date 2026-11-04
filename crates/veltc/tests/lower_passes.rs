@@ -153,3 +153,38 @@ fn a_copy_keeps_only_the_terms_its_tests_need() {
         "terms grew {l} / {s} for 20× the temporaries"
     );
 }
+
+/// The process's peak memory in MB by the end of lowering (`VELT_LOWER_PROFILE`, on Linux).
+#[cfg(target_os = "linux")]
+fn peak_mb(stderr: &str) -> usize {
+    let last = stderr
+        .lines()
+        .rfind(|l| l.starts_with("velt-lower: peak "))
+        .unwrap_or_else(|| panic!("no peak line:\n{stderr}"));
+    last.split(' ').nth(2).unwrap().parse().unwrap()
+}
+
+/// A view loop reading an element through a field (a test that stays in the copy, so that it
+/// hands over to the original) with `n` branches of its own.
+#[cfg(target_os = "linux")]
+fn branching_loop(n: usize) -> String {
+    let body: String = (0..n)
+        .map(|k| format!("    if (t > {}) {{\n      t -= {};\n    }}\n", k + 2, k + 1))
+        .collect();
+    format!(
+        "class Holder {{\n  xs: number[];\n  constructor(xs: number[]) {{\n    this.xs = xs;\n  }}\n}}\n\nfunction sum(o: Holder, n: number): number {{\n  let t = 0;\n  for (let i = 0; i < n; i++) {{\n    t += o.xs[i];\n{body}  }}\n  return t;\n}}\n\nconst raw: any = [1, 2, 3];\nconst v = raw as number[];\nconsole.log(sum(new Holder(v), 3), sum(new Holder([4, 5, 6]), 3));\n"
+    )
+}
+
+/// Versioning a long loop costs blocks × locals bits, and it comes when the rest of the program
+/// is in memory (deferred_versions.rs). With a hash set per block this program peaks 183 MB above
+/// the short loop; with the bits, under 10 MB.
+#[cfg(target_os = "linux")]
+#[test]
+fn versioning_a_long_loop_does_not_raise_the_peak() {
+    let env = [("VELT_LOWER_PROFILE", "1")];
+    let (_, small) = lower(&branching_loop(100), &env);
+    let (_, large) = lower(&branching_loop(2000), &env);
+    let (s, l) = (peak_mb(&small), peak_mb(&large));
+    assert!(l <= s + 100, "peak {l} MB against {s} MB");
+}

@@ -63,6 +63,7 @@ mod atomic;
 mod atomic_ref;
 mod atomic_str;
 mod attempt;
+mod bits;
 mod boxes;
 mod boxing;
 mod c_call;
@@ -157,6 +158,7 @@ mod types;
 mod upcast;
 mod view_unswitch;
 mod view_unswitch_addrs;
+mod view_unswitch_handover;
 mod view_unswitch_plain;
 mod weak;
 mod weak_object;
@@ -259,6 +261,9 @@ pub(crate) fn lower_program(
             eprintln!(
                 "velt-lower: pass {pass} {kind}: view loops versioned in {n} functions, {t} terms kept"
             );
+        }
+        if let Some(mb) = lower_profile::peak_mb().filter(|_| profile) {
+            eprintln!("velt-lower: peak {mb} MB after pass {pass}");
         }
         if profile && next != counted {
             eprintln!("velt-lower: pass {pass} grew: {}", counted.changes(&next));

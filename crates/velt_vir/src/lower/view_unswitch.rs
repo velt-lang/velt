@@ -39,6 +39,7 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use super::rt::Rt;
+use super::view_unswitch_handover::HandOver;
 use super::FnLower;
 use crate::vir::{self, BlockId, Local, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -401,14 +402,10 @@ impl FnLower<'_, '_> {
         };
         // Where the copy goes on in the original, the original's locals take the values of the
         // copy's that are live there (and assigned on every way there).
-        let renamed: FxHashSet<Local> = fresh.keys().copied().collect();
         let proven = self.plain_headers(h, region, tests, params);
-        let (live, set) = match leave.is_empty() && slows.is_empty() {
-            true => (FxHashMap::default(), FxHashMap::default()),
-            false => (
-                self.live_ins(region, &renamed),
-                self.assigned_outs(h, region, &renamed),
-            ),
+        let hand = match leave.is_empty() && slows.is_empty() {
+            true => HandOver::default(),
+            false => HandOver::of(&self.blocks, h, region, fresh.keys().copied()),
         };
         let mut edges = vec![];
         for (b, stmts, term) in copied {
@@ -417,14 +414,7 @@ impl FnLower<'_, '_> {
             // A block going on in the original at `to` from the end of `b` in the copy: the
             // original's locals live there take the values of the copy's.
             let mut hand_over = |this: &mut Self, to: BlockId| {
-                let mut back: Vec<Local> = live
-                    .get(&to)
-                    .into_iter()
-                    .flatten()
-                    .filter(|l| set.get(&b).is_some_and(|s| s.contains(l)))
-                    .copied()
-                    .collect();
-                back.sort_by_key(|l| l.0);
+                let back = hand.locals(b, to);
                 let stmts: Vec<vir::Stmt> = back
                     .iter()
                     .map(|l| {
@@ -507,94 +497,6 @@ impl FnLower<'_, '_> {
         self.switch_to(at);
         self.goto(map[&h]);
     }
-
-    /// The locals of `cands` live into each of the `blocks` (those of a loop when only the loop
-    /// mentions them, or all of them).
-    fn live_ins(
-        &self,
-        region: &[BlockId],
-        cands: &FxHashSet<Local>,
-    ) -> FxHashMap<BlockId, FxHashSet<Local>> {
-        let mut live: FxHashMap<BlockId, FxHashSet<Local>> =
-            region.iter().map(|&b| (b, FxHashSet::default())).collect();
-        let mut grew = true;
-        while grew {
-            grew = false;
-            for &b in region.iter().rev() {
-                let (stmts, term) = &self.blocks[b.0 as usize];
-                let mut l = FxHashSet::default();
-                if let Some(t) = term {
-                    for s in super::cfg::successors(t) {
-                        l.extend(live.get(&s).into_iter().flatten().copied());
-                    }
-                    term_flow(t, &mut l, cands);
-                }
-                for s in stmts.iter().rev() {
-                    stmt_flow(s, &mut l, cands);
-                }
-                if l.len() != live[&b].len() {
-                    grew = true;
-                    live.insert(b, l);
-                }
-            }
-        }
-        live
-    }
-
-    /// The locals of `cands` (which only the loop `region` with header `h` mentions) assigned
-    /// on every way from the header to the end of each block of the loop, as the verifier
-    /// counts assignments (vir invariant 6).
-    fn assigned_outs(
-        &self,
-        h: BlockId,
-        region: &[BlockId],
-        cands: &FxHashSet<Local>,
-    ) -> FxHashMap<BlockId, FxHashSet<Local>> {
-        let inside: FxHashSet<BlockId> = region.iter().copied().collect();
-        let mut preds: FxHashMap<BlockId, Vec<BlockId>> = FxHashMap::default();
-        for &b in region {
-            if let Some(t) = &self.blocks[b.0 as usize].1 {
-                for s in super::cfg::successors(t) {
-                    if inside.contains(&s) {
-                        preds.entry(s).or_default().push(b);
-                    }
-                }
-            }
-        }
-        let mut out: FxHashMap<BlockId, FxHashSet<Local>> =
-            region.iter().map(|&b| (b, cands.clone())).collect();
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for &b in region {
-                let mut set = match b == h {
-                    true => FxHashSet::default(),
-                    false => {
-                        let mut ps = preds.get(&b).into_iter().flatten();
-                        let first = ps.next().map(|p| out[p].clone()).unwrap_or_default();
-                        ps.fold(first, |acc, p| &acc & &out[p])
-                    }
-                };
-                let (stmts, term) = &self.blocks[b.0 as usize];
-                for s in stmts {
-                    if let vir::Stmt::Assign(p, rv) = s {
-                        assigns(p, cands, &mut set);
-                        if let Rvalue::AddrOf(a) = rv {
-                            assigns(a, cands, &mut set);
-                        }
-                    }
-                }
-                if let Some(Terminator::Call { dest: Some(p), .. }) = term {
-                    assigns(p, cands, &mut set);
-                }
-                if set.len() != out[&b].len() {
-                    changed = true;
-                    out.insert(b, set);
-                }
-            }
-        }
-        out
-    }
 }
 
 /// A loop to version: its header, its blocks, the boxes tested before it, and its tests.
@@ -613,53 +515,12 @@ pub(super) struct Tests {
     pub(super) slows: FxHashSet<Local>,
 }
 
-/// A write to `p` assigns its local (one of `cands`) unless it goes through a pointer.
-fn assigns(p: &Place, cands: &FxHashSet<Local>, set: &mut FxHashSet<Local>) {
-    if !matches!(p.proj.first(), Some(Proj::Deref(_))) && cands.contains(&p.local) {
-        set.insert(p.local);
-    }
-}
-
-/// Liveness through `s` (backwards) of the locals in `cands`: an assignment to a whole local
-/// defines it, any other mention uses it.
-fn stmt_flow(s: &vir::Stmt, l: &mut FxHashSet<Local>, cands: &FxHashSet<Local>) {
-    let mut s = s.clone();
-    let mut skip = false;
-    if let vir::Stmt::Assign(p, _) = &s {
-        if p.proj.is_empty() {
-            l.remove(&p.local);
-            skip = true;
-        }
-    }
-    // `stmt_locals` visits an assignment's destination first.
-    stmt_locals(&mut s, &mut |x: &mut Local| {
-        if !std::mem::take(&mut skip) && cands.contains(x) {
-            l.insert(*x);
-        }
-    });
-}
-
-/// Liveness through `t` (backwards), as [`stmt_flow`].
-fn term_flow(t: &Terminator, l: &mut FxHashSet<Local>, cands: &FxHashSet<Local>) {
-    let mut t = t.clone();
-    if let Terminator::Call { dest, .. } = &mut t {
-        if let Some(p) = dest.take_if(|p| p.proj.is_empty()) {
-            l.remove(&p.local);
-        }
-    }
-    term_locals(&mut t, &mut |x: &mut Local| {
-        if cands.contains(x) {
-            l.insert(*x);
-        }
-    });
-}
-
 fn is_local(o: &Operand, l: Local) -> bool {
     matches!(o, Operand::Copy(Place { local, proj }) if *local == l && proj.is_empty())
 }
 
 /// Visit every local `s` mentions.
-fn stmt_locals(s: &mut vir::Stmt, f: &mut impl FnMut(&mut Local)) {
+pub(super) fn stmt_locals(s: &mut vir::Stmt, f: &mut impl FnMut(&mut Local)) {
     match s {
         vir::Stmt::Assign(p, rv) => {
             f(&mut p.local);
@@ -694,7 +555,7 @@ fn stmt_locals(s: &mut vir::Stmt, f: &mut impl FnMut(&mut Local)) {
 }
 
 /// Visit every local `t` mentions.
-fn term_locals(t: &mut Terminator, f: &mut impl FnMut(&mut Local)) {
+pub(super) fn term_locals(t: &mut Terminator, f: &mut impl FnMut(&mut Local)) {
     match t {
         Terminator::Branch { cond: o, .. }
         | Terminator::Switch { value: o, .. }
