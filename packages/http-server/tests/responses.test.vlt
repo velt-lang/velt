@@ -426,3 +426,49 @@ describe("a streamed Response with a Content-Length", () => {
     );
   });
 });
+
+describe("trailers and a streamed body's length", () => {
+  // `addTrailers`: trailers need chunks, so those added before `sendStream` make the body chunked,
+  // and those added while a body with a length goes out are not sent.
+  let port = 0;
+  let close = () => {};
+  async function* withTrailers(add: () => void): AsyncGenerator<u8[]> {
+    yield utf8Encode("one ");
+    add();
+    yield utf8Encode("two");
+  }
+  beforeAll(async () => {
+    const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+      const body = BodyStream.from(withTrailers(() => res.addTrailers([["x-late", "1"]])));
+      if (req.pathIs("/before")) {
+        res.addTrailers([["x-early", "1"]]);
+        await res.sendStream(body, "text/plain", 7);
+      } else if (req.pathIs("/during")) {
+        await res.sendStream(body, "text/plain", 7);
+      } else {
+        await res.sendStream(body, "text/plain");
+      }
+    });
+    port = server.port;
+    close = () => server.close();
+  });
+  afterAll(() => close());
+
+  async function body(path: string): Promise<string> {
+    const raw = `GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`;
+    const text = await exchange(port, raw);
+    return text.slice(text.indexOf("\r\n\r\n") + 4).replaceAll("\r\n", "|");
+  }
+
+  it("sends the body chunked when they were added before it", async () => {
+    expect(await body("/before")).toBe("4|one |3|two|0|x-early: 1|x-late: 1||");
+  });
+
+  it("drops those added while a body with a length goes out", async () => {
+    expect(await body("/during")).toBe("one two");
+  });
+
+  it("sends those added during a body without a length", async () => {
+    expect(await body("/chunked")).toBe("4|one |3|two|0|x-late: 1||");
+  });
+});

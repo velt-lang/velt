@@ -160,9 +160,11 @@ HTTP/1.0 request's expectation is ignored.
 - `sent(): bool`; `upgraded(): bool`: `upgrade` handed the connection over.
 - `addTrailers(trailers: [string, string][])` (Node's `res.addTrailers`): fields sent after the
   body, checked as `header` checks them; call it before the body ends. Over HTTP/1.1 they end a
-  chunked body: a streamed one always, one written at once (`send` and the like) only when the
+  chunked body: a streamed one without a `length`, one with a `length` if they were added before
+  `sendStream` (it is then sent chunked), one written at once (`send` and the like) only when the
   request said `TE: trailers`, which makes the server send that body chunked; otherwise they are
-  not sent (a `Content-Length` body has no place for them). Over HTTP/2 they are a HEADERS frame
+  not sent (a `Content-Length` body has no place for them, so trailers added while a body with a
+  `length` is going out are dropped). Over HTTP/2 they are a HEADERS frame
   after the body, always. Name them in a `Trailer` header when the client needs to know in
   advance (gRPC's `grpc-status` is sent this way). The web `Response` has no trailers (the Fetch
   standard dropped them), so the web-standard `serve` cannot send any.
