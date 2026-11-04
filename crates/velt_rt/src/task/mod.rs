@@ -127,8 +127,9 @@ pub unsafe extern "C-unwind" fn velt_rt_fut_drop(f: *mut VeltFut) {
 /// `PENDING`; the task is re-polled after other ready tasks had a turn. Allocation-free.
 #[no_mangle]
 pub unsafe extern "C-unwind" fn velt_rt_yield_now(cx: *mut c_void) {
-    local::note_yield();
-    context(cx).waker().wake_by_ref();
+    let waker = context(cx).waker();
+    local::note_yield(waker);
+    waker.wake_by_ref();
 }
 
 /// `yieldNow()` as a heap future (for when the promise is stored or passed to `Promise.all`
@@ -136,7 +137,11 @@ pub unsafe extern "C-unwind" fn velt_rt_yield_now(cx: *mut c_void) {
 #[no_mangle]
 pub extern "C-unwind" fn velt_rt_yield_now_fut() -> *mut VeltFut {
     leaf::new_inner_leaf(async {
-        local::note_yield();
+        std::future::poll_fn(|cx| {
+            local::note_yield(cx.waker());
+            std::task::Poll::Ready(())
+        })
+        .await;
         coop::yield_now().await
     })
 }

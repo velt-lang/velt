@@ -1,7 +1,8 @@
 // Timers due together, however late the task gets to run, resume in timer order, whoever polls
 // them: `Promise.all` polls its promises in array order, and the shorter timer comes second in the
 // array. The shorter one is created first, so a stall of the process cannot change which is due
-// first. And a root that yields waits for the task's next poll, however it was resumed.
+// first. And a root that yields waits for the task's next poll, however it was resumed, while a
+// root that only started a promise that yields does not.
 function busy(ms: f64) {
   const end = performance.now() + ms;
   while (performance.now() < end) {}
@@ -32,6 +33,50 @@ async function inner(done: () => void) {
 async function other() {
   await yieldNow();
   console.log("other after yieldNow");
+}
+
+async function started() {
+  console.log("started");
+  await yieldNow();
+  console.log("started after yieldNow");
+}
+
+async function later(ms: i64) {
+  await sleep(ms);
+  console.log("later");
+}
+
+async function ticker(n: i64) {
+  for (let i = 0; i < n; i++) {
+    await Promise.resolve();
+    console.log(`ticker ${i}`);
+  }
+}
+
+async function yields() {
+  await yieldNow();
+  console.log("yields 1");
+  await yieldNow();
+  console.log("yields 2");
+}
+
+async function withMicrotask(): Promise<string> {
+  await sleep(0);
+  queueMicrotask(() => console.log("microtask of the first"));
+  console.log("first");
+  await Promise.resolve();
+  console.log("first, one step on");
+  await Promise.resolve();
+  console.log("first, two steps on");
+  return "first";
+}
+
+async function withYield(): Promise<string> {
+  await sleep(0);
+  console.log("first");
+  await yieldNow();
+  console.log("first after yieldNow");
+  return "first";
 }
 
 async function main() {
@@ -68,4 +113,49 @@ async function main() {
   await yieldNow();
   console.log("main after yieldNow");
   await o;
+
+  console.log("a promise settled beside a started one that yields");
+  let open: () => void = () => {};
+  const opened = new Promise<void>((r) => {
+    open = r;
+  });
+  const s1 = started();
+  open();
+  await opened;
+  console.log("main after settled");
+  await s1;
+
+  console.log("a timer resumes the root beside a started one that yields");
+  const l = later(150);
+  const t = sleep(0);
+  busy(200);
+  await t;
+  const s2 = started();
+  await l;
+  console.log("main after later");
+  await s2;
+
+  console.log("a resolved promise beside a started one that yields");
+  const y = yields();
+  await yieldNow();
+  await Promise.resolve();
+  await yieldNow();
+  const k = ticker(2);
+  await Promise.resolve();
+  console.log("main after a resolved promise");
+  await k;
+  await y;
+
+  console.log("timers in timer order, a microtask after the first");
+  const m1 = withMicrotask();
+  const m2 = step("second", 30);
+  const m3 = step("third", 60);
+  busy(90);
+  console.log(await Promise.all([m1, m2, m3]));
+
+  console.log("timers in timer order, the first yields");
+  const y1 = withYield();
+  const y2 = step("second", 30);
+  busy(60);
+  console.log(await Promise.all([y1, y2]));
 }

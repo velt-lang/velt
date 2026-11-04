@@ -19,3 +19,31 @@ i after sleep(30)
 yieldNow after a timer
 other after yieldNow
 main after yieldNow
+a promise settled beside a started one that yields
+started
+main after settled
+started after yieldNow
+a timer resumes the root beside a started one that yields
+started
+later
+main after later
+started after yieldNow
+a resolved promise beside a started one that yields
+yields 1
+yields 2
+ticker 0
+main after a resolved promise
+ticker 1
+timers in timer order, a microtask after the first
+first
+microtask of the first
+first, one step on
+first, two steps on
+second after sleep(30)
+third after sleep(60)
+[ 'first', 'second', 'third' ]
+timers in timer order, the first yields
+first
+second after sleep(30)
+first after yieldNow
+[ 'first', 'second' ]

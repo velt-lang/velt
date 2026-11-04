@@ -76,6 +76,10 @@ struct TaskCx {
     /// Something yielded during this poll (`yieldNow()`): it must not run again before the
     /// task's next poll (losers.rs).
     yielded: Cell<bool>,
+    /// The task's root yielded during this poll, itself or through a promise it adopted (whose
+    /// leaves hold its waker): it is not resumed again before the task's next poll, which its
+    /// wake brings. A promise it merely started yields on its own waker.
+    root_yielded: Cell<bool>,
     /// The task's await word (micro.rs): its queued microtasks plus the synchronous runs under
     /// way. Generated code reads it through `cx` (`await_word`).
     word: Cell<u32>,
@@ -125,12 +129,16 @@ fn current_turn() -> u32 {
 }
 
 /// `yieldNow()` in the task being polled: what yielded waits for the task's next poll, so no
-/// promise of this poll runs early (losers.rs).
-pub(crate) fn note_yield() {
+/// promise of this poll runs early (losers.rs). `waker` is the yielding code's.
+pub(crate) fn note_yield(waker: &Waker) {
     let tcx = CURRENT.with(Cell::get);
     // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
     if let Some(t) = unsafe { tcx.as_ref() } {
         t.yielded.set(true);
+        // SAFETY: `t.waker` is the waker of the task being polled.
+        if waker.will_wake(unsafe { &*t.waker }) {
+            t.root_yielded.set(true);
+        }
     }
 }
 
@@ -206,8 +214,8 @@ impl SetPtr {
     /// Poll with this set current: drain its woken promises (resuming the task's root with
     /// `root` when a promise it awaits finishes), then poll the root once more if a promise ran
     /// after its last poll, then run the microtasks that queued. A root that yielded
-    /// (`yieldNow()`) is not polled again in this poll, wherever it ran: the wake it made brings
-    /// the next one, after the other ready tasks had their turn.
+    /// (`yieldNow()`) is not polled again in this poll: the wake it made brings the next one,
+    /// after the other ready tasks had their turn.
     ///
     /// # Safety
     /// `waker` must stay valid during the call.
@@ -225,6 +233,7 @@ impl SetPtr {
             },
             turn: self.3,
             yielded: Cell::new(false),
+            root_yielded: Cell::new(false),
             word: Cell::new(self.0.as_ref().map_or(0, |s| s.micro.len() as u32)),
             credit: Cell::new(false),
         };
@@ -232,16 +241,10 @@ impl SetPtr {
         if let Some(g) = self.0.as_ref().and_then(|s| s.gate.as_ref()) {
             g.enter();
         }
-        let root_yielded = Cell::new(false);
         let root = &mut || {
-            if root_yielded.get() {
-                return;
+            if !tcx.root_yielded.get() {
+                root();
             }
-            // What yielded before stays noted; whether this run yielded is told apart from it.
-            let before = tcx.yielded.replace(false);
-            root();
-            root_yielded.set(tcx.yielded.get());
-            tcx.yielded.set(before || tcx.yielded.get());
         };
         let timers = self.2.as_deref();
         if self.0.is_null() {
