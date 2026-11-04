@@ -89,7 +89,7 @@ impl CliLoader {
         packages
             .values()
             .filter_map(|p| p.graph.clone())
-            .find(|g| g.package_of(file).is_some())
+            .find(|g| g.enclosing_package(file).is_some())
     }
 
     fn graph(&self, file: &Path) -> Option<Arc<PackageGraph>> {

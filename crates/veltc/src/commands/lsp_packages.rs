@@ -23,7 +23,7 @@ pub(super) fn variant_target(graph: &PackageGraph, file: &Path) -> Option<String
 
 /// The modules of the dependencies of the package containing `file`, in `graph`.
 pub(super) fn list_dependencies(graph: Option<&PackageGraph>, file: &Path) -> Vec<ModuleEntry> {
-    let Some(package) = graph.and_then(|g| g.package_of(file)) else {
+    let Some(package) = graph.and_then(|g| g.enclosing_package(file)) else {
         return vec![];
     };
     let dir = file.parent().unwrap_or(Path::new(""));

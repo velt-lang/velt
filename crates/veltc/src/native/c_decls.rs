@@ -40,11 +40,17 @@ pub(super) fn check(
     let name = velt_vir::system::base_name(&f.symbol);
     let Some(package) = package.filter(|_| !in_std) else {
         if !in_std {
+            let around = graph.and_then(|g| g.enclosing_package(file));
+            let why = match around {
+                Some(p) => format!(
+                    "this file is in an npm package under `{}`, which isn't part of it",
+                    p.name
+                ),
+                None => "this file has no package.vlt".to_string(),
+            };
             diags.push(
                 Diagnostic::error(
-                    format!(
-                        "`declare c function {name}` is only allowed in a package: this file has no package.vlt"
-                    ),
+                    format!("`declare c function {name}` is only allowed in a package: {why}"),
                     f.span,
                 )
                 .with_note(
@@ -77,7 +83,7 @@ pub(super) fn check(
         );
         return;
     }
-    if graph.is_some_and(|g| !g.allows_native(&package.name)) {
+    if graph.is_some_and(|g| !g.allows_native(package)) {
         if !checked.refused.insert(package.name.clone()) {
             return;
         }

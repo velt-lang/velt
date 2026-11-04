@@ -157,7 +157,7 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
     )?;
     let dirs = fetch(loc, resolution.packages.values())?;
     allow_native::check(
-        (&manifest, &resolution.root_dependencies),
+        (&manifest, &root, &resolution.root_dependencies),
         resolution.packages.values(),
         &dirs,
     )?;
@@ -617,7 +617,7 @@ fn build_graph<'r>(
     let mut graph = PackageGraph::default();
     if let Some((manifest, root, dependencies)) = root {
         add(&mut graph, &manifest.package.name, root, dependencies);
-        graph.set_allow_native(&manifest.package.name, &manifest.allow_native);
+        graph.set_allow_native(root, &manifest.allow_native);
         let added = graph.last_mut();
         configure(added, manifest);
         added.native = natives.remove(&manifest.package.name);

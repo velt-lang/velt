@@ -4,23 +4,32 @@
 //! gains it in a patch release, is then a change to the root manifest, not a line nobody reads.
 
 use std::collections::{BTreeMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::manifest::Manifest;
 use crate::resolve::{ResolvedPackage, Source};
 
+/// Whether `a` and `b` are one directory.
+fn same_dir(a: &Path, b: &Path) -> bool {
+    match (a.canonicalize(), b.canonicalize()) {
+        (Ok(a), Ok(b)) => a == b,
+        _ => false,
+    }
+}
+
 /// An error for each package of `packages` (in `dirs`) with native code that `root` (the root
-/// package's manifest and its direct dependencies) doesn't list in `allowNative`, naming the
-/// chain of dependencies that brings it in and the line to add.
+/// package's manifest, its directory and its direct dependencies) doesn't list in `allowNative`,
+/// naming the chain of dependencies that brings it in and the line to add. A package that depends
+/// back on the root is the root only if it is in the root's directory: anything can have its name.
 pub(crate) fn check<'r>(
-    root: (&Manifest, &[String]),
+    root: (&Manifest, &Path, &[String]),
     packages: impl Iterator<Item = &'r ResolvedPackage> + Clone,
     dirs: &BTreeMap<String, PathBuf>,
 ) -> Result<(), String> {
-    let (manifest, direct) = root;
+    let (manifest, root_dir, direct) = root;
     let mut refused = vec![];
     for p in packages.clone() {
-        if manifest.allow_native.contains(&p.name) || p.name == manifest.package.name {
+        if manifest.allow_native.contains(&p.name) {
             continue;
         }
         // A git target with no `package.vlt` is npm packages: JavaScript, nothing to read here.
@@ -35,6 +44,9 @@ pub(crate) fn check<'r>(
                 p.name
             ));
         };
+        if same_dir(dir, root_dir) {
+            continue;
+        }
         let m = Manifest::from_dir(dir)
             .map_err(|e| format!("package `{}` can't be checked for native code: {e}", p.name))?;
         if m.has_native_code() {
@@ -137,7 +149,38 @@ mod tests {
             .map(|d| ("lib".to_string(), d.to_path_buf()))
             .into_iter()
             .collect();
-        check((&manifest, &["lib".to_string()]), [lib].iter(), &dirs)
+        check(
+            (&manifest, root.path(), &["lib".to_string()]),
+            [lib].iter(),
+            &dirs,
+        )
+    }
+
+    /// A dependency with the root's name and native code, in the root's directory or not.
+    #[test]
+    fn a_package_named_like_the_root_needs_allowing_unless_it_is_the_root() {
+        let root = dir_with(&manifest_text("app", "native: { c: {} }"));
+        let elsewhere = dir_with(&manifest_text("app", "native: { c: {} }"));
+        let manifest = Manifest::from_dir(root.path()).unwrap();
+        let named_app = ResolvedPackage {
+            name: "app".to_string(),
+            version: semver::Version::new(1, 0, 0),
+            source: Source::Path {
+                dir: PathBuf::new(),
+            },
+            dependencies: vec![],
+        };
+        let run = |dir: &Path| {
+            let dirs = BTreeMap::from([("app".to_string(), dir.to_path_buf())]);
+            check(
+                (&manifest, root.path(), &[]),
+                [&named_app].into_iter(),
+                &dirs,
+            )
+        };
+        run(root.path()).unwrap();
+        let e = run(elsewhere.path()).unwrap_err();
+        assert!(e.contains("package `app` has native code"), "{e}");
     }
 
     #[test]

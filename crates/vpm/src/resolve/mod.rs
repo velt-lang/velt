@@ -123,7 +123,43 @@ pub fn resolve(
 ) -> Result<Resolution, String> {
     let root_label = format!("{} {}", manifest.package.name, manifest.package.version);
     let root_reqs = dependency_requirements(manifest, root_dir, &[root_label])?;
-    solve_root(root_dir, root_reqs, loc, prefer, &BTreeMap::new())
+    let resolution = solve_root(root_dir, root_reqs, loc, prefer, &BTreeMap::new())?;
+    refuse_root_name(root_dir, &manifest.package.name, &resolution)?;
+    Ok(resolution)
+}
+
+/// A package with the root's name from anywhere but the root's directory is an error: one name
+/// would stand for two packages, in the lock and in what the program allows. A dependency may
+/// depend back on the root itself.
+fn refuse_root_name(root_dir: &Path, name: &str, resolution: &Resolution) -> Result<(), String> {
+    let Some(pkg) = resolution.packages.get(name) else {
+        return Ok(());
+    };
+    let from = match &pkg.source {
+        Source::Path { dir } => {
+            if let (Ok(a), Ok(b)) = (dir.canonicalize(), root_dir.canonicalize()) {
+                if a == b {
+                    return Ok(());
+                }
+            }
+            format!("from {}", dir.display())
+        }
+        Source::Git { spec, .. } => format!("from {}", spec.url),
+        Source::Registry { .. } => "from the registry".to_string(),
+    };
+    let by: Vec<String> = resolution
+        .packages
+        .values()
+        .filter(|p| p.dependencies.iter().any(|d| d == name))
+        .map(|p| format!("`{}`", p.name))
+        .collect();
+    let by = match by.is_empty() {
+        true => "this package".to_string(),
+        false => by.join(", "),
+    };
+    Err(format!(
+        "{by} depends on a package named `{name}` {from}, but `{name}` is the name of this package: a dependency can't take the name of the package that installs it"
+    ))
 }
 
 /// Resolve the members of a workspace rooted at `root_dir` together: every member (its directory

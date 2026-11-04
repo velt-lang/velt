@@ -68,8 +68,8 @@ pub fn install(
         // A package the member uses may depend back on it.
         dirs.insert(manifest.package.name.clone(), dir.to_path_buf());
     }
-    if let Some((manifest, _, deps)) = root {
-        super::allow_native::check((manifest, deps), packages.iter().copied(), &dirs)?;
+    if let Some(root) = root {
+        super::allow_native::check(root, packages.iter().copied(), &dirs)?;
     }
     let natives = natives(
         &loc,

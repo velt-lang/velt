@@ -69,7 +69,7 @@ pub(super) fn check(
         else {
             continue;
         };
-        let package = packages.and_then(|g| g.package_of(&sm.get(f.span.file).path));
+        let package = packages.and_then(|g| g.enclosing_package(&sm.get(f.span.file).path));
         let by = declared.entry(import.module.as_str()).or_default();
         if !by.iter().any(|(p, _)| same(*p, package)) {
             by.push((package, f.span));
