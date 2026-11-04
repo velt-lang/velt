@@ -9,7 +9,6 @@
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
-use super::error_slots::{error_only, occurs_plain, union_member_only};
 use super::ops::untyped;
 use super::widen_fresh::is_fresh;
 use crate::body::{FnCx, Want};
@@ -464,6 +463,7 @@ impl FnCx<'_, '_> {
             for k in self.infer_union_error(&args[i], p.ty, &known, slots) {
                 known[k] = slots[k];
             }
+            self.fix_for_context_sensitive(c, &args[i], p.ty, slots, &mut known);
             let outer = self.cx.type_level.use_site.replace(args[i].span);
             let expected = self.cx.subst_known(p.ty, &known);
             self.cx.type_level.use_site = outer;
@@ -660,58 +660,6 @@ impl FnCx<'_, '_> {
         if let (Some(None), Some(Some(t))) = (slots.get(s), context.get(s)) {
             if self.cx.ty.is_numeric(*t) {
                 slots[s] = Some(*t);
-            }
-        }
-    }
-
-    /// Slots nothing inferred take their defaults (while the slots before them are known); an
-    /// error type parameter nothing fixed (it appears only as a promise's or function's error
-    /// type) is `never`.
-    fn default_slots(&mut self, c: &Callable, slots: &mut [Option<TyId>]) {
-        for (k, slot) in slots.iter_mut().enumerate() {
-            if slot.is_some() || c.defaults.get(k).is_some_and(|d| d.is_some()) {
-                continue;
-            }
-            let tys: Vec<TyId> = c.params.iter().map(|p| p.ty).collect();
-            let unconstrained_error = tys.iter().any(|t| error_only(self.cx, *t, k as u32))
-                && !tys.iter().any(|t| occurs_plain(self.cx, *t, k as u32));
-            // A type parameter only ever a member of a parameter's union (`x: T | string`)
-            // that the arguments left open (`f("s")`, which the `string` member takes) holds
-            // nothing here: TypeScript infers `unknown`, under which `T | string` is `unknown`;
-            // `never` keeps it `string`.
-            let mut member_only = || {
-                let mut any_member = false;
-                for t in &tys {
-                    match union_member_only(self.cx, *t, k as u32) {
-                        Some(m) => any_member |= m,
-                        None => return false,
-                    }
-                }
-                any_member
-            };
-            if unconstrained_error || member_only() {
-                *slot = Some(self.cx.ty.never);
-            }
-        }
-        for k in 0..slots.len() {
-            let Some(Some(d)) = c.defaults.get(k) else {
-                continue;
-            };
-            if slots[k].is_some() {
-                continue;
-            }
-            let Some(before) = slots[..k].iter().copied().collect::<Option<Vec<TyId>>>() else {
-                break;
-            };
-            slots[k] = Some(self.cx.subst(*d, &before));
-        }
-        // An overload signature calling its implementation: a type parameter of the
-        // implementation that the signature's parameters leave open is `void` (TypeScript
-        // infers `unknown`), as in `function f(x: string): string;` over
-        // `function f<T>(x: string | T[]): string | T`.
-        if slots.iter().any(Option::is_none) && self.signature_body().is_some() {
-            for slot in slots.iter_mut().filter(|s| s.is_none()) {
-                *slot = Some(self.cx.ty.unit);
             }
         }
     }

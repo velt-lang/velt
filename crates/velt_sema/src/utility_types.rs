@@ -217,6 +217,10 @@ impl Ctx<'_> {
         span: Span,
     ) -> Option<Vec<ShapeField>> {
         let shown = self.display(t);
+        // `Omit<unknown, K>` is `{}`, as in TypeScript (`keyof unknown` is `never`).
+        if op == "Omit" && self.dynamic(t) == Some(crate::any::Dynamic::Unknown) {
+            return Some(vec![]);
+        }
         match self.ty.kind(t).clone() {
             TyKind::Adt(d, args) if self.adt(d).is_some() => {
                 let fields = match self.fields_now(d) {
