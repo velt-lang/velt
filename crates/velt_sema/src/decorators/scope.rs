@@ -79,7 +79,7 @@ impl Walk<'_> {
             I::Interface(i) => {
                 for m in &i.methods {
                     if let Some(body) = &m.body {
-                        self.params(&m.sig.params, Some(body));
+                        self.params(&m.sig.params, body);
                     }
                 }
             }
@@ -88,19 +88,19 @@ impl Walk<'_> {
     }
 
     fn function(&mut self, f: &ast::FnDecl) {
-        self.params(&f.sig.params, Some(&f.body));
+        self.params(&f.sig.params, &f.body);
     }
 
     /// A function's parameters and body: its parameters are in scope there, and not in its own
     /// decorators or its parameters' (TypeScript resolves those outside the function).
-    fn params(&mut self, params: &[ast::Param], body: Option<&ast::Block>) {
+    fn params(&mut self, params: &[ast::Param], body: &ast::Block) {
         let in_defaults = params
             .iter()
             .any(|p| p.default.as_ref().is_some_and(|d| self.within(d.span)));
         let in_patterns = params
             .iter()
             .any(|p| p.pattern.as_ref().is_some_and(|q| self.pattern_contains(q)));
-        if !in_defaults && !in_patterns && !body.is_some_and(|b| self.within(b.span)) {
+        if !in_defaults && !in_patterns && !self.within(body.span) {
             return;
         }
         for p in params {
@@ -113,7 +113,7 @@ impl Walk<'_> {
             self.opt_expr(p.default.as_ref());
             p.pattern.iter().for_each(|q| self.pattern_exprs(q));
         }
-        body.iter().for_each(|b| self.block(b));
+        self.block(body);
     }
 
     fn bind(&mut self, name: &str) {
