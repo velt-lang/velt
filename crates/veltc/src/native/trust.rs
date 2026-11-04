@@ -1,8 +1,9 @@
 //! The trust boundary of the C FFI (docs/internals/design/c-ffi.md "The trust boundary"):
 //!
 //! - `unsafe` code (blocks, expressions, unsafe functions and methods) is allowed only in std
-//!   and in packages with native code that the program allows (`allowNative`). Elsewhere it is
-//!   an error, so a program's own code never contains it and an audit reads only those packages.
+//!   and in packages with native code that the program allows (`allowNative`, or the root's own
+//!   package.vlt declaring native code). Elsewhere it is an error, so an audit reads only those
+//!   packages.
 //! - The raw API, `Ptr`, `OutPtr`, `declare c type`s and unsafe functions, is imported only
 //!   there too: by name, through a namespace (`ffi.Ptr`) or re-exported by a package. User code
 //!   works with a binding's safe API.
@@ -55,7 +56,7 @@ fn trust_of(m: &SourceModule, sm: &SourceMap, graph: Option<&PackageGraph>) -> T
     };
     if !package.has_native_code {
         Trust::NoNativeCode(package.name.clone())
-    } else if !graph.allows_native(&package.name) {
+    } else if !graph.allows_native(package) {
         Trust::NotAllowed(package.name.clone())
     } else {
         Trust::Trusted
@@ -88,12 +89,14 @@ pub fn check(
 ) {
     let mut raw = RawExports::new(modules);
     for m in modules {
+        // std is trusted, and its safety comments are a test's (module docs).
+        if m.is_std {
+            continue;
+        }
         let trust = trust_of(m, sm, graph);
         let found = unsafe_sites::find(&m.ast);
         if let Trust::Trusted = trust {
-            if !m.is_std {
-                lint(&found.sites, &sm.get(m.file).src, diags);
-            }
+            lint(&found.sites, &sm.get(m.file).src, diags);
             continue;
         }
         for site in &found.sites {
@@ -206,8 +209,6 @@ fn target_of<'a>(m: &'a SourceModule, spec: &str) -> Option<&'a str> {
 struct RawExports<'a> {
     modules: HashMap<&'a str, &'a SourceModule>,
     done: HashMap<String, HashSet<String>>,
-    /// Modules being computed (an import cycle reads them as exporting nothing raw yet).
-    open: HashSet<String>,
 }
 
 impl<'a> RawExports<'a> {
@@ -215,33 +216,80 @@ impl<'a> RawExports<'a> {
         RawExports {
             modules: modules.iter().map(|m| (m.path.as_str(), m)).collect(),
             done: HashMap::new(),
-            open: HashSet::new(),
         }
     }
 
-    /// The raw exports of the module with canonical path `path`.
+    /// The raw exports of the module with canonical path `path`. Modules can import each other
+    /// in a cycle, so what `path` reaches is computed together, until nothing changes: a result
+    /// is never kept that read a module still being computed.
     fn of(&mut self, path: &str) -> &HashSet<String> {
         if !self.done.contains_key(path) {
-            let set = match self.modules.get(path).copied() {
-                Some(m) if self.open.insert(path.to_string()) => {
-                    let set = self.compute(m);
-                    self.open.remove(path);
-                    set
+            let open = self.reached_from(path);
+            let mut sets: HashMap<&str, HashSet<String>> = open
+                .iter()
+                .map(|m| (m.path.as_str(), HashSet::new()))
+                .collect();
+            loop {
+                let mut changed = false;
+                for m in &open {
+                    let set = self.compute(m, &sets);
+                    if set.len() != sets[m.path.as_str()].len() {
+                        sets.insert(m.path.as_str(), set);
+                        changed = true;
+                    }
                 }
-                _ => HashSet::new(),
-            };
-            self.done.insert(path.to_string(), set);
+                if !changed {
+                    break;
+                }
+            }
+            for (module, set) in sets {
+                self.done.insert(module.to_string(), set);
+            }
+            self.done.entry(path.to_string()).or_default();
         }
         &self.done[path]
     }
 
-    fn compute(&mut self, m: &'a SourceModule) -> HashSet<String> {
+    /// The modules `path` reaches through imports, itself included, without those already done,
+    /// dependencies first (so one pass usually finds everything).
+    fn reached_from(&self, path: &str) -> Vec<&'a SourceModule> {
+        let mut order = vec![];
+        let mut seen: HashSet<&str> = HashSet::new();
+        let Some(&first) = self.modules.get(path) else {
+            return order;
+        };
+        // (module, how many of its imports were looked at).
+        let mut stack = vec![(first, 0)];
+        seen.insert(first.path.as_str());
+        while let Some((m, next)) = stack.pop() {
+            match m.imports.get(next) {
+                Some((_, target)) => {
+                    stack.push((m, next + 1));
+                    let found = self.modules.get(target.as_str()).copied();
+                    if let Some(t) = found.filter(|t| !self.done.contains_key(&t.path)) {
+                        if seen.insert(t.path.as_str()) {
+                            stack.push((t, 0));
+                        }
+                    }
+                }
+                None => order.push(m),
+            }
+        }
+        order
+    }
+
+    /// `m`'s raw exports given what is known so far of the modules being computed (`sets`).
+    fn compute(&self, m: &SourceModule, sets: &HashMap<&str, HashSet<String>>) -> HashSet<String> {
         // The module's own raw names, exported or not (a local `export { f }` can export them).
         let mut local: HashSet<String> = HashSet::new();
         let mut exported: HashSet<String> = HashSet::new();
         for item in &m.ast.items {
             let name = match &item.kind {
                 ast::ItemKind::Function(f) if f.sig.is_unsafe => Some(&f.sig.name.name),
+                // A C function is unsafe by its declaration.
+                ast::ItemKind::ExternFn(sig) if sig.is_unsafe || sig.c.is_some() => {
+                    Some(&sig.name.name)
+                }
                 ast::ItemKind::Struct(t) | ast::ItemKind::Class(t)
                     if t.c_type || (m.is_std && raw_std_type(&m.path, &t.name.name)) =>
                 {
@@ -256,6 +304,7 @@ impl<'a> RawExports<'a> {
                 }
             }
         }
+        let empty = HashSet::new();
         for item in &m.ast.items {
             let ast::ItemKind::Import(imp) = &item.kind else {
                 continue;
@@ -270,9 +319,11 @@ impl<'a> RawExports<'a> {
             let Some(target) = target_of(m, &imp.from) else {
                 continue;
             };
-            let theirs = self.of(target).clone();
+            let theirs = (sets.get(target))
+                .or_else(|| self.done.get(target))
+                .unwrap_or(&empty);
             if imp.all && item.exported && imp.namespace.is_none() {
-                exported.extend(theirs);
+                exported.extend(theirs.iter().cloned());
                 continue;
             }
             for n in imp.names.iter().filter(|n| theirs.contains(&n.name.name)) {
