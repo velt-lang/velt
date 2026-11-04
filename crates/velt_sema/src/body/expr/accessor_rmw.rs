@@ -80,7 +80,13 @@ impl FnCx<'_, '_> {
         span: Span,
         stmts: &mut Vec<hir::Stmt>,
     ) -> hir::Expr {
+        // `x.p! op= v`, `x.p!++` (`asserted_rmw.rs`): the getter's value read as `x.p!`.
+        let asserted = std::mem::take(&mut self.asserted_target);
         let old_val = match self.getter_read(recv.clone(), prop, span) {
+            Ok(read) if asserted && self.cx.ty.opt_payload(read.ty).is_some() => {
+                let msg = super::asserted_rmw::ASSERT_MSG;
+                self.checked_present(read, msg, None, false, span)
+            }
             Ok(read) => read,
             Err(_) => return self.error_expr(span),
         };

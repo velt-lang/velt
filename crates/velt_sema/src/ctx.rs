@@ -172,10 +172,11 @@ pub(crate) struct Ctx<'m> {
     pub lock_free_callbacks: FxHashSet<DefId>, // locked_props.rs
     pub module_scripts: Vec<DefId>, // imported modules' top-level statements (module_scripts.rs)
     pub promoted_consts: FxHashSet<Span>, // `const`s kept in module state (module_chunks.rs)
+    pub asserted_rmw: FxHashSet<Span>, // `e! op= v` / `e!++` whose read is `e!` (asserted_targets.rs)
     pub state_refused: Vec<DefId>, // module-level variables that can't be state (script_locals.rs)
     pub lazy: crate::body::lazy_std::Lazy, // std definitions checked on demand (lazy_std.rs)
     pub global_props: crate::global_this::GlobalProps, // `globalThis`'s, used (global_this.rs)
-    pub global_cycles: u32,       // constants found to depend on themselves (driver::ensure_global)
+    pub global_cycles: u32, // constants found to depend on themselves (driver::ensure_global)
     /// How many function values (arrows, function expressions, literal methods) are being
     /// checked inside the module constant being checked: a read of the constant there runs
     /// later, once it is initialized (`body::driver::ensure_global`).
@@ -504,6 +505,7 @@ impl<'m> Ctx<'m> {
             lock_free_callbacks: FxHashSet::default(),
             module_scripts: Vec::new(),
             promoted_consts: FxHashSet::default(),
+            asserted_rmw: FxHashSet::default(),
             state_refused: Vec::new(),
             lazy: crate::body::lazy_std::Lazy::new(),
             global_props: Default::default(),

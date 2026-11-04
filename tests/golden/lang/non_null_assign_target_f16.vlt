@@ -1,0 +1,24 @@
+// A non-null assertion on an `f16` / `bf16` assignment target (#1569, #2049): the compound
+// assignment or update computes in `number`, rounds once on the store and, used as a value,
+// gives the unrounded `number`, as the plain form does. Node has no `f16`, so each line
+// prints the asserted form beside the plain one: the two columns are equal. (Kept apart from
+// `non_null_assign_target`, which is TypeScript and runs on Node.)
+let v: f16 | undefined = 1.5 as f16;
+let p: f16 = 1.5 as f16;
+v! += 0.1;
+p += 0.1;
+console.log(v, p);
+console.log(v! += 0.1, p += 0.1);
+console.log(v, p);
+const o: { f?: f16 } = { f: 1.5 as f16 };
+const q: { f: f16 } = { f: 1.5 as f16 };
+o.f!++;
+q.f++;
+console.log(o.f, q.f);
+console.log(o.f!++, q.f++, ++o.f!, ++q.f);
+const r: Record<string, bf16> = { a: 1.5 as bf16 };
+let b: bf16 = 1.5 as bf16;
+r["a"]! *= 1.1;
+b *= 1.1;
+console.log(r["a"], b);
+console.log((r["a"]! -= 0.3), (b -= 0.3), r["a"], b);

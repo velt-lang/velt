@@ -326,6 +326,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The call about to be checked is a weak operation of the prelude's `WeakMap`, `WeakSet`
     /// or `WeakRef`: its first argument is a weak key (`dynamic.rs` `weak_key_coerce`).
     pub weak_key_args: bool,
+    /// The compound assignment or update being checked has an asserted target
+    /// (`crate::asserted_targets`), until its read uses the mark (`expr/asserted_rmw.rs`).
+    pub asserted_target: bool,
     /// The call about to be checked is of a `declare system function`: its byte buffer
     /// parameters take views too (`system_args.rs`).
     pub system_args: bool,
@@ -436,6 +439,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             immediate_hint: None,
             collect_iterable_args: false,
             weak_key_args: false,
+            asserted_target: false,
             system_args: false,
             proxy_keys_inner: false,
             unsafe_depth: 0,
