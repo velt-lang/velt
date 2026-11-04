@@ -83,6 +83,24 @@ fn c_library_entries_are_checked() {
     assert_eq!(message, "`allowNative` must be an array, not a string");
 }
 
+/// Decoding goes on after an error, so what it keeps must already be checked.
+#[test]
+fn only_system_names_that_pass_are_kept() {
+    let src = with(
+        "native: { c: { x: { system: { default: \"-lfoo\", linux: \"framework:X\", macos: \"m\", win32: \"good\" } } } }",
+    );
+    let mut decoded = None;
+    let result = read_data(FILE, &src, &PACKAGE_SHAPE, |r, v| {
+        decoded = Some(r.manifest(v));
+    });
+    assert_eq!(result.err().expect("the manifest has errors").len(), 3);
+    let libraries = decoded.unwrap().c_libraries.expect("native.c is decoded");
+    assert_eq!(
+        libraries["x"].system,
+        [("win32".to_string(), "good".to_string())]
+    );
+}
+
 #[test]
 fn c_library_names_have_a_length_limit() {
     let at_limit = "x".repeat(64);

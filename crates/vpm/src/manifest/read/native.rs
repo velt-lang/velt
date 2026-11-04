@@ -93,12 +93,18 @@ impl Reader<'_> {
                         "system" => {
                             if let Some(conds) = self.object(f, "`system`") {
                                 for (cond, s) in conds {
-                                    self.check(check_target_condition(&cond.name), cond.span);
+                                    let condition = check_target_condition(&cond.name);
+                                    let known = condition.is_ok();
+                                    self.check(condition, cond.span);
                                     if let Some(text) = self.string(s, "a system library") {
                                         let checked = check_system_library(text)
                                             .and_then(|()| check_framework(&cond.name, text));
+                                        // Only what passes can reach `link_args`, even through
+                                        // a caller that ignores the manifest's errors.
+                                        if known && checked.is_ok() {
+                                            lib.system.push((cond.name.clone(), text.to_string()));
+                                        }
                                         self.check(checked, s.span);
-                                        lib.system.push((cond.name.clone(), text.to_string()));
                                     }
                                 }
                             }
