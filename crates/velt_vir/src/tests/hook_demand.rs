@@ -33,3 +33,11 @@ fn an_integer_thrown_and_not_caught_lowers() {
     lower_src("function main() { throw 5 as i32; }\n");
     lower_src("async function main() { throw 5 as i32; }\n");
 }
+
+/// The signature alone makes lowering print the error, whatever the body throws (#2312's review).
+#[test]
+fn a_declared_integer_error_nothing_throws_lowers() {
+    lower_src("function f(): void throws i32 {}\nfunction main() { f(); }\n");
+    lower_src("function f(): void throws u8 {}\nfunction main() { f(); }\n");
+    lower_src("function main(): void throws i32 {}\n");
+}

@@ -337,12 +337,15 @@ fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
                 for e in fi.params.iter_mut().filter_map(|p| p.default.as_mut()) {
                     crate::visit::exprs_in(e, &mut |e| walk_expr(ty, e, w));
                 }
+                // Thrown and not caught, it is reported as `console.log` prints it: lowering
+                // builds that from the signature, whatever the body throws. (`hir::FnDef::throws`
+                // is filled in later, by `finalize::build_defs`.)
+                w.formats
+                    .extend(fi.declared_throws.as_ref().and_then(|d| d.ty));
             }
             for t in f.body.locals.iter().map(|l| l.ty).chain([f.ret]) {
                 note_ty(ty, t, w);
             }
-            // Thrown and not caught, it is reported as `console.log` prints it.
-            w.formats.extend(f.throws);
             crate::visit::exprs_mut(&mut f.body.block, &mut |e| walk_expr(ty, e, w));
             true
         }

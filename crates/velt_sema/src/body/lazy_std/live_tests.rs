@@ -104,6 +104,16 @@ fn each_construct_is_found_where_live_code_has_it() {
             &[Format],
         ),
         (
+            "a function declared to throw an integer, whose body doesn't",
+            "function f(): void throws i32 {}\nfunction main() { f(); }",
+            &[Format],
+        ),
+        (
+            "main declared to throw an integer, whose body doesn't",
+            "function main(): void throws i32 {}",
+            &[Format],
+        ),
+        (
             "a function value: lowering's helpers that take one open, and they format",
             "function f(): void throws string { }\n\
              function main() { const h = f; if (h == null) { return; } }",

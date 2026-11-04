@@ -22,12 +22,6 @@
 //! assert!(set.contains(hook_index::int_push) && !set.contains(hook_index::int_text));
 //! ```
 
-/// Does the hook with qualified name `qualified` list the constructs that demand it
-/// (`Hook::constructs`)? Sema checks it only where live code has one.
-pub fn has_constructs(qualified: &str) -> bool {
-    crate::std_hooks::find(qualified).is_some_and(|h| !h.constructs.is_empty())
-}
-
 /// Does `present` demand every hook that lists constructs (so that more live code can demand
 /// nothing new)?
 pub fn all_demanded(present: ConstructSet) -> bool {

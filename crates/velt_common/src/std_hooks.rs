@@ -40,7 +40,7 @@
 //! assert_eq!(std_hook_name!(f64_to_string), "f64ToString");
 //! ```
 
-pub use crate::hook_demand::{all_demanded, has_constructs, Construct, ConstructSet, HookSet};
+pub use crate::hook_demand::{all_demanded, Construct, ConstructSet, HookSet};
 pub use crate::hook_sig::{FnSig, Mode, Param, Sig, T};
 
 /// One hook: its entry name, its module's canonical path, its name there, its signature, whether
@@ -716,11 +716,6 @@ pub fn find(qualified: &str) -> Option<&'static Hook> {
 /// printer where one is unchecked. The integer hooks have no fallback (#2197): sema checks them
 /// where live code has one of their `constructs` ([`crate::hook_demand`]).
 pub const ON_DEMAND_FLOAT: &[&str] = &["number_text", "number_push", "float_text", "float_push"];
-
-/// Is the hook with qualified name `qualified` one of [`ON_DEMAND_FLOAT`]?
-pub fn is_on_demand(qualified: &str) -> bool {
-    find(qualified).is_some_and(|h| ON_DEMAND_FLOAT.contains(&h.name))
-}
 
 /// The qualified names of the hooks named in `names` ([`ON_DEMAND_FLOAT`]).
 pub fn on_demand(names: &'static [&'static str]) -> impl Iterator<Item = String> {
