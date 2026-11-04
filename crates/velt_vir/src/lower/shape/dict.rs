@@ -36,7 +36,7 @@ impl Cx<'_> {
             bytes,
             align: 8,
             relocs: vec![(0, Const::Static(text))],
-            mutable: None,
+            ..Default::default()
         });
         let id = StaticId(self.statics.len() as u32 - 1);
         self.shapes.dicts.insert((inst, targs.clone()), id);
