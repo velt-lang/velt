@@ -2,7 +2,8 @@
 //! table and the statuses): fields, getters and methods of struct / class / object types by
 //! name (`Program::dyn_members`), `length` and elements of arrays, `length` of strings, and
 //! calls of function values. A class object seen through a base class's table is handed to
-//! its own class's glue (its class id), so subclass members are found too.
+//! its own class's glue (its class id), so subclass members are found too. An unsafe member
+//! (`DynMemberKind::Unsafe`) is never called: its name is a `TypeError` naming it.
 
 use velt_sema::hir::{self, DefId, DynMember, DynMemberKind, Nothing, PassMode, TyId, TyKind};
 
@@ -136,6 +137,15 @@ impl FnLower<'_, '_> {
             self.terminate(Terminator::Return(Operand::Copy(out)));
         }
         self.switch_to(own);
+    }
+
+    /// Stop on the unsafe member `name` (`DynMemberKind::Unsafe`): no `unsafe` block can be around
+    /// a dynamic access.
+    pub(super) fn any_unsafe_member(&mut self, name: &str) {
+        self.panic_msg(&format!(
+            "TypeError: '{name}' is unsafe, so it can't be reached through `any`: use it on its class, in an `unsafe` block"
+        ));
+        self.terminate(Terminator::Unreachable);
     }
 
     /// The members of `d` by name (`Program::dyn_members`).
@@ -485,6 +495,11 @@ impl FnLower<'_, '_> {
                     continue;
                 }
                 let next = self.on_key(key, &m.name);
+                if m.kind == DynMemberKind::Unsafe {
+                    self.any_unsafe_member(&m.name);
+                    self.switch_to(next);
+                    continue;
+                }
                 let throwing = m.kind == DynMemberKind::Getter;
                 match (m.kind, self.ready_with(ty, &m, throwing)) {
                     (DynMemberKind::Getter, Some(r)) => {
@@ -693,6 +708,11 @@ impl FnLower<'_, '_> {
                 continue;
             }
             let next = self.on_key(key, &m.name);
+            if m.kind == DynMemberKind::Unsafe {
+                self.any_unsafe_member(&m.name);
+                self.switch_to(next);
+                continue;
+            }
             // A method that throws only when the program calls one of that name through `any`
             // (`""`: a computed name), so the classes of the standard library held as `any` do
             // not bring in every one of their throwing methods.

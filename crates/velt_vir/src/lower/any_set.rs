@@ -143,6 +143,11 @@ impl FnLower<'_, '_> {
                 continue;
             }
             let next = self.on_key(key, &m.name);
+            if m.kind == DynMemberKind::Unsafe {
+                self.any_unsafe_member(&m.name);
+                self.switch_to(next);
+                continue;
+            }
             let throwing = m.kind == DynMemberKind::Setter;
             match (m.kind, self.ready_with(ty, m, throwing)) {
                 (DynMemberKind::Setter, Some(r)) => {

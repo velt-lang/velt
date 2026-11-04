@@ -66,4 +66,8 @@ pub enum DynMemberKind {
     /// A field declared `readonly` (TypeScript checks it statically; Velt relies on it, e.g.
     /// to narrow `o.x !== null` across calls, so a write through `any` is refused).
     ReadonlyField,
+    /// An unsafe method or accessor (docs/internals/design/c-ffi.md "The trust boundary"): no
+    /// `unsafe` block can be around a dynamic call, so the slots find it by name only to refuse
+    /// it, with a `TypeError` naming it. Its `def` is never called from glue.
+    Unsafe,
 }
