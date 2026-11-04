@@ -12,9 +12,11 @@
 
 use velt_syntax::ast;
 
-use super::args::Callable;
+use super::args::{as_arrow, Callable};
 use super::error_slots::{error_only, occurs_plain, union_member_only};
 use super::method_value::strip_parens;
+use super::ops::untyped;
+use super::setters::synth;
 use crate::body::FnCx;
 use crate::hir::{TyId, TyKind};
 
@@ -106,11 +108,61 @@ impl FnCx<'_, '_> {
             if k >= known.len() || known[k].is_some() || open.keep.contains(&(k as u32)) {
                 continue;
             }
-            let Some(t) = self.nothing_inferred(c, k, known) else {
+            let Some(t) = self.nothing_inferred(c, k, known, arg.span) else {
                 continue;
             };
             known[k] = Some(t);
             slots[k] = Some(t);
+        }
+    }
+
+    /// An arrow's annotated parameter fixes a slot that a literal argument would otherwise fix
+    /// first: `xs.reduce((acc: number[], x) => …, [])` and `reduce((acc: T | null, x) => …, null)`
+    /// have `A` from the annotation, the literal is checked against it. TypeScript gets there by
+    /// taking the wider of the two candidates, which is the annotation when the literal fits it.
+    pub(super) fn annotations_before_literals(
+        &mut self,
+        c: &Callable,
+        args: &[ast::Expr],
+        slots: &mut [Option<TyId>],
+    ) {
+        if slots.iter().all(Option::is_some) || !args.iter().any(|a| as_arrow(a).is_some()) {
+            return;
+        }
+        for (arg, p) in args.iter().zip(&c.params) {
+            let Some(ast::ExprKind::Arrow {
+                type_params,
+                params,
+                ..
+            }) = as_arrow(arg).map(|a| &a.kind)
+            else {
+                continue;
+            };
+            if !type_params.is_empty() {
+                continue;
+            }
+            let core = self.cx.ty.core(p.ty).unwrap_or(p.ty);
+            let TyKind::FnPtr { params: ptys, .. } = self.cx.ty.kind(core).clone() else {
+                continue;
+            };
+            for (t, written) in ptys.iter().zip(params) {
+                let Some(written) = &written.ty else {
+                    continue;
+                };
+                // Only a slot a literal argument is passed for directly.
+                let TyKind::Param(k) = *self.cx.ty.kind(*t) else {
+                    continue;
+                };
+                let literal = args.iter().zip(&c.params).any(|(a, p)| {
+                    literal_arg(a) && matches!(*self.cx.ty.kind(p.ty), TyKind::Param(s) if s == k)
+                });
+                if literal && slots.get(k as usize).is_some_and(Option::is_none) {
+                    let before = self.cx.diags.len();
+                    let resolved = self.resolve(written);
+                    self.cx.diags.truncate(before);
+                    slots[k as usize] = Some(resolved);
+                }
+            }
         }
     }
 
@@ -142,13 +194,29 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// What slot `k`, which no candidate reached, is: `None` when that still depends on an open
-    /// slot, or when the slot's interface bound or its place as an error type decides later.
-    fn nothing_inferred(&mut self, c: &Callable, k: usize, known: &[Option<TyId>]) -> Option<TyId> {
+    /// What slot `k`, which no candidate reached, is: its default, its constraint (a type, or
+    /// the interfaces it extends), or `unknown`. `None` when that still depends on an open slot,
+    /// or when its place as an error type decides later.
+    fn nothing_inferred(
+        &mut self,
+        c: &Callable,
+        k: usize,
+        known: &[Option<TyId>],
+        span: velt_common::Span,
+    ) -> Option<TyId> {
+        let bounds = c.bounds.get(k).map_or(&[][..], Vec::as_slice);
+        let parts: Vec<TyId> = (bounds.iter())
+            .map(|b| self.cx.ty.intern(TyKind::Dyn(b.iface, b.args.clone())))
+            .collect();
+        let interface = match parts.as_slice() {
+            [] => None,
+            [one] => Some(*one),
+            _ => Some(self.cx.intersect_parts(parts, self.module, span)),
+        };
         let written = match (c.defaults.get(k), c.constraints.get(k)) {
             (Some(Some(d)), _) => Some(*d),
             (_, Some(Some(b))) => Some(*b),
-            _ => None,
+            _ => interface,
         };
         if let Some(t) = written {
             let mut names = vec![];
@@ -156,10 +224,17 @@ impl FnCx<'_, '_> {
             let open = names
                 .iter()
                 .any(|&n| !known.get(n as usize).is_some_and(|s| s.is_some()));
-            return (!open).then(|| self.cx.subst_known(t, known));
+            if open {
+                return None;
+            }
+            let t = self.cx.subst_known(t, known);
+            // The function may convert an `any` to it (`g({ n: 1 } as any)`), as for an explicit
+            // type argument.
+            self.cx.note_dyn_object_target(t);
+            return Some(t);
         }
         let error_slot = c.params.iter().any(|p| error_only(self.cx, p.ty, k as u32));
-        if error_slot || c.bounds.get(k).is_some_and(|b| !b.is_empty()) {
+        if error_slot {
             return None;
         }
         let defs = self.cx.any?;
@@ -240,31 +315,72 @@ impl FnCx<'_, '_> {
                 }
             }
             ast::ExprKind::Object(props) => {
-                for prop in props {
-                    let ast::ObjectProp::KeyValue(key, value) = prop else {
-                        continue;
-                    };
-                    let Some((_, t)) = self.field_of(core, &key.name) else {
-                        continue;
-                    };
-                    if context_sensitive(value) {
-                        self.open_slots(value, t, known, open);
-                    } else {
+                // From the last: a later field replaces an earlier one of that name
+                // (`{ ...base, v: 1 }`), so it is the candidate.
+                for prop in props.iter().rev() {
+                    match prop {
+                        ast::ObjectProp::KeyValue(key, value) if context_sensitive(value) => {
+                            if let Some((_, t)) = self.field_of(core, &key.name) {
+                                self.open_slots(value, t, known, open);
+                            }
+                        }
                         // A sibling is a candidate first (`{ cb: (x) => …, v: 1 }`), and without
                         // a type of its own it is checked with the literal.
-                        let mut names = vec![];
-                        crate::types::collect_params(&self.cx.ty, t, &mut names);
-                        if names.is_empty() {
-                            continue;
+                        ast::ObjectProp::KeyValue(key, value) => {
+                            self.sibling_candidate(core, &key.name, value, known, open);
                         }
-                        if let Some(found) = self.trial_type(value) {
-                            self.cx.match_ty(t, found, known);
+                        ast::ObjectProp::Shorthand(name) => {
+                            let value = synth(ast::ExprKind::Ident(name.clone()), name.span);
+                            self.sibling_candidate(core, &name.name, &value, known, open);
                         }
-                        open.keep.extend(names);
+                        ast::ObjectProp::Spread(value) => {
+                            let Some(found) = self.trial_type(value) else {
+                                continue;
+                            };
+                            let found = self.cx.ty.core(found).unwrap_or(found);
+                            let Some((d, targs)) = self.adt_of(found) else {
+                                continue;
+                            };
+                            let names: Vec<(String, TyId)> = match self.cx.adt(d) {
+                                Some(a) => {
+                                    a.fields.iter().map(|f| (f.name.clone(), f.ty)).collect()
+                                }
+                                None => continue,
+                            };
+                            for (name, from) in names {
+                                if let Some((_, t)) = self.field_of(core, &name) {
+                                    if open.keep_named(self.cx, t) {
+                                        let from = self.cx.subst(from, &targs);
+                                        self.cx.match_ty(t, from, known);
+                                    }
+                                }
+                            }
+                        }
+                        ast::ObjectProp::Method(_) => {}
                     }
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Field `name` of the object type `core` given `value`, next to a context-sensitive arrow:
+    /// the type parameters its type names are inferred from `value`.
+    fn sibling_candidate(
+        &mut self,
+        core: TyId,
+        name: &str,
+        value: &ast::Expr,
+        known: &mut [Option<TyId>],
+        open: &mut OpenSlots,
+    ) {
+        let Some((_, t)) = self.field_of(core, name) else {
+            return;
+        };
+        if open.keep_named(self.cx, t) {
+            if let Some(found) = self.trial_type(value) {
+                self.cx.match_ty(t, found, known);
+            }
         }
     }
 }
@@ -276,6 +392,26 @@ struct OpenSlots {
     fix: Vec<u32>,
     /// Also in a sibling of that arrow in an object literal, which infers them.
     keep: Vec<u32>,
+}
+
+impl OpenSlots {
+    /// Adds the type parameters `t` names to `keep`: are there any?
+    fn keep_named(&mut self, cx: &crate::ctx::Ctx<'_>, t: TyId) -> bool {
+        let before = self.keep.len();
+        crate::types::collect_params(&cx.ty, t, &mut self.keep);
+        self.keep.len() > before
+    }
+}
+
+/// Is `e` a literal, which takes its type from what it is passed for when it can?
+fn literal_arg(e: &ast::Expr) -> bool {
+    match &strip_parens(e).kind {
+        ast::ExprKind::Lit(_) | ast::ExprKind::Array(_) | ast::ExprKind::Object(_) => true,
+        ast::ExprKind::New { class, .. } => {
+            matches!(&class.kind, ast::TypeExprKind::Named { args, .. } if args.is_empty())
+        }
+        _ => untyped(e),
+    }
 }
 
 /// Does `e` need its type from the parameter it is passed for: an arrow with a parameter neither

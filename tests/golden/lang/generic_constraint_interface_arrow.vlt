@@ -1,0 +1,69 @@
+// A type parameter nothing infers takes the interface it extends when an arrow's parameter needs
+// it; an argument that fills it still decides.
+
+interface HasN {
+  n: number;
+}
+function f<T extends HasN>(g: (x: T) => void): void {
+  g({ n: 1 } as any);
+}
+f((x) => {
+  console.log(x.n);
+});
+
+interface Box<A> {
+  a: A;
+}
+function h<T extends Box<number>>(g: (x: T) => void): void {
+  g({ a: 1 } as any);
+}
+h((x) => {
+  console.log(x.a + 1);
+});
+
+// Several interfaces: what they all have.
+interface HasM {
+  m: string;
+}
+function two<T extends HasN & HasM>(g: (x: T) => void): void {
+  g({ n: 4, m: "m" } as any);
+}
+two((x) => {
+  console.log(x.n, x.m);
+});
+
+// An argument fills the slot: the class, not the interface.
+interface Getter {
+  get(): number;
+}
+class C implements Getter {
+  own = 7;
+  get(): number {
+    return this.own;
+  }
+}
+function fill<T extends Getter>(g: (x: T) => number, v: T): number {
+  return g(v);
+}
+console.log(fill((x) => x.get(), new C()));
+console.log(fill((x) => x.own + 1, new C()));
+
+// The bound names an earlier type parameter that an argument fixed.
+function outer<U, T extends Box<U>>(u: U, g: (x: T) => void): void {
+  g({ a: "held" } as any);
+}
+outer("s", (x) => {
+  console.log(x.a.length);
+});
+
+// A default wins over the constraint.
+class D implements HasN {
+  n = 3;
+  extra = "e";
+}
+function withDefault<T extends HasN = D>(g: (x: T) => void): void {
+  g(new D() as any);
+}
+withDefault((x) => {
+  console.log(x.extra);
+});

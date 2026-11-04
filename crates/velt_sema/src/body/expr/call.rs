@@ -5,6 +5,7 @@ use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
 
 use super::args::Callable;
+use super::error_slots::error_only;
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
@@ -238,13 +239,14 @@ impl FnCx<'_, '_> {
 
     /// Explicit `<T, U>` type args fill the trailing `own` slots. Slots they leave out take
     /// their `defaults` (`f<number>()` of `function f<A, B = A[]>()`), as in TypeScript: not
-    /// inferred.
+    /// inferred. They may also leave out a type parameter that only says what a callback throws
+    /// (the `E` of `reduce<A, E>`, where TypeScript's `reduce<U>` has none): it stays inferred.
     pub(super) fn explicit_type_args(
         &mut self,
         slots: &mut [Option<TyId>],
         own: usize,
         type_args: &[ast::TypeExpr],
-        defaults: &[Option<TyId>],
+        (defaults, params): (&[Option<TyId>], &[crate::defs::ParamSig]),
         span: Span,
     ) {
         if type_args.is_empty() {
@@ -252,7 +254,10 @@ impl FnCx<'_, '_> {
         }
         let start = slots.len() - own;
         let required = (start..slots.len())
-            .rposition(|k| defaults.get(k).is_none_or(|d| d.is_none()))
+            .rposition(|k| {
+                let in_throws = params.iter().any(|p| error_only(self.cx, p.ty, k as u32));
+                defaults.get(k).is_none_or(|d| d.is_none()) && !in_throws
+            })
             .map_or(0, |i| i + 1);
         if type_args.len() < required || type_args.len() > own {
             let expected = match required == own {
@@ -309,7 +314,7 @@ impl FnCx<'_, '_> {
         let c = self.fn_callable(d, format!("function `{name}`"), span);
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
-        self.explicit_type_args(&mut slots, n, type_args, &c.defaults, span);
+        self.explicit_type_args(&mut slots, n, type_args, (&c.defaults, &c.params), span);
         self.std_callback_arg(d, args);
         self.system_args = self.cx.fn_info(d).has_buffer_params();
         self.c_args = self.cx.fn_info(d).c.is_some();

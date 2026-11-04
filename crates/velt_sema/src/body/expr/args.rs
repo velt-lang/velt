@@ -437,6 +437,7 @@ impl FnCx<'_, '_> {
         let order = self.arg_order(c, args);
         // Slots fixed before any argument (explicit type arguments, the receiver's).
         let given: Vec<bool> = slots.iter().map(Option::is_some).collect();
+        self.annotations_before_literals(c, args, slots);
         let mut out: Vec<Option<hir::Expr>> = (0..args.len()).map(|_| None).collect();
         for i in order {
             let p = &c.params[i];

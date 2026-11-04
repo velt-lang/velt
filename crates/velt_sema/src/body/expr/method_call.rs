@@ -368,7 +368,7 @@ impl FnCx<'_, '_> {
         }
         let mut slots = slots;
         let own = slots.iter().filter(|s| s.is_none()).count();
-        self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
+        self.explicit_type_args(&mut slots, own, type_args, (&c.defaults, &c.params), span);
         self.weak_key_args = self.weak_method(def);
         // A promise set into a `Map` (or pushed) whose type is a site (`throws::promise_sites`).
         let stored = self.stored_arg_site(&recv, &name, args);
