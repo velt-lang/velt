@@ -1,0 +1,82 @@
+// http-server (internal): `resolveUnder`, the file a URL path names under a root directory,
+// refusing every way out of it.
+
+import { realpath } from "velt/fs";
+import { platform } from "velt/os";
+
+/**
+ * The real path of the file or directory URL path `urlPath` (a `URL`'s `pathname`, still
+ * percent-encoded) names under directory `root`, or null when there is none or it would lie
+ * outside `root`. Refused: `..` segments, encoded separators (`%2F`, `%5C`), NUL (`%00`),
+ * backslashes, invalid percent-encoding, a `:` in a segment on Windows (drive letters and
+ * alternate data streams), and a symlink whose target is outside `root` (both are resolved
+ * with `realpath` and compared). A path that doesn't exist is null too.
+ *
+ * Between this check and opening the file a symlink could still be swapped in; serve a root
+ * whose contents an attacker can't write.
+ */
+export async function resolveUnder(root: string, urlPath: string): Promise<string | null> {
+  const rel = relativePath(urlPath);
+  if (rel == null) {
+    return null;
+  }
+  try {
+    const top = await realpath(root);
+    const real = await realpath(rel == "" ? top : `${top}/${rel}`);
+    if (real == top) {
+      return real;
+    }
+    const sep = platform() == "win32" ? "\\" : "/";
+    return real.startsWith(top.endsWith(sep) ? top : top + sep) ? real : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/// `urlPath` decoded and checked, without its leading "/"; null when it is refused.
+function relativePath(urlPath: string): string | null {
+  // Encoded separators and NUL: refused before decoding hides them.
+  const n = urlPath.length;
+  for (let i: usize = 0; i + 2 < n; i++) {
+    if (urlPath.charCodeAt(i as i64) == 37) {
+      const a = urlPath.charCodeAt((i + 1) as i64);
+      const b = urlPath.charCodeAt((i + 2) as i64) | 32;
+      if ((a == 50 && b == 102) || (a == 53 && b == 99) || (a == 48 && b == 48)) {
+        return null; // %2F, %5C, %00
+      }
+    }
+  }
+  let decoded = urlPath;
+  if (urlPath.includes("%")) {
+    try {
+      decoded = decodeURIComponent(urlPath);
+    } catch (e) {
+      return null;
+    }
+  }
+  const windows = platform() == "win32";
+  let start: usize = 0;
+  const m = decoded.length;
+  while (start < m && decoded.charCodeAt(start as i64) == 47) {
+    start++;
+  }
+  // Each segment: no "..", no backslash or NUL, no ":" on Windows.
+  let segment = start;
+  for (let i = start; i <= m; i++) {
+    const c = i < m ? decoded.charCodeAt(i as i64) : 47;
+    if (c == 92 || c == 0 || (windows && c == 58)) {
+      return null;
+    }
+    if (c == 47) {
+      if (
+        i - segment == 2 &&
+        decoded.charCodeAt(segment as i64) == 46 &&
+        decoded.charCodeAt((segment + 1) as i64) == 46
+      ) {
+        return null;
+      }
+      segment = i + 1;
+    }
+  }
+  return start == 0 ? decoded : decoded.slice(start as i64);
+}

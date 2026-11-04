@@ -215,7 +215,9 @@ or a response `fetch` returned (a proxy: its body is passed on as it arrives).
 - A body made while it is sent (server-side rendering, large exports) is a `BodyStream`:
   `new Response(BodyStream.from(chunks))`, where `chunks` is an async generator of `u8[]`
   (JS: `ReadableStream.from`). The status and headers go out when the handler returns; each
-  chunk is sent as the generator yields it (HTTP/1.1 chunked transfer, no `content-length`),
+  chunk is sent as the generator yields it (HTTP/1.1 chunked transfer, no `content-length`,
+  unless the headers set one: then the body goes out with it, as in Deno and Bun, and a
+  generator that yields fewer or more bytes cuts the response off),
   and the generator is not asked for the next one before the client took the previous one
   (backpressure). If the client goes away, the generator is closed (its `finally` blocks run);
   if it throws, the error is printed to stderr and the response is cut off, so the client sees
@@ -243,6 +245,39 @@ async function main() {
     return new Response(BodyStream.from(rows(3)), {
       headers: { "content-type": "text/html; charset=utf-8" },
     });
+  });
+}
+```
+
+## Files: `serveFile(req, path, options?)` and `resolveUnder(root, urlPath)`
+
+`serveFile` answers a request with a file, as Deno's `serveFile` does:
+- a weak `ETag` (size and mtime, as Express makes it) and `Last-Modified`;
+- 304 for `If-None-Match` / `If-Modified-Since`, 412 for a failed `If-Match` /
+  `If-Unmodified-Since`;
+- one `Range` of a GET answered with 206 and `Content-Range` (if an `If-Range` matches), 416 for
+  a range past the end; several ranges get the whole file;
+- HEAD, 404 for no file or a directory, 405 for other methods;
+- the body read as the client takes it, with its `Content-Length`.
+
+`options` sets the `contentType` (default: from the extension, `contentType(path)`) and extra
+`headers` (`Cache-Control`). The pieces are exported for other bodies: `parseRange(header,
+size)`, `evaluateConditions(req, validators)` and `ifRangeMatches(req, validators)`.
+
+`resolveUnder(root, urlPath)` maps a URL path to a file under `root`. It refuses `..`, encoded
+separators, NUL and symlinks that lead out of `root`, and gives null for those and for a missing
+file.
+
+```ts
+import { resolveUnder, serve, serveFile } from "http-server";
+
+async function main() {
+  await serve({ port: 8080 }, async (req: Request): Promise<Response> => {
+    const path = await resolveUnder("./public", new URL(req.url).pathname);
+    if (path == null) {
+      return new Response("Not Found", { status: 404 });
+    }
+    return await serveFile(req, path, { headers: [["cache-control", "max-age=60"]] });
   });
 }
 ```

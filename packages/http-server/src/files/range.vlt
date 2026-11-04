@@ -1,0 +1,126 @@
+// http-server (internal): `parseRange`, a request's `Range` header (RFC 9110 §14.2) against a
+// body's size: the one byte range to answer with 206, a range no byte of the body is in (416),
+// or nothing to act on (200 with the whole body). Scanned by index, with no copies.
+
+/** A range of a body's bytes, both ends included: `bytes=0-9` is `{ start: 0, end: 9 }`. */
+export struct ByteRange {
+  start: u64;
+  end: u64;
+}
+
+/** The largest position read (15 digits): any larger one is past every body. */
+const MAX_DIGITS: usize = 15;
+
+/**
+ * What a `Range` header asks of a body of `size` bytes:
+ * - a `ByteRange` (within the body) for a single satisfiable range, answered with 206;
+ * - `"unsatisfiable"` when no byte of the body is in it (`bytes=500-` of 100 bytes, `bytes=-0`,
+ *   any range of an empty body), answered with 416 and `Content-Range: bytes *\/size`;
+ * - `null` for no header, a unit other than `bytes`, a malformed value, or several ranges: the
+ *   whole body is sent (200), as Express's `send` and Deno's `serveFile` do. RFC 9110 lets a
+ *   server ignore `Range`; multipart answers are rarely used and easy to abuse.
+ *
+ * An end past the body is cut to its last byte (`bytes=90-500` of 100 bytes is 90–99), and a
+ * suffix longer than the body is all of it (`bytes=-500`).
+ */
+export function parseRange(header: string | null, size: u64): ByteRange | "unsatisfiable" | null {
+  if (header == null) {
+    return null;
+  }
+  const n = header.length;
+  // "bytes" in any case, then "=" (RFC 9110 §14.1: range units are case-insensitive).
+  if (n < 7 || !unitIsBytes(header)) {
+    return null;
+  }
+  // The range set may have spaces around its elements (`1#range-spec`); a range has none.
+  let i = skipSpaces(header, 6);
+  // first-pos, or none for a suffix range ("-500").
+  const first = digits(header, i);
+  i = first.next;
+  if (i >= n || header.charCodeAt(i as i64) != 45) {
+    return null; // no "-"
+  }
+  const last = digits(header, i + 1);
+  i = skipSpaces(header, last.next);
+  if (i < n) {
+    return null; // a second range (","), or something else after the first
+  }
+  if (first.count == 0) {
+    // A suffix: the last `last` bytes.
+    if (last.count == 0) {
+      return null; // "bytes=-"
+    }
+    if (last.value == 0 || size == 0) {
+      return "unsatisfiable";
+    }
+    const length = last.value > size ? size : last.value;
+    return { start: size - length, end: size - 1 };
+  }
+  if (last.count > 0 && last.value < first.value) {
+    return null; // "bytes=5-4" is invalid, so ignored (RFC 9110 §14.1.1)
+  }
+  if (first.value >= size) {
+    return "unsatisfiable";
+  }
+  const end = last.count == 0 || last.value >= size ? size - 1 : last.value;
+  return { start: first.value, end };
+}
+
+/// Whether `h` starts with "bytes=" in any case.
+function unitIsBytes(h: string): bool {
+  const unit = "bytes";
+  for (let i: i64 = 0; i < 5; i++) {
+    let c = h.charCodeAt(i);
+    if (c >= 65 && c <= 90) {
+      c += 32;
+    }
+    if (c != unit.charCodeAt(i)) {
+      return false;
+    }
+  }
+  return h.charCodeAt(5) == 61;
+}
+
+/// The position after the spaces and tabs from `i` on.
+function skipSpaces(h: string, from: usize): usize {
+  let i = from;
+  while (i < h.length) {
+    const c = h.charCodeAt(i as i64);
+    if (c != 32 && c != 9) {
+      break;
+    }
+    i++;
+  }
+  return i;
+}
+
+/// A run of decimal digits.
+struct Digits {
+  value: u64;
+  /// How many digits there were (0: none).
+  count: usize;
+  /// The position after them.
+  next: usize;
+}
+
+/// The digits from `from` on; a number of more than 15 digits reads as the largest u64.
+function digits(h: string, from: usize): Digits {
+  let i = from;
+  let v: u64 = 0;
+  while (i < h.length) {
+    const d = h.charCodeAt(i as i64) - 48;
+    if (d < 0 || d > 9) {
+      break;
+    }
+    v = v * 10 + (d as u64);
+    i++;
+    if (i - from > MAX_DIGITS) {
+      v = -1 as u64;
+      while (i < h.length && h.charCodeAt(i as i64) >= 48 && h.charCodeAt(i as i64) <= 57) {
+        i++;
+      }
+      break;
+    }
+  }
+  return { value: v, count: i - from, next: i };
+}

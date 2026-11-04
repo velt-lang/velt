@@ -2,10 +2,16 @@
 // HTTP/1.1, HTTP/2 (ALPN over TLS, h2c with prior knowledge) and graceful stops. `serve` takes
 // web-standard handlers, `(req: Request) => Response` as in Deno and Bun; `serveHttp` the
 // lower-level `HttpRequest` and `HttpResponse`, which read the request in place and write the
-// response straight into the connection's buffer. WebSockets: `http-server/websocket`.
+// response straight into the connection's buffer. Files: `serveFile` (conditional requests,
+// `Range`, HEAD) and `resolveUnder` (a URL path under a root). WebSockets: `http-server/websocket`.
 
 export { BodyTooLarge } from "./errors";
 export { EventStream } from "./event_stream";
+export { evaluateConditions, ifRangeMatches, Validators } from "./files/conditions";
+export { contentType } from "./files/content_type";
+export { ByteRange, parseRange } from "./files/range";
+export { resolveUnder } from "./files/resolve";
+export { serveFile, ServeFileOptions } from "./files/serve_file";
 export { HttpStream } from "./http_stream";
 export { HttpRequest } from "./request";
 export { HttpResponse } from "./response";

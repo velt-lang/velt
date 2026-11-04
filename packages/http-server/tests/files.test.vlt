@@ -1,0 +1,288 @@
+// Files (#2077): `parseRange`, `evaluateConditions`, `ifRangeMatches` and `resolveUnder` on
+// their own, then `serveFile` over HTTP/1.1 and HTTP/2 as a client sees it: validators, 304 and
+// 412, 206 and 416, If-Range, HEAD, 404/405, and a large file streamed with its length.
+import {
+  evaluateConditions,
+  ifRangeMatches,
+  parseRange,
+  resolveUnder,
+  serve,
+  serveFile,
+  Validators,
+} from "../src/lib";
+import { mkdir, realpath, remove, symlink, writeFile } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { afterAll, beforeAll, describe, expect, it } from "velt/test";
+import { TEST_CA, TEST_CERT, TEST_KEY } from "./_tls";
+
+function range(header: string | null, size: u64): string {
+  const r = parseRange(header, size);
+  if (r == null) {
+    return "whole";
+  } else if (typeof r == "string") {
+    return r;
+  }
+  return `${r.start}-${r.end}`;
+}
+
+describe("parseRange", () => {
+  it("reads one range of a body, its end cut to the body's", () => {
+    expect(range("bytes=0-9", 100)).toBe("0-9");
+    expect(range("bytes=90-", 100)).toBe("90-99");
+    expect(range("bytes=90-500", 100)).toBe("90-99");
+    expect(range("bytes=99-99", 100)).toBe("99-99");
+    expect(range("bytes=-10", 100)).toBe("90-99");
+    expect(range("bytes=-500", 100)).toBe("0-99");
+    expect(range("Bytes= 1-2 ", 100)).toBe("1-2");
+    expect(range("bytes=0-99999999999999999999", 100)).toBe("0-99");
+  });
+
+  it("says when no byte of the body is in the range", () => {
+    expect(range("bytes=100-", 100)).toBe("unsatisfiable");
+    expect(range("bytes=500-600", 100)).toBe("unsatisfiable");
+    expect(range("bytes=-0", 100)).toBe("unsatisfiable");
+    expect(range("bytes=0-", 0)).toBe("unsatisfiable");
+    expect(range("bytes=99999999999999999999-", 100)).toBe("unsatisfiable");
+  });
+
+  it("leaves the whole body for no range, another unit, a malformed one or several", () => {
+    expect(range(null, 100)).toBe("whole");
+    expect(range("items=0-1", 100)).toBe("whole");
+    expect(range("bytes=", 100)).toBe("whole");
+    expect(range("bytes=-", 100)).toBe("whole");
+    expect(range("bytes=a-b", 100)).toBe("whole");
+    expect(range("bytes=5-4", 100)).toBe("whole");
+    expect(range("bytes=0-1,5-6", 100)).toBe("whole");
+    expect(range("bytes 0-1", 100)).toBe("whole");
+    expect(range("bytes = 1-2", 100)).toBe("whole");
+    expect(range("bytes=1 - 2", 100)).toBe("whole");
+  });
+});
+
+function request(method: string, headers: [string, string][]): Request {
+  return new Request("http://x/f", { method, headers });
+}
+
+describe("evaluateConditions", () => {
+  const v: Validators = {
+    etag: "W/\"a-1\"",
+    lastModified: Date.parse("Wed, 21 Oct 2015 07:28:00 GMT") + 500,
+  };
+  const at = (method: string, name: string, value: string) => evaluateConditions(
+    request(method, [[name, value]]),
+    v,
+  );
+
+  it("answers 304 to a GET or HEAD the client has", () => {
+    expect(at("GET", "if-none-match", "W/\"a-1\"")).toBe(304);
+    expect(at("HEAD", "if-none-match", "\"x\", \"a-1\"")).toBe(304);
+    expect(at("GET", "if-none-match", "*")).toBe(304);
+    expect(at("GET", "if-none-match", "\"b-2\"")).toBe(0);
+    expect(at("GET", "if-modified-since", "Wed, 21 Oct 2015 07:28:00 GMT")).toBe(304);
+    expect(at("GET", "if-modified-since", "Wed, 21 Oct 2015 07:27:59 GMT")).toBe(0);
+    expect(at("GET", "if-modified-since", "not a date")).toBe(0);
+  });
+
+  it(
+    "answers 412 to a failed If-Match or If-Unmodified-Since, and If-None-Match on a write",
+    () => {
+      // If-Match compares strongly: a weak tag never matches it, "*" does.
+      expect(at("PUT", "if-match", "W/\"a-1\"")).toBe(412);
+      expect(at("PUT", "if-match", "*")).toBe(0);
+      expect(at("PUT", "if-unmodified-since", "Wed, 21 Oct 2015 07:27:59 GMT")).toBe(412);
+      expect(at("PUT", "if-unmodified-since", "Wed, 21 Oct 2015 07:28:00 GMT")).toBe(0);
+      expect(at("PUT", "if-none-match", "W/\"a-1\"")).toBe(412);
+    },
+  );
+
+  it("puts If-None-Match before If-Modified-Since", () => {
+    const req = request("GET", [
+      ["if-none-match", "\"other\""],
+      ["if-modified-since", "Wed, 21 Oct 2015 07:28:00 GMT"],
+    ]);
+    expect(evaluateConditions(req, v)).toBe(0);
+  });
+
+  it("lets a Range apply when If-Range names the current representation", () => {
+    const strong: Validators = { etag: "\"s1\"", lastModified: v.lastModified };
+    expect(ifRangeMatches(request("GET", []), v)).toBe(true);
+    expect(ifRangeMatches(request("GET", [["if-range", "Wed, 21 Oct 2015 07:28:00 GMT"]]), v)).toBe(
+      true,
+    );
+    expect(ifRangeMatches(request("GET", [["if-range", "Wed, 21 Oct 2015 07:27:00 GMT"]]), v)).toBe(
+      false,
+    );
+    expect(ifRangeMatches(request("GET", [["if-range", "W/\"a-1\""]]), v)).toBe(false);
+    expect(ifRangeMatches(request("GET", [["if-range", "\"s1\""]]), strong)).toBe(true);
+    expect(ifRangeMatches(request("GET", [["if-range", "\"s2\""]]), strong)).toBe(false);
+  });
+});
+
+describe("resolveUnder", () => {
+  let dir = "";
+  let links = true;
+  beforeAll(async () => {
+    dir = `${await realpath(tmpdir())}/velt-resolve-${uuidv4()}`;
+    await mkdir(`${dir}/root/sub`, { recursive: true });
+    await mkdir(`${dir}/outside`);
+    await writeFile(`${dir}/root/sub/a b.txt`, "a");
+    await writeFile(`${dir}/outside/secret.txt`, "s");
+    try {
+      await symlink("sub", `${dir}/root/inner`);
+      await symlink("../outside", `${dir}/root/escape`);
+    } catch (e) {
+      links = false; // Windows without Developer Mode
+    }
+  });
+  afterAll(async () => {
+    await remove(dir, { recursive: true });
+  });
+  const under = async (p: string) => {
+    const r = await resolveUnder(`${dir}/root`, p);
+    return r == null ? null : r.replaceAll("\\", "/").slice(dir.length);
+  };
+
+  it("finds what a URL path names under the root", async () => {
+    expect(await under("/sub/a%20b.txt")).toBe("/root/sub/a b.txt");
+    expect(await under("/sub/./a%20b.txt")).toBe("/root/sub/a b.txt");
+    expect(await under("/")).toBe("/root");
+    expect(await under("/sub/missing")).toBe(null);
+    if (links) {
+      expect(await under("/inner/a%20b.txt")).toBe("/root/sub/a b.txt");
+    }
+  });
+
+  it("refuses every way out of the root", async () => {
+    expect(await under("/../outside/secret.txt")).toBe(null);
+    expect(await under("/sub/../../outside/secret.txt")).toBe(null);
+    expect(await under("/%2e%2e/outside/secret.txt")).toBe(null);
+    expect(await under("/sub%2f..%2f..%2foutside")).toBe(null);
+    expect(await under("/sub%5ca%20b.txt")).toBe(null);
+    expect(await under("/sub\\a b.txt")).toBe(null);
+    expect(await under("/sub/a%00b")).toBe(null);
+    expect(await under("/sub/%zz")).toBe(null);
+    if (links) {
+      expect(await under("/escape/secret.txt")).toBe(null);
+    }
+  });
+});
+
+// The file served, with a text that shows which bytes a range got.
+const TEXT = "0123456789abcdefghijklmnopqrstuvwxyz";
+
+for (const protocol of ["HTTP/1.1", "HTTP/2"]) {
+  describe(`serveFile over ${protocol}`, () => {
+    let dir = "";
+    let base = "";
+    let close = () => {};
+    const h2 = protocol == "HTTP/2";
+    const get = async (path: string, init: RequestInit = {}): Promise<Response> => {
+      return await fetch(`${base}${path}`, h2 ? { ...init, ca: TEST_CA } : init);
+    };
+    beforeAll(async () => {
+      dir = `${tmpdir()}/velt-serve-file-${uuidv4()}`;
+      await mkdir(`${dir}/dir`, { recursive: true });
+      await writeFile(`${dir}/f.txt`, TEXT);
+      await writeFile(`${dir}/big.bin`, "x".repeat(3 * 1024 * 1024 + 17));
+      const server = await serve(
+        h2 ? { port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } } : { port: 0 },
+        async (req: Request): Promise<Response> => {
+          const name = new URL(req.url).pathname.slice(1);
+          return await serveFile(req, `${dir}/${name}`, {
+            headers: [["cache-control", "no-cache"]],
+          });
+        },
+      );
+      base = h2 ? `https://localhost:${server.port}` : `http://127.0.0.1:${server.port}`;
+      close = () => server.close();
+    });
+    afterAll(async () => {
+      close();
+      await remove(dir, { recursive: true });
+    });
+
+    it("sends the file with its type, length and validators", async () => {
+      const r = await get("/f.txt");
+      expect(r.status).toBe(200);
+      expect(await r.text()).toBe(TEXT);
+      const h = r.headers;
+      expect(h.get("content-type")).toBe("text/plain; charset=utf-8");
+      expect(h.get("content-length")).toBe("36");
+      expect(h.get("accept-ranges")).toBe("bytes");
+      expect(h.get("cache-control")).toBe("no-cache");
+      expect(h.get("etag")!.startsWith("W/\"24-")).toBe(true);
+      expect(Date.parse(h.get("last-modified")!) > 0).toBe(true);
+    });
+
+    it("answers 304 to a client that has it", async () => {
+      const first = await get("/f.txt");
+      await first.text();
+      const etag = first.headers.get("etag")!;
+      const byTag = await get("/f.txt", { headers: { "if-none-match": etag } });
+      expect(byTag.status).toBe(304);
+      expect(await byTag.text()).toBe("");
+      expect(byTag.headers.get("etag")).toBe(etag);
+      const byDate = await get("/f.txt", {
+        headers: { "if-modified-since": first.headers.get("last-modified")! },
+      });
+      expect(byDate.status).toBe(304);
+      const failed = await get("/f.txt", { headers: { "if-match": "\"other\"" } });
+      expect(failed.status).toBe(412);
+    });
+
+    it("answers a range with 206, and one past the end with 416", async () => {
+      const part = await get("/f.txt", { headers: { range: "bytes=10-15" } });
+      expect(part.status).toBe(206);
+      expect(part.headers.get("content-range")).toBe("bytes 10-15/36");
+      expect(part.headers.get("content-length")).toBe("6");
+      expect(await part.text()).toBe("abcdef");
+      const tail = await get("/f.txt", { headers: { range: "bytes=-3" } });
+      expect(await tail.text()).toBe("xyz");
+      const past = await get("/f.txt", { headers: { range: "bytes=36-" } });
+      expect(past.status).toBe(416);
+      expect(past.headers.get("content-range")).toBe("bytes */36");
+      const several = await get("/f.txt", { headers: { range: "bytes=0-1,4-5" } });
+      expect(several.status).toBe(200);
+      expect(await several.text()).toBe(TEXT);
+    });
+
+    it("applies a range only when If-Range names the file as it is", async () => {
+      const first = await get("/f.txt");
+      await first.text();
+      const modified = first.headers.get("last-modified")!;
+      const same = await get("/f.txt", { headers: { range: "bytes=0-1", "if-range": modified } });
+      expect(same.status).toBe(206);
+      expect(await same.text()).toBe("01");
+      const old = await get("/f.txt", {
+        headers: { range: "bytes=0-1", "if-range": "Wed, 21 Oct 2015 07:28:00 GMT" },
+      });
+      expect(old.status).toBe(200);
+      expect(await old.text()).toBe(TEXT);
+    });
+
+    it("answers HEAD with GET's head", async () => {
+      const r = await get("/f.txt", { method: "HEAD" });
+      expect(r.status).toBe(200);
+      expect(r.headers.get("content-length")).toBe("36");
+      expect(await r.text()).toBe("");
+    });
+
+    it("answers 404 for no file or a directory, and 405 for a write", async () => {
+      expect((await get("/missing.txt")).status).toBe(404);
+      expect((await get("/dir")).status).toBe(404);
+      const post = await get("/f.txt", { method: "POST", body: "x" });
+      expect(post.status).toBe(405);
+      expect(post.headers.get("allow")).toBe("GET, HEAD");
+    });
+
+    it("streams a large file whole, and a range of it", async () => {
+      const r = await get("/big.bin");
+      expect(r.headers.get("content-length")).toBe("3145745");
+      expect((await r.bytes()).length).toBe(3145745);
+      const part = await get("/big.bin", { headers: { range: "bytes=1048576-" } });
+      expect(part.headers.get("content-range")).toBe("bytes 1048576-3145744/3145745");
+      expect((await part.bytes()).length).toBe(2097169);
+    });
+  });
+}
