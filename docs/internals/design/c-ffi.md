@@ -639,7 +639,7 @@ Step 1 lands in layers, each its own pull request:
    library, and a call on WebAssembly is an error. One symbol has one signature: a second one
    (another `$suffix`, another package) is an error until calls through C function pointers.
    Under `velt dev` a C function no loaded library has is an error naming its declaration.
-   Step 1 is complete only with layers 5 (the trust boundary) and 6 (the header check): until
+   Step 1 is complete only with layers 5 (the trust boundary) and 6 (the header check): until layer
    6, declarations are unchecked.
 3. `Ptr<T>` (a std struct over the address; `Ptr.at` is unsafe), `Ptr<T> | null`, `null`,
    `declare c type`, arrays of numbers and views of bytes as buffers (read at the call, after
