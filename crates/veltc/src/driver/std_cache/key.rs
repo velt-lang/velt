@@ -63,7 +63,8 @@ impl Code {
 impl Inputs {
     /// This velt building with `opts` for `cg`.
     pub fn of(opts: &BuildOptions, cg: &velt_codegen_cl::CodegenOptions) -> Inputs {
-        // clang's path, size and modification time (nanoseconds), as explicit fields.
+        // clang's path, size and modification time (nanoseconds), as explicit fields, and the version
+        // it reports: a new clang can sit behind the same three.
         let clang = velt_codegen_llvm::find_clang();
         let meta = clang.as_ref().and_then(|c| std::fs::metadata(c).ok());
         let size = meta.as_ref().map_or(0, |m| m.len());
@@ -75,7 +76,10 @@ impl Inputs {
             .unwrap_or_default();
         Inputs {
             compiler: crate::build_cache::compiler_identity(),
-            backend: format!("clang\0{path}\0{size}\0{time}"),
+            backend: format!(
+                "clang\0{path}\0{size}\0{time}\0{}",
+                velt_codegen_llvm::clang_version().unwrap_or_default()
+            ),
             opt: velt_codegen_llvm::opt_flag().to_string(),
             target: cg.target.clone(),
             cpu: cg.cpu.clone(),

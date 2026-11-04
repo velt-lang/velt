@@ -213,8 +213,8 @@ fn wasm_linker() -> Check {
 }
 
 fn clang() -> Check {
-    match velt_codegen_llvm::find_clang() {
-        Some(path) => Check::ok(CLANG, path.display().to_string()),
+    match velt_codegen_llvm::describe_clang() {
+        Some(choice) => Check::ok(CLANG, choice),
         None => Check::bad(
             CLANG,
             Status::Warn,

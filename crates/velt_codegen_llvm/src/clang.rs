@@ -1,222 +1,15 @@
-//! Locating `clang` and compiling textual IR with it.
-//!
-//! Search order: `$VELT_CLANG`, `clang` on `PATH`, then the standard install locations
-//! (`C:\Program Files\LLVM\bin` on Windows; Homebrew / `/usr/bin` / versioned `clang-NN` on
-//! unix). A candidate counts only if `clang --version` runs and reports LLVM 16 or newer: the
-//! emitted IR uses opaque `ptr` types (LLVM 15+) and `memory(...)` attributes (LLVM 16+), and
-//! Linux distributions often ship an older default `clang` (Ubuntu 20.04: 10, 22.04: 14) next
-//! to a newer `clang-NN`. The result is cached per process.
+//! Compiling textual IR with the `clang` that `clang_search` chose.
 
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
+use crate::clang_probe::{try_compile, MIN_LLVM_MAJOR, PROBE_LIMIT};
+use crate::clang_search::{clang_version, find_clang, forget_clang, rejected_clang};
 use crate::target::Target;
 use crate::CodegenResult;
-
-/// Oldest LLVM major version whose IR parser accepts what the backend emits.
-const MIN_LLVM_MAJOR: u32 = 16;
-/// Apple clang numbers releases on its own scheme; Apple clang 15 is based on LLVM 16.
-const MIN_APPLE_CLANG_MAJOR: u32 = 15;
-
-/// Whether a working clang was found, i.e. whether [`crate::emit_object`] can work.
-pub fn available() -> bool {
-    find_clang().is_some()
-}
-
-/// The clang executable used by the backend, if any.
-pub fn find_clang() -> Option<PathBuf> {
-    search_result().found.clone()
-}
-
-/// When no usable clang was found but a too-old one was, why it was rejected (for diagnostics).
-pub fn rejected_clang() -> Option<String> {
-    let search = search_result();
-    if search.found.is_some() {
-        return None;
-    }
-    search.too_old.clone()
-}
-
-/// Outcome of the (cached) clang search.
-struct Search {
-    found: Option<PathBuf>,
-    /// The first candidate that runs but is too old, described.
-    too_old: Option<String>,
-}
-
-fn search_result() -> &'static Search {
-    static SEARCH: OnceLock<Search> = OnceLock::new();
-    SEARCH.get_or_init(search)
-}
-
-fn search() -> Search {
-    let explicit = std::env::var_os("VELT_CLANG").filter(|p| !p.is_empty());
-    // An explicit choice is final: silently using another clang would be surprising.
-    let list = match explicit {
-        Some(p) => vec![PathBuf::from(p)],
-        None => candidates(),
-    };
-    let mut too_old = None;
-    for clang in list {
-        match probe(&clang) {
-            Probe::Usable => {
-                return Search {
-                    found: Some(clang),
-                    too_old: None,
-                }
-            }
-            Probe::TooOld(version) if too_old.is_none() => {
-                too_old = Some(format!(
-                    "`{}` is {version}, but the LLVM backend needs clang {MIN_LLVM_MAJOR} or newer",
-                    clang.display()
-                ));
-            }
-            Probe::TooOld(_) | Probe::Missing => {}
-        }
-    }
-    Search {
-        found: None,
-        too_old,
-    }
-}
-
-fn candidates() -> Vec<PathBuf> {
-    let exe = if cfg!(windows) { "clang.exe" } else { "clang" };
-    let mut list = vec![PathBuf::from(exe)];
-    if cfg!(windows) {
-        for var in ["ProgramFiles", "ProgramW6432"] {
-            if let Some(dir) = std::env::var_os(var) {
-                list.push(Path::new(&dir).join("LLVM").join("bin").join(exe));
-            }
-        }
-        list.push(PathBuf::from(r"C:\Program Files\LLVM\bin\clang.exe"));
-    } else {
-        for dir in [
-            "/opt/homebrew/opt/llvm/bin",
-            "/usr/local/opt/llvm/bin",
-            "/usr/local/bin",
-            "/usr/bin",
-        ] {
-            list.push(Path::new(dir).join("clang"));
-        }
-        for version in (MIN_LLVM_MAJOR..=30).rev() {
-            list.push(PathBuf::from(format!("clang-{version}")));
-        }
-    }
-    list
-}
-
-/// Where `clang --version`'s answers are kept across processes ([`set_probe_memo`]).
-static PROBE_MEMO: OnceLock<&'static dyn velt_codegen_cl::CodeCache> = OnceLock::new();
-
-/// Keep the answers of `clang --version` in `memo` (veltc's build cache), keyed by the
-/// executable's path, size and modification time: starting clang to ask costs about 30M
-/// instructions, which every release build paid before compiling anything. Set once, before the
-/// first search; later calls are ignored.
-pub fn set_probe_memo(memo: &'static dyn velt_codegen_cl::CodeCache) {
-    let _ = PROBE_MEMO.set(memo);
-}
-
-/// The memo key of candidate `clang`: its resolved path (a bare name is looked up on `PATH`),
-/// size and modification time. `None` when it can't be found or read, so it is asked.
-fn probe_key(clang: &Path) -> Option<Vec<u8>> {
-    let path = resolve(clang)?;
-    let path = path.canonicalize().unwrap_or(path);
-    let meta = std::fs::metadata(&path).ok()?;
-    let time = (meta.modified().ok())
-        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())?
-        .as_nanos();
-    let mut key = b"velt clang --version 1-".to_vec();
-    key.extend_from_slice(path.to_string_lossy().as_bytes());
-    key.push(0);
-    key.extend_from_slice(&meta.len().to_le_bytes());
-    key.extend_from_slice(&time.to_le_bytes());
-    Some(key)
-}
-
-/// `clang` as a file: itself when it names a directory, else the first match on `PATH`.
-fn resolve(clang: &Path) -> Option<PathBuf> {
-    if clang.components().count() > 1 {
-        return clang.is_file().then(|| clang.to_path_buf());
-    }
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(clang))
-        .find(|p| p.is_file())
-}
-
-/// Whether a clang candidate can compile the backend's IR.
-enum Probe {
-    Usable,
-    /// Runs, but too old; carries the version for the diagnostic (e.g. `clang 14.0.0`).
-    TooOld(String),
-    Missing,
-}
-
-fn probe(clang: &Path) -> Probe {
-    let key = probe_key(clang);
-    let memo = PROBE_MEMO.get();
-    let cached = (key.as_ref().zip(memo)).and_then(|(k, m)| m.get(k));
-    let banner = match cached {
-        Some(banner) => banner,
-        None => {
-            let Ok(out) = Command::new(clang).arg("--version").output() else {
-                return Probe::Missing;
-            };
-            if !out.status.success() {
-                return Probe::Missing;
-            }
-            if let Some((k, m)) = key.as_ref().zip(memo) {
-                m.put(k, &out.stdout);
-            }
-            out.stdout
-        }
-    };
-    match parse_version(&String::from_utf8_lossy(&banner)) {
-        Some(v) if v.major < v.min_major() => Probe::TooOld(v.describe()),
-        // An unrecognized version banner gets the benefit of the doubt.
-        _ => Probe::Usable,
-    }
-}
-
-/// A clang version as printed by `clang --version`.
-#[derive(Debug, PartialEq, Eq)]
-struct ClangVersion {
-    apple: bool,
-    major: u32,
-    full: String,
-}
-
-impl ClangVersion {
-    fn min_major(&self) -> u32 {
-        if self.apple {
-            MIN_APPLE_CLANG_MAJOR
-        } else {
-            MIN_LLVM_MAJOR
-        }
-    }
-
-    fn describe(&self) -> String {
-        let vendor = if self.apple { "Apple clang" } else { "clang" };
-        format!("{vendor} {}", self.full)
-    }
-}
-
-/// Parse the first line of `clang --version`: `[Vendor ]clang version X.Y.Z[ (...)]`.
-fn parse_version(text: &str) -> Option<ClangVersion> {
-    let line = text.lines().next()?;
-    let (prefix, rest) = line.split_once("clang version ")?;
-    let full = rest.split_whitespace().next()?.to_string();
-    let major = full.split('.').next()?.parse().ok()?;
-    Some(ClangVersion {
-        apple: prefix.trim_end().ends_with("Apple"),
-        major,
-        full,
-    })
-}
 
 /// Compile `ir` to an object file for `target` and return its bytes; from `cache` when this clang
 /// compiled the same IR with the same flags before (on this machine, in any build), else storing
@@ -248,14 +41,16 @@ pub(crate) fn compile_cached(
         args.push("-moutline-atomics".into());
     }
     args.extend(["-", "-o", "-"].map(String::from));
-    // The key: this clang (path, size and time of its executable), its arguments (`-march=native`
-    // means this machine's CPU: the cache is the machine's), and the IR, hashed as it is read (a
-    // key of 32 bytes is the cache's key as it is), so the IR is not copied into it.
+    // The key: this clang (path, size and time of its executable, and the version it reports: a
+    // new clang can sit behind the same three), its arguments (`-march=native` means this
+    // machine's CPU: the cache is the machine's), and the IR, hashed as it is read (a key of 32
+    // bytes is the cache's key as it is), so the IR is not copied into it.
     let key = cache.map(|_| {
         let meta = std::fs::metadata(&clang).ok();
         let stamp = meta.map(|m| (m.len(), m.modified().ok()));
         let id = format!(
-            "clang {clang:?} {stamp:?} {args:?} {}",
+            "clang {clang:?} {stamp:?} {:?} {args:?} {}",
+            clang_version(),
             velt_codegen_cl::host_triple()
         );
         let mut key = blake3::Hasher::new();
@@ -271,8 +66,13 @@ pub(crate) fn compile_cached(
     }
     let mut cmd = Command::new(&clang);
     cmd.args(&args);
-    let obj = run_piped(cmd, ir.into_bytes(), "clang")
-        .map_err(|e| unknown_cpu(e, target.cpu.as_deref()))?;
+    let obj = run_piped(cmd, ir.into_bytes(), "clang").map_err(|e| {
+        let named = unknown_cpu(e.clone(), target.cpu.as_deref());
+        if named != e {
+            return named;
+        }
+        blame(e, &clang, &args, &target.triple)
+    })?;
     if let (Some(cache), Some(key)) = (cache, &key) {
         cache.put(key, &obj);
     }
@@ -348,6 +148,27 @@ pub(crate) fn x86_features(triple: &str, cpu: &str) -> CodegenResult<u32> {
         f.insert(key, mask);
     }
     Ok(mask)
+}
+
+/// `err` from a failed compile by `clang` with `args`, as what it means. Generated IR that clang
+/// rejects is the compiler's bug, but a clang that can't run, or doesn't have the target, fails on
+/// any IR. So it is tried on the smallest IR: failing that too says it's the clang. Then what is
+/// known about it is taken back, since the file can be the same when what it needs has gone: the
+/// next build asks it again and can pass it over. This one has no other clang to go to, because
+/// its keys name this one.
+fn blame(err: String, clang: &Path, args: &[String], triple: &str) -> String {
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let Err(failure) = try_compile(clang, &args, PROBE_LIMIT) else {
+        return err;
+    };
+    forget_clang();
+    format!(
+        "the clang in use, `{}` ({}), can't compile for `{triple}`, whatever the program: {}; set \
+         $VELT_CLANG to a clang {MIN_LLVM_MAJOR}+ that can, or use `--backend cranelift`",
+        clang.display(),
+        clang_version().as_deref().unwrap_or("version unknown"),
+        failure.into_text()
+    )
 }
 
 /// `err` from clang, as the user's error when it is that clang does not know the CPU `cpu` (a
@@ -442,55 +263,6 @@ fn parse_opt_level(level: &str) -> Option<&'static str> {
 mod tests {
     use super::*;
 
-    fn usable(banner: &str) -> Option<bool> {
-        parse_version(banner).map(|v| v.major >= v.min_major())
-    }
-
-    use velt_codegen_cl::CodeCache as _;
-
-    /// A memo held in memory.
-    struct Memo(Mutex<HashMap<Vec<u8>, Vec<u8>>>);
-
-    impl velt_codegen_cl::CodeCache for Memo {
-        fn get(&self, key: &[u8]) -> Option<Vec<u8>> {
-            self.0.lock().unwrap().get(key).cloned()
-        }
-
-        fn put(&self, key: &[u8], value: &[u8]) {
-            self.0.lock().unwrap().insert(key.to_vec(), value.to_vec());
-        }
-    }
-
-    /// With a memo, a candidate whose answer is known is not started: a file that can't run
-    /// counts as the clang the memo says it is. Its key follows the file: another size is
-    /// another key, so a replaced clang is asked again.
-    #[test]
-    fn a_known_clang_is_not_started_again() {
-        static MEMO: OnceLock<Memo> = OnceLock::new();
-        let memo = MEMO.get_or_init(|| Memo(Mutex::default()));
-        set_probe_memo(memo);
-        let dir = std::env::temp_dir().join(format!("velt-probe-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let fake = dir.join("not-a-clang");
-        std::fs::write(&fake, b"not a program").unwrap();
-        assert!(
-            matches!(probe(&fake), Probe::Missing),
-            "nothing known: it is run"
-        );
-        let key = probe_key(&fake).unwrap();
-        memo.put(
-            &key,
-            b"clang version 18.1.8 (https://github.com/llvm/llvm-project)\n",
-        );
-        assert!(matches!(probe(&fake), Probe::Usable), "known: not run");
-        memo.put(&key, b"clang version 14.0.0\n");
-        assert!(matches!(probe(&fake), Probe::TooOld(_)));
-        std::fs::write(&fake, b"another, longer file").unwrap();
-        assert_ne!(probe_key(&fake).unwrap(), key, "replaced: asked again");
-        assert!(probe_key(&dir.join("missing")).is_none());
-        let _ = std::fs::remove_dir_all(&dir);
-    }
-
     #[test]
     fn named_cpus_have_the_features_clang_gives_them() {
         if find_clang().is_none() {
@@ -530,38 +302,5 @@ mod tests {
         assert_eq!(parse_opt_level(" s "), Some("-Os"));
         assert_eq!(parse_opt_level(""), None);
         assert_eq!(parse_opt_level("fast"), None);
-    }
-
-    #[test]
-    fn version_banners() {
-        let win = "clang version 22.1.8 (https://github.com/llvm/llvm-project ca7933e)\nTarget: x";
-        assert_eq!(usable(win), Some(true));
-        assert_eq!(
-            usable("Ubuntu clang version 18.1.8 (11~20.04.2)"),
-            Some(true)
-        );
-        assert_eq!(usable("Ubuntu clang version 16.0.6 (++2023)"), Some(true));
-        // Ubuntu 22.04's default clang: no `memory(...)` attributes yet.
-        assert_eq!(
-            usable("Ubuntu clang version 14.0.0-1ubuntu1.1"),
-            Some(false)
-        );
-        assert_eq!(usable("clang version 10.0.0-4ubuntu1"), Some(false));
-        // Apple clang 15 is LLVM 16; Apple clang 14 is LLVM 15.
-        assert_eq!(
-            usable("Apple clang version 15.0.0 (clang-1500.3.9.4)"),
-            Some(true)
-        );
-        assert_eq!(
-            usable("Apple clang version 14.0.3 (clang-1403.0.22.14.1)"),
-            Some(false)
-        );
-        assert_eq!(
-            parse_version("Ubuntu clang version 14.0.0-1ubuntu1.1")
-                .unwrap()
-                .describe(),
-            "clang 14.0.0-1ubuntu1.1"
-        );
-        assert_eq!(usable("gcc (GCC) 13.2.0"), None);
     }
 }

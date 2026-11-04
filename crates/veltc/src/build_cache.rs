@@ -119,9 +119,9 @@ impl velt_codegen_cl::CodeCache for Objects {
     }
 }
 
-/// `clang --version`'s answers (`velt_codegen_llvm::set_probe_memo`), keyed by clang's path,
-/// size and time: a release build no longer starts clang to find out which one it has. The cache
-/// is opened only when the backend first asks.
+/// What clang answered (`velt_codegen_llvm::set_probe_memo`), keyed by clang's path, size and time:
+/// a release build no longer starts clang to find out which one it has, or whether it compiles for
+/// this machine. The cache is opened only when the backend first asks.
 pub struct ClangProbes;
 
 impl velt_codegen_cl::CodeCache for ClangProbes {
