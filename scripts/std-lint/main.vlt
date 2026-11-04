@@ -178,12 +178,14 @@ function exportedClasses(text: string, path: string): i64 {
 /** The first line of `text` exporting a default (`export default …`, `export { x as default }`,
  * a re-exported `default`), or null. */
 function defaultExport(text: string): string | null {
+  let inList = false;
   for (const raw of text.split("\n")) {
     const line = raw.trim();
-    const listed = line.startsWith("export {") && /\bdefault\b/.test(line);
-    if (line.startsWith("export default ") || listed) {
+    inList = inList || /^export\s*(type\s*)?\{/.test(line);
+    if (/^export\s+default\b/.test(line) || (inList && /\bdefault\b/.test(line))) {
       return line;
     }
+    inList = inList && !line.includes("}");
   }
   return null;
 }
