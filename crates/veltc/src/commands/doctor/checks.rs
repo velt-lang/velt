@@ -213,23 +213,35 @@ fn wasm_linker() -> Check {
 }
 
 fn clang() -> Check {
-    match velt_codegen_llvm::describe_clang() {
+    clang_from(
+        velt_codegen_llvm::describe_clang(),
+        velt_codegen_llvm::no_clang_compiles(),
+        velt_codegen_llvm::rejected_clang(),
+    )
+}
+
+/// [`clang`] with the search's answers: which clang and why, whether it is one kept though none
+/// compiles here (so a release build fails, with no fallback), and why none is in use.
+fn clang_from(choice: Option<String>, none_compiles: bool, rejected: Option<String>) -> Check {
+    let hint = if cfg!(windows) {
+        "install LLVM (`winget install LLVM.LLVM`) or set $VELT_CLANG"
+    } else if cfg!(target_os = "macos") {
+        "install LLVM (`brew install llvm`) or set $VELT_CLANG"
+    } else {
+        // Distribution default `clang` packages may be too old (Ubuntu 22.04: 14).
+        "install clang 16 or newer (e.g. `sudo apt install clang-18`) or set $VELT_CLANG"
+    };
+    match choice {
+        Some(choice) if none_compiles => Check::bad(CLANG, Status::Warn, choice, hint),
         Some(choice) => Check::ok(CLANG, choice),
         None => Check::bad(
             CLANG,
             Status::Warn,
             format!(
                 "{} (optional: `--release` falls back to the Cranelift backend)",
-                velt_codegen_llvm::rejected_clang().unwrap_or_else(|| "not found".into())
+                rejected.unwrap_or_else(|| "not found".into())
             ),
-            if cfg!(windows) {
-                "install LLVM (`winget install LLVM.LLVM`) or set $VELT_CLANG"
-            } else if cfg!(target_os = "macos") {
-                "install LLVM (`brew install llvm`) or set $VELT_CLANG"
-            } else {
-                // Distribution default `clang` packages may be too old (Ubuntu 22.04: 14).
-                "install clang 16 or newer (e.g. `sudo apt install clang-18`) or set $VELT_CLANG"
-            },
+            hint,
         ),
     }
 }
@@ -268,6 +280,21 @@ fn probe_writable(dir: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A clang kept though none compiles here isn't a pass: the release smoke test would fail.
+    #[test]
+    fn no_clang_that_compiles_is_a_warning() {
+        let text = "x/clang (clang 29.0.0): no clang found compiles for this machine";
+        let check = clang_from(Some(text.into()), true, None);
+        assert_eq!(check.status, Status::Warn);
+        assert_eq!(check.detail, text);
+        assert!(check.hint.unwrap().contains("$VELT_CLANG"));
+        let check = clang_from(Some("x/clang (clang 29.0.0)".into()), false, None);
+        assert_eq!(check.status, Status::Ok);
+        let check = clang_from(None, false, Some("too old".into()));
+        assert_eq!(check.status, Status::Warn);
+        assert!(check.detail.starts_with("too old"), "{}", check.detail);
+    }
 
     #[test]
     fn the_toolchain_line_says_what_the_launcher_selected() {

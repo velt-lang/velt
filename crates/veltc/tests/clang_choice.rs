@@ -2,9 +2,10 @@
 //! `--version` themselves and hand everything else to the real one.
 #![cfg(unix)]
 
-use std::os::unix::fs::{symlink, PermissionsExt};
+use std::io::Write;
+use std::os::unix::fs::symlink;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::time::{Duration, SystemTime};
 
 mod no_window;
@@ -16,6 +17,22 @@ const HELLO: &str = "function main() {\n  console.log(\"hello\");\n}\n";
 const STD_PROGRAM: &str =
     "function main() {\n  console.log(new URL(\"https://a.example/b\").host);\n}\n";
 
+/// Write the program `path` from another process. A file a program in this process holds open for
+/// writing can't be started (`ETXTBSY`), and a process another test thread is starting holds a copy
+/// of every descriptor until its `exec`, so a script written here can fail to start for that moment.
+fn write_program(path: &Path, text: &str) {
+    let mut writer = Command::new("/bin/sh")
+        .args(["-c", "cat > \"$0\" && chmod 755 \"$0\""])
+        .arg(path)
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = writer.stdin.take().unwrap();
+    stdin.write_all(text.as_bytes()).unwrap();
+    drop(stdin);
+    assert!(writer.wait().unwrap().success());
+}
+
 /// Write the script `path`, a clang that reports `banner` and logs each compile to `$CLANG_LOG`.
 fn fake_clang(path: &Path, banner: &str, real: &Path) {
     let script = format!(
@@ -23,14 +40,12 @@ fn fake_clang(path: &Path, banner: &str, real: &Path) {
          echo \"$0\" >> \"$CLANG_LOG\"\nexec \"{}\" \"$@\"\n",
         real.display()
     );
-    std::fs::write(path, script).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_program(path, &script);
 }
 
 /// Write the script `path`, which runs `body`.
 fn script(path: &Path, body: &str) {
-    std::fs::write(path, format!("#!/bin/sh\n{body}\n")).unwrap();
-    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    write_program(path, &format!("#!/bin/sh\n{body}\n"));
 }
 
 /// A wrapper as ccache's or asdf's are: it starts `real`, beside it, for everything.
@@ -45,12 +60,28 @@ fn path_with(dirs: &[&Path]) -> std::ffi::OsString {
     std::env::join_paths(dirs.iter().map(PathBuf::from).chain(rest)).unwrap()
 }
 
+/// How long a clang that should answer gets, in milliseconds: the limit isn't what those tests check,
+/// and macOS can take tens of seconds over the first start of a new script when it has many to check.
+const AMPLE_MS: u32 = 600_000;
+
 /// `velt <args>` in `dir` with this `PATH` and no `$VELT_CLANG`.
 fn velt_on_path(dir: &Path, args: &[&str], log: &Path, path: &std::ffi::OsStr) -> Output {
+    velt_with_limit(dir, args, log, path, AMPLE_MS)
+}
+
+/// [`velt_on_path`], with candidates getting `limit_ms` to answer.
+fn velt_with_limit(
+    dir: &Path,
+    args: &[&str],
+    log: &Path,
+    path: &std::ffi::OsStr,
+    limit_ms: u32,
+) -> Output {
     runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(args)
         .current_dir(dir)
+        .env("VELT_CLANG_PROBE_LIMIT_MS", limit_ms.to_string())
         .env("CLANG_LOG", log)
         .env("PATH", path)
         .env("VELT_BUILD_CACHE", dir.join("cache"))
@@ -75,6 +106,7 @@ fn velt(dir: &Path, args: &[&str], log: &Path, env: &[(&str, &Path)]) -> Output 
     cmd.args(args)
         .current_dir(dir)
         .env("CLANG_LOG", log)
+        .env("VELT_CLANG_PROBE_LIMIT_MS", AMPLE_MS.to_string())
         .env("VELT_BUILD_CACHE", dir.join("cache"))
         .env_remove("VELT_RT_LINK")
         .env_remove("VELT_STD_OBJECT");
@@ -112,8 +144,12 @@ impl TwoClangs {
             std::fs::create_dir_all(cellar).unwrap();
             let clang = cellar.join("clang");
             fake_clang(&clang, &format!("clang version {version}"), real);
-            let file = std::fs::File::options().write(true).open(&clang).unwrap();
-            file.set_modified(time).unwrap();
+            // Opened to read: setting the time takes no writing, and a descriptor for writing
+            // could stop a process from starting it (`write_program`).
+            std::fs::File::open(&clang)
+                .unwrap()
+                .set_modified(time)
+                .unwrap();
         }
         let two = TwoClangs {
             link: dir.join("clang"),
@@ -365,6 +401,7 @@ fn a_file_that_cannot_start_does_not_hide_the_clang_behind_it() {
         .current_dir(dir)
         .env("CLANG_LOG", &log)
         .env("PATH", path)
+        .env("VELT_CLANG_PROBE_LIMIT_MS", AMPLE_MS.to_string())
         .env("VELT_CLANG", "clang")
         .env("VELT_BUILD_CACHE", dir.join("cache"))
         .env_remove("VELT_RT_LINK")
@@ -398,9 +435,7 @@ fn doctor_with_fakes(dir: &Path, real: &Path, log: &Path) -> String {
     std::fs::create_dir_all(&bin).unwrap();
     fake_clang(&bin.join("clang-30"), "clang version 14.0.0", real);
     fake_clang(&bin.join("clang-29"), "clang version 98.0.0", real);
-    let broken = bin.join("clang-28");
-    std::fs::write(&broken, "#!/bin/sh\nexit 1\n").unwrap();
-    std::fs::set_permissions(&broken, std::fs::Permissions::from_mode(0o755)).unwrap();
+    script(&bin.join("clang-28"), "exit 1");
     fake_clang(&bin.join("clang"), "clang version 97.0.0", real);
     let path = std::env::var_os("PATH").unwrap_or_default();
     let path =
@@ -411,6 +446,7 @@ fn doctor_with_fakes(dir: &Path, real: &Path, log: &Path) -> String {
         .current_dir(dir)
         .env("CLANG_LOG", log)
         .env("PATH", path)
+        .env("VELT_CLANG_PROBE_LIMIT_MS", AMPLE_MS.to_string())
         .env("VELT_BUILD_CACHE", dir.join("cache"))
         .env_remove("VELT_CLANG")
         .env_remove("VELT_RT_LINK")
@@ -469,4 +505,104 @@ fn elsewhere_the_first_usable_clang_is_kept() {
         dir.join("bin/clang").display()
     );
     assert!(out.contains(&want), "{out}");
+}
+
+/// A clang that answers and compiles anything into nothing: enough for the search.
+const ANSWERS_97: &str = "if [ \"$1\" = --version ]; then echo clang version 97.0.0; exit 0; fi\n\
+                          cat >/dev/null\nexit 0";
+
+/// A file in the current directory, or under it by a relative `PATH` entry, claims to be the newest
+/// clang there is and leaves a mark if it is started. A trailing colon is a common mistake and the
+/// current directory may be a repository just cloned: neither doctor nor a release build starts it,
+/// with a clang on `PATH` to use. `execvp` wouldn't reach it, as `clang` comes first.
+#[test]
+fn a_planted_clang_in_the_current_directory_is_never_started() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    std::fs::write(dir.join("a.vlt"), HELLO).unwrap();
+    let bin = dir.join("bin");
+    let tools = dir.join("tools");
+    std::fs::create_dir_all(&bin).unwrap();
+    std::fs::create_dir_all(&tools).unwrap();
+    script(&bin.join("clang"), ANSWERS_97);
+    let mark = dir.join("started");
+    let planted = format!(
+        "echo \"$0\" >> '{}'\nif [ \"$1\" = --version ]; then echo clang version 99.0.0; exit 0; \
+         fi\ncat >/dev/null\nexit 0",
+        mark.display()
+    );
+    for file in [
+        dir.join("clang"),
+        dir.join("clang-29"),
+        tools.join("clang"),
+        tools.join("clang-29"),
+    ] {
+        script(&file, &planted);
+    }
+    let log = dir.join("log");
+    for entry in ["", ".", "tools"] {
+        let path = path_with(&[&bin]);
+        let mut path = path.to_string_lossy().into_owned();
+        path.push(':');
+        path.push_str(entry);
+        let path = std::ffi::OsString::from(path);
+        let doctor = velt_on_path(dir, &["doctor"], &log, &path);
+        let out = text(&doctor.stdout);
+        let want = format!("{} (clang 97.0.0)", bin.join("clang").display());
+        assert!(out.contains(&want), "with `{entry}`: {out}");
+        // Whether this compiles doesn't matter here, only what it starts.
+        velt_on_path(dir, &RELEASE_BUILD, &log, &path);
+        assert!(
+            !mark.exists(),
+            "with `{entry}`: started {}",
+            std::fs::read_to_string(&mark).unwrap_or_default()
+        );
+    }
+}
+
+/// A clang that hangs costs two builds a wait and a line each, not every build, and `velt doctor`
+/// asks it all the same. The limit is a second, and only the clang that hangs is ever waited for.
+#[test]
+fn a_clang_that_hangs_costs_two_waits_not_one_a_build() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    std::fs::write(dir.join("a.vlt"), HELLO).unwrap();
+    let (hung, other) = (dir.join("hung"), dir.join("other"));
+    std::fs::create_dir_all(&hung).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    let clang = hung.join("clang");
+    let starts = dir.join("starts");
+    script(
+        &clang,
+        &format!("echo x >> '{}'\nexec tail -f /dev/null", starts.display()),
+    );
+    script(&other.join("clang-29"), ANSWERS_97);
+    let log = dir.join("log");
+    let path = path_with(&[&hung, &other]);
+    let line = format!("this build waited 1 s for `{}`", clang.display());
+    let build = || {
+        let o = velt_with_limit(dir, &RELEASE_BUILD, &log, &path, 1000);
+        text(&o.stderr)
+    };
+    let started = || std::fs::read_to_string(&starts).map_or(0, |t| t.lines().count());
+    let err = build();
+    assert_eq!(err.matches(&line).count(), 1, "{err}");
+    assert!(err.contains("the next build asks it again"), "{err}");
+    let err = build();
+    assert_eq!(err.matches(&line).count(), 1, "{err}");
+    assert!(err.contains("for an hour"), "{err}");
+    let after_the_second = started();
+    let err = build();
+    assert!(!err.contains(&line), "{err}");
+    assert_eq!(started(), after_the_second, "not started again");
+    let o = velt_with_limit(dir, &["doctor"], &log, &path, 1000);
+    let out = text(&o.stdout);
+    assert!(
+        out.contains(&format!("`{}` did not answer", clang.display())),
+        "{out}"
+    );
+    assert!(
+        !text(&o.stderr).contains(&line),
+        "doctor reports for itself"
+    );
 }

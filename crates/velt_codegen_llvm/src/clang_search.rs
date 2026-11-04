@@ -3,9 +3,9 @@
 //! `$VELT_CLANG` is final: if it can't be used, no other clang is tried behind the user's back.
 //!
 //! On macOS the newest clang found wins, because Apple's clang makes worse choices than a newer
-//! LLVM on the same IR: every `clang` on `PATH`, Homebrew's `llvm`, `/usr/local/bin/clang` and every
-//! versioned `clang-NN` on `PATH` are ranked by the version they report, and `/usr/bin/clang`
-//! comes last. Apple numbers its releases on its own scheme, so its versions can't be compared
+//! LLVM on the same IR: every `clang` in an absolute `PATH` entry, Homebrew's `llvm`,
+//! `/usr/local/bin/clang` and every versioned `clang-NN` in such an entry are ranked by the version
+//! they report, and `/usr/bin/clang` comes last. Apple numbers its releases on its own scheme, so its versions can't be compared
 //! with LLVM's: any clang from LLVM ranks above Apple's. The `/usr/bin/clang` shim is not even
 //! started when another clang will do (on a Mac without developer tools it opens an install
 //! dialog).
@@ -24,6 +24,9 @@
 //! does later is not retried on another: one build's objects come from the clang its keys name
 //! (`clang::compile_cached` says what went wrong, and the next build asks again). The result is
 //! cached per process.
+//!
+//! A candidate that timed out twice running is passed over without being asked for a while, unless
+//! no other will do (`clang_probe::Waits`): it would cost its time limit on every build, used or not.
 
 use std::cmp::Reverse;
 use std::ffi::{OsStr, OsString};
@@ -31,8 +34,8 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 use crate::clang_probe::{
-    compiles, named_clang, probe, resolve_in, runnable, ClangVersion, Probe, MIN_LLVM_MAJOR,
-    PROBE_LIMIT, SYSTEM_CLANG,
+    compiles, named_clang, probe, probe_anyway, probe_limit, probe_unless_hung, resolve_in,
+    runnable, ClangVersion, Probe, MIN_LLVM_MAJOR, SYSTEM_CLANG,
 };
 
 /// The newest `clang-NN` looked for on `PATH`.
@@ -77,6 +80,12 @@ pub fn describe_clang() -> Option<String> {
     search_result().describe()
 }
 
+/// Whether the clang kept is one no clang found compiles with here: the first of them, in case the
+/// build names a target it can do.
+pub fn no_clang_compiles() -> bool {
+    search_result().why == Why::NoneCompiles
+}
+
 /// A candidate that can be used.
 #[derive(Debug)]
 struct Found {
@@ -119,6 +128,8 @@ struct Search {
     rejected: Option<String>,
     /// The other candidates and why they lost, for `velt doctor`.
     passed_over: Vec<String>,
+    /// A candidate wasn't asked, because it hung lately.
+    held: bool,
 }
 
 impl Search {
@@ -162,18 +173,38 @@ fn search() -> Search {
         return first_usable(vec![PathBuf::from(clang)], Why::Explicit, path, &ask);
     }
     let ask = Ask {
-        version: &probe,
+        version: &probe_unless_hung,
+        compiles: &compiles,
+    };
+    let again = Ask {
+        version: &probe_anyway,
         compiles: &compiles,
     };
     if cfg!(target_os = "macos") {
+        let list = ranked_candidates(path, Path::new(SYSTEM_CLANG));
         let system = runnable(PathBuf::from(SYSTEM_CLANG));
-        return newest(
-            ranked_candidates(path, Path::new(SYSTEM_CLANG)),
-            system,
+        return or_ask_again(
+            |ask| newest(list.clone(), system.clone(), ask),
             &ask,
+            &again,
         );
     }
-    first_usable(candidates(), Why::FirstInOrder, path, &ask)
+    or_ask_again(
+        |ask| first_usable(candidates(), Why::FirstInOrder, path, ask),
+        &ask,
+        &again,
+    )
+}
+
+/// `run`'s search, and again asking those left alone for having hung if nothing else will do: a
+/// wait is better than a release build without LLVM for the rest of the hour, when all that was
+/// wrong may have been one busy moment.
+fn or_ask_again(run: impl Fn(&Ask) -> Search, ask: &Ask, again: &Ask) -> Search {
+    let search = run(ask);
+    match search.held && (search.found.is_none() || search.why == Why::NoneCompiles) {
+        true => run(again),
+        false => search,
+    }
 }
 
 /// What the search wants to know of a candidate.
@@ -191,6 +222,7 @@ struct Notes {
     passed_over: Vec<String>,
     /// The first that says it can be used but doesn't compile for this machine.
     cannot_compile: Option<Found>,
+    held: bool,
 }
 
 impl Notes {
@@ -214,9 +246,10 @@ impl Notes {
                 self.reject(format!(
                     "`{}` did not answer `--version` within {} s",
                     clang.display(),
-                    PROBE_LIMIT.as_secs()
+                    probe_limit().as_secs()
                 ));
             }
+            Probe::Held => self.held = true,
             Probe::Missing if known_file => {
                 (self.passed_over).push(format!("`{}` does not run", clang.display()));
             }
@@ -263,6 +296,7 @@ fn first_usable(list: Vec<PathBuf>, why: Why, path: Option<&OsStr>, ask: &Ask) -
                 why,
                 rejected: None,
                 passed_over: notes.passed_over,
+                held: notes.held,
             };
         }
     }
@@ -283,6 +317,7 @@ fn first_usable(list: Vec<PathBuf>, why: Why, path: Option<&OsStr>, ask: &Ask) -
         } else {
             vec![]
         },
+        held: notes.held,
         found,
     }
 }
@@ -332,6 +367,7 @@ fn newest(list: Vec<PathBuf>, system: Option<PathBuf>, ask: &Ask) -> Search {
         found,
         why,
         passed_over: notes.passed_over,
+        held: notes.held,
     }
 }
 
@@ -376,9 +412,25 @@ fn rank(found: &Found) -> (Rank, (u32, u32, u32)) {
 /// the one the user installed. That is one `stat` per name and directory, each build; only a clang
 /// not seen before costs more, once, for its first `--version`.
 fn ranked_candidates(path: Option<&OsStr>, system: &Path) -> Vec<PathBuf> {
+    ranked_among(path, system, &runnable)
+}
+
+/// [`ranked_candidates`], with `can_start` saying which files can be started.
+///
+/// Only absolute `PATH` entries count. An empty or relative one means the current directory, often
+/// a repository just cloned, and `execvp` reaches it only when nothing before it has the name. This
+/// search looks past every match, so it would run a file there on every `velt build --release` and
+/// `velt doctor`, and rank it by what it claims to be.
+fn ranked_among(
+    path: Option<&OsStr>,
+    system: &Path,
+    can_start: &dyn Fn(PathBuf) -> Option<PathBuf>,
+) -> Vec<PathBuf> {
     let on_path = |name: String| -> Vec<PathBuf> {
         let dirs = path.map(std::env::split_paths).into_iter().flatten();
-        dirs.filter_map(|dir| runnable(dir.join(&name))).collect()
+        dirs.filter(|dir| dir.is_absolute())
+            .filter_map(|dir| can_start(dir.join(&name)))
+            .collect()
     };
     let known = [
         "/opt/homebrew/opt/llvm/bin/clang",
@@ -387,7 +439,7 @@ fn ranked_candidates(path: Option<&OsStr>, system: &Path) -> Vec<PathBuf> {
     ]
     .map(PathBuf::from)
     .into_iter()
-    .filter_map(runnable);
+    .filter_map(can_start);
     let versioned = (MIN_LLVM_MAJOR..=NEWEST_VERSIONED_CLANG)
         .rev()
         .flat_map(|version| on_path(format!("clang-{version}")));

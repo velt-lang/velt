@@ -7,13 +7,18 @@
 //! clang. A wrapper (ccache, asdf, mise, a script of one's own) stays the same while the clang
 //! behind it changes, and the answer is what keys the objects, so a wrapper is asked each build:
 //! see [`answers_for_itself`].
+//!
+//! A candidate that hangs costs [`PROBE_LIMIT`] each time it is asked, whether the build uses it or
+//! not, so once it has failed to answer twice running a build's search leaves it alone for
+//! [`HUNG_HOLD`] (see [`Waits`]).
 
 use std::ffi::OsStr;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitStatus, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, OnceLock};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use velt_codegen_cl::CodeCache;
 
@@ -26,6 +31,12 @@ pub(crate) const SYSTEM_CLANG: &str = "/usr/bin/clang";
 /// How long a candidate gets to answer. Far longer than any clang takes (a first start on a busy
 /// machine, a virus scan), so that only one that hangs is passed over.
 pub(crate) const PROBE_LIMIT: Duration = Duration::from_secs(30);
+/// How long, in seconds, a build's search leaves alone a candidate that hung, and how long one
+/// timeout waits for a second. A hung shim then costs two waits an hour rather than one a build.
+pub(crate) const HUNG_HOLD: u64 = 3600;
+/// How much of a candidate's output is kept: its first line is all that is wanted. The rest is read
+/// and dropped, so that it isn't killed by a closed pipe, whatever it writes.
+const MOST_OUTPUT: u64 = 64 * 1024;
 /// What the target check compiles. Its name is also how tests tell it from a real compile.
 const SMALLEST_IR: &[u8] = b"define void @velt_clang_check() {\n  ret void\n}\n";
 /// The memo's value for a check that passed; anything else is why it failed.
@@ -44,6 +55,192 @@ fn memo() -> Option<&'static dyn CodeCache> {
     PROBE_MEMO.get().copied()
 }
 
+/// How long a candidate gets: [`PROBE_LIMIT`], or `$VELT_CLANG_PROBE_LIMIT_MS` for the tests that
+/// run a hanging clang end to end.
+pub(crate) fn probe_limit() -> Duration {
+    (std::env::var("VELT_CLANG_PROBE_LIMIT_MS").ok())
+        .and_then(|ms| ms.parse().ok())
+        .map_or(PROBE_LIMIT, Duration::from_millis)
+}
+
+/// Whether this process asks a candidate that hung lately, and says nothing of the wait: `velt
+/// doctor`, which is how a user finds out what is wrong and reports it itself.
+static ASKS_EVERY_CLANG: AtomicBool = AtomicBool::new(false);
+
+/// Ask every candidate in this process's search, even one that hung lately, and take back what is
+/// known of one that answers now, for later builds too. Before the first search.
+pub fn ask_every_clang() {
+    ASKS_EVERY_CLANG.store(true, Ordering::Relaxed);
+}
+
+/// What a build's search needs to pay for a candidate that hangs only once in a while.
+///
+/// One timeout says little: macOS checks a new executable on its first start, which can take longer
+/// than the limit when it has many to check (a `brew upgrade`, a busy machine), and the next start
+/// is quick even if the first was killed. So the first timeout is only noted, and the next build
+/// asks again. A second within [`HUNG_HOLD`] with no answer between them is what leaves the
+/// candidate alone. Holding it after one would pass over a clang that works for the whole period.
+///
+/// Both are kept under the file's key. The cache has no way to replace or delete a value, so the
+/// hour number is in the key, and the time in the value says exactly how old the note is: a note
+/// counts from the moment it is written until [`HUNG_HOLD`] later, whichever of two hours it falls
+/// in. A clock that goes back past the note makes it look written in the future, and such a note
+/// doesn't count, so the clang is asked. A clock that jumps ahead only ends the wait early. Without
+/// a clock, or without a cache (`VELT_BUILD_CACHE=off`), nothing is kept and each build waits, and
+/// says so.
+pub(crate) struct Waits<'a> {
+    pub(crate) memo: Option<&'a dyn CodeCache>,
+    pub(crate) limit: Duration,
+    /// Seconds since 1970.
+    pub(crate) now: Option<u64>,
+    /// Says that a build waited.
+    pub(crate) tell: &'a dyn Fn(&str),
+}
+
+/// What is known of a candidate hanging.
+struct HungNote {
+    /// There is a note, in force or not.
+    seen: bool,
+    /// It timed out once lately: another timeout leaves it alone.
+    timed_out_once: bool,
+    /// Leave the candidate alone.
+    in_force: bool,
+}
+
+impl Waits<'_> {
+    /// What `clang` says it is. If `hold`, a candidate that hung lately isn't asked.
+    pub(crate) fn version(&self, clang: &Path, hold: bool) -> Probe {
+        let note = self.hung_note(clang);
+        if hold && note.in_force {
+            return Probe::Held;
+        }
+        let probe = probe_with(clang, self.memo, self.limit);
+        match probe {
+            Probe::TimedOut => self.hung(clang, "`--version`"),
+            _ if note.seen => self.answered(clang),
+            _ => {}
+        }
+        probe
+    }
+
+    /// Whether `clang` compiles for this machine, as [`compiles_with`].
+    pub(crate) fn check(&self, clang: &Path, banner: &str) -> Result<(), String> {
+        let result = check_with(clang, banner, self.memo, self.limit);
+        if matches!(result, Err(Failure::TimedOut(_))) {
+            self.hung(clang, "a small compile");
+        }
+        result.map_err(Failure::into_text)
+    }
+
+    fn hung_note(&self, clang: &Path) -> HungNote {
+        let mut note = HungNote {
+            seen: false,
+            timed_out_once: false,
+            in_force: false,
+        };
+        let (Some(memo), Some(now)) = (self.memo, self.now) else {
+            return note;
+        };
+        let Some(base) = hung_key(clang) else {
+            return note;
+        };
+        let base = current(base, memo);
+        for hour in [now / HUNG_HOLD, (now / HUNG_HOLD).saturating_sub(1)] {
+            for kind in [ONCE, HELD] {
+                let Some(value) = memo.get(&in_hour(&base, kind, hour)) else {
+                    continue;
+                };
+                let Ok(written) = <[u8; 8]>::try_from(value.as_slice()) else {
+                    continue;
+                };
+                note.seen = true;
+                // `checked_sub` is `None` for a note from the future: the clock went back.
+                let age = now.checked_sub(u64::from_le_bytes(written));
+                let lately = age.is_some_and(|age| age < HUNG_HOLD);
+                match kind {
+                    ONCE => note.timed_out_once |= lately,
+                    _ => note.in_force |= lately,
+                }
+            }
+        }
+        note
+    }
+
+    /// `clang` didn't answer `what` in time: keep that, and say the build waited.
+    fn hung(&self, clang: &Path, what: &str) {
+        if let (Some(memo), Some(now), Some(base)) = (self.memo, self.now, hung_key(clang)) {
+            let kind = match self.hung_note(clang).timed_out_once {
+                true => HELD,
+                false => ONCE,
+            };
+            let base = current(base, memo);
+            memo.put(&in_hour(&base, kind, now / HUNG_HOLD), &now.to_le_bytes());
+        }
+        let note = self.hung_note(clang);
+        let then = if note.in_force {
+            "it isn't asked again for an hour unless no other clang will do; `velt doctor` asks it \
+             now"
+        } else if note.timed_out_once {
+            "the next build asks it again"
+        } else {
+            "`velt doctor` says which clang builds use"
+        };
+        (self.tell)(&format!(
+            "note: this build waited {} s for `{}`, which did not answer {what}; {then}",
+            self.limit.as_secs(),
+            clang.display(),
+        ));
+    }
+
+    /// `clang`, which a note says hung, did answer: later builds can ask it again.
+    fn answered(&self, clang: &Path) {
+        if let (Some(memo), Some(base)) = (self.memo, hung_key(clang)) {
+            take_back(&base, memo);
+        }
+    }
+}
+
+/// The key of the notes that `clang` hung: the file's key and the name it is started as, since a
+/// link to a program that picks what to run by that name (mise, asdf) is a clang per name.
+fn hung_key(clang: &Path) -> Option<Vec<u8>> {
+    let path = real_file(clang)?;
+    let mut key = b"velt clang hung 1-".to_vec();
+    key.extend(file_key(&path, &behind(&path))?);
+    key.push(0);
+    if let Some(name) = clang.file_name() {
+        key.extend_from_slice(name.to_string_lossy().as_bytes());
+    }
+    Some(key)
+}
+
+/// The kinds of note: it timed out once, and it is left alone.
+const ONCE: &str = "once";
+const HELD: &str = "held";
+
+fn in_hour(base: &[u8], kind: &str, hour: u64) -> Vec<u8> {
+    let mut key = base.to_vec();
+    key.extend_from_slice(format!("\0{kind} {hour}").as_bytes());
+    key
+}
+
+/// [`Waits`] as a build has them. `velt doctor` reports for itself.
+fn waits() -> Waits<'static> {
+    let quiet = ASKS_EVERY_CLANG.load(Ordering::Relaxed);
+    Waits {
+        memo: memo(),
+        limit: probe_limit(),
+        now: SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .ok()
+            .map(|t| t.as_secs()),
+        tell: if quiet {
+            &|_| {}
+        } else {
+            &|line| eprintln!("{line}")
+        },
+    }
+}
+
 /// Whether a clang candidate can compile the backend's IR, by what it says it is.
 #[derive(Debug)]
 pub(crate) enum Probe {
@@ -54,13 +251,26 @@ pub(crate) enum Probe {
     },
     /// Runs, but too old; carries the version for the diagnostic (e.g. `clang 14.0.0`).
     TooOld(String),
-    /// Started, but didn't answer within [`PROBE_LIMIT`].
+    /// Started, but didn't answer within the limit.
     TimedOut,
+    /// Not asked: it hung lately ([`Waits`]).
+    Held,
     Missing,
 }
 
+/// What `clang` says it is, however it behaved before: `$VELT_CLANG`, which is final.
 pub(crate) fn probe(clang: &Path) -> Probe {
-    probe_with(clang, memo(), PROBE_LIMIT)
+    probe_with(clang, memo(), probe_limit())
+}
+
+/// What the candidate `clang` says it is, unless it hung lately.
+pub(crate) fn probe_unless_hung(clang: &Path) -> Probe {
+    waits().version(clang, !ASKS_EVERY_CLANG.load(Ordering::Relaxed))
+}
+
+/// What the candidate `clang` says it is, even if it hung lately: nothing else would do.
+pub(crate) fn probe_anyway(clang: &Path) -> Probe {
+    waits().version(clang, false)
 }
 
 pub(crate) fn probe_with(clang: &Path, memo: Option<&dyn CodeCache>, limit: Duration) -> Probe {
@@ -90,22 +300,32 @@ pub(crate) fn probe_with(clang: &Path, memo: Option<&dyn CodeCache>, limit: Dura
 /// on a toolchain for another target only (wasi-sdk's `clang-NN`). Costs about as much as asking
 /// its version, so it is asked of the clang about to be chosen, not of every candidate.
 pub(crate) fn compiles(clang: &Path, banner: &str) -> Result<(), String> {
-    compiles_with(clang, banner, memo(), PROBE_LIMIT)
+    waits().check(clang, banner)
 }
 
+#[cfg(test)]
 pub(crate) fn compiles_with(
     clang: &Path,
     banner: &str,
     memo: Option<&dyn CodeCache>,
     limit: Duration,
 ) -> Result<(), String> {
+    check_with(clang, banner, memo, limit).map_err(Failure::into_text)
+}
+
+fn check_with(
+    clang: &Path,
+    banner: &str,
+    memo: Option<&dyn CodeCache>,
+    limit: Duration,
+) -> Result<(), Failure> {
     let key = check_key(clang, banner)
         .zip(memo)
         .map(|(k, m)| current(k, m));
     let cached = (key.as_ref().zip(memo)).and_then(|(k, m)| m.get(k));
     match cached.as_deref() {
         Some(COMPILES) => return Ok(()),
-        Some(why) => return Err(String::from_utf8_lossy(why).into_owned()),
+        Some(why) => return Err(Failure::Refused(String::from_utf8_lossy(why).into_owned())),
         None => {}
     }
     let target = format!("--target={}", velt_codegen_cl::host_triple());
@@ -123,12 +343,13 @@ pub(crate) fn compiles_with(
     if let Some((k, m)) = key.as_ref().zip(memo) {
         match &result {
             Ok(()) => m.put(k, COMPILES),
-            // Only clang's own verdict lasts: a crash or a timeout may not happen next time.
+            // Only clang's own verdict lasts: a crash, a file that couldn't be started because it
+            // was being written, or a timeout may not happen next time.
             Err(Failure::Refused(why)) => m.put(k, why.as_bytes()),
-            Err(Failure::Other(_)) => {}
+            Err(Failure::Other(_) | Failure::TimedOut(_)) => {}
         }
     }
-    result.map_err(Failure::into_text)
+    result
 }
 
 /// Why a small compile failed.
@@ -136,14 +357,16 @@ pub(crate) fn compiles_with(
 pub(crate) enum Failure {
     /// clang ran and said no.
     Refused(String),
-    /// It didn't start, was killed or took too long.
+    /// It didn't start, a wrapper couldn't start what it wraps, or it was killed.
     Other(String),
+    /// It took too long.
+    TimedOut(String),
 }
 
 impl Failure {
     pub(crate) fn into_text(self) -> String {
         match self {
-            Failure::Refused(why) | Failure::Other(why) => why,
+            Failure::Refused(why) | Failure::Other(why) | Failure::TimedOut(why) => why,
         }
     }
 }
@@ -162,12 +385,13 @@ pub(crate) fn try_compile(clang: &Path, args: &[&str], limit: Duration) -> Resul
             let line = text.lines().find(|l| !l.trim().is_empty());
             let why = line.map_or_else(|| status.to_string(), |l| l.trim().to_string());
             Err(match status.code() {
+                // A shell's "could not start that": a wrapper whose clang is being replaced.
+                Some(126 | 127) | None => Failure::Other(why),
                 Some(_) => Failure::Refused(why),
-                None => Failure::Other(why),
             })
         }
         Ran::NotStarted(why) => Err(Failure::Other(why)),
-        Ran::TimedOut => Err(Failure::Other(format!(
+        Ran::TimedOut => Err(Failure::TimedOut(format!(
             "it took longer than {} s",
             limit.as_secs()
         ))),
@@ -187,8 +411,13 @@ pub(crate) fn forget_in(clang: &Path, banner: &str, memo: Option<&dyn CodeCache>
         .into_iter()
         .flatten()
     {
-        memo.put(&taken_back(&key, times_taken_back(&key, memo)), b"");
+        take_back(&key, memo);
     }
+}
+
+/// Leave `key`'s answer behind: see [`current`].
+fn take_back(key: &[u8], memo: &dyn CodeCache) {
+    memo.put(&taken_back(key, times_taken_back(key, memo)), b"");
 }
 
 /// `key` with what has been taken back from it. The cache keeps the first value stored under a key
@@ -244,7 +473,8 @@ fn run_limited(mut cmd: Command, limit: Duration) -> Ran {
     std::thread::spawn(move || {
         let mut text = vec![];
         if let Some(mut pipe) = pipe {
-            let _ = pipe.read_to_end(&mut text);
+            let _ = pipe.by_ref().take(MOST_OUTPUT).read_to_end(&mut text);
+            let _ = std::io::copy(&mut pipe, &mut std::io::sink());
         }
         let _ = send.send(text);
     });

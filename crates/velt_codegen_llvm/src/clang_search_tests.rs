@@ -272,6 +272,108 @@ fn every_match_on_path_is_a_candidate() {
     );
 }
 
+/// An empty or relative `PATH` entry is the current directory, or under it: not looked in, not even
+/// asked about, so nothing relative or bare can reach a probe, whichever files are there.
+#[cfg(unix)]
+#[test]
+fn only_absolute_path_entries_are_searched() {
+    for entry in ["", ".", "tools", "./tools", "../tools"] {
+        for path in [format!("/a/bin:{entry}"), format!("{entry}:/a/bin")] {
+            let asked = RefCell::new(vec![]);
+            let list = ranked_among(Some(OsStr::new(&path)), Path::new("/none"), &|file| {
+                asked.borrow_mut().push(file.clone());
+                Some(file)
+            });
+            let asked = asked.into_inner();
+            assert!(asked.iter().all(|f| f.is_absolute()), "{path}: {asked:?}");
+            assert!(list.iter().all(|f| f.is_absolute()), "{path}: {list:?}");
+            assert!(list.contains(&PathBuf::from("/a/bin/clang-29")), "{path}");
+            assert!(list.contains(&PathBuf::from("/a/bin/clang")), "{path}");
+        }
+    }
+}
+
+/// The same with a file there that could be started, through a relative path to the test's
+/// directory. `execvp` would reach it, so naming the program still resolves as it does.
+#[cfg(unix)]
+#[test]
+fn a_clang_in_a_relative_path_entry_is_not_a_candidate() {
+    let tmp = TempDir::new("relative");
+    let tools = tmp.subdir("tools");
+    program(&tools.join("clang-29"));
+    let cwd = std::env::current_dir().unwrap();
+    let up = "../".repeat(cwd.components().count() - 1);
+    let relative = Path::new(&up).join(tools.strip_prefix("/").unwrap());
+    let there = relative.join("clang-29");
+    assert_eq!(
+        runnable(there.clone()).as_ref(),
+        Some(&there),
+        "it is there"
+    );
+    let list = ranked_candidates(Some(relative.as_os_str()), Path::new("/none"));
+    assert!(!list.contains(&there), "{list:?}");
+    assert!(list.iter().all(|f| f.is_absolute()), "{list:?}");
+    assert_eq!(
+        resolve_in(Path::new("clang-29"), Some(relative.as_os_str())),
+        Some(there)
+    );
+}
+
+/// A candidate that hung lately is passed over for another that will do, without a second asking.
+/// With none, it is asked after all: better a wait than a release build without LLVM.
+#[test]
+fn a_clang_that_hung_is_asked_only_if_no_other_will_do() {
+    let hung = PathBuf::from("a/clang-30");
+    let good = PathBuf::from("b/clang");
+    let held = |clang: &Path| match clang == hung {
+        true => Probe::Held,
+        false => judge("clang version 19.1.7"),
+    };
+    let no_second_asking = |_: &Path| -> Probe { panic!("asked again") };
+    let list = vec![hung.clone(), good.clone()];
+    let search = or_ask_again(
+        |ask| newest(list.clone(), None, ask),
+        &all_compile(&held),
+        &all_compile(&no_second_asking),
+    );
+    assert_eq!(chosen(&search), "b/clang");
+    let search = or_ask_again(
+        |ask| first_usable(list.clone(), Why::FirstInOrder, None, ask),
+        &all_compile(&held),
+        &all_compile(&no_second_asking),
+    );
+    assert_eq!(chosen(&search), "b/clang");
+    let answers = |_: &Path| judge("clang version 19.1.7");
+    let only = vec![hung.clone()];
+    let search = or_ask_again(
+        |ask| newest(only.clone(), None, ask),
+        &all_compile(&held),
+        &all_compile(&answers),
+    );
+    assert_eq!(chosen(&search), "a/clang-30");
+    let search = or_ask_again(
+        |ask| first_usable(only.clone(), Why::FirstInOrder, None, ask),
+        &all_compile(&held),
+        &all_compile(&answers),
+    );
+    assert_eq!(chosen(&search), "a/clang-30");
+    // One that can't compile doesn't count as one that will do: the other is asked.
+    let cannot = Ask {
+        version: &held,
+        compiles: &|clang, _| match clang == good {
+            true => Err("no available targets".to_string()),
+            false => Ok(()),
+        },
+    };
+    let again = Ask {
+        version: &answers,
+        compiles: cannot.compiles,
+    };
+    let search = or_ask_again(|ask| newest(list.clone(), None, ask), &cannot, &again);
+    assert_eq!(chosen(&search), "a/clang-30");
+    assert_eq!(search.why, Why::Newest);
+}
+
 /// As `execvp` would: a file that can't be started doesn't hide one further on `PATH`.
 #[cfg(unix)]
 #[test]

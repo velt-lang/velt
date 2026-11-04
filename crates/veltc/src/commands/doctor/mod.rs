@@ -58,6 +58,7 @@ impl Check {
 
 /// `velt doctor`: print every check; exit 1 if a required one failed.
 pub fn doctor_command() -> ExitCode {
+    velt_codegen_llvm::ask_every_clang();
     let mut all = checks::environment();
     let clang_found = all
         .iter()
