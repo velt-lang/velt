@@ -499,3 +499,68 @@ fn npm_packages_have_no_package_s_trust() {
     write(root, "app/src/main.vlt", call);
     check(root, "repo/js");
 }
+
+/// `export { … }` may come before the import it names: a raw name is raw in either order, under
+/// its own name or another.
+#[test]
+fn a_local_export_before_its_import_is_raw() {
+    let dir = test_dir::TestDir::new();
+    let root = dir.path();
+    let import = "import { Ptr as Q } from \"velt/ffi\";\n";
+    for (good, name) in [
+        (format!("export {{ Q }};\n{import}"), "Q"),
+        (format!("export {{ Q as R }};\n{import}"), "R"),
+        (format!("{import}export {{ Q }};\n"), "Q"),
+        (format!("{import}export {{ Q as R }};\n"), "R"),
+    ] {
+        let evil = format!("import {{ {name} }} from \"good\";\n\nexport function e() {{}}\n");
+        project(root, &good, &evil);
+        let out = errors(&root.join("app"));
+        assert!(
+            out.contains(&format!("`{name}` of `good` is raw native API")),
+            "{good}: {out}"
+        );
+    }
+}
+
+/// A getter and a setter of one name, one of them unsafe: through `any` the safe one works and
+/// the unsafe one is the `TypeError`, whichever way round.
+#[test]
+fn an_unsafe_accessor_leaves_its_safe_other_half_alone() {
+    let dir = test_dir::TestDir::new();
+    let root = dir.path();
+    let app = root.join("app");
+    let class = |members: &str| format!("export class C {{\n  n: i64 = 1;\n{members}\n}}\n");
+    let unsafe_setter = class(
+        "  get x(): i64 {\n    return this.n;\n  }\n\n  /** Unsafe: test. */\n  unsafe set x(v: i64) {\n    console.log(\"unsafe code ran\");\n    this.n = v;\n  }",
+    );
+    let unsafe_getter = class(
+        "  /** Unsafe: test. */\n  unsafe get x(): i64 {\n    console.log(\"unsafe code ran\");\n    return this.n;\n  }\n\n  set x(v: i64) {\n    this.n = v;\n  }",
+    );
+    let evil = |body: &str| {
+        format!("import {{ C }} from \"good\";\n\nexport function e() {{\n  const a: any = new C();\n{body}\n}}\n")
+    };
+    let read = "  console.log(a.x);";
+    let write = "  a.x = 2;\n  console.log(a.n);";
+    let works = |good: &str, body: &str, expected: &str| {
+        project(root, good, &evil(body));
+        let o = velt(&app, &["run"]);
+        assert!(o.status.success(), "{good}{body}: {}", text(&o));
+        assert_eq!(String::from_utf8_lossy(&o.stdout), expected, "{good}{body}");
+    };
+    let stops = |good: &str, body: &str| {
+        project(root, good, &evil(body));
+        let o = velt(&app, &["run"]);
+        let out = text(&o);
+        assert!(!o.status.success(), "{good}{body}: {out}");
+        assert!(!out.contains("unsafe code ran"), "{good}{body}: {out}");
+        assert!(
+            out.contains("TypeError: 'x' is unsafe"),
+            "{good}{body}: {out}"
+        );
+    };
+    works(&unsafe_setter, read, "1\n");
+    stops(&unsafe_setter, write);
+    works(&unsafe_getter, write, "2\n");
+    stops(&unsafe_getter, read);
+}

@@ -70,4 +70,14 @@ pub enum DynMemberKind {
     /// `unsafe` block can be around a dynamic call, so the slots find it by name only to refuse
     /// it, with a `TypeError` naming it. Its `def` is never called from glue.
     Unsafe,
+    /// An unsafe setter, as [`Self::Unsafe`]: only a write finds it, so a safe getter of the same
+    /// name still reads.
+    UnsafeSetter,
+}
+
+impl DynMemberKind {
+    /// Is it found by a write only?
+    pub fn is_setter(self) -> bool {
+        matches!(self, DynMemberKind::Setter | DynMemberKind::UnsafeSetter)
+    }
 }

@@ -310,10 +310,6 @@ impl<'a> RawExports<'a> {
                 continue;
             };
             if imp.from.is_empty() {
-                // `export { a, b as c }`: exports local names.
-                for n in imp.names.iter().filter(|n| local.contains(&n.name.name)) {
-                    exported.insert(n.alias.as_ref().unwrap_or(&n.name).name.clone());
-                }
                 continue;
             }
             let Some(target) = target_of(m, &imp.from) else {
@@ -332,6 +328,18 @@ impl<'a> RawExports<'a> {
                     exported.insert(name);
                 } else {
                     local.insert(name);
+                }
+            }
+        }
+        // `export { a, b as c }` exports local names: after the imports, as one can come before
+        // the import it names.
+        for item in &m.ast.items {
+            let ast::ItemKind::Import(imp) = &item.kind else {
+                continue;
+            };
+            if imp.from.is_empty() {
+                for n in imp.names.iter().filter(|n| local.contains(&n.name.name)) {
+                    exported.insert(n.alias.as_ref().unwrap_or(&n.name).name.clone());
                 }
             }
         }

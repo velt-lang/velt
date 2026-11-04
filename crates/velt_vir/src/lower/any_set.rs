@@ -143,7 +143,7 @@ impl FnLower<'_, '_> {
                 continue;
             }
             let next = self.on_key(key, &m.name);
-            if m.kind == DynMemberKind::Unsafe {
+            if matches!(m.kind, DynMemberKind::Unsafe | DynMemberKind::UnsafeSetter) {
                 self.any_unsafe_member(&m.name);
                 self.switch_to(next);
                 continue;

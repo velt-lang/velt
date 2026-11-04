@@ -491,7 +491,7 @@ impl FnLower<'_, '_> {
                 self.switch_to(next);
             }
             for m in self.dyn_members_of(d) {
-                if m.kind == DynMemberKind::Setter || fields.contains(&m.name) {
+                if m.kind.is_setter() || fields.contains(&m.name) {
                     continue;
                 }
                 let next = self.on_key(key, &m.name);
@@ -704,7 +704,7 @@ impl FnLower<'_, '_> {
             self.switch_to(next);
         }
         for m in self.dyn_members_of(d) {
-            if m.kind == DynMemberKind::Setter || fields.contains(&m.name) {
+            if m.kind.is_setter() || fields.contains(&m.name) {
                 continue;
             }
             let next = self.on_key(key, &m.name);
