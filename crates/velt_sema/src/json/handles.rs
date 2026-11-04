@@ -36,7 +36,7 @@ impl Ctx<'_> {
             let mut libs = NativeLibraries::default();
             for module in self.modules.iter().filter(|m| !m.is_std) {
                 let declares = module.ast.items.iter().any(
-                    |i| matches!(&i.kind, ItemKind::ExternFn(s) if !s.is_system && !s.is_intrinsic && s.host.is_none()),
+                    |i| matches!(&i.kind, ItemKind::ExternFn(s) if !s.is_system && !s.is_intrinsic && s.host.is_none() && s.c.is_none()),
                 );
                 match (declares, module.is_dependency) {
                     (false, _) => {}

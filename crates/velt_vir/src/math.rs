@@ -494,6 +494,7 @@ mod tests {
             ret,
             noreturn: false,
             host: None,
+            c_decl: None,
         };
         assert_eq!(
             MathOp::of_extern(&ext(vec![Ty::U64], Ty::U64)),

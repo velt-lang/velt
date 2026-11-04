@@ -117,6 +117,7 @@ fn f_fingerprint(v: &Variant, mode: Mode) -> Fingerprint {
                 ret: crate::vir::HostValue::Void,
                 is_async: false,
             }),
+            c_decl: None,
         },
         ExternFn {
             symbol: "velt_rt_panic".into(),
@@ -124,6 +125,7 @@ fn f_fingerprint(v: &Variant, mode: Mode) -> Fingerprint {
             ret: Ty::Unit,
             noreturn: v.noreturn,
             host: None,
+            c_decl: None,
         },
     ];
     let leaf = |symbol: &str| {

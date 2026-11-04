@@ -28,6 +28,7 @@ macro_rules! bail {
 }
 
 mod abi;
+mod c_libraries;
 #[cfg(unix)]
 mod c_symbols;
 mod cache;

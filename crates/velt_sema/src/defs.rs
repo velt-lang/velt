@@ -239,6 +239,8 @@ pub(crate) struct FnInfo<'m> {
     pub system: Option<Vec<bool>>,
     /// `declare host("m") function` (`hir::ExternFnDef::host`): the import and what crosses.
     pub host: Option<crate::hir::HostImport>,
+    /// `declare c("lib") function` (`hir::ExternFnDef::c`). `None` for anything else.
+    pub c: Option<crate::hir::CImport>,
     /// `declare intrinsic function` (std/lang/intrinsics): what a call of it is. A call is
     /// checked against its signature and becomes the intrinsic (`body::expr::intrinsic_call`),
     /// so its `hir::ExternFnDef` is never called and lowering never declares its symbol.

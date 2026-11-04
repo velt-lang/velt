@@ -376,6 +376,9 @@ pub struct ExternFn {
     /// A host function (additive): not a link symbol but the WebAssembly import this names
     /// (`symbol` is only its name in the object). `None` for every other extern.
     pub host: Option<HostImport>,
+    /// A C function (`declare c`, additive): where it is declared (`path:line:col`), for the
+    /// dev JIT's error when the symbol is in no loaded library. `None` for every other extern.
+    pub c_decl: Option<String>,
 }
 
 /// Read-only data (string literal bytes, vtables, …), or a word the program writes.
