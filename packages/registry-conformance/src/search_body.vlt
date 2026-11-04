@@ -1,0 +1,8 @@
+// registry-conformance: JSON clients read from `/api/v1/<name>/index` and `/search`.
+
+import { HitBody } from "./hit_body";
+
+/** A search's answer. */
+export class SearchBody {
+  packages: HitBody[] = [];
+}

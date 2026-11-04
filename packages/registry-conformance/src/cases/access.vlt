@@ -1,0 +1,59 @@
+// registry-conformance: names that must be refused, and a failed publish that must leave nothing
+// (crates/velt_registry/src/tests/access.rs).
+
+import { Case } from "../case";
+import { Run } from "../run";
+
+// `..` and `..\\x` are not here: a URL-standard client resolves them before they are sent, so only
+// a raw socket can send them. The servers' own tests cover them.
+async function badPackageNames(run: Run): Promise<void> {
+  const { client, check } = run;
+  const alice = run.users.alice;
+  const names = ["..%5Cother", ".auth", ".staging", "Lib", "con", "nul", "com1", "lpt9"];
+  for (const name of names) {
+    check.answer(`GET ${name}`, await client.call("GET", `${name}/owners`), 400);
+    check.answer(
+      `PUT owner on ${name}`,
+      await client.call("PUT", `${name}/owners/bob`, alice),
+      400,
+    );
+    check.answer(`publish ${name}`, await client.call("PUT", `${name}/1.0.0`, alice), 400);
+  }
+}
+
+async function badUserNames(run: Run): Promise<void> {
+  const { client, check } = run;
+  const alice = run.users.alice;
+  const lib = run.name("users");
+  check.answer("publish", await client.publish(lib, "1.0.0", alice), 201);
+  for (const user of [".auth", "Bob", "..%5Cx", "con"]) {
+    check.answer(`user ${user}`, await client.call("PUT", `${lib}/owners/${user}`, alice), 400);
+  }
+}
+
+async function aFailedPublishLeavesNoOwner(run: Run): Promise<void> {
+  const { client, check } = run;
+  const { alice, bob } = run.users;
+  const taken = run.name("taken");
+  const path = `dependencies: { lib: { path: "../lib" } }`;
+  check.answer("a path dependency", await client.publish(taken, "1.0.0", alice, path), 400, "path");
+  check.answer("no package", await client.call("GET", `${taken}/owners`), 404);
+  check.answer("the name is free", await client.publish(taken, "1.0.0", bob), 201);
+  check.is("its owner", (await client.call("GET", `${taken}/owners`)).text, "bob\n");
+}
+
+async function oneNameUnderTwoSpellings(run: Run): Promise<void> {
+  const { client, check } = run;
+  const alice = run.users.alice;
+  check.answer("my-pkg", await client.publish(run.name("my-pkg"), "1.0.0", alice), 201);
+  const twin = await client.publish(run.name("my_pkg"), "1.0.0", alice);
+  check.answer("my_pkg", twin, 400, "count as the same");
+}
+
+/** Refused names, and what a refusal leaves. */
+export const access: Case[] = [
+  new Case("names that aren't package names are refused", badPackageNames),
+  new Case("names that aren't user names are refused", badUserNames),
+  new Case("a failed publish leaves no owner", aFailedPublishLeavesNoOwner),
+  new Case("names differing only in - and _ are one name", oneNameUnderTwoSpellings),
+];

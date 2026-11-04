@@ -1,0 +1,14 @@
+// registry-conformance: the registry a run talks to.
+
+/** The registry under test. */
+export class Target {
+  /** The registry's base URL, without a trailing `/`. */
+  url: string;
+  /** Answers one request: `fetch`, or a handler called directly. */
+  send: (req: Request) => Promise<Response>;
+
+  constructor(url: string, send: (req: Request) => Promise<Response>) {
+    this.url = url;
+    this.send = send;
+  }
+}

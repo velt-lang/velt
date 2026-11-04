@@ -1,0 +1,45 @@
+// The suite against registry-core's handler over its in-memory stores, called directly. The same
+// cases run over HTTP against `velt registry serve` (crates/veltc/tests/registry_conformance.rs).
+import { describe, expect, it } from "velt/test";
+import {
+  MemoryBlobStore,
+  MemoryMetadataDb,
+  MemoryPublishLock,
+  RecordingCachePurge,
+  Registry,
+  TokenAuth,
+  tokenHash,
+} from "registry-core";
+import { Failure, runOpen, runWithUsers, Target, Users } from "../src/lib";
+
+function target(auth: TokenAuth): Target {
+  const registry = new Registry({
+    blobs: new MemoryBlobStore(),
+    db: new MemoryMetadataDb(),
+    lock: new MemoryPublishLock(),
+    purge: new RecordingCachePurge(),
+    auth,
+  });
+  return new Target(
+    "http://registry.test",
+    (req: Request): Promise<Response> => registry.handle(req),
+  );
+}
+
+function shown(failures: Failure[]): string[] {
+  return failures.map((f: Failure): string => `${f.title}: ${f.problems.join("; ")}`);
+}
+
+describe("registry-core in memory", () => {
+  it("passes on a registry with users", async () => {
+    const auth = new TokenAuth();
+    auth.setUser("alice", tokenHash("token-a"));
+    auth.setUser("bob", tokenHash("token-b"));
+    const failures = await runWithUsers(target(auth), new Users("token-a", "token-b"), "t");
+    expect(shown(failures)).toEqual([]);
+  });
+
+  it("passes on an open registry", async () => {
+    expect(shown(await runOpen(target(new TokenAuth()), "t"))).toEqual([]);
+  });
+});

@@ -1,0 +1,20 @@
+// registry-conformance: an answer from the registry under test.
+
+import { utf8Decode } from "velt/encoding";
+
+/** An answer, read. */
+export class Reply {
+  status: i64;
+  type: string;
+  bytes: u8[];
+
+  constructor(status: i64, type: string, bytes: u8[]) {
+    this.status = status;
+    this.type = type;
+    this.bytes = bytes;
+  }
+
+  get text(): string {
+    return utf8Decode(this.bytes);
+  }
+}

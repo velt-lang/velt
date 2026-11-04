@@ -1,0 +1,26 @@
+// registry-conformance: what a case gets.
+
+import { Check } from "./check";
+import { Client } from "./client";
+import { Users } from "./users";
+
+/** What one case works with. */
+export class Run {
+  client: Client;
+  check: Check = new Check();
+  /** Unique to the run: nothing can be deleted from a deployed registry. */
+  id: string;
+  /** The users' tokens; empty on an open registry. */
+  users: Users;
+
+  constructor(client: Client, id: string, users: Users) {
+    this.client = client;
+    this.id = id;
+    this.users = users;
+  }
+
+  /** A package name no earlier run used. */
+  name(base: string): string {
+    return `conf-${this.id}-${base}`;
+  }
+}

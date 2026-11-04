@@ -1,0 +1,57 @@
+// registry-conformance: runs the suite against a running registry, over HTTP.
+//
+//     main <url> --open
+//     main <url> --alice <token> --bob <token>
+//
+// Tokens are for users named `alice` and `bob`. Nothing is deleted afterwards: the packages a run
+// publishes have names of their own (`conf-<id>-…`). Exits 1 when a case fails.
+
+import { args, exit } from "velt/process";
+import { Failure, runOpen, runWithUsers, Target, Users } from "./lib";
+
+const USAGE = "usage: main <url> (--open | --alice <token> --bob <token>)";
+
+function report(failures: Failure[]): void {
+  for (const f of failures) {
+    console.log(`FAILED ${f.title}`);
+    for (const p of f.problems) {
+      console.log(`    ${p}`);
+    }
+  }
+  console.log(
+    failures.length == 0
+      ? "conformance: every case passed"
+      : `conformance: ${failures.length} failed`,
+  );
+}
+
+async function main(): Promise<void> {
+  const a = args();
+  const send = (req: Request): Promise<Response> => fetch(req);
+  const id = `${Date.now().toString(36)}${Math.floor(Math.random() * 46656).toString(36)}`;
+  const flag = (name: string): string => {
+    const at = a.indexOf(name);
+    return at >= 0 && at + 1 < a.length ? a[at + 1] : "";
+  };
+  if (a.length < 2) {
+    console.error(USAGE);
+    exit(2);
+  }
+  const target = new Target(a[0], send);
+  if (a[1] == "--open") {
+    const failures = await runOpen(target, id);
+    report(failures);
+    exit(failures.length == 0 ? 0 : 1);
+  }
+  const alice = flag("--alice");
+  const bob = flag("--bob");
+  if (alice.length == 0 || bob.length == 0) {
+    console.error(USAGE);
+    exit(2);
+  }
+  const failures = await runWithUsers(target, new Users(alice, bob), id);
+  report(failures);
+  exit(failures.length == 0 ? 0 : 1);
+}
+
+await main();

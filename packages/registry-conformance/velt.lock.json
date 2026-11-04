@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "packages": [
+    {
+      "name": "registry-core",
+      "version": "0.1.0",
+      "source": "path+../registry-core"
+    }
+  ]
+}

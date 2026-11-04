@@ -1,0 +1,10 @@
+// registry-conformance: JSON clients read from `/api/v1/<name>/index` and `/search`.
+
+/** One version in an index. */
+export class EntryBody {
+  version: string = "";
+  checksum: string = "";
+  description?: string;
+  keywords?: string[];
+  yanked?: bool;
+}

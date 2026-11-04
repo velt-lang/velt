@@ -1,0 +1,8 @@
+// registry-conformance: JSON clients read from `/api/v1/<name>/index` and `/search`.
+
+import { EntryBody } from "./entry_body";
+
+/** A package's index. */
+export class IndexBody {
+  versions: EntryBody[] = [];
+}

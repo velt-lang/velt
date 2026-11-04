@@ -1,0 +1,97 @@
+// registry-conformance: owners, yanking and search on a registry with users
+// (crates/velt_registry/src/tests/mod.rs `owners_yank_and_search`, access.rs).
+
+import { Case } from "../case";
+import { IndexBody } from "../index_body";
+import { Run } from "../run";
+import { SearchBody } from "../search_body";
+
+async function ownersDecide(run: Run): Promise<void> {
+  const { client, check } = run;
+  const { alice, bob } = run.users;
+  const lib = run.name("owned");
+  check.answer("first publish", await client.publish(lib, "1.0.0", alice), 201);
+  check.is("first owner", (await client.call("GET", `${lib}/owners`)).text, "alice\n");
+  const denied = await client.publish(lib, "1.1.0", bob);
+  check.answer("a stranger's publish", denied, 403, `\`bob\` is not an owner of \`${lib}\``);
+  check.answer("a stranger adds", await client.call("PUT", `${lib}/owners/bob`, bob), 403);
+  const nobody = await client.call("PUT", `${lib}/owners/no-such-user`, alice);
+  check.answer("adding nobody", nobody, 404);
+  check.answer("adding bob", await client.call("PUT", `${lib}/owners/bob`, alice), 200);
+  check.answer("bob publishes", await client.publish(lib, "1.1.0", bob), 201);
+  check.answer("removing alice", await client.call("DELETE", `${lib}/owners/alice`, bob), 200);
+  check.answer("removing the last", await client.call("DELETE", `${lib}/owners/bob`, bob), 409);
+  check.is("owners after", (await client.call("GET", `${lib}/owners`)).text, "bob\n");
+  const gone = await client.call("DELETE", `${lib}/owners/alice`, bob);
+  check.answer("removing a non-owner", gone, 404);
+  check.answer("no such package", await client.call("GET", `${run.name("none")}/owners`), 404);
+}
+
+async function ownerChangesNeedATokenOfAUser(run: Run): Promise<void> {
+  const { client, check } = run;
+  const lib = run.name("tokens");
+  check.answer("publish", await client.publish(lib, "1.0.0", run.users.alice), 201);
+  for (const method of ["PUT", "DELETE"]) {
+    for (const token of ["", "not-a-token"]) {
+      const answer = await client.call(method, `${lib}/owners/bob`, token);
+      check.answer(`${method} with "${token}"`, answer, 401);
+    }
+  }
+  check.is("owners", (await client.call("GET", `${lib}/owners`)).text, "alice\n");
+}
+
+async function yankIsForOwners(run: Run): Promise<void> {
+  const { client, check } = run;
+  const { alice, bob } = run.users;
+  const lib = run.name("yanked");
+  check.answer("publish", await client.publish(lib, "1.0.0", alice), 201);
+  check.answer("no token", await client.call("PUT", `${lib}/1.0.0/yank`), 401);
+  check.answer("a stranger", await client.call("PUT", `${lib}/1.0.0/yank`, bob), 403);
+  check.answer("no such version", await client.call("PUT", `${lib}/9.9.9/yank`, alice), 404);
+  check.answer("the owner", await client.call("PUT", `${lib}/1.0.0/yank`, alice), 200);
+  check.answer("again", await client.call("PUT", `${lib}/1.0.0/yank`, alice), 200);
+  const entry = JSON.parse<IndexBody>((await client.call("GET", `${lib}/index`)).text).versions[0];
+  check.is("yanked in the index", `${entry.yanked}`, "true");
+  check.answer("still downloads", await client.call("GET", `${lib}/1.0.0`), 200);
+  check.answer("unyank", await client.call("DELETE", `${lib}/1.0.0/yank`, alice), 200);
+  const back = JSON.parse<IndexBody>((await client.call("GET", `${lib}/index`)).text).versions[0];
+  check.is("not yanked", `${back.yanked ?? false}`, "false");
+}
+
+async function searchShowsTheNewestUnyanked(run: Run): Promise<void> {
+  const { client, check } = run;
+  const alice = run.users.alice;
+  const lib = run.name("found");
+  const word = `word${run.id}`;
+  const fields = `description: "JSON ${word}", keywords: ["kw${run.id}"]`;
+  check.answer("publish", await client.publish(lib, "1.0.0", alice, fields), 201);
+  check.answer("next", await client.publish(lib, "1.1.0", alice), 201);
+  check.answer("yank", await client.call("PUT", `${lib}/1.1.0/yank`, alice), 200);
+  const entries = JSON.parse<IndexBody>((await client.call("GET", `${lib}/index`)).text).versions;
+  check.is("a version's own description", entries[0].description ?? "", `JSON ${word}`);
+  check.is("the next has none", entries[1].description ?? "", "");
+  const hit = await client.call("GET", `search?q=${word}`);
+  check.answer("by description", hit, 200);
+  check.is("search type", hit.type, "application/json");
+  const hits = JSON.parse<SearchBody>(hit.text).packages;
+  check.is("hits", hits.map((h) => `${h.name} ${h.version}`).join(), `${lib} 1.0.0`);
+  const byKeyword = await client.call("GET", `search?q=kw${run.id}`);
+  check.is("by keyword", JSON.parse<SearchBody>(byKeyword.text).packages.length.toString(), "1");
+  const none = await client.call("GET", `search?q=nothing${run.id}`);
+  check.is("nothing found", none.text, `{"packages":[]}`);
+  check.answer("unyank", await client.call("DELETE", `${lib}/1.1.0/yank`, alice), 200);
+  const newest = await client.call("GET", `search?q=${run.name("found")}`);
+  const shown = JSON.parse<SearchBody>(newest.text).packages;
+  check.is("the newest again", shown.map((h) => h.version).join(), "1.1.0");
+}
+
+/** Owners, yanking and search on a registry with users. */
+export const owners: Case[] = [
+  new Case("owners decide who changes a package", ownersDecide),
+  new Case("owner changes need a user's token", ownerChangesNeedATokenOfAUser),
+  new Case("owners yank, the index records it, and it still downloads", yankIsForOwners),
+  new Case(
+    "search shows a package's newest version that isn't yanked",
+    searchShowsTheNewestUnyanked,
+  ),
+];

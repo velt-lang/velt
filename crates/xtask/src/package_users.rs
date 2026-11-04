@@ -60,7 +60,14 @@ pub(crate) const USERS: &[Users] = &[
     Users {
         package: "registry-core",
         goldens: &[],
-        binaries: &["registry_core", "docs"],
+        binaries: &["registry_core", "registry_conformance", "docs"],
+    },
+    // The suite against `velt registry serve` (`registry_conformance` copies it into a work
+    // directory) and the documentation.
+    Users {
+        package: "registry-conformance",
+        goldens: &[],
+        binaries: &["registry_conformance", "docs"],
     },
     // The database benchmarks (bench/db, bench/sqlite, bench/web, ...).
     Users {

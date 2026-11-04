@@ -1,0 +1,12 @@
+// registry-conformance: the users a run acts as.
+
+/** A registry with users: tokens of its users `alice` and `bob`. */
+export class Users {
+  alice: string;
+  bob: string;
+
+  constructor(alice: string, bob: string) {
+    this.alice = alice;
+    this.bob = bob;
+  }
+}
