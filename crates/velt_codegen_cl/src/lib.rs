@@ -104,9 +104,49 @@ pub fn emit_object_timed(
     emit_object_on(program, opts, cache, timings, velt_vir::parallel::jobs())
 }
 
+/// [`emit_object_timed`] for a caller that is done with the program: each function's code (its
+/// blocks and their source locations) is freed once every function is compiled, before the
+/// object and its debug information are written, the moment a debug build needs the most
+/// memory. Its declarations stay (debug information describes their locals and types).
+pub fn emit_object_freeing(
+    program: &mut vir::Program,
+    opts: &CodegenOptions,
+    cache: Option<&dyn CodeCache>,
+    timings: &mut Vec<(&'static str, Duration)>,
+) -> Result<(Vec<u8>, CacheStats), String> {
+    let jobs = velt_vir::parallel::jobs();
+    emit_object_from(Program::Freeing(program), opts, cache, timings, jobs)
+}
+
 /// [`emit_object_timed`] on `jobs` threads (verified VIR).
 fn emit_object_on(
     program: &vir::Program,
+    opts: &CodegenOptions,
+    cache: Option<&dyn CodeCache>,
+    timings: &mut Vec<(&'static str, Duration)>,
+    jobs: usize,
+) -> Result<(Vec<u8>, CacheStats), String> {
+    emit_object_from(Program::Borrowed(program), opts, cache, timings, jobs)
+}
+
+/// The program [`emit_object_from`] compiles, and whether it may free the functions' code.
+enum Program<'a> {
+    Borrowed(&'a vir::Program),
+    Freeing(&'a mut vir::Program),
+}
+
+impl Program<'_> {
+    fn get(&self) -> &vir::Program {
+        match self {
+            Program::Borrowed(p) => p,
+            Program::Freeing(p) => p,
+        }
+    }
+}
+
+/// Compile a verified program on `jobs` threads.
+fn emit_object_from(
+    mut program: Program<'_>,
     opts: &CodegenOptions,
     cache: Option<&dyn CodeCache>,
     timings: &mut Vec<(&'static str, Duration)>,
@@ -123,12 +163,19 @@ fn emit_object_on(
     let built = module::build_module_cached(
         &mut module,
         &*isa,
-        program,
+        program.get(),
         &module::Naming::Program,
         cache,
         jobs,
     )?;
     timings.extend_from_slice(&built.timings);
+    if let Program::Freeing(p) = &mut program {
+        for f in &mut p.funcs {
+            f.blocks = Vec::new();
+            f.locs = Vec::new();
+        }
+    }
+    let program = program.get();
     let start = Instant::now();
     let mut product = module.finish();
     unwind::add_unwind_info(&mut product, &*isa, &built.unwind)?;
