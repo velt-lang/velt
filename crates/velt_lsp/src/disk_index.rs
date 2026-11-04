@@ -26,6 +26,8 @@ struct Indexed {
     exports: Vec<Export>,
     /// The root of the package it belongs to.
     package: Option<PathBuf>,
+    /// The specifiers it reads a default export through ("Convert to a named export").
+    default_specifiers: Vec<String>,
 }
 
 /// The index of the workspace folders' files.
@@ -71,6 +73,19 @@ impl DiskIndex {
             })
             .map(|(path, file)| (path.as_path(), file.exports.as_slice()))
             .collect()
+    }
+
+    /// Does an indexed file other than `target` read the default export of the module at
+    /// `target`?
+    pub fn imports_default_of(&mut self, roots: &[PathBuf], target: &Path) -> bool {
+        if !self.scanned || !self.watched {
+            self.rescan(roots);
+        }
+        self.files.iter().any(|(path, file)| {
+            path != target
+                && (file.default_specifiers.iter())
+                    .any(|spec| crate::code_actions::exports::names_module(path, spec, target))
+        })
     }
 
     /// List the folders: forget files that are gone, (re)parse new and modified ones.
@@ -153,8 +168,10 @@ fn index_file(path: &Path, modified: Option<SystemTime>) -> Indexed {
             symbols: vec![],
             exports: vec![],
             package,
+            default_specifiers: vec![],
         };
     };
+    let default_specifiers = crate::code_actions::exports::default_specifiers(&ast);
     let symbols = file_symbols(&SourceFile {
         path,
         text: &sm.get(file).src,
@@ -165,5 +182,6 @@ fn index_file(path: &Path, modified: Option<SystemTime>) -> Indexed {
         symbols,
         exports: exports::of_parsed(sm, file, ast).own,
         package,
+        default_specifiers,
     }
 }

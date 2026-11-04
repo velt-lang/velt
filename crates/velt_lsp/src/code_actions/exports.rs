@@ -2,7 +2,11 @@
 //! declaration (`export default function f` → `export function f`), or turn `export default f;`
 //! into the export list `export { f };`. Velt accepts default exports; this is the refactor a
 //! style that prefers named exports asks for (and the fix of the lint that will report them).
-//! Importers of the default are left as they are.
+//! A file that reads the default would stop compiling, and the action edits one file: it isn't
+//! offered when an open document or a file of the workspace folders does
+//! (`Server::default_imported`, with [`default_specifiers`] and [`names_module`]).
+
+use std::path::{Component, Path, PathBuf};
 
 use velt_common::Span;
 use velt_syntax::ast::{ItemKind, Module};
@@ -11,7 +15,43 @@ use super::Fix;
 use crate::analysis::Analysis;
 
 /// Title of the action.
-const TITLE: &str = "Convert to a named export";
+pub const TITLE: &str = "Convert to a named export";
+
+/// The specifiers `module` reads a default export through: `import x from`, `{ default as x }`,
+/// `export { default } from`, and `import * as ns` and `export * as ns`, which give `ns.default`.
+pub fn default_specifiers(module: &Module) -> Vec<String> {
+    (module.items.iter())
+        .filter_map(|item| match &item.kind {
+            ItemKind::Import(imp)
+                if !imp.from.is_empty()
+                    && (imp.namespace.is_some()
+                        || imp.names.iter().any(|n| n.name.name == "default")) =>
+            {
+                Some(imp.from.clone())
+            }
+            _ => None,
+        })
+        .collect()
+}
+
+/// Does relative specifier `spec` in the file at `importer` name the module at `target`?
+pub fn names_module(importer: &Path, spec: &str, target: &Path) -> bool {
+    let Some(dir) = importer.parent().filter(|_| spec.starts_with('.')) else {
+        return false;
+    };
+    let mut base = PathBuf::new();
+    for part in dir.join(spec).components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                base.pop();
+            }
+            part => base.push(part),
+        }
+    }
+    let index = target.file_stem().is_some_and(|s| s == "index");
+    base == target || base == target.with_extension("") || (index && target.parent() == Some(&base))
+}
 
 /// The action for each `export default` with a name in the document's range `lo..hi`.
 pub fn fixes(analysis: &Analysis, lo: u32, hi: u32) -> Vec<Fix> {

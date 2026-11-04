@@ -15,7 +15,7 @@
 //! ([`fix_all_like`]), and every preferred fix of the document as one `source.fixAll` action
 //! ([`fix_all_preferred`]).
 
-mod exports;
+pub mod exports;
 mod fixits;
 mod promise;
 

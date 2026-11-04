@@ -16,6 +16,22 @@ use crate::line_index::LineIndex;
 use crate::workspace_symbols::{Search, SourceFile};
 
 impl Server<'_> {
+    /// Does another open document, or a file of the workspace folders, read the default export
+    /// of the document `uri`?
+    fn default_imported(&mut self, uri: &lsp_types::Url) -> bool {
+        use code_actions::exports::{default_specifiers, names_module};
+        let target = crate::documents::uri_to_path(uri);
+        let open = (self.analyses.iter())
+            .filter(|(other, _)| *other != uri)
+            .any(|(other, analysis)| {
+                let path = crate::documents::uri_to_path(other);
+                default_specifiers(&analysis.module().ast)
+                    .iter()
+                    .any(|spec| names_module(&path, spec, &target))
+            });
+        open || self.disk_symbols.imports_default_of(&self.roots, &target)
+    }
+
     pub(super) fn code_actions(
         &mut self,
         p: &CodeActionParams,
@@ -38,9 +54,17 @@ impl Server<'_> {
             (index.offset(p.range.start), index.offset(p.range.end))
         };
         let import_fixes = self.import_fixes(uri, (lo, hi));
+        let converts = self
+            .analyses
+            .get(uri)
+            .is_some_and(|a| !code_actions::exports::fixes(a, lo, hi).is_empty());
+        let imported = converts && self.default_imported(uri);
         let analysis = self.analyses.get(uri)?;
         let index = LineIndex::new(analysis.text());
         let mut fixes = code_actions::fixes(analysis, lo, hi);
+        if imported {
+            fixes.retain(|f| f.title != code_actions::exports::TITLE);
+        }
         fixes.extend(import_fixes);
         let all_like = code_actions::fix_all_like(analysis, &fixes);
         // Quick fixes unless other kinds are asked for; `source.fixAll` only when asked for
