@@ -46,12 +46,19 @@ pub(crate) struct GroupFrame {
 impl Ctx<'_> {
     /// Install the groups `crate::nested_closures` made.
     pub(crate) fn set_closure_groups(&mut self, groups: &[crate::nested_closures::ClosureGroup]) {
-        self.closure_groups = groups.to_vec();
+        self.closure_groups.clear();
         self.group_names.clear();
-        for (g, grp) in groups.iter().enumerate() {
+        self.add_closure_groups(groups);
+    }
+
+    /// The groups of std modules added during the check too (`std_load`).
+    pub(crate) fn add_closure_groups(&mut self, groups: &[crate::nested_closures::ClosureGroup]) {
+        for grp in groups {
+            let g = self.closure_groups.len();
             for (m, s) in grp.name_spans.iter().enumerate() {
                 self.group_names.insert(*s, (g, m));
             }
+            self.closure_groups.push(grp.clone());
         }
     }
 }

@@ -443,8 +443,14 @@ pub(crate) struct Ctx<'m> {
     /// For each module, the module each of its import specifiers resolved to
     /// (`exports::import_target`).
     pub import_targets: Vec<FxHashMap<&'m str, usize>>,
+    /// The driver's load callback and what it served in this check (`std_load`).
+    pub loads: Option<crate::std_load::Loads<'m>>,
+    /// How many of those batches this `Ctx` holds.
+    pub loads_added: usize,
     /// How many instances of generic recursive unions have a definition (`recursive_unions`).
     pub recursive_union_instances: usize,
+    /// The ranges of definitions added with them, which count as collected (`Ctx::collected`).
+    pub added_defs: Vec<(u32, u32)>,
 }
 
 impl<'m> Ctx<'m> {
@@ -455,7 +461,10 @@ impl<'m> Ctx<'m> {
             gen: Default::default(),
             export_memo: Default::default(),
             import_targets: crate::collect::exports::import_targets(modules),
+            loads: None,
+            loads_added: 0,
             recursive_union_instances: 0,
+            added_defs: vec![],
             ty: Types::new(),
             defs: vec![],
             info: vec![],

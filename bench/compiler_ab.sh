@@ -52,7 +52,7 @@ find "$W/branch-src/bench" -name '*.velt' | grep -E "${ONLY:-.}" | grep -vE "${S
   | xargs -P "${JOBS:-6}" -I{} bash -c 'one {}' | tee "$W/counts.txt"
 
 for v in base branch; do
-  ir=$(cd "$W" && VELT_EAGER_STD=1 VELT_STD=$W/$v-src/std valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null "$W/tc-$v/velt" check "$W/$v-src/bench/compile/all_std.velt" 2>&1 >/dev/null | grep -oP 'I\s+refs:\s+\K[0-9,]+' | tr -d ,)
+  ir=$(cd "$W" && VELT_EAGER_STD=1 VELT_CHECK_ALL_STD=1 VELT_STD=$W/$v-src/std valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null "$W/tc-$v/velt" check "$W/$v-src/bench/compile/all_std.velt" 2>&1 >/dev/null | grep -oP 'I\s+refs:\s+\K[0-9,]+' | tr -d ,)
   echo "compile $v $ir"
 done
 

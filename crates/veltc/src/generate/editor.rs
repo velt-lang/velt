@@ -60,7 +60,7 @@ impl Program {
             eager_std: false,
         };
         let packages = self.packages.as_deref();
-        let _ = super::check(&mut sess, &self.modules, self.root, opts, packages);
+        let _ = super::check(&mut sess, &self.modules, self.root, opts, packages, None);
         sess.generator_reports
     }
 }

@@ -12,11 +12,11 @@ use velt_lsp::{LoadedProgram, ModuleEntry, ProgramLoader, SlowJob};
 use velt_sema::SourceModule;
 use vpm::{InstallOptions, PackageGraph};
 
-use velt_loader::{self as loader, LoadOptions};
+use velt_loader as loader;
 
 #[path = "lsp_packages.rs"]
 mod packages;
-use packages::{list_dependencies, variant_target};
+use packages::{list_dependencies, load_options, variant_target};
 
 /// Serve until the client exits.
 pub fn lsp_command() -> Result<(), String> {
@@ -134,6 +134,21 @@ impl CliLoader {
     }
 }
 
+impl CliLoader {
+    /// The package graph of the document at `root`. A std file is checked as the std module it
+    /// is, without a package: the std root's `package.velt` is the manifest's type declarations,
+    /// not a manifest to install.
+    fn graph_of(&self, root: &Path) -> Option<Arc<PackageGraph>> {
+        let std_root = loader::std_root();
+        let in_std = std_root.as_deref().is_some_and(|s| loader::in_std(root, s));
+        if in_std {
+            None
+        } else {
+            self.graph(root)
+        }
+    }
+}
+
 impl ProgramLoader for CliLoader {
     fn load(
         &self,
@@ -142,32 +157,31 @@ impl ProgramLoader for CliLoader {
         sm: &mut SourceMap,
         diags: &mut Diagnostics,
     ) -> Result<LoadedProgram, String> {
-        let std_root = loader::std_root();
-        // A std file is checked as the std module it is, without a package: the std root's
-        // `package.velt` is the manifest's type declarations, not a manifest to install.
-        let in_std = std_root.as_deref().is_some_and(|s| loader::in_std(root, s));
-        let graph = if in_std { None } else { self.graph(root) };
-        let opts = LoadOptions {
-            std_root,
-            packages: graph.as_deref().map(|g| g as &dyn loader::PackageResolver),
-            root_source: None,
-            overlay: Some(overlay),
-            std_root_as_std: true,
-            test_harness: false,
-            // For the default target, unless the document is a `#name` variant only another
-            // target uses (`js.velt`): then for that one. The variants of each `#name` are
-            // compared as `velt check` does.
-            target: graph.as_deref().and_then(|g| variant_target(g, root)),
-            host_condition: None,
-            check_variants: true,
-            extra_roots: &[],
-            std_ast_cache: crate::build_cache::std_ast_cache(),
-        };
+        let graph = self.graph_of(root);
+        let opts = load_options(root, overlay, graph.as_deref());
         let loaded = loader::load_program(sm, root, opts, diags)?;
+        let more: Box<dyn std::any::Any + Send> = Box::new(loaded.state);
         Ok(LoadedProgram {
             modules: loaded.modules,
             root: loaded.root,
+            more: loader::demand_std_on().then_some(more),
         })
+    }
+
+    fn load_more(
+        &self,
+        root: &Path,
+        overlay: &HashMap<PathBuf, String>,
+        state: &mut (dyn std::any::Any + Send),
+        base: &[SourceModule],
+        demanded: &[String],
+        sm: &mut SourceMap,
+        diags: &mut Diagnostics,
+    ) -> Option<velt_sema::StdBatch> {
+        let state = state.downcast_mut::<loader::LoadState>()?;
+        let graph = self.graph_of(root);
+        let opts = load_options(root, overlay, graph.as_deref());
+        Some(loader::load_more(sm, state, base, demanded, &opts, diags))
     }
 
     fn module_index(&self, from: &Path) -> Vec<ModuleEntry> {

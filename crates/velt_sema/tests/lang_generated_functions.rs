@@ -35,6 +35,7 @@ fn demand(src: &str) -> Demand {
         &GenInput::default(),
         &[],
         None,
+        None,
     );
     assert!(diags.iter().all(|d| !d.is_error()), "{}", l.render(&diags));
     match out {
@@ -199,6 +200,7 @@ fn shown(src: &str) -> Vec<String> {
         CheckOptions::default(),
         &GenInput::default(),
         &[],
+        None,
         None,
     );
     assert!(diags.iter().all(|d| !d.is_error()), "{}", l.render(&diags));

@@ -42,6 +42,22 @@ pub(super) fn declare_all(cx: &mut Ctx, items: &mut ItemDefs) {
     collect_prelude(cx);
 }
 
+/// Declare the items of std modules `ms`, added during the check (`crate::std_load`), and resolve
+/// their imports. What the prelude exports does not change: none of them is in the prelude.
+pub(super) fn declare_added(cx: &mut Ctx, ms: &[usize], items: &mut ItemDefs) {
+    for &m in ms {
+        let module = &cx.modules[m];
+        for item in &module.ast.items {
+            declare_item(cx, m, item, items);
+        }
+    }
+    super::nested::declare_nested(cx, items, ms);
+    for &m in ms {
+        super::imports::resolve_imports(cx, m);
+        super::imports::bind_jsx_runtime(cx, m);
+    }
+}
+
 /// Declare the items of generated modules `ms`: functions, constants and type aliases (what a
 /// generator's body and helpers declare); any other item is the generator's error.
 pub(super) fn declare_generated(cx: &mut Ctx, ms: &[usize], items: &mut ItemDefs) {

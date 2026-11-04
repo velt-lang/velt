@@ -18,8 +18,8 @@ use crate::defs::{Bound, IfaceMethod};
 use crate::hir::{DefId, ImplDef, TyId};
 use crate::iface_writes::SetterSrc;
 
-pub(super) fn build_impls(cx: &mut Ctx) {
-    let adts: Vec<DefId> = (0..cx.info.len() as u32)
+pub(super) fn build_impls(cx: &mut Ctx, from: super::Added) {
+    let adts: Vec<DefId> = (from.defs..cx.info.len() as u32)
         .map(DefId)
         .filter(|d| cx.adt(*d).is_some_and(|a| !a.implements.is_empty()))
         .collect();
@@ -40,7 +40,7 @@ pub(super) fn build_impls(cx: &mut Ctx) {
             }
         }
     }
-    override_impls(cx, &mut getters);
+    override_impls(cx, &mut getters, from.overrides);
 }
 
 /// A class overriding a generic method of an interface that a base class implements gets an
@@ -48,10 +48,11 @@ pub(super) fn build_impls(cx: &mut Ctx) {
 /// `S extends Sh`) runs the method of the receiver's nearest implementation, statically, so
 /// that must be the override (issue #1132). Generic methods have no vtable slot to dispatch
 /// through instead.
-fn override_impls(cx: &mut Ctx, getters: &mut Getters) {
+fn override_impls(cx: &mut Ctx, getters: &mut Getters, from: usize) {
     let built = cx.impls.len() as u32;
     let mut done: FxHashSet<(DefId, DefId)> = FxHashSet::default();
-    for (d, key) in cx.generic_overrides.clone() {
+    let overrides: Vec<(DefId, String)> = cx.generic_overrides[from..].into();
+    for (d, key) in overrides {
         let n = cx.adt(d).map_or(0, |a| a.generics.len());
         let self_ty = self_type(cx, d, n);
         for b in cx.adt(d).map(|a| a.implements.clone()).unwrap_or_default() {

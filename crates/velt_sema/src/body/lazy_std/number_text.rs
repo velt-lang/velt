@@ -13,8 +13,9 @@ pub(super) fn reach_hooks(cx: &mut Ctx, texts: Vec<TyId>, found: &mut Vec<DefId>
     if cx.lazy.float_text || !texts.iter().any(|&t| may_hold_float(cx, t)) {
         return;
     }
-    for q in velt_common::std_hooks::on_demand(velt_common::std_hooks::ON_DEMAND_FLOAT) {
-        if let Some(crate::ctx::Item::Def(d)) = cx.std_def(&q) {
+    let float_hooks = velt_common::std_hooks::HOOKS.iter();
+    for h in float_hooks.filter(|h| velt_common::std_hooks::ON_DEMAND_FLOAT.contains(&h.name)) {
+        if let Some(crate::ctx::Item::Def(d)) = cx.std_def(&h.qualified()) {
             found.push(d);
         }
     }

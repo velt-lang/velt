@@ -5,7 +5,7 @@ editor tooling). Public items below are the contract; everything else in the mod
 
 ## Entry point
 ```rust
-pub fn check_for_ide(modules: &[SourceModule], root: usize) -> ide::Analysis
+pub fn check_for_ide(modules: &[SourceModule], root: usize, load: Option<&LoadFn>) -> ide::Analysis
 ```
 - Same inputs as `velt_sema::check` (the driver's loader output; the AST may come from a parser that
   recovered from syntax errors).

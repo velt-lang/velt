@@ -17,10 +17,10 @@ use crate::defs::{
 use crate::hir::{DefId, PassMode, TyId, TyKind};
 use crate::resolve::TyEnv;
 
-pub(super) fn resolve_sigs(cx: &mut Ctx, items: &ItemDefs) {
+pub(super) fn resolve_sigs(cx: &mut Ctx, items: &ItemDefs, first: usize) {
     resolve_def_sigs(cx, items);
     let mut used = FxHashSet::default();
-    for m in 0..cx.modules.len() {
+    for m in first..cx.modules.len() {
         if cx.is_generated_module(m) {
             continue;
         }

@@ -57,9 +57,16 @@ npm sources, `#name` variants), parsed, in the order sema expects. It depends on
 Its public API is kept small:
 - `load_program(sm: &mut SourceMap, root: &Path, opts: LoadOptions, diags: &mut Diagnostics)
   -> Result<Loaded, String>`: `Err` only when the root cannot be read; syntax and import problems
-  go into `diags`. `Loaded { modules: Vec<SourceModule>, root: usize }`: the prelude first, then
-  the root, its imports breadth-first, then the extra roots.
-- `LoadOptions` (all fields default to "none"): `std_root`, `packages: Option<&dyn
+  go into `diags`. `Loaded { modules: Vec<SourceModule>, root: usize, state: LoadState }`: the
+  prelude first, then the root, its imports breadth-first, then the extra roots, then (without
+  `demand_std`) the modules a check could demand.
+- `load_more(sm, state: &mut LoadState, base: &[SourceModule], demanded: &[String], opts:
+  &LoadOptions, diags) -> velt_sema::StdBatch`: goes on from a load with the std modules a check
+  demands (canonical paths) and what they import; each must follow `std_index`'s rule. Sema calls
+  it through the driver's `velt_sema::LoadFn` (design/lazy-std.md "Loading on demand").
+  `demand_std_on()`: whether the environment lets a check do that.
+- `LoadOptions` (all fields default to "none"): `demand_std` (leave what a check demands to
+  `load_more`), `std_root`, `packages: Option<&dyn
   PackageResolver>` (implemented for `vpm::PackageGraph`), `extra_roots`, `root_source`,
   `overlay` (unsaved editor buffers), `std_root_as_std`, `test_harness`, `target`,
   `host_condition`, `check_variants`, `std_ast_cache: Option<StdAstCache { cache, compiler }>`

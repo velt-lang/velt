@@ -51,7 +51,7 @@ pub(super) fn run(
             let scope: HashSet<PathBuf> = files.iter().map(|f| canonical(f)).collect();
             // The typed rules ask the checker's IDE analysis (types, what names refer to),
             // which the plain check doesn't keep.
-            let analysis = velt_sema::ide::check_for_ide(&loaded.modules, loaded.root);
+            let analysis = velt_sema::ide::check_for_ide(&loaded.modules, loaded.root, None);
             let findings = velt_tscompat::lint_program(
                 &loaded.modules,
                 &sess.sm,

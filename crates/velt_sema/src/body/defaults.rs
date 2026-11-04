@@ -273,8 +273,8 @@ pub(crate) fn default_type(cx: &mut Ctx, module: usize, e: &ast::Expr) -> TyId {
     fcx.widen_value(h).ty
 }
 
-pub(super) fn iface_defaults(cx: &mut Ctx) {
-    let ifaces: Vec<DefId> = (0..cx.info.len() as u32)
+pub(super) fn iface_defaults(cx: &mut Ctx, from: u32) {
+    let ifaces: Vec<DefId> = (from..cx.info.len() as u32)
         .map(DefId)
         .filter(|d| cx.iface(*d).is_some_and(|i| i.decl.is_some()))
         .collect();

@@ -26,9 +26,9 @@ pub(super) fn check_recovering_loaded(
     opts: &BuildOptions,
     scope: &CheckScope,
 ) -> Result<(velt_loader::Loaded, Result<(), BuildError>), BuildError> {
-    let loaded = load_modules(sess, opts, scope)?;
+    let mut loaded = load_modules(sess, opts, scope)?;
     if !sess.has_errors() {
-        let checked = sema_stage(sess, opts, scope, &loaded).map(drop);
+        let checked = sema_stage(sess, opts, scope, &mut loaded).map(drop);
         return Ok((loaded, checked));
     }
     let t = Instant::now();

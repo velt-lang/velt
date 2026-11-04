@@ -282,6 +282,15 @@ pub(crate) fn index_module(
     out
 }
 
+/// Why `module` may not be served in place ((a1), module docs): the rule alone, for a module the
+/// loader is about to serve, without reading the index (#2161's 23:04 finding: reading it costs
+/// hashing the package's files).
+pub(crate) fn violations(module: &ast::Module) -> Vec<Violation> {
+    let (mut extends, mut violations) = (vec![], vec![]);
+    rule::check(module, &mut extends, &mut violations);
+    violations
+}
+
 /// Each hook's module and entry name, in table order.
 fn hook_modules() -> &'static [(String, &'static str)] {
     static MODULES: std::sync::OnceLock<Vec<(String, &'static str)>> = std::sync::OnceLock::new();

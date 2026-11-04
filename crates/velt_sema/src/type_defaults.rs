@@ -39,9 +39,9 @@ pub(crate) struct TypeDefaults {
 }
 
 /// Resolve the defaults of every declaration that has some (module docs).
-pub(crate) fn check_all(cx: &mut Ctx) {
+pub(crate) fn check_from(cx: &mut Ctx, from: crate::collect::Added) {
     let mut decls = vec![];
-    for (i, info) in cx.info.iter().enumerate() {
+    for (i, info) in cx.info.iter().enumerate().skip(from.defs as usize) {
         let (module, gs) = match info {
             DefInfo::Adt(a) => match a.decl {
                 Some(x) => (a.module, &x.generics[..]),
@@ -57,7 +57,7 @@ pub(crate) fn check_all(cx: &mut Ctx) {
             decls.push((DefaultsOf::Def(DefId(i as u32)), module, gs));
         }
     }
-    for (a, info) in cx.aliases.iter().enumerate() {
+    for (a, info) in cx.aliases.iter().enumerate().skip(from.aliases) {
         let gs = &info.decl.generics[..];
         if gs.iter().any(|g| g.default.is_some()) {
             decls.push((DefaultsOf::Alias(a as u32), info.module, gs));

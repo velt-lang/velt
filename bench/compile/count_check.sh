@@ -45,9 +45,9 @@ for ref in "$@"; do
     { printf '%s\n' "$PREPEND"; cat "$src/bench/compile/all_std.velt"; } > "$src/$input"
   fi
   # velt check must succeed (as in bench/nightly.sh), or the count measures an error path.
-  (cd "$src" && VELT_EAGER_STD=1 VELT_STD="$src/std" "$bin" check "$input" >/dev/null 2>&1) \
+  (cd "$src" && VELT_EAGER_STD=1 VELT_CHECK_ALL_STD=1 VELT_STD="$src/std" "$bin" check "$input" >/dev/null 2>&1) \
     || { echo "$sha: velt check $input failed" >&2; exit 1; }
-  n=$(cd "$src" && VELT_THREADS=1 VELT_EAGER_STD=1 VELT_STD="$src/std" valgrind --tool=cachegrind --cache-sim=no \
+  n=$(cd "$src" && VELT_THREADS=1 VELT_EAGER_STD=1 VELT_CHECK_ALL_STD=1 VELT_STD="$src/std" valgrind --tool=cachegrind --cache-sim=no \
       --cachegrind-out-file="$WORK/cg-$sha${PREPEND:+-variant}.out" "$bin" check "$input" 2>&1 >/dev/null \
       | sed -n 's/.*I[[:space:]]*refs:[[:space:]]*\([0-9,]*\).*/\1/p' | tr -d ,)
   [ -n "$n" ] || { echo "$sha: cachegrind failed" >&2; exit 1; }

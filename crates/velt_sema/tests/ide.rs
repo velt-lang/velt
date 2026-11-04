@@ -10,7 +10,7 @@ use velt_sema::ide::{check_for_ide, Analysis, DefKind};
 fn analyze(src: &str) -> (Analysis, FileId) {
     let l = load_src(src);
     let file = l.modules[l.root].file;
-    (check_for_ide(&l.modules, l.root), file)
+    (check_for_ide(&l.modules, l.root, None), file)
 }
 
 /// Byte offset of the `n`th (0-based) occurrence of `needle` in `src`, plus `delta`.
@@ -218,7 +218,7 @@ function g(): i64 { const b = 2; return b; }";
     assert_eq!(b.detail, "const b: i64");
     let broken = "function main() { const x = 1; x. }";
     let l = load_src_lenient(broken);
-    let an = check_for_ide(&l.modules, l.root);
+    let an = check_for_ide(&l.modules, l.root, None);
     let names: Vec<String> = an
         .scope_at(l.modules[l.root].file, at(broken, "x.", 0, 0))
         .into_iter()
@@ -297,7 +297,7 @@ fn jsx_tags_and_attributes() {
 function main() { const e = <a href=\"/x\">x</a>; }";
     let l = load_src_at(&repo_root().join("tests/golden/lang/main.velt"), src);
     let file = l.modules[l.root].file;
-    let a = check_for_ide(&l.modules, l.root);
+    let a = check_for_ide(&l.modules, l.root, None);
     let tags = a.jsx_intrinsics(file);
     let names: Vec<&str> = tags.iter().map(|(n, _, _)| n.as_str()).collect();
     assert!(
@@ -392,7 +392,7 @@ function Card(props: { title: string; children: JSX.Element }): JSX.Element { re
 function main() { const e = <Card title=\"t\"><p>x</p></Card>; }";
     let l = load_src_at(&repo_root().join("tests/golden/lang/main.velt"), src);
     let file = l.modules[l.root].file;
-    let a = check_for_ide(&l.modules, l.root);
+    let a = check_for_ide(&l.modules, l.root, None);
     let card = a
         .def_at(file, at(src, "</Card>", 0, 3))
         .expect("closing component");
@@ -413,7 +413,7 @@ function Card(props: { title: string }): JSX.Element { return <div>{props.title}
 function main() { const e = <Card title=\"t\"></Other>; }";
     let l = load_src_lenient_at(&repo_root().join("tests/golden/lang/main.velt"), src);
     let file = l.modules[l.root].file;
-    let a = check_for_ide(&l.modules, l.root);
+    let a = check_for_ide(&l.modules, l.root, None);
     let card = a.def_at(file, at(src, "<Card", 0, 1)).expect("opening tag");
     let other = at(src, "</Other>", 0, 2);
     let found = a.def_at(file, other);

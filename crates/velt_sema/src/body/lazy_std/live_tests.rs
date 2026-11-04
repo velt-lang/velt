@@ -54,7 +54,7 @@ fn checked(src: &str, exact: bool) -> ((ConstructSet, usize), Vec<String>) {
                 EXACT.set(exact);
                 let opts = CheckOptions::default();
                 let budget = SEMA_STACK_BUDGET;
-                let (out, _) = crate::check_timed(modules, root, opts, &[], None, budget);
+                let (out, _) = crate::check_timed(modules, root, opts, &[], None, None, budget);
                 let diags = out.1;
                 assert!(
                     !diags.iter().any(|d| d.is_error()),

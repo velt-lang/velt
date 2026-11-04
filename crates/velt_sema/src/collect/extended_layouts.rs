@@ -77,7 +77,8 @@ pub(super) fn families(cx: &mut Ctx, pairs: &[(DefId, DefId)]) {
     }
     order.sort_by_key(|d| d.0);
     let twin = |cx: &Ctx, adt: DefId| cx.readonly_twins.get(&adt).map(|t| t.0);
-    let mut layouts = Layouts::default();
+    // Std modules added during the check (`crate::std_load`) add to what the program's found.
+    let mut layouts = std::mem::take(&mut cx.objects.layouts);
     for base in order {
         let members = &by_base[&base];
         // A type that is both an extension and an extended base keeps its layout (chains are

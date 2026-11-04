@@ -236,9 +236,11 @@ impl FnCx<'_, '_> {
 
 /// The bodies of the default-filling entries (`Ctx::fills`):
 /// `return C.m(this, …, x === undefined ? <C.m's default> : x, …)`.
-pub(crate) fn build_fill_bodies(cx: &mut Ctx) {
-    let mut fills: Vec<(DefId, crate::collect::fill_defaults::Fill)> =
-        cx.fills.iter().map(|(d, f)| (*d, f.clone())).collect();
+pub(crate) fn build_fill_bodies(cx: &mut Ctx, from: u32) {
+    let mut fills: Vec<(DefId, crate::collect::fill_defaults::Fill)> = (cx.fills.iter())
+        .filter(|(d, _)| d.0 >= from)
+        .map(|(d, f)| (*d, f.clone()))
+        .collect();
     fills.sort_by_key(|(d, _)| d.0);
     for (def, fill) in fills {
         fill_body(cx, def, fill.method, &fill.positions, fill.trailing);

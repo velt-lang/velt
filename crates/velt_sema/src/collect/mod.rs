@@ -84,25 +84,63 @@ pub(crate) fn collect(cx: &mut Ctx) -> ItemDefs {
     declare::declare_all(cx, &mut items);
     // Before any type is resolved: `any | null` is `any` (crate::unions).
     crate::any::add_impl(cx);
-    cx.name_symbol_keys();
-    field_only::declare(cx);
-    crate::type_defaults::check_all(cx);
-    shapes::resolve_shapes(cx, &items);
-    cx.shapes_done = true;
-    cx.check_deferred_ts_returns();
-    sigs::resolve_sigs(cx, &items);
-    iface_extends::flatten_all(cx);
-    cx.fill_synth_ifaces();
-    field_only::fill(cx);
-    classes::check_classes(cx);
-    extend_shadow::check(cx);
-    static_this::copy_statics(cx);
-    impls::build_impls(cx);
-    ext_impls::build(cx);
-    comparable::extension_impls(cx);
-    iterable::extension_impls(cx);
-    operators::check(cx);
+    collect_items(cx, &items, Added::default());
     cx.bodies_ok = true;
     sigs::fill_deferred(cx);
     items
+}
+
+/// Where what a collection adds starts: a whole program's starts at 0, that of std modules added
+/// during the check (`crate::std_load`) after what is there, and the passes look only from here.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct Added {
+    pub defs: u32,
+    pub extensions: usize,
+    pub aliases: usize,
+    pub overrides: usize,
+    pub modules: usize,
+}
+
+/// Phases 2 to 5 of the module docs, for what starts at `from`.
+fn collect_items(cx: &mut Ctx, items: &ItemDefs, from: Added) {
+    cx.name_symbol_keys();
+    field_only::declare(cx, from.defs);
+    crate::type_defaults::check_from(cx, from);
+    shapes::resolve_shapes(cx, items);
+    cx.shapes_done = true;
+    cx.check_deferred_ts_returns();
+    sigs::resolve_sigs(cx, items, from.modules);
+    iface_extends::flatten_from(cx, from.defs);
+    cx.fill_synth_ifaces();
+    field_only::fill(cx, from.defs);
+    classes::check_classes(cx, from.defs);
+    extend_shadow::check(cx, from);
+    static_this::copy_statics(cx, from.defs);
+    impls::build_impls(cx, from);
+    ext_impls::build(cx, from.extensions);
+    comparable::extension_impls(cx, from.extensions);
+    iterable::extension_impls(cx, from.extensions);
+    operators::check(cx, from);
+}
+
+/// Collect std modules `ms`, added to the check once its bodies are being reached
+/// (`crate::std_load`): as [`collect`] does, for what they declare alone. They follow the (a1) rule
+/// (velt_loader `std_index`), so nothing collected before changes. Returns where the additions
+/// start.
+pub(crate) fn collect_added(cx: &mut Ctx, ms: &[usize]) -> Added {
+    let from = Added {
+        defs: cx.info.len() as u32,
+        extensions: cx.extensions.len(),
+        aliases: cx.aliases.len(),
+        overrides: cx.generic_overrides.len(),
+        modules: ms.first().copied().unwrap_or(cx.modules.len()),
+    };
+    let mut items = ItemDefs::new();
+    declare::declare_added(cx, ms, &mut items);
+    // A utility type in a field type asks for fields while shapes are being resolved.
+    cx.shapes_done = false;
+    collect_items(cx, &items, from);
+    sigs::fill_deferred(cx);
+    cx.added_defs.push((from.defs, cx.info.len() as u32));
+    from
 }

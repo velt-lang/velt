@@ -336,7 +336,7 @@ fn seed_std(cx: &mut Ctx) {
         }
         let named = match cx.lazy.modules[f.module] {
             // The helpers: the free functions not deferred there.
-            super::Mode::Helpers => !super::deferred(cx, d),
+            super::Mode::Helpers => !super::defers(cx, d),
             super::Mode::Eager => super::EAGER.iter().any(|p| m.path.starts_with(p)),
             super::Mode::Lazy => false,
         };

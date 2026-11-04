@@ -571,14 +571,14 @@ impl Ctx<'_> {
             | TyKind::Symbol
             | TyKind::Never
             | TyKind::Literal(_) => Portable::Leaf(k.clone()),
-            TyKind::Adt(d, args) if (d.0 as usize) < self.collected_defs => {
+            TyKind::Adt(d, args) if self.collected(*d) => {
                 let span = *self.def_spans.get(d.0 as usize)?;
                 let args = (args.iter())
                     .map(|a| self.port(*a, depth + 1))
                     .collect::<Option<Vec<_>>>()?;
                 Portable::Def(*d, span, args)
             }
-            TyKind::Dyn(d, args) if (d.0 as usize) < self.collected_defs => {
+            TyKind::Dyn(d, args) if self.collected(*d) => {
                 let span = *self.def_spans.get(d.0 as usize)?;
                 let args = (args.iter())
                     .map(|a| self.port(*a, depth + 1))

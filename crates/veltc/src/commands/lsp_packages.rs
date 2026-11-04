@@ -1,12 +1,13 @@
 //! What `velt lsp`'s loader learns from the package graph: the target that uses a `#name`
 //! variant file, and the modules of a package's dependencies for import completion.
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use velt_lsp::ModuleEntry;
 use vpm::PackageGraph;
 
-use velt_loader as loader;
+use velt_loader::{self as loader, LoadOptions};
 
 /// A target whose build uses `file`, when it is a variant of a `#name` of its package that the
 /// host's build does not use (`vpm::imports::target_selecting`).
@@ -41,4 +42,29 @@ pub(super) fn list_dependencies(graph: Option<&PackageGraph>, file: &Path) -> Ve
         );
     }
     out
+}
+
+/// How the language server loads the document at `root`.
+pub(super) fn load_options<'a>(
+    root: &Path,
+    overlay: &'a HashMap<PathBuf, String>,
+    graph: Option<&'a PackageGraph>,
+) -> LoadOptions<'a> {
+    LoadOptions {
+        std_root: loader::std_root(),
+        packages: graph.map(|g| g as &dyn loader::PackageResolver),
+        root_source: None,
+        overlay: Some(overlay),
+        std_root_as_std: true,
+        test_harness: false,
+        // For the default target, unless the document is a `#name` variant only another
+        // target uses (`js.velt`): then for that one. The variants of each `#name` are
+        // compared as `velt check` does.
+        target: graph.and_then(|g| variant_target(g, root)),
+        host_condition: None,
+        check_variants: true,
+        extra_roots: &[],
+        std_ast_cache: crate::build_cache::std_ast_cache(),
+        demand_std: loader::demand_std_on(),
+    }
 }

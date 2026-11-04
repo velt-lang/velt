@@ -20,8 +20,8 @@ use crate::hir::{AdtKind, DefId, TyKind};
 
 /// After declaration (names resolvable, no type resolved yet): find the field-only interfaces
 /// and give each an object type definition (its fields come in [`fill`]).
-pub(super) fn declare(cx: &mut Ctx) {
-    let ifaces: Vec<DefId> = (0..cx.info.len() as u32)
+pub(super) fn declare(cx: &mut Ctx, from: u32) {
+    let ifaces: Vec<DefId> = (from..cx.info.len() as u32)
         .map(DefId)
         .filter(|d| matches!(&cx.info[d.0 as usize], DefInfo::Iface(i) if i.decl.is_some()))
         .collect();
@@ -124,8 +124,11 @@ fn parent_iface(cx: &Ctx, module: usize, t: &ast::TypeExpr) -> Option<DefId> {
 /// inherited ones first (as a subclass lists its base class's fields first), with the
 /// interface's generic bounds. It may contain itself (`next?: Node`): lowering stores such a
 /// type behind a pointer (#376).
-pub(super) fn fill(cx: &mut Ctx) {
-    let pairs: Vec<(DefId, DefId)> = cx.field_only.iter().map(|(i, a)| (*i, *a)).collect();
+pub(super) fn fill(cx: &mut Ctx, from: u32) {
+    let pairs: Vec<(DefId, DefId)> = (cx.field_only.iter())
+        .filter(|(i, _)| i.0 >= from)
+        .map(|(i, a)| (*i, *a))
+        .collect();
     for (iface, adt) in &pairs {
         let i = cx.iface(*iface).expect("ICE: iface");
         let own = i.decl.map_or(0, |d| d.fields.len()).min(i.fields.len());

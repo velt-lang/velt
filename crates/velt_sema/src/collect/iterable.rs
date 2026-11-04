@@ -22,13 +22,13 @@ const PROTOCOLS: [(&str, &str, &str); 2] = [
     (SYMBOL_ASYNC_ITERATOR, "AsyncIterable", "AsyncIterator"),
 ];
 
-pub(super) fn extension_impls(cx: &mut Ctx) {
+pub(super) fn extension_impls(cx: &mut Ctx, from: usize) {
     for (method, able, tor) in PROTOCOLS {
         let (Some(iterable), Some(iterator)) = (cx.prelude_iface(able), cx.prelude_iface(tor))
         else {
             continue;
         };
-        for i in 0..cx.extensions.len() {
+        for i in from..cx.extensions.len() {
             if let Some(imp) = extension_impl(cx, i, (method, able), iterable, iterator) {
                 cx.impls.push(imp);
             }
