@@ -34,8 +34,10 @@ fn loaded(src: &str) -> BTreeSet<String> {
 }
 
 /// The programs that load each reach-time hook global (#2161 §3, (a1)) today, by the global.
+///
+/// `number_text` is not among them: integers print through its hooks everywhere, so it loads with
+/// every program and no demand adds it.
 const DEMANDS: &[(&str, &str)] = &[
-    ("number_text", "const n = 1;\nconsole.log(`${n}`);\n"),
     ("number_float", "const x = 1.5;\nconsole.log(`${x}`);\n"),
     (
         "host_async",
