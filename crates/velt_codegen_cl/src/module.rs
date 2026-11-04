@@ -85,7 +85,14 @@ pub(crate) fn build_module<M: Module>(
     program: &vir::Program,
     naming: &Naming,
 ) -> CodegenResult<Built> {
-    build_module_cached(module, isa, program, naming, None, parallel::jobs())
+    build_module_cached(
+        module,
+        isa,
+        program,
+        naming,
+        None,
+        velt_vir::parallel::jobs(),
+    )
 }
 
 /// [`build_module`], translating and compiling the functions on `jobs` threads and through

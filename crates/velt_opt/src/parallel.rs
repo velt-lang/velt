@@ -11,24 +11,6 @@ const PARALLEL_MIN_ITEMS: usize = 256;
 /// Functions a worker takes at a time.
 const CHUNK: usize = 16;
 
-/// The number of threads to work on: `VELT_JOBS` when it is a positive number (at most
-/// [`MAX_JOBS_PER_CORE`] per core), else the machine's available parallelism.
-pub(crate) fn jobs() -> usize {
-    let cores = || std::thread::available_parallelism().map_or(1, |n| n.get());
-    jobs_from(std::env::var("VELT_JOBS").ok().as_deref(), cores)
-}
-
-fn jobs_from(var: Option<&str>, cores: impl FnOnce() -> usize) -> usize {
-    let cores = cores();
-    match var.map(str::trim).and_then(|v| v.parse::<usize>().ok()) {
-        Some(n) if n > 0 => n.min(cores * MAX_JOBS_PER_CORE),
-        _ => cores,
-    }
-}
-
-/// The most threads `VELT_JOBS` may ask for, per core (as in velt_codegen_cl).
-const MAX_JOBS_PER_CORE: usize = 4;
-
 /// `work` on every item, each thread with its own state (`state()`); the states when done, the
 /// calling thread's first.
 pub(crate) fn for_each<T, S>(
@@ -43,7 +25,7 @@ where
     let workers = if items.len() < PARALLEL_MIN_ITEMS {
         1
     } else {
-        jobs().min(items.len().div_ceil(CHUNK))
+        velt_vir::parallel::jobs().min(items.len().div_ceil(CHUNK))
     };
     for_each_on(workers, items, state, work)
 }
@@ -103,15 +85,6 @@ const WORKER_STACK_BYTES: usize = 32 << 20;
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn velt_jobs_overrides_the_cores_when_positive() {
-        assert_eq!(jobs_from(Some("4"), || 8), 4);
-        assert_eq!(jobs_from(Some("99999"), || 8), 32);
-        assert_eq!(jobs_from(Some("0"), || 8), 8);
-        assert_eq!(jobs_from(Some("x"), || 8), 8);
-        assert_eq!(jobs_from(None, || 8), 8);
-    }
 
     /// Every item is visited once whatever the number of workers, and the states add up.
     #[test]

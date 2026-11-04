@@ -515,7 +515,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `<root>/links/<name>`.
 - `--emit vir` prints VIR (`Display`) to stdout and stops. `-v` prints per-stage timings;
   `--timings` adds each optimizer pass and, with the LLVM backend, IR printing and clang (with
-  Cranelift: `verify`, `declare`, `functions`, `define`, `object`). Debug builds run the
+  Cranelift: `declare`, `functions`, `define`, `object`; the program is verified once after
+  optimizing, not again in codegen). Debug builds run VIR verification's per-function checks, the
   optimizer's per-function passes and Cranelift's translation and compilation on
   `$VELT_JOBS` threads (a positive number, at most 4 per core; default: the available parallelism), summing a pass's
   time over the threads; the object is the same bytes on any number of threads.

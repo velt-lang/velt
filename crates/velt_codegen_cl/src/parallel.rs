@@ -20,25 +20,6 @@ const WINDOW: usize = 1024;
 /// Stack of a worker thread: room for deep translations.
 const WORKER_STACK_BYTES: usize = 32 << 20;
 
-/// The number of threads to work on: `VELT_JOBS` when it is a positive number (at most
-/// [`MAX_JOBS_PER_CORE`] per core: each thread reserves a large stack), else the machine's
-/// available parallelism.
-pub(crate) fn jobs() -> usize {
-    let cores = || std::thread::available_parallelism().map_or(1, |n| n.get());
-    jobs_from(std::env::var("VELT_JOBS").ok().as_deref(), cores)
-}
-
-fn jobs_from(var: Option<&str>, cores: impl FnOnce() -> usize) -> usize {
-    let cores = cores();
-    match var.map(str::trim).and_then(|v| v.parse::<usize>().ok()) {
-        Some(n) if n > 0 => n.min(cores * MAX_JOBS_PER_CORE),
-        _ => cores,
-    }
-}
-
-/// The most threads `VELT_JOBS` may ask for, per core.
-const MAX_JOBS_PER_CORE: usize = 4;
-
 /// `work(state, i)` for every `i` in `0..n` on up to `jobs` threads, each with its own `state()`;
 /// `consume(i, result)` on the calling thread in the order of `i`. Stops at the first error of
 /// `consume`. With one job or few items, everything runs on the calling thread.
@@ -161,16 +142,6 @@ impl<F: Fn()> Drop for OnPanic<F> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn velt_jobs_overrides_the_cores_when_positive() {
-        assert_eq!(jobs_from(Some("3"), || 8), 3);
-        assert_eq!(jobs_from(Some("99999"), || 8), 32);
-        assert_eq!(jobs_from(Some(" 1 "), || 8), 1);
-        assert_eq!(jobs_from(Some("0"), || 8), 8);
-        assert_eq!(jobs_from(Some("many"), || 8), 8);
-        assert_eq!(jobs_from(None, || 8), 8);
-    }
 
     /// Results are consumed in item order whatever the number of workers, even when early items
     /// take longest and there are more items than the window.

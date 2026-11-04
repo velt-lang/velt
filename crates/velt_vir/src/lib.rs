@@ -186,6 +186,7 @@ pub mod hook_args {
 }
 pub mod mangle;
 pub mod math;
+pub mod parallel;
 pub mod simd;
 pub mod system;
 pub mod tls;
