@@ -123,7 +123,11 @@ fn timers_that_wake_the_root_fire_one_per_poll_in_timer_order() {
         assert_eq!(timers.fire(&task), Some(0));
         assert!(b.fired.load(Ordering::Acquire) && other.fired.load(Ordering::Acquire));
         assert!(!a.fired.load(Ordering::Acquire));
-        assert_eq!(*log.lock().unwrap(), ["other", "task"], "asks for that poll");
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["other", "task"],
+            "asks for that poll"
+        );
         log.lock().unwrap().clear();
         assert_eq!(timers.fire(&task), Some(0));
         assert!(a.fired.load(Ordering::Acquire));

@@ -666,7 +666,10 @@ fn run_with_timeout(mut cmd: Command) -> std::process::Output {
     // Said in the failure: what was read so far is not all the program printed, perhaps.
     for (open, name) in [(out_open, "stdout"), (err_open, "stderr")] {
         if open {
-            let note = format!("\n({name} still open {} s after the exit)\n", grace.as_secs());
+            let note = format!(
+                "\n({name} still open {} s after the exit)\n",
+                grace.as_secs()
+            );
             stderr.extend_from_slice(note.as_bytes());
         }
     }
