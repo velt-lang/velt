@@ -9,6 +9,7 @@
 
 export type {
   Build,
+  CLibrary,
   Dependency,
   DependencySource,
   Import,

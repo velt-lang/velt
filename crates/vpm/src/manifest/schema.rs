@@ -40,6 +40,8 @@ pub enum Entry {
     Dependency,
     /// A conditional import: a file, or an object of conditions to files (`crate::imports`).
     Import,
+    /// A C library: an object with [`C_LIBRARY`]'s fields.
+    CLibrary,
 }
 
 /// The manifest object: `export const pkg: Package = { … }`.
@@ -169,6 +171,15 @@ pub const PACKAGE: &[Field] = &[
         ty: "Native",
         required: false,
         doc: "A Rust crate in the package, built into a native library.",
+    },
+    Field {
+        key: "allowNative",
+        kind: Kind::StrArray { values: &[] },
+        ty: "string[]",
+        required: false,
+        doc: "The packages with native code (C libraries or a Rust crate) the program allows, by \
+              name, such as `[\"sqlite\"]`: installing or building with any other package that \
+              has native code is an error. Only the root package's applies.",
     },
     Field {
         key: "tsCompat",
@@ -391,7 +402,29 @@ pub const NATIVE: &[Field] = &[
         required: false,
         doc: "WebAssembly libraries are not supported yet: must be `false` (the default).",
     },
+    Field {
+        key: "c",
+        kind: Kind::Map(Entry::CLibrary),
+        ty: "Record<string, CLibrary>",
+        required: false,
+        doc: "The C libraries the package's `declare c(\"<library>\")` functions name, by that \
+              name: where each comes from on each target. `\"c\"`, the platform's C library, \
+              needs no entry, but a package declaring C functions has this object (`c: {}` \
+              for the C library's only), so programs see it has native code.",
+    },
 ];
+
+/// `native.c.<library>`.
+pub const C_LIBRARY: &[Field] = &[Field {
+    key: "system",
+    kind: Kind::Map(Entry::Str),
+    ty: "Record<string, string>",
+    required: false,
+    doc: "The platform's library, by build condition (`darwin`, `linux`, `win32`, `native`, \
+          `default`): `{ linux: \"sqlite3\" }` links `-lsqlite3`, and \
+          `\"framework:Accelerate\"` under `darwin` a macOS framework. The first condition the build has \
+          applies; a target none applies to can't call the library's functions.",
+}];
 
 /// The field `key` of `fields`.
 pub fn field(fields: &'static [Field], key: &str) -> Option<&'static Field> {
@@ -414,6 +447,14 @@ pub fn object_at(path: &[String]) -> Option<&'static [Field]> {
                     return None;
                 }
                 return Some(DEPENDENCY);
+            }
+            Kind::Map(Entry::CLibrary) => {
+                // `native.c.<library>` is a C library object.
+                let (_, tail) = tail.split_first()?;
+                if !tail.is_empty() {
+                    return None;
+                }
+                return Some(C_LIBRARY);
             }
             _ => return None,
         }

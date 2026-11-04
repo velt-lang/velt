@@ -68,6 +68,22 @@ pub fn install(
         // A package the member uses may depend back on it.
         dirs.insert(manifest.package.name.clone(), dir.to_path_buf());
     }
+    match root {
+        Some(root) => super::allow_native::check(root, packages.iter().copied(), &dirs)?,
+        // No package is the root, but the next step builds what the members use, and building
+        // runs build scripts: each member's list has to allow what that member uses.
+        None => {
+            for m in &ws.members {
+                let deps = &resolution.packages[m.name()].dependencies;
+                let used = used_by(&resolution, deps);
+                let theirs = (packages.iter().copied())
+                    .filter(|p| p.name != m.name() && used.contains(p.name.as_str()));
+                let root = (&manifests[&m.dir], m.dir.as_path(), deps.as_slice());
+                super::allow_native::check(root, theirs, &dirs)
+                    .map_err(|e| format!("workspace member `{}`: {e}", m.name()))?;
+            }
+        }
+    }
     let natives = natives(
         &loc,
         root.map(|(manifest, dir, _)| (dir, manifest)),

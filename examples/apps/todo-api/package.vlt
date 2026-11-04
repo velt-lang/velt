@@ -3,6 +3,8 @@ import type { Package } from "velt/package";
 export const pkg: Package = {
   name: "todo-api",
   version: "0.1.0",
+  // Packages with native code run with no safety net, so the program lists the ones it trusts.
+  allowNative: ["sqlite"],
   // The HTTP server and the SQLite store: the repository's packages (sqlite's native library is
   // built with cargo).
   dependencies: {

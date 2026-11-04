@@ -289,6 +289,7 @@ mod tests {
             output: Path::new("p.wasm"),
             release: true,
             native: &[],
+            c_libs: &[],
         };
         let args: Vec<String> = args(&req, WasmFlavor::Browser)
             .unwrap()

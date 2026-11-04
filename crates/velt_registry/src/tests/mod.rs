@@ -171,7 +171,12 @@ fn native_libraries_over_http() {
 
     // Another machine installs the prebuilt library.
     let app = tmp.path().join("app");
-    package(&app, "app", "0.1.0", "dependencies: { n: \"1\" }");
+    package(
+        &app,
+        "app",
+        "0.1.0",
+        "allowNative: [\"n\"], dependencies: { n: \"1\" }",
+    );
     let other = client(&tmp.path().join("home2"), &url);
     let opts = InstallOptions {
         target: Some(target.into()),

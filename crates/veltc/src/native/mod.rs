@@ -195,6 +195,7 @@ pub fn check_declares(
     diags: &mut Diagnostics,
 ) {
     let io = IoTypes::find(p, sm, std_root);
+    let mut checked = c_decls::Checked::default();
     for def in &p.defs {
         let Def::ExternFn(f) = def else { continue };
         if f.system.is_some() {
@@ -206,7 +207,7 @@ pub fn check_declares(
             continue;
         }
         if let Some(c) = &f.c {
-            c_decls::check(f, c, sm, graph, std_files, diags);
+            c_decls::check(f, c, sm, graph, std_files, target, &mut checked, diags);
             continue;
         }
         if std_files.contains(&f.span.file) {
@@ -333,6 +334,7 @@ pub fn links(graph: Option<&PackageGraph>, release: bool) -> Vec<velt_link::Nati
 }
 
 mod c_decls;
+pub use c_decls::{link_args as c_link_args, links as c_links};
 mod system;
 
 #[cfg(test)]

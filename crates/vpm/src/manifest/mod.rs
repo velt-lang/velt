@@ -34,11 +34,13 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use velt_common::{Diagnostics, FileId, SourceMap};
 
+mod c_library;
 pub mod ide;
 pub mod legacy;
 mod lint;
 pub mod read;
 pub mod schema;
+pub use c_library::CLibraryConfig;
 
 pub use lint::{LintConfig, LintLevel};
 pub(crate) mod write;
@@ -92,6 +94,15 @@ pub struct Manifest {
     /// `native`: the package ships a native library built from a Cargo crate.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub native: Option<NativeConfig>,
+    /// `native.c`: the C libraries the package's `declare c("<library>")` functions name, by
+    /// that name (docs/internals/design/c-ffi.md); `Some` (perhaps empty) when the package
+    /// declares C functions at all. A `native` object with only `c` is no Rust crate (`native`
+    /// stays `None`).
+    #[serde(skip)]
+    pub c_libraries: Option<BTreeMap<String, CLibraryConfig>>,
+    /// `allowNative`: the packages with native code the program allows (the root package's).
+    #[serde(skip)]
+    pub allow_native: Vec<String>,
     /// `jsx`: how the package's modules compile JSX.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jsx: Option<JsxConfig>,

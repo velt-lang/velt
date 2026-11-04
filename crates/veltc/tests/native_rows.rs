@@ -134,7 +134,7 @@ fn native_rows_and_parameters_go_through_velt_db() {
     std::fs::write(
         app.join("package.vlt"),
         format!(
-            "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"app\",\n  version: \"0.1.0\",\n  dependencies: {{ rows: {{ path: \"{dep}\" }} }},\n}};\n"
+            "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"app\",\n  version: \"0.1.0\",\n  allowNative: [\"rows\"],\n  dependencies: {{ rows: {{ path: \"{dep}\" }} }},\n}};\n"
         ),
     )
     .unwrap();

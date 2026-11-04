@@ -80,6 +80,18 @@ pub(crate) fn system_lib_args(native: &[NativeLink], covered: &[&str]) -> Vec<Os
     seen.into_iter().flatten().map(OsString::from).collect()
 }
 
+/// The C libraries of `declare c` functions (`c_libs`) beyond `covered`, each once.
+pub(crate) fn c_lib_args(c_libs: &[String], covered: &[&str]) -> Vec<OsString> {
+    let covered = lib_units(covered.iter().copied());
+    let mut seen: Vec<Vec<&str>> = Vec::new();
+    for unit in lib_units(c_libs.iter().map(String::as_str)) {
+        if !covered.contains(&unit) && !seen.contains(&unit) {
+            seen.push(unit);
+        }
+    }
+    seen.into_iter().flatten().map(OsString::from).collect()
+}
+
 /// Linker arguments grouped into libraries: `-framework` with its name, anything else alone.
 fn lib_units<'a>(args: impl Iterator<Item = &'a str>) -> Vec<Vec<&'a str>> {
     let mut units: Vec<Vec<&str>> = Vec::new();
@@ -179,6 +191,7 @@ mod tests {
             output: Path::new("out"),
             release: true,
             native: &native,
+            c_libs: &[],
         };
         let a: Vec<String> = unix_args(&req, TargetOs::Linux)
             .iter()
@@ -204,6 +217,7 @@ mod tests {
             target: "x86_64-pc-windows-msvc",
             runtime_lib: Path::new("velt_rt.lib"),
             native: &dll,
+            c_libs: &[],
             ..req
         };
         let a: Vec<String> = link_msvc_args(&req)

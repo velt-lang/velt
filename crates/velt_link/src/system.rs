@@ -141,6 +141,7 @@ pub(crate) fn msvc_args(req: &LinkRequest) -> Result<Vec<OsString>, String> {
     args.push(out);
     args.extend(req.objects.iter().map(OsString::from));
     args.extend(native::msvc_args(req.native)?);
+    args.extend(native::c_lib_args(req.c_libs, &[]));
     args.push(req.runtime_lib.into());
     args.extend(
         p.libs_for(req, TargetOs::Windows)
@@ -178,6 +179,7 @@ pub(crate) fn unix_args(req: &LinkRequest, os: TargetOs) -> Vec<OsString> {
     // What the packages' prelinked objects need besides (`cc` links libSystem on macOS).
     let covered: Vec<&str> = libs.iter().copied().chain(["-lSystem"]).collect();
     args.extend(native::system_lib_args(req.native, &covered));
+    args.extend(native::c_lib_args(req.c_libs, &covered));
     args.push("-o".into());
     args.push(req.output.into());
     args
@@ -261,6 +263,7 @@ mod tests {
             output: Path::new("out.exe"),
             release: true,
             native: &[],
+            c_libs: &[],
         };
         let args = msvc_args(&req).unwrap();
         assert!(args.iter().any(|a| a == "/STACK:8388608"), "{args:?}");
@@ -276,6 +279,7 @@ mod tests {
                 output: Path::new("out"),
                 release: false,
                 native: &[],
+                c_libs: &[],
             };
             let os = TargetOs::from_triple(target).unwrap();
             unix_args(&req, os)
@@ -340,6 +344,7 @@ mod tests {
                 output: Path::new("out"),
                 release: false,
                 native: &[],
+                c_libs: &[],
             };
             let a = unix_args(&req, TargetOs::from_triple(target).unwrap());
             let i = a.iter().position(|s| s == "-arch")?;
@@ -361,6 +366,7 @@ mod tests {
             output: Path::new("out.exe"),
             release: false,
             native: &[],
+            c_libs: &[],
         };
         let a: Vec<String> = msvc_args(&req)
             .unwrap()
@@ -376,6 +382,7 @@ mod tests {
         let req = LinkRequest {
             release: true,
             native: &[],
+            c_libs: &[],
             target: "x86_64-unknown-linux-gnu",
             runtime_lib: Path::new("libvelt_rt.a"),
             output: Path::new("out"),
@@ -400,6 +407,7 @@ mod tests {
                 output: Path::new("out"),
                 release: false,
                 native: &[],
+                c_libs: &[],
             };
             let os = TargetOs::from_triple(target).unwrap();
             let a = match os {

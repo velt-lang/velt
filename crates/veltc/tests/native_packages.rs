@@ -221,6 +221,18 @@ fn sqlite_package_with_native_code() {
     let mut manifest = vpm::Manifest::from_dir(&app).unwrap();
     manifest.registry = Some(url.clone());
     std::fs::write(app.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).unwrap();
+    // Not allowed yet: `velt add` names the line, and adds once it's there.
+    let refused = velt(&app, &home, &["add", "sqlite"]);
+    let text = String::from_utf8_lossy(&refused.stderr);
+    assert!(!refused.status.success(), "{text}");
+    assert!(
+        text.contains("package `sqlite` has native code")
+            && text.contains("allowNative: [\"sqlite\"]"),
+        "{text}"
+    );
+    let mut manifest = vpm::Manifest::from_dir(&app).unwrap();
+    manifest.allow_native = vec!["sqlite".into()];
+    std::fs::write(app.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).unwrap();
     let added = ok(velt(&app, &home, &["add", "sqlite"]), "velt add");
     let text = String::from_utf8_lossy(&added.stderr);
     assert!(
