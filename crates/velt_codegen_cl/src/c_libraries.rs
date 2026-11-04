@@ -59,11 +59,12 @@ fn file_names(system: &str) -> Vec<String> {
     } else if cfg!(target_os = "macos") {
         vec![format!("lib{system}.dylib")]
     } else {
-        vec![
-            format!("lib{system}.so"),
-            format!("lib{system}.so.0"),
-            format!("lib{system}.so.1"),
-        ]
+        // The unversioned name is only a development link, and for glibc's libraries a linker
+        // script `dlopen` refuses: `m` is `libm.so.6`.
+        let versions = (0..10).map(|v| format!("lib{system}.so.{v}"));
+        std::iter::once(format!("lib{system}.so"))
+            .chain(versions)
+            .collect()
     }
 }
 
