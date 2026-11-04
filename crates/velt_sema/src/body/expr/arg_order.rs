@@ -4,6 +4,7 @@
 use velt_syntax::ast;
 
 use super::args::{as_arrow, deferred, Callable};
+use super::arrow_defaults::context_sensitive;
 use crate::body::FnCx;
 
 impl FnCx<'_, '_> {
@@ -34,8 +35,11 @@ impl FnCx<'_, '_> {
         // for `C: new (v: T) => Box<T>`) takes its type arguments from the signature. It goes
         // before the arrows, whose parameters it may type (`run((b) => b.m, B)`).
         let class: Vec<bool> = args.iter().map(|a| self.names_class(a)).collect();
+        // A context-sensitive argument comes last: nothing after it can give its parameters a
+        // type (`fix_for_context_sensitive`), and everything else is a candidate for them.
         let round = |i: usize| match (deferred(&args[i]) || late[i], as_arrow(&args[i]).is_some()) {
             _ if class[i] => 2,
+            _ if context_sensitive(&args[i]) => 4,
             (false, _) => 0,
             (true, false) => 1,
             (true, true) => 3,

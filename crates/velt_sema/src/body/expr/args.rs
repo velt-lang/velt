@@ -541,6 +541,7 @@ impl FnCx<'_, '_> {
             }
             self.cx.match_ty(p.ty, h.ty, slots);
             self.infer_from_generic(p.ty, h.ty, slots);
+            self.never_element(p.ty, h.ty, slots);
             out[i] = Some(h);
         }
         out.into_iter()
