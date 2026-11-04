@@ -28,7 +28,7 @@ pub struct NativePackage {
 /// declarations against C headers").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Checked {
-    /// It lists headers (checked against them comes with the header check).
+    /// Against the headers package.vlt lists.
     Headers,
     /// `unchecked: true`: the library has no headers.
     Unchecked,
@@ -47,7 +47,7 @@ impl Checked {
 
     fn word(self) -> &'static str {
         match self {
-            Checked::Headers => "headers listed",
+            Checked::Headers => "headers checked",
             Checked::Unchecked => "unchecked",
             Checked::NoHeaders => "no headers",
         }
@@ -241,7 +241,7 @@ mod tests {
         assert_eq!(
             render(&packages),
             "Native code the program allows (allowNative):\n  \
-             sqlite: C libraries sqlite3 (sqlite3; headers listed), blas (none on this target; unchecked); 2 places of unsafe code\n    \
+             sqlite: C libraries sqlite3 (sqlite3; headers checked), blas (none on this target; unchecked); 2 places of unsafe code\n    \
              src/db.vlt:12   unsafe block\n    \
              src/stmt.vlt:7  unsafe function `step`\n  \
              pg: a Rust crate; no unsafe code\n"

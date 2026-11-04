@@ -31,6 +31,9 @@ pub struct GraphPackage {
     /// The package has native code (`crate::manifest::Manifest::has_native_code`): only such a
     /// package may declare C functions.
     pub has_native_code: bool,
+    /// Fetched from a registry or a git repository, not the program's own or a path dependency:
+    /// its C declarations were checked against its headers where it was published.
+    pub fetched: bool,
     /// The package's `jsx.importSource`, as written.
     pub jsx_import_source: Option<String>,
     /// The package's `define` (name → literal source); the root package's apply to the build.
@@ -113,6 +116,7 @@ impl PackageGraph {
             native: None,
             c_libraries: BTreeMap::new(),
             has_native_code: false,
+            fetched: false,
             jsx_import_source: None,
             define: BTreeMap::new(),
             npm: BTreeMap::new(),

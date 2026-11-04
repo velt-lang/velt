@@ -1954,6 +1954,7 @@ dependencies = [
  "notify",
  "semver",
  "serde_json",
+ "sha2",
  "tar",
  "tempfile",
  "velt_build_cache",

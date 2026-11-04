@@ -739,6 +739,23 @@ Step 1 lands in layers, each its own pull request:
      - zig 0.17.1, pinned with each host's SHA-256 (`velt_toolchain::zig`), downloads into
        `$VELT_HOME/cache/zig/` on first use (about 55 MB, 10 s), or `$VELT_ZIG` names one (CI,
        offline machines).
+   - 6a-2: declarations checked against headers in the packages a build has locally (the
+     root, path dependencies, workspace members); registry and git packages come with 6b's
+     digest.
+     - zig's `zig cc -###` gives the clang command for the target; that command with
+       `-ast-dump=json` in place of the object parses the headers (`zig cc -fsyntax-only` still
+       renames an object it never made).
+     - Each declaration must name a function the headers declare, with as many parameters, not
+       variadic, and each parameter and the result must match per the table above (typedefs
+       resolved, `long` per the target's data model, clang's predefined `__size_t`). Windows
+       targets read zig's MinGW headers, which have MSVC's type sizes.
+     - A check that passed is remembered in `$VELT_HOME/cache/headers/`, keyed by zig's
+       version, the target, the headers' names and the package's headers' bytes, and the
+       declarations; clang runs again when one changes (about 0.2 s per library).
+     - A library listing no headers is still built, shown as "no headers" in `velt check`:
+       requiring headers or `unchecked` comes with 6b, which records the digest.
+     - Not yet: headers per build condition (frameworks: zig has no macOS SDK), structs,
+       constants, function pointers, variadics.
 
 ## Decisions
 

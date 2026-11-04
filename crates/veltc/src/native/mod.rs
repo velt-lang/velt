@@ -257,6 +257,7 @@ pub fn check_declares(
             Err(why) => diags.push(Diagnostic::error(why, f.span)),
         }
     }
+    headers::check(p, sm, graph, std_files, target, diags);
 }
 
 /// The error for a `declare function` in a module whose package (`pkg`; `None`: a program
@@ -337,6 +338,7 @@ pub fn links(graph: Option<&PackageGraph>, release: bool) -> Vec<velt_link::Nati
 }
 
 mod c_decls;
+mod headers;
 pub use c_decls::{link_args as c_link_args, links as c_links};
 mod report;
 mod system;
