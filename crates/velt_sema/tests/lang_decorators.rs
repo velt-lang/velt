@@ -408,3 +408,35 @@ fn a_plain_import_is_still_a_decorator_and_a_constant() {
     assert_eq!(uses[0].args, [C::Str("lib".into())]);
 }
 
+#[test]
+fn a_default_must_fit_its_parameter() {
+    const MESSAGE: &str = "this default of the decorator doesn't fit its parameter's type";
+    for decl in [
+        r#"g(a: string = 1)"#,
+        r#"g(a: i64 = "x")"#,
+        "g(a: u8 = 256)",
+        r#"g(a: "x" | "y" = "z")"#,
+        "g(a: string[] = [1])",
+        "g(a: i64, b: boolean = 1)",
+    ] {
+        // Refused at the declaration, used or not.
+        let e = err_src(&format!(
+            "declare decorator function {decl}: TypeDecorator; function main() {{}}"
+        ));
+        assert!(e.contains(MESSAGE), "{decl}: {e}");
+    }
+    for decl in [
+        r#"g(a: string = "x")"#,
+        "g(a: i64 = 1)",
+        "g(a: f64 = 1)",
+        r#"g(a: "x" | "y" = "y")"#,
+        "g(a: string[] = [])",
+        "g(a: i64 | null = null)",
+        "g(a?: string)",
+    ] {
+        ok_src(&format!(
+            "declare decorator function {decl}: TypeDecorator; function main() {{}}"
+        ));
+    }
+}
+

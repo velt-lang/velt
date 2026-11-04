@@ -3,3 +3,5 @@ decorators_declaration.velt:2:41: error: this is not a decorator's result type
 decorators_declaration.velt:3:36: error: a decorator has no type parameters
 decorators_declaration.velt:4:34: error: a decorator is never called, so it can't be `async`
 decorators_declaration.velt:8:51: error: a decorator's argument must be a constant
+decorators_declaration.velt:9:53: error: this default of the decorator doesn't fit its parameter's type `string`
+decorators_declaration.velt:10:47: error: this default of the decorator doesn't fit its parameter's type `u8`

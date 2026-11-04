@@ -107,7 +107,7 @@ pub(crate) fn check<'m>(cx: &mut Ctx<'m>) {
                 let decorated = !sig.decorators.is_empty()
                     || sig.params.iter().any(|p| !p.decorators.is_empty());
                 if sig.is_decorator {
-                    check_declaration(cx, module, sig);
+                    check_declaration(cx, d, module, sig);
                 }
                 if decorated && seen.insert(sig as *const ast::FnSig as usize) {
                     function_uses(cx, d, module, kind, sig);
@@ -169,8 +169,9 @@ fn type_uses<'m>(cx: &mut Ctx<'m>, d: DefId, m: usize, decl: &'m ast::TypeDecl) 
     }
 }
 
-/// Checks what a declaration says: only a target type makes it a decorator's.
-fn check_declaration(cx: &mut Ctx, m: usize, sig: &ast::FnSig) {
+/// Checks what declaration `d` says: only a target type makes it a decorator's, and a default is
+/// a constant that fits its parameter, since a use records it as it is.
+fn check_declaration(cx: &mut Ctx, d: DefId, m: usize, sig: &ast::FnSig) {
     if let Some(g) = sig.generics.first() {
         cx.err("a decorator has no type parameters", g.name.span);
     }
@@ -201,12 +202,23 @@ fn check_declaration(cx: &mut Ctx, m: usize, sig: &ast::FnSig) {
             }
         }
     }
-    for p in &sig.params {
+    let tys: Vec<_> = cx.fn_info(d).params.iter().map(|p| p.ty).collect();
+    for (p, &ty) in sig.params.iter().zip(&tys) {
         let Some(default) = p.default.as_ref().filter(|_| !p.rest) else {
             continue;
         };
-        if let Err(e) = consts::value_of(cx, m, default) {
-            non_constant(cx, e);
+        match consts::value_of(cx, m, default) {
+            Ok(v) if !consts::fits(cx, &v, ty) => {
+                let shown = cx.display(ty);
+                cx.err(
+                    format!(
+                        "this default of the decorator doesn't fit its parameter's type `{shown}`"
+                    ),
+                    default.span,
+                );
+            }
+            Ok(_) => {}
+            Err(e) => non_constant(cx, e),
         }
     }
 }
@@ -413,7 +425,7 @@ fn arguments(
                 None => ok = false,
             }
         } else if let Some(default) = &p.default {
-            // A default that isn't constant is reported at the declaration.
+            // A default that isn't constant, or doesn't fit, is reported at the declaration.
             match consts::value_of(cx, decl_module, default) {
                 Ok(v) => out.push(v),
                 Err(_) => ok = false,
