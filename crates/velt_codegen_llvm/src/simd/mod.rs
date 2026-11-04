@@ -471,11 +471,15 @@ fn fits(b: &mut Body, n: u32) -> String {
 /// Address of element `%a{array + 1}` of the array whose header `%a{array}` points to (the
 /// `{ data, len, cap }` header of docs/internals/design/semantics-stage2.md).
 fn element(b: &mut Body, lane: &str, array: usize) -> String {
+    element_at(b, lane, array, &format!("%a{}", array + 1))
+}
+
+/// [`element`] at the index `at` (an `i64` value).
+fn element_at(b: &mut Body, lane: &str, array: usize, at: &str) -> String {
     let tag = HEADER.suffix();
     let data = b.inst(format!("load ptr, ptr %a{array}, align 8{tag}"));
     b.inst(format!(
-        "getelementptr inbounds {lane}, ptr {data}, i64 %a{}",
-        array + 1
+        "getelementptr inbounds {lane}, ptr {data}, i64 {at}"
     ))
 }
 
@@ -609,6 +613,47 @@ mod tests {
             let t = text(symbol, arch);
             assert!(!t.contains("@llvm.x86"), "{symbol}: {t}");
             assert!(t.contains("extractelement"), "{symbol}: {t}");
+        }
+    }
+
+    /// A partial load or store reads its count through `freeze`, so the vector loop before it
+    /// does not count `len - i` down as an extra induction variable, and its position as it is,
+    /// so a typed-array loop (a constant count, the position `byteOffset + i * k`) still
+    /// vectorizes.
+    #[test]
+    fn partial_accesses_freeze_their_count_only() {
+        for (symbol, at, count) in [
+            ("velt_simd_u8x16_load_partial", "%a1", "%a2"),
+            ("velt_simd_f32x4_load_partial", "%a1", "%a2"),
+            ("velt_simd_u8x16_store_partial", "%a2", "%a3"),
+            ("velt_simd_i64x2_store_partial", "%a2", "%a3"),
+        ] {
+            let text = helper(symbol, Arch::Neon, false).unwrap().1.join("\n");
+            // The body: everything after the `define` line, which names the parameters.
+            let body = text.split_once("{\n").map_or("", |(_, b)| b);
+            let uses = |arg: &str| {
+                body.matches(&format!("{arg},")).count()
+                    + body.matches(&format!("{arg})")).count()
+                    + body.matches(&format!("{arg}\n")).count()
+                    + body.matches(&format!("{arg} ")).count()
+            };
+            assert!(
+                body.contains(&format!("freeze i64 {count}\n")),
+                "{symbol}: {text}"
+            );
+            assert_eq!(
+                uses(count),
+                1,
+                "{symbol}: {count} read besides its freeze: {text}"
+            );
+            assert!(
+                !body.contains(&format!("freeze i64 {at}")),
+                "{symbol}: {text}"
+            );
+            assert!(
+                body.contains(&format!("i64 {at}\n")),
+                "{symbol}: {at} not the GEP's: {text}"
+            );
         }
     }
 
