@@ -142,6 +142,9 @@ class Parser {
       if (bound == "eval" || bound == "arguments") {
         this.fail("a declaration cannot be named `arguments` or `eval`");
       }
+      if (bound == "default") {
+        this.fail("`default` is a reserved word and cannot be used as a name");
+      }
       names++;
       if (!this.punct(",")) {
         this.expectPunct("}");

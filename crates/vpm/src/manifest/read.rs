@@ -168,6 +168,7 @@ impl Reader<'_> {
                     let types_only = import.from == TYPES_MODULE
                         && import.namespace.is_none()
                         && !import.all
+                        && !import.default_import
                         && !import.names.is_empty()
                         && import.names.iter().all(|n| n.type_only);
                     if !types_only {
