@@ -3,7 +3,7 @@
 //! that may hold a float. `texts` are the types of the values it converts (`ToString`,
 //! `TemplateToString`) in the code scanned since the last call, std's own excepted (the prelude
 //! is checked whatever the program uses, and its conversions would make every program check the
-//! hooks). The integer hooks are no longer on demand: checked with the prelude (#2197).
+//! hooks). The integer hooks are demanded by the constructs of live code instead (`live.rs`).
 
 use crate::ctx::Ctx;
 use crate::hir::{self, DefId, TyId, TyKind};

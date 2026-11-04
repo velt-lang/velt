@@ -1,0 +1,167 @@
+//! Which hooks lowering may call, decided by sema (#2161 step 2): the HIR constructs whose
+//! lowering calls a hook ([`Construct`], listed per entry in `std_hooks.rs`'s `constructs(…)`),
+//! and the set of hooks sema demanded ([`HookSet`], `hir::Program::hooks_demanded`).
+//! CONTRACT FILE — changes need maintainer review (docs/internals/contracts/README.md).
+//!
+//! Sema (`velt_sema` `body/lazy_std/live.rs`) evaluates the constructs on *live* code (user code,
+//! and the std definitions that code reaches, that lowering looks up by name, or that are
+//! methods of a type in live code), with the operand's type, and demands each hook one of whose
+//! constructs occurs; a hook whose entry lists no construct is always demanded. It checks the
+//! demanded hooks, and leaves the others unchecked. Lowering's builder of a hook with constructs
+//! (`velt_vir` `lower/hook_calls.rs`) asserts, in release compilers too, that sema demanded it:
+//! `ICE: hook <name> reached by lowering but not demanded by sema (construct <c>)` names the
+//! construct missing from the table.
+//!
+//! ```
+//! use velt_common::std_hooks::{hook_index, Construct, HookSet, HOOKS};
+//! let int_push = &HOOKS[hook_index::int_push];
+//! assert!(int_push.constructs.contains(&Construct::Format));
+//! let mut set = HookSet::default();
+//! set.insert(hook_index::int_push);
+//! assert!(set.contains(hook_index::int_push) && !set.contains(hook_index::int_text));
+//! ```
+
+/// Does the hook with qualified name `qualified` list the constructs that demand it
+/// (`Hook::constructs`)? Sema checks it only where live code has one.
+pub fn has_constructs(qualified: &str) -> bool {
+    crate::std_hooks::find(qualified).is_some_and(|h| !h.constructs.is_empty())
+}
+
+/// Does `present` demand every hook that lists constructs (so that more live code can demand
+/// nothing new)?
+pub fn all_demanded(present: ConstructSet) -> bool {
+    (crate::std_hooks::HOOKS.iter())
+        .all(|h| h.constructs.is_empty() || h.constructs.iter().any(|c| present & c.bit() != 0))
+}
+
+/// A HIR construct whose lowering calls a hook, as sema evaluates it on live code.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Construct {
+    /// `ToString` / `TemplateToString` (`String(v)`, `${v}`, `v.toString()`, `"a" + v`) of a
+    /// signed integer: its text alone (`template.rs` `stringify`), or appended to the
+    /// template's builder.
+    TextInt,
+    /// The same of an unsigned integer.
+    TextUint,
+    /// Lowering's formatting glue for a value of a type that may print an integer (an integer, an
+    /// enum's discriminant, an array's or a map's size, a class's fields, a value of a type
+    /// parameter or held as `any`): `console.log` and `console.error` of it, `inspect`,
+    /// `errorText`, `String()` and `${}` of a value that is no scalar, the report of it thrown
+    /// and not caught, and the `format` slot of a class's or an interface value's table, which
+    /// every class value in live code has.
+    Format,
+    /// A bounds-checked index of an array (`xs[i]`, an array pattern, the array intrinsics): the
+    /// out-of-bounds message prints the length and the index.
+    IndexCheck,
+    /// A value held as `any` (`unknown`, `object`, `Function`): its table's glue writes numeric
+    /// keys (`Object.keys`, `k in x`) and formats what it holds.
+    Dynamic,
+}
+
+impl Construct {
+    /// Every construct, in bit order ([`ConstructSet`]).
+    pub const ALL: [Construct; 5] = [
+        Construct::TextInt,
+        Construct::TextUint,
+        Construct::Format,
+        Construct::IndexCheck,
+        Construct::Dynamic,
+    ];
+
+    /// The construct as the ICE names it.
+    pub fn name(self) -> &'static str {
+        match self {
+            Construct::TextInt => "TextInt (ToString or TemplateToString of a signed integer)",
+            Construct::TextUint => "TextUint (ToString or TemplateToString of an unsigned integer)",
+            Construct::Format => "Format (formatting glue of a type that may print an integer)",
+            Construct::IndexCheck => "IndexCheck (a bounds-checked array index)",
+            Construct::Dynamic => "Dynamic (the glue of a value held as any)",
+        }
+    }
+
+    /// Its bit in a [`ConstructSet`].
+    pub const fn bit(self) -> u8 {
+        1 << self as u8
+    }
+}
+
+/// A set of [`Construct`]s, one bit each ([`Construct::bit`]).
+pub type ConstructSet = u8;
+
+/// The words of a [`HookSet`]: one bit per entry of [`crate::std_hooks::HOOKS`].
+const WORDS: usize = crate::std_hooks::HOOKS.len().div_ceil(64);
+
+/// A set of hooks by their index in [`crate::std_hooks::HOOKS`] (`std_hooks::hook_index::int_push`):
+/// the hooks sema demanded (`hir::Program::hooks_demanded`). Testing one is one bit test.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HookSet([u64; WORDS]);
+
+impl HookSet {
+    /// Every hook: what a program checked with every std body may call.
+    pub fn all() -> HookSet {
+        let mut s = HookSet::default();
+        for i in 0..crate::std_hooks::HOOKS.len() {
+            s.insert(i);
+        }
+        s
+    }
+
+    /// The hooks lowering may call in a program whose live code has the constructs `present`:
+    /// those listing one of them, and those listing none.
+    pub fn demanded_by(present: ConstructSet) -> HookSet {
+        let mut s = HookSet::default();
+        for (i, h) in crate::std_hooks::HOOKS.iter().enumerate() {
+            if h.constructs.is_empty() || h.constructs.iter().any(|c| present & c.bit() != 0) {
+                s.insert(i);
+            }
+        }
+        s
+    }
+
+    #[inline]
+    pub fn insert(&mut self, i: usize) {
+        self.0[i / 64] |= 1 << (i % 64);
+    }
+
+    #[inline]
+    pub fn contains(&self, i: usize) -> bool {
+        self.0[i / 64] & (1 << (i % 64)) != 0
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::std_hooks::{hook_index, HOOKS};
+
+    #[test]
+    fn the_index_is_the_table_order() {
+        assert_eq!(HOOKS[hook_index::int_text].name, "int_text");
+        assert_eq!(HOOKS[hook_index::uint_push].name, "uint_push");
+        assert_eq!(HOOKS[hook_index::array_filled].name, "array_filled");
+    }
+
+    #[test]
+    fn a_hook_without_constructs_is_always_demanded() {
+        let none = HookSet::demanded_by(0);
+        for (i, h) in HOOKS.iter().enumerate() {
+            assert_eq!(none.contains(i), h.constructs.is_empty(), "{}", h.name);
+        }
+        assert_eq!(
+            HookSet::demanded_by(Construct::ALL.iter().fold(0, |s, c| s | c.bit())),
+            HookSet::all()
+        );
+    }
+
+    #[test]
+    fn the_integer_hooks_are_demanded_by_their_constructs() {
+        let by = |c: Construct| HookSet::demanded_by(c.bit());
+        assert!(by(Construct::TextInt).contains(hook_index::int_text));
+        assert!(by(Construct::TextInt).contains(hook_index::int_push));
+        assert!(!by(Construct::TextInt).contains(hook_index::uint_text));
+        assert!(by(Construct::IndexCheck).contains(hook_index::uint_text));
+        assert!(!by(Construct::IndexCheck).contains(hook_index::int_push));
+        assert!(by(Construct::Format).contains(hook_index::uint_push));
+        assert!(by(Construct::Dynamic).contains(hook_index::uint_text));
+    }
+}

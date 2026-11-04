@@ -4,7 +4,7 @@
 
 use velt_sema::hir::{TyId, TyKind};
 
-use super::hook_calls::{self as hooks, ty, HookTy};
+use super::hook_calls::{self as hooks, ty, Construct, HookTy};
 use super::operand::proj;
 use super::rt::Rt;
 use super::{cint, FnLower};
@@ -437,8 +437,14 @@ impl FnLower<'_, '_> {
         self.call_rt(Rt::StrbufPushInspectF64, vec![buf.clone(), v], None);
     }
 
-    /// Append an int/float/bool (or C-like enum discriminant) `v` of type `ty` in JS format.
+    /// Append an int/float/bool (or C-like enum discriminant) `v` of type `ty` in JS format, for
+    /// formatting glue (`Construct::Format`).
     pub(super) fn push_scalar(&mut self, buf: &Operand, v: Operand, ty: TyId) {
+        self.push_scalar_for(buf, v, ty, hooks::Construct::Format);
+    }
+
+    /// [`Self::push_scalar`] for construct `c`, which sema demanded the integer hooks for.
+    pub(super) fn push_scalar_for(&mut self, buf: &Operand, v: Operand, ty: TyId, c: Construct) {
         let from = self.cx.ty(ty);
         let b = buf.clone();
         match self.cx.kind(ty) {
@@ -462,12 +468,12 @@ impl FnLower<'_, '_> {
             // std's integer printing, which every program has (#2197).
             TyKind::Int(it) if !it.is_signed() => {
                 let v = self.cast_to(v, from, Ty::U64);
-                _ = hooks::uint_push(self, ty::Str::arg(b), ty::U64::arg(v)).emit(self);
+                _ = hooks::uint_push(self, c, ty::Str::arg(b), ty::U64::arg(v)).emit(self);
             }
             // An integer, or a C-like enum's discriminant.
             _ => {
                 let v = self.cast_to(v, from, Ty::I64);
-                _ = hooks::int_push(self, ty::Str::arg(b), ty::I64::arg(v)).emit(self);
+                _ = hooks::int_push(self, c, ty::Str::arg(b), ty::I64::arg(v)).emit(self);
             }
         }
     }

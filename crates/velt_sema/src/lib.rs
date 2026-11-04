@@ -429,6 +429,7 @@ fn check_timed(
         return ((None, cx.diags), Default::default());
     }
     let unchecked = finalize::build_defs(&mut cx);
+    let hooks_demanded = body::lazy_std::hooks_demanded(&cx);
     layout_merge::merge(&mut cx);
     let type_names = readonly::erase(&mut cx, &mut generated);
     let module_state = module_state::build(&mut cx, entry);
@@ -489,6 +490,7 @@ fn check_timed(
         dyn_bounds: dyn_bounds.into_iter().collect(),
         lock_free_callbacks: lock_free_callbacks.into_iter().collect(),
         unchecked: unchecked.into_iter().collect(),
+        hooks_demanded,
         any_fn_views,
         generated: generated.into_iter().collect(),
     };

@@ -23,12 +23,17 @@
 //! the way the site needs it ([`Call::emit`], [`Call::emit_to`], [`Call::emit_std`],
 //! [`Call::emit_owned`]). A hook lowering cannot do without is an ICE when std lacks it; a
 //! `fallback` hook's builder returns `None` when it is missing or unchecked, and the caller calls
-//! the runtime instead. Builders are `#[inline]` and allocate only the call's argument list.
+//! the runtime instead. The builder of a hook whose entry lists `constructs(…)` takes the
+//! [`Construct`] the call site lowers, and asserts (in release compilers too: one bit test) that
+//! sema demanded the hook (`hir::Program::hooks_demanded`, velt_common `hook_demand.rs`): a
+//! construct missing from the table is an ICE naming it. Builders are `#[inline]` and allocate
+//! only the call's argument list.
 //!
 //! `velt_vir::hook_args`'s doctest shows that a call with the wrong markers does not compile.
 
 use std::marker::PhantomData;
 
+pub(super) use velt_common::std_hooks::Construct;
 use velt_common::std_hooks::Mode;
 use velt_sema::hir::{DefId, PassMode, TyId};
 
@@ -243,6 +248,26 @@ impl<R> Call<R> {
         Self::with(lw, def, targs, args)
     }
 
+    /// The call of hook `name` (entry `index` of the table) for construct `c`: sema must have
+    /// demanded it, which a release compiler checks too (a construct missing from the table).
+    #[inline]
+    fn demanded<const N: usize>(
+        lw: &mut FnLower<'_, '_>,
+        index: usize,
+        c: Construct,
+        name: &str,
+        targs: Vec<TyId>,
+        args: [Passed; N],
+    ) -> Self {
+        assert!(
+            lw.cx.hir.hooks_demanded.contains(index),
+            "ICE: hook {} reached by lowering but not demanded by sema (construct {})",
+            velt_common::std_hooks::HOOKS[index].name,
+            c.name()
+        );
+        Self::must(lw, name, targs, args)
+    }
+
     fn with<const N: usize>(
         lw: &mut FnLower<'_, '_>,
         def: DefId,
@@ -375,35 +400,41 @@ impl<R> Call<R> {
 
 /// The builders, from the table's entries (`std_hook_table!`): one per lowered function hook.
 macro_rules! builders {
-    // Each entry: which flags it has, then the builder if it is lowered and a function.
-    (@flags $name:ident $s:tt [$l:ident $f:ident] []) => { builders!(@emit $l $f $name $s); };
-    (@flags $name:ident $s:tt [$l:ident $f:ident] [lowered $($r:ident)*]) => {
-        builders!(@flags $name $s [yes $f] [$($r)*]);
+    // Each entry: which flags it has (lowered, fallback, constructs), then the builder if it is
+    // lowered and a function.
+    (@flags $name:ident $s:tt [$l:ident $f:ident $c:ident] []) => {
+        builders!(@emit $l $f $c $name $s);
     };
-    (@flags $name:ident $s:tt [$l:ident $f:ident] [fallback $($r:ident)*]) => {
-        builders!(@flags $name $s [$l yes] [$($r)*]);
+    (@flags $name:ident $s:tt [$l:ident $f:ident $c:ident] [lowered $($r:ident)*]) => {
+        builders!(@flags $name $s [yes $f $c] [$($r)*]);
     };
-    (@flags $name:ident $s:tt [$l:ident $f:ident] [$skip:ident $($r:ident)*]) => {
-        builders!(@flags $name $s [$l $f] [$($r)*]);
+    (@flags $name:ident $s:tt [$l:ident $f:ident $c:ident] [fallback $($r:ident)*]) => {
+        builders!(@flags $name $s [$l yes $c] [$($r)*]);
     };
-    (@emit no $f:ident $name:ident $s:tt) => {};
-    (@emit yes $f:ident $name:ident [class]) => {};
-    (@emit yes $f:ident $name:ident [sig(<$g0:ident> $($sig:tt)*)]) => {
-        builders!(@sig $f $name [targs: [TyId; 1],] [targs.to_vec()] $($sig)*);
+    (@flags $name:ident $s:tt [$l:ident $f:ident $c:ident] [constructs $($r:ident)*]) => {
+        builders!(@flags $name $s [$l $f yes] [$($r)*]);
     };
-    (@emit yes $f:ident $name:ident [sig(<$g0:ident, $g1:ident> $($sig:tt)*)]) => {
-        builders!(@sig $f $name [targs: [TyId; 2],] [targs.to_vec()] $($sig)*);
+    (@flags $name:ident $s:tt [$l:ident $f:ident $c:ident] [$skip:ident $($r:ident)*]) => {
+        builders!(@flags $name $s [$l $f $c] [$($r)*]);
     };
-    (@emit yes $f:ident $name:ident [sig($($sig:tt)*)]) => {
-        builders!(@sig $f $name [] [Vec::new()] $($sig)*);
+    (@emit no $f:ident $c:ident $name:ident $s:tt) => {};
+    (@emit yes $f:ident $c:ident $name:ident [class]) => {};
+    (@emit yes $f:ident $c:ident $name:ident [sig(<$g0:ident> $($sig:tt)*)]) => {
+        builders!(@sig [$f $c] $name [targs: [TyId; 1],] [targs.to_vec()] $($sig)*);
     };
-    (@sig $f:ident $name:ident $decl:tt $targs:tt ( $($p:tt)* ) -> $r:tt
+    (@emit yes $f:ident $c:ident $name:ident [sig(<$g0:ident, $g1:ident> $($sig:tt)*)]) => {
+        builders!(@sig [$f $c] $name [targs: [TyId; 2],] [targs.to_vec()] $($sig)*);
+    };
+    (@emit yes $f:ident $c:ident $name:ident [sig($($sig:tt)*)]) => {
+        builders!(@sig [$f $c] $name [] [Vec::new()] $($sig)*);
+    };
+    (@sig $f:tt $name:ident $decl:tt $targs:tt ( $($p:tt)* ) -> $r:tt
         $(($($ra:tt)*))? $(throws $($e:tt)*)?) => {
         builders!(@params $f $name [$r $(($($ra)*))?] $targs $decl [] []
             [a0 a1 a2 a3 a4 a5 a6 a7] $($p)*);
     };
     // The parameters, each named from the list and typed by its mode.
-    (@params $f:ident $name:ident $ret:tt $targs:tt [$($decl:tt)*] [$($pass:tt)*] [$($tys:ty,)*]
+    (@params $f:tt $name:ident $ret:tt $targs:tt [$($decl:tt)*] [$($pass:tt)*] [$($tys:ty,)*]
         [$($names:ident)*]) => {
         builders!(@fn $f $name $ret $targs [$($decl)*] [$($pass)*]);
         #[doc = concat!("The arguments of [`", stringify!($name), "`](super::", stringify!($name),
@@ -414,31 +445,31 @@ macro_rules! builders {
             pub type Args = ($($tys,)*);
         }
     };
-    (@params $f:ident $name:ident $ret:tt $targs:tt [$($decl:tt)*] [$($pass:tt)*] [$($tys:tt)*]
+    (@params $f:tt $name:ident $ret:tt $targs:tt [$($decl:tt)*] [$($pass:tt)*] [$($tys:tt)*]
         [$n:ident $($names:ident)*] & mut $t:tt $(($($a:tt)*))? $(, $($rest:tt)*)?) => {
         builders!(@params $f $name $ret $targs [$($decl)* $n: Arg<rty!($t $(($($a)*))?)>,]
             [$($pass)* $n.pass(Mode::BorrowMut),] [$($tys)* Arg<rty!($t $(($($a)*))?)>,]
             [$($names)*] $($($rest)*)?);
     };
-    (@params $f:ident $name:ident $ret:tt $targs:tt [$($decl:tt)*] [$($pass:tt)*] [$($tys:tt)*]
+    (@params $f:tt $name:ident $ret:tt $targs:tt [$($decl:tt)*] [$($pass:tt)*] [$($tys:tt)*]
         [$n:ident $($names:ident)*] & $t:tt $(($($a:tt)*))? $(, $($rest:tt)*)?) => {
         builders!(@params $f $name $ret $targs [$($decl)* $n: Arg<rty!($t $(($($a)*))?)>,]
             [$($pass)* $n.pass(Mode::Borrow),] [$($tys)* Arg<rty!($t $(($($a)*))?)>,]
             [$($names)*] $($($rest)*)?);
     };
-    (@params $f:ident $name:ident $ret:tt $targs:tt [$($decl:tt)*] [$($pass:tt)*] [$($tys:tt)*]
+    (@params $f:tt $name:ident $ret:tt $targs:tt [$($decl:tt)*] [$($pass:tt)*] [$($tys:tt)*]
         [$n:ident $($names:ident)*] move $t:tt $(($($a:tt)*))? $(, $($rest:tt)*)?) => {
         builders!(@params $f $name $ret $targs [$($decl)* $n: Own<rty!($t $(($($a)*))?)>,]
             [$($pass)* $n.pass(Mode::Owned),] [$($tys)* Own<rty!($t $(($($a)*))?)>,]
             [$($names)*] $($($rest)*)?);
     };
-    (@params $f:ident $name:ident $ret:tt $targs:tt [$($decl:tt)*] [$($pass:tt)*] [$($tys:tt)*]
+    (@params $f:tt $name:ident $ret:tt $targs:tt [$($decl:tt)*] [$($pass:tt)*] [$($tys:tt)*]
         [$n:ident $($names:ident)*] $t:tt $(($($a:tt)*))? $(, $($rest:tt)*)?) => {
         builders!(@params $f $name $ret $targs [$($decl)* $n: Arg<rty!($t $(($($a)*))?)>,]
             [$($pass)* $n.pass(Mode::Value),] [$($tys)* Arg<rty!($t $(($($a)*))?)>,]
             [$($names)*] $($($rest)*)?);
     };
-    (@fn yes $name:ident [$($ret:tt)*] [$targs:expr] [$($decl:tt)*] [$($pass:tt)*]) => {
+    (@fn [yes no] $name:ident [$($ret:tt)*] [$targs:expr] [$($decl:tt)*] [$($pass:tt)*]) => {
         #[doc = concat!("A call of the fallback hook `", stringify!($name), "`, if std has it checked.")]
         #[inline]
         pub(in crate::lower) fn $name(lw: &mut FnLower<'_, '_>, $($decl)*)
@@ -446,15 +477,25 @@ macro_rules! builders {
             Call::find(lw, velt_common::std_hook!($name), $targs, [$($pass)*])
         }
     };
-    (@fn no $name:ident [$($ret:tt)*] [$targs:expr] [$($decl:tt)*] [$($pass:tt)*]) => {
+    (@fn [no no] $name:ident [$($ret:tt)*] [$targs:expr] [$($decl:tt)*] [$($pass:tt)*]) => {
         #[doc = concat!("A call of the hook `", stringify!($name), "`.")]
         #[inline]
         pub(in crate::lower) fn $name(lw: &mut FnLower<'_, '_>, $($decl)*) -> Call<rty!($($ret)*)> {
             Call::must(lw, velt_common::std_hook!($name), $targs, [$($pass)*])
         }
     };
+    (@fn [no yes] $name:ident [$($ret:tt)*] [$targs:expr] [$($decl:tt)*] [$($pass:tt)*]) => {
+        #[doc = concat!("A call of the hook `", stringify!($name), "` for construct `c`, which \
+            sema must have demanded (velt_common `hook_demand.rs`).")]
+        #[inline]
+        pub(in crate::lower) fn $name(lw: &mut FnLower<'_, '_>, c: Construct, $($decl)*)
+            -> Call<rty!($($ret)*)> {
+            Call::demanded(lw, velt_common::std_hooks::hook_index::$name, c,
+                velt_common::std_hook!($name), $targs, [$($pass)*])
+        }
+    };
     ($($name:ident => $item:literal, $kind:ident $(($($sig:tt)*))? [$($flag:ident)*];)*) => {
-        $(builders!(@flags $name [$kind $(($($sig)*))?] [no no] [$($flag)*]);)*
+        $(builders!(@flags $name [$kind $(($($sig)*))?] [no no no] [$($flag)*]);)*
     };
 }
 
@@ -463,7 +504,7 @@ macro_rules! builders {
 // its argument types (`args::int_push::Args`), public for the doctest of `velt_vir::hook_args`.
 #[allow(dead_code, non_snake_case)]
 pub mod args {
-    use super::{ty, Arg, Call, FnLower, Mode, Own, TyId};
+    use super::{ty, Arg, Call, Construct, FnLower, Mode, Own, TyId};
     velt_common::std_hook_table!(builders);
 }
 

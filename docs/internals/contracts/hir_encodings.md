@@ -917,6 +917,18 @@ methods of the prelude's types (not those of its `extend` blocks on number types
 `JSON_GLUE` modules their glue called by name, are gone: `JSON.parse`, velt/db's row readers and
 its parameter binder are generated code, source-generators.md.)
 
+A hook whose `velt_common` `std_hooks.rs` entry lists `constructs(…)` (the integer hooks
+`intText`, `uintText`, `intPush`, `uintPush`, #2161) is the exception: lazy std checks it only
+where *live* code has one of those constructs (velt_common `hook_demand.rs`): the program's
+definitions and, closed over, the std definitions they name, the methods of the types in them,
+the implementations they call, and the std functions lowering looks up by name for a value live
+code has. `Program::hooks_demanded` (a `HookSet`, one bit per table entry) lists the hooks sema
+demanded: those with a construct in live code, and every hook whose entry lists none. Lowering
+may call a hook with constructs only where it is in `hooks_demanded`; its builder checks that,
+in release compilers too (`ICE: hook <name> reached by lowering but not demanded by sema
+(construct <c>)`), so a construct missing from the table is reported as such. A program checked
+with laziness off demands every hook.
+
 ## Symbols
 
 `TyKind::Symbol` is a pointer-sized Copy value (rt_abi.md "Symbols"). A member a symbol names is

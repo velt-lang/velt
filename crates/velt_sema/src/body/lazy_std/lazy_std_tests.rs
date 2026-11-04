@@ -168,6 +168,8 @@ fn helpers_by_name_and_by_family() {
     assert!(is_helper("anyMap_set"));
     assert!(!is_helper(velt_common::std_hook!(any_member)));
     assert!(!is_helper("Number"));
+    // A hook whose entry lists constructs is checked where live code has one (`live.rs`).
+    assert!(!is_helper(velt_common::std_hook!(int_push)));
 }
 
 /// The hooks named in the Rust sources under `dir`, outside tests: `std_hook!(<entry>)`, and

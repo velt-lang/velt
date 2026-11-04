@@ -22,7 +22,7 @@ use velt_sema::hir::{self, DynMemberKind, TyId, TyKind};
 use super::any::{TAG_NULL, TAG_UNDEFINED};
 use super::any_member::{ST_OK, ST_UNSUPPORTED};
 use super::glue::Glue;
-use super::hook_calls::{self as hooks, ty, HookTy};
+use super::hook_calls::{self as hooks, ty, Construct, HookTy};
 use super::operand::proj;
 use super::{cint, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
@@ -157,7 +157,7 @@ impl FnLower<'_, '_> {
         self.assign(Place::local(k), Rvalue::Use(cint(0, Ty::U64)));
         self.count_loop(k, n, |lw, kv| {
             let s = lw.temp(Ty::Agg(STR_AGG));
-            hooks::uint_text(lw, ty::U64::arg(kv)).emit_to(lw, Place::local(s));
+            hooks::uint_text(lw, Construct::Dynamic, ty::U64::arg(kv)).emit_to(lw, Place::local(s));
             lw.push_value(&arr, str_, Operand::Copy(Place::local(s)));
         });
         self.store(out.clone(), Operand::Copy(ap));

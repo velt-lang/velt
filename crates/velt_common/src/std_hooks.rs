@@ -21,7 +21,8 @@
 //! changing a hook fails the build, not a program. `velt_vir` generates a typed call builder for
 //! each lowered function hook from the same tokens ([`std_hook_table!`]).
 //! `lowered` marks the hooks lowering, the optimizer or a backend call: nothing in the checked
-//! code refers to them, so lazy std checks them with the prelude (`velt_sema` `lazy_std`).
+//! code refers to them, so lazy std checks them with the prelude (`velt_sema` `lazy_std`), unless
+//! the entry lists the constructs whose lowering calls it ([`crate::hook_demand`]).
 //!
 //! The table is also the port tracker of moving the runtime's work into std (#2196): an entry's
 //! `replaces(…)` names the runtime externs (`velt_rt_*`) whose job the hook does, which the
@@ -39,6 +40,7 @@
 //! assert_eq!(std_hook_name!(f64_to_string), "f64ToString");
 //! ```
 
+pub use crate::hook_demand::{all_demanded, has_constructs, Construct, ConstructSet, HookSet};
 pub use crate::hook_sig::{FnSig, Mode, Param, Sig, T};
 
 /// One hook: its entry name, its module's canonical path, its name there, its signature, whether
@@ -72,6 +74,9 @@ pub struct Hook {
     /// The program of `bench/stdport/` (`int_to_string` for `bench/stdport/int_to_string.vlt`)
     /// that measures this hook against the Rust it replaced, if one does.
     pub bench: Option<&'static str>,
+    /// The HIR constructs whose lowering calls it ([`crate::hook_demand`]): sema checks it only
+    /// where live code has one, and lowering asserts that. None: always needed.
+    pub constructs: &'static [Construct],
 }
 
 impl Hook {
@@ -93,14 +98,15 @@ impl Hook {
 }
 
 /// An entry is `name => module, "item", sig(…)` (or `class`), then optional flags after commas,
-/// in any order: `lowered`, `fallback`, `replaces("velt_rt_…", …)` and `bench("row")` (the
-/// fields of [`Hook`]).
+/// in any order: `lowered`, `fallback`, `replaces("velt_rt_…", …)`, `bench("row")` and
+/// `constructs(TextInt, …)` (the fields of [`Hook`]).
 macro_rules! hooks {
     // Each flag is one of these (an unknown one fails here).
     (@flag lowered) => {};
     (@flag fallback) => {};
     (@flag replaces) => {};
     (@flag bench) => {};
+    (@flag constructs) => {};
     (@lowered) => { false };
     (@lowered lowered $($rest:tt)*) => { true };
     (@lowered $skip:tt $($rest:tt)*) => { hooks!(@lowered $($rest)*) };
@@ -113,6 +119,9 @@ macro_rules! hooks {
     (@bench) => { None };
     (@bench bench ($b:literal) $($rest:tt)*) => { Some($b) };
     (@bench $skip:tt $($rest:tt)*) => { hooks!(@bench $($rest)*) };
+    (@constructs) => { &[] };
+    (@constructs constructs ($($c:ident),* $(,)?) $($rest:tt)*) => { &[$(Construct::$c),*] };
+    (@constructs $skip:tt $($rest:tt)*) => { hooks!(@constructs $($rest)*) };
     ($($(#[doc = $doc:literal])* $name:ident => $module:ident, $item:literal,
         $kind:ident $(($($sig:tt)*))? $(, $flag:ident $(($($arg:tt)*))?)*;)*) => {
         $($(hooks!(@flag $flag);)*)*
@@ -151,7 +160,17 @@ macro_rules! hooks {
             fallback: hooks!(@fallback $($flag $(($($arg)*))?)*),
             replaces: hooks!(@replaces $($flag $(($($arg)*))?)*),
             bench: hooks!(@bench $($flag $(($($arg)*))?)*),
+            constructs: hooks!(@constructs $($flag $(($($arg)*))?)*),
         }),*];
+
+        #[allow(non_camel_case_types, dead_code)]
+        enum Index { $($name),* }
+
+        /// Each hook's index in [`HOOKS`] (a [`HookSet`]'s bit): `hook_index::int_push`.
+        #[allow(non_upper_case_globals)]
+        pub mod hook_index {
+            $(pub const $name: usize = super::Index::$name as usize;)*
+        }
     };
 }
 
@@ -180,16 +199,20 @@ hooks! {
     float_position => lang_hooks_number, "floatPosition", sig((f64) -> usize);
     /// `String(v)` of a signed integer: `${v}` alone, `v.toString()` (`velt_vir` `template.rs`).
     int_text => lang_hooks_number_text, "intText", sig((i64) -> string), lowered,
-        replaces("velt_rt_str_from_i64"), bench("int_to_string");
+        replaces("velt_rt_str_from_i64"), bench("int_to_string"),
+        constructs(TextInt, IndexCheck);
     /// `String(v)` of an unsigned integer.
     uint_text => lang_hooks_number_text, "uintText", sig((u64) -> string), lowered,
-        replaces("velt_rt_str_from_u64"), bench("int_to_string");
+        replaces("velt_rt_str_from_u64"), bench("int_to_string"),
+        constructs(TextUint, IndexCheck, Dynamic);
     /// A signed integer appended to a builder: a template's `${v}` (`velt_vir` `strbuf.rs`).
     int_push => lang_hooks_number_text, "intPush", sig((&mut string, i64) -> void), lowered,
-        replaces("velt_rt_strbuf_push_i64"), bench("int_to_string");
+        replaces("velt_rt_strbuf_push_i64"), bench("int_to_string"),
+        constructs(TextInt, Format, Dynamic);
     /// An unsigned integer appended to a builder.
     uint_push => lang_hooks_number_text, "uintPush", sig((&mut string, u64) -> void), lowered,
-        replaces("velt_rt_strbuf_push_u64"), bench("int_to_string");
+        replaces("velt_rt_strbuf_push_u64"), bench("int_to_string"),
+        constructs(TextUint, Format, Dynamic);
     /// `String(x)` of a float (`velt_vir` `template.rs`): a whole number by std's integer
     /// printing, anything else by the runtime's printer. `velt_opt` numrep turns a call with a
     /// whole `x` into one of `int_text`.
@@ -690,8 +713,8 @@ pub fn find(qualified: &str) -> Option<&'static Hook> {
 /// a float to text (`velt_sema` `lazy_std`), by their entries' names: the float hooks, whose whole
 /// numbers take std's integer printing, and, where the program loaded it, std's float printing
 /// (velt/lang/number/format, `shortest`, the table of powers of ten). Lowering calls the runtime's
-/// printer where one is unchecked. The integer hooks (`int_text`, `int_push`, …) are not on
-/// demand: the prelude loads them and sema checks them in every program (#2197).
+/// printer where one is unchecked. The integer hooks have no fallback (#2197): sema checks them
+/// where live code has one of their `constructs` ([`crate::hook_demand`]).
 pub const ON_DEMAND_FLOAT: &[&str] = &["number_text", "number_push", "float_text", "float_push"];
 
 /// Is the hook with qualified name `qualified` one of [`ON_DEMAND_FLOAT`]?
@@ -723,65 +746,5 @@ pub fn is_lowered(qualified: &str) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn names_are_unique() {
-        let mut names: Vec<&str> = HOOKS.iter().map(|h| h.name).collect();
-        names.sort();
-        names.dedup();
-        assert_eq!(names.len(), HOOKS.len(), "a hook is listed twice");
-        let mut items: Vec<String> = HOOKS.iter().map(|h| h.qualified()).collect();
-        items.sort();
-        items.dedup();
-        assert_eq!(items.len(), HOOKS.len(), "two entries name one definition");
-    }
-
-    #[test]
-    fn the_fallback_hooks_are_the_on_demand_ones() {
-        // An unchecked hook is missing to lowering: only these may be, and lowering falls back.
-        for h in HOOKS {
-            let on_demand = ON_DEMAND_FLOAT.contains(&h.name);
-            assert_eq!(h.fallback, on_demand, "{}", h.name);
-            assert!(!h.fallback || h.lowered, "{}", h.name);
-        }
-    }
-
-    #[test]
-    fn every_key_is_a_constant_of_keys_vlt() {
-        let path =
-            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/lang/hooks/keys.vlt");
-        let src = std::fs::read_to_string(path).expect("std/lang/hooks/keys.vlt");
-        for k in KEYS {
-            let make = if k.registered { "Symbol.for" } else { "Symbol" };
-            let decl = format!(
-                "export const {} = {make}(\"{}\");",
-                k.constant, k.description
-            );
-            assert!(src.contains(&decl), "keys.vlt lacks `{decl}`");
-        }
-        assert_eq!(std_key!(map_cursor), "\u{FFFF}Symbol(mapCursor)");
-    }
-
-    #[test]
-    fn every_hook_is_in_lang() {
-        // Outside `lang/` only where the hook needs a module's internals, in a file no program
-        // can import (not a module's `index.vlt`).
-        for h in HOOKS {
-            let rel = crate::std_modules::rel(h.module_entry).expect("ICE: a std module");
-            assert!(
-                h.module().starts_with("std/lang/")
-                    || !crate::std_modules::importable(&format!("{rel}.vlt")),
-                "{}: {}",
-                h.name,
-                h.module()
-            );
-        }
-        let f64_to_string = "std/lang/hooks/number::f64ToString";
-        assert_eq!(find(f64_to_string).map(|h| h.name), Some("f64_to_string"));
-        assert!(is_lowered("std/lang/hooks/number::floatIndex"));
-        assert!(!is_lowered(f64_to_string));
-        assert!(find("std/lang/hooks/number::nothing").is_none());
-    }
-}
+#[path = "std_hooks_tests.rs"]
+mod tests;

@@ -230,6 +230,10 @@ pub struct Program {
     /// unchecked (hir_encodings.md "Unchecked definitions"): each has a stub definition (an
     /// empty body, a `void` constant) that lowering never builds or reads. Additive.
     pub unchecked: HashSet<DefId>,
+    /// The hooks lowering may call (velt_common `hook_demand.rs`): those the constructs of live
+    /// code demand, and those no construct lists (hir_encodings.md "Unchecked definitions").
+    /// Additive.
+    pub hooks_demanded: velt_common::std_hooks::HookSet,
     /// The functions `(f: any) => T` converting a function held as `any` to the function type
     /// `T` (their result type) inside a conversion lowering makes (hir_encodings.md). Additive.
     pub any_fn_views: Vec<DefId>,
