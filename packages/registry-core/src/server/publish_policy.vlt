@@ -1,8 +1,9 @@
 // registry-core (internal): what the registry refuses at publish beyond what an archive may be
 // (#2225). `readArchive` accepts these, as vpm's reader does, but a client unpacking them on
 // Windows or macOS would write one file over another (so the unpacked package no longer matches
-// its checksum) or write to a device, and a `target` or `.git` directory is left out of the
-// checksum a client computes. The registry refuses them once, here. (Two spellings of a name
+// its checksum) or write to a device, a `target` directory is left out of the checksum a client
+// computes, and a `.git` file or directory would hand git's hooks and config to whoever runs git
+// in the unpacked package (git's own `protectNTFS` and `protectHFS` checks). The registry refuses them once, here. (Two spellings of a name
 // that differ only in Unicode normalization, one file on macOS, are not refused yet: std has no
 // normalization.)
 
@@ -52,8 +53,16 @@ function isOtherDeviceName(stem: string): bool {
   return last == "\u00b9" || last == "\u00b2" || last == "\u00b3";
 }
 
+// Characters Windows refuses in file names (`readArchive` already refuses `\\` and `:`).
+const WINDOWS_RESERVED = "<>\"|?*";
+
 // Why one segment of a path can't be a file or directory name on Windows, or null.
 function segmentProblem(segment: string): string | null {
+  for (const c of segment) {
+    if (WINDOWS_RESERVED.includes(c)) {
+      return `has \`${c}\`, which Windows refuses in file names`;
+    }
+  }
   if (segment.endsWith(".") || segment.endsWith(" ")) {
     return "ends with a dot or a space, which Windows drops from file names";
   }
@@ -65,8 +74,13 @@ function segmentProblem(segment: string): string | null {
   return null;
 }
 
-/** Directories a package never holds (vpm's `SKIPPED_DIRS`: `velt publish` leaves them out). */
-const SKIPPED_DIRS: string[] = ["target", ".git"];
+// Whether `segment` is git's directory under some spelling: `.git` in any case (one name on
+// Windows and macOS) or `git~1`, its short name on NTFS. Refused as a file too: a `.git` file
+// can point git at a directory elsewhere in the package.
+function isGitName(segment: string): bool {
+  const lower = segment.toLowerCase();
+  return lower == ".git" || lower == "git~1";
+}
 
 // A file or directory seen so far: its id (a directory's children are keyed by it), its name as
 // written, and whether it is a directory.
@@ -112,8 +126,12 @@ function pathProblem(
     if (problem != null) {
       return `the archive has \`${shownPath(path)}\`, whose name \`${shownPath(segment)}\` ${problem}`;
     }
-    if (isDir && SKIPPED_DIRS.includes(segment)) {
-      return `the archive has \`${shownPath(path)}\`, inside a \`${segment}\` directory, which \`velt publish\` never sends`;
+    if (isGitName(segment)) {
+      return `the archive has \`${shownPath(path)}\`, whose name \`${shownPath(segment)}\` is git's directory, which \`velt publish\` never sends`;
+    }
+    // vpm's `SKIPPED_DIRS` holds `target` too: a client leaves it out of the checksum.
+    if (isDir && segment == "target") {
+      return `the archive has \`${shownPath(path)}\`, inside a \`target\` directory, which \`velt publish\` never sends`;
     }
     const key = `${parent}/${segment.toLowerCase()}`;
     const found = nodes.get(key);
@@ -136,15 +154,12 @@ function pathProblem(
 }
 
 /**
- * Why the registry refuses an archive with `entries` (read by `readPackageArchive`), or null:
- * more than `maxEntries` files, paths out of order or twice, control characters, two paths that
- * differ only in case (one file on Windows and macOS), a file that is also a directory, names
- * Windows can't hold, and `target` or `.git` directories.
+ * Why the registry refuses an archive with `entries` (read by `readPackageArchive`, which caps
+ * their number), or null: paths out of order or twice, control characters, two paths that differ
+ * only in case (one file on Windows and macOS), a file that is also a directory, names Windows
+ * can't hold, `target` directories and `.git` under any spelling.
  */
-export function publishPathProblem(entries: ArchiveEntry[], maxEntries: i64): string | null {
-  if (entries.length > maxEntries) {
-    return `the archive has ${entries.length} files; a package may have at most ${maxEntries}`;
-  }
+export function publishPathProblem(entries: ArchiveEntry[]): string | null {
   const nodes: Map<string, Node> = new Map();
   for (let i = 0; i < entries.length; i++) {
     const problem = pathProblem(entries[i].path, i == 0 ? null : entries[i - 1].path, nodes);

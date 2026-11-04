@@ -36,7 +36,7 @@ function checkedEntries(
 ): [ArchiveEntry[], string] {
   let entries: ArchiveEntry[] = [];
   try {
-    entries = readPackageArchive(body);
+    entries = readPackageArchive(body, limits.maxEntries);
   } catch (e) {
     if (e instanceof ArchiveError) {
       throw new Refusal(400, e.message);
@@ -47,7 +47,7 @@ function checkedEntries(
   if (declared != sum) {
     throw new Refusal(400, `checksum mismatch: the archive hashes to ${sum}`);
   }
-  const problem = publishPathProblem(entries, limits.maxEntries);
+  const problem = publishPathProblem(entries);
   if (problem != null) {
     throw new Refusal(400, problem);
   }

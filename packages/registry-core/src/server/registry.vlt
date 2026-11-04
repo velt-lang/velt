@@ -10,6 +10,7 @@ import { refused, text } from "./answer";
 import { RegistryLimits } from "./registry_limits";
 import { RegistryStores } from "./registry_stores";
 import { search } from "./search";
+import { StoreError } from "../stores/store_error";
 import { yank } from "./yank";
 import { isValidPackageName, normalizedName } from "../names";
 
@@ -75,7 +76,9 @@ export class Registry {
       if (e instanceof Refusal) {
         return e.status == 400 ? refused(e.message) : text(e.status, e.message);
       }
-      return text(500, e instanceof Error ? e.message : "the registry failed");
+      // An adapter's own failure is worded for clients, as the Rust server's are; anything else
+      // may carry internals, so it is not shown.
+      return text(500, e instanceof StoreError ? e.message : "the registry failed");
     }
   }
 

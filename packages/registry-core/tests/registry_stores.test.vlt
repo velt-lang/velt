@@ -32,6 +32,13 @@ class FailingDb extends MemoryMetadataDb {
   }
 }
 
+// A database that fails with an error no adapter worded for clients.
+class BrokenDb extends MemoryMetadataDb {
+  override async putIndex(name: string, index: PackageIndex): Promise<void> {
+    throw new Error("open /srv/registry/db.sqlite: permission denied");
+  }
+}
+
 // A blob store that has lost every blob.
 class EmptyBlobs extends MemoryBlobStore {
   override async get(key: string): Promise<u8[] | null> {
@@ -62,6 +69,12 @@ describe("stores", () => {
     expect(failed.status).toBe(500);
     expect(failed.text).toBe("the database is down");
     expect(await r.db.owners("lib")).toEqual([]);
+  });
+
+  it("show only a StoreError's message", async () => {
+    const r = new TestRegistry(new RegistryLimits(), new BrokenDb());
+    const failed = await r.publish("lib", "1.0.0");
+    expect(`${failed.status} ${failed.text}`).toBe("500 the registry failed");
   });
 
   it("answer 500 for an archive the blob store lost", async () => {

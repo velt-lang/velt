@@ -1,6 +1,7 @@
 // What the registry refuses at publish beyond what an archive may be (#2225,
 // src/server/publish_policy.vlt), and the upload's size limit.
 import { describe, expect, it } from "velt/test";
+import { utf8Encode } from "velt/encoding";
 import { ArchiveEntry, contentChecksum, packArchive, RegistryLimits } from "../src/lib";
 import { file, packageFiles, rawArchive, TestRegistry } from "./_registry";
 
@@ -88,9 +89,39 @@ describe("the publish policy", () => {
       ],
       [
         [file("src/x/.git/HEAD", "")],
-        "400 the archive has `src/x/.git/HEAD`, inside a `.git` directory, which `velt publish` never sends",
+        "400 the archive has `src/x/.git/HEAD`, whose name `.git` is git's directory, which `velt publish` never sends",
+      ],
+      [
+        [file("src/.GIT/config", "")],
+        "400 the archive has `src/.GIT/config`, whose name `.GIT` is git's directory, which `velt publish` never sends",
+      ],
+      [
+        [file("src/.Git/hooks/post-checkout", "")],
+        "400 the archive has `src/.Git/hooks/post-checkout`, whose name `.Git` is git's directory, which `velt publish` never sends",
+      ],
+      [
+        [file("src/.git", "gitdir: ../evil")],
+        "400 the archive has `src/.git`, whose name `.git` is git's directory, which `velt publish` never sends",
+      ],
+      [
+        [file("src/git~1/config", "")],
+        "400 the archive has `src/git~1/config`, whose name `git~1` is git's directory, which `velt publish` never sends",
+      ],
+      [
+        [file("src/GIT~1", "")],
+        "400 the archive has `src/GIT~1`, whose name `GIT~1` is git's directory, which `velt publish` never sends",
       ],
     ];
+    for (const c of ["?", "*", "<", ">", "\"", "|"]) {
+      cases.push([
+        [file(`src/a${c}b.vlt`, "")],
+        `400 the archive has \`src/a${c}b.vlt\`, whose name \`a${c}b.vlt\` has \`${c}\`, which Windows refuses in file names`,
+      ]);
+    }
+    cases.push([
+      [file("src/d|x/y.vlt", "")],
+      "400 the archive has `src/d|x/y.vlt`, whose name `d|x` has `|`, which Windows refuses in file names",
+    ]);
     for (const [extra, expected] of cases) {
       expect(await publishWith(r, extra)).toBe(expected);
     }
@@ -102,6 +133,10 @@ describe("the publish policy", () => {
       file("src/console.vlt", ""),
       file("src/m/x.vlt", ""),
       file("src/target.vlt", ""),
+      file("src/x.git", ""),
+      file("src/git~2", ""),
+      file("src/gitignore", ""),
+      file("src/x/Target/y.vlt", ""),
     ];
     expect(await publishWith(r, fine)).toBe("201 published `p` 1.0.0\n");
   });
@@ -136,7 +171,17 @@ describe("the publish policy", () => {
     const r = new TestRegistry(limits);
     const four = [file("src/x.vlt", ""), file("src/y.vlt", "")];
     expect(await publishWith(r, four)).toBe(
-      "400 the archive has 4 files; a package may have at most 3",
+      "400 the archive has more than 3 files; a package may have at most 3",
+    );
+    // The reader stops at the fourth entry: what follows it is never read, corrupt or not.
+    const files = [...packageFiles("p", "1.0.0"), file("src/x.vlt", "")];
+    files.sort(
+      (a: ArchiveEntry, b: ArchiveEntry): i32 => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
+    );
+    const corrupt = [...rawArchive(files), ...utf8Encode("src/y.vlt\nnot a length\n")];
+    const answer = await r.upload("p", "1.0.0", corrupt, contentChecksum(files));
+    expect(`${answer.status} ${answer.text}`).toBe(
+      "400 the archive has more than 3 files; a package may have at most 3",
     );
     const big = [file("src/x.vlt", "x".repeat(400))];
     expect(await publishWith(r, big)).toBe("413 the upload is larger than 400 bytes");
