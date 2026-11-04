@@ -233,3 +233,178 @@ fn a_compile_time_decorator_is_recorded_in_an_initializer_or_a_default() {
     }
 }
 
+/// The module-level decorator `t` and constant `K`, then `rest`.
+fn with_module_names(rest: &str) -> String {
+    format!(
+        r#"declare decorator function t(): Repeatable<TypeDecorator | MethodDecorator | FunctionDecorator>;
+           declare decorator function any_(s: string): TypeDecorator;
+           const K = "module";
+           {rest}
+           function main() {{}}"#
+    )
+}
+
+#[test]
+fn a_local_hides_a_decorator() {
+    for src in [
+        "function f(t: any) { @t class C {} }",
+        "function f() { const t: any = 1; @t class C {} }",
+        "function f() { @t class C {} const t: any = 1; }",
+        "function f() { let g = (t: any) => { @t class C {} }; }",
+        "function f() { try {} catch (t) { @t class C {} } }",
+        "function f() { for (const t of [1]) { @t class C {} } }",
+        "function f() { for (let t = 0; t < 1; t++) { @t class C {} } }",
+        "function f() { const { t } = { t: 1 }; @t class C {} }",
+        "function f(t: any) { class C { @t m() {} } }",
+        "function f(t: any) { class O { m() { @t class C {} } } }",
+        "function f(t: any) { function g() { @t class C {} } }",
+        "function f(a: i64 = (() => { const t: any = 1; @t class C {} return 1; })()) {}",
+        "class K { x: i64 = ((t: any) => { @t class C {} return 1; })(1); }",
+        "function f() { switch (1) { case 1: const t: any = 1; break; default: @t class C {} } }",
+        "function f(t: any) { { { @t class C {} } } }",
+    ] {
+        let e = err_src(&with_module_names(src));
+        assert!(e.contains(TC39), "{src}: {e}");
+    }
+    // And a namespace or an imported decorator (the library's is `mark`).
+    for src in [
+        r#"import * as t from "./_decorators_lib"; function f(t: any) { @t.mark class C {} } function main() {}"#,
+        r#"import { mark } from "./_decorators_lib"; function f(mark: any) { @mark class C {} } function main() {}"#,
+    ] {
+        let e = in_golden_dir(src).expect_err(src);
+        assert!(e.contains(TC39), "{src}: {e}");
+    }
+}
+
+#[test]
+fn only_a_local_in_scope_hides_a_decorator() {
+    for src in [
+        // Before and after the local's scope.
+        "function f() { { const t: any = 1; } @t class C {} }",
+        "function f() { @t class C {} { const t: any = 1; } }",
+        "function f() { [1].map((t: number) => t); @t class C {} }",
+        "function f() { for (const t of [1]) {} @t class C {} }",
+        "function f() { try {} catch (t) {} @t class C {} }",
+        "function f() { try { const t: any = 1; } finally { @t class C {} } }",
+        // A function's parameters aren't in scope in its own decorators, as in TypeScript's
+        // `resolveName`, which resolves those outside the function.
+        "@t function g(t: any) {}",
+        "class C { @t m(t: any) {} }",
+        "function f() { @t function g(t: any) {} }",
+        "function f() { function g(t: any) {} @t class C {} }",
+    ] {
+        let p = ok_src(&with_module_names(src));
+        assert_eq!(p.decorators.len(), 1, "{src}");
+    }
+}
+
+#[test]
+fn a_local_is_no_constant() {
+    for src in [
+        r#"function g() { const K = "local"; @any_(K) class D {} }"#,
+        "function f(K: string) { @any_(K) class C {} }",
+        r#"function f() { for (const K of ["a"]) { @any_(K) class C {} } }"#,
+        // Through a constant of the nested class, in an object shorthand and a member path.
+        "function f(K: string) { class S { static readonly A: string = K; } @any_(S.A) class C {} }",
+    ] {
+        let e = err_src(&with_module_names(src));
+        assert!(e.contains("must be a constant"), "{src}: {e}");
+    }
+    let e = err_src(
+        r#"declare decorator function o(a: { K: string }): TypeDecorator;
+           const K = "module";
+           function f(K: string) { @o({ K }) class C {} }
+           function main() {}"#,
+    );
+    assert!(e.contains("must be a constant"), "{e}");
+    let e = err_src(
+        "declare decorator function n(a: i64): TypeDecorator;
+         enum E { A }
+         function f(E: any) { @n(E.A) class C {} }
+         function main() {}",
+    );
+    assert!(e.contains("must be a constant"), "{e}");
+}
+
+#[test]
+fn a_constant_out_of_the_locals_scope_keeps_its_value() {
+    let p = ok_src(&with_module_names(
+        r#"function g() { { const K = "local"; } @any_(K) class D {} }"#,
+    ));
+    let uses: Vec<_> = p.decorators.values().flatten().collect();
+    assert_eq!(uses.len(), 1);
+    assert_eq!(uses[0].args, [C::Str("module".into())]);
+}
+
+/// `src` checked as a file next to `tests/golden/lang/_decorators_lib.velt`.
+fn in_golden_dir(src: &str) -> Result<Program, String> {
+    let file = common::programs::repo_root().join("tests/golden/lang/decorators_probe.velt");
+    let loaded = common::programs::load_src_at(&file, src);
+    let (program, diags) = loaded.check();
+    match program.filter(|_| diags.iter().all(|d| !d.is_error())) {
+        Some(p) => Ok(p),
+        None => Err(loaded.render(&diags)),
+    }
+}
+
+#[test]
+fn an_import_type_is_no_decorator_and_no_constant() {
+    const MESSAGE: &str = "is imported with `import type` and cannot be used as a value";
+    for src in [
+        r#"import type { mark } from "./_decorators_lib"; @mark class C {}"#,
+        r#"import { type mark } from "./_decorators_lib"; @mark class C {}"#,
+        r#"import type { mark as m } from "./_decorators_lib"; @m class C {}"#,
+        r#"import type { plain } from "./_decorators_lib"; @plain class C {}"#,
+        r#"import type { arg, LIB_KEY } from "./_decorators_lib"; class C {}
+           @LIB_KEY class D {}"#,
+        r#"import { arg } from "./_decorators_lib";
+           import type { LIB_KEY } from "./_decorators_lib"; @arg(LIB_KEY) class C {}"#,
+        r#"import { arg } from "./_decorators_lib";
+           import { type LIB_KEY } from "./_decorators_lib"; @arg([LIB_KEY][0]) class C {}"#,
+    ] {
+        let src = format!("{src}\nfunction main() {{}}");
+        let e = in_golden_dir(&src).expect_err(&src);
+        assert!(
+            e.contains(MESSAGE) || e.contains("must be a constant"),
+            "{src}: {e}"
+        );
+    }
+    // By name, in the message an ordinary value gets.
+    let e = in_golden_dir(
+        r#"import { arg } from "./_decorators_lib";
+           import type { LIB_KEY } from "./_decorators_lib";
+           @arg(LIB_KEY) class C {}
+           function main() {}"#,
+    )
+    .expect_err("an argument");
+    assert!(e.contains(&format!("`LIB_KEY` {MESSAGE}")), "{e}");
+    let e = in_golden_dir(
+        r#"import type { mark } from "./_decorators_lib"; @mark class C {} function main() {}"#,
+    )
+    .expect_err("a decorator");
+    assert!(e.contains(&format!("`mark` {MESSAGE}")), "{e}");
+}
+
+#[test]
+fn a_nested_item_hides_an_import_type() {
+    let e = in_golden_dir(
+        r#"import type { mark } from "./_decorators_lib";
+           function f() { function mark() {} @mark class C {} }
+           function main() {}"#,
+    )
+    .expect_err("a run-time decorator");
+    assert!(e.contains(TC39), "{e}");
+}
+
+#[test]
+fn a_plain_import_is_still_a_decorator_and_a_constant() {
+    let p = in_golden_dir(
+        r#"import { arg, LIB_KEY } from "./_decorators_lib";
+           @arg(LIB_KEY) class C {}
+           function main() {}"#,
+    )
+    .unwrap();
+    let uses: Vec<_> = p.decorators.values().flatten().collect();
+    assert_eq!(uses[0].args, [C::Str("lib".into())]);
+}
+

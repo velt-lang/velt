@@ -2,11 +2,12 @@
 //! members, arrays and object literals of constants, references to `const` declarations), and
 //! whether a tree fits a parameter's type.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use velt_common::Span;
 use velt_syntax::ast;
 
+use super::scope;
 use crate::ctx::{Ctx, Item};
 use crate::defs::DefInfo;
 use crate::hir::{ConstTree, DefId, IntTy, LitValue, TyId, TyKind};
@@ -35,22 +36,38 @@ pub(super) fn path_of(e: &ast::Expr) -> Option<Vec<ast::Ident>> {
     }
 }
 
-/// The value of `e` in module `m`; on failure, the part of it that isn't constant.
-pub(super) fn value_of(cx: &Ctx, m: usize, e: &ast::Expr) -> Result<ConstTree, Span> {
-    eval(
-        &Fold {
-            cx,
-            nodes: Cell::new(0),
+/// Why an expression has no value: the part of it that isn't constant, and when that is a name
+/// imported with `import type`, the module it is imported into and the name.
+pub(super) struct NotConstant {
+    pub span: Span,
+    pub type_only: Option<(usize, String)>,
+}
+
+/// The value of `e` in module `m`.
+pub(super) fn value_of(cx: &Ctx, m: usize, e: &ast::Expr) -> Result<ConstTree, NotConstant> {
+    let f = Fold {
+        cx,
+        nodes: Cell::new(0),
+        type_only: RefCell::new(None),
+    };
+    eval(&f, m, e, 0).map_err(|span| match f.type_only.into_inner() {
+        Some((module, name, at)) => NotConstant {
+            span: at,
+            type_only: Some((module, name)),
         },
-        m,
-        e,
-        0,
-    )
+        None => NotConstant {
+            span,
+            type_only: None,
+        },
+    })
 }
 
 struct Fold<'c, 'm> {
     cx: &'c Ctx<'m>,
     nodes: Cell<u32>,
+    /// The first name imported with `import type` that the expression reaches: its module, the
+    /// name, and where.
+    type_only: RefCell<Option<(usize, String, Span)>>,
 }
 
 fn eval(f: &Fold, m: usize, e: &ast::Expr, depth: u32) -> Result<ConstTree, Span> {
@@ -117,6 +134,16 @@ fn is_as_const(ty: &ast::TypeExpr) -> bool {
 fn named(f: &Fold, m: usize, path: &[ast::Ident], depth: u32) -> Result<ConstTree, Span> {
     let cx = f.cx;
     let last = path.last().ok_or(Span::DUMMY)?;
+    let head = path.first().ok_or(last.span)?;
+    // A local hides any constant of its name, and no local is a constant here: its value belongs
+    // to one run of the function.
+    if scope::shadow_of(cx, m, head) == Some(scope::Shadow::Local) {
+        return Err(last.span);
+    }
+    if let Some(name) = scope::type_only_name(cx, m, path) {
+        f.type_only.borrow_mut().get_or_insert((m, name, head.span));
+        return Err(last.span);
+    }
     if let Some(Item::Def(d)) = cx.lookup_path_at(m, path, last.span) {
         return global_value(f, d, depth).ok_or(last.span);
     }

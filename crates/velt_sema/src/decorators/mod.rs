@@ -6,6 +6,7 @@
 //! definition here, and nothing later.
 
 mod consts;
+mod scope;
 
 use rustc_hash::FxHashSet;
 
@@ -131,7 +132,7 @@ pub(crate) fn check<'m>(cx: &mut Ctx<'m>) {
                     continue;
                 };
                 let target = DecoratorTarget::Def(d);
-                uses(cx, module, &decl.decorators, TYPE, target, d);
+                uses(cx, module, &decl.decorators, TYPE, target);
             }
             _ => {}
         }
@@ -143,15 +144,15 @@ fn function_uses<'m>(cx: &mut Ctx<'m>, d: DefId, m: usize, kind: FnKind, sig: &'
         FnKind::Method | FnKind::Static => METHOD,
         _ => FUNCTION,
     };
-    uses(cx, m, &sig.decorators, bit, DecoratorTarget::Def(d), d);
+    uses(cx, m, &sig.decorators, bit, DecoratorTarget::Def(d));
     for (i, p) in sig.params.iter().enumerate() {
         let target = DecoratorTarget::Param(d, i as u32);
-        uses(cx, m, &p.decorators, PARAM, target, d);
+        uses(cx, m, &p.decorators, PARAM, target);
     }
 }
 
 fn type_uses<'m>(cx: &mut Ctx<'m>, d: DefId, m: usize, decl: &'m ast::TypeDecl) {
-    uses(cx, m, &decl.decorators, TYPE, DecoratorTarget::Def(d), d);
+    uses(cx, m, &decl.decorators, TYPE, DecoratorTarget::Def(d));
     for f in decl.fields.iter().filter(|f| !f.decorators.is_empty()) {
         let Some(a) = cx.adt(d) else { return };
         let target = match a.statics.get(&f.name.name) {
@@ -164,7 +165,7 @@ fn type_uses<'m>(cx: &mut Ctx<'m>, d: DefId, m: usize, decl: &'m ast::TypeDecl) 
                 DecoratorTarget::Field(d, i as u32)
             }
         };
-        uses(cx, m, &f.decorators, FIELD, target, d);
+        uses(cx, m, &f.decorators, FIELD, target);
     }
 }
 
@@ -204,16 +205,20 @@ fn check_declaration(cx: &mut Ctx, m: usize, sig: &ast::FnSig) {
         let Some(default) = p.default.as_ref().filter(|_| !p.rest) else {
             continue;
         };
-        if let Err(span) = consts::value_of(cx, m, default) {
-            non_constant(cx, span);
+        if let Err(e) = consts::value_of(cx, m, default) {
+            non_constant(cx, e);
         }
     }
 }
 
-fn non_constant(cx: &mut Ctx, span: Span) {
+fn non_constant(cx: &mut Ctx, e: consts::NotConstant) {
+    if let Some((module, name)) = e.type_only {
+        cx.type_only_value(module, &name, e.span);
+        return;
+    }
     cx.error(
-        Diagnostic::error("a decorator's argument must be a constant", span).with_note(
-            "write a literal, an enum member, an array or object literal of constants, or a `const` holding one",
+        Diagnostic::error("a decorator's argument must be a constant", e.span).with_note(
+            "write a literal, an enum member, an array or object literal of constants, or a module-level `const` holding one",
         ),
     );
 }
@@ -221,27 +226,30 @@ fn non_constant(cx: &mut Ctx, span: Span) {
 enum Resolved {
     Decorator(DefId, Item),
     RunTime,
+    /// Imported with `import type`, under this name.
+    TypeOnly(String),
     Unknown(String, Span),
 }
 
-/// What decorator expression `path` names in module `m`, on a declaration in the scope of `on`.
-fn resolve(cx: &Ctx, m: usize, path: &[ast::Ident], on: DefId) -> Resolved {
+/// What decorator expression `path` names in module `m`, where it is written.
+fn resolve(cx: &Ctx, m: usize, path: &[ast::Ident]) -> Resolved {
     let (head, last) = match (path.first(), path.last()) {
         (Some(h), Some(l)) => (h, l),
         _ => return Resolved::RunTime,
     };
-    // A local of the enclosing function, which a class declared in it may name.
-    let local = |h: &ast::Ident| {
-        cx.nested_locals
-            .get(&on)
-            .is_some_and(|names| names.contains(&h.name))
-    };
+    // A local of an enclosing function hides any item of that name, and a value that only exists
+    // when the code runs is a run-time decorator at best.
+    if scope::shadow_of(cx, m, head) == Some(scope::Shadow::Local) {
+        return Resolved::RunTime;
+    }
+    if let Some(name) = scope::type_only_name(cx, m, path) {
+        return Resolved::TypeOnly(name);
+    }
     match cx.lookup_path_at(m, path, last.span) {
         Some(it @ Item::Def(d)) if cx.try_fn(d).is_some_and(|f| decl_of(f).is_some()) => {
             Resolved::Decorator(d, it)
         }
         Some(_) => Resolved::RunTime,
-        None if local(head) => Resolved::RunTime,
         None if path.len() > 1 && cx.scopes[m].namespaces.contains_key(&head.name) => {
             let name: Vec<&str> = path.iter().map(|p| p.name.as_str()).collect();
             Resolved::Unknown(
@@ -276,14 +284,13 @@ fn run_time_error(cx: &mut Ctx, span: Span, bit: u8) {
     cx.error(d);
 }
 
-/// Checks decorators `ds` on the declaration of `on` and records them for `target`.
+/// Checks decorators `ds` and records them for `target`.
 fn uses<'m>(
     cx: &mut Ctx<'m>,
     m: usize,
     ds: &'m [ast::Decorator],
     bit: u8,
     target: DecoratorTarget,
-    on: DefId,
 ) {
     let mut out: Vec<hir::Decorator> = Vec::with_capacity(ds.len());
     for dec in ds {
@@ -295,7 +302,7 @@ fn uses<'m>(
             run_time_error(cx, dec.span, bit);
             continue;
         };
-        let def = match resolve(cx, m, &path, on) {
+        let def = match resolve(cx, m, &path) {
             Resolved::Decorator(def, item) => {
                 let last = path.last().map_or(dec.span, |p| p.span);
                 cx.rec_item(last, Some(item));
@@ -303,6 +310,10 @@ fn uses<'m>(
             }
             Resolved::RunTime => {
                 run_time_error(cx, dec.span, bit);
+                continue;
+            }
+            Resolved::TypeOnly(name) => {
+                cx.type_only_value(m, &name, path[0].span);
                 continue;
             }
             Resolved::Unknown(message, span) => {
@@ -432,8 +443,8 @@ fn checked_value(
 ) -> Option<ConstTree> {
     let v = match consts::value_of(cx, m, a) {
         Ok(v) => v,
-        Err(span) => {
-            non_constant(cx, span);
+        Err(e) => {
+            non_constant(cx, e);
             return None;
         }
     };

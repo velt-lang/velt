@@ -36,4 +36,31 @@ impl Ctx<'_> {
         }
         self.nested_value_item(nested.collect(), module, name)
     }
+
+    /// "`T` is imported with `import type`", once per use (in `module`).
+    pub(crate) fn type_only_value(&mut self, module: usize, name: &str, at: Span) {
+        let via_export = self.scopes[module].via_export_type.contains(name);
+        let msg = match via_export {
+            true => format!(
+                "`{name}` is exported only as a type by the module it is imported from and cannot \
+                 be used as a value"
+            ),
+            false => {
+                format!("`{name}` is imported with `import type` and cannot be used as a value")
+            }
+        };
+        let reported = self
+            .diags
+            .iter()
+            .any(|d| d.message == msg && d.labels.first().is_some_and(|l| l.span == at));
+        if !reported {
+            let note = match via_export {
+                true => "that module exports it with `export type`, or exports again a name it \
+                         imports with `import type`"
+                    .to_string(),
+                false => format!("import it as a value: `import {{ {name} }} from …`"),
+            };
+            self.error(velt_common::Diagnostic::error(msg, at).with_note(note));
+        }
+    }
 }

@@ -1,1 +1,6 @@
 export declare decorator function mark(): TypeDecorator;
+export declare decorator function arg(a: string): TypeDecorator;
+export const LIB_KEY = "lib";
+export function plain(v: any, c: any): any {
+  return v;
+}
