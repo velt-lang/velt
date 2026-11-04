@@ -1,0 +1,123 @@
+// half_dot.vlt's and half_dot_far.vlt's weights and explicit kernels, in Velt.
+// *_one: one accumulator. *_four: four, 32 weights a round. Both with the two-array `fits` test,
+// which velt_opt's `fits_pair` makes one exit test (half_dot_far.vlt).
+// bf16Fast*: `dotAddFast`, `bfdot` with `--cpu` naming a CPU that has it.
+import { bf16x8, f16x8, f32x4 } from "velt/simd";
+
+let seed: u32 = 2463534242;
+
+function next(): u32 {
+  seed = seed ^ (seed << 13);
+  seed = seed ^ (seed >>> 17);
+  seed = seed ^ (seed << 5);
+  return seed;
+}
+
+export function f16Weights(n: usize): f16[] {
+  const xs: f16[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    xs.push(f16.fromBits(((next() & 0x87ff) + 0x2c00) as u16));
+  }
+  return xs;
+}
+
+export function bf16Weights(n: usize): bf16[] {
+  const xs: bf16[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    xs.push(bf16.fromBits(((next() & 0x80ff) + 0x3b00) as u16));
+  }
+  return xs;
+}
+
+export function i8Weights(n: usize): i8[] {
+  const xs: i8[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    xs.push((next() & 255) as u8 as i8);
+  }
+  return xs;
+}
+
+function total(s: f32x4): number {
+  return (s.lane(0) as number) +
+    (s.lane(1) as number) +
+    (s.lane(2) as number) +
+    (s.lane(3) as number);
+}
+
+export function f16One(a: f16[], b: f16[]): number {
+  let s = f32x4.splat(0);
+  let i: usize = 0;
+  while (f16x8.fits(a, i) && f16x8.fits(b, i)) {
+    s = f16x8.load(a, i).dotAdd(f16x8.load(b, i), s);
+    i += 8;
+  }
+  return total(s);
+}
+
+export function f16Four(a: f16[], b: f16[]): number {
+  let s0 = f32x4.splat(0);
+  let s1 = s0;
+  let s2 = s0;
+  let s3 = s0;
+  let i: usize = 0;
+  while (f16x8.fits(a, i + 24) && f16x8.fits(b, i + 24)) {
+    s0 = f16x8.load(a, i).dotAdd(f16x8.load(b, i), s0);
+    s1 = f16x8.load(a, i + 8).dotAdd(f16x8.load(b, i + 8), s1);
+    s2 = f16x8.load(a, i + 16).dotAdd(f16x8.load(b, i + 16), s2);
+    s3 = f16x8.load(a, i + 24).dotAdd(f16x8.load(b, i + 24), s3);
+    i += 32;
+  }
+  return total(s0) + total(s1) + total(s2) + total(s3);
+}
+
+export function bf16One(a: bf16[], b: bf16[]): number {
+  let s = f32x4.splat(0);
+  let i: usize = 0;
+  while (bf16x8.fits(a, i) && bf16x8.fits(b, i)) {
+    s = bf16x8.load(a, i).dotAdd(bf16x8.load(b, i), s);
+    i += 8;
+  }
+  return total(s);
+}
+
+export function bf16Four(a: bf16[], b: bf16[]): number {
+  let s0 = f32x4.splat(0);
+  let s1 = s0;
+  let s2 = s0;
+  let s3 = s0;
+  let i: usize = 0;
+  while (bf16x8.fits(a, i + 24) && bf16x8.fits(b, i + 24)) {
+    s0 = bf16x8.load(a, i).dotAdd(bf16x8.load(b, i), s0);
+    s1 = bf16x8.load(a, i + 8).dotAdd(bf16x8.load(b, i + 8), s1);
+    s2 = bf16x8.load(a, i + 16).dotAdd(bf16x8.load(b, i + 16), s2);
+    s3 = bf16x8.load(a, i + 24).dotAdd(bf16x8.load(b, i + 24), s3);
+    i += 32;
+  }
+  return total(s0) + total(s1) + total(s2) + total(s3);
+}
+
+export function bf16FastOne(a: bf16[], b: bf16[]): number {
+  let s = f32x4.splat(0);
+  let i: usize = 0;
+  while (bf16x8.fits(a, i) && bf16x8.fits(b, i)) {
+    s = bf16x8.load(a, i).dotAddFast(bf16x8.load(b, i), s);
+    i += 8;
+  }
+  return total(s);
+}
+
+export function bf16FastFour(a: bf16[], b: bf16[]): number {
+  let s0 = f32x4.splat(0);
+  let s1 = s0;
+  let s2 = s0;
+  let s3 = s0;
+  let i: usize = 0;
+  while (bf16x8.fits(a, i + 24) && bf16x8.fits(b, i + 24)) {
+    s0 = bf16x8.load(a, i).dotAddFast(bf16x8.load(b, i), s0);
+    s1 = bf16x8.load(a, i + 8).dotAddFast(bf16x8.load(b, i + 8), s1);
+    s2 = bf16x8.load(a, i + 16).dotAddFast(bf16x8.load(b, i + 16), s2);
+    s3 = bf16x8.load(a, i + 24).dotAddFast(bf16x8.load(b, i + 24), s3);
+    i += 32;
+  }
+  return total(s0) + total(s1) + total(s2) + total(s3);
+}

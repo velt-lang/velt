@@ -1,0 +1,25 @@
+// velt/simd (internal): the dot product of two `i8[]`, the inner loop of quantized (int8) inference.
+// A plain loop, because that is what LLVM vectorizes best: the same code as Rust's
+// `a.iter().zip(b).map(|(x, y)| *x as i32 * *y as i32).sum()`, 10 instructions per 64 bytes on an
+// arm64 CPU with `sdot` and a clang as new as rustc's LLVM, where four `i32x4.dotAdd`s in a `fits`
+// loop take 14.
+
+import { noInline } from "velt/lang/intrinsics";
+
+/**
+ * The dot product of `a` and `b`: `a[0] * b[0] + a[1] * b[1] + …`, the products of signed bytes,
+ * summed in `i32`, wrapping on overflow as `+` on `i32` does (131,072 pairs of -128 already make
+ * 2^31 and wrap). Panics with a RangeError when the lengths differ.
+ */
+export function dotI8(a: i8[], b: i8[]): i32 {
+  noInline();
+  const n: usize = a.length;
+  if (n != b.length) {
+    panic(`RangeError: dotI8: the arrays have lengths ${n} and ${b.length}`);
+  }
+  let sum: i32 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    sum += (a[i] as i32) * (b[i] as i32);
+  }
+  return sum;
+}

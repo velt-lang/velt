@@ -15,6 +15,8 @@ export { mask8x16, mask16x8, mask32x4, mask64x2 } from "velt/simd/masks";
 export { f16x8 } from "velt/simd/f16x8";
 /** Eight `bf16` lanes: 16-bit weights, widened to and narrowed from `f32x4`, with a dot product. */
 export { bf16x8 } from "velt/simd/bf16x8";
+/** The dot product of two `i8[]`, summed in `i32`. */
+export { dotI8 } from "velt/simd/dot_bytes";
 // The CPU's SHA instructions on `u32x4` (hand-written, not generated).
 import "velt/simd/sha";
 // Carry-less multiplication on `u64x2` (hand-written, not generated).
