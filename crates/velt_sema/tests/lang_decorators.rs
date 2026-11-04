@@ -171,3 +171,65 @@ fn a_local_named_in_a_nested_class_is_run_time() {
         "{e}"
     );
 }
+
+const TC39: &str = "TC39 run-time decorators are not supported yet";
+
+/// The bodies a nested item can be written in that aren't a function's block, with `ITEM` where
+/// it goes, each a whole program.
+const INITIALIZERS: &[&str] = &[
+    "class K { static { ITEM } }",
+    "class K { static { const a = () => { ITEM }; a(); } }",
+    "class K { x: number = (() => { ITEM return 1; })(); }",
+    "class K { static s: number = (() => { ITEM return 1; })(); }",
+    "class K { static readonly r: number = (() => { ITEM return 1; })(); }",
+    "class K { f: () => void = function () { ITEM }; }",
+    "struct K { x: number = (() => { ITEM return 1; })(); }",
+    "function p(a: number = (() => { ITEM return 1; })()) {}",
+    "function p({ a = (() => { ITEM return 1; })() }: { a?: number }) {}",
+    "class K { m(a: number = (() => { ITEM return 1; })()) {} }",
+    "class K { constructor(a: number = (() => { ITEM return 1; })()) {} }",
+    "extend number { m(a: number = (() => { ITEM return 1; })()): number { return a; } }",
+    "const c = (a: number = (() => { ITEM return 1; })()) => a;",
+    "const o = function (a: number = (() => { ITEM return 1; })()) {};",
+];
+
+#[test]
+fn a_run_time_decorator_is_refused_in_an_initializer_or_a_default() {
+    for body in INITIALIZERS {
+        let src = format!(
+            "function logged(v: any, c: any): any {{ return v; }}
+             {}
+             function main() {{}}",
+            body.replace("ITEM", "@logged class H {}")
+        );
+        let e = err_src(&src);
+        assert!(e.contains(TC39), "{body}: {e}");
+    }
+}
+
+#[test]
+fn an_unknown_decorator_is_refused_in_an_initializer_or_a_default() {
+    for body in INITIALIZERS {
+        let src = format!(
+            "{} function main() {{}}",
+            body.replace("ITEM", "@nosuch class H {}")
+        );
+        let e = err_src(&src);
+        assert!(e.contains("cannot find `nosuch`"), "{body}: {e}");
+    }
+}
+
+#[test]
+fn a_compile_time_decorator_is_recorded_in_an_initializer_or_a_default() {
+    for body in INITIALIZERS {
+        let src = format!(
+            "declare decorator function mark(): TypeDecorator;
+             {}
+             function main() {{}}",
+            body.replace("ITEM", "@mark class H {}")
+        );
+        let p = ok_src(&src);
+        assert_eq!(p.decorators.len(), 1, "{body}");
+    }
+}
+

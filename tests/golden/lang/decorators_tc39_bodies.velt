@@ -1,0 +1,35 @@
+// A nested declaration is decorated in any body, not just a function's: static blocks, field
+// initializers and parameter defaults. Valid TypeScript: `tsc` 5.9.3 runs these decorators at the
+// class's definition, which Velt refuses until #2204.
+function logged(value: any, context: any): any {
+  console.log("decorator ran");
+  return value;
+}
+
+class InStaticBlock {
+  static {
+    @logged
+    class H {}
+    console.log("static");
+  }
+}
+
+class InField {
+  x: number = (() => {
+    @logged
+    class H {}
+    return 1;
+  })();
+}
+
+function inDefault(
+  p: number = (() => {
+    @logged
+    class H {}
+    return 1;
+  })(),
+) {
+  return p;
+}
+
+console.log(new InStaticBlock() != null, new InField().x, inDefault());

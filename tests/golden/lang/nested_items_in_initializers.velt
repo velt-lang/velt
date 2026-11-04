@@ -1,0 +1,121 @@
+// A declaration inside a static block, a field initializer or a parameter default: scoped to its
+// block and hoisted like one in a function's body.
+class K {
+  static {
+    class H {
+      v = 7;
+    }
+    console.log(new H().v);
+  }
+}
+class F {
+  x: number = (() => {
+    class H {
+      v = 1;
+    }
+    return new H().v;
+  })();
+}
+class G {
+  x: number = (() => {
+    function h() {
+      return 2;
+    }
+    return h();
+  })();
+}
+function d(
+  p: number = (() => {
+    function h() {
+      return 3;
+    }
+    return h();
+  })(),
+) {
+  return p;
+}
+class M {
+  m(
+    p: number = (() => {
+      class H {
+        v = 4;
+      }
+      return new H().v;
+    })(),
+  ) {
+    return p;
+  }
+}
+class Generic<T> {
+  v: number = (() => {
+    class H {
+      w = 5;
+    }
+    return new H().w;
+  })();
+}
+class Captures {
+  static {
+    const a = 6;
+    const h = () => a;
+    function g() {
+      return 8;
+    }
+    console.log(g() + h());
+  }
+}
+class Interface {
+  x: number = (() => {
+    interface I {
+      a: number;
+    }
+    const i: I = { a: 9 };
+    return i.a;
+  })();
+}
+class Alias {
+  x: number = (() => {
+    type A = number;
+    const a: A = 10;
+    return a;
+  })();
+}
+class Two {
+  a: number = (() => {
+    function h() {
+      return 12;
+    }
+    return h();
+  })();
+  b: number = (() => {
+    function h() {
+      return 13;
+    }
+    return h();
+  })();
+}
+class Ctor {
+  y: number;
+  constructor(
+    p: number = (() => {
+      class H {
+        v = 14;
+      }
+      return new H().v;
+    })(),
+  ) {
+    this.y = p;
+  }
+}
+console.log(
+  new F().x,
+  new G().x,
+  d(),
+  new M().m(),
+  new Generic<string>().v,
+  new Interface().x,
+  new Alias().x,
+  new Two().a,
+  new Two().b,
+  new Ctor().y,
+);

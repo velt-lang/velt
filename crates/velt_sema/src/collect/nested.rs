@@ -26,7 +26,8 @@ pub(crate) struct NestedItem {
     pub item: Item,
 }
 
-/// A body walked for nested items: a function's, or a module constant's initializer.
+/// A body walked for nested items: a function's, or the initializer of a module constant or a
+/// field (a `static {}` block is the initializer of a field, `parse_static_block`).
 #[derive(Clone, Copy)]
 enum Body<'m> {
     Block(&'m ast::Block),
@@ -123,6 +124,15 @@ fn item_bodies<'m>(
                 let body = Body::Block(&c.body);
                 bodies.push((format!("{qual}.constructor"), &c.sig.params, body, gs));
             }
+            for f in &t.fields {
+                let Some(init) = &f.default else { continue };
+                let name = match f.name.name.starts_with("<static block ") {
+                    true => "static",
+                    false => &f.name.name,
+                };
+                let gs = names(&[&t.generics]);
+                bodies.push((format!("{qual}.{name}"), &[], Body::Expr(init), gs));
+            }
         }
         ast::ItemKind::Extend(e) => {
             for meth in &e.methods {
@@ -169,6 +179,9 @@ fn fn_body<'m>(
     used: &mut FxHashSet<String>,
 ) {
     let mut found = vec![];
+    for p in params {
+        walk_param(p, &mut |f| found.push(f));
+    }
     match body {
         Body::Block(b) => walk_block(b, &mut |f| found.push(f)),
         Body::Expr(e) => walk_expr(e, &mut |f| found.push(f)),
@@ -177,13 +190,6 @@ fn fn_body<'m>(
         return;
     }
     let mut locals: Vec<String> = outer.to_vec();
-    for p in params {
-        param_bindings(p, &mut |f| {
-            if let Found::Bind(n) = f {
-                locals.push(n.to_string());
-            }
-        });
-    }
     for f in &found {
         if let Found::Bind(n) = f {
             locals.push(n.to_string());
@@ -364,12 +370,14 @@ fn bindings<'m>(p: &'m ast::Pattern, f: &mut dyn FnMut(Found<'m>)) {
     }
 }
 
-/// The names a parameter binds: its own, or those of the pattern it destructures.
-fn param_bindings<'m>(p: &'m ast::Param, f: &mut dyn FnMut(Found<'m>)) {
+/// What a parameter holds: the names it binds (its own, or those of the pattern it destructures),
+/// and its default, which may declare items like any other body.
+fn walk_param<'m>(p: &'m ast::Param, f: &mut dyn FnMut(Found<'m>)) {
     match &p.pattern {
         Some(q) => bindings(q, f),
         None => f(Found::Bind(&p.name.name)),
     }
+    p.default.iter().for_each(|x| walk_expr(x, f));
 }
 
 fn walk_expr<'m>(e: &'m ast::Expr, f: &mut dyn FnMut(Found<'m>)) {
@@ -381,6 +389,7 @@ fn walk_expr<'m>(e: &'m ast::Expr, f: &mut dyn FnMut(Found<'m>)) {
                     Some(q) => bindings(q, f),
                     None => f(Found::Bind(&p.name.name)),
                 }
+                p.default.iter().for_each(|x| walk_expr(x, f));
             }
             match body {
                 ast::ArrowBody::Expr(x) => walk_expr(x, f),
@@ -392,7 +401,7 @@ fn walk_expr<'m>(e: &'m ast::Expr, f: &mut dyn FnMut(Found<'m>)) {
             for p in props {
                 if let ast::ObjectProp::Method(d) = p {
                     for p in &d.sig.params {
-                        param_bindings(p, f);
+                        walk_param(p, f);
                     }
                     walk_block(&d.body, f);
                 }
@@ -403,8 +412,7 @@ fn walk_expr<'m>(e: &'m ast::Expr, f: &mut dyn FnMut(Found<'m>)) {
                 f(Found::Bind(&d.sig.name.name));
             }
             for p in &d.sig.params {
-                param_bindings(p, f);
-                p.default.iter().for_each(|x| walk_expr(x, f));
+                walk_param(p, f);
             }
             walk_block(&d.body, f);
         }
