@@ -342,5 +342,11 @@ mod trust;
 pub use trust::check as check_trust;
 mod unsafe_sites;
 
+/// Where `module` first has unsafe code, if it has any: what a generator's output can't have, as
+/// the trust check reads only the loaded modules.
+pub(crate) fn first_unsafe_code(module: &velt_syntax::ast::Module) -> Option<velt_common::Span> {
+    unsafe_sites::find(module).sites.first().map(|s| s.span)
+}
+
 #[cfg(test)]
 mod tests;
