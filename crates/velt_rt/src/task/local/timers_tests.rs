@@ -164,7 +164,11 @@ fn a_later_timer_alone_after_a_held_one_wakes_the_task_at_its_deadline() {
         while log.lock().unwrap().is_empty() && Instant::now() < limit {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
-        assert_eq!(*log.lock().unwrap(), ["task"], "its deadline wakes the task");
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["task"],
+            "its deadline wakes the task"
+        );
         assert!(Instant::now() >= later_at);
         log.lock().unwrap().clear();
         timers.fire(&task);
