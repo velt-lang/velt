@@ -47,7 +47,7 @@ pub(super) fn native_packages(
     let mut out: Vec<NativePackage> = graph
         .packages()
         .iter()
-        .filter(|p| p.has_native_code && graph.allows_native(&p.name))
+        .filter(|p| p.has_native_code && graph.allows_native(p))
         .map(|p| NativePackage {
             name: p.name.clone(),
             c_libraries: p

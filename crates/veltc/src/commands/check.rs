@@ -112,7 +112,7 @@ fn report_and_exit(
         }
         super::build::report(sess, false);
         report_findings(sess, lint);
-        if result.is_ok() {
+        if result.is_ok() && !lint.iter().any(Diagnostic::is_error) {
             print!("{}", crate::native::render_native(&sess.native));
         }
     }
@@ -446,8 +446,8 @@ fn package_root_module(root: &Path) -> Result<(PathBuf, bool), String> {
     }
 }
 
-/// `{"diagnostics": [...], "errors": n, "warnings": n}`, and `native` when the program allows
-/// packages with native code (their libraries and unsafe code); a non-source failure (unreadable
+/// `{"diagnostics": [...], "errors": n, "warnings": n}`, and `native` when the check passed and
+/// the program allows packages with native code (their libraries and unsafe code); a non-source failure (unreadable
 /// root, broken package) becomes an error diagnostic without a location. Lint findings follow the
 /// check's diagnostics.
 pub(crate) fn report_json(sess: &Session, failure: Option<&str>, lint: &[Diagnostic]) -> Value {
@@ -464,7 +464,7 @@ pub(crate) fn report_json(sess: &Session, failure: Option<&str>, lint: &[Diagnos
     let count = |sev: &str| diagnostics.iter().filter(|d| d["severity"] == sev).count();
     let (errors, warnings) = (count("error"), count("warning"));
     let mut report = json!({"diagnostics": diagnostics, "errors": errors, "warnings": warnings});
-    if !sess.native.is_empty() {
+    if errors == 0 && failure.is_none() && !sess.native.is_empty() {
         report["native"] = crate::native::native_json(&sess.native);
     }
     report
