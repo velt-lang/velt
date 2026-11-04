@@ -289,3 +289,46 @@ fn an_npm_package_in_an_allowed_git_package_is_not_that_package() {
         "{out}"
     );
 }
+
+/// `velt install` at a workspace's root builds what the members use: nothing a member's list
+/// doesn't allow, though the workspace has no root package.
+#[test]
+fn a_whole_workspace_install_checks_each_member_s_list() {
+    let dir = test_dir::TestDir::new();
+    let root = dir.path();
+    let marker = root.join("build-script-ran");
+    write(
+        root,
+        "velt.workspace.vlt",
+        "import type { Workspace } from \"velt/package\";\n\nexport const workspace: Workspace = { members: [\"app\"] };\n",
+    );
+    manifest(
+        root,
+        "app",
+        "app",
+        "dependencies: { evil: { path: \"../evil\" } },",
+    );
+    write(root, "app/src/main.vlt", "function main() {}\n");
+    manifest(root, "evil", "evil", "native: {},");
+    write(root, "evil/src/lib.vlt", "export const x = 1;\n");
+    write(
+        root,
+        "evil/native/Cargo.toml",
+        "[package]\nname = \"velt_native_evil\"\nversion = \"0.1.0\"\nedition = \"2021\"\n\n[lib]\nname = \"velt_native_evil\"\ncrate-type = [\"cdylib\", \"staticlib\"]\n\n[workspace]\n",
+    );
+    write(root, "evil/native/src/lib.rs", "");
+    write(
+        root,
+        "evil/native/build.rs",
+        &format!(
+            "fn main() {{ std::fs::write({:?}, \"\").unwrap(); }}\n",
+            marker.display().to_string()
+        ),
+    );
+    let out = refused(root, &["install"]);
+    assert!(
+        out.contains("workspace member `app`: package `evil` has native code"),
+        "{out}"
+    );
+    assert!(!marker.exists(), "the build script ran: {out}");
+}
