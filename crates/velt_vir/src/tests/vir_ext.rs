@@ -304,6 +304,18 @@ fn verify_checks_static_symbols() {
     let f1 = clash.funcs[1].symbol.clone();
     named(&mut clash, 1, &f1, Linkage::Export);
     expect_err(&clash, "is not unique");
+    // Externs too.
+    let mut extern_clash = ok.clone();
+    extern_clash.externs.push(crate::vir::ExternFn {
+        symbol: "_Vclash".into(),
+        params: vec![],
+        ret: Ty::Unit,
+        noreturn: false,
+        host: None,
+        c_decl: None,
+    });
+    named(&mut extern_clash, 1, "_Vclash", Linkage::Export);
+    expect_err(&extern_clash, "is not unique");
     // Imported, it points at internal functions and an internal static.
     let mut hidden = vtable_program();
     named(&mut hidden, 0, "_Vsvt", Linkage::Import);
