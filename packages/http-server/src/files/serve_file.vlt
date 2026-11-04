@@ -26,13 +26,16 @@ export struct ServeFileOptions {
  * - for HEAD, the head a GET would get;
  * - the body read in chunks as the client takes them, with its `Content-Length`;
  * - 404 when there is no such file (or it is a directory), 405 with `Allow` for a method other
- *   than GET and HEAD, 500 when the file can't be read.
+ *   than GET and HEAD, 500 when the file can't be looked at (`stat`).
  *
- * The file is opened when the body is first read, so a response that is never sent holds nothing.
- * The head's size and validators are those of the file sent: a file that changed since it was
- * looked at, or changes or disappears while it is sent, cuts the response off, so the client sees
- * a failed response, not a wrong one. `path` is used as given: map a URL to it with `resolveUnder`,
- * which keeps requests inside a root directory.
+ * The file is opened when the body is first read, so a response that is never sent holds nothing,
+ * and the head goes out before the open. So the response is cut off, and the client sees a failed
+ * one, when the file can't be opened (no permission: a 200 head, then no bytes), is gone, has
+ * another size or mtime when it is opened, or is cut short while it is sent. Two changes aren't
+ * detected, as with Express's `send`: a rewrite in place during the body that keeps the size gives
+ * a complete response of old and new bytes, and a swap that keeps the size and mtime gives the new
+ * file, complete. `path` is used as given: map a URL to it with `resolveUnder`, which keeps requests
+ * inside a root directory.
  */
 export async function serveFile(
   req: Request,

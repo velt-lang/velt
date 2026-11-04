@@ -206,7 +206,9 @@ request lazily: a handler pays only for what it reads.
 
 The handler returns any [`Response`](https://veltlang.com/docs/std/net/http/#response): `new Response(body, {
 status, statusText, headers })` or `Response.json(value, init)`, `Response.redirect(url, status)`,
-or a response `fetch` returned (a proxy: its body is passed on as it arrives).
+or a response `fetch` returned (a proxy: its body is passed on as it arrives). To wrap a fetched
+body in a new response, leave out `content-encoding` and `content-length`: the body is already
+decoded, and with the fetched values the response is cut off.
 
 - A string body is sent without a copy, with `content-type: text/plain;charset=UTF-8` unless the
   headers set one; `Response.json` sends `application/json`, bytes (a typed array, an `ArrayBuffer`
@@ -261,8 +263,12 @@ async function main() {
 - the body read as the client takes it, with its `Content-Length`.
 
 The file is opened when the body is first read, so a response you don't send holds nothing. The
-head describes the file as it was looked at: if the file changes or goes away before its last
-byte is sent, the response is cut off, and the client sees a failed response, not a wrong one.
+head describes the file as it was looked at, and goes out before the open. So the response is cut
+off, and the client sees a failed one, when the file can't be opened (no permission: a 200 head,
+then no bytes), is gone, has another size or modification time when it is opened, or is cut short
+while it is sent. Two changes aren't detected, as with Express's `send`: a rewrite in place during
+the body that keeps the size gives a complete response of old and new bytes, and a swap that keeps
+the size and modification time (`cp -p`, `rsync -t`) gives the new file, complete.
 
 `options` sets the `contentType` (default: from the extension, `contentType(path)`) and extra
 `headers` for a 200, 206 or 304 (`Cache-Control`; not for a 412 or 416, which a cache mustn't
@@ -272,8 +278,10 @@ keep). The pieces are exported for other bodies: `parseRange(header, size)`,
 `resolveUnder(root, urlPath, options?)` maps a URL path to a file under `root`. It gives null for
 a missing file and for what it refuses:
 - `..`, encoded separators, NUL and symlinks that lead out of `root`;
-- dotfiles (`/.env`, `/.git/config`, a symlink to one), as Express's `send` does. Pass
-  `{ dotfiles: true }` to serve them, for `/.well-known/` and the like;
+- dotfiles (`/.env`, `/.git/config`, a symlink to one), as Express's `send` does. To serve
+  `/.well-known/`, give it a root of its own: `resolveUnder(`${root}/.well-known`, rest)`, which
+  the defaults allow. `{ dotfiles: true }` allows every dotfile under `root`, `/.env` and
+  `/.git/config` too;
 - on Windows, a `:` in a segment (drive letters, alternate data streams) and a segment ending in
   a dot or a space, which Windows reads as the name without them (`/f.txt.` is `f.txt`).
 

@@ -305,6 +305,18 @@ describe("resolveUnder", () => {
     }
   });
 
+  it(
+    "serves `.well-known` from a root of its own, with nothing else that starts with a dot",
+    async () => {
+      const own = `${dir}/root/.well-known`;
+      const r = await resolveUnder(own, "/x");
+      expect(r == null ? null : r.replaceAll("\\", "/").slice(dir.length)).toBe(
+        "/root/.well-known/x",
+      );
+      expect(await resolveUnder(own, "/../.env")).toBe(null);
+    },
+  );
+
   it("doesn't mind a dot in the path above the root", async () => {
     const r = await resolveUnder(`${dir}/.hidden/root`, "/a.txt");
     expect(r == null ? null : r.replaceAll("\\", "/").slice(dir.length)).toBe(

@@ -7,8 +7,10 @@ import { platform } from "velt/os";
 /** The options of `resolveUnder`. */
 export struct ResolveOptions {
   /**
-   * Whether a path with a segment starting with `.` (`/.env`, `/.git/config`, `/.well-known/x`)
-   * may be served (default: no, as Express's `send`).
+   * Whether a path with a segment starting with `.` may be served (default: no, as Express's
+   * `send`). It allows all of them: `/.env` and `/.git/config` as well as `/.well-known/x`. To
+   * serve only `/.well-known/`, give it a root of its own, which the default allows:
+   * `resolveUnder(`${root}/.well-known`, rest)`.
    */
   dotfiles?: bool;
 }
