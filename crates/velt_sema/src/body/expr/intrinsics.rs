@@ -108,8 +108,13 @@ impl FnCx<'_, '_> {
         }
         let shown = self.cx.display(t);
         self.cx.error(
-            Diagnostic::error("`arrayCopyBytes` writes bytes into an array of numbers", span)
-                .with_note(format!("its element type must be a number type or `bool`, found {shown}")),
+            Diagnostic::error(
+                "`arrayCopyBytes` writes bytes into an array of numbers",
+                span,
+            )
+            .with_note(format!(
+                "its element type must be a number type or `bool`, found {shown}"
+            )),
         );
     }
 
