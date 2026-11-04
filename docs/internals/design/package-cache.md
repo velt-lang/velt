@@ -247,7 +247,8 @@ Not part of this plan, found on the way:
 2. **Package granularity in std:** one entry per std module, or one per prelude plus one per
    other module? Per module keeps an edit local; the prelude is loaded by every program, so
    decoding one entry for it may be cheaper. Measure both with layer 1. The std index (#2161
-   step 1) is stored per module, the prelude being one entry like any other module.
+   step 1) is stored per package (`std/<module>/` with its implementation folders), so the
+   prelude's many files are one entry.
 3. **Facts traces that never repeat:** a function whose trace asks about many program types (an
    `any` glue user) may have a new trace in every program. Such functions should stay in the
    program; a per-function miss counter in the cache can tell.
