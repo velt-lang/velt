@@ -520,6 +520,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
         }
         used_types(cx, std::mem::take(&mut sc.types), &mut sc.found);
         if !cx.lazy.record_hooks && record_hooks_needed(cx) {
+            cx.demand_std(velt_common::std_module!(lang_hooks_any_record));
             let hooks: Vec<DefId> = RECORD_HOOKS
                 .iter()
                 .filter_map(|h| cx.prelude_fn(h))

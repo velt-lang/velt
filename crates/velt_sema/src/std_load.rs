@@ -197,7 +197,6 @@ impl<'m> Ctx<'m> {
     /// A hook of std module `path` is needed: add the module to the check unless it is loaded.
     /// Without a load callback, or when it cannot be loaded, the module stays missing, and the
     /// hook's lookup (`Ctx::std_def`) finds nothing.
-    #[allow(dead_code)] // Its callers come with the hooks' modules moving to demand.
     pub(crate) fn demand_std(&mut self, path: &str) {
         if crate::collect::exports::std_module(self, path).is_some() {
             return;

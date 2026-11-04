@@ -200,6 +200,9 @@ pub fn load_program(
         loader.add_extra_root(file, &origin, &mut queue);
         loader.resolve_all(&mut queue);
     }
+    if !opts.demand_std {
+        more::load_up_front(&mut loader, &mut queue);
+    }
     loader.check_variants();
     loader.check_ambients();
     loader.declare_global_types();

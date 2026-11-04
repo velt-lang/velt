@@ -29,8 +29,6 @@ use velt_syntax::visit::{self, Visit};
 
 use super::std_ast::StdParser;
 
-mod float_operands;
-
 /// A global module: its file and the names that load it.
 pub(super) struct Global {
     pub file: PathBuf,
@@ -57,11 +55,7 @@ pub(super) fn global_modules(std_root: &Path, parser: &StdParser) -> Vec<Global>
             let src = vpm::probe::read_to_string(&file).ok()?;
             let mut names = reexported_names(&src, parser);
             if names.is_empty() {
-                let marked = [
-                    (THIS_FN_LINE, THIS_FN),
-                    (ASYNC_HOST_LINE, ASYNC_HOST),
-                    (FLOAT_OPERAND_LINE, FLOAT_OPERAND),
-                ];
+                let marked = [(THIS_FN_LINE, THIS_FN), (ASYNC_HOST_LINE, ASYNC_HOST)];
                 names.extend(
                     marked
                         .iter()
@@ -156,21 +150,6 @@ pub(super) fn names_global(src: &str, module: &ast::Module, name: &str) -> bool 
         || (name == "RegExp" && src.contains('/') && has_regex(module))
         || (name == THIS_FN && mentions(src, "this") && has_this_fn(module))
         || (name == ASYNC_HOST && mentions(src, "host") && has_async_host(module))
-        || (name == FLOAT_OPERAND && may_print(src) && float_operands::has_float_conversion(module))
-}
-
-/// The trigger of a global for a module that converts to text an operand that may be a float
-/// (`float_operands`, docs/internals/design/lazy-std.md "Float operands"). No source can mention
-/// it as a word.
-const FLOAT_OPERAND: &str = "<conversion operand may be a float>";
-
-/// The line that marks such a global ([`FLOAT_OPERAND`]).
-const FLOAT_OPERAND_LINE: &str = "// load for: a conversion operand may be a float";
-
-/// Whether source `src` may convert a value to text (a template with an expression, `String(…)`,
-/// `.toString(…)`, `+` with a string), as text: the cheap test before [`float_operands`].
-fn may_print(src: &str) -> bool {
-    src.contains("${") || src.contains("String") || src.contains('+')
 }
 
 /// The trigger of the global an async host function loads (std/prelude/global/host_async.velt:

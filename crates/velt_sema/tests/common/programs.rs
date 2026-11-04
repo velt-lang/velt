@@ -345,6 +345,13 @@ fn load_with(file: &Path, src: &str, lenient: bool) -> Loaded {
     prelude(&mut l);
     l.lenient = lenient;
     let root = l.add("main", file, src.to_string());
+    // What a check can demand is loaded up front here: this loader has no load callback.
+    for path in velt_common::std_hooks::ON_DEMAND_MODULES {
+        let rel = path.strip_prefix("std/").expect("a std path");
+        let f = repo_root().join(format!("std/{rel}.velt"));
+        let src = std::fs::read_to_string(&f).expect("a hook module");
+        l.add(path, &f, src);
+    }
     let root_dir = normalize(file.parent().unwrap());
     l.resolve(&root_dir);
     Loaded {

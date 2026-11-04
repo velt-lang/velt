@@ -1,5 +1,0 @@
-// Global, conditional (crates/velt_loader/src/globals): what converts an `any` holding an
-// object to a `Record<string, V>` (velt/lang/hooks/any_record), for a program that mentions
-// `Record`; a conversion to one can only come from a type written so.
-// load when std/prelude/record uses: Record
-import "velt/lang/hooks/any_record";

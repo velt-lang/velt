@@ -6,7 +6,7 @@
 //! take it in place. The rule is applied to the parses at hand, so no index entry is read.
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use velt_common::{Diagnostic, Diagnostics, SourceMap, Span};
 use velt_sema::{SourceModule, StdBatch};
@@ -214,6 +214,35 @@ pub fn load_more(
     *state = loader.into_state();
     state.base = first_base;
     out
+}
+
+/// Without [`LoadOptions::demand_std`]: every module a demand could ask for, after everything
+/// else, in table order. A test's own std root may not have them.
+pub(crate) fn load_up_front(loader: &mut Loader, queue: &mut VecDeque<usize>) {
+    let Some(std) = loader.opts.std_root.clone() else {
+        return;
+    };
+    let Some(importer) = loader.modules.iter().position(|m| m.is_std) else {
+        return;
+    };
+    for path in velt_common::std_hooks::ON_DEMAND_MODULES {
+        let Some(spec) = specifier(path) else {
+            continue;
+        };
+        if !exists(&std, path) {
+            continue;
+        }
+        loader.import(importer, &spec, Span::DUMMY, false, queue);
+    }
+    loader.resolve_all(queue);
+}
+
+/// Does std root `std` hold module `path` as a file?
+fn exists(std: &Path, path: &str) -> bool {
+    let rel = path
+        .strip_prefix(velt_common::std_modules::CANONICAL_PREFIX)
+        .unwrap_or(path);
+    vpm::probe::is_file(&std.join(format!("{rel}.velt")))
 }
 
 #[cfg(test)]

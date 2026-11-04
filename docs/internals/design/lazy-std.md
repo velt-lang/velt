@@ -1,6 +1,7 @@
 # Standard library checked on demand
 
-Status: implemented (#1658). Owner: `velt_sema` (`body/lazy_std.rs`).
+Status: implemented (#1658; loading during the check, #2161 step 3). Owner: `velt_sema`
+(`body/lazy_std/`, `std_load.rs`).
 
 ## Problem
 
@@ -86,48 +87,66 @@ concrete type (`JSON.stringify` in the typed arrays' and proxies' code) reaches 
 every program.
 
 The editor's analysis (`ide::check_for_ide`) checks everything, since hover, go-to-definition and
-diagnostics in std files need it. `VELT_EAGER_STD=1` turns laziness off for the command line too,
-to compare.
+diagnostics in std files need it. `VELT_CHECK_ALL_STD=1` turns laziness off for the command line
+too, to compare.
 
-## Loading on demand: `// load for:` predicates
+## Loading on demand
 
 Checking on demand still parses every module a program loads, and parsing and collecting std code
-costs about as much as checking it. So some of std is not loaded at all unless a program may need
-it: a global module under `std/prelude/global/` whose header names a condition
-(crates/velt_loader/src/globals). Besides the conditions on words (`export { … }` names, `// load
-when <module> uses: <words>`), a header may name a *predicate* on a module's syntax, evaluated by
-the loader before any types are known. Each predicate is generic: it says what a module does,
-never which std module that loads; the header's imports say that.
+costs about as much as checking it. So some of std is not loaded at all unless a program needs it.
 
-- `// load for: a conversion operand may be a float` (**Float operands**): a conversion (a
-  template literal with an expression, `String(…)`, a `.toString(…)` call, or `+` / `+=` with a
-  string literal or a template) whose operand looks like a float that is not a whole number:
-  - a float literal (`1.5`, `1e-3`), `/` or `**` anywhere in it, a member or call of `Math`, or a
-    cast to a float type (`f64`, `f32`, `f16`, `bf16`);
-  - a variable or parameter declared with a float type, or initialized from such an expression
-    (scopes are not told apart);
-  - an array literal with such an element, and a `for … of` variable over one.
+**During the check (#2161 (a1)).** The modules of hooks no program needs by default
+(velt_common `std_hooks::ON_DEMAND_MODULES`: `velt/lang/hooks/number_text`, `number_float` and
+`any_record`) are not loaded with the prelude. `reach` finds out, from checked code and its types,
+that one of their hooks is needed (a live construct's integer hook, `live.rs`; a text conversion in
+the program's own code of a value that may hold a float, `number_text.rs`; a conversion to a record
+with string keys, `record_hooks_needed`), and demands the module (`Ctx::demand_std`, `std_load.rs`):
+- The driver's load callback (`velt_sema::LoadFn`) goes on from the program's load
+  (`velt_loader::load_more`) with the module and what it imports that is not loaded. Each must
+  follow the rule of `velt_loader::std_index`, so what it adds stays local to it; the loader applies
+  the rule to the parse at hand, and reads no index entry. A module that breaks it is an internal
+  error. `tests`: `std_index::rule_tests`.
+- Sema runs the source rewrites on the batch alone, appends the modules, collects what they declare
+  (`collect::collect_added`: every pass of `collect`, from where the additions start) and checks
+  their eager bodies, then `reach` goes on. Existing `DefId`s do not change.
+- The batches outlive every `Ctx` and every check of the program (`StdLoads`). A later round starts
+  from the program's modules and demands again: it takes the kept batches, in the order they were
+  served, so a round's `DefId`s are the first round's.
 
-  `std/prelude/global/number_float.velt` uses it to load std's float printer (the shortest
-  digits, `velt/lang/hooks/number_float`), which lowering prefers to the runtime's.
+`VELT_EAGER_STD=1`, and any caller of `load_program` that does not ask for `demand_std`, loads all
+of these modules up front, after everything else, and gives the check no callback. Every golden's
+`--emit vir` is byte-identical both ways (`crates/veltc/tests/eager_std_identity.rs`, selected by
+`cargo xtask affected` when sema, the loader, lowering or std change): a difference is a rewrite an
+added module missed, or something in the VIR that depends on the order sema numbers things in. VIR
+does not name a `TyId` or a `FileId` for that reason (`Cx::view_key`, the `_L` of a
+caller-tracking instance's symbol).
 
-std's integer printing (`velt/lang/hooks/number_text`) is loaded with the other hooks (the
-prelude loads `velt/lang/hooks`), but its integer hooks are checked only where *live* code has a
-construct whose lowering calls them (#2161 step 2; velt_common `hook_demand.rs`): a template or
-`String()` of an integer, the formatting glue of a type that may print one (`console.log`, a
-class's table), an array index (its out-of-bounds message) or an `any`. Live code is a superset
-of what lowering builds: the program's own and the std code it reaches (`velt_sema`
-`body/lazy_std/live.rs`), std's own conversions included, which a debug compiler or
-`VELT_LIVE_CHECK=1` has lowering assert, so hello world checks none of std's integer printing. Lowering has no
-runtime fallback for them (#2197), and asserts that sema demanded each one it calls
-(`hir::Program::hooks_demanded`).
+The editor runs the same demand set: `ide::check_for_ide` takes the callback, and with it works out
+what `reach` would check as if bodies were deferred (`Lazy::check_all`), though it checks them all.
+`velt_lsp`'s `tests/demand.rs` requires the errors and the modules of `velt check`. `velt check
+--std` and the editor's workspace index load everything, and demand nothing.
 
-A predicate only decides what is loaded: a program it misses still compiles and prints the same,
-by a slower path (a float the float-operand test misses is printed by the runtime's printer:
-`tests/golden/lang/float_text_miss.velt`, and `crates/veltc/tests/number_format_vir.rs` checks
-which path runs), and one it wrongly matches only costs loading time. The principled fix is
-loading after sema finds the use (std modules loaded lazily), which would retire the syntactic
-test.
+std's integer hooks are checked only where *live* code has a construct whose lowering calls them
+(#2161 step 2; velt_common `hook_demand.rs`): a template or `String()` of an integer, the formatting
+glue of a type that may print one (`console.log`, a class's table), an array index (its
+out-of-bounds message) or an `any`. Live code is a superset of what lowering builds: the program's
+own and the std code it reaches (`velt_sema` `body/lazy_std/live.rs`), std's own conversions
+included, which a debug compiler or `VELT_LIVE_CHECK=1` has lowering assert, so hello world checks
+none of std's integer printing.
+
+`host_async` is not moved: `velt/host/promise` loads `velt/io/error`, whose `IoError` extends the
+prelude's `Error`, which the rule excludes. It keeps its trigger below until (a2) (#2161 step 4).
+
+**Before the check.** A global module under `std/prelude/global/` whose header names a condition is
+loaded by the loader before any types are known (crates/velt_loader/src/globals). Besides the
+conditions on words (`export { … }` names, `// load when <module> uses: <words>`), a header may name
+a *predicate* on a module's syntax (`// load for: a function expression with a this parameter`,
+`// load for: an async host function`). Each says what a module does, never which std module that
+loads; the header's imports say that. They go with (a2) (#2161 step 4).
+
+Lowering has no runtime fallback for the integer hooks (#2197), and asserts that sema demanded each
+one it calls (`hir::Program::hooks_demanded`). A float hook's conversion in std's own code, which
+does not count yet, still goes to the runtime's printer.
 
 ## Diagnostics
 

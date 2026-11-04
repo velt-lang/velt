@@ -234,6 +234,7 @@ pub(super) fn step(cx: &mut Ctx, found: &mut Vec<DefId>) {
     let (old, new) = (HookSet::demanded_by(before), HookSet::demanded_by(now));
     for (i, h) in HOOKS.iter().enumerate() {
         if new.contains(i) && !old.contains(i) {
+            cx.demand_std(&h.module());
             if let Some(crate::ctx::Item::Def(d)) = cx.std_def(&h.qualified()) {
                 mark(cx, d);
                 found.push(d);

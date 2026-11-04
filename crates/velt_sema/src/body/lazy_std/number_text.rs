@@ -15,6 +15,7 @@ pub(super) fn reach_hooks(cx: &mut Ctx, texts: Vec<TyId>, found: &mut Vec<DefId>
     }
     let float_hooks = velt_common::std_hooks::HOOKS.iter();
     for h in float_hooks.filter(|h| velt_common::std_hooks::ON_DEMAND_FLOAT.contains(&h.name)) {
+        cx.demand_std(&h.module());
         if let Some(crate::ctx::Item::Def(d)) = cx.std_def(&h.qualified()) {
             found.push(d);
         }

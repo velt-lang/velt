@@ -1,7 +1,7 @@
-// Floats that reach `${x}` and `String(x)` in a module the float-printer trigger skips
-// (_float_text_miss_lib.velt): a parameter and a field. They are printed by the runtime's printer
-// there (crates/veltc/tests/number_format_vir.rs checks that path) and must still print what Node
-// prints; whole numbers take std's integer printing.
+// Floats that reach `${x}` and `String(x)` in a module whose syntax marks none of them as floats
+// (_float_text_miss_lib.velt): a parameter and a field. Sema sees their types and loads std's float
+// printer during the check (crates/veltc/tests/number_format_vir.rs checks that path); they must
+// print what Node prints, and whole numbers take std's integer printing.
 
 import { alone, Box, show } from "./_float_text_miss_lib";
 

@@ -401,7 +401,7 @@ const RECORD_HOOKS: [&str; 2] = [
 
 #[test]
 fn the_record_hooks_are_checked_only_for_a_program_that_may_convert_to_a_record() {
-    let load = "import \"velt/prelude/global/record_any\";\n";
+    let load = "";
     // A record, and no `any` in the program's code: nothing converts to it.
     let p = ok_src(&format!(
         "{load}function main() {{\n  const r: Record<string, number> = {{ a: 1 }};\n  console.log(r.a);\n}}\n"
@@ -470,19 +470,13 @@ fn number_printing_is_checked_once_the_program_prints_a_number() {
     for f in [number_hook, float_hook, float_body] {
         assert!(!checked(&ints, f), "{f} is checked for an integer");
     }
-    // A float through a `number` parameter, which nothing in the source marks as one: the float
-    // printer is not loaded (velt/lang/hooks/number_float), and `numberPush` prints it.
+    // A float through a `number` parameter, which nothing in the source marks as one: its type
+    // says that it may hold one, and the float printer is checked.
     let unmarked = ok_src(
         "function show(x: number): string {\n  return `x=${x}`;\n}\nfunction main() {\n  console.log(show(7));\n}\n",
     );
-    for f in [int_hook, int_body, number_hook] {
+    for f in all {
         assert!(checked(&unmarked, f), "{f} is not checked");
-    }
-    for f in [float_hook, float_body] {
-        assert!(
-            !checked(&unmarked, f),
-            "{f} is checked without a float operand"
-        );
     }
     let floats = ok_src("function main() {\n  const x = 0.5;\n  console.log(`x=${x}`);\n}\n");
     for f in all {

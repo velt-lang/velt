@@ -897,7 +897,10 @@ program without `any`.
 ## Unchecked definitions (#1658; additive)
 
 Sema checks standard-library definitions that only std code refers to when checked code
-reaches them (docs/internals/design/lazy-std.md). `Program::unchecked` lists the ones nothing
+reaches them (docs/internals/design/lazy-std.md), and may have loaded their modules only then
+(#2161 step 3): a hook whose module no live construct demanded has no definition at all, which
+lowering treats as it treats an unchecked one. What lowering may rely on is what
+`Program::hooks_demanded` lists. `Program::unchecked` lists the ones nothing
 reached. Each still has a definition, so every `DefId` has one:
 
 - a function or method: a `Def::Fn` with its signature (`name`, `generics`, `params` as the

@@ -200,6 +200,10 @@ pub struct Plan {
     pub goldens: Goldens,
     /// `velt fmt --check std examples packages`, and std-lint.
     pub velt_fmt: bool,
+    /// Every golden's VIR, std modules loaded up front and on demand, compared
+    /// (`veltc::eager_std_identity`, lazy-std.md "Loading on demand"): when sema, the loader,
+    /// lowering or std changes.
+    pub vir_identity: bool,
     /// The native crates of the repository's packages (`packages/<name>/native`, outside the
     /// workspace): `cargo fmt` and clippy. (`veltc::packages` runs their tests.)
     pub native_crates: bool,
@@ -253,6 +257,7 @@ impl Plan {
             veltc: Veltc::All,
             goldens: Goldens::All,
             velt_fmt: true,
+            vir_identity: true,
             native_crates: true,
             difftest: true,
             vscode: true,
@@ -290,6 +295,7 @@ impl Plan {
             veltc: Veltc::None,
             goldens: Goldens::None,
             velt_fmt: false,
+            vir_identity: false,
             native_crates: false,
             difftest: false,
             vscode: false,
@@ -368,6 +374,7 @@ impl Plan {
                     plan.all_tests(graph);
                     plan.goldens = Goldens::All;
                     plan.velt_fmt = true;
+                    plan.vir_identity = true;
                 }
                 Effect::ReadByTests(packages, binaries) => {
                     plan.reasons.push(format!("{path}: read by tests"));
@@ -456,6 +463,8 @@ impl Plan {
         if affected.contains("velt_fmt") {
             self.velt_fmt = true;
         }
+        self.vir_identity |=
+            (["velt_sema", "velt_loader", "velt_vir"].iter()).any(|c| changed.contains(*c));
         let tooling = |name: &str| TOOLING.iter().find(|(t, _)| *t == name);
         // A pipeline crate (or one the rules don't know) changes compiled programs.
         let pipeline = changed
@@ -644,6 +653,10 @@ impl Plan {
         out.push_str(&format!(
             "  velt fmt --check std examples packages: {}\n",
             yes(self.velt_fmt)
+        ));
+        out.push_str(&format!(
+            "  VIR identity, std loaded up front and on demand: {}\n",
+            yes(self.vir_identity)
         ));
         out.push_str(&format!(
             "  packages/*/native (fmt, clippy): {}\n",

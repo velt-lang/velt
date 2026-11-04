@@ -652,3 +652,18 @@ fn the_webassembly_goldens_run_only_for_webassembly_code() {
 
 #[path = "plan_os_tests.rs"]
 mod os;
+
+#[test]
+fn the_vir_identity_runs_when_sema_the_loader_lowering_or_std_change() {
+    for path in [
+        "crates/velt_sema/src/lib.rs",
+        "crates/velt_loader/src/lib.rs",
+        "crates/velt_vir/src/lib.rs",
+        "std/lang/hooks/number_text.velt",
+    ] {
+        assert!(plan(&[path]).vir_identity, "{path}");
+    }
+    for path in ["crates/velt_fmt/src/lib.rs", "docs/internals/README.md"] {
+        assert!(!plan(&[path]).vir_identity, "{path}");
+    }
+}

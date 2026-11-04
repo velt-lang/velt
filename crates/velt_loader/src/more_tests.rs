@@ -87,6 +87,40 @@ fn a_demand_serves_the_module_and_what_it_imports_once() {
 }
 
 #[test]
+fn without_demand_every_module_a_demand_could_ask_for_loads_up_front_in_table_order() {
+    let tmp = std_root(HOOKS);
+    let opts = options(tmp.path(), false, "function main() {}\n");
+    let (mut sm, mut diags) = (SourceMap::default(), vec![]);
+    let root = tmp.path().join("main.velt");
+    let l = load_program(&mut sm, &root, opts, &mut diags).unwrap();
+    let got: Vec<&str> = paths(&l.modules)
+        .into_iter()
+        .filter(|p| p.starts_with("std/lang"))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            "std/lang/hooks/number_text",
+            "std/lang/hooks/number_float",
+            "std/lang/hooks/any_record",
+            "std/lang/number/integer",
+            "std/lang/number/format",
+        ]
+    );
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+#[test]
+fn a_std_root_without_them_loads_without_them() {
+    let tmp = std_root(&[]);
+    let opts = options(tmp.path(), false, "function main() {}\n");
+    let (mut sm, mut diags) = (SourceMap::default(), vec![]);
+    let root = tmp.path().join("main.velt");
+    load_program(&mut sm, &root, opts, &mut diags).unwrap();
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+#[test]
 fn a_module_that_breaks_the_rule_is_an_internal_error() {
     let tmp = std_root(&[(
         "lang/hooks/any_record.velt",

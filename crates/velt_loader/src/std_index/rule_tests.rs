@@ -13,47 +13,28 @@ fn real_std() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std")
 }
 
-/// The std modules a program of `src` loads.
-fn loaded(src: &str) -> BTreeSet<String> {
+/// The std modules a program of `src` loads, leaving what a demand serves to [`load_more`].
+fn loaded(src: &str, sm: &mut SourceMap) -> crate::Loaded {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().join("main.velt");
-    let mut sm = SourceMap::default();
     let mut diags = vec![];
     let opts = LoadOptions {
         std_root: Some(real_std()),
         root_source: Some(src.to_string()),
+        demand_std: true,
         ..Default::default()
     };
-    let l = load_program(&mut sm, &root, opts, &mut diags).unwrap();
+    let l = load_program(sm, &root, opts, &mut diags).unwrap();
     assert!(diags.is_empty(), "{src}: {diags:?}");
-    l.modules
-        .into_iter()
-        .filter(|m| m.is_std)
-        .map(|m| m.path)
-        .collect()
+    l
 }
 
-/// The programs that load each reach-time hook global (#2161 §3, (a1)) today, by the global.
-///
-/// `number_text` is not among them: integers print through its hooks everywhere, so it loads with
-/// every program and no demand adds it.
-const DEMANDS: &[(&str, &str)] = &[
-    ("number_float", "const x = 1.5;\nconsole.log(`${x}`);\n"),
-    (
-        "host_async",
-        "declare host(\"m\") async function f(): Promise<void>;\nconsole.log(\"hi\");\n",
-    ),
-    (
-        "record_any",
-        "const r: Record<string, string> = {};\nconsole.log(\"hi\");\n",
-    ),
-];
-
-/// The modules a reach-time demand loads today that break the rule, with the reason: the design
+/// The modules a reach-time demand would load that break the rule, with the reason: the design
 /// (#2161 §2) expected none. `velt/io/error`'s `IoError` extends the prelude's `Error`, a loaded
 /// class, so loading it in place would change `Error`'s subclass closure. Until it is moved
-/// (into the prelude, or `host_async` demands it through (a2)), it is listed here: a new entry
-/// fails this test, and so does one that is gone.
+/// (into the prelude, or `host_async` demands it through (a2)), `host_async` stays on its trigger
+/// (`std/prelude/global/host_async.velt`) and is listed here: a new entry fails this test, and so
+/// does one that is gone.
 const KNOWN: &[&str] = &["host_async demands std/io/error: class `IoError` extends `Error`"];
 
 #[test]
@@ -67,15 +48,52 @@ fn every_module_a_reach_time_hook_demands_may_be_served_in_place() {
             .find(|m| m.path == p)
             .unwrap_or_else(|| panic!("{p} is not in the index"))
     };
-    let base = loaded("console.log(\"hello\");\n");
     let mut problems = vec![];
-    for (global, src) in DEMANDS {
-        let added: Vec<String> = loaded(src).difference(&base).cloned().collect();
-        // The demand is real: the global and its module load.
-        let global_path = format!("std/prelude/global/{global}");
-        assert!(added.contains(&global_path), "{global}: {added:?}");
-        eprintln!("{global}: {}", added.join(", "));
-        for m in &added {
+    // What each demand serves after a program that demanded nothing.
+    let mut demands: Vec<(&str, BTreeSet<String>)> = vec![];
+    for path in velt_common::std_hooks::ON_DEMAND_MODULES {
+        let mut sm = SourceMap::default();
+        let mut l = loaded("console.log(\"hello\");\n", &mut sm);
+        let opts = LoadOptions {
+            std_root: Some(real_std()),
+            demand_std: true,
+            ..Default::default()
+        };
+        let mut diags = vec![];
+        let batch = crate::load_more(
+            &mut sm,
+            &mut l.state,
+            &l.modules,
+            &[path.to_string()],
+            &opts,
+            &mut diags,
+        );
+        assert!(diags.is_empty(), "{path}: {diags:?}");
+        assert!(batch.modules.iter().any(|m| m.path == *path), "{path}");
+        demands.push((path, batch.modules.into_iter().map(|m| m.path).collect()));
+    }
+    // `host_async`'s, by the modules its trigger loads on top of a program that has no host call.
+    let mut sm = SourceMap::default();
+    let base: BTreeSet<String> = loaded("console.log(\"hello\");\n", &mut sm)
+        .modules
+        .into_iter()
+        .map(|m| m.path)
+        .collect();
+    let mut sm = SourceMap::default();
+    let host = "declare host(\"m\") async function f(): Promise<void>;\nconsole.log(\"hi\");\n";
+    let with: BTreeSet<String> = loaded(host, &mut sm)
+        .modules
+        .into_iter()
+        .map(|m| m.path)
+        .filter(|p| p.starts_with("std/"))
+        .collect();
+    demands.push(("host_async", with.difference(&base).cloned().collect()));
+    for (global, added) in &demands {
+        eprintln!("{global}: {added:?}");
+        for m in added
+            .iter()
+            .filter(|m| !m.starts_with("std/prelude/global/"))
+        {
             let module = by_path(m);
             if !module.in_place() {
                 let why: Vec<String> = module.violations.iter().map(|v| v.to_string()).collect();
