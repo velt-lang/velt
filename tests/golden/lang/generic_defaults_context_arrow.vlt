@@ -1,0 +1,42 @@
+// Type parameter defaults and `infer` in a generic call, as TypeScript infers them.
+// - Before an arrow with an untyped parameter is checked, the type parameters in its parameter
+//   types that nothing inferred take their defaults: `component(({ signal }) => …)` types
+//   `ctx` from `T = {}` (sigx's `component<TCombined = {}, …>`). One only in the result still
+//   comes from what the arrow returns.
+// - An `infer` that finds nothing is `unknown`; `keyof unknown` is `never`, `Omit<unknown, K>`
+//   is `{}`.
+
+interface Ctx<P, S> {
+  props: P;
+  slots: S;
+  count: number;
+}
+
+type ExtractSlots<T> = T extends { __slots?: infer S } ? S : {};
+
+function component<T extends Record<string, any> = {}, S = ExtractSlots<T>>(
+  setup: (ctx: Ctx<T, S>) => () => string,
+): (props: T) => string {
+  return (props: T): string => {
+    const slots: S = {} as unknown as S;
+    const render = setup({ props, slots, count: Object.keys(props).length });
+    return render();
+  };
+}
+
+const Plain = component(({ count }) => () => `plain with ${count} props`);
+const Typed = component<{ name: string }>((ctx) => () => `hello ${ctx.props.name}`);
+
+function make<T = string>(f: (n: number) => T): T {
+  return f(21);
+}
+
+type Keys = keyof unknown;
+const none: Keys[] = [];
+const empty: Omit<unknown, never> = {};
+const anything: ExtractSlots<{}> = "unknown holds a string";
+
+console.log(Plain({}));
+console.log(Typed({ name: "ada" }));
+console.log(make((n) => n * 2), make((n) => `#${n}`));
+console.log(none.length, JSON.stringify(empty), anything);
