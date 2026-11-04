@@ -23,6 +23,32 @@ inputs:
 runs:
   using: composite
   steps:
+    # A merge queue entry that drops out (fails, is removed, or one ahead of it fails) makes the
+    # queue test the entries behind it again under new branches and delete the old ones. The old
+    # runs keep going and hold runners (and queue for more) that the live entries wait for:
+    # 2026-11-03, with 5 macOS runners and an account-wide job limit, live entries waited up to
+    # 110 minutes for runners. queue-plan checks the branch only when the run starts; each job
+    # checks again when it gets its runner, which under load is many minutes later, and cancels
+    # the whole run (its queued jobs too) when GitHub says the branch is gone. Only a 404, twice
+    # 10 s apart, counts: any other answer checks as usual, so a live entry is never cancelled.
+    # The job needs `actions: write` to cancel; without it the run goes on as before.
+    - name: is this merge queue entry still live
+      if: github.event_name == 'merge_group'
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        gone() {
+          status=$(curl -sS -o /dev/null -w '%{http_code}' -H "Authorization: Bearer $GH_TOKEN" \
+            "$GITHUB_API_URL/repos/$GITHUB_REPOSITORY/git/ref/${GITHUB_REF#refs/}" || true)
+          [ "$status" = 404 ]
+        }
+        if gone && sleep 10 && gone; then
+          echo "::notice title=queue entry gone::$GITHUB_REF is no longer in the merge queue: cancelling this run to free its runners."
+          gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
+          # The cancellation stops this job within seconds; don't start a build meanwhile.
+          sleep 60
+        fi
     # ReFS with the antivirus filter detached: cargo's many small files build much faster than on
     # the runner's NTFS drives. The checkout is copied there (so `target/` is there too).
     - name: dev drive (Windows)
