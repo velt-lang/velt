@@ -4,7 +4,9 @@
 // publish policy (#2225), `package.vlt` (read as data, never run) naming the package and
 // version of the URL, the dependencies (registry packages only), and the name and version being
 // free. Then the archive is stored by its checksum, the first publisher of a new package becomes
-// its owner, and the version joins the index; versions are immutable.
+// its owner, and the version joins the index; versions are immutable. The body is read before the
+// package's lock is taken, as the Rust server has it whole before its lock, so a stalled upload
+// holds up nothing but itself.
 
 import { EncodingError, utf8Decode } from "velt/encoding";
 import { ArchiveEntry, contentChecksum, MANIFEST_FILE, packArchive } from "../archive";
@@ -21,6 +23,7 @@ import { Caller } from "./caller";
 import { IndexEntry } from "./index_entry";
 import { PackageIndex } from "./package_index";
 import { publishPathProblem } from "./publish_policy";
+import { purgeAfterWrite } from "./purge_after_write";
 import { Refusal } from "./refusal";
 import { RegistryLimits } from "./registry_limits";
 import { RegistryStores } from "./registry_stores";
@@ -168,7 +171,28 @@ async function store(
     }
     throw e;
   }
-  await stores.purge.purge([indexPath(name), `/api/v1/${name}/${entry.version}`, "/"]);
+  await purgeAfterWrite(stores, [indexPath(name), `/api/v1/${name}/${entry.version}`, "/"]);
+}
+
+// Publishes the upload `body`, holding the package's lock. The caller is checked again: the
+// owners may have changed while the body arrived.
+async function publishUpload(
+  stores: RegistryStores,
+  limits: RegistryLimits,
+  req: Request,
+  name: string,
+  version: string,
+  body: u8[],
+): Promise<Response> {
+  const caller = await ownerOf(stores, req, name);
+  const [entries, sum] = checkedEntries(body, req.headers.get("x-velt-checksum"), limits);
+  const m = manifestOf(entries);
+  if (m.name != name || Version.parse(m.version).toString() != version) {
+    return refused(`the archive is \`${m.name}\` ${m.version}, not \`${name}\` ${version}`);
+  }
+  const [index, entry] = await newEntry(stores, m, sum);
+  await store(stores, caller, index, entry, entries);
+  return text(201, `published \`${name}\` ${entry.version}\n`);
 }
 
 /** Publishes package `name` `version` from the archive in `req`'s body. */
@@ -187,14 +211,13 @@ export async function publish(
   if (declaredLength(req.headers.get("content-length")) > limits.maxArchiveBytes) {
     throw tooLarge(limits.maxArchiveBytes);
   }
-  const caller = await ownerOf(stores, req, name);
+  // Only a caller who may publish gets a body read.
+  await ownerOf(stores, req, name);
   const body = await uploadBody(req, limits.maxArchiveBytes);
-  const [entries, sum] = checkedEntries(body, req.headers.get("x-velt-checksum"), limits);
-  const m = manifestOf(entries);
-  if (m.name != name || Version.parse(m.version).toString() != version) {
-    return refused(`the archive is \`${m.name}\` ${m.version}, not \`${name}\` ${version}`);
+  const held = await stores.lock.acquire(normalizedName(name));
+  try {
+    return await publishUpload(stores, limits, req, name, version, body);
+  } finally {
+    await held.release();
   }
-  const [index, entry] = await newEntry(stores, m, sum);
-  await store(stores, caller, index, entry, entries);
-  return text(201, `published \`${name}\` ${entry.version}\n`);
 }
