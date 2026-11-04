@@ -197,3 +197,54 @@ fn symbol_keyed_members_have_their_keys() {
         assert!(net.contains(w), "missing {w:?} in:\n{net}");
     }
 }
+
+/// Operator methods (`[Symbol.add]`): the files that declare them import a `Symbol` that has
+/// those symbols, the one `globals.d.ts` exports, so a client's `Symbol` stays TypeScript's.
+#[test]
+fn operator_keys_come_from_the_globals_file() {
+    let inputs = [
+        input("ops/index.vlt", "export { Add } from \"./add\";\n"),
+        input(
+            "ops/add.vlt",
+            "export interface Add<R, O = R> {\n  [Symbol.add](other: R): O;\n}\n",
+        ),
+        input("math/index.vlt", "export { Big } from \"./big\";\n"),
+        input(
+            "math/big.vlt",
+            "export class Big {\n  [Symbol.neg](): Big { panic(\"\"); }\n\
+             \x20 static [Symbol.mul](l: f64, r: Big): Big { panic(\"\"); }\n\
+             \x20 [Symbol.iterator](): Iterator<i64> { panic(\"\"); }\n}\n",
+        ),
+        input("io/index.vlt", "export { Source } from \"./source\";\n"),
+        input(
+            "io/source.vlt",
+            "export class Source {\n  [Symbol.iterator](): Iterator<i64> { panic(\"\"); }\n}\n",
+        ),
+    ];
+    let files: BTreeMap<String, String> = type_package(&inputs, "1.2.3").into_iter().collect();
+    let import = "import type { Symbol } from \"../globals.js\";";
+    let ops = &files["ops/index.d.ts"];
+    assert!(ops.contains(import), "{ops}");
+    assert!(ops.contains("  [Symbol.add](other: R): O;"), "{ops}");
+    let math = &files["math/index.d.ts"];
+    assert!(math.contains(import), "{math}");
+    assert!(
+        math.contains("  static [Symbol.mul](l: number, r: Big): Big;"),
+        "{math}"
+    );
+    // TypeScript's own symbols need nothing.
+    let io = &files["io/index.d.ts"];
+    assert!(!io.contains("Symbol }"), "{io}");
+    let g = &files["globals.d.ts"];
+    assert!(
+        g.contains("export declare const Symbol: SymbolConstructor & {"),
+        "{g}"
+    );
+    for name in velt_syntax::OPERATOR_SYMBOLS {
+        assert!(
+            g.contains(&format!("  readonly {name}: unique symbol;\n")),
+            "{g}"
+        );
+    }
+    assert!(!g.contains("declare global"), "{g}");
+}

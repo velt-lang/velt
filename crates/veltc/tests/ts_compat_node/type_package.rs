@@ -26,11 +26,18 @@ const TSCONFIG: &str = r#"{
 const CLIENT: &str = r#"import type { BTreeMap, Deque } from "velt/collections";
 import type { readFile, MkdirOptions } from "velt/fs";
 import type { Channel } from "velt/sync";
+import type { Add, Neg } from "velt/ops";
+import type { Duration } from "velt/time";
 
 declare const map: BTreeMap<string, number>;
 declare const q: Deque<string>;
 declare const read: typeof readFile;
 declare const ch: Channel<number>;
+declare const d: Duration;
+
+// A class's operator methods are keyed by the symbols of velt/ops' interfaces.
+export const sum: Add<Duration> = d;
+export const negated: Neg<Duration> = d;
 
 export async function demo(): Promise<string> {
   const opts: MkdirOptions = { recursive: true };
@@ -44,7 +51,8 @@ export async function demo(): Promise<string> {
 }
 "#;
 
-/// A client that misuses them: `readFile` resolves to a string, a `Deque<string>` takes strings.
+/// A client that misuses them: `readFile` resolves to a string, a `Deque<string>` takes strings,
+/// and importing the package does not add Velt's operator symbols to its `Symbol`.
 const MISUSE: &str = r#"import type { readFile } from "velt/fs";
 import type { Deque } from "velt/collections";
 
@@ -56,6 +64,8 @@ export async function misuse(): Promise<void> {
   q.pushBack(1);
   void n;
 }
+
+export const key = Symbol.add;
 "#;
 
 fn tsc(tsc: &Path, dir: &Path, config: &str) -> Output {
@@ -138,7 +148,7 @@ fn type_package_compiles_and_types_clients() {
     let o = tsc(&tsc_bin, dir, "tsconfig.misuse.json");
     let out = String::from_utf8_lossy(&o.stdout);
     assert!(!o.status.success(), "tsc accepted the misuse");
-    for (line, code) in [(8, "TS2322"), (9, "TS2345")] {
+    for (line, code) in [(8, "TS2322"), (9, "TS2345"), (13, "TS2339")] {
         assert!(
             out.contains(&format!("misuse.ts({line},")) && out.contains(code),
             "expected {code} on line {line}:\n{out}"

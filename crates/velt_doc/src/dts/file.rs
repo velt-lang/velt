@@ -4,7 +4,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 use velt_common::std_modules;
 
-use super::globals::TS_GLOBALS;
+use super::globals::{operator_symbols, TS_GLOBALS};
 use super::{rel_of, DeclAt, Package};
 use crate::extract::Kind;
 use crate::ts::FIRST_PARAM;
@@ -123,6 +123,11 @@ impl<'p, 'a> DeclFile<'p, 'a> {
         self.decls[slot] = text;
     }
 
+    /// Declare `Symbol` with the operator symbols (in `globals.d.ts`).
+    pub(super) fn declare_operator_symbols(&mut self) {
+        self.decls.push(operator_symbols());
+    }
+
     /// `type name<A, B> = to<A, B>;` (`generics`: the type parameters' names).
     fn alias(&mut self, name: &str, to: &str, generics: &[String]) {
         if self.declared.contains_key(name) {
@@ -204,8 +209,18 @@ impl<'p, 'a> DeclFile<'p, 'a> {
     /// (`[INSPECT]`), resolve here: imported from the module that exports it, declared here,
     /// or, where no module exports it (a file's own key), declared here privately as
     /// `fallback` says (`const SETTLE: unique symbol;`). An `import type` of a `unique symbol`
-    /// is enough for a key in a declaration file.
+    /// is enough for a key in a declaration file. `Symbol`, for an operator method's key, is
+    /// `globals.d.ts`'s.
     fn key(&mut self, from: usize, key: &str, fallback: &str) {
+        if key == "Symbol" {
+            if self.module.is_some() {
+                self.imports
+                    .entry(self.globals_spec())
+                    .or_default()
+                    .insert((key.to_string(), key.to_string()));
+            }
+            return;
+        }
         if self.package.resolve_ref(from, key).is_some() {
             return self.reference(from, key, 0);
         }

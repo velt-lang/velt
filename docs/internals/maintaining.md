@@ -217,6 +217,9 @@ not a reason for another round.
     `crates/veltc/tests/bench_programs.rs` names a missing one).
     The bench job runs on a fixed runner image: the counts depend on its C library and valgrind,
     so a new image is a pull request of its own, followed by accepting the new counts.
+  - "nightly benchmark guard failed to run" means nothing was compared: a benchmark did not build
+    or did not run with no arguments (the last name in the log of the `bench/nightly.sh` step).
+    Fix that; it is no regression, and the next run measures everything.
   - Any other job: find the commit (`gh run view <id> --log-failed`), fix it with a regression
     test or open an issue that says why it waits.
 - **Platform gaps** found by CI (e.g. a test that is skipped on one OS) get an issue, and any CI

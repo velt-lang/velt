@@ -6,7 +6,8 @@ loop" and "Reviewing a pull request"), CLAUDE.md and CONTRIBUTING.md first and f
 work in this order, finishing each step before the next:
 
 1. **Red first.** The latest runs on `main` (`gh run list --branch main --workflow ci`), the merge
-   queue, the nightly workflow, and open "main fails on <OS>" or "nightly benchmarks regressed"
+   queue, the nightly workflow, and open "main fails on <OS>", "nightly benchmarks regressed" or
+   "nightly benchmark guard failed to run"
    issues. Fix or dispatch anything red there before reviewing.
 2. **Re-reviews.** List the open pull requests with their last verdict (the command in
    maintaining.md "The maintainer loop"). Those at `CHANGES NEEDED` with new commits since that

@@ -202,10 +202,18 @@ impl TsPrinter<'_> {
     }
 
     /// Member name `name` as written (`f`, `[KEY]`, `[Symbol.iterator]`), recording the constant
-    /// a computed key names.
+    /// a computed key names: for an operator method (`[Symbol.add]`), `Symbol`, as the type
+    /// package declares those symbols (`dts/globals.rs`).
     pub(crate) fn member(&self, name: &ast::Ident) -> String {
         if let Some(key) = velt_syntax::computed_key_name(name) {
             self.keys.borrow_mut().insert(key.to_string());
+        } else if name
+            .name
+            .strip_prefix("[Symbol.")
+            .and_then(|n| n.strip_suffix(']'))
+            .is_some_and(|n| velt_syntax::OPERATOR_SYMBOLS.contains(&n))
+        {
+            self.keys.borrow_mut().insert("Symbol".to_string());
         }
         name.name.clone()
     }

@@ -11,7 +11,8 @@
 //! TypeScript lacks (Velt's globals: `Mutex`, `Atomic`, …) are exported by `globals.d.ts`, an
 //! ordinary module the others import them from: a type-only import of `velt/…` adds nothing to
 //! the client's globals. For the same reason the methods Velt adds to TypeScript's own types
-//! (`extend<T> Array<T>`) are not declared.
+//! (`extend<T> Array<T>`) are not declared, and `globals.d.ts` exports its own `Symbol`, with the
+//! operator symbols (`[Symbol.add]`), which the files with operator methods import.
 
 mod file;
 mod globals;
@@ -244,6 +245,7 @@ impl<'a> Package<'a> {
     /// extensions of those types.
     fn globals_file(&self) -> String {
         let mut file = DeclFile::new(self, None);
+        file.declare_operator_symbols();
         for &g in &self.global_files {
             let mut names: Vec<&String> = self.own[g].keys().collect();
             names.sort();

@@ -1,5 +1,20 @@
 //! What TypeScript's `lib` declares, which the type package leaves to it.
 
+/// The declaration of `Symbol` in `globals.d.ts`: TypeScript's, with the symbols of Velt's operator
+/// methods (`[Symbol.add]`), which every file that declares such a method imports. Not added to
+/// the global `SymbolConstructor`: a type-only import must not change the client's globals, where
+/// `Symbol.add` is an error as `velt check --ts-compat` says (tests/tscompat-oracle/rejected).
+pub(super) fn operator_symbols() -> String {
+    let members: String = velt_syntax::OPERATOR_SYMBOLS
+        .iter()
+        .map(|name| format!("  readonly {name}: unique symbol;\n"))
+        .collect();
+    format!(
+        "/**\n * `Symbol` with the symbols of Velt's operator methods.\n */\n\
+         export declare const Symbol: SymbolConstructor & {{\n{members}}};"
+    )
+}
+
 /// Globals TypeScript's `lib` (`esnext` and `dom`) declares: the prelude's declarations of these
 /// are not repeated, and a reference to one needs no import.
 pub(super) const TS_GLOBALS: &[&str] = &[
