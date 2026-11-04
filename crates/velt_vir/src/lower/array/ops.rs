@@ -26,8 +26,11 @@ impl FnLower<'_, '_> {
             let cap = self.cast_to(cap, cty, Ty::U64);
             return self.with_capacity(cap, ty);
         }
-        if i == I::ArrayMove || i == I::ArrayCopyBytes {
-            return self.array_move(args, i == I::ArrayCopyBytes);
+        if i == I::ArrayMove {
+            return self.array_move(args, MoveSource::Elements);
+        }
+        if i == I::ArrayCopyBytes {
+            return self.array_move(args, MoveSource::Bytes);
         }
         let aty = self.sub(args[0].ty);
         if i == I::ArrayLen {
@@ -350,9 +353,11 @@ impl FnLower<'_, '_> {
     /// `arrayMove(dst, d, src, s, n)`: `dst[d..d + n)` = the bits of
     /// `src[s..s + n)`, both ranges bounds-checked; no drop of what `dst` held, no share of
     /// what `src` holds. A literal `n` of 1 is one element copy, anything else one memcpy.
-    /// With `bytes` it is `arrayCopyBytes(dst, d, src, s, n)`: `src` is a `u8[]`, and its
-    /// range is the `n * size` bytes from `s`, `size` the byte size of `dst`'s element.
-    fn array_move(&mut self, args: &[hir::Expr], bytes: bool) -> Operand {
+    /// With `MoveSource::Bytes` it is `arrayCopyBytes(dst, d, src, s, n)`: `src` is a `u8[]`,
+    /// `s` a byte index, and its range the `n * size` bytes from `s`, `size` the byte size of
+    /// `dst`'s element.
+    fn array_move(&mut self, args: &[hir::Expr], source: MoveSource) -> Operand {
+        let bytes = source == MoveSource::Bytes;
         let [dst, d, src, s, n] = args else {
             ice(format_args!(
                 "ArrayMove called with {} arguments",
@@ -365,9 +370,9 @@ impl FnLower<'_, '_> {
         if bytes && self.cx.needs_drop(elem) {
             ice("arrayCopyBytes into an array whose elements own something");
         }
-        let what = match bytes {
-            true => "loading 16-bit floats from bytes",
-            false => "sorting with a comparison function",
+        let what = match source {
+            MoveSource::Bytes => "copying bytes into a typed array",
+            MoveSource::Elements => "sorting with a comparison function",
         };
         let dv = self.expr(dst);
         let darr = self.place_of(dv, dty);
@@ -710,4 +715,12 @@ impl FnLower<'_, '_> {
         self.goto(join);
         self.switch_to(join);
     }
+}
+
+/// What `array_move` copies from: elements of the destination's type (`arrayMove`), or the
+/// bytes of a `u8[]` (`arrayCopyBytes`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MoveSource {
+    Elements,
+    Bytes,
 }

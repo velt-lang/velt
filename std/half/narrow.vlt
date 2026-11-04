@@ -5,7 +5,7 @@
 // on a default (x86-64-v2) build, with no run-time F16C dispatch yet (#2241). From an `f32` one
 // rounding to nearest even is exact, so there is no rounding to odd here.
 
-import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { arraySetLen, arrayWithCapacity, noInline } from "velt/lang/intrinsics";
 import { intoRange } from "velt/half/widen";
 
 /**
@@ -27,6 +27,7 @@ export function narrowF16(xs: f32[]): f16[] {
  * nothing. Panics with a RangeError when that range passes the end of `ws`.
  */
 export function narrowF16Into(xs: f32[], ws: f16[], at: usize = 0) {
+  noInline();
   const n = xs.length;
   intoRange(n, ws.length, at, "narrowF16Into");
   for (let i: usize = 0; i < n; i++) {
@@ -47,6 +48,7 @@ export function narrowBf16(xs: f32[]): bf16[] {
 
 /** As `narrowF16Into`, for `bf16`. */
 export function narrowBf16Into(xs: f32[], ws: bf16[], at: usize = 0) {
+  noInline();
   const n = xs.length;
   intoRange(n, ws.length, at, "narrowBf16Into");
   for (let i: usize = 0; i < n; i++) {

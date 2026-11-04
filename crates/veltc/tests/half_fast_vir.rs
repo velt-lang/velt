@@ -46,7 +46,8 @@ fn vir(src: &str) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// The VIR of the function `name` (mangled `_V7sqrtF16`), from its `fn#` header to its `}`.
+/// The VIR of the function `name` (mangled `_V7sqrtF16`), from its `fn#` header up to (not
+/// including) its closing `}`.
 fn body<'a>(vir: &'a str, name: &str) -> &'a str {
     let head = format!(" _V{}{name}(", name.len());
     let start = vir
