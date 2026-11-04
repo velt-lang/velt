@@ -7,7 +7,7 @@ use velt_syntax::ast;
 
 use super::setters::synth;
 use crate::body::{FnCx, Want};
-use crate::hir::{self, TyKind};
+use crate::hir::{self, TyId, TyKind};
 
 /// `t[i]`.
 fn element(t: &ast::Expr, i: usize, span: Span) -> ast::Expr {
@@ -52,6 +52,29 @@ fn str_lit(s: &str, span: Span) -> ast::Expr {
 }
 
 impl FnCx<'_, '_> {
+    /// A method of arrays that doesn't change its receiver, on a tuple (`t.map(f)`, `t.reduce(f)`):
+    /// called on an array of the tuple's elements, whose type is their union, as TypeScript
+    /// types a tuple's methods. `Err` gives `recv` back for other receivers and methods.
+    pub(super) fn tuple_array_call(
+        &mut self,
+        recv: hir::Expr,
+        prop: &ast::Ident,
+        (type_args, args): (&[ast::TypeExpr], &[ast::Expr]),
+        exp: Option<TyId>,
+        span: Span,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let elems = match self.cx.ty.kind(recv.ty) {
+            TyKind::Tuple(elems) if ARRAY_READERS.contains(&prop.name.as_str()) => elems.len(),
+            _ => return Err(recv),
+        };
+        let recv = self.share_if_place(recv);
+        Ok(self.with_temp("<tuple>", recv, span, span, |lw, t| {
+            let parts = (0..elems).map(|i| element(t, i, span)).collect();
+            let array = synth(ast::ExprKind::Array(parts), span);
+            lw.member_call(&array, prop, false, type_args, args, exp, span)
+        }))
+    }
+
     /// `recv.join(sep)` / `recv.toString()` when `recv` is a tuple; `Err` gives `recv` back for
     /// other receivers and methods.
     pub(super) fn tuple_text_call(
@@ -125,3 +148,29 @@ impl FnCx<'_, '_> {
         }))
     }
 }
+
+/// What [`FnCx::tuple_array_call`] calls on an array of a tuple's elements.
+const ARRAY_READERS: &[&str] = &[
+    "at",
+    "concat",
+    "entries",
+    "every",
+    "filter",
+    "find",
+    "findIndex",
+    "findLast",
+    "findLastIndex",
+    "flat",
+    "flatMap",
+    "forEach",
+    "includes",
+    "indexOf",
+    "keys",
+    "lastIndexOf",
+    "map",
+    "reduce",
+    "reduceRight",
+    "slice",
+    "some",
+    "values",
+];

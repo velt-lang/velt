@@ -28,18 +28,25 @@ impl FnCx<'_, '_> {
             Err(recv) => recv,
         };
         // `xs.reduce(f)` without an initial value: TypeScript's other overload, std's
-        // `[ARRAY_REDUCE_FIRST]` (array_nested.vlt).
-        if prop.name == "reduce"
-            && args.len() == 1
-            && type_args.is_empty()
-            && self.cx.ty.array_elem(recv.ty).is_some()
-        {
+        // `[ARRAY_REDUCE_FIRST]` (array_nested.vlt), and the same for `reduceRight`.
+        let first = match prop.name.as_str() {
+            "reduce" => Some(velt_common::std_key!(array_reduce_first)),
+            "reduceRight" => Some(velt_common::std_key!(array_reduce_right_first)),
+            _ => None,
+        };
+        if let Some(first) = first.filter(|_| {
+            args.len() == 1 && type_args.is_empty() && self.cx.ty.array_elem(recv.ty).is_some()
+        }) {
             let first = ast::Ident {
-                name: velt_common::std_key!(array_reduce_first).to_string(),
+                name: first.to_string(),
                 span: prop.span,
             };
             return self.method_call_on(recv, &first, type_args, args, exp, span);
         }
+        let recv = match self.tuple_array_call(recv, prop, (type_args, args), exp, span) {
+            Ok(h) => return h,
+            Err(recv) => recv,
+        };
         let recv = match self.brand_tag_call(recv, prop, args, span) {
             Ok(h) => return h,
             Err(recv) => recv,

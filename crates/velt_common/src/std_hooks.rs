@@ -610,6 +610,7 @@ keys! {
     array_get => "ARRAY_GET", "arrayGet";
     // `xs.reduce(f)` without an initial value (`velt_sema` `method_call.rs`).
     array_reduce_first => "ARRAY_REDUCE_FIRST", "arrayReduceFirst";
+    array_reduce_right_first => "ARRAY_REDUCE_RIGHT_FIRST", "arrayReduceRightFirst";
     // JsonValue: what `console.log` prints a value from (`velt_vir` `glue/format.rs`), what
     // appends one's text (velt/encoding/json/append) and what decoders read one with
     // (velt/encoding/json/generate/read_value).

@@ -279,6 +279,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
             "lastIndexOf",
             "map",
             "reduce",
+            "reduceRight",
             "reverse",
             "slice",
             "some",

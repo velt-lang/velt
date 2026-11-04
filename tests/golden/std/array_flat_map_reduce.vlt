@@ -25,3 +25,89 @@ try {
 } catch (e) {
   console.log(e instanceof TypeError, (e as Error).message);
 }
+
+// A callback may return an array, or any other value, or nothing to flatten.
+console.log([1, 2, 3].flatMap((x) => (x % 2 ? [x] : x * 10)));
+console.log([1, 2, 3].flatMap((x) => x));
+console.log(
+  [1, 2, 3].flatMap((x) => {
+    return [];
+  }),
+);
+try {
+  [1].flatMap((x) => {
+    throw new Error("boom");
+  });
+} catch (e) {
+  console.log((e as Error).message);
+}
+console.log(["a b", "c"].flatMap((s) => s.split(" ")));
+console.log([[1], [2]].flatMap((x) => x));
+console.log([[1], [2]].flatMap((x) => [x]));
+const viaAny: any = [1, 2];
+console.log(viaAny.flatMap((x: number) => [x, x]));
+
+// The length when the call starts bounds the elements, and a shorter array ends early.
+const shrinking = [1, 2, 3];
+console.log(
+  shrinking.flatMap((x, i) => {
+    if (i === 0) {
+      shrinking.pop();
+    }
+    return [x];
+  }),
+);
+const growing = [1, 2];
+console.log(
+  growing.flatMap((x, i) => {
+    if (i === 0) {
+      growing.push(9);
+    }
+    return [x];
+  }),
+);
+const rs = [1, 2, 3, 4];
+console.log(
+  rs.reduce((acc, x, i) => {
+    if (i === 1) {
+      rs.pop();
+    }
+    return acc + x;
+  }),
+);
+const rg = [1, 2];
+console.log(
+  rg.reduce((acc, x, i) => {
+    if (i === 1) {
+      rg.push(5);
+    }
+    return acc + x;
+  }),
+);
+
+// reduceRight, with and without an initial value.
+console.log([1, 2, 3].reduceRight((a, x) => a + "" + x, ""));
+console.log([1, 2, 3].reduceRight((a, x) => a - x));
+console.log(["a", "b"].reduceRight((a, x) => a + x));
+console.log([1, 2, 3].reduceRight((a, x, i) => a + i, 0));
+try {
+  ([] as number[]).reduceRight((a, x) => a + x);
+} catch (e) {
+  console.log((e as Error).name, (e as Error).message);
+}
+const rrs = [1, 2, 3, 4];
+console.log(
+  rrs.reduceRight((a, x, i) => {
+    if (i === 2) {
+      rrs.length = 1;
+    }
+    return a + x;
+  }, 0),
+);
+const rrg = [1, 2];
+console.log(
+  rrg.reduceRight((a, x) => {
+    rrg.push(9);
+    return a + x;
+  }, 0),
+);
