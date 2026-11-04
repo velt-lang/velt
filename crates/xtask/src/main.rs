@@ -380,8 +380,8 @@ fn precheck_paths(root: &Path, args: &Args) -> Result<(Vec<String>, String), Str
 }
 
 /// The `$GITHUB_OUTPUT` lines for `plan`: which parts have anything to do, the OSes the queue
-/// checks (`os`), the OSes besides Linux a pull request lints on (`other_os`, empty unless
-/// the change touches OS-specific code: PR CI otherwise runs on Linux only), and how the
+/// checks (`os`), the OSes besides Linux a pull request lints on (`other_os`, the same ones: PR CI
+/// otherwise runs on Linux only), and how the
 /// parser's robustness test cuts the goldens in the queue, which runs `--full` and so knows no
 /// changes (`robustness`, `robustness_files`: `VELT_ROBUSTNESS`, `VELT_ROBUSTNESS_FILES`), nor
 /// whether the WebAssembly goldens run (`wasm_goldens`: `skip` when they don't). The goldens and
@@ -390,11 +390,17 @@ fn precheck_paths(root: &Path, args: &Args) -> Result<(Vec<String>, String), Str
 /// when [`Plan::after_merge`] says so, Windows and macOS for the whole gate.
 fn github_output_text(plan: &Plan) -> String {
     let flag = |b: bool| if b { "true" } else { "false" };
-    let oses: &[&str] = if plan.other_os.is_some() {
-        os::QUEUE_OSES
-    } else {
-        &os::QUEUE_OSES[..1]
-    };
+    // Linux, always, stays first.
+    let oses: Vec<&str> = os::QUEUE_OSES
+        .iter()
+        .copied()
+        .filter(|name| match *name {
+            "windows-latest" => plan.other_os.is_some(),
+            "macos-latest" => plan.macos.is_some(),
+            _ => true,
+        })
+        .collect();
+    let oses = oses.as_slice();
     let main_os = if plan.after_merge.is_some() {
         r#"["ubuntu-latest","windows-latest","macos-latest"]"#
     } else {
@@ -549,6 +555,7 @@ name = \"a\"
         assert!(text.contains("\nos=[\"ubuntu-latest\",\"windows-latest\",\"macos-latest\"]\n"));
         let mut linux_only = Plan::everything("test");
         linux_only.other_os = None;
+        linux_only.macos = None;
         let text = github_output_text(&linux_only);
         assert!(
             text.contains("\nother_os=[]\n") && text.contains("\nos=[\"ubuntu-latest\"]\n"),
@@ -564,10 +571,51 @@ name = \"a\"
     }
 
     #[test]
+    fn windows_and_macos_are_decided_apart() {
+        let line = |text: &str, name: &str| {
+            let prefix = format!("{name}=");
+            text.lines()
+                .find_map(|l| l.strip_prefix(prefix.as_str()).map(str::to_string))
+                .unwrap_or_default()
+        };
+        // A CI or loader change: Windows, and no macOS job of any kind.
+        let mut windows = Plan::everything("test");
+        windows.macos = None;
+        let text = github_output_text(&windows);
+        assert_eq!(line(&text, "os"), r#"["ubuntu-latest","windows-latest"]"#);
+        assert_eq!(line(&text, "other_os"), r#"["windows-latest"]"#);
+        for shards in ["golden_shards", "wasm_shards"] {
+            let shards = line(&text, shards);
+            assert!(
+                shards.contains("windows") && !shards.contains("macos"),
+                "{text}"
+            );
+        }
+        // A package's file-path code: macOS, and no Windows job.
+        let mut macos = Plan::everything("test");
+        macos.other_os = None;
+        let text = github_output_text(&macos);
+        assert_eq!(line(&text, "os"), r#"["ubuntu-latest","macos-latest"]"#);
+        assert_eq!(line(&text, "other_os"), r#"["macos-latest"]"#);
+        for shards in ["golden_shards", "wasm_shards"] {
+            let shards = line(&text, shards);
+            assert!(
+                shards.contains("macos") && !shards.contains("windows"),
+                "{text}"
+            );
+        }
+    }
+
+    #[test]
     fn every_os_the_queue_checks_has_golden_shards() {
         let mut linux_only = Plan::everything("test");
         linux_only.other_os = None;
-        for plan in [Plan::everything("test"), linux_only] {
+        linux_only.macos = None;
+        let mut no_macos = Plan::everything("test");
+        no_macos.macos = None;
+        let mut no_windows = Plan::everything("test");
+        no_windows.other_os = None;
+        for plan in [Plan::everything("test"), linux_only, no_macos, no_windows] {
             let text = github_output_text(&plan);
             let line = |name: &str| {
                 let prefix = format!("{name}=");

@@ -249,11 +249,14 @@ pub struct Plan {
     /// The VS Code extension (`editors/vscode`): `npm ci`, then `npm test` (tsc and its unit
     /// tests).
     pub vscode: bool,
-    /// Why the merge queue checks Windows and macOS too; `None`: Linux is enough
-    /// (crates/xtask/src/os.rs).
+    /// Why the merge queue checks Windows too; `None`: it doesn't (crates/xtask/src/os.rs).
     pub other_os: Option<String>,
+    /// Why the merge queue checks macOS too; `None`: the scheduled run does
+    /// ([`os::macos_reason`]).
+    pub macos: Option<String>,
     /// Why the whole gate runs on Windows and macOS after the change lands on `main`; `None`:
-    /// the queue already ran it there (crates/xtask/src/os.rs, [`os::after_merge_reason`]).
+    /// the queue or the scheduled run checks it there (crates/xtask/src/os.rs,
+    /// [`os::after_merge_reason`]).
     pub after_merge: Option<String>,
     /// How velt_syntax's robustness test cuts the goldens, if it runs.
     pub sweep: Sweep,
@@ -272,6 +275,7 @@ impl Plan {
         Plan {
             full: true,
             other_os: Some(reason.clone()),
+            macos: Some(reason.clone()),
             // Without the changes (`--full`, or git can't tell them) nobody knows which OSes the
             // queue checked: check them all again.
             after_merge: Some(reason.clone()),
@@ -305,6 +309,7 @@ impl Plan {
         Plan {
             full: false,
             other_os: None,
+            macos: None,
             after_merge: None,
             reasons: vec![],
             rust: false,
@@ -334,12 +339,18 @@ impl Plan {
         plan.wasm = paths.iter().any(|p| is_wasm(p));
         let mut changed_crates = BTreeSet::new();
         let mut comment_crates = BTreeSet::new();
+        let code: Vec<String> = paths
+            .iter()
+            .filter(|p| !comment_only.contains(*p))
+            .cloned()
+            .collect();
         for path in paths {
             match classify(graph, path) {
                 Effect::Everything => {
                     let everything = Plan::everything(format!("{path} changed"));
                     return Plan {
                         sweep: plan.sweep,
+                        macos: os::macos_reason(&code),
                         after_merge: os::after_merge_reason(paths),
                         // The WebAssembly goldens stay with the nightly unless the change builds
                         // WebAssembly or changes the toolchain: a lockfile, CI or script change
@@ -406,12 +417,8 @@ impl Plan {
                 .collect(),
         );
         plan.add_source_readers(&changed_crates.union(&comment_crates).cloned().collect());
-        let code: Vec<String> = paths
-            .iter()
-            .filter(|p| !comment_only.contains(*p))
-            .cloned()
-            .collect();
         plan.other_os = os::other_os_reason(graph, &code, plan.full);
+        plan.macos = os::macos_reason(&code);
         plan.after_merge = os::after_merge_reason(paths);
         plan
     }
@@ -643,11 +650,15 @@ impl Plan {
             "  editors/vscode (npm ci, npm test): {}\n",
             yes(self.vscode)
         ));
-        let os = match &self.other_os {
-            Some(reason) => format!("Linux, Windows, macOS ({reason})"),
-            None => "Linux".into(),
+        let windows = match &self.other_os {
+            Some(reason) => format!(", Windows ({reason})"),
+            None => String::new(),
         };
-        out.push_str(&format!("  merge queue OSes: {os}\n"));
+        let macos = match &self.macos {
+            Some(reason) => format!(", macOS ({reason})"),
+            None => "; no macOS (nothing that differs there changed: the scheduled run)".into(),
+        };
+        out.push_str(&format!("  merge queue OSes: Linux{windows}{macos}\n"));
         let after = match &self.after_merge {
             Some(reason) => format!("Windows, macOS ({reason})"),
             None => "none (the scheduled run checks Windows and macOS)".into(),
