@@ -14,6 +14,7 @@ mod masks;
 mod partial;
 mod reshape;
 mod sha;
+mod x86_sums;
 
 pub(crate) use sha::has_ext;
 
@@ -67,6 +68,12 @@ pub(crate) fn helper(
     let result = match call {
         SimdCall::Vector(lanes, Op::Min | Op::Max) if lanes.is_float() && arch == Arch::Sse2 => {
             Some(float_min_max(&mut body, lanes, call))
+        }
+        SimdCall::Vector(lanes, Op::SumWide) if arch == Arch::Sse2 => {
+            match x86_sums::sum_wide(&mut body, lanes) {
+                Some(total) => Some(total),
+                None => vector(&mut body, lanes, Op::SumWide, dotprod),
+            }
         }
         SimdCall::Vector(lanes, op) => vector(&mut body, lanes, op, dotprod),
         SimdCall::Mask(bits, op) => mask(&mut body, bits, op, arch == Arch::Neon),
@@ -270,7 +277,8 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op, dotprod: bool) -> Option<String> {
 
 /// The sum of the lanes (`Op::Sum`), or of the lanes extended to `sum_wide_lane`
 /// (`Op::SumWide`), which LLVM selects per target (`addv`, `saddlv`/`uaddlv`, `sdot`/`udot`
-/// with ones; `psadbw` for bytes on x86).
+/// with ones; `psadbw` for unsigned bytes on x86, where signed bytes and 16-bit lanes take
+/// `x86_sums` instead).
 fn sum(b: &mut Body, lanes: Lanes, wide: bool) -> String {
     let (_, ty, _) = spell(lanes);
     let mut x = b.arg(0, &ty);
@@ -579,6 +587,28 @@ mod tests {
             let load = text.lines().find(|l| l.contains("load <2 x i64>"));
             assert!(load.is_some_and(|l| !l.contains("!tbaa")), "{text}");
             assert!(text.contains("freeze <2 x i64>"), "{text}");
+        }
+    }
+
+    /// On x86, `i8x16.sumWide()` is `psadbw` of the biased bytes and `i16x8.sumWide()` is
+    /// `pmaddwd` with ones; other targets and lane types keep the chain of lane adds.
+    #[test]
+    fn signed_wide_sums_on_sse2_use_psadbw_and_pmaddwd() {
+        let text = |symbol, arch| helper(symbol, arch, false).unwrap().1.join("\n");
+        let i8 = text("velt_simd_i8x16_sum_wide", Arch::Sse2);
+        assert!(i8.contains("@llvm.x86.sse2.psad.bw"), "{i8}");
+        assert!(i8.contains("sub i32") && i8.contains(", 2048"), "{i8}");
+        let i16 = text("velt_simd_i16x8_sum_wide", Arch::Sse2);
+        assert!(i16.contains("@llvm.x86.sse2.pmadd.wd"), "{i16}");
+        for (symbol, arch) in [
+            ("velt_simd_i8x16_sum_wide", Arch::Neon),
+            ("velt_simd_i16x8_sum_wide", Arch::Wasm),
+            ("velt_simd_u8x16_sum_wide", Arch::Sse2),
+            ("velt_simd_u16x8_sum_wide", Arch::Sse2),
+        ] {
+            let t = text(symbol, arch);
+            assert!(!t.contains("@llvm.x86"), "{symbol}: {t}");
+            assert!(t.contains("extractelement"), "{symbol}: {t}");
         }
     }
 
