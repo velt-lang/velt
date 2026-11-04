@@ -3,7 +3,16 @@
 // What lowering calls for C functions' pointers and strings, and std's own C declarations of
 // the C library through them (std may declare C functions).
 import { describe, expect, it } from "velt/test";
-import { CString, Out, Ptr, StrBytes, byteLength, readBytes, readCString } from "velt/ffi";
+import {
+  CString,
+  Out,
+  Ptr,
+  StrBytes,
+  byteLength,
+  readBytes,
+  readCString,
+  readUtf8,
+} from "velt/ffi";
 import { ptrAddress, ptrAddressOrZero, ptrOf, ptrOrNull } from "velt/ffi/ptr";
 import { strBytesOf } from "velt/ffi/str_bytes";
 import * as ffi from "velt/ffi";
@@ -17,6 +26,7 @@ declare c("c") function memcmp$ns(a: ffi.StrBytes, b: Text, n: usize): i32;
 declare c("c") function malloc(n: usize): Ptr<u8> | null;
 declare c("c") function free(p: Ptr<u8> | null): void;
 declare c("c") function memcpy(dst: Ptr<u8>, src: CString, n: usize): Ptr<u8>;
+declare c("c") function memset(p: Ptr<u8>, c: i32, n: usize): Ptr<u8>;
 declare c("c") function frexp(x: f64, exp: Out<i32>): f64;
 
 describe("velt/ffi pointers", () => {
@@ -69,6 +79,37 @@ describe("velt/ffi C strings and reads", () => {
       }
       expect(unsafe { readCString(p) }).toBe("héllo");
       expect(unsafe { readBytes(p, 3) }.join(",")).toBe("104,195,169");
+      unsafe {
+        free(p);
+      }
+    }
+  });
+
+  it("reads text and bytes of any length, an invalid sequence as U+FFFD", () => {
+    const n: usize = 1000;
+    // SAFETY: malloc returns `n` bytes or NULL; they are written before they are read, and freed
+    // once.
+    const p = unsafe { malloc(n) };
+    expect(p !== null).toBe(true);
+    if (p !== null) {
+      const text = "é".repeat(500);
+      const c = new CString(text);
+      unsafe {
+        memcpy(p, c, n);
+      }
+      expect(unsafe { readUtf8(p, n) }).toBe(text);
+      const bytes = unsafe { readBytes(p, n) };
+      expect(bytes.length).toBe(n);
+      expect(bytes[n - 1]).toBe(169);
+      expect(unsafe { readBytes(p, 0) }.length).toBe(0);
+      expect(unsafe { readUtf8(p, 0) }).toBe("");
+      // The second byte of "é" on its own is no UTF-8.
+      const bad = new CString("ab");
+      unsafe {
+        memcpy(p, bad, 2);
+        memset(p, 0xff, 1);
+      }
+      expect(unsafe { readUtf8(p, 2) }).toBe("\u{fffd}b");
       unsafe {
         free(p);
       }
