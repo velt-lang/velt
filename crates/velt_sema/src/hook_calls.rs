@@ -63,6 +63,7 @@ pub mod ty {
         HostSettled,
         Map,
         ObjectPrototype,
+        Ptr,
         Record,
         RegExp,
         RegExpMatch,
