@@ -1,0 +1,20 @@
+// Effects while a module's destructuring declarations run: each initializer and getter once, in
+// order, with the statements around them.
+export function eff(s: string): string {
+  console.log("eff " + s);
+  return s;
+}
+class G {
+  get inner() {
+    console.log("inner read");
+    return { x: 1, y: 2 };
+  }
+}
+console.log("effects start");
+export const {
+  inner: { x, y },
+} = new G();
+const {} = { z: eff("empty") };
+const { unused } = { unused: eff("unused") };
+export const [e0, e1] = eff("two") === "two" ? [1, 2] : [3, 4];
+console.log("effects end");

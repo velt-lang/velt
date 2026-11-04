@@ -271,8 +271,7 @@ fn check_timed(
     let modules = asserted.modules.as_deref().unwrap_or(modules);
     let mut merge_diags = chunks.diags.clone();
     merge_diags.extend(call_sigs::check(modules));
-    let (destructured, diags) = module_destructure::rewrite(modules);
-    merge_diags.extend(diags);
+    let destructured = module_destructure::rewrite(modules);
     let modules = destructured.as_deref().unwrap_or(modules);
     let global_ns = namespaces::global_namespaces(modules);
     let (flat, ns_private, diags) = namespaces::flatten(modules);

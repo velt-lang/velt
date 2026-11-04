@@ -1,0 +1,28 @@
+// What local destructuring does, in a declaration-only module.
+export const [e0, e1] = "\u{1F600}x";
+export const [c0, ...cs] = "abc";
+export const [s1, s2] = new Set([7, 8]);
+export const [[kk, vv]] = new Map([["key", 1]]);
+function* gen(): Generator<number> {
+  yield 1;
+  yield 2;
+}
+export const [g1, g2] = gen();
+const t: [number, string, boolean] = [1, "x", true];
+export const [u0, ...ur] = t;
+export const { 0: first } = [5, 6];
+const key = "dyn";
+export const { [key]: computed } = { dyn: 1 } as Record<string, number>;
+export const {
+  a = 10,
+  b: bb = 20,
+  ...others
+} = { b: 2, c: 3, d: 4 } as { a?: number; b?: number; c: number; d: number };
+export const [m0 = 1, , m2 = 3] = [undefined, 2] as (number | undefined)[];
+export let { lv } = { lv: 1 };
+export function bump(): void {
+  lv += 1;
+}
+export const { fnv } = { fnv: (n: number) => n + 1 };
+export const { am } = { am: 1 } as any;
+export const { lit }: { lit: "a" | "b" } = { lit: "a" };
