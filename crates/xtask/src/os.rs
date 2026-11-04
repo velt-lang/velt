@@ -1,14 +1,21 @@
-//! Whether a change needs the merge queue to check Windows and macOS too, or Linux is enough.
+//! Whether a change needs the merge queue to check Windows or macOS too, or Linux is enough.
 //!
 //! The OS-specific code is in the runtime, the native crates, code generation and linking, the
 //! `velt` command line and packages, and the parts of the standard library that talk to the OS; a
-//! change there (or to the build, CI or scripts, which select everything) runs every OS in the
-//! queue. The front end, the tooling, the rest of the standard library, the goldens, the examples
-//! and the packages behave the same everywhere nearly always: Linux checks them, and the full gate
-//! on Windows and macOS once a day (`ci.yml`'s scheduled run) and before a release (`release.yml`)
-//! catches the exception. Runners are the limit (15 at once, 5 of them macOS), and a queue entry
-//! on every OS takes four times the machine time of one on Linux. A push to `main` runs those OSes
-//! only for the build cache ([`after_merge_reason`]).
+//! change there (or to the build, CI or scripts, which select everything) runs Windows in the
+//! queue ([`other_os_reason`]). The front end, the tooling, the rest of the standard library, the
+//! goldens, the examples and the packages behave the same everywhere nearly always: Linux checks
+//! them, and the full gate on Windows and macOS once a day (`ci.yml`'s scheduled run) and before a
+//! release (`release.yml`) catches the exception. Runners are the limit (15 at once, 5 of them
+//! macOS), and a queue entry on every OS takes four times the machine time of one on Linux. A
+//! push to `main` runs those OSes only for the build cache ([`after_merge_reason`]).
+//!
+//! macOS has a much narrower rule of its own ([`macos_reason`]): GitHub often can't supply a macOS
+//! runner, and a job no runner picks up fails its queue entry after 40-50 minutes with no test
+//! failing. So macOS blocks a merge only when the change touches code that really can differ
+//! there. What that gives up: a break only macOS shows in any other code (`velt_loader`, most of
+//! `veltc`, a dependency update, CI itself) appears in the scheduled run, after the merge, not in
+//! the queue.
 
 use crate::graph::Graph;
 
@@ -48,8 +55,8 @@ const OS_SPECIFIC_PATHS: &[&str] = &[
     "tests/std/",
 ];
 
-/// Why Windows and macOS must be checked too, or `None` when Linux is enough. `full` is
-/// whether the paths select everything (build, CI and script changes).
+/// Why Windows must be checked too, or `None` when Linux is enough. `full` is whether the paths
+/// select everything (build, CI and script changes). macOS has its own rule, [`macos_reason`].
 pub fn other_os_reason(graph: &Graph, paths: &[String], full: bool) -> Option<String> {
     if full {
         return Some("the change selects every check".into());
@@ -67,6 +74,70 @@ pub fn other_os_reason(graph: &Graph, paths: &[String], full: bool) -> Option<St
         }
     }
     None
+}
+
+/// Paths that can really behave differently on macOS: the code with a macOS branch, or whose Unix
+/// code meets a different kernel, C library or file system there, and the arm64 code, which of the
+/// queue's runners only macOS runs. Code under `cfg(unix)` that does the same on both needs no
+/// entry: Linux checks it. A new file with a macOS branch needs one.
+pub(crate) const MACOS_PATHS: &[&str] = &[
+    // The runtime, in all its builds: kqueue, signals, thread and memory calls, dylib names.
+    "crates/velt_rt/",
+    "crates/velt_rt_host/",
+    "crates/velt_rt_shared/",
+    // Linking and the toolchain: ld64, the SDK kit, the archives' target names.
+    "crates/velt_link/",
+    "crates/velt_toolchain/",
+    // Code generation: Mach-O objects, symbol names, thread locals, unwinding, the arm64 ABI.
+    "crates/velt_codegen_cl/",
+    "crates/velt_codegen_llvm/",
+    // The system functions' tables per OS and their arm64 lowering, and arm64's vector code.
+    "crates/velt_vir/src/system/",
+    "crates/velt_vir/src/lower/system.rs",
+    "crates/velt_vir/src/simd/",
+    "crates/velt_text/src/json_escape.rs",
+    "std/simd/",
+    // Native libraries are linked with Apple's flags and named `.dylib`.
+    "crates/vpm/src/native/",
+    // The files of the portable crates and of `veltc` that have a macOS branch.
+    "crates/velt_fmt/src/print/thread_cpu.rs",
+    "crates/velt_sema/tests/common/process_work.rs",
+    "crates/veltc/src/commands/doctor/",
+    "crates/veltc/src/dev/supervisor.rs",
+    "crates/veltc/src/generate/process.rs",
+    "crates/veltc/tests/debugger.rs",
+    "crates/veltc/tests/install_layout.rs",
+    "crates/veltc/tests/runtime_support/",
+    // The standard library where it talks to the OS, and its suites of servers, sockets and files.
+    "std/fs/",
+    "std/host/",
+    "std/native/",
+    "std/net/",
+    "std/os/",
+    "std/process/",
+    "std/prelude/timers.vlt",
+    "std/task/",
+    "std/time/",
+    "tests/std/",
+    // Goldens with a macOS branch (`system_functions`, `system_function_views`, ...).
+    "tests/golden/lang/system_function",
+    // Packages with a macOS branch, or tests of file paths: `/tmp` and `/var` are symbolic links
+    // on macOS, so `realpath` answers differently from Linux there.
+    "packages/http-server/src/files/",
+    "packages/http-server/tests/files.test.vlt",
+    "packages/http-server/tests/connections.test.vlt",
+];
+
+/// Why macOS must be checked too, or `None` when it can wait for the scheduled run. Unlike
+/// [`other_os_reason`] this asks only about the paths, not whether they select everything: the
+/// build, CI, the scripts and the lockfile alone don't start a macOS job, and that includes the
+/// macOS steps of `.github/actions/setup`. Documentation never does.
+pub fn macos_reason(paths: &[String]) -> Option<String> {
+    paths
+        .iter()
+        .filter(|p| !p.ends_with(".md"))
+        .find(|p| MACOS_PATHS.iter().any(|m| p.starts_with(m)))
+        .map(|p| format!("{p} can behave differently on macOS"))
 }
 
 /// Paths whose change runs every package's tests on Windows in a pull request (besides a change
@@ -132,7 +203,8 @@ pub fn after_merge_reason(paths: &[String]) -> Option<String> {
         .map(|p| format!("{p} changed: refresh the build cache"))
 }
 
-/// The runners the merge queue checks on: Linux always, the others for OS-specific changes.
+/// The runners the merge queue checks on: Linux always (first), the others when a change needs
+/// them ([`other_os_reason`], [`macos_reason`]).
 pub const QUEUE_OSES: &[&str] = &["ubuntu-latest", "windows-latest", "macos-latest"];
 
 /// How many jobs check the goldens in parallel on each OS in the merge queue
