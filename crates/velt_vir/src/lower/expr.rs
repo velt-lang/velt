@@ -147,26 +147,6 @@ impl FnLower<'_, '_> {
         Operand::Copy(Place::local(out))
     }
 
-    /// `consume` each of `es` in order, snapshotting a value that a later one may change
-    /// (`[xs[0], grow(xs)]` reads `xs[0]` before `grow` reallocates `xs`, #580).
-    pub(super) fn consume_each(&mut self, es: &[hir::Expr]) -> Vec<Operand> {
-        // The elements of an array literal going into the caller's container in a `read`
-        // callback (caller_stores.rs `Held::Elems`).
-        let to_caller = std::mem::take(&mut self.read_info.elems_to_caller);
-        let later = self.later_each(es);
-        let shared = self.shared_moves(es);
-        let mut vals = Vec::with_capacity(es.len());
-        for ((e, later), shared) in es.iter().zip(later).zip(shared) {
-            let v = match (to_caller, shared) {
-                (true, _) => self.keep_for_caller(e),
-                (false, true) => self.consume_shared(e),
-                (false, false) => self.consume(e),
-            };
-            vals.push(self.hold_owned(v, e.ty, later));
-        }
-        vals
-    }
-
     pub(super) fn expr(&mut self, e: &hir::Expr) -> Operand {
         if self.dead() {
             return unit();
