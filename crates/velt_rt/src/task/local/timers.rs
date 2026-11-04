@@ -129,6 +129,14 @@ impl Queue {
         }
     }
 
+    /// The waker of the first entry, at `key` ([`Queue::first_key`]).
+    fn first_waker(&self, key: &Key) -> &Waker {
+        match self.tail.front() {
+            Some((k, Some(r))) if k == key => &r.waker,
+            _ => &self.rest[key].waker,
+        }
+    }
+
     /// Remove the first entry, at `key` ([`Queue::first_key`]).
     fn pop_first(&mut self, key: &Key) -> Registered {
         let r = match self.tail.front() {
@@ -242,15 +250,15 @@ impl Timers {
             while let Some(key) = s.queue.first_key() {
                 let at = key.0;
                 if at <= now {
-                    let r = s.queue.pop_first(&key);
-                    let root = r.waker.will_wake(task);
-                    if (root && root_woken) || (!root && !node::firing_start(&r.waker)) {
-                        s.queue.insert(key, r);
+                    let waker = s.queue.first_waker(&key);
+                    let root = waker.will_wake(task);
+                    if (root && root_woken) || (!root && !node::firing_start(waker)) {
                         s.held = Some(now);
                         self.held.store(true, Ordering::Relaxed);
                         break;
                     }
                     root_woken |= root;
+                    let r = s.queue.pop_first(&key);
                     // SAFETY: registered leaves are live (they deregister, under this lock,
                     // before being freed).
                     unsafe { (*r.fired).store(true, Ordering::Release) };
