@@ -241,7 +241,10 @@ export { default } from \"./m\";
         [reserved]
     );
     // `export * as default` is the module's default, valid alone and not next to another.
-    assert_eq!(errors("export * as default from \"./m\";\n"), [] as [&str; 0]);
+    assert_eq!(
+        errors("export * as default from \"./m\";\n"),
+        [] as [&str; 0]
+    );
     assert_eq!(
         errors("export * as default from \"./m\";\nexport default 1;\n"),
         [two]
