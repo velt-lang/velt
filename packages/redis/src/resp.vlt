@@ -19,6 +19,10 @@ export const ARRAY: u8 = 5;
 // Bulk strings and arrays larger than Redis' own 512 MiB limit are protocol errors.
 const MAX_LEN: i64 = 512 * 1024 * 1024;
 
+// Arrays nested deeper than this are protocol errors: decoding a reply into `RedisReply`s recurses,
+// and a server must not be able to overflow the stack. Redis' own replies nest a few levels.
+const MAX_DEPTH: usize = 1024;
+
 const CR: u8 = 13;
 const LF: u8 = 10;
 
@@ -104,6 +108,9 @@ export class Parser {
     if (n == 0) {
       this.scalar(ARRAY, 0, "");
       return after - pos;
+    }
+    if (this.open.length >= MAX_DEPTH) {
+      return this.fail(`reply nested deeper than ${MAX_DEPTH} arrays`);
     }
     this.push(ARRAY, n, "");
     this.open.push(n);

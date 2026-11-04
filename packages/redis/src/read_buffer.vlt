@@ -1,0 +1,62 @@
+// redis (internal): `ReadBuffer`, what has arrived from a socket and isn't parsed yet.
+
+import { TcpStream } from "velt/net";
+
+// The buffer's first size, and the room each read asks for.
+const INITIAL: i64 = 64 * 1024;
+const MIN_READ: i64 = 16 * 1024;
+
+/**
+ * Bytes arrived and not taken yet: `bytes[pos..end]`. The bytes of an incomplete reply stay where
+ * they are while more arrive, and they move only when room runs out, into a buffer that doubles,
+ * so a reply of any size arriving in many reads costs linear time.
+ */
+export class ReadBuffer {
+  bytes: u8[] = Buffer.alloc(INITIAL as usize);
+  pos: i64 = 0;
+  end: i64 = 0;
+  /** How many bytes were moved so far to make room (what makes large replies linear). */
+  moved: i64 = 0;
+
+  /** Waits for more bytes; false at the end of the stream. A failed read throws. */
+  async fill(s: TcpStream): Promise<bool> {
+    if (this.pos == this.end) {
+      this.pos = 0;
+      this.end = 0;
+    }
+    this.makeRoom();
+    while (true) {
+      // Waits first: what arrived has just been handled, so reading now would mostly find nothing,
+      // a system call per reply for no bytes.
+      await s.readable();
+      const n = s.tryRead(this.bytes, this.end as number, this.bytes.length as number);
+      if (n == null) {
+        return false;
+      }
+      if (n > 0) {
+        this.end += n as i64;
+        return true;
+      }
+    }
+  }
+
+  private makeRoom() {
+    const size = this.bytes.length as i64;
+    if (size - this.end >= MIN_READ) {
+      return;
+    }
+    const held = this.end - this.pos;
+    this.moved += held;
+    if (size - held >= MIN_READ && held * 2 <= size) {
+      this.bytes.copyWithin(0, this.pos, this.end);
+    } else {
+      const bigger: u8[] = Buffer.alloc((size * 2) as usize);
+      for (let i: i64 = 0; i < held; i++) {
+        bigger[i] = this.bytes[this.pos + i];
+      }
+      this.bytes = bigger;
+    }
+    this.pos = 0;
+    this.end = held;
+  }
+}

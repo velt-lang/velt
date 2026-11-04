@@ -18,6 +18,7 @@ import { closedFailure, Failure, ioFailure, protocolFailure, serverFailure } fro
 import { RedisMessage } from "./message";
 import { RedisClient } from "./client";
 import { RawReply } from "./raw_reply";
+import { ReadBuffer } from "./read_buffer";
 import { ARRAY, encodeCommand, ERROR, Parser } from "./resp";
 import { RedisConnectOptions } from "./types";
 import { parseUrl } from "./url";
@@ -78,26 +79,18 @@ async function readLoop(h: Handle) {
   let why = closedFailure();
   try {
     const parser = new Parser();
-    let buf: u8[] = [];
-    let pos: i64 = 0;
+    const input = new ReadBuffer();
     let reading = true;
-    while (reading) {
-      const chunk = await h.stream.read();
-      if (chunk.length == 0) {
-        reading = false;
-        break;
-      }
-      buf = pos < (buf.length as i64) ? buf.slice(pos).concat(chunk) : chunk;
-      pos = 0;
+    while (reading && (await input.fill(h.stream))) {
       while (reading) {
-        const used = parser.step(buf, pos, buf.length as i64);
+        const used = parser.step(input.bytes, input.pos, input.end);
         if (used < 0) {
           why = protocolFailure(parser.error);
           reading = false;
         } else if (used == 0) {
           break;
         } else {
-          pos += used;
+          input.pos += used;
           if (parser.complete) {
             dispatch(parser.take(), h.events, h.acks);
           }

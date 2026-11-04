@@ -8,7 +8,7 @@ import { Channel, channel } from "velt/sync";
 import { Endpoint } from "./endpoint";
 import { closedFailure, Failure, ioFailure } from "./failure";
 import { Outcome } from "./outcome";
-import { Slot } from "./slot";
+import { ONE, Slot } from "./slot";
 import { Waiting } from "./waiting";
 
 /** A connection shared by every copy of a client's handle. */
@@ -23,10 +23,25 @@ export const WAITS_AND_RECONNECTS: u8 = 3;
 // How many channels a client keeps for commands to wait on, instead of making one per command.
 const MAX_FREE: usize = 64;
 
-// What `Line.submit` found, and the channel the outcome comes on.
+// Past this many answered slots at the front of the line, `finish` drops them once they are half of
+// it: a line that never empties stays as long as what is in flight.
+const COMPACT_FROM: usize = 32;
+
+// A sender with this many bytes still to go out waits for the peer to read them.
+export const MAX_QUEUED: i64 = 256 * 1024;
+
+// What `Line.submit` found, the channel the outcome comes on, and the socket to wait on when too
+// much is queued for a peer that doesn't read.
 struct Submitted {
   status: u8;
   done: Channel<Outcome>;
+  crowded: TcpStream | null;
+}
+
+// The request the reply that just arrived belongs to, and whether it was the closed client's last.
+struct Popped {
+  slot: Slot | null;
+  last: bool;
 }
 
 // What a connection's end leaves to do.
@@ -52,22 +67,22 @@ export class Line {
   private free: Channel<Outcome>[] = [];
   // Why queueing bytes failed, for the reader to report rather than the abort it caused.
   private sendFailure: Failure | null = null;
-  /** The bytes still to go out after the last `submit` that sent. */
-  queued: i64 = 0;
+  // The bytes still to go out after the last write.
+  private queued: i64 = 0;
 
   constructor(ep: Endpoint, stream: TcpStream) {
     this.ep = ep;
     this.stream = stream;
   }
 
-  /** The socket to wait on after a `submit` that left too much queued. */
-  get socket(): TcpStream | null {
-    return this.stream;
-  }
-
   submit(payload: string, want: i64, kind: u8): Submitted {
     const done = this.free.pop() ?? channel<Outcome>(1);
-    return { status: this.queue(payload, want, kind, done), done: done };
+    const status = this.queue(payload, want, kind, done);
+    return {
+      status: status,
+      done: done,
+      crowded: status == SENT && this.queued >= MAX_QUEUED ? this.stream : null,
+    };
   }
 
   private queue(payload: string, want: i64, kind: u8, done: Channel<Outcome>): u8 {
@@ -111,9 +126,17 @@ export class Line {
     return true;
   }
 
-  /** The request the next reply belongs to, which stays in line until `finish`. */
-  first(): Slot | null {
-    return this.head < this.slots.length ? this.slots[this.head] : null;
+  /**
+   * A reply arrived, and no request is holding the reader: the request it belongs to. One that
+   * takes this one reply is answered by it and leaves the line now, in this one lock; another stays
+   * until `finish`, so that `close()` knows replies are still to come.
+   */
+  pop(): Popped {
+    if (this.head >= this.slots.length) {
+      return { slot: null, last: false };
+    }
+    const slot = this.slots[this.head];
+    return { slot: slot, last: slot.kind == ONE && this.finish() };
   }
 
   /** The first request is answered; true when the closed client's last reply has arrived. */
@@ -124,7 +147,16 @@ export class Line {
       this.head = 0;
       return this.closed;
     }
+    if (this.head >= COMPACT_FROM && this.head * 2 >= this.slots.length) {
+      this.slots = this.slots.slice(this.head as i64);
+      this.head = 0;
+    }
     return false;
+  }
+
+  /** How long the line's array is, answered slots included. */
+  get allocated(): usize {
+    return this.slots.length;
   }
 
   /** The reader saw the connection end: what it must fail, and whether to reconnect. */

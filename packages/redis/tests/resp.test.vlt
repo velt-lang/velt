@@ -116,12 +116,20 @@ export function test_invalid_utf8_is_replaced() {
   assertEq(parser.take().strs[0], "\u{fffd}x");
 }
 
+// Decoding a reply recurses, so a server can't be allowed to nest arrays without limit.
+export function test_arrays_nest_up_to_a_limit() {
+  assertEq(errorOf("*1\r\n".repeat(1024)), "parsed");
+  assertEq(errorOf("*1\r\n".repeat(1025)), "reply nested deeper than 1024 arrays");
+}
+
 export function test_rejects_garbage() {
   assertEq(errorOf("?x\r\n"), "unexpected reply type byte 0x3f");
   assertEq(errorOf(":x\r\n"), 'invalid number "x"');
   assertEq(errorOf(":\r\n"), 'invalid number ""');
   assertEq(errorOf(":-\r\n"), 'invalid number "-"');
   assertEq(errorOf(":9223372036854775808\r\n"), 'invalid number "9223372036854775808"');
+  assertEq(errorOf(":99999999999999999999\r\n"), 'invalid number "99999999999999999999"');
+  assertEq(errorOf(":-99999999999999999999\r\n"), 'invalid number "-99999999999999999999"');
   assertEq(errorOf("$1\r\nab\r\n"), "bulk string not terminated by CRLF");
   assertEq(errorOf("\r\n"), "empty reply line");
   assertEq(errorOf("$536870913\r\n"), "bulk string too long (536870913)");

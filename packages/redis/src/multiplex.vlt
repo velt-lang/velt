@@ -23,14 +23,11 @@ import { open, reconnect } from "./connection";
 import { Endpoint } from "./endpoint";
 import { closedHandle, errorOf, RedisError } from "./errors";
 import { closedFailure, Failure, ioFailure } from "./failure";
-import { CLOSED, Client, Line, SENT, WAITS_AND_RECONNECTS } from "./line";
+import { CLOSED, Client, Line, MAX_QUEUED, WAITS_AND_RECONNECTS } from "./line";
 import { Outcome } from "./outcome";
 import { RawReply } from "./raw_reply";
 import { Reader } from "./reader";
 import { emptyReply } from "./resp";
-
-// A sender with this many bytes still to go out waits for the peer to read them.
-const MAX_QUEUED: i64 = 256 * 1024;
 
 function failTo(done: Channel<Outcome>, f: Failure) {
   done.trySend({ failure: f, reply: emptyReply() });
@@ -64,8 +61,11 @@ export async function send(
   }
   if (r == WAITS_AND_RECONNECTS) {
     spawn(reconnecting(client));
-  } else if (r == SENT) {
-    await backpressure(client);
+  } else if (submitted.crowded != null) {
+    // A failure is the reader's to report.
+    try {
+      await submitted.crowded.drained(MAX_QUEUED as number);
+    } catch (e) {}
   }
   const o = await done.receive();
   client.with((l) => l.giveBack(done));
@@ -77,16 +77,6 @@ export async function send(
     throw errorOf(f);
   }
   return o.reply;
-}
-
-// Waits while too much is queued for a peer that doesn't read. A failure is the reader's to report.
-async function backpressure(client: Client) {
-  const s = client.with((l) => (l.queued >= MAX_QUEUED ? l.socket : null));
-  if (s != null) {
-    try {
-      await s.drained(MAX_QUEUED as number);
-    } catch (e) {}
-  }
 }
 
 /** `client.close()`: closing twice does nothing. */

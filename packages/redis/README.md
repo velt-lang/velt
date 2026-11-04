@@ -111,10 +111,12 @@ WebAssembly.
   `reply.vlt`, `message.vlt`, `errors.vlt`: one type each; `src/types.vlt`: the options and
   `ZMember`.
 - `src/resp.vlt`: the wire protocol; `src/url.vlt`: connection URLs; `src/connection.vlt`: TCP or
-  TLS and the handshake; `src/multiplex.vlt`: one connection shared by every task.
+  TLS and the handshake; `src/read_buffer.vlt`: what has arrived; `src/multiplex.vlt`,
+  `line.vlt`, `reader.vlt`: one connection shared by every task.
 - `tests/`: `velt test` in this directory. Most need a server: set `VELT_TEST_REDIS_URL`
   (`redis://host:6379`), and for TLS `VELT_TEST_REDISS_URL` and `VELT_TEST_REDISS_CA` (a PEM
   file); without them those tests do nothing. The repository's `scripts/linux-check.sh --services`
-  starts both servers, as CI does. `reconnect.test.vlt`, `client_edges.test.vlt`, `resp.test.vlt` and `url.test.vlt` need none.
+  starts both servers, as CI does. `reconnect.test.vlt`, `client_edges.test.vlt`,
+  `resp.test.vlt` and `url.test.vlt` need none.
 
 The package uses only public std APIs (velt/net, velt/sync, velt/encoding, velt/task, velt/io).
