@@ -55,6 +55,7 @@ pub mod ty {
         Error,
         HostRef,
         HostSettled,
+        Ptr,
         Record
     );
     pub struct Array<E>(PhantomData<E>);

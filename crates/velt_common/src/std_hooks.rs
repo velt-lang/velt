@@ -507,12 +507,12 @@ hooks! {
     view_bytes => lang_typed_array_buffer_view, "viewBytes", sig((&BufferView) -> usize), lowered;
 
     // ffi/ptr.vlt: a `Ptr` from and to a C function (velt_vir's lower/c_call.rs).
-    ffi_ptr_of => ffi_ptr, "ptrOf", "<A>(usize) -> Ptr<A>", lowered;
-    ffi_ptr_or_null => ffi_ptr, "ptrOrNull", "<A>(usize) -> Ptr<A> | null", lowered;
-    ffi_ptr_address => ffi_ptr, "ptrAddress", "<A>(Ptr<A>) -> usize", lowered;
-    ffi_ptr_address_or_zero => ffi_ptr, "ptrAddressOrZero", "<A>(Ptr<A> | null) -> usize", lowered;
+    ffi_ptr_of => ffi_ptr, "ptrOf", sig(<A>(usize) -> Ptr(A)), lowered;
+    ffi_ptr_or_null => ffi_ptr, "ptrOrNull", sig(<A>(usize) -> or_null(Ptr(A))), lowered;
+    ffi_ptr_address => ffi_ptr, "ptrAddress", sig(<A>(&Ptr(A)) -> usize), lowered;
+    ffi_ptr_address_or_zero => ffi_ptr, "ptrAddressOrZero", sig(<A>(&or_null(Ptr(A))) -> usize), lowered;
     // ffi/str_bytes.vlt: the string whose bytes a `StrBytes` argument passes.
-    ffi_str_bytes_of => ffi_str_bytes, "strBytesOf", "(string) -> string", lowered;
+    ffi_str_bytes_of => ffi_str_bytes, "strBytesOf", sig((move string) -> string), lowered;
 
     // host/host_ref.vlt: a `HostRef` from and to a host function (velt_vir's lower/host.rs).
     /// The `HostRef` of the slot a host function returned.
