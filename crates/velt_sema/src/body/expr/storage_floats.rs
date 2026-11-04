@@ -116,42 +116,14 @@ impl FnCx<'_, '_> {
     ) -> Option<(hir::Expr, Option<hir::LocalId>)> {
         let lty = place.ty;
         let f64_ = self.cx.ty.f64;
-        let v = self.storage_widened(v);
-        let v = if v.ty == f64_ || self.cx.ty.is_bottom(v.ty) {
-            v
-        } else if self.exact_in_number(v.ty) {
-            self.int_to_float(v, f64_)
-        } else {
-            let vt = self.cx.display(v.ty);
-            let mut d = Diagnostic::error(
-                format!("mismatched types: expected number, found {vt}"),
-                span,
-            );
-            if let Some(note) = self.number_note(f64_, v.ty) {
-                d = d.with_note(note);
-            }
-            self.cx.error(d);
-            return None;
-        };
+        let v = self.storage_operand(v, span)?;
         let mut place = place;
         self.hoist_indices(&mut place, stmts);
         // As the number path: the object a narrowed field held before `v` (#1280).
         self.hoist_checked_object(&mut place, &v, stmts);
         let cur = self.place_read(&place, crate::body::Want::Borrow);
         let cur = self.storage_widened(cur);
-        let wide = match super::ops::hir_binop(op) {
-            _ if super::int32::is_bitwise(op) => self.js_bitwise_assign(op, cur, v, span),
-            Some(hir::BinOp::Div) => self.divide(cur, v, f64_, span),
-            Some(op) => {
-                let kind = H::Binary {
-                    op,
-                    lhs: Box::new(cur),
-                    rhs: Box::new(v),
-                };
-                self.mk(kind, f64_, span)
-            }
-            None => return None,
-        };
+        let wide = self.storage_op(cur, op, v, span)?;
         let (wide, kept) = match keep {
             true => {
                 let l = self.bind_temp("<result>", wide, stmts);
@@ -171,6 +143,54 @@ impl FnCx<'_, '_> {
             value: Box::new(narrowed),
         };
         Some((self.mk(kind, unit, span), kept))
+    }
+
+    /// The right-hand side of `w op= v` on a storage float as a `number`: `v` widened, or an
+    /// integer exact in f64 converted. `None` after reporting any other type.
+    pub(super) fn storage_operand(&mut self, v: hir::Expr, span: Span) -> Option<hir::Expr> {
+        let f64_ = self.cx.ty.f64;
+        let v = self.storage_widened(v);
+        if v.ty == f64_ || self.cx.ty.is_bottom(v.ty) {
+            return Some(v);
+        }
+        if self.exact_in_number(v.ty) {
+            return Some(self.int_to_float(v, f64_));
+        }
+        let vt = self.cx.display(v.ty);
+        let mut d = Diagnostic::error(
+            format!("mismatched types: expected number, found {vt}"),
+            span,
+        );
+        if let Some(note) = self.number_note(f64_, v.ty) {
+            d = d.with_note(note);
+        }
+        self.cx.error(d);
+        None
+    }
+
+    /// `cur op v` of two `number`s for a storage float's compound assignment, in f64 (the
+    /// bitwise operators with JS's ToInt32): the value before the store rounds it.
+    pub(super) fn storage_op(
+        &mut self,
+        cur: hir::Expr,
+        op: ast::BinaryOp,
+        v: hir::Expr,
+        span: Span,
+    ) -> Option<hir::Expr> {
+        let f64_ = self.cx.ty.f64;
+        Some(match super::ops::hir_binop(op) {
+            _ if super::int32::is_bitwise(op) => self.js_bitwise_assign(op, cur, v, span),
+            Some(hir::BinOp::Div) => self.divide(cur, v, f64_, span),
+            Some(op) => {
+                let kind = H::Binary {
+                    op,
+                    lhs: Box::new(cur),
+                    rhs: Box::new(v),
+                };
+                self.mk(kind, f64_, span)
+            }
+            None => return None,
+        })
     }
 
     /// `w = L` (a number literal) or `w op= v` on an `f16`/`bf16` place used as a value (#2049):

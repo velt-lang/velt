@@ -1,0 +1,1 @@
+an `any` doesn't convert to `f16` implicitly: write `x as f16` (rounds)
