@@ -1,0 +1,6 @@
+// The type meaning of a default reached only through a re-export: nothing here imports the module
+// declaring it, whose table would answer (#1916). The output is Node's.
+import d from "./_default_type_through_reexport/b";
+
+const x: d = { a: d() };
+console.log(x.a);
