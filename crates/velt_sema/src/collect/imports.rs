@@ -47,9 +47,11 @@ pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
             for n in &imp.names {
                 exported_item(cx, m, t, imp, n);
             }
-        } else if let Some(ns) = &imp.namespace {
-            bind_namespace(cx, m, t, ns);
         } else {
+            // `import x, * as ns from`: the default binding is the first name.
+            if let Some(ns) = &imp.namespace {
+                bind_namespace(cx, m, t, ns);
+            }
             for n in &imp.names {
                 if imp.from == "velt/process" && n.name.name == BUILTIN_PROCESS {
                     import_builtin_process(cx, m, n, &mut process_imported);
@@ -77,6 +79,15 @@ fn exported_item(
     }
     if !namespace_exports(cx, t, &n.name.name).is_empty() {
         return None; // a namespace: its members are bound by `import_name`
+    }
+    if n.name.name == super::exports::DEFAULT {
+        if !super::exports::maybe_dropped(cx, t, &n.name.name) {
+            cx.error(no_default(cx, t, imp, bound_name(n)));
+        }
+        // Its uses would only repeat the error.
+        let file = cx.modules[m].file;
+        cx.poisoned.insert((file, bound_name(n).name.clone()));
+        return None;
     }
     if !cx.scopes[t].items.contains_key(&n.name.name) {
         if super::exports::maybe_dropped(cx, t, &n.name.name) {
@@ -108,6 +119,51 @@ fn exported_item(
     None
 }
 
+/// A default import (`import local from`, `import { default as local } from`) of module `t`,
+/// which has no default export: TypeScript's TS1192, with the names it does export (#1916).
+/// No default is made up from the module's namespace (`esModuleInterop`'s).
+fn no_default(cx: &Ctx, t: usize, imp: &ast::Import, local: &ast::Ident) -> Diagnostic {
+    let d = Diagnostic::error(
+        format!("module `{}` has no default export", imp.from),
+        local.span,
+    );
+    let from = &imp.from;
+    let name = &local.name;
+    if cx.modules[t].is_std {
+        // #777: `process` is the builtin namespace, which `import * as process` would hide.
+        if name == BUILTIN_PROCESS && from.ends_with("process") {
+            return d.with_note(format!(
+                "`process` is a builtin: write `import {{ process }} from \"{from}\"`, or leave the import out"
+            ));
+        }
+        return d.with_note(format!(
+            "the standard library's modules have named exports only: import a name, `import {{ … }} from \"{from}\"`, or the whole module, `import * as {name} from \"{from}\"`"
+        ));
+    }
+    let all = all_exports(cx, t);
+    let mut names: Vec<&str> = (all.iter())
+        .map(|(n, _)| crate::type_meanings::of_type_key(n).unwrap_or(n))
+        .filter(|n| !n.contains(['.', '\u{2}']))
+        .collect();
+    names.dedup();
+    if names.is_empty() {
+        return d.with_note(format!("module `{from}` exports nothing"));
+    }
+    const SHOWN: usize = 8;
+    let mut list = (names.iter().take(SHOWN))
+        .map(|n| format!("`{n}`"))
+        .collect::<Vec<_>>()
+        .join(", ");
+    if names.len() > SHOWN {
+        list.push_str(&format!(" and {} more", names.len() - SHOWN));
+    }
+    d.with_note(format!("it exports {list}"))
+        .with_note(format!(
+            "import one by name, `import {{ {} }} from \"{from}\"`, or the whole module, `import * as {name} from \"{from}\"`",
+            names[0]
+        ))
+}
+
 /// What replaced an export the standard library removed.
 fn removed_export(from: &str, name: &str) -> Option<&'static str> {
     match (from, name) {
@@ -120,6 +176,12 @@ fn removed_export(from: &str, name: &str) -> Option<&'static str> {
 }
 
 fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::ImportName) {
+    // A module's namespace that `t` re-exports (`export * as ns from "…"`): bound as
+    // `import * as local` of that module.
+    if let Some(s) = super::exports::namespace_module(cx, t, &n.name.name) {
+        bind_namespace(cx, m, s, bound_name(n));
+        return;
+    }
     // A namespace (`crate::namespaces`): its exported members `N.x` are bound as `local.x`;
     // a type or interface of the same name is imported with it.
     let members = namespace_exports(cx, t, &n.name.name);
@@ -221,7 +283,20 @@ fn bind_namespace(cx: &mut Ctx, m: usize, t: usize, ns: &ast::Ident) {
         return;
     }
     cx.scopes[m].namespaces.insert(ns.name.clone(), t);
-    for (name, it) in all_exports(cx, t).iter() {
+    let all = all_exports(cx, t);
+    // A module namespace `t` re-exports (`export * as sub from`) is the namespace `ns.sub`.
+    let mut prefixes: Vec<&str> = (all.iter())
+        .filter_map(|(name, _)| Some(name.split_once('.')?.0))
+        .collect();
+    prefixes.dedup();
+    for sub in prefixes {
+        if let Some(s) = super::exports::namespace_module(cx, t, sub) {
+            cx.scopes[m]
+                .namespaces
+                .insert(format!("{}.{sub}", ns.name), s);
+        }
+    }
+    for (name, it) in all.iter() {
         let scope = &mut cx.scopes[m];
         scope.type_keys |= crate::type_meanings::of_type_key(name).is_some();
         scope.items.insert(format!("{}.{name}", ns.name), *it);

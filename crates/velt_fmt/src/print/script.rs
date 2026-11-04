@@ -35,6 +35,13 @@ pub(super) fn entries(module: &Module) -> Vec<Top<'_>> {
                     if n.name == velt_syntax::ast::IMPORT_META) => {}
             // And the import of its class.
             ItemKind::Import(i) if velt_syntax::is_synthesized_import(i) => {}
+            // `export { f as default }` after `export default function f`: printed with it.
+            ItemKind::Import(i)
+                if velt_syntax::written_default(i)
+                    && i.names[0]
+                        .alias
+                        .as_ref()
+                        .is_some_and(|a| a.span == item.span) => {}
             _ => out.push(Top::Item(item)),
         }
     }

@@ -44,11 +44,18 @@ impl FnCx<'_, '_> {
         let kind = match self.namespace_member(object, prop) {
             Some(id) if !optional => ast::ExprKind::Ident(id),
             Some(_) => return None,
-            None => ast::ExprKind::Member {
-                object: Box::new(self.without_namespace(object)?),
-                prop: prop.clone(),
-                optional: *optional,
-            },
+            None => {
+                let object = self.without_namespace(object)?;
+                match self.namespace_member(&object, prop) {
+                    // `ns.sub.x`: `sub` is a namespace `ns`'s module re-exports.
+                    Some(id) if !optional => ast::ExprKind::Ident(id),
+                    _ => ast::ExprKind::Member {
+                        object: Box::new(object),
+                        prop: prop.clone(),
+                        optional: *optional,
+                    },
+                }
+            }
         };
         Some(ast::Expr {
             id: e.id,
