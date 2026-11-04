@@ -156,6 +156,39 @@ fn declarations_are_checked_against_their_headers_per_target() {
     assert_eq!(out.matches("error:").count(), 3, "{out}");
 }
 
+/// One machine checks every target: `long` is 64 bits except on Windows.
+#[test]
+fn every_target_is_checked_with_its_own_types() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let decls = "import { CString } from \"velt/ffi\";\n\ndeclare c(\"c\") function strlen(s: CString): usize;\ndeclare c(\"c\") function labs(x: i64): i64;\n\n";
+    let native = ", native: { c: { c: { headers: [\"<string.h>\", \"<stdlib.h>\"] } } }";
+    project(dir.path(), native, &format!("{decls}{LEN}"), &[], ALLOW);
+    for target in [
+        "x86_64-apple-darwin",
+        "aarch64-apple-darwin",
+        "x86_64-unknown-linux-gnu",
+        "aarch64-unknown-linux-gnu",
+        "x86_64-unknown-linux-musl",
+        "aarch64-unknown-linux-musl",
+        "x86_64-pc-windows-msvc",
+        "aarch64-pc-windows-msvc",
+    ] {
+        let o = velt(dir.path(), &home, &["check", "--target", target]);
+        let out = output(&o);
+        if target.contains("windows") {
+            assert!(!o.status.success(), "{target}: {out}");
+            assert!(
+                out.contains("error: parameter 1 of C function `labs` is `long`"),
+                "{target}: {out}"
+            );
+        } else {
+            assert!(o.status.success(), "{target}: {out}");
+        }
+    }
+}
+
 #[test]
 fn a_check_that_passed_is_remembered() {
     let Some(_zig) = zig() else { return };

@@ -1,0 +1,19 @@
+name: zig
+description: >-
+  The pinned zig (crates/velt_toolchain/src/zig.rs), checked against its SHA-256, as VELT_ZIG for
+  the later steps. Only jobs that check C headers use it: everything else never downloads zig.
+runs:
+  using: composite
+  steps:
+    # Caches saved by pull request and merge queue runs can't be restored by other branches: the
+    # nightly's, from main, is the one they find, which keeps them off ziglang.org.
+    - uses: actions/cache@v4
+      with:
+        path: ~/.velt-zig
+        key: zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/velt_toolchain/src/zig.rs') }}
+    - name: the pinned zig
+      shell: bash
+      run: |
+        zig=$(cargo run --quiet -p velt_toolchain --example zig -- "$HOME/.velt-zig")
+        "$zig" version
+        echo "VELT_ZIG=$zig" >> "$GITHUB_ENV"

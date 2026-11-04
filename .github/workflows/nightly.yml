@@ -8,7 +8,9 @@
 # (bench/nightly.sh), the WebAssembly goldens on Windows and macOS, and the deletion of superseded
 # build caches (`cache-prune`). At 05:07 UTC, when the macOS runners are less busy, a second run
 # has only the timing-sensitive tests, run many times on Windows and macOS (`flake`). A manual run
-# can pick one job: `gh workflow run nightly -f only=stress` (`all` includes `flake`).
+# can pick one job: `gh workflow run nightly -f only=stress` (`all` includes `flake`). `c-headers`
+# checks `declare c` against C headers through the pinned zig whatever changed; pull requests and
+# the queue run it only when a change touches what it checks.
 name: nightly
 
 on:
@@ -21,7 +23,7 @@ on:
       only:
         description: Run only one job (all = every job, flake included).
         type: choice
-        options: [all, gate, stress, oracle, workerd, bench, wasm, flake, cache]
+        options: [all, gate, stress, oracle, workerd, bench, wasm, flake, cache, headers]
         default: all
       bench_baseline:
         description: >-
@@ -198,6 +200,22 @@ jobs:
   # and Node, which must print differently, and the same once the lint's fixes are applied
   # (crates/veltc/tests/ts_compat_node). The pull request gate skips the parts that need the
   # Node packages or a Node that strips types; VELT_TSC_ORACLE=1 makes them fail here.
+  c-headers:
+    if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'headers')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+        with:
+          tools: false
+      - uses: ./.github/actions/zig
+      - name: declarations against headers, every target
+        run: cargo test --workspace --test c_headers -- --nocapture
+      # The pin itself: the release still downloads and matches its SHA-256.
+      - name: the pinned zig downloads
+        run: env -u VELT_ZIG cargo test -p velt_toolchain zig -- --ignored
+
   tsc-oracle:
     if: github.event.schedule != '7 5 * * *' && ((inputs.only || 'all') == 'all' || inputs.only == 'oracle')
     runs-on: ubuntu-latest

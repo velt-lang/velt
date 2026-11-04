@@ -774,6 +774,9 @@ Step 1 lands in layers, each its own pull request:
      - zig 0.17.1, pinned with each host's SHA-256 (`velt_toolchain::zig`), downloads into
        `$VELT_HOME/cache/zig/` on first use (about 55 MB, 100 MB on Windows, 10 s), or `$VELT_ZIG` names one (CI,
        offline machines).
+     - CI: the `c-headers` job checks every target from one Linux machine, only when a change
+       touches what it checks (`crates/xtask/src/c_headers.rs`), so nothing else
+       downloads zig; the nightly runs it whatever changed.
    - 6a-2: declarations checked against headers in the packages a build has locally (the
      root, path dependencies, workspace members); registry and git packages come with 6b's
      digest.

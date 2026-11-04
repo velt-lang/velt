@@ -7,6 +7,7 @@
 
 use std::collections::BTreeSet;
 
+use crate::c_headers;
 use crate::graph::Graph;
 use crate::os;
 use crate::package_users;
@@ -230,6 +231,9 @@ pub struct Plan {
     /// them in full on every OS, as do the checks after merging when they run. `--full` runs them
     /// unless `VELT_WASM_GOLDENS=skip`, which the merge queue sets from the change's plan.
     pub wasm: bool,
+    /// `declare c` checked against C headers on every target through the pinned zig: the
+    /// `c-headers` job in ci.yml (crates/xtask/src/c_headers.rs). `--full` knows no changes, so it doesn't run it.
+    pub c_headers: bool,
 }
 
 impl Plan {
@@ -258,6 +262,7 @@ impl Plan {
             fmt_corpus: Sweep::Default,
             debug_vars_all: false,
             wasm: true,
+            c_headers: false,
         }
     }
 
@@ -292,6 +297,7 @@ impl Plan {
             fmt_corpus: Sweep::Default,
             debug_vars_all: false,
             wasm: false,
+            c_headers: false,
         }
     }
 
@@ -311,6 +317,9 @@ impl Plan {
             .iter()
             .any(|p| !comment_only.contains(p) && DEBUG_VARS_CODE.contains(&p.as_str()));
         plan.wasm = paths.iter().any(|p| is_wasm(p));
+        plan.c_headers = paths
+            .iter()
+            .any(|p| !comment_only.contains(p) && c_headers::depends_on(p));
         let mut changed_crates = BTreeSet::new();
         let mut comment_crates = BTreeSet::new();
         let code: Vec<String> = paths
@@ -332,6 +341,7 @@ impl Plan {
                         // WebAssembly or changes the toolchain: a lockfile, CI or script change
                         // alone doesn't need them in the queue (about half the test time).
                         wasm: plan.wasm || paths.iter().any(|p| changes_toolchain(p)),
+                        c_headers: plan.c_headers,
                         ..everything
                     };
                 }
@@ -608,6 +618,10 @@ impl Plan {
             _ => "no",
         };
         out.push_str(&format!("  WebAssembly goldens: {wasm}\n"));
+        out.push_str(&format!(
+            "  C headers through zig: {}\n",
+            yes(self.c_headers)
+        ));
         out.push_str(&format!(
             "  parser robustness sweep: {}\n",
             self.sweep.describe(
