@@ -122,10 +122,10 @@ with a test that breaks it on purpose:
    the first concrete type of its shape. Each shape query maps a placeholder to its
    representative first (`Cx::ph_rep`). Since the key makes every member give the
    representative's answers, that answer is right for all of them.
-2. **`Boxing`'s sets are private.** Lowering reads them through accessors that do the same
-   mapping for derived types. In the prototype, a placeholder's derived types are put into each
-   set where the representative's are, for the pass's sharing part, and taken out again before
-   the pass closes its facts. A test fails when code outside `boxing/` reads a set directly.
+2. **`Boxing`'s sets are read through the representative.** The accessors that read a set of
+   types map a type built from a placeholder to the same type built from the representative
+   (`Cx::ph_rep`) and ask about that. Nothing is put into or taken out of `Boxing`. A test
+   fails when code outside `boxing/` reads a set of types without the mapping.
 3. **Every other question about a placeholder is an ICE.** That covers `Cx::kind`, and each of
    the raw `types.kind` reads either is a shape question or goes through `Cx::kind`. Step 2
    lists the 64 sites with which of the two each is.
@@ -402,8 +402,9 @@ direct, and the next inlining round can inline it. A dictionary is such a static
   caller that passed a constant dictionary, the dictionary parameter becomes a local holding
   the static. Its loads fold: a sub-dictionary or type table becomes a `Const::Static`, which
   the next run of the pass folds again.
-- **Instances reached by one dictionary are decided in lowering**. At the end of the whole
-  pass, lowering knows every dictionary of every shared instance. In release, an instance
+- **Instances reached by one dictionary are decided in lowering**. After the last pass, once
+  `close_boxing` returns the `Boxing` it started with, lowering knows every dictionary of every
+  shared instance. In release, an instance
   reached by exactly one dictionary gets its dictionary folded in place: the parameter becomes
   the constant, its calls drop the argument, and `vtable_loads` folds the loads. That is
   today's per-type code with no clone made. A program with one `Map` type pays nothing.
