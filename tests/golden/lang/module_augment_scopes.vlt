@@ -1,0 +1,61 @@
+// The names in an augmentation's members are the augmenting module's, except what the target
+// exports: the same type twice, in two interfaces, two blocks and two modules; a private type; a
+// target's export of the same name; names bound in the members; a namespace import.
+import type { Node, Second, Exp } from "./_augment_scope/t";
+import type { Node as N2 } from "./_augment_scope/t";
+import * as T from "./_augment_scope/t";
+import { helper } from "./_augment_scope/t";
+import type { PT, Q } from "./_augment_scope/target";
+import "./_augment_scope/other_block";
+
+type Local = { n: number };
+type Hidden<A> = { h: A };
+function mine(n: number): number {
+  return n + 1;
+}
+
+declare module "./_augment_scope/target" {
+  interface PT {
+    a: Node;
+    a2: N2;
+    a3: Second;
+    loc: Local;
+    hid: Hidden<number>;
+    e: Exp;
+    gm<Node>(x: Node): Node;
+    f: <Node>(x: Node) => Node;
+    mp: { [Node in "a" | "b"]: Node };
+    cond: "q" extends infer Second ? Second : never;
+    ns: T.Node;
+    tv: typeof helper;
+    tm: typeof mine;
+  }
+  interface Q {
+    b: Node;
+  }
+}
+declare module "./_augment_scope/target" {
+  interface Q {
+    c: Node;
+  }
+}
+
+const q: Q = { base: 1, b: { n: 1 }, c: { n: 2 }, fromOther: { n: 3 } };
+const p: PT = {
+  base: 0,
+  a: { n: 1 },
+  a2: { n: 2 },
+  a3: { s: "s" },
+  loc: { n: 4 },
+  hid: { h: 5 },
+  e: { x: 1 },
+  gm: (x: any) => x,
+  f: (x: any) => x,
+  mp: { a: "a", b: "b" },
+  cond: "q",
+  ns: { n: 6 },
+  tv: helper,
+  tm: mine,
+};
+console.log(q.b.n, q.c.n, q.fromOther.n, p.a.n, p.a2.n, p.a3.s, p.loc.n, p.hid.h, p.e.x);
+console.log(p.gm(1), p.f("t"), p.mp.a, p.cond, p.ns.n, p.tv(7), p.tm(8));

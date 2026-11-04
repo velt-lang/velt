@@ -111,9 +111,10 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, V
                         // The members name the augmenting module's types (`augment_scope`).
                         let mut decl = decl;
                         let mut imports = crate::augment_scope::Imports::default();
-                        crate::augment_scope::scope_into(&out, m, &mut decl, &mut imports);
+                        crate::augment_scope::scope_into(&out, (m, tm), &mut decl, &mut imports);
                         out[tm].ast.items.extend(imports.items);
                         out[tm].imports.extend(imports.specs);
+                        out[m].ast.items.extend(imports.exports);
                         let ast::ItemKind::Interface(into) = &mut out[tm].ast.items[ti].kind else {
                             unreachable!("ICE: `find_interface` found an interface");
                         };
