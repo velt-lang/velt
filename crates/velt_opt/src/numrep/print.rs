@@ -100,11 +100,13 @@ pub(super) fn as_integer(env: &Env, func: &mut Function, bi: usize, f: Fact) -> 
         return false;
     };
     let whole = f.integral && !f.nan && f.lo > -TWO_53 && f.hi < TWO_53;
-    if !whole || (*prints_neg_zero && f.neg_zero) || args.len() != 2 {
+    if !whole || (*prints_neg_zero && f.neg_zero) {
         return false;
     }
     let pos = *pos;
-    let x = args[pos].clone();
+    let Some(x) = args.get(pos).cloned() else {
+        return false;
+    };
     func.locals.push(LocalDecl::new(Ty::I64, None));
     let t = Local(func.locals.len() as u32 - 1);
     let at = func.term_loc(bi);
