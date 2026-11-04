@@ -232,3 +232,80 @@ fn a_constant_bound_compares_in_integers() {
         }
     }
 }
+
+#[test]
+fn a_block_with_a_remainder_rewrites_its_comparison_in_the_same_run() {
+    // `r = (z as f64) % 7` (an integer remainder) before `(x as f64) < (y as f64)` in one block:
+    // both rewrites renumber the block, and both happen in one run of the pass.
+    let two_52 = 1i128 << 52;
+    let mut pb = ProgramBuilder::new();
+    let mut fb = FuncBuilder::export("f", &[Ty::U64, Ty::I64, Ty::U32], Ty::F64);
+    let (x, y, z) = (fb.param(0), fb.param(1), fb.param(2));
+    let (c0, c1, zf, r, xf, yf, c, s) = (
+        fb.local(Ty::Bool),
+        fb.local(Ty::Bool),
+        fb.local(Ty::F64),
+        fb.local(Ty::F64),
+        fb.local(Ty::F64),
+        fb.local(Ty::F64),
+        fb.local(Ty::Bool),
+        fb.local(Ty::F64),
+    );
+    let (entry, mid, test, yes, no, out) = (
+        fb.block(),
+        fb.block(),
+        fb.block(),
+        fb.block(),
+        fb.block(),
+        fb.block(),
+    );
+    fb.assign(
+        entry,
+        c0,
+        bin(BinOp::Gt, copy_local(y), int(-two_52, Ty::I64)),
+    );
+    fb.branch(entry, c0, mid, out);
+    fb.assign(mid, c1, bin(BinOp::Lt, copy_local(y), int(two_52, Ty::I64)));
+    fb.branch(mid, c1, test, out);
+    fb.assign(test, zf, Rvalue::Cast(copy_local(z), Ty::F64));
+    fb.assign(
+        test,
+        r,
+        bin(BinOp::Rem, copy_local(zf), float(7.0, Ty::F64)),
+    );
+    fb.assign(test, yf, Rvalue::Cast(copy_local(y), Ty::F64));
+    fb.assign(test, xf, Rvalue::Cast(copy_local(x), Ty::F64));
+    fb.assign(test, c, bin(BinOp::Lt, copy_local(xf), copy_local(yf)));
+    fb.branch(test, c, yes, no);
+    fb.assign(yes, s, bin(BinOp::Add, copy_local(r), float(10.0, Ty::F64)));
+    fb.ret(yes, copy_local(s));
+    fb.ret(no, copy_local(r));
+    fb.ret(out, float(-1.0, Ty::F64));
+    pb.add(fb.finish());
+    let mut p = as_intrinsics(pb.finish());
+    let original = p.clone();
+    // One run of the pass on the function.
+    assert!(run_program(&mut p));
+    assert_valid(&p);
+    let f = &p.funcs[0];
+    assert!(
+        !compares_doubles(f),
+        "the comparison waited for another run"
+    );
+    assert!(
+        !f.blocks.iter().flat_map(|b| &b.stmts).any(|s| matches!(
+            s,
+            Stmt::Assign(_, Rvalue::Binary(BinOp::Rem, a, _))
+                if super::super::flow::operand_ty(f, a) == Ty::F64
+        )),
+        "the remainder is still a double one"
+    );
+    for x in [0u64, 5, 1 << 53, u64::MAX] {
+        for y in [-3i64, 0, 6, 1 << 40] {
+            for z in [0u64, 13, 4294967295] {
+                let args = [x, y as u64, z];
+                assert_eq!(call(&p, &args), call(&original, &args), "f({x}, {y}, {z})");
+            }
+        }
+    }
+}

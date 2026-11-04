@@ -61,11 +61,12 @@ pub(super) fn run(env: &Env, flow: &Flow, func: &mut Function) -> bool {
             flow.transfer(&mut st, func, &func.blocks[bi].stmts[si]);
         }
         if !remainders.is_empty() {
-            remainders_as_integers(func, bi, &remainders);
+            let new = remainders_as_integers(func, bi, &remainders);
+            compares.iter_mut().for_each(|p| p.moved(&new));
             changed = true;
-        } else if !compares.is_empty() {
-            // (Both rewrites renumber the block's statements: a block with remainders gets its
-            // comparisons on a later run.) After every block: the new locals have no facts.
+        }
+        if !compares.is_empty() {
+            // After every block: the new locals have no facts.
             later.push((bi, compares));
         }
         changed |= terminator(env, flow, func, bi, &st);
@@ -95,8 +96,9 @@ fn integer_remainder(flow: &Flow, func: &Function, st: &State, s: &Stmt) -> bool
     whole(x) && whole(y) && x.lo >= 0.0 && !x.neg_zero && !y.may_be_zero()
 }
 
-/// Rewrite the remainders at `at` (statement indexes of block `bi`) into integer ones.
-fn remainders_as_integers(func: &mut Function, bi: usize, at: &[usize]) {
+/// Rewrite the remainders at `at` (statement indexes of block `bi`) into integer ones; returns
+/// each statement's new index (a remainder's, that of the first statement replacing it).
+fn remainders_as_integers(func: &mut Function, bi: usize, at: &[usize]) -> Vec<usize> {
     let fresh = |func: &mut Function| {
         func.locals.push(LocalDecl::new(Ty::I64, None));
         Local(func.locals.len() as u32 - 1)
@@ -107,9 +109,11 @@ fn remainders_as_integers(func: &mut Function, bi: usize, at: &[usize]) {
     }
     let mut si = 0;
     let mut next = 0;
+    let mut new = Vec::with_capacity(func.blocks[bi].stmts.len());
     crate::srclocs::rewrite_stmts(func, bi, |s, out| {
         let i = si;
         si += 1;
+        new.push(out.len());
         if at.get(next) != Some(&i) {
             out.push(s);
             return;
@@ -138,6 +142,7 @@ fn remainders_as_integers(func: &mut Function, bi: usize, at: &[usize]) {
             Rvalue::Cast(Operand::Copy(Place::local(tr)), Ty::F64),
         ));
     });
+    new
 }
 
 /// A parameter that every call sets to the same constant (`params`) is that constant where it

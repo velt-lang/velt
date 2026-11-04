@@ -18,17 +18,27 @@
 
 use velt_vir::vir::{BinOp, Function, Local, LocalDecl, Operand, Place, Rvalue, Stmt, Ty};
 
+use super::fact::TWO_53;
 use super::flow::{is_comparison, operand_ty, Flow, State};
 
 /// A comparison at statement `si` that `rewrite` makes in integers: which operand is the
 /// converted integer (`left`), the integer it was converted from, and the type to compare in.
 pub(super) struct Plan {
+    /// The statement's index in its block (updated by [`Plan::moved`] when the block's
+    /// remainders are rewritten first).
     si: usize,
     left: bool,
     int: Operand,
     ty: Ty,
     /// An unsigned integer against a double that may be negative: the sign is tested too.
     signed_bound: bool,
+}
+
+impl Plan {
+    /// The statement at index `si` is at `new[si]` once its block's remainders are rewritten.
+    pub(super) fn moved(&mut self, new: &[usize]) {
+        self.si = new[self.si];
+    }
 }
 
 /// The integer conversions to `f64` made so far in a block: the double local, the integer
@@ -100,9 +110,11 @@ pub(super) fn plan(
         return None;
     }
     // Either operand may be the converted integer, and the other one the bounded double.
+    // Each condition the exactness argument needs, spelled out rather than through
+    // `Fact::exact_int`: whole, never NaN, a non-empty interval strictly within ±2^53.
     let bounded = |other: &Operand| {
         flow.operand(st, func, other)
-            .filter(|y| y.exact_int() && y.lo <= y.hi)
+            .filter(|y| y.integral && !y.nan && y.lo <= y.hi && y.lo > -TWO_53 && y.hi < TWO_53)
     };
     let (left, int, y) = [(true, a, b), (false, b, a)]
         .into_iter()
