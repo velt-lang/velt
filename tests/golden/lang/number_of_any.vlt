@@ -1,0 +1,5 @@
+// `Number(x)` of an `any` is JavaScript's `ToNumber`, as `+x` converts it: a string, a boolean, `null`,
+// `undefined` and an object with `valueOf` (sigx: `Number(node.props.gap ?? 2)`).
+const props: Record<string, any> = { gap: "3", width: 4, on: true, none: null, obj: { valueOf: () => 7 } };
+console.log(Number(props.gap ?? 2), Number(props.width), Number(props.on), Number(props.none), Number(props.missing ?? 2));
+console.log(Number(props.missing), Number(props.obj), Number("x" as any));
