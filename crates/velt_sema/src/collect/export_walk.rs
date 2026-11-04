@@ -59,10 +59,7 @@ fn export_walk(
         }
     }
     if star_skips(&name) {
-        // `export default interface I` with no value default: the name's only meaning.
-        return (name == DEFAULT && namespace_module(cx, t, DEFAULT).is_none())
-            .then(|| declared_type_default(cx, t, depth))
-            .flatten();
+        return None;
     }
     let mut targets = imports_of(cx, t)
         .filter(|(imp, exported)| *exported && imp.all)
@@ -153,27 +150,21 @@ fn type_default_entry<'m>(cx: &Ctx<'m>, t: usize) -> Option<&'m ast::ImportName>
         })
 }
 
-/// The interface of module `t`'s `export default interface I`.
-fn declared_type_default(cx: &Ctx, t: usize, depth: u32) -> Option<Item> {
-    let n = type_default_entry(cx, t)?;
-    local_at(cx, t, &type_key(&n.name.name), depth + 1)
-        .or_else(|| local_at(cx, t, &n.name.name, depth + 1))
-}
-
 /// For `name`, the type key of `default`: the interface of `export default interface I` next to
-/// a value default that is no type itself ([`build_table`] does the same).
+/// a value default that is no type itself (`exports::build_table` does the same).
 fn type_of_default(cx: &Ctx, t: usize, name: &str, depth: u32) -> Option<Item> {
     if of_type_key(name) != Some(DEFAULT) {
         return None;
     }
-    type_default_entry(cx, t)?;
+    let n = type_default_entry(cx, t)?;
     if namespace_module(cx, t, DEFAULT).is_none() {
         let value = export_at(cx, t, DEFAULT, depth + 1)?;
         if cx.meaning(value) != Meaning::Value {
             return None;
         }
     }
-    declared_type_default(cx, t, depth)
+    local_at(cx, t, &type_key(&n.name.name), depth + 1)
+        .or_else(|| local_at(cx, t, &n.name.name, depth + 1))
 }
 
 /// The item `name` denotes at the top level of module `t`: its own declaration, or what a named
