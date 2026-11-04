@@ -271,6 +271,7 @@ pub(crate) const TS_MEMBERS: &[(&str, &[&str])] = &[
             "findLast",
             "findLastIndex",
             "flat",
+            "flatMap",
             "forEach",
             "includes",
             "indexOf",
