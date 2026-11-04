@@ -20,6 +20,7 @@ pub mod pin;
 pub mod release;
 pub mod requirement;
 pub mod signature;
+pub mod zig;
 
 pub use layout::{Root, Toolchain};
 pub use requirement::Requirement;

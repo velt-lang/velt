@@ -195,3 +195,41 @@ fn c_libraries_and_allow_native_are_written_back() {
     assert_eq!(json["native"]["c"], serde_json::json!({}));
     assert_eq!(json["native"]["path"], "native");
 }
+
+#[test]
+fn headers_and_unchecked_are_read_checked_and_written_back() {
+    let m = read(&with(
+        "native: { c: { sqlite3: { system: { default: \"sqlite3\" }, headers: [\"native/sqlite3.h\"] }, sdk: { system: { default: \"sdk\" }, unchecked: true }, c: { headers: [\"<string.h>\", \"<sys/stat.h>\"] } } }",
+    ));
+    let libraries = m.c_libraries.as_ref().unwrap();
+    assert_eq!(libraries["sqlite3"].headers, ["native/sqlite3.h"]);
+    assert!(!libraries["sqlite3"].unchecked);
+    assert!(libraries["sdk"].unchecked && libraries["sdk"].headers.is_empty());
+    // The platform's C library lists only headers.
+    assert_eq!(libraries["c"].headers, ["<string.h>", "<sys/stat.h>"]);
+    assert!(libraries["c"].system.is_empty());
+    let text = m.to_vlt();
+    assert!(text.contains("headers: [\"native/sqlite3.h\"]"), "{text}");
+    assert!(text.contains("unchecked: true"), "{text}");
+    assert_eq!(read(&text), m, "{text}");
+    let json = m.to_json();
+    assert_eq!(json["native"]["c"]["c"]["headers"][1], "<sys/stat.h>");
+    assert_eq!(json["native"]["c"]["sdk"]["unchecked"], true);
+    // A header is in the package or a C library's, never elsewhere.
+    for bad in [
+        "/usr/include/x.h",
+        "../x.h",
+        "a/../../x.h",
+        "C:\\x.h",
+        "<>",
+        "<../x.h>",
+        "",
+    ] {
+        let (message, _) = error(&with(&format!(
+            "native: {{ c: {{ x: {{ headers: [{bad:?}] }} }} }}"
+        )));
+        assert!(message.contains("is not a header"), "{bad}: {message}");
+    }
+    let (message, _) = error(&with("native: { c: { x: { unchecked: \"yes\" } } }"));
+    assert_eq!(message, "`unchecked` must be a boolean, not a string");
+}

@@ -15,13 +15,43 @@ use super::unsafe_sites::{Site, SiteKind};
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct NativePackage {
     pub name: String,
-    /// Its C libraries (`native.c`), each with the system library it links on the build's
-    /// target (`None`: none there).
-    pub c_libraries: Vec<(String, Option<String>)>,
+    /// Its C libraries (`native.c`): each with the system library it links on the build's
+    /// target (`None`: none there, or the C library), and how its declarations are checked.
+    pub c_libraries: Vec<(String, Option<String>, Checked)>,
     /// It has a Rust crate (`native.crate`), built into a native library.
     pub rust_crate: bool,
     /// Its unsafe code, in module and source order.
     pub unsafe_code: Vec<UnsafeCode>,
+}
+
+/// How a C library's declarations are checked (docs/internals/design/c-ffi.md "Checking
+/// declarations against C headers").
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Checked {
+    /// It lists headers (checked against them comes with the header check).
+    Headers,
+    /// `unchecked: true`: the library has no headers.
+    Unchecked,
+    /// It lists no headers (yet).
+    NoHeaders,
+}
+
+impl Checked {
+    fn of(lib: &vpm::manifest::CLibraryConfig) -> Checked {
+        match (lib.unchecked, lib.headers.is_empty()) {
+            (true, _) => Checked::Unchecked,
+            (false, false) => Checked::Headers,
+            (false, true) => Checked::NoHeaders,
+        }
+    }
+
+    fn word(self) -> &'static str {
+        match self {
+            Checked::Headers => "headers listed",
+            Checked::Unchecked => "unchecked",
+            Checked::NoHeaders => "no headers",
+        }
+    }
 }
 
 /// One piece of unsafe code: where (relative to the package root, `/`-separated) and what.
@@ -53,7 +83,13 @@ pub(super) fn native_packages(
             c_libraries: p
                 .c_libraries
                 .iter()
-                .map(|(name, lib)| (name.clone(), lib.system_for(target).map(str::to_string)))
+                .map(|(name, lib)| {
+                    (
+                        name.clone(),
+                        lib.system_for(target).map(str::to_string),
+                        Checked::of(lib),
+                    )
+                })
                 .collect(),
             rust_crate: p.native.is_some(),
             unsafe_code: Vec::new(),
@@ -108,9 +144,13 @@ pub fn render(packages: &[NativePackage]) -> String {
             let libs: Vec<String> = p
                 .c_libraries
                 .iter()
-                .map(|(name, system)| match system {
-                    Some(system) => format!("{name} ({system})"),
-                    None => format!("{name} (none on this target)"),
+                .map(|(name, system, checked)| {
+                    let links = match system {
+                        Some(system) => system.clone(),
+                        None if name == "c" => "the platform's".into(),
+                        None => "none on this target".into(),
+                    };
+                    format!("{name} ({links}; {})", checked.word())
                 })
                 .collect();
             parts.push(format!("C libraries {}", libs.join(", ")));
@@ -147,9 +187,10 @@ pub fn json(packages: &[NativePackage]) -> Value {
             .map(|p| {
                 json!({
                     "package": p.name,
-                    "cLibraries": p.c_libraries.iter().map(|(name, system)| json!({
+                    "cLibraries": p.c_libraries.iter().map(|(name, system, checked)| json!({
                         "name": name,
                         "system": system,
+                        "checked": checked.word(),
                     })).collect::<Vec<_>>(),
                     "rustCrate": p.rust_crate,
                     "unsafe": p.unsafe_code.iter().map(|u| json!({
@@ -173,8 +214,8 @@ mod tests {
             NativePackage {
                 name: "sqlite".into(),
                 c_libraries: vec![
-                    ("sqlite3".into(), Some("sqlite3".into())),
-                    ("blas".into(), None),
+                    ("sqlite3".into(), Some("sqlite3".into()), Checked::Headers),
+                    ("blas".into(), None, Checked::Unchecked),
                 ],
                 rust_crate: false,
                 unsafe_code: vec![
@@ -200,7 +241,7 @@ mod tests {
         assert_eq!(
             render(&packages),
             "Native code the program allows (allowNative):\n  \
-             sqlite: C libraries sqlite3 (sqlite3), blas (none on this target); 2 places of unsafe code\n    \
+             sqlite: C libraries sqlite3 (sqlite3; headers listed), blas (none on this target; unchecked); 2 places of unsafe code\n    \
              src/db.vlt:12   unsafe block\n    \
              src/stmt.vlt:7  unsafe function `step`\n  \
              pg: a Rust crate; no unsafe code\n"

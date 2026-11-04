@@ -62,7 +62,8 @@ impl Reader<'_> {
         ((!only_c).then_some(config), libraries)
     }
 
-    /// `c: { <library>: { system?: Record<string, string> } }`.
+    /// `c: { <library>: { system?: Record<string, string>, headers?: string[], unchecked?:
+    /// boolean } }`; the entry `c`, the platform's C library, only has `headers`.
     fn c_libraries(&mut self, value: &Value) -> BTreeMap<String, CLibraryConfig> {
         let mut out = BTreeMap::new();
         let Some(entries) = self.object(value, "`native.c`") else {
@@ -74,14 +75,16 @@ impl Reader<'_> {
                 continue;
             }
             if name.name.is_empty()
-                || name.name == "c"
                 || !name
                     .name
                     .chars()
                     .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
             {
                 self.error(
-                    format!("`{}` is not a C library name: letters, digits, `_` and `-` (and `c` is the platform's C library, which needs no entry)", name.name),
+                    format!(
+                        "`{}` is not a C library name: letters, digits, `_` and `-`",
+                        name.name
+                    ),
                     name.span,
                 );
                 continue;
@@ -90,6 +93,32 @@ impl Reader<'_> {
             if let Some(fields) = self.object(v, "a C library") {
                 for (key, f) in fields {
                     match key.name.as_str() {
+                        "system" if name.name == "c" => self.error(
+                            "`c` is the platform's C library, which every target links: it has no `system`",
+                            key.span,
+                        ),
+                        "headers" => {
+                            let ValueKind::Array(elems) = &f.kind else {
+                                self.error(
+                                    format!("`headers` must be an array, not {}", f.kind.describe()),
+                                    f.span,
+                                );
+                                continue;
+                            };
+                            for elem in elems {
+                                if let Some(text) = self.string(elem, "a header") {
+                                    self.check(check_header(text), elem.span);
+                                    lib.headers.push(text.to_string());
+                                }
+                            }
+                        }
+                        "unchecked" => match f.kind {
+                            ValueKind::Bool(b) => lib.unchecked = b,
+                            ref other => self.error(
+                                format!("`unchecked` must be a boolean, not {}", other.describe()),
+                                f.span,
+                            ),
+                        },
                         "system" => {
                             if let Some(conds) = self.object(f, "`system`") {
                                 for (cond, s) in conds {
@@ -267,4 +296,30 @@ fn check_target_condition(condition: &str) -> Result<(), String> {
             .collect::<Vec<_>>()
             .join(", ")
     ))
+}
+
+/// `Ok` for a header entry: `<name.h>`, or a `/`-separated path inside the package.
+fn check_header(text: &str) -> Result<(), String> {
+    if let Some(inner) = text.strip_prefix('<').and_then(|t| t.strip_suffix('>')) {
+        let ok = !inner.is_empty()
+            && inner
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_-./".contains(c))
+            && !inner.split('/').any(|p| p == "..");
+        return match ok {
+            true => Ok(()),
+            false => Err(format!("`{text}` is not a header name")),
+        };
+    }
+    let inside = !text.is_empty()
+        && !text.starts_with('/')
+        && !text.contains('\\')
+        && !text.contains(':')
+        && !text.split('/').any(|p| p == ".." || p.is_empty());
+    match inside {
+        true => Ok(()),
+        false => Err(format!(
+            "`{text}` is not a header of the package: a `/`-separated path inside it (`native/lib.h`), or `<name.h>` for a C library header"
+        )),
+    }
 }

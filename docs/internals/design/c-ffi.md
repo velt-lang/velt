@@ -717,7 +717,16 @@ Step 1 lands in layers, each its own pull request:
        the lockfile's diff and `--locked` refuses a lock that doesn't have it. A workspace's
        lock has none, as its install has no root.
      - Not yet: header-checked or `unchecked` libraries (layer 6) in the listing.
-6. The header check and `declare c const`.
+6. The header check and `declare c const`, in parts.
+   - 6a-1: what the check needs.
+     - `native.c.<library>.headers`: the package's own headers (`native/sqlite3.h`) or C
+       library headers (`<string.h>`), one list for every target. `native.c.c` lists the
+       platform's C library's. `unchecked: true` says a library has none; `allowNative`'s
+       error and `velt check` show it, and `velt check` shows each library as checked against
+       headers, unchecked, or without headers.
+     - zig 0.17.1, pinned with each host's SHA-256 (`velt_toolchain::zig`), downloads into
+       `$VELT_HOME/cache/zig/` on first use (about 55 MB, 10 s), or `$VELT_ZIG` names one (CI,
+       offline machines).
 
 ## Decisions
 
