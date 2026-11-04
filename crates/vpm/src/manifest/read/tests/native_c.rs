@@ -215,6 +215,8 @@ fn headers_and_unchecked_are_read_checked_and_written_back() {
     let json = m.to_json();
     assert_eq!(json["native"]["c"]["c"]["headers"][1], "<sys/stat.h>");
     assert_eq!(json["native"]["c"]["sdk"]["unchecked"], true);
+    assert_eq!(json["native"]["c"]["sdk"]["system"]["default"], "sdk");
+    assert!(json["native"]["c"]["c"].get("system").is_none(), "{json}");
     // A header is in the package or a C library's, never elsewhere.
     for bad in [
         "/usr/include/x.h",
@@ -223,6 +225,9 @@ fn headers_and_unchecked_are_read_checked_and_written_back() {
         "C:\\x.h",
         "<>",
         "<../x.h>",
+        "</usr/include/x.h>",
+        "<a//b.h>",
+        "<a/>",
         "",
     ] {
         let (message, _) = error(&with(&format!(
@@ -232,4 +237,18 @@ fn headers_and_unchecked_are_read_checked_and_written_back() {
     }
     let (message, _) = error(&with("native: { c: { x: { unchecked: \"yes\" } } }"));
     assert_eq!(message, "`unchecked` must be a boolean, not a string");
+    // The two contradict each other, in either order; `unchecked: false` says nothing.
+    for both in [
+        "headers: [\"<a.h>\"], unchecked: true",
+        "unchecked: true, headers: [\"<a.h>\"]",
+    ] {
+        let (message, _) = error(&with(&format!("native: {{ c: {{ x: {{ {both} }} }} }}")));
+        assert!(
+            message.contains("lists `headers` and says `unchecked`"),
+            "{message}"
+        );
+    }
+    read(&with(
+        "native: { c: { x: { headers: [\"<a.h>\"], unchecked: false } } }",
+    ));
 }

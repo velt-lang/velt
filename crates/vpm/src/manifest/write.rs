@@ -252,7 +252,10 @@ pub(super) fn to_json(m: &Manifest) -> Value {
                         .iter()
                         .map(|(c, s)| (c.clone(), json!(s)))
                         .collect();
-                    let mut entry = json!({ "system": system });
+                    let mut entry = json!({});
+                    if !system.is_empty() {
+                        entry["system"] = json!(system);
+                    }
                     if !lib.headers.is_empty() {
                         entry["headers"] = json!(lib.headers);
                     }

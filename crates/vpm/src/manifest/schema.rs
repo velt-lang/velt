@@ -433,7 +433,7 @@ pub const C_LIBRARY: &[Field] = &[
         ty: "string[]",
         required: false,
         doc: "The C headers the library's declarations are checked against when the package \
-              builds, for each target: a path in the package (`\"native/sqlite3.h\"`), or \
+              builds, once per target: a path in the package (`\"native/sqlite3.h\"`), or \
               `\"<string.h>\"` for a C library header.",
     },
     Field {

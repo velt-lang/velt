@@ -141,6 +141,15 @@ impl Reader<'_> {
                         _ => self.unknown_key(key, crate::manifest::schema::C_LIBRARY),
                     }
                 }
+                if lib.unchecked && !lib.headers.is_empty() {
+                    self.error(
+                        format!(
+                            "C library `{}` lists `headers` and says `unchecked`: keep one",
+                            name.name
+                        ),
+                        name.span,
+                    );
+                }
             }
             out.insert(name.name.clone(), lib);
         }
@@ -305,7 +314,7 @@ fn check_header(text: &str) -> Result<(), String> {
             && inner
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || "_-./".contains(c))
-            && !inner.split('/').any(|p| p == "..");
+            && !inner.split('/').any(|p| p == ".." || p.is_empty());
         return match ok {
             true => Ok(()),
             false => Err(format!("`{text}` is not a header name")),
