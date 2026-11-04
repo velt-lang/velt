@@ -318,3 +318,79 @@ fn a_package_that_does_not_parse_is_not_stored() {
     assert_eq!(index.packages.len(), 1);
     assert_eq!(cache.usage().entries, 0, "nothing stored");
 }
+
+/// Loads a std of `files` through one cache, applies `change` to it and loads again with that
+/// cache: the second load must be what a load with no cache gives, not the first load's entry.
+/// Returns the two loads.
+fn through_one_cache(files: &[(&str, &str)], change: impl FnOnce(&Path)) -> (StdIndex, StdIndex) {
+    let tmp = std_with(files);
+    let dir = tempfile::tempdir().unwrap();
+    let cache = cache_of(dir.path());
+    let c1 = Key::of(&[b"c1"]);
+    let before = load(tmp.path(), with(&cache, c1));
+    // Each file's parse, and the package's entry.
+    assert_eq!(cache.usage().entries, files.len() as u64 + 1, "stored");
+    change(tmp.path());
+    let after = load(tmp.path(), with(&cache, c1));
+    assert_eq!(after, load(tmp.path(), None));
+    (before, after)
+}
+
+fn module_paths(index: &StdIndex) -> Vec<&str> {
+    index
+        .packages
+        .iter()
+        .flat_map(|p| &p.modules)
+        .map(|m| m.path.as_str())
+        .collect()
+}
+
+fn export_names(m: &ModuleIndex) -> Vec<&str> {
+    m.exports.iter().map(|e| e.name.as_str()).collect()
+}
+
+#[test]
+fn a_renamed_file_with_the_same_contents_is_another_entry() {
+    let (before, after) = through_one_cache(
+        &[
+            ("a/index.vlt", "export const A = 1;\n"),
+            ("a/x.vlt", "export const X = 1;\n"),
+        ],
+        |root| std::fs::rename(root.join("a/x.vlt"), root.join("a/y.vlt")).unwrap(),
+    );
+    assert_eq!(module_paths(&before), ["std/a", "std/a/x"]);
+    assert_eq!(module_paths(&after), ["std/a", "std/a/y"]);
+}
+
+/// An element in a `.vlt` file, whose text looks like an item; in a `.ts` file, the assertion
+/// `<a>b` and then that item (`</ a>`: a `</a` would make it an element there too). The canonical
+/// path is the same: only the plain-TypeScript flag tells the two files apart.
+const JSX_OR_ASSERTION: &str = "export const el = <a>b\nexport const k = 1;\n</ a>;\n";
+
+#[test]
+fn a_file_that_changes_only_its_extension_to_ts_is_another_entry() {
+    let (before, after) = through_one_cache(
+        &[
+            ("a/index.vlt", "export const A = 1;\n"),
+            ("a/x.vlt", JSX_OR_ASSERTION),
+        ],
+        |root| std::fs::rename(root.join("a/x.vlt"), root.join("a/x.ts")).unwrap(),
+    );
+    assert_eq!(module_paths(&before), module_paths(&after));
+    assert_eq!(export_names(module(&before, "std/a/x")), ["el"]);
+    assert!(
+        export_names(module(&after, "std/a/x")).contains(&"k"),
+        "{:?}",
+        module(&after, "std/a/x").exports
+    );
+}
+
+#[test]
+fn a_file_added_to_a_package_is_another_entry() {
+    let (before, after) = through_one_cache(&[("a/index.vlt", "export const A = 1;\n")], |root| {
+        std::fs::write(root.join("a/z.vlt"), "export const Z = 1;\n").unwrap()
+    });
+    assert_eq!(module_paths(&before), ["std/a"]);
+    assert_eq!(module_paths(&after), ["std/a", "std/a/z"]);
+    assert_eq!(export_names(module(&after, "std/a/z")), ["Z"]);
+}
