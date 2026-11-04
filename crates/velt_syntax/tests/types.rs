@@ -294,3 +294,23 @@ fn indexed_access_with_any_key() {
     assert_eq!(alias_ty("{ a: 1 }[keyof T]"), "{a: 1}[keyof T]");
     assert_eq!(alias_ty("T[K][]"), "T[K][]");
 }
+
+#[test]
+fn a_parenthesized_function_type_is_no_parameter_list() {
+    // As in TypeScript, `((` starts a parenthesized type even when `=>` follows its `)`: an
+    // arrow returning a function type (sigx runtime-terminal `terminalMount`).
+    check(
+        "(a: any, o?: i64): (() => void) => {}",
+        "(arrow (a: any, o: (i64 | undefined)): fn() => void {0 stmts})",
+    );
+    check(
+        "(n: f64): ((x: f64) => f64) => (x: f64) => x * n",
+        "(arrow (n: f64): fn(f64) => f64 (arrow (x: f64) (* x n)))",
+    );
+    assert_eq!(alias_ty("(() => void) | null"), "(fn() => void | null)");
+    assert_eq!(alias_ty("(() => void)[]"), "fn() => void[]");
+    assert_eq!(
+        alias_ty("(cb: () => void) => void"),
+        "fn(fn() => void) => void"
+    );
+}
