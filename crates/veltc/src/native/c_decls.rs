@@ -78,7 +78,7 @@ pub(super) fn check(
                 f.span,
             )
             .with_note(
-                "list its C libraries in `native.c` (`native: { c: {} }` when it calls only the platform's C library, `c`): programs then see it has native code and allow it with `allowNative`",
+                "list its C libraries and their headers in `native.c` (`native: { c: { c: { headers: [\"<string.h>\"] } } }` when it calls only the platform's C library, `c`): programs then see it has native code and allow it with `allowNative`",
             ),
         );
         return;

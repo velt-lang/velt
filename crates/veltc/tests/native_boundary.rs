@@ -140,7 +140,7 @@ fn a_dependency_may_depend_back_on_the_root() {
         root,
         "app",
         "app",
-        "native: { c: {} },\n  dependencies: { mid: { path: \"../mid\" } },",
+        "native: { c: { c: { unchecked: true } } },\n  dependencies: { mid: { path: \"../mid\" } },",
     );
     write(root, "app/src/lib.vlt", C_CALL);
     write(

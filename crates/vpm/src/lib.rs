@@ -12,6 +12,7 @@
 //!   [`workspace`]: members of a `velt.workspace.vlt` share one resolution and lock.
 
 pub mod archive;
+pub mod c_headers;
 pub mod cache;
 pub mod contents;
 pub mod credentials;

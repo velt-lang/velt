@@ -185,6 +185,15 @@ fn report_fixed(fixed: &lint::Fixed) {
     }
 }
 
+/// Check the current package for `target`, as `velt check --target <target>` does, into `sess`.
+pub(super) fn check_package_for(sess: &mut Session, target: &str) -> Result<(), BuildError> {
+    let args = CheckArgs {
+        target: Some(target.to_string()),
+        ..Default::default()
+    };
+    check_input_or_package(sess, &args)
+}
+
 /// `velt check [<file>]`: the file and its imports, or the current package.
 fn check_input_or_package(sess: &mut Session, args: &CheckArgs) -> Result<(), BuildError> {
     resolve(args).and_then(|(opts, scope, same_path)| {

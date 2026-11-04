@@ -1,5 +1,5 @@
 //! vpm subcommands: `add`, `install`, `update`, `publish`, `native build`, `manifest`
-//! (`new`/`init` are in `create`). Status lines go to stderr (cargo style), so stdout stays free
+//! (`new`/`init` are in `create`, `native headers` in `native_headers`). Status lines go to stderr (cargo style), so stdout stays free
 //! for program output.
 
 use std::collections::BTreeMap;
@@ -154,10 +154,22 @@ fn workspace_without_package() -> Result<Option<vpm::workspace::Workspace>, Stri
 
 /// `velt publish`: copy the current package into the local registry, or upload it to the
 /// remote one, with a prebuilt native library for every `native` target. `--native-only` adds
-/// libraries for targets not yet published to the published version.
+/// libraries for targets not yet published to the published version. A package with C
+/// libraries has its declarations checked against their headers first (`velt native headers`),
+/// and publishes the record.
 pub fn publish(native_artifacts: Option<&Path>, native_only: bool) -> Result<(), String> {
     let root = Project::current_root()?;
     let manifest = vpm::Manifest::from_dir(&root)?;
+    if manifest.c_libraries.is_some() && !native_only {
+        let record = super::native_headers::record(&root)?;
+        style::status(
+            "Checked",
+            &format!(
+                "C declarations against their headers on {} targets",
+                record.checked.len()
+            ),
+        );
+    }
     let loc = Locations::from_env()?.with_manifest(&manifest);
     let bundles = collect_bundles(&root, &manifest, native_artifacts, native_only)?;
     let entry = if native_only {

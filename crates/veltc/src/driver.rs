@@ -208,6 +208,9 @@ pub struct Session {
     /// The packages with native code the program allows, and their unsafe code (set by the
     /// check; `velt check` lists them).
     pub native: Vec<crate::native::NativePackage>,
+    /// The digests of the C declarations of packages built here that passed the header check,
+    /// per package root and library (set by the check; `velt native headers` records them).
+    pub c_checked: crate::native::CChecked,
 }
 
 impl Session {
@@ -342,7 +345,7 @@ fn sema_stage(
             .filter(|m| m.is_std)
             .map(|m| m.file)
             .collect();
-        let checked = crate::native::check_declares(
+        sess.c_checked = crate::native::check_declares(
             hir,
             &sess.sm,
             std_root.as_deref(),
@@ -351,8 +354,8 @@ fn sema_stage(
             &opts.target(),
             &mut sess.diagnostics,
         );
-        crate::native::note_checked(&mut sess.native, opts.packages.as_ref(), &checked);
-        crate::native::c_stamp_inputs(&checked, &mut sess.generator_inputs);
+        crate::native::note_checked(&mut sess.native, opts.packages.as_ref(), &sess.c_checked);
+        crate::native::c_stamp_inputs(&sess.c_checked, &mut sess.generator_inputs);
         sess.c_libs = crate::native::c_links(hir, &sess.sm, opts.packages.as_ref(), &opts.target());
     }
     let _ = t;

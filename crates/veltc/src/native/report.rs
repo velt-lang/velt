@@ -260,7 +260,7 @@ mod tests {
         checked
             .entry("/p/bind".into())
             .or_default()
-            .insert("own".to_string(), vec![]);
+            .insert("own".to_string(), (String::new(), vec![]));
         note_checked(&mut packages, Some(&graph), &checked);
         assert_eq!(packages[0].c_libraries[0].2, Checked::Headers);
         assert_eq!(packages[0].c_libraries[1].2, Checked::Listed);

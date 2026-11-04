@@ -5,7 +5,10 @@
 //! each declaration must name a function they declare, with parameters and a result that
 //! match. A mismatch is an error naming the header line. A result that passed is remembered
 //! (`$VELT_HOME/cache/headers/`), so clang runs again only when a header, a declaration, the
-//! target or zig changes. Registry and git packages were checked where they were published.
+//! target or zig changes. Registry and git packages were checked by their authors: their
+//! `c-headers.json` records a digest of the declarations that passed per target, which a build
+//! compares with the declarations it compiles. A library lists its headers or says
+//! `unchecked: true`.
 
 mod compare;
 mod ctype;
@@ -33,25 +36,35 @@ struct Decl {
     span: Span,
 }
 
-/// The C libraries whose declarations passed the check on this target, per package root, with
-/// the files of the package that check read (its headers, with what they include).
-pub type Checked = BTreeMap<PathBuf, BTreeMap<String, Vec<PathBuf>>>;
+/// The digests of the declarations that passed the check, per package root and C library
+/// (what `c-headers.json` records for the target), with the files of the package that check
+/// read (its headers, with what they include).
+pub type Checked = BTreeMap<PathBuf, BTreeMap<String, (String, Vec<PathBuf>)>>;
 
 /// Build-stamp `file` entries for the package files the checks in `checked` read: a build with
 /// nothing changed isn't checked again, so a changed header has to change the stamp.
 pub fn stamp_inputs(checked: &Checked, inputs: &mut Vec<String>) {
-    for file in checked.values().flat_map(|l| l.values()).flatten() {
-        let bytes = std::fs::read(file).unwrap_or_default();
-        inputs.push(format!(
-            "file {}\t{}",
-            vpm::probe::content_hash(&bytes),
-            vpm::relpath::absolute(file).display()
-        ));
+    for (_, files) in checked.values().flat_map(|l| l.values()) {
+        for file in files {
+            let bytes = std::fs::read(file).unwrap_or_default();
+            inputs.push(format!(
+                "file {}\t{}",
+                vpm::probe::content_hash(&bytes),
+                vpm::relpath::absolute(file).display()
+            ));
+        }
     }
 }
 
+/// Whether `file`, a path clang read, is in the package at `root`.
+fn in_package(file: &Path, root: &Path) -> bool {
+    file.starts_with(root) || root.canonicalize().is_ok_and(|r| file.starts_with(r))
+}
+
 /// Check the C declarations of `p` (std's, in `std_files`, aside) against their libraries'
-/// headers for `target`. Errors go to `diags`; the libraries that passed are returned.
+/// headers for `target`: a package built here runs clang, one fetched has its record
+/// (`c-headers.json`) compared. Every library a package declares functions of lists its
+/// headers or says `unchecked: true`. Errors go to `diags`; the digests that passed are returned.
 pub fn check(
     p: &hir::Program,
     sm: &SourceMap,
@@ -62,9 +75,6 @@ pub fn check(
 ) -> Checked {
     let mut checked = Checked::new();
     let Some(graph) = graph else { return checked };
-    let Some(zig_target) = zig_target(target) else {
-        return checked;
-    };
     // (package root, library) → its declarations.
     let mut groups: BTreeMap<(PathBuf, String), (&GraphPackage, Vec<Decl>)> = BTreeMap::new();
     for def in &p.defs {
@@ -76,10 +86,8 @@ pub fn check(
         let Some(package) = graph.package_of(&sm.get(f.span.file).path) else {
             continue;
         };
-        let Some(lib) = package.c_libraries.get(&c.library) else {
-            continue;
-        };
-        if package.fetched || lib.unchecked || lib.headers.is_empty() {
+        // A library other than `c` without an entry is `c_decls`' error.
+        if c.library != "c" && !package.c_libraries.contains_key(&c.library) {
             continue;
         }
         let decl = Decl {
@@ -100,24 +108,122 @@ pub fn check(
             .push(decl);
     }
     for ((root, library), (package, decls)) in groups {
-        let headers = &package.c_libraries[&library].headers;
+        let (headers, unchecked) = match package.c_libraries.get(&library) {
+            Some(lib) => (lib.headers.as_slice(), lib.unchecked),
+            None => (&[][..], false),
+        };
+        if unchecked {
+            continue;
+        }
+        if headers.is_empty() {
+            diags.push(no_headers(&package.name, &library, decls[0].span));
+            continue;
+        }
+        let Some(zig_target) = zig_target(target) else {
+            continue;
+        };
+        let digest = digest(&decls);
+        if package.fetched {
+            if let Err(d) = compare_record(package, &library, &digest, zig_target, decls[0].span) {
+                diags.push(d);
+            }
+            continue;
+        }
         if let Some(read) =
             check_library(&root, &library, headers, &decls, zig_target, target, diags)
         {
             let own = read.into_iter().filter(|f| in_package(f, &root)).collect();
-            checked.entry(root).or_default().insert(library, own);
+            checked
+                .entry(root)
+                .or_default()
+                .insert(library, (digest, own));
         }
     }
     checked
 }
 
-/// Whether `file`, a path clang read, is in the package at `root`.
-fn in_package(file: &Path, root: &Path) -> bool {
-    file.starts_with(root) || root.canonicalize().is_ok_and(|r| file.starts_with(r))
+/// The error for a C library that lists no headers and doesn't say it has none.
+fn no_headers(package: &str, library: &str, at: Span) -> Diagnostic {
+    let example = if library == "c" {
+        "<string.h>"
+    } else {
+        "native/<library>.h"
+    };
+    Diagnostic::error(
+        format!(
+            "package `{package}` declares functions of C library `{library}`, but its package.vlt lists no headers to check them against"
+        ),
+        at,
+    )
+    .with_note(format!(
+        "list them: `native: {{ c: {{ {library}: {{ headers: [\"{example}\"] }} }} }}`; a library without headers (a binary-only SDK) says `unchecked: true` instead"
+    ))
 }
 
-/// Check `decls` of `library` against its `headers`, or find a check of them remembered: when
-/// they pass, the files the check read.
+/// Compare the declarations of a fetched package's `library` (`digest`) with what its author
+/// checked on `zig_target`, as its `c-headers.json` records.
+fn compare_record(
+    package: &GraphPackage,
+    library: &str,
+    digest: &str,
+    zig_target: &str,
+    at: Span,
+) -> Result<(), Diagnostic> {
+    let name = &package.name;
+    let record = vpm::c_headers::CHeaders::read(&package.root)
+        .map_err(|e| Diagnostic::error(e, at))?
+        .ok_or_else(|| {
+            Diagnostic::error(
+                format!(
+                    "package `{name}` declares C functions, but was published without a record that they were checked against their headers ({})",
+                    vpm::c_headers::FILE
+                ),
+                at,
+            )
+            .with_note("its author makes the record with `velt native headers`, which `velt publish` runs; ask for a version that has it")
+        })?;
+    match record.digest(zig_target, library) {
+        Some(d) if d == digest => Ok(()),
+        Some(_) => Err(Diagnostic::error(
+            format!(
+                "the declarations of C library `{library}` in package `{name}` are not the ones its author checked against its headers for {zig_target}"
+            ),
+            at,
+        )
+        .with_note(format!(
+            "{} records other declarations: the package changed after the check",
+            vpm::c_headers::FILE
+        ))),
+        None => Err(Diagnostic::error(
+            format!(
+                "package `{name}`'s C library `{library}` was not checked against its headers for {zig_target}"
+            ),
+            at,
+        )
+        .with_note(format!(
+            "{} has no entry for {zig_target}: its author runs `velt native headers` to check every target",
+            vpm::c_headers::FILE
+        ))),
+    }
+}
+
+/// The digest of a library's declarations as `c-headers.json` records it: each function's name
+/// and what its parameters and result pass, in declaration order.
+fn digest(decls: &[Decl]) -> String {
+    let mut h = Sha256::new();
+    for d in decls {
+        h.update(&d.name);
+        for p in &d.params {
+            h.update([0]);
+            h.update(compare::describe(p));
+        }
+        h.update([1]);
+        h.update(compare::describe(&d.ret));
+        h.update([2]);
+    }
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
+}
+
 #[allow(clippy::too_many_arguments)]
 fn check_library(
     root: &Path,
@@ -321,7 +427,7 @@ fn cache_key(root: &Path, headers: &[String], decls: &[Decl], target: &str) -> S
 
 /// The target as zig names it; `None` for one without C headers (WebAssembly). Windows
 /// targets read zig's MinGW headers, which have the MSVC targets' type sizes.
-fn zig_target(triple: &str) -> Option<&'static str> {
+pub fn zig_target(triple: &str) -> Option<&'static str> {
     Some(match triple {
         "aarch64-apple-darwin" => "aarch64-macos",
         "x86_64-apple-darwin" => "x86_64-macos",
@@ -536,6 +642,75 @@ mod tests {
         );
     }
 
+    fn decl(name: &str, params: Vec<Shape>) -> Decl {
+        let int = compare::Scalar::Int {
+            bits: 32,
+            signed: true,
+            pointer_sized: false,
+        };
+        Decl {
+            name: name.into(),
+            params,
+            ret: Shape::Scalar(int),
+            span: Span::DUMMY,
+        }
+    }
+
+    #[test]
+    fn the_digest_changes_with_any_declaration() {
+        let base = digest(&[decl("f", vec![Shape::Text])]);
+        assert_eq!(base, digest(&[decl("f", vec![Shape::Text])]));
+        assert_ne!(base, digest(&[decl("g", vec![Shape::Text])]));
+        assert_ne!(base, digest(&[decl("f", vec![Shape::Null])]));
+        assert_ne!(base, digest(&[decl("f", vec![])]));
+        let two = [decl("f", vec![Shape::Text]), decl("g", vec![])];
+        assert_ne!(base, digest(&two));
+    }
+
+    /// A fetched package's declarations are compared with its `c-headers.json`.
+    #[test]
+    fn a_fetched_package_s_record_is_compared() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut graph = PackageGraph::default();
+        graph.add("bind", tmp.path(), BTreeMap::new()).fetched = true;
+        let package = &graph.packages()[0];
+        let decls = [decl("f", vec![Shape::Text])];
+        let mine = digest(&decls);
+        let target = "x86_64-linux-gnu";
+        let e = compare_record(package, "own", &mine, target, Span::DUMMY).unwrap_err();
+        assert!(
+            e.message.contains("was published without a record"),
+            "{}",
+            e.message
+        );
+        let mut record = vpm::c_headers::CHeaders::default();
+        record
+            .checked
+            .entry(target.into())
+            .or_default()
+            .insert("own".into(), mine.clone());
+        record.write(tmp.path()).unwrap();
+        assert!(compare_record(package, "own", &mine, target, Span::DUMMY).is_ok());
+        let other = digest(&[decl("f", vec![])]);
+        let e = compare_record(package, "own", &other, target, Span::DUMMY).unwrap_err();
+        assert!(
+            e.message.contains(
+                "are not the ones its author checked against its headers for x86_64-linux-gnu"
+            ),
+            "{}",
+            e.message
+        );
+        let e = compare_record(package, "own", &mine, "aarch64-macos", Span::DUMMY).unwrap_err();
+        assert!(
+            e.message
+                .contains("was not checked against its headers for aarch64-macos"),
+            "{}",
+            e.message
+        );
+        let e = compare_record(package, "sdk", &mine, target, Span::DUMMY).unwrap_err();
+        assert!(e.message.contains("C library `sdk`"), "{}", e.message);
+    }
+
     #[test]
     fn clang_s_dependency_list_gives_the_files_read() {
         assert_eq!(
@@ -602,7 +777,7 @@ mod tests {
         checked
             .entry(dir.path().to_path_buf())
             .or_default()
-            .insert("own".into(), vec![header.clone()]);
+            .insert("own".into(), (String::new(), vec![header.clone()]));
         let mut inputs = Vec::new();
         stamp_inputs(&checked, &mut inputs);
         let hash = vpm::probe::content_hash(b"int f(int a);\n");

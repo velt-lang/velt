@@ -18,6 +18,7 @@ mod host;
 mod lint;
 pub mod lsp;
 pub mod members;
+mod native_headers;
 mod package;
 pub(crate) mod project;
 mod registry;
@@ -126,6 +127,7 @@ pub fn execute(cmd: Command) -> ExitCode {
             native_only,
         } => package::publish(native_artifacts.as_deref(), native_only),
         Command::NativeBuild { target } => package::native_build(target),
+        Command::NativeHeaders => native_headers::native_headers(),
         Command::Manifest { json } => package::manifest(json),
         Command::Yank {
             name,

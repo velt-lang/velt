@@ -399,10 +399,10 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "native",
-        summary: "Build the package's native library",
-        usage: &["native build [--target <triple>]"],
-        about: "Builds the `native` crate with cargo and writes the bundle `velt publish` uploads \
-                to target/velt-native/<triple>/ (needs Rust; users of the package do not).",
+        summary: "Build the package's native library, or check its C headers",
+        usage: &["native build [--target <triple>]", "native headers"],
+        about: "build: the `native` crate into the bundle `velt publish` uploads (needs Rust). \
+                headers: `declare c` against C headers on every target, into c-headers.json.",
         options: &[("--target <triple>", "the target to build for (default: this machine)")],
         examples: &[(
             "velt native build --target aarch64-apple-darwin",
