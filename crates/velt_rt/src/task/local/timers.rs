@@ -288,16 +288,18 @@ impl Timers {
         root_at
     }
 
-    /// The poll that fired ended: what it held back and is still due gets the next poll, and the
-    /// tokio timer (it wakes `task`) is armed for anything later.
+    /// The poll that fired ended: what it held back and is still there gets the next poll, and
+    /// the tokio timer (it wakes `task`) is armed for anything later, unless it is already: a timer
+    /// registered during this poll has seen to that itself.
     pub(crate) fn end_poll(&self, task: &Waker) {
         if !self.held.swap(false, Ordering::Relaxed) {
             return;
         }
         let mut s = self.state.lock();
-        s.held = None;
+        let held = s.held.take();
         if let Some(key) = s.queue.first_key() {
-            if key.0 <= Instant::now() || arm(&mut s.armed, key.0, task) {
+            let armed = s.armed.as_ref().is_some_and(|(_, at)| *at == key.0);
+            if held.is_some_and(|now| key.0 <= now) || (!armed && arm(&mut s.armed, key.0, task)) {
                 task.wake_by_ref();
             }
         }
