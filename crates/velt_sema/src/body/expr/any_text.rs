@@ -25,6 +25,7 @@ use super::setters::synth;
 use crate::body::places::set_place_mode;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, Callee, DefId, ExprKind as H, Intrinsic, TyId, TyKind, UseMode};
+use crate::hook_calls::{self as hooks, ty, Arg, Call, Form, HookTy};
 
 /// `at`: a text helper's own parameter, the user's call site its stops report.
 fn site_param(span: Span) -> ast::Expr {
@@ -33,6 +34,15 @@ fn site_param(span: Span) -> ast::Expr {
         span,
     };
     synth(ast::ExprKind::Ident(at), span)
+}
+
+/// The call-site argument of a text helper's call, filled by [`FnCx::text_helper_call`]: an
+/// empty string until then.
+pub(super) fn text_site_arg(span: Span) -> Arg<ty::Str, ast::Expr> {
+    ty::Str::of(synth(
+        ast::ExprKind::Lit(ast::Lit::Str(String::new())),
+        span,
+    ))
 }
 
 /// `callee(args)`.
@@ -69,20 +79,42 @@ pub(crate) enum Hint {
     Default,
 }
 
+/// The `any` written and the call site, the arguments of a text hook.
+type TextArgs<E> = (Arg<ty::Any, E>, Arg<ty::Str, E>);
+
 impl Hint {
-    /// The prelude function writing a value with this hint, whose body holds the dispatch.
-    fn helper(self) -> &'static str {
+    /// The name of the prelude function writing a value with this hint, whose body holds the
+    /// dispatch.
+    fn helper_name(self) -> &'static str {
         match self {
             Hint::String => velt_common::std_hook!(any_string),
             Hint::Default => velt_common::std_hook!(any_concat_text),
         }
     }
 
-    /// The prelude function for values that are no class instances with such a method.
-    fn fallback(self) -> &'static str {
+    /// The call of the prelude function writing a value with this hint ([`Self::helper_name`]).
+    fn helper<E: Form>(self, (v, at): TextArgs<E>) -> Call<ty::Str, E> {
         match self {
-            Hint::String => velt_common::std_hook!(any_text),
-            Hint::Default => velt_common::std_hook!(any_concat_plain),
+            Hint::String => hooks::any_string(v, at),
+            Hint::Default => hooks::any_concat_text(v, at),
+        }
+    }
+
+    /// The call of the prelude function for values that are no class instances with such a
+    /// method.
+    fn fallback<E: Form>(self, (v, at): TextArgs<E>) -> Call<ty::Str, E> {
+        match self {
+            Hint::String => hooks::any_text(v, at),
+            Hint::Default => hooks::any_concat_plain(v, at),
+        }
+    }
+
+    /// The call of the prelude function writing a record with this hint, which stops for one
+    /// without a prototype.
+    fn record<E: Form>(self, (v, at): TextArgs<E>) -> Call<ty::Str, E> {
+        match self {
+            Hint::String => hooks::any_record_text(v, at),
+            Hint::Default => hooks::any_record_concat(v, at),
         }
     }
 
@@ -109,10 +141,10 @@ const TEXT_FNS: [&str; 6] = [
 enum TextMethod {
     /// A `Proxy`, whose traps the text would run (not yet).
     Proxy,
-    /// A record, in a program that calls `Object.create(null)`: the prelude function (hint's)
-    /// that stops with Node's `TypeError` for one without a prototype, else writes it as an
-    /// object.
-    Record(&'static str),
+    /// A record, in a program that calls `Object.create(null)`: the prelude function (hint's,
+    /// [`Hint::record`]) that stops with Node's `TypeError` for one without a prototype, else
+    /// writes it as an object.
+    Record(Hint),
     /// Its `[Symbol.toPrimitive]`, with the hint when it takes one.
     ToPrimitive(Option<&'static str>),
     /// `OrdinaryToPrimitive`: the methods tried in order, each with whether its result type is
@@ -155,23 +187,18 @@ impl FnCx<'_, '_> {
         self.mk(site, str_, span)
     }
 
-    /// `f(args, <site>)` of the text helper `f`: `args` and the call site its stops report
-    /// ([`Self::text_site`]), checked as a call with an empty string in its place.
-    pub(crate) fn text_helper_call(
+    /// The call `f` of a text helper, its last argument [`text_site_arg`]: the call site its
+    /// stops report ([`Self::text_site`]), checked as a call with an empty string in its place.
+    pub(crate) fn text_helper_call<R>(
         &mut self,
-        f: &str,
-        mut args: Vec<ast::Expr>,
+        mut f: Call<R, ast::Expr>,
         span: Span,
     ) -> hir::Expr {
         if self.in_text_helper() {
-            args.push(site_param(span));
-            return self.prelude_fn_call(f, args, span);
+            *f.site_mut() = site_param(span);
+            return f.check(self, span);
         }
-        args.push(synth(
-            ast::ExprKind::Lit(ast::Lit::Str(String::new())),
-            span,
-        ));
-        let mut call = self.prelude_fn_call(f, args, span);
+        let mut call = f.check(self, span);
         if let H::Call { args, .. } = &mut call.kind {
             if let Some(last) = args.last_mut() {
                 if matches!(last.kind, H::Lit(_)) {
@@ -187,7 +214,7 @@ impl FnCx<'_, '_> {
     pub(crate) fn dynamic_text_as(&mut self, h: hir::Expr, span: Span, hint: Hint) -> hir::Expr {
         if self.cx.scopes[self.module].is_std {
             for own in [Hint::String, Hint::Default] {
-                if self.fn_name.ends_with(own.helper()) {
+                if self.fn_name.ends_with(own.helper_name()) {
                     return self.text_dispatch(h, span, own);
                 }
             }
@@ -202,11 +229,13 @@ impl FnCx<'_, '_> {
             set_place_mode(&mut h, UseMode::Borrow);
             let str_ = self.cx.ty.str_;
             let site = self.text_site(span);
-            return self.prelude_hir_call(hint.helper(), vec![h, site], str_, span);
+            let call = hint.helper((ty::Any::of(h), ty::Str::of(site)));
+            return call.emit(self, str_, span);
         }
         let h = self.share_if_place(h);
         self.with_temp("<text>", h, span, span, |lw, v| {
-            lw.text_helper_call(hint.helper(), vec![v.clone()], span)
+            let call = hint.helper((ty::Any::of(v.clone()), text_site_arg(span)));
+            lw.text_helper_call(call, span)
         })
     }
 
@@ -237,7 +266,7 @@ impl FnCx<'_, '_> {
             lw.dynamic_class_match_where(
                 s,
                 str_,
-                (hint.fallback(), vec![site_param(span)]),
+                |v| hint.fallback((ty::Any::of(v), ty::Str::of(site_param(span)))),
                 |lw, c| lw.text_method(c, hint).is_some(),
                 |lw, c, read| match lw.text_method(c, hint) {
                     Some(m) => lw.text_method_call(&m, read, span),
@@ -253,33 +282,20 @@ impl FnCx<'_, '_> {
     /// methods in turn (`anyPrimTry(read.valueOf(), at) ?? anyPrimText(read.toString(), at)`),
     /// the result written with `ToString`.
     fn text_method_call(&mut self, m: &TextMethod, read: ast::Expr, span: Span) -> hir::Expr {
-        let at = || site_param(span);
-        let call_fn = |f: &str, args: Vec<ast::Expr>| {
-            let callee = synth(
-                ast::ExprKind::Ident(ast::Ident {
-                    name: f.into(),
-                    span,
-                }),
-                span,
-            );
-            call_expr(callee, args, span)
-        };
+        let at = || ty::Str::of(site_param(span));
         let text = match m {
             TextMethod::Proxy => {
                 let lit = synth(ast::ExprKind::Lit(ast::Lit::Str("Proxy".into())), span);
-                call_fn(
-                    velt_common::std_hook!(any_text_unsupported),
-                    vec![lit, at()],
-                )
+                hooks::any_text_unsupported(ty::Str::of(lit), at()).ast(span)
             }
-            TextMethod::Record(f) => call_fn(f, vec![read, at()]),
+            &TextMethod::Record(hint) => hint.record((ty::Any::of(read), at())).ast(span),
             TextMethod::ToPrimitive(hint) => {
                 let args = hint
                     .map(|h| synth(ast::ExprKind::Lit(ast::Lit::Str(h.into())), span))
                     .into_iter()
                     .collect();
                 let call = method_call(read, "[Symbol.toPrimitive]", args, span);
-                call_fn(velt_common::std_hook!(any_prim_text), vec![call, at()])
+                hooks::any_prim_text(ty::Any::of(call), at()).ast(span)
             }
             TextMethod::Ordinary { methods, inherited } => {
                 let mut parts = vec![];
@@ -287,20 +303,14 @@ impl FnCx<'_, '_> {
                 for (i, &(name, primitive)) in methods.iter().enumerate() {
                     let call = method_call(read.clone(), name, vec![], span);
                     if primitive || (i + 1 == methods.len() && !inherited) {
-                        parts.push(call_fn(
-                            velt_common::std_hook!(any_prim_text),
-                            vec![call, at()],
-                        ));
+                        parts.push(hooks::any_prim_text(ty::Any::of(call), at()).ast(span));
                         ended = true;
                         break;
                     }
-                    parts.push(call_fn(
-                        velt_common::std_hook!(any_prim_try),
-                        vec![call, at()],
-                    ));
+                    parts.push(hooks::any_prim_try(ty::Any::of(call), at()).ast(span));
                 }
                 if !ended {
-                    parts.push(call_fn(velt_common::std_hook!(any_text), vec![read, at()]));
+                    parts.push(hooks::any_text(ty::Any::of(read), at()).ast(span));
                 }
                 let mut parts = parts.into_iter().rev();
                 let Some(mut text) = parts.next() else {
@@ -329,10 +339,7 @@ impl FnCx<'_, '_> {
         // Only a record can have no prototype, and only where `Object.create(null)` is called:
         // other values never pay for the test.
         if self.cx.objects.null_proto_records && self.cx.prelude_adt("Record") == Some(c) {
-            return Some(TextMethod::Record(match hint {
-                Hint::String => velt_common::std_hook!(any_record_text),
-                Hint::Default => velt_common::std_hook!(any_record_concat),
-            }));
+            return Some(TextMethod::Record(hint));
         }
         let n = self.cx.adt(c).map_or(0, |a| a.generics.len());
         let params: Vec<_> = (0..n as u32).map(|i| self.cx.ty.param(i)).collect();
@@ -504,7 +511,12 @@ impl FnCx<'_, '_> {
         self.with_temp("<list>", init, span, span, |lw, v| {
             let comma = || synth(ast::ExprKind::Lit(ast::Lit::Str(",".into())), span);
             let sep = args.first().cloned().unwrap_or_else(comma);
-            lw.text_helper_call(velt_common::std_hook!(any_join), vec![v.clone(), sep], span)
+            let call = hooks::any_join(
+                ty::Any::of(v.clone()),
+                ty::Str::of(sep),
+                text_site_arg(span),
+            );
+            lw.text_helper_call(call, span)
         })
     }
 

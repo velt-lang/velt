@@ -16,6 +16,7 @@ use velt_syntax::ast;
 
 use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, DefId, ExprKind as H, Intrinsic, LocalId, TyId, TyKind, UseMode};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 /// Is `name` (`u8x16.lane`) a method of a SIMD type? Those are Velt's own API: a lane of a
 /// `u8x16` is a `u8`, not a number.
@@ -455,36 +456,35 @@ impl FnCx<'_, '_> {
     /// array or vector has room at, so `fits` gives `false` and the others their `RangeError`.
     pub(super) fn simd_position(&mut self, h: hir::Expr) -> hir::Expr {
         let span = h.span;
-        let Some(crate::ctx::Item::Def(d)) =
-            self.cx.std_def(velt_common::std_hook!(float_position))
-        else {
-            let usize_ = self.cx.ty.usize;
+        let usize_ = self.cx.ty.usize;
+        if self
+            .cx
+            .prelude_fn(velt_common::std_hook!(float_position))
+            .is_none()
+        {
             return self.mk(H::Cast(Box::new(h)), usize_, span);
-        };
+        }
         let f64_ = self.cx.ty.f64;
         let arg = if h.ty == f64_ {
             h
         } else {
             self.mk(H::Cast(Box::new(h)), f64_, span)
         };
-        self.mk(
-            H::Call {
-                callee: hir::Callee::Def(d, vec![]),
-                args: vec![arg],
-            },
-            self.cx.ty.usize,
-            span,
-        )
+        (hooks::float_position(ty::F64::of(arg)).plain(self.cx, usize_, span))
+            .unwrap_or_else(|| panic!("ICE: `floatPosition` is gone"))
     }
 
     /// A float index (`xs[i]` with `i: number`, `xs[Math.floor(n / 2)]`) as a `usize`, through
     /// std's `floatIndex` (a hook): a whole number indexes as usual, anything else panics (in
     /// JS it reads `undefined`).
     pub(super) fn float_index(&mut self, h: hir::Expr) -> hir::Expr {
-        let Some(crate::ctx::Item::Def(d)) = self.cx.std_def(velt_common::std_hook!(float_index))
-        else {
+        if self
+            .cx
+            .prelude_fn(velt_common::std_hook!(float_index))
+            .is_none()
+        {
             return h;
-        };
+        }
         let span = h.span;
         let f64_ = self.cx.ty.f64;
         let arg = if h.ty == f64_ {
@@ -492,14 +492,9 @@ impl FnCx<'_, '_> {
         } else {
             self.mk(H::Cast(Box::new(h)), f64_, span)
         };
-        self.mk(
-            H::Call {
-                callee: hir::Callee::Def(d, vec![]),
-                args: vec![arg],
-            },
-            self.cx.ty.usize,
-            span,
-        )
+        let usize_ = self.cx.ty.usize;
+        (hooks::float_index(ty::F64::of(arg)).plain(self.cx, usize_, span))
+            .unwrap_or_else(|| panic!("ICE: `floatIndex` is gone"))
     }
 }
 

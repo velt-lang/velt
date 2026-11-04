@@ -11,6 +11,7 @@ use crate::any::Dynamic;
 use crate::body::places::{is_place, set_place_mode};
 use crate::body::{FnCx, LocalKind, Want};
 use crate::hir::{self, ExprKind as H, Intrinsic, Lit, UseMode};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 /// The key of a dynamic write.
 pub(super) enum WriteKey {
@@ -285,12 +286,13 @@ impl FnCx<'_, '_> {
                 self.any_op(Intrinsic::AnyGet, vec![obj.clone(), n.clone()], any, span)
             }
             WriteKey::Sym(n, k) => {
-                let args = vec![obj.clone(), n.clone(), k.clone()];
-                self.prelude_hir_call(velt_common::std_hook!(any_get_sym), args, any, span)
+                let (o, n, k) = (obj.clone(), n.clone(), k.clone());
+                let call = hooks::any_get_sym(ty::Any::of(o), ty::Str::of(n), ty::Symbol::of(k));
+                call.emit(self, any, span)
             }
             WriteKey::Keyed(k) => {
-                let args = vec![obj.clone(), k.clone()];
-                self.prelude_hir_call(velt_common::std_hook!(any_get_key), args, any, span)
+                let call = hooks::any_get_key(ty::Any::of(obj.clone()), ty::Any::of(k.clone()));
+                call.emit(self, any, span)
             }
         }
     }
@@ -307,18 +309,14 @@ impl FnCx<'_, '_> {
         match key {
             WriteKey::Str(k) => self.any_op(Intrinsic::AnySet, vec![obj, k, v], unit, span),
             WriteKey::Num(k) => self.any_op(Intrinsic::AnySetIndex, vec![obj, k, v], unit, span),
-            WriteKey::Sym(n, k) => self.prelude_hir_call(
-                velt_common::std_hook!(any_set_sym),
-                vec![obj, n, k, v],
-                unit,
-                span,
-            ),
-            WriteKey::Keyed(k) => self.prelude_hir_call(
-                velt_common::std_hook!(any_set_key),
-                vec![obj, k, v],
-                unit,
-                span,
-            ),
+            WriteKey::Sym(n, k) => {
+                let (o, n, k) = (ty::Any::of(obj), ty::Str::of(n), ty::Symbol::of(k));
+                hooks::any_set_sym(o, n, k, ty::Any::of(v)).emit(self, unit, span)
+            }
+            WriteKey::Keyed(k) => {
+                let (o, k) = (ty::Any::of(obj), ty::Any::of(k));
+                hooks::any_set_key(o, k, ty::Any::of(v)).emit(self, unit, span)
+            }
         }
     }
 

@@ -11,6 +11,7 @@ use velt_syntax::ast;
 
 use crate::body::FnCx;
 use crate::hir::{self, TyId};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 /// An expression the source doesn't contain (an argument filled in for the prelude call).
 fn synthetic(kind: ast::ExprKind, span: Span) -> ast::Expr {
@@ -109,14 +110,8 @@ impl FnCx<'_, '_> {
             ast::ExprKind::Lit(ast::Lit::Str(prop.name.clone())),
             prop.span,
         );
-        Some(self.prelude_call(
-            velt_common::std_hook!(process_env),
-            "process.env",
-            &[],
-            &[name],
-            exp,
-            span,
-        ))
+        let call = hooks::process_env(ty::Str::of(name));
+        Some(call.check_as(self, "process.env", exp, span))
     }
 
     /// `process.argv`: Node's `[runtime, script, ...args]`, a fresh array per read; `None` for
@@ -131,14 +126,7 @@ impl FnCx<'_, '_> {
         if prop.name != "argv" || !self.is_builtin_process(object) {
             return None;
         }
-        Some(self.prelude_call(
-            velt_common::std_hook!(process_argv),
-            "process.argv",
-            &[],
-            &[],
-            exp,
-            span,
-        ))
+        Some(hooks::process_argv().check_as(self, "process.argv", exp, span))
     }
 
     /// Is `e` the builtin `process.argv`?
@@ -247,15 +235,8 @@ impl FnCx<'_, '_> {
         if self.process_member(object)?.name != "env" {
             return None;
         }
-        let args = std::slice::from_ref(index);
-        Some(self.prelude_call(
-            velt_common::std_hook!(process_env),
-            "process.env",
-            &[],
-            args,
-            None,
-            span,
-        ))
+        let call = hooks::process_env(ty::Str::of(index.clone()));
+        Some(call.check_as(self, "process.env", None, span))
     }
 }
 

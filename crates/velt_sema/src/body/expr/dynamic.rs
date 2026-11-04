@@ -13,6 +13,7 @@ use crate::body::{FnCx, LocalKind};
 use crate::hir::{
     self, ExprKind as H, Intrinsic, LocalId, Nothing, PatKind as P, TyId, TyKind, UseMode,
 };
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 /// Does a value of the dynamic type `from` convert to the dynamic type `to`? Every one converts
 /// to `any` and `unknown`, an `any` and a `Function` to `object`, an `any` to `Function`; the
@@ -626,12 +627,7 @@ impl FnCx<'_, '_> {
             TyKind::Array(_) => {
                 let x = read(self);
                 if self.uses_proxy() && !self.cx.scopes[self.module].is_std {
-                    self.prelude_hir_call(
-                        velt_common::std_hook!(any_is_array_proxy),
-                        vec![x],
-                        b,
-                        span,
-                    )
+                    hooks::any_is_array_proxy(ty::Any::of(x)).emit(self, b, span)
                 } else {
                     self.intrinsic(Intrinsic::AnyIsArray, vec![x], b, span)
                 }

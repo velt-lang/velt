@@ -13,6 +13,7 @@ use velt_syntax::ast;
 use crate::any::Dynamic;
 use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, BinOp, ExprKind as H, Intrinsic, LocalId, TyId, UseMode};
+use crate::hook_calls::{self as hooks, ty, Call, HookTy};
 
 /// `Intrinsic::AnyTag` of a number; tags up to it (`undefined`, `null`, booleans, numbers) add
 /// as numbers.
@@ -91,17 +92,16 @@ impl FnCx<'_, '_> {
             .all(|t| matches!(self.cx.dynamic(*t), None | Some(Dynamic::Any)))
     }
 
-    /// A call of the prelude's operator helper `name`, which reads arrays and objects through
-    /// `any` (their member slots).
-    pub(crate) fn dyn_helper_call(
+    /// The call `f` of a prelude operator helper, which reads arrays and objects through `any`
+    /// (their member slots).
+    pub(crate) fn dyn_helper_call<R>(
         &mut self,
-        name: &str,
-        args: Vec<hir::Expr>,
+        f: Call<R, hir::Expr>,
         ret: TyId,
         span: Span,
     ) -> hir::Expr {
         self.note_dyn_members();
-        self.prelude_hir_call(name, args, ret, span)
+        f.emit(self, ret, span)
     }
 
     /// The `any` in `t`, borrowed.
@@ -140,12 +140,8 @@ impl FnCx<'_, '_> {
         let is_obj = self.tag_test(t, d, BinOp::GtEq, TAG_FUNCTION, span);
         let read = self.side_any(t, d, span);
         let site = self.text_site(span);
-        let obj = self.dyn_helper_call(
-            velt_common::std_hook!(any_object_number),
-            vec![read, site],
-            f64_,
-            span,
-        );
+        let call = hooks::any_object_number(ty::Any::of(read), ty::Str::of(site));
+        let obj = self.dyn_helper_call(call, f64_, span);
         let prim = self.op_prim_number(t, d, span);
         self.op_choose(is_obj, obj, prim, f64_, span)
     }
@@ -273,12 +269,8 @@ impl FnCx<'_, '_> {
         };
         let (xa, ya) = (as_any(self, a), as_any(self, b));
         let site = self.text_site(span);
-        let slow = self.dyn_helper_call(
-            velt_common::std_hook!(any_add),
-            vec![xa, ya, site],
-            any,
-            span,
-        );
+        let call = hooks::any_add(ty::Any::of(xa), ty::Any::of(ya), ty::Str::of(site));
+        let slow = self.dyn_helper_call(call, any, span);
         let v = match test {
             Some(test) => self.op_choose(test, fast, slow, any, span),
             None => slow,

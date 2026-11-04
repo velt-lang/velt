@@ -20,6 +20,7 @@ use crate::defs::{IfaceMethod, ThrowSrc};
 use crate::hir::{
     self, Callee, Def, DefId, ExprKind as H, Intrinsic, LocalId, StmtKind, TyId, TyKind, UseMode,
 };
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 impl Ctx<'_> {
     /// Can a `Function` field fill method `m` (whose interface arguments and implementor are
@@ -275,14 +276,12 @@ impl Ctx<'_> {
             ty: list_ty,
             span,
         };
-        let call = hir::Expr {
-            kind: H::Call {
-                callee: Callee::Def(call_on, vec![]),
-                args: vec![f, me, list],
-            },
-            ty: any,
-            span,
-        };
+        let call = hooks::call_on(
+            ty::Any::of(f),
+            ty::Any::of(me),
+            ty::Array::<ty::Any>::of(list),
+        );
+        let call = (call.plain(self, any, span)).unwrap_or_else(|| panic!("ICE: `callOn` is gone"));
         let kind = match ret == self.ty.unit || self.dynamic(ret) == Some(Dynamic::Any) {
             true if ret == self.ty.unit => StmtKind::Expr(call),
             true => StmtKind::Return(Some(call)),

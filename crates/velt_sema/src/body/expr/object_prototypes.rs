@@ -11,6 +11,7 @@ use super::setters::synth;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
 use crate::hir::{self, AdtKind, DefId, ExprKind as H, PatKind as P, TyId, TyKind};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 /// A prototype Velt names: what tells it apart, and what `console.log`, `String` and
 /// `JSON.stringify` make of it, as in Node.
@@ -192,25 +193,17 @@ impl FnCx<'_, '_> {
         self.dynamic_class_match(
             s,
             ret,
-            velt_common::std_hook!(any_prototype),
+            |v| hooks::any_prototype(ty::Any::of(v)),
             |lw, c, read| {
                 if Some(c) == record {
-                    return lw.prelude_fn_call(
-                        velt_common::std_hook!(any_record_prototype),
-                        vec![read],
-                        span,
-                    );
+                    return hooks::any_record_prototype(ty::Any::of(read)).check(lw, span);
                 }
                 match lw.class_proto(c) {
                     Some(p) => lw.new_prototype(&p, ret, span),
                     None => {
                         let name = lw.cx.adt(c).map_or(String::new(), |a| a.name.clone());
                         let lit = synth(ast::ExprKind::Lit(ast::Lit::Str(name)), span);
-                        lw.prelude_fn_call(
-                            velt_common::std_hook!(any_prototype_unsupported),
-                            vec![lit],
-                            span,
-                        )
+                        hooks::any_prototype_unsupported(ty::Str::of(lit)).check(lw, span)
                     }
                 }
             },
@@ -507,7 +500,7 @@ impl FnCx<'_, '_> {
                 _ => None,
             },
         );
-        let Some((d, f)) = found else {
+        let Some((d, _)) = found else {
             self.cx
                 .err("prototypes need the prelude (std/prelude)", span);
             return self.error_expr(span);
@@ -516,14 +509,9 @@ impl FnCx<'_, '_> {
         let opt = self.cx.ty.option(proto);
         let (l, r) = (self.coerce(l, opt), self.coerce(r, opt));
         let b = self.cx.ty.bool_;
-        let call = self.mk(
-            H::Call {
-                callee: hir::Callee::Def(f, vec![]),
-                args: vec![l, r],
-            },
-            b,
-            span,
-        );
+        let (l, r) = (ty::OrNull::<ty::ObjectPrototype>::of(l), ty::OrNull::of(r));
+        let call = (hooks::prototype_same(l, r).plain(self.cx, b, span))
+            .unwrap_or_else(|| panic!("ICE: `prototypeSame` is gone"));
         self.negated(call, negate, span)
     }
 }

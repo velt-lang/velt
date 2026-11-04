@@ -11,6 +11,7 @@ use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
 use crate::hir::{self, TyId};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 impl FnCx<'_, '_> {
     /// `new Array<T>(n).fill(v)` as `arrayFilled<T>(n, v)`, if `object.prop(args)` is that.
@@ -42,30 +43,16 @@ impl FnCx<'_, '_> {
                 match count {
                     Some(1) => {}
                     Some(k) => {
-                        let filled = synthetic_call(
-                            velt_common::std_hook!(array_filled),
-                            type_args,
-                            vec![int_lit(k as u128, span), args[0].clone()],
-                            span,
-                        );
-                        let call_args = vec![(**inner).clone(), filled];
-                        let call = synthetic_call(
-                            velt_common::std_hook!(array_one),
-                            vec![],
-                            call_args,
-                            span,
-                        );
-                        return Some(self.expr(&call, exp, Want::Move));
+                        let (k, v) = (int_lit(k as u128, span), args[0].clone());
+                        let filled = hooks::array_filled(type_args, ty::F64::of(k), ty::Gen::of(v));
+                        let filled = ty::Gen::of(filled.ast(span));
+                        let call = hooks::array_one(vec![], ty::Gen::of((**inner).clone()), filled);
+                        return Some(call.check_exp(self, exp, span));
                     }
                     None => {
-                        let call_args = vec![n.clone(), args[0].clone()];
-                        let call = synthetic_call(
-                            velt_common::std_hook!(array_filled),
-                            type_args,
-                            call_args,
-                            span,
-                        );
-                        return Some(self.expr(&call, exp, Want::Move));
+                        let (n, v) = (ty::F64::of(n.clone()), ty::Gen::of(args[0].clone()));
+                        let call = hooks::array_filled(type_args, n, v);
+                        return Some(call.check_exp(self, exp, span));
                     }
                 }
                 elem = first_of(inner);
@@ -116,14 +103,12 @@ impl FnCx<'_, '_> {
             // A length of any numeric type (or `any`) as a `number`: the prelude checks it the
             // way JS does (a whole number from 0 up, within the array length limit). An `n`
             // with errors reports them here.
-            _ => synthetic_call(
-                velt_common::std_hook!(array_filled),
-                type_args,
-                vec![as_number(n), args[0].clone()],
-                span,
-            ),
+            _ => {
+                let (n, v) = (ty::F64::of(as_number(n)), ty::Gen::of(args[0].clone()));
+                hooks::array_filled(type_args, n, v)
+            }
         };
-        Some(self.expr(&call, exp, Want::Move))
+        Some(call.check_exp(self, exp, span))
     }
 
     /// `new Array<T>(e).fill(v)` with `e` a value of the numeric enum `def`: its number is the
@@ -154,15 +139,9 @@ impl FnCx<'_, '_> {
         };
         let elem = vh.ty;
         let ty = self.cx.ty.intern(hir::TyKind::Array(elem));
-        let d = self
-            .cx
-            .prelude_fn(velt_common::std_hook!(array_filled))
-            .unwrap_or_else(|| panic!("ICE: std without the hook `arrayFilled`"));
-        let kind = hir::ExprKind::Call {
-            callee: hir::Callee::Def(d, vec![elem]),
-            args: vec![n, vh],
-        };
-        self.mk(kind, ty, span)
+        let call = hooks::array_filled([elem], ty::F64::of(n), ty::Gen::of(vh));
+        (call.plain(self.cx, ty, span))
+            .unwrap_or_else(|| panic!("ICE: std without the hook `arrayFilled`"))
     }
 
     /// `new Array<T>(x).fill(v)` with an `x` that is no number: as in JS, `x` is evaluated and
@@ -189,16 +168,10 @@ impl FnCx<'_, '_> {
             span,
         };
         let arr = self.expr(&lit, lit_exp, Want::Move);
-        let d = self
-            .cx
-            .prelude_fn(velt_common::std_hook!(array_one))
-            .unwrap_or_else(|| panic!("ICE: std without the hook `arrayOne`"));
         let ty = arr.ty;
-        let kind = hir::ExprKind::Call {
-            callee: hir::Callee::Def(d, vec![xh.ty, ty]),
-            args: vec![xh, arr],
-        };
-        self.mk(kind, ty, span)
+        let call = hooks::array_one([xh.ty, ty], ty::Gen::of(xh), ty::Gen::of(arr));
+        (call.plain(self.cx, ty, span))
+            .unwrap_or_else(|| panic!("ICE: std without the hook `arrayOne`"))
     }
 
     /// `new Array<T>(n)` not followed by `.fill(v)`: an error.
@@ -256,13 +229,8 @@ impl FnCx<'_, '_> {
             );
             return self.error_expr(span);
         };
-        let call = synthetic_call(
-            velt_common::std_hook!(array_from_length),
-            vec![],
-            vec![n.clone(), f],
-            span,
-        );
-        self.expr(&call, exp, Want::Move)
+        let call = hooks::array_from_length(vec![], ty::I64::of(n.clone()), ty::Func::of(f));
+        call.check_exp(self, exp, span)
     }
 }
 
@@ -457,30 +425,4 @@ fn index_only(f: &ast::Expr) -> Option<ast::Expr> {
         },
         span: f.span,
     })
-}
-
-fn synthetic_call(
-    name: &str,
-    type_args: Vec<ast::TypeExpr>,
-    args: Vec<ast::Expr>,
-    span: Span,
-) -> ast::Expr {
-    let callee = ast::Expr {
-        id: ast::NodeId(u32::MAX),
-        kind: ast::ExprKind::Ident(ast::Ident {
-            name: name.to_string(),
-            span,
-        }),
-        span,
-    };
-    ast::Expr {
-        id: ast::NodeId(u32::MAX),
-        kind: ast::ExprKind::Call {
-            callee: Box::new(callee),
-            type_args,
-            args,
-            optional: false,
-        },
-        span,
-    }
 }

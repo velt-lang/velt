@@ -19,6 +19,7 @@ use velt_syntax::ast::{self, ExprKind as E};
 use super::consume::Synth;
 use super::{FnCx, Want};
 use crate::hir::{self, Intrinsic, StmtKind as S};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 /// The prefix of the hidden constant holding the loop's object: `Object.keys` of it is the plain
 /// value's own (the typed proxy hook of `proxy.rs` skips it).
@@ -66,7 +67,6 @@ impl FnCx<'_, '_> {
         let bool_ = self.cx.ty.bool_;
         self.push_scope_until(span.hi);
         let mut stmts = vec![];
-        let call = |f: &str, args: Vec<ast::Expr>| syn.call(syn.name(f), args);
         let keys_name = format!("<forink#{n}>");
         let decl = |name: &str, ty: Option<ast::TypeExpr>, init: ast::Expr| {
             syn.stmt(ast::StmtKind::Var(ast::VarDecl {
@@ -109,11 +109,7 @@ impl FnCx<'_, '_> {
             // conversion to `any` is left out where `o`'s type cannot hold a proxy.
             let read = self.expr(&operand, None, Want::Borrow);
             let cond = self.intrinsic(Intrinsic::IsTypedProxy, vec![read], bool_, obj.span);
-            let then = self.prelude_fn_call(
-                velt_common::std_hook!(proxy_any),
-                vec![operand.clone()],
-                obj.span,
-            );
+            let then = hooks::proxy_any(ty::Any::of(operand.clone())).check(self, obj.span);
             let any = then.ty;
             let none = syn.expr(E::Lit(ast::Lit::Undefined));
             let els = self.expr(&none, Some(any), Want::Move);
@@ -132,20 +128,15 @@ impl FnCx<'_, '_> {
         // The keys, once, before the loop: a proxy's `ownKeys`, else the value's own.
         let keys = syn.expr(E::Cond {
             cond: Box::new(syn.name(&is_proxy)),
-            then: Box::new(call(
-                velt_common::std_hook!(any_for_in_keys),
-                vec![syn.name(&object)],
-            )),
+            then: Box::new(hooks::any_for_in_keys(ty::Any::of(syn.name(&object))).ast(syn.at)),
             els: Box::new(syn.method(syn.name("Object"), "keys", vec![operand])),
         });
         let inner_flag = std::mem::replace(&mut self.proxy_keys_inner, true);
         self.stmt(&decl(&keys_name, None, keys), &mut stmts);
         self.proxy_keys_inner = inner_flag;
         let keys = syn.name(&keys_name);
-        let has = call(
-            velt_common::std_hook!(any_for_in_has),
-            vec![syn.name(&object), syn.expr(E::Ident(k.clone()))],
-        );
+        let (o, k) = (syn.name(&object), syn.expr(E::Ident(k.clone())));
+        let has = hooks::any_for_in_has(ty::Any::of(o), ty::Str::of(k)).ast(syn.at);
         let skip = syn.binary(
             ast::BinaryOp::And,
             syn.name(&is_proxy),

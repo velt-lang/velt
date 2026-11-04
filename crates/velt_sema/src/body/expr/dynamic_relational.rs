@@ -11,6 +11,7 @@ use super::dynamic_arith::TAG_FUNCTION;
 use crate::any::Dynamic;
 use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, BinOp, ExprKind as H, Intrinsic, LocalId, TyId, UseMode};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 /// One operand of the comparison, bound to a temporary.
 #[derive(Clone, Copy)]
@@ -135,8 +136,9 @@ impl FnCx<'_, '_> {
         let i64_ = self.cx.ty.i64;
         let code = self.mk(H::Lit(hir::Lit::Int(code)), i64_, span);
         let site = self.text_site(span);
-        let args = vec![x, y, code, site];
-        let slow = self.dyn_helper_call(velt_common::std_hook!(any_relational), args, bool_, span);
+        let (x, y) = (ty::Any::of(x), ty::Any::of(y));
+        let call = hooks::any_relational(x, y, ty::I64::of(code), ty::Str::of(site));
+        let slow = self.dyn_helper_call(call, bool_, span);
         self.rel_choose(test, slow, result, bool_, span)
     }
 
