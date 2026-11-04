@@ -26,7 +26,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `Number(x)`: std's `Number(s)` (function `d`) for a string, the value itself for a number,
-    /// `1` / `0` for a boolean, `0` for `null` (`Number()` is `0`).
+    /// `1` / `0` for a boolean, `0` for `null` (`Number()` is `0`), and `+x` for an `any`.
     pub(super) fn number_call(&mut self, d: DefId, args: &[ast::Expr], span: Span) -> hir::Expr {
         let f64 = self.cx.ty.f64;
         if !self.conversion_arity("Number", args, span) {
@@ -37,6 +37,10 @@ impl FnCx<'_, '_> {
         };
         let h = self.expr(a, None, Want::Borrow);
         let h = self.unbrand(h);
+        // An `any` (or `unknown`): JavaScript's `ToNumber`, as `+x` converts it.
+        if self.cx.maybe_dynamic(h.ty) {
+            return self.dynamic_unary(ast::UnaryOp::Plus, h, span);
+        }
         let t = self.cx.widened(h.ty);
         let ty = &self.cx.ty;
         if t == ty.str_ {
