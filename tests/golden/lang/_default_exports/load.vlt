@@ -1,0 +1,4 @@
+// A default async function.
+export default async function load(): Promise<number> {
+  return 7;
+}

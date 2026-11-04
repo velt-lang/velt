@@ -3,7 +3,8 @@
 //!
 //! Rename is offered for locals, parameters and items (functions, types, constants) declared
 //! outside the standard library. Uses through an import alias keep the alias (only spans spelled
-//! like the old name are edited).
+//! like the old name are edited); renaming at the alias (`import x from`, `import { f as x }`)
+//! renames the alias, in its module only.
 
 use velt_common::Span;
 use velt_sema::ide::DefKind;
@@ -55,8 +56,18 @@ pub fn rename(analysis: &Analysis, offset: u32, new_name: &str) -> Result<Vec<Sp
         .ide
         .as_ref()
         .ok_or("the program has not been analyzed")?;
-    Ok(ide
-        .references(&def)
+    let refs = ide.references(&def);
+    // At a name an import gives the definition (`import x from`, `import { f as x }`): that
+    // local name, in this module only (#1916).
+    let file = analysis.file();
+    let here = (refs.iter()).find(|s| s.file == file && s.lo <= offset && offset <= s.hi);
+    let spelled = here.map_or(def.name.as_str(), |s| analysis.snippet(*s));
+    if spelled != def.name {
+        return Ok((refs.into_iter())
+            .filter(|s| s.file == file && analysis.snippet(*s) == spelled)
+            .collect());
+    }
+    Ok(refs
         .into_iter()
         .filter(|s| analysis.snippet(*s) == def.name)
         .collect())

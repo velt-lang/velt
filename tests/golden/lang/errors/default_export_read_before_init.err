@@ -1,0 +1,2 @@
+b.vlt:3:30: error: the default export is read before its initializer runs
+`early`'s initializer runs first (JavaScript throws a `ReferenceError` here)

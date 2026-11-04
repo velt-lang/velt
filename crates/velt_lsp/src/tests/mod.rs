@@ -3,6 +3,7 @@
 
 mod assists;
 mod client;
+mod default_exports;
 mod doc_comments;
 mod doc_surfaces;
 mod effects;

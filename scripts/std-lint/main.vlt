@@ -175,6 +175,19 @@ function exportedClasses(text: string, path: string): i64 {
   return n;
 }
 
+/** The first line of `text` exporting a default (`export default …`, `export { x as default }`,
+ * a re-exported `default`), or null. */
+function defaultExport(text: string): string | null {
+  for (const raw of text.split("\n")) {
+    const line = raw.trim();
+    const listed = line.startsWith("export {") && /\bdefault\b/.test(line);
+    if (line.startsWith("export default ") || listed) {
+      return line;
+    }
+  }
+  return null;
+}
+
 /** What an index.vlt holds beyond comments, named re-exports and side-effect imports. */
 function indexCode(text: string): string | null {
   let inList = false;
@@ -330,6 +343,16 @@ function lint(std: Std): Problem[] {
           file,
           "multiClass",
           `exports ${classes} classes: one exported class per file, named after it (\`Deque\` in deque.vlt)`,
+        ),
+      );
+    }
+    const dflt = defaultExport(text);
+    if (dflt !== null) {
+      problems.push(
+        new Problem(
+          file,
+          "defaultExport",
+          `\`${dflt.slice(0, 50)}\`: std modules have named exports only, the API people learn from: export it by name (\`export function f\`, \`export const x = …\`)`,
         ),
       );
     }

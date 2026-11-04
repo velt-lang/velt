@@ -1,0 +1,5 @@
+// `export default function main()` (an error before #1916): `main` is declared in the module and
+// exported as `default`, and it is the program's entry point as without `export default`.
+export default function main() {
+  console.log("hi");
+}

@@ -1,0 +1,10 @@
+// `export { x as default }` is a live binding; `export default x;` of a `let` is a snapshot, as
+// is `export default expr;` (#1916). The output is Node's.
+
+import live, { setLive } from "./_default_exports_live/live";
+import snapshot, { setSnapshot } from "./_default_exports_live/snapshot";
+
+console.log(live, snapshot);
+setLive(2);
+setSnapshot(2);
+console.log(live, snapshot);

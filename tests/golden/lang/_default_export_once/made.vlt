@@ -1,0 +1,8 @@
+import { count } from "./counter";
+
+function make(): number {
+  console.log("making", count());
+  return 40 + count();
+}
+
+export default make();
