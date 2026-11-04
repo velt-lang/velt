@@ -18,7 +18,8 @@
 //! Summaries are computed on demand from the crossings, each body prepared once (what each local
 //! may be, its stores and calls), by a worklist that applies again only the events whose
 //! callee's summary grew, and only what grew ([`apply`]). A call through a function value read
-//! from the heap applies one join per function type. A store of a value that is not new into a value of a class (or of one of its subclasses,
+//! from the heap applies one join per function type. Keys are left out of all that and go over a
+//! graph of their own at the end ([`flow`]). A store of a value that is not new into a value of a class (or of one of its subclasses,
 //! a new one included) feeds that class's fields of the key's name, or all of them; a target of
 //! an open type (`any`, `object`, a type parameter) whose object is not known feeds the fields of
 //! every type the program converts to a dynamic value and of the types those hold, and an
@@ -32,16 +33,18 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::Span;
 
 use crate::ctx::Ctx;
-use crate::hir::{Def, DefId, TyId, TyKind};
+use crate::hir::{Def, DefId, TyId};
 
 use super::changes::Memo;
-use super::fed::{adt_of, declaring, Field};
+use super::fed::Field;
 use super::targets::Literals;
 
 mod apply;
+mod flow;
 mod prepare;
 
 use apply::{summarize, Joins, Node, Pending, Shape, Shapes, Summary};
+use flow::Flows;
 use prepare::{may_store, prepare};
 
 /// The key of a store: a constant name, or any field.
@@ -149,12 +152,10 @@ struct Run<'a> {
     /// How much of each summary each function applied to each shape of arguments (and of
     /// captures, for a closure being made): (stores, latent calls).
     applied: FxHashMap<(DefId, Node, Shape, Shape), (u32, u32)>,
-    /// What was fed already, per type and key.
-    done: FxHashSet<(TyId, Key)>,
-    /// Each class fed so far, with its subclasses.
-    below: FxHashMap<DefId, Vec<DefId>>,
-    /// Each field fed, with where (and whether that store's target was known, not open).
-    fed: FxHashMap<Field, (Site, bool)>,
+    /// Which keys reach which stores.
+    flows: Flows,
+    /// Steps taken, for the scaling tests.
+    steps: u64,
     memo: Memo,
 }
 
@@ -187,27 +188,24 @@ pub(super) fn keyed_fields(
         shapes: Shapes::default(),
         joins: Joins::default(),
         applied: FxHashMap::default(),
-        done: FxHashSet::default(),
-        below: FxHashMap::default(),
-        fed: FxHashMap::default(),
+        flows: Flows::default(),
+        steps: 0,
         memo: Memo::default(),
     };
     for &r in roots {
         ensure(cx, &mut run, r);
     }
-    // Summaries only grow, and each is a finite set (parameters, keys the program writes,
-    // argument shapes over the program's types and functions), and an event applies only what
-    // grew since it last applied a summary, so the worklist empties in time linear in the
-    // events and the summaries' entries.
+    // Summaries only grow, and each is a finite set (pairs of parameters, argument shapes over
+    // the program's types and functions), and an event applies only what grew since it last
+    // applied a summary, so the worklist empties in time linear in the events and the
+    // summaries' entries.
     while let Some(d) = run.work.pop_front() {
         run.queued.remove(&d);
         let pending = run.dirty.remove(&d).unwrap_or_default();
         summarize(cx, &mut run, d, pending);
     }
-    run.fed
-        .into_iter()
-        .map(|(f, (site, _))| (f, site))
-        .collect()
+    crate::check_work::add_keyed_work(run.steps);
+    run.flows.fields(cx, lits)
 }
 
 /// Prepare function `d` and queue all its events, the first time it is needed: a function of
@@ -228,59 +226,5 @@ fn ensure(cx: &mut Ctx, run: &mut Run, d: DefId) {
     run.sums.entry(Node::Fn(d)).or_default();
     if run.queued.insert(d) {
         run.work.push_back(d);
-    }
-}
-
-/// Feed the fields `key` names of a value of type `ty` (module docs), first fed at `site`.
-fn feed(cx: &mut Ctx, run: &mut Run, ty: TyId, key: &Key, site: &Site) {
-    if !run.done.insert((ty, key.clone())) {
-        return;
-    }
-    let ty = match cx.ty.kind(ty) {
-        TyKind::Option(inner, _) => *inner,
-        _ => ty,
-    };
-    let mut types = vec![];
-    let mut known = true;
-    if let Some(d) = adt_of(cx, ty) {
-        types.push(d);
-    } else if let (TyKind::Dyn(iface, _), None) = (cx.ty.kind(ty), cx.dynamic(ty)) {
-        let iface = *iface;
-        for i in cx.impls.iter().filter(|i| i.iface == iface) {
-            types.extend(adt_of(cx, i.ty));
-        }
-    } else {
-        known = false;
-        types.extend(super::targets::held_adts(cx, run.lits));
-    }
-    for d in types {
-        let classes = match run.below.get(&d) {
-            Some(cs) => cs.clone(),
-            None => {
-                // A value of class `d` may be of any of its subclasses.
-                let cs = run.lits.below(d);
-                run.below.insert(d, cs.clone());
-                cs
-            }
-        };
-        for c in classes {
-            let Some(a) = cx.adt(c) else { continue };
-            for (k, fd) in a.fields.iter().enumerate() {
-                let hit = match key {
-                    Key::Name(n) => fd.name == *n,
-                    Key::Any => true,
-                };
-                if let (true, Some(f)) = (hit, declaring(cx, c, k as u32)) {
-                    // The error names a store into a known object over one into any object.
-                    match run.fed.get(&f) {
-                        Some((_, true)) => {}
-                        Some((_, false)) if !known => {}
-                        _ => {
-                            run.fed.insert(f, (site.clone(), known));
-                        }
-                    }
-                }
-            }
-        }
     }
 }

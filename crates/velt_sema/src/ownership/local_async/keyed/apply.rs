@@ -2,7 +2,9 @@
 //! to a shape of arguments remembers how much of the summary it applied, and a summary that grows
 //! has only its new entries applied, at only the events that applied it. A call through a
 //! function value read from the heap applies one join per function type, the union of the
-//! summaries of the functions that may be in it, kept up to date as they grow.
+//! summaries of the functions that may be in it, kept up to date as they grow. An entry says which
+//! parameter is stored into from which, not by which key: the keys go over the graph of
+//! [`super::flow`], so a summary stays small however many keys reach it.
 
 use std::rc::Rc;
 
@@ -13,7 +15,7 @@ use crate::hir::{DefId, TyId, TyKind};
 
 use super::super::fed::adt_of;
 use super::super::targets::value_targets;
-use super::{ensure, feed, Arg, Ev, Key, Run, Site, Src};
+use super::{ensure, Arg, Ev, Run, Site, Src};
 
 /// A shape of arguments ([`Arg`] per operand), interned.
 pub(super) type Shape = u32;
@@ -75,11 +77,12 @@ impl<T: Clone + Eq + std::hash::Hash> Ordered<T> {
     }
 }
 
-/// A function's stores by key into what its parameters hold, and the calls through its
-/// function-typed parameters (the parameter, and the shape of its arguments).
+/// A function's stores by key into what its parameters hold (the parameter, and where the value
+/// comes from; the keys are in [`super::flow`]), and the calls through its function-typed
+/// parameters (the parameter, and the shape of its arguments).
 #[derive(Default)]
 pub(super) struct Summary {
-    stores: Ordered<(u32, Key, Src)>,
+    stores: Ordered<(u32, Src)>,
     latent: Ordered<(u32, Shape)>,
 }
 
@@ -130,7 +133,10 @@ pub(super) fn summarize(cx: &mut Ctx, run: &mut Run, d: DefId, pending: Pending)
                 key,
                 value,
                 site,
-            } => b.store(cx, run, target, key, value, site),
+            } => {
+                let from = run.flows.seeded(key);
+                b.store(cx, run, target, from, value, site);
+            }
             Ev::Call { targets, site } => {
                 for &(g, shape) in targets {
                     b.apply(cx, run, Node::Fn(g), shape, CALLED, site);
@@ -205,14 +211,14 @@ fn take_in(run: &mut Run, t: TyId, g: DefId) -> bool {
         return false;
     }
     run.joins.taken.insert((t, g), (s1, l1));
-    let stores: Vec<(u32, Key, Src)> = (s.stores.list[s0 as usize..s1 as usize].iter())
-        .filter_map(|(q, key, src)| {
-            let q = q.checked_sub(ncap)?;
-            let src = match src {
+    let stores: Vec<((u32, Src), (u32, Src))> = (s.stores.list[s0 as usize..s1 as usize].iter())
+        .filter_map(|&(q, src)| {
+            let into = q.checked_sub(ncap)?;
+            let from = match src {
                 Src::Param(r) => r.checked_sub(ncap).map_or(Src::Other, Src::Param),
                 Src::Other => Src::Other,
             };
-            Some((q, key.clone(), src))
+            Some(((q, src), (into, from)))
         })
         .collect();
     let latent: Vec<(u32, Shape)> = s.latent.list[l0 as usize..l1 as usize].to_vec();
@@ -239,13 +245,20 @@ fn take_in(run: &mut Run, t: TyId, g: DefId) -> bool {
     }
     let j = run.sums.entry(Node::Join(t)).or_default();
     let before = j.len();
-    for x in stores {
-        j.stores.insert(x);
+    for (_, x) in &stores {
+        j.stores.insert(*x);
     }
     for x in added {
         j.latent.insert(x);
     }
-    j.len() != before
+    let grew = j.len() != before;
+    run.steps += stores.len() as u64 + 1;
+    for ((q, src), (into, from)) in stores {
+        let a = run.flows.set(Node::Fn(g), q, src);
+        let b = run.flows.set(Node::Join(t), into, from);
+        run.flows.edge(a, b);
+    }
+    grew
 }
 
 /// Event `ev` of function `me` being applied.
@@ -256,13 +269,14 @@ struct Body<'a> {
 }
 
 impl Body<'_> {
-    /// A store by `key` into what `target` may be of what `value` may be, at `site`.
+    /// A store by the keys of `from` ([`super::flow`]) into what `target` may be of what `value`
+    /// may be, at `site`.
     fn store(
         &mut self,
         cx: &mut Ctx,
         run: &mut Run,
         target: &[Arg],
-        key: &Key,
+        from: u32,
         value: &[Arg],
         site: &Site,
     ) {
@@ -278,19 +292,21 @@ impl Body<'_> {
                 match t {
                     Arg::Param(p) => {
                         let me = run.sums.entry(Node::Fn(self.me)).or_default();
-                        me.stores.insert((*p, key.clone(), src));
+                        me.stores.insert((*p, src));
+                        let to = run.flows.set(Node::Fn(self.me), *p, src);
+                        run.flows.edge(from, to);
                         // A parameter of a class type is that class (or a subclass) at every
                         // caller; one the store is given a value that is not new in feeds it now.
                         let ty = self.params.get(*p as usize).copied();
                         if let (Src::Other, Some(ty)) = (src, ty) {
                             if adt_of(cx, ty).is_some() {
-                                feed(cx, run, ty, key, site);
+                                run.flows.sink(from, ty, site);
                             }
                         }
                     }
                     // A value of a parameter may still be new at the caller; feeding the class
                     // now is the conservative answer. A new object's fields are fed too.
-                    Arg::Ty(ty) | Arg::New(ty) => feed(cx, run, *ty, key, site),
+                    Arg::Ty(ty) | Arg::New(ty) => run.flows.sink(from, *ty, site),
                     Arg::Own | Arg::Fns(_) | Arg::Other => {}
                 }
             }
@@ -309,6 +325,7 @@ impl Body<'_> {
         caps: Shape,
         site: &Site,
     ) {
+        run.steps += 1;
         if let Node::Fn(g) = n {
             ensure(cx, run, g);
         }
@@ -325,7 +342,8 @@ impl Body<'_> {
         // Recorded first: a latent call that leads back here (a function value passed around
         // in a cycle) adds nothing new and stops.
         run.applied.insert(key, (s1, l1));
-        let stores: Vec<(u32, Key, Src)> = s.stores.list[s0 as usize..s1 as usize].to_vec();
+        run.steps += u64::from(s1 - s0) + u64::from(l1 - l0);
+        let stores: Vec<(u32, Src)> = s.stores.list[s0 as usize..s1 as usize].to_vec();
         let latent: Vec<(u32, Shape)> = s.latent.list[l0 as usize..l1 as usize].to_vec();
         let ncap = match n {
             Node::Fn(g) => run.ncap.get(&g).copied().unwrap_or(0),
@@ -345,16 +363,17 @@ impl Body<'_> {
                 (Some(_), Some(_)) => Some(vec![Arg::Other]),
             }
         };
-        for (q, key, src) in &stores {
-            if making != (*q < ncap) {
+        for &(q, src) in &stores {
+            if making != (q < ncap) {
                 continue;
             }
-            let Some(target) = arg(*q) else { continue };
+            let Some(target) = arg(q) else { continue };
             let value = match src {
-                Src::Param(r) => arg(*r).unwrap_or_else(|| vec![Arg::Other]),
+                Src::Param(r) => arg(r).unwrap_or_else(|| vec![Arg::Other]),
                 Src::Other => vec![Arg::Other],
             };
-            self.store(cx, run, &target, key, &value, site);
+            let from = run.flows.set(n, q, src);
+            self.store(cx, run, &target, from, &value, site);
         }
         for (fp, largs) in latent {
             if making != (fp < ncap) {

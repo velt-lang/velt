@@ -2,7 +2,7 @@
 //! breadth-first type searches (`type_reach`, #859), the checks of arrow functions
 //! (`body::expr::closure`, #859), of expressions (`FnCx::expr`, spread operands checked again
 //! per operator) and the resolution of exports (`collect::exports`, barrels walked again per
-//! imported name). The scaling tests compare these counts between program sizes, which unlike CPU
+//! imported name) and the check of stores by key (`ownership::local_async::keyed`). The scaling tests compare these counts between program sizes, which unlike CPU
 //! time doesn't depend on the load of the machine (#1502).
 
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -14,6 +14,7 @@ static TYPE_SEARCH: AtomicU64 = AtomicU64::new(0);
 static CLOSURE_CHECKS: AtomicU64 = AtomicU64::new(0);
 static EXPR_CHECKS: AtomicU64 = AtomicU64::new(0);
 static EXPORTS: AtomicU64 = AtomicU64::new(0);
+static KEYED: AtomicU64 = AtomicU64::new(0);
 
 /// Adds `n` to `counter`.
 fn add(counter: &AtomicU64, n: u64) {
@@ -41,6 +42,12 @@ pub(crate) fn add_export_work(n: u64) {
     add(&EXPORTS, n);
 }
 
+/// Adds `n` steps of the check of stores by key, or of finding the functions a call through a
+/// function value may run.
+pub(crate) fn add_keyed_work(n: u64) {
+    add(&KEYED, n);
+}
+
 /// The work of these kinds done in this process so far (checks run at the same time may lose
 /// counts). A deterministic cost measure, like [`crate::InstantiationWork`].
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -55,6 +62,9 @@ pub struct CheckWork {
     /// Module items and export names the resolution of exports looked at (`export *` chains,
     /// export lists, export tables).
     pub exports: u64,
+    /// Summary entries applied, key sets combined and fields looked at by the check of stores by
+    /// key, and function values tried against the type of a call through a function value.
+    pub keyed: u64,
 }
 
 /// See [`CheckWork`].
@@ -64,5 +74,6 @@ pub fn check_work() -> CheckWork {
         closure_checks: CLOSURE_CHECKS.load(Ordering::Relaxed),
         expr_checks: EXPR_CHECKS.load(Ordering::Relaxed),
         exports: EXPORTS.load(Ordering::Relaxed),
+        keyed: KEYED.load(Ordering::Relaxed),
     }
 }
