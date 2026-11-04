@@ -1533,9 +1533,9 @@ dependencies = [
 name = "velt_codegen_llvm"
 version = "0.5.0"
 dependencies = [
+ "blake3",
  "object",
  "rustc-hash",
- "sha2",
  "velt_codegen_cl",
  "velt_opt",
  "velt_vir",

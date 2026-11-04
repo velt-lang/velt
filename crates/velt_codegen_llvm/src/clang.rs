@@ -13,8 +13,6 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
-use sha2::{Digest, Sha256};
-
 use crate::target::Target;
 use crate::CodegenResult;
 
@@ -260,11 +258,11 @@ pub(crate) fn compile_cached(
             "clang {clang:?} {stamp:?} {args:?} {}",
             velt_codegen_cl::host_triple()
         );
-        let mut key = Sha256::new();
+        let mut key = blake3::Hasher::new();
         key.update(id.as_bytes());
-        key.update([0]);
+        key.update(&[0]);
         key.update(ir.as_bytes());
-        <[u8; 32]>::from(key.finalize())
+        *key.finalize().as_bytes()
     });
     if let (Some(cache), Some(key)) = (cache, &key) {
         if let Some(obj) = cache.get(key) {
