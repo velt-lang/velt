@@ -149,8 +149,8 @@ export async function* responseChunks(r: Response): AsyncIterator<u8[], IoError 
 
 /**
  * What a server writes for `r` (`responseParts`, parts.vlt): a streamed body (a `BodyStream`, or a
- * fetched response's body) is used up, as sending it does in JS. A fetched body arrives decoded,
- * so the coding it was sent in is not passed on.
+ * fetched response's body) is used up, as sending it does in JS. A fetched response's head is
+ * passed on without what only held for the message it came in (`passedOn`).
  */
 export function serverParts(r: Response): ResponseParts throws IoError {
   const source = r.bodySource;
@@ -164,8 +164,8 @@ export function serverParts(r: Response): ResponseParts throws IoError {
   } else if (r.bodyFetched != null) {
     headers = r.headers.raw();
   }
-  if (r.decoded()) {
-    headers = withoutCoding(headers);
+  if (r.headRemote != null) {
+    headers = passedOn(headers, r.decoded());
   }
   let stream: BodyStream | null = null;
   if (source == STREAM || source == RUNTIME) {
@@ -192,12 +192,26 @@ export function serverParts(r: Response): ResponseParts throws IoError {
   };
 }
 
-/** `[name, value, …]` without its `content-encoding` headers. */
-function withoutCoding(list: string[]): string[] {
+/**
+ * `[name, value, …]` of a fetched response, without the fields that end at the connection it came
+ * over (RFC 9110 §7.6.1) and its `date` (the server sending it on writes its own). A `decoded` body
+ * no longer has the coding it was sent in, nor the `content-length` that counted the coded bytes.
+ */
+function passedOn(list: string[], decoded: bool): string[] {
   const out: string[] = [];
   for (let i: i64 = 0; i + 1 < (list.length as i64); i += 2) {
-    if (list[i] != "content-encoding") {
-      out.push(list[i]);
+    const name = list[i];
+    if (
+      name != "connection" &&
+      name != "keep-alive" &&
+      name != "proxy-connection" &&
+      name != "te" &&
+      name != "trailer" &&
+      name != "upgrade" &&
+      name != "date" &&
+      !(decoded && (name == "content-encoding" || name == "content-length"))
+    ) {
+      out.push(name);
       out.push(list[i + 1]);
     }
   }
