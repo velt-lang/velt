@@ -100,22 +100,30 @@ describe("velt/ffi C strings and reads", () => {
     if (p !== null) {
       const text = "é".repeat(500);
       const c = new CString(text);
+      // SAFETY: `p` holds `n` bytes from `malloc`, written above, and is freed once, at the end.
       unsafe {
         memcpy(p, c, n);
       }
+      // SAFETY: `p` holds `n` bytes from `malloc`, written above, and is freed once, at the end.
       expect(unsafe { readUtf8(p, n) }).toBe(text);
+      // SAFETY: `p` holds `n` bytes from `malloc`, written above, and is freed once, at the end.
       const bytes = unsafe { readBytes(p, n) };
       expect(bytes.length).toBe(n);
       expect(bytes[n - 1]).toBe(169);
+      // SAFETY: `p` holds `n` bytes from `malloc`, written above, and is freed once, at the end.
       expect(unsafe { readBytes(p, 0) }.length).toBe(0);
+      // SAFETY: `p` holds `n` bytes from `malloc`, written above, and is freed once, at the end.
       expect(unsafe { readUtf8(p, 0) }).toBe("");
       // The second byte of "é" on its own is no UTF-8.
       const bad = new CString("ab");
+      // SAFETY: `p` holds `n` bytes from `malloc`, written above, and is freed once, at the end.
       unsafe {
         memcpy(p, bad, 2);
         memset(p, 0xff, 1);
       }
+      // SAFETY: `p` holds `n` bytes from `malloc`, written above, and is freed once, at the end.
       expect(unsafe { readUtf8(p, 2) }).toBe("\u{fffd}b");
+      // SAFETY: `p` holds `n` bytes from `malloc`, written above, and is freed once, at the end.
       unsafe {
         free(p);
       }
