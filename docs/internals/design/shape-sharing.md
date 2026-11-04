@@ -158,11 +158,18 @@ three properties without touching the HIR contract:
   such a derived type read the instance's footprint.
 - **`FnLower::sub` is the one place where instance types enter lowering.** It substitutes the
   placeholders exactly as it substitutes concrete arguments today.
-- **Leaks fail loudly.** Every lowering path that asks a per-type question of a placeholder
-  hits a match arm with no case for it: `Cx::kind` and `type_name`, class ids, vtables,
-  `any_target_name`. That is an ICE in the test suite, not a silently wrong answer. Only the
-  shape queries answer for a placeholder (`ty`, `has_null_niche`, `share_kind`, `needs_drop`,
-  `boxed`); everything else goes through the dictionary.
+- **Leaks fail loudly.** Many lowering matches end in a wildcard (`share_kind`'s `_ =>
+  ShareKind::Plain`), so a placeholder reaching them would silently get a wrong answer. To
+  prevent that:
+  - `Cx::kind` ICEs on a placeholder;
+  - the shape queries (`ty`, `has_null_niche`, `share_kind`, `needs_drop`, `boxed`) answer for
+    a placeholder from the footprint before they would call it;
+  - the few reads of `types.kind` that bypass `Cx::kind` (`is_union`, `has_null_niche`, …) get
+    the same check.
+
+  So every per-type question asked of a placeholder is an ICE in the test suite, not a wrong
+  value: `type_name`, class ids, vtables, `any_target_name`. Everything else goes through the
+  dictionary.
 
 A generic definition's body is scanned once (HIR, memoized per `DefId`) to decide which of its
 type parameters can be shared. A parameter can be shared when every use of a value of a type
@@ -318,9 +325,10 @@ direct, and the next inlining round can inline it. A dictionary is such a static
   code, at the call sites that need it. Its `MAX_CLONE_COST` and `MAX_CLONES` bound the
   growth. This is release only (section 3), and the prototype doesn't need it.
 
-The prototype adds a `velt_opt` unit test for the two-level fold (dictionary, then type table,
-then function). `addrs.rs` treats parameters as unknown, so the fold works once the instance is
-inlined or specialized, which is the case it is for.
+Step 3 adds a `velt_opt` unit test for the two-level fold (dictionary, then type table, then
+function), with the release workstream that owns `velt_opt`'s inliner. `addrs.rs` treats
+parameters as unknown, so the fold applies once the instance is inlined or specialized, which is
+when it is needed.
 
 ### The per-package cache and facts traces
 
@@ -333,7 +341,8 @@ for the common shapes (`~rc`, `~f64`, `~str`, `~i32`, `~bool`).
 Dictionaries and type tables are per program. They are the "statics with symbols" of
 package-cache.md step 2: the cached caller of a shared instance refers to its dictionary by
 symbol, and the program defines it. `PackageCode::lookup(func, args, facts)` is asked with the
-placeholder arguments. No change to that interface is needed.
+placeholder arguments. The cache keys them by shape name, as symbols do, never by `TyId`, so the
+interface stays as package-cache.md has it.
 
 ## 3. Debug and release
 
@@ -341,8 +350,8 @@ placeholder arguments. No change to that interface is needed.
 both, so the goldens test one semantics. Release adds profitability, not eligibility.
 
 **Debug shares everywhere.** Every eligible instance in std and user code shares, for every
-shape. Cranelift does no cross-function optimization, so an inlined per-type operation is
-already a call there, and the cost is an indirect call where today's code has a direct one. Run
+shape. Debug builds run only `velt_opt`'s cheap passes, and the glue is a call in both versions,
+so the cost is an indirect call and a dictionary load where today's code has a direct call. Run
 time of debug builds isn't gated. Their build time and memory are. This is #1612's "debug builds
 without per-type copies".
 
@@ -354,8 +363,9 @@ Three rules decide it. The first two are local and cheap to compute:
    call: a drop when the count reaches zero, clone, format, transfer, the `AnyUnbox` slow path,
    a call of a sub-dictionary's callee. An *inline* read is one the per-type instance would have
    compiled inline: a type predicate turned into a branch, a descriptor compared on the fast
-   path of `as T`, the share or drop of a small `~agg` (its parts' counts, written out). An instance with only call reads is shared in release. Only a call through a
-   pointer is lost, and the callee is out of line in both versions. For the classes of section
+   path of `as T`, the share or drop of a small `~agg` (its parts' counts, written out). An
+   instance with only call reads is shared in release. Only a call through a pointer is lost,
+   and the callee is out of line in both versions. For the classes of section
    1, almost every read is a call. The exceptions are the fast-path descriptor, which costs one
    load that LLVM hoists out of the loop, and the share and drop of aggregates, which rule 2
    covers.
