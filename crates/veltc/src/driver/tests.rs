@@ -108,3 +108,31 @@ fn codegen_does_not_verify_what_the_driver_verified() {
     let codegen = sess.memory.iter().any(|(s, _)| *s == "codegen");
     assert!(codegen, "{:?}", sess.memory);
 }
+
+/// Each line shows its own reading when a stage is recorded more than once, and a stage recorded
+/// without one (`jit`) does not shift the rest.
+#[test]
+fn timings_show_each_recording_of_a_stage_its_own_memory() {
+    let mb = |n: usize| memory::Reading {
+        rss: n << 20,
+        peak: n << 20,
+    };
+    let mut sess = Session::new();
+    for stage in ["generate", "jit", "generate", "link"] {
+        sess.timings.push((stage, Duration::ZERO));
+    }
+    sess.memory = vec![("generate", mb(1)), ("generate", mb(2)), ("link", mb(3))];
+    let text = sess.render_timings();
+    let ends: Vec<_> = text
+        .lines()
+        .map(|l| l.split("ms").nth(1).unwrap())
+        .collect();
+    let want = [
+        "  (rss 1 MB, peak 1 MB)",
+        "",
+        "  (rss 2 MB, peak 2 MB)",
+        "  (rss 3 MB, peak 3 MB)",
+        "",
+    ];
+    assert_eq!(ends, want, "{text}");
+}

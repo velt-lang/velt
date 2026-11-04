@@ -57,17 +57,11 @@ impl<T> Drop for Noted<T> {
     }
 }
 
-/// The end of `stage`'s line in `--timings`: its memory, if it was read.
-pub(crate) fn line_end(memory: &[(&'static str, Reading)], stage: &str) -> String {
-    match memory.iter().find(|(n, _)| *n == stage) {
-        Some((_, r)) => format!(
-            "  ({})
-",
-            render(*r)
-        ),
-        None => "
-"
-        .to_string(),
+/// The end of a stage's line in `--timings`: its memory, if it was read.
+pub(crate) fn line_end(reading: Option<Reading>) -> String {
+    match reading {
+        Some(r) => format!("  ({})\n", render(r)),
+        None => "\n".to_string(),
     }
 }
 

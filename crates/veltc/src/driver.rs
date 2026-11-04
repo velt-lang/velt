@@ -227,12 +227,14 @@ impl Session {
     pub fn render_timings(&self) -> String {
         let total: Duration = self.timings.iter().map(|(_, d)| *d).sum();
         let mut s = String::new();
+        let mut readings = self.memory.iter().peekable();
         for (name, d) in self
             .timings
             .iter()
             .map(|(n, d)| (*n, *d))
             .chain([("total", total)])
         {
+            let reading = readings.next_if(|(n, _)| *n == name).map(|(_, r)| *r);
             s.push_str(&format!(
                 "velt: {name:<8} {:>9.3} ms",
                 d.as_secs_f64() * 1e3
@@ -246,7 +248,7 @@ impl Session {
                 _ if name == "stamp" && !self.timings.iter().any(|(n, _)| *n == "parse") => {
                     s.push_str("  (unchanged: nothing to compile)\n");
                 }
-                _ => s.push_str(&memory::line_end(&self.memory, name)),
+                _ => s.push_str(&memory::line_end(reading)),
             }
             let steps = self.details.iter().filter(|(stage, ..)| *stage == name);
             for (_, step, d) in steps.filter(|_| self.show_details) {
