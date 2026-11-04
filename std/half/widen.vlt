@@ -4,8 +4,12 @@
 // with F16C (`--cpu x86-64-v3` or `native`), and a branch-free integer sequence in SSE4.1 lanes
 // on a default (x86-64-v2) build, with no run-time F16C dispatch yet (#2241). bf16 is a shift
 // (and a NaN's quiet bit) on every target.
+//
+// The `…Into` functions stay out of line (`noInline()`): inlined into a caller's loop, the x86
+// integer sequence's ten constants compete with the caller's registers, and the loop gains a
+// register copy per instruction or so (11.5 instructions a value on x86-64-v2 against 8.75).
 
-import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { arraySetLen, arrayWithCapacity, noInline } from "velt/lang/intrinsics";
 
 /** Each element of `ws` as an `f32`: exact, NaN payloads kept (their quiet bit set). */
 export function widenF16(ws: f16[]): f32[] {
@@ -23,6 +27,7 @@ export function widenF16(ws: f16[]): f32[] {
  * Panics with a RangeError when that range passes the end of `xs`.
  */
 export function widenF16Into(ws: f16[], xs: f32[], at: usize = 0) {
+  noInline();
   const n = ws.length;
   intoRange(n, xs.length, at, "widenF16Into");
   for (let i: usize = 0; i < n; i++) {
@@ -43,6 +48,7 @@ export function widenBf16(ws: bf16[]): f32[] {
 
 /** As `widenF16Into`, for `bf16`. */
 export function widenBf16Into(ws: bf16[], xs: f32[], at: usize = 0) {
+  noInline();
   const n = ws.length;
   intoRange(n, xs.length, at, "widenBf16Into");
   for (let i: usize = 0; i < n; i++) {
