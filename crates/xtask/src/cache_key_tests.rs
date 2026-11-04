@@ -47,11 +47,17 @@ struct Repo(PathBuf);
 
 impl Repo {
     fn new() -> Repo {
+        // Tests run in parallel in one process and can read the same time: only the counter tells
+        // their directories apart.
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let nanos = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map_or(0, |d| d.as_nanos());
-        let dir =
-            std::env::temp_dir().join(format!("xtask-cache-key-{}-{nanos}", std::process::id()));
+        let dir = std::env::temp_dir().join(format!(
+            "xtask-cache-key-{}-{nanos}-{n}",
+            std::process::id()
+        ));
         std::fs::create_dir_all(&dir).unwrap();
         let repo = Repo(dir);
         let ok = Command::new("git")
