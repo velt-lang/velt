@@ -368,6 +368,10 @@ pub enum Intrinsic {
     /// std only: `strCharCodeAt(s: borrow string, i: i64) -> i64` — the byte at
     /// `i`, or -1 when out of range (`s.charCodeAt(i)`, POC byte model); inline code, no call.
     StrCharCodeAt,
+    /// std only: `addressLoad<T>(address: usize) -> T`, `T` a number type or `bool`: the value
+    /// at `address` in memory, unchecked (velt/ffi's raw reads of C memory, which are unsafe
+    /// functions). Additive.
+    AddressLoad,
     /// `(s, i: u64)` → u8: byte `i` of the UTF-8 bytes of `s`, unchecked (std checks the
     /// range against `StrByteLen`). The bytes are read where the string keeps them.
     StrByteAt,

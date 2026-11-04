@@ -417,3 +417,99 @@ fn empty_arrays_are_never_null_and_a_null_ptr_result_is_caught() {
         );
     }
 }
+
+const RAW: &str = include_str!("c_functions/raw.vlt");
+
+/// `CString` (refused with a NUL inside), `Out<T>` and `OutPtr<T>` written by C, and C memory
+/// read back with `readCString`, `readUtf8` and `readBytes`, in debug and release builds.
+#[test]
+fn c_strings_out_parameters_and_reads() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        RAW,
+        "import { length, parse, env, roundTrip, exponent, negativeHex } from \"cmath\";\n\nfunction main() {\n  console.log(length(\"héllo\"), parse(\"42abc\"), env(\"PATH\") !== null, env(\"NO_SUCH_VAR_X\") === null, negativeHex());\n  console.log(roundTrip(\"héllo world\"), exponent(8));\n  try {\n    length(\"a\\0b\");\n  } catch (e) {\n    console.log(e.message);\n  }\n}\n",
+    );
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let o = velt(dir.path(), args);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "velt {args:?} failed:\n{stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "6 [ 42, 'abc' ] true true -31\nhéllo world|h|104,195 [ 0.5, 4 ]\na CString can't hold a NUL character: C would stop reading there\n",
+            "velt {args:?}:\n{stderr}"
+        );
+    }
+}
+
+#[test]
+fn raw_reads_need_unsafe_code() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { CString, Ptr, readCString } from \"velt/ffi\";\n\ndeclare c(\"c\") function getenv(name: CString): Ptr<u8> | null;\n\nexport function f(): string {\n  // SAFETY: getenv returns a string or NULL.\n  const p = unsafe { getenv(new CString(\"PATH\")) };\n  return p === null ? \"\" : readCString(p);\n}\n",
+        "import { f } from \"cmath\";\n\nfunction main() {\n  console.log(f());\n}\n",
+    );
+    let out = check(dir.path());
+    assert!(
+        out.contains("calling unsafe function `readCString`"),
+        "{out}"
+    );
+}
+
+/// A proxy over a `CString` could give C other bytes, without the NUL (its `get` trap answers
+/// for the bytes): refused at the call, as for `Out`'s field.
+#[test]
+fn a_proxied_c_string_is_refused() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { CString } from \"velt/ffi\";\n\ndeclare c(\"c\") function strlen(s: CString): usize;\n\nexport function proxied(): usize {\n  const p: any = new Proxy(new CString(\"a\"), { get: (_t: any, _k: any) => [104, 105] });\n  const c = p as CString;\n  // SAFETY: a CString is NUL-terminated (a proxy is refused).\n  return unsafe { strlen(c) };\n}\n",
+        "import { proxied } from \"cmath\";\n\nfunction main() {\n  console.log(proxied());\n}\n",
+    );
+    let o = velt(dir.path(), &["run"]);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(!o.status.success(), "{stderr}");
+    assert!(
+        stderr.contains("TypeError: this operation on a proxy"),
+        "{stderr}"
+    );
+}
+
+/// A pointer C can hold points at a C type, a number, `bool`, `void` or another pointer:
+/// `Ptr<string>` and `OutPtr<string>` mean nothing in C.
+#[test]
+fn pointers_point_at_c_types_and_numbers() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { OutPtr, Ptr } from \"velt/ffi\";\n\ndeclare c(\"c\") function f(p: Ptr<string>): void;\ndeclare c(\"c\") function g(p: OutPtr<string>): void;\ndeclare c(\"c\") function h(p: Ptr<Ptr<u8>>, q: Ptr<void> | null): Ptr<f64>;\n\nexport const x = 1;\n",
+        "import { x } from \"cmath\";\n\nfunction main() {\n  console.log(x);\n}\n",
+    );
+    let out = check(dir.path());
+    assert!(
+        out.contains("parameter `p` of C function `f` has type `Ptr<string>`"),
+        "{out}"
+    );
+    assert!(
+        out.contains("parameter `p` of C function `g` has type `OutPtr<string>`"),
+        "{out}"
+    );
+    assert!(!out.contains("C function `h`"), "{out}");
+}
+
+/// `CString.bytesOf` lends the `CString`'s own bytes, read-only (zero-copy, as Rust's
+/// `CString::as_bytes`): writing through them must be an error, or C would read past a removed
+/// NUL. Two gaps in sema's `readonly` rule let them through today (#2228).
+#[test]
+#[ignore = "needs #2228: `readonly T[] as T[]` and locals inferred from a readonly array are writable"]
+fn a_c_string_s_bytes_are_read_only() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { CString } from \"velt/ffi\";\n\nexport function f(): void {\n  const c = new CString(\"abc\");\n  const b = CString.bytesOf(c) as u8[];\n  b[3] = 65;\n  const r = CString.bytesOf(c);\n  r.push(66);\n}\n",
+        "import { f } from \"cmath\";\n\nfunction main() {\n  f();\n}\n",
+    );
+    let out = check(dir.path());
+    assert!(out.matches("read-only").count() >= 2, "{out}");
+}

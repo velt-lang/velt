@@ -1,0 +1,7 @@
+// velt/lang/intrinsics (internal): memory at an address, for velt/ffi's raw reads of C memory
+// (docs/internals/design/c-ffi.md). The public surface is velt/ffi's unsafe functions.
+
+/**
+ * The `T` (a number type or `bool`) at `address`, unchecked: the caller knows a `T` is there.
+ */
+export declare intrinsic function addressLoad<T>(address: usize): T;

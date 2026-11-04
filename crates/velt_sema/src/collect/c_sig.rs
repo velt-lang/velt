@@ -13,10 +13,15 @@ use crate::hir::{CImport, CTy, DefId, FloatTy, Nothing, TyId, TyKind};
 /// What may cross, for the errors.
 const ALLOWED: &str = "integers (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, \
                        `Ptr<T>` and `Ptr<T> | null` (velt/ffi), and for a parameter `null`, \
-                       `StrBytes` (velt/ffi) and arrays of numbers (`u8[]`, `readonly f64[]`)";
+                       `StrBytes`, `CString`, `Out<T>` of a number and `OutPtr<T>` (velt/ffi), and arrays of numbers (`u8[]`, `readonly f64[]`)";
 
 /// The module of std's `StrBytes` (std/ffi/str_bytes.vlt).
 const STR_BYTES_MODULE: &str = velt_common::std_module!(ffi_str_bytes);
+
+/// velt/ffi's classes a C function takes by address (std/ffi/{c_string,out,out_ptr}.vlt).
+const C_STRING: &str = velt_common::std_item!(ffi_c_string, "CString");
+const OUT: &str = velt_common::std_item!(ffi_out, "Out");
+const OUT_PTR: &str = velt_common::std_item!(ffi_out_ptr, "OutPtr");
 
 /// std's pointer into C memory (std/ffi/ptr.vlt).
 const PTR: &str = velt_common::std_item!(ffi_ptr, "Ptr");
@@ -136,6 +141,9 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
     if is_null(cx, ty) {
         return CTy::Null;
     }
+    if let Some(t) = by_address(cx, ty) {
+        return t;
+    }
     match cx.ty.kind(ty) {
         TyKind::Str if is_str_bytes(cx, module, &p.ty) => return CTy::StrBytes,
         TyKind::Str => {
@@ -180,10 +188,10 @@ fn value_ty(cx: &Ctx, ty: TyId) -> Option<CTy> {
         TyKind::Float(FloatTy::F64) => Some(CTy::F64),
         TyKind::Bool => Some(CTy::Bool),
         // `Ptr<T> | null` (or `| undefined`): `NULL` is the nothing.
-        TyKind::Option(inner, n) if *n != Nothing::Both && is_ptr(cx, *inner) => {
+        TyKind::Option(inner, n) if *n != Nothing::Both && is_c_ptr(cx, *inner) => {
             Some(CTy::Ptr { nullable: true })
         }
-        _ if is_ptr(cx, ty) => Some(CTy::Ptr { nullable: false }),
+        _ if is_c_ptr(cx, ty) => Some(CTy::Ptr { nullable: false }),
         _ => None,
     }
 }
@@ -250,6 +258,41 @@ pub(crate) fn ptr_conversion(
             "pointers to different C types never convert implicitly: in `unsafe` code, `Ptr.at<{target}>(Ptr.addressOf(p))` makes one, stating that a `{target}` is at that address"
         )),
     )
+}
+
+/// velt/ffi's `CString`, `Out<T>` (of a number or `bool`) or `OutPtr<T>`, which cross as an
+/// address.
+fn by_address(cx: &Ctx, ty: TyId) -> Option<CTy> {
+    let TyKind::Adt(d, args) = cx.ty.kind(ty) else {
+        return None;
+    };
+    let scalar = |t: &TyId| is_number(cx, *t) || matches!(cx.ty.kind(*t), TyKind::Bool);
+    match cx.adt(*d)?.qual_name.as_str() {
+        C_STRING => Some(CTy::CString),
+        OUT if args.first().is_some_and(scalar) => Some(CTy::Out),
+        OUT_PTR if args.first().is_some_and(|t| c_pointee(cx, *t)) => Some(CTy::OutPtr),
+        _ => None,
+    }
+}
+
+/// Is `ty` a `Ptr<T>` C can hold: one to a C type (`declare c type`), a number, `bool`, `void`
+/// or another such pointer (`Ptr<Ptr<u8>>` for `char **`)? `Ptr<string>` means nothing in C.
+fn is_c_ptr(cx: &Ctx, ty: TyId) -> bool {
+    match cx.ty.kind(ty) {
+        TyKind::Adt(_, args) if is_ptr(cx, ty) => args.first().is_some_and(|t| c_pointee(cx, *t)),
+        _ => false,
+    }
+}
+
+/// Can a C pointer point at a `ty`?
+fn c_pointee(cx: &Ctx, ty: TyId) -> bool {
+    match cx.ty.kind(ty) {
+        TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Unit => true,
+        TyKind::Adt(d, _) => {
+            cx.adt(*d).is_some_and(|a| a.decl.is_some_and(|t| t.c_type)) || is_c_ptr(cx, ty)
+        }
+        _ => false,
+    }
 }
 
 /// Is `ty` std's `Ptr<T>`?

@@ -6,7 +6,7 @@ use super::async_fn::BoxHold;
 use super::operand::proj;
 use super::rt::Rt;
 use super::{ice, unit, FnLower};
-use crate::vir::{Operand, Place, Proj, Ty, STR_AGG};
+use crate::vir::{Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
 const STR: Ty = Ty::Agg(STR_AGG);
 
@@ -102,6 +102,19 @@ impl FnLower<'_, '_> {
                 let v = self.projection_base(a, BoxHold::No);
                 let p = self.operand_place(v, Ty::Agg(STR_AGG));
                 self.str_bytes(&p)
+            }
+            (I::AddressLoad, [a]) => {
+                let addr = self.expr(a);
+                let at = self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr));
+                let Operand::Copy(at) = at else {
+                    ice("rvalue_temp returns a place")
+                };
+                let t = self.vty(ty);
+                let place = Place {
+                    local: at.local,
+                    proj: vec![Proj::Deref(t)],
+                };
+                self.rvalue_temp(t, Rvalue::Use(Operand::Copy(place)))
             }
             (I::StrByteAt, [s, i]) => {
                 let v = self.projection_base(s, BoxHold::No);

@@ -22,7 +22,7 @@ const LOADS_ALL: &str = "import \"velt/lang/this_fn\";\nimport \"velt/lang/recor
     import \"velt/lang/hooks/any_record\";\nimport \"velt/lang/hooks/number_text\";\n\
     import \"velt/lang/hooks/number_float\";\nimport \"velt/host\";\n\
     import \"velt/test/registry\";\nimport \"velt/test/run\";\nimport \"velt/host/promise\";\n\
-    import \"velt/ffi/ptr\";\nimport \"velt/ffi/str_bytes\";\n\
+    import \"velt/ffi/ptr\";\nimport \"velt/ffi/str_bytes\";\nimport \"velt/ffi/c_string\";\n\
     function main() {\n  const p = new Proxy({}, {});\n  const s = new Set<number>();\n  \
     const b = new Uint8Array(1);\n  const r = new RegExp(\"a\");\n  \
     const j = JSON.parse<i64>(\"1\");\n  const v: JsonValue = JsonValue.of(1);\n}\n";

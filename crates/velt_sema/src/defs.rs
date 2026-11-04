@@ -302,8 +302,14 @@ impl FnInfo<'_> {
             return Some(h.params.iter().map(unwritten).collect());
         }
         if let Some(c) = &self.c {
-            let unwritten =
-                |t: &crate::hir::CTy| !matches!(t, crate::hir::CTy::Buf { readonly: false });
+            let unwritten = |t: &crate::hir::CTy| {
+                !matches!(
+                    t,
+                    crate::hir::CTy::Buf { readonly: false }
+                        | crate::hir::CTy::Out
+                        | crate::hir::CTy::OutPtr
+                )
+            };
             return Some(c.params.iter().map(unwritten).collect());
         }
         self.system.clone()

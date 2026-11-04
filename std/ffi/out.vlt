@@ -1,0 +1,15 @@
+// velt/ffi (internal): `Out<T>`, a number a C function writes through a pointer
+// (`int *out`): the C function gets the address of its `value`.
+
+/**
+ * A number (or `bool`) a C function writes through a pointer parameter declared `Out<T>`
+ * (`int *out`, `size_t *len`): C gets the address of `value`, and `value` holds what it wrote
+ * once the call returned.
+ */
+export class Out<T> {
+  value: T;
+
+  constructor(value: T) {
+    this.value = value;
+  }
+}

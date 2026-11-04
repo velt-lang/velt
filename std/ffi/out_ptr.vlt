@@ -1,0 +1,18 @@
+// velt/ffi (internal): `OutPtr<T>`, a pointer a C function writes through a pointer
+// (`sqlite3 **db`): the C function gets the address of the pointer it holds.
+
+import { Ptr, ptrOrNull } from "velt/ffi/ptr";
+
+/**
+ * A pointer a C function writes through a pointer parameter declared `OutPtr<T>` (`T **out`,
+ * as `sqlite3_open_v2` returns its database): C gets the address of the pointer it holds, and
+ * `value` is what it wrote once the call returned (`null` for `NULL`).
+ */
+export class OutPtr<T> {
+  private address: usize = 0;
+
+  /** The pointer C wrote, or `null` for `NULL` (and before any call). */
+  get value(): Ptr<T> | null {
+    return ptrOrNull<T>(this.address);
+  }
+}

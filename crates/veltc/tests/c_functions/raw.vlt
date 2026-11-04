@@ -1,0 +1,66 @@
+import { CString, Out, OutPtr, Ptr, byteLength, readBytes, readCString, readUtf8 } from "velt/ffi";
+
+declare c type FILE;
+
+declare c("c") function strlen(s: CString): usize;
+declare c("c") function strtoll(s: CString, end: OutPtr<u8>, base: i32): i64;
+declare c("c") function getenv(name: CString): Ptr<u8> | null;
+declare c("c") function malloc(n: usize): Ptr<u8> | null;
+declare c("c") function memcpy(dst: Ptr<u8>, src: CString, n: usize): Ptr<u8>;
+declare c("c") function free(p: Ptr<u8> | null): void;
+declare c("c") function frexp(x: f64, exp: Out<i32>): f64;
+
+export function length(s: string): usize {
+  // SAFETY: a CString is NUL-terminated.
+  return unsafe { strlen(new CString(s)) };
+}
+
+export function parse(s: string): [i64, string] {
+  const text = new CString(s);
+  const end = new OutPtr<u8>();
+  // SAFETY: `text` is NUL-terminated; strtoll writes where it stopped, inside `text`, which
+  // lives until the read below.
+  const n = unsafe { strtoll(text, end, 10) };
+  const rest = end.value;
+  return [n, rest === null ? "" : unsafe { readCString(rest) }];
+}
+
+export function env(name: string): string | null {
+  // SAFETY: getenv returns a NUL-terminated string or NULL, read before any setenv.
+  const p = unsafe { getenv(new CString(name)) };
+  return p === null ? null : unsafe { readCString(p) };
+}
+
+export function roundTrip(s: string): string {
+  // A copy of the CString in C memory, NUL included (`strdup` is `_strdup` on Windows).
+  const n = byteLength(s) + 1;
+  // SAFETY: malloc returns `n` bytes or NULL; the copy fills them; read and freed once.
+  const p = unsafe { malloc(n) };
+  if (p === null) {
+    return "";
+  }
+  unsafe {
+    memcpy(p, new CString(s), n);
+  }
+  const text = unsafe { readCString(p) };
+  const first = unsafe { readUtf8(p, 1) };
+  const bytes = unsafe { readBytes(p, 2) };
+  unsafe {
+    free(p);
+  }
+  return `${text}|${first}|${bytes.join(",")}`;
+}
+
+export function exponent(x: f64): [f64, i32] {
+  const e = new Out<i32>(0);
+  // SAFETY: frexp writes the exponent.
+  const m = unsafe { frexp(x, e) };
+  return [m, e.value];
+}
+
+/// A negative result through `long long`, 64 bits on every target (C's `long` is 32 on Windows).
+export function negativeHex(): i64 {
+  const end = new OutPtr<u8>();
+  // SAFETY: the CString is NUL-terminated and lives through the call.
+  return unsafe { strtoll(new CString("  -0x1F rest"), end, 16) };
+}

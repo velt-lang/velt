@@ -1,0 +1,40 @@
+// velt/ffi (internal): `CString`, a NUL-terminated copy of a string's UTF-8 for C functions that
+// take `const char *`, and the function lowering calls to pass one (crates/velt_vir/src/lower/
+// c_call.rs).
+
+import { strBytesOf } from "velt/ffi/str_bytes";
+import { utf8DecodeLossy, utf8Encode } from "velt/encoding/utf8";
+
+/**
+ * A NUL-terminated copy of a string's UTF-8, which a C function declared to take `CString`
+ * reads as `const char *`. Made once (one allocation) and passed to any number of calls. A string
+ * holding a lone surrogate is copied with U+FFFD for it; a string holding a NUL is refused, since
+ * C would stop reading there.
+ */
+export class CString {
+  private bytes: readonly u8[];
+
+  constructor(s: string) {
+    const bytes = utf8Encode(strBytesOf(s));
+    if (bytes.includes(0)) {
+      throw new TypeError("a CString can't hold a NUL character: C would stop reading there");
+    }
+    bytes.push(0);
+    this.bytes = bytes;
+  }
+
+  /** The string, without its NUL. */
+  toString(): string {
+    return utf8DecodeLossy(this.bytes.slice(0, (this.bytes.length - 1) as i64));
+  }
+
+  /** The bytes a C function reads: the UTF-8 and the NUL after it, read-only. */
+  static bytesOf(c: CString): readonly u8[] {
+    return c.bytes;
+  }
+}
+
+/** The bytes a `CString` argument passes (std only: lowering calls it). */
+export function cStringBytes(c: CString): readonly u8[] {
+  return CString.bytesOf(c);
+}

@@ -106,6 +106,8 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("strLoadPartialU8x16", Op(I::StrLoadPartialU8x16)),
     ("strLoadU8x16", Op(I::StrLoadU8x16)),
     ("targetFeature", TargetFeature),
+    // address.vlt
+    ("addressLoad", Op(I::AddressLoad)),
     // string.vlt
     ("strAsciiWords", Op(I::StrAsciiWords)),
     ("strByteAt", Op(I::StrByteAt)),
