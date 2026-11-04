@@ -116,10 +116,12 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// An arrow's annotated parameter fixes a slot that a literal argument would otherwise fix
-    /// first: `xs.reduce((acc: number[], x) => …, [])` and `reduce((acc: T | null, x) => …, null)`
-    /// have `A` from the annotation, the literal is checked against it. TypeScript gets there by
-    /// taking the wider of the two candidates, which is the annotation when the literal fits it.
+    /// An arrow's annotated parameter fixes a slot before a literal argument for that slot, when
+    /// the literal has no type of its own to offer (`xs.reduce((acc: number[], x) => …, [])`, with
+    /// `null`, `{}`, `new Map()`), or when the arrow's result also has the slot
+    /// (`xs.reduce((acc: string | number, s) => acc, 0)`). TypeScript prefers what a value gives
+    /// over what a parameter takes (`on((x: number | string) => {}, 1)` is a `number`), but what
+    /// a result gives counts as a value too, and the wider candidate wins.
     pub(super) fn annotations_before_literals(
         &mut self,
         c: &Callable,
@@ -142,9 +144,14 @@ impl FnCx<'_, '_> {
                 continue;
             }
             let core = self.cx.ty.core(p.ty).unwrap_or(p.ty);
-            let TyKind::FnPtr { params: ptys, .. } = self.cx.ty.kind(core).clone() else {
+            let TyKind::FnPtr {
+                params: ptys, ret, ..
+            } = self.cx.ty.kind(core).clone()
+            else {
                 continue;
             };
+            let mut in_result = vec![];
+            crate::types::collect_params(&self.cx.ty, ret, &mut in_result);
             for (t, written) in ptys.iter().zip(params) {
                 let Some(written) = &written.ty else {
                     continue;
@@ -153,16 +160,43 @@ impl FnCx<'_, '_> {
                 let TyKind::Param(k) = *self.cx.ty.kind(*t) else {
                     continue;
                 };
+                if slots.get(k as usize).is_none_or(Option::is_some) {
+                    continue;
+                }
                 let literal = args.iter().zip(&c.params).any(|(a, p)| {
-                    literal_arg(a) && matches!(*self.cx.ty.kind(p.ty), TyKind::Param(s) if s == k)
+                    matches!(*self.cx.ty.kind(p.ty), TyKind::Param(s) if s == k)
+                        && (self.has_no_type_of_its_own(a)
+                            || (in_result.contains(&k) && literal_arg(a)))
                 });
-                if literal && slots.get(k as usize).is_some_and(Option::is_none) {
+                if literal {
                     let before = self.cx.diags.len();
                     let resolved = self.resolve(written);
                     self.cx.diags.truncate(before);
                     slots[k as usize] = Some(resolved);
                 }
             }
+        }
+    }
+
+    /// `null`, `undefined`, `[]`, `{}`, or `new C()` of a generic class without type arguments:
+    /// nothing in it says what type it is.
+    fn has_no_type_of_its_own(&mut self, e: &ast::Expr) -> bool {
+        match &strip_parens(e).kind {
+            ast::ExprKind::Lit(ast::Lit::Null | ast::Lit::Undefined) => true,
+            ast::ExprKind::Array(xs) => xs.is_empty(),
+            ast::ExprKind::Object(props) => props.is_empty(),
+            ast::ExprKind::New { class, .. } => match &class.kind {
+                ast::TypeExprKind::Named { path, args } if args.is_empty() => {
+                    match self.lookup_type_path(path) {
+                        Some(crate::ctx::Item::Def(d)) => {
+                            self.cx.adt(d).is_some_and(|a| !a.generics.names.is_empty())
+                        }
+                        _ => false,
+                    }
+                }
+                _ => false,
+            },
+            _ => false,
         }
     }
 

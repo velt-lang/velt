@@ -1,0 +1,57 @@
+// An annotated callback parameter and a literal argument for the same type parameter: the literal
+// gives the type when it has one, unless the callback's result also has that type parameter.
+
+function on<T>(cb: (x: T) => void, init: T): T {
+  cb(init);
+  return init;
+}
+
+// The literal has a type of its own.
+const a = on((x: number | string) => {}, 1);
+console.log(a.toFixed(1));
+const b = on((x: number | undefined) => {}, 1);
+console.log(b + 1);
+const c = on((x: string | number) => {}, "a");
+console.log(c.length);
+const d: number = on((x: number | string) => {}, 1);
+console.log(d);
+const e = on((x: boolean | string) => {}, true);
+console.log(e && "yes");
+const f = on((x: number[] | string) => {}, [1, 2]);
+console.log(f.length);
+const g = on((x: { a: number } | string) => {}, { a: 1 });
+console.log(g.a);
+class Base {
+  name = "base";
+}
+class Derived extends Base {
+  extra = "derived";
+}
+const h = on((x: Base) => {}, new Derived());
+console.log(h.extra);
+
+// The literal has none.
+const i = on((x: number[]) => {}, []);
+i.push(1);
+console.log(i);
+const j = on((x: number | null) => {}, null);
+console.log(j === null);
+const k = on((x: number | undefined) => {}, undefined);
+console.log(k === undefined);
+const l = on((x: Record<string, number>) => {}, {});
+l["k"] = 1;
+console.log(l);
+const m = on((x: Map<string, number>) => {}, new Map());
+m.set("a", 1);
+console.log(m.get("a"));
+
+// The result has the type parameter: the callback returns the wider type.
+const strs = ["a", "bb"];
+console.log(strs.reduce((acc: string | number, s) => acc, 0));
+console.log(strs.reduce((acc: string | number, s) => s, 0));
+console.log(strs.reduceRight((acc: number | null, s) => s.length, 7));
+function fold<T>(cb: (acc: T, x: number) => T, init: T): T {
+  return cb(init, 1);
+}
+console.log(fold((acc: number | string, x) => "s" + x, 0));
+console.log(fold((acc: Base, x) => acc, new Derived()).name);
