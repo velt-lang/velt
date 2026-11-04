@@ -16,6 +16,8 @@ export const INSPECT = Symbol.for("nodejs.util.inspect.custom");
 export const TYPED_ARRAY_KIND = Symbol.for("velt.typedArray.kind");
 /** `xs[i]` of an array where JS reads `undefined` past the end. */
 export const ARRAY_GET = Symbol("arrayGet");
+/** `xs.reduce(f)` without an initial value: the first element starts the accumulation. */
+export const ARRAY_REDUCE_FIRST = Symbol("arrayReduceFirst");
 /** Typed arrays: element `i` as a number (in range). */
 export const TYPED_ARRAY_GET = Symbol("typedArrayGet");
 /** Typed arrays: writes element `i` (in range). */

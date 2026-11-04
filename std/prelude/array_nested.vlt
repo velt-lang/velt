@@ -1,9 +1,11 @@
-// Prelude: `flat` on arrays of arrays, and `join` on arrays of arrays and of nullable elements,
+// Prelude: `flat` on arrays of arrays, `flatMap`, `reduce` without an initial value, and `join`
+// on arrays of arrays and of nullable elements,
 // like JS: inner arrays are written as `${x}` writes them (their elements joined with ",", at
 // any depth, `null` as ""), and `null` elements join as "". These targets are more specific
 // than `extend<T> Array<T>` (array.vlt), so their `join` wins.
 
 import { arraySwapNested, arrayWithCapacity, share } from "velt/lang/intrinsics";
+import { ARRAY_REDUCE_FIRST } from "velt/lang/hooks/keys";
 
 extend<T> Array<T[]> {
   /**
@@ -60,5 +62,45 @@ extend<T> Array<T | null> {
       s += `${one}`;
     }
     return s;
+  }
+}
+
+extend<T> Array<T> {
+  /**
+   * Calls `f` on each element (with its index) and returns the elements of the arrays it
+   * returns, in order, one level deep: `map` followed by `flat()`. The elements visited are those
+   * below the length when the call starts that are still there, as in JS. Unlike JS, `f` returns
+   * an array (return `[x]` for one element and `[]` for none).
+   * @throws what `f` throws.
+   */
+  flatMap<U, E>(f: (x: T, i: i64) => U[] throws E): U[] throws E {
+    const out: U[] = [];
+    const n = this.length;
+    for (let i: usize = 0; i < n && i < this.length; i++) {
+      const part = f(this[i], i as i64);
+      for (let j: usize = 0; j < part.length; j++) {
+        out.push(share(part[j]));
+      }
+    }
+    return out;
+  }
+
+  /**
+   * `reduce(f)` without an initial value (the compiler calls this for a `reduce` with one
+   * argument): the first element is the accumulator, and `f` is called with each element after
+   * it that is below the length when the call starts, as in JS. Throws JS's `TypeError` on an
+   * empty array.
+   * @throws what `f` throws, and a `TypeError` for an empty array.
+   */
+  [ARRAY_REDUCE_FIRST]<E>(f: (acc: T, x: T, i: i64) => T throws E): T throws E | TypeError {
+    if (this.length === 0) {
+      throw new TypeError("Reduce of empty array with no initial value");
+    }
+    let acc = share(this[0]);
+    const n = this.length;
+    for (let i: usize = 1; i < n && i < this.length; i++) {
+      acc = f(acc, this[i], i as i64);
+    }
+    return acc;
   }
 }

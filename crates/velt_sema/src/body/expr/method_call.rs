@@ -27,6 +27,19 @@ impl FnCx<'_, '_> {
             Ok(h) => return h,
             Err(recv) => recv,
         };
+        // `xs.reduce(f)` without an initial value: TypeScript's other overload, std's
+        // `[ARRAY_REDUCE_FIRST]` (array_nested.vlt).
+        if prop.name == "reduce"
+            && args.len() == 1
+            && type_args.is_empty()
+            && self.cx.ty.array_elem(recv.ty).is_some()
+        {
+            let first = ast::Ident {
+                name: velt_common::std_key!(array_reduce_first).to_string(),
+                span: prop.span,
+            };
+            return self.method_call_on(recv, &first, type_args, args, exp, span);
+        }
         let recv = match self.brand_tag_call(recv, prop, args, span) {
             Ok(h) => return h,
             Err(recv) => recv,
