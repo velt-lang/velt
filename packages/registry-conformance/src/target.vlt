@@ -2,13 +2,13 @@
 
 /** The registry under test. */
 export class Target {
-  /** The registry's base URL, without a trailing `/`. */
+  /** The registry's base URL, without a trailing `/` (one given is dropped). */
   url: string;
   /** Answers one request: `fetch`, or a handler called directly. */
   send: (req: Request) => Promise<Response>;
 
   constructor(url: string, send: (req: Request) => Promise<Response>) {
-    this.url = url;
+    this.url = url.endsWith("/") ? url.slice(0, url.length - 1) : url;
     this.send = send;
   }
 }

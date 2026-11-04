@@ -17,7 +17,7 @@ async function versionsAreImmutable(run: Run): Promise<void> {
   check.answer("first publish", await client.publish(lib, "1.0.0", token), 201, "published");
   const before = await client.call("GET", `${lib}/index`);
   check.answer("index", before, 200);
-  check.is("index type", before.type, JSON_TYPE);
+  check.mediaType("index type", before, JSON_TYPE);
   const first = JSON.parse<IndexBody>(before.text).versions[0];
   check.is("index version", first.version, "1.0.0");
   check.is("index checksum", first.checksum, contentChecksum(packageFiles(lib, "1.0.0")));
@@ -38,7 +38,7 @@ async function readsArePublic(run: Run): Promise<void> {
   check.answer("publish", await client.publish(lib, "1.0.0", run.users.alice), 201);
   const got = await client.call("GET", `${lib}/1.0.0`);
   check.answer("download", got, 200);
-  check.is("download type", got.type, "application/octet-stream");
+  check.mediaType("download type", got, "application/octet-stream");
   const read = readArchive(got.bytes, (path: string): bool => true);
   check.is("the archive's checksum", contentChecksum(read), contentChecksum(files));
   const listing = await client.send("GET", "/", [], null);

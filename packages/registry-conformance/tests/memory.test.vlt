@@ -30,6 +30,14 @@ function shown(failures: Failure[]): string[] {
   return failures.map((f: Failure): string => `${f.title}: ${f.problems.join("; ")}`);
 }
 
+describe("a target", () => {
+  it("drops a trailing / from its URL", () => {
+    const send = async (req: Request): Promise<Response> => new Response("");
+    expect(new Target("http://registry.test/", send).url).toBe("http://registry.test");
+    expect(new Target("http://registry.test", send).url).toBe("http://registry.test");
+  });
+});
+
 describe("registry-core in memory", () => {
   it("passes on a registry with users", async () => {
     const auth = new TokenAuth();

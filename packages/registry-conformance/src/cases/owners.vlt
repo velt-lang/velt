@@ -72,7 +72,7 @@ async function searchShowsTheNewestUnyanked(run: Run): Promise<void> {
   check.is("the next has none", entries[1].description ?? "", "");
   const hit = await client.call("GET", `search?q=${word}`);
   check.answer("by description", hit, 200);
-  check.is("search type", hit.type, "application/json");
+  check.mediaType("search type", hit, "application/json");
   const hits = JSON.parse<SearchBody>(hit.text).packages;
   check.is("hits", hits.map((h) => `${h.name} ${h.version}`).join(), `${lib} 1.0.0`);
   const byKeyword = await client.call("GET", `search?q=kw${run.id}`);
