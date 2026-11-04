@@ -101,7 +101,7 @@ fn earlier_deadline_first_then_creation_order() {
 }
 
 #[test]
-fn timers_that_wake_the_root_fire_one_per_poll_in_timer_order() {
+fn timers_that_wake_the_root_hold_back_until_their_turn() {
     // `Promise.all([a, b])` in the root: its leaves hold the task's waker, and the root polls
     // `a` first, so with both fired `a` would run first though `b` was due first.
     rt().block_on(async {
@@ -119,18 +119,19 @@ fn timers_that_wake_the_root_fire_one_per_poll_in_timer_order() {
         );
         tokio::time::sleep(Duration::from_millis(2)).await;
         log.lock().unwrap().clear();
-        // `b`, then `other` (another waiter), then `a`, whose waiter was woken already: next poll.
+        // `b`, then `other` (another waiter), then `a`, whose waiter was woken already: held back.
         assert_eq!(timers.fire(&task), Some(0));
         assert!(b.fired.load(Ordering::Acquire) && other.fired.load(Ordering::Acquire));
         assert!(!a.fired.load(Ordering::Acquire));
-        assert_eq!(
-            *log.lock().unwrap(),
-            ["other", "task"],
-            "asks for that poll"
-        );
+        assert_eq!(*log.lock().unwrap(), ["other"]);
+        log.lock().unwrap().clear();
+        // The poll ends with `a` still due: it gets the next one, which fires it.
+        timers.end_poll(&task);
+        assert_eq!(*log.lock().unwrap(), ["task"], "asks for that poll");
         log.lock().unwrap().clear();
         assert_eq!(timers.fire(&task), Some(0));
         assert!(a.fired.load(Ordering::Acquire));
+        timers.end_poll(&task);
         assert!(log.lock().unwrap().is_empty(), "nothing is left to fire");
     });
 }
@@ -148,9 +149,11 @@ fn reports_where_the_root_resumes() {
         let _root2 = leaf(&timers, at, &task, &task);
         tokio::time::sleep(Duration::from_millis(1)).await;
         log.lock().unwrap().clear();
-        // One promise runs before the root, which is resumed, not woken; its second timer fires
-        // at the next poll, which it is woken for.
+        // One promise runs before the root, which is resumed, not woken; its second timer is held
+        // back, and asks for the next poll when this one ends.
         assert_eq!(timers.fire(&task), Some(1));
+        assert_eq!(*log.lock().unwrap(), ["a", "b"]);
+        timers.end_poll(&task);
         assert_eq!(*log.lock().unwrap(), ["a", "b", "task"]);
     });
 }

@@ -1,0 +1,10 @@
+// A fixed-arity `Promise.all` in the task's root over timers that are all due at once: they wake
+// the same waiter and resume in timer order (crates/velt_rt/src/task/local/timers.rs). What this
+// measures is that this costs no poll per timer when they are polled in timer order. `sleep(0)` is
+// due at the next poll, so nothing waits and the count does not depend on timing.
+async function main() {
+  for (let i = 0; i < 20000; i++) {
+    await Promise.all([sleep(0), sleep(0), sleep(0), sleep(0), sleep(0), sleep(0), sleep(0), sleep(0)]);
+  }
+  console.log("done");
+}

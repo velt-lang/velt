@@ -278,6 +278,10 @@ impl SetPtr {
         if !self.0.is_null() && unhandled::waiting(self.0) {
             unhandled::flush(self.0);
         }
+        // The due timers this poll held back, if any are left, get a poll of their own.
+        if let Some(t) = timers {
+            t.end_poll(&*waker);
+        }
         // The poll is over: timers this task created may run their callbacks (gate.rs).
         if let Some(g) = self.0.as_ref().and_then(|s| s.gate.as_ref()) {
             g.leave();

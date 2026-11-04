@@ -5,11 +5,18 @@
 //! arms a single tokio `Sleep` for the earliest deadline. When the task is polled, the queue wakes
 //! every timer that is due, in order, before the task's woken promises run: started promises are
 //! queued in that order, and the root, when it waits for one of the timers itself, resumes at its
-//! place among them (set.rs). Timers that wake the same waiter (`Promise.all([a, b])`, whose
-//! owner polls `a` and `b` itself, in that order) fire one per poll of the task: that waiter
-//! resumes once per poll, and would find them all fired and run them in the order it polls them,
-//! not in timer order. Timers created by one task are ordered among themselves; there is no order
-//! across tasks, which run in parallel.
+//! place among them (set.rs). Timers created by one task are ordered among themselves; there is
+//! no order across tasks, which run in parallel.
+//!
+//! **Timers that wake the same waiter** (`Promise.all([a, b])`, whose owner polls `a` and `b`
+//! itself, in that order): the waiter resumes once per firing, and would find them all fired and
+//! run them in the order it polls them, not in timer order. So firing stops at the first timer
+//! whose waiter was woken already, and that timer is held back. While the poll goes on, a leaf
+//! that is polled and finds itself next in timer order fires itself and is ready at once: no timer
+//! before it is still to be seen, and no microtask waits (the await word is 0), so this is where
+//! its turn comes (Node's timer phase, which drains the microtasks between timers). Timers polled
+//! in timer order, the usual case, so all fire in the one poll of their waiter. What is still
+//! due when the poll ends gets the next poll ([`Timers::end_poll`]).
 //!
 //! A leaf registers in the queue of the task polling it (a promise handed to another task moves
 //! its registration along). Outside any task it waits on a plain tokio timer.
@@ -18,7 +25,7 @@ use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::marker::PhantomPinned;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
@@ -37,6 +44,11 @@ pub(crate) struct Timers {
     state: Mutex<State>,
     /// The last creation sequence number (only the owning task creates timers).
     seq: AtomicU64,
+    /// Fired timers whose leaves did not see it yet (they are polled, or dropped). Wraps: a leaf
+    /// a task took over may see it just before the firing counts it.
+    unseen: AtomicU32,
+    /// `State::held` is set: this poll has to end with [`Timers::end_poll`].
+    held: AtomicBool,
 }
 
 /// The registered timers in key order. Timers mostly come in key order (equal delays, or a
@@ -135,6 +147,9 @@ struct State {
     armed: Option<(Sleep, Instant)>,
     /// Wakers of the timers being fired (kept to reuse its allocation).
     due: Vec<Waker>,
+    /// Firing stopped at a timer whose waiter was woken already, at this time: timers due by then
+    /// may fire themselves while the poll goes on (see the module docs).
+    held: Option<Instant>,
 }
 
 /// A registered leaf: who to wake, and its `fired` flag (valid while registered: a leaf
@@ -153,14 +168,26 @@ impl Timers {
         self.seq.fetch_add(1, Ordering::Relaxed) + 1
     }
 
-    /// A registered leaf polled again: wake it through `waker` from now on.
-    fn update(&self, key: &Key, waker: &Waker) {
+    /// A registered leaf polled again: wake it through `waker` from now on, or, when a timer was
+    /// held back and this one's turn has come, fire it (true; see the module docs).
+    fn update(&self, key: &Key, waker: &Waker) -> bool {
         let mut s = self.state.lock();
+        if s.held.is_some_and(|now| key.0 <= now)
+            && self.unseen.load(Ordering::Relaxed) == 0
+            && s.queue.first_key() == Some(*key)
+            && super::micro::step_free()
+        {
+            let r = s.queue.pop_first(key);
+            drop(s);
+            drop(r);
+            return true;
+        }
         if let Some(r) = s.queue.get_mut(key) {
             if !r.waker.will_wake(waker) {
                 r.waker = waker.clone();
             }
         }
+        false
     }
 
     /// Register the leaf at `key`, woken through `waker`. `task` is the waker of the task being
@@ -185,7 +212,11 @@ impl Timers {
     }
 
     fn deregister(&self, key: &Key) {
-        self.state.lock().queue.remove(key);
+        let r = self.state.lock().queue.remove(key);
+        if r.is_none() {
+            // It was fired.
+            self.unseen.fetch_sub(1, Ordering::Relaxed);
+        }
     }
 
     /// Is a registered timer due now?
@@ -195,12 +226,11 @@ impl Timers {
     }
 
     /// Wake the due timers, in order, up to the first that wakes a waiter already woken here (it
-    /// and those after it fire at the task's next poll, which this asks for: see the module
-    /// docs), and arm the tokio timer for the next one (it wakes `task`). Returns how many of the
-    /// woken waited in a started promise before the first that `task` itself waited for (`None`:
-    /// none of them), so the drain can resume the root at its place.
+    /// is held back, with those after it, until [`Timers::end_poll`]: see the module docs), or
+    /// else arm the tokio timer for the next one (it wakes `task`). Returns how many of the woken
+    /// waited in a started promise before the first that `task` itself waited for (`None`: none
+    /// of them), so the drain can resume the root at its place.
     pub(crate) fn fire(&self, task: &Waker) -> Option<usize> {
-        let mut again = false;
         let mut due = {
             let mut s = self.state.lock();
             if s.queue.is_empty() {
@@ -216,7 +246,8 @@ impl Timers {
                     let root = r.waker.will_wake(task);
                     if (root && root_woken) || (!root && !node::firing_start(&r.waker)) {
                         s.queue.insert(key, r);
-                        again = true;
+                        s.held = Some(now);
+                        self.held.store(true, Ordering::Relaxed);
                         break;
                     }
                     root_woken |= root;
@@ -231,6 +262,7 @@ impl Timers {
                     break;
                 }
             }
+            self.unseen.fetch_add(due.len() as u32, Ordering::Relaxed);
             due
         };
         let mut root_at = None;
@@ -245,10 +277,22 @@ impl Timers {
             }
         }
         self.state.lock().due = due;
-        if again {
-            task.wake_by_ref();
-        }
         root_at
+    }
+
+    /// The poll that fired ended: what it held back and is still due gets the next poll, and the
+    /// tokio timer (it wakes `task`) is armed for anything later.
+    pub(crate) fn end_poll(&self, task: &Waker) {
+        if !self.held.swap(false, Ordering::Relaxed) {
+            return;
+        }
+        let mut s = self.state.lock();
+        s.held = None;
+        if let Some(key) = s.queue.first_key() {
+            if key.0 <= Instant::now() || arm(&mut s.armed, key.0, task) {
+                task.wake_by_ref();
+            }
+        }
     }
 }
 
@@ -304,14 +348,20 @@ impl Future for TimerLeaf {
         let this = unsafe { self.get_unchecked_mut() };
         if this.fired.load(Ordering::Acquire) {
             // Its queue removed it when firing it.
-            this.registered = None;
+            if let Some((t, _)) = this.registered.take() {
+                t.unseen.fetch_sub(1, Ordering::Relaxed);
+            }
             return Poll::Ready(());
         }
         let in_task = super::with_timers(|timers, task| {
             if let Some((t, key)) = &this.registered {
                 if Arc::ptr_eq(t, timers) {
-                    t.update(key, cx.waker());
-                    return Poll::Pending;
+                    if !t.update(key, cx.waker()) {
+                        return Poll::Pending;
+                    }
+                    this.fired.store(true, Ordering::Release);
+                    this.registered = None;
+                    return Poll::Ready(());
                 }
             }
             // First poll, or polled by another task now: (re-)register here. Once out of the
