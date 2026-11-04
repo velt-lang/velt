@@ -90,6 +90,12 @@ pub fn written_default(import: &ast::Import) -> bool {
             if n.alias.as_ref().is_some_and(|a| a.name == "default" && a.span.lo < n.name.span.lo))
 }
 
+/// Whether entry `n` of export list `import` is the list of `export default interface I` next to
+/// a value default (#1916): it gives `default` its type meaning, and the value default the rest.
+pub fn is_type_default(import: &ast::Import, n: &ast::ImportName) -> bool {
+    n.type_only && written_default(import)
+}
+
 /// Stack for the parser thread. The recursive-descent parser needs a few KB per nesting level
 /// (bounded by its depth limit); a dedicated thread keeps deeply nested input from overflowing the
 /// caller's stack (1 MB main thread on Windows). The memory is reserved, not committed, until used.
@@ -114,6 +120,8 @@ pub fn parse_ts_file(file: FileId, src: &str) -> (ast::Module, Diagnostics) {
 pub struct ParseOptions<'a> {
     /// A plain `.ts` file (as [`parse_ts_file`]).
     pub plain_ts: bool,
+    /// A `.tsx` file: TypeScript's syntax rules, but not `<T>x` as a type assertion.
+    pub tsx: bool,
     /// Build-time constants (`define` in package.vlt, as Vite's `define`): each identifier
     /// expression of one of these names that nothing in its scope declares parses as the
     /// literal ([`scope::free_values`]).
@@ -154,6 +162,7 @@ pub fn parse_with(file: FileId, src: &str, opts: &ParseOptions) -> Parsed {
         on_parser_thread(|| {
             let mut parser = parser::Parser::new(file, src);
             parser.plain_ts = opts.plain_ts;
+            parser.typescript = opts.plain_ts || opts.tsx;
             parser.define_at = Some(define_at);
             parser.ambient = Some(vec![]);
             let module = parser.parse_module();
@@ -260,6 +269,7 @@ fn parse_source(
 ) -> (ast::Module, Diagnostics, Vec<std::ops::Range<u32>>) {
     let mut parser = parser::Parser::new(file, src);
     parser.plain_ts = plain_ts;
+    parser.typescript = plain_ts;
     let module = parser.parse_module();
     let (mut diags, comments) = parser.finish();
     // Lexer and parser diagnostics interleave by position (stable sort keeps same-offset order).

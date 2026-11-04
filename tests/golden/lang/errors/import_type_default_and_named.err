@@ -1,0 +1,2 @@
+import_type_default_and_named.vlt:2:16: error: a type-only import can specify a default import or named bindings, but not both (TypeScript's TS1363)
+import_type_default_and_named.vlt:3:16: error: a type-only import can specify a default import or named bindings, but not both (TypeScript's TS1363)

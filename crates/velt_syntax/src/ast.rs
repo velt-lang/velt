@@ -114,6 +114,9 @@ pub struct Import {
     /// default binding, given as the first of `names` (`default as x`, the `default` ident at
     /// `x`'s span), as `import { default as x }` would give it.
     pub default_import: bool,
+    /// `import type * as ns from "…"`: only the module's types are used, so it isn't evaluated.
+    /// (`import type { a }` and `import type x from` mark their names instead.)
+    pub type_only: bool,
 }
 
 #[derive(Clone, Debug)]

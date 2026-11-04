@@ -31,6 +31,7 @@ fn golden_m1_files_parse() {
                 | "using_syntax.vlt"
                 | "_default_export_twice_lib.vlt"
                 | "default_name_reserved.vlt"
+                | "import_type_default_and_named.vlt"
                 | "strict_mode_names.vlt"
                 | "generator_syntax.vlt"
                 | "generator_done_undefined.vlt"

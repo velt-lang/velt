@@ -240,13 +240,11 @@ export { default } from \"./m\";
         ),
         [reserved]
     );
-    let errs = errors(
-        "export * as default from \"./m\";
-",
-    );
-    assert!(
-        errs[0].starts_with("`export * as default from`"),
-        "{errs:?}"
+    // `export * as default` is the module's default, valid alone and not next to another.
+    assert_eq!(errors("export * as default from \"./m\";\n"), [] as [&str; 0]);
+    assert_eq!(
+        errors("export * as default from \"./m\";\nexport default 1;\n"),
+        [two]
     );
     let errs = errors(
         "function f() {
@@ -323,4 +321,50 @@ fn script_variables_closures_capture_stay_module_state() {
     let src = "const ready = new Promise<number>((r) => r(5));\nconst list = [1];\n\
                const use = async () => (await ready) + list.length;\nconsole.log(await use());\n";
     assert_eq!(module_vars(src), ["list"]);
+}
+
+/// The default export a parsed `src` gives: `(is it the constant, the name in its list)`.
+fn default_of(src: &str) -> (bool, Option<String>) {
+    let parsed = velt_syntax::parse_with(
+        velt_common::FileId(0),
+        src,
+        &velt_syntax::ParseOptions::default(),
+    );
+    assert!(parsed.diags.is_empty(), "{:?}", parsed.diags);
+    for item in parsed.module.items.iter().filter(|i| i.exported) {
+        match &item.kind {
+            velt_syntax::ast::ItemKind::Var(_) => return (true, None),
+            velt_syntax::ast::ItemKind::Import(i) => {
+                return (false, i.names.first().map(|n| n.name.name.clone()))
+            }
+            _ => {}
+        }
+    }
+    panic!("no default export in {src}");
+}
+
+#[test]
+fn export_default_of_a_name_is_a_list_only_where_it_may_be_live() {
+    // What the module binds, whose value is there and can't change; an import, which sema decides.
+    for src in [
+        "const x = 1;\nexport default x;\n",
+        "export default f;\nfunction f() {}\n",
+        "class C {}\nexport default C;\n",
+        "interface I {}\nexport default I;\n",
+        "type T = number;\nexport default T;\n",
+        "import { x } from \"./a\";\nexport default x;\n",
+        "import * as x from \"./a\";\nexport default x;\n",
+    ] {
+        assert!(!default_of(src).0, "{src}");
+    }
+    // A `let`, a declaration below and a name the module doesn't bind are read when it runs.
+    for src in [
+        "let x = 1;\nexport default x;\n",
+        "export default x;\nconst x = 1;\n",
+        "export default C;\nclass C {}\n",
+        "export default E;\nenum E { A }\n",
+        "export default NaN;\n",
+    ] {
+        assert!(default_of(src).0, "{src}");
+    }
 }

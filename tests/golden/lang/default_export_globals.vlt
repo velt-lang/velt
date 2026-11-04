@@ -1,0 +1,8 @@
+// `export default x;` of a name the module doesn't bind is an expression, as any other (#1916).
+// The output is Node's.
+
+import nan from "./_default_export_globals/nan";
+import inf from "./_default_export_globals/infinity";
+import parse from "./_default_export_globals/parse";
+
+console.log(nan, inf, parse("12", 10));

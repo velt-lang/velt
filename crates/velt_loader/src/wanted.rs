@@ -154,6 +154,7 @@ pub(super) fn augmented(spec: &str, span: Span) -> ast::Import {
         namespace: None,
         all: false,
         default_import: false,
+        type_only: false,
     }
 }
 

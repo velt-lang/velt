@@ -35,6 +35,13 @@ impl<'a> Parser<'a> {
             });
         }
         let more = !default_import || self.eat(Tok::Comma);
+        if type_only && default_import && more {
+            let span = self.cur_span();
+            self.error(
+                "a type-only import can specify a default import or named bindings, but not both (TypeScript's TS1363)",
+                span,
+            );
+        }
         let mut clause = default_import;
         if more && self.at(Tok::LBrace) {
             names.extend(self.parse_import_names(type_only, true)?);
@@ -52,6 +59,7 @@ impl<'a> Parser<'a> {
         }
         let (from, from_span) = self.parse_module_spec()?;
         self.expect_semi()?;
+        let whole_module = type_only && namespace.is_some();
         Ok(Import {
             names,
             from,
@@ -59,6 +67,7 @@ impl<'a> Parser<'a> {
             namespace,
             all: false,
             default_import,
+            type_only: whole_module,
         })
     }
 
@@ -92,7 +101,7 @@ impl<'a> Parser<'a> {
             // `export * as ns from "…"`: the module's namespace, `default` included, exported
             // as `ns` (its members as `ns.x`, as TypeScript namespaces are).
             let namespace = match self.eat_kw(Kw::As) {
-                true => Some(self.parse_export_namespace()?),
+                true => Some(self.parse_ident()?),
                 false => None,
             };
             self.expect_kw(Kw::From, "from")?;
@@ -105,6 +114,7 @@ impl<'a> Parser<'a> {
                 all: namespace.is_none(),
                 namespace,
                 default_import: false,
+                type_only: false,
             });
         }
         let names = self.parse_import_names(type_only, false)?;
@@ -124,20 +134,8 @@ impl<'a> Parser<'a> {
             namespace: None,
             all: false,
             default_import: false,
+            type_only: false,
         })
-    }
-
-    /// The `ns` of `export * as ns from`.
-    fn parse_export_namespace(&mut self) -> PResult<Ident> {
-        let ns = self.parse_ident()?;
-        if ns.name == super::default_exports::DEFAULT {
-            self.report(
-                Diagnostic::error("`export * as default from` is not supported", ns.span)
-                    .with_note("import the namespace, then export it under a name: `export * as ns from \"…\"`"),
-            );
-            return Err(Fail);
-        }
-        Ok(ns)
     }
 
     /// `{ a, type B, c as d }`; `type_only` marks every name (`import type { … }`). With `binds`

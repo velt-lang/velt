@@ -112,6 +112,7 @@ mod tests {
         let defines = HashMap::from([("__DEV__".to_string(), Lit::Bool(false))]);
         let opts = ParseOptions {
             plain_ts: true,
+            tsx: false,
             defines: Some(&defines),
         };
         let parsed = parse_with(FileId(0), SRC, &opts);

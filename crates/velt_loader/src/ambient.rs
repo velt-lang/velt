@@ -112,6 +112,7 @@ impl Ambients {
             let id = sm.add(&file, src);
             let opts = velt_syntax::ParseOptions {
                 plain_ts: true,
+                tsx: false,
                 defines: None,
             };
             let parsed = velt_syntax::parse_with(id, &sm.get(id).src, &opts);

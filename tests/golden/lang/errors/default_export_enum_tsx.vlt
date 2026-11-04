@@ -1,0 +1,4 @@
+// `export default enum` is refused in a `.tsx` file as in a `.ts` file (TS1109, #1916).
+import Color from "./_default_export_enum_tsx";
+
+console.log(Color.Red);

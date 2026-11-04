@@ -1,0 +1,6 @@
+// A type default doesn't stand next to `export default expr;` or `export default x;`: TS2528, as
+// the `default` of these is the expression's alone (#1916).
+import a from "./_default_type_beside_expression_a";
+import b from "./_default_type_beside_expression_b";
+
+console.log(a, b);

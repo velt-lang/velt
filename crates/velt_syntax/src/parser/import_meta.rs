@@ -122,6 +122,7 @@ impl<'a> Parser<'a> {
             namespace: None,
             all: false,
             default_import: false,
+            type_only: false,
         };
         Item {
             kind: ItemKind::Import(import),
