@@ -33,6 +33,7 @@ mod counter;
 mod fact;
 mod flow;
 mod int32;
+mod int_compare;
 mod liveness;
 mod narrow;
 mod params;

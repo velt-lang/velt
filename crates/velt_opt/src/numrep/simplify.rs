@@ -19,6 +19,7 @@ use velt_vir::vir::{
 
 use super::fact::{self, Fact};
 use super::flow::{is_comparison, operand_ty, Flow, State};
+use super::int_compare;
 use super::refine;
 use super::Env;
 use crate::srclocs::push_stmt;
@@ -27,14 +28,21 @@ use crate::srclocs::push_stmt;
 pub(super) fn run(env: &Env, flow: &Flow, func: &mut Function) -> bool {
     let mut changed = false;
     let mut st: State = flow.scratch();
+    let mut later = vec![];
     for bi in 0..func.blocks.len() {
         if !flow.load(bi, &mut st) {
             continue;
         }
         let mut remainders = vec![];
+        let mut compares = vec![];
+        let mut conv = int_compare::Conversions::default();
         for si in 0..func.blocks[bi].stmts.len() {
             if integer_remainder(flow, func, &st, &func.blocks[bi].stmts[si]) {
                 remainders.push(si);
+            }
+            let s = &func.blocks[bi].stmts[si];
+            if let Some(p) = int_compare::plan(flow, func, &st, &conv, si, s) {
+                compares.push(p);
             }
             changed |= constant_params(flow, func, &st, bi, si);
             if let Some(v) = decided(flow, func, &st, &func.blocks[bi].stmts[si]) {
@@ -49,13 +57,22 @@ pub(super) fn run(env: &Env, flow: &Flow, func: &mut Function) -> bool {
                     changed = true;
                 }
             }
+            conv.note(func, &func.blocks[bi].stmts[si]);
             flow.transfer(&mut st, func, &func.blocks[bi].stmts[si]);
         }
         if !remainders.is_empty() {
             remainders_as_integers(func, bi, &remainders);
             changed = true;
+        } else if !compares.is_empty() {
+            // (Both rewrites renumber the block's statements: a block with remainders gets its
+            // comparisons on a later run.) After every block: the new locals have no facts.
+            later.push((bi, compares));
         }
         changed |= terminator(env, flow, func, bi, &st);
+    }
+    for (bi, compares) in later {
+        int_compare::rewrite(func, bi, compares);
+        changed = true;
     }
     changed
 }
