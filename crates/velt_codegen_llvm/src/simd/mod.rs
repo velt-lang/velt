@@ -10,6 +10,7 @@ use crate::types::{abi_ret, abi_type};
 use masks::mask;
 use reshape::{convert, narrow, widen, zip};
 
+mod half;
 mod masks;
 mod partial;
 mod reshape;
@@ -17,6 +18,24 @@ mod sha;
 mod x86_sums;
 
 pub(crate) use sha::has_ext;
+
+/// What a helper may use of the CPUs code for the target runs on (`Target::simd_caps`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Caps {
+    /// Arm's dot-product instructions (`Target::has_dotprod`).
+    pub dotprod: bool,
+    /// The f16 conversions the target has instructions for (`Target::half_native`).
+    pub half: crate::half::HalfNative,
+}
+
+impl Caps {
+    /// Nothing beyond the architecture's baseline, on a target with no f16 instructions.
+    #[cfg(test)]
+    pub(crate) const NONE: Caps = Caps {
+        dotprod: false,
+        half: crate::half::HalfNative::None,
+    };
+}
 
 // Alias tags (tbaa.rs): the header word a helper reads, and the elements it loads or stores.
 const HEADER: crate::tbaa::Access = crate::tbaa::Access::Header;
@@ -54,12 +73,11 @@ impl Arch {
 pub(crate) const WASM_SIMD: &str = " \"target-features\"=\"+simd128\"";
 
 /// The helper computing the SIMD extern `symbol` for `arch`: its name, what the module must
-/// define and declare for it, and the signature the extern must have. `dotprod`: every CPU of
-/// the target has Arm's dot-product instructions (`Target::has_dotprod`).
+/// define and declare for it, and the signature the extern must have.
 pub(crate) fn helper(
     symbol: &str,
     arch: Arch,
-    dotprod: bool,
+    caps: Caps,
 ) -> Option<(String, Vec<String>, Vec<Ty>, Ty)> {
     let call = SimdCall::of_symbol(symbol)?;
     let (params, ret) = call.signature();
@@ -72,10 +90,10 @@ pub(crate) fn helper(
         SimdCall::Vector(lanes, Op::SumWide) if arch == Arch::Sse2 => {
             match x86_sums::sum_wide(&mut body, lanes) {
                 Some(total) => Some(total),
-                None => vector(&mut body, lanes, Op::SumWide, dotprod),
+                None => vector(&mut body, lanes, Op::SumWide, caps),
             }
         }
-        SimdCall::Vector(lanes, op) => vector(&mut body, lanes, op, dotprod),
+        SimdCall::Vector(lanes, op) => vector(&mut body, lanes, op, caps),
         SimdCall::Mask(bits, op) => mask(&mut body, bits, op, arch == Arch::Neon),
         SimdCall::Has(ext) => Some(sha::has(&mut body, arch, ext)),
         SimdCall::Inst(op) => Some(sha::op(&mut body, arch, op)),
@@ -199,7 +217,7 @@ fn mask_type(bits: u32) -> String {
 }
 
 /// The body of a vector operation; the value to return, if any.
-fn vector(b: &mut Body, lanes: Lanes, op: Op, dotprod: bool) -> Option<String> {
+fn vector(b: &mut Body, lanes: Lanes, op: Op, caps: Caps) -> Option<String> {
     let (lane, ty, _) = spell(lanes);
     let value = match op {
         Op::Store => {
@@ -226,6 +244,10 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op, dotprod: bool) -> Option<String> {
         }
         Op::Sum | Op::SumWide => return Some(sum(b, lanes, op == Op::SumWide)),
         Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => return Some(compare(b, lanes, op)),
+        Op::WidenLow | Op::WidenHigh if lanes.is_half() => {
+            return Some(half::widen(b, lanes, op == Op::WidenHigh, caps.half));
+        }
+        Op::NarrowTo(to) => return Some(half::narrow(b, to, caps.half)),
         Op::WidenLow | Op::WidenHigh => return Some(widen(b, lanes, op == Op::WidenHigh)),
         Op::Narrow => return Some(narrow(b, lanes)),
         Op::Convert(to) => return Some(convert(b, lanes, to)),
@@ -258,7 +280,7 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op, dotprod: bool) -> Option<String> {
         Op::Neg | Op::Abs | Op::Sqrt | Op::Not => unary(b, lanes, op),
         Op::Shl | Op::Shr => shift(b, lanes, op),
         Op::Select => select(b, lanes),
-        Op::DotAdd if dotprod => sdot(b),
+        Op::DotAdd if caps.dotprod => sdot(b),
         Op::DotAdd => dot_add(b),
         // `llvm.fma` rounds once on every target (a library call per lane without FMA);
         // `llvm.fmuladd` fuses only where that is faster.
@@ -588,14 +610,14 @@ mod tests {
     #[test]
     fn a_helper_per_supported_symbol() {
         let (name, definitions, params, ret) =
-            helper("velt_simd_u8x16_eq", Arch::Wasm, false).unwrap();
+            helper("velt_simd_u8x16_eq", Arch::Wasm, Caps::NONE).unwrap();
         assert_eq!(name, "@velt.simd.u8x16_eq");
         assert_eq!((params, ret), (vec![Ty::V128, Ty::V128], Ty::V128));
         let text = definitions.last().unwrap();
         assert!(text.contains("icmp eq <16 x i8>"), "{text}");
         assert!(text.contains("alwaysinline"), "{text}");
-        assert!(helper("velt_simd_u8x16_mul", Arch::Wasm, false).is_none());
-        assert!(helper("velt_rt_math_sqrt", Arch::Wasm, false).is_none());
+        assert!(helper("velt_simd_u8x16_mul", Arch::Wasm, Caps::NONE).is_none());
+        assert!(helper("velt_rt_math_sqrt", Arch::Wasm, Caps::NONE).is_none());
     }
 
     /// An optimistic load is a plain vector load whose lanes are frozen, so a lane another
@@ -605,7 +627,7 @@ mod tests {
     fn optimistic_loads_freeze_their_lanes() {
         for arch in [Arch::Neon, Arch::Sse2, Arch::Wasm] {
             let (_, definitions, params, ret) =
-                helper("velt_simd_u64x2_load_optimistic", arch, false).unwrap();
+                helper("velt_simd_u64x2_load_optimistic", arch, Caps::NONE).unwrap();
             assert_eq!((params, ret), (vec![Ty::Ptr, Ty::U64], Ty::V128));
             let text = definitions.last().unwrap();
             let load = text.lines().find(|l| l.contains("load <2 x i64>"));
@@ -618,7 +640,7 @@ mod tests {
     /// `pmaddwd` with ones; other targets and lane types keep the chain of lane adds.
     #[test]
     fn signed_wide_sums_on_sse2_use_psadbw_and_pmaddwd() {
-        let text = |symbol, arch| helper(symbol, arch, false).unwrap().1.join("\n");
+        let text = |symbol, arch| helper(symbol, arch, Caps::NONE).unwrap().1.join("\n");
         let i8 = text("velt_simd_i8x16_sum_wide", Arch::Sse2);
         assert!(i8.contains("@llvm.x86.sse2.psad.bw"), "{i8}");
         assert!(i8.contains("sub i32") && i8.contains(", 2048"), "{i8}");
@@ -648,7 +670,7 @@ mod tests {
             ("velt_simd_u8x16_store_partial", "%a2", "%a3"),
             ("velt_simd_i64x2_store_partial", "%a2", "%a3"),
         ] {
-            let text = helper(symbol, Arch::Neon, false).unwrap().1.join("\n");
+            let text = helper(symbol, Arch::Neon, Caps::NONE).unwrap().1.join("\n");
             // The body: everything after the `define` line, which names the parameters.
             let body = text.split_once("{\n").map_or("", |(_, b)| b);
             let uses = |arg: &str| {
@@ -679,18 +701,24 @@ mod tests {
 
     #[test]
     fn float_min_on_sse2_is_built_from_comparisons() {
-        let (_, definitions, _, _) = helper("velt_simd_f64x2_min", Arch::Sse2, false).unwrap();
+        let (_, definitions, _, _) = helper("velt_simd_f64x2_min", Arch::Sse2, Caps::NONE).unwrap();
         assert_eq!(definitions.len(), 1, "no intrinsic is declared");
         let text = &definitions[0];
         assert!(text.contains("fcmp olt <2 x double>"), "{text}");
         assert!(text.contains("or <2 x i64>"), "{text}");
-        let (_, definitions, _, _) = helper("velt_simd_u8x16_min", Arch::Sse2, false).unwrap();
+        let (_, definitions, _, _) = helper("velt_simd_u8x16_min", Arch::Sse2, Caps::NONE).unwrap();
         assert!(definitions[0].contains("@llvm.umin.v16i8"));
     }
 
     #[test]
     fn lanes_are_rearranged_with_shuffles() {
-        let text = |symbol: &str| helper(symbol, Arch::Neon, false).unwrap().1.pop().unwrap();
+        let text = |symbol: &str| {
+            helper(symbol, Arch::Neon, Caps::NONE)
+                .unwrap()
+                .1
+                .pop()
+                .unwrap()
+        };
         let zip = text("velt_simd_u32x4_zip_high");
         assert!(
             zip.contains("<4 x i32> <i32 2, i32 6, i32 3, i32 7>"),
@@ -715,12 +743,12 @@ mod tests {
 
     #[test]
     fn intrinsics_are_declared() {
-        let (_, definitions, _, _) = helper("velt_simd_f32x4_min", Arch::Wasm, false).unwrap();
+        let (_, definitions, _, _) = helper("velt_simd_f32x4_min", Arch::Wasm, Caps::NONE).unwrap();
         assert_eq!(
             definitions[0],
             "declare <4 x float> @llvm.minimum.v4f32(<4 x float>, <4 x float>)"
         );
-        let (_, definitions, _, _) = helper("velt_simd_i16x8_abs", Arch::Wasm, false).unwrap();
+        let (_, definitions, _, _) = helper("velt_simd_i16x8_abs", Arch::Wasm, Caps::NONE).unwrap();
         assert_eq!(
             definitions[0],
             "declare <8 x i16> @llvm.abs.v8i16(<8 x i16>, i1)"

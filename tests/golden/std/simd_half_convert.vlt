@@ -1,0 +1,189 @@
+// `f16x8` and `bf16x8` widening and narrowing, over every 16-bit pattern and in every lane: each
+// widened value is checked against the bits integer code written here gives (a NaN quieted, its
+// payload kept), and narrowing the widened lanes back gives the pattern again (a signalling NaN
+// comes back quiet). Narrowing also rounds once to nearest even: the midpoint between two
+// neighbours, and one f32 step either side of it, for every finite pair. The checks count
+// mismatches; the backends share this expected output. A few values are printed too: the NaN bits
+// and edge lanes. The f16 reference and midpoints agree with Node's `Float16Array` (0 differences).
+
+import { bf16x8, f16x8, f32x4 } from "velt/simd";
+
+// The f32 bits of the f16 `h`, by integer code.
+function refF16(h: u32): u32 {
+  const sign = (h & 0x8000) << 16;
+  const e = (h >> 10) & 0x1f;
+  let m = h & 0x3ff;
+  if (e == 0x1f) {
+    const quiet: u32 = m != 0 ? 0x400000 : 0;
+    return sign | 0x7f800000 | (m << 13) | quiet;
+  }
+  if (e == 0) {
+    if (m == 0) {
+      return sign;
+    }
+    let ex: u32 = 113;
+    while ((m & 0x400) == 0) {
+      m <<= 1;
+      ex -= 1;
+    }
+    return sign | (ex << 23) | ((m & 0x3ff) << 13);
+  }
+  return sign | ((e + 112) << 23) | (m << 13);
+}
+
+// The f32 bits of the bf16 `b`.
+function refBf16(b: u32): u32 {
+  const x = b << 16;
+  const nan = (x & 0x7fffffff) > 0x7f800000;
+  return nan ? x | 0x400000 : x;
+}
+
+const SIGNS: u32[] = [0, 0x8000];
+
+function hex(x: u32): string {
+  return "0x" + x.toString(16);
+}
+
+function lanes(v: f32x4): string {
+  const u = v.asU32x4();
+  return `${hex(u.lane(0))} ${hex(u.lane(1))} ${hex(u.lane(2))} ${hex(u.lane(3))}`;
+}
+
+function val(x: u32): number {
+  return f32.fromBits(x) as number;
+}
+
+// The midpoint between the neighbours `va` and `vb` and one f32 step below and above it, with the
+// patterns they must round to.
+function addMidpoints(va: number, vb: number, pa: u16, pb: u16, xs: f32[], want: u16[]) {
+  const mid = ((va + vb) / 2) as f32;
+  const bits = mid.toBits();
+  xs.push(mid);
+  want.push((pa & 1) == 0 ? pa : pb);
+  xs.push(f32.fromBits(bits - 1));
+  want.push(pa);
+  xs.push(f32.fromBits(bits + 1));
+  want.push(pb);
+}
+
+function quieted(p: u32, exp: u32, quiet: u32): u32 {
+  const signalling = (p & exp) == exp && (p & (quiet - 1)) != 0 && (p & quiet) == 0;
+  return signalling ? p | quiet : p;
+}
+
+function f16Patterns(): f16[] {
+  const ws: f16[] = [];
+  for (let p: u32 = 0; p < 65536; p++) {
+    ws.push(f16.fromBits(p as u16));
+  }
+  // Seven more, so that every pattern passes through every lane of the sliding load below.
+  for (let p: u32 = 0; p < 7; p++) {
+    ws.push(f16.fromBits(p as u16));
+  }
+  return ws;
+}
+
+function bf16Patterns(): bf16[] {
+  const ws: bf16[] = [];
+  for (let p: u32 = 0; p < 65536; p++) {
+    ws.push(bf16.fromBits(p as u16));
+  }
+  for (let p: u32 = 0; p < 7; p++) {
+    ws.push(bf16.fromBits(p as u16));
+  }
+  return ws;
+}
+
+function checkF16() {
+  const ws = f16Patterns();
+  let widen = 0;
+  let back = 0;
+  for (let at: usize = 0; at < 65536; at++) {
+    const v = f16x8.load(ws, at);
+    const lo = v.widenLow().asU32x4();
+    const hi = v.widenHigh().asU32x4();
+    const n = f16x8.narrow(v.widenLow(), v.widenHigh());
+    for (let k: usize = 0; k < 8; k++) {
+      const p = ((at + k) & 0xffff) as u32;
+      const w = k < 4 ? lo.lane(k) : hi.lane(k - 4);
+      widen += w == refF16(p) ? 0 : 1;
+      back += n.asU16x8().lane(k) as u32 == quieted(p, 0x7c00, 0x200) ? 0 : 1;
+    }
+  }
+  console.log("f16 every pattern in every lane: mismatches", widen, back);
+  const nans: f16[] = [
+    f16.fromBits(0x7c01), f16.fromBits(0xfe55), f16.fromBits(0x7c00), f16.fromBits(0x8001),
+    f16.fromBits(0x0001), f16.fromBits(0x03ff), f16.fromBits(0x0400), f16.fromBits(0x7bff),
+  ];
+  const e = f16x8.load(nans);
+  console.log("f16 edges", lanes(e.widenLow()), lanes(e.widenHigh()));
+  const b = f16x8.narrow(e.widenLow(), e.widenHigh()).asU16x8();
+  console.log("f16 back", hex(b.lane(0) as u32), hex(b.lane(1) as u32), hex(b.lane(2) as u32), hex(b.lane(7) as u32));
+  // Rounding: every pair of finite neighbours of each sign.
+  const mids: f32[] = [];
+  const want: u16[] = [];
+  for (let p: u32 = 0; p < 0x7c00; p++) {
+    for (const s of SIGNS) {
+      const pa = p | s;
+      const top = p == 0x7bff ? (s == 0 ? 65536 : -65536) : val(refF16(pa + 1));
+      addMidpoints(val(refF16(pa)), top, pa as u16, (pa + 1) as u16, mids, want);
+    }
+  }
+  let wrong = 0;
+  for (let i: usize = 0; i + 8 <= mids.length; i += 8) {
+    const n = f16x8.narrow(f32x4.load(mids, i), f32x4.load(mids, i + 4)).asU16x8();
+    for (let k: usize = 0; k < 8; k++) {
+      wrong += n.lane(k) == want[i + k] ? 0 : 1;
+    }
+  }
+  console.log("f16 rounding", mids.length, "mismatches", wrong);
+}
+
+function checkBf16() {
+  const ws = bf16Patterns();
+  let widen = 0;
+  let back = 0;
+  for (let at: usize = 0; at < 65536; at++) {
+    const v = bf16x8.load(ws, at);
+    const lo = v.widenLow().asU32x4();
+    const hi = v.widenHigh().asU32x4();
+    const n = bf16x8.narrow(v.widenLow(), v.widenHigh());
+    for (let k: usize = 0; k < 8; k++) {
+      const p = ((at + k) & 0xffff) as u32;
+      const w = k < 4 ? lo.lane(k) : hi.lane(k - 4);
+      widen += w == refBf16(p) ? 0 : 1;
+      back += n.asU16x8().lane(k) as u32 == quieted(p, 0x7f80, 0x40) ? 0 : 1;
+    }
+  }
+  console.log("bf16 every pattern in every lane: mismatches", widen, back);
+  const nans: bf16[] = [
+    bf16.fromBits(0x7f81), bf16.fromBits(0xffd5), bf16.fromBits(0x7f80), bf16.fromBits(0x8001),
+    bf16.fromBits(0x0001), bf16.fromBits(0x007f), bf16.fromBits(0x0080), bf16.fromBits(0x7f7f),
+  ];
+  const e = bf16x8.load(nans);
+  console.log("bf16 edges", lanes(e.widenLow()), lanes(e.widenHigh()));
+  const b = bf16x8.narrow(e.widenLow(), e.widenHigh()).asU16x8();
+  console.log("bf16 back", hex(b.lane(0) as u32), hex(b.lane(1) as u32), hex(b.lane(2) as u32), hex(b.lane(7) as u32));
+  const mids: f32[] = [];
+  const want: u16[] = [];
+  for (let p: u32 = 0; p < 0x7f80; p++) {
+    for (const s of SIGNS) {
+      const pa = p | s;
+      const top = p == 0x7f7f ? (s == 0 ? 2 ** 128 : -(2 ** 128)) : val(refBf16(pa + 1));
+      addMidpoints(val(refBf16(pa)), top, pa as u16, (pa + 1) as u16, mids, want);
+    }
+  }
+  let wrong = 0;
+  for (let i: usize = 0; i + 8 <= mids.length; i += 8) {
+    const n = bf16x8.narrow(f32x4.load(mids, i), f32x4.load(mids, i + 4)).asU16x8();
+    for (let k: usize = 0; k < 8; k++) {
+      wrong += n.lane(k) == want[i + k] ? 0 : 1;
+    }
+  }
+  console.log("bf16 rounding", mids.length, "mismatches", wrong);
+}
+
+function main() {
+  checkF16();
+  checkBf16();
+}

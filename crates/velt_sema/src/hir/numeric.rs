@@ -74,6 +74,10 @@ pub enum SimdTy {
     U64x2,
     F32x4,
     F64x2,
+    /// Eight `f16` lanes, a storage type like `f16`: bits, widening and narrowing, no arithmetic.
+    F16x8,
+    /// Eight `bf16` lanes, likewise.
+    BF16x8,
     Mask8x16,
     Mask16x8,
     Mask32x4,
@@ -139,7 +143,7 @@ impl CpuTarget {
 
 impl SimdTy {
     /// Every SIMD type.
-    pub const ALL: [SimdTy; 14] = [
+    pub const ALL: [SimdTy; 16] = [
         SimdTy::I8x16,
         SimdTy::U8x16,
         SimdTy::I16x8,
@@ -150,6 +154,8 @@ impl SimdTy {
         SimdTy::U64x2,
         SimdTy::F32x4,
         SimdTy::F64x2,
+        SimdTy::F16x8,
+        SimdTy::BF16x8,
         SimdTy::Mask8x16,
         SimdTy::Mask16x8,
         SimdTy::Mask32x4,
@@ -169,6 +175,8 @@ impl SimdTy {
             SimdTy::U64x2 => "u64x2",
             SimdTy::F32x4 => "f32x4",
             SimdTy::F64x2 => "f64x2",
+            SimdTy::F16x8 => "f16x8",
+            SimdTy::BF16x8 => "bf16x8",
             SimdTy::Mask8x16 => "mask8x16",
             SimdTy::Mask16x8 => "mask16x8",
             SimdTy::Mask32x4 => "mask32x4",
@@ -180,7 +188,7 @@ impl SimdTy {
     pub fn lane_count(self) -> Option<u32> {
         Some(match self {
             SimdTy::I8x16 | SimdTy::U8x16 => 16,
-            SimdTy::I16x8 | SimdTy::U16x8 => 8,
+            SimdTy::I16x8 | SimdTy::U16x8 | SimdTy::F16x8 | SimdTy::BF16x8 => 8,
             SimdTy::I32x4 | SimdTy::U32x4 | SimdTy::F32x4 => 4,
             SimdTy::I64x2 | SimdTy::U64x2 | SimdTy::F64x2 => 2,
             _ => return None,

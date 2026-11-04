@@ -1,0 +1,74 @@
+// `f16x8` and `bf16x8` as values: their lanes are `f16`/`bf16` (reading one widens to a number,
+// storing rounds once), loads and stores move packed elements, partial forms stop at the end of
+// the array, the bits convert to and from `u16x8` with nothing changed (NaN payloads included),
+// `T.shuffle` works as on every vector type, and a generic function takes them.
+
+import { bf16x8, f16x8, u16x8 } from "velt/simd";
+
+function f16Bits(v: f16x8): string {
+  const u = v.asU16x8();
+  let s = "";
+  for (let k: usize = 0; k < 8; k++) {
+    s += u.lane(k).toString(16) + " ";
+  }
+  return s;
+}
+
+function bf16Bits(v: bf16x8): string {
+  return f16Bits(f16x8.fromU16x8(v.asU16x8()));
+}
+
+function same<T>(xs: T[], x: T): boolean {
+  return xs.includes(x);
+}
+
+function f16Values() {
+  const xs: f16[] = [1, 1.5, -2, 0.5, 3, 4, 5, 6, 7, 8.25];
+  const v = f16x8.load(xs, 1);
+  console.log(v.lane(0), v.lane(2), v.lane(7), f16x8.fits(xs, 2), f16x8.fits(xs, 3));
+  console.log(f16Bits(f16x8.splat(0.1)));
+  const w: f16 = f16x8.splat(0.1).lane(3);
+  console.log(w, w * 2, w == 0.1);
+  console.log(f16Bits(v.withLane(7, (1 / 3) as f16)), v.withLane(7, (1 / 3) as f16).lane(7));
+  const out: f16[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  v.store(out, 2);
+  console.log(out.join(" "));
+  const tail = f16x8.loadPartial(xs, 7);
+  console.log(f16Bits(tail));
+  console.log(f16Bits(f16x8.loadPartial(xs, 10)));
+  const short: f16[] = [9, 9, 9];
+  v.storePartial(short, 1);
+  console.log(short.join(" "));
+  v.storePartial(short, 3);
+  console.log(short.join(" "));
+  const nan = f16x8.fromU16x8(u16x8.splat(0x7c01));
+  console.log(f16Bits(nan), nan.lane(0));
+  console.log(f16Bits(f16x8.shuffle(v, nan, 1, 0, 8, 2, 15, 3, 4, 5)));
+  console.log(same([v], v), same([v], v.withLane(0, 9)), same([nan], nan));
+}
+
+function bf16Values() {
+  const xs: bf16[] = [1, 1.5, -2, 0.5, 3, 4, 5, 6, 7, 8.25];
+  const v = bf16x8.load(xs, 1);
+  console.log(v.lane(0), v.lane(2), v.lane(7), bf16x8.fits(xs, 2), bf16x8.fits(xs, 3));
+  console.log(bf16Bits(bf16x8.splat(0.1)));
+  const w: bf16 = bf16x8.splat(0.1).lane(3);
+  console.log(w, w * 2, w == 0.1);
+  console.log(bf16Bits(v.withLane(7, (1 / 3) as bf16)), v.withLane(7, (1 / 3) as bf16).lane(7));
+  const out: bf16[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  v.store(out, 2);
+  console.log(out.join(" "));
+  console.log(bf16Bits(bf16x8.loadPartial(xs, 7)));
+  const short: bf16[] = [9, 9, 9];
+  v.storePartial(short, 1);
+  console.log(short.join(" "));
+  const nan = bf16x8.fromU16x8(u16x8.splat(0x7f81));
+  console.log(bf16Bits(nan), nan.lane(0));
+  console.log(bf16Bits(bf16x8.shuffle(v, nan, 1, 0, 8, 2, 15, 3, 4, 5)));
+  console.log(same([v], v));
+}
+
+function main() {
+  f16Values();
+  bf16Values();
+}

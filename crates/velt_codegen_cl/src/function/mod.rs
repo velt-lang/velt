@@ -29,6 +29,7 @@ mod operand;
 mod place;
 mod rounding;
 mod simd;
+mod simd_half;
 mod simd_partial;
 mod slots;
 #[cfg(test)]

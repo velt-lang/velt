@@ -1,0 +1,172 @@
+// A two-array `fits` loop on `f16x8` and `bf16x8`, which release builds may turn into one test on
+// the smaller length: the operation that test is must exist for these lane types, or the build
+// stops with an internal error. The same result as a scalar loop and as the arithmetic written
+// out, on lengths around the lane count and indexes around the lengths, the index computed both
+// as `j` and as `j + 24`.
+
+import { bf16x8, f16x8, f32x4 } from "velt/simd";
+import { args } from "velt/process";
+
+// Always 0, and no compiler can tell: lengths stay unknown at compile time.
+const ZERO: usize = args().length > 1000 ? 1 : 0;
+
+const LENGTHS: usize[] = [0, 1, 7, 8, 9, 15, 16, 17, 31, 32, 33, 40];
+
+function f16s(n: usize, step: u32): f16[] {
+  const xs: f16[] = [];
+  for (let i: usize = 0; i < n + ZERO; i++) {
+    xs.push(f16.fromBits((0x3c00 + (((i as u32) * step) & 0x3ff)) as u16));
+  }
+  return xs;
+}
+
+function bf16s(n: usize, step: u32): bf16[] {
+  const xs: bf16[] = [];
+  for (let i: usize = 0; i < n + ZERO; i++) {
+    xs.push(bf16.fromBits((0x3f80 + (((i as u32) * step) & 0x7f)) as u16));
+  }
+  return xs;
+}
+
+function inside(len: usize, at: usize): bool {
+  return len >= 8 && at <= len - 8;
+}
+
+function total(v: f32x4): number {
+  return (v.lane(0) as number) + (v.lane(1) as number) + (v.lane(2) as number) + (v.lane(3) as number);
+}
+
+// These conditions are the pair: a lane type each, the index computed in each test or not.
+function bothF16(a: f16[], b: f16[], j: usize): bool {
+  if (f16x8.fits(a, j) && f16x8.fits(b, j)) {
+    return true;
+  }
+  return false;
+}
+
+function bothBf16(a: bf16[], b: bf16[], j: usize): bool {
+  if (bf16x8.fits(a, j) && bf16x8.fits(b, j)) {
+    return true;
+  }
+  return false;
+}
+
+function bothF16Plus24(a: f16[], b: f16[], j: usize): bool {
+  if (f16x8.fits(a, j + 24) && f16x8.fits(b, j + 24)) {
+    return true;
+  }
+  return false;
+}
+
+function bothBf16Plus24(a: bf16[], b: bf16[], j: usize): bool {
+  if (bf16x8.fits(a, j + 24) && bf16x8.fits(b, j + 24)) {
+    return true;
+  }
+  return false;
+}
+
+// The loops, one vector of each array at a time, and the same sums written as scalars.
+function loopF16(a: f16[], b: f16[]): number {
+  let s: number = 0;
+  let i: usize = 0;
+  while (f16x8.fits(a, i) && f16x8.fits(b, i)) {
+    const x = f16x8.load(a, i);
+    const y = f16x8.load(b, i);
+    s += total(x.widenLow()) + 2 * total(x.widenHigh()) + 3 * total(y.widenLow()) + 4 * total(y.widenHigh());
+    i += 8;
+  }
+  return s;
+}
+
+function loopBf16(a: bf16[], b: bf16[]): number {
+  let s: number = 0;
+  let i: usize = 0;
+  while (bf16x8.fits(a, i) && bf16x8.fits(b, i)) {
+    const x = bf16x8.load(a, i);
+    const y = bf16x8.load(b, i);
+    s += total(x.widenLow()) + 2 * total(x.widenHigh()) + 3 * total(y.widenLow()) + 4 * total(y.widenHigh());
+    i += 8;
+  }
+  return s;
+}
+
+function loopF16Rounds(a: f16[], b: f16[]): number {
+  let s: number = 0;
+  let i: usize = 0;
+  while (f16x8.fits(a, i + 24) && f16x8.fits(b, i + 24)) {
+    for (let r: usize = 0; r < 4; r++) {
+      const x = f16x8.load(a, i + r * 8);
+      const y = f16x8.load(b, i + r * 8);
+      s += total(x.widenLow()) + 2 * total(x.widenHigh()) + 3 * total(y.widenLow()) + 4 * total(y.widenHigh());
+    }
+    i += 32;
+  }
+  return s;
+}
+
+function loopBf16Rounds(a: bf16[], b: bf16[]): number {
+  let s: number = 0;
+  let i: usize = 0;
+  while (bf16x8.fits(a, i + 24) && bf16x8.fits(b, i + 24)) {
+    for (let r: usize = 0; r < 4; r++) {
+      const x = bf16x8.load(a, i + r * 8);
+      const y = bf16x8.load(b, i + r * 8);
+      s += total(x.widenLow()) + 2 * total(x.widenHigh()) + 3 * total(y.widenLow()) + 4 * total(y.widenHigh());
+    }
+    i += 32;
+  }
+  return s;
+}
+
+function scalar(a: number[], b: number[], whole: usize): number {
+  let s: number = 0;
+  for (let i: usize = 0; i < whole; i++) {
+    const weight: number = i % 8 < 4 ? 1 : 2;
+    s += weight * a[i] + (weight + 2) * b[i];
+  }
+  return s;
+}
+
+function main() {
+  let wrong: usize = 0;
+  let yes: usize = 0;
+  let sum: number = 0;
+  for (const la of LENGTHS) {
+    for (const lb of LENGTHS) {
+      const a = f16s(la, 3);
+      const b = f16s(lb, 5);
+      const c = bf16s(la, 3);
+      const d = bf16s(lb, 5);
+      const na: number[] = a.map((x) => x as number);
+      const nb: number[] = b.map((x) => x as number);
+      const nc: number[] = c.map((x) => x as number);
+      const nd: number[] = d.map((x) => x as number);
+      const min = la < lb ? la : lb;
+      for (const j of [0, 1, 7, 8, 9, 16, min - 8, min - 7, min, la, lb, la - 8, lb - 8] as usize[]) {
+        const want = inside(min, j);
+        const want24 = j + 24 >= j && inside(min, j + 24);
+        if (bothF16(a, b, j) != want || bothBf16(c, d, j) != want) {
+          wrong++;
+        }
+        if (bothF16Plus24(a, b, j) != want24 || bothBf16Plus24(c, d, j) != want24) {
+          wrong++;
+        }
+        if (want) {
+          yes++;
+        }
+      }
+      const whole = min - min % 8;
+      const rounds = min - min % 32;
+      if (loopF16(a, b) != scalar(na, nb, whole) || loopBf16(c, d) != scalar(nc, nd, whole)) {
+        wrong++;
+      }
+      if (loopF16Rounds(a, b) != scalar(na, nb, rounds) || loopBf16Rounds(c, d) != scalar(nc, nd, rounds)) {
+        wrong++;
+      }
+      sum += loopF16(a, b) + loopBf16(c, d);
+    }
+  }
+  console.log("wrong", wrong);
+  console.log("inside", yes);
+  console.log("sum", sum);
+}
