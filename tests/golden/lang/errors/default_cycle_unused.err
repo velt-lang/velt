@@ -1,0 +1,1 @@
+_default_cycle_2/a.ts:1:10: error: circular definition of import alias `default`

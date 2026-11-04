@@ -1,0 +1,3 @@
+_default_cycle_3/a.ts:1:10: error: circular definition of import alias `default`
+_default_cycle_3/b.ts:1:10: error: circular definition of import alias `default`
+_default_cycle_3/c.ts:1:10: error: circular definition of import alias `default`

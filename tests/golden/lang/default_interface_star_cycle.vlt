@@ -1,0 +1,6 @@
+// A module's only default is an interface, and the module is in a cycle of `export *`, which has
+// no export table: the interface is still its default (#1916). The output is Node's.
+import type D from "./_default_interface_star_cycle/a";
+
+const f: D = { a: 2 };
+console.log(f.a);

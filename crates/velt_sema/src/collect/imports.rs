@@ -85,6 +85,9 @@ fn exported_item(
         return None; // a namespace: its members are bound by `import_name`
     }
     if n.name.name == super::exports::DEFAULT {
+        if super::exports::in_export_cycle(cx, m, t, &n.name.name) {
+            cx.error(circular_default(imp, bound_name(n)));
+        }
         // A default the module does export, whose name it can't find: reported there.
         let listed = imports_of(cx, t).any(|(list, exported)| {
             exported && list.names.iter().any(|x| bound_name(x).name == n.name.name)
@@ -125,6 +128,20 @@ fn exported_item(
         )),
     );
     None
+}
+
+/// TypeScript's TS2303 (a SyntaxError in Node): the re-exports of a default come back to this
+/// module, so no module defines it. Reported in the modules of the cycle, not in those importing
+/// from it.
+fn circular_default(imp: &ast::Import, local: &ast::Ident) -> Diagnostic {
+    Diagnostic::error(
+        format!("circular definition of import alias `{}`", local.name),
+        local.span,
+    )
+    .with_note(format!(
+        "the re-exports of `default` from module `{}` lead back here: no module defines it",
+        imp.from
+    ))
 }
 
 /// A default import (`import local from`, `import { default as local } from`) of module `t`,
@@ -375,6 +392,10 @@ fn check_export_list(cx: &mut Ctx, m: usize, imp: &ast::Import) {
             || cx.scopes[m].items.keys().any(|k| k.starts_with(&prefix));
         if item.is_some() || namespace {
             cx.rec_item(n.name.span, item);
+            continue;
+        }
+        // An import that found nothing: reported there.
+        if super::exports::imported_as(cx, m, &n.name.name).is_some() {
             continue;
         }
         let msg = format!("cannot find `{}` in this scope", n.name.name);

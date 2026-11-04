@@ -28,6 +28,7 @@ mod comparable;
 mod constants;
 mod declare;
 mod default_snapshots;
+mod export_walk;
 pub(crate) mod exports;
 pub(crate) mod ext_fn_errors;
 pub(crate) mod ext_impls;

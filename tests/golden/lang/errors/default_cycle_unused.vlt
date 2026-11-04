@@ -1,0 +1,4 @@
+// A cycle of re-exports is refused with the import unused too, as by tsc and Node.
+import a from "./_default_cycle_2/a";
+
+console.log(1);

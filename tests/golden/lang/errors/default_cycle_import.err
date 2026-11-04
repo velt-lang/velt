@@ -1,0 +1,2 @@
+_default_cycle_import_a.ts:1:8: error: circular definition of import alias `b`
+_default_cycle_import_b.ts:1:8: error: circular definition of import alias `a`

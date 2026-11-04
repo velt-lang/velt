@@ -1,0 +1,4 @@
+// A default re-exported in a cycle of 1 module, read as a value: TS2303, a SyntaxError in Node.
+import a from "./_default_cycle_1/a";
+
+console.log(a);

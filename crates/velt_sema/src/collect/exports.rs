@@ -3,8 +3,9 @@
 //! `export * from "…"`, everything another module exports.
 //!
 //! Answers are computed from the syntax and the declared items alone (never from bindings made by
-//! other modules' imports), so they do not depend on the order modules are processed in. Chains
-//! and cycles of re-exports are followed up to [`MAX_DEPTH`] steps.
+//! other modules' imports), so they do not depend on the order modules are processed in. A chain
+//! of named re-exports is followed to its end, and a cycle of them ends there ([`export_at`]);
+//! `export *` and the names of namespaces are followed up to [`MAX_DEPTH`] steps.
 //!
 //! A module's names and their items are computed once ([`Memo`]): importing a name from a module
 //! that re-exports a whole package reads them, never walks the package again.
@@ -15,16 +16,18 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_syntax::ast;
 
+use super::export_walk::{export_at, imported_type_only, local_at};
 use crate::check_work::add_export_work;
 use crate::ctx::{Ctx, Item};
 use crate::hir::{DefId, TyId, TyKind};
-use crate::type_meanings::{
-    of_type_key, type_key, type_only_key, Meaning, TYPE_MARK, TYPE_ONLY_MARK,
-};
+use crate::type_meanings::{type_key, type_only_key, Meaning, TYPE_MARK, TYPE_ONLY_MARK};
 use crate::SourceModule;
 
-/// How many re-export steps are followed (a cycle of `export *` ends here).
-const MAX_DEPTH: u32 = 32;
+pub(crate) use super::export_walk::{imported_as, in_export_cycle, local_of};
+
+/// How many `export *` steps are followed (a cycle of them ends here). Also how many named
+/// re-export steps are taken before [`export_at`] starts remembering where it has been.
+pub(super) const MAX_DEPTH: u32 = 32;
 
 /// Every module's export names and its export table, as far as computed. An import that binds
 /// namespace members (`ns.x`) a module's export list exports (`export { ns }`) changes what that
@@ -32,7 +35,11 @@ const MAX_DEPTH: u32 = 32;
 #[derive(Default)]
 pub(crate) struct Memo {
     names: FxHashMap<usize, Rc<[String]>>,
-    tables: FxHashMap<usize, Rc<[(String, Item)]>>,
+    /// Module and depth: the names found by a walk [`MAX_DEPTH`] cut short. Every entry of an
+    /// export list walks on from the next module, so without these a chain or cycle with two
+    /// names in its lists would take 2^[`MAX_DEPTH`] steps.
+    cut_names: FxHashMap<(usize, u32), Rc<[String]>>,
+    pub(super) tables: FxHashMap<usize, Rc<[(String, Item)]>>,
     /// The modules whose tables are being built (a cycle of `export *` reaches one again).
     building: FxHashSet<usize>,
     /// The standard library's modules by path ([`std_module`]), and how many modules the check
@@ -47,6 +54,7 @@ impl Memo {
     /// A module's items changed: forget everything computed from them.
     pub(crate) fn changed(&mut self) {
         self.names.clear();
+        self.cut_names.clear();
         self.tables.clear();
     }
 }
@@ -99,7 +107,7 @@ pub(crate) fn all_exports(cx: &Ctx, t: usize) -> Rc<[(String, Item)]> {
 }
 
 /// The item of `name` in an export table.
-fn lookup(all: &[(String, Item)], name: &str) -> Option<Item> {
+pub(super) fn lookup(all: &[(String, Item)], name: &str) -> Option<Item> {
     let i = all.binary_search_by(|(n, _)| n.as_str().cmp(name)).ok()?;
     Some(all[i].1)
 }
@@ -223,7 +231,7 @@ fn build_table(cx: &Ctx, t: usize, depth: u32) -> Option<Rc<[(String, Item)]>> {
 
 /// `export * from` leaves out the module's default export (as in Node): `default`, with its
 /// type meanings (`crate::type_meanings`).
-fn star_skips(name: &str) -> bool {
+pub(super) fn star_skips(name: &str) -> bool {
     name.strip_prefix(DEFAULT).is_some_and(|rest| {
         let mut rest = rest.chars();
         match rest.next() {
@@ -504,103 +512,6 @@ pub(crate) fn imports_of<'m>(
     })
 }
 
-fn export_at(cx: &Ctx, t: usize, name: &str, depth: u32) -> Option<Item> {
-    if depth > MAX_DEPTH {
-        return None;
-    }
-    if let Some(all) = cx.export_memo.borrow().tables.get(&t) {
-        return lookup(all, name);
-    }
-    if cx.scopes[t].exports.contains(name) {
-        return cx.scopes[t].items.get(name).copied();
-    }
-    if let Some(ty) = type_of_default(cx, t, name, depth) {
-        return Some(ty);
-    }
-    let reexports = imports_of(cx, t).filter(|(imp, exported)| *exported && !imp.all);
-    for (imp, _) in reexports {
-        let source = (imp.names.iter())
-            .filter(|n| !velt_syntax::is_type_default(imp, n))
-            .find_map(|n| renamed(n, name));
-        let Some(source) = source else {
-            continue;
-        };
-        if imp.from.is_empty() {
-            return local_at(cx, t, &source, depth + 1);
-        }
-        return export_at(cx, import_target(cx, t, &imp.from)?, &source, depth + 1);
-    }
-    if star_skips(name) {
-        return None;
-    }
-    imports_of(cx, t)
-        .filter(|(imp, exported)| *exported && imp.all)
-        .find_map(|(imp, _)| export_at(cx, import_target(cx, t, &imp.from)?, name, depth + 1))
-}
-
-/// For `name`, the type key of `default`: the interface of `export default interface I` next to
-/// a value default that is no type itself ([`build_table`] does the same).
-fn type_of_default(cx: &Ctx, t: usize, name: &str, depth: u32) -> Option<Item> {
-    if of_type_key(name) != Some(DEFAULT) {
-        return None;
-    }
-    let n = imports_of(cx, t)
-        .filter(|(_, exported)| *exported)
-        .find_map(|(imp, _)| {
-            imp.names
-                .iter()
-                .find(|n| velt_syntax::is_type_default(imp, n))
-        })?;
-    let value = export_at(cx, t, DEFAULT, depth + 1)?;
-    if cx.meaning(value) != Meaning::Value {
-        return None;
-    }
-    local_at(cx, t, &type_key(&n.name.name), depth + 1)
-        .or_else(|| local_at(cx, t, &n.name.name, depth + 1))
-}
-
-/// The item `name` denotes at the top level of module `t`: its own declaration, or what a named
-/// import binds (an `export { name }` list may re-export an imported name).
-pub(crate) fn local_of(cx: &Ctx, t: usize, name: &str) -> Option<Item> {
-    local_at(cx, t, name, 0)
-}
-
-fn local_at(cx: &Ctx, t: usize, name: &str, depth: u32) -> Option<Item> {
-    let imported = imports_of(cx, t)
-        .filter(|(imp, exported)| !exported && !imp.from.is_empty())
-        .find_map(|(imp, _)| {
-            let source = imp.names.iter().find_map(|n| renamed(n, name))?;
-            Some((imp, source))
-        });
-    match imported {
-        Some((imp, source)) => export_at(cx, import_target(cx, t, &imp.from)?, &source, depth),
-        None => cx.scopes[t].items.get(name).copied(),
-    }
-}
-
-/// Whether module `t` binds `name` with a type-only import (`import type { name }`).
-fn imported_type_only(cx: &Ctx, t: usize, name: &str) -> bool {
-    imports_of(cx, t)
-        .filter(|(imp, exported)| !exported && !imp.from.is_empty())
-        .flat_map(|(imp, _)| imp.names.iter())
-        .any(|n| n.type_only && bound_name(n).name == name)
-}
-
-/// The name in the source module of the name `name` that import or export list entry `n`
-/// binds, if it binds it: `a` for `b` in `a as b`, and for a member of a namespace `N`
-/// (`N.T`, `crate::namespaces`), `M.T` when the entry is `M as N`.
-fn renamed(n: &ast::ImportName, name: &str) -> Option<String> {
-    let bound = &bound_name(n).name;
-    if name == bound {
-        return Some(n.name.name.clone());
-    }
-    if of_type_key(name) == Some(bound.as_str()) {
-        return Some(type_key(&n.name.name));
-    }
-    let rest = name.strip_prefix(bound.as_str())?.strip_prefix('.')?;
-    Some(format!("{}.{rest}", n.name.name))
-}
-
 /// The members `x` of a namespace `name` (the items named `name.x`) that module `t` exports.
 pub(crate) fn namespace_exports(cx: &Ctx, t: usize, name: &str) -> Vec<(String, Item)> {
     let prefix = format!("{name}.");
@@ -657,16 +568,25 @@ fn list_members(
 /// away from the module asking, and whether no chain was cut at [`MAX_DEPTH`] (only such
 /// answers are remembered).
 fn names_at(cx: &Ctx, t: usize, depth: u32) -> (Rc<[String]>, bool) {
-    if let Some(names) = cx.export_memo.borrow().names.get(&t) {
-        return (names.clone(), true);
+    {
+        let memo = cx.export_memo.borrow();
+        if let Some(names) = memo.names.get(&t) {
+            return (names.clone(), true);
+        }
+        if let Some(names) = memo.cut_names.get(&(t, depth)) {
+            return (names.clone(), false);
+        }
     }
     let mut out = vec![];
     let complete = export_names(cx, t, &mut out, &mut FxHashMap::default(), depth);
     out.sort();
     out.dedup();
     let names: Rc<[String]> = out.into();
+    let mut memo = cx.export_memo.borrow_mut();
     if complete {
-        cx.export_memo.borrow_mut().names.insert(t, names.clone());
+        memo.names.insert(t, names.clone());
+    } else {
+        memo.cut_names.insert((t, depth), names.clone());
     }
     (names, complete)
 }

@@ -1,0 +1,1 @@
+export_star_cycle_missing.vlt:3:10: error: module `./_export_star_cycle_a` has no member `nope`

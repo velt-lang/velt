@@ -1,0 +1,5 @@
+// A name no module of a cycle of `export *`s exports, where each module has two of them: an error
+// at once, not every path through the cycle up to the depth limit.
+import { nope } from "./_export_star_cycle_a";
+
+console.log(nope);

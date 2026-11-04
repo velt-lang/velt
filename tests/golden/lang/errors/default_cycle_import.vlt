@@ -1,0 +1,4 @@
+// The cycle goes through imported names, not re-exports: TS2303, a SyntaxError in Node.
+import a from "./_default_cycle_import_a";
+
+console.log(a);
