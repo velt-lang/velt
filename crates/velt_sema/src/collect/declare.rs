@@ -34,6 +34,7 @@ pub(super) fn declare_all(cx: &mut Ctx, items: &mut ItemDefs) {
         }
     }
     super::nested::declare_nested(cx, items, &ms);
+    super::default_snapshots::declare(cx, items);
     for m in 0..cx.modules.len() {
         super::imports::resolve_imports(cx, m);
         super::imports::bind_jsx_runtime(cx, m);
@@ -123,7 +124,12 @@ pub(crate) fn fn_placeholder<'m>(
     }
 }
 
-fn declare_item<'m>(cx: &mut Ctx<'m>, m: usize, item: &'m ast::Item, items: &mut ItemDefs) {
+pub(super) fn declare_item<'m>(
+    cx: &mut Ctx<'m>,
+    m: usize,
+    item: &'m ast::Item,
+    items: &mut ItemDefs,
+) {
     if let ast::ItemKind::Var(v) = &item.kind {
         if let Some((name, info)) = super::constants::global_info(cx, m, v) {
             let id = cx.alloc_def(name.span, info);
@@ -247,6 +253,15 @@ fn bind(cx: &mut Ctx, m: usize, item: &ast::Item, name: &ast::Ident, it: Item) {
             ast::ItemKind::Class(_) | ast::ItemKind::Struct(_)
         );
         let iface = matches!(item.kind, ast::ItemKind::Interface(_));
+        if ((iface && earlier_class) || (class && earlier_iface))
+            && super::default_snapshots::default_type_and_class(cx, m, &name.name)
+        {
+            // `export default interface I` next to `export default class I`: the class is both.
+            if class {
+                cx.scopes[m].items.insert(name.name.clone(), it);
+            }
+            return;
+        }
         if (iface && earlier_class) || (class && earlier_iface) {
             // TypeScript also merges an interface with a class (#384); with a function or a
             // variable it is a separate meaning (`split_meanings`).

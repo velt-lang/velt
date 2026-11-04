@@ -1,0 +1,26 @@
+// `export default interface` next to a value default: the type meaning and the value meaning of
+// `default`, as in TypeScript (#1916). The output is Node's.
+
+import Fn from "./_default_type_beside_value/function_same";
+import Other from "./_default_type_beside_value/function_other";
+import Bar from "./_default_type_beside_value/class_other";
+import Same from "./_default_type_beside_value/class_same";
+import v from "./_default_type_beside_value/list";
+import Reexported from "./_default_type_beside_value/reexport";
+import { renamed } from "./_default_type_beside_value/reexport_renamed";
+import * as whole from "./_default_type_beside_value/function_other";
+import Anonymous from "./_default_type_beside_value/function_anonymous";
+import type Two from "./_default_type_beside_value/two_interfaces";
+
+const a: Fn = { a: Fn() };
+const b: Other = { a: Other() };
+const t: Two = { a: 1, b: 2 };
+
+console.log(a.a, b.a, new Bar().b, new Same().b, v, t.a + t.b);
+
+const c: Reexported = { a: Reexported() };
+const d: renamed = { a: renamed() };
+const e: whole.default = { a: whole.default() };
+const f: Anonymous = { a: Anonymous() };
+
+console.log(c.a, d.a, e.a, f.a);

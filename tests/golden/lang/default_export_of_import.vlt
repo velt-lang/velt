@@ -1,0 +1,22 @@
+// `export default x;` of an imported `let` takes its value when it runs; `export { x as default }`
+// stays live, also through an import of a live default (#1916). The output is Node's.
+
+import plain from "./_default_export_of_import/of_named";
+import ofDefault from "./_default_export_of_import/of_default";
+import again from "./_default_export_of_import/of_snapshot";
+import live from "./_default_export_of_import/still_live";
+import fn from "./_default_export_of_import/of_function";
+import K from "./_default_export_of_import/of_class";
+import c from "./_default_export_of_import/of_const";
+import among from "./_default_export_of_import/among_statements";
+import { set } from "./_default_export_of_import/source";
+import { setDefault } from "./_default_export_of_import/default_source";
+
+console.log(plain, ofDefault, again, live);
+set(2);
+setDefault(2);
+console.log(plain, ofDefault, again, live);
+
+const k: K = new K();
+console.log(fn("kept"), fn(1), k.v, c);
+console.log(among);
