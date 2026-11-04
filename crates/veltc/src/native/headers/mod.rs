@@ -13,6 +13,7 @@ mod shape;
 
 use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
 use velt_common::{Diagnostic, Diagnostics, FileId, SourceMap, Span};
@@ -250,14 +251,36 @@ fn parse(
     headers: &[String],
     zig_target: &str,
 ) -> Result<Headers, String> {
-    let dir = home
-        .join("cache")
-        .join("headers")
-        .join(format!("work-{}", std::process::id()));
+    let dir = work_dir(home);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let result = parse_in(zig, &dir, root, headers, zig_target);
     let _ = std::fs::remove_dir_all(&dir);
     result
+}
+
+/// A directory for one parse, whoever else parses at the same time, in this process or another.
+fn work_dir(home: &Path) -> PathBuf {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    home.join("cache")
+        .join("headers")
+        .join(format!("work-{}-{n}", std::process::id()))
+}
+
+/// The C file that includes `headers`. A package's headers go by their path in it, which `-I`
+/// finds: the package's own path could hold what a `#include` reads differently (`\`, `"`).
+fn includes(root: &Path, headers: &[String]) -> Result<String, String> {
+    let mut source = String::new();
+    for header in headers {
+        if !header.starts_with('<') && !root.join(header).is_file() {
+            return Err(format!("header `{header}` is not in the package"));
+        }
+        match header.starts_with('<') {
+            true => source.push_str(&format!("#include {header}\n")),
+            false => source.push_str(&format!("#include \"{header}\"\n")),
+        }
+    }
+    Ok(source)
 }
 
 fn parse_in(
@@ -267,18 +290,7 @@ fn parse_in(
     headers: &[String],
     zig_target: &str,
 ) -> Result<Headers, String> {
-    let mut source = String::new();
-    for header in headers {
-        if header.starts_with('<') {
-            source.push_str(&format!("#include {header}\n"));
-        } else {
-            let path = root.join(header);
-            if !path.is_file() {
-                return Err(format!("header `{header}` is not in the package"));
-            }
-            source.push_str(&format!("#include \"{}\"\n", path.display()));
-        }
-    }
+    let source = includes(root, headers)?;
     let file = dir.join("headers.c");
     std::fs::write(&file, source).map_err(|e| e.to_string())?;
     let cache = dir.join("zig-cache");
@@ -378,6 +390,26 @@ mod tests {
             split_quoted(r#" "/z/zig" "-cc1" "-I/a b" "-DX=\"y\"""#),
             ["/z/zig", "-cc1", "-I/a b", "-DX=\"y\""]
         );
+    }
+
+    #[test]
+    fn each_parse_has_its_own_directory() {
+        let home = Path::new("/h");
+        assert_ne!(work_dir(home), work_dir(home));
+    }
+
+    #[test]
+    fn a_package_s_headers_are_included_by_their_path_in_it() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir(dir.path().join("native")).unwrap();
+        std::fs::write(dir.path().join("native/a.h"), "").unwrap();
+        let headers = ["native/a.h".to_string(), "<string.h>".to_string()];
+        assert_eq!(
+            includes(dir.path(), &headers).unwrap(),
+            "#include \"native/a.h\"\n#include <string.h>\n"
+        );
+        let missing = includes(dir.path(), &["native/b.h".to_string()]).unwrap_err();
+        assert_eq!(missing, "header `native/b.h` is not in the package");
     }
 
     #[test]
