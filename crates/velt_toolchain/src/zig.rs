@@ -145,6 +145,14 @@ fn check_version(path: PathBuf) -> Result<PathBuf, String> {
         .arg("version")
         .output()
         .map_err(|e| format!("VELT_ZIG={}: {e}", path.display()))?;
+    if !out.status.success() {
+        return Err(format!(
+            "VELT_ZIG={}: `zig version` failed ({}): {}",
+            path.display(),
+            out.status,
+            String::from_utf8_lossy(&out.stderr).trim()
+        ));
+    }
     let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if version != VERSION {
         return Err(format!(
@@ -203,6 +211,22 @@ mod tests {
         for (h, sha) in ARCHIVES {
             assert_eq!(sha.len(), 64, "{h}");
         }
+    }
+
+    /// A zig that can't run says why, not "is zig ``" with an empty version.
+    #[cfg(unix)]
+    #[test]
+    fn a_zig_that_fails_to_run_says_why() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("zig");
+        std::fs::write(&path, "#!/bin/sh\necho no loader >&2\nexit 3\n").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let e = check_version(path).unwrap_err();
+        assert!(
+            e.contains("`zig version` failed") && e.contains("no loader"),
+            "{e}"
+        );
     }
 
     #[test]
