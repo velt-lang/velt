@@ -1,0 +1,24 @@
+// Array views whose helpers are shared by shape in debug builds (shape-sharing.md): a reload
+// that adds an element type and edits the handler gives the new version's dictionaries to the
+// shared code, swapped in or restarted.
+import { serve } from "http-server";
+
+type A = { a: number; b: string };
+type B = { c: string; d: number };
+type C = { e: string; f: number };
+
+function make(xs: any[]): any {
+  return xs;
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const va = make([{ a: 1, b: "x" }]) as A[];
+    const vb = make([{ c: "y", d: 2 }]) as B[];
+    const vc = make([{ e: "z", f: 3 }]) as C[];
+    vb.push({ c: "w", d: 4 });
+    return new Response(`${va[0].b} ${vb[1].c} ${vc[0].f} ${vb.length}`);
+  });
+  console.log(`listening on ${server.port}`);
+  await sleep(1000000000);
+}

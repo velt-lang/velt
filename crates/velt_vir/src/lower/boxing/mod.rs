@@ -610,7 +610,7 @@ impl Cx<'_> {
     /// `counted` against a candidate set.
     pub(super) fn counted_in(&self, b: &Boxing, t: TyId) -> bool {
         let t = self.ph_rep(t);
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             TyKind::Adt(d, _) if self.is_class(t) => b.roots.contains(&self.class_root(*d)),
             TyKind::Adt(d, _) if b.recursive.contains(d) => true,
             _ => b.boxes.contains(&t),
@@ -625,7 +625,7 @@ impl Cx<'_> {
     /// Is `t` an array or object type stored as a counted box (a `Ptr` to its inline value)?
     pub(super) fn boxed(&self, t: TyId) -> bool {
         let t = self.ph_rep(t);
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             TyKind::Adt(d, _) if self.boxing.recursive.contains(d) => true,
             _ => self.boxing.boxes.contains(&t),
         }

@@ -126,4 +126,49 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(unit()));
         self.cx.shapes.std_glue = outer;
     }
+
+    /// The dictionary parameter of shared instance `def` (being built) described to debuggers
+    /// as `$types`: an object whose one field, `types`, is the names of the concrete types
+    /// (dict.rs `HEADER`), so a frame of shared code says which types it runs for.
+    pub(in crate::lower) fn describe_dict(&mut self, def: velt_sema::hir::DefId, f: &hir::FnDef) {
+        if self.cx.debug.is_none() {
+            return;
+        }
+        let Some(&cur) = self.cx.shapes.current.last() else {
+            return;
+        };
+        let Some(inst) = self.cx.shapes.insts.get(&cur) else {
+            return;
+        };
+        let (Some(param), true) = (inst.param, inst.def == def && inst.targs == self.targs) else {
+            return;
+        };
+        let Some(decl) = self.cx.locs.as_ref().and_then(|m| m.loc(f.span)) else {
+            return;
+        };
+        let s = self.cx.intern(TyKind::Str);
+        let names = self.cx.debug_ty(s);
+        let obj = self
+            .cx
+            .new_agg("$types".into(), &[vir::Ty::Agg(vir::STR_AGG)]);
+        let field = vir::DebugField {
+            name: "types".into(),
+            index: 0,
+            ty: names,
+        };
+        let ty = self.cx.add_debug_ty(vir::DebugTy {
+            name: "$types".into(),
+            kind: vir::DebugKind::Class {
+                obj,
+                fields: vec![field],
+            },
+        });
+        self.locals[param.0 as usize].debug = Some(vir::LocalDebug {
+            decl,
+            end: None,
+            ty,
+            by_ref: false,
+            param: true,
+        });
+    }
 }

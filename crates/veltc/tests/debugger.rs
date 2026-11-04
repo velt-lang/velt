@@ -565,3 +565,51 @@ fn lldb_shows_closure_captures() {
         assert!(out.contains(expected), "no `{expected}` in:\n{out}");
     }
 }
+
+/// A view of an object type (#1485): its array-view helpers are shared by shape in debug builds
+/// (docs/internals/design/shape-sharing.md), so a frame of one is named after the shape.
+const SHARED: &str = "type A = { a: number; b: string };
+const xs: any[] = [];
+xs.push({ a: 1, b: \"x\" });
+const raw: any = xs;
+const v = raw as A[];
+console.log(v[0].a);
+";
+
+/// A frame of shared code shows the types it runs for: the dictionary parameter is `$types`,
+/// whose `types` field names them, and a value of the shared type shows its shape.
+#[test]
+fn lldb_shows_the_types_of_a_shared_frame() {
+    if !lldb_runs() {
+        return;
+    }
+    let Some((work, exe)) = build_debuggable("golden-work-debugger-shapes", SHARED, &[]) else {
+        return;
+    };
+    // The formatters show the names as a string (`lldb_formats_velt_values`).
+    let script = root().join("editors/lldb/velt_lldb.py");
+    let import = format!("command script import {}", script.display());
+    let out = lldb(
+        &exe,
+        &[
+            &import,
+            "breakpoint set -r arrayViewSyncAt_T",
+            "run",
+            "frame variable -P 1 $types",
+            "frame variable v",
+            "kill",
+        ],
+    );
+    let _ = std::fs::remove_dir_all(&work);
+    if !out.contains("stop reason = breakpoint") {
+        eprintln!("note: LLDB could not run the program here; skipping\n{out}");
+        return;
+    }
+    for expected in [
+        "($types) $types",
+        "types = \"{ a: f64; b: string }\"",
+        "(~ptr) v",
+    ] {
+        assert!(out.contains(expected), "no `{expected}` in:\n{out}");
+    }
+}

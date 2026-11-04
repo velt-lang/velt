@@ -81,3 +81,65 @@ fn the_guard_finds_an_unguarded_read() {
     std::fs::remove_dir_all(&dir).ok();
     assert_eq!(found.len(), 1, "{found:?}");
 }
+
+/// The reads of a type's kind straight from the type table (`types.kind`) that may see a
+/// placeholder and handle it themselves: `Cx::kind` (an ICE), `mentions_params`, the shape
+/// questions mapping through `ph_rep`, and `type_key_in` (a placeholder's name). Every other
+/// read goes through `Cx::raw_kind`, an ICE on a placeholder.
+const RAW_KIND_READS: &[(&str, &str)] = &[
+    ("types.rs", "        match self.types.kind(t) {"),
+    (
+        "types.rs",
+        "        match self.types.kind(self.ph_rep(t)) {",
+    ),
+    (
+        "types.rs",
+        "            || matches!(self.types.kind(t), TyKind::Shared(_) | TyKind::Symbol)",
+    ),
+    ("keys.rs", "        match self.types.kind(t) {"),
+];
+
+fn raw_reads(dir: &std::path::Path, out: &mut Vec<String>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for e in entries.flatten() {
+        let p = e.path();
+        let name = p
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("")
+            .to_string();
+        if p.is_dir() {
+            if name != "shape" {
+                raw_reads(&p, out);
+            }
+            continue;
+        }
+        if !name.ends_with(".rs") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&p).unwrap_or_default();
+        for (i, line) in text.lines().enumerate() {
+            let allowed = RAW_KIND_READS.iter().any(|(f, l)| name == *f && line == *l);
+            // `hir.types` is the HIR's table, which never holds a placeholder.
+            let lowering = line.contains("self.types.kind(") || line.contains("cx.types.kind(");
+            if lowering && !allowed {
+                out.push(format!("{}:{}: {}", p.display(), i + 1, line.trim()));
+            }
+        }
+    }
+}
+
+#[test]
+fn kinds_are_read_through_raw_kind() {
+    let lower = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/lower");
+    let mut found = vec![];
+    raw_reads(&lower, &mut found);
+    assert!(
+        found.is_empty(),
+        "a type's kind read straight from the type table (use `Cx::raw_kind`, which ICEs on a \
+         placeholder, or a shape question):\n{}",
+        found.join("\n")
+    );
+}

@@ -390,7 +390,7 @@ impl super::Cx<'_> {
     /// Can glue convert an `any` to a value of `t` (`any_unbox`)? Unions, literal and enum
     /// types (which sema converts member by member) and interface values are not reached yet.
     pub(super) fn any_unboxable(&self, t: TyId) -> bool {
-        !matches!(self.types.kind(t), TyKind::Unit) && self.any_boxable(t)
+        !matches!(self.raw_kind(t), TyKind::Unit) && self.any_boxable(t)
     }
 }
 

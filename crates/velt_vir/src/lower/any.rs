@@ -76,7 +76,7 @@ impl Cx<'_> {
             return false;
         };
         let any = self.hir.impls[i as usize].iface;
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             TyKind::Dyn(d, args) if args.is_empty() => {
                 *d == any
                     || [self.hir.unknown, self.hir.object, self.hir.function].contains(&Some(*d))
@@ -89,7 +89,7 @@ impl Cx<'_> {
     /// one (`Intrinsic::HoldsDynamic`): a type whose JavaScript text is the value's, not its
     /// static `ToString` (a `Function` is not written as a dynamic value's text)?
     pub(super) fn holds_dynamic(&mut self, t: TyId) -> bool {
-        match self.types.kind(t).clone() {
+        match self.raw_kind(t).clone() {
             TyKind::Dyn(d, _) if self.hir.function == Some(d) => false,
             TyKind::Array(e) | TyKind::Option(e, _) => self.holds_dynamic(e),
             TyKind::Tuple(es) => es.iter().any(|e| self.holds_dynamic(*e)),
@@ -107,12 +107,12 @@ impl Cx<'_> {
     /// [`Self::holds_dynamic`], or a class instance (`Intrinsic::HoldsDynamicOrClass`).
     pub(super) fn holds_dynamic_or_class(&mut self, t: TyId) -> bool {
         self.holds_dynamic(t)
-            || matches!(self.types.kind(t), TyKind::Adt(d, _) if self.adt_def(*d).kind == hir::AdtKind::Class)
+            || matches!(self.raw_kind(t), TyKind::Adt(d, _) if self.adt_def(*d).kind == hir::AdtKind::Class)
     }
 
     /// Is `t` `object` or `Function` (issue #926)?
     pub(super) fn is_narrow_dynamic(&self, t: TyId) -> bool {
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             TyKind::Dyn(d, args) if args.is_empty() => {
                 self.hir.any_impl.is_some()
                     && [self.hir.object, self.hir.function].contains(&Some(*d))
@@ -128,7 +128,7 @@ impl Cx<'_> {
 
     /// The `typeof` tag of a value of the concrete type `t` held by an `any`.
     pub(super) fn any_tag(&self, t: TyId) -> u64 {
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             // Options are unpacked when boxed: an option is the dynamic `null` / `undefined`.
             TyKind::Option(_, n) if n.has_null() => TAG_NULL,
             TyKind::Option(..) | TyKind::Unit => TAG_UNDEFINED,
@@ -175,7 +175,7 @@ impl Cx<'_> {
         ];
         if self.boxing.any_number
             || matches!(
-                self.types.kind(ty),
+                self.raw_kind(ty),
                 TyKind::Bool | TyKind::Int(_) | TyKind::Float(_) | TyKind::Str
             )
         {

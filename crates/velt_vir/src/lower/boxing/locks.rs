@@ -188,7 +188,7 @@ impl Cx<'_> {
             return false;
         }
         let t = self.ph_rep(t);
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             TyKind::Adt(d, _) if self.is_class(t) => {
                 self.boxing.lock_roots.contains(&self.class_root(*d))
             }

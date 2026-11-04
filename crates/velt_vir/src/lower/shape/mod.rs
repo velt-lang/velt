@@ -3,7 +3,7 @@
 //!
 //! A call of a shareable generic function from code of concrete types calls one instance per
 //! *shape* of its type arguments (key.rs), passing a dictionary of the type-specific code as a
-//! hidden last parameter. The shared instance is lowered with a *placeholder* for each shared
+//! hidden parameter after the user's arguments. The shared instance is lowered with a *placeholder* for each shared
 //! type argument: a `TyKind::Param` at `SHAPE_BASE` or above, which HIR never holds.
 //! - Layout and ownership questions (the shape questions) about a placeholder, or a type built
 //!   from one, are answered for the same type built from its representative, the first
@@ -17,9 +17,12 @@
 //!   dictionary holds the concrete function for its type arguments (dict.rs). A call of
 //!   another shared instance passes that instance's dictionary, an entry of this one.
 //!
-//! Sharing happens only in the pass that lowers the program whole, once the counted types are
-//! complete: the facts a shared body would record are dropped (a facts-only pass lowers the
-//! per-type instances and records them), so the passes converge exactly as without sharing.
+//! Shared bodies are lowered in every pass. The facts a shared body records over placeholders
+//! are taken out of the pass's facts once it is lowered and added back for each of its
+//! dictionaries with that dictionary's types (`finish_shared`, `replay`; boxing/replay.rs), so
+//! the passes find the counted types they find without sharing. Facts kept per function
+//! (boxing/tuples.rs) can't be replayed, since one shared `FuncId` stands for several
+//! instances: a shared body recording one over a placeholder is an ICE.
 
 mod dict;
 mod glue;
@@ -140,6 +143,16 @@ pub(super) fn wanted(debug_build: bool) -> bool {
 }
 
 impl Cx<'_> {
+    /// `t`'s kind as the type table has it, for code that matches on it directly. A
+    /// placeholder has none (an ICE): only the shape questions answer for it (`ph_rep`).
+    #[inline]
+    pub(super) fn raw_kind(&self, t: TyId) -> &TyKind {
+        if self.is_ph(t) {
+            ice("a placeholder's kind read directly");
+        }
+        self.types.kind(t)
+    }
+
     /// Is `t` a placeholder type?
     #[inline]
     pub(super) fn is_ph(&self, t: TyId) -> bool {
@@ -318,6 +331,13 @@ impl Cx<'_> {
             return func;
         }
         self.shapes.current.pop();
+        // Facts kept per function (boxing/tuples.rs) are not replayed: one shared `FuncId`
+        // stands for several instances. The body's own are still pending here (`finish_fn_tuples`
+        // stores them after this), so they are checked here.
+        let own = self.cur_tuple_writes.iter().chain(&self.cur_read_params);
+        if own.copied().any(|t| self.mentions_ph(t)) {
+            ice("a shared body records facts per function, which are not replayed");
+        }
         self.shape_rewrite(fid, &mut func);
         let facts = {
             let shapes = &self.shapes;

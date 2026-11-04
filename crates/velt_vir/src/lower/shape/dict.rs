@@ -8,6 +8,9 @@ use velt_sema::hir::TyId;
 
 use super::super::{Cx, Work};
 use super::{Entry, PSEUDO_BASE};
+
+/// The bytes in front of a dictionary's entries: the `VeltStr` of its types' names.
+pub(super) const HEADER: u32 = 24;
 use crate::vir::{Const, FuncId, StaticData, StaticId};
 
 impl Cx<'_> {
@@ -16,11 +19,23 @@ impl Cx<'_> {
         if let Some(&s) = self.shapes.dicts.get(&(inst, targs.clone())) {
             return s;
         }
-        // Never empty, for the backends: a dictionary of no entries holds one null word.
+        // A dictionary starts with the names of its types, a `VeltStr` object that debuggers
+        // show as the frame's `$types` (`describe_dict`); its entries follow (`HEADER`).
+        let names: Vec<String> = targs.iter().map(|&t| self.type_key(t)).collect();
+        let names = names.join(", ");
+        let text = {
+            let mut b = names.as_bytes().to_vec();
+            if b.is_empty() {
+                b.push(0);
+            }
+            self.static_bytes(b, 1)
+        };
+        let mut bytes = vec![0u8; HEADER as usize];
+        bytes[8..16].copy_from_slice(&super::super::strings::str_w1(&names).to_le_bytes());
         self.statics.push(StaticData {
-            bytes: vec![0; 8],
+            bytes,
             align: 8,
-            relocs: vec![],
+            relocs: vec![(0, Const::Static(text))],
             mutable: None,
         });
         let id = StaticId(self.statics.len() as u32 - 1);
@@ -112,7 +127,8 @@ impl Cx<'_> {
             }
         };
         let data = &mut self.statics[id.0 as usize];
-        let at = 8 * data.relocs.len();
+        // After the header and the entries before it (the header's one relocation is its text).
+        let at = HEADER as usize + 8 * (data.relocs.len() - 1);
         data.bytes.resize(data.bytes.len().max(at + 8), 0);
         data.relocs.push((at as u32, c));
     }

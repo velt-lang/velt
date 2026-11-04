@@ -1,0 +1,12 @@
+// A view of a union whose code is shared with another union of the same size
+// (shape-sharing.md): a wrong element stops with the `TypeError` naming this union.
+// Node erases `as` and reads the wrong element as it is: Velt checks the conversion (#1485).
+type U = string | number;
+type V = string | boolean;
+const rv: any = [true, "s"];
+const vv = rv as V[];
+console.log(vv[0], vv[1]);
+const ru: any = ["a", 1, null];
+const vu = ru as U[];
+console.log(vu[0], vu[1]);
+console.log(vu[2]);

@@ -151,7 +151,7 @@ impl FnLower<'_, '_> {
     }
 
     fn is_result(&self, ty: TyId) -> bool {
-        matches!(self.cx.types.kind(ty), TyKind::Result(..))
+        matches!(self.cx.raw_kind(ty), TyKind::Result(..))
     }
 
     /// One part of type `t` at `place`: visit it when it is a counted object, else walk it.

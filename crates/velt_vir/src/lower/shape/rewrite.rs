@@ -176,7 +176,10 @@ fn load(func: &mut Function, dict: crate::vir::Local, i: u32, pre: &mut Vec<Stmt
     func.locals.push(LocalDecl::new(Ty::Ptr, None));
     let val = crate::vir::Local(func.locals.len() as u32);
     func.locals.push(LocalDecl::new(Ty::Ptr, None));
-    let off = Operand::Const(Const::Int(8 * i128::from(i)), Ty::I64);
+    let off = Operand::Const(
+        Const::Int(i128::from(super::dict::HEADER) + 8 * i128::from(i)),
+        Ty::I64,
+    );
     let base = Operand::Copy(Place::local(dict));
     pre.push(Stmt::Assign(
         Place::local(addr),

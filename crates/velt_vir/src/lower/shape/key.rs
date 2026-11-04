@@ -24,25 +24,49 @@ enum Lay {
 /// The shape key of a type argument.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub(in crate::lower) struct Key {
-    lay: Lay,
     /// The storage float it is (`Cx::half`), which arithmetic on it converts through.
     half: Option<String>,
-    /// `ShareKind` as a number, and the bits shared code may branch on.
+    /// `ShareKind` as a number.
     share: u8,
+    /// The answers `answers` gives for `T` and for each type of the footprint
+    /// (`footprint`): what the end-of-pass check compares, so a key it accepts never fails it.
+    answers: Vec<Answers>,
+}
+
+/// The answers to the shape questions about one type (`Cx::answers`).
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub(in crate::lower) struct Answers {
+    /// Its layout (`Cx::ty`), aggregates by size and alignment.
+    lay: Option<Lay>,
     bits: u32,
-    /// The same answers for `T[]`.
-    array: u32,
+    /// Membership in each of `Boxing::ty_sets`.
+    sets: Vec<bool>,
+}
+
+/// Test hook (debug builds of the compiler only): `VELT_SHAPES_TEST_DROP=<row>` leaves one
+/// row (`counted`, `weak`, `niche`, `align`) out of the key, never out of the end-of-pass
+/// check, so tests show that the check catches a key missing it.
+fn dropped(row: &str) -> bool {
+    cfg!(debug_assertions)
+        && !CHECKING.with(std::cell::Cell::get)
+        && std::env::var("VELT_SHAPES_TEST_DROP").is_ok_and(|v| v == row)
+}
+
+thread_local! {
+    /// The end-of-pass check is running: rows are never dropped then (`dropped`).
+    static CHECKING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 impl Key {
     /// `~` and the layout (`~f64`, `~agg64x8`), then a hash of the other answers.
     pub(super) fn name(&self) -> String {
-        let lay = match &self.lay {
-            Lay::Scalar(t) => format!("{t}"),
-            Lay::Agg(s, a) => format!("agg{s}x{a}"),
+        let lay = match self.answers.first().and_then(|a| a.lay.as_ref()) {
+            Some(Lay::Scalar(t)) => format!("{t}"),
+            Some(Lay::Agg(s, a)) => format!("agg{s}x{a}"),
+            None => "unit".into(),
         };
         // FNV-1a of the answers: the same in every build of the same compiler.
-        let text = format!("{:?}{}{}{}", self.half, self.share, self.bits, self.array);
+        let text = format!("{:?}{}{:?}", self.half, self.share, self.answers);
         let h = text.bytes().fold(0xcbf2_9ce4_8422_2325u64, |h, b| {
             (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3)
         });
@@ -120,26 +144,66 @@ impl Cx<'_> {
         if !shareable || self.mentions_any_param(t) || self.is_dynamic(t) {
             return None;
         }
-        let lay = match self.ty(t) {
-            Ty::Agg(a) => {
-                let l = &self.aggs[a.0 as usize];
-                Lay::Agg(l.size, l.align)
-            }
-            Ty::Unit | Ty::V128 => return None,
-            s => Lay::Scalar(s),
-        };
+        if matches!(self.ty(t), Ty::Unit | Ty::V128) {
+            return None;
+        }
         let share = self.share_kind(t) as u8;
         let half = self.half(t).map(|f| format!("{f:?}"));
-        let bits = self.bits(t);
-        let arr = self.intern(TyKind::Array(t));
-        let array = self.bits(arr) | u32::from(self.array_view(arr)) << 16;
+        let answers = (self.footprint(t).into_iter())
+            .map(|f| self.answers(f))
+            .collect();
         Some(Key {
-            lay,
             half,
             share,
-            bits,
-            array,
+            answers,
         })
+    }
+
+    /// The types built from `t` the shared helpers ask about, besides `t`: `T[]` (the mirror),
+    /// `T[][]` (a view of arrays of `T`), and `T | null`.
+    fn footprint(&mut self, t: TyId) -> Vec<TyId> {
+        let arr = self.intern(TyKind::Array(t));
+        let arr2 = self.intern(TyKind::Array(arr));
+        let mut out = vec![t, arr, arr2];
+        // `T | null` of a `T` that is an option already is not another type (`intern`).
+        if !matches!(self.kind(t), TyKind::Option(..)) {
+            out.push(self.intern(TyKind::Option(t, velt_sema::hir::Nothing::Null)));
+        }
+        out
+    }
+
+    /// The answers to the shape questions about `t`: the yes/no queries lowering's inline code
+    /// depends on, and which counted-types sets hold it.
+    pub(super) fn answers(&mut self, t: TyId) -> Answers {
+        let mut bits = self.bits(t);
+        let sets = self
+            .boxing
+            .ty_sets()
+            .iter()
+            .map(|s| s.contains(&t))
+            .collect();
+        let mut lay = self.lay(t);
+        if let (Some(Lay::Agg(_, a)), true) = (&mut lay, dropped("align")) {
+            *a = 0;
+        }
+        for (row, bit) in [("niche", 1), ("counted", 4), ("weak", 8)] {
+            if dropped(row) {
+                bits &= !(1 << bit);
+            }
+        }
+        Answers { lay, bits, sets }
+    }
+
+    /// The layout of `t`: aggregates by size and alignment (`None`: no value).
+    fn lay(&mut self, t: TyId) -> Option<Lay> {
+        match self.ty(t) {
+            Ty::Agg(a) => {
+                let l = &self.aggs[a.0 as usize];
+                Some(Lay::Agg(l.size, l.align))
+            }
+            Ty::Unit => None,
+            s => Some(Lay::Scalar(s)),
+        }
     }
 
     /// The yes/no answers lowering may depend on for `t` (`Key::bits`).
@@ -155,6 +219,13 @@ impl Cx<'_> {
             self.lock_counted(t),
             self.weak_capable(t),
             self.is_union(t),
+            self.reaches_lock_set(t),
+            self.shared_reads(t),
+            self.copied_across(t),
+            self.transfers(t),
+            self.holds_mutex(t, 0, true),
+            self.holds_mutex(t, 0, false),
+            self.array_view(t),
         ];
         answers
             .iter()
@@ -213,8 +284,12 @@ impl Cx<'_> {
     /// At the end of the pass: every member of every shape gives the representative's answers
     /// for each type built from a placeholder that shared code asked about (module docs).
     pub(in crate::lower) fn shapes_close(&mut self) {
+        CHECKING.with(|c| c.set(true));
         let mut derived: Vec<TyId> = self.shapes.asked.borrow().iter().copied().collect();
+        // Every placeholder itself too, asked about or not.
+        derived.extend(self.shapes.ph.iter().map(|p| p.ty));
         derived.sort_by_key(|t| t.0);
+        derived.dedup();
         for i in 0..self.shapes.ph.len() {
             let (p, rep) = (self.shapes.ph[i].ty, self.shapes.ph[i].rep);
             let members = self.shapes.ph[i].members.clone();
@@ -222,15 +297,15 @@ impl Cx<'_> {
                 let rest: Vec<(TyId, TyId)> =
                     self.shapes.ph.iter().map(|q| (q.ty, q.rep)).collect();
                 let want_ty = self.replace_tys(d, &rest);
-                let want = self.set_answers(want_ty);
+                let want = self.answers(want_ty);
                 for &m in &members {
                     let mut map = rest.clone();
                     map[i] = (p, m);
                     let got = self.replace_tys(d, &map);
-                    let have = self.set_answers(got);
+                    let have = self.answers(got);
                     if have != want {
-                        let (a, b) = (self.type_name(rep), self.type_name(m));
-                        let (x, y) = (self.type_name(want_ty), self.type_name(got));
+                        let (a, b) = (self.type_key(rep), self.type_key(m));
+                        let (x, y) = (self.type_key(want_ty), self.type_key(got));
                         ice(format_args!(
                             "shape of `{a}` and `{b}` differs for a type built from them \
                              (`{x}`: {want:?}, `{y}`: {have:?}): the shape key is missing a \
@@ -240,16 +315,6 @@ impl Cx<'_> {
                 }
             }
         }
-    }
-
-    /// Which counted-types sets hold `t`, and the answers of `bits`.
-    fn set_answers(&mut self, t: TyId) -> (Vec<bool>, u32) {
-        let sets = self
-            .boxing
-            .ty_sets()
-            .iter()
-            .map(|s| s.contains(&t))
-            .collect();
-        (sets, self.bits(t))
+        CHECKING.with(|c| c.set(false));
     }
 }

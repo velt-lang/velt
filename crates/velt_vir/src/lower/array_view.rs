@@ -104,7 +104,7 @@ impl Cx<'_> {
                     .starts_with(velt_common::std_modules::CANONICAL_PREFIX),
                 _ => false,
             });
-        let TyKind::Array(mut e) = self.types.kind(t).clone() else {
+        let TyKind::Array(mut e) = self.raw_kind(t).clone() else {
             return;
         };
         if std {
@@ -114,10 +114,10 @@ impl Cx<'_> {
         // The view converts its elements out of `any` (`arrayViewSyncAt`, in the prelude):
         // an object among them may be a view too (any_view.rs), as when the program converts
         // one itself.
-        while let TyKind::Array(x) = self.types.kind(e).clone() {
+        while let TyKind::Array(x) = self.raw_kind(e).clone() {
             e = x;
         }
-        if matches!(self.types.kind(e), TyKind::Adt(..)) {
+        if matches!(self.raw_kind(e), TyKind::Adt(..)) {
             self.note_proxy_target(e);
         }
     }
@@ -131,7 +131,7 @@ impl Cx<'_> {
         }
         let mut seen = FxHashSet::default();
         while let Some(t) = work.pop() {
-            let TyKind::Array(e) = self.types.kind(t).clone() else {
+            let TyKind::Array(e) = self.raw_kind(t).clone() else {
                 continue;
             };
             if next.array_views.insert(t) {
@@ -146,7 +146,7 @@ impl Cx<'_> {
         if !seen.insert(t) {
             return;
         }
-        match self.types.kind(t).clone() {
+        match self.raw_kind(t).clone() {
             TyKind::Array(_) => out.push(t),
             TyKind::Option(x, _) => self.inner_arrays(x, out, seen),
             TyKind::Adt(d, _) if self.is_union(t) => {

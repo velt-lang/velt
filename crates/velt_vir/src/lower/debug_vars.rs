@@ -59,6 +59,13 @@ impl Cx<'_> {
         id
     }
 
+    /// A debug type not made from a HIR type (shape/glue.rs `describe_dict`).
+    pub(super) fn add_debug_ty(&mut self, t: DebugTy) -> DebugTyId {
+        let d = self.debug_types();
+        d.types.push(t);
+        DebugTyId(d.types.len() as u32 - 1)
+    }
+
     fn debug_types(&mut self) -> &mut DebugTypes {
         self.debug
             .as_mut()

@@ -43,7 +43,7 @@ impl<'h> Cx<'h> {
         // `TyTable::intern` makes an option of an option one option; a `U | null` of a `U`
         // that allows `undefined` would lose one nothing (issue #930): report it.
         if let TyKind::Option(e, n) = &k {
-            if matches!(self.types.kind(*e), TyKind::Option(_, m) if n.has_null() && m.has_undefined() && m != n)
+            if matches!(self.raw_kind(*e), TyKind::Option(_, m) if n.has_null() && m.has_undefined() && m != n)
                 && !self.keeps_nothings_apart()
             {
                 self.nothing_clashes.push(self.cur_def);
@@ -384,9 +384,12 @@ impl<'h> Cx<'h> {
         if targs.is_empty() {
             return t;
         }
+        // A placeholder (shape/) is a type argument, not a parameter: it stays.
+        if self.is_ph(t) {
+            return t;
+        }
         let s = |cx: &mut Self, x: TyId| cx.subst_raw(x, targs);
         let k = match self.kind(t) {
-            TyKind::Param(n) if n >= super::shape::SHAPE_BASE => return t,
             TyKind::Param(n) => {
                 return *targs
                     .get(n as usize)
@@ -474,7 +477,7 @@ impl<'h> Cx<'h> {
 
     /// Is `t` a union type (a compiler-generated enum, `EnumDef::is_union`)?
     pub(super) fn is_union(&self, t: TyId) -> bool {
-        match self.types.kind(t) {
+        match self.types.kind(self.ph_rep(t)) {
             TyKind::Adt(d, _) => matches!(self.hir.def(*d), hir::Def::Enum(e) if e.is_union),
             _ => false,
         }
@@ -657,7 +660,7 @@ impl<'h> Cx<'h> {
     }
 
     pub(super) fn is_never(&self, t: TyId) -> bool {
-        matches!(self.types.kind(t), TyKind::Never)
+        matches!(self.raw_kind(t), TyKind::Never)
     }
 
     /// A concrete error type, `None` when nothing can be thrown: `Never`, or a union (built by
@@ -706,7 +709,7 @@ impl<'h> Cx<'h> {
         {
             return None;
         }
-        let TyKind::Adt(p, _) = self.types.kind(a.base?) else {
+        let TyKind::Adt(p, _) = self.raw_kind(a.base?) else {
             return None;
         };
         let hir::Def::Adt(pa) = self.hir.def(*p) else {
@@ -718,7 +721,7 @@ impl<'h> Cx<'h> {
 
     /// Short display name of a type (`Uncaught <Type>`, `Name { ... }` when printing).
     pub(super) fn type_name(&self, t: TyId) -> String {
-        let full = match self.types.kind(t) {
+        let full = match self.raw_kind(t) {
             TyKind::Adt(d, _) | TyKind::Dyn(d, _) => match self.hir.def(*d) {
                 hir::Def::Adt(a) => a.name.clone(),
                 hir::Def::Enum(e) => e.name.clone(),

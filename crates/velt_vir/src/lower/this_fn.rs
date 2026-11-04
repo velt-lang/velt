@@ -20,7 +20,7 @@ pub(super) const STD_THIS_FN: &str = velt_common::std_hook!(this_fn);
 impl super::Cx<'_> {
     /// Is `t` std/lang/this_fn/index.vlt's `ThisFn` (module docs)?
     pub(super) fn is_this_fn(&self, t: TyId) -> bool {
-        let TyKind::Adt(d, _) = self.types.kind(t) else {
+        let TyKind::Adt(d, _) = self.raw_kind(t) else {
             return false;
         };
         matches!(self.hir.def(*d), hir::Def::Adt(a) if a.name == STD_THIS_FN)
