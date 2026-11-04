@@ -90,8 +90,8 @@ The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
   WebAssembly goldens, which `test` includes).
 - **Everything**: `scripts/check-all.sh` or `pwsh scripts/check-all.ps1` (`--fast` / `-Fast`:
   goldens in debug mode only). The merge queue runs it on Linux (and on Windows and macOS for
-  OS-specific changes), and the push to `main` on Windows and macOS when the queue checked Linux
-  only, so you need it locally only when you want that certainty before queueing. The queue
+  OS-specific changes), and a scheduled run on Windows and macOS once a day, so you need it
+  locally only when you want that certainty before queueing. The queue
   skips the WebAssembly goldens when the change doesn't touch WebAssembly code, and otherwise
   runs them in parallel shards next to the goldens' (`--part wasm`, `VELT_WASM_SHARD=<i>/<n>`),
   not in the lint-and-test job (`VELT_WASM_GOLDENS=skip`). On Windows, `-Linux` also builds and tests the committed `HEAD` in
@@ -403,9 +403,9 @@ opening it.
   Windows and macOS when the change touches OS-specific code (the runtime, code generation and
   linking, `veltc`, `vpm`, the parts of the standard library that talk to the OS and its test
   suites; comment-only edits don't count; `cargo xtask affected` says which).
-  When the queue checked Linux only, the push to `main` then runs the whole gate on Windows and
-  macOS and opens an issue when it fails. A nightly run adds PostgreSQL and Redis so the
-  database tests run too.
+  A scheduled run checks the whole gate on Windows and macOS once a day and opens an issue when
+  it fails, and a tag checks it again before a release. A nightly run adds PostgreSQL and Redis
+  so the database tests run too.
 - Pull requests are **squash-merged**: the pull request **title and description become the commit
   message** on `main` (`sema: infer throws through closures in recursive functions`). Keep the
   description to what changed, why, and how it was tested: no tool-generated footers, session

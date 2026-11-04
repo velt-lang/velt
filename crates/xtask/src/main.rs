@@ -591,7 +591,7 @@ name = \"a\"
         plan.after_merge = None;
         let text = github_output_text(&plan);
         assert!(text.contains("\nmain_os=[\"ubuntu-latest\"]\n"), "{text}");
-        plan.after_merge = Some("the merge queue checked Linux only".into());
+        plan.after_merge = Some("Cargo.lock changed: refresh the build cache".into());
         let text = github_output_text(&plan);
         assert!(
             text.contains("\nmain_os=[\"ubuntu-latest\",\"windows-latest\",\"macos-latest\"]\n"),
