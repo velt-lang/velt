@@ -2,17 +2,21 @@
 """Writes a Velt program whose `any` arrays are converted to N element types (array views,
 #1485), for generic instances shared by shape (docs/internals/design/shape-sharing.md).
 
-    gen.py [object types = 40] [out file = shapes.vlt]
+    gen.py [object types = 40] [out file = shapes.vlt] [sites = 0]
 
 The object types come in three layouts (two numbers; a number and a string; two strings and
 a number), with field names of their own, so each is a type of its own; a union and `string`
 are added. Without sharing, each element type gets its own instance of each array-view helper;
 with it, each shape does. The program prints a checksum, the same either way.
+
+With `sites` > 0 it also reads one view at that many sites (one function each), the case where
+sharing gains nothing and what it costs per call of a shared helper shows.
 """
 import sys
 
 n = int(sys.argv[1]) if len(sys.argv) > 1 else 40
 out = sys.argv[2] if len(sys.argv) > 2 else "shapes.vlt"
+sites = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 
 layouts = [
     lambda i: (f"{{ x{i}: number; y{i}: number }}", f"{{ x{i}: k, y{i}: k * 2 }}", f"o.x{i} + o.y{i}"),
@@ -80,5 +84,12 @@ lines += [
 ]
 for i in range(n):
     lines.append(f"total += sum{i}(5);")
+if sites > 0:
+    view = "const sv = make0(3) as O0[];"
+    lines.insert(lines.index("let total = sumU(10) + sumS(10);"), view)
+    for k in range(sites):
+        lines.insert(lines.index(view), f"function site{k}(v: O0[]): number {{\n  return v[{k % 3}].x0;\n}}\n")
+    for k in range(sites):
+        lines.append(f"total += site{k}(sv);")
 lines.append("console.log(total);")
 open(out, "w").write("\n".join(lines) + "\n")

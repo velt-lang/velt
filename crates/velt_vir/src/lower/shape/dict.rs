@@ -8,10 +8,10 @@ use velt_sema::hir::TyId;
 
 use super::super::{Cx, Work};
 use super::{Entry, PSEUDO_BASE};
+use crate::vir::{Const, FuncId, StaticData, StaticId};
 
 /// The bytes in front of a dictionary's entries: the `VeltStr` of its types' names.
 pub(super) const HEADER: u32 = 24;
-use crate::vir::{Const, FuncId, StaticData, StaticId};
 
 impl Cx<'_> {
     /// The dictionary of shared instance `inst` for concrete `targs` (built once).

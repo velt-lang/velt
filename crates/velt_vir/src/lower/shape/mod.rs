@@ -3,8 +3,9 @@
 //!
 //! A call of a shareable generic function from code of concrete types calls one instance per
 //! *shape* of its type arguments (key.rs), passing a dictionary of the type-specific code as a
-//! hidden parameter after the user's arguments. The shared instance is lowered with a *placeholder* for each shared
-//! type argument: a `TyKind::Param` at `SHAPE_BASE` or above, which HIR never holds.
+//! hidden parameter after the user's arguments. The shared instance is lowered with a
+//! *placeholder* for each shared type argument: a `TyKind::Param` at `SHAPE_BASE` or above,
+//! which HIR never holds.
 //! - Layout and ownership questions (the shape questions) about a placeholder, or a type built
 //!   from one, are answered for the same type built from its representative, the first
 //!   concrete type of the shape (`Cx::ph_rep`). Every type asked about this way is checked
@@ -106,13 +107,16 @@ pub(super) struct Shapes {
     pub(super) std_glue: bool,
     ph: Vec<Ph>,
     ph_of: FxHashMap<(Key, u32), TyId>,
+    /// Memo of `placeholder`: a type's key is fixed for the pass (`Boxing` is), so each call
+    /// of a shared helper doesn't compute it again.
+    ph_for: FxHashMap<(TyId, u32), Option<TyId>>,
     pub(super) insts: FxHashMap<FuncId, Inst>,
     pseudo: Vec<(FuncId, u32)>,
     /// The shared instances being lowered, innermost last.
     pub(super) current: Vec<FuncId>,
     dicts: FxHashMap<(FuncId, Vec<TyId>), StaticId>,
-    /// Memo of `mentions_ph`.
-    mentions: std::cell::RefCell<FxHashMap<TyId, bool>>,
+    /// Memo of `mentions_ph`, by type index: 0 not known yet, 1 no, 2 yes.
+    mentions: std::cell::RefCell<Vec<u8>>,
     /// The types built from placeholders that shape questions were asked about (key.rs).
     asked: std::cell::RefCell<rustc_hash::FxHashSet<TyId>>,
 }
@@ -169,6 +173,16 @@ impl Cx<'_> {
     /// The placeholder for concrete type `t` at type-argument position `pos`, made when new;
     /// `None` when `t` is not shared (key.rs).
     fn placeholder(&mut self, t: TyId, pos: u32) -> Option<TyId> {
+        if let Some(&p) = self.shapes.ph_for.get(&(t, pos)) {
+            return p;
+        }
+        let p = self.new_placeholder(t, pos);
+        self.shapes.ph_for.insert((t, pos), p);
+        p
+    }
+
+    /// [`placeholder`](Self::placeholder) without the memo.
+    fn new_placeholder(&mut self, t: TyId, pos: u32) -> Option<TyId> {
         let key = self.shape_key(t)?;
         if let Some(&p) = self.shapes.ph_of.get(&(key.clone(), pos)) {
             let i = self.ph_index(p);
@@ -334,6 +348,13 @@ impl Cx<'_> {
         // Facts kept per function (boxing/tuples.rs) are not replayed: one shared `FuncId`
         // stands for several instances. The body's own are still pending here (`finish_fn_tuples`
         // stores them after this), so they are checked here.
+        // Test hook (`VELT_SHAPES_TEST_DROP=per-function`): the body records one, so a test
+        // shows that this check fires.
+        if key::dropped("per-function") {
+            if let Some(&p) = self.shapes.insts[&fid].targs.first() {
+                self.cur_read_params.push(p);
+            }
+        }
         let own = self.cur_tuple_writes.iter().chain(&self.cur_read_params);
         if own.copied().any(|t| self.mentions_ph(t)) {
             ice("a shared body records facts per function, which are not replayed");
@@ -423,8 +444,10 @@ fn mentions(shapes: &Shapes, types: &velt_sema::hir::TyTable, t: TyId) -> bool {
     if shapes.ph.is_empty() {
         return false;
     }
-    if let Some(&m) = shapes.mentions.borrow().get(&t) {
-        return m;
+    match shapes.mentions.borrow().get(t.0 as usize) {
+        Some(1) => return false,
+        Some(2) => return true,
+        _ => {}
     }
     let mut stack = vec![t];
     let mut found = false;
@@ -441,7 +464,11 @@ fn mentions(shapes: &Shapes, types: &velt_sema::hir::TyTable, t: TyId) -> bool {
             k => stack.extend(parts(k)),
         }
     }
-    shapes.mentions.borrow_mut().insert(t, found);
+    let mut memo = shapes.mentions.borrow_mut();
+    if memo.len() <= t.0 as usize {
+        memo.resize(types.len().max(t.0 as usize + 1), 0);
+    }
+    memo[t.0 as usize] = if found { 2 } else { 1 };
     found
 }
 

@@ -1,10 +1,11 @@
 # Design: generic instances shared by shape (Go-style dictionaries)
 
-Status: draft for review (#2271, part of #2189 and #1612 item 2). It starts from the proposal on
+Status: step 2 is implemented (#2285), in debug builds only; steps 3 and later are proposed
+(#2271, part of #2189 and #1612 item 2). It starts from the proposal on
 #2189 (2026-11-03 17:19) and answers the five points #2271 leaves to review. Related designs:
 [package-cache.md](package-cache.md) (the per-package cache, #2236), #375's generic interface
 methods (implemented in #943 as per-instantiation slot tables, `lower/glue/generic_slots.rs`),
-and `AnyUnbox`, the out-of-line slow path of `any as T` (#2268). Nothing here is implemented.
+and `AnyUnbox`, the out-of-line slow path of `any as T` (#2268).
 
 ## Problem
 
@@ -102,8 +103,9 @@ every type in its body that mentions one of its type parameters: `T`, `T[]`, `T 
 - **The key.** The key of a type argument is the answers to the shape questions, plus its
   layout and membership in each counted-types set, for the type itself and for every type of
   the footprint. In step 2 every shared definition is one of the array-view helpers, whose
-  footprint is `T`, `T[]`, `T[][]` (a view of arrays of `T`) and `T | null`, so the key covers
-  those four. The families of step 4 build other types from their parameters: there the
+  footprint is `T` and `T[]` (the helpers build no other type from `T`), so the key covers
+  those two. A view of `T[]` or of `T | null` is the helpers instantiated at that type, with
+  its own key. The families of step 4 build other types from their parameters: there the
   footprint is collected per definition by a HIR scan (memoized per `DefId`), and the key
   covers it.
 - **Placeholders are per key and parameter position.** Two definitions share a placeholder
@@ -120,10 +122,10 @@ every type in its body that mentions one of its type parameters: `T`, `T[]`, `T 
 ### How the questions are enforced
 
 `Cx::kind` ICEing for a placeholder isn't enough on its own. Most per-type facts are reads of
-`Boxing`'s sets (`self.boxing.<set>.contains(&t)`, 16 sites), and 64 places in `lower/` read
-`types.kind` directly. All of these answer silently
-for a placeholder or an `Array(placeholder)`. Step 2 therefore delivers three things, each
-with a test that breaks it on purpose:
+`Boxing`'s sets (`self.boxing.<set>.contains(&t)`, 16 sites), and other code in `lower/` matched
+on `types.kind` directly (52 reads, which now go through `Cx::raw_kind`). All of these answer
+silently for a placeholder or an `Array(placeholder)`. Step 2 therefore delivers three things,
+each with a test that breaks it on purpose:
 1. **The shape queries answer for the representative.** A placeholder has a representative,
    the first concrete type of its shape. Each shape query maps a placeholder to its
    representative first (`Cx::ph_rep`). Since the key makes every member give the
@@ -237,9 +239,10 @@ new golden.
 | `any_identity`, `fn_compared`, `generic_any`, `any_set`, `any_has`, `any_delete`, `any_keys`, `any_reflect`, `any_number`, `any_call_keys`, `weak_object`, `object_from_dyn`, `proxy_new`, `read_indirect`, `unmet` | nothing (program-wide) | as is, once |
 
 `share_sites` for the counted-`Atomic` diagnostic is replayed with the site of the user call
-that requested the dictionary, so the report points at user code. `VELT_SHAPES=check` lowers
-each eligible instance both ways and compares the final `Boxing` and the diagnostics. Its
-coverage is this table.
+that requested the dictionary, so the report points at user code. A planned
+`VELT_SHAPES=check` would lower each eligible instance both ways and compare the final
+`Boxing` and the diagnostics, with this table as its coverage; step 2 checks the same by
+comparing whole runs with `VELT_SHAPES=off`.
 
 ### How lowering represents a shape
 
@@ -500,8 +503,8 @@ So what decides is:
 - rule 1, computed by lowering;
 - rule 2's single-dictionary fold, also in lowering, and its hot-site clones, in `velt_opt`;
 - the measured gate, kept as a list in the code that only grows. A switch in
-`VELT_SHAPES` (`off`, `on`, `check`, `all`) picks the behavior for A/Bs without rebuilding the
-compiler.
+`VELT_SHAPES` picks the behavior for A/Bs without rebuilding the compiler: `off` and `all`
+exist in step 2, `on` (the default made explicit) and `check` are planned.
 
 Release is unchanged in step 2 (order of work): it shares nothing, and its VIR is
 byte-identical to main's for every golden and benchmark program, which the step checks.
@@ -543,6 +546,8 @@ code-wise but doesn't say which type was meant. Debug builds name the types too:
 
 A frame then shows `arrayViewSyncAt<~ptr.556ac4f9>`, and `$types` expands to
 `types = "{ a: f64; b: string }"`. A value of the shared type shows its shape (`(~ptr) v`).
+`$types` can't be typed as a name in LLDB's `frame variable`, so it shows with the frame's
+other variables (`frame variable -P 1`).
 `crates/veltc/tests/debugger.rs` checks this, next to the existing debug-variable cases.
 Release strips symbols at link time, as it does today. Panic messages carry source locations,
 not function names, and are unaffected.
@@ -554,8 +559,9 @@ not function names, and are unaffected.
   doesn't share yet, and runs the whole golden suite in debug and release. This is proposed as
   one more CI job, so each leak or scan bug shows up as an ICE or a wrong output, not in a
   user's program.
-- **`VELT_SHAPES=check`.** Compares the counted-types facts and the diagnostics both ways
-  (section 1, "Facts and the counted-types fixpoint").
+- **`VELT_SHAPES=check`** (planned). Compares the counted-types facts and the diagnostics
+  both ways (section 1, "Facts and the counted-types fixpoint"). Step 2 compares whole runs
+  with `VELT_SHAPES=off` instead.
 - **The enforcement tests** (section 1, "How the questions are enforced"), each checked to fail
   when broken on purpose:
   - code outside `boxing/` reading a counted-types set of types without `ph_rep` fails a test;
@@ -582,7 +588,9 @@ not function names, and are unaffected.
 - **Key rows** (`shape_keys.rs`): a row left out of the key (`VELT_SHAPES_TEST_DROP`, debug
   compilers only), for a program whose view element types differ in that row alone, must make
   the end-of-pass check fire. The weak row is tested this way, with a weak-capable class beside
-  a plain one. For view element types the other rows never differ alone:
+  a plain one, and so is the footprint: leaving `T[]` out (`array`) on two object types whose
+  arrays differ in a counted-types set makes the check fire. A fact recorded per function in a
+  shared body (`per-function`) is an ICE, also tested. For view element types the other rows never differ alone:
   - view element types are always counted, so the counted row can't differ;
   - a nullable class also differs from its class in share kind and class-ness, so the niche row
     can't differ alone;

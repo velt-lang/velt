@@ -44,9 +44,9 @@ pub(in crate::lower) struct Answers {
 }
 
 /// Test hook (debug builds of the compiler only): `VELT_SHAPES_TEST_DROP=<row>` leaves one
-/// row (`counted`, `weak`, `niche`, `align`) out of the key, never out of the end-of-pass
-/// check, so tests show that the check catches a key missing it.
-fn dropped(row: &str) -> bool {
+/// row (`counted`, `weak`, `niche`, `align`, or `array`: `T[]`) out of the key, never out of
+/// the end-of-pass check, so tests show that the check catches a key missing it.
+pub(super) fn dropped(row: &str) -> bool {
     cfg!(debug_assertions)
         && !CHECKING.with(std::cell::Cell::get)
         && std::env::var("VELT_SHAPES_TEST_DROP").is_ok_and(|v| v == row)
@@ -159,17 +159,15 @@ impl Cx<'_> {
         })
     }
 
-    /// The types built from `t` the shared helpers ask about, besides `t`: `T[]` (the mirror),
-    /// `T[][]` (a view of arrays of `T`), and `T | null`.
+    /// `t` and the type built from it the shared helpers ask about: `T[]`, the mirror. A
+    /// nested view's element (`string[]` in `string[][][]`) differs from another at this
+    /// level, and so does a recursive object type holding an array of itself.
     fn footprint(&mut self, t: TyId) -> Vec<TyId> {
         let arr = self.intern(TyKind::Array(t));
-        let arr2 = self.intern(TyKind::Array(arr));
-        let mut out = vec![t, arr, arr2];
-        // `T | null` of a `T` that is an option already is not another type (`intern`).
-        if !matches!(self.kind(t), TyKind::Option(..)) {
-            out.push(self.intern(TyKind::Option(t, velt_sema::hir::Nothing::Null)));
+        match dropped("array") {
+            true => vec![t],
+            false => vec![t, arr],
         }
-        out
     }
 
     /// The answers to the shape questions about `t`: the yes/no queries lowering's inline code

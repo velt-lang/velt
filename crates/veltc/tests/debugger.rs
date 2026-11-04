@@ -595,8 +595,9 @@ fn lldb_shows_the_types_of_a_shared_frame() {
             &import,
             "breakpoint set -r arrayViewSyncAt_T",
             "run",
-            "frame variable -P 1 $types",
-            "frame variable v",
+            // Every variable, one level deep: `frame variable` can't name `$types` in some
+            // LLDB versions (LLDB 23 reads it as an expression variable).
+            "frame variable -P 1",
             "kill",
         ],
     );

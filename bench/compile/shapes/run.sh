@@ -5,7 +5,9 @@
 # array-view helpers, the shared instances (`VELT_LOWER_PROFILE`), build CPU (user + sys) and
 # peak memory, with a fresh empty VELT_HOME and the build caches off.
 #
-#   bench/compile/shapes/run.sh [object types = 40] [path to velt] [out dir]
+#   bench/compile/shapes/run.sh [object types = 40] [path to velt] [out dir] [sites = 0]
+#
+# `sites` > 0 also reads one view at that many sites (gen.py), where sharing gains nothing.
 #
 # Without a velt path it builds velt (release) first. Needs python3.
 set -euo pipefail
@@ -15,6 +17,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 ROOT=$(cd "$HERE/../../.." && pwd)
 TARGET=${CARGO_TARGET_DIR:-$ROOT/target}
 OUT=${3:-$TARGET/bench/compile/shapes-$N}
+SITES=${4:-0}
 mkdir -p "$OUT"
 if [ -z "$VELT" ]; then
   echo "building velt and the runtime (release)..." >&2
@@ -22,7 +25,7 @@ if [ -z "$VELT" ]; then
   VELT="$TARGET/release/velt"
 fi
 export VELT_STD=${VELT_STD:-$ROOT/std} VELT_BUILD_CACHE=off VELT_BUILD_STAMP=off
-python3 "$HERE/gen.py" "$N" "$OUT/shapes.vlt"
+python3 "$HERE/gen.py" "$N" "$OUT/shapes.vlt" "$SITES"
 
 # body_lines <vir file> <pattern>: non-empty lines inside the bodies of functions whose symbol
 # matches the pattern (all functions for "").
