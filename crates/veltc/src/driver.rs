@@ -246,10 +246,7 @@ impl Session {
                 _ if name == "stamp" && !self.timings.iter().any(|(n, _)| *n == "parse") => {
                     s.push_str("  (unchanged: nothing to compile)\n");
                 }
-                _ => match self.memory.iter().find(|(n, _)| *n == name) {
-                    Some((_, r)) => s.push_str(&format!("  ({})\n", memory::render(*r))),
-                    None => s.push('\n'),
-                },
+                _ => s.push_str(&memory::line_end(&self.memory, name)),
             }
             let steps = self.details.iter().filter(|(stage, ..)| *stage == name);
             for (_, step, d) in steps.filter(|_| self.show_details) {
@@ -270,8 +267,8 @@ impl Session {
     pub(crate) fn record_time(&mut self, stage: &'static str, d: Duration) {
         self.timings.push((stage, d));
         self.lifetimes.push(stage);
-        if let Some(r) = memory::read().filter(|_| self.show_details) {
-            self.memory.push((stage, r));
+        if self.show_details {
+            self.memory.extend(memory::read().map(|r| (stage, r)));
         }
     }
 

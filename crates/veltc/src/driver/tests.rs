@@ -76,4 +76,35 @@ fn each_stage_frees_its_input_when_done() {
     assert!(at("hir freed") < at("verify"), "{events:?}");
     assert!(at("vir freed") < at("write"), "{events:?}");
     assert!(at("optimize") < at("vir freed"), "{events:?}");
+    assert!(sess.memory.is_empty(), "read only for `--timings`");
+}
+
+/// The driver verifies the VIR after lowering and after optimizing, so the path it compiles
+/// through (which frees the code) must not verify it again.
+#[test]
+fn codegen_does_not_verify_what_the_driver_verified() {
+    let dir = tempfile::tempdir().unwrap();
+    let opts = BuildOptions {
+        input: dir.path().join("main.vlt"),
+        root_source: Some(
+            "function main() {
+  console.log(\"hi\");
+}
+"
+            .into(),
+        ),
+        output: Some(dir.path().join("main.o")),
+        emit: Emit::Obj,
+        ..Default::default()
+    };
+    let mut sess = Session::new();
+    sess.show_details = true;
+    let built = build(&mut sess, &opts);
+    assert!(matches!(built, Ok(Artifact::Object(_))), "{built:?}");
+    let stages = sess.timings.iter().filter(|(n, _)| *n == "verify").count();
+    assert_eq!(stages, 1, "{:?}", sess.timings);
+    let steps: Vec<_> = sess.details.iter().filter(|d| d.1 == "verify").collect();
+    assert!(steps.iter().all(|d| d.0 == "optimize"), "{steps:?}");
+    let codegen = sess.memory.iter().any(|(s, _)| *s == "codegen");
+    assert!(codegen, "{:?}", sess.memory);
 }

@@ -57,6 +57,20 @@ impl<T> Drop for Noted<T> {
     }
 }
 
+/// The end of `stage`'s line in `--timings`: its memory, if it was read.
+pub(crate) fn line_end(memory: &[(&'static str, Reading)], stage: &str) -> String {
+    match memory.iter().find(|(n, _)| *n == stage) {
+        Some((_, r)) => format!(
+            "  ({})
+",
+            render(*r)
+        ),
+        None => "
+"
+        .to_string(),
+    }
+}
+
 /// One reading: `(resident, peak resident)` in bytes, `None` where the OS does not say.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Reading {
