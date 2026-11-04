@@ -6,7 +6,7 @@ use velt_vir::vir::*;
 
 use crate::module::emit_unit;
 use crate::target::normalize;
-use crate::units::{plan, plan_placed, unit_count, Unit};
+use crate::units::{count_for, plan, plan_placed, unit_count, Unit};
 
 /// `a` (tiny), `b` (calls `a`), `c` (calls `b`; returns a vtable static holding `a`'s address)
 /// and `velt_main` (calls `c` and `a`, reads the vtable): 2 + 62 + 63 + 65 weight.
@@ -186,6 +186,19 @@ fn unit_count_from_size_unless_requested() {
     assert_eq!(unit_count(&sized(200), None), 4);
     assert_eq!(unit_count(&sized(200), Some(1)), 1);
     assert_eq!(unit_count(&sized(200), Some(12)), 12);
+}
+
+/// Large programs get units of at most 200,000 statements, at most 16; up to 4 units of that,
+/// the count is as for any program.
+#[test]
+fn large_programs_get_bounded_units() {
+    assert_eq!(count_for(31_999), 1);
+    assert_eq!(count_for(64_000), 4);
+    assert_eq!(count_for(800_000), 4);
+    assert_eq!(count_for(800_001), 5);
+    assert_eq!(count_for(2_000_000), 10);
+    assert_eq!(count_for(3_200_000), 16);
+    assert_eq!(count_for(9_000_000), 16);
 }
 
 #[test]
