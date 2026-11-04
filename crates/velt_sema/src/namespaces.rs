@@ -147,13 +147,32 @@ impl Ctx<'_> {
 /// or a namespace member flattened into the item `N.T`, `A.B.T` (a member declared without
 /// `export` only inside its namespace).
 pub(crate) fn lookup(cx: &Ctx, module: usize, path: &[ast::Ident], at: Span) -> Option<Item> {
-    let key: Vec<&str> = path.iter().map(|i| i.name.as_str()).collect();
-    let key = key.join(".");
+    let key = path_key(cx, module, path);
     let private = cx.ns_private.get(module).and_then(|p| p.get(&key));
     if private.is_some_and(|b| !(b.file == at.file && b.lo <= at.lo && at.hi <= b.hi)) {
         return None;
     }
     cx.scopes[module].items.get(&key).copied()
+}
+
+/// The key of the item `path` names in `module`: its names joined, each namespace path on the way
+/// through a module's cycle of re-exports as the path it is bound under
+/// (`collect::imports::bind_members`).
+pub(crate) fn path_key(cx: &Ctx, module: usize, path: &[ast::Ident]) -> String {
+    let aliases = &cx.scopes[module].namespace_aliases;
+    let mut key = String::new();
+    for (i, name) in path.iter().enumerate() {
+        if i > 0 {
+            key.push('.');
+        }
+        key.push_str(&name.name);
+        if i + 1 < path.len() {
+            if let Some(bound) = aliases.get(&key) {
+                key.clone_from(bound);
+            }
+        }
+    }
+    key
 }
 
 fn flatten_items(mut items: Vec<ast::Item>, private: &mut Private) -> Vec<ast::Item> {

@@ -1,0 +1,1 @@
+_export_star_as_default_twice.ts:2:8: error: a module cannot have multiple default exports

@@ -209,8 +209,7 @@ impl Ctx<'_> {
                 if !self.scopes[module].type_keys {
                     return self.lookup_path_at(module, path, at);
                 }
-                let joined: Vec<&str> = path.iter().map(|i| i.name.as_str()).collect();
-                let key = type_key(&joined.join("."));
+                let key = type_key(&crate::namespaces::path_key(self, module, path));
                 match self.scopes[module].items.get(&key) {
                     Some(&it) => Some(it),
                     None => self.lookup_path_at(module, path, at),

@@ -1,0 +1,6 @@
+// A name is exported once, `export * as ns` too: Node's SyntaxError, TS2300 (#1916).
+import { ns as one } from "./_export_star_as_duplicate_twice";
+import { ns as two } from "./_export_star_as_duplicate_const";
+import { ns as three } from "./_export_star_as_duplicate_list";
+
+console.log(one, two, three);

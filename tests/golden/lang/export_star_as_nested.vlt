@@ -1,0 +1,25 @@
+// `export * as ns` nested at any depth, cycles included, `export * as default`, and a namespace
+// import exported by name or as the default (#1916). The output is Node's.
+
+import * as d from "./_export_star_as_nested/level3";
+import { b } from "./_export_star_as_nested/level2";
+import * as a from "./_export_star_as_nested/self";
+import { self } from "./_export_star_as_nested/self";
+import { m2 } from "./_export_star_as_nested/mutual1";
+import asDefault from "./_export_star_as_nested/as_default";
+import * as holder from "./_export_star_as_nested/as_default";
+import { default as named } from "./_export_star_as_nested/as_default";
+import star from "./_export_star_as_nested/star_of_as_default";
+import { reexported } from "./_export_star_as_nested/namespace_list";
+import listed from "./_export_star_as_nested/namespace_default";
+
+console.log(b.level0.x, b.level0.default, d.level2.b.level0.x, d.level2.b.level0.default);
+console.log(a.x, self.x, a.self.x, self.self.self.x, self.self.self.self.self.x);
+console.log(m2.y, m2.m1.x, m2.m1.m2.y, m2.m1.m2.m1.x);
+console.log(asDefault.x, holder.default.x, named.x, star);
+
+const typed: d.level2.b.level0.Shape = new d.level2.b.level0.Square(2);
+const viaCycle: self.self.Pair = { left: self.self.self.x };
+let sameAs: typeof d.level2.b.level0.x = 1;
+console.log(typed.area(), viaCycle.left, sameAs, d.level2.b.level0.E.Q);
+console.log(reexported.x, listed.x);

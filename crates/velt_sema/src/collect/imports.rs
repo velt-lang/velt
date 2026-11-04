@@ -2,19 +2,21 @@
 //! - `import { a, b as c } from "…"` binds the exported items (`import type` marks the names
 //!   type-only: using one as a value is an error);
 //! - `import * as ns from "…"` binds every export `x` of the module as `ns.x` (the body checker
-//!   reads `ns.x` in expressions and types as that name);
+//!   reads `ns.x` in expressions and types as that name), and each namespace it exports the same
+//!   way (`ns.sub.x`);
 //! - re-exports (`export { x } from "…"`, `export * from "…"`) and local export lists
 //!   (`export { a }`) bind nothing locally; their names are checked here and resolved on demand
 //!   by [`super::exports`];
 //! - the JSX runtime of a module containing JSX is bound as the namespace `JSX`.
 
-use rustc_hash::FxHashSet;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use velt_common::Diagnostic;
 use velt_syntax::ast;
 
 use super::exports::{
-    all_exports, bound_name, export_of, import_target, imports_of, local_of, namespace_exports,
+    all_exports, bound_name, export_of, exported_namespaces, import_target, imports_of, local_of,
+    namespace_exports, namespace_module,
 };
 use crate::ctx::Ctx;
 use crate::type_meanings::{type_key, type_only_key};
@@ -50,7 +52,7 @@ pub(super) fn resolve_imports(cx: &mut Ctx, m: usize) {
         } else {
             // `import x, * as ns from`: the default binding is the first name.
             if let Some(ns) = &imp.namespace {
-                bind_namespace(cx, m, t, ns);
+                bind_namespace(cx, m, t, ns, imp.type_only);
             }
             for n in &imp.names {
                 if imp.from == "velt/process" && n.name.name == BUILTIN_PROCESS {
@@ -77,11 +79,17 @@ fn exported_item(
         cx.rec_item(n.name.span, Some(it));
         return Some(it);
     }
-    if !namespace_exports(cx, t, &n.name.name).is_empty() {
+    if !namespace_exports(cx, t, &n.name.name).is_empty()
+        || namespace_module(cx, t, &n.name.name).is_some()
+    {
         return None; // a namespace: its members are bound by `import_name`
     }
     if n.name.name == super::exports::DEFAULT {
-        if !super::exports::maybe_dropped(cx, t, &n.name.name) {
+        // A default the module does export, whose name it can't find: reported there.
+        let listed = imports_of(cx, t).any(|(list, exported)| {
+            exported && list.names.iter().any(|x| bound_name(x).name == n.name.name)
+        });
+        if !listed && !super::exports::maybe_dropped(cx, t, &n.name.name) {
             cx.error(no_default(cx, t, imp, bound_name(n)));
         }
         // Its uses would only repeat the error.
@@ -176,20 +184,15 @@ fn removed_export(from: &str, name: &str) -> Option<&'static str> {
 }
 
 fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::ImportName) {
+    // A module's namespace that `t` re-exports (`export * as ns from "…"`): bound as
+    // `import * as local` of that module.
+    if let Some(s) = namespace_module(cx, t, &n.name.name) {
+        bind_namespace(cx, m, s, bound_name(n), n.type_only);
+        return;
+    }
     // A namespace (`crate::namespaces`): its exported members `N.x` are bound as `local.x`;
     // a type or interface of the same name is imported with it.
     let members = namespace_exports(cx, t, &n.name.name);
-    // A module's namespace that `t` re-exports (`export * as ns from "…"`): bound as
-    // `import * as local` of that module. Looked for only when `t` exports `ns.x` names (the
-    // memoized table), so plain imports never walk the re-exports again.
-    let reexported = match members.is_empty() {
-        true => None,
-        false => super::exports::namespace_module(cx, t, &n.name.name),
-    };
-    if let Some(s) = reexported {
-        bind_namespace(cx, m, s, bound_name(n));
-        return;
-    }
     if !members.is_empty() {
         let local = bound_name(n).clone();
         // Both are namespaces: TypeScript's TS2440 (a type or value import merges with a
@@ -282,31 +285,48 @@ fn import_builtin_process(cx: &mut Ctx, m: usize, n: &ast::ImportName, imported:
     *imported = define(cx, m, local);
 }
 
-/// `import * as ns from` module `t`: every export `x` becomes the item `ns.x`.
-fn bind_namespace(cx: &mut Ctx, m: usize, t: usize, ns: &ast::Ident) {
+/// `import * as ns from` module `t`: every export `x` becomes the item `ns.x`, and a namespace
+/// `t` exports (`export * as sub from`) the namespace `ns.sub`, the same way (`type_only`:
+/// `import type * as ns`, whose members are types only).
+fn bind_namespace(cx: &mut Ctx, m: usize, t: usize, ns: &ast::Ident, type_only: bool) {
     if !define(cx, m, ns) {
         return;
     }
-    cx.scopes[m].namespaces.insert(ns.name.clone(), t);
-    let all = all_exports(cx, t);
-    // A module namespace `t` re-exports (`export * as sub from`) is the namespace `ns.sub`.
-    let mut prefixes: Vec<&str> = (all.iter())
-        .filter_map(|(name, _)| Some(name.split_once('.')?.0))
-        .collect();
-    prefixes.dedup();
-    for sub in prefixes {
-        if let Some(s) = super::exports::namespace_module(cx, t, sub) {
-            cx.scopes[m]
-                .namespaces
-                .insert(format!("{}.{sub}", ns.name), s);
-        }
-    }
-    for (name, it) in all.iter() {
+    bind_members(cx, m, t, &ns.name, type_only, &mut FxHashMap::default());
+    super::exports::namespace_bound(cx, m, &ns.name);
+}
+
+/// Bind module `t` as the namespace path `path` of module `m`. Modules re-exporting namespaces
+/// can form cycles (`a.b.a.b.x`), so a module is bound under one nested path (`bound`, by
+/// module); other paths to it are aliases of that one (`ModuleScope::namespace_aliases`).
+fn bind_members(
+    cx: &mut Ctx,
+    m: usize,
+    t: usize,
+    path: &str,
+    type_only: bool,
+    bound: &mut FxHashMap<usize, String>,
+) {
+    cx.scopes[m].namespaces.insert(path.to_string(), t);
+    for (name, it) in all_exports(cx, t).iter() {
         let scope = &mut cx.scopes[m];
         scope.type_keys |= crate::type_meanings::of_type_key(name).is_some();
-        scope.items.insert(format!("{}.{name}", ns.name), *it);
+        let key = format!("{path}.{name}");
+        if type_only {
+            scope.type_only.insert(key.clone());
+        }
+        scope.items.insert(key, *it);
     }
-    super::exports::namespace_bound(cx, m, &ns.name);
+    for (sub, s) in exported_namespaces(cx, t) {
+        let nested = format!("{path}.{sub}");
+        if let Some(earlier) = bound.get(&s) {
+            let scope = &mut cx.scopes[m];
+            scope.namespace_aliases.insert(nested, earlier.clone());
+            continue;
+        }
+        bound.insert(s, nested.clone());
+        bind_members(cx, m, s, &nested, type_only, bound);
+    }
 }
 
 /// A module containing JSX sees its runtime's exports as `JSX.x` (`JSX.Element`, …), as if it
@@ -327,7 +347,7 @@ pub(super) fn bind_jsx_runtime(cx: &mut Ctx, m: usize) {
         name: JSX_NAMESPACE.to_string(),
         span: velt_common::Span::DUMMY,
     };
-    bind_namespace(cx, m, t, &ns);
+    bind_namespace(cx, m, t, &ns, false);
 }
 
 /// The namespace the JSX runtime's exports are visible under.
@@ -351,20 +371,13 @@ fn check_export_list(cx: &mut Ctx, m: usize, imp: &ast::Import) {
     for n in &imp.names {
         let item = local_of(cx, m, &n.name.name);
         let prefix = format!("{}.", n.name.name);
-        let namespace = cx.scopes[m].items.keys().any(|k| k.starts_with(&prefix))
-            && !cx.scopes[m].namespaces.contains_key(&n.name.name);
+        let namespace = cx.scopes[m].namespaces.contains_key(&n.name.name)
+            || cx.scopes[m].items.keys().any(|k| k.starts_with(&prefix));
         if item.is_some() || namespace {
             cx.rec_item(n.name.span, item);
             continue;
         }
-        let msg = if cx.scopes[m].namespaces.contains_key(&n.name.name) {
-            format!(
-                "`{}` is a namespace import and cannot be exported",
-                n.name.name
-            )
-        } else {
-            format!("cannot find `{}` in this scope", n.name.name)
-        };
+        let msg = format!("cannot find `{}` in this scope", n.name.name);
         cx.err(msg, n.name.span);
     }
 }
@@ -374,8 +387,12 @@ fn check_duplicate_exports(cx: &mut Ctx, m: usize) {
     let mut seen: FxHashSet<String> = cx.scopes[m].exports.clone();
     let mut dups = vec![];
     for (imp, exported) in imports_of(cx, m) {
-        for n in imp.names.iter().filter(|_| exported) {
-            let name = bound_name(n);
+        // `export default` was checked when parsed; sema may declare it too (`default_snapshots`).
+        if !exported || velt_syntax::written_default(imp) {
+            continue;
+        }
+        let names = imp.names.iter().map(bound_name);
+        for name in names.chain(imp.namespace.as_ref()) {
             if !seen.insert(name.name.clone()) {
                 dups.push((name.name.clone(), name.span));
             }
