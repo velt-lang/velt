@@ -124,16 +124,13 @@ impl<'a> Printer<'a> {
                 );
                 let mods = crate::source::slice(p.src, param.span);
                 let mods_lo = param.decorators.last().map_or(param.span.lo, |d| d.span.hi);
-                let mods = mods
-                    .get(
+                let mods = modifiers(
+                    mods.get(
                         (mods_lo - param.span.lo) as usize
                             ..(param.name.span.lo - param.span.lo) as usize,
                     )
-                    .unwrap_or("")
-                    .split_whitespace()
-                    .filter(|m| *m != "...")
-                    .map(|m| format!("{m} "))
-                    .collect::<String>();
+                    .unwrap_or(""),
+                );
                 let mods = cat![decorators, mods];
                 let name = p.param_binding(&param.name, param.pattern.as_ref());
                 if param.optional {
@@ -310,6 +307,34 @@ pub(super) fn breaks_itself(e: &Expr) -> bool {
 
 /// The modifiers a function's signature puts before its keyword: `unsafe ` (when `own_unsafe`),
 /// `async `, both (`unsafe async `) or none.
+/// The modifiers in `src`, the source between a parameter's decorators and its name, each followed
+/// by a space. Comments there stay out: the parameter list prints them itself.
+fn modifiers(mut src: &str) -> String {
+    let mut out = String::new();
+    loop {
+        src = src.trim_start();
+        if let Some(rest) = src.strip_prefix("//") {
+            src = rest.split_once('\n').map_or("", |(_, after)| after);
+        } else if let Some(rest) = src.strip_prefix("/*") {
+            src = rest.split_once("*/").map_or("", |(_, after)| after);
+        } else if src.is_empty() {
+            return out;
+        } else {
+            let end = src
+                .find(|c: char| c.is_whitespace() || c == '/')
+                .unwrap_or(src.len());
+            // At least one character, whatever comes first, so this always ends.
+            let end = end.max(src.chars().next().map_or(1, char::len_utf8));
+            let (word, rest) = src.split_at(end);
+            src = rest;
+            if word != "..." {
+                out.push_str(word);
+                out.push(' ');
+            }
+        }
+    }
+}
+
 fn fn_mods(sig: &FnSig, own_unsafe: bool) -> &'static str {
     match (sig.is_unsafe && own_unsafe, sig.is_async) {
         (true, true) => "unsafe async ",

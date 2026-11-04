@@ -484,3 +484,28 @@ fn decorators_go_on_their_own_lines_before_export() {
     let got = format_source("export @a class C { @b x = 1; }").unwrap();
     assert_eq!(got, "@a\nexport class C {\n  @b\n  x = 1;\n}\n");
 }
+
+/// Formats `src`, and the result again: both must parse and agree.
+fn formats_stably(src: &str) -> String {
+    let once = format_source(src).unwrap();
+    let twice = format_source(&once).unwrap_or_else(|e| panic!("{once}\ndoesn't parse: {e:?}"));
+    assert_eq!(once, twice, "not stable for {src}");
+    once
+}
+
+#[test]
+fn a_comment_after_a_parameter_decorator_leaves_the_parameter_alone() {
+    let got = formats_stably("function f(@c // why\n  d: i64) {}\n");
+    assert!(
+        got.contains("@c d: i64, // why\n") || got.contains("@c d: i64 // why\n"),
+        "{got}"
+    );
+    assert_eq!(got.matches("// why").count(), 1, "{got}");
+    let got = formats_stably("function f(@c /* why */ d: i64) {}\n");
+    assert!(got.contains("@c d: i64"), "{got}");
+    assert_eq!(got.matches("/* why */").count(), 1, "{got}");
+    let got = formats_stably("class C { constructor(@c // why\n  private readonly d: i64) {} }\n");
+    assert!(got.contains("@c private readonly d: i64"), "{got}");
+    assert_eq!(got.matches("// why").count(), 1, "{got}");
+}
+
