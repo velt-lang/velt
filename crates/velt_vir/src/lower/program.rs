@@ -230,13 +230,13 @@ impl<'h> Cx<'h> {
             // Work items carry canonical type arguments (one type per anonymous shape), which
             // the instances' own may not be (a generic object type at its arguments).
             let hir = self.hir;
-            let canon = (hir.generated.iter())
+            let entries: Vec<_> = (hir.generated.iter())
                 .map(|((g, targs), body)| {
                     let targs = targs.iter().map(|t| self.canon(*t)).collect();
                     ((*g, targs), *body)
                 })
                 .collect();
-            self.generated_canon = Some(canon);
+            self.generated_canon = Some(canonical_generated(entries));
         }
         let map = self.generated_canon.as_ref().expect("ICE: made above");
         if let Some((d, targs)) = work_target(&mut work) {
@@ -495,5 +495,38 @@ fn work_def(work: &Work) -> Option<DefId> {
         | Work::GenNew(d, _)
         | Work::GenFree(d, _) => Some(*d),
         _ => None,
+    }
+}
+
+/// The generated definitions by canonical instance (`hir::Program::generated` with canonical
+/// type arguments). Two instances can have one canonical form, such as two unions that erase to
+/// one layout, and their generated bodies are then the same code; which one is used must not
+/// depend on the map's iteration order (#2243: it changed from run to run), so the smallest
+/// `DefId` wins.
+fn canonical_generated(
+    entries: impl IntoIterator<Item = ((DefId, Vec<TyId>), DefId)>,
+) -> FxHashMap<(DefId, Vec<TyId>), DefId> {
+    let mut map: FxHashMap<(DefId, Vec<TyId>), DefId> = FxHashMap::default();
+    for (key, body) in entries {
+        let kept = map.entry(key).or_insert(body);
+        *kept = (*kept).min(body);
+    }
+    map
+}
+
+#[cfg(test)]
+mod canonical_generated_tests {
+    use super::*;
+
+    /// Two instances with one canonical form: whatever order they come in, the same body.
+    #[test]
+    fn the_same_body_whatever_the_order() {
+        let key = (DefId(7), vec![TyId(3)]);
+        let a = ((key.clone(), DefId(20)), (key.clone(), DefId(12)));
+        let other = ((DefId(7), vec![TyId(4)]), DefId(30));
+        let forward = canonical_generated([a.0.clone(), a.1.clone(), other.clone()]);
+        let backward = canonical_generated([other, a.1, a.0]);
+        assert_eq!(forward, backward);
+        assert_eq!(forward[&key], DefId(12));
     }
 }
