@@ -1,0 +1,8 @@
+// TypeScript's legacy form has parameter decorators: TC39 has none.
+function inject(target: any, key: any, index: any): void {}
+
+class C {
+  m(@inject a: i64) {}
+}
+
+function main() {}

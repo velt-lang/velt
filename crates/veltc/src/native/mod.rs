@@ -202,6 +202,9 @@ pub fn check_declares(
     let mut checked = c_decls::Checked::default();
     for def in &p.defs {
         let Def::ExternFn(f) = def else { continue };
+        if f.is_decorator {
+            continue;
+        }
         if f.system.is_some() {
             system::check(p, f, target, diags);
             continue;

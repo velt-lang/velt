@@ -1,0 +1,10 @@
+declare decorator function noTarget();
+declare decorator function badTarget(): string;
+declare decorator function generic<T>(): TypeDecorator;
+declare decorator async function later(): TypeDecorator;
+function g(): string {
+  return "x";
+}
+declare decorator function badDefault(a: string = g()): TypeDecorator;
+
+function main() {}

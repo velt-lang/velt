@@ -345,6 +345,7 @@ fn from_arrow(
             pattern: p.pattern.clone(),
             ty,
             default,
+            decorators: vec![],
             optional,
             rest,
         });
@@ -471,6 +472,8 @@ fn decl(
             is_unsafe: false,
             is_system: false,
             is_intrinsic: false,
+            is_decorator: false,
+            decorators: vec![],
             generator: None,
             host: None,
             c: None,
@@ -501,6 +504,7 @@ fn hidden_param(i: usize, ty: &ast::TypeExpr, rest: bool) -> ast::Param {
         pattern: None,
         ty: ty.clone(),
         default,
+        decorators: vec![],
         optional,
         rest,
     }

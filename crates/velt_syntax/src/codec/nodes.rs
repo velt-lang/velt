@@ -61,11 +61,13 @@ structs! {
     Import { names, from, from_span, namespace, all, default_import, type_only }
     ImportName { name, alias, type_only }
     GenericParam { name, bounds, default }
-    Param { name, pattern, ty, default, optional, rest, span }
+    Param { name, pattern, ty, default, decorators, optional, rest, span }
     FnSig {
-        name, generics, params, ret, throws, is_async, is_unsafe, is_system, is_intrinsic, generator, host, c,
+        name, generics, params, ret, throws, is_async, is_unsafe, is_system, is_intrinsic, is_decorator,
+        decorators, generator, host, c,
         is_generator, this_param, span,
     }
+    Decorator { expr, span }
     GeneratorSpec { spec, span }
     HostModule { module, span }
     CLibrary { library, errno, span }
@@ -85,16 +87,16 @@ structs! {
     Namespace { name, items, declare }
     Augment { module, items }
     // decls
-    Field { name, ty, default, readonly, optional, is_private, is_static, span }
+    Field { name, ty, default, readonly, optional, is_private, is_static, decorators, span }
     Method { decl, is_static, is_private, is_getter, is_setter, is_override, is_abstract }
     TypeDecl {
         name, generics, extends, implements, fields, constructor, ctor_visibility, methods,
-        is_abstract, c_type, c_struct,
+        is_abstract, c_type, c_struct, decorators,
     }
     InterfaceDecl { name, generics, extends, fields, methods, call_sigs }
     InterfaceMethod { sig, body, is_getter, is_setter }
     ExtendDecl { generics, target, implements, methods }
-    EnumDecl { name, variants }
+    EnumDecl { name, variants, decorators }
     Variant { name, discriminant, span }
     TypeAlias { name, generics, ty }
     // jsx

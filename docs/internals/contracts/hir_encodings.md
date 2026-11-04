@@ -1668,3 +1668,13 @@ guard and refuses both as values). Lowering replaces them per instance (velt_vir
 `lower/type_tests.rs`): `typeIs` by the constant `A == B` (the `if` it guards then lowers one
 branch), `asType` by `x` itself when `A == B` and by a trap otherwise (only reachable in a
 branch the constant made dead).
+
+## Decorators (additive)
+
+`Program::decorators` maps what a decorator is written on (`DecoratorTarget`: a definition, a field
+of a type, a written parameter of a function) to its compile-time decorators, in source order. Each
+is `Decorator { def, args, span }`: `def` is the `declare decorator function`, a `Def::ExternFn`
+that nothing calls and lowering never declares; `args` has one `ConstTree` per parameter of the
+declaration, defaults filled in. The map is a side table, so a program without decorators has an
+empty one and no other HIR type changes. Lowering reads none of it yet. A TC39 run-time decorator
+is an error until #2204, so it never gets here.

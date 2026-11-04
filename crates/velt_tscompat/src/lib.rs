@@ -41,6 +41,7 @@ pub const RULES: &[&str] = &[
     "jsx-provider",
     "jsx-pragma-comment",
     "declare-fn",
+    "decorator",
     "int-division",
     "object-in-template",
     "default-sort",

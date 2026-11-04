@@ -207,6 +207,7 @@ fn add_members(item: &mut ast::Item, adds: &[(String, ast::Ident, ast::TypeExpr)
                     optional: true,
                     is_private: false,
                     is_static: false,
+                    decorators: vec![],
                     span,
                 });
             }

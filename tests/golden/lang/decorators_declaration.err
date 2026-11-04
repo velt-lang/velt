@@ -1,0 +1,5 @@
+decorators_declaration.velt:1:28: error: a decorator's result type says where it may be used
+decorators_declaration.velt:2:41: error: this is not a decorator's result type
+decorators_declaration.velt:3:36: error: a decorator has no type parameters
+decorators_declaration.velt:4:34: error: a decorator is never called, so it can't be `async`
+decorators_declaration.velt:8:51: error: a decorator's argument must be a constant

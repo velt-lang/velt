@@ -31,6 +31,9 @@ use velt_common::{Diagnostic, Severity, Span};
 impl Parser<'_> {
     /// Does the cursor start a declaration (as opposed to a statement)?
     pub(super) fn at_item_start(&mut self) -> bool {
+        if self.at(Tok::At) {
+            return true;
+        }
         if self.at_decl_word_before_line_break() {
             return false;
         }
@@ -99,6 +102,8 @@ impl Parser<'_> {
             is_unsafe: false,
             is_system: false,
             is_intrinsic: false,
+            is_decorator: false,
+            decorators: vec![],
             generator: None,
             host: None,
             c: None,

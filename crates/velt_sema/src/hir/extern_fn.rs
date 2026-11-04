@@ -29,6 +29,9 @@ pub struct ExternFnDef {
     /// library, called through the C ABI, and what crosses. Never with `system` or `host`.
     /// Additive.
     pub c: Option<CImport>,
+    /// `declare decorator function` (hir_encodings.md "Decorators"): data, with no symbol behind
+    /// it, which nothing calls. Additive.
+    pub is_decorator: bool,
     pub span: Span,
 }
 

@@ -113,15 +113,28 @@ impl<'a> Printer<'a> {
             end,
             |p| (p.span.lo, p.span.hi),
             |p, param| {
-                // Parameter property modifiers (`private readonly x`) precede the name.
+                // Decorators come first, then parameter property modifiers
+                // (`private readonly x`), which precede the name.
+                let decorators = concat(
+                    param
+                        .decorators
+                        .iter()
+                        .map(|d| cat!["@", p.expr(&d.expr), " "])
+                        .collect(),
+                );
                 let mods = crate::source::slice(p.src, param.span);
+                let mods_lo = param.decorators.last().map_or(param.span.lo, |d| d.span.hi);
                 let mods = mods
-                    .get(..(param.name.span.lo - param.span.lo) as usize)
+                    .get(
+                        (mods_lo - param.span.lo) as usize
+                            ..(param.name.span.lo - param.span.lo) as usize,
+                    )
                     .unwrap_or("")
                     .split_whitespace()
                     .filter(|m| *m != "...")
                     .map(|m| format!("{m} "))
                     .collect::<String>();
+                let mods = cat![decorators, mods];
                 let name = p.param_binding(&param.name, param.pattern.as_ref());
                 if param.optional {
                     return cat![mods, name, "?: ", p.ty_optional(&param.ty)];

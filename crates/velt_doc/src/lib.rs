@@ -13,6 +13,7 @@
 //! [`api_json`] is `velt doc --format json`.
 
 pub mod comment;
+mod declared;
 pub mod dts;
 pub mod extract;
 pub mod html;

@@ -210,7 +210,7 @@ fn extract_with(name: &str, source: &str, widened: &Widened) -> (DocModule, Vec<
                     let local = module
                         .items
                         .iter()
-                        .find(|d| declared_name(d) == Some(&n.name.name));
+                        .find(|d| crate::declared::declared_name(d) == Some(&n.name.name));
                     if let Some(mut doc) = local.and_then(|d| text.item(d, true)) {
                         doc.name = exported;
                         items.push(doc);
@@ -288,27 +288,6 @@ fn imported_names(i: &ast::Import) -> Vec<Import> {
         name: Some(n.name.name.clone()),
     });
     namespace.chain(names).collect()
-}
-
-/// The name a top-level declaration binds.
-fn declared_name(item: &Item) -> Option<&String> {
-    Some(match &item.kind {
-        ItemKind::Function(f) => &f.sig.name.name,
-        ItemKind::ExternFn(s) if s.is_intrinsic || s.host.is_some() => &s.name.name,
-        ItemKind::Struct(t) | ItemKind::Class(t) => &t.name.name,
-        ItemKind::Interface(i) => &i.name.name,
-        ItemKind::Enum(e) => &e.name.name,
-        ItemKind::TypeAlias(t) => &t.name.name,
-        ItemKind::Var(v) => match &v.pattern.kind {
-            ast::PatternKind::Ident(name) => &name.name,
-            _ => return None,
-        },
-        ItemKind::Extend(_)
-        | ItemKind::Import(_)
-        | ItemKind::ExternFn(_)
-        | ItemKind::Augment(_)
-        | ItemKind::Namespace(_) => return None,
-    })
 }
 
 fn generic_names(generics: &[ast::GenericParam]) -> Vec<String> {
@@ -396,7 +375,7 @@ impl Source<'_> {
         };
         doc.ts = ts.decl(
             item,
-            declared_name(item).map_or(doc.name.as_str(), |n| n.as_str()),
+            crate::declared::declared_name(item).map_or(doc.name.as_str(), |n| n.as_str()),
         );
         Some(doc)
     }
@@ -412,6 +391,10 @@ impl Source<'_> {
             // declaration is their signature.
             ItemKind::ExternFn(s) if s.is_intrinsic => DocItem {
                 signature: format!("declare intrinsic function {}", p.fn_sig(s)),
+                ..self.leaf(Kind::Function, &s.name.name, &s.generics, doc, item.span.lo)
+            },
+            ItemKind::ExternFn(s) if s.is_decorator => DocItem {
+                signature: format!("declare decorator function {}", p.fn_sig(s)),
                 ..self.leaf(Kind::Function, &s.name.name, &s.generics, doc, item.span.lo)
             },
             ItemKind::ExternFn(s @ ast::FnSig { host: Some(h), .. }) => DocItem {

@@ -123,6 +123,18 @@ fn declare_function_is_reported() {
 }
 
 #[test]
+fn compile_time_decorators_are_not_typescript() {
+    let src = "export declare decorator function d(): TypeDecorator;\n\
+               @d function f(@d a: number) {}\n\
+               @d enum E { A }\n\
+               @d class C { @d m() {} }\n";
+    let findings = lint_syntax(Path::new("decorators.velt"), src);
+    let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
+    // A class and its members are TypeScript's own places for a decorator.
+    assert_eq!(codes, ["declare-fn", "decorator", "decorator", "decorator"]);
+}
+
+#[test]
 fn a_host_function_is_not_typescript() {
     let src = "export declare host(\"env\") function now(): number;\n";
     let findings = lint_syntax(Path::new("host.velt"), src);

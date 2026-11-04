@@ -1,0 +1,12 @@
+// A TC39 decorator from valid TypeScript: `logged` is an ordinary function (#2204).
+function logged(value: any, context: any): any {
+  return value;
+}
+
+@logged
+class C {
+  @logged m() {}
+  @logged x: i64 = 1;
+}
+
+function main() {}

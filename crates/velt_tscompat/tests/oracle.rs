@@ -74,6 +74,7 @@ const CLAIMS: &[(&str, Claim)] = &[
         ),
     ),
     ("declare-fn", Claim::Behaviour),
+    ("decorator", Claim::Rejected),
     ("jsx-pragma-comment", Claim::Behaviour),
     ("int-division", Claim::Behaviour),
     ("object-in-template", Claim::Behaviour),

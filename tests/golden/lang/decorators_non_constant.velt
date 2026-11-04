@@ -1,0 +1,17 @@
+declare decorator function name(key: string): FieldDecorator;
+declare decorator function list(keys: string[]): FieldDecorator;
+
+function g(): string {
+  return "x";
+}
+let mutable = "m";
+const computed = g();
+
+class C {
+  @name(g()) a: i64 = 0;
+  @name(mutable) b: i64 = 0;
+  @name(computed) c: i64 = 0;
+  @list(["a", g()]) d: i64 = 0;
+}
+
+function main() {}

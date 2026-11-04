@@ -2,14 +2,14 @@
 //! policy between top-level items. Nominal type declarations are in `decls`.
 
 use velt_syntax::ast::{
-    Augment, FnDecl, FnSig, Import, Item, ItemKind, Namespace, PatternKind, TypeAlias,
+    Augment, Decorator, FnDecl, FnSig, Import, Item, ItemKind, Namespace, PatternKind, TypeAlias,
     TypeExprKind, VarDecl, VarKind,
 };
 
 use super::lists::delimited;
 use super::script::{blank_before, Top};
 use super::Printer;
-use crate::doc::{cat, group, hardline, if_break, indent, join, line, text, Doc};
+use crate::doc::{cat, concat, group, hardline, if_break, indent, join, line, text, Doc};
 use crate::source::{slice, string_literal};
 
 /// Items of these kinds may sit on consecutive lines (a run of imports, constants, ...);
@@ -42,14 +42,33 @@ pub(super) fn blank_between(prev: &Item, cur: &Item) -> bool {
 
 impl<'a> Printer<'a> {
     pub(super) fn item(&mut self, item: &Item) -> Doc {
-        match self.default_export(item) {
+        let decorators: &[Decorator] = match &item.kind {
+            ItemKind::Function(f) => &f.sig.decorators,
+            ItemKind::ExternFn(s) => &s.decorators,
+            ItemKind::Struct(t) | ItemKind::Class(t) => &t.decorators,
+            ItemKind::Enum(e) => &e.decorators,
+            _ => &[],
+        };
+        let decorators = self.decorators(decorators);
+        let body = match self.default_export(item) {
             Some(doc) => doc,
-            None => self.plain_item(item),
-        }
+            None => self.undecorated_item(item),
+        };
+        cat![decorators, body]
     }
 
-    /// An item as the AST gives it.
-    fn plain_item(&mut self, item: &Item) -> Doc {
+    /// `@x` / `@ns.x(args)`, each on its own line. Written after `export`, they move before it:
+    /// TC39 allows both places, and one form is enough.
+    pub(super) fn decorators(&mut self, decorators: &[Decorator]) -> Doc {
+        let docs = decorators
+            .iter()
+            .map(|d| cat!["@", self.expr(&d.expr), hardline()])
+            .collect();
+        concat(docs)
+    }
+
+    /// An item as the AST gives it, but for its decorators.
+    fn undecorated_item(&mut self, item: &Item) -> Doc {
         let export = if item.exported { "export " } else { "" };
         let body = match &item.kind {
             ItemKind::Import(import) => self.import(import, item.exported),
@@ -72,6 +91,9 @@ impl<'a> Printer<'a> {
             ItemKind::ExternFn(sig) if sig.c.is_some() => self.c_fn(sig),
             ItemKind::ExternFn(sig) => {
                 let asyncness = match (sig.is_system, sig.is_intrinsic, sig.is_async) {
+                    // Not a decorator (the check says why), but written as it was.
+                    _ if sig.is_decorator && sig.is_async => "decorator async ",
+                    _ if sig.is_decorator => "decorator ",
                     // Not a system function (the check says why), but written as it was.
                     (true, _, true) => "async system ",
                     (true, _, false) => "system ",
@@ -110,7 +132,7 @@ impl<'a> Printer<'a> {
                 ItemKind::Function(f) if f.sig.generator.is_none() => {
                     self.fn_decl_with(f, "function ", KW)
                 }
-                _ => cat![KW, self.plain_item(item)],
+                _ => cat![KW, self.undecorated_item(item)],
             });
         }
         let mut anonymous = item.clone();
@@ -133,7 +155,7 @@ impl<'a> Printer<'a> {
             f.overloads.iter_mut().for_each(|o| o.name.name.clear());
             return Some(self.fn_decl_with(f, "function ", KW));
         }
-        Some(cat![KW, self.plain_item(&anonymous)])
+        Some(cat![KW, self.undecorated_item(&anonymous)])
     }
 
     /// `declare c("<library>"[, { errno: true }]) [async] function f(…): R;`.

@@ -120,3 +120,6 @@ pub const OPERATOR_SYMBOLS: [&str; 28] = [
 pub fn is_well_known_symbol(name: &str) -> bool {
     JS_WELL_KNOWN_SYMBOLS.contains(&name) || OPERATOR_SYMBOLS.contains(&name)
 }
+
+/// What a decorator that is not compile-time reports, in the parser and in sema.
+pub const TC39_NOT_SUPPORTED: &str = "TC39 run-time decorators are not supported yet (#2204)";

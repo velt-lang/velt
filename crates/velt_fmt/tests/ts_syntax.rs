@@ -469,3 +469,18 @@ fn default_expressions_print_as_written() {
         "export default interface Foo {\n  a: number;\n}\n\nexport default function bar() {}\n",
     );
 }
+
+#[test]
+fn decorators() {
+    round_trips("declare decorator function name(key: string): FieldDecorator;\n");
+    round_trips("@a\n@ns.b(\"k\", 1)\nexport function f(@c x: number, @d() y: number) {}\n");
+    round_trips("@a\nexport class C {\n  @b\n  x = 1;\n\n  @c(1)\n  @d\n  m() {}\n\n  constructor(@e private readonly p: number) {}\n}\n");
+    round_trips("@(a.b)\nenum E {\n  A,\n}\n");
+    round_trips("// about f\n@a\nfunction f() {}\n");
+}
+
+#[test]
+fn decorators_go_on_their_own_lines_before_export() {
+    let got = format_source("export @a class C { @b x = 1; }").unwrap();
+    assert_eq!(got, "@a\nexport class C {\n  @b\n  x = 1;\n}\n");
+}

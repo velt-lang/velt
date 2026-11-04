@@ -21,6 +21,13 @@ fn round_trips(src: &str, ts: bool) {
 }
 
 const SAMPLE: &str = r#"
+@a @ns.b("k", 1) export class Decorated<T> {
+  @c field: T[] = [];
+  constructor(@d private p: i64) {}
+  @e() m(@f x: i64): i64 { return x; }
+}
+@g(1) enum DecoratedEnum { A }
+export declare decorator function g(a: i64 = 3): Repeatable<TypeDecorator | FieldDecorator>;
 import { a, type B as C } from "velt/x";
 import * as ns from "./y";
 export * from "./z";

@@ -15,6 +15,8 @@ pub enum DefKind {
     Function,
     /// `declare function` (external symbol).
     ExternFunction,
+    /// `declare decorator function` (named by `@…`, never called).
+    Decorator,
     Method,
     StaticMethod,
     Getter,
@@ -229,6 +231,14 @@ impl Builder<'_, '_, '_> {
             FnKind::Free => (
                 DefKind::Function,
                 format!("{asyncness}function {short}{sig}: {ret}"),
+            ),
+            FnKind::Extern if crate::decorators::decl_of(f).is_some() => (
+                DefKind::Decorator,
+                format!(
+                    "declare decorator function {short}{sig}: {}",
+                    f.extern_sig
+                        .map_or_else(String::new, crate::decorators::shown_result)
+                ),
             ),
             FnKind::Extern if f.intrinsic.is_some() => (
                 DefKind::ExternFunction,

@@ -80,15 +80,18 @@ impl<'a> Parser<'a> {
 
     fn parse_item_here(&mut self, top: bool) -> PResult<Item> {
         let lo = self.cur_lo();
+        let mut decorators = self.parse_decorators()?;
         let mut exported = self.at_kw(Kw::Export);
         if exported {
+            self.saw_module_syntax |= top;
             if !top {
                 let span = self.cur_span();
                 self.error("`export` is only allowed at the top level", span);
             }
             self.bump();
             if self.at_export_list() {
-                let kind = ItemKind::Import(self.parse_export_list()?);
+                let mut kind = ItemKind::Import(self.parse_export_list()?);
+                self.attach_item_decorators(&mut kind, decorators);
                 return Ok(Item {
                     kind,
                     exported,
@@ -98,8 +101,10 @@ impl<'a> Parser<'a> {
             if self.at_kw(Kw::Default) {
                 return self.parse_export_default(lo, top);
             }
+            self.decorators_after_export(&mut decorators)?;
         }
-        let kind = self.parse_item_kind(lo, top && !exported)?;
+        let mut kind = self.parse_item_kind(lo, top && !exported)?;
+        self.attach_item_decorators(&mut kind, decorators);
         if exported && matches!(kind, ItemKind::Extend(_)) {
             let span = Span::new(self.file, lo, lo + "export".len() as u32);
             self.error(
@@ -186,7 +191,8 @@ impl<'a> Parser<'a> {
     /// (`declare async system function` too, which the system function check rejects)
     /// (`system` is a word only there: a function of the platform's C library) or
     /// `declare [unsafe] intrinsic function name(...): R;` (`intrinsic` likewise: a compiler
-    /// intrinsic).
+    /// intrinsic) or `declare decorator function name(...): Target;` (`decorator` likewise; `async`
+    /// parses, so sema can say why it is not one).
     fn parse_declare(&mut self, lo: u32) -> PResult<FnSig> {
         // `declare async system function` parses, so the check can say why it is not one.
         self.bump(); // declare
@@ -212,11 +218,19 @@ impl<'a> Parser<'a> {
         if is_intrinsic {
             self.bump(); // intrinsic
         }
+        let is_decorator = !is_system
+            && !is_intrinsic
+            && self.at_word("decorator")
+            && matches!(self.nth(1), Tok::Kw(Kw::Function | Kw::Async));
+        if is_decorator {
+            self.bump(); // decorator
+        }
         is_async |= self.eat_kw(Kw::Async);
         let mut sig = self.parse_fn_sig(lo, is_async)?;
         sig.is_system = is_system;
         sig.is_intrinsic = is_intrinsic;
         sig.is_unsafe = is_unsafe;
+        sig.is_decorator = is_decorator;
         if sig.is_generator {
             self.error("a `declare function` cannot be a generator", sig.name.span);
         }
@@ -224,74 +238,6 @@ impl<'a> Parser<'a> {
             self.expect_semi()?;
         }
         Ok(sig)
-    }
-
-    /// `declare host("<module>") [async] function name(...): R;`: a function the JS host provides
-    /// (`host` is a word only there). `async` parses, so sema can say why it is not allowed.
-    fn parse_host_decl(&mut self, lo: u32) -> PResult<FnSig> {
-        self.bump(); // declare
-        self.bump(); // host
-        self.expect(Tok::LParen)?;
-        let Tok::Str(idx) = self.peek() else {
-            self.error_expected("the host's import module as a string");
-            return Err(Fail);
-        };
-        let host = HostModule {
-            module: self.payload_text(idx),
-            span: self.cur_span(),
-        };
-        self.bump();
-        self.expect(Tok::RParen)?;
-        let is_async = self.eat_kw(Kw::Async);
-        let mut sig = self.parse_fn_sig(lo, is_async)?;
-        sig.host = Some(host);
-        if sig.is_generator {
-            self.error("a host function cannot be a generator", sig.name.span);
-        }
-        if !self.eat_signature_end() {
-            self.expect_semi()?;
-        }
-        Ok(sig)
-    }
-
-    /// `declare generated("<spec>") [async] function name<T>(...): R;`: a function whose body a
-    /// source generator writes per instance (`generated` is a word only there). Parsed as a
-    /// function with an empty body; sema checks what it may be.
-    fn parse_generated_decl(&mut self, lo: u32) -> PResult<FnDecl> {
-        self.bump(); // declare
-        self.bump(); // generated
-        self.expect(Tok::LParen)?;
-        let Tok::Str(idx) = self.peek() else {
-            self.error_expected("the generator module as a string");
-            return Err(Fail);
-        };
-        let spec = GeneratorSpec {
-            spec: self.payload_text(idx),
-            span: self.cur_span(),
-        };
-        self.bump();
-        self.expect(Tok::RParen)?;
-        let is_async = self.eat_kw(Kw::Async);
-        let mut sig = self.parse_fn_sig(lo, is_async)?;
-        sig.generator = Some(spec);
-        if sig.is_generator {
-            self.error(
-                "a generated function cannot be a generator function",
-                sig.name.span,
-            );
-        }
-        if !self.eat_signature_end() {
-            self.expect_semi()?;
-        }
-        let span = Span::new(sig.span.file, sig.span.hi, sig.span.hi);
-        Ok(FnDecl {
-            sig,
-            body: Block {
-                stmts: vec![],
-                span,
-            },
-            overloads: vec![],
-        })
     }
 
     /// At `function`. `lo` is the start of the item (may include `export`/`async`). A
@@ -432,6 +378,7 @@ impl<'a> Parser<'a> {
     /// TS2371: a default value in an overload signature (an optional parameter `p?: T` is
     /// fine).
     pub(super) fn signature_defaults(&mut self, sig: &FnSig) {
+        self.reject_overload_decorators(sig);
         for p in &sig.params {
             if p.default.is_some() && !p.optional && !p.rest {
                 self.error(
@@ -447,6 +394,7 @@ impl<'a> Parser<'a> {
         self.expect_kw(Kw::Function, "function")?;
         let is_generator = self.eat(Tok::Star);
         let name = self.parse_decl_name()?;
+        self.decorated_params = true;
         self.parse_sig_rest(lo, name, is_async, is_generator)
     }
 
@@ -459,7 +407,9 @@ impl<'a> Parser<'a> {
         is_async: bool,
         is_generator: bool,
     ) -> PResult<FnSig> {
+        let decorated = std::mem::take(&mut self.decorated_params);
         let generics = self.parse_generic_params()?;
+        self.decorated_params = decorated;
         let params = self.parse_params(is_generator)?;
         let this_param = self.this_type();
         let ret = if self.eat(Tok::Colon) {
@@ -478,6 +428,8 @@ impl<'a> Parser<'a> {
             is_unsafe: false,
             is_system: false,
             is_intrinsic: false,
+            is_decorator: false,
+            decorators: vec![],
             generator: None,
             host: None,
             c: None,
@@ -594,6 +546,7 @@ impl<'a> Parser<'a> {
     /// `( name: Type [= default], ... )`, of a `generator` or not (whose defaults run at the
     /// call: [`Parser::check_param_defaults`]).
     pub(super) fn parse_params(&mut self, generator: bool) -> PResult<Vec<Param>> {
+        let decorated = std::mem::take(&mut self.decorated_params);
         self.expect(Tok::LParen)?;
         let mut params = Vec::new();
         self.parse_this_param()?;
@@ -602,6 +555,9 @@ impl<'a> Parser<'a> {
         let this_param = self.this_param.clone();
         while !self.at(Tok::RParen) {
             let p = self.parse_param(params.len())?;
+            if !decorated {
+                self.reject_param_decorators(&p);
+            }
             if params.last().is_some_and(|q: &Param| q.rest) {
                 self.error("a rest parameter must be the last parameter", p.span);
             }
@@ -624,6 +580,7 @@ impl<'a> Parser<'a> {
     /// `[a, b]: T` / `{ a, b }: T = e`.
     pub(super) fn parse_param(&mut self, index: usize) -> PResult<Param> {
         let lo = self.cur_lo();
+        let decorators = self.parse_decorators()?;
         self.reject_mut_modifier();
         let rest = self.eat(Tok::DotDotDot);
         if self.at(Tok::PrivateName) {
@@ -685,6 +642,7 @@ impl<'a> Parser<'a> {
             pattern,
             ty,
             default,
+            decorators,
             optional,
             rest,
             span: self.span_from(lo),

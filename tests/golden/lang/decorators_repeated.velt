@@ -1,0 +1,12 @@
+declare decorator function once(): TypeDecorator;
+declare decorator function many(): Repeatable<TypeDecorator>;
+
+@many
+@many
+class Fine {}
+
+@once
+@once
+class C {}
+
+function main() {}

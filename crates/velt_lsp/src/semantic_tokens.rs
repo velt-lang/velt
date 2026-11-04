@@ -160,7 +160,9 @@ fn classify(analysis: &Analysis, def: &DefRef, span: Span) -> (u32, u32) {
         DefKind::Enum => SemanticTokenType::ENUM,
         DefKind::Variant => SemanticTokenType::ENUM_MEMBER,
         DefKind::TypeAlias => SemanticTokenType::TYPE,
-        DefKind::Function | DefKind::ExternFunction => SemanticTokenType::FUNCTION,
+        DefKind::Function | DefKind::ExternFunction | DefKind::Decorator => {
+            SemanticTokenType::FUNCTION
+        }
         DefKind::Method | DefKind::StaticMethod => SemanticTokenType::METHOD,
         DefKind::Field | DefKind::Getter | DefKind::StaticField => SemanticTokenType::PROPERTY,
         DefKind::Constant | DefKind::Local => SemanticTokenType::VARIABLE,

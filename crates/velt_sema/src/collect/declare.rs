@@ -125,6 +125,7 @@ pub(crate) fn fn_placeholder<'m>(
         c: None,
         intrinsic: None,
         unsafe_intrinsic: false,
+        extern_sig: None,
         is_generator: false,
         is_async_gen: false,
         soft_moves: vec![],
@@ -228,6 +229,7 @@ pub(super) fn new_def<'m>(
                 info.intrinsic = Some(crate::intrinsic_decls::declare(cx, m, s));
                 info.unsafe_intrinsic = s.is_unsafe;
             }
+            info.extern_sig = Some(s);
             (&s.name, DefInfo::Fn(Box::new(info)))
         }
         ast::ItemKind::Struct(t) => (&t.name, adt_info(m, t, AdtKind::Struct, q)),

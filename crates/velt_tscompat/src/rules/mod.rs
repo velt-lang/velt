@@ -4,7 +4,7 @@
 //! - [`types`]: `velt-number-type`, `bool-type`, `promise-error-type`, and suffixes in literal
 //!   types (`number-suffix`);
 //! - [`exprs`]: `number-suffix`, `int-cast`, named object literals (`struct`);
-//! - [`decls`]: `struct`, `extend`, `throws`, `interface-body`, `declare-fn`;
+//! - [`decls`]: `struct`, `extend`, `throws`, `interface-body`, `declare-fn`, `decorator`;
 //! - [`imports`]: `velt-import`, `outside-import`, `jsx-provider`;
 //! - [`jsx_pragma`]: a `@jsxImportSource` pragma in a line comment (`jsx-pragma-comment`).
 
@@ -72,6 +72,9 @@ impl<'a> Visit<'a> for Walk<'a> {
         if sig.is_unsafe {
             let at = self.cx.keyword(sig.span, "unsafe");
             unsafe_code(at, &mut self.cx);
+        }
+        for p in &sig.params {
+            decls::decorated(&p.decorators, &mut self.cx);
         }
         decls::operator_method(&sig.name, &mut self.cx);
         decls::throws_clause(sig, true, &mut self.cx);

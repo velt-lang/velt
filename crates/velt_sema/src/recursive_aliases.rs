@@ -448,6 +448,7 @@ fn interface_field(f: &ast::ObjectTypeField) -> ast::Field {
         optional: f.optional,
         is_private: false,
         is_static: false,
+        decorators: vec![],
         span: f.span,
     }
 }

@@ -1,0 +1,13 @@
+// A misspelling is an unknown name, not silence.
+import * as lib from "./_decorators_lib";
+
+@missing
+class A {}
+
+@lib.markk
+class B {}
+
+@nowhere.mark
+class C {}
+
+function main() {}

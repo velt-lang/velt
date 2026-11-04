@@ -303,6 +303,34 @@ fn labels(result: &Value) -> Vec<String> {
         .collect()
 }
 
+const DECORATED: &str = r#"export declare decorator function name(key: string): FieldDecorator;
+
+function plain() {}
+
+class C {
+  @name("id") id: i64 = 1;
+  @
+  other: i64 = 2;
+}
+
+function main() {}
+"#;
+
+#[test]
+fn a_decorator_hovers_as_its_declaration_and_completes_after_the_at() {
+    let mut client = Client::start();
+    let doc = uri("decorated.velt");
+    client.open(&doc, DECORATED);
+    assert_eq!(
+        hover_text(&mut client, &doc, DECORATED, "name(\"id", 0),
+        "declare decorator function name(key: string): FieldDecorator"
+    );
+    let (line, col) = pos_of(DECORATED, "@\n", 1);
+    let items = labels(&client.request("textDocument/completion", at(&doc, line, col)));
+    assert_eq!(items, ["name"], "only decorators are offered after `@`");
+    client.shutdown();
+}
+
 #[test]
 fn completion_offers_scope_items_and_keywords() {
     let (mut client, app) = open_app();

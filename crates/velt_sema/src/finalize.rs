@@ -63,6 +63,7 @@ pub(crate) fn build_defs(cx: &mut Ctx) -> rustc_hash::FxHashSet<DefId> {
                 system: f.system.clone(),
                 host: f.host.clone(),
                 c: f.c.clone(),
+                is_decorator: crate::decorators::decl_of(f).is_some(),
                 span: f.span,
             })),
             DefInfo::Adt(_) => Some(Def::Adt(adt_def(cx, d, &mut memo, assigned.contains(&d)))),

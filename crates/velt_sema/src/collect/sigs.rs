@@ -215,6 +215,8 @@ fn fill_sig(cx: &mut Ctx, d: DefId, sig: &ast::FnSig, owner: &Generics, module: 
     // A generator declares its result (`generator_sig`), so it is never inferred.
     let inferred = sig.ret.is_none() && !sig.is_generator && infers_ret(cx, d);
     let (mut ret, ret_span) = match &sig.ret {
+        // A decorator's result type says where it may be used (`crate::decorators`): no type.
+        Some(t) if sig.is_decorator => (cx.ty.unit, Some(t.span)),
         Some(t) => (
             cx.resolve_async_aware(t, &env, sig.is_async, sig.is_generator),
             Some(t.span),

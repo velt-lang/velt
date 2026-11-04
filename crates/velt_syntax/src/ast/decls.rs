@@ -3,7 +3,7 @@
 
 use velt_common::Span;
 
-use super::{Block, CallSig, Expr, FnDecl, FnSig, GenericParam, Ident, TypeExpr};
+use super::{Block, CallSig, Decorator, Expr, FnDecl, FnSig, GenericParam, Ident, TypeExpr};
 
 #[derive(Clone, Debug)]
 pub struct Field {
@@ -17,6 +17,8 @@ pub struct Field {
     pub is_private: bool,
     /// `static readonly name: T = e;` — a per-type constant, not an instance field.
     pub is_static: bool,
+    /// `@x name: T`. Additive.
+    pub decorators: Vec<Decorator>,
     pub span: Span,
 }
 
@@ -63,6 +65,8 @@ pub struct TypeDecl {
     /// structs"), an `ItemKind::Struct` whose fields are in C's order, with the target's C
     /// layout; in Velt a value that is copied, never counted. Additive.
     pub c_struct: bool,
+    /// `@x class C {}`. Additive.
+    pub decorators: Vec<Decorator>,
 }
 
 /// Who may call a class's constructor (TypeScript's rules, https://veltlang.com/docs/reference/classes/): anyone;
@@ -115,6 +119,8 @@ pub struct ExtendDecl {
 pub struct EnumDecl {
     pub name: Ident,
     pub variants: Vec<Variant>,
+    /// `@x enum E {}`. Additive.
+    pub decorators: Vec<Decorator>,
 }
 
 #[derive(Clone, Debug)]

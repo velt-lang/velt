@@ -178,6 +178,15 @@ impl<'a> Printer<'a> {
     }
 
     fn member(&mut self, member: &Member) -> Doc {
+        let decorators = match member {
+            Member::Field(f) => self.decorators(&f.decorators),
+            Member::Method(m) => self.decorators(&m.decl.sig.decorators),
+            _ => nil(),
+        };
+        cat![decorators, self.undecorated_member(member)]
+    }
+
+    fn undecorated_member(&mut self, member: &Member) -> Doc {
         match member {
             Member::Field(f) => self.field(f),
             Member::Constructor(c, visibility) => {
