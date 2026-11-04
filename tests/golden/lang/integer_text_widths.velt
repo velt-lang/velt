@@ -1,0 +1,44 @@
+// An integer as text at every width and sign: `String(v)` and `${v}` (a builder), each digit count
+// at its edges, 10^8 (where the short path ends), the bounds of `i64` and `u64`.
+
+function signed(v: i64): void {
+  console.log(String(v), `<${v}>`);
+}
+
+function unsigned(v: u64): void {
+  console.log(String(v), `<${v}>`);
+}
+
+function main() {
+  let p: u64 = 1;
+  for (let d = 0; d < 20; d++) {
+    unsigned(p - 1);
+    unsigned(p);
+    unsigned(p + 1);
+    if (d < 19) {
+      const s = p as i64;
+      signed(s - 1);
+      signed(s);
+      signed(s + 1);
+      signed(-(s - 1));
+      signed(-s);
+      signed(-(s + 1));
+    }
+    if (d < 19) {
+      p = p * 10;
+    }
+  }
+  signed(9223372036854775807);
+  signed(-9223372036854775807);
+  signed(-9223372036854775807 - 1);
+  unsigned(18446744073709551615);
+  unsigned(18446744073709551614);
+  unsigned(18440000000000000000);
+  signed(4000000000000000000);
+  signed(-4000000000000000000);
+  signed(12345678);
+  signed(-1234567);
+  signed(-12345678);
+  signed(123456789);
+  signed(-123456789);
+}

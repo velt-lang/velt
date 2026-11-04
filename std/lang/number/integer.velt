@@ -214,7 +214,7 @@ export function intWords(v: u64, neg: bool): Words {
   if (v < 100000000) {
     return shortWords(v, neg);
   }
-  return longWords(v, neg);
+  return neg ? longNegative(v) : longPositive(v);
 }
 
 /** The number of digits of `v`, below 10^4. */
@@ -253,17 +253,29 @@ function shortWords(v: u64, neg: bool): Words {
   return { w0: (d << 8) | MINUS, w1: d >> 56, w2: 0, len: (n + 1) as usize };
 }
 
-// `intWords` of a `v` from 10^8 up: three groups of eight digits (the first below 1845), 24
-// digits with leading zeros, of which the first `24 - len` are dropped. At least three are: with
-// a minus, the last one dropped becomes it.
-// Rare (10^8 and up), and three callers would each get a copy of it.
+// `longWords` without a minus, and with one. Rare (10^8 and up), and each of the callers would
+// otherwise get a copy; two functions, so that the common one pays nothing for the sign.
 @noInline
+function longPositive(v: u64): Words {
+  return longWords(v, false);
+}
+
+@noInline
+function longNegative(v: u64): Words {
+  return longWords(v, true);
+}
+
+// `intWords` of a `v` from 10^8 up: three groups of eight digits, 24 digits with leading zeros,
+// of which the first `24 - len` are dropped. At least four are (the text is at most 20 bytes):
+// with a minus, the last one dropped becomes it. The first group is below 1845, so at most four
+// digits: two lookups, in the upper half of its word, and its lower half is never read.
+@inline
 function longWords(v: u64, neg: bool): Words {
   const n = digitCount(v);
   const len = neg ? n + 1 : n;
   const lo = v % 100000000;
   const rest = v / 100000000;
-  let a0 = digits8(rest / 100000000);
+  let a0 = smallDigits(rest / 100000000, 4) << 32;
   let a1 = digits8(rest % 100000000);
   let a2 = digits8(lo);
   const k = 24 - len;
@@ -285,83 +297,125 @@ function longWords(v: u64, neg: bool): Words {
 }
 
 /**
- * `String(v)`. Out of its callers, as the other integer entry points: inlined at every `${n}`,
- * the formatter took the program-wide inlining budget from hotter code (`bench/json/navigate`).
+ * `String(v)`. A number that isn't negative is `u64Text`'s path, with one test more: the sign
+ * costs nothing there. Out of its callers, as the other integer entry points: inlined at every
+ * `${n}`, the formatter took the program-wide inlining budget from hotter code
+ * (`bench/json/navigate`).
  */
 @noInline
 export function i64Text(v: i64): string {
-  const neg = v < 0;
-  const a = neg ? ~(v as u64) + 1 : v as u64;
-  return text(a, neg);
+  if (v < 0) {
+    return negativeText(~(v as u64) + 1);
+  }
+  return text(v as u64);
 }
 
 /** `String(v)`. */
 @noInline
 export function u64Text(v: u64): string {
-  return text(v, false);
+  return text(v);
 }
 
-// The text of `a`, after a `-` when `neg`: up to 8 bytes as one word here (the entry points'
-// common case, inlined into each), longer text by `longText`.
+// The text of `a`: up to 8 digits as one word here (the entry points' common case, inlined into
+// each), longer text by `longText`.
 @inline
-function text(a: u64, neg: bool): string {
-  if (oneWord(a, neg)) {
-    const w = shortWords(a, neg);
+function text(a: u64): string {
+  if (a < 100000000) {
+    const w = shortWords(a, false);
     return strAsciiWords(w.w0, 0, 0, w.len);
   }
-  return longText(a, neg);
+  return longText(a);
 }
 
-// Whether the text of `a`, after a `-` when `neg`, is at most 8 bytes: one word.
-function oneWord(a: u64, neg: bool): bool {
-  return a < 10000000 || (a < 100000000 && !neg);
-}
-
-// The text of `a` past one word (9 bytes and more), after a `-` when `neg`: out of the entry
-// points, so that their short path needs no stack frame.
+// The text of `a`, from 10^8 up: out of the entry points, so that their short path needs no
+// stack frame.
 @noInline
-function longText(a: u64, neg: bool): string {
-  const w = a < 100000000 ? shortWords(a, neg) : longWords(a, neg);
+function longText(a: u64): string {
+  const w = longPositive(a);
+  return strAsciiWords(w.w0, w.w1, w.w2, w.len);
+}
+
+// The text of `-a`, as `text` makes that of `a`: up to 8 bytes as one word here.
+@inline
+function negativeText(a: u64): string {
+  if (a < 10000000) {
+    const w = shortWords(a, true);
+    return strAsciiWords(w.w0, 0, 0, w.len);
+  }
+  return longNegativeText(a);
+}
+
+// The text of `-a`, past one word.
+@noInline
+function longNegativeText(a: u64): string {
+  const w = intWords(a, true);
   return strAsciiWords(w.w0, w.w1, w.w2, w.len);
 }
 
 /**
- * Appends `String(v)` to the builder `buf`. Text of up to 8 bytes (below 10^7, or 10^8 without a
- * minus) is one word, appended with `strbufPushAsciiWord`; longer numbers are `pushLong`'s.
+ * Appends `String(v)` to the builder `buf`. A number that isn't negative is `pushU64`'s path:
+ * up to 8 digits are one word, appended with `strbufPushAsciiWord`; longer numbers are
+ * `pushLong`'s. A negative number is `pushNegative`'s.
  */
 @noInline
 export function pushI64(buf: string, v: i64): void {
-  const neg = v < 0;
-  const a = neg ? ~(v as u64) + 1 : v as u64;
-  push(buf, a, neg);
+  if (v < 0) {
+    const a = ~(v as u64) + 1;
+    pushNegative(buf, a);
+    return;
+  }
+  push(buf, v as u64);
 }
 
 /** Appends `String(v)` to the builder `buf`, as `pushI64`. */
 @noInline
 export function pushU64(buf: string, v: u64): void {
-  push(buf, v, false);
+  push(buf, v);
 }
 
-// Appends the text of `a`, after a `-` when `neg`, as `text` makes it (inlined into each entry
-// point). The builder is passed on with locals only after it (CLAUDE.md "the string builder
-// passed as a `string`").
+// Appends the text of `a`, as `text` makes it (inlined into each entry point). The builder is
+// passed on with locals only after it (CLAUDE.md "the string builder passed as a `string`").
 @inline
-function push(buf: string, a: u64, neg: bool): void {
-  if (oneWord(a, neg)) {
-    const w = shortWords(a, neg);
+function push(buf: string, a: u64): void {
+  if (a < 100000000) {
+    const w = shortWords(a, false);
     const w0 = w.w0;
     const len = w.len;
     strbufPushAsciiWord(buf, w0, len);
     return;
   }
-  pushLong(buf, a, neg);
+  pushLong(buf, a);
 }
 
-// Appends `a` past one word (9 bytes and more), after a `-` when `neg`: out of the entry points,
-// so that their short path needs no stack frame.
+// Appends `a`, from 10^8 up: out of the entry points, so that their short path needs no stack
+// frame.
 @noInline
-function pushLong(buf: string, a: u64, neg: bool): void {
-  const w = a < 100000000 ? shortWords(a, neg) : longWords(a, neg);
+function pushLong(buf: string, a: u64): void {
+  const w = longPositive(a);
+  const w0 = w.w0;
+  const w1 = w.w1;
+  const w2 = w.w2;
+  const len = w.len;
+  strbufPushAsciiWords(buf, w0, w1, w2, len);
+}
+
+// Appends `-a`, as `push` appends `a`: up to 8 bytes as one word here.
+@inline
+function pushNegative(buf: string, a: u64): void {
+  if (a < 10000000) {
+    const w = shortWords(a, true);
+    const w0 = w.w0;
+    const len = w.len;
+    strbufPushAsciiWord(buf, w0, len);
+    return;
+  }
+  pushLongNegative(buf, a);
+}
+
+// Appends `-a`, past one word.
+@noInline
+function pushLongNegative(buf: string, a: u64): void {
+  const w = intWords(a, true);
   const w0 = w.w0;
   const w1 = w.w1;
   const w2 = w.w2;
