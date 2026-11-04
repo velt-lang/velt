@@ -26,9 +26,12 @@ function nativeDir(entries: ArchiveEntry[]): string | null {
   return null;
 }
 
-/** The entries of the package archive `archive`; throws `ArchiveError` as vpm refuses one. */
-export function readPackageArchive(archive: u8[]): ArchiveEntry[] {
-  const entries = readArchive(archive, (p: string): bool => true);
+/**
+ * The entries of the package archive `archive`; throws `ArchiveError` as vpm refuses one, and
+ * when it has more than `maxEntries` files (see `readArchive`).
+ */
+export function readPackageArchive(archive: u8[], maxEntries: i64 | null = null): ArchiveEntry[] {
+  const entries = readArchive(archive, (p: string): bool => true, maxEntries);
   checkPackagePaths(entries, nativeDir(entries));
   return entries;
 }

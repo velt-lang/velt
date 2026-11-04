@@ -1,0 +1,63 @@
+// registry-core (internal): who may write (crates/velt_registry/src/auth.rs and owners.rs). On
+// an open registry (no users) anyone may, and packages have no owners. Once it has users, a
+// write needs a user's token and, for a published package, one of its owners. The first user to
+// publish a new package owns it; a published package without owners (published while the
+// registry was open, or whose owners an administrator removed) can't be changed until an
+// administrator assigns one.
+
+import { Caller } from "./caller";
+import { Refusal } from "./refusal";
+import { RegistryStores } from "./registry_stores";
+
+/** The caller of a write, or the 401 to answer. */
+export async function writer(stores: RegistryStores, req: Request): Promise<Caller> {
+  const caller = await stores.auth.caller(req.headers.get("authorization"));
+  if (caller.refused) {
+    throw new Refusal(
+      401,
+      "a valid `Authorization: Bearer <token>` is required (your registry user's token)",
+    );
+  }
+  return caller;
+}
+
+/** Whether `name` is a published package. */
+export async function isPublished(stores: RegistryStores, name: string): Promise<bool> {
+  return (await stores.db.index(name)) != null;
+}
+
+/** Returns when `caller` may change package `name`; else throws the 403. */
+export async function authorize(
+  stores: RegistryStores,
+  name: string,
+  caller: Caller,
+): Promise<void> {
+  const user = caller.user;
+  if (user == null) {
+    return;
+  }
+  const owners = await stores.db.owners(name);
+  if (owners.includes(user)) {
+    return;
+  }
+  if (owners.length == 0) {
+    if (!(await isPublished(stores, name))) {
+      return;
+    }
+    throw new Refusal(
+      403,
+      `\`${name}\` has no owners; an administrator assigns one with \`velt registry owner add\``,
+    );
+  }
+  throw new Refusal(
+    403,
+    `\`${user}\` is not an owner of \`${name}\` (owners: ${owners.join(", ")})`,
+  );
+}
+
+/** The caller of a write to package `name`, once it is known to be allowed. */
+export async function ownerOf(stores: RegistryStores, req: Request, name: string): Promise<Caller> {
+  const caller = await writer(stores, req);
+  await authorize(stores, name, caller);
+  return caller;
+}

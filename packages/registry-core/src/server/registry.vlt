@@ -1,0 +1,122 @@
+// registry-core: the registry's HTTP API, `/api/v1/…` as `velt` speaks it
+// (crates/vpm/src/remote.rs), over a host's stores. A web-standard handler: natively under
+// http-server's `serve`, on Cloudflare under the Worker's.
+
+import { listOwners, changeOwners } from "./owners";
+import { publish } from "./publish";
+import { download, index, listing, native } from "./reads";
+import { Refusal } from "./refusal";
+import { refused, text } from "./answer";
+import { RegistryLimits } from "./registry_limits";
+import { RegistryStores } from "./registry_stores";
+import { search } from "./search";
+import { StoreError } from "../stores/store_error";
+import { yank } from "./yank";
+import { isValidPackageName, normalizedName } from "../names";
+
+/**
+ * The path and query (without `?`) of `url` as sent: not resolved as the URL standard would
+ * (`/a/../b` stays as it is, so a name `..` is refused rather than read as a parent).
+ */
+function target(url: string): [string, string] {
+  const scheme = url.indexOf("://");
+  const start = scheme < 0 ? 0 : url.indexOf("/", scheme + 3);
+  if (start < 0) {
+    return ["/", ""];
+  }
+  const rest = url.slice(start);
+  const q = rest.indexOf("?");
+  return q < 0 ? [rest, ""] : [rest.slice(0, q), rest.slice(q + 1)];
+}
+
+// `path` without the `/`s at its ends.
+function trimSlashes(path: string): string {
+  let a = 0;
+  let b = path.length;
+  while (a < b && path.charAt(a) == "/") {
+    a++;
+  }
+  while (b > a && path.charAt(b - 1) == "/") {
+    b--;
+  }
+  return path.slice(a, b);
+}
+
+/**
+ * A package registry. Reads are public; writes (publishing, yanking, owners) need a user's
+ * token unless the registry is open, and an owner for a published package. Each write holds its
+ * package's `PublishLock`. A store that fails answers 500 with its message.
+ */
+export class Registry {
+  private stores: RegistryStores;
+  private limits: RegistryLimits;
+
+  constructor(stores: RegistryStores, limits: RegistryLimits = new RegistryLimits()) {
+    this.stores = stores;
+    this.limits = limits;
+  }
+
+  /** Answers one request. */
+  async handle(req: Request): Promise<Response> {
+    const [path, query] = target(req.url);
+    const parts = trimSlashes(path).split("/");
+    try {
+      // Every write to a package holds that package's lock (by its normalized name, so
+      // `my-pkg` and `my_pkg` wait for each other); an invalid name is refused unlocked.
+      if (req.method != "GET" && parts.length > 2 && isValidPackageName(parts[2])) {
+        const held = await this.stores.lock.acquire(normalizedName(parts[2]));
+        try {
+          return await this.route(req, parts, query);
+        } finally {
+          await held.release();
+        }
+      }
+      return await this.route(req, parts, query);
+    } catch (e) {
+      if (e instanceof Refusal) {
+        return e.status == 400 ? refused(e.message) : text(e.status, e.message);
+      }
+      // An adapter's own failure is worded for clients, as the Rust server's are; anything else
+      // may carry internals, so it is not shown.
+      return text(500, e instanceof StoreError ? e.message : "the registry failed");
+    }
+  }
+
+  private async route(req: Request, p: string[], query: string): Promise<Response> {
+    const s = this.stores;
+    const m = req.method;
+    const api = p.length >= 3 && p[0] == "api" && p[1] == "v1";
+    const n = p.length;
+    if (m == "GET" && n == 1 && p[0] == "") {
+      return await listing(s);
+    }
+    if (!api) {
+      return text(404, "not found");
+    }
+    if (m == "GET" && n == 3 && p[2] == "search") {
+      return await search(s, query);
+    }
+    if (n == 4 && p[3] == "index" && m == "GET") {
+      return await index(s, p[2]);
+    }
+    if (n == 4 && p[3] == "owners" && m == "GET") {
+      return await listOwners(s, p[2]);
+    }
+    if (n == 5 && p[3] == "owners" && (m == "PUT" || m == "DELETE")) {
+      return await changeOwners(s, req, p[2], p[4], m == "PUT");
+    }
+    if (n == 4 && m == "GET") {
+      return await download(s, p[2], p[3]);
+    }
+    if (n == 4 && m == "PUT") {
+      return await publish(s, this.limits, req, p[2], p[3]);
+    }
+    if (n == 5 && p[4] == "yank" && (m == "PUT" || m == "DELETE")) {
+      return await yank(s, req, p[2], p[3], m == "PUT");
+    }
+    if (n == 6 && p[4] == "native" && (m == "GET" || m == "PUT")) {
+      return native(p[2], p[3], p[5]);
+    }
+    return text(404, "not found");
+  }
+}

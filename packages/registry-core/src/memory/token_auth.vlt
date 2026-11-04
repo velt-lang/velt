@@ -1,0 +1,72 @@
+// registry-core: an `AuthProvider` of users with tokens (crates/velt_registry/src/auth.rs): it
+// keeps the SHA-256 of each user's token (`sha256:<hex>`), never the token. A request names its
+// user with `Authorization: Bearer <token>`. The registry is open (anyone may write) only while
+// it has no users list at all; an empty list refuses every write, so an emptied store never
+// opens the registry.
+
+import { sha256 } from "velt/crypto";
+import { hexEncode, utf8Encode } from "velt/encoding";
+import { Caller } from "../server/caller";
+import { AuthProvider } from "../stores/auth_provider";
+
+/** `sha256:<hex>` of `token`, as the users file stores it. */
+export function tokenHash(token: string): string {
+  return `sha256:${hexEncode(sha256(utf8Encode(token)))}`;
+}
+
+/** Users and their token hashes in memory; open until the first user is added. */
+export class TokenAuth implements AuthProvider {
+  /** User name → token hash; null while the registry is open. */
+  private users: Map<string, string> | null = null;
+
+  /**
+   * Adds user `name`, or gives it a new token, with the token whose hash is `hash`; closes the
+   * registry.
+   */
+  setUser(name: string, hash: string): void {
+    const users = this.users ?? new Map<string, string>();
+    users.set(name, hash);
+    this.users = users;
+  }
+
+  /**
+   * Removes user `name`; the registry stays closed even with no users left. The user's place in
+   * owner lists is the `MetadataDb`'s: an administrator removing a user drops it there too, as
+   * `velt registry user remove` does, so a new user of that name owns nothing.
+   */
+  removeUser(name: string): void {
+    this.users?.delete(name);
+  }
+
+  async caller(authorization: string | null): Promise<Caller> {
+    const users = this.users;
+    if (users == null) {
+      return Caller.anyone();
+    }
+    const token = bearerToken(authorization ?? "");
+    if (token.length == 0) {
+      return Caller.nobody();
+    }
+    const hashed = tokenHash(token);
+    for (const [name, hash] of users) {
+      if (hash == hashed) {
+        return Caller.ofUser(name);
+      }
+    }
+    return Caller.nobody();
+  }
+
+  async isUser(name: string): Promise<bool> {
+    return this.users?.has(name) ?? false;
+  }
+}
+
+// The token of an `Authorization` value: after the first space, trimmed, when the scheme before
+// it is `Bearer` in any case (RFC 7235); "" otherwise.
+function bearerToken(value: string): string {
+  const space = value.indexOf(" ");
+  if (space < 0 || value.slice(0, space).toLowerCase() != "bearer") {
+    return "";
+  }
+  return value.slice(space + 1).trim();
+}

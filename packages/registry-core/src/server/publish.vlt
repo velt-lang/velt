@@ -1,0 +1,200 @@
+// registry-core (internal): `PUT /api/v1/<name>/<version>`, publishing a package (the Rust
+// server's `upload`, and vpm's `publish_to`). Everything is checked before anything is written:
+// the caller and the package's owners, the archive and its checksum (`X-Velt-Checksum`), the
+// publish policy (#2225), `package.vlt` (read as data, never run) naming the package and
+// version of the URL, the dependencies (registry packages only), and the name and version being
+// free. Then the archive is stored by its checksum, the first publisher of a new package becomes
+// its owner, and the version joins the index; versions are immutable.
+
+import { EncodingError, utf8Decode } from "velt/encoding";
+import { ArchiveEntry, contentChecksum, MANIFEST_FILE, packArchive } from "../archive";
+import { ArchiveError } from "../archive_error";
+import { Manifest } from "../manifest/manifest";
+import { readManifest } from "../manifest/decode";
+import { ManifestError } from "../manifest/manifest_error";
+import { isValidPackageName, normalizedName } from "../names";
+import { readPackageArchive } from "../package_archive";
+import { Version } from "../semver/version";
+import { ownerOf } from "./access";
+import { refused, text } from "./answer";
+import { Caller } from "./caller";
+import { IndexEntry } from "./index_entry";
+import { PackageIndex } from "./package_index";
+import { publishPathProblem } from "./publish_policy";
+import { Refusal } from "./refusal";
+import { RegistryLimits } from "./registry_limits";
+import { RegistryStores } from "./registry_stores";
+import { declaredLength, tooLarge, uploadBody } from "./upload_body";
+import { indexPath } from "./yank";
+
+// The archive's entries and checksum, after the checks of its format, checksum and the publish
+// policy.
+function checkedEntries(
+  body: u8[],
+  declared: string | null,
+  limits: RegistryLimits,
+): [ArchiveEntry[], string] {
+  let entries: ArchiveEntry[] = [];
+  try {
+    entries = readPackageArchive(body, limits.maxEntries);
+  } catch (e) {
+    if (e instanceof ArchiveError) {
+      throw new Refusal(400, e.message);
+    }
+    throw e;
+  }
+  const sum = contentChecksum(entries);
+  if (declared != sum) {
+    throw new Refusal(400, `checksum mismatch: the archive hashes to ${sum}`);
+  }
+  const problem = publishPathProblem(entries);
+  if (problem != null) {
+    throw new Refusal(400, problem);
+  }
+  return [entries, sum];
+}
+
+// The archive's manifest, read as vpm reads an uploaded one; messages name `package.vlt`.
+function manifestOf(entries: ArchiveEntry[]): Manifest {
+  for (const e of entries) {
+    if (e.path != MANIFEST_FILE) {
+      continue;
+    }
+    try {
+      return readManifest(utf8Decode(e.bytes));
+    } catch (err) {
+      if (err instanceof EncodingError) {
+        throw new Refusal(400, `${MANIFEST_FILE}: the manifest is not valid UTF-8`);
+      }
+      if (err instanceof ManifestError) {
+        throw new Refusal(400, `${MANIFEST_FILE}: ${err.message}`);
+      }
+      throw err;
+    }
+  }
+  throw new Refusal(400, `the archive has no ${MANIFEST_FILE}`);
+}
+
+// The dependencies as the index records them (name → requirement): registry packages only.
+function requirements(m: Manifest): Map<string, string> {
+  const out: Map<string, string> = new Map();
+  for (const [dep, spec] of m.dependencies) {
+    if (spec.simple == "workspace") {
+      // Publishing members, with `"workspace"` replaced by versions, is planned
+      // (docs/internals/design/workspaces.md "Publishing").
+      throw new Refusal(
+        400,
+        `cannot publish \`${m.name}\`: dependency \`${dep}\` is \`"workspace"\`; publishing members of a workspace is not supported yet`,
+      );
+    }
+    const req = spec.simple ?? spec.version;
+    if (req == null) {
+      const source = spec.git != null ? "a `git` repository" : "a `path`";
+      throw new Refusal(
+        400,
+        `cannot publish \`${m.name}\`: dependency \`${dep}\` has only ${source}; add a \`version\` requirement (a registry package is built from the registry alone)`,
+      );
+    }
+    out.set(dep, req);
+  }
+  return out;
+}
+
+// A new package's name may not differ from a published one's only in `-` versus `_`: their
+// native functions, init functions and library files would share names.
+async function checkNameIsFree(stores: RegistryStores, name: string): Promise<void> {
+  const norm = normalizedName(name);
+  for (const other of await stores.db.packageNames()) {
+    if (other != name && normalizedName(other) == norm) {
+      throw new Refusal(
+        400,
+        `cannot publish \`${name}\`: the registry has \`${other}\`, and names that differ only in \`-\` and \`_\` count as the same; choose another name`,
+      );
+    }
+  }
+}
+
+// The new version's index entry and the index it joins, once every check has passed.
+async function newEntry(
+  stores: RegistryStores,
+  m: Manifest,
+  sum: string,
+): Promise<[PackageIndex, IndexEntry]> {
+  const deps = requirements(m);
+  const version = Version.parse(m.version);
+  const existing = await stores.db.index(m.name);
+  if (existing == null) {
+    await checkNameIsFree(stores, m.name);
+  }
+  const index = existing ?? new PackageIndex(m.name);
+  for (const e of index.versions) {
+    if (Version.isValid(e.version) && Version.parse(e.version).compare(version) == 0) {
+      throw new Refusal(
+        409,
+        `\`${m.name}\` ${version.toString()} is already published (bump \`version\` in package.vlt)`,
+      );
+    }
+  }
+  const entry = new IndexEntry(version.toString(), sum);
+  entry.description = m.description;
+  entry.keywords = [...m.keywords];
+  entry.dependencies = deps;
+  return [index, entry];
+}
+
+// Stores the version: its archive, its first owner (the publisher of a new package, recorded
+// first, so a package is never published without its owner), then its index entry.
+async function store(
+  stores: RegistryStores,
+  caller: Caller,
+  index: PackageIndex,
+  entry: IndexEntry,
+  entries: ArchiveEntry[],
+): Promise<void> {
+  await stores.blobs.putIfAbsent(entry.checksum, packArchive(entries));
+  const name = index.name;
+  const user = caller.user;
+  const claimed = user != null && (await stores.db.owners(name)).length == 0;
+  if (claimed && user != null) {
+    await stores.db.putOwners(name, [user]);
+  }
+  index.versions.push(entry);
+  try {
+    await stores.db.putIndex(name, index);
+  } catch (e) {
+    // A failed publish takes the claim back, so the name stays free for anyone.
+    if (claimed) {
+      await stores.db.putOwners(name, []);
+    }
+    throw e;
+  }
+  await stores.purge.purge([indexPath(name), `/api/v1/${name}/${entry.version}`, "/"]);
+}
+
+/** Publishes package `name` `version` from the archive in `req`'s body. */
+export async function publish(
+  stores: RegistryStores,
+  limits: RegistryLimits,
+  req: Request,
+  name: string,
+  version: string,
+): Promise<Response> {
+  if (!isValidPackageName(name) || !Version.isValid(version)) {
+    return text(400, "invalid package name or version");
+  }
+  // A body announced too large is refused before anything else, as the Rust server's HTTP
+  // layer refuses it before its handler runs; one that only turns out too large, once read.
+  if (declaredLength(req.headers.get("content-length")) > limits.maxArchiveBytes) {
+    throw tooLarge(limits.maxArchiveBytes);
+  }
+  const caller = await ownerOf(stores, req, name);
+  const body = await uploadBody(req, limits.maxArchiveBytes);
+  const [entries, sum] = checkedEntries(body, req.headers.get("x-velt-checksum"), limits);
+  const m = manifestOf(entries);
+  if (m.name != name || Version.parse(m.version).toString() != version) {
+    return refused(`the archive is \`${m.name}\` ${m.version}, not \`${name}\` ${version}`);
+  }
+  const [index, entry] = await newEntry(stores, m, sum);
+  await store(stores, caller, index, entry, entries);
+  return text(201, `published \`${name}\` ${entry.version}\n`);
+}

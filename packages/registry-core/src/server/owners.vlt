@@ -1,0 +1,69 @@
+// registry-core (internal): `GET /api/v1/<name>/owners`, and `PUT`/`DELETE
+// /api/v1/<name>/owners/<user>` (crates/velt_registry/src/owners.rs). Only an owner changes
+// the owners, only to users that exist, and the last owner stays.
+
+import { checkUserName, isValidPackageName } from "../names";
+import { authorize, isPublished, writer } from "./access";
+import { text } from "./answer";
+import { Refusal } from "./refusal";
+import { RegistryStores } from "./registry_stores";
+
+/** `GET /api/v1/<name>/owners`: one owner per line. */
+export async function listOwners(stores: RegistryStores, name: string): Promise<Response> {
+  if (!isValidPackageName(name)) {
+    return text(400, "invalid package name");
+  }
+  if (!(await isPublished(stores, name))) {
+    return text(404, `no package \`${name}\``);
+  }
+  const owners = await stores.db.owners(name);
+  return text(200, owners.map((o: string): string => `${o}\n`).join(""));
+}
+
+/** `PUT` (`add`) or `DELETE /api/v1/<name>/owners/<user>`. */
+export async function changeOwners(
+  stores: RegistryStores,
+  req: Request,
+  name: string,
+  user: string,
+  add: bool,
+): Promise<Response> {
+  if (!isValidPackageName(name)) {
+    return text(400, "invalid package name");
+  }
+  const bad = checkUserName(user);
+  if (bad != null) {
+    return text(400, bad);
+  }
+  const caller = await writer(stores, req);
+  if (!(await isPublished(stores, name))) {
+    return text(404, `no package \`${name}\``);
+  }
+  if (caller.isAnyone()) {
+    return text(400, "this registry has no users, so packages have no owners");
+  }
+  await authorize(stores, name, caller);
+  const owners = await stores.db.owners(name);
+  if (add) {
+    if (!(await stores.auth.isUser(user))) {
+      throw new Refusal(404, `no user \`${user}\``);
+    }
+    if (!owners.includes(user)) {
+      owners.push(user);
+    }
+  } else {
+    if (!owners.includes(user)) {
+      throw new Refusal(404, `\`${user}\` is not an owner of \`${name}\``);
+    }
+    if (owners.length == 1) {
+      throw new Refusal(
+        409,
+        `\`${user}\` is the last owner of \`${name}\`; add another owner first`,
+      );
+    }
+    owners.splice(owners.indexOf(user), 1);
+  }
+  await stores.db.putOwners(name, owners);
+  await stores.purge.purge([`/api/v1/${name}/owners`]);
+  return text(200, `owners of \`${name}\`: ${owners.join(", ")}\n`);
+}

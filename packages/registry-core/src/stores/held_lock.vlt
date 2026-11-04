@@ -1,0 +1,7 @@
+// registry-core: a `PublishLock` while it is held.
+
+/** A held lock (`PublishLock.acquire`). */
+export interface HeldLock {
+  /** Lets the next waiter have the lock. */
+  release(): Promise<void>;
+}

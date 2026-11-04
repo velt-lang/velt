@@ -1,0 +1,16 @@
+// registry-core: who sends a request (#1325's `AuthProvider`): users with tokens natively,
+// GitHub OAuth on Cloudflare.
+
+import { Caller } from "../server/caller";
+
+/** Tells who sent a request, and which users exist. */
+export interface AuthProvider {
+  /**
+   * The sender of a request whose `Authorization` header is `authorization` (null without
+   * one): anyone when the registry is open, a user, or nobody (`Caller.nobody`) when the
+   * registry has users and the header names none of them.
+   */
+  caller(authorization: string | null): Promise<Caller>;
+  /** Whether `name` is a user (one an owner may make an owner too). */
+  isUser(name: string): Promise<bool>;
+}

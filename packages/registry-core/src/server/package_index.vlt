@@ -1,0 +1,65 @@
+// registry-core: a package's index, every version published, in publication order (vpm's
+// `Index`): what `GET /api/v1/<name>/index` answers and resolution reads.
+
+import { Version } from "../semver/version";
+import { IndexEntry } from "./index_entry";
+import { jsonArray, jsonField, jsonObject } from "./json_text";
+
+/** The published versions of package `name`. */
+export class PackageIndex {
+  name: string;
+  versions: IndexEntry[] = [];
+
+  constructor(name: string) {
+    this.name = name;
+  }
+
+  /** A copy that shares nothing with this index. */
+  copy(): PackageIndex {
+    const index = new PackageIndex(this.name);
+    index.versions = this.versions.map((e: IndexEntry): IndexEntry => e.copy());
+    return index;
+  }
+
+  /** The entry of `version` (as semver writes it), or null. */
+  entry(version: string): IndexEntry | null {
+    for (const e of this.versions) {
+      if (e.version == version) {
+        return e;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The version `velt add` picks (vpm's `newest`): the newest stable version that is not
+   * yanked, else the newest pre-release that is not; null when every version is yanked.
+   */
+  newest(): IndexEntry | null {
+    let stable: IndexEntry | null = null;
+    let stableVersion: Version | null = null;
+    let any: IndexEntry | null = null;
+    let anyVersion: Version | null = null;
+    for (const e of this.versions) {
+      if (e.yanked || !Version.isValid(e.version)) {
+        continue;
+      }
+      const v = Version.parse(e.version);
+      if (anyVersion == null || v.compare(anyVersion) > 0) {
+        any = e;
+        anyVersion = v;
+      }
+      if (!v.isPrerelease() && (stableVersion == null || v.compare(stableVersion) > 0)) {
+        stable = e;
+        stableVersion = v;
+      }
+    }
+    return stable ?? any;
+  }
+
+  /** `index.json`'s text, as vpm's `json_file::write` writes it (with the final newline). */
+  toJson(): string {
+    const items = this.versions.map((e: IndexEntry): string => e.toJson(2));
+    return `${jsonObject([jsonField("versions", jsonArray(items, 1))], 0)}\n`;
+  }
+}

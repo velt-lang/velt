@@ -82,9 +82,15 @@ function parseLength(text: string): i64 {
  * The entries of `archive`, in their order, when each path is safe and `allowed` accepts it;
  * throws `ArchiveError` for a malformed archive or a disallowed path (what `allowed` throws, it
  * throws). Like vpm, it reads duplicate paths and paths out of order as they come: a registry
- * that stores archives without unpacking them must decide about those itself.
+ * that stores archives without unpacking them must decide about those itself. With `maxEntries`,
+ * it stops with an `ArchiveError` at entry `maxEntries + 1`, before reading it, so an archive of
+ * millions of tiny entries costs no more than one of `maxEntries`.
  */
-export function readArchive(archive: u8[], allowed: (path: string) => bool): ArchiveEntry[] {
+export function readArchive(
+  archive: u8[],
+  allowed: (path: string) => bool,
+  maxEntries: i64 | null = null,
+): ArchiveEntry[] {
   const magic = utf8Encode(MAGIC);
   if (archive.length < magic.length) {
     throw new ArchiveError("not a Velt package archive");
@@ -98,6 +104,11 @@ export function readArchive(archive: u8[], allowed: (path: string) => bool): Arc
   let at = magic.length as i64;
   const end = archive.length as i64;
   while (at < end) {
+    if (maxEntries != null && (entries.length as i64) == maxEntries) {
+      throw new ArchiveError(
+        `the archive has more than ${maxEntries} files; a package may have at most ${maxEntries}`,
+      );
+    }
     const pathEnd: i64 = archive.indexOf(10, at);
     if (pathEnd < 0) {
       throw new ArchiveError("corrupt archive: missing newline");

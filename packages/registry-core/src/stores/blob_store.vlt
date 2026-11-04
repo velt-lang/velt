@@ -1,0 +1,13 @@
+// registry-core: where package archives are kept (#1325's `BlobStore`): a folder natively, R2 on
+// Cloudflare. Blobs are addressed by their content checksum, so a stored blob never changes.
+
+/** Package archives by key (`sha256:<hex>`, the archive's content checksum). */
+export interface BlobStore {
+  /**
+   * Stores `bytes` under `key` unless a blob is stored there already (whose bytes are then
+   * the same, since the key is their checksum). Resolves to whether it stored them.
+   */
+  putIfAbsent(key: string, bytes: u8[]): Promise<bool>;
+  /** The blob stored under `key`, or null. */
+  get(key: string): Promise<u8[] | null>;
+}

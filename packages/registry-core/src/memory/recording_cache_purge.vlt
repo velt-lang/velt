@@ -1,0 +1,15 @@
+// registry-core: a `CachePurge` for a registry without a cache in front of it, which remembers
+// what it was asked to purge (for tests).
+
+import { CachePurge } from "../stores/cache_purge";
+
+/** Purges nothing; `purged` lists every path it was given, in order. */
+export class RecordingCachePurge implements CachePurge {
+  purged: string[] = [];
+
+  async purge(paths: string[]): Promise<void> {
+    for (const p of paths) {
+      this.purged.push(p);
+    }
+  }
+}
