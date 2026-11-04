@@ -198,14 +198,47 @@ pub(crate) fn check_system_library(text: &str) -> Result<(), String> {
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | '+'));
-    if ok {
-        Ok(())
-    } else {
-        Err(format!(
+    if !ok {
+        return Err(format!(
             "`{text}` is not a system library: a library name such as `sqlite3` (linked as \
              `-lsqlite3`), or `framework:Name` for a macOS framework"
-        ))
+        ));
     }
+    match library_of_file(name) {
+        Some(library) => Err(format!(
+            "`{text}` is a library's file: name the library, not its file: `{library}`"
+        )),
+        None => Ok(()),
+    }
+}
+
+/// The library whose file `name` (checked to be ASCII) names: `foo` of `foo.lib`, `foo.dll`,
+/// `libfoo.a`, `libfoo.so`, `libfoo.so.1` and `libfoo.dylib`; `None` for anything else, such as
+/// `python3.11`. File names differ by case on Windows only, so any case counts.
+fn library_of_file(name: &str) -> Option<&str> {
+    let lower = name.to_ascii_lowercase();
+    let versioned = lower.find(".so.").filter(|at| {
+        lower[at + 4..]
+            .chars()
+            .all(|c| c.is_ascii_digit() || c == '.')
+    });
+    let unix = [".a", ".so", ".dylib"];
+    let windows = [".lib", ".dll"];
+    let ends = |suffixes: &[&str]| {
+        suffixes
+            .iter()
+            .find(|s| lower.ends_with(**s))
+            .map(|s| name.len() - s.len())
+    };
+    if let Some(at) = ends(&windows) {
+        return Some(&name[..at]);
+    }
+    let stem = &name[..versioned.or_else(|| ends(&unix))?];
+    Some(
+        stem.strip_prefix("lib")
+            .filter(|s| !s.is_empty())
+            .unwrap_or(stem),
+    )
 }
 
 /// A framework exists only on macOS, and another target's linker would take `-framework`'s name

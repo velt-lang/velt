@@ -83,6 +83,43 @@ fn c_library_entries_are_checked() {
     assert_eq!(message, "`allowNative` must be an array, not a string");
 }
 
+#[test]
+fn a_system_library_is_not_a_file() {
+    for (file, library) in [
+        ("foo.lib", "foo"),
+        ("FOO.LIB", "FOO"),
+        ("foo.dll", "foo"),
+        ("libfoo.lib", "libfoo"),
+        ("libfoo.a", "foo"),
+        ("foo.a", "foo"),
+        ("libfoo.so", "foo"),
+        ("libfoo.so.1", "foo"),
+        ("libfoo.so.1.2", "foo"),
+        ("libfoo.dylib", "foo"),
+        ("lib.a", "lib"),
+    ] {
+        let (message, covered) = error(&with(&format!(
+            "native: {{ c: {{ x: {{ system: {{ linux: \"{file}\" }} }} }} }}"
+        )));
+        let expected = format!("name the library, not its file: `{library}`");
+        assert!(message.contains(&expected), "{file}: {message}");
+        assert_eq!(covered, format!("\"{file}\""));
+    }
+    // Under `framework:` too.
+    let (message, _) = error(&with(
+        "native: { c: { x: { system: { darwin: \"framework:Foo.dylib\" } } } }",
+    ));
+    assert!(
+        message.contains("name the library, not its file"),
+        "{message}"
+    );
+    // Dots that aren't a file's suffix.
+    let ok = read(&with(
+        "native: { c: { x: { system: { linux: \"python3.11\", darwin: \"foo.so.bar\", win32: \"a.b\" } } } }",
+    ));
+    assert!(ok.c_libraries.is_some());
+}
+
 /// Decoding goes on after an error, so what it keeps must already be checked.
 #[test]
 fn only_system_names_that_pass_are_kept() {
