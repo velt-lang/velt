@@ -42,6 +42,11 @@ function trimSlashes(path: string): string {
   return path.slice(a, b);
 }
 
+// Whether the path's parts start `/api/v1/<name>`.
+function isApi(p: string[]): bool {
+  return p.length >= 3 && p[0] == "api" && p[1] == "v1";
+}
+
 /**
  * A package registry. Reads are public; writes (publishing, yanking, owners) need a user's
  * token unless the registry is open, and an owner for a published package. Each write holds its
@@ -62,8 +67,10 @@ export class Registry {
     const parts = trimSlashes(path).split("/");
     try {
       // Every write to a package holds that package's lock (by its normalized name, so
-      // `my-pkg` and `my_pkg` wait for each other); an invalid name is refused unlocked.
-      if (req.method != "GET" && parts.length > 2 && isValidPackageName(parts[2])) {
+      // `my-pkg` and `my_pkg` wait for each other); an invalid name is refused unlocked. A publish
+      // takes it itself, once its body has arrived.
+      const isPublish = req.method == "PUT" && parts.length == 4 && isApi(parts);
+      if (req.method != "GET" && !isPublish && parts.length > 2 && isValidPackageName(parts[2])) {
         const held = await this.stores.lock.acquire(normalizedName(parts[2]));
         try {
           return await this.route(req, parts, query);
@@ -85,7 +92,7 @@ export class Registry {
   private async route(req: Request, p: string[], query: string): Promise<Response> {
     const s = this.stores;
     const m = req.method;
-    const api = p.length >= 3 && p[0] == "api" && p[1] == "v1";
+    const api = isApi(p);
     const n = p.length;
     if (m == "GET" && n == 1 && p[0] == "") {
       return await listing(s);

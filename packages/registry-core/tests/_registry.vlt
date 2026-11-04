@@ -20,20 +20,23 @@ export class TestRegistry {
   auth: TokenAuth = new TokenAuth();
   db: MemoryMetadataDb;
   blobs: MemoryBlobStore;
-  purge: RecordingCachePurge = new RecordingCachePurge();
+  purge: RecordingCachePurge;
   registry: Registry;
 
   constructor(
     limits: RegistryLimits = new RegistryLimits(),
     db: MemoryMetadataDb = new MemoryMetadataDb(),
     blobs: MemoryBlobStore = new MemoryBlobStore(),
+    lock: MemoryPublishLock = new MemoryPublishLock(),
+    purge: RecordingCachePurge = new RecordingCachePurge(),
   ) {
     this.db = db;
     this.blobs = blobs;
+    this.purge = purge;
     const stores: RegistryStores = {
       blobs: this.blobs,
       db: this.db,
-      lock: new MemoryPublishLock(),
+      lock,
       purge: this.purge,
       auth: this.auth,
     };
@@ -93,7 +96,7 @@ export class TestRegistry {
     method: string,
     path: string,
     headers: [string, string][],
-    body: u8[] | null,
+    body: BodyInit | null,
   ): Promise<Answer> {
     const init: RequestInit = { method, headers };
     if (body != null) {
