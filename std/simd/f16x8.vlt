@@ -1,6 +1,7 @@
 // velt/simd (internal): `f16x8`, eight `f16` lanes: a storage type like `f16`, for moving 16-bit weights
 // into and out of `f32x4` arithmetic. It has no arithmetic of its own: `widenLow` and `widenHigh`
-// give `f32x4`, and `f16x8.narrow` takes them back. The `velt_simd_*` functions below have no runtime implementation, the
+// give `f32x4`, `f16x8.narrow` takes them back, and `dotAdd` multiply two of them into an
+// `f32x4` accumulator. The `velt_simd_*` functions below have no runtime implementation, the
 // compiler emits them inline (rt_abi.md "SIMD").
 
 export type f16x8 = f16x8;
@@ -18,6 +19,7 @@ declare function velt_simd_u16x8_as_f16x8(v: u16x8): f16x8;
 declare function velt_simd_f16x8_widen_low(v: f16x8): f32x4;
 declare function velt_simd_f16x8_widen_high(v: f16x8): f32x4;
 declare function velt_simd_f32x4_narrow_f16x8(lo: f32x4, hi: f32x4): f16x8;
+declare function velt_simd_f32x4_dot_add_f16x8(acc: f32x4, a: f16x8, b: f16x8): f32x4;
 
 extend f16x8 {
   /** A vector with every lane `x`. */
@@ -130,5 +132,21 @@ extend f16x8 {
    */
   static narrow(lo: f32x4, hi: f32x4): f16x8 {
     return velt_simd_f32x4_narrow_f16x8(lo, hi);
+  }
+
+  /**
+   * `acc` plus the products of this and `b`, in `f32`, as `a.mulAdd(b, c)` is `a * b + c`: lane
+   * `k` is `fma(this[k + 4], b[k + 4], fma(this[k], b[k], acc[k]))`, in that order, so each lane
+   * takes lanes `k` and `k + 4` (not adjacent ones) and rounds twice. Each product is exact in
+   * `f32` and every number comes out the same on every CPU: Arm's `fmlal` and `fmlal2`
+   * (every Apple arm64 CPU, and `--cpu` where the CPU has FEAT_FHM), and elsewhere the widened
+   * lanes and two fused additions (one library call per lane on a CPU with no FMA, as
+   * `f32x4.mulAdd`). A lane with one NaN among its operands gives that NaN, and a signalling one
+   * may or may not come out quiet (an optimizer can drop a step that adds nothing, as it can in
+   * `f32x4.mulAdd`); with several, or from an invalid operation (`Infinity * 0`), a NaN, which
+   * one depends on the CPU and the build.
+   */
+  dotAdd(b: f16x8, acc: f32x4): f32x4 {
+    return velt_simd_f32x4_dot_add_f16x8(acc, this, b);
   }
 }

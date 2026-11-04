@@ -24,6 +24,11 @@ pub(crate) use sha::has_ext;
 pub(crate) struct Caps {
     /// Arm's dot-product instructions (`Target::has_dotprod`).
     pub dotprod: bool,
+    /// Arm's `fmlal`/`fmlal2` (FEAT_FHM).
+    pub fhm: bool,
+    /// A bf16 dot product: Arm's `bfdot` (FEAT_BF16) or x86's 128-bit `vdpbf16ps` (AVX512-BF16
+    /// with AVX512VL), as `Arch` says.
+    pub bf16_dot: bool,
     /// The f16 conversions the target has instructions for (`Target::half_native`).
     pub half: crate::half::HalfNative,
 }
@@ -33,6 +38,8 @@ impl Caps {
     #[cfg(test)]
     pub(crate) const NONE: Caps = Caps {
         dotprod: false,
+        fhm: false,
+        bf16_dot: false,
         half: crate::half::HalfNative::None,
     };
 }
@@ -90,10 +97,10 @@ pub(crate) fn helper(
         SimdCall::Vector(lanes, Op::SumWide) if arch == Arch::Sse2 => {
             match x86_sums::sum_wide(&mut body, lanes) {
                 Some(total) => Some(total),
-                None => vector(&mut body, lanes, Op::SumWide, caps),
+                None => vector(&mut body, lanes, Op::SumWide, arch, caps),
             }
         }
-        SimdCall::Vector(lanes, op) => vector(&mut body, lanes, op, caps),
+        SimdCall::Vector(lanes, op) => vector(&mut body, lanes, op, arch, caps),
         SimdCall::Mask(bits, op) => mask(&mut body, bits, op, arch == Arch::Neon),
         SimdCall::Has(ext) => Some(sha::has(&mut body, arch, ext)),
         SimdCall::Inst(op) => Some(sha::op(&mut body, arch, op)),
@@ -217,7 +224,7 @@ fn mask_type(bits: u32) -> String {
 }
 
 /// The body of a vector operation; the value to return, if any.
-fn vector(b: &mut Body, lanes: Lanes, op: Op, caps: Caps) -> Option<String> {
+fn vector(b: &mut Body, lanes: Lanes, op: Op, arch: Arch, caps: Caps) -> Option<String> {
     let (lane, ty, _) = spell(lanes);
     let value = match op {
         Op::Store => {
@@ -248,6 +255,8 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op, caps: Caps) -> Option<String> {
             return Some(half::widen(b, lanes, op == Op::WidenHigh, caps.half));
         }
         Op::NarrowTo(to) => return Some(half::narrow(b, to, caps.half)),
+        Op::DotAddHalf(of) => return Some(half::dot_add(b, of, caps)),
+        Op::DotAddFast(of) => return Some(half::dot_add_fast(b, of, arch, caps)),
         Op::WidenLow | Op::WidenHigh => return Some(widen(b, lanes, op == Op::WidenHigh)),
         Op::Narrow => return Some(narrow(b, lanes)),
         Op::Convert(to) => return Some(convert(b, lanes, to)),

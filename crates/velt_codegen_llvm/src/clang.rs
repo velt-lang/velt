@@ -150,6 +150,74 @@ pub(crate) fn x86_features(triple: &str, cpu: &str) -> CodegenResult<u32> {
     Ok(mask)
 }
 
+/// The half-precision dot products a CPU has (`Target::half_dot`).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct HalfDot {
+    /// Arm's `fmlal`/`fmlal2` (FEAT_FHM).
+    pub fhm: bool,
+    /// A bf16 dot product: Arm's `bfdot` (FEAT_BF16), or x86's `vdpbf16ps` on 128-bit vectors
+    /// (AVX512-BF16 with AVX512VL).
+    pub bf16: bool,
+}
+
+/// What clang lets code for `cpu` on `triple` use of the half-precision dot products: from the
+/// macros it defines, once per CPU and process, for `native` as for a name. Without a clang,
+/// none (`velt build --emit llvm` needs no clang; everything that compiles the IR does).
+pub(crate) fn half_dot(triple: &str, cpu: &str) -> CodegenResult<HalfDot> {
+    static FEATURES: OnceLock<Mutex<HashMap<(String, String), HalfDot>>> = OnceLock::new();
+    let features = FEATURES.get_or_init(Default::default);
+    let key = (triple.to_string(), cpu.to_string());
+    if let Some(dot) = features.lock().ok().and_then(|f| f.get(&key).copied()) {
+        return Ok(dot);
+    }
+    let Some(clang) = find_clang() else {
+        return Ok(HalfDot::default());
+    };
+    let x86 = triple.starts_with("x86_64");
+    let flag = if x86 { "-march" } else { "-mcpu" };
+    let out = Command::new(&clang)
+        .args(["-dM", "-E", "-x", "c"])
+        .arg(format!("--target={triple}"))
+        .arg(format!("{flag}={cpu}"))
+        .arg("-")
+        .stdin(Stdio::null())
+        .output()
+        .map_err(|e| format!("codegen: cannot run `{}`: {e}", clang.display()))?;
+    if !out.status.success() {
+        let err = String::from_utf8_lossy(&out.stderr);
+        return Err(unknown_cpu(
+            format!("codegen: `clang {flag}={cpu}` failed:\n{err}"),
+            Some(cpu),
+        ));
+    }
+    let dot = half_dot_from_macros(&String::from_utf8_lossy(&out.stdout), x86);
+    if let Ok(mut f) = features.lock() {
+        f.insert(key, dot);
+    }
+    Ok(dot)
+}
+
+/// What the macros in `defines` (clang's `-dM -E` output) say of the half-precision dot products.
+fn half_dot_from_macros(defines: &str, x86: bool) -> HalfDot {
+    let has = |name: &str| {
+        defines
+            .lines()
+            .filter_map(|l| l.strip_prefix("#define ")?.split_whitespace().next())
+            .any(|m| m == name)
+    };
+    if x86 {
+        HalfDot {
+            fhm: false,
+            bf16: has("__AVX512BF16__") && has("__AVX512VL__"),
+        }
+    } else {
+        HalfDot {
+            fhm: has("__ARM_FEATURE_FP16_FML"),
+            bf16: has("__ARM_FEATURE_BF16_VECTOR_ARITHMETIC"),
+        }
+    }
+}
+
 /// `err` from a failed compile by `clang` with `args`, as what it means. Generated IR that clang
 /// rejects is the compiler's bug, but a clang that can't run, or doesn't have the target, fails on
 /// any IR. So it is tried on the smallest IR: failing that too says it's the clang. Then what is
@@ -262,6 +330,37 @@ fn parse_opt_level(level: &str) -> Option<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn half_dot_products_are_what_clang_defines() {
+        let dot = |text, x86| half_dot_from_macros(text, x86);
+        let none = HalfDot::default();
+        assert_eq!(dot("#define __FOO__ 1\n", false), none);
+        assert_eq!(dot("#define __ARM_FEATURE_FP16_FML 1\n", true), none);
+        assert_eq!(
+            dot("#define __ARM_FEATURE_FP16_FML 1\n", false),
+            HalfDot {
+                fhm: true,
+                bf16: false
+            }
+        );
+        assert_eq!(
+            dot("#define __ARM_FEATURE_BF16_VECTOR_ARITHMETIC 1\n", false),
+            HalfDot {
+                fhm: false,
+                bf16: true
+            }
+        );
+        // x86's 128-bit form needs AVX512VL as well.
+        assert_eq!(dot("#define __AVX512BF16__ 1\n", true), none);
+        assert_eq!(
+            dot("#define __AVX512BF16__ 1\n#define __AVX512VL__ 1\n", true),
+            HalfDot {
+                fhm: false,
+                bf16: true
+            }
+        );
+    }
 
     #[test]
     fn named_cpus_have_the_features_clang_gives_them() {

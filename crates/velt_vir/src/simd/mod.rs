@@ -228,6 +228,15 @@ pub enum Op {
     /// of the four products of the signed bytes in the same quarter of `a` and `b` (bytes
     /// `4k..4k + 3` for lane `k`), exactly (no saturation): Arm's `sdot`.
     DotAdd,
+    /// `(acc, a, b) -> v` on `f32x4`, `a` and `b` having the lanes given (`f16x8` or `bf16x8`):
+    /// lane `k` is `fma(a[k + 4], b[k + 4], fma(a[k], b[k], acc[k]))`, two roundings: Arm's
+    /// `fmlal` then `fmlal2` for f16 where the CPU has them, else both operands widened and two
+    /// `MulAdd`s, the same bits but for which NaN a lane with several NaNs gives.
+    DotAddHalf(Lanes),
+    /// `(acc, a, b) -> v` on `f32x4`, `a` and `b` being `bf16x8`: `DotAddHalf`, or where `--cpu`
+    /// has one, Arm's `bfdot` or x86's `vdpbf16ps`, which give lane `k`
+    /// `a[2k] * b[2k] + a[2k + 1] * b[2k + 1]` and may flush subnormals.
+    DotAddFast(Lanes),
     /// `(a, b, c) -> v`: `a * b + c` with one rounding (fused), the same bits on every CPU: one
     /// instruction where the CPU has FMA (arm64, x86 with `--cpu x86-64-v3`), a library call
     /// per lane elsewhere. Floats only.
@@ -379,9 +388,12 @@ impl SimdCall {
                 | Op::ReverseBytes
                 | Op::Convert(_) => (vec![V128], V128),
                 Op::Shl | Op::Shr => (vec![V128, U32], V128),
-                Op::Select | Op::MulAdd | Op::MulAddFast | Op::DotAdd => {
-                    (vec![V128, V128, V128], V128)
-                }
+                Op::Select
+                | Op::MulAdd
+                | Op::MulAddFast
+                | Op::DotAdd
+                | Op::DotAddHalf(_)
+                | Op::DotAddFast(_) => (vec![V128, V128, V128], V128),
                 _ => (vec![V128, V128], V128),
             },
         }
@@ -474,6 +486,12 @@ fn vector_op(name: &str) -> Option<Op> {
     if let Some(to) = name.strip_prefix("narrow_") {
         return Lanes::named(to).map(Op::NarrowTo);
     }
+    if let Some(of) = name.strip_prefix("dot_add_fast_") {
+        return Lanes::named(of).map(Op::DotAddFast);
+    }
+    if let Some(of) = name.strip_prefix("dot_add_") {
+        return Lanes::named(of).map(Op::DotAddHalf);
+    }
     Some(match name {
         "splat" => Op::Splat,
         "index" => Op::Index,
@@ -536,7 +554,8 @@ fn supported(lanes: Lanes, op: Op) -> bool {
     }
     match op {
         Op::DotAdd => lanes == Lanes::I32,
-        Op::NarrowTo(of) => lanes == Lanes::F32 && of.is_half(),
+        Op::DotAddHalf(of) | Op::NarrowTo(of) => lanes == Lanes::F32 && of.is_half(),
+        Op::DotAddFast(of) => lanes == Lanes::F32 && of == Lanes::BF16,
         Op::Sum => !float,
         Op::SumWide => !float && bits <= 32,
         Op::Div | Op::Sqrt | Op::MulAdd | Op::MulAddFast => float,
@@ -592,6 +611,8 @@ fn half_supported(op: Op) -> bool {
             | Op::Sum
             | Op::SumWide
             | Op::DotAdd
+            | Op::DotAddHalf(_)
+            | Op::DotAddFast(_)
             | Op::MulAdd
             | Op::MulAddFast
             | Op::ZipLow

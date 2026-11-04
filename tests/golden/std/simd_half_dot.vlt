@@ -1,0 +1,271 @@
+// `a.dotAdd(b, acc)` on `f16x8` and `bf16x8`: lane `k` of `f32x4` is
+// `fma(a[k + 4], b[k + 4], fma(a[k], b[k], acc[k]))`. The expected output came from Python with
+// exact rational arithmetic, not from a compiler: fixed edge lanes (the pairing, the order of the
+// two steps, subnormals, Infinity, NaN payloads) and a hash of the results over pseudo-random
+// vectors. The same random vectors are also checked here against the same chain written with
+// scalar widening and `f32x4.mulAdd`. A NaN lane with one NaN among its operands gives that NaN;
+// with several, or from `Infinity * 0`, which NaN depends on the CPU, so those print as `NaN` and
+// hash as one value. `dotAddFast` promises only the sum of its lanes up to rounding: checked on
+// inputs whose products and sums are exact.
+
+import { bf16x8, f16x8, f32x4 } from "velt/simd";
+
+let seed: u32 = 2463534242;
+
+function next(): u32 {
+  seed = seed ^ (seed << 13);
+  seed = seed ^ (seed >>> 17);
+  seed = seed ^ (seed << 5);
+  return seed;
+}
+
+function fma(a: f32, b: f32, c: f32): f32 {
+  return f32x4.splat(a).mulAdd(f32x4.splat(b), f32x4.splat(c)).lane(0);
+}
+
+function isNan(bits: u32): bool {
+  return (bits & 0x7fffffff) > 0x7f800000;
+}
+
+function isInf(bits: u32): bool {
+  return (bits & 0x7fffffff) == 0x7f800000;
+}
+
+function isZero(bits: u32): bool {
+  return (bits & 0x7fffffff) == 0;
+}
+
+function hex(x: u32): string {
+  return "0x" + x.toString(16);
+}
+
+// The bits of each lane, `NaN` for the lanes `any` marks (which NaN is the CPU's business).
+function show(what: string, v: f32x4, any: bool[]) {
+  const u = v.asU32x4();
+  const out: string[] = [];
+  for (let k: usize = 0; k < 4; k++) {
+    if (any[k]) {
+      out.push(isNan(u.lane(k)) ? "NaN" : `not a NaN: ${hex(u.lane(k))}`);
+    } else {
+      out.push(hex(u.lane(k)));
+    }
+  }
+  console.log(what, out.join(" "));
+}
+
+const EXACT: bool[] = [false, false, false, false];
+
+function acc(b0: u32, b1: u32, b2: u32, b3: u32): f32x4 {
+  const xs: f32[] = [f32.fromBits(b0), f32.fromBits(b1), f32.fromBits(b2), f32.fromBits(b3)];
+  return f32x4.load(xs);
+}
+
+function f16s(bits: u32[]): f16x8 {
+  const xs: f16[] = [];
+  for (const p of bits) {
+    xs.push(f16.fromBits(p as u16));
+  }
+  return f16x8.load(xs);
+}
+
+function bf16s(bits: u32[]): bf16x8 {
+  const xs: bf16[] = [];
+  for (const p of bits) {
+    xs.push(bf16.fromBits(p as u16));
+  }
+  return bf16x8.load(xs);
+}
+
+function fixedF16() {
+  const one = 0x3c00;
+  const zero = acc(0, 0, 0, 0);
+  // Pairing: lanes k and k + 4, not adjacent ones. 1 to 8 times 10 to 80.
+  const a = f16s([0x3c00, 0x4000, 0x4200, 0x4400, 0x4500, 0x4600, 0x4700, 0x4800]);
+  const b = f16s([0x4900, 0x4d00, 0x4f80, 0x5100, 0x5240, 0x5380, 0x5460, 0x5500]);
+  show("f16 pairs", a.dotAdd(b, zero), EXACT);
+  show("f16 pairs twice", a.dotAdd(b, a.dotAdd(b, zero)), EXACT);
+  // Order: 1 + 2^24 rounds to 2^24 before -2^24 comes, so 0, where the other order keeps 1.
+  // Lane 1 the other way round, keeping 1; lane 2 rounding 3 + 2^24 up to even, so 4; lane 3
+  // with no rounding.
+  const big = 0x6c00; // 2^12
+  const neg = 0xec00;
+  const o1 = f16s([big, neg, big, big, neg, big, neg, neg]);
+  const o2 = f16s([big, big, big, big, big, big, big, big]);
+  show("f16 order", o1.dotAdd(o2, acc(0x3f800000, 0x3f800000, 0x40400000, 0xbf800000)), EXACT);
+  // Subnormal f16 lanes (2^-24 and the largest), a subnormal f32 accumulator kept, and the
+  // largest f16 squared. Lanes 0 and 3 cancel exactly, to +0.
+  const s1 = f16s([0x0001, 0x03ff, 0x0000, 0x7bff, 0x8001, 0x0000, 0x0000, 0xfbff]);
+  const s2 = f16s([0x0001, 0x03ff, 0x0000, 0x7bff, 0x0001, 0x0000, 0x0000, 0x7bff]);
+  show("f16 subnormal", s1.dotAdd(s2, acc(0, 0x00000001, 0x00000001, 0)), EXACT);
+  // Zeros: acc -0 stays -0 with products of +0 and -0's sums (fused, exact signs).
+  const z1 = f16s([0x0000, 0x8000, 0x0000, 0x8000, 0x0000, 0x8000, 0x0000, 0x8000]);
+  const z2 = f16s([0x0000, 0x0000, 0x8000, 0x8000, 0x0000, 0x0000, 0x8000, 0x8000]);
+  show("f16 zeros", z1.dotAdd(z2, acc(0x80000000, 0x80000000, 0x80000000, 0x80000000)), EXACT);
+  show("f16 zeros +", z1.dotAdd(z2, zero), EXACT);
+  // Infinity: Inf * 1 + 1, -Inf; Inf with a finite second step; Inf * 0 is a NaN; Inf - Inf too.
+  const inf = 0x7c00;
+  const i1 = f16s([inf, 0xfc00, inf, inf, one, one, 0x0000, 0xfc00]);
+  const i2 = f16s([one, one, 0x0000, one, one, one, inf, one]);
+  show("f16 inf", i1.dotAdd(i2, acc(0x3f800000, 0x3f800000, 0, 0)), [false, false, true, true]);
+  show("f16 acc inf", i2.dotAdd(i2, acc(0x7f800000, 0xff800000, 0, 0)), EXACT);
+  // One NaN among the operands: its payload, quiet. A signalling and a quiet f16 NaN, each in
+  // either operand and either step, and a NaN accumulator.
+  const n1 = f16s([0x7c01, one, one, one, one, one, one, one]);
+  const n2 = f16s([one, 0x7c01, one, one, one, one, 0xfe55, one]);
+  show("f16 nan", n1.dotAdd(n2, acc(0, 0, 0, 0x7fc12345)), EXACT);
+  const n3 = f16s([one, one, one, one, 0x7d55, one, one, one]);
+  show("f16 nan step 2", n3.dotAdd(n2, acc(0, 0, 0, 0xffc00001)), EXACT);
+  // Several NaNs: a NaN.
+  const m1 = f16s([0x7c01, 0x7e01, one, one, 0x7e02, one, 0x7c02, one]);
+  const m2 = f16s([0xfc03, one, one, one, 0x7c03, one, 0x7c04, one]);
+  show("f16 several nans", m1.dotAdd(m2, acc(0x7fc00003, 0x7fc00004, 0x7fc00005, 0)), [true, true, true, false]);
+}
+
+function fixedBf16() {
+  const one = 0x3f80;
+  const zero = acc(0, 0, 0, 0);
+  const a = bf16s([0x3f80, 0x4000, 0x4040, 0x4080, 0x40a0, 0x40c0, 0x40e0, 0x4100]);
+  const b = bf16s([0x4120, 0x41a0, 0x41f0, 0x4220, 0x4248, 0x4270, 0x428c, 0x42a0]);
+  show("bf16 pairs", a.dotAdd(b, zero), EXACT);
+  show("bf16 pairs twice", a.dotAdd(b, a.dotAdd(b, zero)), EXACT);
+  // Order: 2^12 * 2^12 as for f16.
+  const big = 0x4580;
+  const neg = 0xc580;
+  const o1 = bf16s([big, neg, big, big, neg, big, neg, neg]);
+  const o2 = bf16s([big, big, big, big, big, big, big, big]);
+  show("bf16 order", o1.dotAdd(o2, acc(0x3f800000, 0x3f800000, 0x40400000, 0xbf800000)), EXACT);
+  // A product past f32's range or below its subnormals, which only a fused addition keeps:
+  // (1 + 2^-7) * 2^64 squared less the largest f32 is finite (rounded apart, Infinity);
+  // ((1 + 2^-7) * 2^-75)^2 less 2^-149 rounds to -0 (rounded apart, +0).
+  const huge = 0x5f81;
+  const tiny = 0x1a01;
+  const f1 = bf16s([huge, tiny, tiny, 0x0001, 0, 0x8000, 0, 0]);
+  const f2 = bf16s([huge, tiny, tiny, 0x0001, 0, 0, 0, 0]);
+  show("bf16 fused", f1.dotAdd(f2, acc(0xff7fffff, 0x80000001, 0, 0x00000001)), EXACT);
+  // Subnormal lanes (2^-133) keep their value on widening; 2^-133 * 2^133 is 1.
+  const s1 = bf16s([0x0001, 0x8001, 0x007f, 0x0080, 0, 0, 0, 0]);
+  const s2 = bf16s([0x7f00, 0x7f00, 0x3f80, 0x3f80, 0, 0, 0, 0]);
+  show("bf16 subnormal", s1.dotAdd(s2, zero), EXACT);
+  const inf = 0x7f80;
+  const i1 = bf16s([inf, 0xff80, inf, inf, one, one, 0x0000, 0xff80]);
+  const i2 = bf16s([one, one, 0x0000, one, one, one, inf, one]);
+  show("bf16 inf", i1.dotAdd(i2, acc(0x3f800000, 0x3f800000, 0, 0)), [false, false, true, true]);
+  const n1 = bf16s([0x7f81, one, one, one, one, one, one, one]);
+  const n2 = bf16s([one, 0x7f81, one, one, one, one, 0xffd5, one]);
+  show("bf16 nan", n1.dotAdd(n2, acc(0, 0, 0, 0x7fc12345)), EXACT);
+  const m1 = bf16s([0x7f81, 0x7fc1, one, one, 0x7fc2, one, 0x7f82, one]);
+  const m2 = bf16s([0xff83, one, one, one, 0x7f83, one, 0x7f84, one]);
+  show("bf16 several nans", m1.dotAdd(m2, acc(0x7fc00003, 0x7fc00004, 0x7fc00005, 0)), [true, true, true, false]);
+}
+
+function fnv(h: u32, x: u32): u32 {
+  let r = h;
+  for (let s: u32 = 0; s < 32; s += 8) {
+    r = (r ^ ((x >>> s) & 255)) * 16777619;
+  }
+  return r;
+}
+
+// An operand pattern for random round `i`: anything; numbers near 1; subnormal or very small;
+// large. Bf16's "near 1" and exponent bands are its own.
+function pattern(i: u32, f16Lanes: bool): u32 {
+  const x = next() & 0xffff;
+  if (f16Lanes) {
+    switch (i & 3) {
+      case 0:
+        return x;
+      case 1:
+        return (x & 0x83ff) | 0x3c00;
+      case 2:
+        return x & 0x83ff;
+      default:
+        return (x & 0x83ff) | 0x6c00;
+    }
+  }
+  switch (i & 3) {
+    case 0:
+      return x;
+    case 1:
+      return (x & 0x807f) | 0x3f80;
+    case 2:
+      // About 2^-75, where the product falls below f32's subnormals.
+      return (x & 0x807f) | 0x1a00;
+    default:
+      // About 2^64, where it passes f32's range.
+      return (x & 0x807f) | 0x5f80;
+  }
+}
+
+// One accumulator lane: anything; a small number; or about minus the first product, so the
+// steps cancel and rounding shows.
+function accLane(i: u32, product: f32): u32 {
+  const x = next();
+  switch ((i >>> 2) & 3) {
+    case 0:
+      return x;
+    case 1:
+      return (x & 0x807fffff) | 0x3f800000;
+    case 2:
+      return (-product).toBits() ^ (x & 7);
+    default:
+      return x & 0x807fffff;
+  }
+}
+
+function randomRounds(f16Lanes: bool, rounds: u32) {
+  let hash: u32 = 2166136261;
+  let wrong = 0;
+  for (let i: u32 = 0; i < rounds; i++) {
+    const pa: u32[] = [];
+    const pb: u32[] = [];
+    for (let k: usize = 0; k < 8; k++) {
+      pa.push(pattern(i, f16Lanes));
+      pb.push(pattern(i, f16Lanes));
+    }
+    const wide = (p: u32): f32 => (f16Lanes ? f16.fromBits(p as u16) as f32 : bf16.fromBits(p as u16) as f32);
+    const lanes: u32[] = [];
+    for (let k: usize = 0; k < 4; k++) {
+      lanes.push(accLane(i, wide(pa[k]) * wide(pb[k])));
+    }
+    const start = acc(lanes[0], lanes[1], lanes[2], lanes[3]);
+    const r = (f16Lanes ? f16s(pa).dotAdd(f16s(pb), start) : bf16s(pa).dotAdd(bf16s(pb), start)).asU32x4();
+    for (let k: usize = 0; k < 4; k++) {
+      const [a0, b0, a1, b1] = [wide(pa[k]), wide(pb[k]), wide(pa[k + 4]), wide(pb[k + 4])];
+      const want = fma(a1, b1, fma(a0, b0, f32.fromBits(lanes[k]))).toBits();
+      const got = r.lane(k);
+      let nans = isNan(lanes[k]) ? 1 : 0;
+      let invalid = false;
+      for (const [x, y] of [[a0, b0], [a1, b1]]) {
+        const [bx, by] = [x.toBits(), y.toBits()];
+        nans += (isNan(bx) ? 1 : 0) + (isNan(by) ? 1 : 0);
+        invalid = invalid || (isInf(bx) && isZero(by)) || (isZero(bx) && isInf(by));
+      }
+      if (isNan(want) || isNan(got)) {
+        // One NaN operand: its bits, on every path. Otherwise only that it is a NaN.
+        const strict = nans == 1 && !invalid;
+        wrong += isNan(want) && isNan(got) && (!strict || want == got) ? 0 : 1;
+        hash = fnv(hash, 0x7fc00000);
+      } else {
+        wrong += want == got ? 0 : 1;
+        hash = fnv(hash, got);
+      }
+    }
+  }
+  console.log(f16Lanes ? "f16" : "bf16", "random", rounds, "mismatches", wrong, "hash", hex(hash));
+}
+
+// `dotAddFast`: small integers, so every product and sum is exact whichever lanes they go to.
+function fast() {
+  const a: bf16[] = [1, 2, 3, 4, 5, 6, 7, 8];
+  const b: bf16[] = [8, 7, 6, 5, 4, 3, 2, 1];
+  const r = bf16x8.load(a).dotAddFast(bf16x8.load(b), f32x4.splat(1));
+  console.log("bf16 fast sum", r.lane(0) + r.lane(1) + r.lane(2) + r.lane(3));
+}
+
+function main() {
+  fixedF16();
+  fixedBf16();
+  randomRounds(true, 8000);
+  randomRounds(false, 8000);
+  fast();
+}

@@ -10,7 +10,9 @@
 //!
 //! Code for a CPU above the baseline checks at start-up that the CPU has what it was built for
 //! ([`required_features`] for Cranelift's code, the LLVM backend's own for clang's;
-//! `velt_rt_check_cpu` in rt_abi.md "CPU check").
+//! `velt_rt_check_cpu` in rt_abi.md "CPU check"), except FEAT_FHM, FEAT_BF16 and AVX512-BF16,
+//! which the check does not know (rt_abi.md "SIMD"): such code stops with an illegal instruction
+//! on a CPU without them.
 
 use cranelift_codegen::isa::{self, Builder as IsaBuilder};
 use cranelift_codegen::settings::{self, Configurable};
@@ -110,9 +112,9 @@ pub fn x86_features_from_macros(defines: &str) -> u32 {
 }
 
 /// The arm64 features the start-up check knows, by bit of its mask, with the macro clang defines
-/// for each (`clang -dM -E -mcpu=<cpu>`): only those generated code uses (the dot product's
-/// `sdot`); the arm64 baseline (armv8-a with NEON) needs none. Part of rt_abi.md "CPU check", in
-/// the runtime's order.
+/// for each (`clang -dM -E -mcpu=<cpu>`): the dot product's `sdot`, not all that generated code
+/// uses (FEAT_FHM's `fmlal` and FEAT_BF16's `bfdot` are not here; rt_abi.md "SIMD"); the arm64
+/// baseline (armv8-a with NEON) needs none. Part of rt_abi.md "CPU check", in the runtime's order.
 pub const ARM_FEATURES: [(&str, &str); 1] = [("DOTPROD", "__ARM_FEATURE_DOTPROD")];
 
 /// The features of [`ARM_FEATURES`] whose macro `defines` (clang's `-dM -E` output) defines.
