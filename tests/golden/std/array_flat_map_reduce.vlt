@@ -1,0 +1,27 @@
+// `flatMap` (callbacks returning arrays) and `reduce` without an initial value, as in JS: the
+// first element starts the accumulation, and an empty array throws a `TypeError`.
+
+type Opt = { value: string; group?: string };
+const options: Opt[] = [{ value: "a", group: "g1" }, { value: "b", group: "g1" }, { value: "c", group: "g2" }];
+const rows = options.flatMap((option, i) => {
+  const header = option.group && (i === 0 || option.group !== options[i - 1].group) ? [`# ${option.group}`] : [];
+  return [...header, `- ${option.value}`];
+});
+console.log(rows.join("|"));
+console.log([1, 2, 3].flatMap((x) => (x % 2 ? [x, x * 10] : [])).join(","));
+const grow = [1, 2];
+console.log(grow.flatMap((x) => { grow.push(x); return [x]; }).join(","), grow.length);
+
+function overlayCR(line: string): string {
+  if (!line.includes("\r")) return line;
+  return line.split("\r").reduce((acc, seg) => seg + acc.slice(seg.length));
+}
+console.log(overlayCR("hello world\rHE\rh"));
+console.log([3, 1, 4, 1, 5].reduce((a, b) => Math.max(a, b)), [7].reduce((a, b) => a + b));
+console.log([1, 2, 3].reduce((acc, x, i) => acc + x * i));
+console.log([1, 2, 3].reduce((acc, x) => acc + x, 10));
+try {
+  ([] as number[]).reduce((a, b) => a + b);
+} catch (e) {
+  console.log(e instanceof TypeError, (e as Error).message);
+}

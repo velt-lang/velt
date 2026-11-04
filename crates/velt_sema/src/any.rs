@@ -171,6 +171,19 @@ impl Ctx<'_> {
         }
     }
 
+    /// The type of an `infer` name that found nothing: `unknown`, as in TypeScript
+    /// (`{} extends { __slots?: infer S } ? S : {}` is `unknown`); an error without the prelude.
+    pub(crate) fn infer_found_nothing(&mut self, name: &str, span: velt_common::Span) -> TyId {
+        if let Some(defs) = self.any {
+            return self.ty.intern(TyKind::Dyn(defs.unknown, vec![]));
+        }
+        self.err(
+            format!("`{name}` is inferred as `unknown` here, which is not supported yet (#934)"),
+            span,
+        );
+        self.ty.error
+    }
+
     /// Is `t` `any` or `unknown`?
     pub(crate) fn dynamic(&self, t: TyId) -> Option<Dynamic> {
         let defs = self.any?;

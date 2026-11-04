@@ -277,18 +277,7 @@ impl Ctx<'_> {
             return *b;
         }
         if env.unknowns.iter().any(|u| u == name) {
-            // An `infer` that found nothing is `unknown`, as in TypeScript
-            // (`{} extends { __slots?: infer S } ? S : {}` is `unknown`).
-            if let Some(defs) = self.any {
-                return self.ty.intern(TyKind::Dyn(defs.unknown, vec![]));
-            }
-            self.err(
-                format!(
-                    "`{name}` is inferred as `unknown` here, which is not supported yet (#934)"
-                ),
-                t.span,
-            );
-            return self.ty.error;
+            return self.infer_found_nothing(name, t.span);
         }
         if name == "this" {
             return self.resolve_this_type(t, args, env);
