@@ -96,6 +96,7 @@ mod known;
 mod layout_merge;
 mod literals;
 mod module_chunks;
+mod module_destructure;
 mod module_scripts;
 mod module_state;
 mod moves;
@@ -263,6 +264,9 @@ fn check_timed(
     let modules = chunks.modules.as_deref().unwrap_or(modules);
     let mut merge_diags = chunks.diags.clone();
     merge_diags.extend(call_sigs::check(modules));
+    let (destructured, diags) = module_destructure::rewrite(modules);
+    merge_diags.extend(diags);
+    let modules = destructured.as_deref().unwrap_or(modules);
     let global_ns = namespaces::global_namespaces(modules);
     let (flat, ns_private, diags) = namespaces::flatten(modules);
     merge_diags.extend(diags);

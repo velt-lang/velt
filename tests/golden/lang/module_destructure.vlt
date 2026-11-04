@@ -1,0 +1,17 @@
+// Destructuring in module-level declarations: each name reads its part of the value, as the
+// declarations written out would (exported ones too), with nested and array patterns.
+import { render, teardown } from "./_module_destructure/renderer";
+
+const config = { name: "velt", size: { w: 80, h: 24 }, mode: null as string | null };
+const { name, size: { w, h }, mode } = config;
+
+const list = [1, 2, 3, 4];
+const [first, , third, ...others] = list;
+
+let { name: label } = config;
+label = `${label}!`;
+
+console.log(render("hello"), teardown());
+console.log(name, w, h, mode);
+console.log(first, third, others.join(","));
+console.log(label);

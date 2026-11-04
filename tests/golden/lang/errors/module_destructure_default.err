@@ -1,0 +1,2 @@
+module_destructure_default.vlt:4:9: error: a default (`= value`) in a module-level destructuring declaration is not supported yet
+module_destructure_default.vlt:5:15: error: a rest pattern (`...rest`) in a module-level declaration is not supported yet
