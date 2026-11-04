@@ -54,6 +54,9 @@ e0, one step on
 waits for e0
 e3 after sleep(1)
 [ 'e2', 'e3', 'e0' ]
+an inline join over due timers, then only a later timer
+joined
+later
 a join over due timers, then only a later timer
 joined
 later

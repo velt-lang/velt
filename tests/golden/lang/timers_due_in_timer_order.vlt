@@ -195,7 +195,15 @@ async function main() {
   console.log(await Promise.all([e2, e3, e1]));
 
   // Firing stops at a held timer and arms nothing; only the end of the poll can arm the later one,
-  // and without that these programs never end.
+  // and without that an inline join (this one, and the one in a promise below) never ends. A stored
+  // join's leaves have different wakers, so nothing is held there: those two only have to finish.
+  console.log("an inline join over due timers, then only a later timer");
+  const l0 = laterTimer(40);
+  await Promise.all([sleep(0), sleep(0)]);
+  console.log("joined");
+  await l0;
+  console.log("later");
+
   console.log("a join over due timers, then only a later timer");
   const l1 = laterTimer(40);
   const j1 = Promise.all([sleep(0), sleep(1)]);
@@ -227,7 +235,7 @@ async function main() {
 
   // Polled in turn after the due ones, with nothing unseen: it still waits for its deadline.
   console.log("a timer not due yet, polled after the due ones");
-  const started = performance.now();
+  const before = performance.now();
   await Promise.all([sleep(0), sleep(0), sleep(100)]);
-  console.log(performance.now() - started >= 90);
+  console.log(performance.now() - before >= 90);
 }
