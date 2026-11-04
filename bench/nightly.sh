@@ -75,7 +75,7 @@ done
 BENCHES=("${programs[@]}")
 for name in await_chain await_deep hot_loop fanout_all fanout_all_throwing all_small_stored \
   spawn_many channel_pipeline timers_fire timers_due_join timers_due_stored timers_due_in_promise \
-  top_level_await timer_await timer_await_top \
+  timers_due_reversed top_level_await timer_await timer_await_top \
   promise_identity_loop; do
   BENCHES+=("$ROOT/bench/async/$name.vlt")
 done
