@@ -1,0 +1,82 @@
+// A driver written in Velt takes a statement's parameters through `ParamSink`: what `writeParams`
+// hands it for each shape of parameters, with no text in between.
+import { ParamSink, writeParams } from "velt/db";
+
+class Log implements ParamSink {
+  seen: string[] = [];
+
+  object(): void {
+    this.seen.push("object");
+  }
+  name(name: string): void {
+    this.seen.push(`name ${name}`);
+  }
+  int(v: i64): void {
+    this.seen.push(`int ${v}`);
+  }
+  uint(v: u64): void {
+    this.seen.push(`uint ${v}`);
+  }
+  float(v: f64): void {
+    this.seen.push(`float ${v}`);
+  }
+  bool(v: bool): void {
+    this.seen.push(`bool ${v}`);
+  }
+  null(): void {
+    this.seen.push("null");
+  }
+  text(v: string): void {
+    this.seen.push(`text ${v}`);
+  }
+  blob(v: u8[]): void {
+    this.seen.push(`blob ${v.join(",")}`);
+  }
+}
+
+// A sink may refuse a value, as a driver does for a parameter the statement doesn't have.
+class Refusing extends Log {
+  override name(name: string): void {
+    if (name == "missing") {
+      throw new Error(`no parameter :${name}`);
+    }
+    super.name(name);
+  }
+}
+
+function show<P>(label: string, params: P) {
+  const log = new Log();
+  const taken = writeParams<P, Log>(log, params);
+  console.log(`${label}: ${taken} [${log.seen.join(", ")}]`);
+}
+
+class Row {
+  id: i64 = 7;
+  label: string | null = null;
+  #hidden: i64 = 1;
+}
+
+function main() {
+  const bytes: u8[] = [1, 2];
+  const big: u64 = 18446744073709551615u64;
+  const none: i64 | null = null;
+  const some: i64 | null = 3;
+  show("object", { id: 1 as i64, name: "a", score: 1.5, ok: true, raw: bytes });
+  show("class", new Row());
+  show("array", [1 as i64, 2 as i64]);
+  show("tuple", [1 as i64, "two"] as [i64, string]);
+  show("blobs", [bytes, bytes]);
+  show("lone", "x");
+  show("unsigned", big);
+  show("null", none);
+  show("present", some);
+  // What can't go value by value: nothing reaches the sink.
+  show("nested", { a: { b: 1 as i64 } });
+  show("union", 1 as (i64 | string));
+  const refusing = new Refusing();
+  try {
+    writeParams(refusing, { id: 1 as i64, missing: 2 as i64 });
+  } catch (e) {
+    console.log(`refused: ${e.message} after [${refusing.seen.join(", ")}]`);
+  }
+}

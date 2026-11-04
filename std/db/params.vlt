@@ -1,0 +1,16 @@
+// velt/db (internal): `writeParams`, a statement's parameters handed to a `ParamSink`.
+
+import { writeValues } from "velt/db/generated";
+import { ParamSink } from "velt/db/param_sink";
+
+/**
+ * Hands `params` to `sink` value by value, with no text in between, by code generated for `P`: an
+ * array, a tuple or a value by position, an object's fields by name, each value bound as its JSON
+ * text would read back (an integral number an integer, a `u8[]` field a blob). True once they
+ * went to the sink; false, having done nothing, for a type that can't go that way (a nested
+ * object, a union): the driver then takes `JSON.stringify(params)`, which binds the same values.
+ * What the sink's methods throw (a parameter the statement doesn't have) passes through.
+ */
+export function writeParams<P, S extends ParamSink>(sink: S, params: P): bool throws Error {
+  return writeValues<P, S>(sink, params);
+}

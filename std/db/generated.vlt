@@ -48,3 +48,12 @@ export declare generated("velt/db/generate/bind") function bindValues<P>(
   sink: u64,
   params: P,
 ): bool;
+
+/**
+ * Hands `params` to a `ParamSink` value by value; false, having done nothing, for a type that
+ * can't be handed over that way. What the sink's methods throw passes through.
+ */
+export declare generated("velt/db/generate/bind") function writeValues<P, S>(
+  sink: S,
+  params: P,
+): bool throws Error;

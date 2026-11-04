@@ -1,7 +1,7 @@
-// velt/db (internal): the generator of `bindValues<P>` (generated.vlt), run at compile time
-// (docs/internals/design/source-generators.md): a statement's parameters handed to a native
-// driver's parameter sink value by value (`velt_rt_param_*`, velt/db/rt), as their JSON text
-// would bind: an array or tuple its values in order, an object each member's name and value, a
+// velt/db (internal): the generators of `bindValues<P>` and `writeValues<P, S>` (generated.vlt), run
+// at compile time (docs/internals/design/source-generators.md): a statement's parameters handed
+// value by value to a native driver's parameter sink (`velt_rt_param_*`, velt/db/rt) or to a
+// `ParamSink`, as their JSON text would bind: an array or tuple its values in order, an object each member's name and value, a
 // lone value itself (a `u8[]` member or element a blob). Only types whose JSON text binds plainly
 // are handed over (numbers, booleans, strings, `T | null` of those, `u8[]` inside an array or an
 // object, and objects of such fields); for any other the function returns false having done
@@ -78,38 +78,74 @@ function bindable(model: Model, t: Type): bool {
   return scalar(model, t);
 }
 
+/** Where the generated code hands the values: a native driver's sink, or a `ParamSink`. */
+interface Target {
+  /** The statement that hands over one value (`args`: its text, empty for none). */
+  call(kind: string, args: string): string;
+}
+
+class NativeSink implements Target {
+  call(kind: string, args: string): string {
+    return args.length == 0
+      ? `velt_rt_param_${kind}(sink);`
+      : `velt_rt_param_${kind}(sink, ${args});`;
+  }
+}
+
+/** The `ParamSink` methods, named for what they take (the native functions by their types). */
+class VeltSink implements Target {
+  call(kind: string, args: string): string {
+    const method =
+      kind == "i64"
+        ? "int"
+        : kind == "u64"
+          ? "uint"
+          : kind == "f64" ? "float" : kind == "str" ? "text" : kind == "bytes" ? "blob" : kind;
+    return `sink.${method}(${args});`;
+  }
+}
+
 /** Writes the code that hands the value `v` of type `t` to the sink: a scalar or a blob. */
-function bindMember(out: Output, model: Model, t: Type, v: string): void {
+function bindMember(out: Output, model: Model, to: Target, t: Type, v: string): void {
   if (isBlob(model, t)) {
-    out.line(`velt_rt_param_bytes(sink, ${v});`);
+    out.line(to.call("bytes", v));
     return;
   }
-  bindValue(out, model, t, v);
+  bindValue(out, model, to, t, v);
 }
 
 /** Writes the code that hands the scalar `v` of type `t` to the sink. */
-function bindValue(out: Output, model: Model, t: Type, v: string): void {
+function bindValue(out: Output, model: Model, to: Target, t: Type, v: string): void {
   if (t.kind == "option") {
     const x = out.fresh("x");
     out.line(`const ${x} = ${v};`);
-    out.line(`if (${x} == null) { velt_rt_param_null(sink); } else {`);
-    bindValue(out, model, model.type(t.args[0]), x);
+    out.line(`if (${x} == null) { ${to.call("null", "")} } else {`);
+    bindValue(out, model, to, model.type(t.args[0]), x);
     out.line(`}`);
   } else if (t.kind == "number" && (t.repr == "f64" || t.repr == "f32")) {
-    out.line(`velt_rt_param_f64(sink, ${v} as f64);`);
+    out.line(to.call("f64", `${v} as f64`));
   } else if (t.kind == "number" && t.repr.startsWith("u")) {
-    out.line(`velt_rt_param_u64(sink, ${v} as u64);`);
+    out.line(to.call("u64", `${v} as u64`));
   } else if (t.kind == "number") {
-    out.line(`velt_rt_param_i64(sink, ${v} as i64);`);
+    out.line(to.call("i64", `${v} as i64`));
   } else if (t.kind == "boolean") {
-    out.line(`velt_rt_param_bool(sink, ${v});`);
+    out.line(to.call("bool", v));
   } else {
-    out.line(`velt_rt_param_str(sink, ${v});`);
+    out.line(to.call("str", v));
   }
 }
 
 /** The generator of `bindValues<P>(sink: u64, params: P): bool`. */
 export function bindValues(req: InstanceRequest, out: Output): void {
+  generate(req, out, new NativeSink());
+}
+
+/** The generator of `writeValues<P, S>(sink: S, params: P): bool`. */
+export function writeValues(req: InstanceRequest, out: Output): void {
+  generate(req, out, new VeltSink());
+}
+
+function generate(req: InstanceRequest, out: Output, to: Target): void {
   const model = req.model;
   const t = model.type(req.args[0]);
   const [sink, params] = [req.params[0], req.params[1]];
@@ -123,23 +159,23 @@ export function bindValues(req: InstanceRequest, out: Output): void {
   if (t.kind == "array") {
     const e = model.type(t.args[0]);
     out.line(`for (const x of ${params}) {`);
-    bindMember(out, model, e, "x");
+    bindMember(out, model, to, e, "x");
     out.line(`}`);
   } else if (t.kind == "tuple") {
     for (let i: i64 = 0; i < (t.args.length as i64); i++) {
-      bindMember(out, model, model.type(t.args[i]), `${params}[${i}]`);
+      bindMember(out, model, to, model.type(t.args[i]), `${params}[${i}]`);
     }
   } else if (t.kind == "object" || t.kind == "struct" || t.kind == "class") {
-    out.line(`velt_rt_param_object(sink);`);
+    out.line(to.call("object", ""));
     for (const f of t.fields) {
       if (hiddenKey(f)) {
         continue;
       }
-      out.line(`velt_rt_param_name(sink, ${out.literal(f.name)});`);
-      bindMember(out, model, model.type(f.type), member(out, params, f.name));
+      out.line(to.call("name", out.literal(f.name)));
+      bindMember(out, model, to, model.type(f.type), member(out, params, f.name));
     }
   } else {
-    bindValue(out, model, t, params);
+    bindValue(out, model, to, t, params);
   }
   out.line(`return true;`);
 }
