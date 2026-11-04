@@ -176,10 +176,8 @@ impl Walk<'_> {
         for s in stmts {
             match &s.kind {
                 ast::StmtKind::Var(v) => self.bind_pattern(&v.pattern),
-                ast::StmtKind::Item(item) => {
-                    if item_name(item) == Some(self.id.name.as_str()) {
-                        self.shadow = Some(Shadow::Item);
-                    }
+                ast::StmtKind::Item(item) if item_name(item) == Some(self.id.name.as_str()) => {
+                    self.shadow = Some(Shadow::Item);
                 }
                 _ => {}
             }
