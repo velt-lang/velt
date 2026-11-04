@@ -332,6 +332,8 @@ pub(crate) struct FnCx<'a, 'm> {
     /// The call about to be checked is of a `declare system function`: its byte buffer
     /// parameters take views too (`system_args.rs`).
     pub system_args: bool,
+    /// ...and it is a C function's (`declare c`), for the messages.
+    pub c_args: bool,
     /// Checking the `Object.keys(x)` of a plain value inside the typed proxy hooks (`proxy.rs`).
     pub proxy_keys_inner: bool,
     /// How many `unsafe { … }` blocks and expressions enclose the code being
@@ -441,6 +443,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             weak_key_args: false,
             asserted_target: false,
             system_args: false,
+            c_args: false,
             proxy_keys_inner: false,
             unsafe_depth: 0,
             explicit_type_spans: None,

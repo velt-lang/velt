@@ -450,6 +450,8 @@ struct Cx<'h> {
     c_symbols: FxHashMap<String, CDecl>,
     /// The C declarations whose signature clash is reported (once each).
     c_clashes_reported: rustc_hash::FxHashSet<DefId>,
+    /// velt/ffi's hooks found so far (c_call.rs): each is looked up once per program.
+    ffi_hooks: FxHashMap<&'static str, DefId>,
     /// Per user call site of a standard-library function, that function (call.rs): what an
     /// unavailable system function deep in std is reported as, at the user's call.
     std_calls: FxHashMap<velt_common::Span, DefId>,

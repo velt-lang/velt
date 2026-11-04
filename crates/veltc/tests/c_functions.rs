@@ -243,12 +243,12 @@ fn what_cant_cross_and_unknown_libraries_are_errors() {
     let dir = test_dir::TestDir::new();
     project(
         dir.path(),
-        "declare c(\"c\") function puts(s: string): i32;\ndeclare c(\"c\") async function later(): void;\n\nexport const x = 1;\n",
+        "declare c(\"c\") function puts(s: string): i32;\ndeclare c(\"c\") async function later(): Promise<void>;\n\nexport const x = 1;\n",
         "import { x } from \"cmath\";\n\nfunction main() {\n  console.log(x);\n}\n",
     );
     let out = check(dir.path());
     for want in [
-        "parameter `s` of C function `puts` has type `string`, which cannot cross to C",
+        "`string` cannot be passed to C: declare parameter `s` of `puts` as `StrBytes`",
         "C function `later` can't be `async` yet",
     ] {
         assert!(out.contains(want), "missing `{want}` in:\n{out}");
@@ -307,4 +307,113 @@ fn velt_dev_calls_c_functions_and_reports_a_missing_one() {
     let err = dev.stderr_since(reload_support::Mark::default()).join("\n");
     assert!(err.contains("lib.vlt:1:1)"), "{err}");
     assert!(!err.contains("panicked"), "{err}");
+}
+
+const POINTERS: &str = include_str!("c_functions/pointers.vlt");
+
+/// Pointers to C types (`declare c type`), `Ptr<T> | null` and `null`, arrays of numbers and
+/// byte views as buffers, and strings as `StrBytes` (a lone surrogate passes as U+FFFD), in
+/// debug and release builds.
+#[test]
+fn pointers_buffers_and_strings_cross() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        POINTERS,
+        "import { written, same, filled, copied, roundTrip, equal } from \"cmath\";\n\nfunction main() {\n  console.log(written(\"abc\"), same(\"hello\", \"help\", 3), same(\"hello\", \"help\", 4));\n  console.log(filled(4).join(\",\"), copied([1.5, 2.5, -3]).join(\",\"), roundTrip([1, 2, 3, 250]).join(\",\"));\n  console.log(equal(\"héllo\", \"héllo\"), equal(\"a\" + String.fromCharCode(0xd800), \"a\\u{fffd}\"));\n  const long = \"a string far longer than an inline one, \".repeat(3);\n  console.log(equal(long, long), equal(long + \"x\", long + \"y\"), equal(`${long}é`, long + \"é\"));\n}\n",
+    );
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let o = velt(dir.path(), args);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "velt {args:?} failed:\n{stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "3 true false\n7,7,7,7 1.5,2.5,-3 1,2,3,250\ntrue true\ntrue false true\n",
+            "velt {args:?}:\n{stderr}"
+        );
+    }
+}
+
+/// Only velt/ffi's `StrBytes` passes a string's bytes: a look-alike alias of `string` is a
+/// `string` (and velt/ffi's hooks may not even be loaded).
+#[test]
+fn a_look_alike_str_bytes_is_a_string() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "type StrBytes = string;\n\ndeclare c(\"c\") function memcmp(a: StrBytes, b: StrBytes, n: usize): i32;\n\nexport function f(): i32 {\n  // SAFETY: both have a byte.\n  return unsafe { memcmp(\"a\", \"b\", 1) };\n}\n",
+        "import { f } from \"cmath\";\n\nfunction main() {\n  console.log(f());\n}\n",
+    );
+    let out = check(dir.path());
+    assert!(out.contains("`string` cannot be passed to C"), "{out}");
+    assert!(!out.contains("ICE"), "{out}");
+}
+
+#[test]
+fn pointer_types_and_strings_are_checked() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { Ptr } from \"velt/ffi\";\n\ndeclare c type FILE;\n\ndeclare c(\"c\") function fclose(f: Ptr<FILE>): i32;\ndeclare c(\"c\") function malloc(n: usize): Ptr<u8> | null;\ndeclare c(\"c\") function puts(s: string): i32;\n\nexport function f(): void {\n  // SAFETY: only types are checked here.\n  unsafe {\n    const p = malloc(1);\n    if (p !== null) {\n      fclose(p);\n    }\n  }\n  const forged = Ptr.at<FILE>(8);\n}\n",
+        "import { f } from \"cmath\";\n\nfunction main() {\n  f();\n}\n",
+    );
+    let out = check(dir.path());
+    for want in [
+        "`string` cannot be passed to C: declare parameter `s` of `puts` as `StrBytes`",
+        "`Ptr<u8>`",
+        "calling unsafe",
+    ] {
+        assert!(out.contains(want), "missing `{want}` in:\n{out}");
+    }
+}
+
+/// A `declare c type` exists only behind a `Ptr`: `new` on it is an error, in its package and
+/// in a program importing it; pointers to different C types never convert implicitly; a
+/// read-only array passed for a buffer C writes names the C function.
+#[test]
+fn c_types_are_only_behind_pointers() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { Ptr } from \"velt/ffi\";\n\nexport declare c type FILE;\n\ndeclare c(\"c\") function malloc(n: usize): Ptr<u8> | null;\ndeclare c(\"c\") function fclose(f: Ptr<FILE>): i32;\ndeclare c(\"c\") function memset(dst: u8[], c: i32, n: usize): Ptr<u8>;\n\nconst FIXED: readonly u8[] = [1, 2];\n\nexport function f(): void {\n  const mine = new FILE();\n  // SAFETY: only types are checked here.\n  unsafe {\n    const p = malloc(1);\n    if (p !== null) {\n      fclose(p);\n    }\n    memset(FIXED, 0, 2);\n  }\n}\n",
+        "import { f, FILE } from \"cmath\";\n\nfunction main() {\n  const theirs = new FILE();\n  f();\n}\n",
+    );
+    let out = check(dir.path());
+    assert_eq!(
+        out.matches("`FILE` is a C type: it exists only behind a `Ptr<FILE>`")
+            .count(),
+        2,
+        "{out}"
+    );
+    assert!(out.contains("a `Ptr<u8>` is not a `Ptr<FILE>`"), "{out}");
+    assert!(out.contains("`Ptr.at<FILE>(Ptr.addressOf(p))`"), "{out}");
+    assert!(out.contains("a buffer the C function writes"), "{out}");
+}
+
+/// An empty array reaches C as a non-null address (C's `memset` and `memcpy` given NULL are
+/// undefined behaviour even for 0 bytes): a `[]` literal holds a null data pointer, an emptied
+/// array a dangling one. A C function declared to return `Ptr<T>` that returns NULL stops the
+/// program, naming it.
+#[test]
+fn empty_arrays_are_never_null_and_a_null_ptr_result_is_caught() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { Ptr } from \"velt/ffi\";\n\ndeclare c(\"c\") function memset(dst: u8[], c: i32, n: usize): Ptr<u8> | null;\ndeclare c(\"c\") function getenv$wrong(name: u8[]): Ptr<u8>;\n\nexport function nonNull(): [bool, bool] {\n  const e: u8[] = [];\n  const g: u8[] = [1];\n  g.pop();\n  // SAFETY: 0 bytes are written.\n  return unsafe { [memset(e, 0, 0) !== null, memset(g, 0, 0) !== null] };\n}\n\nexport function wrong(): void {\n  const name: u8[] = [0x56, 0x45, 0x4c, 0x54, 0x5f, 0x4e, 0x4f, 0x53, 0x55, 0x43, 0x48, 0];\n  // SAFETY: the name is NUL-terminated; the declaration's `Ptr<u8>` result is wrong on purpose.\n  unsafe { getenv$wrong(name); }\n}\n",
+        "import { nonNull, wrong } from \"cmath\";\n\nfunction main() {\n  console.log(nonNull());\n  wrong();\n}\n",
+    );
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let o = velt(dir.path(), args);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "[ true, true ]\n",
+            "{stderr}"
+        );
+        assert!(!o.status.success(), "{stderr}");
+        assert!(
+            stderr.contains("C function `getenv` returned NULL, but its declaration's result is `Ptr<T>`: declare it `Ptr<T> | null`"),
+            "{stderr}"
+        );
+    }
 }

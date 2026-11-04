@@ -74,6 +74,8 @@ const HELPERS: &[&str] = &[
     velt_common::std_dir!(lang_hooks),
     velt_common::std_module!(lang_record),
     velt_common::std_module!(collections),
+    // The hooks lowering calls for C functions' pointers and strings.
+    velt_common::std_dir!(ffi),
 ];
 
 /// The prelude methods (and the few other names) lowering looks up by name: every `"__…"` name

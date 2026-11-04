@@ -1,0 +1,92 @@
+import { Ptr, StrBytes, byteLength } from "velt/ffi";
+
+declare c type FILE;
+
+declare c("c") function memcmp(a: StrBytes, b: StrBytes, n: usize): i32;
+declare c("c") function memset(buf: u8[], c: i32, n: usize): Ptr<u8>;
+declare c("c") function memcpy(dst: f64[], src: readonly f64[], n: usize): Ptr<f64>;
+declare c("c") function tmpfile(): Ptr<FILE> | null;
+declare c("c") function fwrite(buf: readonly u8[], size: usize, n: usize, f: Ptr<FILE>): usize;
+declare c("c") function fread(buf: u8[], size: usize, n: usize, f: Ptr<FILE>): usize;
+declare c("c") function rewind(f: Ptr<FILE>): void;
+declare c("c") function fclose(f: Ptr<FILE>): i32;
+
+declare c("c") function fputc(c: i32, f: Ptr<FILE>): i32;
+declare c("c") function ftell(f: Ptr<FILE>): i64;
+declare c("c") function malloc(n: usize): Ptr<u8> | null;
+declare c("c") function free(p: Ptr<u8> | null): void;
+declare c("c") function free$nothing(p: null): void;
+
+export function written(text: string): i64 {
+  // SAFETY: tmpfile returns a new file or NULL.
+  const f = unsafe { tmpfile() };
+  if (f === null) {
+    return -1;
+  }
+  for (const ch of text) {
+    // SAFETY: `f` is open until the fclose below.
+    unsafe {
+      fputc(ch.charCodeAt(0) as i32, f);
+    }
+  }
+  // SAFETY: `f` is open; it is closed once, and freeing NULL does nothing.
+  const n = unsafe { ftell(f) };
+  unsafe {
+    fclose(f);
+    const m = malloc(16);
+    if (m !== null) {
+      free(m);
+    }
+    free(malloc(16));
+    free$nothing(null);
+  }
+  return n;
+}
+
+export function same(a: string, b: string, n: usize): bool {
+  // SAFETY: both strings have at least `n` bytes (the caller says so); the second argument is
+  // a temporary string, alive until the call returned.
+  return unsafe { memcmp(a, b + "", n) } == 0;
+}
+
+export function filled(n: usize): u8[] {
+  const buf: u8[] = new Array<u8>(n).fill(0);
+  // SAFETY: `buf` has `n` bytes.
+  unsafe {
+    memset(buf, 7, n);
+  }
+  return buf;
+}
+
+export function copied(src: f64[]): f64[] {
+  const dst: f64[] = new Array<f64>(src.length).fill(0);
+  // SAFETY: both arrays have `src.length` doubles.
+  unsafe {
+    memcpy(dst, src, (src.length * 8) as usize);
+  }
+  return dst;
+}
+
+export function roundTrip(data: u8[]): u8[] {
+  // SAFETY: tmpfile returns a new file or NULL; it is closed once below.
+  const f = unsafe { tmpfile() };
+  if (f === null) {
+    return [];
+  }
+  const back: u8[] = new Array<u8>(data.length).fill(0);
+  const view = new Uint8Array(back.length);
+  // SAFETY: the buffers have `data.length` bytes; `f` is open.
+  unsafe {
+    fwrite(data, 1, data.length as usize, f);
+    rewind(f);
+    fread(view, 1, data.length as usize, f);
+    fclose(f);
+  }
+  return Array.from(view).map((x) => x as u8);
+}
+
+export function equal(a: string, b: string): bool {
+  const n = byteLength(a);
+  // SAFETY: `a` has `n` bytes, and `b` at least as many when the lengths agree.
+  return n == byteLength(b) && unsafe { memcmp(a, b, n) } == 0;
+}

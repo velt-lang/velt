@@ -1,0 +1,58 @@
+// velt/ffi (internal): `Ptr<T>`, an address of C memory, and the functions lowering calls to pass
+// one to a C function and to take one from it (crates/velt_vir/src/lower/c_call.rs).
+
+/**
+ * The address of a `T` in C memory (docs/internals/design/c-ffi.md): what a C function declared
+ * with `declare c` returns as `Ptr<T>`, and passes to C when given as an argument. `T` is a type
+ * declared with `declare c type` (or a number type, for a pointer to numbers); `Ptr<T> | null`
+ * is a pointer that may be `NULL`. Nothing in Velt reads or writes through one without `unsafe`
+ * code.
+ */
+export struct Ptr<T> {
+  private address: usize;
+
+  /**
+   * A pointer to `address`. Unsafe: nothing checks that a `T` is there, and C will read or
+   * write it.
+   */
+  static unsafe at<T>(address: usize): Ptr<T> {
+    return { address };
+  }
+
+  /** The address `p` holds. */
+  static addressOf<T>(p: Ptr<T>): usize {
+    return p.address;
+  }
+}
+
+/**
+ * The `Ptr` a C function declared to return `Ptr<T>` returned (std only, lowering calls it
+ * after stopping the program on NULL).
+ */
+export function ptrOf<T>(address: usize): Ptr<T> {
+  // SAFETY: the C function's declaration says it returns a pointer to a `T`; the header check
+  // holds the declaration to the C function's.
+  return unsafe { Ptr.at<T>(address) };
+}
+
+/** The `Ptr` a C function returned, or `null` for `NULL` (std only, as `ptrOf`). */
+export function ptrOrNull<T>(address: usize): Ptr<T> | null {
+  if (address == 0) {
+    return null;
+  }
+  // SAFETY: as in `ptrOf`.
+  return unsafe { Ptr.at<T>(address) };
+}
+
+/** The address a `Ptr` argument passes to C (std only, as `ptrOf`). */
+export function ptrAddress<T>(p: Ptr<T>): usize {
+  return Ptr.addressOf(p);
+}
+
+/** The address a `Ptr<T> | null` argument passes to C, 0 for `null` (std only, as `ptrOf`). */
+export function ptrAddressOrZero<T>(p: Ptr<T> | null): usize {
+  if (p === null) {
+    return 0;
+  }
+  return Ptr.addressOf(p);
+}

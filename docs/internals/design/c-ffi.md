@@ -641,11 +641,18 @@ Step 1 lands in layers, each its own pull request:
    Under `velt dev` a C function no loaded library has is an error naming its declaration.
    Step 1 is complete only with layers 5 (the trust boundary) and 6 (the header check): until
    then any package may declare C functions, unchecked.
-3. The types that cross beyond scalars (`Ptr`, `declare c type`, arrays and views, `StrBytes`,
-   `CString`, `Out`) and the raw reads.
-4. The trust boundary: `native.c` libraries per target, `allowNative`, the export rule for raw
+3. `Ptr<T>` (a std struct over the address; `Ptr.at` is unsafe), `Ptr<T> | null`, `null`,
+   `declare c type`, arrays of numbers and views of bytes as buffers (read at the call, after
+   every argument), `StrBytes` (a well-formed string's own bytes; a std hook makes the U+FFFD
+   copy otherwise) and `byteLength`. Lowering converts pointers through std hooks
+   (std/ffi/ptr.vlt), which LLVM inlines. A `declare c type` can't be made with `new`; an empty
+   array reaches C as a dangling non-null address; a `Ptr<T>` result (not `| null`) that is NULL
+   stops the program, naming the C function, since C has no non-null pointer type a header
+   could state.
+4. `CString`, `Out<T>` and the raw reads (`readUtf8`, `readCString`, `readBytes`).
+5. The trust boundary: `native.c` libraries per target, `allowNative`, the export rule for raw
    types, the `SAFETY` lint and `velt check`'s listing.
-5. The header check and `declare c const`.
+6. The header check and `declare c const`.
 
 ## Decisions
 

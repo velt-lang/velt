@@ -185,3 +185,26 @@ fn c_declarations() {
         "{e:?}"
     );
 }
+
+#[test]
+fn c_types() {
+    let m = parse_ok("declare c type sqlite3;\nexport declare c type sqlite3_stmt;");
+    let names: Vec<(String, bool)> = m
+        .items
+        .iter()
+        .filter_map(|i| match &i.kind {
+            ItemKind::Class(c) => Some((c.name.name.clone(), c.c_type)),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        names,
+        [("sqlite3".into(), true), ("sqlite3_stmt".into(), true)]
+    );
+    assert!(m.items[1].exported);
+    let ItemKind::Class(c) = &m.items[0].kind else {
+        panic!()
+    };
+    assert_eq!(c.ctor_visibility, CtorVisibility::Private);
+    assert!(c.fields.is_empty() && c.methods.is_empty());
+}

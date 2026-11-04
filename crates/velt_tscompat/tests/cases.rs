@@ -281,3 +281,16 @@ fn a_c_function_is_reported() {
         findings[0].message
     );
 }
+
+#[test]
+fn a_c_type_is_reported() {
+    let src = "declare c type sqlite3;\n";
+    let findings = lint_syntax(Path::new("c.vlt"), src);
+    let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
+    assert_eq!(codes, ["declare-fn"]);
+    assert!(
+        findings[0].message.contains("`declare c type sqlite3`"),
+        "{}",
+        findings[0].message
+    );
+}

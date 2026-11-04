@@ -12,6 +12,35 @@ impl<'a> Parser<'a> {
         self.at_kw(Kw::Declare) && self.nth_word(1, "c") && self.nth(2) == Tok::LParen
     }
 
+    /// At `declare c type`.
+    pub(super) fn at_c_type(&mut self) -> bool {
+        self.at_kw(Kw::Declare) && self.nth_word(1, "c") && self.nth(2) == Tok::Kw(Kw::Type)
+    }
+
+    /// `declare c type name;` (the caller checked [`Self::at_c_type`]): an opaque C type, a
+    /// class without members whose constructor is private, so nothing makes one.
+    pub(super) fn parse_c_type(&mut self) -> PResult<TypeDecl> {
+        self.bump(); // declare
+        self.bump(); // c
+        self.bump(); // type
+        let name = self.parse_binding_ident()?;
+        if !self.eat_signature_end() {
+            self.expect_semi()?;
+        }
+        Ok(TypeDecl {
+            name,
+            generics: vec![],
+            extends: None,
+            implements: vec![],
+            fields: vec![],
+            constructor: None,
+            ctor_visibility: CtorVisibility::Private,
+            methods: vec![],
+            is_abstract: false,
+            c_type: true,
+        })
+    }
+
     /// `declare c("<library>") [async] function name(…): R;` (the caller checked
     /// [`Self::at_c_decl`]). `async` parses, so sema can say it is not supported yet.
     pub(super) fn parse_c_decl(&mut self, lo: u32) -> PResult<FnSig> {
