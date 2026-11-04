@@ -75,7 +75,9 @@ impl Reader<'_> {
                                 for (cond, s) in conds {
                                     self.check(check_target_condition(&cond.name), cond.span);
                                     if let Some(text) = self.string(s, "a system library") {
-                                        self.check(check_system_library(text), s.span);
+                                        let checked = check_system_library(text)
+                                            .and_then(|()| check_framework(&cond.name, text));
+                                        self.check(checked, s.span);
                                         lib.system.push((cond.name.clone(), text.to_string()));
                                     }
                                 }
@@ -177,6 +179,17 @@ pub(crate) fn check_system_library(text: &str) -> Result<(), String> {
              `-lsqlite3`), or `framework:Name` for a macOS framework"
         ))
     }
+}
+
+/// A framework exists only on macOS, and another target's linker would take `-framework`'s name
+/// for an input file, so `framework:Name` is only for the `darwin` condition.
+fn check_framework(condition: &str, text: &str) -> Result<(), String> {
+    if text.starts_with("framework:") && condition != "darwin" {
+        return Err(format!(
+            "`{text}` under `{condition}`: a framework is macOS-only: put it under `darwin`"
+        ));
+    }
+    Ok(())
 }
 
 /// A `system` condition: one a native target's build has (a library is linked, so WebAssembly's

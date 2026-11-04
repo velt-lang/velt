@@ -170,16 +170,50 @@ pub fn links(
 }
 
 /// The linker arguments of `systems` ([`links`]) for `target`: `-lsqlite3`, `-framework
-/// Accelerate`; `sqlite3.lib` with MSVC.
+/// Accelerate`; `sqlite3.lib` with MSVC. A manifest has a framework only under `darwin`: another
+/// target's linker would open its name as an input file.
 pub fn link_args(systems: &[String], target: &str) -> Vec<String> {
     let msvc = target.contains("-windows-msvc");
     let mut args = Vec::new();
     for system in systems {
         match system.strip_prefix("framework:") {
+            Some(framework) if !target.contains("-apple-") => {
+                panic!("ICE: framework `{framework}` reached the link for {target}")
+            }
             Some(framework) => args.extend(["-framework".to_string(), framework.to_string()]),
             None if msvc => args.push(format!("{system}.lib")),
             None => args.push(format!("-l{system}")),
         }
     }
     args
+}
+
+#[cfg(test)]
+mod tests {
+    use super::link_args;
+
+    fn args(systems: &[&str], target: &str) -> Vec<String> {
+        let systems: Vec<String> = systems.iter().map(|s| s.to_string()).collect();
+        link_args(&systems, target)
+    }
+
+    #[test]
+    fn link_args_per_target() {
+        let mac = args(&["z", "framework:Accelerate"], "aarch64-apple-darwin");
+        assert_eq!(mac, ["-lz", "-framework", "Accelerate"]);
+        assert_eq!(args(&["z"], "x86_64-unknown-linux-gnu"), ["-lz"]);
+        assert_eq!(args(&["z"], "x86_64-pc-windows-msvc"), ["z.lib"]);
+    }
+
+    #[test]
+    #[should_panic(expected = "ICE: framework `Accelerate`")]
+    fn a_framework_never_reaches_a_windows_link() {
+        args(&["framework:Accelerate"], "x86_64-pc-windows-msvc");
+    }
+
+    #[test]
+    #[should_panic(expected = "ICE: framework `Accelerate`")]
+    fn a_framework_never_reaches_a_linux_link() {
+        args(&["framework:Accelerate"], "x86_64-unknown-linux-gnu");
+    }
 }

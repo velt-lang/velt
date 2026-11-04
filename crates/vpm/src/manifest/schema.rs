@@ -422,7 +422,7 @@ pub const C_LIBRARY: &[Field] = &[Field {
     required: false,
     doc: "The platform's library, by build condition (`darwin`, `linux`, `win32`, `native`, \
           `default`): `{ linux: \"sqlite3\" }` links `-lsqlite3`, and \
-          `\"framework:Accelerate\"` a macOS framework. The first condition the build has \
+          `\"framework:Accelerate\"` under `darwin` a macOS framework. The first condition the build has \
           applies; a target none applies to can't call the library's functions.",
 }];
 

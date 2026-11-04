@@ -53,6 +53,17 @@ fn c_library_entries_are_checked() {
             "{bad}: {message}"
         );
     }
+    // A framework only under `darwin`, even under a condition macOS also has.
+    for condition in ["linux", "win32", "native", "default"] {
+        let (message, covered) = error(&with(&format!(
+            "native: {{ c: {{ x: {{ system: {{ {condition}: \"framework:Accelerate\" }} }} }} }}"
+        )));
+        assert!(
+            message.contains("a framework is macOS-only: put it under `darwin`"),
+            "{condition}: {message}"
+        );
+        assert_eq!(covered, "\"framework:Accelerate\"");
+    }
     let (message, covered) = error(&with("native: { c: { x: { system: { macos: \"x\" } } } }"));
     assert!(
         message.contains("`macos` is not a condition of a native target"),

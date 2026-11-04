@@ -666,8 +666,9 @@ Step 1 lands in layers, each its own pull request:
        the same at each package's first C declaration.
      - A library other than `c` is one of the package's `native.c` entries. Its `system` object
        maps build conditions (`native`, `darwin`, `linux`, `win32`, `default`) to a library name
-       or `framework:Name`, checked to be a name and never a linker flag. The first condition the
-       build has applies. A target with none is an error at the declaration.
+       or, under `darwin` only, `framework:Name`, checked to be a name of at most 64 bytes and
+       never a linker flag or a library's file. The first condition the build has applies. A
+       target with none is an error at the declaration.
      - Every build links the libraries the program's declarations name (`-lname`, `-framework
        Name`, `name.lib`), and `velt dev` opens them (`dlopen` with `RTLD_GLOBAL`,
        `LoadLibraryA`).

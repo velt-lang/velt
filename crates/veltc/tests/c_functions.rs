@@ -355,6 +355,10 @@ fn c_libraries_need_an_entry_for_the_target() {
         out.contains("`-Wl,-rpath,/tmp` is not a system library"),
         "{out}"
     );
+    let native = ", native: { c: { m: { system: { default: \"framework:Accelerate\" } } } }";
+    project_with(dir.path(), LIBM, main, native, "allowNative: [\"cmath\"], ");
+    let out = check(dir.path());
+    assert!(out.contains("a framework is macOS-only"), "{out}");
 }
 
 #[test]
