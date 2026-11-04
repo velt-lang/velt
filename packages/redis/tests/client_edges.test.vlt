@@ -6,7 +6,7 @@ import { transaction } from "../src/reader";
 import { Line } from "../src/line";
 import { ReadBuffer } from "../src/read_buffer";
 import { Parser } from "../src/resp";
-import { ONE } from "../src/slot";
+import { BATCH, ONE } from "../src/slot";
 import { parseUrl } from "../src/url";
 import { Channel, channel } from "velt/sync";
 import { listen, streamPair, TcpStream } from "velt/net";
@@ -251,12 +251,32 @@ export async function test_the_line_does_not_grow_while_it_never_empties() {
   const [a, b] = streamPair();
   const url = "redis://127.0.0.1";
   const line = new Line({ url: url, ca: "", target: parseUrl(url) }, a);
-  line.submit("x", 1, ONE);
-  for (let i = 0; i < 5000; i++) {
-    line.submit("x", 1, ONE);
-    assert(line.pop().slot != null, "a request in line");
+  line.submit("x", 0, ONE);
+  for (let i: i64 = 0; i < 5000; i++) {
+    line.submit("x", i + 1, ONE);
+    // Each request comes out once and in order, also when the array is compacted.
+    assertEq(line.pop().slot?.want, i);
     assert(line.allocated <= 64, `the line's array holds ${line.allocated}`);
   }
+  a.close();
+  b.close();
+}
+
+// A request of several replies stays in line until `finish`, so that a `close()` meanwhile knows
+// replies are still to come; one of one reply leaves as it is popped.
+export function test_a_batch_stays_in_line_until_it_is_finished() {
+  const [a, b] = streamPair();
+  const url = "redis://127.0.0.1";
+  const line = new Line({ url: url, ca: "", target: parseUrl(url) }, a);
+  line.submit("x", 2, BATCH);
+  line.submit("y", 1, ONE);
+  assertEq(line.pop().slot?.want, 2);
+  assertEq(line.pop().slot?.want, 2);
+  assert(line.close() == null, "replies are still to come");
+  line.finish();
+  const last = line.pop();
+  assertEq(last.slot?.want, 1);
+  assert(last.last, "the closed client's last reply");
   a.close();
   b.close();
 }

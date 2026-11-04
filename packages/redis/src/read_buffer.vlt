@@ -51,9 +51,7 @@ export class ReadBuffer {
       this.bytes.copyWithin(0, this.pos, this.end);
     } else {
       const bigger: u8[] = Buffer.alloc((size * 2) as usize);
-      for (let i: i64 = 0; i < held; i++) {
-        bigger[i] = this.bytes[this.pos + i];
-      }
+      this.bytes.copy(bigger, 0, this.pos as number, this.end as number);
       this.bytes = bigger;
     }
     this.pos = 0;
