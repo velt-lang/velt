@@ -25,7 +25,9 @@ export struct ResolveOptions {
  *   symlink to `.env` as well), unless `options.dotfiles` allows them;
  * - on Windows, a `:` in a segment (drive letters and alternate data streams), and a segment
  *   ending in a dot or a space, which Windows would resolve to the name without them (`f.txt.`
- *   and `f.txt/.` are `f.txt`), past any filter a handler keeps by name;
+ *   is `f.txt`), past any filter a handler keeps by name;
+ * - a last `.` segment, on every platform: `realpath` on Windows and macOS reads `f.txt/.` as
+ *   `f.txt`, and a URL parser has already removed it from any real request;
  * - a symlink whose target is outside `root` (both are resolved with `realpath` and compared).
  *
  * A path that doesn't exist is null too. Between this check and opening the file a symlink could
@@ -119,8 +121,8 @@ export function relativePath(urlPath: string, windows: bool, dotfiles: bool): st
       if (!segmentAllowed(decoded, segment, i, windows, dotfiles)) {
         return null;
       }
-      if (windows && i == m && i - segment == 1 && decoded.charCodeAt(segment as i64) == 46) {
-        return null; // a last ".": Windows reads "f.txt/." as the file
+      if (i == m && i - segment == 1 && decoded.charCodeAt(segment as i64) == 46) {
+        return null; // a last ".": Windows and macOS read "f.txt/." as the file
       }
       segment = i + 1;
     }

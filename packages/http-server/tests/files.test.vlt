@@ -178,7 +178,7 @@ describe("the rules of a URL path", () => {
     }
     expect(relativePath("/.env.", true, true)).toBe(null);
     expect(windows("/f.txt/.")).toBe(null);
-    expect(posix("/f.txt/.")).toBe("f.txt/.");
+    expect(posix("/f.txt/.")).toBe(null);
     expect(windows("/./sub/./f.txt")).toBe("./sub/./f.txt");
     expect(windows("/sub/")).toBe("sub/");
     expect(windows("/a%20b/c.d")).toBe("a b/c.d");
