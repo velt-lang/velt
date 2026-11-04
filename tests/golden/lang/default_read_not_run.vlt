@@ -1,0 +1,6 @@
+// A read of a default or a `let` before its initializer ran is an error only where it always
+// runs; a branch not taken doesn't read it (#1916). The output is Node's.
+
+import { getDefault, getNamed, getLogical } from "./_default_read_not_run/a";
+
+console.log(getDefault(), getNamed(), getLogical());

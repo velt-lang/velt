@@ -1,0 +1,4 @@
+_default_export_before_declaration_const.ts:1:16: error: `x` is used before its declaration
+_default_export_before_declaration_call.ts:2:16: error: `x` is used before its declaration
+_default_export_before_declaration_class.ts:1:16: error: class `C` is used before its declaration
+_default_export_before_declaration_expr.ts:1:16: error: `x` is used before its declaration

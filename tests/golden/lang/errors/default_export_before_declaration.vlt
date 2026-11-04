@@ -1,0 +1,8 @@
+// `export default x;` runs where it stands: a `const`, class or enum declared below isn't there
+// yet (Node's `ReferenceError`, TS2448), whether the module has statements or not (#1916).
+import a from "./_default_export_before_declaration_const";
+import b from "./_default_export_before_declaration_call";
+import c from "./_default_export_before_declaration_class";
+import d from "./_default_export_before_declaration_expr";
+
+console.log(a, b, c, d);

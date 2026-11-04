@@ -2,8 +2,9 @@
 //! (hir_encodings.md "Module state"). Slots are numbered in Node's module evaluation order: a
 //! depth-first walk over each module's imports in source order, a module after the modules it
 //! imports, and its own declarations in source order. The state's initializer evaluates them
-//! in that order, so an initializer that reads a `let` whose initializer has not run yet is an
-//! error, as Node throws a `ReferenceError` there.
+//! in that order, so an initializer that always reads a `let` whose initializer has not run yet
+//! is an error, as Node throws a `ReferenceError` there (a read only some runs reach stops with
+//! that error at run time).
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -13,6 +14,8 @@ use crate::ctx::Ctx;
 use crate::defs::DefInfo;
 use crate::hir::{self, DefId, ExprKind as E, TyId, TyKind};
 
+#[path = "module_state_reads.rs"]
+mod always;
 #[path = "locked_props.rs"]
 mod locked_props;
 #[path = "module_state_reach.rs"]
@@ -90,12 +93,18 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
         };
         let name = shown(g.name.clone());
         let mut early = Vec::new();
-        reads(init, &mut |r, span| {
+        // Only a read that always runs: any other stops at run time if it does run.
+        always::reads(init, &mut |r, span| {
             if pos.get(&r).is_some_and(|&j| j >= i) {
                 early.push((r, span));
             }
         });
         for (r, span) in early {
+            // `export default x;` above `x`: `script_tdz` said so already.
+            let said = |d: &Diagnostic| d.labels.first().is_some_and(|l| l.span == span);
+            if cx.diags.iter().any(said) {
+                continue;
+            }
             let other = shown(cx.global(r).map(|g| g.name.clone()).unwrap_or_default());
             cx.error(
                 Diagnostic::error(format!("{other} is read before its initializer runs"), span)
@@ -206,9 +215,9 @@ fn unread_elsewhere(cx: &mut Ctx, mut skipped: FxHashSet<DefId>) -> FxHashSet<De
 fn evaluates(module: &crate::SourceModule, spec: &str) -> bool {
     module.ast.items.iter().any(|it| match &it.kind {
         velt_syntax::ast::ItemKind::Import(imp) if imp.from == spec => {
-            imp.namespace.is_some()
+            !imp.type_only && imp.namespace.is_some()
                 || imp.all
-                || imp.names.is_empty()
+                || (imp.names.is_empty() && !imp.type_only)
                 || imp.names.iter().any(|n| !n.type_only)
         }
         _ => false,
@@ -348,6 +357,14 @@ impl crate::body::FnCx<'_, '_> {
         };
         if !self.cx.global(d).is_some_and(|g| g.stored) {
             return None;
+        }
+        // `export default expr;` is the constant `default`, a name the source doesn't have.
+        if self.cx.global(d).is_some_and(|g| g.name == "default") {
+            self.cx.err(
+                format!("cannot assign to `{}`, an import", id.name),
+                id.span,
+            );
+            return Some(None);
         }
         let place = self.global_read(d, crate::body::Want::BorrowMut, id.span);
         Some(self.require_mutable(&place, "assign to").then_some(place))
