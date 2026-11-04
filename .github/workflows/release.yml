@@ -365,9 +365,27 @@ jobs:
           echo "velt release signing check" > probe
           scripts/release-sign.sh probe
 
+  # The whole gate on Windows and macOS for the tagged commit: the queue checks them only for
+  # OS-specific changes and ci.yml's scheduled run once a day, and nothing is published unchecked.
+  gate:
+    if: github.ref_type == 'tag'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup
+      - name: cargo xtask check --full
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: cargo xtask check --full
+
   publish:
     if: github.ref_type == 'tag'
-    needs: [version, build, clean-machine, cross-run, signing-key]
+    needs: [version, build, clean-machine, cross-run, signing-key, gate]
     runs-on: ubuntu-latest
     environment: release
     permissions:

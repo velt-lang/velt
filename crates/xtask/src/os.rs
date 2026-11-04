@@ -5,10 +5,10 @@
 //! change there (or to the build, CI or scripts, which select everything) runs every OS in the
 //! queue. The front end, the tooling, the rest of the standard library, the goldens, the examples
 //! and the packages behave the same everywhere nearly always: Linux checks them, and the full gate
-//! on Windows and macOS after the push to `main` catches the exception. Runners are the limit (15
-//! at once, 5 of them macOS), and a queue entry on every OS takes four times the machine time of
-//! one on Linux. A change the queue checked on every OS skips that second run
-//! ([`after_merge_reason`]).
+//! on Windows and macOS once a day (`ci.yml`'s scheduled run) and before a release (`release.yml`)
+//! catches the exception. Runners are the limit (15 at once, 5 of them macOS), and a queue entry
+//! on every OS takes four times the machine time of one on Linux. A push to `main` runs those OSes
+//! only for the build cache ([`after_merge_reason`]).
 
 use crate::graph::Graph;
 
@@ -119,18 +119,13 @@ const CACHE_INPUTS: &[&str] = &[
     ".github/actions/setup/",
 ];
 
-/// Why the whole gate runs on Windows and macOS after a change lands on `main`, or `None` when
-/// the merge queue already ran it there. `other_os` is the change's [`other_os_reason`]: on the
-/// push, `cargo xtask affected --base HEAD^1` plans the same change the queue planned (the queue
-/// tests each entry on its `base_sha`, which becomes `HEAD^1` on `main`). The gate runs when
-///
-/// - the queue checked Linux only, so Windows and macOS have not seen the change, or
-/// - the change touches the toolchain or the dependencies: the run refreshes the Windows and
-///   macOS build caches, which only pushes to `main` save.
-pub fn after_merge_reason(paths: &[String], other_os: &Option<String>) -> Option<String> {
-    if other_os.is_none() {
-        return Some("the merge queue checked Linux only".into());
-    }
+/// Why the whole gate runs on Windows and macOS right after a change lands on `main`, or `None`
+/// when it can wait for `ci.yml`'s scheduled run. On the push, `cargo xtask affected --base
+/// HEAD^1` plans the same change the queue planned (the queue tests each entry on its `base_sha`,
+/// which becomes `HEAD^1` on `main`). The gate runs when the change touches the toolchain or the
+/// dependencies: the run refreshes the Windows and macOS build caches, which only runs on `main`
+/// save.
+pub fn after_merge_reason(paths: &[String]) -> Option<String> {
     paths
         .iter()
         .find(|p| CACHE_INPUTS.iter().any(|c| p.starts_with(c)))

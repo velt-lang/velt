@@ -27,21 +27,22 @@ fn main_skips_the_windows_and_macos_gate_the_queue_already_ran() {
 }
 
 #[test]
-fn main_runs_the_windows_and_macos_gate_after_a_linux_only_queue_run() {
+fn main_leaves_windows_and_macos_to_the_scheduled_run() {
     for path in [
         "crates/velt_sema/src/check.rs",
         "crates/velt_lsp/src/hover.rs",
         "docs/internals/design/semantics.md",
         "CONTRIBUTING.md",
+        "tests/golden/lang/foo.out",
     ] {
         let p = plan(&[path]);
         assert_eq!(p.other_os, None, "{path}");
-        assert!(p.after_merge.is_some(), "{path}");
+        assert_eq!(p.after_merge, None, "{path}");
     }
     // Comments only in OS-specific code: the queue checked Linux only.
     let paths = vec!["crates/velt_rt/src/http/server.rs".to_string()];
     let p = Plan::for_changes(&graph(), &paths, &paths.iter().cloned().collect());
-    assert!(p.after_merge.is_some());
+    assert_eq!(p.after_merge, None);
 }
 
 #[test]

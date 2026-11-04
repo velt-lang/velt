@@ -21,9 +21,13 @@
 # ran. The pull request's text and commits are checked by
 # the separate required check `hygiene` (hygiene.yml, which says why it is separate).
 #
-# Each push to main checks everything on Windows and macOS when the queue checked the change on
-# Linux only (opening an issue when that fails), and refreshes the build cache every other run
-# restores (a cache saved on a pull request or queue branch can't be restored anywhere else).
+# A scheduled run checks everything on Windows and macOS once a day (opening an issue when that
+# fails, with the commits since the last run that passed): runners are the limit, and the runtime,
+# code generation and linking have met those OSes in the queue already. A tag runs it again before
+# a release (release.yml). Each push to main refreshes the build cache every other run restores (a
+# cache saved on a pull request or queue branch can't be restored anywhere else), on Windows and
+# macOS too when the toolchain or the dependencies changed, and a commit no passing queue run
+# tested checks every OS.
 name: ci
 
 on:
@@ -31,10 +35,13 @@ on:
   merge_group:
   push:
     branches: [main]
+  schedule:
+    - cron: "37 0 * * *"
   workflow_dispatch:
 
+# The scheduled run has a group of its own: a push to main must not replace it while it waits.
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  group: ci-${{ github.event.pull_request.number || (github.event_name == 'schedule' && 'nightly') || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
@@ -295,8 +302,8 @@ jobs:
   # Which OSes the push to main checks. Only a commit the merge queue tested (a ci run on it that
   # passed: the queue's head is the commit that lands) can skip any; a direct push or an admin
   # merge runs every OS. The queue tested it against its base_sha, which is HEAD^1 here, so
-  # `affected --base HEAD^1` is the queue's plan: Windows and macOS run when it checked Linux only
-  # (or the change refreshes their build cache; crates/xtask/src/os.rs). No plan: every OS.
+  # `affected --base HEAD^1` is the queue's plan: Windows and macOS run when the change refreshes
+  # their build cache (crates/xtask/src/os.rs). No plan: every OS.
   main-plan:
     if: github.event_name == 'push'
     runs-on: ubuntu-latest
@@ -331,17 +338,18 @@ jobs:
         run: cargo xtask affected --base HEAD^1 --github
 
   # After each push to main: on Linux the build cache, saved even when a check fails; on Windows
-  # and macOS the whole gate (and their caches) when main-plan says the queue didn't run it there.
-  # Without a plan (not a queue commit, or main-plan failed) every OS runs.
+  # and macOS the whole gate (and their caches) when main-plan says so. Without a plan (not a queue
+  # commit, or main-plan failed) every OS runs. The scheduled run is Windows and macOS.
   main:
     needs: main-plan
-    if: ${{ !cancelled() && github.event_name == 'push' }}
+    if: ${{ !cancelled() && (github.event_name == 'push' || github.event_name == 'schedule') }}
     name: main (${{ matrix.os }})
     strategy:
       fail-fast: false
       matrix:
         os: >-
-          ${{ fromJSON(needs.main-plan.outputs.os
+          ${{ fromJSON((github.event_name == 'schedule' && '["windows-latest","macos-latest"]')
+          || needs.main-plan.outputs.os
           || '["ubuntu-latest","windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 120
@@ -369,6 +377,9 @@ jobs:
         if: runner.os != 'Linux'
         shell: bash
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        # nightly.yml's wasm-goldens job runs the WebAssembly goldens on these OSes every night.
+        env:
+          VELT_WASM_GOLDENS: ${{ github.event_name == 'schedule' && 'skip' || '' }}
         run: cargo xtask check --full
       - name: report the failure
         if: failure()
@@ -378,7 +389,14 @@ jobs:
             const os = '${{ runner.os }}';
             const title = `main fails on ${os}`;
             const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const body = `The gate failed on ${os} after ${context.sha.slice(0, 7)}: ${run}`;
+            let body = `The gate failed on ${os} after ${context.sha.slice(0, 7)}: ${run}`;
+            if (context.eventName === 'schedule') {
+              const passed = await github.rest.actions.listWorkflowRuns({ ...context.repo, workflow_id: 'ci.yml', event: 'schedule', status: 'success', per_page: 1 });
+              const last = passed.data.workflow_runs[0];
+              if (last) {
+                body += `\nCommits since the last scheduled run that passed: ${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/compare/${last.head_sha}...${context.sha}`;
+              }
+            }
             const open = await github.rest.issues.listForRepo({ ...context.repo, state: 'open', per_page: 100 });
             const existing = open.data.find(i => i.title === title && !i.pull_request);
             if (existing) {

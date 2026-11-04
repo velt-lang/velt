@@ -340,7 +340,7 @@ impl Plan {
                     let everything = Plan::everything(format!("{path} changed"));
                     return Plan {
                         sweep: plan.sweep,
-                        after_merge: os::after_merge_reason(paths, &everything.other_os),
+                        after_merge: os::after_merge_reason(paths),
                         // The WebAssembly goldens stay with the nightly unless the change builds
                         // WebAssembly or changes the toolchain: a lockfile, CI or script change
                         // alone doesn't need them in the queue (about half the test time).
@@ -412,7 +412,7 @@ impl Plan {
             .cloned()
             .collect();
         plan.other_os = os::other_os_reason(graph, &code, plan.full);
-        plan.after_merge = os::after_merge_reason(paths, &plan.other_os);
+        plan.after_merge = os::after_merge_reason(paths);
         plan
     }
 
@@ -650,7 +650,7 @@ impl Plan {
         out.push_str(&format!("  merge queue OSes: {os}\n"));
         let after = match &self.after_merge {
             Some(reason) => format!("Windows, macOS ({reason})"),
-            None => "none (the queue checked every OS)".into(),
+            None => "none (the scheduled run checks Windows and macOS)".into(),
         };
         out.push_str(&format!("  whole gate after merging, on main: {after}\n"));
         out
