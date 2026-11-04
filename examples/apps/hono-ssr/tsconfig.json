@@ -1,0 +1,17 @@
+{
+  "//": "The Node side: src/shared compiled against the real hono/jsx, plus reference/render.tsx (README).",
+  "compilerOptions": {
+    "strict": true,
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM"],
+    "module": "commonjs",
+    "moduleResolution": "node10",
+    "jsx": "react-jsx",
+    "jsxImportSource": "hono/jsx",
+    "outDir": "reference/out",
+    "rootDir": ".",
+    "skipLibCheck": true,
+    "types": []
+  },
+  "include": ["src/shared", "reference/render.tsx"]
+}

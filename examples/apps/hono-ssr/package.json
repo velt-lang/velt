@@ -1,0 +1,14 @@
+{
+  "name": "hono-ssr-reference",
+  "private": true,
+  "description": "The Node side of examples/apps/hono-ssr: the shared components rendered by real Hono, to compare with the Velt server's output.",
+  "scripts": {
+    "build": "tsc -p .",
+    "reference": "tsc -p . && node reference/out/reference/render.js",
+    "compare": "tsc -p . && node reference/out/reference/render.js | diff - demo.out && echo 'byte-identical to demo.out'"
+  },
+  "devDependencies": {
+    "hono": "4.13.16",
+    "typescript": "5.9.3"
+  }
+}

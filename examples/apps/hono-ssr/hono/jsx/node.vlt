@@ -1,0 +1,87 @@
+// hono/jsx (Velt): what every JSX expression evaluates to, and the builder that assembles it.
+//
+// Hono renders a tree to one string; an async component leaves a hole that is filled once its
+// promise settles. Here an element is its markup up to the first such hole (`html`), then each
+// pending component (`waits[i]`) followed by the markup after it (`tails[i]`). Everything without
+// an async component inside is a single string by the time its element is built.
+
+import type { Style } from "./style";
+
+/** What an intrinsic attribute may hold. Event handlers are typed by `IntrinsicElements`. */
+export type AttrValue = string | i64 | f64 | bool | Style | Handler | null;
+
+/** An event handler: it runs in the browser (hono/jsx/dom); the server renders nothing for it. */
+export type Handler = () => void;
+
+/**
+ * What may appear as a child: text is escaped, numbers render like `${n}`, `true`, `false` and
+ * `null` render nothing, and an array renders its elements in order.
+ */
+export type Child = Element | Node[] | string | i64 | f64 | bool | null | undefined;
+
+/** One child of several (`<Card><p>a</p>text</Card>`, or an array a `{list}` holds). */
+export type Node = Element | string | i64 | f64 | bool | null | undefined;
+
+/** A component's render failure: `name` is the component (`"<module>#<Name>"`). */
+export class RenderError extends Error {
+  component: string;
+
+  constructor(component: string, message: string) {
+    super(message);
+    this.component = component;
+  }
+}
+
+export class Element {
+  /** The markup before the first pending component. */
+  html: string;
+  /** The pending async components, in document order. */
+  waits: Promise<Element, RenderError>[] = [];
+  /** `tails[i]` is the markup after `waits[i]`. */
+  tails: string[] = [];
+
+  constructor(html: string) {
+    this.html = html;
+  }
+}
+
+/** Builds one element from markup and child elements, in document order. */
+export class Builder {
+  el: Element = new Element("");
+
+  markup(s: string) {
+    const n = this.el.tails.length;
+    if (n == 0) {
+      this.el.html += s;
+    } else {
+      this.el.tails[n - 1] += s;
+    }
+  }
+
+  element(child: Element) {
+    this.markup(child.html);
+    for (let i = 0; i < child.waits.length; i++) {
+      this.el.waits.push(child.waits[i]);
+      this.el.tails.push(child.tails[i]);
+    }
+  }
+
+  wait(p: Promise<Element, RenderError>) {
+    this.el.waits.push(p);
+    this.el.tails.push("");
+  }
+}
+
+/**
+ * The element's HTML, as Hono's `await (<App />).toString()` renders it: every async component
+ * awaited (they all started when their elements were built, so they load concurrently).
+ */
+export async function renderToString(el: Element): Promise<string, RenderError> {
+  let out = el.html;
+  for (let i = 0; i < el.waits.length; i++) {
+    const done = await el.waits[i];
+    out += await renderToString(done);
+    out += el.tails[i];
+  }
+  return out;
+}

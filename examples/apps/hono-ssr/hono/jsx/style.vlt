@@ -1,0 +1,138 @@
+// hono/jsx (Velt): the `style` attribute's object form (`style={{ color: c, fontSize: 12 }}`),
+// rendered with hono/jsx/utils.ts's `styleObjectForEach` rules: camelCase names in kebab-case
+// (names starting with `-` stay as written), numbers get `px` unless the property takes plain
+// numbers, and a name or value that could break out of the declaration is left out.
+
+/** A `style` object: CSS property names to values. */
+export type Style = Record<string, string | f64>;
+
+// Hono's /^(?:a|border-im|column(?:-c|s)|flex(?:$|-[^b])|grid-(?!.*gap)(?:ar|[^a])|font-w|li|
+// or|sca|st|ta|wido|z)|ty$/: the kebab-case properties whose numbers take no unit.
+function unitless(key: string): bool {
+  if (key.endsWith("ty")) {
+    return true;
+  }
+  for (const p of [
+    "a",
+    "border-im",
+    "column-c",
+    "columns",
+    "font-w",
+    "li",
+    "or",
+    "sca",
+    "st",
+    "ta",
+    "wido",
+    "z",
+  ]) {
+    if (key.startsWith(p)) {
+      return true;
+    }
+  }
+  if (key == "flex" || (key.startsWith("flex-") && key.length > 5 && key[5] != "b")) {
+    return true;
+  }
+  if (key.startsWith("grid-") && key.length > 5) {
+    const rest = key.slice(5);
+    return !rest.includes("gap") && (rest.startsWith("ar") || rest[0] != "a");
+  }
+  return false;
+}
+
+function kebab(k: string): string {
+  if (k.startsWith("-")) {
+    return k;
+  }
+  let out = "";
+  for (const ch of k) {
+    if (ch >= "A" && ch <= "Z") {
+      out += `-${ch.toLowerCase()}`;
+    } else {
+      out += ch;
+    }
+  }
+  return out;
+}
+
+// Hono's `isValidStylePropertyName`: no whitespace, quotes, `():;\/[]{}` or control characters.
+function validName(name: string): bool {
+  if (name.length == 0) {
+    return false;
+  }
+  for (let i = 0; i < name.length; i++) {
+    const c = name.charCodeAt(i);
+    if (c <= 0x20 || (c >= 0x7f && c <= 0x9f) || `"'():;\\/[]{}`.includes(name[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Hono's `hasUnsafeStyleValue`: a value that ends the declaration (`;`, `}`), leaves a string or
+// a comment open, or unbalances its brackets.
+function unsafeValue(value: string): bool {
+  let quote = 0;
+  const blocks: number[] = [];
+  const len = value.length;
+  for (let i = 0; i < len; i++) {
+    const c = value.charCodeAt(i);
+    if (c == 0x5c) {
+      if (i == len - 1) {
+        return true;
+      }
+      i++;
+    } else if (quote != 0) {
+      if (c == 0x0a || c == 0x0c || c == 0x0d) {
+        return true;
+      }
+      if (c == quote) {
+        quote = 0;
+      }
+    } else if (c == 0x2f && i + 1 < len && value.charCodeAt(i + 1) == 0x2a) {
+      const end = value.indexOf("*/", i + 2);
+      if (end == -1) {
+        return true;
+      }
+      i = end + 1;
+    } else if (c == 0x22 || c == 0x27) {
+      quote = c;
+    } else if (c == 0x28) {
+      blocks.push(0x29);
+    } else if (c == 0x5b) {
+      blocks.push(0x5d);
+    } else if (c == 0x7b || c == 0x7d) {
+      return true;
+    } else if (c == 0x29 || c == 0x5d) {
+      if (blocks.length == 0 || blocks[blocks.length - 1] != c) {
+        return true;
+      }
+      blocks.pop();
+    } else if (c == 0x3b && blocks.length == 0) {
+      return true;
+    }
+  }
+  return quote != 0 || blocks.length != 0;
+}
+
+/** `color:red;font-size:12px`, not yet escaped for the attribute. */
+export function renderStyle(style: Style): string {
+  let out = "";
+  for (const [k, v] of Object.entries(style)) {
+    const key = kebab(k);
+    if (!validName(key)) {
+      continue;
+    }
+    let value = "";
+    if (typeof v === "number") {
+      value = unitless(key) ? `${v}` : `${v}px`;
+    } else {
+      if (unsafeValue(v)) {
+        continue;
+      }
+      value = v;
+    }
+    out += `${out == "" ? "" : ";"}${key}:${value}`;
+  }
+  return out;
+}
