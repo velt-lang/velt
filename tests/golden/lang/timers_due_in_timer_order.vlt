@@ -79,6 +79,18 @@ async function withYield(): Promise<string> {
   return "first";
 }
 
+async function waits(p: Promise<string>, name: string): Promise<string> {
+  const v = await p;
+  console.log(name);
+  return v;
+}
+
+// Started, so its timer is in the queue from here on. It prints nothing: `main` says when it ended,
+// so a stall of the process cannot change the order.
+async function laterTimer(ms: i64) {
+  await sleep(ms);
+}
+
 async function main() {
   console.log("Promise.all in main");
   const b = step("b", 0);
@@ -158,4 +170,64 @@ async function main() {
   const y2 = step("second", 30);
   busy(60);
   console.log(await Promise.all([y1, y2]));
+
+  console.log("a timer does not pass what a microtask job made ready");
+  let openGate: () => void = () => {};
+  const gate = new Promise<void>((r) => {
+    openGate = r;
+  });
+  const e0 = (async (): Promise<string> => {
+    await gate;
+    console.log("e0");
+    await Promise.resolve();
+    console.log("e0, one step on");
+    return "e0";
+  })();
+  const e1 = waits(e0, "waits for e0");
+  const e2 = (async (): Promise<string> => {
+    await sleep(0);
+    console.log("e2");
+    openGate();
+    return "e2";
+  })();
+  const e3 = step("e3", 1);
+  busy(5);
+  console.log(await Promise.all([e2, e3, e1]));
+
+  // Firing stops at a held timer and arms nothing; only the end of the poll can arm the later one,
+  // and without that these programs never end.
+  console.log("a join over due timers, then only a later timer");
+  const l1 = laterTimer(40);
+  const j1 = Promise.all([sleep(0), sleep(1)]);
+  busy(5);
+  await j1;
+  console.log("joined");
+  await l1;
+  console.log("later");
+
+  console.log("the same, reversed");
+  const l2 = laterTimer(40);
+  const j2 = Promise.all([sleep(1), sleep(0)]);
+  busy(5);
+  await j2;
+  console.log("joined");
+  await l2;
+  console.log("later");
+
+  console.log("the same, the join in a promise");
+  const l3 = laterTimer(40);
+  const j3 = (async () => {
+    await Promise.all([sleep(0), sleep(1)]);
+    console.log("joined in a promise");
+  })();
+  busy(5);
+  await j3;
+  await l3;
+  console.log("later");
+
+  // Polled in turn after the due ones, with nothing unseen: it still waits for its deadline.
+  console.log("a timer not due yet, polled after the due ones");
+  const started = performance.now();
+  await Promise.all([sleep(0), sleep(0), sleep(100)]);
+  console.log(performance.now() - started >= 90);
 }

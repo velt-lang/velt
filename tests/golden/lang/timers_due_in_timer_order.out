@@ -47,3 +47,21 @@ first
 second after sleep(30)
 first after yieldNow
 [ 'first', 'second' ]
+a timer does not pass what a microtask job made ready
+e2
+e0
+e0, one step on
+waits for e0
+e3 after sleep(1)
+[ 'e2', 'e3', 'e0' ]
+a join over due timers, then only a later timer
+joined
+later
+the same, reversed
+joined
+later
+the same, the join in a promise
+joined in a promise
+later
+a timer not due yet, polled after the due ones
+true
