@@ -1,0 +1,9 @@
+// `export default expr;` runs once, in module order, however often it is read; a hoisted default
+// function is usable from a module in a cycle before its own module runs (#1916). The output is
+// Node's.
+
+import { first } from "./_default_export_once/first";
+import made from "./_default_export_once/made";
+
+console.log("main", made, made, first());
+console.log("main", made);

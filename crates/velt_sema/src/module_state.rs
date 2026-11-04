@@ -83,7 +83,12 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
         let Some(init) = g.init.as_ref() else {
             continue;
         };
-        let name = g.name.clone();
+        // `export default expr;` is the constant `default` (#1916).
+        let shown = |n: String| match n.as_str() {
+            "default" => "the default export".to_string(),
+            _ => format!("`{n}`"),
+        };
+        let name = shown(g.name.clone());
         let mut early = Vec::new();
         reads(init, &mut |r, span| {
             if pos.get(&r).is_some_and(|&j| j >= i) {
@@ -91,16 +96,13 @@ pub(crate) fn order(cx: &mut Ctx) -> Vec<DefId> {
             }
         });
         for (r, span) in early {
-            let other = cx.global(r).map(|g| g.name.clone()).unwrap_or_default();
+            let other = shown(cx.global(r).map(|g| g.name.clone()).unwrap_or_default());
             cx.error(
-                Diagnostic::error(
-                    format!("`{other}` is read before its initializer runs"),
-                    span,
-                )
-                .with_note(format!(
-                    "module state is initialized in order, and `{name}`'s initializer \
-                     runs first (JavaScript throws a `ReferenceError` here)"
-                )),
+                Diagnostic::error(format!("{other} is read before its initializer runs"), span)
+                    .with_note(format!(
+                        "module state is initialized in order, and {name}'s initializer \
+                         runs first (JavaScript throws a `ReferenceError` here)"
+                    )),
             );
         }
     }

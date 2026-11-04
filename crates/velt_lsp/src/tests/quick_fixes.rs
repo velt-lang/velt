@@ -236,15 +236,16 @@ async function main() {
 }
 
 #[test]
-fn export_default_becomes_a_named_export() {
+fn export_default_converts_to_a_named_export() {
     let text = "export default function main() {}\n";
     let (mut client, doc, diags) = open("fix_default.vlt", text);
-    let offered = actions(&mut client, &doc, text, "default", &diags);
-    let fixed = apply(
-        text,
-        find(&offered, "Remove `default` (use a named export)"),
-        &doc,
+    assert_eq!(
+        diags,
+        [] as [Value; 0],
+        "default exports are accepted (#1916)"
     );
+    let offered = actions(&mut client, &doc, text, "default", &diags);
+    let fixed = apply(text, find(&offered, "Convert to a named export"), &doc);
     assert_eq!(fixed, "export function main() {}\n");
     assert_eq!(errors_after(&mut client, &doc, &fixed), [] as [Value; 0]);
 
@@ -255,7 +256,18 @@ fn export_default_becomes_a_named_export() {
         .unwrap()
         .clone();
     let offered = actions(&mut client, &doc, text, "default", &diags);
-    let fixed = apply(text, find(&offered, "Export `LIMIT` by name"), &doc);
+    let fixed = apply(text, find(&offered, "Convert to a named export"), &doc);
     assert!(fixed.contains("export { LIMIT };"), "{fixed}");
+
+    // An anonymous default has no name to export it by.
+    let text = "export default function () {}\n\nfunction main() {}\n";
+    client.change(&doc, 4, text);
+    let offered = actions(&mut client, &doc, text, "default", &[]);
+    assert!(
+        !offered
+            .iter()
+            .any(|a| a["title"] == json!("Convert to a named export")),
+        "{offered:#?}"
+    );
     client.shutdown();
 }

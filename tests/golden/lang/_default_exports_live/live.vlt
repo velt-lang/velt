@@ -1,0 +1,6 @@
+let value = 1;
+export { value as default };
+
+export function setLive(v: number): void {
+  value = v;
+}

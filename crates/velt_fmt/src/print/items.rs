@@ -2,8 +2,8 @@
 //! policy between top-level items. Nominal type declarations are in `decls`.
 
 use velt_syntax::ast::{
-    Augment, FnDecl, FnSig, Import, Item, ItemKind, Namespace, TypeAlias, TypeExprKind, VarDecl,
-    VarKind,
+    Augment, FnDecl, FnSig, Import, Item, ItemKind, Namespace, PatternKind, TypeAlias,
+    TypeExprKind, VarDecl, VarKind,
 };
 
 use super::lists::delimited;
@@ -42,6 +42,14 @@ pub(super) fn blank_between(prev: &Item, cur: &Item) -> bool {
 
 impl<'a> Printer<'a> {
     pub(super) fn item(&mut self, item: &Item) -> Doc {
+        match self.default_export(item) {
+            Some(doc) => doc,
+            None => self.plain_item(item),
+        }
+    }
+
+    /// An item as the AST gives it.
+    fn plain_item(&mut self, item: &Item) -> Doc {
         let export = if item.exported { "export " } else { "" };
         let body = match &item.kind {
             ItemKind::Import(import) => self.import(import, item.exported),
@@ -77,6 +85,42 @@ impl<'a> Printer<'a> {
             ItemKind::Namespace(n) => self.namespace(n, item.span.hi),
         };
         cat![export, body]
+    }
+
+    /// `export default …` as written (#1916): the parser gives it as a declaration that is not
+    /// exported but starts at `export` (`export default function f`, its `export { f as default
+    /// }` skipped by `script::entries`), a declaration named `default` (`export default
+    /// function () {}`), the constant `default` (`export default expr;`) or an export list
+    /// whose alias comes first (`export default x;`).
+    fn default_export(&mut self, item: &Item) -> Option<Doc> {
+        const KW: &str = "export default ";
+        if let ItemKind::Import(i) = &item.kind {
+            let [n] = i.names.as_slice() else {
+                return None;
+            };
+            return velt_syntax::written_default(i).then(|| cat![KW, n.name.name.clone(), ";"]);
+        }
+        if !item.exported {
+            let written = slice(self.src, item.span).starts_with("export");
+            return written.then(|| cat![KW, self.plain_item(item)]);
+        }
+        let mut anonymous = item.clone();
+        anonymous.exported = false;
+        let name = match &mut anonymous.kind {
+            ItemKind::Var(v) => {
+                let init = v.init.as_ref()?;
+                return matches!(&v.pattern.kind, PatternKind::Ident(n) if n.name == "default")
+                    .then(|| cat![KW, self.expr(init), ";"]);
+            }
+            ItemKind::Function(f) => &mut f.sig.name,
+            ItemKind::Struct(d) | ItemKind::Class(d) => &mut d.name,
+            _ => return None,
+        };
+        if name.name != "default" {
+            return None;
+        }
+        name.name.clear();
+        Some(cat![KW, self.plain_item(&anonymous)])
     }
 
     /// `declare c("<library>") [async] function f(…): R;`.
@@ -157,7 +201,18 @@ impl<'a> Printer<'a> {
     /// `import … from "…";`, or after `export`: a re-export or local export list.
     fn import(&mut self, import: &Import, exported: bool) -> Doc {
         let from = text(string_literal(slice(self.src, import.from_span)));
-        let keyword = if exported { "" } else { "import " };
+        let mut keyword = text(if exported { "" } else { "import " });
+        let mut names = import.names.as_slice();
+        // `import x from`, `import x, { y } from`, `import x, * as ns from` (#1916).
+        if let (true, [first, rest @ ..]) = (import.default_import, names) {
+            let local = first.alias.as_ref().unwrap_or(&first.name).name.clone();
+            let types = if first.type_only { "type " } else { "" };
+            if rest.is_empty() && import.namespace.is_none() {
+                return cat![keyword, types, local, " from ", from, ";"];
+            }
+            keyword = cat![keyword, types, local, ", "];
+            names = rest;
+        }
         if let Some(ns) = &import.namespace {
             return cat![keyword, "* as ", ns.name.clone(), " from ", from, ";"];
         }
@@ -167,9 +222,10 @@ impl<'a> Printer<'a> {
         if import.names.is_empty() && !exported {
             return cat!["import ", from, ";"];
         }
-        let all_types = !import.names.is_empty() && import.names.iter().all(|n| n.type_only);
+        let all_types = !names.is_empty() && names.iter().all(|n| n.type_only);
+        let all_types = all_types && !import.default_import;
         let names = self.list(
-            &import.names,
+            names,
             import.from_span.lo,
             |n| (n.name.span.lo, n.alias.as_ref().unwrap_or(&n.name).span.hi),
             |_, n| {

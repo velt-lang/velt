@@ -80,6 +80,16 @@ pub fn is_synthesized_import(import: &ast::Import) -> bool {
             if n.alias.as_ref().is_some_and(|a| a.name == ast::IMPORT_META_CLASS))
 }
 
+/// Whether export list `import` stands for an `export default` the source has (#1916): a
+/// declaration's (`export default function f`, then `export { f as default }` spanning the
+/// `default` keyword) or an identifier's (`export default x;`). The parser gives the alias the
+/// `default` keyword's span, before the name; a written `export { x as default }` has it after.
+pub fn written_default(import: &ast::Import) -> bool {
+    import.from.is_empty()
+        && matches!(import.names.as_slice(), [n]
+            if n.alias.as_ref().is_some_and(|a| a.name == "default" && a.span.lo < n.name.span.lo))
+}
+
 /// Stack for the parser thread. The recursive-descent parser needs a few KB per nesting level
 /// (bounded by its depth limit); a dedicated thread keeps deeply nested input from overflowing the
 /// caller's stack (1 MB main thread on Windows). The memory is reserved, not committed, until used.

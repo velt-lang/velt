@@ -110,6 +110,10 @@ pub struct Import {
     pub namespace: Option<Ident>,
     /// `export * from "…"`: re-export every export of the module (`names` is then empty).
     pub all: bool,
+    /// `import x from "…"` (also `import x, { y } from` and `import x, * as ns from`): the
+    /// default binding, given as the first of `names` (`default as x`, the `default` ident at
+    /// `x`'s span), as `import { default as x }` would give it.
+    pub default_import: bool,
 }
 
 #[derive(Clone, Debug)]

@@ -18,7 +18,9 @@ use velt_syntax::ast;
 use crate::check_work::add_export_work;
 use crate::ctx::{Ctx, Item};
 use crate::hir::{DefId, TyId, TyKind};
-use crate::type_meanings::{of_type_key, type_key, type_only_key, Meaning};
+use crate::type_meanings::{
+    of_type_key, type_key, type_only_key, Meaning, TYPE_MARK, TYPE_ONLY_MARK,
+};
 use crate::SourceModule;
 
 /// How many re-export steps are followed (a cycle of `export *` ends here).
@@ -179,6 +181,13 @@ fn build_table(cx: &Ctx, t: usize, depth: u32) -> Option<Rc<[(String, Item)]>> {
             }
         }
     }
+    for (ns, target) in namespace_reexports(cx, t) {
+        let names = table(cx, target, depth + 1)?;
+        add_export_work(names.len() as u64);
+        for (name, item) in names.iter() {
+            decided.entry(format!("{ns}.{name}")).or_insert(Some(*item));
+        }
+    }
     let stars = imports_of(cx, t).filter(|(imp, exported)| *exported && imp.all);
     for (imp, _) in stars {
         let Some(target) = import_target(cx, t, &imp.from) else {
@@ -186,7 +195,7 @@ fn build_table(cx: &Ctx, t: usize, depth: u32) -> Option<Rc<[(String, Item)]>> {
         };
         let names = table(cx, target, depth + 1)?;
         add_export_work(names.len() as u64);
-        for (name, item) in names.iter() {
+        for (name, item) in names.iter().filter(|(n, _)| !star_skips(n)) {
             if !decided.contains_key(name) {
                 decided.insert(name.clone(), Some(*item));
             }
@@ -197,6 +206,67 @@ fn build_table(cx: &Ctx, t: usize, depth: u32) -> Option<Rc<[(String, Item)]>> {
         .collect();
     all.sort_by(|a, b| a.0.cmp(&b.0));
     Some(all.into())
+}
+
+/// `export * from` leaves out the module's default export (as in Node): `default`, with its
+/// type meanings (`crate::type_meanings`).
+fn star_skips(name: &str) -> bool {
+    name.strip_prefix(DEFAULT).is_some_and(|rest| {
+        let mut rest = rest.chars();
+        match rest.next() {
+            None => true,
+            Some(TYPE_MARK | TYPE_ONLY_MARK) => rest.next().is_none(),
+            Some(_) => false,
+        }
+    })
+}
+
+/// The export name of a default export (#1916).
+pub(crate) const DEFAULT: &str = "default";
+
+/// Module `t`'s namespace re-exports, `export * as ns from "…"`: `ns` and the module.
+fn namespace_reexports<'m>(cx: &Ctx<'m>, t: usize) -> Vec<(&'m str, usize)> {
+    imports_of(cx, t)
+        .filter(|(imp, exported)| *exported && !imp.all)
+        .filter_map(|(imp, _)| {
+            let ns = imp.namespace.as_ref()?;
+            Some((ns.name.as_str(), import_target(cx, t, &imp.from)?))
+        })
+        .collect()
+}
+
+/// The module whose namespace module `t` exports as `name` (`export * as name from "…"`, also
+/// through re-exports of it), if it does.
+pub(crate) fn namespace_module(cx: &Ctx, t: usize, name: &str) -> Option<usize> {
+    fn go(cx: &Ctx, t: usize, name: &str, depth: u32) -> Option<usize> {
+        if depth > MAX_DEPTH || cx.scopes[t].exports.contains(name) {
+            return None;
+        }
+        if let Some((_, m)) = namespace_reexports(cx, t)
+            .into_iter()
+            .find(|(n, _)| *n == name)
+        {
+            return Some(m);
+        }
+        for (imp, exported) in imports_of(cx, t) {
+            if !exported || imp.from.is_empty() || imp.namespace.is_some() {
+                continue;
+            }
+            let Some(s) = import_target(cx, t, &imp.from) else {
+                continue;
+            };
+            let found = match imp.names.iter().find(|n| bound_name(n).name == name) {
+                Some(n) => go(cx, s, &n.name.name, depth + 1),
+                None if imp.all && !star_skips(name) => go(cx, s, name, depth + 1),
+                None => None,
+            };
+            if found.is_some() {
+                return found;
+            }
+        }
+        None
+    }
+    go(cx, t, name, 0)
 }
 
 /// The module that import specifier `spec` of module `m` resolved to.
@@ -346,6 +416,14 @@ fn export_at(cx: &Ctx, t: usize, name: &str, depth: u32) -> Option<Item> {
             return local_at(cx, t, &source, depth + 1);
         }
         return export_at(cx, import_target(cx, t, &imp.from)?, &source, depth + 1);
+    }
+    for (ns, target) in namespace_reexports(cx, t) {
+        if let Some(member) = name.strip_prefix(ns).and_then(|r| r.strip_prefix('.')) {
+            return export_at(cx, target, member, depth + 1);
+        }
+    }
+    if star_skips(name) {
+        return None;
     }
     imports_of(cx, t)
         .filter(|(imp, exported)| *exported && imp.all)
@@ -499,7 +577,24 @@ fn export_names(
         }
         if imp.all {
             if let Some(target) = import_target(cx, t, &imp.from) {
+                let start = out.len();
                 complete &= export_names(cx, target, out, seen, depth + 1);
+                let mut i = start;
+                while i < out.len() {
+                    if star_skips(&out[i]) {
+                        out.swap_remove(i);
+                    } else {
+                        i += 1;
+                    }
+                }
+            }
+        }
+        if let (Some(ns), false) = (&imp.namespace, imp.all) {
+            if let Some(target) = import_target(cx, t, &imp.from) {
+                let (names, names_complete) = names_at(cx, target, depth + 1);
+                complete &= names_complete;
+                add_export_work(names.len() as u64);
+                out.extend(names.iter().map(|x| format!("{}.{x}", ns.name)));
             }
         }
     }

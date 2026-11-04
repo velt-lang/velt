@@ -1,0 +1,40 @@
+// Default exports and imports (#1916), as in TypeScript, across `.vlt` and `.ts` modules: every
+// form of `export default`, default imports, `ns.default`, re-exported defaults, `export *`
+// leaving `default` out, and `export * as ns`. The output is Node's.
+
+import greet from "./_default_exports/greet";
+import add, * as addNs from "./_default_exports/add";
+import Point from "./_default_exports/point";
+import Anonymous from "./_default_exports/anon_class";
+import type Shape from "./_default_exports/shape";
+import type Id from "./_default_exports/id";
+import config from "./_default_exports/config";
+import load from "./_default_exports/load";
+import emitter, { type Handler } from "./_default_exports/emitter";
+import { default as hello } from "./_default_exports/greet";
+import barrelGreet, { Point as P, sum, plus, configNs } from "./_default_exports/barrel";
+import * as barrel from "./_default_exports/barrel";
+import wrapped, { shout, emitter as reEmitter } from "./_default_exports/wrap";
+
+async function main() {
+  console.log(greet("ada"), hello("bob"), barrelGreet("cy"), barrel.default("di"));
+  console.log(add(2, 3), addNs.default(1, 1), sum(4, 5), plus(1, 2));
+  const p = new Point(3, 4);
+  console.log(p.len(), new P(6, 8).len());
+  console.log(new Anonymous().label());
+  const s: Shape = { area: 2 };
+  const id: Id = 41;
+  console.log(s.area, id + 1);
+  console.log(config.name, config.size, configNs.default.size, barrel.configNs.default.name);
+  console.log(await load());
+  const e = emitter<string>();
+  const log: Handler<string> = (ev) => console.log("event", ev);
+  e.on(log);
+  e.emit("one");
+  const n = reEmitter<number>();
+  n.on((x) => console.log("number", x * 2));
+  n.emit(21);
+  console.log(wrapped("eve"), shout("fay"));
+}
+
+main();

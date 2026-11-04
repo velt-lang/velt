@@ -1,0 +1,6 @@
+let calls = 0;
+
+export function count(): number {
+  calls++;
+  return calls;
+}

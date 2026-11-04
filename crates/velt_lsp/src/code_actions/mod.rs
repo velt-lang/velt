@@ -6,7 +6,7 @@
 //! message/notes and builds the replacement from the AST and sema's types:
 //! - [`fixits`]: `mut` removal, a non-`bool` condition → an explicit comparison,
 //!   `async` for a method whose promise must carry its errors;
-//! - [`exports`]: `export default` → a named export;
+//! - [`exports`]: `export default` → a named export (a refactor, no diagnostic);
 //! - [`promise`]: a floating promise (a promise-typed expression statement, a compiler error) →
 //!   `await` it or `spawn` it;
 //! - the fixes diagnostics carry: the lint findings' (TypeScript compatibility, `perf/…`).
@@ -48,8 +48,7 @@ pub fn fixes(analysis: &Analysis, lo: u32, hi: u32) -> Vec<Fix> {
         if span.file != file || span.hi < lo || span.lo > hi {
             continue;
         }
-        let fix = fixits::for_diagnostic(analysis, d, span)
-            .or_else(|| exports::for_diagnostic(analysis, d, span));
+        let fix = fixits::for_diagnostic(analysis, d, span);
         out.extend(fix.map(|(title, edits)| Fix {
             title,
             edits,
@@ -58,6 +57,7 @@ pub fn fixes(analysis: &Analysis, lo: u32, hi: u32) -> Vec<Fix> {
         }));
     }
     out.extend(promise::fixes(analysis, lo, hi));
+    out.extend(exports::fixes(analysis, lo, hi));
     out.extend(crate::lint::fixes(analysis, lo, hi));
     out
 }

@@ -1,0 +1,4 @@
+// `default` is a reserved word: a default export is imported under a name.
+import { default } from "./_default_import_missing_lib";
+
+const default = 1;

@@ -1,0 +1,2 @@
+_default_export_enum_ts.ts:1:16: error: `export default` cannot be followed by an `enum` declaration in TypeScript
+declare the enum, then export it: `enum E { … }` and `export default E;`

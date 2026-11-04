@@ -1,0 +1,5 @@
+// A module in a cycle that reads a default export before its module ran: Node throws a
+// `ReferenceError`; Velt reports it (#1916).
+import { get } from "./_default_export_read_before_init/a";
+
+console.log(get());

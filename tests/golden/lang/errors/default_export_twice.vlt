@@ -1,0 +1,4 @@
+// A module has at most one default export (TS2528).
+import d from "./_default_export_twice_lib";
+
+console.log(d);

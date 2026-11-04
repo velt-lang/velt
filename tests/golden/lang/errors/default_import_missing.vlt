@@ -1,0 +1,10 @@
+// A default import of a module without a default export (TS1192): no default is made up from
+// the module's namespace; the error lists what it exports. Standard library modules have named
+// exports only, and `process` is a builtin (#777).
+import lib from "./_default_import_missing_lib";
+import { default as again } from "./_default_import_missing_lib";
+import starred from "./_default_import_missing_star";
+import path from "velt/path";
+import process from "velt/process";
+
+console.log(lib, again, starred, path);
