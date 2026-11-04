@@ -187,9 +187,25 @@ impl FnLower<'_, '_> {
             self.cx.versioned += usize::from(self.has_view_loops());
             self.version_view_loops(params.len());
         } else if self.has_view_loops() {
-            self.cx.left_out = true;
+            if let Some(blocks) = self.defer_versions(&symbol, params.len()) {
+                return Function {
+                    blocks,
+                    ..Function::new(symbol, params, ret, Linkage::Internal)
+                };
+            }
         }
         self.place_sections();
+        let (locals, blocks, locs) = self.into_parts(&symbol);
+        Function {
+            locals,
+            blocks,
+            locs,
+            ..Function::new(symbol, params, ret, Linkage::Internal)
+        }
+    }
+
+    /// The live blocks, renumbered densely, with their locations, and the locals.
+    pub(super) fn into_parts(self, symbol: &str) -> super::deferred_versions::Parts {
         let mut remap = vec![None; self.blocks.len()];
         for (n, (i, _)) in self
             .live
@@ -220,12 +236,7 @@ impl FnLower<'_, '_> {
                 }
             }
         }
-        Function {
-            locals: self.locals,
-            blocks,
-            locs,
-            ..Function::new(symbol, params, ret, Linkage::Internal)
-        }
+        (self.locals, blocks, locs)
     }
 
     /// The live `panic("division by zero at …")` blocks, one per panic location.

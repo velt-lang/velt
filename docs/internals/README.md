@@ -35,9 +35,9 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
    functions as state machines, errors as result returns, with source locations for debug info
    and panic messages. VIR is a typed, MIR-like control-flow graph with a verifier. The
    program is lowered again while a pass finds types that must be counted (`lower/boxing/`).
-   Those passes only find them: their functions leave out the versions of view loops, and once
-   the counted types are complete one more pass lowers the program whole (`VELT_LOWER_WHOLE=1`
-   lowers every pass whole, for comparing). `VELT_LOWER_PROFILE=1` prints each pass's time,
+   Those passes only find them: their functions leave out the versions of view loops, which
+   are made once the counted types are complete (`lower/deferred_versions.rs`;
+   `VELT_LOWER_WHOLE=1` lowers every pass whole, for comparing). `VELT_LOWER_PROFILE=1` prints each pass's time,
    what it found, and its slowest functions (their own time, with their size) to stderr.
 5. **Optimize** (`velt_opt`, release builds): inlining, constant folding, copy propagation,
    scalar replacement of aggregates, closure specialization, dead-code elimination, CFG

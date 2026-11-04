@@ -80,3 +80,11 @@ pub(super) fn end_pass(n: usize, d: Duration) {
     }
     eprint!("{out}");
 }
+
+/// The process's peak memory so far in MB, where the system says it (`VmHWM`, on Linux).
+pub(super) fn peak_mb() -> Option<usize> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let line = status.lines().find_map(|l| l.strip_prefix("VmHWM:"))?;
+    let kb: usize = line.trim().strip_suffix(" kB")?.parse().ok()?;
+    Some(kb / 1024)
+}

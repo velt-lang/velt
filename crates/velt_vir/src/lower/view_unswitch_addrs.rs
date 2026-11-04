@@ -13,7 +13,7 @@ use super::FnLower;
 use crate::vir::{self, BlockId, Local, Operand, Proj, Rvalue, Terminator};
 
 /// A function's blocks while it is lowered.
-type Blocks = [(Vec<vir::Stmt>, Option<Terminator>)];
+pub(super) type Blocks = [(Vec<vir::Stmt>, Option<Terminator>)];
 
 #[cfg(test)]
 thread_local! {

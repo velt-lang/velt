@@ -225,9 +225,11 @@ fn live_out(f: &Function, units: &[Vec<Unit>], extra: &[(usize, usize)], n: usiz
         for &s in &succs[b] {
             o.union(&live_in[s]);
         }
+        // Through the block's units in place (`live_before` without a set per unit).
         let mut l = o.clone();
         for u in units[b].iter().rev() {
-            l = u.live_before(&l);
+            l.minus(&u.kills);
+            l.union(&u.uses);
         }
         out[b] = o;
         if l != live_in[b] {
