@@ -181,7 +181,10 @@ impl FnLower<'_, '_> {
             self.check_half_bits(&symbol);
         }
         self.build_div_zero_blocks();
-        if !self.cx.facts_only || self.asyncx.is_some() {
+        // A shared instance's body is rewritten as soon as it is built (`Cx::finish_shared`), so it
+        // cannot stand as its calls until later: its targs are placeholders, as no other's are.
+        let shared = self.targs.iter().any(|&t| self.cx.mentions_ph(t));
+        if !self.cx.facts_only || self.asyncx.is_some() || shared {
             // A poll function's body is analysed for its state (async_fn/spill), which the
             // calls creating it build: it is always whole.
             self.cx.versioned += usize::from(self.has_view_loops());
