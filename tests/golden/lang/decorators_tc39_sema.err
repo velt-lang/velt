@@ -1,4 +1,6 @@
-decorators_tc39_sema.velt:10:1: error: TC39 run-time decorators are not supported yet (#2204)
 decorators_tc39_sema.velt:13:1: error: TC39 run-time decorators are not supported yet (#2204)
 decorators_tc39_sema.velt:16:1: error: TC39 run-time decorators are not supported yet (#2204)
 decorators_tc39_sema.velt:19:1: error: TC39 run-time decorators are not supported yet (#2204)
+decorators_tc39_sema.velt:22:1: error: TC39 run-time decorators are not supported yet (#2204)
+decorators_tc39_sema.velt:26:1: error: TC39 run-time decorators are not supported yet (#2204)
+decorators_tc39_sema.velt:28:3: error: TC39 run-time decorators are not supported yet (#2204)

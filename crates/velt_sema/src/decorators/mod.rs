@@ -306,10 +306,16 @@ fn uses<'m>(
 ) {
     let mut out: Vec<hir::Decorator> = Vec::with_capacity(ds.len());
     for dec in ds {
-        let (callee, args): (&ast::Expr, &[ast::Expr]) = match &dec.expr.kind {
-            ast::ExprKind::Call { callee, args, .. } => (callee, args),
-            _ => (&dec.expr, &[]),
-        };
+        let (callee, type_args, args): (&ast::Expr, &[ast::TypeExpr], &[ast::Expr]) =
+            match &dec.expr.kind {
+                ast::ExprKind::Call {
+                    callee,
+                    type_args,
+                    args,
+                    ..
+                } => (callee, type_args, args),
+                _ => (&dec.expr, &[], &[]),
+            };
         let Some(path) = consts::path_of(callee) else {
             run_time_error(cx, dec.span, bit);
             continue;
@@ -338,6 +344,13 @@ fn uses<'m>(
         let Some(sig) = decl_of(cx.fn_info(def)) else {
             continue;
         };
+        if let Some(t) = type_args.first() {
+            cx.err(
+                format!("the decorator `{name}` has no type parameters"),
+                t.span,
+            );
+            continue;
+        }
         let declared = sig.ret.as_ref().and_then(|r| targets_of(r).ok());
         let (bits, repeatable) = declared.unwrap_or((u8::MAX, true));
         if bits & bit == 0 {

@@ -526,3 +526,7 @@ fn a_method_decorator_stays_on_the_implementation() {
     round_trips("abstract class D {\n  @logged\n  abstract m(x: number): void;\n}\n");
 }
 
+#[test]
+fn a_decorator_keeps_its_type_arguments() {
+    round_trips("@fac<string>(\"a\")\nclass C {\n  @ns.fac<Array<i64>>()\n  m() {}\n}\n");
+}

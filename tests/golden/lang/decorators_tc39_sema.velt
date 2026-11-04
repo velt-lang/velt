@@ -5,6 +5,9 @@ function logged(value: any, context: any): any {
 function factory(n: i64): any {
   return logged;
 }
+function generic<T>(n: string): any {
+  return logged;
+}
 const holder = { logged: 1 };
 
 @(logged)
@@ -18,5 +21,12 @@ class D {}
 
 @logged
 function plainFunction() {}
+
+// TypeScript's type arguments on the call.
+@generic<string>("a")
+class E {
+  @generic<string>("b")
+  m() {}
+}
 
 function main() {}

@@ -440,3 +440,25 @@ fn a_default_must_fit_its_parameter() {
     }
 }
 
+#[test]
+fn type_arguments_on_a_decorator() {
+    // Valid TypeScript, and a run-time decorator like any other.
+    let e = err_src(
+        r#"function fac<T>(a: string): any { return null; }
+           @fac<string>("a") class C { @fac<string>("b") m() {} }
+           function main() {}"#,
+    );
+    assert_eq!(e.matches(TC39).count(), 2, "{e}");
+    let e = err_src(r#"@nosuch<string>("a") class C {} function main() {}"#);
+    assert!(e.contains("cannot find `nosuch`"), "{e}");
+    // A compile-time decorator has no type parameters.
+    let e = err_src(
+        r#"declare decorator function d(a: string): TypeDecorator;
+           @d<string>("a") class C {}
+           function main() {}"#,
+    );
+    assert!(
+        e.contains("the decorator `d` has no type parameters"),
+        "{e}"
+    );
+}

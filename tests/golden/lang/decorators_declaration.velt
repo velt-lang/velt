@@ -8,5 +8,9 @@ function g(): string {
 declare decorator function badDefault(a: string = g()): TypeDecorator;
 declare decorator function wrongDefault(a: string = 1): TypeDecorator;
 declare decorator function outOfRange(a: u8 = 256): TypeDecorator;
+declare decorator function typeArgument(): TypeDecorator;
+
+@typeArgument<string>()
+class A {}
 
 function main() {}

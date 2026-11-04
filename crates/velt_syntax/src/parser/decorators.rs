@@ -131,7 +131,12 @@ impl<'a> Parser<'a> {
                 f.decorators.splice(0..0, decorators);
             }
             Member::Method(m) => {
-                m.decl.sig.span.lo = lo;
+                // Written before an overload signature, the member starts there; they belong to
+                // the implementation either way.
+                match m.decl.overloads.first_mut() {
+                    Some(first) => first.span.lo = lo,
+                    None => m.decl.sig.span.lo = lo,
+                }
                 m.decl.sig.decorators.splice(0..0, decorators);
             }
             Member::Constructor(..) => {

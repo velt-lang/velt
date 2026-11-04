@@ -187,3 +187,32 @@ fn a_parameter_list_inside_a_signature_starts_out_refused() {
     );
     parse_ok("function f<T extends { m(x: i64): void }>(@a y: T) {}");
 }
+
+#[test]
+fn type_arguments_on_a_decorator_call() {
+    let m = parse_ok("@fac<string, i64>(\"a\") class C { @ns.fac<Array<i64>>() m() {} }");
+    let ItemKind::Class(c) = &m.items[0].kind else {
+        panic!("not a class");
+    };
+    let ExprKind::Call {
+        type_args, args, ..
+    } = &c.decorators[0].expr.kind
+    else {
+        panic!("not a call");
+    };
+    assert_eq!((type_args.len(), args.len()), (2, 1));
+    let ExprKind::Call { type_args, .. } = &c.methods[0].decl.sig.decorators[0].expr.kind else {
+        panic!("not a call");
+    };
+    assert_eq!(type_args.len(), 1);
+}
+
+#[test]
+fn type_arguments_without_a_call_are_refused() {
+    let errs = errors("@fac<string> class C {}");
+    assert!(
+        errs.iter()
+            .any(|e| e.contains("must be followed by its arguments")),
+        "{errs:?}"
+    );
+}
