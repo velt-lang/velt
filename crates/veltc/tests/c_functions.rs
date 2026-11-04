@@ -315,7 +315,8 @@ export function cubeRoot(x: f64): f64 {
 #[test]
 fn a_package_s_c_library_is_linked_per_target() {
     let dir = test_dir::TestDir::new();
-    let main = "import { cubeRoot } from \"cmath\";\n\nfunction main() {\n  console.log(cubeRoot(27));\n}\n";
+    // Rounded: glibc's `cbrt(27)` is 3.0000000000000004. What's tested is that libm links.
+    let main = "import { cubeRoot } from \"cmath\";\n\nfunction main() {\n  console.log(Math.round(cubeRoot(27)));\n}\n";
     let native = ", native: { c: { m: { system: { linux: \"m\", darwin: \"m\" } } } }";
     project_with(dir.path(), LIBM, main, native, "allowNative: [\"cmath\"], ");
     for args in [&["run"][..], &["run", "--release"][..]] {
