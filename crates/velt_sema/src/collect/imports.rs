@@ -205,6 +205,12 @@ fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::Imp
     // `import * as local` of that module.
     if let Some(s) = namespace_module(cx, t, &n.name.name) {
         bind_namespace(cx, m, s, bound_name(n), n.type_only);
+        // `export default interface I` next to it: the type meaning of the same name.
+        if let Some(ty) = export_of(cx, t, &type_key(&n.name.name)) {
+            let scope = &mut cx.scopes[m];
+            scope.items.insert(type_key(&bound_name(n).name), ty);
+            scope.type_keys = true;
+        }
         return;
     }
     // A namespace (`crate::namespaces`): its exported members `N.x` are bound as `local.x`;

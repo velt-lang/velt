@@ -8,7 +8,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use velt_syntax::ast;
 
 use super::exports::{
-    bound_name, import_target, imports_of, lookup, star_skips, DEFAULT, MAX_DEPTH,
+    bound_name, import_target, imports_of, lookup, namespace_module, star_skips, DEFAULT, MAX_DEPTH,
 };
 use crate::ctx::{Ctx, Item};
 use crate::type_meanings::{of_type_key, type_key, Meaning};
@@ -60,7 +60,7 @@ fn export_walk(
     }
     if star_skips(&name) {
         // `export default interface I` with no value default: the name's only meaning.
-        return (name == DEFAULT)
+        return (name == DEFAULT && namespace_module(cx, t, DEFAULT).is_none())
             .then(|| declared_type_default(cx, t, depth))
             .flatten();
     }
@@ -167,9 +167,11 @@ fn type_of_default(cx: &Ctx, t: usize, name: &str, depth: u32) -> Option<Item> {
         return None;
     }
     type_default_entry(cx, t)?;
-    let value = export_at(cx, t, DEFAULT, depth + 1)?;
-    if cx.meaning(value) != Meaning::Value {
-        return None;
+    if namespace_module(cx, t, DEFAULT).is_none() {
+        let value = export_at(cx, t, DEFAULT, depth + 1)?;
+        if cx.meaning(value) != Meaning::Value {
+            return None;
+        }
     }
     declared_type_default(cx, t, depth)
 }

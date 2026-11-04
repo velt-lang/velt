@@ -1,0 +1,16 @@
+// `export default interface` next to `export * as default from`: the name's type meaning and its
+// value meaning, in both orders and through a re-export, as in TypeScript (#1916). The output
+// is Node's.
+import d from "./_default_interface_star/a";
+import e from "./_default_interface_star/after";
+import r, { renamed } from "./_default_interface_star/reexport";
+import * as whole from "./_default_interface_star/a";
+
+const a: d = { a: 2 };
+const b: e = { a: 3 };
+const c: r = { a: 4 };
+const f: renamed = { a: 5 };
+const g: whole.default = { a: 6 };
+
+console.log(d.v, e.v, r.v, renamed.v, whole.default.v);
+console.log(a.a, b.a, c.a, f.a, g.a);

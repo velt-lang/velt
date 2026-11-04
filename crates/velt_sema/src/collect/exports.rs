@@ -204,6 +204,10 @@ fn build_table(cx: &Ctx, t: usize, depth: u32) -> Option<Rc<[(String, Item)]>> {
                 decided.insert(type_key(DEFAULT), type_default);
             }
             Some(_) => {}
+            // Next to `export * as default from` the value is that namespace.
+            None if namespace_module(cx, t, DEFAULT).is_some() => {
+                decided.insert(type_key(DEFAULT), type_default);
+            }
             None => {
                 decided.insert(DEFAULT.to_string(), type_default);
             }
@@ -303,7 +307,10 @@ fn exported_namespace(
         if imp.namespace.as_ref().is_some_and(|ns| ns.name == name) {
             return import_target(cx, t, &imp.from);
         }
-        let Some(n) = imp.names.iter().find(|n| bound_name(n).name == name) else {
+        let bound = |n: &&ast::ImportName| {
+            bound_name(n).name == name && !velt_syntax::is_type_default(imp, n)
+        };
+        let Some(n) = imp.names.iter().find(bound) else {
             continue;
         };
         return match imp.from.is_empty() {
