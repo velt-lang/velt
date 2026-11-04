@@ -118,22 +118,3 @@ pub fn lint(
     }
     out
 }
-
-/// Whether `e` (or anything inside it, nested functions excluded) satisfies `f`.
-pub(crate) fn any_expr(
-    e: &velt_syntax::ast::Expr,
-    f: &dyn Fn(&velt_syntax::ast::Expr) -> bool,
-) -> bool {
-    struct Find<'f> {
-        f: &'f dyn Fn(&velt_syntax::ast::Expr) -> bool,
-        hit: bool,
-    }
-    impl<'a> velt_syntax::visit::Visit<'a> for Find<'_> {
-        fn expr(&mut self, e: &'a velt_syntax::ast::Expr) {
-            self.hit |= (self.f)(e);
-        }
-    }
-    let mut find = Find { f, hit: false };
-    velt_syntax::visit::walk_expr(e, &mut find);
-    find.hit
-}

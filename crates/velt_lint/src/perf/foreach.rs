@@ -2,7 +2,8 @@
 //! outside it. The closure must share that variable with the enclosing function, so the variable
 //! lives in a heap cell that every read and write goes through, in the loop and after it.
 //! `for (const x of xs) { … }` runs the same body in place (measured: a third of the
-//! instructions for a sum over a number array). The rewrite is TypeScript too.
+//! instructions for a sum over a number array). The rewrite is TypeScript too, and always a
+//! Review fix (`--fix=review`): `for…of` also visits elements the body adds ([`rewrite`]).
 //!
 //! Only locals and parameters count as outer variables: a module-level `let` lives in module
 //! state whether a closure assigns it or not, so a callback assigning one is not reported.
@@ -12,7 +13,7 @@ use velt_sema::ide::{DefKind, TypeView};
 use velt_syntax::ast::{self, ArrowBody, ExprKind, StmtKind};
 use velt_syntax::visit::{walk_module, Visit};
 
-use super::{any_expr, Cx};
+use super::Cx;
 use crate::{Finding, ProfiledFix};
 
 pub(crate) const CODE: &str = "perf/foreach-capture";
@@ -155,9 +156,10 @@ fn returns(stmts: &[ast::Stmt]) -> bool {
 }
 
 /// `for (const x of xs) { … }` for the statement `stmt`, when the callback has one plain
-/// parameter and no `return`. `forEach` visits the elements there when it starts and `for…of`
-/// also those added while it walks, so the fix is Safe only when the body provably changes no
-/// array ([`changes_nothing`]); otherwise it is Review.
+/// parameter and no `return`. Always Review: `forEach` visits the elements there when it starts
+/// and `for…of` also those added while it walks, and almost any body can run code that adds
+/// one (a call, a getter, `toString` or `valueOf` behind `+` or a template, an iterator, a
+/// destructuring), so no reading of the body proves the two the same.
 fn rewrite(cx: &Cx, stmt: Span, object: &ast::Expr, arrow: &ast::Expr) -> Option<ProfiledFix> {
     let ExprKind::Arrow { params, body, .. } = &arrow.kind else {
         return None;
@@ -177,20 +179,6 @@ fn rewrite(cx: &Cx, stmt: Span, object: &ast::Expr, arrow: &ast::Expr) -> Option
         ArrowBody::Block(b) => cx.text(b.span).to_string(),
         ArrowBody::Expr(e) => format!("{{ {}; }}", cx.text(e.span)),
     };
-    let root = root_name(object);
-    let touches_array = root.is_some_and(|name| {
-        let named = |e: &ast::Expr| match &e.kind {
-            ExprKind::Ident(id) => id.name == name,
-            ExprKind::This => name == "this",
-            _ => false,
-        };
-        any_expr(arrow, &named)
-    });
-    let safe = !touches_array && root.is_some() && changes_nothing(arrow, binding);
-    let applicability = match !safe {
-        true => Applicability::Review,
-        false => Applicability::Safe,
-    };
     let array = cx.text(object.span);
     let text = format!("for (const {binding} of {array}) {body_text}");
     Some(ProfiledFix {
@@ -198,35 +186,8 @@ fn rewrite(cx: &Cx, stmt: Span, object: &ast::Expr, arrow: &ast::Expr) -> Option
             format!("rewrite as `for (const {binding} of {array})`"),
             stmt,
             text,
-            applicability,
+            Applicability::Review,
         ),
         portable: true,
     })
-}
-
-/// Whether the callback `arrow` (with the parameter `param`) can change no array: no call or
-/// `new` (a function or method could push to the array, also through an
-/// alias), no assignment to a member or an element (`ys[n] = v` grows an alias), and no member
-/// read but of the parameter (a getter runs code).
-fn changes_nothing(arrow: &ast::Expr, param: &str) -> bool {
-    let param_member =
-        |object: &ast::Expr| matches!(&object.kind, ExprKind::Ident(id) if id.name == param);
-    !any_expr(arrow, &|e| match &e.kind {
-        ExprKind::Call { .. } | ExprKind::New { .. } => true,
-        ExprKind::Assign { target, .. } | ExprKind::Update { target, .. } => {
-            !matches!(target.kind, ExprKind::Ident(_))
-        }
-        ExprKind::Member { object, .. } | ExprKind::Index { object, .. } => !param_member(object),
-        _ => false,
-    })
-}
-
-/// The variable an array expression starts from (`xs` in `xs`, `this.xs`, `a.b.xs`), if any.
-fn root_name(e: &ast::Expr) -> Option<&str> {
-    match &e.kind {
-        ExprKind::Ident(id) => Some(&id.name),
-        ExprKind::Member { object, .. } => root_name(object),
-        ExprKind::This => Some("this"),
-        _ => None,
-    }
 }

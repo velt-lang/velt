@@ -188,10 +188,13 @@ pub(super) fn apply(
         write_all(&texts, &originals)
     };
     let restore = || -> Result<(), String> {
-        let texts: Vec<(PathBuf, String)> = (originals.iter())
-            .map(|(path, src)| (path.clone(), src.to_string()))
-            .collect();
-        write_all(&texts, &[])
+        match restore_all(&originals) {
+            failed if failed.is_empty() => Ok(()),
+            failed => Err(format!(
+                "cannot write back {}: the fixes are still in them",
+                listed(&failed)
+            )),
+        }
     };
     write(&edits)?;
     if recheck() {
@@ -238,17 +241,15 @@ pub(super) fn apply(
 }
 
 /// Write each of `texts` (path, new text). All or nothing: when one write fails, every file of
-/// `originals` (path, text before the fixes) is written back, so a fix that edits several files
-/// is never left half applied, and the error says so.
+/// `originals` (path, text before the fixes) is put back ([`restore_all`]), so a fix that edits
+/// several files is never left half applied, and the error says whether that worked.
 fn write_all(texts: &[(PathBuf, String)], originals: &[(PathBuf, &str)]) -> Result<(), String> {
     for (path, text) in texts {
         if let Err(e) = std::fs::write(path, text) {
-            let restored = originals
-                .iter()
-                .all(|(p, src)| std::fs::write(p, src).is_ok());
-            let state = match restored {
-                true => "no file was changed",
-                false => "some files could not be written back: check them",
+            let failed = restore_all(originals);
+            let state = match failed.is_empty() {
+                true => "no file was changed".to_string(),
+                false => format!("{} could not be written back: check them", listed(&failed)),
             };
             return Err(format!("cannot write `{}`: {e}; {state}", path.display()));
         }
@@ -256,9 +257,45 @@ fn write_all(texts: &[(PathBuf, String)], originals: &[(PathBuf, &str)]) -> Resu
     Ok(())
 }
 
+/// Put every file of `originals` back to its text, trying each one (a file that already has it,
+/// such as one whose write failed before changing it, is left alone). Returns the files that
+/// could not be written.
+fn restore_all(originals: &[(PathBuf, &str)]) -> Vec<PathBuf> {
+    originals
+        .iter()
+        .filter(|(path, src)| std::fs::read_to_string(path).ok().as_deref() != Some(*src))
+        .filter(|(path, src)| std::fs::write(path, src).is_err())
+        .map(|(path, _)| path.clone())
+        .collect()
+}
+
+/// `` `a`, `b` `` for the files `paths`.
+fn listed(paths: &[PathBuf]) -> String {
+    let names: Vec<String> = paths.iter().map(|p| format!("`{}`", p.display())).collect();
+    names.join(", ")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A file that already has its original text is not written back, so one that could not
+    /// be written (and so never changed) doesn't count as one that could not be restored.
+    #[test]
+    fn restoring_skips_unchanged_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let a = dir.path().join("a.vlt");
+        std::fs::write(&a, "changed").unwrap();
+        let missing = dir.path().join("no-such-dir").join("b.vlt");
+        // `missing` can't be written, so restoring it fails: it is reported.
+        assert_eq!(
+            restore_all(&[(a.clone(), "before"), (missing.clone(), "x")]),
+            [missing]
+        );
+        assert_eq!(std::fs::read_to_string(&a).unwrap(), "before");
+        // `a` has its text now: nothing to write, nothing reported.
+        assert!(restore_all(&[(a, "before")]).is_empty());
+    }
 
     /// A write that fails after another succeeded puts the first file back.
     #[test]

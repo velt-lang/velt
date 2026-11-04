@@ -84,7 +84,7 @@ fn perf_hints_show_with_perf_only() {
         "{err}"
     );
     assert!(
-        err.contains("= note: fix: rewrite as `for (const x of xs)` (`velt check --fix`)"),
+        err.contains("= note: fix: rewrite as `for (const x of xs)` (`velt check --fix=review`)"),
         "{err}"
     );
     assert!(err.contains("= note: perf(foreach-capture)"), "{err}");
@@ -180,8 +180,10 @@ function main() {
 }
 ";
 
+/// Both fixes may change what the program does (the class's copies instead of sharing, the loop
+/// also visits elements its body adds), so `--fix` applies neither and `--fix=review` both.
 #[test]
-fn fix_applies_safe_fixes_and_review_the_rest() {
+fn review_fixes_need_fix_review() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     package(dir, "");
@@ -189,21 +191,18 @@ fn fix_applies_safe_fixes_and_review_the_rest() {
     let o = velt(dir, &["check", "--fix"]);
     assert!(o.status.success(), "{}", stderr(&o));
     assert!(
-        stderr(&o).starts_with("velt: fixed 1 problem in 1 file\n"),
+        stderr(&o).starts_with("velt: nothing to fix\n"),
         "{}",
         stderr(&o)
     );
-    let after = read(dir, "src/main.vlt");
-    assert_eq!(
-        after,
-        SHAPES.replace(
-            "xs.forEach((x) => { total += x; });",
-            "for (const x of xs) { total += x; }"
-        )
-    );
-    // The class's fix copies instead of sharing: only `--fix=review` applies it.
+    assert_eq!(read(dir, "src/main.vlt"), SHAPES);
     let o = velt(dir, &["check", "--fix=review"]);
     assert!(o.status.success(), "{}", stderr(&o));
+    assert!(
+        stderr(&o).starts_with("velt: fixed 2 problems in 1 file\n"),
+        "{}",
+        stderr(&o)
+    );
     let after = read(dir, "src/main.vlt");
     assert!(
         after.starts_with("type Point = { x: number; y: number };\n"),
@@ -213,18 +212,24 @@ fn fix_applies_safe_fixes_and_review_the_rest() {
         after.contains("ps.push({ x: i, y: 1 } as Point)"),
         "{after}"
     );
+    assert!(
+        after.contains("for (const x of xs) { total += x; }"),
+        "{after}"
+    );
     assert!(velt(dir, &["check"]).status.success());
     let o = velt(dir, &["check", "--fix=review"]);
     assert_eq!(stderr(&o), "velt: nothing to fix\n");
 }
 
-/// `forEach` visits the elements there when it starts, `for…of` also those added on the way, so
-/// the rewrite is Safe only when the body can change no array. A body that calls a function
-/// growing the array, grows it through an alias, or calls a method of its owner gets a Review
-/// fix, which `--fix` leaves alone (each program prints 6 with `forEach`, 26 with `for…of`).
+/// `forEach` visits the elements there when it starts, `for…of` also those added on the way, and
+/// a body can add one through a call, an alias, its owner's method, or with no call in its text
+/// at all (a getter of the element), so the rewrite is always a Review fix, which `--fix` leaves
+/// alone. Each program prints 6 (the getter one 3) with `forEach`, 26 (5) with `for…of`.
 #[test]
-fn a_foreach_body_that_may_grow_the_array_gets_a_review_fix() {
+fn a_foreach_rewrite_is_a_review_fix() {
     let programs = [
+        "function main() {\n  const xs = [1, 2, 3];\n  let sum = 0;\n  xs.forEach((x) => { sum += x; });\n  console.log(sum);\n}\n",
+        "class Item {\n  get v(): number { if (xs.length < 5) xs.push(new Item()); return 1; }\n}\nconst xs: Item[] = [new Item(), new Item(), new Item()];\nfunction main() {\n  let sum = 0;\n  xs.forEach((x) => { sum += x.v; });\n  console.log(sum);\n}\n",
         "function main() {\n  const xs = [1, 2, 3];\n  let sum = 0;\n  const grow = () => { if (xs.length < 5) xs.push(10); };\n  xs.forEach((x) => { sum += x; grow(); });\n  console.log(sum);\n}\n",
         "function main() {\n  const xs = [1, 2, 3];\n  const ys = xs;\n  let sum = 0;\n  xs.forEach((x) => { sum += x; if (ys.length < 5) ys.push(10); });\n  console.log(sum);\n}\n",
         "class Bag {\n  items: number[] = [1, 2, 3];\n  add(): void { if (this.items.length < 5) this.items.push(10); }\n}\nfunction main() {\n  const b = new Bag();\n  const items = b.items;\n  let sum = 0;\n  items.forEach((x) => { sum += x; b.add(); });\n  console.log(sum);\n}\n",
@@ -358,7 +363,7 @@ fn json_has_codes_and_fixes() {
     assert_eq!(codes(&report), ["perf/foreach-capture"]);
     let d = &report["diagnostics"][0];
     assert_eq!(d["severity"], "note");
-    assert_eq!(d["fixes"][0]["applicability"], "safe");
+    assert_eq!(d["fixes"][0]["applicability"], "review");
     assert_eq!(
         d["fixes"][0]["edits"][0]["replacement"],
         "for (const x of xs) { total += x; }"
