@@ -89,8 +89,9 @@ The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
   `--part` runs some parts (`lint`, `test`, `golden`, comma-separated; `wasm` runs only the
   WebAssembly goldens, which `test` includes).
 - **Everything**: `scripts/check-all.sh` or `pwsh scripts/check-all.ps1` (`--fast` / `-Fast`:
-  goldens in debug mode only). The merge queue runs it on Linux (and on Windows and macOS for
-  OS-specific changes), and a scheduled run on Windows and macOS once a day, so you need it
+  goldens in debug mode only). The merge queue runs it on Linux (and on Windows for OS-specific
+  changes, on macOS for the narrower set that really can differ there), and a scheduled run on
+  Windows and macOS once a day, so you need it
   locally only when you want that certainty before queueing. The queue
   skips the WebAssembly goldens when the change doesn't touch WebAssembly code, and otherwise
   runs them in parallel shards next to the goldens' (`--part wasm`, `VELT_WASM_SHARD=<i>/<n>`),
@@ -394,15 +395,19 @@ opening it.
 
 - **CI**: every pull request runs the checks its changes need (as `scripts/check.sh` selects
   them) on Linux, as three parallel jobs: lint, test and golden; a change to OS-specific code
-  (below) is also linted (fmt, clippy) on Windows and macOS, so `cfg(windows)`-only findings
-  show before the queue. The label `ci:full` makes them check everything (add it before
+  (below) is also linted (fmt, clippy) on Windows, and on macOS when the queue checks it there,
+  so `cfg(windows)`-only findings show before the queue. The label `ci:full` makes them check everything (add it before
   pushing, or close and reopen the pull request). When a pull
   request is approved, the maintainer who approves it adds it to the **merge queue** in the same
   step (`gh pr merge <n> --auto`): the queue runs the whole gate against the pull
   request merged with the latest `main`, and merges it when it passes. It checks Linux, plus
-  Windows and macOS when the change touches OS-specific code (the runtime, code generation and
-  linking, `veltc`, `vpm`, the parts of the standard library that talk to the OS and its test
-  suites; comment-only edits don't count; `cargo xtask affected` says which).
+  Windows when the change touches OS-specific code (the runtime, code generation and linking,
+  `veltc`, `vpm`, the parts of the standard library that talk to the OS and its test suites, and
+  the build, CI and scripts; comment-only edits don't count), plus macOS when it touches code that
+  really can differ there (the runtime, code generation and linking, those parts of the standard
+  library, and a few files with a macOS branch), since GitHub often can't supply a macOS runner.
+  `cargo xtask affected` says which and why. A break only macOS shows in other code appears after
+  the merge, in the scheduled run.
   A scheduled run checks the whole gate on Windows and macOS once a day and opens an issue when
   it fails, and a tag checks it again before a release. A nightly run adds PostgreSQL and Redis
   so the database tests run too.

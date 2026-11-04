@@ -1,16 +1,22 @@
 // The registry over stores that wait, fail or lose data (src/server/registry.vlt, publish.vlt):
 // writes to one package hold its lock, a failed write takes its owner claim back, a failing
-// store answers 500, and what the cache in front is told to forget.
+// store answers 500, and what the cache in front is told to forget. An upload's body is read
+// outside the lock, and a cache that can't be purged fails no write.
 import { channel, Channel } from "velt/sync";
 import { describe, expect, it } from "velt/test";
 import {
+  contentChecksum,
+  HeldLock,
   MemoryBlobStore,
   MemoryMetadataDb,
+  MemoryPublishLock,
   PackageIndex,
+  packArchive,
+  RecordingCachePurge,
   RegistryLimits,
   StoreError,
 } from "../src/lib";
-import { Answer, TestRegistry } from "./_registry";
+import { Answer, packageFiles, TestRegistry } from "./_registry";
 
 // A database whose `packageNames` waits for a token from `gate` (while it is set).
 class GatedDb extends MemoryMetadataDb {
@@ -45,6 +51,138 @@ class EmptyBlobs extends MemoryBlobStore {
     return null;
   }
 }
+
+// A lock that lists the keys it was asked for, in order.
+class RecordingLock extends MemoryPublishLock {
+  keys: string[] = [];
+
+  override async acquire(key: string): Promise<HeldLock> {
+    this.keys.push(key);
+    return await super.acquire(key);
+  }
+}
+
+// A cache that can't be purged.
+class FailingPurge extends RecordingCachePurge {
+  override async purge(paths: string[]): Promise<void> {
+    throw new StoreError("the cache is down");
+  }
+}
+
+// An upload of `lib` 1.0.0 whose body arrives only when `finish` is called.
+class SlowUpload {
+  private ctl: ReadableStreamDefaultController<Uint8Array> | null = null;
+  answer: Promise<Answer>;
+
+  constructor(r: TestRegistry, token: string = "") {
+    const stream = new ReadableStream<Uint8Array>({
+      start: (c: ReadableStreamDefaultController<Uint8Array>): void => {
+        this.ctl = c;
+      },
+    });
+    const headers: [string, string][] = [
+      ["x-velt-checksum", contentChecksum(packageFiles("lib", "1.0.0"))],
+    ];
+    if (token.length > 0) {
+      headers.push(["authorization", `Bearer ${token}`]);
+    }
+    this.answer = r.send("PUT", "/api/v1/lib/1.0.0", headers, stream);
+  }
+
+  finish(): void {
+    this.ctl?.enqueue(Uint8Array.fromBytes(packArchive(packageFiles("lib", "1.0.0"))));
+    this.ctl?.close();
+  }
+}
+
+describe("uploads", () => {
+  it("take the package's lock only once the body has arrived", async () => {
+    const lock = new RecordingLock();
+    const r = new TestRegistry(
+      new RegistryLimits(),
+      new MemoryMetadataDb(),
+      new MemoryBlobStore(),
+      lock,
+    );
+    const slow = new SlowUpload(r);
+    // Another package's publish runs start to finish while lib's body is on its way.
+    expect((await r.publish("other", "1.0.0")).status).toBe(201);
+    expect(lock.keys).toEqual(["other"]);
+    slow.finish();
+    expect((await slow.answer).status).toBe(201);
+    expect(lock.keys).toEqual(["other", "lib"]);
+  });
+
+  it("let a package's other writes through while a body is on its way", async () => {
+    const r = new TestRegistry();
+    await r.publish("lib", "0.9.0");
+    const slow = new SlowUpload(r);
+    await r.publish("other", "1.0.0");
+    expect((await r.publish("lib", "0.9.1")).status).toBe(201);
+    slow.finish();
+    expect((await slow.answer).status).toBe(201);
+  });
+
+  it("check the caller again once the body has arrived", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    const slow = new SlowUpload(r, alice);
+    // Past the first check by now: this publish has run through more steps than that takes.
+    await r.publish("other", "1.0.0", alice);
+    await r.db.putOwners("lib", ["bob"]);
+    slow.finish();
+    const answer = await slow.answer;
+    expect(answer.status).toBe(403);
+    expect(await r.db.index("lib")).toBeNull();
+    expect(await r.db.owners("lib")).toEqual(["bob"]);
+  });
+
+  it("read no body for a caller who may not publish", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    r.user("bob");
+    await r.publish("lib", "1.0.0", alice);
+    // A body that fails when read: reading it would answer 500.
+    const stream = new ReadableStream<Uint8Array>({
+      pull: (c: ReadableStreamDefaultController<Uint8Array>): void => {
+        c.error(new Error("the body was read"));
+      },
+    });
+    const headers: [string, string][] = [["authorization", "Bearer token-of-bob"]];
+    const answer = await r.send("PUT", "/api/v1/lib/1.0.1", headers, stream);
+    expect(answer.status).toBe(403);
+  });
+});
+
+describe("a cache that can't be purged", () => {
+  function registry(): TestRegistry {
+    return new TestRegistry(
+      new RegistryLimits(),
+      new MemoryMetadataDb(),
+      new MemoryBlobStore(),
+      new MemoryPublishLock(),
+      new FailingPurge(),
+    );
+  }
+
+  it("still answers 201 for a publish, and a retry 409", async () => {
+    const r = registry();
+    const first = await r.publish("lib", "1.0.0");
+    expect(first.status).toBe(201);
+    expect((await r.call("GET", "lib/index")).text).toContain(`"1.0.0"`);
+    expect((await r.publish("lib", "1.0.0")).status).toBe(409);
+  });
+
+  it("still answers 200 for a yank and a change of owners", async () => {
+    const r = registry();
+    const alice = r.user("alice");
+    r.user("bob");
+    await r.publish("lib", "1.0.0", alice);
+    expect((await r.call("PUT", "lib/1.0.0/yank", alice)).status).toBe(200);
+    expect((await r.call("PUT", "lib/owners/bob", alice)).status).toBe(200);
+    expect(await r.db.owners("lib")).toEqual(["alice", "bob"]);
+  });
+});
 
 describe("stores", () => {
   it("publish one name's spellings one at a time", async () => {

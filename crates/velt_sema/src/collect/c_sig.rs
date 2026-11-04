@@ -8,10 +8,23 @@ use velt_syntax::ast;
 
 use crate::ctx::Ctx;
 use crate::defs::{FnKind, ParamSig};
-use crate::hir::{CImport, CTy, DefId, FloatTy, TyId, TyKind};
+use crate::hir::{CImport, CTy, DefId, FloatTy, Nothing, TyId, TyKind};
 
 /// What may cross, for the errors.
-const ALLOWED: &str = "integers (`i8` … `u64`, `isize`, `usize`), `f32`, `f64` and `bool`";
+const ALLOWED: &str = "integers (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, \
+                       `Ptr<T>` and `Ptr<T> | null` (velt/ffi), and for a parameter `null`, \
+                       `StrBytes`, `CString`, `Out<T>` of a number and `OutPtr<T>` (velt/ffi), and arrays of numbers (`u8[]`, `readonly f64[]`)";
+
+/// The module of std's `StrBytes` (std/ffi/str_bytes.vlt).
+const STR_BYTES_MODULE: &str = velt_common::std_module!(ffi_str_bytes);
+
+/// velt/ffi's classes a C function takes by address (std/ffi/{c_string,out,out_ptr}.vlt).
+const C_STRING: &str = velt_common::std_item!(ffi_c_string, "CString");
+const OUT: &str = velt_common::std_item!(ffi_out, "Out");
+const OUT_PTR: &str = velt_common::std_item!(ffi_out_ptr, "OutPtr");
+
+/// std's pointer into C memory (std/ffi/ptr.vlt).
+const PTR: &str = velt_common::std_item!(ffi_ptr, "Ptr");
 
 /// The imports of extern function `d` (`kind`, declared in `module`) with signature `sig`:
 /// a host function's (`host_sig`) or a C function's, recorded on its `FnInfo`.
@@ -32,7 +45,7 @@ pub(super) fn foreign_imports(
     let c = sig
         .c
         .as_ref()
-        .map(|lib| c_import(cx, &lib.library, lib.span, sig, ps, *ret));
+        .map(|lib| c_import(cx, module, (&lib.library, lib.span), sig, ps, *ret));
     let f = cx.fn_info_mut(d);
     f.host = host;
     f.c = c;
@@ -42,8 +55,8 @@ pub(super) fn foreign_imports(
 /// what cannot cross. Reported types cross as `void`: the program does not compile.
 fn c_import(
     cx: &mut Ctx,
-    library: &str,
-    at: velt_common::Span,
+    module: usize,
+    (library, at): (&str, velt_common::Span),
     sig: &ast::FnSig,
     ps: &[ParamSig],
     ret: TyId,
@@ -79,7 +92,7 @@ fn c_import(
         .params
         .iter()
         .zip(ps)
-        .map(|(p, s)| param(cx, name, p, s.ty))
+        .map(|(p, s)| param(cx, module, name, p, s.ty))
         .collect();
     let ret_ty = match cx.ty.kind(ret) {
         TyKind::Unit => Some(CTy::Void),
@@ -105,7 +118,7 @@ fn c_import(
 }
 
 /// What crosses for parameter `p` (type `ty`) of C function `name`.
-fn param(cx: &mut Ctx, name: &str, p: &ast::Param, ty: TyId) -> CTy {
+fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> CTy {
     let what = if p.rest {
         Some("a rest parameter (C's `...` is declared `...args: CVarArgs`, coming later)")
     } else if p.optional || p.default.is_some() {
@@ -124,6 +137,34 @@ fn param(cx: &mut Ctx, name: &str, p: &ast::Param, ty: TyId) -> CTy {
     }
     if let Some(t) = value_ty(cx, ty) {
         return t;
+    }
+    if is_null(cx, ty) {
+        return CTy::Null;
+    }
+    if let Some(t) = by_address(cx, ty) {
+        return t;
+    }
+    match cx.ty.kind(ty) {
+        TyKind::Str if is_str_bytes(cx, module, &p.ty) => return CTy::StrBytes,
+        TyKind::Str => {
+            cx.error(
+                Diagnostic::error(
+                    format!(
+                        "`string` cannot be passed to C: declare parameter `{}` of `{name}` as `StrBytes` (velt/ffi) to pass its bytes, borrowed",
+                        p.name.name
+                    ),
+                    p.ty.span,
+                )
+                .with_note("`StrBytes` passes the string's UTF-8 bytes without a NUL, and the binding passes their length (`byteLength(s)`); a C function that needs a NUL-terminated string takes a `CString`"),
+            );
+            return CTy::Void;
+        }
+        TyKind::Array(e) if is_number(cx, *e) => {
+            return CTy::Buf {
+                readonly: super::sigs::written_readonly(&p.ty),
+            };
+        }
+        _ => {}
     }
     let shown = cx.display(ty);
     cx.error(
@@ -146,6 +187,123 @@ fn value_ty(cx: &Ctx, ty: TyId) -> Option<CTy> {
         TyKind::Float(FloatTy::F32) => Some(CTy::F32),
         TyKind::Float(FloatTy::F64) => Some(CTy::F64),
         TyKind::Bool => Some(CTy::Bool),
+        // `Ptr<T> | null` (or `| undefined`): `NULL` is the nothing.
+        TyKind::Option(inner, n) if *n != Nothing::Both && is_c_ptr(cx, *inner) => {
+            Some(CTy::Ptr { nullable: true })
+        }
+        _ if is_c_ptr(cx, ty) => Some(CTy::Ptr { nullable: false }),
         _ => None,
     }
+}
+
+/// Does the written type `t` (in `module`) name velt/ffi's `StrBytes`, directly
+/// (`StrBytes`, imported) or through a namespace (`ffi.StrBytes`)? A look-alike alias of
+/// `string` does not.
+fn is_str_bytes(cx: &Ctx, module: usize, t: &ast::TypeExpr) -> bool {
+    let ast::TypeExprKind::Named { path, args } = &t.kind else {
+        return false;
+    };
+    if !args.is_empty() {
+        return false;
+    }
+    let item = match path.as_slice() {
+        [n] => cx.scopes[module].items.get(&n.name).copied(),
+        // `ffi.StrBytes`: what the namespace's module exports under the name.
+        [ns, n] => match cx.scopes[module].namespaces.get(&ns.name) {
+            Some(&m) => super::exports::export_of(cx, m, &n.name),
+            None => return false,
+        },
+        _ => return false,
+    };
+    // By the alias's own declaration, so a renamed import (`StrBytes as SB`) is it too.
+    match item {
+        Some(crate::ctx::Item::Alias(a)) => {
+            let alias = &cx.aliases[a as usize];
+            let m = alias.module;
+            alias.decl.name.name == "StrBytes"
+                && cx.modules[m].is_std
+                && cx.modules[m].path == STR_BYTES_MODULE
+        }
+        _ => false,
+    }
+}
+
+/// Is `ty` a number type an array of which C reads as a C array (integers, `f32`, `f64`)?
+fn is_number(cx: &Ctx, ty: TyId) -> bool {
+    matches!(
+        cx.ty.kind(ty),
+        TyKind::Int(_) | TyKind::Float(FloatTy::F32 | FloatTy::F64)
+    )
+}
+
+/// The error for using a `Ptr<A>` where a `Ptr<B>` is expected (`expected`; `from` the value's
+/// type), or `None` when `expected` is no `Ptr`: pointers to different C types never convert
+/// implicitly, so the messages of other types' conversions don't fit.
+pub(crate) fn ptr_conversion(
+    cx: &Ctx,
+    from: TyId,
+    expected: TyId,
+    at: velt_common::Span,
+) -> Option<Diagnostic> {
+    if !is_ptr(cx, expected) {
+        return None;
+    }
+    let (f, e) = (cx.display(from), cx.display(expected));
+    let target = match cx.ty.kind(expected) {
+        TyKind::Adt(_, args) if args.len() == 1 => cx.display(args[0]),
+        _ => "T".into(),
+    };
+    Some(
+        Diagnostic::error(format!("a `{f}` is not a `{e}`"), at).with_note(format!(
+            "pointers to different C types never convert implicitly: in `unsafe` code, `Ptr.at<{target}>(Ptr.addressOf(p))` makes one, stating that a `{target}` is at that address"
+        )),
+    )
+}
+
+/// velt/ffi's `CString`, `Out<T>` (of a number or `bool`) or `OutPtr<T>`, which cross as an
+/// address.
+fn by_address(cx: &Ctx, ty: TyId) -> Option<CTy> {
+    let TyKind::Adt(d, args) = cx.ty.kind(ty) else {
+        return None;
+    };
+    let scalar = |t: &TyId| is_number(cx, *t) || matches!(cx.ty.kind(*t), TyKind::Bool);
+    match cx.adt(*d)?.qual_name.as_str() {
+        C_STRING => Some(CTy::CString),
+        OUT if args.first().is_some_and(scalar) => Some(CTy::Out),
+        OUT_PTR if args.first().is_some_and(|t| c_pointee(cx, *t)) => Some(CTy::OutPtr),
+        _ => None,
+    }
+}
+
+/// Is `ty` a `Ptr<T>` C can hold: one to a C type (`declare c type`), a number, `bool`, `void`
+/// or another such pointer (`Ptr<Ptr<u8>>` for `char **`)? `Ptr<string>` means nothing in C.
+fn is_c_ptr(cx: &Ctx, ty: TyId) -> bool {
+    match cx.ty.kind(ty) {
+        TyKind::Adt(_, args) if is_ptr(cx, ty) => args.first().is_some_and(|t| c_pointee(cx, *t)),
+        _ => false,
+    }
+}
+
+/// Can a C pointer point at a `ty`?
+fn c_pointee(cx: &Ctx, ty: TyId) -> bool {
+    match cx.ty.kind(ty) {
+        TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Unit => true,
+        TyKind::Adt(d, _) => {
+            cx.adt(*d).is_some_and(|a| a.decl.is_some_and(|t| t.c_type)) || is_c_ptr(cx, ty)
+        }
+        _ => false,
+    }
+}
+
+/// Is `ty` std's `Ptr<T>`?
+fn is_ptr(cx: &Ctx, ty: TyId) -> bool {
+    match cx.ty.kind(ty) {
+        TyKind::Adt(d, _) => cx.adt(*d).is_some_and(|a| a.qual_name == PTR),
+        _ => false,
+    }
+}
+
+/// Is `ty` the type `null` (an option of nothing)?
+fn is_null(cx: &Ctx, ty: TyId) -> bool {
+    matches!(cx.ty.kind(ty), TyKind::Option(inner, Nothing::Null) if *inner == cx.ty.never)
 }

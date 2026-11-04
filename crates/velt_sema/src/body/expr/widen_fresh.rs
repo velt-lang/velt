@@ -367,6 +367,12 @@ impl FnCx<'_, '_> {
         if is_fresh(found) || !self.widens(found.ty, expected) {
             return false;
         }
+        if let Some(d) =
+            crate::collect::c_sig::ptr_conversion(self.cx, found.ty, expected, found.span)
+        {
+            self.cx.error(d);
+            return true;
+        }
         let (e, f) = (self.cx.display(expected), self.cx.display(found.ty));
         let what = self.value_name(found);
         let array = self.cx.ty.array_elem(expected).is_some();

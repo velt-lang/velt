@@ -35,6 +35,15 @@ pub(super) fn item(item: &ast::Item, cx: &mut Cx) {
             ],
         ),
         I::Interface(i) => interface(i, cx),
+        I::Class(c) if c.c_type => cx.error(
+            "declare-fn",
+            cx.keyword(item.span, "declare"),
+            format!(
+                "`declare c type {}` declares a C type, which JavaScript doesn't have",
+                c.name.name
+            ),
+            &["keep native bindings out of code shared with TypeScript"],
+        ),
         I::Function(f) if f.sig.generator.is_some() => cx.error(
             "declare-fn",
             cx.keyword(item.span, "declare"),

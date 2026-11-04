@@ -5,6 +5,7 @@
 import { checkUserName, isValidPackageName } from "../names";
 import { authorize, isPublished, writer } from "./access";
 import { text } from "./answer";
+import { purgeAfterWrite } from "./purge_after_write";
 import { Refusal } from "./refusal";
 import { RegistryStores } from "./registry_stores";
 
@@ -64,6 +65,6 @@ export async function changeOwners(
     owners.splice(owners.indexOf(user), 1);
   }
   await stores.db.putOwners(name, owners);
-  await stores.purge.purge([`/api/v1/${name}/owners`]);
+  await purgeAfterWrite(stores, [`/api/v1/${name}/owners`]);
   return text(200, `owners of \`${name}\`: ${owners.join(", ")}\n`);
 }

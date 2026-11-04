@@ -1,13 +1,13 @@
 //! The runtime externs the hooks replace (`Hook::replaces`, std_hooks.rs) and the benchmarks
-//! that measure them (`Hook::bench`): each named extern is one the runtime defines, each
-//! benchmark exists, and the compiler names a replaced extern only where [`ALLOWED`] lists it
+//! that measure them (`Hook::bench`): each named extern is one the runtime defines or one listed
+//! as deleted (`std_hooks::DELETED`, named nowhere any more), each benchmark exists, and the compiler names a replaced extern only where [`ALLOWED`] lists it
 //! (#2197). Each later change that deletes a fallback deletes its entries here: an entry whose
 //! uses are gone fails too, so the list only shrinks.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use velt_common::std_hooks::HOOKS;
+use velt_common::std_hooks::{DELETED, HOOKS};
 
 /// The crates whose sources make code (sema writes calls, lowering emits them, the optimizer
 /// rewrites them, the backends compile them).
@@ -25,48 +25,25 @@ const EMITTERS: &[&str] = &[
 #[rustfmt::skip]
 const ALLOWED: &[(&str, &str, usize, &str)] = &[
     // The runtime calls lowering can emit (`Rt` and its symbols).
-    ("velt_vir/src/lower/rt.rs", "velt_rt_str_from_i64", 3, DECLARED),
-    ("velt_vir/src/lower/rt.rs", "velt_rt_str_from_u64", 3, DECLARED),
     ("velt_vir/src/lower/rt.rs", "velt_rt_str_from_f64", 3, DECLARED),
-    ("velt_vir/src/lower/rt.rs", "velt_rt_strbuf_push_i64", 3, DECLARED),
-    ("velt_vir/src/lower/rt.rs", "velt_rt_strbuf_push_u64", 3, DECLARED),
     ("velt_vir/src/lower/rt.rs", "velt_rt_strbuf_push_f64", 3, DECLARED),
-    // The fallbacks when a number hook is missing or unchecked.
-    ("velt_vir/src/lower/template.rs", "velt_rt_str_from_i64", 1, FALLBACK),
-    ("velt_vir/src/lower/template.rs", "velt_rt_str_from_u64", 1, FALLBACK),
+    // The fallbacks when a float hook is missing or unchecked.
     ("velt_vir/src/lower/template.rs", "velt_rt_str_from_f64", 1, FALLBACK),
-    ("velt_vir/src/lower/strbuf.rs", "velt_rt_strbuf_push_i64", 1, FALLBACK),
-    ("velt_vir/src/lower/strbuf.rs", "velt_rt_strbuf_push_u64", 1, FALLBACK),
     ("velt_vir/src/lower/strbuf.rs", "velt_rt_strbuf_push_f64", 1, FALLBACK),
     // Emitters with no hook in between.
-    ("velt_vir/src/lower/strbuf.rs", "velt_rt_strbuf_push_i64", 1, DISCRIMINANT),
     ("velt_vir/src/lower/glue/literals.rs", "velt_rt_strbuf_push_f64", 1, FLOAT_LITERAL),
     ("velt_vir/src/lower/any_member.rs", "velt_rt_str_from_f64", 1, NUMERIC_KEY),
     ("velt_vir/src/lower/any_has.rs", "velt_rt_str_from_f64", 1, NUMERIC_KEY),
     ("velt_vir/src/lower/any_proxy.rs", "velt_rt_str_from_f64", 1, NUMERIC_KEY),
     ("velt_vir/src/lower/proxy_throws.rs", "velt_rt_str_from_f64", 1, NUMERIC_KEY),
-    ("velt_vir/src/lower/any_has_builtin.rs", "velt_rt_str_from_u64", 1, NUMERIC_KEY),
-    ("velt_vir/src/lower/any_keys.rs", "velt_rt_str_from_u64", 1, INDEX_KEYS),
-    ("velt_vir/src/lower/array/builtins.rs", "velt_rt_str_from_u64", 2, OUT_OF_BOUNDS),
-    ("velt_vir/src/lower/array/builtins.rs", "velt_rt_str_from_i64", 1, OUT_OF_BOUNDS),
     // The optimizer's knowledge of the externs, which goes with their last call.
-    ("velt_opt/src/numrep/print.rs", "velt_rt_strbuf_push_f64", 1, NUMREP),
-    ("velt_opt/src/numrep/print.rs", "velt_rt_strbuf_push_i64", 1, NUMREP),
-    ("velt_opt/src/numrep/print.rs", "velt_rt_str_from_f64", 1, NUMREP),
-    ("velt_opt/src/numrep/print.rs", "velt_rt_str_from_i64", 1, NUMREP),
-    ("velt_opt/src/borrowed_copies/counted/mod.rs", "velt_rt_strbuf_push_i64", 1, NO_FREE),
-    ("velt_opt/src/borrowed_copies/counted/mod.rs", "velt_rt_strbuf_push_u64", 1, NO_FREE),
     ("velt_opt/src/borrowed_copies/counted/mod.rs", "velt_rt_strbuf_push_f64", 1, NO_FREE),
 ];
 
 const DECLARED: &str = "the `Rt` call's declaration and its symbol";
-const FALLBACK: &str = "fallback when the hook is unchecked, #2197";
-const DISCRIMINANT: &str = "an enum's discriminant as text, no hook yet: #2197 PR 4";
+const FALLBACK: &str = "fallback when the float hook is unchecked: #2161";
 const FLOAT_LITERAL: &str = "`console.log` of a float literal, no hook yet: #2197 PR 4";
 const NUMERIC_KEY: &str = "a numeric key of an `any` as text, no hook yet: #2197 PR 4";
-const INDEX_KEYS: &str = "an array's index keys as text, no hook yet: #2197 PR 4";
-const OUT_OF_BOUNDS: &str = "the out-of-bounds message, no hook yet: #2197 PR 4";
-const NUMREP: &str = "numrep rewrites a call of the float extern into the integer one";
 const NO_FREE: &str = "the externs whose call frees nothing (borrowed copies)";
 
 fn crates() -> PathBuf {
@@ -220,24 +197,91 @@ fn every_bench_row_exists() {
 
 /// Each replaced extern is a runtime function the compiler could call: velt_rt defines it as
 /// `extern "C" fn <name>(` (what a program links against; std's `declare function`s only
-/// declare what the runtime defines).
+/// declare what the runtime defines), unless the port is done and its Rust deleted
+/// (`std_hooks::DELETED`).
 #[test]
-fn every_replaced_extern_is_defined_by_the_runtime() {
+fn every_replaced_extern_is_defined_by_the_runtime_or_deleted() {
     let mut rt = vec![];
     sources(&crates().join("velt_rt/src"), &mut rt);
     let names = replaced();
     assert!(!names.is_empty(), "no hook replaces an extern");
-    for name in names {
+    for name in &names {
         assert!(
             name.starts_with("velt_rt_"),
             "`{name}` is no runtime extern"
         );
         let def = format!("extern \"C\" fn {name}(");
+        let defined = rt.iter().any(|(_, src)| src.contains(&def));
+        if DELETED.contains(name) {
+            assert!(
+                !defined,
+                "replaces(\"{name}\"): velt_rt defines it, but std_hooks::DELETED lists it"
+            );
+        } else {
+            assert!(
+                defined,
+                "replaces(\"{name}\"): velt_rt defines no `{def}` (deleted: list it in \
+                 std_hooks::DELETED)"
+            );
+        }
+    }
+    for name in DELETED {
         assert!(
-            rt.iter().any(|(_, src)| src.contains(&def)),
-            "replaces(\"{name}\"): velt_rt defines no `{def}`"
+            names.contains(name),
+            "std_hooks::DELETED lists `{name}`, which no hook replaces"
         );
     }
+}
+
+/// The text files under `dir` (recursively) with extension `ext`, skipping `target` folders.
+fn files_with(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if path.file_name().is_none_or(|n| n != "target") {
+                files_with(&path, ext, out);
+            }
+        } else if path.extension().is_some_and(|e| e == ext) {
+            out.push(path);
+        }
+    }
+}
+
+/// A deleted extern is gone for good: no Rust source of any crate (tests included: a test
+/// harness defining its own copy would hide a call that slipped back) and no std file names it,
+/// so a program cannot reach it and a link cannot need it.
+#[test]
+fn a_deleted_extern_is_named_nowhere() {
+    let mut files = vec![];
+    files_with(&crates(), "rs", &mut files);
+    files_with(&crates().join("../std"), "vlt", &mut files);
+    let this = Path::new(file!()).file_name().expect("this file");
+    let mut wrong = vec![];
+    for path in files {
+        if path.ends_with(Path::new("velt_common/src/std_hooks.rs"))
+            || path.file_name() == Some(this)
+        {
+            continue; // The table and this test name them as history.
+        }
+        let Ok(src) = std::fs::read_to_string(&path) else {
+            continue;
+        };
+        for name in DELETED {
+            for (i, line) in src.lines().enumerate() {
+                if word_uses(line, name).next().is_some() {
+                    wrong.push(format!("  {}:{}: {}", path.display(), i + 1, line.trim()));
+                }
+            }
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "a deleted runtime extern (std_hooks::DELETED) is named:\n{}",
+        wrong.join("\n")
+    );
 }
 
 #[test]

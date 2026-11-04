@@ -87,7 +87,7 @@ structs! {
     Method { decl, is_static, is_private, is_getter, is_setter, is_override, is_abstract }
     TypeDecl {
         name, generics, extends, implements, fields, constructor, ctor_visibility, methods,
-        is_abstract,
+        is_abstract, c_type,
     }
     InterfaceDecl { name, generics, extends, fields, methods, call_sigs }
     InterfaceMethod { sig, body, is_getter, is_setter }

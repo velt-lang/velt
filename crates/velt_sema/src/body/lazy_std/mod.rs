@@ -74,6 +74,8 @@ const HELPERS: &[&str] = &[
     velt_common::std_dir!(lang_hooks),
     velt_common::std_module!(lang_record),
     velt_common::std_module!(collections),
+    // The hooks lowering calls for C functions' pointers and strings.
+    velt_common::std_dir!(ffi),
 ];
 
 /// The prelude methods (and the few other names) lowering looks up by name: every `"__…"` name
@@ -183,10 +185,8 @@ pub(crate) struct Lazy {
     record_conversion: bool,
     /// Have [`RECORD_HOOKS`] been reached?
     record_hooks: bool,
-    /// The program's code converts a number (any value but a string or a boolean) to text: the
-    /// integer printing hooks are reached (`velt_common::std_hooks::ON_DEMAND_TEXT`).
-    number_text: bool,
-    /// It converts a value that may hold a float: the float hooks are (`ON_DEMAND_FLOAT`).
+    /// The program's code converts a value that may hold a float to text: the float hooks are
+    /// reached (`velt_common::std_hooks::ON_DEMAND_FLOAT`).
     float_text: bool,
 }
 
@@ -207,7 +207,6 @@ impl Lazy {
             generic_any: false,
             record_conversion: false,
             record_hooks: false,
-            number_text: false,
             float_text: false,
         }
     }

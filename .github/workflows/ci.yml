@@ -1,9 +1,9 @@
 # Pull requests run the checks their changes need (`cargo xtask check`, rules in
 # crates/xtask/src/plan.rs) on Linux, as three parallel jobs: lint (fmt, clippy), test (build,
 # unit and integration tests) and golden (end-to-end, debug mode). A change to OS-specific code
-# (crates/xtask/src/os.rs) is also linted on Windows and macOS, where `cfg(windows)` and
-# `cfg(unix)` code compiles differently: clippy's findings there otherwise surface only in the
-# merge queue. The test files a pull request adds or edits run 20 times at once under load
+# (crates/xtask/src/os.rs) is also linted on Windows, where `cfg(windows)` code compiles
+# differently, and on macOS when it can really differ there: clippy's findings there otherwise
+# surface only in the merge queue. The test files a pull request adds or edits run 20 times at once under load
 # (`cargo xtask repeat`), in the `test` job and on Windows (`pr-windows`, which also runs the
 # package tests when the change touches a package, networking, timers or the test runner): a test
 # ordering events by timing fails there, not in the queue. The label `ci:full` makes them check
@@ -16,14 +16,16 @@
 # one job lints and tests, and the goldens (debug and release mode) are built once and checked in
 # parallel shards (queue-goldens.yml), as are the WebAssembly goldens when the change touches
 # WebAssembly code (shards of their own from the same build; the `check` job leaves them out).
-# Linux always; Windows and macOS when the change touches OS-specific code
-# (crates/xtask/src/os.rs). The single required check is `ci`, which summarizes whichever jobs
+# Linux always; Windows when the change touches OS-specific code; macOS only when it touches code
+# that really can differ there, because a macOS job can wait for a runner that never comes and
+# fail the entry with no test failing (crates/xtask/src/os.rs). The single required check is `ci`, which summarizes whichever jobs
 # ran. The pull request's text and commits are checked by
 # the separate required check `hygiene` (hygiene.yml, which says why it is separate).
 #
 # A scheduled run checks everything on Windows and macOS once a day (opening an issue when that
 # fails, with the commits since the last run that passed): runners are the limit, and the runtime,
-# code generation and linking have met those OSes in the queue already. A tag runs it again before
+# code generation and linking have met those OSes in the queue already. A break only macOS shows
+# in any other code first appears there, after the merge. A tag runs it again before
 # a release (release.yml). Each push to main refreshes the build cache every other run restores (a
 # cache saved on a pull request or queue branch can't be restored anywhere else), on Windows and
 # macOS too when the toolchain or the dependencies changed, and a commit no passing queue run
@@ -84,8 +86,8 @@ jobs:
         if: matrix.part == 'test'
         run: cargo xtask repeat --base HEAD^1 --times 50
 
-  # Whether the change touches OS-specific code, so the pull request is linted on Windows and
-  # macOS too (xtask builds with the runner's stable Rust in seconds, as for queue-plan).
+  # Whether the change touches OS-specific code, so the pull request is linted on Windows or
+  # macOS too (`other_os`, xtask builds with the runner's stable Rust in seconds, as for queue-plan).
   pr-plan:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest

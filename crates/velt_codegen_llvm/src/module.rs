@@ -172,7 +172,15 @@ pub(crate) fn emit_unit_capped(
         bodies.push('\n');
         bodies.push_str(&text);
     }
+    // A C function the program declares (`declare c`) may be one a helper declares too
+    // (`memcmp`): one declaration of it.
+    let externs: FxHashSet<String> = (program.externs.iter())
+        .flat_map(|e| [global_name(&e.symbol), format!("@{}", e.symbol)])
+        .collect();
     for decl in &intrinsics.0 {
+        if declared_name(decl).is_some_and(|n| externs.contains(n)) {
+            continue;
+        }
         let _ = writeln!(out, "{decl}");
     }
     out.push_str(&bodies);
@@ -406,4 +414,12 @@ pub(crate) fn define_prefix(func: &vir::Function, how: Definition) -> CodegenRes
         }
     };
     Ok(format!("define {linkage} {}", abi_ret(func.ret)?))
+}
+
+/// The function a `declare` line declares (`@memcmp` of `declare i32 @memcmp(ptr, ...)`).
+fn declared_name(line: &str) -> Option<&str> {
+    let rest = line.strip_prefix("declare ")?;
+    let at = rest.find('@')?;
+    let name = &rest[at..];
+    Some(&name[..name.find('(')?])
 }

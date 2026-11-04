@@ -171,7 +171,7 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
 
 | Velt | C | Notes |
 |---|---|---|
-| `bool`, `i8`…`i64`, `u8`…`u64`, `isize`, `usize`, `f32`, `f64` | `_Bool`, `int8_t`…, `ssize_t`, `size_t`, `float`, `double` | by value |
+| `bool`, `i8`…`i64`, `u8`…`u64`, `isize`, `usize`, `f32`, `f64` | `_Bool`, `int8_t`…, `ssize_t`, `size_t`, `float`, `double` | by value; `bool` is C's `_Bool` only (one byte, 0 or 1), never an `int` flag. C's `long` and `unsigned long` are 64 bits on Linux and macOS but 32 on Windows (LLP64): a declaration using them is right on one or the other until the header check (or a `c_long` type) |
 | `Ptr<T>`, `Ptr<T> \| null` | `T *` | an address; `null` is `NULL` (same word) |
 | `NativeHandle<T>` (argument for a `Ptr<T>` parameter) | `T *` | holds an in-flight reference for the call (below) |
 | `null` (as a parameter type) | any pointer | always `NULL` |
@@ -641,11 +641,25 @@ Step 1 lands in layers, each its own pull request:
    Under `velt dev` a C function no loaded library has is an error naming its declaration.
    Step 1 is complete only with layers 5 (the trust boundary) and 6 (the header check): until
    then any package may declare C functions, unchecked.
-3. The types that cross beyond scalars (`Ptr`, `declare c type`, arrays and views, `StrBytes`,
-   `CString`, `Out`) and the raw reads.
-4. The trust boundary: `native.c` libraries per target, `allowNative`, the export rule for raw
+3. `Ptr<T>` (a std struct over the address; `Ptr.at` is unsafe), `Ptr<T> | null`, `null`,
+   `declare c type`, arrays of numbers and views of bytes as buffers (read at the call, after
+   every argument), `StrBytes` (a well-formed string's own bytes; a std hook makes the U+FFFD
+   copy otherwise) and `byteLength`. Lowering converts pointers through std hooks
+   (std/ffi/ptr.vlt), which LLVM inlines. A `declare c type` can't be made with `new`; an empty
+   array reaches C as a dangling non-null address; a `Ptr<T>` result (not `| null`) that is NULL
+   stops the program, naming the C function, since C has no non-null pointer type a header
+   could state.
+4. `CString` (a class over its NUL-terminated bytes, refusing a NUL inside), `Out<T>` for
+   numbers and `OutPtr<T>` for pointers (C writes the field whose address it gets: a
+   `Ptr<T> | null` field isn't a C pointer, so pointers have their own class), and the raw reads
+   `readBytes`, `readUtf8` and `readCString` (unsafe functions in Velt, over the std-only
+   intrinsic `addressLoad`; `readCString` calls `strlen` through `declare c("c")`). `Ptr<T>` and
+   `OutPtr<T>` point at a C type, a number, `bool`, `void` or another pointer. `CString.bytesOf`
+   lends its bytes read-only, zero-copy (Rust's `as_bytes`); #2228 closes the `readonly` gaps
+   that let a write through them.
+5. The trust boundary: `native.c` libraries per target, `allowNative`, the export rule for raw
    types, the `SAFETY` lint and `velt check`'s listing.
-5. The header check and `declare c const`.
+6. The header check and `declare c const`.
 
 ## Decisions
 

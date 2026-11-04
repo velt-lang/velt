@@ -1,0 +1,28 @@
+// velt/ffi: what crosses to C functions declared with `declare c`
+// (docs/internals/design/c-ffi.md).
+
+/**
+ * The address of a `T` in C memory: what a C function returns as `Ptr<T>` and takes as one;
+ * `Ptr<T> | null` may be `NULL`.
+ */
+export { Ptr } from "velt/ffi/ptr";
+
+/**
+ * A `string` a C function takes as its UTF-8 bytes, borrowed for the call, without a NUL.
+ */
+export { StrBytes } from "velt/ffi/str_bytes";
+
+/** The number of UTF-8 bytes a `StrBytes` argument passes for a string. O(1). */
+export { byteLength } from "velt/ffi/str_bytes";
+
+/** A NUL-terminated copy of a string's UTF-8, for a C function taking `const char *`. */
+export { CString } from "velt/ffi/c_string";
+
+/** A number a C function writes through a pointer parameter. */
+export { Out } from "velt/ffi/out";
+
+/** A pointer a C function writes through a pointer parameter (`T **out`). */
+export { OutPtr } from "velt/ffi/out_ptr";
+
+/** Copies of bytes, UTF-8 text and NUL-terminated strings in C memory (unsafe). */
+export { readBytes, readCString, readUtf8 } from "velt/ffi/read";

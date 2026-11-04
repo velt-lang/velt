@@ -6,6 +6,7 @@ import { isValidPackageName } from "../names";
 import { Version } from "../semver/version";
 import { ownerOf } from "./access";
 import { text } from "./answer";
+import { purgeAfterWrite } from "./purge_after_write";
 import { RegistryStores } from "./registry_stores";
 
 /** The path whose cached answers show package `name`'s index. */
@@ -37,7 +38,7 @@ export async function yank(
   if (entry.yanked != yanked) {
     entry.yanked = yanked;
     await stores.db.putIndex(name, index);
-    await stores.purge.purge([indexPath(name)]);
+    await purgeAfterWrite(stores, [indexPath(name)]);
   }
   return text(200, `${yanked ? "yanked" : "unyanked"} \`${name}\` ${version}\n`);
 }

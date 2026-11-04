@@ -1,0 +1,16 @@
+// registry-core (internal): telling the cache in front of the registry about a committed write.
+
+import { RegistryStores } from "./registry_stores";
+
+/**
+ * Asks the cache to forget `paths` after a write has been committed. A failure doesn't fail the
+ * request: the write stands, and a client told otherwise would retry a publish into a 409 for a
+ * version that is there. It is logged; the cache shows the old answers until they expire.
+ */
+export async function purgeAfterWrite(stores: RegistryStores, paths: string[]): Promise<void> {
+  try {
+    await stores.purge.purge(paths);
+  } catch (e) {
+    console.error(`registry: purging ${paths.join(", ")} from the cache failed:`, e);
+  }
+}

@@ -103,7 +103,10 @@ impl FnCx<'_, '_> {
         if self.is_readonly_source(h, 0) {
             self.cx.error(
                 Diagnostic::error(
-                    "a read-only array cannot be passed for a buffer the system function writes",
+                    match self.c_args {
+                        true => "a read-only array cannot be passed for a buffer the C function writes",
+                        false => "a read-only array cannot be passed for a buffer the system function writes",
+                    },
                     h.span,
                 )
                 .with_note(

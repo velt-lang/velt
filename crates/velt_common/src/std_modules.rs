@@ -136,6 +136,13 @@ table! {
     encoding_json_reader => "encoding/json/reader",
     encoding_json_writer => "encoding/json/writer",
     encoding_json_generated => "encoding/json/generated",
+    /// `velt/ffi`: what crosses to C functions (`declare c`, docs/internals/design/c-ffi.md).
+    ffi => "ffi",
+    ffi_ptr => "ffi/ptr",
+    ffi_str_bytes => "ffi/str_bytes",
+    ffi_c_string => "ffi/c_string",
+    ffi_out => "ffi/out",
+    ffi_out_ptr => "ffi/out_ptr",
     /// `velt/host`: `HostRef`, the handle to a JS value host functions pass (https://veltlang.com/docs/reference/host-functions/).
     host => "host",
     host_host_ref => "host/host_ref",

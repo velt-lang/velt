@@ -29,34 +29,27 @@ fn release_vir(golden: &str) -> String {
 #[test]
 fn numbers_print_without_the_runtime_and_floats_through_one_function() {
     let vir = release_vir("std/number_format.vlt");
-    // The bodies of the functions that may run often: the out-of-bounds report (`_Goob_…`
-    // glue, which prints the length and index) and cold functions are left as they are.
+    // The bodies of the functions that may run often: cold functions are left as they are.
+    // (The runtime prints no integer for a template or `String()` at all: its integer
+    // formatters were deleted, #2197.)
     let mut hot = vec![];
     let mut keep = false;
     for line in vir.lines() {
         if line.starts_with("fn#") {
-            keep = !line.contains(" cold") && !line.contains(" _Goob_");
+            keep = !line.contains(" cold");
         } else if keep {
             hot.push(line);
         }
     }
-    for runtime in [
-        "velt_rt_str_from_i64",
-        "velt_rt_str_from_u64",
-        "velt_rt_str_from_f64",
-        "velt_rt_strbuf_push_i64",
-        "velt_rt_strbuf_push_u64",
-        // Not `velt_rt_strbuf_push_f64`: `StringBuilder.appendNumber` and the JSON writer (the
-        // golden's builder and JSON section, inlined into `main`) send a float that is not a
-        // whole number to the runtime's printer by design, since std's float printer is not
-        // loaded for them. Templates and `String()` take std's: the float formatter is checked
-        // below.
-    ] {
-        assert!(
-            !hot.iter().any(|l| l.contains(runtime)),
-            "a call of `{runtime}`\n{vir}"
-        );
-    }
+    // Not `velt_rt_strbuf_push_f64`: `StringBuilder.appendNumber` and the JSON writer (the
+    // golden's builder and JSON section, inlined into `main`) send a float that is not a whole
+    // number to the runtime's printer by design, since std's float printer is not loaded for
+    // them. Templates and `String()` take std's: the float formatter is checked below.
+    let runtime = "velt_rt_str_from_f64";
+    assert!(
+        !hot.iter().any(|l| l.contains(runtime)),
+        "a call of `{runtime}`\n{vir}"
+    );
     let float_fns: Vec<&str> = vir
         .lines()
         .filter(|l| l.starts_with("fn#") && (l.contains("N7f64Text") || l.contains("N7pushF64")))

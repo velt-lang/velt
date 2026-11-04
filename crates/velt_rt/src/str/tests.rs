@@ -253,7 +253,7 @@ fn strbuf_pushes_carry_units() {
     let mut b = Owned(VeltStr::empty());
     unsafe {
         velt_rt_strbuf_new(0, &mut b.0);
-        velt_rt_strbuf_push_i64(&mut b.0, -42);
+        velt_rt_strbuf_push_f64(&mut b.0, -42.0);
         velt_rt_strbuf_push_bytes(&mut b.0, "€ ".as_ptr(), 4);
         velt_rt_strbuf_push_bool(&mut b.0, 1);
         let s = VeltStr::from_static("😀".as_bytes());

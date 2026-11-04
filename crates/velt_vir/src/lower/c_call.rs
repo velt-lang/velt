@@ -4,11 +4,33 @@
 //! target without native code (WebAssembly) can't call one: an error once lowering is done
 //! (system.rs `unavailable_diagnostics`).
 
-use velt_sema::hir::{self, CTy, DefId, IntTy};
+use velt_sema::hir::{self, CTy, DefId, IntTy, TyId, TyKind};
 
-use super::{ice, unit, FnLower};
+use super::system::Arg;
+use super::{cint, ice, unit, FnLower};
 use crate::system;
-use crate::vir::{self, Operand, Place, Ty};
+use crate::vir::{self, BinOp, Operand, Place, Rvalue, Ty, STR_AGG};
+
+/// std's hooks that turn a `Ptr` into its address and back (std/ffi/ptr.vlt).
+const PTR_OF: &str = velt_common::std_hook!(ffi_ptr_of);
+const PTR_OR_NULL: &str = velt_common::std_hook!(ffi_ptr_or_null);
+const PTR_ADDRESS: &str = velt_common::std_hook!(ffi_ptr_address);
+const PTR_ADDRESS_OR_ZERO: &str = velt_common::std_hook!(ffi_ptr_address_or_zero);
+const STR_BYTES_OF: &str = velt_common::std_hook!(ffi_str_bytes_of);
+const C_STRING_BYTES: &str = velt_common::std_hook!(ffi_c_string_bytes);
+
+/// An argument evaluated, before the call reads what it needs of it.
+enum CArg {
+    /// The C argument itself.
+    Ready(Operand),
+    /// A buffer: its data pointer is read at the call, after every argument (a later one may
+    /// grow an array an earlier one names).
+    Buffer(Arg),
+    /// A string (a `StrBytes` argument, well-formed): where its bytes are is read at the call.
+    Str(Operand),
+    /// An object (`Out`, `OutPtr`): the address of its field `name` is taken at the call.
+    Field(Place, TyId, &'static str),
+}
 
 impl FnLower<'_, '_> {
     /// A call of the C function `def` (an `ExternFnDef` with `c`).
@@ -32,12 +54,96 @@ impl FnLower<'_, '_> {
                 vt => Operand::Copy(Place::local(self.temp(vt))),
             };
         }
-        let mut cargs = vec![];
         let mut ctys = vec![];
-        for (a, t) in args.iter().zip(&c.params) {
-            let v = self.expr(a);
-            cargs.push(self.freeze(v, a.ty));
+        let mut vals = vec![];
+        let laters = self.later_each(args);
+        let callee = format!("C function `{}`", base_symbol(&symbol));
+        for (k, ((a, t), later)) in args.iter().zip(&c.params).zip(laters).enumerate() {
             ctys.push(c_vir(*t));
+            if let CTy::Buf { .. } = t {
+                let name = format!("argument {}", k + 1);
+                let arg = match self.system_view(&callee, &name, a, later) {
+                    Some(v) => v,
+                    None => {
+                        self.note_held_buffer(a, later);
+                        let v = self.expr(a);
+                        let v = self.hold_buffer(v, a.ty, later);
+                        let t = self.sub(a.ty);
+                        let vt = self.cx.ty(t);
+                        Arg::Value(self.operand_place(v, vt), t)
+                    }
+                };
+                vals.push(CArg::Buffer(arg));
+                continue;
+            }
+            if let CTy::StrBytes = t {
+                let d = self.ffi_hook(STR_BYTES_OF);
+                let s = self.call_def(d, vec![], vec![], std::slice::from_ref(a));
+                vals.push(CArg::Str(s));
+                continue;
+            }
+            if let CTy::CString = t {
+                // Its bytes (read-only, NUL-terminated), held for the statement. A proxy's `get`
+                // trap could give other bytes, without the NUL: refused, as for `Out`'s field.
+                let v = self.expr(a);
+                let obj = self.operand_place(v, Ty::Ptr);
+                self.proxy_guard(&obj);
+                let d = self.ffi_hook(C_STRING_BYTES);
+                let bytes = self.call_def(d, vec![], vec![Operand::Copy(obj)], &[]);
+                let bt = self.cx.fn_def(d).ret;
+                let vt = self.cx.ty(bt);
+                vals.push(CArg::Buffer(Arg::Value(self.operand_place(bytes, vt), bt)));
+                continue;
+            }
+            if let CTy::Out | CTy::OutPtr = t {
+                let v = self.expr(a);
+                let obj = self.operand_place(v, Ty::Ptr);
+                let field = if *t == CTy::Out { "value" } else { "address" };
+                vals.push(CArg::Field(obj, self.sub(a.ty), field));
+                continue;
+            }
+            let v = match t {
+                CTy::Ptr { nullable } => {
+                    let hook = if *nullable {
+                        PTR_ADDRESS_OR_ZERO
+                    } else {
+                        PTR_ADDRESS
+                    };
+                    let targ = self.ptr_target(a.ty);
+                    let addr = {
+                        let d = self.ffi_hook(hook);
+                        self.call_def(d, vec![targ], vec![], std::slice::from_ref(a))
+                    };
+                    self.rvalue_temp(Ty::Ptr, Rvalue::Cast(addr, Ty::Ptr))
+                }
+                CTy::Null => {
+                    self.expr(a);
+                    cint(0, Ty::Ptr)
+                }
+                _ => {
+                    let v = self.expr(a);
+                    self.freeze(v, a.ty)
+                }
+            };
+            vals.push(CArg::Ready(v));
+        }
+        let mut cargs = vec![];
+        for v in vals {
+            cargs.push(match v {
+                CArg::Ready(o) => o,
+                CArg::Buffer(arg) => {
+                    let p = self.buffer(Some(arg)).0;
+                    self.never_null(p)
+                }
+                CArg::Str(s) => {
+                    let p = self.operand_place(s, Ty::Agg(STR_AGG));
+                    self.str_data(&p)
+                }
+                CArg::Field(obj, t, name) => {
+                    let (field, _) = self.class_field(&obj, t, name);
+                    self.addr(field)
+                }
+            });
         }
         let cret = c_vir(c.ret);
         let link = base_symbol(&symbol);
@@ -88,10 +194,83 @@ impl FnLower<'_, '_> {
         );
         // Before any drop or other call of the statement: `lastOsError()` reads this.
         self.capture_errno();
-        match dest {
-            Some(d) => Operand::Copy(Place::local(d)),
-            None => unit(),
+        let Some(d) = dest else {
+            return unit();
+        };
+        let result = Operand::Copy(Place::local(d));
+        match c.ret {
+            CTy::Ptr { nullable } => {
+                let addr = self.rvalue_temp(Ty::U64, Rvalue::Cast(result, Ty::U64));
+                if !nullable {
+                    // C has no non-null pointer type, so the header check can't see this: a NULL
+                    // where the declaration says `Ptr<T>` stops the program here, not where the
+                    // pointer is used.
+                    self.null_result_check(&symbol, addr.clone());
+                }
+                let hook = if nullable { PTR_OR_NULL } else { PTR_OF };
+                let targ = self.ptr_target(ret);
+                {
+                    let d = self.ffi_hook(hook);
+                    self.call_def(d, vec![targ], vec![addr], &[])
+                }
+            }
+            _ => result,
         }
+    }
+
+    /// Stops the program when `addr` (a `Ptr<T>` result of C function `symbol`) is NULL.
+    fn null_result_check(&mut self, symbol: &str, addr: Operand) {
+        let null = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, addr, cint(0, Ty::U64)));
+        let (bad, ok) = (self.new_block(), self.new_block());
+        self.branch(null, bad, ok);
+        self.switch_to(bad);
+        let name = base_symbol(symbol);
+        self.panic_msg(&format!(
+            "C function `{name}` returned NULL, but its declaration's result is `Ptr<T>`: declare it `Ptr<T> | null`"
+        ));
+        self.terminate(vir::Terminator::Unreachable);
+        self.switch_to(ok);
+    }
+
+    /// `p`, or a dangling address aligned for any element (16) where it is null: an empty array
+    /// literal holds a null data pointer, and C's `memcpy`, `memset` or `fwrite` given NULL is
+    /// undefined behaviour even for a length of 0. No branch.
+    fn never_null(&mut self, p: Operand) -> Operand {
+        let p = self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64));
+        let null = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Eq, p.clone(), cint(0, Ty::U64)),
+        );
+        let null = self.rvalue_temp(Ty::U64, Rvalue::Cast(null, Ty::U64));
+        let dangling = self.u64_op(BinOp::Shl, null, cint(4, Ty::U64));
+        let p = self.u64_op(BinOp::BitOr, p, dangling);
+        self.rvalue_temp(Ty::Ptr, Rvalue::Cast(p, Ty::Ptr))
+    }
+
+    /// The `T` of `Ptr<T>` or `Ptr<T> | null` (type `t`).
+    fn ptr_target(&mut self, t: TyId) -> TyId {
+        let t = self.sub(t);
+        let t = match self.cx.kind(t) {
+            TyKind::Option(inner, _) => inner,
+            _ => t,
+        };
+        match self.cx.kind(t) {
+            TyKind::Adt(_, args) if args.len() == 1 => args[0],
+            _ => ice("a C pointer type that is not `Ptr<T>`"),
+        }
+    }
+
+    /// The definition of std hook `qualified`.
+    fn ffi_hook(&mut self, qualified: &'static str) -> DefId {
+        if let Some(&d) = self.cx.ffi_hooks.get(qualified) {
+            return d;
+        }
+        let d = self
+            .cx
+            .prelude_def(qualified)
+            .unwrap_or_else(|| ice(format_args!("no `{qualified}` in velt/ffi")));
+        self.cx.ffi_hooks.insert(qualified, d);
+        d
     }
 }
 
@@ -111,6 +290,13 @@ fn c_vir(t: CTy) -> Ty {
         CTy::F32 => Ty::F32,
         CTy::F64 => Ty::F64,
         CTy::Bool => Ty::Bool,
+        CTy::Ptr { .. }
+        | CTy::Null
+        | CTy::StrBytes
+        | CTy::Buf { .. }
+        | CTy::CString
+        | CTy::Out
+        | CTy::OutPtr => Ty::Ptr,
         CTy::Void => Ty::Unit,
     }
 }
@@ -139,6 +325,15 @@ fn c_name(t: CTy) -> &'static str {
         CTy::F32 => "f32",
         CTy::F64 => "f64",
         CTy::Bool => "bool",
+        CTy::Ptr { nullable: false } => "Ptr",
+        CTy::Ptr { nullable: true } => "Ptr | null",
+        CTy::Null => "null",
+        CTy::StrBytes => "StrBytes",
+        CTy::Buf { readonly: true } => "readonly array",
+        CTy::Buf { readonly: false } => "array",
+        CTy::CString => "CString",
+        CTy::Out => "Out",
+        CTy::OutPtr => "OutPtr",
         CTy::Void => "void",
     }
 }

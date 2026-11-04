@@ -26,11 +26,12 @@
 //! The table is also the port tracker of moving the runtime's work into std (#2196): an entry's
 //! `replaces(…)` names the runtime externs (`velt_rt_*`) whose job the hook does, which the
 //! compiler must no longer call in the hook's place, and `bench(…)` names the program of
-//! `bench/stdport/` that measures the hook against the Rust it replaced. `velt_common`'s test
-//! `hook_replaces.rs` checks that each named extern is defined by the runtime and each program
-//! exists, and lists every place in the compiler's sources that still names a replaced extern
-//! (a fallback, or an emitter with no hook yet: #2197); a new one fails, and so does a listed
-//! one that is gone, so the list only shrinks.
+//! `bench/stdport/` that measures the hook against the Rust it replaced. Once nothing calls a
+//! replaced extern any more, its Rust is deleted and it moves to [`DELETED`]. `velt_common`'s
+//! test `hook_replaces.rs` checks that each named extern is defined by the runtime or listed as
+//! deleted (and then named nowhere), that each program exists, and lists every place in the
+//! compiler's sources that still names a replaced extern (a fallback, or an emitter with no hook
+//! yet: #2197); a new one fails, and so does a listed one that is gone, so the list only shrinks.
 //!
 //! ```
 //! use velt_common::{std_hook, std_hook_name};
@@ -65,8 +66,8 @@ pub struct Hook {
     /// counts is that the compiler no longer calls it in the hook's place.
     pub replaces: &'static [&'static str],
     /// Lowering calls the runtime instead when the hook is missing or left unchecked (it is
-    /// one of [`ON_DEMAND_TEXT`] / [`ON_DEMAND_FLOAT`]): its `velt_vir` builder returns an
-    /// `Option`. Every other lowered hook missing is an internal compiler error.
+    /// one of [`ON_DEMAND_FLOAT`]): its `velt_vir` builder returns an `Option`. Every other
+    /// lowered hook missing is an internal compiler error.
     pub fallback: bool,
     /// The program of `bench/stdport/` (`int_to_string` for `bench/stdport/int_to_string.vlt`)
     /// that measures this hook against the Rust it replaced, if one does.
@@ -178,16 +179,16 @@ hooks! {
     /// A float position argument (`xs.at(i)`, `s.slice(i)`).
     float_position => lang_hooks_number, "floatPosition", sig((f64) -> usize);
     /// `String(v)` of a signed integer: `${v}` alone, `v.toString()` (`velt_vir` `template.rs`).
-    int_text => lang_hooks_number_text, "intText", sig((i64) -> string), lowered, fallback,
+    int_text => lang_hooks_number_text, "intText", sig((i64) -> string), lowered,
         replaces("velt_rt_str_from_i64"), bench("int_to_string");
     /// `String(v)` of an unsigned integer.
-    uint_text => lang_hooks_number_text, "uintText", sig((u64) -> string), lowered, fallback,
+    uint_text => lang_hooks_number_text, "uintText", sig((u64) -> string), lowered,
         replaces("velt_rt_str_from_u64"), bench("int_to_string");
     /// A signed integer appended to a builder: a template's `${v}` (`velt_vir` `strbuf.rs`).
-    int_push => lang_hooks_number_text, "intPush", sig((&mut string, i64) -> void), lowered, fallback,
+    int_push => lang_hooks_number_text, "intPush", sig((&mut string, i64) -> void), lowered,
         replaces("velt_rt_strbuf_push_i64"), bench("int_to_string");
     /// An unsigned integer appended to a builder.
-    uint_push => lang_hooks_number_text, "uintPush", sig((&mut string, u64) -> void), lowered, fallback,
+    uint_push => lang_hooks_number_text, "uintPush", sig((&mut string, u64) -> void), lowered,
         replaces("velt_rt_strbuf_push_u64"), bench("int_to_string");
     /// `String(x)` of a float (`velt_vir` `template.rs`): a whole number by std's integer
     /// printing, anything else by the runtime's printer. `velt_opt` numrep turns a call with a
@@ -506,6 +507,16 @@ hooks! {
     /// The bytes a typed array or `DataView` passed to a system function views (`system_views.rs`).
     view_bytes => lang_typed_array_buffer_view, "viewBytes", sig((&BufferView) -> usize), lowered;
 
+    // ffi/ptr.vlt: a `Ptr` from and to a C function (velt_vir's lower/c_call.rs).
+    ffi_ptr_of => ffi_ptr, "ptrOf", sig(<A>(usize) -> Ptr(A)), lowered;
+    ffi_ptr_or_null => ffi_ptr, "ptrOrNull", sig(<A>(usize) -> or_null(Ptr(A))), lowered;
+    ffi_ptr_address => ffi_ptr, "ptrAddress", sig(<A>(&Ptr(A)) -> usize), lowered;
+    ffi_ptr_address_or_zero => ffi_ptr, "ptrAddressOrZero", sig(<A>(&or_null(Ptr(A))) -> usize), lowered;
+    // ffi/str_bytes.vlt: the string whose bytes a `StrBytes` argument passes.
+    ffi_str_bytes_of => ffi_str_bytes, "strBytesOf", sig((move string) -> string), lowered;
+    // ffi/c_string.vlt: the bytes a `CString` argument passes.
+    ffi_c_string_bytes => ffi_c_string, "cStringBytes", sig((&CString) -> [u8]), lowered;
+
     // host/host_ref.vlt: a `HostRef` from and to a host function (velt_vir's lower/host.rs).
     /// The `HostRef` of the slot a host function returned.
     host_ref_of => host_host_ref, "hostRefOf", sig((u32) -> HostRef), lowered;
@@ -652,6 +663,20 @@ keys! {
     proxy_has_own => "PROXY_HAS_OWN", "proxyHasOwn";
 }
 
+/// The externs of [`Hook::replaces`] that the runtime no longer defines: the hooks took their job
+/// over everywhere and their Rust was deleted (#2196's port tracker: an entry here is a finished
+/// port). `velt_common`'s test `hook_replaces.rs` checks that every replaced extern is defined by
+/// `velt_rt` unless it is listed here, and that one listed here is defined nowhere and named by
+/// no compiler source, runtime or std file. The entries keep their place in `replaces(…)` as the
+/// record of what the hook replaced.
+pub const DELETED: &[&str] = &[
+    // #2197: integers as text (std/lang/hooks/number_text, velt/lang/number/integer).
+    "velt_rt_str_from_i64",
+    "velt_rt_str_from_u64",
+    "velt_rt_strbuf_push_i64",
+    "velt_rt_strbuf_push_u64",
+];
+
 /// The hook whose qualified name is `qualified` (`std/lang/hooks/number::f64ToString`).
 pub fn find(qualified: &str) -> Option<&'static Hook> {
     let (module, item) = qualified.rsplit_once("::")?;
@@ -661,24 +686,20 @@ pub fn find(qualified: &str) -> Option<&'static Hook> {
         .find(|h| h.item == item && crate::std_modules::rel(h.module_entry) == Some(rel))
 }
 
-/// Lowered hooks that sema checks only once the program's own code converts a value that is not
-/// a string or a boolean to text (`velt_sema` `lazy_std`), by their entries' names: std's integer
-/// printing (velt/lang/number/integer), which a program that prints no number does not check.
-/// Lowering calls the runtime's printer where one is unchecked.
-pub const ON_DEMAND_TEXT: &[&str] = &["int_text", "uint_text", "int_push", "uint_push"];
-
-/// The same, once the program's own code converts a value that may hold a float to text: the
-/// float hooks, whose whole numbers take std's integer printing, and, where the program loaded it,
-/// std's float printing (velt/lang/number/format, `shortest`, the table of powers of ten).
+/// Lowered hooks that sema checks only once the program's own code converts a value that may hold
+/// a float to text (`velt_sema` `lazy_std`), by their entries' names: the float hooks, whose whole
+/// numbers take std's integer printing, and, where the program loaded it, std's float printing
+/// (velt/lang/number/format, `shortest`, the table of powers of ten). Lowering calls the runtime's
+/// printer where one is unchecked. The integer hooks (`int_text`, `int_push`, …) are not on
+/// demand: the prelude loads them and sema checks them in every program (#2197).
 pub const ON_DEMAND_FLOAT: &[&str] = &["number_text", "number_push", "float_text", "float_push"];
 
-/// Is the hook with qualified name `qualified` one of [`ON_DEMAND_TEXT`] or [`ON_DEMAND_FLOAT`]?
+/// Is the hook with qualified name `qualified` one of [`ON_DEMAND_FLOAT`]?
 pub fn is_on_demand(qualified: &str) -> bool {
-    find(qualified)
-        .is_some_and(|h| ON_DEMAND_TEXT.contains(&h.name) || ON_DEMAND_FLOAT.contains(&h.name))
+    find(qualified).is_some_and(|h| ON_DEMAND_FLOAT.contains(&h.name))
 }
 
-/// The qualified names of the hooks named in `names` ([`ON_DEMAND_TEXT`], [`ON_DEMAND_FLOAT`]).
+/// The qualified names of the hooks named in `names` ([`ON_DEMAND_FLOAT`]).
 pub fn on_demand(names: &'static [&'static str]) -> impl Iterator<Item = String> {
     HOOKS
         .iter()
@@ -721,7 +742,7 @@ mod tests {
     fn the_fallback_hooks_are_the_on_demand_ones() {
         // An unchecked hook is missing to lowering: only these may be, and lowering falls back.
         for h in HOOKS {
-            let on_demand = ON_DEMAND_TEXT.contains(&h.name) || ON_DEMAND_FLOAT.contains(&h.name);
+            let on_demand = ON_DEMAND_FLOAT.contains(&h.name);
             assert_eq!(h.fallback, on_demand, "{}", h.name);
             assert!(!h.fallback || h.lowered, "{}", h.name);
         }

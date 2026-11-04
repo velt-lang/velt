@@ -51,10 +51,12 @@ pub mod ty {
     markers!(
         ArrayView,
         BufferView,
+        CString,
         ClassMarker,
         Error,
         HostRef,
         HostSettled,
+        Ptr,
         Record
     );
     pub struct Array<E>(PhantomData<E>);

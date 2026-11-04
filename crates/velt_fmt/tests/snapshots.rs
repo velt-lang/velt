@@ -579,3 +579,11 @@ fn c_declarations() {
         "declare c(\"c\") function labs(x: i64): i64;\nexport declare c(\"m\") function cos(x: f64): f64;\n",
     );
 }
+
+#[test]
+fn c_types() {
+    assert_fmt(
+        "declare  c  type sqlite3\nexport declare c type sqlite3_stmt;\n",
+        "declare c type sqlite3;\nexport declare c type sqlite3_stmt;\n",
+    );
+}

@@ -3,6 +3,9 @@
 
 /** Drops cached answers once what they show has changed. */
 export interface CachePurge {
-  /** Forgets the cached answers to `paths` (`/api/v1/<name>/index`, …). */
+  /**
+   * Forgets the cached answers to `paths` (`/api/v1/<name>/index`, …). The registry logs a failure
+   * and still answers that the write succeeded, so answers may stay stale until they expire.
+   */
   purge(paths: string[]): Promise<void>;
 }

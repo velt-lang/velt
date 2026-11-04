@@ -1862,6 +1862,7 @@ dependencies = [
  "velt_codegen_cl",
  "velt_common",
  "velt_link",
+ "velt_loader",
  "velt_sema",
 ]
 

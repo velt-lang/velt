@@ -52,6 +52,15 @@ impl FnCx<'_, '_> {
             self.check_args_loose(args);
             return self.error_expr(span);
         }
+        if let Some(a) = self.cx.adt(d).filter(|a| a.decl.is_some_and(|t| t.c_type)) {
+            let msg = format!(
+                "`{0}` is a C type: it exists only behind a `Ptr<{0}>`, which C functions give",
+                a.name
+            );
+            self.cx.error(Diagnostic::error(msg, class.span));
+            self.check_args_loose(args);
+            return self.error_expr(span);
+        }
         if let Some(a) = self
             .cx
             .adt(d)

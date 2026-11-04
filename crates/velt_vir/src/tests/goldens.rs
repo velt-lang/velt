@@ -1,7 +1,9 @@
 //! The M1 golden programs (`tests/golden/m1/*.vlt`), hand-lowered to HIR the way sema will
 //! produce them, run through lower → verify → interpreter and compared with the `.out` files.
+//! `strings`, which converts numbers to text through std's hooks, is loaded from its source with
+//! the real std instead (std_src.rs).
 
-use velt_sema::hir::{BinOp as B, Intrinsic, LogicOp, PassMode, Program, UnOp};
+use velt_sema::hir::{BinOp as B, LogicOp, PassMode, Program, UnOp};
 
 use super::builder::*;
 use super::run;
@@ -308,85 +310,10 @@ pub(super) fn functions() -> Program {
     pb.finish()
 }
 
-pub(super) fn strings() -> Program {
-    let mut pb = PB::new();
-    let t = pb.t;
-    let greet = pb.declare();
-    let mut f = FB::new("greet", t.str);
-    let name = f.param("name", t.str, PassMode::Borrow);
-    // `Hello, ${name}!`
-    let body = vec![ret(Some(concat(
-        concat(s("Hello, ", t), f.bw(name), t),
-        s("!", t),
-        t,
-    )))];
-    pb.define(greet, f.build(body));
-
-    let mut f = FB::new("main", t.unit);
-    let who = f.local("who", t.str);
-    let n = f.local("n", t.i64);
-    let pi = f.local("pi", t.f64);
-    let sv = f.local("s", t.str);
-    let i = f.local("i", t.i64);
-    let line = f.local("line", t.str);
-    let c = |v| int(v, t.i64);
-    // `n=${n} pi=${pi} ok=${n > 40} sum=${n + 1}`
-    let tmpl = {
-        let mut e = concat(s("n=", t), to_s(f.cp(n), t), t);
-        e = concat(e, s(" pi=", t), t);
-        e = concat(e, to_s(f.cp(pi), t), t);
-        e = concat(e, s(" ok=", t), t);
-        e = concat(e, to_s(cmp(B::Gt, f.cp(n), c(40), t), t), t);
-        e = concat(e, s(" sum=", t), t);
-        concat(e, to_s(bin(B::Add, f.cp(n), c(1)), t), t)
-    };
-    let body = vec![
-        let_(who, s("Velt", t)),
-        se(print(vec![call(greet, vec![f.bw(who)], t.str)], t)),
-        se(print(vec![call(greet, vec![s("world", t)], t.str)], t)),
-        let_(n, c(42)),
-        let_(pi, flt(3.5, t.f64)),
-        se(print(vec![tmpl], t)),
-        let_(sv, s("a", t)),
-        se(assign(f.bm(sv), concat(f.bw(sv), s("b", t), t), t)),
-        se(cassign(B::Add, f.bm(sv), s("c", t), t)),
-        se(print(
-            vec![f.bw(sv), intr(Intrinsic::StrLen, vec![f.bw(sv)], t.usize)],
-            t,
-        )),
-        se(print(
-            vec![
-                cmp(B::Eq, s("abc", t), f.bw(sv), t),
-                cmp(B::NotEq, s("abd", t), f.bw(sv), t),
-                cmp(B::Lt, s("abc", t), s("abd", t), t),
-            ],
-            t,
-        )),
-        se(print(vec![s("multi\nline", t)], t)),
-        se(print(vec![s("esc: \"q\" \\ \t|", t)], t)),
-        sblock(vec![
-            let_(i, c(0)),
-            while_(
-                None,
-                cmp(B::Lt, f.cp(i), c(3), t),
-                vec![
-                    // `row ${i}: ${greet(who)}`
-                    let_(
-                        line,
-                        concat(
-                            concat(concat(s("row ", t), to_s(f.cp(i), t), t), s(": ", t), t),
-                            call(greet, vec![f.bw(who)], t.str),
-                            t,
-                        ),
-                    ),
-                    se(print(vec![f.bw(line)], t)),
-                ],
-                Some(cassign(B::Add, f.cp(i), c(1), t)),
-            ),
-        ]),
-    ];
-    pb.add_main(f.build(body));
-    pb.finish()
+/// `tests/golden/m1/strings.vlt`, which converts numbers to text: std's hooks (#2197), so it is
+/// loaded with the real std (std_src.rs), not hand-built.
+pub(super) fn strings_src() -> String {
+    super::golden_src("m1", "strings")
 }
 
 fn check(p: Program, name: &str, code: i32) {
@@ -418,7 +345,9 @@ fn golden_functions() {
 
 #[test]
 fn golden_strings() {
-    check(strings(), "strings", 0);
+    let out = super::run_src(&strings_src());
+    assert_eq!(out.stdout, golden("strings"), "stdout of strings");
+    assert_eq!((out.stderr.as_str(), out.code), ("", 0), "strings");
 }
 
 /// Snapshot of the full VIR dump for `hello` (documents the Display format and the ABI shape).
@@ -455,18 +384,19 @@ fn#1 export velt_main() -> i32 {
     assert_eq!(v.to_string(), expected);
 }
 
-/// Snapshot of a Str-returning function: trailing out-pointer, borrowed param via deref, and a
-/// three-part concatenation built in one string builder (no intermediate strings).
+/// Snapshot of a Str-returning function: trailing out-pointer, borrowed param via deref (read
+/// only, as sema infers it), and a three-part concatenation built in one string builder (no
+/// intermediate strings).
 #[test]
 fn snapshot_greet() {
-    let v = super::lower_ok(&strings());
+    let v = super::lower_src(&strings_src());
     let dump = v.to_string();
     // Found by its symbol: function ids follow the lowering queue (`velt_main` is built last).
     let at = dump.find("internal _V5greet(").unwrap();
     let start = at;
     let end = start + dump[start..].find("\n}\n").unwrap() + 3;
     let expected = r#"internal _V5greet(ptr, ptr) -> unit {
-  param _0: ptr [nonnull dereferenceable(24)] // name
+  param _0: ptr [readonly frozen nonnull dereferenceable(24)] // name
   param _1: ptr [noalias nonnull dereferenceable(24)] // ret.out
   let _2: u64
   let _3: u64
@@ -502,9 +432,9 @@ fn snapshot_greet() {
   bb1:
     call extern#4 velt_rt_strbuf_push_bytes(_16, static#15, 30064771079_u64) -> bb2
   bb2:
-    call extern#14 velt_rt_strbuf_push_str(_16, _0) -> bb3
+    call extern#12 velt_rt_strbuf_push_str(_16, _0) -> bb3
   bb3:
-    call extern#15 velt_rt_strbuf_push_byte(_16, 33_u8) -> bb4
+    call extern#13 velt_rt_strbuf_push_byte(_16, 33_u8) -> bb4
   bb4:
     (*_1 as agg#0) = _15
     return ()

@@ -33,6 +33,7 @@ impl<'h> Cx<'h> {
             c_clashes: vec![],
             c_symbols: Default::default(),
             c_clashes_reported: Default::default(),
+            ffi_hooks: Default::default(),
             std_calls: FxHashMap::default(),
             system_aggs: FxHashMap::default(),
             no_await_steps: false,

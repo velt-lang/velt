@@ -112,12 +112,15 @@ fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
             // A system function binds the C library, not the runtime
             // (https://veltlang.com/docs/reference/system-functions/), an intrinsic is the compiler's
             // (std/lang/intrinsics), a generated function's body is a source generator's and a
-            // host function is the JS host's (a WebAssembly import, rt_abi.md "Host values").
+            // host function is the JS host's (a WebAssembly import, rt_abi.md "Host values"), and
+            // a C function or C type a C library's (docs/internals/design/c-ffi.md).
             if [
                 "declare system ",
                 "declare intrinsic ",
                 "declare generated(",
                 "declare host(",
+                "declare c(",
+                "declare c type ",
             ]
             .iter()
             .any(|kw| decl.starts_with(kw))

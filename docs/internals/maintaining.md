@@ -130,7 +130,8 @@ not a reason for another round.
   `crates/xtask/src/plan.rs`; the label `ci:full` selects everything). The **merge queue** runs the whole gate against the pull request
   merged with the latest `main`, then squash-merges: per OS a lint-and-test job and the goldens
   (built once, then checked in parallel shards: `.github/workflows/queue-goldens.yml`), Linux
-  always, Windows and macOS when the change touches OS-specific code (`crates/xtask/src/os.rs`).
+  always, Windows when the change touches OS-specific code, and macOS only when it touches code
+  that really can differ there (`crates/xtask/src/os.rs`, below).
   For a change to WebAssembly code the same build also packs the WebAssembly goldens, which then
   run in shards of their own (`WASM_SHARDS` in `os.rs`: 4 on Windows, 2 on Linux and macOS)
   instead of in the lint-and-test job, where on Windows they took about 45 minutes. Enable it with `gh pr merge <n>
@@ -160,6 +161,17 @@ not a reason for another round.
   An intended slowdown is accepted with `gh workflow run nightly -f only=bench -f
   bench_baseline=accept`. Run one part alone with `gh workflow run nightly -f only=stress` (or
   `gate`, `oracle`, `workerd`, `bench`, `wasm`).
+- macOS has its own rule (`macos_reason`, `MACOS_PATHS` in `crates/xtask/src/os.rs`), for the queue
+  and for the pull request's `lint (macos-latest)`: the runtime, linking and the toolchain, code
+  generation, the parts of the standard library that talk to the OS, and the few other files with
+  a macOS branch or arm64 code. GitHub often can't supply a macOS runner ("The job was not acquired
+  by Runner of type hosted"), which fails a queue entry after 40-50 minutes with no test failing.
+  So `velt_loader`, the rest of `veltc`, `xtask`, the lockfile, CI, the scripts and docs run no
+  macOS job, even though they select everything else, Windows included; the label `ci:full` still
+  does. What this gives up: a break only macOS shows in that other code, or in a change to the macOS
+  steps of `.github/actions/setup`, shows up in the scheduled run after the merge, not in the
+  queue. Fix it there first, as any red `main`; when a file turns out to differ on macOS, add it
+  to the list.
 - `ci.yml`'s scheduled run checks the whole gate on Windows and macOS once a day, and opens or
   updates the issue "main fails on <OS>" when that fails, with the commits since the last run that
   passed; fix it first. A tag runs the same gate before the release publishes (`release.yml`). A

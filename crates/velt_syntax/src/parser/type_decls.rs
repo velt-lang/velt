@@ -103,6 +103,7 @@ impl<'a> Parser<'a> {
             ctor_visibility: CtorVisibility::Public,
             methods: vec![],
             is_abstract,
+            c_type: false,
         };
         self.parse_members(|p| {
             let member = p.parse_member()?;

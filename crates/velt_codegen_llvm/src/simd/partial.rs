@@ -4,16 +4,25 @@
 //! 3 three single bytes (the first, the middle and the last). Each load is shifted into place
 //! in a register, so nothing goes through memory twice. Exactly 8 or 2 bytes (a typed array's
 //! element) are one access.
+//!
+//! The count is frozen first: to the loop before the tail it is opaque. Otherwise a vector loop
+//! `while (fits(d, i)) … i += 16` followed by `loadPartial(d, i)` may keep `d.length - i` (and
+//! the shift computed from it) as extra induction variables, counted down on every iteration
+//! for one use after the loop: LLVM's loop strength reduction does so once it knows a lower
+//! bound on the length (8 instructions a vector instead of 6 on arm64). The position is not
+//! frozen: typed arrays read every element through these helpers with a constant count, and a
+//! frozen `byteOffset + i * k` would hide the element's address from the loop vectorizer.
 
 use velt_vir::simd::Lanes;
 
-use super::{element, spell, Body};
+use super::{element_at, spell, Body};
 
 /// The vector of the `%a2` elements from `%a1` of the array `%a0`, zeros above them.
 pub(super) fn load(b: &mut Body, lanes: Lanes) -> String {
     let (lane, _, _) = spell(lanes);
-    let p = element(b, lane, 0);
-    let c = b.inst(format!("mul i64 %a2, {}", lanes.bits() / 8));
+    let count = b.inst("freeze i64 %a2".to_string());
+    let p = element_at(b, lane, 0, "%a1");
+    let c = b.inst(format!("mul i64 {count}, {}", lanes.bits() / 8));
     // A whole 8- or 2-byte element (a typed array's, with a constant count once inlined): one
     // load, which the compiler can vectorize in a loop.
     b.lines.push_str(&format!(
@@ -114,8 +123,9 @@ pub(super) fn store(b: &mut Body, lanes: Lanes) {
     let words = b.inst("bitcast <16 x i8> %a0 to <2 x i64>".to_string());
     let lo = b.inst(format!("extractelement <2 x i64> {words}, i64 0"));
     let hi = b.inst(format!("extractelement <2 x i64> {words}, i64 1"));
-    let p = element(b, lane, 1);
-    let c = b.inst(format!("mul i64 %a3, {}", lanes.bits() / 8));
+    let count = b.inst("freeze i64 %a3".to_string());
+    let p = element_at(b, lane, 1, "%a2");
+    let c = b.inst(format!("mul i64 {count}, {}", lanes.bits() / 8));
     // A whole 8- or 2-byte element: one store (see `load`).
     b.lines.push_str(&format!(
         "  switch i64 {c}, label %general [ i64 8, label %exact8 i64 2, label %exact2 ]\nexact8:\n"

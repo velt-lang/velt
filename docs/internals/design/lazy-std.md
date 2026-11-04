@@ -99,10 +99,9 @@ when <module> uses: <words>`), a header may name a *predicate* on a module's syn
 the loader before any types are known. Each predicate is generic: it says what a module does,
 never which std module that loads; the header's imports say that.
 
-- `// load for: a number converted to text`: a template literal with an expression,
-  `String(…)`, a `.toString(…)` call, or `+` / `+=` with a string literal or a template.
-- `// load for: a conversion operand may be a float` (**Float operands**): a conversion as above
-  whose operand looks like a float that is not a whole number:
+- `// load for: a conversion operand may be a float` (**Float operands**): a conversion (a
+  template literal with an expression, `String(…)`, a `.toString(…)` call, or `+` / `+=` with a
+  string literal or a template) whose operand looks like a float that is not a whole number:
   - a float literal (`1.5`, `1e-3`), `/` or `**` anywhere in it, a member or call of `Math`, or a
     cast to a float type (`f64`, `f32`, `f16`, `bf16`);
   - a variable or parameter declared with a float type, or initialized from such an expression
@@ -111,6 +110,11 @@ never which std module that loads; the header's imports say that.
 
   `std/prelude/global/number_float.vlt` uses it to load std's float printer (the shortest
   digits, `velt/lang/hooks/number_float`), which lowering prefers to the runtime's.
+
+std's integer printing (`velt/lang/hooks/number_text`) is not on demand: the prelude loads it
+with the other hooks and sema checks its integer hooks in every program, since lowering has no
+runtime fallback for them (#2197; about 2.3% of checking hello, nothing for a program that
+already printed an integer).
 
 A predicate only decides what is loaded: a program it misses still compiles and prints the same,
 by a slower path (a float the float-operand test misses is printed by the runtime's printer:
