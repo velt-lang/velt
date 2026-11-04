@@ -134,10 +134,34 @@ fn modules_that_may_not_be_served_in_place() {
             base: "Error".into()
         }]
     );
+    // An `export type i8x16 = i8x16;` line does not make a built-in vector type the module's own.
+    for path in [
+        "std/simd/bytes",
+        "std/simd/floats",
+        "std/simd/masks",
+        "std/simd/words",
+    ] {
+        let m = path_of(path);
+        assert!(!m.extends.is_empty(), "{path}");
+        assert!(
+            m.violations
+                .iter()
+                .any(|v| matches!(v, Violation::ExtendsForeignType { .. })),
+            "{path}: {:?}",
+            m.violations
+        );
+    }
     // A global's import line, and the hook modules, are served in place.
     for path in ["std/prelude/global/to_fixed", "std/lang/hooks/any_record"] {
         assert!(path_of(path).in_place(), "{path}");
     }
+}
+
+fn local_subclass(class: &str, base: &str) -> Vec<Violation> {
+    vec![Violation::SubclassesForeignClass {
+        class: class.into(),
+        base: base.into(),
+    }]
 }
 
 /// Each reason of the rule, on hand-written modules.
@@ -182,6 +206,143 @@ fn each_reason_of_the_rule() {
             vec![Violation::MergesInterface { name: "I".into() }],
         ),
         (
+            "extend_alias",
+            "export type V = V;\nextend V { a(): void {} }\n",
+            vec![Violation::ExtendsForeignType { ty: "V".into() }],
+        ),
+        (
+            "subclass_alias",
+            "type B = Error;\nclass C extends B {}\n",
+            vec![Violation::SubclassesForeignClass {
+                class: "C".into(),
+                base: "B".into(),
+            }],
+        ),
+        (
+            "local_subclass",
+            "export function f(): void { class L extends Error {} }\n",
+            local_subclass("L", "Error"),
+        ),
+        (
+            "local_binding",
+            "export function f(): void { const L = class extends Error {}; }\n",
+            local_subclass("L", "Error"),
+        ),
+        (
+            "local_in_method",
+            "export class K { m(): void { if (true) { class L extends Error {} } } }\n",
+            local_subclass("L", "Error"),
+        ),
+        (
+            "local_in_arrow",
+            "export const g = (): void => { class L extends Error {} };\n",
+            local_subclass("L", "Error"),
+        ),
+        (
+            "local_in_arrow_default",
+            "export const g = (x: i64 = (() => { class L extends Error {} return 1; })()): i64 => x;\n",
+            local_subclass("L", "Error"),
+        ),
+        (
+            "local_in_object_method",
+            "export const o = { *[Symbol.iterator]() { class L extends Error {} } };\n",
+            local_subclass("L", "Error"),
+        ),
+        (
+            "local_in_switch",
+            "export function f(n: i64): void { switch (n) { case 1: class L extends Error {} } }\n",
+            local_subclass("L", "Error"),
+        ),
+        (
+            "local_alias_shadows_own_class",
+            "class Base {}\nexport function f(): void { type Base = Error; class L extends Base {} }\n",
+            local_subclass("L", "Base"),
+        ),
+        (
+            "local_class_of_another_function",
+            "function f(): void { class Error {} }\n\
+             export function g(): void { class L extends Error {} }\n",
+            local_subclass("L", "Error"),
+        ),
+        (
+            "local_in_static_block",
+            "export class K { static { class L extends Error {} } }\n",
+            local_subclass("L", "Error"),
+        ),
+        (
+            "local_in_field",
+            "export class K { f: () => void = () => { class L extends Error {} }; }\n",
+            local_subclass("L", "Error"),
+        ),
+        (
+            "local_in_interface_default",
+            "export interface I { m(): void { class L extends Error {} } }\n",
+            local_subclass("L", "Error"),
+        ),
+        (
+            "local_in_destructuring_default",
+            "export function f(): void {\n\
+             const [a = () => { class L extends Error {} }] = [];\n\
+             }\n",
+            local_subclass("L", "Error"),
+        ),
+        (
+            "local_in_parameter_pattern",
+            "export function f({ a = () => { class L extends Error {} } }: T): void {}\n",
+            local_subclass("L", "Error"),
+        ),
+        (
+            "extend_interface_of_a_namespace",
+            "namespace N { export interface I { a(): void; } }\nextend N.I { z(): void {} }\n",
+            vec![],
+        ),
+        (
+            "extend_alias_of_a_namespace",
+            "namespace N { export type A = string; }\nextend N.A { z(): void {} }\n",
+            vec![Violation::ExtendsForeignType { ty: "N.A".into() }],
+        ),
+        (
+            "local_own",
+            "class Own {}\n\
+             export function f(): void {\n\
+             class A extends Own {}\n\
+             function g(): void { class B extends A {} }\n\
+             try { class D {} class E extends D {} } catch { class D {} class E extends D {} }\n\
+             interface I { a(): void; }\n\
+             }\n\
+             export function h(): void { interface I { b(): void; } }\n",
+            vec![],
+        ),
+        (
+            "merge_in_namespace",
+            "namespace N { export interface I { a(): void; } }\n\
+             namespace N { export interface I { b(): void; } }\n",
+            vec![Violation::MergesInterface { name: "N.I".into() }],
+        ),
+        (
+            "merge_in_nested_namespace",
+            "namespace A.B { export interface I { a(): void; } }\n\
+             namespace A { export namespace B { export interface I { b(): void; } } }\n",
+            vec![Violation::MergesInterface {
+                name: "A.B.I".into(),
+            }],
+        ),
+        (
+            "same_name_in_two_namespaces",
+            "interface I { a(): void; }\n\
+             namespace M { export interface I { b(): void; } }\n\
+             namespace N { export interface I { c(): void; } }\n",
+            vec![],
+        ),
+        (
+            "merge_in_body",
+            "export function f(): void {\n\
+             interface I { a(): void; }\n\
+             interface I { b(): void; }\n\
+             }\n",
+            vec![Violation::MergesInterface { name: "I".into() }],
+        ),
+        (
             "global",
             "declare global { interface Array<T> { x(): void; } }\n",
             vec![Violation::AugmentsGlobal],
@@ -198,8 +359,11 @@ fn each_reason_of_the_rule() {
         std::fs::write(tmp.path().join(format!("{name}.vlt")), src).unwrap();
     }
     let index = load(tmp.path(), None);
-    for (name, _, want) in &files {
+    for (name, src, want) in &files {
         let path = format!("std/{name}");
+        // A case the parser rejects would test its recovery, not the rule.
+        let (_, diags) = velt_syntax::parse_file(crate::std_ast::NO_FILE, src);
+        assert!(diags.is_empty(), "{path}: {diags:?}");
         let m = index.packages[0]
             .modules
             .iter()

@@ -22,15 +22,16 @@
 //! (a1)) only if what it adds stays local to it: it declares functions, constants, structs,
 //! classes (and its own interfaces, enums and type aliases, which nothing loaded can name),
 //! implements interfaces only for its own types, and has no top-level statements, no `extend` of
-//! a type it does not declare, no class extending a class it does not declare, no interface
-//! declared twice (a merge) and no `declare global` / `declare module` block. Anything else
-//! changes what the program's other modules mean (subclass closure, dispatch tables, members of
-//! loaded types) and goes through a new round ((a2)).
+//! a type it does not declare, no class extending a class it does not declare (in a function
+//! body too), no interface declared twice in one scope (a merge; a namespace is a scope) and no
+//! `declare global` / `declare module` block. A type alias does not declare a type here: it names
+//! whatever it is written with ([`rule`]). Anything else changes what the program's other modules
+//! mean (subclass closure, dispatch tables, members of loaded types) and goes through a new round
+//! ((a2)).
 
 pub(crate) mod codec;
+mod rule;
 mod store;
-
-use std::collections::HashSet;
 
 use velt_syntax::ast;
 
@@ -62,7 +63,7 @@ pub struct ModuleIndex {
     /// The names of the hook table's entries it defines (`host_await`; velt_common
     /// `std_hooks::HOOKS`), in table order.
     pub hooks: Vec<String>,
-    /// What its `extend` blocks add, in source order.
+    /// What its `extend` blocks add, in source order (with the rule, [`rule`]).
     pub extends: Vec<ExtendMember>,
     /// What it exports, in source order.
     pub exports: Vec<Export>,
@@ -154,9 +155,11 @@ pub enum Violation {
     /// `extend` of a type the module does not declare (`ty` as [`ExtendMember::ty`]); with
     /// `implements`, also an implementation of an interface for another module's type.
     ExtendsForeignType { ty: String },
-    /// `class`'s `extends` names a class the module does not declare.
+    /// `class`'s `extends` names a class the module does not declare where the class is (a
+    /// class in a function body may extend a class of an enclosing block).
     SubclassesForeignClass { class: String, base: String },
-    /// An interface declared more than once (TypeScript's declaration merging).
+    /// An interface declared more than once in one scope (TypeScript's declaration merging);
+    /// `name` has its namespace path (`N.I`).
     MergesInterface { name: String },
     /// A `declare global { … }` block.
     AugmentsGlobal,
@@ -186,7 +189,6 @@ pub(crate) fn index_module(
     module: &ast::Module,
     imports: &dyn Fn(&str) -> String,
 ) -> ModuleIndex {
-    let own = own_types(module);
     let mut out = ModuleIndex {
         path: path.to_string(),
         hooks: hook_modules()
@@ -196,7 +198,7 @@ pub(crate) fn index_module(
             .collect(),
         ..ModuleIndex::default()
     };
-    let mut interfaces = HashSet::new();
+    rule::check(module, &mut out.extends, &mut out.violations);
     for item in &module.items {
         let exported = |name: &str, kind| Export {
             name: name.to_string(),
@@ -237,50 +239,7 @@ pub(crate) fn index_module(
                 }
                 continue;
             }
-            ast::ItemKind::Function(f) if velt_syntax::is_script_main(&f.sig.name) => {
-                out.violations.push(Violation::TopLevelStatements);
-                continue;
-            }
-            ast::ItemKind::Extend(e) => {
-                let ty = extended_type(e);
-                out.extends.extend(e.methods.iter().map(|m| ExtendMember {
-                    ty: ty.clone(),
-                    member: m.decl.sig.name.name.clone(),
-                    is_static: m.is_static,
-                }));
-                if ty == "*" || !own.contains(ty.as_str()) {
-                    push_once(&mut out.violations, Violation::ExtendsForeignType { ty });
-                }
-                continue;
-            }
-            ast::ItemKind::Class(t) => {
-                if let Some(base) = &t.extends {
-                    let base = type_name(base);
-                    if !own.contains(base.as_str()) {
-                        out.violations.push(Violation::SubclassesForeignClass {
-                            class: t.name.name.clone(),
-                            base,
-                        });
-                    }
-                }
-            }
-            ast::ItemKind::Interface(i) => {
-                if !interfaces.insert(i.name.name.as_str()) {
-                    push_once(
-                        &mut out.violations,
-                        Violation::MergesInterface {
-                            name: i.name.name.clone(),
-                        },
-                    );
-                }
-            }
-            ast::ItemKind::Augment(a) => {
-                out.violations.push(match &a.module {
-                    Some((spec, _)) => Violation::AugmentsModule { spec: spec.clone() },
-                    None => Violation::AugmentsGlobal,
-                });
-                continue;
-            }
+            ast::ItemKind::Function(f) if velt_syntax::is_script_main(&f.sig.name) => continue,
             _ => {}
         }
         if !item.exported {
@@ -332,50 +291,6 @@ fn hook_modules() -> &'static [(String, &'static str)] {
             .map(|h| (h.module(), h.name))
             .collect()
     })
-}
-
-fn push_once(violations: &mut Vec<Violation>, v: Violation) {
-    if !violations.contains(&v) {
-        violations.push(v);
-    }
-}
-
-/// The types `module` declares at its top level.
-fn own_types(module: &ast::Module) -> HashSet<&str> {
-    module
-        .items
-        .iter()
-        .filter_map(|item| match &item.kind {
-            ast::ItemKind::Struct(t) | ast::ItemKind::Class(t) => Some(t.name.name.as_str()),
-            ast::ItemKind::Interface(i) => Some(i.name.name.as_str()),
-            ast::ItemKind::Enum(e) => Some(e.name.name.as_str()),
-            ast::ItemKind::TypeAlias(t) => Some(t.name.name.as_str()),
-            _ => None,
-        })
-        .collect()
-}
-
-/// [`ExtendMember::ty`] of `e`'s target.
-fn extended_type(e: &ast::ExtendDecl) -> String {
-    let name = type_name(&e.target);
-    match e.generics.iter().any(|g| g.name.name == name) {
-        true => "*".into(),
-        false => name,
-    }
-}
-
-/// The name `t` is written with, without its arguments: `Array` for `T[]`, `*` for a type with
-/// no name.
-fn type_name(t: &ast::TypeExpr) -> String {
-    match &t.kind {
-        ast::TypeExprKind::Named { path, .. } => path
-            .iter()
-            .map(|i| i.name.as_str())
-            .collect::<Vec<_>>()
-            .join("."),
-        ast::TypeExprKind::Array(_) => "Array".into(),
-        _ => "*".into(),
-    }
 }
 
 /// The names `p` binds, in order.
