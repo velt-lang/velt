@@ -102,7 +102,13 @@ impl<'a> Printer<'a> {
         }
         if !item.exported {
             let written = slice(self.src, item.span).starts_with("export");
-            return written.then(|| cat![KW, self.plain_item(item)]);
+            return written.then(|| match &item.kind {
+                // Each overload signature says `export default` too.
+                ItemKind::Function(f) if f.sig.generator.is_none() => {
+                    self.fn_decl_with(f, "function ", KW)
+                }
+                _ => cat![KW, self.plain_item(item)],
+            });
         }
         let mut anonymous = item.clone();
         anonymous.exported = false;
@@ -120,6 +126,10 @@ impl<'a> Printer<'a> {
             return None;
         }
         name.name.clear();
+        if let ItemKind::Function(f) = &mut anonymous.kind {
+            f.overloads.iter_mut().for_each(|o| o.name.name.clear());
+            return Some(self.fn_decl_with(f, "function ", KW));
+        }
         Some(cat![KW, self.plain_item(&anonymous)])
     }
 
@@ -214,7 +224,16 @@ impl<'a> Printer<'a> {
             names = rest;
         }
         if let Some(ns) = &import.namespace {
-            return cat![keyword, "* as ", ns.name.clone(), " from ", from, ";"];
+            let types = if import.type_only { "type " } else { "" };
+            return cat![
+                keyword,
+                types,
+                "* as ",
+                ns.name.clone(),
+                " from ",
+                from,
+                ";"
+            ];
         }
         if import.all {
             return cat![keyword, "* from ", from, ";"];

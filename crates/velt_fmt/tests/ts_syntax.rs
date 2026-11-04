@@ -438,3 +438,34 @@ fn accessors_in_object_types() {
 fn as_as_a_name() {
     round_trips("function as(x: any): any {\n  return x;\n}\n\nconst v = as(as(1)) as number;\n");
 }
+
+#[test]
+fn type_only_namespace_import() {
+    // Without `type` it would evaluate the module.
+    round_trips("import type * as ns from \"./a\";\n");
+    round_trips("import * as ns from \"./a\";\n");
+}
+
+#[test]
+fn default_function_overloads() {
+    // Each signature says `export default`; without it the next parse refuses them (TS2383).
+    round_trips(
+        "export default function f(a: string): string;\nexport default function f(a: number): number;\nexport default function f(a: any): any {\n  return a;\n}\n",
+    );
+    round_trips(
+        "export default function (a: string): string;\nexport default function (a: any): any {\n  return a;\n}\n",
+    );
+    round_trips(
+        "export default async function f(a: string): Promise<string>;\nexport default async function f(a: any): Promise<any> {\n  return a;\n}\n",
+    );
+}
+
+#[test]
+fn default_expressions_print_as_written() {
+    round_trips("export default NaN;\n");
+    round_trips("export default x;\nconst x = 1;\n");
+    round_trips("export * as default from \"./a\";\n");
+    round_trips(
+        "export default interface Foo {\n  a: number;\n}\n\nexport default function bar() {}\n",
+    );
+}
