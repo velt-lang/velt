@@ -401,8 +401,8 @@ opening it.
   step (`gh pr merge <n> --auto`): the queue runs the whole gate against the pull
   request merged with the latest `main`, and merges it when it passes. It checks Linux, plus
   Windows and macOS when the change touches OS-specific code (the runtime, code generation and
-  linking, `veltc`, `vpm`, the standard library, goldens; comment-only edits don't count;
-  `cargo xtask affected` says which).
+  linking, `veltc`, `vpm`, the parts of the standard library that talk to the OS and its test
+  suites; comment-only edits don't count; `cargo xtask affected` says which).
   When the queue checked Linux only, the push to `main` then runs the whole gate on Windows and
   macOS and opens an issue when it fails. A nightly run adds PostgreSQL and Redis so the
   database tests run too.

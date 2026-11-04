@@ -1,11 +1,14 @@
 //! Whether a change needs the merge queue to check Windows and macOS too, or Linux is enough.
 //!
 //! The OS-specific code is in the runtime, the native crates, code generation and linking, the
-//! `velt` command line and packages, and the standard library; a change there (or to the build,
-//! CI or scripts, which select everything) runs every OS in the queue. The front end and the
-//! tooling are portable Rust: Linux checks them, and the full gate on Windows and macOS after
-//! the push to `main` catches the rare exception. A change the queue checked on every OS skips
-//! that second run ([`after_merge_reason`]).
+//! `velt` command line and packages, and the parts of the standard library that talk to the OS; a
+//! change there (or to the build, CI or scripts, which select everything) runs every OS in the
+//! queue. The front end, the tooling, the rest of the standard library, the goldens, the examples
+//! and the packages behave the same everywhere nearly always: Linux checks them, and the full gate
+//! on Windows and macOS after the push to `main` catches the exception. Runners are the limit (15
+//! at once, 5 of them macOS), and a queue entry on every OS takes four times the machine time of
+//! one on Linux. A change the queue checked on every OS skips that second run
+//! ([`after_merge_reason`]).
 
 use crate::graph::Graph;
 
@@ -26,15 +29,22 @@ pub(crate) const PORTABLE_CRATES: &[&str] = &[
     "velt_rt_wasm",
 ];
 
-/// Paths outside `crates/` whose behavior can differ by OS: the standard library's bindings,
-/// end-to-end programs and their expected output, the standard library's `velt test` suites,
-/// native packages.
+/// Paths outside `crates/` whose behavior differs by OS: the parts of the standard library that
+/// talk to the OS, and the standard library's `velt test` suites, which run servers, sockets and
+/// files (#1892). A pull request that changes a package runs its tests on Windows
+/// ([`windows_packages`]), so packages need no second look in the queue.
 const OS_SPECIFIC_PATHS: &[&str] = &[
-    "std/",
-    "tests/golden/",
+    "std/fs/",
+    "std/host/",
+    "std/native/",
+    "std/net/",
+    "std/os/",
+    "std/process/",
+    "std/prelude/timers.vlt",
+    "std/task/",
+    "std/test/",
+    "std/time/",
     "tests/std/",
-    "examples/",
-    "packages/",
 ];
 
 /// Why Windows and macOS must be checked too, or `None` when Linux is enough. `full` is
