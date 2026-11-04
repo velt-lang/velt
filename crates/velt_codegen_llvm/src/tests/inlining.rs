@@ -195,3 +195,49 @@ fn limits_are_velt_opts() {
     assert_eq!(CALLER_LIMIT, velt_opt::INLINE_CALLER_LIMIT);
     assert_eq!(SMALL, velt_opt::INLINE_SMALL_COST);
 }
+
+/// Calls LLVM leaves alone take no room under the limit: three calls of a 3,000-statement
+/// function called from two sites, then the only call of a 6,000-statement one. Counting the
+/// first three (as the caps first did) kept the last call out; LLVM inlines it, so it fits.
+#[test]
+fn calls_llvm_keeps_take_no_room() {
+    let mut pb = ProgramBuilder::new();
+    let sink = pb.ext("sink", &[I64], Unit, false);
+    let shared = calling(&mut pb, "shared", sink, 3_000);
+    let once = calling(&mut pb, "once", sink, 6_000);
+    let main = main_calling(&mut pb, &[shared, shared, shared, once]);
+    // A second caller of `shared` elsewhere: still several sites.
+    main_calling_named(&mut pb, "other", &[shared]);
+    let p = pb.finish();
+    let caps = Caps::of(&p);
+    assert!(
+        caps.kept(main.0 as usize).is_empty(),
+        "{:?}",
+        caps.kept(main.0 as usize)
+    );
+    // The same call stays capped once another unit refers to `once`: then it is no single
+    // local call, so LLVM leaves it, and it takes no room either.
+    let mut shared_funcs = vec![false; p.funcs.len()];
+    shared_funcs[once.0 as usize] = true;
+    let caps = Caps::of_units(&p, &shared_funcs);
+    assert!(caps.kept(main.0 as usize).is_empty());
+    // Only the single local call counts: with `once` grown past the room left, it is kept.
+    let mut pb = ProgramBuilder::new();
+    let sink = pb.ext("sink", &[I64], Unit, false);
+    let first = calling(&mut pb, "first", sink, 6_000);
+    let second = calling(&mut pb, "second", sink, 6_000);
+    let main = main_calling(&mut pb, &[first, second]);
+    let caps = Caps::of(&pb.finish());
+    assert_eq!(caps.kept(main.0 as usize), [1]);
+}
+
+/// An internal function `name` calling each of `callees` once.
+fn main_calling_named(pb: &mut ProgramBuilder, name: &str, callees: &[FuncId]) -> FuncId {
+    let mut fb = FuncBuilder::internal(name, &[], Unit);
+    let mut b = fb.block();
+    for &f in callees {
+        b = fb.call(b, Callee::Func(f), vec![], None);
+    }
+    fb.ret(b, Operand::Const(Const::Unit, Unit));
+    pb.add(fb.finish())
+}

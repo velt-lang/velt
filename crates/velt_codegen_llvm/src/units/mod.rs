@@ -33,8 +33,7 @@ use std::collections::BTreeSet;
 
 use velt_vir::vir;
 
-pub(crate) use graph::components;
-use graph::Refs;
+pub(crate) use graph::{components, Refs};
 
 /// Functions of at most this weight are imported into the units that call them...
 const IMPORT_WEIGHT: usize = 40;
