@@ -93,6 +93,24 @@ fn json_has_the_package_shape_with_defaults() {
     assert!(minimal.get("native").is_none() && minimal.get("registry").is_none());
 }
 
+/// `lint` round-trips through `to_vlt`, and the JSON has only the parts that are set.
+#[test]
+fn lint_levels_round_trip() {
+    let src = "export const pkg: Package = { name: \"a\", version: \"1.0.0\", lint: { rules: { \"perf/number-double\": \"off\" } } };";
+    let m = Manifest::parse(src).unwrap();
+    let lint = m.lint.clone().unwrap();
+    assert_eq!(lint.perf, None);
+    assert_eq!(lint.rules["perf/number-double"], LintLevel::Off);
+    assert_eq!(
+        m.to_json()["lint"],
+        serde_json::json!({ "rules": { "perf/number-double": "off" } })
+    );
+    assert_eq!(Manifest::parse(&m.to_vlt()).unwrap().lint, Some(lint));
+    let err = Manifest::parse("export const pkg: Package = { name: \"a\", version: \"1.0.0\", lint: { perf: \"loud\" } };")
+        .unwrap_err();
+    assert!(err.contains("`lint.perf` must be"), "{err}");
+}
+
 #[test]
 fn errors_name_the_file_and_line() {
     let tmp = tempfile::tempdir().unwrap();
@@ -265,6 +283,7 @@ fn std_package_types_match_the_schema() {
         ("Jsx", schema::JSX),
         ("Native", schema::NATIVE),
         ("Build", schema::BUILD),
+        ("Lint", schema::LINT),
         ("Workspace", schema::WORKSPACE),
     ] {
         assert_eq!(declared(name), expected(fields), "`{name}` in std/package/");

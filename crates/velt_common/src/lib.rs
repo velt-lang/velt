@@ -100,6 +100,45 @@ pub struct Label {
     pub message: String,
 }
 
+/// Whether a [`Fix`] keeps the program's behaviour.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Applicability {
+    /// The program behaves the same after the fix: `velt check --fix` applies it, and editors
+    /// include it in "fix all".
+    Safe,
+    /// The fix may change what the program does (a value's type, sharing, overflow): offered,
+    /// applied only by `velt check --fix=review` or by hand.
+    Review,
+}
+
+/// A machine-applicable change that resolves a [`Diagnostic`]: replacements of source ranges
+/// (in one file or several: a rename), applied together or not at all.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fix {
+    /// What the fix does, for an editor's menu (``replace with `number` ``).
+    pub title: String,
+    /// The replacements, as (range, new text); ranges don't overlap.
+    pub edits: Vec<(Span, String)>,
+    /// Whether it keeps the program's behaviour.
+    pub applicability: Applicability,
+}
+
+impl Fix {
+    /// A fix of one replacement.
+    pub fn replace(
+        title: impl Into<String>,
+        span: Span,
+        text: impl Into<String>,
+        applicability: Applicability,
+    ) -> Self {
+        Fix {
+            title: title.into(),
+            edits: vec![(span, text.into())],
+            applicability,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct Diagnostic {
     pub severity: Severity,
@@ -107,6 +146,12 @@ pub struct Diagnostic {
     /// First label is the primary location.
     pub labels: Vec<Label>,
     pub notes: Vec<String>,
+    /// The lint rule that reported it (`perf/number-double`, `ts-compat/bool-type`); `None`
+    /// for the compiler's own diagnostics.
+    /// (A `Box<str>`: diagnostics travel in `Result`s, which should stay small.)
+    pub code: Option<Box<str>>,
+    /// Machine-applicable fixes, the preferred one first.
+    pub fixes: Vec<Fix>,
 }
 
 impl Diagnostic {
@@ -119,7 +164,29 @@ impl Diagnostic {
                 message: String::new(),
             }],
             notes: vec![],
+            code: None,
+            fixes: vec![],
         }
+    }
+
+    /// A warning at `span`.
+    pub fn warning(message: impl Into<String>, span: Span) -> Self {
+        Diagnostic {
+            severity: Severity::Warning,
+            ..Diagnostic::error(message, span)
+        }
+    }
+
+    /// This diagnostic with the lint code `code`.
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        self.code = Some(code.into().into_boxed_str());
+        self
+    }
+
+    /// This diagnostic with `fix` after its other fixes.
+    pub fn with_fix(mut self, fix: Fix) -> Self {
+        self.fixes.push(fix);
+        self
     }
 
     pub fn with_label(mut self, span: Span, message: impl Into<String>) -> Self {

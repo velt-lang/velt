@@ -56,12 +56,18 @@ impl Server<'_> {
         let mut actions = vec![];
         if wanted(&CodeActionKind::QUICKFIX) {
             for fix in fixes.into_iter().chain(all_like) {
-                actions.push(action(p, &index, fix, CodeActionKind::QUICKFIX));
+                actions.extend(action(p, analysis, &index, fix, CodeActionKind::QUICKFIX));
             }
         }
         if wanted(&CodeActionKind::SOURCE_FIX_ALL) {
             if let Some(fix) = code_actions::fix_all_preferred(analysis) {
-                actions.push(action(p, &index, fix, CodeActionKind::SOURCE_FIX_ALL));
+                actions.extend(action(
+                    p,
+                    analysis,
+                    &index,
+                    fix,
+                    CodeActionKind::SOURCE_FIX_ALL,
+                ));
             }
         }
         Some(actions)
@@ -90,18 +96,35 @@ impl Server<'_> {
     }
 }
 
-/// `fix` as a code action of `kind`, tied to the client's diagnostic it resolves.
+/// `fix` as a code action of `kind`, tied to the client's diagnostic it resolves. Edits in other
+/// loaded files (a lint fix that rewrites the uses of a type) go to their files; `None` when one
+/// of those has no URI.
 fn action(
     p: &CodeActionParams,
+    analysis: &crate::analysis::Analysis,
     index: &LineIndex,
     fix: code_actions::Fix,
     kind: CodeActionKind,
-) -> CodeActionOrCommand {
-    let edits = fix
-        .edits
-        .iter()
-        .map(|(span, text)| TextEdit::new(index.range(span.lo, span.hi), text.clone()))
-        .collect();
+) -> Option<CodeActionOrCommand> {
+    let document = analysis.file();
+    let mut changes: HashMap<lsp_types::Url, Vec<TextEdit>> = HashMap::new();
+    for (span, text) in &fix.edits {
+        if span.file == document {
+            let edit = TextEdit::new(index.range(span.lo, span.hi), text.clone());
+            changes
+                .entry(p.text_document.uri.clone())
+                .or_default()
+                .push(edit);
+            continue;
+        }
+        let file = analysis.sm.get(span.file);
+        let uri = lsp_types::Url::from_file_path(&file.path).ok()?;
+        let range = LineIndex::new(&file.src).range(span.lo, span.hi);
+        changes
+            .entry(uri)
+            .or_default()
+            .push(TextEdit::new(range, text.clone()));
+    }
     let diagnostics = fix.diagnostic.as_ref().map(|d| {
         let range = d.labels.first().map(|l| index.range(l.span.lo, l.span.hi));
         p.context
@@ -111,15 +134,14 @@ fn action(
             .cloned()
             .collect()
     });
-    let uri = p.text_document.uri.clone();
-    CodeActionOrCommand::CodeAction(CodeAction {
+    Some(CodeActionOrCommand::CodeAction(CodeAction {
         title: fix.title,
         kind: Some(kind),
         diagnostics,
-        edit: Some(WorkspaceEdit::new(HashMap::from([(uri, edits)]))),
+        edit: Some(WorkspaceEdit::new(changes)),
         is_preferred: fix.preferred.then_some(true),
         ..Default::default()
-    })
+    }))
 }
 
 /// Does a requested kind `asked` cover `kind`: the same kind or a parent of it, by whole

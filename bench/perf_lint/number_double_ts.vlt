@@ -1,0 +1,8 @@
+// perf/number-double, the TypeScript form: `n` may pass 2^53, so it stays a double.
+// The pair is measured in README.md.
+function main() {
+  let total = 0;
+  let n = 0;
+  for (let r = 0; r < 100000000; r++) { n = n + r; total = total + (n & 7); }
+  console.log(total);
+}

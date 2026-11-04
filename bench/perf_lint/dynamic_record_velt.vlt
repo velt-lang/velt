@@ -1,0 +1,13 @@
+// perf/dynamic-record, the Velt form: an object type of the keys read.
+// The pair is measured in README.md.
+type Size = { w: number; h: number };
+function area(p: Size): number {
+  return p.w * p.h;
+}
+function main() {
+  let total = 0.0;
+  for (let i = 0; i < 1000000; i++) {
+    total += area({ w: i * 0.5, h: 2 });
+  }
+  console.log(total);
+}

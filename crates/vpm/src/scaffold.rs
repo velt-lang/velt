@@ -95,6 +95,7 @@ pub fn manifest_text_depending(
         jsx: None,
         define: BTreeMap::new(),
         ts_compat: vec![],
+        lint: None,
         build: None,
     }
     .to_vlt()

@@ -1,0 +1,12 @@
+// perf/dynamic-record, the TypeScript form: a `Record<string, any>` parameter read with constant keys.
+// The pair is measured in README.md.
+function area(p: Record<string, any>): number {
+  return (p["w"] as number) * (p["h"] as number);
+}
+function main() {
+  let total = 0.0;
+  for (let i = 0; i < 1000000; i++) {
+    total += area({ w: i * 0.5, h: 2 });
+  }
+  console.log(total);
+}

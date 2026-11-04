@@ -54,7 +54,7 @@ use crate::visit::rvalue_operands;
 use flow::Flow;
 
 pub(crate) use print::declare as declare_formatters;
-pub use report::Unnarrowed;
+pub use report::{Unnarrowed, Why};
 pub(crate) use simplify::self_comparisons;
 
 /// The prelude's `xs[i]` with a float `i` (`std/prelude/math.vlt`).

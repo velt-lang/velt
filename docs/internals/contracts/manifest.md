@@ -25,6 +25,7 @@ export const pkg: Package = {
     targets: ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"],  // published prebuilt
   },
   tsCompat: ["src/models"],     // optional: folders kept TypeScript-compatible (additive)
+  lint: { perf: "warn" },       // optional: how loud the lint rules are (additive)
   imports: {                    // optional conditional imports (additive)
     "#io": { js: "./src/io/js.vlt", default: "./src/io/native.vlt" },
   },
@@ -373,7 +374,22 @@ tsCompat: ["src/components", "src/models"],
 - The reader doesn't look at the disk. `vpm::manifest::read::missing_ts_compat_dirs(file, src,
   root)` returns a warning, at its string, for each entry that is not a directory under `root`
   (the language server shows them in `package.vlt`); `velt check --ts-compat` fails on one.
-- `to_vlt` writes `tsCompat` last; `velt manifest --json` prints it when present.
+- `to_vlt` writes `tsCompat` after the other fields but `lint` and `build`; `velt manifest
+  --json` prints it when present.
+
+## Lint levels (additive)
+```ts ignore
+lint: { perf: "warn", rules: { "perf/number-double": "off", "ts-compat/default-sort": "warn" } },
+```
+- `vpm::Manifest::lint` (`Option<LintConfig>`): `perf` (`Option<LintLevel>`, every `perf/…`
+  rule; `hint` when absent) and `rules` (code → `LintLevel`, which wins over `perf`; a
+  `ts-compat/<rule>` level replaces that finding's severity). `LintLevel` is `off`, `hint`,
+  `warn` or `deny` ([cli.md](cli.md) "Lint rules"); std's type is `Lint` with `LintLevel`.
+- The reader's errors, at the value: `lint`, or `rules`, not an object; a level that is not a
+  string or not one of the four; an unknown key in `lint`. It doesn't check that a code names a
+  rule (`velt check` warns about one that doesn't).
+- `to_vlt` writes `lint` before `build`; `velt manifest --json` prints `{"perf", "rules"}`, each
+  only when set.
 
 ## Native libraries (additive)
 Contract: [native_abi.md](native_abi.md).

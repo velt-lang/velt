@@ -1,0 +1,12 @@
+// perf/class-as-data, the Velt form: an object type, stored inline in the array.
+// The pair is measured in README.md.
+type P = { x: number; y: number };
+function main() {
+  let total = 0.0;
+  for (let r = 0; r < 200; r++) {
+    const ps: P[] = [];
+    for (let i = 0; i < 10000; i++) ps.push({ x: i, y: r });
+    for (const p of ps) total += p.x + p.y;
+  }
+  console.log(total);
+}

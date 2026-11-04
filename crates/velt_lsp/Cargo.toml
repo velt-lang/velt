@@ -12,6 +12,7 @@ velt_doc = { path = "../velt_doc" }
 velt_http = { path = "../velt_http" }
 vpm.workspace = true
 velt_tscompat.workspace = true
+velt_lint.workspace = true
 lsp-server = "0.10.0"
 crossbeam-channel = "0.5.17"
 lsp-types = "0.95"

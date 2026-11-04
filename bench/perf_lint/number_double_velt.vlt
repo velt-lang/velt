@@ -1,0 +1,8 @@
+// perf/number-double, the Velt form: `i64` counters.
+// The pair is measured in README.md.
+function main() {
+  let total: i64 = 0;
+  let n: i64 = 0;
+  for (let r: i64 = 0; r < 100000000; r++) { n = n + r; total = total + (n & 7); }
+  console.log(total);
+}

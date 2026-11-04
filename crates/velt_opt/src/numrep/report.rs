@@ -16,6 +16,27 @@ pub struct Unnarrowed {
     pub loc: Option<SrcLoc>,
     /// Why it is not an integer, in words.
     pub reason: String,
+    /// The reason's kind, for tools that act on it (the `perf/number-double` lint).
+    pub why: Why,
+}
+
+/// The kind of reason an [`Unnarrowed`] variable stays a double.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Why {
+    /// It may hold a fraction.
+    Fraction,
+    /// It may be NaN.
+    NaN,
+    /// Every value is a whole number from integer operations, but nothing bounds it below 2^53.
+    Unbounded,
+    /// It is set from a division, a call or memory.
+    Form,
+    /// It may be -0, which a use can tell from 0.
+    NegZero,
+    /// It is set from a value that is not a 32-bit integer.
+    Wide,
+    /// A parameter, a call result or a value stored in memory.
+    Opaque,
 }
 
 /// The named `f64` locals of `func` assigned inside a loop that stay `f64`.
@@ -58,10 +79,23 @@ pub(super) fn unnarrowed(env: &Env, flow: &Flow, func: &Function) -> Vec<Unnarro
                 name: name.clone(),
                 loc: func.loc(bi, si),
                 reason,
+                why: plan.reasons[i].map_or(Why::Opaque, why),
             });
         }
     }
     out
+}
+
+fn why(r: Reason) -> Why {
+    match r {
+        Reason::NotWhole => Why::Fraction,
+        Reason::MayBeNan => Why::NaN,
+        Reason::Unbounded(..) => Why::Unbounded,
+        Reason::Form => Why::Form,
+        Reason::NegZero(..) => Why::NegZero,
+        Reason::Wide => Why::Wide,
+        Reason::NoGain => Why::Opaque,
+    }
 }
 
 /// The words for each reason; `https://veltlang.com/docs/tooling/cli/` (`--report numbers`) lists the same ones.
