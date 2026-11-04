@@ -10,18 +10,16 @@
 //! types converted to dynamic types (`Cx::note_dyn_identity`): an object is then itself in
 //! every `any` it is converted to (#1256), not a copy per conversion.
 
-use velt_sema::hir::{self, PassMode, TyId, TyKind};
+use velt_sema::hir::{self, TyId, TyKind};
 
 use super::any::{
     SLOT_HASH, SLOT_NUMBER, SLOT_SAME, TAG_BOOLEAN, TAG_NULL, TAG_NUMBER, TAG_OBJECT, TAG_STRING,
 };
+use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
 use super::rt::Rt;
-use super::{cint, ice, FnLower};
+use super::{cint, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Terminator, Ty, STR_AGG};
-
-/// The prelude's `==` of an object and a primitive (std/lang/hooks/any_ops.vlt).
-const LOOSE_EQ: &str = velt_common::std_hook!(any_loose_eq);
 
 /// Is `e` the literal `null` or `undefined` made dynamic?
 fn nothing_lit(e: &hir::Expr) -> bool {
@@ -314,10 +312,6 @@ impl FnLower<'_, '_> {
     /// `anyLooseEq(a, b, at)` of the `any`s at `a` and `b` (borrowed), one an object and the
     /// other a boolean, number or string; `at` is this location (the prelude's stops report it).
     fn any_loose_object(&mut self, a: &Place, b: &Place) -> Operand {
-        let d = self
-            .cx
-            .prelude_def(LOOSE_EQ)
-            .unwrap_or_else(|| ice(format_args!("no prelude `{LOOSE_EQ}`")));
         // Known when lowering (not in an instance that takes its caller's location at run time).
         let text = self
             .panic_loc()
@@ -326,27 +320,10 @@ impl FnLower<'_, '_> {
             .unwrap_or_else(|| "an unknown location".into());
         let at = self.str_lit(&text);
         let at = Place::local(self.copy_to_temp(at, Ty::Agg(STR_AGG)));
-        let any = self.cx.any_ty();
-        let modes: Vec<PassMode> = self.cx.fn_def(d).params.iter().map(|p| p.mode).collect();
-        let mut argv = vec![];
-        for (p, mode) in [a.clone(), b.clone()].into_iter().zip(modes) {
-            // A parameter the helper keeps takes a share of the value.
-            let p = match mode {
-                PassMode::Owned => {
-                    let v = self.share_value(Operand::Copy(p), any);
-                    let vt = self.cx.ty(any);
-                    let t = Place::local(self.copy_to_temp(v, vt));
-                    self.take_temp(&t);
-                    t
-                }
-                _ => p,
-            };
-            argv.push(self.addr(p));
-        }
-        argv.push(self.addr(at));
-        let f = self.cx.func_for(d, vec![]);
-        let bool_ = self.cx.intern(TyKind::Bool);
-        self.finish_call(vir::Callee::Func(f), argv, bool_, None)
+        let a = ty::Any::arg(self.addr(a.clone()));
+        let b = ty::Any::arg(self.addr(b.clone()));
+        let at = ty::Str::arg(self.addr(at));
+        hooks::any_loose_eq(self, a, b, at).emit_owned(self)
     }
 
     /// Is `tag` a boolean, number or string?

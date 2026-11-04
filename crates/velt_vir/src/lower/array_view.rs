@@ -42,21 +42,15 @@ use velt_sema::hir::{self, DefId, TyId, TyKind};
 use super::any_set_site::ARRAY_ID;
 use super::boxing::Boxing;
 use super::glue::Glue;
+use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
 use super::rt::Rt;
 use super::{cint, ice, Cx, FnLower};
-use crate::vir::{self, BinOp, Callee, Const, Operand, Place, Proj, Rvalue, Ty};
+use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
 pub(super) const VIEW_CLASS: &str = velt_common::std_hook!(array_view);
+/// Whether the program has views at all (its calls: `hook_calls.rs`).
 const VIEW_NEW: &str = velt_common::std_hook!(array_view_new);
-const VIEW_SYNC: &str = velt_common::std_hook!(array_view_sync);
-pub(super) const VIEW_SYNC_AT: &str = velt_common::std_hook!(array_view_sync_at);
-pub(super) const VIEW_SYNC_LEN: &str = velt_common::std_hook!(array_view_sync_len);
-const VIEW_FLUSH: &str = velt_common::std_hook!(array_view_flush);
-const VIEW_FLUSH_AT: &str = velt_common::std_hook!(array_view_flush_at);
-pub(super) const VIEW_FLUSH_FROM: &str = velt_common::std_hook!(array_view_flush_from);
-pub(super) const VIEW_LEN: &str = velt_common::std_hook!(array_view_len);
-pub(super) const VIEW_SORT: &str = velt_common::std_hook!(array_view_sort);
 
 /// What an access to a view's contents needs of the mirror (`content_with`).
 pub(super) enum ViewSync {
@@ -177,32 +171,6 @@ impl Cx<'_> {
 }
 
 impl FnLower<'_, '_> {
-    pub(super) fn view_call(
-        &mut self,
-        name: &str,
-        e: TyId,
-        args: Vec<Operand>,
-        out: Option<Place>,
-    ) {
-        self.view_call_with(name, vec![e], args, out);
-    }
-
-    /// A call of the prelude function `name` instantiated with `targs`.
-    pub(super) fn view_call_with(
-        &mut self,
-        name: &str,
-        targs: Vec<TyId>,
-        args: Vec<Operand>,
-        out: Option<Place>,
-    ) {
-        let d = self
-            .cx
-            .prelude_def(name)
-            .unwrap_or_else(|| ice(format_args!("no prelude `{name}`")));
-        let f = self.cx.func_for_direct(d, targs, self.mode);
-        self.call(Callee::Func(f), args, out, false);
-    }
-
     /// The type `ArrayView<e>`.
     fn view_class(&mut self, e: TyId) -> TyId {
         let d = self
@@ -292,7 +260,7 @@ impl FnLower<'_, '_> {
         self.switch_to(miss);
         let arg = self.addr(p.clone());
         let r = self.temp(Ty::Ptr);
-        self.view_call(VIEW_NEW, e, vec![arg], Some(Place::local(r)));
+        hooks::array_view_new(self, [e], ty::Any::moved(arg)).emit_to(self, Place::local(r));
         let tagged = self.proxy_tag(Operand::Copy(Place::local(r)));
         let a = self.cx.array_agg();
         let parts = vec![tagged, cint(0, Ty::U64), cint(0, Ty::U64)];
@@ -343,14 +311,20 @@ impl FnLower<'_, '_> {
         }
         self.branch(is, yes, join);
         self.switch_to(yes);
-        let flag = |b| Operand::Const(Const::Bool(b), Ty::Bool);
+        let flag = |b| ty::Bool::arg(Operand::Const(Const::Bool(b), Ty::Bool));
+        let view = || ty::ArrayView::arg(v.clone());
         match sync {
-            ViewSync::All => self.view_call(VIEW_SYNC, e, vec![v.clone()], None),
-            ViewSync::Len => self.view_call(VIEW_SYNC_LEN, e, vec![v.clone(), flag(false)], None),
-            ViewSync::Last => self.view_call(VIEW_SYNC_LEN, e, vec![v.clone(), flag(true)], None),
+            ViewSync::All => _ = hooks::array_view_sync(self, [e], view()).emit(self),
+            ViewSync::Len => {
+                _ = hooks::array_view_sync_len(self, [e], view(), flag(false)).emit(self);
+            }
+            ViewSync::Last => {
+                _ = hooks::array_view_sync_len(self, [e], view(), flag(true)).emit(self);
+            }
             ViewSync::Slots(at) => {
                 for i in at {
-                    self.view_call(VIEW_SYNC_AT, e, vec![v.clone(), i], None);
+                    let i = ty::USize::arg(i);
+                    _ = hooks::array_view_sync_at(self, [e], view(), i).emit(self);
                 }
             }
         }
@@ -375,12 +349,17 @@ impl FnLower<'_, '_> {
         let (yes, join) = (self.new_block(), self.new_block());
         self.branch(is, yes, join);
         self.switch_to(yes);
+        let view = || ty::ArrayView::arg(v.clone());
         match what {
-            ViewFlush::All => self.view_call(VIEW_FLUSH, e, vec![v], None),
-            ViewFlush::From(i) => self.view_call(VIEW_FLUSH_FROM, e, vec![v, i], None),
+            ViewFlush::All => _ = hooks::array_view_flush(self, [e], view()).emit(self),
+            ViewFlush::From(i) => {
+                let i = ty::USize::arg(i);
+                _ = hooks::array_view_flush_from(self, [e], view(), i).emit(self);
+            }
             ViewFlush::Slots(at) => {
                 for i in at {
-                    self.view_call(VIEW_FLUSH_AT, e, vec![v.clone(), i], None);
+                    let i = ty::USize::arg(i);
+                    _ = hooks::array_view_flush_at(self, [e], view(), i).emit(self);
                 }
             }
         }

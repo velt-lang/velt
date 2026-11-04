@@ -7,13 +7,15 @@
 //! traps of a proxy of an array, or of a proxy without traps around an array. Any other
 //! prototype or key, and a program without `Proxy`, read `undefined` as before.
 
-use velt_sema::hir::{PassMode, TyId};
+use velt_sema::hir::TyId;
 
 use super::any_member::ST_OK;
+use super::hook_calls::{self as hooks, ty, HookTy};
 use super::FnLower;
 use crate::vir::{self, Operand, Place, Rvalue, Ty};
 
-/// The hook that reads a member of `Array.prototype` in a program with `Proxy`.
+/// The hook that reads a member of `Array.prototype` in a program with `Proxy` (its call:
+/// `hook_calls.rs`).
 const PROTOTYPE_MEMBER: &str = velt_common::std_hook!(array_prototype_member);
 
 /// The name of the prelude's prototype class (std/prelude/object_prototype.vlt).
@@ -44,26 +46,19 @@ impl FnLower<'_, '_> {
         else {
             return;
         };
-        let Some(h) = self.cx.prelude_def(PROTOTYPE_MEMBER) else {
+        // A program without `Proxy` has no such hook, and no such key to read.
+        if self.cx.prelude_def(PROTOTYPE_MEMBER).is_none() {
             return;
-        };
+        }
         let vp = self.any_value_place(data, ty);
         let fp = self.field_place(&vp, ty, i as u32);
         let is_array = self.rvalue_temp(Ty::Bool, Rvalue::Use(Operand::Copy(fp)));
         let (yes, no) = (self.new_block(), self.new_block());
         self.branch(is_array, yes, no);
         self.switch_to(yes);
-        let k = match self.cx.fn_def(h).params[0].mode {
-            PassMode::Owned => {
-                let str_ty = self.cx.str_ty();
-                let kp = self.deref_param(key, str_ty);
-                let ks = self.share_value(Operand::Copy(kp), str_ty);
-                let t = self.copy_to_temp(ks, Ty::Agg(vir::STR_AGG));
-                self.addr(Place::local(t))
-            }
-            _ => Operand::Copy(Place::local(key)),
-        };
-        let r = self.call_std_hook(h, vec![], vec![k]);
+        let str_ty = self.cx.str_ty();
+        let kp = self.deref_param(key, str_ty);
+        let r = hooks::array_prototype_member(self, ty::Str::shared(kp)).emit_std(self);
         self.assign(out.clone(), Rvalue::Use(r));
         self.ret_status(ST_OK);
         self.switch_to(no);

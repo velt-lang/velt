@@ -10,10 +10,11 @@
 //! object converted to another object type is (any_object_fill.rs): a later write through one is
 //! not seen through the other. `null`, `undefined` and primitives stay a `TypeError`.
 
-use velt_sema::hir::{DefId, PassMode, TyId, TyKind};
+use velt_sema::hir::{DefId, TyId, TyKind};
 
 use super::any::TAG_OBJECT;
 use super::any_glue::Ready;
+use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
 use super::{cint, FnLower};
 use crate::vir::{BinOp, BlockId, Callee, Operand, Place, Proj, Rvalue, Ty};
@@ -41,19 +42,17 @@ impl FnLower<'_, '_> {
         if !matches!(self.cx.kind(k), TyKind::Str) {
             return;
         }
-        let (name, targs) = match v == self.cx.any_ty() {
-            true => (TO_RECORD_ANY, vec![]),
-            false => (TO_RECORD, vec![v]),
-        };
+        let of_any = v == self.cx.any_ty();
+        let name = if of_any { TO_RECORD_ANY } else { TO_RECORD };
         // sema checks the hooks, and adds the member slots of the `any` tables they read, only
         // for a program that may convert to a record (velt_sema `lazy_std::RECORD_HOOKS`);
         // without them the conversion stays the `TypeError`.
         let hook = self.cx.prelude_def(name);
         let usable =
             |d: &DefId| !self.cx.hir.unchecked.contains(d) && self.cx.hir.dyn_members.is_some();
-        let Some(d) = hook.filter(usable) else {
+        if hook.filter(usable).is_none() {
             return;
-        };
+        }
         let desc = Operand::Copy(proj(p, Proj::Field(1)));
         let tag = self.any_tag_of(desc);
         let obj = cint(TAG_OBJECT as i128, Ty::U64);
@@ -61,12 +60,13 @@ impl FnLower<'_, '_> {
         let (yes, no) = (self.new_block(), self.new_block());
         self.branch(is_obj, yes, no);
         self.switch_to(yes);
-        let owned = self.cx.fn_def(d).params[0].mode == PassMode::Owned;
-        let arg = self.addr(p.clone());
-        let r = self.call_std_hook(d, targs, vec![arg]);
-        if !owned {
-            self.drop_glue(p.clone(), from);
-        }
+        // The hooks borrow the `any` (velt_common's table), which this function owns.
+        let arg = ty::Any::arg(self.addr(p.clone()));
+        let r = match of_any {
+            true => hooks::any_to_record_any(self, arg).emit_std(self),
+            false => hooks::any_to_record(self, [v], arg).emit_std(self),
+        };
+        self.drop_glue(p.clone(), from);
         self.assign(out.clone(), Rvalue::Use(r));
         self.goto(done);
         self.switch_to(no);
