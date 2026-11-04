@@ -1,0 +1,28 @@
+// A hook typed `(a: any, b: any) => void`, given the captured list (#854): a call through a
+// value of a function type runs only the function values made as that type (one converted to
+// it is an adapter made as it). The program's hook only reads the list, so this compiles. The
+// http-server package's own two-argument handlers (`(hreq, out) => …`) are made as their own
+// types and are never in `hooks`, so they are not among what the call may run. Prints what
+// Node prints.
+import { serve } from "http-server";
+
+class App {
+  plugins: string[] = ["a", "b"];
+}
+
+const hooks: ((a: any, b: any) => void)[] = [];
+const seen: string[] = [];
+
+async function main() {
+  hooks.push((a: any, b: any): void => {
+    seen.push(`${a}:${b.length}`);
+  });
+  const app = new App();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    hooks[0]("plugins", app.plugins);
+    return new Response(`${app.plugins.length}`);
+  });
+  const r = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await r.text(), seen.join(","));
+  await server.shutdown();
+}

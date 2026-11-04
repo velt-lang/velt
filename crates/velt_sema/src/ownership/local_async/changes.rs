@@ -45,6 +45,7 @@ use crate::hir::{
 use crate::ownership::local_closures::walk::{self, Visit};
 
 use super::reach::{constructor, plain, reached_locals, reaches};
+use super::targets::Read;
 
 /// A callback that a library runs on other threads: the closure, and where (with the label) the
 /// program hands it to the library.
@@ -474,12 +475,12 @@ fn call_changes(
         // the captured value or a new value holding it (write-effects.md "Function values").
         Callee::Indirect(fv) => {
             let via = format!("…({base})");
-            let want: Vec<TyId> = match cx.ty.kind(fv.ty) {
-                TyKind::FnPtr { params, .. } => params.clone(),
-                _ => args.iter().map(|a| a.ty).collect(),
+            let (want, read): (Vec<TyId>, Read) = match cx.ty.kind(fv.ty) {
+                TyKind::FnPtr { params, .. } => (params.clone(), Read::Typed),
+                _ => (args.iter().map(|a| a.ty).collect(), Read::Untyped),
             };
             let lits = memo.lits.clone();
-            match super::targets::value_targets(cx, &lits, &want, false, 0) {
+            match super::targets::value_targets(cx, &lits, &want, read, 0) {
                 None => Some((base.to_string(), via)),
                 Some(t) => follow(cx, &t, (i, direct, root_ty), (base, via), depth, memo),
             }
@@ -488,10 +489,18 @@ fn call_changes(
             let via = format!("…({base})");
             let want: Vec<TyId> = args[2..].iter().map(|a| unconverted(a).ty).collect();
             let lits = memo.lits.clone();
-            match super::targets::value_targets(cx, &lits, &want, true, 2) {
+            match super::targets::value_targets(cx, &lits, &want, Read::FromAny, 2) {
                 None => Some((base.to_string(), via)),
                 Some(t) => follow(cx, &t, (i, direct, root_ty), (base, via), depth, memo),
             }
+        }
+        // `(xs as string[]).push(x)`, `xs!.push(x)`, `u.items.push(x)` of a union `u`: a receiver
+        // computed from the value is no place, so it has no mode, and the array still changes.
+        // The other intrinsics that change an array are std's own, whose bodies are not followed.
+        Callee::Intrinsic(Intrinsic::ArrayPush | Intrinsic::ArrayPop)
+            if i == 0 && direct && top_mode(a).is_none() =>
+        {
+            Some((base.to_string(), format!("{base}.…(…)")))
         }
         // An operation of the compiler's on a new value (`out.push(x)`) changes only it.
         Callee::Intrinsic(_) if mutable && direct => {
@@ -504,11 +513,13 @@ fn call_changes(
         // `app`); the library's are not looked into, and a call whose methods are not all known
         // here changes it.
         Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. }
-            if mutable || !direct =>
+            if mutable || !direct || top_mode(a).is_none() =>
         {
             let via = format!("{base}.…(…)");
             let lits = memo.lits.clone();
-            let targets = (!direct)
+            // A receiver computed from the value has no mode to go by: followed too.
+            let computed = direct && !mutable;
+            let targets = (!direct || computed)
                 .then(|| super::targets::method_targets(cx, &lits, callee, args))
                 .flatten()
                 .filter(|t| !t.iter().any(|&(g, _)| in_library(cx, g)));
@@ -516,16 +527,23 @@ fn call_changes(
             // (`c.app.n++` borrows `c` only to read `app`); the captured value itself, when the
             // mode says so.
             let Some(targets) = targets else {
-                return (mutable || !direct).then(|| (base.to_string(), via));
+                return Some((base.to_string(), via));
             };
-            follow(cx, &targets, (i, false, root_ty), (base, via), depth, memo)
+            follow(
+                cx,
+                &targets,
+                (i, computed, root_ty),
+                (base, via),
+                depth,
+                memo,
+            )
         }
         _ => None,
     }
 }
 
 /// The value `a` was before it was converted to an `any` for a call through one.
-fn unconverted(a: &Expr) -> &Expr {
+pub(super) fn unconverted(a: &Expr) -> &Expr {
     match &a.kind {
         E::ToDyn { expr, .. } => unconverted(expr),
         _ => a,

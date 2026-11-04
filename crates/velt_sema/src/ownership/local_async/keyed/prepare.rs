@@ -5,13 +5,13 @@
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
-use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, Lit, LocalId};
+use crate::hir::{Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, Lit, LocalId, TyId};
 use crate::ownership::local_closures::walk::{self, Visit};
 
-use super::super::changes::{callee_name, Memo};
+use super::super::changes::{callee_name, unconverted, Memo};
 use super::super::fed::{adt_of, own};
 use super::super::reach::{constructor, plain};
-use super::super::targets::{method_targets, targets_for, Literals};
+use super::super::targets::{held_adts, method_targets, methods_of, targets_for, Literals};
 use super::apply::Shapes;
 use super::{Arg, Ev, Key, Prepared, Run, Site};
 
@@ -20,7 +20,7 @@ use super::{Arg, Ev, Key, Prepared, Run, Site};
 /// backwards from the stores over the calls the scan recorded (super::super::targets), so that
 /// a program whose stores by key are far from its crossings costs little. std's bodies are not
 /// followed.
-pub(super) fn may_store(cx: &Ctx, lits: &Literals) -> FxHashSet<DefId> {
+pub(super) fn may_store(cx: &mut Ctx, lits: &Literals) -> FxHashSet<DefId> {
     let mut may: FxHashSet<DefId> = lits.store_sites.iter().copied().collect();
     if may.is_empty() {
         return may;
@@ -37,12 +37,28 @@ pub(super) fn may_store(cx: &Ctx, lits: &Literals) -> FxHashSet<DefId> {
     // A call through a function value may run any of the program's: once one of those may
     // store, every such caller may.
     let values: FxHashSet<DefId> = lits.values().iter().copied().collect();
+    // One read from an `any` may also run a method of what the program converts to one.
+    let methods: FxHashSet<DefId> = match lits.through_any.is_empty() {
+        true => FxHashSet::default(),
+        false => (held_adts(cx, lits).into_iter())
+            .flat_map(|c| methods_of(cx, c))
+            .collect(),
+    };
     let mut values_done = false;
+    let mut any_done = false;
     let mut work: Vec<DefId> = may.iter().copied().collect();
     while let Some(g) = work.pop() {
         if !values_done && values.contains(&g) {
             values_done = true;
             for &c in &lits.through_values {
+                if may.insert(c) {
+                    work.push(c);
+                }
+            }
+        }
+        if !any_done && (values.contains(&g) || methods.contains(&g)) {
+            any_done = true;
+            for &c in &lits.through_any {
                 if may.insert(c) {
                     work.push(c);
                 }
@@ -190,6 +206,22 @@ impl Visit for Prep<'_, '_> {
                         .map(|(g, skip)| (g, self.shapes.id(&actual[skip.min(actual.len())..])))
                         .collect();
                     self.events.push(Ev::Call { targets, site });
+                }
+                // `f(c, v)` of a function read from an `any`: [`Ev::FromAny`]. Its operands are the
+                // value, the callee as written, and the arguments.
+                Callee::Intrinsic(Intrinsic::AnyApply) if args.len() >= 2 => {
+                    let want: Vec<TyId> = args[2..].iter().map(|a| unconverted(a).ty).collect();
+                    let mut actual = vec![vec![Arg::Own]];
+                    actual.extend(self.args(&args[2..]));
+                    let methods = self.shapes.id(&actual);
+                    let values = self.shapes.id(&actual[1..]);
+                    let site = self.at(e, format!("{}(…)", short(self.names, &args[0])));
+                    self.events.push(Ev::FromAny {
+                        want,
+                        values,
+                        methods,
+                        site,
+                    });
                 }
                 Callee::Indirect(fv) => {
                     let fns = self.arg(fv);

@@ -14,6 +14,8 @@ use crate::ctx::Ctx;
 use crate::hir::{AdtKind, Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, TyId, TyKind};
 use crate::ownership::local_closures::walk::{self, Visit};
 
+use super::values::{fits, ValueIndex};
+
 /// A method a call may run, and how many of the call's arguments it does not take first (1
 /// for a literal's function, which takes no `this`).
 pub(super) type Target = (DefId, usize);
@@ -22,7 +24,20 @@ pub(super) type Target = (DefId, usize);
 type TargetCache = FxHashMap<(u8, u32, u32), Option<Vec<Target>>>;
 
 /// [`value_targets`] found so far.
-type ValueCache = FxHashMap<(Vec<TyId>, bool, usize), Option<Vec<Target>>>;
+type ValueCache = FxHashMap<(Vec<TyId>, Read), Option<Vec<Target>>>;
+
+/// How a function value is read, which says what a call through it may run
+/// ([`value_targets`]).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum Read {
+    /// From a place of a function type: the values made as that type.
+    Typed,
+    /// Of a type that is not a function type: the values that accept the arguments.
+    Untyped,
+    /// From an `any`: the values and bound methods that accept the arguments, whatever their
+    /// number, since such a call passes what it is given.
+    FromAny,
+}
 
 /// The functions the literals of each object type store in each field: `None` when one stores
 /// a value that is not a closure or a named function, or a spread makes such an object.
@@ -36,6 +51,9 @@ pub(super) struct Literals {
     from_any: Vec<DefId>,
     /// The function values the program makes (closures, named functions used as values).
     values: Vec<DefId>,
+    /// Each function value with the type it is made as: a function value converted to another
+    /// function type is a new value, an adapter, made as that type.
+    made: Vec<(DefId, TyId)>,
     /// The types the program converts to a dynamic value (`any`, `unknown`, `object`,
     /// `Function`): a function read from one may be one of their methods.
     to_any: Vec<TyId>,
@@ -55,14 +73,18 @@ pub(super) struct Literals {
     by_shape: std::cell::RefCell<ValueCache>,
     /// The function values by the first parameter that is not open.
     index: ValueIndex,
+    /// The same, by the type each is made as, for a call through a place of a function type.
+    made_as: ValueIndex,
     /// [`held_adts`], found once.
     held: std::cell::RefCell<Option<Vec<DefId>>>,
     /// The program's and packages' calls, for keyed.rs: (caller, callee) for a direct call, a
     /// constructor and a closure made; a dispatched call with its receiver's type; the
-    /// functions that call through a function value; and those that store through an `any`.
+    /// functions that call through a function value or one read from an `any`; and those that
+    /// store through an `any`.
     pub(super) calls: Vec<(DefId, DefId)>,
     pub(super) dispatch: Vec<(DefId, Callee, Option<TyId>)>,
     pub(super) through_values: Vec<DefId>,
+    pub(super) through_any: Vec<DefId>,
     pub(super) store_sites: Vec<DefId>,
 }
 
@@ -111,7 +133,8 @@ impl Literals {
             }
         }
         out.scan_initializers(cx);
-        out.index = ValueIndex::new(cx, &out.values);
+        out.index = ValueIndex::of_values(cx, &out.values);
+        out.made_as = ValueIndex::of_types(cx, &out.made);
         // The classes, from sema's information: `cx.defs` holds no ADT yet at this point.
         for (i, info) in cx.info.iter().enumerate() {
             let crate::defs::DefInfo::Adt(a) = info else {
@@ -186,6 +209,7 @@ impl Visit for Scan<'_> {
                         self.1.dispatch.push((me, callee.clone(), recv));
                     }
                     Callee::Indirect(_) => self.1.through_values.push(me),
+                    Callee::Intrinsic(Intrinsic::AnyApply) => self.1.through_any.push(me),
                     Callee::Intrinsic(Intrinsic::AnySet) => self.1.store_sites.push(me),
                     _ => {}
                 },
@@ -193,7 +217,10 @@ impl Visit for Scan<'_> {
             }
         }
         match &e.kind {
-            E::Closure(g) | E::FnRef(g, _) if !self.2 => self.1.values.push(*g),
+            E::Closure(g) | E::FnRef(g, _) if !self.2 => {
+                self.1.values.push(*g);
+                self.1.made.push((*g, e.ty));
+            }
             E::Call {
                 callee: Callee::Intrinsic(Intrinsic::AnySet),
                 ..
@@ -371,21 +398,6 @@ fn object_type(a: &crate::defs::AdtInfo) -> bool {
     a.kind == AdtKind::Anon || (a.kind == AdtKind::Struct && a.decl.is_none())
 }
 
-/// Is class `d` class `base` or one of its subclasses?
-fn descends(cx: &Ctx, d: DefId, base: DefId) -> bool {
-    let mut d = d;
-    for _ in 0..64 {
-        if d == base {
-            return true;
-        }
-        let Some(TyKind::Adt(b, _)) = cx.adt(d).and_then(|a| a.base).map(|b| cx.ty.kind(b)) else {
-            return false;
-        };
-        d = *b;
-    }
-    false
-}
-
 /// Can extern `d` hand the program a value made outside it that may be a function: a host
 /// import, or a package's native function returning an `any`, a function or an interface value?
 /// std's own externs return data.
@@ -428,249 +440,85 @@ pub(super) fn held_adts(cx: &mut Ctx, lits: &Literals) -> Vec<DefId> {
     out
 }
 
+/// The non-static methods of class `c`, also those no subclass overrides (not in the vtable).
+pub(super) fn methods_of(cx: &Ctx, c: DefId) -> Vec<DefId> {
+    let mut methods: Vec<DefId> = (cx.adt(c).into_iter())
+        .flat_map(|a| a.methods.values().filter(|m| !m.is_static).map(|m| m.def))
+        .collect();
+    if let Some(a) = cx.adt(c) {
+        methods.extend(a.vtable.iter().copied());
+    }
+    methods.sort_by_key(|m| m.0);
+    methods
+}
+
 /// The functions a call through a function value may run (#854; write-effects.md "Function
-/// values"): the program's function values that take as many arguments, each of a type that
-/// accepts the call's (`want`: the function type's parameters, or for a function read from an
-/// `any` the arguments' types before they were converted). For one read from an `any`
-/// (`from_any`), also the methods of the classes the program converts to `any` and of the
-/// classes those hold ([`held_adts`]), bound to their object. `skip`: the call's operands in front of the arguments. `None` when a value made
-/// outside the program may be called.
+/// values"): those [`Read`] says, each of a type that accepts the call's (`want`: the function
+/// type's parameters, or for a function read from an `any` the arguments' types before they were
+/// converted). A method read from an `any` is one of the classes the program converts to `any`
+/// or of the classes those hold ([`held_adts`]), bound to its object. A target's count is the
+/// call's operands in front of the arguments it takes: `skip`, one less for a bound method.
+/// `None` when a value made outside the program may be called.
 pub(super) fn value_targets(
     cx: &mut Ctx,
     lits: &Literals,
     want: &[TyId],
-    from_any: bool,
+    read: Read,
     skip: usize,
 ) -> Option<Vec<Target>> {
     if lits.outside {
         return None;
     }
-    let key = (want.to_vec(), from_any, skip);
+    let key = (want.to_vec(), read);
     if let Some(t) = lits.by_shape.borrow().get(&key) {
-        return t.clone();
+        return Some(t.clone()?.into_iter().map(|(g, s)| (g, skip - s)).collect());
     }
     // The classes a value read from an `any` may be an object of: those converted, and what
     // they hold (`h.inner.run` of a converted `Holder`).
-    let held = match from_any {
-        true => held_adts(cx, lits),
-        false => vec![],
+    let held = match read {
+        Read::FromAny => held_adts(cx, lits),
+        _ => vec![],
     };
-    let t = find_values(cx, lits, want, &held, skip);
+    let t = find_values(cx, lits, want, &held, read);
     lits.by_shape.borrow_mut().insert(key, t.clone());
-    t
+    Some(t?.into_iter().map(|(g, s)| (g, skip - s)).collect())
 }
 
+/// The targets of [`value_targets`], each with 1 for a bound method (it takes one more of the
+/// call's operands: its `this` stands where a value's call has an operand of its own), else 0.
 fn find_values(
     cx: &Ctx,
     lits: &Literals,
     want: &[TyId],
     held: &[DefId],
-    skip: usize,
+    read: Read,
 ) -> Option<Vec<Target>> {
-    let mut out: Vec<Target> = vec![];
-    let fits = |ps: &[crate::hir::Param]| {
-        ps.len() == want.len() && ps.iter().zip(want).all(|(p, &w)| accepts(cx, p.ty, w))
+    let index = match read {
+        Read::Typed => &lits.made_as,
+        _ => &lits.index,
     };
-    let candidates = lits.index.candidates(cx, want);
+    let (exact, loose) = (read == Read::Typed, read == Read::FromAny);
+    let candidates = index.candidates(cx, want, loose);
     crate::check_work::add_keyed_work(candidates.len() as u64 + 1);
-    for g in candidates {
-        let Some(Def::Fn(f)) = &cx.defs[g.0 as usize] else {
-            continue;
-        };
-        if fits(&f.params[f.captures.len()..]) {
-            out.push((g, skip));
+    let mut out: Vec<Target> = vec![];
+    let mut seen = rustc_hash::FxHashSet::default();
+    for i in candidates {
+        if fits(cx, index.params(i), want, exact, loose) && seen.insert(index.value(i)) {
+            out.push((index.value(i), 0));
         }
     }
-    let mut seen = rustc_hash::FxHashSet::default();
-    {
-        for c in held {
-            // Its methods, also those no subclass overrides (not in the vtable).
-            let mut methods: Vec<DefId> = (cx.adt(*c).into_iter())
-                .flat_map(|a| a.methods.values().filter(|m| !m.is_static).map(|m| m.def))
-                .collect();
-            if let Some(a) = cx.adt(*c) {
-                methods.extend(a.vtable.iter().copied());
-            }
-            methods.sort_by_key(|m| m.0);
-            for m in methods {
-                let Some(Def::Fn(f)) = &cx.defs[m.0 as usize] else {
-                    continue;
-                };
-                // A bound method: its `this` is the object, not one of the call's operands.
-                let new = seen.insert(m) && !lits.index.has(m);
-                if new && !f.params.is_empty() && fits(&f.params[1..]) {
-                    out.push((m, skip - 1));
-                }
+    seen.clear();
+    for &c in held {
+        for m in methods_of(cx, c) {
+            let Some(Def::Fn(f)) = &cx.defs[m.0 as usize] else {
+                continue;
+            };
+            let new = seen.insert(m) && !lits.index.has(m);
+            let params: Vec<TyId> = f.params.iter().skip(1).map(|p| p.ty).collect();
+            if new && !f.params.is_empty() && fits(cx, &params, want, false, loose) {
+                out.push((m, 1));
             }
         }
     }
     Some(out)
-}
-
-/// What a parameter's type must be for a value of a type to be possibly accepted, without looking
-/// further than its outermost type ([`unify`]).
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-enum Head {
-    Adt(DefId),
-    Dyn(DefId),
-    Kind(std::mem::Discriminant<TyKind>),
-}
-
-/// A type without its `| null`.
-fn strip(cx: &Ctx, t: TyId) -> TyId {
-    match cx.ty.kind(t) {
-        TyKind::Option(inner, _) => *inner,
-        _ => t,
-    }
-}
-
-/// A type that unifies with every other: a type parameter, or a dynamic type.
-fn is_open(cx: &Ctx, t: TyId) -> bool {
-    matches!(cx.ty.kind(t), TyKind::Param(_)) || cx.dynamic(t).is_some()
-}
-
-fn head(cx: &Ctx, t: TyId) -> Head {
-    match cx.ty.kind(t) {
-        TyKind::Adt(d, _) => Head::Adt(*d),
-        TyKind::Dyn(d, _) => Head::Dyn(*d),
-        k => Head::Kind(std::mem::discriminant(k)),
-    }
-}
-
-/// The program's function values of one arity. Each is listed once, under its first parameter
-/// that is not open (or in `open`), by its position in [`Literals`]' values.
-#[derive(Default)]
-struct Arity {
-    open: Vec<u32>,
-    at: Vec<Position>,
-}
-
-/// The function values of an arity listed under a parameter position.
-#[derive(Default)]
-struct Position {
-    all: Vec<u32>,
-    by_head: FxHashMap<Head, Vec<u32>>,
-    /// Those whose parameter is an interface, which a class or another type may implement.
-    ifaces: Vec<u32>,
-}
-
-/// The program's function values, so that a call's type tries only those that can accept it, not
-/// all of them.
-#[derive(Default)]
-struct ValueIndex {
-    list: Vec<DefId>,
-    has: rustc_hash::FxHashSet<DefId>,
-    by_arity: FxHashMap<usize, Arity>,
-}
-
-impl ValueIndex {
-    fn new(cx: &Ctx, values: &[DefId]) -> ValueIndex {
-        let mut out = ValueIndex::default();
-        for &g in values {
-            if !out.has.insert(g) {
-                continue;
-            }
-            let Some(Def::Fn(f)) = &cx.defs[g.0 as usize] else {
-                continue;
-            };
-            let i = out.list.len() as u32;
-            out.list.push(g);
-            let ps = &f.params[f.captures.len()..];
-            let arity = out.by_arity.entry(ps.len()).or_default();
-            arity.at.resize_with(ps.len(), Position::default);
-            let first = (ps.iter().enumerate())
-                .map(|(k, p)| (k, strip(cx, p.ty)))
-                .find(|&(_, t)| !is_open(cx, t));
-            let Some((k, t)) = first else {
-                arity.open.push(i);
-                continue;
-            };
-            let at = &mut arity.at[k];
-            at.all.push(i);
-            let h = head(cx, t);
-            at.by_head.entry(h).or_default().push(i);
-            if let Head::Dyn(_) = h {
-                at.ifaces.push(i);
-            }
-        }
-        out
-    }
-
-    /// Is `g` one of the function values?
-    fn has(&self, g: DefId) -> bool {
-        self.has.contains(&g)
-    }
-
-    /// The function values that may accept arguments of types `want`, in the order the program
-    /// makes them; [`unify`] decides.
-    fn candidates(&self, cx: &Ctx, want: &[TyId]) -> Vec<DefId> {
-        let Some(arity) = self.by_arity.get(&want.len()) else {
-            return vec![];
-        };
-        let mut out: Vec<u32> = arity.open.clone();
-        for (at, &w) in arity.at.iter().zip(want) {
-            let w = strip(cx, w);
-            if is_open(cx, w) {
-                out.extend(&at.all);
-                continue;
-            }
-            let mut heads = |h: Head| out.extend(at.by_head.get(&h).into_iter().flatten());
-            match head(cx, w) {
-                // Its own class, or one it extends.
-                Head::Adt(d) => {
-                    let mut d = d;
-                    for _ in 0..64 {
-                        heads(Head::Adt(d));
-                        let base = cx.adt(d).and_then(|a| a.base).map(|b| cx.ty.kind(b));
-                        let Some(TyKind::Adt(b, _)) = base else { break };
-                        d = *b;
-                    }
-                    out.extend(&at.ifaces);
-                }
-                Head::Dyn(i) => heads(Head::Dyn(i)),
-                h => {
-                    heads(h);
-                    out.extend(&at.ifaces);
-                }
-            }
-        }
-        out.sort_unstable();
-        out.into_iter().map(|i| self.list[i as usize]).collect()
-    }
-}
-
-/// Can a parameter of type `p` be given a value of type `a`? The types unify: the same type,
-/// either open (a type parameter, `any`, `unknown`, `object`) at any depth (`T[]` and `string[]`,
-/// `Map<K, V>` and `Map<string, App>`), an interface `a` implements, or a base class of `a`.
-fn accepts(cx: &Ctx, p: TyId, a: TyId) -> bool {
-    unify(cx, p, a, 0)
-}
-
-fn unify(cx: &Ctx, p: TyId, a: TyId, depth: u32) -> bool {
-    // Deep enough: count it as a match (the join may only grow).
-    if depth > 8 {
-        return true;
-    }
-    let (p, a) = (strip(cx, p), strip(cx, a));
-    if p == a || is_open(cx, p) || is_open(cx, a) {
-        return true;
-    }
-    let (kp, ka) = (cx.ty.kind(p), cx.ty.kind(a));
-    match (kp, ka) {
-        (TyKind::Dyn(iface, _), TyKind::Dyn(other, _)) => iface == other,
-        (TyKind::Dyn(iface, _), _) => cx.impls.iter().any(|i| i.iface == *iface && i.ty == a),
-        (TyKind::Adt(pd, pa), TyKind::Adt(ad, aa)) if pd == ad => {
-            pa.len() == aa.len() && pa.iter().zip(aa).all(|(x, y)| unify(cx, *x, *y, depth + 1))
-        }
-        (TyKind::Adt(pd, _), TyKind::Adt(ad, _)) => descends(cx, *ad, *pd),
-        _ if std::mem::discriminant(kp) == std::mem::discriminant(ka) => {
-            let (cp, ca) = (crate::types::children(kp), crate::types::children(ka));
-            cp.len() == ca.len()
-                && cp
-                    .iter()
-                    .zip(&ca)
-                    .all(|(x, y)| unify(cx, *x, *y, depth + 1))
-        }
-        _ => false,
-    }
 }

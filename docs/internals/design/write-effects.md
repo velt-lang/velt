@@ -281,7 +281,10 @@ This is how G4 is resolved: `viaCb(this, setK, "out", a.plugins)` resolves `f` t
 one-argument function.
 
 **A function value read from the heap** (a field, an array element, a `Map` value). The call
-joins the summaries of every function value the program puts into a slot of a matching type:
+joins the summaries of every function value the program makes as that function type. A function
+value converted to another function type is a new value made as that type, so a dynamic type
+matches only itself here, on either side: a value made as `(h: HttpRequest) => void` is not in a
+slot of `(a: any) => void`, and a call through the slot does not run it. The values are:
 
 - closures and named functions used as values;
 - method values;
@@ -291,9 +294,15 @@ joins the summaries of every function value the program puts into a slot of a ma
   callers pass as `f`.
 
 A type matches when it has the same arity and parameter types that unify (type parameters
-match anything). A conversion between function types carries its source's values, so a
-`(x: any) => void` passed where `(c: Ctx) => void` is expected joins the values of the first
-type, and carries the unknown taint if they have it.
+match anything, dynamic types only themselves). A conversion between function types makes a value
+of the type it converts to, so a `(x: any) => void` passed where `(c: Ctx) => void` is expected
+is joined under the second type, and what it does is still followed there.
+
+**A function read from an `any`.** A call of one (`const f = h.go; f(c, v)`) joins, per list of
+argument types, the function values that accept them and the methods of the classes the program
+converts to `any` and of those they hold, in both halves of the check. The numbers of parameters
+and arguments need not agree: such a call passes what it is given. A store into a bound method's
+`this` feeds its class, since the call does not know the object.
 
 **Unknown values.** These are a function from `any` (`AnyTo` to a function type, and
 `AnyCall`), an interface from `any`, a function value returned or passed in by a native or host

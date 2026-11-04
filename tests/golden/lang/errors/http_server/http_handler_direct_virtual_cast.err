@@ -1,0 +1,1 @@
+http_handler_direct_virtual_cast.vlt:20:5: error: this async closure changes `n` of a value reached from captured `v` (through `g(…)`), so it must stay on the task that created it

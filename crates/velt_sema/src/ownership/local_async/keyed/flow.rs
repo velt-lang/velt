@@ -5,7 +5,8 @@
 //! run, so the graph is complete when the worklist empties, and only then do keys flow over it,
 //! once: the nodes of a cycle (functions calling each other through a join) become one set, and a
 //! set a node passes on unchanged is shared, not copied. A program of N keys and N functions holds
-//! few sets of N keys, not N of them.
+//! few sets of N keys, not N of them. The types of the values latent calls pass go over a graph of
+//! their own the same way ([`Payloads`]).
 
 use std::rc::Rc;
 
@@ -16,7 +17,7 @@ use crate::hir::{TyId, TyKind};
 
 use super::super::fed::{adt_of, declaring, Field};
 use super::super::targets::{held_adts, Literals};
-use super::apply::Node;
+use super::apply::{Node, Shape};
 use super::{Key, Site, Src};
 
 /// The key id of `Key::Any`.
@@ -170,6 +171,78 @@ impl Flows {
         (fed.into_iter())
             .map(|(f, (i, _))| (f, sinks[i as usize].2.clone()))
             .collect()
+    }
+}
+
+/// The types of the values latent calls pass, apart from the summaries ([`super::Arg::Payload`]): a
+/// node's types are its own and those of the nodes a call maps onto it. A store into a node is a
+/// sink of each type that reaches it, known when the worklist is done.
+#[derive(Default)]
+pub(super) struct Payloads {
+    nodes: FxHashMap<(Node, u32, Shape, u32), u32>,
+    own: Vec<Vec<TyId>>,
+    own_set: FxHashSet<(u32, TyId)>,
+    /// The nodes that pass their types on to each node.
+    pred: Vec<Vec<u32>>,
+    edges: FxHashSet<(u32, u32)>,
+    /// The keys, the node stored into, and where.
+    sinks: Vec<(u32, u32, Site)>,
+    sunk: FxHashSet<(u32, u32)>,
+}
+
+impl Payloads {
+    /// The node of a latent call's position: (its summary, the parameter called, the shape of its
+    /// other arguments, the position).
+    pub(super) fn node(&mut self, key: (Node, u32, Shape, u32)) -> u32 {
+        let next = self.own.len() as u32;
+        let n = *self.nodes.entry(key).or_insert(next);
+        if n == next {
+            self.own.push(vec![]);
+            self.pred.push(vec![]);
+        }
+        n
+    }
+
+    pub(super) fn add(&mut self, n: u32, ty: TyId) {
+        if self.own_set.insert((n, ty)) {
+            self.own[n as usize].push(ty);
+        }
+    }
+
+    /// The types of node `m` reach node `n`.
+    pub(super) fn flow(&mut self, m: u32, n: u32) {
+        if m != n && self.edges.insert((m, n)) {
+            self.pred[n as usize].push(m);
+        }
+    }
+
+    /// The keys of `from` are stored into a value of a type node `n` holds, at `site`.
+    pub(super) fn sink(&mut self, from: u32, n: u32, site: &Site) {
+        if self.sunk.insert((from, n)) {
+            self.sinks.push((from, n, site.clone()));
+        }
+    }
+
+    /// Each store into a node, as a sink of each type that reaches the node.
+    pub(super) fn sink_all(&self, flows: &mut Flows) {
+        let mut types: FxHashMap<u32, Vec<TyId>> = FxHashMap::default();
+        for (from, n, site) in &self.sinks {
+            let tys = types.entry(*n).or_insert_with(|| {
+                let (mut out, mut seen, mut work) = (vec![], FxHashSet::default(), vec![*n]);
+                while let Some(m) = work.pop() {
+                    if seen.insert(m) {
+                        out.extend(self.own[m as usize].iter().copied());
+                        work.extend(self.pred[m as usize].iter().copied());
+                    }
+                }
+                out.sort_by_key(|t| t.0);
+                out.dedup();
+                out
+            });
+            for &ty in tys.iter() {
+                flows.sink(*from, ty, site);
+            }
+        }
     }
 }
 

@@ -1,0 +1,1 @@
+http_handler_direct_union.vlt:18:5: error: this async closure changes a value reached from captured `l` (through `g(…)`), so it must stay on the task that created it

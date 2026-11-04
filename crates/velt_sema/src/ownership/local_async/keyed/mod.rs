@@ -12,14 +12,16 @@
 //!   to what the maker's locals are;
 //! - a call through a function-typed parameter is latent: each caller resolves it against the
 //!   function it passes (`viaCb(this, setK, …)` runs `setK`'s stores); a function value read
-//!   from the heap runs any of the program's function values that accept the arguments
+//!   from the heap runs the program's function values made as its type, and one read from an
+//!   `any` those that accept the arguments and the methods of what the program converts to one
 //!   ([`super::targets::value_targets`]).
 //!
 //! Summaries are computed on demand from the crossings, each body prepared once (what each local
 //! may be, its stores and calls), by a worklist that applies again only the events whose
 //! callee's summary grew, and only what grew ([`apply`]). A call through a function value read
-//! from the heap applies one join per function type. Keys are left out of all that and go over a
-//! graph of their own at the end ([`flow`]). A store of a value that is not new into a value of a class (or of one of its subclasses,
+//! from the heap applies one join per function type, and one read from an `any` one per list of
+//! argument types. Keys, and the types of the values latent calls pass, are left out of all that
+//! and go over graphs of their own at the end ([`flow`]). A store of a value that is not new into a value of a class (or of one of its subclasses,
 //! a new one included) feeds that class's fields of the key's name, or all of them; a target of
 //! an open type (`any`, `object`, a type parameter) whose object is not known feeds the fields of
 //! every type the program converts to a dynamic value and of the types those hold, and an
@@ -44,7 +46,7 @@ mod flow;
 mod prepare;
 
 use apply::{summarize, Joins, Node, Pending, Shape, Shapes, Summary};
-use flow::Flows;
+use flow::{Flows, Payloads};
 use prepare::{may_store, prepare};
 
 /// The key of a store: a constant name, or any field.
@@ -67,6 +69,9 @@ enum Arg {
     New(TyId),
     Ty(TyId),
     Fns(Vec<DefId>),
+    /// Values of the types a node of [`flow::Payloads`] holds: the arguments of a latent call that
+    /// are values of a type (not functions), kept apart from the summaries.
+    Payload(u32),
     Other,
 }
 
@@ -110,6 +115,15 @@ enum Ev {
         caps: Shape,
         site: Site,
     },
+    /// A call of a function read from an `any`: the types of its arguments, the shape a function
+    /// value takes, and the shape a bound method takes (its `this` first, which this call does
+    /// not know).
+    FromAny {
+        want: Vec<TyId>,
+        values: Shape,
+        methods: Shape,
+        site: Site,
+    },
 }
 
 impl Ev {
@@ -118,7 +132,8 @@ impl Ev {
             Ev::Store { site, .. }
             | Ev::Call { site, .. }
             | Ev::Value { site, .. }
-            | Ev::Closure { site, .. } => site,
+            | Ev::Closure { site, .. }
+            | Ev::FromAny { site, .. } => site,
         }
     }
 }
@@ -154,6 +169,8 @@ struct Run<'a> {
     applied: FxHashMap<(DefId, Node, Shape, Shape), (u32, u32)>,
     /// Which keys reach which stores.
     flows: Flows,
+    /// The types latent calls pass ([`Arg::Payload`]).
+    payloads: Payloads,
     /// Steps taken, for the scaling tests.
     steps: u64,
     memo: Memo,
@@ -189,6 +206,7 @@ pub(super) fn keyed_fields(
         joins: Joins::default(),
         applied: FxHashMap::default(),
         flows: Flows::default(),
+        payloads: Payloads::default(),
         steps: 0,
         memo: Memo::default(),
     };
@@ -205,6 +223,7 @@ pub(super) fn keyed_fields(
         summarize(cx, &mut run, d, pending);
     }
     crate::check_work::add_keyed_work(run.steps);
+    run.payloads.sink_all(&mut run.flows);
     run.flows.fields(cx, lits)
 }
 

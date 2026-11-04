@@ -1,0 +1,32 @@
+// A direct call that only reads through a receiver computed from its parameter (#854): the
+// parameters are `| null`, `unknown` and a union, none of them changed, so this compiles. Prints
+// what Node prints.
+import { serve } from "http-server";
+
+class Lists {
+  items: string[] = ["a", "b"];
+}
+class O {
+  items: string[] = ["c"];
+  other: number = 1;
+}
+
+function viaNull(xs: string[] | null): number {
+  return xs!.length;
+}
+function viaUnknown(xs: unknown): number {
+  return (xs as string[]).length;
+}
+function viaUnion(x: Lists | O): number {
+  return x.items.length;
+}
+
+async function main() {
+  const l = new Lists();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(`${viaNull(l.items)} ${viaUnknown(l.items)} ${viaUnion(l)}`);
+  });
+  const r = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await r.text());
+  await server.shutdown();
+}

@@ -1,0 +1,31 @@
+// A store by key into its own object by a method read from an `any` (#854): the object, here a new
+// one holding the capture, is not among the call's arguments.
+import { serve } from "http-server";
+
+class App {
+  plugins: string[] = [];
+}
+class M {
+  app: App;
+  out: string[] = [];
+  constructor(a: App) {
+    this.app = a;
+  }
+  go(v: string[]): void {
+    const me: any = this;
+    me["out"] = v;
+  }
+}
+
+async function main() {
+  const a = new App();
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const m = new M(a);
+    const h: any = m;
+    const f = h.go;
+    f(a.plugins);
+    m.out.push("x");
+    return new Response("ok");
+  });
+  await s.shutdown();
+}

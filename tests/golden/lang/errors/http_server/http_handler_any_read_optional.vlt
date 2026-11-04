@@ -1,0 +1,21 @@
+// A function read from an `any` and given fewer arguments than it has parameters (#854): a call
+// through an `any` passes what it is given.
+import { serve } from "http-server";
+
+class App {
+  plugins: string[] = [];
+}
+function g(xs: string[], n?: number): void {
+  xs.push("a");
+}
+const o: any = { g: g };
+
+async function main() {
+  const a = new App();
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const f = o.g;
+    f(a.plugins);
+    return new Response("ok");
+  });
+  await s.shutdown();
+}

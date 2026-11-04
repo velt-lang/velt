@@ -14,7 +14,7 @@ use crate::ctx::Ctx;
 use crate::hir::{DefId, TyId, TyKind};
 
 use super::super::fed::adt_of;
-use super::super::targets::value_targets;
+use super::super::targets::{value_targets, Read};
 use super::{ensure, Arg, Ev, Run, Site, Src};
 
 /// A shape of arguments ([`Arg`] per operand), interned.
@@ -52,6 +52,10 @@ impl Shapes {
 pub(super) enum Node {
     Fn(DefId),
     Join(TyId),
+    /// The functions a call read from an `any` with a list of argument types may run: its function
+    /// values, and its methods, whose parameters count from `this`.
+    AnyValues(u32),
+    AnyMethods(u32),
 }
 
 /// A set that keeps its order of insertion, so that what was added since a point is a suffix.
@@ -99,8 +103,13 @@ pub(super) struct Joins {
     /// For each function type, whether a call through it is joined (`false`: it may run a value
     /// made outside the program, reported where it is called).
     made: FxHashMap<TyId, bool>,
-    of: FxHashMap<DefId, Vec<TyId>>,
-    taken: FxHashMap<(TyId, DefId), (u32, u32)>,
+    /// The joins of calls read from an `any`, per list of argument types; `None`: such a call may
+    /// run a value made outside the program.
+    from_any: FxHashMap<Vec<TyId>, Option<u32>>,
+    /// Where each join of methods was first called: what stores into a method's `this` feed.
+    any_sites: FxHashMap<Node, Site>,
+    of: FxHashMap<DefId, Vec<Node>>,
+    taken: FxHashMap<(Node, DefId), (u32, u32)>,
 }
 
 /// What of a queued function to apply (again): events (all of them the first time), and
@@ -144,6 +153,17 @@ pub(super) fn summarize(cx: &mut Ctx, run: &mut Run, d: DefId, pending: Pending)
             }
             Ev::Value { fns, actual, site } => b.call_values(cx, run, fns, *actual, site),
             Ev::Closure { k, caps, site } => b.apply(cx, run, Node::Fn(*k), CALLED, *caps, site),
+            Ev::FromAny {
+                want,
+                values,
+                methods,
+                site,
+            } => {
+                if let Some(id) = join_any(cx, run, want, site) {
+                    b.apply(cx, run, Node::AnyValues(id), *values, CALLED, site);
+                    b.apply(cx, run, Node::AnyMethods(id), *methods, CALLED, site);
+                }
+            }
         }
     }
     let mut apps: Vec<(Node, Shape, Shape, u32)> = pending.apps.into_iter().collect();
@@ -161,7 +181,7 @@ pub(super) fn summarize(cx: &mut Ctx, run: &mut Run, d: DefId, pending: Pending)
     }
     run.prepared.insert(d, p);
     if run.sums.get(&Node::Fn(d)).map(Summary::len) != before {
-        grew(run, Node::Fn(d));
+        grew(cx, run, Node::Fn(d));
     }
 }
 
@@ -171,12 +191,14 @@ fn node_order(n: Node) -> (u8, u32) {
     match n {
         Node::Fn(d) => (0, d.0),
         Node::Join(t) => (1, t.0),
+        Node::AnyValues(i) => (2, i),
+        Node::AnyMethods(i) => (3, i),
     }
 }
 
 /// The summary of `n` grew: the applications of it are queued again, and the joins `n` is in
 /// take in what is new.
-fn grew(run: &mut Run, n: Node) {
+fn grew(cx: &Ctx, run: &mut Run, n: Node) {
     let mut users: Vec<(DefId, Shape, Shape, u32)> =
         run.users.get(&n).into_iter().flatten().copied().collect();
     users.sort_unstable_by_key(|&(u, a, c, e)| (u.0, e, a, c));
@@ -191,8 +213,8 @@ fn grew(run: &mut Run, n: Node) {
     };
     let joins = run.joins.of.get(&g).cloned().unwrap_or_default();
     for t in joins {
-        if take_in(run, t, g) {
-            grew(run, Node::Join(t));
+        if take_in(cx, run, t, g) {
+            grew(cx, run, t);
         }
     }
 }
@@ -200,7 +222,7 @@ fn grew(run: &mut Run, n: Node) {
 /// Join `t` takes in what is new in function `g`'s summary, as a call (not the making of a
 /// closure) applies it: its stores into what it captured are not the call's, and its parameters
 /// count from the first after its captures. Did the join grow?
-fn take_in(run: &mut Run, t: TyId, g: DefId) -> bool {
+fn take_in(cx: &Ctx, run: &mut Run, t: Node, g: DefId) -> bool {
     let ncap = run.ncap.get(&g).copied().unwrap_or(0);
     let (s0, l0) = run.joins.taken.get(&(t, g)).copied().unwrap_or((0, 0));
     let Some(s) = run.sums.get(&Node::Fn(g)) else {
@@ -221,6 +243,7 @@ fn take_in(run: &mut Run, t: TyId, g: DefId) -> bool {
             Some(((q, src), (into, from)))
         })
         .collect();
+    let bound = matches!(t, Node::AnyMethods(_));
     let latent: Vec<(u32, Shape)> = s.latent.list[l0 as usize..l1 as usize].to_vec();
     let mut added = vec![];
     for (fp, args) in latent {
@@ -241,24 +264,74 @@ fn take_in(run: &mut Run, t: TyId, g: DefId) -> bool {
                     .collect()
             })
             .collect();
-        added.push((fp, run.shapes.id(&mapped)));
+        added.push((fp, mapped));
     }
-    let j = run.sums.entry(Node::Join(t)).or_default();
-    let before = j.len();
-    for (_, x) in &stores {
-        j.stores.insert(*x);
-    }
-    for x in added {
-        j.latent.insert(x);
-    }
-    let grew = j.len() != before;
+    let before = run.sums.entry(t).or_default().len();
     run.steps += stores.len() as u64 + 1;
     for ((q, src), (into, from)) in stores {
         let a = run.flows.set(Node::Fn(g), q, src);
-        let b = run.flows.set(Node::Join(t), into, from);
+        // A bound method's `this` is the object it was read from, which the call does not know: a
+        // store into it feeds its class, and a value from it is one that is not new.
+        if bound && into == 0 {
+            let this = run.prepared.get(&g).and_then(|p| p.params.first().copied());
+            if let (Some(ty), Some(site)) = (this, run.joins.any_sites.get(&t).cloned()) {
+                run.flows.sink(a, ty, &site);
+            }
+            continue;
+        }
+        let from = match from {
+            Src::Param(0) if bound => Src::Other,
+            other => other,
+        };
+        let j = run.sums.entry(t).or_default();
+        j.stores.insert((into, from));
+        let b = run.flows.set(t, into, from);
         run.flows.edge(a, b);
     }
-    grew
+    for (fp, args) in added {
+        add_latent(cx, run, t, fp, args);
+    }
+    run.sums.entry(t).or_default().len() != before
+}
+
+/// Add the latent call of parameter `fp` with arguments `args` to `n`'s summary. Its arguments that
+/// are values of a type (not a function type) go to a node of [`super::flow::Payloads`] instead,
+/// one per (summary, parameter, the other arguments, position), so that latent calls that differ
+/// only in those types are one entry: a cycle whose members each pass a value of a type of their
+/// own adds one entry per member, not one per member and type.
+fn add_latent(cx: &Ctx, run: &mut Run, n: Node, fp: u32, args: Vec<Vec<Arg>>) {
+    let typed = |a: &Arg| match a {
+        Arg::Ty(t) => !matches!(cx.ty.kind(*t), TyKind::FnPtr { .. }),
+        Arg::Payload(_) => true,
+        _ => false,
+    };
+    if !args.iter().flatten().any(typed) {
+        let id = run.shapes.id(&args);
+        run.sums.entry(n).or_default().latent.insert((fp, id));
+        return;
+    }
+    let skeleton: Vec<Vec<Arg>> = (args.iter())
+        .map(|xs| xs.iter().filter(|a| !typed(a)).cloned().collect())
+        .collect();
+    let skel = run.shapes.id(&skeleton);
+    let mut out = skeleton;
+    for (i, xs) in args.iter().enumerate() {
+        let here: Vec<&Arg> = xs.iter().filter(|a| typed(a)).collect();
+        if here.is_empty() {
+            continue;
+        }
+        let node = run.payloads.node((n, fp, skel, i as u32));
+        for a in here {
+            match a {
+                Arg::Ty(t) => run.payloads.add(node, *t),
+                Arg::Payload(m) => run.payloads.flow(*m, node),
+                _ => {}
+            }
+        }
+        out[i].push(Arg::Payload(node));
+    }
+    let id = run.shapes.id(&out);
+    run.sums.entry(n).or_default().latent.insert((fp, id));
 }
 
 /// Event `ev` of function `me` being applied.
@@ -284,7 +357,7 @@ impl Body<'_> {
             .filter_map(|v| match v {
                 Arg::Own | Arg::New(_) | Arg::Fns(_) => None,
                 Arg::Param(m) => Some(Src::Param(*m)),
-                Arg::Ty(_) | Arg::Other => Some(Src::Other),
+                Arg::Ty(_) | Arg::Payload(_) | Arg::Other => Some(Src::Other),
             })
             .collect();
         for src in srcs {
@@ -307,6 +380,8 @@ impl Body<'_> {
                     // A value of a parameter may still be new at the caller; feeding the class
                     // now is the conservative answer. A new object's fields are fed too.
                     Arg::Ty(ty) | Arg::New(ty) => run.flows.sink(from, *ty, site),
+                    // Values of the types [`super::flow::Payloads`] holds there: fed at the end.
+                    Arg::Payload(n) => run.payloads.sink(from, *n, site),
                     Arg::Own | Arg::Fns(_) | Arg::Other => {}
                 }
             }
@@ -347,7 +422,7 @@ impl Body<'_> {
         let latent: Vec<(u32, Shape)> = s.latent.list[l0 as usize..l1 as usize].to_vec();
         let ncap = match n {
             Node::Fn(g) => run.ncap.get(&g).copied().unwrap_or(0),
-            Node::Join(_) => 0,
+            _ => 0,
         };
         let actual = run.shapes.get(actual).unwrap_or_else(|| Rc::from([]));
         let caps = run.shapes.get(caps);
@@ -418,8 +493,10 @@ impl Body<'_> {
                 }
                 // Resolved by each caller against the function it passes.
                 Arg::Param(p) => {
-                    let me = run.sums.entry(Node::Fn(self.me)).or_default();
-                    me.latent.insert((*p, actual));
+                    let args = (run.shapes.get(actual))
+                        .map(|a| a.to_vec())
+                        .unwrap_or_default();
+                    add_latent(cx, run, Node::Fn(self.me), *p, args);
                 }
                 // A function value read from the heap: any of the program's that accept the
                 // arguments, as for the check itself, through the join of its type.
@@ -428,7 +505,7 @@ impl Body<'_> {
                         self.apply(cx, run, Node::Join(*ty), actual, CALLED, site);
                     }
                 }
-                Arg::Own | Arg::New(_) | Arg::Other => {}
+                Arg::Own | Arg::New(_) | Arg::Payload(_) | Arg::Other => {}
             }
         }
     }
@@ -449,16 +526,46 @@ fn join(cx: &mut Ctx, run: &mut Run, ty: TyId) -> bool {
             return false;
         }
     };
-    let Some(targets) = value_targets(cx, run.lits, &want, false, 0) else {
+    let Some(targets) = value_targets(cx, run.lits, &want, Read::Typed, 0) else {
         run.joins.made.insert(ty, false);
         return false;
     };
     run.joins.made.insert(ty, true);
-    run.sums.entry(Node::Join(ty)).or_default();
+    let j = Node::Join(ty);
+    run.sums.entry(j).or_default();
     for (g, _) in targets {
-        ensure(cx, run, g);
-        run.joins.of.entry(g).or_default().push(ty);
-        take_in(run, ty, g);
+        add_to_join(cx, run, j, g);
     }
     true
+}
+
+/// Join `j` holds function `g`.
+fn add_to_join(cx: &mut Ctx, run: &mut Run, j: Node, g: DefId) {
+    ensure(cx, run, g);
+    let of = run.joins.of.entry(g).or_default();
+    if !of.contains(&j) {
+        of.push(j);
+    }
+    take_in(cx, run, j, g);
+}
+
+/// Make the joins of a call read from an `any` with arguments of types `want`, the first time one
+/// is made (`site`: what a store into a method's `this` names). `None` when a value made outside
+/// the program may be called, which is reported where it is called.
+fn join_any(cx: &mut Ctx, run: &mut Run, want: &[TyId], site: &Site) -> Option<u32> {
+    if let Some(&id) = run.joins.from_any.get(want) {
+        return id;
+    }
+    let id = run.joins.from_any.len() as u32;
+    let targets = value_targets(cx, run.lits, want, Read::FromAny, 2);
+    let got = targets.as_ref().map(|_| id);
+    run.joins.from_any.insert(want.to_vec(), got);
+    let (values, methods) = (Node::AnyValues(id), Node::AnyMethods(id));
+    run.sums.entry(values).or_default();
+    run.sums.entry(methods).or_default();
+    run.joins.any_sites.insert(methods, site.clone());
+    for (g, skip) in targets? {
+        add_to_join(cx, run, if skip == 2 { values } else { methods }, g);
+    }
+    got
 }
