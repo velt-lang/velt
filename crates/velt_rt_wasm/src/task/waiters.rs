@@ -18,15 +18,24 @@ pub struct Waiters {
 impl Waiters {
     /// Wake every registered wait (each registers again if it polls pending again).
     pub fn wake_all(&self) {
-        let ws: Vec<Waker> = self
-            .slots
+        for w in self.take_all() {
+            w.wake();
+        }
+    }
+
+    /// [`Waiters::wake_all`] as microtasks ([`super::executor::wake_micro`]).
+    pub fn wake_all_micro(&self) {
+        for w in self.take_all() {
+            super::executor::wake_micro(w);
+        }
+    }
+
+    fn take_all(&self) -> Vec<Waker> {
+        self.slots
             .borrow_mut()
             .iter_mut()
             .filter_map(Option::take)
-            .collect();
-        for w in ws {
-            w.wake();
-        }
+            .collect()
     }
 }
 

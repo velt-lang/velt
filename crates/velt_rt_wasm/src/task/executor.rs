@@ -230,6 +230,21 @@ pub fn wake_next(w: Waker) {
     });
 }
 
+/// Wake `w` as a microtask: behind the microtasks queued already, before any ready task (so before
+/// what a timer fired earlier woke). How `resolve()` of a `new Promise` resumes who awaits it, as
+/// in Node and velt_rt.
+pub fn wake_micro(w: Waker) {
+    if !running() {
+        w.wake();
+        return;
+    }
+    let s = Rc::new(MicroSlot {
+        fired: Cell::new(false),
+        waker: RefCell::new(Some(w)),
+    });
+    with_exec(|e| e.micro.push_back(s));
+}
+
 /// Whether the next ready task is an awaiter [`wake_next`] resumed (the checkpoint waits for it).
 fn resuming() -> bool {
     with_exec(|e| {
