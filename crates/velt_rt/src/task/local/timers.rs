@@ -225,10 +225,9 @@ impl Timers {
                 fired,
             },
         );
-        if s.queue.is_first(&key)
-            && s.armed.as_ref().is_none_or(|(_, at)| *at != key.0)
-            && arm(&mut s.armed, key.0, task)
-        {
+        // Also when `armed` holds this deadline: the timer it was armed for may have fired, and its
+        // wake is spent (two timers created in one tick of the clock have one deadline).
+        if s.queue.is_first(&key) && arm(&mut s.armed, key.0, task) {
             // Due already: the task's next poll fires it.
             task.wake_by_ref();
         }

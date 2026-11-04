@@ -1,0 +1,30 @@
+// Two timers created in one tick of the clock (100 ns on Windows) have one deadline. The second is
+// first polled once the first has fired, and still has to wake the task. Without that, these loops
+// stop within a few iterations where the clock ticks that finely; the unit test
+// a_timer_at_the_deadline_of_one_that_fired_wakes_the_task pins it on every clock.
+async function main() {
+  for (let i = 0; i < 5000; i++) {
+    const a = sleep(0);
+    const b = sleep(0);
+    await a;
+    await b;
+  }
+  console.log("sleep(0), one after the other");
+
+  for (let i = 0; i < 200; i++) {
+    const a = sleep(1);
+    const b = sleep(1);
+    await a;
+    await b;
+  }
+  console.log("sleep(1), one after the other");
+
+  for (let i = 0; i < 2000; i++) {
+    const a = sleep(0);
+    const b = sleep(0);
+    const c = sleep(0);
+    await a;
+    await Promise.all([c, b]);
+  }
+  console.log("then a join of the rest");
+}

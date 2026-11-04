@@ -177,6 +177,144 @@ fn a_later_timer_alone_after_a_held_one_wakes_the_task_at_its_deadline() {
     });
 }
 
+/// Wait (at most 20 s) until something logged a wake.
+async fn until_woken(log: &Arc<StdMutex<Vec<&'static str>>>) {
+    let limit = Instant::now() + Duration::from_secs(20);
+    while log.lock().unwrap().is_empty() && Instant::now() < limit {
+        tokio::time::sleep(Duration::from_millis(1)).await;
+    }
+}
+
+#[test]
+fn a_timer_at_the_deadline_of_one_that_fired_wakes_the_task() {
+    // Two timers created in one tick of the clock have one deadline, and the second is first
+    // polled once the first has fired: `armed` holds that deadline, its wake is spent.
+    rt().block_on(async {
+        let log = Arc::new(StdMutex::new(Vec::new()));
+        let task = named("task", &log);
+        let timers = Arc::new(Timers::default());
+        let at = Instant::now() + Duration::from_millis(5);
+        let a = leaf(&timers, at, &task, &task);
+        until_woken(&log).await;
+        assert_eq!(
+            *log.lock().unwrap(),
+            ["task"],
+            "the deadline wakes the task"
+        );
+        log.lock().unwrap().clear();
+        assert_eq!(timers.fire(&task), Some(0));
+        assert!(a.fired.load(Ordering::Acquire));
+        let b = leaf(&timers, at, &task, &task);
+        assert_eq!(*log.lock().unwrap(), ["task"], "nothing else would wake it");
+        assert_eq!(timers.fire(&task), Some(0));
+        assert!(b.fired.load(Ordering::Acquire));
+    });
+}
+
+#[test]
+fn a_timer_at_the_deadline_of_a_dropped_one_wakes_the_task() {
+    rt().block_on(async {
+        let log = Arc::new(StdMutex::new(Vec::new()));
+        let task = named("task", &log);
+        let timers = Arc::new(Timers::default());
+        let at = Instant::now() + Duration::from_millis(5);
+        // Dropped before its deadline: the tokio timer stays armed, and wakes the new one's task.
+        drop(leaf(&timers, at, &task, &task));
+        let b = leaf(&timers, at, &task, &task);
+        assert!(log.lock().unwrap().is_empty(), "not due yet");
+        until_woken(&log).await;
+        assert!(Instant::now() >= at);
+        log.lock().unwrap().clear();
+        assert_eq!(timers.fire(&task), Some(0));
+        assert!(b.fired.load(Ordering::Acquire));
+        // Dropped after its deadline: the one after it still gets a wake.
+        drop(leaf(&timers, at, &task, &task));
+        log.lock().unwrap().clear();
+        let c = leaf(&timers, at, &task, &task);
+        assert_eq!(*log.lock().unwrap(), ["task"]);
+        assert_eq!(timers.fire(&task), Some(0));
+        assert!(c.fired.load(Ordering::Acquire));
+    });
+}
+
+#[test]
+fn a_dropped_armed_timer_still_gets_the_next_one_armed() {
+    // The tokio timer stays armed for the dropped timer's deadline; that wake arms the next.
+    rt().block_on(async {
+        let log = Arc::new(StdMutex::new(Vec::new()));
+        let task = named("task", &log);
+        let timers = Arc::new(Timers::default());
+        let now = Instant::now();
+        let first_at = now + Duration::from_millis(5);
+        let next_at = now + Duration::from_millis(40);
+        let first = leaf(&timers, first_at, &task, &task);
+        let next = leaf(&timers, next_at, &named("next", &log), &task);
+        drop(first);
+        until_woken(&log).await;
+        assert_eq!(*log.lock().unwrap(), ["task"]);
+        log.lock().unwrap().clear();
+        assert_eq!(timers.fire(&task), None);
+        assert!(!next.fired.load(Ordering::Acquire));
+        assert_eq!(
+            timers.state.lock().armed.as_ref().map(|a| a.1),
+            Some(next_at)
+        );
+        until_woken(&log).await;
+        assert_eq!(*log.lock().unwrap(), ["task"]);
+        assert!(Instant::now() >= next_at);
+        log.lock().unwrap().clear();
+        timers.fire(&task);
+        assert_eq!(*log.lock().unwrap(), ["next"]);
+    });
+}
+
+#[test]
+fn the_end_of_a_poll_wakes_the_task_for_a_timer_at_a_spent_deadline() {
+    // Firing held `b` back at the deadline `a` fired at; `b` goes and `c` comes at that deadline
+    // during the same poll. The next poll fires it.
+    rt().block_on(async {
+        let log = Arc::new(StdMutex::new(Vec::new()));
+        let task = named("task", &log);
+        let timers = Arc::new(Timers::default());
+        let at = Instant::now();
+        let a = leaf(&timers, at, &task, &task);
+        let b = leaf(&timers, at, &task, &task);
+        assert_eq!(timers.fire(&task), Some(0));
+        assert!(a.fired.load(Ordering::Acquire) && !b.fired.load(Ordering::Acquire));
+        drop(b);
+        log.lock().unwrap().clear();
+        let c = leaf(&timers, at, &task, &task);
+        timers.end_poll(&task);
+        assert!(!log.lock().unwrap().is_empty());
+        assert_eq!(timers.fire(&task), Some(0));
+        assert!(c.fired.load(Ordering::Acquire));
+    });
+}
+
+#[test]
+fn a_timer_firing_itself_at_an_equal_deadline_leaves_the_next_to_the_next_poll() {
+    // All at one deadline: `b` fires itself in its turn, `c`, which nobody polled, is still due
+    // when the poll ends.
+    rt().block_on(async {
+        let log = Arc::new(StdMutex::new(Vec::new()));
+        let task = named("task", &log);
+        let timers = Arc::new(Timers::default());
+        let at = Instant::now();
+        let mut a = leaf(&timers, at, &task, &task);
+        let mut b = leaf(&timers, at, &task, &task);
+        let c = leaf(&timers, at, &task, &task);
+        assert_eq!(timers.fire(&task), Some(0));
+        a.deregister();
+        let key = b.registered.take().expect("registered").1;
+        assert!(timers.update(&key, &task, true));
+        log.lock().unwrap().clear();
+        timers.end_poll(&task);
+        assert_eq!(*log.lock().unwrap(), ["task"]);
+        assert_eq!(timers.fire(&task), Some(0));
+        assert!(c.fired.load(Ordering::Acquire));
+    });
+}
+
 #[test]
 fn a_timer_not_due_when_firing_stopped_does_not_fire_itself() {
     // `Promise.all([sleep(0), sleep(0), sleep(100)])`: once the two due ones are gone, the third
