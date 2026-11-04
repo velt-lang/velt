@@ -1,0 +1,46 @@
+// Connection URLs. Ported from the Rust crate's unit tests.
+import { parseUrl } from "../src/url";
+import { RedisError } from "../src/lib";
+
+export function test_parses_urls() {
+  let t = parseUrl("redis://127.0.0.1:6379");
+  assertEq(`${t.tls} ${t.host} ${t.port} ${t.db}`, "false 127.0.0.1 6379 0");
+  assert(t.user == null && t.password == null, "no credentials");
+  t = parseUrl("rediss://al%40x:p%3Ass@cache.example.com/3");
+  assertEq(`${t.tls} ${t.host} ${t.port} ${t.db}`, "true cache.example.com 6379 3");
+  assertEq(t.user, "al@x");
+  assertEq(t.password, "p:ss");
+  t = parseUrl("redis://:pw@[::1]:7000?db=2");
+  assertEq(`${t.host} ${t.port} ${t.db}`, "::1 7000 2");
+  assert(t.user == null, "an empty user is the default user");
+  assertEq(t.password, "pw");
+  assertEq(parseUrl("redis://secret@h").password, "secret");
+  assertEq(parseUrl("redis://").host, "127.0.0.1");
+  assertEq(parseUrl("redis://h:").port, 6379);
+  // The last `@` ends the credentials.
+  assertEq(parseUrl("redis://a@b:c@h").host, "h");
+  assertEq(parseUrl("redis://u:%C3%A9@h").password, "é");
+}
+
+export function test_rejects_bad_urls() {
+  for (const bad of [
+    "http://x",
+    "redis://h:99999",
+    "redis://h:x",
+    "redis://h/x",
+    "redis://h/-1",
+    "redis://h?db=x",
+    "redis://[::1",
+    "redis://%zz@h",
+    "redis://%4@h",
+    "redis://%ff@h",
+  ]) {
+    let code = "accepted";
+    try {
+      parseUrl(bad);
+    } catch (e) {
+      code = e instanceof RedisError ? e.code : "not a RedisError";
+    }
+    assertEq(code, "EINVAL");
+  }
+}

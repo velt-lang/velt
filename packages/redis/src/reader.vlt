@@ -1,0 +1,170 @@
+// redis (internal): `Reader`, the reply side of one connection: it parses what arrives and completes
+// the line in order.
+
+import { TcpStream } from "velt/net";
+import { Failure, protocolFailure, serverFailure } from "./failure";
+import { Client } from "./line";
+import { Outcome } from "./outcome";
+import { RawReply } from "./raw_reply";
+import { ARRAY, emptyReply, ERROR, NIL, Parser } from "./resp";
+import { BATCH, ONE, Slot } from "./slot";
+
+// The read buffer's first size, and the room each read asks for.
+const INITIAL_BUFFER: i64 = 64 * 1024;
+const MIN_READ: i64 = 16 * 1024;
+
+/** The reply side of one connection. */
+export class Reader {
+  /** A reply that broke the protocol, which ended the connection. */
+  protocol: Failure | null = null;
+  private client: Client;
+  private parser: Parser = new Parser();
+  // The request the next reply belongs to, once bytes for it arrived.
+  private current: Slot | null = null;
+  private got: i64 = 0;
+  // A transaction's first rejected command.
+  private rejected: string | null = null;
+  // The closed client's last reply arrived.
+  private finished: bool = false;
+
+  constructor(client: Client) {
+    this.client = client;
+  }
+
+  // Delivers replies until the stream ends, the replies in flight ran out on a closed client, or a
+  // reply breaks the protocol. A failed read throws.
+  async run(s: TcpStream) {
+    let buf: u8[] = Buffer.alloc(INITIAL_BUFFER as usize);
+    let pos: i64 = 0;
+    let end: i64 = 0;
+    while (true) {
+      if ((buf.length as i64) - end < MIN_READ) {
+        if (pos > 0) {
+          buf.copyWithin(0, pos, end);
+          end -= pos;
+          pos = 0;
+        }
+        if ((buf.length as i64) - end < MIN_READ) {
+          buf = grown(buf, end, (buf.length as i64) * 2);
+        }
+      }
+      // Waits first: a reply has just been handled, so reading now would mostly find nothing, a
+      // system call per reply for no bytes.
+      await s.readable();
+      const n = s.tryRead(buf, end as number, buf.length as number);
+      if (n == null) {
+        return;
+      }
+      if (n == 0) {
+        continue;
+      }
+      end += n as i64;
+      pos = this.parse(buf, pos, end);
+      if (pos < 0 || this.finished) {
+        return;
+      }
+      if (pos == end) {
+        pos = 0;
+        end = 0;
+      }
+    }
+  }
+
+  // Takes the complete frames in `buf[pos..end]`: the position after them, or -1 when the
+  // connection must end.
+  private parse(buf: u8[], start: i64, end: i64): i64 {
+    let pos = start;
+    while (pos < end) {
+      if (this.current == null) {
+        const slot = this.client.with((l) => l.first());
+        if (slot == null) {
+          this.protocol = protocolFailure("unexpected reply");
+          return -1;
+        }
+        this.current = slot;
+        this.got = 0;
+        this.rejected = null;
+        if (slot.kind == BATCH) {
+          const r = this.parser.reply;
+          r.tags.push(ARRAY);
+          r.nums.push(slot.want);
+          r.strs.push("");
+        }
+      }
+      const used = this.parser.step(buf, pos, end);
+      if (used < 0) {
+        this.protocol = protocolFailure(this.parser.error);
+        return -1;
+      }
+      if (used == 0) {
+        return pos;
+      }
+      pos += used;
+      if (this.parser.complete) {
+        this.reply();
+      }
+    }
+    return pos;
+  }
+
+  // A reply finished: it joins its request, or ends it.
+  private reply() {
+    const slot = this.current;
+    if (slot == null) {
+      panic("ICE: a reply without a slot");
+    }
+    this.got++;
+    if (slot.kind == ONE) {
+      const r = this.parser.take();
+      slot.done.trySend(
+        r.tags[0] == ERROR
+          ? { failure: serverFailure(r.strs[0]), reply: emptyReply() }
+          : { failure: null, reply: r },
+      );
+    } else if (slot.kind == BATCH) {
+      if (this.got < slot.want) {
+        return;
+      }
+      slot.done.trySend({ failure: null, reply: this.parser.take() });
+    } else {
+      const r = this.parser.take();
+      if (this.got < slot.want) {
+        if (r.tags[0] == ERROR && this.rejected == null) {
+          this.rejected = r.strs[0];
+        }
+        return;
+      }
+      slot.done.trySend(transaction(r, this.rejected));
+    }
+    this.current = null;
+    if (this.client.with((l) => l.finish())) {
+      this.finished = true;
+    }
+  }
+}
+
+// `EXEC`'s reply as the result of a transaction; an aborted one fails, naming the first command
+// that was rejected.
+export function transaction(exec: RawReply, rejected: string | null): Outcome {
+  const tag = exec.tags[0];
+  if (tag == ERROR) {
+    const text = rejected == null ? exec.strs[0] : `${exec.strs[0]} (${rejected})`;
+    return { failure: serverFailure(text), reply: emptyReply() };
+  }
+  if (tag == NIL) {
+    return {
+      failure: serverFailure("EXECABORT Transaction aborted (a watched key changed)"),
+      reply: emptyReply(),
+    };
+  }
+  return { failure: null, reply: exec };
+}
+
+// `buf`'s first `used` bytes in a new buffer of `size`.
+function grown(buf: u8[], used: i64, size: i64): u8[] {
+  const bigger: u8[] = Buffer.alloc(size as usize);
+  for (let i: i64 = 0; i < used; i++) {
+    bigger[i] = buf[i];
+  }
+  return bigger;
+}

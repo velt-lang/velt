@@ -1,0 +1,129 @@
+// RESP2 on its own, no server: encoding, every reply type, replies split at every position, and
+// what isn't RESP. Ported from the Rust crate's unit tests, plus what its Velt form adds.
+import { utf8Encode } from "velt/encoding";
+import { encodeCommand, Parser } from "../src/resp";
+import { RawReply } from "../src/raw_reply";
+
+function encoded(args: string[]): string {
+  const out = new StringBuilder();
+  encodeCommand(out, args, 0, args.length);
+  return out.toString();
+}
+
+// The replies in `chunks`, fed as they would arrive, as text.
+function parseAll(chunks: string[]): string[] {
+  const parser = new Parser();
+  const replies: string[] = [];
+  let buf: u8[] = [];
+  let pos: i64 = 0;
+  for (const chunk of chunks) {
+    buf = buf.slice(pos).concat(utf8Encode(chunk));
+    pos = 0;
+    while (true) {
+      const used = parser.step(buf, pos, buf.length as i64);
+      assert(used >= 0, parser.error);
+      if (used == 0) {
+        break;
+      }
+      pos += used;
+      if (parser.complete) {
+        replies.push(show(parser.take()));
+      }
+    }
+  }
+  assertEq(pos, buf.length as i64);
+  return replies;
+}
+
+function show(r: RawReply): string {
+  const parts: string[] = [];
+  for (let i: usize = 0; i < r.tags.length; i++) {
+    parts.push(`${r.tags[i]}/${r.nums[i]}/${r.strs[i]}`);
+  }
+  return parts.join(" ");
+}
+
+function errorOf(wire: string): string {
+  const parser = new Parser();
+  const b = utf8Encode(wire);
+  let pos: i64 = 0;
+  while (pos < (b.length as i64)) {
+    const used = parser.step(b, pos, b.length as i64);
+    if (used < 0) {
+      return parser.error;
+    }
+    if (used == 0) {
+      return "incomplete";
+    }
+    pos += used;
+  }
+  return "parsed";
+}
+
+export function test_encodes_commands() {
+  assertEq(encoded(["SET", "k", "héllo"]), "*3\r\n$3\r\nSET\r\n$1\r\nk\r\n$6\r\nhéllo\r\n");
+  // The length counts bytes, also for characters outside the BMP.
+  assertEq(encoded(["😀"]), "*1\r\n$4\r\n😀\r\n");
+  assertEq(encoded(["A", ""]), "*2\r\n$1\r\nA\r\n$0\r\n\r\n");
+}
+
+export function test_encodes_part_of_a_batch() {
+  const out = new StringBuilder();
+  encodeCommand(out, ["GET", "a", "PING"], 0, 2);
+  encodeCommand(out, ["GET", "a", "PING"], 2, 3);
+  assertEq(out.toString(), "*2\r\n$3\r\nGET\r\n$1\r\na\r\n*1\r\n$4\r\nPING\r\n");
+}
+
+export function test_parses_every_type() {
+  assertEq(parseAll(["+OK\r\n-ERR bad\r\n:-7\r\n$3\r\nabc\r\n$-1\r\n*-1\r\n*0\r\n"]), [
+    "1/0/OK",
+    "2/0/ERR bad",
+    "3/-7/",
+    "4/0/abc",
+    "0/0/",
+    "0/0/",
+    "5/0/",
+  ]);
+}
+
+export function test_parses_the_limits_of_an_integer() {
+  assertEq(parseAll([":9223372036854775807\r\n:-9223372036854775808\r\n:+5\r\n"]), [
+    "3/9223372036854775807/",
+    "3/-9223372036854775808/",
+    "3/5/",
+  ]);
+}
+
+export function test_parses_nested_arrays_split_anywhere() {
+  const wire = "*2\r\n*2\r\n:1\r\n$2\r\nab\r\n$0\r\n\r\n:5\r\n";
+  const want = ["5/2/ 5/2/ 3/1/ 4/0/ab 4/0/", "3/5/"];
+  for (let split: i64 = 0; split <= (wire.length as i64); split++) {
+    assertEq(parseAll([wire.slice(0, split), wire.slice(split)]), want);
+  }
+  assertEq(parseAll(wire.split("")), want);
+}
+
+// A bulk string may hold CR LF: its length says where it ends.
+export function test_a_bulk_string_holds_line_ends() {
+  assertEq(parseAll(["$4\r\na\r\nb\r\n"]), ["4/0/a\r\nb"]);
+}
+
+// Invalid UTF-8 becomes U+FFFD, and the parser carries on.
+export function test_invalid_utf8_is_replaced() {
+  const parser = new Parser();
+  const b: u8[] = [36, 50, 13, 10, 255, 120, 13, 10];
+  assertEq(parser.step(b, 0, b.length as i64), b.length as i64);
+  assertEq(parser.take().strs[0], "\u{fffd}x");
+}
+
+export function test_rejects_garbage() {
+  assertEq(errorOf("?x\r\n"), "unexpected reply type byte 0x3f");
+  assertEq(errorOf(":x\r\n"), 'invalid number "x"');
+  assertEq(errorOf(":\r\n"), 'invalid number ""');
+  assertEq(errorOf(":-\r\n"), 'invalid number "-"');
+  assertEq(errorOf(":9223372036854775808\r\n"), 'invalid number "9223372036854775808"');
+  assertEq(errorOf("$1\r\nab\r\n"), "bulk string not terminated by CRLF");
+  assertEq(errorOf("\r\n"), "empty reply line");
+  assertEq(errorOf("$536870913\r\n"), "bulk string too long (536870913)");
+  assertEq(errorOf("*536870913\r\n"), "array too long (536870913)");
+}

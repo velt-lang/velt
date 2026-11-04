@@ -1,48 +1,184 @@
 // redis (internal): `RedisSubscriber`, a connection in subscribed mode, and `subscribe` /
 // `psubscribe`, which open one.
 //
-// A subscriber owns its own connection in subscribed mode. Messages are pulled with `next()` or
-// `for await (const m of sub)` (the runtime stores no callbacks). `close()` (from any task)
-// makes pending and later `next()` calls return null, which ends a `for await` loop.
+// A subscriber owns its own connection in subscribed mode. A reader task parses what the server
+// pushes: `message` / `pmessage` go to a queue that `next()` drains, or `for await (const m of sub)`
+// (nothing stores callbacks); (un)subscribe confirmations go to a queue that `subscribe()` and
+// `unsubscribe()` wait on, so those return once the server has applied them (a message published
+// afterwards is guaranteed to arrive). `close()` (from any task) makes pending and later `next()`
+// calls return null, which ends a `for await` loop.
 
-import { IoStatus } from "velt/native";
-import {
-  velt_redis__sub_change,
-  velt_redis__sub_close,
-  velt_redis__sub_next,
-  velt_redis__subscribe,
-} from "./native";
-import { RedisError, redisError } from "./errors";
+import { TcpStream } from "velt/net";
+import { IoError } from "velt/io";
+import { Channel, channel } from "velt/sync";
+import { open } from "./connection";
+import { Endpoint } from "./endpoint";
+import { closedHandle, errorOf, RedisError } from "./errors";
+import { closedFailure, Failure, ioFailure, protocolFailure, serverFailure } from "./failure";
 import { RedisMessage } from "./message";
 import { RedisClient } from "./client";
+import { RawReply } from "./raw_reply";
+import { ARRAY, encodeCommand, ERROR, Parser } from "./resp";
 import { RedisConnectOptions } from "./types";
+import { parseUrl } from "./url";
 
-function check(s: IoStatus) {
-  if (s.code != 0) {
-    throw redisError(s.code, s.message);
+// A message on its way to `next()`, or (`failure`) why there will be no more.
+struct Event {
+  failure: Failure | null;
+  message: RedisMessage | null;
+}
+
+// One (un)subscribed name confirmed, or what went wrong (`failure`).
+struct Ack {
+  failure: Failure | null;
+}
+
+// The channels and socket of a subscriber: copies share them.
+struct Handle {
+  stream: TcpStream;
+  events: Channel<Event>;
+  acks: Channel<Ack>;
+  // Holds one token while no (un)subscribe is running: they take turns.
+  turn: Channel<bool>;
+  // Closed by `close()`, which is how every copy knows.
+  stopped: Channel<bool>;
+}
+
+function commandName(patterns: bool, subscribe: bool): string {
+  if (patterns) {
+    return subscribe ? "PSUBSCRIBE" : "PUNSUBSCRIBE";
+  }
+  return subscribe ? "SUBSCRIBE" : "UNSUBSCRIBE";
+}
+
+/** Routes one push to `events` or `acks`; anything unexpected is ignored. */
+export function dispatch(r: RawReply, events: Channel<Event>, acks: Channel<Ack>) {
+  if (r.tags[0] == ERROR) {
+    acks.trySend({ failure: serverFailure(r.strs[0]) });
+    return;
+  }
+  if (r.tags[0] != ARRAY || r.nums[0] == 0) {
+    return;
+  }
+  const kind = r.strs[1].toLowerCase();
+  const at = (i: usize): string => (i < r.strs.length ? r.strs[i] : "");
+  if (kind == "message") {
+    events.trySend({ failure: null, message: new RedisMessage(at(2), at(3), null) });
+  } else if (kind == "pmessage") {
+    events.trySend({ failure: null, message: new RedisMessage(at(3), at(4), at(2)) });
+  } else if (
+    kind == "subscribe" || kind == "psubscribe" || kind == "unsubscribe" || kind == "punsubscribe"
+  ) {
+    acks.trySend({ failure: null });
+  }
+}
+
+// Reads pushes until the stream ends or fails, then tells whoever waits.
+async function readLoop(h: Handle) {
+  let why = closedFailure();
+  try {
+    const parser = new Parser();
+    let buf: u8[] = [];
+    let pos: i64 = 0;
+    let reading = true;
+    while (reading) {
+      const chunk = await h.stream.read();
+      if (chunk.length == 0) {
+        reading = false;
+        break;
+      }
+      buf = pos < (buf.length as i64) ? buf.slice(pos).concat(chunk) : chunk;
+      pos = 0;
+      while (reading) {
+        const used = parser.step(buf, pos, buf.length as i64);
+        if (used < 0) {
+          why = protocolFailure(parser.error);
+          reading = false;
+        } else if (used == 0) {
+          break;
+        } else {
+          pos += used;
+          if (parser.complete) {
+            dispatch(parser.take(), h.events, h.acks);
+          }
+        }
+      }
+    }
+  } catch (e) {
+    if (e instanceof IoError) {
+      why = ioFailure(e.code, e.message);
+    }
+  }
+  h.acks.trySend({ failure: why });
+  h.acks.close();
+  h.events.trySend({ failure: why, message: null });
+  h.events.close();
+}
+
+// Sends one (un)subscribe command and waits until the server confirmed every name.
+async function change(
+  h: Handle,
+  command: string,
+  names: string[],
+): Promise<void> throws RedisError {
+  if (names.length == 0) {
+    return;
+  }
+  if ((await h.turn.receive()) == null) {
+    throw closedHandle();
+  }
+  const out = new StringBuilder();
+  encodeCommand(out, [command, ...names], 0, names.length + 1);
+  let failed: Failure | null = null;
+  try {
+    await h.stream.write(out.toString());
+  } catch (e) {
+    failed = e instanceof IoError ? ioFailure(e.code, e.message) : closedFailure();
+  }
+  for (let i: usize = 0; i < names.length && failed == null; i++) {
+    const ack = await h.acks.receive();
+    failed = ack == null ? closedFailure() : ack.failure;
+  }
+  h.turn.trySend(true);
+  if (failed != null) {
+    throw errorOf(failed);
   }
 }
 
 /** A subscribed connection (a Copy handle like `RedisClient`; release it with `close()`). */
 export struct RedisSubscriber implements AsyncIterable<RedisMessage, RedisError> {
-  private handle: u64;
+  private handle: Handle;
 
-  /**
-   * The package's own: subscribes on a new connection to `url` (or to where client handle
-   * `client` is connected, when non-zero).
-   */
+  /** The package's own: subscribes on a new connection to `url`. */
   static async open(
-    client: u64,
     url: string,
     ca: string,
     names: string[],
     patterns: bool,
   ): Promise<RedisSubscriber> {
-    const r = await velt_redis__subscribe(client, url, ca, names, patterns);
-    if (r.code != 0) {
-      throw redisError(r.code, r.message);
+    const ep: Endpoint = { url: url, ca: ca, target: parseUrl(url) };
+    const opened = await open(ep);
+    const stream = opened.stream;
+    if (stream == null) {
+      throw errorOf(opened.failure ?? closedFailure());
     }
-    return RedisSubscriber { handle: r.value };
+    const h: Handle = {
+      stream: stream,
+      events: channel<Event>(),
+      acks: channel<Ack>(),
+      turn: channel<bool>(1),
+      stopped: channel<bool>(1),
+    };
+    h.turn.trySend(true);
+    spawn(readLoop(h));
+    const sub = RedisSubscriber { handle: h };
+    try {
+      await change(h, commandName(patterns, true), names);
+    } catch (e) {
+      sub.close();
+      throw e;
+    }
+    return sub;
   }
 
   /**
@@ -50,15 +186,22 @@ export struct RedisSubscriber implements AsyncIterable<RedisMessage, RedisError>
    * the server closes the connection.
    */
   async next(): Promise<RedisMessage | null> {
-    const r = await velt_redis__sub_next(this.handle);
-    if (r.code != 0) {
-      throw redisError(r.code, r.message);
-    }
-    const m = r.value;
-    if (m.kind == 0) {
+    const h = this.handle;
+    if (h.stopped.closed) {
       return null;
     }
-    return new RedisMessage(m.channel, m.message, m.kind == 2 ? m.pattern : null);
+    const e = await h.events.receive();
+    if (h.stopped.closed) {
+      return null;
+    }
+    if (e == null) {
+      throw errorOf(closedFailure());
+    }
+    const f = e.failure;
+    if (f != null) {
+      throw errorOf(f);
+    }
+    return e.message;
   }
 
   /**
@@ -75,24 +218,31 @@ export struct RedisSubscriber implements AsyncIterable<RedisMessage, RedisError>
     }
   }
 
+  private async changeNames(names: string[], patterns: bool, subscribe: bool): Promise<void> {
+    if (this.handle.stopped.closed) {
+      throw closedHandle();
+    }
+    await change(this.handle, commandName(patterns, subscribe), names);
+  }
+
   /** Also listens to `channels`; resolves once the server confirmed them. */
   async subscribe(channels: string[]): Promise<void> {
-    check(await velt_redis__sub_change(this.handle, channels, false, true));
+    await this.changeNames(channels, false, true);
   }
 
   /** Stops listening to `channels` (an empty list does nothing; use `close()` to stop entirely). */
   async unsubscribe(channels: string[]): Promise<void> {
-    check(await velt_redis__sub_change(this.handle, channels, false, false));
+    await this.changeNames(channels, false, false);
   }
 
   /** Also listens to channels matching the glob `patterns`. */
   async psubscribe(patterns: string[]): Promise<void> {
-    check(await velt_redis__sub_change(this.handle, patterns, true, true));
+    await this.changeNames(patterns, true, true);
   }
 
   /** Stops listening to `patterns`. */
   async punsubscribe(patterns: string[]): Promise<void> {
-    check(await velt_redis__sub_change(this.handle, patterns, true, false));
+    await this.changeNames(patterns, true, false);
   }
 
   /**
@@ -100,7 +250,15 @@ export struct RedisSubscriber implements AsyncIterable<RedisMessage, RedisError>
    * released. Closing again does nothing.
    */
   close() {
-    velt_redis__sub_close(this.handle);
+    const h = this.handle;
+    if (h.stopped.closed) {
+      return;
+    }
+    h.stopped.close();
+    h.turn.close();
+    h.turn.tryReceive();
+    h.stream.abort();
+    h.stream.close();
   }
 }
 
@@ -114,7 +272,7 @@ export async function subscribe(
   opts: RedisConnectOptions = {},
 ): Promise<RedisSubscriber> {
   if (typeof target === "string") {
-    return await RedisSubscriber.open(0, target, opts.ca ?? "", channels, false);
+    return await RedisSubscriber.open(target, opts.ca ?? "", channels, false);
   }
   return await target.newSubscriber(channels);
 }
@@ -126,7 +284,7 @@ export async function psubscribe(
   opts: RedisConnectOptions = {},
 ): Promise<RedisSubscriber> {
   if (typeof target === "string") {
-    return await RedisSubscriber.open(0, target, opts.ca ?? "", patterns, true);
+    return await RedisSubscriber.open(target, opts.ca ?? "", patterns, true);
   }
   return await target.newSubscriber(patterns, true);
 }

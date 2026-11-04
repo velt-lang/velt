@@ -165,14 +165,15 @@ fn a_changed_package_runs_the_package_tests() {
             "packages",
             "native_packages",
             "example_apps",
-            "bench_programs"
+            "bench_programs",
+            "docs"
         ]))
     );
     assert_eq!(p.goldens, Goldens::None);
     assert!(p.filterset().unwrap().contains("binary(packages)"));
     // Its Velt files are formatted like std's; its native crate is linted only when it changed.
     assert!(p.vlt_fmt && !p.native_crates);
-    let p = plan(&["packages/redis/native/src/resp.rs"]);
+    let p = plan(&["packages/postgres/native/src/lib.rs"]);
     assert!(p.native_crates);
     assert!(!p.rust, "no workspace crate changed");
 }

@@ -1,0 +1,151 @@
+// redis (internal): the multiplexed client connection: one socket shared by every task that uses a
+// client, like ioredis' single connection.
+//
+// A command takes no hop through another task. Under a short lock it queues its bytes on the socket
+// and its place in the line for replies, in the same order; its own task sends them when it next
+// waits, so commands waiting together go out in one write. The connection's one task, the reader,
+// parses replies and completes the line in order (Redis answers in request order).
+//
+// When the connection fails, the requests already written fail with that error (they may have run;
+// resending could run them twice), and the socket is gone. The next request finds no connection and
+// starts a reconnecting task: with backoff (`reconnect`), and every request arriving meanwhile
+// waits with it, to go out first on the new connection. If reconnecting fails for its whole window,
+// they fail with the connect error and the next request starts over.
+//
+// `close()` must abort the socket, or the reader's pending read would never finish and would keep
+// the program alive after `main` returns. With replies still to come, the reader does it after the
+// last of them.
+
+import { TcpStream } from "velt/net";
+import { IoError } from "velt/io";
+import { Channel } from "velt/sync";
+import { open, reconnect } from "./connection";
+import { Endpoint } from "./endpoint";
+import { closedHandle, errorOf, RedisError } from "./errors";
+import { closedFailure, Failure, ioFailure } from "./failure";
+import { CLOSED, Client, Line, SENT, WAITS_AND_RECONNECTS } from "./line";
+import { Outcome } from "./outcome";
+import { RawReply } from "./raw_reply";
+import { Reader } from "./reader";
+import { emptyReply } from "./resp";
+
+// A sender with this many bytes still to go out waits for the peer to read them.
+const MAX_QUEUED: i64 = 256 * 1024;
+
+function failTo(done: Channel<Outcome>, f: Failure) {
+  done.trySend({ failure: f, reply: emptyReply() });
+}
+
+/** Opens a connection and starts its reader. */
+export async function openClient(ep: Endpoint): Promise<Client> throws RedisError {
+  const opened = await open(ep);
+  const stream = opened.stream;
+  if (stream == null) {
+    throw errorOf(opened.failure ?? closedFailure());
+  }
+  const client: Client = shared(new Mutex<Line>(new Line(ep, stream.clone())));
+  spawn(readLoop(client, stream));
+  return client;
+}
+
+/** Sends `payload` and waits for its reply; a failure throws, `EBADF` for a closed client. */
+export async function send(
+  client: Client,
+  payload: string,
+  want: i64,
+  kind: u8,
+): Promise<RawReply> throws RedisError {
+  const submitted = client.with((l) => l.submit(payload, want, kind));
+  const r = submitted.status;
+  const done = submitted.done;
+  if (r == CLOSED) {
+    done.close();
+    throw closedHandle();
+  }
+  if (r == WAITS_AND_RECONNECTS) {
+    spawn(reconnecting(client));
+  } else if (r == SENT) {
+    await backpressure(client);
+  }
+  const o = await done.receive();
+  client.with((l) => l.giveBack(done));
+  if (o == null) {
+    throw errorOf(closedFailure());
+  }
+  const f = o.failure;
+  if (f != null) {
+    throw errorOf(f);
+  }
+  return o.reply;
+}
+
+// Waits while too much is queued for a peer that doesn't read. A failure is the reader's to report.
+async function backpressure(client: Client) {
+  const s = client.with((l) => (l.queued >= MAX_QUEUED ? l.socket : null));
+  if (s != null) {
+    try {
+      await s.drained(MAX_QUEUED as number);
+    } catch (e) {}
+  }
+}
+
+/** `client.close()`: closing twice does nothing. */
+export function closeClient(client: Client) {
+  const s = client.with((l) => l.close());
+  if (s != null) {
+    s.abort();
+  }
+}
+
+/** Whether `close()` was called. */
+export function isClosed(client: Client): bool {
+  return client.with((l) => l.isClosed);
+}
+
+/** Where the client connects; `EBADF` once closed. */
+export function endpointOf(client: Client): Endpoint throws RedisError {
+  const ep = client.with((l) => (l.isClosed ? null : l.ep));
+  if (ep == null) {
+    throw closedHandle();
+  }
+  return ep;
+}
+
+// Opens a replacement for a lost connection (see the module header).
+async function reconnecting(client: Client) {
+  const ep = client.with((l) => l.ep);
+  const opened = await reconnect(ep);
+  const s = opened.stream;
+  if (s == null) {
+    const why = opened.failure ?? closedFailure();
+    for (const w of client.with((l) => l.gaveUp())) {
+      failTo(w.done, why);
+    }
+    return;
+  }
+  client.with((l) => l.install(s));
+  spawn(readLoop(client, s));
+}
+
+// The connection's task: delivers replies until the connection ends, then ends it.
+async function readLoop(client: Client, s: TcpStream) {
+  const reader = new Reader(client);
+  let why = closedFailure();
+  try {
+    await reader.run(s);
+  } catch (e) {
+    if (e instanceof IoError) {
+      why = ioFailure(e.code, e.message);
+    }
+  }
+  const lost = client.with((l) => l.lost());
+  const f = reader.protocol ?? lost.sendFailure ?? why;
+  for (const slot of lost.slots) {
+    failTo(slot.done, f);
+  }
+  s.abort();
+  s.close();
+  if (lost.reconnects) {
+    spawn(reconnecting(client));
+  }
+}

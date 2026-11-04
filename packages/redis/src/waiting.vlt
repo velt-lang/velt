@@ -1,0 +1,12 @@
+// redis (internal): `Waiting`, a request that found no connection.
+
+import { Channel } from "velt/sync";
+import { Outcome } from "./outcome";
+
+/** A request that found no connection: it goes out first on the next one. */
+export struct Waiting {
+  payload: string;
+  want: i64;
+  kind: u8;
+  done: Channel<Outcome>;
+}

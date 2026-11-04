@@ -1,0 +1,182 @@
+// redis (internal): `Line`, the state behind a client's lock (multiplex.vlt): the open connection,
+// the requests waiting for replies in the order they were written, and the ones waiting for a
+// connection.
+
+import { TcpStream } from "velt/net";
+import { IoError } from "velt/io";
+import { Channel, channel } from "velt/sync";
+import { Endpoint } from "./endpoint";
+import { closedFailure, Failure, ioFailure } from "./failure";
+import { Outcome } from "./outcome";
+import { Slot } from "./slot";
+import { Waiting } from "./waiting";
+
+/** A connection shared by every copy of a client's handle. */
+export type Client = shared<Mutex<Line>>;
+
+// What `Line.submit` found.
+export const SENT: u8 = 0;
+export const CLOSED: u8 = 1;
+export const WAITS: u8 = 2;
+export const WAITS_AND_RECONNECTS: u8 = 3;
+
+// How many channels a client keeps for commands to wait on, instead of making one per command.
+const MAX_FREE: usize = 64;
+
+// What `Line.submit` found, and the channel the outcome comes on.
+struct Submitted {
+  status: u8;
+  done: Channel<Outcome>;
+}
+
+// What a connection's end leaves to do.
+struct Lost {
+  slots: Slot[];
+  sendFailure: Failure | null;
+  reconnects: bool;
+}
+
+/** The state behind a client's lock. */
+export class Line {
+  ep: Endpoint;
+  // The open connection; null before a reconnect, after the reader saw it end.
+  private stream: TcpStream | null;
+  private closed: bool = false;
+  private reconnecting: bool = false;
+  // What was written and not answered yet: `slots[head..]`, the first one's replies arriving.
+  private slots: Slot[] = [];
+  private head: usize = 0;
+  private waiting: Waiting[] = [];
+  // Channels no command is waiting on. Each carries one outcome per use, so reuse is safe; a
+  // command that stops waiting never gives its channel back.
+  private free: Channel<Outcome>[] = [];
+  // Why queueing bytes failed, for the reader to report rather than the abort it caused.
+  private sendFailure: Failure | null = null;
+  /** The bytes still to go out after the last `submit` that sent. */
+  queued: i64 = 0;
+
+  constructor(ep: Endpoint, stream: TcpStream) {
+    this.ep = ep;
+    this.stream = stream;
+  }
+
+  /** The socket to wait on after a `submit` that left too much queued. */
+  get socket(): TcpStream | null {
+    return this.stream;
+  }
+
+  submit(payload: string, want: i64, kind: u8): Submitted {
+    const done = this.free.pop() ?? channel<Outcome>(1);
+    return { status: this.queue(payload, want, kind, done), done: done };
+  }
+
+  private queue(payload: string, want: i64, kind: u8, done: Channel<Outcome>): u8 {
+    if (this.closed) {
+      return CLOSED;
+    }
+    const s = this.stream;
+    if (s != null && this.write(s, payload, want, kind, done)) {
+      return SENT;
+    }
+    this.waiting.push({ payload: payload, want: want, kind: kind, done: done });
+    if (s != null || this.reconnecting) {
+      return WAITS;
+    }
+    this.reconnecting = true;
+    return WAITS_AND_RECONNECTS;
+  }
+
+  /** A command is done with its channel. */
+  giveBack(done: Channel<Outcome>) {
+    if (this.closed || this.free.length >= MAX_FREE) {
+      done.close();
+    } else {
+      this.free.push(done);
+    }
+  }
+
+  // Queues the bytes, and the slot their replies complete; false if the socket takes no more: it
+  // is aborted, so the reader ends it and whoever waits goes to the next connection.
+  private write(s: TcpStream, payload: string, want: i64, kind: u8, done: Channel<Outcome>): bool {
+    try {
+      this.queued = s.writeLater(payload);
+    } catch (e) {
+      if (this.sendFailure == null) {
+        this.sendFailure = e instanceof IoError ? ioFailure(e.code, e.message) : closedFailure();
+      }
+      s.abort();
+      return false;
+    }
+    this.slots.push({ want: want, kind: kind, done: done });
+    return true;
+  }
+
+  /** The request the next reply belongs to, which stays in line until `finish`. */
+  first(): Slot | null {
+    return this.head < this.slots.length ? this.slots[this.head] : null;
+  }
+
+  /** The first request is answered; true when the closed client's last reply has arrived. */
+  finish(): bool {
+    this.head++;
+    if (this.head == this.slots.length) {
+      this.slots.length = 0;
+      this.head = 0;
+      return this.closed;
+    }
+    return false;
+  }
+
+  /** The reader saw the connection end: what it must fail, and whether to reconnect. */
+  lost(): Lost {
+    const slots = this.slots.slice(this.head as i64);
+    this.slots = [];
+    this.head = 0;
+    this.stream = null;
+    const reconnects = this.waiting.length > 0 && !this.reconnecting;
+    if (reconnects) {
+      this.reconnecting = true;
+    }
+    const why = this.sendFailure;
+    this.sendFailure = null;
+    return { slots: slots, sendFailure: why, reconnects: reconnects };
+  }
+
+  /** Reconnected: whoever waited goes out first. */
+  install(s: TcpStream) {
+    this.stream = s;
+    this.reconnecting = false;
+    const waiting = this.waiting;
+    this.waiting = [];
+    for (const w of waiting) {
+      if (!this.write(s, w.payload, w.want, w.kind, w.done)) {
+        this.waiting.push(w);
+      }
+    }
+  }
+
+  /** Reconnecting gave up: whoever waited fails, and the next request starts over. */
+  gaveUp(): Waiting[] {
+    this.reconnecting = false;
+    const waiting = this.waiting;
+    this.waiting = [];
+    return waiting;
+  }
+
+  /** `close()`: no more requests; the socket to abort, if no reply is still to come. */
+  close(): TcpStream | null {
+    if (this.closed) {
+      return null;
+    }
+    this.closed = true;
+    for (const done of this.free) {
+      done.close();
+    }
+    this.free = [];
+    return this.head < this.slots.length ? null : this.stream;
+  }
+
+  get isClosed(): bool {
+    return this.closed;
+  }
+}

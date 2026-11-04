@@ -1,21 +1,14 @@
-// redis (internal): `RedisReply`, a reply decoded into a tree, and the decoding of the native
-// library's replies for the typed commands.
+// redis (internal): `RedisReply`, a reply decoded into a tree, and the decoding of parsed replies
+// for the typed commands.
 //
-// The library hands a reply over as three parallel arrays in pre-order (a node, then its
+// The parser (resp.vlt) leaves a reply as three parallel arrays in pre-order (a node, then its
 // children): `tags` (the kind), `nums` (an integer, or an array's length) and `strs` (text).
 // Typed commands read them directly (`get` looks at node 0, `lrange` at nodes 1..); `call()` and
 // pipelines rebuild the tree as `RedisReply` objects.
 
-import { RawReply } from "./native";
+import { RawReply } from "./raw_reply";
 import { RedisError } from "./errors";
-
-// Node kinds (the library's `reply::tag`).
-const NIL: u8 = 0;
-const STATUS: u8 = 1;
-const ERROR: u8 = 2;
-const INT: u8 = 3;
-const STRING: u8 = 4;
-const ARRAY: u8 = 5;
+import { ARRAY, ERROR, INT, NIL, STATUS, STRING } from "./resp";
 
 /** What a reply node is. */
 export type RedisReplyKind = "nil" | "status" | "error" | "int" | "string" | "array";

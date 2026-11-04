@@ -1,4 +1,4 @@
-// The driver's handles have no JSON form: decoding would forge a native handle, and encoding
+// The driver's handles have no JSON form: decoding would forge a connection, and encoding
 // would hand one out.
 import { RedisClient, RedisPipeline, RedisSubscriber } from "../../src/lib";
 
@@ -8,9 +8,9 @@ function main() {
   const p = JSON.parse<RedisPipeline>('{"handle":1}');
 }
 
-// Encoding: the handles are private fields of types that bind the native library.
-function encode(c: RedisClient, s: RedisSubscriber, p: RedisPipeline) {
+// Encoding: both hold std types' private state, which has no JSON form. (A pipeline's fields are
+// `#` fields, which JSON never writes, as in Node: client_edges.test.vlt.)
+function encode(c: RedisClient, s: RedisSubscriber) {
   console.log(JSON.stringify(c));
   console.log(JSON.stringify(s));
-  console.log(JSON.stringify(p));
 }

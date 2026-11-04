@@ -1415,8 +1415,8 @@ native code); its library's functions are documented there (`packages/sqlite/doc
 
 ### 14.12 Redis (moved)
 
-The Redis client left the runtime for the `redis` package (`packages/redis`, a package with
-native code); its library's functions are documented there (`packages/redis/docs/native_abi.md`).
+The Redis client left the runtime for the `redis` package (`packages/redis`), which is plain Velt
+on `velt/net` and has no native code.
 
 ### 14.13 PostgreSQL (moved)
 

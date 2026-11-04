@@ -571,8 +571,8 @@ fold; every other benchmark within 3%.
    package as the worked example (tokens/s against `llama-cli`, thread counts reported).
 7. **Rust through `declare c`**: `crate` libraries with generated headers and the slimmed
    `velt_native`; Velt's reactor in `velt.h` with the SDK's `AsyncRead`/`AsyncWrite` and spawner;
-   `packages/postgres` and `packages/redis` move to `declare c` and the reactor API (gate: ±3% of
-   today or faster on their `bench/db` rows), with one worked example of an off-the-shelf
+   `packages/postgres` moves to `declare c` and the reactor API (gate: ±3% of today or faster on
+   its `bench/db` rows; `packages/redis` needs neither, it is plain Velt now), with one worked example of an off-the-shelf
    trait-based crate; then the Velt-specific native ABI, native_abi.md and their tests are
    removed.
 8. **Per-platform backends**: a BLAS package on Accelerate, OpenBLAS and MKL, benchmarked on
@@ -584,7 +584,7 @@ fold; every other benchmark within 3%.
 
 ## Rust crates on Velt's scheduler (step 7)
 
-Today's Rust drivers (`packages/postgres`, `packages/redis`) run on Velt's scheduler through the
+Today's Rust driver (`packages/postgres`, as `packages/redis` was) runs on Velt's scheduler through the
 native ABI's async I/O part (`velt_native::net::TcpStream`, `velt_native::rt::spawn`: the
 program's own sockets, timers and tasks, polled inline by the awaiting task). With that ABI
 retired, `velt.h` keeps them there (owner, 2026-11-03: option (a); no option may regress
@@ -607,9 +607,8 @@ performance):
 - **Cancellation**: a socket or task registered through the API belongs to the awaiting task's
   scope and is closed or cancelled with it, by the rule of `Completion` and leases; late events
   after cancellation are dropped, never delivered to freed state.
-- **Gate before the old ABI is removed**: the Rust `packages/postgres` and `packages/redis`,
-  ported to `declare c` and the public reactor API, run within ±3% of today on the `bench/db`
-  Postgres and Redis rows; plus one worked example of an off-the-shelf trait-based crate wrapped
+- **Gate before the old ABI is removed**: the Rust `packages/postgres`, ported to `declare c` and
+  the public reactor API, runs within ±3% of today on the `bench/db` Postgres rows; plus one worked example of an off-the-shelf trait-based crate wrapped
   this way.
 
 ## Follow-up track: first-party drivers in Velt
@@ -623,6 +622,14 @@ no thread hops, and prove that `velt/net` and Velt's async carry real database p
   codecs, TLS, COPY.
 - **Gate**: match or beat the Rust drivers on the same `bench/db` rows. When a Velt driver
   passes, the Rust one is retired.
+- **As built, Redis:** `packages/redis` passed and its crate is gone. A command queues its bytes and
+  its place in the line for replies under a short lock, and its own task sends them, so it takes no
+  hop through another task; one reader task per connection completes the line. Best of 13 interleaved
+  rounds, Linux, one compiler, Velt over Rust: `set_seq` 1.006, `get_seq` 1.003, `pipeline_set`
+  1.027, `pipeline_get` 1.034, `concurrent_get` 1.069. What the driver needed to get there: wait
+  before reading (a read per reply found nothing), no driver task, one-shot channels reused rather
+  than made per command. Channel operations are what cost most in `velt_rt`; Postgres will meet the
+  same.
 
 ## As built
 
