@@ -15,7 +15,7 @@
 
 use velt_sema::hir::{self, Intrinsic, TyId, TyKind};
 
-use super::hook_calls::{self as hooks, ty, HookTy};
+use super::hook_calls::{self as hooks, ty, Construct, HookTy};
 use super::operand::proj;
 use super::rt::Rt;
 use super::sequence::{may_move_local, root_local, Later};
@@ -264,7 +264,13 @@ impl FnLower<'_, '_> {
             (Part::Text(s), _) => self.push_text(bp, s),
             (Part::Format(e, _), Some(v)) => {
                 let t = self.sub(e.ty);
-                self.push_scalar(bp, v, t);
+                // A template's `${n}` (`TemplateToString` of an integer, sema's `TextInt`).
+                let c = match self.cx.kind(t) {
+                    TyKind::Int(it) if it.is_signed() => Construct::TextInt,
+                    TyKind::Int(_) => Construct::TextUint,
+                    _ => Construct::Format,
+                };
+                self.push_scalar_for(bp, v, t, c);
             }
             (Part::Str(_), Some(v)) => {
                 let a = self.operand_addr(v, STR);
@@ -749,11 +755,13 @@ impl FnLower<'_, '_> {
             // std's number printing, as `push_scalar` (strbuf.rs) appends it.
             TyKind::Int(it) if it.is_signed() => {
                 let v = self.cast_to(v, from, Ty::I64);
-                hooks::int_text(self, ty::I64::arg(v)).emit_to(self, Place::local(out));
+                hooks::int_text(self, Construct::TextInt, ty::I64::arg(v))
+                    .emit_to(self, Place::local(out));
             }
             TyKind::Int(_) => {
                 let v = self.cast_to(v, from, Ty::U64);
-                hooks::uint_text(self, ty::U64::arg(v)).emit_to(self, Place::local(out));
+                hooks::uint_text(self, Construct::TextUint, ty::U64::arg(v))
+                    .emit_to(self, Place::local(out));
             }
             TyKind::Float(_) => {
                 let v = self.float_as_f64(v, aty);

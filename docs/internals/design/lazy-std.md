@@ -111,10 +111,15 @@ never which std module that loads; the header's imports say that.
   `std/prelude/global/number_float.vlt` uses it to load std's float printer (the shortest
   digits, `velt/lang/hooks/number_float`), which lowering prefers to the runtime's.
 
-std's integer printing (`velt/lang/hooks/number_text`) is not on demand: the prelude loads it
-with the other hooks and sema checks its integer hooks in every program, since lowering has no
-runtime fallback for them (#2197; about 2.3% of checking hello, nothing for a program that
-already printed an integer).
+std's integer printing (`velt/lang/hooks/number_text`) is loaded with the other hooks (the
+prelude loads `velt/lang/hooks`), but its integer hooks are checked only where *live* code has a
+construct whose lowering calls them (#2161 step 2; velt_common `hook_demand.rs`): a template or
+`String()` of an integer, the formatting glue of a type that may print one (`console.log`, a
+class's table), an array index (its out-of-bounds message) or an `any`. Live code is the
+program's own and the std code it reaches (`velt_sema` `body/lazy_std/live.rs`), std's own
+conversions included, so hello world checks none of std's integer printing. Lowering has no
+runtime fallback for them (#2197), and asserts that sema demanded each one it calls
+(`hir::Program::hooks_demanded`).
 
 A predicate only decides what is loaded: a program it misses still compiles and prints the same,
 by a slower path (a float the float-operand test misses is printed by the runtime's printer:

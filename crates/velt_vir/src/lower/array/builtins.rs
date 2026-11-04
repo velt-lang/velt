@@ -1,7 +1,7 @@
 //! Generated functions shared by all arrays: buffer growth (`ArrayGrow`) and the bounds-check
 //! panic (`Oob`), which formats `index out of bounds: the len is L but the index is I`.
 
-use crate::lower::hook_calls::{self as hooks, ty, HookTy};
+use crate::lower::hook_calls::{self as hooks, ty, Construct, HookTy};
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cint, unit, Cx, FnLower, ScopeKind};
@@ -94,8 +94,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             let s = lw.temp(Ty::Agg(crate::vir::STR_AGG));
             let n = Operand::Copy(Place::local(num));
             let call = match signed {
-                true => hooks::int_text(&mut lw, ty::I64::arg(n)),
-                false => hooks::uint_text(&mut lw, ty::U64::arg(n)),
+                true => hooks::int_text(&mut lw, Construct::IndexCheck, ty::I64::arg(n)),
+                false => hooks::uint_text(&mut lw, Construct::IndexCheck, ty::U64::arg(n)),
             };
             call.emit_to(&mut lw, Place::local(s));
             parts.push(Operand::Copy(Place::local(s)));

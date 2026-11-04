@@ -21,7 +21,10 @@
 //!   interface implementation that holds one ([`impl_methods`]);
 //! - nothing in the modules lowering looks into by name for other definitions ([`EAGER`]);
 //! - the hooks lowering calls to convert an `any` to a record ([`RECORD_HOOKS`]), although
-//!   lowering calls them: reached by a conversion that may need them ([`record_hooks_needed`]).
+//!   lowering calls them: reached by a conversion that may need them ([`record_hooks_needed`]);
+//! - the hooks whose table entry lists the constructs whose lowering calls them (velt_common
+//!   `hook_demand.rs`: the integer hooks): reached once *live* code has one ([`live`]), which
+//!   [`reach`] works out alongside what it checks; `hir::Program::hooks_demanded` tells lowering.
 //!
 //! A user module's code is always checked, and so is a std module it imports: `velt check`
 //! reports everything in what a program imports, except the prelude's unreached free functions,
@@ -35,7 +38,10 @@ use crate::ctx::Ctx;
 use crate::defs::{BodyState, DefInfo, FnKind};
 use crate::hir::{self, Callee, DefId, ExprKind as E, TyId, TyKind};
 
+mod live;
 mod number_text;
+
+pub(crate) use live::demanded as hooks_demanded;
 
 /// Std modules (path prefixes) checked whole: lowering looks up their definitions by name
 /// (`velt_vir` `STABLE_SORT`, the proxy and typed-array glue, the epoch sections' `pin`,
@@ -124,7 +130,9 @@ pub(crate) const HELPER_NAMES: &[&str] = &[
 pub(crate) fn is_helper(qualified: &str) -> bool {
     let name = qualified.rsplit(['.', ':']).next().unwrap_or(qualified);
     (velt_common::std_hooks::is_lowered(qualified)
-        && !velt_common::std_hooks::is_on_demand(qualified))
+        && velt_common::std_hooks::find(qualified).is_some_and(|h| {
+            !velt_common::std_hooks::ON_DEMAND_FLOAT.contains(&h.name) && h.constructs.is_empty()
+        }))
         || HELPER_NAMES.contains(&name)
         || name
             .strip_prefix("any")
@@ -188,6 +196,8 @@ pub(crate) struct Lazy {
     /// The program's code converts a value that may hold a float to text: the float hooks are
     /// reached (`velt_common::std_hooks::ON_DEMAND_FLOAT`).
     float_text: bool,
+    /// The live definitions, and the hooks their constructs demand ([`live`]).
+    live: live::Live,
 }
 
 impl Lazy {
@@ -208,6 +218,7 @@ impl Lazy {
             record_conversion: false,
             record_hooks: false,
             float_text: false,
+            live: live::Live::default(),
         }
     }
 
@@ -360,6 +371,16 @@ pub(crate) fn reach(cx: &mut Ctx) {
     // field defaults of a class whose methods are deferred, scanned once the class is used (the
     // type of `#tape: Tape | null = null` would make `Tape` used in every program).
     let mut sc = Scan::default();
+    // The hooks the program's own code demands, checked first, as if eager: what they call is
+    // found with the rest in the first round below.
+    live::step(cx, &mut sc.found);
+    for d in std::mem::take(&mut sc.found) {
+        if deferred(cx, d)
+            && matches!(&cx.info[d.0 as usize], DefInfo::Fn(f) if f.state == BodyState::Unchecked)
+        {
+            super::ensure_body(cx, d);
+        }
+    }
     // Those of the definitions made since the last time (generated code checked later,
     // `generated::phase`).
     let from = std::mem::replace(&mut cx.lazy.defaults_scanned, cx.info.len());
@@ -407,10 +428,11 @@ pub(crate) fn reach(cx: &mut Ctx) {
             let user = !cx.modules[module].is_std;
             let first_type = sc.types.len();
             let (first_conv, first_into) = (sc.conversions.len(), sc.into_any.len());
-            // Text conversions count only in the program's own modules. Std code is checked
-            // whether or not the program uses it (the prelude's methods, and what they call), so
-            // its conversions would make every program check the on-demand hooks; where lowering
-            // builds such std code and needs a hook that stayed unchecked, it calls the runtime.
+            // Text conversions count here only in the program's own modules, for the float hooks:
+            // std code is checked whether or not the program uses it (the prelude's methods, and
+            // what they call), and where lowering builds such std code and needs a float hook
+            // that stayed unchecked, it calls the runtime. The integer hooks, which have no such
+            // fallback, count conversions in live code, std's included ([`live`]).
             let texts_before = sc.texts.len();
             match (&mut cx.defs[i], &mut cx.info[i]) {
                 (Some(hir::Def::Fn(f)), info) => {
@@ -469,6 +491,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
         }
         impl_methods(cx, &mut sc.found);
         number_text::reach_hooks(cx, std::mem::take(&mut sc.texts), &mut sc.found);
+        live::step(cx, &mut sc.found);
         let mut checked = false;
         for d in std::mem::take(&mut sc.found) {
             if !deferred(cx, d) {

@@ -1,0 +1,9 @@
+// An integer error type written on a signature, with nothing throwing it: lowering still builds
+// what reports it uncaught, so sema must demand the integer printing (#2161 step 2).
+function f(): void throws i32 {}
+function g(): void throws u8 {}
+function main() {
+  f();
+  g();
+  console.log("done");
+}

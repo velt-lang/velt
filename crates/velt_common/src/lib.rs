@@ -5,6 +5,7 @@ use std::fmt;
 use std::path::PathBuf;
 
 pub mod half;
+pub mod hook_demand;
 pub mod hook_sig;
 pub mod std_hooks;
 pub mod std_modules;

@@ -13,6 +13,7 @@ mod fingerprint;
 mod for_of_consume;
 mod frame_envs;
 mod goldens;
+mod hook_demand;
 mod hybrid;
 mod interp;
 mod keys;

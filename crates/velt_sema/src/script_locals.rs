@@ -238,7 +238,7 @@ fn with_moved(
 
 #[cfg(test)]
 #[path = "script_locals_tests.rs"]
-mod sema_tests;
+pub(crate) mod sema_tests;
 
 #[cfg(test)]
 mod tests {
