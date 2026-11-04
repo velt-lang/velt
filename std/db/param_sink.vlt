@@ -1,0 +1,19 @@
+// velt/db (internal): `ParamSink`, where a driver written in Velt takes a statement's parameters.
+
+/**
+ * A statement's parameters as a driver takes them, value by value: `writeParams` calls these. An
+ * array or tuple gives its values in order, a lone value itself; an object calls `object()`,
+ * then `name` before each value. A value binds as its JSON text would read back.
+ */
+export interface ParamSink {
+  /** An object's members follow, each `name` before its value. */
+  object(): void;
+  name(name: string): void;
+  int(v: i64): void;
+  uint(v: u64): void;
+  float(v: f64): void;
+  bool(v: bool): void;
+  null(): void;
+  text(v: string): void;
+  blob(v: u8[]): void;
+}
