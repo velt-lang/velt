@@ -108,7 +108,7 @@ impl FnCx<'_, '_> {
                     return Some(init);
                 }
                 let f = self.frame_at(j);
-                let name = format!("#class{}#{}", d.0, f.class_lets.len());
+                let name = format!("#class#{}", f.class_lets.len());
                 let local = LocalId(f.locals.len() as u32);
                 f.locals.push(LocalDef {
                     name: name.clone(),

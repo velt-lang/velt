@@ -443,6 +443,8 @@ pub(crate) struct Ctx<'m> {
     /// For each module, the module each of its import specifiers resolved to
     /// (`exports::import_target`).
     pub import_targets: Vec<FxHashMap<&'m str, usize>>,
+    /// How many instances of generic recursive unions have a definition (`recursive_unions`).
+    pub recursive_union_instances: usize,
 }
 
 impl<'m> Ctx<'m> {
@@ -453,6 +455,7 @@ impl<'m> Ctx<'m> {
             gen: Default::default(),
             export_memo: Default::default(),
             import_targets: crate::collect::exports::import_targets(modules),
+            recursive_union_instances: 0,
             ty: Types::new(),
             defs: vec![],
             info: vec![],

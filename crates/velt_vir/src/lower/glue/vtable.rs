@@ -267,7 +267,8 @@ impl Cx<'_> {
         let dyn_ty = self.intern(TyKind::Dyn(iface, iargs));
         let at = (8 * (SLOT_GENERIC_TYPE + HIDDEN)) as usize;
         data.bytes.resize(data.bytes.len().max(at + 8), 0);
-        data.bytes[at..at + 8].copy_from_slice(&(dyn_ty.0 as u64 + 1).to_le_bytes());
+        let key = self.number_of(crate::lower::program::Numbered::Type, dyn_ty.0);
+        data.bytes[at..at + 8].copy_from_slice(&(key as u64).to_le_bytes());
         self.statics.push(data);
         let id = StaticId(self.statics.len() as u32 - 1);
         self.lay

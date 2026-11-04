@@ -12,6 +12,17 @@ use super::{ice, Cx, Work};
 use crate::vir::Ty;
 use crate::vir::{self, AggLayout, ExternFn, ExternId, FuncId, Function, StaticData, StaticId};
 
+/// What [`Cx::number_of`] numbers.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+pub(super) enum Numbered {
+    /// A type a view, an error tag or a generic function's table names.
+    Type,
+    /// A source file.
+    File,
+    /// A definition.
+    Def,
+}
+
 impl<'h> Cx<'h> {
     /// A pass over `hir` with the type table `types` (the HIR's, plus what earlier passes
     /// interned) and the counted types `boxing`.
@@ -21,6 +32,7 @@ impl<'h> Cx<'h> {
         boxing: super::boxing::Boxing,
     ) -> Self {
         Cx {
+            numbered: Default::default(),
             hir,
             prelude_proxy: None,
             native_inits: vec![],
@@ -237,6 +249,14 @@ impl<'h> Cx<'h> {
             self.register_inst(id, &w);
         }
         id
+    }
+
+    /// A number for the type, file or definition `id`, for a symbol or a key in the program, in
+    /// the order lowering meets them: never the id itself, which depends on what sema loaded and
+    /// when, and the VIR must not (docs/internals/design/lazy-std.md "Loading on demand").
+    pub(super) fn number_of(&mut self, kind: Numbered, id: u32) -> u32 {
+        let next = self.numbered.len() as u32 + 1;
+        *self.numbered.entry((kind, id)).or_insert(next)
     }
 
     /// `work` for an instance of a generated function built from its generated definition

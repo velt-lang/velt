@@ -213,7 +213,9 @@ impl Ctx<'_> {
         let module = self.aliases[a as usize].module;
         let mut qual_name = self.qualify(module, name);
         if !args.is_empty() {
-            qual_name = format!("{qual_name}<{}>", self.info.len());
+            // One name per instance, whatever else the check has defined so far.
+            self.recursive_union_instances += 1;
+            qual_name = format!("{qual_name}<{}>", self.recursive_union_instances);
         }
         let info = EnumInfo {
             name: name.clone(),
