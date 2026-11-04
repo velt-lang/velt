@@ -276,21 +276,18 @@ fn exported_name(n: &ast::ImportName) -> String {
 }
 
 fn imported_names(i: &ast::Import) -> Vec<Import> {
-    if let Some(ns) = &i.namespace {
-        return vec![Import {
-            local: ns.name.clone(),
-            from: i.from.clone(),
-            name: None,
-        }];
-    }
-    i.names
-        .iter()
-        .map(|n| Import {
-            local: exported_name(n),
-            from: i.from.clone(),
-            name: Some(n.name.name.clone()),
-        })
-        .collect()
+    // `import x, * as ns from` binds both (#1916).
+    let namespace = i.namespace.iter().map(|ns| Import {
+        local: ns.name.clone(),
+        from: i.from.clone(),
+        name: None,
+    });
+    let names = i.names.iter().map(|n| Import {
+        local: exported_name(n),
+        from: i.from.clone(),
+        name: Some(n.name.name.clone()),
+    });
+    namespace.chain(names).collect()
 }
 
 /// The name a top-level declaration binds.

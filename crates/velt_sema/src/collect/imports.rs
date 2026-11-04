@@ -176,15 +176,20 @@ fn removed_export(from: &str, name: &str) -> Option<&'static str> {
 }
 
 fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::ImportName) {
-    // A module's namespace that `t` re-exports (`export * as ns from "…"`): bound as
-    // `import * as local` of that module.
-    if let Some(s) = super::exports::namespace_module(cx, t, &n.name.name) {
-        bind_namespace(cx, m, s, bound_name(n));
-        return;
-    }
     // A namespace (`crate::namespaces`): its exported members `N.x` are bound as `local.x`;
     // a type or interface of the same name is imported with it.
     let members = namespace_exports(cx, t, &n.name.name);
+    // A module's namespace that `t` re-exports (`export * as ns from "…"`): bound as
+    // `import * as local` of that module. Looked for only when `t` exports `ns.x` names (the
+    // memoized table), so plain imports never walk the re-exports again.
+    let reexported = match members.is_empty() {
+        true => None,
+        false => super::exports::namespace_module(cx, t, &n.name.name),
+    };
+    if let Some(s) = reexported {
+        bind_namespace(cx, m, s, bound_name(n));
+        return;
+    }
     if !members.is_empty() {
         let local = bound_name(n).clone();
         // Both are namespaces: TypeScript's TS2440 (a type or value import merges with a
