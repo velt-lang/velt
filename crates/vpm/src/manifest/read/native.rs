@@ -9,6 +9,22 @@ use crate::manifest::{
     NativeConfig,
 };
 
+/// The longest C library key and system library name: well inside every linker's limits. A name
+/// of some thousands of characters makes `link.exe` lose track of its arguments.
+const MAX_LIBRARY_NAME: usize = 64;
+
+/// The error for a name longer than [`MAX_LIBRARY_NAME`], quoting enough of it to find it.
+fn check_name_length(name: &str) -> Result<(), String> {
+    if name.len() <= MAX_LIBRARY_NAME {
+        return Ok(());
+    }
+    let start: String = name.chars().take(24).collect();
+    Err(format!(
+        "`{start}…` is too long for a library name: {} bytes, at most {MAX_LIBRARY_NAME}",
+        name.len()
+    ))
+}
+
 impl Reader<'_> {
     /// `native: { path?: string; targets?: string[]; wasm?: boolean; c?: … }`: the Rust crate
     /// (`None` when the object has only `c`) and the C libraries.
@@ -53,6 +69,10 @@ impl Reader<'_> {
             return out;
         };
         for (name, v) in entries {
+            if let Err(long) = check_name_length(&name.name) {
+                self.error(long, name.span);
+                continue;
+            }
             if name.name.is_empty()
                 || name.name == "c"
                 || !name
@@ -166,6 +186,7 @@ impl Reader<'_> {
 /// a manifest names a library and never passes the linker a flag.
 pub(crate) fn check_system_library(text: &str) -> Result<(), String> {
     let name = text.strip_prefix("framework:").unwrap_or(text);
+    check_name_length(name)?;
     let ok = !name.is_empty()
         && !name.starts_with(['-', '.'])
         && name

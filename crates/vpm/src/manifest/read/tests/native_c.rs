@@ -84,6 +84,34 @@ fn c_library_entries_are_checked() {
 }
 
 #[test]
+fn c_library_names_have_a_length_limit() {
+    let at_limit = "x".repeat(64);
+    let over = "x".repeat(65);
+    // The key and the system name, the latter with and without `framework:`.
+    let ok = read(&with(&format!(
+        "native: {{ c: {{ {at_limit}: {{ system: {{ darwin: \"framework:{at_limit}\", default: \"{at_limit}\" }} }} }} }}"
+    )));
+    assert!(ok.c_libraries.is_some_and(|c| c.contains_key(&at_limit)));
+    for src in [
+        format!("native: {{ c: {{ {over}: {{}} }} }}"),
+        format!("native: {{ c: {{ x: {{ system: {{ default: \"{over}\" }} }} }} }}"),
+        format!("native: {{ c: {{ x: {{ system: {{ darwin: \"framework:{over}\" }} }} }} }}"),
+    ] {
+        let (message, _) = error(&with(&src));
+        assert!(message.contains("too long for a library name"), "{message}");
+        assert!(message.contains("65 bytes, at most 64"), "{message}");
+        // The message doesn't repeat the whole name.
+        assert!(!message.contains(&over), "{message}");
+    }
+    // Cut on a character, whatever the name holds.
+    let wide = "\u{ff4d}".repeat(40);
+    let (message, _) = error(&with(&format!(
+        "native: {{ c: {{ x: {{ system: {{ default: \"{wide}\" }} }} }} }}"
+    )));
+    assert!(message.contains("too long for a library name"), "{message}");
+}
+
+#[test]
 fn c_libraries_and_allow_native_are_written_back() {
     let m = read(&with(
         "native: { c: { sqlite3: { system: { linux: \"sqlite3\", default: \"winsqlite3\" } }, \"my-lib\": {} } }, allowNative: [\"sqlite\", \"llama\"]",
