@@ -1,0 +1,4 @@
+// A namespace exported with `export type` is no value for its importers: TS1362.
+import d from "./_default_interface_star_type_reexport";
+
+console.log(d.v);

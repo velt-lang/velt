@@ -204,9 +204,20 @@ fn import_name(cx: &mut Ctx, m: usize, t: usize, imp: &ast::Import, n: &ast::Imp
     // A module's namespace that `t` re-exports (`export * as ns from "…"`): bound as
     // `import * as local` of that module.
     if let Some(s) = namespace_module(cx, t, &n.name.name) {
-        bind_namespace(cx, m, s, bound_name(n), n.type_only);
-        // `export default interface I` next to it: the type meaning of the same name.
-        if let Some(ty) = export_of(cx, t, &type_key(&n.name.name)) {
+        let exported_as_type = imports_of(cx, t).any(|(list, exported)| {
+            exported
+                && list.names.iter().any(|x| {
+                    x.type_only
+                        && bound_name(x).name == n.name.name
+                        && !velt_syntax::is_type_default(list, x)
+                })
+        });
+        bind_namespace(cx, m, s, bound_name(n), n.type_only || exported_as_type);
+        // `export default interface I` next to it: the type meaning of the same name, which
+        // `export type { default } from` exports under the name itself.
+        let as_type = (export_of(cx, t, &n.name.name))
+            .filter(|&it| cx.meaning(it) != crate::type_meanings::Meaning::Value);
+        if let Some(ty) = export_of(cx, t, &type_key(&n.name.name)).or(as_type) {
             let scope = &mut cx.scopes[m];
             scope.items.insert(type_key(&bound_name(n).name), ty);
             scope.type_keys = true;
