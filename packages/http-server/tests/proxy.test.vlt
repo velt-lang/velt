@@ -32,7 +32,14 @@ for (const protocol of ["HTTP/1.1", "HTTP/2"]) {
         const path = new URL(req.url).pathname;
         if (path == "/plain" || path == "/plain/clone") {
           const r = new Response("abc");
+          r.headers.set("connection", "X-Hop , x-other");
+          r.headers.set("x-hop", "1");
+          r.headers.set("x-other", "2");
           r.headers.set("keep-alive", "timeout=5");
+          r.headers.set("proxy-connection", "keep-alive");
+          r.headers.set("te", "trailers");
+          r.headers.set("trailer", "x-t");
+          r.headers.set("upgrade", "x-protocol");
           r.headers.set("x-origin", "yes");
           return r;
         }
@@ -45,6 +52,17 @@ for (const protocol of ["HTTP/1.1", "HTTP/2"]) {
         h2 ? { port: 0, tls: { cert: TEST_CERT, key: TEST_KEY } } : { port: 0 },
         async (req: Request): Promise<Response> => {
           const path = new URL(req.url).pathname;
+          if (path.startsWith("/wrapped/")) {
+            const fetched = await fetch(`${origin}/many`);
+            const headers = new Headers(fetched.headers);
+            if (path == "/wrapped/no-coding" || path == "/wrapped/neither") {
+              headers.delete("content-encoding");
+            }
+            if (path == "/wrapped/neither") {
+              headers.delete("content-length");
+            }
+            return new Response(fetched.body, { headers });
+          }
           const r = await fetch(`${origin}${path}`);
           if (!path.endsWith("/clone")) {
             return r;
@@ -84,10 +102,38 @@ for (const protocol of ["HTTP/1.1", "HTTP/2"]) {
         expect(await r.text()).toBe("abc");
         expect(r.headers.get("x-origin")).toBe("yes");
         expect(r.headers.get("keep-alive")).toBe(null);
+        expect(r.headers.get("proxy-connection")).toBe(null);
+        expect(r.headers.get("te")).toBe(null);
+        expect(r.headers.get("trailer")).toBe(null);
+        expect(r.headers.get("upgrade")).toBe(null);
+        // Its own `connection`, and the fields it named, in any case and with spaces.
+        expect((r.headers.get("connection") ?? "").toLowerCase().includes("x-hop")).toBe(false);
+        expect(r.headers.get("x-hop")).toBe(null);
+        expect(r.headers.get("x-other")).toBe(null);
         // One date, this server's: an HTTP-date has one "GMT".
         expect(r.headers.get("date")!.split("GMT").length).toBe(2);
       });
     }
+
+    // What a client gets of `path`: "cut off" for a response that failed.
+    const outcome = async (path: string): Promise<string> => {
+      try {
+        const r = await get(path);
+        return `${r.status} ${await r.text()}`;
+      } catch (e) {
+        return "cut off";
+      }
+    };
+
+    it("cuts a fetched body off in a new response that keeps the fetched fields", async () => {
+      expect(await outcome("/wrapped/fetched")).toBe("cut off");
+      // Without the coding the client doesn't decode: it is the length that cuts it off.
+      expect(await outcome("/wrapped/no-coding")).toBe("cut off");
+    });
+
+    it("sends a fetched body whole in a new response without those fields", async () => {
+      expect(await outcome("/wrapped/neither")).toBe(`200 ${"a".repeat(1000)}`);
+    });
 
     it("keeps a body's length when it wasn't decoded", async () => {
       const r = await get("/plain");

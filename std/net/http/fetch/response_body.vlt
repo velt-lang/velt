@@ -194,10 +194,12 @@ export function serverParts(r: Response): ResponseParts throws IoError {
 
 /**
  * `[name, value, …]` of a fetched response, without the fields that end at the connection it came
- * over (RFC 9110 §7.6.1) and its `date` (the server sending it on writes its own). A `decoded` body
+ * over and those its `connection` names (RFC 9110 §7.6.1), and its `date` (the server sending it on
+ * writes its own). A `decoded` body
  * no longer has the coding it was sent in, nor the `content-length` that counted the coded bytes.
  */
 function passedOn(list: string[], decoded: bool): string[] {
+  const named = connectionNames(list);
   const out: string[] = [];
   for (let i: i64 = 0; i + 1 < (list.length as i64); i += 2) {
     const name = list[i];
@@ -209,13 +211,27 @@ function passedOn(list: string[], decoded: bool): string[] {
       name != "trailer" &&
       name != "upgrade" &&
       name != "date" &&
-      !(decoded && (name == "content-encoding" || name == "content-length"))
+      !(decoded && (name == "content-encoding" || name == "content-length")) &&
+      !named.includes(name)
     ) {
       out.push(name);
       out.push(list[i + 1]);
     }
   }
   return out;
+}
+
+/** The field names the `connection` fields of `[name, value, …]` list, in lowercase. */
+function connectionNames(list: string[]): string[] {
+  const names: string[] = [];
+  for (let i: i64 = 0; i + 1 < (list.length as i64); i += 2) {
+    if (list[i] == "connection") {
+      for (const name of list[i + 1].split(",")) {
+        names.push(name.trim().toLowerCase());
+      }
+    }
+  }
+  return names;
 }
 
 /**
