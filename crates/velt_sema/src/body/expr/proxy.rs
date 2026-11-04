@@ -23,6 +23,7 @@ pub(crate) use velt_common::std_modules::PROXY_MODULES;
 
 use crate::body::FnCx;
 use crate::hir::{self, DefId, ExprKind as H};
+use crate::hook_calls::{self as hooks, ty, Call, HookTy};
 
 impl FnCx<'_, '_> {
     /// Has the program loaded `Proxy` (a module names it: std/prelude/global/proxy.vlt)? Only
@@ -31,18 +32,15 @@ impl FnCx<'_, '_> {
         self.cx.prelude_adt("Proxy").is_some()
     }
 
-    /// The prelude helper `name` for an operation on `any`, or, in a program that has loaded
+    /// The prelude class `name` for an operation on `any`, or, in a program that has loaded
     /// `Proxy`, its version that asks a proxy's traps (`<name>Proxy`, velt/lang/hooks/proxy).
+    /// The function hooks with a proxy version are chosen where they are called, by
+    /// [`Self::uses_proxy`], through their typed builders (`hook_calls.rs`).
     pub(crate) fn proxy_op(&self, name: &'static str) -> &'static str {
         if !self.uses_proxy() {
             return name;
         }
         match name {
-            velt_common::std_hook!(spread_any) => velt_common::std_hook!(spread_any_proxy),
-            velt_common::std_hook!(any_has_own) => velt_common::std_hook!(any_has_own_proxy),
-            velt_common::std_hook!(any_values) => velt_common::std_hook!(any_values_proxy),
-            velt_common::std_hook!(any_entries) => velt_common::std_hook!(any_entries_proxy),
-            velt_common::std_hook!(any_delete_member) => velt_common::std_hook!(any_delete_proxy),
             velt_common::std_hook!(has_own_property) => {
                 velt_common::std_hook!(has_own_property_proxy)
             }
@@ -155,7 +153,9 @@ impl FnCx<'_, '_> {
         self.cx.any_impl();
         self.cx.note_dyn_members();
         self.cx.object_copies.proxies = true;
-        Some(self.prelude_fn_call(velt_common::std_hook!(proxy_new_any), args.to_vec(), span))
+        let target = ty::Any::of(args[0].clone());
+        let call = hooks::proxy_new_any(target, ty::Any::of(handler.clone()));
+        Some(call.check(self, span))
     }
 
     /// The `Proxy` object `h` (`new Proxy(...)` of class `d`) as an `any`; `h` itself for
@@ -265,11 +265,7 @@ impl FnCx<'_, '_> {
         let b = self.cx.ty.bool_;
         let cond = self.intrinsic(hir::Intrinsic::IsTypedProxy, vec![x], b, span);
         self.proxy_keys_inner = true;
-        let then = self.prelude_fn_call(
-            velt_common::std_hook!(proxy_keys_of),
-            vec![arg.clone()],
-            span,
-        );
+        let then = hooks::proxy_keys_of(ty::Any::of(arg.clone())).check(self, span);
         let els = self.expr(&call, None, crate::body::Want::Move);
         self.proxy_keys_inner = false;
         let ty = els.ty;
@@ -306,8 +302,8 @@ impl FnCx<'_, '_> {
             },
             span,
         );
-        let proxy = vec![rhs.clone(), lhs.clone()];
-        Some(self.proxy_split(rhs, velt_common::std_hook!(proxy_has), proxy, &plain, span))
+        let proxy = hooks::proxy_has(ty::Any::of(rhs.clone()), ty::Str::of(lhs.clone()));
+        Some(self.proxy_split(rhs, proxy, &plain, span))
     }
 
     /// `Object.hasOwn(x, k)` of a class instance or an object `x` that may be a typed proxy:
@@ -327,22 +323,15 @@ impl FnCx<'_, '_> {
         if !self.may_be_typed_proxy(t) {
             return None;
         }
-        let proxy = vec![o.clone(), k.clone()];
-        Some(self.proxy_split(
-            o,
-            velt_common::std_hook!(proxy_has_own_of),
-            proxy,
-            plain,
-            span,
-        ))
+        let proxy = hooks::proxy_has_own_of(ty::Any::of(o.clone()), ty::Str::of(k.clone()));
+        Some(self.proxy_split(o, proxy, plain, span))
     }
 
-    /// `IsTypedProxy(x) ? f(args) : plain`, both checked without the typed proxy hooks.
+    /// `IsTypedProxy(x) ? proxy : plain`, both checked without the typed proxy hooks.
     fn proxy_split(
         &mut self,
         x: &ast::Expr,
-        f: &str,
-        args: Vec<ast::Expr>,
+        proxy: Call<ty::Bool, ast::Expr>,
         plain: &ast::Expr,
         span: Span,
     ) -> hir::Expr {
@@ -350,7 +339,7 @@ impl FnCx<'_, '_> {
         let b = self.cx.ty.bool_;
         let cond = self.intrinsic(hir::Intrinsic::IsTypedProxy, vec![xv], b, span);
         self.proxy_keys_inner = true;
-        let then = self.prelude_fn_call(f, args, span);
+        let then = proxy.check(self, span);
         let els = self.expr(plain, None, crate::body::Want::Move);
         self.proxy_keys_inner = false;
         let ty = els.ty;
@@ -391,9 +380,9 @@ impl FnCx<'_, '_> {
     /// `if (IsTypedProxy(e)) proxySpreadCheck(e)`. Its fields are its traps' or the viewed
     /// object's, which no lock guards.
     pub(super) fn proxy_spread_check(&mut self, e: &ast::Expr, t: hir::TyId) -> hir::Expr {
-        let hook = velt_common::std_hook!(proxy_spread_check);
+        let hook = |e: ast::Expr| hooks::proxy_spread_check(ty::Any::of(e));
         let (Some(any), true) = (self.any_ty(), self.cx.holds_lock(t)) else {
-            return self.prelude_fn_call(hook, vec![e.clone()], e.span);
+            return hook(e.clone()).check(self, e.span);
         };
         let span = e.span;
         let x = self.expr(e, None, crate::body::Want::Borrow);
@@ -406,38 +395,16 @@ impl FnCx<'_, '_> {
         let x = self.expr(e, None, crate::body::Want::Borrow);
         let x = self.share_if_place(x);
         let Ok(boxed) = self.box_value_dynamic(x, any, crate::any::Dynamic::Any) else {
-            return self.prelude_fn_call(hook, vec![e.clone()], span);
+            return hook(e.clone()).check(self, span);
         };
         let unit = self.cx.ty.unit;
-        let then = self.prelude_hir_call(hook, vec![boxed], unit, span);
+        let then = hooks::proxy_spread_check(ty::Any::of(boxed)).emit(self, unit, span);
         let kind = H::If {
             cond: Box::new(cond),
             then: Box::new(then),
             els: Box::new(self.unit_expr(span)),
         };
         self.mk(kind, unit, span)
-    }
-
-    /// A call of the prelude function `name` with the checked arguments `args`, of type `ret`.
-    /// It throws what `name` throws, as any call does (`anyConstructor`'s dispatch, for one,
-    /// throws what a proxy's traps throw).
-    pub(crate) fn prelude_hir_call(
-        &mut self,
-        name: &str,
-        args: Vec<hir::Expr>,
-        ret: hir::TyId,
-        span: Span,
-    ) -> hir::Expr {
-        let d = self
-            .cx
-            .prelude_fn(name)
-            .unwrap_or_else(|| panic!("ICE: the prelude without `{name}`"));
-        self.call_throws(d, &[], ret, span);
-        let kind = H::Call {
-            callee: hir::Callee::Def(d, vec![]),
-            args,
-        };
-        self.mk(kind, ret, span)
     }
 
     /// `delete obj.k` / `delete obj[k]` where `obj` is an `any` or `object`: the prelude's
@@ -465,20 +432,24 @@ impl FnCx<'_, '_> {
                 // A symbol constant names the member it keys; a proxy's trap sees the symbol.
                 match self.symbol_key_of(e) {
                     Some(name) if self.uses_proxy() => {
-                        let args = vec![object.clone(), lit(name, e.span), (*e).clone()];
-                        return Some(self.prelude_fn_call(
-                            velt_common::std_hook!(any_delete_sym),
-                            args,
-                            span,
-                        ));
+                        let call = hooks::any_delete_sym(
+                            ty::Any::of(object.clone()),
+                            ty::Str::of(lit(name, e.span)),
+                            ty::Symbol::of((*e).clone()),
+                        );
+                        return Some(call.check(self, span));
                     }
                     Some(name) => lit(name, e.span),
                     None => (*e).clone(),
                 }
             }
         };
-        let f = self.proxy_op(velt_common::std_hook!(any_delete_member));
-        Some(self.prelude_fn_call(f, vec![object.clone(), k], span))
+        let (o, k) = (ty::Any::of(object.clone()), ty::Any::of(k));
+        let call = match self.uses_proxy() {
+            true => hooks::any_delete_proxy(o, k),
+            false => hooks::any_delete_member(o, k),
+        };
+        Some(call.check(self, span))
     }
 
     /// `key in obj` where `obj` is an `any`: `Intrinsic::AnyHas` (a proxy runs its `has`
@@ -497,8 +468,9 @@ impl FnCx<'_, '_> {
             if let Some(name) = self.symbol_key_of(lhs) {
                 self.note_dyn_members();
                 let name = super::setters::synth(ast::ExprKind::Lit(ast::Lit::Str(name)), lhs.span);
-                let args = vec![rhs.clone(), name, lhs.clone()];
-                return Some(self.prelude_fn_call(velt_common::std_hook!(any_has_sym), args, span));
+                let (o, k) = (ty::Any::of(rhs.clone()), ty::Symbol::of(lhs.clone()));
+                let call = hooks::any_has_sym(o, ty::Str::of(name), k);
+                return Some(call.check(self, span));
             }
         }
         let k = match self.symbol_key_of(lhs) {
@@ -572,12 +544,7 @@ impl FnCx<'_, '_> {
         };
         let b = self.cx.ty.bool_;
         if self.uses_proxy() && self.symbolic_key_type(kty_of_key) {
-            return self.prelude_hir_call(
-                velt_common::std_hook!(any_has_key),
-                vec![obj, k],
-                b,
-                span,
-            );
+            return hooks::any_has_key(ty::Any::of(obj), ty::Any::of(k)).emit(self, b, span);
         }
         self.any_op(hir::Intrinsic::AnyHas, vec![obj, k], b, span)
     }

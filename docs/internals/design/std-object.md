@@ -100,11 +100,16 @@ a build by reason):
   callers can inline them, and are compiled into the cached functions that call them (so they are
   in those functions' keys).
 - **Renamed duplicates** (`$dup`): not the same function in every program.
-- **Functions reaching statics with identity**: a static with relocations (vtables, type
-  descriptors, `any` tables) or one the program writes (module state, static atomics), named by
-  the function or by a small function it may inline. A copy in another object would be another
-  address. Serving them needs statics with symbols and linkage in VIR (step 4); it is the largest
-  exclusion left, 3-5k statements in `fetch.vlt`, the todo-api example and the sqlite engine.
+- **Functions reaching statics with identity that can't be named.** A static with relocations
+  (vtables, type descriptors, `any` tables) or one the program writes (module state, static
+  atomics) is compared or written by address, so a cached object can't carry a copy. Such a
+  static, and what its relocations reach, is named instead (vir.rs invariant 13,
+  `std_cache/statics.rs`): `_Vs<its content fingerprint>`, the same in every program with the
+  same static. The program defines it (`Export`, and exports the functions its relocations
+  name), and the function's own program declares it (`Import`, with its contents, so the code
+  is optimized as it would be in the program). Only two statics of one program with the same
+  contents can't be named. On `bench/json/parse_typed.vlt` this serves 7,137 of its 8,124
+  std statements instead of 5,264.
 - **Functions that call through a function pointer** (callbacks): in the program `const_fields`
   specializes them for the closure their caller passes and inlines it; compiled on their own,
   `Array.map` and `Map.upsert` ran 3-6% slower.
@@ -257,10 +262,12 @@ of its own (rt_abi.md "Module state"), so an object's std module-level `let` wou
 second block. Std has no module-level `let` today, so this is for later. Static atomics
 (`StaticData::mutable`, such as the four words of `std/sync/epoch/reclaim.vlt`) are written by address,
 and a second copy would be a second word. Fingerprints compare statics by contents, so they do not
-catch any of this; `Canon::reaches_mutable_static` (`crates/velt_vir/src/fingerprint.rs`) finds
-the functions that reach a static atomic. A function that refers
-to any of these statics does not go into the object in the first version: two copies, the
-program's and the object's, would compare unequal. The object build marks these functions. A later version can give such statics one symbol, defined once, as codegen units do.
+catch any of this. Two copies, the program's and the object's, would compare unequal, so the
+first version kept every function that refers to such a static in the program. Now such
+statics have one symbol, defined once by the program, as codegen units do: the std cache names
+them by their contents (vir.rs invariant 13, "The std cache" above), and the cached objects
+refer to the program's copy. Only two statics of one program with the same contents can't be
+named, and the code reaching them stays in the program.
 
 ## Symbols and linkage
 
@@ -557,8 +564,8 @@ head, with interleaved runs:
 2. VIR fingerprints and `Linkage::Import` in both backends (tests with hand-built VIR).
 3. The std cache ("The std cache" above), behind `VELT_STD_OBJECT=1`; on by default for release
    builds in a separate change once the measurements hold on all three OSes.
-4. Statics with symbols and linkage in VIR, so code reaching statics with identity is served too;
-   `inline()` for fast paths where measurements ask for one.
+4. Statics with symbols and linkage in VIR, so code reaching statics with identity is served too
+   (done, #2189); `inline()` for fast paths where measurements ask for one.
 5. Prebuilt objects in `scripts/package.sh` and target packs.
 6. Later: statics with identity in the object, the JIT host keeping std compiled, a cheaper
    fingerprint if lowering std shows up in profiles.

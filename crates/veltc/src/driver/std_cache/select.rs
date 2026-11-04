@@ -4,9 +4,10 @@
 //! except
 //! - small ones ([`SMALL`]), which stay where callers can inline them;
 //! - renamed duplicates (`$dup`), which are not the same function in every program;
-//! - those whose inlinable set ([`inlinable`]) names a static with relocations or one that is
-//!   written: vtables, type descriptors and module state are compared or written by address,
-//!   and a copy in another object would be another address;
+//! - those whose inlinable set ([`inlinable`]) reaches a static with identity (relocations, or
+//!   written: vtables, type descriptors, module state) that can't be named: such statics are
+//!   named and used by address from the program (`statics`), unless another static has the same
+//!   contents;
 //! - those whose inlinable set calls through a function pointer: in the program `const_fields`
 //!   specializes them for the closure their caller passes and inlines it (`Array.map`,
 //!   `Map.upsert` ran 3-6% slower compiled on their own).
@@ -14,6 +15,8 @@
 use std::collections::{BTreeMap, HashSet};
 
 use velt_vir::vir::{self, Callee, Const, Linkage, Operand, Rvalue, Stmt, Terminator};
+
+use super::statics::{self, Names};
 
 /// Functions of fewer statements (terminators included) than this stay in the program, where
 /// they can be inlined (velt_opt's `SMALL_COST` is 40).
@@ -41,15 +44,15 @@ fn is_std(f: &vir::Function) -> bool {
     velt_common::std_modules::is_std(&name) || name.starts_with(GENERATED_STD)
 }
 
-/// The functions of `program` the cache serves.
-pub(super) fn candidates(program: &vir::Program) -> Vec<usize> {
+/// The functions of `program` the cache serves (`names`: its statics' names).
+pub(super) fn candidates(program: &vir::Program, names: &Names) -> Vec<usize> {
     (0..program.funcs.len())
-        .filter(|&i| reason(program, i).is_none())
+        .filter(|&i| reason(program, names, i).is_none())
         .collect()
 }
 
 /// Why std function `i` stays in the program; `None` when the cache serves it.
-fn reason(program: &vir::Program, i: usize) -> Option<&'static str> {
+fn reason(program: &vir::Program, names: &Names, i: usize) -> Option<&'static str> {
     let f = &program.funcs[i];
     if !is_std(f) || f.linkage != Linkage::Internal || f.blocks.is_empty() {
         return Some("not internal");
@@ -61,10 +64,7 @@ fn reason(program: &vir::Program, i: usize) -> Option<&'static str> {
         return Some("$dup");
     }
     let set = inlinable(program, i);
-    if !set
-        .iter()
-        .all(|&j| plain_statics(program, &program.funcs[j]))
-    {
+    if !statics::nameable(names, &statics::reached(program, &set)) {
         return Some("statics with identity");
     }
     if set
@@ -78,11 +78,11 @@ fn reason(program: &vir::Program, i: usize) -> Option<&'static str> {
 
 /// The std code of `program` by why it stays in the program (statements), and how much the
 /// cache serves (`VELT_STD_OBJECT_STATS`).
-pub(super) fn reasons(program: &vir::Program) -> BTreeMap<&'static str, usize> {
+pub(super) fn reasons(program: &vir::Program, names: &Names) -> BTreeMap<&'static str, usize> {
     let mut by = BTreeMap::new();
     for (i, f) in program.funcs.iter().enumerate() {
         if is_std(f) {
-            *by.entry(reason(program, i).unwrap_or("served"))
+            *by.entry(reason(program, names, i).unwrap_or("served"))
                 .or_default() += size(f);
         }
     }
@@ -107,31 +107,20 @@ pub(super) fn inlinable(program: &vir::Program, i: usize) -> Vec<usize> {
     order
 }
 
-/// The functions the code of `set` (an [`inlinable`] set) calls without compiling them: what its
-/// object declares, in a deterministic order.
+/// The functions the code of `set` (an [`inlinable`] set) calls without compiling them, and those
+/// the statics it reaches name (it may load and call them): what its object declares, in a
+/// deterministic order.
 pub(super) fn declared(program: &vir::Program, set: &[usize]) -> Vec<usize> {
     let mut seen: HashSet<usize> = set.iter().copied().collect();
     let mut out = vec![];
-    for &j in set {
-        for c in referenced(&program.funcs[j]) {
-            if seen.insert(c) {
-                out.push(c);
-            }
+    let named = statics::functions(program, &statics::reached(program, set));
+    let called = set.iter().flat_map(|&j| referenced(&program.funcs[j]));
+    for c in called.chain(named) {
+        if seen.insert(c) {
+            out.push(c);
         }
     }
     out
-}
-
-/// Whether every static `f` names holds plain bytes: no relocations, never written.
-fn plain_statics(program: &vir::Program, f: &vir::Function) -> bool {
-    let mut plain = true;
-    visit(f, &mut |op| {
-        if let Operand::Const(Const::Static(s), _) = op {
-            let s = &program.statics[s.0 as usize];
-            plain &= s.relocs.is_empty() && s.mutable.is_none();
-        }
-    });
-    plain
 }
 
 /// Whether `f` calls through a function pointer.
@@ -168,7 +157,7 @@ pub(super) fn referenced(f: &vir::Function) -> Vec<usize> {
 }
 
 /// Every operand of `f`'s code.
-fn visit(f: &vir::Function, each: &mut dyn FnMut(&Operand)) {
+pub(super) fn visit(f: &vir::Function, each: &mut dyn FnMut(&Operand)) {
     for b in &f.blocks {
         for s in &b.stmts {
             match s {

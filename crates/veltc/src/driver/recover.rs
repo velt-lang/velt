@@ -16,9 +16,20 @@ pub(super) fn check_recovering(
     opts: &BuildOptions,
     scope: &CheckScope,
 ) -> Result<(), BuildError> {
+    check_recovering_loaded(sess, opts, scope).and_then(|(_, checked)| checked)
+}
+
+/// [`check_recovering`] that also returns the loaded modules, for a lint of them (`velt check
+/// --perf`): `Err` when loading failed, so nothing was checked.
+pub(super) fn check_recovering_loaded(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    scope: &CheckScope,
+) -> Result<(velt_loader::Loaded, Result<(), BuildError>), BuildError> {
     let loaded = load_modules(sess, opts, scope)?;
     if !sess.has_errors() {
-        return sema_stage(sess, opts, scope, &loaded).map(drop);
+        let checked = sema_stage(sess, opts, scope, &loaded).map(drop);
+        return Ok((loaded, checked));
     }
     let t = Instant::now();
     let broken: std::collections::HashSet<velt_common::FileId> = sess
@@ -47,7 +58,7 @@ pub(super) fn check_recovering(
         sess.diagnostics.extend(found);
     }
     sess.record("sema", t);
-    Err(BuildError::Diagnostics)
+    Ok((loaded, Err(BuildError::Diagnostics)))
 }
 
 /// Where diagnostic `d` is reported (`None`: nowhere in particular).

@@ -54,6 +54,7 @@ impl<'a> Printer<'a> {
             ItemKind::Var(var) => cat![self.var_decl(var), ";"],
             ItemKind::Extend(decl) => self.extend(decl),
             ItemKind::ExternFn(sig) if sig.host.is_some() => self.host_fn(sig),
+            ItemKind::ExternFn(sig) if sig.c.is_some() => self.c_fn(sig),
             ItemKind::ExternFn(sig) => {
                 let asyncness = match (sig.is_system, sig.is_intrinsic, sig.is_async) {
                     // Not a system function (the check says why), but written as it was.
@@ -71,6 +72,17 @@ impl<'a> Printer<'a> {
             ItemKind::Namespace(n) => self.namespace(n, item.span.hi),
         };
         cat![export, body]
+    }
+
+    /// `declare c("<library>") [async] function f(…): R;`.
+    fn c_fn(&mut self, sig: &FnSig) -> Doc {
+        let Some(c) = &sig.c else {
+            return text("");
+        };
+        let library = text(string_literal(slice(self.src, c.span)));
+        let asyncness = if sig.is_async { "async " } else { "" };
+        let sig = self.fn_sig(sig, "function ", sig.span.hi);
+        cat!["declare c(", library, ") ", asyncness, sig, ";"]
     }
 
     /// `declare host("<module>") [async] function f(…): R;` (`async` is an error, printed as

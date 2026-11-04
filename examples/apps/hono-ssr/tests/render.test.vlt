@@ -1,0 +1,204 @@
+// Unit tests of the provider in ../hono: each expected string is what hono/jsx 4.13.16 renders for
+// the same JSX on Node (`await (<…/>).toString()`).
+
+import { renderToString, RenderError } from "hono/jsx";
+import type { Child } from "hono/jsx";
+import { raw } from "hono/html";
+import { channel, Channel } from "velt/sync";
+
+export async function test_text_and_attributes_are_escaped() {
+  assertEq(
+    await renderToString(
+      <a href="/x?a=1&b='2'" title={'q"'}>
+        a & b {"<"} c {">"} d "e" 'f'
+      </a>,
+    ),
+    "<a href=\"/x?a=1&amp;b=&#39;2&#39;\" title=\"q&quot;\">a &amp; b &lt; c &gt; d &quot;e&quot; &#39;f&#39;</a>",
+  );
+}
+
+export async function test_empty_void_elements_close_themselves() {
+  assertEq(
+    await renderToString(
+      <div>
+        <br />
+        <img src="i.png" alt="" />
+      </div>,
+    ),
+    "<div><br/><img src=\"i.png\" alt=\"\"/></div>",
+  );
+  assertEq(await renderToString(<div></div>), "<div></div>");
+}
+
+export async function test_boolean_attributes() {
+  // Listed boolean attributes render `name=""` or nothing; any other renders the word.
+  assertEq(
+    await renderToString(<input type="checkbox" checked={true} disabled={false} readonly={true} />),
+    "<input type=\"checkbox\" checked=\"\" readonly=\"\"/>",
+  );
+  assertEq(
+    await renderToString(<div hidden={true} data-on={true} aria-hidden={false} tabindex={0} />),
+    "<div hidden=\"\" data-on=\"true\" aria-hidden=\"false\" tabindex=\"0\"></div>",
+  );
+}
+
+export async function test_react_style_names() {
+  assertEq(
+    await renderToString(
+      <label htmlFor="q" className="c">
+        L
+      </label>,
+    ),
+    "<label for=\"q\" class=\"c\">L</label>",
+  );
+}
+
+export async function test_event_handlers_render_nothing() {
+  assertEq(
+    await renderToString(
+      <button onClick={() => {}} type="button">
+        go
+      </button>,
+    ),
+    "<button type=\"button\">go</button>",
+  );
+}
+
+export async function test_style_objects() {
+  const html = await renderToString(
+    <p
+      style={{
+        color: "red",
+        fontSize: 12,
+        lineHeight: 1.5,
+        zIndex: 2,
+        gridArea: 3,
+        margin: 0,
+        background: "url(x)",
+        bad: "a;b",
+        "--x": "1",
+        flexGrow: 1,
+        flexBasis: 2,
+        gridGap: 3,
+        WebkitTransition: "a",
+        content: "'}'",
+      }}
+    >
+      s
+    </p>,
+  );
+  assertEq(
+    html,
+    "<p style=\"color:red;font-size:12px;line-height:1.5;z-index:2;grid-area:3;margin:0px;" +
+      "background:url(x);--x:1;flex-grow:1;flex-basis:2px;grid-gap:3px;-webkit-transition:a;" +
+      "content:&#39;}&#39;\">s</p>",
+  );
+}
+
+export async function test_numbers_render_like_javascript() {
+  const half = 2.5;
+  const zero = -0.0;
+  const big = 1e21;
+  assertEq(
+    await renderToString(
+      <p>
+        {7}|{half}|{zero}|{big}|{0.1 + 0.2}|{-3}
+      </p>,
+    ),
+    "<p>7|2.5|0|1e+21|0.30000000000000004|-3</p>",
+  );
+}
+
+export async function test_null_and_booleans_render_nothing() {
+  assertEq(
+    await renderToString(
+      <ul>
+        {null}
+        {false}
+        {true}
+        <li>x</li>
+      </ul>,
+    ),
+    "<ul><li>x</li></ul>",
+  );
+}
+
+function Box(props: { title: string; children?: Child }) {
+  return (
+    <section class="box">
+      <h2>{props.title}</h2>
+      {props.children}
+    </section>
+  );
+}
+
+export async function test_components_lists_and_fragments() {
+  const items: string[] = ["a", "b"];
+  assertEq(
+    await renderToString(
+      <Box title="T & U">
+        <p>child</p>
+        text
+        <>
+          <i>1</i>two
+        </>
+        <ul>
+          {items.map((s) => (
+            <li>{s}</li>
+          ))}
+        </ul>
+      </Box>,
+    ),
+    "<section class=\"box\"><h2>T &amp; U</h2><p>child</p>text<i>1</i>two<ul><li>a</li><li>b</li></ul></section>",
+  );
+}
+
+// Renders once a value arrives on `gate`.
+async function Gated(props: { n: number; gate: Channel<i64> }): Promise<JSX.Element> {
+  await props.gate.receive();
+  return <b>{props.n}</b>;
+}
+
+export async function test_async_components_render_in_document_order() {
+  const first = channel<i64>(1);
+  const second = channel<i64>(1);
+  const el = (
+    <ul>
+      <li>
+        <Gated n={1} gate={first} />
+      </li>
+      <li>
+        <Gated n={2} gate={second} />
+      </li>
+      <li>3</li>
+    </ul>
+  );
+  // The second finishes first: the output keeps document order.
+  await second.send(1);
+  await first.send(1);
+  assertEq(await renderToString(el), "<ul><li><b>1</b></li><li><b>2</b></li><li>3</li></ul>");
+}
+
+class Missing extends Error {}
+
+async function Broken(props: { id: string }): Promise<JSX.Element, Missing> {
+  throw new Missing(`no ${props.id}`);
+}
+
+export async function test_an_async_component_failure_names_it() {
+  let message = "";
+  try {
+    await renderToString(
+      <div>
+        <Broken id="x" />
+      </div>,
+    );
+  } catch (e) {
+    message = e.message;
+  }
+  assertEq(message, "Component render.test#Broken failed: Error: no x");
+}
+
+export async function test_raw_markup_is_not_escaped() {
+  assertEq(await renderToString(<div>{raw("<b>x</b>")}</div>), "<div><b>x</b></div>");
+}

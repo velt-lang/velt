@@ -88,6 +88,7 @@ fn f_fingerprint(v: &Variant, mode: Mode) -> Fingerprint {
         align: 8,
         relocs,
         mutable: None,
+        ..Default::default()
     };
     let mut statics = vec![
         stat(v.throw_loc, vec![]),
@@ -117,6 +118,7 @@ fn f_fingerprint(v: &Variant, mode: Mode) -> Fingerprint {
                 ret: crate::vir::HostValue::Void,
                 is_async: false,
             }),
+            c_decl: None,
         },
         ExternFn {
             symbol: "velt_rt_panic".into(),
@@ -124,6 +126,7 @@ fn f_fingerprint(v: &Variant, mode: Mode) -> Fingerprint {
             ret: Ty::Unit,
             noreturn: v.noreturn,
             host: None,
+            c_decl: None,
         },
     ];
     let leaf = |symbol: &str| {
@@ -331,6 +334,7 @@ fn reaches_mutable_static_through_operands_and_relocations() {
         align: 8,
         relocs,
         mutable,
+        ..Default::default()
     };
     let statics = vec![
         stat(vec![], Some(0xe90c)),
@@ -392,6 +396,7 @@ fn static_chain(n: u32, last: &[u8]) -> Vec<StaticData> {
             } else {
                 vec![(0, Const::Static(StaticId(i + 1)))]
             },
+            ..Default::default()
         })
         .collect()
 }

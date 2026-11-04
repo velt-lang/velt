@@ -44,7 +44,7 @@ use std::collections::{HashMap, HashSet};
 
 use velt_common::Span;
 
-pub use extern_fn::{ExternFnDef, HostImport, HostTy};
+pub use extern_fn::{CImport, CTy, ExternFnDef, HostImport, HostTy};
 pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
 pub use fresh::FreshClosure;
 pub use impl_bound::{ImplBound, ImplDef};

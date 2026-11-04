@@ -364,6 +364,7 @@ pub(super) fn extern_fn(
         is_async,
         system: None,
         host: None,
+        c: None,
         span: SP,
     }))
 }

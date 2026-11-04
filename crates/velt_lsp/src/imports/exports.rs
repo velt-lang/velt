@@ -123,7 +123,7 @@ pub fn of_parsed(sm: SourceMap, file: FileId, ast: ast::Module) -> ModuleExports
         diagnostics: vec![],
         loaded_cleanly: false,
         ide: None,
-        ts_compat: vec![],
+        lint: vec![],
         docs: Default::default(),
     };
     // Without loaded imports, the module's items are its own (re-exports resolve nothing).

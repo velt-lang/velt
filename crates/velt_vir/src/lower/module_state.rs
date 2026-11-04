@@ -64,6 +64,7 @@ impl Cx<'_> {
             align: 8,
             relocs,
             mutable: None,
+            ..Default::default()
         });
         self.module_desc = Some(id);
         id

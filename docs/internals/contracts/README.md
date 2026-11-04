@@ -39,6 +39,13 @@ velt build main.vlt
       └─ velt_link::link  (+ velt_rt staticlib)       → executable
 ```
 Diagnostics from any stage are rendered with `Diagnostic::render` to stderr; exit code 1 on errors.
+A `velt_common::Diagnostic` may carry a lint `code` (`Option<Box<str>>`: `perf/number-double`,
+`ts-compat/bool-type`; `None` for the compiler's own) and `fixes: Vec<Fix>` (changed: both
+added, docs/internals/design/lint-profiles.md). A `Fix` is a `title`, `edits: Vec<(Span,
+String)>` (replacements, possibly in several files, applied together or not at all) and an
+`applicability`: `Safe` (the program behaves the same; `velt check --fix` and editors' "fix all"
+apply it) or `Review` (it may change what the program does; `--fix=review`). `render` does not
+print them; a lint adds its code as the last note (`perf(number-double)`).
 
 ## Program loader (crate boundary, #2197)
 `crates/velt_loader` loads a program: the root file and every module it needs (the prelude, the
@@ -276,3 +283,19 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
 - **A declared entry** (#1728 step 3): code compiled on its own to link into a program (the std
   cache, cli.md "Std cache") declares `velt_main` (`Import`, `() -> I32`) instead of defining
   it; verification accepts that (vir.rs invariant 5). A program still defines it.
+
+## Named statics (additive VIR extension)
+- `vir::StaticData::symbol` and `::linkage` (vir.rs invariant 13; #2189, design/std-object.md
+  "The std cache"): a static is private to the program's objects (`Internal`, no symbol, as
+  before) unless it is `Export` (defined here, visible to the link's other objects under its
+  symbol) or `Import` (defined by another object under its symbol; its `bytes`, `relocs` and
+  `mutable` are its contents there, for reading only). Symbols are unique among the program's
+  statics, functions and externs, and an `Import` static's relocations name only
+  `Export`/`Import` functions and statics or externs (both checked by `verify`).
+- Backends: LLVM emits a named static under its symbol, `hidden` (`Export`) or
+  `available_externally hidden` (`Import`), in every unit that refers to it, as units already
+  share statics under `.s<n>`; Cranelift declares it as `Hidden` or `Import` data under its
+  symbol and defines only the `Export` one.
+- `fingerprint` (both modes) prints a named static's symbol and linkage with its contents.
+- Lowering never names a static; only the std cache does (`VELT_STD_OBJECT=1`), so builds without
+  it are unchanged.

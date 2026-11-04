@@ -159,3 +159,29 @@ fn interface_members_cant_be_unsafe() {
         "{e:?}"
     );
 }
+
+#[test]
+fn c_declarations() {
+    let m = parse_ok("declare c(\"c\") function labs(x: i64): i64;\nexport declare c(\"m\") function cos(x: f64): f64;");
+    let sigs: Vec<(String, String)> = m
+        .items
+        .iter()
+        .filter_map(|i| match &i.kind {
+            ItemKind::ExternFn(s) => Some((s.name.name.clone(), s.c.as_ref()?.library.clone())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        sigs,
+        [("labs".into(), "c".into()), ("cos".into(), "m".into())]
+    );
+    assert!(m.items[1].exported);
+    // `c` is a word only there.
+    parse_ok("function f() { const c = 1; c; }\ndeclare function c(x: i64): i64;");
+    let e = errors("declare c(m) function f(): void;");
+    assert!(
+        e.iter()
+            .any(|m| m.contains("the C library's name as a string")),
+        "{e:?}"
+    );
+}

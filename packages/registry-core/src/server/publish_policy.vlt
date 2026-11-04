@@ -1,0 +1,171 @@
+// registry-core (internal): what the registry refuses at publish beyond what an archive may be
+// (#2225). `readArchive` accepts these, as vpm's reader does, but a client unpacking them on
+// Windows or macOS would write one file over another (so the unpacked package no longer matches
+// its checksum) or write to a device, a `target` directory is left out of the checksum a client
+// computes, and a `.git` file or directory would hand git's hooks and config to whoever runs git
+// in the unpacked package (git's own `protectNTFS` and `protectHFS` checks). The registry refuses them once, here. (Two spellings of a name
+// that differ only in Unicode normalization, one file on macOS, are not refused yet: std has no
+// normalization.)
+
+import { ArchiveEntry } from "../archive";
+import { isWindowsDeviceName } from "../names";
+import { compareUtf8 } from "./json_text";
+
+/** How much of a path a refusal shows (the rest is cut, so an answer stays small). */
+export const SHOWN_PATH_CHARS = 100;
+
+/** `path` as a refusal shows it: control characters escaped, at most `SHOWN_PATH_CHARS` long. */
+export function shownPath(path: string): string {
+  let out = "";
+  let n = 0;
+  for (const c of path) {
+    if (n == SHOWN_PATH_CHARS) {
+      return `${out}…`;
+    }
+    const code = c.charCodeAt(0);
+    out += code < 32 || code == 127 ? `\\x${code < 16 ? "0" : ""}${code.toString(16)}` : c;
+    n++;
+  }
+  return out;
+}
+
+function hasControl(path: string): bool {
+  for (const c of path) {
+    const code = c.charCodeAt(0);
+    if (code < 32 || code == 127) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// Device names Windows has beyond `isWindowsDeviceName`'s (which matches vpm's rule for package
+// names): `COM¹`–`COM³`, `LPT¹`–`LPT³`, `CONIN$` and `CONOUT$`.
+function isOtherDeviceName(stem: string): bool {
+  const lower = stem.toLowerCase();
+  if (lower == "conin$" || lower == "conout$") {
+    return true;
+  }
+  if (lower.length != 4 || !(lower.startsWith("com") || lower.startsWith("lpt"))) {
+    return false;
+  }
+  const last = lower.charAt(3);
+  return last == "\u00b9" || last == "\u00b2" || last == "\u00b3";
+}
+
+// Characters Windows refuses in file names (`readArchive` already refuses `\\` and `:`).
+const WINDOWS_RESERVED = "<>\"|?*";
+
+// Why one segment of a path can't be a file or directory name on Windows, or null.
+function segmentProblem(segment: string): string | null {
+  for (const c of segment) {
+    if (WINDOWS_RESERVED.includes(c)) {
+      return `has \`${c}\`, which Windows refuses in file names`;
+    }
+  }
+  if (segment.endsWith(".") || segment.endsWith(" ")) {
+    return "ends with a dot or a space, which Windows drops from file names";
+  }
+  const dot = segment.indexOf(".");
+  const stem = dot < 0 ? segment : segment.slice(0, dot);
+  if (isWindowsDeviceName(stem) || isOtherDeviceName(stem)) {
+    return "names a device on Windows (`con`, `nul`, `com1`, …)";
+  }
+  return null;
+}
+
+// Whether `segment` is git's directory under some spelling: `.git` in any case (one name on
+// Windows and macOS) or `git~1`, its short name on NTFS. Refused as a file too: a `.git` file
+// can point git at a directory elsewhere in the package.
+function isGitName(segment: string): bool {
+  const lower = segment.toLowerCase();
+  return lower == ".git" || lower == "git~1";
+}
+
+// A file or directory seen so far: its id (a directory's children are keyed by it), its name as
+// written, and whether it is a directory.
+struct Node {
+  id: i64;
+  name: string;
+  isDir: bool;
+}
+
+// The first `n` segments of `segments`, with the last of them written as `last`.
+function prefix(segments: string[], n: i64, last: string): string {
+  const parts = segments.slice(0, n - 1);
+  parts.push(last);
+  return parts.join("/");
+}
+
+// Why the path `path` (after `previous`, null for the first) is refused, or null. `nodes` holds
+// every file and directory seen, keyed by `<parent id>/<lowercased name>`, so each path costs
+// time in proportion to its length however deep it is.
+function pathProblem(
+  path: string,
+  previous: string | null,
+  nodes: Map<string, Node>,
+): string | null {
+  if (hasControl(path)) {
+    return `the archive has a path with a control character, \`${shownPath(path)}\``;
+  }
+  if (previous != null) {
+    const order = compareUtf8(previous, path);
+    if (order == 0) {
+      return `the archive has \`${shownPath(path)}\` twice`;
+    }
+    if (order > 0) {
+      return `the archive's paths are not sorted: \`${shownPath(path)}\` comes after \`${shownPath(previous)}\``;
+    }
+  }
+  const segments = path.split("/");
+  let parent: i64 = 0;
+  for (let s: i64 = 0; s < segments.length; s++) {
+    const segment = segments[s];
+    const isDir = s < segments.length - 1;
+    const problem = segmentProblem(segment);
+    if (problem != null) {
+      return `the archive has \`${shownPath(path)}\`, whose name \`${shownPath(segment)}\` ${problem}`;
+    }
+    if (isGitName(segment)) {
+      return `the archive has \`${shownPath(path)}\`, whose name \`${shownPath(segment)}\` is git's directory, which \`velt publish\` never sends`;
+    }
+    // vpm's `SKIPPED_DIRS` holds `target` too: a client leaves it out of the checksum.
+    if (isDir && segment == "target") {
+      return `the archive has \`${shownPath(path)}\`, inside a \`target\` directory, which \`velt publish\` never sends`;
+    }
+    const key = `${parent}/${segment.toLowerCase()}`;
+    const found = nodes.get(key);
+    if (found == null) {
+      const id = (nodes.size as i64) + 1;
+      nodes.set(key, { id, name: segment, isDir });
+      parent = id;
+      continue;
+    }
+    if (found.name != segment) {
+      const earlier = prefix(segments, s + 1, found.name);
+      return `the archive has \`${shownPath(earlier)}\` and \`${shownPath(prefix(segments, s + 1, segment))}\`, which differ only in case: one file on Windows and macOS`;
+    }
+    if (!isDir || !found.isDir) {
+      return `the archive has \`${shownPath(prefix(segments, s + 1, segment))}\` as a file and as a directory`;
+    }
+    parent = found.id;
+  }
+  return null;
+}
+
+/**
+ * Why the registry refuses an archive with `entries` (read by `readPackageArchive`, which caps
+ * their number), or null: paths out of order or twice, control characters, two paths that differ
+ * only in case (one file on Windows and macOS), a file that is also a directory, names Windows
+ * can't hold, `target` directories and `.git` under any spelling.
+ */
+export function publishPathProblem(entries: ArchiveEntry[]): string | null {
+  const nodes: Map<string, Node> = new Map();
+  for (let i = 0; i < entries.length; i++) {
+    const problem = pathProblem(entries[i].path, i == 0 ? null : entries[i - 1].path, nodes);
+    if (problem != null) {
+      return problem;
+    }
+  }
+  return null;
+}

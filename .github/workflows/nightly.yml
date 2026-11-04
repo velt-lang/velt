@@ -132,8 +132,8 @@ jobs:
           } >> "$GITHUB_STEP_SUMMARY"
 
   # The WebAssembly goldens (crates/veltc/tests/wasm_goldens.rs) on Windows and macOS: the queue
-  # skips them unless a change touches WebAssembly code, and the push to main runs these OSes only
-  # after a Linux-only queue run, so this is where every change meets them there. As in the
+  # skips them unless a change touches WebAssembly code, and ci.yml's scheduled run of these OSes
+  # leaves them out, so this is where every change meets them there. As in the
   # queue, one job per OS builds them and shards run them (queue-goldens.yml, `WASM_SHARDS` in
   # crates/xtask/src/os.rs, which `wasm-plan` reads); a failed shard leaves the other jobs of this
   # run alone (`fail-fast: false`).

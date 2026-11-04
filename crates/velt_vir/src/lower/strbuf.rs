@@ -4,6 +4,7 @@
 
 use velt_sema::hir::{TyId, TyKind};
 
+use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
 use super::rt::Rt;
 use super::{cint, FnLower};
@@ -11,19 +12,6 @@ use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Stmt, Ty, STR
 
 /// The longest literal text appended with the inline fast path (longer text is one call).
 const INLINE_PUSH_MAX: usize = 32;
-
-/// std's number formatting in Velt (std/lang/number/format.vlt): integers appended to a builder,
-/// and as a string of their own.
-const INT_PUSH: &str = velt_common::std_hook!(int_push);
-const UINT_PUSH: &str = velt_common::std_hook!(uint_push);
-const NUMBER_PUSH: &str = velt_common::std_hook!(number_push);
-pub(super) const NUMBER_TEXT: &str = velt_common::std_hook!(number_text);
-/// The float hooks of std's own float printing, preferred where the program loaded them
-/// (`float_push`/`float_text`; otherwise `number_push`/`number_text`, then the runtime).
-const FLOAT_PUSH: &str = velt_common::std_hook!(float_push);
-pub(super) const FLOAT_TEXT: &str = velt_common::std_hook!(float_text);
-pub(super) const INT_TEXT: &str = velt_common::std_hook!(int_text);
-pub(super) const UINT_TEXT: &str = velt_common::std_hook!(uint_text);
 
 /// `StringBuilder.append`, whose literal arguments are appended inline.
 const STRING_BUILDER_APPEND: &str = "std/text/string_builder::StringBuilder.append";
@@ -120,35 +108,6 @@ impl FnLower<'_, '_> {
         slow_path(self);
         self.goto(done);
         self.switch_to(done);
-    }
-
-    /// Call std's number hook `name` (no type parameters) with `args`, its result (if any)
-    /// returned through `out`. False when the program has no such hook (a program built
-    /// without std, as `velt_vir`'s own tests build them) or it is unchecked: the caller calls
-    /// the runtime.
-    pub(super) fn call_number_hook(
-        &mut self,
-        name: &str,
-        mut args: Vec<Operand>,
-        out: Option<Place>,
-    ) -> bool {
-        // An on-demand hook that sema left unchecked (the program converts no value that may
-        // hold a float to text, as far as sema saw: velt_common `std_hooks::ON_DEMAND`) is
-        // missing too.
-        let Some(d) = self
-            .cx
-            .prelude_def(name)
-            .filter(|d| !self.cx.hir.unchecked.contains(d))
-        else {
-            return false;
-        };
-        let f = self.cx.func_for_direct(d, vec![], self.mode);
-        if let Some(o) = out {
-            let a = self.addr(o);
-            args.push(a);
-        }
-        self.call(vir::Callee::Func(f), args, None, false);
-        true
     }
 
     /// Expression `e` (an integer) as a `u64`.
@@ -483,26 +442,34 @@ impl FnLower<'_, '_> {
         let from = self.cx.ty(ty);
         let b = buf.clone();
         match self.cx.kind(ty) {
+            // std's number printing (velt_common `std_hooks.rs`): its own float printing where
+            // the program loaded it, then `number_push`; the runtime where neither is checked.
             TyKind::Float(_) => {
                 let v = self.float_as_f64(v, ty);
-                let args = || vec![b.clone(), v.clone()];
-                if !self.call_number_hook(FLOAT_PUSH, args(), None)
-                    && !self.call_number_hook(NUMBER_PUSH, args(), None)
-                {
-                    self.call_rt(Rt::StrbufPushF64, vec![b, v], None);
+                let args = || (ty::Str::arg(b.clone()), ty::F64::arg(v.clone()));
+                let (b1, v1) = args();
+                let call = hooks::float_push(self, b1, v1).or_else(|| {
+                    let (b2, v2) = args();
+                    hooks::number_push(self, b2, v2)
+                });
+                match call {
+                    Some(c) => _ = c.emit(self),
+                    None => self.call_rt(Rt::StrbufPushF64, vec![b, v], None),
                 }
             }
             TyKind::Bool => self.call_rt(Rt::StrbufPushBool, vec![b, v], None),
             TyKind::Int(it) if !it.is_signed() => {
                 let v = self.cast_to(v, from, Ty::U64);
-                if !self.call_number_hook(UINT_PUSH, vec![b.clone(), v.clone()], None) {
-                    self.call_rt(Rt::StrbufPushU64, vec![b, v], None);
+                match hooks::uint_push(self, ty::Str::arg(b.clone()), ty::U64::arg(v.clone())) {
+                    Some(c) => _ = c.emit(self),
+                    None => self.call_rt(Rt::StrbufPushU64, vec![b, v], None),
                 }
             }
             TyKind::Int(_) => {
                 let v = self.cast_to(v, from, Ty::I64);
-                if !self.call_number_hook(INT_PUSH, vec![b.clone(), v.clone()], None) {
-                    self.call_rt(Rt::StrbufPushI64, vec![b, v], None);
+                match hooks::int_push(self, ty::Str::arg(b.clone()), ty::I64::arg(v.clone())) {
+                    Some(c) => _ = c.emit(self),
+                    None => self.call_rt(Rt::StrbufPushI64, vec![b, v], None),
                 }
             }
             _ => {

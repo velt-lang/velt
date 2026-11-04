@@ -1,7 +1,8 @@
 //! The counted-types fixpoint's passes (velt_vir `lower_program`): the passes until the counted
-//! types stop growing only find them and leave out the versions of view loops, and one more
-//! pass lowers the program whole. Its VIR is the VIR of lowering every pass whole
-//! (`VELT_LOWER_WHOLE`), and the view loops are versioned in that last pass only.
+//! types stop growing only find them and leave out the versions of view loops, which are made
+//! once the last pass is done (deferred_versions.rs), with no pass more. The VIR is the VIR of
+//! lowering every pass whole (`VELT_LOWER_WHOLE`), and the view loops are versioned in the last
+//! pass only.
 
 mod no_window;
 mod test_dir;
@@ -73,17 +74,20 @@ fn view_loops_are_versioned_in_the_last_pass_only() {
     let ps = passes(&err);
     assert!(
         ps.len() >= 2,
-        "expected facts-only passes and a whole one:\n{err}"
+        "expected passes that grow the counted types:\n{err}"
     );
     let (last, earlier) = ps.split_last().unwrap();
     assert!(
-        last.0 && last.1 > 0,
+        !last.0 && last.1 > 0,
         "the last pass versions the loops:\n{err}"
     );
     for (whole, n) in earlier {
         assert!(!whole && *n == 0, "an earlier pass versioned loops:\n{err}");
     }
-    let (all_whole, _) = lower(VIEWS, &[("VELT_LOWER_WHOLE", "1")]);
+    let whole_env = [("VELT_LOWER_WHOLE", "1"), ("VELT_LOWER_PROFILE", "1")];
+    let (all_whole, err_whole) = lower(VIEWS, &whole_env);
+    let n_whole = passes(&err_whole).len();
+    assert_eq!(ps.len(), n_whole, "a pass more:\n{err}\n{err_whole}");
     assert!(
         vir == all_whole,
         "the VIR differs from lowering every pass whole"
@@ -112,4 +116,75 @@ fn a_program_without_view_loops_is_lowered_as_before() {
         vir == all_whole,
         "the VIR differs from lowering every pass whole"
     );
+}
+
+/// The terms the copies' dataflow kept in the last pass (`VELT_LOWER_PROFILE`).
+fn terms_kept(stderr: &str) -> usize {
+    let last = stderr
+        .lines()
+        .rfind(|l| l.contains(" functions, ") && l.ends_with(" terms kept"))
+        .unwrap_or_else(|| panic!("no pass line:\n{stderr}"));
+    let (_, rest) = last.rsplit_once(", ").unwrap();
+    rest.split(' ').next().unwrap().parse().unwrap()
+}
+
+/// A view loop whose body computes `n` temporaries none of its tests reads.
+fn long_loop(n: usize) -> String {
+    let body: String = (0..n)
+        .map(|k| format!("    t += x * {} + i * {};\n", k + 2, k + 1))
+        .collect();
+    format!(
+        "function sum(xs: number[]): number {{\n  let t = 0;\n  for (let i = 0; i < xs.length; i++) {{\n    const x = xs[i];\n{body}  }}\n  return t;\n}}\n\nconst raw: any = [1, 2, 3];\nconst v = raw as number[];\nconsole.log(sum(v), sum([4, 5]));\n"
+    )
+}
+
+#[test]
+fn a_copy_keeps_only_the_terms_its_tests_need() {
+    let env = [("VELT_LOWER_PROFILE", "1")];
+    let (_, small) = lower(&long_loop(10), &env);
+    let (_, large) = lower(&long_loop(200), &env);
+    let (s, l) = (terms_kept(&small), terms_kept(&large));
+    assert!(s > 0, "no terms kept:\n{small}");
+    // Twenty times the temporaries in the same blocks: the terms the tests need stay as many
+    // (keeping every once-assigned local's term grows them by a third on this program, most of
+    // whose terms are the prelude's).
+    assert!(
+        l <= s + s / 10,
+        "terms grew {l} / {s} for 20× the temporaries"
+    );
+}
+
+/// The process's peak memory in MB by the end of lowering (`VELT_LOWER_PROFILE`, on Linux).
+#[cfg(target_os = "linux")]
+fn peak_mb(stderr: &str) -> usize {
+    let last = stderr
+        .lines()
+        .rfind(|l| l.starts_with("velt-lower: peak "))
+        .unwrap_or_else(|| panic!("no peak line:\n{stderr}"));
+    last.split(' ').nth(2).unwrap().parse().unwrap()
+}
+
+/// A view loop reading an element through a field (a test that stays in the copy, so that it
+/// hands over to the original) with `n` branches of its own.
+#[cfg(target_os = "linux")]
+fn branching_loop(n: usize) -> String {
+    let body: String = (0..n)
+        .map(|k| format!("    if (t > {}) {{\n      t -= {};\n    }}\n", k + 2, k + 1))
+        .collect();
+    format!(
+        "class Holder {{\n  xs: number[];\n  constructor(xs: number[]) {{\n    this.xs = xs;\n  }}\n}}\n\nfunction sum(o: Holder, n: number): number {{\n  let t = 0;\n  for (let i = 0; i < n; i++) {{\n    t += o.xs[i];\n{body}  }}\n  return t;\n}}\n\nconst raw: any = [1, 2, 3];\nconst v = raw as number[];\nconsole.log(sum(new Holder(v), 3), sum(new Holder([4, 5, 6]), 3));\n"
+    )
+}
+
+/// Versioning a long loop costs blocks × locals bits, and it comes when the rest of the program
+/// is in memory (deferred_versions.rs). With a hash set per block this program peaks 183 MB above
+/// the short loop; with the bits, under 10 MB.
+#[cfg(target_os = "linux")]
+#[test]
+fn versioning_a_long_loop_does_not_raise_the_peak() {
+    let env = [("VELT_LOWER_PROFILE", "1")];
+    let (_, small) = lower(&branching_loop(100), &env);
+    let (_, large) = lower(&branching_loop(2000), &env);
+    let (s, l) = (peak_mb(&small), peak_mb(&large));
+    assert!(l <= s + 100, "peak {l} MB against {s} MB");
 }

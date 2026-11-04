@@ -1,0 +1,26 @@
+// The HTTP side: each request is routed by the shared `route` and rendered to one string, as
+// Hono's `c.html(<App />)` does.
+
+import { serve, HttpServer } from "http-server";
+import { renderToString } from "hono/jsx";
+import { document, route } from "./shared/pages";
+
+/** The status and HTML of `url`'s page. */
+export async function render(url: URL): Promise<Response> {
+  const tag = url.searchParams.get("tag");
+  const page = route(url.pathname, tag);
+  const status = page.status;
+  const html = "<!DOCTYPE html>" + (await renderToString(document(page)));
+  return new Response(html, {
+    status: status as number,
+    headers: { "content-type": "text/html; charset=UTF-8" },
+  });
+}
+
+/** Serves the shop on `port` (0 = any free port). */
+export async function startServer(port: i64): Promise<HttpServer> {
+  return await serve(
+    { port: port as number },
+    async (req: Request): Promise<Response> => await render(new URL(req.url)),
+  );
+}

@@ -12,6 +12,7 @@ use super::pattern::BindCtx;
 use super::places::{frozen_source, source_root};
 use super::{FnCx, LoopCx};
 use crate::hir::{self, ExprKind as H, StmtKind as S, TyId, TyKind};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 impl FnCx<'_, '_> {
     fn true_lit(&self, span: Span) -> hir::Expr {
@@ -473,12 +474,7 @@ impl FnCx<'_, '_> {
     /// is one), as JS's string iterator: the hook `stringCodePoints(s)`.
     pub(super) fn chars_of(&mut self, s: hir::Expr, span: Span) -> hir::Expr {
         let ret = self.cx.ty.intern(hir::TyKind::Array(self.cx.ty.str_));
-        self.prelude_hir_call(
-            velt_common::std_hook!(string_code_points),
-            vec![s],
-            ret,
-            span,
-        )
+        hooks::string_code_points(ty::Str::of(s)).emit(self, ret, span)
     }
 
     /// `for (const [k, v] of m)` over a class value iterates `m.entries()`.

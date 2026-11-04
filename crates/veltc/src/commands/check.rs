@@ -6,14 +6,13 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
-use serde_json::{json, Value};
-use velt_common::{Diagnostic, Severity, SourceMap, Span};
-use velt_tscompat::Finding;
-
+use super::lint;
 use super::project::Project;
 use super::test::discover;
-use crate::cli::{BuildArgs, CheckArgs, Emit};
+use crate::cli::{BuildArgs, CheckArgs, Emit, FixMode};
 use crate::driver::{self, BuildError, CheckScope, Session};
+use serde_json::{json, Value};
+use velt_common::{Diagnostic, Severity, SourceMap, Span};
 
 /// Directories of a package whose modules `velt check` checks (recursively). Other directories
 /// (`examples/`, `bench/`, scripts at the package root) hold standalone programs with their own
@@ -21,13 +20,78 @@ use crate::driver::{self, BuildError, CheckScope, Session};
 const PACKAGE_DIRS: [&str; 2] = ["src", "tests"];
 
 /// `velt check`: exit 0 when there are no errors, 1 when there are, 101 on an internal error.
-/// With `--ts-compat`, an error-severity finding is an error too.
+/// A lint finding at the error level (a ts-compat error, a `perf/…` rule at `deny`) is an error
+/// too.
 pub fn check_command(args: &CheckArgs) -> ExitCode {
+    if let Some(mode) = args.fix {
+        return fix_command(args, mode);
+    }
     let mut sess = Session::new();
-    let (result, findings) = match &args.ts_compat {
-        Some(paths) => super::ts_compat::run(&mut sess, args, paths),
-        None => (check_input_or_package(&mut sess, args), vec![]),
+    let (result, lint) = check_and_lint(&mut sess, args, false);
+    report_and_exit(&sess, args, result, &lint, None)
+}
+
+/// The check's outcome and its lint findings: `--ts-compat`'s, or the `perf/…` rules' when
+/// [`lint::Package::lints`] (or `fixing`: for `--fix`).
+fn check_and_lint(
+    sess: &mut Session,
+    args: &CheckArgs,
+    fixing: bool,
+) -> (Result<(), BuildError>, Vec<Diagnostic>) {
+    if let Some(paths) = &args.ts_compat {
+        let (result, findings) = super::ts_compat::run(sess, args, paths);
+        let package = match paths.first() {
+            Some(p) if p.is_dir() => lint::Package::in_dir(p),
+            Some(p) => lint::Package::around(p),
+            None => lint::Package::in_dir(Path::new(".")),
+        };
+        let diags = findings
+            .iter()
+            .filter_map(|f| velt_lint::ts_compat(f, &package.levels))
+            .collect();
+        let linted: Vec<velt_common::FileId> = findings.iter().map(|f| f.span.file).collect();
+        let ran = |code: &str| code.starts_with("ts-compat/");
+        return (result, velt_lint::finish(diags, &sess.sm, &linted, &ran));
+    }
+    let (opts, scope, same_path) = match resolve(args) {
+        Ok(r) => r,
+        Err(e) => return (Err(e), vec![]),
     };
+    let package = lint::Package::around(&opts.input);
+    if args.std || !(fixing || package.lints(args)) {
+        let checked = driver::check_with(sess, &opts, &scope);
+        report_same_path(sess, &same_path, &opts.input);
+        return (with_same_path(checked, &same_path), vec![]);
+    }
+    match driver::check_with_modules(sess, &opts, &scope) {
+        Ok((loaded, checked)) => {
+            report_same_path(sess, &same_path, &opts.input);
+            let checked = with_same_path(checked, &same_path);
+            let findings = lint::findings(sess, args, &opts, &loaded, checked.is_ok(), &package);
+            (checked, findings)
+        }
+        Err(e) => (Err(e), vec![]),
+    }
+}
+
+fn with_same_path(
+    checked: Result<(), BuildError>,
+    same_path: &[Vec<PathBuf>],
+) -> Result<(), BuildError> {
+    match checked {
+        Ok(()) if !same_path.is_empty() => Err(BuildError::Diagnostics),
+        other => other,
+    }
+}
+
+/// Print the check's diagnostics and `lint`'s (text on stderr, or `--json`), then the exit code.
+fn report_and_exit(
+    sess: &Session,
+    args: &CheckArgs,
+    result: Result<(), BuildError>,
+    lint: &[Diagnostic],
+    fixed: Option<&lint::Fixed>,
+) -> ExitCode {
     if args.verbose {
         eprint!("{}", sess.render_timings());
     }
@@ -36,14 +100,20 @@ pub fn check_command(args: &CheckArgs) -> ExitCode {
             Err(BuildError::Failed(msg)) => Some(msg.as_str()),
             _ => None,
         };
-        println!("{}", report_json(&sess, failure, &findings));
+        let mut report = report_json(sess, failure, lint);
+        if let Some(fixed) = fixed {
+            report["fixed"] =
+                json!({"fixes": fixed.fixes, "files": fixed.files, "undone": fixed.undone});
+        }
+        println!("{report}");
     } else {
-        super::build::report(&sess, false);
-        report_findings(&sess, &findings);
+        if let Some(fixed) = fixed {
+            report_fixed(fixed);
+        }
+        super::build::report(sess, false);
+        report_findings(sess, lint);
     }
-    let lint_errors = findings
-        .iter()
-        .any(|f| f.severity == velt_tscompat::Severity::Error);
+    let lint_errors = lint.iter().any(Diagnostic::is_error);
     match result {
         Ok(()) if lint_errors => ExitCode::from(1),
         Ok(()) => ExitCode::SUCCESS,
@@ -52,24 +122,78 @@ pub fn check_command(args: &CheckArgs) -> ExitCode {
     }
 }
 
+/// `velt check --fix`: check and lint, apply the fixes `mode` picks, then check and lint again
+/// and report what is left, after what was fixed.
+fn fix_command(args: &CheckArgs, mode: FixMode) -> ExitCode {
+    let plain = CheckArgs {
+        fix: None,
+        ..args.clone()
+    };
+    let mut sess = Session::new();
+    let (result, lint) = check_and_lint(&mut sess, &plain, true);
+    if let Err(BuildError::Failed(_) | BuildError::Ice(_)) = &result {
+        return report_and_exit(&sess, &plain, result, &lint, None);
+    }
+    let errors = |s: &Session| s.diagnostics.iter().filter(|d| d.is_error()).count();
+    let before = errors(&sess);
+    // A check without the lint: the fixes must not add errors (the evidence rules would build
+    // the program again for nothing).
+    let check_only = CheckArgs {
+        perf: false,
+        ..plain.clone()
+    };
+    let recheck = || {
+        let mut s = Session::new();
+        let (result, _) = match &check_only.ts_compat {
+            Some(paths) => super::ts_compat::run(&mut s, &check_only, paths),
+            None => (check_input_or_package(&mut s, &check_only), vec![]),
+        };
+        !matches!(result, Err(BuildError::Failed(_) | BuildError::Ice(_))) && errors(&s) <= before
+    };
+    let candidates: Vec<Diagnostic> = sess.diagnostics.iter().cloned().chain(lint).collect();
+    let fixed = match lint::apply(&sess, &candidates, mode, &recheck) {
+        Ok(fixed) => fixed,
+        Err(msg) => {
+            eprintln!("error: {msg}");
+            return ExitCode::from(1);
+        }
+    };
+    let mut sess = Session::new();
+    let (result, lint) = check_and_lint(&mut sess, &plain, true);
+    report_and_exit(&sess, &plain, result, &lint, Some(&fixed))
+}
+
+/// What `--fix` did, on stderr.
+fn report_fixed(fixed: &lint::Fixed) {
+    let s = |n: usize| if n == 1 { "" } else { "s" };
+    if fixed.fixes == 0 && fixed.undone.is_empty() {
+        eprintln!("velt: nothing to fix");
+    } else {
+        eprintln!(
+            "velt: fixed {} problem{} in {} file{}",
+            fixed.fixes,
+            s(fixed.fixes),
+            fixed.files,
+            s(fixed.files)
+        );
+    }
+    for title in &fixed.undone {
+        eprintln!("velt: not applied, the program did not check after it: {title}");
+    }
+}
+
 /// `velt check [<file>]`: the file and its imports, or the current package.
 fn check_input_or_package(sess: &mut Session, args: &CheckArgs) -> Result<(), BuildError> {
     resolve(args).and_then(|(opts, scope, same_path)| {
         let checked = driver::check_with(sess, &opts, &scope);
         report_same_path(sess, &same_path, &opts.input);
-        match checked {
-            Ok(()) if !same_path.is_empty() => Err(BuildError::Diagnostics),
-            other => other,
-        }
+        with_same_path(checked, &same_path)
     })
 }
 
-/// The `--ts-compat` findings on stderr, after the check's diagnostics.
-fn report_findings(sess: &Session, findings: &[Finding]) {
-    let rendered: Vec<String> = findings
-        .iter()
-        .map(|f| super::ts_compat::diagnostic(f).render(&sess.sm))
-        .collect();
+/// The lint findings on stderr, after the check's diagnostics.
+fn report_findings(sess: &Session, lint: &[Diagnostic]) {
+    let rendered: Vec<String> = lint.iter().map(|d| d.render(&sess.sm)).collect();
     if !rendered.is_empty() {
         // A blank line after the check's diagnostics, as between them.
         if !sess.diagnostics.is_empty() {
@@ -320,9 +444,9 @@ fn package_root_module(root: &Path) -> Result<(PathBuf, bool), String> {
 }
 
 /// `{"diagnostics": [...], "errors": n, "warnings": n}`; a non-source failure (unreadable root,
-/// broken package) becomes an error diagnostic without a location. `--ts-compat` findings
-/// follow the check's diagnostics, with their `code` and `fix` (both `null` elsewhere).
-pub(crate) fn report_json(sess: &Session, failure: Option<&str>, findings: &[Finding]) -> Value {
+/// broken package) becomes an error diagnostic without a location. Lint findings follow the
+/// check's diagnostics.
+pub(crate) fn report_json(sess: &Session, failure: Option<&str>, lint: &[Diagnostic]) -> Value {
     let mut diagnostics: Vec<Value> = sess
         .diagnostics
         .iter()
@@ -330,31 +454,19 @@ pub(crate) fn report_json(sess: &Session, failure: Option<&str>, findings: &[Fin
         .collect();
     diagnostics.extend(failure.map(|msg| {
         json!({"severity": "error", "message": msg, "location": null, "labels": [], "notes": [],
-               "code": null, "fix": null})
+               "code": null, "fix": null, "fixes": []})
     }));
-    diagnostics.extend(findings.iter().map(|f| finding_json(f, &sess.sm)));
+    diagnostics.extend(lint.iter().map(|d| diagnostic_json(d, &sess.sm)));
     let count = |sev: &str| diagnostics.iter().filter(|d| d["severity"] == sev).count();
     let (errors, warnings) = (count("error"), count("warning"));
     json!({"diagnostics": diagnostics, "errors": errors, "warnings": warnings})
 }
 
-/// A finding as a diagnostic, with its `code` and `fix` (`{"location", "replacement",
-/// "title"}` or `null`).
-fn finding_json(f: &Finding, sm: &SourceMap) -> Value {
-    let mut d = diagnostic_json(&super::ts_compat::diagnostic(f), sm);
-    d["code"] = json!(f.code);
-    if let Some(fix) = &f.fix {
-        d["fix"] = json!({
-            "location": location(sm, fix.span),
-            "replacement": fix.replacement,
-            "title": fix.title,
-        });
-    }
-    d
-}
-
 /// One diagnostic: the first label is the primary `location`; the other labels (with their
-/// messages) follow in `labels`.
+/// messages) follow in `labels`. `code` is the lint rule's (`null` for the compiler's own),
+/// `fixes` every fix (`{"title", "applicability": "safe"|"review", "edits": [{"location",
+/// "replacement"}]}`), and `fix` the first one when it is one edit, as `{"location",
+/// "replacement", "title"}`, else `null`.
 fn diagnostic_json(d: &Diagnostic, sm: &SourceMap) -> Value {
     let severity = match d.severity {
         Severity::Error => "error",
@@ -371,14 +483,37 @@ fn diagnostic_json(d: &Diagnostic, sm: &SourceMap) -> Value {
         .skip(1)
         .map(|l| json!({"location": location(sm, l.span), "message": l.message}))
         .collect();
+    let fixes: Vec<Value> = d
+        .fixes
+        .iter()
+        .map(|f| {
+            let edits: Vec<Value> = (f.edits.iter())
+                .map(|(s, text)| json!({"location": location(sm, *s), "replacement": text}))
+                .collect();
+            let applicability = match f.applicability {
+                velt_common::Applicability::Safe => "safe",
+                velt_common::Applicability::Review => "review",
+            };
+            json!({"title": f.title, "applicability": applicability, "edits": edits})
+        })
+        .collect();
+    let fix = match d.fixes.first() {
+        Some(f) if f.edits.len() == 1 => json!({
+            "location": location(sm, f.edits[0].0),
+            "replacement": f.edits[0].1,
+            "title": f.title,
+        }),
+        _ => Value::Null,
+    };
     json!({
         "severity": severity,
         "message": d.message,
         "location": primary,
         "labels": labels,
         "notes": d.notes,
-        "code": null,
-        "fix": null,
+        "code": d.code.as_deref(),
+        "fix": fix,
+        "fixes": fixes,
     })
 }
 

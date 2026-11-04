@@ -1,0 +1,14 @@
+// velt/fs (internal): `OpenReadOptions`, the range `openRead` reads.
+
+/**
+ * The options of `openRead`: the bytes to read, as Node's `createReadStream` takes them, both
+ * ends included: `{ start: 0, end: 9 }` reads the first ten bytes (an HTTP `Range` of
+ * `bytes=0-9`). Reading stops at the end of the file, so an `end` past it reads to the end and
+ * a `start` past it reads nothing; so does an `end` before `start`.
+ */
+export struct OpenReadOptions {
+  /** The first byte to read (default 0). */
+  start?: u64;
+  /** The last byte to read, included (default: the last byte of the file). */
+  end?: u64;
+}

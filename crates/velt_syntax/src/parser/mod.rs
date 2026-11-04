@@ -10,6 +10,7 @@ mod ambient;
 mod arrow;
 mod asi;
 mod augment;
+mod c_decls;
 mod cast_types;
 mod expr;
 mod field_types;

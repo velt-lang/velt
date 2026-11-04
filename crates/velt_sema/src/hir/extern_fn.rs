@@ -25,7 +25,33 @@ pub struct ExternFnDef {
     /// parameter and the result. Never with `system`. With `is_async`, `ret` is
     /// `Promise<T, IoError>` and `HostImport::ret` what `T` crosses as. Additive.
     pub host: Option<HostImport>,
+    /// `declare c("<library>") function` (docs/internals/design/c-ffi.md): a function of a native
+    /// library, called through the C ABI, and what crosses. Never with `system` or `host`.
+    /// Additive.
+    pub c: Option<CImport>,
     pub span: Span,
+}
+
+/// A C function's library and what crosses (docs/internals/design/c-ffi.md "What crosses").
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CImport {
+    /// The logical library name of `declare c("<library>")`; `"c"` is the platform's C library.
+    pub library: String,
+    /// One per parameter of the declaration, in order.
+    pub params: Vec<CTy>,
+    pub ret: CTy,
+}
+
+/// A type that crosses to C.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CTy {
+    Int(IntTy),
+    F32,
+    F64,
+    /// C's `_Bool` (one byte, 0 or 1).
+    Bool,
+    /// `void` (results only).
+    Void,
 }
 
 /// Where a host function comes from and what crosses (https://veltlang.com/docs/reference/host-functions/).

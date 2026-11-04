@@ -1,0 +1,12 @@
+// registry-core (internal): an answer other than success, thrown by the request's handling and
+// sent by `Registry.handle` (the Rust server's `Err(Response)`).
+
+/** A request refused with `status` and the error's message as the answer. */
+export class Refusal extends Error {
+  readonly status: i64;
+
+  constructor(status: i64, message: string) {
+    super(message);
+    this.status = status;
+  }
+}

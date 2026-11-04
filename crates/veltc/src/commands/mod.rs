@@ -15,6 +15,7 @@ mod doc;
 mod doctor;
 mod fmt;
 mod host;
+mod lint;
 pub mod lsp;
 pub mod members;
 mod package;

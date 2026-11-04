@@ -6,6 +6,9 @@ mod dominators;
 mod init;
 mod typing;
 
+#[cfg(test)]
+mod parallel_tests;
+
 use rustc_hash::FxHashSet;
 
 use crate::vir::*;
@@ -68,6 +71,11 @@ fn check_math_extern(i: usize, e: &ExternFn, errs: &mut Vec<String>) {
 }
 
 pub(crate) fn verify_program(p: &Program) -> Result<(), Vec<String>> {
+    verify_program_on(p, crate::parallel::jobs())
+}
+
+/// [`verify_program`] on up to `jobs` threads.
+fn verify_program_on(p: &Program, jobs: usize) -> Result<(), Vec<String>> {
     let mut errs = vec![];
     check_aggs(p, &mut errs);
     for (i, e) in p.externs.iter().enumerate() {
@@ -84,22 +92,47 @@ pub(crate) fn verify_program(p: &Program) -> Result<(), Vec<String>> {
     check_symbols(p, &mut errs);
     check_statics(p, &mut errs);
     debug::check_debug(p, &mut errs);
-    for (i, f) in p.funcs.iter().enumerate() {
-        check_locs(p, f, &mut errs);
-        check_param_attrs(f, &mut errs);
-        FnCheck {
-            p,
-            f,
-            errs: &mut errs,
-            ctx: format!("fn#{i} {}", f.symbol),
-        }
-        .run();
-    }
+    // Each function on its own, on every core for larger programs: its errors are listed
+    // after the program's, in the functions' order, whatever the number of threads.
+    let per_chunk = crate::parallel::map_chunks(
+        &p.funcs,
+        FUNCTIONS_PER_CHUNK,
+        PARALLEL_MIN_FUNCTIONS,
+        jobs,
+        |first, funcs| {
+            let mut errs = vec![];
+            for (i, f) in (first..).zip(funcs) {
+                check_function(p, i, f, &mut errs);
+            }
+            errs
+        },
+    );
+    errs.extend(per_chunk.into_iter().flatten());
     if errs.is_empty() {
         Ok(())
     } else {
         Err(errs)
     }
+}
+
+/// Below this many functions a program is checked on the calling thread: starting threads
+/// costs more than it saves.
+const PARALLEL_MIN_FUNCTIONS: usize = 256;
+
+/// Functions a worker checks at a time.
+const FUNCTIONS_PER_CHUNK: usize = 32;
+
+/// The checks of function `i`.
+fn check_function(p: &Program, i: usize, f: &Function, errs: &mut Vec<String>) {
+    check_locs(p, f, errs);
+    check_param_attrs(f, errs);
+    FnCheck {
+        p,
+        f,
+        errs,
+        ctx: format!("fn#{i} {}", f.symbol),
+    }
+    .run();
 }
 
 fn check_aggs(p: &Program, errs: &mut Vec<String>) {
@@ -225,6 +258,12 @@ fn check_symbols(p: &Program, errs: &mut Vec<String>) {
 
 /// Alignment and relocation rules of `StaticData` (see its docs in vir.rs).
 fn check_statics(p: &Program, errs: &mut Vec<String>) {
+    // A static's symbol shares the link's namespace with the functions and externs.
+    let mut symbols: std::collections::HashSet<&str> = std::collections::HashSet::new();
+    if p.statics.iter().any(|s| s.symbol.is_some()) {
+        symbols.extend(p.funcs.iter().map(|f| f.symbol.as_str()));
+        symbols.extend(p.externs.iter().map(|e| e.symbol.as_str()));
+    }
     for (i, s) in p.statics.iter().enumerate() {
         if !s.align.is_power_of_two() {
             errs.push(format!("static#{i}: bad alignment {}", s.align));
@@ -248,6 +287,43 @@ fn check_statics(p: &Program, errs: &mut Vec<String>) {
             if let Err(e) = check_reloc(p, &s.bytes, *off, target) {
                 errs.push(format!("static#{i}: relocation at {off}: {e}"));
             }
+        }
+        check_static_symbol(p, i, s, &mut symbols, errs);
+    }
+}
+
+/// Invariant 13: a static has a symbol exactly when it is `Export` or `Import`, symbols are
+/// unique, and an `Import` static's relocations name only what another object can see.
+fn check_static_symbol<'p>(
+    p: &'p Program,
+    i: usize,
+    s: &'p crate::vir::StaticData,
+    symbols: &mut std::collections::HashSet<&'p str>,
+    errs: &mut Vec<String>,
+) {
+    match (&s.symbol, s.linkage) {
+        (None, Linkage::Internal) => return,
+        (Some(_), Linkage::Internal) => errs.push(format!("static#{i}: internal with a symbol")),
+        (None, _) => errs.push(format!("static#{i}: {:?} without a symbol", s.linkage)),
+        (Some(sym), _) => {
+            if !symbols.insert(sym) {
+                errs.push(format!("static#{i}: symbol `{sym}` is not unique"));
+            }
+        }
+    }
+    if s.linkage != Linkage::Import {
+        return;
+    }
+    for (off, target) in &s.relocs {
+        let visible = match target {
+            Const::Func(f) => p.funcs.get(f.0 as usize).map(|f| f.linkage),
+            Const::Static(t) => p.statics.get(t.0 as usize).map(|t| t.linkage),
+            _ => Some(Linkage::Export),
+        };
+        if visible == Some(Linkage::Internal) {
+            errs.push(format!(
+                "static#{i}: imported, but its relocation at {off} names an internal definition"
+            ));
         }
     }
 }

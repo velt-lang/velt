@@ -16,6 +16,13 @@
 //!   (LLVM's ordinary inlining, which grows a caller in proportion to its own size);
 //! - a function that can grow past that limit by itself is `noinline` (every call of it would be).
 //!
+//! Only calls LLVM would inline count: of a small callee (LLVM's ordinary inlining), of std's
+//! `inline()` functions, and of an internal function called from this one site, whose address no
+//! one takes and that no other unit calls (the bonus above). A larger callee called from several
+//! sites stays a call in LLVM anyway, so it takes no room under the limit: counted, such calls
+//! kept `parseWith` (one call from `main` in bench/json/parse_value, its constant arguments then
+//! folded in) out of a `main` that had room for it.
+//!
 //! So no function grows in LLVM past `CALLER_LIMIT` plus its small callees. A call that fits
 //! under the limit stays LLVM's to inline; one that does not stays a call even in a hot loop
 //! (`main` → `parseWith` in bench/json/parse_value: out of line, `parseWith` no longer gets its
@@ -26,7 +33,7 @@
 
 use velt_vir::vir::{self, Callee, Inline, Terminator};
 
-use crate::units::components;
+use crate::units::{components, Refs};
 
 /// A call is not inlined when it would take its caller past this size (velt_opt's
 /// `CALLER_LIMIT`; a test holds the two equal)...
@@ -52,8 +59,26 @@ pub(crate) struct Caps {
 }
 
 impl Caps {
+    /// The caps of `program` in one module.
     pub(crate) fn of(program: &vir::Program) -> Caps {
+        Caps::of_units(program, &[])
+    }
+
+    /// The caps of `program` split into units: `shared[f]`, function `f` is referenced from a
+    /// unit other than its own (`units::Shared::funcs`; empty: one module).
+    pub(crate) fn of_units(program: &vir::Program, shared: &[bool]) -> Caps {
         let n = program.funcs.len();
+        let (sites, taken) = call_sites(program);
+        // An internal function called from one site only, whose address no one takes and that
+        // no other unit refers to: LLVM inlines it whatever its size.
+        let once: Vec<bool> = (0..n)
+            .map(|g| {
+                program.funcs[g].linkage == vir::Linkage::Internal
+                    && sites[g] == 1
+                    && !taken[g]
+                    && !shared.get(g).copied().unwrap_or(false)
+            })
+            .collect();
         let callee = |t: &Terminator| match t {
             Terminator::Call {
                 callee: Callee::Func(f),
@@ -95,7 +120,11 @@ impl Caps {
                     continue;
                 }
                 let size = caps.grown[g];
-                if always || size <= SMALL || total.saturating_add(size) <= CALLER_LIMIT {
+                if always || size <= SMALL {
+                    total = total.saturating_add(size);
+                } else if !once[g] {
+                    // LLVM leaves it a call: no room taken, no cap needed.
+                } else if total.saturating_add(size) <= CALLER_LIMIT {
                     total = total.saturating_add(size);
                 } else {
                     caps.kept[f].push(b);
@@ -115,4 +144,38 @@ impl Caps {
     pub(crate) fn kept(&self, f: usize) -> &[usize] {
         self.kept.get(f).map_or(&[], Vec::as_slice)
     }
+}
+
+/// Per function: the number of direct call sites of it, and whether its address is taken (by
+/// code or by a static: a vtable entry).
+fn call_sites(program: &vir::Program) -> (Vec<u32>, Vec<bool>) {
+    let n = program.funcs.len();
+    let mut sites = vec![0u32; n];
+    let mut taken = vec![false; n];
+    for f in &program.funcs {
+        for b in &f.blocks {
+            if let Terminator::Call {
+                callee: Callee::Func(g),
+                ..
+            } = &b.term
+            {
+                if let Some(s) = sites.get_mut(g.0 as usize) {
+                    *s = s.saturating_add(1);
+                }
+            }
+        }
+        for g in Refs::of_function(f).addresses {
+            if let Some(t) = taken.get_mut(g) {
+                *t = true;
+            }
+        }
+    }
+    for s in &program.statics {
+        for g in Refs::of_static(s).funcs() {
+            if let Some(t) = taken.get_mut(g) {
+                *t = true;
+            }
+        }
+    }
+    (sites, taken)
 }

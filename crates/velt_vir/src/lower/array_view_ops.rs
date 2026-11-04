@@ -12,7 +12,8 @@
 
 use velt_sema::hir::{self, DefId, TyId, TyKind};
 
-use super::array_view::{ViewFlush, ViewSync, VIEW_FLUSH_FROM, VIEW_LEN, VIEW_SORT, VIEW_SYNC_LEN};
+use super::array_view::{ViewFlush, ViewSync};
+use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
 use super::{cint, ice, unit, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
@@ -117,7 +118,7 @@ impl FnLower<'_, '_> {
         let a = self.cx.array_agg();
         let held = Place::local(self.temp(Ty::Agg(a)));
         let n = proj(&held, Proj::Field(1));
-        self.view_call_with(VIEW_LEN, vec![e], vec![v], Some(n.clone()));
+        hooks::array_view_len(self, [e], ty::ArrayView::arg(v)).emit_to(self, n.clone());
         self.assign(out.clone(), Rvalue::Use(Operand::Copy(n)));
         self.goto(join);
         self.switch_to(join);
@@ -155,8 +156,8 @@ impl FnLower<'_, '_> {
         let (yes, no, join) = (self.new_block(), self.new_block(), self.new_block());
         self.branch(is, yes, no);
         self.switch_to(yes);
-        let args = vec![v, cmp.clone(), neg.clone()];
-        self.view_call_with(VIEW_SORT, vec![*e, *c], args, None);
+        let (cmp, neg) = (ty::Func::arg(cmp.clone()), ty::Func::arg(neg.clone()));
+        _ = hooks::array_view_sort(self, [*e, *c], ty::ArrayView::arg(v), cmp, neg).emit(self);
         self.goto(join);
         self.switch_to(no);
         Some(join)
@@ -187,14 +188,16 @@ impl FnLower<'_, '_> {
             lw.switch_to(yes);
             let (_, view) = lw.array_view_of_hdr(&hdr);
             let last = Operand::Const(Const::Bool(false), Ty::Bool);
-            lw.view_call(VIEW_SYNC_LEN, e, vec![view.clone(), last], None);
+            let (vw, last) = (ty::ArrayView::arg(view.clone()), ty::Bool::arg(last));
+            _ = hooks::array_view_sync_len(lw, [e], vw, last).emit(lw);
             let seen = lw.view_field(&view, e, "seen");
             let at = Place::local(lw.copy_to_temp(Operand::Copy(seen), Ty::Ptr));
             let mirror = proj(&at, Proj::Deref(payload));
             let len = Operand::Copy(proj(&mirror, Proj::Field(1)));
             let old = lw.rvalue_temp(Ty::U64, Rvalue::Use(len));
             lw.push_value(&mirror, e, v);
-            lw.view_call(VIEW_FLUSH_FROM, e, vec![view, old], None);
+            let (vw, old) = (ty::ArrayView::arg(view), ty::USize::arg(old));
+            _ = hooks::array_view_flush_from(lw, [e], vw, old).emit(lw);
             lw.goto(done);
             lw.switch_to(no);
         });

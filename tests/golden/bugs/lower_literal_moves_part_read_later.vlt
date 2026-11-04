@@ -1,0 +1,91 @@
+// check: no leaks
+// An object, array or tuple literal that moves a part out of a local and reads the local again
+// in a later element (#2258): the later read sees the part, as in Node. The compiler used to
+// empty the part (the payload of a narrowed `T | null`) or drop the rest of a narrowed union
+// member as soon as it moved it. Expected output: Node's.
+
+type P = { name: string; n: number };
+type Page = { title: string; body: string };
+type Shape =
+  | { kind: "circle"; label: string; r: number }
+  | { kind: "square"; label: string; side: number };
+
+function show(p: P): string {
+  return `name=${p.name}`;
+}
+
+function describe(s: Shape): string {
+  return s.kind == "circle" ? `circle ${s.label} r=${s.r}` : `square ${s.label} side=${s.side}`;
+}
+
+function make(name: string): P | null {
+  return name == "" ? null : { name: name + "!", n: name.length };
+}
+
+function shape(label: string, round: boolean): Shape {
+  return round
+    ? { kind: "circle", label: label + "?", r: 2 }
+    : { kind: "square", label: label + "#", side: 3 };
+}
+
+// The payload of a narrowed `P | null`.
+function page(name: string): Page {
+  const p = make(name);
+  if (p != null) {
+    return { title: p.name, body: show(p) };
+  }
+  return { title: "-", body: "-" };
+}
+
+// A later element that only reads the part again.
+function lengths(name: string): [string, number] {
+  const p = make(name);
+  if (p != null) {
+    return [p.name, p.name.length];
+  }
+  return ["-", 0];
+}
+
+// An array literal.
+function names(name: string): string[] {
+  const p = make(name);
+  if (p != null) {
+    return [p.name, show(p), p.name];
+  }
+  return [];
+}
+
+// A field of a narrowed union member.
+function labelled(round: boolean): Page {
+  const s = shape("s", round);
+  if (s.kind == "circle") {
+    return { title: s.label, body: describe(s) };
+  }
+  return { title: s.label, body: `${s.side}` };
+}
+
+// A local moved on one path only (it gets a drop flag).
+function flagged(keep: boolean): Page {
+  const p: P = { name: "f" + (keep ? "k" : "d"), n: 1 };
+  if (!keep) {
+    const gone = p;
+    return { title: gone.name, body: "moved" };
+  }
+  return { title: p.name, body: show(p) };
+}
+
+const a = page("ada");
+console.log(a.title, a.body);
+const b = page("");
+console.log(b.title, b.body);
+const l = lengths("grace");
+console.log(l[0], l[1]);
+console.log(names("lin").join(" | "));
+const c = labelled(true);
+console.log(c.title, c.body);
+const d = labelled(false);
+console.log(d.title, d.body);
+const k = flagged(true);
+console.log(k.title, k.body);
+const g = flagged(false);
+console.log(g.title, g.body);

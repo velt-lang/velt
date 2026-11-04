@@ -29,6 +29,7 @@ fn dev_program(value: i64, helper: bool) -> Program {
         align: 8,
         relocs: vec![],
         mutable: Some(77),
+        ..Default::default()
     });
     let word = Operand::Const(Const::Static(velt_vir::vir::StaticId(0)), Ptr);
     // A function inserted first in the second version, shifting every `FuncId`.

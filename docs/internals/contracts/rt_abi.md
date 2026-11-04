@@ -384,9 +384,7 @@ tells the two kinds apart. They are `f32_bits bits_f32` (`x.toBits()` / `f32.fro
 `f32`) and the f16/bf16 conversions, each 16-bit value its bit pattern in a `u16`:
 `f16_to_f32(h: u16): f32`, `f32_to_f16(x: f32): u16`, `f64_to_f16(x: f64): u16`,
 `bf16_to_f32(b: u16): f32`, `f32_to_bf16(x: f32): u16`, `f64_to_bf16(x: f64): u16`,
-`i64_to_bf16(x: i64): u16` and `u64_to_bf16(x: u64): u16`; and [additive] `sqrt_f32(x: f32): f32`,
-the correctly rounded square root (LLVM's `llvm.sqrt.f32`, Cranelift's `sqrt`), which lowering
-emits for `Math.sqrt` of an f16/bf16 stored to the same format. Widening is exact; narrowing rounds
+`i64_to_bf16(x: i64): u16` and `u64_to_bf16(x: u64): u16`. Widening is exact; narrowing rounds
 to nearest even once, from the exact source (an f64 or an integer is not rounded through f32 or
 f64 first), keeps subnormals, overflows to infinity, and keeps a NaN as a quiet NaN with its sign
 and the payload's top bits; widening a NaN sets the quiet bit (Arm's `fcvt`/`bfcvt` and x86's
@@ -396,6 +394,9 @@ and F16C under a `--cpu` with it, and the reference's branchless integer sequenc
 `vcvtps2ph` rounds by its immediate (nearest even); on AVX512-FP16 CPUs LLVM picks `vcvtss2sh`,
 which rounds by MXCSR: the same bits, since Velt never changes MXCSR from round-to-nearest (code
 that does, through a native package, changes these conversions too).
+[additive] `sqrt_f32(x: f32): f32` is not a conversion: the correctly rounded f32 square root
+(LLVM's `llvm.sqrt.f32`, Cranelift's `sqrt`), which lowering emits for `Math.sqrt(x) as f16` (or
+`as bf16`) of a value of that format, before the one narrowing.
 
 ## SIMD [additive]
 

@@ -5,7 +5,8 @@
 
 use velt_sema::hir::{self, TyId};
 
-use super::array_view::{ViewSync, VIEW_SYNC_AT};
+use super::array_view::ViewSync;
+use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
 use super::FnLower;
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Ty};
@@ -174,7 +175,8 @@ impl FnLower<'_, '_> {
         self.branch(is, view, exit);
         self.switch_to(view);
         let (_, v) = self.array_view_of_hdr(&hdr);
-        self.view_call(VIEW_SYNC_AT, e, vec![v.clone(), k.clone()], None);
+        let (vw, slot) = (ty::ArrayView::arg(v.clone()), ty::USize::arg(k.clone()));
+        _ = hooks::array_view_sync_at(self, [e], vw, slot).emit(self);
         let seen = self.view_field(&v, e, "seen");
         let mp = Place::local(self.copy_to_temp(Operand::Copy(seen), Ty::Ptr));
         let m = proj(&mp, Proj::Deref(payload));

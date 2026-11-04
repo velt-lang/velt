@@ -32,7 +32,7 @@ use crate::disk_index::DiskIndex;
 use crate::documents::{self, Documents};
 use crate::imports::ImportHelp;
 use crate::registry::RegistryData;
-use crate::{diagnostics, manifest, ts_compat, workspace_symbols, ProgramLoader};
+use crate::{diagnostics, lint, manifest, workspace_symbols, ProgramLoader};
 
 /// Quiet time after an edit before the document is re-analyzed.
 const DEBOUNCE: Duration = Duration::from_millis(150);
@@ -100,7 +100,7 @@ struct Server<'a> {
     /// Package indexes and searches for `package.vlt`, fetched in the background.
     registry: RegistryData,
     /// The packages' `tsCompat` folders (cleared when folders appear or disappear on disk).
-    ts_folders: ts_compat::FolderCache,
+    ts_folders: lint::FolderCache,
     /// Parsed exports of modules outside the analyzed programs (import completion, auto-import).
     imports: ImportHelp,
     /// Serve the run and debug code lenses ([`run_lenses`]).

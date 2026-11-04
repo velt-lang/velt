@@ -180,6 +180,13 @@ pub const PACKAGE: &[Field] = &[
               package root. `velt check --ts-compat` and the editor lint them.",
     },
     Field {
+        key: "lint",
+        kind: Kind::Object(LINT),
+        ty: "Lint",
+        required: false,
+        doc: "How loud the lint rules are in the package's own modules: `{ perf: \"warn\" }`.",
+    },
+    Field {
         key: "build",
         kind: Kind::Object(BUILD),
         ty: "Build",
@@ -324,6 +331,27 @@ pub const JSX: &[Field] = &[Field {
           default), a `paths` alias, or `./dir` relative to the package root. A \
           `// @jsxImportSource` comment in a file wins.",
 }];
+
+/// `lint`.
+pub const LINT: &[Field] = &[
+    Field {
+        key: "perf",
+        kind: Kind::Str,
+        ty: "LintLevel",
+        required: false,
+        doc: "The level of every `perf/…` rule: `\"hint\"` (the default: `velt check --perf` \
+              and the editor show them), `\"warn\"`, `\"deny\"` (`velt check` fails) or \
+              `\"off\"`.",
+    },
+    Field {
+        key: "rules",
+        kind: Kind::Map(Entry::Str),
+        ty: "Record<string, LintLevel>",
+        required: false,
+        doc: "Levels of single rules by code, which win over `perf`: \
+              `{ \"perf/number-double\": \"off\" }`.",
+    },
+];
 
 /// `build`.
 pub const BUILD: &[Field] = &[Field {

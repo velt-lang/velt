@@ -20,7 +20,9 @@ pub(crate) fn lookup(name: &str) -> Option<*const u8> {
         "TlsFree" => TlsFree as *const u8,
         "TlsGetValue" => TlsGetValue as *const u8,
         "TlsSetValue" => TlsSetValue as *const u8,
-        _ => return None,
+        // kernel32's other functions (`GetLastError`) and the UCRT's, which cranelift-jit's
+        // lookup misses (c_libraries.rs).
+        _ => return crate::c_libraries::loaded(name),
     };
     Some(address)
 }

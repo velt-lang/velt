@@ -21,6 +21,7 @@
 //!   jsx: { importSource: "sigx" },      // JSX runtime of the package's modules
 //!   native: { targets: ["x86_64-unknown-linux-gnu"] },  // a Rust crate (`crate::native`)
 //!   tsCompat: ["src/models"],           // folders kept TypeScript-compatible
+//!   lint: { perf: "warn" },             // how loud the lint rules are (`lint`)
 //! };
 //! ```
 //!
@@ -35,8 +36,11 @@ use velt_common::{Diagnostics, FileId, SourceMap};
 
 pub mod ide;
 pub mod legacy;
+mod lint;
 pub mod read;
 pub mod schema;
+
+pub use lint::{LintConfig, LintLevel};
 pub(crate) mod write;
 
 /// File name of the manifest at a package root.
@@ -102,6 +106,9 @@ pub struct Manifest {
     /// another; checked to exist by the tools that lint them ([`read::missing_ts_compat_dirs`]).
     #[serde(default, rename = "tsCompat", skip_serializing_if = "Vec::is_empty")]
     pub ts_compat: Vec<String>,
+    /// `lint`: how loud the lint rules are in the package's own modules.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lint: Option<LintConfig>,
     /// `build`: how the package's program is built. Only the root package's applies.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub build: Option<BuildConfig>,

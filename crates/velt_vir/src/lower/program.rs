@@ -30,11 +30,15 @@ impl<'h> Cx<'h> {
             cell_checks: false,
             target: String::new(),
             unavailable: vec![],
+            c_clashes: vec![],
+            c_symbols: Default::default(),
+            c_clashes_reported: Default::default(),
             std_calls: FxHashMap::default(),
             system_aggs: FxHashMap::default(),
             no_await_steps: false,
             facts_only: false,
-            left_out: false,
+            deferred: FxHashMap::default(),
+            deferred_new: vec![],
             versioned: 0,
             types,
             aggs: vec![AggLayout {
@@ -227,13 +231,13 @@ impl<'h> Cx<'h> {
             // Work items carry canonical type arguments (one type per anonymous shape), which
             // the instances' own may not be (a generic object type at its arguments).
             let hir = self.hir;
-            let canon = (hir.generated.iter())
+            let entries: Vec<_> = (hir.generated.iter())
                 .map(|((g, targs), body)| {
                     let targs = targs.iter().map(|t| self.canon(*t)).collect();
                     ((*g, targs), *body)
                 })
                 .collect();
-            self.generated_canon = Some(canon);
+            self.generated_canon = Some(canonical_generated(entries));
         }
         let map = self.generated_canon.as_ref().expect("ICE: made above");
         if let Some((d, targs)) = work_target(&mut work) {
@@ -257,6 +261,7 @@ impl<'h> Cx<'h> {
             return;
         }
         self.glue_slots.enter(fid);
+        let deferred_mark = self.deferred_new.len();
         let outer = self.cur_def;
         if let Some(d) = work_def(work).filter(|d| self.hir.unchecked.contains(d)) {
             let name = &self.fn_def(d).name;
@@ -301,6 +306,7 @@ impl<'h> Cx<'h> {
         self.funcs[fid.0 as usize] = Some(func);
         self.building.remove(&fid);
         self.glue_slots.leave();
+        self.claim_deferred(fid, deferred_mark);
     }
 
     /// Instance of a user function with concrete type args.
@@ -332,6 +338,13 @@ impl<'h> Cx<'h> {
     }
 
     /// Intern an extern by symbol; the same symbol must always have the same signature.
+    /// The signature extern `symbol` has so far, if it has one.
+    pub(super) fn extern_signature(&self, symbol: &str) -> Option<(&[Ty], Ty)> {
+        let id = self.extern_map.get(symbol)?;
+        let e = &self.externs[id.0 as usize];
+        Some((&e.params[..], e.ret))
+    }
+
     pub(super) fn extern_sym(
         &mut self,
         symbol: &str,
@@ -347,6 +360,17 @@ impl<'h> Cx<'h> {
         if let Some(&id) = self.extern_map.get(symbol) {
             let e = &self.externs[id.0 as usize];
             if e.params != params || e.ret != ret {
+                if let Some(c) = self.c_symbols.get(symbol) {
+                    // The program declared it as a C function first (c_call.rs).
+                    self.c_clashes.push(velt_common::Diagnostic::error(
+                        format!(
+                            "C function `{symbol}` (`{}`) is a symbol the compiler's runtime calls with another signature",
+                            c.shown
+                        ),
+                        c.span,
+                    ));
+                    return id;
+                }
                 ice(format_args!(
                     "extern `{symbol}` declared with two different signatures"
                 ));
@@ -360,6 +384,7 @@ impl<'h> Cx<'h> {
             ret,
             noreturn,
             host: None,
+            c_decl: None,
         });
         self.extern_map.insert(symbol.to_string(), id);
         id
@@ -398,6 +423,7 @@ impl<'h> Cx<'h> {
             align,
             relocs: vec![],
             mutable: None,
+            ..Default::default()
         });
         self.static_map.insert(key, id);
         id
@@ -422,6 +448,7 @@ impl<'h> Cx<'h> {
             align: 8,
             relocs: vec![(0, vir::Const::Static(text))],
             mutable: None,
+            ..Default::default()
         });
         self.str_objects.insert(s.to_string(), id);
         id
@@ -473,5 +500,38 @@ fn work_def(work: &Work) -> Option<DefId> {
         | Work::GenNew(d, _)
         | Work::GenFree(d, _) => Some(*d),
         _ => None,
+    }
+}
+
+/// The generated definitions by canonical instance (`hir::Program::generated` with canonical
+/// type arguments). Two instances can have one canonical form, such as two unions that erase to
+/// one layout, and their generated bodies are then the same code; which one is used must not
+/// depend on the map's iteration order (#2243: it changed from run to run), so the smallest
+/// `DefId` wins.
+fn canonical_generated(
+    entries: impl IntoIterator<Item = ((DefId, Vec<TyId>), DefId)>,
+) -> FxHashMap<(DefId, Vec<TyId>), DefId> {
+    let mut map: FxHashMap<(DefId, Vec<TyId>), DefId> = FxHashMap::default();
+    for (key, body) in entries {
+        let kept = map.entry(key).or_insert(body);
+        *kept = (*kept).min(body);
+    }
+    map
+}
+
+#[cfg(test)]
+mod canonical_generated_tests {
+    use super::*;
+
+    /// Two instances with one canonical form: whatever order they come in, the same body.
+    #[test]
+    fn the_same_body_whatever_the_order() {
+        let key = (DefId(7), vec![TyId(3)]);
+        let a = ((key.clone(), DefId(20)), (key.clone(), DefId(12)));
+        let other = ((DefId(7), vec![TyId(4)]), DefId(30));
+        let forward = canonical_generated([a.0.clone(), a.1.clone(), other.clone()]);
+        let backward = canonical_generated([other, a.1, a.0]);
+        assert_eq!(forward, backward);
+        assert_eq!(forward[&key], DefId(12));
     }
 }

@@ -1,11 +1,14 @@
 //! Whether a change needs the merge queue to check Windows and macOS too, or Linux is enough.
 //!
 //! The OS-specific code is in the runtime, the native crates, code generation and linking, the
-//! `velt` command line and packages, and the standard library; a change there (or to the build,
-//! CI or scripts, which select everything) runs every OS in the queue. The front end and the
-//! tooling are portable Rust: Linux checks them, and the full gate on Windows and macOS after
-//! the push to `main` catches the rare exception. A change the queue checked on every OS skips
-//! that second run ([`after_merge_reason`]).
+//! `velt` command line and packages, and the parts of the standard library that talk to the OS; a
+//! change there (or to the build, CI or scripts, which select everything) runs every OS in the
+//! queue. The front end, the tooling, the rest of the standard library, the goldens, the examples
+//! and the packages behave the same everywhere nearly always: Linux checks them, and the full gate
+//! on Windows and macOS once a day (`ci.yml`'s scheduled run) and before a release (`release.yml`)
+//! catches the exception. Runners are the limit (15 at once, 5 of them macOS), and a queue entry
+//! on every OS takes four times the machine time of one on Linux. A push to `main` runs those OSes
+//! only for the build cache ([`after_merge_reason`]).
 
 use crate::graph::Graph;
 
@@ -21,20 +24,28 @@ pub(crate) const PORTABLE_CRATES: &[&str] = &[
     "velt_lsp",
     "velt_doc",
     "velt_tscompat",
+    "velt_lint",
     "velt_registry",
     "velt_http",
     "velt_rt_wasm",
 ];
 
-/// Paths outside `crates/` whose behavior can differ by OS: the standard library's bindings,
-/// end-to-end programs and their expected output, the standard library's `velt test` suites,
-/// native packages.
+/// Paths outside `crates/` whose behavior differs by OS: the parts of the standard library that
+/// talk to the OS, and the standard library's `velt test` suites, which run servers, sockets and
+/// files (#1892). A pull request that changes a package runs its tests on Windows
+/// ([`windows_packages`]), so packages need no second look in the queue.
 const OS_SPECIFIC_PATHS: &[&str] = &[
-    "std/",
-    "tests/golden/",
+    "std/fs/",
+    "std/host/",
+    "std/native/",
+    "std/net/",
+    "std/os/",
+    "std/process/",
+    "std/prelude/timers.vlt",
+    "std/task/",
+    "std/test/",
+    "std/time/",
     "tests/std/",
-    "examples/",
-    "packages/",
 ];
 
 /// Why Windows and macOS must be checked too, or `None` when Linux is enough. `full` is
@@ -108,18 +119,13 @@ const CACHE_INPUTS: &[&str] = &[
     ".github/actions/setup/",
 ];
 
-/// Why the whole gate runs on Windows and macOS after a change lands on `main`, or `None` when
-/// the merge queue already ran it there. `other_os` is the change's [`other_os_reason`]: on the
-/// push, `cargo xtask affected --base HEAD^1` plans the same change the queue planned (the queue
-/// tests each entry on its `base_sha`, which becomes `HEAD^1` on `main`). The gate runs when
-///
-/// - the queue checked Linux only, so Windows and macOS have not seen the change, or
-/// - the change touches the toolchain or the dependencies: the run refreshes the Windows and
-///   macOS build caches, which only pushes to `main` save.
-pub fn after_merge_reason(paths: &[String], other_os: &Option<String>) -> Option<String> {
-    if other_os.is_none() {
-        return Some("the merge queue checked Linux only".into());
-    }
+/// Why the whole gate runs on Windows and macOS right after a change lands on `main`, or `None`
+/// when it can wait for `ci.yml`'s scheduled run. On the push, `cargo xtask affected --base
+/// HEAD^1` plans the same change the queue planned (the queue tests each entry on its `base_sha`,
+/// which becomes `HEAD^1` on `main`). The gate runs when the change touches the toolchain or the
+/// dependencies: the run refreshes the Windows and macOS build caches, which only runs on `main`
+/// save.
+pub fn after_merge_reason(paths: &[String]) -> Option<String> {
     paths
         .iter()
         .find(|p| CACHE_INPUTS.iter().any(|c| p.starts_with(c)))

@@ -8,7 +8,10 @@
 //! its first referrer in program order, so a hot call chain and the small helpers it calls stay
 //! in one unit where LLVM can inline them. A group stops taking components at half a unit's
 //! share of the program, so a huge `main` that calls everything does not swallow the program.
-//! Large components, components no one refers to and exported functions start a group.
+//! Large components, components no one refers to and exported functions start a group. A
+//! component heavier than that cap is cut into pieces of at most the cap, in program order, each
+//! a group: one component can hold most of a program (sigx's any glue and vtables tie 3,691
+//! functions, half of its IR, into one), and left whole it made one unit four times the others.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
@@ -78,7 +81,6 @@ fn groups(
             parent.push(first.map(|p| group[p]));
             group_weight.len() - 1
         });
-        group_weight[g] += weight;
         let static_pos = nodes
             .iter()
             .copied()
@@ -86,9 +88,24 @@ fn groups(
             .min()
             .or(first.map(|p| pos[p]))
             .unwrap_or(usize::MAX);
+        // The component's statics go with its first group; its functions fill groups of at most
+        // `cap` in program order (all of them the first group, unless the component is larger).
+        let mut current = g;
         for &v in nodes {
-            group[v] = g;
-            pos[v] = if v < n { v } else { static_pos };
+            if v < n {
+                let w = weights[v];
+                if weight > cap && group_weight[current] > 0 && group_weight[current] + w > cap {
+                    group_weight.push(0);
+                    parent.push(first.map(|p| group[p]));
+                    current = group_weight.len() - 1;
+                }
+                group_weight[current] += w;
+                group[v] = current;
+                pos[v] = v;
+            } else {
+                group[v] = g;
+                pos[v] = static_pos;
+            }
         }
     }
     group.truncate(n);

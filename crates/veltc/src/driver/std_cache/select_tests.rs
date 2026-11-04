@@ -1,5 +1,6 @@
 //! Which std functions the cache serves (hand-built VIR).
 
+use super::statics::Names;
 use super::*;
 use velt_vir::vir::{
     BasicBlock, FuncId, Function, Local, Place, Program, StaticData, StaticId, Ty,
@@ -42,6 +43,21 @@ fn func(name: &str, stmts: usize, calls: &[u32], extra: Option<Rvalue>) -> Funct
     f
 }
 
+fn names(p: &Program) -> Names {
+    Names::new(
+        p,
+        &velt_vir::fingerprint::Canon::new(p, velt_vir::fingerprint::Mode::Link),
+    )
+}
+
+fn cands(p: &Program) -> Vec<usize> {
+    candidates(p, &names(p))
+}
+
+fn reasons_of(p: &Program) -> BTreeMap<&'static str, usize> {
+    reasons(p, &names(p))
+}
+
 fn program(funcs: Vec<Function>, statics: Vec<StaticData>) -> Program {
     Program {
         funcs,
@@ -60,6 +76,7 @@ fn stat(relocs: bool) -> StaticData {
             vec![]
         },
         mutable: None,
+        ..Default::default()
     }
 }
 
@@ -83,20 +100,21 @@ fn large_std_functions_are_served_small_ones_stay() {
         ],
         vec![],
     );
-    assert_eq!(candidates(&p), [0]);
+    assert_eq!(cands(&p), [0]);
     assert_eq!(
         inlinable(&p, 0),
         [0, 1],
         "the small callee is compiled into it"
     );
-    let by = reasons(&p);
+    let by = reasons_of(&p);
     assert_eq!((by["small"], by["$dup"]), (4, 51));
 }
 
-/// A static with relocations (a vtable, a type descriptor) or one the program writes keeps the
-/// function in the program, also when only a small function it may inline names it.
+/// A static with identity (relocations: a vtable, a type descriptor; or written) is served by
+/// name, also when only a small function it may inline names it; what its relocations point
+/// at is reached too. Two statics with the same contents can't be named, so their users stay.
 #[test]
-fn statics_with_identity_keep_a_function_in_the_program() {
+fn statics_with_identity_are_served_by_name_unless_two_are_alike() {
     let p = program(
         vec![
             func("plain", 50, &[], addr(0)),
@@ -106,10 +124,28 @@ fn statics_with_identity_keep_a_function_in_the_program() {
         ],
         vec![stat(false), stat(true)],
     );
-    assert_eq!(candidates(&p), [0]);
+    assert_eq!(cands(&p), [0, 1, 2]);
     let mut written = p.clone();
-    written.statics[0].mutable = Some(Default::default());
-    assert!(candidates(&written).is_empty());
+    written.statics[0].mutable = Some(7);
+    assert_eq!(cands(&written), [0, 1, 2], "a written word is named too");
+    assert_eq!(super::statics::reached(&p, &inlinable(&p, 2)), [1]);
+    // A second vtable with the same contents: neither can be named.
+    let mut alike = p.clone();
+    alike.statics.push(stat(true));
+    alike.funcs.push(func("other", 50, &[], addr(2)));
+    assert_eq!(cands(&alike), [0]);
+    assert!(reasons_of(&alike).contains_key("statics with identity"));
+    // What a named static points at must be nameable too.
+    let mut nested = p.clone();
+    nested.statics[1].relocs = vec![(0, Const::Static(StaticId(2)))];
+    nested.statics.push(stat(false));
+    nested.statics.push(stat(false));
+    assert_eq!(super::statics::reached(&nested, &[1]), [1, 2]);
+    assert_eq!(
+        cands(&nested),
+        [0],
+        "the plain static it points at has a twin"
+    );
 }
 
 /// A function that calls through a pointer (a callback) stays where `const_fields` can
@@ -132,6 +168,6 @@ fn callback_callers_stay_in_the_program() {
         term: Terminator::Return(Operand::Copy(Place::local(Local(0)))),
     });
     let p = program(vec![f], vec![]);
-    assert!(candidates(&p).is_empty());
-    assert!(reasons(&p).contains_key("callbacks"));
+    assert!(cands(&p).is_empty());
+    assert!(reasons_of(&p).contains_key("callbacks"));
 }

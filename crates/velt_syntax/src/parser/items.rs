@@ -149,6 +149,7 @@ impl<'a> Parser<'a> {
             Some(Kw::Declare) if self.nth_word(1, "generated") && self.nth(2) == Tok::LParen => {
                 ItemKind::Function(self.parse_generated_decl(lo)?)
             }
+            Some(Kw::Declare) if self.at_c_decl() => ItemKind::ExternFn(self.parse_c_decl(lo)?),
             Some(Kw::Declare) if self.nth_word(1, "host") && self.nth(2) == Tok::LParen => {
                 ItemKind::ExternFn(self.parse_host_decl(lo)?)
             }
@@ -420,7 +421,7 @@ impl<'a> Parser<'a> {
     }
 
     /// `function name(...)` or `function* name(...)` (a generator).
-    fn parse_fn_sig(&mut self, lo: u32, is_async: bool) -> PResult<FnSig> {
+    pub(super) fn parse_fn_sig(&mut self, lo: u32, is_async: bool) -> PResult<FnSig> {
         self.expect_kw(Kw::Function, "function")?;
         let is_generator = self.eat(Tok::Star);
         let name = self.parse_binding_ident()?;
@@ -457,6 +458,7 @@ impl<'a> Parser<'a> {
             is_intrinsic: false,
             generator: None,
             host: None,
+            c: None,
             is_generator,
             this_param,
             span: self.span_from(lo),

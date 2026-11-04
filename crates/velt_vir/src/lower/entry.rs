@@ -24,6 +24,7 @@
 use velt_sema::hir::{self, DefId, TyId, TyKind};
 
 use super::glue::SLOT_NAME;
+use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
 use super::rt::Rt;
 use super::{cint, FnLower, ScopeKind, Work};
@@ -315,8 +316,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
     /// uncaught.
     pub(super) fn push_error_text(&mut self, buf: &Operand, ep: &Place, err: TyId) {
         if self.cx.is_union(err) {
-            if let Some(root) = self.common_error_root(err) {
-                return self.push_union_error_header(buf, ep, err, root);
+            if self.common_error_root(err).is_some() {
+                return self.push_union_error_header(buf, ep, err);
             }
             let done = self.new_block();
             self.for_each_member(ep, err, |lw, payload, m| {
@@ -331,8 +332,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             self.switch_to(done);
             return;
         }
-        if let Some(root) = self.error_root(err) {
-            self.push_error_header(buf, ep, err, root);
+        if self.error_root(err).is_some() {
+            self.push_error_header(buf, ep, err);
         } else if self.cx.is_dynamic(err) {
             self.push_dynamic_thrown(buf, ep, err);
         } else {
@@ -358,10 +359,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         root
     }
 
-    /// [`push_error_text`](Self::push_error_text) for a union of `Error` classes extending
-    /// `root`: each member only names its class, and one call writes the header, so a `main`
+    /// [`push_error_text`](Self::push_error_text) for a union of `Error` classes extending one
+    /// root: each member only names its class, and one call writes the header, so a `main`
     /// calling functions that throw three kinds of error has one header, not three.
-    fn push_union_error_header(&mut self, buf: &Operand, ep: &Place, err: TyId, root: DefId) {
+    fn push_union_error_header(&mut self, buf: &Operand, ep: &Place, err: TyId) {
         const STR: Ty = Ty::Agg(crate::vir::STR_AGG);
         let obj = Place::local(self.temp(Ty::Ptr));
         let name = Place::local(self.temp(STR));
@@ -374,7 +375,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         });
         self.terminate(Terminator::Unreachable);
         self.switch_to(tail);
-        self.push_class_error_header(buf, &obj, root, &name);
+        self.push_class_error_header(buf, &obj, &name);
     }
 
     /// A thrown `any` (or `unknown`) value at `ep`: Node's header for an `Error` it holds
@@ -390,7 +391,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.switch_to(error_bb);
         let obj = self.downcast_place(ep.clone(), err);
         let error = self.cx.intern(TyKind::Adt(root, vec![]));
-        self.push_error_header(buf, &obj, error, root);
+        self.push_error_header(buf, &obj, error);
         self.goto(done);
         self.switch_to(value_bb);
         self.push_thrown_value(buf, ep, err);
@@ -415,12 +416,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// The first line Node prints for an uncaught error of class `err` (extending the prelude
-    /// `Error` class `root`): `uncaughtHeader(e, <dynamic class name>)` (std/lang/hooks/error.vlt), which writes
+    /// `Error` class): `uncaughtHeader(e, <dynamic class name>)` (std/lang/hooks/error.vlt), which writes
     /// `<name>: <message>` from the (possibly overridden) `name`, and the class in front when
     /// they differ (`E [TypeError]: m`).
-    fn push_error_header(&mut self, buf: &Operand, ep: &Place, err: TyId, root: DefId) {
+    fn push_error_header(&mut self, buf: &Operand, ep: &Place, err: TyId) {
         let cls = self.error_class_name(ep, err);
-        self.push_class_error_header(buf, ep, root, &cls);
+        self.push_class_error_header(buf, ep, &cls);
     }
 
     /// The name of the class of the error of class type `err` at `ep` that the header shows (a
@@ -456,16 +457,16 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
     }
 
-    /// The hook `uncaughtHeader(e, cls)` of the error at `ep` (a class extending `root`),
+    /// The hook `uncaughtHeader(e, cls)` of the error at `ep` (a class extending `Error`),
     /// appended to the builder at `buf`.
-    fn push_class_error_header(&mut self, buf: &Operand, ep: &Place, root: DefId, cls: &Place) {
-        let m = (self.cx.prelude_def(velt_common::std_hook!(uncaught_header)))
-            .unwrap_or_else(|| super::ice("std without the hook `uncaughtHeader`"));
-        let root_ty = self.cx.intern(TyKind::Adt(root, vec![]));
-        let (text, ty) = self.call_hook(m, Operand::Copy(ep.clone()), root_ty, Some(cls));
+    fn push_class_error_header(&mut self, buf: &Operand, ep: &Place, cls: &Place) {
+        let e = ty::Error::arg(Operand::Copy(ep.clone()));
+        let cls = ty::Str::arg(self.addr(cls.clone()));
+        let text = hooks::uncaught_header(self, e, cls).emit(self).place();
         let a = self.addr(text.clone());
         self.push_str(buf, a);
-        self.drop_glue(text, ty);
+        let str_ty = self.cx.str_ty();
+        self.drop_glue(text, str_ty);
     }
 
     /// Is `err` the prelude's `JsonError` (what `JSON.parse` throws), not a class of that name?

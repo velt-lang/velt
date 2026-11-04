@@ -49,6 +49,7 @@ pub(crate) fn declare(externs: &mut Vec<ExternFn>) {
                 ret: Ty::Unit,
                 noreturn: false,
                 host: None,
+                c_decl: None,
             });
         }
     }

@@ -22,6 +22,7 @@ fn program() -> Program {
                 ret: Ty::Unit,
                 noreturn: false,
                 host: None,
+                c_decl: None,
             },
             // 1: keep(ptr) -> ptr (returns its argument)
             ExternFn {
@@ -30,6 +31,7 @@ fn program() -> Program {
                 ret: Ty::Ptr,
                 noreturn: false,
                 host: None,
+                c_decl: None,
             },
         ],
         funcs: vec![callee("ret.out"), callee("s")],

@@ -152,8 +152,41 @@ pub const OBJECT_AGG_SUFFIX: &str = " object";
 pub mod atomic;
 pub mod fingerprint;
 mod lower;
+
+/// The argument types of lowering's typed hook builders (`lower/hook_calls.rs`), generated from
+/// velt_common's hook table: public only so that this doctest can show a call with the wrong
+/// types does not compile. `intPush(buf, v)` takes the builder, then the integer:
+///
+/// ```
+/// use velt_vir::hook_args::{int_push, ty, HookTy};
+/// use velt_vir::vir::{Const, Operand, Ty};
+/// let op = || Operand::Const(Const::Int(0), Ty::I64);
+/// let _: int_push::Args = (ty::Str::arg(op()), ty::I64::arg(op()));
+/// ```
+///
+/// Swapped, or with a float, it is a type error:
+///
+/// ```compile_fail,E0308
+/// use velt_vir::hook_args::{int_push, ty, HookTy};
+/// use velt_vir::vir::{Const, Operand, Ty};
+/// let op = || Operand::Const(Const::Int(0), Ty::I64);
+/// let _: int_push::Args = (ty::I64::arg(op()), ty::Str::arg(op()));
+/// ```
+///
+/// ```compile_fail,E0308
+/// use velt_vir::hook_args::{int_push, ty, HookTy};
+/// use velt_vir::vir::{Const, Operand, Ty};
+/// let op = || Operand::Const(Const::Int(0), Ty::I64);
+/// let _: int_push::Args = (ty::Str::arg(op()), ty::F64::arg(op()));
+/// ```
+#[doc(hidden)]
+pub mod hook_args {
+    pub use crate::lower::hook_calls::args::*;
+    pub use crate::lower::hook_calls::{ty, HookTy};
+}
 pub mod mangle;
 pub mod math;
+pub mod parallel;
 pub mod simd;
 pub mod system;
 pub mod tls;

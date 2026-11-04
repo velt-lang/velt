@@ -1,0 +1,48 @@
+// @jsxImportSource ./_jsx_async_provider
+
+// A package provider's generic `jsxAsyncComponent<P, E>` takes async components that cannot
+// fail: `E` is inferred as nothing (#2259: "cannot infer type parameter `E`"). So does a plain
+// generic function over such a callback. Nothing here declares an error type: a function value
+// with one makes sema check the program again with the inferred error sets written in, which
+// never had the problem.
+
+import { renderToString } from "velt/jsx";
+
+async function Count(props: { n: number }): Promise<JSX.Element> {
+  return <b>{props.n}</b>;
+}
+
+async function Name(props: { first: string; last: string }): Promise<JSX.Element> {
+  return (
+    <i>
+      {props.first} {props.last}
+    </i>
+  );
+}
+
+async function label(n: number): Promise<string> {
+  return `#${n}`;
+}
+
+function arity<P, E>(f: (p: P) => Promise<string, E>, p: P): number {
+  return 1;
+}
+
+const top = (
+  <p>
+    <Count n={1} />
+  </p>
+);
+
+async function main() {
+  console.log(await renderToString(top));
+  console.log(
+    await renderToString(
+      <p>
+        <Count n={2} /> by <Name first="Ada" last="Lovelace" />
+      </p>,
+    ),
+  );
+  console.log(arity(label, 7));
+  console.log(await label(7));
+}

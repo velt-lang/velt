@@ -147,7 +147,7 @@ pub fn emit_objects_cached(
     types::validate_aggregates(program)?;
     let start = Instant::now();
     let plan = units::plan(program, count);
-    let caps = inlining::Caps::of(program);
+    let caps = inlining::Caps::of_units(program, &plan.shared.funcs);
     timings.push(("units", start.elapsed()));
     let start = Instant::now();
     let compile = |unit: &units::Unit| -> Result<(Vec<u8>, bool, Duration), String> {

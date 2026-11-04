@@ -126,6 +126,7 @@ impl ProgramBuilder {
             ret,
             noreturn,
             host: None,
+            c_decl: None,
         });
         ExternId(self.p.externs.len() as u32 - 1)
     }
@@ -150,6 +151,7 @@ impl ProgramBuilder {
             align,
             relocs,
             mutable: None,
+            ..Default::default()
         });
         StaticId(self.p.statics.len() as u32 - 1)
     }

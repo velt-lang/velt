@@ -20,13 +20,22 @@ impl fmt::Display for Program {
         }
         for (i, s) in self.statics.iter().enumerate() {
             let mutable = s.mutable.map(|id| format!(" mutable={id:x}"));
+            // A named static (invariant 13); unnamed ones print as before.
+            let named = (s.symbol.as_ref()).map(|sym| {
+                let how = match s.linkage {
+                    Linkage::Import => "import",
+                    _ => "export",
+                };
+                format!(" symbol={sym} {how}")
+            });
             writeln!(
                 f,
-                "static#{} align={} {:?}{}",
+                "static#{} align={} {:?}{}{}",
                 i,
                 s.align,
                 String::from_utf8_lossy(&s.bytes),
-                mutable.unwrap_or_default()
+                mutable.unwrap_or_default(),
+                named.unwrap_or_default()
             )?;
         }
         for (i, e) in self.externs.iter().enumerate() {

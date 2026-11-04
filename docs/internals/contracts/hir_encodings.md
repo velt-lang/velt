@@ -609,8 +609,9 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
   through an alias while it runs.
   `Intrinsic::ArrayCopyBytes(dst, d, src, s, n)` (std only, std/half/bytes.vlt): the bytes
   `src[s..s + n * size(T))` of a `u8[]` copied as the bits of `dst[d..d + n)`, a different array
-  whose element type owns nothing (both ranges bounds-checked; one memcpy, in the target's byte
-  order). An element type that owns something is an ICE.
+  whose element type is a number type or `bool` (both ranges bounds-checked; one memcpy, in the
+  target's byte order). Sema rejects any other concrete element type; a generic instance whose
+  element owns something is an ICE in lowering.
   `Intrinsic::ArrayReserve(xs, extra)` (sema's array spreads): room for `extra` more elements,
   the buffer reallocated to exactly `len + extra` when the capacity is smaller (no doubling).
   `Intrinsic::NeedsDrop(value)` (std only, value borrowed and not evaluated): a constant `bool`,

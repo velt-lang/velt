@@ -14,6 +14,7 @@ use crate::any::Dynamic;
 use crate::body::narrow::Fact;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, Intrinsic, TyId};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 impl FnCx<'_, '_> {
     /// The argument of `Array.isArray(arg)` (the built-in: no local or item named `Array`)
@@ -61,12 +62,7 @@ impl FnCx<'_, '_> {
         let b = self.cx.ty.bool_;
         if self.uses_proxy() && !self.cx.scopes[self.module].is_std {
             // A proxy of an array is one too.
-            return Some(self.prelude_hir_call(
-                velt_common::std_hook!(any_is_array_proxy),
-                vec![x],
-                b,
-                span,
-            ));
+            return Some(hooks::any_is_array_proxy(ty::Any::of(x)).emit(self, b, span));
         }
         Some(self.intrinsic(Intrinsic::AnyIsArray, vec![x], b, span))
     }

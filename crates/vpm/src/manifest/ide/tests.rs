@@ -37,6 +37,7 @@ fn top_level_keys_not_yet_written() {
             "define",
             "native",
             "tsCompat",
+            "lint",
             "build"
         ]
     );

@@ -1,0 +1,8 @@
+ada! name=ada!
+- -
+grace! 6
+lin! | name=lin! | lin!
+s? circle s? r=2
+s# 3
+fk name=fk
+fd moved

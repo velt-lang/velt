@@ -24,6 +24,7 @@ use super::setters::synth;
 use crate::body::{FnCx, Want};
 use crate::ctx::Item;
 use crate::hir::{self, AdtKind, DefId, ExprKind as H, PatKind as P, TyId, TyKind};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 /// What to use instead of `Object.values` / `Object.entries` on an object that is not a record.
 const ONE_VALUE_TYPE_NOTE: &str = "they return one value type, so they need a `Record<K, V>`; list an object's keys with `Object.keys`, or keep values of different types in a `Record<string, V>` whose `V` is a union or `JsonValue`";
@@ -333,25 +334,13 @@ impl FnCx<'_, '_> {
             self.unknown_use_error(arg.span);
             return Some(self.error_expr(span));
         }
-        let f = self.proxy_op(match helper {
-            "values" => velt_common::std_hook!(any_values),
-            _ => velt_common::std_hook!(any_entries),
-        });
-        let call = synth(
-            ast::ExprKind::Call {
-                callee: Box::new(synth(
-                    ast::ExprKind::Ident(ast::Ident {
-                        name: f.to_string(),
-                        span,
-                    }),
-                    span,
-                )),
-                type_args: vec![],
-                args: vec![arg.clone()],
-                optional: false,
-            },
-            span,
-        );
+        let x = ty::Any::of(arg.clone());
+        let call = match (helper, self.uses_proxy()) {
+            ("values", false) => hooks::any_values(x).ast(span),
+            ("values", true) => hooks::any_values_proxy(x).ast(span),
+            (_, false) => hooks::any_entries(x).ast(span),
+            (_, true) => hooks::any_entries_proxy(x).ast(span),
+        };
         // The keys and values are read through the value's descriptor.
         self.note_dyn_members();
         Some(self.expr(&call, None, Want::Move))

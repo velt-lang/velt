@@ -527,6 +527,16 @@ pub fn check_with(
     on_pipeline_thread(|| recover::check_recovering(sess, opts, scope))
 }
 
+/// [`check_with`] that also returns the loaded modules, for a lint of them (`velt check
+/// --perf`, `--fix`): the same diagnostics as [`check_with`]; `Err` when loading failed.
+pub fn check_with_modules(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    scope: &CheckScope,
+) -> Result<(loader::Loaded, Result<(), BuildError>), BuildError> {
+    on_pipeline_thread(|| recover::check_recovering_loaded(sess, opts, scope))
+}
+
 /// [`check_with`] for a lint of the checked modules (`velt check --ts-compat`): the loaded
 /// modules once the type checker ran, with its outcome (whose errors are in the session).
 /// `Err` when loading or parsing failed, so nothing was type-checked.

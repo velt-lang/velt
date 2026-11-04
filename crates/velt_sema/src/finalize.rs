@@ -62,6 +62,7 @@ pub(crate) fn build_defs(cx: &mut Ctx) -> rustc_hash::FxHashSet<DefId> {
                 is_async: f.is_async,
                 system: f.system.clone(),
                 host: f.host.clone(),
+                c: f.c.clone(),
                 span: f.span,
             })),
             DefInfo::Adt(_) => Some(Def::Adt(adt_def(cx, d, &mut memo, assigned.contains(&d)))),

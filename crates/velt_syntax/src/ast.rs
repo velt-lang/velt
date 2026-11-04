@@ -180,6 +180,10 @@ pub struct FnSig {
     /// WebAssembly import `<module>`.`name` (https://veltlang.com/docs/reference/host-functions/). `None` for every
     /// other function. Additive.
     pub host: Option<HostModule>,
+    /// `declare c("<library>") function name(…): R;`: a function of a native library, called
+    /// through the C ABI from `unsafe` code (docs/internals/design/c-ffi.md). `None` for every
+    /// other function. Additive.
+    pub c: Option<CLibrary>,
     /// `function*` / `*name()`: a generator (`yield` is allowed in its body).
     pub is_generator: bool,
     /// `function f(this: T, ...)`: the type of `this` in the body, when it is not `void` (a
@@ -200,6 +204,14 @@ pub struct GeneratorSpec {
 #[derive(Clone, Debug)]
 pub struct HostModule {
     pub module: String,
+    pub span: Span,
+}
+
+/// The library of a C function: the logical name in `declare c("<library>") function`, which the
+/// package's manifest maps to a library per target (`"c"`: the platform's C library).
+#[derive(Clone, Debug)]
+pub struct CLibrary {
+    pub library: String,
     pub span: Span,
 }
 

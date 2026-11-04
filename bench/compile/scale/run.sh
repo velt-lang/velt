@@ -21,8 +21,10 @@ TARGET=${CARGO_TARGET_DIR:-$ROOT/target}
 OUT=${3:-$TARGET/bench/compile/scale-$LINES}
 mkdir -p "$OUT"
 if [ -z "$VELT" ]; then
-  echo "building velt and the runtime (release)..." >&2
-  cargo build --release -q -p veltc -p velt_rt --manifest-path "$ROOT/Cargo.toml"
+  echo "building velt and the runtimes (release)..." >&2
+  # velt_rt_shared too: debug builds link it (as an installed toolchain does) instead of the
+  # static runtime, and timing them against the static one would measure another link.
+  cargo build --release -q -p veltc -p velt_rt -p velt_rt_shared --manifest-path "$ROOT/Cargo.toml"
   VELT="$TARGET/release/velt"
 fi
 export VELT_STD=${VELT_STD:-$ROOT/std} VELT_BUILD_CACHE=off VELT_BUILD_STAMP=off

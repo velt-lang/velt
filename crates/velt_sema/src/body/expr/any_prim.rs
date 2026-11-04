@@ -18,6 +18,7 @@ use velt_syntax::ast;
 use super::setters::synth;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, DefId, ExprKind as H, TyId};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 /// `name` as an identifier expression.
 fn ident(name: &str, span: Span) -> ast::Expr {
@@ -26,17 +27,6 @@ fn ident(name: &str, span: Span) -> ast::Expr {
         span,
     };
     synth(ast::ExprKind::Ident(id), span)
-}
-
-/// `f(args)`.
-fn call(f: &str, args: Vec<ast::Expr>, span: Span) -> ast::Expr {
-    let kind = ast::ExprKind::Call {
-        callee: Box::new(ident(f, span)),
-        type_args: vec![],
-        args,
-        optional: false,
-    };
-    synth(kind, span)
 }
 
 /// `recv.name()`.
@@ -84,11 +74,14 @@ impl FnCx<'_, '_> {
         let init = self.share_if_place(v);
         self.with_temp("<prim>", init, span, span, |lw, v| {
             let s = lw.expr(v, None, Want::Borrow);
-            let fallback = vec![ident("hint", span), ident("at", span)];
+            let fallback = |v| {
+                let (hint, at) = (ident("hint", span), ident("at", span));
+                hooks::any_primitive_plain(ty::Any::of(v), ty::Str::of(hint), ty::Str::of(at))
+            };
             lw.dynamic_class_match_where(
                 s,
                 any,
-                (velt_common::std_hook!(any_primitive_plain), fallback),
+                fallback,
                 |lw, c| lw.prim_method(c).is_some(),
                 |lw, c, read| match lw.prim_method(c) {
                     Some(m) => lw.prim_method_call(&m, read, any, span),
@@ -142,11 +135,7 @@ impl FnCx<'_, '_> {
         let e = match m {
             PrimMethod::Proxy => {
                 let lit = synth(ast::ExprKind::Lit(ast::Lit::Str("Proxy".into())), span);
-                call(
-                    velt_common::std_hook!(any_text_unsupported),
-                    vec![lit, at()],
-                    span,
-                )
+                hooks::any_text_unsupported(ty::Str::of(lit), ty::Str::of(at())).ast(span)
             }
             PrimMethod::ToPrimitive(takes_hint) => {
                 let args = match takes_hint {
@@ -168,11 +157,8 @@ impl FnCx<'_, '_> {
                     args,
                     optional: false,
                 };
-                call(
-                    velt_common::std_hook!(any_prim_keep),
-                    vec![synth(kind, span), at()],
-                    span,
-                )
+                let v = ty::Any::of(synth(kind, span));
+                hooks::any_prim_keep(v, ty::Str::of(at())).ast(span)
             }
             &PrimMethod::Ordinary {
                 to_string,
@@ -186,11 +172,10 @@ impl FnCx<'_, '_> {
                 // Without a `toString` of its own, `Object.prototype.toString` writes it first
                 // for `"string"`.
                 let string_chain = match inherited {
-                    true => call(
-                        velt_common::std_hook!(any_text),
-                        vec![read.clone(), at()],
-                        span,
-                    ),
+                    true => {
+                        let v = ty::Any::of(read.clone());
+                        hooks::any_text(v, ty::Str::of(at())).ast(span)
+                    }
                     false => self.prim_chain(&string, false, &read, span),
                 };
                 let default_chain = self.prim_chain(&default, inherited, &read, span);
@@ -236,22 +221,15 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> ast::Expr {
         let Some((&(name, primitive), rest)) = ms.split_first() else {
-            return call(
-                velt_common::std_hook!(any_text),
-                vec![read.clone(), ident("at", span)],
-                span,
-            );
+            let v = ty::Any::of(read.clone());
+            return hooks::any_text(v, ty::Str::of(ident("at", span))).ast(span);
         };
         let c = method0(read.clone(), name, span);
         if primitive {
             return c;
         }
         if rest.is_empty() && !inherited {
-            return call(
-                velt_common::std_hook!(any_prim_keep),
-                vec![c, ident("at", span)],
-                span,
-            );
+            return hooks::any_prim_keep(ty::Any::of(c), ty::Str::of(ident("at", span))).ast(span);
         }
         let next = self.prim_chain(rest, inherited, read, span);
         let arrow = ast::ExprKind::Arrow {
@@ -262,10 +240,6 @@ impl FnCx<'_, '_> {
             body: ast::ArrowBody::Expr(Box::new(next)),
             is_async: false,
         };
-        call(
-            velt_common::std_hook!(any_prim_then),
-            vec![c, synth(arrow, span)],
-            span,
-        )
+        hooks::any_prim_then(ty::Any::of(c), ty::Func::of(synth(arrow, span))).ast(span)
     }
 }

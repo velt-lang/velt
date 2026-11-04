@@ -9,6 +9,7 @@ use velt_syntax::ast;
 use super::setters::synth;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, AdtKind, DefId, ExprKind as H, TyId, TyKind};
+use crate::hook_calls::{self as hooks, ty, Call, HookTy};
 
 impl FnCx<'_, '_> {
     /// `Object.prototype.m` (the prelude's `Object`), as the callee of `.call`: `m`.
@@ -105,11 +106,16 @@ impl FnCx<'_, '_> {
         // symbol itself.
         if let Some(name) = self.symbol_key_of(k).filter(|_| self.uses_proxy()) {
             let name = synth(ast::ExprKind::Lit(ast::Lit::Str(name)), k.span);
-            let args = vec![o.clone(), name, k.clone()];
-            return Some(self.prelude_fn_call(velt_common::std_hook!(any_has_own_sym), args, span));
+            let (o, k) = (ty::Any::of(o.clone()), ty::Symbol::of(k.clone()));
+            let call = hooks::any_has_own_sym(o, ty::Str::of(name), k);
+            return Some(call.check(self, span));
         }
-        let f = self.proxy_op(velt_common::std_hook!(any_has_own));
-        Some(self.prelude_fn_call(f, vec![o.clone(), k.clone()], span))
+        let (o, k) = (ty::Any::of(o.clone()), ty::Union::of(k.clone()));
+        let call = match self.uses_proxy() {
+            true => hooks::any_has_own_proxy(o, k),
+            false => hooks::any_has_own(o, k),
+        };
+        Some(call.check(self, span))
     }
 
     /// `Object.hasOwn(o, k)` / `Object.prototype.hasOwnProperty.call(o, k)` (`what`).
@@ -248,54 +254,28 @@ impl FnCx<'_, '_> {
         self.expr(&call, None, Want::Move)
     }
 
-    /// A call of the prelude function `f` with the expressions `args`, checked.
-    pub(crate) fn prelude_fn_call(
-        &mut self,
-        f: &str,
-        args: Vec<ast::Expr>,
-        span: Span,
-    ) -> hir::Expr {
-        let call = synth(
-            ast::ExprKind::Call {
-                callee: Box::new(synth(
-                    ast::ExprKind::Ident(ast::Ident {
-                        name: f.to_string(),
-                        span,
-                    }),
-                    span,
-                )),
-                type_args: vec![],
-                args,
-                optional: false,
-            },
-            span,
-        );
-        self.expr(&call, None, Want::Move)
-    }
-
     /// What the value of the `any` (or `object`) `s` is, by its class: `match (s) {
     /// InstanceOf(C) => class(C, s), ..., _ => <fallback>(s) }` over every class of the program
-    /// (the standard library's too), deepest first, of type `ret`; `fallback` is a prelude
-    /// function taking the `any`, for values that are no class instances.
-    pub(super) fn dynamic_class_match(
+    /// (the standard library's too), deepest first, of type `ret`; `fallback` is the call of a
+    /// hook given the value (`<fallback>(s)`), for values that are no class instances.
+    pub(super) fn dynamic_class_match<R>(
         &mut self,
         s: hir::Expr,
         ret: TyId,
-        fallback: &str,
+        fallback: impl FnOnce(ast::Expr) -> Call<R, ast::Expr>,
         class: impl FnMut(&mut Self, DefId, ast::Expr) -> hir::Expr,
         span: Span,
     ) -> hir::Expr {
-        let fallback = (fallback, vec![]);
         self.dynamic_class_match_where(s, ret, fallback, |_, _| true, class, span)
     }
 
     /// [`Self::dynamic_class_match`] over the classes `only` keeps; the others go to `fallback`
-    /// (the prelude function, called with the value and the arguments given with it).
-    pub(super) fn dynamic_class_match_where(
+    /// (the hook call given the value).
+    pub(super) fn dynamic_class_match_where<R>(
         &mut self,
         s: hir::Expr,
         ret: TyId,
-        fallback: (&str, Vec<ast::Expr>),
+        fallback: impl FnOnce(ast::Expr) -> Call<R, ast::Expr>,
         only: impl Fn(&mut Self, DefId) -> bool,
         mut class: impl FnMut(&mut Self, DefId, ast::Expr) -> hir::Expr,
         span: Span,
@@ -333,9 +313,7 @@ impl FnCx<'_, '_> {
         }
         // The value's members are read through its descriptor.
         self.note_dyn_members();
-        let (fallback, more) = fallback;
-        let args = std::iter::once(read).chain(more).collect();
-        let body = self.prelude_fn_call(fallback, args, span);
+        let body = fallback(read).check(self, span);
         arms.push(hir::Arm {
             pat: self.pat(hir::PatKind::Wildcard, sty, span),
             guard: None,
@@ -369,7 +347,7 @@ impl FnCx<'_, '_> {
         self.dynamic_class_match(
             s,
             str_,
-            velt_common::std_hook!(any_object_tag),
+            |v| hooks::any_object_tag(ty::Any::of(v)),
             |lw, c, _| {
                 let n = lw.cx.adt(c).map_or(0, |a| a.generics.len());
                 let params: Vec<TyId> = (0..n as u32).map(|i| lw.cx.ty.param(i)).collect();
@@ -379,11 +357,7 @@ impl FnCx<'_, '_> {
                     None => {
                         let name = lw.cx.adt(c).map_or(String::new(), |a| a.name.clone());
                         let lit = synth(ast::ExprKind::Lit(ast::Lit::Str(name)), span);
-                        lw.prelude_fn_call(
-                            velt_common::std_hook!(any_tag_unsupported),
-                            vec![lit],
-                            span,
-                        )
+                        hooks::any_tag_unsupported(ty::Str::of(lit)).check(lw, span)
                     }
                 }
             },

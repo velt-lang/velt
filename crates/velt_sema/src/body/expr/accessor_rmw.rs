@@ -80,11 +80,24 @@ impl FnCx<'_, '_> {
         span: Span,
         stmts: &mut Vec<hir::Stmt>,
     ) -> hir::Expr {
+        // `x.p! op= v`, `x.p!++` (`asserted_rmw.rs`): the getter's value read as `x.p!`.
+        let asserted = std::mem::take(&mut self.asserted_target);
         let old_val = match self.getter_read(recv.clone(), prop, span) {
+            Ok(read) if asserted && self.cx.ty.opt_payload(read.ty).is_some() => {
+                let msg = super::asserted_rmw::ASSERT_MSG;
+                self.checked_present(read, msg, None, false, span)
+            }
             Ok(read) => read,
             Err(_) => return self.error_expr(span),
         };
         let old_ty = old_val.ty;
+        // The setter's type decides: what it takes is what gets rounded (a getter of another type
+        // is read as a `number`).
+        let set_ty = self.setter_param_ty(recv.ty, &prop.name).unwrap_or(old_ty);
+        if self.cx.ty.is_storage_float(set_ty) && !matches!(rmw, Rmw::Logical(..)) {
+            let to = (old_val, set_ty);
+            return self.storage_accessor_rmw(recv, prop, to, rmw, as_value, span, stmts);
+        }
         let old = self.bind_temp(OLD, old_val, stmts);
         let at = |kind| synth(kind, span);
         let old_ref = || {
@@ -164,6 +177,79 @@ impl FnCx<'_, '_> {
             _ => Some(self.read_temp(new, old_ty, span)),
         };
         let ty = value.as_ref().map_or(unit, |v| v.ty);
+        let b = block(std::mem::take(stmts), value, span);
+        self.mk(H::Block(b), ty, span)
+    }
+
+    /// `x.p op= v` or `x.p++` where `p`'s setter takes an `f16`/`bf16` (#2190), as on a storage
+    /// place (`storage_rmw`): the getter's value (`old_val`) read as a `number`, the operation in
+    /// f64, the result rounded once into the setter's argument (of type `set_ty`). The expression's value is the unrounded
+    /// result, or for postfix `++`/`--` the old value, both `number`s, as JS gives.
+    #[allow(clippy::too_many_arguments)]
+    fn storage_accessor_rmw(
+        &mut self,
+        recv: hir::Expr,
+        prop: &ast::Ident,
+        (old_val, set_ty): (hir::Expr, hir::TyId),
+        rmw: Rmw,
+        as_value: bool,
+        span: Span,
+        stmts: &mut Vec<hir::Stmt>,
+    ) -> hir::Expr {
+        let f64_ = self.cx.ty.f64;
+        let Some(old_n) = self.storage_operand(old_val, span) else {
+            return self.error_expr(span);
+        };
+        let old = self.bind_temp(OLD, old_n, stmts);
+        let read = |s: &mut Self, l| s.mk(H::Local(l, UseMode::Copy), f64_, span);
+        let cur = read(self, old);
+        let (wide, postfix) = match rmw {
+            Rmw::Compound(op, v) => {
+                // As on a field: a `number` hint, brands stripped, an `any` needs `as`.
+                let v = self.expr(v, Some(f64_), Want::Borrow);
+                let v = self.unbrand(v);
+                if self.cx.dynamic(v.ty).is_some() {
+                    return self.any_as_storage(set_ty, span);
+                }
+                let wide = self
+                    .storage_operand(v, span)
+                    .and_then(|v| self.storage_op(cur, op, v, span));
+                (wide, false)
+            }
+            Rmw::Update(op, prefix) => {
+                let one = self.mk(H::Lit(hir::Lit::Float(1.0)), f64_, span);
+                let op = match op {
+                    ast::UpdateOp::Inc => hir::BinOp::Add,
+                    ast::UpdateOp::Dec => hir::BinOp::Sub,
+                };
+                let kind = H::Binary {
+                    op,
+                    lhs: Box::new(cur),
+                    rhs: Box::new(one),
+                };
+                (Some(self.mk(kind, f64_, span)), !prefix)
+            }
+            Rmw::Logical(..) => unreachable!("ICE: logical assignment on the storage path"),
+        };
+        let Some(wide) = wide else {
+            return self.error_expr(span);
+        };
+        let wide = self.bind_temp("<wide>", wide, stmts);
+        let stored = read(self, wide);
+        let stored = self.mk(H::Cast(Box::new(stored)), set_ty, span);
+        self.bind_temp(NEW, stored, stmts);
+        let new_ref = synth(
+            ast::ExprKind::Ident(ast::Ident {
+                name: NEW.into(),
+                span,
+            }),
+            span,
+        );
+        let call = self.setter_call(recv, prop, &new_ref, span);
+        stmts.push(stmt(hir::StmtKind::Expr(call), span));
+        let unit = self.cx.ty.unit;
+        let value = as_value.then(|| read(self, if postfix { old } else { wide }));
+        let ty = if as_value { f64_ } else { unit };
         let b = block(std::mem::take(stmts), value, span);
         self.mk(H::Block(b), ty, span)
     }

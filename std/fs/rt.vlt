@@ -22,6 +22,7 @@ export declare async function velt_rt_fs_read_dir_typed(
 export declare async function velt_rt_fs_stat(path: string): Promise<IoResult<Stats>>;
 export declare async function velt_rt_fs_lstat(path: string): Promise<IoResult<Stats>>;
 export declare async function velt_rt_fs_readlink(path: string): Promise<IoResult<string>>;
+export declare async function velt_rt_fs_realpath(path: string): Promise<IoResult<string>>;
 export declare async function velt_rt_fs_symlink(target: string, path: string): Promise<IoStatus>;
 export declare async function velt_rt_fs_mkdir(path: string, recursive: bool): Promise<IoStatus>;
 export declare async function velt_rt_fs_remove(path: string, recursive: bool): Promise<IoStatus>;
@@ -37,6 +38,7 @@ export declare function velt_rt_fs_read_dir_typed_sync(path: string): IoResult<D
 export declare function velt_rt_fs_stat_sync(path: string): IoResult<Stats>;
 export declare function velt_rt_fs_lstat_sync(path: string): IoResult<Stats>;
 export declare function velt_rt_fs_readlink_sync(path: string): IoResult<string>;
+export declare function velt_rt_fs_realpath_sync(path: string): IoResult<string>;
 export declare function velt_rt_fs_symlink_sync(target: string, path: string): IoStatus;
 export declare function velt_rt_fs_mkdir_sync(path: string, recursive: bool): IoStatus;
 export declare function velt_rt_fs_remove_sync(path: string, recursive: bool): IoStatus;
@@ -45,6 +47,12 @@ export declare function velt_rt_fs_copy_file_sync(from: string, to: string): IoS
 export declare function velt_rt_fs_exists_sync(path: string): bool;
 
 export declare async function velt_rt_fs_open_read(path: string): Promise<IoResult<u64>>;
+export declare async function velt_rt_fs_open_read_range(
+  path: string,
+  start: u64,
+  end: u64,
+): Promise<IoResult<u64>>;
+export declare function velt_rt_fs_reader_opened_stats(r: u64): IoResult<Stats>;
 export declare async function velt_rt_fs_reader_read(r: u64, max: u64): Promise<IoResult<u8[]>>;
 export declare async function velt_rt_fs_reader_read_string(
   r: u64,

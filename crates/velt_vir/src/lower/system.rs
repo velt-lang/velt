@@ -275,7 +275,7 @@ impl FnLower<'_, '_> {
     /// Read `errno` of the calling thread now (`*__error()` / `*__errno_location()`) into the
     /// thread's errno slot, for a later `lastOsError()`, in this function or a caller. Does
     /// nothing on a target whose `lastOsError` is not an `errno` pointer.
-    fn capture_errno(&mut self) {
+    pub(super) fn capture_errno(&mut self) {
         let Some(errno) =
             system::overloads(&self.cx.target, "lastOsError").find(|f| matches!(f.ret, Ret::Errno))
         else {
@@ -615,9 +615,10 @@ impl super::Cx<'_> {
             let hir::Def::ExternFn(x) = self.hir.def(d) else {
                 continue;
             };
-            let kind = match x.host {
-                Some(_) => "host function",
-                None => "system function",
+            let kind = match (&x.host, &x.c) {
+                (Some(_), _) => "host function",
+                (None, Some(_)) => "C function",
+                (None, None) => "system function",
             };
             let in_std = self.locs.as_ref().is_some_and(|m| m.is_std(x.span));
             let entry = self.std_calls.get(&site).map(|&e| self.hir.def(e));
@@ -634,9 +635,10 @@ impl super::Cx<'_> {
                         ),
                         site,
                     )
-                    .with_note(match x.host {
-                        Some(_) => format!("it calls the host function `{}`", x.symbol),
-                        None => format!(
+                    .with_note(match (&x.host, &x.c) {
+                        (Some(_), _) => format!("it calls the host function `{}`", x.symbol),
+                        (None, Some(_)) => format!("it calls the C function `{}`", x.symbol),
+                        (None, None) => format!(
                             "it calls the system function `{}`, which {} lacks",
                             x.symbol, self.target
                         ),
@@ -656,12 +658,19 @@ impl super::Cx<'_> {
                     }
                 }
             };
-            diag = diag.with_note(match x.host {
-                Some(_) => "only a JS host (wasm32-unknown-unknown) provides host functions".into(),
-                None => self.system_note(&x.symbol),
+            diag = diag.with_note(match (&x.host, &x.c) {
+                (Some(_), _) => {
+                    "only a JS host (wasm32-unknown-unknown) provides host functions".into()
+                }
+                (None, Some(_)) => {
+                    "C functions need a native target: WebAssembly can't link C libraries yet"
+                        .into()
+                }
+                (None, None) => self.system_note(&x.symbol),
             });
             out.push(diag);
         }
+        out.extend(self.c_clashes.iter().cloned());
         out
     }
 

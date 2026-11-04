@@ -559,9 +559,13 @@ impl<'a> Parser<'a> {
     /// `(a: A) => R` when `=>` follows the matching `)`, else a parenthesized type `(A | B)`.
     /// Deciding by lookahead (not by trying the function type first) keeps nested parentheses
     /// linear: a failed attempt would re-parse everything inside once more per level.
+    ///
+    /// A `(` right after the `(` starts a parenthesized type even when `=>` follows, as in
+    /// TypeScript (no parameter starts with `(`): in an arrow's return type,
+    /// `(): (() => void) => body` returns `() => void`.
     fn parse_fn_or_paren_type(&mut self) -> PResult<TypeExpr> {
         let lo = self.cur_lo();
-        if self.after_matching_paren(0) == Some(Tok::FatArrow) {
+        if self.nth(1) != Tok::LParen && self.after_matching_paren(0) == Some(Tok::FatArrow) {
             return self.parse_fn_type(lo);
         }
         self.bump(); // (

@@ -1,0 +1,18 @@
+// `s.x += v` through an `f16` setter with an `any` on the right (#2190): as for an `f16` field, the
+// value needs an explicit `as` (the store rounds), not a generic type mismatch.
+class H {
+  #v: f16 = 0;
+  get x(): f16 {
+    return this.#v;
+  }
+  set x(v: f16) {
+    this.#v = v;
+  }
+}
+
+function main() {
+  const a: any = 1;
+  const h = new H();
+  h.x += a;
+  console.log(h.x);
+}

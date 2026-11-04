@@ -205,6 +205,10 @@ pub fn check_declares(
         if f.host.is_some() {
             continue;
         }
+        if let Some(c) = &f.c {
+            c_decls::check(f, c, sm, graph, std_files, diags);
+            continue;
+        }
         if std_files.contains(&f.span.file) {
             continue;
         }
@@ -328,6 +332,7 @@ pub fn links(graph: Option<&PackageGraph>, release: bool) -> Vec<velt_link::Nati
         .collect()
 }
 
+mod c_decls;
 mod system;
 
 #[cfg(test)]

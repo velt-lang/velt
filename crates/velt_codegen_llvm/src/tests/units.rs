@@ -6,7 +6,7 @@ use velt_vir::vir::*;
 
 use crate::module::emit_unit;
 use crate::target::normalize;
-use crate::units::{plan, plan_placed, unit_count, Unit};
+use crate::units::{count_for, plan, plan_placed, unit_count, Unit};
 
 /// `a` (tiny), `b` (calls `a`), `c` (calls `b`; returns a vtable static holding `a`'s address)
 /// and `velt_main` (calls `c` and `a`, reads the vtable): 2 + 62 + 63 + 65 weight.
@@ -188,6 +188,19 @@ fn unit_count_from_size_unless_requested() {
     assert_eq!(unit_count(&sized(200), Some(12)), 12);
 }
 
+/// Large programs get units of at most 200,000 statements, at most 16; up to 4 units of that,
+/// the count is as for any program.
+#[test]
+fn large_programs_get_bounded_units() {
+    assert_eq!(count_for(31_999), 1);
+    assert_eq!(count_for(64_000), 4);
+    assert_eq!(count_for(800_000), 4);
+    assert_eq!(count_for(800_001), 5);
+    assert_eq!(count_for(2_000_000), 10);
+    assert_eq!(count_for(3_200_000), 16);
+    assert_eq!(count_for(9_000_000), 16);
+}
+
 #[test]
 fn unit_modules_link_across_units() {
     let p = program();
@@ -269,4 +282,51 @@ fn exported_functions_are_declared_dso_local() {
             "{symbol} must keep default visibility"
         );
     }
+}
+
+/// An `Export` static (vir.rs invariant 13) that no function of the program names, because the
+/// code using it is another object's (a std cache function), is still defined: by unit 0, with
+/// the static its relocation points at, and the function it names is declared there and shared.
+#[test]
+fn exported_statics_no_body_reaches_are_defined() {
+    let mut p = program();
+    let a = FuncId(0);
+    let target = p.statics.len() as u32;
+    p.statics.push(StaticData {
+        bytes: vec![0; 16],
+        align: 8,
+        relocs: vec![
+            (0, Const::Func(a)),
+            (8, Const::Static(StaticId(target + 1))),
+        ],
+        symbol: Some("_Vsdesc".into()),
+        linkage: Linkage::Export,
+        ..Default::default()
+    });
+    p.statics.push(StaticData {
+        bytes: b"name".to_vec(),
+        align: 1,
+        symbol: Some("_Vsname".into()),
+        linkage: Linkage::Export,
+        ..Default::default()
+    });
+    velt_vir::verify(&p).unwrap();
+    // `a` is in unit 0 here; place it in unit 1 so unit 0 must declare it.
+    let plan = plan_placed(&p, &[1, 1, 1, 2]);
+    let (desc, name) = (target as usize, target as usize + 1);
+    let owners: Vec<usize> = (plan.units.iter().enumerate())
+        .filter(|(_, u)| u.statics.contains(&desc))
+        .map(|(n, _)| n)
+        .collect();
+    assert_eq!(owners, [0], "{:?}", plan.units);
+    assert!(plan.units[0].statics.contains(&name));
+    assert!(plan.units[0].declares.contains(&0), "{:?}", plan.units[0]);
+    assert!(
+        plan.shared.funcs[0],
+        "`a` is called from another unit's static"
+    );
+    let triple = normalize("x86_64-unknown-linux-gnu").unwrap();
+    let ir = emit_unit(&p, &triple, true, &plan.units[0], &plan.shared).unwrap();
+    assert!(ir.contains("@\"_Vsdesc\" = hidden"), "{ir}");
+    assert!(ir.contains("@\"_Vsname\" = hidden"), "{ir}");
 }

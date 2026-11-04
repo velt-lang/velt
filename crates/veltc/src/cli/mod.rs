@@ -25,7 +25,7 @@ use crate::backend::Backend;
 use crate::playground::PlaygroundArgs;
 use crate::templates::{Editor, Template};
 pub(crate) use build::run_options;
-pub use check::CheckArgs;
+pub use check::{CheckArgs, FixMode};
 use completions::Shell;
 
 /// `velt doc` arguments.

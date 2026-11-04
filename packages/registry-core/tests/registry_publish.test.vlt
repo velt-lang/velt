@@ -1,0 +1,162 @@
+// The registry's API over in-memory stores (src/server/registry.vlt): publishing, downloads,
+// the index and its JSON, yanking and search, as crates/velt_registry's tests check them.
+import { describe, expect, it } from "velt/test";
+import { ArchiveEntry, contentChecksum, packArchive, readArchive } from "../src/lib";
+import { file, packageFiles, TestRegistry } from "./_registry";
+
+describe("publishing", () => {
+  it("stores a version, serves its archive and lists it in the index", async () => {
+    const r = new TestRegistry();
+    const files = packageFiles("lib", "1.0.0");
+    const sum = contentChecksum(files);
+    const first = await r.upload("lib", "1.0.0", packArchive(files), sum);
+    expect(first.status).toBe(201);
+    expect(first.text).toBe("published `lib` 1.0.0\n");
+    expect(first.type).toBe("text/plain; charset=utf-8");
+    expect((await r.publish("lib", "1.0.0")).status).toBe(409);
+    expect((await r.publish("lib", "1.1.0")).status).toBe(201);
+
+    const got = await r.call("GET", "lib/1.0.0");
+    expect(got.status).toBe(200);
+    expect(got.type).toBe("application/octet-stream");
+    expect(contentChecksum(readArchive(got.bytes, (p: string): bool => true))).toBe(sum);
+
+    const index = await r.call("GET", "lib/index");
+    expect(index.type).toBe("application/json");
+    expect(index.text).toBe(
+      `{\n  "versions": [\n    {\n      "version": "1.0.0",\n      "checksum": "${sum}"\n    },\n    {\n      "version": "1.1.0",\n      "checksum": "${contentChecksum(packageFiles("lib", "1.1.0"))}"\n    }\n  ]\n}\n`,
+    );
+    expect((await r.call("GET", "nope/index")).status).toBe(404);
+    expect((await r.call("GET", "lib/2.0.0")).text).toBe("no `lib` 2.0.0");
+    expect(r.purge.purged.length).toBe(6);
+  });
+
+  it("records the manifest's description, keywords and requirements per version", async () => {
+    const r = new TestRegistry();
+    const fields = `description: "JSON \\"for\\" Velt", keywords: ["parser"], dependencies: { b: "^1", a: { version: "0.2", path: "../a" } }`;
+    expect((await r.publish("json", "1.0.0-rc.1", "", fields)).status).toBe(201);
+    const text = (await r.call("GET", "json/index")).text;
+    expect(text).toContain(
+      `"description": "JSON \\"for\\" Velt",\n      "keywords": [\n        "parser"\n      ],\n      "dependencies": {\n        "a": "0.2",\n        "b": "^1"\n      }\n`,
+    );
+  });
+
+  it("refuses an archive whose checksum or manifest is wrong", async () => {
+    const r = new TestRegistry();
+    const files = packageFiles("p", "1.0.0");
+    const body = packArchive(files);
+    const sum = contentChecksum(files);
+    const bad = await r.upload("p", "1.0.0", body, "sha256:0");
+    expect(bad.status).toBe(400);
+    expect(bad.text).toBe(`checksum mismatch: the archive hashes to ${sum}`);
+    const wrong = await r.upload("q", "1.0.0", body, sum);
+    expect(wrong.status).toBe(400);
+    expect(wrong.text).toBe("the archive is `p` 1.0.0, not `q` 1.0.0");
+    expect((await r.upload("p", "1.0.1", body, sum)).status).toBe(400);
+    expect((await r.upload("p", "one", body, sum)).text).toBe("invalid package name or version");
+    // An extra segment matches no route, as on the Rust server.
+    expect((await r.upload("../x", "1.0.0", body, sum)).status).toBe(404);
+    expect((await r.upload("..", "1.0.0", body, sum)).status).toBe(400);
+    expect(r.blobs.size).toBe(0);
+  });
+
+  it("reads an uploaded manifest as data and names it package.vlt", async () => {
+    const r = new TestRegistry();
+    const refusal = async (entries: ArchiveEntry[]): Promise<string> => {
+      const answer = await r.upload("p", "1.0.0", packArchive(entries), contentChecksum(entries));
+      expect(answer.status).toBe(400);
+      return answer.text;
+    };
+    expect(await refusal([file("src/lib.vlt", "")])).toBe("the archive has no package.vlt");
+    expect(await refusal([file("src/lib.vlt", ""), file("velt.toml", "[package]\n")])).toContain(
+      "published with a `velt.toml`",
+    );
+    const code = `import { readFile } from "velt/fs";\nexport const pkg: Package = { name: "p", version: "1.0.0" };\n`;
+    expect((await refusal([file("package.vlt", code)])).startsWith("package.vlt: ")).toBe(true);
+    const huge = `// ${"x".repeat(64 * 1024)}\n`;
+    expect(await refusal([file("package.vlt", huge)])).toBe(
+      "package.vlt: the manifest is larger than 64 KiB",
+    );
+    const invalid: ArchiveEntry[] = [{ path: "package.vlt", bytes: [47, 47, 32, 255, 10] }];
+    expect(await refusal(invalid)).toBe("package.vlt: the manifest is not valid UTF-8");
+    const ok = [
+      file("package.vlt", `export const pkg: Package = { name: "p", version: "1.0.0" };\n`),
+    ];
+    expect((await r.upload("p", "1.0.0", packArchive(ok), contentChecksum(ok))).status).toBe(201);
+  });
+
+  it("publishes only dependencies the registry can resolve", async () => {
+    const r = new TestRegistry();
+    const path = await r.publish("lib", "1.0.0", "", `dependencies: { u: { path: "../u" } }`);
+    expect(path.status).toBe(400);
+    expect(path.text).toContain("dependency `u` has only a `path`");
+    const ws = await r.publish("lib", "1.0.0", "", `dependencies: { core: "workspace" }`);
+    expect(ws.text).toContain("dependency `core` is `\"workspace\"`");
+    expect((await r.call("GET", "lib/index")).status).toBe(404);
+    expect(r.blobs.size).toBe(0);
+  });
+
+  it("counts names that differ only in - and _ as one", async () => {
+    const r = new TestRegistry();
+    expect((await r.publish("my-pkg", "1.0.0")).status).toBe(201);
+    const taken = await r.publish("my_pkg", "1.0.0");
+    expect(taken.status).toBe(400);
+    expect(taken.text).toContain("the registry has `my-pkg`");
+    expect((await r.publish("my-pkg", "1.0.1")).status).toBe(201);
+  });
+
+  it("lists the packages at /", async () => {
+    const r = new TestRegistry();
+    await r.publish("zeta", "1.0.0");
+    await r.publish("alpha", "1.0.0");
+    const listing = await r.send("GET", "/", [], null);
+    expect(listing.text).toBe("Velt package registry: 2 packages\nalpha\nzeta\n");
+    expect((await r.send("GET", "/other", [], null)).status).toBe(404);
+  });
+});
+
+describe("yanking and search", () => {
+  it("yanks a version without removing it, and search shows the newest left", async () => {
+    const r = new TestRegistry();
+    await r.publish("json", "1.0.0", "", `description: "JSON for Velt", keywords: ["parser"]`);
+    await r.publish("json", "1.1.0");
+    expect((await r.call("PUT", "json/1.1.0/yank")).text).toBe("yanked `json` 1.1.0\n");
+    expect((await r.call("PUT", "json/9.9.9/yank")).status).toBe(404);
+    expect((await r.call("PUT", "nope/1.0.0/yank")).text).toBe("`nope` is not in the registry");
+    expect((await r.call("GET", "json/index")).text).toContain(`"yanked": true`);
+    expect((await r.call("GET", "json/1.1.0")).status).toBe(200);
+
+    const hit = `{"packages":[{"name":"json","version":"1.0.0","description":"JSON for Velt","keywords":["parser"]}]}`;
+    expect((await r.call("GET", "search?q=JS")).text).toBe(hit);
+    expect((await r.call("GET", "search?q=parser")).text).toBe(hit);
+    expect((await r.call("GET", "search?q=http")).text).toBe(`{"packages":[]}`);
+    expect((await r.call("DELETE", "json/1.1.0/yank")).text).toBe("unyanked `json` 1.1.0\n");
+    expect((await r.call("GET", "search?q=json")).text).toBe(
+      `{"packages":[{"name":"json","version":"1.1.0"}]}`,
+    );
+  });
+
+  it("ranks by the best tier, then the terms off it, then the name", async () => {
+    const r = new TestRegistry();
+    await r.publish("http-client", "1.0.0", "", `keywords: ["web"]`);
+    await r.publish("http", "1.0.0");
+    await r.publish("web", "2.0.0-rc.1");
+    await r.publish("router", "1.0.0", "", `description: "An HTTP router", keywords: ["webby"]`);
+    // A keyword that starts with the term ranks below one equal to it, whatever the names.
+    await r.publish("aardvark", "1.0.0", "", `keywords: ["webs"]`);
+    const names = async (q: string): Promise<string> => {
+      const text = (await r.call("GET", `search?q=${q}`)).text;
+      return text
+        .split(`"name":"`)
+        .slice(1)
+        .map((s: string): string => s.slice(0, s.indexOf("\"")))
+        .join(" ");
+    };
+    expect(await names("http")).toBe("http http-client router");
+    expect(await names("web")).toBe("web http-client aardvark router");
+    expect(await names("HTTP+web")).toBe("http-client router");
+    expect(await names("%68ttp%2")).toBe("");
+    expect(await names("")).toBe("aardvark http http-client router web");
+    expect((await r.call("GET", "search?q=web")).text).toContain(`"version":"2.0.0-rc.1"`);
+  });
+});

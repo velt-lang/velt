@@ -28,6 +28,7 @@ macro_rules! bail {
 }
 
 mod abi;
+mod c_libraries;
 #[cfg(unix)]
 mod c_symbols;
 mod cache;
@@ -85,20 +86,25 @@ pub fn emit_object_cached(
     opts: &CodegenOptions,
     cache: Option<&dyn CodeCache>,
 ) -> Result<(Vec<u8>, CacheStats), String> {
+    if let Err(errs) = velt_vir::verify(program) {
+        return Err(format!("invalid VIR:\n  {}", errs.join("\n  ")));
+    }
     emit_object_timed(program, opts, cache, &mut Vec::new())
 }
 
-/// [`emit_object_cached`], appending the time of each step to `timings` (`velt build --timings`).
+/// [`emit_object_cached`] for a program that passed `velt_vir::verify` already (the driver
+/// verifies after optimizing), so it is not verified again, appending the time of each step to
+/// `timings` (`velt build --timings`). VIR that would not pass may fail with an ICE here.
 pub fn emit_object_timed(
     program: &vir::Program,
     opts: &CodegenOptions,
     cache: Option<&dyn CodeCache>,
     timings: &mut Vec<(&'static str, Duration)>,
 ) -> Result<(Vec<u8>, CacheStats), String> {
-    emit_object_on(program, opts, cache, timings, parallel::jobs())
+    emit_object_on(program, opts, cache, timings, velt_vir::parallel::jobs())
 }
 
-/// [`emit_object_timed`] on `jobs` threads.
+/// [`emit_object_timed`] on `jobs` threads (verified VIR).
 fn emit_object_on(
     program: &vir::Program,
     opts: &CodegenOptions,
@@ -106,12 +112,6 @@ fn emit_object_on(
     timings: &mut Vec<(&'static str, Duration)>,
     jobs: usize,
 ) -> Result<(Vec<u8>, CacheStats), String> {
-    let start = Instant::now();
-    let verified = velt_vir::verify(program);
-    timings.push(("verify", start.elapsed()));
-    if let Err(errs) = verified {
-        return Err(format!("invalid VIR:\n  {}", errs.join("\n  ")));
-    }
     let isa = isa::make_isa(&opts.target, opts.cpu.as_deref(), opts.optimize, false)?;
     let builder = ObjectBuilder::new(
         isa.clone(),

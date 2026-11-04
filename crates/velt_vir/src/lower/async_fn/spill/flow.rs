@@ -11,76 +11,11 @@
 //! locals in question. A large function with one `await` costs time linear in its size, not
 //! blocks × locals.
 
+pub(super) use crate::lower::bits::Bits;
+#[cfg(test)]
+pub(super) use crate::lower::bits::WORDS;
 use crate::lower::successors;
 use crate::vir::{Function, Operand, Place, Proj, Rvalue, Stmt, Terminator};
-
-/// A fixed-size bit set over local indexes (or over the indexes of a [`Universe`]).
-#[derive(PartialEq)]
-pub(super) struct Bits(Vec<u64>);
-
-#[cfg(test)]
-thread_local! {
-    /// Words of every `Bits` made or cloned: the work of the dense dataflow, which tests bound.
-    pub(super) static WORDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
-}
-
-fn count_words(_n: usize) {
-    #[cfg(test)]
-    WORDS.with(|w| w.set(w.get() + _n));
-}
-
-impl Clone for Bits {
-    fn clone(&self) -> Self {
-        count_words(self.0.len());
-        Bits(self.0.clone())
-    }
-}
-
-impl Bits {
-    pub(super) fn new(n: usize) -> Self {
-        count_words(n.div_ceil(64));
-        Bits(vec![0; n.div_ceil(64)])
-    }
-    pub(super) fn get(&self, i: usize) -> bool {
-        self.0[i / 64] >> (i % 64) & 1 == 1
-    }
-    pub(super) fn set(&mut self, i: usize) {
-        self.0[i / 64] |= 1 << (i % 64);
-    }
-    /// `self |= other`; returns whether anything was added.
-    pub(super) fn union(&mut self, other: &Bits) -> bool {
-        let mut changed = false;
-        for (a, b) in self.0.iter_mut().zip(&other.0) {
-            let n = *a | b;
-            changed |= n != *a;
-            *a = n;
-        }
-        changed
-    }
-    pub(super) fn intersect(&mut self, other: &Bits) {
-        for (a, b) in self.0.iter_mut().zip(&other.0) {
-            *a &= b;
-        }
-    }
-    pub(super) fn minus(&mut self, other: &Bits) {
-        for (a, b) in self.0.iter_mut().zip(&other.0) {
-            *a &= !b;
-        }
-    }
-    /// The set indexes in ascending order.
-    pub(super) fn iter(&self) -> impl Iterator<Item = usize> + '_ {
-        self.0.iter().enumerate().flat_map(|(w, &word)| {
-            let mut rest = word;
-            std::iter::from_fn(move || {
-                (rest != 0).then(|| {
-                    let i = rest.trailing_zeros() as usize;
-                    rest &= rest - 1;
-                    w * 64 + i
-                })
-            })
-        })
-    }
-}
 
 /// A subset of the locals, numbered densely in ascending local order, so a [`Bits`] per block
 /// over it costs the subset's size rather than the function's local count.

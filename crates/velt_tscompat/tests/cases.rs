@@ -266,3 +266,18 @@ fn unsafe_code_is_reported() {
     assert_eq!(codes, ["unsafe", "unsafe", "unsafe"]);
     assert_eq!(findings[0].span, Span::new(FileId(0), 0, 6));
 }
+
+#[test]
+fn a_c_function_is_reported() {
+    let src = "declare c(\"c\") function labs(x: number): number;\n";
+    let findings = lint_syntax(Path::new("c.vlt"), src);
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].code, "declare-fn");
+    assert!(
+        findings[0]
+            .message
+            .contains("`declare c(\"c\") function labs` binds native code"),
+        "{}",
+        findings[0].message
+    );
+}

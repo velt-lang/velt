@@ -4,7 +4,7 @@
 //! "stop after the first failing stage" policy as `velt build`, so the editor shows exactly what the
 //! compiler would — but its queries also answer on a document the parser had to recover. A
 //! document in a package's `tsCompat` folders is then linted on the same modules
-//! ([`crate::ts_compat`]).
+//! ([`crate::lint`]).
 
 use std::collections::HashMap;
 use std::panic::{catch_unwind, AssertUnwindSafe};
@@ -30,8 +30,9 @@ pub struct Analysis {
     pub loaded_cleanly: bool,
     /// Sema's query tables (also for programs with errors), unless sema could not run.
     pub ide: Option<ide::Analysis>,
-    /// The TypeScript-compatibility findings in the document (none outside `tsCompat` folders).
-    pub ts_compat: Vec<velt_tscompat::Finding>,
+    /// The lint findings in the document: TypeScript compatibility (in `tsCompat` folders) and
+    /// the `perf/…` rules ([`crate::lint`]).
+    pub lint: Vec<Diagnostic>,
     /// Doc comment lookups ([`crate::docs`]), filled on demand.
     pub docs: crate::docs::Cache,
 }
@@ -75,7 +76,7 @@ pub fn analyze(
     loader: &dyn ProgramLoader,
     path: &Path,
     overlay: &HashMap<PathBuf, String>,
-    ts_folders: &mut crate::ts_compat::FolderCache,
+    ts_folders: &mut crate::lint::FolderCache,
 ) -> Analysis {
     let mut sm = SourceMap::new();
     let mut diagnostics = vec![];
@@ -96,15 +97,15 @@ pub fn analyze(
         diagnostics,
         loaded_cleanly,
         ide: None,
-        ts_compat: vec![],
+        lint: vec![],
         docs: Default::default(),
     };
     run_sema(&mut analysis);
     let linted = catch_unwind(AssertUnwindSafe(|| {
-        crate::ts_compat::findings(&analysis, path, overlay, ts_folders)
+        crate::lint::findings(&analysis, path, overlay, ts_folders)
     }));
     // A crash in the lint costs its findings, not the document's analysis.
-    analysis.ts_compat = linted.unwrap_or_default();
+    analysis.lint = linted.unwrap_or_default();
     analysis
 }
 
@@ -155,7 +156,7 @@ fn standalone(path: &Path, overlay: &HashMap<PathBuf, String>, msg: String) -> A
         diagnostics,
         loaded_cleanly: false,
         ide: None,
-        ts_compat: vec![],
+        lint: vec![],
         docs: Default::default(),
     }
 }

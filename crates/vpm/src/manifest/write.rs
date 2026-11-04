@@ -106,6 +106,9 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
         let dirs: Vec<String> = m.ts_compat.iter().map(|d| string_lit(d)).collect();
         fields.push(format!("tsCompat: [{}]", dirs.join(", ")));
     }
+    if let Some(lint) = &m.lint {
+        fields.push(format!("lint: {}", lint_vlt(lint)));
+    }
     if let Some(build) = &m.build {
         let cpu = build.cpu.iter().map(|c| format!("cpu: {}", string_lit(c)));
         fields.push(format!("build: {}", inline_object(cpu)));
@@ -213,6 +216,21 @@ pub(super) fn to_json(m: &Manifest) -> Value {
     if !m.ts_compat.is_empty() {
         out.insert("tsCompat".into(), json!(m.ts_compat));
     }
+    if let Some(lint) = &m.lint {
+        let rules: Map<String, Value> = lint
+            .rules
+            .iter()
+            .map(|(code, level)| (code.clone(), json!(level.name())))
+            .collect();
+        let mut o = Map::new();
+        if let Some(perf) = lint.perf {
+            o.insert("perf".into(), json!(perf.name()));
+        }
+        if !rules.is_empty() {
+            o.insert("rules".into(), Value::Object(rules));
+        }
+        out.insert("lint".into(), Value::Object(o));
+    }
     if let Some(build) = &m.build {
         let mut o = Map::new();
         if let Some(cpu) = &build.cpu {
@@ -293,4 +311,20 @@ pub(crate) fn string_lit(s: &str) -> String {
     }
     out.push('"');
     out
+}
+
+/// `lint` as `package.vlt` writes it: `{ perf: "warn", rules: { "perf/x": "off" } }`.
+fn lint_vlt(lint: &super::LintConfig) -> String {
+    let mut parts = vec![];
+    if let Some(perf) = lint.perf {
+        parts.push(format!("perf: {}", string_lit(perf.name())));
+    }
+    if !lint.rules.is_empty() {
+        let rules = lint
+            .rules
+            .iter()
+            .map(|(code, level)| format!("{}: {}", string_lit(code), string_lit(level.name())));
+        parts.push(format!("rules: {}", inline_object(rules)));
+    }
+    inline_object(parts.into_iter())
 }

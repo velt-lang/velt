@@ -23,6 +23,7 @@ velt_opt.workspace = true
 velt_fmt.workspace = true
 velt_lsp.workspace = true
 velt_tscompat.workspace = true
+velt_lint.workspace = true
 velt_http = { path = "../velt_http" }
 velt_doc = { path = "../velt_doc" }
 velt_registry = { path = "../velt_registry" }

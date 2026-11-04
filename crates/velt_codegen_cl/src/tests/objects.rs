@@ -372,6 +372,7 @@ fn errors_are_reported_not_panics() {
         align: 8,
         relocs: vec![(0, Const::Func(FuncId(9)))],
         mutable: None,
+        ..Default::default()
     });
     let err = emit_object(&p, &opts).unwrap_err();
     assert!(err.contains("relocation at 0: unknown function"), "{err}");
@@ -556,5 +557,45 @@ fn data_relocations_for_all_targets() {
                 assert!(relocs.iter().all(|(_, f)| *f == addr64), "{ctx}");
             }
         }
+    }
+}
+
+/// A named static (vir invariant 13) is defined under its symbol when `Export`, and only
+/// referred to when `Import` (another object defines it), on every object format.
+#[test]
+fn named_statics_are_defined_or_referred_to_by_symbol() {
+    for (triple, fmt, _) in TARGETS {
+        let mut p = programs::fib().program;
+        let first = p.statics.len() as u32;
+        p.statics.push(StaticData {
+            bytes: vec![0; 8],
+            align: 8,
+            relocs: vec![(0, Const::Static(StaticId(first + 1)))],
+            symbol: Some("_Vsvt".into()),
+            linkage: Linkage::Export,
+            ..Default::default()
+        });
+        p.statics.push(StaticData {
+            bytes: b"hi".to_vec(),
+            align: 1,
+            symbol: Some("_Vshi".into()),
+            linkage: Linkage::Import,
+            ..Default::default()
+        });
+        velt_vir::verify(&p).unwrap();
+        let opts = CodegenOptions {
+            target: triple.into(),
+            optimize: false,
+            cpu: None,
+        };
+        let bytes = emit_object(&p, &opts).unwrap_or_else(|e| panic!("{triple}: {e}"));
+        let file = object::File::parse(&*bytes).unwrap();
+        let find = |name: &str| {
+            (file.symbols())
+                .find(|s| s.name() == Ok(&obj_name(fmt, name)))
+                .unwrap_or_else(|| panic!("{triple}: no {name}"))
+        };
+        assert!(find("_Vsvt").is_definition(), "{triple}");
+        assert!(find("_Vshi").is_undefined(), "{triple}");
     }
 }

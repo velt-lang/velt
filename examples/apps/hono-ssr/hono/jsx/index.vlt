@@ -1,0 +1,10 @@
+// hono/jsx (Velt): the types shared components import, and `renderToString`, which renders an
+// element as Hono's `await (<App />).toString()` does. JSX itself compiles to ./jsx-runtime.
+
+export { Element, RenderError, renderToString } from "./node";
+export type { AttrValue, Child, Handler } from "./node";
+export { Fragment } from "./jsx-runtime";
+import type { Child } from "./node";
+
+/** `props` with optional `children`, as hono/jsx's `PropsWithChildren`. */
+export type PropsWithChildren<P> = P & { children?: Child };

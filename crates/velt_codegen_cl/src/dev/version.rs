@@ -65,6 +65,10 @@ pub(crate) fn compile(
     builder.symbol_lookup_fn(Box::new(crate::c_symbols::lookup));
     #[cfg(windows)]
     builder.symbol_lookup_fn(Box::new(crate::win_symbols::lookup));
+    let known = |s: &str| runtime.iter().chain(imports).any(|(n, _)| n == s);
+    if let Some(e) = crate::c_libraries::missing_c_functions(program, &known) {
+        return Err(e);
+    }
     builder.memory_provider(crate::jit_memory::arena(arena_size(program, names, first))?);
     let mut module = JITModule::new(builder);
     let built = build_module(&mut module, &*isa, program, &Naming::Dev(names))?;

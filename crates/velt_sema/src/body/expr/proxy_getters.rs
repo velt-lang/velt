@@ -15,6 +15,7 @@ use velt_syntax::ast;
 use crate::body::places::is_place;
 use crate::body::{FnCx, LocalKind};
 use crate::hir::{self, ExprKind as H, Intrinsic, UseMode};
+use crate::hook_calls::{self as hooks, ty, HookTy};
 
 impl FnCx<'_, '_> {
     /// `obj.name` of the class getter `name` where `obj` may be a typed proxy (module docs);
@@ -61,12 +62,8 @@ impl FnCx<'_, '_> {
         let str_ = self.cx.ty.str_;
         let key = self.mk(H::Lit(hir::Lit::Str(prop.name.clone())), str_, prop.span);
         self.note_dyn_members();
-        let read = self.prelude_hir_call(
-            velt_common::std_hook!(brand_getter_read),
-            vec![boxed, key],
-            any,
-            span,
-        );
+        let read = hooks::brand_getter_read(ty::Any::of(boxed), ty::Str::of(key));
+        let read = read.emit(self, any, span);
         let through = self.intrinsic(Intrinsic::AnyTo, vec![read], plain.ty, span);
         let pick = self.mk(
             H::If {

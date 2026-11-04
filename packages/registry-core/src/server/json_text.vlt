@@ -1,0 +1,90 @@
+// registry-core (internal): JSON text as serde_json writes it (`to_string_pretty`, which vpm's
+// `json_file` uses for `index.json`): two-space indents, `"key": value`, empty arrays and
+// objects as `[]` and `{}`, and strings escaped as serde_json escapes them.
+
+import { utf8Encode } from "velt/encoding";
+
+const HEX = "0123456789abcdef";
+
+/** `s` as a JSON string, escaped as serde_json does (`\uXXXX` only for control characters). */
+export function jsonString(s: string): string {
+  let out = "\"";
+  for (const c of s) {
+    const code = c.charCodeAt(0);
+    if (c == "\"") {
+      out += "\\\"";
+    } else if (c == "\\") {
+      out += "\\\\";
+    } else if (c == "\n") {
+      out += "\\n";
+    } else if (c == "\r") {
+      out += "\\r";
+    } else if (c == "\t") {
+      out += "\\t";
+    } else if (code == 8) {
+      out += "\\b";
+    } else if (code == 12) {
+      out += "\\f";
+    } else if (code < 32) {
+      out += `\\u00${HEX.charAt(code >> 4)}${HEX.charAt(code & 15)}`;
+    } else {
+      out += c;
+    }
+  }
+  return out + "\"";
+}
+
+/** The members `fields` (each `"key": value` already) as a pretty object at depth `depth`. */
+export function jsonObject(fields: string[], depth: i64): string {
+  if (fields.length == 0) {
+    return "{}";
+  }
+  const inner = "  ".repeat(depth + 1);
+  return `{\n${inner}${fields.join(`,\n${inner}`)}\n${"  ".repeat(depth)}}`;
+}
+
+/** The values `items` (each a JSON value already) as a pretty array at depth `depth`. */
+export function jsonArray(items: string[], depth: i64): string {
+  if (items.length == 0) {
+    return "[]";
+  }
+  const inner = "  ".repeat(depth + 1);
+  return `[\n${inner}${items.join(`,\n${inner}`)}\n${"  ".repeat(depth)}]`;
+}
+
+/** One member, `"key": value`. */
+export function jsonField(key: string, value: string): string {
+  return `${jsonString(key)}: ${value}`;
+}
+
+/** A string map as a pretty object at depth `depth`, its keys in byte order (a `BTreeMap`'s). */
+export function jsonStringMap(m: Map<string, string>, depth: i64): string {
+  const fields: string[] = [];
+  for (const key of sortedKeys(m)) {
+    fields.push(jsonField(key, jsonString(m.get(key) ?? "")));
+  }
+  return jsonObject(fields, depth);
+}
+
+/** The keys of `m` in UTF-8 byte order, as Rust's `BTreeMap<String, _>` keeps them. */
+export function sortedKeys(m: Map<string, string>): string[] {
+  const keys: string[] = [];
+  for (const [k, _] of m) {
+    keys.push(k);
+  }
+  keys.sort(compareUtf8);
+  return keys;
+}
+
+/** Orders `a` and `b` as Rust compares `String`s: by their UTF-8 bytes (not UTF-16 units). */
+export function compareUtf8(a: string, b: string): i32 {
+  const left = utf8Encode(a);
+  const right = utf8Encode(b);
+  const n = left.length < right.length ? left.length : right.length;
+  for (let i = 0; i < n; i++) {
+    if (left[i] != right[i]) {
+      return left[i] < right[i] ? -1 : 1;
+    }
+  }
+  return left.length == right.length ? 0 : left.length < right.length ? -1 : 1;
+}

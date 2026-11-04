@@ -66,9 +66,9 @@ pub fn for_document(
         })
         .chain(
             analysis
-                .ts_compat
+                .lint
                 .iter()
-                .map(|f| crate::ts_compat::diagnostic(&index, f)),
+                .map(|d| crate::lint::diagnostic(&index, d)),
         )
         .chain(deprecated_uses(analysis, &index))
         .collect()

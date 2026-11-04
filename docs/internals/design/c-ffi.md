@@ -559,7 +559,8 @@ fold; every other benchmark within 3%.
    effect summaries; `velt check`'s listing; LLVM, Cranelift and the dev JIT; the reference entry
    and its docs-sync issue.
 2. **libc**: std's `declare system` uses become `declare c("c")` with the guards in Velt, checked
-   against each CI target's headers; the compiler's table goes. Gate: file I/O unchanged.
+   against each CI target's headers; the compiler's table goes. Gate: file I/O unchanged. Phase
+   3 of #2196 (the OS boundary and the allocator through `declare c`) builds on steps 1 and 2.
 3. **Bundled sources and SQLite**: `sources` built and cross-built reproducibly with `zig cc`,
    checked against their headers; `NativeHandle`; `packages/sqlite` moves onto `declare c` and is
    gated against rusqlite and better-sqlite3; its Rust crate is deleted.
@@ -622,6 +623,29 @@ no thread hops, and prove that `velt/net` and Velt's async carry real database p
   codecs, TLS, COPY.
 - **Gate**: match or beat the Rust drivers on the same `bench/db` rows. When a Velt driver
   passes, the Rust one is retired.
+
+## As built
+
+Step 1 lands in layers, each its own pull request:
+
+1. `unsafe` blocks, expressions and functions (#2201).
+2. `declare c("lib") function` with scalars (integers, `f32`, `f64`, `bool`, `void`): a direct
+   call in both backends and the dev JIT (which finds the C library's functions with `dlsym`),
+   `errno` captured after it on Unix (on Windows, `lastOsError()` after a C call reads
+   `GetLastError()`, which the C library doesn't set, so it does not report the call's error
+   until step 2 captures the CRT's `errno`), calls
+   only in unsafe code. Until the trust boundary layer, a C declaration is allowed in std and in
+   any file with a package (not a lone file), the only library is `"c"`, the platform's C
+   library, and a call on WebAssembly is an error. One symbol has one signature: a second one
+   (another `$suffix`, another package) is an error until calls through C function pointers.
+   Under `velt dev` a C function no loaded library has is an error naming its declaration.
+   Step 1 is complete only with layers 5 (the trust boundary) and 6 (the header check): until
+   then any package may declare C functions, unchecked.
+3. The types that cross beyond scalars (`Ptr`, `declare c type`, arrays and views, `StrBytes`,
+   `CString`, `Out`) and the raw reads.
+4. The trust boundary: `native.c` libraries per target, `allowNative`, the export rule for raw
+   types, the `SAFETY` lint and `velt check`'s listing.
+5. The header check and `declare c const`.
 
 ## Decisions
 

@@ -1,0 +1,12 @@
+// perf/class-as-data, the TypeScript form: a class that only holds data, one heap object per point.
+// The pair is measured in README.md.
+class P { x: number; y: number; constructor(x: number, y: number) { this.x = x; this.y = y; } }
+function main() {
+  let total = 0.0;
+  for (let r = 0; r < 200; r++) {
+    const ps: P[] = [];
+    for (let i = 0; i < 10000; i++) ps.push(new P(i, r));
+    for (const p of ps) total += p.x + p.y;
+  }
+  console.log(total);
+}

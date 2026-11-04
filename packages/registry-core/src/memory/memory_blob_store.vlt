@@ -1,0 +1,26 @@
+// registry-core: a `BlobStore` in memory, for tests and for trying a registry out.
+
+import { BlobStore } from "../stores/blob_store";
+
+/** Blobs in a map; lost when the program ends. */
+export class MemoryBlobStore implements BlobStore {
+  private blobs: Map<string, u8[]> = new Map();
+
+  async putIfAbsent(key: string, bytes: u8[]): Promise<bool> {
+    if (this.blobs.has(key)) {
+      return false;
+    }
+    this.blobs.set(key, [...bytes]);
+    return true;
+  }
+
+  async get(key: string): Promise<u8[] | null> {
+    const found = this.blobs.get(key);
+    return found == null ? null : [...found];
+  }
+
+  /** How many blobs it holds. */
+  get size(): i64 {
+    return this.blobs.size;
+  }
+}

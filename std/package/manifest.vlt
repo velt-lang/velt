@@ -56,6 +56,8 @@ export type Package = {
   /// `/`-separated paths relative to the package root. `velt check --ts-compat` and the editor
   /// lint them.
   tsCompat?: string[];
+  /// How loud the lint rules are in the package's own modules: `{ perf: "warn" }`.
+  lint?: Lint;
   /// How the package's program is built. Only the root package's applies.
   build?: Build;
 };
@@ -122,6 +124,19 @@ export type Jsx = {
 };
 
 /// How a package's program is built (https://veltlang.com/docs/tooling/platforms/ "CPU").
+/// How loud the lint rules are in the package's own modules
+/// (https://veltlang.com/docs/tooling/cli/).
+export type Lint = {
+  /// The level of every `perf/…` rule: `"hint"` (the default: `velt check --perf` and the editor
+  /// show them), `"warn"`, `"deny"` (`velt check` fails) or `"off"`.
+  perf?: LintLevel;
+  /// Levels of single rules by code, which win over `perf`: `{ "perf/number-double": "off" }`.
+  rules?: Record<string, LintLevel>;
+};
+
+/// How loud a lint rule is.
+export type LintLevel = "off" | "hint" | "warn" | "deny";
+
 export type Build = {
   /// The CPU the program is built for, as `velt build --cpu`: `"baseline"`, `"x86-64-v2"` (the
   /// default on x86-64), `"x86-64-v3"`, `"x86-64-v4"`, `"native"` or a CPU name such as

@@ -464,6 +464,7 @@ mod atomics;
 mod half;
 mod inlining;
 mod placement;
+mod static_symbols;
 mod tbaa;
 mod units;
 mod wasm;
