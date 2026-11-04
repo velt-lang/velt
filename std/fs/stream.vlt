@@ -12,7 +12,12 @@
 import { unwrapIo } from "velt/native/result";
 import { FileReader } from "velt/fs/file_reader";
 import { FileWriter } from "velt/fs/file_writer";
-import { velt_rt_fs_open_read, velt_rt_fs_open_write } from "velt/fs/rt";
+import { OpenReadOptions } from "velt/fs/open_read_options";
+import {
+  velt_rt_fs_open_read,
+  velt_rt_fs_open_read_range,
+  velt_rt_fs_open_write,
+} from "velt/fs/rt";
 
 /** The options of `openWrite`. */
 export struct OpenWriteOptions {
@@ -20,9 +25,15 @@ export struct OpenWriteOptions {
   append?: bool;
 }
 
-/** Opens `path` for chunked reading. */
-export async function openRead(path: string): Promise<FileReader> {
-  return FileReader { handle: unwrapIo(await velt_rt_fs_open_read(path)) };
+/** Opens `path` for chunked reading: the whole file, or the bytes `start` to `end` (included). */
+export async function openRead(path: string, opts: OpenReadOptions = {}): Promise<FileReader> {
+  if (opts.start == undefined && opts.end == undefined) {
+    return FileReader { handle: unwrapIo(await velt_rt_fs_open_read(path)) };
+  }
+  // The runtime's "to the end of the file" is the largest u64, a byte no file has.
+  const start = opts.start ?? 0;
+  const end = opts.end ?? (-1 as u64);
+  return FileReader { handle: unwrapIo(await velt_rt_fs_open_read_range(path, start, end)) };
 }
 
 /** Creates (or truncates, or with `append` extends) `path` for buffered writing. */

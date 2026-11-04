@@ -2,11 +2,13 @@
 
 import { IoError } from "velt/io/error";
 import { unwrapIo } from "velt/native/result";
+import { Stats } from "velt/fs/stats";
 import {
   velt_rt_fs_reader_close,
   velt_rt_fs_reader_read,
   velt_rt_fs_reader_read_line,
   velt_rt_fs_reader_read_string,
+  velt_rt_fs_reader_opened_stats,
 } from "velt/fs/rt";
 
 /** A file open for reading. */
@@ -47,6 +49,16 @@ export struct FileReader {
       }
       yield unwrapIo(r.line);
     }
+  }
+
+  /**
+   * The file's metadata when it was opened (taken with the open, so this costs no I/O): the
+   * size and modification time of the file this reader reads, even if its path was renamed,
+   * replaced or removed since. `size` is the whole file's, whatever range `openRead` was given;
+   * a file that grows after the open isn't seen to (`stat(path)` reads it now).
+   */
+  openedStats(): Stats {
+    return unwrapIo(velt_rt_fs_reader_opened_stats(this.handle));
   }
 
   /** Closes the file (reads in flight finish first). */

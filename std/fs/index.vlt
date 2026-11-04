@@ -41,6 +41,8 @@ export {
   lstatSync,
   readlink,
   readlinkSync,
+  realpath,
+  realpathSync,
   stat,
   statSync,
   symlink,
@@ -50,6 +52,7 @@ export { Dirent } from "velt/fs/dirent";
 export { Stats } from "velt/fs/stats";
 export { FileReader } from "velt/fs/file_reader";
 export { FileWriter } from "velt/fs/file_writer";
+export { OpenReadOptions } from "velt/fs/open_read_options";
 export { openRead, openWrite, OpenWriteOptions } from "velt/fs/stream";
 export { closeSync, openSync, unlinkSync } from "velt/fs/fd/open";
 export { readSync } from "velt/fs/fd/read";

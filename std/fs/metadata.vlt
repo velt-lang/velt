@@ -1,5 +1,5 @@
-// velt/fs (internal): metadata and symbolic links (`stat`, `lstat`, `readlink`, `symlink` and
-// their `*Sync` twins).
+// velt/fs (internal): metadata and symbolic links (`stat`, `lstat`, `readlink`, `realpath`,
+// `symlink` and their `*Sync` twins).
 
 import { unwrapIo } from "velt/native/result";
 import { checkIo } from "velt/native/status";
@@ -9,6 +9,8 @@ import {
   velt_rt_fs_lstat_sync,
   velt_rt_fs_readlink,
   velt_rt_fs_readlink_sync,
+  velt_rt_fs_realpath,
+  velt_rt_fs_realpath_sync,
   velt_rt_fs_stat,
   velt_rt_fs_stat_sync,
   velt_rt_fs_symlink,
@@ -28,6 +30,15 @@ export async function lstat(path: string): Promise<Stats> {
 /** The target of the symlink `path`, as stored in the link (`EINVAL` if it is not a link). */
 export async function readlink(path: string): Promise<string> {
   return unwrapIo(await velt_rt_fs_readlink(path));
+}
+
+/**
+ * The absolute path of `path` with every symlink, `.` and `..` resolved (Node's
+ * `fs.promises.realpath`): where a file really is, to check that it lies under a directory.
+ * `ENOENT` if it doesn't exist.
+ */
+export async function realpath(path: string): Promise<string> {
+  return unwrapIo(await velt_rt_fs_realpath(path));
 }
 
 /**
@@ -52,6 +63,11 @@ export function lstatSync(path: string): Stats {
 /** `readlink`, blocking the calling thread. */
 export function readlinkSync(path: string): string {
   return unwrapIo(velt_rt_fs_readlink_sync(path));
+}
+
+/** `realpath`, blocking the calling thread. */
+export function realpathSync(path: string): string {
+  return unwrapIo(velt_rt_fs_realpath_sync(path));
 }
 
 /** `symlink`, blocking the calling thread. */

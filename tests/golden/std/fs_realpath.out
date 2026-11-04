@@ -1,0 +1,9 @@
+<dir>/root/sub/a.txt
+<dir>/root/sub/a.txt
+<dir>/root/sub/a.txt
+<dir>/outside/secret.txt
+<dir>/root/sub
+ENOENT
+sync ENOENT
+ENOENT
+sync ENOENT

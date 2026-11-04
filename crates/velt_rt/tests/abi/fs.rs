@@ -226,6 +226,21 @@ fn symlinks() {
             sync(|o| velt_rt_fs_readlink_sync(&arg(&f), o)),
             code::INVALID_INPUT,
         );
+        // realpath resolves the link to the file's absolute path, without Windows' `\\?\`.
+        let real = take_string(ok(block_on_fut::<IoResult<VeltStr>>(velt_rt_fs_realpath(
+            &arg(&link),
+        ))));
+        let expected = take_string(ok(sync(|o| velt_rt_fs_realpath_sync(&arg(&f), o))));
+        assert_eq!(real, expected);
+        assert!(
+            real.ends_with("f.txt") && !real.starts_with(r"\\?\"),
+            "{real}"
+        );
+        assert!(std::path::Path::new(&real).is_absolute(), "{real}");
+        err(
+            sync(|o| velt_rt_fs_realpath_sync(&arg(&path(&dir, "none")), o)),
+            code::NOT_FOUND,
+        );
         let mut got = ok(sync(|o| {
             velt_rt_fs_read_dir_typed_sync(&arg(&path(&dir, "")), o)
         }));
@@ -233,6 +248,68 @@ fn symlinks() {
         velt_rt_bytes_drop(&mut got.kinds);
         velt_rt_str_array_drop(&mut got.names);
         ok(sync(|o| velt_rt_fs_lstat_sync(&arg(&f), o)));
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `openRead(path, { start, end })`: both ends included, an end past the file stops at its end,
+/// and `openedStats()` describes the opened file, whatever range it reads.
+#[test]
+fn ranged_readers_and_their_stats() {
+    use crate::fs::stream::*;
+    let dir = temp_dir("fs_range");
+    std::fs::create_dir_all(&dir).unwrap();
+    let f = path(&dir, "f.txt");
+    std::fs::write(&f, "0123456789").unwrap();
+    let read_all = |start: u64, end: u64| -> String {
+        unsafe {
+            let r = ok(block_on_fut::<IoResult<ReaderHandle>>(
+                velt_rt_fs_open_read_range(&arg(&f), start, end),
+            ));
+            let mut out = Vec::new();
+            loop {
+                let mut chunk = ok(block_on_fut::<IoResult<VeltBytes>>(velt_rt_fs_reader_read(
+                    r, 4,
+                )));
+                let bytes = chunk.as_bytes().to_vec();
+                velt_rt_bytes_drop(&mut chunk);
+                if bytes.is_empty() {
+                    break;
+                }
+                out.extend(bytes);
+            }
+            velt_rt_fs_reader_close(r);
+            String::from_utf8(out).unwrap()
+        }
+    };
+    assert_eq!(read_all(2, 5), "2345");
+    assert_eq!(read_all(9, 9), "9");
+    assert_eq!(read_all(7, 100), "789");
+    assert_eq!(read_all(0, u64::MAX), "0123456789");
+    assert_eq!(read_all(3, u64::MAX), "3456789");
+    assert_eq!(read_all(10, u64::MAX), "");
+    assert_eq!(read_all(5, 4), "");
+    assert_eq!(read_all(u64::MAX - 1, u64::MAX - 1), "");
+    unsafe {
+        let r = ok(block_on_fut::<IoResult<ReaderHandle>>(
+            velt_rt_fs_open_read_range(&arg(&f), 1, 2),
+        ));
+        // Replaced after the open: the reader still describes the file it opened.
+        std::fs::write(&f, "a longer file than before").unwrap();
+        let s = ok(sync(|o| velt_rt_fs_reader_opened_stats(r, o)));
+        assert_eq!((s.size, s.is_file, s.is_dir), (10, 1, 0));
+        velt_rt_fs_reader_close(r);
+        // A closed reader's are EBADF, as its reads are.
+        let closed = sync(|o| velt_rt_fs_reader_opened_stats(r, o));
+        assert!(closed.err.code != 0);
+        err(
+            block_on_fut::<IoResult<ReaderHandle>>(velt_rt_fs_open_read_range(
+                &arg(&path(&dir, "none")),
+                1,
+                2,
+            )),
+            code::NOT_FOUND,
+        );
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

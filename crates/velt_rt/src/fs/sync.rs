@@ -85,6 +85,15 @@ pub unsafe extern "C" fn velt_rt_fs_readlink_sync(
     ops::readlink(path_arg(path)).write_to(out);
 }
 
+/// `realpathSync(path)`.
+#[no_mangle]
+pub unsafe extern "C" fn velt_rt_fs_realpath_sync(
+    path: *const VeltStr,
+    out: *mut IoResult<VeltStr>,
+) {
+    ops::realpath(path_arg(path)).write_to(out);
+}
+
 /// `symlinkSync(target, path)`.
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_fs_symlink_sync(
