@@ -361,29 +361,3 @@ impl<'a> Parser<'a> {
         Ok(self.mk_expr(ExprKind::Spread(Box::new(inner)), span))
     }
 }
-
-/// An assignment target (`=` or `op=`) without its non-null assertions: `w[i]! -= n` and
-/// `x! = v` assign to `w[i]` and `x`, as TypeScript emits them, so every analysis of assignment
-/// targets sees the place (the assertion only changes the type that is read, and Velt types an
-/// element read as the element type). Through a target whose type is nullable, the compound
-/// operator is then checked on that type and reported. `++`/`--` keep their target as written:
-/// sema reads `h[k]!++` through the assertion. Other targets are unchanged.
-pub(super) fn unassert_target(e: Expr) -> Expr {
-    match e.kind {
-        ExprKind::NonNull(inner) if is_place(&inner) => unassert_target(*inner),
-        ExprKind::Paren(inner) if is_place(&inner) => Expr {
-            kind: ExprKind::Paren(Box::new(unassert_target(*inner))),
-            ..e
-        },
-        kind => Expr { kind, ..e },
-    }
-}
-
-/// A variable, member or element, under any parentheses and non-null assertions.
-fn is_place(e: &Expr) -> bool {
-    match &e.kind {
-        ExprKind::Ident(_) | ExprKind::Member { .. } | ExprKind::Index { .. } => true,
-        ExprKind::Paren(inner) | ExprKind::NonNull(inner) => is_place(inner),
-        _ => false,
-    }
-}

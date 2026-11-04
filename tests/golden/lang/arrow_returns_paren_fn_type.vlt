@@ -1,0 +1,18 @@
+// An arrow may return a parenthesized function type (`(): (() => void) => …`): the `(` right
+// after a type's `(` starts a parenthesized type, as in TypeScript.
+
+const mount = (label: string, count?: number): (() => void) => {
+  return () => {
+    console.log(`${label} ${count ?? 0}`);
+  };
+};
+
+const scale = (k: number): ((x: number) => number) => (x: number) => x * k;
+
+function main() {
+  mount("tick", 3)();
+  mount("idle")();
+  console.log(scale(3)(4));
+}
+
+main();
