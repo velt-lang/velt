@@ -15,6 +15,11 @@ export class Check {
     }
   }
 
+  /** The answer's media type must be `want`; parameters such as `charset` may follow it. */
+  mediaType(what: string, reply: Reply, want: string): void {
+    this.is(what, reply.type.split(";")[0].trim().toLowerCase(), want);
+  }
+
   /** The answer must have `status`, and contain `words` when given. */
   answer(what: string, reply: Reply, status: i64, words: string = ""): void {
     if (reply.status != status) {

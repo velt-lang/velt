@@ -33,7 +33,7 @@ async function runCases(
     try {
       await c.body(run);
     } catch (e) {
-      run.check.failures.push(`stopped: ${(e as Error).message}`);
+      run.check.failures.push(`stopped: ${e instanceof Error ? e.message : String(e)}`);
     }
     if (run.check.failures.length > 0) {
       failures.push(new Failure(c.title, run.check.failures));

@@ -1,7 +1,9 @@
 // registry-conformance: names that must be refused, and a failed publish that must leave nothing
 // (crates/velt_registry/src/tests/access.rs).
 
+import { contentChecksum, packArchive } from "registry-core";
 import { Case } from "../case";
+import { packageFiles } from "../client";
 import { Run } from "../run";
 
 // `..` and `..\\x` are not here: a URL-standard client resolves them before they are sent, so only
@@ -9,6 +11,10 @@ import { Run } from "../run";
 async function badPackageNames(run: Run): Promise<void> {
   const { client, check } = run;
   const alice = run.users.alice;
+  // A real upload, so a refusal can only be about the name.
+  const files = packageFiles(run.name("named"), "1.0.0");
+  const body = packArchive(files);
+  const sum = contentChecksum(files);
   const names = ["..%5Cother", ".auth", ".staging", "Lib", "con", "nul", "com1", "lpt9"];
   for (const name of names) {
     check.answer(`GET ${name}`, await client.call("GET", `${name}/owners`), 400);
@@ -17,7 +23,12 @@ async function badPackageNames(run: Run): Promise<void> {
       await client.call("PUT", `${name}/owners/bob`, alice),
       400,
     );
-    check.answer(`publish ${name}`, await client.call("PUT", `${name}/1.0.0`, alice), 400);
+    check.answer(
+      `publish ${name}`,
+      await client.upload(name, "1.0.0", body, sum, alice),
+      400,
+      "invalid package name",
+    );
   }
 }
 
