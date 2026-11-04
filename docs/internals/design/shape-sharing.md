@@ -468,6 +468,53 @@ Every step reports base against head, on the same machine:
 | the nightly set, `bench/array_view`, `bench/btree`, `bench/concurrent_map`, `bench/json` | run time: cachegrind instructions ±3%, wall interleaved best of N for the hot ones | release (and debug, reported, not gated) |
 | goldens | debug and release outputs byte-identical; release VIR byte-identical to base in steps where release doesn't change | both |
 
+### Baseline, before any code
+
+Measured with release-built compilers in a 4-core Linux container, so these are line counts, not
+times, and no load affects them:
+- main `a25dbab`;
+- #2268's branch `gen-size` `5e34170`, which moves the `as T` slow path into `AnyUnbox` glue.
+
+The programs:
+- **repro:** #2271's ten-line program converting an `any` to `Item[]`;
+- **sigx-like:** `bench/array_view`'s `sigx_like`, which converts `kids as JSXChild[]`, where
+  `JSXChild` is a union;
+- **scale 10k:** `bench/compile/scale/gen.py 10000`.
+
+The helpers are the `arrayView*` functions of `std/lang/hooks/array_view.vlt`. The counts are
+non-empty lines inside their function bodies in `--emit vir` (debug) and `--emit llvm`
+(release), summed per element type.
+
+| program | element type | debug VIR, main | debug VIR, #2268 | release IR, main | release IR, #2268 |
+|---|---|---:|---:|---:|---:|
+| repro | `Item` (`~agg(64, 8)`) | 46,618 | 5,404 | 119,415 | 12,388 |
+| repro | `string` (`~str`) | 6,063 | 5,581 | 13,672 | 13,118 |
+| sigx-like | `JSXChild` (a union, `~agg`) | 18,355 | 8,296 | 41,406 | 40,058 |
+| sigx-like | `string` | 6,068 | 5,586 | 13,672 | 12,932 |
+
+What this says for the prototype:
+- **#2268 makes an element type cost about the same, whatever the type:** about 5.5k debug
+  VIR lines and 12-13k release IR lines for the family. That is the helpers' own code, compiled
+  again per type. Sharing removes exactly that, so the saving is (element types − shapes) ×
+  that cost.
+- **These two programs have one element type per shape** (`Item` and `string`; `JSXChild` and
+  `string`), so sharing saves nothing on them. They are the "nothing changes" cases. The win is
+  in programs with many view element types, which is what small-page's 3.32M lines of helpers
+  mean: at main's sizes, hundreds of instances. The prototype's counters report small-page's
+  element types and shapes first, before any timing, and that ratio predicts the rest.
+- **A union target still writes much of its conversion inline in release** (`JSXChild`: 40k
+  lines on #2268 against 41k on main; #2268 outlines the slow path of object types). Shared
+  code calls slot 6 for every target, so in shared instances unions get the out-of-line path
+  as well. Where the per-type instance would have inlined the union's member comparisons, that
+  is rule 1's *inline* read for release.
+
+**Scale 10k, debug:** the build takes 1.05 s (lower 138 ms, codegen 528 ms; `-v`). The generic
+instances are user code, 121 instances each of `common.count`, `first` and five `Box<T>`
+methods, one per generated class. They come to 17,182 of 194,664 VIR body lines (8.8%), and
+sharing makes them 7 instances, or 14 if the classes split between `~rc` and `~own`. In release
+all of them are inlined into their callers, and none is left in the IR, so the release scale
+numbers should not move. That makes them a check that release is unchanged, not a target.
+
 New counters in `VELT_LOWER_PROFILE`:
 - shared instances;
 - per-type instances they replace;
