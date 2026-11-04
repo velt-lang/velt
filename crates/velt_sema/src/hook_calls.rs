@@ -56,6 +56,7 @@ pub mod ty {
     // The std classes in the hooks' signatures.
     markers!(
         ArrayView,
+        TupleElements,
         BufferView,
         CString,
         ClassMarker,

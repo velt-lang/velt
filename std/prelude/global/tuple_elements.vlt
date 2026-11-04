@@ -1,0 +1,5 @@
+// Global, conditional (crates/velt_loader/src/globals): a tuple's array methods that call back
+// (velt/lang/hooks/tuple_elements), for a program that mentions one; other programs don't load
+// them. It names nothing a program can use: sema writes the calls (`tuple_text.rs`).
+// load when std/prelude/array uses: .every .filter .find .findIndex .findLast .findLastIndex .flatMap .forEach .map .reduce .reduceRight .some
+import "velt/lang/hooks/tuple_elements";

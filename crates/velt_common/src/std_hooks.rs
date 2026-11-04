@@ -367,6 +367,12 @@ hooks! {
     /// `v.constructor` of an instance of a std class JavaScript doesn't name: an error.
     any_ctor_unsupported => lang_hooks_class_object, "anyCtorUnsupported", sig((&string) -> any);
 
+    // tuple_elements.vlt: a tuple's array methods that call back (`velt_sema` `tuple_text.rs`).
+    /// The elements of one tuple, read when a method reaches them.
+    tuple_elements_class => lang_hooks_tuple_elements, "TupleElements", class;
+    /// `TupleElements` of a tuple: an array of its elements for their type, and how to read one.
+    tuple_elements => lang_hooks_tuple_elements, "tupleElements", sig(<A>(&[A], move Fn((i64) -> A)) -> TupleElements(A));
+
     // array_view.vlt: an `any` holding an array viewed as `T[]` (`velt_vir` `array_view.rs`).
     /// One view's state: the original array and the mirror of its elements as `T`.
     array_view => lang_hooks_array_view, "ArrayView", class, lowered;
