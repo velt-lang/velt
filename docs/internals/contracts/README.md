@@ -67,6 +67,12 @@ Its public API is kept small:
 - The resolution rules tools must share with the loader: `std_root()`, `prelude_files`,
   `in_std`, `resolve_spec` → `ModuleRef`, `resolve_module`, `module_path`, and
   `PackageResolver` / `PackageImports`.
+- The std index (#2161 step 1, `std_index`): `std_index::load(std_root, Option<StdAstCache>)
+  -> StdIndex`, per std package (`std/<module>/`) and module: the hook table's entries it
+  defines, its `extend` members as (type, member, static), its exports and imports, and the
+  (a1) rule's `violations` (`ModuleIndex::in_place`). Stored per package in the build cache (kind
+  `pkg-interface`, `std_index::KIND`: the first fields of package-cache.md's layer 1; versioned
+  by `std_index::FORMAT`). Nothing in a build calls it yet.
 
 Everything else (resolution, globals, visibility, variants, the std parse cache) is private to
 the crate. The same inputs give the same modules, diagnostics and order for every caller.

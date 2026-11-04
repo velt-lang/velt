@@ -122,19 +122,25 @@ fn parse_source(file: FileId, src: &str, plain_ts: bool) -> (ast::Module, Diagno
     }
 }
 
-/// The key of `src`'s parse: `prefix` and the source's contents. The content hashes are cheap
-/// next to parsing (a CRC-32 in hardware and a 64-bit multiply-fold hash), and with the length
-/// they make two different sources with one key as unlikely as a collision of a 96-bit hash.
+/// The key of `src`'s parse: `prefix` and the source's contents ([`contents`]).
 pub(crate) fn key(prefix: &KeyHasher, src: &str, plain_ts: bool) -> Key {
+    let mut h = prefix.clone();
+    h.part(&contents(src, plain_ts));
+    h.finish()
+}
+
+/// What a key holds of a source's contents: its length, CRC-32 and a 64-bit hash, and whether it
+/// is plain TypeScript. The content hashes are cheap next to parsing (a CRC-32 in hardware and a
+/// 64-bit multiply-fold hash), and with the length they make two different sources with one key
+/// as unlikely as a collision of a 96-bit hash.
+pub(crate) fn contents(src: &str, plain_ts: bool) -> [u8; 21] {
     let fold = foldhash::fast::FixedState::with_seed(0x05ee_da57).hash_one(src.as_bytes());
     let mut contents = [0u8; 21];
     contents[..8].copy_from_slice(&(src.len() as u64).to_le_bytes());
     contents[8..12].copy_from_slice(&crc32fast::hash(src.as_bytes()).to_le_bytes());
     contents[12..20].copy_from_slice(&fold.to_le_bytes());
     contents[20] = u8::from(plain_ts);
-    let mut h = prefix.clone();
-    h.part(&contents);
-    h.finish()
+    contents
 }
 
 #[cfg(test)]

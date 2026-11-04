@@ -6,7 +6,8 @@
 //! The crate's API is [`load_program`] (a root, [`LoadOptions`] → [`Loaded`] modules, problems
 //! in the caller's diagnostics) and the resolution rules a tool needs to agree with it
 //! ([`std_root`], [`prelude_files`], [`in_std`], [`resolve_spec`], [`resolve_module`],
-//! [`module_path`]); docs/internals/contracts/README.md "Program loader".
+//! [`module_path`]), and the std index ([`std_index`]: what demand loading needs to know of each
+//! std module, kept in the build cache); docs/internals/contracts/README.md "Program loader".
 //!
 //! Order of the result: the prelude (`std/prelude/*.vlt` in the order `std/prelude/index.vlt`
 //! lists them, canonical `"std/prelude/<name>"`), then the root (`"main"`), then imported modules
@@ -63,6 +64,7 @@ mod resolve;
 mod signature;
 mod spec;
 mod std_ast;
+pub mod std_index;
 mod std_root;
 mod variants;
 mod visibility;

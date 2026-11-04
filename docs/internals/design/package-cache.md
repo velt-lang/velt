@@ -98,8 +98,9 @@ Three layers, each usable without the next:
 
 1. **Interface (export data).** The package's collected declarations and checked signatures:
    types, classes and their layouts' inputs, overloads, `extend` members, hook roles (#2161's
-   std index), and the summaries sema computes from bodies that callers need: write effects
-   (`write-effects.md`), ownership pass modes, error sets, `holds_promise`, fresh returns. A
+   std index, stored now: kind `pkg-interface`, `velt_loader::std_index`), and the summaries
+   sema computes from bodies that callers need: write effects (`write-effects.md`), ownership
+   pass modes, error sets, `holds_promise`, fresh returns. A
    dependent is checked against this without the package's bodies. The interface hash is the
    hash of this layer.
 2. **Checked bodies** for what dependents instantiate or inline: generic functions and methods,
@@ -245,7 +246,9 @@ Not part of this plan, found on the way:
    instructions).
 2. **Package granularity in std:** one entry per std module, or one per prelude plus one per
    other module? Per module keeps an edit local; the prelude is loaded by every program, so
-   decoding one entry for it may be cheaper. Measure both with layer 1.
+   decoding one entry for it may be cheaper. Measure both with layer 1. The std index (#2161
+   step 1) is stored per package (`std/<module>/` with its implementation folders), so the
+   prelude's many files are one entry.
 3. **Facts traces that never repeat:** a function whose trace asks about many program types (an
    `any` glue user) may have a new trace in every program. Such functions should stay in the
    program; a per-function miss counter in the cache can tell.
