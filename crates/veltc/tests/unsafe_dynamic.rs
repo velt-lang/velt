@@ -483,7 +483,9 @@ fn npm_packages_have_no_package_s_trust() {
         assert!(o.status.success(), "git {args:?}: {}", text(&o));
     }
     let path = repo.canonicalize().unwrap();
+    // On Windows, `canonicalize` gives a verbatim `//?/C:/...` path, whose `?` a URL can't hold.
     let path = path.to_string_lossy().replace('\\', "/");
+    let path = path.strip_prefix("//?/").unwrap_or(&path);
     let url = match path.starts_with('/') {
         true => format!("file://{path}"),
         false => format!("file:///{path}"),
