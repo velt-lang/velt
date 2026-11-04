@@ -3,3 +3,26 @@
 const props: Record<string, any> = { gap: "3", width: 4, on: true, none: null, obj: { valueOf: () => 7 } };
 console.log(Number(props.gap ?? 2), Number(props.width), Number(props.on), Number(props.none), Number(props.missing ?? 2));
 console.log(Number(props.missing), Number(props.obj), Number("x" as any));
+
+// Anything else takes `ToNumber` the same way: an `unknown`, `undefined`, a type parameter, a
+// union with `null`, an object.
+const u: unknown = "5";
+console.log(Number(u));
+const r: Record<string, unknown> = { a: "6" };
+console.log(Number(r.a));
+console.log(Number(undefined));
+function g<T>(x: T): number {
+  return Number(x);
+}
+console.log(g("7"), g(8), g(true), g(null), g([9]));
+const n1: string | null = null;
+console.log(Number(n1));
+const n2: number | undefined = undefined;
+console.log(Number(n2));
+console.log(Number([1]), Number([]), Number({}), Number(new Date(5)));
+class V {
+  valueOf(): number {
+    return 11;
+  }
+}
+console.log(Number(new V()));

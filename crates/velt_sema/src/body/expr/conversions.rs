@@ -26,7 +26,8 @@ impl FnCx<'_, '_> {
     }
 
     /// `Number(x)`: std's `Number(s)` (function `d`) for a string, the value itself for a number,
-    /// `1` / `0` for a boolean, `0` for `null` (`Number()` is `0`), and `+x` for an `any`.
+    /// `1` / `0` for a boolean, `0` for `null` (`Number()` is `0`), `toNumber()` for a `BigInt`, and
+    /// `+x` of it as an `any` for anything else.
     pub(super) fn number_call(&mut self, d: DefId, args: &[ast::Expr], span: Span) -> hir::Expr {
         let f64 = self.cx.ty.f64;
         if !self.conversion_arity("Number", args, span) {
@@ -37,10 +38,6 @@ impl FnCx<'_, '_> {
         };
         let h = self.expr(a, None, Want::Borrow);
         let h = self.unbrand(h);
-        // An `any` (or `unknown`): JavaScript's `ToNumber`, as `+x` converts it.
-        if self.cx.maybe_dynamic(h.ty) {
-            return self.dynamic_unary(ast::UnaryOp::Plus, h, span);
-        }
         let t = self.cx.widened(h.ty);
         let ty = &self.cx.ty;
         if t == ty.str_ {
@@ -51,6 +48,14 @@ impl FnCx<'_, '_> {
             };
             return self.mk(kind, f64, span);
         }
+        if self.is_bigint(t) {
+            let to_number = ast::Ident {
+                name: "toNumber".to_string(),
+                span,
+            };
+            return self.method_call_on(h, &to_number, &[], &[], Some(f64), span);
+        }
+        let ty = &self.cx.ty;
         if t == ty.bool_ {
             let one = self.mk(H::Lit(hir::Lit::Float(1.0)), f64, span);
             let zero = self.mk(H::Lit(hir::Lit::Float(0.0)), f64, span);
@@ -68,14 +73,16 @@ impl FnCx<'_, '_> {
                 Err(h) => self.mk(H::Cast(Box::new(h)), f64, span),
             };
         }
-        if !ty.is_bottom(t) && t != ty.error {
-            let tn = self.cx.display(h.ty);
-            self.cx.err(
-                format!("`Number(x)` converts a string, a number or a boolean, not a `{tn}`"),
-                h.span,
-            );
+        if ty.is_bottom(t) || t == ty.error {
+            return self.error_expr(span);
         }
-        self.error_expr(span)
+        // Anything else (an `any`, an `unknown`, `undefined`, a type parameter, an object) takes
+        // JavaScript's `ToNumber`, as `+x` converts an `any`.
+        let Some(any) = self.any_ty() else {
+            return self.error_expr(span);
+        };
+        let h = self.coerce(h, any);
+        self.dynamic_unary(ast::UnaryOp::Plus, h, span)
     }
 
     /// `Boolean(x)`: whether `x` is truthy (`Boolean()` is `false`).
