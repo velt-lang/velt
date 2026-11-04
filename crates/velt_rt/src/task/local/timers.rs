@@ -5,8 +5,11 @@
 //! arms a single tokio `Sleep` for the earliest deadline. When the task is polled, the queue wakes
 //! every timer that is due, in order, before the task's woken promises run: started promises are
 //! queued in that order, and the root, when it waits for one of the timers itself, resumes at its
-//! place among them (set.rs). Timers created by one task are ordered among themselves; there is no
-//! order across tasks, which run in parallel.
+//! place among them (set.rs). Timers that wake the same waiter (`Promise.all([a, b])`, whose
+//! owner polls `a` and `b` itself, in that order) fire one per poll of the task: that waiter
+//! resumes once per poll, and would find them all fired and run them in the order it polls them,
+//! not in timer order. Timers created by one task are ordered among themselves; there is no order
+//! across tasks, which run in parallel.
 //!
 //! A leaf registers in the queue of the task polling it (a promise handed to another task moves
 //! its registration along). Outside any task it waits on a plain tokio timer.
@@ -19,6 +22,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::task::{Context, Poll, Waker};
 
+use super::node;
 use crate::task::runtime::time::{sleep_until, Sleep};
 use parking_lot::Mutex;
 use std::time::Instant;
@@ -184,17 +188,19 @@ impl Timers {
         self.state.lock().queue.remove(key);
     }
 
-    /// Wake every due timer, in order, and arm the tokio timer for the next one (it wakes
-    /// `task`). Returns how many of the woken waited in a started promise before the first that
-    /// `task` itself waited for (`None`: none of them), so the drain can resume the root at its
-    /// place.
     /// Is a registered timer due now?
     pub(crate) fn has_due(&self) -> bool {
         let mut s = self.state.lock();
         s.queue.first_key().is_some_and(|k| k.0 <= Instant::now())
     }
 
+    /// Wake the due timers, in order, up to the first that wakes a waiter already woken here (it
+    /// and those after it fire at the task's next poll, which this asks for: see the module
+    /// docs), and arm the tokio timer for the next one (it wakes `task`). Returns how many of the
+    /// woken waited in a started promise before the first that `task` itself waited for (`None`:
+    /// none of them), so the drain can resume the root at its place.
     pub(crate) fn fire(&self, task: &Waker) -> Option<usize> {
+        let mut again = false;
         let mut due = {
             let mut s = self.state.lock();
             if s.queue.is_empty() {
@@ -202,10 +208,18 @@ impl Timers {
             }
             let mut due = std::mem::take(&mut s.due);
             let mut now = Instant::now();
+            let mut root_woken = false;
             while let Some(key) = s.queue.first_key() {
                 let at = key.0;
                 if at <= now {
                     let r = s.queue.pop_first(&key);
+                    let root = r.waker.will_wake(task);
+                    if (root && root_woken) || (!root && !node::firing_start(&r.waker)) {
+                        s.queue.insert(key, r);
+                        again = true;
+                        break;
+                    }
+                    root_woken |= root;
                     // SAFETY: registered leaves are live (they deregister, under this lock,
                     // before being freed).
                     unsafe { (*r.fired).store(true, Ordering::Release) };
@@ -225,11 +239,15 @@ impl Timers {
             if w.will_wake(task) {
                 root_at.get_or_insert(nodes);
             } else {
+                node::firing_end(&w);
                 nodes += 1;
                 w.wake();
             }
         }
         self.state.lock().due = due;
+        if again {
+            task.wake_by_ref();
+        }
         root_at
     }
 }

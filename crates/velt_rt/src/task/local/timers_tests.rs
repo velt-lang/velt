@@ -101,6 +101,37 @@ fn earlier_deadline_first_then_creation_order() {
 }
 
 #[test]
+fn timers_that_wake_the_root_fire_one_per_poll_in_timer_order() {
+    // `Promise.all([a, b])` in the root: its leaves hold the task's waker, and the root polls
+    // `a` first, so with both fired `a` would run first though `b` was due first.
+    rt().block_on(async {
+        let log = Arc::new(StdMutex::new(Vec::new()));
+        let task = named("task", &log);
+        let timers = Arc::new(Timers::default());
+        let now = Instant::now();
+        let a = leaf(&timers, now + Duration::from_millis(2), &task, &task);
+        let b = leaf(&timers, now + Duration::from_millis(1), &task, &task);
+        let other = leaf(
+            &timers,
+            now + Duration::from_millis(1),
+            &named("other", &log),
+            &task,
+        );
+        tokio::time::sleep(Duration::from_millis(2)).await;
+        log.lock().unwrap().clear();
+        // `b`, then `other` (another waiter), then `a`, whose waiter was woken already: next poll.
+        assert_eq!(timers.fire(&task), Some(0));
+        assert!(b.fired.load(Ordering::Acquire) && other.fired.load(Ordering::Acquire));
+        assert!(!a.fired.load(Ordering::Acquire));
+        assert_eq!(*log.lock().unwrap(), ["other", "task"], "asks for that poll");
+        log.lock().unwrap().clear();
+        assert_eq!(timers.fire(&task), Some(0));
+        assert!(a.fired.load(Ordering::Acquire));
+        assert!(log.lock().unwrap().is_empty(), "nothing is left to fire");
+    });
+}
+
+#[test]
 fn reports_where_the_root_resumes() {
     rt().block_on(async {
         let log = Arc::new(StdMutex::new(Vec::new()));
@@ -113,9 +144,10 @@ fn reports_where_the_root_resumes() {
         let _root2 = leaf(&timers, at, &task, &task);
         tokio::time::sleep(Duration::from_millis(1)).await;
         log.lock().unwrap().clear();
-        // One promise runs before the root; the root itself is not woken.
+        // One promise runs before the root, which is resumed, not woken; its second timer fires
+        // at the next poll, which it is woken for.
         assert_eq!(timers.fire(&task), Some(1));
-        assert_eq!(*log.lock().unwrap(), ["a", "b"]);
+        assert_eq!(*log.lock().unwrap(), ["a", "b", "task"]);
     });
 }
 

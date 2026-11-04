@@ -1,0 +1,71 @@
+// Timers due together, however late the task gets to run, resume in timer order, whoever polls
+// them: `Promise.all` polls its promises in array order, and the shorter timer comes second in the
+// array. The shorter one is created first, so a stall of the process cannot change which is due
+// first. And a root that yields waits for the task's next poll, however it was resumed.
+function busy(ms: f64) {
+  const end = performance.now() + ms;
+  while (performance.now() < end) {}
+}
+
+function timeout(ms: i64): Promise<void> {
+  return new Promise<void>((resolve) => {
+    setTimeout(async () => resolve(), ms);
+  });
+}
+
+async function step(name: string, ms: i64): Promise<string> {
+  await sleep(ms);
+  console.log(`${name} after sleep(${ms})`);
+  return name;
+}
+
+// Polled by its task with its own waker: nothing awaits it directly.
+async function inner(done: () => void) {
+  await sleep(0);
+  const d = step("d", 0);
+  const c = step("c", 30);
+  busy(60);
+  console.log(await Promise.all([c, d]));
+  done();
+}
+
+async function other() {
+  await yieldNow();
+  console.log("other after yieldNow");
+}
+
+async function main() {
+  console.log("Promise.all in main");
+  const b = step("b", 0);
+  const a = step("a", 30);
+  busy(60);
+  console.log(await Promise.all([a, b]));
+
+  console.log("Promise.all in a promise");
+  await new Promise<void>((resolve) => {
+    const running = inner(() => resolve());
+  });
+
+  console.log("three, with another waiter between them");
+  const g = step("g", 0);
+  const h = step("h", 1);
+  const f = step("f", 2);
+  const e = step("e", 30);
+  busy(60);
+  console.log(await Promise.all([e, f, g]));
+  await h;
+
+  console.log("Promise.race");
+  const j = step("j", 0);
+  const i = step("i", 30);
+  busy(60);
+  console.log(await Promise.race([i, j]));
+  await sleep(1);
+
+  console.log("yieldNow after a timer");
+  await timeout(1);
+  const o = other();
+  await yieldNow();
+  console.log("main after yieldNow");
+  await o;
+}

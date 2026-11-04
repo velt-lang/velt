@@ -452,6 +452,7 @@ fn async_host_functions_under_node() {
             ("stuck", host(), None, read("stuck.out")),
             ("many", Some(dir.join("many.mjs")), None, read("many.out")),
             ("order", None, None, order.clone()),
+            ("spawn_yield", None, None, read("spawn_yield.out")),
         ]) {
             let module = work.join(format!("{program}.wasm"));
             // Built where it was copied, so messages name it by its file name.

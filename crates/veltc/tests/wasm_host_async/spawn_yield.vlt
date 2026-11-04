@@ -1,0 +1,16 @@
+// On a JS host, with its one thread, a task spawned runs while the task that spawned it yields.
+// (Natively it runs in parallel: order.vlt has nothing beside a spawned task.)
+
+async function task(): Promise<string> {
+  console.log("task start");
+  await yieldNow();
+  console.log("task after yieldNow");
+  return "task";
+}
+
+async function main() {
+  const t = spawn(task());
+  await yieldNow();
+  console.log("yielded");
+  console.log(await t);
+}

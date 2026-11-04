@@ -1,0 +1,4 @@
+task start
+yielded
+task after yieldNow
+task

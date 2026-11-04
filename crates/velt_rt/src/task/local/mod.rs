@@ -205,7 +205,9 @@ impl SetPtr {
 
     /// Poll with this set current: drain its woken promises (resuming the task's root with
     /// `root` when a promise it awaits finishes), then poll the root once more if a promise ran
-    /// after its last poll, then run the microtasks that queued.
+    /// after its last poll, then run the microtasks that queued. A root that yielded
+    /// (`yieldNow()`) is not polled again in this poll, wherever it ran: the wake it made brings
+    /// the next one, after the other ready tasks had their turn.
     ///
     /// # Safety
     /// `waker` must stay valid during the call.
@@ -230,6 +232,17 @@ impl SetPtr {
         if let Some(g) = self.0.as_ref().and_then(|s| s.gate.as_ref()) {
             g.enter();
         }
+        let root_yielded = Cell::new(false);
+        let root = &mut || {
+            if root_yielded.get() {
+                return;
+            }
+            // What yielded before stays noted; whether this run yielded is told apart from it.
+            let before = tcx.yielded.replace(false);
+            root();
+            root_yielded.set(tcx.yielded.get());
+            tcx.yielded.set(before || tcx.yielded.get());
+        };
         let timers = self.2.as_deref();
         if self.0.is_null() {
             // Only the root can wait for timers here; it is polled below.

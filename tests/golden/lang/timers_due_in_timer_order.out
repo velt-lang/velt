@@ -1,0 +1,21 @@
+Promise.all in main
+b after sleep(0)
+a after sleep(30)
+[ 'a', 'b' ]
+Promise.all in a promise
+d after sleep(0)
+c after sleep(30)
+[ 'c', 'd' ]
+three, with another waiter between them
+g after sleep(0)
+h after sleep(1)
+f after sleep(2)
+e after sleep(30)
+[ 'e', 'f', 'g' ]
+Promise.race
+j after sleep(0)
+j
+i after sleep(30)
+yieldNow after a timer
+other after yieldNow
+main after yieldNow
