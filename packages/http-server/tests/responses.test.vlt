@@ -2,6 +2,8 @@
 import { serve, ServeInfo } from "../src/lib";
 import { HttpRequest, HttpResponse, serveHttp } from "../src/lib";
 import { connect } from "velt/net";
+import { BodyStream } from "velt/net/http";
+import { utf8Encode } from "velt/encoding";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
 import "velt/test/http";
 
@@ -357,5 +359,116 @@ describe("HEAD, 204 and 304", () => {
       "HTTP/1.1 204 No Content|Server: Velt||HTTP/1.1 304 Not Modified|Server: Velt||" +
         "HTTP/1.1 404 Not Found|Server: Velt|Content-Type: text/plain; charset=utf-8|Content-Length: 2|Connection: close||",
     );
+  });
+});
+
+describe("a streamed Response with a Content-Length", () => {
+  // As in Deno and Bun: a handler that knows its streamed body's size (a file's) gets it sent
+  // with that Content-Length instead of chunks (#2077). A body that ends short or goes past it
+  // cuts the response off: the connection closes, so the client sees an incomplete response.
+  let port = 0;
+  let close = () => {};
+  async function* pieces(): AsyncGenerator<u8[]> {
+    yield utf8Encode("one ");
+    yield utf8Encode("two");
+  }
+  beforeAll(async () => {
+    const server = await serve({ port: 0 }, (req: Request): Response => {
+      const length = new URL(req.url).searchParams.get("length") ?? "7";
+      return new Response(BodyStream.from(pieces()), {
+        headers: { "content-type": "text/plain", "content-length": length },
+      });
+    });
+    port = server.port;
+    close = () => server.close();
+  });
+  afterAll(() => close());
+
+  async function lines(raw: string): Promise<string> {
+    const text = await exchange(port, raw);
+    return text.replace(/Date: [^\r]*\r\n/g, "").replaceAll("\r\n", "|");
+  }
+
+  it("goes out with its length, and the connection serves the next request", async () => {
+    const got = await lines(
+      "GET / HTTP/1.1\r\nHost: x\r\n\r\nHEAD / HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    );
+    expect(got).toBe(
+      "HTTP/1.1 200 OK|Server: Velt|Content-Length: 7|content-type: text/plain||one two" +
+        "HTTP/1.1 200 OK|Server: Velt|Content-Length: 7|Connection: close|content-type: text/plain||",
+    );
+  });
+
+  it("is cut off when the body ends short of its length", async () => {
+    const got = await lines(
+      "GET /?length=10 HTTP/1.1\r\nHost: x\r\n\r\nGET / HTTP/1.1\r\nHost: x\r\n\r\n",
+    );
+    // 7 of the 10 bytes, then the connection closes: the second request gets no answer.
+    expect(got).toBe(
+      "HTTP/1.1 200 OK|Server: Velt|Content-Length: 10|content-type: text/plain||one two",
+    );
+  });
+
+  it("is cut off before the byte past its length", async () => {
+    const got = await lines(
+      "GET /?length=5 HTTP/1.1\r\nHost: x\r\n\r\nGET / HTTP/1.1\r\nHost: x\r\n\r\n",
+    );
+    // "one " fits in the 5 bytes, "two" doesn't: nothing of it goes out, nor another response.
+    expect(got).toBe(
+      "HTTP/1.1 200 OK|Server: Velt|Content-Length: 5|content-type: text/plain||one ",
+    );
+  });
+
+  it("is chunked when its Content-Length is not a number", async () => {
+    const got = await lines("GET /?length=7x HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+    expect(got).toBe(
+      "HTTP/1.1 200 OK|Server: Velt|Transfer-Encoding: chunked|Connection: close|content-type: text/plain||4|one |3|two|0||",
+    );
+  });
+});
+
+describe("trailers and a streamed body's length", () => {
+  // `addTrailers`: trailers need chunks, so those added before `sendStream` make the body chunked,
+  // and those added while a body with a length goes out are not sent.
+  let port = 0;
+  let close = () => {};
+  async function* withTrailers(add: () => void): AsyncGenerator<u8[]> {
+    yield utf8Encode("one ");
+    add();
+    yield utf8Encode("two");
+  }
+  beforeAll(async () => {
+    const server = await serveHttp({ port: 0 }, async (req: HttpRequest, res: HttpResponse) => {
+      const body = BodyStream.from(withTrailers(() => res.addTrailers([["x-late", "1"]])));
+      if (req.pathIs("/before")) {
+        res.addTrailers([["x-early", "1"]]);
+        await res.sendStream(body, "text/plain", 7);
+      } else if (req.pathIs("/during")) {
+        await res.sendStream(body, "text/plain", 7);
+      } else {
+        await res.sendStream(body, "text/plain");
+      }
+    });
+    port = server.port;
+    close = () => server.close();
+  });
+  afterAll(() => close());
+
+  async function body(path: string): Promise<string> {
+    const raw = `GET ${path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n`;
+    const text = await exchange(port, raw);
+    return text.slice(text.indexOf("\r\n\r\n") + 4).replaceAll("\r\n", "|");
+  }
+
+  it("sends the body chunked when they were added before it", async () => {
+    expect(await body("/before")).toBe("4|one |3|two|0|x-early: 1|x-late: 1||");
+  });
+
+  it("drops those added while a body with a length goes out", async () => {
+    expect(await body("/during")).toBe("one two");
+  });
+
+  it("sends those added during a body without a length", async () => {
+    expect(await body("/chunked")).toBe("4|one |3|two|0|x-late: 1||");
   });
 });

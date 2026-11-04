@@ -1,0 +1,165 @@
+// http-server (internal): conditional requests (RFC 9110 §13): `evaluateConditions`, the status
+// a request's preconditions call for against a representation's validators, and
+// `ifRangeMatches`, whether an `If-Range` lets its `Range` apply. Entity-tag lists are scanned
+// by index, with no copies.
+
+/** A representation's validators: its entity tag and when it last changed. */
+export struct Validators {
+  /** The `ETag` value, quotes included: `"v1"` or weak `W/"v1"`. */
+  etag?: string;
+  /** When it last changed, in milliseconds since the epoch (`Last-Modified`, to the second). */
+  lastModified?: number;
+}
+
+/**
+ * The status the request's preconditions call for, in RFC 9110 §13.2.2's order: 412 when
+ * `If-Match` fails (else when `If-Unmodified-Since` does), 304 when `If-None-Match` matches a
+ * GET or HEAD (412 for other methods), else 304 when a GET or HEAD wasn't modified since
+ * `If-Modified-Since`; 0 when the request goes on. `If-Match` compares strongly, so a weak tag
+ * never matches it; `If-None-Match` weakly. A value that isn't an HTTP-date is ignored (RFC 9110
+ * §13.1.3, §13.1.4), as is `If-Modified-Since` next to `If-None-Match`. Dates compare to the
+ * second.
+ */
+export function evaluateConditions(req: Request, v: Validators): number {
+  const h = req.headers;
+  const read = req.method == "GET" || req.method == "HEAD";
+  const modified = v.lastModified == undefined ? NaN : Math.floor(v.lastModified / 1000);
+  const ifMatch = h.get("if-match");
+  if (ifMatch != null) {
+    if (!tagListMatches(ifMatch, v.etag ?? null, true)) {
+      return 412;
+    }
+  } else {
+    const since = h.get("if-unmodified-since");
+    if (since != null) {
+      const date = httpDate(since) / 1000;
+      if (!isNaN(date) && !isNaN(modified) && modified > date) {
+        return 412;
+      }
+    }
+  }
+  const ifNoneMatch = h.get("if-none-match");
+  if (ifNoneMatch != null) {
+    if (tagListMatches(ifNoneMatch, v.etag ?? null, false)) {
+      return read ? 304 : 412;
+    }
+    return 0;
+  }
+  if (read) {
+    const since = h.get("if-modified-since");
+    if (since != null) {
+      const date = httpDate(since) / 1000;
+      if (!isNaN(date) && !isNaN(modified) && modified <= date) {
+        return 304;
+      }
+    }
+  }
+  return 0;
+}
+
+/**
+ * Whether the request's `Range` applies (RFC 9110 §13.1.5): yes without `If-Range`; with one,
+ * only if it names the current representation: an entity tag equal to a strong `etag`, or the
+ * date of `lastModified` exactly. Otherwise the whole body is sent. A weak tag never matches, as
+ * the RFC requires, so with weak tags clients resume by date.
+ */
+export function ifRangeMatches(req: Request, v: Validators): bool {
+  const value = req.headers.get("if-range");
+  if (value == null) {
+    return true;
+  }
+  const t = value.trim();
+  if (t.startsWith("\"") || t.startsWith("W/")) {
+    const etag = v.etag;
+    return etag != null && !t.startsWith("W/") && !etag.startsWith("W/") && t == etag;
+  }
+  const date = httpDate(t);
+  return v.lastModified != undefined &&
+    !isNaN(date) &&
+    Math.floor(v.lastModified / 1000) == date / 1000;
+}
+
+/**
+ * An HTTP-date in milliseconds since the epoch, NaN for any other value (`Date.parse` takes much
+ * more than RFC 9110 §5.6.7's three forms, `2100` among them): `Sun, 06 Nov 1994 08:49:37 GMT`,
+ * `Sunday, 06-Nov-94 08:49:37 GMT` or `Sun Nov  6 08:49:37 1994`.
+ */
+function httpDate(value: string): number {
+  const n = value.length;
+  const comma = value.indexOf(",");
+  const form =
+    value.endsWith(" GMT")
+      ? (n == 29 && comma == 3) || (comma >= 6 && comma <= 9 && n == comma + 24)
+      : n == 24 && comma < 0 && value.charCodeAt(3) == 32 && value.charCodeAt(7) == 32;
+  return form ? Date.parse(value) : NaN;
+}
+
+/**
+ * Whether the list `list` (`*`, or entity tags separated by commas) has `etag`: compared
+ * strongly (both tags strong and equal) or weakly (equal once `W/` is set aside). `*` matches
+ * any current representation, so anything with an `etag`.
+ */
+function tagListMatches(list: string, etag: string | null, strong: bool): bool {
+  if (etag == null) {
+    return false;
+  }
+  const weakOwn = etag.startsWith("W/");
+  if (strong && weakOwn) {
+    // A weak tag never matches strongly; `*` still does.
+    return list.trim() == "*";
+  }
+  const own: usize = weakOwn ? 2 : 0;
+  const ownLength: usize = etag.length - own;
+  const n = list.length;
+  let i: usize = 0;
+  while (i < n) {
+    // One element: spaces, `*` or `[W/]"..."`, spaces, then "," or the end.
+    while (i < n && (list.charCodeAt(i as i64) == 32 || list.charCodeAt(i as i64) == 9)) {
+      i++;
+    }
+    if (i >= n) {
+      break;
+    }
+    if (list.charCodeAt(i as i64) == 42) {
+      return true; // "*"
+    }
+    let weak = false;
+    if (list.charCodeAt(i as i64) == 87 && i + 1 < n && list.charCodeAt((i + 1) as i64) == 47) {
+      weak = true;
+      i += 2;
+    }
+    const start = i;
+    let end = i;
+    if (i < n && list.charCodeAt(i as i64) == 34) {
+      end = i + 1;
+      while (end < n && list.charCodeAt(end as i64) != 34) {
+        end++;
+      }
+      end = end < n ? end + 1 : end; // past the closing quote
+    }
+    if (
+      end > start &&
+      (!strong || !weak) &&
+      end - start == ownLength &&
+      sameAt(list, start, etag, own, ownLength)
+    ) {
+      return true;
+    }
+    i = end;
+    while (i < n && list.charCodeAt(i as i64) != 44) {
+      i++;
+    }
+    i++;
+  }
+  return false;
+}
+
+/// Whether `a` from `ai` and `b` from `bi` have the same `length` characters.
+function sameAt(a: string, ai: usize, b: string, bi: usize, length: usize): bool {
+  for (let k: usize = 0; k < length; k++) {
+    if (a.charCodeAt((ai + k) as i64) != b.charCodeAt((bi + k) as i64)) {
+      return false;
+    }
+  }
+  return true;
+}

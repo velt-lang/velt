@@ -31,11 +31,13 @@ export abstract class HttpResponse {
 
   /**
    * Adds trailers: fields sent after the body (Node's `res.addTrailers`), checked as `header`
-   * checks names and values. Over HTTP/1.1 they end a chunked body: a streamed one always, one
-   * written at once (`send` and the like) when the request said `TE: trailers` (it is then sent
-   * chunked); otherwise they are not sent. Over HTTP/2 they are a HEADERS frame after the body.
-   * Name them in a `Trailer` header if the client needs to know in advance. Call it before the
-   * body ends.
+   * checks names and values. Over HTTP/1.1 they end a chunked body: a streamed one without a
+   * `length` (`sendStream`), one with a `length` if they were added before `sendStream` (it is
+   * then sent chunked), and one written at once (`send` and the like) when the request said
+   * `TE: trailers` (it is then sent chunked). Otherwise they are not sent: that includes trailers
+   * added while a body with a `length` is going out, which has no chunks for them to end. Over
+   * HTTP/2 they are a HEADERS frame after the body. Name them in a `Trailer` header if the client
+   * needs to know in advance. Call it before the body ends.
    */
   abstract addTrailers(trailers: [string, string][]): void;
 
@@ -73,8 +75,13 @@ export abstract class HttpResponse {
    * [velt/jsx](jsx.md): the markup above a pending async component reaches the client while it
    * loads. A client that goes away ends it quietly (the source is closed, so rendering stops;
    * `signal()` is aborted).
+   *
+   * With `length`, the body's size known in advance (a file's), it goes out with that
+   * `Content-Length` instead of chunks, so the client knows how much is coming. A source that
+   * ends short of it or goes past it cuts the response off, as a failed body does. Over HTTP/1.1
+   * a response with trailers is chunked anyway (trailers need chunks).
    */
-  abstract sendStream(body: BodyStream, type?: string): Promise<void>;
+  abstract sendStream(body: BodyStream, type?: string, length?: number): Promise<void>;
 
   /**
    * Starts a Server-Sent Events response (`text/event-stream`, not cached): `send` writes an

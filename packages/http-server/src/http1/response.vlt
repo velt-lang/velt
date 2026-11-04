@@ -53,6 +53,8 @@ export class Http1Response extends HttpResponse implements BodySink {
   /** A streamed body is being written, chunked (HTTP/1.1) or until the connection closes. */
   streaming: bool = false;
   chunked: bool = false;
+  /// The bytes a streamed body of known length still has to send (-1: not such a body).
+  private left: i64 = -1;
   /// The request was `HEAD`: the response has the head a `GET` would get, and no body.
   headOnly: bool = false;
   /// The response has no body (a `HEAD` request, or status 1xx, 204 or 304): what the handler
@@ -133,12 +135,22 @@ export class Http1Response extends HttpResponse implements BodySink {
     return new HttpStream(this);
   }
 
-  async sendStream(body: BodyStream, type?: string): Promise<void> {
-    // The head goes out with the first chunk: one write less per response.
-    writeHead(this, -1, type ?? "text/html; charset=utf-8", -1);
+  async sendStream(body: BodyStream, type?: string, length?: number): Promise<void> {
+    // The head goes out with the first chunk: one write less per response. Trailers need
+    // chunks, so a length is only used without them.
+    const t = type ?? "text/html; charset=utf-8";
+    if (length != undefined && length >= 0 && this.trailers.length == 0) {
+      writeHead(this, -1, t, length as i64, true);
+      this.left = this.noBody ? -1 : length as i64;
+    } else {
+      writeHead(this, -1, t, -1);
+    }
     try {
       for await (const chunk of body) {
         await this.piece(chunk);
+      }
+      if (this.left > 0) {
+        throw new Error(`the body ended ${this.left} bytes short of its Content-Length`);
       }
     } catch (e) {
       // The client went away, or the source failed: nothing more can be sent, and the
@@ -148,6 +160,7 @@ export class Http1Response extends HttpResponse implements BodySink {
       }
       this.streaming = false;
       this.keepAlive = false;
+      this.cut = this.left >= 0;
       return;
     }
     await this.finishStream();
@@ -253,6 +266,7 @@ export class Http1Response extends HttpResponse implements BodySink {
     this.done = false;
     this.streaming = false;
     this.chunked = false;
+    this.left = -1;
     this.cut = false;
   }
 
@@ -330,6 +344,13 @@ export class Http1Response extends HttpResponse implements BodySink {
     if (this.noBody) {
       return;
     }
+    if (this.left >= 0) {
+      const n = pieceLength(data);
+      if (n > this.left) {
+        throw new Error(`the body is longer than its Content-Length (${n - this.left} bytes more)`);
+      }
+      this.left -= n;
+    }
     writePiece(this.out, data, this.chunked);
     await this.queue();
   }
@@ -374,4 +395,14 @@ export class Http1Response extends HttpResponse implements BodySink {
     }
     this.endChunks();
   }
+}
+
+/// The bytes `data` adds to a body.
+function pieceLength(data: string | u8[] | Uint8Array): i64 {
+  if (typeof data == "string") {
+    return Buffer.byteLength(data) as i64;
+  } else if (data instanceof Uint8Array) {
+    return data.length as i64;
+  }
+  return data.length as i64;
 }

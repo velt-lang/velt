@@ -36,6 +36,8 @@ export class H2Response extends HttpResponse implements BodySink {
   private done: bool = false;
   private streaming: bool = false;
   private noBody: bool = false;
+  /// The bytes a streamed body of known length still has to send (-1: not such a body).
+  private left: i64 = -1;
 
   constructor(c: H2Connection, s: H2Stream) {
     super();
@@ -156,6 +158,20 @@ export class H2Response extends HttpResponse implements BodySink {
       }
       throw new Error("the streamed response has ended");
     }
+    if (this.left >= 0) {
+      let n: i64 = 0;
+      if (typeof data == "string") {
+        n = Buffer.byteLength(data) as i64;
+      } else if (data instanceof Uint8Array) {
+        n = data.length as i64;
+      } else {
+        n = data.length as i64;
+      }
+      if (n > this.left) {
+        throw new Error(`the body is longer than its Content-Length (${n - this.left} bytes more)`);
+      }
+      this.left -= n;
+    }
     if (typeof data == "string") {
       sendText(this.c, s, data, Buffer.byteLength(data) as i64, false);
     } else if (data instanceof Uint8Array) {
@@ -182,13 +198,26 @@ export class H2Response extends HttpResponse implements BodySink {
 
   /**
    * Streams `body` as the response (default type `text/html; charset=utf-8`), each chunk as it
-   * comes; a client that goes away ends it quietly.
+   * comes; a client that goes away ends it quietly. With `length`, the head has that
+   * `content-length`, and a source that ends short of it or goes past it resets the stream.
    */
-  async sendStream(body: BodyStream, type?: string): Promise<void> {
-    await this.startStream(type ?? "text/html; charset=utf-8");
+  async sendStream(body: BodyStream, type?: string, length?: number): Promise<void> {
+    const t = type ?? "text/html; charset=utf-8";
+    if (length != undefined && length >= 0) {
+      // A length of 0 ends the stream with the head.
+      this.head(t, length as i64);
+      this.streaming = !this.noBody && length > 0;
+      this.left = this.streaming ? length as i64 : -1;
+      await this.drain();
+    } else {
+      await this.startStream(t);
+    }
     try {
       for await (const chunk of body) {
         await this.piece(chunk);
+      }
+      if (this.left > 0) {
+        throw new Error(`the body ended ${this.left} bytes short of its Content-Length`);
       }
     } catch (e) {
       // The client reset the stream: nothing more can be sent. The source failed: the stream

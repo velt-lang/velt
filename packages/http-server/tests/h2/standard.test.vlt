@@ -2,6 +2,8 @@
 // method, URL and headers (a field sent several times joined with ", ", as `Headers.get` reads
 // it), and the `Response` it returns becomes the stream's HEADERS and DATA.
 import { serve } from "../../src/lib";
+import { utf8Encode } from "velt/encoding";
+import { BodyStream } from "velt/net/http";
 import { channel } from "velt/sync";
 import { timeout } from "velt/task";
 import { describe, expect, it } from "velt/test";
@@ -90,5 +92,49 @@ describe("serve over HTTP/2", () => {
       c.close();
       server.close();
     }
+  });
+});
+
+describe("a streamed Response with a Content-Length over HTTP/2", () => {
+  // #2077: the head carries the handler's content-length; a body that ends short of it resets
+  // the stream, so the client doesn't take the bytes so far for the whole body.
+  async function* pieces(): AsyncGenerator<u8[]> {
+    yield utf8Encode("one ");
+    yield utf8Encode("two");
+  }
+  async function exchange(length: string): Promise<string> {
+    const server = await serve({ port: 0 }, (req: Request): Response => {
+      return new Response(BodyStream.from(pieces()), {
+        headers: { "content-type": "text/plain", "content-length": length },
+      });
+    });
+    const c = await Client.open(server.port);
+    try {
+      c.get(1, "/");
+      await c.flush();
+      let head = "";
+      const frames = await c.until((f) => {
+        if (f.type == 1) {
+          head = c.fields(f).replace(/date: [^\n]*\n/, "").replaceAll("\n", " ");
+        }
+        return (f.type == 0 && (f.flags & 1) == 1) || f.type == 3;
+      });
+      return `${head} | ${frames.replaceAll("\n", " / ")}`;
+    } finally {
+      c.close();
+      server.close();
+    }
+  }
+
+  it("sends its length in the head", async () => {
+    expect(await exchange("7")).toBe(
+      ":status: 200 server: Velt content-length: 7 content-type: text/plain | " +
+        "HEADERS 1 :status=200 / DATA 1 4:one  / DATA 1 3:two / DATA 1 es 0:",
+    );
+  });
+
+  it("resets the stream when the body ends short of its length", async () => {
+    const got = await exchange("10");
+    expect(got.endsWith("RST 1 INTERNAL_ERROR")).toBe(true);
   });
 });

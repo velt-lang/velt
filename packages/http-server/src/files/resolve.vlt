@@ -1,0 +1,153 @@
+// http-server (internal): `resolveUnder`, the file a URL path names under a root directory,
+// refusing every way out of it.
+
+import { realpath } from "velt/fs";
+import { platform } from "velt/os";
+
+/** The options of `resolveUnder`. */
+export struct ResolveOptions {
+  /**
+   * Whether a path with a segment starting with `.` may be served (default: no, as Express's
+   * `send`). It allows all of them: `/.env` and `/.git/config` as well as `/.well-known/x`. To
+   * serve only `/.well-known/`, give it a root of its own, which the default allows:
+   * `resolveUnder(`${root}/.well-known`, rest)`.
+   */
+  dotfiles?: bool;
+}
+
+/**
+ * The real path of the file or directory URL path `urlPath` (a `URL`'s `pathname`, still
+ * percent-encoded) names under directory `root`, or null when there is none or it would lie
+ * outside `root`. Refused:
+ * - `..` segments, encoded separators (`%2F`, `%5C`), NUL (`%00`), backslashes and invalid
+ *   percent-encoding;
+ * - dotfiles: a segment starting with `.` below `root`, in the URL or in the real path (so a
+ *   symlink to `.env` as well), unless `options.dotfiles` allows them;
+ * - on Windows, a `:` in a segment (drive letters and alternate data streams), and a segment
+ *   ending in a dot or a space, which Windows would resolve to the name without them (`f.txt.`
+ *   is `f.txt`), past any filter a handler keeps by name;
+ * - a last `.` segment, on every platform: `realpath` on Windows and macOS reads `f.txt/.` as
+ *   `f.txt`, and a URL parser has already removed it from any real request;
+ * - a symlink whose target is outside `root` (both are resolved with `realpath` and compared).
+ *
+ * A path that doesn't exist is null too. Between this check and opening the file a symlink could
+ * still be swapped in; serve a root whose contents an attacker can't write.
+ */
+export async function resolveUnder(
+  root: string,
+  urlPath: string,
+  options: ResolveOptions = {},
+): Promise<string | null> {
+  const windows = platform() == "win32";
+  const dotfiles = options.dotfiles ?? false;
+  const rel = relativePath(urlPath, windows, dotfiles);
+  if (rel == null) {
+    return null;
+  }
+  try {
+    const top = await realpath(root);
+    const real = await realpath(rel == "" ? top : `${top}/${rel}`);
+    return realPathAllowed(real, top, windows, dotfiles) ? real : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+/**
+ * Whether `real` is `top` or below it, with no segment below `top` starting with `.` unless
+ * `dotfiles`. Both are real paths, with the platform's separators.
+ */
+export function realPathAllowed(real: string, top: string, windows: bool, dotfiles: bool): bool {
+  if (real == top) {
+    return true;
+  }
+  const sep = windows ? "\\" : "/";
+  const prefix = top.endsWith(sep) ? top : top + sep;
+  if (!real.startsWith(prefix)) {
+    return false;
+  }
+  if (dotfiles) {
+    return true;
+  }
+  const code = sep.charCodeAt(0);
+  const n = real.length;
+  let first = true;
+  for (let i = prefix.length; i < n; i++) {
+    const c = real.charCodeAt(i as i64);
+    if (first && c == 46) {
+      return false;
+    }
+    first = c == code;
+  }
+  return true;
+}
+
+/**
+ * `urlPath` decoded and checked, without its leading "/"; null when it is refused. `windows` says
+ * which platform's rules apply.
+ */
+export function relativePath(urlPath: string, windows: bool, dotfiles: bool): string | null {
+  // Encoded separators and NUL: refused before decoding hides them.
+  const n = urlPath.length;
+  for (let i: usize = 0; i + 2 < n; i++) {
+    if (urlPath.charCodeAt(i as i64) == 37) {
+      const a = urlPath.charCodeAt((i + 1) as i64);
+      const b = urlPath.charCodeAt((i + 2) as i64) | 32;
+      if ((a == 50 && b == 102) || (a == 53 && b == 99) || (a == 48 && b == 48)) {
+        return null; // %2F, %5C, %00
+      }
+    }
+  }
+  let decoded = urlPath;
+  if (urlPath.includes("%")) {
+    try {
+      decoded = decodeURIComponent(urlPath);
+    } catch (e) {
+      return null;
+    }
+  }
+  let start: usize = 0;
+  const m = decoded.length;
+  while (start < m && decoded.charCodeAt(start as i64) == 47) {
+    start++;
+  }
+  let segment = start;
+  for (let i = start; i <= m; i++) {
+    const c = i < m ? decoded.charCodeAt(i as i64) : 47;
+    if (c == 92 || c == 0 || (windows && c == 58)) {
+      return null;
+    }
+    if (c == 47) {
+      if (!segmentAllowed(decoded, segment, i, windows, dotfiles)) {
+        return null;
+      }
+      if (i == m && i - segment == 1 && decoded.charCodeAt(segment as i64) == 46) {
+        return null; // a last ".": Windows and macOS read "f.txt/." as the file
+      }
+      segment = i + 1;
+    }
+  }
+  return start == 0 ? decoded : decoded.slice(start as i64);
+}
+
+/// Whether the segment of `path` from `start` up to `end` may be looked up. "." stays: it names
+/// the directory it is in.
+function segmentAllowed(
+  path: string,
+  start: usize,
+  end: usize,
+  windows: bool,
+  dotfiles: bool,
+): bool {
+  const length = end - start;
+  if (length == 0 || (length == 1 && path.charCodeAt(start as i64) == 46)) {
+    return true;
+  }
+  if (path.charCodeAt(start as i64) == 46) {
+    if (!dotfiles || (length == 2 && path.charCodeAt((start + 1) as i64) == 46)) {
+      return false; // a dotfile, or ".."
+    }
+  }
+  const last = path.charCodeAt((end - 1) as i64);
+  return !windows || (last != 46 && last != 32);
+}

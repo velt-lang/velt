@@ -80,10 +80,21 @@ async function respond(res: Response, out: HttpResponse) {
   out.status(b.status as number);
   const h = b.headers;
   let typed = false;
+  // A streamed body's Content-Length, when the handler knows it (a file's): the body goes out
+  // with it instead of chunks, as in Deno and Bun. -1: none.
+  let length: i64 = -1;
   for (let i: usize = 0; i + 1 < h.length; i += 2) {
     const name = h[i];
     // The server frames the body: its own Content-Length or chunks.
-    if (name == "content-length" || name == "transfer-encoding") {
+    if (name == "content-length") {
+      length = streamLength(h[i + 1]);
+      if (b.kind != BodyKind.Stream && length >= 0) {
+        // A HEAD response's: the length a GET would get (`HttpResponse.header`).
+        out.header(name, h[i + 1]);
+      }
+      continue;
+    }
+    if (name == "transfer-encoding") {
       continue;
     }
     typed = typed || name == "content-type";
@@ -95,10 +106,31 @@ async function respond(res: Response, out: HttpResponse) {
   }
   const stream = b.stream;
   if (b.kind == BodyKind.Stream && stream != null) {
-    await out.sendStream(stream, "application/octet-stream");
+    await out.sendStream(
+      stream,
+      "application/octet-stream",
+      length >= 0 ? length as number : undefined,
+    );
   } else if (b.kind == BodyKind.Bytes) {
     out.sendBytes(b.bytes);
   } else {
     out.send(b.text);
   }
+}
+
+/// A `Content-Length` value: its digits (up to 15, so it is an exact `number`), or -1.
+function streamLength(value: string): i64 {
+  const n = value.length;
+  if (n == 0 || n > 15) {
+    return -1;
+  }
+  let v: i64 = 0;
+  for (let i: usize = 0; i < n; i++) {
+    const d = (value.charCodeAt(i as i64) as i64) - 48;
+    if (d < 0 || d > 9) {
+      return -1;
+    }
+    v = v * 10 + d;
+  }
+  return v;
 }

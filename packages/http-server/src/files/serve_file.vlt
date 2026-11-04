@@ -1,0 +1,169 @@
+// http-server (internal): `serveFile`, a file as the response to a request: its validators,
+// conditional requests (304, 412), a byte range (206, 416), HEAD, and the body streamed with
+// backpressure and its length.
+
+import { openRead, stat, Stats } from "velt/fs";
+import { IoError } from "velt/io";
+import { BodyStream } from "velt/net/http";
+import { evaluateConditions, ifRangeMatches, Validators } from "./conditions";
+import { contentType } from "./content_type";
+import { ByteRange, parseRange } from "./range";
+
+/** The options of `serveFile`. */
+export struct ServeFileOptions {
+  /** The `Content-Type` (default: from the file's extension, `contentType`). */
+  contentType?: string;
+  /** Headers for a 200, 206 or 304, not for an error (412, 416), such as `Cache-Control`. */
+  headers?: [string, string][];
+}
+
+/**
+ * The response to `req` with the file at `path`, as Deno's `serveFile`:
+ * - a weak `ETag` (size and modification time, as Express's) and `Last-Modified`;
+ * - 304 or 412 when the request's preconditions call for it (`evaluateConditions`);
+ * - for a GET with a single satisfiable `Range` (and an `If-Range`, if any, that matches), 206
+ *   with `Content-Range`; 416 for an unsatisfiable one; the whole file otherwise;
+ * - for HEAD, the head a GET would get;
+ * - the body read in chunks as the client takes them, with its `Content-Length`;
+ * - 404 when there is no such file (or it is a directory), 405 with `Allow` for a method other
+ *   than GET and HEAD, 500 when the file can't be looked at (`stat`).
+ *
+ * The file is opened when the body is first read, so a response that is never sent holds nothing,
+ * and the head goes out before the open. So the response is cut off, and the client sees a failed
+ * one, when the file can't be opened (no permission: a 200 head, then no bytes), is gone, has
+ * another size or mtime when it is opened, or is cut short while it is sent. Two changes aren't
+ * detected, as with Express's `send`: a rewrite in place during the body that keeps the size gives
+ * a complete response of old and new bytes, and a swap that keeps the size and mtime gives the new
+ * file, complete. `path` is used as given: map a URL to it with `resolveUnder`, which keeps requests
+ * inside a root directory.
+ */
+export async function serveFile(
+  req: Request,
+  path: string,
+  options: ServeFileOptions = {},
+): Promise<Response> {
+  const method = req.method;
+  if (method != "GET" && method != "HEAD") {
+    return new Response("Method Not Allowed", { status: 405, headers: { allow: "GET, HEAD" } });
+  }
+  let info: Stats;
+  try {
+    info = await stat(path);
+  } catch (e) {
+    return failure(e);
+  }
+  if (!info.isFile()) {
+    return status(404);
+  }
+  const size = info.size;
+  const v = validatorsOf(size, info.mtimeMs);
+  const headers = new Headers();
+  headers.set("etag", v.etag!);
+  headers.set("last-modified", new Date(v.lastModified!).toUTCString());
+  const cond = evaluateConditions(req, v);
+  if (cond == 412) {
+    return new Response(null, { status: 412, headers });
+  }
+  let code = 200;
+  let start: u64 = 0;
+  let end: u64 = size == 0 ? 0 : size - 1;
+  if (cond == 0 && method == "GET" && ifRangeMatches(req, v)) {
+    const range = parseRange(req.headers.get("range"), size);
+    if (typeof range == "string") {
+      // "unsatisfiable"
+      headers.set("accept-ranges", "bytes");
+      headers.set("content-range", `bytes */${size}`);
+      return new Response(null, { status: 416, headers });
+    } else if (range != null) {
+      code = 206;
+      start = range.start;
+      end = range.end;
+      headers.set("content-range", `bytes ${start}-${end}/${size}`);
+    }
+  }
+  for (const h of options.headers ?? []) {
+    headers.append(h[0], h[1]);
+  }
+  if (cond != 0) {
+    return new Response(null, { status: cond, headers });
+  }
+  headers.set("content-type", options.contentType ?? contentType(path));
+  headers.set("accept-ranges", "bytes");
+  const length = size == 0 ? 0 : end - start + 1;
+  headers.set("content-length", `${length}`);
+  if (method == "HEAD" || length == 0) {
+    return new Response(null, { status: code, headers });
+  }
+  const part: ByteRange | null = code == 206 ? { start, end } : null;
+  return new Response(BodyStream.from(chunks(path, part, length, size, info.mtimeMs)), {
+    status: code,
+    headers,
+  });
+}
+
+/// A file's validators, byte-identical to Express's: the time is rounded to the millisecond, as
+/// Node's `stat.mtime` has `mtimeMs`, and the weak entity tag is its size and that time, in hex.
+export function validatorsOf(size: u64, mtimeMs: f64): Validators {
+  const modified = Math.round(mtimeMs);
+  const hexSize = (size as number).toString(16);
+  return { etag: `W/"${hexSize}-${modified.toString(16)}"`, lastModified: modified };
+}
+
+/// Whether a file opened, of `openedSize` and `openedMtimeMs`, is the one looked at to write the
+/// head.
+export function sameFile(openedSize: u64, openedMtimeMs: f64, size: u64, mtimeMs: f64): bool {
+  return openedSize == size && openedMtimeMs == mtimeMs;
+}
+
+/// The largest chunk read at once.
+const CHUNK: u64 = 65536;
+
+/**
+ * The `length` bytes of the file at `path` (the whole of it, or `part`) that was `size` bytes and
+ * last changed at `mtimeMs` when the head was written, read in chunks of at most 64 KiB, each no
+ * larger than what is left (so a small file is one read of its size). It is opened by the first
+ * read and closed after the last byte, with no read for the end, or when the client goes away. A
+ * generator that was never started has opened nothing. A failure here, another file than the one
+ * looked at, or one cut short since it was opened (which ends the body early) cuts the response
+ * off: the head is out or on its way.
+ */
+async function* chunks(
+  path: string,
+  part: ByteRange | null,
+  length: u64,
+  size: u64,
+  mtimeMs: f64,
+): AsyncGenerator<u8[], IoError> {
+  const r = await openRead(path, part != null ? { start: part.start, end: part.end } : {});
+  try {
+    const opened = r.openedStats();
+    if (!sameFile(opened.size, opened.mtimeMs, size, mtimeMs)) {
+      throw new IoError("ESTALE", `${path} changed while it was being served`);
+    }
+    let left = length;
+    while (left > 0) {
+      const b = await r.read(left < CHUNK ? left : CHUNK);
+      if (b.length == 0) {
+        return;
+      }
+      left -= b.length as u64;
+      yield b;
+    }
+  } finally {
+    r.close();
+  }
+}
+
+/// The answer to a failed file operation: 404 for a missing file, 500 otherwise.
+function failure(e: IoError): Response {
+  const code = e.code;
+  if (code == "ENOENT" || code == "ENOTDIR" || code == "EISDIR" || code == "ENAMETOOLONG") {
+    return status(404);
+  }
+  return status(500);
+}
+
+/// A plain-text response with the status's reason phrase.
+function status(code: number): Response {
+  return new Response(code == 404 ? "Not Found" : "Internal Server Error", { status: code });
+}
