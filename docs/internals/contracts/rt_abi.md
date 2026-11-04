@@ -408,6 +408,9 @@ The operations are externs `velt_simd_<type>_<op>` (`velt_simd_u8x16_add`,
 them**: `velt_vir::simd` gives each symbol's operation and VIR signature (`SimdCall`), the
 verifier rejects a `velt_simd_*` extern that is not one, and both backends emit every call
 inline. They never cross the C ABI, so no target's vector calling convention is involved.
+`fits_both(a, b, at)` [additive] is `fits(a, at) && fits(b, at)` as one test against the smaller
+length; no std file declares it: `velt_opt` writes it where the two tests have one lane type and
+one index (`fits_pair`), and it reads both headers whatever the first length is.
 `load` and `store` take the array (a pointer to its header) and an element index, and do not
 check it: the prelude's methods do. `load_partial` and `store_partial` take a count of elements
 too, below the lane count, and touch only those elements. `load_optimistic` [additive] is `load`

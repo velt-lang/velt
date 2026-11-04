@@ -1,0 +1,17 @@
+i8x16 cases 4563 true 587 wrong 0
+i8x16 + 48 cases 4563 true 335 wrong 0
+u16x8 cases 4563 true 566 wrong 0
+f32x4 cases 4563 true 566 wrong 0
+f64x2 cases 4563 true 595 wrong 0
+loops total 3340520 wrong 0
+lanes yes
+index no
+moved no 17
+call no 0
+call no 1
+field no
+null no
+null no
+result no, first yes
+given no 1 32
+grown yes 64

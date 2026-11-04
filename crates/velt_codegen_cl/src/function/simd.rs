@@ -159,7 +159,15 @@ impl Translator<'_, '_> {
                 let v = self.simd_load_partial(lanes, values[0], values[1], values[2]);
                 return Inlined::Value(v);
             }
-            Op::Fits => return Inlined::Value(self.simd_fits(lanes, values[0], values[1])),
+            Op::Fits => {
+                let len = self.array_len(values[0]);
+                return Inlined::Value(self.simd_fits(lanes, len, values[1]));
+            }
+            Op::FitsBoth => {
+                let (x, y) = (self.array_len(values[0]), self.array_len(values[1]));
+                let len = self.builder.ins().umin(x, y);
+                return Inlined::Value(self.simd_fits(lanes, len, values[2]));
+            }
             Op::Lane => return Inlined::Value(self.simd_lane(lanes, &args[1], values)),
             Op::Sum | Op::SumWide => {
                 let x = self.lanes_of(values[0], ty);
@@ -293,12 +301,15 @@ impl Translator<'_, '_> {
         self.builder.ins().iadd(acc, sums)
     }
 
-    /// Whether a vector's worth of elements from `at` is inside the array whose header `array`
-    /// points to (its second word is the length).
+    /// The length of the array whose header `array` points to (the header's second word).
+    fn array_len(&mut self, array: ir::Value) -> ir::Value {
+        self.builder.ins().load(types::I64, mem_flags(), array, 8)
+    }
+
+    /// Whether a vector's worth of elements from `at` is inside the length `len`.
     /// The length is at least the lane count and `at` at most the length minus it (the form the
     /// LLVM backend uses, where it matters for removing checks).
-    fn simd_fits(&mut self, lanes: Lanes, array: ir::Value, at: ir::Value) -> ir::Value {
-        let len = self.builder.ins().load(types::I64, mem_flags(), array, 8);
+    fn simd_fits(&mut self, lanes: Lanes, len: ir::Value, at: ir::Value) -> ir::Value {
         let n = i64::from(lanes.count());
         let room = self
             .builder

@@ -1,0 +1,375 @@
+// `fits(a, j) && fits(b, j)` is one test in release builds (velt_opt `fits_pair`, the backends'
+// `fits_both`): the same result as the two tests and as the arithmetic written out, on lengths
+// around the lane count and indexes around the lengths and the top of the range, where `j + 48`
+// and `len - n` wrap. Every other shape keeps two tests, and what runs between them still runs
+// (#2049). crates/veltc/tests/simd_fits_both.rs checks which conditions became one test.
+
+import { f32x4, f64x2, i16x8, i8x16, u16x8 } from "velt/simd";
+import { args } from "velt/process";
+
+const TOP: usize = 18446744073709551615;
+
+// Always 0, and no compiler can tell: lengths and indexes stay unknown at compile time. A call
+// each time it is read.
+const ZERO: usize = args().length > 1000 ? 1 : 0;
+
+function lengths(n: usize): usize[] {
+  return [0, 1, n - 1, n, n + 1, 2 * n - 1, 2 * n, 2 * n + 1, 47, 48, 49, 64, 65];
+}
+
+function positions(n: usize, la: usize, lb: usize): usize[] {
+  const min = la < lb ? la : lb;
+  const max = la < lb ? lb : la;
+  const sign: usize = 9223372036854775808;
+  return [
+    0, 1, n - 1, n, n + 1, 16, 47, 48,
+    min - n, min - n + 1, min - n - 1, min, min + 1,
+    max - n, max - n + 1, max,
+    min - n - 48, min - n - 47, min - n - 49,
+    sign, TOP - 48, TOP - 47, TOP - 47 - n, TOP - n, TOP - n + 1, TOP - 1, TOP,
+  ];
+}
+
+function inside(len: usize, at: usize, n: usize): bool {
+  if (len < n) {
+    return false;
+  }
+  return at <= len - n;
+}
+
+function i8s(n: usize): i8[] {
+  const a: i8[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    a.push((i % 100) as i8);
+  }
+  return a;
+}
+
+function u16s(n: usize): u16[] {
+  const a: u16[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    a.push((i % 100) as u16);
+  }
+  return a;
+}
+
+function f32s(n: usize): f32[] {
+  const a: f32[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    a.push((i % 100) as f32);
+  }
+  return a;
+}
+
+function f64s(n: usize): f64[] {
+  const a: f64[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    a.push((i % 100) as f64);
+  }
+  return a;
+}
+
+// These conditions are the pair. One per lane count, plus the index computed in each test.
+function bothI8(a: i8[], b: i8[], j: usize): bool {
+  if (i8x16.fits(a, j) && i8x16.fits(b, j)) {
+    return true;
+  }
+  return false;
+}
+
+function bothI8Plus48(a: i8[], b: i8[], j: usize): bool {
+  if (i8x16.fits(a, j + 48) && i8x16.fits(b, j + 48)) {
+    return true;
+  }
+  return false;
+}
+
+function bothU16(a: u16[], b: u16[], j: usize): bool {
+  if (u16x8.fits(a, j) && u16x8.fits(b, j)) {
+    return true;
+  }
+  return false;
+}
+
+function bothF32(a: f32[], b: f32[], j: usize): bool {
+  if (f32x4.fits(a, j) && f32x4.fits(b, j)) {
+    return true;
+  }
+  return false;
+}
+
+function bothF64(a: f64[], b: f64[], j: usize): bool {
+  if (f64x2.fits(a, j) && f64x2.fits(b, j)) {
+    return true;
+  }
+  return false;
+}
+
+function report(name: string, cases: number, yes: number, wrong: number) {
+  console.log(name, "cases", cases, "true", yes, "wrong", wrong);
+}
+
+function edgesI8() {
+  let cases = 0;
+  let yes = 0;
+  let wrong = 0;
+  let cases48 = 0;
+  let yes48 = 0;
+  let wrong48 = 0;
+  for (const la of lengths(16)) {
+    for (const lb of lengths(16)) {
+      const a = i8s(la + ZERO);
+      const b = i8s(lb + ZERO);
+      for (const j of positions(16, la, lb)) {
+        const want = inside(la, j, 16) && inside(lb, j, 16);
+        const got = bothI8(a, b, j + ZERO);
+        cases++;
+        yes += want ? 1 : 0;
+        wrong += got == want ? 0 : 1;
+        // Written with `+ 48`: it wraps at the top, and `fits` sees the wrapped index.
+        const at = j + 48;
+        const want48 = inside(la, at, 16) && inside(lb, at, 16);
+        const got48 = bothI8Plus48(a, b, j + ZERO);
+        cases48++;
+        yes48 += want48 ? 1 : 0;
+        wrong48 += got48 == want48 ? 0 : 1;
+      }
+    }
+  }
+  report("i8x16", cases, yes, wrong);
+  report("i8x16 + 48", cases48, yes48, wrong48);
+}
+
+function edgesU16() {
+  let cases = 0;
+  let yes = 0;
+  let wrong = 0;
+  for (const la of lengths(8)) {
+    for (const lb of lengths(8)) {
+      const a = u16s(la + ZERO);
+      const b = u16s(lb + ZERO);
+      for (const j of positions(8, la, lb)) {
+        const want = inside(la, j, 8) && inside(lb, j, 8);
+        cases++;
+        yes += want ? 1 : 0;
+        wrong += bothU16(a, b, j + ZERO) == want ? 0 : 1;
+      }
+    }
+  }
+  report("u16x8", cases, yes, wrong);
+}
+
+function edgesF32() {
+  let cases = 0;
+  let yes = 0;
+  let wrong = 0;
+  for (const la of lengths(4)) {
+    for (const lb of lengths(4)) {
+      const a = f32s(la + ZERO);
+      const b = f32s(lb + ZERO);
+      for (const j of positions(4, la, lb)) {
+        const want = inside(la, j, 4) && inside(lb, j, 4);
+        cases++;
+        yes += want ? 1 : 0;
+        wrong += bothF32(a, b, j + ZERO) == want ? 0 : 1;
+      }
+    }
+  }
+  report("f32x4", cases, yes, wrong);
+}
+
+function edgesF64() {
+  let cases = 0;
+  let yes = 0;
+  let wrong = 0;
+  for (const la of lengths(2)) {
+    for (const lb of lengths(2)) {
+      const a = f64s(la + ZERO);
+      const b = f64s(lb + ZERO);
+      for (const j of positions(2, la, lb)) {
+        const want = inside(la, j, 2) && inside(lb, j, 2);
+        cases++;
+        yes += want ? 1 : 0;
+        wrong += bothF64(a, b, j + ZERO) == want ? 0 : 1;
+      }
+    }
+  }
+  report("f64x2", cases, yes, wrong);
+}
+
+// The loop the pair is for: it reads whole vectors of both arrays and stops at the shorter one.
+function dot(a: i8[], b: i8[]): i32 {
+  let s = 0 as i32;
+  let i: usize = 0;
+  while (i8x16.fits(a, i + 16) && i8x16.fits(b, i + 16)) {
+    s += i8x16.load(a, i).lane(3) as i32;
+    s += i8x16.load(a, i + 16).lane(15) as i32;
+    s += i8x16.load(b, i).lane(0) as i32;
+    s += i8x16.load(b, i + 16).lane(7) as i32;
+    i += 32;
+  }
+  return s + (i as i32) * 1000;
+}
+
+function scalarDot(a: i8[], b: i8[]): i32 {
+  let s = 0 as i32;
+  let i: usize = 0;
+  const min = a.length < b.length ? a.length : b.length;
+  while (min >= 32 && i <= min - 32) {
+    s += a[i + 3] as i32;
+    s += a[i + 16 + 15] as i32;
+    s += b[i] as i32;
+    s += b[i + 16 + 7] as i32;
+    i += 32;
+  }
+  return s + (i as i32) * 1000;
+}
+
+function loops() {
+  let wrong = 0;
+  let total = 0 as i32;
+  for (const la of [0, 15, 16, 31, 32, 33, 63, 64, 65, 100, 128, 200]) {
+    for (const lb of [0, 15, 16, 31, 32, 33, 63, 64, 65, 100, 128, 200]) {
+      const a = i8s((la as usize) + ZERO);
+      const b = i8s((lb as usize) + ZERO);
+      const got = dot(a, b);
+      total += got;
+      wrong += got == scalarDot(a, b) ? 0 : 1;
+    }
+  }
+  console.log("loops total", total, "wrong", wrong);
+}
+
+class Holder {
+  a: i8[];
+  b: i8[];
+  constructor(a: i8[], b: i8[]) {
+    this.a = a;
+    this.b = b;
+  }
+}
+
+let calls = 0;
+
+function counted(b: i8[]): i8[] {
+  calls++;
+  return b;
+}
+
+function grow(b: i8[]): bool {
+  while (b.length < 64) {
+    b.push(1);
+  }
+  return true;
+}
+
+function yesNo(c: bool): string {
+  return c ? "yes" : "no";
+}
+
+// Shapes around the pair: most have something between the tests or differ between them, and stay
+// two tests.
+function others() {
+  // Read once: each read of the constant is a call, which would keep any two tests apart.
+  const z = ZERO;
+  const short = i8s(4 + z);
+  const long = i8s(32 + z);
+  const words: i16[] = [];
+  for (let i: usize = 0; i < 8 + z; i++) {
+    words.push(i as i16);
+  }
+
+  // Lane types with different counts: 8 words fit `i16x8`, and would not as 16 lanes.
+  if (i8x16.fits(long, z) && i16x8.fits(words, z)) {
+    console.log("lanes yes");
+  } else {
+    console.log("lanes no");
+  }
+
+  // Two indexes: 16 fits `long` at 16, 17 does not.
+  const at: usize = 16 + z;
+  if (i8x16.fits(long, at) && i8x16.fits(long, at + 1)) {
+    console.log("index yes");
+  } else {
+    console.log("index no");
+  }
+
+  // The second test's index moves: it sees 17, and `i` stays moved when the first passed.
+  let i: usize = 16 + z;
+  if (i8x16.fits(long, i) && i8x16.fits(long, ++i)) {
+    console.log("moved yes", i);
+  } else {
+    console.log("moved no", i);
+  }
+
+  // A call between: not made when the first test fails.
+  if (i8x16.fits(short, z) && i8x16.fits(counted(long), z)) {
+    console.log("call yes", calls);
+  } else {
+    console.log("call no", calls);
+  }
+  if (i8x16.fits(long, z) && i8x16.fits(counted(short), z)) {
+    console.log("call yes", calls);
+  } else {
+    console.log("call no", calls);
+  }
+
+  // Both arrays read from fields: once the object is locals, this is a pair too.
+  const h = new Holder(long, short);
+  if (i8x16.fits(h.a, z) && i8x16.fits(h.b, z)) {
+    console.log("field yes");
+  } else {
+    console.log("field no");
+  }
+
+  // A second array that is null where the first test fails: never read there.
+  const none: i8[] | null = z == 0 ? null : long;
+  if (i8x16.fits(short, z) && none !== null && i8x16.fits(none, z)) {
+    console.log("null yes");
+  } else {
+    console.log("null no");
+  }
+  if (i8x16.fits(long, z) && none !== null && i8x16.fits(none, z)) {
+    console.log("null yes");
+  } else {
+    console.log("null no");
+  }
+
+  // The first test's result read later: true although the pair is false.
+  const first = i8x16.fits(long, z);
+  if (first && i8x16.fits(short, z)) {
+    console.log("result yes");
+  } else {
+    console.log("result no, first", yesNo(first));
+  }
+
+  // This pair is one test, which reads the second array's length also where the first fails:
+  // here, an array given away on that path just before, still alive.
+  const kept: i8[][] = [];
+  const given = i8s(32 + z);
+  if (!i8x16.fits(short, z)) {
+    kept.push(given);
+  }
+  if (i8x16.fits(short, z) && i8x16.fits(given, z)) {
+    console.log("given yes");
+  } else {
+    console.log("given no", kept.length, given.length);
+  }
+
+  // The second array grows between the tests.
+  const small = i8s(1 + z);
+  if (i8x16.fits(long, 16 + z) && grow(small) && i8x16.fits(small, 16 + z)) {
+    console.log("grown yes", small.length);
+  } else {
+    console.log("grown no", small.length);
+  }
+}
+
+function main() {
+  edgesI8();
+  edgesU16();
+  edgesF32();
+  edgesF64();
+  loops();
+  others();
+}

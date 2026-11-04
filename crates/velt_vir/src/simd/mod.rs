@@ -127,6 +127,10 @@ pub enum Op {
     /// inside the array (`at + lanes` does not wrap and is at most the length): what the
     /// prelude checks before `load` and `store`, and offers as a loop condition.
     Fits,
+    /// `(a: ptr, b: ptr, at: u64) -> bool`: `Fits` for both arrays, as one test against the
+    /// smaller length. No API names it: `velt_opt`'s `fits_pair` writes it for
+    /// `fits(a, at) && fits(b, at)`, and it reads both lengths whatever `a`'s is.
+    FitsBoth,
     /// `(array: ptr, at: u64) -> v`: the lanes at elements `at..` of an array's buffer,
     /// unchecked (the prelude checks the range).
     Load,
@@ -336,6 +340,7 @@ impl SimdCall {
                 Op::Splat => (vec![lanes.scalar()], V128),
                 Op::Index => (vec![], V128),
                 Op::Fits => (vec![Ptr, U64], Bool),
+                Op::FitsBoth => (vec![Ptr, Ptr, U64], Bool),
                 Op::Load | Op::LoadOptimistic => (vec![Ptr, U64], V128),
                 Op::Store => (vec![V128, Ptr, U64], Unit),
                 Op::LoadPartial => (vec![Ptr, U64, U64], V128),
@@ -450,6 +455,7 @@ fn vector_op(name: &str) -> Option<Op> {
         "splat" => Op::Splat,
         "index" => Op::Index,
         "fits" => Op::Fits,
+        "fits_both" => Op::FitsBoth,
         "load" => Op::Load,
         "load_optimistic" => Op::LoadOptimistic,
         "store" => Op::Store,
