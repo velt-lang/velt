@@ -44,159 +44,195 @@ This note fixes the details for Velt, where two things differ from Go:
 ## 1. The shape key
 
 A *shape* is everything about a type argument that a shared instance's code may depend on
-without asking a dictionary. Two type arguments with the same shape get the same code. Every
-other difference goes through the dictionary (section 2).
+without asking a dictionary. Two lists of type arguments get the same code only when every
+such answer is the same for both. Every other difference goes through the dictionary (section
+2).
 
-### The classes
+### The key is a list of answers, not a table of classes
 
-Every shape has a class, and a class determines everything that is compiled inline:
-- the VIR representation (`Cx::ty`);
-- whether `T | null` uses the null pointer (`has_null_niche`);
-- how a copy, a drop and `===` are compiled when they are compiled inline.
+Lowering compiles code inline from per-type facts in many places, and a table of classes
+misses some of them:
+- the weak-capable release (`rc.rs` `release_as`);
+- union tags, which follow `TyId` order (`canon_union`);
+- parameter attributes (`unique_refs`, `holds_mutex`, the object size behind
+  `dereferenceable`);
+- lock-set reach, transfers and array views;
+- nullable pointers.
 
-| shape | VIR | types | compiled inline | through the dictionary |
-|---|---|---|---|---|
-| `~i8` … `~u64`, `~f32`, `~f64`, `~bool`, `~v128` | the scalar | numbers of that type, `bool`, C-like enums (`I64`), storage floats (`U16`), SIMD | everything: copy, `===`, no drop | format, `any` table, from `any`, hash |
-| `~sym` | `Ptr`, never null | `symbol` | copy, `===` (identity) | format, `any` table |
-| `~rc` | `Ptr`, null niche | counted class objects and counted boxes (arrays, object types) outside the lock set | count increment and decrement, `===` (identity), move | drop when the count reaches zero, format, clone, transfer, trace, `any` table, from `any`, structural eq and hash |
-| `~rc.lk` | `Ptr`, null niche | as `~rc`, in the lock set (`boxing/locks.rs`) | as `~rc`, through `velt_rt_lk_*` | as `~rc`, plus the type word the `_of` variants take |
-| `~own` | `Ptr`, null niche | uncounted class objects (one owner) | move | drop (frees), format, clone, transfer, … |
-| `~shared` | `Ptr`, null niche | `shared<T>` | move | share (its atomic count), drop, format |
-| `~promise` | `Ptr`, no niche | `Promise<T, E>` | move | drop, format |
-| `~str` | `Agg(STR_AGG)` | `string` | everything string code does today | format (quoted inside containers) |
-| `~arr` | `Agg(array_agg)` | uncounted arrays | header moves, `length` | drop, clone and format (each walks the elements), `any` table, from `any` |
-| `~fn` | `Agg(closure_agg)` | function values | share and drop (through the environment's own header) | format, `any` table, `===` when the program compares functions |
-| `~dyn` | `Agg(dyn_agg)` | interface values | share, drop and format (through the vtable) | `===` (`identity_dyns`), `any` table |
-| `~unit` | `Unit` | `void`, `never`, literal types | nothing, since the value has no bits | format, `any` table |
-| `~agg(s, a)` | `Agg` of size *s*, alignment *a* | value types that own parts: object types never changed in place, tuples, unions, `T \| null` without a niche, `Result` | move (a copy of *s* bytes) | share, drop, format, eq, hash, `any` table, from `any`, … |
-| `~agg.plain(s, a)` | as `~agg` | as `~agg`, owning nothing (`ShareKind::Plain`) | move, share (both a copy), no drop | format, eq, hash, `any` table, from `any`, … |
+So the key is defined by a closed list of **shape questions**: per-type queries that inline
+code may depend on. Shared code may ask only these about a placeholder, and the key is their
+answers:
 
-**Aggregates.** Value types are keyed by size and alignment only. Every aggregate operation
-in shared code is either a copy of the whole value or goes through the dictionary. Lowering
-copies aggregates with `memcpy` (`Operand::Copy` of an `Agg` place), passes them by pointer and
-returns them through an out-pointer. Shared code never reads one of their fields, tags or
-presence flags. So two aggregates of one size and alignment run the same code whatever their
-fields are. Go needs the pointer layout too, for its collector; Velt doesn't. Derived types
-follow: `T | undefined` of an aggregate is `{ some: bool, value: T }` (`value_agg`), and an
-array's stride is the size rounded to the alignment, so both depend only on *s* and *a*. Inside
-a shared instance, a value of `~agg(s, a)` has a lowering-made `AggLayout` of *s* bytes in words
-of *a*: one per shape, not one per type.
+| question | `Cx` query | why inline code depends on it |
+|---|---|---|
+| layout | `ty` (an aggregate as its size and alignment) | moves, locals, strides |
+| share kind | `share_kind` | the copy written at a share |
+| needs drop | `needs_drop` | whether a drop is emitted; for a function value it varies per closure type (`closure_env_is_heap`, `fn_identity`), so a `Closure(d)` that reaches a type argument splits by it |
+| null niche | `has_null_niche` | `T \| null` as a pointer |
+| class object | `is_class` | parameter shape, `PtrParam::Object` |
+| counted | `counted`, `boxed` | count increment and decrement inline |
+| interior | `unique_refs` | `noalias` (vir.rs invariant 9) |
+| lock set | `lock_counted`, `reaches_lock_set`, `shared_reads` | `velt_rt_lk_*` counting, read-mode pinning at stores and calls (`caller_stores.rs`, `caller_aliases.rs`, `leave_levels.rs`, `hand_result.rs`) |
+| weak | `weak_capable` | the three-way release (`rc.rs` `release_as`) |
+| transfers | `transfers` | what a hand-over to another task writes |
+| mutex | `holds_mutex` | `frozen` |
+| proxy | `proxiable` | typed-proxy tests at reads and drops |
+| array view | `array_view` of `T[]` | the view sync at every access (`sequence.rs`, `array_view_ops.rs`, `view_unswitch*`) |
+| union | `is_union` | truthiness and narrowing of the value |
 
-Aggregates are in the first step because they are the prototype's case. In #2271's repro, `Item`
-(an object type) is `~agg(64, 8)`, and sigx's `JSXChild` (`VNode | string | number | … |
-JSXChild[]`) is a union, also an aggregate. A prototype limited to pointers and scalars would
-share nothing there.
+The classes are just names for common answer lists:
+- `~rc`, `~own`, `~rc.lk`, `~rc.weak`;
+- `~rc?`, `~own?`, `~sym?` for a nullable pointer, which uses the niche: its share and
+  drop test for null first, and `(T | null) | undefined` can't use the niche again;
+- `~f64`, `~str`, `~arr`, `~agg(64, 8)`, …
 
-### Point 1 of #2271
+A new inline dependency is one more row, not a new class.
 
-**Is `Map<string, A>` the same shape as `Map<string, B>` when A and B are both counted
-pointers?** Yes. Both are `Map<~str, ~rc>`, with one copy of each method, provided:
-- **A and B are both counted.** If A is counted and B has one owner, `Map<~str, ~rc>` and
-  `Map<~str, ~own>` are two copies, because a count decrement is inline code and a single
-  owner's drop is a call. `Map<string, number>` is `Map<~str, ~f64>`, a third copy.
-- **Neither is in the lock set,** whose count operations are runtime calls (`~rc.lk`).
+**Point 1 of #2271.** Is `Map<string, A>` the same instance as
+`Map<string, B>` when A and B are both counted? Yes, when every row above gives the same
+answer for both, and so for their footprint types (below). A weak-capable A against a plain B,
+or an A in the lock set, splits them. `Map<string, number>` is another instance in any
+case.
 
-**Why the key has no separate "trivial equality, hash and drop" bits.** For every class above,
-those facts already follow from the class:
-- scalars, `~sym` and `~unit` never drop;
-- `===` is bitwise or identity for every class except `~str`, `~fn` and `~dyn`, and those have
-  their own code (`~str` is one type);
-- structural `Eq` and `Hash` are calls in per-type code too.
+### The footprint
 
-The one exception is aggregates: an aggregate that owns nothing copies and drops with no code at
-all, so `~agg.plain` is its own shape. Equality and hash of aggregates go through the
-dictionary in both cases. Bitwise comparison would be wrong for floats (`NaN`, `-0`) and
-padding, and per-type code calls `Eq` and `Hash` glue for them too.
+The questions are asked of more than the type argument itself. A definition's **footprint** is
+every type in its body that mentions one of its type parameters: `T`, `T[]`, `T | undefined`,
+`ArrayView<T>`, a callee's type arguments.
+- **Collected per definition.** The footprint is a set of type templates, collected once per
+  definition by a HIR scan (memoized per `DefId`).
+- **The key.** The key of a list of type arguments for a definition is the answer list of
+  every template instantiated with those arguments.
+- **Placeholders are per definition.** They are interned per `(definition, key, parameter
+  index)`. Two definitions with the same argument shapes never share a placeholder, so
+  the global memo tables keyed by `TyId` (`drop_memo`, `value_agg`) can't mix two footprints.
+- **The end-of-pass check.** At the end of the pass, every type built from a placeholder is
+  instantiated with every member of its shape, and its answers are compared with the
+  representative's. A difference is an ICE: the footprint scan missed a template. That check
+  is a test of the scan, not the mechanism that makes sharing sound.
 
-**The key covers the derived types too.** The counted-types passes decide per `TyId`: whether
-an array type or an object type is a counted box is in `Boxing::boxes`, keyed by the type, so
-`A[]` can be counted while `B[]` is not. The helpers store a `T[]` in `ArrayView<T>`, so the shape
-of `T` alone doesn't fix their code. The key of an instance is therefore the shapes of its
-*footprint*: every type in the body that mentions a type parameter (`T`, `T[]`,
-`T | undefined`, `ArrayView<T>`, a callee's type arguments). The footprint is collected once per
-definition by the scan below. Two lists of type arguments share an instance when every
-footprint type has the same shape under both. Usually that is the same as "the parameters have
-the same shapes". When it isn't, the result is two instances, never wrong code. Class
-hierarchies are counted per root definition (`Boxing::roots`), so `ArrayView<A>` and
-`ArrayView<B>` always agree.
+### How the questions are enforced
 
-**Shapes are per type parameter.** Each type argument is a shape or stays concrete. Debug
-replaces every eligible one. Release may keep an argument concrete when its operations are hot
-and small (section 3). Example: `Map<string, V>`'s hashing of the key stays inline while `V`
-is shared.
+`Cx::kind` ICEing for a placeholder isn't enough on its own. Most per-type facts are reads of
+`Boxing`'s sets (`self.boxing.<set>.contains(&t)`, 16 sites), and 64 places in `lower/` read
+`types.kind` directly. All of these answer silently
+for a placeholder or an `Array(placeholder)`. Step 2 therefore delivers three things, each
+with a test that breaks it on purpose:
+1. **The shape queries answer for the representative.** A placeholder has a representative,
+   the first concrete type of its shape. Each shape query maps a placeholder to its
+   representative first (`Cx::ph_rep`). Since the key makes every member give the
+   representative's answers, that answer is right for all of them.
+2. **`Boxing`'s sets are private.** Lowering reads them through accessors that do the same
+   mapping for derived types. In the prototype, a placeholder's derived types are put into each
+   set where the representative's are, for the pass's sharing part, and taken out again before
+   the pass closes its facts. A test fails when code outside `boxing/` reads a set directly.
+3. **Every other question about a placeholder is an ICE.** That covers `Cx::kind`, and each of
+   the raw `types.kind` reads either is a shape question or goes through `Cx::kind`. Step 2
+   lists the 64 sites with which of the two each is.
 
-### Shapes and the counted-types fixpoint
+### What is not shared in step 2
 
-Whether a class is `~rc` or `~own` is decided by lowering's counted-types passes (`Boxing`), so
-a shape is computed per pass, from that pass's `Boxing`, as layouts already are. A type that
-becomes counted in pass N changes shape in pass N. The instance it uses changes with it, and
-the passes still converge, because the facts are the same as before (next paragraph).
+A definition keeps per-type instances, and the scan says why (a `VELT_LOWER_PROFILE` counter
+reports it per reason), when:
+- **A union in its footprint mentions a parameter**: `T | Baz`, or `V | X` with `X` a
+  union. Tags of such a union follow `TyId` order (`canon_union` sorts members by id), and the
+  union can collapse (`pick<Baz>` makes `T | Baz` just `Baz`). The later fix is a dictionary word
+  per tag the body writes or tests, plus the collapse. That is also what package-cache.md wants
+  ("union tags … move out of the code"). A type argument that *is* a union (sigx's `JSXChild`)
+  is fine: the shared body only moves it, and its tags are read only by its own glue.
+- **The body narrows, tests or branches on a value of a parameter's type:**
+  - `Intrinsic::Truthy` of a `T`, which is per value for a union and constant for an object
+    type;
+  - `typeof x` with `x: T`;
+  - `x instanceof C` with `x: T`;
+  - the compile-time type predicates (`HoldsDynamic`, …).
 
-A per-type instance records the facts that drive the fixpoint for its own type arguments: a
-share of `T` asks the next pass to count `T` (`note_share`), and a borrow inside a counted
-object becomes `note_projection`. A shared instance records them in terms of its parameters,
-for example "parameter 0 is shared". Each dictionary made for the instance replays those facts
-on its concrete arguments, and so does each fact found after the dictionary exists, with the
-same growing-table bookkeeping as section 2. The result is the set of facts the per-type
-instances would have recorded. The prototype checks that in a test mode
-(`VELT_SHAPES=check`): it lowers each eligible instance both ways and compares the final
-`Boxing`.
+  Step 4 makes these dictionary entries: `Truthy` and `Typeof` functions per type, like
+  `AnyTruthy` but not through the `any` table, and the predicates as words. A counted box
+  (an array or object type) has no class header, so `instanceof` of a `~rc` that may be one
+  stays per type until then.
+- Deferred type operators (`TyKind::Op`), generated per-type code (`generate/`), foreign
+  boundaries, async functions, generators and closures that use a parameter's type. Each comes in
+  a later step (order of work).
 
-This touches the passes' bookkeeping (`lower/boxing/`), which the lowering workstream owns. #2221
-(lower once, facts-only passes) doesn't change it: the facts are recorded the same way, by
-fewer passes.
+### Parameter attributes
+
+`declare_locals` computes `ParamAttrs` per parameter from per-type facts:
+- `noalias`, `readonly` and `frozen` from `unique_refs` and `holds_mutex`;
+- `dereferenceable` from the class object's size;
+- and `unfreeze_module_reach` changes them per type after the pass.
+
+`unique_refs` and `holds_mutex` are shape questions, so they are in the key. The object size is
+not. A parameter whose type is a placeholder (or a pointer to one) gets:
+- `noalias`, `readonly` and `frozen` only where the key's answers allow them;
+- `dereferenceable` only of the shape's own size: the value's size for `~agg`, 0 for a class
+  object, whose size differs between members.
+
+`unfreeze_module_reach` treats a shared instance's parameters as those of every type of its
+dictionaries: it removes an attribute when any of them needs it removed. Debug builds don't
+read the attributes for code generation. Release (section 3) counts what is lost under rule 1.
+
+### Facts and the counted-types fixpoint
+
+**Step 2 shares only in the pass that lowers the program whole.** By then the counted types are
+complete (`close_boxing` only adds to `Boxing`, starting from the current one). The facts-only
+passes lower the per-type instances, which record their facts as today. In the whole pass:
+- the facts a shared body records are set aside, so they can't add placeholder types to
+  `Boxing` or end the fixpoint early;
+- every fact that matters was recorded by the per-type instances of the passes before;
+- `share_sites`, which the counted-`Atomic` diagnostic reads, comes from those passes too.
+
+So in step 2 the fixpoint converges exactly as without sharing, and `VELT_SHAPES=check` (the
+final `Boxing` compared both ways) passes by construction. The cost is that the facts-only
+passes still lower each instance per type. Step 2's saving is in the whole pass, in
+`velt_opt` and in code generation.
+
+**Step 4 replays facts, so that facts-only passes share too.** A replay has to cover:
+- every field of `Facts`;
+- facts recorded only under a per-type predicate;
+- facts keyed by `FuncId`.
+
+A shared body records **templates**: a fact over placeholder-built types, plus the predicate it
+was recorded under. Each dictionary evaluates the templates for its concrete arguments against
+the current pass's `Boxing`. Dictionaries and their layouts are per-pass state, like
+`lay.slot_tables`.
+
+| `Facts` fields | parameterized by | replayed per dictionary |
+|---|---|---|
+| `shares`, `identity`, `identity_borrows`, `tuple_writes`, `tuple_copies`, `transfers`, `captures`, `vtable_types`, `weak_seeds`, `dyn_types`, `object_types`, `array_view_targets`, `proxy_targets`, `lock_values` | a type template | the template instantiated. `identity` stays conditional on `copied_object(t)`, which `note_dyn_identity` and `close_share` evaluate for the concrete type. `identity_borrows` evaluates `in_place_parts` for it |
+| `projections`, `upcasts`, `proxy_casts` | a pair of templates | both instantiated |
+| `fn_tuple_writes`, `fn_read_params` | `FuncId` of the shared instance | keyed by `(instance, dictionary)`, since one `FuncId` stands for many lists |
+| `fn_compared_keys`, `generic_any_keys`, `fn_edges`, `fresh_made` | `FnKey` over templates | instantiated keys |
+| `dyn_to_any` | a `DefId` | as is |
+| `any_identity`, `fn_compared`, `generic_any`, `any_set`, `any_has`, `any_delete`, `any_keys`, `any_reflect`, `any_number`, `any_call_keys`, `weak_object`, `object_from_dyn`, `proxy_new`, `read_indirect`, `unmet` | nothing (program-wide) | as is, once |
+
+`share_sites` for the counted-`Atomic` diagnostic is replayed with the site of the user call
+that requested the dictionary, so the report points at user code. `VELT_SHAPES=check` lowers
+each eligible instance both ways and compares the final `Boxing` and the diagnostics. Its
+coverage is this table.
 
 ### How lowering represents a shape
 
 The instance key stays `Work::Fn(def, targs)`. For a shared instance, each shared argument in
-`targs` is a *shape placeholder*: a `TyKind::Param` with an index above `SHAPE_BASE`, interned
-by lowering, so it is a `TyId` like any other. HIR never contains one. This gives
-three properties without touching the HIR contract:
-- **Memo tables stay correct.** `drop_memo`, `value_agg`, vtable and glue keys are keyed by
-  `TyId`. A placeholder is interned per instance key and parameter, so it and every type built
-  from it (`Array(placeholder)`) always denote the same footprint shapes. The shape queries on
-  such a derived type read the instance's footprint.
-- **`FnLower::sub` is the one place where instance types enter lowering.** It substitutes the
-  placeholders exactly as it substitutes concrete arguments today.
-- **Leaks fail loudly.** Many lowering matches end in a wildcard (`share_kind`'s `_ =>
-  ShareKind::Plain`), so a placeholder reaching them would silently get a wrong answer. To
-  prevent that:
-  - `Cx::kind` ICEs on a placeholder;
-  - the shape queries (`ty`, `has_null_niche`, `share_kind`, `needs_drop`, `boxed`) answer for
-    a placeholder from the footprint before they would call it;
-  - the few reads of `types.kind` that bypass `Cx::kind` (`is_union`, `has_null_niche`, …) get
-    the same check.
+`targs` is a *placeholder*: a `TyKind::Param` with an index at or above `SHAPE_BASE`, interned
+by lowering. HIR never contains one, and the HIR contract doesn't change. `FnLower::sub`, the
+one place where instance types enter lowering, substitutes placeholders as it substitutes
+concrete arguments, and `subst` leaves a placeholder as it is.
 
-  So every per-type question asked of a placeholder is an ICE in the test suite, not a wrong
-  value: `type_name`, class ids, vtables, `any_target_name`. Everything else goes through the
-  dictionary.
+### Debug information
 
-A generic definition's body is scanned once (HIR, memoized per `DefId`) to decide which of its
-type parameters can be shared. A parameter can be shared when every use of a value of a type
-mentioning it is one of these:
-- a move, copy, borrow, drop or share;
-- `===` or `!==`;
-- a field or element of a generic class or array, whose layout follows from the shape;
-- a conversion to or from `any` or `unknown`;
-- `console.log`, `String()` or a template;
-- a call of a generic function or method, through a sub-dictionary or a code pointer;
-- a conversion to an interface (`T as I`);
-- a call of a generic interface method on an interface value (#375);
-- an intrinsic that answers a type question at compile time (`HoldsDynamic`,
-  `MayHoldPrimitive`, `needsDrop`, `fnCapturesNothing`, …), which becomes a dictionary word
-  that the branch tests.
+`describe_locals` gives every local a debug type. A local of a placeholder type (`const x: T`)
+is described as what the shared code knows about it:
+- for `~agg`, an array of `s` bytes named after the shape (`~agg(64, 8)`);
+- for a pointer shape, a pointer to opaque data;
+- for scalars and `~str`, their own type.
 
-It cannot be shared, and the definition keeps per-type instances for it, when:
-- a deferred type operator (`TyKind::Op`) mentions it;
-- generated code is per type (JSON readers and writers, `generate/`);
-- it crosses a foreign boundary (`extern`, native packages).
-
-In the first steps, async functions, generators, and generic closures that use dictionary
-operations are also kept per type.
-
-The scan is conservative, and the ICE is the backstop. A body the scan accepts that still asks
-a per-type question is a bug in the scan, and a golden run with sharing on everywhere finds it
-(section 4).
+The frame's `$types` variable names the concrete types. Showing such a local per type, as
+`Item` with its fields, is out of scope. Where it matters, sharing is limited instead:
+- builds made for debugging (`debug_vars` on, as F5 builds) share only std code. User generics
+  keep per-type instances, and their locals look as they do today;
+- the std helpers' `T` locals show as bytes, and stepping into std is rare;
+- other debug builds (`velt build`, `velt run`) share everything.
 
 ## 2. The dictionary ABI
 
@@ -206,20 +242,20 @@ exactly like vtables. So no VIR type, verifier rule or backend changes.
 ### Type tables
 
 A **type table** (`_Gtype` *T*) is one per concrete type that reaches shared code as a type
-argument. It uses the vtable layout (`glue/vtable.rs`):
+argument. It uses the vtable layout (`lower/glue/vtable.rs`):
 - the seven hidden slots, with the same constants: class id, transfer, name, share, format,
   clone, drop;
 - then the dictionary slots:
 
 | slot | entry | signature (as the glue's) |
 |---|---|---|
-| −7 | class id (a word) | |
-| −6 | `Transfer` | `(p)` |
-| −5 | the type's name, a static string (debuggers, section 4) | |
-| −4 | `Share` | `(src, dst)` |
-| −3 | `Format` | `(buf, p, depth)` |
-| −2 | `Clone` | `(src, dst)` |
-| −1 | `Drop` (`~rc`: `ObjDrop` / `QueuedDrop`, called when the count reaches zero) | `(p)` |
+| -7 | class id (a word) | |
+| -6 | `Transfer` | `(p)` |
+| -5 | the type's name, a static string (debuggers, section 4) | |
+| -4 | `Share` | `(src, dst)` |
+| -3 | `Format` | `(buf, p, depth)` |
+| -2 | `Clone` | `(src, dst)` |
+| -1 | `Drop` (`~rc`: `ObjDrop` / `QueuedDrop`, called when the count reaches zero) | `(p)` |
 | 0 | `Eq` | `(a, b) -> bool` |
 | 1 | `Same` | `(a, b) -> bool` |
 | 2 | `SameValue` | `(a, b) -> bool` |
@@ -231,6 +267,8 @@ argument. It uses the vtable layout (`glue/vtable.rs`):
 | 8 | `Trace` / `TraceIn` | `(p, visit, ctx)` |
 | 9 | `JsText` | `(p, buf)` |
 | 10 | the lock-set type word for `velt_rt_lk_*_of` (`~rc.lk` only) | |
+| 11 | `Truthy` (step 4): the truthiness of a value, per member for a union | `(p) -> bool` |
+| 12 | `Typeof` (step 4): the `typeof` text of a value | `(p) -> ptr` |
 
 A slot is filled only when a shared instance reads it. A slot nothing reads stays null, and no
 glue is generated for it. This is the rule #2249 applies to vtables' format, clone and transfer
@@ -253,7 +291,29 @@ shared instance's lowering asks for them:
 - the vtable of each `T as I` conversion;
 - the slot index of each generic interface method called with type arguments that mention a
   shared parameter (#375, next section);
-- the words of the compile-time type predicates (`HoldsDynamic`, …).
+- the words of the compile-time type predicates (`HoldsDynamic`, …), from step 4;
+- the **function value** of each generic function a shared body takes as a value at a type
+  built from a parameter (`xs.map(id<T>)`): the thunk of `id<concrete>`, or of the
+  shared `id` with its constant dictionary, the same thunk that function values use anywhere
+  (section 2, "The hidden parameter").
+
+**Calls of other shared instances.** The callee's instance follows from the callee's own key,
+which its footprint decides (section 1). Two members of the caller's shape can therefore need
+two callee instances. A call whose callee instance is the same for every dictionary made so far
+is a direct call that passes a sub-dictionary entry. Otherwise the entry is a pair, the
+callee's code and its dictionary, and the call goes through the pair. Debug costs an indirect
+call. Release folds constant pairs like any entry.
+
+**Closures in shared bodies.** A closure literal in a shared body that mentions a parameter's
+type, generic or not, captures the dictionary in its environment: its code is shared with the
+instance's, and its own entries are entries of the instance's dictionary. That is step 4. In
+step 2 the scan rejects such bodies.
+
+**Polymorphic recursion**. `f<T>` calling `f<T[]>` is bounded today by sema's
+`MAX_ARG_DEPTH` (64), and stays so. With shapes, `f<A[]>`, `f<A[][]>`, … can be one `~arr`
+instance with a chain of dictionaries, each made at compile time when lowering meets it.
+Dictionaries are statics and are never built at run time, so a chain is as long as the
+instantiations lowering meets, which the same bound limits.
 
 The layout is found while the shared instance is lowered, so dictionaries grow as entries are
 found. This is the problem `generic_slots.rs` already solves for #375's slot tables: a list of
@@ -276,8 +336,9 @@ loops.
 
 - **Callers.** Monomorphic code passes `Operand::Const(Const::Static(dict), Ty::Ptr)`. Shared
   code passes a sub-dictionary loaded from its own dictionary.
-- **Function values.** A shared instance used as a function value, or reached from a vtable
-  slot, goes through a thunk that passes the constant dictionary. There is one thunk per
+- **Function values.** A shared instance used as a function value, reached from a vtable slot,
+  or passed to native code as a `NativeCallback`, goes through a thunk that passes the
+  constant dictionary. Native code never sees a dictionary parameter. There is one thunk per
   `(def, targs)` (`Work::Thunk`, as the borrow-ABI adapters are). So function identity is the
   same as today: `f<A>` and `f<B>` as values are different functions, and `f<A>` taken twice is
   one.
@@ -297,14 +358,15 @@ keeps that decision and meets it in three places:
    dictionaries are all read-only statics of relocated words, read with a constant offset and
    called (`dispatch.rs`). The hidden slots use the same constants (`SLOT_DROP` …). There is one
    growth algorithm, `generic_slots.rs` generalized. There is one fold in `velt_opt`, below.
-2. **Generic interface calls from shared code.** `x.wrap<T>()` on an interface value, inside an
+2. **Interface calls never take a dictionary**. A call through a vtable slot, generic or
+   not, passes exactly the arguments it passes today. A dictionary appears only behind a thunk:
+   a slot table entry of a shared method is the method's thunk with its constant dictionary,
+   as for any function value. Interface dispatch costs what it costs today, plus the thunk's
+   tail call where the method is shared, which release removes (section 3).
+3. **Generic interface calls from shared code.** `x.wrap<T>()` on an interface value, inside an
    instance where `T` is shared, needs the index of `[T]` in the slot's tables. That index is a
    constant per concrete `T`, so it is a dictionary word. The call loads the instantiation
    table from the vtable (as today) and the index from the dictionary.
-3. **Shared implementations in slot tables.** A slot table entry of a shared method is the
-   method's thunk with its constant dictionary, as for any function value. Interface dispatch
-   costs what it costs today. The only extra is the thunk's tail call where the method is
-   shared, and release removes it (section 3).
 
 If #375 is ever switched to dictionary passing, that is the same hidden parameter: the slot's
 code takes a dictionary built from the slot's type arguments.
@@ -318,31 +380,47 @@ direct, and the next inlining round can inline it. A dictionary is such a static
   caller that passed a constant dictionary, the dictionary parameter becomes a local holding
   the static. Its loads fold: a sub-dictionary or type table becomes a `Const::Static`, which
   the next run of the pass folds again.
-- **One change, for the instances that aren't inlined.** `const_fields/specialize.rs` already
-  clones a callee for a read-only parameter whose fields are known: a closure's code pointer,
-  which is how `sort(cmp)` gets a direct comparator. Extending "known" to "points at a read-only
-  static" clones the shared instance with its dictionary folded in, which is today's per-type
-  code, at the call sites that need it. Its `MAX_CLONE_COST` and `MAX_CLONES` bound the
-  growth. This is release only (section 3), and the prototype doesn't need it.
+- **Instances reached by one dictionary are decided in lowering**. At the end of the whole
+  pass, lowering knows every dictionary of every shared instance. In release, an instance
+  reached by exactly one dictionary gets its dictionary folded in place: the parameter becomes
+  the constant, its calls drop the argument, and `vtable_loads` folds the loads. That is
+  today's per-type code with no clone made. A program with one `Map` type pays nothing.
+- **Hot call sites of an instance with several dictionaries** get a clone with the constant
+  dictionary folded in, as `const_fields/specialize.rs` clones a callee for a known closure.
+  This uses a budget of its own, not `MAX_CLONES`/`MAX_CLONE_COST`, which closure
+  specialization (`sort(cmp)`) keeps for itself, so programs that share nothing don't change.
+  Choosing call sites in loops is new work: `specialize.rs` doesn't look at loops today.
 
-Step 3 adds a `velt_opt` unit test for the two-level fold (dictionary, then type table, then
-function), with the release workstream that owns `velt_opt`'s inliner. `addrs.rs` treats
-parameters as unknown, so the fold applies once the instance is inlined or specialized, which is
-when it is needed.
+Step 3 adds `velt_opt` unit tests for the two-level fold (dictionary, then type table, then
+function) and for the single-dictionary fold, with the release workstream that owns
+`velt_opt`'s inliner. `addrs.rs` treats parameters as unknown, so the folds apply once the
+dictionary is a constant, which is when they are needed.
 
 ### The per-package cache and facts traces
 
-A shared instance refers to no per-type static. Every type-specific thing it touches arrives
-through its dictionary parameter. Its facts trace (package-cache.md) is therefore its shapes:
-the answers it reads (is `T` counted? in the lock set?) are the shape key itself. So shared std
-instances are the entries that repeat between programs, and they are what std can ship compiled
-for the common shapes (`~rc`, `~f64`, `~str`, `~i32`, `~bool`).
+A shared instance refers to no per-type static: every type-specific thing it touches arrives
+through its dictionary parameter. Its facts trace (package-cache.md) is its key plus the
+program-wide flags shared code reads:
+- `fn_identity`, `any_identity`, `any_writes` and the other `any` slot flags, which decide
+  which `any` table slots exist;
+- `weak_object`;
+- whether the program has a lock set (`has_lock_set`) or proxies;
+- whether `array_views` is empty.
+
+Those flags are the same in most programs, so shared std instances are the entries that repeat
+between programs. They are what std can ship compiled for the common keys (`~rc`, `~f64`,
+`~str`, `~i32`, `~bool`).
+
+A cache hit skips lowering, so the instance's outgoing fact templates (section 1, "Facts and
+the counted-types fixpoint") have to be stored in the entry: `Served` gets `facts` next to
+`calls`. Otherwise a cached shared instance would contribute nothing to the fixpoint. This
+applies to package-cache.md's per-function entries too, and shared instances are where it
+first matters.
 
 Dictionaries and type tables are per program. They are the "statics with symbols" of
 package-cache.md step 2: the cached caller of a shared instance refers to its dictionary by
 symbol, and the program defines it. `PackageCode::lookup(func, args, facts)` is asked with the
-placeholder arguments. The cache keys them by shape name, as symbols do, never by `TyId`, so the
-interface stays as package-cache.md has it.
+placeholder arguments, and the cache keys them by their keys, as symbols do, never by `TyId`.
 
 ## 3. Debug and release
 
@@ -359,21 +437,22 @@ without per-type copies".
 Three rules decide it. The first two are local and cheap to compute:
 
 1. **No inlining lost.** While a shared instance is lowered, each dictionary read is classified
-   as **call** or **inline**. A *call* is an operation the per-type instance also compiles as a
-   call: a drop when the count reaches zero, clone, format, transfer, the `AnyUnbox` slow path,
-   a call of a sub-dictionary's callee. An *inline* read is one the per-type instance would have
-   compiled inline: a type predicate turned into a branch, a descriptor compared on the fast
-   path of `as T`, the share or drop of a small `~agg` (its parts' counts, written out). An
-   instance with only call reads is shared in release. Only a call through a pointer is lost,
-   and the callee is out of line in both versions. For the classes of section
-   1, almost every read is a call. The exceptions are the fast-path descriptor, which costs one
-   load that LLVM hoists out of the loop, and the share and drop of aggregates, which rule 2
-   covers.
-2. **Hot sites get a per-type copy back.** An instance with inline reads is shared too, and
-   `velt_opt`'s specializer (section 2) clones it with the constant dictionary at a call site in
-   a loop when the callee is under its size limit. A shared instance that only one dictionary
-   ever reaches is specialized at every site and the shared original is deleted (`dead_funcs`),
-   so a program with one `Map` type pays nothing.
+   as **call** or **inline**. A *call* is a callee LLVM would not inline in the per-type
+   instance either: over the inline cap, measured as #2224 and its follow-up measure it
+   (counting only the callees LLVM would actually inline), or cold. Anything else is *inline*:
+   - a small `Hash`, `Eq` or `Share` glue that is a direct VIR call today but which LLVM
+     inlines;
+   - a type predicate turned into a branch;
+   - the descriptor compared on the fast path of `as T`;
+   - the share or drop of a small `~agg`.
+
+   An indirect call also hides the callee's memory effects: after it, LLVM has to reload what
+   it had in registers, such as `this`'s fields in `Map`'s probe loop. So an instance is shared
+   in release only when all its reads are calls. An instance with inline reads goes to rule 2.
+   The parameter attributes a placeholder loses (section 1) count as inline reads.
+2. **Hot sites get a per-type copy back** (section 2): an instance reached by one dictionary is
+   folded in place by lowering, and hot call sites of the others get specialized clones from
+   their own budget.
 3. **The gate decides, per family.** A family (the array-view helpers, `Map` methods, `Set`,
    `Record`, user generics) is shared in release only once:
    - every benchmark of `bench/nightly.sh` and the sigx scenarios is within ±3% by cachegrind
@@ -381,12 +460,15 @@ Three rules decide it. The first two are local and cheap to compute:
    - the hot ones (`bench/array_view`, `bench/btree`, `bench/concurrent_map`, `bench/json`) are
      also interleaved best-of-N by wall time.
 
-   Until then, the family stays per type in release, by a per-family switch in lowering
-   (`shape::RELEASE_FAMILIES`). A family that fails the gate is fixed (a concrete argument
-   kept, a predicate left inline) or stays per type.
+   The gate also records each family's build CPU, IR lines and peak memory against base. A
+   family within ±3% that saves nothing stays per type. Until it passes, the family stays per
+   type in release, by a per-family switch in lowering (`shape::RELEASE_FAMILIES`). A family
+   that fails is fixed (a concrete argument kept, a predicate left inline) or stays per type.
 
-So what decides is rule 1, computed by lowering; rule 2, computed by `velt_opt` from call sites
-and size; and the measured gate, kept as a list in the code that only grows. A switch in
+So what decides is:
+- rule 1, computed by lowering;
+- rule 2's single-dictionary fold, also in lowering, and its hot-site clones, in `velt_opt`;
+- the measured gate, kept as a list in the code that only grows. A switch in
 `VELT_SHAPES` (`off`, `on`, `check`, `all`) picks the behavior for A/Bs without rebuilding the
 compiler.
 
@@ -409,8 +491,8 @@ per-type instance. The difference is only how the code is reached.
 | `console.log`, `String()`, templates | `Format` and `JsText` of the type table: the glue per type, so class names, quoting and nesting are those of the type |
 | `TypeError` from `x as T` | the fast path compares the descriptor from slot 5. Otherwise `AnyUnbox` of *T* (slot 6) builds the message, with *T*'s name, as #2268's glue does. A site whose message names what it converts (`any_context`) keeps the per-type instance in the first steps (#2268 keeps those sites written out as well) |
 | other errors and panics | messages are per type only through glue. Locations are the source locations of the body, the same in every instance, and caller-tracking passes its location parameter on as today |
-| `instanceof` | class ids are in object headers and class ranges are per class definition, so neither depends on which code tests them. `instanceof` a type parameter is not TypeScript |
-| `typeof`, `Array.isArray`, truthiness of a `T` | the `typeof` tag word, the `any` table, or the shape (`~f64` is always `"number"`) |
+| `instanceof` | `x instanceof C` with `x` of a concrete type: class ids are in object headers and class ranges are per class definition, so neither depends on which code tests them. With `x: T`, the body is not shared in step 2 (section 1), since a `~rc` may be a counted box with no class header |
+| `typeof`, `Array.isArray`, truthiness of a `T` | not shared in step 2 (section 1). From step 4, the type table's `Truthy` and `Typeof` functions, whose answer depends on the value for a union |
 | `===`, `Object.is`, `Map`/`Set` keys | inline where the class makes it bitwise or identity, otherwise `Same`, `SameValue`, `KeySame` and `Hash` of the type table. Hash values are the same, so iteration order is too |
 | drop order, `dispose`, weak references | the same drop and trace glue, called at the same points of the same body |
 | function identity | one thunk per `(def, targs)`, so as today (section 2) |
@@ -422,7 +504,7 @@ per-type instance. The difference is only how the code is reached.
 shape segment, demangled `arrayViewSync<~rc>`. Like other symbols it contains no `TyId`, so
 `velt dev` matches it across versions. Debuggers and profilers show that name, which is correct
 code-wise but doesn't say which type was meant. Debug builds name the types too:
-- each type table holds its type's name (slot −5);
+- each type table holds its type's name (slot -5);
 - the dictionary parameter is described to the debugger as a variable `$types`, listing the
   type arguments by name through the debug-variable support (`debug-variables.md`).
 
@@ -438,7 +520,13 @@ names, and are unaffected.
   doesn't share yet, and runs the whole golden suite in debug and release. This is proposed as
   one more CI job, so each leak or scan bug shows up as an ICE or a wrong output, not in a
   user's program.
-- **`VELT_SHAPES=check`.** Compares the counted-types facts both ways (section 1).
+- **`VELT_SHAPES=check`.** Compares the counted-types facts and the diagnostics both ways
+  (section 1, "Facts and the counted-types fixpoint").
+- **The enforcement tests** (section 1, "How the questions are enforced"):
+  - a placeholder reaching `Cx::kind` ICEs;
+  - code outside `boxing/` reading a `Boxing` set fails a test;
+  - the end-of-pass check ICEs on a footprint the scan missed, with a footprint template
+    removed on purpose.
 - **New goldens, each run with Node,** for what crosses a shared instance:
   - views of class objects (counted and single-owner), of two object types of one size with
     different fields, and of a union, each printed and converted wrongly (the `TypeError`
@@ -446,10 +534,14 @@ names, and are unaffected.
   - `Map` and `Set` keys of several class types;
   - a shared method reached through an interface slot;
   - a generic method called through an interface from shared code;
-  - function values of instances compared.
+  - function values of instances compared;
+  - a shared instance passed to native code as a `NativeCallback`;
+  - element types that split a shape: a weak-capable class next to a plain one, an element
+    type in the lock set, a nullable class (`Foo | null`), and an object type holding an
+    `Atomic`.
 - **Unit tests in `velt_vir`.** The shape of each type kind, and a placeholder's per-type query
-  ICEing. Each test is checked to fail with the key broken on purpose: `~rc` and `~own` merged,
-  the niche bit dropped, or `~agg` keyed by size without alignment.
+  ICEing. Each test is checked to fail with the key broken on purpose: a row of the question
+  table left out (counted, weak, niche), or `~agg` keyed by size without alignment.
 
 ## 5. Measurement plan
 
@@ -523,13 +615,43 @@ New counters in `VELT_LOWER_PROFILE`:
 - per family: instances before and after;
 - the instances the scan rejected, by reason, so the next family's work starts from data.
 
-Expected effect, to check against these numbers: the helpers' instances drop to one per shape
+Expected effect, to check against these numbers: the helpers' instances drop to one per key
 used, against one per element type today. Small-page's element types are mostly object types
-and unions, so its shapes are the sizes among them, plus `~str` and the pointer classes. Its
-3.32M lines of helpers go toward that many families of about 13k release IR lines each, plus
-the dictionaries (a few words per type). The `as T` slow paths move into the type tables'
-`AnyUnbox` entries unchanged. The number of distinct aggregate sizes is the figure that decides
-how close it gets (open question 4).
+and unions, so its keys are mostly the sizes among them, split further by the question table
+(weak, lock set, niche), plus `~str` and the pointer keys. Its 3.32M lines of helpers go toward
+that many families of about 13k release IR lines each, plus the dictionaries (a few words per
+type). Whether that is a large cut depends on how many element types share a key, which
+nothing in this repository shows (below).
+
+### Step 2's bars
+
+The baseline shows that the in-repository programs have one element type per key (the repro,
+`sigx_like`), so they can't measure a saving. Scale 10k/100k has no views, so for step 2 it is
+only a check that the scan and the footprint don't cost anything. Small-page isn't in this
+repository. So step 2 starts with what makes the result reproducible:
+1. **The counter first, before the placeholder machinery.** `VELT_LOWER_PROFILE` reports, per
+   shared family, its element types and the distinct keys they fall into, and the instances
+   the scan rejects, by reason. Its first report is small-page's, posted on #2271. Open
+   question 4 (aggregate sizes) and the rows of the question table that split keys are
+   settled by that number. If small-page's element types fall into nearly as many keys as
+   types, step 2 stops there.
+2. **A generated benchmark in the repository,** `bench/compile/shapes/` (generator and
+   `run.sh`, like `scale/`). It converts `any` arrays to N view element types over a few
+   keys, by default 40 object types of three sizes, a union and `string`. Its expected cut is
+   computed from the baseline: about 5.5k debug VIR lines per element type of the helpers, so
+   about (43 − 5) × 5.5k = 0.2M debug VIR lines. Head has to reach at least 80% of that.
+3. **The bars as numbers:**
+   - goldens pass, with debug and release output byte-identical;
+   - on `bench/compile/shapes/`, the helpers' debug VIR lines down by at least 80% of the
+     expected cut, and debug build CPU down;
+   - on hello and scale 10k/100k, debug build CPU and peak RSS within noise (instructions
+     within ±1%);
+   - release VIR byte-identical to base for every golden and benchmark program;
+   - small-page's helpers' debug VIR, with the cut reported against the counter's prediction.
+
+**Without #2268.** Step 2 doesn't depend on it. The prototype's `FromAny` glue wraps what `any_to`
+writes at a site today (`any_unbox`), so it works on main. When #2268 lands, `FromAny`'s body
+becomes #2268's fast path plus its `AnyUnbox`, and nothing in the shared code changes.
 
 ## Order of work
 
@@ -537,22 +659,17 @@ how close it gets (open question 4).
 2. **Prototype, debug only, the array-view sync helpers.** It covers `arrayViewSync`,
    `arrayViewSyncAt`, `arrayViewSyncLen`, `arrayViewFlush`, `arrayViewFlushFrom`,
    `arrayViewFlushAt` and `arrayViewLen` (not `arrayViewSort`, whose closure and comparator
-   wait for closures). The classes are the scalars, `~rc`, `~own`, `~str`, `~arr` and `~agg`. It
-   includes:
-   - the placeholder types;
-   - the type tables;
-   - the instance dictionaries on the generalized growing tables;
-   - the hidden parameter;
-   - the facts replay;
-   - `VELT_SHAPES`;
-   - the counters.
+   wait for closures). In order:
+   1. the counter, and small-page's first report (section 5, "Step 2's bars");
+   2. `bench/compile/shapes/`;
+   3. the question table enforced: `Boxing`'s sets behind accessors, `Cx::kind` ICEing, and
+      the raw `types.kind` reads listed;
+   4. the placeholders, the footprint scan and the end-of-pass check;
+   5. the dictionaries on the generalized growing tables, and the hidden parameter;
+   6. `ToAny` and `FromAny` glue;
+   7. sharing only in the whole pass (section 1), and `VELT_SHAPES`.
 
-   The bars:
-   - all goldens pass, with debug and release output byte-identical;
-   - IR lines, build CPU and peak memory for small-page and scale 10k/100k, base against head;
-   - release unchanged.
-
-   It builds on #2268 (`AnyUnbox`) for slot 6.
+   It is checked against the bars in section 5.
 3. **Release for the helpers.** Rules 1 and 2, the `velt_opt` specializer extension, and the
    gate.
 4. **`Map`, `Set`, `Record` and `mapCompact`/`mapResize`/`mapKeys`, then every eligible std
@@ -570,13 +687,16 @@ edits their files, it says what and why on #2189:
 
 | area | owner | what step 2 needs there |
 |---|---|---|
-| the passes and the counted-types fixpoint (`lower/boxing/`, `view_unswitch*`, `spill/`) | lowering | recording facts per parameter and replaying them per dictionary (section 1). A hook at `note_share` and `note_projection`, no change to how the set is closed |
+| the passes and the counted-types fixpoint (`lower/boxing/`, `view_unswitch*`, `spill/`) | lowering | `Boxing`'s sets behind accessors (section 1), and the facts of a shared body set aside in the whole pass. The fact templates and their replay (the table in section 1) are step 4's, with this workstream |
 | `any` operations (`any_*.rs` sites, `any_unbox`) | `any` operations | the fast path of `as T` reading the descriptor from slot 5 and the slow path calling slot 6 when the target is a placeholder: one branch at the top of `any_unbox` |
 | glue and vtables (`lower/glue/`, `lower/any.rs` tables) | release backend and glue | type tables built from the existing glue builders; `generic_slots.rs` generalized into the growing table both use |
 
 Step 2's own code is a new `lower/shape/` module with the key, the scan, the type tables and
-dictionaries. It also touches the instance key at call sites (`call.rs`, `callee.rs`), the
-hidden parameter in `abi.rs`, and `Cx::ty`'s placeholder case in `types.rs`. `ast.rs`, HIR,
+dictionaries, the glue and the rewrite of pseudo ids into dictionary loads. It also touches:
+- the call sites of the helpers (`array_view.rs`);
+- the hidden parameter in `abi.rs`;
+- the shape queries' placeholder case (`types.rs`, `boxing/`);
+- one new `LowerOptions` field, `shapes`, which the driver sets for debug builds. `ast.rs`, HIR,
 `vir.rs` and the contract documents don't change. If the placeholder convention
 (`TyKind::Param` above `SHAPE_BASE`, lowering only) should be written down, it goes into
 `docs/internals/contracts/hir_encodings.md` with the maintainer's review.
