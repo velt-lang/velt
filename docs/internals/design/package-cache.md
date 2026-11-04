@@ -37,6 +37,18 @@ compiles.
 | `bench/json/parse_typed.vlt` | 9,320M | 10,176M | 7,196M | 10,459M | 1,123M | 3,917M |
 | scale benchmark, 10k lines | 89,238M | 91,733M | 91,721M | 91,782M | 16,304M | 91,782M |
 
+Debug builds (Cranelift; the std cache serves release builds only):
+
+| program | off | cache, cold | cache, again | cache, edit |
+|---|---:|---:|---:|---:|
+| hello | 704M | 718M | 662M | 661M |
+| `bench/json/parse_typed.vlt` | 3,520M | 4,196M | 980M | 986M |
+| scale benchmark, 10k lines | 6,134M | 4,295M | 4,042M | 4,053M |
+
+- Debug, warm: the link is the floor. `ld.lld` takes 357-362M of hello's 660M and 390M of the
+  scale program's 4.0G. `velt` itself is 300M on hello, 620M on parse_typed and 3.6G on the scale
+  program. Per-function Cranelift entries already make an edit cost about what an unchanged
+  rebuild does, so what is left is the front end and lowering, which steps 3 and 4 remove.
 - hello, warm and edited: `velt` 307M (parse and sema of the prelude, 26k lines, nearly all of
   it), `ld.lld` 156M (the static runtime), clang 76M (31M of it `clang --version`, run by every
   release build to find clang). No std function is large enough to serve. Only a cache of
@@ -148,6 +160,42 @@ struct Served { symbol: String, sig: (Vec<Ty>, Ty), param_attrs: Vec<ParamAttrs>
 - veltc implements `PackageCode` over `velt_build_cache`; velt_vir stays free of storage, and
   unit tests hand lowering a fake.
 
+### Soundness: the trace is enforced, not trusted
+
+Serving an object is correct only if lowering read *every* whole-program fact through `Facts`. A
+fact read around it is a silent miscompile in some programs only. Two guards:
+
+- **Structurally:** lowering's program-wide state (the counted types, the shared flag, tag and
+  class-id tables, parameter attributes) moves behind `Facts`, and the per-function lowering
+  context gets no other handle to it. A fact a function's code can depend on is then a `Facts`
+  question by construction, and the recorder sees it.
+- **Differentially:** `VELT_PACKAGE_CACHE=verify` lowers and compiles every served function anyway
+  and fails the build on any difference between the served entry (its VIR, and its object) and
+  the fresh one, naming the function and the first differing fact or statement. CI runs it over
+  all goldens in debug and release.
+
+### Release run time
+
+A served object is not inlined into its callers across the package boundary. Layer 2 keeps
+`inline()` and `SMALL_COST` bodies inlinable, but a hot mid-size std function called in a loop
+loses the inlining LLVM gives it today. That is measured, not assumed: today's std cache already
+shows it. `bench/json/parse_typed.vlt` built with `VELT_STD_OBJECT=1` runs 3,295M instructions
+against 2,520M without it (+31%): the reader's functions are linked instead of inlined into
+the loop.
+
+So release builds keep the cache's objects only where run time stays within ±3% of cache off,
+gated on the nightly run-time set and `bench/stdport`, and step 3 measures the alternative:
+release entries as LLVM bitcode with a ThinLTO summary, imported and inlined across packages at
+link time. Debug builds have no such cost (no cross-function inlining to lose).
+
+### Concurrent builds
+
+Two builds filling the same entries at once (an editor and a terminal, parallel tests) both
+succeed and leave one valid entry. `velt_build_cache` writes every entry atomically (a
+temporary file renamed into place, or an append under the pack's lock, each with its checksum),
+so a reader never sees half an entry. An object and its facts trace are one entry, never two
+written separately, so no build can pair one program's object with another's trace.
+
 ## Invalidation
 
 Nothing is ever stale: every entry is found by a key that covers its inputs, and garbage
@@ -167,20 +215,27 @@ limit).
    15,086M with the cache alone).
 2. **Statics with symbols in VIR** (std-object.md step 4): serves the code reaching vtables, type
    descriptors and module state, and is the mechanism class ids and union tags need.
-3. **Facts trace and `PackageCode`**: skip lowering for served std functions. Measured by
-   `velt build` of parse_typed after an edit: lowering std drops out of the profile.
-4. **Interface layer for std** (export data, sema): skip checking std bodies, with #2161's
-   demand loading. Measured by hello's 307M `velt` instructions.
+3. **Facts trace and `PackageCode`**, for debug and release together: skip lowering for served
+   std functions. Debug builds come first in the edit loop, and their Cranelift entries (`cl`)
+   are per function already, so the facts trace serves them a cached function without lowering
+   it. With `VELT_PACKAGE_CACHE=verify` in CI from the first commit, and the release run-time
+   decision above. Measured by debug and release builds of hello, parse_typed and the scale
+   benchmark, again and edited: lowering std drops out of the profile.
+4. **Interface layer for std** (export data, sema), debug and release: skip checking std bodies.
+   One plan with #2161 (lazy std modules): both target hello's 307M instructions of checking std.
+   The interface layer removes the checking, and #2161's demand loading decides *which*
+   modules' interfaces a build decodes. #2161's std index is the interface layer's first part.
 5. **vpm packages** through the same entries.
-6. **Debug builds:** the same entries with Cranelift objects (`cl` keys today are per function
-   already; the facts trace lets them skip lowering too).
-7. **The program's own modules,** per module, once the above holds.
+6. **The program's own modules,** per module, once the above holds.
 
 Not part of this plan, found on the way:
-- `clang --version` runs on every release build (31M instructions, 6% of a warm hello): its
-  answer can be cached by clang's path, size and time.
+- `clang --version` runs on every release build (31M instructions, 6% of a warm hello). Its
+  answer is cached by clang's path, size and time (#2239).
 - Linking the static runtime costs 156M instructions in every release build of hello (`ld.lld`
-  over `libvelt_rt.a`, 72 MB).
+  over `libvelt_rt.a`, 72 MB). A thin archive costs the same (155.7M), and a runtime prelinked
+  into one object (`ld.lld -r --whole-archive`) 147.8M (-5%). The cost is lld's work on the
+  runtime's sections, not reading the archive, so the lever is a smaller runtime per program
+  (what hello pulls in), not the archive's form.
 
 ## Open questions
 
