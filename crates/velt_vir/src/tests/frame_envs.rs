@@ -16,8 +16,6 @@ enum Shape {
     Called,
     /// `(…)(1)`.
     Immediate,
-    /// `const f = …; const fs = [f]; fs[0](1)`.
-    Stored,
     /// `const f = …; const g = () => f(1); g()`.
     Captured,
     /// `let f = …; f = …; f(1)`.
@@ -30,11 +28,9 @@ fn program(shape: Shape) -> Program {
     let i = t.i64;
     let i2i = pb.fn_ty(vec![i], i);
     let v2i = pb.fn_ty(vec![], i);
-    let arr = pb.arr(i2i);
     let mut f = FB::new("main", t.unit);
     let k = f.local("k", i);
     let fl = f.local("f", i2i);
-    let other = f.local("other", arr);
     let g = f.local("g", v2i);
     let scale = |pb: &mut PB, n: u32| {
         closure_def(
@@ -59,19 +55,6 @@ fn program(shape: Shape) -> Program {
                 vec![call_ptr(closure(c, i2i), vec![int(1, i)], i)],
                 t,
             )));
-        }
-        Shape::Stored => {
-            body.push(let_(fl, closure(c, i2i)));
-            body.push(let_(other, array(vec![f.mv(fl)], arr)));
-            let elem = ex(
-                ExprKind::Index {
-                    base: Box::new(f.bw(other)),
-                    index: Box::new(int(0, t.usize)),
-                    mode: velt_sema::hir::UseMode::Borrow,
-                },
-                i2i,
-            );
-            body.push(se(print(vec![call_ptr(elem, vec![int(1, i)], i)], t)));
         }
         Shape::Captured => {
             body.push(let_(fl, closure(c, i2i)));
@@ -99,7 +82,11 @@ fn program(shape: Shape) -> Program {
 
 /// Does `main` allocate (a heap environment)?
 fn main_allocates(p: &Program) -> bool {
-    let vir = lower_ok(p).to_string();
+    allocates(&lower_ok(p).to_string())
+}
+
+/// Does `main` of the VIR dump `vir` allocate?
+fn allocates(vir: &str) -> bool {
     let start = vir.find("_V4main(").expect("main in the VIR");
     let rest = &vir[start..];
     rest[..rest.find("\n}\n").unwrap_or(rest.len())].contains("velt_rt_alloc")
@@ -116,11 +103,18 @@ fn only_called_closures_get_frame_envs() {
 
 #[test]
 fn closures_that_may_outlive_the_call_keep_heap_envs() {
-    for shape in [Shape::Stored, Shape::Captured, Shape::Reassigned] {
+    for shape in [Shape::Captured, Shape::Reassigned] {
         let p = program(shape);
         assert!(main_allocates(&p));
         run(&p);
     }
+    // Stored in an array: indexing it builds the out-of-bounds report, which prints the index
+    // through std's hooks (#2197), so this shape is Velt source loaded with the real std.
+    let src = "function main() {\n  const k: i64 = 3;\n  const f = (x: i64): i64 => x * k;\n  \
+               const fs = [f];\n  console.log(fs[0](1));\n}\n";
+    let v = super::lower_src(src);
+    assert!(allocates(&v.to_string()), "{v}");
+    assert_eq!(super::run_src(src).stdout, "3\n");
 }
 
 /// A frame env that owns a capture (a string moved in) drops it with the closure.

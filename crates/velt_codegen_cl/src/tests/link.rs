@@ -40,7 +40,7 @@ fn out(b: &[u8]) { std::io::stdout().write_all(b).unwrap(); }
 #[no_mangle] pub extern "C" fn velt_rt_exit(c: i32) -> ! { std::process::exit(c) }
 #[no_mangle] pub extern "C" fn velt_rt_alloc(_s: u64, _a: u64) -> *mut u8 { std::ptr::null_mut() }
 #[no_mangle] pub extern "C" fn velt_rt_free(_p: *mut u8, _s: u64, _a: u64) {}
-#[no_mangle] pub extern "C" fn velt_rt_str_from_i64(_v: i64, _o: *mut VeltStr) {}
+#[no_mangle] pub extern "C" fn velt_test_str_from_i64(_v: i64, _o: *mut VeltStr) {}
 #[no_mangle] pub extern "C" fn velt_rt_str_concat(_a: *const VeltStr, _b: *const VeltStr, _o: *mut VeltStr) {}
 #[no_mangle] pub extern "C" fn velt_rt_str_drop(_s: *mut VeltStr) {}
 #[no_mangle] pub extern "C" fn velt_rt_str_cmp(a: *const VeltStr, b: *const VeltStr) -> i32 {

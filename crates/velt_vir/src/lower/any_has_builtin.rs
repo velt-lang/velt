@@ -5,6 +5,7 @@
 
 use velt_sema::hir::{self, DefId, TyId, TyKind};
 
+use super::hook_calls::{self as hooks, ty, HookTy};
 use super::operand::proj;
 use super::rt::Rt;
 use super::{cint, FnLower};
@@ -351,8 +352,8 @@ impl FnLower<'_, '_> {
         self.switch_to(check);
         let i = self.rvalue_temp(Ty::U64, Rvalue::Cast(Operand::Copy(n), Ty::U64));
         let s = self.temp(Ty::Agg(STR_AGG));
+        hooks::uint_text(self, ty::U64::arg(i)).emit_to(self, Place::local(s));
         let sp = self.addr(Place::local(s));
-        self.call_rt(Rt::StrFromU64, vec![i, sp.clone()], None);
         let eq = Place::local(self.temp(Ty::U8));
         self.call_rt(Rt::StrEq, vec![k, sp.clone()], Some(eq.clone()));
         self.call_rt(Rt::StrDrop, vec![sp], None);

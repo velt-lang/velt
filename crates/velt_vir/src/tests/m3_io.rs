@@ -9,7 +9,7 @@ use velt_sema::hir::{Intrinsic as I, Program, UseMode as U};
 use super::builder::*;
 use super::builder_m2::*;
 use super::builder_m3::*;
-use super::programs_m3::{io_types, tcp_echo, wrapper};
+use super::programs_m3::{io_types, wrapper};
 use super::{m3_golden, run};
 
 fn fs_program(finally_test: bool) -> Program {
@@ -207,9 +207,11 @@ fn stored_promises_of_throwing_fns() {
     assert_eq!(out.code, 1);
 }
 
+/// The golden program prints numbers through std's hooks (#2197): loaded from source with the
+/// real std (std_src.rs).
 #[test]
 fn tcp_echo_golden() {
-    let out = run(&tcp_echo());
+    let out = super::run_src(&super::golden_src("m3", "tcp_echo"));
     assert_eq!(out.stdout, m3_golden("tcp_echo"));
     assert_eq!(out.code, 0);
 }

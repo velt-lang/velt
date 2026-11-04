@@ -3,13 +3,13 @@
 //! leaks and double frees), dropping unpolled promise values, awaits inside loops with
 //! `try`/`finally`, `continue`/`break` (and an await inside `finally`), and 10k spawned tasks.
 
-use velt_sema::hir::{BinOp as B, DefId, Intrinsic as I, PassMode, Program, UseMode as U};
+use velt_sema::hir::{BinOp as B, Intrinsic as I, PassMode, Program, UseMode as U};
 
 use super::builder::*;
 use super::builder_m2::*;
 use super::builder_m3::*;
 use super::interp::{poll_then_drop, Arg};
-use super::programs_m3::{count_to, delayed};
+use super::programs_m3::count_to;
 use super::run;
 
 /// `holder(s, moveIt)`: owns `s`, two derived strings (one conditionally moved away before the
@@ -107,74 +107,19 @@ fn cancel_parent_drops_embedded_child() {
     assert_eq!(done.live_allocs, 0);
 }
 
-/// ```text
-/// async function loopy(): Promise<i64> {
-///   let total = 0;
-///   for (let i = 0; i < 5; i++) {
-///     const tag = `i${i}`;                       // owned, alive across every await below
-///     try {
-///       if (i == 3) continue;
-///       total += await delayed(1, i);
-///       if (i == 4) break;
-///     } finally { await sleep(1); total += 100; console.log(tag); }
-///   }
-///   return total;
-/// }
-/// ```
-fn loopy(pb: &mut PB, delayed: DefId) -> DefId {
-    let t = pb.t;
-    let (pi, pv) = (pb.promise(t.i64), pb.promise(t.unit));
-    let mut f = FB::new("loopy", pi);
-    let total = f.local("total", t.i64);
-    let i = f.local("i", t.i64);
-    let tag = f.local("tag", t.str);
-    let body_try = vec![
-        if_(
-            cmp(B::Eq, f.cp(i), int(3, t.i64), t),
-            vec![cont(None)],
-            None,
-        ),
-        se(cassign(
-            B::Add,
-            f.bm(total),
-            await_(call(delayed, vec![int(1, t.i64), f.cp(i)], pi), t.i64),
-            t,
-        )),
-        if_(cmp(B::Eq, f.cp(i), int(4, t.i64), t), vec![brk(None)], None),
-    ];
-    let fin = vec![
-        se(await_(sleep(int(1, t.i64), pv), t.unit)),
-        se(cassign(B::Add, f.bm(total), int(100, t.i64), t)),
-        se(print(vec![f.bw(tag)], t)),
-    ];
-    let body = vec![
-        let_(total, int(0, t.i64)),
-        count_to(
-            &f,
-            i,
-            5,
-            t,
-            vec![
-                let_(tag, concat(s("i", t), to_s(f.cp(i), t), t)),
-                try_(body_try, None, Some(fin)),
-            ],
-        ),
-        ret(Some(f.cp(total))),
-    ];
-    pb.add_fn(f.build_async(body))
-}
-
+/// Awaits inside a loop, in a `try` with `continue` and `break` and a `finally` that awaits too,
+/// with an owned `tag` alive across every await. It makes the tag from `i` through std's hooks
+/// (#2197): Velt source loaded with the real std.
 #[test]
 fn awaits_in_loops_try_finally_break_continue() {
-    let mut pb = PB::new();
-    let t = pb.t;
-    let d = delayed(&mut pb);
-    let l = loopy(&mut pb, d);
-    let (pi, pv) = (pb.promise(t.i64), pb.promise(t.unit));
-    let f = FB::new("main", pv);
-    let body = vec![se(print(vec![await_(call(l, vec![], pi), t.i64)], t))];
-    pb.add_main(f.build_async(body));
-    let out = run(&pb.finish());
+    let src = "async function delayed(ms: i64, v: i64): Promise<i64> {\n  await sleep(ms);\n  return v;\n}\n\n\
+               async function loopy(): Promise<i64> {\n  let total: i64 = 0;\n  \
+               for (let i: i64 = 0; i < 5; i++) {\n    const tag = `i${i}`;\n    try {\n      \
+               if (i == 3) {\n        continue;\n      }\n      total += await delayed(1, i);\n      \
+               if (i == 4) {\n        break;\n      }\n    } finally {\n      await sleep(1);\n      \
+               total += 100;\n      console.log(tag);\n    }\n  }\n  return total;\n}\n\n\
+               async function main() {\n  console.log(await loopy());\n}\n";
+    let out = super::run_src(src);
     assert_eq!(out.stdout, "i0\ni1\ni2\ni3\ni4\n507\n");
 }
 

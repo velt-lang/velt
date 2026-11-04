@@ -159,26 +159,22 @@ fn a_program_that_names_no_json_loads_no_json_modules() {
     assert!(json_modules(csv).contains(&"std/prelude/json/json".to_string()));
 }
 
-/// Std's number printing (velt/lang/number) is loaded for a program that may convert a number
-/// to text (std/prelude/global/number_text.vlt): a template with an expression, `String(…)`,
-/// `.toString(…)`, `+` with a string. Hello world, and a program that only logs numbers (the
-/// runtime prints those), parse none of it.
+/// Std's integer printing (velt/lang/number/integer) comes with the prelude's hooks
+/// (velt/lang/hooks/number_text, #2197): lowering converts every integer to text through it. Its
+/// float printing (velt/lang/number/format) is loaded only for a program that may convert a float
+/// to text; hello world, and a program that prints only integers, parse none of it.
 #[test]
-fn a_program_that_prints_no_number_loads_no_number_printing() {
+fn a_program_that_prints_no_float_loads_no_float_printing() {
     let loads = |main: &str, module: &str| {
         std_modules(main, &["std/lang/hooks/number_", "std/lang/number/"])
             .contains(&module.to_string())
     };
     let (integers, floats) = ("std/lang/number/integer", "std/lang/number/format");
-    for main in [
-        "console.log(\"hello, world\");\n",
-        "const n = 7;\nconsole.log(n, n + 1);\n",
-    ] {
-        assert!(!loads(main, integers) && !loads(main, floats), "{main}");
-    }
     // Integers, and numbers nothing marks as floats (std's float printer stays out: such a
     // float would take the runtime's printer).
     for main in [
+        "console.log(\"hello, world\");\n",
+        "const n = 7;\nconsole.log(n, n + 1);\n",
         "const n = 7;\nconsole.log(`n=${n}`);\n",
         "const n = 7;\nconsole.log(String(n));\n",
         "const n = 7;\nconsole.log(n.toString());\n",

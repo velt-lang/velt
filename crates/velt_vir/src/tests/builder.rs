@@ -349,9 +349,6 @@ pub(super) fn let_(local: LocalId, init: Expr) -> Stmt {
         init: Some(init),
     })
 }
-pub(super) fn let_uninit(local: LocalId) -> Stmt {
-    st(StmtKind::Let { local, init: None })
-}
 pub(super) fn se(e: Expr) -> Stmt {
     st(StmtKind::Expr(e))
 }

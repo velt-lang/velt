@@ -1,169 +1,29 @@
 //! Arrays and structs: the array parts of `tests/golden/m2/arrays_maps.vlt` (Map is a prelude
-//! class), `tests/golden/m2/structs.vlt`, destructuring, bounds checks and array intrinsics.
+//! class), `tests/golden/m2/structs.vlt`, destructuring, bounds checks and array intrinsics. The
+//! programs that index an array are Velt source loaded with the real std (std_src.rs): the
+//! out-of-bounds report prints the index through std's hooks (#2197).
 
-use velt_sema::hir::{
-    AdtKind, BinOp as B, Def, Intrinsic as I, PassMode, PatKind, Program, UseMode as U,
-};
+use velt_sema::hir::{AdtKind, BinOp as B, Def, Intrinsic as I, PassMode, Program, UseMode as U};
 
 use super::builder::*;
 use super::builder_m2::*;
-use super::run;
+use super::{run, run_src};
 
-pub(super) fn arrays() -> Program {
-    let mut pb = PB::new();
-    let t = pb.t;
-    let ia = pb.arr(t.i64);
-    let iaa = pb.arr(ia);
-    let oi = pb.opt(t.i64);
-    let sum = {
-        let mut f = FB::new("sum", t.i64);
-        let xs = f.param("xs", ia, PassMode::Borrow);
-        let s_ = f.local("s", t.i64);
-        let x = f.local("x", t.i64);
-        let body = vec![
-            let_(s_, int(0, t.i64)),
-            for_of(
-                pbind(x, U::Copy, t.i64),
-                f.bw(xs),
-                vec![se(cassign(B::Add, f.bm(s_), f.cp(x), t))],
-            ),
-            ret(Some(f.cp(s_))),
-        ];
-        pb.add_fn(f.build(body))
-    };
-    let anon_d = pb.declare();
-    let anon = pb.adt_ty(anon_d, vec![]);
-    pb.set_def(
-        anon_d,
-        Def::Adt(adt(
-            "{x,y}",
-            AdtKind::Anon,
-            vec![("x", t.f64, None), ("y", t.f64, None)],
-        )),
-    );
-    let mut f = FB::new("main", t.unit);
-    let xs = f.local("xs", ia);
-    let i = f.local("i", t.i64);
-    let last = f.local("last", oi);
-    let v = f.local("v", t.i64);
-    let (first, second) = (f.local("first", t.i64), f.local("second", t.i64));
-    let (x, y) = (f.local("x", t.f64), f.local("y", t.f64));
-    let nested = f.local("nested", iaa);
-    let ix = |f: &FB, l, n| index(f.bw(l), int(n, t.i64), U::Copy, t.i64);
-    let len = |e| intr(I::ArrayLen, vec![e], t.usize);
-    let body = vec![
-        let_(xs, array(vec![], ia)),
-        sblock(vec![
-            let_(i, int(0, t.i64)),
-            while_(
-                None,
-                cmp(B::Lt, f.cp(i), int(5, t.i64), t),
-                vec![se(intr(
-                    I::ArrayPush,
-                    vec![f.bm(xs), bin(B::Mul, f.cp(i), f.cp(i))],
-                    t.unit,
-                ))],
-                Some(cassign(B::Add, f.bm(i), int(1, t.i64), t)),
-            ),
-        ]),
-        se(print(
-            vec![
-                len(f.bw(xs)),
-                call(sum, vec![f.bw(xs)], t.i64),
-                ix(&f, xs, 4),
-            ],
-            t,
-        )),
-        se(assign(
-            index(f.bm(xs), int(0, t.i64), U::BorrowMut, t.i64),
-            int(100, t.i64),
-            t,
-        )),
-        let_(last, intr(I::ArrayPop, vec![f.bm(xs)], oi)),
-        se(print(
-            vec![
-                ix(&f, xs, 0),
-                match_(
-                    f.cp(last),
-                    vec![
-                        (
-                            pat(PatKind::Some(Box::new(pbind(v, U::Copy, t.i64))), oi),
-                            None,
-                            f.cp(v),
-                        ),
-                        (pat(PatKind::None, oi), None, neg(int(1, t.i64))),
-                    ],
-                    t.i64,
-                ),
-                len(f.bw(xs)),
-            ],
-            t,
-        )),
-        let_pat(
-            pat(
-                PatKind::Array {
-                    elems: vec![pbind(first, U::Copy, t.i64), pbind(second, U::Copy, t.i64)],
-                    rest: None,
-                },
-                ia,
-            ),
-            array(vec![int(10, t.i64), int(20, t.i64)], ia),
-        ),
-        let_pat(
-            pat(
-                PatKind::Adt {
-                    fields: vec![(0, pbind(x, U::Copy, t.f64)), (1, pbind(y, U::Copy, t.f64))],
-                },
-                anon,
-            ),
-            adt_lit(anon_d, vec![flt(1.5, t.f64), flt(2.5, t.f64)], anon),
-        ),
-        se(print(
-            vec![
-                bin(B::Add, f.cp(first), f.cp(second)),
-                bin(B::Add, f.cp(x), f.cp(y)),
-            ],
-            t,
-        )),
-        let_(
-            nested,
-            array(
-                vec![
-                    array(vec![int(1, t.i64), int(2, t.i64)], ia),
-                    array(vec![int(3, t.i64)], ia),
-                ],
-                iaa,
-            ),
-        ),
-        se(print(
-            vec![
-                bin(
-                    B::Add,
-                    index(
-                        index(f.bw(nested), int(0, t.i64), U::Borrow, ia),
-                        int(1, t.i64),
-                        U::Copy,
-                        t.i64,
-                    ),
-                    index(
-                        index(f.bw(nested), int(1, t.i64), U::Borrow, ia),
-                        int(0, t.i64),
-                        U::Copy,
-                        t.i64,
-                    ),
-                ),
-                len(f.bw(nested)),
-            ],
-            t,
-        )),
-    ];
-    pb.add_main(f.build(body));
-    pb.finish()
-}
+/// The array part of `tests/golden/m2/arrays_maps.vlt` (pushes, a sum over `for … of`, indexing,
+/// assignment through an index, `pop`, array and object destructuring, nested arrays). Indexing
+/// builds the out-of-bounds report, which prints the index through std's hooks (#2197): loaded
+/// with the real std (std_src.rs).
+pub(super) const ARRAYS: &str = "function sum(xs: i64[]): i64 {\n  let s: i64 = 0;\n  \
+    for (const x of xs) {\n    s += x;\n  }\n  return s;\n}\n\nfunction main() {\n  \
+    const xs: i64[] = [];\n  for (let i: i64 = 0; i < 5; i++) {\n    xs.push(i * i);\n  }\n  \
+    console.log(xs.length, sum(xs), xs[4]);\n  xs[0] = 100;\n  const last = xs.pop();\n  \
+    console.log(xs[0], last ?? -1, xs.length);\n  const [first, second] = [10, 20];\n  \
+    const { x, y } = { x: 1.5, y: 2.5 };\n  console.log(first + second, x + y);\n  \
+    const nested: i64[][] = [[1, 2], [3]];\n  console.log(nested[0][1] + nested[1][0], nested.length);\n}\n";
 
 #[test]
 fn golden_arrays_part() {
-    let out = run(&arrays());
+    let out = run_src(ARRAYS);
     assert_eq!(out.stdout, "5 30 16\n100 16 4\n30 4\n5 2\n");
 }
 
@@ -286,84 +146,29 @@ fn golden_structs_part() {
 
 #[test]
 fn index_out_of_bounds_panics() {
-    let mut pb = PB::new();
-    let t = pb.t;
-    let sa = pb.arr(t.str);
-    let mut f = FB::new("main", t.unit);
-    let xs = f.local("xs", sa);
-    let body = vec![
-        let_(xs, array(vec![s("a", t), s("b", t)], sa)),
-        se(print(
-            vec![index(f.bw(xs), neg(int(1, t.i64)), U::Borrow, t.str)],
-            t,
-        )),
-    ];
-    pb.add_main(f.build(body));
-    let out = run(&pb.finish());
+    let src = "function main() {\n  const xs = [\"a\", \"b\"];\n  const i: i64 = 5;\n  \
+               console.log(xs[i]);\n}\n";
+    let out = run_src(src);
     assert_eq!(
         out.stderr,
-        "panic: index out of bounds: the len is 2 but the index is -1\n"
+        "panic: index out of bounds: the len is 2 but the index is 5\n"
     );
     assert_eq!(out.code, 101);
 }
 
-/// swap / remove / truncate / with_capacity / clone / `==` / hash on arrays of strings.
+/// swap / shift / truncate / clone on arrays of strings (the clone is a copy of its own), and a
+/// string key built at run time found in a `Map` (its hash is the literal's).
 #[test]
 fn array_intrinsics() {
-    let mut pb = PB::new();
-    let t = pb.t;
-    let sa = pb.arr(t.str);
-    let u64t = pb.ty(velt_sema::hir::TyKind::Int(velt_sema::hir::IntTy::U64));
-    let mut f = FB::new("main", t.unit);
-    let xs = f.local("xs", sa);
-    let ys = f.local("ys", sa);
-    let removed = f.local("removed", t.str);
-    let u = |v| int(v, t.usize);
-    let body = vec![
-        let_(xs, intr(I::ArrayWithCapacity, vec![u(2)], sa)),
-        se(intr(
-            I::ArrayPush,
-            vec![f.bm(xs), concat(s("a", t), s("1", t), t)],
-            t.unit,
-        )),
-        se(intr(
-            I::ArrayPush,
-            vec![f.bm(xs), concat(s("b", t), s("2", t), t)],
-            t.unit,
-        )),
-        se(intr(
-            I::ArrayPush,
-            vec![f.bm(xs), concat(s("c", t), s("3", t), t)],
-            t.unit,
-        )),
-        se(intr(I::ArraySwap, vec![f.bm(xs), u(0), u(2)], t.unit)),
-        let_(ys, intr(I::Clone, vec![f.bw(xs)], sa)),
-        se(print(vec![f.bw(xs), cmp(B::Eq, f.bw(xs), f.bw(ys), t)], t)),
-        let_(removed, intr(I::ArrayRemove, vec![f.bm(xs), u(0)], t.str)),
-        se(intr(I::ArrayTruncate, vec![f.bm(ys), u(1)], t.unit)),
-        se(print(
-            vec![
-                f.bw(removed),
-                f.bw(xs),
-                f.bw(ys),
-                cmp(B::Eq, f.bw(xs), f.bw(ys), t),
-            ],
-            t,
-        )),
-        se(print(
-            vec![cmp(
-                B::Eq,
-                intr(I::Hash, vec![s("k", t)], u64t),
-                intr(I::Hash, vec![concat(s("", t), s("k", t), t)], u64t),
-                t,
-            )],
-            t,
-        )),
-    ];
-    pb.add_main(f.build(body));
-    let out = run(&pb.finish());
+    let src = "function main() {\n  const xs: string[] = [];\n  xs.push(\"a\" + \"1\");\n  \
+               xs.push(\"b\" + \"2\");\n  xs.push(\"c\" + \"3\");\n  xs.swap(0, 2);\n  \
+               const ys = xs.clone();\n  console.log(xs, ys);\n  const removed = xs.shift();\n  \
+               ys.truncate(1);\n  console.log(removed, xs, ys);\n  \
+               const m = new Map<string, i64>();\n  m.set(\"k\", 1);\n  const empty = \"\";\n  \
+               console.log(m.has(empty + \"k\"));\n}\n";
+    let out = run_src(src);
     assert_eq!(
         out.stdout,
-        "[ 'c3', 'b2', 'a1' ] true\nc3 [ 'b2', 'a1' ] [ 'c3' ] false\ntrue\n"
+        "[ 'c3', 'b2', 'a1' ] [ 'c3', 'b2', 'a1' ]\nc3 [ 'b2', 'a1' ] [ 'c3' ]\ntrue\n"
     );
 }

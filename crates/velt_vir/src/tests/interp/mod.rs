@@ -72,6 +72,9 @@ struct Interp<'p> {
     exec: async_rt::Exec,
     /// Bounded drop nesting (drops.rs).
     drops: drops::Drops,
+    /// The function `velt_rt_statics_drop` handed over, which releases the references the
+    /// program's static atomics hold: called at a normal exit, before leaks are counted.
+    statics_drop: Option<u64>,
 }
 
 /// Run `velt_main` to completion (or until panic/exit).
@@ -90,6 +93,10 @@ fn run_in(mut it: Interp) -> Outcome {
         Ok(v) => (v.s() as u32 as i32, true),
         Err(c) => (c, false),
     };
+    if let (true, Some(f)) = (normal, it.statics_drop.take()) {
+        it.call_fn((f - FUNC_BASE) as usize, vec![])
+            .unwrap_or_else(|c| panic!("interp: statics' drop exited with {c}"));
+    }
     Outcome {
         stdout: it.stdout,
         stderr: it.stderr,
@@ -116,6 +123,7 @@ impl<'p> Interp<'p> {
             throw_loc: 0,
             exec: async_rt::Exec::default(),
             drops: drops::Drops::default(),
+            statics_drop: None,
         };
         for s in &p.statics {
             let a = it.raw_alloc(s.bytes.len().max(1) as u64);

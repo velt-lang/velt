@@ -34,6 +34,7 @@ mod numeric;
 mod param_attrs;
 mod programs_m3;
 mod srclocs;
+mod std_src;
 mod verifier;
 mod vir_ext;
 
@@ -58,6 +59,30 @@ fn run(p: &hir::Program) -> interp::Outcome {
     out
 }
 
+/// `src` (Velt, loaded with the real std: std_src.rs) lowered and verified.
+fn lower_src(src: &str) -> vir::Program {
+    lower_ok(&std_src::check_src(src))
+}
+
+/// The function of `v` that the root module's top-level function `name` lowered to (its symbol
+/// is `_V<len><name>`).
+fn user_fn<'a>(v: &'a vir::Program, name: &str) -> &'a vir::Function {
+    let sym = format!("_V{}{name}", name.len());
+    v.funcs
+        .iter()
+        .find(|f| f.symbol == sym)
+        .unwrap_or_else(|| panic!("no function `{sym}` in:\n{v}"))
+}
+
+/// `src` (Velt, loaded with the real std: std_src.rs) lowered, verified and interpreted. Asserts
+/// no leaks on normal exit.
+fn run_src(src: &str) -> interp::Outcome {
+    let v = lower_src(src);
+    let out = interp::run(&v);
+    assert_eq!(out.live_allocs, 0, "leaked heap allocations\n{v}");
+    out
+}
+
 /// Expected stdout of an M2 golden program.
 fn m2_golden(name: &str) -> String {
     golden_out("m2", name)
@@ -66,6 +91,15 @@ fn m2_golden(name: &str) -> String {
 /// Expected stdout of an M3/M4 golden program.
 fn m3_golden(name: &str) -> String {
     golden_out("m3", name)
+}
+
+/// The source of golden program `tests/golden/<dir>/<name>.vlt`, for [`run_src`].
+fn golden_src(dir: &str, name: &str) -> String {
+    let path = format!(
+        "{}/../../tests/golden/{dir}/{name}.vlt",
+        env!("CARGO_MANIFEST_DIR")
+    );
+    std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"))
 }
 
 fn golden_out(dir: &str, name: &str) -> String {

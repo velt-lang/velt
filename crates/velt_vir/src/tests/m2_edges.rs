@@ -1,266 +1,72 @@
 //! Less common M2 paths: rest patterns, `catch {}` without a binding, class
 //! objects as interface values, generic impls, virtual methods taking owned arguments (thunks),
-//! printing tuples, hashing structured values.
+//! printing tuples, hashing structured values. The programs that print numbers or index arrays
+//! are Velt source loaded with the real std (std_src.rs): both go through std's hooks (#2197).
 
-use velt_sema::hir::{
-    AdtKind, BinOp as B, Callee, Def, ImplDef, InterfaceDef, InterfaceMethodDef, Intrinsic as I,
-    PassMode, PatKind, TyKind, UseMode as U,
-};
+use velt_sema::hir::{AdtKind, Def, PassMode, UseMode as U};
 
 use super::builder::*;
 use super::builder_m2::*;
-use super::run;
+use super::{run, run_src};
 
 #[test]
 fn rest_pattern_and_catch_without_binding() {
-    let mut pb = PB::new();
-    let t = pb.t;
-    let sa = pb.arr(t.str);
-    let boom = {
-        let mut f = FB::new("boom", t.unit);
-        f.throws = Some(t.str);
-        pb.add_fn(f.build(vec![se(throw(concat(s("x", t), s("y", t), t), t.never))]))
-    };
-    let mut f = FB::new("main", t.unit);
-    let (a, rest) = (f.local("a", t.str), f.local("rest", sa));
-    // Sema gives a binding-less `catch` a local of the caught type.
-    let caught = f.local("<caught>", t.str);
-    let body = vec![
-        let_pat(
-            pat(
-                PatKind::Array {
-                    elems: vec![pbind(a, U::Move, t.str)],
-                    rest: Some(rest),
-                },
-                sa,
-            ),
-            array(
-                vec![
-                    concat(s("p", t), s("1", t), t),
-                    s("q", t),
-                    concat(s("r", t), s("", t), t),
-                ],
-                sa,
-            ),
-        ),
-        se(print(vec![f.bw(a), f.bw(rest)], t)),
-        try_(
-            vec![se(call(boom, vec![], t.unit))],
-            Some((Some(caught), vec![se(print(vec![s("caught", t)], t))])),
-            None,
-        ),
-    ];
-    pb.add_main(f.build(body));
-    let out = run(&pb.finish());
+    let src = "class Boom {\n  message: string;\n  constructor(message: string) {\n    \
+               this.message = message;\n  }\n}\n\nfunction boom() {\n  throw new Boom(\"x\" + \"y\");\n}\n\n\
+               function main() {\n  const [a, ...rest] = [\"p\" + \"1\", \"q\", \"r\" + \"\"];\n  \
+               console.log(a, rest);\n  try {\n    boom();\n  } catch {\n    console.log(\"caught\");\n  }\n}\n";
+    let out = run_src(src);
     assert_eq!(out.stdout, "p1 [ 'q', 'r' ]\ncaught\n");
 }
 
+/// A `Base` holding a `Sub` calls `take` (owned argument) virtually, and as a `Shows` interface
+/// value it calls `show`, which calls `take` virtually again.
 #[test]
 fn classes_as_interface_values_and_owned_virtual_args() {
-    let mut pb = PB::new();
-    let t = pb.t;
-    let base_d = pb.declare();
-    let base = pb.adt_ty(base_d, vec![]);
-    let sub_d = pb.declare();
-    let sub = pb.adt_ty(sub_d, vec![]);
-    let (take_b, take_s) = (pb.declare(), pb.declare());
-    let mut bd = adt("Base", AdtKind::Class, vec![("n", t.i64, None)]);
-    bd.vtable = vec![take_b];
-    pb.set_def(base_d, Def::Adt(bd));
-    let mut sd = adt(
-        "Sub",
-        AdtKind::Class,
-        vec![("n", t.i64, None), ("tag", t.str, Some(s("t", t)))],
-    );
-    sd.vtable = vec![take_s];
-    sd.base = Some(base);
-    pb.set_def(sub_d, Def::Adt(sd));
-    for (def, cls, name, pre) in [
-        (take_b, base, "Base.take", "base "),
-        (take_s, sub, "Sub.take", "sub "),
-    ] {
-        let mut f = FB::method(name, cls, t.str);
-        let _this = f.param("this", cls, PassMode::Borrow);
-        let x = f.param("x", t.str, PassMode::Owned);
-        let keep = f.local("keep", t.str);
-        let body = vec![
-            let_(keep, f.mv(x)),
-            ret(Some(concat(s(pre, t), f.bw(keep), t))),
-        ];
-        pb.define(def, f.build(body));
-    }
-    let shows = pb.declare();
-    let show_d = pb.declare();
-    pb.set_def(
-        shows,
-        Def::Interface(InterfaceDef {
-            name: "Shows".into(),
-            generics: 0,
-            fields: vec![],
-            methods: vec![InterfaceMethodDef {
-                name: "show".into(),
-                default: Some(show_d),
-                promise: false,
-                throws: None,
-            }],
-            span: SP,
-        }),
-    );
-    let p0 = pb.param(0);
-    {
-        let mut f = FB::method("Shows.show", p0, t.str);
-        f.generics = 1;
-        let this = f.param("this", p0, PassMode::Borrow);
-        let e = callee(
-            Callee::Virtual { slot: 0 },
-            vec![upcast(f.bw(this), base), s("via dyn", t)],
-            t.str,
-        );
-        pb.define(show_d, f.build(vec![ret(Some(e))]));
-    }
-    pb.add_impl(ImplDef {
-        ty: base,
-        generics: 0,
-        iface: shows,
-        iface_args: vec![],
-        methods: vec![show_d],
-    });
-    let dy = pb.ty(TyKind::Dyn(shows, vec![]));
-    let mut f = FB::new("main", t.unit);
-    let b = f.local("b", base);
-    let d = f.local("d", dy);
-    let arg = f.local("arg", t.str);
-    let body = vec![
-        let_(b, upcast(new_obj(sub_d, vec![], sub), base)),
-        let_(arg, concat(s("o", t), s("wned", t), t)),
-        se(print(
-            vec![callee(
-                Callee::Virtual { slot: 0 },
-                vec![f.bw(b), f.mv(arg)],
-                t.str,
-            )],
-            t,
-        )),
-        let_(d, to_dyn(f.mv(b), 0, dy)),
-        se(print(
-            vec![
-                callee(
-                    Callee::Dyn {
-                        slot: 0,
-                        method_type_args: vec![],
-                    },
-                    vec![f.bw(d)],
-                    t.str,
-                ),
-                f.bw(d),
-            ],
-            t,
-        )),
-    ];
-    pb.add_main(f.build(body));
-    let out = run(&pb.finish());
+    let src = "interface Shows {\n  show(): string;\n}\n\nclass Base implements Shows {\n  \
+               n: i64 = 0;\n  take(x: string): string {\n    const keep = x;\n    return \"base \" + keep;\n  }\n  \
+               show(): string {\n    return this.take(\"via dyn\");\n  }\n}\n\n\
+               class Sub extends Base {\n  tag: string = \"t\";\n  override take(x: string): string {\n    \
+               const keep = x;\n    return \"sub \" + keep;\n  }\n}\n\n\
+               function main() {\n  const b: Base = new Sub();\n  const arg = \"o\" + \"wned\";\n  \
+               console.log(b.take(arg));\n  const d: Shows = b;\n  console.log(d.show(), b);\n}\n";
+    let out = run_src(src);
     assert_eq!(
         out.stdout,
         "sub owned\nsub via dyn Sub { n: 0, tag: 't' }\n"
     );
 }
 
-/// Prints a generic struct through an interface impl and hashes two equal values of it and a
-/// third one; `declared` marks it as declared with `struct` (`AdtDef::declared_struct`).
-fn structured_hash_print(declared: bool) -> String {
-    let mut pb = PB::new();
-    let t = pb.t;
-    let p0 = pb.param(0);
-    let box_d = pb.declare();
-    let mut bd = adt("Box", AdtKind::Struct, vec![("v", p0, None)]);
-    bd.generics = 1;
-    bd.declared_struct = declared;
-    pb.set_def(box_d, Def::Adt(bd));
-    let box_p = pb.adt_ty(box_d, vec![p0]);
-    let sized = pb.declare();
-    let size_m = {
-        let mut f = FB::method("Box.size", box_p, t.i64);
-        f.generics = 1;
-        let _this = f.param("this", box_p, PassMode::Borrow);
-        pb.add_fn(f.build(vec![ret(Some(int(1, t.i64)))]))
+/// Prints a generic `Box` through an interface method called on a type parameter and as a value
+/// next to a tuple, and looks up two equal `Box`es and another one as `Map` keys: `kind` is
+/// `struct` (a declared struct, which hashes its fields) or `class` (which hashes its identity).
+fn structured_hash_print(kind: &str) -> String {
+    let ctor = match kind {
+        "class" => "\n  constructor(v: T) {\n    this.v = v;\n  }",
+        _ => "",
     };
-    pb.set_def(
-        sized,
-        Def::Interface(InterfaceDef {
-            name: "Sized".into(),
-            generics: 0,
-            fields: vec![],
-            methods: vec![InterfaceMethodDef {
-                name: "size".into(),
-                default: None,
-                promise: false,
-                throws: None,
-            }],
-            span: SP,
-        }),
+    let make = |v: &str| match kind {
+        "class" => format!("new Box<string>({v})"),
+        _ => format!("Box {{ v: {v} }}"),
+    };
+    let src = format!(
+        "interface Sized {{\n  size(): i64;\n}}\n\n{kind} Box<T> implements Sized {{\n  v: T;{ctor}\n  \
+         size(): i64 {{\n    return 1;\n  }}\n}}\n\nfunction count<T extends Sized>(x: T): i64 {{\n  \
+         return x.size();\n}}\n\nfunction main() {{\n  const empty = \"\";\n  const bx = {};\n  \
+         console.log(count(bx));\n  const tup: [i64, string] = [1, \"a\"];\n  console.log(tup, bx);\n  \
+         const m = new Map<Box<string>, i64>();\n  m.set(bx, 1);\n  \
+         console.log(m.has({}), m.has({}));\n}}\n",
+        make("empty + \"k\""),
+        make("empty + \"k\""),
+        make("empty + \"j\""),
     );
-    pb.add_impl(ImplDef {
-        ty: box_p,
-        generics: 1,
-        iface: sized,
-        iface_args: vec![],
-        methods: vec![size_m],
-    });
-    let count = {
-        let mut f = FB::new("count", t.i64);
-        f.generics = 1;
-        let x = f.param("x", p0, PassMode::Borrow);
-        let e = callee(
-            Callee::ParamMethod {
-                iface: sized,
-                iface_args: vec![],
-                slot: 0,
-                method_type_args: vec![],
-            },
-            vec![f.bw(x)],
-            t.i64,
-        );
-        pb.add_fn(f.build(vec![ret(Some(e))]))
-    };
-    let box_s = pb.adt_ty(box_d, vec![t.str]);
-    let tup = pb.ty(TyKind::Tuple(vec![t.i64, t.str]));
-    let u64t = pb.ty(TyKind::Int(velt_sema::hir::IntTy::U64));
-    let mut f = FB::new("main", t.unit);
-    let bx = f.local("bx", box_s);
-    let h = |e| intr(I::Hash, vec![e], u64t);
-    let mk = |v: &str| adt_lit(box_d, vec![concat(s(v, t), s("", t), t)], box_s);
-    let body = vec![
-        let_(bx, mk("k")),
-        se(print(
-            vec![call_g(count, vec![box_s], vec![f.bw(bx)], t.i64)],
-            t,
-        )),
-        se(print(
-            vec![
-                ex(
-                    velt_sema::hir::ExprKind::Tuple(vec![int(1, t.i64), s("a", t)]),
-                    tup,
-                ),
-                f.bw(bx),
-            ],
-            t,
-        )),
-        se(print(
-            vec![
-                cmp(B::Eq, h(f.bw(bx)), h(mk("k")), t),
-                cmp(B::Eq, h(f.bw(bx)), h(mk("j")), t),
-            ],
-            t,
-        )),
-    ];
-    pb.add_main(f.build(body));
-    run(&pb.finish()).stdout
+    run_src(&src).stdout
 }
 
 #[test]
 fn generic_impl_and_structured_hash_print() {
     // An object hashes its identity (`Map` keys, #1257): an equal object is another key.
-    let out = structured_hash_print(false);
+    let out = structured_hash_print("class");
     assert_eq!(out, "1\n[ 1, 'a' ] Box { v: 'k' }\nfalse false\n");
 }
 
@@ -268,7 +74,7 @@ fn generic_impl_and_structured_hash_print() {
 fn declared_struct_hashes_its_content() {
     // A type declared with `struct` hashes its fields (`Map` keys, #641): an equal struct is
     // the same key.
-    let out = structured_hash_print(true);
+    let out = structured_hash_print("struct");
     assert_eq!(out, "1\n[ 1, 'a' ] Box { v: 'k' }\ntrue false\n");
 }
 

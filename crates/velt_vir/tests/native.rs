@@ -1,5 +1,5 @@
-//! Native runs of lowered M3/M4 programs: HIR (the same hand-built programs the interpreter
-//! tests use) → `velt_vir::lower` → Cranelift object → linked with the real `velt_rt` (tokio
+//! Native runs of lowered M3/M4 programs: HIR (the same programs the interpreter tests use:
+//! hand-built, or golden sources loaded with the real std) → `velt_vir::lower` → Cranelift object → linked with the real `velt_rt` (tokio
 //! executor, timers, TCP, JSON reader) → executed; stdout is compared with the goldens.
 
 // The shared builders are written for the unit-test tree; each test crate uses a subset.
@@ -18,6 +18,8 @@ mod builder_prelude;
 #[allow(dead_code)]
 #[path = "../src/tests/programs_m3.rs"]
 mod programs_m3;
+#[path = "../src/tests/std_src.rs"]
+mod std_src;
 
 use std::path::{Path, PathBuf};
 use std::sync::Once;
@@ -98,9 +100,17 @@ fn golden(dir: &str, name: &str) -> String {
         .replace("\r\n", "\n")
 }
 
+/// The source of golden program `tests/golden/<dir>/<name>.vlt`, loaded with the real std: it
+/// prints numbers through std's hooks (#2197).
+fn golden_program(dir: &str, name: &str) -> hir::Program {
+    let path = root().join(format!("tests/golden/{dir}/{name}.vlt"));
+    let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    std_src::check_src(&src)
+}
+
 #[test]
 fn async_basic() {
-    let (out, code) = run_native("async_basic", &programs_m3::async_basic());
+    let (out, code) = run_native("async_basic", &golden_program("m3", "async_basic"));
     assert_eq!(out, golden("m3", "async_basic"));
     assert_eq!(code, 0);
 }
@@ -114,7 +124,7 @@ fn tasks() {
 
 #[test]
 fn tcp_echo() {
-    let (out, code) = run_native("tcp_echo", &programs_m3::tcp_echo());
+    let (out, code) = run_native("tcp_echo", &golden_program("m3", "tcp_echo"));
     assert_eq!(out, golden("m3", "tcp_echo"));
     assert_eq!(code, 0);
 }

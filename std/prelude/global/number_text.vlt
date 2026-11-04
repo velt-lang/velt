@@ -1,6 +1,0 @@
-// Global (loaded when a module may convert a number to text: a template literal with an
-// expression, `String(…)`, `.toString(…)` or `+` with a string, crates/velt_loader/src/globals):
-// velt/lang/hooks/number_text, the hooks lowering calls for a number in a template or `String()`.
-// It names nothing a program can use: the compiler calls them (velt_common `std_hooks.rs`).
-// load for: a number converted to text
-import "velt/lang/hooks/number_text";

@@ -493,32 +493,24 @@ fn remainders_of_doubles_that_may_be_negative_stay_doubles() {
     }
 }
 
-/// `f(a: i32, out: ptr)`: `x.toString()` and `` `${x}` `` of `x = a as f64` (or of `x * 0.5`).
+/// `f(a: i32, out: ptr)`: `console.log(x)` of `x = a as f64` (or of `x * 0.5`).
 fn formatted_program(half: bool) -> Program {
     let mut pb = ProgramBuilder::new();
-    let from = pb.ext("velt_rt_str_from_f64", &[Ty::F64, Ty::Ptr], Ty::Unit, false);
-    let push = pb.ext(
-        "velt_rt_strbuf_push_f64",
-        &[Ty::Ptr, Ty::F64],
-        Ty::Unit,
-        false,
-    );
+    let write = pb.ext("velt_rt_write_f64", &[Ty::U32, Ty::F64], Ty::Unit, false);
     let mut fb = FuncBuilder::export("f", &[Ty::I32, Ty::Ptr], Ty::Unit);
-    let (a, out) = (fb.param(0), fb.param(1));
+    let a = fb.param(0);
     let (af, x) = (fb.local(Ty::F64), fb.local(Ty::F64));
     let b0 = fb.block();
     fb.assign(b0, af, Rvalue::Cast(copy_local(a), Ty::F64));
-    let factor = if half { 0.5 } else { 1.0 };
-    fb.assign(
-        b0,
-        x,
-        bin(BinOp::Mul, copy_local(af), float(factor, Ty::F64)),
-    );
-    let args = vec![copy_local(x), copy_local(out)];
-    let b1 = fb.call(b0, Callee::Extern(from), args, None);
-    let args = vec![copy_local(out), copy_local(x)];
-    let b2 = fb.call(b1, Callee::Extern(push), args, None);
-    fb.ret(b2, Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit));
+    // `console.log` prints `-0` as `-0`: the whole `x` must not be one (an `i32` as `f64` is not).
+    let value = match half {
+        true => bin(BinOp::Mul, copy_local(af), float(0.5, Ty::F64)),
+        false => Rvalue::Use(copy_local(af)),
+    };
+    fb.assign(b0, x, value);
+    let args = vec![int(1, Ty::U32), copy_local(x)];
+    let b1 = fb.call(b0, Callee::Extern(write), args, None);
+    fb.ret(b1, Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit));
     pb.add(fb.finish());
     let mut p = as_intrinsics(pb.finish());
     print::declare(&mut p.externs);
@@ -542,15 +534,9 @@ fn callees(p: &Program) -> Vec<String> {
 #[test]
 fn whole_numbers_format_through_the_integer_formatters() {
     let q = narrowed(&formatted_program(false));
-    assert_eq!(
-        callees(&q),
-        ["velt_rt_str_from_i64", "velt_rt_strbuf_push_i64"]
-    );
+    assert_eq!(callees(&q), ["velt_rt_write_i64"]);
     let q = narrowed(&formatted_program(true));
-    assert_eq!(
-        callees(&q),
-        ["velt_rt_str_from_f64", "velt_rt_strbuf_push_f64"]
-    );
+    assert_eq!(callees(&q), ["velt_rt_write_f64"]);
 }
 
 /// `f(p: f64, n: u32 or u64)`: `k = 0; while (p < 1e18) { i = k as u64; t = i; if (!(t < n))

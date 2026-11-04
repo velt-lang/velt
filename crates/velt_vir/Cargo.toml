@@ -9,6 +9,9 @@ velt_common.workspace = true
 velt_sema.workspace = true
 
 [dev-dependencies]
+# Tests whose lowering reaches std's hooks load their program with the real std, as `velt build`
+# does (src/tests/std_src.rs). No cycle: velt_loader does not depend on velt_vir.
+velt_loader.workspace = true
 # Native tests (tests/native.rs): compile lowered programs with Cranelift and link the real rt.
 velt_codegen_cl.workspace = true
 velt_link.workspace = true

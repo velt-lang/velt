@@ -204,16 +204,9 @@ unsafe fn push_ascii(buf: *mut VeltStrBuf, text: &[u8]) {
     (*buf).push_ascii(text);
 }
 
-/// Append a decimal `i64`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_strbuf_push_i64(buf: *mut VeltStrBuf, v: i64) {
-    let mut b = itoa::Buffer::new();
-    push_ascii(buf, b.format(v).as_bytes());
-}
-
-/// Append a decimal `u64`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_strbuf_push_u64(buf: *mut VeltStrBuf, v: u64) {
+/// Append a decimal `i64`: a whole float's digits. Not an extern: compiled code appends an
+/// integer through std (velt/lang/hooks/number_text, #2197).
+unsafe fn push_i64(buf: *mut VeltStrBuf, v: i64) {
     let mut b = itoa::Buffer::new();
     push_ascii(buf, b.format(v).as_bytes());
 }
@@ -223,7 +216,7 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_u64(buf: *mut VeltStrBuf, v: u64) {
 pub unsafe extern "C" fn velt_rt_strbuf_push_f64(buf: *mut VeltStrBuf, v: f64) {
     // A whole number below 2^53 (`${i}`) is its integer digits, as fast as an integer's.
     if let Some(i) = fmt::whole(v) {
-        return velt_rt_strbuf_push_i64(buf, i);
+        return push_i64(buf, i);
     }
     (*buf).push_with_summary(|b| fmt::push_f64(b, v), |n| Some(Summary::ascii(n)));
 }
@@ -233,7 +226,7 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_f64(buf: *mut VeltStrBuf, v: f64) {
 pub unsafe extern "C" fn velt_rt_strbuf_push_inspect_f64(buf: *mut VeltStrBuf, v: f64) {
     if v != 0.0 {
         if let Some(i) = fmt::whole(v) {
-            return velt_rt_strbuf_push_i64(buf, i);
+            return push_i64(buf, i);
         }
     }
     (*buf).push_with_summary(|b| fmt::push_inspect_f64(b, v), |n| Some(Summary::ascii(n)));
@@ -402,9 +395,9 @@ mod tests {
         let name = VeltStr::from_static("wörld".as_bytes());
         unsafe {
             velt_rt_strbuf_push_bytes(&mut b, b"x=".as_ptr(), 2);
-            velt_rt_strbuf_push_i64(&mut b, -42);
+            velt_rt_strbuf_push_f64(&mut b, -42.0);
             velt_rt_strbuf_push_byte(&mut b, b' ');
-            velt_rt_strbuf_push_u64(&mut b, u64::MAX);
+            velt_rt_strbuf_push_f64(&mut b, 9007199254740991.0);
             velt_rt_strbuf_push_byte(&mut b, b' ');
             velt_rt_strbuf_push_f64(&mut b, 0.1 + 0.2);
             velt_rt_strbuf_push_byte(&mut b, b' ');
@@ -413,7 +406,7 @@ mod tests {
             velt_rt_strbuf_push_str(&mut b, &name);
             velt_rt_strbuf_push_bytes(&mut b, std::ptr::null(), 0);
         }
-        let want = format!("x={} {} 0.30000000000000004 1e+21truewörld", -42, u64::MAX);
+        let want = "x=-42 9007199254740991 0.30000000000000004 1e+21truewörld";
         assert_eq!(finish(b), want);
     }
 
@@ -439,7 +432,7 @@ mod tests {
         let mut b = new_buf(8);
         unsafe {
             velt_rt_strbuf_push_bytes(&mut b, b"line ".as_ptr(), 5);
-            velt_rt_strbuf_push_i64(&mut b, 123456);
+            velt_rt_strbuf_push_f64(&mut b, 123456.0);
             velt_rt_strbuf_push_bytes(&mut b, b": fizz ok".as_ptr(), 9);
         }
         assert!(b.is_inline());
@@ -469,7 +462,7 @@ mod tests {
         let mut s = VeltStr::from_static(b"ab");
         unsafe { velt_rt_strbuf_push_byte(&mut s, b'c') };
         assert!(!s.is_static());
-        unsafe { velt_rt_strbuf_push_i64(&mut s, 7) };
+        unsafe { velt_rt_strbuf_push_byte(&mut s, b'7') };
         let sp: *mut VeltStr = &mut s;
         unsafe { velt_rt_strbuf_push_str(sp, sp) };
         // An uncounted view into the builder's own full buffer, which must grow (and may move).

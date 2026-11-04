@@ -206,9 +206,7 @@ Three forms, told apart by **byte 23** (the top byte of `w2`) and `w2`:
 |---|---|---|
 | `velt_rt_str_concat` | `(const VeltStr* a, const VeltStr* b, VeltStr* out)` | new string (an empty operand: the other one, shared) |
 | `velt_rt_str_append` | `(VeltStr* s, const VeltStr* t)` | `s += t` on the owned string `*s`, whose old value is dead: in place when `*s` is inline with room or holds the only reference to its heap buffer (which grows geometrically); a static or shared `*s` is first copied into a buffer of its own. `t` may be `s` or lie in `*s`'s buffer. Emitted for `s += x`, `s = s + x` and `` s = `${s}${x}` `` on variables and fields (rt_abi_async.md §12.1) |
-| `velt_rt_str_from_i64` | `(int64_t v, VeltStr* out)` | decimal (inline) |
-| `velt_rt_str_from_u64` | `(uint64_t v, VeltStr* out)` | decimal (inline) |
-| `velt_rt_str_from_f64` | `(double v, VeltStr* out)` | JS `Number.prototype.toString` formatting (inline) |
+| `velt_rt_str_from_f64` | `(double v, VeltStr* out)` | JS `Number.prototype.toString` formatting (inline). The integer forms (`str_from_i64` / `_u64`) are gone: an integer's text is std's `intText` / `uintText` (velt/lang/hooks/number_text, #2197) |
 | `velt_rt_str_from_bool` | `(uint8_t v, VeltStr* out)` | `true`/`false` (static) |
 | `velt_rt_str_clone` | `(const VeltStr* s, VeltStr* out)` | a copy: bitwise, plus count +1 for heap strings (never a deep copy); generated code calls it for heap strings only (`(int64_t)w2 > 0`) and copies the three words of any other |
 | `velt_rt_str_own` | `(const VeltStr* s, VeltStr* out)` | like `str_clone`, but a static-form string (which may borrow memory, e.g. a JSON key pointing into the parsed text) is copied into an inline or heap string |
