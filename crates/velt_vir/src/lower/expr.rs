@@ -154,11 +154,13 @@ impl FnLower<'_, '_> {
         // callback (caller_stores.rs `Held::Elems`).
         let to_caller = std::mem::take(&mut self.read_info.elems_to_caller);
         let later = self.later_each(es);
+        let shared = self.shared_moves(es);
         let mut vals = Vec::with_capacity(es.len());
-        for (e, later) in es.iter().zip(later) {
-            let v = match to_caller {
-                true => self.keep_for_caller(e),
-                false => self.consume(e),
+        for ((e, later), shared) in es.iter().zip(later).zip(shared) {
+            let v = match (to_caller, shared) {
+                (true, _) => self.keep_for_caller(e),
+                (false, true) => self.consume_shared(e),
+                (false, false) => self.consume(e),
             };
             vals.push(self.hold_owned(v, e.ty, later));
         }
