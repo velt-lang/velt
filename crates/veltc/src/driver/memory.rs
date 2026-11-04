@@ -1,6 +1,6 @@
 //! The compiler's memory at the end of each stage, for `velt build --timings`: the resident set
 //! and its peak so far (the peak as mimalloc, the compiler's allocator through `velt_rt_host`,
-//! reports it). A stage that keeps an earlier stage's data alive shows as a resident set that does not
+//! reports it, and on Windows the OS). A stage that keeps an earlier stage's data alive shows as a resident set that does not
 //! go down after it.
 
 use std::sync::{Arc, Mutex};
@@ -78,8 +78,38 @@ pub struct Reading {
     pub peak: usize,
 }
 
-/// The process's resident set and its peak now.
-pub fn read() -> Option<Reading> {
+/// Windows: the peak working set from kernel32, as `velt_rt`'s `memory_usage` reads its counters:
+/// `mi_process_info` loads `psapi.dll` on its first call, which can hang on the loader lock.
+#[cfg(windows)]
+fn os_peak() -> Option<usize> {
+    #[repr(C)]
+    #[derive(Default)]
+    struct ProcessMemoryCounters {
+        cb: u32,
+        page_fault_count: u32,
+        peak_working_set_size: usize,
+        rest: [usize; 7],
+    }
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetCurrentProcess() -> *mut std::ffi::c_void;
+        fn K32GetProcessMemoryInfo(
+            process: *mut std::ffi::c_void,
+            counters: *mut ProcessMemoryCounters,
+            cb: u32,
+        ) -> i32;
+    }
+    let mut c = ProcessMemoryCounters::default();
+    let cb = std::mem::size_of::<ProcessMemoryCounters>() as u32;
+    c.cb = cb;
+    // SAFETY: `c` is a properly sized out buffer and `cb` says its size.
+    let ok = unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut c, cb) };
+    (ok != 0).then_some(c.peak_working_set_size)
+}
+
+/// The peak resident set as mimalloc, the compiler's allocator, reports it.
+#[cfg(not(windows))]
+fn os_peak() -> Option<usize> {
     extern "C" {
         fn mi_process_info(
             elapsed_msecs: *mut usize,
@@ -96,6 +126,12 @@ pub fn read() -> Option<Reading> {
     let null = std::ptr::null_mut();
     // SAFETY: mimalloc writes only the outputs that are not null.
     unsafe { mi_process_info(null, null, null, null, &mut peak, null, null, null) };
+    Some(peak)
+}
+
+/// The process's resident set and its peak now.
+pub fn read() -> Option<Reading> {
+    let peak = os_peak().unwrap_or(0);
     // The resident set as the OS counts it (mimalloc's current figure is its committed memory
     // on some systems).
     let rss = usize::try_from(velt_rt_host::memory_usage::velt_rt_memory_rss()).unwrap_or(0);
