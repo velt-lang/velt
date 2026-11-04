@@ -229,10 +229,12 @@ fn growth(stderr: &str) -> Vec<String> {
 fn shared_instances_keep_the_fixpoint() {
     let profile = [("VELT_LOWER_PROFILE", "1")];
     let (vir, shared) = lower(SHARED_VIEWS, &profile);
-    assert!(
-        shared.contains("shared instances for"),
-        "the helpers were not shared:\n{shared}"
-    );
+    // Of the pass that is the program: each pass prints the line, with 0 if nothing was shared.
+    let last = (shared.lines())
+        .rfind(|l| l.ends_with(" per type"))
+        .unwrap_or_else(|| panic!("no count of shared instances:\n{shared}"));
+    let count = last.rsplit_once(": ").unwrap().1.split(' ').next().unwrap();
+    assert_ne!(count, "0", "the helpers were not shared:\n{shared}");
     let (_, plain) = lower(
         SHARED_VIEWS,
         &[("VELT_LOWER_PROFILE", "1"), ("VELT_SHAPES", "off")],

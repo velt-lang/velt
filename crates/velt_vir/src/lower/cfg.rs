@@ -187,7 +187,9 @@ impl FnLower<'_, '_> {
         if !self.cx.facts_only || self.asyncx.is_some() || shared {
             // A poll function's body is analysed for its state (async_fn/spill), which the
             // calls creating it build: it is always whole.
-            self.cx.versioned += usize::from(self.has_view_loops());
+            // Counted for the profile: the functions a whole pass versions that a facts-only pass
+            // leaves out, which a shared instance is not.
+            self.cx.versioned += usize::from(self.has_view_loops() && !shared);
             self.version_view_loops(params.len());
         } else if self.has_view_loops() {
             if let Some(blocks) = self.defer_versions(&symbol, params.len()) {
