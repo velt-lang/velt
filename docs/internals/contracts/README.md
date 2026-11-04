@@ -276,3 +276,19 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
 - **A declared entry** (#1728 step 3): code compiled on its own to link into a program (the std
   cache, cli.md "Std cache") declares `velt_main` (`Import`, `() -> I32`) instead of defining
   it; verification accepts that (vir.rs invariant 5). A program still defines it.
+
+## Named statics (additive VIR extension)
+- `vir::StaticData::symbol` and `::linkage` (vir.rs invariant 13; #2189, design/std-object.md
+  "The std cache"): a static is private to the program's objects (`Internal`, no symbol, as
+  before) unless it is `Export` (defined here, visible to the link's other objects under its
+  symbol) or `Import` (defined by another object under its symbol; its `bytes`, `relocs` and
+  `mutable` are its contents there, for reading only). Symbols are unique among the program's
+  statics, functions and externs, and an `Import` static's relocations name only
+  `Export`/`Import` functions and statics or externs (both checked by `verify`).
+- Backends: LLVM emits a named static under its symbol, `hidden` (`Export`) or
+  `available_externally hidden` (`Import`), in every unit that refers to it, as units already
+  share statics under `.s<n>`; Cranelift declares it as `Hidden` or `Import` data under its
+  symbol and defines only the `Export` one.
+- `fingerprint` (both modes) prints a named static's symbol and linkage with its contents.
+- Lowering never names a static; only the std cache does (`VELT_STD_OBJECT=1`), so builds without
+  it are unchanged.

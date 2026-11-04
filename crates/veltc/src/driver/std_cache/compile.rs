@@ -2,8 +2,10 @@
 //!
 //! The function is compiled in a program of its own: itself (exported), the small functions it
 //! may inline (declarations keeping their bodies; they are in its key), declarations of what
-//! those call, and the statics they name (plain bytes: `select` keeps out functions reaching any
-//! other); the aggregates and externs are the program's, so their ids stay. It is optimized with
+//! those call, copies of the plain statics they name, and the statics with identity they reach
+//! as `Import`s under the program's names for them, with their contents (`statics`), and
+//! declarations of the functions those name; the aggregates and externs are the program's, so
+//! their ids stay. It is optimized with
 //! unknown callers (velt_opt treats a declaration as opaque, an exported function as called from
 //! anywhere) and compiled by LLVM to an object of its own. The program's entry is declared,
 //! never defined, in such an object (vir.rs invariant 5).
@@ -18,6 +20,7 @@ use velt_vir::vir::{
     self, Callee, Const, FuncId, Linkage, Operand, Rvalue, StaticId, Stmt, Terminator,
 };
 
+use super::statics::{self, Names};
 use super::{select, KIND};
 
 /// Compile each of `programs` (a function's program of its own, [`program_of`]) in parallel:
@@ -51,9 +54,10 @@ pub(super) fn each(
     results.into_inner().unwrap_or_else(PoisonError::into_inner)
 }
 
-/// The program of function `i` alone (module docs).
-pub(super) fn program_of(program: &vir::Program, i: usize) -> vir::Program {
+/// The program of function `i` alone (module docs); `names`: the program's statics' names.
+pub(super) fn program_of(program: &vir::Program, i: usize, names: &Names) -> vir::Program {
     let bodies = select::inlinable(program, i);
+    let reached = statics::reached(program, &bodies);
     let mut funcs: HashMap<usize, FuncId> = HashMap::new();
     let mut order: Vec<usize> = vec![];
     let mut add = |j: usize, order: &mut Vec<usize>| {
@@ -71,12 +75,31 @@ pub(super) fn program_of(program: &vir::Program, i: usize) -> vir::Program {
             add(c, &mut order);
         }
     }
-    let mut statics: HashMap<u32, StaticId> = HashMap::new();
+    for c in statics::functions(program, &reached) {
+        add(c, &mut order);
+    }
     let mut alone = vir::Program {
         aggs: program.aggs.clone(),
         externs: program.externs.clone(),
         ..vir::Program::default()
     };
+    // The statics with identity, as the program's: named, defined there.
+    let mut statics: HashMap<u32, StaticId> = (reached.iter().enumerate())
+        .map(|(n, &s)| (s as u32, StaticId(n as u32)))
+        .collect();
+    for &s in &reached {
+        let mut data = program.statics[s].clone();
+        data.symbol = names.of(s).map(str::to_string);
+        data.linkage = Linkage::Import;
+        for (_, target) in &mut data.relocs {
+            match target {
+                Const::Func(f) => *f = funcs[&(f.0 as usize)],
+                Const::Static(t) => *t = statics[&t.0],
+                _ => {}
+            }
+        }
+        alone.statics.push(data);
+    }
     for &j in &order {
         let mut f = program.funcs[j].clone();
         f.locs.clear();

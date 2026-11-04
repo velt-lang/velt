@@ -166,6 +166,7 @@ impl Cx<'_> {
             align: 8,
             relocs,
             mutable: None,
+            ..Default::default()
         });
         let id = StaticId(self.statics.len() as u32 - 1);
         self.lay.vtables.insert(key, id);

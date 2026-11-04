@@ -71,6 +71,7 @@ impl Cx<'_> {
             align: 8,
             relocs,
             mutable: None,
+            ..Default::default()
         });
         self.symbol_records.by_id.insert(id, s);
         if id >= REGISTERED_IDS {
@@ -90,6 +91,7 @@ impl Cx<'_> {
             align: 8,
             relocs: vec![],
             mutable: None,
+            ..Default::default()
         });
         self.symbol_records.table = Some(t);
         t
