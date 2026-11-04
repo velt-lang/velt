@@ -174,34 +174,56 @@ read the attributes for code generation. Release (section 3) counts what is lost
 
 ### Facts and the counted-types fixpoint
 
-**Step 2 shares only in the pass that lowers the program whole.** By then the counted types are
-complete (`close_boxing` only adds to `Boxing`, starting from the current one). The facts-only
-passes lower the per-type instances, which record their facts as today. In the whole pass:
-- the facts a shared body records are set aside, so they can't add placeholder types to
-  `Boxing` or end the fixpoint early;
-- every fact that matters was recorded by the per-type instances of the passes before;
-- `share_sites`, which the counted-`Atomic` diagnostic reads, comes from those passes too.
+**Shared bodies are lowered in every pass, and their facts are replayed.** There is no pass that
+lowers the program whole to share in: since #2221 and #2232 every pass is facts-only, and the
+last one is the program, known only once `close_boxing` returns the `Boxing` it started with.
+So a shared body has to leave the pass's facts exactly as the per-type bodies it stands for
+would have. Otherwise the fixpoint ends in another `Boxing`, and code that doesn't share
+changes too.
 
-So in step 2 the fixpoint converges exactly as without sharing, and `VELT_SHAPES=check` (the
-final `Boxing` compared both ways) passes by construction. The cost is that the facts-only
-passes still lower each instance per type. Step 2's saving is in the whole pass, in
-`velt_opt` and in code generation.
+The replay works on the facts themselves, not on the methods that record them:
+1. A shared body is lowered with the pass's facts, as any function is. Every decision it
+   makes about a placeholder is a shape question (answered for the representative and checked
+   at the end of the pass) or an ICE. So the facts it records are the per-type facts with each
+   concrete type replaced by its placeholder.
+2. After the body is lowered, every entry that names a placeholder is taken out of the pass's
+   facts (`Facts::take_types`, boxing/replay.rs). The instance keeps those entries as its
+   template.
+3. For each dictionary, existing or made later in the pass, the template is added back with
+   the placeholders replaced by that dictionary's types (`Facts::add_mapped`). Entries over
+   concrete types, and the program-wide flags, stay as recorded.
+4. `share_sites`, which the counted-`Atomic` diagnostic reads, gets the replayed shares at the
+   site of the user code that asked for the dictionary.
 
-**Step 4 replays facts, so that facts-only passes share too.** A replay has to cover:
-- every field of `Facts`;
-- facts recorded only under a per-type predicate;
-- facts keyed by `FuncId`.
+Two parts of the facts are not plain sets of types:
+- **Facts keyed by function** (`fn_tuple_writes`, `fn_read_params`) can't be replayed, since
+  one shared `FuncId` stands for several instances. A shared body that records one with a
+  placeholder type is an ICE in step 2. The scan keeps such bodies per type, which is the
+  conservative subset: only bodies whose facts are plain sets of types share.
+- **`callee_writes`** (boxing/tuples.rs) follows the calls of built functions and gives up at
+  an indirect call. A shared instance's calls through its dictionaries are the functions they
+  hold, so for a shared instance it follows those (`Cx::shape_callees`) and not the indirect
+  calls.
 
-A shared body records **templates**: a fact over placeholder-built types, plus the predicate it
-was recorded under. Each dictionary evaluates the templates for its concrete arguments against
-the current pass's `Boxing`. Dictionaries and their layouts are per-pass state, like
-`lay.slot_tables`.
+Glue made for a shared std body (`ToAny`, `FromAny`) records what the std body would have
+recorded at the site: it counts as std code for `note_array_view`, which ignores std's own
+conversions.
+
+The checks are the ones #2221 and #2232 used, run on every program in step 2's bars:
+- VIR byte-identical between the facts-only passes and `VELT_LOWER_WHOLE=1`;
+- the same pass count and the same `Boxing` growth per pass (`VELT_LOWER_PROFILE`) as with
+  `VELT_SHAPES=off`.
+
+The prototype passes both on the `Item[]` repro, `sigx_like`, `bench/compile/shapes/` and the
+new golden.
+
+**The full table, for the bodies of later steps.** What a template holds per `Facts` field:
 
 | `Facts` fields | parameterized by | replayed per dictionary |
 |---|---|---|
-| `shares`, `identity`, `identity_borrows`, `tuple_writes`, `tuple_copies`, `transfers`, `captures`, `vtable_types`, `weak_seeds`, `dyn_types`, `object_types`, `array_view_targets`, `proxy_targets`, `lock_values` | a type template | the template instantiated. `identity` stays conditional on `copied_object(t)`, which `note_dyn_identity` and `close_share` evaluate for the concrete type. `identity_borrows` evaluates `in_place_parts` for it |
+| `shares`, `identity`, `identity_borrows`, `tuple_writes`, `tuple_copies`, `transfers`, `captures`, `vtable_types`, `weak_seeds`, `dyn_types`, `object_types`, `array_view_targets`, `proxy_targets`, `lock_values` | a type template | the template instantiated. A predicate a fact is recorded under (`copied_object` in `note_dyn_identity`, `in_place_parts` for `identity_borrows`) is evaluated for the placeholder while the body is lowered, so it is a shape question: in the key, or an ICE. `close_share` evaluates its own predicates later, on the concrete types |
 | `projections`, `upcasts`, `proxy_casts` | a pair of templates | both instantiated |
-| `fn_tuple_writes`, `fn_read_params` | `FuncId` of the shared instance | keyed by `(instance, dictionary)`, since one `FuncId` stands for many lists |
+| `fn_tuple_writes`, `fn_read_params` | `FuncId` of the shared instance | not in step 2 (an ICE, the body stays per type). Later keyed by `(instance, dictionary)`, with `callee_writes` per dictionary |
 | `fn_compared_keys`, `generic_any_keys`, `fn_edges`, `fresh_made` | `FnKey` over templates | instantiated keys |
 | `dyn_to_any` | a `DefId` | as is |
 | `any_identity`, `fn_compared`, `generic_any`, `any_set`, `any_has`, `any_delete`, `any_keys`, `any_reflect`, `any_number`, `any_call_keys`, `weak_object`, `object_from_dyn`, `proxy_new`, `read_indirect`, `unmet` | nothing (program-wide) | as is, once |
@@ -667,7 +689,7 @@ becomes #2268's fast path plus its `AnyUnbox`, and nothing in the shared code ch
    4. the placeholders, the footprint scan and the end-of-pass check;
    5. the dictionaries on the generalized growing tables, and the hidden parameter;
    6. `ToAny` and `FromAny` glue;
-   7. sharing only in the whole pass (section 1), and `VELT_SHAPES`.
+   7. shared bodies in every pass with their facts replayed (section 1), and `VELT_SHAPES`.
 
    It is checked against the bars in section 5.
 3. **Release for the helpers.** Rules 1 and 2, the `velt_opt` specializer extension, and the
@@ -687,7 +709,7 @@ edits their files, it says what and why on #2189:
 
 | area | owner | what step 2 needs there |
 |---|---|---|
-| the passes and the counted-types fixpoint (`lower/boxing/`, `view_unswitch*`, `spill/`) | lowering | `Boxing`'s sets behind accessors (section 1), and the facts of a shared body set aside in the whole pass. The fact templates and their replay (the table in section 1) are step 4's, with this workstream |
+| the passes and the counted-types fixpoint (`lower/mod.rs`'s pass loop, `lower/boxing/`, `view_unswitch*`, `spill/`) | lowering | `Boxing`'s sets behind accessors (section 1); taking a shared body's facts out and replaying them (`boxing/replay.rs`); `callee_writes` through dictionaries (`boxing/tuples.rs`); in the pass loop, the shape state set up per pass and its end-of-pass check, two calls and no new pass. Agreed on #2189 before it lands |
 | `any` operations (`any_*.rs` sites, `any_unbox`) | `any` operations | the fast path of `as T` reading the descriptor from slot 5 and the slow path calling slot 6 when the target is a placeholder: one branch at the top of `any_unbox` |
 | glue and vtables (`lower/glue/`, `lower/any.rs` tables) | release backend and glue | type tables built from the existing glue builders; `generic_slots.rs` generalized into the growing table both use |
 
