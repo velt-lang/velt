@@ -41,6 +41,7 @@ mod asserted_targets;
 mod assigned_fields;
 mod ast_walk;
 mod atomic_copies;
+mod augment_scope;
 mod body;
 mod brands;
 mod call_sigs;
