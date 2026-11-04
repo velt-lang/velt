@@ -265,7 +265,9 @@ fn an_npm_package_in_an_allowed_git_package_is_not_that_package() {
         ],
     );
     let path = repo.canonicalize().unwrap();
+    // On Windows, `canonicalize` gives a verbatim `//?/C:/...` path, whose `?` a URL can't hold.
     let path = path.to_string_lossy().replace('\\', "/");
+    let path = path.strip_prefix("//?/").unwrap_or(&path);
     let url = match path.starts_with('/') {
         true => format!("file://{path}"),
         false => format!("file:///{path}"),
