@@ -88,9 +88,8 @@ fn each_construct_is_found_where_live_code_has_it() {
             &[TextInt, TextUint, Format],
         ),
         (
-            "a promise that may reject with an integer, not handled",
-            "async function f(): Promise<string> throws i32 { return \"a\"; }\n\
-             function main() { const p = f(); if (p == null) { return; } }",
+            "a promise that may reject with an integer, with no `throws` written on a function",
+            "function f(p: Promise<string, i32>) { }\nfunction main() { }",
             &[Format],
         ),
         (

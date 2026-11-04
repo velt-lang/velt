@@ -198,6 +198,9 @@ hooks! {
     /// A float position argument (`xs.at(i)`, `s.slice(i)`).
     float_position => lang_hooks_number, "floatPosition", sig((f64) -> usize);
     /// `String(v)` of a signed integer: `${v}` alone, `v.toString()` (`velt_vir` `template.rs`).
+    /// `IndexCheck`: the message of an out-of-bounds signed index. Sema casts every index it
+    /// builds to an unsigned type, so no program reaches that call; only `velt_vir`'s
+    /// `hook_demand` test does, with an index made signed by hand. Lowering still handles one.
     int_text => lang_hooks_number_text, "intText", sig((i64) -> string), lowered,
         replaces("velt_rt_str_from_i64"), bench("int_to_string"),
         constructs(TextInt, IndexCheck);

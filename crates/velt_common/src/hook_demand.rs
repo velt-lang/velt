@@ -13,6 +13,14 @@
 //! `ICE: hook <name> reached by lowering but not demanded by sema (construct <c>)` names the
 //! construct missing from the table.
 //!
+//! **Why this is sound: the integer hooks act as one bit.** Live code is not a superset of what
+//! lowering builds, so a construct can occur in a function sema did not walk. That does no harm
+//! today because any one construct brings all of them: once one integer hook is live, its std
+//! code has arrays, integers and so on, which demand the other three. So a program demands none of
+//! the hooks, and then nothing lowering builds calls one, or all four. A hook whose demand is
+//! narrower than that must not get `constructs(…)` until the live set covers what lowering builds
+//! (#2161). `velt_sema`'s `live_hooks` test pins the one bit.
+//!
 //! ```
 //! use velt_common::std_hooks::{hook_index, Construct, HookSet, HOOKS};
 //! let int_push = &HOOKS[hook_index::int_push];

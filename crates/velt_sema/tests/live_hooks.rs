@@ -127,3 +127,34 @@ fn a_class_with_a_number_in_it_demands_its_format_slot() {
         assert!(got.contains(&w), "{w} not demanded: {got:?}");
     }
 }
+
+/// The integer hooks act as one bit, which is what makes the demand sound (velt_common
+/// `hook_demand.rs`): any one construct in a program demands and checks all four, through the std
+/// code of the first. If this fails, live code must first cover what lowering builds (#2161).
+#[test]
+fn any_one_construct_demands_and_checks_all_the_integer_hooks() {
+    for src in [
+        // TextInt, alone in the program's code.
+        "function main() {\n  const n: i64 = 7;\n  const s = `n=${n}`;\n}\n",
+        // TextUint.
+        "function main() {\n  const n: u32 = 7;\n  const s = String(n);\n}\n",
+        // Format: `console.log` of an integer.
+        "function main() {\n  const n: i32 = 7;\n  console.log(n);\n}\n",
+        // IndexCheck: the out-of-bounds message of an index.
+        "function main() {\n  const xs = [\"a\"];\n  const s = xs[0];\n}\n",
+        // Format: the table of a class with a number in it (its `format` slot).
+        "class P {\n  x = 1;\n}\nfunction main() {\n  const p = new P();\n}\n",
+        // Dynamic: the numeric keys of an `any`.
+        "function main() {\n  const a: any = \"s\";\n}\n",
+    ] {
+        let p = ok_src(src);
+        assert_eq!(
+            demanded(&p),
+            ["int_text", "uint_text", "int_push", "uint_push"],
+            "{src}"
+        );
+        for i in INT {
+            assert!(checked(&p, i), "{} is not checked:\n{src}", HOOKS[i].name);
+        }
+    }
+}
