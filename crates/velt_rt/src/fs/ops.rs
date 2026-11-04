@@ -222,7 +222,10 @@ fn plain_path(p: PathBuf) -> PathBuf {
         return PathBuf::from(format!(r"\\{rest}"));
     }
     match s.strip_prefix(r"\\?\") {
-        Some(rest) if rest.as_bytes().get(1) == Some(&b':') && rest.len() < 260 => {
+        // MAX_PATH counts UTF-16 units, not UTF-8 bytes.
+        Some(rest)
+            if rest.as_bytes().get(1) == Some(&b':') && rest.encode_utf16().count() < 260 =>
+        {
             PathBuf::from(rest)
         }
         _ => p,
@@ -367,6 +370,9 @@ mod tests {
         // A path too long for the plain form keeps its prefix, as does a volume GUID path.
         let long = format!(r"\\?\C:\{}", "d".repeat(300));
         assert_eq!(plain(&long), long);
+        // Under 260 UTF-16 units but more UTF-8 bytes: plain.
+        let wide = format!(r"\\?\C:\{}", "é".repeat(200));
+        assert_eq!(plain(&wide), wide[4..]);
         let volume = r"\\?\Volume{0b1c}\f";
         assert_eq!(plain(volume), volume);
     }
