@@ -1,0 +1,29 @@
+// registry-conformance: a registry without users (crates/velt_registry/src/tests/mod.rs
+// `an_open_registry_has_no_owners`).
+
+import { Case } from "../case";
+import { Run } from "../run";
+
+async function anyoneWrites(run: Run): Promise<void> {
+  const { client, check } = run;
+  const lib = run.name("open");
+  check.answer("publish", await client.publish(lib, "1.0.0"), 201);
+  check.answer("yank", await client.call("PUT", `${lib}/1.0.0/yank`), 200);
+  check.answer("unyank", await client.call("DELETE", `${lib}/1.0.0/yank`), 200);
+}
+
+async function noOwners(run: Run): Promise<void> {
+  const { client, check } = run;
+  const lib = run.name("unowned");
+  check.answer("publish", await client.publish(lib, "1.0.0"), 201);
+  const owners = await client.call("GET", `${lib}/owners`);
+  check.answer("owners", owners, 200);
+  check.is("no owners", owners.text, "");
+  check.answer("adding one", await client.call("PUT", `${lib}/owners/alice`), 400, "has no users");
+}
+
+/** A registry without users. */
+export const open: Case[] = [
+  new Case("anyone publishes and yanks", anyoneWrites),
+  new Case("packages have no owners", noOwners),
+];

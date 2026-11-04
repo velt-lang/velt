@@ -1,0 +1,33 @@
+// registry-conformance: one case's checks. A failed check is recorded and the case goes on, so a
+// run lists every disagreement at once.
+
+import { Reply } from "./reply";
+
+/** The checks of one case. */
+export class Check {
+  /** What failed, one line each. */
+  failures: string[] = [];
+
+  /** `got` must be `want`. */
+  is(what: string, got: string, want: string): void {
+    if (got != want) {
+      this.failures.push(`${what}: got ${JSON.stringify(got)}, want ${JSON.stringify(want)}`);
+    }
+  }
+
+  /** The answer must have `status`, and contain `words` when given. */
+  answer(what: string, reply: Reply, status: i64, words: string = ""): void {
+    if (reply.status != status) {
+      this.failures.push(`${what}: got ${reply.status} (${reply.text}), want ${status}`);
+    } else if (!reply.text.includes(words)) {
+      this.failures.push(`${what}: ${status} says ${JSON.stringify(reply.text)}, not "${words}"`);
+    }
+  }
+
+  /** `text` must not contain `words`. */
+  lacks(what: string, text: string, words: string): void {
+    if (text.includes(words)) {
+      this.failures.push(`${what}: ${JSON.stringify(text)} has "${words}"`);
+    }
+  }
+}

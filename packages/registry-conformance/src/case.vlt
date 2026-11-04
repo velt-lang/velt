@@ -1,0 +1,14 @@
+// registry-conformance: one case of the suite.
+
+import { Run } from "./run";
+
+/** One conformance case. */
+export class Case {
+  title: string;
+  body: (run: Run) => Promise<void>;
+
+  constructor(title: string, body: (run: Run) => Promise<void>) {
+    this.title = title;
+    this.body = body;
+  }
+}

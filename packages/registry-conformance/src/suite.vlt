@@ -1,0 +1,53 @@
+// registry-conformance: running the cases.
+
+import { Case } from "./case";
+import { access } from "./cases/access";
+import { open } from "./cases/open";
+import { owners } from "./cases/owners";
+import { publishing } from "./cases/publishing";
+import { Client } from "./client";
+import { Run } from "./run";
+import { Target } from "./target";
+import { Users } from "./users";
+
+/** One failed case: its title and what failed. */
+export class Failure {
+  title: string;
+  problems: string[];
+
+  constructor(title: string, problems: string[]) {
+    this.title = title;
+    this.problems = problems;
+  }
+}
+
+async function runCases(
+  target: Target,
+  users: Users,
+  id: string,
+  cases: Case[],
+): Promise<Failure[]> {
+  const failures: Failure[] = [];
+  for (const c of cases) {
+    const run = new Run(new Client(target), id, users);
+    try {
+      await c.body(run);
+    } catch (e) {
+      run.check.failures.push(`stopped: ${(e as Error).message}`);
+    }
+    if (run.check.failures.length > 0) {
+      failures.push(new Failure(c.title, run.check.failures));
+    }
+  }
+  return failures;
+}
+
+/** Runs the cases for a registry with users `alice` and `bob`. `id` makes this run's names. */
+export async function runWithUsers(target: Target, users: Users, id: string): Promise<Failure[]> {
+  return await runCases(target, users, id, [...publishing, ...owners, ...access]);
+}
+
+/** Runs the cases for an open registry. `id` makes this run's names. */
+export async function runOpen(target: Target, id: string): Promise<Failure[]> {
+  return await runCases(target, new Users("", ""), id, [...publishing, ...open]);
+}
