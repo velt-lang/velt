@@ -165,6 +165,21 @@ function eighty(): number {
 }
 console.log(has.includes(eighty()), has.indexOf(eighty()), has.lastIndexOf(2));
 
+// An argument that runs code has the type a method expects, as for an array.
+const mixedT: [number, string] = [1, "s"];
+function three(): number {
+  return 3;
+}
+function numbers(): number[] {
+  return [5];
+}
+function mixedList(): (number | string)[] {
+  return ["x"];
+}
+console.log(mixedT.concat(numbers()), mixedT.concat(mixedList()));
+console.log(mixedT.concat([three()]), mixedT.concat([three(), "y"]));
+console.log(mixedT.includes(three()), mixedT.indexOf(three()), mixedT.at(three() - 3));
+
 // What the methods return and hand over are numbers.
 const nums: [number, number] = [1, 2];
 console.log(nums.findIndex((x) => x === 2) / 2, nums.indexOf(2) / 2, nums.findLastIndex((x) => x === 2) / 4);

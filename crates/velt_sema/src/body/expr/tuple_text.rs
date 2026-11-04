@@ -153,7 +153,17 @@ impl FnCx<'_, '_> {
                 (name, _) => CALLING_BACK.iter().copied().find(|m| *m == name),
             };
             let Some(live) = live else {
-                return lw.args_before_elements(args, &mut vec![], |lw, args| {
+                // What the first argument is expected to be, as for an array: `m.concat([f()])`
+                // of a `[number, string]` takes a `(number | string)[]`.
+                let first = match prop.name.as_str() {
+                    _ if args.first().is_none_or(runs_nothing) => None,
+                    "concat" => lw.trial_type(&array),
+                    "includes" | "indexOf" | "lastIndexOf" => {
+                        (lw.trial_type(&array)).and_then(|a| lw.cx.ty.array_elem(a))
+                    }
+                    _ => None,
+                };
+                return lw.args_before_elements(args, first, &mut vec![], |lw, args| {
                     lw.member_call(&array, prop, false, type_args, args, exp, span)
                 });
             };
@@ -168,24 +178,30 @@ impl FnCx<'_, '_> {
 
     /// `body` with `args`, those that may run code evaluated into temporaries first: JavaScript
     /// reads a tuple's elements after a method's arguments (`t.at(f())`, where `f` writes to `t`).
+    /// `expected`: what the next one is expected to be.
     fn args_before_elements(
         &mut self,
         args: &[ast::Expr],
+        expected: Option<TyId>,
         done: &mut Vec<ast::Expr>,
         body: impl FnOnce(&mut Self, &[ast::Expr]) -> hir::Expr,
     ) -> hir::Expr {
         let Some((a, rest)) = args.split_first() else {
             return body(self, done);
         };
-        if runs_nothing(a) {
+        if runs_nothing(a) || matches!(a.kind, ast::ExprKind::Spread(_)) {
             done.push(a.clone());
-            return self.args_before_elements(rest, done, body);
+            return self.args_before_elements(rest, None, done, body);
         }
         let name = format!("<arg{}>", done.len());
-        let h = self.expr(a, None, Want::Move);
+        let h = self.expr(a, expected, Want::Move);
+        let h = match expected {
+            Some(t) => self.coerce(h, t),
+            None => h,
+        };
         self.with_temp(&name, h, a.span, a.span, |lw, v| {
             done.push(v.clone());
-            lw.args_before_elements(rest, done, body)
+            lw.args_before_elements(rest, None, done, body)
         })
     }
 
