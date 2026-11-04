@@ -558,7 +558,9 @@ fn build_on_current_thread(
         let paths = OutputPaths::new(&opts.input, opts.output.as_deref(), opts.emit, &target);
         let stamp_path = stamp::path(&paths.executable);
         let objects = stamp::read(&stamp_path, &key)
-            .map(|(n, std)| {
+            .map(|(n, std, c_libs)| {
+                // Not checked again, and the check is what finds them.
+                sess.c_libs = c_libs;
                 (0..n)
                     .map(|i| paths.unit_object(i))
                     .chain(std)
@@ -689,6 +691,7 @@ fn build_on_current_thread(
             std_objects: &sess.std_objects,
             outside: &reaches,
             generator_inputs: &sess.generator_inputs,
+            c_libs: &sess.c_libs,
         };
         // Best effort: without a stamp the next build compiles again.
         let _ = stamp::write(&stamp_path, &stamp::render(&key, &sess.sm, &built));

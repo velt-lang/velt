@@ -19,7 +19,9 @@
 //!   listings and lockfile when the package is in one;
 //! - extra inputs of the link, by size and time;
 //! - how many objects the build made, and at the end how many entries it has, so a stamp cut
-//!   short is no stamp. It is written to a temporary file and renamed into place.
+//!   short is no stamp. It is written to a temporary file and renamed into place;
+//! - the system libraries the program's C functions need: an unchanged build isn't checked, and
+//!   the check is what finds them, but its link still needs them.
 //!
 //! Only builds without diagnostics get a stamp, so a build that warned warns every time.
 
@@ -34,7 +36,7 @@ use super::BuildOptions;
 use crate::backend::Backend;
 
 /// The stamp's first line; a new format changes it, so old stamps just miss.
-const HEADER: &str = "velt-build-stamp 4";
+const HEADER: &str = "velt-build-stamp 5";
 
 /// `<exe>.build-stamp`.
 pub(crate) fn path(exe: &Path) -> PathBuf {
@@ -183,15 +185,19 @@ pub(super) struct Built<'a> {
     /// What the generators the build ran read: the `file`, `dir`, `probe` and `real` entries of
     /// their hosts' stamps.
     pub generator_inputs: &'a [String],
+    /// The system libraries of the program's C functions (`Session::c_libs`), whose names hold no
+    /// space (`vpm`'s manifest checks them).
+    pub c_libs: &'a [String],
 }
 
 /// The stamp of a build configured by `key` that read the files in `sm` and `built`.
 pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
     let mut s = format!(
-        "{HEADER}\nkey {}\nobjects {}\noutside {}\n",
+        "{HEADER}\nkey {}\nobjects {}\noutside {}\nc-libs {}\n",
         key.hex(),
         built.objects,
-        built.outside
+        built.outside,
+        built.c_libs.join(" ")
     );
     let seen = built.seen;
     let mut files = seen.read.clone();
@@ -284,7 +290,7 @@ pub(crate) fn outside(exe: &Path) -> Option<String> {
 /// them.
 pub(crate) fn entry_lines(text: &str) -> Vec<&str> {
     text.lines()
-        .skip(4)
+        .skip(5)
         .take_while(|l| !l.starts_with("end "))
         .collect()
 }
@@ -293,7 +299,7 @@ pub(crate) fn entry_lines(text: &str) -> Vec<&str> {
 /// [`render`] writes them), which [`still_valid`] checks like a build's.
 pub(crate) fn compose(key: &Key, objects: usize, entries: &[String]) -> String {
     let mut s = format!(
-        "{HEADER}\nkey {}\nobjects {objects}\noutside -\n",
+        "{HEADER}\nkey {}\nobjects {objects}\noutside -\nc-libs \n",
         key.hex()
     );
     for line in entries {
@@ -311,7 +317,7 @@ pub(crate) fn dir_entry(dir: &Path, hash: &str) -> String {
 /// The `objects` of the stamp at `path` when it is of `key` and everything it records is
 /// unchanged.
 pub(crate) fn still_valid(path: &Path, key: &Key) -> Option<usize> {
-    read(path, key).map(|(objects, _)| objects)
+    read(path, key).map(|(objects, _, _)| objects)
 }
 
 /// Write stamp `text` to `path` whole: into a temporary file renamed into place, so a build
@@ -364,8 +370,9 @@ pub(super) fn known(path: &Path) -> std::collections::BTreeMap<PathBuf, probe::R
 }
 
 /// [`check`] of the stamp at `path`, against the time it was written: the number of unit
-/// objects, and the std cache's objects the link also needs.
-pub(super) fn read(path: &Path, key: &Key) -> Option<(usize, Vec<PathBuf>)> {
+/// objects, the std cache's objects the link also needs, and the system libraries of its C
+/// functions.
+pub(super) fn read(path: &Path, key: &Key) -> Option<(usize, Vec<PathBuf>, Vec<String>)> {
     let text = std::fs::read_to_string(path).ok()?;
     let written = probe::stat(path).map(|(_, t)| t);
     let objects = check(&text, key, written)?;
@@ -373,7 +380,12 @@ pub(super) fn read(path: &Path, key: &Key) -> Option<(usize, Vec<PathBuf>)> {
         .filter_map(|l| l.strip_prefix("std ")?.split_once('\t'))
         .map(|(_, path)| PathBuf::from(path))
         .collect();
-    Some((objects, std))
+    let c_libs = (text.lines())
+        .find_map(|l| l.strip_prefix("c-libs "))?
+        .split_whitespace()
+        .map(String::from)
+        .collect();
+    Some((objects, std, c_libs))
 }
 
 /// Whether the stamp `text`, written at `written` (nanoseconds since 1970), still describes the
@@ -384,6 +396,7 @@ pub(crate) fn check(text: &str, key: &Key, written: Option<u128>) -> Option<usiz
     (lines.next()?.strip_prefix("key ")? == key.hex()).then_some(())?;
     let objects = lines.next()?.strip_prefix("objects ")?.parse().ok()?;
     lines.next()?.strip_prefix("outside ")?;
+    lines.next()?.strip_prefix("c-libs ")?;
     for (entries, line) in lines.by_ref().enumerate() {
         if let Some(n) = line.strip_prefix("end ") {
             // Whole: as many entries as it says, and nothing after.
