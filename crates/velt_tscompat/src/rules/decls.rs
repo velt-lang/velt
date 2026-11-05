@@ -35,6 +35,13 @@ pub(super) fn item(item: &ast::Item, cx: &mut Cx) {
             ],
         ),
         I::Interface(i) => interface(i, cx),
+        I::Var(v) if v.c_const => cx.error(
+            "declare-fn",
+            cx.keyword(item.span, "declare"),
+            "`declare c const` takes a constant from C headers, which JavaScript doesn't have"
+                .into(),
+            &["keep native bindings out of code shared with TypeScript"],
+        ),
         I::Class(c) if c.c_type => cx.error(
             "declare-fn",
             cx.keyword(item.span, "declare"),

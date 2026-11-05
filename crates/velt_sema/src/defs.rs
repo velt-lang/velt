@@ -498,6 +498,8 @@ pub(crate) struct GlobalInfo<'m> {
     /// whose value is not a constant (`new Map()`, a call with effects) or whose identity shows
     /// (a function from a call, #802).
     pub stored: bool,
+    /// `declare c const`: what it crosses as, once its type is checked.
+    pub c_const: Option<crate::hir::CTy>,
 }
 
 /// Source of a constant: a module-level `const`, or a `static readonly` field of a type.
@@ -508,6 +510,8 @@ pub(crate) struct GlobalSrc<'m> {
     /// Declaring type of a static field (its body may read it even when `private`).
     pub owner: Option<DefId>,
     pub is_private: bool,
+    /// `declare c const`: no initializer, its value comes from C headers.
+    pub c_const: bool,
 }
 
 pub(crate) enum DefInfo<'m> {

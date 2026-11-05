@@ -30,6 +30,7 @@ fn globals_are_rematerialized_constants() {
         init: adt_lit(vd, vec![flt(0.5, t.f64), flt(2.0, t.f64)], vec2),
         span: SP,
         slot: None,
+        c_const: None,
     }));
     let greeting = pb.add_def(Def::Global(GlobalDef {
         name: "HELLO".into(),
@@ -37,6 +38,7 @@ fn globals_are_rematerialized_constants() {
         init: s("hello", t),
         span: SP,
         slot: None,
+        c_const: None,
     }));
     let g = |d, ty| ex(velt_sema::hir::ExprKind::Global(d), ty);
     let mut f = FB::new("main", t.unit);

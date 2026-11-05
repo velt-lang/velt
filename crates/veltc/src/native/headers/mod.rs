@@ -9,9 +9,11 @@
 //! `c-headers.json` records, per target, a digest of each declaration that passed and of each
 //! of the package's own headers read. A build requires each declaration it compiles to be
 //! recorded, and compares the headers it has: a git checkout has them, a registry archive
-//! doesn't. A library lists its headers or says `unchecked: true`.
+//! doesn't. A library lists its headers or says `unchecked: true`. `declare c const`'s values
+//! come the same way (`constants`).
 
 mod compare;
+mod constants;
 mod ctype;
 mod record;
 mod shape;
@@ -31,6 +33,8 @@ use compare::Shape;
 use ctype::Headers;
 use record::{compare_record, library_record};
 use shape::shape;
+
+pub use constants::{read as read_constants, Constants};
 
 /// One `declare c` function to check: its name in C, what it passes, where it is.
 struct Decl {
@@ -374,6 +378,57 @@ fn cache_key(root: &Path, headers: &[String], decls: &[Decl], target: &str) -> S
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
+/// Hash `headers`' names and what a package's own headers read ([`own_header_files`]).
+fn hash_headers(h: &mut Sha256, root: &Path, headers: &[String]) {
+    for header in headers {
+        h.update([0]);
+        h.update(header);
+    }
+    for file in own_header_files(root, headers) {
+        h.update([0]);
+        h.update(
+            file.strip_prefix(root)
+                .unwrap_or(&file)
+                .to_string_lossy()
+                .as_bytes(),
+        );
+        h.update([0]);
+        h.update(std::fs::read(&file).unwrap_or_default());
+    }
+}
+
+/// What a package's own `headers` read: as they may include each other, the files beside them
+/// (all under their directory; only headers when that is the package's root). An `#include`
+/// reaching elsewhere in the package isn't seen.
+fn own_header_files(root: &Path, headers: &[String]) -> Vec<PathBuf> {
+    let mut files = std::collections::BTreeSet::new();
+    for header in headers.iter().filter(|h| !h.starts_with('<')) {
+        let path = root.join(header);
+        if let Some(dir) = path.parent() {
+            files.extend(files_under(dir, dir != root));
+        }
+        files.insert(path);
+    }
+    files.into_iter().collect()
+}
+
+/// The files that headers in `dir` could include, sorted.
+fn files_under(dir: &Path, deep: bool) -> Vec<PathBuf> {
+    let mut files = Vec::new();
+    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            if deep {
+                files.extend(files_under(&path, true));
+            }
+        } else if deep || path.extension().is_some_and(|e| e == "h" || e == "inc") {
+            files.push(path);
+        }
+    }
+    files.sort();
+    files
+}
+
 /// The target as zig names it; `None` for one without C headers (WebAssembly). Windows
 /// targets read zig's MinGW headers, which have the MSVC targets' type sizes.
 pub fn zig_target(triple: &str) -> Option<&'static str> {
@@ -441,32 +496,67 @@ fn parse_in(
     let source = includes(root, headers)?;
     let file = dir.join("headers.c");
     std::fs::write(&file, source).map_err(|e| e.to_string())?;
+    let mut full = cc1_command(zig, dir, root, "headers.c", zig_target)?;
+    full.push("-ast-dump=json".into());
+    full.extend(
+        [
+            "-dependency-file",
+            DEPENDENCIES,
+            "-MT",
+            "deps",
+            "-sys-header-deps",
+        ]
+        .map(str::to_string),
+    );
+    let out = zig_command(zig, dir)
+        .args(&full)
+        .output()
+        .map_err(|e| format!("running {}: {e}", zig.display()))?;
+    if !out.status.success() {
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        let errors: Vec<&str> = stderr
+            .lines()
+            .filter(|l| l.contains("error"))
+            .take(3)
+            .collect();
+        return Err(format!("clang can't parse them: {}", errors.join("; ")));
+    }
+    let json: serde_json::Value =
+        serde_json::from_slice(&out.stdout).map_err(|e| format!("clang's AST is not JSON: {e}"))?;
+    let dependencies = std::fs::read_to_string(dir.join(DEPENDENCIES))
+        .map_err(|e| format!("clang wrote no list of the files it read: {e}"))?;
+    Ok((Headers::from_json(&json), files_read(dir, &dependencies)))
+}
+
+/// zig, run in `dir` with its caches there.
+fn zig_command(zig: &Path, dir: &Path) -> std::process::Command {
     let cache = dir.join("zig-cache");
-    let command = |args: &[&str]| {
-        let mut c = std::process::Command::new(zig);
-        c.args(args)
-            .current_dir(dir)
-            .env("ZIG_GLOBAL_CACHE_DIR", &cache)
-            .env("ZIG_LOCAL_CACHE_DIR", &cache);
-        c
-    };
+    let mut c = std::process::Command::new(zig);
+    c.current_dir(dir)
+        .env("ZIG_GLOBAL_CACHE_DIR", &cache)
+        .env("ZIG_LOCAL_CACHE_DIR", &cache);
+    c
+}
+
+/// zig's arguments for clang to read `file` (in `dir`, including from the package at `root`)
+/// for `zig_target`, producing nothing yet: the caller says what it wants out.
+fn cc1_command(
+    zig: &Path,
+    dir: &Path,
+    root: &Path,
+    file: &str,
+    zig_target: &str,
+) -> Result<Vec<String>, String> {
     // `zig cc -###` prints the clang command it would run; that command with the AST dump in
     // place of the object is what clang parses the headers with (zig's own `-fsyntax-only`
     // still renames an object it never made).
     let include = format!("-I{}", root.display());
-    let plan = command(&[
-        "cc",
-        "-target",
-        zig_target,
-        &include,
-        "-c",
-        "headers.c",
-        "-o",
-        "headers.o",
-        "-###",
-    ])
-    .output()
-    .map_err(|e| format!("running {}: {e}", zig.display()))?;
+    let plan = zig_command(zig, dir)
+        .args([
+            "cc", "-target", zig_target, &include, "-c", file, "-o", "probe.o", "-###",
+        ])
+        .output()
+        .map_err(|e| format!("running {}: {e}", zig.display()))?;
     let plan = String::from_utf8_lossy(&plan.stderr);
     let line = plan
         .lines()
@@ -484,35 +574,7 @@ fn parse_in(
     }
     let mut full = vec!["clang".to_string(), "-cc1".to_string()];
     full.extend(cc1);
-    full.push("-ast-dump=json".into());
-    full.extend(
-        [
-            "-dependency-file",
-            DEPENDENCIES,
-            "-MT",
-            "deps",
-            "-sys-header-deps",
-        ]
-        .map(str::to_string),
-    );
-    let refs: Vec<&str> = full.iter().map(String::as_str).collect();
-    let out = command(&refs)
-        .output()
-        .map_err(|e| format!("running {}: {e}", zig.display()))?;
-    if !out.status.success() {
-        let stderr = String::from_utf8_lossy(&out.stderr);
-        let errors: Vec<&str> = stderr
-            .lines()
-            .filter(|l| l.contains("error"))
-            .take(3)
-            .collect();
-        return Err(format!("clang can't parse them: {}", errors.join("; ")));
-    }
-    let json: serde_json::Value =
-        serde_json::from_slice(&out.stdout).map_err(|e| format!("clang's AST is not JSON: {e}"))?;
-    let dependencies = std::fs::read_to_string(dir.join(DEPENDENCIES))
-        .map_err(|e| format!("clang wrote no list of the files it read: {e}"))?;
-    Ok((Headers::from_json(&json), files_read(dir, &dependencies)))
+    Ok(full)
 }
 
 /// Where clang writes the files it read, in the parse's directory.

@@ -49,6 +49,7 @@ impl FnCx<'_, '_> {
                     ty: None,
                     init: Some(init),
                     span: pattern.span,
+                    c_const: false,
                 }),
                 span: pattern.span,
             };

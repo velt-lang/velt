@@ -299,6 +299,7 @@ fn decl(kind: VarKind, name: &str, t: Option<&str>, init: Option<Expr>) -> Stmt 
         ty: t.map(ty),
         init,
         span: D,
+        c_const: false,
     }))
 }
 

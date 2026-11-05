@@ -286,6 +286,7 @@ impl FnCx<'_, '_> {
                 ty: p.ty.clone(),
                 init: Some(value),
                 span,
+                c_const: false,
             };
             stmts.push(stmt(ast::StmtKind::Var(decl), span));
         }

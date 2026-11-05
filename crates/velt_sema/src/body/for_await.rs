@@ -124,6 +124,7 @@ impl FnCx<'_, '_> {
                 ty: None,
                 init: Some(awaited),
                 span: at,
+                c_const: false,
             }),
             span: at,
         };

@@ -96,6 +96,7 @@ impl FnCx<'_, '_> {
                 ty: None,
                 init: Some(x.clone()),
                 span,
+                c_const: false,
             };
             self.var_decl(&d, span, out);
             if let Some(p) = p.filter(|p| !matches!(p.kind, P::Wildcard)) {
@@ -254,6 +255,7 @@ impl FnCx<'_, '_> {
                         ty: None,
                         init: Some(read),
                         span,
+                        c_const: false,
                     };
                     self.var_decl(&d, span, out);
                     let read = mk(E::Ident(name), span);
@@ -443,6 +445,7 @@ impl FnCx<'_, '_> {
             ty: v.ty.clone(),
             init: Some(init.clone()),
             span,
+            c_const: false,
         };
         self.var_decl(&d, span, out);
         let tmp = mk(E::Ident(name), span);

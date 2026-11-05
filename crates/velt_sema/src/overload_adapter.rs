@@ -315,6 +315,7 @@ fn default_let(
             ty: Some(ty.clone()),
             init: Some(value),
             span,
+            c_const: false,
         }),
         span,
     }

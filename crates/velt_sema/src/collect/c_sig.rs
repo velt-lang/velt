@@ -181,6 +181,43 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
     CTy::Void
 }
 
+impl Ctx<'_> {
+    /// The initializer the compiler makes for global `d` (of type `ann`), if any: a symbol
+    /// constant's or a C constant's.
+    pub(crate) fn made_init(&mut self, d: DefId, ann: Option<TyId>) -> Option<crate::hir::Expr> {
+        self.symbol_init(d, ann)
+            .or_else(|| self.c_const_init(d, ann))
+    }
+
+    /// The initializer of global `d` (of type `ann`) when it is a `declare c const`: a
+    /// placeholder never evaluated, as its value comes from C headers after sema
+    /// (`GlobalDef::c_const`) and lowering reads that. A type that can't hold one is reported.
+    fn c_const_init(&mut self, d: DefId, ann: Option<TyId>) -> Option<crate::hir::Expr> {
+        let g = self.global(d).filter(|g| g.src.c_const)?;
+        let (name, at) = (g.name.clone(), g.src.span);
+        let t = ann?;
+        let cty = value_ty(self, t);
+        if cty.is_none() && t != self.ty.error {
+            let shown = self.display(t);
+            self.error(
+                Diagnostic::error(
+                    format!("C constant `{name}` has type `{shown}`, which can't hold a C constant"),
+                    at,
+                )
+                .with_note("a C constant is an integer (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`, `bool`, `Ptr<T>` or `Ptr<T> | null` (velt/ffi)"),
+            );
+        }
+        if let crate::defs::DefInfo::Global(g) = &mut self.info[d.0 as usize] {
+            g.c_const = cty;
+        }
+        Some(crate::hir::Expr {
+            kind: crate::hir::ExprKind::Lit(crate::hir::Lit::Unit),
+            ty: t,
+            span: at,
+        })
+    }
+}
+
 /// What crosses for a value of type `ty` (`None`: nothing can).
 fn value_ty(cx: &Ctx, ty: TyId) -> Option<CTy> {
     match cx.ty.kind(ty) {

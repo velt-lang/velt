@@ -802,7 +802,7 @@ Step 1 lands in layers, each its own pull request:
        package's files among them are build-stamp inputs, so a changed header rebuilds (and so
        checks) a program whose sources didn't change.
      - Not yet: headers per build condition (frameworks: zig has no macOS SDK), structs,
-       constants, function pointers, variadics.
+       function pointers (other than as `Ptr<void>`, 6c-1), variadics.
    - 6b: what installs check.
      - A C library a package declares functions of lists its `headers` or says
        `unchecked: true`; `c`, the platform's C library, too (`c: { c: { headers:
@@ -828,6 +828,36 @@ Step 1 lands in layers, each its own pull request:
      - `velt check` says "headers checked" only for a library that passed here on this target,
        by the check or by its record; on a target without C headers (WebAssembly), or with
        nothing of the library declared, it says "headers listed".
+   - 6c-1: `declare c const NAME: T;`, a constant whose value comes from the headers per target.
+     - `T` is an integer, `f32`, `f64`, `bool`, `Ptr<U>` or `Ptr<U> | null`. It has no library of
+       its own in the syntax: its package's libraries that list `headers` are read in turn, and
+       one that has other value than another is an error. A package has to be allowed to declare
+       one as for a C function. A library that says `unchecked: true` has no headers to read, so
+       no constants; nor has std, without a manifest (step 2).
+     - clang evaluates what C can: an object-like macro, an enumerator, a `static const`.
+       `__typeof__(NAME)` in a generated file says it exists and its C type, an enumerator
+       initialized from `(intmax_t)(NAME)` holds its value in the AST dump, and a float comes
+       from the LLVM IR of a constant initialized from it. A function-like macro or a name
+       headers don't have is "not defined", a variable or a string "has no value a program can
+       use".
+     - The value decides for integers (a flag `#define`d as `int` can be a `u32`), any that fits;
+       a float type takes its C type's (`f32` a `float`, `f64` a `float` or `double`), `bool`
+       `_Bool`, a `Ptr` a pointer of its C type (NULL only if `| null`). Reading one needs no
+       `unsafe`: the value is what the headers say, and a `Ptr` can't be read through without it.
+     - **Until `CFunction<F>` (step 5), `Ptr<void>` matches a function pointer**, in `declare c`
+       function parameters too, or `sqlite3_bind_text` and `SQLITE_TRANSIENT` couldn't be
+       declared against `sqlite3.h` (`declare c const SQLITE_TRANSIENT: Ptr<void>;`).
+     - Values go by the target: `velt native headers` records each in `c-headers.json`, per
+       target in `constants` beside `checked`'s digests: the type declared and the value, which
+       a fetched build compiles in. A fetched package's come from there (a declaration that differs, or a
+       missing target, is an error). What clang said is remembered like a check, keyed by the
+       headers and the files beside them, and those files are build-stamp inputs, so a changed
+       header changes the program with no source changed. An `#include` reaching elsewhere in
+       the package isn't seen.
+     - HIR: `GlobalDef::c_const` holds the value, set by the driver after sema; lowering reads it
+       instead of the initializer, in tables too. On a target without C headers (WebAssembly) a
+       reachable read is an error, as a C function's call is.
+     - Not yet: strings. A macro of a string literal is an error.
 
 ## Decisions
 

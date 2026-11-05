@@ -1,6 +1,6 @@
 //! C declarations (docs/internals/design/c-ffi.md): `declare c("<library>") function name(…): R;`,
-//! a function of a native library, called through the C ABI from `unsafe` code. `c` is a word
-//! only there.
+//! a function of a native library, called through the C ABI from `unsafe` code; `declare c type`
+//! and `declare c const`. `c` is a word only there.
 
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
@@ -15,6 +15,50 @@ impl<'a> Parser<'a> {
     /// At `declare c type`.
     pub(super) fn at_c_type(&mut self) -> bool {
         self.at_kw(Kw::Declare) && self.nth_word(1, "c") && self.nth(2) == Tok::Kw(Kw::Type)
+    }
+
+    /// At `declare c const`.
+    pub(super) fn at_c_const(&mut self) -> bool {
+        self.at_kw(Kw::Declare) && self.nth_word(1, "c") && self.nth(2) == Tok::Kw(Kw::Const)
+    }
+
+    /// `declare c const NAME: T;` (the caller checked [`Self::at_c_const`]): a constant whose
+    /// value the package's C headers give, so it has a type and never an initializer.
+    pub(super) fn parse_c_const(&mut self, lo: u32) -> PResult<VarDecl> {
+        self.bump(); // declare
+        self.bump(); // c
+        self.bump(); // const
+        let name = self.parse_binding_ident()?;
+        let span = name.span;
+        let pattern = self.mk_pat(PatternKind::Ident(name), span);
+        if !self.at(Tok::Colon) {
+            self.error(
+                "a C constant says its type: `declare c const NAME: T;`",
+                span,
+            );
+            return Err(Fail);
+        }
+        self.bump();
+        let ty = self.parse_type()?;
+        if self.at(Tok::Eq) {
+            let at = self.cur_span();
+            self.error(
+                "a C constant's value comes from its package's C headers, per target: it has no initializer",
+                at,
+            );
+            return Err(Fail);
+        }
+        if !self.eat_signature_end() {
+            self.expect_semi()?;
+        }
+        Ok(VarDecl {
+            kind: VarKind::Const,
+            pattern,
+            ty: Some(ty),
+            init: None,
+            span: self.span_from(lo),
+            c_const: true,
+        })
     }
 
     /// `declare c type name;` (the caller checked [`Self::at_c_type`]): an opaque C type, a

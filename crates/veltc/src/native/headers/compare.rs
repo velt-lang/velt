@@ -116,6 +116,9 @@ pub fn compare(shape: &Shape, c: &CType) -> Result<(), String> {
                 velt_for(c)
             )),
         },
+        // Until `CFunction<F>` (#2187 step 5), a function pointer crosses as `void *`, as what
+        // `(sqlite3_destructor_type)-1` is: no call through it is possible.
+        Shape::Ptr(Pointee::Void) if matches!(c, CType::FunctionPointer) => Ok(()),
         Shape::Ptr(p) => match c {
             CType::Pointer {
                 pointee,
@@ -244,7 +247,7 @@ fn text_bytes(c: &CType) -> bool {
 }
 
 /// What to declare for C type `c`, for messages.
-fn velt_for(c: &CType) -> String {
+pub(super) fn velt_for(c: &CType) -> String {
     match c {
         CType::Void => "`void`".into(),
         CType::Bool => "`bool`".into(),
@@ -272,7 +275,7 @@ fn velt_for(c: &CType) -> String {
             _ => "a pointer (`Ptr<T>`, an array, `Out<T>`)".into(),
         },
         CType::Named(n) => format!("struct `{n}` by value, which can't cross yet"),
-        CType::FunctionPointer => "a function pointer, which can't cross yet".into(),
+        CType::FunctionPointer => "a `Ptr<void>` (a function pointer, until `CFunction`)".into(),
         CType::Unknown(n) => format!("`{n}`, which can't cross"),
     }
 }
@@ -400,6 +403,17 @@ mod tests {
         let char_ptr = ptr(int(8, true), true, &["char"]);
         assert!(compare(&Shape::Text, &char_ptr).is_ok());
         assert!(compare(&Shape::Text, &sqlite).is_err());
+    }
+
+    /// Until `CFunction`, a function pointer crosses as `Ptr<void>` and nothing else.
+    #[test]
+    fn a_function_pointer_is_a_void_pointer() {
+        let f = CType::FunctionPointer;
+        assert!(compare(&Shape::Ptr(Pointee::Void), &f).is_ok());
+        assert!(compare(&Shape::Null, &f).is_ok());
+        let e = compare(&Shape::Ptr(Pointee::CType("thing".into())), &f).unwrap_err();
+        assert!(e.contains("`Ptr<void>`"), "{e}");
+        assert!(compare(&velt_int(64, false), &f).is_err());
     }
 
     #[test]

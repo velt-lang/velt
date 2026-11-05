@@ -64,6 +64,7 @@ impl<'a> Printer<'a> {
             ItemKind::Interface(decl) => self.interface(decl),
             ItemKind::Enum(decl) => self.enum_decl(decl),
             ItemKind::TypeAlias(alias) => self.type_alias(alias),
+            ItemKind::Var(var) if var.c_const => cat!["declare c ", self.var_decl(var), ";"],
             ItemKind::Var(var) => cat![self.var_decl(var), ";"],
             ItemKind::Extend(decl) => self.extend(decl),
             ItemKind::ExternFn(sig) if sig.host.is_some() => self.host_fn(sig),

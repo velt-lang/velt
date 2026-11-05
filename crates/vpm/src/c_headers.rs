@@ -4,7 +4,8 @@
 //! check against its headers there, and of each of the package's own headers the check read. It
 //! is generated (`velt native headers`, and `velt publish` before it packs), committed for git
 //! dependencies, and shipped with the package. A build that fetched the package compares its
-//! declarations and the headers it has with it, so users never run clang.
+//! declarations and the headers it has with it, so users never run clang. It holds the value
+//! of each `declare c const` per target too, which such a build compiles in.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -19,6 +20,9 @@ pub const FILE: &str = "c-headers.json";
 pub struct CHeaders {
     /// zig target → C library → what was checked there.
     pub checked: BTreeMap<String, BTreeMap<String, LibraryRecord>>,
+    /// zig target → C constant → what its author declared and what the headers gave there.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub constants: BTreeMap<String, BTreeMap<String, CConstant>>,
 }
 
 /// What was checked of one C library on one target.
@@ -30,6 +34,37 @@ pub struct LibraryRecord {
     /// The package's own headers the check read, with what they include: `/`-separated path in
     /// the package → digest.
     pub headers: BTreeMap<String, String>,
+}
+
+/// A `declare c const` as its author's check saw it on one target.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CConstant {
+    /// The Velt type declared (`i32`, `Ptr<void> | null`).
+    pub declared: String,
+    pub value: CConstantValue,
+}
+
+/// The value of a C constant. Numbers are text: JSON's aren't exact over 2^53.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CConstantValue {
+    /// In decimal.
+    Int(String),
+    /// `f64::to_bits`, in hexadecimal.
+    Float(String),
+    Bool(bool),
+    /// In hexadecimal.
+    Pointer(String),
+}
+
+/// What clang says about a name in a package's headers, as the compiler remembers it while the
+/// headers don't change (not part of the record).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Probe {
+    /// Its C type, typedefs resolved (`unsigned int`, `void (*)(void *)`).
+    pub c_type: String,
+    /// `None`: clang can't evaluate it, or it is of a type no constant crosses as.
+    pub value: Option<CConstantValue>,
 }
 
 impl CHeaders {
@@ -53,11 +88,45 @@ impl CHeaders {
     pub fn library(&self, target: &str, library: &str) -> Option<&LibraryRecord> {
         self.checked.get(target)?.get(library)
     }
+
+    /// The record of constant `name` on `target`.
+    pub fn constant(&self, target: &str, name: &str) -> Option<&CConstant> {
+        self.constants.get(target)?.get(name)
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A record made before C constants reads as one without any, and one without any writes
+    /// nothing for them, so a package's file doesn't change.
+    #[test]
+    fn constants_are_optional_in_the_record() {
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::write(tmp.path().join(FILE), "{\"checked\":{}}").unwrap();
+        let old = CHeaders::read(tmp.path()).unwrap().unwrap();
+        assert!(old.constants.is_empty());
+        old.write(tmp.path()).unwrap();
+        let text = std::fs::read_to_string(tmp.path().join(FILE)).unwrap();
+        assert!(!text.contains("constants"), "{text}");
+        let mut record = CHeaders::default();
+        let constant = CConstant {
+            declared: "Ptr<void>".into(),
+            value: CConstantValue::Pointer("ffffffffffffffff".into()),
+        };
+        record
+            .constants
+            .entry("x86_64-linux-gnu".into())
+            .or_default()
+            .insert("T".into(), constant.clone());
+        record.write(tmp.path()).unwrap();
+        let back = CHeaders::read(tmp.path()).unwrap().unwrap();
+        assert_eq!(back, record);
+        assert_eq!(back.constant("x86_64-linux-gnu", "T"), Some(&constant));
+        assert_eq!(back.constant("x86_64-linux-gnu", "U"), None);
+        assert_eq!(back.constant("aarch64-macos", "T"), None);
+    }
 
     #[test]
     fn the_record_round_trips() {

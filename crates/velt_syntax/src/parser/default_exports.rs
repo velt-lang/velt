@@ -157,6 +157,7 @@ impl Parser<'_> {
                 ty: None,
                 init: Some(expr),
                 span,
+                c_const: false,
             }),
             exported: true,
             span,

@@ -67,6 +67,7 @@ impl FnCx<'_, '_> {
             ty: None,
             init: Some(syn.int(0)),
             span: syn.at,
+            c_const: false,
         }));
         let length = syn.member(syn.name(&syn.array), "length");
         let cond = syn.binary(ast::BinaryOp::Lt, syn.name(&index), length);
@@ -87,6 +88,7 @@ impl FnCx<'_, '_> {
             ty: None,
             init: Some(element),
             span: p.pattern.span,
+            c_const: false,
         }));
         let body = ast::Stmt {
             kind: ast::StmtKind::Block(p.body.clone()),
