@@ -76,6 +76,16 @@ impl Ctx<'_> {
         matches!(self.ty.kind(t), TyKind::Dyn(..)) && self.dynamic(t).is_none()
     }
 
+    /// Is `t` an interface with no fields and no methods (`interface Extensions {}`, which
+    /// declarations merge into)?
+    pub(crate) fn empty_iface(&self, t: TyId) -> bool {
+        let TyKind::Dyn(d, _) = self.ty.kind(t) else {
+            return false;
+        };
+        self.iface(*d)
+            .is_some_and(|i| i.fields.is_empty() && i.methods.is_empty())
+    }
+
     /// `a & b` where one of them is an interface with methods, or an interface made here from
     /// an intersection: the interface with both's members (module docs). `None` when the
     /// other is not an interface or an object type.

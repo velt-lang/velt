@@ -386,6 +386,8 @@ pub(crate) struct Ctx<'m> {
     pub held_borrows: bool,
     /// Per module: namespace members visible only inside their namespace (`crate::namespaces`).
     pub ns_private: Vec<crate::namespaces::Private>,
+    /// The namespaces of `declare global` blocks and their modules (`crate::namespaces`).
+    pub global_namespaces: crate::namespaces::GlobalNamespaces,
     /// Some closure or `const me = this` was made to borrow.
     pub held_borrows_used: bool,
     /// Module constants taken over, reported: (constant, start of the value taken) → index in
@@ -599,6 +601,7 @@ impl<'m> Ctx<'m> {
             stack_budget: crate::SEMA_STACK_BUDGET,
             held_borrows: true,
             ns_private: vec![],
+            global_namespaces: Default::default(),
             held_borrows_used: false,
             moved_consts: Default::default(),
             borrow_pass_errors: false,

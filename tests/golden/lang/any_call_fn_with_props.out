@@ -1,0 +1,3 @@
+function false plain 1
+function true called 2
+C called 3

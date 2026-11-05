@@ -1,0 +1,8 @@
+// A namespace the module declares itself hides a global one of the same name (TS2694).
+import "./_global_namespace_hidden";
+
+namespace N {
+  export type U = number;
+}
+const a: N.U = 1;
+const b: N.T = "x";
