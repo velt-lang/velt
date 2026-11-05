@@ -1,0 +1,6 @@
+// `export *` leaves out the default: not imported through it, by a namespace member or a
+// re-export of it (#1916).
+import * as star from "./_default_not_through_star_b";
+import { default as d } from "./_default_not_through_star_c";
+
+console.log(star.default, d, star.named);

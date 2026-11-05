@@ -1,0 +1,6 @@
+// A default and a name re-exported through 33 modules, the type meaning of the default too: a
+// chain of re-exports can be any length, as in Node (#1916). The output is Node's.
+import d, { x } from "./_default_chain_33/m0";
+
+const y: d = { a: d() };
+console.log(y.a, x);

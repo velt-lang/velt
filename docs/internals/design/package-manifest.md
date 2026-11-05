@@ -321,7 +321,8 @@ Implementation order:
 
 - **Executable manifests**, with computed values, environment access or imports of other code.
   The manifest stays as safe as JSON.
-- **`export default`**. Velt has named exports only.
+- **`export default`** for the manifest. Velt accepts default exports (#1916), but the manifest
+  is found by its name: one binding, `export const pkg`, is the one way to write it.
 - **`satisfies Package`** instead of an annotation. Velt has no `satisfies`, and the annotation
   does the same job here.
 - **Keeping `velt.toml` as an alternative.** Two formats would double the tool code and the
@@ -333,7 +334,8 @@ Implementation order:
   It gets static completion from editors' JSON support, but live registry data needs the same
   custom language-server code, and it loses comments and the Velt-native goal.
 - **`definePackage({ … })`**, as in Vite's `defineConfig`. A call is not a constant expression
-  either, Velt has no `export default`, and it adds no completion over the annotation.
+  either, the manifest is the named `pkg` (not a default export), and it adds no completion over
+  the annotation.
 
 ## Decisions
 

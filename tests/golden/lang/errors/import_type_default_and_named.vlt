@@ -1,0 +1,6 @@
+// `import type` takes a default or named bindings, not both (TS1363, #1916).
+import type C, { D } from "./_import_type_default_and_named";
+import type E, * as ns from "./_import_type_default_and_named";
+
+const c: C | null = null;
+console.log(c);

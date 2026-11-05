@@ -262,9 +262,18 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             ));
             return failures;
         }
+        // An expected path is written with `/`, and Windows prints `\` in a diagnostic.
+        let same_slashes = |s: &str| {
+            if cfg!(windows) {
+                s.replace('\\', "/")
+            } else {
+                s.to_string()
+            }
+        };
+        let stderr_slashes = same_slashes(&stderr);
         for line in norm(&std::fs::read_to_string(&err_file).unwrap()).lines() {
             let line = line.trim();
-            if !line.is_empty() && !stderr.contains(line) {
+            if !line.is_empty() && !stderr_slashes.contains(&same_slashes(line)) {
                 failures.push(format!(
                     "{rel}: stderr missing `{line}`
 --- stderr ---

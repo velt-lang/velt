@@ -1,0 +1,5 @@
+// A cycle of re-exports with two names in its lists: an error at once, not every path through
+// the lists up to the depth limit.
+import { p, q } from "./_export_list_cycle_a";
+
+console.log(p, q);

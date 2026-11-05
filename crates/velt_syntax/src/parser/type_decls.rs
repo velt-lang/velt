@@ -32,7 +32,7 @@ impl<'a> Parser<'a> {
     /// `struct|class Name<T> [extends Base<T>] [implements A, B] { members }`
     pub(super) fn parse_type_decl(&mut self, is_class: bool) -> PResult<TypeDecl> {
         self.bump(); // struct / class
-        let name = self.parse_binding_ident()?;
+        let name = self.parse_decl_name()?;
         self.parse_type_decl_rest(name, is_class, false)
     }
 
@@ -45,7 +45,7 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_abstract_class(&mut self) -> PResult<TypeDecl> {
         self.bump(); // abstract
         self.bump(); // class
-        let name = self.parse_binding_ident()?;
+        let name = self.parse_decl_name()?;
         self.parse_type_decl_rest(name, true, true)
     }
 

@@ -1,0 +1,5 @@
+// The branch is taken: the read stops at run time, with Node's `ReferenceError` (#1916).
+
+import { get } from "./_default_read_runs/a";
+
+console.log(get());

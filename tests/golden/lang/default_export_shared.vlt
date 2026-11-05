@@ -1,0 +1,11 @@
+// `export default expr;` is one value, whatever its initializer: every import sees the same
+// array and object, as in Node (#1916), not one made at each read.
+
+import arr from "./_default_export_shared/array";
+import { len } from "./_default_export_shared/pusher";
+import state from "./_default_export_shared/state";
+import { default as sameState } from "./_default_export_shared/state";
+
+arr.push(2);
+console.log(arr, len, arr.length);
+console.log(state.inc(), sameState.inc(), state.v);

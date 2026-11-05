@@ -1,0 +1,4 @@
+// `export * as default` is the module's default: not one more next to it (TS2528, #1916).
+import four from "./_export_star_as_default_twice";
+
+console.log(four);

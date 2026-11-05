@@ -121,6 +121,8 @@ impl<'a> Parser<'a> {
             from_span: span,
             namespace: None,
             all: false,
+            default_import: false,
+            type_only: false,
         };
         Item {
             kind: ItemKind::Import(import),

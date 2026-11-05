@@ -26,6 +26,9 @@ pub(crate) struct ModuleScope {
     pub exports: FxHashSet<String>,
     /// `import * as ns`: namespace name → module index (its exports are bound as `ns.x`).
     pub namespaces: FxHashMap<String, usize>,
+    /// A nested namespace path whose module is bound under another path of this scope (`a.b.a`
+    /// → `a`'s nested path; `collect::imports::bind_members`).
+    pub namespace_aliases: FxHashMap<String, String>,
     /// Names bound by `import type` (types only: using one as a value is an error).
     pub type_only: FxHashSet<String>,
     /// Of those, the names their module exports only as types (`export type { x }`).

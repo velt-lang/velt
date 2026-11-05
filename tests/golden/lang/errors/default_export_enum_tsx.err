@@ -1,0 +1,1 @@
+_default_export_enum_tsx.tsx:1:16: error: `export default` cannot be followed by an `enum` declaration in TypeScript

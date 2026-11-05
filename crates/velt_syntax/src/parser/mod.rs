@@ -12,6 +12,7 @@ mod asi;
 mod augment;
 mod c_decls;
 mod cast_types;
+mod default_exports;
 mod expr;
 mod field_types;
 mod fn_exprs;
@@ -97,6 +98,17 @@ pub(crate) struct Parser<'a> {
     /// The declarators after the first of `let a = 1, b = 2;` (`parse_var_decl`), for the
     /// statement or item list to add after the first one.
     more_vars: Vec<VarDecl>,
+    /// Items an item adds after itself (`export default function f` adds `export { f as
+    /// default }`, `default_exports`), for the item list to add after it.
+    more_items: Vec<Item>,
+    /// The name of the declaration after `export default` when it has none
+    /// (`default_exports`).
+    anonymous_default: Option<Ident>,
+    /// Parsing the declaration after `export default`, whose overload signatures each start with
+    /// `export default` (`default_exports`).
+    default_overloads: bool,
+    /// A `.ts` or `.tsx` file: `export default enum` is refused, as TypeScript refuses it.
+    pub(crate) typescript: bool,
     /// The abstract setter of the abstract property just parsed (`members::abstracts`), for
     /// the class body to add after its getter.
     abstract_setter: Option<Method>,
@@ -189,6 +201,10 @@ impl<'a> Parser<'a> {
             paren_matches: ParenMatches::default(),
             plain_ts: false,
             more_vars: Vec::new(),
+            more_items: Vec::new(),
+            anonymous_default: None,
+            default_overloads: false,
+            typescript: false,
             abstract_setter: None,
             static_blocks: 0,
             accessor_type: None,

@@ -1,0 +1,4 @@
+const x = 2;
+export default 1;
+export { x as default };
+export default function () {}

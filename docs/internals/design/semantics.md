@@ -169,8 +169,15 @@ of doing things, even when ported code must change (with a precise error and a f
   (run automatically when the value is dropped); `using x = …` disposes at the end of the
   enclosing block; `await using` and `[Symbol.asyncDispose]()` work too.
 - **Modules** (implemented). `import * as ns`, `export { x } from`, `export * from`, folders
-  through `index.vlt`, `paths` aliases in `package.vlt`, `import type`. Named exports only (no
-  `export default`).
+  through `index.vlt`, `paths` aliases in `package.vlt`, `import type`, `export * as ns from`.
+  Default exports and imports as in TypeScript (#1916): `export default` in every file, `.vlt`
+  included, desugared by the parser into a named export `default` (`export default expr` a
+  constant kept in module state, evaluated once in module order; `export default x` too when `x`
+  may change or isn't there yet: a `let`, an imported `let`, a declaration below it, or no module
+  binding); `export *` leaves `default` out. `export default interface` stands next to a value
+  default, as its type meaning, but not next to `export default expr` or `x` (TS2528). Namespaces
+  nest at any depth, cycles included (`a.b.a.x`). The standard library keeps named exports only
+  (`scripts/std-lint`).
 - **`null` and `undefined`, as in Node** (owner decision on #930; phases 1 and 2 implemented).
   `T | undefined` is its own type with the same layout as `T | null` (hir_encodings.md
   "Undefined"); `typeof`, comparisons, printing and JSON follow Node. Optional fields and

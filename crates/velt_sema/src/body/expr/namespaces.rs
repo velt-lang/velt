@@ -24,9 +24,13 @@ impl FnCx<'_, '_> {
         let ast::ExprKind::Ident(ns) = &object.kind else {
             return None;
         };
-        self.is_namespace(&ns.name).then(|| ast::Ident {
-            name: format!("{}.{}", ns.name, prop.name),
-            span: prop.span,
+        self.is_namespace(&ns.name).then(|| {
+            let name = format!("{}.{}", ns.name, prop.name);
+            let aliases = &self.cx.scopes[self.module].namespace_aliases;
+            ast::Ident {
+                name: aliases.get(&name).cloned().unwrap_or(name),
+                span: prop.span,
+            }
         })
     }
 
@@ -44,11 +48,18 @@ impl FnCx<'_, '_> {
         let kind = match self.namespace_member(object, prop) {
             Some(id) if !optional => ast::ExprKind::Ident(id),
             Some(_) => return None,
-            None => ast::ExprKind::Member {
-                object: Box::new(self.without_namespace(object)?),
-                prop: prop.clone(),
-                optional: *optional,
-            },
+            None => {
+                let object = self.without_namespace(object)?;
+                match self.namespace_member(&object, prop) {
+                    // `ns.sub.x`: `sub` is a namespace `ns`'s module re-exports.
+                    Some(id) if !optional => ast::ExprKind::Ident(id),
+                    _ => ast::ExprKind::Member {
+                        object: Box::new(object),
+                        prop: prop.clone(),
+                        optional: *optional,
+                    },
+                }
+            }
         };
         Some(ast::Expr {
             id: e.id,
@@ -73,12 +84,21 @@ impl FnCx<'_, '_> {
     /// The error for `ns.x` when namespace `ns` has no export `x`; false if `name` is not a
     /// namespace member.
     pub(crate) fn unknown_namespace_member(&mut self, name: &str, span: Span) -> bool {
-        let Some((ns, member)) = name.split_once('.') else {
+        let Some((ns, member)) = name.rsplit_once('.') else {
             return false;
         };
         let Some(&t) = self.cx.scopes[self.module].namespaces.get(ns) else {
             return false;
         };
+        if self.cx.scopes[self.module].namespaces.contains_key(name) {
+            self.cx.err(
+                format!(
+                    "`{name}` is a namespace import: use its exported members, like `{name}.name`"
+                ),
+                span,
+            );
+            return true;
+        }
         if crate::collect::exports::maybe_dropped(self.cx, t, member) {
             return true; // its declaration may be one the parser dropped (`Ctx::recovered`)
         }

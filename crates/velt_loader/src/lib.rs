@@ -373,6 +373,7 @@ impl Loader<'_, '_> {
             self.ambient.read_declarations(self.sm, path);
             let opts = velt_syntax::ParseOptions {
                 plain_ts,
+                tsx: path.extension().is_some_and(|e| e == "tsx"),
                 defines: self.ambient.defines(),
             };
             let parsed = velt_syntax::parse_with(file, &self.sm.get(file).src, &opts);

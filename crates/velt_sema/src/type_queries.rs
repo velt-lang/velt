@@ -63,12 +63,19 @@ impl Ctx<'_> {
         let (mut ty, rest) = match local {
             Some(ty) => (ty, &path[1..]),
             None => {
-                let ns =
-                    path.len() >= 2 && self.scopes[env.module].namespaces.contains_key(&head.name);
-                let (item, rest) = match ns {
+                // `typeof ns.sub.x`: how many names lead to the member.
+                let mut ns = 0;
+                while ns + 1 < path.len() {
+                    let key = crate::namespaces::path_key(self, env.module, &path[..=ns]);
+                    if !self.scopes[env.module].namespaces.contains_key(&key) {
+                        break;
+                    }
+                    ns += 1;
+                }
+                let (item, rest) = match ns > 0 {
                     true => (
-                        self.lookup_path_at(env.module, &path[..2], t.span),
-                        &path[2..],
+                        self.lookup_path_at(env.module, &path[..=ns], t.span),
+                        &path[ns + 1..],
                     ),
                     false => (
                         self.lookup_item_at(env.module, &head.name, head.span),

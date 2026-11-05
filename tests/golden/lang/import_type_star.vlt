@@ -1,0 +1,7 @@
+// `import type * as ns` uses a module's types only: the module isn't evaluated (#1916). The
+// output is Node's.
+
+import type * as ns from "./_import_type_star/a";
+
+const t: ns.T = 1;
+console.log(t);

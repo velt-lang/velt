@@ -1,0 +1,2 @@
+_let_read_before_init_always_b.ts:3:30: error: `v` is read before its initializer runs
+_let_read_before_init_always_b.ts:5:30: error: `v` is read before its initializer runs

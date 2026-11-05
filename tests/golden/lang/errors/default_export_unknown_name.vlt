@@ -1,0 +1,5 @@
+// A name nothing declares is reported once: the module does have a default export (#1916).
+import a from "./_default_export_unknown_name";
+import b from "./_default_export_unknown_destructured";
+
+console.log(a, b);

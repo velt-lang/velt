@@ -1,0 +1,4 @@
+// A default re-exported in a cycle of 3 modules, called: TS2303, a SyntaxError in Node.
+import a from "./_default_cycle_3/a";
+
+a();

@@ -58,7 +58,7 @@ structs! {
     Ident { name, span }
     Module { items, span, jsx_import_source }
     Item { kind, exported, span }
-    Import { names, from, from_span, namespace, all }
+    Import { names, from, from_span, namespace, all, default_import, type_only }
     ImportName { name, alias, type_only }
     GenericParam { name, bounds, default }
     Param { name, pattern, ty, default, optional, rest, span }

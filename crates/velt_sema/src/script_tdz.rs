@@ -23,7 +23,12 @@ pub(crate) fn check(cx: &mut Ctx) {
     let modules = cx.modules.clone();
     for m in modules {
         let scripts = crate::module_scripts::script_fns(m);
-        if scripts.is_empty() {
+        // `export default x;` runs where it stands whether the module has statements or not.
+        let default_expr = m.ast.items.iter().find_map(|i| match &i.kind {
+            ItemKind::Var(v) if matches!(&v.pattern.kind, PatternKind::Ident(n) if n.name == "default") => Some(v.span),
+            _ => None,
+        });
+        if scripts.is_empty() && default_expr.is_none() {
             continue;
         }
         let mut stmts: Vec<&Stmt> = scripts.iter().flat_map(|f| &f.body.stmts).collect();
@@ -31,6 +36,11 @@ pub(crate) fn check(cx: &mut Ctx) {
         let early = early_uses(&m.ast.items, &stmts);
         cx.promoted_consts.extend(early.promoted);
         for (name, what, at) in early.direct {
+            // Without statements, constants may be declared in any order; only the default
+            // export is held to it, as `.ts` and `.vlt` files alike read it where it stands.
+            if scripts.is_empty() && !default_expr.is_some_and(|s| s.lo <= at.lo && at.hi <= s.hi) {
+                continue;
+            }
             let msg = match what {
                 "variable" | LOCAL => format!("`{name}` is used before its declaration"),
                 _ => format!("{what} `{name}` is used before its declaration"),

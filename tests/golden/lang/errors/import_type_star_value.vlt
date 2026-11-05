@@ -1,0 +1,4 @@
+// A member of `import type * as ns` is a type: using it as a value is an error (TS1361, #1916).
+import type * as ns from "./_import_type_star_value";
+
+console.log(ns.x);

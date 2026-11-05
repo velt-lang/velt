@@ -63,6 +63,11 @@ impl<'a> Printer<'a> {
             })
             .map(|g| g.decl.sig.name.span.lo)
             .collect();
+        // `export default class {` (#1916): no name.
+        let keyword = match decl.name.name.is_empty() {
+            true => keyword.trim_end(),
+            false => keyword,
+        };
         let mut head = cat![
             keyword,
             decl.name.name.clone(),

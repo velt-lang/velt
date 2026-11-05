@@ -1,0 +1,4 @@
+// The read always runs: reported for a named `let` as for a default, also past a branch (#1916).
+import { get } from "./_let_read_before_init_always_a";
+
+console.log(get());

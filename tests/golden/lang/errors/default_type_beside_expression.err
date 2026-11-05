@@ -1,0 +1,2 @@
+_default_type_beside_expression_a.ts:2:8: error: a module cannot have multiple default exports
+_default_type_beside_expression_b.ts:3:8: error: a module cannot have multiple default exports

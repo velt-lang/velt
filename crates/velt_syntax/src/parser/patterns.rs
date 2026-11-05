@@ -177,6 +177,16 @@ impl<'a> Parser<'a> {
             self.diags
                 .push(velt_common::Diagnostic::error(msg, id.span));
         }
+        if id.name == super::default_exports::DEFAULT {
+            // TS1214: `default` is a reserved word; it names a module's default export.
+            self.diags.push(
+                velt_common::Diagnostic::error(
+                    "`default` is a reserved word and cannot be used as a name",
+                    id.span,
+                )
+                .with_note("to import a module's default export, name it: `import x from \"…\"` or `import { default as x } from \"…\"`"),
+            );
+        }
     }
 }
 

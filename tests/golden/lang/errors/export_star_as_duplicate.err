@@ -1,0 +1,3 @@
+_export_star_as_duplicate_twice.ts:2:13: error: `ns` is exported more than once
+_export_star_as_duplicate_const.ts:1:13: error: `ns` is exported more than once
+_export_star_as_duplicate_list.ts:2:15: error: `ns` is exported more than once

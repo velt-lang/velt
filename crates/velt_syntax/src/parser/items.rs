@@ -35,6 +35,7 @@ impl<'a> Parser<'a> {
                     Ok(item) => {
                         let exported = item.exported;
                         items.push(item);
+                        items.append(&mut self.more_items);
                         for v in std::mem::take(&mut self.more_vars) {
                             items.push(Item {
                                 span: v.span,
@@ -45,6 +46,7 @@ impl<'a> Parser<'a> {
                     }
                     Err(Fail) => {
                         self.more_vars.clear();
+                        self.more_items.clear();
                         self.sync_item(start);
                     }
                 },
@@ -53,6 +55,7 @@ impl<'a> Parser<'a> {
                 self.bump();
             }
         }
+        self.finish_default_exports(&mut items, &stmts);
         if !stmts.is_empty() {
             self.finish_script(&mut items, stmts);
         }
@@ -93,7 +96,7 @@ impl<'a> Parser<'a> {
                 });
             }
             if self.at_kw(Kw::Default) {
-                self.export_default()?;
+                return self.parse_export_default(lo, top);
             }
         }
         let kind = self.parse_item_kind(lo, top && !exported)?;
@@ -294,6 +297,7 @@ impl<'a> Parser<'a> {
         let mut sigs: Vec<(FnSig, bool)> = vec![];
         while self.eat_signature_end() {
             self.signature_defaults(&sig);
+            let next_default = self.eat_default_overload(&sig.name);
             let (next_exported, next_unsafe, next_async) =
                 match self.at_function_after(&sig.name.name) {
                     Some(Ok(next)) => next,
@@ -313,7 +317,7 @@ impl<'a> Parser<'a> {
                 }
             }
             sigs.push((sig, exported));
-            exported = next_exported;
+            exported = next_exported || next_default;
             sig = self.parse_fn_sig(next_lo, next_async)?;
             sig.is_unsafe = next_unsafe;
         }
@@ -362,6 +366,10 @@ impl<'a> Parser<'a> {
         k += 1;
         if self.nth(k) == Tok::Star {
             k += 1;
+        }
+        // `export default function (a: string): string;`: its next signature has no name either.
+        if name == super::default_exports::DEFAULT && !Self::is_ident_like(self.nth(k)) {
+            return Some(Ok((exported, is_unsafe, is_async)));
         }
         if !Self::is_ident_like(self.nth(k)) {
             return None;
@@ -425,7 +433,7 @@ impl<'a> Parser<'a> {
     pub(super) fn parse_fn_sig(&mut self, lo: u32, is_async: bool) -> PResult<FnSig> {
         self.expect_kw(Kw::Function, "function")?;
         let is_generator = self.eat(Tok::Star);
-        let name = self.parse_binding_ident()?;
+        let name = self.parse_decl_name()?;
         self.parse_sig_rest(lo, name, is_async, is_generator)
     }
 

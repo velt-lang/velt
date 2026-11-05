@@ -1,0 +1,12 @@
+// Overload signatures of a default function each say `export default` (#1916). The output is
+// Node's.
+
+import f from "./_default_export_overloads/named";
+import g from "./_default_export_overloads/anonymous";
+import h from "./_default_export_overloads/asynchronous";
+
+async function main() {
+  console.log(f("s"), f(1), g("t"), g(2), await h("u"), await h(3));
+}
+
+main();

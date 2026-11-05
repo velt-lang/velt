@@ -134,7 +134,9 @@ impl ImportHelp {
             out.extend(
                 exports
                     .iter()
-                    .filter(|e| wanted(e) && seen.insert(e.name.clone()))
+                    // A default export is imported under a name of the importer's choosing,
+                    // never as `default`.
+                    .filter(|e| e.name != "default" && wanted(e) && seen.insert(e.name.clone()))
                     .map(|e| Candidate {
                         source: source.clone(),
                         rank,

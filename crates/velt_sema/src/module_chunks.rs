@@ -88,7 +88,19 @@ fn split_module(module: &SourceModule, out: &mut Split) -> Option<Vec<ast::Item>
         .ast
         .items
         .iter()
-        .filter(|it| matches!(it.kind, ast::ItemKind::Var(_)))
+        .filter(|it| match &it.kind {
+            ast::ItemKind::Var(_) => true,
+            // `export default x;`, which may be a variable (`collect::default_snapshots`).
+            ast::ItemKind::Import(imp) => {
+                it.exported
+                    && velt_syntax::written_default(imp)
+                    && imp.names[0]
+                        .alias
+                        .as_ref()
+                        .is_some_and(|a| a.span != it.span)
+            }
+            _ => false,
+        })
         .map(|it| it.span.lo)
         .collect();
     let mut promoted: FxHashSet<usize> = FxHashSet::default();
