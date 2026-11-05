@@ -92,10 +92,10 @@ impl FnCx<'_, '_> {
     /// The first of `members` that arrow `e` type-checks against (each try is rolled back), or
     /// the first one, whose errors the real check then reports.
     fn member_by_trial(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
-        // Remembered per arrow, members and the types of the enclosing locals it names: an
-        // arrow nested in one being tried is tried once, not once per try of each enclosing
-        // arrow (exponential in the nesting), unless a local it uses has another type in this
-        // try (`(x) => { const y = x; show(() => y); }`, `x` a number, then a string). Locals
+        // Remembered per arrow, members and the types of the enclosing locals it names, as
+        // narrowed here: an arrow nested in one being tried is tried once, not once per try of
+        // each enclosing arrow (exponential in the nesting), unless a local it uses has another
+        // type in this try (`(x) => { const y = x; show(() => y); }`, `x` a number, then a string). Locals
         // it doesn't name (the enclosing arrows' other locals) don't change how it checks.
         let key = (e.span, members.to_vec(), self.named_local_types(e));
         if let Some(&m) = self.member_choices.get(&key) {
@@ -104,18 +104,6 @@ impl FnCx<'_, '_> {
         let m = self.first_fitting(e, members, escaping);
         self.member_choices.insert(key, m);
         m
-    }
-
-    /// The types of the locals (of this function and of those it is nested in) named like a
-    /// value arrow `e` takes from its surroundings, or `this`.
-    pub(super) fn named_local_types(&mut self, e: &ast::Expr) -> Vec<TyId> {
-        let free = self.arrow_scans.free_names(e);
-        let frames = self.outer.iter().chain(std::iter::once(&self.f));
-        frames
-            .flat_map(|f| f.locals.iter())
-            .filter(|l| free.binary_search(&l.name).is_ok())
-            .map(|l| l.ty)
-            .collect()
     }
 
     fn first_fitting(&mut self, e: &ast::Expr, members: &[TyId], escaping: bool) -> TyId {
@@ -137,6 +125,18 @@ impl FnCx<'_, '_> {
     /// An arrow function (`e` is an `ast::ExprKind::Arrow`) where a value of type `exp` is
     /// expected; `escaping` when it is stored or returned rather than passed to a call.
     pub(crate) fn closure(
+        &mut self,
+        e: &ast::Expr,
+        exp: Option<TyId>,
+        escaping: bool,
+    ) -> hir::Expr {
+        if self.memo_trials > 0 {
+            return self.closure_in_trial(e, exp, escaping);
+        }
+        self.closure_checked(e, exp, escaping)
+    }
+
+    pub(super) fn closure_checked(
         &mut self,
         e: &ast::Expr,
         exp: Option<TyId>,

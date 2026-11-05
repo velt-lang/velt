@@ -99,6 +99,7 @@ mod untyped_let;
 mod using;
 mod yield_infer;
 
+use self::expr::trial_memo::NamedLocal;
 use rustc_hash::FxHashMap;
 
 use velt_common::{Diagnostic, Span};
@@ -307,11 +308,17 @@ pub(crate) struct FnCx<'a, 'm> {
     pub task_callback: Option<Span>,
     /// The member of a union of function types each arrow (by span) was typed by, for the
     /// members it was tried against and the types of the locals it names (`expr/closure.rs`).
-    pub member_choices: FxHashMap<(Span, Vec<TyId>, Vec<TyId>), TyId>,
-    /// Whether a `catch` body (by span, with the types of the enclosing locals it names) takes
+    pub member_choices: FxHashMap<(Span, Vec<TyId>, Vec<NamedLocal>), TyId>,
+    /// How many remembered trials (`expr/trial_memo.rs`) are running, what each answered, and the
+    /// types of the arrows checked inside them.
+    pub memo_trials: u32,
+    pub trial_answers: FxHashMap<(Span, TyId, Vec<NamedLocal>), Option<TyId>>,
+    pub trial_closures: FxHashMap<(Span, Option<TyId>, Vec<NamedLocal>), TyId>,
+    pub arrow_trials: FxHashMap<(Span, Vec<NamedLocal>), TyId>,
+    /// Whether a `catch` body (by span, with the enclosing locals it names as they read) takes
     /// Node's `TypeError` (`expr::catch_any`): decided once, not once per trial check of an
     /// enclosing `catch` body (exponential in their nesting).
-    pub catch_choices: FxHashMap<(Span, Vec<TyId>), bool>,
+    pub catch_choices: FxHashMap<(Span, Vec<NamedLocal>), bool>,
     /// What scans of each arrow's syntax found (`arrow_scans`).
     pub arrow_scans: arrow_scans::ArrowScans,
     /// Checking an expression outside any body (a field initializer, a parameter default, a
@@ -435,6 +442,10 @@ impl<'a, 'm> FnCx<'a, 'm> {
             packed_rest: None,
             task_callback: None,
             member_choices: FxHashMap::default(),
+            memo_trials: 0,
+            trial_answers: FxHashMap::default(),
+            trial_closures: FxHashMap::default(),
+            arrow_trials: FxHashMap::default(),
             catch_choices: FxHashMap::default(),
             arrow_scans: Default::default(),
             detached: false,

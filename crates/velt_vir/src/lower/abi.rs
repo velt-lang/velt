@@ -269,6 +269,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let abi = lw.cx.ret_abi(ret, lw.throws);
         lw.lower_body(f);
         lw.describe_locals(f, f.params.len());
+        lw.describe_dict(def, f);
         let mut symbol = lw.cx.instance_symbol(&f.name, targs);
         match caller {
             // `_L` never follows a mangled name or `_T` list, so instances stay distinct.
@@ -353,6 +354,18 @@ impl<'c, 'h> FnLower<'c, 'h> {
             });
             let droppable = p.mode == PassMode::Owned && self.cx.needs_drop(ty);
             info[p.local.0 as usize] = Some(LInfo::new(vir, ty, indirect, droppable, LState::Init));
+        }
+        // A shared instance: its dictionary, after the user's params (shape/).
+        if let Some(inst) = self.cx.shared_being_built(def, &self.targs) {
+            params.push(Ty::Ptr);
+            attrs.push(ParamAttrs::default());
+            let l = self.new_local(Ty::Ptr, Some("$types".into()));
+            self.cx
+                .shapes
+                .insts
+                .get_mut(&inst)
+                .expect("ICE: shared")
+                .param = Some(l);
         }
         // An instance that takes its caller's location: the pointer to it (track_caller.rs).
         if self.caller_loc == Some(super::srcloc::ARG_LOC) {

@@ -1,0 +1,166 @@
+// velt/lang/hooks (internal): a tuple's array methods that call back (`t.map(f)`, `t.reduce(f, 0)`).
+// JavaScript reads each element when the method reaches it, after the callbacks before it ran,
+// and a tuple's elements have no array to read from: sema writes `t.map(f)` as
+// `tupleElements([t[0], t[1]], (i) => i === 0 ? t[0] : t[1]).map(f)`. No element is ever out of
+// range, since a tuple's length doesn't change.
+
+/** The elements of one tuple, read one at a time when a method reaches them. */
+export class TupleElements<T> {
+  private n: i64;
+  private read: (i: i64) => T;
+
+  constructor(n: i64, read: (i: i64) => T) {
+    this.n = n;
+    this.read = read;
+  }
+
+  /** `Array.prototype.forEach`. @throws what `f` throws. */
+  forEach<E>(f: (x: T, i: i64) => void throws E) throws E {
+    for (let i: i64 = 0; i < this.n; i++) {
+      f(this.read(i), i);
+    }
+  }
+
+  /** `Array.prototype.map`. @throws what `f` throws. */
+  map<U, E>(f: (x: T, i: i64) => U throws E): U[] throws E {
+    const out: U[] = [];
+    for (let i: i64 = 0; i < this.n; i++) {
+      out.push(f(this.read(i), i));
+    }
+    return out;
+  }
+
+  /** `Array.prototype.flatMap`. @throws what `f` throws. */
+  flatMap<U, E>(f: (x: T, i: i64) => U | U[] throws E): U[] throws E {
+    const out: U[] = [];
+    for (let i: i64 = 0; i < this.n; i++) {
+      const part = f(this.read(i), i);
+      if (Array.isArray(part)) {
+        for (const y of part as U[]) {
+          out.push(y);
+        }
+      } else {
+        out.push(part as U);
+      }
+    }
+    return out;
+  }
+
+  /** `Array.prototype.filter`: keeps the value `keep` was given. @throws what `keep` throws. */
+  filter<E>(keep: (x: T, i: i64) => bool throws E): T[] throws E {
+    const out: T[] = [];
+    for (let i: i64 = 0; i < this.n; i++) {
+      const x = this.read(i);
+      if (keep(x, i)) {
+        out.push(x);
+      }
+    }
+    return out;
+  }
+
+  /** `Array.prototype.reduce`. @throws what `f` throws. */
+  reduce<A, E>(f: (acc: A, x: T, i: i64) => A throws E, init: A): A throws E {
+    let acc = init;
+    for (let i: i64 = 0; i < this.n; i++) {
+      acc = f(acc, this.read(i), i);
+    }
+    return acc;
+  }
+
+  /** `Array.prototype.reduce` without an initial value. @throws what `f` throws. */
+  reduceFirst<E>(f: (acc: T, x: T, i: i64) => T throws E): T throws E {
+    let acc = this.read(0);
+    for (let i: i64 = 1; i < this.n; i++) {
+      acc = f(acc, this.read(i), i);
+    }
+    return acc;
+  }
+
+  /** `Array.prototype.reduceRight`. @throws what `f` throws. */
+  reduceRight<A, E>(f: (acc: A, x: T, i: i64) => A throws E, init: A): A throws E {
+    let acc = init;
+    for (let i: i64 = this.n - 1; i >= 0; i--) {
+      acc = f(acc, this.read(i), i);
+    }
+    return acc;
+  }
+
+  /** `Array.prototype.reduceRight` without an initial value. @throws what `f` throws. */
+  reduceRightFirst<E>(f: (acc: T, x: T, i: i64) => T throws E): T throws E {
+    let acc = this.read(this.n - 1);
+    for (let i: i64 = this.n - 2; i >= 0; i--) {
+      acc = f(acc, this.read(i), i);
+    }
+    return acc;
+  }
+
+  /** `Array.prototype.find`: the value `pred` was given. @throws what `pred` throws. */
+  find<E>(pred: (x: T, i: i64) => bool throws E): T | undefined throws E {
+    for (let i: i64 = 0; i < this.n; i++) {
+      const x = this.read(i);
+      if (pred(x, i)) {
+        return x;
+      }
+    }
+    return undefined;
+  }
+
+  /** `Array.prototype.findIndex`. @throws what `pred` throws. */
+  findIndex<E>(pred: (x: T, i: i64) => bool throws E): i64 throws E {
+    for (let i: i64 = 0; i < this.n; i++) {
+      if (pred(this.read(i), i)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /** `Array.prototype.findLast`: the value `pred` was given. @throws what `pred` throws. */
+  findLast<E>(pred: (x: T, i: i64) => bool throws E): T | undefined throws E {
+    for (let i: i64 = this.n - 1; i >= 0; i--) {
+      const x = this.read(i);
+      if (pred(x, i)) {
+        return x;
+      }
+    }
+    return undefined;
+  }
+
+  /** `Array.prototype.findLastIndex`. @throws what `pred` throws. */
+  findLastIndex<E>(pred: (x: T, i: i64) => bool throws E): i64 throws E {
+    for (let i: i64 = this.n - 1; i >= 0; i--) {
+      if (pred(this.read(i), i)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  /** `Array.prototype.some`. @throws what `pred` throws. */
+  some<E>(pred: (x: T, i: i64) => bool throws E): bool throws E {
+    for (let i: i64 = 0; i < this.n; i++) {
+      if (pred(this.read(i), i)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** `Array.prototype.every`. @throws what `pred` throws. */
+  every<E>(pred: (x: T, i: i64) => bool throws E): bool throws E {
+    for (let i: i64 = 0; i < this.n; i++) {
+      if (!pred(this.read(i), i)) {
+        return false;
+      }
+    }
+    return true;
+  }
+}
+
+/**
+ * The elements of a tuple for `TupleElements`: `seed` gives their type, the union of the tuple's
+ * elements, as an array literal of them has it.
+ */
+export function tupleElements<T>(seed: T[], read: (i: i64) => T): TupleElements<T> {
+  return new TupleElements<T>(seed.length as i64, read);
+}

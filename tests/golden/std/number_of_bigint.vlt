@@ -1,0 +1,5 @@
+// `Number` of a `BigInt` is its nearest number, where `+x` throws. (`5n` isn't in Velt yet.)
+import { BigInt } from "velt/math";
+
+const b = BigInt.fromNumber(5);
+console.log(Number(b));

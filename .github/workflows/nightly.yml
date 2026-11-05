@@ -66,10 +66,24 @@ jobs:
       # The parser's robustness test cuts every golden at every character, not a sample
       # (crates/velt_syntax/tests/robustness.rs).
       VELT_ROBUSTNESS: full
+      # Every golden with variables described, not a sample (crates/veltc/tests/debug_vars.rs).
+      VELT_DEBUG_VARS: all
     steps:
+      # The whole gate fills the runner's disk (2026-11-05: "No space left on device", which kills
+      # the runner itself and leaves no log). Remove what the image carries and this job never uses.
+      - name: free disk space
+        run: |
+          df -h /
+          sudo rm -rf /usr/local/lib/android /usr/share/dotnet /opt/ghc /usr/local/.ghcup
+          df -h /
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
+        with:
+          fast-linker: "false"
       - run: scripts/check-all.sh
+      - name: disk used by the gate
+        if: ${{ !cancelled() }}
+        run: df -h /
       # Node is the oracle: the hand-written corpus and short generated runs must agree with it.
       # All three run even when one finds a mismatch (each finds different bugs); the step fails
       # at the end if any did.

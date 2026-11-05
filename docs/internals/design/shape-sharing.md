@@ -1,10 +1,11 @@
 # Design: generic instances shared by shape (Go-style dictionaries)
 
-Status: draft for review (#2271, part of #2189 and #1612 item 2). It starts from the proposal on
+Status: step 2 is implemented (#2285), in debug builds only; steps 3 and later are proposed
+(#2271, part of #2189 and #1612 item 2). It starts from the proposal on
 #2189 (2026-11-03 17:19) and answers the five points #2271 leaves to review. Related designs:
 [package-cache.md](package-cache.md) (the per-package cache, #2236), #375's generic interface
 methods (implemented in #943 as per-instantiation slot tables, `lower/glue/generic_slots.rs`),
-and `AnyUnbox`, the out-of-line slow path of `any as T` (#2268). Nothing here is implemented.
+and `AnyUnbox`, the out-of-line slow path of `any as T` (#2268).
 
 ## Problem
 
@@ -99,25 +100,33 @@ case.
 The questions are asked of more than the type argument itself. A definition's **footprint** is
 every type in its body that mentions one of its type parameters: `T`, `T[]`, `T | undefined`,
 `ArrayView<T>`, a callee's type arguments.
-- **Collected per definition.** The footprint is a set of type templates, collected once per
-  definition by a HIR scan (memoized per `DefId`).
-- **The key.** The key of a list of type arguments for a definition is the answer list of
-  every template instantiated with those arguments.
-- **Placeholders are per definition.** They are interned per `(definition, key, parameter
-  index)`. Two definitions with the same argument shapes never share a placeholder, so
-  the global memo tables keyed by `TyId` (`drop_memo`, `value_agg`) can't mix two footprints.
-- **The end-of-pass check.** At the end of the pass, every type built from a placeholder is
-  instantiated with every member of its shape, and its answers are compared with the
-  representative's. A difference is an ICE: the footprint scan missed a template. That check
-  is a test of the scan, not the mechanism that makes sharing sound.
+- **The key.** The key of a type argument is the answers to the shape questions, plus its
+  layout and membership in each counted-types set, for the type itself and for every type of
+  the footprint. In step 2 every shared definition is one of the array-view helpers, whose
+  key covers `T` and `T[]`. The helpers also ask about `ArrayView<T>`, which the key leaves
+  out: no program is known where it differs while `T[]` agrees, and the end-of-pass check
+  would catch one. A view of `T[]` or of `T | null` is the helpers instantiated at that type,
+  with its own key. The families of step 4 build other types from their parameters: there the
+  footprint is collected per definition by a HIR scan (memoized per `DefId`), and the key
+  covers it.
+- **Placeholders are per key and parameter position.** Two definitions share a placeholder
+  only when the key, which covers the footprint, is the same. So every type built from the
+  placeholder has the same answers for every member, and the global memo tables keyed by
+  `TyId` (`drop_memo`, `value_agg`) can't mix two footprints. Once footprints are per
+  definition (step 4), the key includes the definition.
+- **The end-of-pass check.** At the end of the pass, the placeholder and every type built from
+  it that shared code asked about are instantiated with every member of the shape. Their
+  answers are compared with the representative's, from the same list the key is made of. A
+  difference is an ICE: the footprint missed a type. So the check never fires on a program
+  the key describes, and a key too coarse is caught, not compiled.
 
 ### How the questions are enforced
 
 `Cx::kind` ICEing for a placeholder isn't enough on its own. Most per-type facts are reads of
-`Boxing`'s sets (`self.boxing.<set>.contains(&t)`, 16 sites), and 64 places in `lower/` read
-`types.kind` directly. All of these answer silently
-for a placeholder or an `Array(placeholder)`. Step 2 therefore delivers three things, each
-with a test that breaks it on purpose:
+`Boxing`'s sets (`self.boxing.<set>.contains(&t)`, 16 sites), and other code in `lower/` matched
+on `types.kind` directly (52 reads, which now go through `Cx::raw_kind`). All of these answer
+silently for a placeholder or an `Array(placeholder)`. Step 2 therefore delivers three things,
+each with a test that breaks it on purpose:
 1. **The shape queries answer for the representative.** A placeholder has a representative,
    the first concrete type of its shape. Each shape query maps a placeholder to its
    representative first (`Cx::ph_rep`). Since the key makes every member give the
@@ -126,9 +135,11 @@ with a test that breaks it on purpose:
    types map a type built from a placeholder to the same type built from the representative
    (`Cx::ph_rep`) and ask about that. Nothing is put into or taken out of `Boxing`. A test
    fails when code outside `boxing/` reads a set of types without the mapping.
-3. **Every other question about a placeholder is an ICE.** That covers `Cx::kind`, and each of
-   the raw `types.kind` reads either is a shape question or goes through `Cx::kind`. Step 2
-   lists the 64 sites with which of the two each is.
+3. **Every other question about a placeholder is an ICE.** That covers `Cx::kind`. Every read of
+   lowering's type table that matches on a kind directly goes through `Cx::raw_kind`, which
+   ICEs on a placeholder. The exceptions are the four reads that handle placeholders
+   themselves: `Cx::kind`, `mentions_params`, the shape questions mapping through `ph_rep`,
+   and `type_key_in`. A test fails on any other raw read.
 
 ### What is not shared in step 2
 
@@ -229,9 +240,10 @@ new golden.
 | `any_identity`, `fn_compared`, `generic_any`, `any_set`, `any_has`, `any_delete`, `any_keys`, `any_reflect`, `any_number`, `any_call_keys`, `weak_object`, `object_from_dyn`, `proxy_new`, `read_indirect`, `unmet` | nothing (program-wide) | as is, once |
 
 `share_sites` for the counted-`Atomic` diagnostic is replayed with the site of the user call
-that requested the dictionary, so the report points at user code. `VELT_SHAPES=check` lowers
-each eligible instance both ways and compares the final `Boxing` and the diagnostics. Its
-coverage is this table.
+that requested the dictionary, so the report points at user code. A planned
+`VELT_SHAPES=check` would lower each eligible instance both ways and compare the final
+`Boxing` and the diagnostics, with this table as its coverage; step 2 checks the same by
+comparing whole runs with `VELT_SHAPES=off`.
 
 ### How lowering represents a shape
 
@@ -492,8 +504,8 @@ So what decides is:
 - rule 1, computed by lowering;
 - rule 2's single-dictionary fold, also in lowering, and its hot-site clones, in `velt_opt`;
 - the measured gate, kept as a list in the code that only grows. A switch in
-`VELT_SHAPES` (`off`, `on`, `check`, `all`) picks the behavior for A/Bs without rebuilding the
-compiler.
+`VELT_SHAPES` picks the behavior for A/Bs without rebuilding the compiler: `off` and `all`
+exist in step 2, `on` (the default made explicit) and `check` are planned.
 
 Release is unchanged in step 2 (order of work): it shares nothing, and its VIR is
 byte-identical to main's for every golden and benchmark program, which the step checks.
@@ -524,17 +536,22 @@ per-type instance. The difference is only how the code is reached.
 | stack traces in debuggers, profilers and crash dumps | see below |
 
 **Stack traces.** A shared instance's symbol names its shape: `arrayViewSync_T` followed by a
-shape segment, demangled `arrayViewSync<~rc>`. Like other symbols it contains no `TyId`, so
+shape segment, its layout and a hash of the rest of its key, demangled
+`arrayViewSync<~ptr.556ac4f9>`. Like other symbols it contains no `TyId`, so
 `velt dev` matches it across versions. Debuggers and profilers show that name, which is correct
 code-wise but doesn't say which type was meant. Debug builds name the types too:
-- each type table holds its type's name (slot -5);
-- the dictionary parameter is described to the debugger as a variable `$types`, listing the
-  type arguments by name through the debug-variable support (`debug-variables.md`).
+- each dictionary starts with the names of its type arguments, a string object (and from step
+  4 each type table holds its type's name, slot -5);
+- the dictionary parameter is described to the debugger as `$types`, an object whose `types`
+  field is that string (`debug-variables.md`).
 
-A frame then shows `arrayViewSync<~rc>` with `$types = [Node]`. The prototype checks this with a
-case in `crates/veltc/tests/debugger.rs`, next to the existing debug-variable cases. Release strips
-symbols at link time, as it does today. Panic messages carry source locations, not function
-names, and are unaffected.
+A frame then shows `arrayViewSyncAt<~ptr.556ac4f9>`, and `$types` expands to
+`types = "{ a: f64; b: string }"`. A value of the shared type shows its shape (`(~ptr) v`).
+`$types` can't be typed as a name in LLDB's `frame variable`, so it shows with the frame's
+other variables (`frame variable -P 1`).
+`crates/veltc/tests/debugger.rs` checks this, next to the existing debug-variable cases.
+Release strips symbols at link time, as it does today. Panic messages carry source locations,
+not function names, and are unaffected.
 
 **How it is tested:**
 - **The bars.** Every golden passes, with output byte-identical between debug, where sharing is
@@ -543,28 +560,49 @@ names, and are unaffected.
   doesn't share yet, and runs the whole golden suite in debug and release. This is proposed as
   one more CI job, so each leak or scan bug shows up as an ICE or a wrong output, not in a
   user's program.
-- **`VELT_SHAPES=check`.** Compares the counted-types facts and the diagnostics both ways
-  (section 1, "Facts and the counted-types fixpoint").
-- **The enforcement tests** (section 1, "How the questions are enforced"):
-  - a placeholder reaching `Cx::kind` ICEs;
-  - code outside `boxing/` reading a `Boxing` set fails a test;
-  - the end-of-pass check ICEs on a footprint the scan missed, with a footprint template
-    removed on purpose.
-- **New goldens, each run with Node,** for what crosses a shared instance:
-  - views of class objects (counted and single-owner), of two object types of one size with
-    different fields, and of a union, each printed and converted wrongly (the `TypeError`
-    text);
-  - `Map` and `Set` keys of several class types;
-  - a shared method reached through an interface slot;
-  - a generic method called through an interface from shared code;
-  - function values of instances compared;
-  - a shared instance passed to native code as a `NativeCallback`;
-  - element types that split a shape: a weak-capable class next to a plain one, an element
-    type in the lock set, a nullable class (`Foo | null`), and an object type holding an
-    `Atomic`.
-- **Unit tests in `velt_vir`.** The shape of each type kind, and a placeholder's per-type query
-  ICEing. Each test is checked to fail with the key broken on purpose: a row of the question
-  table left out (counted, weak, niche), or `~agg` keyed by size without alignment.
+- **`VELT_SHAPES=check`** (planned). Compares the counted-types facts and the diagnostics
+  both ways (section 1, "Facts and the counted-types fixpoint"). Step 2 compares whole runs
+  with `VELT_SHAPES=off` instead.
+- **The enforcement tests** (section 1, "How the questions are enforced"), each checked to fail
+  when broken on purpose:
+  - code outside `boxing/` reading a counted-types set of types without `ph_rep` fails a test;
+  - a raw kind read outside the four allowed fails a test;
+  - the fixpoint checks run as a test (`lower_passes.rs`): the same growth and passes as
+    `VELT_SHAPES=off`, and VIR identical to `VELT_LOWER_WHOLE=1`. Taking out the replay makes
+    it fail.
+- **New goldens, run with Node where they are valid TypeScript,** for what crosses a shared
+  instance. In step 2:
+  - views of two object types of one size with different fields, of classes and nullable
+    classes, of a union and of strings (`array_view_shapes`);
+  - nested views, a class that is a field of another view's element, and a weak-capable class
+    beside a plain one (`array_view_shapes_nested`);
+  - a type made `shared`, a class held by a `Mutex`, an `RwLock` whose values are in the lock
+    set, a value passed to `spawn`, and an object type holding an `Atomic`, each beside views
+    (`array_view_shapes_locks`, Velt-only);
+  - a wrong conversion's `TypeError` text for class, object, union and nullable element types,
+    each next to another view of its shape (`array_view_shape_error_*`; Node erases `as`).
+
+  With the families of step 4: `Map` and `Set` keys of several class types, a shared method
+  reached through an interface slot, a generic method called through an interface from shared
+  code, function values of instances compared, and a shared instance passed to native code as
+  a `NativeCallback`.
+- **Key rows** (`shape_keys.rs`): a row left out of the key (`VELT_SHAPES_TEST_DROP`, debug
+  compilers only), for a program whose view element types differ in that row alone, must make
+  the end-of-pass check fire. The weak row is tested this way, with a weak-capable class beside
+  a plain one, and so is the footprint: leaving `T[]` out (`array`) on two object types whose
+  arrays differ in a counted-types set makes the check fire. A fact recorded per function in a
+  shared body (`per-function`) is an ICE, also tested. For view element types the other rows never differ alone:
+  - view element types are always counted, so the counted row can't differ;
+  - a nullable class also differs from its class in share kind and class-ness, so the niche row
+    can't differ alone;
+  - aggregates of one size and different alignment also differ in their set memberships, so
+    the alignment row can't differ alone.
+
+  Their own tests come with the families of step 4, where they can.
+- **A debugger case** (`debugger.rs`): a frame of a shared helper shows `$types` naming the
+  concrete type, and the shape for a value of it.
+- **A `velt dev` case** (`tests/reload/view_shapes`): a reload that adds an element type and
+  edits the handler, hot-swapped (JIT) and restarted (`--exe`).
 
 ## 5. Measurement plan
 

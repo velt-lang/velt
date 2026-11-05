@@ -518,8 +518,7 @@ typedef struct { int32_t code; uint32_t _pad; VeltStr message; } VeltErr;   // 3
   owned string (drop with `velt_rt_str_drop`).
 - Sync functions write an `IoResult` (or a bare `VeltErr` status) to a trailing out-pointer and
   **return nothing** (§3.1); callers read `err.code` from the slot.
-- `IoError.code` (a string in Velt): `velt_rt_err_code_name(i32 code, VeltStr* out)` writes a static
-  string (nothing to free).
+- `IoError.code` (a string in Velt): std's `errorCodeName` (std/native/error.vlt) names a code.
 
 | code | name | code | name |
 |---|---|---|---|

@@ -35,6 +35,8 @@ mod native_init;
 mod numeric;
 mod param_attrs;
 mod programs_m3;
+mod shape_dicts;
+mod shape_guard;
 mod srclocs;
 mod std_src;
 mod verifier;

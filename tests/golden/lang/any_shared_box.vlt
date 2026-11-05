@@ -1,0 +1,28 @@
+// check: heap blocks at most 24
+// check: no leaks
+// Copies of an `any` holding a string, a number or a boolean share its box (#2057): the 300
+// copies below and the records that copy them cost no heap block per copy (the blocks are the
+// boxes, the array's buffer as it grows, and the records with their arrays).
+const text: any = "a string long enough to live on the heap, not inline";
+const num: any = 2.5;
+const flag: any = true;
+const copies: any[] = [];
+for (let i = 0; i < 100; i++) {
+  copies.push(text);
+  copies.push(num);
+  copies.push(flag);
+}
+let total = 0;
+for (const c of copies) {
+  if (typeof c === "number") {
+    total += c;
+  } else if (typeof c === "string") {
+    total += c.length;
+  } else if (typeof c === "boolean" && (c as boolean)) {
+    total += 1;
+  }
+}
+console.log(copies.length, total);
+const props: Record<string, any> = { label: text, depth: num };
+const again: Record<string, any> = { ...props };
+console.log(again.label === text, again.depth as number, props.label as string === text);

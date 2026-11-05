@@ -1,0 +1,29 @@
+// Destructuring in module-level declarations: each name reads its part of the value, as the
+// declarations written out would (exported ones too), with nested and array patterns.
+import { render, teardown } from "./_module_destructure/renderer";
+import { eff, x, y, e0, e1 } from "./_module_destructure/effects";
+import * as forms from "./_module_destructure/forms";
+import { getB, a1 } from "./_module_destructure/cycle_a";
+import { getA, b1 } from "./_module_destructure/cycle_b";
+
+const config = { name: "velt", size: { w: 80, h: 24 }, mode: null as string | null };
+const { name, size: { w, h }, mode } = config;
+
+const list = [1, 2, 3, 4];
+const [first, , third, ...others] = list;
+
+let { name: label } = config;
+label = `${label}!`;
+
+console.log(render("hello"), teardown());
+console.log(name, w, h, mode);
+console.log(first, third, others.join(","));
+console.log(label);
+
+console.log(eff("after"), x, y, e0, e1);
+console.log(forms.e0, forms.e1, forms.c0, forms.cs, forms.s1, forms.s2, forms.kk, forms.vv);
+console.log(forms.g1, forms.g2, forms.u0, forms.ur, forms.first, forms.computed);
+console.log(forms.a, forms.bb, forms.others, forms.m0, forms.m2, forms.lv);
+forms.bump();
+console.log(forms.lv, forms.fnv(1), forms.am, forms.lit);
+console.log(getB(), getA(), a1, b1);

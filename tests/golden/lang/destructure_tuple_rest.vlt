@@ -1,0 +1,32 @@
+// `...r` of a tuple is a tuple of the other elements, and a tuple has the array methods that
+// don't change it.
+const t: [number, string, boolean] = [1, "x", true];
+const [a, ...r] = t;
+console.log(a, r, r[0], r[1]);
+const [p, q, u, ...none] = t;
+console.log(p, q, u, none);
+let [l0, ...lr] = t;
+lr = ["y", false];
+console.log(l0, lr);
+const [h = 5, ...o]: [number | undefined, string] = [undefined, "z"];
+console.log(h, o);
+const [...all] = t;
+console.log(all);
+function f(): [string] {
+  const [x, ...y] = [1, "a"] as [number, string];
+  return y;
+}
+console.log(f());
+const [w, ...rest2] = [1, 2, 3];
+console.log(w, rest2);
+
+const n: [number, number] = [2, 3];
+console.log(n.map((x) => x * 2));
+console.log(n.reduce((s, x) => s + x));
+console.log(n.reduce((s, x) => s + x, 10));
+console.log(n.reduceRight((s, x) => s - x));
+console.log(n.flatMap((x) => [x, x]));
+console.log(n.filter((x) => x > 2), n.includes(3), n.indexOf(3), n.slice(1));
+console.log(t.map((x) => typeof x));
+console.log(n.some((x) => x > 2), n.every((x) => x > 2), n.find((x) => x > 2));
+n.forEach((x) => console.log(x));

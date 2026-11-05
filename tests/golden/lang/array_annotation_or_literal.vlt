@@ -1,0 +1,141 @@
+// An annotated callback parameter and a literal argument for the same type parameter: the literal
+// gives the type when it has one, unless what the callback returns doesn't fit that type. Callbacks
+// whose annotations differ leave it to the literal.
+
+function on<T>(cb: (x: T) => void, init: T): T {
+  cb(init);
+  return init;
+}
+
+// The literal has a type of its own.
+const a = on((x: number | string) => {}, 1);
+console.log(a.toFixed(1));
+const b = on((x: number | undefined) => {}, 1);
+console.log(b + 1);
+const c = on((x: string | number) => {}, "a");
+console.log(c.length);
+const d: number = on((x: number | string) => {}, 1);
+console.log(d);
+const e = on((x: boolean | string) => {}, true);
+console.log(e && "yes");
+const f = on((x: number[] | string) => {}, [1, 2]);
+console.log(f.length);
+const g = on((x: { a: number } | string) => {}, { a: 1 });
+console.log(g.a);
+class Base {
+  name = "base";
+}
+class Derived extends Base {
+  extra = "derived";
+}
+const h = on((x: Base) => {}, new Derived());
+console.log(h.extra);
+
+// The literal has none.
+const i = on((x: number[]) => {}, []);
+i.push(1);
+console.log(i);
+const j = on((x: number | null) => {}, null);
+console.log(j === null);
+const k = on((x: number | undefined) => {}, undefined);
+console.log(k === undefined);
+const l = on((x: Record<string, number>) => {}, {});
+l["k"] = 1;
+console.log(l);
+const m = on((x: Map<string, number>) => {}, new Map());
+m.set("a", 1);
+console.log(m.get("a"));
+
+// The result has the type parameter: the callback returns the wider type.
+const strs = ["a", "bb"];
+console.log(strs.reduce((acc: string | number, s) => acc, 0));
+console.log(strs.reduce((acc: string | number, s) => s, 0));
+console.log(strs.reduceRight((acc: number | null, s) => s.length, 7));
+function fold<T>(cb: (acc: T, x: number) => T, init: T): T {
+  return cb(init, 1);
+}
+console.log(fold((acc: number | string, x) => "s" + x, 0));
+console.log(fold((acc: Base, x) => acc, new Derived()).name);
+
+// The result has the type parameter, but what the callback returns fits the literal's type.
+function fold1<T>(cb: (a: T) => T, init: T): T {
+  return cb(init);
+}
+const n1 = fold1((a: number | string) => 2, 1);
+console.log(n1.toFixed(1));
+const n2 = fold1(
+  (a: number | string) => {
+    return 2;
+  },
+  1,
+);
+console.log(n2 + 1);
+const n3: number = fold1((a: number | undefined) => 1, 0);
+console.log(n3);
+console.log([1].reduce((a: number | string, x) => 2, 0).toFixed(1));
+const n4 = [1].reduce((a: number | null, x) => 2, 0);
+console.log(n4 + 1);
+console.log([1].reduceRight((a: number | string, x) => 2, 0).toFixed(1));
+try {
+  const n5 = fold1((a: number | string) => {
+    throw new Error("never returns");
+  }, 1);
+  console.log(n5 + 1);
+} catch (e) {
+  console.log((e as Error).message);
+}
+
+// What the callback returns needs the annotation.
+console.log(fold1((a: number | string) => a, 1));
+console.log(
+  fold1(
+    (a: number | string) => {
+      return a;
+    },
+    1,
+  ),
+);
+
+// Annotations that differ, and a literal with no type.
+function two<T>(a: (x: T) => void, b: (x: T) => void, v: T): T {
+  return v;
+}
+console.log(
+  two(
+    (x: number | null) => {},
+    (x: string | null) => {},
+    null,
+  ),
+);
+console.log(
+  two(
+    (x: number | undefined) => {},
+    (x: string | undefined) => {},
+    undefined,
+  ),
+);
+console.log(
+  two(
+    (x: number[] | null) => {},
+    (x: string[] | null) => {},
+    null,
+  ),
+);
+function on2<T>(v: T, a: (x: T) => void, b: (x: T) => void): T {
+  return v;
+}
+console.log(
+  on2(
+    null,
+    (x: number | null) => {},
+    (x: string | null) => {},
+  ),
+);
+
+// Annotations that agree still give the type.
+const same = two(
+  (x: number[]) => {},
+  (x: number[]) => {},
+  [],
+);
+console.log(same);

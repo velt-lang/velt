@@ -36,6 +36,13 @@ pub(crate) struct SigQueries<'m> {
     /// The name spans of the parameters declared with a read-only array type (`xs: readonly
     /// string[]`): an argument for one may be a copy (`widen_fresh::readonly_array_arg`).
     pub readonly_params: rustc_hash::FxHashSet<velt_common::Span>,
+    /// Resolving the argument of `ReturnType` or `Parameters`: as in TypeScript, `typeof f` of a
+    /// generic `f` is its signature with each type parameter at its constraint, else `unknown`.
+    pub erase_generics: bool,
+    /// Resolving the type of a field (`Ctx::resolve_field_type`), and whether its type is a form
+    /// Velt cannot give a field.
+    pub in_field: bool,
+    pub field_erased: bool,
 }
 
 impl Ctx<'_> {
@@ -214,7 +221,8 @@ impl Ctx<'_> {
                 .iter()
                 .all(|p| !self.mentions_beyond_errors(p.ty, 0));
         let errors_only = errors_only && !self.mentions_beyond_errors(f.ret, 0);
-        if n > 0 && !errors_only {
+        let erased = n > 0 && !errors_only && self.sigq.erase_generics && self.any.is_some();
+        if n > 0 && !errors_only && !erased {
             self.error(
                 Diagnostic::error(
                     format!("`typeof {name}` of a generic function is not supported yet (#936)"),
@@ -275,7 +283,10 @@ impl Ctx<'_> {
             _ => crate::body::returns::ret_of(self, d, span),
         };
         let never = self.ty.never;
-        let targs = vec![never; self.fn_info(d).generics.len()];
+        let targs = match erased {
+            true => self.erased_type_args(d),
+            false => vec![never; n],
+        };
         let params = params.iter().map(|&p| self.subst(p, &targs)).collect();
         let ret = self.subst(ret, &targs);
         let throws = crate::throws::throws_now(self, d, &targs).unwrap_or(never);
@@ -286,6 +297,31 @@ impl Ctx<'_> {
             throws,
             rest,
         })
+    }
+
+    /// The type arguments that erase generic function `d`'s type parameters: a constraint that
+    /// is a type (and names no other parameter), else `unknown`.
+    fn erased_type_args(&mut self, d: DefId) -> Vec<TyId> {
+        let f = self.fn_info(d);
+        let n = f.generics.len();
+        let constraints = f.generics.constraints.clone();
+        let unknown = self.any.map_or(self.ty.error, |a| {
+            self.ty.intern(TyKind::Dyn(a.unknown, vec![]))
+        });
+        (0..n)
+            .map(|i| match constraints.get(i).copied().flatten() {
+                Some(c) => {
+                    let mut named = vec![];
+                    crate::types::collect_params(&self.ty, c, &mut named);
+                    if named.is_empty() {
+                        c
+                    } else {
+                        unknown
+                    }
+                }
+                None => unknown,
+            })
+            .collect()
     }
 
     /// The type of function `d` from its declaration alone, before signatures are resolved
@@ -352,6 +388,8 @@ impl Ctx<'_> {
     fn query_needs_body(&mut self, name: &str, what: &str, span: Span) -> TyId {
         if self.sigq.sig_fill {
             self.sigq.sig_deferred = true;
+        } else if self.erase_field_form() {
+            return self.ty.error;
         } else {
             self.error(
                 Diagnostic::error(
@@ -362,6 +400,31 @@ impl Ctx<'_> {
             );
         }
         self.ty.error
+    }
+
+    /// In the type of a field, a form Velt cannot give a field makes the field an `any`
+    /// (`Self::resolve_field_type`): `true`, and the form is not reported.
+    pub(crate) fn erase_field_form(&mut self) -> bool {
+        self.sigq.field_erased |= self.sigq.in_field && self.any.is_some();
+        self.sigq.field_erased
+    }
+
+    /// The type a field's written type `t` gives it. Function types have no type parameters, and
+    /// a field's type is one layout for every instantiation, so `signal: typeof signal` of a
+    /// generic function and `emit: EmitFn<TEvents>`, a generic function type over a conditional
+    /// one, have no type of their own here: such a field is an `any`, whose value is called and
+    /// read as TypeScript's erased code does. Nothing of the program's behavior changes; what is
+    /// lost is TypeScript's checking of the uses.
+    pub(crate) fn resolve_field_type(&mut self, t: &ast::TypeExpr, env: &TyEnv) -> TyId {
+        let outer = (self.sigq.in_field, self.sigq.field_erased);
+        (self.sigq.in_field, self.sigq.field_erased) = (true, false);
+        let ty = self.resolve_type(t, env);
+        let erased = self.sigq.field_erased;
+        (self.sigq.in_field, self.sigq.field_erased) = outer;
+        match (erased, self.any) {
+            (true, Some(a)) => self.ty.intern(TyKind::Dyn(a.any, vec![])),
+            _ => ty,
+        }
     }
 
     /// The type of field `seg` of a value of type `ty` (`typeof config.port`).
@@ -412,6 +475,10 @@ impl Ctx<'_> {
         if self.dynamic(ty) == Some(crate::any::Dynamic::Any) {
             let (s, n, y) = (self.ty.str_, self.ty.f64, self.ty.intern(TyKind::Symbol));
             return self.union_of(&[s, n, y], false, t.span);
+        }
+        // `unknown` has no keys, as in TypeScript.
+        if self.dynamic(ty) == Some(crate::any::Dynamic::Unknown) {
+            return self.ty.never;
         }
         if self.has_type_params(ty) && matches!(self.ty.kind(ty), TyKind::Param(_) | TyKind::Op(..))
         {
@@ -513,7 +580,9 @@ impl Ctx<'_> {
         args: &[ast::TypeExpr],
         env: &TyEnv,
     ) -> TyId {
+        let outer = std::mem::replace(&mut self.sigq.erase_generics, true);
         let tys: Vec<TyId> = args.iter().map(|a| self.resolve_type(a, env)).collect();
+        self.sigq.erase_generics = outer;
         let [f] = tys[..] else {
             self.err(
                 format!(

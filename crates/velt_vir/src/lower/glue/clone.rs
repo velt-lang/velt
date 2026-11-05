@@ -314,8 +314,7 @@ impl FnLower<'_, '_> {
         if self.cx.is_class(ty) || self.cx.boxed(ty) {
             self.clone_into(Place::local(data), Place::local(out), ty);
         } else {
-            let vt = self.cx.ty(ty);
-            let b = self.alloc(vt);
+            let b = self.dyn_box_alloc(ty);
             self.assign(Place::local(out), Rvalue::Use(b));
             let src = self.deref_param(data, ty);
             let dst = self.deref_param(out, ty);

@@ -1,0 +1,19 @@
+// @ts-nocheck: `tsc` refuses `typeof` of what its lib has only as a type (TS2693); Node runs it.
+// `typeof` of a global the prelude has only as a type is what Node answers: Node's own for a
+// name it has as a value (`Function`, `Iterator`, whose types here are interfaces), and otherwise
+// `"undefined"`, for interfaces, aliases and structs alike.
+console.log(typeof Function, typeof Iterator);
+console.log(typeof Iterable, typeof IterableIterator, typeof AsyncIterable, typeof AsyncIterator);
+console.log(typeof IteratorObject, typeof IteratorResult, typeof PromiseSettledResult);
+console.log(typeof PromiseWithResolvers, typeof Comparable, typeof Frozen, typeof MemoryUsage);
+console.log(typeof BlobPropertyBag, typeof FilePropertyBag, typeof RequestInit, typeof ResponseInit);
+console.log(typeof TextDecoderOptions);
+
+// `switch` on it too, and on a global the prelude does not have at all.
+switch (typeof window) {
+  case "undefined":
+    console.log("no window");
+    break;
+  default:
+    console.log("window");
+}

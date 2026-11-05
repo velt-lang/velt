@@ -72,8 +72,8 @@ export class AbortSignal {
     return velt_rt_signal_aborted(this.handle());
   }
 
-  /** The reason passed to `abort()` ("" while not aborted). */
-  get reason(): string {
+  /** The reason passed to `abort()` ("" while not aborted). As in TypeScript, it is an `any`. */
+  get reason(): any {
     return velt_rt_signal_reason(this.handle());
   }
 

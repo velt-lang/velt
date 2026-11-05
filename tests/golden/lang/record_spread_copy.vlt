@@ -1,0 +1,41 @@
+// check: heap blocks at most 1200
+// check: no leaks
+// A record spread into a new object literal (`{ ...props }`, also the copy behind a `...rest`
+// pattern) takes the source's entries and index as they are when the source has no deleted
+// entries (#2058): no key is hashed again and no list of entries is built on the way, so 100
+// copies cost their records and the copied arrays only.
+const props: Record<string, any> = { depth: 3, label: "a heap string, not an inline one", on: true };
+let keys = 0;
+for (let i = 0; i < 100; i++) {
+  const copy: Record<string, any> = { ...props };
+  copy.extra = i;
+  keys += Object.keys(copy).length;
+}
+console.log(keys);
+
+// The copy is the source's entries in the source's order, array-index keys first.
+const indexed: Record<string, any> = { b: 1, "2": "two", a: 2, "0": "zero" };
+const again: Record<string, any> = { ...indexed };
+again["1"] = "one";
+console.log(Object.keys(again).join(","), JSON.stringify(again));
+
+// A source with deleted entries, and a target that already has keys, set entry by entry.
+const holes: Record<string, any> = { p: 1, q: 2, r: 3 };
+delete holes.p;
+const fromHoles: Record<string, any> = { ...holes, s: 4 };
+const merged: Record<string, any> = { z: 0, ...holes };
+console.log(fromHoles, merged);
+
+// `...rest` copies, then removes the keys taken.
+const { depth, ...rest } = props;
+const restCopy: Record<string, any> = { ...rest };
+restCopy.depth = depth;
+console.log(rest, restCopy);
+
+// The copy is its own record: writes to one leave the other as it was.
+const first: Record<string, any> = { k: [1, 2] };
+const second: Record<string, any> = { ...first };
+second.k = "replaced";
+second.n = 1;
+delete first.k;
+console.log(first, second);

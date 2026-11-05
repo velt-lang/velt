@@ -1,0 +1,39 @@
+// In an object literal with a context-sensitive arrow, a shorthand and a spread field are
+// candidates for the arrow's type parameters, as a `key: value` field is.
+
+function o<T = string>(c: { cb: (x: T) => void; v: T }): void {
+  c.cb(c.v);
+}
+const v = 5;
+o({ cb: (x) => { console.log(x + 1); }, v });
+const base = { v: 2 };
+o({ cb: (x) => { console.log(x + 1); }, ...base });
+
+// The shorthand or spread first, and a key: value field.
+o({ v, cb: (x) => { console.log(x * 2); } });
+o({ ...base, cb: (x) => { console.log(x * 3); } });
+o({ cb: (x) => { console.log(x + 1); }, v: 9 });
+
+// A later field replaces an earlier one, in the type too.
+const text = { v: "text" };
+o({ ...text, v: 4, cb: (x) => { console.log(x + 1); } });
+o({ v: 4, ...text, cb: (x) => { console.log(x.length); } });
+o({ ...base, ...text, cb: (x) => { console.log(x.toUpperCase()); } });
+
+// Nothing gives the type: the default.
+o({ cb: (x) => { console.log(x.length); }, v: "abc" });
+function p<T = string>(c: { cb: (x: T) => void; v?: T }): void {
+  c.cb("d" as any);
+}
+p({ cb: (x) => { console.log(x.length); } });
+const empty = {};
+p({ cb: (x) => { console.log(x.length); }, ...empty });
+
+// Nested type parameters, and a spread with a field of no interest.
+function q<T = string>(c: { cb: (x: T) => void; v: T[] }): void {
+  c.cb(c.v[0]);
+}
+const more = { v: [1, 2], w: true };
+q({ cb: (x) => { console.log(x + 1); }, ...more });
+const names = { v: ["a"] };
+q({ cb: (x) => { console.log(x + "!"); }, ...names });

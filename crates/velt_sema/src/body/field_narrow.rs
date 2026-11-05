@@ -21,9 +21,9 @@ use crate::hir::{self, ExprKind as H, LocalId, TyId};
 /// A narrowed field path: the root local, the field names, and the token local.
 #[derive(Clone)]
 pub(crate) struct FieldToken {
-    root: LocalId,
+    pub(super) root: LocalId,
     path: Vec<String>,
-    token: LocalId,
+    pub(super) token: LocalId,
 }
 
 impl FnCx<'_, '_> {

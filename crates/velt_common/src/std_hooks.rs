@@ -367,6 +367,12 @@ hooks! {
     /// `v.constructor` of an instance of a std class JavaScript doesn't name: an error.
     any_ctor_unsupported => lang_hooks_class_object, "anyCtorUnsupported", sig((&string) -> any);
 
+    // tuple_elements.vlt: a tuple's array methods that call back (`velt_sema` `tuple_text.rs`).
+    /// The elements of one tuple, read when a method reaches them.
+    tuple_elements_class => lang_hooks_tuple_elements, "TupleElements", class;
+    /// `TupleElements` of a tuple: an array of its elements for their type, and how to read one.
+    tuple_elements => lang_hooks_tuple_elements, "tupleElements", sig(<A>(&[A], move Fn((i64) -> A)) -> TupleElements(A));
+
     // array_view.vlt: an `any` holding an array viewed as `T[]` (`velt_vir` `array_view.rs`).
     /// One view's state: the original array and the mirror of its elements as `T`.
     array_view => lang_hooks_array_view, "ArrayView", class, lowered;
@@ -608,6 +614,9 @@ keys! {
     typed_array_kind => "TYPED_ARRAY_KIND", "velt.typedArray.kind", registered;
     // Arrays: `xs[i]` that reads `undefined` past the end, as JS (`velt_sema` `indexers.rs`).
     array_get => "ARRAY_GET", "arrayGet";
+    // `xs.reduce(f)` without an initial value (`velt_sema` `method_call.rs`).
+    array_reduce_first => "ARRAY_REDUCE_FIRST", "arrayReduceFirst";
+    array_reduce_right_first => "ARRAY_REDUCE_RIGHT_FIRST", "arrayReduceRightFirst";
     // JsonValue: what `console.log` prints a value from (`velt_vir` `glue/format.rs`), what
     // appends one's text (velt/encoding/json/append) and what decoders read one with
     // (velt/encoding/json/generate/read_value).
@@ -689,18 +698,20 @@ keys! {
     proxy_has_own => "PROXY_HAS_OWN", "proxyHasOwn";
 }
 
-/// The externs of [`Hook::replaces`] that the runtime no longer defines: the hooks took their job
-/// over everywhere and their Rust was deleted (#2196's port tracker: an entry here is a finished
-/// port). `velt_common`'s test `hook_replaces.rs` checks that every replaced extern is defined by
-/// `velt_rt` unless it is listed here, and that one listed here is defined nowhere and named by
-/// no compiler source, runtime or std file. The entries keep their place in `replaces(…)` as the
-/// record of what the hook replaced.
+/// The runtime externs whose job moved to std and whose Rust was deleted (#2196's port tracker: an
+/// entry here is a finished port): hooks took over the externs of [`Hook::replaces`], which keep
+/// their place there as the record of what the hook replaced, and ordinary std code the ones only
+/// std called, which no hook replaces. `velt_common`'s test `hook_replaces.rs` checks that every
+/// replaced extern is defined by `velt_rt` unless it is listed here, and that one listed here is
+/// defined nowhere and named by no compiler source, runtime or std file.
 pub const DELETED: &[&str] = &[
     // #2197: integers as text (std/lang/hooks/number_text, velt/lang/number/integer).
     "velt_rt_str_from_i64",
     "velt_rt_str_from_u64",
     "velt_rt_strbuf_push_i64",
     "velt_rt_strbuf_push_u64",
+    // #2196, only std called them: error-code names (std/native/error).
+    "velt_rt_err_code_name",
 ];
 
 /// The hook whose qualified name is `qualified` (`std/lang/hooks/number::f64ToString`).

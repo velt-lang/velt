@@ -284,6 +284,9 @@ impl FnCx<'_, '_> {
                 self.array_used_in_place(&obj);
                 return self.intrinsic(Intrinsic::ArrayLen, vec![obj], self.cx.ty.usize, span);
             }
+            if matches!(self.cx.ty.kind(t), TyKind::Tuple(_)) {
+                return self.tuple_length(obj, span);
+            }
         }
         let obj = self.shared_member_view(obj, &prop.name);
         if self.cx.frozen_reads && self.frozen_buffer_view(&obj, &prop.name, span) {

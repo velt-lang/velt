@@ -191,7 +191,7 @@ impl Cx<'_> {
         if depth > 32 {
             return false;
         }
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             TyKind::Param(_) | TyKind::Error | TyKind::Op(..) => false,
             TyKind::Promise(..) | TyKind::Unit | TyKind::Never => false,
             TyKind::Adt(_, xs) | TyKind::Dyn(_, xs) | TyKind::Tuple(xs) => all(xs),
@@ -213,7 +213,7 @@ impl Cx<'_> {
         if depth > 32 {
             return false;
         }
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             TyKind::Param(_) | TyKind::Error | TyKind::Op(..) => false,
             TyKind::Adt(_, xs) | TyKind::Dyn(_, xs) | TyKind::Tuple(xs) => all(xs),
             TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) => all(&[*x]),

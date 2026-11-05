@@ -76,7 +76,7 @@ impl Cx<'_> {
             let id = DefId(i as u32);
             if let hir::Def::Adt(a) = self.hir.def(id) {
                 if a.kind == AdtKind::Class {
-                    let base = a.base.and_then(|b| match self.types.kind(b) {
+                    let base = a.base.and_then(|b| match self.raw_kind(b) {
                         TyKind::Adt(bd, _) => Some(*bd),
                         _ => None,
                     });

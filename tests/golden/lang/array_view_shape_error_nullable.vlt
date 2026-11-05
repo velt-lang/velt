@@ -1,0 +1,22 @@
+// A view of a nullable class whose code is shared with another nullable class
+// (shape-sharing.md): a wrong element stops with the `TypeError` naming this view's own type.
+// Node erases `as` and reads the wrong element as it is: Velt checks the conversion (#1485).
+class P {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+class Q {
+  m: number;
+  constructor(m: number) {
+    this.m = m;
+  }
+}
+const rq: any = [new Q(2), null];
+const vq = rq as (Q | null)[];
+console.log(vq[0]?.m, vq[1]);
+const rp: any = [null, new P(1), 7];
+const vp = rp as (P | null)[];
+console.log(vp[0], vp[1]?.n);
+console.log(vp[2]);

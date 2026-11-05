@@ -79,6 +79,10 @@ impl FnCx<'_, '_> {
                 op: ast::UnaryOp::TypeOf,
                 expr,
             } => {
+                // A global the program does not declare has no value to read (`typeof window`).
+                if let Some(tag) = self.global_typeof_value(expr, disc.span) {
+                    return self.value_scrut(tag, None, what, pre);
+                }
                 let x = self.expr(expr, None, Want::Borrow);
                 let local = self.named_local(expr);
                 self.scrut(x, ScrutKind::TypeOf, local, what, pre)

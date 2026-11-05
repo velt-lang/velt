@@ -683,7 +683,7 @@ impl Rewrite<'_> {
 }
 
 /// The names `infer X` declares in type `t` (a conditional type's `extends` clause).
-fn infer_names(t: &ast::TypeExpr, out: &mut Vec<String>) {
+pub(crate) fn infer_names(t: &ast::TypeExpr, out: &mut Vec<String>) {
     struct Infers<'o>(&'o mut Vec<String>);
     impl<'a> velt_syntax::visit::Visit<'a> for Infers<'_> {
         fn ty(&mut self, t: &'a ast::TypeExpr) {

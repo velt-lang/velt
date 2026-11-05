@@ -107,6 +107,7 @@ table! {
     lang_hooks_record => "lang/hooks/record",
     lang_hooks_string => "lang/hooks/string",
     lang_hooks_syntax => "lang/hooks/syntax",
+    lang_hooks_tuple_elements => "lang/hooks/tuple_elements",
     lang_import_meta => "lang/import_meta",
     /// The compiler's intrinsics, declared (`declare intrinsic function`; std-layout.md §10).
     lang_intrinsics => "lang/intrinsics",

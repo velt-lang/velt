@@ -34,7 +34,7 @@ impl Cx<'_> {
 
     /// For a generator class type: whether it is the async one.
     pub(in crate::lower) fn generator_obj_kind(&self, t: TyId) -> Option<bool> {
-        let TyKind::Adt(d, _) = self.types.kind(t) else {
+        let TyKind::Adt(d, _) = self.raw_kind(t) else {
             return None;
         };
         match self.hir.def(*d) {
