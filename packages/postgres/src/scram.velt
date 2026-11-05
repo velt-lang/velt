@@ -41,8 +41,9 @@ export class Scram {
 
   /** `nonce` and `user` are for tests, which use the RFC's. */
   constructor(password: string, nonce: string | null = null, user: string = "") {
-    // SASLprep would change a few non-ASCII passwords (compatibility forms): std has no Unicode
-    // normalization to do it with, and such a password is refused rather than sent wrong.
+    // No SASLprep: std has no Unicode normalization to do it with. The password's own bytes are used,
+    // which is the same for ASCII and for what's already in its normal form; the server refuses a
+    // password SASLprep would change (README.md, "SCRAM").
     this.password = utf8Encode(password);
     this.nonce = nonce ?? base64Encode(randomBytes(NONCE_BYTES));
     this.user = user;
