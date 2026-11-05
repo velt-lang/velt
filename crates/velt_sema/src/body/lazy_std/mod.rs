@@ -41,7 +41,7 @@ use crate::hir::{self, Callee, DefId, ExprKind as E, TyId, TyKind};
 mod live;
 mod number_text;
 
-pub(crate) use live::demanded as hooks_demanded;
+pub(crate) use live::{demanded as hooks_demanded, finish as finish_live, live_defs};
 
 /// Std modules (path prefixes) checked whole: lowering looks up their definitions by name
 /// (`velt_vir` `STABLE_SORT`, the proxy and typed-array glue, the epoch sections' `pin`,
@@ -218,7 +218,7 @@ impl Lazy {
             record_conversion: false,
             record_hooks: false,
             float_text: false,
-            live: live::Live::default(),
+            live: live::Live::new(),
         }
     }
 

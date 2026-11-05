@@ -4,7 +4,7 @@
 //! named is gone if the code that finds it is: the walk stops as soon as every hook is demanded,
 //! so a construct std's code would also bring is not found later.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use velt_common::std_hooks::{Construct, ConstructSet};
 
@@ -15,16 +15,43 @@ thread_local! {
     /// What the live set held when the last check on this thread asked for the demand set: its
     /// constructs and how many implementations it opened.
     pub(super) static PRESENT: Cell<(ConstructSet, usize)> = const { Cell::new((0, 0)) };
+    /// Work the set out in full, as a debug compiler outside these tests does.
+    pub(super) static EXACT: Cell<bool> = const { Cell::new(false) };
+    /// The names of the functions live when the last check asked for the demand set.
+    static NAMES: RefCell<Vec<String>> = const { RefCell::new(vec![]) };
+}
+
+/// What the live set holds where a check asks for the demand set.
+pub(super) fn note_demanded(cx: &crate::ctx::Ctx) {
+    let live = &cx.lazy.live;
+    PRESENT.set((live.present, live.impls.len()));
+    NAMES.with_borrow_mut(|names| {
+        names.clear();
+        names.extend(
+            live.live
+                .iter()
+                .filter_map(|d| match &cx.info[d.0 as usize] {
+                    crate::defs::DefInfo::Fn(f) => Some(f.name.clone()),
+                    _ => None,
+                }),
+        );
+    });
 }
 
 /// [`PRESENT`] after a check of `src`, on a thread with sema's stack.
 fn live(src: &str) -> (ConstructSet, usize) {
+    checked(src, false).0
+}
+
+/// [`PRESENT`] and [`NAMES`] after a check of `src`, on a thread with sema's stack.
+fn checked(src: &str, exact: bool) -> ((ConstructSet, usize), Vec<String>) {
     let l = programs::load_src(src);
     let (modules, root) = (&l.modules, l.root);
     std::thread::scope(|s| {
         let spawned = std::thread::Builder::new()
             .stack_size(SEMA_STACK_BYTES)
             .spawn_scoped(s, || {
+                EXACT.set(exact);
                 let opts = CheckOptions::default();
                 let budget = SEMA_STACK_BUDGET;
                 let (out, _) = crate::check_timed(modules, root, opts, &[], None, budget);
@@ -34,7 +61,7 @@ fn live(src: &str) -> (ConstructSet, usize) {
                     "{src}\n{}",
                     l.render(&diags)
                 );
-                PRESENT.get()
+                (PRESENT.get(), NAMES.with_borrow(Vec::clone))
             });
         spawned.expect("sema thread").join().expect("sema thread")
     })
@@ -147,4 +174,20 @@ fn an_interface_called_on_a_type_parameter_opens_its_implementations() {
          function main() { console.log(u(\"a\")); }",
     );
     assert!(impls > 0);
+}
+
+/// What sema makes after the last `reach` is walked in time for what it demands to be checked:
+/// before ownership, not only where `live_defs` adds what is made after it.
+#[test]
+fn what_sema_makes_after_the_bodies_are_checked_is_live_before_ownership() {
+    let (_, names) = checked(
+        "interface Src {\n  get: () => string;\n}\n\
+         class R {\n  toString(radix: i64 = 10): string {\n    return \"r\";\n  }\n}\n\
+         function main() {\n  const s: any = Object.create(null);\n  \
+         s.get = (): any => \"a\";\n  console.log((s as Src).get(), `${new R()}`);\n}\n",
+        true,
+    );
+    for name in ["<any as () => string>", "R.<toString>"] {
+        assert!(names.iter().any(|n| n == name), "no {name}");
+    }
 }
