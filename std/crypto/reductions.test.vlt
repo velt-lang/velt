@@ -1,0 +1,76 @@
+// velt/crypto (tests): white-box tests of the final reductions, run by `velt test std/`.
+//
+// X25519's field encoding and Poly1305's tag reduce values that rarely occur with random inputs
+// (an element from p up to 2^255 - 1, an accumulator at or above 2^130 - 5); these feed them in
+// directly.
+import { describe, expect, it } from "velt/test";
+import { Fe25519 } from "velt/crypto/field25519";
+import { Poly1305 } from "velt/crypto/poly1305";
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+
+describe("Fe25519", () => {
+  it("encodes values from p up to 2^255 - 1 reduced", () => {
+    const f = new Fe25519(1);
+    // p + 9 and 2^255 - 1 (= p + 18), both above p before the final reduction.
+    const above: u8[] = Buffer.alloc(32);
+    above[0] = 0xf6;
+    for (let i: usize = 1; i < 31; i++) {
+      above[i] = 0xff;
+    }
+    above[31] = 0x7f;
+    f.decode(0, above);
+    expect(f.encode(0)[0]).toBe(9);
+    above[0] = 0xff;
+    f.decode(0, above);
+    const out = f.encode(0);
+    expect(out[0]).toBe(18);
+    let rest: u32 = 0;
+    for (let i: usize = 1; i < 32; i++) {
+      rest |= out[i] as u32;
+    }
+    expect(rest).toBe(0);
+  });
+});
+
+describe("Poly1305", () => {
+  it("reduces accumulators at and above 2^130 - 5 (RFC 8439 A.3's edge cases)", () => {
+    // Key, message, tag; from RFC 8439 Appendix A.3 (vectors 5-9).
+    const cases: string[][] = [
+      [
+        "0200000000000000000000000000000000000000000000000000000000000000",
+        "ffffffffffffffffffffffffffffffff",
+        "03000000000000000000000000000000",
+      ],
+      [
+        "02000000000000000000000000000000ffffffffffffffffffffffffffffffff",
+        "02000000000000000000000000000000",
+        "03000000000000000000000000000000",
+      ],
+      [
+        "0100000000000000000000000000000000000000000000000000000000000000",
+        "fffffffffffffffffffffffffffffffff0ffffffffffffffffffffffffffffff11000000000000000000000000000000",
+        "05000000000000000000000000000000",
+      ],
+      [
+        "0100000000000000000000000000000000000000000000000000000000000000",
+        "fffffffffffffffffffffffffffffffffbfefefefefefefefefefefefefefefe01010101010101010101010101010101",
+        "00000000000000000000000000000000",
+      ],
+      [
+        "0200000000000000000000000000000000000000000000000000000000000000",
+        "fdffffffffffffffffffffffffffffff",
+        "faffffffffffffffffffffffffffffff",
+      ],
+    ];
+    for (const c of cases) {
+      const p = new Poly1305(hexDecode(c[0]));
+      const m = hexDecode(c[1]);
+      p.updatePadded(m, 0, m.length);
+      expect(hexEncode(p.finish())).toBe(c[2]);
+    }
+  });
+
+  it("throws CryptoError for a key that is not 32 bytes", () => {
+    expect(() => new Poly1305([1, 2])).toThrow("Poly1305 key must be 32 bytes, got 2");
+  });
+});

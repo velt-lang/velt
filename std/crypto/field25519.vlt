@@ -1,0 +1,347 @@
+// velt/crypto (internal): arithmetic mod p = 2^255 - 19 for X25519, in five 51-bit limbs
+// (radix 2^51, as curve25519-donna-c64 and ring): each limb product is a 128-bit value from
+// `*` (the low half) and `Math.umulh` (the high half), summed with branch-free carries
+// (`(s < p) as u64`, never a ternary). Constant time: nothing branches on or indexes by a
+// limb's value.
+//
+// The elements live in one array of registers (five limbs each) inside `Fe25519`; `mul` and
+// `square` load their operands into locals, work there, and store the result once, so the hot
+// loop has no array accesses inside (an output array argument cannot alias an input one, #2403,
+// so operations name registers by number and `mul(a, a, b)` works in place).
+//
+// Bounds: `mul` and `square` take limbs below 2^54 (a reduced element, the sum of two, or a
+// difference from `sub`) and return limbs below 2^52; the 128-bit sums stay below 2^115, so a
+// carry `(l >> 51) | (h << 13)` loses nothing.
+
+const M: u64 = 0x7ffffffffffff;
+
+// `(l, h) + a * b` as 128 bits.
+function mulAdd(l: u64, h: u64, a: u64, b: u64): [u64, u64] {
+  const p = a * b;
+  const s = l + p;
+  return [s, h + Math.umulh(a, b) + ((s < p) as u64)];
+}
+
+// `(l, h) + c` as 128 bits.
+function addCarry(l: u64, h: u64, c: u64): [u64, u64] {
+  const s = l + c;
+  return [s, h + ((s < c) as u64)];
+}
+
+/** `n` registers of field elements mod 2^255 - 19, all zero. */
+export class Fe25519 {
+  private r: u64[];
+
+  /** `n` registers, each zero. */
+  constructor(n: usize) {
+    this.r = [];
+    for (let i: usize = 0; i < 5 * n; i++) {
+      this.r.push(0);
+    }
+  }
+
+  /** Register `d` = the small non-negative constant `x`. */
+  set(d: usize, x: u64) {
+    for (let i: usize = 0; i < 5; i++) {
+      this.r[5 * d + i] = i == 0 ? x : 0;
+    }
+  }
+
+  /** Register `d` = register `a`. */
+  copy(d: usize, a: usize) {
+    for (let i: usize = 0; i < 5; i++) {
+      this.r[5 * d + i] = this.r[5 * a + i];
+    }
+  }
+
+  /** `d = a + b`, limb by limb (no carry). */
+  add(d: usize, a: usize, b: usize) {
+    for (let i: usize = 0; i < 5; i++) {
+      this.r[5 * d + i] = this.r[5 * a + i] + this.r[5 * b + i];
+    }
+  }
+
+  /** `d = a - b` as `a + 2p - b`, limb by limb, so no limb goes negative (`b` reduced). */
+  sub(d: usize, a: usize, b: usize) {
+    this.r[5 * d] = this.r[5 * a] + 0xfffffffffffda - this.r[5 * b];
+    for (let i: usize = 1; i < 5; i++) {
+      this.r[5 * d + i] = this.r[5 * a + i] + 0xffffffffffffe - this.r[5 * b + i];
+    }
+  }
+
+  /** `d = a * b` mod p (`d` may be `a` or `b`); products past limb 4 wrap around times 19. */
+  mul(d: usize, a: usize, b: usize) {
+    const r = this.r;
+    const oa = 5 * a;
+    const ob = 5 * b;
+    const a0 = r[oa + 0];
+    const a1 = r[oa + 1];
+    const a2 = r[oa + 2];
+    const a3 = r[oa + 3];
+    const a4 = r[oa + 4];
+    const b0 = r[ob + 0];
+    const b1 = r[ob + 1];
+    const b2 = r[ob + 2];
+    const b3 = r[ob + 3];
+    const b4 = r[ob + 4];
+    const b1x19 = b1 * 19;
+    const b2x19 = b2 * 19;
+    const b3x19 = b3 * 19;
+    const b4x19 = b4 * 19;
+    let l0 = a0 * b0;
+    let h0 = Math.umulh(a0, b0);
+    [l0, h0] = mulAdd(l0, h0, a1, b4x19);
+    [l0, h0] = mulAdd(l0, h0, a2, b3x19);
+    [l0, h0] = mulAdd(l0, h0, a3, b2x19);
+    [l0, h0] = mulAdd(l0, h0, a4, b1x19);
+    let l1 = a0 * b1;
+    let h1 = Math.umulh(a0, b1);
+    [l1, h1] = mulAdd(l1, h1, a1, b0);
+    [l1, h1] = mulAdd(l1, h1, a2, b4x19);
+    [l1, h1] = mulAdd(l1, h1, a3, b3x19);
+    [l1, h1] = mulAdd(l1, h1, a4, b2x19);
+    let l2 = a0 * b2;
+    let h2 = Math.umulh(a0, b2);
+    [l2, h2] = mulAdd(l2, h2, a1, b1);
+    [l2, h2] = mulAdd(l2, h2, a2, b0);
+    [l2, h2] = mulAdd(l2, h2, a3, b4x19);
+    [l2, h2] = mulAdd(l2, h2, a4, b3x19);
+    let l3 = a0 * b3;
+    let h3 = Math.umulh(a0, b3);
+    [l3, h3] = mulAdd(l3, h3, a1, b2);
+    [l3, h3] = mulAdd(l3, h3, a2, b1);
+    [l3, h3] = mulAdd(l3, h3, a3, b0);
+    [l3, h3] = mulAdd(l3, h3, a4, b4x19);
+    let l4 = a0 * b4;
+    let h4 = Math.umulh(a0, b4);
+    [l4, h4] = mulAdd(l4, h4, a1, b3);
+    [l4, h4] = mulAdd(l4, h4, a2, b2);
+    [l4, h4] = mulAdd(l4, h4, a3, b1);
+    [l4, h4] = mulAdd(l4, h4, a4, b0);
+    this.reduce(d, l0, h0, l1, h1, l2, h2, l3, h3, l4, h4);
+  }
+
+  /** `d = a^2` mod p: the 15 distinct products of `mul`'s 25. */
+  square(d: usize, a: usize) {
+    const r = this.r;
+    const oa = 5 * a;
+    const a0 = r[oa + 0];
+    const a1 = r[oa + 1];
+    const a2 = r[oa + 2];
+    const a3 = r[oa + 3];
+    const a4 = r[oa + 4];
+    const a1x2 = a1 * 2;
+    const a2x2 = a2 * 2;
+    const a3x2 = a3 * 2;
+    const a3x19 = a3 * 19;
+    const a3x38 = a3 * 38;
+    const a4x2 = a4 * 2;
+    const a4x19 = a4 * 19;
+    const a4x38 = a4 * 38;
+    let l0 = a0 * a0;
+    let h0 = Math.umulh(a0, a0);
+    [l0, h0] = mulAdd(l0, h0, a1, a4x38);
+    [l0, h0] = mulAdd(l0, h0, a2, a3x38);
+    let l1 = a0 * a1x2;
+    let h1 = Math.umulh(a0, a1x2);
+    [l1, h1] = mulAdd(l1, h1, a2, a4x38);
+    [l1, h1] = mulAdd(l1, h1, a3, a3x19);
+    let l2 = a0 * a2x2;
+    let h2 = Math.umulh(a0, a2x2);
+    [l2, h2] = mulAdd(l2, h2, a1, a1);
+    [l2, h2] = mulAdd(l2, h2, a3, a4x38);
+    let l3 = a0 * a3x2;
+    let h3 = Math.umulh(a0, a3x2);
+    [l3, h3] = mulAdd(l3, h3, a1, a2x2);
+    [l3, h3] = mulAdd(l3, h3, a4, a4x19);
+    let l4 = a0 * a4x2;
+    let h4 = Math.umulh(a0, a4x2);
+    [l4, h4] = mulAdd(l4, h4, a1, a3x2);
+    [l4, h4] = mulAdd(l4, h4, a2, a2);
+    this.reduce(d, l0, h0, l1, h1, l2, h2, l3, h3, l4, h4);
+  }
+
+  /** `d = a * k` mod p for a constant `k` below 2^20 (X25519's a24). */
+  mulSmall(d: usize, a: usize, k: u64) {
+    const r = this.r;
+    const oa = 5 * a;
+    const a0 = r[oa + 0];
+    const a1 = r[oa + 1];
+    const a2 = r[oa + 2];
+    const a3 = r[oa + 3];
+    const a4 = r[oa + 4];
+    this.reduce(
+      d,
+      a0 * k,
+      Math.umulh(a0, k),
+      a1 * k,
+      Math.umulh(a1, k),
+      a2 * k,
+      Math.umulh(a2, k),
+      a3 * k,
+      Math.umulh(a3, k),
+      a4 * k,
+      Math.umulh(a4, k),
+    );
+  }
+
+  // Carries the five 128-bit sums down to limbs below 2^52 and stores them in register `d`.
+  private reduce(
+    d: usize,
+    l0: u64,
+    h0: u64,
+    l1: u64,
+    h1: u64,
+    l2: u64,
+    h2: u64,
+    l3: u64,
+    h3: u64,
+    l4: u64,
+    h4: u64,
+  ) {
+    let x1 = l1;
+    let y1 = h1;
+    let x2 = l2;
+    let y2 = h2;
+    let x3 = l3;
+    let y3 = h3;
+    let x4 = l4;
+    let y4 = h4;
+    [x1, y1] = addCarry(x1, y1, (l0 >> 51) | (h0 << 13));
+    [x2, y2] = addCarry(x2, y2, (x1 >> 51) | (y1 << 13));
+    [x3, y3] = addCarry(x3, y3, (x2 >> 51) | (y2 << 13));
+    [x4, y4] = addCarry(x4, y4, (x3 >> 51) | (y3 << 13));
+    // The carry out of limb 4 counts 19 times in limb 0 (2^255 = 19 mod p): up to 2^64 * 19.
+    const c4 = (x4 >> 51) | (y4 << 13);
+    let x0 = l0 & M;
+    let y0: u64 = 0;
+    [x0, y0] = mulAdd(x0, y0, c4, 19);
+    const c0 = (x0 >> 51) | (y0 << 13);
+    const o = 5 * d;
+    this.r[o] = x0 & M;
+    this.r[o + 1] = (x1 & M) + c0;
+    this.r[o + 2] = x2 & M;
+    this.r[o + 3] = x3 & M;
+    this.r[o + 4] = x4 & M;
+  }
+
+  /** `d = a^(2^n)` (n squarings, n >= 1). */
+  squareN(d: usize, a: usize, n: usize) {
+    this.square(d, a);
+    for (let i: usize = 1; i < n; i++) {
+      this.square(d, d);
+    }
+  }
+  /**
+   * `d = 1 / a` (0 for 0): a^(p - 2) by ref10's fixed chain of 254 squarings and 11 products.
+   * Uses registers `s` to `s + 4` as scratch (none of them `d` or `a`).
+   */
+  invert(d: usize, a: usize, s: usize) {
+    const z2 = s;
+    const z9 = s + 1;
+    const z11 = s + 2;
+    const b = s + 3;
+    const c = s + 4;
+    this.square(z2, a);
+    this.squareN(b, z2, 2);
+    this.mul(z9, b, a);
+    this.mul(z11, z9, z2);
+    this.square(b, z11);
+    this.mul(z2, b, z9); // 2^5 - 1 (z2 is free again)
+    this.squareN(b, z2, 5);
+    this.mul(b, b, z2); // 2^10 - 1
+    this.squareN(c, b, 10);
+    this.mul(c, c, b); // 2^20 - 1
+    this.squareN(d, c, 20);
+    this.mul(d, d, c); // 2^40 - 1
+    this.squareN(d, d, 10);
+    this.mul(z2, d, b); // 2^50 - 1
+    this.squareN(b, z2, 50);
+    this.mul(b, b, z2); // 2^100 - 1
+    this.squareN(c, b, 100);
+    this.mul(c, c, b); // 2^200 - 1
+    this.squareN(c, c, 50);
+    this.mul(c, c, z2); // 2^250 - 1
+    this.squareN(c, c, 5);
+    this.mul(d, c, z11); // 2^255 - 21
+  }
+
+  /** Swaps registers `a` and `b` when `swap` is 1, leaves them when it is 0, without a branch. */
+  swap(a: usize, b: usize, swap: u64) {
+    const mask = 0 - swap;
+    for (let i: usize = 0; i < 5; i++) {
+      const x = (this.r[5 * a + i] ^ this.r[5 * b + i]) & mask;
+      this.r[5 * a + i] ^= x;
+      this.r[5 * b + i] ^= x;
+    }
+  }
+
+  /**
+   * Register `d` = the element of 32 little-endian bytes, the top bit ignored (RFC 7748 §5):
+   * limb 4 takes bits 204..254 only.
+   */
+  decode(d: usize, b: u8[]) {
+    const w: u64[] = [0, 0, 0, 0];
+    for (let i: usize = 0; i < 32; i++) {
+      w[i >> 3] |= (b[i] as u64) << (((i & 7) * 8) as u64);
+    }
+    for (let i: usize = 0; i < 5; i++) {
+      const off = 51 * i;
+      const sh = (off & 63) as u64;
+      let v = w[off >> 6] >> sh;
+      if ((off & 63) + 51 > 64) {
+        v |= w[(off >> 6) + 1] << (64 - sh);
+      }
+      this.r[5 * d + i] = v & M;
+    }
+  }
+
+  /** The canonical 32 little-endian bytes of register `a` (fully reduced mod p). */
+  encode(a: usize): u8[] {
+    let h0 = this.r[5 * a];
+    let h1 = this.r[5 * a + 1];
+    let h2 = this.r[5 * a + 2];
+    let h3 = this.r[5 * a + 3];
+    let h4 = this.r[5 * a + 4];
+    // Two carry passes: limbs below 2^51, the value below 2^255 + 2^13.
+    for (let pass = 0; pass < 2; pass++) {
+      h1 += h0 >> 51;
+      h0 &= M;
+      h2 += h1 >> 51;
+      h1 &= M;
+      h3 += h2 >> 51;
+      h2 &= M;
+      h4 += h3 >> 51;
+      h3 &= M;
+      h0 += (h4 >> 51) * 19;
+      h4 &= M;
+    }
+    // q = 1 when h >= p: adding 19 then carries out of bit 255.
+    let q = (h0 + 19) >> 51;
+    q = (h1 + q) >> 51;
+    q = (h2 + q) >> 51;
+    q = (h3 + q) >> 51;
+    q = (h4 + q) >> 51;
+    h0 += 19 * q;
+    h1 += h0 >> 51;
+    h0 &= M;
+    h2 += h1 >> 51;
+    h1 &= M;
+    h3 += h2 >> 51;
+    h2 &= M;
+    h4 += h3 >> 51;
+    h3 &= M;
+    h4 &= M;
+    const w: u64[] = [
+      h0 | (h1 << 51),
+      (h1 >> 13) | (h2 << 38),
+      (h2 >> 26) | (h3 << 25),
+      (h3 >> 39) | (h4 << 12),
+    ];
+    const out = Buffer.alloc(32);
+    for (let i: usize = 0; i < 32; i++) {
+      out[i] = ((w[i >> 3] >> (((i & 7) * 8) as u64)) & 0xff) as u8;
+    }
+    return out;
+  }
+}
