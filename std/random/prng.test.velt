@@ -1,0 +1,93 @@
+// velt/random (tests): white-box tests, run by `velt test std/`.
+//
+// wyrand's steps against values from an independent big-integer implementation, so that a changed constant,
+// half of the product left out or the wrong shift fails; these can't be told from the numbers the
+// seeded generator gives. The rest is what a seeded generator can show: its range and its bits.
+import { describe, expect, it } from "velt/test";
+import { unitF64, wyMix, wyStep } from "velt/lang/random/wyrand";
+import { random, randomInt } from "velt/random/prng";
+
+describe("wyrand", () => {
+  it("mixes a state as the reference does", () => {
+    expect(wyMix(0x1)).toBe(16646288086500911322);
+    expect(wyMix(0x123456789abcdef0)).toBe(10284731886303739430);
+    expect(wyMix(0xffffffffffffffff)).toBe(18446744073709551615);
+    expect(wyMix(0xa0761d6478bd6430)).toBe(14839104130206199084);
+  });
+
+  it("steps by its constant, wrapping", () => {
+    expect(wyStep(1)).toBe(11562461410679940144);
+    expect(wyStep(0xffffffffffffffff)).toBe(11562461410679940142);
+  });
+
+  it("makes floats of the top 53 bits", () => {
+    expect(unitF64(0)).toBe(0);
+    expect(unitF64(0xffffffffffffffff)).toBe(0.9999999999999999);
+    expect(unitF64(0x8000000000000000)).toBe(0.5);
+    expect(unitF64(0x7ff)).toBe(0);
+    expect(unitF64(0x800)).toBe(1.1102230246251565e-16);
+  });
+});
+
+describe("the thread's generator", () => {
+  it("sets each of the 53 bits about half the time", () => {
+    const n = 20000;
+    for (let bit = 1; bit <= 53; bit++) {
+      const scale = 2 ** bit;
+      let ones = 0;
+      for (let i = 0; i < n; i++) {
+        if (Math.floor(random() * scale) % 2 == 1) {
+          ones++;
+        }
+      }
+      expect(ones > 9000 && ones < 11000).toBe(true);
+    }
+  });
+
+  it("gives Math.random() from the same generator", () => {
+    let sum = 0;
+    let inside = true;
+    for (let i = 0; i < 100000; i++) {
+      const x = Math.random();
+      inside = inside && x >= 0 && x < 1;
+      sum += x;
+    }
+    expect(inside).toBe(true);
+    expect(sum > 49000 && sum < 51000).toBe(true);
+  });
+
+  it("covers a range exactly, with an empty one its minimum", () => {
+    const seen = [0, 0, 0, 0, 0, 0];
+    for (let i = 0; i < 6000; i++) {
+      const v = randomInt(1, 7);
+      expect(v >= 1 && v < 7).toBe(true);
+      seen[v - 1] += 1;
+    }
+    expect(seen.every((c) => c > 700)).toBe(true);
+    expect(randomInt(5, 5)).toBe(5);
+    expect(randomInt(5, 1)).toBe(5);
+    expect(randomInt(-3, -2)).toBe(-3);
+  });
+
+  it("takes the widest range, negative numbers included", () => {
+    const low: i64 = -9223372036854775808;
+    const high: i64 = 9223372036854775807;
+    let negative = 0;
+    let positive = 0;
+    for (let i = 0; i < 1000; i++) {
+      const v = randomInt(low, high);
+      if (v < 0) {
+        negative++;
+      } else {
+        positive++;
+      }
+    }
+    expect(negative > 400 && positive > 400).toBe(true);
+    let spans = true;
+    for (let i = 0; i < 1000; i++) {
+      const v = randomInt(-10, 10);
+      spans = spans && v >= -10 && v < 10;
+    }
+    expect(spans).toBe(true);
+  });
+});

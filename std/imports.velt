@@ -13,4 +13,7 @@ export const imports: Imports = {
     js: "./net/http/fetch/client/transport/js.velt",
     default: "./net/http/fetch/client/transport/native.velt",
   },
+  // The seed of `Math.random()`'s generator. On WebAssembly the runtime's own (no generator there
+  // is fit for secrets); elsewhere the operating system's random numbers.
+  "#random-seed": { wasm: "./lang/random/seed_wasm.velt", default: "./lang/random/seed_native.velt" },
 };
