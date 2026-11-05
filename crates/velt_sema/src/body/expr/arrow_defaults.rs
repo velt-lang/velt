@@ -254,6 +254,7 @@ impl FnCx<'_, '_> {
         let TyKind::FnPtr { ret: returned, .. } = *self.cx.ty.kind(found) else {
             return true;
         };
+        self.arrow_tried(arrow, found);
         let mut from_result = slots.to_vec();
         self.cx.match_ty(ret, returned, &mut from_result);
         // Nothing for the slot: the arrow doesn't return a value, which the annotation can't help.

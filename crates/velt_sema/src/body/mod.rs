@@ -313,6 +313,7 @@ pub(crate) struct FnCx<'a, 'm> {
     pub memo_trials: u32,
     pub trial_answers: FxHashMap<(Span, TyId, Vec<TyId>), Option<TyId>>,
     pub trial_closures: FxHashMap<(Span, Option<TyId>, Vec<TyId>), TyId>,
+    pub arrow_trials: FxHashMap<(Span, Vec<TyId>), TyId>,
     /// Whether a `catch` body (by span, with the types of the enclosing locals it names) takes
     /// Node's `TypeError` (`expr::catch_any`): decided once, not once per trial check of an
     /// enclosing `catch` body (exponential in their nesting).
@@ -443,6 +444,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             memo_trials: 0,
             trial_answers: FxHashMap::default(),
             trial_closures: FxHashMap::default(),
+            arrow_trials: FxHashMap::default(),
             catch_choices: FxHashMap::default(),
             arrow_scans: Default::default(),
             detached: false,

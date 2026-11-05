@@ -4,7 +4,8 @@
 //! at 18 levels). So:
 //! - a trial is answered once per expression, expected type and types of the locals it names;
 //! - inside such a trial, nothing is kept and only types are read, so an arrow already checked
-//!   there with the same inputs gives its type without its body being checked again.
+//!   there with the same inputs gives its type without its body being checked again, and so does
+//!   one tried for what it returns (`arrow_tried`) when that fits what is now expected.
 //!
 //! The real check of an argument is not affected: it runs once, outside every trial.
 
@@ -12,7 +13,7 @@ use velt_common::Span;
 use velt_syntax::ast;
 
 use crate::body::{FnCx, Want};
-use crate::hir::{self, TyId};
+use crate::hir::{self, TyId, TyKind};
 
 impl FnCx<'_, '_> {
     /// The type `check` gives for `e` against `expected` as a trial, remembered.
@@ -54,11 +55,70 @@ impl FnCx<'_, '_> {
             h.ty = ty;
             return h;
         }
+        if let Some(ty) = self.fits_arrow_trial(e, exp, &key.2) {
+            let mut h = self.error_expr(e.span);
+            h.ty = ty;
+            return h;
+        }
         let diags = self.cx.diags.len();
         let h = self.closure_checked(e, exp, escaping);
         if self.cx.diags.len() == diags && !self.cx.ty.has_error(h.ty) {
             self.trial_closures.insert(key, h.ty);
         }
         h
+    }
+
+    /// Remembers `found`, the type arrow `e` gave as a trial with its result left open.
+    pub(super) fn arrow_tried(&mut self, e: &ast::Expr, found: TyId) {
+        let key = (e.span, self.named_local_types(e));
+        self.arrow_trials.insert(key, found);
+    }
+
+    /// The type arrow `e` has against `exp`, from its trial with the result left open: its
+    /// unannotated parameters have the same types there, so its body gives the same result, and
+    /// that fits `exp`'s result. What it throws is what the trial found.
+    fn fits_arrow_trial(
+        &mut self,
+        e: &ast::Expr,
+        exp: Option<TyId>,
+        locals: &[TyId],
+    ) -> Option<TyId> {
+        let exp = exp?;
+        let found = *self.arrow_trials.get(&(e.span, locals.to_vec()))?;
+        let (
+            TyKind::FnPtr {
+                params: wanted,
+                ret: wanted_ret,
+                rest,
+                ..
+            },
+            TyKind::FnPtr {
+                params: tried,
+                ret: tried_ret,
+                throws,
+                ..
+            },
+        ) = (self.cx.ty.kind(exp).clone(), self.cx.ty.kind(found).clone())
+        else {
+            return None;
+        };
+        let ast::ExprKind::Arrow { params, .. } = &e.kind else {
+            return None;
+        };
+        let same_inputs = wanted.len() == tried.len()
+            && (params.iter().enumerate()).all(|(i, p)| {
+                p.ty.is_some() || (wanted.get(i).is_some() && wanted.get(i) == tried.get(i))
+            });
+        let known =
+            !self.cx.ty.has_error(wanted_ret) && !wanted.iter().any(|t| self.cx.ty.has_error(*t));
+        if !same_inputs || !known || !self.converts_to(tried_ret, wanted_ret) {
+            return None;
+        }
+        Some(self.cx.ty.intern(TyKind::FnPtr {
+            params: wanted,
+            ret: wanted_ret,
+            throws,
+            rest,
+        }))
     }
 }
