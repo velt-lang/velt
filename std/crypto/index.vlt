@@ -15,6 +15,7 @@
 // bitsliced, GHASH uses the carry-less multiply instruction or a constant-time integer one.
 // https://veltlang.com/docs/std/crypto/.
 
+export { Aead } from "velt/crypto/aead";
 export { AesGcm } from "velt/crypto/aes_gcm";
 export { ChaCha20Poly1305 } from "velt/crypto/chacha20_poly1305";
 export { timingSafeEqual } from "velt/crypto/compare";

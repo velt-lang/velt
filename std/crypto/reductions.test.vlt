@@ -66,7 +66,9 @@ describe("Poly1305", () => {
       const p = new Poly1305(hexDecode(c[0]));
       const m = hexDecode(c[1]);
       p.updatePadded(m, 0, m.length);
-      expect(hexEncode(p.finish())).toBe(c[2]);
+      const tag = Buffer.alloc(16);
+      p.finishInto(tag, 0);
+      expect(hexEncode(tag)).toBe(c[2]);
     }
   });
 
