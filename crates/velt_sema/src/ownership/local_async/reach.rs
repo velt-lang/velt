@@ -46,8 +46,14 @@ pub(super) fn reached_locals(cx: &mut Ctx, f: &FnDef, roots: &Roots, memo: &mut 
     // the body, also for a long chain of assignments in a loop).
     let mut readers: FxHashMap<LocalId, Vec<usize>> = FxHashMap::default();
     for (i, (_, from, _)) in binds.iter().enumerate() {
-        let mut read = vec![];
-        walk::expr(from, &mut Reads(&mut read));
+        let (mut read, mut made) = (vec![], vec![]);
+        walk::expr(from, &mut Reads(&mut read, &mut made));
+        // A closure made or a function called here reads what it captured.
+        for d in made {
+            if let Some(Def::Fn(k)) = &cx.defs[d.0 as usize] {
+                read.extend(k.captures.iter().map(|c| c.outer));
+            }
+        }
         read.sort_by_key(|l| l.0);
         read.dedup();
         for l in read {
@@ -83,12 +89,18 @@ pub(super) fn reached_locals(cx: &mut Ctx, f: &FnDef, roots: &Roots, memo: &mut 
 }
 
 /// The locals an expression reads.
-struct Reads<'a>(&'a mut Vec<LocalId>);
+struct Reads<'a>(&'a mut Vec<LocalId>, &'a mut Vec<DefId>);
 
 impl Visit for Reads<'_> {
     fn expr(&mut self, e: &Expr) {
-        if let E::Local(l, _) = e.kind {
-            self.0.push(l);
+        match &e.kind {
+            E::Local(l, _) => self.0.push(*l),
+            E::Closure(c) => self.1.push(*c),
+            E::Call {
+                callee: Callee::Def(d, _),
+                ..
+            } => self.1.push(*d),
+            _ => {}
         }
     }
 }
