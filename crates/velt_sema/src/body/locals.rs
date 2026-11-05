@@ -20,7 +20,7 @@ use crate::ctx::Item;
 use crate::hir::{LocalDef, LocalId, TyId};
 use velt_common::Span;
 
-fn frame_lookup(f: &Frame, name: &str) -> Option<LocalId> {
+pub(in crate::body) fn frame_lookup(f: &Frame, name: &str) -> Option<LocalId> {
     f.scopes
         .iter()
         .rev()
