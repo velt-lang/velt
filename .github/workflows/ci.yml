@@ -224,7 +224,11 @@ jobs:
           RUSTUP_TOOLCHAIN: stable
           BASE: ${{ github.event.merge_group.base_sha }}
         run: |
+          # Plan against `main`, not against this group's parent. A green group merges the entries
+          # ahead of it too, even one whose own run failed, so it must check what they need as well.
           if [ -n "$BASE" ]; then
+            git fetch --quiet origin main
+            BASE=$(git merge-base HEAD origin/main || echo "$BASE")
             cargo xtask affected --base "$BASE" --github
           else
             cargo xtask affected --full --github
