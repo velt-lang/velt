@@ -7,6 +7,7 @@ import { Case } from "../case";
 import { Run } from "../run";
 import { file, packageFiles, rawArchive } from "../client";
 import { IndexBody } from "../index_body";
+import { Reply } from "../reply";
 
 const JSON_TYPE = "application/json";
 
@@ -107,10 +108,57 @@ async function manifestsAreData(run: Run): Promise<void> {
   run.check.answer("only a manifest", accepted, 201);
 }
 
+// What the index keeps of a version, and that publishing another leaves it exactly as it was.
+async function theIndexKeepsEachVersion(run: Run): Promise<void> {
+  const { client, check } = run;
+  const lib = run.name("kept");
+  const token = run.users.alice;
+  const fields = `description: "said \\"hi\\" på svenska", keywords: ["kept", "index"], dependencies: { one: "^1.2", two: ">=2, <3" }`;
+  check.answer("publish", await client.publish(lib, "1.0.0", token, fields), 201);
+  const first = (await client.call("GET", `${lib}/index`)).text;
+  for (const part of [
+    `"description": "said \\"hi\\" på svenska"`,
+    `"kept"`,
+    `"index"`,
+    `"one": "^1.2"`,
+    `"two": ">=2, <3"`,
+  ]) {
+    check.is(`the index has ${part}`, `${first.includes(part)}`, "true");
+  }
+  check.answer("the next version", await client.publish(lib, "1.1.0", token), 201);
+  const second = (await client.call("GET", `${lib}/index`)).text;
+  // The text up to the end of the only entry.
+  const entry = first.slice(0, first.lastIndexOf("]")).trimEnd();
+  check.is("the first version's entry is unchanged", `${second.startsWith(entry)}`, "true");
+}
+
+// A registry that doesn't hold a package's lock across a write loses versions here: each publish
+// reads the index, adds its version and writes the index back.
+async function publishesAtOnceAllCount(run: Run): Promise<void> {
+  const { client, check } = run;
+  const lib = run.name("together");
+  const token = run.users.alice;
+  check.answer("the first version", await client.publish(lib, "1.0.0", token), 201);
+  const answers: Promise<Reply>[] = [];
+  const versions = ["1.0.0"];
+  for (let minor: i64 = 1; minor <= 8; minor++) {
+    versions.push(`1.${minor}.0`);
+    answers.push(client.publish(lib, `1.${minor}.0`, token));
+  }
+  for (const answer of answers) {
+    check.answer("a publish at the same time", await answer, 201);
+  }
+  const listed = JSON.parse<IndexBody>((await client.call("GET", `${lib}/index`)).text).versions;
+  const found = listed.map((e): string => e.version).sort().join();
+  check.is("every version is in the index", found, versions.sort().join());
+}
+
 /** Publishing and reading back. */
 export const publishing: Case[] = [
   new Case("a version is published once, and never changes", versionsAreImmutable),
   new Case("anyone reads a published version", readsArePublic),
   new Case("an upload is checked before anything is stored", uploadsAreChecked),
   new Case("a manifest is read as data, and refused by name", manifestsAreData),
+  new Case("the index keeps what each version says", theIndexKeepsEachVersion),
+  new Case("publishes of one package at the same time all count", publishesAtOnceAllCount),
 ];

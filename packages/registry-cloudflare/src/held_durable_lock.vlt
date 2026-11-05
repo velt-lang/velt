@@ -1,0 +1,33 @@
+// registry-cloudflare (internal): a lock its Durable Object has given this request.
+
+import { DurableObjectStub } from "cloudflare";
+import { HeldLock } from "registry-core";
+
+/** One package's lock, while held, with the token its object gave. */
+export class HeldDurableLock implements HeldLock {
+  private stub: DurableObjectStub;
+  private token: string;
+
+  constructor(stub: DurableObjectStub, token: string) {
+    this.stub = stub;
+    this.token = token;
+  }
+
+  /**
+   * Frees the lock. A failure is logged and goes no further: the write it protected is done, and
+   * saying it failed would have the client try it again. The lease frees the lock anyway.
+   */
+  async release(): Promise<void> {
+    try {
+      const res = await this.stub.fetch("https://lock/release", {
+        method: "POST",
+        body: this.token,
+      });
+      if (!res.ok) {
+        console.error(`releasing the lock answered ${res.status}`);
+      }
+    } catch (e) {
+      console.error(`releasing the lock failed: ${e.message}`);
+    }
+  }
+}

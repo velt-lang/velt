@@ -39,6 +39,8 @@ pub(crate) const USERS: &[Users] = &[
             // fixtures).
             "workers",
             "workerd",
+            // Serving the registry's Worker.
+            "registry_worker",
         ],
     },
     // `--host` builds (`workers`, `cloudflare` and `workerd` copy it beside their fixtures) and
@@ -53,21 +55,33 @@ pub(crate) const USERS: &[Users] = &[
     Users {
         package: "cloudflare",
         goldens: &[],
-        binaries: &["cloudflare", "workerd", "docs"],
+        binaries: &["cloudflare", "workerd", "registry_worker", "docs"],
     },
     // Its rules against vpm's (`registry_core` copies it beside its driver) and the
     // documentation (`docs` compiles snippets against every package without native code).
     Users {
         package: "registry-core",
         goldens: &[],
-        binaries: &["registry_core", "registry_conformance", "docs"],
+        binaries: &[
+            "registry_core",
+            "registry_conformance",
+            "registry_worker",
+            "docs",
+        ],
     },
     // The suite against `velt registry serve` (`registry_conformance` copies it into a work
     // directory) and the documentation.
     Users {
         package: "registry-conformance",
         goldens: &[],
-        binaries: &["registry_conformance", "docs"],
+        binaries: &["registry_conformance", "registry_worker", "docs"],
+    },
+    // Its stores under workerd (`registry_worker` copies it into a work directory) and the
+    // documentation.
+    Users {
+        package: "registry-cloudflare",
+        goldens: &[],
+        binaries: &["registry_worker", "docs"],
     },
     // The database benchmarks (bench/db, bench/sqlite, bench/web, ...).
     Users {

@@ -18,6 +18,11 @@ async function ownersDecide(run: Run): Promise<void> {
   const nobody = await client.call("PUT", `${lib}/owners/no-such-user`, alice);
   check.answer("adding nobody", nobody, 404);
   check.answer("adding bob", await client.call("PUT", `${lib}/owners/bob`, alice), 200);
+  check.is(
+    "owners, oldest first",
+    (await client.call("GET", `${lib}/owners`)).text,
+    "alice\nbob\n",
+  );
   check.answer("bob publishes", await client.publish(lib, "1.1.0", bob), 201);
   check.answer("removing alice", await client.call("DELETE", `${lib}/owners/alice`, bob), 200);
   check.answer("removing the last", await client.call("DELETE", `${lib}/owners/bob`, bob), 409);

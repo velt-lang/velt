@@ -1,0 +1,47 @@
+// registry-cloudflare: users and the hashes of their tokens in the D1 database. Unlike registry-core's
+// `TokenAuth` it is never open: with no users, every write is refused.
+
+import { D1Database, d1Database } from "cloudflare";
+import { AuthProvider, bearerToken, Caller, tokenHash } from "registry-core";
+import { storeFailure } from "./stored";
+
+struct NameRow {
+  name: string;
+}
+
+/** The registry's users in the D1 database bound as `binding`. */
+export class D1TokenAuth implements AuthProvider {
+  private db: D1Database;
+
+  constructor(binding: string) {
+    this.db = d1Database(binding);
+  }
+
+  async caller(authorization: string | null): Promise<Caller> {
+    const token = bearerToken(authorization ?? "");
+    if (token.length == 0) {
+      return Caller.nobody();
+    }
+    try {
+      const row = await this.db
+        .prepare("SELECT name FROM users WHERE token_hash = ?")
+        .bind(tokenHash(token))
+        .first<NameRow>();
+      return row == null ? Caller.nobody() : Caller.ofUser(row.name);
+    } catch (e) {
+      throw storeFailure("the database", e);
+    }
+  }
+
+  async isUser(name: string): Promise<bool> {
+    try {
+      const row = await this.db
+        .prepare("SELECT name FROM users WHERE name = ?")
+        .bind(name)
+        .first<NameRow>();
+      return row != null;
+    } catch (e) {
+      throw storeFailure("the database", e);
+    }
+  }
+}

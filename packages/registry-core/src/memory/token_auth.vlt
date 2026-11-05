@@ -61,9 +61,11 @@ export class TokenAuth implements AuthProvider {
   }
 }
 
-// The token of an `Authorization` value: after the first space, trimmed, when the scheme before
-// it is `Bearer` in any case (RFC 7235); "" otherwise.
-function bearerToken(value: string): string {
+/**
+ * The token of an `Authorization` value: after the first space, trimmed, when the scheme before
+ * it is `Bearer` in any case (RFC 7235); "" otherwise.
+ */
+export function bearerToken(value: string): string {
   const space = value.indexOf(" ");
   if (space < 0 || value.slice(0, space).toLowerCase() != "bearer") {
     return "";
