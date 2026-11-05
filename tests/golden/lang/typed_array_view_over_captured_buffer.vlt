@@ -1,0 +1,34 @@
+// Writes through a view made inside a closure reach the captured buffer, as in Node. The same
+// functions in `shared(...)` are refused (errors/shared_fn_changes_buffer_view).
+const u = new Uint8Array(4);
+const overBuffer = (): number => {
+  const v = new Uint8Array(u.buffer);
+  v[0] = v[0] + 1;
+  return u[0];
+};
+console.log(overBuffer(), overBuffer());
+
+const w = new Uint8Array(4);
+const dataView = (): number => {
+  const d = new DataView(w.buffer);
+  d.setUint8(0, d.getUint8(0) + 1);
+  return w[0];
+};
+console.log(dataView(), dataView());
+
+const b = new ArrayBuffer(4);
+const overCaptured = (): number => {
+  const v = new Uint8Array(b);
+  v[0] = v[0] + 1;
+  return v[0];
+};
+console.log(overCaptured(), overCaptured());
+
+// Over a typed array it copies: the write stays in the copy.
+const c = new Uint8Array(4);
+const copy = (): number => {
+  const v = new Uint8Array(c);
+  v[0] = v[0] + 1;
+  return v[0] + c[0];
+};
+console.log(copy(), copy());

@@ -1,0 +1,23 @@
+// A view over a captured buffer, in a function the compiler can't follow, so `shared(...)` panics.
+type F = (x: number) => number;
+
+interface Fi {
+  make(): F;
+}
+
+class Fa implements Fi {
+  make(): F {
+    const u = new Uint8Array(4);
+    return (x: number): number => {
+      const v = new Uint8Array(u.buffer);
+      v[0] = v[0] + 1;
+      return u[0];
+    };
+  }
+}
+
+async function main() {
+  const m: Fi = new Fa();
+  const f = shared(m.make());
+  console.log(f(1));
+}

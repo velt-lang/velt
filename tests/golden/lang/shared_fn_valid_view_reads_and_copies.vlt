@@ -1,0 +1,16 @@
+// Valid: a view that only reads a captured buffer, and a copy of a captured typed array, which it
+// writes to, change nothing the function captured.
+async function main() {
+  const u = new Uint8Array(4);
+  u[0] = 5;
+  const read = shared((x: number): number => {
+    const v = new Uint8Array(u.buffer);
+    return v[0] + x;
+  });
+  const copy = shared((x: number): number => {
+    const v = new Uint8Array(u);
+    v[0] = v[0] + x;
+    return v[0];
+  });
+  console.log(read(1), read(1), copy(1), copy(1));
+}

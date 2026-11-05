@@ -1,0 +1,23 @@
+// A panic caught inside a class's own `clone()`: the transfer around it goes on, so identity holds.
+import { catchPanic } from "velt/task";
+async function boom(): Promise<i64> { panic("in clone"); return 1 as i64; }
+class K {
+  n: i64 = 0;
+  clone(): K {
+    const k = new K();
+    const q = catchPanic(async (): Promise<i64> => boom());
+    k.n = 7;
+    return k;
+  }
+  [Symbol.dispose]() {}
+}
+class O { v: i64 = 1; }
+class G { a: O = new O(); k: K = new K(); b: O | null = null; }
+async function look(g: G): Promise<string> { g.a.v += 10; return `${g.a === g.b} ${g.a.v} ${g.b?.v} ${g.k.n}`; }
+async function main() {
+  const g = new G(); g.b = g.a;
+  const keep = g;
+  const p = keep.a;
+  console.log(await spawn(look(g)), keep.a.v, p.v);
+  console.log(await spawn(look(g)), keep.a.v, p.v);
+}

@@ -228,9 +228,41 @@ pub(super) fn reaches(
     }
 }
 
+/// Is `e` a typed array or `DataView` made over an existing `ArrayBuffer` (`new Uint8Array(u.buffer)`)?
+/// It writes to that buffer, so it isn't a new value. Over an array or another typed array it copies.
+fn view_over_buffer(cx: &mut Ctx, e: &Expr, memo: &mut Memo) -> bool {
+    let E::New { def, args, .. } = &e.kind else {
+        return false;
+    };
+    let is_view = cx.adt(*def).is_some_and(|a| {
+        velt_common::std_modules::is_std(&a.name)
+            && (a.name.ends_with("Array") || a.name.ends_with("::DataView"))
+    });
+    is_view && args.first().is_some_and(|a| over_buffer(cx, a, memo))
+}
+
+/// Is `e`, through conversions, an `ArrayBuffer` that isn't a new one?
+fn over_buffer(cx: &mut Ctx, e: &Expr, memo: &mut Memo) -> bool {
+    let buffer = matches!(cx.ty.kind(e.ty), TyKind::Adt(d, _)
+        if cx.adt(*d).is_some_and(|a| velt_common::std_modules::is_std(&a.name)
+            && a.name.ends_with("::ArrayBuffer")));
+    if buffer {
+        return !fresh(cx, e, memo);
+    }
+    if matches!(e.kind, E::New { .. } | E::Call { .. }) {
+        return false;
+    }
+    let mut found = false;
+    walk::children(e, &mut |x| found = found || over_buffer(cx, x, memo));
+    found
+}
+
 /// Is `e` a new value: `new`, a literal, a builtin copy, a call of a function that returns new
 /// values (`crate::fresh_returns`), or a library call that returns a copy ([`FRESH`])?
 pub(super) fn fresh(cx: &mut Ctx, e: &Expr, memo: &mut Memo) -> bool {
+    if view_over_buffer(cx, e, memo) {
+        return false;
+    }
     // `new` always makes a new object (whatever its constructor keeps), as a literal and a
     // spread object (`{ ...cfg }` in a generic function) do.
     if matches!(

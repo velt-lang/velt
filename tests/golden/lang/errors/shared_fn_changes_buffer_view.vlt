@@ -1,0 +1,22 @@
+// A view made in a function in `shared(...)` writes to the buffer it captured.
+async function main() {
+  const a = new Uint8Array(4);
+  const overBuffer = shared((x: number): number => {
+    const v = new Uint8Array(a.buffer);
+    v[0] = v[0] + 1;
+    return a[0];
+  });
+  const c = new Uint8Array(4);
+  const dataView = shared((x: number): number => {
+    const d = new DataView(c.buffer);
+    d.setUint8(0, d.getUint8(0) + 1);
+    return c[0];
+  });
+  const e = new ArrayBuffer(4);
+  const overCaptured = shared((x: number): number => {
+    const v = new Uint8Array(e);
+    v[0] = v[0] + 1;
+    return v[0];
+  });
+  console.log(overBuffer(1), dataView(1), overCaptured(1));
+}
