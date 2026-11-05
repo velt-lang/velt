@@ -1,0 +1,2 @@
+http_handler_store_into_new.vlt:41:5: error: this async closure changes `c.out`, which may be a value reached from captured `a`: `fillAsync(…)` in a closure stores one there by key, so it must stay on the task that created it
+http_handler_store_into_new.vlt:48:5: error: this async closure changes `c.out`, which may be a value reached from captured `b`: `…(…)` in a closure stores one there by key, so it must stay on the task that created it

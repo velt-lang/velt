@@ -1,0 +1,132 @@
+// Code that runs when a value is written or read changes what the handler captured (#854):
+// a closure a reached function returns, which pushes to the captured list when it is called; a
+// setter of the captured object; a proxy made by a generic `reactive<T>` over captured state,
+// whose `set` trap writes the target (sigx's reactivity); and a plugin hook found through `any`
+// that changes the captured value held by the render context, and a method read through an
+// `any` and called (`const f = r.run; f(app)`), also one of an object a converted value holds
+// (`const f = h.inner.run; f(app, 1)`). Each change goes to the request's copy, where Node
+// changes the shared object, so each is an error.
+import { serve } from "http-server";
+
+class App {
+  name: string = "app";
+  plugins: string[] = ["a"];
+  hits: number = 0;
+  set last(v: string) {
+    this.plugins.push(v);
+  }
+}
+
+class State {
+  count: number = 0;
+}
+
+class Holder {
+  app: App = new App();
+  state: State = new State();
+}
+
+function adder(a: App): () => void {
+  return () => {
+    a.plugins.push("x");
+  };
+}
+
+function reactive<T extends object>(t: T): T {
+  return new Proxy(t, {
+    set(target: any, key: string | symbol, v: any, receiver: any): boolean {
+      return Reflect.set(target, key, v);
+    },
+  }) as T;
+}
+
+class RenderCtx {
+  app: App;
+  out: string[] = [];
+  constructor(app: App) {
+    this.app = app;
+  }
+}
+
+const quiet = {
+  setup: (c: RenderCtx): void => {
+    c.out.push("q");
+  },
+};
+
+const loud = {
+  setup: (c: RenderCtx): void => {
+    c.app.plugins.push("l");
+  },
+};
+
+const plugins: any[] = [quiet as any, loud as any];
+
+class Runner {
+  run(a: App): void {
+    a.plugins.push("r");
+  }
+}
+
+const runner = new Runner();
+
+// Two parameters, so that no other function value of this file stands for `f` below.
+class Inner {
+  run(a: App, n: number): void {
+    a.plugins.push("i");
+  }
+}
+
+class Outer {
+  inner: Inner = new Inner();
+}
+
+const outer = new Outer();
+
+async function main() {
+  const a1 = new App();
+  const s1 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const add = adder(a1);
+    add();
+    return new Response("1");
+  });
+  const a2 = new App();
+  const s2 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    a2.last = "y";
+    return new Response("2");
+  });
+  const h3 = new Holder();
+  const s3 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const st = reactive(h3.state);
+    st.count++;
+    return new Response("3");
+  });
+  const a4 = new App();
+  const s4 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const ctx = new RenderCtx(a4);
+    for (const p of plugins) {
+      const f = p["setup"];
+      if (typeof f === "function") {
+        f(ctx);
+      }
+    }
+    return new Response(ctx.out.join(""));
+  });
+  const a5 = new App();
+  const s5 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const r: any = runner;
+    const f = r.run;
+    f(a5);
+    return new Response("5");
+  });
+  const a6 = new App();
+  const s6 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const h: any = outer;
+    const f = h.inner.run;
+    f(a6, 1);
+    return new Response("6");
+  });
+  for (const s of [s1, s2, s3, s4, s5, s6]) {
+    await s.shutdown();
+  }
+}

@@ -21,8 +21,9 @@ pub(super) type Field = (DefId, u32);
 
 /// The fields some code stores a value that is not new in (module docs); `None` when the
 /// program stores into a field of a type not followed here (a type parameter), which may be any.
-pub(super) fn fed_fields(cx: &mut Ctx) -> Option<FxHashSet<Field>> {
-    let mut fed = FxHashSet::default();
+pub(super) fn fed_fields(cx: &mut Ctx, keyed: FxHashSet<Field>) -> Option<FxHashSet<Field>> {
+    // Fields fed by key (`self.out = v` through an `any`, a helper's `o[k] = v`): super::keyed.
+    let mut fed = keyed;
     let mut memo = Memo::default();
     for i in 0..cx.defs.len() {
         // Asked before the definition is taken out of `cx.defs`.
@@ -79,12 +80,12 @@ pub(super) fn fed_fields(cx: &mut Ctx) -> Option<FxHashSet<Field>> {
 }
 
 /// Is a value stored by `value` the request's own: one that holds no reference, or a new one?
-fn own(cx: &mut Ctx, value: &Expr, memo: &mut Memo) -> bool {
+pub(super) fn own(cx: &mut Ctx, value: &Expr, memo: &mut Memo) -> bool {
     plain(cx, value.ty) || matches!(value.kind, E::Lit(_) | E::Closure(_)) || fresh(cx, value, memo)
 }
 
 /// The ADT a value of `t` is (seen through an option).
-fn adt_of(cx: &Ctx, t: TyId) -> Option<DefId> {
+pub(super) fn adt_of(cx: &Ctx, t: TyId) -> Option<DefId> {
     let t = match cx.ty.kind(t) {
         TyKind::Option(inner, _) => *inner,
         _ => t,
@@ -108,7 +109,7 @@ pub(super) fn field_of(cx: &Ctx, t: TyId, k: u32) -> Option<Field> {
 
 /// Field `k` of ADT `d`, as the class declaring it knows it: a base class's fields are a
 /// prefix of its subclasses'.
-fn declaring(cx: &Ctx, d: DefId, k: u32) -> Option<Field> {
+pub(super) fn declaring(cx: &Ctx, d: DefId, k: u32) -> Option<Field> {
     let mut d = d;
     if k as usize >= cx.adt(d)?.fields.len() {
         return None;

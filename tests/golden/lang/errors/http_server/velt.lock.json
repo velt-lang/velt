@@ -2,6 +2,11 @@
   "version": 1,
   "packages": [
     {
+      "name": "effects-helpers",
+      "version": "0.0.0",
+      "source": "path+_effects_pkg"
+    },
+    {
       "name": "http-server",
       "version": "0.1.0",
       "source": "path+../../../../../packages/http-server"

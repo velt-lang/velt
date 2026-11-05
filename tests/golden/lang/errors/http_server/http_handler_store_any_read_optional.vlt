@@ -1,0 +1,32 @@
+// A store by key through a function read from an `any` with a parameter the call does not give
+// (#854).
+import { serve } from "http-server";
+
+class App {
+  plugins: string[] = [];
+}
+class Holder {
+  app: App;
+  k7: string[] = [];
+  other: string[] = [];
+  constructor(a: App) {
+    this.app = a;
+  }
+}
+function g(o: Holder, v: string[], n?: number): void {
+  const x: any = o;
+  x["k7"] = v;
+}
+const x: any = { g: g };
+
+async function main() {
+  const a = new App();
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new Holder(a);
+    const f = x.g;
+    f(c, a.plugins);
+    c.k7.push("x");
+    return new Response("ok");
+  });
+  await s.shutdown();
+}

@@ -1,0 +1,29 @@
+// A package's function is followed like the program's (#854): `setKey` from a dependency
+// (_effects_pkg) stores the captured list by key into the object it is given, so `c.out.push`
+// is an error.
+import { serve } from "http-server";
+import { setKey as pkgSetKey } from "effects-helpers";
+
+class App {
+  name: string = "app";
+  plugins: string[] = ["a"];
+}
+
+class ByPackage {
+  app: App;
+  out: string[] = [];
+  constructor(a: App) {
+    this.app = a;
+    pkgSetKey(this, "out", a.plugins);
+  }
+}
+
+async function main() {
+  const a = new App();
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new ByPackage(a);
+    c.out.push("x");
+    return new Response("x");
+  });
+  await s.shutdown();
+}

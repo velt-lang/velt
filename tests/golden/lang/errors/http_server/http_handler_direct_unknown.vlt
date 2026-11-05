@@ -1,0 +1,19 @@
+// A direct call changing what it is given through a receiver computed from a parameter of type
+// `unknown` (#854): such a receiver has no mode of its own.
+import { serve } from "http-server";
+
+class Lists {
+  items: string[] = [];
+}
+function g(xs: unknown): void {
+  (xs as string[]).push("a");
+}
+
+async function main() {
+  const l = new Lists();
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    g(l.items);
+    return new Response("ok");
+  });
+  await s.shutdown();
+}

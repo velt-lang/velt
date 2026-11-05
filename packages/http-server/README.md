@@ -94,14 +94,9 @@ key that does not parse) throws `IoError`.
   - typed arrays and other library writes into a buffer: `hist[1]++` on a captured
     `Int32Array`, `fill`, `sort`, `reverse`, `copyWithin`, `subarray().fill`, a view over a
     captured buffer (`new Uint8Array(b.buffer)`), I/O that reads into a captured buffer;
-  - calls through a function value: a route table (`Map<string, handler>`), a middleware array,
-    a callback parameter, even a local arrow (`const touch = (s) => { s.hits++; }; touch(c)`) or
-    a function in an object (`helpers.touch(c)`) (a callback that assigns a *variable* it
-    captured is reported, below);
-  - a field of a new object filled from the captured value by key: through an `any`
-    (`const self: any = this; self.out = this.app.plugins`), `Reflect.set(this, "out", …)`, or
-    a helper or generic function that stores by key into the object it is given (also one
-    called through an interface or taken as a function value), then `ctx.out.push(…)`;
+  - a field of a new object filled from the captured value by `Reflect.set(this, "out", …)`,
+    then `ctx.out.push(…)` (std's `Reflect.set` is not looked into yet; the same store through
+    an `any` or a helper of the program's is reported);
   - a `RegExp` with the `g` or `y` flag used with `test` or `exec` (its `lastIndex`), and the
     caches of `Headers` and `URLSearchParams` reads, which each request keeps for itself;
   - a library `struct` (a handle such as `Channel` or `TcpStream`, whose copies share what they
@@ -113,8 +108,16 @@ key that does not parse) throws `IoError`.
   method, `{ ...cfg }` then a write, `new Map(cfg.headers)` then `set`, and the result of a
   function the compiler sees returns a new value (`makeCtx(cfg)`). A write through a part of it
   that may hold the captured value (`ctx.app.n++`, or a field some code fills from it by
-  assignment, a literal or a spread) is reported, and so is an element of a copy
-  (`list.filter(…)[0].visits++`, `slice`, `map`, `concat`, `toSorted`).
+  assignment, a literal, a spread or a store by key through an `any`) is reported, and so is an
+  element of a copy (`list.filter(…)[0].visits++`, `slice`, `map`, `concat`, `toSorted`).
+
+  A call through a function value runs one of the program's functions that accept its
+  arguments, and each is followed: a route table (`Map<string, handler>`), a middleware array,
+  a callback parameter, a local arrow (`const touch = (s) => { s.hits++; }; touch(c)`), a
+  function in an object (`helpers.touch(c)`) and a function read from an `any`
+  (`plugin[hook](ctx)`). In a program with a host import or a native function that can hand it
+  a function from outside, any such call given the captured value, or a new object holding it,
+  is reported.
 
   It also reports some changes that are safe: through an element of a new object's list whose
   type could hold the captured value though it does not, through a field that some other code

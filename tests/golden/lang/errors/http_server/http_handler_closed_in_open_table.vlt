@@ -1,0 +1,21 @@
+// A function of a closed first parameter stored in a table whose parameters are `any` (#854): the
+// conversion makes a new value of the table's type, which a call through the table runs.
+import { serve } from "http-server";
+
+class App {
+  plugins: string[] = [];
+}
+function g(o: number, v: any): void {
+  v.push("x");
+}
+const t: ((o: any, v: any) => void)[] = [];
+t.push(g);
+
+async function main() {
+  const a = new App();
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    t[0](1, a.plugins);
+    return new Response("ok");
+  });
+  await s.shutdown();
+}

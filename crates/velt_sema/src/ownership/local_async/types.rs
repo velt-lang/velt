@@ -74,6 +74,18 @@ pub(super) fn crossing_fns(
 /// What a value of class, struct or union `d<args>` holds: its fields (with those of every
 /// subclass, whose own parameters are not followed) or its variants' payloads.
 pub(super) fn adt_parts(cx: &mut Ctx, d: crate::hir::DefId, args: &[TyId]) -> Vec<TyId> {
+    let below = subclasses(cx, d);
+    adt_parts_below(cx, d, args, &below)
+}
+
+/// [`adt_parts`], given the classes that extend `d` (from a map built once, where a walk over
+/// every definition per class would cost too much).
+pub(super) fn adt_parts_below(
+    cx: &mut Ctx,
+    d: crate::hir::DefId,
+    args: &[TyId],
+    below: &[crate::hir::DefId],
+) -> Vec<TyId> {
     // A `Record`'s accessors (`Object.defineProperty`) hold closures only in a program that
     // defines accessors; elsewhere the field is always `null`, and its function types stand
     // for no closure of the program.
@@ -91,7 +103,7 @@ pub(super) fn adt_parts(cx: &mut Ctx, d: crate::hir::DefId, args: &[TyId]) -> Ve
         _ => vec![],
     };
     let mut out: Vec<TyId> = raw.into_iter().map(|t| cx.subst(t, args)).collect();
-    for s in subclasses(cx, d) {
+    for &s in below {
         if let DefInfo::Adt(a) = &cx.info[s.0 as usize] {
             out.extend(a.fields.iter().map(|f| f.ty));
         }

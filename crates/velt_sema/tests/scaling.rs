@@ -272,6 +272,25 @@ fn assert_linear_counted<const K: usize>(
     counters: impl Fn() -> [u64; K],
     slack: f64,
 ) {
+    let failed = nonlinear_counted(sizes, load, names, counters, slack);
+    assert!(
+        failed.is_empty(),
+        "{}",
+        failed.join(
+            "
+"
+        )
+    );
+}
+
+/// What [`assert_linear_counted`] asserts: each way the work grew too fast.
+fn nonlinear_counted<const K: usize>(
+    sizes: &[usize],
+    load: impl Fn(usize) -> Loaded,
+    names: [&str; K],
+    counters: impl Fn() -> [u64; K],
+    slack: f64,
+) -> Vec<String> {
     let _serial = serial();
     let empty = counted_work(&load_src("function main() {}"), &counters);
     let per_unit: Vec<[f64; K]> = sizes
@@ -282,17 +301,18 @@ fn assert_linear_counted<const K: usize>(
             std::array::from_fn(|i| work[i].saturating_sub(empty[i]) as f64 / n as f64)
         })
         .collect();
+    let mut failed = vec![];
     for (n, u) in sizes.iter().zip(&per_unit).skip(1) {
         for (i, name) in names.iter().enumerate() {
-            assert!(
-                u[i] <= slack * per_unit[0][i],
-                "{name}: work per unit grew from {:.1} (N = {}) to {:.1} (N = {n})",
-                per_unit[0][i],
-                sizes[0],
-                u[i],
-            );
+            if u[i] > slack * per_unit[0][i] {
+                failed.push(format!(
+                    "{name}: work per unit grew from {:.1} (N = {}) to {:.1} (N = {n})",
+                    per_unit[0][i], sizes[0], u[i],
+                ));
+            }
         }
     }
+    failed
 }
 
 #[test]
@@ -565,4 +585,170 @@ fn wide_math_min_max_calls_stay_shallow() {
             "{name}: helper calls and their depth"
         );
     }
+}
+
+/// The check of stores by key (`ownership::local_async::keyed`) on `n` classes and `n` function
+/// values, reached from a callback a dependency spawns. The shapes are those of
+/// `bench/compile/keyed/gen.py`, which measures them by instructions: every class stores by the
+/// one open key (`A`), by a constant key of its own (`B`), passing its parameter on as well, so
+/// that the functions form one cycle through the hooks (`B2`), `n` function types with their own
+/// values (`T`), those with a constant key per type and a value that is not new, next to `A`'s `n`
+/// values of `(any, any)` (`TK`), `n` function types and `n` values of other types that an open
+/// parameter would match (`TW`), or a
+/// cycle of classes each calling the function it is given with a box of its own type (`L`).
+fn keyed_program(shape: &str, n: usize, handler: &str) -> Loaded {
+    let dir = std::env::temp_dir().join(format!("velt-keyed-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("pool.vlt"),
+        "export async function onEachWorker(work: () => Promise<void>) {\n  await spawn(work());\n}\n",
+    )
+    .unwrap();
+    let mut src = String::from("import { onEachWorker } from \"./pool\";\n");
+    src += "class App {\n  plugins: string[] = [];\n}\nclass Holder {\n  app: App;\n  k7: string[] = [];\n  other: string[] = [];\n  constructor(a: App) {\n    this.app = a;\n  }\n}\n";
+    if shape == "TW" {
+        for i in 0..n {
+            src += &format!(
+                "class D{i} {{ out: any = null; }}\ntype W{i} = (a: any, d: D{i}) => void;\nconst w{i}: W{i}[] = [];\n\
+                 const v{i}: (d: D{i}, v: any) => void = (d: D{i}, v: any): void => {{ const o: any = d; o[\"out\"] = v; }};\n"
+            );
+        }
+        src += "function setup(o: any): void {\n";
+        for i in 0..n {
+            src += &format!(
+                "  v{i}(new D{i}(), 1);\n  if (w{i}.length > 0) {{ w{i}[0](o, new D{i}()); }}\n"
+            );
+        }
+    } else if shape == "T" {
+        for i in 0..n {
+            src += &format!(
+                "class D{i} {{ out: any = null; cb: (d: D{i}, v: any) => void = (d: D{i}, v: any): void => \
+                 {{ const o: any = d; o[\"out\"] = v; }}; run(v: any): void {{ this.cb(this, v); }} }}\n"
+            );
+        }
+        src += "function setup(o: any): void {\n";
+        for i in 0..n {
+            src += &format!("  new D{i}().run(\"x\");\n");
+        }
+    } else {
+        src += "type Hook = (o: any, v: any) => void;\nconst hooks: Hook[] = [];\n";
+        for i in 0..n {
+            let (m, line) = (i % 7, shape);
+            let line = match line {
+                "A" | "L" | "TK" => format!("p[key + \"\"] = v; hooks[{m}](this.peer, v);"),
+                "B" => format!("p[\"k{i}\"] = v; hooks[{m}](this.peer, v);"),
+                _ => format!("p[\"k{i}\"] = v; hooks[{m}](p, v);"),
+            };
+            src += &format!(
+                "class C{i} {{ peer: any = null; put(p: any, key: string, v: any): void {{ {line} }} }}\n"
+            );
+        }
+        if shape == "L" {
+            src += "const lhooks: ((a: any, f: (o: any, x: any) => void) => void)[] = [];\n";
+            for i in 0..n {
+                let m = i % 7;
+                src += &format!(
+                    "class Box{i} {{ items: string[] = []; }}\nclass L{i} {{ box: Box{i} = new Box{i}(); \
+                     put(p: any, f: (o: any, x: any) => void): void {{ f(p, this.box); lhooks[{m}](p, f); }} }}\n"
+                );
+            }
+        }
+        if shape == "TK" {
+            src += "class Own {\n  list: string[] = [];\n}\n";
+            for i in 0..n {
+                src += &format!(
+                    "class D{i} {{ out: any = null; k{i}: string[] = []; cb: (d: D{i}, v: any) => void = (d: D{i}, v: any): void => \
+                     {{ const o: any = d; o[\"k{i}\"] = v; }}; run(v: any): void {{ this.cb(this, v); }} }}\nconst dconv{i}: any = new D{i}();\n"
+                );
+            }
+        }
+        src += "function setup(o: any): void {\n";
+        if shape == "TK" {
+            src += "  const own = new Own();\n";
+            for i in 0..n {
+                src += &format!("  new D{i}().run(own.list);\n");
+            }
+        }
+        if shape == "L" {
+            for i in 0..n {
+                src += &format!(
+                    "  lhooks.push((a: any, f: (o: any, x: any) => void): void => {{ new L{i}().put(a, f); }});\n"
+                );
+            }
+            src += "  lhooks[0](o, (p: any, x: any): void => { p[\"out\"] = x; });\n";
+        }
+        for i in 0..n {
+            src += &format!(
+                "  const c{i}: any = new C{i}();\n  hooks.push((a: any, b: any): void => {{ new C{i}().put(a, \"out\", b); }});\n"
+            );
+        }
+    }
+    src += "}\n";
+    src += &format!(
+        "async function main() {{\n  const app = new App();\n  await onEachWorker(async (): Promise<void> => {{\n{handler}\n  }});\n}}\n"
+    );
+    let mut loaded = load_src_at(&dir.join("main.vlt"), &src);
+    for m in &mut loaded.modules {
+        m.is_dependency |= m.path.ends_with("pool");
+    }
+    loaded
+}
+
+/// What the handlers of [`keyed_program`] do when the program must compile.
+const KEYED_OK: &str =
+    "    const own: any = { n: 1 };\n    setup(own);\n    console.log(app.plugins.length);";
+
+/// The work of the check of stores by key grows with the program, not with its square: what a
+/// constant key per class, a parameter passed on through the hooks or a function type per class
+/// made quadratic (33%, 53% and 5% of a whole `velt check` at N = 800). Counted, not timed.
+#[test]
+fn stores_by_key_grow_linearly() {
+    let keyed = || [check_work().keyed];
+    let mut failed = vec![];
+    for shape in ["A", "B", "B2", "T", "TK", "TW", "L"] {
+        let load = |n| keyed_program(shape, n, KEYED_OK);
+        // The check runs on these programs: no work at all would pass the comparison below.
+        let _serial = serial();
+        let work = counted_work(&load(100), &keyed)[0];
+        drop(_serial);
+        assert!(work >= 100, "{shape}: only {work} steps at N = 100");
+        failed.extend(nonlinear_counted(
+            &[100, 200, 400, 800],
+            load,
+            [shape],
+            keyed,
+            1.5,
+        ));
+    }
+    assert!(
+        failed.is_empty(),
+        "{}",
+        failed.join(
+            "
+"
+        )
+    );
+}
+
+/// However the keys are kept, a key still reaches the store it is for, and only that one: `k7` goes
+/// from `C7.put` through the hooks (a cycle of all the classes) to the handler's call of a hook,
+/// where it feeds the field of that name of a new object holding the capture; no store has the key
+/// `other`.
+#[test]
+fn a_key_reaches_a_store_through_the_cycle_of_hooks() {
+    let _serial = serial();
+    let handler = |field: &str| {
+        format!(
+            "    const c = new Holder(app);\n    hooks[0](c, app.plugins);\n    c.{field}.push(\"x\");"
+        )
+    };
+    let loaded = keyed_program("B2", 20, &handler("k7"));
+    let (program, diags) = loaded.check();
+    let text = loaded.render(&diags);
+    assert!(program.is_none(), "{text}");
+    assert!(text.contains("changes `c.k7`"), "{text}");
+    assert!(text.contains("by key"), "{text}");
+    let loaded = keyed_program("B2", 20, &handler("other"));
+    let (program, diags) = loaded.check();
+    assert!(program.is_some(), "{}", loaded.render(&diags));
 }

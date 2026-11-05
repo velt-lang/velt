@@ -1,0 +1,6 @@
+http_handler_code_on_write.vlt:95:5: error: this async closure modifies captured `a2`, so it must stay on the task that created it
+http_handler_code_on_write.vlt:89:17: error: this async closure changes `plugins` of captured `a1` (`adder(…)` changes `a1.plugins`), so it must stay on the task that created it
+http_handler_code_on_write.vlt:101:5: error: this async closure changes `count` of a value reached from captured `h3`, so it must stay on the task that created it
+http_handler_code_on_write.vlt:110:9: error: this async closure changes `plugins` of a value reached from captured `a4` (through `…(…)`), so it must stay on the task that created it
+http_handler_code_on_write.vlt:119:5: error: this async closure changes `plugins` of a value reached from captured `a5` (through `…(…)`), so it must stay on the task that created it
+http_handler_code_on_write.vlt:126:5: error: this async closure changes `plugins` of a value reached from captured `a6` (through `…(…)`), so it must stay on the task that created it

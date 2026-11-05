@@ -39,9 +39,11 @@ mod callbacks;
 mod changes;
 mod fed;
 mod graph;
+mod keyed;
 mod reach;
 mod targets;
 mod types;
+mod values;
 
 use rustc_hash::FxHashMap;
 

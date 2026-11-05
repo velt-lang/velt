@@ -173,9 +173,14 @@ pub(super) fn reaches(
         E::Local(l, _) => taint.get(l).copied(),
         E::Closure(_) | E::Lit(_) | E::Global(_) | E::FnRef(..) => None,
         E::Block(b) => b.value.as_deref().and_then(|v| reaches(cx, v, taint, memo)),
-        E::Await(x) | E::UnwrapSome(x, _) | E::Downcast(x) | E::Upcast(x) | E::WrapSome(x) => {
-            reaches(cx, x, taint, memo)
-        }
+        // A conversion keeps the value: a new value converted to an `any` or an interface
+        // (`f(ctx)` through `any`) is still the request's own.
+        E::Await(x)
+        | E::UnwrapSome(x, _)
+        | E::Downcast(x)
+        | E::Upcast(x)
+        | E::WrapSome(x)
+        | E::ToDyn { expr: x, .. } => reaches(cx, x, taint, memo),
         // A part of a value that may be the captured one may be captured too; a part of a new
         // value only when its type can hold the captured value (`ctx.app` of `new Ctx(app)`,
         // not `ctx.depth`).
@@ -200,6 +205,12 @@ pub(super) fn reaches(
                 (Some(f), Some(fed)) => !fed.contains(&f),
                 _ => false,
             };
+            // A field fed by key: the error names where the value was stored.
+            if let (false, Some(f)) = (own, field) {
+                if let Some(site) = memo.fed_sites.get(&f) {
+                    memo.via_site = Some(site.clone());
+                }
+            }
             Some((r, !own))
         }
         _ => {

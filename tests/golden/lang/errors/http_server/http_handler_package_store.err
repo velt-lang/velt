@@ -1,0 +1,1 @@
+http_handler_package_store.vlt:25:5: error: this async closure changes `c.out`, which may be a value reached from captured `a`: `setKey(…)` in `ByPackage.constructor` stores one there by key, so it must stay on the task that created it

@@ -1,0 +1,40 @@
+// A subclass's override reached through a call typed by the base class (#854): `Sub.fill`
+// stores `v` by key into the new `Ctx` that holds the captured `app`, so `c.out` is the
+// captured list and `c.out.push` changes the request's copy of it. `Base.fill` stores nothing:
+// the error comes only from following the override.
+import { serve } from "http-server";
+
+class App {
+  plugins: string[] = ["a"];
+}
+
+class Ctx {
+  app: App;
+  out: string[] = [];
+  constructor(a: App) {
+    this.app = a;
+  }
+}
+
+class Base {
+  fill(o: any, v: string[]): void {}
+}
+
+class Sub extends Base {
+  override fill(o: any, v: string[]): void {
+    o["out"] = v;
+  }
+}
+
+const bases: Base[] = [new Base(), new Sub()];
+
+async function main() {
+  const app = new App();
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new Ctx(app);
+    bases[1].fill(c, app.plugins);
+    c.out.push("x");
+    return new Response("3");
+  });
+  await s.shutdown();
+}

@@ -4,5 +4,8 @@ import type { Package } from "velt/package";
 export const pkg: Package = {
   name: "errors-server-goldens",
   version: "0.0.0",
-  dependencies: { "http-server": { path: "../../../../../packages/http-server" } },
+  dependencies: {
+    "http-server": { path: "../../../../../packages/http-server" },
+    "effects-helpers": { path: "./_effects_pkg" },
+  },
 };

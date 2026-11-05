@@ -1,0 +1,8 @@
+import type { Package } from "velt/package";
+
+// A package for the HTTP handler goldens (#854): its functions are a dependency's, followed
+// like the program's.
+export const pkg: Package = {
+  name: "effects-helpers",
+  version: "0.0.0",
+};

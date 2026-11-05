@@ -1,0 +1,51 @@
+// A plugin's optional server hook, called through an optional function-valued property of a
+// nested object (`plugin.server?.setup?.(ctx)`), as SSR renderers call them (#854): every function
+// that can be stored there is the program's, and none changes what the render context holds,
+// so its own `out` stays the request's. Prints what Node prints.
+import { serve } from "http-server";
+
+class App {
+  name: string = "app";
+  plugins: string[] = ["a"];
+}
+
+class RenderCtx {
+  app: App;
+  out: string[] = [];
+  constructor(app: App) {
+    this.app = app;
+  }
+  emit(s: string): void {
+    this.out.push(s);
+  }
+}
+
+type ServerHooks = { setup?: (c: RenderCtx) => void };
+type PluginDef = { name: string; server?: ServerHooks };
+
+const plugins: PluginDef[] = [
+  { name: "a", server: { setup: (c: RenderCtx) => { c.out.push("s"); } } },
+  { name: "b", server: {} },
+  { name: "c" },
+];
+
+function render(app: App): string {
+  const ctx = new RenderCtx(app);
+  ctx.emit(app.name);
+  for (const plugin of plugins) {
+    plugin.server?.setup?.(ctx);
+  }
+  ctx.emit(`${ctx.app.plugins.length}`);
+  return ctx.out.join("");
+}
+
+async function main() {
+  const app = new App();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(render(app));
+  });
+  const r = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await r.text());
+  await server.shutdown();
+}
+

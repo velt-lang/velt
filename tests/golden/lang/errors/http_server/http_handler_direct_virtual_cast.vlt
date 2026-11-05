@@ -1,0 +1,24 @@
+// A virtual method called on a receiver computed from a parameter (#854): the override changes it.
+import { serve } from "http-server";
+
+class V {
+  n: number = 0;
+  bump(): void {}
+}
+class W extends V {
+  override bump(): void {
+    this.n += 2;
+  }
+}
+function g(x: unknown): void {
+  (x as V).bump();
+}
+
+async function main() {
+  const v: V = new W();
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    g(v);
+    return new Response("ok");
+  });
+  await s.shutdown();
+}

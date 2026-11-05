@@ -1,0 +1,1 @@
+http_handler_subclass_override.vlt:36:5: error: this async closure changes `c.out`, which may be a value reached from captured `app`: `….…(…)` in a closure stores one there by key, so it must stay on the task that created it

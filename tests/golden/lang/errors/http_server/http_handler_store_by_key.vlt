@@ -1,0 +1,181 @@
+// A field of a new value filled from the capture by key is the captured value (#854, the
+// declared-write-effects acceptance tests D6, F2, G1 and G4): each class stores `a.plugins` in
+// its `out` through an `any` (`self.out = …`), a helper storing by a computed or a literal key
+// into the `this` it is given, a generic one reached through an interface (again with either
+// key), or one taken as a function value. Each handler's `c.out.push` then changes the request's
+// copy of the captured list, where Node changes the shared one, so each is an error. So is a
+// store into an object held by a field of a value converted to `any` (`o.inner.out = …`). The
+// other shapes have goldens of their own (http_handler_store_into_new, _closure_stores,
+// _package_store, _optional_iface_store).
+// `Reflect.set` is std's and is seen once std declares its effects
+// (std/http_server/handler_known_gap_store_by_key).
+import { serve } from "http-server";
+
+class App {
+  name: string = "app";
+  plugins: string[] = ["a"];
+}
+
+// D6: a store through an `any` in a method the constructor calls.
+class ThroughAny {
+  app: App;
+  out: string[] = [];
+  constructor(a: App) {
+    this.app = a;
+    this.fill();
+  }
+  fill(): void {
+    const self: any = this;
+    self.out = this.app.plugins;
+  }
+}
+
+// F2: a program helper storing by a computed key into the `this` it is given.
+function setKey(o: any, k: string, v: any): void {
+  const key = k + "";
+  o[key] = v;
+}
+
+class ByHelper {
+  app: App;
+  out: string[] = [];
+  constructor(a: App) {
+    this.app = a;
+    setKey(this, "out", a.plugins);
+  }
+}
+
+// F2 with a literal key: the helper's `any` parameter has no field `out` of its own.
+function setOut(o: any, v: any): void {
+  o.out = v;
+}
+
+class ByLiteralHelper {
+  app: App;
+  out: string[] = [];
+  constructor(a: App) {
+    this.app = a;
+    setOut(this, a.plugins);
+  }
+}
+
+// G1: a generic converter reached through an interface method, by a computed and a literal key.
+interface Setter {
+  put<T>(x: T, k: string, v: any): void;
+  putOut<T>(x: T, v: any): void;
+}
+
+class AnySetter implements Setter {
+  put<T>(x: T, k: string, v: any): void {
+    const o: any = x;
+    const key = k + "";
+    o[key] = v;
+  }
+  putOut<T>(x: T, v: any): void {
+    const o: any = x;
+    o.out = v;
+  }
+}
+
+class ThroughIface {
+  app: App;
+  out: string[] = [];
+  constructor(a: App, s: Setter) {
+    this.app = a;
+    s.put(this, "out", a.plugins);
+  }
+}
+
+class ThroughIfaceLiteral {
+  app: App;
+  out: string[] = [];
+  constructor(a: App, s: Setter) {
+    this.app = a;
+    s.putOut(this, a.plugins);
+  }
+}
+
+// G4: a generic converter passed as a function value.
+function setK<T>(x: T, k: string, v: any): void {
+  const o: any = x;
+  const key = k + "";
+  o[key] = v;
+}
+
+function viaCb<T>(x: T, f: (x: T, k: string, v: any) => void, k: string, v: any): void {
+  f(x, k, v);
+}
+
+class ThroughValue {
+  app: App;
+  out: string[] = [];
+  constructor(a: App) {
+    this.app = a;
+    viaCb(this, setK, "out", a.plugins);
+  }
+}
+
+
+// A store into an object a field of a converted value holds.
+class Inner {
+  out: string[] = [];
+}
+
+class Nested {
+  app: App;
+  inner: Inner = new Inner();
+  constructor(a: App) {
+    this.app = a;
+    const o: any = this;
+    o.inner.out = a.plugins;
+  }
+}
+
+async function main() {
+  const setter: Setter = new AnySetter();
+  const a1 = new App();
+  const s1 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new ThroughAny(a1);
+    c.out.push("x");
+    return new Response(`${c.out.length}`);
+  });
+  const a2 = new App();
+  const s2 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new ByHelper(a2);
+    c.out.push("x");
+    return new Response(`${c.out.length}`);
+  });
+  const a3 = new App();
+  const s3 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new ByLiteralHelper(a3);
+    c.out.push("x");
+    return new Response(`${c.out.length}`);
+  });
+  const a4 = new App();
+  const s4 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new ThroughIface(a4, setter);
+    c.out.push("x");
+    return new Response(`${c.out.length}`);
+  });
+  const a5 = new App();
+  const s5 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new ThroughIfaceLiteral(a5, setter);
+    c.out.push("x");
+    return new Response(`${c.out.length}`);
+  });
+  const a6 = new App();
+  const s6 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new ThroughValue(a6);
+    c.out.push("x");
+    return new Response(`${c.out.length}`);
+  });
+  const a7 = new App();
+  const s7 = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new Nested(a7);
+    c.inner.out.push("x");
+    return new Response(`${c.inner.out.length}`);
+  });
+  for (const s of [s1, s2, s3, s4, s5, s6, s7]) {
+    await s.shutdown();
+  }
+}

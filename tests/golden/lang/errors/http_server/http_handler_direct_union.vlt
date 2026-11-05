@@ -1,0 +1,22 @@
+// A direct call changing a field of a union's member (#854).
+import { serve } from "http-server";
+
+class Lists {
+  items: string[] = [];
+}
+class O {
+  items: string[] = [];
+  other: number = 1;
+}
+function g(x: Lists | O): void {
+  x.items.push("a");
+}
+
+async function main() {
+  const l = new Lists();
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    g(l);
+    return new Response("ok");
+  });
+  await s.shutdown();
+}

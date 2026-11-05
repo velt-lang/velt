@@ -1,0 +1,43 @@
+// A store by key through an optional interface value (`const o: any = this.peer`, with
+// `peer: Holder | null`) feeds the field of the class implementing the interface (#854), so a
+// change to that field through the handler's object is an error.
+import { serve } from "http-server";
+
+class App {
+  name: string = "app";
+  plugins: string[] = ["a"];
+}
+
+interface Holder {
+  size(): number;
+}
+
+class HolderImpl implements Holder {
+  out: string[] = [];
+  size(): number {
+    return this.out.length;
+  }
+}
+
+class ThroughPeer {
+  app: App;
+  peer: Holder | null = new HolderImpl();
+  constructor(a: App) {
+    this.app = a;
+    const o: any = this.peer;
+    o.out = a.plugins;
+  }
+}
+
+async function main() {
+  const a = new App();
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new ThroughPeer(a);
+    const p = c.peer;
+    if (p instanceof HolderImpl) {
+      p.out.push("x");
+    }
+    return new Response("x");
+  });
+  await s.shutdown();
+}

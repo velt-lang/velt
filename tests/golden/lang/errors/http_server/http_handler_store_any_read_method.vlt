@@ -1,0 +1,38 @@
+// A store by key through a method read from an `any` and called (#854): the push reaches the
+// captured list, so Node sees it in `a.plugins`.
+import { serve } from "http-server";
+
+class App {
+  plugins: string[] = [];
+}
+class Holder {
+  app: App;
+  k7: string[] = [];
+  other: string[] = [];
+  constructor(a: App) {
+    this.app = a;
+  }
+}
+class S {
+  put(p: any, v: any): void {
+    p["k7"] = v;
+  }
+}
+class M {
+  go(o: Holder, v: string[]): void {
+    new S().put(o, v);
+  }
+}
+const h: any = new M();
+
+async function main() {
+  const a = new App();
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new Holder(a);
+    const f = h.go;
+    f(c, a.plugins);
+    c.k7.push("x");
+    return new Response("ok");
+  });
+  await s.shutdown();
+}

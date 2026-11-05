@@ -1,0 +1,20 @@
+// A function read from an `any` and given more arguments than it has parameters (#854).
+import { serve } from "http-server";
+
+class App {
+  plugins: string[] = [];
+}
+function g(xs: string[]): void {
+  xs.push("a");
+}
+const o: any = { g: g };
+
+async function main() {
+  const a = new App();
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const f = o.g;
+    f(a.plugins, 1);
+    return new Response("ok");
+  });
+  await s.shutdown();
+}
