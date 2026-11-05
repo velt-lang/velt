@@ -204,16 +204,17 @@ pub fn checkout(
         download(spec, &raw)?;
     }
     let dir = choose(&raw, spec)?;
-    let actual = crate::git::tree_checksum(&dir)?;
-    if let Some(expected) = checksum {
-        if actual != expected {
-            return Err(format!(
-                "checksum mismatch for {}: velt.lock.json has {expected}, the extracted tree hashes to {actual} (delete `{}` to download it again)",
-                spec.describe(),
-                raw.display()
-            ));
-        }
-    }
+    // From its stamp while the tree is unchanged (`crate::tree_stamp`); its links are checked
+    // whenever it is read in full.
+    let mismatch = |expected: &str, actual: &str| {
+        format!(
+            "checksum mismatch for {}: velt.lock.json has {expected}, the extracted tree hashes to {actual} (delete `{}` to download it again)",
+            spec.describe(),
+            raw.display()
+        )
+    };
+    let links = || check_chosen_links(&dir, spec);
+    let actual = crate::tree_stamp::checksum_checked(loc, &dir, checksum, mismatch, links)?;
     Ok((dir, actual))
 }
 
@@ -302,7 +303,7 @@ pub fn archive_root(dir: &Path, spec: &UrlSpec) -> PathBuf {
 }
 
 /// The directory `spec` names in the raw tree: `strip` levels down, each the only entry at its
-/// level, then `path`; its links must stay inside it.
+/// level, then `path` (its links are checked with the tree, [`check_chosen_links`]).
 fn choose(raw: &Path, spec: &UrlSpec) -> Result<PathBuf, String> {
     let named = |e: String| format!("the archive at {}: {e}", spec.url);
     let mut dir = raw.to_path_buf();
@@ -337,13 +338,19 @@ fn choose(raw: &Path, spec: &UrlSpec) -> Result<PathBuf, String> {
             "`path` leads out of the archive (through a link)".into(),
         ));
     }
-    crate::git::check_links(&dir).map_err(|e| {
-        named(format!(
-            "the part `strip` and `path` choose {}",
-            e.replace("out of the repository", "out of that part")
-        ))
-    })?;
     Ok(dir)
+}
+
+/// The links of `dir`, the directory [`choose`] gave for `spec`, must stay inside it: a link that
+/// stays in the archive can leave the part chosen.
+fn check_chosen_links(dir: &Path, spec: &UrlSpec) -> Result<(), String> {
+    crate::git::check_links(dir).map_err(|e| {
+        format!(
+            "the archive at {}: the part `strip` and `path` choose {}",
+            spec.url,
+            e.replace("out of the repository", "out of that part")
+        )
+    })
 }
 
 #[cfg(test)]

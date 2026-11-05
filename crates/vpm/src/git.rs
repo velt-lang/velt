@@ -234,14 +234,14 @@ pub fn checkout(
     if !dir.is_dir() {
         fetch(url, commit, &dir)?;
     }
-    if let Some(expected) = checksum {
-        let actual = tree_checksum(&dir)?;
-        if actual != expected {
-            return Err(format!(
+    if checksum.is_some() {
+        // From its stamp while the checkout is unchanged (`crate::tree_stamp`).
+        crate::tree_stamp::checksum(loc, &dir, checksum, |expected, actual| {
+            format!(
                 "checksum mismatch for commit {commit} of {url}: velt.lock.json has {expected}, the checkout hashes to {actual} (delete `{}` to fetch it again)",
                 dir.display()
-            ));
-        }
+            )
+        })?;
     }
     Ok(dir)
 }
