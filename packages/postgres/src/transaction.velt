@@ -1,25 +1,59 @@
 // postgres (internal): `Transaction`, a transaction (or a savepoint) from `Client.begin()`.
 
-import { velt_postgres__end } from "./native";
-import { check } from "./errors";
+import { simple, noted } from "./connection";
+import { closed, invalid } from "./failure";
+import { errorOf } from "./errors";
+import { Conn } from "./line";
 
 /** A transaction from `Client.begin()`. */
 export struct Transaction {
-  private handle: u64;
+  private handle: Conn;
+  private generation: i64;
   /** 1 for a transaction, 2 and up for savepoints inside one. */
   depth: u32;
 
-  /** The package's own: the transaction `begin()` opened on connection `handle`. */
-  static fromHandle(handle: u64, depth: u32): Transaction {
-    return Transaction { handle: handle, depth: depth };
+  /** The package's own: the transaction `begin()` opened on a connection. */
+  static of(handle: Conn, generation: i64, depth: u32): Transaction {
+    return Transaction { handle: handle, generation: generation, depth: depth };
   }
 
   async commit(): Promise<void> {
-    check(await velt_postgres__end(this.handle, this.depth, true));
+    const d = this.depth;
+    await this.end(d == 1 ? "COMMIT" : `RELEASE SAVEPOINT velt_tx_${d}`);
   }
 
   /** Undoes everything since `begin()`. */
   async rollback(): Promise<void> {
-    check(await velt_postgres__end(this.handle, this.depth, false));
+    const d = this.depth;
+    await this.end(
+      d == 1 ? "ROLLBACK" : `ROLLBACK TO SAVEPOINT velt_tx_${d}; RELEASE SAVEPOINT velt_tx_${d}`,
+    );
+  }
+
+  // Whatever the outcome, this level is over: a failed COMMIT has rolled back, and a failed
+  // savepoint command leaves the enclosing transaction aborted.
+  private async end(sql: string): Promise<void> {
+    const conn = this.handle;
+    const generation = this.generation;
+    const depth = this.depth;
+    const open = conn.with((l) => (l.generation == generation ? l.depth : 0));
+    if (conn.with((l) => l.generation != generation)) {
+      throw errorOf(closed("client"));
+    }
+    if (depth == 0 || depth != open) {
+      const f = invalid(
+        depth > open
+          ? "the transaction has already ended"
+          : "an inner transaction is still open; end it first",
+      );
+      throw noted(conn, f);
+    }
+    try {
+      await simple(conn, generation, sql);
+    } finally {
+      conn.with((l) => {
+        l.depth = depth - 1;
+      });
+    }
   }
 }

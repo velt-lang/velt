@@ -1,9 +1,8 @@
 # postgres
 
 `import { connect, createPool, Client, Pool, PgError } from "postgres"`. A PostgreSQL client
-(the package's native library: Rust over tokio-postgres and rustls) with an API close to
-node-postgres. Every call that talks
-to the server is async.
+written in plain Velt on `velt/net`, with an API close to node-postgres. Every call that talks to
+the server is async.
 
 ```ts ignore
 // package.velt
@@ -18,11 +17,7 @@ dependencies: {
 },
 ```
 
-The package has native code (a Rust crate in `native/`), which `velt` builds with cargo, so a
-Rust toolchain is needed. A git dependency builds it only when you allow that with
-`VELT_NATIVE_FROM_SOURCE=1` (it runs the crate's build scripts):
-`VELT_NATIVE_FROM_SOURCE=1 velt install`. A path dependency (this repository's examples use one)
-builds it the first time, into `packages/postgres/target/velt-native/`, and again when it changes.
+The package has no native code, so it needs no toolchain beyond `velt`.
 The full guide: https://veltlang.com/docs/packages/postgres/.
 
 - `connect(url): Promise<Client>`. `url` is `postgres://user:password@host:port/db?options` or
@@ -105,12 +100,17 @@ The full guide: https://veltlang.com/docs/packages/postgres/.
   `"ECLOSED"` (closed client or ended pool), `"EINVAL"` (connection string or parameters),
   `"ETLS"`, `"ENOTSUP"` (a column type that can't be decoded) and `"EMISMATCH"` (a row that
   doesn't fit `T`).
-- **TLS** is rustls. `sslmode=disable`; `prefer` (the default: TLS if the server offers it);
-  `require` (encrypted, but the certificate isn't checked); `verify-ca` (the certificate must
-  chain to a trusted root); `verify-full` (the host name must also match). Trusted roots are
-  Mozilla's plus the PEM file named by `sslrootcert`, which also upgrades `require` to
-  `verify-ca`, as in libpq. SCRAM channel binding isn't offered. The tests only cover
-  unencrypted local servers; the modes were checked by hand against a server with a private CA.
+- **TLS** goes through `velt/net`, which connects with TLS from the first byte: PostgreSQL 17's
+  direct negotiation (ALPN `postgresql`), with the certificate always checked against Mozilla's
+  roots and the PEM file named by `sslrootcert`, name included. `sslmode=disable` is plain text.
+  `prefer` (the default) asks the server with `SSLRequest`: if it has no TLS the connection goes on
+  in plain text; if it has, it reopens with direct TLS, and a failure is `"ETLS"`, never a quiet
+  step down to plain text. `require`, `verify-ca` and `verify-full` all connect that way and are
+  equally strict. So a server older than 17 with TLS on, and a certificate that doesn't verify, need
+  `sslmode=disable`, or the `velt/net` features that would serve them (upgrading a plain socket,
+  connecting without checking the certificate or its name). SCRAM channel binding isn't offered.
+- Unix-domain sockets (`host=/dir`) throw `"ENOTSUP"`: `velt/net` has none. Keepalive options are
+  accepted and do nothing, for the same reason.
 
 ```ts
 import { connect, createPool } from "postgres";
@@ -154,20 +154,35 @@ async function main() {
 
 Notes: after `close()` or `end()` through one copy of a `Client` or `Pool`, every copy throws
 `"ECLOSED"` (closing again does nothing). A pooled connection that is still in a transaction
-when its client is closed is dropped rather than reused. WebAssembly isn't supported (a native
-library can't be used there).
+when its client is closed is dropped rather than reused. A connection idle over 100 ms has its socket
+looked at before a pool hands it out, so one the server closed is replaced; one closed within that
+time fails its next statement with `"ECONNRESET"`.
+
+## How it works
+
+A request takes no hop through another task, and a connection has no task of its own. Under a short
+lock the caller queues its bytes on the socket and takes its place in the line for replies; its own
+task sends them when it next waits. The reading end (`Input`) is held by the request whose replies come
+next: it reads in its own task, decodes the rows right out of the read buffer, and hands the `Input` to
+the next in line. Parameters are encoded in place for the types the server inferred. A task that goes
+away while waiting (a `timeout` around a query) drops what it held, and a task starts to read what the
+server still owes, so the next request finds the connection in step.
 
 ## Layout and tests
 
-- `src/lib.velt`: the API (re-exports); `src/client.velt`, `pool.velt`, `transaction.velt`,
-  `copy_reader.velt`, `copy_writer.velt`, `errors.velt`: one type each; `src/rows.velt`: rows into
-  typed values (velt/db's `decodeRows`); `src/native.velt`: the native library's functions, the
-  only `declare`s.
-- `native/`: the Rust crate (`velt_native_postgres`) on the native SDK (`velt_native` with its
-  `tokio` feature: Velt's own sockets), `velt_text` and `velt_tls`; its ABI is
-  [docs/native_abi.md](docs/native_abi.md).
-- `tests/`: `velt test` in this directory. They need a server: set `VELT_TEST_PG_URL`
-  (`postgres://user:password@host/db`); without it they do nothing. The repository's
-  `scripts/linux-check.sh --services` starts one, as CI does.
+- `src/lib.velt`: the API (re-exports); `client.velt`, `pool.velt`, `transaction.velt`, `copy_reader.velt`,
+  `copy_writer.velt`, `errors.velt`: the public types.
+- The connection: `line.velt` (the state behind its lock), `connection.velt` (requests), `ops.velt` (what
+  `Client` and `Pool` share), `builder.velt` and `encoder.velt` (a request's bytes), `input.velt` and
+  `reply.velt` (a reply, and rows through velt/db's `readRows`), `drain.velt` (after a task went away),
+  `startup.velt`, `config.velt`, `describe.velt` and `prepared.velt` (statements), `pool_state.velt`,
+  `copy_state.velt`.
+- The protocol: `frontend.velt`, `backend.velt`, `scram.velt`, `md5.velt`, `placeholders.velt`,
+  `pg_type.velt`, `values.velt`, `temporal.velt`, `network.velt`, `array_json.velt`, `json_params.velt`.
+- `tests/`: `velt test` in this directory. `values`, `auth`, `config`, `placeholders` and
+  `fake_server` need no server; the rest need one: set `VELT_TEST_PG_URL`
+  (`postgres://user:password@host/db`), without which they do nothing. `VELT_TEST_PG_MD5_URL`,
+  `VELT_TEST_PG_SCRAM_URL` and `VELT_TEST_PG_TLS_URL` add the password exchanges and TLS. The
+  repository's `scripts/linux-check.sh --services` starts a server, as CI does.
 
-The package uses only public std APIs: velt/db (`decodeRows`, `bindParams`), velt/native.
+The package uses only public std APIs: velt/db (`readRows`, `writeParams`), velt/net, velt/crypto.

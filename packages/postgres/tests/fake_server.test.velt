@@ -1,0 +1,359 @@
+// The driver against a fake server, so no PostgreSQL is needed: what a real server never sends (it
+// must not crash or read out of bounds on it), replies in many reads, requests that wait in line, a
+// task that goes away, and the connection's end.
+import { connect, Client, PgError } from "../src/lib";
+import { timeout } from "velt/task";
+import { listen } from "velt/net";
+import { channel } from "velt/sync";
+import { ReadBuffer } from "../src/read_buffer";
+import {
+  be16,
+  be32,
+  complete,
+  fakeUrl,
+  join,
+  msg,
+  prepared,
+  ready,
+  row,
+  serve,
+  serveThenClose,
+  serverError,
+  ascii,
+} from "./support/fake";
+
+const INT4: i64 = 23;
+const TEXT: i64 = 25;
+
+class Item {
+  id: i64;
+  name: string;
+
+  constructor(id: i64, name: string) {
+    this.id = id;
+    this.name = name;
+  }
+}
+
+// The reply to Bind, Execute and Sync with the rows `rows`.
+function selected(rows: u8[][]): u8[] {
+  return join([msg("2"), join(rows), complete(`SELECT ${rows.length}`), ready()]);
+}
+
+const SQL = "SELECT id, name FROM items WHERE id = $1";
+
+function describedItem(): u8[] {
+  return prepared([INT4], ["id", "name"], [INT4, TEXT]);
+}
+
+function item(id: i64, name: string): u8[] {
+  return row([be32(id), ascii(name)]);
+}
+
+// "code message" of the query's failure, or how many rows it found.
+async function outcome(c: Client): Promise<string> {
+  try {
+    const rows: Item[] = await c.query(SQL, [1]);
+    return `${rows.length} rows`;
+  } catch (e) {
+    return `${e.code} ${e.message}`;
+  }
+}
+
+async function nameOf(c: Client, id: i64): Promise<string> {
+  const r: Item | null = await c.queryOne(SQL, [id]);
+  return r == null ? "none" : r.name;
+}
+
+export async function test_rows_come_right_out_of_the_buffer() {
+  const c = await connect(
+    fakeUrl(await serve([describedItem(), selected([item(1, "a"), item(2, "b")])])),
+  );
+  const rows: Item[] = await c.query(SQL, [1]);
+  assertEq(rows.map((r) => `${r.id}:${r.name}`), ["1:a", "2:b"]);
+  c.close();
+}
+
+export async function test_a_reply_split_at_every_byte_reads_the_same() {
+  const script = [describedItem(), selected([item(7, "seven"), item(8, "eight")])];
+  const c = await connect(fakeUrl(await serve(script, 1)));
+  const rows: Item[] = await c.query(SQL, [1]);
+  assertEq(rows.map((r) => `${r.id}:${r.name}`), ["7:seven", "8:eight"]);
+  c.close();
+}
+
+export async function test_a_server_error_leaves_the_connection_usable() {
+  const script = [
+    describedItem(),
+    join([serverError("22012", "division by zero"), ready()]),
+    selected([item(1, "a")]),
+  ];
+  const c = await connect(fakeUrl(await serve(script)));
+  assertEq(await outcome(c), "22012 division by zero");
+  assertEq(await outcome(c), "1 rows");
+  c.close();
+}
+
+// Bad lengths, which end the connection: the bytes after them can't be trusted.
+export async function test_a_message_length_that_cannot_be_is_refused() {
+  const tooShort: u8[] = [90, 0, 0, 0, 3];
+  const tooLong: u8[] = [68, 0x7f, 0xff, 0xff, 0xff];
+  const huge: u8[] = [68, 0xff, 0xff, 0xff, 0xff];
+  for (const bad of [tooShort, tooLong, huge]) {
+    const c = await connect(fakeUrl(await serve([describedItem(), bad])));
+    const first = await outcome(c);
+    assert(first.startsWith("UNKNOWN error parsing response from server"), first);
+    assertEq(await outcome(c), "ECONNRESET connection closed");
+    c.close();
+  }
+}
+
+export async function test_a_ready_for_query_of_the_wrong_size_is_refused() {
+  const c = await connect(fakeUrl(await serve([describedItem(), msg("Z")])));
+  const first = await outcome(c);
+  assert(first.startsWith("UNKNOWN error parsing response"), first);
+  c.close();
+}
+
+// Rows that lie about themselves stop the query, and read nothing outside the message.
+export async function test_rows_that_lie_are_refused() {
+  const wrongCount = msg("D", join([be16(3), be32(4), be32(1), be32(1), ascii("a")]));
+  const valuePastEnd = msg("D", join([be16(2), be32(4), be32(1), be32(1000), ascii("a")]));
+  const lengthCut = msg("D", join([be16(2), be32(4), be32(1), be16(0)]));
+  const noCount: u8[] = msg("D", [0]);
+  const negative = msg("D", join([be16(-2)]));
+  for (const bad of [wrongCount, valuePastEnd, lengthCut, noCount, negative]) {
+    const script = [describedItem(), selected([bad]), selected([item(1, "a")])];
+    const c = await connect(fakeUrl(await serve(script)));
+    const first = await outcome(c);
+    assert(first.startsWith("UNKNOWN unexpected batch reply"), first);
+    // The messages themselves were whole, so the connection is still in step.
+    assertEq(await outcome(c), "1 rows");
+    c.close();
+  }
+}
+
+export async function test_a_value_of_the_wrong_width_is_reported() {
+  const shortInt = row([be16(1), ascii("a")]);
+  const script = [describedItem(), selected([shortInt]), selected([item(1, "a")])];
+  const c = await connect(fakeUrl(await serve(script)));
+  const first = await outcome(c);
+  assertEq(
+    first,
+    `ENOTSUP column "id" has expected 4 bytes, got 2, which the postgres package cannot decode; cast it, e.g. "id"::text`,
+  );
+  assertEq(await outcome(c), "1 rows");
+  c.close();
+}
+
+export async function test_every_cut_of_a_described_statement_is_safe() {
+  // Descriptions shortened at each byte, with their lengths adjusted to match: never a crash.
+  const whole = describedItem();
+  const desc = msg("T", join([be16(1), ascii("id")]));
+  const params = msg("t", join([be16(100), be32(23)]));
+  for (const bad of [desc, params]) {
+    const c = await connect(fakeUrl(await serve([join([bad, ready()])])));
+    const first = await outcome(c);
+    assert(first.startsWith("UNKNOWN error parsing response"), first);
+    c.close();
+  }
+  assert(whole.length > 0, "the script");
+}
+
+export async function test_the_connection_ending_fails_the_request() {
+  const c = await connect(fakeUrl(await serveThenClose([describedItem()])));
+  assertEq(await outcome(c), "ECONNRESET connection closed");
+  assertEq(await outcome(c), "ECONNRESET connection closed");
+  c.close();
+}
+
+export async function test_a_session_ending_says_why() {
+  const fatal = msg(
+    "E",
+    join([ascii("VFATAL\0"), ascii("C57P01\0"), ascii("Mterminating connection\0"), [0]]),
+  );
+  const c = await connect(fakeUrl(await serveThenClose([describedItem(), fatal])));
+  assertEq(await outcome(c), "57P01 terminating connection");
+  assertEq(await outcome(c), "ECONNRESET connection closed");
+  c.close();
+}
+
+// Requests behind the one reading get their own replies, in order.
+export async function test_requests_wait_in_line() {
+  // The three go out together, so the server reads them at once and answers them at once.
+  const script = [
+    describedItem(),
+    selected([item(0, "warm")]),
+    join([selected([item(1, "a")]), selected([item(2, "b")]), selected([item(3, "c")])]),
+  ];
+  const c = await connect(fakeUrl(await serve(script)));
+  assertEq(await nameOf(c, 0), "warm");
+  const names = await Promise.all([nameOf(c, 1), nameOf(c, 2), nameOf(c, 3)]);
+  assertEq(names, ["a", "b", "c"]);
+  c.close();
+}
+
+// A task behind another goes away: the reply it was owed is read, and the one behind it gets its own.
+export async function test_a_request_given_up_on_in_line_does_not_stop_it() {
+  const l = await listen("127.0.0.1:0");
+  const answers = channel<u8[]>();
+  spawn(async () => {
+    const s = await l.accept();
+    l.close();
+    await s.read();
+    await s.writeBytes(join([msg("R", be32(0)), ready()]));
+    await s.read();
+    await s.writeBytes(describedItem());
+    await s.read();
+    await s.writeBytes(selected([item(0, "warm")]));
+    // All three replies, when told; the requests have gone out by then, whatever the reads were.
+    const a = await answers.receive();
+    if (a != null) {
+      await s.writeBytes(a);
+    }
+    while ((await s.read()).length > 0) {}
+    s.close();
+  });
+  const c = await connect(fakeUrl(l.port));
+  assertEq(await nameOf(c, 0), "warm");
+  const first = spawn(nameOf(c, 1));
+  await yieldNow();
+  let middle = "";
+  try {
+    middle = await timeout(nameOf(c, 2), 200);
+  } catch (e) {
+    middle = "timed out";
+  }
+  assertEq(middle, "timed out");
+  const last = spawn(nameOf(c, 3));
+  await yieldNow();
+  await answers.send(
+    join([selected([item(1, "a")]), selected([item(2, "b")]), selected([item(3, "c")])]),
+  );
+  assertEq(await first, "a");
+  assertEq(await last, "c");
+  c.close();
+}
+
+// A closed client lets what's in flight finish.
+export async function test_close_lets_a_request_in_flight_finish() {
+  const c = await connect(
+    fakeUrl(await serve([describedItem(), selected([item(0, "warm")]), selected([item(1, "a")])])),
+  );
+  assertEq(await nameOf(c, 0), "warm");
+  const inFlight = spawn(nameOf(c, 1));
+  await yieldNow();
+  c.close();
+  assertEq(await inFlight, "a");
+  assertEq(await outcome(c), "ECLOSED the client is closed");
+}
+
+// A reply much larger than the buffer moves few bytes, and the buffer doesn't stay large.
+export function test_the_read_buffer_grows_by_doubling_and_lets_go() {
+  const b = new ReadBuffer();
+  let total: i64 = 0;
+  for (let i: i64 = 0; i < 2000; i++) {
+    b.makeRoom();
+    const room = (b.bytes.length as i64) - b.end;
+    const n: i64 = room < 8192 ? room : 8192;
+    b.end += n;
+    total += n;
+  }
+  assert(b.moved <= total * 2, `moved ${b.moved} of ${total}`);
+  assert((b.bytes.length as i64) > 8000000, "it holds the whole reply");
+  b.rewind();
+  assert((b.bytes.length as i64) <= 1024 * 1024, "a large buffer is let go");
+}
+
+// A task gone while reading: what the server still owes it is read, and the next query gets its own.
+export async function test_a_query_given_up_on_does_not_stop_the_line() {
+  const l = await listen("127.0.0.1:0");
+  const answers = channel<u8[]>();
+  spawn(async () => {
+    const s = await l.accept();
+    l.close();
+    await s.read();
+    await s.writeBytes(join([msg("R", be32(0)), ready()]));
+    await s.read();
+    await s.writeBytes(describedItem());
+    for await (const a of answers) {
+      await s.writeBytes(a);
+    }
+    while ((await s.read()).length > 0) {}
+    s.close();
+  });
+  const c = await connect(fakeUrl(l.port));
+  // Prepares, and stays waiting for the reply the server holds back.
+  let given = "";
+  try {
+    const none: Item[] = await timeout(c.query(SQL, [1]), 300);
+    given = `${none.length} rows`;
+  } catch (e) {
+    given = "timed out";
+  }
+  assertEq(given, "timed out");
+  await answers.send(selected([item(1, "theirs")]));
+  await answers.send(selected([item(2, "mine")]));
+  answers.close();
+  const rows: Item[] = await c.query(SQL, [2]);
+  assertEq(rows.map((r) => r.name), ["mine"]);
+  c.close();
+}
+
+// A notice in the middle of COPY's data doesn't end it, and an idle connection's mail is skipped.
+export async function test_notices_in_a_copy_are_skipped() {
+  const notice = msg("N", join([ascii("SNOTICE\0"), [0]]));
+  const copyOut = msg("H", join([[0 as u8], be16(0)]));
+  const script = [
+    join([
+      copyOut,
+      msg("d", ascii("a\n")),
+      notice,
+      msg("d", ascii("b\n")),
+      msg("c"),
+      complete("COPY 2"),
+      ready(),
+    ]),
+  ];
+  const c = await connect(fakeUrl(await serve(script)));
+  const r = await c.copyTo("COPY t TO STDOUT");
+  let text = "";
+  for await (const chunk of r) {
+    text += chunk;
+  }
+  assertEq(text, "a\nb\n");
+  c.close();
+}
+
+// A lone message before a reply, as PostgreSQL sends for `SET`: read past.
+export async function test_parameter_status_and_notices_mid_reply_are_ignored() {
+  const script = [
+    describedItem(),
+    join([
+      msg("2"),
+      msg("S", join([ascii("a\0"), ascii("b\0")])),
+      item(1, "x"),
+      msg("N", [0]),
+      msg("A", join([be32(1), ascii("c\0"), ascii("p\0")])),
+      item(2, "y"),
+      complete("SELECT 2"),
+      ready(),
+    ]),
+  ];
+  const c = await connect(fakeUrl(await serve(script)));
+  const rows: Item[] = await c.query(SQL, [1]);
+  assertEq(rows.map((r) => r.name), ["x", "y"]);
+  c.close();
+}
+
+export async function test_statements_without_values_say_none_were_given() {
+  const c = await connect(fakeUrl(await serve([describedItem()])));
+  let what = "";
+  try {
+    await c.run(SQL);
+  } catch (e) {
+    what = e.message.clone();
+  }
+  assertEq(what, "the statement takes 1 parameter(s) but none were given");
+  c.close();
+}

@@ -1,0 +1,375 @@
+// postgres (internal): `Line`, the state behind a connection's lock: the requests waiting for replies
+// in the order they were written, and the session's bookkeeping. See connection.velt.
+
+import { TcpStream } from "velt/net";
+import { Channel, channel } from "velt/sync";
+import { Builder, FAILED, NOT_PREPARED, SENT } from "./builder";
+import { closed, connectionClosed, Failure } from "./failure";
+import { FailureLog } from "./failure_log";
+import { describeStatement, Out, parse, query, terminate } from "./frontend";
+import { Input } from "./input";
+import { PgType } from "./pg_type";
+import { PoolHandle } from "./pool_state";
+import { Prepared } from "./prepared";
+
+/** A connection shared by every copy of its handle. */
+export type Conn = shared<Mutex<Line>>;
+
+/** What sending a request found (builder.velt). */
+export struct Sent {
+  status: u8;
+  /** Hands over the `Input` when the request's replies come next. */
+  turn: Channel<Input>;
+  statement: shared<Prepared>;
+  problem: Failure | null;
+  /** Whether the values bind by name. */
+  named: bool;
+  /** Nothing is ahead of this request: `turn` has the `Input` now. */
+  first: bool;
+}
+
+/** Who gets the `Input` when a reply was taken in full. */
+export struct Next {
+  turn: Channel<Input>;
+  /** Nobody is in line: it waits at home. */
+  idle: bool;
+  /** The connection ended with the line's end. */
+  closes: bool;
+}
+
+// How many channels a connection keeps for requests to wait on, instead of making one each.
+const MAX_FREE: usize = 16;
+
+// Past this many answered places at the front of the line, `pass` drops them once they are half of
+// it: a line that never empties stays as long as what is in flight.
+const COMPACT_FROM: usize = 32;
+
+/** The state behind a connection's lock. */
+export class Line {
+  /** Which client's the connection is: a closed client's number is never used again. */
+  generation: i64 = 1;
+  /** Open transaction levels (0 none, 1 BEGIN, n the savepoint `velt_tx_n`). */
+  depth: u32 = 0;
+  /** The pool that lent this connection, for a task that leaves it behind. */
+  pool: PoolHandle | null = null;
+  /** A one-statement borrow is under way: when its task is gone, the connection goes back. */
+  borrowed: bool = false;
+  /** The server's transaction status after the last reply. */
+  status: u8 = 73;
+  /** What failed on this client. */
+  failures: FailureLog = new FailureLog();
+  private stream: TcpStream;
+  private home: Channel<Input>;
+  private none: shared<Prepared>;
+  private builder: Builder;
+  // Whose replies come next: `slots[head..]`; the first of them has the `Input`.
+  private slots: Channel<Input>[] = [];
+  private head: usize = 0;
+  private free: Channel<Input>[] = [];
+  // What was written after a `COPY … FROM STDIN` started, which can't go out until it ends, and how
+  // many answered requests from now that copy's own reply ends.
+  private copying: bool = false;
+  private copyAfter: i64 = 0;
+  private held: Out = new Out(16);
+  private lostIt: bool = false;
+  // The client called `close()`: the connection ends when the line empties.
+  private closing: bool = false;
+  // Types read from the catalog, by OID.
+  private types: Map<i64, PgType> = new Map<i64, PgType>();
+
+  constructor(stream: TcpStream, home: Channel<Input>, none: shared<Prepared>) {
+    this.stream = stream;
+    this.home = home;
+    this.none = none;
+    this.builder = new Builder(none);
+  }
+
+  // Why no request can start now. Number 0 is a pool's own borrow, for one statement.
+  private unusable(generation: i64): Failure | null {
+    if (generation == 0) {
+      this.borrowed = true;
+    } else if (generation != this.generation) {
+      return closed("client");
+    }
+    return this.lostIt ? connectionClosed() : null;
+  }
+
+  /** Why the client numbered `generation` can't start a request now; null if it can. */
+  whyUnusable(generation: i64): Failure | null {
+    if (generation != 0 && generation != this.generation) {
+      return closed("client");
+    }
+    return this.lostIt ? connectionClosed() : null;
+  }
+
+  private notSent(status: u8, problem: Failure | null, named: bool): Sent {
+    return {
+      status: status,
+      turn: this.home,
+      statement: this.none,
+      problem: problem,
+      named: named,
+      first: false,
+    };
+  }
+
+  // What `Builder` found: its bytes go on their way with a place in line, or nothing happened.
+  private built(status: u8): Sent {
+    const b = this.builder;
+    if (status == SENT) {
+      b.endGroup();
+      return this.enter(b.encoder.statement, b.encoder.named);
+    }
+    if (status == NOT_PREPARED) {
+      return this.notSent(status, null, b.encoder.named);
+    }
+    return this.notSent(status, b.problem, false);
+  }
+
+  // Takes the next place in line, and puts what `Builder` made on its way.
+  private enter(statement: shared<Prepared>, named: bool): Sent {
+    const first = this.head == this.slots.length;
+    const turn = first ? this.home : (this.free.pop() ?? channel<Input>(1));
+    this.slots.push(turn);
+    const o = this.builder.out;
+    if (this.copying) {
+      this.held.raw(o.bytes, 0, o.len);
+    } else {
+      this.write(o);
+    }
+    o.len = 0;
+    return {
+      status: SENT,
+      turn: turn,
+      statement: statement,
+      problem: null,
+      named: named,
+      first: first,
+    };
+  }
+
+  // The bytes go out with this task's next wait, in the order they were put here. If that fails the
+  // stream is already failing, and the next read reports it.
+  private write(o: Out) {
+    try {
+      this.stream.writeBytesLater(o.bytes, 0, o.len as number);
+    } catch (e) {
+      this.stream.abort();
+    }
+  }
+
+  /** Sends one execution of `sql`; `text` is the values' JSON when `writeParams` can't take them. */
+  run<P>(generation: i64, sql: string, params: P, text: string | null, rows: bool): Sent {
+    const why = this.unusable(generation);
+    if (why != null) {
+      return this.notSent(FAILED, why, false);
+    }
+    return this.built(this.builder.one<P>(sql, params, text, rows));
+  }
+
+  /** `run` of a statement without values. */
+  runBare(generation: i64, sql: string, rows: bool): Sent {
+    const why = this.unusable(generation);
+    if (why != null) {
+      return this.notSent(FAILED, why, false);
+    }
+    return this.built(this.builder.bare(sql, rows));
+  }
+
+  /** Sends `sql` with each of `sets`, in one group with one `Sync`. */
+  runBatch<P>(generation: i64, sql: string, sets: P[], texts: string[] | null, rows: bool): Sent {
+    const why = this.unusable(generation);
+    if (why != null) {
+      return this.notSent(FAILED, why, false);
+    }
+    return this.built(this.builder.batch<P>(sql, sets, texts, rows));
+  }
+
+  /** A name for a new statement. */
+  statementName(): string {
+    return this.builder.statements.nextName();
+  }
+
+  /** Sends `Parse` and `Describe` of `sql` as the statement `name`. */
+  sendPrepare(generation: i64, name: string, sql: string): Sent {
+    const why = this.unusable(generation);
+    if (why != null) {
+      return this.notSent(FAILED, why, false);
+    }
+    const b = this.builder;
+    parse(b.out, name, sql);
+    describeStatement(b.out, name);
+    b.endGroup();
+    return this.enter(this.none, false);
+  }
+
+  /** A statement the server has prepared. */
+  addStatement(sql: string, statement: shared<Prepared>) {
+    this.builder.statements.insert(sql, statement);
+  }
+
+  /** Forgets a statement whose plan went stale. */
+  forget(sql: string, named: bool) {
+    this.builder.statements.remove(sql, named);
+  }
+
+  /** A type read from the catalog earlier. */
+  cachedType(oid: i64): PgType | null {
+    return this.types.get(oid) ?? null;
+  }
+
+  /** Remembers a type read from the catalog. */
+  cacheType(oid: i64, t: PgType) {
+    this.types.set(oid, t);
+  }
+
+  /** Sends a request of the simple protocol. */
+  sendSimple(generation: i64, sql: string): Sent {
+    const why = this.unusable(generation);
+    if (why != null) {
+      return this.notSent(FAILED, why, false);
+    }
+    query(this.builder.out, sql);
+    return this.enter(this.none, false);
+  }
+
+  /** Sends `COPY`: with `from`, what's sent after it is held back until its data has gone. */
+  sendCopy(generation: i64, sql: string, from: bool): Sent {
+    const s = this.sendSimple(generation, sql);
+    if (from && s.status == SENT) {
+      this.copying = true;
+      this.copyAfter = (this.slots.length as i64) - (this.head as i64);
+    }
+    return s;
+  }
+
+  /** A `COPY … FROM STDIN`'s data has all gone: what waited behind it can go. */
+  endCopy() {
+    if (!this.copying) {
+      return;
+    }
+    this.copying = false;
+    if (this.held.len > 0) {
+      this.write(this.held);
+      this.held.len = 0;
+    }
+  }
+
+  /** A reply was taken in full: who gets the `Input` now (connection.velt sends it). */
+  next(status: u8): Next {
+    this.status = status;
+    if (this.copying) {
+      this.copyAfter--;
+      if (this.copyAfter == 0) {
+        this.endCopy();
+      }
+    }
+    this.head++;
+    if (this.head < this.slots.length) {
+      if (this.head >= COMPACT_FROM && this.head * 2 >= this.slots.length) {
+        this.slots = this.slots.slice(this.head as i64);
+        this.head = 0;
+      }
+      return { turn: this.slots[this.head], idle: false, closes: false };
+    }
+    this.slots.length = 0;
+    this.head = 0;
+    if (this.closing) {
+      this.shutDown();
+      return { turn: this.home, idle: true, closes: true };
+    }
+    return { turn: this.home, idle: true, closes: false };
+  }
+
+  /** Where the `Input` waits while nothing is in line. */
+  get homeChannel(): Channel<Input> {
+    return this.home;
+  }
+
+  /** The statement with no parameters or columns, which a reply without rows reads by. */
+  get noStatement(): shared<Prepared> {
+    return this.none;
+  }
+
+  /** A request is done with the channel it waited on. */
+  giveBack(ch: Channel<Input>) {
+    if (this.lostIt || this.free.length >= MAX_FREE) {
+      ch.close();
+    } else {
+      this.free.push(ch);
+    }
+  }
+
+  /** The connection is gone: everyone in line stops waiting, and nobody gets in. */
+  lost() {
+    if (this.lostIt) {
+      return;
+    }
+    this.lostIt = true;
+    this.copying = false;
+    for (let k = this.head; k < this.slots.length; k++) {
+      this.slots[k].close();
+    }
+    this.slots.length = 0;
+    this.head = 0;
+    this.letGo();
+    this.stream.abort();
+    this.stream.close();
+  }
+
+  // Nothing will wait on the channels again; the `Input` at home, if it's there, goes with them.
+  private letGo() {
+    this.home.close();
+    this.home.tryReceive();
+    for (const ch of this.free) {
+      ch.close();
+    }
+    this.free = [];
+  }
+
+  get isLost(): bool {
+    return this.lostIt;
+  }
+
+  /** It can go back in a pool: unbroken, and nothing open on the session. */
+  get reusable(): bool {
+    return !this.lostIt && this.depth == 0 && (this.status == 73 || this.head < this.slots.length);
+  }
+
+  /** A new user of a pooled connection: its number. */
+  lease(): i64 {
+    this.failures.clear();
+    return this.generation;
+  }
+
+  /** `close()` of the client numbered `generation`: false if it was closed already. */
+  endClient(generation: i64): bool {
+    if (generation != this.generation) {
+      return false;
+    }
+    this.generation++;
+    return true;
+  }
+
+  /** Ends the connection, at once or when the line empties. */
+  shutDownWhenIdle() {
+    if (this.lostIt) {
+      return;
+    }
+    if (this.head == this.slots.length) {
+      this.shutDown();
+    } else {
+      this.closing = true;
+    }
+  }
+
+  private shutDown() {
+    this.lostIt = true;
+    this.letGo();
+    const o = new Out(8);
+    terminate(o);
+    this.stream.tryWrite(o.bytes, 0, o.len as number);
+    this.stream.abort();
+    this.stream.close();
+  }
+}

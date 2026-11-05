@@ -1,0 +1,149 @@
+// postgres (internal): `Builder`, a request's bytes while they are made, under the connection's lock.
+// It looks up the statement and writes `Bind` and `Execute` for each set of values; `Line` then puts
+// the bytes on their way.
+
+import { writeParams } from "velt/db";
+import { Encoder } from "./encoder";
+import { Failure, failure, invalid } from "./failure";
+import { closeStatement, execute, Out, sync } from "./frontend";
+import { JsonParams } from "./json_params";
+import { Prepared, StatementCache } from "./prepared";
+
+// What making a request found.
+/** It's ready to go. */
+export const SENT: u8 = 0;
+/** It can't go: `problem` says why. */
+export const FAILED: u8 = 1;
+/** Its statement must be prepared first. */
+export const NOT_PREPARED: u8 = 2;
+/** The values can't go by `writeParams`, so their JSON text must be made. */
+export const NEEDS_JSON: u8 = 3;
+
+/** A request's bytes (see the module header). */
+export class Builder {
+  out: Out = new Out(512);
+  statements: StatementCache = new StatementCache();
+  encoder: Encoder;
+  /** Why the request can't go. */
+  problem: Failure | null = null;
+
+  constructor(none: shared<Prepared>) {
+    this.encoder = new Encoder(this.out, this.statements, none);
+  }
+
+  // Hands one set of values to the encoder; `SENT` when `endSet` may follow.
+  private values<P>(params: P, text: string | null): u8 {
+    const e = this.encoder;
+    if (text != null) {
+      const wrong = new JsonParams(text).bindTo(e);
+      if (wrong != null) {
+        this.problem = invalid(wrong);
+        return FAILED;
+      }
+      return SENT;
+    }
+    let written = true;
+    try {
+      written = writeParams<P, Encoder>(e, params);
+    } catch (x) {
+      this.problem = invalid(x.message);
+      return FAILED;
+    }
+    return written ? SENT : NEEDS_JSON;
+  }
+
+  // Nothing of a request that didn't get its values stays.
+  private notBound(): u8 {
+    const e = this.encoder;
+    this.out.len = 0;
+    const p = e.problem;
+    if (p != null) {
+      this.problem = p;
+      return FAILED;
+    }
+    return NOT_PREPARED;
+  }
+
+  // A statement whose rows can't be decoded isn't run for its rows.
+  private checked(rows: bool): u8 {
+    const u = this.encoder.statement.undecodable;
+    if (rows && u.length > 0) {
+      this.out.len = 0;
+      this.problem = failure("ENOTSUP", u);
+      return FAILED;
+    }
+    return SENT;
+  }
+
+  /** One execution of `sql`; `text` is the values' JSON when `writeParams` can't take them. */
+  one<P>(sql: string, params: P, text: string | null, rows: bool): u8 {
+    const e = this.encoder;
+    e.start(sql);
+    const r = this.values<P>(params, text);
+    if (r != SENT) {
+      this.out.len = 0;
+      return r;
+    }
+    if (!e.endSet()) {
+      return this.notBound();
+    }
+    const c = this.checked(rows);
+    if (c == SENT) {
+      execute(this.out);
+    }
+    return c;
+  }
+
+  /** One execution of a statement without values. */
+  bare(sql: string, rows: bool): u8 {
+    const e = this.encoder;
+    e.start(sql, true);
+    if (!e.endSet()) {
+      return this.notBound();
+    }
+    const c = this.checked(rows);
+    if (c == SENT) {
+      execute(this.out);
+    }
+    return c;
+  }
+
+  /** An execution of `sql` per set, in one group. */
+  batch<P>(sql: string, sets: P[], texts: string[] | null, rows: bool): u8 {
+    const e = this.encoder;
+    e.start(sql);
+    const o = this.out;
+    for (let i: usize = 0; i < sets.length; i++) {
+      if (i > 0) {
+        e.nextSet();
+      }
+      const r = this.values<P>(sets[i], texts == null ? null : texts[i]);
+      if (r != SENT) {
+        o.len = 0;
+        return r;
+      }
+      if (!e.endSet()) {
+        return this.notBound();
+      }
+      execute(o);
+    }
+    return this.checked(rows);
+  }
+
+  /** Ends the extended protocol's group, closing statements the cache dropped. */
+  endGroup() {
+    this.closeDropped();
+    sync(this.out);
+  }
+
+  /** Closes statements the cache dropped. */
+  closeDropped() {
+    const s = this.statements;
+    if (s.closing.length > 0) {
+      for (const name of s.closing) {
+        closeStatement(this.out, name);
+      }
+      s.closing = [];
+    }
+  }
+}

@@ -1,5 +1,5 @@
-// postgres: a PostgreSQL client (README.md; the native library is tokio-postgres, native/),
-// with an API close to node-postgres: `connect(url)` for one connection, `createPool({ url,
+// postgres: a PostgreSQL client (README.md), the wire protocol written in Velt on velt/net, with an
+// API close to node-postgres: `connect(url)` for one connection, `createPool({ url,
 // max })` for many. Every server round trip is async.
 //
 // Parameters are a value `P` bound as its JSON text would be: an array binds `$1, $2, …` by
@@ -11,7 +11,7 @@
 // syntax for anything else (`uuid`, `date`, `timestamptz`, arrays like "{1,2}" …). Use
 // `{}` or the `select` / `selectOne` / `run` forms for statements without parameters.
 //
-// Rows are decoded by velt/db's `decodeRows`, as `JSON.parse<T[]>` would: each column fills the
+// Rows are decoded by velt/db's `readRows`, as `JSON.parse<T[]>` would: each column fills the
 // field of the same name (rename with `AS`). int2/int4/int8 → exact integers, float4/float8 → `f64`, numeric → its
 // exact digits as a `string` (cast `::float8` for a number), bool → `bool`, text types, enums
 // and uuid → `string`, date/time/timestamp/timestamptz → ISO 8601 `string` (timestamptz in UTC
