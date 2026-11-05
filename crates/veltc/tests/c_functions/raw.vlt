@@ -22,12 +22,14 @@ export function parse(s: string): [i64, string] {
   // lives until the read below.
   const n = unsafe { strtoll(text, end, 10) };
   const rest = end.value;
+  // SAFETY: strtoll left `rest` inside `text`, which is NUL-terminated and alive.
   return [n, rest === null ? "" : unsafe { readCString(rest) }];
 }
 
 export function env(name: string): string | null {
   // SAFETY: getenv returns a NUL-terminated string or NULL, read before any setenv.
   const p = unsafe { getenv(new CString(name)) };
+  // SAFETY: the string getenv returned, unchanged since.
   return p === null ? null : unsafe { readCString(p) };
 }
 
@@ -39,12 +41,17 @@ export function roundTrip(s: string): string {
   if (p === null) {
     return "";
   }
+  // SAFETY: `p` has `n` bytes, as many as the CString with its NUL.
   unsafe {
     memcpy(p, new CString(s), n);
   }
+  // SAFETY: `p` holds the copy, NUL-terminated.
   const text = unsafe { readCString(p) };
+  // SAFETY: the copy has at least 1 byte.
   const first = unsafe { readUtf8(p, 1) };
+  // SAFETY: the copy has at least 2 bytes.
   const bytes = unsafe { readBytes(p, 2) };
+  // SAFETY: `p` came from malloc and is freed once.
   unsafe {
     free(p);
   }

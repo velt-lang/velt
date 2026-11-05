@@ -59,10 +59,18 @@ impl<'a> Parser<'a> {
         self.parse_fn_decl(lo, is_async, true)
     }
 
-    /// `unsafe [Symbol.dispose]()`: a symbol-keyed method is called by the language itself
-    /// (disposal at the end of a scope, `for…of`, operators), where no `unsafe` block can be.
-    pub(super) fn unsafe_symbol_method(&mut self, sig: &FnSig) {
-        if sig.is_unsafe && sig.name.name.starts_with("[Symbol.") {
+    /// `unsafe [Symbol.dispose]()`, `unsafe toString()`: a symbol-keyed method, and each of the
+    /// methods conversions and `await` look for by name, is called by the language itself
+    /// (disposal at the end of a scope, `for…of`, operators, `String(x)`, `JSON.stringify`),
+    /// where no `unsafe` block can be.
+    pub(super) fn unsafe_implicit_method(&mut self, sig: &FnSig) {
+        let name = sig.name.name.as_str();
+        let implicit = name.starts_with('[')
+            || matches!(
+                name,
+                "toString" | "toLocaleString" | "valueOf" | "toJSON" | "then"
+            );
+        if sig.is_unsafe && implicit {
             self.error(
                 format!(
                     "`{}` can't be unsafe: the language calls it implicitly, where no `unsafe` block can be",

@@ -183,7 +183,8 @@ impl<'a> Parser<'a> {
     /// `declare [async] function name(...): R;`, `declare system function name(...): R;`
     /// (`declare async system function` too, which the system function check rejects)
     /// (`system` is a word only there: a function of the platform's C library) or
-    /// `declare intrinsic function name(...): R;` (`intrinsic` likewise: a compiler intrinsic).
+    /// `declare [unsafe] intrinsic function name(...): R;` (`intrinsic` likewise: a compiler
+    /// intrinsic).
     fn parse_declare(&mut self, lo: u32) -> PResult<FnSig> {
         // `declare async system function` parses, so the check can say why it is not one.
         self.bump(); // declare
@@ -195,6 +196,15 @@ impl<'a> Parser<'a> {
         if is_system {
             self.bump(); // system
         }
+        // `declare unsafe intrinsic function`: calling it needs unsafe code (std only, as every
+        // intrinsic).
+        let is_unsafe = !is_system
+            && self.at_word("unsafe")
+            && self.nth_word(1, "intrinsic")
+            && self.nth(2) == Tok::Kw(Kw::Function);
+        if is_unsafe {
+            self.bump(); // unsafe
+        }
         let is_intrinsic =
             !is_system && self.at_word("intrinsic") && self.nth(1) == Tok::Kw(Kw::Function);
         if is_intrinsic {
@@ -204,6 +214,7 @@ impl<'a> Parser<'a> {
         let mut sig = self.parse_fn_sig(lo, is_async)?;
         sig.is_system = is_system;
         sig.is_intrinsic = is_intrinsic;
+        sig.is_unsafe = is_unsafe;
         if sig.is_generator {
             self.error("a `declare function` cannot be a generator", sig.name.span);
         }

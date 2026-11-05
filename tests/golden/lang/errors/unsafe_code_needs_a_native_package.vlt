@@ -1,0 +1,13 @@
+// `unsafe` code is allowed only in std and in packages with native code that the program
+// allows (docs/internals/design/c-ffi.md "The trust boundary"): not in a program's own file.
+// crates/veltc/tests/unsafe_scope.rs runs it in a package.
+
+// SAFETY: callers pass a non-negative `n`.
+unsafe function raw(n: i64): i64 {
+  return n * 2;
+}
+
+function main() {
+  // SAFETY: 3 is non-negative.
+  console.log(unsafe { raw(3) });
+}

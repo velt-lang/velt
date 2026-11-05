@@ -192,7 +192,7 @@ impl<'a> Parser<'a> {
         }
         let mut sig = self.parse_sig_rest(lo, name, mods.is_async, star.is_some())?;
         sig.is_unsafe = mods.is_unsafe;
-        self.unsafe_symbol_method(&sig);
+        self.unsafe_implicit_method(&sig);
         self.check_accessor(&sig, &mods);
         if mods.is_abstract {
             return self.abstract_method(sig, &mods);

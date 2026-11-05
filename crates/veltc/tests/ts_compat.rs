@@ -123,7 +123,8 @@ fn copy_tree(from: &Path, to: &Path) {
 
 /// The `tsc` oracle's samples of what `tsc` rejects (tests/tscompat-oracle/rejected) are valid
 /// Velt too, so they show what the lint sees. (Its behaviour sample, `declare function`, is
-/// valid only in a package with a native library.)
+/// valid only in a package with a native library.) `unsafe.ts` is checked as a module of a
+/// package with native code, the only place `unsafe` code may be.
 #[test]
 fn every_rejected_sample_passes_velt_check() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/tscompat-oracle/rejected");
@@ -133,8 +134,21 @@ fn every_rejected_sample_passes_velt_check() {
         .collect();
     files.sort();
     assert!(files.len() > 5, "{files:?}");
+    let native = test_dir::TestDir::new();
+    std::fs::create_dir_all(native.path().join("src")).unwrap();
+    std::fs::write(
+        native.path().join("package.vlt"),
+        "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = { name: \"sample\", version: \"0.1.0\", native: { c: {} } };\n",
+    )
+    .unwrap();
     for file in files {
-        let o = velt(&dir, &["check", file.to_str().unwrap()]);
+        let o = if file.file_name().is_some_and(|n| n == "unsafe.ts") {
+            let target = native.path().join("src/unsafe.ts");
+            std::fs::copy(&file, &target).unwrap();
+            velt(native.path(), &["check", target.to_str().unwrap()])
+        } else {
+            velt(&dir, &["check", file.to_str().unwrap()])
+        };
         assert!(o.status.success(), "{}:\n{}", file.display(), stderr(&o));
     }
 }

@@ -8,6 +8,8 @@
 //!   `IoResult` and `IoStatus` are std's (`velt/io`) types, identified by definition, not by name.
 //! - [`inits`]: the libraries `velt_main` initializes before `main`.
 //! - [`links`]: what the linker adds per library.
+//! - [`check_trust`]: `unsafe` code and the raw FFI API only in std and allowed native packages,
+//!   each piece with a `// SAFETY:` comment (docs/internals/design/c-ffi.md).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -336,6 +338,15 @@ pub fn links(graph: Option<&PackageGraph>, release: bool) -> Vec<velt_link::Nati
 mod c_decls;
 pub use c_decls::{link_args as c_link_args, links as c_links};
 mod system;
+mod trust;
+pub use trust::check as check_trust;
+mod unsafe_sites;
+
+/// Where `module` first has unsafe code, if it has any: what a generator's output can't have, as
+/// the trust check reads only the loaded modules.
+pub(crate) fn first_unsafe_code(module: &velt_syntax::ast::Module) -> Option<velt_common::Span> {
+    unsafe_sites::find(module).sites.first().map(|s| s.span)
+}
 
 #[cfg(test)]
 mod tests;

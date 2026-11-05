@@ -9,7 +9,7 @@
  * code.
  */
 export struct Ptr<T> {
-  private address: usize;
+  private readonly address: usize;
 
   /**
    * A pointer to `address`. Unsafe: nothing checks that a `T` is there, and C will read or

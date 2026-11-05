@@ -322,7 +322,13 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
             let base = a.base;
             let owner = cx.ty.intern(TyKind::Adt(cur, cur_args.clone()));
             for (key, def) in own {
-                let kind = if is_setter_key(&key) {
+                // Before the others: an unsafe accessor is no accessor to a dynamic access.
+                let unsafe_member = crate::body::unsafe_fn(cx, def);
+                let kind = if unsafe_member && is_setter_key(&key) {
+                    DynMemberKind::UnsafeSetter
+                } else if unsafe_member {
+                    DynMemberKind::Unsafe
+                } else if is_setter_key(&key) {
                     DynMemberKind::Setter
                 } else if cx.fn_info(def).is_getter {
                     DynMemberKind::Getter
@@ -330,10 +336,9 @@ pub(crate) fn dyn_members(cx: &mut Ctx) -> Option<FxHashMap<DefId, Vec<DynMember
                     DynMemberKind::Method
                 };
                 let name = key_member_name(&key).to_string();
-                let setter = kind == DynMemberKind::Setter;
                 if members
                     .iter()
-                    .any(|m| m.name == name && (m.kind == DynMemberKind::Setter) == setter)
+                    .any(|m| m.name == name && m.kind.is_setter() == kind.is_setter())
                 {
                     continue;
                 }

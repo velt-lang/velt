@@ -245,6 +245,8 @@ pub(crate) struct FnInfo<'m> {
     /// checked against its signature and becomes the intrinsic (`body::expr::intrinsic_call`),
     /// so its `hir::ExternFnDef` is never called and lowering never declares its symbol.
     pub intrinsic: Option<crate::intrinsic_decls::DeclaredIntrinsic>,
+    /// `declare unsafe intrinsic function`: a call needs unsafe code, as an unsafe function's.
+    pub unsafe_intrinsic: bool,
     /// `function*` / `*name()`: a generator. `ret` is the declared result (`Generator<T>`,
     /// `Iterator<T>` or `Iterable<T>`, its `E` moved into `declared_throws`); a call returns it
     /// with the generator's final error type as `E` (`generators.rs`).

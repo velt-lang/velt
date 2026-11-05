@@ -682,8 +682,33 @@ Step 1 lands in layers, each its own pull request:
      - The bundled linker's kits have only the platform's own libraries, so another system
        library links with the system linker (`VELT_LINKER=system`).
      - `sources`/`crate` entries come with the bundle builds (step 3).
-   - 5b: `unsafe` only in allowed packages and std; the export rule for raw types; the `SAFETY`
-     lint; `velt check`'s listing; `allowNative` recorded in `velt.lock.json`.
+   - 5b: the code that needs trust stays in allowed packages and std.
+     - `unsafe` blocks, expressions, functions and methods are errors outside std and the
+       packages with native code that the program allows (a program's own files included, unless
+       the program's own package.vlt declares native code; and code hidden in a default value).
+       veltc checks the loaded modules' ASTs (`native/trust.rs`); sema already requires an unsafe
+       context for each unsafe call.
+     - An npm package isn't part of the package around it: a file under a `node_modules`, or
+       under a directory below the package's root with its own `package.json` or package.vlt,
+       has no package's trust (`PackageGraph::package_of`).
+     - What the AST check can't see stays out of reach another way. Dynamic dispatch (`any`,
+       `Proxy`, `Reflect`) doesn't reach unsafe methods and accessors: their names give a
+       `TypeError`. The methods the language calls implicitly (symbol-keyed ones, `toString`,
+       `toLocaleString`, `valueOf`, `toJSON`, `then`) can't be unsafe. A generator's output
+       can't contain `unsafe` code. `Ptr`'s address is a `readonly` field, which a write through `any`
+       refuses; `OutPtr`'s and `CString`'s are private fields of std classes, which are no members
+       through `any`.
+     - The raw API, `Ptr`, `OutPtr`, `declare c type`s and unsafe functions, can be imported
+       there only: by name, re-exported (through any number of modules), or as a namespace
+       import's member (`ffi.Ptr`). A safe function of an allowed package can still return a
+       `Ptr`; the code receiving it can't read or write through it without `unsafe`.
+     - The `SAFETY` lint: in those packages each unsafe block and expression has a comment with
+       `SAFETY:` in the comment lines directly above its line, and each unsafe function such a
+       comment or an `Unsafe:` paragraph in its doc comment (what callers must guarantee). It is
+       an error. std follows it too, checked by a test rather than at each build.
+     - `addressLoad` is `declare unsafe intrinsic function`: its callers are unsafe code.
+     - The language server doesn't run these checks yet (builds and `velt check` do).
+   - 5c: `velt check`'s listing; `allowNative` recorded in `velt.lock.json`.
 6. The header check and `declare c const`.
 
 ## Decisions

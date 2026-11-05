@@ -128,7 +128,7 @@ fn check_offered(
             .sm
             .add(PathBuf::from(&f.path).with_extension("vlt"), f.text.clone());
         let (ast, errors) = velt_syntax::parse_file(file, &f.text);
-        if !errors.is_empty() {
+        if !errors.is_empty() || crate::native::first_unsafe_code(&ast).is_some() {
             return None;
         }
         sources.push(generated_module(modules, &f.module, &f.path, file, ast)?);
@@ -316,6 +316,17 @@ fn generate_now(
                     file_path_of(&sess.sm, file),
                     sess.sm.line_col(file, i.span.lo).0
                 ));
+            report(sess, d);
+            return None;
+        }
+        if let Some(span) = crate::native::first_unsafe_code(&ast) {
+            let d = Diagnostic::error("generated code cannot contain `unsafe` code", at).with_note(
+                format!(
+                    "`unsafe` code stays in files an audit can read (`velt check` lists them), never in what a generator writes; here at {}:{}",
+                    file_path_of(&sess.sm, file),
+                    sess.sm.line_col(file, span.lo).0
+                ),
+            );
             report(sess, d);
             return None;
         }
