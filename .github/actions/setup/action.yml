@@ -94,6 +94,20 @@ runs:
         add-rust-environment-hash-key: "false"
         save-if: ${{ inputs.save-cache == 'true' }}
         cache-on-failure: true
+    # The workspace's own crates: rust-cache keeps only the dependencies, so without this every job
+    # compiles all of them again, however little changed. Keyed by each crate's sources and flags
+    # in the Actions cache; a failure there is only a miss (SCCACHE_IGNORE_SERVER_IO_ERROR).
+    - uses: mozilla-actions/sccache-action@v0.0.11
+      if: inputs.cache == 'true'
+    - name: compile through sccache
+      if: inputs.cache == 'true'
+      shell: bash
+      run: |
+        {
+          echo "RUSTC_WRAPPER=sccache"
+          echo "SCCACHE_GHA_ENABLED=true"
+          echo "SCCACHE_IGNORE_SERVER_IO_ERROR=1"
+        } >> "$GITHUB_ENV"
     - uses: taiki-e/install-action@v2
       with:
         tool: cargo-nextest
