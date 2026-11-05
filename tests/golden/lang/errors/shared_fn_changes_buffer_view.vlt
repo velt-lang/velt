@@ -18,5 +18,35 @@ async function main() {
     v[0] = v[0] + 1;
     return v[0];
   });
-  console.log(overBuffer(1), dataView(1), overCaptured(1));
+  // Made by a closure inside the function.
+  const g = new ArrayBuffer(4);
+  const madeInside = shared((x: number): number => {
+    const mk = (): Uint8Array => new Uint8Array(g);
+    const v = mk();
+    v[0] = v[0] + 1;
+    return v[0];
+  });
+  const h = new ArrayBuffer(4);
+  const bufferInside = shared((x: number): number => {
+    const gb = (): ArrayBuffer => h;
+    const v = new Uint8Array(gb());
+    v[0] = v[0] + 1;
+    return v[0];
+  });
+  const i = new ArrayBuffer(4);
+  const madeInline = shared((x: number): number => {
+    const mk = (): Uint8Array => new Uint8Array(i);
+    mk()[0] = 1;
+    return mk()[0];
+  });
+  const j = new ArrayBuffer(4);
+  const declaredInside = shared((x: number): number => {
+    function mk(): Uint8Array {
+      return new Uint8Array(j);
+    }
+    const v = mk();
+    v[0] = v[0] + 1;
+    return v[0];
+  });
+  console.log(overBuffer(1), dataView(1), overCaptured(1), madeInside(1), bufferInside(1), madeInline(1), declaredInside(1));
 }

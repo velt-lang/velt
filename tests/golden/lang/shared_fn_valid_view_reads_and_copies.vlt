@@ -15,4 +15,49 @@ async function main() {
     return v[0];
   });
   console.log(read(1), read(1), copy(1), copy(1));
+
+  // A copy held in a local: what's written goes to the copy.
+  const b1 = new ArrayBuffer(4);
+  const sliceLocal = shared((x: number): number => {
+    const c = b1.slice(0);
+    const v = new Uint8Array(c);
+    v[0] = v[0] + x;
+    return v[0];
+  });
+  const b2 = new ArrayBuffer(4);
+  const sliceAlias = shared((x: number): number => {
+    const c = b2.slice(0);
+    const d = c;
+    const v = new Uint8Array(d);
+    v[0] = v[0] + x;
+    return v[0];
+  });
+  const u3 = new Uint8Array(4);
+  const bufferSlice = shared((x: number): number => {
+    const c = u3.buffer.slice(0);
+    const v = new Uint8Array(c);
+    v[0] = v[0] + x;
+    return v[0];
+  });
+  const u4 = new Uint8Array(4);
+  const arraySlice = shared((x: number): number => {
+    const c = u4.slice();
+    const v = new Uint8Array(c.buffer);
+    v[0] = v[0] + x;
+    return v[0];
+  });
+  const u5 = new Uint8Array(4);
+  const arrayMap = shared((x: number): number => {
+    const v = new Uint8Array(u5.map((e) => e).buffer);
+    v[0] = v[0] + x;
+    return v[0];
+  });
+  const u6 = new Uint8Array(4);
+  const lengths = shared((x: number): number => {
+    const c = u6.slice();
+    return c.byteLength + c.byteOffset + x;
+  });
+  console.log(lengths(1));
+  console.log(sliceLocal(1), sliceLocal(1), sliceAlias(1), sliceAlias(1));
+  console.log(bufferSlice(1), bufferSlice(1), arraySlice(1), arraySlice(1), arrayMap(1), arrayMap(1));
 }

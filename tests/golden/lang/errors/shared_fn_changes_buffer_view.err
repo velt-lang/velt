@@ -1,3 +1,7 @@
 shared_fn_changes_buffer_view.vlt:6:5: error: this closure changes a value reached from captured `a` (through `v.setIndex](…)`), so it must stay on the task that created it
 shared_fn_changes_buffer_view.vlt:12:5: error: this closure changes a value reached from captured `c` (through `d.setUint8(…)`), so it must stay on the task that created it
 shared_fn_changes_buffer_view.vlt:18:5: error: this closure changes a value reached from captured `e` (through `v.setIndex](…)`), so it must stay on the task that created it
+shared_fn_changes_buffer_view.vlt:26:5: error: this closure changes a value reached from captured `g` (through `v.setIndex](…)`), so it must stay on the task that created it
+shared_fn_changes_buffer_view.vlt:33:5: error: this closure changes a value reached from captured `h` (through `v.setIndex](…)`), so it must stay on the task that created it
+shared_fn_changes_buffer_view.vlt:39:5: error: this closure changes a value reached from captured `i` (through `….setIndex](…)`), so it must stay on the task that created it
+shared_fn_changes_buffer_view.vlt:48:5: error: this closure changes a value reached from captured `j` (through `v.setIndex](…)`), so it must stay on the task that created it

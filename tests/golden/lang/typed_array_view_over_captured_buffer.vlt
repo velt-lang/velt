@@ -32,3 +32,49 @@ const copy = (): number => {
   return v[0] + c[0];
 };
 console.log(copy(), copy());
+
+// A view or the buffer handed out by a closure inside the closure: the same buffer.
+const g = new ArrayBuffer(4);
+const madeInside = (): number => {
+  const mk = (): Uint8Array => new Uint8Array(g);
+  const v = mk();
+  v[0] = v[0] + 1;
+  return v[0];
+};
+console.log(madeInside(), madeInside());
+
+const h = new ArrayBuffer(4);
+const bufferInside = (): number => {
+  const gb = (): ArrayBuffer => h;
+  const v = new Uint8Array(gb());
+  v[0] = v[0] + 1;
+  return v[0];
+};
+console.log(bufferInside(), bufferInside());
+
+const i = new ArrayBuffer(4);
+const madeInline = (): number => {
+  const mk = (): Uint8Array => new Uint8Array(i);
+  mk()[0] = mk()[0] + 1;
+  return mk()[0];
+};
+console.log(madeInline(), madeInline());
+
+// A copy held in a local: the write stays in the copy.
+const j = new ArrayBuffer(4);
+const sliceLocal = (): number => {
+  const c = j.slice(0);
+  const v = new Uint8Array(c);
+  v[0] = v[0] + 1;
+  return v[0];
+};
+console.log(sliceLocal(), sliceLocal());
+
+const k = new Uint8Array(4);
+const arraySlice = (): number => {
+  const c = k.slice();
+  const v = new Uint8Array(c.buffer);
+  v[0] = v[0] + 1;
+  return v[0];
+};
+console.log(arraySlice(), arraySlice());
