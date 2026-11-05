@@ -142,6 +142,18 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         escaping: bool,
     ) -> hir::Expr {
+        if self.memo_trials > 0 {
+            return self.closure_in_trial(e, exp, escaping);
+        }
+        self.closure_checked(e, exp, escaping)
+    }
+
+    pub(super) fn closure_checked(
+        &mut self,
+        e: &ast::Expr,
+        exp: Option<TyId>,
+        escaping: bool,
+    ) -> hir::Expr {
         if let Some(h) = self.instantiated_arrow(e, exp, escaping) {
             return h;
         }

@@ -358,7 +358,7 @@ impl FnCx<'_, '_> {
         if !matches!(v.pattern.kind, P::Array { rest: Some(_), .. }) {
             return false;
         }
-        let ty = ann.or_else(|| self.trial_type(e));
+        let ty = ann.or_else(|| self.remembered_type(e));
         ty.is_some_and(|t| matches!(self.cx.ty.kind(t), hir::TyKind::Tuple(_)))
     }
 

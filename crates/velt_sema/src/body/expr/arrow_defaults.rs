@@ -244,7 +244,7 @@ impl FnCx<'_, '_> {
             }
             _ => None,
         };
-        let found = self.trial_with(|lw| {
+        let found = self.remembered_trial(arrow, expected, |lw| {
             lw.std_callback = notes;
             lw.closure(arrow, Some(expected), false).ty
         });
@@ -260,7 +260,7 @@ impl FnCx<'_, '_> {
         let Some(given) = from_result[k].filter(|t| *t != self.cx.ty.unit) else {
             return false;
         };
-        let Some(literal_ty) = self.trial_type(literal) else {
+        let Some(literal_ty) = self.remembered_type(literal) else {
             return true;
         };
         if self.cx.ty.has_error(given) {
@@ -421,7 +421,7 @@ impl FnCx<'_, '_> {
                     in_result.contains(s) && known.get(*s as usize).is_some_and(|k| k.is_none())
                 };
                 if undeclared.iter().any(from_result) && !sensitive {
-                    if let Some(found) = self.trial_type(arg) {
+                    if let Some(found) = self.remembered_type(arg) {
                         if let TyKind::FnPtr { ret: returned, .. } = *self.cx.ty.kind(found) {
                             self.cx.match_ty(ret, returned, known);
                         }
@@ -460,7 +460,7 @@ impl FnCx<'_, '_> {
                             self.sibling_candidate(core, &name.name, &value, known, open);
                         }
                         ast::ObjectProp::Spread(value) => {
-                            let Some(found) = self.trial_type(value) else {
+                            let Some(found) = self.remembered_type(value) else {
                                 continue;
                             };
                             let found = self.cx.ty.core(found).unwrap_or(found);
@@ -504,7 +504,7 @@ impl FnCx<'_, '_> {
             return;
         };
         if open.keep_named(self.cx, t) {
-            if let Some(found) = self.trial_type(value) {
+            if let Some(found) = self.remembered_type(value) {
                 self.cx.match_ty(t, found, known);
             }
         }
