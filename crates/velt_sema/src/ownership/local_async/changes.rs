@@ -416,6 +416,9 @@ fn call_changes(
     depth: u32,
     memo: &mut Memo,
 ) -> Option<(String, String)> {
+    if super::reach::reads_buffer(cx, callee, args) {
+        return None;
+    }
     let a = &args[i];
     let mutable = top_mode(a) == Some(UseMode::BorrowMut);
     match callee {

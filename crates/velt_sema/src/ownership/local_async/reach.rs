@@ -174,7 +174,18 @@ pub(super) fn reaches(
     }
     match &e.kind {
         E::Local(l, _) => taint.get(l).copied(),
-        E::Closure(_) | E::Lit(_) | E::Global(_) | E::FnRef(..) => None,
+        // A closure handing out a buffer it captured, or a view over one: its result is that buffer.
+        E::Closure(c) => {
+            if !hands_out_held(cx, *c, memo) {
+                return None;
+            }
+            let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
+                return None;
+            };
+            let found = f.captures.iter().find_map(|k| taint.get(&k.outer).copied());
+            found.map(|(r, _)| (r, true))
+        }
+        E::Lit(_) | E::Global(_) | E::FnRef(..) => None,
         E::Block(b) => b.value.as_deref().and_then(|v| reaches(cx, v, taint, memo)),
         // A conversion keeps the value: a new value converted to an `any` or an interface
         // (`f(ctx)` through `any`) is still the request's own.
@@ -305,14 +316,30 @@ fn buffer_of(cx: &Ctx, e: &Expr) -> Option<Expr> {
     }
     match &e.kind {
         E::Field { base, .. } if is_view(cx, base.ty) => Some((**base).clone()),
-        E::Call {
-            callee: Callee::Def(d, _),
-            args,
-        } if callee_name(cx, *d).is_some_and(|(n, _)| n == "buffer") => {
-            args.first().filter(|a| is_view(cx, a.ty)).cloned()
-        }
+        E::Call { callee, args } if reads_buffer(cx, callee, args) => args.first().cloned(),
         _ => None,
     }
+}
+
+/// Is this call a view's `buffer`, `byteLength` or `byteOffset`, which change nothing (the base class's
+/// getters, called through its table)?
+pub(super) fn reads_buffer(cx: &Ctx, callee: &Callee, args: &[Expr]) -> bool {
+    let Some(TyKind::Adt(class, _)) = (args.first()).map(|a| cx.ty.kind(a.ty)) else {
+        return false;
+    };
+    if args.len() != 1 || !cx.std_class(*class, VIEWS) {
+        return false;
+    }
+    let method = match callee {
+        Callee::Def(d, _) => Some(*d),
+        Callee::Virtual { slot } => cx
+            .adt(*class)
+            .and_then(|a| a.vtable.get(*slot as usize).copied()),
+        _ => None,
+    };
+    method
+        .and_then(|d| callee_name(cx, d))
+        .is_some_and(|(n, _)| matches!(n.as_str(), "buffer" | "byteLength" | "byteOffset"))
 }
 
 /// Does closure `d`, which returns a buffer or a view, return what it captured or was given, or a
