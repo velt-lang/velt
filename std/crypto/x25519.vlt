@@ -85,8 +85,7 @@ const BB: usize = 8;
 const E: usize = 9;
 const C: usize = 10;
 const D: usize = 11;
-const A24: usize = 12;
-const SCRATCH: usize = 13;
+const SCRATCH: usize = 12;
 
 // RFC 7748 §5's ladder, with a24 = 121665.
 function ladder(scalar: u8[], u: u8[]): u8[] {
@@ -99,31 +98,30 @@ function ladder(scalar: u8[], u: u8[]): u8[] {
   f.set(X2, 1);
   f.copy(X3, X1);
   f.set(Z3, 1);
-  f.set(A24, 121665);
-  let swap: i64 = 0;
+  let swap: u64 = 0;
   for (let i: usize = 0; i < 255; i++) {
     const pos = 254 - i;
-    const bit = ((k[pos >> 3] >> ((pos & 7) as u8)) & 1) as i64;
+    const bit = ((k[pos >> 3] >> ((pos & 7) as u8)) & 1) as u64;
     swap ^= bit;
     f.swap(X2, X3, swap);
     f.swap(Z2, Z3, swap);
     swap = bit;
     f.add(A, X2, Z2);
-    f.mul(AA, A, A);
+    f.square(AA, A);
     f.sub(B, X2, Z2);
-    f.mul(BB, B, B);
+    f.square(BB, B);
     f.sub(E, AA, BB);
     f.add(C, X3, Z3);
     f.sub(D, X3, Z3);
     f.mul(D, D, A); // DA
     f.mul(C, C, B); // CB
     f.add(X3, D, C);
-    f.mul(X3, X3, X3);
+    f.square(X3, X3);
     f.sub(Z3, D, C);
-    f.mul(Z3, Z3, Z3);
+    f.square(Z3, Z3);
     f.mul(Z3, Z3, X1);
     f.mul(X2, AA, BB);
-    f.mul(Z2, E, A24);
+    f.mulSmall(Z2, E, 121665);
     f.add(Z2, Z2, AA);
     f.mul(Z2, Z2, E);
   }
