@@ -713,6 +713,7 @@ impl FnCx<'_, '_> {
             .or_else(|h| self.union_view_cast(h, target, span))
             .or_else(|h| self.array_view_cast(h, target, span))
             .or_else(|h| self.generic_assertion(h, target))
+            .or_else(|h| self.comparable_cast(h, target, span))
     }
 
     /// `x as UserId`: brands a value of the brand's primitive `base` (or one that converts to
