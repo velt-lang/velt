@@ -171,16 +171,19 @@ fn staging(dest: &Path) -> Result<PathBuf, String> {
     // Unique within the process (a counter) and between processes (the pid); one left behind by
     // a process that died with the same pid is skipped.
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let staging = loop {
+    for _ in 0..1 << 20 {
         let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         let staging = parent.join(format!(".{name}.partial-{}-{n}", std::process::id()));
         match std::fs::create_dir(&staging) {
-            Ok(()) => break staging,
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && n < 1 << 20 => {}
+            Ok(()) => return Ok(staging),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
             Err(e) => return Err(format!("cannot create `{}`: {e}", staging.display())),
         }
-    };
-    Ok(staging)
+    }
+    Err(format!(
+        "cannot find a free staging name beside `{}`",
+        dest.display()
+    ))
 }
 
 fn write_into(tree: &Tree, root: &Path, links: Links) -> Result<(), String> {

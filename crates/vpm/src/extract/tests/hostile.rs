@@ -257,3 +257,36 @@ fn parallel_extractions_into_one_parent_each_get_their_own_staging() {
     });
     assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 80);
 }
+
+#[test]
+fn a_staging_name_is_not_given_twice() {
+    // One destination, with the first directory still there: only the counter tells them apart.
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("out");
+    let (first, second) = (staging(&dest).unwrap(), staging(&dest).unwrap());
+    assert_ne!(first, second);
+    assert!(first.is_dir() && second.is_dir());
+}
+
+#[test]
+fn parallel_extractions_of_one_destination_leave_one_tree() {
+    let dir = tempfile::tempdir().unwrap();
+    let dest = dir.path().join("out");
+    let tar = TarBuilder::default().file("a/b", b"x").gz();
+    let start = std::sync::Barrier::new(8);
+    let results: Vec<_> = std::thread::scope(|s| {
+        let threads: Vec<_> = (0..8)
+            .map(|_| {
+                s.spawn(|| {
+                    start.wait();
+                    extract(&tar, &dest)
+                })
+            })
+            .collect();
+        threads.into_iter().map(|t| t.join().unwrap()).collect()
+    });
+    let won = results.iter().filter(|r| r.is_ok()).count();
+    assert_eq!(won, 1, "{results:?}");
+    assert_eq!(std::fs::read_to_string(dest.join("a/b")).unwrap(), "x");
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+}
