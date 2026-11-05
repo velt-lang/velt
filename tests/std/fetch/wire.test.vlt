@@ -239,7 +239,7 @@ function request(input: string): [string, string, number] | null {
   return [head, input.slice(end + 4, end + 4 + length), end + 4 + length];
 }
 
-async function serveStrict(conn: TcpStream) {
+async function serveStrict(conn: TcpStream, ended: Channel<i64>) {
   const responses = strictResponses();
   let input = "";
   while (true) {
@@ -267,6 +267,7 @@ async function serveStrict(conn: TcpStream) {
       // bounds how long a connection the client keeps pooled stays open.
       await conn.write("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok");
       conn.shutdown();
+      ended.trySend(1);
       await conn.readableWithin(500);
       break;
     }
@@ -291,16 +292,17 @@ describe("fetch's strict framing", () => {
   // caller's `content-length` must match the body and `transfer-encoding` is refused (else a
   // header could smuggle a second request onto the connection); only 301, 302, 303, 307 and 308
   // are followed; a malformed response is refused, 150 headers are fine; a chunked trailer that
-  // never ends fails once it is larger than a head may be; POSTs to a server that ends each
-  // connection right after its response (without `connection: close`) all succeed, as with
-  // Node. (Was the golden std/fetch_wire_strict.)
+  // never ends fails once it is larger than a head may be; POSTs to a server that has ended each
+  // connection after its response (without `connection: close`) all succeed, as with Node. (Was
+  // the golden std/fetch_wire_strict.)
   const accepted = channel<i64>(1024);
+  const ended = channel<i64>(64);
   let base = "";
   let close = () => {};
   beforeAll(async () => {
     const listener = await listen("127.0.0.1:0");
     base = `http://127.0.0.1:${listener.port}`;
-    acceptAll(listener, accepted, async (conn: TcpStream) => await serveStrict(conn));
+    acceptAll(listener, accepted, async (conn: TcpStream) => await serveStrict(conn, ended));
     close = () => {
       accepted.close();
       listener.close();
@@ -360,17 +362,20 @@ describe("fetch's strict framing", () => {
   });
 
   it("sends POSTs to a server that ends each connection after its response", async () => {
-    // A close in the same tick as the response is deterministic here; a close a moment later
-    // depends on the runner's timing, so it is measured by hand, not pinned.
-    let failed = 0;
+    // Each POST starts once the server has closed: that close the check before reuse must find.
+    // Not sooner: a server held up between its response and its close (88 ms seen under load) can
+    // close just after the check, and no client can see that coming. The POST then fails, as in
+    // Node, Go and .NET, since it may not be sent twice.
+    const errors: string[] = [];
     for (let i = 0; i < 50; i++) {
       try {
         await (await fetch(`${base}/end`, { method: "POST", body: "x" })).text();
+        await ended.receive();
       } catch (e) {
-        failed += 1;
+        errors.push(`POST ${i}: ${e instanceof IoError ? e.code : ""} ${e.message}`);
       }
     }
-    expect(failed).toBe(0);
+    expect(errors).toEqual([]);
   });
 });
 
@@ -484,6 +489,52 @@ describe("sending a request again", () => {
         "rejected",
         `conn 1: drops ${method} /second HTTP/1.1`,
       ]);
+    }
+  });
+});
+
+/**
+ * Answers the first request on `c`, ends its output and says so on `ended`, as a server that
+ * closes an idle connection. It goes on reading: a request sent on the closed connection anyway
+ * goes to `landed`, so a test sees it even when the client would hide it by sending it again.
+ */
+async function serveThenEnd(c: TcpStream, ended: Channel<i64>, landed: Channel<string>) {
+  if ((await requestLine(c)) != "") {
+    await c.write("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok");
+    c.shutdown();
+    ended.trySend(1);
+    if (await c.readableWithin(500)) {
+      const late = await requestLine(c);
+      if (late != "") {
+        landed.trySend(late);
+      }
+    }
+  }
+  c.close();
+}
+
+describe("a pooled connection the server has closed", () => {
+  // The check before reuse (crates/velt_rt/src/net/park.rs) without its race: the next request
+  // starts only after the server's close, so it must find the connection closed and go out on a
+  // new one. A POST could not be sent again, so without the check it would fail.
+  it("is not used again by a POST or a GET", async () => {
+    for (const method of ["POST", "GET"]) {
+      const listener = await listen("127.0.0.1:0");
+      const accepted = channel<i64>(8);
+      const ended = channel<i64>(8);
+      const landed = channel<string>(8);
+      acceptAll(listener, accepted, async (c: TcpStream) => await serveThenEnd(c, ended, landed));
+      const url = `http://127.0.0.1:${listener.port}/`;
+      expect(await (await fetch(url)).text()).toBe("ok");
+      await ended.receive();
+      // A POST takes only a connection idle for 5 ms or more; a newer one stays parked and the
+      // check is not reached. (A lower bound: waiting longer changes nothing.)
+      // timing: the pooled connection's idle threshold is the subject
+      await sleep(10);
+      expect(await (await fetch(url, { method: method })).text()).toBe("ok");
+      expect(landed.tryReceive()).toBe(null);
+      expect(drained(accepted)).toBe(2);
+      listener.close();
     }
   });
 });
