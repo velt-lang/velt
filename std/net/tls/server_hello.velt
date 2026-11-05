@@ -70,7 +70,7 @@ export struct ServerHello {
 /** The ServerHello in `body` (the message without its 4-byte header), checked against `sessionId`. */
 export function parseServerHello(body: u8[], sessionId: u8[]): ServerHello {
   const r = new ByteReader(body, 0, body.length, "ServerHello");
-  r.u16();
+  checkLegacyVersion(r.u16());
   const random = r.bytes(32);
   let retry = true;
   for (let i: usize = 0; i < 32; i++) {
@@ -150,4 +150,25 @@ export function parseServerHello(body: u8[], sessionId: u8[]): ServerHello {
     );
   }
   return { retry: retry, suite: suite, keyShare: keyShare, group: group, cookie: cookie };
+}
+
+// TLS 1.3 fixes the legacy_version at 0x0303 (§4.1.3): below it the server chose an older
+// version, which is not supported (protocol_version); above it the field is wrong.
+function checkLegacyVersion(v: usize) {
+  if (v < 0x0303) {
+    throw new TlsFailure(
+      PROTOCOL_VERSION,
+      `the server does not speak TLS 1.3 (it chose version 0x${hex4(v)})`,
+    );
+  }
+  if (v != 0x0303) {
+    throw new TlsFailure(
+      ILLEGAL_PARAMETER,
+      `the ServerHello's legacy_version is 0x${hex4(v)}, not 0x0303`,
+    );
+  }
+}
+
+function hex4(v: usize): string {
+  return v.toString(16).padStart(4, "0");
 }
