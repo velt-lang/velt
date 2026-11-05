@@ -11,7 +11,7 @@ mod compare;
 mod ctype;
 mod shape;
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -33,8 +33,11 @@ struct Decl {
     span: Span,
 }
 
+/// The C libraries whose declarations passed the check on this target, per package root.
+pub type Checked = BTreeMap<PathBuf, BTreeSet<String>>;
+
 /// Check the C declarations of `p` (std's, in `std_files`, aside) against their libraries'
-/// headers for `target`. Errors go to `diags`.
+/// headers for `target`. Errors go to `diags`; the libraries that passed are returned.
 pub fn check(
     p: &hir::Program,
     sm: &SourceMap,
@@ -42,10 +45,11 @@ pub fn check(
     std_files: &HashSet<FileId>,
     target: &str,
     diags: &mut Diagnostics,
-) {
-    let Some(graph) = graph else { return };
+) -> Checked {
+    let mut checked = Checked::new();
+    let Some(graph) = graph else { return checked };
     let Some(zig_target) = zig_target(target) else {
-        return;
+        return checked;
     };
     // (package root, library) → its declarations.
     let mut groups: BTreeMap<(PathBuf, String), (&GraphPackage, Vec<Decl>)> = BTreeMap::new();
@@ -83,8 +87,11 @@ pub fn check(
     }
     for ((root, library), (package, decls)) in groups {
         let headers = &package.c_libraries[&library].headers;
-        check_library(&root, &library, headers, &decls, zig_target, target, diags);
+        if check_library(&root, &library, headers, &decls, zig_target, target, diags) {
+            checked.entry(root).or_default().insert(library);
+        }
     }
+    checked
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -96,23 +103,26 @@ fn check_library(
     zig_target: &str,
     target: &str,
     diags: &mut Diagnostics,
-) {
+) -> bool {
     let first = decls[0].span;
     let home = match vpm::locations::velt_home() {
         Ok(home) => home,
-        Err(e) => return diags.push(Diagnostic::error(e, first)),
+        Err(e) => {
+            diags.push(Diagnostic::error(e, first));
+            return false;
+        }
     };
     let key = cache_key(root, headers, decls, target);
     let remembered = home.join("cache").join("headers").join(&key);
-    if remembered.is_file() {
-        return;
+    if still_holds(&remembered) {
+        return true;
     }
     let parsed = velt_toolchain::zig::zig(&home)
         .and_then(|zig| parse(&zig, &home, root, headers, zig_target));
-    let parsed = match parsed {
-        Ok(h) => h,
+    let (parsed, read) = match parsed {
+        Ok(parsed) => parsed,
         Err(e) => {
-            return diags.push(
+            diags.push(
                 Diagnostic::error(
                     format!(
                         "the declarations of C library `{library}` can't be checked against its headers: {e}"
@@ -122,7 +132,8 @@ fn check_library(
                 .with_note(
                     "a library without headers says so in package.vlt with `unchecked: true`",
                 ),
-            )
+            );
+            return false;
         }
     };
     let long_bits = if target.contains("windows") { 32 } else { 64 };
@@ -133,8 +144,41 @@ fn check_library(
     if diags.len() == before {
         // Remembered only when it passed; a failure to write it costs a check next time.
         let _ = std::fs::create_dir_all(remembered.parent().unwrap_or(&home));
-        let _ = std::fs::write(&remembered, b"checked\n");
+        if let Some(text) = remembered_text(&read) {
+            let _ = std::fs::write(&remembered, text);
+        }
     }
+    diags.len() == before
+}
+
+/// What a remembered check holds: a digest and the path of each file its parse read, one per
+/// line. `None` when one can't be read any more.
+fn remembered_text(read: &[PathBuf]) -> Option<String> {
+    let mut text = String::new();
+    for file in read {
+        let path = file.to_str()?;
+        text.push_str(&format!("{}\t{path}\n", file_digest(file)?));
+    }
+    Some(text)
+}
+
+/// Whether a check was remembered at `remembered` and every file its parse read is unchanged.
+fn still_holds(remembered: &Path) -> bool {
+    let Ok(text) = std::fs::read_to_string(remembered) else {
+        return false;
+    };
+    !text.is_empty()
+        && text.lines().all(|line| match line.split_once('\t') {
+            Some((digest, file)) => file_digest(Path::new(file)).as_deref() == Some(digest),
+            None => false,
+        })
+}
+
+/// The SHA-256 of a file's bytes, hex.
+fn file_digest(file: &Path) -> Option<String> {
+    let bytes = std::fs::read(file).ok()?;
+    let digest = Sha256::digest(bytes);
+    Some(digest.iter().map(|b| format!("{b:02x}")).collect())
 }
 
 fn check_decl(d: &Decl, h: &Headers, headers: &[String], long_bits: u32, diags: &mut Diagnostics) {
@@ -207,19 +251,18 @@ fn check_decl(d: &Decl, h: &Headers, headers: &[String], long_bits: u32, diags: 
 }
 
 /// What the result remembered for these declarations and headers is filed under: zig's
-/// version, the target, the headers' names and the package's own headers' bytes, and the
-/// declarations.
+/// version, the target, the package's root, the headers' names and the declarations. What it
+/// holds says whether the files parsed have changed ([`still_holds`]).
 fn cache_key(root: &Path, headers: &[String], decls: &[Decl], target: &str) -> String {
     let mut h = Sha256::new();
     h.update(velt_toolchain::zig::VERSION);
     h.update([0]);
     h.update(target);
+    h.update([0]);
+    h.update(root.to_string_lossy().as_bytes());
     for header in headers {
         h.update([0]);
         h.update(header);
-        if !header.starts_with('<') {
-            h.update(std::fs::read(root.join(header)).unwrap_or_default());
-        }
     }
     for d in decls {
         h.update(format!("\0{}{:?}{:?}", d.name, d.params, d.ret));
@@ -243,14 +286,15 @@ fn zig_target(triple: &str) -> Option<&'static str> {
     })
 }
 
-/// Parse `headers` (of the package at `root`) with zig's clang for `zig_target`.
+/// Parse `headers` (of the package at `root`) with zig's clang for `zig_target`: what they
+/// declare, and every file the parse read.
 fn parse(
     zig: &Path,
     home: &Path,
     root: &Path,
     headers: &[String],
     zig_target: &str,
-) -> Result<Headers, String> {
+) -> Result<(Headers, Vec<PathBuf>), String> {
     let dir = work_dir(home);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let result = parse_in(zig, &dir, root, headers, zig_target);
@@ -289,7 +333,7 @@ fn parse_in(
     root: &Path,
     headers: &[String],
     zig_target: &str,
-) -> Result<Headers, String> {
+) -> Result<(Headers, Vec<PathBuf>), String> {
     let source = includes(root, headers)?;
     let file = dir.join("headers.c");
     std::fs::write(&file, source).map_err(|e| e.to_string())?;
@@ -337,6 +381,16 @@ fn parse_in(
     let mut full = vec!["clang".to_string(), "-cc1".to_string()];
     full.extend(cc1);
     full.push("-ast-dump=json".into());
+    full.extend(
+        [
+            "-dependency-file",
+            DEPENDENCIES,
+            "-MT",
+            "deps",
+            "-sys-header-deps",
+        ]
+        .map(str::to_string),
+    );
     let refs: Vec<&str> = full.iter().map(String::as_str).collect();
     let out = command(&refs)
         .output()
@@ -352,7 +406,48 @@ fn parse_in(
     }
     let json: serde_json::Value =
         serde_json::from_slice(&out.stdout).map_err(|e| format!("clang's AST is not JSON: {e}"))?;
-    Ok(Headers::from_json(&json))
+    let dependencies = std::fs::read_to_string(dir.join(DEPENDENCIES))
+        .map_err(|e| format!("clang wrote no list of the files it read: {e}"))?;
+    Ok((Headers::from_json(&json), files_read(dir, &dependencies)))
+}
+
+/// Where clang writes the files it read, in the parse's directory.
+const DEPENDENCIES: &str = "deps.d";
+
+/// The files a parse in `dir` read, from clang's dependency list: its own `headers.c` aside.
+fn files_read(dir: &Path, dependencies: &str) -> Vec<PathBuf> {
+    let canonical = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
+    dependency_paths(dependencies)
+        .into_iter()
+        .map(|file| dir.join(file))
+        .filter(|file| !file.starts_with(dir) && !file.starts_with(&canonical))
+        .collect()
+}
+
+/// The paths of clang's dependency list `deps: a.h b\\ c.h \\\n d.h`: separated by white space,
+/// with `\\ `, `\\#` and `$$` for what make would read otherwise. Other backslashes are a Windows
+/// path's.
+fn dependency_paths(list: &str) -> Vec<String> {
+    let list = list.strip_prefix("deps:").unwrap_or(list);
+    let mut paths = Vec::new();
+    let mut path = String::new();
+    let mut chars = list.chars().peekable();
+    while let Some(c) = chars.next() {
+        match (c, chars.peek()) {
+            ('\\', Some(' ' | '#')) | ('$', Some('$')) => path.extend(chars.next()),
+            ('\\', Some('\n' | '\r')) => {}
+            (c, _) if c.is_whitespace() => {
+                if !path.is_empty() {
+                    paths.push(std::mem::take(&mut path));
+                }
+            }
+            (c, _) => path.push(c),
+        }
+    }
+    if !path.is_empty() {
+        paths.push(path);
+    }
+    paths
 }
 
 /// The words of a command line clang printed: each in double quotes, with `\"` and `\\`.
@@ -390,6 +485,43 @@ mod tests {
             split_quoted(r#" "/z/zig" "-cc1" "-I/a b" "-DX=\"y\"""#),
             ["/z/zig", "-cc1", "-I/a b", "-DX=\"y\""]
         );
+    }
+
+    #[test]
+    fn clang_s_dependency_list_gives_the_files_read() {
+        assert_eq!(
+            dependency_paths("deps: headers.c /p/a\\ b.h \\\n  /p/c\\#d.h \\\r\n C:\\z\\e$$.h\n"),
+            ["headers.c", "/p/a b.h", "/p/c#d.h", "C:\\z\\e$.h"]
+        );
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            files_read(dir.path(), "deps: headers.c /p/a.h\n"),
+            [PathBuf::from("/p/a.h")]
+        );
+    }
+
+    /// A remembered check holds while every file it read is the same; an older entry, without
+    /// the files, doesn't.
+    #[test]
+    fn a_remembered_check_holds_while_its_files_do() {
+        let dir = tempfile::tempdir().unwrap();
+        let (outer, inner) = (dir.path().join("t.h"), dir.path().join("inner.h"));
+        std::fs::write(&outer, "#include \"inner.h\"\n").unwrap();
+        std::fs::write(&inner, "int f(int a);\n").unwrap();
+        let remembered = dir.path().join("remembered");
+        assert!(!still_holds(&remembered));
+        std::fs::write(
+            &remembered,
+            remembered_text(&[outer, inner.clone()]).unwrap(),
+        )
+        .unwrap();
+        assert!(still_holds(&remembered));
+        std::fs::write(&inner, "int f(long a);\n").unwrap();
+        assert!(!still_holds(&remembered));
+        std::fs::remove_file(&inner).unwrap();
+        assert!(!still_holds(&remembered));
+        std::fs::write(&remembered, "checked\n").unwrap();
+        assert!(!still_holds(&remembered));
     }
 
     #[test]

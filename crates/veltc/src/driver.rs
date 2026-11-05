@@ -348,6 +348,7 @@ fn sema_stage(
             opts.packages.as_ref(),
             &std_files,
             &opts.target(),
+            &mut sess.native,
             &mut sess.diagnostics,
         );
         sess.c_libs = crate::native::c_links(hir, &sess.sm, opts.packages.as_ref(), &opts.target());

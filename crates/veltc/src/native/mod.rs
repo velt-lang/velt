@@ -187,7 +187,8 @@ fn ty_name(p: &hir::Program, t: TyId) -> String {
 /// Check every `declare function` outside the standard library (`std_files`: the files of std
 /// modules) against the native library of its own package (`graph`, `None` for a program without
 /// packages), and every `declare system function` against the table of system functions of
-/// `target` (system.rs); see the module docs. Reports errors into `diags`.
+/// `target` (system.rs); see the module docs. Reports errors into `diags`, and says in `packages`
+/// which C libraries were checked against their headers.
 pub fn check_declares(
     p: &hir::Program,
     sm: &SourceMap,
@@ -195,6 +196,7 @@ pub fn check_declares(
     graph: Option<&PackageGraph>,
     std_files: &HashSet<FileId>,
     target: &str,
+    packages: &mut [NativePackage],
     diags: &mut Diagnostics,
 ) {
     let io = IoTypes::find(p, sm, std_root);
@@ -257,7 +259,8 @@ pub fn check_declares(
             Err(why) => diags.push(Diagnostic::error(why, f.span)),
         }
     }
-    headers::check(p, sm, graph, std_files, target, diags);
+    let header_checked = headers::check(p, sm, graph, std_files, target, diags);
+    report::note_checked(packages, graph, &header_checked);
 }
 
 /// The error for a `declare function` in a module whose package (`pkg`; `None`: a program

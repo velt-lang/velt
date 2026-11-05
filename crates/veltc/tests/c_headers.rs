@@ -181,6 +181,20 @@ fn a_check_that_passed_is_remembered() {
         output(&o)
     );
 }
+
+/// `velt check` in `app` for `target`, with a zig that doesn't exist: passing shows that clang
+/// wasn't needed.
+fn check_without_zig(dir: &Path, home: &Path, target: &str) -> Output {
+    no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["check", "--target", target])
+        .current_dir(dir.join("app"))
+        .env("NO_COLOR", "1")
+        .env("VELT_HOME", home)
+        .env("VELT_ZIG", dir.join("no-zig"))
+        .output()
+        .unwrap()
+}
+
 /// `int (void) __attribute__((__cdecl__))`: what Windows headers declare most things as.
 #[test]
 fn attributed_function_types_are_read_on_windows_targets() {
@@ -250,6 +264,50 @@ fn a_win32_function_is_read_on_windows_targets() {
 
 const DECLS_STRLEN: &str = "import { CString } from \"velt/ffi\";\n\ndeclare c(\"c\") function strlen(s: CString): usize;\n\n";
 
+/// A remembered check covers what a listed header includes, not only the header.
+#[test]
+fn a_change_in_an_included_header_is_checked_again() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let files = [
+        ("native/t.h", "#include \"inner.h\"\n"),
+        ("native/inner.h", "int f(int a);\n"),
+    ];
+    let native = ", native: { c: { c: { headers: [\"<string.h>\"] }, z: { system: { default: \"z\" }, headers: [\"native/t.h\"] } } }";
+    let lib = format!("declare c(\"z\") function f(a: i32): i32;\n{DECLS_STRLEN}{LEN}");
+    project(dir.path(), native, &lib, &files, ALLOW);
+    let target = "x86_64-unknown-linux-gnu";
+    let args = ["check", "--target", target];
+    let o = velt(dir.path(), &home, &args);
+    assert!(o.status.success(), "{}", output(&o));
+    assert!(
+        output(&o).contains("z (z; headers checked)"),
+        "{}",
+        output(&o)
+    );
+    // Remembered: clang doesn't run while nothing changed.
+    let o = check_without_zig(dir.path(), &home, target);
+    assert!(o.status.success(), "{}", output(&o));
+    assert!(
+        output(&o).contains("z (z; headers checked)"),
+        "{}",
+        output(&o)
+    );
+    std::fs::write(dir.path().join("bind/native/inner.h"), "int f(long a);\n").unwrap();
+    let o = velt(dir.path(), &home, &args);
+    assert!(!o.status.success(), "{}", output(&o));
+    assert!(
+        output(&o).contains("parameter 1 of C function `f` is `long` in inner.h:1"),
+        "{}",
+        output(&o)
+    );
+    // And back: the check passes again, not from what was remembered of the wrong one.
+    std::fs::write(dir.path().join("bind/native/inner.h"), "int f(int a);\n").unwrap();
+    let o = velt(dir.path(), &home, &args);
+    assert!(o.status.success(), "{}", output(&o));
+}
+
 /// What an enum passes, from the width of its type.
 #[test]
 fn enums_are_as_wide_as_their_types() {
@@ -310,3 +368,111 @@ fn an_out_pointer_is_the_pointer_c_can_write() {
     );
 }
 
+/// "headers checked" is for a library checked on this target; these need no zig, as nothing
+/// runs clang.
+#[test]
+fn the_listing_says_checked_only_for_what_was() {
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let files = [("native/own.h", OWN_H)];
+    let native = ", native: { c: { c: { headers: [\"<string.h>\"] }, own: { system: { default: \"own\" }, headers: [\"native/own.h\"] } } }";
+    project(
+        dir.path(),
+        native,
+        &format!("{DECLS_STRLEN}{LEN}"),
+        &files,
+        ALLOW,
+    );
+    // WebAssembly has no C headers: `check` looks at nothing there.
+    let o = check_without_zig(dir.path(), &home, "wasm32-wasip1");
+    assert!(o.status.success(), "{}", output(&o));
+    assert!(
+        output(&o).contains("own (own; headers listed)"),
+        "{}",
+        output(&o)
+    );
+    assert!(!output(&o).contains("headers checked"), "{}", output(&o));
+    // Nothing is declared of `own`: nothing is checked of it.
+    let native = ", native: { c: { c: { unchecked: true }, own: { system: { default: \"own\" }, headers: [\"native/own.h\"] } } }";
+    project(
+        dir.path(),
+        native,
+        &format!("{DECLS_STRLEN}{LEN}"),
+        &files,
+        ALLOW,
+    );
+    let o = check_without_zig(dir.path(), &home, "x86_64-unknown-linux-gnu");
+    assert!(o.status.success(), "{}", output(&o));
+    assert!(
+        output(&o).contains("own (own; headers listed)"),
+        "{}",
+        output(&o)
+    );
+    assert!(
+        output(&o).contains("c (the platform's; unchecked)"),
+        "{}",
+        output(&o)
+    );
+}
+
+/// A fetched package's headers aren't compared at this layer, so they aren't called checked.
+#[test]
+fn a_fetched_package_s_headers_are_only_listed() {
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let files = [("native/own.h", OWN_H)];
+    let native = ", native: { c: { c: { headers: [\"<string.h>\"] }, own: { system: { default: \"own\" }, headers: [\"native/own.h\"] } } }";
+    project(
+        dir.path(),
+        native,
+        &format!("{DECLS_STRLEN}{LEN}"),
+        &files,
+        ALLOW,
+    );
+    let bind = dir.path().join("bind");
+    git(&bind, &["init", "-q", "-b", "main"]);
+    git(&bind, &["add", "-A"]);
+    git(&bind, &["commit", "-q", "-m", "first"]);
+    let url = bind.display().to_string().replace('\\', "/");
+    let url = match url.starts_with('/') {
+        true => format!("file://{url}"),
+        false => format!("file:///{url}"),
+    };
+    let manifest = dir.path().join("app/package.vlt");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let text = text.replace(
+        "path: \"../bind\"",
+        &format!("git: \"{url}\", branch: \"main\""),
+    );
+    std::fs::write(&manifest, text).unwrap();
+    let o = check_without_zig(dir.path(), &home, "x86_64-unknown-linux-gnu");
+    assert!(o.status.success(), "{}", output(&o));
+    assert!(
+        output(&o).contains("own (own; headers listed)"),
+        "{}",
+        output(&o)
+    );
+    assert!(
+        output(&o).contains("c (the platform's; headers listed)"),
+        "{}",
+        output(&o)
+    );
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let o = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "git {args:?}: {}", output(&o));
+}
