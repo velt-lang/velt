@@ -1,10 +1,10 @@
 // velt/jsx (internal): HTML escaping of text and attributes (docs/internals/contracts/jsx.md
 // "Escaping").
 //
-// Text and attribute values escape `&`, `<`, `>`, `"` and `'` as react-dom does: like std/html
-// `escapeHtml`, but `'` is `&#x27;` (std/text/html). The compiler
-// escapes static text and attributes of precompiled templates the same way, and leaves those with a
-// `'` to `jsxEscape`/`jsxAttr`, so both lowerings render the same bytes.
+// Text and attribute values escape `&`, `<`, `>`, `"` and `'` as react-dom does: like `escapeHtml`
+// (velt/text, std/text/html.velt), but `'` is `&#x27;`. The compiler escapes static text and
+// attributes of precompiled templates the same way, and leaves those with a `'` to
+// `jsxEscape`/`jsxAttr`, so both lowerings render the same bytes.
 
 import type { AttrValue } from "velt/jsx/node";
 import { renderStyle } from "velt/jsx/style";
