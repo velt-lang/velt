@@ -342,7 +342,7 @@ impl Cx<'_> {
         let mut extended = FxHashSet::default();
         for def in &self.hir.defs {
             let hir::Def::Adt(a) = def else { continue };
-            if let Some(TyKind::Adt(b, _)) = a.base.map(|b| self.types.kind(b)) {
+            if let Some(TyKind::Adt(b, _)) = a.base.map(|b| self.raw_kind(b)) {
                 extended.insert(*b);
             }
         }
@@ -351,7 +351,7 @@ impl Cx<'_> {
 
     pub(super) fn class_root(&self, mut d: DefId) -> DefId {
         while let Some(b) = self.adt_def(d).base {
-            match self.types.kind(b) {
+            match self.raw_kind(b) {
                 TyKind::Adt(bd, _) => d = *bd,
                 _ => ice("base class is not a class type"),
             }

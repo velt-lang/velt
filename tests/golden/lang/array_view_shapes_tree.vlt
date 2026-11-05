@@ -1,0 +1,15 @@
+// check: no leaks
+// Array views (#1485) of two recursive object types, each holding an array of itself: their
+// element types share code by shape (shape-sharing.md), but the arrays built from them
+// (`Tree[]`, `Tree2[]`) differ in how they are counted, so the shape key covers `T[]`.
+type Tree = { v: number; kids: Tree[] };
+type Tree2 = { w: string; kids: Tree2[] };
+const t1: Tree = { v: 1, kids: [{ v: 2, kids: [] }] };
+const t2: Tree2 = { w: "a", kids: [{ w: "b", kids: [] }] };
+const r1: any = [t1];
+const r2: any = [t2];
+const v1 = r1 as Tree[];
+const v2 = r2 as Tree2[];
+console.log(v1[0].kids[0].v, v2[0].kids[0].w);
+v1[0].kids.push({ v: 3, kids: [] });
+console.log(v1[0].kids.length, r1[0].kids.length);

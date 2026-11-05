@@ -190,7 +190,7 @@ impl FnLower<'_, '_> {
     }
 
     pub(in crate::lower) fn is_enum(&self, ty: TyId) -> bool {
-        match self.cx.types.kind(ty) {
+        match self.cx.raw_kind(ty) {
             TyKind::Adt(d, _) => matches!(self.cx.hir.def(*d), velt_sema::hir::Def::Enum(_)),
             _ => false,
         }

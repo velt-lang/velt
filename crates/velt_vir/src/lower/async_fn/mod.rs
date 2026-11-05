@@ -94,7 +94,7 @@ pub(super) struct AsyncCx {
 impl Cx<'_> {
     /// The awaited result type `T` of an async function (`ret` is `Promise<T>`, or `T`).
     pub(super) fn async_result(&self, f: &FnDef) -> TyId {
-        match self.types.kind(f.ret) {
+        match self.raw_kind(f.ret) {
             TyKind::Promise(t, _) => *t,
             _ => f.ret,
         }

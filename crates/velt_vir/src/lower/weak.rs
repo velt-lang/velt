@@ -38,7 +38,7 @@ impl super::Cx<'_> {
     /// is one of them or a subclass of one (`class Cache extends WeakMap<K, V>`: the same
     /// runtime handle, with fields of its own).
     pub(in crate::lower) fn weak_class(&self, t: TyId) -> Option<&'static str> {
-        let TyKind::Adt(d, _) = self.types.kind(t) else {
+        let TyKind::Adt(d, _) = self.raw_kind(t) else {
             return None;
         };
         if !self.is_class(t) {

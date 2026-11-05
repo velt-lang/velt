@@ -208,13 +208,13 @@ impl Cx<'_> {
         let mut out = FxHashMap::default();
         for (i, def) in self.hir.defs.iter().enumerate() {
             let hir::Def::Fn(f) = def else { continue };
-            let Some(TyKind::Adt(owner, _)) = f.self_ty.map(|t| self.types.kind(t).clone()) else {
+            let Some(TyKind::Adt(owner, _)) = f.self_ty.map(|t| self.raw_kind(t).clone()) else {
                 continue;
             };
-            let returns_self = matches!(self.types.kind(f.ret), TyKind::Adt(r, _) if *r == owner);
+            let returns_self = matches!(self.raw_kind(f.ret), TyKind::Adt(r, _) if *r == owner);
             let throws = f
                 .throws
-                .is_some_and(|e| !matches!(self.types.kind(e), TyKind::Never));
+                .is_some_and(|e| !matches!(self.raw_kind(e), TyKind::Never));
             if f.name.ends_with(".clone")
                 && f.params.len() == 1
                 && !f.is_async

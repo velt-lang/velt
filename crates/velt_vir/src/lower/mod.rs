@@ -137,6 +137,7 @@ mod receiver;
 mod rt;
 mod same;
 mod sequence;
+mod shape;
 mod share;
 mod simd;
 mod spread_object;
@@ -229,6 +230,8 @@ pub(crate) fn lower_program(
             .map_or_else(crate::system::host_triple, str::to_string);
         cx.no_await_steps = no_await_steps;
         cx.facts_only = facts_only;
+        cx.shapes.wanted = shape::wanted(opts.shapes);
+        cx.shapes.on = cx.shapes.wanted;
         cx.locs = opts
             .source_map
             .map(|sm| srcloc::LocMap::new(sm, opts.std_root));
@@ -251,6 +254,7 @@ pub(crate) fn lower_program(
         }
         cx.build_iface_glues();
         lower_profile::end_pass(pass, pass_start.elapsed());
+        cx.shapes_close();
         let next = cx.close_boxing();
         if next == counted {
             // The counted types are complete: this pass's functions are the program's, once
@@ -266,6 +270,10 @@ pub(crate) fn lower_program(
         }
         if let Some(mb) = lower_profile::peak_mb().filter(|_| profile) {
             eprintln!("velt-lower: peak {mb} MB after pass {pass}");
+        }
+        if profile && cx.shapes.on {
+            let (shared, per_type) = cx.shapes.counts();
+            eprintln!("velt-lower: pass {pass}: {shared} shared instances for {per_type} per type");
         }
         if profile && next != counted {
             eprintln!("velt-lower: pass {pass} grew: {}", counted.changes(&next));
@@ -540,6 +548,8 @@ struct Cx<'h> {
     boxing: boxing::Boxing,
     /// Sharing facts observed in this pass (boxing/).
     facts: boxing::Facts,
+    /// Generic instances shared by shape in this pass (shape/).
+    shapes: shape::Shapes,
     /// `Program::impls` indexes per interface (`impls_of`), built on first use.
     iface_impls: Option<FxHashMap<DefId, Rc<[u32]>>>,
     /// Finished `extend` lookups by `(interface, arguments, type)` (impl_lookup.rs), and bound

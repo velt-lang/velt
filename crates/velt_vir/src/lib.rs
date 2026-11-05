@@ -223,6 +223,9 @@ pub struct LowerOptions<'a> {
     /// The target triple: system functions (`declare system function`, [`system`]) are bound
     /// per target. `None`: the host's.
     pub target: Option<&'a str>,
+    /// Share generic instances by shape (docs/internals/design/shape-sharing.md): debug builds.
+    /// `VELT_SHAPES=off` / `all` overrides it.
+    pub shapes: bool,
 }
 
 /// One native library to initialize before `main` runs.

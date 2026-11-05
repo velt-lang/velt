@@ -1,0 +1,22 @@
+// A view whose element type shares its code with another class view (shape-sharing.md): a
+// wrong element stops with the `TypeError` naming this view's own element type.
+// Node erases `as` and reads the wrong element as it is: Velt checks the conversion (#1485).
+class P {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+class Q {
+  m: number;
+  constructor(m: number) {
+    this.m = m;
+  }
+}
+const rq: any = [new Q(2)];
+const vq = rq as Q[];
+console.log(vq[0].m);
+const rp: any = [new P(1), "x"];
+const vp = rp as P[];
+console.log(vp[0].n);
+console.log(vp[1].n);
