@@ -35,12 +35,34 @@
 //!   form never runs `r`, and leaves `_x` false where the first test alone was true); both
 //!   `false` edges go to one block.
 //!
-//! The rewrite reads `_b`'s length also when `a`'s test fails. That read is safe: `_b` is the
-//! same value there, and the language gives no way to make an array value's validity depend on
-//! `fits(a, j)`. A test between them (`fits(a, j) && b !== null && fits(b, j)`) is a block between
-//! them, which does not match; a dominating one still dominates. A constant second array other
-//! than a static's address, which is how a null reaches here once constants have propagated, does
-//! not match either.
+//! **The second array may be null where the first test fails.** The two tests never read `_b`
+//! there, so the rewrite must not either. A field holding an array that something else holds is a
+//! pointer (its type is boxed, semantics-stage2.md 3.1), null until it is assigned: read during
+//! construction, by the constructor or a method or override it calls, it reaches a function with no
+//! retain and no test (`class D extends B { x: i8[] = shared; ... }` is `{ ptr@0, bool@8, ptr@16 }`).
+//! The VIR can't see this, as `_b` is a plain param. So the rewrite tests `_b` first, in the VIR:
+//!
+//! ```text
+//! a:       _j1 = add _i, 48; _n = ne _b, 0; branch _n, call, out
+//! call:    _x = call fits_both(_a, _b, _j1) -> a_test
+//! ```
+//!
+//! which is what the first test alone gives with a failing second one: false. In a block of its own
+//! the call dominates the loop's body, so LLVM takes the range checks out as it does without the test,
+//! and `_b`'s length stays loaded behind it (a test inside the helper joins back before the branch,
+//! and the checks stay: 32 instructions a loop against 11). The test leaves the loop and is invariant,
+//! so it goes in front of the loop. Only a null `_a` with a null `_b` changes: false, not a read of
+//! `_a` (and with LLVM the load of an unused length would go anyway).
+//!
+//! Boxing is a fact of the type in the whole program, and it decides what a param promises. A boxed
+//! array's param is a plain pointer, with no `nonnull` or `dereferenceable`, so LLVM keeps the test
+//! and can't move the load above it. An array that isn't boxed is passed as a pointer to its header,
+//! a local or inline in an object, never null (a field not assigned yet reads as length 0), and with
+//! both attributes: no test is written for such a param ([`may_be_null`]).
+//!
+//! A test between them (`fits(a, j) && b !== null && fits(b, j)`) is a block between them, which
+//! does not match; a dominating one still dominates. A constant second array other than a static's
+//! address, which is how a null reaches here once constants have propagated, does not match either.
 //!
 //! The pass goes over a function once, so the counts it asks about are taken once, at the first
 //! pair of the right shape, and kept exact as it rewrites ([`Counts::rewritten`]): the blocks a
@@ -53,11 +75,11 @@ mod tests;
 use rustc_hash::FxHashMap;
 use velt_vir::simd::{Lanes, Op, SimdCall};
 use velt_vir::vir::{
-    BinOp, BlockId, Callee, Const, ExternFn, ExternId, Function, Local, Operand, Place, Program,
-    Rvalue, Stmt, Terminator, Ty,
+    BasicBlock, BinOp, BlockId, Callee, Const, ExternFn, ExternId, Function, Local, LocalDecl,
+    Operand, Place, Program, Rvalue, Stmt, Terminator, Ty,
 };
 
-use crate::locals::Usage;
+use crate::locals::{LocalUsage, Usage};
 use crate::visit::{derefs, stmt_places, successors, term_places, PlaceUse};
 
 /// Rewrites every pair; returns the indices of the functions that changed, which hold dead blocks
@@ -98,19 +120,26 @@ fn rewrite_pairs(
         let Some(pair) = matched(func, bi, fits, &mut counts) else {
             continue;
         };
-        if let Some(counts) = &mut counts {
-            counts.rewritten(&pair);
-        }
+        let y = pair.y.clone();
+        let no = pair.no;
         let both = fits_both(externs, pair.lanes);
         if let Terminator::Call { callee, args, .. } = &mut func.blocks[bi].term {
             *callee = Callee::Extern(both);
-            *args = vec![pair.x, pair.y, pair.at];
+            *args = vec![pair.x.clone(), pair.y.clone(), pair.at.clone()];
         }
         func.blocks[pair.test.0 as usize].term = Terminator::Branch {
-            cond: pair.cond,
+            cond: pair.cond.clone(),
             then: pair.yes,
             els: pair.no,
         };
+        let usage = counts.as_ref().map(|c: &Counts| &c.usage);
+        let test = usage.is_some_and(|u| may_be_null(func, u, &y));
+        if let Some(counts) = &mut counts {
+            counts.rewritten(&pair, test);
+        }
+        if test {
+            test_for_null(func, bi, y, no);
+        }
     }
     counts
 }
@@ -146,8 +175,26 @@ impl Counts {
 
     /// `pair` is being rewritten: the first test's branch leaves `r` for `yes`, and its call also
     /// reads the second array. `r` and what follows stay in the function, so nothing else changes.
-    fn rewritten(&mut self, pair: &Pair) {
+    /// With `test`, [`test_for_null`] follows, with a block of its own, an edge out and a read of
+    /// a new local and of the second array.
+    fn rewritten(&mut self, pair: &Pair, test: bool) {
         self.rewrites += 1;
+        if test {
+            self.edges.push(1);
+            if let Some(n) = self.edges.get_mut(pair.no.0 as usize) {
+                *n += 1;
+            }
+            self.usage.locals.push(LocalUsage {
+                reads: 1,
+                defs: 1,
+                ..LocalUsage::default()
+            });
+            if let Operand::Copy(p) = &pair.y {
+                if let Some(u) = self.usage.locals.get_mut(p.local.0 as usize) {
+                    u.reads += 1;
+                }
+            }
+        }
         if let Some(n) = self.edges.get_mut(pair.r.0 as usize) {
             *n -= 1;
         }
@@ -160,6 +207,39 @@ impl Counts {
             }
         }
     }
+}
+
+/// Whether the second array can be null at the first test: anything but a static's address and a
+/// param that promises otherwise (one that isn't boxed; the module's comment says why).
+fn may_be_null(func: &Function, usage: &Usage, y: &Operand) -> bool {
+    let Operand::Copy(p) = y else {
+        return false;
+    };
+    let param = whole_local(p).filter(|l| (l.0 as usize) < func.params.len());
+    !param.is_some_and(|l| func.param_attr(l.0 as usize).nonnull && usage.get(l).defs == 1)
+}
+
+/// Block `bi`'s call runs only when `y` isn't null: a new block takes it, and `bi` goes to `no`
+/// otherwise, what the first test alone gives with a failing second one.
+fn test_for_null(func: &mut Function, bi: usize, y: Operand, no: BlockId) {
+    let nonnull = Local(func.locals.len() as u32);
+    func.locals.push(LocalDecl::new(Ty::Bool, None));
+    let call = BlockId(func.blocks.len() as u32);
+    let block = &mut func.blocks[bi];
+    block.stmts.push(Stmt::Assign(
+        Place::local(nonnull),
+        Rvalue::Binary(BinOp::Ne, y, Operand::Const(Const::Int(0), Ty::Ptr)),
+    ));
+    let branch = Terminator::Branch {
+        cond: Operand::Copy(Place::local(nonnull)),
+        then: call,
+        els: no,
+    };
+    let term = std::mem::replace(&mut block.term, branch);
+    func.blocks.push(BasicBlock {
+        stmts: vec![],
+        term,
+    });
 }
 
 /// The `fits_both` extern of `lanes`, declared when the program has none yet.

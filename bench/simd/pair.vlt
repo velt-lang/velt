@@ -1,0 +1,74 @@
+// The int8 dot kernel of #2049, four `dotAdd`s per 64 bytes and a scalar tail, over two arrays
+// (`fits(a, i + 48) && fits(b, i + 48)`, one test once velt_opt's `fits_pair` has merged it) and
+// over one (`fits(a, i + 48)`, which it leaves alone). pair.sh counts the instructions.
+//
+//   pair        the two-array kernel
+//   pair one    the one-array kernel
+//
+// Prints a checksum. The kernel is called through a function value chosen at run time: nothing
+// inlines it or sees the lengths. pair.sh also builds this with `i8[]` boxed (semantics-stage2.md
+// 3.1), where the second array is a plain pointer and the merged test starts with a null test.
+import { i8x16, i32x4 } from "velt/simd";
+import { args } from "velt/process";
+
+const N: usize = 16384;
+const REPS: usize = 100000;
+
+function two(a: i8[], b: i8[]): i32 {
+  let s0 = i32x4.splat(0);
+  let s1 = i32x4.splat(0);
+  let s2 = i32x4.splat(0);
+  let s3 = i32x4.splat(0);
+  let i: usize = 0;
+  while (i8x16.fits(a, i + 48) && i8x16.fits(b, i + 48)) {
+    s0 = s0.dotAdd(i8x16.load(a, i), i8x16.load(b, i));
+    s1 = s1.dotAdd(i8x16.load(a, i + 16), i8x16.load(b, i + 16));
+    s2 = s2.dotAdd(i8x16.load(a, i + 32), i8x16.load(b, i + 32));
+    s3 = s3.dotAdd(i8x16.load(a, i + 48), i8x16.load(b, i + 48));
+    i += 64;
+  }
+  let s = s0.add(s1).add(s2.add(s3)).sum();
+  while (i < a.length && i < b.length) {
+    s += (a[i] as i32) * (b[i] as i32);
+    i++;
+  }
+  return s;
+}
+
+function one(a: i8[], b: i8[]): i32 {
+  let s0 = i32x4.splat(0);
+  let s1 = i32x4.splat(0);
+  let s2 = i32x4.splat(0);
+  let s3 = i32x4.splat(0);
+  let i: usize = 0;
+  while (i8x16.fits(a, i + 48)) {
+    s0 = s0.dotAdd(i8x16.load(a, i), i8x16.load(a, i));
+    s1 = s1.dotAdd(i8x16.load(a, i + 16), i8x16.load(a, i + 16));
+    s2 = s2.dotAdd(i8x16.load(a, i + 32), i8x16.load(a, i + 32));
+    s3 = s3.dotAdd(i8x16.load(a, i + 48), i8x16.load(a, i + 48));
+    i += 64;
+  }
+  let s = s0.add(s1).add(s2.add(s3)).sum();
+  while (i < a.length) {
+    s += (a[i] as i32) * (a[i] as i32);
+    i++;
+  }
+  return s;
+}
+
+function main() {
+  const a: i8[] = [];
+  const b: i8[] = [];
+  for (let i: usize = 0; i < N; i++) {
+    a.push(((i * 7) % 251) as i8);
+    b.push(((i * 13) % 241) as i8);
+  }
+  const kernels: ((a: i8[], b: i8[]) => i32)[] = [two, one];
+  const k = kernels[args().length > 0 ? 1 : 0];
+  let t: i32 = 0;
+  for (let r: usize = 0; r < REPS; r++) {
+    t = t + k(a, b);
+    a[r % N] = (t & 63) as i8;
+  }
+  console.log(t);
+}

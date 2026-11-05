@@ -410,7 +410,10 @@ verifier rejects a `velt_simd_*` extern that is not one, and both backends emit 
 inline. They never cross the C ABI, so no target's vector calling convention is involved.
 `fits_both(a, b, at)` [additive] is `fits(a, at) && fits(b, at)` as one test against the smaller
 length; no std file declares it: `velt_opt` writes it where the two tests have one lane type and
-one index (`fits_pair`), and it reads both headers whatever the first length is.
+one index (`fits_pair`). It reads both headers whatever the first length is, so neither array may
+be null: where the second can be (an array field read during construction), `fits_pair` tests it
+in front of the call, and a null gives false, since the two tests never read it where the first
+fails.
 `load` and `store` take the array (a pointer to its header) and an element index, and do not
 check it: the prelude's methods do. `load_partial` and `store_partial` take a count of elements
 too, below the lane count, and touch only those elements. `load_optimistic` [additive] is `load`

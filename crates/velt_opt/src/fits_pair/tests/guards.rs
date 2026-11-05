@@ -1,7 +1,7 @@
 //! The guards a wrong merge would get past, one shape each, and the counts the pass keeps.
 
 use super::*;
-use velt_vir::vir::{StaticData, StaticId};
+use velt_vir::vir::{ParamAttrs, StaticData, StaticId};
 
 #[test]
 fn an_address_computed_in_the_second_block_stays() {
@@ -26,8 +26,8 @@ fn an_address_computed_in_the_second_block_stays() {
 
 #[test]
 fn a_constant_null_second_array_stays() {
-    // The first test fails on all of these, so the second array is never read. The rewrite would
-    // read it.
+    // The first test fails on all of these, so the second array is never read. A known null isn't
+    // worth the rewrite and its test against it.
     let grid: Vec<[u64; 3]> = edges(16)
         .into_iter()
         .filter(|[la, _, _]| *la < 16)
@@ -346,4 +346,126 @@ fn the_counts_kept_are_what_a_new_scan_gives() {
         let reads = |c: &Counts| c.usage.locals.iter().map(|u| u.reads).collect::<Vec<_>>();
         assert_eq!(reads(&kept), reads(&scan));
     }
+}
+
+#[test]
+fn a_null_second_array_where_the_first_test_fails_gives_the_same_result() {
+    // `lb` = 0 is the second array as a pointer, known to no pass.
+    let grid: Vec<[u64; 3]> = edges(16)
+        .into_iter()
+        .filter(|[la, lb, _]| *la < 16 && *lb == 0)
+        .collect();
+    assert!(grid.len() > 20);
+    let p = shaped(|p, b| {
+        let array = p.fb.local(Ty::Ptr);
+        let lb = p.fb.param(1);
+        p.fb.assign(p.entry, array, Rvalue::Cast(copy_local(lb), Ty::Ptr));
+        second_test_of(p, b, copy_local(array));
+    });
+    assert!(rewrites(&p, &grid));
+}
+
+#[test]
+fn a_null_second_array_is_false_with_a_long_first_one_too() {
+    // The two tests read the null here (#349's area); the one test gives false.
+    let p = shaped(|p, b| {
+        let array = p.fb.local(Ty::Ptr);
+        p.fb.assign(p.entry, array, Rvalue::Cast(int(0, Ty::U64), Ty::Ptr));
+        second_test_of(p, b, copy_local(array));
+    });
+    let mut q = p.clone();
+    assert!(!run(&mut q).is_empty());
+    let got = Interp::new(&q, Headers::default()).call_symbol("f", &[64, 0, 0]);
+    assert_eq!(got, Ok(2));
+    let got = Interp::new(&p, Headers::default()).call_symbol("f", &[64, 0, 0]);
+    assert!(got.is_err(), "{got:?}");
+}
+
+#[test]
+fn a_null_first_array_is_read_as_the_first_test_reads_it() {
+    let p = shaped(|p, b| {
+        let array = p.fb.local(Ty::Ptr);
+        let la = p.fb.param(0);
+        p.fb.assign(p.entry, array, Rvalue::Cast(copy_local(la), Ty::Ptr));
+        let call = Terminator::Call {
+            callee: p.fits.clone(),
+            args: vec![copy_local(array), copy_local(p.j)],
+            dest: Some(Place::local(b.x)),
+            next: b.test1,
+        };
+        p.fb.term(p.entry, call);
+    });
+    let mut q = p.clone();
+    assert!(!run(&mut q).is_empty());
+    for program in [&p, &q] {
+        let got = Interp::new(program, Headers::default()).call_symbol("f", &[0, 64, 0]);
+        assert!(got.is_err(), "{got:?}");
+    }
+}
+
+/// How many null tests `run` wrote in `f`.
+fn null_tests(p: &mut Program) -> usize {
+    assert!(!run(p).is_empty());
+    let stmts = p.funcs[0].blocks.iter().flat_map(|b| &b.stmts);
+    let null = int(0, Ty::Ptr);
+    stmts
+        .filter(|s| matches!(s, Stmt::Assign(_, Rvalue::Binary(BinOp::Ne, _, c)) if *c == null))
+        .count()
+}
+
+#[test]
+fn only_a_second_array_that_may_be_null_is_tested() {
+    // A local, whatever it holds.
+    let mut p = same_lane_pair(Lanes::I8);
+    assert_eq!(null_tests(&mut p), 1);
+    // A static's address.
+    let mut p = shaped(|p, b| {
+        second_test_of(p, b, Operand::Const(Const::Static(StaticId(0)), Ty::Ptr));
+    });
+    p.statics.push(StaticData {
+        bytes: vec![0u8; 24],
+        align: 8,
+        ..Default::default()
+    });
+    assert_eq!(null_tests(&mut p), 0);
+    // A param: tested unless it promises otherwise, and it can't where it is written again.
+    let param = |promise: bool, written: bool| {
+        let mut pb = ProgramBuilder::new();
+        let fits = fits_ext(&mut pb, Lanes::I8);
+        let mut fb = FuncBuilder::new("f", &[Ty::Ptr, Ty::Ptr], Ty::I64, Linkage::Export);
+        let (a, b) = (fb.param(0), fb.param(1));
+        let (x, y) = (fb.local(Ty::Bool), fb.local(Ty::Bool));
+        let first = fb.block();
+        let (r, yes, no) = (fb.block(), fb.block(), fb.block());
+        if written {
+            fb.assign(first, b, Rvalue::Use(copy_local(a)));
+        }
+        let test = fb.call(
+            first,
+            fits.clone(),
+            vec![copy_local(a), int(0, Ty::U64)],
+            Some(x),
+        );
+        fb.branch(test, x, r, no);
+        let test = fb.call(r, fits, vec![copy_local(b), int(0, Ty::U64)], Some(y));
+        fb.branch(test, y, yes, no);
+        fb.ret(yes, int(1, Ty::I64));
+        fb.ret(no, int(2, Ty::I64));
+        let mut f = fb.finish();
+        if promise {
+            f.param_attrs = vec![
+                ParamAttrs::default(),
+                ParamAttrs {
+                    nonnull: true,
+                    dereferenceable: 24,
+                    ..ParamAttrs::default()
+                },
+            ];
+        }
+        pb.add(f);
+        pb.finish()
+    };
+    assert_eq!(null_tests(&mut param(false, false)), 1);
+    assert_eq!(null_tests(&mut param(true, false)), 0);
+    assert_eq!(null_tests(&mut param(true, true)), 1);
 }

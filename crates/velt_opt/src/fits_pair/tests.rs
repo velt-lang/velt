@@ -261,9 +261,11 @@ fn the_rewrite_makes_one_call_and_declares_the_helper_once() {
         .filter(|e| e.symbol == "velt_simd_i8x16_fits_both")
         .collect();
     assert_eq!(both.len(), 1);
-    let Terminator::Call { args, .. } = &p.funcs[0].blocks[0].term else {
-        panic!("no call");
-    };
+    let args = p.funcs[0].blocks.iter().find_map(|b| match &b.term {
+        Terminator::Call { args, .. } if args.len() == 3 => Some(args),
+        _ => None,
+    });
+    let args = args.expect("the call");
     // In the order of the source; `min` does not care, the reader of the VIR does.
     assert_eq!(*args, want);
     // The verifier knows the helper's signature; this program is no whole one (no `velt_main`).

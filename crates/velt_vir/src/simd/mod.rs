@@ -129,7 +129,8 @@ pub enum Op {
     Fits,
     /// `(a: ptr, b: ptr, at: u64) -> bool`: `Fits` for both arrays, as one test against the
     /// smaller length. No API names it: `velt_opt`'s `fits_pair` writes it for
-    /// `fits(a, at) && fits(b, at)`, and it reads both lengths whatever `a`'s is.
+    /// `fits(a, at) && fits(b, at)`, and it reads both lengths whatever `a`'s is, having tested a
+    /// `b` that may be null in front of the call.
     FitsBoth,
     /// `(array: ptr, at: u64) -> v`: the lanes at elements `at..` of an array's buffer,
     /// unchecked (the prelude checks the range).
