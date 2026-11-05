@@ -314,7 +314,7 @@ fn enums_are_as_wide_as_their_types() {
     let Some(_zig) = zig() else { return };
     let dir = test_dir::TestDir::new();
     let home = dir.path().join("home");
-    let header = "enum wide { A = 0x100000000LL };\nenum wide wide_f(void);\nenum big : long long { B };\nenum big big_f(void);\nenum byte : char { C };\nenum byte byte_f(enum byte x);\nenum small { D };\nenum small small_f(void);\ntypedef enum { E = 0x100000000LL } named;\nnamed named_f(void);\nenum __attribute__((packed)) tiny { F };\nenum tiny tiny_f(void);\n";
+    let header = "enum wide { A = 0x100000000LL };\nenum wide wide_f(void);\nenum big : long long { B };\nenum big big_f(void);\nenum byte : char { C };\nenum byte byte_f(enum byte x);\nenum small { D };\nenum small small_f(void);\ntypedef enum { E = 0x100000000LL } named;\nnamed named_f(void);\nenum __attribute__((packed)) tiny { F };\nenum tiny tiny_f(void);\nint proto_f(enum p : char { G } x);\nenum m { H } __attribute__((mode(byte)));\nenum m mode_f(void);\n";
     let files = [("native/e.h", header)];
     let native = ", native: { c: { c: { headers: [\"<string.h>\"] }, e: { system: { default: \"e\" }, headers: [\"native/e.h\"] } } }";
     let lib = |decls: &str| format!("{decls}{DECLS_STRLEN}{LEN}");
@@ -323,7 +323,7 @@ fn enums_are_as_wide_as_their_types() {
     project(dir.path(), native, &lib(right), &files, ALLOW);
     let o = velt(dir.path(), &home, &args);
     assert!(o.status.success(), "{}", output(&o));
-    let wrong = "declare c(\"e\") function wide_f(): i32;\ndeclare c(\"e\") function big_f(): i32;\ndeclare c(\"e\") function byte_f(x: i32): i32;\ndeclare c(\"e\") function small_f(): i64;\ndeclare c(\"e\") function named_f(): i32;\ndeclare c(\"e\") function tiny_f(): i32;\n";
+    let wrong = "declare c(\"e\") function wide_f(): i32;\ndeclare c(\"e\") function big_f(): i32;\ndeclare c(\"e\") function byte_f(x: i32): i32;\ndeclare c(\"e\") function small_f(): i64;\ndeclare c(\"e\") function named_f(): i32;\ndeclare c(\"e\") function tiny_f(): i32;\ndeclare c(\"e\") function proto_f(x: i32): i32;\ndeclare c(\"e\") function mode_f(): i32;\n";
     project(dir.path(), native, &lib(wrong), &files, ALLOW);
     let o = velt(dir.path(), &home, &args);
     let out = output(&o);
@@ -336,8 +336,78 @@ fn enums_are_as_wide_as_their_types() {
         "C function `small_f` returns `enum small` in e.h:8, not the declaration's `i64`\n  = note: declare `i32` (a C enum)",
         "C function `named_f` returns `named` in e.h:10, not the declaration's `i32`\n  = note: declare `i64` (a C enum)",
         "C function `tiny_f` returns `enum tiny` in e.h:12, not the declaration's `i32`\n  = note: declare `packed enum tiny`, which can't cross",
+        // Defined in the parameters, where clang's dump doesn't show it: its width isn't known.
+        "parameter 1 of C function `proto_f` is `enum p` in e.h:13, not the declaration's `i32`\n  = note: declare `enum p`, which can't cross",
+        "C function `mode_f` returns `enum m` in e.h:15, not the declaration's `i32`\n  = note: declare `mode enum m`, which can't cross",
     ] {
         assert!(out.contains(e), "{e}:\n{out}");
+    }
+}
+
+/// `declare c` calls with the target's C calling convention: a function with another is
+/// refused, and Windows' own (`ms_abi`) or every other target's (`sysv_abi`) is that convention.
+#[test]
+fn a_calling_convention_other_than_the_target_s_is_refused() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let header = "int ms(int a) __attribute__((ms_abi));\nint sysv(int a) __attribute__((sysv_abi));\nint vector(int a) __attribute__((vectorcall));\nint plain(int a) __attribute__((cdecl));\n";
+    let files = [("native/cc.h", header)];
+    let native = ", native: { c: { c: { headers: [\"<string.h>\"] }, cc: { system: { default: \"cc\" }, headers: [\"native/cc.h\"] } } }";
+    let decls = "declare c(\"cc\") function ms(a: i32): i32;\ndeclare c(\"cc\") function sysv(a: i32): i32;\ndeclare c(\"cc\") function vector(a: i32): i32;\ndeclare c(\"cc\") function plain(a: i32): i32;\n";
+    project(
+        dir.path(),
+        native,
+        &format!("{decls}{DECLS_STRLEN}{LEN}"),
+        &files,
+        ALLOW,
+    );
+    for (target, refused) in [
+        ("x86_64-unknown-linux-gnu", "ms_abi"),
+        ("x86_64-pc-windows-msvc", "sysv_abi"),
+    ] {
+        let o = velt(dir.path(), &home, &["check", "--target", target]);
+        let out = output(&o);
+        assert!(!o.status.success(), "{target}: {out}");
+        let name = if refused == "ms_abi" { "ms" } else { "sysv" };
+        let line = if refused == "ms_abi" { 1 } else { 2 };
+        for (f, attribute, line) in [(name, refused, line), ("vector", "vectorcall", 3)] {
+            let e = format!("C function `{f}` is `__attribute__(({attribute}))` in cc.h:{line}, a calling convention `declare c` doesn't call");
+            assert!(out.contains(&e), "{target}: {e}:\n{out}");
+        }
+        assert_eq!(out.matches("error:").count(), 2, "{target}: {out}");
+    }
+}
+
+/// A build with nothing changed is skipped, but a changed header of a package's own is a stamp
+/// input: the next build checks the C functions again, with no source changed.
+#[test]
+fn a_changed_header_checks_the_next_build_again() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let header = "unsigned long long strlen(const char *s);\n";
+    let files = [("native/own.h", header)];
+    let native = ", native: { c: { c: { headers: [\"native/own.h\"] } } }";
+    let lib = "import { CString } from \"velt/ffi\";\n\ndeclare c(\"c\") function strlen(s: CString): u64;\n\nexport function len(s: string): u64 {\n  // SAFETY: a CString is NUL-terminated.\n  return unsafe { strlen(new CString(s)) };\n}\n";
+    project(dir.path(), native, lib, &files, ALLOW);
+    for _ in 0..2 {
+        let o = velt(dir.path(), &home, &["run"]);
+        assert!(o.status.success(), "{}", output(&o));
+        assert_eq!(String::from_utf8_lossy(&o.stdout), "3\n");
+        let o = velt(dir.path(), &home, &["build", "-o", "out"]);
+        assert!(o.status.success(), "{}", output(&o));
+    }
+    let wrong = "int strlen(const char *s);\n";
+    std::fs::write(dir.path().join("bind/native/own.h"), wrong).unwrap();
+    for args in [&["run"][..], &["build", "-o", "out"][..]] {
+        let o = velt(dir.path(), &home, args);
+        assert!(!o.status.success(), "{args:?}: {}", output(&o));
+        assert!(
+            output(&o).contains("C function `strlen` returns `int` in own.h:1"),
+            "{args:?}: {}",
+            output(&o)
+        );
     }
 }
 

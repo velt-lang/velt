@@ -749,14 +749,21 @@ Step 1 lands in layers, each its own pull request:
        variadic, and each parameter and the result must match per the table above (typedefs
        resolved, `long` per the target's data model, clang's predefined `__size_t`). Windows
        targets read zig's MinGW headers, which have MSVC's type sizes. An enum is as wide as
-       its fixed type or its widest constant; a packed enum can't cross.
+       its fixed type or its widest constant; a packed enum, one with `mode(...)`, and one whose
+       definition clang's dump doesn't show (only declared, or defined in a prototype) can't
+       cross. A function whose type has a calling convention other than the target's C one
+       (`vectorcall`, `pcs(...)`, `preserve_most`, `ms_abi` off Windows, `sysv_abi` on it) is
+       refused; `cdecl`, 32-bit x86's conventions (which 64-bit targets ignore) and `noreturn`
+       aren't conventions here.
      - `<name.h>` means a header of zig's set: the C library's for each target. Other libraries'
        headers (`<sqlite3.h>`) aren't in it, and nothing reads the machine's own: a package ships
        its copy (`native/sqlite3.h`).
      - A check that passed is remembered in `$VELT_HOME/cache/headers/`: keyed by zig's version,
        the target, the package's root, the headers' names and the declarations, it holds a
        digest of every file the parse read (clang's dependency list), so what a listed header
-       includes counts. clang runs again when one changes (about 0.2 s per library).
+       includes counts. clang runs again when one changes (about 0.2 s per library). The
+       package's files among them are build-stamp inputs, so a changed header rebuilds (and so
+       checks) a program whose sources didn't change.
      - A library listing no headers is still built, shown as "no headers" in `velt check`:
        requiring headers or `unchecked` comes with 6b, which records the digest.
      - Not yet: headers per build condition (frameworks: zig has no macOS SDK), structs,

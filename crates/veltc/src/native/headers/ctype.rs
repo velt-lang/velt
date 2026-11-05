@@ -13,6 +13,8 @@ pub struct CFunction {
     /// Each parameter's C type, as written.
     pub params: Vec<String>,
     pub variadic: bool,
+    /// The attributes of its type, by name (`ms_abi`, `noreturn`): calling conventions.
+    pub attributes: Vec<String>,
     /// Where it is declared: the header's file name and line.
     pub at: String,
 }
@@ -36,8 +38,9 @@ struct EnumDef {
     fixed: Option<String>,
     /// Its constants' types: `int`, or a wider type for a constant `int` doesn't hold.
     constants: Vec<String>,
-    /// `__attribute__((packed))`: as narrow as its values, which only clang works out.
-    packed: bool,
+    /// `__attribute__((packed))` or `__attribute__((mode(byte)))`, which make it narrower than
+    /// its constants say: what only clang works out. The attribute, as messages show it.
+    narrowed: Option<&'static str>,
 }
 
 impl EnumDef {
@@ -61,7 +64,10 @@ impl EnumDef {
             constants: of_kind("EnumConstantDecl")
                 .filter_map(|c| c["type"]["qualType"].as_str().map(str::to_string))
                 .collect(),
-            packed: of_kind("PackedAttr").next().is_some(),
+            narrowed: [("PackedAttr", "packed"), ("ModeAttr", "mode")]
+                .into_iter()
+                .find(|(kind, _)| of_kind(kind).next().is_some())
+                .map(|(_, attribute)| attribute),
         })
     }
 }
@@ -98,12 +104,13 @@ impl Headers {
                             .to_string()
                     })
                     .collect();
-                let (ret, variadic) = split_function_type(ty);
+                let (ret, variadic, attributes) = split_function_type(ty);
                 // The first declaration wins: a later one repeats it (a definition, a redeclaration).
                 self.functions.entry(name).or_insert(CFunction {
                     ret,
                     params,
                     variadic,
+                    attributes,
                     at,
                 });
             }
@@ -150,11 +157,15 @@ impl Headers {
 
     /// The integer type of `enum tag`. An enum without a fixed type is as wide as its widest
     /// constant, and its sign is clang's choice, which depends on its values: either matches.
+    /// One whose definition the dump doesn't show (only declared, or defined in a function's
+    /// parameters, whose scope clang doesn't print) is unknown.
     fn enum_type(&self, tag: &str, long_bits: u32, names: &[String]) -> CType {
-        let def = self.enums.get(tag);
+        let Some(def) = self.enums.get(tag) else {
+            return CType::Unknown(format!("enum {tag}"));
+        };
         let resolve = |written: &str| self.resolve_in(written, long_bits, &mut names.to_vec());
-        match def.and_then(|d| d.fixed.as_deref()) {
-            Some(fixed) => match resolve(fixed) {
+        match (def.fixed.as_deref(), def.narrowed) {
+            (Some(fixed), _) => match resolve(fixed) {
                 CType::Int {
                     bits,
                     signed,
@@ -166,11 +177,9 @@ impl Headers {
                 },
                 _ => CType::Unknown(format!("enum {tag}")),
             },
-            None if def.is_some_and(|d| d.packed) => CType::Unknown(format!("packed enum {tag}")),
-            None => {
-                let constants = def.map(|d| d.constants.as_slice()).unwrap_or_default();
-                let bits = constants
-                    .iter()
+            (None, Some(attribute)) => CType::Unknown(format!("{attribute} enum {tag}")),
+            (None, None) => {
+                let bits = (def.constants.iter())
                     .map(|c| match resolve(c) {
                         CType::Int { bits, .. } => bits,
                         _ => 32,
@@ -382,22 +391,69 @@ fn builtin(words: &[&str], long_bits: u32) -> Option<CType> {
     })
 }
 
-/// A function type's result and whether it is variadic: `long (const char *, char **, int)`
-/// → (`long`, false). Attributes after the parameters are skipped: `int (void)
-/// __attribute__((cdecl))`, which is how clang prints a calling convention.
-fn split_function_type(ty: &str) -> (String, bool) {
+/// A function type's result, whether it is variadic and its attributes: `long (const char *,
+/// int)` → (`long`, false, []). clang prints a calling convention as an attribute after the
+/// parameters (`int (void) __attribute__((ms_abi))`) or, for some, before the result
+/// (`__attribute__((preserve_most)) int (int)`); each comes back by its name (`ms_abi`, with
+/// `__cdecl__` as `cdecl`).
+fn split_function_type(ty: &str) -> (String, bool, Vec<String>) {
+    let mut attributes = Vec::new();
     let mut end = ty.trim_end().len();
     while let Some(open) = opening_paren(&ty[..end]) {
         let before = ty[..open].trim_end();
         match before.strip_suffix("__attribute__") {
-            Some(rest) => end = rest.trim_end().len(),
+            Some(rest) => {
+                attributes.push(attribute_name(&ty[open..end]));
+                end = rest.trim_end().len();
+            }
             None => {
                 let params = ty[open + 1..end - 1].trim_end();
-                return (before.to_string(), params.ends_with("..."));
+                attributes.reverse();
+                let mut ret = before;
+                while let Some(rest) = ret.strip_prefix("__attribute__") {
+                    let Some(close) = closing_paren(rest) else {
+                        break;
+                    };
+                    attributes.push(attribute_name(&rest[..=close]));
+                    ret = rest[close + 1..].trim_start();
+                }
+                return (ret.to_string(), params.ends_with("..."), attributes);
             }
         }
     }
-    (ty.to_string(), false)
+    (ty.to_string(), false, attributes)
+}
+
+/// The name of the attribute `((__cdecl__))`, `((pcs("aapcs")))`: `cdecl`, `pcs("aapcs")`.
+fn attribute_name(parens: &str) -> String {
+    let parens = parens.trim();
+    let inner = (parens.strip_prefix("((").and_then(|p| p.strip_suffix("))"))).unwrap_or(parens);
+    let (name, args) = inner.split_at(inner.find('(').unwrap_or(inner.len()));
+    let name = name.trim();
+    let name = (name.strip_prefix("__").and_then(|n| n.strip_suffix("__"))).unwrap_or(name);
+    format!("{name}{args}")
+}
+
+/// Where the `)` closing the `(` that `text` starts with is; `None` when it doesn't start with
+/// one, or it isn't closed.
+fn closing_paren(text: &str) -> Option<usize> {
+    if !text.starts_with('(') {
+        return None;
+    }
+    let mut depth = 0i32;
+    for (i, b) in text.bytes().enumerate() {
+        match b {
+            b'(' => depth += 1,
+            b')' => {
+                depth -= 1;
+                if depth == 0 {
+                    return Some(i);
+                }
+            }
+            _ => {}
+        }
+    }
+    None
 }
 
 /// Where the parenthesis that the `)` closing `text` opens is; `None` when `text` doesn't end
@@ -510,24 +566,46 @@ mod tests {
     }
 
     #[test]
-    fn attributes_after_the_parameters_are_not_the_parameters() {
+    fn attributes_are_not_the_parameters_or_the_result() {
         let split = |ty: &str| split_function_type(ty);
-        assert_eq!(split("long (const char *, int)"), ("long".into(), false));
+        let none = Vec::<String>::new;
+        assert_eq!(
+            split("long (const char *, int)"),
+            ("long".into(), false, none())
+        );
         assert_eq!(
             split("int (void) __attribute__((cdecl))"),
-            ("int".into(), false)
+            ("int".into(), false, vec!["cdecl".into()])
         );
         assert_eq!(
             split("char *(const char *) __attribute__((__cdecl__))"),
-            ("char *".into(), false)
+            ("char *".into(), false, vec!["cdecl".into()])
         );
         assert_eq!(
             split("int (const char *, ...) __attribute__((cdecl)) __attribute__((noreturn))"),
-            ("int".into(), true)
+            ("int".into(), true, vec!["cdecl".into(), "noreturn".into()])
         );
-        assert_eq!(split("int (const char *, ...)"), ("int".into(), true));
-        assert_eq!(split("void (void (*)(int, ...))"), ("void".into(), false));
-        assert_eq!(split("int"), ("int".into(), false));
+        assert_eq!(
+            split("int (int) __attribute__((ms_abi))"),
+            ("int".into(), false, vec!["ms_abi".into()])
+        );
+        assert_eq!(
+            split("__attribute__((preserve_most)) int (int)"),
+            ("int".into(), false, vec!["preserve_most".into()])
+        );
+        assert_eq!(
+            split("int (int) __attribute__((pcs(\"aapcs\")))"),
+            ("int".into(), false, vec!["pcs(\"aapcs\")".into()])
+        );
+        assert_eq!(
+            split("int (const char *, ...)"),
+            ("int".into(), true, none())
+        );
+        assert_eq!(
+            split("void (void (*)(int, ...))"),
+            ("void".into(), false, none())
+        );
+        assert_eq!(split("int"), ("int".into(), false, none()));
     }
 
     /// What clang prints for the enums of a header.
@@ -541,6 +619,7 @@ mod tests {
             { "kind": "EnumDecl", "name": "bytes", "fixedUnderlyingType": { "qualType": "char" } },
             { "kind": "EnumDecl", "name": "bytes" },
             { "kind": "EnumDecl", "name": "tiny", "inner": [{ "kind": "PackedAttr" }, constant("int")] },
+            { "kind": "EnumDecl", "name": "byte", "inner": [{ "kind": "ModeAttr" }, constant("int")] },
             { "kind": "EnumDecl", "id": "0x1", "inner": [constant("long long")] },
             { "kind": "TypedefDecl", "name": "mode", "type": { "qualType": "enum mode" },
               "inner": [{ "kind": "EnumType", "decl": { "id": "0x1", "kind": "EnumDecl", "name": "" } }] },
@@ -557,10 +636,17 @@ mod tests {
         assert_eq!(h.resolve("mode", 64), e(64, None));
         assert_eq!(h.resolve("enum inside", 64), e(64, None));
         assert_eq!(h.resolve("enum inside", 32), e(32, None));
-        assert_eq!(h.resolve("enum only_named", 64), e(32, None));
+        assert_eq!(
+            h.resolve("enum only_named", 64),
+            CType::Unknown("enum only_named".into())
+        );
         assert_eq!(
             h.resolve("enum tiny", 64),
             CType::Unknown("packed enum tiny".into())
+        );
+        assert_eq!(
+            h.resolve("enum byte", 64),
+            CType::Unknown("mode enum byte".into())
         );
     }
 
@@ -664,10 +750,7 @@ mod tests {
         assert_eq!(h.resolve("_Bool", 64), CType::Bool);
         assert_eq!(
             h.resolve("enum mode", 64),
-            CType::Enum {
-                bits: 32,
-                signed: None
-            }
+            CType::Unknown("enum mode".into())
         );
         assert_eq!(h.resolve("__int128", 64), CType::Unknown("__int128".into()));
     }

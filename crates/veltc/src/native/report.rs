@@ -140,7 +140,7 @@ pub fn note_checked(
         };
         let listed = packages.iter_mut().find(|p| p.name == package.name);
         for (name, _, state) in listed.into_iter().flat_map(|p| &mut p.c_libraries) {
-            if libraries.contains(name) {
+            if libraries.contains_key(name) {
                 *state = Checked::Headers;
             }
         }
@@ -260,7 +260,7 @@ mod tests {
         checked
             .entry("/p/bind".into())
             .or_default()
-            .insert("own".to_string());
+            .insert("own".to_string(), vec![]);
         note_checked(&mut packages, Some(&graph), &checked);
         assert_eq!(packages[0].c_libraries[0].2, Checked::Headers);
         assert_eq!(packages[0].c_libraries[1].2, Checked::Listed);

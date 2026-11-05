@@ -277,6 +277,24 @@ fn velt_for(c: &CType) -> String {
     }
 }
 
+/// The first of a C function's type attributes (`ctype::CFunction::attributes`) that makes it
+/// called other than the target's C calling convention, which is how `declare c` calls:
+/// `ms_abi` is Windows' own, `sysv_abi` every other target's. `cdecl` is the C convention, and
+/// `stdcall`, `fastcall` and `thiscall` are 32-bit x86's, which 64-bit targets ignore;
+/// `noreturn` changes no call. Any other attribute is taken as a convention (`vectorcall`,
+/// `pcs("aapcs")`, `preserve_most`, `swiftcall`): what isn't known is refused.
+pub fn foreign_convention(attributes: &[String], windows: bool) -> Option<&str> {
+    attributes
+        .iter()
+        .find(|a| match a.as_str() {
+            "cdecl" | "stdcall" | "fastcall" | "thiscall" | "noreturn" => false,
+            "ms_abi" => !windows,
+            "sysv_abi" => windows,
+            _ => true,
+        })
+        .map(String::as_str)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -447,5 +465,32 @@ mod tests {
         assert!(compare(&signed_out, &fixed).is_err());
         assert!(compare(&Shape::Void, &CType::Void).is_ok());
         assert!(compare(&Shape::Void, &int(32, true)).is_err());
+    }
+
+    #[test]
+    fn a_calling_convention_other_than_the_target_s_is_refused() {
+        let refused = |a: &str, windows| {
+            foreign_convention(&["cdecl".to_string(), a.to_string()], windows).map(str::to_string)
+        };
+        for windows in [false, true] {
+            for noise in ["cdecl", "stdcall", "fastcall", "thiscall", "noreturn"] {
+                assert_eq!(refused(noise, windows), None, "{noise}");
+            }
+            for other in [
+                "vectorcall",
+                "regcall",
+                "pcs(\"aapcs\")",
+                "preserve_most",
+                "preserve_all",
+                "preserve_none",
+                "swiftcall",
+            ] {
+                assert_eq!(refused(other, windows).as_deref(), Some(other), "{other}");
+            }
+        }
+        assert_eq!(refused("ms_abi", true), None);
+        assert_eq!(refused("ms_abi", false).as_deref(), Some("ms_abi"));
+        assert_eq!(refused("sysv_abi", false), None);
+        assert_eq!(refused("sysv_abi", true).as_deref(), Some("sysv_abi"));
     }
 }

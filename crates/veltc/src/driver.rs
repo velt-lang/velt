@@ -191,7 +191,8 @@ pub struct Session {
     /// Objects of std functions the program links instead of compiling (`std_cache`).
     pub std_objects: Vec<PathBuf>,
     /// What the source generators the build ran read, as build-stamp `file` entries
-    /// (`crate::generate`): a changed generator rebuilds the program.
+    /// (`crate::generate`): a changed generator rebuilds the program. The package headers its C
+    /// functions were checked against too (`native::c_stamp_inputs`).
     pub generator_inputs: Vec<String>,
     /// This builds a source generator host, whose generators must not reach outside the
     /// program (no I/O, clock, randomness or native code: [`check_generator_host`]).
@@ -351,6 +352,7 @@ fn sema_stage(
             &mut sess.diagnostics,
         );
         crate::native::note_checked(&mut sess.native, opts.packages.as_ref(), &checked);
+        crate::native::c_stamp_inputs(&checked, &mut sess.generator_inputs);
         sess.c_libs = crate::native::c_links(hir, &sess.sm, opts.packages.as_ref(), &opts.target());
     }
     let _ = t;

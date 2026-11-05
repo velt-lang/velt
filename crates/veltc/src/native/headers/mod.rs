@@ -11,7 +11,7 @@ mod compare;
 mod ctype;
 mod shape;
 
-use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 
@@ -33,8 +33,22 @@ struct Decl {
     span: Span,
 }
 
-/// The C libraries whose declarations passed the check on this target, per package root.
-pub type Checked = BTreeMap<PathBuf, BTreeSet<String>>;
+/// The C libraries whose declarations passed the check on this target, per package root, with
+/// the files of the package that check read (its headers, with what they include).
+pub type Checked = BTreeMap<PathBuf, BTreeMap<String, Vec<PathBuf>>>;
+
+/// Build-stamp `file` entries for the package files the checks in `checked` read: a build with
+/// nothing changed isn't checked again, so a changed header has to change the stamp.
+pub fn stamp_inputs(checked: &Checked, inputs: &mut Vec<String>) {
+    for file in checked.values().flat_map(|l| l.values()).flatten() {
+        let bytes = std::fs::read(file).unwrap_or_default();
+        inputs.push(format!(
+            "file {}\t{}",
+            vpm::probe::content_hash(&bytes),
+            vpm::relpath::absolute(file).display()
+        ));
+    }
+}
 
 /// Check the C declarations of `p` (std's, in `std_files`, aside) against their libraries'
 /// headers for `target`. Errors go to `diags`; the libraries that passed are returned.
@@ -87,13 +101,23 @@ pub fn check(
     }
     for ((root, library), (package, decls)) in groups {
         let headers = &package.c_libraries[&library].headers;
-        if check_library(&root, &library, headers, &decls, zig_target, target, diags) {
-            checked.entry(root).or_default().insert(library);
+        if let Some(read) =
+            check_library(&root, &library, headers, &decls, zig_target, target, diags)
+        {
+            let own = read.into_iter().filter(|f| in_package(f, &root)).collect();
+            checked.entry(root).or_default().insert(library, own);
         }
     }
     checked
 }
 
+/// Whether `file`, a path clang read, is in the package at `root`.
+fn in_package(file: &Path, root: &Path) -> bool {
+    file.starts_with(root) || root.canonicalize().is_ok_and(|r| file.starts_with(r))
+}
+
+/// Check `decls` of `library` against its `headers`, or find a check of them remembered: when
+/// they pass, the files the check read.
 #[allow(clippy::too_many_arguments)]
 fn check_library(
     root: &Path,
@@ -103,19 +127,19 @@ fn check_library(
     zig_target: &str,
     target: &str,
     diags: &mut Diagnostics,
-) -> bool {
+) -> Option<Vec<PathBuf>> {
     let first = decls[0].span;
     let home = match vpm::locations::velt_home() {
         Ok(home) => home,
         Err(e) => {
             diags.push(Diagnostic::error(e, first));
-            return false;
+            return None;
         }
     };
     let key = cache_key(root, headers, decls, target);
     let remembered = home.join("cache").join("headers").join(&key);
-    if still_holds(&remembered) {
-        return true;
+    if let Some(read) = still_holds(&remembered) {
+        return Some(read);
     }
     let parsed = velt_toolchain::zig::zig(&home)
         .and_then(|zig| parse(&zig, &home, root, headers, zig_target));
@@ -133,22 +157,32 @@ fn check_library(
                     "a library without headers says so in package.vlt with `unchecked: true`",
                 ),
             );
-            return false;
+            return None;
         }
     };
-    let long_bits = if target.contains("windows") { 32 } else { 64 };
+    let windows = target.contains("windows");
     let before = diags.len();
     for d in decls {
-        check_decl(d, &parsed, headers, long_bits, diags);
+        check_decl(d, &parsed, headers, windows, diags);
     }
-    if diags.len() == before {
-        // Remembered only when it passed; a failure to write it costs a check next time.
-        let _ = std::fs::create_dir_all(remembered.parent().unwrap_or(&home));
-        if let Some(text) = remembered_text(&read) {
-            let _ = std::fs::write(&remembered, text);
-        }
+    if diags.len() != before {
+        return None;
     }
-    diags.len() == before
+    // Remembered only when it passed; a failure to write it costs a check next time.
+    remember(&remembered, &read);
+    Some(read)
+}
+
+/// Remember at `remembered` that a check which read `read` passed. The file is replaced whole
+/// (written beside it and renamed), so a torn write can't leave a list of fewer files, which
+/// would still hold.
+fn remember(remembered: &Path, read: &[PathBuf]) {
+    if let Some(dir) = remembered.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    if let Some(text) = remembered_text(read) {
+        let _ = vpm::json_file::write_atomic(remembered, &text);
+    }
 }
 
 /// What a remembered check holds: a digest and the path of each file its parse read, one per
@@ -162,16 +196,17 @@ fn remembered_text(read: &[PathBuf]) -> Option<String> {
     Some(text)
 }
 
-/// Whether a check was remembered at `remembered` and every file its parse read is unchanged.
-fn still_holds(remembered: &Path) -> bool {
-    let Ok(text) = std::fs::read_to_string(remembered) else {
-        return false;
-    };
-    !text.is_empty()
-        && text.lines().all(|line| match line.split_once('\t') {
-            Some((digest, file)) => file_digest(Path::new(file)).as_deref() == Some(digest),
-            None => false,
+/// The files a check remembered at `remembered` read, when there is one and every one of them
+/// is unchanged.
+fn still_holds(remembered: &Path) -> Option<Vec<PathBuf>> {
+    let text = std::fs::read_to_string(remembered).ok()?;
+    let read: Option<Vec<PathBuf>> = (text.lines())
+        .map(|line| {
+            let (digest, file) = line.split_once('\t')?;
+            (file_digest(Path::new(file)).as_deref() == Some(digest)).then(|| PathBuf::from(file))
         })
+        .collect();
+    read.filter(|read| !read.is_empty())
 }
 
 /// The SHA-256 of a file's bytes, hex.
@@ -181,7 +216,8 @@ fn file_digest(file: &Path) -> Option<String> {
     Some(digest.iter().map(|b| format!("{b:02x}")).collect())
 }
 
-fn check_decl(d: &Decl, h: &Headers, headers: &[String], long_bits: u32, diags: &mut Diagnostics) {
+fn check_decl(d: &Decl, h: &Headers, headers: &[String], windows: bool, diags: &mut Diagnostics) {
+    let long_bits = if windows { 32 } else { 64 };
     let Some(c) = h.functions.get(&d.name) else {
         diags.push(Diagnostic::error(
             format!(
@@ -201,6 +237,19 @@ fn check_decl(d: &Decl, h: &Headers, headers: &[String], long_bits: u32, diags: 
             ),
             d.span,
         ));
+        return;
+    }
+    if let Some(convention) = compare::foreign_convention(&c.attributes, windows) {
+        diags.push(
+            Diagnostic::error(
+                format!(
+                    "C function `{}` is `__attribute__(({convention}))` in {}, a calling convention `declare c` doesn't call",
+                    d.name, c.at
+                ),
+                d.span,
+            )
+            .with_note("`declare c` calls with the target's C calling convention"),
+        );
         return;
     }
     if c.params.len() != d.params.len() {
@@ -509,19 +558,54 @@ mod tests {
         std::fs::write(&outer, "#include \"inner.h\"\n").unwrap();
         std::fs::write(&inner, "int f(int a);\n").unwrap();
         let remembered = dir.path().join("remembered");
-        assert!(!still_holds(&remembered));
-        std::fs::write(
-            &remembered,
-            remembered_text(&[outer, inner.clone()]).unwrap(),
-        )
-        .unwrap();
-        assert!(still_holds(&remembered));
+        assert_eq!(still_holds(&remembered), None);
+        let read = [outer, inner.clone()];
+        remember(&remembered, &read);
+        assert_eq!(still_holds(&remembered).as_deref(), Some(&read[..]));
         std::fs::write(&inner, "int f(long a);\n").unwrap();
-        assert!(!still_holds(&remembered));
+        assert_eq!(still_holds(&remembered), None);
         std::fs::remove_file(&inner).unwrap();
-        assert!(!still_holds(&remembered));
+        assert_eq!(still_holds(&remembered), None);
         std::fs::write(&remembered, "checked\n").unwrap();
-        assert!(!still_holds(&remembered));
+        assert_eq!(still_holds(&remembered), None);
+        std::fs::write(&remembered, "").unwrap();
+        assert_eq!(still_holds(&remembered), None);
+    }
+
+    /// Remembering replaces the file rather than writing into it: what another name of the old
+    /// file reads stays whole (as a reader in the middle of the write would see it).
+    #[test]
+    fn remembering_replaces_the_file_whole() {
+        let dir = tempfile::tempdir().unwrap();
+        let header = dir.path().join("a.h");
+        std::fs::write(&header, "int f(int a);\n").unwrap();
+        let remembered = dir.path().join("remembered");
+        std::fs::write(&remembered, "old\n").unwrap();
+        let other_name = dir.path().join("other");
+        std::fs::hard_link(&remembered, &other_name).unwrap();
+        remember(&remembered, std::slice::from_ref(&header));
+        assert_eq!(std::fs::read_to_string(&other_name).unwrap(), "old\n");
+        assert_eq!(still_holds(&remembered), Some(vec![header]));
+    }
+
+    /// What the stamp gets: the package files each check read, by digest.
+    #[test]
+    fn the_stamp_has_the_package_files_a_check_read() {
+        let dir = tempfile::tempdir().unwrap();
+        let header = dir.path().join("own.h");
+        std::fs::write(&header, "int f(int a);\n").unwrap();
+        let mut checked = Checked::new();
+        checked
+            .entry(dir.path().to_path_buf())
+            .or_default()
+            .insert("own".into(), vec![header.clone()]);
+        let mut inputs = Vec::new();
+        stamp_inputs(&checked, &mut inputs);
+        let hash = vpm::probe::content_hash(b"int f(int a);\n");
+        let path = vpm::relpath::absolute(&header);
+        assert_eq!(inputs, [format!("file {hash}\t{}", path.display())]);
+        assert!(in_package(&header, dir.path()));
+        assert!(!in_package(Path::new("/z/lib/stdio.h"), dir.path()));
     }
 
     #[test]
