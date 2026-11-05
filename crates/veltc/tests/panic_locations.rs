@@ -1,8 +1,8 @@
 //! Panic and uncaught-error messages name their source location (stderr; the goldens under
 //! `tests/golden/lang/panic_*` check stdout and exit codes). Each program runs in debug mode and
-//! in release mode with each backend: Cranelift, and LLVM when clang is installed (the backend
-//! `--release` picks then, so a plain `--release` run would only repeat that one). An uncaught
-//! error is reported once.
+//! in release mode with each backend: Cranelift, and LLVM when clang is installed. With clang,
+//! a plain `--release` selects LLVM, so it would only repeat that run. An uncaught error is
+//! reported once.
 
 use std::path::{Path, PathBuf};
 
