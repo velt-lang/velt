@@ -1,0 +1,17 @@
+// `Parameters` and `ReturnType` of `typeof` a generic function: as in TypeScript, the signature
+// with each type parameter at its constraint, else `unknown`.
+function match<T, R>(state: { value: T }, arms: { on: (v: T) => R }): R {
+  return arms.on(state.value);
+}
+const o = {
+  m(arms: Parameters<typeof match>[1]) {
+    return match({ value: 1 as unknown }, arms);
+  },
+};
+console.log(o.m({ on: (v) => String(v) + "!" }));
+function lengthOf<S extends string>(s: S): number { return s.length; }
+const args: Parameters<typeof lengthOf> = ["abc"];
+console.log(lengthOf(args[0]));
+function wrap<V>(v: V): { v: V } { return { v }; }
+const r: ReturnType<typeof wrap> = { v: 3 };
+console.log(r.v);

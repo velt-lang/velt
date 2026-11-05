@@ -1,0 +1,8 @@
+// `typeof f` of a generic function in a field: the field holds
+// the function and calls pass what they pass, as in the JavaScript TypeScript erases to.
+function box<T>(v: T): { v: T } { return { v }; }
+interface Ctx { box: typeof box; name: string; }
+const ctx: Ctx = { box, name: "c" };
+console.log(ctx.box(1).v, ctx.box("s").v);
+class Holder { maker: typeof box = box; }
+console.log(new Holder().maker(true).v);

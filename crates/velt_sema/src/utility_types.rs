@@ -112,6 +112,19 @@ impl Ctx<'_> {
         if self.dynamic(t) == Some(crate::any::Dynamic::Any) {
             return t;
         }
+        // `[A, B][1]` (`Parameters<typeof f>[1]`): the element, as in TypeScript.
+        if let TyKind::Tuple(elems) = self.ty.kind(t).clone() {
+            let at = match self.ty.kind(k) {
+                TyKind::Literal(crate::hir::LitValue::Float(_, bits)) => f64::from_bits(*bits),
+                TyKind::Literal(crate::hir::LitValue::Int(_, n)) => *n as f64,
+                _ => -1.0,
+            };
+            if at >= 0.0 && at.fract() == 0.0 {
+                if let Some(&e) = elems.get(at as usize) {
+                    return e;
+                }
+            }
+        }
         let op = "an indexed access type";
         let written = match &object.kind {
             ast::TypeExprKind::Named { path, .. } if path.len() == 1 => Some(path[0].name.clone()),
