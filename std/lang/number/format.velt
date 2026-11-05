@@ -21,38 +21,41 @@ import {
   lowBytes,
 } from "velt/lang/number/text";
 
-/** `String(x)` of a finite `x` that is not 0: its text and length (at most 25 bytes). */
 struct FloatText {
   t: Text;
   len: i64;
 }
 
+/** `Infinity` in a word. */
+const INFINITY: u64 = 0x7974696e69666e49;
+
+function special(w0: u64, w1: u64, len: i64): FloatText {
+  return FloatText { t: Text { w0, w1, w2: 0, w3: 0 }, len };
+}
+
+/** `String(x)` of an `x` that is not 0: its text and length (at most 25 bytes). */
 function floatText(x: f64): FloatText {
+  if (x != x) {
+    return special(0x4e614e, 0, 3);
+  }
+  if (x == Infinity) {
+    return special(INFINITY, 0, 8);
+  }
+  if (x == -Infinity) {
+    return special((INFINITY << 8) | MINUS, INFINITY >> 56, 9);
+  }
   const neg = x < 0;
   const sh = shortest(neg ? -x : x);
   // The digits without their trailing zeros (at most 17 digits, so at most 16 zeros).
   let m = sh.f;
   let e = sh.e;
   if (m % 10 == 0) {
-    // Most shortest digits end in another digit; the zeros of the rest, sixteen, eight, four,
-    // two, then one at a time.
-    if (m % 10000000000000000 == 0) {
-      m = m / 10000000000000000;
-      e += 16;
-    }
+    // Most shortest digits end in another digit; the zeros of the rest, eight, then one at a time.
     if (m % 100000000 == 0) {
       m = m / 100000000;
       e += 8;
     }
-    if (m % 10000 == 0) {
-      m = m / 10000;
-      e += 4;
-    }
-    if (m % 100 == 0) {
-      m = m / 100;
-      e += 2;
-    }
-    if (m % 10 == 0) {
+    while (m != 0 && m % 10 == 0) {
       m = m / 10;
       e += 1;
     }
@@ -104,15 +107,6 @@ function floatText(x: f64): FloatText {
  */
 export function f64Text(x: f64): string {
   noInline();
-  if (x != x) {
-    return "NaN";
-  }
-  if (x == Infinity) {
-    return "Infinity";
-  }
-  if (x == -Infinity) {
-    return "-Infinity";
-  }
   const f = floatText(x);
   const t = f.t;
   if (f.len <= 23) {
@@ -120,13 +114,7 @@ export function f64Text(x: f64): string {
   }
   // 24 or 25 bytes: appended to an empty string, which makes a heap string of its own.
   let s = "";
-  const w0 = t.w0;
-  const w1 = t.w1;
-  const w2 = t.w2;
-  const w3 = t.w3;
-  const rest = (f.len - 24) as usize;
-  strbufPushAsciiWords(s, w0, w1, w2, 24);
-  strbufPushAsciiWords(s, w3, 0, 0, rest);
+  pushText(s, t, f.len);
   return s;
 }
 
@@ -136,34 +124,19 @@ export function f64Text(x: f64): string {
  */
 export function pushF64(buf: string, x: f64): void {
   noInline();
-  if (x != x) {
-    strbufPushAsciiWords(buf, 0x4e614e, 0, 0, 3);
-    return;
-  }
-  if (x == Infinity || x == -Infinity) {
-    // `Infinity`, after a minus for -Infinity.
-    const inf: u64 = 0x7974696e69666e49;
-    if (x > 0) {
-      strbufPushAsciiWords(buf, inf, 0, 0, 8);
-    } else {
-      const w0 = (inf << 8) | MINUS;
-      const w1 = inf >> 56;
-      strbufPushAsciiWords(buf, w0, w1, 0, 9);
-    }
-    return;
-  }
   const f = floatText(x);
-  const t = f.t;
+  pushText(buf, f.t, f.len);
+}
+
+function pushText(buf: string, t: Text, len: i64): void {
   const w0 = t.w0;
   const w1 = t.w1;
   const w2 = t.w2;
-  if (f.len <= 24) {
-    const len = f.len as usize;
-    strbufPushAsciiWords(buf, w0, w1, w2, len);
+  if (len <= 24) {
+    strbufPushAsciiWords(buf, w0, w1, w2, len as usize);
     return;
   }
   const w3 = t.w3;
-  const rest = (f.len - 24) as usize;
   strbufPushAsciiWords(buf, w0, w1, w2, 24);
-  strbufPushAsciiWords(buf, w3, 0, 0, rest);
+  strbufPushAsciiWords(buf, w3, 0, 0, (len - 24) as usize);
 }

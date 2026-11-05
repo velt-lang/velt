@@ -1,14 +1,14 @@
 // velt/lang/number (internal): the shortest decimal digits of a double, in Velt (#1982): the
 // Schubfach algorithm (R. Giulietti, "The Schubfach way to render doubles", 2020; the JDK's
 // `DoubleToDecimal`). The double's rounding interval is scaled by a 126-bit power of ten
-// (std/lang/number/pow10.velt) to integers at 17 digits; the shortest decimal inside it is either
+// (`pow10`, from std/lang/number/pow10.velt) to integers at 17 digits; the shortest decimal inside it is either
 // one digit shorter (a multiple of ten) or one of the two integers around the scaled value, the
 // closer one, the even one on a tie. JavaScript prints the same digits (Number::toString).
 //
 // Two changes from the JDK: a tiny subnormal is not given a second digit (Java prints
 // `4.9E-324`, JavaScript `5e-324`), so the one-digit-shorter test runs from two digits up.
 
-import { G, G_K_MIN } from "velt/lang/number/pow10";
+import { ADJUST, FIVES, G_K_MIN, G_STEP, KEPT } from "velt/lang/number/pow10";
 
 declare function velt_rt_math_umulh(a: u64, b: u64): u64;
 
@@ -49,6 +49,34 @@ function rop(g1: u64, g0: u64, cp: u64): u64 {
   return vbp | (((z & MASK63) + MASK63) >> 63);
 }
 
+// 10^-k as 126 bits, `g1` the high 63 and `g0` the low 63 (the table's text, and
+// `rebuild` in scripts/gen-pow10-table.py, which checks this against every exact value): the kept
+// power at the next multiple of the step, times the power of five in between.
+struct Pow10 {
+  g1: u64;
+  g0: u64;
+}
+
+function pow10(k: i64): Pow10 {
+  const at = k - G_K_MIN;
+  const n = (at + G_STEP - 1) / G_STEP;
+  const j = n * G_STEP - at;
+  const c1 = KEPT[(n * 2) as usize];
+  const c0 = KEPT[(n * 2 + 1) as usize];
+  const m = FIVES[j as usize];
+  const low0 = c0 * m;
+  const low1 = c1 * m;
+  const t = ((low0 >> 63) | (velt_rt_math_umulh(c0, m) << 1)) + (low1 & MASK63);
+  const p2 = (t >> 63) + (low1 >> 63) + (velt_rt_math_umulh(c1, m) << 1);
+  const p1 = t & MASK63;
+  const sh = (flog2pow10(-k) - flog2pow10(-k - j) - j) as u64;
+  const adjust = (ADJUST[(at >> 5) as usize] >> (((at & 31) * 2) as u64)) & 3;
+  const g0 = (((low0 & MASK63) >> sh) | (p1 << (63 - sh))) & MASK63;
+  const g0a = g0 + adjust;
+  const g1 = ((p1 >> sh) | (p2 << (63 - sh))) & MASK63;
+  return Pow10 { g1: g1 + (g0a >> 63), g0: g0a & MASK63 };
+}
+
 // The shortest digits of `c * 2^q`.
 function toDecimal(q: i64, c: u64): Shortest {
   const out = c & 1;
@@ -62,9 +90,9 @@ function toDecimal(q: i64, c: u64): Shortest {
     k = flog10ThreeQuartersPow2(q);
   }
   const h = (q + flog2pow10(-k) + 2) as u64;
-  const at = ((k - G_K_MIN) * 2) as usize;
-  const g1 = G[at];
-  const g0 = G[at + 1];
+  const g = pow10(k);
+  const g1 = g.g1;
+  const g0 = g.g0;
   const vb = rop(g1, g0, cb << h);
   const vbl = rop(g1, g0, cbl << h);
   const vbr = rop(g1, g0, cbr << h);
