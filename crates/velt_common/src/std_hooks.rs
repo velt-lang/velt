@@ -234,6 +234,23 @@ hooks! {
     float_push => lang_hooks_number_float, "floatPush", sig((&mut string, f64) -> void), lowered, fallback,
         replaces("velt_rt_strbuf_push_f64"), bench("float_to_string");
 
+    // inspect.velt: what `console.log` and `util.inspect` write the same way for every type
+    // (`velt_vir` `glue/format*.rs` write what differs per type around it). Checked where live
+    // code may print one; lowering's own formatter is the fallback, and what a program built
+    // without std prints with.
+    /// An object's depth limit and cycle check, before lowering writes its fields.
+    open_object => lang_hooks_inspect, "openObject", sig((&mut string, &string, u64, u32) -> bool),
+        lowered, fallback, constructs(Format, Dynamic);
+    /// An array: `[ 1, 2 ]`, its first 100 elements, `[Array]` past the depth limit.
+    inspect_array => lang_hooks_inspect, "inspectArray", sig(<A>(&mut string, &[A], u32) -> void),
+        lowered, fallback, constructs(Format, Dynamic);
+    /// A `Map`: `Map(1) { 'a' => 1 }`.
+    inspect_map => lang_hooks_inspect, "inspectMap", sig(<A, B>(&mut string, &Map(A, B), u32) -> void),
+        lowered, fallback, constructs(Format, Dynamic);
+    /// A `Set`, of the map holding its members and the identity of the `Set`: `Set(1) { 'a' }`.
+    inspect_set => lang_hooks_inspect, "inspectSet", sig(<A>(&mut string, &Map(A, bool), u64, u32) -> void),
+        lowered, fallback, constructs(Format, Dynamic);
+
     // process.velt: the builtin `process` namespace (`velt_sema` `process.rs`).
     /// `process.stdout.write(s)` / `process.stderr.write(s)`.
     process_write => lang_hooks_process, "processWrite", sig((u32, &string) -> bool);
@@ -730,6 +747,12 @@ pub fn find(qualified: &str) -> Option<&'static Hook> {
 /// printer where one is unchecked. The integer hooks have no fallback (#2197): sema checks them
 /// where live code has one of their `constructs` ([`crate::hook_demand`]).
 pub const ON_DEMAND_FLOAT: &[&str] = &["number_text", "number_push", "float_text", "float_push"];
+
+/// Lowered hooks with a fallback that sema checks where live code has one of their `constructs`,
+/// by their entries' names: what std/lang/hooks/inspect.velt writes for every type. Lowering's own
+/// formatter writes the same text where one is unchecked (a program built without std, a value
+/// the live set misses until #2161's superset is in).
+pub const INSPECT_SHAPES: &[&str] = &["open_object", "inspect_array", "inspect_map", "inspect_set"];
 
 /// The qualified names of the hooks named in `names` ([`ON_DEMAND_FLOAT`]).
 pub fn on_demand(names: &'static [&'static str]) -> impl Iterator<Item = String> {

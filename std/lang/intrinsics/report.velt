@@ -1,6 +1,8 @@
 // velt/lang/intrinsics (internal): values written as an uncaught error's report and Node's
 // `util.inspect` write them.
 
+import type { Mut } from "./modes";
+
 /**
  * What the report of `error` thrown and not caught writes after `Uncaught ` and before the
  * location: Node's header for an `Error` (`ParseError: bad`), any other value as `console.log`
@@ -19,3 +21,10 @@ export declare intrinsic function throwLoc(): string;
  * prints it inside an array), for messages that show values.
  */
 export declare intrinsic function inspect<T>(value: T): string;
+
+/**
+ * Appends `value` as `console.log` shows it inside a container (`'a'`, `[ 1, 2 ]`, `Point { x: 1 }`)
+ * at Node's depth `depth` to the string builder `buf`: what velt/lang/hooks/inspect calls for each
+ * element. A number, a string or a boolean is appended in place.
+ */
+export declare intrinsic function inspectNested<T>(buf: Mut<string>, value: T, depth: u32): void;

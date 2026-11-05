@@ -1,0 +1,11 @@
+class Point {
+  x: number = 1;
+  y: number = 2;
+}
+
+function main(): void {
+  const p = new Point();
+  for (let i = 0; i < 20000; i++) {
+    console.log(p);
+  }
+}

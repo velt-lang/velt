@@ -6,8 +6,10 @@
 use velt_sema::hir::{AdtKind, TyId, TyKind};
 
 use crate::lower::glue::literals::inspect_key;
-use crate::lower::FnLower;
-use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
+use crate::lower::hook_calls::{self as hooks, ty, HookTy};
+use crate::lower::rt::Rt;
+use crate::lower::{cint, FnLower};
+use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Ty, STR_AGG};
 
 impl FnLower<'_, '_> {
     /// An object `Name { a: 1, b: 'x' }` (`{ … }` without a name), `Name {}` when it shows no
@@ -42,16 +44,44 @@ impl FnLower<'_, '_> {
         }
         let optional = self.optional_fields(ty, &shown);
         let cut = format!("[{}]", name.as_deref().unwrap_or("Object"));
-        self.within_depth(buf, depth, &cut, obj.clone(), |lw, child| {
-            let body = |lw: &mut Self| match optional.iter().any(|o| *o) {
-                true => lw.format_fields_optional(buf, name, place, ty, &shown, &optional, &child),
-                false => lw.format_fields(buf, name, place, ty, &shown, &child),
-            };
-            match obj {
-                Some(p) => lw.format_once(buf, p, body),
-                None => body(lw),
-            }
-        });
+        let fields = |lw: &mut Self, name, child: &Operand| match optional.iter().any(|o| *o) {
+            true => lw.format_fields_optional(buf, name, place, ty, &shown, &optional, child),
+            false => lw.format_fields(buf, name, place, ty, &shown, child),
+        };
+        // The depth limit and the cycle check, in std where the program has them checked.
+        let id = match &obj {
+            Some(p) => self.rvalue_temp(Ty::U64, Rvalue::Cast(p.clone(), Ty::U64)),
+            None => cint(0, Ty::U64),
+        };
+        let cut_text = self.str_lit(&cut);
+        let cut_text = self.operand_addr(cut_text, Ty::Agg(STR_AGG));
+        let open = hooks::open_object(
+            self,
+            ty::Str::arg(buf.clone()),
+            ty::Str::arg(cut_text),
+            ty::U64::arg(id),
+            ty::U32::arg(depth.clone()),
+        );
+        let Some(open) = open else {
+            return self.within_depth(buf, depth, &cut, obj.clone(), |lw, child| match obj {
+                Some(p) => lw.format_once(buf, p, |lw| fields(lw, name, &child)),
+                None => fields(lw, name, &child),
+            });
+        };
+        let open = open.emit(self).op();
+        let (body, done) = (self.new_block(), self.new_block());
+        self.branch(open, body, done);
+        self.switch_to(body);
+        let child = self.rvalue_temp(
+            Ty::U32,
+            Rvalue::Binary(BinOp::Add, depth.clone(), cint(1, Ty::U32)),
+        );
+        fields(self, name, &child);
+        if obj.is_some() {
+            self.call_rt(Rt::StrbufInspectLeave, vec![buf.clone()], None);
+        }
+        self.goto(done);
+        self.switch_to(done);
     }
 
     /// Panic: the object (of an object type) has a field that is `void` after substitution
@@ -123,8 +153,14 @@ impl FnLower<'_, '_> {
             .into_iter()
             .map(|i| {
                 let (index, n, t) = &shown[i];
-                let key =
-                    velt_sema::property_order::symbol_key(n).unwrap_or_else(|| inspect_key(n));
+                // Node 26 writes a symbol key as `Symbol(d): v`, without brackets.
+                let key = match velt_sema::property_order::symbol_key(n) {
+                    Some(k) => {
+                        let k = k.trim_start_matches('[').trim_end_matches(']');
+                        k.replace('\\', "\\\\").replace('\'', "\\'")
+                    }
+                    None => inspect_key(n),
+                };
                 (*index, key, *t)
             })
             .collect()

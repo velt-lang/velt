@@ -1,0 +1,6 @@
+function main(): void {
+  const o = { a: 1, b: "two", c: true };
+  for (let i = 0; i < 20000; i++) {
+    console.log(o);
+  }
+}

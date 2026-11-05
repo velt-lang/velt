@@ -209,6 +209,9 @@ impl FnLower<'_, '_> {
         let hir::Def::ExternFn(x) = self.cx.hir.def(def) else {
             ice("not an extern")
         };
+        if let Some(v) = self.strbuf_push_literal(&x.symbol, args) {
+            return v;
+        }
         let foreign = x
             .params
             .iter()

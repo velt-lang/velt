@@ -22,6 +22,7 @@
 use velt_sema::hir::{AdtKind, DefId, TyId, TyKind};
 
 use super::{Glue, SLOT_FORMAT};
+use crate::lower::hook_calls::{self as hooks, ty, HookTy};
 use crate::lower::hooks::Hook;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
@@ -300,8 +301,15 @@ impl FnLower<'_, '_> {
                 self.switch_to(done);
             }
             TyKind::Array(e) => {
-                let arr = self.content(place, ty);
-                self.format_array(buf, &arr, e, depth)
+                let a = self.value_arg(place, ty);
+                let args = (ty::Str::arg(buf.clone()), ty::Array::<ty::Gen>::arg(a));
+                match hooks::inspect_array(self, [e], args.0, args.1, ty::U32::arg(depth.clone())) {
+                    Some(call) => _ = call.emit(self),
+                    None => {
+                        let arr = self.content(place, ty);
+                        self.format_array(buf, &arr, e, depth)
+                    }
+                }
             }
             TyKind::Shared(e) => {
                 let bx = self.cx.shared_box(e);
@@ -328,6 +336,15 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// The value at `place` (of type `ty`) as a borrowed argument of a hook: a scalar or a pointer
+    /// by value, an aggregate by its address.
+    pub(super) fn value_arg(&mut self, place: &Place, ty: TyId) -> Operand {
+        match self.cx.ty(ty) {
+            Ty::Agg(_) => self.addr(place.clone()),
+            _ => Operand::Copy(place.clone()),
+        }
+    }
+
     /// Node's `depth` limit for a container at depth `depth`: deeper than [`DEPTH`], `cut`
     /// (`[Object]`) instead of `body`, which is given its entries' depth. `obj`: the address
     /// of an object that may be part of a cycle, which prints `[Circular *N]` there instead
@@ -348,6 +365,7 @@ impl FnLower<'_, '_> {
         self.branch(deep, deep_bb, shallow_bb);
         self.switch_to(deep_bb);
         if let Some(p) = obj {
+            let p = self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64));
             let circular = self.rt_u8(Rt::StrbufInspectCircular, vec![buf.clone(), p]);
             let cut_bb = self.new_block();
             self.branch(circular, done, cut_bb);
@@ -506,6 +524,7 @@ impl FnLower<'_, '_> {
     /// object graph with a cycle prints `[Circular *1]` there, and the object it refers back to
     /// gets a `<ref *1>` prefix, as node prints it.
     pub(super) fn format_once(&mut self, buf: &Operand, p: Operand, body: impl FnOnce(&mut Self)) {
+        let p = self.rvalue_temp(Ty::U64, Rvalue::Cast(p, Ty::U64));
         let fresh = self.rt_u8(Rt::StrbufInspectEnter, vec![buf.clone(), p]);
         let (print, done) = (self.new_block(), self.new_block());
         self.branch(fresh, print, done);
