@@ -1,0 +1,234 @@
+// velt/net (internal): `Certificate`, an X.509 v3 certificate (RFC 5280 §4.1) parsed from DER
+// for path validation: the fields a TLS client checks, as ranges into the certificate's bytes
+// (no copies). Parsing is strict where webpki is: v3 only, the outer and inner signature
+// algorithms byte-identical, extensions at most once each, and an unknown critical extension
+// refused. Malformed input throws a `bad_certificate` `TlsFailure`.
+
+import { daysFromCivil, daysInMonth } from "velt/time/civil";
+import { keyAlgorithm, signatureAlgorithm } from "velt/net/tls/x509/algorithms";
+import {
+  BIT_STRING,
+  BOOLEAN,
+  DerReader,
+  GENERALIZED_TIME,
+  INTEGER,
+  OCTET_STRING,
+  OID,
+  SEQUENCE,
+  UTC_TIME,
+} from "velt/net/tls/x509/der";
+import { Tlv } from "velt/net/tls/x509/tlv";
+import { readExtension } from "velt/net/tls/x509/extensions";
+
+function none(): Tlv {
+  return { tag: 0, head: 0, start: 0, end: 0 };
+}
+
+/** An X.509 certificate, parsed. Ranges (`Tlv`) index `der`. */
+export class Certificate {
+  /** The certificate's DER encoding. */
+  der: u8[];
+  /** The signed part, header included: what `signature` signs. */
+  tbs: Tlv;
+  /** The signature algorithm (`SIG_*` of velt/net/tls/algorithms). */
+  signatureAlgorithm: i32;
+  /** The signature's bytes. */
+  signature: Tlv;
+  /** The serial number's contents. */
+  serial: Tlv;
+  /** The issuer and subject Names, headers included (compared byte for byte, as webpki does). */
+  issuer: Tlv;
+  subject: Tlv;
+  /** The validity period, in seconds since the Unix epoch, both ends included. */
+  notBefore: i64;
+  notAfter: i64;
+  /** The SubjectPublicKeyInfo, header included. */
+  spki: Tlv;
+  /** The key algorithm (`KEY_*`). */
+  keyAlgorithm: i32;
+  /** The key's bytes: an RSAPublicKey, an uncompressed EC point, or 32 Ed25519 bytes. */
+  publicKey: Tlv;
+  /** basicConstraints: whether this is a CA, and its pathLenConstraint (-1 for none). */
+  isCa: bool;
+  pathLen: i64;
+  /** keyUsage's bits (bit 0 is digitalSignature, 5 keyCertSign), or -1 without the extension. */
+  keyUsage: i64;
+  /** extKeyUsage's contents (a SEQUENCE of OIDs); `tag` 0 without the extension. */
+  extKeyUsage: Tlv;
+  /** subjectAltName's GeneralNames; `tag` 0 without the extension. */
+  subjectAltName: Tlv;
+  /** nameConstraints' contents; `tag` 0 without the extension. */
+  nameConstraints: Tlv;
+  /** The subject and authority key identifiers; `tag` 0 when absent. */
+  subjectKeyId: Tlv;
+  authorityKeyId: Tlv;
+
+  /** Parses the DER certificate `der` (all of it). */
+  constructor(der: u8[]) {
+    this.der = der;
+    this.tbs = none();
+    this.signatureAlgorithm = 0;
+    this.signature = none();
+    this.serial = none();
+    this.issuer = none();
+    this.subject = none();
+    this.notBefore = 0;
+    this.notAfter = 0;
+    this.spki = none();
+    this.keyAlgorithm = 0;
+    this.publicKey = none();
+    this.isCa = false;
+    this.pathLen = -1;
+    this.keyUsage = -1;
+    this.extKeyUsage = none();
+    this.subjectAltName = none();
+    this.nameConstraints = none();
+    this.subjectKeyId = none();
+    this.authorityKeyId = none();
+    const r = new DerReader(der);
+    const cert = r.enter(SEQUENCE, der.length);
+    if (cert.end != der.length) {
+      r.fail("stray bytes after the certificate");
+    }
+    this.tbs = r.next(SEQUENCE, cert.end);
+    const outerAlg = r.next(SEQUENCE, cert.end);
+    const sigBits = r.next(BIT_STRING, cert.end);
+    this.signature = r.bitBytes(sigBits);
+    r.done(cert.end);
+    this.readTbs(r, outerAlg);
+    this.signatureAlgorithm = signatureAlgorithm(r, outerAlg);
+  }
+
+  private readTbs(r: DerReader, outerAlg: Tlv) {
+    const end = this.tbs.end;
+    r.pos = this.tbs.start;
+    // version [0] EXPLICIT, v3 (2): v1 and v2 certificates have no extensions to check.
+    if (r.peek(end) != 0xa0) {
+      r.fail("not a v3 certificate");
+    }
+    const v = r.enter(0xa0, end);
+    const version = r.next(INTEGER, v.end);
+    if (r.smallInt(version) != 2) {
+      r.fail("not a v3 certificate");
+    }
+    r.done(v.end);
+    this.serial = r.next(INTEGER, end);
+    if (this.serial.end == this.serial.start || this.serial.end - this.serial.start > 21) {
+      r.fail("bad serial number");
+    }
+    const alg = r.next(SEQUENCE, end);
+    if (!this.sameBytes(alg, outerAlg)) {
+      r.fail("the signature algorithm differs inside and outside the signed part");
+    }
+    this.issuer = r.next(SEQUENCE, end);
+    const validity = r.enter(SEQUENCE, end);
+    this.notBefore = readTime(r, validity.end);
+    this.notAfter = readTime(r, validity.end);
+    r.done(validity.end);
+    this.subject = r.next(SEQUENCE, end);
+    this.spki = r.enter(SEQUENCE, end);
+    const keyAlg = r.next(SEQUENCE, this.spki.end);
+    const keyBits = r.next(BIT_STRING, this.spki.end);
+    const key = r.bitBytes(keyBits);
+    r.done(this.spki.end);
+    this.publicKey = key;
+    this.keyAlgorithm = keyAlgorithm(r, keyAlg);
+    r.pos = this.spki.end;
+    // issuerUniqueID [1] and subjectUniqueID [2] (RFC 5280 §4.1.2.8): skipped.
+    if (r.peek(end) == 0x81) {
+      r.any(end);
+    }
+    if (r.peek(end) == 0x82) {
+      r.any(end);
+    }
+    if (r.peek(end) == 0xa3) {
+      const x = r.enter(0xa3, end);
+      const list = r.enter(SEQUENCE, x.end);
+      if (list.end == list.start) {
+        r.fail("empty extensions");
+      }
+      let seen: u64 = 0;
+      while (r.pos < list.end) {
+        const ext = r.enter(SEQUENCE, list.end);
+        const id = r.next(OID, ext.end);
+        let critical = false;
+        if (r.peek(ext.end) == (BOOLEAN as i32)) {
+          // An explicit FALSE is not DER, but webpki takes it, and so do browsers.
+          const flag = r.next(BOOLEAN, ext.end);
+          critical = r.boolean(flag);
+        }
+        const value = r.next(OCTET_STRING, ext.end);
+        r.done(ext.end);
+        seen = readExtension(this, r, id, critical, value, seen);
+        r.pos = ext.end;
+      }
+      r.done(x.end);
+    }
+    r.done(end);
+  }
+
+  private sameBytes(a: Tlv, b: Tlv): bool {
+    if (a.end - a.head != b.end - b.head) {
+      return false;
+    }
+    for (let i: usize = 0; i < a.end - a.head; i++) {
+      if (this.der[a.head + i] != this.der[b.head + i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+}
+
+// Two decimal digits at `p`, or -1 when either is not a digit.
+function twoDigits(b: u8[], p: usize): i64 {
+  const h = b[p] as i64;
+  const l = b[p + 1] as i64;
+  if (h < 48 || h > 57 || l < 48 || l > 57) {
+    return -1;
+  }
+  return (h - 48) * 10 + (l - 48);
+}
+
+// A UTCTime ("YYMMDDHHMMSSZ", 1950-2049) or GeneralizedTime ("YYYYMMDDHHMMSSZ") below `end`,
+// as Unix seconds (RFC 5280 §4.1.2.5: UTC, with seconds, no fractions).
+function readTime(r: DerReader, end: usize): i64 {
+  const t = r.any(end);
+  const b = r.b;
+  let p = t.start;
+  let year: i64 = 0;
+  if (t.tag == UTC_TIME && t.end - t.start == 13) {
+    const yy = twoDigits(b, p);
+    year = yy < 0 ? -1 : yy < 50 ? 2000 + yy : 1900 + yy;
+    p += 2;
+  } else if (t.tag == GENERALIZED_TIME && t.end - t.start == 15) {
+    const hi = twoDigits(b, p);
+    const lo = twoDigits(b, p + 2);
+    year = hi < 0 || lo < 0 ? -1 : hi * 100 + lo;
+    p += 4;
+  } else {
+    r.fail("bad time");
+  }
+  const month = twoDigits(b, p);
+  const day = twoDigits(b, p + 2);
+  const hour = twoDigits(b, p + 4);
+  const minute = twoDigits(b, p + 6);
+  const second = twoDigits(b, p + 8);
+  if (
+    year < 0 ||
+    month < 1 ||
+    month > 12 ||
+    day < 1 ||
+    day > daysInMonth(year, month) ||
+    hour < 0 ||
+    hour > 23 ||
+    minute < 0 ||
+    minute > 59 ||
+    second < 0 ||
+    second > 59 ||
+    b[p + 10] != 0x5a
+  ) {
+    r.fail("bad time");
+  }
+  return daysFromCivil(year, month, day) * 86400 + hour * 3600 + minute * 60 + second;
+}

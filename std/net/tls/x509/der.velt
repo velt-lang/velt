@@ -1,0 +1,202 @@
+// velt/net (internal): `DerReader`, a reader of DER (ITU-T X.690 §10), the encoding of X.509
+// certificates, over untrusted bytes. Strict as DER is: definite lengths in their shortest
+// form, single-byte tags (all that X.509 uses), and every element inside its parent. A
+// malformed input throws a `bad_certificate` `TlsFailure`, never an index panic. Elements are
+// ranges of the input (`Tlv`), not copies.
+
+import { BAD_CERTIFICATE, TlsFailure } from "velt/net/tls/alert";
+import { Tlv } from "velt/net/tls/x509/tlv";
+
+// Universal tags (X.690 §8), with the constructed bit where DER requires it.
+export const BOOLEAN: u8 = 0x01;
+export const INTEGER: u8 = 0x02;
+export const BIT_STRING: u8 = 0x03;
+export const OCTET_STRING: u8 = 0x04;
+export const NULL: u8 = 0x05;
+export const OID: u8 = 0x06;
+export const UTF8_STRING: u8 = 0x0c;
+export const PRINTABLE_STRING: u8 = 0x13;
+export const IA5_STRING: u8 = 0x16;
+export const UTC_TIME: u8 = 0x17;
+export const GENERALIZED_TIME: u8 = 0x18;
+export const SEQUENCE: u8 = 0x30;
+export const SET: u8 = 0x31;
+
+/** Reads DER elements of `b` from `pos`; each read stays below the `end` it is given. */
+export class DerReader {
+  b: u8[];
+  pos: usize;
+
+  /** A reader of `b` from 0. */
+  constructor(b: u8[]) {
+    this.b = b;
+    this.pos = 0;
+  }
+
+  /** Throws the `bad_certificate` failure for `what`. */
+  fail(what: string): never {
+    throw new TlsFailure(BAD_CERTIFICATE, `malformed certificate: ${what}`);
+  }
+
+  /** The tag of the next element below `end`, or -1 at `end`. */
+  peek(end: usize): i32 {
+    if (this.pos >= end) {
+      return -1;
+    }
+    return this.b[this.pos] as i32;
+  }
+
+  /** The next element below `end`, whatever its tag; `pos` moves past it. */
+  any(end: usize): Tlv {
+    const t = this.header(end);
+    this.pos = t.end;
+    return t;
+  }
+
+  /** The next element, which must have tag `tag`; `pos` moves past it. */
+  next(tag: u8, end: usize): Tlv {
+    const t = this.header(end);
+    if (t.tag != tag) {
+      this.fail(`expected tag ${tag}, found ${t.tag}`);
+    }
+    this.pos = t.end;
+    return t;
+  }
+
+  /** The next element, which must have tag `tag`; `pos` moves to its contents. */
+  enter(tag: u8, end: usize): Tlv {
+    const t = this.header(end);
+    if (t.tag != tag) {
+      this.fail(`expected tag ${tag}, found ${t.tag}`);
+    }
+    this.pos = t.start;
+    return t;
+  }
+
+  /** Throws unless `pos` is at `end` (the element's contents were all read). */
+  done(end: usize) {
+    if (this.pos != end) {
+      this.fail("stray bytes inside an element");
+    }
+  }
+
+  // The header of the element at `pos`, checked to end at or before `end`.
+  private header(end: usize): Tlv {
+    const b = this.b;
+    let p = this.pos;
+    if (end > b.length || p + 2 > end) {
+      this.fail("truncated element");
+    }
+    const tag = b[p];
+    if ((tag & 0x1f) == 0x1f) {
+      this.fail("multi-byte tag");
+    }
+    const first = b[p + 1];
+    p += 2;
+    let n: usize = 0;
+    if (first < 0x80) {
+      n = first as usize;
+    } else {
+      const k = (first & 0x7f) as usize;
+      // 0x80 is BER's indefinite length; more than 4 length bytes is never a certificate.
+      if (k == 0 || k > 4 || p + k > end) {
+        this.fail("bad length");
+      }
+      if (b[p] == 0) {
+        this.fail("length not in its shortest form");
+      }
+      for (let i: usize = 0; i < k; i++) {
+        n = (n << 8) | (b[p + i] as usize);
+      }
+      p += k;
+      if (n < 0x80) {
+        this.fail("length not in its shortest form");
+      }
+    }
+    if (n > end - p) {
+      this.fail("element runs past its parent");
+    }
+    return { tag: tag, head: this.pos, start: p, end: p + n };
+  }
+
+  /** Whether the contents of `t` are the bytes `want` (an OID's encoding, say). */
+  equals(t: Tlv, want: u8[]): bool {
+    if (t.end - t.start != want.length) {
+      return false;
+    }
+    for (let i: usize = 0; i < want.length; i++) {
+      if (this.b[t.start + i] != want[i]) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  /** A copy of the contents of `t`. */
+  bytes(t: Tlv): u8[] {
+    return this.b.slice(t.start as i64, t.end as i64);
+  }
+
+  /** A copy of the whole element `t`, header included. */
+  whole(t: Tlv): u8[] {
+    return this.b.slice(t.head as i64, t.end as i64);
+  }
+
+  /** A BOOLEAN's value (DER: 0x00 or 0xff only). */
+  boolean(t: Tlv): bool {
+    if (t.end - t.start != 1 || (this.b[t.start] != 0 && this.b[t.start] != 0xff)) {
+      this.fail("bad BOOLEAN");
+    }
+    return this.b[t.start] == 0xff;
+  }
+
+  /**
+   * A non-negative INTEGER below 2^62 (a version, a path length): minimal encoding, no sign
+   * bit set.
+   */
+  smallInt(t: Tlv): i64 {
+    const n = t.end - t.start;
+    if (n == 0 || n > 8 || (this.b[t.start] & 0x80) != 0) {
+      this.fail("bad small INTEGER");
+    }
+    if (n > 1 && this.b[t.start] == 0 && (this.b[t.start + 1] & 0x80) == 0) {
+      this.fail("INTEGER not in its shortest form");
+    }
+    let v: u64 = 0;
+    for (let i = t.start; i < t.end; i++) {
+      v = (v << 8) | (this.b[i] as u64);
+    }
+    if (v >= 0x4000000000000000) {
+      this.fail("INTEGER too large");
+    }
+    return v as i64;
+  }
+
+  /**
+   * The magnitude of a positive INTEGER (an RSA modulus, an ECDSA r or s): the range of its
+   * contents without the leading zero DER adds when the top bit is set. Throws for zero, a
+   * negative value or a non-minimal encoding.
+   */
+  unsigned(t: Tlv): Tlv {
+    const b = this.b;
+    if (t.end == t.start || (b[t.start] & 0x80) != 0) {
+      this.fail("INTEGER is not positive");
+    }
+    let s = t.start;
+    if (b[s] == 0) {
+      if (s + 1 == t.end || (b[s + 1] & 0x80) == 0) {
+        this.fail("INTEGER not in its shortest form or zero");
+      }
+      s += 1;
+    }
+    return { tag: t.tag, head: t.head, start: s, end: t.end };
+  }
+
+  /** The bits of a BIT STRING that must be whole bytes (a key, a signature): its byte range. */
+  bitBytes(t: Tlv): Tlv {
+    if (t.end == t.start || this.b[t.start] != 0) {
+      this.fail("BIT STRING with unused bits");
+    }
+    return { tag: t.tag, head: t.head, start: t.start + 1, end: t.end };
+  }
+}
