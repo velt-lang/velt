@@ -568,7 +568,6 @@ fn check_locked_checksums(old: &Lockfile, new: &Lockfile) -> Result<(), String> 
     Ok(())
 }
 
-/// The lockfile of `resolution`, with path sources relative to `root`; the path packages in
 /// The native library of a git or url package at `dir` (`from`: how its source reads; `work`:
 /// where its builds go), and where its C sources build (into `c_sources`). Building runs its
 /// build scripts or the pinned zig, as for a registry package without a prebuilt library, so
@@ -598,6 +597,7 @@ fn remote_native(
     native_from_source_in(&copy, &m, target, work)
 }
 
+/// The lockfile of `resolution`, with path sources relative to `root`; the path packages in
 /// `members` (a workspace's) are `workspace+<dir>`.
 fn to_lockfile(resolution: &Resolution, root: &Path, members: &[PathBuf]) -> Lockfile {
     let packages = resolution
