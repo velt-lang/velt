@@ -2,9 +2,9 @@
 // `yank_local`, behind the Rust server's checks). A yanked version stays downloadable, so
 // lockfiles that pin it keep installing; only its index entry's `yanked` changes.
 
-import { isValidPackageName } from "../names";
+import { isValidPackageName, normalizedName } from "../names";
 import { Version } from "../semver/version";
-import { ownerOf } from "./access";
+import { authorize, ownerOf } from "./access";
 import { text } from "./answer";
 import { purgeAfterWrite } from "./purge_after_write";
 import { RegistryStores } from "./registry_stores";
@@ -25,7 +25,24 @@ export async function yank(
   if (!isValidPackageName(name) || !Version.isValid(version)) {
     return text(400, "invalid package name or version");
   }
-  await ownerOf(stores, req, name);
+  // Only a caller who may write gets to hold the lock; by its normalized name, so `my-pkg` and
+  // `my_pkg` wait for each other.
+  const caller = await ownerOf(stores, req, name);
+  const held = await stores.lock.acquire(normalizedName(name));
+  try {
+    await authorize(stores, name, caller);
+    return await setYanked(stores, name, version, yanked);
+  } finally {
+    await held.release();
+  }
+}
+
+async function setYanked(
+  stores: RegistryStores,
+  name: string,
+  version: string,
+  yanked: bool,
+): Promise<Response> {
   const index = await stores.db.index(name);
   if (index == null) {
     return text(404, `\`${name}\` is not in the registry`);
