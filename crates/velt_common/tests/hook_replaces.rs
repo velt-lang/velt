@@ -374,3 +374,80 @@ fn the_compiler_names_a_replaced_extern_only_where_allowed() {
         wrong.join("\n")
     );
 }
+
+/// The runtime's exports, one `<crate> <name>` per line, sorted (#2196: the runtime only
+/// shrinks): what the runtime may define with `#[no_mangle]`.
+const EXPORTS: &str = include_str!("runtime_exports.txt");
+
+/// The items `src` exports with `#[no_mangle]` / `#[unsafe(no_mangle)]` (on a line of its own):
+/// the name of the `fn` or `static` the attribute is on.
+fn no_mangle_names(src: &str) -> Vec<String> {
+    let mut out = vec![];
+    for (i, line) in src.lines().enumerate() {
+        let t = line.trim();
+        if t != "#[no_mangle]" && t != "#[unsafe(no_mangle)]" {
+            continue;
+        }
+        let item = src.lines().skip(i + 1).find(|l| {
+            let l = l.trim();
+            !l.starts_with("#[") && !l.starts_with("//")
+        });
+        let item = item.unwrap_or_else(|| panic!("`{t}` on no item"));
+        let name = ["fn ", "static mut ", "static "].iter().find_map(|kw| {
+            let at = item.find(kw)?;
+            let rest = &item[at + kw.len()..];
+            let end = rest.find(|c: char| !(c.is_alphanumeric() || c == '_'))?;
+            Some(rest[..end].to_string())
+        });
+        out.push(name.unwrap_or_else(|| panic!("`{t}` on `{}`, no fn or static", item.trim())));
+    }
+    out
+}
+
+/// Every symbol the runtime exports is in `runtime_exports.txt`, and every line there is one it
+/// exports: a new export fails here (the runtime gets no new Rust, #2196: write it in Velt, or
+/// add what Velt lacks to the language), and a port that deletes one deletes its line, so the
+/// list only shrinks.
+#[test]
+fn the_runtime_exports_only_what_runtime_exports_lists() {
+    let mut have = vec![];
+    for krate in ["velt_rt", "velt_rt_wasm"] {
+        let mut files = vec![];
+        sources(&crates().join(krate).join("src"), &mut files);
+        for (_, src) in &files {
+            have.extend(
+                no_mangle_names(src)
+                    .into_iter()
+                    .map(|n| format!("{krate} {n}")),
+            );
+        }
+    }
+    have.sort();
+    have.dedup();
+    let listed: Vec<&str> = EXPORTS.lines().filter(|l| !l.is_empty()).collect();
+    let mut sorted = listed.clone();
+    sorted.sort();
+    sorted.dedup();
+    assert_eq!(
+        listed, sorted,
+        "runtime_exports.txt must be sorted, each line once"
+    );
+    let new: Vec<&String> = have
+        .iter()
+        .filter(|h| !listed.contains(&h.as_str()))
+        .collect();
+    assert!(
+        new.is_empty(),
+        "the runtime exports symbols runtime_exports.txt doesn't list: {new:?}. The runtime gets \
+         no new Rust (#2196): write it in Velt, or file what Velt lacks"
+    );
+    let gone: Vec<&&str> = listed
+        .iter()
+        .filter(|l| !have.iter().any(|h| h == **l))
+        .collect();
+    assert!(
+        gone.is_empty(),
+        "runtime_exports.txt lists symbols the runtime no longer exports: {gone:?}. Delete \
+         their lines"
+    );
+}
