@@ -17,6 +17,8 @@ import { arrayTruncate } from "velt/lang/intrinsics";
  * nonce must never be used twice with one key. A message is at most 68,719,476,704 bytes
  * (2^32 - 2 blocks, SP 800-38D §5.2.1.1); a longer one throws `CryptoError`. The AES rounds are
  * bitsliced, with no table lookups, so the time does not depend on the key or the data.
+ * An object keeps its scratch between calls, so it must not be used by two threads at once
+ * (tasks on one thread may share it: no call awaits).
  */
 export class AesGcm implements Aead {
   private skey: u64[];

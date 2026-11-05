@@ -7,7 +7,10 @@ import { CryptoError } from "velt/crypto/errors";
 
 const M26: u64 = 0x3ffffff;
 
-/** A running Poly1305 MAC: `reset` with a key, `updatePadded` pieces, then `finish`; reusable. */
+/**
+ * A running Poly1305 MAC: `reset` with a key, `updatePadded` pieces, then `finishInto`;
+ * reusable.
+ */
 export class Poly1305 {
   private r: u64[];
   private h: u64[];

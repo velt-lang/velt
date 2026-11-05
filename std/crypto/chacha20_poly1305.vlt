@@ -22,6 +22,8 @@ import { arrayTruncate } from "velt/lang/intrinsics";
  * `openInPlace` do the same in the caller's buffer. A nonce (12 bytes) must never be used
  * twice with one key. A message is at most 274,877,906,880 bytes (2^32 - 1 blocks, RFC 8439
  * §2.8); a longer one throws `CryptoError`.
+ * An object keeps its scratch between calls, so it must not be used by two threads at once
+ * (tasks on one thread may share it: no call awaits).
  */
 export class ChaCha20Poly1305 implements Aead {
   private state: u32[];
