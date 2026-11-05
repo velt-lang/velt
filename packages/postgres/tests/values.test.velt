@@ -1,0 +1,204 @@
+// Values in the binary format on their own, no server: ported from the Rust crate's unit tests.
+import { arrayJson } from "../src/array_json";
+import { C_ARRAY, C_INT4, C_TEXT, CHAIN, decodable, knownType } from "../src/pg_type";
+import { Prepared } from "../src/prepared";
+import { inet, macaddr } from "../src/network";
+import { date, interval, money, numeric, time, timestamp } from "../src/temporal";
+
+function be16(v: i64): u8[] {
+  return [(v >> 8) as u8, v as u8];
+}
+
+function be32(v: i64): u8[] {
+  return [(v >> 24) as u8, (v >> 16) as u8, (v >> 8) as u8, v as u8];
+}
+
+function be64(v: i64): u8[] {
+  return be32(v >> 32).concat(be32(v));
+}
+
+function numericRaw(weight: i64, sign: i64, dscale: i64, digits: i64[]): u8[] {
+  let b = be16(digits.length as i64).concat(be16(weight)).concat(be16(sign)).concat(be16(dscale));
+  for (const d of digits) {
+    b = b.concat(be16(d));
+  }
+  return b;
+}
+
+function num(weight: i64, sign: i64, dscale: i64, digits: i64[]): string {
+  const raw = numericRaw(weight, sign, dscale, digits);
+  return numeric(raw, 0, raw.length as i64).text;
+}
+
+export function test_numerics_keep_every_digit() {
+  // 12345678.0100 = groups 1234 5678 . 0100, weight 1.
+  assertEq(num(1, 0, 4, [1234, 5678, 100]), "12345678.0100");
+  assertEq(num(0, 0x4000, 3, [5, 1000]), "-5.100");
+  // 0.00012 = groups 0001 2000 from weight -1; a leading zero group is left out.
+  assertEq(num(-1, 0, 5, [1, 2000]), "0.00012");
+  assertEq(num(-2, 0, 8, [1200]), "0.00001200");
+  assertEq(num(2, 0, 0, [7]), "700000000");
+  assertEq(num(0, 0, 0, []), "0");
+  assertEq(num(0, 0xc000, 0, []), "NaN");
+  assertEq(num(0, 0xd000, 0, []), "Infinity");
+  assertEq(num(0, 0xf000, 0, []), "-Infinity");
+}
+
+export function test_a_numeric_cut_short_is_refused() {
+  const raw = numericRaw(1, 0, 4, [1234, 5678, 100]);
+  assertEq(numeric(raw, 0, 7).problem, "truncated value");
+  // It says three groups, and the value holds two.
+  assertEq(numeric(raw, 0, (raw.length as i64) - 2).problem, "truncated value");
+}
+
+function day(days: i64): string {
+  return date(be32(days), 0, 4).text;
+}
+
+export function test_dates_and_times_are_iso() {
+  assertEq(day(0), "2000-01-01");
+  assertEq(day(1520), "2004-02-29");
+  assertEq(day(-730485), "0000-01-01");
+  assertEq(day(-730486), "-000001-12-31");
+  assertEq(day(2147483647), "infinity");
+  assertEq(day(-2147483648), "-infinity");
+  assertEq(time(be64(30600123456), 0, 8).text, "08:30:00.123456");
+  assertEq(time(be64(0), 0, 8).text, "00:00:00");
+  assertEq(timestamp(be64(1500000), 0, 8, true).text, "2000-01-01T00:00:01.500Z");
+  assertEq(timestamp(be64(-1), 0, 8, false).text, "1999-12-31T23:59:59.999999");
+  assertEq(timestamp(be64(-9223372036854775807 - 1), 0, 8, true).text, "-infinity");
+  assertEq(timestamp(be64(9223372036854775807), 0, 8, true).text, "infinity");
+  assert(date(be32(0), 0, 3).problem.length > 0, "a short date");
+  assert(time(be64(0), 0, 7).problem.length > 0, "a short time");
+}
+
+function span(micros: i64, days: i64, months: i64): string {
+  const raw = be64(micros).concat(be32(days)).concat(be32(months));
+  return interval(raw, 0, 16).text;
+}
+
+function hms(h: i64, m: i64, s: i64): i64 {
+  return ((h * 60 + m) * 60 + s) * 1000000;
+}
+
+// Expected strings are PostgreSQL 17's output for the same values.
+export function test_intervals_print_like_postgres() {
+  assertEq(span(hms(4, 5, 6) + 500000, 3, 14), "1 year 2 mons 3 days 04:05:06.5");
+  assertEq(span(-1000000, 0, 0), "-00:00:01");
+  assertEq(span(0, 0, 0), "00:00:00");
+  assertEq(span(hms(4, 0, 0), -3, -10), "-10 mons -3 days +04:00:00");
+  assertEq(span(0, -1, 1), "1 mon -1 days");
+  assertEq(span(hms(100, 0, 0), 0, 0), "100:00:00");
+  assertEq(span(0, 0, -25), "-2 years -1 mons");
+  assertEq(span(1, 1, 0), "1 day 00:00:00.000001");
+  assert(interval(be64(0), 0, 8).problem.length > 0, "a short interval");
+}
+
+export function test_money_and_network_types_print_like_postgres() {
+  assertEq(money(be64(-123450), 0, 8).text, "-1234.50");
+  assertEq(money(be64(7), 0, 8).text, "0.07");
+  assertEq(money(be64(-7), 0, 8).text, "-0.07");
+  const v4 = (bits: u8, cidr: u8): string => {
+    const raw: u8[] = [2, bits, cidr, 4, 10, 0, 0, 1];
+    return inet(raw, 0, 8).text;
+  };
+  assertEq(v4(32, 0), "10.0.0.1");
+  assertEq(v4(32, 1), "10.0.0.1/32");
+  assertEq(v4(8, 0), "10.0.0.1/8");
+  const v6: u8[] = [3, 128, 0, 16, 0x20, 0x01, 0x0d, 0xb8, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
+  assertEq(inet(v6, 0, 20).text, "2001:db8::1");
+  const mapped: u8[] = [3, 128, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0xff, 0xff, 1, 2, 3, 4];
+  assertEq(inet(mapped, 0, 20).text, "::ffff:1.2.3.4");
+  const zero: u8[] = [3, 128, 0, 16, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  assertEq(inet(zero, 0, 20).text, "::");
+  const short: u8[] = [2, 32, 0, 4, 10];
+  assert(inet(short, 0, 5).problem.length > 0, "a short inet");
+  const mac: u8[] = [8, 0, 0x2b, 1, 2, 3];
+  assertEq(macaddr(mac, 0, 6).text, "08:00:2b:01:02:03");
+  assert(macaddr(mac, 0, 5).problem.length > 0, "a short macaddr");
+}
+
+// The binary array format for one dimension of int4 values (null: NULL).
+function int4Array(values: (i64 | null)[]): u8[] {
+  let b = be32(1)
+    .concat(be32(1))
+    .concat(be32(23))
+    .concat(be32(values.length as i64))
+    .concat(be32(1));
+  for (const v of values) {
+    if (v == null) {
+      b = b.concat(be32(-1));
+    } else {
+      b = b.concat(be32(4)).concat(be32(v));
+    }
+  }
+  return b;
+}
+
+function arrayOf(element: u8): shared<Prepared> {
+  return shared(
+    new Prepared("", [], false, [], ["c"], [{ name: "a", param: 0, chain: [C_ARRAY, element] }]),
+  );
+}
+
+export function test_arrays_decode_with_nulls() {
+  const chains = arrayOf(C_INT4);
+  const raw = int4Array([1, null, -3]);
+  assertEq(arrayJson(raw, 0, raw.length as i64, chains, 1).json, "[1,null,-3]");
+  const empty = be32(0).concat(be32(0)).concat(be32(23));
+  assertEq(arrayJson(empty, 0, 12, chains, 1).json, "[]");
+  assert(arrayJson(raw, 0, (raw.length as i64) - 2, chains, 1).problem.length > 0, "cut short");
+}
+
+export function test_two_dimensions_nest() {
+  const chains = arrayOf(C_INT4);
+  let raw = be32(2)
+    .concat(be32(0))
+    .concat(be32(23))
+    .concat(be32(2))
+    .concat(be32(1))
+    .concat(be32(2))
+    .concat(be32(1));
+  for (let v: i64 = 1; v <= 4; v++) {
+    raw = raw.concat(be32(4)).concat(be32(v));
+  }
+  assertEq(arrayJson(raw, 0, raw.length as i64, chains, 1).json, "[[1,2],[3,4]]");
+}
+
+// What a server could send to make a client spend memory or time for nothing.
+export function test_hostile_arrays_are_refused_fast() {
+  const chains = arrayOf(C_TEXT);
+  const claim = (dims: i64, size: i64): string => {
+    let raw = be32(dims).concat(be32(0)).concat(be32(25));
+    for (let d: i64 = 0; d < dims; d++) {
+      raw = raw.concat(be32(size)).concat(be32(1));
+    }
+    return arrayJson(raw, 0, raw.length as i64, chains, 1).problem;
+  };
+  // Two billion elements in no bytes.
+  assert(claim(1, 2147483647).length > 0, "more elements than bytes");
+  // Dimensions multiplying past what an i64 holds is caught at the first too large.
+  assert(claim(6, 2147483647).length > 0, "dimensions that multiply out");
+  assert(claim(7, 1).length > 0, "more dimensions than PostgreSQL has");
+  assert(claim(1, -1).length > 0, "a negative dimension");
+  // An element longer than what's left.
+  const long = be32(1)
+    .concat(be32(0))
+    .concat(be32(25))
+    .concat(be32(1))
+    .concat(be32(1))
+    .concat(be32(100));
+  assert(arrayJson(long, 0, long.length as i64, chains, 1).problem.length > 0, "a long element");
+}
+
+export function test_only_known_types_are_decodable() {
+  const known = (oid: i64): bool => {
+    const t = knownType(oid);
+    return t != null && decodable(t.chain);
+  };
+  assert(known(1184) && known(1009), "timestamptz, text[]");
+  assert(known(1186) && known(869) && known(790), "interval, inet, money");
+  // point, int4range, tsvector aren't here, so the catalog names them and they stay undecodable.
+  assert(!known(600) && !known(3904) && !known(3614), "point, int4range, tsvector");
+  assert((CHAIN as i64) >= 2, "an array and its element fit a chain");
+}

@@ -1,0 +1,185 @@
+// postgres (internal): named placeholders. `WHERE id = :id AND org = $org` becomes `WHERE id = $1 AND
+// org = $2` with the names ["id", "org"], so an object of parameters binds by field name while the
+// server only ever sees PostgreSQL's positional `$n`.
+//
+// The scanner knows enough SQL to leave alone what only looks like a placeholder: `::type` casts,
+// string literals ('…', E'…\'…'), quoted identifiers ("…"), dollar-quoted strings ($$…$$,
+// $tag$…$tag$), comments (-- …, nested /* … */) and `$` inside identifiers (a$b). A repeated name
+// reuses its number. Mixing named placeholders with positional `$1` is an error. An array slice with
+// a named bound needs spaces (a[lo : hi]).
+
+import { utf8Encode } from "velt/encoding";
+
+/** SQL rewritten to positional placeholders, and the parameter name of each `$n`. */
+export struct Rewritten {
+  sql: string;
+  names: string[];
+  /** Why it can't be rewritten; "" when it can. */
+  problem: string;
+}
+
+const DOLLAR: u8 = 36;
+const COLON: u8 = 58;
+const QUOTE: u8 = 39;
+const DOUBLE_QUOTE: u8 = 34;
+
+function digit(c: i64): bool {
+  return c >= 48 && c <= 57;
+}
+
+function identStart(c: i64): bool {
+  return (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 || c >= 128;
+}
+
+function identChar(c: i64): bool {
+  return identStart(c) || digit(c) || c == 36;
+}
+
+// The byte at `i`, or 0 past the end.
+function at(b: u8[], i: i64): i64 {
+  return i < (b.length as i64) ? b[i] as i64 : 0;
+}
+
+// The position after the first `needle` at or after `from`; the end of `b` if there is none.
+function after(b: u8[], from: i64, needle: u8[]): i64 {
+  const n = b.length as i64;
+  const m = needle.length as i64;
+  for (let i = from; i + m <= n; i++) {
+    let same = true;
+    for (let k: i64 = 0; k < m && same; k++) {
+      same = b[i + k] == needle[k];
+    }
+    if (same) {
+      return i + m;
+    }
+  }
+  return n;
+}
+
+// The end of a quoted run starting at `pos`: a doubled quote continues it; `backslash` for E'…'.
+function quotedEnd(b: u8[], pos: i64, quote: u8, backslash: bool): i64 {
+  const n = b.length as i64;
+  let i = pos + 1;
+  while (i < n) {
+    const c = b[i];
+    if (backslash && c == 92) {
+      i += 2;
+    } else if (c == quote) {
+      if (at(b, i + 1) == (quote as i64)) {
+        i += 2;
+      } else {
+        return i + 1;
+      }
+    } else {
+      i++;
+    }
+  }
+  return n;
+}
+
+// The end of a (nested) block comment starting at `pos`.
+function commentEnd(b: u8[], pos: i64): i64 {
+  const n = b.length as i64;
+  let i = pos + 2;
+  let depth: i64 = 1;
+  while (i + 1 < n) {
+    if (b[i] == 47 && b[i + 1] == 42) {
+      depth++;
+      i += 2;
+    } else if (b[i] == 42 && b[i + 1] == 47) {
+      depth--;
+      i += 2;
+      if (depth == 0) {
+        return i;
+      }
+    } else {
+      i++;
+    }
+  }
+  return n;
+}
+
+// The end of a placeholder's name starting at `from` (no `$` inside).
+function nameEnd(b: u8[], from: i64): i64 {
+  let i = from;
+  while (i < (b.length as i64) && identChar(b[i] as i64) && b[i] != DOLLAR) {
+    i++;
+  }
+  return i;
+}
+
+/** Rewrites `sql`'s named placeholders (see the module header). */
+export function rewriteNamed(sql: string): Rewritten {
+  const b = utf8Encode(sql);
+  const n = b.length as i64;
+  const out = new StringBuilder();
+  const names: string[] = [];
+  let pos: i64 = 0;
+  let copied: i64 = 0;
+  // Replaces the name `b[start..end]` (its sigil before it, at `pos`) with `$n`.
+  const placeholder = (start: i64, end: i64): void => {
+    out.append(b.utf8Slice(copied, pos));
+    const name = b.utf8Slice(start, end);
+    let place = (names.indexOf(name) as i64) + 1;
+    if (place == 0) {
+      names.push(name);
+      place = names.length as i64;
+    }
+    out.append(`$${place}`);
+    pos = end;
+    copied = end;
+  };
+  while (pos < n) {
+    const c = b[pos];
+    const next = at(b, pos + 1);
+    if (c == QUOTE) {
+      const before = pos > 0 ? b[pos - 1] as i64 : 0;
+      const escaped = (before == 69 || before == 101) && !(pos > 1 && identChar(b[pos - 2] as i64));
+      pos = quotedEnd(b, pos, QUOTE, escaped);
+    } else if (c == DOUBLE_QUOTE) {
+      pos = quotedEnd(b, pos, DOUBLE_QUOTE, false);
+    } else if (c == 45 && next == 45) {
+      pos = after(b, pos, [10]);
+    } else if (c == 47 && next == 42) {
+      pos = commentEnd(b, pos);
+    } else if (c == DOLLAR) {
+      if (digit(next)) {
+        return {
+          sql: "",
+          names: [],
+          problem:
+            "positional placeholders ($1) cannot be mixed with named parameters; pass an array to bind $1, $2, …",
+        };
+      }
+      if (next == 36) {
+        pos = after(b, pos + 2, [36, 36]);
+      } else if (!identStart(next)) {
+        pos++;
+      } else {
+        const end = nameEnd(b, pos + 1);
+        if (at(b, end) == 36) {
+          pos = after(b, end + 1, b.slice(pos, end + 1));
+        } else {
+          placeholder(pos + 1, end);
+        }
+      }
+    } else if (c == COLON) {
+      if (next == 58) {
+        pos += 2;
+      } else if (identStart(next)) {
+        placeholder(pos + 1, nameEnd(b, pos + 1));
+      } else {
+        pos++;
+      }
+    } else if (identStart(c as i64)) {
+      pos++;
+      while (pos < n && identChar(b[pos] as i64)) {
+        pos++;
+      }
+    } else {
+      pos++;
+    }
+  }
+  out.append(b.utf8Slice(copied, n));
+  return { sql: out.toString(), names: names, problem: "" };
+}
