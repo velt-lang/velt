@@ -18,7 +18,8 @@ pub(super) const ENVIRONMENT: &[(&str, &str)] = &[
     ),
     (
         "VELT_CLANG",
-        "clang used by the LLVM backend (default: PATH, then the standard LLVM install)",
+        "clang used by the LLVM backend (default on macOS: the newest of Homebrew's and those on \
+         PATH, then /usr/bin/clang; elsewhere: PATH, then the standard LLVM install)",
     ),
     (
         "VELT_RT_LIB",

@@ -102,7 +102,8 @@ pub(super) fn options_key(opts: &BuildOptions, backend: Backend) -> Key {
     if backend == Backend::Llvm {
         let clang = velt_codegen_llvm::find_clang();
         let time = clang.as_deref().and_then(probe::stat);
-        h.part(format!("{clang:?} {time:?}").as_bytes());
+        let version = velt_codegen_llvm::clang_version();
+        h.part(format!("{clang:?} {time:?} {version:?}").as_bytes());
     }
     h.finish()
 }

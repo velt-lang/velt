@@ -19,7 +19,9 @@
 //!   source locations (`vir::Program::files`; debug builds and `velt build -g`).
 //! - `units`: splitting large programs into codegen units compiled in parallel.
 //! - `inlining`: caps on how much LLVM's inliner grows a function.
-//! - `clang`: locating `clang` and running it on the emitted IR.
+//! - `clang`: running `clang` on the emitted IR.
+//! - `clang_search`: choosing which `clang`.
+//! - `clang_probe`: asking a candidate what it is and whether it compiles for this machine.
 //! - `llc`: locating LLVM's `opt`/`llc` and running them for the WebAssembly targets.
 
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -33,6 +35,8 @@ macro_rules! bail {
 }
 
 mod clang;
+mod clang_probe;
+mod clang_search;
 mod debug;
 mod function;
 mod half;
@@ -53,7 +57,11 @@ mod units;
 #[cfg(test)]
 mod tests;
 
-pub use clang::{available, find_clang, opt_flag, rejected_clang, set_probe_memo};
+pub use clang::opt_flag;
+pub use clang_probe::{ask_every_clang, set_probe_memo};
+pub use clang_search::{
+    available, clang_version, describe_clang, find_clang, no_clang_compiles, rejected_clang,
+};
 pub use llc::{find_wasm_tools, LlvmTools};
 pub use target::is_wasm;
 /// Options for [`emit_object`]: the same struct as the Cranelift backend's, so the driver can

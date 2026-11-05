@@ -104,8 +104,23 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `.vscode/extensions.json`, both kept if present. `init --editor vscode` writes only those, in
   `--dir` (an existing directory) or else at the root of the package around the cwd (or in the
   cwd outside one), never overwriting, and takes no other option.
-- Backends: default `llvm` for `--release` when clang is found (`$VELT_CLANG`, PATH, standard install
-  dirs), else `cranelift` (with a one-line stderr note). `--emit llvm` prints LLVM IR (no clang needed).
+- Backends: default `llvm` for `--release` when clang is found, else `cranelift` (with a one-line
+  stderr note). `--emit llvm` prints LLVM IR (no clang needed). The search
+  (`velt_codegen_llvm::clang_search`; `velt doctor` says which clang and why): `$VELT_CLANG` first
+  and final. On macOS, every `clang` and `clang-NN` in an absolute PATH entry (an empty or relative
+  one means the current directory, whose files this search must not run), Homebrew's `llvm` and
+  `/usr/local/bin/clang`, ranked: any clang from LLVM above Apple's, then by version, the earlier on
+  a tie; `/usr/bin/clang` last, not started when one from LLVM will do. Elsewhere the first usable
+  in a fixed order: `clang` on PATH, the standard install dirs, `clang-NN` from new to old. A
+  candidate counts if `--version` answers within 30 s with LLVM 16 or newer (Apple clang 15); the
+  one about to be chosen must also compile a small IR function for the host (not asked of
+  `$VELT_CLANG`, which may be a cross compiler). One that fails is passed over for the next; if none
+  compiles, the first is kept and the build reports it. Nothing falls back during a build: a clang
+  that fails there on the small IR too is reported by name, as not a compiler bug, and asked again
+  by the next build. A candidate that doesn't answer in time costs the build that wait and one line
+  on stderr. The next build asks it again, since a first start can be slow (macOS checks a new
+  executable); after a second timeout within the hour, builds leave it alone for an hour unless no
+  other will do. `velt doctor` asks it regardless, and an answer ends that.
   Release builds run `velt_opt` (Speed) before either backend.
 - Codegen units (additive): the LLVM backend splits a large program into units compiled by
   parallel clang processes, at most one per core (`velt_codegen_llvm::emit_objects_timed`); the
@@ -372,13 +387,18 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   with kinds `cl` (Cranelift compiled functions, Cranelift's incremental-cache key with the
   Cranelift version), `stdfn` (the std cache below: objects of single std functions, file
   entries), `llvm`
-  (unit objects, keyed by clang's path, size, time and arguments, the host triple and the IR),
+  (unit objects, keyed by clang's path, size, time, reported version and arguments, the host triple
+  and the IR),
   `std-ast` (std files' parses, `velt_syntax::encode_module`, keyed by the compiler identity,
   `AST_FORMAT`, plain TypeScript or not and the source's length, CRC-32 and 64-bit hash; only
   parses without diagnostics of files read from disk, never an editor's unsaved buffer; every
   command that loads a program uses them, `check` and the language server included), and
   `clang-probe` (`clang --version`'s output, keyed by the candidate's resolved path, size and
-  modification time, so a release build doesn't start clang to learn its version).
+  modification time, so a release build doesn't start clang to learn its version: only for a native
+  program whose real file is named `clang…`; a script, or a link to something else, is a wrapper and
+  is asked each build; and whether it compiles for the host, keyed also by its version; and that a candidate timed out
+  once or is left alone, for `--version` and for the target check apart, keyed by the same three,
+  its name and the hour, the value being the time it was written).
   Entries under 16 KiB are packed: 64 shards per kind by the key's first byte, each `<nn>.pack`
   (values) + `<nn>.idx` (56-byte records: key, offset, length, 8-byte checksum (CRC-32) of the
   value, minutes since 1970 of the last use; the last record of a key wins) appended under an
@@ -407,7 +427,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `_Vs<content fingerprint>`, vir.rs invariant 13, and the functions their relocations name
   are exported) and makes no indirect call is keyed by BLAKE3 over `velt std function
   1`, `build_cache::compiler_identity()` (version line, executable size and time), clang's path,
-  size and time, clang's optimization flag (`VELT_LLVM_OPT`), the target, the CPU and the
+  size, time and reported version, clang's optimization flag (`VELT_LLVM_OPT`), the target, the CPU
+  and the
   optimization level; then, for it and each small internal function it reaches through small
   ones (in that order), its symbol, `velt_vir::fingerprint::Canon::text` (`Mode::Link`) and its
   parameter attributes; then, for each function that code calls without compiling it (what its
@@ -669,7 +690,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   only when a non-std module mentions one of their names as a whole word, unless that module
   binds the name itself at the top level.
 - Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.velt`), `VELT_REGISTRY`
-  (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (`bundled`, `system`, or a linker program), `VELT_CLANG` (clang for the LLVM backend), `VELT_LLVM_OPT` (clang `-O` level of release builds, default 3), `VELT_CODEGEN_UNITS` (codegen units of LLVM release builds; default from the program's size), `VELT_BUILD_CACHE`, `VELT_BUILD_CACHE_SIZE`, `VELT_BUILD_STAMP` (above), `VELT_EAGER_STD` (set: check every standard-library definition, not only those the program reaches; docs/internals/design/lazy-std.md).
+  (default `$VELT_HOME/registry`), `VELT_RT_LIB` (runtime lib), `VELT_RT_LINK` (`static`: no shared runtime in debug builds), `VELT_LINKER` (`bundled`, `system`, or a linker program), `VELT_CLANG` (clang for the LLVM backend), `VELT_CLANG_PROBE_LIMIT_MS` (how long a clang gets to answer `--version` or the small compile, default 30000: for tests of a clang that hangs), `VELT_LLVM_OPT` (clang `-O` level of release builds, default 3), `VELT_CODEGEN_UNITS` (codegen units of LLVM release builds; default from the program's size), `VELT_BUILD_CACHE`, `VELT_BUILD_CACHE_SIZE`, `VELT_BUILD_STAMP` (above), `VELT_EAGER_STD` (set: check every standard-library definition, not only those the program reaches; docs/internals/design/lazy-std.md).
   Set by `velt dev` for the program (not for users): `VELT_DEV_SOCKET` (a Unix socket path, or a
   named pipe `\\.\pipe\velt-dev-<pid>-<n>` on Windows).
 - Lockfile: `version = 1` + `[[package]]` entries with `name`, `version`, `source`
