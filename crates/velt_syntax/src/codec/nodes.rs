@@ -68,7 +68,7 @@ structs! {
     }
     GeneratorSpec { spec, span }
     HostModule { module, span }
-    CLibrary { library, span }
+    CLibrary { library, errno, span }
     FnDecl { sig, body, overloads }
     TypeExpr { kind, span }
     Block { stmts, span }

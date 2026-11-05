@@ -37,6 +37,9 @@ pub struct ExternFnDef {
 pub struct CImport {
     /// The logical library name of `declare c("<library>")`; `"c"` is the platform's C library.
     pub library: String,
+    /// `{ errno: true }`: each call saves `errno` for `lastOsError()`. Most libraries report
+    /// failures through results, and a call that doesn't ask pays nothing.
+    pub errno: bool,
     /// One per parameter of the declaration, in order.
     pub params: Vec<CTy>,
     pub ret: CTy,
