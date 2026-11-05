@@ -83,16 +83,39 @@ const DEFAULT_CHILDREN: &str = "children";
 const RUNTIME_SUFFIX: &str = "/jsx-runtime";
 
 impl FnCx<'_, '_> {
-    /// The current module's JSX runtime (`None` once the reason was reported at `at`).
+    /// The current module's JSX runtime (`None` once the reason was reported at `at`). A refusal
+    /// is one error, however many elements the module has, for as long as that error stands: a
+    /// first check inside a trial loses it to the rollback, and the next check reports it again.
     pub(super) fn jsx_provider(&mut self, at: Span) -> Option<Rc<Provider>> {
         if let Some(p) = self.cx.jsx_providers.get(&self.module) {
-            return p.clone();
+            if p.is_some() || self.jsx_refusal_stands() {
+                return p.clone();
+            }
         }
+        let reported = self.cx.diags.len();
         let p = load(self.cx, self.module, at)
             .filter(|p| self.component_attrs_fit(p, at))
             .map(Rc::new);
+        self.cx.jsx_refusals.remove(&self.module);
+        if let (None, Some(d)) = (&p, self.cx.diags.get(reported)) {
+            if let Some(label) = d.labels.first() {
+                let reason = (d.message.clone(), label.span);
+                self.cx.jsx_refusals.insert(self.module, reason);
+            }
+        }
         self.cx.jsx_providers.insert(self.module, p.clone());
         p
+    }
+
+    /// Is the error behind this module's cached `None` still among the diagnostics?
+    fn jsx_refusal_stands(&self) -> bool {
+        let Some((message, span)) = self.cx.jsx_refusals.get(&self.module) else {
+            return true;
+        };
+        self.cx
+            .diags
+            .iter()
+            .any(|d| d.message == *message && d.labels.first().is_some_and(|l| l.span == *span))
     }
 
     /// `jsxComponentAttributes` takes what the compiler passes (`key`, `name`, `names`,

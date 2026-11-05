@@ -1,0 +1,1 @@
+jsx_refused_runtime_in_argument.vlt:3:28: error: `jsx` of the JSX provider '_jsx_auto_any' is not a function (it has type `any`)

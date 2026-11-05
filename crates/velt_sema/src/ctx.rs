@@ -339,6 +339,9 @@ pub(crate) struct Ctx<'m> {
     pub overloaded_methods: FxHashSet<String>,
     /// Each JSX module's runtime, resolved on first use (`None` after its errors).
     pub jsx_providers: FxHashMap<usize, Option<std::rc::Rc<crate::body::expr::jsx::Provider>>>,
+    /// The first error behind each `None` in `jsx_providers`: a trial's rollback can take it away,
+    /// and then the `None` no longer stands (`FnCx::jsx_provider`).
+    pub jsx_refusals: FxHashMap<usize, (String, Span)>,
     /// Sync wrappers of async closures (`body/expr/callback.rs`) and the type of the async
     /// closure each one calls: the thread analysis (`ownership::local_async`) matches a wrapper
     /// stored on the heap by that type, the function the user wrote.
@@ -580,6 +583,7 @@ impl<'m> Ctx<'m> {
             gen_throw: false,
             overloaded_methods: FxHashSet::default(),
             jsx_providers: FxHashMap::default(),
+            jsx_refusals: FxHashMap::default(),
             callback_wrappers: Default::default(),
             reported_captures: vec![],
             crossing_callbacks: vec![],

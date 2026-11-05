@@ -1,0 +1,1 @@
+jsx_refused_runtime_no_factory.vlt:3:28: error: the JSX provider '_jsx_incomplete_provider' does not export `jsx`, `Fragment`, `jsxComponent`

@@ -1,0 +1,3 @@
+/** @jsxImportSource ./_jsx_auto_props */
+// The first check of the JSX in an object literal argument is a trial.
+console.log(JSON.stringify({ a: <box /> }));

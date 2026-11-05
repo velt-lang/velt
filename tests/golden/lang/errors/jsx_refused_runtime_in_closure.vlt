@@ -1,0 +1,4 @@
+/** @jsxImportSource ./_jsx_auto_value */
+// The first check of the JSX in a closure for a parameter that is a union of functions is a trial.
+function g(f: (() => number) | (() => string)): void {}
+g(() => <box />);
