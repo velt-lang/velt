@@ -168,6 +168,21 @@ describe("AesGcm", () => {
     expect(aead.openInPlace(nonce, aad, Buffer.alloc(15), 0, 15)).toBe(false);
   });
 
+  it("throws for a wrong nonce length in sealInPlace", () => {
+    const aead = new AesGcm(hexDecode(K));
+    expect(() => aead.sealInPlace(Buffer.alloc(16), [], Buffer.alloc(32), 0, 0)).toThrow(
+      "AES-GCM nonce must be 12 bytes, got 16",
+    );
+  });
+
+  it("opens nothing shorter than a tag at a non-zero start", () => {
+    const aead = new AesGcm(hexDecode(K));
+    const nonce: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const buf = patterned(40);
+    expect(aead.openInPlace(nonce, [], buf, 10, 25)).toBe(false);
+    expect(hexEncode(buf)).toBe(hexEncode(patterned(40)));
+  });
+
   it("throws CryptoError for a range outside the buffer, before writing anything", () => {
     const aead = new AesGcm(hexDecode(K));
     const nonce: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];

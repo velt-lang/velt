@@ -113,6 +113,14 @@ describe("ChaCha20Poly1305", () => {
     expect(aead.openInPlace(nonce, aad, Buffer.alloc(15), 0, 15)).toBe(false);
   });
 
+  it("opens nothing shorter than a tag at a non-zero start", () => {
+    const aead = new ChaCha20Poly1305(hexDecode(RFC_KEY));
+    const nonce: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const buf = patterned(40);
+    expect(aead.openInPlace(nonce, [], buf, 10, 25)).toBe(false);
+    expect(hexEncode(buf)).toBe(hexEncode(patterned(40)));
+  });
+
   it("throws CryptoError for a range outside the buffer, before writing anything", () => {
     const aead = new ChaCha20Poly1305(hexDecode(RFC_KEY));
     const nonce: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
