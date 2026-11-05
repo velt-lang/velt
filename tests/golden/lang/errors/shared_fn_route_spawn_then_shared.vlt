@@ -1,0 +1,22 @@
+// A function spawned first, which later reaches `shared(...)`: spawned, it may change its copy; in
+// `shared(...)` it may not.
+type F = (x: i64) => i64;
+
+function mk(): F {
+  let n: i64 = 0;
+  return (x: i64): i64 => {
+    n += 1;
+    return n;
+  };
+}
+
+async function work(f: F): Promise<i64> {
+  return f(1);
+}
+
+async function main() {
+  const g = mk();
+  const r = await spawn(work(g.clone()));
+  const s = shared(g);
+  console.log(r, s(1));
+}
