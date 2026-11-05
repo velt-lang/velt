@@ -95,10 +95,8 @@ export class TlsEngine {
           this.writer = new RecordCipher(h.suite, h.clientHandshake);
         } else if (step == FINISHED_DONE) {
           this.hs.checkEmpty();
-          if (compat && !ccsSent) {
-            await this.sendCcs();
-          }
-          await this.sendProtected(HANDSHAKE, h.lastFlight);
+          // The ChangeCipherSpec (once, in compatibility mode) goes out with the flight.
+          await this.sendProtected(HANDSHAKE, h.lastFlight, compat && !ccsSent);
           this.readSecret = h.serverApplication;
           this.writeSecret = h.clientApplication;
           this.r.cipher = new RecordCipher(h.suite, this.readSecret);
@@ -281,17 +279,27 @@ export class TlsEngine {
     await this.t.writeBytes([CHANGE_CIPHER_SPEC, 3, 3, 0, 1, 1], 0);
   }
 
-  // Sends `content` of `type` in protected records under the current write keys.
-  private async sendProtected(type: u8, content: u8[]): Promise<void> {
+  // Sends `content` of `type` in protected records under the current write keys, after a
+  // ChangeCipherSpec record when `ccs`, all in one transport write.
+  private async sendProtected(type: u8, content: u8[], ccs: bool = false): Promise<void> {
     const writer = this.writer;
     if (writer == null) {
       throw new IoError("ENOTCONN", "ICE: TLS: no write keys");
     }
     const records = content.length / MAX_PLAIN + 1;
-    const buf = Buffer.alloc(content.length + records * (HEADER + 1 + TAG));
+    const buf = Buffer.alloc(content.length + records * (HEADER + 1 + TAG) + 6);
     let n: usize = 0;
+    if (ccs) {
+      buf[0] = CHANGE_CIPHER_SPEC;
+      buf[1] = 3;
+      buf[2] = 3;
+      buf[4] = 1;
+      buf[5] = 1;
+      n = 6;
+    }
+    const start = n;
     let off: usize = 0;
-    while (off < content.length || n == 0) {
+    while (off < content.length || n == start) {
       const len = content.length - off < MAX_PLAIN ? content.length - off : MAX_PLAIN;
       for (let i: usize = 0; i < len; i++) {
         buf[n + HEADER + i] = content[off + i];

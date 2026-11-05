@@ -4,32 +4,112 @@
 
 import { hkdfExpandSha256, hkdfExtractSha256 } from "velt/crypto/hkdf";
 import { hmacSha256 } from "velt/crypto/hmac";
-import { sha256 } from "velt/crypto/sha256";
-import { utf8Encode } from "velt/encoding/utf8";
-import { ByteWriter } from "velt/net/tls/byte_writer";
 
-/** HKDF-Expand-Label(secret, label, context, length) (RFC 8446 §7.1), "tls13 " prefixed. */
+/**
+ * HKDF-Expand-Label(secret, label, context, length) (RFC 8446 §7.1), "tls13 " prefixed. The
+ * HkdfLabel goes straight into one buffer of its exact size (labels are ASCII).
+ */
 export function expandLabel(secret: u8[], label: string, context: u8[], length: usize): u8[] {
-  const w = new ByteWriter();
-  w.u16(length);
-  const l = w.begin(1);
-  w.put(utf8Encode(`tls13 ${label}`));
-  w.end(l, 1);
-  const c = w.begin(1);
-  w.put(context);
-  w.end(c, 1);
-  return hkdfExpandSha256(secret, w.bytes, length);
+  const l = label.length as usize;
+  const info = Buffer.alloc(4 + 6 + l + context.length);
+  info[0] = ((length >> 8) & 0xff) as u8;
+  info[1] = (length & 0xff) as u8;
+  info[2] = (6 + l) as u8;
+  const prefix: u8[] = [0x74, 0x6c, 0x73, 0x31, 0x33, 0x20];
+  for (let i: usize = 0; i < 6; i++) {
+    info[3 + i] = prefix[i];
+  }
+  for (let i: usize = 0; i < l; i++) {
+    info[9 + i] = label.charCodeAt(i as i64) as u8;
+  }
+  info[9 + l] = context.length as u8;
+  for (let i: usize = 0; i < context.length; i++) {
+    info[10 + l + i] = context[i];
+  }
+  return hkdfExpandSha256(secret, info, length);
 }
+
+// SHA-256 of the empty string: Derive-Secret's context for "derived".
+const EMPTY_HASH: u8[] = [
+  0xe3,
+  0xb0,
+  0xc4,
+  0x42,
+  0x98,
+  0xfc,
+  0x1c,
+  0x14,
+  0x9a,
+  0xfb,
+  0xf4,
+  0xc8,
+  0x99,
+  0x6f,
+  0xb9,
+  0x24,
+  0x27,
+  0xae,
+  0x41,
+  0xe4,
+  0x64,
+  0x9b,
+  0x93,
+  0x4c,
+  0xa4,
+  0x95,
+  0x99,
+  0x1b,
+  0x78,
+  0x52,
+  0xb8,
+  0x55,
+];
+
+// Derive-Secret(Early Secret, "derived", "") without a PSK: the early secret is
+// HKDF-Extract(0, 0), the same for every handshake (RFC 8448 §3).
+const EARLY_DERIVED: u8[] = [
+  0x6f,
+  0x26,
+  0x15,
+  0xa1,
+  0x08,
+  0xc7,
+  0x02,
+  0xc5,
+  0x67,
+  0x8f,
+  0x54,
+  0xfc,
+  0x9d,
+  0xba,
+  0xb6,
+  0x97,
+  0x16,
+  0xc0,
+  0x76,
+  0x18,
+  0x9c,
+  0x48,
+  0x25,
+  0x0c,
+  0xeb,
+  0xea,
+  0xc3,
+  0x57,
+  0x6c,
+  0x36,
+  0x11,
+  0xba,
+];
 
 // Derive-Secret(secret, "derived", "") for the next extract.
 function derived(secret: u8[]): u8[] {
-  return expandLabel(secret, "derived", sha256([]), 32);
+  return expandLabel(secret, "derived", EMPTY_HASH, 32);
 }
 
 /** The handshake secret from the (EC)DHE shared secret, without a PSK. */
 export function handshakeSecret(shared: u8[]): u8[] {
-  const early = hkdfExtractSha256(Buffer.alloc(32), Buffer.alloc(32));
-  return hkdfExtractSha256(derived(early), shared);
+  return hkdfExtractSha256(EARLY_DERIVED.slice(), shared);
 }
 
 /** The master secret after `handshake`. */

@@ -276,7 +276,8 @@ export class ClientHandshake {
     const fin = new ByteWriter();
     fin.u8(FINISHED);
     const f = fin.begin(3);
-    fin.put(finishedMac(this.clientHandshake, this.hash()));
+    // The transcript only grew when a Certificate was sent; otherwise `h` is still its hash.
+    fin.put(finishedMac(this.clientHandshake, context != null ? this.hash() : h));
     fin.end(f, 3);
     this.add(fin.bytes);
     w.put(fin.bytes);

@@ -6,10 +6,12 @@
 // records byte for byte: its Finished, its application data, its close_notify. Tampered and
 // broken server flights must fail with the right alert.
 import { hkdfExpandSha256 } from "velt/crypto/hkdf";
+import { sha256 } from "velt/crypto/sha256";
 import { hexDecode, hexEncode } from "velt/encoding/hex";
 import { IoError } from "velt/io/error";
 import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 import { ByteStream } from "velt/net/byte_stream";
+import { finishedMac } from "velt/net/tls/key_schedule";
 import { RecordCipher } from "velt/net/tls/record_cipher";
 import { startTls } from "velt/net/tls/start_tls";
 import { TlsEngine } from "velt/net/tls/tls_engine";
@@ -208,6 +210,9 @@ function resealed(change: (p: u8[]) => void, padding: usize = 0): string {
   );
   return hexEncode(buf.slice(0, n as i64));
 }
+
+// The trace's client handshake traffic secret.
+const CLIENT_HS_SECRET = "b3eddb126e067f35a780b3abf45e2d8f3b1a950738f52e9600746a0e27a55a21";
 
 // The trace's application traffic secrets.
 const SERVER_AP_SECRET = "a11af9f05531f856ad47116b45a950328204b4f44bfb6b3a4b4f1f3fcb631643";
@@ -466,6 +471,57 @@ describe("TLS 1.3 client, RFC 8448 §3", () => {
     expect(await s.readInto(view)).toBe(10);
     expect(backing[10]).toBe(0);
     expect(hexEncode(await s.read())).toBe(hexEncode(payload(50).slice(10)));
+  });
+
+  it("answers a CertificateRequest with an empty Certificate before its Finished", async () => {
+    // The trace's flight with a CertificateRequest (no context, signature_algorithms
+    // ecdsa_secp256r1_sha256) after EncryptedExtensions, and the server Finished recomputed.
+    const flight = hexDecode(SERVER_FLIGHT);
+    const request = hexDecode("0d00000b000008000d000400020403");
+    const head: u8[] = [];
+    for (const b of hexDecode(CLIENT_HELLO)) {
+      head.push(b);
+    }
+    for (const b of hexDecode(SERVER_HELLO_RECORD).slice(5)) {
+      head.push(b);
+    }
+    const server: u8[] = flight.slice(0, 40);
+    for (const b of request) {
+      server.push(b);
+    }
+    for (const b of flight.slice(40, 621)) {
+      server.push(b);
+    }
+    const transcript = head.slice();
+    for (const b of server) {
+      transcript.push(b);
+    }
+    const fin: u8[] = [20, 0, 0, 32];
+    for (const b of finishedMac(hexDecode(SERVER_HS_SECRET), sha256(transcript))) {
+      fin.push(b);
+    }
+    for (const b of fin) {
+      server.push(b);
+      transcript.push(b);
+    }
+    server.push(22);
+    const sealed = sealAll(new RecordCipher(0x1301, hexDecode(SERVER_HS_SECRET)), [server]);
+    const t = new Playback(hexDecode(SERVER_HELLO_RECORD + sealed), 1000000);
+    await handshake(t);
+    // The client's flight under its handshake keys: an empty Certificate, then a Finished over
+    // the transcript that includes it.
+    const [inner, end] = openAt(
+      new RecordCipher(0x1301, hexDecode(CLIENT_HS_SECRET)),
+      t.written,
+      201,
+    );
+    expect(end).toBe(t.written.length);
+    const empty: u8[] = [11, 0, 0, 4, 0, 0, 0, 0];
+    for (const b of empty) {
+      transcript.push(b);
+    }
+    const mac = hexEncode(finishedMac(hexDecode(CLIENT_HS_SECRET), sha256(transcript)));
+    expect(inner).toBe(hexEncode(empty) + "14000020" + mac + "16");
   });
 
   it("refuses to start without verify: false", async () => {
