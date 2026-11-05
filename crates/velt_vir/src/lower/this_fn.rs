@@ -122,7 +122,7 @@ impl FnLower<'_, '_> {
             self.goto(join);
             self.switch_to(no);
             let imp = self.cx.hir.any_impl.unwrap_or(0);
-            let u = self.dynamic_undefined(imp, any);
+            let u = self.dynamic_undefined_moved(imp, any);
             self.assign(this.clone(), Rvalue::Use(u));
             self.goto(join);
             self.switch_to(join);
@@ -147,7 +147,7 @@ impl FnLower<'_, '_> {
         let any = self.cx.any_ty();
         let avt = self.cx.ty(any);
         let imp = self.cx.hir.any_impl.unwrap_or(0);
-        let u = self.dynamic_undefined(imp, any);
+        let u = self.dynamic_undefined_moved(imp, any);
         let this = Place::local(self.copy_to_temp(u, avt));
         let st = self.this_fn_invoke(data, ty, this, (argv, argc, out));
         self.ret_status(st);

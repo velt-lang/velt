@@ -1,0 +1,28 @@
+// check: no leaks
+// As any_optional_any_member_fill, in a program with proxies, where the same conversions run (#2338).
+const anyProxyUsed = new Proxy({ a: 1 }, {});
+console.log(anyProxyUsed.a);
+function show(label: string, v: any): void {
+  console.log(label, typeof v, v === undefined ? "undefined" : JSON.stringify(v));
+}
+function emptyP<T>(o: T): Partial<T> {
+  const r = {} as Partial<T>;
+  return r;
+}
+function copyOne<T>(o: T, k: string): Partial<T> {
+  const r = {} as Partial<T>;
+  (r as Record<string, any>)[k] = (o as any)[k];
+  return r;
+}
+type S = { a: any; b: string };
+const src: S = { a: "held" + 1, b: "B" };
+const e = emptyP(src);
+show("empty a", e.a);
+const c = copyOne(src, "a");
+show("copy a", c.a);
+const n: Record<string, any> = { children: 7 };
+const cn: any = n;
+show("record number", (cn as { children?: any }).children);
+const m: Record<string, any> = {};
+const cm: any = m;
+show("record absent", (cm as { children?: any }).children);

@@ -1,0 +1,187 @@
+// check: no leaks
+// An `any` converted to an object type with an optional `any` member keeps the value (#2338):
+// the member present, absent and null, through a record and an object, in each shape of target.
+// Each shape: member present, absent and null, through an any.
+function show(label: string, v: any): void {
+  console.log(label, typeof v, v === undefined ? "undefined" : v === null ? "null" : JSON.stringify(v));
+}
+
+// The one from the report: a record and an object, number and string.
+function direct(): void {
+  const n: Record<string, any> = { children: 7 };
+  const c: any = n;
+  const p = c as { children?: any };
+  show("record number", p.children);
+  const s: Record<string, any> = { children: "made" };
+  const cs: any = s;
+  const ps = cs as { children?: any };
+  show("record string", ps.children);
+  console.log(typeof ps.children, ps.children === "made", ps.children.length);
+  const o: any = { children: "made" };
+  const po = o as { children?: any };
+  show("object string", po.children);
+  console.log(po.children === "made", po.children.length);
+  const absent: any = { other: 1 };
+  const pa = absent as { children?: any };
+  show("object absent", pa.children);
+  const e: Record<string, any> = {};
+  const ce: any = e;
+  const pe = ce as { children?: any };
+  show("record absent", pe.children);
+  const nu: any = { children: null };
+  const pn = nu as { children?: any };
+  show("object null", pn.children);
+  const rn: Record<string, any> = { children: null };
+  const crn: any = rn;
+  const prn = crn as { children?: any };
+  show("record null", prn.children);
+}
+
+// Through a call of a function held in an any.
+function viaCall(): void {
+  function F(p: { children?: any }): any { return p.children; }
+  const f: any = F;
+  show("call record", f({ children: "x" } as Record<string, any>));
+  show("call object", f({ children: "y" }));
+  show("call absent", f({}));
+  show("call null", f({ children: null }));
+}
+
+// A required member next to an optional one, and several optional ones.
+function mixed(): void {
+  type M = { a?: any; b: string };
+  const x: any = { a: "A", b: "B" };
+  const m = x as M;
+  show("mixed a", m.a); show("mixed b", m.b);
+  const y: any = { b: "B" };
+  const m2 = y as M;
+  show("mixed absent a", m2.a); show("mixed absent b", m2.b);
+  const z: any = { a: null, b: "B" };
+  const m3 = z as M;
+  show("mixed null a", m3.a);
+  type T = { a?: any; b?: any; c?: any; d?: string; e?: number };
+  const t: any = { b: 2, d: "D" };
+  const tt = t as T;
+  show("many a", tt.a); show("many b", tt.b); show("many c", tt.c); show("many d", tt.d); show("many e", tt.e);
+  const rec: Record<string, any> = { a: "ra", c: [1, 2] };
+  const rc: any = rec;
+  const tr = rc as T;
+  show("many rec a", tr.a); show("many rec b", tr.b); show("many rec c", tr.c);
+}
+
+// A nested object: the member an object type with an optional any itself.
+function nested(): void {
+  type I = { v?: any };
+  type O = { inner: I; opt?: I; list?: any };
+  const x: any = { inner: { v: "deep" }, opt: { v: 1 }, list: [1, "two"] };
+  const o = x as O;
+  show("nested inner", o.inner.v); show("nested opt", o.opt?.v); show("nested list", o.list);
+  const y: any = { inner: {} };
+  const o2 = y as O;
+  show("nested absent inner v", o2.inner.v); show("nested absent opt", o2.opt); show("nested absent list", o2.list);
+  const z: any = { inner: { v: null }, opt: { v: null } };
+  const o3 = z as O;
+  show("nested null", o3.inner.v); show("nested opt null", o3.opt?.v);
+}
+
+// A union and T | undefined of the struct.
+function unions(): void {
+  type A = { kind: string; v?: any };
+  const x: any = { kind: "a", v: "va" };
+  const u = x as A | string;
+  if (typeof u !== "string") show("union object", u.v);
+  const y: any = { kind: "b" };
+  const u2 = y as A | string;
+  if (typeof u2 !== "string") show("union absent", u2.v);
+  const y3: any = { kind: "c", v: null };
+  const u3 = y3 as A | number;
+  if (typeof u3 !== "number") show("union null", u3.v);
+  const y4: any = "text";
+  const u4 = y4 as A | string;
+  show("union other", u4);
+  type S = { s?: any };
+  const present: any = { s: "here" };
+  const v1 = present as S | undefined;
+  show("opt struct present", v1?.s);
+  const none: any = undefined;
+  const v2 = none as S | undefined;
+  show("opt struct undefined", v2?.s);
+  const nul: any = null;
+  const v3 = nul as S | null;
+  show("opt struct null", v3?.s);
+  const lack: any = {};
+  const v4 = lack as S | undefined;
+  show("opt struct absent", v4?.s);
+}
+
+// An array element, a tuple and a generic instantiation.
+function containers(): void {
+  type E = { e?: any };
+  const e0: any = { e: "first" };
+  const e1: any = {};
+  const e2: any = { e: null };
+  const a: any = [e0, e1, e2];
+  const arr = a as E[];
+  show("array 0", arr[0].e); show("array 1", arr[1].e); show("array 2", arr[2].e);
+  const held: [E, number] = [{ e: "tup" }, 3];
+  const t: any = held;
+  const tu = t as [E, number];
+  show("tuple 0", tu[0].e); show("tuple 1", tu[1]);
+  type G<T> = { g?: T; h?: any };
+  const g: any = { g: "gee", h: "aitch" };
+  const gs = g as G<string>;
+  show("generic g", gs.g); show("generic h", gs.h);
+  const g2: any = { g: 1 };
+  const ga = g2 as G<any>;
+  show("generic any g", ga.g); show("generic any h", ga.h);
+  function conv<T>(v: any): G<T> { return v as G<T>; }
+  show("generic fn", conv<number>({ h: "in fn" }).h);
+}
+
+// An interface and a class target.
+interface Iface { i?: any; j: number }
+class Plain { c?: any; n: number = 1; }
+function nominal(): void {
+  const x: any = { i: "eye", j: 1 };
+  const it = x as Iface;
+  show("iface i", it.i); show("iface j", it.j);
+  const y: any = { j: 2 };
+  const it2 = y as Iface;
+  show("iface absent", it2.i);
+  const z: any = { i: null, j: 3 };
+  const it3 = z as Iface;
+  show("iface null", it3.i);
+  const inst: any = new Plain();
+  const cl = inst as Plain;
+  show("class absent", cl.c); show("class n", cl.n);
+  const inst2: any = new Plain();
+  inst2.c = "set";
+  const cl2 = inst2 as Plain;
+  show("class set", cl2.c);
+}
+
+// Many in a loop, so a freed block is reused: every value still reads back.
+function loop(): void {
+  let total = 0;
+  for (let i = 0; i < 2000; i++) {
+    const r: Record<string, any> = i % 3 === 0 ? {} : { children: "s" + i };
+    const c: any = r;
+    const p = c as { children?: any };
+    if (p.children !== undefined) total += p.children.length;
+    const full: any = { children: i };
+    const empty: any = {};
+    const o: any = i % 2 === 0 ? full : empty;
+    const q = o as { children?: any };
+    if (q.children !== undefined) total += q.children;
+  }
+  console.log("loop", total);
+}
+
+direct();
+viaCall();
+mixed();
+nested();
+unions();
+containers();
+nominal();
+loop();
