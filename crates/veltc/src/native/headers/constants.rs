@@ -3,11 +3,10 @@
 //! asks clang (each library's headers in turn; a constant is one no matter which library); a
 //! fetched one has the values in its `c-headers.json`, so users never run clang.
 //!
-//! clang evaluates each name in a file of its own making: `__typeof__(NAME)` says its C type and
-//! that it exists, and an enumerator initialized from it holds its value, which the JSON dump
-//! prints. A float can't initialize an enumerator exactly: those are read from the LLVM IR of a
-//! constant initialized from them, in a second run. So what a declared name may be is what C
-//! itself evaluates: an object-like macro or an enumerator (or a `static const` clang folds).
+//! clang evaluates each name (`probe`), so what a declared name may be is what C itself
+//! evaluates: an object-like macro or an enumerator (or a `static const` clang folds). The files
+//! clang read decide whether what it said still holds, and are the build's inputs; a fetched
+//! package's are compared with those its record names.
 
 use std::collections::BTreeMap;
 use std::collections::HashSet;
@@ -16,16 +15,17 @@ use std::path::{Path, PathBuf};
 use sha2::{Digest, Sha256};
 use velt_common::{Diagnostic, Diagnostics, FileId, SourceMap, Span};
 use velt_sema::hir::{self, CTy, CValue, Def};
-use vpm::c_headers::{self, CConstant, CConstantValue, Probe};
+use vpm::c_headers::{self, CConstant, CConstantValue, ConstantsRecord, Probe};
 use vpm::graph::GraphPackage;
 use vpm::PackageGraph;
 
 use super::compare::{self, Scalar, Shape};
 use super::ctype::{CType, Headers};
+use super::probe;
 use super::shape::shape;
 
 /// The constants that were read, per package root (what `c-headers.json` records for the target).
-pub type Constants = BTreeMap<PathBuf, BTreeMap<String, CConstant>>;
+pub type Constants = BTreeMap<PathBuf, ConstantsRecord>;
 
 /// One `declare c const`.
 struct Decl {
@@ -96,23 +96,27 @@ pub fn read(
     };
     let mut values = Vec::new();
     for (root, (package, decls)) in groups {
-        inputs.extend(input_files(package).iter().map(|f| stamp_entry(f)));
-        let of_package = match package.fetched {
+        let (of_package, headers) = match package.fetched {
             true => from_record(package, &decls, zig_target, diags),
             false => from_headers(package, &decls, zig_target, target, diags),
         };
-        for (i, value) in of_package {
+        if package.fetched {
+            inputs.push(stamp_entry(&root.join(c_headers::FILE)));
+        }
+        // A header the package doesn't have (a registry archive ships none) is no input.
+        let files = headers.keys().map(|h| root.join(h));
+        inputs.extend(files.filter(|f| f.is_file()).map(|f| stamp_entry(&f)));
+        if of_package.is_empty() {
+            continue;
+        }
+        let record = read.entry(root.clone()).or_default();
+        record.headers = headers;
+        for (i, constant) in of_package {
             let d = &decls[i];
-            if let Some(v) = to_hir(&value) {
+            if let Some(v) = to_hir(&constant.value) {
                 values.push((d.def, v));
             }
-            read.entry(root.clone()).or_default().insert(
-                d.name.clone(),
-                CConstant {
-                    declared: d.declared(),
-                    value,
-                },
-            );
+            record.values.insert(d.name.clone(), constant);
         }
     }
     for (def, value) in values {
@@ -124,15 +128,6 @@ pub fn read(
         }
     }
     read
-}
-
-/// The files `package`'s constants come from.
-fn input_files(package: &GraphPackage) -> Vec<PathBuf> {
-    if package.fetched {
-        return vec![package.root.join(c_headers::FILE)];
-    }
-    let headers = package.c_libraries.values().flat_map(|l| l.headers.clone());
-    super::own_header_files(&package.root, &headers.collect::<Vec<_>>())
 }
 
 /// A build-stamp `file` entry for `file`: without a time, so it is hashed each time.
@@ -155,13 +150,23 @@ fn to_hir(v: &CConstantValue) -> Option<CValue> {
     })
 }
 
-/// The values of `decls` in the record of fetched `package`, by index in `decls`.
+/// A package's own headers some values were read from: `/`-separated path in it → digest.
+type HeaderDigests = BTreeMap<String, String>;
+
+/// The headers `package`'s C libraries list.
+fn listed(package: &GraphPackage) -> Vec<String> {
+    let libraries = package.c_libraries.values();
+    libraries.flat_map(|l| l.headers.clone()).collect()
+}
+
+/// The values of `decls` in the record of fetched `package`, by index in `decls`, and the
+/// headers the record says they were read from, which are compared with the package's.
 fn from_record(
     package: &GraphPackage,
     decls: &[Decl],
     zig_target: &str,
     diags: &mut Diagnostics,
-) -> Vec<(usize, CConstantValue)> {
+) -> (Vec<(usize, CConstant)>, HeaderDigests) {
     let name = &package.name;
     let record = match c_headers::CHeaders::read(&package.root) {
         Ok(Some(record)) => record,
@@ -176,18 +181,35 @@ fn from_record(
                 )
                 .with_note("its author makes the record with `velt native headers`, which `velt publish` runs; ask for a version that has it"),
             );
-            return Vec::new();
+            return Default::default();
         }
         Err(e) => {
             diags.push(Diagnostic::error(e, decls[0].span));
-            return Vec::new();
+            return Default::default();
         }
+    };
+    let headers = match record.constants.get(zig_target) {
+        Some(r) => {
+            let of = format!("of package `{name}`'s C constants");
+            let at = decls[0].span;
+            let listed = listed(package);
+            super::record::compare_headers(
+                package, &of, &r.headers, &listed, zig_target, at, diags,
+            );
+            r.headers.clone()
+        }
+        None => HeaderDigests::new(),
+    };
+    let long_bits = if zig_target.contains("windows") {
+        32
+    } else {
+        64
     };
     let mut out = Vec::new();
     for (i, d) in decls.iter().enumerate() {
         match record.constant(zig_target, &d.name) {
-            Some(c) if c.declared == d.declared() && to_hir(&c.value).is_some() => {
-                out.push((i, c.value.clone()))
+            Some(c) if c.declared == d.declared() && holds(d, c, long_bits) => {
+                out.push((i, c.clone()))
             }
             Some(c) => diags.push(
                 Diagnostic::error(
@@ -217,17 +239,25 @@ fn from_record(
             ),
         }
     }
-    out
+    (out, headers)
 }
 
-/// The values of `decls` in the headers of `package`'s C libraries, by index in `decls`.
+/// Whether recorded constant `c` is one `d` can be: a record is trusted as its author's check,
+/// but a value its type can't hold would break the type, or the compiler.
+fn holds(d: &Decl, c: &CConstant, long_bits: u32) -> bool {
+    let c_type = Headers::default().resolve(&c.c_type, long_bits);
+    to_hir(&c.value).is_some() && fit(&d.shape, d.nullable, &c_type, &c.value).is_ok()
+}
+
+/// The values of `decls` in the headers of `package`'s C libraries, by index in `decls`, and
+/// the package's own headers clang read for them.
 fn from_headers(
     package: &GraphPackage,
     decls: &[Decl],
     zig_target: &str,
     target: &str,
     diags: &mut Diagnostics,
-) -> Vec<(usize, CConstantValue)> {
+) -> (Vec<(usize, CConstant)>, HeaderDigests) {
     let libraries: Vec<(&String, &[String])> = package
         .c_libraries
         .iter()
@@ -245,15 +275,19 @@ fn from_headers(
             )
             .with_note("list them: `native: { c: { <library>: { headers: [\"native/<library>.h\"] } } }`; a library that says `unchecked: true` has none to read"),
         );
-        return Vec::new();
+        return Default::default();
     }
     let names: Vec<&str> = decls.iter().map(|d| d.name.as_str()).collect();
     let long_bits = if target.contains("windows") { 32 } else { 64 };
     let mut found: BTreeMap<&str, (&str, Probe)> = BTreeMap::new();
     let mut failed = false;
+    let mut read = Vec::new();
     for (library, headers) in &libraries {
         let probes = match probes_of(&package.root, headers, &names, zig_target, long_bits) {
-            Ok(probes) => probes,
+            Ok((probes, files)) => {
+                read.extend(files);
+                probes
+            }
             Err(e) => {
                 diags.push(
                     Diagnostic::error(
@@ -312,11 +346,18 @@ fn from_headers(
             continue;
         };
         match value_for(d, probe, long_bits) {
-            Ok(value) => out.push((i, value)),
+            Ok(value) => out.push((
+                i,
+                CConstant {
+                    declared: d.declared(),
+                    c_type: probe.c_type.clone(),
+                    value,
+                },
+            )),
             Err(e) => diags.push(e),
         }
     }
-    out
+    (out, super::record::package_headers(&package.root, &read))
 }
 
 /// The value of declaration `d`, which clang says is `probe`.
@@ -401,21 +442,31 @@ pub(super) fn fit(
     }
 }
 
-/// What clang says about `names` in `headers`, remembered like a check's result: the macros of
-/// a package's headers are what a value depends on, and a target's C headers come with zig.
+/// What [`probes_of`] remembers: what clang said, and the files it read, with their digests.
+type Remembered = (BTreeMap<String, Probe>, Vec<(PathBuf, String)>);
+
+/// What clang says about `names` in `headers` and the files it read, remembered like a check's
+/// result (`still_holds`): while none of those files change, a target's C headers from zig
+/// among them.
 fn probes_of(
     root: &Path,
     headers: &[String],
     names: &[&str],
     zig_target: &str,
     long_bits: u32,
-) -> Result<BTreeMap<String, Probe>, String> {
+) -> Result<Remembered, String> {
     let home = vpm::locations::velt_home()?;
     let mut h = Sha256::new();
     h.update(velt_toolchain::zig::VERSION);
     h.update([0]);
     h.update(zig_target);
-    super::hash_headers(&mut h, root, headers);
+    h.update([0]);
+    h.update(root.to_string_lossy().as_bytes());
+    for header in headers {
+        h.update([0]);
+        h.update(header);
+    }
+    h.update([1]);
     for name in names {
         h.update([0]);
         h.update(name);
@@ -425,233 +476,38 @@ fn probes_of(
         .join("cache")
         .join("headers")
         .join(format!("constants-{key}.json"));
-    if let Some(known) = std::fs::read(&remembered)
+    let known = std::fs::read(&remembered)
         .ok()
-        .and_then(|b| serde_json::from_slice(&b).ok())
-    {
+        .and_then(|b| serde_json::from_slice::<Remembered>(&b).ok());
+    if let Some(known) = known.filter(|(_, read)| holds_still(read)) {
         return Ok(known);
     }
     let zig = velt_toolchain::zig::zig(&home)?;
     let dir = super::work_dir(&home);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let result = run_clang(&zig, &dir, root, headers, names, zig_target, long_bits);
+    let result = probe::run_clang(&zig, &dir, root, headers, names, zig_target, long_bits);
     let _ = std::fs::remove_dir_all(&dir);
-    let probes = result?;
-    // A failure to write it costs a run next time.
-    if let Ok(text) = serde_json::to_vec(&probes) {
-        let _ = std::fs::write(&remembered, text);
+    let (probes, files) = result?;
+    let read = files
+        .into_iter()
+        .map(|file| Some((file.clone(), super::file_digest(&file)?)))
+        .collect::<Option<Vec<_>>>()
+        .ok_or("the headers changed while clang read them")?;
+    // A failure to write it costs a run next time; written whole, so a torn write can't leave a
+    // list of fewer files, which would still hold.
+    let known = (probes, read);
+    if let Ok(text) = serde_json::to_string(&known) {
+        let _ = vpm::json_file::write_atomic(&remembered, &text);
     }
-    Ok(probes)
+    Ok(known)
 }
 
-const SOURCE: &str = "constants.c";
-
-/// The C file that asks about `names`: two lines each after `includes`.
-fn probe_source(includes: &str, names: &[&str]) -> String {
-    let mut source = includes.to_string();
-    for (i, name) in names.iter().enumerate() {
-        source.push_str(&format!("__typeof__({name}) __velt_t{i};\n"));
-        source.push_str(&format!(
-            "enum {{ __velt_v{i} = (__INTMAX_TYPE__)({name}) }};\n"
-        ));
-    }
-    source
-}
-
-#[allow(clippy::too_many_arguments)]
-fn run_clang(
-    zig: &Path,
-    dir: &Path,
-    root: &Path,
-    headers: &[String],
-    names: &[&str],
-    zig_target: &str,
-    long_bits: u32,
-) -> Result<BTreeMap<String, Probe>, String> {
-    let includes = super::includes(root, headers)?;
-    let file = dir.join(SOURCE);
-    std::fs::write(&file, probe_source(&includes, names)).map_err(|e| e.to_string())?;
-    let mut cc1 = super::cc1_command(zig, dir, root, SOURCE, zig_target)?;
-    cc1.extend(["-ferror-limit".into(), "0".into(), "-ast-dump=json".into()]);
-    let out = super::zig_command(zig, dir)
-        .args(&cc1)
-        .output()
-        .map_err(|e| format!("running {}: {e}", zig.display()))?;
-    let stderr = String::from_utf8_lossy(&out.stderr);
-    let wrong = probe_errors(&stderr, headers.len(), names.len())?;
-    let json: serde_json::Value =
-        serde_json::from_slice(&out.stdout).map_err(|e| format!("clang's AST is not JSON: {e}"))?;
-    let (types, values) = read_dump(&json);
-    let mut probes = BTreeMap::new();
-    let mut floats = Vec::new();
-    for (i, name) in names.iter().enumerate() {
-        if wrong.undefined.contains(&i) {
-            continue;
-        }
-        let Some(c_type) = types.get(&i) else {
-            continue;
-        };
-        let value = match wrong.not_constant.contains(&i) {
-            true => None,
-            false => values.get(&i).copied(),
-        };
-        let c = Headers::default().resolve(c_type, long_bits);
-        if matches!(c, CType::Float | CType::Double) && !c_type.contains('[') {
-            floats.push((i, *name));
-        }
-        let value = classify(c_type, &c, value);
-        probes.insert(
-            name.to_string(),
-            Probe {
-                c_type: c_type.clone(),
-                value,
-            },
-        );
-    }
-    if !floats.is_empty() {
-        let mut source = includes;
-        for (i, name) in &floats {
-            source.push_str(&format!(
-                "const __typeof__({name}) __velt_f{i} = ({name});\n"
-            ));
-        }
-        std::fs::write(&file, source).map_err(|e| e.to_string())?;
-        let mut cc1 = super::cc1_command(zig, dir, root, SOURCE, zig_target)?;
-        cc1.extend(["-emit-llvm".into(), "-o".into(), "-".into()]);
-        let out = super::zig_command(zig, dir)
-            .args(&cc1)
-            .output()
-            .map_err(|e| format!("running {}: {e}", zig.display()))?;
-        let ir = String::from_utf8_lossy(&out.stdout);
-        for (i, name) in &floats {
-            if let (Some(bits), Some(probe)) = (float_in_ir(&ir, *i), probes.get_mut(*name)) {
-                probe.value = Some(CConstantValue::Float(format!("{bits:x}")));
-            }
-        }
-    }
-    Ok(probes)
-}
-
-/// The value clang evaluated, as what it crosses as; `None` for a type no constant crosses as.
-fn classify(c_type: &str, c: &CType, value: Option<i64>) -> Option<CConstantValue> {
-    // An array (a string literal) reads as a pointer in `resolve`, but no value is its address.
-    if c_type.contains('[') {
-        return None;
-    }
-    let value = value?;
-    Some(match c {
-        CType::Int { signed: false, .. } => CConstantValue::Int((value as u64).to_string()),
-        CType::Int { .. } | CType::Enum { .. } => CConstantValue::Int(value.to_string()),
-        CType::Bool => CConstantValue::Bool(value != 0),
-        CType::Pointer { .. } | CType::FunctionPointer => {
-            CConstantValue::Pointer(format!("{:x}", value as u64))
-        }
-        _ => return None,
-    })
-}
-
-/// Which of the probed names clang refused.
-#[derive(Default, Debug, PartialEq, Eq)]
-struct ProbeErrors {
-    /// `__typeof__(NAME)` failed: not declared.
-    undefined: HashSet<usize>,
-    /// Its value is no constant.
-    not_constant: HashSet<usize>,
-}
-
-/// The errors of a run on [`probe_source`] for `headers` includes and `names` names. An error
-/// anywhere else is that the headers themselves don't parse.
-fn probe_errors(stderr: &str, headers: usize, names: usize) -> Result<ProbeErrors, String> {
-    let mut wrong = ProbeErrors::default();
-    let mut other = Vec::new();
-    for line in stderr.lines() {
-        if !line.contains(" error: ") {
-            continue;
-        }
-        let at = line
-            .strip_prefix(SOURCE)
-            .and_then(|l| l.strip_prefix(':'))
-            .and_then(|l| l.split(':').next())
-            .and_then(|l| l.parse::<usize>().ok())
-            .filter(|&l| l > headers && l <= headers + 2 * names);
-        match at {
-            Some(l) => {
-                let k = l - headers - 1;
-                match k.is_multiple_of(2) {
-                    true => wrong.undefined.insert(k / 2),
-                    false => wrong.not_constant.insert(k / 2),
-                };
-            }
-            None => other.push(line),
-        }
-    }
-    if other.is_empty() {
-        return Ok(wrong);
-    }
-    other.truncate(3);
-    Err(format!("clang can't parse them: {}", other.join("; ")))
-}
-
-/// In clang's dump: each probe's C type and value, by its number.
-fn read_dump(json: &serde_json::Value) -> (BTreeMap<usize, String>, BTreeMap<usize, i64>) {
-    let mut types = BTreeMap::new();
-    let mut values = BTreeMap::new();
-    for node in json["inner"].as_array().into_iter().flatten() {
-        match node["kind"].as_str() {
-            Some("VarDecl") => {
-                let Some(i) = number_of(node, "__velt_t") else {
-                    continue;
-                };
-                let ty = &node["type"];
-                let written = ty["desugaredQualType"].as_str().or(ty["qualType"].as_str());
-                if let Some(written) = written {
-                    types.insert(i, written.to_string());
-                }
-            }
-            Some("EnumDecl") => {
-                for e in node["inner"].as_array().into_iter().flatten() {
-                    let Some(i) = number_of(e, "__velt_v") else {
-                        continue;
-                    };
-                    if let Some(v) = constant_expr(e) {
-                        values.insert(i, v);
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-    (types, values)
-}
-
-fn number_of(node: &serde_json::Value, prefix: &str) -> Option<usize> {
-    node["name"].as_str()?.strip_prefix(prefix)?.parse().ok()
-}
-
-/// The value of the `ConstantExpr` under `node`.
-fn constant_expr(node: &serde_json::Value) -> Option<i64> {
-    if node["kind"] == "ConstantExpr" {
-        return node["value"].as_str()?.parse().ok();
-    }
-    node["inner"].as_array()?.iter().find_map(constant_expr)
-}
-
-/// The value of float probe `i` in LLVM IR, as `f64::to_bits`: `@__velt_f0 = constant double
-/// 3.25e+00, align 8`. A `float` is printed as the `double` of its value.
-fn float_in_ir(ir: &str, i: usize) -> Option<u64> {
-    let head = format!("@__velt_f{i} = ");
-    let line = ir.lines().find(|l| l.starts_with(&head))?;
-    let (_, rest) = line.split_once(" constant ")?;
-    let mut words = rest.split_whitespace();
-    let ty = words.next()?;
-    if ty != "double" && ty != "float" {
-        return None;
-    }
-    let text = words.next()?.trim_end_matches(',');
-    match text.strip_prefix("0x") {
-        Some(hex) => u64::from_str_radix(hex, 16).ok(),
-        None => text.parse::<f64>().ok().map(f64::to_bits),
-    }
+/// Whether every file of `read` still has its digest (and there is one).
+fn holds_still(read: &[(PathBuf, String)]) -> bool {
+    !read.is_empty()
+        && read
+            .iter()
+            .all(|(file, digest)| super::file_digest(file).as_deref() == Some(digest))
 }
 
 #[cfg(test)]
@@ -742,30 +598,65 @@ mod tests {
         assert!(fit(&int(64, false), false, &c_thing, &at).is_err());
     }
 
+    /// A record's value is trusted as its author's check only when its type can hold it.
     #[test]
-    fn a_probe_s_errors_name_its_lines() {
-        let stderr = "constants.c:2:12: error: use of undeclared identifier 'NOPE'\nconstants.c:5:20: error: expression is not an integer constant expression\n./own.h:3:9: note: expanded from macro 'X'\n2 errors generated.\n";
-        let wrong = probe_errors(stderr, 1, 2).unwrap();
-        assert_eq!(wrong.undefined, HashSet::from([0]));
-        assert_eq!(wrong.not_constant, HashSet::from([1]));
-        // A broken header, or one that isn't there, is no probe's fault.
-        let e = probe_errors("./own.h:3:9: error: expected ';'\n", 1, 2).unwrap_err();
-        assert!(e.contains("own.h:3:9"), "{e}");
-        let e = probe_errors(
-            "constants.c:1:10: fatal error: 'x.h' file not found\n",
-            1,
-            2,
-        );
-        assert!(e.unwrap_err().contains("x.h"));
-    }
-
-    #[test]
-    fn floats_are_read_from_ir() {
-        let ir = "@__velt_f0 = constant double 3.250000e+00, align 8, !dbg !0\n@__velt_f1 = dso_local constant float 0x3FF8000000000000, align 4\n@__velt_f2 = constant double -0.000000e+00, align 8\n";
-        assert_eq!(float_in_ir(ir, 0), Some(3.25f64.to_bits()));
-        assert_eq!(float_in_ir(ir, 1), Some(1.5f64.to_bits()));
-        assert_eq!(float_in_ir(ir, 2), Some((-0.0f64).to_bits()));
-        assert_eq!(float_in_ir(ir, 3), None);
+    fn a_recorded_value_its_type_can_t_hold_is_refused() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut graph = PackageGraph::default();
+        graph.add("bind", tmp.path(), BTreeMap::new()).fetched = true;
+        let package = &graph.packages()[0];
+        let target = "x86_64-linux-gnu";
+        let float = CConstantValue::Float(format!("{:x}", 1.5f64.to_bits()));
+        let pointer = |a: &str| CConstantValue::Pointer(a.into());
+        let void_ptr = Shape::Ptr(Pointee::Void);
+        let bool_shape = Shape::Scalar(Scalar::Bool);
+        // (declared, nullable, C type, value, whether it is accepted)
+        let cases = [
+            (int(32, true), false, "int", v(7), true),
+            (void_ptr.clone(), true, "void *", pointer("0"), true),
+            (int(32, true), false, "int", pointer("10"), false),
+            (int(32, true), false, "int", float.clone(), false),
+            (
+                int(32, true),
+                false,
+                "int",
+                CConstantValue::Bool(true),
+                false,
+            ),
+            (Shape::Scalar(Scalar::F64), false, "double", v(1), false),
+            (void_ptr.clone(), false, "void *", v(16), false),
+            (int(32, true), false, "int", v(5_000_000_000), false),
+            (void_ptr, false, "void *", pointer("0"), false),
+            (bool_shape, false, "_Bool", v(1), false),
+        ];
+        for (n, (shape, nullable, c_type, value, accepted)) in cases.into_iter().enumerate() {
+            let d = Decl {
+                def: 0,
+                name: "X".into(),
+                shape,
+                nullable,
+                span: Span::DUMMY,
+            };
+            let mut record = c_headers::CHeaders::default();
+            let constant = CConstant {
+                declared: d.declared(),
+                c_type: c_type.into(),
+                value,
+            };
+            let values = &mut record.constants.entry(target.into()).or_default().values;
+            values.insert("X".into(), constant);
+            record.write(tmp.path()).unwrap();
+            let mut diags = Diagnostics::default();
+            let (out, _) = from_record(package, std::slice::from_ref(&d), target, &mut diags);
+            let messages: Vec<_> = diags.iter().map(|d| d.message.clone()).collect();
+            match accepted {
+                true => assert!(out.len() == 1 && messages.is_empty(), "{n}: {messages:?}"),
+                false => {
+                    assert!(out.is_empty(), "case {n}");
+                    assert_eq!(messages, ["C constant `X` of package `bind` is not the one its author checked against its headers for x86_64-linux-gnu"], "case {n}");
+                }
+            }
+        }
     }
 
     #[test]

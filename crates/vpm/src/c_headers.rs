@@ -5,7 +5,8 @@
 //! is generated (`velt native headers`, and `velt publish` before it packs), committed for git
 //! dependencies, and shipped with the package. A build that fetched the package compares its
 //! declarations and the headers it has with it, so users never run clang. It holds the value
-//! of each `declare c const` per target too, which such a build compiles in.
+//! of each `declare c const` per target too, which such a build compiles in, with the package's
+//! own headers those were read from, which it compares as it does a library's.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
@@ -20,9 +21,19 @@ pub const FILE: &str = "c-headers.json";
 pub struct CHeaders {
     /// zig target → C library → what was checked there.
     pub checked: BTreeMap<String, BTreeMap<String, LibraryRecord>>,
-    /// zig target → C constant → what its author declared and what the headers gave there.
+    /// zig target → the C constants read there.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    pub constants: BTreeMap<String, BTreeMap<String, CConstant>>,
+    pub constants: BTreeMap<String, ConstantsRecord>,
+}
+
+/// The C constants of a package on one target.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ConstantsRecord {
+    /// The package's own headers the values were read from, with what they include, as
+    /// [`LibraryRecord::headers`].
+    pub headers: BTreeMap<String, String>,
+    /// C constant → what its author declared and what the headers gave.
+    pub values: BTreeMap<String, CConstant>,
 }
 
 /// What was checked of one C library on one target.
@@ -41,6 +52,8 @@ pub struct LibraryRecord {
 pub struct CConstant {
     /// The Velt type declared (`i32`, `Ptr<void> | null`).
     pub declared: String,
+    /// Its C type, as [`Probe::c_type`]: what the value is checked against again.
+    pub c_type: String,
     pub value: CConstantValue,
 }
 
@@ -91,7 +104,7 @@ impl CHeaders {
 
     /// The record of constant `name` on `target`.
     pub fn constant(&self, target: &str, name: &str) -> Option<&CConstant> {
-        self.constants.get(target)?.get(name)
+        self.constants.get(target)?.values.get(name)
     }
 }
 
@@ -113,12 +126,14 @@ mod tests {
         let mut record = CHeaders::default();
         let constant = CConstant {
             declared: "Ptr<void>".into(),
+            c_type: "void (*)(void *)".into(),
             value: CConstantValue::Pointer("ffffffffffffffff".into()),
         };
         record
             .constants
             .entry("x86_64-linux-gnu".into())
             .or_default()
+            .values
             .insert("T".into(), constant.clone());
         record.write(tmp.path()).unwrap();
         let back = CHeaders::read(tmp.path()).unwrap().unwrap();

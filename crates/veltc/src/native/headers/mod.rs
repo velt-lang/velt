@@ -15,6 +15,7 @@
 mod compare;
 mod constants;
 mod ctype;
+mod probe;
 mod record;
 mod shape;
 
@@ -376,57 +377,6 @@ fn cache_key(root: &Path, headers: &[String], decls: &[Decl], target: &str) -> S
         h.update(format!("\0{}{:?}{:?}", d.name, d.params, d.ret));
     }
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// Hash `headers`' names and what a package's own headers read ([`own_header_files`]).
-fn hash_headers(h: &mut Sha256, root: &Path, headers: &[String]) {
-    for header in headers {
-        h.update([0]);
-        h.update(header);
-    }
-    for file in own_header_files(root, headers) {
-        h.update([0]);
-        h.update(
-            file.strip_prefix(root)
-                .unwrap_or(&file)
-                .to_string_lossy()
-                .as_bytes(),
-        );
-        h.update([0]);
-        h.update(std::fs::read(&file).unwrap_or_default());
-    }
-}
-
-/// What a package's own `headers` read: as they may include each other, the files beside them
-/// (all under their directory; only headers when that is the package's root). An `#include`
-/// reaching elsewhere in the package isn't seen.
-fn own_header_files(root: &Path, headers: &[String]) -> Vec<PathBuf> {
-    let mut files = std::collections::BTreeSet::new();
-    for header in headers.iter().filter(|h| !h.starts_with('<')) {
-        let path = root.join(header);
-        if let Some(dir) = path.parent() {
-            files.extend(files_under(dir, dir != root));
-        }
-        files.insert(path);
-    }
-    files.into_iter().collect()
-}
-
-/// The files that headers in `dir` could include, sorted.
-fn files_under(dir: &Path, deep: bool) -> Vec<PathBuf> {
-    let mut files = Vec::new();
-    for entry in std::fs::read_dir(dir).into_iter().flatten().flatten() {
-        let path = entry.path();
-        if path.is_dir() {
-            if deep {
-                files.extend(files_under(&path, true));
-            }
-        } else if deep || path.extension().is_some_and(|e| e == "h" || e == "inc") {
-            files.push(path);
-        }
-    }
-    files.sort();
-    files
 }
 
 /// The target as zig names it; `None` for one without C headers (WebAssembly). Windows

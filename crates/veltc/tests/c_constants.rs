@@ -316,36 +316,13 @@ fn values_are_recorded_per_target_and_a_fetched_package_uses_them() {
         .constants
         .get_mut(host)
         .unwrap()
+        .values
         .get_mut("O_CREAT")
         .unwrap()
         .value = vpm::c_headers::CConstantValue::Int("1234".into());
     changed.write(&bind).unwrap();
-    git(&bind, &["init", "-q", "-b", "main"]);
-    git(&bind, &["add", "-A"]);
-    git(&bind, &["commit", "-q", "-m", "checked"]);
-    let url = bind.display().to_string().replace('\\', "/");
-    let url = match url.starts_with('/') {
-        true => format!("file://{url}"),
-        false => format!("file:///{url}"),
-    };
-    let manifest = dir.path().join("app/package.vlt");
-    let text = std::fs::read_to_string(&manifest).unwrap();
-    let text = text.replace(
-        "path: \"../bind\"",
-        &format!("git: \"{url}\", branch: \"main\""),
-    );
-    std::fs::write(&manifest, text).unwrap();
-    let fetched = |args: &[&str]| {
-        let _ = std::fs::remove_file(dir.path().join("app/velt.lock.json"));
-        no_window::command(env!("CARGO_BIN_EXE_velt"))
-            .args(args)
-            .current_dir(dir.path().join("app"))
-            .env("NO_COLOR", "1")
-            .env("VELT_HOME", &home)
-            .env("VELT_ZIG", dir.path().join("no-zig"))
-            .output()
-            .unwrap()
-    };
+    commit_and_depend_by_git(dir.path());
+    let fetched = |args: &[&str]| fetched(dir.path(), &home, args);
     let o = fetched(&["run"]);
     assert!(o.status.success(), "{}", output(&o));
     assert_eq!(String::from_utf8_lossy(&o.stdout), "1234\n");
@@ -362,8 +339,28 @@ fn values_are_recorded_per_target_and_a_fetched_package_uses_them() {
         "{out}"
     );
     assert!(out.contains("c-headers.json records `i32`"), "{out}");
-    // No value for a target.
+    // The declaration is as recorded, but the value isn't one it can hold: refused, where it
+    // was compiled in and crashed lowering.
     std::fs::write(bind.join("src/lib.vlt"), lib).unwrap();
+    let mut wrong = changed.clone();
+    wrong
+        .constants
+        .get_mut(host)
+        .unwrap()
+        .values
+        .get_mut("O_CREAT")
+        .unwrap()
+        .value = vpm::c_headers::CConstantValue::Pointer("10".into());
+    wrong.write(&bind).unwrap();
+    git(&bind, &["commit", "-q", "-am", "a pointer"]);
+    let o = fetched(&["run"]);
+    let out = output(&o);
+    assert_eq!(o.status.code(), Some(1), "{out}");
+    assert!(
+        out.contains("error: C constant `O_CREAT` of package `bind` is not the one its author checked against its headers"),
+        "{out}"
+    );
+    // No value for a target.
     let mut gone = changed.clone();
     gone.constants.remove(host);
     gone.write(&bind).unwrap();
@@ -394,6 +391,44 @@ fn host_zig_target() -> &'static str {
     }
 }
 
+/// Commit package `bind` in `dir` to a git repository, and make `app` depend on it by `file://`.
+fn commit_and_depend_by_git(dir: &Path) {
+    let bind = dir.join("bind");
+    git(&bind, &["init", "-q", "-b", "main"]);
+    git(&bind, &["add", "-A"]);
+    git(&bind, &["commit", "-q", "-m", "checked"]);
+    let url = bind.display().to_string().replace('\\', "/");
+    let url = match url.starts_with('/') {
+        true => format!("file://{url}"),
+        false => format!("file:///{url}"),
+    };
+    let manifest = dir.join("app/package.vlt");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let text = text.replace(
+        "path: \"../bind\"",
+        &format!("git: \"{url}\", branch: \"main\""),
+    );
+    let text = text.replace(
+        ALLOW,
+        &format!("allowNative: [{{ name: \"bind\", git: \"{url}\" }}], "),
+    );
+    std::fs::write(&manifest, text).unwrap();
+}
+
+/// `velt <args>` in `app`, with `bind` fetched again from its branch, as a user without zig:
+/// `VELT_ZIG` names none, so clang can't run.
+fn fetched(dir: &Path, home: &Path, args: &[&str]) -> Output {
+    let _ = std::fs::remove_file(dir.join("app/velt.lock.json"));
+    no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(args)
+        .current_dir(dir.join("app"))
+        .env("NO_COLOR", "1")
+        .env("VELT_HOME", home)
+        .env("VELT_ZIG", dir.join("no-zig"))
+        .output()
+        .unwrap()
+}
+
 fn git(dir: &Path, args: &[&str]) {
     let o = std::process::Command::new("git")
         .arg("-C")
@@ -410,6 +445,74 @@ fn git(dir: &Path, args: &[&str]) {
         .output()
         .unwrap();
     assert!(o.status.success(), "git {args:?}: {}", output(&o));
+}
+
+/// A value read through any file of the package changes with that file, wherever it is: what
+/// clang read is what the remembered values and the build stamp hold.
+#[test]
+fn a_value_changes_with_any_header_it_was_read_through() {
+    let Some(_zig) = zig() else { return };
+    let lib = "export declare c const X: i32;\n";
+    let main = "import { X } from \"bind\";\n\nfunction main() {\n  console.log(X);\n}\n";
+    // The header listed, what it includes, and the file that defines `X`.
+    let cases = [
+        ("native/own.h", "#include \"../other/o.h\"\n", "other/o.h"),
+        ("own.h", "#include \"inc/x.h\"\n", "inc/x.h"),
+        ("native/own.h", "#include <shadow_x.h>\n", "shadow_x.h"),
+    ];
+    for (n, (listed, header, defines)) in cases.into_iter().enumerate() {
+        let dir = test_dir::TestDir::new();
+        let home = dir.path().join("home");
+        let native = format!(
+            ", native: {{ c: {{ own: {{ system: {{ default: \"own\" }}, headers: [\"{listed}\"] }} }} }}"
+        );
+        let value = 50 + 10 * n;
+        let define = format!("#define X {value}\n");
+        let files = [(listed, header), (defines, define.as_str())];
+        project(dir.path(), &native, lib, &files, main, ALLOW);
+        let run = |want: usize| {
+            let o = velt(dir.path(), &home, &["run"]);
+            assert!(o.status.success(), "{defines}: {}", output(&o));
+            assert_eq!(
+                String::from_utf8_lossy(&o.stdout),
+                format!("{want}\n"),
+                "{defines}"
+            );
+        };
+        run(value);
+        let path = dir.path().join("bind").join(defines);
+        std::fs::write(&path, format!("#define X {}\n", value + 1)).unwrap();
+        run(value + 1);
+    }
+}
+
+/// A git dependency with only constants has the headers its author read compared with the
+/// record, as one with C functions has.
+#[test]
+fn a_changed_header_of_a_git_dependency_with_constants_is_refused() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let lib = "export declare c const A: i32;\n";
+    let main = "import { A } from \"bind\";\n\nfunction main() {\n  console.log(A);\n}\n";
+    let files = [("native/own.h", "#define A 7\n")];
+    project(dir.path(), NATIVE, lib, &files, main, ALLOW);
+    let bind = dir.path().join("bind");
+    let o = velt_in(&bind, &home, &["native", "headers"]);
+    assert!(o.status.success(), "{}", output(&o));
+    commit_and_depend_by_git(dir.path());
+    let o = fetched(dir.path(), &home, &["run"]);
+    assert!(o.status.success(), "{}", output(&o));
+    assert_eq!(String::from_utf8_lossy(&o.stdout), "7\n");
+    std::fs::write(bind.join("native/own.h"), "#define A 8\n").unwrap();
+    git(&bind, &["commit", "-q", "-am", "changed"]);
+    let o = fetched(dir.path(), &home, &["run"]);
+    let out = output(&o);
+    assert!(!o.status.success(), "{out}");
+    assert!(
+        out.contains("error: header `native/own.h` of package `bind`'s C constants is not the one its author checked"),
+        "{out}"
+    );
 }
 
 const SEVEN: &str = "export declare c const SEVEN: i32;\n";

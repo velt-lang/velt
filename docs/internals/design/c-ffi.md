@@ -848,12 +848,14 @@ Step 1 lands in layers, each its own pull request:
        function parameters too, or `sqlite3_bind_text` and `SQLITE_TRANSIENT` couldn't be
        declared against `sqlite3.h` (`declare c const SQLITE_TRANSIENT: Ptr<void>;`).
      - Values go by the target: `velt native headers` records each in `c-headers.json`, per
-       target in `constants` beside `checked`'s digests: the type declared and the value, which
-       a fetched build compiles in. A fetched package's come from there (a declaration that differs, or a
-       missing target, is an error). What clang said is remembered like a check, keyed by the
-       headers and the files beside them, and those files are build-stamp inputs, so a changed
-       header changes the program with no source changed. An `#include` reaching elsewhere in
-       the package isn't seen.
+       target in `constants` beside `checked`'s digests: the type declared, the C type and the
+       value, which a fetched build compiles in, and a digest of each of the package's own
+       headers clang read. A fetched package's come from there: a declaration that differs, a
+       value its type can't hold (checked as the author's was, with the recorded C type), or a
+       missing target is an error, and its headers are compared as a library's are. What clang
+       said is remembered like a check, with the files it read, and holds while they do; the
+       package's own files among them are build-stamp inputs, so a changed header changes the
+       program with no source changed.
      - HIR: `GlobalDef::c_const` holds the value, set by the driver after sema; lowering reads it
        instead of the initializer, in tables too. On a target without C headers (WebAssembly) a
        reachable read is an error, as a C function's call is.

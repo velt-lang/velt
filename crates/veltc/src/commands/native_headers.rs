@@ -41,7 +41,7 @@ pub fn native_headers() -> Result<(), String> {
     let constants: usize = record
         .constants
         .values()
-        .map(|c| c.len())
+        .map(|c| c.values.len())
         .max()
         .unwrap_or(0);
     let targets = record.checked.len().max(record.constants.len());
