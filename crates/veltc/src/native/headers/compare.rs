@@ -174,15 +174,17 @@ fn scalar(s: &Scalar, c: &CType) -> Result<(), String> {
         (Scalar::F32, CType::Float)
         | (Scalar::F64, CType::Double)
         | (Scalar::Bool, CType::Bool) => true,
-        // A C enum is an `int` here.
         (
             Scalar::Int {
-                bits: 32,
+                bits,
+                signed,
                 pointer_sized: false,
-                ..
             },
-            CType::Enum,
-        ) => true,
+            CType::Enum {
+                bits: cbits,
+                signed: csigned,
+            },
+        ) => bits == cbits && csigned.is_none_or(|c| c == *signed),
         (
             Scalar::Int {
                 bits,
@@ -248,7 +250,10 @@ fn velt_for(c: &CType) -> String {
         CType::Bool => "`bool`".into(),
         CType::Float => "`f32`".into(),
         CType::Double => "`f64`".into(),
-        CType::Enum => "`i32` (a C enum)".into(),
+        CType::Enum { bits, signed } => {
+            let sign = if *signed == Some(false) { "u" } else { "i" };
+            format!("`{sign}{bits}` (a C enum)")
+        }
         CType::Int {
             bits,
             signed,
@@ -311,7 +316,26 @@ mod tests {
         assert!(compare(&velt_int(32, false), &int(32, true)).is_err());
         assert!(compare(&Shape::Scalar(Scalar::F64), &CType::Double).is_ok());
         assert!(compare(&Shape::Scalar(Scalar::Bool), &int(32, true)).is_err());
-        assert!(compare(&velt_int(32, true), &CType::Enum).is_ok());
+        let int_enum = CType::Enum {
+            bits: 32,
+            signed: None,
+        };
+        assert!(compare(&velt_int(32, true), &int_enum).is_ok());
+        assert!(compare(&velt_int(32, false), &int_enum).is_ok());
+        assert_eq!(
+            compare(&velt_int(64, true), &int_enum).unwrap_err(),
+            "declare `i32` (a C enum)"
+        );
+        let wide = CType::Enum {
+            bits: 64,
+            signed: Some(false),
+        };
+        assert!(compare(&velt_int(64, false), &wide).is_ok());
+        assert!(compare(&velt_int(64, true), &wide).is_err());
+        assert_eq!(
+            compare(&velt_int(32, true), &wide).unwrap_err(),
+            "declare `u64` (a C enum)"
+        );
         // `char`'s sign is the target's: both match.
         let plain = CType::Int {
             bits: 8,

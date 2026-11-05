@@ -23,6 +23,47 @@ pub struct Headers {
     pub functions: HashMap<String, CFunction>,
     /// Typedef name → the type it names, as written.
     typedefs: HashMap<String, String>,
+    /// Enum tag (a typedef's name, for an enum without a tag) → what its width comes from.
+    enums: HashMap<String, EnumDef>,
+    /// Enums without a tag, by clang's id, until a typedef names them.
+    unnamed_enums: HashMap<String, EnumDef>,
+}
+
+/// What an enum's width comes from, as written.
+#[derive(Clone, Debug, Default)]
+struct EnumDef {
+    /// `enum e : long long`.
+    fixed: Option<String>,
+    /// Its constants' types: `int`, or a wider type for a constant `int` doesn't hold.
+    constants: Vec<String>,
+    /// `__attribute__((packed))`: as narrow as its values, which only clang works out.
+    packed: bool,
+}
+
+impl EnumDef {
+    /// `None` for a declaration that only names the enum (`enum e;`).
+    fn of(node: &Value) -> Option<EnumDef> {
+        let inner = node["inner"].as_array();
+        let fixed = node["fixedUnderlyingType"]["qualType"]
+            .as_str()
+            .map(str::to_string);
+        if inner.is_none() && fixed.is_none() {
+            return None;
+        }
+        let of_kind = |kind: &'static str| {
+            inner
+                .into_iter()
+                .flatten()
+                .filter(move |n| n["kind"] == kind)
+        };
+        Some(EnumDef {
+            fixed,
+            constants: of_kind("EnumConstantDecl")
+                .filter_map(|c| c["type"]["qualType"].as_str().map(str::to_string))
+                .collect(),
+            packed: of_kind("PackedAttr").next().is_some(),
+        })
+    }
 }
 
 impl Headers {
@@ -71,11 +112,74 @@ impl Headers {
                     (node["name"].as_str(), node["type"]["qualType"].as_str())
                 {
                     self.typedefs.insert(name.to_string(), ty.to_string());
+                    // `typedef enum { A } mode;`: clang prints the type as `enum mode`.
+                    let id = node["inner"][0]["decl"]["id"].as_str().unwrap_or_default();
+                    if let Some(def) = self.unnamed_enums.get(id) {
+                        self.enums.insert(name.to_string(), def.clone());
+                    }
+                }
+            }
+            _ => self.nested_enums(node),
+        }
+        visit_places(&node["inner"], place);
+    }
+
+    /// Enums `node` defines, inside structs too: their tags are the file's in C.
+    fn nested_enums(&mut self, node: &Value) {
+        match node["kind"].as_str() {
+            Some("EnumDecl") => {
+                let Some(def) = EnumDef::of(node) else { return };
+                match node["name"].as_str() {
+                    Some(tag) => {
+                        self.enums.insert(tag.to_string(), def);
+                    }
+                    None => {
+                        let id = node["id"].as_str().unwrap_or_default().to_string();
+                        self.unnamed_enums.insert(id, def);
+                    }
+                }
+            }
+            Some("RecordDecl") => {
+                for inner in node["inner"].as_array().into_iter().flatten() {
+                    self.nested_enums(inner);
                 }
             }
             _ => {}
         }
-        visit_places(&node["inner"], place);
+    }
+
+    /// The integer type of `enum tag`. An enum without a fixed type is as wide as its widest
+    /// constant, and its sign is clang's choice, which depends on its values: either matches.
+    fn enum_type(&self, tag: &str, long_bits: u32, names: &[String]) -> CType {
+        let def = self.enums.get(tag);
+        let resolve = |written: &str| self.resolve_in(written, long_bits, &mut names.to_vec());
+        match def.and_then(|d| d.fixed.as_deref()) {
+            Some(fixed) => match resolve(fixed) {
+                CType::Int {
+                    bits,
+                    signed,
+                    plain_char,
+                    ..
+                } => CType::Enum {
+                    bits,
+                    signed: (!plain_char).then_some(signed),
+                },
+                _ => CType::Unknown(format!("enum {tag}")),
+            },
+            None if def.is_some_and(|d| d.packed) => CType::Unknown(format!("packed enum {tag}")),
+            None => {
+                let constants = def.map(|d| d.constants.as_slice()).unwrap_or_default();
+                let bits = constants
+                    .iter()
+                    .map(|c| match resolve(c) {
+                        CType::Int { bits, .. } => bits,
+                        _ => 32,
+                    })
+                    .max()
+                    .unwrap_or(32);
+                CType::Enum { bits, signed: None }
+            }
+        }
     }
 
     /// The C type `written` (`size_t`, `const char *`) for a target whose `long` has `long_bits`.
@@ -126,8 +230,8 @@ impl Headers {
         {
             return CType::Named(tag.to_string());
         }
-        if base.starts_with("enum ") {
-            return CType::Enum;
+        if let Some(tag) = base.strip_prefix("enum ") {
+            return self.enum_type(tag, long_bits, names);
         }
         match self.typedefs.get(&base) {
             // A typedef of itself (`typedef struct x x`) names the struct.
@@ -184,7 +288,11 @@ pub enum CType {
     },
     /// A struct or union, by tag or typedef name (behind a pointer: a `declare c type`).
     Named(String),
-    Enum,
+    /// An enum: an integer of `bits`; `signed`, when its type fixes the sign.
+    Enum {
+        bits: u32,
+        signed: Option<bool>,
+    },
     FunctionPointer,
     /// A type the check doesn't know (`__int128`, a vector type).
     Unknown(String),
@@ -401,6 +509,40 @@ mod tests {
         assert_eq!(split("int"), ("int".into(), false));
     }
 
+    /// What clang prints for the enums of a header.
+    #[test]
+    fn an_enum_is_as_wide_as_its_type_says() {
+        let constant = |ty: &str| serde_json::json!({ "kind": "EnumConstantDecl", "type": { "qualType": ty } });
+        let json = serde_json::json!({ "inner": [
+            { "kind": "EnumDecl", "name": "plain", "inner": [constant("int")] },
+            { "kind": "EnumDecl", "name": "wide", "inner": [constant("int"), constant("unsigned long")] },
+            { "kind": "EnumDecl", "name": "fixed", "fixedUnderlyingType": { "qualType": "long long" }, "inner": [constant("long long")] },
+            { "kind": "EnumDecl", "name": "bytes", "fixedUnderlyingType": { "qualType": "char" } },
+            { "kind": "EnumDecl", "name": "bytes" },
+            { "kind": "EnumDecl", "name": "tiny", "inner": [{ "kind": "PackedAttr" }, constant("int")] },
+            { "kind": "EnumDecl", "id": "0x1", "inner": [constant("long long")] },
+            { "kind": "TypedefDecl", "name": "mode", "type": { "qualType": "enum mode" },
+              "inner": [{ "kind": "EnumType", "decl": { "id": "0x1", "kind": "EnumDecl", "name": "" } }] },
+            { "kind": "RecordDecl", "name": "s", "inner": [
+                { "kind": "EnumDecl", "name": "inside", "inner": [constant("long")] }
+            ] }
+        ]});
+        let h = Headers::from_json(&json);
+        let e = |bits, signed| CType::Enum { bits, signed };
+        assert_eq!(h.resolve("enum plain", 64), e(32, None));
+        assert_eq!(h.resolve("enum wide", 64), e(64, None));
+        assert_eq!(h.resolve("enum fixed", 64), e(64, Some(true)));
+        assert_eq!(h.resolve("enum bytes", 64), e(8, None));
+        assert_eq!(h.resolve("mode", 64), e(64, None));
+        assert_eq!(h.resolve("enum inside", 64), e(64, None));
+        assert_eq!(h.resolve("enum inside", 32), e(32, None));
+        assert_eq!(h.resolve("enum only_named", 64), e(32, None));
+        assert_eq!(
+            h.resolve("enum tiny", 64),
+            CType::Unknown("packed enum tiny".into())
+        );
+    }
+
     #[test]
     fn types_resolve_per_target() {
         let h = headers();
@@ -468,7 +610,13 @@ mod tests {
             }
         ));
         assert_eq!(h.resolve("_Bool", 64), CType::Bool);
-        assert_eq!(h.resolve("enum mode", 64), CType::Enum);
+        assert_eq!(
+            h.resolve("enum mode", 64),
+            CType::Enum {
+                bits: 32,
+                signed: None
+            }
+        );
         assert_eq!(h.resolve("__int128", 64), CType::Unknown("__int128".into()));
     }
 }

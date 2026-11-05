@@ -250,3 +250,36 @@ fn a_win32_function_is_read_on_windows_targets() {
 
 const DECLS_STRLEN: &str = "import { CString } from \"velt/ffi\";\n\ndeclare c(\"c\") function strlen(s: CString): usize;\n\n";
 
+/// What an enum passes, from the width of its type.
+#[test]
+fn enums_are_as_wide_as_their_types() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let header = "enum wide { A = 0x100000000LL };\nenum wide wide_f(void);\nenum big : long long { B };\nenum big big_f(void);\nenum byte : char { C };\nenum byte byte_f(enum byte x);\nenum small { D };\nenum small small_f(void);\ntypedef enum { E = 0x100000000LL } named;\nnamed named_f(void);\nenum __attribute__((packed)) tiny { F };\nenum tiny tiny_f(void);\n";
+    let files = [("native/e.h", header)];
+    let native = ", native: { c: { c: { headers: [\"<string.h>\"] }, e: { system: { default: \"e\" }, headers: [\"native/e.h\"] } } }";
+    let lib = |decls: &str| format!("{decls}{DECLS_STRLEN}{LEN}");
+    let args = ["check", "--target", "x86_64-unknown-linux-gnu"];
+    let right = "declare c(\"e\") function wide_f(): i64;\ndeclare c(\"e\") function big_f(): i64;\ndeclare c(\"e\") function byte_f(x: i8): u8;\ndeclare c(\"e\") function small_f(): i32;\ndeclare c(\"e\") function named_f(): i64;\n";
+    project(dir.path(), native, &lib(right), &files, ALLOW);
+    let o = velt(dir.path(), &home, &args);
+    assert!(o.status.success(), "{}", output(&o));
+    let wrong = "declare c(\"e\") function wide_f(): i32;\ndeclare c(\"e\") function big_f(): i32;\ndeclare c(\"e\") function byte_f(x: i32): i32;\ndeclare c(\"e\") function small_f(): i64;\ndeclare c(\"e\") function named_f(): i32;\ndeclare c(\"e\") function tiny_f(): i32;\n";
+    project(dir.path(), native, &lib(wrong), &files, ALLOW);
+    let o = velt(dir.path(), &home, &args);
+    let out = output(&o);
+    assert!(!o.status.success(), "{out}");
+    for e in [
+        "C function `wide_f` returns `enum wide` in e.h:2, not the declaration's `i32`\n  = note: declare `i64` (a C enum)",
+        "C function `big_f` returns `enum big` in e.h:4, not the declaration's `i32`\n  = note: declare `i64` (a C enum)",
+        "parameter 1 of C function `byte_f` is `enum byte` in e.h:6, not the declaration's `i32`\n  = note: declare `i8` (a C enum)",
+        "C function `byte_f` returns `enum byte` in e.h:6, not the declaration's `i32`",
+        "C function `small_f` returns `enum small` in e.h:8, not the declaration's `i64`\n  = note: declare `i32` (a C enum)",
+        "C function `named_f` returns `named` in e.h:10, not the declaration's `i32`\n  = note: declare `i64` (a C enum)",
+        "C function `tiny_f` returns `enum tiny` in e.h:12, not the declaration's `i32`\n  = note: declare `packed enum tiny`, which can't cross",
+    ] {
+        assert!(out.contains(e), "{e}:\n{out}");
+    }
+}
+
