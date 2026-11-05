@@ -48,10 +48,14 @@ fn vir(file: &Path, home: &Path, eager: bool) -> (bool, Vec<u8>, Vec<u8>) {
     (out.status.success(), out.stdout, out.stderr)
 }
 
-/// The goldens, whose first different line per golden is reported.
-fn differs(file: &Path, home: &Path) -> Option<String> {
+/// The goldens, whose first different line per golden is reported; `built` counts those that build
+/// both ways.
+fn differs(file: &Path, home: &Path, built: &AtomicUsize) -> Option<String> {
     let (lazy_ok, lazy, lazy_err) = vir(file, home, false);
     let (eager_ok, eager, eager_err) = vir(file, home, true);
+    if lazy_ok && eager_ok {
+        built.fetch_add(1, Ordering::Relaxed);
+    }
     if lazy_ok != eager_ok {
         let err = if lazy_ok { &eager_err } else { &lazy_err };
         let err: String = String::from_utf8_lossy(err).chars().take(400).collect();
@@ -87,17 +91,19 @@ fn every_golden_has_the_same_vir_with_std_up_front_and_on_demand() {
         let f = f.to_string_lossy().into_owned();
         files.retain(|p| p.to_string_lossy().contains(&f));
     }
+    let filtered = std::env::var_os("VELT_GOLDEN").is_some();
     let next = AtomicUsize::new(0);
+    let built = AtomicUsize::new(0);
     let found = Mutex::new(vec![]);
     let workers = std::thread::available_parallelism().map_or(2, |n| n.get());
     let home = test_dir::TestDir::new();
     std::thread::scope(|s| {
         for w in 0..workers {
-            let (next, found, files, root) = (&next, &found, &files, &root);
+            let (next, built, found, files, root) = (&next, &built, &found, &files, &root);
             let home = home.path().join(w.to_string());
             s.spawn(move || {
                 while let Some(file) = files.get(next.fetch_add(1, Ordering::Relaxed)) {
-                    if let Some(why) = differs(file, &home) {
+                    if let Some(why) = differs(file, &home, built) {
                         let name = file.strip_prefix(root).unwrap_or(file);
                         let name = name.to_string_lossy().replace('\\', "/");
                         found.lock().unwrap().push((name, why));
@@ -106,6 +112,13 @@ fn every_golden_has_the_same_vir_with_std_up_front_and_on_demand() {
             });
         }
     });
+    // Two identical compile failures count as a match: a broken setup must not pass that way.
+    let built = built.into_inner();
+    assert!(
+        filtered || built > 1000,
+        "only {built} of {} goldens built",
+        files.len()
+    );
     let mut found = found.into_inner().unwrap();
     found.sort();
     let (known, new): (Vec<_>, Vec<_>) = found
@@ -318,4 +331,120 @@ fn a_module_with_every_kind_of_item_collects_in_the_check_as_up_front() {
         let found = a.lines().zip(b.lines()).find(|(x, y)| x != y);
         panic!("the VIR differs: {found:?}");
     }
+}
+
+/// Prints floats through a class field, a parameter, `+` and an array, none marked as a float by
+/// syntax: the values below and 2,000 from random bit patterns (fixed seed).
+const FLOATS: &str = r#"
+class P {
+  x: number = 0;
+}
+function show(x: number): void {
+  const p = new P();
+  p.x = x;
+  console.log(`${p.x} ${String(x)} ${x + ""} ${[x]}`);
+}
+function main(): void {
+  const xs: number[] = [
+    0, -0, 1, -1, 0.1, 0.5, 1.5, 4.35, 0.000001, 1e-7, 1e21, 1e20, 123456789012345680000,
+    9007199254740992, 1.7976931348623157e308, 5e-324, 2.2250738585072014e-308, 1e300, 0.3,
+    NaN, Infinity, -Infinity,
+  ];
+  for (const x of xs) {
+    show(x);
+  }
+  let s: u64 = 0x9e3779b97f4a7c15;
+  for (let i = 0; i < 2000; i++) {
+    s = s ^ (s << 13);
+    s = s ^ (s >> 7);
+    s = s ^ (s << 17);
+    show(f64.fromBits(s));
+  }
+}
+"#;
+
+/// What Node prints for the first values of [`FLOATS`], one column of each line.
+const NODE_FLOATS: &[&str] = &[
+    "0", "0", "1", "-1", "0.1", "0.5", "1.5", "4.35", "0.000001", "1e-7", "1e+21",
+    "100000000000000000000", "123456789012345680000", "9007199254740992",
+    "1.7976931348623157e+308", "5e-324", "2.2250738585072014e-308", "1e+300", "0.3", "NaN",
+    "Infinity", "-Infinity",
+];
+
+/// A std root and a compiler run over it, for the tests of a std without its on-demand modules.
+fn velt_with_std(std: &Path, home: &Path) -> std::process::Command {
+    let mut c = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
+    c.env("VELT_STD", std)
+        .env("VELT_HOME", home)
+        .env("VELT_BUILD_CACHE", "off")
+        .env("VELT_BUILD_STAMP", "off")
+        .env_remove("VELT_EAGER_STD");
+    c
+}
+
+#[test]
+fn a_missing_std_checks_as_it_did() {
+    let tmp = test_dir::TestDir::new();
+    let main = tmp.path().join("main.velt");
+    std::fs::write(&main, "const n: number = 3;\nconsole.log(`x ${n}`);\n").unwrap();
+    let out = velt_with_std(&tmp.path().join("nonexistent"), &tmp.path().join("home"))
+        .arg("check")
+        .arg(&main)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success() && out.stderr.is_empty() && out.stdout.is_empty(),
+        "{out:?}"
+    );
+}
+
+/// The claim that lets `number_text::may_hold_float` answer "no" for what it can prove: std's
+/// float printing and the runtime's, which a program without the hook falls back to, print the
+/// same text. A std root without the module also must report nothing (`Ctx::demand_std`).
+#[test]
+fn a_std_without_the_float_module_prints_the_same_through_the_runtime() {
+    let tmp = test_dir::TestDir::new();
+    let std = tmp.path().join("std");
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std"),
+        &std,
+    );
+    let main = tmp.path().join("main.velt");
+    std::fs::write(&main, FLOATS).unwrap();
+    let home = tmp.path().join("home");
+    let vir = |std: &Path| {
+        let out = velt_with_std(std, &home)
+            .arg("build")
+            .arg(&main)
+            .args(["--emit", "vir"])
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success() && err.is_empty(), "{err}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let run = |std: &Path| {
+        let out = velt_with_std(std, &home)
+            .arg("run")
+            .arg(&main)
+            .output()
+            .unwrap();
+        let err = String::from_utf8_lossy(&out.stderr).into_owned();
+        assert!(out.status.success() && err.is_empty(), "{err}");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    };
+    let in_std = run(&std);
+    assert!(vir(&std).contains("floatPush"), "std's printer is not used");
+    std::fs::remove_file(std.join("lang/hooks/number_float.velt")).unwrap();
+    assert!(!vir(&std).contains("floatPush"), "std's printer is used");
+    let in_runtime = run(&std);
+    assert_eq!(in_std.lines().count(), NODE_FLOATS.len() + 2000);
+    for (line, node) in in_std.lines().zip(NODE_FLOATS) {
+        let columns: Vec<&str> = line.split(' ').collect();
+        assert_eq!(columns, [*node; 4], "{line}");
+    }
+    let found = in_std.lines().zip(in_runtime.lines());
+    let found = found.enumerate().find(|(_, (a, b))| a != b);
+    assert_eq!(found, None, "std's printer and the runtime's differ");
+    assert_eq!(in_std.lines().count(), in_runtime.lines().count());
 }

@@ -186,3 +186,57 @@ fn a_re_export_skipped_until_now_is_reported_as_an_import_of_the_loaded_module()
         )]
     );
 }
+
+#[test]
+fn a_std_root_without_the_demanded_module_serves_nothing_and_says_nothing() {
+    let without: Vec<_> = (HOOKS.iter().copied())
+        .filter(|(rel, _)| *rel != "lang/hooks/number_float.velt")
+        .collect();
+    let tmp = std_root(&without);
+    let opts = options(tmp.path(), true, "function main() {}\n");
+    let (mut sm, mut diags) = (SourceMap::default(), vec![]);
+    let root = tmp.path().join("main.velt");
+    let mut l = load_program(&mut sm, &root, opts, &mut diags).unwrap();
+    let opts = options(tmp.path(), true, "");
+    let d = ["std/lang/hooks/number_float".to_string()];
+    let got = load_more(&mut sm, &mut l.state, &l.modules, &d, &opts, &mut diags);
+    assert!(got.modules.is_empty() && got.imports.is_empty());
+    assert!(diags.is_empty(), "{diags:?}");
+    // The load goes on: what the root does have is still served.
+    let d = ["std/lang/hooks/any_record".to_string()];
+    let got = load_more(&mut sm, &mut l.state, &l.modules, &d, &opts, &mut diags);
+    assert_eq!(paths(&got.modules), ["std/lang/hooks/any_record"]);
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+#[test]
+fn a_program_without_std_serves_nothing_and_says_nothing() {
+    let tmp = tempfile::tempdir().unwrap();
+    let std = tmp.path().join("nonexistent");
+    let opts = options(&std, true, "function main() {}\n");
+    let (mut sm, mut diags) = (SourceMap::default(), vec![]);
+    let root = tmp.path().join("main.velt");
+    let mut l = load_program(&mut sm, &root, opts, &mut diags).unwrap();
+    assert!(!l.modules.iter().any(|m| m.is_std));
+    let opts = options(&std, true, "");
+    let d = ["std/lang/hooks/number_float".to_string()];
+    let got = load_more(&mut sm, &mut l.state, &l.modules, &d, &opts, &mut diags);
+    assert!(got.modules.is_empty() && got.imports.is_empty());
+    assert!(diags.is_empty(), "{diags:?}");
+}
+
+#[test]
+fn a_demand_that_is_no_std_module_stays_an_internal_error() {
+    let tmp = std_root(HOOKS);
+    let opts = options(tmp.path(), true, "function main() {}\n");
+    let (mut sm, mut diags) = (SourceMap::default(), vec![]);
+    let root = tmp.path().join("main.velt");
+    let mut l = load_program(&mut sm, &root, opts, &mut diags).unwrap();
+    let opts = options(tmp.path(), true, "");
+    let d = ["not/std".to_string()];
+    load_more(&mut sm, &mut l.state, &l.modules, &d, &opts, &mut diags);
+    assert!(
+        diags.iter().any(|d| d.message.starts_with("ICE: `not/std`")),
+        "{diags:?}"
+    );
+}

@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Instructions `velt check bench/compile/all_std.velt` executes at each given git ref, counted the
-# way bench/nightly.sh counts compile/check_all_std (cachegrind, VELT_THREADS=1, VELT_EAGER_STD=1
-# so that every std definition is checked, release build).
+# way bench/nightly.sh counts compile/check_all_std (cachegrind, VELT_THREADS=1, release build), with
+# every std definition checked: VELT_CHECK_ALL_STD=1, and VELT_EAGER_STD=1 for commits older than
+# that variable, where it had this meaning.
 # For bisecting a compile-time change between commits. Linux only (valgrind).
 #
 #   bench/compile/count_check.sh [--prepend LINE] WORKDIR REF...

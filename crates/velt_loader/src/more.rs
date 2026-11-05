@@ -155,6 +155,15 @@ pub fn load_more(
     opts: &LoadOptions,
     diags: &mut Diagnostics,
 ) -> StdBatch {
+    // As `load_up_front`: a std root (a test's, `VELT_STD`'s) may not have what is demanded, or be
+    // there at all. The module stays missing, and the hook's lookup finds nothing.
+    let in_std_root = |path: &&String| {
+        specifier(path).is_none() || opts.std_root.as_deref().is_some_and(|s| exists(s, path))
+    };
+    let demanded: Vec<&String> = demanded.iter().filter(in_std_root).collect();
+    if demanded.is_empty() || !base.iter().any(|m| m.is_std) {
+        return StdBatch::default();
+    }
     let mut taken = std::mem::take(state);
     if taken.modules.is_empty() {
         taken.modules = base.iter().map(|m| skeleton(m, false)).collect();
@@ -169,26 +178,20 @@ pub fn load_more(
     let start = loader.modules.len();
     let imports_before: Vec<usize> = loader.modules.iter().map(|m| m.imports.len()).collect();
     let mut queue = VecDeque::new();
-    match (loader.modules.iter()).position(|m| m.is_std) {
-        Some(importer) => {
-            for path in demanded {
-                match specifier(path) {
-                    // The compiler's import, not the source's: no visibility rule.
-                    Some(spec) => {
-                        loader.import(importer, &spec, Span::DUMMY, false, &mut queue);
-                    }
-                    None => loader.diags.push(Diagnostic::error(
-                        format!("ICE: `{path}` was demanded, and it is no std module"),
-                        Span::DUMMY,
-                    )),
+    if let Some(importer) = (loader.modules.iter()).position(|m| m.is_std) {
+        for path in demanded {
+            match specifier(path) {
+                // The compiler's import, not the source's: no visibility rule.
+                Some(spec) => {
+                    loader.import(importer, &spec, Span::DUMMY, false, &mut queue);
                 }
+                None => loader.diags.push(Diagnostic::error(
+                    format!("ICE: `{path}` was demanded, and it is no std module"),
+                    Span::DUMMY,
+                )),
             }
-            loader.resolve_all(&mut queue);
         }
-        None => loader.diags.push(Diagnostic::error(
-            "ICE: a std module was demanded in a program without std",
-            Span::DUMMY,
-        )),
+        loader.resolve_all(&mut queue);
     }
     let mut out = StdBatch::default();
     for (i, before) in imports_before.iter().enumerate() {

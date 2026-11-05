@@ -10,7 +10,8 @@
 # base-src) with each toolchain (LLVM, --release) and runs it under cachegrind with
 # VELT_THREADS=1. Prints `name base-Ir branch-Ir same|DIFF` per program (DIFF: the outputs
 # differ; db/velt/sqlite prints its timings, so it is DIFF unless those are stripped), then the
-# compile row (`VELT_EAGER_STD=1 velt check bench/compile/all_std.velt`), then the programs sorted by change.
+# compile row (`VELT_CHECK_ALL_STD=1 velt check bench/compile/all_std.velt`, with `VELT_EAGER_STD=1` for
+# commits older than that variable), then the programs sorted by change.
 # A program that fails to build prints FAIL. Knobs: JOBS (parallel programs, default 6), ONLY and
 # SKIP (regular expressions over the paths), TO (timeout per run, seconds, default 1800).
 # WORK defaults to $CARGO_TARGET_DIR/compiler-ab; keep it on a Linux file system (not /mnt/*).
