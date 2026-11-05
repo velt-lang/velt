@@ -215,12 +215,15 @@ fn a_field_of_an_aggregate_is_tracked_through_copies_and_swaps() {
 
 #[test]
 fn a_read_in_a_terminator_is_folded() {
+    // The only read of the block it ends: nothing else makes the walk look at that block.
     let n = folds(|env, fb, b| {
         let (s, m) = (fb.local(Ptr), fb.local(Ptr));
         fb.assign(b, s, bin(BinOp::PtrAdd, address(env.vtable), int(8, I64)));
         fb.assign(b, m, Rvalue::Use(copy_place(deref(s, Ptr))));
+        let call = fb.block();
+        fb.goto(b, call);
         let args = vec![copy_place(deref(s, Ptr))];
-        let after = fb.call(b, Callee::Extern(env.keep), args, None);
+        let after = fb.call(call, Callee::Extern(env.keep), args, None);
         end(fb, after);
     });
     assert_eq!(n, 2);

@@ -9,7 +9,7 @@
 //! with the slots their values come from (`track`). Every slot of that closure stays exact, also
 //! where it is unassigned, since an unassigned path does not spoil a join. Blocks are visited in
 //! reverse postorder: the transfer functions are monotone, so the fixed point does not depend on
-//! the order, but a last-in-first-out worklist reached it after hundreds of visits per block.
+//! the order, and this order reaches it in about two visits per block.
 
 use std::cmp::Reverse;
 use std::collections::BinaryHeap;
