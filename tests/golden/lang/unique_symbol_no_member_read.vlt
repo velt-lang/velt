@@ -1,0 +1,14 @@
+// A field of a union with `typeof K` narrowed to no member: an error, as tsc gives (TS2339) (#923).
+const K = Symbol("k");
+
+type S = { p: string } | typeof K;
+
+function g(x: typeof K): string {
+  const q: S = x;
+  if (q !== K) {
+    return q.p.toUpperCase() + q.p.length;
+  }
+  return "k";
+}
+
+console.log(g(K));

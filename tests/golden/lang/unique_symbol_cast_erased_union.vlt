@@ -1,0 +1,33 @@
+// `as` to a union or nullable target with a member of one erased form with the value: the same
+// value as that member, literal or variable, discriminated or not (#923). Node's output.
+const K = Symbol("k");
+
+type S = { p: string } | typeof K;
+type L = { p: string } | symbol;
+const a = { v: K } as { v: S } | null;
+console.log(a === null);
+const b = { v: K } as ({ v: S } | string);
+console.log(typeof b);
+const c = { v: K } as ({ v: S } | { w: number });
+console.log(typeof c);
+const d = { kind: "a", v: K } as ({ kind: "a"; v: S } | { kind: "b"; v: number });
+console.log(d.kind);
+const e = { t: "a", v: K } as ({ t: "a"; v: S } | { t: "b"; n: number } | { t: "c" });
+console.log(e.t);
+const l: { v: L } = { v: K };
+const f = l as { v: S } | null;
+console.log(f === null);
+const g = l as ({ v: S } | string);
+console.log(typeof g);
+if (f !== null) {
+  f.v = { p: "w" };
+  console.log(typeof l.v);
+}
+const undef = l as ({ v: S } | undefined);
+console.log(undef === undefined);
+const pair: [L, number] = [K, 1];
+console.log((pair as [S, number] | null) === null);
+const inMap = new Map<string, L>();
+console.log((inMap as Map<string, S> | null) === null);
+const back: { v: S } = { v: K };
+console.log((back as { v: L } | null) === null);

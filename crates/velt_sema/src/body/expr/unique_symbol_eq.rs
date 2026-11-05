@@ -390,6 +390,81 @@ impl FnCx<'_, '_> {
         (self.cx.union_members(u)).is_some_and(|ms| ms.contains(&m))
     }
 
+    /// The type to check `e as target` at: a fresh literal is built at the erased type
+    /// (`[Symbol("z")] as S[]`), then retyped.
+    pub(super) fn assertion_hint(&mut self, e: &ast::Expr, target: TyId) -> TyId {
+        match e.kind {
+            ast::ExprKind::Array(..) | ast::ExprKind::Object(..) => self.cx.erase_unique(target),
+            _ => target,
+        }
+    }
+
+    /// `h as target` for two types of one erased form (`l as S[]`, `{ v: L }` as `{ v: S }`), or
+    /// for such a member of `target` (`{ v: S } | null`): a test of `K` stops on a symbol that
+    /// is not.
+    pub(super) fn erased_form_cast(
+        &mut self,
+        h: hir::Expr,
+        target: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        if h.ty != target && self.cx.erases_alike(h.ty, target) {
+            return Ok(self.unique_retype(h, target));
+        }
+        let Some(m) = self.cx.erased_member_of(h.ty, target) else {
+            return Err(h);
+        };
+        let v = self.unique_retype(h, m);
+        Ok(self.coerce(v, target))
+    }
+
+    /// `l` and `r` of a binary operator, or the operand narrowed to no member (`never`), which
+    /// stops: the other is not an operand of anything.
+    pub(super) fn never_operands(
+        &mut self,
+        l: hir::Expr,
+        r: hir::Expr,
+    ) -> Result<hir::Expr, Box<(hir::Expr, hir::Expr)>> {
+        let never = self.cx.ty.never;
+        if l.ty == never {
+            return Ok(l);
+        }
+        if r.ty != never {
+            return Err(Box::new((l, r)));
+        }
+        let span = r.span;
+        let stmt = hir::Stmt {
+            kind: hir::StmtKind::Expr(l),
+            span,
+        };
+        Ok(self.with_temps_value(vec![stmt], r))
+    }
+
+    /// `q.p` for a local `q` of a union with `typeof K` narrowed to no member: an error, as in
+    /// TypeScript (a field of `never`), where only `K` has that type and it was ruled out.
+    pub(super) fn never_member_read(&mut self, object: &ast::Expr, prop: &ast::Ident) -> bool {
+        if self.cx.unique_symbols.is_empty() {
+            return false;
+        }
+        let Some(l) = self.named_local(object) else {
+            return false;
+        };
+        let ty = self.local_ty(l);
+        let core = self.cx.ty.core(ty).unwrap_or(ty);
+        let members = self.cx.union_members(core).unwrap_or_default();
+        if !self.narrowed_to_nothing(l)
+            || !members.iter().any(|&m| self.unique_symbol_of(m).is_some())
+        {
+            return false;
+        }
+        let msg = format!("no field `{}` on type `never`", prop.name);
+        self.cx.error(
+            velt_common::Diagnostic::error(msg, prop.span).with_note(
+                "no member of the union is left here: every one was ruled out by a test",
+            ),
+        );
+        true
+    }
+
     /// `h` as `exp`, which it is once brands are erased (`Ctx::widens_unique`).
     pub(super) fn unique_retype(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
         let span = h.span;

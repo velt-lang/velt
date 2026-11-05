@@ -1,0 +1,86 @@
+// A test that leaves a union no member: the read is `never`, in code that doesn't run, also with
+// an inferred return type (#923). Node's output.
+const K = Symbol("k");
+const A = Symbol("a");
+const B = Symbol("b");
+
+type S = { p: string } | typeof K;
+
+function once(x: typeof K) {
+  const q: S = x;
+  if (q !== K) {
+    const y = q;
+    return typeof y;
+  }
+  return "k";
+}
+
+console.log(once(K));
+
+function later(x: typeof K) {
+  let q: S = x;
+  if (q !== K) {
+    const y = q;
+    return typeof y;
+  }
+  q = { p: "a" };
+  return q.p;
+}
+
+console.log(later(K));
+
+function chain(x: typeof A | typeof B) {
+  if (x === A) {
+    return "a";
+  }
+  if (x === B) {
+    return "b";
+  }
+  const y = x;
+  return typeof y;
+}
+
+console.log(chain(A), chain(B));
+
+function older(x: string | number) {
+  if (typeof x === "string") {
+    return "s";
+  }
+  if (typeof x === "number") {
+    return "n";
+  }
+  const y = x;
+  return typeof y;
+}
+
+console.log(older("a"), older(1));
+
+function ternary(x: typeof K) {
+  const q: S = x;
+  return q !== K ? typeof q : "k";
+}
+
+console.log(ternary(K));
+
+function pick(x: typeof A | typeof B) {
+  switch (x) {
+    case A:
+      return "a";
+    case B:
+      return "b";
+    default:
+      return typeof x;
+  }
+}
+
+console.log(pick(A), pick(B));
+
+function both(x: string) {
+  const q: string | number = x;
+  if (typeof q !== "string") {
+    return String(q + q);
+  }
+  return "s";
+}
+
+console.log(both("a"));

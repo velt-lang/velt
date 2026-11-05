@@ -121,6 +121,20 @@ impl Ctx<'_> {
         self.erased(a, true, 0) == self.erased(b, true, 0)
     }
 
+    /// `h as target` for a union or nullable `target` with a member that erases like `h`
+    /// (`{ v: L }` as `{ v: S } | null`): retyped to that member, then converted to `target`.
+    pub(crate) fn erased_member_of(&mut self, h: TyId, target: TyId) -> Option<TyId> {
+        if self.unique_symbols.is_empty() {
+            return None;
+        }
+        let core = self.ty.core(target).unwrap_or(target);
+        let mut members = self.union_members(core).unwrap_or_default();
+        if core != target {
+            members.push(core);
+        }
+        (members.into_iter()).find(|&m| m != h && self.erases_alike(h, m))
+    }
+
     fn erased(&mut self, t: TyId, ifaces: bool, depth: u32) -> TyId {
         if self.unique_symbols.is_empty() || depth > 6 {
             return t;
@@ -172,8 +186,10 @@ impl Ctx<'_> {
         let mut changed = ifaces && !anon;
         for f in &mut fields {
             let e = self.erased(f.ty, ifaces, depth);
-            changed |= e != f.ty;
+            changed |= e != f.ty || (ifaces && f.readonly);
             f.ty = e;
+            // Only in a comparison (`ifaces`): `readonly` is gone once lowered.
+            f.readonly &= !ifaces;
         }
         match changed {
             true => self.anon_type_with(&fields, module),

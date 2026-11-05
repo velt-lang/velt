@@ -367,6 +367,11 @@ impl FnCx<'_, '_> {
                 self.erased_operands(l, r)
             }
         };
+        // An operand narrowed to no member stops there.
+        let (l, r) = match self.never_operands(l, r) {
+            Ok(h) => return h,
+            Err(lr) => *lr,
+        };
         // An `any` or `unknown` operand, by its checked type (a variable, a field, an element,
         // a call, a capture).
         if self.cx.maybe_dynamic(l.ty) || self.cx.maybe_dynamic(r.ty) {

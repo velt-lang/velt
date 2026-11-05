@@ -113,6 +113,9 @@ impl FnCx<'_, '_> {
         want: Want,
         span: Span,
     ) -> hir::Expr {
+        if self.never_member_read(object, prop) {
+            return self.error_expr(span);
+        }
         match self.namespace_member(object, prop) {
             Some(id) if !optional => return self.ident_expr(&id, exp, want),
             _ => {}
@@ -657,11 +660,7 @@ impl FnCx<'_, '_> {
         let asserted = matches!(arrow.kind, ast::ExprKind::Arrow { .. })
             && matches!(self.cx.ty.kind(target), TyKind::FnPtr { .. });
         let outer = std::mem::replace(&mut self.asserted_fn, asserted.then_some(arrow.span));
-        // A fresh literal is built at the erased type (`[Symbol("z")] as S[]`), then retyped.
-        let hint = match arrow.kind {
-            ast::ExprKind::Array(..) | ast::ExprKind::Object(..) => self.cx.erase_unique(target),
-            _ => target,
-        };
+        let hint = self.assertion_hint(arrow, target);
         let inner = self.expr(expr, Some(hint), want);
         // An `object | null` converts as the `object` holding its nothing (#2144).
         let inner = match inner.ty == target {
@@ -698,11 +697,10 @@ impl FnCx<'_, '_> {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
-        // Two types of one erased form (`l as S[]`, `{ v: L }` as `{ v: S }`): a test of `K` stops
-        // on a symbol that is not.
-        if inner.ty != target && self.cx.erases_alike(inner.ty, target) {
-            return Ok(self.unique_retype(inner, target));
-        }
+        let inner = match self.erased_form_cast(inner, target) {
+            Ok(h) => return Ok(h),
+            Err(h) => h,
+        };
         // `x as object` of an unbounded `T` (issue #926): checked at run time.
         self.object_view_cast(inner, target, span)
             .or_else(|h| self.try_coerce(h, target))
