@@ -270,8 +270,14 @@ impl FnCx<'_, '_> {
                 format!("{} {{}}", ba.name)
             }
         };
+        // Where the class is written, not its `DefId`: std modules loaded earlier or later must not
+        // change the VIR. Among the program's own modules, which load in one order however std
+        // loads. Two classes at one place are the same class to `===` (no source rewrite copies a
+        // class under its own name).
+        let (name, span, module) = (&a.name, a.span, a.module);
+        let own_module = (self.cx.scopes[..module].iter()).filter(|s| !s.is_std).count();
         Some(Proto {
-            tag: format!("class#{}", d.0),
+            tag: format!("class#{own_module}:{}:{name}", span.lo),
             shown,
             text: "[object Object]".to_string(),
             array: false,
