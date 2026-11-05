@@ -1,0 +1,210 @@
+// velt/crypto (tests): white-box cross-checks of the fast paths, run by `velt test std/`.
+//
+// ChaCha20's four-block path (chacha20_simd.velt) against the scalar block, and Poly1305's 64-bit
+// limbs against a five-limb 26-bit reference (the representation it replaced), over every
+// length up to 1000 and at odd offsets, so every tail and carry path is taken.
+import { describe, expect, it } from "velt/test";
+import { chachaBlock, chachaSetNonce, chachaState } from "velt/crypto/chacha20";
+import { chachaXorInPlace } from "velt/crypto/chacha20_simd";
+import { Poly1305 } from "velt/crypto/poly1305";
+import { hexEncode } from "velt/encoding/hex";
+
+// Deterministic bytes (xorshift), so a failure reproduces.
+function noise(n: usize, seed: u32): u8[] {
+  const out: u8[] = Buffer.alloc(n);
+  let s = seed | 1;
+  for (let i: usize = 0; i < n; i++) {
+    s ^= s << 13;
+    s ^= s >>> 17;
+    s ^= s << 5;
+    out[i] = (s >>> 24) as u8;
+  }
+  return out;
+}
+
+// `buf[start..end]` XORed with the keystream from block `counter` on, one scalar block at a time.
+function xorScalar(state: u32[], counter: u32, buf: u8[], start: usize, end: usize) {
+  const x: u32[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  for (let i: usize = 0; start + i < end; i++) {
+    if (i % 64 == 0) {
+      state[12] = counter + ((i / 64) as u32);
+      chachaBlock(state, x);
+    }
+    const k = i % 64;
+    buf[start + i] ^= ((x[k >> 2] >>> (8 * ((k & 3) as u32))) & 0xff) as u8;
+  }
+}
+
+const M26: u64 = 0x3ffffff;
+
+// Poly1305 of `m` zero-padded to whole blocks (as the AEAD absorbs its pieces, `updatePadded`)
+// under `key`, in five 26-bit limbs (products fit a u64): the reference.
+function poly26(key: u8[], m: u8[]): string {
+  const k = (i: usize): u64 =>
+    (key[i] as u64) |
+    ((key[i + 1] as u64) << 8) |
+    ((key[i + 2] as u64) << 16) |
+    ((key[i + 3] as u64) << 24);
+  const r0 = k(0) & 0x3ffffff;
+  const r1 = (k(3) >> 2) & 0x3ffff03;
+  const r2 = (k(6) >> 4) & 0x3ffc0ff;
+  const r3 = (k(9) >> 6) & 0x3f03fff;
+  const r4 = (k(12) >> 8) & 0x00fffff;
+  let h0: u64 = 0;
+  let h1: u64 = 0;
+  let h2: u64 = 0;
+  let h3: u64 = 0;
+  let h4: u64 = 0;
+  const block: u8[] = Buffer.alloc(17);
+  for (let off: usize = 0; off < m.length; off += 16) {
+    for (let i: usize = 0; i < 16; i++) {
+      block[i] = off + i < m.length ? m[off + i] : 0;
+    }
+    block[16] = 1;
+    const b = (i: usize): u64 =>
+      (block[i] as u64) |
+      ((block[i + 1] as u64) << 8) |
+      ((block[i + 2] as u64) << 16) |
+      ((block[i + 3] as u64) << 24);
+    h0 += b(0) & M26;
+    h1 += (b(3) >> 2) & M26;
+    h2 += (b(6) >> 4) & M26;
+    h3 += (b(9) >> 6) & M26;
+    h4 += (b(12) >> 8) | ((block[16] as u64) << 24);
+    const d0 = h0 * r0 + h1 * r4 * 5 + h2 * r3 * 5 + h3 * r2 * 5 + h4 * r1 * 5;
+    let d1 = h0 * r1 + h1 * r0 + h2 * r4 * 5 + h3 * r3 * 5 + h4 * r2 * 5;
+    let d2 = h0 * r2 + h1 * r1 + h2 * r0 + h3 * r4 * 5 + h4 * r3 * 5;
+    let d3 = h0 * r3 + h1 * r2 + h2 * r1 + h3 * r0 + h4 * r4 * 5;
+    let d4 = h0 * r4 + h1 * r3 + h2 * r2 + h3 * r1 + h4 * r0;
+    d1 += d0 >> 26;
+    d2 += d1 >> 26;
+    d3 += d2 >> 26;
+    d4 += d3 >> 26;
+    h0 = (d0 & M26) + (d4 >> 26) * 5;
+    h1 = (d1 & M26) + (h0 >> 26);
+    h0 &= M26;
+    h2 = d2 & M26;
+    h3 = d3 & M26;
+    h4 = d4 & M26;
+  }
+  // Full carry, then h - p where that does not borrow (not constant time: a reference).
+  for (let i = 0; i < 2; i++) {
+    h2 += h1 >> 26;
+    h1 &= M26;
+    h3 += h2 >> 26;
+    h2 &= M26;
+    h4 += h3 >> 26;
+    h3 &= M26;
+    h0 += (h4 >> 26) * 5;
+    h4 &= M26;
+    h1 += h0 >> 26;
+    h0 &= M26;
+  }
+  let lo = h0 | (h1 << 26) | (h2 << 52);
+  let hi = (h2 >> 12) | (h3 << 14) | (h4 << 40);
+  const top = h4 >> 24;
+  if (top == 3 && hi == 0xffffffffffffffff && lo >= 0xfffffffffffffffb) {
+    lo -= 0xfffffffffffffffb;
+    hi = 0;
+  }
+  const s0 = k(16) | (k(20) << 32);
+  const s1 = k(24) | (k(28) << 32);
+  const f0 = lo + s0;
+  const f1 = hi + s1 + ((f0 < lo) as u64);
+  const out: u8[] = Buffer.alloc(16);
+  for (let i: usize = 0; i < 8; i++) {
+    out[i] = ((f0 >> ((8 * i) as u64)) & 0xff) as u8;
+    out[8 + i] = ((f1 >> ((8 * i) as u64)) & 0xff) as u8;
+  }
+  return hexEncode(out);
+}
+
+function poly64(key: u8[], m: u8[]): string {
+  const p = new Poly1305(key);
+  p.updatePadded(m, 0, m.length);
+  const tag: u8[] = Buffer.alloc(16);
+  p.finishInto(tag, 0);
+  return hexEncode(tag);
+}
+
+describe("ChaCha20's four-block path", () => {
+  it("matches the scalar block for every length up to 1000, at odd offsets", () => {
+    const state = chachaState(noise(32, 7));
+    chachaSetNonce(state, noise(12, 9));
+    const x: u32[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    const data = noise(1000 + 16, 11);
+    let failures = 0;
+    for (let n: usize = 0; n <= 1000; n++) {
+      const start: usize = (2 * n + 1) % 15;
+      const counter: u32 = n % 3 == 0 ? 0xfffffffe : (n as u32);
+      const fast = data.slice(0, (start + n + 3) as i64);
+      const slow = fast.slice();
+      chachaXorInPlace(state, x, counter, fast, start, start + n);
+      xorScalar(state, counter, slow, start, start + n);
+      if (hexEncode(fast) != hexEncode(slow)) {
+        failures++;
+      }
+    }
+    expect(failures).toBe(0);
+  });
+});
+
+describe("Poly1305 in 64-bit limbs", () => {
+  it("matches the 26-bit reference for every length up to 1000", () => {
+    let failures = 0;
+    for (let n: usize = 0; n <= 1000; n++) {
+      const key = noise(32, (n as u32) + 101);
+      if (poly64(key, noise(n, (n as u32) + 202)) != poly26(key, noise(n, (n as u32) + 202))) {
+        failures++;
+      }
+    }
+    expect(failures).toBe(0);
+  });
+
+  it("matches the reference with the largest r and all-ones messages (the most carries)", () => {
+    const key: u8[] = Buffer.alloc(32);
+    for (let i: usize = 0; i < 32; i++) {
+      key[i] = 0xff;
+    }
+    let failures = 0;
+    for (let n: usize = 0; n <= 300; n++) {
+      const m: u8[] = Buffer.alloc(n);
+      for (let i: usize = 0; i < n; i++) {
+        m[i] = 0xff;
+      }
+      if (poly64(key, m) != poly26(key, m)) {
+        failures++;
+      }
+    }
+    expect(failures).toBe(0);
+  });
+
+  it("carries into the top limb when the reduction wraps both 64-bit limbs", () => {
+    // r = 4: the first block (2^64 - 1, 2^62 - 1) gives d0 = 2^64 - 4 and d1 = 2^64 - 1, so
+    // adding back 5 (2^130) carries through both limbs into h2; the zero block after it shows h2.
+    const key: u8[] = Buffer.alloc(32);
+    key[0] = 4;
+    const m: u8[] = Buffer.alloc(32);
+    for (let i: usize = 0; i < 15; i++) {
+      m[i] = 0xff;
+    }
+    m[15] = 0x3f;
+    expect(poly64(key, m)).toBe("0e000000000000000000000000000000");
+    expect(poly26(key, m)).toBe("0e000000000000000000000000000000");
+  });
+
+  it("carries through both limbs when a block is added", () => {
+    // r = 1: h = 2^128 + 2^64 - 1 after the first block; adding (1, 2^64 - 1) carries out of
+    // h0, then out of h1 + m1 + 1, into h2; the zero block after it shows h2.
+    const key: u8[] = Buffer.alloc(32);
+    key[0] = 1;
+    const m: u8[] = Buffer.alloc(48);
+    for (let i: usize = 0; i < 8; i++) {
+      m[i] = 0xff;
+      m[24 + i] = 0xff;
+    }
+    m[16] = 1;
+    expect(poly64(key, m)).toBe("05000000000000000000000000000000");
+    expect(poly26(key, m)).toBe("05000000000000000000000000000000");
+  });
+});

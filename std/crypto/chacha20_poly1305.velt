@@ -5,13 +5,8 @@
 
 import { Aead } from "velt/crypto/aead";
 import { checkOpenRange, checkSealRange, tagMatches, withRoom } from "velt/crypto/aead_tag";
-import {
-  chachaPolyKey,
-  chachaSetNonce,
-  chachaState,
-  chachaXorInPlace,
-  store32le,
-} from "velt/crypto/chacha20";
+import { chachaPolyKey, chachaSetNonce, chachaState, store32le } from "velt/crypto/chacha20";
+import { chachaXorInPlace } from "velt/crypto/chacha20_simd";
 import { CryptoError } from "velt/crypto/errors";
 import { Poly1305 } from "velt/crypto/poly1305";
 import { arrayTruncate } from "velt/lang/intrinsics";
