@@ -493,7 +493,18 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let env = lw.new_local(Ty::Ptr, Some("env".into()));
         let ea = lw.cx.env_agg(def, targs);
         let src = proj(&Place::local(env), Proj::Deref(Ty::Agg(ea)));
+        // In a program with calls of a function in `shared(...)`, which copy its environment: an
+        // environment reached twice in one copy is copied once, and one that holds itself (through
+        // an array of functions, say) ends (velt_rt `transfer_map`).
+        let found = lw
+            .cx
+            .boxing
+            .calls_shared_fn
+            .then(|| lw.return_env_copy(Operand::Copy(Place::local(env))));
         let new = lw.counted_alloc(Ty::Agg(ea));
+        if let Some(found) = found {
+            lw.record_copy(found, Operand::Copy(Place::local(env)), new.clone());
+        }
         let newp = lw.operand_place(new.clone(), Ty::Ptr);
         let dst = proj(&newp, Proj::Deref(Ty::Agg(ea)));
         lw.assign(dst.clone(), Rvalue::Use(Operand::Copy(src.clone())));

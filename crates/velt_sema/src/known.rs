@@ -710,7 +710,7 @@ impl Ctx<'_> {
 
     /// The field types of an object type of kind `k`, the payload types of an enum, the element
     /// types of any other type.
-    fn parts_of(&mut self, k: TyKind) -> Vec<TyId> {
+    pub(crate) fn parts_of(&mut self, k: TyKind) -> Vec<TyId> {
         let TyKind::Adt(d, args) = k else {
             return crate::types::children(&k);
         };
@@ -785,6 +785,29 @@ impl Ctx<'_> {
                 .is_some_and(|e| !matches!(self.ty.kind(e), TyKind::Never));
         (f.owner == Some(d) && f.params.is_empty() && !f.is_async && !throws && returns_self)
             .then_some(m.def)
+    }
+
+    /// Does a deep copy of a `t` run its class's own `clone()`? Only for a class that owns a
+    /// resource, its own or a part's, or holds a promise (velt_vir `Cx::own_clone`); any other class
+    /// is copied field by field whatever its `clone()` does.
+    pub fn runs_own_clone(&mut self, t: TyId) -> bool {
+        let TyKind::Adt(d, _) = *self.ty.kind(t) else {
+            return false;
+        };
+        if self.own_clone(d).is_none() {
+            return false;
+        }
+        let mut look = |cx: &mut Self, t: TyId| match cx.ty.kind(t).clone() {
+            TyKind::Shared(_) | TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_) => {
+                Look::Stop
+            }
+            TyKind::Promise(..) => Look::Found,
+            TyKind::Adt(d, _) if matches!(&cx.info[d.0 as usize], DefInfo::Adt(a) if a.has_dispose) => {
+                Look::Found
+            }
+            k => Look::Parts(cx.parts_of(k)),
+        };
+        self.find_within(t, MAX_LEVELS, &mut look).is_some()
     }
 
     /// The dynamic JSON value class: the prelude's `JsonValue` itself, not a user class of the

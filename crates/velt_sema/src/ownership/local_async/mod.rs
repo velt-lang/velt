@@ -41,6 +41,7 @@ mod fed;
 mod graph;
 mod keyed;
 mod reach;
+mod record;
 mod targets;
 mod types;
 mod values;
@@ -55,11 +56,13 @@ use crate::hir::{Def, DefId, TyId, TyKind};
 use graph::{Boundary, Graph, Node, Why, CROSSES, INDIRECT, STORED};
 
 pub(crate) use changes::{check_crossing_changes, Crossing};
+pub(crate) use record::record_changed_captures;
 
 /// Decide which async closures are local, mark them (`FnDef::shares_captures`), and report the
 /// non-local ones that modify a captured variable.
 pub(crate) fn infer_local_async(cx: &mut Ctx) {
     cx.crossing_callbacks.clear();
+    cx.in_shared.clear();
     let g = graph::build(cx);
     let mut p = Propagation::new(&g);
     for &(n, f, why) in &g.seeds {
@@ -67,15 +70,23 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     }
     let mut seen = FxHashMap::default();
     let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
+    // The function types a value in `shared(...)` holds, whatever else they cross.
+    let (mut shared_seen, mut shared_fns) = (FxHashMap::default(), FxHashMap::default());
     let mut rooted = 0;
     loop {
         p.run(cx, &g);
         types::crossing_fns(cx, &p.roots[rooted..], &mut seen, &mut fns);
+        let in_shared: Vec<(TyId, Why)> = (p.roots[rooted..].iter())
+            .filter(|(_, w)| w.boundary == Boundary::Shared)
+            .copied()
+            .collect();
+        types::crossing_fns(cx, &in_shared, &mut shared_seen, &mut shared_fns);
         rooted = p.roots.len();
         let mut changed = false;
         for (n, node) in g.nodes.iter().enumerate() {
             let Node::Lit(c) = *node else { continue };
-            if p.flags[n] & CROSSES != 0 || p.flags[n] & STORED == 0 {
+            let crosses = p.flags[n] & CROSSES != 0;
+            if p.flags[n] & STORED == 0 || (crosses && p.shared[n].is_some()) {
                 continue;
             }
             // A callback wrapper of an async closure (`body/expr/callback.rs`) is matched by the
@@ -94,6 +105,19 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
                 None if sync => !types::mentions_param(cx, t) && types::may_be(cx, g.tys[n], t),
                 None => types::may_be(cx, g.tys[n], t),
             };
+            // Crossing already, by another boundary: it may also reach `shared(...)`, where a sync
+            // closure's change would be lost.
+            if crosses {
+                let why = (shared_fns.iter())
+                    .filter(|(t, w)| sync && heap_reaches(cx, w, c) && matches(**t))
+                    .map(|(_, w)| *w)
+                    .min_by_key(|w| w.rank(cx));
+                if let Some(w) = why {
+                    p.set(n, CROSSES, Some(w));
+                    changed = true;
+                }
+                continue;
+            }
             // Several crossing types may match: report one in user code, the earliest.
             let why = fns
                 .iter()
@@ -125,9 +149,9 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
         }
         // In `shared(...)`: every thread holding it calls it, each call on a copy of what it
         // captured, so a change would be lost. A `Mutex` around it runs the calls one at a time.
-        let in_shared =
-            (p.why[n][0]).filter(|w| p.flags[n] & CROSSES != 0 && w.boundary == Boundary::Shared);
+        let in_shared = p.shared[n].filter(|_| p.flags[n] & CROSSES != 0);
         if let Some(w) = in_shared {
+            cx.in_shared.push(c);
             crossing_sync(cx, c, Some(w));
             if !cx.callback_wrappers.contains_key(&c)
                 && !cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_library)
@@ -445,11 +469,17 @@ pub(in crate::ownership::local_async) fn reaches(cx: &Ctx, w: &Why) -> String {
     }
 }
 
+/// In [`Propagation::work`]: a node that crosses already reaches `shared(...)` too.
+const SHARED_WALK: u8 = 8;
+
 /// Flags of every node, with why each was set (`CROSSES`, `INDIRECT`), propagated from a
 /// node to the nodes its values come from.
 struct Propagation {
     flags: Vec<u8>,
     why: Vec<[Option<Why>; 2]>,
+    /// How a crossing node reaches `shared(...)`, if it does, whichever boundary came first: a sync
+    /// closure may change its copy when spawned, and not when it is in `shared(...)`.
+    shared: Vec<Option<Why>>,
     work: Vec<(usize, u8)>,
     roots: Vec<(TyId, Why)>,
 }
@@ -459,12 +489,21 @@ impl Propagation {
         Propagation {
             flags: vec![0; g.nodes.len()],
             why: vec![[None, None]; g.nodes.len()],
+            shared: vec![None; g.nodes.len()],
             work: vec![],
             roots: g.roots.clone(),
         }
     }
 
     fn set(&mut self, n: usize, f: u8, why: Option<Why>) {
+        if let (CROSSES, Some(w), None) = (f, why, self.shared[n]) {
+            if w.boundary == Boundary::Shared {
+                self.shared[n] = Some(w);
+                if self.flags[n] & CROSSES != 0 {
+                    self.work.push((n, SHARED_WALK));
+                }
+            }
+        }
         if self.flags[n] & f != 0 {
             // A path fewer calls deep inside a library replaces a deeper one: only a path at the
             // library's own level may leave it for the program (`Why::step`).
@@ -495,7 +534,13 @@ impl Propagation {
             let why = match f {
                 CROSSES => self.why[n][0],
                 INDIRECT => self.why[n][1],
+                SHARED_WALK => self.shared[n],
                 _ => None,
+            };
+            // The walk for `shared(...)` goes where a crossing goes, with that reason.
+            let f = match f {
+                SHARED_WALK => CROSSES,
+                f => f,
             };
             if let Some(w) = why {
                 self.root(cx, g, n, f, w);

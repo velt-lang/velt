@@ -97,6 +97,49 @@ impl Cx<'_> {
         parts.into_iter().any(|p| self.reaches_fn_in(p, seen))
     }
 
+    /// Can a value of `t` reach what the many-threads check looks at (glue/many.rs): a function or
+    /// interface value, or what its strict walk panics on, a lock or an `Atomic` held by value or a
+    /// class whose `clone()` may change its object?
+    pub(super) fn reaches_held(&mut self, t: TyId) -> bool {
+        self.reaches_held_in(t, &mut FxHashSet::default())
+    }
+
+    fn reaches_held_in(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
+        if !seen.insert(t) {
+            return false;
+        }
+        let parts = match self.kind(t) {
+            TyKind::Dyn(..) | TyKind::Closure(_) | TyKind::FnPtr { .. } => return true,
+            TyKind::Shared(_) | TyKind::Promise(..) => return false,
+            TyKind::Array(e) => vec![e],
+            TyKind::Adt(d, _) if super::atomic::is_atomic(self, d) || self.is_lock(t) => {
+                return true
+            }
+            TyKind::Adt(..) if self.clone_may_change(t) => return true,
+            TyKind::Adt(d, _) if self.is_class(t) && self.has_subclasses(d) => return true,
+            TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
+            _ => self.part_types(t),
+        };
+        parts.into_iter().any(|p| self.reaches_held_in(p, seen))
+    }
+
+    /// Is `t` the prelude's `Mutex` or `RwLock`?
+    pub(super) fn is_lock(&self, t: TyId) -> bool {
+        let TyKind::Adt(d, _) = self.kind(t) else {
+            return false;
+        };
+        matches!(self.hir.def(d), hir::Def::Adt(a)
+            if a.name.starts_with(velt_common::std_dir!(prelude))
+                && (a.name.ends_with("::Mutex") || a.name.ends_with("::RwLock")))
+    }
+
+    /// A deep copy of a `t` runs a class's own `clone()`, which may change the object
+    /// (`FnDef::changes_held`): a standard library `clone()` that changes nothing doesn't.
+    pub(super) fn clone_may_change(&mut self, t: TyId) -> bool {
+        self.own_clone(t)
+            .is_some_and(|m| self.fn_def(m).changes_held)
+    }
+
     /// Can a deep copy of a `t` call a class's own `clone()` (`own_clone`), or hold a promise?
     /// Then the copy is transferred in turn (glue/transfer.rs `settle_copy`): what `clone()`
     /// returned may share objects, and a promise's copy is another holder of it, which is handed

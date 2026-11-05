@@ -348,6 +348,8 @@ pub(crate) struct Ctx<'m> {
     pub reported_captures: Vec<(String, velt_common::Span)>,
     /// The changes to captures `report_mutated` reported, by variable and place.
     pub reported_mutations: Vec<(String, velt_common::Span)>,
+    /// Closures followed to a `shared(...)` by `ownership::local_async` (`ownership::many`).
+    pub in_shared: Vec<DefId>,
     /// Callbacks a library runs on other threads, checked for changes through calls once
     /// mutation inference is done (`ownership::local_async::changes`).
     pub crossing_callbacks: Vec<crate::ownership::Crossing>,
@@ -585,6 +587,7 @@ impl<'m> Ctx<'m> {
             callback_wrappers: Default::default(),
             reported_captures: vec![],
             reported_mutations: vec![],
+            in_shared: vec![],
             crossing_callbacks: vec![],
             ide: None,
             recovered: FxHashMap::default(),

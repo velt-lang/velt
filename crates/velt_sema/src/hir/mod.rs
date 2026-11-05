@@ -306,6 +306,12 @@ pub struct FnDef {
     /// reference, or the cell of a `LocalDef::boxed` capture) instead of copying them. False for
     /// everything else, including async closures that may run on another thread.
     pub shares_captures: bool,
+    /// A closure that changes what it captured, or a class's `clone()` that may change its object
+    /// (all but the standard library's that don't). Set when the program puts a function in
+    /// `shared(...)` (`crate::ownership::local_async::record`): each call of one runs on a copy of
+    /// what it captured, so a change would be lost, and the many-threads check panics on it
+    /// (velt_vir glue/many.rs).
+    pub changes_held: bool,
     pub body: Body,
     /// Thrown error type (a union when several types can be thrown; see hir_encodings.md
     /// "Errors"). May mention type params; `Some(Never)` after substitution means non-throwing.

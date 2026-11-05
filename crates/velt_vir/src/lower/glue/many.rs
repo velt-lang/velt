@@ -10,11 +10,18 @@
 //! environment's transfer entry and the `SLOT_TRANSFER` vtable entry, called with the pointer
 //! tagged (low bit set, [`FnLower::tagged`]): in that mode the entry checks instead of
 //! transferring and returns the pointer untagged ([`FnLower::check_if_tagged`]).
+//!
+//! The strict walk, for a function in `shared(...)`, also panics on what a call's copy of the
+//! captures would lose: a closure that changes or shares what it captured, a lock or an `Atomic`
+//! held by value, and a class whose `clone()` may change its object, which every call would run on
+//! one object at once. A `Mutex` around the function needs none of that: the calls run one at a
+//! time. A walk goes through an object once, so a cycle ends (velt_rt `many_walk`).
 
 use velt_sema::hir::{TyId, TyKind};
 
 use super::{Glue, SLOT_TRANSFER};
 use crate::lower::operand::proj;
+use crate::lower::rt::Rt;
 use crate::lower::{cint, unit, FnLower, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
@@ -35,7 +42,42 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(unit()));
     }
 
+    /// When the walk is strict (module docs): panic with `msg`.
+    pub(super) fn panic_if_strict(&mut self, msg: &str) {
+        let strict = self.rt_u8(Rt::ManyStrict, vec![]);
+        let done = self.new_block();
+        self.when(strict, done);
+        self.panic_msg(msg);
+        self.goto(done);
+        self.switch_to(done);
+    }
+
+    /// The panic of the strict walk for a value of `ty` itself, a lock or an `Atomic`.
+    fn panic_if_strict_held(&mut self, ty: TyId) {
+        let name = self.cx.type_name(ty);
+        match self.cx.kind(ty) {
+            TyKind::Adt(d, _) if crate::lower::atomic::is_atomic(self.cx, d) => self.panic_if_strict(&format!(
+                "a function that captured an `{name}` by value is in `shared(...)`: each call would change an `Atomic` of its own, so the change would be lost; keep the value in a `shared(...)`"
+            )),
+            _ if self.cx.is_lock(ty) => self.panic_if_strict(&format!(
+                "a function that captured a `{name}` by value is in `shared(...)`: each call would have a lock of its own; share the lock: `shared(new {name}(…))`"
+            )),
+            _ => {}
+        }
+    }
+
+    /// The panic of the strict walk for an object of class `ty` (module docs).
+    pub(super) fn panic_if_strict_clone(&mut self, ty: TyId) {
+        if self.cx.clone_may_change(ty) {
+            let name = self.cx.type_name(ty);
+            self.panic_if_strict(&format!(
+                "a function that captured a `{name}` is in `shared(...)`: calls from several threads would run its `clone()` on the same object at once; put the function in a `Mutex`"
+            ));
+        }
+    }
+
     fn many_check_expand(&mut self, place: &Place, ty: TyId) {
+        self.panic_if_strict_held(ty);
         if self.cx.boxed(ty) {
             return self.many_check_boxed(place, ty);
         }
@@ -45,6 +87,8 @@ impl FnLower<'_, '_> {
                 let done = self.new_block();
                 let nn = self.non_null(obj.clone());
                 self.when(nn, done);
+                let first = self.rt_u8(Rt::ManyFirst, vec![obj.clone()]);
+                self.when(first, done);
                 let tagged = self.tagged(obj.clone());
                 if self.cx.has_header(d) {
                     let vt = self.obj_vtable(obj, ty);
@@ -143,7 +187,7 @@ impl FnLower<'_, '_> {
     }
 
     fn many_check_elems(&mut self, arr: &Place, e: TyId) {
-        if !self.cx.reaches_fn(e) {
+        if !self.cx.reaches_held(e) {
             return;
         }
         let k = self.temp(Ty::U64);
@@ -174,6 +218,11 @@ impl FnLower<'_, '_> {
         let heap = self.non_null(drop);
         self.when(heap, done);
         let f = self.env_transfer_entry(env.clone());
+        // A frame env that owns captures has a drop entry and no transfer entry.
+        let has = self.non_null(f.clone());
+        self.when(has, done);
+        let first = self.rt_u8(Rt::ManyFirst, vec![env.clone()]);
+        self.when(first, done);
         let tagged = self.tagged(env);
         self.call_entry(f, vec![tagged], vec![Ty::Ptr], Ty::Ptr);
         self.goto(done);
@@ -217,9 +266,21 @@ impl FnLower<'_, '_> {
         self.switch_to(no);
     }
 
+    /// One walk of the value at `p` (concrete type `ty`), which every thread can now reach;
+    /// `strict` for a function in `shared(...)` (module docs).
+    pub(in crate::lower) fn many_walk(&mut self, strict: bool, p: Place, ty: TyId) {
+        if !self.cx.reaches_fn(ty) {
+            return;
+        }
+        let flag = cint(i128::from(strict), Ty::U8);
+        self.call_rt(Rt::ManyBegin, vec![flag], None);
+        self.many_check(p, ty);
+        self.call_rt(Rt::ManyEnd, vec![], None);
+    }
+
     /// Check the value at `p` (concrete type `ty`) with the many-threads glue.
     pub(in crate::lower) fn many_check(&mut self, p: Place, ty: TyId) {
-        if !self.cx.reaches_fn(ty) {
+        if !self.cx.reaches_held(ty) {
             return;
         }
         let a = self.addr(p);

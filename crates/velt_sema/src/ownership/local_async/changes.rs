@@ -242,7 +242,7 @@ pub(super) struct Root {
 /// whether the argument may be the captured value itself), and whether one returns new values.
 #[derive(Default)]
 pub(super) struct Memo {
-    calls: FxHashMap<(DefId, usize, bool, TyId), Option<String>>,
+    pub(super) calls: FxHashMap<(DefId, usize, bool, TyId), Option<String>>,
     pub fresh: FxHashMap<DefId, bool>,
     /// The types a value of a type may hold (itself, its fields, elements, …).
     pub holds: FxHashMap<TyId, FxHashSet<TyId>>,
@@ -270,7 +270,7 @@ type Found = (
 /// The changes body `f` makes to what the locals of `roots` (each standing for a root of the
 /// callback being checked) reach, first one per root. `params`: closures whose parameters stand
 /// for a root (a closure passed to a call with a reached argument).
-fn changes(
+pub(super) fn changes(
     cx: &mut Ctx,
     f: &FnDef,
     roots: &Roots,
@@ -615,7 +615,7 @@ fn reader(cx: &Ctx, d: DefId) -> bool {
 /// Does the function `d` change what its parameter `i` (`this` first) reaches, given an argument
 /// reached from a root of type `root_ty` (`direct`: the argument may be the captured value
 /// itself)? The place it writes, as written there (`this.count`).
-fn callee_changes(
+pub(super) fn callee_changes(
     cx: &mut Ctx,
     d: DefId,
     i: usize,

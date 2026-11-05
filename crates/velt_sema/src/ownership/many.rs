@@ -5,6 +5,10 @@
 //! `clone()` would have its count updated from several threads. Where the function is visible
 //! here — a closure literal in the argument, or a `const` bound to one — that is an error;
 //! otherwise the many-threads check where the value is made panics (velt_vir glue/many.rs).
+//!
+//! A function there runs each call on a copy of what it captured, so what a copy would break is
+//! refused too, at any depth of the capture's type ([`Barred`]), for the closures visible here and
+//! those `local_async` followed here; the strict walk of that check panics on the rest.
 
 use rustc_hash::{FxHashMap, FxHashSet};
 
@@ -27,6 +31,7 @@ pub(crate) fn check_many_threads(cx: &mut Ctx) {
         .copied()
         .filter(|d| cx.fn_info(*d).state == BodyState::Done)
         .collect();
+    let mut checked = FxHashSet::default();
     for d in fns {
         let Some(Def::Fn(mut f)) = cx.defs[d.0 as usize].take() else {
             continue;
@@ -50,8 +55,15 @@ pub(crate) fn check_many_threads(cx: &mut Ctx) {
                 if reported.insert(c) {
                     check_closure(cx, c, &Copied::Shared);
                     check_shared_captures(cx, c, locked);
+                    checked.insert(c);
                 }
             }
+        }
+    }
+    // The closures `local_async` followed to a `shared(...)` from elsewhere.
+    for c in std::mem::take(&mut cx.in_shared) {
+        if checked.insert(c) {
+            check_shared_captures(cx, c, false);
         }
     }
 }
@@ -62,10 +74,55 @@ fn lock_type(cx: &Ctx, t: TyId) -> bool {
         if Some(*d) == cx.mutex_ty() || Some(*d) == cx.rwlock_ty())
 }
 
-/// The captures that a function in `shared(...)` can't have. A lock held by value would be
-/// copied with the function, which would then lock its own copy. A class with its own `clone()`
-/// would run that `clone()` on the same object from several threads at once for the calls' copies,
-/// unless a lock (`locked`) runs the calls one at a time.
+/// What a capture holds that a function in `shared(...)` can't have, each call running on a copy.
+enum Barred {
+    /// A lock held by value: the call would lock its own copy.
+    Lock(TyId),
+    /// An `Atomic` held by value: the call would change its own copy.
+    Atomic(TyId),
+    /// A class whose `clone()` may change its object, which would run on one object from several
+    /// threads at once, unless a lock (`locked`) runs the calls one at a time. A standard library
+    /// `clone()` that changes nothing is fine (`FnDef::changes_held`), as `RegExp`'s.
+    Clone(TyId),
+}
+
+/// The first thing `t` holds that a function in `shared(...)` can't capture (`Barred`). What a
+/// `shared` holds is one object for every thread; a function or interface value is checked by the
+/// many-threads check at run time (velt_vir glue/many.rs).
+fn barred(cx: &mut Ctx, t: TyId, locked: bool, seen: &mut FxHashSet<TyId>) -> Option<Barred> {
+    if !seen.insert(t) {
+        return None;
+    }
+    let k = cx.ty.kind(t).clone();
+    match k {
+        TyKind::Shared(_)
+        | TyKind::Dyn(..)
+        | TyKind::FnPtr { .. }
+        | TyKind::Closure(_)
+        | TyKind::Param(_) => return None,
+        TyKind::Adt(d, _) => {
+            if lock_type(cx, t) {
+                return Some(Barred::Lock(t));
+            }
+            if !locked && Some(d) == cx.atomic_ty() {
+                return Some(Barred::Atomic(t));
+            }
+            if !locked && cx.runs_own_clone(t) {
+                let changes = cx.own_clone(d).is_some_and(
+                    |m| matches!(&cx.defs[m.0 as usize], Some(Def::Fn(f)) if f.changes_held),
+                );
+                if changes {
+                    return Some(Barred::Clone(t));
+                }
+            }
+        }
+        _ => {}
+    }
+    let parts = cx.parts_of(k);
+    parts.into_iter().find_map(|p| barred(cx, p, locked, seen))
+}
+
+/// The captures that a function in `shared(...)` can't have (`Barred`).
 fn check_shared_captures(cx: &mut Ctx, c: DefId, locked: bool) {
     let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
         return;
@@ -79,27 +136,38 @@ fn check_shared_captures(cx: &mut Ctx, c: DefId, locked: bool) {
         })
         .collect();
     for (name, ty) in caps {
-        if lock_type(cx, ty) {
-            let tn = cx.display(ty);
-            cx.error(
+        let held = |cx: &Ctx, part: TyId| match part == ty {
+            true => format!("`{name}`, a `{}` held by value", cx.display(part)),
+            false => format!("`{name}`, which holds a `{}` by value", cx.display(part)),
+        };
+        let d = match barred(cx, ty, locked, &mut FxHashSet::default()) {
+            None => continue,
+            Some(Barred::Lock(p)) => {
+                let tn = cx.display(p);
                 Diagnostic::error(
-                    format!("this function captures `{name}`, a `{tn}` held by value, and it is in `shared(...)`, so each call would have a lock of its own"),
+                    format!("this function captures {}, and it is in `shared(...)`, so each call would have a lock of its own", held(cx, p)),
                     span,
                 )
-                .with_note(format!("share the lock: `const {name} = shared(new {tn}(…))`")),
-            );
-        } else if let (false, TyKind::Adt(d, _)) = (locked, cx.ty.kind(ty).clone()) {
-            if cx.own_clone(d).is_some() {
-                let tn = cx.display(ty);
-                cx.error(
-                    Diagnostic::error(
-                        format!("this function captures `{name}`, and it is in `shared(...)`, so each call would run `{tn}`'s `clone()` on the same object, from several threads at once"),
-                        span,
-                    )
-                    .with_note(format!("share the object: `const {name} = shared(new Mutex(…))`, or put the function itself in a `Mutex`")),
-                );
+                .with_note(format!("share the lock: `shared(new {tn}(…))`"))
             }
-        }
+            Some(Barred::Atomic(p)) => {
+                let tn = cx.display(p);
+                Diagnostic::error(
+                    format!("this function captures `{name}`, which holds an `{tn}` by value, and it is in `shared(...)`, so each call would change an `Atomic` of its own"),
+                    span,
+                )
+                .with_note(format!("share the value: `const {name} = shared(...)` and `{name}.add(1)`, or hold the `{tn}` in a `shared` object"))
+            }
+            Some(Barred::Clone(p)) => {
+                let tn = cx.display(p);
+                Diagnostic::error(
+                    format!("this function captures `{name}`, and it is in `shared(...)`, so each call would run `{tn}`'s `clone()` on the same object, from several threads at once"),
+                    span,
+                )
+                .with_note(format!("share the object: `const {name} = shared(new Mutex(…))`, or put the function itself in a `Mutex`"))
+            }
+        };
+        cx.error(d);
     }
 }
 

@@ -352,6 +352,7 @@ fn fill_body(cx: &mut Ctx, def: DefId, m: DefId, positions: &[usize], trailing: 
         self_ty: Some(this_sig.ty),
         captures: vec![],
         shares_captures: false,
+        changes_held: false,
         body: hir::Body {
             locals: frame.locals,
             block: hir::Block {

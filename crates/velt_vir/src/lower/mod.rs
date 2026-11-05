@@ -283,6 +283,7 @@ pub(crate) fn lower_program(
             let mut diags = cx.nothing_clash_diagnostics();
             diags.extend(cx.fresh_fn_diagnostics());
             diags.extend(cx.counted_atomic_diagnostics());
+            diags.extend(cx.counted_lock_diagnostics());
             diags.extend(cx.atomic_copy_diagnostics());
             diags.extend(cx.unavailable_diagnostics());
             cx.unfreeze_module_reach();
@@ -580,6 +581,8 @@ struct Cx<'h> {
     /// The first `user_site` that shared each type, or borrowed it through a container
     /// (boxing `note_share`, `note_projection`): where a counted `Atomic` is reported.
     share_sites: rustc_hash::FxHashMap<TyId, velt_common::Span>,
+    /// The locks the program shares by value (`counted_lock_diagnostics`).
+    shared_locks: rustc_hash::FxHashSet<TyId>,
     /// The shared type each type `close_boxing` reached through shared values came from.
     share_from: rustc_hash::FxHashMap<TyId, TyId>,
     /// Non-zero while the field types of a prelude `Map` are substituted (types.rs

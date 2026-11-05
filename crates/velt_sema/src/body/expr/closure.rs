@@ -405,6 +405,7 @@ impl FnCx<'_, '_> {
         };
         let info = self.cx.fn_info_mut(def);
         info.escaping = escaping || is_async;
+        info.assigns_capture = !mutated.is_empty();
         info.mutated_captures = mutated;
         info.mutated_through = through;
         self.finish_closure(Checked {
@@ -674,6 +675,7 @@ impl FnCx<'_, '_> {
             self_ty: None,
             captures,
             shares_captures: false,
+            changes_held: false,
             body: hir::Body { locals, block },
             throws: None,
             span,

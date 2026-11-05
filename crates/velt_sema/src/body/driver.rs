@@ -677,6 +677,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
             .map(|t| t.ty),
         captures: vec![],
         shares_captures: false,
+        changes_held: false,
         body: hir::Body {
             locals: frame.locals,
             block,

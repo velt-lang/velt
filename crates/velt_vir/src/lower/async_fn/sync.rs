@@ -449,7 +449,7 @@ impl FnLower<'_, '_> {
         self.mode = mode;
         // A function value stored into the value while the lock was held may be called by
         // another thread next (glue/many.rs).
-        self.many_check(value, vty);
+        self.many_walk(false, value, vty);
         let mut unlock_args = vec![lock];
         unlock_args.extend(how);
         self.call_rt(unlock_fn, unlock_args, None);
