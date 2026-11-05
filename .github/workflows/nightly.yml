@@ -571,7 +571,8 @@ jobs:
             esac
           done < "$RUNNER_TEMP/caches.tsv"
           # Clang's objects: only the newest stays; each is a whole copy.
-          grep -P '^\d+\tvelt-clang-objects-' "$RUNNER_TEMP/caches.tsv" | sort -t$'\t' -k4 -r | tail -n +2 |
+          awk -F'\t' '$2 ~ /^velt-clang-objects-/' "$RUNNER_TEMP/caches.tsv" | sort -t$'\t' -k2,2 -k4,4r |
+            awk -F'\t' '{ prefix = $2; sub(/-[0-9]+$/, "", prefix) } seen[prefix]++' |
             while IFS=$'\t' read -r id key size created; do
               echo "delete  $key ($((size >> 20)) MiB)"
               [ -n "$dry" ] || gh cache delete "$id"
