@@ -1,0 +1,110 @@
+f16x8.load 1 9
+f16x8.load 2 RangeError: f16x8.load: range is out of bounds
+f16x8.load 9 RangeError: f16x8.load: range is out of bounds
+f16x8.load 10 RangeError: f16x8.load: range is out of bounds
+f16x8.load 2000000000 RangeError: f16x8.load: range is out of bounds
+f16x8.load 18446744073709551608 RangeError: f16x8.load: range is out of bounds
+f16x8.load 18446744073709551615 RangeError: f16x8.load: range is out of bounds
+f16x8.store 1 1 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+  array 1 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+f16x8.store 2 RangeError: f16x8.store: range is out of bounds
+  array 1 2 3 4 5 6 7 8 9
+f16x8.store 9 RangeError: f16x8.store: range is out of bounds
+  array 1 2 3 4 5 6 7 8 9
+f16x8.store 10 RangeError: f16x8.store: range is out of bounds
+  array 1 2 3 4 5 6 7 8 9
+f16x8.store 2000000000 RangeError: f16x8.store: range is out of bounds
+  array 1 2 3 4 5 6 7 8 9
+f16x8.store 18446744073709551608 RangeError: f16x8.store: range is out of bounds
+  array 1 2 3 4 5 6 7 8 9
+f16x8.store 18446744073709551615 RangeError: f16x8.store: range is out of bounds
+  array 1 2 3 4 5 6 7 8 9
+f16x8.loadPartial 1 2 9
+f16x8.loadPartial 2 3 0
+f16x8.loadPartial 8 9 0
+f16x8.loadPartial 9 0 0
+f16x8.loadPartial 10 RangeError: f16x8.loadPartial: position is out of range
+f16x8.loadPartial 2000000000 RangeError: f16x8.loadPartial: position is out of range
+f16x8.loadPartial 18446744073709551608 RangeError: f16x8.loadPartial: position is out of range
+f16x8.loadPartial 18446744073709551615 RangeError: f16x8.loadPartial: position is out of range
+f16x8.storePartial 1 1 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+  array 1 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+f16x8.storePartial 2 1 2 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+  array 1 2 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+f16x8.storePartial 8 1 2 3 4 5 6 7 8 0.5
+  array 1 2 3 4 5 6 7 8 0.5
+f16x8.storePartial 9 1 2 3 4 5 6 7 8 9
+  array 1 2 3 4 5 6 7 8 9
+f16x8.storePartial 10 RangeError: f16x8.storePartial: position is out of range
+  array 1 2 3 4 5 6 7 8 9
+f16x8.storePartial 2000000000 RangeError: f16x8.storePartial: position is out of range
+  array 1 2 3 4 5 6 7 8 9
+f16x8.storePartial 18446744073709551608 RangeError: f16x8.storePartial: position is out of range
+  array 1 2 3 4 5 6 7 8 9
+f16x8.storePartial 18446744073709551615 RangeError: f16x8.storePartial: position is out of range
+  array 1 2 3 4 5 6 7 8 9
+f16x8.lane 7 0.5
+f16x8.lane 8 RangeError: f16x8.lane: index is out of range
+f16x8.lane 2000000000 RangeError: f16x8.lane: index is out of range
+f16x8.lane 18446744073709551608 RangeError: f16x8.lane: index is out of range
+f16x8.lane 18446744073709551615 RangeError: f16x8.lane: index is out of range
+f16x8.withLane 7 3
+f16x8.withLane 8 RangeError: f16x8.withLane: index is out of range
+f16x8.withLane 2000000000 RangeError: f16x8.withLane: index is out of range
+f16x8.withLane 18446744073709551608 RangeError: f16x8.withLane: index is out of range
+f16x8.withLane 18446744073709551615 RangeError: f16x8.withLane: index is out of range
+bf16x8.load 1 9
+bf16x8.load 2 RangeError: bf16x8.load: range is out of bounds
+bf16x8.load 9 RangeError: bf16x8.load: range is out of bounds
+bf16x8.load 10 RangeError: bf16x8.load: range is out of bounds
+bf16x8.load 2000000000 RangeError: bf16x8.load: range is out of bounds
+bf16x8.load 18446744073709551608 RangeError: bf16x8.load: range is out of bounds
+bf16x8.load 18446744073709551615 RangeError: bf16x8.load: range is out of bounds
+bf16x8.store 1 1 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+  array 1 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+bf16x8.store 2 RangeError: bf16x8.store: range is out of bounds
+  array 1 2 3 4 5 6 7 8 9
+bf16x8.store 9 RangeError: bf16x8.store: range is out of bounds
+  array 1 2 3 4 5 6 7 8 9
+bf16x8.store 10 RangeError: bf16x8.store: range is out of bounds
+  array 1 2 3 4 5 6 7 8 9
+bf16x8.store 2000000000 RangeError: bf16x8.store: range is out of bounds
+  array 1 2 3 4 5 6 7 8 9
+bf16x8.store 18446744073709551608 RangeError: bf16x8.store: range is out of bounds
+  array 1 2 3 4 5 6 7 8 9
+bf16x8.store 18446744073709551615 RangeError: bf16x8.store: range is out of bounds
+  array 1 2 3 4 5 6 7 8 9
+bf16x8.loadPartial 1 2 9
+bf16x8.loadPartial 2 3 0
+bf16x8.loadPartial 8 9 0
+bf16x8.loadPartial 9 0 0
+bf16x8.loadPartial 10 RangeError: bf16x8.loadPartial: position is out of range
+bf16x8.loadPartial 2000000000 RangeError: bf16x8.loadPartial: position is out of range
+bf16x8.loadPartial 18446744073709551608 RangeError: bf16x8.loadPartial: position is out of range
+bf16x8.loadPartial 18446744073709551615 RangeError: bf16x8.loadPartial: position is out of range
+bf16x8.storePartial 1 1 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+  array 1 0.5 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+bf16x8.storePartial 2 1 2 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+  array 1 2 0.5 0.5 0.5 0.5 0.5 0.5 0.5
+bf16x8.storePartial 8 1 2 3 4 5 6 7 8 0.5
+  array 1 2 3 4 5 6 7 8 0.5
+bf16x8.storePartial 9 1 2 3 4 5 6 7 8 9
+  array 1 2 3 4 5 6 7 8 9
+bf16x8.storePartial 10 RangeError: bf16x8.storePartial: position is out of range
+  array 1 2 3 4 5 6 7 8 9
+bf16x8.storePartial 2000000000 RangeError: bf16x8.storePartial: position is out of range
+  array 1 2 3 4 5 6 7 8 9
+bf16x8.storePartial 18446744073709551608 RangeError: bf16x8.storePartial: position is out of range
+  array 1 2 3 4 5 6 7 8 9
+bf16x8.storePartial 18446744073709551615 RangeError: bf16x8.storePartial: position is out of range
+  array 1 2 3 4 5 6 7 8 9
+bf16x8.lane 7 0.5
+bf16x8.lane 8 RangeError: bf16x8.lane: index is out of range
+bf16x8.lane 2000000000 RangeError: bf16x8.lane: index is out of range
+bf16x8.lane 18446744073709551608 RangeError: bf16x8.lane: index is out of range
+bf16x8.lane 18446744073709551615 RangeError: bf16x8.lane: index is out of range
+bf16x8.withLane 7 3
+bf16x8.withLane 8 RangeError: bf16x8.withLane: index is out of range
+bf16x8.withLane 2000000000 RangeError: bf16x8.withLane: index is out of range
+bf16x8.withLane 18446744073709551608 RangeError: bf16x8.withLane: index is out of range
+bf16x8.withLane 18446744073709551615 RangeError: bf16x8.withLane: index is out of range

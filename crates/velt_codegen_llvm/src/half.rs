@@ -83,7 +83,7 @@ const F64_TO_F16: &str = "define internal i16 @velt.f64_to_f16(double %x) always
 }";
 
 // The integer sequences (`velt_vir::math::half`).
-const F16_TO_F32_SOFT: &str =
+pub(crate) const F16_TO_F32_SOFT: &str =
     "define internal float @velt.f16_to_f32.soft(i16 %h16) alwaysinline nounwind {
   %h = zext i16 %h16 to i32
   %a = and i32 %h, 32767
@@ -110,7 +110,7 @@ const F16_TO_F32_SOFT: &str =
   %f = bitcast i32 %rs to float
   ret float %f
 }";
-const F32_TO_F16_SOFT: &str =
+pub(crate) const F32_TO_F16_SOFT: &str =
     "define internal i16 @velt.f32_to_f16.soft(float %x) alwaysinline nounwind {
   %b = bitcast float %x to i32
   %hi = lshr i32 %b, 16
@@ -172,18 +172,20 @@ const F64_TO_F16_ODD_SOFT: &str =
   %r = call i16 @velt.f32_to_f16.soft(float %f)
   ret i16 %r
 }";
-const BF16_TO_F32: &str =
+pub(crate) const BF16_TO_F32: &str =
     "define internal float @velt.bf16_to_f32(i16 %b16) alwaysinline nounwind {
   %w = zext i16 %b16 to i32
   %x = shl i32 %w, 16
   %a = and i32 %x, 2147483647
   %nan = icmp ugt i32 %a, 2139095040
-  %quiet = or i32 %x, 4194304
-  %r = select i1 %nan, i32 %quiet, i32 %x
+  %mask = sext i1 %nan to i32
+  %quiet = and i32 %mask, 4194304
+  %r = or i32 %x, %quiet
   %f = bitcast i32 %r to float
   ret float %f
 }";
-const F32_TO_BF16: &str = "define internal i16 @velt.f32_to_bf16(float %f) alwaysinline nounwind {
+pub(crate) const F32_TO_BF16: &str =
+    "define internal i16 @velt.f32_to_bf16(float %f) alwaysinline nounwind {
   %x = bitcast float %f to i32
   %hi = lshr i32 %x, 16
   %nanb = or i32 %hi, 64

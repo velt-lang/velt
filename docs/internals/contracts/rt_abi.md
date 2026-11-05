@@ -398,7 +398,7 @@ that does, through a native package, changes these conversions too).
 
 ## SIMD [additive]
 
-A SIMD value (HIR `TyKind::Simd`, the ten vector and four mask types) is a VIR `V128`: 16 bytes,
+A SIMD value (HIR `TyKind::Simd`, the twelve vector and four mask types) is a VIR `V128`: 16 bytes,
 8-byte aligned in memory (loads and stores are unaligned), passed and returned by value between
 Velt functions. Lanes are in memory order: lane 0 is the lowest-addressed bytes, as in an array.
 A mask lane is all ones or all zeros.
@@ -458,6 +458,13 @@ wrapping; `velt_simd_<type>_sum_wide` [additive] (8-, 16- and 32-bit integer lan
 extended to `velt_vir::simd::sum_wide_lane`: 32 bits for 8- and 16-bit lanes, 64 for 32-bit ones,
 with the lanes' signedness, so it never overflows. LLVM emits `llvm.vector.reduce.add` (of the
 extended vector); Cranelift adds the lanes one by one.
+
+`f16x8` and `bf16x8` [additive] are 16-bit lanes (`u16` in VIR, as `f16` and `bf16` are): `splat`,
+`load`, `store`, `load_partial`, `store_partial`, `fits`, `lane`, `with_lane`, shuffles and
+`as_<type>` (and `velt_simd_u16x8_as_f16x8`, `_as_bf16x8`) move their bits. `_widen_low` and
+`_widen_high` give `f32x4`, exactly, a NaN quieted. `velt_simd_f32x4_narrow_f16x8` and
+`_narrow_bf16x8` `(a, b)` give the lanes of `a` then `b` rounded once to nearest even. Cranelift converts lane by
+lane with the scalar sequences.
 
 **CPU extensions (#1330).** `velt_simd_u32x4_<op>` for the SHA instructions (`sha1c`, `sha1p`,
 `sha1m`, `sha1h`, `sha1su0`, `sha1su1`, `sha256h`, `sha256h2`, `sha256su0`, `sha256su1` on

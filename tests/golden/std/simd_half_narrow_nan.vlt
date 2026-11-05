@@ -1,0 +1,63 @@
+// `narrow` of `f32` NaNs that did not come from `widen`: a signalling NaN comes out quiet in every
+// lane, with the top bits of its payload, whichever half it is in, and the other lanes of the
+// vector round as usual. 0x7f800001 is the sharp case: its payload does not reach the 16 bits, so
+// without the quiet bit it would come out as Infinity. The vectors come from an `f32[]`, from
+// integer lanes with no float move on the way, and from a splat a compiler can see through. The
+// expected output comes from Python: integer code for the NaNs and exact rational arithmetic for
+// the rest (the finite f16 lanes also agree with Node's `Float16Array`, which keeps no NaN payload).
+
+import { bf16x8, f16x8, f32x4, u16x8, u32x4 } from "velt/simd";
+
+const SIGNALLING: u32[] = [0x7f800001, 0xff800001, 0x7fa00000, 0x7fbfffff];
+const MIXED: u32[] = [0xffa12345, 0x7f810000, 0x3fc00000, 0x7f800000];
+const QUIET: u32[] = [0x7fc00001, 0xffd55555, 0x3f800001, 0xbf7fffff];
+const EDGES: u32[] = [0x00000001, 0x80000001, 0x7f7fffff, 0xff800000];
+
+function floats(bits: u32[]): f32[] {
+  const xs: f32[] = [];
+  for (const b of bits) {
+    xs.push(f32.fromBits(b));
+  }
+  return xs;
+}
+
+function fromFloats(bits: u32[]): f32x4 {
+  return f32x4.load(floats(bits));
+}
+
+function fromInts(bits: u32[]): f32x4 {
+  return u32x4.load(bits).asF32x4();
+}
+
+function hex(v: u16x8): string {
+  let s = "";
+  for (let k: usize = 0; k < 8; k++) {
+    s += (k == 0 ? "" : " ") + (v.lane(k) as u32).toString(16);
+  }
+  return s;
+}
+
+function f16Lanes(lo: f32x4, hi: f32x4): string {
+  return hex(f16x8.narrow(lo, hi).asU16x8());
+}
+
+function bf16Lanes(lo: f32x4, hi: f32x4): string {
+  return hex(bf16x8.narrow(lo, hi).asU16x8());
+}
+
+function main() {
+  const s = fromFloats(SIGNALLING);
+  const m = fromFloats(MIXED);
+  console.log("f16 floats", f16Lanes(s, m));
+  console.log("f16 other half", f16Lanes(m, s));
+  console.log("f16 ints", f16Lanes(fromInts(SIGNALLING), fromInts(MIXED)));
+  console.log("f16 quiet", f16Lanes(fromFloats(QUIET), fromFloats(EDGES)));
+  console.log("bf16 floats", bf16Lanes(s, m));
+  console.log("bf16 other half", bf16Lanes(m, s));
+  console.log("bf16 ints", bf16Lanes(fromInts(SIGNALLING), fromInts(MIXED)));
+  console.log("bf16 quiet", bf16Lanes(fromFloats(QUIET), fromFloats(EDGES)));
+  const a = f32x4.splat(f32.fromBits(0x7f800001));
+  const b = f32x4.splat(f32.fromBits(0xffa12345));
+  console.log("f16 splat", f16Lanes(a, b));
+  console.log("bf16 splat", bf16Lanes(a, b));
+}

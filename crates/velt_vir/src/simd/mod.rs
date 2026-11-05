@@ -34,11 +34,15 @@ pub enum Lanes {
     F32,
     /// `f64x2`
     F64,
+    /// `f16x8`: a lane is an `f16`'s 16 bits, as `f16` is in VIR (a `U16`, never a float here).
+    F16,
+    /// `bf16x8`, likewise.
+    BF16,
 }
 
 impl Lanes {
     /// Every vector type.
-    pub const ALL: [Lanes; 10] = [
+    pub const ALL: [Lanes; 12] = [
         Lanes::I8,
         Lanes::U8,
         Lanes::I16,
@@ -49,6 +53,8 @@ impl Lanes {
         Lanes::U64,
         Lanes::F32,
         Lanes::F64,
+        Lanes::F16,
+        Lanes::BF16,
     ];
 
     /// The type of one lane.
@@ -57,7 +63,7 @@ impl Lanes {
             Lanes::I8 => Ty::I8,
             Lanes::U8 => Ty::U8,
             Lanes::I16 => Ty::I16,
-            Lanes::U16 => Ty::U16,
+            Lanes::U16 | Lanes::F16 | Lanes::BF16 => Ty::U16,
             Lanes::I32 => Ty::I32,
             Lanes::U32 => Ty::U32,
             Lanes::I64 => Ty::I64,
@@ -87,9 +93,18 @@ impl Lanes {
         self.scalar().is_signed()
     }
 
+    /// Whether the lanes are the storage floats (`f16x8`, `bf16x8`): bits that convert to `f32`.
+    pub fn is_half(self) -> bool {
+        matches!(self, Lanes::F16 | Lanes::BF16)
+    }
+
     /// The Velt type name, `u8x16`.
     pub fn name(self) -> String {
-        format!("{}x{}", self.scalar(), self.count())
+        match self {
+            Lanes::F16 => "f16x8".to_string(),
+            Lanes::BF16 => "bf16x8".to_string(),
+            _ => format!("{}x{}", self.scalar(), self.count()),
+        }
     }
 
     /// The integer lanes twice as wide with the same signedness (what `WidenLow` gives).
@@ -227,13 +242,17 @@ pub enum Op {
     /// `(a, b) -> v`: the lanes of the high halves in turn.
     ZipHigh,
     /// `(v) -> wider`: the low half's lanes at twice the width (signed lanes keep their sign).
-    /// 8-, 16- and 32-bit integers.
+    /// 8-, 16- and 32-bit integers, and `f16`/`bf16` to `f32`, exactly, a NaN's quiet bit set.
     WidenLow,
     /// `(v) -> wider`: the high half's lanes at twice the width.
     WidenHigh,
     /// `(a, b) -> narrower`: the lanes of `a`, then of `b`, at half the width, clamped to its
     /// range. 16- and 32-bit integers.
     Narrow,
+    /// `(a, b) -> v` on `f32x4`: the lanes of `a`, then of `b`, each rounded once to nearest even
+    /// to the lanes given (`f16x8` or `bf16x8`), a NaN keeping its top payload bits and made
+    /// quiet.
+    NarrowTo(Lanes),
     /// `(v) -> v`: every lane converted to the lane type of another vector type with as many
     /// lanes: 32-bit integers to `f32` (rounded to nearest), `f32` to 32-bit integers
     /// (truncated, clamped to the range, NaN to 0).
@@ -452,6 +471,9 @@ fn vector_op(name: &str) -> Option<Op> {
     if let Some(to) = name.strip_prefix("to_") {
         return Lanes::named(to).map(Op::Convert);
     }
+    if let Some(to) = name.strip_prefix("narrow_") {
+        return Lanes::named(to).map(Op::NarrowTo);
+    }
     Some(match name {
         "splat" => Op::Splat,
         "index" => Op::Index,
@@ -509,8 +531,12 @@ fn vector_op(name: &str) -> Option<Op> {
 fn supported(lanes: Lanes, op: Op) -> bool {
     let float = lanes.is_float();
     let bits = lanes.bits();
+    if lanes.is_half() {
+        return half_supported(op);
+    }
     match op {
         Op::DotAdd => lanes == Lanes::I32,
+        Op::NarrowTo(of) => lanes == Lanes::F32 && of.is_half(),
         Op::Sum => !float,
         Op::SumWide => !float && bits <= 32,
         Op::Div | Op::Sqrt | Op::MulAdd | Op::MulAddFast => float,
@@ -531,199 +557,51 @@ fn supported(lanes: Lanes, op: Op) -> bool {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn sha_symbols_and_signatures() {
-        use Ty::{Bool, U32, V128};
-        for op in ExtOp::ALL {
-            let symbol = format!("velt_simd_{}_{}", op.type_name(), op.name());
-            assert_eq!(
-                SimdCall::of_symbol(&symbol),
-                Some(SimdCall::Inst(op)),
-                "{symbol}"
-            );
-        }
-        let sig = |s: &str| SimdCall::of_symbol(s).unwrap().signature();
-        assert_eq!(sig("velt_simd_u32x4_sha1c"), (vec![V128, U32, V128], V128));
-        assert_eq!(sig("velt_simd_u32x4_sha1h"), (vec![U32], U32));
-        assert_eq!(
-            sig("velt_simd_u32x4_sha256rnds2"),
-            (vec![V128, V128, V128], V128)
-        );
-        assert_eq!(sig("velt_simd_u32x4_sha1rnds4_3"), (vec![V128, V128], V128));
-        assert_eq!(sig("velt_simd_has_sha_x86"), (vec![], Bool));
-        assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_sha1rnds4_4"), None);
-        assert_eq!(SimdCall::of_symbol("velt_simd_has_sha_mips"), None);
-        assert_eq!(ExtOp::Sha256Msg2.ext(), Ext::ShaX86);
-        assert_eq!(ExtOp::Sha1H.ext(), Ext::ShaArm);
-        assert_eq!(
-            sig("velt_simd_u64x2_pclmulqdq_16"),
-            (vec![V128, V128], V128)
-        );
-        assert_eq!(SimdCall::of_symbol("velt_simd_u64x2_pclmulqdq_2"), None);
-        assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_pmull_0"), None);
-        assert_eq!(ExtOp::Pmull(17).ext(), Ext::ClmulArm);
-        assert_eq!(ExtOp::Pclmulqdq(1).ext(), Ext::ClmulX86);
-    }
-
-    #[test]
-    fn shuffles_spell_lanes_and_mean_bytes() {
-        let call = SimdCall::of_symbol("velt_simd_u32x4_shuffle_1_0_7_6").unwrap();
-        let mut mask = [0u8; 16];
-        for (lane, from) in [1u8, 0, 7, 6].into_iter().enumerate() {
-            for byte in 0..4 {
-                mask[lane * 4 + byte] = from * 4 + byte as u8;
-            }
-        }
-        assert_eq!(call, SimdCall::Vector(Lanes::U32, Op::Shuffle(mask)));
-        assert_eq!(
-            shuffle_symbol(Lanes::U32, &[1, 0, 7, 6]),
-            "velt_simd_u32x4_shuffle_1_0_7_6"
-        );
-        // Wrong count, out of range, not a number.
-        assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_shuffle_1_0_7"), None);
-        assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_shuffle_1_0_7_8"), None);
-        assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_shuffle_1_0_x_6"), None);
-        assert_eq!(
-            SimdCall::of_symbol("velt_simd_u32x4_reverse_bytes"),
-            Some(SimdCall::Vector(Lanes::U32, Op::ReverseBytes))
-        );
-        assert_eq!(SimdCall::of_symbol("velt_simd_u8x16_reverse_bytes"), None);
-        assert_eq!(SimdCall::of_symbol("velt_simd_f32x4_reverse_bytes"), None);
-    }
-
-    #[test]
-    fn symbols() {
-        assert_eq!(
-            SimdCall::of_symbol("velt_simd_u8x16_eq"),
-            Some(SimdCall::Vector(Lanes::U8, Op::Eq))
-        );
-        assert_eq!(
-            SimdCall::of_symbol("velt_simd_f32x4_as_u32x4"),
-            Some(SimdCall::Vector(Lanes::F32, Op::As(Lanes::U32)))
-        );
-        assert_eq!(
-            SimdCall::of_symbol("velt_simd_i16x8_with_lane"),
-            Some(SimdCall::Vector(Lanes::I16, Op::WithLane))
-        );
-        assert_eq!(
-            SimdCall::of_symbol("velt_simd_mask32x4_first"),
-            Some(SimdCall::Mask(32, MaskOp::First))
-        );
-        assert_eq!(
-            SimdCall::of_symbol("velt_simd_u32x4_to_f32x4"),
-            Some(SimdCall::Vector(Lanes::U32, Op::Convert(Lanes::F32)))
-        );
-        assert_eq!(
-            SimdCall::of_symbol("velt_simd_i16x8_widen_high"),
-            Some(SimdCall::Vector(Lanes::I16, Op::WidenHigh))
-        );
-        assert_eq!(
-            SimdCall::of_symbol("velt_simd_i32x4_dot_add"),
-            Some(SimdCall::Vector(Lanes::I32, Op::DotAdd))
-        );
-        assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_dot_add"), None);
-        let sig = |s: &str| SimdCall::of_symbol(s).map(SimdCall::signature);
-        assert_eq!(sig("velt_simd_i8x16_sum"), Some((vec![Ty::V128], Ty::I8)));
-        assert_eq!(sig("velt_simd_u64x2_sum"), Some((vec![Ty::V128], Ty::U64)));
-        assert_eq!(
-            sig("velt_simd_i8x16_sum_wide"),
-            Some((vec![Ty::V128], Ty::I32))
-        );
-        assert_eq!(
-            sig("velt_simd_u16x8_sum_wide"),
-            Some((vec![Ty::V128], Ty::U32))
-        );
-        assert_eq!(
-            sig("velt_simd_i32x4_sum_wide"),
-            Some((vec![Ty::V128], Ty::I64))
-        );
-        assert_eq!(
-            sig("velt_simd_u32x4_sum_wide"),
-            Some((vec![Ty::V128], Ty::U64))
-        );
-        for missing in [
-            "velt_simd_i64x2_sum_wide",
-            "velt_simd_f32x4_sum",
-            "velt_simd_f64x2_sum_wide",
-        ] {
-            assert_eq!(SimdCall::of_symbol(missing), None, "{missing}");
-        }
-        assert_eq!(SimdCall::of_symbol("velt_simd_i16x8_dot_add"), None);
-        assert_eq!(
-            SimdCall::of_symbol("velt_simd_f64x2_mul_add"),
-            Some(SimdCall::Vector(Lanes::F64, Op::MulAdd))
-        );
-        assert_eq!(
-            SimdCall::of_symbol("velt_simd_f32x4_mul_add_fast"),
-            Some(SimdCall::Vector(Lanes::F32, Op::MulAddFast))
-        );
-        for unsupported in [
-            "velt_simd_i32x4_mul_add",
-            "velt_simd_u16x8_mul_add_fast",
-            "velt_simd_i64x2_widen_low",
-            "velt_simd_u8x16_narrow",
-            "velt_simd_f32x4_to_f64x2",
-            "velt_simd_i16x8_to_f32x4",
-            "velt_simd_f32x4_widen_low",
-            "velt_simd_u8x16_mul",
-            "velt_simd_i32x4_div",
-            "velt_simd_f64x2_and",
-            "velt_simd_u32x4_neg",
-            "velt_simd_i64x2_min",
-            "velt_simd_i32x4_add_sat",
-            "velt_simd_u8x32_add",
-            "velt_rt_math_sqrt",
-        ] {
-            assert_eq!(SimdCall::of_symbol(unsupported), None, "{unsupported}");
-        }
-    }
-
-    /// Every `declare function velt_simd_*` of the standard library names an operation, with
-    /// as many parameters as the operation takes (the verifier checks their types whenever a
-    /// program uses one).
-    #[test]
-    fn std_declarations_are_operations() {
-        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/simd");
-        let mut seen = 0;
-        for entry in std::fs::read_dir(dir).expect("std/simd") {
-            let text = std::fs::read_to_string(entry.expect("entry").path()).expect("source");
-            for line in text.lines() {
-                let Some(rest) = line.strip_prefix("declare function velt_simd_") else {
-                    continue;
-                };
-                let (name, params) = rest.split_once('(').expect("parameter list");
-                let symbol = format!("velt_simd_{name}");
-                let call = SimdCall::of_symbol(&symbol)
-                    .unwrap_or_else(|| panic!("{symbol} is not a SIMD operation"));
-                let list = params.split_once(')').expect("`)`").0;
-                let declared = list.split(", ").filter(|p| !p.is_empty()).count();
-                assert_eq!(call.signature().0.len(), declared, "{symbol}");
-                seen += 1;
-            }
-        }
-        assert!(seen > 300, "found only {seen} SIMD declarations");
-    }
-
-    #[test]
-    fn signatures() {
-        let sig = |s: &str| SimdCall::of_symbol(s).unwrap().signature();
-        assert_eq!(sig("velt_simd_i8x16_splat"), (vec![Ty::I8], Ty::V128));
-        assert_eq!(
-            sig("velt_simd_f32x4_store"),
-            (vec![Ty::V128, Ty::Ptr, Ty::U64], Ty::Unit)
-        );
-        assert_eq!(
-            sig("velt_simd_u16x8_lane"),
-            (vec![Ty::V128, Ty::U64], Ty::U16)
-        );
-        assert_eq!(sig("velt_simd_mask8x16_any"), (vec![Ty::V128], Ty::Bool));
-        assert_eq!(
-            sig("velt_simd_u32x4_shr"),
-            (vec![Ty::V128, Ty::U32], Ty::V128)
-        );
-    }
+/// Whether `f16x8` and `bf16x8` have `op`: no arithmetic and nothing that reads a lane as a number.
+/// As in [`supported`], what isn't excluded exists: an operation on the bits and the array, such
+/// as one `velt_opt` writes in place of `Fits`, holds for these lane types as for any other.
+fn half_supported(op: Op) -> bool {
+    !matches!(
+        op,
+        Op::Index
+            | Op::LoadOptimistic
+            | Op::Add
+            | Op::Sub
+            | Op::Mul
+            | Op::Div
+            | Op::Neg
+            | Op::Abs
+            | Op::Sqrt
+            | Op::Min
+            | Op::Max
+            | Op::AddSat
+            | Op::SubSat
+            | Op::And
+            | Op::Or
+            | Op::Xor
+            | Op::Not
+            | Op::Shl
+            | Op::Shr
+            | Op::Eq
+            | Op::Ne
+            | Op::Lt
+            | Op::Le
+            | Op::Gt
+            | Op::Ge
+            | Op::Select
+            | Op::Sum
+            | Op::SumWide
+            | Op::DotAdd
+            | Op::MulAdd
+            | Op::MulAddFast
+            | Op::ZipLow
+            | Op::ZipHigh
+            | Op::Narrow
+            | Op::NarrowTo(_)
+            | Op::ReverseBytes
+            | Op::Convert(_)
+    )
 }
+
+#[cfg(test)]
+mod tests;

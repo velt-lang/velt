@@ -1,0 +1,10 @@
+f16 floats 7e00 fe00 7f00 7fff ff09 7e08 3e00 7c00
+f16 other half ff09 7e08 3e00 7c00 7e00 fe00 7f00 7fff
+f16 ints 7e00 fe00 7f00 7fff ff09 7e08 3e00 7c00
+f16 quiet 7e00 feaa 3c00 bc00 0 8000 7c00 fc00
+bf16 floats 7fc0 ffc0 7fe0 7fff ffe1 7fc1 3fc0 7f80
+bf16 other half ffe1 7fc1 3fc0 7f80 7fc0 ffc0 7fe0 7fff
+bf16 ints 7fc0 ffc0 7fe0 7fff ffe1 7fc1 3fc0 7f80
+bf16 quiet 7fc0 ffd5 3f80 bf80 0 8000 7f80 ff80
+f16 splat 7e00 7e00 7e00 7e00 ff09 ff09 ff09 ff09
+bf16 splat 7fc0 7fc0 7fc0 7fc0 ffe1 ffe1 ffe1 ffe1

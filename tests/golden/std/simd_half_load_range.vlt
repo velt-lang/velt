@@ -1,0 +1,11 @@
+// `load` on `bf16x8` needs the whole vector inside the array: the last eight elements load, one
+// further panics.
+
+import { bf16x8 } from "velt/simd";
+
+function main() {
+  const xs: bf16[] = [1, 2, 3, 4, 5, 6, 7, 8, 9];
+  console.log(bf16x8.load(xs, 1).lane(0));
+  const at: usize = xs.length as usize - 7;
+  console.log(bf16x8.load(xs, at).lane(0));
+}

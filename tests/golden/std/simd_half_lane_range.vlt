@@ -1,0 +1,10 @@
+// `lane` on `f16x8` checks its index, as on every vector type.
+
+import { f16x8 } from "velt/simd";
+
+function main() {
+  const v = f16x8.splat(1);
+  console.log(v.lane(7));
+  const at: usize = 8 + (process.argv.length as usize) * 0;
+  console.log(v.lane(at));
+}

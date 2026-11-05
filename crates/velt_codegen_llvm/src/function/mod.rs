@@ -92,8 +92,8 @@ struct Emitter<'a> {
     rounds_by_conversion: bool,
     /// What the SIMD helpers depend on of the target.
     simd: crate::simd::Arch,
-    /// Every CPU of the target has Arm's dot-product instructions (`Target::has_dotprod`).
-    dotprod: bool,
+    /// What the SIMD helpers may use of the target's CPUs (`Target::simd_caps`).
+    simd_caps: crate::simd::Caps,
     /// The f16 conversions the target has instructions for (`Target::half_native`).
     half_native: crate::half::HalfNative,
     /// The CPU features the code may use without checking (`Target::cpu_features`, `--cpu`).
@@ -148,7 +148,7 @@ pub(crate) fn emit_function(
         wide_pointer_slots: target.wide_pointer_slots(),
         rounds_by_conversion: target.rounds_by_conversion(),
         simd: crate::simd::Arch::of(target),
-        dotprod: target.has_dotprod(),
+        simd_caps: target.simd_caps(),
         half_native: target.half_native(),
         cpu_features: target.cpu_features,
         array,

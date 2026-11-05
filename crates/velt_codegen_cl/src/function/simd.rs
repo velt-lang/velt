@@ -21,7 +21,7 @@ pub(super) enum Inlined {
 fn vector_type(lanes: Lanes) -> ir::Type {
     match lanes {
         Lanes::I8 | Lanes::U8 => types::I8X16,
-        Lanes::I16 | Lanes::U16 => types::I16X8,
+        Lanes::I16 | Lanes::U16 | Lanes::F16 | Lanes::BF16 => types::I16X8,
         Lanes::I32 | Lanes::U32 => types::I32X4,
         Lanes::I64 | Lanes::U64 => types::I64X2,
         Lanes::F32 => types::F32X4,
@@ -187,6 +187,10 @@ impl Translator<'_, '_> {
             Op::Shuffle(mask) => self.simd_shuffle(&mask, values[0], values[1]),
             Op::Narrow => self.simd_narrow(lanes, values),
             Op::DotAdd => self.simd_dot_add(values),
+            Op::NarrowTo(to) => self.simd_half_narrow(to, values),
+            Op::WidenLow | Op::WidenHigh if lanes.is_half() => {
+                self.simd_half_widen(lanes, op == Op::WidenHigh, values[0])
+            }
             Op::Select => {
                 let x = self.lanes_of(values[1], ty);
                 let y = self.lanes_of(values[2], ty);
