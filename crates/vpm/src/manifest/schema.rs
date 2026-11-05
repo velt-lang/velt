@@ -314,8 +314,10 @@ pub const ALLOW_NATIVE: &[Field] = &[
         kind: Kind::Str,
         ty: "string",
         required: false,
-        doc: "The git repository it is allowed from, at any commit (compared without a \
-              trailing `/` or `.git`, the host in any case).",
+        doc: "The git repository it is allowed from, at any commit. Compared without a \
+              trailing `/` or `.git`, the host in any case, a default port dropped, and \
+              `user@host:/path` as `ssh://user@host/path`; a home-relative `user@host:path` is \
+              `ssh://user@host/~/path`, so it matches only that spelling.",
     },
     Field {
         key: "url",

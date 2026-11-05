@@ -3,64 +3,65 @@
 //! only from there.
 //!
 //! Both sides are refused, not repaired, when they hold anything that could make two spellings
-//! of one place compare unequal or two places compare equal: `..` or `.` segments (also once
-//! decoded, and any segment starting with `..`, as `..;` reads to some servers), empty segments,
-//! a backslash, percent-encoded `.`, `/`, `\`, `%` or NUL, escapes that don't decode to UTF-8
-//! (overlong forms of `.` and `/`), and credentials. Git URLs compare in one normal form
+//! of one place compare unequal or two places compare equal: anything but ASCII, `..` or `.`
+//! segments and any segment starting with `..` (judged before a `;`), empty segments, a
+//! backslash, escapes of bytes that can change where a path goes (`.`, `/`, `\`, `;`, `?`, `#`,
+//! `%`, controls, anything past ASCII), a host with a `%` or a stray `:`, and credentials. Git URLs compare in one normal form
 //! ([`git_identity`]); a URL prefix matches on a `/` boundary ([`prefix_matches`]).
 
-/// Characters and escapes refused anywhere in a compared URL: a backslash (a separator on
-/// Windows); percent-encoded `.`, `/` and `\`, which servers may decode into a path that a
-/// textual comparison never saw; an encoded `%` (double encoding: `%252e` decodes to `%2e`, then
-/// `.`) and an encoded NUL; and escapes that don't decode to UTF-8 (`%c0%ae`, an overlong `.`).
+/// Characters and escapes refused anywhere in a compared URL: anything but ASCII (an invisible
+/// or look-alike character would make a printed entry look like another repository), a
+/// backslash (a separator on Windows), whitespace and control characters, and any `%XX` escape
+/// that isn't two hex digits or that decodes to a byte [`escape_is_safe`] refuses: servers decode
+/// escapes into a path that a textual comparison never saw.
 fn refuse_escapes(url: &str) -> Result<(), String> {
-    let lower = url.to_ascii_lowercase();
+    if !url.is_ascii() {
+        return Err(format!(
+            "`{}` contains a character that isn't ASCII",
+            url.escape_unicode()
+        ));
+    }
     if url.contains('\\') {
         return Err(format!("`{url}` contains a backslash"));
-    }
-    for escape in ["%2e", "%2f", "%5c", "%25", "%00"] {
-        if lower.contains(escape) {
-            return Err(format!(
-                "`{url}` contains `{escape}` (an encoded `.`, `/`, `\\`, `%` or NUL)"
-            ));
-        }
     }
     if url.chars().any(|c| c.is_whitespace() || c.is_control()) {
         return Err(format!(
             "`{url}` contains whitespace or a control character"
         ));
     }
-    let decoded =
-        percent_decode(url).ok_or_else(|| format!("`{url}` has a malformed `%` escape"))?;
-    if String::from_utf8(decoded).is_err() {
-        return Err(format!(
-            "`{url}` has escapes that don't decode to UTF-8 (an overlong `.` or `/`?)"
-        ));
+    let b = url.as_bytes();
+    for (i, _) in url.match_indices('%') {
+        let hex = b
+            .get(i + 1..i + 3)
+            .filter(|h| h.iter().all(u8::is_ascii_hexdigit));
+        let Some(hex) = hex else {
+            return Err(format!("`{url}` has a malformed `%` escape"));
+        };
+        // Two hex digits, checked: `from_str_radix` alone would take `%+1`.
+        let text = std::str::from_utf8(hex).unwrap_or_default();
+        let Ok(byte) = u8::from_str_radix(text, 16) else {
+            return Err(format!("`{url}` has a malformed `%` escape"));
+        };
+        if !escape_is_safe(byte) {
+            return Err(format!(
+                "`{url}` contains `%{text}`, an encoded byte that can change where the path goes \
+                 (`.`, `/`, `\\`, `;`, `?`, `#`, `%`, a control character or a byte past ASCII)"
+            ));
+        }
     }
     Ok(())
 }
 
-/// `url` with its `%XX` escapes decoded; `None` for a `%` not followed by two hex digits.
-fn percent_decode(url: &str) -> Option<Vec<u8>> {
-    let b = url.as_bytes();
-    let mut out = Vec::with_capacity(b.len());
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] == b'%' {
-            let hex = std::str::from_utf8(b.get(i + 1..i + 3)?).ok()?;
-            out.push(u8::from_str_radix(hex, 16).ok()?);
-            i += 3;
-        } else {
-            out.push(b[i]);
-            i += 1;
-        }
-    }
-    Some(out)
+/// Whether a `%XX` escape may decode to `byte`: not a control byte, `.`, `/`, `\`, `;`, `?`, `#`
+/// or `%` (double encoding), nor anything past ASCII (overlong or look-alike forms of `.` and
+/// `/`). `%20` stays: a space can't change where a path goes, and real repository names have one.
+fn escape_is_safe(byte: u8) -> bool {
+    byte.is_ascii() && !byte.is_ascii_control() && !b"./\\;?#%".contains(&byte)
 }
 
 /// `path` (a URL's path after the authority, `/`-led or empty) has no `.` or `..` segment, no
-/// segment starting with `..` (`..;` is `..` to some servers), and no empty segment but for one
-/// trailing `/`: `https://h//a/b` and `https://h/a//b` are other paths on a server, and a
+/// segment starting with `..`, and no empty segment but for one trailing `/`, each judged by its
+/// part before a `;` (`..;` and `.;x` are `..` and `.` to some servers): `https://h//a/b` and `https://h/a//b` are other paths on a server, and a
 /// normal form that dropped the empty segments would make them equal to `/a/b`.
 fn refuse_dot_segments(url: &str, path: &str) -> Result<(), String> {
     let Some(rest) = path.strip_prefix('/') else {
@@ -74,11 +75,15 @@ fn refuse_dot_segments(url: &str, path: &str) -> Result<(), String> {
         return Ok(());
     }
     for segment in rest.split('/') {
-        if segment == "." || segment.starts_with("..") {
+        // Some servers drop what follows `;` in a segment (`..;x` is `..`).
+        let name = segment.split(';').next().unwrap_or_default();
+        if name == "." || name.starts_with("..") {
             return Err(format!("`{url}` has a `.` or `..` path segment"));
         }
-        if segment.is_empty() {
-            return Err(format!("`{url}` has an empty path segment (`//`)"));
+        if name.is_empty() {
+            return Err(format!(
+                "`{url}` has an empty path segment (`//`, or one starting with `;`)"
+            ));
         }
     }
     Ok(())
@@ -112,9 +117,12 @@ fn split(url: &str) -> Result<Parts<'_>, String> {
     }
     // A port is digits after the last `:` (`[::1]` has colons but no port).
     let (host, port) = match hostport.rsplit_once(':') {
-        Some((host, port)) if port.bytes().all(|b| b.is_ascii_digit()) => (host, Some(port)),
+        Some((host, port)) if !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit()) => {
+            (host, Some(port))
+        }
         _ => (hostport, None),
     };
+    check_host(url, host)?;
     let default_port = match scheme.as_str() {
         "https" => Some("443"),
         "http" => Some("80"),
@@ -132,6 +140,21 @@ fn split(url: &str) -> Result<Parts<'_>, String> {
     })
 }
 
+/// `host` (without its port) is a name or an address with no `%`, and a `:` only inside `[…]`
+/// (an IPv6 address): `github.com:8443:443` would otherwise compare as `github.com:8443`.
+fn check_host(url: &str, host: &str) -> Result<(), String> {
+    let ok = match host.strip_prefix('[').and_then(|h| h.strip_suffix(']')) {
+        Some(inner) => !inner.contains(['[', ']', '%']),
+        None => !host.contains([':', '[', ']', '%']),
+    };
+    match ok {
+        true => Ok(()),
+        false => Err(format!(
+            "`{url}` has a host that isn't a plain name or `[address]` (a `%`, or a second `:`)"
+        )),
+    }
+}
+
 /// `user@host:path`, as git reads it: SSH to `host`, `path` relative to the user's home unless
 /// it starts with `/`. A relative path is spelled `/~/path`, as an `ssh://` URL writes the home,
 /// so `git@h:srv/x` and `git@h:/srv/x` stay two repositories.
@@ -146,6 +169,7 @@ fn split_scp(url: &str) -> Result<Parts<'_>, String> {
     if host.is_empty() || host.contains('/') || path.is_empty() {
         return Err(format!("`{url}` is not a URL"));
     }
+    check_host(url, host)?;
     let path = match path.starts_with('/') {
         true => path.to_string(),
         false => format!("/~/{path}"),

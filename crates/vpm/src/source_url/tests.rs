@@ -240,3 +240,80 @@ fn matching_checks_the_prefix() {
         assert!(prefix_matches(bad, url).is_err(), "{bad}");
     }
 }
+
+/// Forms refused in a path segment, by all three functions: raw non-ASCII (invisible and
+/// look-alike characters), escapes of bytes that can change where a path goes, malformed
+/// escapes, and segments judged by their part before `;`.
+#[test]
+fn unsafe_path_forms_are_refused_everywhere() {
+    for form in [
+        "\u{200b}b",
+        "\u{feff}b",
+        "\u{ff0e}\u{ff0e}",
+        "\u{2024}",
+        "\u{2025}",
+        "%ef%bc%8e",
+        "%e2%80%a4",
+        "%C3%A9",
+        "%0a",
+        "%0d%0a",
+        "%09",
+        "%7f",
+        "%3b",
+        "%3f",
+        "%23",
+        "%+1",
+        "%4",
+        ".;",
+        ";x",
+        "..;x",
+    ] {
+        let git = format!("https://github.com/a/{form}/b");
+        assert!(git_identity(&git).is_err(), "git_identity {git:?}");
+        assert!(
+            prefix_matches("https://github.com/a/", &git).is_err(),
+            "prefix_matches {git:?}"
+        );
+        let prefix = format!("https://github.com/a/{form}/");
+        assert!(check_prefix(&prefix).is_err(), "check_prefix {prefix:?}");
+    }
+    // A malformed escape says so, even where it would decode to something refused anyway.
+    for malformed in ["%+1", "%-1", "%4", "%zz"] {
+        let e = git_identity(&format!("https://github.com/a/{malformed}/b")).unwrap_err();
+        assert!(e.contains("malformed `%` escape"), "{malformed}: {e}");
+    }
+    // A space stays: real repository names have one, and it can't change where a path goes.
+    let azure = "https://dev.azure.com/org/My%20Project/_git/repo";
+    git_identity(azure).unwrap();
+    assert!(prefix_matches("https://dev.azure.com/org/My%20Project/", azure).unwrap());
+}
+
+/// Hosts with a `%` or a `:` outside `[…]` are refused: `:8443:443` compared as `:8443`.
+#[test]
+fn hosts_must_be_plain() {
+    for host in [
+        "github.com:8443:443",
+        "github%41.com",
+        "[::1",
+        "::1]",
+        "github.com:443x",
+        "github\u{3002}com",
+    ] {
+        let git = format!("https://{host}/a/b");
+        assert!(git_identity(&git).is_err(), "git_identity {git:?}");
+        assert!(
+            prefix_matches("https://github.com:8443/a/", &git).is_err(),
+            "prefix_matches {git:?}"
+        );
+        let prefix = format!("https://{host}/a/");
+        assert!(check_prefix(&prefix).is_err(), "check_prefix {prefix:?}");
+    }
+    assert!(git_identity("ssh://git@github.com:8443:22/a/b").is_err());
+    assert!(git_identity("git@github%41.com:a/b").is_err());
+    assert!(git_identity("git@[::1:a/b").is_err());
+    assert_ne!(
+        git_identity("https://github.com:8443/a/b").unwrap(),
+        git_identity("https://github.com/a/b").unwrap()
+    );
+    git_identity("https://[::1]:8443/a/b").unwrap();
+}

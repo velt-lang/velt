@@ -106,8 +106,10 @@ export type AllowNative = string | AllowNativeSource;
 export type AllowNativeSource = {
   /// The package's name.
   name: string;
-  /// The git repository it is allowed from, at any commit (compared without a trailing `/` or
-  /// `.git`, the host in any case).
+  /// The git repository it is allowed from, at any commit. Compared without a trailing `/` or
+  /// `.git`, the host in any case, a default port dropped, and `user@host:/path` as
+  /// `ssh://user@host/path`; a home-relative `user@host:path` is `ssh://user@host/~/path`, so it
+  /// matches only that spelling.
   git?: string;
   /// An https URL prefix its archives are allowed from, with a path under the host:
   /// `https://github.com/o/duck/releases/download/`. It matches whole path segments.
