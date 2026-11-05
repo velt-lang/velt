@@ -1,7 +1,7 @@
 // AES-GCM (velt/crypto `AesGcm`): the GCM specification's test cases 1-4 (AES-128) and 13-16
 // (AES-256) from McGrew and Viega, as NIST's validation uses them, longer messages, and tampering
 // checks.
-import { AesGcm, CryptoError } from "velt/crypto";
+import { Aead, AesGcm, CryptoError } from "velt/crypto";
 import { hexDecode, hexEncode } from "velt/encoding";
 import { describe, expect, it } from "velt/test";
 
@@ -120,6 +120,16 @@ describe("AesGcm", () => {
     expect(() => new AesGcm(hexDecode(K)).open(Buffer.alloc(16), Buffer.alloc(32))).toThrow(
       "AES-GCM nonce must be 12 bytes, got 16",
     );
+  });
+
+  it("seals and opens through Aead without additional data", () => {
+    const direct = new AesGcm(hexDecode(K));
+    const aead: Aead = new AesGcm(hexDecode(K));
+    const nonce = hexDecode(IV);
+    const sealed = aead.seal(nonce, hexDecode(P));
+    expect(hexEncode(sealed)).toBe(hexEncode(direct.seal(nonce, hexDecode(P), [])));
+    const opened = aead.open(nonce, sealed);
+    expect(opened == null ? "null" : hexEncode(opened)).toBe(P);
   });
 
   it("seals and opens in place at an offset, as seal and open do", () => {
