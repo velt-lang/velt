@@ -1,0 +1,38 @@
+// velt/text: `escapeHtml` of a text with nothing to escape returns the text itself, shared, not a
+// copy. Holding 64 results of a 1 MB clean text allocates no text (copies would take 64 MB); one
+// entity makes each result a new string. (Node shares too, so it prints the stdout lines; the
+// verdicts go to stderr, which `.stderr` checks.)
+import { escapeHtml } from "velt/text";
+
+class Row {
+  constructor(public text: string) {}
+}
+
+function main() {
+  const clean = "x".repeat(1 << 20);
+  const before = process.memoryUsage().heapUsed;
+  const kept: string[] = [];
+  for (let i = 0; i < 64; i++) {
+    kept.push(escapeHtml(clean));
+  }
+  const grown = process.memoryUsage().heapUsed - before;
+  console.log(kept.length, kept[63].length, kept[63] == clean);
+  console.error(grown < 8 * 1024 * 1024 ? "clean: shared" : `clean: ${grown} bytes`);
+  // A field passed in is shared the same way, and stays in its object.
+  const row = new Row(clean);
+  const at = process.memoryUsage().heapUsed;
+  const fromField: string[] = [];
+  for (let i = 0; i < 64; i++) {
+    fromField.push(escapeHtml(row.text));
+  }
+  const took = process.memoryUsage().heapUsed - at;
+  console.log(fromField[0].length, row.text.length);
+  console.error(took < 8 * 1024 * 1024 ? "field: shared" : `field: ${took} bytes`);
+  // With an entity, each result is a new string of its own.
+  const dirty = "<" + clean;
+  const copies: string[] = [];
+  for (let i = 0; i < 4; i++) {
+    copies.push(escapeHtml(dirty));
+  }
+  console.log(copies[3].length, copies[3].slice(0, 5));
+}
