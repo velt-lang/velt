@@ -11,7 +11,8 @@ import { newBytes } from "velt/crypto/vectors";
 /**
  * The ChaCha20-Poly1305 AEAD (RFC 8439) under a 32-byte key: `seal` encrypts and appends a
  * 16-byte tag, `open` checks the tag (in constant time) and decrypts. A nonce (12 bytes) must
- * never be used twice with one key.
+ * never be used twice with one key. A message is at most 274,877,906,880 bytes (2^32 - 1
+ * blocks, RFC 8439 §2.8); a longer one throws `CryptoError`.
  */
 export class ChaCha20Poly1305 {
   private key: u8[];
@@ -27,6 +28,7 @@ export class ChaCha20Poly1305 {
   /** `plaintext` encrypted under `nonce` (12 bytes), followed by the 16-byte tag over `aad` and it. */
   seal(nonce: u8[], plaintext: u8[], aad: u8[] = []): u8[] {
     checkNonce(nonce);
+    chachaCheckLength(plaintext.length as u64);
     const ct = chacha20Xor(this.key, nonce, 1, plaintext);
     const tag = mac(this.key, nonce, aad, ct, ct.length);
     for (let i: usize = 0; i < 16; i++) {
@@ -45,6 +47,7 @@ export class ChaCha20Poly1305 {
       return null;
     }
     const n = sealed.length - 16;
+    chachaCheckLength(n as u64);
     const tag = mac(this.key, nonce, aad, sealed, n);
     if (!timingSafeEqual(tag, sealed.slice(n as i64))) {
       return null;
@@ -56,6 +59,19 @@ export class ChaCha20Poly1305 {
 function checkNonce(nonce: u8[]) {
   if (nonce.length != 12) {
     throw new CryptoError(`ChaCha20-Poly1305 nonce must be 12 bytes, got ${nonce.length}`);
+  }
+}
+
+// RFC 8439 §2.8's limit, 2^32 - 1 blocks of 64 bytes: past it ChaCha20's 32-bit block counter
+// would wrap to block 0, the one-time Poly1305 key, and reuse keystream.
+const CHACHA_MAX_BYTES: u64 = 274877906880;
+
+/** Throws `CryptoError` when a message of `n` bytes is longer than ChaCha20-Poly1305 allows. */
+export function chachaCheckLength(n: u64) {
+  if (n > CHACHA_MAX_BYTES) {
+    throw new CryptoError(
+      `ChaCha20-Poly1305 message must be at most ${CHACHA_MAX_BYTES} bytes, got ${n}`,
+    );
   }
 }
 
