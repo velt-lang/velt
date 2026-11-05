@@ -8,8 +8,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
 use crate::hir::{
-    AdtKind, Callee, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, Pat, PatKind, Stmt,
-    StmtKind as S, TyId, TyKind,
+    AdtKind, Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, Pat, PatKind,
+    Stmt, StmtKind as S, TyId, TyKind,
 };
 use crate::ownership::local_closures::walk::{self, Visit};
 
@@ -169,6 +169,9 @@ pub(super) fn reaches(
     if plain(cx, e.ty) || sharing(cx, e.ty) {
         return None;
     }
+    if let Some(x) = viewed_buffer(cx, e).or_else(|| buffer_of(cx, e)) {
+        return reaches(cx, &x, taint, memo);
+    }
     match &e.kind {
         E::Local(l, _) => taint.get(l).copied(),
         E::Closure(_) | E::Lit(_) | E::Global(_) | E::FnRef(..) => None,
@@ -223,66 +226,133 @@ pub(super) fn reaches(
                 }
             });
             let (r, _) = found?;
+            if let E::Call {
+                callee: Callee::Def(d, _),
+                ..
+            } = &e.kind
+            {
+                if hands_out_held(cx, *d, memo) {
+                    return Some((r, true));
+                }
+            }
             Some((r, !fresh(cx, e, memo)))
         }
     }
 }
 
-/// Is `e` a typed array or `DataView` made over an existing `ArrayBuffer` (`new Uint8Array(u.buffer)`)?
-/// It writes to that buffer, so it isn't a new value. Over an array or another typed array it copies.
-fn view_over_buffer(cx: &mut Ctx, e: &Expr, memo: &mut Memo) -> bool {
-    let E::New { def, args, .. } = &e.kind else {
-        return false;
-    };
-    let is_view = cx.std_class(
-        *def,
-        &[
-            "Int8Array",
-            "Uint8Array",
-            "Uint8ClampedArray",
-            "Int16Array",
-            "Uint16Array",
-            "Int32Array",
-            "Uint32Array",
-            "Float16Array",
-            "Float32Array",
-            "Float64Array",
-            "BigInt64Array",
-            "BigUint64Array",
-            "DataView",
-        ],
-    );
-    is_view && args.first().is_some_and(|a| over_buffer(cx, a, memo))
+const VIEWS: &[&str] = &[
+    "Int8Array",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "Int16Array",
+    "Uint16Array",
+    "Int32Array",
+    "Uint32Array",
+    "Float16Array",
+    "Float32Array",
+    "Float64Array",
+    "BigInt64Array",
+    "BigUint64Array",
+    "DataView",
+];
+
+fn is_view(cx: &Ctx, t: TyId) -> bool {
+    matches!(cx.ty.kind(t), TyKind::Adt(d, _) if cx.std_class(*d, VIEWS))
 }
 
-/// Is `e`, through conversions, an `ArrayBuffer` that isn't a new one?
-fn over_buffer(cx: &mut Ctx, e: &Expr, memo: &mut Memo) -> bool {
-    let buffer =
-        matches!(cx.ty.kind(e.ty), TyKind::Adt(d, _) if cx.std_class(*d, &["ArrayBuffer"]));
-    if buffer {
-        return !fresh(cx, e, memo);
+fn is_buffer(cx: &Ctx, t: TyId) -> bool {
+    matches!(cx.ty.kind(t), TyKind::Adt(d, _) if cx.std_class(*d, &["ArrayBuffer"]))
+}
+
+/// The `ArrayBuffer` a typed array or `DataView` is made over (`new Uint8Array(b)`): the view writes
+/// to it, so the view reaches what the buffer does. Over an array or another typed array it copies.
+fn viewed_buffer(cx: &Ctx, e: &Expr) -> Option<Expr> {
+    let E::New { def, args, .. } = &e.kind else {
+        return None;
+    };
+    if !cx.std_class(*def, VIEWS) {
+        return None;
     }
-    if matches!(
-        e.kind,
+    args.first().and_then(|a| buffer_in(cx, a))
+}
+
+/// `e`, through conversions, if it is an `ArrayBuffer`.
+fn buffer_in(cx: &Ctx, e: &Expr) -> Option<Expr> {
+    if is_buffer(cx, e.ty) {
+        return Some(e.clone());
+    }
+    match &e.kind {
         E::New { .. }
-            | E::Call {
-                callee: Callee::Def(..),
-                ..
-            }
-    ) {
+        | E::Call {
+            callee: Callee::Def(..),
+            ..
+        } => None,
+        E::Upcast(x) | E::WrapSome(x) | E::ToDyn { expr: x, .. } => buffer_in(cx, x),
+        _ => {
+            let mut found = None;
+            walk::children(e, &mut |x| {
+                found = found.take().or_else(|| buffer_in(cx, x))
+            });
+            found
+        }
+    }
+}
+
+/// The view whose `.buffer` `e` reads: that buffer is new exactly when the view is.
+fn buffer_of(cx: &Ctx, e: &Expr) -> Option<Expr> {
+    if !is_buffer(cx, e.ty) {
+        return None;
+    }
+    match &e.kind {
+        E::Field { base, .. } if is_view(cx, base.ty) => Some((**base).clone()),
+        E::Call {
+            callee: Callee::Def(d, _),
+            args,
+        } if callee_name(cx, *d).is_some_and(|(n, _)| n == "buffer") => {
+            args.first().filter(|a| is_view(cx, a.ty)).cloned()
+        }
+        _ => None,
+    }
+}
+
+/// Does closure `d`, which returns a buffer or a view, return what it captured or was given, or a
+/// view over that? `fresh` would call its result new, as its body may be a `new`.
+fn hands_out_held(cx: &mut Ctx, d: DefId, memo: &mut Memo) -> bool {
+    let wanted = matches!(&cx.defs[d.0 as usize], Some(Def::Fn(f))
+        if !f.captures.is_empty() && (is_view(cx, f.ret) || is_buffer(cx, f.ret)));
+    if !wanted {
         return false;
     }
-    let mut found = false;
-    walk::children(e, &mut |x| found = found || over_buffer(cx, x, memo));
-    found
+    let Some(Def::Fn(f)) = cx.defs[d.0 as usize].take() else {
+        return false;
+    };
+    let roots: Roots = (f.params.iter())
+        .map(|p| {
+            let ty = f.body.locals[p.local.0 as usize].ty;
+            (p.local, (Root { local: p.local, ty }, true))
+        })
+        .collect();
+    let taint = reached_locals(cx, &f, &roots, memo);
+    let mut results: Vec<Expr> = f.body.block.value.as_deref().cloned().into_iter().collect();
+    struct Returns<'a>(&'a mut Vec<Expr>);
+    impl Visit for Returns<'_> {
+        fn stmt(&mut self, s: &Stmt) {
+            if let S::Return(Some(x)) = &s.kind {
+                self.0.push(x.clone());
+            }
+        }
+    }
+    walk::block(&f.body.block, &mut Returns(&mut results));
+    let held = results
+        .iter()
+        .any(|r| reaches(cx, r, &taint, memo).is_some_and(|(_, direct)| direct));
+    cx.defs[d.0 as usize] = Some(Def::Fn(f));
+    held
 }
 
 /// Is `e` a new value: `new`, a literal, a builtin copy, a call of a function that returns new
 /// values (`crate::fresh_returns`), or a library call that returns a copy ([`FRESH`])?
 pub(super) fn fresh(cx: &mut Ctx, e: &Expr, memo: &mut Memo) -> bool {
-    if view_over_buffer(cx, e, memo) {
-        return false;
-    }
     // `new` always makes a new object (whatever its constructor keeps), as a literal and a
     // spread object (`{ ...cfg }` in a generic function) do.
     if matches!(
