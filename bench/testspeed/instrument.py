@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
-"""Throwaway instrumentation of lower/debug_vars.rs: mark(n) at each branch records which goldens
-reach it (VELT_DBGCOV=<file>) and panics when VELT_MUT=n, so one build gives the program x branch
-matrix and every branch-removal mutant. Never committed."""
+"""Temporary instrumentation for measuring a sample of the debug-variable test: it edits
+lower/debug_vars.rs in a working copy so that mark(n) at each branch records which goldens reach it
+(VELT_DBGCOV=<file>) and panics when VELT_MUT=n, so one build gives the program x branch matrix and
+every branch-removal mutant. Apply it to a scratch checkout and don't commit the edited source; it
+works on the file as #2407 found it, and stops on a pattern it no longer finds."""
 import sys
 p = sys.argv[1]
 s = open(p, encoding="utf8").read()
