@@ -3,6 +3,7 @@
 // A message at the limit needs a buffer of hundreds of GiB, so these call the length checks that
 // `seal` and `open` run first.
 import { describe, expect, it } from "velt/test";
+import { gcmCheckLength } from "velt/crypto/aes_gcm";
 import { chachaCheckLength } from "velt/crypto/chacha20_poly1305";
 import { CryptoError } from "velt/crypto/errors";
 
@@ -26,5 +27,18 @@ describe("ChaCha20-Poly1305's length limit", () => {
     expect(throwsCryptoError(chachaCheckLength, 274877906880)).toBe(false);
     expect(throwsCryptoError(chachaCheckLength, 274877906881)).toBe(true);
     expect(throwsCryptoError(chachaCheckLength, 0xffffffffffffffff)).toBe(true);
+  });
+});
+
+describe("AES-GCM's length limit", () => {
+  it("allows 2^32 - 2 blocks of 16 bytes and throws CryptoError past them", () => {
+    gcmCheckLength(0);
+    gcmCheckLength(68719476704);
+    expect(() => gcmCheckLength(68719476705)).toThrow(
+      "AES-GCM message must be at most 68719476704 bytes, got 68719476705",
+    );
+    expect(throwsCryptoError(gcmCheckLength, 68719476704)).toBe(false);
+    expect(throwsCryptoError(gcmCheckLength, 68719476705)).toBe(true);
+    expect(throwsCryptoError(gcmCheckLength, 0xffffffffffffffff)).toBe(true);
   });
 });

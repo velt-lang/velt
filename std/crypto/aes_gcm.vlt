@@ -11,8 +11,10 @@ import { newBytes } from "velt/crypto/vectors";
 /**
  * AES-GCM (NIST SP 800-38D) under a 16-byte (AES-128) or 32-byte (AES-256) key, with 12-byte
  * nonces and 16-byte tags: `seal` encrypts and appends the tag, `open` checks it (in constant
- * time) and decrypts. A nonce must never be used twice with one key. The AES rounds are
- * bitsliced, with no table lookups, so the time does not depend on the key or the data.
+ * time) and decrypts. A nonce must never be used twice with one key. A message is at most
+ * 68,719,476,704 bytes (2^32 - 2 blocks, SP 800-38D §5.2.1.1); a longer one throws
+ * `CryptoError`. The AES rounds are bitsliced, with no table lookups, so the time does not
+ * depend on the key or the data.
  */
 export class AesGcm {
   private skey: u64[];
@@ -34,6 +36,7 @@ export class AesGcm {
   seal(nonce: u8[], plaintext: u8[], aad: u8[] = []): u8[] {
     checkNonce(nonce);
     const n = plaintext.length;
+    gcmCheckLength(n as u64);
     const out = newBytes(n + 16);
     aesCtrXor(this.skey, nonce, 2, plaintext, 0, n, out, 0);
     const tag = this.tag(nonce, aad, out, n);
@@ -53,6 +56,7 @@ export class AesGcm {
       return null;
     }
     const n = sealed.length - 16;
+    gcmCheckLength(n as u64);
     const tag = this.tag(nonce, aad, sealed, n);
     if (!timingSafeEqual(tag, sealed.slice(n as i64))) {
       return null;
@@ -86,5 +90,16 @@ export class AesGcm {
 function checkNonce(nonce: u8[]) {
   if (nonce.length != 12) {
     throw new CryptoError(`AES-GCM nonce must be 12 bytes, got ${nonce.length}`);
+  }
+}
+
+// SP 800-38D's limit, 2^32 - 2 blocks of 16 bytes: past it the 32-bit counter, which starts at 2,
+// would wrap to 1, whose block masks the tag, and reuse keystream.
+const GCM_MAX_BYTES: u64 = 68719476704;
+
+/** Throws `CryptoError` when a message of `n` bytes is longer than AES-GCM allows. */
+export function gcmCheckLength(n: u64) {
+  if (n > GCM_MAX_BYTES) {
+    throw new CryptoError(`AES-GCM message must be at most ${GCM_MAX_BYTES} bytes, got ${n}`);
   }
 }
