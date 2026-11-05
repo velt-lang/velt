@@ -1,0 +1,28 @@
+// The code of a failed file operation, as in Node: the runtime fails with a number and std names
+// it. The expected output is Node's, from the same steps on node:fs/promises.
+import { mkdir, readDir, readFile, remove, writeFile } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+
+async function code(run: () => Promise<void>): Promise<string> {
+  try {
+    await run();
+    return "ok";
+  } catch (e) {
+    return e.code;
+  }
+}
+
+async function main() {
+  const dir = `${tmpdir()}/velt-error-codes-${uuidv4()}`;
+  await mkdir(dir);
+  await writeFile(`${dir}/file`, "x");
+  await mkdir(`${dir}/full`);
+  await writeFile(`${dir}/full/file`, "x");
+  console.log(await code(async () => { await readFile(`${dir}/missing`); }));
+  console.log(await code(async () => { await mkdir(dir); }));
+  console.log(await code(async () => { await readDir(`${dir}/file`); }));
+  console.log(await code(async () => { await readFile(dir); }));
+  console.log(await code(async () => { await remove(`${dir}/full`); }));
+  await remove(dir, { recursive: true });
+}

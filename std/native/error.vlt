@@ -2,17 +2,54 @@
 // name of its code.
 
 import { IoError } from "velt/io/error";
-import { velt_rt_err_code_name } from "velt/native/rt";
 
 /**
  * The Node-style name of a native function's failure code (`code` of a failed `IoResult` or
- * `IoStatus`): "ENOENT", "ECONNREFUSED", "ETIMEDOUT", ...; what `IoError.code` holds.
+ * `IoStatus`): "ENOENT", "ECONNREFUSED", "ETIMEDOUT", ...; what `IoError.code` holds. The codes
+ * are the runtime's (docs/internals/contracts/rt_abi_async.md, "Results and errors").
  */
 export function errorCodeName(code: i32): string {
-  return velt_rt_err_code_name(code);
+  switch (code) {
+    case 0:
+      return "";
+    case 1:
+      return "ENOENT";
+    case 2:
+      return "EACCES";
+    case 3:
+      return "EEXIST";
+    case 4:
+      return "EINVAL";
+    case 5:
+      return "EILSEQ";
+    case 6:
+      return "ETIMEDOUT";
+    case 7:
+      return "ECONNREFUSED";
+    case 8:
+      return "ECONNRESET";
+    case 9:
+      return "EADDRINUSE";
+    case 10:
+      return "EPIPE";
+    case 11:
+      return "EOF";
+    case 12:
+      return "ENOTSUP";
+    case 13:
+      return "ENOTDIR";
+    case 14:
+      return "ENOTEMPTY";
+    case 15:
+      return "EISDIR";
+    case 16:
+      return "EBADF";
+    default:
+      return "UNKNOWN";
+  }
 }
 
 /** Builds the `IoError` for a failed result; takes ownership of the runtime's message. */
 export function ioError(code: i32, message: string): IoError {
-  return new IoError(velt_rt_err_code_name(code), message);
+  return new IoError(errorCodeName(code), message);
 }

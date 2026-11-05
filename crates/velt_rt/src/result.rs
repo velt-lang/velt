@@ -174,7 +174,8 @@ impl<T> IoResult<T> {
     }
 }
 
-/// Node-style name of an error code (`IoError.code` in Velt: `"ENOENT"`, `"EACCES"`...).
+/// Node-style name of an error code, for the messages the runtime builds itself ([`fs_error`],
+/// [`op_error`]); `IoError.code` in Velt comes from the same table in std/native/error.vlt.
 pub fn code_name(c: i32) -> &'static str {
     match c {
         code::OK => "",
@@ -248,12 +249,6 @@ pub fn fs_error(e: io::Error, syscall: &str, path: &Path, dest: Option<&Path>) -
 pub fn op_error(e: io::Error, syscall: &str) -> io::Error {
     let msg = format!("{}: {}, {syscall}", code_name(code_of(&e)), describe(&e));
     io::Error::new(e.kind(), msg)
-}
-
-/// Write the Node-style name of `code` (a static string: `cap == 0`, nothing to free) to `out`.
-#[no_mangle]
-pub unsafe extern "C" fn velt_rt_err_code_name(code: i32, out: *mut VeltStr) {
-    out.write(VeltStr::from_static(code_name(code).as_bytes()));
 }
 
 /// Error for a byte buffer that is not valid UTF-8 where a string was requested.

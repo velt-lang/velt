@@ -1,0 +1,14 @@
+// The name of every failure code a native result can carry, 20M times over: what `IoError.code`
+// holds. Each name's length goes into the total, so nothing is thrown away. The Rust port is the
+// `match` the runtime had.
+import { errorCodeName } from "velt/native";
+
+function main() {
+  let total: i64 = 0;
+  let code: i32 = 0;
+  for (let round = 0; round < 20000000; round++) {
+    total += errorCodeName(code).length as i64;
+    code = (code * 5 + 7) % 32;
+  }
+  console.log(total);
+}

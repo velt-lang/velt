@@ -1,0 +1,11 @@
+// Every code of a failed native result and its name, the table of
+// docs/internals/contracts/rt_abi_async.md; a code outside it has the name UNKNOWN.
+import { errorCodeName, ioError } from "velt/native";
+
+function main() {
+  const codes: i32[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 99, -1];
+  for (const code of codes) {
+    console.log(code, JSON.stringify(errorCodeName(code)));
+  }
+  console.log(ioError(13, "m").code, ioError(99, "m").code);
+}

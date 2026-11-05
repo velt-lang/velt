@@ -689,18 +689,20 @@ keys! {
     proxy_has_own => "PROXY_HAS_OWN", "proxyHasOwn";
 }
 
-/// The externs of [`Hook::replaces`] that the runtime no longer defines: the hooks took their job
-/// over everywhere and their Rust was deleted (#2196's port tracker: an entry here is a finished
-/// port). `velt_common`'s test `hook_replaces.rs` checks that every replaced extern is defined by
-/// `velt_rt` unless it is listed here, and that one listed here is defined nowhere and named by
-/// no compiler source, runtime or std file. The entries keep their place in `replaces(…)` as the
-/// record of what the hook replaced.
+/// The runtime externs whose job moved to std and whose Rust was deleted (#2196's port tracker: an
+/// entry here is a finished port): hooks took over the externs of [`Hook::replaces`], which keep
+/// their place there as the record of what the hook replaced, and ordinary std code the ones only
+/// std called, which no hook replaces. `velt_common`'s test `hook_replaces.rs` checks that every
+/// replaced extern is defined by `velt_rt` unless it is listed here, and that one listed here is
+/// defined nowhere and named by no compiler source, runtime or std file.
 pub const DELETED: &[&str] = &[
     // #2197: integers as text (std/lang/hooks/number_text, velt/lang/number/integer).
     "velt_rt_str_from_i64",
     "velt_rt_str_from_u64",
     "velt_rt_strbuf_push_i64",
     "velt_rt_strbuf_push_u64",
+    // #2196, only std called them: error-code names (std/native/error).
+    "velt_rt_err_code_name",
 ];
 
 /// The hook whose qualified name is `qualified` (`std/lang/hooks/number::f64ToString`).
