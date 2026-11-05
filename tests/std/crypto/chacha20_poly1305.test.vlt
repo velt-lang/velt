@@ -1,6 +1,6 @@
 // ChaCha20-Poly1305 (velt/crypto `ChaCha20Poly1305`): RFC 8439's AEAD vector and Project
 // Wycheproof's cases, including the ones whose tag must be rejected.
-import { ChaCha20Poly1305, CryptoError } from "velt/crypto";
+import { Aead, ChaCha20Poly1305, CryptoError } from "velt/crypto";
 import { hexDecode, hexEncode, utf8Encode } from "velt/encoding";
 import { describe, expect, it } from "velt/test";
 import { CHACHA20_POLY1305_CASES } from "./wycheproof_chacha20_poly1305";
@@ -67,6 +67,17 @@ describe("ChaCha20Poly1305", () => {
     expect(() => new ChaCha20Poly1305(hexDecode(RFC_KEY)).seal([0], [])).toThrow(
       "ChaCha20-Poly1305 nonce must be 12 bytes, got 1",
     );
+  });
+
+  it("seals and opens through Aead without additional data", () => {
+    const direct = new ChaCha20Poly1305(hexDecode(RFC_KEY));
+    const aead: Aead = new ChaCha20Poly1305(hexDecode(RFC_KEY));
+    const nonce = hexDecode(RFC_NONCE);
+    const text: u8[] = utf8Encode(RFC_TEXT);
+    const sealed = aead.seal(nonce, text);
+    expect(hexEncode(sealed)).toBe(hexEncode(direct.seal(nonce, text, [])));
+    const opened = aead.open(nonce, sealed);
+    expect(opened == null ? "null" : hexEncode(opened)).toBe(hexEncode(text));
   });
 
   it("seals and opens in place at an offset, as seal and open do", () => {

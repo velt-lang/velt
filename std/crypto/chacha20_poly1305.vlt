@@ -43,7 +43,7 @@ export class ChaCha20Poly1305 implements Aead {
   }
 
   /** `plaintext` encrypted under `nonce` (12 bytes), followed by the 16-byte tag over `aad` and it. */
-  seal(nonce: u8[], plaintext: u8[], aad: u8[] = []): u8[] {
+  seal(nonce: u8[], plaintext: u8[], aad: u8[] | undefined = []): u8[] {
     const out = withRoom(plaintext, 16);
     this.sealInPlace(nonce, aad, out, 0, plaintext.length);
     return out;
@@ -53,7 +53,7 @@ export class ChaCha20Poly1305 implements Aead {
    * The plaintext of `sealed` (ciphertext and tag, as `seal` returns them) under `nonce` and
    * `aad`, or null when the tag does not match (nothing of the plaintext is computed then).
    */
-  open(nonce: u8[], sealed: u8[], aad: u8[] = []): u8[] | null {
+  open(nonce: u8[], sealed: u8[], aad: u8[] | undefined = []): u8[] | null {
     const out = sealed.slice();
     if (!this.openInPlace(nonce, aad, out, 0, out.length)) {
       return null;
