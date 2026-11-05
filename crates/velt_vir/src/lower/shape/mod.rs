@@ -237,6 +237,11 @@ impl Cx<'_> {
         Some((f, dict))
     }
 
+    /// Is `f` a shared instance?
+    pub(super) fn is_shared_inst(&self, f: FuncId) -> bool {
+        self.shapes.insts.contains_key(&f)
+    }
+
     /// Is `def` one of the functions shared in this step?
     fn shares(&self, def: DefId) -> bool {
         match self.hir.def(def) {
@@ -340,6 +345,7 @@ impl Cx<'_> {
         fid: FuncId,
         mut func: crate::vir::Function,
         shared: bool,
+        deferred_mark: usize,
     ) -> crate::vir::Function {
         if !shared {
             return func;
@@ -359,7 +365,13 @@ impl Cx<'_> {
         if own.copied().any(|t| self.mentions_ph(t)) {
             ice("a shared body's own facts per function are not replayed");
         }
-        self.shape_rewrite(fid, &mut func);
+        // A body that left its view loops for later stands as its calls until they are versioned
+        // (deferred_versions.rs), and is rewritten then.
+        if self.deferred_new.len() > deferred_mark {
+            self.rewrite_stand_in(fid, &mut func);
+        } else {
+            self.shape_rewrite(fid, &mut func);
+        }
         let facts = {
             let shapes = &self.shapes;
             let types = &self.types;

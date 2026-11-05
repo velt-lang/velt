@@ -315,7 +315,7 @@ impl<'h> Cx<'h> {
             }
             _ => super::FnLower::build(self, work),
         };
-        let func = self.finish_shared(fid, func, shared);
+        let func = self.finish_shared(fid, func, shared, deferred_mark);
         self.cur_mode = outer_mode;
         self.cur_def = outer;
         self.user_site = outer_site;
