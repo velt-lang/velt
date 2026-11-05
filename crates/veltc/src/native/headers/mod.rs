@@ -542,10 +542,14 @@ mod tests {
             dependency_paths("deps: headers.c /p/a\\ b.h \\\n  /p/c\\#d.h \\\r\n C:\\z\\e$$.h\n"),
             ["headers.c", "/p/a b.h", "/p/c#d.h", "C:\\z\\e$.h"]
         );
+        // A file outside the parse's directory, as an absolute path of this host (a drive
+        // letter on Windows), with spaces escaped as clang does.
         let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().parent().unwrap().join("a.h");
+        let listed = outside.to_str().unwrap().replace(' ', "\\ ");
         assert_eq!(
-            files_read(dir.path(), "deps: headers.c /p/a.h\n"),
-            [PathBuf::from("/p/a.h")]
+            files_read(dir.path(), &format!("deps: headers.c {listed}\n")),
+            [outside]
         );
     }
 
