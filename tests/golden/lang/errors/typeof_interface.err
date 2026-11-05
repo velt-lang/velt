@@ -1,0 +1,7 @@
+typeof_interface.vlt:27:17: error: `Inner` is a type, not a value
+typeof_interface.vlt:15:20: error: `Widget` is a type, not a value
+typeof_interface.vlt:16:20: error: `Size` is a type, not a value
+typeof_interface.vlt:17:20: error: `Node` is a type, not a value
+typeof_interface.vlt:18:20: error: `Iterable` is a type, not a value
+typeof_interface.vlt:19:20: error: `RequestInit` is a type, not a value
+typeof_interface.vlt:20:12: error: `Widget` is a type, not a value
