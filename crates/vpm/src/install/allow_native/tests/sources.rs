@@ -128,3 +128,24 @@ fn an_install_names_native_code_that_changes() {
         second.notes
     );
 }
+
+/// A repository whose URL no entry can name is refused without suggesting one: the entry would
+/// be refused when added.
+#[test]
+fn a_repository_no_entry_can_name_gets_no_suggestion() {
+    let lib = dir_with(&manifest_text("lib", "native: { c: {} }"));
+    for fields in ["", "allowNative: [\"lib\"]"] {
+        let e = run_from(
+            git_source("https://github.com/o/lib\u{200b}"),
+            fields,
+            Some(lib.path()),
+        )
+        .unwrap_err();
+        assert!(
+            e.contains("comes from a git repository that allowNative can't name")
+                && e.contains("https://github.com/o/lib\\u{200b}")
+                && !e.contains("allowNative: ["),
+            "{fields}: {e}"
+        );
+    }
+}

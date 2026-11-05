@@ -282,6 +282,9 @@ fn unsafe_path_forms_are_refused_everywhere() {
         let e = git_identity(&format!("https://github.com/a/{malformed}/b")).unwrap_err();
         assert!(e.contains("malformed `%` escape"), "{malformed}: {e}");
     }
+    // The refusal shows the URL readably, with the invisible character spelled out.
+    let e = git_identity("https://github.com/a/b\u{200b}").unwrap_err();
+    assert!(e.contains("https://github.com/a/b\\u{200b}"), "{e}");
     // A space stays: real repository names have one, and it can't change where a path goes.
     let azure = "https://dev.azure.com/org/My%20Project/_git/repo";
     git_identity(azure).unwrap();

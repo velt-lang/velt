@@ -29,7 +29,7 @@ fn describe_source(source: &Source) -> String {
     match source {
         Source::Registry { .. } => "the registry".to_string(),
         Source::Path { dir } => format!("the local path {}", dir.display()),
-        Source::Git { spec, .. } => format!("the git repository {}", spec.url),
+        Source::Git { spec, .. } => format!("the git repository {}", spec.url.escape_default()),
     }
 }
 
@@ -94,6 +94,17 @@ pub(crate) fn check<'r>(
             continue;
         }
         native.push(p.name.clone());
+        // A repository no entry can name (its URL can't be compared safely) gets no suggestion:
+        // the entry it would suggest is refused when added.
+        if let Source::Git { spec, .. } = &p.source {
+            if let Err(e) = crate::source_url::git_identity(&spec.url) {
+                elsewhere.push(format!(
+                    "package `{}` has native code and comes from a git repository that allowNative can't name: {e}",
+                    p.name
+                ));
+                continue;
+            }
+        }
         let entries: Vec<&AllowNative> = (manifest.allow_native.iter())
             .filter(|a| a.name == p.name)
             .collect();

@@ -18,7 +18,7 @@ fn refuse_escapes(url: &str) -> Result<(), String> {
     if !url.is_ascii() {
         return Err(format!(
             "`{}` contains a character that isn't ASCII",
-            url.escape_unicode()
+            url.escape_default()
         ));
     }
     if url.contains('\\') {
