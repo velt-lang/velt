@@ -1,35 +1,46 @@
 //! The live set, and the hooks its constructs demand (#2161 step 2; velt_common
 //! `hook_demand.rs`). Lowering builds what `main` reaches, the definitions it looks up by name,
 //! and the glue of the types in that code; it may call a hook from any of it, std's code
-//! included. *Live* code aims to cover that, and doesn't yet cover all of it (below): the
-//! program's own definitions, the std
-//! definitions lowering looks up by name ([`super::is_helper`], [`super::EAGER`]), the hooks
-//! demanded so far, and, closed over, every definition live code names (a call, a function
-//! value, a closure, a constant), the methods of each class or struct a live type mentions
-//! (with its base classes, subclasses and fields' types, as [`super::used_types`]), and the
-//! interface implementations of the live types. What [`super::reach`] checks only because
-//! checked code names it (the prelude's methods, a module checked whole) is not live until
-//! live code reaches it.
+//! included. *Live* code is a superset of the functions it builds: the program's own definitions,
+//! the std definitions lowering looks up by name ([`super::is_helper`], [`super::EAGER`]), the
+//! hooks demanded so far, and, closed over, every definition live code names (a call, a function
+//! value, a closure, a constant), the methods of each class or struct a live type mentions (with
+//! its base classes, subclasses and fields' types, as [`super::used_types`]), and the interface
+//! implementations of the live types, and every module slot, whose initializer lowering runs
+//! whether or not code reads it. Three more rules are about what lowering makes that no
+//! code in the program names: a generator function's value is a `Generator` or `AsyncGenerator`,
+//! whatever its written result says; an `any` may become an `ArrayView` and may hold an `Error`
+//! ([`dynamic_classes`]); and what sema makes once the bodies are checked (the implementations
+//! of interfaces through `any`, the conversions of its functions, the adapters of `toString`
+//! and `toJSON`) is added by [`finish`]. What [`super::reach`] checks only because checked code
+//! names it (the prelude's methods, a module checked whole) is not live until live code
+//! reaches it.
 //!
-//! Lowering also builds functions that are not live here (`T[].truncate`, the `arrayView*` hooks,
-//! `errorText`, `uncaughtHeader`, `Generator.*`, the any-to-interface adapters; #2161). That is
-//! harmless for the integer hooks only because any construct brings all of them through their
-//! std code: this must be fixed before a hook with a narrower demand gets `constructs(…)`.
+//! Once every hook with constructs is demanded the walk stops (`Live::saturated`): a release
+//! compiler's set is then partial, and needn't be more, as nothing more can be demanded. A debug
+//! compiler (the one the goldens run), or `VELT_LIVE_CHECK=1`, works it out in full
+//! (`Live::exact`) and gives it to lowering (`hir::Program::live`), which asserts that each
+//! function it builds, and each constant or module slot it reads, is in it
+//! (`Cx::assert_live`): a gap in these rules is an ICE on the first program that has it. One
+//! thing a release compiler doesn't walk: the forwarders [`live_defs`] names.
 //!
 //! The constructs of `hook_demand::Construct` are evaluated on live code with the operand's
 //! type, and a hook one of whose constructs occurs is demanded: [`step`] adds it to what
 //! [`super::reach`] checks. Each live definition is walked once, after it is checked.
 
 use rustc_hash::{FxHashMap, FxHashSet};
-use velt_common::std_hooks::{Construct, ConstructSet, HookSet, HOOKS};
+use velt_common::std_hooks::{hook_index, Construct, ConstructSet, HookSet, HOOKS};
 
 use crate::ctx::Ctx;
-use crate::defs::{DefInfo, FnKind};
+use crate::defs::{BodyState, DefInfo, FnKind};
 use crate::hir::{self, Callee, DefId, ExprKind as E, Intrinsic as I, TyId, TyKind};
 
 /// The live set of one check.
 #[derive(Default)]
 pub(crate) struct Live {
+    /// Work the set out in full, even once saturated, for lowering to check against it
+    /// (`hir::Program::live`).
+    exact: bool,
     /// The definitions below this one are seeded ([`seed`]; generated code is added later).
     seeded: usize,
     /// The live definitions.
@@ -58,12 +69,34 @@ pub(crate) struct Live {
     std_seeded: usize,
     /// Every hook with constructs is demanded: nothing more to work out.
     saturated: bool,
+    /// [`dynamic_classes`] ran.
+    dynamic_classes: bool,
     /// The sets of constructs that demand every hook, one bit per set ([`saturated`]).
     full: Option<u64>,
     /// The constructs met in live code.
     pub(super) present: ConstructSet,
     /// Per type: may its text or format print an integer ([`may_print_int`])?
     int_text: FxHashMap<TyId, bool>,
+}
+
+impl Live {
+    /// `VELT_LIVE_CHECK`, `1` or `0`, says whether to work the set out in full for lowering to
+    /// check against; a debug compiler does (not in sema's own tests, which assert what a walk
+    /// that stops finds).
+    pub(super) fn new() -> Live {
+        #[cfg(test)]
+        let by_default = tests::EXACT.get();
+        #[cfg(not(test))]
+        let by_default = cfg!(debug_assertions);
+        let exact = match std::env::var_os("VELT_LIVE_CHECK") {
+            Some(v) => v != "0",
+            None => by_default,
+        };
+        Live {
+            exact,
+            ..Live::default()
+        }
+    }
 }
 
 /// A value a function takes ([`gate`]): of a class or struct, an interface, or a kind of type
@@ -88,17 +121,49 @@ struct Walk {
     ifaces: Vec<DefId>,
     /// The kinds ([`kind_bit`]) of its scalar types, which are not recorded as types.
     kinds: u32,
+    /// Generator functions, and async ones: their values are `Generator`s and `AsyncGenerator`s
+    /// whatever their written result says.
+    generators: [bool; 2],
 }
 
 /// The hooks lowering may call (`hir::Program::hooks_demanded`): those the constructs of live
 /// code demand; every hook when nothing is deferred (laziness off).
 pub(crate) fn demanded(cx: &Ctx) -> HookSet {
     #[cfg(test)]
-    tests::PRESENT.set((cx.lazy.live.present, cx.lazy.live.impls.len()));
+    tests::note_demanded(cx);
     match cx.lazy.modules.is_empty() {
         true => HookSet::all(),
         false => HookSet::demanded_by(cx.lazy.live.present),
     }
+}
+
+/// The live definitions for lowering to check against (`hir::Program::live`), when they were
+/// worked out in full, with the definitions made since [`finish`]: the forwarders of an interface
+/// converted to another (`Ctx::upcast_tables`), made once ownership is settled, so that a hook can
+/// no longer be checked. Each reads a field or a getter and calls what it holds, so they demand
+/// nothing; this asserts it. A release compiler doesn't walk them.
+pub(crate) fn live_defs(
+    cx: &mut Ctx,
+    unchecked: &FxHashSet<DefId>,
+) -> Option<std::collections::HashSet<DefId>> {
+    if !cx.lazy.live.exact || cx.lazy.modules.is_empty() {
+        return None;
+    }
+    // A stub has a signature and no code. Not walked, and not live.
+    let live = &mut cx.lazy.live;
+    live.todo.retain(|d| !unchecked.contains(d));
+    live.live.extend(unchecked);
+    live.opened = None;
+    let mut found = vec![];
+    step(cx, &mut found);
+    if let Some(&d) = found.first() {
+        panic!(
+            "ICE: a definition made after ownership demands the hook `{}`",
+            cx.fn_info(d).name
+        );
+    }
+    let live = &cx.lazy.live.live;
+    Some(live.difference(unchecked).copied().collect())
 }
 
 /// Mark what is live since the last step, evaluate its constructs, and add the definitions of
@@ -149,6 +214,10 @@ pub(super) fn step(cx: &mut Ctx, found: &mut Vec<DefId>) {
         let mut types = w.types;
         types.extend(w.formats.iter().chain(&w.texts));
         live_types(cx, types);
+        let generators = [cx.generator_class(), cx.async_generator_class()];
+        for (_, d) in (w.generators.iter().zip(generators)).filter(|(g, _)| **g) {
+            live_classes(cx, d);
+        }
     }
     // Not checked yet: walked once checked. `reach` checks what checked code names and the
     // methods of the types it uses, which covers what is live; a hook lowering calls only where
@@ -169,11 +238,33 @@ pub(super) fn step(cx: &mut Ctx, found: &mut Vec<DefId>) {
     }
 }
 
+/// After the passes that make definitions once the bodies are checked (the implementations of
+/// interfaces through `any`, the conversions of its functions, the adapters of `toString` and
+/// `toJSON`), which lowering builds: their code is live, and may demand a hook. Checks what it
+/// demands, with what that reaches.
+pub(crate) fn finish(cx: &mut Ctx) {
+    if cx.lazy.modules.is_empty() || cx.lazy.live.saturated && !cx.lazy.live.exact {
+        return;
+    }
+    let mut found = vec![];
+    step(cx, &mut found);
+    if !found.is_empty() {
+        for d in found {
+            if super::deferred(cx, d)
+                && matches!(&cx.info[d.0 as usize], DefInfo::Fn(f) if f.state == BodyState::Unchecked)
+            {
+                crate::body::ensure_body(cx, d);
+            }
+        }
+        super::reach(cx);
+    }
+}
+
 /// Does every hook with constructs have one present? Then nothing more is worked out
 /// (`Live::saturated`).
 fn saturated(cx: &mut Ctx) -> bool {
     let live = &mut cx.lazy.live;
-    if !live.saturated {
+    if !live.saturated && !live.exact {
         // Which sets of constructs demand every hook, one bit per set.
         let full = *live.full.get_or_insert_with(|| {
             (0..1u32 << Construct::ALL.len())
@@ -202,13 +293,14 @@ fn seed(cx: &mut Ctx) {
         .collect();
     let any_live_type = !cx.lazy.live.adts.is_empty();
     for i in from..cx.info.len() {
-        let (module, owner) = match &cx.info[i] {
-            DefInfo::Fn(f) => (f.module, f.owner),
-            DefInfo::Global(g) => (g.module, None),
+        let (module, owner, slot) = match &cx.info[i] {
+            DefInfo::Fn(f) => (f.module, f.owner, false),
+            // Lowering runs a module slot's initializer whether or not code reads it.
+            DefInfo::Global(g) => (g.module, None, g.stored),
             _ => continue,
         };
         let of_live = any_live_type && owner.is_some_and(|o| cx.lazy.live.adts.contains(&o));
-        if program[module] || of_live {
+        if program[module] || of_live || slot {
             mark(cx, DefId(i as u32));
         }
     }
@@ -293,6 +385,9 @@ fn gate(cx: &Ctx, f: &crate::defs::FnInfo<'_>) -> Vec<Gate> {
 /// The implementations and gated roots that the live classes, interfaces and kinds open, when
 /// those changed since the last time.
 fn open(cx: &mut Ctx) {
+    if cx.lazy.live.kinds & DYNAMIC != 0 {
+        dynamic_classes(cx);
+    }
     let live = &cx.lazy.live;
     let now = (live.adts.len(), live.ifaces.len(), live.kinds);
     if live.opened == Some(now) {
@@ -301,6 +396,30 @@ fn open(cx: &mut Ctx) {
     cx.lazy.live.opened = Some(now);
     live_impls(cx);
     open_gates(cx);
+}
+
+/// The classes of the values lowering's glue makes from an `any` or finds in one, which no code
+/// in the program has to mention: the `ArrayView` an `any` converted to an array is
+/// (`velt_vir` `array_view.rs`), and the `Error`s it may hold, that its text and an uncaught
+/// report of it call (`any_text`, `entry.rs` `push_dynamic_thrown`), with the `TypeError` its
+/// operations throw among their subclasses.
+fn dynamic_classes(cx: &mut Ctx) {
+    if !std::mem::replace(&mut cx.lazy.live.dynamic_classes, true) {
+        let view = match cx.std_def(&HOOKS[hook_index::array_view].qualified()) {
+            Some(crate::ctx::Item::Def(d)) => Some(d),
+            _ => None,
+        };
+        let error = cx.prelude_adt("Error");
+        live_classes(cx, view);
+        live_classes(cx, error);
+    }
+}
+
+/// The class `d`, when the program has it, as [`live_types`] records a type of it.
+fn live_classes(cx: &mut Ctx, d: Option<DefId>) {
+    if let Some(d) = d {
+        live_types_of(cx, vec![], vec![d]);
+    }
 }
 
 /// The gated roots one of whose values live code now has.
@@ -345,6 +464,9 @@ fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
             }
             for t in f.body.locals.iter().map(|l| l.ty).chain([f.ret]) {
                 note_ty(ty, t, w);
+            }
+            if f.is_generator {
+                w.generators[f.is_async as usize] = true;
             }
             crate::visit::exprs_mut(&mut f.body.block, &mut |e| walk_expr(ty, e, w));
             true
@@ -501,8 +623,12 @@ fn may_print_int(cx: &mut Ctx, t: TyId) -> bool {
 /// Record the types `todo` and their parts as live: their constructs, and the methods of each
 /// class or struct among them (with its base classes, subclasses and fields' types), and of the
 /// implementations for them.
-fn live_types(cx: &mut Ctx, mut todo: Vec<TyId>) {
-    let mut adts: Vec<DefId> = vec![];
+fn live_types(cx: &mut Ctx, todo: Vec<TyId>) {
+    live_types_of(cx, todo, vec![]);
+}
+
+/// [`live_types`], and the classes and structs `adts`.
+fn live_types_of(cx: &mut Ctx, mut todo: Vec<TyId>, mut adts: Vec<DefId>) {
     loop {
         if let Some(t) = todo.pop() {
             if !cx.lazy.live.types.insert(t) {

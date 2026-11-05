@@ -17,6 +17,7 @@ mod hook_demand;
 mod hybrid;
 mod interp;
 mod keys;
+mod live_superset;
 mod m2_arrays;
 mod m2_classes;
 mod m2_closures;

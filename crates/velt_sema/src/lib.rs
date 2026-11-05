@@ -442,6 +442,7 @@ fn check_timed(
     let (upcasts, upcast_impls) = cx.upcast_tables();
     let extension_impls = collect::ext_impls::hir_bounds(&cx);
     let dyn_bounds = collect::ext_impls::dyn_bounds(&mut cx);
+    let live = body::lazy_std::live_defs(&mut cx, &unchecked);
     let ctx::Ctx {
         ty,
         defs,
@@ -493,6 +494,7 @@ fn check_timed(
         lock_free_callbacks: lock_free_callbacks.into_iter().collect(),
         unchecked: unchecked.into_iter().collect(),
         hooks_demanded,
+        live,
         any_fn_views,
         generated: generated.into_iter().collect(),
     };
@@ -585,6 +587,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
         type_level::instances::reach(cx)
     });
     timings::pass("hooks::check_shapes", || hooks::check_shapes(cx));
+    body::lazy_std::finish_live(cx);
     let before = error_count(cx);
     generated::bind::fix_modes(cx);
     timings::pass("ownership_passes", || ownership_passes(cx));
