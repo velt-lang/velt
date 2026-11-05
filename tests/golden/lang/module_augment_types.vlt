@@ -1,0 +1,10 @@
+// The types an augmentation's members name are the augmenting module's, as in TypeScript:
+// `declare module "./core" { interface PlatformTypes { element: Node } }` names the `Node` that
+// module imports, not the target's own `Node`; a type it declares and exports works too.
+import "./_augment_scope/platform";
+import { describe, nodeName, type PlatformElement, type PlatformTypes } from "./_augment_scope/core";
+
+const e: PlatformElement = { tag: "box", width: 3 };
+const p: PlatformTypes = { element: { tag: "text", width: 1 }, extra: { depth: 2 } };
+console.log(describe(e));
+console.log(p.element.tag, p.extra.depth, nodeName("x"));

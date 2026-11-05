@@ -179,7 +179,14 @@ impl Loader {
                         .as_bytes()
                         .windows(3)
                         .any(|w| w[0].is_ascii_digit() && w[1] == b'.' && w[2].is_ascii_digit()));
+            // A tuple's array methods: one of the global's words, each `.name` (`// load when`).
+            let tuple_method = name == "tuple_elements"
+                && text
+                    .lines()
+                    .find_map(|l| l.split_once(" uses: ").map(|(_, w)| w))
+                    .is_some_and(|words| words.split_whitespace().any(|w| src.contains(w)));
             if float_text
+                || tuple_method
                 || reexports(&text)
                     .iter()
                     .any(|n| !own.contains(n) && mentions(&src, n))

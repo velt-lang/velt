@@ -297,8 +297,8 @@ impl FnCx<'_, '_> {
                     || super::object_rest::has_object_rest(inner)
                     || super::index_keys::has_index_key(inner)
             });
-            if applies || nested {
-                if rest.is_some() || elems.len() > elem_tys.len() {
+            if applies || nested || rest.is_some() {
+                if elems.len() > elem_tys.len() {
                     // What an ordinary pattern reports, without taking it apart again.
                     let shown = tuple_ty.map(|t| self.cx.display(t)).unwrap_or_default();
                     self.cx.err(
@@ -331,6 +331,9 @@ impl FnCx<'_, '_> {
                     };
                     self.decl_with_defaults(kind, sub, value, out);
                 }
+                if let Some(r) = rest {
+                    self.tuple_rest_decl(kind, r, &tmp, (elems.len(), &elem_tys), out);
+                }
                 return;
             }
         }
@@ -342,6 +345,48 @@ impl FnCx<'_, '_> {
             span,
         };
         self.var_decl(&v, span, out);
+    }
+
+    /// Does `const [x, ...r] = e` take a tuple apart? (`tuple_decl`: a pattern can't bind a part
+    /// of a tuple.)
+    pub(super) fn tuple_with_rest(
+        &mut self,
+        v: &ast::VarDecl,
+        e: &Expr,
+        ann: Option<hir::TyId>,
+    ) -> bool {
+        if !matches!(v.pattern.kind, P::Array { rest: Some(_), .. }) {
+            return false;
+        }
+        let ty = ann.or_else(|| self.remembered_type(e));
+        ty.is_some_and(|t| matches!(self.cx.ty.kind(t), hir::TyKind::Tuple(_)))
+    }
+
+    /// `...r` of a tuple after its first `from` elements: a tuple of the others, as in TypeScript.
+    fn tuple_rest_decl(
+        &mut self,
+        kind: VarKind,
+        r: &ast::Ident,
+        tmp: &Expr,
+        (from, elem_tys): (usize, &[hir::TyId]),
+        out: &mut Vec<hir::Stmt>,
+    ) {
+        let others: Vec<Expr> = (from..elem_tys.len()).map(|k| index(tmp, k)).collect();
+        let ty = self
+            .cx
+            .ty
+            .intern(hir::TyKind::Tuple(elem_tys[from..].to_vec()));
+        let value = self.expr(&mk(E::Array(others), r.span), Some(ty), super::Want::Move);
+        let local_kind = match kind {
+            VarKind::Let => super::LocalKind::Let,
+            _ => super::LocalKind::Const,
+        };
+        let local = self.declare_local(r, ty, local_kind);
+        let init = Some(value);
+        out.push(hir::Stmt {
+            kind: hir::StmtKind::Let { local, init },
+            span: r.span,
+        });
     }
 
     /// A temporary holding a non-array iterable (`const [a, b = 0] = gen()`): a second one

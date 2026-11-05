@@ -497,11 +497,16 @@ impl FnCx<'_, '_> {
 
     /// The type `e` checks to, without keeping anything of the check (`None`: it has errors).
     pub(crate) fn trial_type(&mut self, e: &ast::Expr) -> Option<TyId> {
+        self.trial_with(|lw| lw.expr(e, None, Want::Borrow).ty)
+    }
+
+    /// The type `check` gives, without keeping anything of the check (`None`: it has errors).
+    pub(crate) fn trial_with(&mut self, check: impl FnOnce(&mut Self) -> TyId) -> Option<TyId> {
         let mark = crate::body::recheck::Mark::here(self.cx);
         let frames = self.trial_frames();
         let diags = self.cx.diags.len();
         let temps = self.call_temps.len();
-        let ty = self.expr(e, None, Want::Borrow).ty;
+        let ty = check(self);
         let failed = self.cx.diags.len() > diags;
         mark.rollback(self.cx);
         self.cx.diags.truncate(diags);

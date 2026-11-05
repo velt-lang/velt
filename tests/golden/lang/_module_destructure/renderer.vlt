@@ -1,0 +1,11 @@
+// A module exporting names it destructures, as sigx's runtime-terminal does
+// (`export const { render } = renderer;`).
+function createRenderer(prefix: string) {
+  return {
+    render: (s: string): string => `${prefix}${s}`,
+    unmount: (): string => `${prefix}unmounted`,
+  };
+}
+
+const renderer = createRenderer("> ");
+export const { render, unmount: teardown } = renderer;

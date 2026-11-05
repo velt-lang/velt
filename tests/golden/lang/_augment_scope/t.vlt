@@ -1,0 +1,8 @@
+export type Node = { n: number };
+export interface Second {
+  s: string;
+}
+export function helper(n: number): string {
+  return `${n}`;
+}
+export type Exp = { y: string };

@@ -14,13 +14,14 @@ use velt_sema::hir::{Def, DefId, FloatTy, IntTy, Nothing, PassMode, Program, TyI
 
 /// A program that loads every module defining a hook: the prelude loads `velt/lang/hooks`, and
 /// the others come with what they implement (`Proxy`, `Set`, `Uint8Array`, `RegExp`, `JSON`; the globals
-/// velt/lang/this_fn, velt/lang/record/reflect, velt/lang/hooks/any_record and
+/// velt/lang/this_fn, velt/lang/record/reflect, velt/lang/hooks/any_record, tuple_elements and
 /// velt/lang/hooks/number_float, which the driver's loader adds for what a module uses, and this
 /// test's loader does not). velt/lang/hooks/number_text comes with the prelude; imported here,
 /// its float hooks, which are checked on demand, are checked too.
 const LOADS_ALL: &str = "import \"velt/lang/this_fn\";\nimport \"velt/lang/record/reflect\";\n\
     import \"velt/lang/hooks/any_record\";\nimport \"velt/lang/hooks/number_text\";\n\
     import \"velt/lang/hooks/number_float\";\nimport \"velt/host\";\n\
+    import \"velt/lang/hooks/tuple_elements\";\n\
     import \"velt/test/registry\";\nimport \"velt/test/run\";\nimport \"velt/host/promise\";\n\
     import \"velt/ffi/ptr\";\nimport \"velt/ffi/str_bytes\";\nimport \"velt/ffi/c_string\";\n\
     function main() {\n  const p = new Proxy({}, {});\n  const s = new Set<number>();\n  \

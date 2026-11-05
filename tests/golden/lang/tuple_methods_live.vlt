@@ -1,0 +1,192 @@
+// A tuple's array methods read each element when they reach it, so a callback sees what the
+// callbacks before it wrote, as for an array.
+
+const a: [number, number] = [1, 2];
+console.log(a.map((x, i) => {
+  a[1] = 5;
+  return x;
+}));
+
+const b: [number, number, number] = [1, 2, 3];
+console.log(b.reduce((acc, x) => {
+  b[2] = 100;
+  return acc + x;
+}, 0));
+
+const c: [string, string] = ["a", "b"];
+console.log(c.find((x, i) => {
+  c[1] = "z";
+  return i === 1;
+}));
+
+const d: [number, number] = [1, 2];
+d.forEach((x, i) => {
+  d[1] = 9;
+  console.log(x, i);
+});
+
+// Every method that calls back.
+function fresh(): [number, number, number] {
+  return [1, 2, 3];
+}
+let t = fresh();
+console.log(t.filter((x, i) => {
+  t[1] = x + 10;
+  return true;
+}), t);
+t = fresh();
+console.log(t.findIndex((x) => {
+  t[1] = 7;
+  return x === 7;
+}));
+t = fresh();
+console.log(t.findLast((x, i) => {
+  t[0] = 8;
+  return i === 0;
+}));
+t = fresh();
+console.log(t.findLastIndex((x) => {
+  t[0] = 8;
+  return x === 8;
+}));
+t = fresh();
+console.log(t.every((x) => {
+  t[2] = -1;
+  return x > 0;
+}));
+t = fresh();
+console.log(t.some((x) => {
+  t[2] = -1;
+  return x < 0;
+}));
+t = fresh();
+console.log(t.flatMap((x) => {
+  t[1] = 20;
+  return [x, x];
+}));
+t = fresh();
+console.log(t.reduce((acc, x) => {
+  t[2] = 300;
+  return acc + x;
+}));
+t = fresh();
+console.log(t.reduceRight((acc, x) => {
+  t[0] = 40;
+  return acc + "," + x;
+}, "r"));
+t = fresh();
+console.log(t.reduceRight((acc, x) => {
+  t[0] = 50;
+  return acc + x;
+}));
+
+// Elements of different types, a callback that isn't an arrow, a tuple in a field and one passed
+// in; the receiver is evaluated once.
+const m: [number, string] = [1, "s"];
+console.log(m.map((x) => {
+  m[1] = "new";
+  return typeof x === "number" ? x + 1 : x + "!";
+}));
+
+const seen: [number, number] = [1, 2];
+function writes(x: number): number {
+  seen[1] = 6;
+  return x * 2;
+}
+console.log(seen.map(writes));
+
+const o = { pair: [1, 2] as [number, number] };
+console.log(o.pair.map((x) => {
+  o.pair[1] = 11;
+  return x;
+}));
+
+function inside(p: [number, number]): number[] {
+  return p.map((x) => {
+    p[1] = 12;
+    return x;
+  });
+}
+const given: [number, number] = [1, 2];
+console.log(inside(given), given);
+
+let calls = 0;
+const held: [number, number] = [1, 2];
+function get(): [number, number] {
+  calls++;
+  return held;
+}
+console.log(get().map((x) => {
+  held[1] = 13;
+  return x;
+}), calls);
+
+// A callback that replaces the tuple: the method goes on with the one it was called on.
+let swapped: [number, number] = [1, 2];
+console.log(swapped.map((x) => {
+  swapped = [7, 8];
+  return x;
+}), swapped);
+
+// A throw leaves what was written.
+const thrown: [number, number] = [1, 2];
+try {
+  thrown.forEach((x) => {
+    thrown[1] = 14;
+    throw new Error("stop");
+  });
+} catch (e) {
+  console.log((e as Error).message, thrown);
+}
+
+// The elements are read after the arguments, in the methods that don't call back too.
+const at: [number, number] = [1, 2];
+function writesAt(): number {
+  at[0] = 50;
+  return 0;
+}
+console.log(at.at(writesAt()));
+const joined: [number, number] = [1, 2];
+function more(): number[] {
+  joined[1] = 60;
+  return [3];
+}
+console.log(joined.concat(more()));
+const cut: [number, number] = [1, 2];
+function from(): number {
+  cut[1] = 70;
+  return 1;
+}
+console.log(cut.slice(from()));
+const has: [number, number] = [1, 2];
+function eighty(): number {
+  has[0] = 80;
+  return 80;
+}
+console.log(has.includes(eighty()), has.indexOf(eighty()), has.lastIndexOf(2));
+
+// An argument that runs code has the type a method expects, as for an array.
+const mixedT: [number, string] = [1, "s"];
+function three(): number {
+  return 3;
+}
+function numbers(): number[] {
+  return [5];
+}
+function mixedList(): (number | string)[] {
+  return ["x"];
+}
+console.log(mixedT.concat(numbers()), mixedT.concat(mixedList()));
+console.log(mixedT.concat([three()]), mixedT.concat([three(), "y"]));
+console.log(mixedT.includes(three()), mixedT.indexOf(three()), mixedT.at(three() - 3));
+
+// What the methods return and hand over are numbers.
+const nums: [number, number] = [1, 2];
+console.log(nums.findIndex((x) => x === 2) / 2, nums.indexOf(2) / 2, nums.findLastIndex((x) => x === 2) / 4);
+console.log(nums.map((x, i) => i / 2), nums.reduce((acc, x, i) => acc + i / 2, 0));
+
+// Object elements are the elements themselves.
+const first = { n: 1 };
+const objs: [{ n: number }, { n: number }] = [first, { n: 2 }];
+console.log(objs.map((x) => x)[0] === first);
+console.log(objs.find((x) => x.n === 1) === first);

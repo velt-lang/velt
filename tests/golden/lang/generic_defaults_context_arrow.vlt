@@ -1,0 +1,185 @@
+// Type parameter defaults and `infer` in a generic call, as TypeScript infers them.
+// - Before an arrow with an unannotated parameter is checked, the type parameters in those
+//   parameters' types that nothing inferred take their defaults (`component(({ signal }) => …)`
+//   types `ctx` from `T = {}`, sigx's `component<TCombined = {}, …>`), or their constraint, or
+//   `unknown`. One only in the result still comes from what the arrow returns, and so does one
+//   in the result and in a parameter the arrow leaves out (`both(() => 1)`).
+// - An `infer` that finds nothing is `unknown`; `keyof unknown` is `never`, `Omit<unknown, K>`
+//   is `{}`.
+
+interface Ctx<P, S> {
+  props: P;
+  slots: S;
+  count: number;
+}
+
+type ExtractSlots<T> = T extends { __slots?: infer S } ? S : {};
+
+function component<T extends Record<string, any> = {}, S = ExtractSlots<T>>(
+  setup: (ctx: Ctx<T, S>) => () => string,
+): (props: T) => string {
+  return (props: T): string => {
+    const slots: S = {} as unknown as S;
+    const render = setup({ props, slots, count: Object.keys(props).length });
+    return render();
+  };
+}
+
+const Plain = component(({ count }) => () => `plain with ${count} props`);
+const Typed = component<{ name: string }>((ctx) => () => `hello ${ctx.props.name}`);
+const Bare = component(() => () => "no parameters");
+
+function make<T = string>(f: (n: number) => T): T {
+  return f(21);
+}
+
+type Keys = keyof unknown;
+const none: Keys[] = [];
+const empty: Omit<unknown, never> = {};
+const anything: ExtractSlots<{}> = "unknown holds a string";
+
+console.log(Plain({}));
+console.log(Typed({ name: "ada" }), Bare({}));
+console.log(make((n) => n * 2), make((n) => `#${n}`));
+console.log(none.length, JSON.stringify(empty), anything);
+
+// An arrow without parameters: what the result names comes from what it returns.
+function both<T = string>(f: (x: T) => T): string {
+  return "ok";
+}
+function z3<T = string>(f: (x: T) => T): T {
+  return f(1 as any);
+}
+console.log(both(() => 1));
+console.log(z3(() => 42) + 1);
+console.log(
+  z3(() => {
+    return 43;
+  }) + 1,
+);
+console.log(
+  z3(function () {
+    return 44;
+  }) + 1,
+);
+function asy<T = string>(f: (x: T) => Promise<T>): Promise<T> {
+  return f(1 as any);
+}
+
+// A default naming another type parameter.
+function k<A = number, B = A[]>(g: (b: B) => void): void {
+  g([0] as any);
+}
+k((b) => {
+  console.log(b.length);
+});
+
+// Partly annotated: an annotation is a candidate, the others take their defaults.
+function pa<T = string, U = boolean>(g: (x: T, y: U) => void): void {
+  g(1 as any, true as any);
+}
+pa((x: number, y) => {
+  const b: boolean = y;
+  console.log(x + 1, b);
+});
+function same<T>(g: (x: T, y: T) => void, a: any): void {
+  g(a, a);
+}
+same((x: number, y) => {
+  console.log(x + y);
+}, 2);
+
+// Inside a rest parameter, an object literal, an array literal, or returned by an arrow.
+function rs<T = string>(...gs: ((x: T) => void)[]): void {
+  for (const g of gs) {
+    g("s" as any);
+  }
+}
+rs((x) => {
+  console.log(x.length);
+});
+function ob<T = string>(o: { cb: (x: T) => void }): void {
+  o.cb("abc" as any);
+}
+ob({
+  cb: (x) => {
+    console.log(x.length);
+  },
+});
+function ob2<T = string>(o: { cb: (x: T) => void }, v: T): void {
+  o.cb(v);
+}
+ob2(
+  {
+    cb: (x) => {
+      console.log(x + 1);
+    },
+  },
+  5,
+);
+function ob3<T = string>(o: { cb: (x: T) => void; v: T }): void {
+  o.cb(o.v);
+}
+ob3({
+  cb: (x) => {
+    console.log(x + 2);
+  },
+  v: 1,
+});
+function arr<T = string>(gs: ((x: T) => void)[]): void {
+  gs[0]("q" as any);
+}
+arr([
+  (x) => {
+    console.log(x.length);
+  },
+]);
+function w<T = string>(a: () => (y: T) => void): void {
+  a()("wxyz" as any);
+}
+w(() => (y) => {
+  console.log(y.length);
+});
+
+// No default and no candidate: `unknown`, or the constraint.
+function nd<T>(g: (x: T) => void): void {
+  g(1 as any);
+}
+nd((x) => {
+  console.log(typeof x);
+});
+function f2<A, B = A>(g: (b: B) => void): void {
+  g(2 as any);
+}
+f2((b) => {
+  console.log(typeof b);
+});
+function cn<T extends { a: number }>(g: (x: T) => void): void {
+  g({ a: 3 } as any);
+}
+cn((x) => {
+  console.log(x.a);
+});
+
+// A context-sensitive arrow comes after every other argument.
+function later<T>(a: (x: T) => void, b: () => T): void {
+  a(b());
+}
+later(
+  (x) => {
+    console.log(x + 1);
+  },
+  () => 1,
+);
+
+// What the utility types make of an `unknown`.
+const pu: Partial<ExtractSlots<{}>> = {};
+const ru: Required<ExtractSlots<{}>> = {};
+const ro: Readonly<ExtractSlots<{}>> = {};
+const pk: Pick<unknown, never> = {};
+const om: Omit<unknown, "a"> = {};
+type G<T, K extends string> = Omit<ExtractSlots<T>, K>;
+const ga: G<{}, "q"> = {};
+console.log(JSON.stringify([pu, ru, ro, pk, om, ga]));
+
+asy(async () => 5).then((v) => console.log(v + 1));

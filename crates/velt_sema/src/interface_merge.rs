@@ -10,6 +10,7 @@
 //! Rules (TypeScript's where it has them): type parameters must agree in number and names
 //! (TS2428); `extends` lists are joined; a member declared in two declarations is an error (a
 //! field of the same type is allowed in TypeScript, and a method there becomes an overload).
+//! The types an augmentation's members name are the augmenting module's (`augment_scope`).
 
 use rustc_hash::FxHashMap;
 
@@ -107,6 +108,13 @@ pub(crate) fn rewrite(modules: &[SourceModule]) -> (Option<Vec<SourceModule>>, V
                             );
                             continue;
                         };
+                        // The members name the augmenting module's types (`augment_scope`).
+                        let mut decl = decl;
+                        let mut imports = crate::augment_scope::Imports::default();
+                        crate::augment_scope::scope_into(&out, (m, tm), &mut decl, &mut imports);
+                        out[tm].ast.items.extend(imports.items);
+                        out[tm].imports.extend(imports.specs);
+                        out[m].ast.items.extend(imports.exports);
                         let ast::ItemKind::Interface(into) = &mut out[tm].ast.items[ti].kind else {
                             unreachable!("ICE: `find_interface` found an interface");
                         };

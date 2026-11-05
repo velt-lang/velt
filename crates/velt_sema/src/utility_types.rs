@@ -230,6 +230,10 @@ impl Ctx<'_> {
         span: Span,
     ) -> Option<Vec<ShapeField>> {
         let shown = self.display(t);
+        // `Omit<unknown, K>` and the like are `{}`, as in TypeScript (`keyof unknown` is `never`).
+        if self.dynamic(t) == Some(crate::any::Dynamic::Unknown) {
+            return Some(vec![]);
+        }
         match self.ty.kind(t).clone() {
             TyKind::Adt(d, args) if self.adt(d).is_some() => {
                 let fields = match self.fields_now(d) {
@@ -386,8 +390,11 @@ impl Ctx<'_> {
         };
         let names: Vec<String> = fields.iter().map(|f| f.name.clone()).collect();
         let mut ok = true;
+        // Nothing to omit from an `unknown`, and no mistake to warn about: `keyof unknown` is
+        // `never`, and a generic alias reaches this with any key.
+        let unknown = self.dynamic(t) == Some(crate::any::Dynamic::Unknown);
         for key in &keys {
-            if names.contains(key) {
+            if names.contains(key) || (unknown && op == "Omit") {
                 continue;
             }
             let shown = self.display(t);

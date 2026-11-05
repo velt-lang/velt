@@ -462,6 +462,67 @@ fn nested_arrow_trials_grow_polynomially() {
     }
 }
 
+/// Each shape that tries an argument before checking it, nested `n` deep.
+fn nested_argument_trials(n: usize) -> Vec<String> {
+    let nest = |head: &str, open: &str, close: &str| {
+        format!(
+            "{head}\nfunction main() {{\n  {}1{};\n}}\n",
+            open.repeat(n),
+            close.repeat(n)
+        )
+    };
+    let fold = "function fold<T>(cb: (a: T) => T, init: T): T {\n  return cb(init);\n}";
+    let both = "function both<T = string>(f: (x: T) => T): T {\n  return f(1 as any);\n}";
+    let sib = "function sib<T>(o: { cb: (x: T) => void; v: T }): T {\n  return o.v;\n}";
+    let rest = "function id<T>(f: () => T): T {\n  return f();\n}";
+    vec![
+        nest(fold, "fold((a: number | string) => ", ", 1)"),
+        nest(fold, "fold((a: number | string) => { return ", "; }, 1)"),
+        nest("", "[1].reduce((a: number | string, x) => ", ", 0)"),
+        nest(both, "both(() => ", ")"),
+        nest(sib, "sib({ cb: (x) => {}, v: ", " })"),
+        format!(
+            "{rest}\nfunction main() {{\n  {}const n = 1;{}\n}}\n",
+            "const [h, ...r] = id((): [number, number] => {\n".repeat(n),
+            " return [1, 2]; });".repeat(n),
+        ),
+    ]
+}
+
+/// An argument tried before it is checked (`trial_memo`) costs a constant factor per level of
+/// nesting: trying it and then checking it, unremembered, doubled the work at each level, and
+/// `fold` at 18 levels took 52 s. Trials outside a remembered one still see each level again, so
+/// only the arrows are held to linear; a doubling fails either way.
+#[test]
+fn nested_argument_trials_grow_linearly() {
+    let sizes = [4, 8, 16];
+    let _serial = serial();
+    let programs: Vec<Vec<String>> = sizes.iter().map(|&n| nested_argument_trials(n)).collect();
+    for shape in 0..programs[0].len() {
+        let checks: Vec<(u64, u64)> = (sizes.iter().zip(&programs))
+            .map(|(&n, p)| {
+                let [c, t] = counted_work(&load_src(&p[shape]), &|| {
+                    [check_work().closure_checks, check_work().memo_trials]
+                });
+                eprintln!("shape {shape}, depth {n:>2}: {c} arrows checked, {t} trials run");
+                (c, t)
+            })
+            .collect();
+        let arrows: Vec<u64> = checks.iter().map(|c| c.0).collect();
+        if let Err(e) = slopes_within(&sizes, &arrows, 1.6) {
+            panic!("shape {shape}: {e}");
+        }
+        // Each level's trial runs once: the real check of an enclosing arrow reaches it again,
+        // and asking again would still be linear, so the count itself is what is held.
+        let trials = checks[2].1 - checks[0].1;
+        let levels = (sizes[2] - sizes[0]) as u64;
+        assert!(
+            trials <= levels,
+            "shape {shape}: {trials} trials run for {levels} more levels: an answer wasn't reused"
+        );
+    }
+}
+
 /// An array literal, an object literal and a call of a rest parameter, each holding one chain
 /// of `n` additions (`[x + x + ..., ...ys]`), with spreads or (`spread` false) without.
 fn spread_chains(n: usize, spread: bool) -> String {

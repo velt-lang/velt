@@ -15,6 +15,7 @@ static CLOSURE_CHECKS: AtomicU64 = AtomicU64::new(0);
 static EXPR_CHECKS: AtomicU64 = AtomicU64::new(0);
 static EXPORTS: AtomicU64 = AtomicU64::new(0);
 static KEYED: AtomicU64 = AtomicU64::new(0);
+static MEMO_TRIALS: AtomicU64 = AtomicU64::new(0);
 
 /// Adds `n` to `counter`.
 fn add(counter: &AtomicU64, n: u64) {
@@ -42,6 +43,11 @@ pub(crate) fn add_export_work(n: u64) {
     add(&EXPORTS, n);
 }
 
+/// Counts one remembered trial run (`body::expr::trial_memo`), not one answered from memory.
+pub(crate) fn add_memo_trial() {
+    add(&MEMO_TRIALS, 1);
+}
+
 /// Adds `n` steps of the check of stores by key, or of finding the functions a call through a
 /// function value may run.
 pub(crate) fn add_keyed_work(n: u64) {
@@ -65,6 +71,8 @@ pub struct CheckWork {
     /// Summary entries applied, key sets combined and fields looked at by the check of stores by
     /// key, and function values tried against the type of a call through a function value.
     pub keyed: u64,
+    /// Remembered trials run, not counting those answered from memory (`trial_memo`).
+    pub memo_trials: u64,
 }
 
 /// See [`CheckWork`].
@@ -75,5 +83,6 @@ pub fn check_work() -> CheckWork {
         expr_checks: EXPR_CHECKS.load(Ordering::Relaxed),
         exports: EXPORTS.load(Ordering::Relaxed),
         keyed: KEYED.load(Ordering::Relaxed),
+        memo_trials: MEMO_TRIALS.load(Ordering::Relaxed),
     }
 }

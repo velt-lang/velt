@@ -476,6 +476,10 @@ impl Ctx<'_> {
             let (s, n, y) = (self.ty.str_, self.ty.f64, self.ty.intern(TyKind::Symbol));
             return self.union_of(&[s, n, y], false, t.span);
         }
+        // `unknown` has no keys, as in TypeScript.
+        if self.dynamic(ty) == Some(crate::any::Dynamic::Unknown) {
+            return self.ty.never;
+        }
         if self.has_type_params(ty) && matches!(self.ty.kind(ty), TyKind::Param(_) | TyKind::Op(..))
         {
             if !self.defer_param_form() {

@@ -1,0 +1,63 @@
+// A callback's annotated accumulator gives `reduce` and `reduceRight` their type when the initial
+// value is a literal that can be that type, and explicit type arguments do too.
+
+const xs: number[] = [1, 2, 3];
+
+console.log(xs.reduce((acc: number[], x) => {
+  acc.push(x * 2);
+  return acc;
+}, []));
+console.log(xs.reduceRight((acc: number[], x) => {
+  acc.push(x * 2);
+  return acc;
+}, []));
+console.log(xs.reduce((acc: number | null, x) => (acc === null ? x : acc + x), null));
+console.log(xs.reduceRight((acc: number | null, x) => (acc === null ? x : acc * x), null));
+console.log(xs.reduce((acc: number | undefined, x) => (acc === undefined ? x : acc + x), undefined));
+console.log(xs.reduceRight((acc: string | undefined, x) => (acc ?? "") + x, undefined));
+console.log(xs.reduce((acc: number | null, x) => (acc ?? 0) + x, 10));
+console.log(xs.reduce((acc: string | null, x) => (acc ?? "") + x, ""));
+console.log(xs.reduce((acc: (number | null)[], x) => [...acc, x, null], [0]));
+console.log(xs.reduce((acc: Record<string, number>, x) => {
+  acc["k" + x] = x;
+  return acc;
+}, {}));
+const counts = xs.reduce((acc: Map<string, number>, x) => {
+  acc.set("k" + x, x);
+  return acc;
+}, new Map());
+console.log(counts.get("k2"));
+interface Tally {
+  sum: number;
+  label?: string;
+}
+console.log(xs.reduce((acc: Tally, x) => ({ sum: acc.sum + x, label: "t" }), { sum: 0 }).sum);
+
+// Every parameter annotated.
+console.log(xs.reduce((acc: number[], x: number) => [...acc, x], []));
+console.log(xs.reduce((acc: number[], x: number, i: number) => [...acc, x * i], []));
+
+// A function.
+function push(acc: string[], x: number): string[] {
+  acc.push(String(x));
+  return acc;
+}
+console.log(xs.reduce(push, []));
+
+// On a tuple.
+const t: [number, number] = [4, 5];
+console.log(t.reduce((acc: number[], x) => [x, ...acc], []));
+console.log(t.reduceRight((acc: number | null, x) => (acc ?? 0) + x, null));
+
+// Explicit type arguments.
+console.log(xs.reduce<number[]>((acc, x) => [...acc, x + 1], []));
+console.log(xs.reduceRight<string>((acc, x) => acc + x, ""));
+console.log(xs.reduce<number | null>((acc, x) => (acc ?? 0) + x, null));
+console.log(xs.map<string>((x) => "m" + x));
+console.log(xs.flatMap<number>((x) => [x, x]));
+console.log(t.reduce<string>((acc, x) => acc + x, ">"));
+console.log(t.map<number>((x) => x + 1));
+function grow(acc: number[], x: number): number[] {
+  return [...acc, x];
+}
+console.log(xs.reduce<number[]>(grow, []));

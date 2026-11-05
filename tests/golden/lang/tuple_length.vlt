@@ -1,0 +1,39 @@
+// A tuple's `length` is how many elements its type has.
+
+const t: [number, string] = [1, "a"];
+console.log(t.length);
+const [x, ...r] = t;
+console.log(x, r.length, r);
+const [a, b, ...none] = t;
+console.log(a, b, none.length);
+const three = [1, 2, 3] as const;
+console.log(three.length);
+console.log(three.length / 2);
+
+let calls = 0;
+function make(): [number, number] {
+  calls++;
+  return [1, 2];
+}
+console.log(make().length, calls);
+
+function last(p: [number, number, number]): number {
+  const n = p.length;
+  return n * 2;
+}
+console.log(last([1, 2, 3]));
+const e: [] = [];
+console.log(e.length);
+const o = { pair: [1, 2] as [number, number] };
+console.log(o.pair.length + 1);
+const indexes: number[] = [];
+for (let i = 0; i < t.length; i++) {
+  indexes.push(i);
+}
+console.log(indexes);
+const n: number = t.length;
+console.log(n, `${t.length}`, t.length === 2, [0, 0, 7][t.length]);
+const maybe: [number, number] | null = make();
+console.log(maybe?.length, maybe!.length);
+const { length } = t;
+console.log(length);
