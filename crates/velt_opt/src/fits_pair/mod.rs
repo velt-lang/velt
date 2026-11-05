@@ -80,6 +80,7 @@ use velt_vir::vir::{
 };
 
 use crate::locals::{LocalUsage, Usage};
+use crate::srclocs::push_stmt;
 use crate::visit::{derefs, stmt_places, successors, term_places, PlaceUse};
 
 /// Rewrites every pair; returns the indices of the functions that changed, which hold dead blocks
@@ -225,17 +226,29 @@ fn test_for_null(func: &mut Function, bi: usize, y: Operand, no: BlockId) {
     let nonnull = Local(func.locals.len() as u32);
     func.locals.push(LocalDecl::new(Ty::Bool, None));
     let call = BlockId(func.blocks.len() as u32);
-    let block = &mut func.blocks[bi];
-    block.stmts.push(Stmt::Assign(
-        Place::local(nonnull),
-        Rvalue::Binary(BinOp::Ne, y, Operand::Const(Const::Int(0), Ty::Ptr)),
-    ));
+    // The test and the call are the source's first `fits`: all of it has the call's location.
+    let at = func
+        .locs
+        .get(bi)
+        .and_then(|locs| locs.last().copied().flatten());
+    push_stmt(
+        func,
+        bi,
+        Stmt::Assign(
+            Place::local(nonnull),
+            Rvalue::Binary(BinOp::Ne, y, Operand::Const(Const::Int(0), Ty::Ptr)),
+        ),
+        at,
+    );
     let branch = Terminator::Branch {
         cond: Operand::Copy(Place::local(nonnull)),
         then: call,
         els: no,
     };
-    let term = std::mem::replace(&mut block.term, branch);
+    let term = std::mem::replace(&mut func.blocks[bi].term, branch);
+    if !func.locs.is_empty() {
+        func.locs.push(vec![at]);
+    }
     func.blocks.push(BasicBlock {
         stmts: vec![],
         term,

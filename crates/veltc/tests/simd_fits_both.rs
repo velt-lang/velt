@@ -124,6 +124,59 @@ fn cranelift_agrees_at_the_edges() {
     runs_as_the_golden_says("cranelift", "simd_fits_pair");
 }
 
+/// `--release -g` keeps source locations through the optimizer, so the block the pass adds for the
+/// null test has to keep `Function::locs` in step: `simplify_cfg` reorders both.
+fn builds_with_locations(backend: &str, name: &str) {
+    let root = root();
+    runtime_support::build_native_runtime(&root);
+    let work = work_dir::work_dir(&root, "golden-work-fits-both-g").join(backend);
+    std::fs::create_dir_all(&work).expect("work dir");
+    let f = golden(&root, name);
+    let exe = work.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
+    let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["build", "--release", "-g", "--backend", backend, "-o"])
+        .arg(&exe)
+        .arg(&f)
+        .current_dir(&work)
+        .output()
+        .expect("run velt");
+    assert!(
+        o.status.success(),
+        "{name} with {backend}: {:?}\n{}",
+        o.status,
+        String::from_utf8_lossy(&o.stderr)
+    );
+    let ran = crate::no_window::command(&exe)
+        .current_dir(&work)
+        .output()
+        .expect("run the program");
+    let want = std::fs::read_to_string(f.with_extension("out"))
+        .expect(".out")
+        .replace("\r\n", "\n");
+    let got = String::from_utf8_lossy(&ran.stdout).replace("\r\n", "\n");
+    assert_eq!(got, want, "{name} with {backend}, built with -g");
+}
+
+#[test]
+fn llvm_builds_the_pairs_with_locations() {
+    if !velt_codegen_llvm::available() {
+        eprintln!("note: clang not available; skipping the LLVM run");
+        return;
+    }
+    builds_with_locations("llvm", "simd_fits_pair");
+    for &name in NULL_SECOND {
+        builds_with_locations("llvm", name);
+    }
+}
+
+#[test]
+fn cranelift_builds_the_pairs_with_locations() {
+    builds_with_locations("cranelift", "simd_fits_pair");
+    for &name in NULL_SECOND {
+        builds_with_locations("cranelift", name);
+    }
+}
+
 #[test]
 fn llvm_reads_no_null_second_array() {
     if !velt_codegen_llvm::available() {
