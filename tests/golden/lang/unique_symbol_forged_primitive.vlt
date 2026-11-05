@@ -1,0 +1,18 @@
+// A union narrowed by `x === K` reads the other members without looking at the value's slot, so a
+// symbol that is not `K` must not get past the test. Here the union's other member is a `string`,
+// and the value comes from an `any` array. Node stops here too, with a TypeError that
+// `x.toUpperCase` is not a function; a thrown TypeError with another message is the accepted
+// difference.
+const K = Symbol("k");
+
+type S = string | typeof K;
+
+function use(x: S): string {
+  return x === K ? "k" : x.toUpperCase();
+}
+
+const a: any = ["a", K, Symbol("z")];
+const t: S[] = a;
+for (const x of t) {
+  console.log(use(x));
+}

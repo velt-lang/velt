@@ -1,0 +1,18 @@
+// A union narrowed by `x === K` reads the other members without looking at the value's slot, so a
+// symbol that is not `K` must not get past the test. Here the union's other member is an object
+// with a type parameter in a field. Node stops here too, with a TypeError on `undefined`; a thrown
+// TypeError with another message is the accepted difference.
+const K = Symbol("k");
+
+type M<T> = { v: T[] } | typeof K;
+
+function c<T>(x: any): T {
+  return x as T;
+}
+
+function size<T>(x: M<T>): number {
+  return x === K ? -1 : x.v.length;
+}
+
+console.log(size<number>(K), size<number>({ v: [1] }));
+console.log(size<number>(c<M<number>>(Symbol("z"))));

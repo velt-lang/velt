@@ -1,0 +1,10 @@
+// `l as S[]` of an array of plain symbols: a view would read the elements as `S` without looking
+// for `K`. TypeScript allows the assertion; here it is refused, with the copy that checks each
+// element as the fix (#923). Node prints 1.
+const K = Symbol("k");
+
+type S = { p: string } | typeof K;
+type L = { p: string } | symbol;
+const l: L[] = [Symbol("z")];
+const s = l as S[];
+console.log(s.length);

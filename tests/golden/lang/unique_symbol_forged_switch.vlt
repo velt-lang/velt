@@ -1,0 +1,23 @@
+// A union narrowed by `x === K` reads the other members without looking at the value's slot, so a
+// symbol that is not `K` must not get past the test. Here `case K` and `default` take the place of
+// the test, the value from a type parameter's instance. Node stops here too, with a TypeError on
+// `undefined`; a thrown TypeError with another message is the accepted difference.
+const K = Symbol("k");
+
+type S = { p: string } | typeof K;
+
+function c<T>(x: any): T {
+  return x as T;
+}
+
+function pick(x: S): string {
+  switch (x) {
+    case K:
+      return "k";
+    default:
+      return x.p.toUpperCase();
+  }
+}
+
+console.log(pick(c<S>(K)), pick(c<S>({ p: "a" })));
+console.log(pick(c<S>(Symbol("z"))));

@@ -104,6 +104,39 @@ impl Ctx<'_> {
     }
 }
 
+impl Ctx<'_> {
+    /// Does `t` hold a `unique symbol` type (`unique`) or a plain `symbol`: itself, or in its
+    /// elements, members or fields?
+    pub(crate) fn holds_symbol(&mut self, t: TyId, unique: bool, depth: u32) -> bool {
+        if self.unique_symbols.is_empty() || depth > 4 {
+            return false;
+        }
+        let found = match unique {
+            true => self.unique_symbols.values().any(|&u| u == t),
+            false => matches!(self.ty.kind(t), TyKind::Symbol),
+        };
+        if found {
+            return true;
+        }
+        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
+            TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => vec![e],
+            TyKind::Promise(e, _) => vec![e],
+            TyKind::Map(k, v) => vec![k, v],
+            TyKind::Tuple(ts) => ts,
+            _ => match self.union_members(t) {
+                Some(ms) => ms,
+                None if self.is_object_type(t) => {
+                    self.public_fields(t).iter().map(|f| f.ty).collect()
+                }
+                None => vec![],
+            },
+        };
+        parts
+            .into_iter()
+            .any(|p| self.holds_symbol(p, unique, depth + 1))
+    }
+}
+
 /// Where a `unique symbol` type is in another type.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) enum UniqueAt {

@@ -1,0 +1,62 @@
+// `x === K` stops on a symbol that no member of the union can hold; a member that holds other
+// symbols (`symbol`, a type parameter) has room for it, and nothing stops. Values that are one
+// of the union's constants pass through the conversions that don't see the brand. As in Node.
+const K = Symbol("k");
+const L = Symbol("l");
+
+type S = { p: string } | typeof K;
+type Roomy = { p: string } | symbol | typeof K;
+type Two = { p: string } | typeof K | typeof L;
+
+function c<T>(x: any): T {
+  return x as T;
+}
+
+function roomy(x: Roomy): string {
+  if (x === K) {
+    return "k";
+  }
+  return typeof x === "symbol" ? `symbol ${x.description}` : x.p;
+}
+
+console.log(roomy(K), roomy(Symbol("z")), roomy({ p: "a" }));
+
+function orElse<T>(x: T | typeof K, d: T): T {
+  return x === K ? d : x;
+}
+
+console.log(orElse<string>(K, "d"), orElse<string>("a", "d"));
+console.log(
+  orElse<symbol>(Symbol("z"), Symbol("d")).description,
+  orElse<symbol>(K, Symbol("d")).description,
+);
+
+function shown<T>(x: T | typeof K): string {
+  switch (x) {
+    case K:
+      return "k";
+    default:
+      return String(x);
+  }
+}
+
+console.log(shown<symbol>(c<symbol | typeof K>(Symbol("y"))), shown<symbol>(K), shown<string>("s"));
+
+function two(x: Two): string {
+  switch (x) {
+    case K:
+      return "k";
+    case L:
+      return "l";
+    default:
+      return x.p;
+  }
+}
+
+console.log(two(c<Two>(K)), two(c<Two>(L)), two({ p: "a" }));
+console.log(c<Two>(L) === K, c<Two>(K) === L);
+
+const a: any = [K, { p: "a" }];
+const t: S[] = a;
+console.log(t.map((x) => (x === K ? "k" : x.p)).join());
+console.log(t.filter((x) => x !== K).length, t.includes(K), t.indexOf(K));

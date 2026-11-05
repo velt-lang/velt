@@ -1,0 +1,8 @@
+// The same with a primitive for the union's other member: `(string | symbol)[]` as
+// `(string | typeof K)[]` is refused (#923). Node prints 1.
+const K = Symbol("k");
+
+type S = string | typeof K;
+const l: (string | symbol)[] = [Symbol("z")];
+const s = l as S[];
+console.log(s.length);

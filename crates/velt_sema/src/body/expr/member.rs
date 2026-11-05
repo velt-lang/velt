@@ -693,6 +693,10 @@ impl FnCx<'_, '_> {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
+        // `xs as (typeof K)[]`: nothing below looks for `K` in each element.
+        if self.array_narrows_to_unique(inner.ty, target).is_some() {
+            return Err(inner);
+        }
         // `x as object` of an unbounded `T` (issue #926): checked at run time.
         self.object_view_cast(inner, target, span)
             .or_else(|h| self.try_coerce(h, target))

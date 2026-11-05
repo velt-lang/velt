@@ -367,7 +367,7 @@ impl FnCx<'_, '_> {
         };
         let l = self.new_local("<case>", u, false, span, LocalKind::Bind);
         let read = self.mk(hir::ExprKind::Local(l, mode), u, span);
-        let guard = self.is_unique_symbol(read, d);
+        let guard = self.unique_member_guard(read, d, sty);
         let bind = self.pat(P::Binding(l, mode), u, span);
         let variant = P::Variant {
             def,

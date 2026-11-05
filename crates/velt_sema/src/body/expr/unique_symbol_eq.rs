@@ -4,7 +4,6 @@
 use velt_common::Span;
 use velt_syntax::ast;
 
-use super::callback::synth;
 use super::type_tests::LitEq;
 use crate::body::narrow::Fact;
 use crate::body::{FnCx, LocalKind, Want};
@@ -33,7 +32,7 @@ impl FnCx<'_, '_> {
         let (k_e, other_e) = if k_first { (lhs, rhs) } else { (rhs, lhs) };
         let other = self.type_test_operand(other_e);
         if let Some(UniqueAt::Member(v)) = self.cx.unique_symbol_in(other.ty, d) {
-            let test = self.unique_member_test(other, v, k_e, span);
+            let test = self.unique_member_test(other, v, (d, k_e), span);
             return Some(LitEq::Done(self.negated(test, negate, span)));
         }
         let other = self.unbrand(other);
@@ -48,11 +47,13 @@ impl FnCx<'_, '_> {
 impl FnCx<'_, '_> {
     /// `match (s) { <member v>(#sym) if #sym === K => true, _ => false }`: the value is
     /// compared too, since two `unique symbol` members are one `symbol` member once lowered.
+    /// The guard stops on a symbol none of the union's constants is
+    /// ([`Self::unique_member_guard`]).
     fn unique_member_test(
         &mut self,
         s: hir::Expr,
         v: u32,
-        k_e: &ast::Expr,
+        (d, k_e): (DefId, &ast::Expr),
         span: Span,
     ) -> hir::Expr {
         let inner = self.cx.ty.core(s.ty).unwrap_or(s.ty);
@@ -62,20 +63,11 @@ impl FnCx<'_, '_> {
             return self.error_expr(span);
         };
         let u = members[v as usize];
-        self.push_scope();
-        let name = format!("#sym{}", self.f.locals.len());
-        let l = self.new_local(&name, u, false, span, LocalKind::Temp);
-        if let Some(scope) = self.f.scopes.last_mut() {
-            scope.names.insert(name.clone(), l);
-        }
-        let ident = ast::Ident { name, span };
-        let eq = ast::ExprKind::Binary {
-            op: ast::BinaryOp::StrictEq,
-            lhs: Box::new(synth(ast::ExprKind::Ident(ident), span)),
-            rhs: Box::new(k_e.clone()),
-        };
-        let guard = self.expr(&synth(eq, span), None, Want::Borrow);
-        self.pop_scope();
+        // Checked as a value too, so the constant counts as used (captures, editors).
+        self.expr(k_e, None, Want::Borrow);
+        let l = self.new_local("<unique symbol>", u, false, span, LocalKind::Bind);
+        let read = self.mk(H::Local(l, UseMode::Copy), u, span);
+        let guard = self.unique_member_guard(read, d, s.ty);
         let bind = self.pat(P::Binding(l, UseMode::Copy), u, span);
         let variant = P::Variant {
             def,
@@ -112,8 +104,117 @@ impl FnCx<'_, '_> {
         self.mk(kind, b, span)
     }
 
+    /// The guard of the member `typeof K` of a union value of type `sty`, whose slot holds
+    /// `read`: is it `K`? The false branch of the test has no such member, and reads the value
+    /// as one of the others without looking at the slot, so a symbol that none of the union's
+    /// constants is stops here with a `TypeError`. It can come from a conversion that does not
+    /// see the brand (an `any` to an array of the union, a type parameter's instance). A
+    /// member that can hold another symbol (`symbol`) has room for it, and so has a type
+    /// parameter whose instance can (`Self::unless_param_member`).
+    pub(crate) fn unique_member_guard(
+        &mut self,
+        read: hir::Expr,
+        d: DefId,
+        sty: TyId,
+    ) -> hir::Expr {
+        let span = read.span;
+        let same = self.is_unique_symbol(read.clone(), d);
+        let inner = self.cx.ty.core(sty).unwrap_or(sty);
+        let members = self.cx.union_members(inner).unwrap_or_default();
+        if members.iter().any(|&m| self.member_holds_symbols(m)) {
+            return same;
+        }
+        let name = self.cx.display(sty);
+        let msg = self.str_lit(&format!("TypeError: the value is not `{name}`"), span);
+        let never = self.cx.ty.never;
+        let mut other = self.intrinsic(Intrinsic::Panic, vec![msg], never, span);
+        other = self.unless_param_member(read.clone(), inner, other);
+        let b = self.cx.ty.bool_;
+        let lit = |x: bool| hir::Expr {
+            kind: H::Lit(hir::Lit::Bool(x)),
+            ty: b,
+            span,
+        };
+        let others: Vec<DefId> = (members.iter())
+            .filter_map(|&m| self.unique_symbol_of(m))
+            .filter(|&o| o != d)
+            .collect();
+        for o in others {
+            let cond = self.is_unique_symbol(read.clone(), o);
+            let kind = H::If {
+                cond: Box::new(cond),
+                then: Box::new(lit(false)),
+                els: Box::new(other),
+            };
+            other = self.mk(kind, b, span);
+        }
+        let kind = H::If {
+            cond: Box::new(same),
+            then: Box::new(lit(true)),
+            els: Box::new(other),
+        };
+        self.mk(kind, b, span)
+    }
+
+    /// Can union member `m` hold a symbol that is not a constant's `unique symbol`, whatever
+    /// the type arguments are?
+    fn member_holds_symbols(&mut self, m: TyId) -> bool {
+        if self.unique_symbol_of(m).is_some() || matches!(self.cx.ty.kind(m), TyKind::Param(_)) {
+            return false;
+        }
+        let symbol = self.cx.ty.intern(TyKind::Symbol);
+        m == symbol
+            || self.cx.brand_base(m) == Some(symbol)
+            || self.cx.dynamic(m).is_some()
+            || self.cx.deferred_part(m)
+    }
+
+    /// `fail`, unless the union `inner` has a type parameter member whose slot holds a symbol
+    /// in this instance (`T | typeof K` at `symbol`, the two one member once lowered): then
+    /// `false`, as the value is that member. `T` at an object type has its own slot.
+    fn unless_param_member(&mut self, read: hir::Expr, inner: TyId, fail: hir::Expr) -> hir::Expr {
+        let span = read.span;
+        let members = self.cx.union_members(inner).unwrap_or_default();
+        let params: Vec<usize> = (0..members.len())
+            .filter(|&i| matches!(self.cx.ty.kind(members[i]), TyKind::Param(_)))
+            .collect();
+        let Some((def, _)) = self.cx.union_def(inner).filter(|_| !params.is_empty()) else {
+            return fail;
+        };
+        let b = self.cx.ty.bool_;
+        let mut arms = vec![];
+        for v in params {
+            let args = vec![self.pat(P::Wildcard, members[v], span)];
+            let variant = P::Variant {
+                def,
+                variant: v as u32,
+                args,
+            };
+            arms.push(hir::Arm {
+                pat: self.pat(variant, inner, span),
+                guard: None,
+                body: hir::Expr {
+                    kind: H::Lit(hir::Lit::Bool(false)),
+                    ty: b,
+                    span,
+                },
+            });
+        }
+        arms.push(hir::Arm {
+            pat: self.pat(P::Wildcard, inner, span),
+            guard: None,
+            body: fail,
+        });
+        let kind = H::Match {
+            scrutinee: Box::new(self.coerce(read, inner)),
+            arms,
+        };
+        self.mk(kind, b, span)
+    }
+
     /// Facts of `x === K` on a union local `x` with the member `typeof K`: that member when
-    /// true, the others when false (only `K` has that type).
+    /// true, the others when false (only `K` has that type, and the test stops on another
+    /// symbol, [`Self::unique_member_guard`]).
     pub(crate) fn unique_symbol_facts(
         &mut self,
         lhs: &ast::Expr,

@@ -1,0 +1,9 @@
+// The same for an element type with the symbols inside: `{ v: symbol }[]` as
+// `{ v: typeof K }[]` is refused (#923). TypeScript allows it, and Node prints 1.
+const K = Symbol("k");
+
+type Plain = { v: symbol };
+type Branded = { v: typeof K };
+const l: Plain[] = [{ v: Symbol("z") }];
+const s = l as Branded[];
+console.log(s.length);
