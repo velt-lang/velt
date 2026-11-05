@@ -80,10 +80,21 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           fast-linker: "false"
+          code-cache: "false"
+      # Every golden's release object, for the merge queue and pull requests (only a run on `main`
+      # saves what other branches can restore). From an empty cache, so entries no program uses
+      # any more go with it; the limit keeps them all (.cargo/config.toml has 500M for local builds).
       - run: scripts/check-all.sh
+        env:
+          VELT_BUILD_CACHE_SIZE: 4G
       - name: disk used by the gate
         if: ${{ !cancelled() }}
         run: df -h /
+      - uses: actions/cache/save@v4
+        if: success() && github.ref == 'refs/heads/main'
+        with:
+          path: target/velt-build-cache/v*/llvm
+          key: velt-clang-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
       # Node is the oracle: the hand-written corpus and short generated runs must agree with it.
       # All three run even when one finds a mismatch (each finds different bugs); the step fails
       # at the end if any did.
@@ -559,4 +570,10 @@ jobs:
                 ;;
             esac
           done < "$RUNNER_TEMP/caches.tsv"
+          # Clang's objects: only the newest stays; each is a whole copy.
+          grep -P '^\d+\tvelt-clang-objects-' "$RUNNER_TEMP/caches.tsv" | sort -t$'\t' -k4 -r | tail -n +2 |
+            while IFS=$'\t' read -r id key size created; do
+              echo "delete  $key ($((size >> 20)) MiB)"
+              [ -n "$dry" ] || gh cache delete "$id"
+            done
           echo "### cache-prune: $((freed >> 20)) MiB of superseded rust-cache entries${dry:+ (dry run)}" >> "$GITHUB_STEP_SUMMARY"
