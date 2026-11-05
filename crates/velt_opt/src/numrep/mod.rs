@@ -19,6 +19,9 @@
 //!   where `-0` cannot be told from 0, becomes an `i32` or `i64` local computed with integer
 //!   operations (an `i32` that feeds a 64-bit one becomes 64-bit too). `i64` locals holding only
 //!   32-bit values become `i32` (step 1). Other reads convert back exactly.
+//! - **Integer comparisons** (`int_compare`, last): an integer converted to a double and compared
+//!   with a double that is whole and within ±2^53 (an array length) is compared as an integer,
+//!   which keeps a loop's trip count computable for LLVM.
 //! - **Guarded sums** (`int32`): ToInt32 of a sum the facts cannot bound adds as integers
 //!   behind a cheap range check.
 //! - **Arrays** (`arrays`, step 5): the elements of a `number[]` that never leaves the function
@@ -33,6 +36,7 @@ mod counter;
 mod fact;
 mod flow;
 mod int32;
+mod int_compare;
 mod liveness;
 mod narrow;
 mod params;
@@ -174,6 +178,8 @@ pub(crate) fn run(env: &Env, func: &mut Function) -> bool {
     }
     changed |= arrays::choose(env, func, &elements, |f| narrow_locals(env, f, &elements));
     changed |= int32::guarded_sums(func);
+    // Last: only the comparisons narrowing left in doubles.
+    changed |= int_compare::run(env, func);
     changed
 }
 

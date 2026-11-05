@@ -95,7 +95,8 @@ fn goldens_split_into_codegen_units() {
 /// `clz32`) and the string helpers (`@velt.str_drop`, `str_eq`, `str_cmp`, `str_slice`,
 /// `str_hash`: keys hashed inline and by the runtime must agree), with `charCodeAt` and the `Map` probes
 /// `velt_opt` merges alongside, and the f16/bf16 square root (`@velt.sqrt_f32` and the
-/// narrowing helpers), and the vector sums (`sumWide()`: `psadbw` and `pmaddwd` on x86). Each
+/// narrowing helpers), the vector sums (`sumWide()`: `psadbw` and `pmaddwd` on x86), and integers
+/// compared with whole doubles (`numrep`'s `int_compare`, with `bitand`/`bitor` on `bool`). Each
 /// helper is defined in every codegen unit that uses it, so each golden also runs split into two
 /// units.
 #[test]
@@ -119,6 +120,7 @@ fn inline_helpers_with_llvm() {
         "lang/map_probe_reuse",
         "lang/f16_sqrt",
         "std/simd_sum",
+        "lang/int_compare_bounds",
     ]
     .iter()
     .map(|name| root.join("tests/golden").join(format!("{name}.vlt")))

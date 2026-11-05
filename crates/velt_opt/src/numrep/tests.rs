@@ -3,6 +3,8 @@
 //! after the pass (`random.rs`).
 
 mod context;
+mod int_compare;
+mod int_compare_read_back;
 mod intrinsics;
 mod random;
 
