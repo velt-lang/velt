@@ -1,7 +1,8 @@
 //! Panic and uncaught-error messages name their source location (stderr; the goldens under
-//! `tests/golden/lang/panic_*` check stdout and exit codes). Each program runs in debug and
-//! release mode, plus release with the LLVM backend when clang is installed. An uncaught error is
-//! reported once.
+//! `tests/golden/lang/panic_*` check stdout and exit codes). Each program runs in debug mode and
+//! in release mode with each backend: Cranelift, and LLVM when clang is installed (the backend
+//! `--release` picks then, so a plain `--release` run would only repeat that one). An uncaught
+//! error is reported once.
 
 use std::path::{Path, PathBuf};
 
@@ -106,7 +107,7 @@ const CASES: &[(&str, i32, &str)] = &[
 fn panics_report_their_source_location() {
     let root = root();
     runtime_support::build_native_runtime(&root);
-    let mut modes: Vec<&[&str]> = vec![&[], &["--release"]];
+    let mut modes: Vec<&[&str]> = vec![&[], &["--release", "--backend", "cranelift"]];
     if velt_codegen_llvm::available() {
         modes.push(&["--release", "--backend", "llvm"]);
     }
