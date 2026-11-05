@@ -58,6 +58,7 @@ mod import_meta;
 mod jsx;
 mod locate;
 mod moved;
+mod old_extension;
 mod paths;
 mod pick;
 mod resolve;
@@ -751,32 +752,6 @@ impl Loader<'_, '_> {
         }
         let file = self.opts.packages?.path_alias(importer, spec)?;
         Some(vpm::relpath::normalize(&file))
-    }
-
-    /// A file with the old extension: named when it is the user's to rename, and once per package
-    /// when it is a dependency's, which its user cannot fix.
-    fn warn_old_extension(&mut self, file: velt_common::FileId, path: &Path, origin: &Origin) {
-        let old = vpm::sources::OLD_EXTENSION;
-        if path.extension().is_none_or(|e| e != old) {
-            return;
-        }
-        let message = match origin {
-            Origin::Std(_) => return,
-            Origin::Root(_) => {
-                format!("`.{old}` files are read for one more release: rename this one to `.velt`")
-            }
-            Origin::Package { name, .. } => {
-                if !self.warned_old_extension.insert(name.clone()) {
-                    return;
-                }
-                format!(
-                    "package `{name}` has `.{old}` files, read for one more release: its author \
-                     must rename them to `.velt`"
-                )
-            }
-        };
-        self.diags
-            .push(Diagnostic::warning(message, Span::new(file, 0, 0)));
     }
 
     fn error(&mut self, msg: String, notes: Vec<String>, span: Span) -> Option<usize> {
