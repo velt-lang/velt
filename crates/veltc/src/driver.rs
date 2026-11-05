@@ -341,16 +341,16 @@ fn sema_stage(
             .filter(|m| m.is_std)
             .map(|m| m.file)
             .collect();
-        crate::native::check_declares(
+        let checked = crate::native::check_declares(
             hir,
             &sess.sm,
             std_root.as_deref(),
             opts.packages.as_ref(),
             &std_files,
             &opts.target(),
-            &mut sess.native,
             &mut sess.diagnostics,
         );
+        crate::native::note_checked(&mut sess.native, opts.packages.as_ref(), &checked);
         sess.c_libs = crate::native::c_links(hir, &sess.sm, opts.packages.as_ref(), &opts.target());
     }
     let _ = t;

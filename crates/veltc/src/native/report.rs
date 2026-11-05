@@ -128,10 +128,10 @@ pub(super) fn native_packages(
 
 /// Say which of `packages`' C libraries were checked against their headers (`checked`, by the
 /// roots in `graph`): only those may be listed as checked.
-pub(super) fn note_checked(
+pub fn note_checked(
     packages: &mut [NativePackage],
     graph: Option<&PackageGraph>,
-    checked: &super::headers::Checked,
+    checked: &super::CChecked,
 ) {
     let Some(graph) = graph else { return };
     for package in graph.packages() {
