@@ -34,6 +34,14 @@ const PIPELINE: &[&str] = &[
     "veltc",
 ];
 
+/// The code that describes variables for debuggers: a change checks every golden with it.
+const DEBUG_VARS_CODE: &[&str] = &[
+    "crates/velt_vir/src/lower/debug_vars.rs",
+    "crates/velt_vir/src/verify/debug.rs",
+    "crates/velt_vir/src/vir/debug.rs",
+    "crates/veltc/tests/debug_vars.rs",
+];
+
 /// Crates that don't change compiled programs, with the `veltc` integration test binaries
 /// (crates/veltc/tests/<name>.rs) that exercise them. `veltc`'s unit tests always run with them.
 const TOOLING: &[(&str, &[&str])] = &[
@@ -211,6 +219,9 @@ pub struct Plan {
     pub sweep: Sweep,
     /// The files velt_fmt's corpus tests format, if they run.
     pub fmt_corpus: Sweep,
+    /// `every_golden_compiles_with_variables` (crates/veltc/tests/debug_vars.rs) checks every
+    /// golden, not its sample: the code describing variables changed ([`DEBUG_VARS_CODE`]).
+    pub debug_vars_all: bool,
     /// The WebAssembly goldens (`veltc::wasm_goldens`, every golden built twice more and run
     /// under wasmtime: about half of the test time) run with all of `veltc`'s tests. A change
     /// runs them only when it touches WebAssembly code ([`WASM_TOO`]); a changed golden alone
@@ -244,6 +255,7 @@ impl Plan {
             // (`VELT_ROBUSTNESS`, as `cargo xtask affected` sets it for the queue).
             sweep: Sweep::Default,
             fmt_corpus: Sweep::Default,
+            debug_vars_all: false,
             wasm: true,
         }
     }
@@ -254,6 +266,7 @@ impl Plan {
         Plan {
             sweep: Sweep::Full,
             fmt_corpus: Sweep::Full,
+            debug_vars_all: true,
             ..Plan::everything(reason)
         }
     }
@@ -276,6 +289,7 @@ impl Plan {
             vscode: false,
             sweep: Sweep::Default,
             fmt_corpus: Sweep::Default,
+            debug_vars_all: false,
             wasm: false,
         }
     }
@@ -292,6 +306,9 @@ impl Plan {
         plan.sweep = Sweep::for_changes(graph, paths, comment_only, "velt_syntax", PARSER_FILES);
         plan.fmt_corpus =
             Sweep::for_changes(graph, paths, comment_only, "velt_fmt", FORMATTER_FILES);
+        plan.debug_vars_all = paths
+            .iter()
+            .any(|p| !comment_only.contains(p) && DEBUG_VARS_CODE.contains(&p.as_str()));
         plan.wasm = paths.iter().any(|p| is_wasm(p));
         let mut changed_crates = BTreeSet::new();
         let mut comment_crates = BTreeSet::new();
@@ -307,6 +324,7 @@ impl Plan {
                     return Plan {
                         sweep: plan.sweep,
                         fmt_corpus: plan.fmt_corpus,
+                        debug_vars_all: plan.debug_vars_all,
                         macos: os::macos_reason(&code),
                         after_merge: os::after_merge_reason(paths),
                         // The WebAssembly goldens stay with the nightly unless the change builds
@@ -554,6 +572,9 @@ impl Plan {
             self.fmt_corpus
                 .env("VELT_FMT_CORPUS", "VELT_FMT_CORPUS_FILES", false),
         );
+        if self.debug_vars_all {
+            env.push(("VELT_DEBUG_VARS", "all".to_string()));
+        }
         env
     }
 
@@ -596,6 +617,14 @@ impl Plan {
         out.push_str(&format!(
             "  formatter corpus: {}\n",
             self.fmt_corpus.describe("every file", "every file")
+        ));
+        out.push_str(&format!(
+            "  goldens with variables described: {}\n",
+            if self.debug_vars_all {
+                "all"
+            } else {
+                "a sample"
+            }
         ));
         out.push_str(&format!(
             "  velt fmt --check std examples packages: {}\n",

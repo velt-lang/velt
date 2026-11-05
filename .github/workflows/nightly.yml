@@ -66,6 +66,8 @@ jobs:
       # The parser's robustness test cuts every golden at every character, not a sample
       # (crates/velt_syntax/tests/robustness.rs).
       VELT_ROBUSTNESS: full
+      # Every golden with variables described, not a sample (crates/veltc/tests/debug_vars.rs).
+      VELT_DEBUG_VARS: all
     steps:
       # The whole gate fills the runner's disk (2026-11-05: "No space left on device", which kills
       # the runner itself and leaves no log). Remove what the image carries and this job never uses.
