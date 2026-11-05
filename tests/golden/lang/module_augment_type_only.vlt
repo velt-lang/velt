@@ -1,0 +1,16 @@
+// Modules named only through `import type` in an augmentation aren't evaluated, by the augmenting
+// module or by the target that the members move to: neither module's message prints.
+import type * as Space from "./_augment_scope/loud_namespace";
+import type { Named } from "./_augment_scope/loud_named";
+import { base } from "./_augment_scope/quiet_target";
+import type { Augmented } from "./_augment_scope/quiet_target";
+
+declare module "./_augment_scope/quiet_target" {
+  interface Augmented {
+    l: Space.Loud;
+    m: Named;
+  }
+}
+
+const a: Augmented = { base, l: { l: 2 }, m: { m: 3 } };
+console.log(a.base, a.l.l, a.m.m);

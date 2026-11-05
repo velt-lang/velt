@@ -16,17 +16,45 @@ pub fn root() -> PathBuf {
 
 /// Every `.vlt` file under `tests/golden`, `std` and `fuzz/seeds` (whatever exists), plus the
 /// directories listed in `VELT_FMT_EXTRA_CORPUS` (separated like `PATH`), sorted.
+/// `VELT_FMT_CORPUS=changed` keeps the files in `VELT_FMT_CORPUS_FILES` (comma-separated paths
+/// relative to the workspace root) and the extra directories: `cargo xtask check` and the merge
+/// queue set it when the formatter and what it depends on didn't change, since it then gives
+/// every other file the answers it had.
 pub fn corpus() -> Vec<PathBuf> {
+    if std::env::var("VELT_FMT_CORPUS").is_ok_and(|v| v == "changed") {
+        let files = std::env::var("VELT_FMT_CORPUS_FILES").unwrap_or_default();
+        let mut out = changed_files(&files);
+        out.extend(extra_corpus());
+        out.sort();
+        return out;
+    }
     let mut out = vec![];
     for dir in ["tests/golden", "std", "fuzz/seeds"] {
         collect(&root().join(dir), &mut out);
     }
+    out.extend(extra_corpus());
+    out.sort();
+    out
+}
+
+/// The files of `list` (comma-separated, relative to the workspace root) that still exist: a
+/// change may delete one.
+pub fn changed_files(list: &str) -> Vec<PathBuf> {
+    list.split(',')
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .map(|f| root().join(f))
+        .filter(|f| f.is_file())
+        .collect()
+}
+
+fn extra_corpus() -> Vec<PathBuf> {
+    let mut out = vec![];
     if let Some(extra) = std::env::var_os("VELT_FMT_EXTRA_CORPUS") {
         for dir in std::env::split_paths(&extra) {
             collect(&dir, &mut out);
         }
     }
-    out.sort();
     out
 }
 

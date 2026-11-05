@@ -1,0 +1,83 @@
+// check: no leaks
+// An `any` holding a string or a number whose box other copies share (#2057) reaches a task on
+// another worker as a value of its own: the box's count is not atomic, so a shared one is copied
+// on the way and the copies left here keep theirs. The consumers are pinned to a worker other
+// than this one (task placement, which selects the per-core scheduler), so the values do cross
+// threads wherever there is more than one worker.
+import { channel, Channel } from "velt/sync";
+import { currentWorker, workerCount } from "velt/task";
+
+// The values received, and the worker that received them.
+async function consume(ch: Channel<any>): Promise<[string, i64]> {
+  let out = "";
+  for await (const v of ch) {
+    const kept: any = v;
+    out += `${typeof kept}:${kept} `;
+  }
+  return [out, currentWorker()];
+}
+
+// Copies of `v` pushed and dropped again and again: every one of them changes the count of its box.
+function churn(v: any): i64 {
+  let n: i64 = 0;
+  for (let round = 0; round < 300; round++) {
+    const copies: any[] = [];
+    for (let i = 0; i < 100; i++) {
+      copies.push(v);
+    }
+    n += copies.length as i64;
+  }
+  return n;
+}
+
+async function churnEach(ch: Channel<any>, ack: Channel<bool>): Promise<i64> {
+  let n: i64 = 0;
+  for await (const v of ch) {
+    await ack.send(true);
+    n += churn(v);
+  }
+  return n;
+}
+
+async function main(): Promise<void> {
+  const here = currentWorker();
+  const other = (here + 1) % workerCount();
+  const text: any = "a string long enough to live on the heap, not inline";
+  const num: any = 4.25;
+  const ch = channel<any>(4);
+  const c = spawn(consume(ch), { worker: other });
+  const copies: any[] = [text, num, text];
+  await ch.send(text);
+  await ch.send(num);
+  await ch.send(copies[2]);
+  ch.close();
+  const [got, first] = await c;
+  console.log(got);
+  console.log(copies.length, copies[0] as string === text, (copies[1] as number) + 1);
+  const unique: any = "only one reference to this heap string, sent as it is";
+  const ch2 = channel<any>(1);
+  const d = spawn(consume(ch2), { worker: other });
+  await ch2.send(unique);
+  ch2.close();
+  const [gotUnique, second] = await d;
+  console.log(gotUnique);
+  // This side and the consumer change the counts at the same time: if the box sent were still
+  // the one kept here, counts would be lost, and a box leaked or freed while in use.
+  const ch3 = channel<any>(1);
+  const ack = channel<bool>(1);
+  const e = spawn(churnEach(ch3, ack), { worker: other });
+  let mine: i64 = 0;
+  for (let round = 0; round < 20; round++) {
+    // `sent` ends at the send, so nothing copies it on the way there: the box is still shared.
+    const sent: any = round % 2 == 0 ? text : num;
+    await ch3.send(sent);
+    await ack.receive();
+    mine += churn(round % 2 == 0 ? text : num);
+  }
+  ch3.close();
+  console.log(mine, await e);
+  // One worker (a single-core machine) has no other thread to cross to.
+  const crossed = workerCount() == 1 || (first != here && second != here);
+  console.log("consumers on another worker:", crossed);
+}
+main();

@@ -225,7 +225,7 @@ impl FnLower<'_, '_> {
         if !self.cx.needs_drop(ty) {
             return;
         }
-        if self.cx.kind(ty) == TyKind::Str {
+        if !self.cx.is_ph(ty) && self.cx.kind(ty) == TyKind::Str {
             return self.str_drop(place);
         }
         // A pointer in an object drops from a copy (`read_addr`): the object stays scalar.

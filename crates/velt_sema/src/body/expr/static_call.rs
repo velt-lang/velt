@@ -156,7 +156,7 @@ impl FnCx<'_, '_> {
         for (slot, a) in slots.iter_mut().zip(owner_args.into_iter().flatten()) {
             *slot = Some(a);
         }
-        self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
+        self.explicit_type_args(&mut slots, own, type_args, (&c.defaults, &c.params), span);
         let ck = self.check_call(&c, slots, args, exp, span);
         self.def_call(def, ck, span)
     }

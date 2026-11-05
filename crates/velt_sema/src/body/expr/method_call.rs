@@ -27,6 +27,26 @@ impl FnCx<'_, '_> {
             Ok(h) => return h,
             Err(recv) => recv,
         };
+        // `xs.reduce(f)` without an initial value: TypeScript's other overload, std's
+        // `[ARRAY_REDUCE_FIRST]` (array_nested.vlt), and the same for `reduceRight`.
+        let first = match prop.name.as_str() {
+            "reduce" => Some(velt_common::std_key!(array_reduce_first)),
+            "reduceRight" => Some(velt_common::std_key!(array_reduce_right_first)),
+            _ => None,
+        };
+        if let Some(first) = first.filter(|_| {
+            args.len() == 1 && type_args.is_empty() && self.cx.ty.array_elem(recv.ty).is_some()
+        }) {
+            let first = ast::Ident {
+                name: first.to_string(),
+                span: prop.span,
+            };
+            return self.method_call_on(recv, &first, type_args, args, exp, span);
+        }
+        let recv = match self.tuple_array_call(recv, prop, (type_args, args), exp, span) {
+            Ok(h) => return h,
+            Err(recv) => recv,
+        };
         let recv = match self.brand_tag_call(recv, prop, args, span) {
             Ok(h) => return h,
             Err(recv) => recv,
@@ -348,7 +368,7 @@ impl FnCx<'_, '_> {
         }
         let mut slots = slots;
         let own = slots.iter().filter(|s| s.is_none()).count();
-        self.explicit_type_args(&mut slots, own, type_args, &c.defaults, span);
+        self.explicit_type_args(&mut slots, own, type_args, (&c.defaults, &c.params), span);
         self.weak_key_args = self.weak_method(def);
         // A promise set into a `Map` (or pushed) whose type is a site (`throws::promise_sites`).
         let stored = self.stored_arg_site(&recv, &name, args);

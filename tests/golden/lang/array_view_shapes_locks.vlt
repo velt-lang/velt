@@ -1,0 +1,55 @@
+// check: no leaks
+// Array views (#1485) whose element types share code by shape (shape-sharing.md) beside types
+// that differ in what they hand to other threads or lock: a type made `shared` (transferred),
+// a class held by a `Mutex`, an `RwLock` whose values are in the lock set, a value passed to
+// `spawn`, and an object type holding an `Atomic`. Velt-only (`shared`, `Mutex`, `RwLock`,
+// `Atomic`, `spawn`), so it has no Node run.
+type A = { a: number; b: string };
+type B = { c: string; d: number };
+type St = { at: Atomic<u64>; k: u64 };
+type T = { x: u64; k: u64 };
+
+class P {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+class Q {
+  m: number;
+  constructor(m: number) {
+    this.m = m;
+  }
+}
+
+async function work(x: A): Promise<number> {
+  return x.a + x.b.length;
+}
+
+async function main() {
+  const s = shared({ a: 1, b: "x" } as A);
+  const ra: any = [{ a: 1, b: "x" }];
+  const rb: any = [{ c: "y", d: 2 }];
+  const va = ra as A[];
+  const vb = rb as B[];
+  console.log(s.a, va[0].a, vb[0].d);
+
+  const m = shared(new Mutex<P>(new P(3)));
+  const rp: any = [new P(1)];
+  const rq: any = [new Q(2)];
+  const vp = rp as P[];
+  const vq = rq as Q[];
+  console.log(m.with((p) => p.n), vp[0].n, vq[0].m);
+
+  const rw = shared(new RwLock<P[]>([new P(5)]));
+  vp.push(new P(7));
+  console.log(rw.read((xs) => xs[0].n), vp.length, rp.length);
+
+  const r = await spawn(work({ a: 1, b: "xy" }));
+  console.log(r, va.length);
+
+  const st: St = { at: new Atomic<u64>(5), k: 2 };
+  const rt: any = [{ x: 1, k: 2 }];
+  const vt = rt as T[];
+  console.log(st.at.load() + st.k, vt[0].x + vt[0].k);
+}

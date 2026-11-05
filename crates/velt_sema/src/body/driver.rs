@@ -204,12 +204,12 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
                     format!("`{}`", n.rsplit("::").next().unwrap_or(n))
                 })
                 .collect();
+            let what = match g.name.starts_with(crate::module_destructure::HIDDEN) {
+                true => "this destructuring declaration".to_string(),
+                false => format!("module constant `{}`", g.name),
+            };
             let msg = match chain.is_empty() {
-                false => format!(
-                    "module constant `{}` depends on itself through {}",
-                    g.name,
-                    chain.join(" -> ")
-                ),
+                false => format!("{what} depends on itself through {}", chain.join(" -> ")),
                 true => "module-level constant refers to itself".to_string(),
             };
             cx.err(msg, span);

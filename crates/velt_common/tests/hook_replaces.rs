@@ -225,10 +225,13 @@ fn every_replaced_extern_is_defined_by_the_runtime_or_deleted() {
             );
         }
     }
+    // An extern only std called is deleted with no hook replacing it, so the check above doesn't
+    // see it.
     for name in DELETED {
+        let def = format!("extern \"C\" fn {name}(");
         assert!(
-            names.contains(name),
-            "std_hooks::DELETED lists `{name}`, which no hook replaces"
+            !rt.iter().any(|(_, src)| src.contains(&def)),
+            "velt_rt defines `{name}`, but std_hooks::DELETED lists it"
         );
     }
 }

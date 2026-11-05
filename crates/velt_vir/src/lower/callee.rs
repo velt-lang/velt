@@ -18,7 +18,7 @@ use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
 impl super::Cx<'_> {
     /// Unify a (possibly generic) pattern type with a concrete type, binding `Param(i)`.
     pub(super) fn match_ty(&self, pat: TyId, ty: TyId, binds: &mut Vec<Option<TyId>>) -> bool {
-        match (self.types.kind(pat), self.types.kind(ty)) {
+        match (self.raw_kind(pat), self.raw_kind(ty)) {
             (TyKind::Param(n), _) => {
                 let n = *n as usize;
                 if binds.len() <= n {

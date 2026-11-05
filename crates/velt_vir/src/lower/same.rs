@@ -247,7 +247,7 @@ impl super::Cx<'_> {
 
     /// Is `t` an object type (compared by identity)?
     pub(super) fn is_object(&self, t: TyId) -> bool {
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             TyKind::Array(_) | TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_) => true,
             TyKind::Adt(d, _) => matches!(self.hir.def(*d), hir::Def::Adt(_)),
             _ => false,
@@ -257,7 +257,7 @@ impl super::Cx<'_> {
     /// Is `t` a type declared with `struct`, whose `Map` and `Set` keys compare and hash by
     /// content (`hir::AdtDef::declared_struct`)?
     pub(super) fn content_key(&self, t: TyId) -> bool {
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             TyKind::Adt(d, _) => {
                 matches!(self.hir.def(*d), hir::Def::Adt(a) if a.declared_struct)
             }
@@ -268,7 +268,7 @@ impl super::Cx<'_> {
     /// Is every value of `t` an object, never a primitive (a struct, class, object type,
     /// array, tuple, map or function type)? `Intrinsic::MayHoldPrimitive` is its negation.
     pub(super) fn object_only(&self, t: TyId) -> bool {
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             TyKind::Array(_)
             | TyKind::Map(..)
             | TyKind::Tuple(_)
@@ -287,7 +287,7 @@ impl super::Cx<'_> {
 
     pub(super) fn is_fn_or_dyn(&self, t: TyId) -> bool {
         matches!(
-            self.types.kind(t),
+            self.raw_kind(t),
             TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_)
         )
     }

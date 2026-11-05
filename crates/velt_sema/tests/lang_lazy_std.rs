@@ -275,6 +275,17 @@ fn a_decoder_checks_the_tape_only_for_a_type_with_a_json_value() {
     assert!(!unchecked(&value).contains(&tape.to_string()));
 }
 
+#[test]
+fn the_tuple_elements_methods_are_checked_only_for_a_tuple_method_call() {
+    // Both programs mention `.map`, which loads the module (std/prelude/global/tuple_elements.vlt).
+    let map = "std/lang/hooks/tuple_elements::TupleElements.map";
+    let array = "function main() {\n  console.log([1].map((x) => x + 1));\n}\n";
+    assert!(unchecked(&ok_src(array)).contains(&map.to_string()));
+    let tuple = "function main() {\n  const t: [number, number] = [1, 2];\n  \
+         console.log(t.map((x) => x + 1));\n}\n";
+    assert!(!unchecked(&ok_src(tuple)).contains(&map.to_string()));
+}
+
 /// An `extend` block on a number type and one on `string` in a lazy std module, with an error
 /// in one method, and a free function calling one of them.
 const PROBE_EXTEND: &str = "\

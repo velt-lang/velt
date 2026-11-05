@@ -67,7 +67,7 @@ impl FnCx<'_, '_> {
         };
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
-        self.explicit_type_args(&mut slots, n, type_args, &c.defaults, span);
+        self.explicit_type_args(&mut slots, n, type_args, (&c.defaults, &c.params), span);
         let ck = self.check_call(&c, slots, args, exp, span);
         if matches!(
             i,

@@ -101,7 +101,7 @@ impl Interp<'_> {
                 let path = self.str_text(a[0]);
                 self.read_file_into(&path, a[1]) as u64
             }
-            "velt_rt_err_code_name" => {
+            "test_err_code_name" => {
                 let name = match a[0] as u32 as i32 {
                     1 => "ENOENT",
                     7 => "ECONNREFUSED",

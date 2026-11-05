@@ -1,0 +1,33 @@
+// check: heap blocks at most 6
+// check: no leaks
+// Reading an `any` that holds a string, a number or a boolean as that type (`typeof` narrowing,
+// `as`) shares the value held instead of copying it into a new box (#2057): the loops allocate
+// nothing per pass (the blocks are the boxes of the `any` values).
+function lengthOf(x: any): number {
+  if (typeof x === "string") {
+    return x.length;
+  }
+  return -1;
+}
+
+const text: any = "a string long enough to live on the heap, not inline";
+const num: any = 1.5;
+const count: any = 3 as i64;
+const flag: any = true;
+let total = 0;
+let sum = 0;
+let ints: i64 = 0;
+let yes = 0;
+for (let i = 0; i < 1000; i++) {
+  total += lengthOf(text);
+  sum += num as number;
+  ints += count as i64;
+  if (flag as boolean) {
+    yes++;
+  }
+}
+console.log(total, sum, ints, yes);
+// Another type still takes the general path: a number read as a string is a `TypeError`.
+console.log(lengthOf(num), lengthOf(flag));
+const wide: any = 7 as i32;
+console.log((wide as number) + 0.5);

@@ -1,0 +1,19 @@
+effects start
+inner read
+eff empty
+eff unused
+eff two
+effects end
+cycle b
+cycle a
+> hello > unmounted
+velt 80 24 null
+1 3 4
+velt!
+eff after
+after 1 2 1 2
+😀 x a [ 'b', 'c' ] 7 8 key 1
+1 2 1 [ 'x', true ] 5 1
+10 2 { c: 3, d: 4 } 1 3 1
+2 2 1 a
+2 1 1 2

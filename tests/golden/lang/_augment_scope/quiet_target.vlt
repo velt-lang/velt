@@ -1,0 +1,5 @@
+console.log("target evaluated");
+export interface Augmented {
+  base: number;
+}
+export const base = 1;

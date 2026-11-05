@@ -192,6 +192,11 @@ jobs:
       # How the parser's robustness test cuts the goldens (`--full` below knows no changes).
       robustness: ${{ steps.plan.outputs.robustness }}
       robustness_files: ${{ steps.plan.outputs.robustness_files }}
+      # The same for the formatter's corpus.
+      fmt_corpus: ${{ steps.plan.outputs.fmt_corpus }}
+      fmt_corpus_files: ${{ steps.plan.outputs.fmt_corpus_files }}
+      # `all` when the code describing variables changed: every golden, not the sample.
+      debug_vars: ${{ steps.plan.outputs.debug_vars }}
       # `skip` unless the change touches WebAssembly code.
       wasm_goldens: ${{ steps.plan.outputs.wasm_goldens }}
       # The golden shards and the WebAssembly goldens' shards of each OS (crates/xtask/src/os.rs).
@@ -252,6 +257,9 @@ jobs:
     env:
       VELT_ROBUSTNESS: ${{ needs.queue-plan.outputs.robustness }}
       VELT_ROBUSTNESS_FILES: ${{ needs.queue-plan.outputs.robustness_files }}
+      VELT_FMT_CORPUS: ${{ needs.queue-plan.outputs.fmt_corpus }}
+      VELT_FMT_CORPUS_FILES: ${{ needs.queue-plan.outputs.fmt_corpus_files }}
+      VELT_DEBUG_VARS: ${{ needs.queue-plan.outputs.debug_vars }}
       # The WebAssembly goldens run in shards of their own (`queue-golden`).
       VELT_WASM_GOLDENS: skip
     # The slowest job (Windows) takes about 50 minutes on a slow runner (2026-11-02: two queue

@@ -67,7 +67,16 @@ other goldens where each token starts or ends plus a fixed sample of characters.
 `VELT_ROBUSTNESS=full` cuts every golden at every character (about eight times the work): the
 nightly gate sets it, and so does `cargo xtask check` (and the merge queue, and the label `ci:full`)
 when velt_syntax, a crate it depends on, `rust-toolchain.toml` or the root `Cargo.toml` changed,
-or when the changes can't be told.
+or when the changes can't be told. For any other change `cargo xtask check` and the merge queue set
+`VELT_ROBUSTNESS=changed`, which cuts only the kitchen sink and the changed goldens: the same parser
+gives the other goldens the same answers. velt_fmt's corpus tests work the same way
+(`VELT_FMT_CORPUS=changed`, `VELT_FMT_CORPUS_FILES`): the changed `.vlt` files unless the formatter or
+what it depends on changed. The nightly gate goes through every file.
+
+`every_golden_compiles_with_variables` (`veltc::debug_vars`) lowers goldens with variables described
+and verifies them. Without `VELT_DEBUG_VARS=all` it checks one golden in 16, by a hash of the path,
+two by name, and the goldens selected by `VELT_GOLDEN`; the nightly gate sets it, and so do
+`cargo xtask check` and the merge queue when the code describing variables changes.
 
 The quality gate is `cargo xtask check` (crates/xtask), with two ways to run it:
 

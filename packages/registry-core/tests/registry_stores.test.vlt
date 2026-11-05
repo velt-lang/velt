@@ -10,6 +10,7 @@ import {
   MemoryBlobStore,
   MemoryMetadataDb,
   MemoryPublishLock,
+  normalizedName,
   PackageIndex,
   packArchive,
   RecordingCachePurge,
@@ -94,6 +95,96 @@ class SlowUpload {
     this.ctl?.close();
   }
 }
+
+describe("the lock", () => {
+  // A package of alice's, a user who owns nothing, and a lock that starts counting after that.
+  async function published(): Promise<[TestRegistry, RecordingLock]> {
+    const lock = new RecordingLock();
+    const r = new TestRegistry(
+      new RegistryLimits(),
+      new MemoryMetadataDb(),
+      new MemoryBlobStore(),
+      lock,
+    );
+    r.user("bob");
+    await r.publish("my-lib", "1.0.0", r.user("alice"));
+    lock.keys = [];
+    return [r, lock];
+  }
+
+  it("isn't taken for a request that can't write", async () => {
+    const [r, lock] = await published();
+    // No such route, whatever its third part is.
+    for (const [method, path] of [
+      ["POST", "/a/b/my-lib"],
+      ["DELETE", "/x/y/my-lib"],
+      ["POST", "/api/v1/my-lib"],
+      ["DELETE", "/api/v1/my-lib/1.0.0"],
+      ["HEAD", "/api/v1/my-lib/1.0.0"],
+      ["PUT", "/api/v1/my-lib/1.0.0/native/x"],
+    ]) {
+      await r.send(method, path, [], null);
+    }
+    // No token, a token of nobody's, and a user who owns nothing.
+    for (const token of ["", "not-a-token", r.user("bob")]) {
+      for (const [method, path] of [
+        ["PUT", "my-lib/1.0.0/yank"],
+        ["DELETE", "my-lib/1.0.0/yank"],
+        ["PUT", "my-lib/owners/bob"],
+        ["DELETE", "my-lib/owners/alice"],
+      ]) {
+        const answer = await r.call(method, path, token);
+        expect(answer.status == 401 || answer.status == 403).toBe(true);
+      }
+    }
+    // The other spelling of a published package's name shares its lock, and isn't published: any
+    // valid token passes the owner check for it, so the lock has to wait for the name to exist.
+    for (const token of [r.user("bob"), r.user("alice")]) {
+      for (const [method, path] of [
+        ["PUT", "my_lib/1.0.0/yank"],
+        ["DELETE", "my_lib/1.0.0/yank"],
+        ["PUT", "my_lib/owners/bob"],
+        ["DELETE", "my_lib/owners/alice"],
+      ]) {
+        expect((await r.call(method, path, token)).status).toBe(404);
+      }
+    }
+    expect(lock.keys).toEqual([]);
+  });
+
+  it("is taken by an owner's write, by the package's normalized name", async () => {
+    const [r, lock] = await published();
+    const alice = r.user("alice");
+    expect((await r.call("PUT", "my-lib/1.0.0/yank", alice)).status).toBe(200);
+    expect((await r.call("PUT", "my-lib/owners/bob", alice)).status).toBe(200);
+    const key = normalizedName("my-lib");
+    expect(lock.keys).toEqual([key, key]);
+  });
+
+  it("is no help to an owner removed while waiting for it", async () => {
+    for (const [method, path] of [
+      ["PUT", "my-lib/1.0.0/yank"],
+      ["PUT", "my-lib/owners/bob"],
+    ]) {
+      const [r, lock] = await published();
+      const key = normalizedName("my-lib");
+      await r.db.putOwners("my-lib", ["alice", "carol"]);
+      r.user("carol");
+      // Another write holds the lock while carol, still an owner, gets past the first check.
+      const other = await lock.acquire(key);
+      const waiting = r.call(method, path, r.user("carol"));
+      // timing: only waits for the call to reach the lock; the deadline is a hang guard.
+      const deadline = Date.now() + 60000;
+      while (lock.keys.length < 2) {
+        expect(Date.now() < deadline).toBe(true);
+        await sleep(1);
+      }
+      await r.db.putOwners("my-lib", ["alice"]);
+      await other.release();
+      expect((await waiting).status).toBe(403);
+    }
+  });
+});
 
 describe("uploads", () => {
   it("take the package's lock only once the body has arrived", async () => {

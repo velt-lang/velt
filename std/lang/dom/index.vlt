@@ -1,0 +1,28 @@
+// velt/lang/dom: the types of TypeScript's `lib.dom` that code shared with the browser names.
+
+/** A listener of events. */
+export { EventListener } from "velt/lang/dom/types";
+/** An event being dispatched. */
+export { Event } from "velt/lang/dom/types";
+/** An event with data of its own. */
+export { CustomEvent } from "velt/lang/dom/types";
+/** What events are dispatched on. */
+export { EventTarget } from "velt/lang/dom/types";
+/** A node of a document tree. */
+export { Node } from "velt/lang/dom/types";
+/** An element of a document. */
+export { Element } from "velt/lang/dom/types";
+/** The root of a shadow tree. */
+export { ShadowRoot } from "velt/lang/dom/types";
+/** An HTML element. */
+export { HTMLElement } from "velt/lang/dom/types";
+/** An SVG element. */
+export { SVGElement } from "velt/lang/dom/types";
+/** A `<div>`. */
+export { HTMLDivElement } from "velt/lang/dom/types";
+/** An `<input>`. */
+export { HTMLInputElement } from "velt/lang/dom/types";
+/** A `<textarea>`. */
+export { HTMLTextAreaElement } from "velt/lang/dom/types";
+/** A `<select>`. */
+export { HTMLSelectElement } from "velt/lang/dom/types";

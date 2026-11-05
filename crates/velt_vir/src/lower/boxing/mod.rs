@@ -11,6 +11,7 @@
 mod kinds;
 mod locks;
 mod module_reach;
+mod replay;
 mod transfers;
 mod tuples;
 mod weak;
@@ -120,6 +121,23 @@ pub(super) struct Boxing {
 }
 
 impl Boxing {
+    /// The sets of types (not of class hierarchies) the counted types are made of (shape/).
+    pub(super) fn ty_sets(&self) -> [&FxHashSet<TyId>; 11] {
+        [
+            &self.boxes,
+            &self.interior,
+            &self.identity_dyns,
+            &self.transferred,
+            &self.weak,
+            &self.dyn_types,
+            &self.proxy_types,
+            &self.array_views,
+            &self.lock_values,
+            &self.lock_boxes,
+            &self.lock_exclusive,
+        ]
+    }
+
     /// The counted types before any share is observed: the recursive object types, and the
     /// object types sema relies on being counted (`hir::Program::counted_objects`).
     pub(super) fn initial(hir: &hir::Program) -> Boxing {
@@ -285,11 +303,14 @@ impl Cx<'_> {
     /// Record that a value of type `t` is shared.
     pub(super) fn note_share(&mut self, t: TyId) {
         self.facts.shares.insert(t);
-        self.note_share_site(t);
+        // A shared body's are replayed with the site of the code its dictionary is for (shape/).
+        if !self.mentions_ph(t) {
+            self.note_share_site(t);
+        }
     }
 
     /// The user code sharing `t` now, if it is the first (`counted_atomic_diagnostics`).
-    fn note_share_site(&mut self, t: TyId) {
+    pub(super) fn note_share_site(&mut self, t: TyId) {
         if self.user_site != velt_common::Span::DUMMY {
             self.share_sites.entry(t).or_insert(self.user_site);
         }
@@ -403,6 +424,7 @@ impl Cx<'_> {
     /// owner can reach the value: it is neither counted nor borrowed inside a counted object)?
     /// Only then may a param of type `t` be `noalias` (vir.rs invariant 9).
     pub(super) fn unique_refs(&self, t: TyId) -> bool {
+        let t = self.ph_rep(t);
         !self.counted(t) && !self.boxing.interior.contains(&t)
     }
 
@@ -587,7 +609,8 @@ impl Cx<'_> {
 
     /// `counted` against a candidate set.
     pub(super) fn counted_in(&self, b: &Boxing, t: TyId) -> bool {
-        match self.types.kind(t) {
+        let t = self.ph_rep(t);
+        match self.raw_kind(t) {
             TyKind::Adt(d, _) if self.is_class(t) => b.roots.contains(&self.class_root(*d)),
             TyKind::Adt(d, _) if b.recursive.contains(d) => true,
             _ => b.boxes.contains(&t),
@@ -601,7 +624,8 @@ impl Cx<'_> {
 
     /// Is `t` an array or object type stored as a counted box (a `Ptr` to its inline value)?
     pub(super) fn boxed(&self, t: TyId) -> bool {
-        match self.types.kind(t) {
+        let t = self.ph_rep(t);
+        match self.raw_kind(t) {
             TyKind::Adt(d, _) if self.boxing.recursive.contains(d) => true,
             _ => self.boxing.boxes.contains(&t),
         }

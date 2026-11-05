@@ -24,7 +24,9 @@ fn kitchen_sink_parses_cleanly() {
 /// starts or ends, within its top-level item, plus a deterministic sample of the characters,
 /// within the whole file ([`sampled_cuts`]). `VELT_ROBUSTNESS=full` sweeps every character of
 /// every file; the nightly gate sets it, and `cargo xtask check` does for a change to the parser
-/// (velt_syntax) or velt_common.
+/// (velt_syntax) or velt_common. `VELT_ROBUSTNESS=changed`, which `cargo xtask check` and the merge
+/// queue set for every other change, leaves the other goldens out: the same parser gives them the
+/// answers they had.
 ///
 /// The work is cut into shards, one test each: a parallel test runner runs them as separate
 /// processes (threads in one process mostly wait on each other in the kernel, allocating and
@@ -35,10 +37,12 @@ fn prefixes_never_panic(shard: usize) {
 }
 
 fn sweep(shard: usize) {
-    let full = match std::env::var("VELT_ROBUSTNESS").as_deref() {
-        Ok("full") => true,
-        Ok("" | "sample") | Err(_) => false,
-        Ok(other) => panic!("VELT_ROBUSTNESS={other}: expected `full` or `sample`"),
+    let mode = std::env::var("VELT_ROBUSTNESS").unwrap_or_default();
+    let (full, only_touched) = match mode.as_str() {
+        "full" => (true, false),
+        "" | "sample" => (false, false),
+        "changed" => (false, true),
+        other => panic!("VELT_ROBUSTNESS={other}: expected `full`, `sample` or `changed`"),
     };
     let touched = std::env::var("VELT_ROBUSTNESS_FILES").unwrap_or_default();
     let touched: Vec<&str> = touched.split(',').map(str::trim).collect();
@@ -55,6 +59,9 @@ fn sweep(shard: usize) {
     let mut k = 0;
     for (path, src) in &sources {
         let every_char = full || path == "kitchen sink" || touched.contains(&path.as_str());
+        if only_touched && !every_char {
+            continue;
+        }
         let cuts = if every_char {
             src.char_indices().map(|(i, _)| (0, i, src.len())).collect()
         } else {

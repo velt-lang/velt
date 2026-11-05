@@ -35,7 +35,7 @@ impl Cx<'_> {
 
     /// May a transfer deep-copy a counted `t` (so its copies are looked up by identity)?
     pub(in crate::lower) fn copied_across(&self, t: TyId) -> bool {
-        self.boxing.transferred.contains(&t)
+        self.boxing.transferred.contains(&self.ph_rep(t))
     }
 
     /// Fill `next.transferred` with the counted types (as `next` counts them) reachable from the

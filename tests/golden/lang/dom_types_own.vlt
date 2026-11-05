@@ -1,0 +1,5 @@
+// A program's own type of one of these names is its own.
+class Node { value = 1; next: Node | null = null; }
+const head = new Node();
+head.next = new Node();
+console.log(head.next.value);

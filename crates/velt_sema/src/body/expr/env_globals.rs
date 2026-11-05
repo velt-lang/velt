@@ -5,7 +5,8 @@
 //! - `typeof X` of a global Velt has no value for is the constant Node 22 gives: `"undefined"`
 //!   for other environments' globals (`window`, `document`, `Deno`, `require`, ...), `"object"` or
 //!   `"function"` for Node's own (`globalThis`, `process`, `navigator`, `Event`, ...). A class's
-//!   name is `"function"`.
+//!   name is `"function"`. A global the prelude has only as a type is such a global too
+//!   (`HTMLElement`).
 //! - Reading a browser global throws the `ReferenceError` Node throws (`window is not defined`),
 //!   so a branch that only runs in the browser still compiles, and behaves as on Node if it runs.
 //!
@@ -20,6 +21,7 @@ use crate::body::FnCx;
 use crate::ctx::Item;
 use crate::defs::DefInfo;
 use crate::hir::{self, AdtKind};
+use crate::type_meanings::Meaning;
 
 /// The globals of other environments that Node 22 doesn't have in an ES module: the browser's
 /// (TypeScript's `lib.dom`), other runtimes' (`Deno`, `Bun`) and CommonJS's (`require`,
@@ -115,6 +117,11 @@ pub(crate) const NODE_GLOBALS: [(&str, &str); 53] = [
     ("SharedArrayBuffer", "function"),
 ];
 
+/// Node's functions that the prelude has only as a type, and that aren't in [`NODE_GLOBALS`]
+/// because `globalThis.Iterator` is still a slot of the program's. Any other such type has no
+/// value in Node (`tests/golden/std/typeof_prelude_types` compares them).
+const NODE_FUNCTIONS_TYPED: [&str; 2] = ["Function", "Iterator"];
+
 impl FnCx<'_, '_> {
     /// `e instanceof SharedArrayBuffer` where the program declares no `SharedArrayBuffer`:
     /// Node has the class, but no Velt value is a shared buffer, so `false` (after `e`).
@@ -169,7 +176,24 @@ impl FnCx<'_, '_> {
             .iter()
             .find(|(n, _)| *n == id.name)
             .map(|(_, t)| *t);
-        match self.lookup_item(&id.name, id.span) {
+        let item = self.lookup_item(&id.name, id.span);
+        if item.is_some_and(|it| self.prelude_type_only(&id.name, it)) {
+            return Some(match node {
+                Some(tag) => tag,
+                None if NODE_FUNCTIONS_TYPED.contains(&id.name.as_str()) => "function",
+                None => "undefined",
+            });
+        }
+        // The program's own type next to Node's value: that value, whether or not a module has
+        // named the prelude's type too (`Ctx::global_value`).
+        if node.is_some()
+            && item.is_some_and(|it| self.cx.meaning(it) == Meaning::Type)
+            && (self.cx.prelude.get(id.name.as_str()))
+                .is_some_and(|p| self.cx.meaning(*p) == Meaning::Type)
+        {
+            return node;
+        }
+        match item {
             // A function, generic or not.
             Some(Item::Def(d)) if matches!(self.cx.info[d.0 as usize], DefInfo::Fn(_)) => {
                 Some("function")
@@ -192,6 +216,20 @@ impl FnCx<'_, '_> {
             None if ABSENT.contains(&id.name.as_str()) => Some("undefined"),
             None => node,
         }
+    }
+
+    /// Whether `name`, found as `item`, is a global the prelude has only as a type (`HTMLElement`,
+    /// `Iterable`): no name of this module, so there is no variable behind it but Node's. A type
+    /// the module declares or imports is its own: `typeof` of that is refused, as under `tsc`.
+    fn prelude_type_only(&self, name: &str, item: Item) -> bool {
+        let only_a_type = match item {
+            // A struct has no value in Velt (`RequestInit`, an interface under `tsc`).
+            Item::Def(d) if self.cx.adt(d).is_some_and(|a| a.kind == AdtKind::Struct) => true,
+            _ => self.cx.meaning(item) == Meaning::Type,
+        };
+        only_a_type
+            && self.cx.prelude.get(name) == Some(&item)
+            && !self.cx.scopes[self.module].items.contains_key(name)
     }
 
     /// Reading such a global the program doesn't declare: Node's `ReferenceError` (`None`:

@@ -190,7 +190,7 @@ impl FnLower<'_, '_> {
     }
 
     pub(in crate::lower) fn is_enum(&self, ty: TyId) -> bool {
-        match self.cx.types.kind(ty) {
+        match self.cx.raw_kind(ty) {
             TyKind::Adt(d, _) => matches!(self.cx.hir.def(*d), velt_sema::hir::Def::Enum(_)),
             _ => false,
         }
@@ -339,6 +339,15 @@ impl FnLower<'_, '_> {
     pub(super) fn dyn_drop_body(&mut self, data: vir::Local, ty: TyId) {
         if self.cx.is_class(ty) || self.cx.boxed(ty) {
             self.drop_glue(Place::local(data), ty);
+        } else if self.cx.shared_dyn_box(ty) {
+            // A primitive's shared box (any_borrowed.rs): the last reference drops and frees it.
+            let vt = self.cx.ty(ty);
+            let d = Operand::Copy(Place::local(data));
+            self.release(d.clone(), |lw| {
+                let p = lw.deref_param(data, ty);
+                lw.drop_glue(p, ty);
+                lw.counted_free(d, vt);
+            });
         } else {
             let vt = self.cx.ty(ty);
             let p = self.deref_param(data, ty);

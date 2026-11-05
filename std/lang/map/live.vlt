@@ -189,6 +189,30 @@ export function mapKeys<K, V>(m: Map<K, V>): K[] {
   return out;
 }
 
+/**
+ * The keys of `m` as strings, in insertion order (`Object.keys` of a record in that order):
+ * `${key}`, so a string enum key is its value. Read straight from the entries, without the
+ * array of keys `keys()` would make first.
+ */
+export function mapKeyNames<K, V>(m: Map<K, V>): string[] {
+  const out: string[] = arrayWithCapacity(m._size);
+  if (holdsNull(nullAs<V>()) && m.dead > 0) {
+    const live = mapLiveBits(m);
+    for (let e: usize = 0; e < m.entryKeys.length; e++) {
+      if (m.entryValues[e] != null || bitAt(live, e)) {
+        out.push(`${m.entryKeys[e]}`);
+      }
+    }
+    return out;
+  }
+  for (let e: usize = 0; e < m.entryKeys.length; e++) {
+    if (holdsNull(nullAs<V>()) || m.entryValues[e] != null) {
+      out.push(`${m.entryKeys[e]}`);
+    }
+  }
+  return out;
+}
+
 /** `values` of `m` (std/prelude/map.vlt). */
 export function mapValues<K, V>(m: Map<K, V>): V[] {
   if (holdsNull(nullAs<V>()) && m.dead > 0) {

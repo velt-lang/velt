@@ -27,9 +27,9 @@ use crate::hir::{self, DefId, ExprKind as H, LocalId, TyId};
 /// A module variable some condition of this function tested: its global, its name, the token.
 #[derive(Clone)]
 pub(crate) struct GlobalToken {
-    def: DefId,
+    pub(super) def: DefId,
     name: String,
-    token: LocalId,
+    pub(super) token: LocalId,
 }
 
 impl FnCx<'_, '_> {

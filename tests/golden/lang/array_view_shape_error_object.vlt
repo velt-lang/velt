@@ -1,0 +1,12 @@
+// A view whose element type shares its code with another object type of the same size
+// (shape-sharing.md): a wrong element stops with the `TypeError` naming this view's own type.
+// Node erases `as` and reads the wrong element as it is: Velt checks the conversion (#1485).
+type A = { a: number; b: string };
+type B = { c: string; d: number };
+const rb: any = [{ c: "y", d: 2 }];
+const vb = rb as B[];
+console.log(vb[0].d);
+const ra: any = [{ a: 1, b: "x" }, 5];
+const va = ra as A[];
+console.log(va[0].a);
+console.log(va[1].a);

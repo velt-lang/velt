@@ -15,7 +15,7 @@ use crate::vir::{Const, Intrinsic, Operand, Rvalue, Ty};
 impl Cx<'_> {
     /// The storage float `t` is, if it is one.
     pub(super) fn half(&self, t: TyId) -> Option<FloatTy> {
-        match self.kind(t) {
+        match self.kind(self.ph_rep(t)) {
             TyKind::Float(f) if f.is_storage() => Some(f),
             _ => None,
         }

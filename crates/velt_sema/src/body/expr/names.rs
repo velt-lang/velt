@@ -558,7 +558,10 @@ impl FnCx<'_, '_> {
         let slots = vec![None; f.generics.len()];
         // A generic function where a generic function value is expected, or where no function
         // type to instantiate it at is: the value of its own generic function type (#943).
-        if !slots.is_empty() {
+        // Where an `any` is expected it is instantiated at `any` (`fn_ref_slots`).
+        let to_any =
+            self.hint(exp).and_then(|t| self.cx.dynamic(t)) == Some(crate::any::Dynamic::Any);
+        if !slots.is_empty() && !to_any {
             let want = self.hint(exp).filter(|t| self.cx.is_generic_fn(*t));
             // Without an expected type, an overloaded function is its implementation (and has
             // no one generic type of its own).
@@ -596,6 +599,10 @@ impl FnCx<'_, '_> {
         let fn_ty = self.fn_value_type(d, params, ret, is_async);
         if let Some(e) = self.hint(exp) {
             self.cx.match_ty(fn_ty, e, &mut slots);
+            // Called through an `any`, each call passes `any`s: the type parameters are `any`.
+            if self.cx.dynamic(e) == Some(crate::any::Dynamic::Any) {
+                slots.iter_mut().for_each(|s| *s = s.or(Some(e)));
+            }
         }
         let args: Vec<TyId> = slots
             .iter()
