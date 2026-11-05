@@ -22,7 +22,8 @@ import {
   C_OID,
   C_TEXT,
 } from "./pg_type";
-import { Prepared, StatementCache } from "./prepared";
+import { Prepared } from "./prepared";
+import { StatementCache } from "./statement_cache";
 
 // 2^63, where integers stop fitting in an `i64`.
 const TWO_63: f64 = 9223372036854775808.0;

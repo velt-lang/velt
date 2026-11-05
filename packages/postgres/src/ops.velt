@@ -9,7 +9,8 @@ import { prepare } from "./describe";
 import { Input } from "./input";
 import { counts } from "./reply";
 import { NEEDS_JSON, NOT_PREPARED, SENT } from "./builder";
-import { Conn, Sent } from "./line";
+import { Conn } from "./line";
+import { Sent } from "./sent";
 
 // Sends `sql` with `params`, preparing it first if it must be, and reads the whole reply.
 async function send<P>(

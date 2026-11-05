@@ -23,13 +23,13 @@ import {
 import { date, interval, money, numeric, Rendered, time, timestamp } from "./temporal";
 
 /** An integer, or why not. */
-export struct IntegerValue {
+struct IntegerValue {
   value: i64;
   problem: string;
 }
 
 /** A float, or why not. */
-export struct FloatValue {
+struct FloatValue {
   value: f64;
   problem: string;
 }

@@ -3,12 +3,15 @@
 // what it lent. Each helper here ends the way a dropped task does: its local value is dropped.
 import { Waiting, finish, readWhole, simple, takeTurn } from "../src/connection";
 import { parseConfig } from "../src/config";
-import { Conn, Sent } from "../src/line";
-import { Opening, WaitingForPool, borrow } from "../src/pool";
+import { Conn } from "../src/line";
+import { Sent } from "../src/sent";
+import { borrow } from "../src/pool";
+import { Opening } from "../src/opening";
+import { WaitingForPool } from "../src/waiting_for_pool";
 import { PoolHandle, PoolState, release, TAKE_OPEN, TAKE_WAIT } from "../src/pool_state";
 import { openConnection } from "../src/startup";
 import { Channel } from "velt/sync";
-import { Grant } from "../src/pool_state";
+import { Grant } from "../src/grant";
 import { Input } from "../src/input";
 import { complete, fakeUrl, join, ready, serve } from "./support/fake";
 

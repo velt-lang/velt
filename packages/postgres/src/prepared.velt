@@ -1,5 +1,5 @@
 // postgres (internal): `Prepared`, a statement the server has prepared, read in place by whichever
-// task runs it, and `StatementCache`, a connection's statements by SQL text.
+// task runs it.
 
 import { C_OTHER, CHAIN, decodable, PgType } from "./pg_type";
 
@@ -55,91 +55,4 @@ export class Prepared {
 /** The `ENOTSUP` message for a column holding `what`. */
 export function unsupported(column: string, what: string): string {
   return `column "${column}" has ${what}, which the postgres package cannot decode; cast it, e.g. "${column}"::text`;
-}
-
-// A cached statement and when it was last used.
-class Entry {
-  statement: shared<Prepared>;
-  used: i64;
-
-  constructor(statement: shared<Prepared>, used: i64) {
-    this.statement = statement;
-    this.used = used;
-  }
-}
-
-/** A connection's statements by SQL text, the least recently used evicted past `CAPACITY`. */
-export class StatementCache {
-  // The same text binds differently for an object and for an array, so each has its own map.
-  private positional: Map<string, Entry> = new Map<string, Entry>();
-  private named: Map<string, Entry> = new Map<string, Entry>();
-  private clock: i64 = 0;
-  private serial: i64 = 0;
-  /** Names of statements dropped here, for the next request to close on the server. */
-  closing: string[] = [];
-
-  /** The statement for `sql`, marked recently used. */
-  get(sql: string, named: bool): shared<Prepared> | null {
-    const e = named ? this.named.get(sql) : this.positional.get(sql);
-    if (e == null) {
-      return null;
-    }
-    this.clock++;
-    e.used = this.clock;
-    return e.statement;
-  }
-
-  /** A name for a new statement. */
-  nextName(): string {
-    this.serial++;
-    return `s${this.serial}`;
-  }
-
-  /** Caches `statement` for `sql`, evicting the least recently used when full. */
-  insert(sql: string, statement: shared<Prepared>) {
-    const named = statement.named;
-    const map = named ? this.named : this.positional;
-    const had = map.get(sql);
-    if (had != null) {
-      // Two tasks prepared the same text at once: the first one's statement isn't needed.
-      this.closing.push(had.statement.name);
-    } else if (this.positional.size + this.named.size >= CAPACITY) {
-      this.evict();
-    }
-    this.clock++;
-    map.set(sql, new Entry(statement, this.clock));
-  }
-
-  /** Forgets `sql` (its plan went stale on the server). */
-  remove(sql: string, named: bool) {
-    const map = named ? this.named : this.positional;
-    const had = map.get(sql);
-    if (had != null) {
-      this.closing.push(had.statement.name);
-      map.delete(sql);
-    }
-  }
-
-  private evict() {
-    let oldest: i64 = 9223372036854775807;
-    let key: string | null = null;
-    let fromNamed = false;
-    for (const [sql, e] of this.positional) {
-      if (e.used < oldest) {
-        oldest = e.used;
-        key = sql;
-        fromNamed = false;
-      }
-    }
-    for (const [sql, e] of this.named) {
-      if (e.used < oldest) {
-        oldest = e.used;
-        key = sql;
-        fromNamed = true;
-      }
-    }
-    if (key != null) {
-      this.remove(key, fromNamed);
-    }
-  }
 }

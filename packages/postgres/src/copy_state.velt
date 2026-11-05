@@ -5,7 +5,7 @@
 // (drain.velt), so the connection goes on.
 
 import { IoError } from "velt/io";
-import { TcpStream } from "velt/net";
+import { PgStream } from "./transport";
 import { Channel } from "velt/sync";
 import {
   COPY_DATA,
@@ -37,7 +37,7 @@ const DATA_TAG: i64 = 100;
 /** What the copies of a reader's or writer's handle share. */
 export class CopyState {
   conn: Conn;
-  stream: TcpStream;
+  stream: PgStream;
   home: Channel<Input>;
   open: bool = true;
   private out: Out = new Out(WRITE_BATCH + 256);
@@ -47,7 +47,7 @@ export class CopyState {
   /** Why the last write failed. */
   sendProblem: string = "";
 
-  constructor(conn: Conn, stream: TcpStream, home: Channel<Input>) {
+  constructor(conn: Conn, stream: PgStream, home: Channel<Input>) {
     this.conn = conn;
     this.stream = stream;
     this.home = home;
@@ -178,7 +178,7 @@ export async function startCopyTo(
 }
 
 // Waits while too much is queued for a server that doesn't read yet; a failed send is reported.
-async function pace(h: CopyHandle, stream: TcpStream, conn: Conn) {
+async function pace(h: CopyHandle, stream: PgStream, conn: Conn) {
   const late = h.with((c) => (c.backlog >= MAX_QUEUED ? 1 : c.sendProblem.length > 0 ? 2 : 0));
   if (late == 2) {
     const why = h.with((c) => c.sendProblem);

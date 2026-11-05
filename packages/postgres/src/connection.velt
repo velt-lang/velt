@@ -22,7 +22,8 @@ import { connectionClosed, Failure, ioFailure } from "./failure";
 import { Input } from "./input";
 import { quiet, readReply } from "./reply";
 import { FAILED } from "./builder";
-import { Conn, Sent } from "./line";
+import { Conn } from "./line";
+import { Sent } from "./sent";
 
 // SQLSTATEs after which a cached statement must be prepared again: its plan no longer matches the
 // schema ("cached plan must not change result type"), or it is gone.

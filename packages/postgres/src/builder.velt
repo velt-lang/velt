@@ -7,7 +7,8 @@ import { Encoder } from "./encoder";
 import { Failure, failure, invalid } from "./failure";
 import { closeStatement, execute, Out, sync } from "./frontend";
 import { JsonParams } from "./json_params";
-import { Prepared, StatementCache } from "./prepared";
+import { Prepared } from "./prepared";
+import { StatementCache } from "./statement_cache";
 
 // What making a request found.
 /** It's ready to go. */

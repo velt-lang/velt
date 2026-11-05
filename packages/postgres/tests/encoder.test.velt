@@ -6,7 +6,8 @@ import { Encoder } from "../src/encoder";
 import { Out } from "../src/frontend";
 import { JsonParams } from "../src/json_params";
 import { knownType, PgType } from "../src/pg_type";
-import { Prepared, StatementCache } from "../src/prepared";
+import { Prepared } from "../src/prepared";
+import { StatementCache } from "../src/statement_cache";
 
 const INT2: i64 = 21;
 const INT4: i64 = 23;

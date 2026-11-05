@@ -3,7 +3,6 @@
 // `Pool` is a Copy handle: pass and capture it freely (concurrent queries run on separate
 // connections) and release it once with `end()`.
 
-import { Channel } from "velt/sync";
 import { Client } from "./client";
 import { parseConfig } from "./config";
 import { errorOf, PgError } from "./errors";
@@ -24,7 +23,6 @@ import {
 import { PoolOptions } from "./pool_options";
 import {
   connectionGone,
-  Grant,
   PoolHandle,
   PoolState,
   poolClosed,
@@ -35,54 +33,12 @@ import {
 } from "./pool_state";
 import { simple } from "./connection";
 import { openConnection } from "./startup";
+import { Opening } from "./opening";
+import { WaitingForPool } from "./waiting_for_pool";
 
 // An idle connection this old has its socket looked at before use: the server may have gone. A
 // younger one's would cost a system call per query, under load, for nothing.
 const CHECK_AFTER_MS: f64 = 100.0;
-
-/** A task waiting in a pool's line; if it goes away, what it was handed must not be lost. */
-export class WaitingForPool {
-  private pool: PoolHandle;
-  private ch: Channel<Grant>;
-  released: bool = false;
-
-  constructor(pool: PoolHandle, ch: Channel<Grant>) {
-    this.pool = pool;
-    this.ch = ch;
-  }
-
-  [Symbol.dispose]() {
-    if (this.released) {
-      return;
-    }
-    this.ch.close();
-    const g = this.ch.tryReceive();
-    if (g != null) {
-      const conn = g.conn;
-      if (conn != null) {
-        release(this.pool, conn);
-      } else {
-        connectionGone(this.pool);
-      }
-    }
-  }
-}
-
-/** Leave to open a connection, given back when its task goes away while connecting. */
-export class Opening {
-  private pool: PoolHandle;
-  released: bool = false;
-
-  constructor(pool: PoolHandle) {
-    this.pool = pool;
-  }
-
-  [Symbol.dispose]() {
-    if (!this.released) {
-      connectionGone(this.pool);
-    }
-  }
-}
 
 // Opens a connection under the leave `take` or a waiter's grant gave.
 async function open(pool: PoolHandle): Promise<Conn> throws PgError {
