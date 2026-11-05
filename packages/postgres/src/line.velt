@@ -281,6 +281,11 @@ export class Line {
     return { turn: this.home, idle: true, closes: false };
   }
 
+  /** How long the line's array is, answered places included. */
+  get allocated(): usize {
+    return this.slots.length;
+  }
+
   /** Where the `Input` waits while nothing is in line. */
   get homeChannel(): Channel<Input> {
     return this.home;

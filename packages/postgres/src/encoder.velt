@@ -1,12 +1,9 @@
 // postgres (internal): `Encoder`, a request's `Bind` messages, written as `writeParams` hands over the
-// values, each encoded right away for the type the server inferred for its parameter: integers
-// range-checked, floats, `bool`, text-like types and `bytea` in binary, plus `json` and `jsonb` from a
-// string holding JSON. A string for any other type (`uuid`, `numeric`, `date`, arrays such as "{1,2}",
-// enums …) goes in PostgreSQL's text format and the server parses it. Numbers also convert to
-// `numeric` and to text types; booleans to text types. Anything else is a clear `EINVAL`.
-//
-// The first value (or `object()`) says whether they bind by name, which finds the statement. On a
-// miss, nothing is written: the caller prepares it and starts over.
+// values, each encoded right away for the type the server inferred: integers range-checked, floats,
+// `bool`, text types, `bytea` and JSON in binary. A string for any other type goes in PostgreSQL's
+// text format and the server parses it. Anything else is a clear `EINVAL`. The first value (or
+// `object()`) says whether they bind by name, which finds the statement; on a miss nothing is
+// written, and the caller prepares it and starts over.
 
 import { ParamSink } from "velt/db";
 import { Failure, invalid } from "./failure";
@@ -30,19 +27,13 @@ import { Prepared, StatementCache } from "./prepared";
 // 2^63, where integers stop fitting in an `i64`.
 const TWO_63: f64 = 9223372036854775808.0;
 
-const BIND: i64 = 66;
-
 /** Writes a request's `Bind` messages (see the module header). */
 export class Encoder implements ParamSink {
-  /** Where the messages go. */
   out: Out;
-  /** The statement; `none` until the first value finds it. */
+  /** `none` until the first value finds it. */
   statement: shared<Prepared>;
-  /** The first value came and its statement isn't prepared. */
   missed: bool = false;
-  /** Whether the first value bound by name. */
   named: bool = false;
-  /** What's wrong with the values; nothing more is written. */
   problem: Failure | null = null;
   private statements: StatementCache;
   private none: shared<Prepared>;
@@ -50,7 +41,6 @@ export class Encoder implements ParamSink {
   private found: bool = false;
   // The caller has no values at all (`select`, `run`), not an empty list of them.
   private bare: bool = false;
-  // The `Bind` being written.
   private lengthAt: i64 = 0;
   private formatsAt: i64 = 0;
   private valuesAt: i64 = 0;
@@ -107,7 +97,7 @@ export class Encoder implements ParamSink {
     this.count = n;
     this.values = 0;
     this.byName = false;
-    this.lengthAt = o.begin(BIND);
+    this.lengthAt = o.begin(66);
     o.u8(0);
     o.cstr(this.statement.name);
     o.i16(n);
@@ -125,7 +115,7 @@ export class Encoder implements ParamSink {
     this.valuesAt = o.len;
   }
 
-  /** Ends one set of values: `Bind` is whole. False, having written no more, on a miss or a problem. */
+  /** Ends a set of values: `Bind` is whole. False on a miss or a problem. */
   endSet(): bool {
     if (!this.found && !this.first(false)) {
       return false;
@@ -233,7 +223,6 @@ export class Encoder implements ParamSink {
     return -1;
   }
 
-  // The end of a value bound by name.
   private placed(i: i64) {
     if (this.byName) {
       this.ends[i] = this.out.len;
@@ -264,7 +253,7 @@ export class Encoder implements ParamSink {
     return false;
   }
 
-  // Text in PostgreSQL's input syntax, parsed by the server.
+  // In PostgreSQL's input syntax, for the server to parse.
   private serverText(i: i64, s: string) {
     const o = this.out;
     o.bytes[this.formatsAt + 2 * i + 1] = 0;
@@ -279,8 +268,10 @@ export class Encoder implements ParamSink {
     }
     const o = this.out;
     const codec = this.statement.paramCodecs[i];
-    if (codec == C_INT4) {
-      if (v < -2147483648 || v > 2147483647) {
+    if (codec == C_INT4 || codec == C_OID) {
+      const low: i64 = codec == C_INT4 ? -2147483648 : 0;
+      const high: i64 = codec == C_INT4 ? 2147483647 : 4294967295;
+      if (v < low || v > high) {
         this.outOfRange(v, i);
       } else {
         o.i32(4);
@@ -296,19 +287,8 @@ export class Encoder implements ParamSink {
         o.i32(2);
         o.i16(v);
       }
-    } else if (codec == C_OID) {
-      if (v < 0 || v > 4294967295) {
-        this.outOfRange(v, i);
-      } else {
-        o.i32(4);
-        o.i32(v);
-      }
-    } else if (codec == C_FLOAT8) {
-      o.i32(8);
-      o.i64((v as f64).toBits() as i64);
-    } else if (codec == C_FLOAT4) {
-      o.i32(4);
-      o.i32((v as f32).toBits() as i64);
+    } else if (codec == C_FLOAT8 || codec == C_FLOAT4) {
+      this.floating(v as f64, codec);
     } else if (codec == C_NUMERIC) {
       this.serverText(i, `${v}`);
     } else if (!this.asText(`${v}`, codec)) {
@@ -341,19 +321,25 @@ export class Encoder implements ParamSink {
     }
   }
 
+  private floating(v: f64, codec: u8) {
+    const o = this.out;
+    if (codec == C_FLOAT8) {
+      o.i32(8);
+      o.i64(v.toBits() as i64);
+    } else {
+      o.i32(4);
+      o.i32((v as f32).toBits() as i64);
+    }
+  }
+
   private real(v: f64) {
     const i = this.place();
     if (i < 0) {
       return;
     }
-    const o = this.out;
     const codec = this.statement.paramCodecs[i];
-    if (codec == C_FLOAT8) {
-      o.i32(8);
-      o.i64(v.toBits() as i64);
-    } else if (codec == C_FLOAT4) {
-      o.i32(4);
-      o.i32((v as f32).toBits() as i64);
+    if (codec == C_FLOAT8 || codec == C_FLOAT4) {
+      this.floating(v, codec);
     } else if (codec == C_NUMERIC) {
       this.serverText(i, `${v}`);
     } else if (!this.asText(`${v}`, codec)) {

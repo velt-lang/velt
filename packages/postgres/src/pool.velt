@@ -23,6 +23,7 @@ import {
 } from "./ops";
 import { PoolOptions } from "./pool_options";
 import {
+  connectionGone,
   Grant,
   PoolHandle,
   PoolState,
@@ -39,8 +40,8 @@ import { openConnection } from "./startup";
 // younger one's would cost a system call per query, under load, for nothing.
 const CHECK_AFTER_MS: f64 = 100.0;
 
-// A task waiting in a pool's line; if it goes away, what it was handed must not be lost.
-class WaitingForPool {
+/** A task waiting in a pool's line; if it goes away, what it was handed must not be lost. */
+export class WaitingForPool {
   private pool: PoolHandle;
   private ch: Channel<Grant>;
   released: bool = false;
@@ -61,14 +62,14 @@ class WaitingForPool {
       if (conn != null) {
         release(this.pool, conn);
       } else {
-        this.pool.with((p) => p.lostOne());
+        connectionGone(this.pool);
       }
     }
   }
 }
 
-// Leave to open a connection that wasn't used, when its task goes away while connecting.
-class Opening {
+/** Leave to open a connection, given back when its task goes away while connecting. */
+export class Opening {
   private pool: PoolHandle;
   released: bool = false;
 
@@ -78,7 +79,7 @@ class Opening {
 
   [Symbol.dispose]() {
     if (!this.released) {
-      this.pool.with((p) => p.lostOne());
+      connectionGone(this.pool);
     }
   }
 }
@@ -106,7 +107,7 @@ export async function borrow(pool: PoolHandle): Promise<Conn> throws PgError {
         if (t.idleMs < CHECK_AFTER_MS || stillAlive(conn)) {
           return conn;
         }
-        pool.with((p) => p.lostOne());
+        connectionGone(pool);
       }
       continue;
     }
@@ -121,6 +122,7 @@ export async function borrow(pool: PoolHandle): Promise<Conn> throws PgError {
       const waiting = new WaitingForPool(pool, ch);
       const g = await ch.receive();
       waiting.released = true;
+      ch.close();
       if (g == null) {
         throw poolClosed();
       }
