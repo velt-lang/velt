@@ -747,3 +747,28 @@ fn a_changed_header_of_a_git_dependency_is_refused() {
     let o = check_from_git(dir.path(), &home);
     assert!(o.status.success(), "{}", output(&o));
 }
+
+/// With no C functions there is nothing to record, and no empty file saying so.
+#[test]
+fn a_package_without_c_functions_has_no_record() {
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let lib = "export function len(s: string): i32 {\n  return 1;\n}\n";
+    project(dir.path(), "", lib, &[], "");
+    let bind = dir.path().join("bind");
+    std::fs::write(bind.join(vpm::c_headers::FILE), "{ \"checked\": {} }").unwrap();
+    let o = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["native", "headers"])
+        .current_dir(&bind)
+        .env("NO_COLOR", "1")
+        .env("VELT_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", output(&o));
+    assert!(
+        output(&o).contains("the package declares no C functions"),
+        "{}",
+        output(&o)
+    );
+    assert!(!bind.join(vpm::c_headers::FILE).exists());
+}

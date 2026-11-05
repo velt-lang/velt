@@ -29,6 +29,13 @@ const TARGETS: &[&str] = &[
 pub fn native_headers() -> Result<(), String> {
     let root = Project::current_root()?;
     let record = record(&root)?;
+    if record.checked.is_empty() {
+        style::status(
+            "Checked",
+            "nothing: the package declares no C functions to check",
+        );
+        return Ok(());
+    }
     let libraries: usize = record.checked.values().map(|l| l.len()).max().unwrap_or(0);
     style::status(
         "Checked",
@@ -44,7 +51,8 @@ pub fn native_headers() -> Result<(), String> {
 }
 
 /// Check the package at `root` (the current directory's) on every target and write its
-/// record; `Err` (with the diagnostics shown) when a check fails, and nothing is written.
+/// record; `Err` (with the diagnostics shown) when a check fails, and nothing is written. With
+/// nothing to record there is no file: one left from before goes.
 pub(super) fn record(root: &Path) -> Result<CHeaders, String> {
     let canonical = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
     let mut record = CHeaders::default();
@@ -69,6 +77,10 @@ pub(super) fn record(root: &Path) -> Result<CHeaders, String> {
             record.checked.insert(zig_target.to_string(), libraries);
         }
     }
-    record.write(root)?;
+    if record.checked.is_empty() {
+        let _ = std::fs::remove_file(root.join(vpm::c_headers::FILE));
+    } else {
+        record.write(root)?;
+    }
     Ok(record)
 }

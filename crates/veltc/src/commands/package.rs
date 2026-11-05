@@ -162,13 +162,15 @@ pub fn publish(native_artifacts: Option<&Path>, native_only: bool) -> Result<(),
     let manifest = vpm::Manifest::from_dir(&root)?;
     if manifest.c_libraries.is_some() && !native_only {
         let record = super::native_headers::record(&root)?;
-        style::status(
-            "Checked",
-            &format!(
-                "C declarations against their headers on {} targets",
-                record.checked.len()
-            ),
-        );
+        if !record.checked.is_empty() {
+            style::status(
+                "Checked",
+                &format!(
+                    "C declarations against their headers on {} targets",
+                    record.checked.len()
+                ),
+            );
+        }
     }
     let loc = Locations::from_env()?.with_manifest(&manifest);
     let bundles = collect_bundles(&root, &manifest, native_artifacts, native_only)?;
