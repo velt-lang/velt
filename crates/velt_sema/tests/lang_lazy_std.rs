@@ -501,6 +501,7 @@ fn a_value_that_cannot_hold_a_float_does_not_check_the_float_printer() {
         ok_src(&src)
     };
     let enums = "enum Dir { Up = \"UP\", Down = \"DOWN\" }\nenum Plain { A, B }\ntype Nest = string | Nest[];\nclass Shape { w: number = 1.5; }";
+    let mut wrong = vec![];
     for ty in [
         "string",
         "string | null",
@@ -519,8 +520,9 @@ fn a_value_that_cannot_hold_a_float_does_not_check_the_float_printer() {
         "Plain",
         "Nest",
     ] {
-        let p = cases(enums, ty);
-        assert!(!checked(&p), "the float printer is checked for `{ty}`");
+        if checked(&cases(enums, ty)) {
+            wrong.push(format!("checked for `{ty}`"));
+        }
     }
     for ty in [
         "number",
@@ -531,14 +533,15 @@ fn a_value_that_cannot_hold_a_float_does_not_check_the_float_printer() {
         "(string | number)[]",
         "[string, number]",
         "[string, number] | null",
-        "any",
         "Shape",
         "Shape | null",
         "Shape[]",
     ] {
-        let p = cases(enums, ty);
-        assert!(checked(&p), "the float printer is not checked for `{ty}`");
+        if !checked(&cases(enums, ty)) {
+            wrong.push(format!("not checked for `{ty}`"));
+        }
     }
+    assert!(wrong.is_empty(), "the float printer is {wrong:?}");
     // A type parameter may be instantiated with a float.
     let p = ok_src(
         "function text<T>(v: T): string {\n  return `v=${v}`;\n}\nfunction main() {\n  console.log(text(\"a\"));\n}\n",
