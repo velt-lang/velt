@@ -63,7 +63,7 @@ impl Reader<'_> {
     }
 
     /// `c: { <library>: { system?: Record<string, string>, headers?: string[], unchecked?:
-    /// boolean } }`; the entry `c`, the platform's C library, only has `headers`.
+    /// boolean } }`; the entry `c`, the platform's C library, has `headers` or `unchecked`, not `system`.
     fn c_libraries(&mut self, value: &Value) -> BTreeMap<String, CLibraryConfig> {
         let mut out = BTreeMap::new();
         let Some(entries) = self.object(value, "`native.c`") else {
@@ -307,25 +307,29 @@ fn check_target_condition(condition: &str) -> Result<(), String> {
     ))
 }
 
+/// Whether `path` is `/`-separated plain names, safe to write into a `#include`: letters,
+/// digits, `_`, `-`, `+` and `.`; no `.` or `..` segment, and none that reads as a flag.
+fn is_header_path(path: &str) -> bool {
+    path.split('/').all(|segment| {
+        !segment.is_empty()
+            && segment != "."
+            && segment != ".."
+            && !segment.starts_with('-')
+            && segment
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || "_-+.".contains(c))
+    })
+}
+
 /// `Ok` for a header entry: `<name.h>`, or a `/`-separated path inside the package.
 fn check_header(text: &str) -> Result<(), String> {
     if let Some(inner) = text.strip_prefix('<').and_then(|t| t.strip_suffix('>')) {
-        let ok = !inner.is_empty()
-            && inner
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || "_-./".contains(c))
-            && !inner.split('/').any(|p| p == ".." || p.is_empty());
-        return match ok {
+        return match is_header_path(inner) {
             true => Ok(()),
             false => Err(format!("`{text}` is not a header name")),
         };
     }
-    let inside = !text.is_empty()
-        && !text.starts_with('/')
-        && !text.contains('\\')
-        && !text.contains(':')
-        && !text.split('/').any(|p| p == ".." || p.is_empty());
-    match inside {
+    match is_header_path(text) {
         true => Ok(()),
         false => Err(format!(
             "`{text}` is not a header of the package: a `/`-separated path inside it (`native/lib.h`), or `<name.h>` for a C library header"

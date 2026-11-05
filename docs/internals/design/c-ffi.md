@@ -737,7 +737,7 @@ Step 1 lands in layers, each its own pull request:
        error and `velt check` show it, and `velt check` shows each library as checked against
        headers, unchecked, or without headers.
      - zig 0.17.1, pinned with each host's SHA-256 (`velt_toolchain::zig`), downloads into
-       `$VELT_HOME/cache/zig/` on first use (about 55 MB, 10 s), or `$VELT_ZIG` names one (CI,
+       `$VELT_HOME/cache/zig/` on first use (about 55 MB, 100 MB on Windows, 10 s), or `$VELT_ZIG` names one (CI,
        offline machines).
    - 6a-2: declarations checked against headers in the packages a build has locally (the
      root, path dependencies, workspace members); registry and git packages come with 6b's
@@ -748,10 +748,15 @@ Step 1 lands in layers, each its own pull request:
      - Each declaration must name a function the headers declare, with as many parameters, not
        variadic, and each parameter and the result must match per the table above (typedefs
        resolved, `long` per the target's data model, clang's predefined `__size_t`). Windows
-       targets read zig's MinGW headers, which have MSVC's type sizes.
-     - A check that passed is remembered in `$VELT_HOME/cache/headers/`, keyed by zig's
-       version, the target, the headers' names and the package's headers' bytes, and the
-       declarations; clang runs again when one changes (about 0.2 s per library).
+       targets read zig's MinGW headers, which have MSVC's type sizes. An enum is as wide as
+       its fixed type or its widest constant; a packed enum can't cross.
+     - `<name.h>` means a header of zig's set: the C library's for each target. Other libraries'
+       headers (`<sqlite3.h>`) aren't in it, and nothing reads the machine's own: a package ships
+       its copy (`native/sqlite3.h`).
+     - A check that passed is remembered in `$VELT_HOME/cache/headers/`: keyed by zig's version,
+       the target, the package's root, the headers' names and the declarations, it holds a
+       digest of every file the parse read (clang's dependency list), so what a listed header
+       includes counts. clang runs again when one changes (about 0.2 s per library).
      - A library listing no headers is still built, shown as "no headers" in `velt check`:
        requiring headers or `unchecked` comes with 6b, which records the digest.
      - Not yet: headers per build condition (frameworks: zig has no macOS SDK), structs,

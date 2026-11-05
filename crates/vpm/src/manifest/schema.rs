@@ -434,7 +434,8 @@ pub const C_LIBRARY: &[Field] = &[
         required: false,
         doc: "The C headers the library's declarations are checked against when the package \
               builds, once per target: a path in the package (`\"native/sqlite3.h\"`), or \
-              `\"<string.h>\"` for a C library header.",
+              `\"<string.h>\"` for a C library header. Other libraries' headers aren't there \
+              to find (`\"<sqlite3.h>\"`): the package ships its copy.",
     },
     Field {
         key: "unchecked",
