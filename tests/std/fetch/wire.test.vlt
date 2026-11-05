@@ -5,6 +5,7 @@ import { Channel, channel } from "velt/sync";
 import { hexDecode } from "velt/encoding";
 import { IoError } from "velt/io";
 import { listen, TcpListener, TcpStream } from "velt/net";
+import { AbortSignal } from "velt/task";
 import { afterAll, beforeAll, describe, expect, it } from "velt/test";
 import "velt/test/http";
 
@@ -494,23 +495,53 @@ describe("sending a request again", () => {
 });
 
 /**
- * Answers the first request on `c`, ends its output and says so on `ended`, as a server that
- * closes an idle connection. It goes on reading: a request sent on the closed connection anyway
- * goes to `landed`, so a test sees it even when the client would hide it by sending it again.
+ * What arrives on `c` before its end, a reset or `stop`. A read that waits could outlast the test,
+ * on a connection the client keeps pooled, so nothing here waits but `readableWithin`: true says
+ * only that a read may find something (on Windows it stays true after any earlier read, with
+ * nothing there), so read without waiting and wait again.
  */
-async function serveThenEnd(c: TcpStream, ended: Channel<i64>, landed: Channel<string>) {
+async function arrival(c: TcpStream, stop: AbortSignal): Promise<string> {
+  const buf = new Uint8Array(4096);
+  try {
+    while (await c.readableWithin(86400000, stop)) {
+      const n = c.tryRead(buf);
+      if (n == null) {
+        return "";
+      }
+      if (n > 0) {
+        return new TextDecoder().decode(buf.subarray(0, n));
+      }
+    }
+  } catch (e) {
+    // The client's reset ends the connection as its close does.
+  }
+  return "";
+}
+
+/**
+ * Answers the first request on `c`, ends its output and says so on `ended`, as a server that
+ * closes an idle connection. It goes on reading until `stop`: a request sent on the closed
+ * connection anyway goes to `landed`, so a test sees it even when the client would hide it by
+ * sending it again. `finished` gets a message once `c` is closed.
+ */
+async function serveThenEnd(
+  c: TcpStream,
+  stop: AbortSignal,
+  ended: Channel<i64>,
+  landed: Channel<string>,
+  finished: Channel<i64>,
+) {
   if ((await requestLine(c)) != "") {
     await c.write("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok");
     c.shutdown();
     ended.trySend(1);
-    if (await c.readableWithin(500)) {
-      const late = await requestLine(c);
-      if (late != "") {
-        landed.trySend(late);
-      }
+    const late = await arrival(c, stop);
+    if (late != "") {
+      landed.trySend(late);
     }
   }
   c.close();
+  finished.trySend(1);
 }
 
 describe("a pooled connection the server has closed", () => {
@@ -523,18 +554,32 @@ describe("a pooled connection the server has closed", () => {
       const accepted = channel<i64>(8);
       const ended = channel<i64>(8);
       const landed = channel<string>(8);
-      acceptAll(listener, accepted, async (c: TcpStream) => await serveThenEnd(c, ended, landed));
+      const finished = channel<i64>(8);
+      const stop = new AbortController();
+      const signal = stop.signal;
+      acceptAll(
+        listener,
+        accepted,
+        async (c: TcpStream) => await serveThenEnd(c, signal, ended, landed, finished),
+      );
       const url = `http://127.0.0.1:${listener.port}/`;
-      expect(await (await fetch(url)).text()).toBe("ok");
-      await ended.receive();
-      // A POST takes only a connection idle for 5 ms or more; a newer one stays parked and the
-      // check is not reached. (A lower bound: waiting longer changes nothing.)
-      // timing: the pooled connection's idle threshold is the subject
-      await sleep(10);
-      expect(await (await fetch(url, { method: method })).text()).toBe("ok");
+      try {
+        expect(await (await fetch(url)).text()).toBe("ok");
+        await ended.receive();
+        // A POST takes only a connection idle for 5 ms or more; a newer one stays parked and the
+        // check is not reached. (A lower bound: waiting longer changes nothing.)
+        // timing: the pooled connection's idle threshold is the subject
+        await sleep(10);
+        expect(await (await fetch(url, { method: method })).text()).toBe("ok");
+      } finally {
+        stop.abort();
+        listener.close();
+      }
+      // Both connections' tasks are done, whatever the client still keeps pooled.
+      await finished.receive();
+      await finished.receive();
       expect(landed.tryReceive()).toBe(null);
       expect(drained(accepted)).toBe(2);
-      listener.close();
     }
   });
 });
