@@ -294,6 +294,10 @@ mod tests {
             "{text}"
         );
         assert!(!text.contains("llvm.fma"), "{text}");
+        // The low lanes first, as `dotAdd` documents: the order shows in the rounding.
+        let low = text.find("call <4 x float> @llvm.aarch64.neon.fmlal.v4f32.v8f16");
+        let high = text.find("call <4 x float> @llvm.aarch64.neon.fmlal2.v4f32.v8f16");
+        assert!(matches!((low, high), (Some(l), Some(h)) if l < h), "{text}");
         // No FEAT_FHM: the conversion instruction and two FMAs.
         let text = body(f16, Arch::Neon, arm);
         assert!(

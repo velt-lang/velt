@@ -271,5 +271,6 @@ fn half_dot_products_on_this_cpu_print_the_golden() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let o = no_window::command(exe.to_str().unwrap()).output().unwrap();
     let want = std::fs::read_to_string(golden.join("simd_half_dot.out")).unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(String::from_utf8_lossy(&o.stdout), want);
 }
