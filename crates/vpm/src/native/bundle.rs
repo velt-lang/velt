@@ -6,7 +6,8 @@ use std::path::Path;
 
 use crate::archive;
 use crate::native::{
-    export_prefix, exports, init_symbol, library_files, NativeMeta, LEGACY_META_FILE, META_FILE,
+    c_library_files, export_prefix, exports, init_symbol, library_files, NativeMeta,
+    LEGACY_META_FILE, META_FILE,
 };
 
 /// Whether `path` (relative, `/`-separated) may be part of a bundle.
@@ -149,7 +150,7 @@ pub fn check_meta(
         ));
     }
     let named = [
-        ("shared", Some(&meta.shared), "shared/"),
+        ("shared", meta.shared.as_ref(), "shared/"),
         ("import_lib", meta.import_lib.as_ref(), "shared/"),
         ("static", meta.static_obj.as_ref(), "static/"),
     ];
@@ -162,7 +163,53 @@ pub fn check_meta(
         }
     }
     check_library_files(meta, what)?;
-    check_export_names(meta, what)
+    check_export_names(meta, what)?;
+    check_c_libraries(meta, files, what)
+}
+
+/// A bundle holds a Rust crate's library or C libraries, each C library under the names of
+/// [`c_library_files`], for its package and target only, and every file there: what the linker and
+/// the loader use is what the checksum covers, and a DLL copied beside an executable can't
+/// replace another package's.
+fn check_c_libraries(meta: &NativeMeta, files: &[String], what: &str) -> Result<(), String> {
+    if meta.shared.is_some() == !meta.c.is_empty() {
+        return Err(format!(
+            "{what}: {META_FILE} must name either a Rust crate's `shared` library or C libraries in `c`"
+        ));
+    }
+    if meta.shared.is_none() && !meta.exports.is_empty() {
+        return Err(format!(
+            "{what}: {META_FILE} lists exports but no `shared` library that has them"
+        ));
+    }
+    for (lib, actual) in &meta.c {
+        let name_ok = !lib.is_empty()
+            && lib
+                .chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-');
+        if !name_ok {
+            return Err(format!(
+                "{what}: `{lib}` in {META_FILE} is not a C library name"
+            ));
+        }
+        let expected = c_library_files(&meta.package, lib, &meta.target);
+        if *actual != expected {
+            return Err(format!(
+                "{what}: C library `{lib}` in {META_FILE} must have the files {expected:?}, not {actual:?}"
+            ));
+        }
+        let all = [
+            Some(&actual.shared),
+            actual.import_lib.as_ref(),
+            actual.static_lib.as_ref(),
+        ];
+        if let Some(missing) = all.into_iter().flatten().find(|f| !files.contains(f)) {
+            return Err(format!(
+                "{what}: C library `{lib}` has no `{missing}` in the bundle"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// Every export listed in the metadata carries the package's prefix (`velt_<pkg>__`): a `declare` of a
@@ -211,12 +258,16 @@ pub fn check_exports(
     file: &dyn Fn(&str) -> Result<Vec<u8>, String>,
     what: &str,
 ) -> Result<(), String> {
-    let library = file(&meta.shared)?;
-    check_shared_library(meta, &library, what)?;
+    // C libraries export what their sources define: there is no list to hold them to.
+    let Some(shared) = &meta.shared else {
+        return Ok(());
+    };
+    let library = file(shared)?;
+    check_shared_library(meta, shared, &library, what)?;
     if let Some(import_lib) = &meta.import_lib {
-        let dll = meta.shared.rsplit('/').next().unwrap_or(&meta.shared);
+        let dll = shared.rsplit('/').next().unwrap_or(shared);
         let names = exports::exported_names(&library)
-            .map_err(|e| format!("{what}: the shared library `{}`: {e}", meta.shared))?;
+            .map_err(|e| format!("{what}: the shared library `{shared}`: {e}"))?;
         exports::check_import_library(&file(import_lib)?, dll, &names)
             .map_err(|e| format!("{what}: `{import_lib}`: {e}"))?;
     }
@@ -227,9 +278,14 @@ pub fn check_exports(
     Ok(())
 }
 
-fn check_shared_library(meta: &NativeMeta, library: &[u8], what: &str) -> Result<(), String> {
+fn check_shared_library(
+    meta: &NativeMeta,
+    shared: &str,
+    library: &[u8],
+    what: &str,
+) -> Result<(), String> {
     let actual = exports::read(library, &meta.package)
-        .map_err(|e| format!("{what}: the shared library `{}`: {e}", meta.shared))?;
+        .map_err(|e| format!("{what}: the shared library `{shared}`: {e}"))?;
     if actual == meta.exports {
         return Ok(());
     }
@@ -249,8 +305,7 @@ fn check_shared_library(meta: &NativeMeta, library: &[u8], what: &str) -> Result
         problems.push(format!("the library exports `{name}`, which is not listed"));
     }
     Err(format!(
-        "{what}: {META_FILE} does not match the shared library `{}`:\n  {}",
-        meta.shared,
+        "{what}: {META_FILE} does not match the shared library `{shared}`:\n  {}",
         problems.join("\n  ")
     ))
 }
@@ -258,7 +313,7 @@ fn check_shared_library(meta: &NativeMeta, library: &[u8], what: &str) -> Result
 fn check_library_files(meta: &NativeMeta, what: &str) -> Result<(), String> {
     let (shared, import_lib) = library_files(&meta.package, &meta.target);
     let named = [
-        ("shared", Some(&meta.shared), Some(shared)),
+        ("shared", meta.shared.as_ref(), Some(shared)),
         ("import_lib", meta.import_lib.as_ref(), import_lib),
     ];
     for (key, path, expected) in named {
@@ -289,11 +344,12 @@ mod tests {
             version: version.into(),
             target: "x86_64-unknown-linux-gnu".into(),
             abi: 1,
-            shared: "shared/libvelt_native_p.so".into(),
+            shared: Some("shared/libvelt_native_p.so".into()),
             import_lib: None,
             static_obj: Some("static/p.o".into()),
             system_libs: None,
             exports: BTreeMap::from([("velt_p__open".into(), "()->u64".into())]),
+            c: BTreeMap::new(),
         };
         std::fs::create_dir_all(dir.join("shared")).unwrap();
         std::fs::create_dir_all(dir.join("static")).unwrap();
@@ -444,7 +500,7 @@ mod tests {
             ("shared/libvelt_native_p.so", Some("/tmp/evil.o")),
         ] {
             let mut bad = good.clone();
-            bad.shared = shared.into();
+            bad.shared = Some(shared.into());
             bad.static_obj = static_obj.map(Into::into);
             let e = check_meta(&bad, id, &files, "t").unwrap_err();
             assert!(
@@ -459,7 +515,7 @@ mod tests {
         std::fs::write(&other, b"ELF").unwrap();
         let files = list_files(&b).unwrap();
         let mut bad = good.clone();
-        bad.shared = "shared/libvelt_native_q.so".into();
+        bad.shared = Some("shared/libvelt_native_q.so".into());
         let e = check_meta(&bad, id, &files, "t").unwrap_err();
         assert!(e.contains("must be `shared/libvelt_native_p.so`"), "{e}");
         let mut bad = good.clone();
@@ -473,7 +529,7 @@ mod tests {
         let names = names.map(String::from);
         let mut dll = good.clone();
         dll.target = win.2.into();
-        dll.shared = names[0].clone();
+        dll.shared = Some(names[0].clone());
         dll.import_lib = Some(names[1].clone());
         dll.static_obj = None;
         check_meta(&dll, win, &names, "t").unwrap();
@@ -482,7 +538,7 @@ mod tests {
             ("shared/velt_native_p.dll", "shared/velt_native_q.dll.lib"),
         ] {
             let mut bad = dll.clone();
-            bad.shared = shared.into();
+            bad.shared = Some(shared.into());
             bad.import_lib = Some(import.into());
             let files = [shared.to_string(), import.to_string()];
             let e = check_meta(&bad, win, &files, "t").unwrap_err();
@@ -491,7 +547,7 @@ mod tests {
 
         // A malicious native.json inside a correctly checksummed archive is refused on unpack.
         let mut evil = good.clone();
-        evil.shared = "/usr/lib/libc.so.6".into();
+        evil.shared = Some("/usr/lib/libc.so.6".into());
         std::fs::write(b.join(META_FILE), evil.to_json()).unwrap();
         let sum = checksum(&b).unwrap();
         let out = tmp.path().join("out");
@@ -504,5 +560,111 @@ mod tests {
     fn rejects_paths_outside_the_layout() {
         assert!(allowed("shared/libx.so") && allowed("static/x.o") && allowed(META_FILE));
         assert!(!allowed("shared/") && !allowed("shared/a/b") && !allowed("src/x.vlt"));
+    }
+
+    /// A bundle of C libraries for `target`, as `c_build` writes it.
+    fn c_bundle(dir: &Path, target: &str) -> NativeMeta {
+        let files = c_library_files("p", "tiny", target);
+        let meta = NativeMeta {
+            package: "p".into(),
+            version: "1.0.0".into(),
+            target: target.into(),
+            abi: 0,
+            shared: None,
+            import_lib: None,
+            static_obj: None,
+            system_libs: None,
+            exports: BTreeMap::new(),
+            c: BTreeMap::from([("tiny".to_string(), files.clone())]),
+        };
+        std::fs::create_dir_all(dir.join("shared")).unwrap();
+        std::fs::create_dir_all(dir.join("static")).unwrap();
+        std::fs::write(dir.join(META_FILE), meta.to_json()).unwrap();
+        let all = [
+            Some(&files.shared),
+            files.import_lib.as_ref(),
+            files.static_lib.as_ref(),
+        ];
+        for file in all.into_iter().flatten() {
+            std::fs::write(dir.join(file), b"library").unwrap();
+        }
+        meta
+    }
+
+    #[test]
+    fn a_bundle_of_c_libraries_round_trips() {
+        let tmp = tempfile::tempdir().unwrap();
+        for target in ["x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc"] {
+            let id = ("p", "1.0.0", target);
+            let b = tmp.path().join(target);
+            let meta = c_bundle(&b, target);
+            let lib =
+                crate::native::NativeLib::open(&b, crate::native::NativeOrigin::Prebuilt).unwrap();
+            assert!(!lib.has_crate());
+            assert_eq!(lib.meta, meta);
+            assert_eq!(NativeMeta::read(&b).unwrap(), meta);
+            let sum = checksum(&b).unwrap();
+            let dest = tmp.path().join("unpacked").join(target);
+            unpack_verified(&pack(&b).unwrap(), &sum, id, &dest, "test").unwrap();
+            assert_eq!(checksum(&dest).unwrap(), sum);
+        }
+    }
+
+    /// `native.json` is not trusted for a C library's files: the linker and the loader take what
+    /// it names, and a DLL goes beside the executable.
+    #[test]
+    fn a_c_library_names_only_its_own_files() {
+        let tmp = tempfile::tempdir().unwrap();
+        let target = "x86_64-pc-windows-msvc";
+        let id = ("p", "1.0.0", target);
+        let open = |meta: &NativeMeta, dir: &Path| {
+            std::fs::write(dir.join(META_FILE), meta.to_json()).unwrap();
+            check_meta(meta, id, &list_files(dir).unwrap(), "test")
+        };
+        let b = tmp.path().join("b");
+        let good = c_bundle(&b, target);
+
+        let mut escaping = good.clone();
+        escaping.c.get_mut("tiny").unwrap().shared = "../../evil.dll".into();
+        assert!(open(&escaping, &b)
+            .unwrap_err()
+            .contains("must have the files"));
+
+        let mut others = good.clone();
+        others.c.get_mut("tiny").unwrap().shared = "shared/velt_rt_shared.dll".into();
+        assert!(open(&others, &b)
+            .unwrap_err()
+            .contains("must have the files"));
+
+        let mut renamed = good.clone();
+        let files = renamed.c.remove("tiny").unwrap();
+        renamed.c.insert("../tiny".into(), files);
+        assert!(open(&renamed, &b)
+            .unwrap_err()
+            .contains("is not a C library name"));
+
+        let mut empty = good.clone();
+        empty.c.clear();
+        assert!(open(&empty, &b)
+            .unwrap_err()
+            .contains("either a Rust crate's"));
+
+        let mut both = good.clone();
+        both.shared = Some("shared/velt_native_p.dll".into());
+        std::fs::write(b.join("shared/velt_native_p.dll"), b"x").unwrap();
+        assert!(open(&both, &b)
+            .unwrap_err()
+            .contains("either a Rust crate's"));
+        std::fs::remove_file(b.join("shared/velt_native_p.dll")).unwrap();
+
+        let mut exporting = good.clone();
+        exporting
+            .exports
+            .insert("velt_p__x".into(), "()->u64".into());
+        assert!(open(&exporting, &b).unwrap_err().contains("lists exports"));
+
+        std::fs::write(b.join(META_FILE), good.to_json()).unwrap();
+        std::fs::remove_file(b.join(good.c["tiny"].import_lib.as_ref().unwrap())).unwrap();
+        assert!(open(&good, &b).unwrap_err().contains("has no `shared/"));
     }
 }

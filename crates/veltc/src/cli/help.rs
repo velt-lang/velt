@@ -374,7 +374,8 @@ pub const COMMANDS: &[CommandHelp] = &[
         about: "Publishes to the package's `registry`, else $VELT_REGISTRY, else the local \
                 registry (~/.velt/registry). A package with `native` in package.vlt also publishes a \
                 prebuilt native library for every target it lists: from <dir>/<triple>/, else \
-                target/velt-native/<triple>/ (the host's is built if missing).",
+                target/velt-native/<triple>/ (the host's is built if missing; every target's, for \
+                a package of C `sources`).",
         options: &[
             ("--native-artifacts <dir>", "native libraries built elsewhere (`velt native build` on each OS)"),
             ("--native-only", "add libraries for new targets to the published version"),
@@ -401,8 +402,9 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "native",
         summary: "Build the package's native library, or check its C headers",
         usage: &["native build [--target <triple>]", "native headers"],
-        about: "build: the `native` crate into the bundle `velt publish` uploads (needs Rust). \
-                headers: `declare c` against C headers on every target, into c-headers.json.",
+        about: "build: the `native` crate (needs Rust), or the C `sources` of `native.c` (with the \
+                pinned zig, for any target), into the bundle `velt publish` uploads. headers: \
+                `declare c` against C headers on every target, into c-headers.json.",
         options: &[("--target <triple>", "the target to build for (default: this machine)")],
         examples: &[(
             "velt native build --target aarch64-apple-darwin",

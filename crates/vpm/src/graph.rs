@@ -25,6 +25,9 @@ pub struct GraphPackage {
     /// The package's native library for the build target (packages with native code, when the
     /// install had a target).
     pub native: Option<crate::native::NativeLib>,
+    /// Where the package's C libraries built from `sources` come from for the build target
+    /// (when the install had one).
+    pub c_bundle: Option<CBundle>,
     /// The package's C libraries (`native.c`), by the name its `declare c("<library>")`
     /// functions give.
     pub c_libraries: BTreeMap<String, crate::manifest::CLibraryConfig>,
@@ -46,6 +49,16 @@ pub struct GraphPackage {
     pub npm: BTreeMap<String, PathBuf>,
     /// `root`, canonicalized, for matching importing files.
     key: PathBuf,
+}
+
+/// Where a package's C libraries built from `sources` come from.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CBundle {
+    /// A published bundle, verified against the lockfile.
+    Prebuilt(Box<crate::native::NativeLib>),
+    /// Built from the package's sources into this directory when a program links them: a check,
+    /// an editor or a program that doesn't call them never runs zig.
+    FromSource(PathBuf),
 }
 
 /// All packages of one build.
@@ -117,6 +130,7 @@ impl PackageGraph {
             host_modules: BTreeMap::new(),
             host: None,
             native: None,
+            c_bundle: None,
             c_libraries: BTreeMap::new(),
             has_native_code: false,
             fetched: false,

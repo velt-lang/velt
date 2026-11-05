@@ -42,7 +42,7 @@ mod lint;
 pub mod read;
 pub mod schema;
 pub use allow_native::{AllowNative, AllowedFrom};
-pub use c_library::CLibraryConfig;
+pub use c_library::{CLibraryConfig, C_SOURCES_DIR};
 
 pub use lint::{LintConfig, LintLevel};
 pub(crate) mod write;
@@ -102,6 +102,10 @@ pub struct Manifest {
     /// stays `None`).
     #[serde(skip)]
     pub c_libraries: Option<BTreeMap<String, CLibraryConfig>>,
+    /// `native.targets` of a package whose libraries are C `sources`: what `velt publish` builds
+    /// (a package with a Rust crate has them in [`NativeConfig::targets`]).
+    #[serde(skip)]
+    pub c_targets: Vec<String>,
     /// `allowNative`: the packages with native code the program allows, and where from (the root
     /// package's).
     #[serde(skip)]

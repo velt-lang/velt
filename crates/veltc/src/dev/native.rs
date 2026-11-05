@@ -45,6 +45,17 @@ pub fn jit_symbols(graph: Option<&PackageGraph>) -> Result<Vec<(String, usize)>,
     Ok(out)
 }
 
+/// Open the C libraries a version of the program calls (`c_libs`, a session's): system libraries,
+/// and those packages build from `sources`, built first if a source changed.
+pub fn load_c_libraries(
+    opts: &crate::driver::BuildOptions,
+    c_libs: &[String],
+) -> Result<(), String> {
+    velt_codegen_cl::load_c_libraries(&crate::native::c_system_libraries(c_libs))?;
+    let files = crate::native::c_dev_libraries(opts.packages.as_ref(), c_libs)?;
+    velt_codegen_cl::load_c_library_files(&files)
+}
+
 /// When the sources of the native libraries built from source were last changed: a different
 /// fingerprint after a rebuild means the running host has stale native code.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -69,6 +80,12 @@ impl Fingerprint {
 /// watches besides the Velt sources.
 pub fn source_files(graph: Option<&PackageGraph>) -> Vec<PathBuf> {
     let mut out = vec![];
+    // A package's C sources: all of `native/` is what they are built from.
+    for pkg in graph.into_iter().flat_map(|g| g.packages()) {
+        if matches!(pkg.c_bundle, Some(vpm::graph::CBundle::FromSource(_))) {
+            collect(&pkg.root.join(vpm::manifest::C_SOURCES_DIR), &mut out);
+        }
+    }
     for (pkg, lib) in graph.into_iter().flat_map(|g| g.natives()) {
         if lib.origin != NativeOrigin::BuiltFromSource {
             continue;

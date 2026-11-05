@@ -1,6 +1,7 @@
 //! The contents of a package as distributed: `package.vlt`, everything under `src/`, the record
 //! of its C declarations' header check (`c-headers.json`, [`crate::c_headers`]), and for a
-//! package with a `native` object the sources of its crate (without `target/` and `.git/`).
+//! package with a `native` object the sources of its crate, or of its C libraries (without
+//! `target/` and `.git/`).
 //! Listing, copying and content-hashing all use the same file set so a checksum computed on a
 //! source tree matches the one computed on its registry or cache copy.
 
@@ -37,19 +38,21 @@ pub fn list_files(root: &Path) -> Result<Vec<String>, String> {
     Ok(files)
 }
 
-/// The `native.path` of the package at `root`, if its manifest has one (an unreadable manifest
-/// has none here; it is reported where it is parsed).
+/// The directory of the native sources of the package at `root`, if it has one (an unreadable
+/// manifest has none here; it is reported where it is parsed).
 fn native_dir(root: &Path) -> Option<String> {
     let text = std::fs::read_to_string(root.join(MANIFEST_FILE)).ok()?;
     native_dir_of(&text)
 }
 
-/// The `native.path` of manifest text.
+/// The directory of manifest text's native sources: `native.path`, or where C `sources` are.
 pub fn native_dir_of(manifest: &str) -> Option<String> {
-    crate::manifest::Manifest::parse(manifest)
-        .ok()?
-        .native
-        .map(|n| n.path)
+    let manifest = crate::manifest::Manifest::parse(manifest).ok()?;
+    match manifest.native {
+        Some(native) => Some(native.path),
+        None if manifest.has_c_sources() => Some(crate::manifest::C_SOURCES_DIR.to_string()),
+        None => None,
+    }
 }
 
 /// Directories never distributed inside a native crate.

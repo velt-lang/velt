@@ -8,6 +8,7 @@
 //! Tools (overridable for cross builds): `$VELT_CARGO` (default `cargo`), `$VELT_NATIVE_LD`
 //! (default `ld`; GNU ld on Linux, ld64 on macOS) and `$VELT_NATIVE_OBJCOPY` (default `objcopy`).
 
+use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -170,11 +171,12 @@ pub fn build(req: BuildRequest) -> Result<NativeMeta, String> {
         version: req.manifest.package.version.clone(),
         target: req.target.to_string(),
         abi: NATIVE_ABI,
-        shared: shared_rel,
+        shared: Some(shared_rel),
         import_lib: import_rel,
         static_obj: static_rel,
         system_libs,
         exports,
+        c: BTreeMap::new(),
     };
     crate::json_file::write_atomic(&tmp.join(META_FILE), &meta.to_json())?;
     if req.out.exists() {
@@ -191,7 +193,7 @@ pub fn build(req: BuildRequest) -> Result<NativeMeta, String> {
 
 /// An exclusive lock on the bundle directory `out` (the file `<out>.lock` beside it), released
 /// when the result is dropped.
-fn lock_bundle(out: &Path) -> Result<std::fs::File, String> {
+pub(super) fn lock_bundle(out: &Path) -> Result<std::fs::File, String> {
     let path = out.with_extension("lock");
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -217,7 +219,7 @@ fn current_bundle(req: &BuildRequest, newest: Option<std::time::SystemTime>) -> 
         .ok()?;
     let current = meta.version == req.manifest.package.version && meta.target == req.target;
     let whole = [
-        Some(&meta.shared),
+        meta.shared.as_ref(),
         meta.import_lib.as_ref(),
         meta.static_obj.as_ref(),
     ]

@@ -47,6 +47,23 @@ pub fn load_c_libraries(systems: &[String]) -> Result<(), String> {
     Ok(())
 }
 
+/// Open the shared libraries `files` packages built from their C sources, with their symbols
+/// global, as [`load_c_libraries`] does: each once per host, as it stays open. A rebuilt library
+/// restarts the host.
+pub fn load_c_library_files(files: &[std::path::PathBuf]) -> Result<(), String> {
+    let mut opened = OPENED.lock().unwrap_or_else(|e| e.into_inner());
+    for file in files {
+        let name = file.display().to_string();
+        if opened.iter().any(|(s, _)| *s == name) {
+            continue;
+        }
+        let handle = platform::open(&name)
+            .ok_or_else(|| format!("cannot load the C library `{name}` into `velt dev`"))?;
+        opened.push((name, handle));
+    }
+    Ok(())
+}
+
 /// The file names the platform's loader may find system library `system` as.
 fn file_names(system: &str) -> Vec<String> {
     if let Some(framework) = system.strip_prefix("framework:") {

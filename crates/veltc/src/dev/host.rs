@@ -94,7 +94,7 @@ fn compile_and_load(
     session: &mut DevSession,
 ) -> Result<JitProgram, BuildError> {
     let program = driver::compile(sess, opts)?;
-    velt_codegen_cl::load_c_libraries(&sess.c_libs).map_err(BuildError::Failed)?;
+    super::native::load_c_libraries(opts, &sess.c_libs).map_err(BuildError::Failed)?;
     let start = Instant::now();
     let mut steps = vec![];
     let loaded = session

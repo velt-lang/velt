@@ -78,7 +78,7 @@ pub(super) fn check(
         );
         return;
     };
-    if lib.system_for(target).is_none() {
+    if lib.sources.is_empty() && lib.system_for(target).is_none() {
         diags.push(
             Diagnostic::error(
                 format!(
@@ -200,8 +200,8 @@ pub(super) fn check_const<'g>(
 }
 
 /// The system libraries (`sqlite3`, `framework:Accelerate`) of the C libraries `program`'s
-/// declarations name, for `target`: each once, in declaration order. The platform's C library is
-/// linked anyway.
+/// declarations name, for `target`, and those built from `sources` ([`super::c_sources`]): each
+/// once, in declaration order. The platform's C library is linked anyway.
 pub fn links(
     program: &hir::Program,
     sm: &SourceMap,
@@ -218,15 +218,22 @@ pub fn links(
             continue;
         };
         let file = &sm.get(f.span.file).path;
-        let Some(system) = graph
-            .package_of(file)
-            .and_then(|p| p.c_libraries.get(&c.library))
-            .and_then(|lib| lib.system_for(target))
-        else {
+        let Some(package) = graph.package_of(file) else {
             continue;
         };
-        if !seen.iter().any(|s| s == system) {
-            seen.push(system.to_string());
+        let Some(lib) = package.c_libraries.get(&c.library) else {
+            continue;
+        };
+        let link = if lib.sources.is_empty() {
+            let Some(system) = lib.system_for(target) else {
+                continue;
+            };
+            system.to_string()
+        } else {
+            super::c_sources::entry(&package.name, &c.library)
+        };
+        if !seen.contains(&link) {
+            seen.push(link);
         }
     }
     seen
@@ -238,7 +245,7 @@ pub fn links(
 pub fn link_args(systems: &[String], target: &str) -> Vec<String> {
     let msvc = target.contains("-windows-msvc");
     let mut args = Vec::new();
-    for system in systems {
+    for system in super::c_sources::system_libraries(systems).iter() {
         match system.strip_prefix("framework:") {
             Some(framework) if !target.contains("-apple-") => {
                 panic!("ICE: framework `{framework}` reached the link for {target}")

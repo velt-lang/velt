@@ -316,6 +316,23 @@ pub fn inits(graph: Option<&PackageGraph>) -> Vec<velt_vir::NativeInit> {
         .collect()
 }
 
+/// What the linker adds for a program: its packages' native libraries (with `crates`; a source
+/// generator links none), then the C libraries of `c_libs` built from `sources`.
+pub fn program_links(
+    graph: Option<&PackageGraph>,
+    c_libs: &[String],
+    crates: bool,
+    release: bool,
+    target: &str,
+) -> Result<Vec<velt_link::NativeLink>, String> {
+    let mut out = match crates {
+        true => links(graph, release),
+        false => vec![],
+    };
+    out.extend(c_sources::links(graph, c_libs, release, target)?);
+    Ok(out)
+}
+
 /// What the linker adds per native library: the shared library in debug builds (a fast link,
 /// like the shared runtime), the prelinked object in release builds so the executable stays
 /// self-contained (where there is one: not on Windows).
@@ -339,8 +356,10 @@ pub fn links(graph: Option<&PackageGraph>, release: bool) -> Vec<velt_link::Nati
 }
 
 mod c_decls;
+mod c_sources;
 mod headers;
 pub use c_decls::{link_args as c_link_args, links as c_links};
+pub use c_sources::{dev_libraries as c_dev_libraries, system_libraries as c_system_libraries};
 pub use headers::{
     read_constants as read_c_constants, stamp_inputs as c_stamp_inputs, zig_target,
     Checked as CChecked, Constants as CConstants,

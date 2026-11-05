@@ -40,7 +40,7 @@ pub(super) fn run_clang(
     let includes = super::includes(root, headers)?;
     let file = dir.join(SOURCE);
     std::fs::write(&file, probe_source(&includes, names)).map_err(|e| e.to_string())?;
-    let mut cc1 = super::cc1_command(zig, dir, root, SOURCE, zig_target)?;
+    let mut cc1 = super::cc1_command(zig, dir, root, SOURCE, &[], zig_target)?;
     cc1.extend(["-ferror-limit".into(), "0".into(), "-ast-dump=json".into()]);
     cc1.extend(
         [
@@ -98,7 +98,7 @@ pub(super) fn run_clang(
             ));
         }
         std::fs::write(&file, source).map_err(|e| e.to_string())?;
-        let mut cc1 = super::cc1_command(zig, dir, root, SOURCE, zig_target)?;
+        let mut cc1 = super::cc1_command(zig, dir, root, SOURCE, &[], zig_target)?;
         cc1.extend(["-emit-llvm".into(), "-o".into(), "-".into()]);
         let out = super::zig_command(zig, dir)
             .args(&cc1)

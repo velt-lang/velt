@@ -16,8 +16,9 @@ use super::unsafe_sites::{Site, SiteKind};
 pub struct NativePackage {
     pub name: String,
     /// Its C libraries (`native.c`): each with the system library it links on the build's
-    /// target (`None`: none there, or the C library), and how its declarations are checked.
-    pub c_libraries: Vec<(String, Option<String>, Checked)>,
+    /// target (`None`: none there, the C library, or its `sources`), how its declarations are
+    /// checked, and the C files it is built from.
+    pub c_libraries: Vec<(String, Option<String>, Checked, Vec<String>)>,
     /// It has a Rust crate (`native.crate`), built into a native library.
     pub rust_crate: bool,
     /// Its unsafe code, in module and source order.
@@ -92,6 +93,7 @@ pub(super) fn native_packages(
                         name.clone(),
                         lib.system_for(target).map(str::to_string),
                         Checked::of(lib),
+                        lib.sources.clone(),
                     )
                 })
                 .collect(),
@@ -139,7 +141,7 @@ pub fn note_checked(
             continue;
         };
         let listed = packages.iter_mut().find(|p| p.name == package.name);
-        for (name, _, state) in listed.into_iter().flat_map(|p| &mut p.c_libraries) {
+        for (name, _, state, _) in listed.into_iter().flat_map(|p| &mut p.c_libraries) {
             if libraries.contains_key(name) {
                 *state = Checked::Headers;
             }
@@ -169,9 +171,10 @@ pub fn render(packages: &[NativePackage]) -> String {
             let libs: Vec<String> = p
                 .c_libraries
                 .iter()
-                .map(|(name, system, checked)| {
+                .map(|(name, system, checked, sources)| {
                     let links = match system {
                         Some(system) => system.clone(),
+                        None if !sources.is_empty() => format!("built from {}", sources.join(", ")),
                         None if name == "c" => "the platform's".into(),
                         None => "none on this target".into(),
                     };
@@ -212,10 +215,11 @@ pub fn json(packages: &[NativePackage]) -> Value {
             .map(|p| {
                 json!({
                     "package": p.name,
-                    "cLibraries": p.c_libraries.iter().map(|(name, system, checked)| json!({
+                    "cLibraries": p.c_libraries.iter().map(|(name, system, checked, sources)| json!({
                         "name": name,
                         "system": system,
                         "checked": checked.word(),
+                        "sources": sources,
                     })).collect::<Vec<_>>(),
                     "rustCrate": p.rust_crate,
                     "unsafe": p.unsafe_code.iter().map(|u| json!({
@@ -249,8 +253,8 @@ mod tests {
         let package = |name: &str| NativePackage {
             name: name.into(),
             c_libraries: vec![
-                ("own".into(), None, Checked::Listed),
-                ("other".into(), None, Checked::Listed),
+                ("own".into(), None, Checked::Listed, vec![]),
+                ("other".into(), None, Checked::Listed, vec![]),
             ],
             rust_crate: false,
             unsafe_code: vec![],
@@ -273,8 +277,19 @@ mod tests {
             NativePackage {
                 name: "sqlite".into(),
                 c_libraries: vec![
-                    ("sqlite3".into(), Some("sqlite3".into()), Checked::Headers),
-                    ("blas".into(), None, Checked::Unchecked),
+                    (
+                        "sqlite3".into(),
+                        Some("sqlite3".into()),
+                        Checked::Headers,
+                        vec![],
+                    ),
+                    ("blas".into(), None, Checked::Unchecked, vec![]),
+                    (
+                        "tiny".into(),
+                        None,
+                        Checked::Headers,
+                        vec!["native/tiny.c".into()],
+                    ),
                 ],
                 rust_crate: false,
                 unsafe_code: vec![
@@ -300,7 +315,7 @@ mod tests {
         assert_eq!(
             render(&packages),
             "Native code the program allows (allowNative):\n  \
-             sqlite: C libraries sqlite3 (sqlite3; headers checked), blas (none on this target; unchecked); 2 places of unsafe code\n    \
+             sqlite: C libraries sqlite3 (sqlite3; headers checked), blas (none on this target; unchecked), tiny (built from native/tiny.c; headers checked); 2 places of unsafe code\n    \
              src/db.vlt:12   unsafe block\n    \
              src/stmt.vlt:7  unsafe function `step`\n  \
              pg: a Rust crate; no unsafe code\n"
@@ -308,5 +323,9 @@ mod tests {
         assert_eq!(render(&[]), "");
         assert_eq!(json(&packages)[0]["unsafe"][1]["line"], 7);
         assert_eq!(json(&packages)[1]["rustCrate"], true);
+        assert_eq!(
+            json(&packages)[0]["cLibraries"][2]["sources"][0],
+            "native/tiny.c"
+        );
     }
 }

@@ -305,6 +305,7 @@ impl Reader<'_> {
     /// Decode the data into a [`Manifest`], checking every field where it is written.
     fn manifest(&mut self, value: &Value) -> Manifest {
         let mut manifest = Manifest {
+            c_targets: Vec::new(),
             registry: None,
             package: Package {
                 name: String::new(),
@@ -380,7 +381,9 @@ impl Reader<'_> {
                 "host" => manifest.host = self.host(v),
                 "jsx" => manifest.jsx = self.jsx(v),
                 "define" => manifest.define = self.define(v),
-                "native" => (manifest.native, manifest.c_libraries) = self.native(v),
+                "native" => {
+                    (manifest.native, manifest.c_libraries, manifest.c_targets) = self.native(v)
+                }
                 "allowNative" => manifest.allow_native = self.allow_native(v),
                 "tsCompat" => manifest.ts_compat = self.ts_compat(v),
                 "lint" => manifest.lint = self.lint(v),
@@ -393,7 +396,7 @@ impl Reader<'_> {
                 self.error(format!("the manifest is missing `{key}`"), value.span);
             }
         }
-        if manifest.native.is_some() && super::split_scoped(&manifest.package.name).is_some() {
+        if manifest.has_bundles() && super::split_scoped(&manifest.package.name).is_some() {
             self.error(
                 "a package with a scoped name (`@scope/name`) cannot have `native` code yet",
                 value.span,

@@ -17,7 +17,10 @@ use crate::resolve::{resolve, Resolution, ResolvedPackage, Source};
 use crate::workspace::{Workspace, WorkspaceFile};
 
 mod allow_native;
+mod c_sources;
 pub mod workspace;
+
+use c_sources::Natives;
 
 /// How to treat the existing lockfile, and what to install for.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -312,14 +315,18 @@ fn natives<'r>(
     packages: impl Iterator<Item = &'r ResolvedPackage>,
     (lockfile, dirs): (&Lockfile, &BTreeMap<String, PathBuf>),
     opts: &InstallOptions,
-) -> Result<BTreeMap<String, NativeLib>, String> {
+) -> Result<Natives, String> {
     let mut natives = BTreeMap::new();
+    let mut c_sources = BTreeMap::new();
     let Some(target) = &opts.target else {
-        return Ok(natives);
+        return Ok(Natives::default());
     };
     if let Some((dir, manifest)) = root {
         if let Some(lib) = native_from_source(dir, manifest, target)? {
             natives.insert(manifest.package.name.clone(), lib);
+        }
+        if let Some(out) = c_sources::local_out(dir, manifest, target) {
+            c_sources.insert(manifest.package.name.clone(), out);
         }
     }
     for pkg in packages {
@@ -328,6 +335,10 @@ fn natives<'r>(
             Source::Registry { native_abi, .. } => {
                 let locked = lockfile.get(&pkg.name).map(|p| &p.native);
                 let published = locked.cloned().unwrap_or_default();
+                let id = (pkg.name.as_str(), &pkg.version);
+                if let Some(out) = c_sources::registry_out(loc, id, dir, &published, target)? {
+                    c_sources.insert(pkg.name.clone(), out);
+                }
                 registry_native(
                     loc,
                     (&pkg.name, &pkg.version),
@@ -343,6 +354,9 @@ fn natives<'r>(
                 // build directory are the package's, not the link's.
                 let real = std::fs::canonicalize(dir).unwrap_or_else(|_| dir.clone());
                 let m = Manifest::from_dir(&real)?;
+                if let Some(out) = c_sources::local_out(&real, &m, target) {
+                    c_sources.insert(pkg.name.clone(), out);
+                }
                 native_from_source(&real, &m, target)?
             }
             // npm packages from git have no native code.
@@ -351,6 +365,10 @@ fn natives<'r>(
                 dir, spec, commit, ..
             } => {
                 let m = Manifest::from_dir(dir)?;
+                let work = loc.cache.join("git-native").join(&pkg.name).join(commit);
+                if let Some(out) = c_sources::git_out(&pkg.name, spec, &m, &work, target)? {
+                    c_sources.insert(pkg.name.clone(), out);
+                }
                 // As a registry package without a prebuilt library: building runs its build
                 // scripts, so only when the user asks for it.
                 if m.native.is_some() && !from_source_allowed() {
@@ -362,7 +380,6 @@ fn natives<'r>(
                 }
                 // Built from a copy: cargo writes `Cargo.lock` beside the crate, and the checkout
                 // must stay as fetched (its checksum is verified on every use).
-                let work = loc.cache.join("git-native").join(&pkg.name).join(commit);
                 let copy = work.join("package");
                 if m.native.is_some() && !copy.is_dir() {
                     crate::contents::copy_package(dir, &copy)?;
@@ -374,8 +391,11 @@ fn natives<'r>(
             natives.insert(pkg.name.clone(), lib);
         }
     }
-    check_native_names(&natives)?;
-    Ok(natives)
+    check_native_names(natives.keys().chain(c_sources.keys()))?;
+    Ok(Natives {
+        libs: natives,
+        c_sources,
+    })
 }
 
 /// The environment variable that allows building registry packages' native code from source.
@@ -452,8 +472,16 @@ fn registry_native(
     target: &str,
 ) -> Result<Option<NativeLib>, String> {
     let manifest = Manifest::from_dir(dir)?;
-    if manifest.native.is_none() && published.is_empty() {
-        return Ok(None);
+    if manifest.native.is_none() && (published.is_empty() || manifest.has_c_sources()) {
+        // A library built from sources has its bundle here only for a target it was published for.
+        let Some(checksum) = published.get(target).filter(|_| manifest.has_c_sources()) else {
+            return Ok(None);
+        };
+        let bundle = cache::fetch_native(loc, name, version, target, checksum)?;
+        let lib = NativeLib::open(&bundle, NativeOrigin::Prebuilt)?;
+        let what = format!("`{name} {version}`");
+        crate::native::c_build::check_has_libraries(&manifest, &lib.meta, &what)?;
+        return Ok(Some(lib));
     }
     check_not_wasm(name, target)?;
     if let Some(abi) = native_abi.filter(|&a| a > NATIVE_ABI) {
@@ -607,9 +635,9 @@ fn to_lockfile(resolution: &Resolution, root: &Path, members: &[PathBuf]) -> Loc
 
 /// Two packages with native code whose names differ only in `-` versus `_` would share an export
 /// prefix, an init function and library file names: refused.
-fn check_native_names(natives: &BTreeMap<String, NativeLib>) -> Result<(), String> {
+fn check_native_names<'n>(names: impl Iterator<Item = &'n String>) -> Result<(), String> {
     let mut seen: BTreeMap<String, &str> = BTreeMap::new();
-    for name in natives.keys() {
+    for name in names {
         let norm = crate::manifest::normalized_name(name);
         if let Some(other) = seen.insert(norm, name) {
             return Err(format!(
@@ -656,7 +684,7 @@ fn build_graph<'r>(
     root: Option<(&Manifest, &Path, &[String])>,
     packages: impl Iterator<Item = &'r ResolvedPackage>,
     dirs: &BTreeMap<String, PathBuf>,
-    mut natives: BTreeMap<String, NativeLib>,
+    mut natives: Natives,
 ) -> PackageGraph {
     let packages: Vec<&ResolvedPackage> = packages.collect();
     let npm: BTreeMap<&str, &BTreeMap<String, PathBuf>> = packages
@@ -692,7 +720,7 @@ fn build_graph<'r>(
         graph.set_allow_native(root, &allowed);
         let added = graph.last_mut();
         configure(added, manifest);
-        added.native = natives.remove(&manifest.package.name);
+        natives.attach(added, &manifest.package.name);
     }
     for pkg in packages
         .iter()
@@ -706,7 +734,7 @@ fn build_graph<'r>(
         if let Ok(m) = Manifest::from_dir(dir) {
             configure(added, &m);
         }
-        added.native = natives.remove(&pkg.name);
+        natives.attach(added, &pkg.name);
         added.fetched = matches!(pkg.source, Source::Registry { .. } | Source::Git { .. });
         added.checkout = matches!(pkg.source, Source::Git { .. });
     }
@@ -727,72 +755,4 @@ fn configure(package: &mut crate::graph::GraphPackage, manifest: &Manifest) {
 }
 
 #[cfg(test)]
-mod toolchain_tests {
-    use super::*;
-
-    fn opts(locked: bool, update: bool) -> InstallOptions {
-        InstallOptions {
-            locked,
-            update,
-            target: None,
-        }
-    }
-
-    #[test]
-    fn the_lock_keeps_its_toolchain_until_update_or_the_pin_moves() {
-        let normal = opts(false, false);
-        // A new lock records the running toolchain.
-        assert_eq!(
-            locked_toolchain(None, Some("0.2"), "0.2.1", &normal).as_deref(),
-            Some("0.2.1")
-        );
-        // Without a pin, nothing is recorded (and a recorded one is dropped).
-        assert_eq!(locked_toolchain(None, None, "0.2.1", &normal), None);
-        assert_eq!(
-            locked_toolchain(Some("0.1.0"), None, "0.2.1", &normal),
-            None
-        );
-        // Another toolchain running the package (an editor, $VELT_TOOLCHAIN) leaves it alone.
-        assert_eq!(
-            locked_toolchain(Some("0.2.0"), Some("0.2"), "0.2.1", &normal).as_deref(),
-            Some("0.2.0")
-        );
-        // `velt update` moves it to the running toolchain (the launcher ran the newest).
-        assert_eq!(
-            locked_toolchain(Some("0.2.0"), Some("0.2"), "0.2.1", &opts(false, true)).as_deref(),
-            Some("0.2.1")
-        );
-        // A pin that no longer accepts it moves it too.
-        assert_eq!(
-            locked_toolchain(Some("0.2.0"), Some("0.3"), "0.3.0", &normal).as_deref(),
-            Some("0.3.0")
-        );
-        // --locked never adds or moves it.
-        let locked = opts(true, false);
-        assert_eq!(locked_toolchain(None, Some("0.2"), "0.2.1", &locked), None);
-        assert_eq!(
-            locked_toolchain(Some("0.2.0"), Some("0.3"), "0.3.0", &locked).as_deref(),
-            Some("0.2.0")
-        );
-    }
-
-    #[test]
-    fn locked_checks_the_toolchain_in_pinned_packages_only() {
-        check_locked_toolchain(Some("0.2.0"), Some("0.2"), "0.2.0").unwrap();
-        check_locked_toolchain(None, Some("0.2"), "0.2.0").unwrap();
-        // Unpinned: the launcher doesn't follow the lock there, so it isn't checked.
-        check_locked_toolchain(Some("0.1.0"), None, "0.2.0").unwrap();
-        let other = check_locked_toolchain(Some("0.2.0"), Some("0.2"), "0.2.1").unwrap_err();
-        assert!(
-            other.contains("runs 0.2.0 here (`velt +0.2.0 …`)"),
-            "{other}"
-        );
-        let moved = check_locked_toolchain(Some("0.1.9"), Some("0.2"), "0.2.0").unwrap_err();
-        assert!(
-            moved.contains(
-                "pins velt 0.1.9, which the package's velt pin \"0.2\" no longer accepts"
-            ) && moved.contains("to record velt 0.2.0"),
-            "{moved}"
-        );
-    }
-}
+mod toolchain_tests;

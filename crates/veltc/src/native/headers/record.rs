@@ -86,7 +86,8 @@ pub(super) fn compare_record(
 
 /// Compare the headers of a fetched package with those its author's check read (`recorded`,
 /// the headers `of` a library or the constants, as messages say). A git checkout has them all,
-/// so one missing is an error; a registry archive doesn't ship `native/`, so there only what is
+/// so one missing is an error. A registry archive ships `native/` only for a package that
+/// builds C `sources`: one missing from there is an error too, and elsewhere only what is
 /// present can be compared (docs/internals/design/c-ffi.md).
 pub(super) fn compare_headers(
     package: &GraphPackage,
@@ -97,6 +98,14 @@ pub(super) fn compare_headers(
     at: Span,
     diags: &mut Diagnostics,
 ) {
+    let ships_sources = package.c_libraries.values().any(|l| !l.sources.is_empty());
+    let shipped = |header: &str| {
+        package.checkout
+            || (ships_sources
+                && header
+                    .strip_prefix(vpm::manifest::C_SOURCES_DIR)
+                    .is_some_and(|rest| rest.starts_with('/')))
+    };
     let mut refuse = |header: &str, what: &str| {
         diags.push(
             Diagnostic::error(
@@ -119,14 +128,14 @@ pub(super) fn compare_headers(
         match found {
             Some(found) if found == *digest => {}
             Some(_) => refuse(header, "is not the one its author checked"),
-            None if package.checkout || !inside => {
+            None if shipped(header) || !inside => {
                 refuse(header, "is gone, though its author checked it")
             }
             None => {}
         }
     }
     for header in listed.iter().filter(|h| !h.starts_with('<')) {
-        let here = package.checkout || package.root.join(header).is_file();
+        let here = shipped(header) || package.root.join(header).is_file();
         if here && !recorded.contains_key(header) {
             refuse(header, "is listed, but its author didn't check it");
         }
@@ -334,6 +343,20 @@ mod tests {
         );
         let (e, _) = compared(&checkout.packages()[0], std::slice::from_ref(&g), &listed);
         assert!(e[0].contains("is gone"), "{e:?}");
+        // A registry archive of a package that builds C `sources` ships all of `native/`.
+        let mut bundled = PackageGraph::default();
+        let added = bundled.add("bind", root, BTreeMap::new());
+        added.fetched = true;
+        let own = vpm::manifest::CLibraryConfig {
+            sources: vec!["native/own.c".into()],
+            ..Default::default()
+        };
+        added.c_libraries.insert("own".into(), own);
+        let (e, _) = compared(&bundled.packages()[0], std::slice::from_ref(&g), &listed);
+        assert!(
+            e[0].contains("`native/own.h`") && e[0].contains("is gone"),
+            "{e:?}"
+        );
         // A header listed since the check, and a path out of the package in the record.
         let (e, _) = compared(
             &checkout.packages()[0],

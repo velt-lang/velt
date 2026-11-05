@@ -264,3 +264,120 @@ fn headers_and_unchecked_are_read_checked_and_written_back() {
         "native: { c: { x: { headers: [\"<a.h>\"], unchecked: false } } }",
     ));
 }
+
+#[test]
+fn c_sources_are_decoded_and_are_no_crate() {
+    let m = read(&with(
+        "native: { targets: [\"aarch64-apple-darwin\"], c: { tiny: { sources: [\"native/a.c\", \"native/sub/b.c\"], headers: [\"native/a.h\", \"<stddef.h>\"], defines: { TINY_X: \"2\", _Y: \"\" } } } }",
+    ));
+    // `targets` with `sources` is what they publish: there is no crate.
+    assert!(m.native.is_none() && m.has_bundles() && m.has_native_code());
+    assert_eq!(m.bundle_targets(), ["aarch64-apple-darwin"]);
+    let lib = &m.c_libraries.as_ref().unwrap()["tiny"];
+    assert_eq!(lib.sources, ["native/a.c", "native/sub/b.c"]);
+    assert_eq!(
+        lib.defines,
+        [
+            ("TINY_X".to_string(), "2".to_string()),
+            ("_Y".to_string(), String::new())
+        ]
+    );
+    let again = Manifest::parse(&m.to_vlt()).unwrap();
+    assert_eq!(again.c_libraries, m.c_libraries);
+    assert_eq!(again.c_targets, m.c_targets);
+    assert!(again.native.is_none());
+    assert_eq!(m.to_json()["native"]["c"]["tiny"]["defines"]["TINY_X"], "2");
+    assert_eq!(m.to_json()["native"]["targets"][0], "aarch64-apple-darwin");
+    // No sources: as before, `targets` says there is a crate.
+    assert!(!read(&with("native: { c: { x: { unchecked: true } } }")).has_bundles());
+}
+
+#[test]
+fn c_sources_that_are_not_are_errors() {
+    for bad in [
+        "a.c",
+        "/native/a.c",
+        "src/a.c",
+        "native/../a.c",
+        "native/./a.c",
+        "native//a.c",
+        "native\\a.c",
+        "C:/native/a.c",
+        "native/",
+    ] {
+        let (message, _) = error(&with(&format!(
+            "native: {{ c: {{ x: {{ sources: [{bad:?}] }} }} }}"
+        )));
+        assert!(
+            message.contains("is not a source of the package"),
+            "{bad}: {message}"
+        );
+    }
+    let (message, _) = error(&with(
+        "native: { c: { x: { sources: [\"native/a.cc\"] } } }",
+    ));
+    assert_eq!(
+        message,
+        "`native/a.cc` is not a C file: `sources` builds `.c` files for now"
+    );
+    let (message, _) = error(&with("native: { c: { x: { sources: [] } } }"));
+    assert_eq!(message, "`sources` is empty; remove the field instead");
+    let (message, _) = error(&with("native: { c: { x: { sources: \"native/a.c\" } } }"));
+    assert_eq!(message, "`sources` must be an array, not a string");
+    let (message, _) = error(&with("native: { c: { c: { sources: [\"native/a.c\"] } } }"));
+    assert!(message.contains("it has no `sources`"), "{message}");
+    let (message, _) = error(&with(
+        "native: { c: { x: { sources: [\"native/a.c\"], system: { default: \"x\" } } } }",
+    ));
+    assert!(
+        message.contains("lists `sources` and `system`"),
+        "{message}"
+    );
+    let (message, _) = error(&with(
+        "native: { c: { x: { sources: [\"native/a.c\"], headers: [\"include/a.h\"] } } }",
+    ));
+    assert!(message.contains("is not under `native/`"), "{message}");
+    let (message, _) = error(&with("native: { c: { x: { defines: { A: \"1\" } } } }"));
+    assert!(
+        message.contains("has `defines` but no `sources`"),
+        "{message}"
+    );
+    for bad in ["1A", "A B", "A=1", "-DA"] {
+        let (message, _) = error(&with(&format!(
+            "native: {{ c: {{ x: {{ sources: [\"native/a.c\"], defines: {{ {bad:?}: \"1\" }} }} }} }}"
+        )));
+        assert!(
+            message.contains("is not a C macro name"),
+            "{bad}: {message}"
+        );
+    }
+    // Under `native/` whichever field comes first, and an unknown key is only that: not called a
+    // crate's. `prebuilt` and `fetch` (#2367) are keys to come.
+    let (message, _) = error(&with(
+        "native: { c: { x: { headers: [\"<a.h>\"], sources: [\"src/a.c\"] } } }",
+    ));
+    assert!(
+        message.contains("is not a source of the package"),
+        "{message}"
+    );
+    let (message, _) = error(&with(
+        "native: { prebuilt: {}, c: { x: { sources: [\"native/a.c\"] } } }",
+    ));
+    assert!(!message.contains("Rust crate"), "{message}");
+    let (message, _) = error(&with(
+        "native: { c: { x: { fetch: {}, sources: [\"native/a.c\"] } } }",
+    ));
+    assert!(!message.contains("Rust crate"), "{message}");
+    // A crate's keys don't go with `sources`, in any order.
+    for crate_key in ["path: \"rust\"", "wasm: false"] {
+        let (message, _) = error(&with(&format!(
+            "native: {{ {crate_key}, c: {{ x: {{ sources: [\"native/a.c\"] }} }} }}"
+        )));
+        assert!(message.contains("has no crate yet"), "{message}");
+    }
+    let m = "export const pkg: Package = { name: \"@s/p\", version: \"1.0.0\", native: { c: { x: { sources: [\"native/a.c\"] } } } };";
+    let (message, _) = error(&format!(
+        "import type {{ Package }} from \"velt/package\";\n{m}"
+    ));
+    assert!(message.contains("scoped name"), "{message}");
+}

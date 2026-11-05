@@ -173,8 +173,8 @@ export type Build = {
 export type Native = {
   /// The crate's directory, one directory name in the package root (default `"native"`).
   path?: string;
-  /// The targets `velt publish` publishes a prebuilt library for, such as
-  /// `"x86_64-unknown-linux-gnu"` or `"aarch64-apple-darwin"`.
+  /// The targets `velt publish` publishes a prebuilt library for, of a Rust crate or a package's
+  /// C `sources`, such as `"x86_64-unknown-linux-gnu"` or `"aarch64-apple-darwin"`.
   targets?: string[];
   /// WebAssembly libraries are not supported yet: must be `false` (the default).
   wasm?: boolean;
@@ -197,10 +197,18 @@ export type CLibrary = {
   /// library header. Other libraries' headers aren't there to find (`"<sqlite3.h>"`): the
   /// package ships its copy. A library the package declares functions of lists them or says
   /// `unchecked`. `velt native headers` (run by `velt publish`) records the check in
-  /// c-headers.json for those who install it. A registry archive ships no `native/`, so only a
-  /// git dependency's headers are compared with it.
+  /// c-headers.json for those who install it. A git dependency's headers are compared with it,
+  /// and a registry package's under `native/` when it builds `sources` (only then does its
+  /// archive ship `native/`).
   headers?: string[];
   /// The library has no headers (a binary-only SDK): its declarations go unchecked, which
   /// `velt check` and `allowNative`'s error say.
   unchecked?: boolean;
+  /// The library's C files, in the package under `native/` (`"native/sqlite3.c"`): `velt native
+  /// build` compiles them for each target with the pinned zig, and those who install the package
+  /// get the result prebuilt. A library has `sources` or `system`, not both.
+  sources?: string[];
+  /// What its `sources` and headers are compiled with: `{ SQLITE_THREADSAFE: "2" }` is
+  /// `-DSQLITE_THREADSAFE=2`.
+  defines?: Record<string, string>;
 };

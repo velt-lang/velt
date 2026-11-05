@@ -428,7 +428,8 @@ pub const NATIVE: &[Field] = &[
         },
         ty: "string[]",
         required: false,
-        doc: "The targets `velt publish` publishes a prebuilt library for.",
+        doc: "The targets `velt publish` publishes a prebuilt library for, of a Rust crate or a \
+              package's C `sources`.",
     },
     Field {
         key: "wasm",
@@ -472,8 +473,9 @@ pub const C_LIBRARY: &[Field] = &[
               `\"<string.h>\"` for a C library header. Other libraries' headers aren't there \
               to find (`\"<sqlite3.h>\"`): the package ships its copy. A library the package \
               declares functions of lists them or says `unchecked`. `velt native headers` (run \
-              by `velt publish`) records the check in c-headers.json for those who install it. A registry archive \
-              ships no `native/`, so only a git dependency's headers are compared with it.",
+              by `velt publish`) records the check in c-headers.json for those who install it. A git dependency's \
+              headers are compared with it, and a registry package's under `native/` when it \
+              builds `sources` (only then does its archive ship `native/`).",
     },
     Field {
         key: "unchecked",
@@ -482,6 +484,24 @@ pub const C_LIBRARY: &[Field] = &[
         required: false,
         doc: "The library has no headers (a binary-only SDK): its declarations go unchecked, \
               which `velt check` and `allowNative`'s error say.",
+    },
+    Field {
+        key: "sources",
+        kind: Kind::StrArray { values: &[] },
+        ty: "string[]",
+        required: false,
+        doc: "The library's C files, in the package under `native/` (`\"native/sqlite3.c\"`): \
+              `velt native build` compiles them for each target with the pinned zig, and those \
+              who install the package get the result prebuilt. A library has `sources` or \
+              `system`, not both.",
+    },
+    Field {
+        key: "defines",
+        kind: Kind::Map(Entry::Str),
+        ty: "Record<string, string>",
+        required: false,
+        doc: "What its `sources` and headers are compiled with: `{ SQLITE_THREADSAFE: \"2\" }` \
+              is `-DSQLITE_THREADSAFE=2`.",
     },
 ];
 
