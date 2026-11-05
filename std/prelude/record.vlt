@@ -24,6 +24,8 @@ import {
   MAP_NEWEST_KEY_DIGIT,
 } from "velt/lang/hooks/keys";
 import { arrayIndex, objectPrototypeKey } from "velt/lang/hooks/record";
+import { mapKeyNames } from "velt/lang/map/live";
+import { mapCopyFrom } from "velt/lang/map/table";
 import {
   RECORD_AT,
   RECORD_DECODED,
@@ -175,6 +177,9 @@ export class Record<K, V> {
    * glue walk them), or empty when that is insertion order.
    */
   [RECORD_POSITIONS](): usize[] {
+    if (!this.unordered) {
+      return [];
+    }
     const at = this[RECORD_PERM]();
     if (at.length == 0) {
       return at;
@@ -209,8 +214,14 @@ export class Record<K, V> {
 
   /** `{ ...other }`: every entry of `other`, later entries replacing earlier ones. */
   [RECORD_EXTEND](other: Record<K, V>) {
-    for (const [k, v] of other[RECORD_ENTRIES]()) {
-      this[RECORD_SET](k, v);
+    if (mapCopyFrom(this.entries, other.entries)) {
+      // Into a record that never held a key: the same entries in the same order, so the same
+      // keys are array indices.
+      this.unordered = this.unordered || other.unordered;
+    } else {
+      for (const [k, v] of other[RECORD_ENTRIES]()) {
+        this[RECORD_SET](k, v);
+      }
     }
     // A spread copies the symbol keys too, as in Node.
     const t = other.symbols;
@@ -269,17 +280,17 @@ export class Record<K, V> {
    * listed as its value.
    */
   [RECORD_KEY_NAMES](): string[] {
-    const out: string[] = [];
-    const keys = this.entries.keys();
+    if (!this.unordered) {
+      return mapKeyNames(this.entries);
+    }
     const at = this[RECORD_PERM]();
     if (at.length == 0) {
-      for (const k of keys) {
-        out.push(`${k}`);
-      }
-    } else {
-      for (const i of at) {
-        out.push(`${keys[i]}`);
-      }
+      return mapKeyNames(this.entries);
+    }
+    const keys = this.entries.keys();
+    const out: string[] = [];
+    for (const i of at) {
+      out.push(`${keys[i]}`);
     }
     return out;
   }
@@ -287,6 +298,9 @@ export class Record<K, V> {
   /** `Object.values(r)` (the compiler calls it). */
   [RECORD_VALUES](): V[] {
     const values = this.entries.values();
+    if (!this.unordered) {
+      return values;
+    }
     const at = this[RECORD_PERM]();
     if (at.length == 0) {
       return values;
@@ -301,6 +315,9 @@ export class Record<K, V> {
   /** `Object.entries(r)` (the compiler calls it). */
   [RECORD_ENTRIES](): [K, V][] {
     const entries = this.entries.entries();
+    if (!this.unordered) {
+      return entries;
+    }
     const at = this[RECORD_PERM]();
     if (at.length == 0) {
       return entries;

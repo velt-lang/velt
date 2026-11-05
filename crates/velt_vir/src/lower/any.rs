@@ -452,6 +452,9 @@ impl FnLower<'_, '_> {
         if let Some(v) = self.unboxed_own(a, ty) {
             return v;
         }
+        if let Some(v) = self.any_to_borrowed(a, ty) {
+            return v;
+        }
         let v = self.consume(a);
         if self.dead() {
             let vt = self.cx.ty(ty);
@@ -613,7 +616,7 @@ impl FnLower<'_, '_> {
             v
         } else {
             let vt = self.cx.ty(t);
-            let b = self.alloc(vt);
+            let b = self.dyn_box_alloc(t);
             let bp = self.operand_place(b.clone(), Ty::Ptr);
             self.store(proj(&bp, Proj::Deref(vt)), v);
             b
@@ -737,11 +740,7 @@ impl FnLower<'_, '_> {
         let v = if self.cx.is_class(ty) || self.cx.boxed(ty) {
             data.clone()
         } else {
-            let dp = self.operand_place(data.clone(), Ty::Ptr);
-            let v = Operand::Copy(proj(&dp, Proj::Deref(vt)));
-            let v = self.copy_to_temp(v, vt);
-            self.free(data, vt);
-            Operand::Copy(Place::local(v))
+            self.dyn_box_take(data.clone(), ty)
         };
         self.assign(out.clone(), Rvalue::Use(v));
         self.goto(done);

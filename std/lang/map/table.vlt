@@ -2,11 +2,13 @@
 // removing a slot, resizing, compacting the entries, and dropping them all.
 
 import {
+  arrayReserve,
   arraySwap,
   arrayTruncate,
   arrayWithCapacity,
   holdsNull,
   nullAs,
+  share,
 } from "velt/lang/intrinsics";
 import { place, shiftIn } from "velt/lang/map/slots";
 import { mapNextSeq, mapSeqTail } from "velt/lang/map/order";
@@ -173,4 +175,39 @@ export function mapAppend<K, V>(m: Map<K, V>, key: K, value: V, p: u64, s: i64) 
   m.entryValues.push(value);
   shiftIn(m.slots, (-s - 1) as usize, word);
   m._size++;
+}
+
+/**
+ * Copies every entry of `src` into `dst`, which has never held an entry (a record spread into a
+ * new object, `{ ...props }`), sharing the keys and values. Without tombstones in `src`, its
+ * entry positions are the copy's, so the slot words are taken as they are: no key is hashed or
+ * probed again. Returns false, doing nothing, when `dst` is not such a map or `src` has
+ * tombstones (the caller then sets the entries one by one).
+ */
+export function mapCopyFrom<K, V>(dst: Map<K, V>, src: Map<K, V>): bool {
+  if (
+    src.dead != 0 || dst.entryKeys.length != 0 || dst.slots.length != 0 || dst.seqPos.length != 0
+  ) {
+    return false;
+  }
+  const n = src.entryKeys.length;
+  if (n == 0) {
+    return true;
+  }
+  // Room for one more key, as a record spread is often followed by a write.
+  const room = n < 4 ? 4 : n + 1;
+  arrayReserve(dst.entryKeys, room);
+  arrayReserve(dst.entryValues, room);
+  for (let e: usize = 0; e < n; e++) {
+    dst.entryKeys.push(share(src.entryKeys[e]));
+    dst.entryValues.push(share(src.entryValues[e]));
+  }
+  arrayReserve(dst.slots, src.slots.length);
+  for (let s: usize = 0; s < src.slots.length; s++) {
+    dst.slots.push(src.slots[s]);
+  }
+  dst.shift = src.shift;
+  dst._size = src._size;
+  dst.edits++;
+  return true;
 }

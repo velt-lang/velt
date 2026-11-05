@@ -145,7 +145,8 @@ impl FnLower<'_, '_> {
     }
 
     /// `Glue::DynShare`: the data pointer of another reference to an interface value's data. A
-    /// counted value (class object, boxed value) is retained; a function value or a value that
+    /// counted value (class object, boxed value) and a primitive's shared box (any_borrowed.rs)
+    /// are retained; a function value or a value that
     /// is never changed in place gets a new box holding a share of it (part by part); anything
     /// else is recorded so the next pass counts it.
     pub(super) fn dyn_share_body(&mut self, data: vir::Local, ty: TyId) {
@@ -154,6 +155,10 @@ impl FnLower<'_, '_> {
         let out = if self.cx.counted(ty) {
             let c = self.count_ptr(d.clone(), ty);
             self.retain_of(c, ty);
+            d
+        } else if self.cx.shared_dyn_box(ty) {
+            // A primitive never changes in place: its box is shared (any_borrowed.rs).
+            self.retain(d.clone());
             d
         } else if matches!(
             self.cx.share_kind(ty),

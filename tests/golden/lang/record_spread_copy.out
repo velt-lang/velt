@@ -1,0 +1,5 @@
+400
+0,1,2,b,a {"0":"zero","1":"one","2":"two","b":1,"a":2}
+{ q: 2, r: 3, s: 4 } { z: 0, q: 2, r: 3 }
+{ label: 'a heap string, not an inline one', on: true } { label: 'a heap string, not an inline one', on: true, depth: 3 }
+{} { k: 'replaced', n: 1 }
