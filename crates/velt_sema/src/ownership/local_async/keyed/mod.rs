@@ -11,7 +11,9 @@
 //! - a closure's stores into what it captured count where it is made, with its captures bound
 //!   to what the maker's locals are;
 //! - a call through a function-typed parameter is latent: each caller resolves it against the
-//!   function it passes (`viaCb(this, setK, …)` runs `setK`'s stores); a function value read
+//!   function it passes (`viaCb(this, setK, …)` runs `setK`'s stores); a capture's, or a parameter
+//!   of a function value's, also runs the values made as its type, since no caller may say what it
+//!   is (the function a conversion wraps, `h` of `t.forEach((h: Hk) => h(c, v))`); a function value read
 //!   from the heap runs the program's function values made as its type, and one read from an
 //!   `any` those that accept the arguments and the methods of what the program converts to one
 //!   ([`super::targets::value_targets`]).

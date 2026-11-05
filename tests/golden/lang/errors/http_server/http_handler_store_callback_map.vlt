@@ -1,0 +1,43 @@
+// The same in `map` (#854).
+import { serve } from "http-server";
+
+class App {
+  plugins: string[] = ["a"];
+}
+class Holder {
+  app: App;
+  k7: string[] = [];
+  other: string[] = [];
+  constructor(a: App) {
+    this.app = a;
+  }
+}
+class S {
+  put(p: any, v: any): void {
+    p["k7"] = v;
+  }
+}
+type Hk = (o: Holder, v: string[]) => void;
+function g(o: any, v: any): void {
+  const w: string[] = v;
+  new S().put(o, w);
+}
+function noop(o: Holder, v: string[]): void {}
+const t: Hk[] = [(o: Holder, v: string[]): void => {
+  new S().put(o, v);
+}];
+
+async function main() {
+  const l = new App();
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new Holder(l);
+    t.map((h: Hk): number => {
+      h(c, l.plugins);
+      return 1;
+    });
+    c.k7.push("x");
+    return new Response("ok");
+  });
+  await s.shutdown();
+}
+main();

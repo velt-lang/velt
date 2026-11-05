@@ -17,7 +17,7 @@ enum Head {
 }
 
 /// A type without its `| null`.
-fn strip(cx: &Ctx, t: TyId) -> TyId {
+pub(super) fn strip(cx: &Ctx, t: TyId) -> TyId {
     match cx.ty.kind(t) {
         TyKind::Option(inner, _) => *inner,
         _ => t,

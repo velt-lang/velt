@@ -1,0 +1,113 @@
+// A store by key through a function value, however it reaches the call: the key is `k7`, and the
+// handler changes only `other`, so it may run anywhere (#854). Each is reported when the handler
+// changes `k7`: `http_handler_store_converted_*`, `http_handler_store_callback_*`.
+import { serve } from "http-server";
+
+class App {
+  plugins: string[] = ["a"];
+}
+class Holder {
+  app: App;
+  k7: string[] = [];
+  other: string[] = [];
+  constructor(a: App) {
+    this.app = a;
+  }
+}
+class S {
+  put(p: any, v: any): void {
+    p["k7"] = v;
+  }
+}
+type Hk = (o: Holder, v: string[]) => void;
+function g(o: any, v: any): void {
+  const w: string[] = v;
+  new S().put(o, w);
+}
+function few(o: Holder): void {
+  new S().put(o, o.app.plugins);
+}
+function noop(o: Holder, v: string[]): void {}
+function run(f: Hk, o: Holder, v: string[]): void {
+  f(o, v);
+}
+function each(hs: Hk[], f: (h: Hk) => void): void {
+  for (const h of hs) {
+    f(h);
+  }
+}
+class Rn {
+  f: Hk;
+  constructor(f: Hk) {
+    this.f = f;
+  }
+  go(o: Holder, v: string[]): void {
+    this.f(o, v);
+  }
+}
+const table: Hk[] = [noop];
+table[0] = g;
+const fewer: Hk[] = [noop];
+fewer[0] = few;
+const kept: Hk[] = [];
+function reg(f: (o: any, v: any) => void): void {
+  kept.push((o: Holder, v: string[]): void => {
+    f(o, v);
+  });
+}
+reg(g);
+const closures: Hk[] = [(o: Holder, v: string[]): void => {
+  new S().put(o, v);
+}];
+
+async function main() {
+  const l = new App();
+  const s = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c1 = new Holder(l);
+    const f: Hk = g;
+    f(c1, l.plugins);
+    const c2 = new Holder(l);
+    run(g, c2, l.plugins);
+    const c3 = new Holder(l);
+    new Rn(g).go(c3, l.plugins);
+    const c4 = new Holder(l);
+    table[0](c4, l.plugins);
+    const c5 = new Holder(l);
+    fewer[0](c5, l.plugins);
+    const c6 = new Holder(l);
+    const h = g as any as Hk;
+    h(c6, l.plugins);
+    const c7 = new Holder(l);
+    kept[0](c7, l.plugins);
+    const c8 = new Holder(l);
+    closures.forEach((k: Hk): void => {
+      k(c8, l.plugins);
+    });
+    const c9 = new Holder(l);
+    closures.map((k: Hk): number => {
+      k(c9, l.plugins);
+      return 1;
+    });
+    const c10 = new Holder(l);
+    each(closures, (k: Hk): void => {
+      k(c10, l.plugins);
+    });
+    c1.other.push("x");
+    c2.other.push("x");
+    c3.other.push("x");
+    c4.other.push("x");
+    c5.other.push("x");
+    c6.other.push("x");
+    c7.other.push("x");
+    c8.other.push("x");
+    c9.other.push("x");
+    c10.other.push("x");
+    const all = [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10];
+    return new Response(all.map((c: Holder): string => `${c.k7.length}:${c.other.length}`).join(" "));
+  });
+  const r = await fetch(`http://127.0.0.1:${s.port}/`);
+  console.log(await r.text());
+  console.log(l.plugins.length);
+  await s.shutdown();
+}
+main();

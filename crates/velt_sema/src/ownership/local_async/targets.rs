@@ -182,6 +182,11 @@ impl Literals {
         &self.values
     }
 
+    /// Is `g` a function value the program or a package makes?
+    pub(super) fn is_value(&self, g: DefId) -> bool {
+        self.index.has(g)
+    }
+
     /// Does the program or a package store through an `any` anywhere?
     pub(super) fn stores_by_key(&self) -> bool {
         self.stores_by_key
@@ -201,7 +206,7 @@ impl Visit for Scan<'_> {
                         self.1.calls.push((me, c));
                     }
                 }
-                E::Closure(k) => self.1.calls.push((me, *k)),
+                E::Closure(k) | E::FnRef(k, _) => self.1.calls.push((me, *k)),
                 E::Call { callee, args } => match callee {
                     Callee::Def(d, _) => self.1.calls.push((me, *d)),
                     Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. } => {

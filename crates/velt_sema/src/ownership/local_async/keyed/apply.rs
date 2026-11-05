@@ -15,6 +15,7 @@ use crate::hir::{DefId, TyId, TyKind};
 
 use super::super::fed::adt_of;
 use super::super::targets::{value_targets, Read};
+use super::super::values::strip;
 use super::{ensure, Arg, Ev, Run, Site, Src};
 
 /// A shape of arguments ([`Arg`] per operand), interned.
@@ -103,6 +104,8 @@ pub(super) struct Joins {
     /// For each function type, whether a call through it is joined (`false`: it may run a value
     /// made outside the program, reported where it is called).
     made: FxHashMap<TyId, bool>,
+    /// The function type that stands for each list of parameters ([`canonical`]).
+    by_params: FxHashMap<Vec<TyId>, TyId>,
     /// The joins of calls read from an `any`, per list of argument types; `None`: such a call may
     /// run a value made outside the program.
     from_any: FxHashMap<Vec<TyId>, Option<u32>>,
@@ -301,7 +304,7 @@ fn take_in(cx: &Ctx, run: &mut Run, t: Node, g: DefId) -> bool {
 /// own adds one entry per member, not one per member and type.
 fn add_latent(cx: &Ctx, run: &mut Run, n: Node, fp: u32, args: Vec<Vec<Arg>>) {
     let typed = |a: &Arg| match a {
-        Arg::Ty(t) => !matches!(cx.ty.kind(*t), TyKind::FnPtr { .. }),
+        Arg::Ty(t) => !matches!(cx.ty.kind(strip(cx, *t)), TyKind::FnPtr { .. }),
         Arg::Payload(_) => true,
         _ => false,
     };
@@ -497,17 +500,41 @@ impl Body<'_> {
                         .map(|a| a.to_vec())
                         .unwrap_or_default();
                     add_latent(cx, run, Node::Fn(self.me), *p, args);
+                    // A capture (the function a conversion wraps, whose maker may not be followed),
+                    // or a parameter of a function value (a callback std calls, or one run through
+                    // a join), may have no caller that says what it is: any value of its type.
+                    let ncap = run.ncap.get(&self.me).copied().unwrap_or(0);
+                    if *p < ncap || run.lits.is_value(self.me) {
+                        if let Some(&ty) = self.params.get(*p as usize) {
+                            self.call_type(cx, run, ty, actual, site);
+                        }
+                    }
                 }
                 // A function value read from the heap: any of the program's that accept the
                 // arguments, as for the check itself, through the join of its type.
-                Arg::Ty(ty) => {
-                    if join(cx, run, *ty) {
-                        self.apply(cx, run, Node::Join(*ty), actual, CALLED, site);
-                    }
-                }
+                Arg::Ty(ty) => self.call_type(cx, run, *ty, actual, site),
                 Arg::Own | Arg::New(_) | Arg::Payload(_) | Arg::Other => {}
             }
         }
+    }
+
+    /// A call through a value of type `ty` (seen through its `| null`), through the join of the
+    /// function type it is.
+    fn call_type(&mut self, cx: &mut Ctx, run: &mut Run, ty: TyId, actual: Shape, site: &Site) {
+        let ty = canonical(cx, run, strip(cx, ty));
+        if join(cx, run, ty) {
+            self.apply(cx, run, Node::Join(ty), actual, CALLED, site);
+        }
+    }
+}
+
+/// The function type that stands for those of `ty`'s parameters. Only the parameters say what is in
+/// a join, and function types can differ in the rest: each closure's function-typed parameter has
+/// errors of its own, so N closures calling theirs would make N joins of the same N values.
+fn canonical(cx: &Ctx, run: &mut Run, ty: TyId) -> TyId {
+    match cx.ty.kind(ty) {
+        TyKind::FnPtr { params, .. } => *run.joins.by_params.entry(params.clone()).or_insert(ty),
+        _ => ty,
     }
 }
 
