@@ -82,7 +82,8 @@ function array(r: ArrayReader, at: i64) {
     return;
   }
   const dims: i64[] = [];
-  let total: i64 = 1;
+  // Every element takes at least its 4 bytes of length, so the loops below end with the bytes.
+  let empty = false;
   for (let i: i64 = 0; i < ndim; i++) {
     const d = r.i32();
     r.i32(); // lower bound
@@ -93,15 +94,10 @@ function array(r: ArrayReader, at: i64) {
       r.problem = "an array with a negative dimension";
       return;
     }
-    // Every element takes at least its 4 bytes of length, so more than fit can't be there.
-    total *= d;
-    if (total > (r.end - r.pos) / 4 + 1) {
-      r.problem = "truncated array";
-      return;
-    }
+    empty = empty || d == 0;
     dims.push(d);
   }
-  if (ndim == 0 || total == 0) {
+  if (ndim == 0 || empty) {
     r.out.append("[]");
     return;
   }

@@ -1,0 +1,143 @@
+// A task that goes away while it holds or waits for something (a request whose client disconnected:
+// the runtime drops its task, and every value it held). The line must go on, and a pool must get back
+// what it lent. Each helper here ends the way a dropped task does: its local value is dropped.
+import { Waiting, finish, readWhole, simple, takeTurn } from "../src/connection";
+import { parseConfig } from "../src/config";
+import { Conn, Sent } from "../src/line";
+import { Opening, WaitingForPool, borrow } from "../src/pool";
+import { PoolHandle, PoolState, release, TAKE_OPEN, TAKE_WAIT } from "../src/pool_state";
+import { openConnection } from "../src/startup";
+import { Channel } from "velt/sync";
+import { Grant } from "../src/pool_state";
+import { Input } from "../src/input";
+import { complete, fakeUrl, join, ready, serve } from "./support/fake";
+
+function done(tag: string): u8[] {
+  return join([complete(tag), ready()]);
+}
+
+// Holds the `Input`, reading nothing, and goes away.
+async function holdAndGo(conn: Conn, s: Sent) {
+  const input: Input = await takeTurn(conn, s);
+  assert(!input.parked, "it's held");
+}
+
+function waitAndGo(turn: Channel<Input>) {
+  const waiting = new Waiting(turn, false);
+  assert(!waiting.released, "it's waiting");
+}
+
+async function connected(script: u8[][]): Promise<Conn> {
+  return await openConnection(parseConfig(fakeUrl(await serve(script))));
+}
+
+// What the reading end's holder was owed is read, and the next request gets its own.
+export async function test_a_reader_that_goes_away_leaves_the_line_in_step() {
+  const conn = await connected([join([done("UPDATE 1"), done("UPDATE 2")])]);
+  const s = conn.with((l) => l.sendSimple(1, "a"));
+  await holdAndGo(conn, s);
+  assertEq(await simple(conn, 1, "b"), 2);
+  conn.with((l) => l.shutDownWhenIdle());
+}
+
+// Bytes of the reply it had already read aren't lost either.
+export async function test_a_reader_that_goes_away_mid_reply_keeps_what_it_read() {
+  const whole = done("UPDATE 1");
+  const conn = await connected([whole.slice(0, 7), whole.slice(7).concat(done("UPDATE 2"))]);
+  const s = conn.with((l) => l.sendSimple(1, "a"));
+  await holdPartly(conn, s);
+  assertEq(await simple(conn, 1, "b"), 2);
+  conn.with((l) => l.shutDownWhenIdle());
+}
+
+async function holdPartly(conn: Conn, s: Sent) {
+  const input: Input = await takeTurn(conn, s);
+  await input.buffer.fill(input.stream);
+  assert(input.buffer.end > 0, "something arrived");
+}
+
+// One waiting behind others goes away: its reply is read, and the one behind it gets its own.
+export async function test_a_waiter_that_goes_away_leaves_the_line_in_step() {
+  const conn = await connected([join([done("UPDATE 1"), done("UPDATE 2"), done("UPDATE 3")])]);
+  const a = conn.with((l) => l.sendSimple(1, "a"));
+  const b = conn.with((l) => l.sendSimple(1, "b"));
+  const c = conn.with((l) => l.sendSimple(1, "c"));
+  waitAndGo(b.turn);
+  const first = await takeTurn(conn, a);
+  await readWhole(conn, first);
+  assertEq(first.affected(), 1);
+  finish(conn, first);
+  const last = await takeTurn(conn, c);
+  await readWhole(conn, last);
+  assertEq(last.affected(), 3);
+  finish(conn, last);
+  conn.with((l) => l.shutDownWhenIdle());
+}
+
+function poolOf(url: string): PoolHandle {
+  return shared(new Mutex<PoolState>(new PoolState(parseConfig(url), 1)));
+}
+
+async function idleBecomes(pool: PoolHandle, n: i64) {
+  for (let i: i64 = 0; i < 500 && pool.with((p) => p.idleCount) != n; i++) {
+    // timing: the task that reads what was owed runs by itself
+    await sleep(10);
+  }
+  assertEq(pool.with((p) => p.idleCount), n);
+}
+
+// A statement borrowed a connection and its task went away: it goes back once the reply is read.
+export async function test_a_borrowed_connection_comes_back() {
+  const pool = poolOf(fakeUrl(await serve([done("UPDATE 1")])));
+  const conn = await borrow(pool);
+  const s = conn.with((l) => l.sendSimple(0, "a"));
+  await holdAndGo(conn, s);
+  await idleBecomes(pool, 1);
+  pool.with((p) => p.end());
+}
+
+// A task in the pool's line goes away before it's handed anything.
+export async function test_a_pool_waiter_that_goes_away_gets_nothing() {
+  const pool = poolOf(fakeUrl(await serve([])));
+  const conn = await borrow(pool);
+  const t = pool.with((p) => p.take());
+  assertEq(t.status, TAKE_WAIT);
+  giveUpWaiting(pool, t.wait);
+  release(pool, conn);
+  assertEq(pool.with((p) => p.idleCount), 1);
+  pool.with((p) => p.end());
+}
+
+// A task in the pool's line goes away just after it's handed a connection.
+export async function test_a_pool_waiter_gone_after_its_grant_gives_it_back() {
+  const pool = poolOf(fakeUrl(await serve([])));
+  const conn = await borrow(pool);
+  const t = pool.with((p) => p.take());
+  assertEq(t.status, TAKE_WAIT);
+  release(pool, conn);
+  assertEq(pool.with((p) => p.idleCount), 0);
+  giveUpWaiting(pool, t.wait);
+  assertEq(pool.with((p) => p.idleCount), 1);
+  pool.with((p) => p.end());
+}
+
+function giveUpWaiting(pool: PoolHandle, ch: Channel<Grant> | null) {
+  if (ch != null) {
+    const waiting = new WaitingForPool(pool, ch);
+    assert(!waiting.released, "it's waiting");
+  }
+}
+
+function giveUpOpening(pool: PoolHandle) {
+  const opening = new Opening(pool);
+  assert(!opening.released, "it's opening");
+}
+
+// Leave to open a connection comes back when the task connecting goes away.
+export async function test_a_task_gone_while_connecting_gives_its_leave_back() {
+  const pool = poolOf("postgres://u@127.0.0.1:1/d");
+  assertEq(pool.with((p) => p.take()).status, TAKE_OPEN);
+  giveUpOpening(pool);
+  assertEq(pool.with((p) => p.take()).status, TAKE_OPEN);
+  pool.with((p) => p.end());
+}

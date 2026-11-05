@@ -29,8 +29,8 @@ import { Conn, Sent } from "./line";
 const STALE_PLAN = "0A000";
 const STALE_NAME = "26000";
 
-// A request waiting for the `Input`; when its task goes away, the `Input` must not wait for it.
-class Waiting {
+/** A request waiting for the `Input`; when its task goes away, the `Input` must not wait for it. */
+export class Waiting {
   private turn: Channel<Input>;
   private atHome: bool;
   released: bool = false;
