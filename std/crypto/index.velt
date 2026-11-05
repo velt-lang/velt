@@ -12,8 +12,10 @@
 // resistance: use it only for legacy protocols (WebSocket handshakes, HMAC-SHA1 in TOTP, git
 // object ids).
 // X25519, P-256, the AEADs and HKDF are what TLS 1.3 needs (#2392); code that handles secrets runs in
-// constant time (no branch or table index depends on a key, a nonce or the data): AES is
-// bitsliced, GHASH uses the carry-less multiply instruction or a constant-time integer one.
+// constant time (no branch or table index depends on a key, a nonce or the data): AES-GCM runs on
+// the CPU's AES and carry-less multiply instructions where it has them (AES-NI with PCLMULQDQ,
+// ARMv8 AES with PMULL: `u8x16.hasAes()`), and otherwise on a bitsliced AES and GHASH with the
+// carry-less multiply instruction or a constant-time integer one.
 // https://veltlang.com/docs/std/crypto/.
 
 export { Aead } from "velt/crypto/aead";
