@@ -5,3 +5,4 @@ shared_fn_changes_buffer_view.vlt:26:5: error: this closure changes a value reac
 shared_fn_changes_buffer_view.vlt:33:5: error: this closure changes a value reached from captured `h` (through `v.setIndex](…)`), so it must stay on the task that created it
 shared_fn_changes_buffer_view.vlt:39:5: error: this closure changes a value reached from captured `i` (through `….setIndex](…)`), so it must stay on the task that created it
 shared_fn_changes_buffer_view.vlt:48:5: error: this closure changes a value reached from captured `j` (through `v.setIndex](…)`), so it must stay on the task that created it
+shared_fn_changes_buffer_view.vlt:55:5: error: this closure changes `v` of a value reached from captured `k` (through `o.v.setIndex](…)`), so it must stay on the task that created it

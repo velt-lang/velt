@@ -48,5 +48,12 @@ async function main() {
     v[0] = v[0] + 1;
     return v[0];
   });
-  console.log(overBuffer(1), dataView(1), overCaptured(1), madeInside(1), bufferInside(1), madeInline(1), declaredInside(1));
+  // Held by a new object.
+  const k = new ArrayBuffer(4);
+  const inObject = shared((x: number): number => {
+    const o = { v: new Uint8Array(k) };
+    o.v[0] = o.v[0] + 1;
+    return o.v[0];
+  });
+  console.log(overBuffer(1), dataView(1), overCaptured(1), madeInside(1), bufferInside(1), madeInline(1), declaredInside(1), inObject(1));
 }
