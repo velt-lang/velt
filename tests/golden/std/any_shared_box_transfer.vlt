@@ -30,9 +30,10 @@ function churn(v: any): i64 {
   return n;
 }
 
-async function churnEach(ch: Channel<any>): Promise<i64> {
+async function churnEach(ch: Channel<any>, ack: Channel<bool>): Promise<i64> {
   let n: i64 = 0;
   for await (const v of ch) {
+    await ack.send(true);
     n += churn(v);
   }
   return n;
@@ -63,9 +64,16 @@ async function main(): Promise<void> {
   // This side and the consumer change the counts at the same time: if the box sent were still
   // the one kept here, counts would be lost, and a box leaked or freed while in use.
   const ch3 = channel<any>(1);
-  const e = spawn(churnEach(ch3), { worker: other });
-  await ch3.send(text);
-  const mine = churn(text);
+  const ack = channel<bool>(1);
+  const e = spawn(churnEach(ch3, ack), { worker: other });
+  let mine: i64 = 0;
+  for (let round = 0; round < 20; round++) {
+    // `sent` ends at the send, so nothing copies it on the way there: the box is still shared.
+    const sent: any = round % 2 == 0 ? text : num;
+    await ch3.send(sent);
+    await ack.receive();
+    mine += churn(round % 2 == 0 ? text : num);
+  }
   ch3.close();
   console.log(mine, await e);
   // One worker (a single-core machine) has no other thread to cross to.
