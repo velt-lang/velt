@@ -241,7 +241,13 @@ impl Scan<'_> {
 /// handled by the caller).
 pub(super) fn children(e: &Expr, f: &mut dyn FnMut(&Expr)) {
     match &e.kind {
-        E::Lit(_) | E::Global(_) | E::FnRef(..) | E::Closure(_) | E::Local(..) | E::Block(_) => {}
+        E::Lit(_)
+        | E::ConstArray(_)
+        | E::Global(_)
+        | E::FnRef(..)
+        | E::Closure(_)
+        | E::Local(..)
+        | E::Block(_) => {}
         E::Unary { expr: x, .. }
         | E::Cast(x)
         | E::Await(x)

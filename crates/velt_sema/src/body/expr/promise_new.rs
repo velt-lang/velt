@@ -255,6 +255,7 @@ fn never_a_promise(e: &ast::Expr) -> bool {
         | E::Arrow { .. }
         | E::Function(_)
         | E::Array(_)
+        | E::NumArray(_)
         | E::Object(_) => true,
         _ => false,
     }

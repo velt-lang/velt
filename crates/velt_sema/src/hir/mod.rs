@@ -28,6 +28,7 @@
 //! M2/M3 encodings (classes, vtables, interfaces, closures, errors, async, …) are specified in
 //! `docs/internals/contracts/hir_encodings.md` — part of this contract.
 
+mod const_array;
 mod extern_fn;
 mod fields;
 mod fresh;
@@ -44,6 +45,7 @@ use std::collections::{HashMap, HashSet};
 
 use velt_common::Span;
 
+pub use const_array::{ConstArray, ConstElem};
 pub use extern_fn::{CImport, CTy, ExternFnDef, HostImport, HostTy};
 pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
 pub use fresh::FreshClosure;
@@ -713,6 +715,9 @@ pub enum ExprKind {
         args: Vec<Expr>,
     },
     ArrayLit(Vec<Expr>),
+    /// An `ArrayLit` of many number literals of one type, packed (see [`ConstArray`]): what
+    /// sema makes of a large literal table. Additive (#2421).
+    ConstArray(Box<ConstArray>),
     Tuple(Vec<Expr>),
     /// Closure creation: `def` is its `Def::Fn`; captures listed in `FnDef::captures`.
     Closure(DefId),

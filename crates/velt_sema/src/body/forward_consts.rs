@@ -131,6 +131,8 @@ fn inert(e: &ast::Expr) -> bool {
         E::Array(xs) => xs
             .iter()
             .all(|x| !matches!(x.kind, E::Spread(_)) && inert(x)),
+        // Literals are; a negated one is not (`E::Unary`).
+        E::NumArray(n) => n.elems.iter().all(|x| !x.negative()),
         E::Object(props) | E::StructLit { props, .. } => props.iter().all(|p| match p {
             ast::ObjectProp::KeyValue(k, v) => {
                 let computed = k.name.starts_with('[');

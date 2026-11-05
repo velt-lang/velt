@@ -359,6 +359,8 @@ fn inert(e: &ast::Expr) -> bool {
         }
         E::Cond { cond, then, els } => inert(cond) && inert(then) && inert(els),
         E::Array(items) => items.iter().all(inert),
+        // Number literals, maybe negated.
+        E::NumArray(_) => true,
         E::Object(props) | E::StructLit { props, .. } => props.iter().all(prop),
         _ => false,
     }

@@ -390,7 +390,7 @@ fn unparen_place(e: Expr) -> Expr {
 fn is_assignable(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::Ident(_) | ExprKind::Member { .. } | ExprKind::Index { .. } => true,
-        ExprKind::Array(_) | ExprKind::Object(_) => true,
+        ExprKind::Array(_) | ExprKind::NumArray(_) | ExprKind::Object(_) => true,
         ExprKind::Paren(inner) => is_assignable(inner),
         // `x! = v`, `a[i]! += 1`: the assertion only types the target (sema writes to `x`).
         ExprKind::NonNull(inner) => is_assignable(inner) && !is_pattern(inner),
@@ -401,7 +401,7 @@ fn is_assignable(e: &Expr) -> bool {
 /// A destructuring target (`[a, b]`, `{ a }`), also parenthesized: `[a, b]! = v` is not one.
 fn is_pattern(e: &Expr) -> bool {
     match &e.kind {
-        ExprKind::Array(_) | ExprKind::Object(_) => true,
+        ExprKind::Array(_) | ExprKind::NumArray(_) | ExprKind::Object(_) => true,
         ExprKind::Paren(inner) | ExprKind::NonNull(inner) => is_pattern(inner),
         _ => false,
     }

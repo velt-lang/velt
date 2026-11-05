@@ -89,7 +89,11 @@ impl Moves<'_> {
             .take()
             .filter(|_| matches!(e.kind, ExprKind::Closure(_)));
         match &e.kind {
-            ExprKind::Lit(_) | ExprKind::Global(_) | ExprKind::FnRef(..) => {}
+            // Constants (a `ConstArray`'s elements are literals: nothing to move).
+            ExprKind::Lit(_)
+            | ExprKind::ConstArray(_)
+            | ExprKind::Global(_)
+            | ExprKind::FnRef(..) => {}
             ExprKind::Closure(d) => self.closure(*d, e.span, holder, st),
             ExprKind::Local(..)
             | ExprKind::Field { .. }

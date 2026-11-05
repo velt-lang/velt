@@ -147,6 +147,7 @@ pub(super) fn any_operand(e: &hir::Expr, f: &mut dyn FnMut(&hir::Expr) -> bool) 
             args.iter().any(&mut *f) || matches!(callee, hir::Callee::Indirect(c) if f(c))
         }
         K::ArrayLit(xs) => xs.iter().any(f),
+        K::ConstArray(c) => c.elem_exprs(e.span.file).any(|x| f(&x)),
         _ => return None,
     })
 }
@@ -234,6 +235,7 @@ fn writes_local(e: &hir::Expr) -> bool {
         }
         K::If { cond, then, els } => writes_local(cond) || writes_local(then) || writes_local(els),
         K::ArrayLit(es) => es.iter().any(writes_local),
+        K::ConstArray(c) => c.elem_exprs(e.span.file).any(|x| writes_local(&x)),
         _ => true,
     }
 }
@@ -498,6 +500,7 @@ impl FnLower<'_, '_> {
                 .any(|a| velt_sema::effects::writes_place(a) || self.reaches_objects(a)),
             // A new array (`Math.max(1, 2)`'s rest param, `[1, 2].length`): its elements.
             K::ArrayLit(es) => es.iter().any(|x| self.reaches_objects(x)),
+            K::ConstArray(c) => c.elem_exprs(e.span.file).any(|x| self.reaches_objects(&x)),
             K::Field { base, .. } => self.read_runs_code(e) || self.reaches_objects(base),
             _ => true,
         }
@@ -516,6 +519,7 @@ impl FnLower<'_, '_> {
     fn plain_arg(&mut self, a: &hir::Expr) -> bool {
         match &a.kind {
             hir::ExprKind::ArrayLit(es) => es.iter().all(|x| self.plain_arg(x)),
+            hir::ExprKind::ConstArray(c) => c.elem_exprs(a.span.file).all(|x| self.plain_arg(&x)),
             _ => self.plain_value(a.ty),
         }
     }

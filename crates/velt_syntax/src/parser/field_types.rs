@@ -62,6 +62,25 @@ pub(super) fn stated_type(e: &Expr) -> Option<TypeExpr> {
                 span: e.span,
             })
         }
+        // Number literals: a `number[]`, named at the first literal as for `Array`.
+        ExprKind::NumArray(n) => {
+            let first = n.elems.first()?;
+            let name = Ident {
+                name: "number".to_string(),
+                span: first.lit_span(e.span.file),
+            };
+            let elem = TypeExpr {
+                kind: TypeExprKind::Named {
+                    path: vec![name],
+                    args: vec![],
+                },
+                span: first.lit_span(e.span.file),
+            };
+            Some(TypeExpr {
+                kind: TypeExprKind::Array(Box::new(elem)),
+                span: e.span,
+            })
+        }
         ExprKind::Paren(inner) => stated_type(inner),
         _ => None,
     }

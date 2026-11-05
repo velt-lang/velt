@@ -23,6 +23,7 @@ mod items;
 mod jsx;
 mod members;
 mod namespaces;
+mod num_arrays;
 mod optional_types;
 mod param_patterns;
 mod param_props;
@@ -95,6 +96,9 @@ pub(crate) struct Parser<'a> {
     /// A plain `.ts` file: `<T>x` there is TypeScript's type assertion, not JSX
     /// (`type_assertion`).
     pub(crate) plain_ts: bool,
+    /// Make a large array literal of numbers one packed node ([`crate::ast::NumArray`]); off
+    /// for the formatter, which prints every element as written.
+    pub(crate) pack_numbers: bool,
     /// The declarators after the first of `let a = 1, b = 2;` (`parse_var_decl`), for the
     /// statement or item list to add after the first one.
     more_vars: Vec<VarDecl>,
@@ -200,6 +204,7 @@ impl<'a> Parser<'a> {
             speculating: 0,
             paren_matches: ParenMatches::default(),
             plain_ts: false,
+            pack_numbers: true,
             more_vars: Vec::new(),
             more_items: Vec::new(),
             anonymous_default: None,

@@ -417,6 +417,10 @@ pub fn sx(e: &Expr) -> String {
             )
         }
         ExprKind::Array(es) => format!("[{}]", es.iter().map(sx).collect::<Vec<_>>().join(", ")),
+        ExprKind::NumArray(n) => {
+            let es = n.exprs(e.span.file);
+            format!("[{}]", es.iter().map(sx).collect::<Vec<_>>().join(", "))
+        }
         ExprKind::Object(ps) => format!("{{{}}}", props(ps)),
         ExprKind::StructLit { name, props: ps } => format!("{} {{{}}}", ty(name), props(ps)),
         ExprKind::Spread(e) => format!("...{}", sx(e)),

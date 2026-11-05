@@ -79,6 +79,8 @@ structs! {
     ArrowParam { name, pattern, ty, default, optional, rest }
     Pattern { id, kind, span }
     SignedLit { lit, negative }
+    NumArray { first_id, elems }
+    NumElem { bits, lo, lit_lo, hi, float }
     // blocks
     Namespace { name, items, declare }
     Augment { module, items }
@@ -261,6 +263,7 @@ enums! {
         25 => NonNull(a),
         26 => Jsx(a),
         27 => Unsafe(a),
+        28 => NumArray(a),
     }
     PatternKind {
         0 => Ident(a),

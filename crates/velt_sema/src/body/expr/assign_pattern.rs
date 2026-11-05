@@ -111,6 +111,7 @@ impl Split {
                     | E::Member { .. }
                     | E::Index { .. }
                     | E::Array(_)
+                    | E::NumArray(_)
                     | E::Object(_) => Some(self.hidden(inner, Some(value))),
                     _ => None,
                 };
@@ -198,7 +199,7 @@ pub(super) fn value_use_message(target: &ast::Expr) -> &'static str {
         t = x;
     }
     match t.kind {
-        ast::ExprKind::Array(_) | ast::ExprKind::Object(_) => {
+        ast::ExprKind::Array(_) | ast::ExprKind::NumArray(_) | ast::ExprKind::Object(_) => {
             "a destructuring assignment cannot be used as a value yet; assign the value to a variable first (`const v = c; [a, b] = v;`)"
         }
         _ => "an assignment to an element or a computed place cannot be used as a value",
@@ -262,7 +263,7 @@ impl FnCx<'_, '_> {
         if op.is_some()
             || !matches!(
                 inner.kind,
-                ast::ExprKind::Array(_) | ast::ExprKind::Object(_)
+                ast::ExprKind::Array(_) | ast::ExprKind::NumArray(_) | ast::ExprKind::Object(_)
             )
         {
             return None;

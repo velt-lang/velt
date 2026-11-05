@@ -11,6 +11,20 @@ use velt_common::{Diagnostics, FileId, SourceMap};
 use velt_sema::{check, hir, SourceModule};
 use velt_syntax::ast;
 
+thread_local! {
+    /// Parse without packing number arrays (`velt_syntax::parse_file_unpacked`).
+    static UNPACKED: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `f` with every module it loads parsed without packing large array literals of numbers into
+/// `ast::ExprKind::NumArray` (as before #2421): what a packed array must check exactly like.
+pub fn unpacked<T>(f: impl FnOnce() -> T) -> T {
+    UNPACKED.with(|u| u.set(true));
+    let r = f();
+    UNPACKED.with(|u| u.set(false));
+    r
+}
+
 pub fn repo_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
@@ -45,7 +59,10 @@ impl Loader {
         let src = src.replace("\r\n", "\n");
         let name = file.file_name().unwrap().to_string_lossy().to_string();
         let id = self.sm.add(name, src.clone());
-        let (ast, diags) = velt_syntax::parse_file(id, &src);
+        let (ast, diags) = match UNPACKED.with(|u| u.get()) {
+            true => velt_syntax::parse_file_unpacked(id, &src),
+            false => velt_syntax::parse_file(id, &src),
+        };
         let msgs: Vec<String> = diags.iter().map(|d| d.render(&self.sm)).collect();
         assert!(
             self.lenient || diags.is_empty(),

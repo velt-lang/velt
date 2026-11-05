@@ -454,7 +454,10 @@ impl FnCx<'_, '_> {
         let [arg] = args else {
             return None;
         };
-        if matches!(strip_parens(arg).kind, ast::ExprKind::Array(_)) {
+        if matches!(
+            strip_parens(arg).kind,
+            ast::ExprKind::Array(_) | ast::ExprKind::NumArray(_)
+        ) {
             return None;
         }
         let ty = self.trial_type(arg);

@@ -338,6 +338,10 @@ impl FnLower<'_, '_> {
                 let t = self.sub(x.ty);
                 !self.cx.reaches_lock_set(t) || self.plain_literal(x)
             }),
+            K::ConstArray(c) => c.elem_exprs(e.span.file).all(|x| {
+                let t = self.sub(x.ty);
+                !self.cx.reaches_lock_set(t) || self.plain_literal(&x)
+            }),
             _ => false,
         }
     }

@@ -141,6 +141,7 @@ mod names;
 mod namespaces;
 mod narrowing_casts;
 mod never_null;
+mod num_array;
 mod number_records;
 mod numbers;
 mod object;
@@ -409,6 +410,7 @@ impl FnCx<'_, '_> {
             A::Arrow { .. } => self.closure(e, exp, true),
             A::Function(d) => self.function_expr(d, exp, span),
             A::Array(elems) => self.array_lit(elems, exp, span),
+            A::NumArray(n) => self.num_array(n, exp, span),
             A::Object(props) => {
                 self.per_use_spreads(props);
                 match self.reject_cover_inits(props) {

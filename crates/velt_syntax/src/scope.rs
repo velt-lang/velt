@@ -428,7 +428,7 @@ impl<'a> Walker<'a, '_> {
         use ExprKind as E;
         match &e.kind {
             E::Ident(id) => self.reference(id),
-            E::Lit(_) | E::This | E::Super => {}
+            E::Lit(_) | E::NumArray(_) | E::This | E::Super => {}
             E::Template { exprs, .. } | E::Array(exprs) => self.exprs(exprs),
             E::Unary { expr, .. }
             | E::Update { target: expr, .. }

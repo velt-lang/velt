@@ -645,6 +645,7 @@ fn holds_part(cx: &mut Ctx, r: &Regions, d: DefId, e: &Expr) -> bool {
         E::ArrayLit(xs) | E::Tuple(xs) | E::New { args: xs, .. } | E::AdtLit { fields: xs, .. } => {
             xs.iter().any(|y| holds_part(cx, r, d, y))
         }
+        E::ConstArray(c) => c.elem_exprs(x.span.file).any(|y| holds_part(cx, r, d, &y)),
         _ => !(crate::fresh_returns::fresh_value(cx, x) && !holds_shared(cx, x.ty)),
     }
 }

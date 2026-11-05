@@ -77,6 +77,10 @@ impl<'a> Parser<'a> {
                 ExprKind::Paren(Box::new(inner))
             }
             Tok::LBracket => {
+                if let Some(packed) = self.num_array() {
+                    let span = self.span_from(lo);
+                    return Ok(self.mk_expr(packed, span));
+                }
                 self.bump();
                 let elems = self.parse_elems(Tok::RBracket)?;
                 self.expect(Tok::RBracket)?;

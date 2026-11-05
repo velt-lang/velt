@@ -118,6 +118,8 @@ impl<'a> Printer<'a> {
             }
             ExprKind::Function(f) => self.fn_decl(f, "function "),
             ExprKind::Array(elems) => self.array(elems, e.span.hi),
+            // Not made by the parse `velt fmt` uses (`parse_file_unpacked`); as the `Array`.
+            ExprKind::NumArray(n) => self.array(&n.exprs(e.span.file), e.span.hi),
             ExprKind::Object(props) => self.object(props, e.span.hi),
             ExprKind::StructLit { name, props } => self.struct_lit(name, props, e.span.hi),
             ExprKind::Spread(inner) => cat!["...", self.expr(inner)],

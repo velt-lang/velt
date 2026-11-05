@@ -303,7 +303,8 @@ impl<'h, 'p> FlagScan<'h, 'p> {
                 });
             }
             K::Closure(def) => self.closure(*def),
-            K::Lit(_) | K::Local(..) | K::Global(_) | K::FnRef(..) => {}
+            // A `ConstArray`'s elements are literals, as an `ArrayLit`'s would be visited.
+            K::Lit(_) | K::ConstArray(_) | K::Local(..) | K::Global(_) | K::FnRef(..) => {}
         }
     }
 

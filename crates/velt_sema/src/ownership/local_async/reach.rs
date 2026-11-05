@@ -336,6 +336,7 @@ pub(super) fn fresh(cx: &mut Ctx, e: &Expr, memo: &mut Memo) -> bool {
         e.kind,
         E::New { .. }
             | E::ArrayLit(_)
+            | E::ConstArray(_)
             | E::AdtLit { .. }
             | E::Call {
                 callee: Callee::Intrinsic(Intrinsic::SpreadObject),

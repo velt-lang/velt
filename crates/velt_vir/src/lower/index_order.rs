@@ -259,6 +259,9 @@ impl FnLower<'_, '_> {
             K::Binary { lhs, rhs, .. } | K::Logical { lhs, rhs, .. } => each(self, &[lhs, rhs]),
             K::If { cond, then, els } => each(self, &[cond, then, els]),
             K::ArrayLit(xs) => xs.iter().any(|x| self.passes_changeable(x, base)),
+            K::ConstArray(c) => c
+                .elem_exprs(e.span.file)
+                .any(|x| self.passes_changeable(&x, base)),
             K::Block(b) => {
                 b.stmts.iter().any(|st| match &st.kind {
                     hir::StmtKind::Let { init, .. } => init

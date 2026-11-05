@@ -38,7 +38,13 @@ pub fn walk_expr<'a>(e: &'a ast::Expr, v: &mut dyn Visit<'a>) {
 /// Call `f` on every direct sub-expression of `e` (arrow, function and method bodies excluded).
 fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
     match &e.kind {
-        E::Lit(_) | E::Ident(_) | E::This | E::Super | E::Arrow { .. } | E::Function(_) => {}
+        E::Lit(_)
+        | E::NumArray(_)
+        | E::Ident(_)
+        | E::This
+        | E::Super
+        | E::Arrow { .. }
+        | E::Function(_) => {}
         E::Template { exprs, .. } | E::Array(exprs) => exprs.iter().for_each(f),
         E::Unary { expr, .. }
         | E::Update { target: expr, .. }

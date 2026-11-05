@@ -8,7 +8,7 @@ use velt_syntax::ast::{self, ExprKind as E, JsxAttr, JsxAttrValue, JsxChild, Obj
 /// Call `f` on every direct sub-expression of `e`.
 pub(crate) fn children<'a>(e: &'a ast::Expr, f: &mut dyn FnMut(&'a ast::Expr)) {
     match &e.kind {
-        E::Lit(_) | E::Ident(_) | E::This | E::Super | E::Function(_) => {}
+        E::Lit(_) | E::NumArray(_) | E::Ident(_) | E::This | E::Super | E::Function(_) => {}
         E::Template { exprs, .. } | E::Array(exprs) => exprs.iter().for_each(f),
         E::Unary { expr, .. }
         | E::Update { target: expr, .. }
@@ -145,7 +145,7 @@ pub(crate) fn reads_in_fn_value(e: &velt_syntax::ast::Expr, name: &str) -> bool 
 /// Like [`children`], mutably.
 pub(crate) fn children_mut(e: &mut ast::Expr, f: &mut dyn FnMut(&mut ast::Expr)) {
     match &mut e.kind {
-        E::Lit(_) | E::Ident(_) | E::This | E::Super | E::Function(_) => {}
+        E::Lit(_) | E::NumArray(_) | E::Ident(_) | E::This | E::Super | E::Function(_) => {}
         E::Template { exprs, .. } | E::Array(exprs) | E::New { args: exprs, .. } => {
             exprs.iter_mut().for_each(f)
         }

@@ -94,6 +94,12 @@ impl FnLower<'_, '_> {
             {
                 Held::Elems
             }
+            K::ConstArray(c)
+                if c.elem_exprs(e.span.file)
+                    .any(|x| matches!(self.held_of(&x), Held::Copied | Held::Elems)) =>
+            {
+                Held::Elems
+            }
             _ if self.held_by_caller(e) => Held::Caller,
             _ => Held::Other,
         }
@@ -229,6 +235,7 @@ impl FnLower<'_, '_> {
             }
             K::If { then, els, .. } => self.held_by_caller(then) && self.held_by_caller(els),
             K::ArrayLit(xs) | K::Tuple(xs) => self.made_of_held(xs),
+            K::ConstArray(c) => self.made_of_held(&c.exprs(e.span.file)),
             K::AdtLit { fields: xs, .. }
             | K::New { args: xs, .. }
             | K::Variant { args: xs, .. } => self.made_of_held(xs),

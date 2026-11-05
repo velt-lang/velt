@@ -450,6 +450,8 @@ impl FnCx<'_, '_> {
 fn has_literal(e: &ast::Expr) -> bool {
     match &e.kind {
         ast::ExprKind::Array(xs) => xs.iter().any(has_literal),
+        // Number literals (also negated, `literal_of`).
+        ast::ExprKind::NumArray(_) => true,
         ast::ExprKind::Object(ps) => ps.iter().any(|p| match p {
             ast::ObjectProp::KeyValue(_, v) => has_literal(v),
             _ => false,

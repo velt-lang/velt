@@ -102,6 +102,7 @@ impl<'a> Visit<'a> for Finder {
                         ast::ExprKind::Lit(_)
                             | ast::ExprKind::Template { .. }
                             | ast::ExprKind::Array(_)
+                            | ast::ExprKind::NumArray(_)
                             | ast::ExprKind::Object(_)
                             | ast::ExprKind::StructLit { .. }
                             | ast::ExprKind::Unary { .. }

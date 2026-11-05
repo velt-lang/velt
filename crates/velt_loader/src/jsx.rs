@@ -107,7 +107,7 @@ fn stmt(s: &ast::Stmt) -> Option<Span> {
 fn expr(e: &ast::Expr) -> Option<Span> {
     match &e.kind {
         E::Jsx(_) => Some(e.span),
-        E::Lit(_) | E::Ident(_) | E::This | E::Super => None,
+        E::Lit(_) | E::NumArray(_) | E::Ident(_) | E::This | E::Super => None,
         E::Template { exprs, .. } | E::Array(exprs) => exprs.iter().find_map(expr),
         E::Unary { expr: x, .. }
         | E::Update { target: x, .. }

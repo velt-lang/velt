@@ -108,6 +108,20 @@ pub fn parse_file(file: FileId, src: &str) -> (ast::Module, Diagnostics) {
     (module, diags)
 }
 
+/// [`parse_file`] with every array literal as an [`ast::ExprKind::Array`] of its elements, none
+/// packed into an [`ast::ExprKind::NumArray`]: for tools that print each element (`velt fmt`).
+pub fn parse_file_unpacked(file: FileId, src: &str) -> (ast::Module, Diagnostics) {
+    let (module, diags) = on_parser_thread(|| {
+        let mut parser = parser::Parser::new(file, src);
+        parser.pack_numbers = false;
+        let module = parser.parse_module();
+        let (mut diags, _) = parser.finish();
+        diags.sort_by_key(|d| d.labels.first().map_or(0, |l| l.span.lo));
+        (module, diags)
+    });
+    (module, diags)
+}
+
 /// [`parse_file`] for a plain TypeScript file (`.ts`): there `<T>x` is TypeScript's type
 /// assertion, which is reported as unsupported (with a fix) instead of being parsed as JSX.
 pub fn parse_ts_file(file: FileId, src: &str) -> (ast::Module, Diagnostics) {
