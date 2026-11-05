@@ -109,12 +109,13 @@ impl Printer<'_> {
     }
 
     /// Is a child a template literal written over several lines (prettier: its text forces the
-    /// element to break)?
+    /// element to break)? The template's own text decides, not the whitespace around it inside
+    /// the braces, which is layout.
     fn has_multiline_template(&self, children: &[JsxChild]) -> bool {
         children.iter().any(|c| {
-            matches!(c, JsxChild::Expr { expr: Some(e), span }
+            matches!(c, JsxChild::Expr { expr: Some(e), .. }
                 if matches!(e.kind, ExprKind::Template { .. })
-                    && slice(self.src, *span).contains('\n'))
+                    && slice(self.src, e.span).contains('\n'))
         })
     }
 
