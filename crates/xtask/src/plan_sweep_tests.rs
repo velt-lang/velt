@@ -59,7 +59,10 @@ fn other_changes_sweep_only_the_changed_goldens() {
     // A change that selects everything still says which goldens it touched.
     let p = plan(&[".github/workflows/ci.yml", "tests/golden/lang/foo.velt"]);
     assert!(p.full);
-    assert_eq!(p.sweep, Sweep::Changed(set(&["tests/golden/lang/foo.velt"])));
+    assert_eq!(
+        p.sweep,
+        Sweep::Changed(set(&["tests/golden/lang/foo.velt"]))
+    );
 }
 
 #[test]
