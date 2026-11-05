@@ -23,7 +23,7 @@ inputs:
     default: "true"
   code-cache:
     description: >-
-      Restore clang's objects from the last nightly gate (Linux). Clang's object is keyed by the IR
+      Restore clang's objects from the last nightly gate (Linux, for jobs that run tests: `tools`). Clang's object is keyed by the IR
       and the clang, not by the compiler (crates/velt_build_cache), and a change leaves most
       programs' IR as it was. A cache that doesn't apply is only misses.
     default: "true"
@@ -129,13 +129,13 @@ runs:
           echo "SCCACHE_IGNORE_SERVER_IO_ERROR=1"
         } >> "$GITHUB_ENV"
     - uses: actions/cache/restore@v4
-      if: inputs.code-cache == 'true' && runner.os == 'Linux'
+      if: inputs.code-cache == 'true' && inputs.tools == 'true' && runner.os == 'Linux'
       with:
         path: target/velt-build-cache/v*/llvm
         key: velt-clang-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
         restore-keys: velt-clang-objects-${{ runner.os }}-${{ runner.arch }}-
     - name: room for clang's objects
-      if: inputs.code-cache == 'true' && runner.os == 'Linux'
+      if: inputs.code-cache == 'true' && inputs.tools == 'true' && runner.os == 'Linux'
       shell: bash
       run: echo "VELT_BUILD_CACHE_SIZE=4G" >> "$GITHUB_ENV"
     - uses: taiki-e/install-action@v2
