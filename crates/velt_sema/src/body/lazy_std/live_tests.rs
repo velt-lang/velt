@@ -17,8 +17,33 @@ thread_local! {
     pub(super) static PRESENT: Cell<(ConstructSet, usize)> = const { Cell::new((0, 0)) };
     /// Work the set out in full, as a debug compiler outside these tests does.
     pub(super) static EXACT: Cell<bool> = const { Cell::new(false) };
+    /// Have [`finish`] demand this std module, as no program does yet.
+    static LATE_DEMAND: Cell<Option<&'static str>> = const { Cell::new(None) };
+    /// Have [`finish`] find the hook of this name, with the editor's `check_all`, and whether
+    /// it then entered `reached`.
+    static LATE_FOUND: Cell<Option<&'static str>> = const { Cell::new(None) };
+    static LATE_REACHED: Cell<bool> = const { Cell::new(false) };
     /// The names of the functions live when the last check asked for the demand set.
     static NAMES: RefCell<Vec<String>> = const { RefCell::new(vec![]) };
+}
+
+/// In [`finish`], what its tests ask of it.
+pub(super) fn note_finish(cx: &mut crate::ctx::Ctx, found: &mut Vec<crate::hir::DefId>) {
+    if let Some(path) = LATE_DEMAND.get() {
+        cx.demand_std(path);
+    }
+    if let Some(hook) = LATE_FOUND.get() {
+        cx.lazy.check_all = true;
+        cx.lazy.reached.clear();
+        found.extend(cx.prelude_fn(hook));
+    }
+}
+
+/// At the end of [`finish`]: did what its tests had it find enter `reached`?
+pub(super) fn note_finished(cx: &crate::ctx::Ctx) {
+    if let Some(d) = LATE_FOUND.get().and_then(|hook| cx.prelude_fn(hook)) {
+        LATE_REACHED.set(cx.lazy.reached.contains(&d));
+    }
 }
 
 /// What the live set holds where a check asks for the demand set.
@@ -190,4 +215,67 @@ fn what_sema_makes_after_the_bodies_are_checked_is_live_before_ownership() {
     for name in ["<any as () => string>", "R.<toString>"] {
         assert!(names.iter().any(|n| n == name), "no {name}");
     }
+}
+
+/// The diagnostics of a check of `src`, on a thread with sema's stack.
+fn check_diags(src: &str, set: impl Fn() + Send + Sync) -> Vec<String> {
+    let l = programs::load_src(src);
+    let (modules, root) = (&l.modules, l.root);
+    std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .stack_size(crate::SEMA_STACK_BUDGET)
+            .spawn_scoped(s, || {
+                set();
+                let opts = CheckOptions::default();
+                let budget = SEMA_STACK_BUDGET;
+                let (out, _) = crate::check_timed(modules, root, opts, &[], None, None, budget);
+                out.1.iter().map(|d| d.message.clone()).collect()
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+    })
+}
+
+#[test]
+fn a_module_demanded_after_the_passes_is_an_internal_error() {
+    let src = "function main() {\n  const n: i64 = 7;\n  console.log(`${n}`);\n}\n";
+    let late = check_diags(src, || {
+        EXACT.set(true);
+        LATE_DEMAND.set(Some("std/lang/hooks/no_such_module"));
+    });
+    assert!(
+        late.iter().any(|m| m.starts_with("ICE: std module `std/lang/hooks/no_such_module`")),
+        "{late:?}"
+    );
+    // A module that is loaded is no late demand, and without one nothing is reported.
+    let loaded = check_diags(src, || {
+        EXACT.set(true);
+        LATE_DEMAND.set(Some("std/prelude"));
+    });
+    assert!(!loaded.iter().any(|m| m.starts_with("ICE:")), "{loaded:?}");
+    LATE_DEMAND.set(None);
+}
+
+#[test]
+fn what_finish_finds_enters_reached_under_check_all() {
+    let src = "function main() {\n  const n: i64 = 7;\n  console.log(`${n}`);\n}\n";
+    let l = programs::load_src(src);
+    let (modules, root) = (&l.modules, l.root);
+    let reached = std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .stack_size(crate::SEMA_STACK_BUDGET)
+            .spawn_scoped(s, || {
+                EXACT.set(true);
+                LATE_FOUND.set(Some("anyToRecordAny"));
+                let opts = CheckOptions::default();
+                let budget = SEMA_STACK_BUDGET;
+                let _ = crate::check_timed(modules, root, opts, &[], None, None, budget);
+                LATE_REACHED.get()
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+    });
+    assert!(reached, "a hook `finish` found did not enter `reached`");
 }

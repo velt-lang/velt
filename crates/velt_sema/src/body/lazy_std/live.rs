@@ -33,7 +33,7 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::std_hooks::{hook_index, Construct, ConstructSet, HookSet, HOOKS};
 
 use crate::ctx::Ctx;
-use crate::defs::{BodyState, DefInfo, FnKind};
+use crate::defs::{DefInfo, FnKind};
 use crate::hir::{self, Callee, DefId, ExprKind as E, Intrinsic as I, TyId, TyKind};
 
 /// The live set of one check.
@@ -72,6 +72,8 @@ pub(crate) struct Live {
     saturated: bool,
     /// [`dynamic_classes`] ran.
     dynamic_classes: bool,
+    /// [`finish`] began: no std module can be added any more (`Ctx::demand_std`).
+    pub(crate) finishing: bool,
     /// The sets of constructs that demand every hook, one bit per set ([`saturated`]).
     full: Option<u64>,
     /// The constructs met in live code.
@@ -251,18 +253,24 @@ pub(crate) fn finish(cx: &mut Ctx) {
     if cx.lazy.modules.is_empty() || cx.lazy.live.saturated && !cx.lazy.live.exact {
         return;
     }
+    // The passes this comes after don't run again: nothing more can be added to the check.
+    cx.lazy.live.finishing = true;
     let mut found = vec![];
     step(cx, &mut found);
+    #[cfg(test)]
+    tests::note_finish(cx, &mut found);
     if !found.is_empty() {
+        // As `reach` checks what it finds: with `Lazy::check_all` (the editor) a found definition
+        // must enter `reached`, or the editor and `velt check` demand different sets.
         for d in found {
-            if super::deferred(cx, d)
-                && matches!(&cx.info[d.0 as usize], DefInfo::Fn(f) if f.state == BodyState::Unchecked)
-            {
-                crate::body::ensure_body(cx, d);
+            if super::defers(cx, d) {
+                super::check_found(cx, d);
             }
         }
         super::reach(cx);
     }
+    #[cfg(test)]
+    tests::note_finished(cx);
 }
 
 /// Does every hook with constructs have one present? Then nothing more is worked out

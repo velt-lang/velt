@@ -201,6 +201,14 @@ impl<'m> Ctx<'m> {
         if crate::collect::exports::std_module(self, path).is_some() {
             return;
         }
+        // The passes after the bodies' check have run: they would not see what this adds.
+        if self.lazy.finishing() {
+            self.err(
+                format!("ICE: std module `{path}` was demanded after the passes that follow the check"),
+                Span::DUMMY,
+            );
+            return;
+        }
         let Some(loads) = self.loads else {
             return;
         };

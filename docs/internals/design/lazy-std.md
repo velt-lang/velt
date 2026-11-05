@@ -126,6 +126,11 @@ what `reach` would check as if bodies were deferred (`Lazy::check_all`), though 
 `velt_lsp`'s `tests/demand.rs` requires the errors and the modules of `velt check`. `velt check
 --std` and the editor's workspace index load everything, and demand nothing.
 
+A demand must come before the passes that follow the bodies' check (`hooks::check_shapes` and the
+others up to `live::finish`), which would not run for what it adds. `live::finish` walks what those
+passes make, so a demand from there is an internal error (`Ctx::demand_std`), which no program
+reaches yet; a float hook found there is left to the runtime's printer, as in std's own code.
+
 std's integer hooks are checked only where *live* code has a construct whose lowering calls them
 (#2161 step 2; velt_common `hook_demand.rs`): a template or `String()` of an integer, the formatting
 glue of a type that may print one (`console.log`, a class's table), an array index (its

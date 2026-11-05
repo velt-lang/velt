@@ -11,7 +11,10 @@ use rustc_hash::FxHashSet;
 
 /// Adds the on-demand hooks that `texts` now need to `found`.
 pub(super) fn reach_hooks(cx: &mut Ctx, texts: Vec<TyId>, found: &mut Vec<DefId>) {
+    // Too late to add a module (`Ctx::demand_std`), and a float hook has the runtime's printer to
+    // fall back on, as in std's own code.
     if cx.lazy.float_text
+        || cx.lazy.live.finishing
         || !(texts.iter()).any(|&t| may_hold_float(cx, t, &mut FxHashSet::default(), 0))
     {
         return;

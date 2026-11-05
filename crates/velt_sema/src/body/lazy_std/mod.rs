@@ -215,6 +215,11 @@ pub(crate) struct Lazy {
 }
 
 impl Lazy {
+    /// The passes after the bodies' check have run: no std module can be added any more.
+    pub(crate) fn finishing(&self) -> bool {
+        self.live.finishing
+    }
+
     /// On, unless `VELT_CHECK_ALL_STD` is set; the editor's analysis turns it off.
     pub(crate) fn new() -> Lazy {
         Lazy {
