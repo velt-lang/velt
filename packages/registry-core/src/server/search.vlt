@@ -5,6 +5,7 @@
 // name. Packages whose versions are all yanked are left out.
 
 import { utf8DecodeLossy, utf8Encode } from "velt/encoding";
+import { words } from "../manifest/chars";
 import { json } from "./answer";
 import { IndexEntry } from "./index_entry";
 import { compareUtf8, jsonString } from "./json_text";
@@ -135,7 +136,7 @@ function hitJson(h: Hit): string {
 /** Answers a search for the query string `query` (no `?`) with vpm's `to_json`. */
 export async function search(stores: RegistryStores, query: string): Promise<Response> {
   const q = queryParam(query).trim().toLowerCase();
-  const terms = q.split(/\s+/).filter((t: string): bool => t.length > 0);
+  const terms = words(q);
   const hits: Hit[] = [];
   for (const index of await stores.db.searchCandidates(terms)) {
     const shown = index.newest();

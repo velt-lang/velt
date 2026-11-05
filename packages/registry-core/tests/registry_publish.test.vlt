@@ -155,6 +155,9 @@ describe("yanking and search", () => {
     expect(await names("http")).toBe("http http-client router");
     expect(await names("web")).toBe("web http-client aardvark router");
     expect(await names("HTTP+web")).toBe("http-client router");
+    // Terms are split at any run of whitespace, as vpm's server does: tabs and no-break spaces too.
+    expect(await names("HTTP%09+%20web")).toBe("http-client router");
+    expect(await names("HTTP%C2%A0web")).toBe("http-client router");
     expect(await names("%68ttp%2")).toBe("");
     expect(await names("")).toBe("aardvark http http-client router web");
     expect((await r.call("GET", "search?q=web")).text).toContain(`"version":"2.0.0-rc.1"`);
