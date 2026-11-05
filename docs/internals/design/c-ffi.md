@@ -202,11 +202,23 @@ unsafe function sum(p: Ptr<f32>, n: usize): f32 { … }
 
 ### Errors: `errno` and `GetLastError`
 
-Lowering captures `errno` (`*__error()` / `*__errno_location()`) into the function's hidden error
-local right after every `declare c` call, and `GetLastError()` the same way on Windows; no
-runtime code between the call and the check can overwrite it. `lastOsError()` reads the local,
-so its adjacency is a compiler guarantee. An async call captures the error on its thread and
-carries it back with the result. One load per call.
+A declaration asks for the error, as .NET's `SetLastError` does per P/Invoke:
+
+```ts planned
+declare c("c", { errno: true }) function open(path: CString, flags: i32): i32;
+```
+
+Lowering captures `errno` (`*__error()` / `*__errno_location()`) into the thread's error slot right
+after a call of such a function, and `GetLastError()` the same way on Windows; no runtime code
+between the call and the check can overwrite it. `lastOsError()` reads the slot, so its adjacency is
+a compiler guarantee, and it is meaningful only after a call that asked: any other leaves the slot
+alone. An async call that asks captures the error on its thread and carries it back with the result.
+
+Off by default, because what a call pays shows: many libraries report failures through results and
+never need it, and capture is a call and a store per C call. SQLite's range select of a hundred rows
+costs 9% more with it, 1.04× the Rust crate it replaces against 0.94× without. A check of whether the
+whole program reads `lastOsError()` was rejected: what a `declare c` call does must not depend on
+code elsewhere.
 
 ### C structs
 
@@ -519,8 +531,8 @@ scopes trusted by convention, and the consumer's explicit `allowNative`.
 
 ## Cost
 
-A `declare c` call costs a C-to-C call plus two thread-local stores (the task record) and one
-load (`errno`). `StrBytes`, borrowed arrays and synchronous leases cost nothing at run time; a
+A `declare c` call costs a C-to-C call plus two thread-local stores (the task record), and one
+that asks for `errno` a call and a store more. `StrBytes`, borrowed arrays and synchronous leases cost nothing at run time; a
 handle argument one atomic increment and decrement; `Out<T>` a stack slot. A queued callback a
 few atomics and a copy into its ring.
 
@@ -638,7 +650,7 @@ Step 1 lands in layers, each its own pull request:
 1. `unsafe` blocks, expressions and functions (#2201).
 2. `declare c("lib") function` with scalars (integers, `f32`, `f64`, `bool`, `void`): a direct
    call in both backends and the dev JIT (which finds the C library's functions with `dlsym`),
-   `errno` captured after it on Unix (on Windows, `lastOsError()` after a C call reads
+   `errno` captured after it on Unix for a declaration that asks (on Windows, `lastOsError()` after a C call reads
    `GetLastError()`, which the C library doesn't set, so it does not report the call's error
    until step 2 captures the CRT's `errno`), calls
    only in unsafe code. Until the trust boundary layer, a C declaration is allowed in std and in
@@ -717,7 +729,16 @@ Step 1 lands in layers, each its own pull request:
        the lockfile's diff and `--locked` refuses a lock that doesn't have it. A workspace's
        lock has none, as its install has no root.
      - Not yet: header-checked or `unchecked` libraries (layer 6) in the listing.
-6. The header check and `declare c const`.
+6. The header check and `declare c const`, in parts.
+   - 6a-1: what the check needs.
+     - `native.c.<library>.headers`: the package's own headers (`native/sqlite3.h`) or C
+       library headers (`<string.h>`), one list for every target. `native.c.c` lists the
+       platform's C library's. `unchecked: true` says a library has none; `allowNative`'s
+       error and `velt check` show it, and `velt check` shows each library as checked against
+       headers, unchecked, or without headers.
+     - zig 0.17.1, pinned with each host's SHA-256 (`velt_toolchain::zig`), downloads into
+       `$VELT_HOME/cache/zig/` on first use (about 55 MB, 10 s), or `$VELT_ZIG` names one (CI,
+       offline machines).
 
 ## Decisions
 

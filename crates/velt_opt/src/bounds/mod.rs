@@ -330,7 +330,7 @@ fn tracked_locals(func: &Function) -> Vec<bool> {
 
 /// Each block's position in a reverse postorder of the CFG from the entry (unreachable
 /// blocks last).
-fn rpo_rank(func: &Function) -> Vec<usize> {
+pub(crate) fn rpo_rank(func: &Function) -> Vec<usize> {
     let n = func.blocks.len();
     let mut post = Vec::with_capacity(n);
     let mut seen = vec![false; n];

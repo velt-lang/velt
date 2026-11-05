@@ -409,22 +409,42 @@ pub const NATIVE: &[Field] = &[
         required: false,
         doc: "The C libraries the package's `declare c(\"<library>\")` functions name, by that \
               name: where each comes from on each target. `\"c\"`, the platform's C library, \
-              needs no entry, but a package declaring C functions has this object (`c: {}` \
-              for the C library's only), so programs see it has native code.",
+              needs no entry (one lists only its `headers`), but a package declaring C \
+              functions has this object (`c: {}` for the C library's only), so programs see \
+              it has native code.",
     },
 ];
 
 /// `native.c.<library>`.
-pub const C_LIBRARY: &[Field] = &[Field {
-    key: "system",
-    kind: Kind::Map(Entry::Str),
-    ty: "Record<string, string>",
-    required: false,
-    doc: "The platform's library, by build condition (`darwin`, `linux`, `win32`, `native`, \
-          `default`): `{ linux: \"sqlite3\" }` links `-lsqlite3`, and \
-          `\"framework:Accelerate\"` under `darwin` a macOS framework. The first condition the build has \
-          applies; a target none applies to can't call the library's functions.",
-}];
+pub const C_LIBRARY: &[Field] = &[
+    Field {
+        key: "system",
+        kind: Kind::Map(Entry::Str),
+        ty: "Record<string, string>",
+        required: false,
+        doc: "The platform's library, by build condition (`darwin`, `linux`, `win32`, `native`, \
+              `default`): `{ linux: \"sqlite3\" }` links `-lsqlite3`, and \
+              `\"framework:Accelerate\"` under `darwin` a macOS framework. The first condition \
+              the build has applies; a target none applies to can't call the library's functions.",
+    },
+    Field {
+        key: "headers",
+        kind: Kind::StrArray { values: &[] },
+        ty: "string[]",
+        required: false,
+        doc: "The C headers the library's declarations are checked against when the package \
+              builds, once per target: a path in the package (`\"native/sqlite3.h\"`), or \
+              `\"<string.h>\"` for a C library header.",
+    },
+    Field {
+        key: "unchecked",
+        kind: Kind::Bool,
+        ty: "boolean",
+        required: false,
+        doc: "The library has no headers (a binary-only SDK): its declarations go unchecked, \
+              which `velt check` and `allowNative`'s error say.",
+    },
+];
 
 /// The field `key` of `fields`.
 pub fn field(fields: &'static [Field], key: &str) -> Option<&'static Field> {

@@ -82,7 +82,7 @@ fn view_key(t: TyId) -> Operand {
 impl Cx<'_> {
     /// May a value of the array type `t` be a view?
     pub(super) fn array_view(&self, t: TyId) -> bool {
-        !self.boxing.array_views.is_empty() && self.boxing.array_views.contains(&t)
+        !self.boxing.array_views.is_empty() && self.boxing.array_views.contains(&self.ph_rep(t))
     }
 
     /// May an array of elements `e` be a view?
@@ -96,13 +96,15 @@ impl Cx<'_> {
 
     /// Record an `AnyTo` to the array type `t` (not counted in the standard library).
     pub(super) fn note_array_view(&mut self, t: TyId) {
-        let std = self.cur_def.is_some_and(|d| match self.hir.def(d) {
-            hir::Def::Fn(f) => f
-                .name
-                .starts_with(velt_common::std_modules::CANONICAL_PREFIX),
-            _ => false,
-        });
-        let TyKind::Array(mut e) = self.types.kind(t).clone() else {
+        // The conversions of a shared std body's glue are the std body's (shape/glue.rs).
+        let std = self.shapes.std_glue
+            || self.cur_def.is_some_and(|d| match self.hir.def(d) {
+                hir::Def::Fn(f) => f
+                    .name
+                    .starts_with(velt_common::std_modules::CANONICAL_PREFIX),
+                _ => false,
+            });
+        let TyKind::Array(mut e) = self.raw_kind(t).clone() else {
             return;
         };
         if std {
@@ -112,10 +114,10 @@ impl Cx<'_> {
         // The view converts its elements out of `any` (`arrayViewSyncAt`, in the prelude):
         // an object among them may be a view too (any_view.rs), as when the program converts
         // one itself.
-        while let TyKind::Array(x) = self.types.kind(e).clone() {
+        while let TyKind::Array(x) = self.raw_kind(e).clone() {
             e = x;
         }
-        if matches!(self.types.kind(e), TyKind::Adt(..)) {
+        if matches!(self.raw_kind(e), TyKind::Adt(..)) {
             self.note_proxy_target(e);
         }
     }
@@ -129,7 +131,7 @@ impl Cx<'_> {
         }
         let mut seen = FxHashSet::default();
         while let Some(t) = work.pop() {
-            let TyKind::Array(e) = self.types.kind(t).clone() else {
+            let TyKind::Array(e) = self.raw_kind(t).clone() else {
                 continue;
             };
             if next.array_views.insert(t) {
@@ -144,7 +146,7 @@ impl Cx<'_> {
         if !seen.insert(t) {
             return;
         }
-        match self.types.kind(t).clone() {
+        match self.raw_kind(t).clone() {
             TyKind::Array(_) => out.push(t),
             TyKind::Option(x, _) => self.inner_arrays(x, out, seen),
             TyKind::Adt(d, _) if self.is_union(t) => {

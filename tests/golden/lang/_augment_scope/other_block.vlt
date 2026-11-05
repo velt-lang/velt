@@ -1,0 +1,7 @@
+import type { Node } from "./t";
+declare module "./target" {
+  interface Q {
+    fromOther: Node;
+  }
+}
+export const other = 1;

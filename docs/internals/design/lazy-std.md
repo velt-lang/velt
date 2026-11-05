@@ -115,9 +115,10 @@ std's integer printing (`velt/lang/hooks/number_text`) is loaded with the other 
 prelude loads `velt/lang/hooks`), but its integer hooks are checked only where *live* code has a
 construct whose lowering calls them (#2161 step 2; velt_common `hook_demand.rs`): a template or
 `String()` of an integer, the formatting glue of a type that may print one (`console.log`, a
-class's table), an array index (its out-of-bounds message) or an `any`. Live code is the
-program's own and the std code it reaches (`velt_sema` `body/lazy_std/live.rs`), std's own
-conversions included, so hello world checks none of std's integer printing. Lowering has no
+class's table), an array index (its out-of-bounds message) or an `any`. Live code is a superset
+of what lowering builds: the program's own and the std code it reaches (`velt_sema`
+`body/lazy_std/live.rs`), std's own conversions included, which a debug compiler or
+`VELT_LIVE_CHECK=1` has lowering assert, so hello world checks none of std's integer printing. Lowering has no
 runtime fallback for them (#2197), and asserts that sema demanded each one it calls
 (`hir::Program::hooks_demanded`).
 

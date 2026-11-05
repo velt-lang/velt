@@ -1,0 +1,8 @@
+type Local = string;
+export type Exp = { x: number };
+export interface PT {
+  base: number;
+}
+export interface Q {
+  base: number;
+}

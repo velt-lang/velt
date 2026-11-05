@@ -27,7 +27,8 @@ pub(crate) fn check<'r>(
     dirs: &BTreeMap<String, PathBuf>,
 ) -> Result<(), String> {
     let (manifest, root_dir, direct) = root;
-    let mut refused = vec![];
+    // Each refused package and its C libraries declared `unchecked` (no headers).
+    let mut refused: Vec<(String, Vec<String>)> = vec![];
     for p in packages.clone() {
         if manifest.allow_native.contains(&p.name) {
             continue;
@@ -50,7 +51,14 @@ pub(crate) fn check<'r>(
         let m = Manifest::from_dir(dir)
             .map_err(|e| format!("package `{}` can't be checked for native code: {e}", p.name))?;
         if m.has_native_code() {
-            refused.push(p.name.clone());
+            let unchecked = m
+                .c_libraries
+                .iter()
+                .flatten()
+                .filter(|(_, lib)| lib.unchecked)
+                .map(|(name, _)| name.clone())
+                .collect();
+            refused.push((p.name.clone(), unchecked));
         }
     }
     if refused.is_empty() {
@@ -60,11 +68,11 @@ pub(crate) fn check<'r>(
         .map(|p| (p.name.as_str(), p.dependencies.as_slice()))
         .collect();
     let mut allowed = manifest.allow_native.clone();
-    allowed.extend(refused.iter().cloned());
+    allowed.extend(refused.iter().map(|(name, _)| name.clone()));
     let list: Vec<String> = allowed.iter().map(|n| format!("{n:?}")).collect();
     let lines: Vec<String> = refused
         .iter()
-        .map(|name| {
+        .map(|(name, unchecked)| {
             let via = match chain(direct, &deps, name) {
                 Some(path) if path.len() > 1 => format!(
                     " (through {})",
@@ -75,7 +83,25 @@ pub(crate) fn check<'r>(
                 ),
                 _ => String::new(),
             };
-            format!("package `{name}`{via} has native code, which runs with no safety net")
+            let unchecked = match unchecked.as_slice() {
+                [] => String::new(),
+                libs => format!(
+                    "; its C {} {} not checked against headers (`unchecked: true`)",
+                    if libs.len() == 1 {
+                        "library"
+                    } else {
+                        "libraries"
+                    },
+                    libs.iter()
+                        .map(|l| format!("`{l}`"))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                        + if libs.len() == 1 { " is" } else { " are" }
+                ),
+            };
+            format!(
+                "package `{name}`{via} has native code, which runs with no safety net{unchecked}"
+            )
         })
         .collect();
     Err(format!(

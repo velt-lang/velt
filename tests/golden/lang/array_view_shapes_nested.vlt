@@ -1,0 +1,49 @@
+// check: no leaks
+// Array views (#1485) whose element types share code by shape (shape-sharing.md) while types
+// built from them differ: nested views (`T[][]`, whose arrays are counted at one depth and
+// borrowed inside counted ones at another), a class that is a field of another class's view
+// element, and a weakly referenced class beside a plain one (their releases differ).
+type A = { a: number; b: string };
+
+class G<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+}
+class P {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+class Q {
+  m: number;
+  constructor(m: number) {
+    this.m = m;
+  }
+}
+
+const deep: any = [[["a"]]];
+const vs = deep as string[][][];
+console.log(vs[0][0][0], vs.length, vs[0].length);
+
+const objs: any = [[{ a: 1, b: "x" }], [{ a: 2, b: "y" }]];
+const va = objs as A[][];
+console.log(va[1][0].a, va[0][0].b, va.length);
+
+const r1: any = [new G<P>(new P(1))];
+const r2: any = [new P(2)];
+const v1 = r1 as G<P>[];
+const v2 = r2 as P[];
+console.log(v1[0].v.n, v2[0].n);
+
+const p = new P(4);
+const w = new WeakRef(p);
+const rp: any = [p, new P(5)];
+const rq: any = [new Q(6)];
+const vp = rp as P[];
+const vq = rq as Q[];
+console.log(w.deref()?.n, vp[1].n, vq[0].m);
+vp.pop();
+console.log(vp.length, rp.length, w.deref() === p);

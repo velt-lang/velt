@@ -1,0 +1,3 @@
+// A destructuring declaration that reads itself is named as what the user wrote.
+import { av } from "../_module_destructure/self_cycle";
+console.log(av);

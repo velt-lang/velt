@@ -21,6 +21,10 @@
 //!   one, and the calls its sections will make): its state is kept once, not also as a body.
 //! - Poll functions are always versioned in `finish`: their state layout (async_fn/spill) is
 //!   computed from the versioned body.
+//! - A shared instance (shape/) is rewritten after it is versioned, here as in a whole pass.
+//!   Until then its stand-in is rewritten with the kept locals (`rewrite_stand_in`): that adds to
+//!   its dictionaries the entries its calls need, in the order the body would, and makes the calls
+//!   the ones the analysis can follow. Versions copy calls, so they add no entry.
 
 use super::epoch_sections::{PIN, UNPIN};
 use super::rt::Rt;
@@ -124,6 +128,21 @@ impl FnLower<'_, '_> {
 }
 
 impl Cx<'_> {
+    /// Shared instance `inst`'s stand-in `func`, whose `finish` kept the last state, rewritten:
+    /// the rewrite reads the types of the calls' arguments from the kept locals. The locals it
+    /// adds, for loads whose statements a stand-in does not keep, are dropped.
+    pub(super) fn rewrite_stand_in(&mut self, inst: FuncId, func: &mut vir::Function) {
+        let d =
+            (self.deferred_new.last_mut()).unwrap_or_else(|| ice("a stand-in without its state"));
+        func.locals = std::mem::take(&mut d.locals);
+        let kept = func.locals.len();
+        self.shape_rewrite(inst, func);
+        func.locals.truncate(kept);
+        let d =
+            (self.deferred_new.last_mut()).unwrap_or_else(|| ice("a stand-in without its state"));
+        d.locals = std::mem::take(&mut func.locals);
+    }
+
     /// The function `fid` was built: the state its `finish` kept (since `mark`) is its own.
     pub(super) fn claim_deferred(&mut self, fid: FuncId, mark: usize) {
         let mut mine = self.deferred_new.split_off(mark);
@@ -175,6 +194,12 @@ impl Cx<'_> {
             f.locals = locals;
             f.blocks = blocks;
             f.locs = locs;
+            if self.is_shared_inst(fid) {
+                let slot = &mut self.funcs[fid.0 as usize];
+                let mut func = slot.take().unwrap_or_else(|| ice("a shared body taken"));
+                self.shape_rewrite(fid, &mut func);
+                self.funcs[fid.0 as usize] = Some(func);
+            }
         }
     }
 }

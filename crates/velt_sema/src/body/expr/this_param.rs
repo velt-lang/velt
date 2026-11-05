@@ -38,7 +38,7 @@ impl FnCx<'_, '_> {
         let mut c = self.fn_callable(d, format!("function `{name}`"), span);
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
-        self.explicit_type_args(&mut slots, n, type_args, &c.defaults, span);
+        self.explicit_type_args(&mut slots, n, type_args, (&c.defaults, &c.params), span);
         let this = self
             .cx
             .fn_info(d)

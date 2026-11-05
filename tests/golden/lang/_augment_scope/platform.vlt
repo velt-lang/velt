@@ -1,0 +1,13 @@
+// A renderer's augmentation, as sigx's runtime-terminal `types.ts`: its members name a type this
+// module imports.
+import type { Node } from "./nodes";
+import "./core";
+
+export type Extra = { depth: number };
+
+declare module "./core" {
+  interface PlatformTypes {
+    element: Node;
+    extra: Extra;
+  }
+}

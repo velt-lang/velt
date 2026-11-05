@@ -1,8 +1,8 @@
-//! The M1 goldens through the LLVM release backend: every `tests/golden/m1/*.vlt` with a
-//! `.out` file, run with `velt run --release --backend llvm`, must print exactly that output
-//! (and exit with the `.code`, default 0). Skipped with a note when clang is unavailable.
-//! A few goldens also run split into codegen units (`VELT_CODEGEN_UNITS=3`).
-//! `velt build --emit llvm` must print IR without needing clang.
+//! The LLVM release backend split into codegen units: the goldens run every program in one unit
+//! wherever clang is installed (`--release` picks LLVM then, crates/veltc/src/backend.rs), so
+//! this runs the programs that depend on what units share (`VELT_CODEGEN_UNITS`), against their
+//! `.out` and `.code`. Skipped with a note when clang is unavailable. `velt build --emit llvm`
+//! must print IR without needing clang.
 
 use std::path::{Path, PathBuf};
 
@@ -15,36 +15,6 @@ fn root() -> PathBuf {
         .join("../..")
         .canonicalize()
         .expect("repo root")
-}
-
-fn m1_programs(root: &Path) -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = std::fs::read_dir(root.join("tests/golden/m1"))
-        .expect("tests/golden/m1")
-        .flatten()
-        .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "vlt") && p.with_extension("out").exists())
-        .collect();
-    files.sort();
-    files
-}
-
-#[test]
-fn m1_goldens_with_llvm() {
-    if !velt_codegen_llvm::available() {
-        eprintln!("note: clang not available; skipping the LLVM goldens");
-        return;
-    }
-    let root = root();
-    runtime_support::build_native_runtime(&root);
-    let work = work_dir::work_dir(&root, "golden-work-llvm");
-    std::fs::create_dir_all(&work).expect("work dir");
-    let files = m1_programs(&root);
-    assert!(!files.is_empty(), "no M1 goldens found");
-    let failures: Vec<String> = files
-        .iter()
-        .filter_map(|f| run_golden(f, &work, None))
-        .collect();
-    assert!(failures.is_empty(), "\n{}", failures.join("\n\n"));
 }
 
 /// Goldens that depend on symbols shared between codegen units, forced into three units: a
@@ -80,7 +50,7 @@ fn goldens_split_into_codegen_units() {
         for i in 1..=3 {
             let _ = std::fs::remove_file(unit(i));
         }
-        run_golden(&f, &work, Some(3)).or_else(|| {
+        run_golden(&f, &work, 3).or_else(|| {
             let written = (1..=3).filter(|&i| unit(i).exists()).count() + 1;
             (written != units)
                 .then(|| format!("{}: {written} unit object(s), want {units}", f.display()))
@@ -97,8 +67,8 @@ fn goldens_split_into_codegen_units() {
 /// `velt_opt` merges alongside, and the f16/bf16 square root (`@velt.sqrt_f32` and the
 /// narrowing helpers), the vector sums (`sumWide()`: `psadbw` and `pmaddwd` on x86), and integers
 /// compared with whole doubles (`numrep`'s `int_compare`, with `bitand`/`bitor` on `bool`). Each
-/// helper is defined in every codegen unit that uses it, so each golden also runs split into two
-/// units.
+/// helper is defined in every codegen unit that uses it, so each golden runs split into two units
+/// (the goldens run them in one).
 #[test]
 fn inline_helpers_with_llvm() {
     if !velt_codegen_llvm::available() {
@@ -124,8 +94,7 @@ fn inline_helpers_with_llvm() {
     ]
     .iter()
     .map(|name| root.join("tests/golden").join(format!("{name}.vlt")))
-    .flat_map(|f| [None, Some(2)].map(|units| (f.clone(), units)))
-    .filter_map(|(f, units)| run_golden(&f, &work, units))
+    .filter_map(|f| run_golden(&f, &work, 2))
     .collect();
     assert!(
         failures.is_empty(),
@@ -139,9 +108,9 @@ fn inline_helpers_with_llvm() {
     );
 }
 
-/// Runs one golden in a release build through LLVM (with `units` codegen units when given);
-/// returns the mismatch report, if any.
-fn run_golden(f: &Path, work: &Path, units: Option<usize>) -> Option<String> {
+/// Runs one golden in a release build through LLVM with `units` codegen units; returns the
+/// mismatch report, if any.
+fn run_golden(f: &Path, work: &Path, units: usize) -> Option<String> {
     let want = std::fs::read_to_string(f.with_extension("out"))
         .expect(".out")
         .replace("\r\n", "\n");
@@ -152,11 +121,8 @@ fn run_golden(f: &Path, work: &Path, units: Option<usize>) -> Option<String> {
     let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
     cmd.args(["run", "--release", "--backend", "llvm"])
         .arg(f)
-        .current_dir(work);
-    match units {
-        Some(n) => cmd.env("VELT_CODEGEN_UNITS", n.to_string()),
-        None => cmd.env_remove("VELT_CODEGEN_UNITS"),
-    };
+        .current_dir(work)
+        .env("VELT_CODEGEN_UNITS", units.to_string());
     let o = cmd.output().expect("run velt");
     let got = String::from_utf8_lossy(&o.stdout).replace("\r\n", "\n");
     let code = o.status.code().unwrap_or(-1);

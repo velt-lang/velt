@@ -581,6 +581,14 @@ fn c_declarations() {
 }
 
 #[test]
+fn c_declarations_that_ask_for_errno() {
+    assert_fmt(
+        "declare c( 'c',{errno:true,}, ) function close(fd:i32):i32\n",
+        "declare c(\"c\", { errno: true }) function close(fd: i32): i32;\n",
+    );
+}
+
+#[test]
 fn c_types() {
     assert_fmt(
         "declare  c  type sqlite3\nexport declare c type sqlite3_stmt;\n",

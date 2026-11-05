@@ -84,7 +84,7 @@ impl Cx<'_> {
         if self.is_dynamic(t) {
             return true;
         }
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             TyKind::Unit => true,
             TyKind::Option(inner, _) => self.is_dynamic(*inner) || self.any_boxable_plain(*inner),
             _ => self.any_boxable_plain(t),
@@ -92,7 +92,7 @@ impl Cx<'_> {
     }
 
     fn any_boxable_plain(&self, t: TyId) -> bool {
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             TyKind::Bool
             | TyKind::Int(_)
             | TyKind::Float(_)
@@ -114,7 +114,7 @@ impl Cx<'_> {
                             [p] => {
                                 !self.is_dynamic(*p)
                                     && (self.any_boxable_plain(*p)
-                                        || matches!(self.types.kind(*p), TyKind::Promise(..)))
+                                        || matches!(self.raw_kind(*p), TyKind::Promise(..)))
                             }
                             _ => false,
                         })
@@ -222,7 +222,7 @@ impl FnLower<'_, '_> {
             v
         } else {
             let vt = self.cx.ty(t);
-            let b = self.alloc(vt);
+            let b = self.dyn_box_alloc(t);
             let bp = self.operand_place(b.clone(), Ty::Ptr);
             self.store(proj(&bp, Proj::Deref(vt)), v);
             b

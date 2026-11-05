@@ -41,6 +41,7 @@ mod asserted_targets;
 mod assigned_fields;
 mod ast_walk;
 mod atomic_copies;
+mod augment_scope;
 mod body;
 mod brands;
 mod call_sigs;
@@ -100,6 +101,7 @@ mod known;
 mod layout_merge;
 mod literals;
 mod module_chunks;
+mod module_destructure;
 mod module_scripts;
 mod module_state;
 mod moves;
@@ -269,6 +271,8 @@ fn check_timed(
     let modules = asserted.modules.as_deref().unwrap_or(modules);
     let mut merge_diags = chunks.diags.clone();
     merge_diags.extend(call_sigs::check(modules));
+    let destructured = module_destructure::rewrite(modules);
+    let modules = destructured.as_deref().unwrap_or(modules);
     let global_ns = namespaces::global_namespaces(modules);
     let (flat, ns_private, diags) = namespaces::flatten(modules);
     merge_diags.extend(diags);
@@ -442,6 +446,7 @@ fn check_timed(
     let (upcasts, upcast_impls) = cx.upcast_tables();
     let extension_impls = collect::ext_impls::hir_bounds(&cx);
     let dyn_bounds = collect::ext_impls::dyn_bounds(&mut cx);
+    let live = body::lazy_std::live_defs(&mut cx, &unchecked);
     let ctx::Ctx {
         ty,
         defs,
@@ -493,6 +498,7 @@ fn check_timed(
         lock_free_callbacks: lock_free_callbacks.into_iter().collect(),
         unchecked: unchecked.into_iter().collect(),
         hooks_demanded,
+        live: live.map(|l| l.into_iter().collect()),
         any_fn_views,
         generated: generated.into_iter().collect(),
     };
@@ -585,6 +591,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
         type_level::instances::reach(cx)
     });
     timings::pass("hooks::check_shapes", || hooks::check_shapes(cx));
+    body::lazy_std::finish_live(cx);
     let before = error_count(cx);
     generated::bind::fix_modes(cx);
     timings::pass("ownership_passes", || ownership_passes(cx));

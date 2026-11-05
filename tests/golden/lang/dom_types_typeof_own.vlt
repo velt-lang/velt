@@ -1,0 +1,23 @@
+// `typeof` of a name of `lib.dom` that the program declares itself is the program's own.
+class Node {
+  value = 1;
+}
+function Element(): number {
+  return 1;
+}
+const HTMLElement = 2;
+const SVGElement = "own";
+console.log(typeof Node, typeof Element, typeof HTMLElement, typeof SVGElement);
+function shadowed(Event: string, ShadowRoot: number): string {
+  return `${typeof Event} ${typeof ShadowRoot}`;
+}
+console.log(shadowed("x", 1));
+// Next to them, a name it did not declare is still the global.
+console.log(typeof HTMLDivElement, typeof CustomEvent);
+const noDiv: HTMLDivElement | null = null;
+console.log(noDiv === null, new Node().value);
+// An interface of its own does not hide the value Node has of that name, as under `tsc`.
+interface EventTarget {
+  own: number;
+}
+console.log(typeof EventTarget);

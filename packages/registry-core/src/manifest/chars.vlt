@@ -82,3 +82,42 @@ export function componentsNormal(path: string, curDir: bool): bool {
   }
   return true;
 }
+
+/** Whether every character of `s` passes `test`; `s` empty passes. */
+export function allChars(s: string, test: (c: number) => bool): bool {
+  return !anyChar(s, (c: number): bool => !test(c));
+}
+
+/** `0-9`, `a-f`. */
+export function isLowerHex(c: number): bool {
+  return (c >= 48 && c <= 57) || (c >= 97 && c <= 102);
+}
+
+/** ASCII letters, digits, `_` and `-`. */
+export function isWordChar(c: number): bool {
+  return (c >= 48 && c <= 57) ||
+    (c >= 65 && c <= 90) ||
+    (c >= 97 && c <= 122) ||
+    c == 95 ||
+    c == 45;
+}
+
+/** The parts of `s` between runs of whitespace ([`isWhitespace`]), Rust's `split_whitespace`. */
+export function words(s: string): string[] {
+  const out: string[] = [];
+  let word = "";
+  for (const c of s) {
+    if (isWhitespace(c.codePointAt(0) ?? 0)) {
+      if (word.length > 0) {
+        out.push(word);
+      }
+      word = "";
+    } else {
+      word += c;
+    }
+  }
+  if (word.length > 0) {
+    out.push(word);
+  }
+  return out;
+}

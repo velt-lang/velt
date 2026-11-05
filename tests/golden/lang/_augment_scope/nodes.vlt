@@ -1,0 +1,1 @@
+export type Node = { tag: string; width: number };

@@ -1,0 +1,10 @@
+// `x instanceof Promise` of an `object` or `unknown`: a promise never converts to one here, so the
+// test is false, as JavaScript answers for what they hold.
+function check(value: object): string {
+  if (value instanceof Promise) return "promise";
+  if (value instanceof Error) return "error";
+  return "other";
+}
+console.log(check({ a: 1 }), check(new Error("e")));
+const u: unknown = 1;
+console.log(u instanceof Promise);

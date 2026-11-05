@@ -218,6 +218,9 @@ impl FnLower<'_, '_> {
     pub(super) fn make_dyn(&mut self, e: &hir::Expr, impl_index: u32, ty: TyId) -> Operand {
         let cty = self.sub(e.ty);
         let ty = self.sub(ty);
+        if self.cx.mentions_ph(cty) {
+            return self.shape_to_dyn(e, impl_index, cty, ty);
+        }
         if self.cx.is_narrow_dynamic(ty) {
             // `object` / `Function` key collections by identity (issue #926).
             self.cx.note_identity(ty);
@@ -290,7 +293,7 @@ impl FnLower<'_, '_> {
             v
         } else {
             let vt = self.cx.ty(cty);
-            let b = self.alloc(vt);
+            let b = self.dyn_box_alloc(cty);
             let bp = self.operand_place(b.clone(), Ty::Ptr);
             self.store(proj(&bp, Proj::Deref(vt)), v);
             if self.cx.is_any_impl(impl_index) && self.fn_props(cty) {

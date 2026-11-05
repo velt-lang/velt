@@ -324,7 +324,7 @@ impl super::Cx<'_> {
     /// Is `t` velt/lang/proxy's `ArrayMethod` (an array method read through `Reflect.get`), which
     /// `typeof` and `console.log` show as the function it stands for?
     pub(super) fn is_array_method(&self, t: TyId) -> bool {
-        let TyKind::Adt(d, _) = self.types.kind(t) else {
+        let TyKind::Adt(d, _) = self.raw_kind(t) else {
             return false;
         };
         matches!(self.hir.def(*d), hir::Def::Adt(a) if a.name == PRELUDE_ARRAY_METHOD)
@@ -335,7 +335,7 @@ impl super::Cx<'_> {
     /// `#call`) or a class (`#new`; hir_encodings.md "Functions with properties", "Classes as
     /// values")?
     pub(super) fn is_function_object(&self, t: TyId) -> bool {
-        let TyKind::Adt(d, _) = self.types.kind(t) else {
+        let TyKind::Adt(d, _) = self.raw_kind(t) else {
             return false;
         };
         let hidden = |a: &hir::AdtDef| {

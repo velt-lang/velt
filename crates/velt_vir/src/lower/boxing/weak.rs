@@ -64,6 +64,7 @@ impl Cx<'_> {
         if !self.has_weak() {
             return false;
         }
+        let t = self.ph_rep(t);
         match self.kind(t) {
             TyKind::Adt(d, _) if self.is_class(t) => {
                 let root = self.class_root(d);

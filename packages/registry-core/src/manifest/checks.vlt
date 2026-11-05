@@ -2,7 +2,15 @@
 // (crates/vpm/src/manifest/mod.rs and the modules it calls). Each returns why a value is refused,
 // or null; the messages are vpm's.
 
-import { anyChar, componentsNormal, isControl, isWhitespace, trim } from "./chars";
+import {
+  allChars,
+  anyChar,
+  componentsNormal,
+  isControl,
+  isWhitespace,
+  isWordChar,
+  trim,
+} from "./chars";
 import { Version } from "../semver/version";
 import { isValidRequirement } from "../semver/requirement";
 
@@ -176,10 +184,12 @@ export function checkImportSource(source: string): string | null {
 }
 
 export function checkNativePath(path: string): string | null {
-  let ok = path.length > 0 && !path.startsWith(".") && path != "src" && path != "target";
-  for (const c of path) {
-    ok = ok && c.length == 1 && (/[A-Za-z0-9_.-]/.test(c));
-  }
+  const ok =
+    path.length > 0 &&
+    !path.startsWith(".") &&
+    path != "src" &&
+    path != "target" &&
+    allChars(path, (c: number): bool => isWordChar(c) || c == 46);
   return ok
     ? null
     : `path \`${path}\` must be the name of a directory in the package root (not \`src\` or \`target\`)`;
@@ -325,7 +335,7 @@ export function checkImportKey(key: string): string | null {
   const ok =
     name != null &&
     name.length > 0 &&
-    name.split("/").every((seg: string): bool => seg.length > 0 && /^[A-Za-z0-9_-]+$/.test(seg));
+    name.split("/").every((seg: string): bool => seg.length > 0 && allChars(seg, isWordChar));
   if (ok) {
     return null;
   }

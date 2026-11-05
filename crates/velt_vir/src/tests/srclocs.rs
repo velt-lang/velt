@@ -41,6 +41,7 @@ fn lower_located(p: &Program, sm: &SourceMap) -> crate::vir::Program {
         cell_checks: false,
         debug_info: false,
         target: None,
+        shapes: false,
     };
     let v = crate::lower_with(p, &opts);
     if let Err(errs) = crate::verify(&v) {

@@ -75,6 +75,8 @@ impl FnCx<'_, '_> {
                 let ret = self.cx.fn_info(*d).ret;
                 self.is_js_api(*d) && self.cx.ty.is_int(ret) && ret != self.cx.ty.u64
             }
+            // A call after the temporaries it needs (`t.indexOf(x)` of a tuple).
+            H::Block(hir::Block { value: Some(v), .. }) => self.is_std_api_value(v),
             _ => false,
         }
     }

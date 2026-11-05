@@ -77,6 +77,19 @@ impl Cx<'_> {
         shape: PtrParam,
         written: bool,
     ) -> ParamAttrs {
+        // A placeholder (shape/): only what holds for every type of the shape.
+        if self.is_ph(ty) {
+            let size = match shape {
+                PtrParam::Value(t) => self.size_align(t).0,
+                PtrParam::Object => 0,
+                PtrParam::NotPtr => return ParamAttrs::default(),
+            };
+            return ParamAttrs {
+                nonnull: true,
+                dereferenceable: u64::from(size),
+                ..ParamAttrs::default()
+            };
+        }
         let size = match shape {
             PtrParam::Value(t) => self.size_align(t).0,
             PtrParam::Object => {

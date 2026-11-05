@@ -41,7 +41,7 @@ use crate::hir::{self, Callee, DefId, ExprKind as E, TyId, TyKind};
 mod live;
 mod number_text;
 
-pub(crate) use live::demanded as hooks_demanded;
+pub(crate) use live::{demanded as hooks_demanded, finish as finish_live, live_defs};
 
 /// Std modules (path prefixes) checked whole: lowering looks up their definitions by name
 /// (`velt_vir` `STABLE_SORT`, the proxy and typed-array glue, the epoch sections' `pin`,
@@ -60,8 +60,12 @@ const EAGER: &[&str] = &[
 /// prelude's are: lowering looks up none of their methods by name except where it also has a
 /// value of the type (`JsonValue[JSON_RUNTIME_HANDLE]` prints one; generated decoders call
 /// [`LAZY_PRELUDE_STATICS`]), and their code reaches large modules most programs never load (`JsonValue`'s the tape,
-/// velt/encoding/json/tape).
-const LAZY_PRELUDE_TYPES: &[&str] = &[velt_common::std_item!(prelude_json_value, "JsonValue")];
+/// velt/encoding/json/tape). `TupleElements`: a program that mentions `.map` loads it
+/// (std/prelude/global/tuple_elements.vlt), and only a tuple method call uses it.
+const LAZY_PRELUDE_TYPES: &[&str] = &[
+    velt_common::std_item!(prelude_json_value, "JsonValue"),
+    velt_common::std_item!(lang_hooks_tuple_elements, "TupleElements"),
+];
 
 /// Static methods of [`LAZY_PRELUDE_TYPES`] checked with the type's methods, once the type is
 /// used: `JsonValue[JSON_FROM_READER]`, which the decoder generated for a type holding a
@@ -218,7 +222,7 @@ impl Lazy {
             record_conversion: false,
             record_hooks: false,
             float_text: false,
-            live: live::Live::default(),
+            live: live::Live::new(),
         }
     }
 

@@ -1,0 +1,14 @@
+// A platform-neutral core, as sigx's runtime-core: an interface renderers augment, and a type
+// read from it (TypeScript's `PlatformTypes extends { element: infer E } ? E : …`).
+export interface PlatformTypes {}
+export type PlatformElement = PlatformTypes extends { element: infer E } ? E : string;
+
+// A `Node` of its own: the augmentation's `Node` is not this one.
+type Node = string;
+export function nodeName(n: Node): string {
+  return `core ${n}`;
+}
+
+export function describe(e: PlatformElement): string {
+  return JSON.stringify(e);
+}

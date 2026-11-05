@@ -1,0 +1,56 @@
+// The types of TypeScript's `lib.dom`, named by code shared with the browser: types only.
+interface Hooks {
+  beforeHydrate?(container: Element): boolean | void;
+  hydrate?(dom: Node | null, parent: Node, end?: Node | null): Node | null | undefined;
+  onEvent?(e: Event, target: HTMLElement | SVGElement): void;
+}
+const hooks: Hooks = {};
+console.log(hooks.beforeHydrate === undefined, hooks.hydrate === undefined);
+function onInput(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement): string {
+  return el.value;
+}
+function title(el: Element | null): string | null {
+  return el == null ? null : el.getAttribute("title");
+}
+console.log(title(null), typeof onInput);
+function listen(t: EventTarget, l: EventListener): void {
+  t.addEventListener("x", l);
+}
+console.log(typeof listen);
+
+// `typeof` of each of them is what Node answers, as code shared with the browser tests for them.
+console.log(typeof Event, typeof EventTarget, typeof CustomEvent);
+// @ts-ignore: `lib.dom` has `EventListener` only as a type.
+console.log(typeof EventListener);
+console.log(typeof Node, typeof Element, typeof HTMLElement, typeof SVGElement, typeof ShadowRoot);
+console.log(typeof HTMLDivElement, typeof HTMLInputElement);
+console.log(typeof HTMLTextAreaElement, typeof HTMLSelectElement);
+
+function textOf(el: HTMLElement | null): string {
+  if (typeof HTMLElement !== "undefined") {
+    return el === null ? "no element" : el.tagName;
+  }
+  return "server";
+}
+console.log(textOf(null));
+const isDom = typeof Element === "function" ? "dom" : "no dom";
+console.log(isDom, typeof (Node) === "undefined", "undefined" === typeof HTMLElement);
+console.log(typeof Event === "function" && typeof HTMLElement === "undefined");
+function kind(): string {
+  switch (typeof HTMLElement) {
+    case "undefined":
+      return "absent";
+    default:
+      return "present";
+  }
+}
+function kindOfEvent(): string {
+  switch (typeof Event) {
+    case "function":
+      return "a function";
+    default:
+      return "something else";
+  }
+}
+const inClosure = (): string => typeof Node;
+console.log(kind(), kindOfEvent(), inClosure());

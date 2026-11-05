@@ -104,6 +104,7 @@ impl PB {
             any_fn_views: vec![],
             unchecked: Default::default(),
             hooks_demanded: Default::default(),
+            live: None,
             generated: Default::default(),
             cpu_targets: Default::default(),
             type_names: Default::default(),

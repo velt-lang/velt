@@ -98,6 +98,13 @@ impl Ctx<'_> {
         self.intersect(operands, names, env.module, t.span)
     }
 
+    /// `A & B` of types known now, not written anywhere (the interfaces a type parameter extends).
+    pub(crate) fn intersect_parts(&mut self, parts: Vec<TyId>, module: usize, span: Span) -> TyId {
+        let names = vec![None; parts.len()];
+        let operands = parts.into_iter().map(|t| (t, span)).collect();
+        self.intersect(operands, names, module, span)
+    }
+
     /// The function type operands of an intersection with object types made callable object
     /// types (`crate::callables`); false (reported at `span`) when there is more than one
     /// function type (overloads, not supported).

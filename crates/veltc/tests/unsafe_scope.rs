@@ -237,7 +237,7 @@ fn velt_check_lists_the_allowed_native_code() {
     assert_eq!(
         passes(dir.path(), &["check"]),
         "Native code the program allows (allowNative):\n  \
-         bind: C libraries m (m); 6 places of unsafe code\n    \
+         bind: C libraries m (m; no headers); 6 places of unsafe code\n    \
          src/lib.vlt:2   unsafe function `raw`\n    \
          src/lib.vlt:10  unsafe function `at`\n    \
          src/lib.vlt:18  unsafe block\n    \
@@ -334,4 +334,34 @@ fn locked_refuses_a_changed_allow_native() {
     }
     project(dir.path(), lib, NATIVE, main, ALLOW);
     passes(dir.path(), &["install", "--locked"]);
+}
+
+/// A C library without headers says so (`unchecked: true`), and the refusal of its package
+/// names it, so the decision to allow it knows nothing checks its declarations.
+#[test]
+fn an_unchecked_library_is_named_when_the_program_refuses_it() {
+    let dir = test_dir::TestDir::new();
+    let native = ", native: { c: { sdk: { system: { default: \"sdk\" }, unchecked: true } } }";
+    project(
+        dir.path(),
+        "export function demo(): void {}\n",
+        native,
+        DEMO,
+        "",
+    );
+    let out = errors(dir.path());
+    assert!(
+        out.contains("package `bind` has native code, which runs with no safety net; its C library `sdk` is not checked against headers (`unchecked: true`)"),
+        "{out}"
+    );
+    // Allowed, `velt check` lists it as unchecked.
+    project(
+        dir.path(),
+        "export function demo(): void {}\n",
+        native,
+        DEMO,
+        ALLOW,
+    );
+    assert!(passes(dir.path(), &["check"])
+        .contains("bind: C libraries sdk (sdk; unchecked); no unsafe code"),);
 }

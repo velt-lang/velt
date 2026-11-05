@@ -1,0 +1,9 @@
+2 1x y 2
+[ { a: 1, b: 'x' }, { a: 1, b: 'x' }, { a: 3, b: 'z' } ] [ { c: 'w', d: 4 } ]
+3 q true 2
+[ P { n: 1 }, P { n: 2 } ] [ Q { s: 'q' }, null, Q { s: 'r' } ]
+object { a: 1, b: 'x' }
+string s
+number 5
+[ { a: 1, b: 'x' }, 't', 5 ]
+klm 3 [ 'k', 'l', 'm' ]

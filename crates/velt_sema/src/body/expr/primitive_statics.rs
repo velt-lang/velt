@@ -103,7 +103,7 @@ impl FnCx<'_, '_> {
         let c = self.fn_callable(m.def, format!("`{tname}.{name}`"), span);
         let n = c.slot_names.len();
         let mut slots = vec![None; n];
-        self.explicit_type_args(&mut slots, n, type_args, &c.defaults, span);
+        self.explicit_type_args(&mut slots, n, type_args, (&c.defaults, &c.params), span);
         let ck = self.check_call(&c, slots, args, exp, span);
         self.note_async_args(m.def, &ck.args);
         self.call_throws(m.def, &ck.type_args, ck.ret, span);

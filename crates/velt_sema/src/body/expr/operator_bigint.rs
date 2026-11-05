@@ -44,7 +44,7 @@ fn quotable(e: &ast::Expr) -> bool {
 
 impl FnCx<'_, '_> {
     /// Is `t` `velt/math`'s `BigInt`?
-    fn is_bigint(&self, t: TyId) -> bool {
+    pub(super) fn is_bigint(&self, t: TyId) -> bool {
         match self.cx.ty.kind(t) {
             TyKind::Adt(d, _) => self
                 .cx

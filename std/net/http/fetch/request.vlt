@@ -131,7 +131,9 @@ export class Request {
       );
     }
     if (input.fromServer() != null) {
-      const body = BodyStream.adopt(input.chunks());
+      // The connection's chunks themselves: `chunks()` claims the body when first read, which
+      // this copy's `input` already has by then.
+      const body = BodyStream.adopt(input.received());
       this.extra().body = { kind: 3, text: "", bytes: [], stream: body, implied: 0 };
     } else {
       this.extra().body = input.made();

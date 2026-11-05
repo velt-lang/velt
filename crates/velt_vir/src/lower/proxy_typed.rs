@@ -39,7 +39,8 @@ impl Cx<'_> {
             return false;
         }
         let b = &self.boxing;
-        match self.types.kind(t) {
+        let t = self.ph_rep(t);
+        match self.raw_kind(t) {
             TyKind::Adt(d, _) if self.is_class(t) => b.proxy_roots.contains(&self.class_root(*d)),
             _ => b.proxy_types.contains(&t),
         }
@@ -105,7 +106,7 @@ impl Cx<'_> {
         for &t in &targets {
             self.add_proxiable(next, t, proxy);
         }
-        let traced = targets.into_iter().filter(|&t| match self.types.kind(t) {
+        let traced = targets.into_iter().filter(|&t| match self.raw_kind(t) {
             TyKind::Adt(_, args) if self.is_class(t) => args.is_empty(),
             _ => next.proxy_types.contains(&t),
         });
@@ -133,7 +134,7 @@ impl Cx<'_> {
     /// Make `t` proxiable in `next` when it is a class (rule 3: its whole hierarchy) or an
     /// object type; either is counted.
     fn add_proxiable(&mut self, next: &mut Boxing, t: TyId, proxy: DefId) {
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             TyKind::Adt(d, _) if self.is_class(t) => {
                 if *d == proxy {
                     return;
@@ -153,7 +154,7 @@ impl Cx<'_> {
     }
 
     pub(super) fn proxiable_in(&self, b: &Boxing, t: TyId) -> bool {
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             TyKind::Adt(d, _) if self.is_class(t) => b.proxy_roots.contains(&self.class_root(*d)),
             _ => b.proxy_types.contains(&t),
         }
@@ -173,7 +174,7 @@ impl Cx<'_> {
             .boxing
             .proxy_types
             .iter()
-            .map(|&t| match self.types.kind(t) {
+            .map(|&t| match self.raw_kind(t) {
                 TyKind::Adt(d, _) => match self.hir.def(*d) {
                     hir::Def::Adt(a) => a.name.clone(),
                     _ => self.type_name(t),

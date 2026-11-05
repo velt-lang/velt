@@ -1,0 +1,6 @@
+import { a1 } from "./cycle_a";
+console.log("cycle b");
+export const { b1 } = { b1: 2 };
+export function getA(): number {
+  return a1;
+}

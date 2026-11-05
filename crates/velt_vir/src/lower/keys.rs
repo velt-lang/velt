@@ -117,7 +117,7 @@ impl Cx<'_> {
                 // `Generator<T, E, never>` is spelled `Generator<T, E>`, as before `N` existed.
                 let args = match args.as_slice() {
                     [_, _, n] if self.generator_obj_kind(t) == Some(false) => {
-                        match self.types.kind(*n) {
+                        match self.raw_kind(*n) {
                             TyKind::Never => &args[..2],
                             _ => &args[..],
                         }
@@ -157,6 +157,7 @@ impl Cx<'_> {
                 self.type_key_in(*throws, env, stack)
             ),
             TyKind::Closure(d) => format!("closure {}", self.def_name(*d)),
+            TyKind::Param(_) if self.is_ph(t) => self.ph_name(t),
             TyKind::Param(n) => env
                 .get(*n as usize)
                 .cloned()
@@ -174,7 +175,7 @@ impl Cx<'_> {
         let targs = match targs {
             [_, _, n]
                 if name.starts_with(velt_common::std_item!(prelude_iter, "Generator."))
-                    && matches!(self.types.kind(*n), TyKind::Never) =>
+                    && matches!(self.raw_kind(*n), TyKind::Never) =>
             {
                 &targs[..2]
             }

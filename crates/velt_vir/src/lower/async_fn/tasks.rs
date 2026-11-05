@@ -32,7 +32,7 @@ impl Cx<'_> {
 
     /// `T` of a `Promise<T, E>` type.
     pub(in crate::lower) fn promise_result(&self, t: TyId) -> TyId {
-        match self.types.kind(t) {
+        match self.raw_kind(t) {
             TyKind::Promise(r, _) => *r,
             k => ice(format_args!("expected a promise type, found {k:?}")),
         }

@@ -188,3 +188,67 @@ fn versioning_a_long_loop_does_not_raise_the_peak() {
     let (s, l) = (peak_mb(&small), peak_mb(&large));
     assert!(l <= s + 100, "peak {l} MB against {s} MB");
 }
+
+/// Views of several element types, whose array-view helpers are shared by shape in debug
+/// builds (velt_vir `lower/shape/`): their bodies are lowered in every pass and their facts
+/// replayed per dictionary, so the passes find the same counted types as without sharing, and
+/// the program is the one lowering every pass whole gives.
+const SHARED_VIEWS: &str = "
+type A = { a: number; b: string };
+type B = { c: string; d: number };
+type U = string | number;
+class P {
+  n: number;
+  constructor(n: number) {
+    this.n = n;
+  }
+}
+const ra: any = [{ a: 1, b: \"x\" }];
+const rb: any = [{ c: \"y\", d: 2 }];
+const ru: any = [\"u\", 3];
+const rp: any = [new P(1)];
+const va = ra as A[];
+const vb = rb as B[];
+const vu = ru as U[];
+const vp = rp as P[];
+va.push({ a: 2, b: \"z\" });
+vu[0] = 4;
+console.log(va.length, vb[0].d, vu[0], vp[0].n, ra.length);
+";
+
+/// The growth lines of a lowering profile (`velt-lower: pass N grew: …`).
+fn growth(stderr: &str) -> Vec<String> {
+    stderr
+        .lines()
+        .filter(|l| l.contains(" grew: "))
+        .map(str::to_string)
+        .collect()
+}
+
+#[test]
+fn shared_instances_keep_the_fixpoint() {
+    let profile = [("VELT_LOWER_PROFILE", "1")];
+    let (vir, shared) = lower(SHARED_VIEWS, &profile);
+    // Of the pass that is the program: each pass prints the line, with 0 if nothing was shared.
+    let last = (shared.lines())
+        .rfind(|l| l.ends_with(" per type"))
+        .unwrap_or_else(|| panic!("no count of shared instances:\n{shared}"));
+    let count = last.rsplit_once(": ").unwrap().1.split(' ').next().unwrap();
+    assert_ne!(count, "0", "the helpers were not shared:\n{shared}");
+    let (_, plain) = lower(
+        SHARED_VIEWS,
+        &[("VELT_LOWER_PROFILE", "1"), ("VELT_SHAPES", "off")],
+    );
+    assert_eq!(
+        growth(&shared),
+        growth(&plain),
+        "counted types grew differently"
+    );
+    assert_eq!(
+        passes(&shared).len(),
+        passes(&plain).len(),
+        "another number of passes"
+    );
+    let (whole, _) = lower(SHARED_VIEWS, &[("VELT_LOWER_WHOLE", "1")]);
+    assert!(vir == whole, "VIR differs from lowering every pass whole");
+}

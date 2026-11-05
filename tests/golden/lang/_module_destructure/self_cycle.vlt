@@ -1,0 +1,7 @@
+function ia(): { av: number } {
+  return { av: bv() };
+}
+function bv(): number {
+  return av;
+}
+export const { av } = ia();

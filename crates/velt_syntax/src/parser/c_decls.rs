@@ -41,8 +41,28 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// `declare c("<library>") [async] function name(…): R;` (the caller checked
-    /// [`Self::at_c_decl`]). `async` parses, so sema can say it is not supported yet.
+    /// A C function's options: `{ errno: true }`, the only one, which is off when left out.
+    fn parse_c_options(&mut self) -> PResult<bool> {
+        self.expect(Tok::LBrace)?;
+        if !self.at_word("errno") {
+            self.error_expected("`errno`, the only option of a C function");
+            return Err(Fail);
+        }
+        self.bump();
+        self.expect(Tok::Colon)?;
+        if !self.at(Tok::Kw(Kw::True)) {
+            self.error_expected("`true`: a C function that doesn't ask for `errno` leaves it out");
+            return Err(Fail);
+        }
+        self.bump();
+        self.eat(Tok::Comma);
+        self.expect(Tok::RBrace)?;
+        self.eat(Tok::Comma);
+        Ok(true)
+    }
+
+    /// `declare c("<library>"[, { errno: true }]) [async] function name(…): R;` (the caller
+    /// checked [`Self::at_c_decl`]). `async` parses, so sema can say it is not supported yet.
     pub(super) fn parse_c_decl(&mut self, lo: u32) -> PResult<FnSig> {
         self.bump(); // declare
         self.bump(); // c
@@ -51,11 +71,15 @@ impl<'a> Parser<'a> {
             self.error_expected("the C library's name as a string");
             return Err(Fail);
         };
-        let c = CLibrary {
+        let mut c = CLibrary {
             library: self.payload_text(idx),
+            errno: false,
             span: self.cur_span(),
         };
         self.bump();
+        if self.eat(Tok::Comma) && !self.at(Tok::RParen) {
+            c.errno = self.parse_c_options()?;
+        }
         self.expect(Tok::RParen)?;
         let is_async = self.eat_kw(Kw::Async);
         let mut sig = self.parse_fn_sig(lo, is_async)?;

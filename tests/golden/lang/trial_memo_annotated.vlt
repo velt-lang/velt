@@ -1,0 +1,14 @@
+// A remembered trial of an arrow: a generic overload tried it first, and the next overload's
+// parameter doesn't take what the arrow's annotation says, so that overload doesn't fit. Node
+// prints 7.0, and tsc accepts it.
+function pick<T>(cb: (a: T) => T, init: T, extra: string): "g";
+function pick(cb: (a: string) => number, init: number, extra: number): string;
+function pick(cb: (a: number) => number, init: number, extra: number): number;
+function pick(cb: any, init: any, extra: any): any {
+  return 7;
+}
+function fold<T>(cb: (a: T) => T, init: T): T {
+  return cb(init);
+}
+const r = fold((a: number | string) => pick((b: number) => 1, 1, 5), 1);
+console.log(r.toFixed(1));
