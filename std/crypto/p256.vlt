@@ -11,6 +11,7 @@
 
 import { CryptoError } from "velt/crypto/errors";
 import { FeP256 } from "velt/crypto/field_p256";
+import { baseMultiply } from "velt/crypto/p256_base";
 import { randomBytes } from "velt/crypto/random";
 
 // The constants, in the Montgomery domain, little-endian limbs.
@@ -112,14 +113,7 @@ export function p256PublicKey(scalar: u8[]): u8[] {
   if (!p256ScalarOk(scalar)) {
     throw new CryptoError("P-256 needs a 32-byte private key between 1 and n - 1");
   }
-  const f = new FeP256(REGS);
-  f.load(TABLE + 3, GX_M);
-  f.load(TABLE + 4, GY_M);
-  f.load(TABLE + 5, ONE_M);
-  const out = Buffer.alloc(65);
-  out[0] = 4;
-  multiply(f, scalar, out, true);
-  return out;
+  return baseMultiply(scalar);
 }
 
 /**

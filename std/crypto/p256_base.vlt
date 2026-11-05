@@ -1,0 +1,131 @@
+// velt/crypto (internal): P-256 key generation's scalar multiplication k G (the public key),
+// from the precomputed table of p256_table.vlt: k in 65 signed 4-bit digits (-8..7, the last
+// one the final carry), and for each digit d_i the table's |d_i| 16^i G, negated when d_i < 0,
+// added to the accumulator. No doublings. The accumulator is projective and the additions are
+// Renes, Costello and Batina's complete mixed formula (2016, algorithm 5 for a = -3), which has
+// no exceptional case, not even P + P. Constant time: the digits come from the scalar without
+// branches, each window reads all 8 entries through masks, the negation and the "digit is
+// zero, keep the accumulator" case are masked selects, and the inversion is a fixed chain.
+
+import { FeP256 } from "velt/crypto/field_p256";
+import { P256_BASE } from "velt/crypto/p256_table";
+
+const B_M: u64[] = [0xd89cdf6229c4bddf, 0xacf005cd78843090, 0xe5a220abf7212ed6, 0xdc30061d04874834];
+const ONE_M: u64[] = [0x0000000000000001, 0xffffffff00000000, 0xffffffffffffffff, 0x00000000fffffffe];
+
+// Registers: eight temporaries, the accumulator, the selected entry (x, y), its negated y,
+// b and zero.
+const T: usize = 0;
+const ACC: usize = 8;
+const SX: usize = 11;
+const SY: usize = 12;
+const NY: usize = 13;
+const BREG: usize = 14;
+const ZERO: usize = 15;
+const REGS: usize = 16;
+
+/** The uncompressed public key (0x04, x, y) of the valid private key `scalar` (32 bytes). */
+export function baseMultiply(scalar: u8[]): u8[] {
+  const f = new FeP256(REGS);
+  f.load(BREG, B_M);
+  f.zero(ZERO);
+  // The identity, (0 : 1 : 0).
+  f.zero(ACC);
+  f.load(ACC + 1, ONE_M);
+  f.zero(ACC + 2);
+  let carry: u64 = 0;
+  for (let i: usize = 0; i < 65; i++) {
+    // The nibble i (least significant first) plus the carry, as a digit in -8..7.
+    let v = carry;
+    if (i < 64) {
+      const byte = scalar[31 - (i >> 1)] as u64;
+      v += (i & 1) == 0 ? byte & 15 : byte >> 4;
+    }
+    carry = (v + 8) >> 4;
+    const neg = carry & ((v - 8 * carry - 8 * carry) >> 63);
+    // |d| = v when v < 8, 16 - v otherwise (v is 0..16).
+    const abs = v + carry * (16 - v - v);
+    // Read all 8 entries; entry j - 1 is j 16^i G.
+    f.zero(SX);
+    f.zero(SY);
+    for (let j: usize = 1; j <= 8; j++) {
+      const x = (j as u64) ^ abs;
+      const mask = 0 - ((x - 1) >> 63);
+      const off = 64 * i + 8 * (j - 1);
+      // Indexed in place: passing the table to a function would copy it.
+      for (let k: usize = 0; k < 4; k++) {
+        f.r[4 * SX + k] |= P256_BASE[off + k] & mask;
+        f.r[4 * SY + k] |= P256_BASE[off + 4 + k] & mask;
+      }
+    }
+    f.sub(NY, ZERO, SY);
+    f.blend(SY, NY, SY, 0 - neg);
+    addMixed(f);
+    // A zero digit keeps the accumulator: the sum went to the temporaries.
+    const keep = 0 - ((abs - 1) >> 63);
+    f.blend(ACC, ACC, T + 2, keep);
+    f.blend(ACC + 1, ACC + 1, T + 1, keep);
+    f.blend(ACC + 2, ACC + 2, T + 7, keep);
+  }
+  // x = X / Z, y = Y / Z (k G is never the identity for 0 < k < n).
+  f.invert(T, ACC + 2, T + 1);
+  f.mul(ACC, ACC, T);
+  f.mul(ACC + 1, ACC + 1, T);
+  const out = Buffer.alloc(65);
+  out[0] = 4;
+  f.encode(ACC, out, 1, T + 1);
+  f.encode(ACC + 1, out, 33, T + 1);
+  return out;
+}
+
+// (T + 2, T + 1, T + 7) = ACC + (SX, SY), the complete mixed addition for a = -3 (11M + 2 by
+// b), leaving ACC as it was.
+function addMixed(f: FeP256) {
+  const t0 = T;
+  const t1 = T + 1;
+  const t2 = T + 2;
+  const t3 = T + 3;
+  const t4 = T + 4;
+  const t5 = T + 5;
+  const t6 = T + 6;
+  const t7 = T + 7;
+  const x1 = ACC;
+  const y1 = ACC + 1;
+  const z1 = ACC + 2;
+  f.mul(t0, x1, SX); // xx
+  f.mul(t1, y1, SY); // yy
+  f.add(t3, x1, y1);
+  f.add(t4, SX, SY);
+  f.mul(t3, t3, t4);
+  f.add(t4, t0, t1);
+  f.sub(t3, t3, t4); // xy pairs
+  f.mul(t4, SY, z1);
+  f.add(t4, t4, y1); // yz pairs
+  f.mul(t5, SX, z1);
+  f.add(t5, t5, x1); // xz pairs
+  f.mul(t6, BREG, z1);
+  f.sub(t6, t5, t6);
+  f.add(t7, t6, t6);
+  f.add(t6, t7, t6); // 3 (xz - b z)
+  f.sub(t7, t1, t6); // yy - that
+  f.add(t1, t1, t6); // yy + that
+  f.add(t2, z1, z1);
+  f.add(t2, t2, z1); // 3 z
+  f.mul(t6, BREG, t5);
+  f.add(t5, t2, t0);
+  f.sub(t6, t6, t5);
+  f.add(t5, t6, t6);
+  f.add(t6, t5, t6); // 3 (b xz - 3 z - xx)
+  f.add(t5, t0, t0);
+  f.add(t0, t5, t0);
+  f.sub(t0, t0, t2); // 3 xx - 3 z
+  f.mul(t2, t1, t3);
+  f.mul(t5, t4, t6);
+  f.sub(t2, t2, t5); // X
+  f.mul(t1, t1, t7);
+  f.mul(t5, t0, t6);
+  f.add(t1, t1, t5); // Y
+  f.mul(t7, t7, t4);
+  f.mul(t5, t3, t0);
+  f.add(t7, t7, t5); // Z
+}
