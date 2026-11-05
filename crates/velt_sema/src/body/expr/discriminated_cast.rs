@@ -9,8 +9,10 @@
 //! that member's field type as `x as T` asserts (a `T | null` as the `T` of the member with a
 //! value; `null` for the member whose field is `null`, checked to be `null`). A value that
 //! names no member is a `TypeError`, as other failed assertions are: building a member would
-//! change the discriminant Node keeps. When the members name every value the discriminant's
-//! type has (`true` and `false` of a `boolean`), the last member needs no test.
+//! change the discriminant Node keeps. A member whose literal the discriminant's type can't
+//! hold is not tried (`{ kind: p() }` for `p(): "square"`). When the members name every value
+//! the discriminant's type has (`true` and `false` of a `boolean`), the last member needs no
+//! test.
 
 use velt_common::Span;
 use velt_syntax::ast;
@@ -82,6 +84,17 @@ impl FnCx<'_, '_> {
         }
         let (disc_id, disc_ty) =
             (temps.iter().find(|(k, ..)| k.name == disc)).map(|(_, id, ty)| (id.clone(), *ty))?;
+        // The members this discriminant's type can name; none is the assertion that fails.
+        let kept: Vec<usize> = (0..members.len())
+            .filter(|&i| self.may_hold_literal(disc_ty, &values[i]))
+            .collect();
+        if kept.is_empty() {
+            self.pop_scope();
+            let (s, d) = (self.cx.display(disc_ty), self.cx.display(target));
+            let msg = format!("cannot cast: `{disc}` of type `{s}` names no member of `{d}`");
+            self.cx.err(msg, span);
+            return Some(self.error_expr(span));
+        }
         // A value no member names stops, as a failed assertion does (module docs).
         let mut out = match self.names_every_value(disc_ty, &values) {
             true => None,
@@ -95,9 +108,9 @@ impl FnCx<'_, '_> {
                 Some(self.intrinsic(Intrinsic::Panic, vec![msg], never, span))
             }
         };
-        for (i, m) in members.iter().enumerate().rev() {
+        for i in kept.into_iter().rev() {
             let lit = lit_expr(&values[i], span);
-            let built = self.discriminated_member(*m, target, &temps, (&disc, &lit), span);
+            let built = self.discriminated_member(members[i], target, &temps, (&disc, &lit), span);
             out = Some(match out {
                 None => built,
                 Some(els) => {
@@ -201,6 +214,18 @@ impl FnCx<'_, '_> {
             els: Box::new(fail),
         };
         self.mk(kind, fty, span)
+    }
+
+    /// Can a value of type `t` be the literal `v`? Only a literal type rules it out.
+    fn may_hold_literal(&mut self, t: TyId, v: &LitValue) -> bool {
+        let core = self.cx.ty.core(t).unwrap_or(t);
+        if let Some(x) = self.cx.lit_value(core) {
+            return x == *v;
+        }
+        match self.cx.union_members(core) {
+            Some(ms) => ms.into_iter().any(|m| self.may_hold_literal(m, v)),
+            None => true,
+        }
     }
 
     /// Do `values` (the members' discriminants) name every value a discriminant of type `t`

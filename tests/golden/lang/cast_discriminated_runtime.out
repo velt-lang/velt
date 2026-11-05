@@ -4,3 +4,4 @@ value null
 retry,value,hasValue,retry,value,hasValue,retry,value,hasValue
 circle 6
 square 4
+{"kind":"square","size":1} 2
