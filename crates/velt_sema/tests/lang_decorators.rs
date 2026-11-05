@@ -298,6 +298,117 @@ fn only_a_local_in_scope_hides_a_decorator() {
     }
 }
 
+/// `n` functions with a parameter `t`, which hides nothing outside them.
+fn padding(prefix: &str, n: usize) -> String {
+    (0..n)
+        .map(|i| format!("function {prefix}{i}(t: any): void {{}}\n"))
+        .collect()
+}
+
+/// The walk finds the item a name is in wherever that item stands, and only that item: the
+/// padding around it declares a `t` of its own.
+#[test]
+fn a_local_is_found_in_any_item_of_a_big_module() {
+    const HIDES: &str = "function f(t: any) { @t class C {} }";
+    const HIDES_NOTHING: &str = "function f() { @t class C {} }";
+    let last_hides = "function main() { const t: any = 1; @t class C {} }";
+    let program = |before: usize, item: &str, after: usize, last: &str| {
+        let (a, b) = (padding("a", before), padding("b", after));
+        format!("declare decorator function t(): TypeDecorator;\n{a}{item}\n{b}{last}\n")
+    };
+    for (before, after) in [(0, 300), (150, 150), (300, 0), (1, 0), (0, 1)] {
+        let e = err_src(&program(before, HIDES, after, "function main() {}"));
+        assert!(e.contains(TC39), "{before}, {after}: {e}");
+        let p = ok_src(&program(before, HIDES_NOTHING, after, "function main() {}"));
+        assert_eq!(p.decorators.len(), 1, "{before}, {after}");
+    }
+    let e = err_src(&program(300, "", 0, last_hides));
+    assert!(e.contains(TC39), "{e}");
+    let p = ok_src(&program(300, "", 0, "function main() { @t class C {} }"));
+    assert_eq!(p.decorators.len(), 1);
+    // A decorator on the item itself, written before it: its parameters don't hide it.
+    let p = ok_src(
+        &program(300, "@t2 function g(t2: any) {}", 0, "function main() {}").replace(
+            "declare decorator function t(): TypeDecorator;",
+            "declare decorator function t2(): FunctionDecorator;",
+        ),
+    );
+    assert_eq!(p.decorators.len(), 1);
+}
+
+/// The items aren't in source order when sema walks them (`decorators::item_spans`). A script's
+/// generated `main` comes last and spans the declarations between its statements, and a
+/// function's overload signatures repeat its span.
+#[test]
+fn a_local_is_found_when_the_items_are_rewritten() {
+    for src in [
+        // An item inside the span of the script's `main`.
+        "console.log(1); function f(t: any) { @t class C {} } console.log(2);",
+        "console.log(1); function e(a: any) {} function f(t: any) { @t class C {} } console.log(2);",
+        // A variable that moved into `main`, whose span holds the class outside its statements.
+        "const t: any = 1; console.log(t); @t class C {} console.log(2);",
+        // In `main` itself, where a statement's variable is declared.
+        "console.log(1); { const t: any = 1; @t class C {} } console.log(2);",
+        // Flattened out of a namespace.
+        "namespace N { export interface K { m(t: any): void { @t class C {} } } } function g() {}
+         function main() {}",
+        // Repeated for each signature.
+        "function f(t: any): void; function f(t: any, u: any): void;
+         function f(t: any, u?: any): void { @t class C {} }
+         function main() {}",
+    ] {
+        let src = format!("declare decorator function t(): TypeDecorator;\n{src}");
+        let e = err_src(&src);
+        assert!(e.contains(TC39), "{src}: {e}");
+    }
+    for src in [
+        "console.log(1); function f() { @t class C {} } function g(t: any) {} console.log(2);",
+        "console.log(1); function g(t: any) {} @t class C {} console.log(2);",
+        "console.log(1); { const t: any = 1; } @t class C {} console.log(2);",
+        "namespace N { export interface K { m(): void { @t class C {} } n(t: any): void {} } }
+         function main() {}",
+    ] {
+        let src = format!("declare decorator function t(): TypeDecorator;\n{src}");
+        let p = ok_src(&src);
+        assert_eq!(p.decorators.len(), 1, "{src}");
+    }
+}
+
+/// An imported module's statements become chunks, which come last among its items, with its
+/// variables; a local in a function between them still hides, and one in a sibling doesn't.
+#[test]
+fn a_local_is_found_in_an_imported_module_with_statements() {
+    let check = |lib_body: &str| {
+        let dir = std::env::temp_dir().join(format!(
+            "velt-decorator-chunks-{}-{:x}",
+            std::process::id(),
+            lib_body.len()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let lib = format!(
+            "declare decorator function t(): TypeDecorator;\n\
+             export let a = 1;\nconsole.log(a);\n{lib_body}\nexport let b = 2;\nconsole.log(b);\n"
+        );
+        std::fs::write(dir.join("lib.velt"), lib).unwrap();
+        let root = dir.join("main.velt");
+        let loaded = common::programs::load_src_at(
+            &root,
+            "import { a } from \"./lib\";\nfunction main() { console.log(a); }\n",
+        );
+        let (program, diags) = loaded.check();
+        let result = match program.filter(|_| diags.iter().all(|d| !d.is_error())) {
+            Some(p) => Ok(p),
+            None => Err(loaded.render(&diags)),
+        };
+        std::fs::remove_dir_all(&dir).ok();
+        result
+    };
+    let e = check("function f(t: any) { @t class C {} }").expect_err("a run-time decorator");
+    assert!(e.contains(TC39), "{e}");
+    let p = check("function f() { @t class C {} }\nfunction g(t: any) {}").unwrap();
+    assert_eq!(p.decorators.len(), 1);
+}
+
 #[test]
 fn a_local_is_no_constant() {
     for src in [

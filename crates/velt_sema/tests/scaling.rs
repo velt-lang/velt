@@ -471,6 +471,48 @@ fn imports_through_barrels_grow_linearly() {
     assert_linear_counted(&[100, 800], barrel_package, ["exports"], exports, 1.5);
 }
 
+/// `n` classes with 4 decorators each and a function each, between the two statements of `stmts`
+/// when that is given: then the generated `main` spans them all, and comes last among the items.
+fn decorated_classes(n: usize, stmts: Option<(&str, &str)>) -> String {
+    let (first, last) = stmts.unwrap_or_default();
+    let mut out = String::from(
+        "declare decorator function policy(p: string): TypeDecorator;\n\
+         declare decorator function name(k: string): FieldDecorator;\n\
+         declare decorator function tag(t: string): MethodDecorator;\n\
+         declare decorator function level(l: i64): ParamDecorator;\n",
+    );
+    out += first;
+    for i in 0..n {
+        out += &format!(
+            "@policy(\"a\") class C{i} {{\n  @name(\"k\") x: i64 = 0;\n  \
+             @tag(\"t\") m(@level(1) a: i64): i64 {{ return a + this.x; }}\n}}\n\
+             function f{i}(c: C{i}): i64 {{ return c.m(1); }}\n"
+        );
+    }
+    out += last;
+    if stmts.is_none() {
+        out += "function main() {}\n";
+    }
+    out
+}
+
+/// A decorator costs a search for the items that hold it, not a test of every item of its module:
+/// the items looked at per decorator don't grow with the module, in source order or with a
+/// script's `main` around all of them.
+#[test]
+fn decorated_classes_grow_linearly() {
+    let items = || [check_work().decorator_scope_items];
+    let plain = |n| load_src(&decorated_classes(n, None));
+    assert_linear_counted(&[100, 800], plain, ["decorator_scope_items"], items, 2.0);
+    let script = |n| {
+        load_src(&decorated_classes(
+            n,
+            Some(("console.log(1);\n", "console.log(2);\n")),
+        ))
+    };
+    assert_linear_counted(&[100, 800], script, ["decorator_scope_items"], items, 2.0);
+}
+
 /// Choosing the member of a union of function types for nested arrows that each use the
 /// enclosing arrow's parameter grows polynomially with the nesting, not exponentially (#859).
 /// Each try of an arrow checks the arrows nested in it, so the arrows checked are quadratic in

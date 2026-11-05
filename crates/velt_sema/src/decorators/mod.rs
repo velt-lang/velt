@@ -6,6 +6,7 @@
 //! definition here, and nothing later.
 
 mod consts;
+mod item_spans;
 mod scope;
 
 use rustc_hash::FxHashSet;
@@ -16,6 +17,8 @@ use velt_syntax::ast;
 use crate::ctx::{Ctx, Item};
 use crate::defs::{DefInfo, FnInfo, FnKind, FnSource};
 use crate::hir::{self, ConstTree, DecoratorTarget, DefId};
+
+pub(crate) use item_spans::ItemSpans;
 
 /// The result types of a `declare decorator function`: where it may be used, with the bit each
 /// stands for and how messages say it. They are words only in that position, so they hide no name

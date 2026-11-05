@@ -3,9 +3,12 @@
 //! local of an enclosing function hides a module-level decorator or constant. A walk from the
 //! module's items down to the name, scope by scope, so a decorator costs nothing until it is used,
 //! and a local in a block the name isn't in (an arrow's parameter, a sibling block) hides nothing.
+//! The walk starts at the items that hold the name ([`super::item_spans`]), so its cost is the
+//! name's enclosing scopes, whatever else the module holds.
 
 use velt_syntax::ast;
 
+use super::item_spans::ItemSpans;
 use crate::ctx::Ctx;
 
 /// The innermost declaration of a name that hides module level.
@@ -23,9 +26,15 @@ pub(super) fn shadow_of(cx: &Ctx, m: usize, id: &ast::Ident) -> Option<Shadow> {
     if id.span.file != module.file {
         return None;
     }
+    let holding = (cx.decorator_item_spans.borrow_mut().entry(m))
+        .or_insert_with(|| {
+            let spans = module.ast.items.iter().map(|item| item.span);
+            ItemSpans::new(spans, module.file)
+        })
+        .holding(id.span.lo, id.span.hi);
     let mut walk = Walk { id, shadow: None };
-    for item in &module.ast.items {
-        walk.item(item);
+    for i in holding {
+        walk.item(&module.ast.items[i]);
     }
     walk.shadow
 }
