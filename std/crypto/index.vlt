@@ -1,6 +1,6 @@
 // velt/crypto: SHA-256 and SHA-1 (FIPS 180-4), HMAC (RFC 2104), HKDF (RFC 5869), X25519
-// (RFC 7748), the ChaCha20-Poly1305 AEAD (RFC 8439), secure random bytes/integers and
-// constant-time comparison.
+// (RFC 7748), the ChaCha20-Poly1305 (RFC 8439) and AES-GCM (NIST SP 800-38D) AEADs, secure
+// random bytes/integers and constant-time comparison.
 //
 // The hashes are Velt: where the CPU has SHA instructions (`velt/simd`, #1330: ARMv8 SHA2, x86
 // SHA-NI with SSSE3 and SSE4.1) whole blocks go through functions gated on them, which run the
@@ -10,10 +10,12 @@
 // Randomness comes from the OS generator through the runtime. SHA-1 is broken for collision
 // resistance: use it only for legacy protocols (WebSocket handshakes, HMAC-SHA1 in TOTP, git
 // object ids).
-// X25519, the AEAD and HKDF are what TLS 1.3 needs (#2392); code that handles secrets runs in
-// constant time (no branch or table index depends on a key, a nonce or the data).
+// X25519, the AEADs and HKDF are what TLS 1.3 needs (#2392); code that handles secrets runs in
+// constant time (no branch or table index depends on a key, a nonce or the data): AES is
+// bitsliced, GHASH uses the carry-less multiply instruction or a constant-time integer one.
 // https://veltlang.com/docs/std/crypto/.
 
+export { AesGcm } from "velt/crypto/aes_gcm";
 export { ChaCha20Poly1305 } from "velt/crypto/chacha20_poly1305";
 export { timingSafeEqual } from "velt/crypto/compare";
 export { CryptoError } from "velt/crypto/errors";
