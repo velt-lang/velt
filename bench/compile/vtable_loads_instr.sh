@@ -18,6 +18,7 @@ names=("$@")
 [ ${#names[@]} -gt 0 ] || names=(hello all_std jsx this_fn)
 mkdir -p "$out"
 home=$(mktemp -d)
+trap 'rm -rf "$home"' EXIT
 run() {
   local name=$1
   shift

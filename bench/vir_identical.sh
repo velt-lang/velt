@@ -12,7 +12,8 @@
 # The VIR holds the paths of std files (in panic locations, " at <std>/prelude/array.vlt:127:22",
 # and in their lengths), so each compiler reads its std from a copy at one and the same path
 # ($VELT_STD): the base's for every base build, then the head's for every head build.
-# $JOBS compilers run at a time (default 8).
+# $JOBS compilers run at a time (default 8). RELEASE=1 emits the VIR of `--release` builds: the
+# optimizer's speed rounds run only there, so a change to them needs it.
 set -uo pipefail
 base=$1
 head=$2
@@ -38,7 +39,7 @@ emit_all() {
   cp -r "$2" "$tmp/std"
   local n=0
   for f in "${programs[@]}"; do
-    (VELT_STD="$tmp/std" "$1" build "$f" --emit vir >"$3/${f//\//_}.vir" 2>/dev/null ||
+    (VELT_STD="$tmp/std" "$1" build "$f" --emit vir ${RELEASE:+--release} >"$3/${f//\//_}.vir" 2>/dev/null ||
       rm -f "$3/${f//\//_}.vir") &
     n=$((n + 1))
     [ $((n % ${JOBS:-8})) -eq 0 ] && wait

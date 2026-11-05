@@ -13,6 +13,10 @@ struct Env {
     keep: ExternId,
     /// `{ a: ptr, b: ptr }`
     pair: AggId,
+    /// `{ head: ptr, inner: pair }`: as many fields as `pair`, one of them nested.
+    nested: AggId,
+    /// `{ a: ptr, b: ptr, c: ptr }`
+    triple: AggId,
     /// Relocations at 8 and 16.
     vtable: StaticId,
     /// A relocation at 8.
@@ -25,6 +29,8 @@ fn env() -> Env {
     let mut pb = ProgramBuilder::new();
     let keep = pb.ext("keep", &[Ptr], Ptr, false);
     let pair = pb.agg("pair", 16, 8, &[(Ptr, 0), (Ptr, 8)]);
+    let nested = pb.agg("nested", 24, 8, &[(Ptr, 0), (Ty::Agg(pair), 8)]);
+    let triple = pb.agg("triple", 24, 8, &[(Ptr, 0), (Ptr, 8), (Ptr, 16)]);
     let mut fb = FuncBuilder::internal("method", &[], Unit);
     let b = fb.block();
     fb.ret(b, Operand::Const(Const::Unit, Unit));
@@ -37,6 +43,8 @@ fn env() -> Env {
         pb,
         keep,
         pair,
+        nested,
+        triple,
         vtable,
         other,
         plain,
@@ -63,7 +71,10 @@ fn folds(body: impl FnOnce(&Env, &mut FuncBuilder, BlockId)) -> usize {
     body(&env, &mut fb, b);
     let f = env.pb.add(fb.finish());
     let p = env.pb.finish();
-    slot_loads(&p.aggs, &p.statics, &p.funcs[f.0 as usize]).len()
+    let func = &p.funcs[f.0 as usize];
+    let loads = slot_loads(&p.aggs, &p.statics, func);
+    assert_eq!(loads, dense_loads(&p, func), "{func:?}");
+    loads.len()
 }
 
 fn end(fb: &mut FuncBuilder, b: BlockId) {
@@ -272,6 +283,183 @@ fn nothing_to_fold_needs_no_analysis() {
     assert!(Addrs::of(&p.aggs, &p.statics, &p.funcs[f.0 as usize]).is_none());
 }
 
+/// `x = vtable + 8; m = *x`, with `x`'s address taken after the load when `taken`.
+fn with_its_address(taken: bool) -> usize {
+    folds(|env, fb, b| {
+        let (x, m, q) = (fb.local(Ptr), fb.local(Ptr), fb.local(Ptr));
+        fb.assign(b, x, bin(BinOp::PtrAdd, address(env.vtable), int(8, I64)));
+        fb.assign(b, m, Rvalue::Use(copy_place(deref(x, Ptr))));
+        if taken {
+            fb.assign(b, q, Rvalue::AddrOf(Place::local(x)));
+        }
+        end(fb, b);
+    })
+}
+
+#[test]
+fn a_slot_whose_address_is_taken_is_never_known() {
+    assert_eq!(with_its_address(false), 1);
+    // A write through `q` could change it, wherever the address is taken.
+    assert_eq!(with_its_address(true), 0);
+    // Also as the source of another slot, and as an aggregate through a field's address.
+    let copied = folds(|env, fb, b| {
+        let (x, q, y) = (fb.local(Ptr), fb.local(Ptr), fb.local(Ptr));
+        fb.assign(b, x, Rvalue::Use(address(env.vtable)));
+        fb.assign(b, q, Rvalue::AddrOf(Place::local(x)));
+        fb.assign(b, y, Rvalue::Use(copy_local(x)));
+        load_slot(fb, b, copy_local(y));
+        end(fb, b);
+    });
+    assert_eq!(copied, 0);
+    let field_taken = folds(|env, fb, b| {
+        let (a, q, x) = (fb.local(Ty::Agg(env.pair)), fb.local(Ptr), fb.local(Ptr));
+        let fields = vec![address(env.vtable), int(0, Ptr)];
+        fb.assign(b, a, Rvalue::Aggregate(env.pair, fields));
+        fb.assign(b, q, Rvalue::AddrOf(field(a, 1)));
+        fb.assign(b, x, Rvalue::Use(copy_place(field(a, 0))));
+        load_slot(fb, b, copy_local(x));
+        end(fb, b);
+    });
+    assert_eq!(field_taken, 0);
+}
+
+#[test]
+fn an_unreachable_block_does_not_reach_a_join() {
+    // `x = vtable`, then the join; a block nothing jumps to gives `x` another static and loads
+    // through it, and a dead cycle around it does the same.
+    let n = folds(|env, fb, b| {
+        let x = fb.local(Ptr);
+        fb.assign(b, x, Rvalue::Use(address(env.vtable)));
+        let (join, dead, dead_too) = (fb.block(), fb.block(), fb.block());
+        fb.goto(b, join);
+        fb.assign(dead, x, Rvalue::Use(address(env.other)));
+        load_slot(fb, dead, copy_local(x));
+        fb.branch(dead, fb.param(0), join, dead_too);
+        fb.assign(dead_too, x, Rvalue::Use(copy_local(fb.param(1))));
+        fb.goto(dead_too, dead);
+        load_slot(fb, join, copy_local(x));
+        end(fb, join);
+    });
+    assert_eq!(n, 1);
+}
+
+/// `x = vtable + 8; if c goto a else goto b`, with `a` and `b` jumping to each other (neither
+/// dominates the other, so no order sees all of a loop's values in one sweep), both loading
+/// through `x`, then `x` loaded at the exit. `b` runs `change` on `x` after its load.
+fn around_an_irreducible_cycle(
+    change: impl FnOnce(&Env, &mut FuncBuilder, BlockId, Local),
+) -> usize {
+    folds(|env, fb, b| {
+        let (x, m) = (fb.local(Ptr), fb.local(Ptr));
+        fb.assign(b, x, bin(BinOp::PtrAdd, address(env.vtable), int(8, I64)));
+        let (first, second, exit) = (fb.block(), fb.block(), fb.block());
+        fb.branch(b, fb.param(0), first, second);
+        fb.assign(first, m, Rvalue::Use(copy_place(deref(x, Ptr))));
+        fb.branch(first, fb.param(0), second, exit);
+        fb.assign(second, m, Rvalue::Use(copy_place(deref(x, Ptr))));
+        change(env, fb, second, x);
+        fb.branch(second, fb.param(0), first, exit);
+        fb.assign(exit, m, Rvalue::Use(copy_place(deref(x, Ptr))));
+        end(fb, exit);
+    })
+}
+
+#[test]
+fn a_slot_around_an_irreducible_cycle() {
+    assert_eq!(around_an_irreducible_cycle(|_, _, _, _| {}), 3);
+    // The other value gets to both blocks of the cycle and out of it, by either way in.
+    let unknown = |_: &Env, fb: &mut FuncBuilder, b, x| {
+        fb.assign(b, x, Rvalue::Use(copy_local(fb.param(1))));
+    };
+    assert_eq!(around_an_irreducible_cycle(unknown), 0);
+    let same = |env: &Env, fb: &mut FuncBuilder, b, x| {
+        fb.assign(b, x, bin(BinOp::PtrAdd, address(env.vtable), int(8, I64)));
+    };
+    assert_eq!(around_an_irreducible_cycle(same), 3);
+}
+
+/// `s = base + offset; m = *s` through a place that views `s` as `proj`.
+fn through_projection(base: StaticId, offset: i128, proj: Vec<Proj>) -> usize {
+    let mut env = env();
+    let mut fb = FuncBuilder::export("main", &[], Unit);
+    let b = fb.block();
+    let (s, m) = (fb.local(Ptr), fb.local(Ptr));
+    let start = Operand::Const(Const::Static(base), Ptr);
+    fb.assign(b, s, bin(BinOp::PtrAdd, start, int(offset, I64)));
+    fb.assign(b, m, Rvalue::Use(copy_place(Place { local: s, proj })));
+    end(&mut fb, b);
+    let f = env.pb.add(fb.finish());
+    let p = env.pb.finish();
+    let func = &p.funcs[f.0 as usize];
+    let loads = slot_loads(&p.aggs, &p.statics, func);
+    assert_eq!(loads, dense_loads(&p, func), "{func:?}");
+    loads.len()
+}
+
+#[test]
+fn a_load_through_a_field_projection_reads_at_the_fields_offset() {
+    let e = env();
+    let (vtable, other) = (e.vtable, e.other);
+    let view = |id| Proj::Deref(Ty::Agg(id));
+    // Relocations at 8 and 16 in `vtable`, at 8 in `other`.
+    let at = through_projection;
+    assert_eq!(at(vtable, 0, vec![view(e.pair), Proj::Field(0)]), 0);
+    assert_eq!(at(vtable, 0, vec![view(e.pair), Proj::Field(1)]), 1);
+    assert_eq!(at(vtable, 8, vec![view(e.pair), Proj::Field(1)]), 1);
+    assert_eq!(at(other, 8, vec![view(e.pair), Proj::Field(1)]), 0);
+    assert_eq!(at(vtable, 0, vec![view(e.triple), Proj::Field(2)]), 1);
+    // Through a nested field: `nested.inner.b` is at 16, `nested.inner.a` at 8.
+    let inner = |k| vec![view(e.nested), Proj::Field(1), Proj::Field(k)];
+    assert_eq!(at(other, 0, inner(0)), 1);
+    assert_eq!(at(other, 0, inner(1)), 0);
+    // A field that is an aggregate is no pointer to load, and a pointer the place goes on
+    // through reads elsewhere.
+    assert_eq!(at(vtable, 0, vec![view(e.nested), Proj::Field(1)]), 0);
+    let through = vec![view(e.pair), Proj::Field(1), Proj::Deref(Ptr)];
+    assert_eq!(at(vtable, 0, through), 0);
+    // A reinterpreting view reads the same bytes.
+    let cast = vec![view(e.pair), Proj::Cast(e.triple), Proj::Field(2)];
+    assert_eq!(at(vtable, 0, cast), 1);
+}
+
+#[test]
+fn aggregates_of_another_shape_forget_what_they_copy() {
+    // `a = (vtable, q)`, then `b = a`, then `x = b.0`, for `b` of each shape: as many fields
+    // copies them one by one, another count is an unknown value.
+    let copy_to = |shape: fn(&Env) -> AggId| {
+        folds(|env, fb, b| {
+            let a = fb.local(Ty::Agg(env.pair));
+            let c = fb.local(Ty::Agg(shape(env)));
+            let x = fb.local(Ptr);
+            let fields = vec![address(env.vtable), copy_local(fb.param(1))];
+            fb.assign(b, a, Rvalue::Aggregate(env.pair, fields));
+            fb.assign(b, c, Rvalue::Use(copy_local(a)));
+            fb.assign(b, x, Rvalue::Use(copy_place(field(c, 0))));
+            load_slot(fb, b, copy_local(x));
+            end(fb, b);
+        })
+    };
+    assert_eq!(copy_to(|env| env.pair), 1);
+    assert_eq!(copy_to(|env| env.nested), 1);
+    assert_eq!(copy_to(|env| env.triple), 0);
+    // A write inside a nested field forgets the whole local.
+    let nested_write = folds(|env, fb, b| {
+        let a = fb.local(Ty::Agg(env.nested));
+        let x = fb.local(Ptr);
+        let fields = vec![address(env.vtable), int(0, Ptr)];
+        fb.assign(b, a, Rvalue::Aggregate(env.nested, fields));
+        let inner = Place {
+            local: a,
+            proj: vec![Proj::Field(1), Proj::Field(0)],
+        };
+        fb.push(b, Stmt::Assign(inner, Rvalue::Use(int(0, Ptr))));
+        fb.assign(b, x, Rvalue::Use(copy_place(field(a, 0))));
+        load_slot(fb, b, copy_local(x));
+        end(fb, b);
+    });
+    assert_eq!(nested_write, 0);
+}
+
 /// The analysis before it was sparse: every slot of every candidate, in a last-in-first-out
 /// worklist, which is what the tracked slots and the order must reproduce.
 mod dense {
@@ -469,7 +657,8 @@ struct Gen<'a> {
     rng: Rng,
     env: &'a Env,
     ptrs: Vec<Local>,
-    pairs: Vec<Local>,
+    /// Aggregate locals, of every shape, with their shape and field count.
+    aggs: Vec<(Local, AggId, usize)>,
     blocks: usize,
     /// Leave out what forgets a slot, so that facts survive to the loads.
     quiet: bool,
@@ -481,16 +670,26 @@ impl Gen<'_> {
         self.ptrs[self.rng.below(self.ptrs.len())]
     }
 
-    fn pair_field(&mut self) -> Place {
-        let a = self.pairs[self.rng.below(self.pairs.len())];
-        field(a, self.rng.below(2) as u32)
+    fn agg(&mut self) -> (Local, AggId, usize) {
+        self.aggs[self.rng.below(self.aggs.len())]
+    }
+
+    /// A top-level field of an aggregate local; rarely one it does not have.
+    fn agg_field(&mut self) -> Place {
+        let (a, _, len) = self.agg();
+        let k = if self.rng.below(20) == 0 {
+            len
+        } else {
+            self.rng.below(len)
+        };
+        field(a, k as u32)
     }
 
     fn operand(&mut self) -> Operand {
         match self.rng.below(if self.quiet { 5 } else { 7 }) {
             0 => address(self.env.vtable),
             1 => address(self.env.other),
-            2 => copy_place(self.pair_field()),
+            2 => copy_place(self.agg_field()),
             5 => address(self.env.plain),
             6 => int(0, Ptr),
             _ => copy_local(self.ptr()),
@@ -500,11 +699,20 @@ impl Gen<'_> {
     /// A place through a pointer: most of them loads of a pointer a relocation can answer.
     fn through(&mut self) -> Place {
         let p = self.ptr();
-        let pair = Ty::Agg(self.env.pair);
-        let proj = match self.rng.below(6) {
-            0 => vec![Proj::Deref(pair), Proj::Field(self.rng.below(2) as u32)],
+        let view = |id| Proj::Deref(Ty::Agg(id));
+        let (pair, nested, triple) = (self.env.pair, self.env.nested, self.env.triple);
+        let proj = match self.rng.below(10) {
+            0 => vec![view(pair), Proj::Field(self.rng.below(2) as u32)],
             1 => vec![Proj::Deref(Ptr), Proj::Deref(Ptr)],
             2 => vec![Proj::Deref(I64)],
+            3 => vec![view(triple), Proj::Field(self.rng.below(3) as u32)],
+            4 => vec![
+                view(nested),
+                Proj::Field(1),
+                Proj::Field(self.rng.below(2) as u32),
+            ],
+            5 => vec![view(nested), Proj::Field(self.rng.below(2) as u32)],
+            6 => vec![view(pair), Proj::Cast(triple), Proj::Field(2)],
             _ => vec![Proj::Deref(Ptr)],
         };
         Place { local: p, proj }
@@ -517,7 +725,6 @@ impl Gen<'_> {
 
     fn stmt(&mut self) -> Stmt {
         let d = Place::local(self.ptr());
-        let (a, b) = (self.pairs[0], self.pairs[self.rng.below(self.pairs.len())]);
         let rv = Rvalue::Use;
         match self.rng.below(if self.quiet { 9 } else { 14 }) {
             0 | 1 => Stmt::Assign(d, rv(self.operand())),
@@ -528,11 +735,22 @@ impl Gen<'_> {
             4 if self.quiet => Stmt::Assign(self.fresh_load(), rv(copy_place(self.through()))),
             4 | 5 => Stmt::Assign(d, rv(copy_place(self.through()))),
             6 => {
-                let fields = vec![self.operand(), self.operand()];
-                Stmt::Assign(Place::local(b), Rvalue::Aggregate(self.env.pair, fields))
+                // Rarely with the wrong number of operands.
+                let (a, shape, len) = self.agg();
+                let count = if self.rng.below(20) == 0 {
+                    len + 1
+                } else {
+                    len
+                };
+                let fields = (0..count).map(|_| self.operand()).collect();
+                Stmt::Assign(Place::local(a), Rvalue::Aggregate(shape, fields))
             }
-            7 => Stmt::Assign(Place::local(a), rv(copy_local(b))),
-            8 => Stmt::Assign(self.pair_field(), rv(self.operand())),
+            // Between any two aggregate locals: the same one, or another shape.
+            7 => {
+                let ((to, ..), (from, ..)) = (self.agg(), self.agg());
+                Stmt::Assign(Place::local(to), rv(copy_local(from)))
+            }
+            8 => Stmt::Assign(self.agg_field(), rv(self.operand())),
             9 => Stmt::Assign(self.through(), rv(self.operand())),
             10 => Stmt::Assign(d, bin(BinOp::Add, self.operand(), int(8, I64))),
             11 => {
@@ -544,8 +762,9 @@ impl Gen<'_> {
                 }
             }
             12 => {
-                let mut p = self.pair_field();
-                p.proj.push(Proj::Deref(Ptr));
+                let mut p = self.agg_field();
+                let inner = [Proj::Deref(Ptr), Proj::Field(0)][self.rng.below(2)].clone();
+                p.proj.push(inner);
                 Stmt::Assign(p, rv(self.operand()))
             }
             _ => Stmt::Nop,
@@ -574,7 +793,7 @@ impl Gen<'_> {
                     if self.rng.below(2) == 0 {
                         Place::local(self.ptr())
                     } else {
-                        self.pair_field()
+                        self.agg_field()
                     }
                 }),
                 next: next(self),
@@ -590,8 +809,12 @@ fn random_function(env: &Env, seed: u64) -> Function {
     // The parameter and a local whose address some function takes are never known.
     let mut ptrs = vec![fb.param(0)];
     ptrs.extend((0..1 + rng.below(8)).map(|_| fb.local(Ptr)));
-    let pairs: Vec<Local> = (0..1 + rng.below(3))
-        .map(|_| fb.local(Ty::Agg(env.pair)))
+    let shapes = [(env.pair, 2), (env.nested, 2), (env.triple, 3)];
+    let aggs: Vec<(Local, AggId, usize)> = (0..1 + rng.below(4))
+        .map(|_| {
+            let (shape, len) = shapes[rng.below(shapes.len())];
+            (fb.local(Ty::Agg(shape)), shape, len)
+        })
         .collect();
     let ids: Vec<BlockId> = (0..blocks).map(|_| fb.block()).collect();
     let loaded = fb.local(Ptr);
@@ -599,7 +822,7 @@ fn random_function(env: &Env, seed: u64) -> Function {
         rng,
         env,
         ptrs,
-        pairs,
+        aggs,
         blocks,
         quiet: seed.is_multiple_of(2),
         loaded,
