@@ -192,8 +192,12 @@ impl FnLower<'_, '_> {
             dest.map(Place::local),
             false,
         );
-        // Before any drop or other call of the statement: `lastOsError()` reads this.
-        self.capture_errno();
+        // Before any drop or other call of the statement: `lastOsError()` reads this. Only for a
+        // declaration that asks: it is a call and a store per C call, about 9% of a query that
+        // reads a hundred rows from SQLite, whose failures come back as results.
+        if c.errno {
+            self.capture_errno();
+        }
         let Some(d) = dest else {
             return unit();
         };

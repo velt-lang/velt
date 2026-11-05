@@ -219,6 +219,9 @@ pub struct HostModule {
 #[derive(Clone, Debug)]
 pub struct CLibrary {
     pub library: String,
+    /// `declare c("<library>", { errno: true })`: `lastOsError()` reads the `errno` this
+    /// function's calls leave. Additive.
+    pub errno: bool,
     pub span: Span,
 }
 

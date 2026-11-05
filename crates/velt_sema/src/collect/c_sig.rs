@@ -42,10 +42,10 @@ pub(super) fn foreign_imports(
         .host
         .is_some()
         .then(|| super::host_sig::host_import(cx, cx.scopes[module].is_std, sig, ps, ret));
-    let c = sig
-        .c
-        .as_ref()
-        .map(|lib| c_import(cx, module, (&lib.library, lib.span), sig, ps, *ret));
+    let c = sig.c.as_ref().map(|lib| CImport {
+        errno: lib.errno,
+        ..c_import(cx, module, (&lib.library, lib.span), sig, ps, *ret)
+    });
     let f = cx.fn_info_mut(d);
     f.host = host;
     f.c = c;
@@ -111,6 +111,7 @@ fn c_import(
         CTy::Void
     });
     CImport {
+        errno: false,
         library: library.to_string(),
         params,
         ret,

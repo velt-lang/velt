@@ -109,17 +109,40 @@ fn a_package_calls_c_functions_in_debug_and_release_builds() {
     }
 }
 
-/// `errno` is captured right after a C call, so `lastOsError()` reads the call's error even
-/// with code between them (here a string built and printed). Windows reads `GetLastError()`
-/// there, which the C library's functions don't set: its capture of the CRT's `errno` comes
-/// with std's move onto `declare c("c")` (#2187 step 2).
+/// A call whose declaration doesn't ask for `errno` leaves what `lastOsError()` reads alone: this
+/// `close` fails with EBADF, and the slot still holds the failure of the call that asked.
+#[cfg(unix)]
+#[test]
+fn only_a_declaration_that_asks_captures_errno() {
+    let dir = test_dir::TestDir::new();
+    project(
+        dir.path(),
+        "import { lastOsError } from \"velt/os\";\n\ndeclare c(\"c\", { errno: true }) function chdir$asks(path: CString): i32;\ndeclare c(\"c\") function close(fd: i32): i32;\n\nimport { CString } from \"velt/ffi\";\n\nexport function codes(): [i32, i32] {\n  // SAFETY: the path is NUL-terminated and borrowed for the call.\n  unsafe { chdir$asks(new CString(\"/no/such/directory\")) };\n  const asked = lastOsError();\n  // SAFETY: closing a descriptor that isn't open only fails.\n  unsafe { close(-1) };\n  return [asked, lastOsError()];\n}\n",
+        "import { codes } from \"cmath\";\n\nfunction main() {\n  const [asked, after] = codes();\n  console.log(asked != 0, asked == after);\n}\n",
+    );
+    for args in [&["run"][..], &["run", "--release"][..]] {
+        let o = velt(dir.path(), args);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "velt {args:?} failed:\n{stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "true true\n",
+            "{stderr}"
+        );
+    }
+}
+
+/// `errno` is captured right after a C call that asks for it, so `lastOsError()` reads the call's
+/// error even with code between them (here a string built and printed). Windows reads
+/// `GetLastError()` there, which the C library's functions don't set: its capture of the CRT's
+/// `errno` comes with std's move onto `declare c("c")` (#2187 step 2).
 #[cfg(unix)]
 #[test]
 fn errno_is_captured_after_a_c_call() {
     let dir = test_dir::TestDir::new();
     project(
         dir.path(),
-        "import { lastOsError } from \"velt/os\";\n\ndeclare c(\"c\") function close(fd: i32): i32;\n\n/// `close` of a descriptor that isn't open: -1, and errno EBADF.\nexport function closeBad(): [i32, i32] {\n  // SAFETY: -1 is never a descriptor, so nothing is closed.\n  const r = unsafe { close(-1) };\n  console.log(`closed: ${r}`);\n  return [r, lastOsError()];\n}\n",
+        "import { lastOsError } from \"velt/os\";\n\ndeclare c(\"c\", { errno: true }) function close(fd: i32): i32;\n\n/// `close` of a descriptor that isn't open: -1, and errno EBADF.\nexport function closeBad(): [i32, i32] {\n  // SAFETY: -1 is never a descriptor, so nothing is closed.\n  const r = unsafe { close(-1) };\n  console.log(`closed: ${r}`);\n  return [r, lastOsError()];\n}\n",
         "import { closeBad } from \"cmath\";\n\nfunction main() {\n  const [r, err] = closeBad();\n  console.log(r, err === 9);\n}\n",
     );
     for args in [&["run"][..], &["run", "--release"][..]] {

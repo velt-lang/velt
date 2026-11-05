@@ -92,6 +92,24 @@ fn unsafe_methods() {
 }
 
 #[test]
+fn a_c_function_has_one_option() {
+    for (src, says) in [
+        (
+            "declare c(\"c\", { errno: false }) function f(): i32;\n",
+            "leaves it out",
+        ),
+        (
+            "declare c(\"c\", { other: true }) function f(): i32;\n",
+            "the only option",
+        ),
+        ("declare c(\"c\", errno) function f(): i32;\n", "{"),
+    ] {
+        let e = errors(src);
+        assert!(e.iter().any(|m| m.contains(says)), "{src}: {e:?}");
+    }
+}
+
+#[test]
 fn unsafe_field_is_an_error() {
     let e = errors("class C { unsafe x: i64 = 0; }");
     assert!(
@@ -176,6 +194,17 @@ fn c_declarations() {
         [("labs".into(), "c".into()), ("cos".into(), "m".into())]
     );
     assert!(m.items[1].exported);
+    let asked = |src: &str| match &parse_ok(src).items[0].kind {
+        ItemKind::ExternFn(s) => s.c.as_ref().is_some_and(|c| c.errno),
+        _ => panic!("not a function"),
+    };
+    assert!(!asked("declare c(\"c\") function f(): i32;\n"));
+    assert!(asked(
+        "declare c(\"c\", { errno: true }) function f(): i32;\n"
+    ));
+    assert!(asked(
+        "declare c(\"c\", { errno: true, }, ) function f(): i32;\n"
+    ));
     // `c` is a word only there.
     parse_ok("function f() { const c = 1; c; }\ndeclare function c(x: i64): i64;");
     let e = errors("declare c(m) function f(): void;");
