@@ -609,7 +609,7 @@ impl FnCx<'_, '_> {
         if let (LocalKind::Const, Some(o)) = (kind, root.filter(|o| o.name != name.name)) {
             if self.is_local_name(&o.name) {
                 if let Some(r) = self.lookup_local(&o.name, o.span) {
-                    self.f.member_reads.insert(local, r);
+                    self.note_member_read(local, r, v.init.as_ref());
                 }
             }
         }
@@ -627,6 +627,7 @@ impl FnCx<'_, '_> {
             self.narrow_to_assigned(local, ty, h);
         }
         self.note_checked_copy(local, v.ty.is_none(), v.init.as_ref());
+        self.note_fresh_object(local, kind, v.init.as_ref());
         Self::push(out, S::Let { local, init }, span);
     }
 

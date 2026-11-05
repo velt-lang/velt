@@ -1,0 +1,18 @@
+// A write through `any` to the object a local just made shows no copy: another object's conversion
+// by copying its fields stays allowed.
+interface Options { mode: string; extra: number; }
+interface Part { mode: string; }
+function read(p: Part): string { return p.mode; }
+const opts: Options = { mode: "a", extra: 1 };
+const seen: any = opts;
+console.log(seen.extra);
+console.log(read(opts));
+const slots: any = Object.create(null);
+for (const name of ["x", "y"]) {
+  slots[name] = name + "!";
+}
+console.log(slots.x, slots.y, Object.keys(slots));
+const made = Object.create(null) as any;
+const k = "z";
+made[k] = 1;
+console.log(made.z);

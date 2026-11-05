@@ -98,6 +98,12 @@ pub(crate) struct Frame {
     /// `new C()` assigned through `any` with `??=`, `||=` or `&&=` takes its type arguments from
     /// it (`dynamic_write`).
     pub assign_hint: Option<TyId>,
+    /// Where this function reads an open record's key (`record_value_as`).
+    pub record_reads: rustc_hash::FxHashSet<velt_common::Span>,
+    /// `const` locals holding an object made by their own initializer (`Object.create(null)`,
+    /// `{}`): a write through `any` to one reaches no object an object conversion copied
+    /// (`dynamic_assign`, `crate::object_copies`).
+    pub fresh_objects: rustc_hash::FxHashSet<LocalId>,
     /// The read-only local a method call written `(x as T).m()` may change (`T` not read-only;
     /// `readonly_arrays.rs`).
     pub readonly_exempt: Option<LocalId>,
@@ -125,6 +131,8 @@ pub(crate) struct Frame {
     /// that variable: `f.call(o)` runs `f` on the object it keeps while nothing assigns `o`
     /// (`call_apply`).
     pub member_reads: rustc_hash::FxHashMap<LocalId, LocalId>,
+    /// The member each of those read (`m` of `const f = o.m`).
+    pub member_props: rustc_hash::FxHashMap<LocalId, String>,
     /// Throw sources of the enclosing `try` bodies (innermost last).
     pub tries: Vec<Vec<ThrowSrc>>,
     /// Each `catch` variable used only as `throw e`, with the throw sources of its `try` body:
@@ -250,6 +258,8 @@ impl Frame {
             await_using: Default::default(),
             local_marks: Default::default(),
             assign_hint: None,
+            record_reads: Default::default(),
+            fresh_objects: Default::default(),
             readonly_exempt: None,
             readonly_cast_recv: false,
             as_const_tuples: Default::default(),
@@ -259,6 +269,7 @@ impl Frame {
             assign_targets: vec![],
             method_values: Default::default(),
             member_reads: Default::default(),
+            member_props: Default::default(),
             tries: vec![],
             caught: vec![],
             chain_texts: vec![],
