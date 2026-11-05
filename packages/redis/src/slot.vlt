@@ -1,0 +1,19 @@
+// redis (internal): `Slot`, a request's place in the line for replies, and what its replies become.
+
+import { Channel } from "velt/sync";
+import { Outcome } from "./outcome";
+
+// What a request's replies become.
+/** One reply is the result; an error reply fails the command. */
+export const ONE: u8 = 0;
+/** `want` replies become one array; error replies are nodes in it. */
+export const BATCH: u8 = 1;
+/** `MULTI`, the commands and `EXEC`: `EXEC`'s array is the result. */
+export const TRANSACTION: u8 = 2;
+
+/** A request's place in the line for replies. */
+export struct Slot {
+  want: i64;
+  kind: u8;
+  done: Channel<Outcome>;
+}

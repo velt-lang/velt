@@ -1,18 +1,16 @@
 // redis (internal): `RedisClient`, a multiplexed connection, and `connect`, which opens one.
 //
-// `RedisClient` is a Copy handle like velt/net's `TcpStream` (async methods take `this` by copy,
-// so it can be used from many tasks at once), released by `close()`. Commands that take several
-// keys or values take a `string[]`: `del(["a", "b"])`.
+// `RedisClient` is a handle: copies share one connection, so it can be used from many tasks at once.
+// `close()` releases it: after that every copy fails with `EBADF`. Commands that take several keys or values take a `string[]`:
+// `del(["a", "b"])`.
 
-import { IoResult } from "velt/native";
-import {
-  velt_redis__close,
-  velt_redis__command,
-  velt_redis__connect,
-  velt_redis__duplicate,
-  RawReply,
-} from "./native";
-import { checkReply, redisError } from "./errors";
+import { parseUrl } from "./url";
+import { closedHandle, RedisError } from "./errors";
+import { Client } from "./line";
+import { closeClient, endpointOf, isClosed, openClient, send } from "./multiplex";
+import { ONE } from "./slot";
+import { encodeCommand } from "./resp";
+import { RawReply } from "./raw_reply";
 import {
   parseScore,
   RedisReply,
@@ -29,24 +27,26 @@ import { RedisSubscriber } from "./subscriber";
 import { RedisConnectOptions, SetOptions, ZMember } from "./types";
 import { setArgs, withPairs } from "./args";
 
-function unwrapHandle(r: IoResult<u64>): u64 {
-  if (r.code != 0) {
-    throw redisError(r.code, r.message);
+async function run(handle: Client, args: string[]): Promise<RawReply> {
+  if (args.length == 0) {
+    if (isClosed(handle)) {
+      throw closedHandle();
+    }
+    throw new RedisError("EINVAL", "empty Redis command");
   }
-  return r.value;
-}
-
-async function run(handle: u64, args: string[]): Promise<RawReply> {
-  return checkReply(await velt_redis__command(handle, args));
+  const out = new StringBuilder(64);
+  encodeCommand(out, args, 0, args.length);
+  return await send(handle, out.toString(), 1, ONE);
 }
 
 /** A connection (a Copy handle; see the module header). */
 export struct RedisClient {
-  private handle: u64;
+  private handle: Client;
 
   /** Connects to `url`: what `connect(url, opts)` does. */
   static async connect(url: string, opts: RedisConnectOptions = {}): Promise<RedisClient> {
-    return RedisClient { handle: unwrapHandle(await velt_redis__connect(url, opts.ca ?? "")) };
+    const ca = opts.ca ?? "";
+    return RedisClient { handle: await openClient({ url: url, ca: ca, target: parseUrl(url) }) };
   }
 
   /** Runs any command (`args[0]` is its name) and returns the decoded reply. */
@@ -301,12 +301,14 @@ export struct RedisClient {
    * patterns with `patterns` (what `subscribe(client, …)` and `psubscribe(client, …)` do).
    */
   async newSubscriber(names: string[], patterns: bool = false): Promise<RedisSubscriber> {
-    return await RedisSubscriber.open(this.handle, "", "", names, patterns);
+    const ep = endpointOf(this.handle);
+    return await RedisSubscriber.open(ep.url, ep.ca, names, patterns);
   }
 
   /** A new, separate connection to the same server (for blocking commands). */
   async duplicate(): Promise<RedisClient> {
-    return RedisClient { handle: unwrapHandle(await velt_redis__duplicate(this.handle)) };
+    const ep = endpointOf(this.handle);
+    return RedisClient { handle: await openClient(ep) };
   }
 
   /**
@@ -314,7 +316,7 @@ export struct RedisClient {
    * nothing.
    */
   close() {
-    velt_redis__close(this.handle);
+    closeClient(this.handle);
   }
 }
 

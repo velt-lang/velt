@@ -33,7 +33,8 @@ How a program uses the binary depends on the mode:
   - The dev JIT resolves only `velt_rt_host::abi_symbols::symbol_table()` and `c_symbols`.
 - This is why the sqlite, postgres and redis drivers were built into `velt_rt`
   (`rt_abi_async.md` §14). They are packages now (`packages/sqlite`, `packages/postgres`,
-  `packages/redis`; see [As built](#as-built)).
+  `packages/redis`; see [As built](#as-built)), and `packages/redis` has since become plain Velt
+  (c-ffi.md "Follow-up track").
 
 ## Package layout
 

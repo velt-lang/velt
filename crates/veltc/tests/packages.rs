@@ -268,19 +268,16 @@ fn every_package_rejects_its_error_programs() {
     assert!(failures.is_empty(), "{}", failures.join("\n\n"));
 }
 
-/// A program that closes its Redis client ends (packages/redis): closing used to abort the
-/// connection's driver task while its reader task, waiting on the socket, was left running, and
-/// its pending read kept the process alive forever after `main` returned. Against a stand-in
+/// A program that closes its Redis client ends (packages/redis): a reader task left waiting on the
+/// socket has a pending read, which would keep the process alive forever after `main` returned. Against a stand-in
 /// server on a local port that answers every command with `+PONG`, so it needs no Redis.
 #[test]
 fn a_closed_redis_client_lets_the_program_end() {
     let root = root();
-    let skip_native = std::env::var_os("VELT_SKIP_NATIVE_E2E").is_some_and(|v| v == "1");
-    if skip_native || !packages(&root).iter().any(|p| p.ends_with("redis")) {
-        eprintln!("skipped (VELT_SKIP_NATIVE_E2E=1 or VELT_PACKAGES)");
+    if !packages(&root).iter().any(|p| p.ends_with("redis")) {
+        eprintln!("skipped (VELT_PACKAGES)");
         return;
     }
-    runtime_support::build_native_runtime(&root);
     let server = std::net::TcpListener::bind("127.0.0.1:0").expect("listen");
     let port = server.local_addr().unwrap().port();
     std::thread::spawn(move || {

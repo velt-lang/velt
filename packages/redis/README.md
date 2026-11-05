@@ -1,8 +1,7 @@
 # redis
 
 `import { connect, subscribe, psubscribe, RedisClient, RedisError, ZMember } from "redis"`. A
-Redis client close to ioredis (the package's native library: RESP2 in Rust over Velt's own sockets
-and rustls): strings with expiry, counters, hashes, lists, sets, sorted sets,
+Redis client close to ioredis, written in Velt on `velt/net`, with no native code: strings with expiry, counters, hashes, lists, sets, sorted sets,
 pipelines, `MULTI`/`EXEC` transactions and pub/sub, over `redis://` or `rediss://` (TLS). One
 `RedisClient` is one multiplexed connection: commands from any number of tasks are pipelined on
 it in order, so it already works as a connection pool (there is no separate `createPool`).
@@ -20,11 +19,7 @@ dependencies: {
 },
 ```
 
-The package has native code (a Rust crate in `native/`), which `velt` builds with cargo, so a
-Rust toolchain is needed. A git dependency builds it only when you allow that with
-`VELT_NATIVE_FROM_SOURCE=1` (it runs the crate's build scripts):
-`VELT_NATIVE_FROM_SOURCE=1 velt install`. A path dependency (this repository's examples use one)
-builds it the first time, into `packages/redis/target/velt-native/`, and again when it changes.
+The package has no native code, so it needs neither a Rust toolchain nor `allowNative`.
 The full guide: https://veltlang.com/docs/packages/redis/.
 
 - `connect(url, opts: RedisConnectOptions { ca? } = {}): Promise<RedisClient>`: URL
@@ -101,26 +96,27 @@ async function main() {
 }
 ```
 
-Notes: the protocol is RESP2, implemented in the runtime over tokio with the shared rustls
-configuration (no extra dependencies). A lost connection is reopened automatically: commands
-already sent on it throw `RedisError` "ECONNRESET" (they may have run, so they are not resent);
-later commands wait while the client reconnects with exponential backoff (50 ms doubling to 2 s,
-for up to 10 s; then they throw the connect error and the next command tries again).
-Subscribers do not reconnect. Messages are pulled with
-`next()` or `for await` (the runtime stores no callbacks). Values are UTF-8
-strings (invalid bytes read back as U+FFFD). Not available on WebAssembly.
+Notes: the protocol is RESP2, written in Velt; sockets and TLS come from `velt/net`. A lost
+connection is reopened automatically: commands already sent on it throw `RedisError` "ECONNRESET"
+(they may have run, so they are not resent); later commands wait while the client reconnects with
+exponential backoff (50 ms doubling to 2 s, for up to 10 s; then they throw the connect error and
+the next command tries again). Subscribers do not reconnect. Messages are pulled with `next()` or
+`for await`. Values are UTF-8 strings (invalid bytes read back as U+FFFD). Not available on
+WebAssembly.
 
 
 ## Layout and tests
 
 - `src/lib.vlt`: the API (re-exports); `src/client.vlt`, `subscriber.vlt`, `pipeline.vlt`,
   `reply.vlt`, `message.vlt`, `errors.vlt`: one type each; `src/types.vlt`: the options and
-  `ZMember`; `src/native.vlt`: the native library's functions and layouts, the only `declare`s.
-- `native/`: the Rust crate (`velt_native_redis`) on the native SDK (`velt_native` with its
-  `tokio` feature) and `velt_tls`; its ABI is [docs/native_abi.md](docs/native_abi.md).
+  `ZMember`.
+- `src/resp.vlt`: the wire protocol; `src/url.vlt`: connection URLs; `src/connection.vlt`: TCP or
+  TLS and the handshake; `src/read_buffer.vlt`: what has arrived; `src/multiplex.vlt`,
+  `line.vlt`, `reader.vlt`: one connection shared by every task.
 - `tests/`: `velt test` in this directory. Most need a server: set `VELT_TEST_REDIS_URL`
   (`redis://host:6379`), and for TLS `VELT_TEST_REDISS_URL` and `VELT_TEST_REDISS_CA` (a PEM
   file); without them those tests do nothing. The repository's `scripts/linux-check.sh --services`
-  starts both servers, as CI does. `reconnect.test.vlt` needs none: its server is a fake one.
+  starts both servers, as CI does. `reconnect.test.vlt`, `client_edges.test.vlt`,
+  `resp.test.vlt` and `url.test.vlt` need none.
 
-The package uses only public std APIs (velt/native, velt/net in its tests).
+The package uses only public std APIs (velt/net, velt/sync, velt/encoding, velt/task, velt/io).

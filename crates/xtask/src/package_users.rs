@@ -80,10 +80,11 @@ pub(crate) const USERS: &[Users] = &[
         goldens: &[],
         binaries: &["bench_programs"],
     },
+    // The benchmarks, and the documentation (`docs` compiles snippets against it: no native code).
     Users {
         package: "redis",
         goldens: &[],
-        binaries: &["bench_programs"],
+        binaries: &["bench_programs", "docs"],
     },
 ];
 

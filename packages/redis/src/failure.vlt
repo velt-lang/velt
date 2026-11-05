@@ -1,0 +1,29 @@
+// redis (internal): `Failure`, what went wrong, as a plain value that crosses between tasks.
+
+/** A failure on its way between tasks; `code` as `RedisError.code`, `server` for an error reply. */
+export struct Failure {
+  code: string;
+  message: string;
+  server: bool;
+}
+
+/** The failure of an error reply (`-CODE message`): the code is its first word. */
+export function serverFailure(reply: string): Failure {
+  const space = reply.indexOf(" ");
+  return { code: space > 0 ? reply.slice(0, space) : reply, message: reply, server: true };
+}
+
+/** The failure of a failed socket operation. */
+export function ioFailure(code: string, message: string): Failure {
+  return { code: code, message: `Redis connection failed: ${message}`, server: false };
+}
+
+/** The connection is gone (closed by the server, or failed earlier). */
+export function closedFailure(): Failure {
+  return { code: "ECONNRESET", message: "the Redis connection is closed", server: false };
+}
+
+/** A reply that does not follow RESP. */
+export function protocolFailure(message: string): Failure {
+  return { code: "EILSEQ", message: `Redis protocol error: ${message}`, server: false };
+}

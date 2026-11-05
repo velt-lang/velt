@@ -1,0 +1,133 @@
+// redis (internal): `Reader`, the reply side of one connection: it parses what arrives and completes
+// the line in order.
+
+import { TcpStream } from "velt/net";
+import { Failure, protocolFailure, serverFailure } from "./failure";
+import { Client } from "./line";
+import { Outcome } from "./outcome";
+import { ReadBuffer } from "./read_buffer";
+import { RawReply } from "./raw_reply";
+import { ARRAY, emptyReply, ERROR, NIL, Parser } from "./resp";
+import { BATCH, ONE, Slot } from "./slot";
+
+/** The reply side of one connection. */
+export class Reader {
+  /** A reply that broke the protocol, which ended the connection. */
+  protocol: Failure | null = null;
+  private client: Client;
+  private parser: Parser = new Parser();
+  // The request whose later replies are still to come.
+  private current: Slot | null = null;
+  private got: i64 = 0;
+  // A transaction's first rejected command.
+  private rejected: string | null = null;
+  // The closed client's last reply arrived.
+  private finished: bool = false;
+
+  constructor(client: Client) {
+    this.client = client;
+  }
+
+  // Delivers replies until the stream ends, the replies in flight ran out on a closed client, or a
+  // reply breaks the protocol. A failed read throws.
+  async run(s: TcpStream) {
+    const input = new ReadBuffer();
+    while (await input.fill(s)) {
+      const pos = this.parse(input.bytes, input.pos, input.end);
+      if (pos < 0 || this.finished) {
+        return;
+      }
+      input.pos = pos;
+    }
+  }
+
+  // Takes the complete frames in `buf[pos..end]`: the position after them, or -1 when the
+  // connection must end.
+  private parse(buf: u8[], start: i64, end: i64): i64 {
+    let pos = start;
+    while (pos < end) {
+      const used = this.parser.step(buf, pos, end);
+      if (used < 0) {
+        this.protocol = protocolFailure(this.parser.error);
+        return -1;
+      }
+      if (used == 0) {
+        return pos;
+      }
+      pos += used;
+      if (this.parser.complete && !this.reply()) {
+        return -1;
+      }
+    }
+    return pos;
+  }
+
+  // A reply finished: it answers its request, or joins it; false if no request waits for one.
+  private reply(): bool {
+    let slot = this.current;
+    if (slot == null) {
+      const popped = this.client.with((l) => l.pop());
+      slot = popped.slot;
+      if (slot == null) {
+        this.protocol = protocolFailure("unexpected reply");
+        return false;
+      }
+      if (slot.kind == ONE) {
+        const r = this.parser.take();
+        slot.done.trySend(
+          r.tags[0] == ERROR
+            ? { failure: serverFailure(r.strs[0]), reply: emptyReply() }
+            : { failure: null, reply: r },
+        );
+        this.finished = popped.last;
+        return true;
+      }
+      this.current = slot;
+      this.got = 0;
+      this.rejected = null;
+      if (slot.kind == BATCH) {
+        // The array the replies go in, around the first of them.
+        const r = this.parser.reply;
+        r.tags.unshift(ARRAY);
+        r.nums.unshift(slot.want);
+        r.strs.unshift("");
+      }
+    }
+    this.got++;
+    if (slot.kind == BATCH) {
+      if (this.got < slot.want) {
+        return true;
+      }
+      slot.done.trySend({ failure: null, reply: this.parser.take() });
+    } else {
+      const r = this.parser.take();
+      if (this.got < slot.want) {
+        if (r.tags[0] == ERROR && this.rejected == null) {
+          this.rejected = r.strs[0];
+        }
+        return true;
+      }
+      slot.done.trySend(transaction(r, this.rejected));
+    }
+    this.current = null;
+    this.finished = this.client.with((l) => l.finish());
+    return true;
+  }
+}
+
+// `EXEC`'s reply as the result of a transaction; an aborted one fails, naming the first command
+// that was rejected.
+export function transaction(exec: RawReply, rejected: string | null): Outcome {
+  const tag = exec.tags[0];
+  if (tag == ERROR) {
+    const text = rejected == null ? exec.strs[0] : `${exec.strs[0]} (${rejected})`;
+    return { failure: serverFailure(text), reply: emptyReply() };
+  }
+  if (tag == NIL) {
+    return {
+      failure: serverFailure("EXECABORT Transaction aborted (a watched key changed)"),
+      reply: emptyReply(),
+    };
+  }
+  return { failure: null, reply: exec };
+}

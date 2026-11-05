@@ -1,0 +1,10 @@
+// redis (internal): `Endpoint`, where a client connects.
+
+import { Target } from "./url";
+
+/** Where to connect: what `duplicate()`, subscribers and reconnecting need to open another. */
+export struct Endpoint {
+  url: string;
+  ca: string;
+  target: Target;
+}

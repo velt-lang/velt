@@ -1,0 +1,410 @@
+// What the client does around the commands, against fake servers, so no Redis is needed:
+// transactions, closed handles, replies in many reads, a reply nobody asked for, and subscribers'
+// routing. Ported from the Rust crate's unit tests, plus what the crate's tests left to Redis.
+import { connect, psubscribe, RedisError, RedisReply, subscribe } from "../src/lib";
+import { transaction } from "../src/reader";
+import { Line } from "../src/line";
+import { ReadBuffer } from "../src/read_buffer";
+import { Parser } from "../src/resp";
+import { BATCH, ONE } from "../src/slot";
+import { parseUrl } from "../src/url";
+import { Channel, channel } from "velt/sync";
+import { listen, streamPair, TcpStream } from "velt/net";
+
+// A server on a free port for one connection: it reads once, sends `chunks` one by one and stays
+// open until the peer leaves. Its port.
+async function replies(chunks: string[]): Promise<number> {
+  const l = await listen("127.0.0.1:0");
+  spawn(async () => {
+    const s = await l.accept();
+    l.close();
+    await answer(s, chunks);
+  });
+  return l.port;
+}
+
+async function answer(s: TcpStream, chunks: string[]) {
+  try {
+    await s.readString();
+    for (const c of chunks) {
+      await s.write(c);
+    }
+    while ((await s.readString()).length > 0) {}
+  } catch (e) {
+    // A client that left with replies unread resets the connection, as TCP does: it's done.
+  }
+  s.close();
+}
+
+async function codeOf(p: Promise<string, RedisError>): Promise<string> {
+  try {
+    return await p;
+  } catch (e) {
+    return e.code;
+  }
+}
+
+export function test_a_transaction_is_exec_s_array() {
+  const ok = transaction({ tags: [5, 3], nums: [1, 3], strs: ["", ""] }, null);
+  assert(ok.failure == null, "it committed");
+  assertEq(ok.reply.nums[1], 3);
+}
+
+export function test_an_aborted_transaction_names_the_rejected_command() {
+  const f =
+    transaction(
+      { tags: [2], nums: [0], strs: ["EXECABORT Transaction discarded"] },
+      "ERR unknown command 'NOPE'",
+    ).failure;
+  if (f == null) {
+    panic("it failed");
+  }
+  assertEq(f.code, "EXECABORT");
+  assert(f.message.includes("NOPE"), f.message);
+  const watched = transaction({ tags: [0], nums: [0], strs: [""] }, null).failure;
+  if (watched == null) {
+    panic("a watched key changed");
+  }
+  assertEq(watched.code, "EXECABORT");
+}
+
+export async function test_a_closed_client_fails_with_ebadf_through_every_copy() {
+  const c = await connect(`redis://127.0.0.1:${await replies(["+PONG\r\n"])}`);
+  const copy = c;
+  assertEq(await c.ping(), "PONG");
+  c.close();
+  c.close();
+  assertEq(await codeOf(copy.ping()), "EBADF");
+  let duplicate = "no error";
+  try {
+    await copy.duplicate();
+  } catch (e) {
+    duplicate = e.code.clone();
+  }
+  assertEq(duplicate, "EBADF");
+  let pipeline = "no error";
+  try {
+    await copy.pipeline().exec();
+  } catch (e) {
+    pipeline = e.code.clone();
+  }
+  assertEq(pipeline, "EBADF");
+}
+
+// Closing waits for the reply in flight.
+export async function test_close_lets_a_command_in_flight_finish() {
+  const l = await listen("127.0.0.1:0");
+  const release = spawn(async () => {
+    const s = await l.accept();
+    await s.readString();
+    await sleep(50); // timing: the reply must arrive after `close()`
+    await s.write("+LATE\r\n");
+    while ((await s.readString()).length > 0) {}
+    s.close();
+    l.close();
+  });
+  const c = await connect(`redis://127.0.0.1:${l.port}`);
+  const pending = c.ping();
+  c.close();
+  assertEq(await pending, "LATE");
+  await release;
+}
+
+// A reply larger than the read buffer, delivered in pieces, and a pipeline split across reads.
+export async function test_large_replies_arrive_in_many_reads() {
+  const big = "x".repeat(300000);
+  const wire = `$${big.length}\r\n${big}\r\n`;
+  const c = await connect(
+    `redis://127.0.0.1:${await replies([wire.slice(0, 7), wire.slice(7, 70000), wire.slice(70000)])}`,
+  );
+  assertEq(await c.get("k"), big);
+  c.close();
+  const d = await connect(
+    `redis://127.0.0.1:${await replies([":1\r\n:", "2\r\n$1", "\r\na\r\n"])}`,
+  );
+  const p = d.pipeline();
+  p.incr("a");
+  p.incr("a");
+  p.get("b");
+  const r = await p.exec();
+  assertEq(`${r[0].int} ${r[1].int} ${r[2].text}`, "1 2 a");
+  d.close();
+}
+
+export async function test_an_empty_pipeline_sends_nothing() {
+  const c = await connect(`redis://127.0.0.1:${await replies([])}`);
+  assertEq((await c.pipeline().exec()).length, 0);
+  c.close();
+}
+
+// JSON never writes a `#` field, so a pipeline shows nothing of its connection or its commands.
+export async function test_a_pipeline_s_json_shows_nothing() {
+  const c = await connect(`redis://secret@127.0.0.1:${await replies(["+OK\r\n"])}`);
+  const p = c.pipeline();
+  p.get("a");
+  assertEq(JSON.stringify(p), "{}");
+  c.close();
+}
+
+// A reply nobody asked for, or one that isn't RESP, ends the connection; the command in flight
+// fails, and the error says it was the protocol.
+export async function test_a_broken_reply_fails_the_command() {
+  const c = await connect(`redis://127.0.0.1:${await replies(["?nope\r\n"])}`);
+  assertEq(await codeOf(c.ping()), "EILSEQ");
+  c.close();
+}
+
+// A subscriber routes pushes: confirmations to `subscribe`, messages to `next`, an error reply
+// to whoever waits.
+export async function test_a_subscriber_routes_pushes() {
+  const pushes = [
+    "*3\r\n$9\r\nsubscribe\r\n$1\r\na\r\n:1\r\n",
+    "*3\r\n$7\r\nmessage\r\n$1\r\na\r\n$2\r\nhi\r\n",
+    "*3\r\n$7\r\nUNKNOWN\r\n$1\r\na\r\n:1\r\n",
+    "*4\r\n$8\r\npmessage\r\n$2\r\na*\r\n$2\r\nab\r\n$2\r\nyo\r\n",
+  ];
+  const s = await subscribe(`redis://127.0.0.1:${await replies(pushes)}`, ["a"]);
+  const m = await s.next();
+  if (m == null) {
+    panic("a message");
+  }
+  assertEq(`${m.channel} ${m.message} ${m.pattern}`, "a hi null");
+  const p = await s.next();
+  if (p == null) {
+    panic("a pattern message");
+  }
+  assertEq(`${p.channel} ${p.message} ${p.pattern}`, "ab yo a*");
+  s.close();
+  s.close();
+  assert((await s.next()) == null, "closed");
+  let again = "no error";
+  try {
+    await s.subscribe(["b"]);
+  } catch (e) {
+    again = e.code.clone();
+  }
+  assertEq(again, "EBADF");
+}
+
+export async function test_a_rejected_subscribe_fails_with_the_server_s_error() {
+  let code = "no error";
+  try {
+    await psubscribe(`redis://127.0.0.1:${await replies(["-NOPERM no\r\n"])}`, ["a*"]);
+  } catch (e) {
+    code = e.code.clone();
+  }
+  assertEq(code, "NOPERM");
+}
+
+// `close()` ends a `next()` that is waiting.
+export async function test_close_wakes_a_waiting_next() {
+  const s = await subscribe(
+    `redis://127.0.0.1:${await replies(["*3\r\n$9\r\nsubscribe\r\n$1\r\na\r\n:1\r\n"])}`,
+    ["a"],
+  );
+  const waiting = spawn(async () => await s.next());
+  await sleep(10); // timing: lets the task start waiting; `close()` before that ends it too
+  s.close();
+  assert((await waiting) == null, "woken by close");
+}
+
+// A server that goes away fails a waiting `next()`, then every later one.
+export async function test_a_lost_subscriber_connection_fails_next() {
+  const l = await listen("127.0.0.1:0");
+  spawn(async () => {
+    const s = await l.accept();
+    await s.readString();
+    await s.write("*3\r\n$9\r\nsubscribe\r\n$1\r\na\r\n:1\r\n");
+    s.close();
+    l.close();
+  });
+  const s = await subscribe(`redis://127.0.0.1:${l.port}`, ["a"]);
+  for (let i = 0; i < 2; i++) {
+    let code = "no error";
+    try {
+      await s.next();
+    } catch (e) {
+      code = e.code.clone();
+    }
+    assertEq(code, "ECONNRESET");
+  }
+  s.close();
+}
+
+// A reply nested past the limit fails the command and ends the connection, where decoding it would
+// overflow the stack, which nothing can catch.
+export async function test_a_reply_nested_too_deep_fails_the_command() {
+  const c = await connect(`redis://127.0.0.1:${await replies(["*1\r\n".repeat(100000)])}`);
+  let code = "no error";
+  try {
+    await c.call(["GET", "a"]);
+  } catch (e) {
+    code = e.code.clone();
+  }
+  assertEq(code, "EILSEQ");
+  c.close();
+}
+
+// A line that never empties (a busy client always has a command unanswered) stays as long as what
+// is in flight.
+export async function test_the_line_does_not_grow_while_it_never_empties() {
+  const [a, b] = streamPair();
+  const url = "redis://127.0.0.1";
+  const line = new Line({ url: url, ca: "", target: parseUrl(url) }, a);
+  line.submit("x", 0, ONE);
+  for (let i: i64 = 0; i < 5000; i++) {
+    line.submit("x", i + 1, ONE);
+    // Each request comes out once and in order, also when the array is compacted.
+    assertEq(line.pop().slot?.want, i);
+    assert(line.allocated <= 64, `the line's array holds ${line.allocated}`);
+  }
+  a.close();
+  b.close();
+}
+
+// A request of several replies stays in line until `finish`, so that a `close()` meanwhile knows
+// replies are still to come; one of one reply leaves as it is popped.
+export function test_a_batch_stays_in_line_until_it_is_finished() {
+  const [a, b] = streamPair();
+  const url = "redis://127.0.0.1";
+  const line = new Line({ url: url, ca: "", target: parseUrl(url) }, a);
+  line.submit("x", 2, BATCH);
+  line.submit("y", 1, ONE);
+  assertEq(line.pop().slot?.want, 2);
+  assertEq(line.pop().slot?.want, 2);
+  assert(line.close() == null, "replies are still to come");
+  line.finish();
+  const last = line.pop();
+  assertEq(last.slot?.want, 1);
+  assert(last.last, "the closed client's last reply");
+  a.close();
+  b.close();
+}
+
+// A large reply arriving in many reads moves a bounded number of bytes: linear time, however it
+// is split. Moving what is held on every read would be quadratic.
+export async function test_a_large_reply_in_many_reads_moves_few_bytes() {
+  const [a, b] = streamPair();
+  const size = 4 * 1024 * 1024;
+  const payload = "x".repeat(size);
+  spawn(async () => {
+    const wire = `$${size}\r\n${payload}\r\n`;
+    let at = 0;
+    while (at < wire.length) {
+      await a.write(wire.slice(at, at + 16384));
+      at += 16384;
+    }
+  });
+  const input = new ReadBuffer();
+  const parser = new Parser();
+  let done = false;
+  while (!done && (await input.fill(b))) {
+    const used = parser.step(input.bytes, input.pos, input.end);
+    assert(used >= 0, parser.error);
+    input.pos += used;
+    done = parser.complete;
+  }
+  assertEq(parser.take().strs[0], payload);
+  assert(input.moved <= size * 2, `moved ${input.moved} bytes for a reply of ${size}`);
+  a.close();
+  b.close();
+}
+
+// A pub/sub message larger than the read buffer, split across reads, arrives whole.
+export async function test_a_large_message_arrives_whole() {
+  const message = "m".repeat(300000);
+  const push = `*3\r\n$7\r\nmessage\r\n$1\r\na\r\n$${message.length}\r\n${message}\r\n`;
+  const confirm = "*3\r\n$9\r\nsubscribe\r\n$1\r\na\r\n:1\r\n";
+  const parts = [confirm, push.slice(0, 40), push.slice(40, 70000), push.slice(70000)];
+  const s = await subscribe(`redis://127.0.0.1:${await replies(parts)}`, ["a"]);
+  const m = await s.next();
+  if (m == null) {
+    panic("a message");
+  }
+  assertEq(m.message, message);
+  s.close();
+}
+
+// Requests that wait for a reconnect go out in the order they came: a SET then a GET must stay so.
+export async function test_waiting_requests_keep_their_order_over_a_reconnect() {
+  const l = await listen("127.0.0.1:0");
+  const heard = channel<string>(1);
+  // Held back until the commands are waiting, so that all three wait for this connection.
+  const waiting = channel<bool>(1);
+  spawn(async () => {
+    const first = await l.accept();
+    await first.readString();
+    first.close();
+    const second = await l.accept();
+    l.close();
+    let text = await second.readString();
+    while (!text.includes("THIRD")) {
+      text += await second.readString();
+    }
+    heard.trySend(text);
+    await waiting.receive();
+    await second.write(":1\r\n:2\r\n:3\r\n");
+    while ((await second.readString()).length > 0) {}
+    second.close();
+  });
+  const c = await connect(`redis://127.0.0.1:${l.port}`);
+  // Fails once the reader saw the connection end: the next command finds none.
+  assertEq(await codeOf(c.ping()), "ECONNRESET");
+  const both = await Promise.all([
+    c.call(["FIRST"]),
+    c.call(["SECOND"]),
+    c.call(["THIRD"]),
+    told(waiting),
+  ]);
+  assertEq(`${both[0].int} ${both[1].int} ${both[2].int}`, "1 2 3");
+  const text = await heard.receive();
+  if (text == null) {
+    panic("the server heard nothing");
+  }
+  assert(text.indexOf("FIRST") < text.indexOf("SECOND"), text);
+  assert(text.indexOf("SECOND") < text.indexOf("THIRD"), text);
+  c.close();
+}
+
+// Started after the commands before it in a `Promise.all`, so they are all in line.
+async function told(waiting: Channel<bool>): Promise<RedisReply> {
+  waiting.trySend(true);
+  return new RedisReply("nil", "", 0, []);
+}
+
+// An aborted transaction's error names the command the server rejected.
+export async function test_exec_abort_names_the_rejected_command() {
+  const wire = "+OK\r\n-ERR unknown command 'NOPE'\r\n-EXECABORT Transaction discarded\r\n";
+  const c = await connect(`redis://127.0.0.1:${await replies([wire])}`);
+  const m = c.multi();
+  m.call(["NOPE"]);
+  let got = "no error";
+  try {
+    await m.exec();
+  } catch (e) {
+    got = `${e.code}: ${e.message}`;
+  }
+  assert(got.startsWith("EXECABORT"), got);
+  assert(got.includes("NOPE"), got);
+  c.close();
+}
+
+// A server silent during `AUTH` fails the connect at its deadline, instead of hanging forever.
+export async function test_a_silent_handshake_times_out() {
+  const l = await listen("127.0.0.1:0");
+  spawn(async () => {
+    const s = await l.accept();
+    l.close();
+    await s.readString();
+    while ((await s.readString()).length > 0) {}
+    s.close();
+  });
+  let code = "connected";
+  try {
+    const c = await connect(`redis://secret@127.0.0.1:${l.port}`);
+    c.close();
+  } catch (e) {
+    code = e.code.clone();
+  }
+  assertEq(code, "ETIMEDOUT");
+}

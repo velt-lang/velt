@@ -1,0 +1,169 @@
+// redis (internal): opening a Redis connection: TCP or TLS on velt/net, then the handshake (`AUTH`,
+// `SELECT`) before the connection goes to the multiplexer or a subscriber.
+
+import { connect as tcpConnect, connectTls, TcpStream } from "velt/net";
+import { IoError } from "velt/io";
+import { timeout, TimeoutError } from "velt/task";
+import { Endpoint } from "./endpoint";
+import { RedisError } from "./errors";
+import { closedFailure, Failure, ioFailure, protocolFailure, serverFailure } from "./failure";
+import { encodeCommand, ERROR, Parser } from "./resp";
+import { Target } from "./url";
+
+// Connecting (TCP + TLS + handshake) fails with `ETIMEDOUT` after this long.
+const CONNECT_TIMEOUT_MS: i64 = 10000;
+
+// How long `reconnect` keeps trying (like ioredis' default of about 20 retries).
+const RECONNECT_WINDOW_MS: f64 = 10000;
+
+// First retry delay of `reconnect`, doubled per attempt up to `MAX_BACKOFF_MS`.
+const FIRST_BACKOFF_MS: i64 = 50;
+const MAX_BACKOFF_MS: i64 = 2000;
+
+/** An opened connection, or why it could not be opened. */
+export struct Opened {
+  stream: TcpStream | null;
+  failure: Failure | null;
+}
+
+// The failure of what `e` says went wrong while connecting to `t`.
+function failureOf(e: Error, t: Target): Failure {
+  if (e instanceof TimeoutError) {
+    return {
+      code: "ETIMEDOUT",
+      message: `Redis connection to ${t.host}:${t.port} timed out`,
+      server: false,
+    };
+  }
+  if (e instanceof IoError) {
+    return ioFailure(e.code, e.message);
+  }
+  if (e instanceof RedisError) {
+    return { code: e.code, message: e.message, server: false };
+  }
+  return ioFailure("UNKNOWN", e.message);
+}
+
+async function socket(ep: Endpoint): Promise<TcpStream> {
+  const t = ep.target;
+  // An IPv6 literal is bracketed in `host:port`.
+  const addr = t.host.includes(":") ? `[${t.host}]:${t.port}` : `${t.host}:${t.port}`;
+  if (t.tls) {
+    return await connectTls(addr, { serverName: t.host, ca: ep.ca });
+  }
+  return await tcpConnect(addr);
+}
+
+/** Opens a stream to `ep` and runs the handshake. */
+export async function open(ep: Endpoint): Promise<Opened> {
+  const t = ep.target;
+  let stream: TcpStream;
+  const deadline = performance.now() + (CONNECT_TIMEOUT_MS as f64);
+  try {
+    stream = await timeout(socket(ep), CONNECT_TIMEOUT_MS);
+  } catch (e) {
+    return { stream: null, failure: failureOf(e, t) };
+  }
+  const failed = await handshake(stream, t, deadline);
+  if (failed != null) {
+    stream.abort();
+    stream.close();
+    return { stream: null, failure: failed };
+  }
+  return { stream: stream, failure: null };
+}
+
+/**
+ * Opens a replacement for a lost connection: retries with exponential backoff for up to
+ * `RECONNECT_WINDOW_MS`, then fails with the last error. An error reply to the handshake (bad
+ * password, unknown database) is final.
+ */
+export async function reconnect(ep: Endpoint): Promise<Opened> {
+  const start = performance.now();
+  let delay = FIRST_BACKOFF_MS;
+  while (true) {
+    const opened = await open(ep);
+    const f = opened.failure;
+    if (f == null || f.server) {
+      return opened;
+    }
+    if (performance.now() - start + (delay as f64) >= RECONNECT_WINDOW_MS) {
+      return opened;
+    }
+    // timing: the backoff between attempts to reach a server that is down
+    await sleep(delay);
+    delay = delay * 2 > MAX_BACKOFF_MS ? MAX_BACKOFF_MS : delay * 2;
+  }
+}
+
+// `AUTH [user] password` and `SELECT db` as the URL asks; what went wrong, or null.
+async function handshake(s: TcpStream, t: Target, deadline: f64): Promise<Failure | null> {
+  const out = new StringBuilder();
+  let commands: i64 = 0;
+  const password = t.password;
+  if (password != null) {
+    const user = t.user;
+    const auth = user == null ? ["AUTH", password] : ["AUTH", user, password];
+    encodeCommand(out, auth, 0, auth.length);
+    commands++;
+  }
+  if (t.db != 0) {
+    const select = ["SELECT", `${t.db}`];
+    encodeCommand(out, select, 0, select.length);
+    commands++;
+  }
+  if (commands == 0) {
+    return null;
+  }
+  try {
+    await s.write(out.toString());
+    return await handshakeReplies(s, t, commands, deadline);
+  } catch (e) {
+    return failureOf(e, t);
+  }
+}
+
+// Reads exactly `n` replies (nothing else is in flight during the handshake); the first error
+// reply, or null.
+async function handshakeReplies(
+  s: TcpStream,
+  t: Target,
+  n: i64,
+  deadline: f64,
+): Promise<Failure | null> {
+  const parser = new Parser();
+  let buf: u8[] = [];
+  let pos: i64 = 0;
+  let got: i64 = 0;
+  let rejected: Failure | null = null;
+  while (got < n) {
+    const left = deadline - performance.now();
+    if (left <= 0 || !(await s.readableWithin(left))) {
+      throw new TimeoutError(CONNECT_TIMEOUT_MS);
+    }
+    const chunk = await s.read();
+    if (chunk.length == 0) {
+      return closedFailure();
+    }
+    buf = pos < (buf.length as i64) ? buf.slice(pos).concat(chunk) : chunk;
+    pos = 0;
+    while (true) {
+      const used = parser.step(buf, pos, buf.length as i64);
+      if (used < 0) {
+        return protocolFailure(parser.error);
+      }
+      if (used == 0) {
+        break;
+      }
+      pos += used;
+      if (parser.complete) {
+        const r = parser.take();
+        if (r.tags[0] == ERROR && rejected == null) {
+          rejected = serverFailure(r.strs[0]);
+        }
+        got++;
+      }
+    }
+  }
+  return rejected;
+}

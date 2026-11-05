@@ -1,0 +1,10 @@
+// redis (internal): `Outcome`, what a connection hands a command.
+
+import { Failure } from "./failure";
+import { RawReply } from "./raw_reply";
+
+/** What a command resolves to: `failure` is null when `reply` holds its reply. */
+export struct Outcome {
+  failure: Failure | null;
+  reply: RawReply;
+}

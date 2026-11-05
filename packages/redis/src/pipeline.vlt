@@ -1,24 +1,27 @@
 // redis (internal): `RedisPipeline`, commands queued locally and sent together by `exec()`.
 //
-// Queued commands travel as one flat `string[]` plus the argument count of each command, so the
-// library encodes the whole batch in one pass and writes it at once.
+// Queued commands are one flat `string[]` plus the argument count of each command: `exec()` encodes
+// the whole batch in one pass and it is written at once.
 
-import { velt_redis__pipeline } from "./native";
-import { checkReply } from "./errors";
+import { Client } from "./line";
+import { isClosed, send } from "./multiplex";
+import { BATCH, TRANSACTION } from "./slot";
+import { encodeCommand } from "./resp";
 import { RedisReply, replyItems, scoreArg } from "./reply";
+import { closedHandle, RedisError } from "./errors";
 
 /**
  * Commands to send in one round trip: `client.pipeline()` (independent commands) or
  * `client.multi()` (a `MULTI`/`EXEC` transaction). Queue commands, then `await p.exec()`.
  */
 export class RedisPipeline {
-  #handle: u64;
+  #handle: Client;
   #atomic: bool;
   #args: string[] = [];
   #counts: u64[] = [];
 
   /** Use `client.pipeline()` / `client.multi()`. */
-  constructor(handle: u64, atomic: bool) {
+  constructor(handle: Client, atomic: bool) {
     this.#handle = handle;
     this.#atomic = atomic;
   }
@@ -102,7 +105,30 @@ export class RedisPipeline {
    * throw. For `multi()`, a transaction the server aborts (EXECABORT) throws `RedisError`.
    */
   async exec(): Promise<RedisReply[]> {
-    const r = await velt_redis__pipeline(this.#handle, this.#args, this.#counts, this.#atomic);
-    return replyItems(checkReply(r));
+    const out = new StringBuilder();
+    if (this.#atomic) {
+      encodeCommand(out, ["MULTI"], 0, 1);
+    }
+    let at: usize = 0;
+    for (const n of this.#counts) {
+      if (n == 0) {
+        throw new RedisError("EINVAL", "malformed Redis pipeline");
+      }
+      encodeCommand(out, this.#args, at, at + (n as usize));
+      at += n as usize;
+    }
+    const commands = this.#counts.length as i64;
+    if (this.#atomic) {
+      encodeCommand(out, ["EXEC"], 0, 1);
+      return replyItems(await send(this.#handle, out.toString(), commands + 2, TRANSACTION));
+    }
+    if (commands == 0) {
+      // Nothing to send, but a closed client still says so.
+      if (isClosed(this.#handle)) {
+        throw closedHandle();
+      }
+      return [];
+    }
+    return replyItems(await send(this.#handle, out.toString(), commands, BATCH));
   }
 }

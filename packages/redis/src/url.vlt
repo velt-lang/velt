@@ -1,0 +1,172 @@
+// redis (internal): connection URLs, `redis://[[user]:password@]host[:port][/db]` and `rediss://…`
+// (TLS), as ioredis and redis-cli read them. The user name and password are percent-decoded; IPv6
+// hosts are written in brackets. `?db=N` is accepted as an alternative to the path.
+
+import { utf8Decode, utf8Encode } from "velt/encoding";
+import { RedisError } from "./errors";
+
+/** Where and how to connect. */
+export struct Target {
+  /** `rediss://`: TLS. */
+  tls: bool;
+  /** Host name or IP address (without brackets). */
+  host: string;
+  /** TCP port (6379 by default). */
+  port: i64;
+  /** ACL user name for `AUTH` (null: the default user). */
+  user: string | null;
+  /** Password for `AUTH` (null: no `AUTH`). */
+  password: string | null;
+  /** Database index for `SELECT` (0: none sent). */
+  db: i64;
+}
+
+function invalid(message: string): RedisError {
+  return new RedisError("EINVAL", message);
+}
+
+// The first `sep` splits `s`; without one, all of `s` comes first.
+function splitOnce(s: string, sep: string): [string, string] {
+  const at = s.indexOf(sep);
+  return at < 0 ? [s, ""] : [s.slice(0, at), s.slice(at + 1)];
+}
+
+/** Parses a connection URL; a bad one throws `RedisError` ("EINVAL"). */
+export function parseUrl(url: string): Target {
+  let tls = false;
+  let rest: string;
+  if (url.startsWith("redis://")) {
+    rest = url.slice(8);
+  } else if (url.startsWith("rediss://")) {
+    tls = true;
+    rest = url.slice(9);
+  } else {
+    throw invalid(`invalid Redis URL "${url}": expected redis:// or rediss://`);
+  }
+  const [beforeQuery, query] = splitOnce(rest, "?");
+  const [authority, path] = splitOnce(beforeQuery, "/");
+  const at = authority.lastIndexOf("@");
+  let user: string | null = null;
+  let password: string | null = null;
+  if (at >= 0) {
+    const info = authority.slice(0, at);
+    const colon = info.indexOf(":");
+    if (colon >= 0) {
+      const name = decode(info.slice(0, colon));
+      user = name.length > 0 ? name : null;
+      password = decode(info.slice(colon + 1));
+    } else {
+      // `redis://secret@host` means a password, as in ioredis.
+      password = decode(info);
+    }
+  }
+  const hostPort = at >= 0 ? authority.slice(at + 1) : authority;
+  let host: string;
+  let portText: string | null = null;
+  if (hostPort.startsWith("[")) {
+    const close = hostPort.indexOf("]");
+    if (close < 0) {
+      throw invalid("invalid Redis URL: unclosed '[' in the host");
+    }
+    host = hostPort.slice(1, close);
+    if (hostPort.charAt(close + 1) == ":") {
+      portText = hostPort.slice(close + 2);
+    }
+  } else {
+    const colon = hostPort.lastIndexOf(":");
+    host = colon >= 0 ? hostPort.slice(0, colon) : hostPort;
+    portText = colon >= 0 ? hostPort.slice(colon + 1) : null;
+  }
+  let db = database(path);
+  for (const pair of query.split("&")) {
+    if (pair.startsWith("db=")) {
+      db = database(pair.slice(3));
+    }
+  }
+  return {
+    tls: tls,
+    host: host.length > 0 ? host : "127.0.0.1",
+    port: port(portText),
+    user: user,
+    password: password,
+    db: db,
+  };
+}
+
+// The decimal number `s` if it is one and at most `max`, else -1.
+function decimal(s: string, max: i64): i64 {
+  let n: i64 = 0;
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    const d = (s.charCodeAt(i) as i64) - 48;
+    if (d < 0 || d > 9 || n > (max - d) / 10) {
+      return -1;
+    }
+    n = n * 10 + d;
+  }
+  return s.length > 0 ? n : -1;
+}
+
+function port(text: string | null): i64 {
+  if (text == null || text.length == 0) {
+    return 6379;
+  }
+  const n = decimal(text, 65535);
+  if (n < 0) {
+    throw invalid(`invalid Redis URL: bad port "${text}"`);
+  }
+  return n;
+}
+
+function database(text: string): i64 {
+  if (text.length == 0) {
+    return 0;
+  }
+  const n = decimal(text, 9223372036854775807);
+  if (n < 0) {
+    throw invalid(`invalid Redis URL: bad database index "${text}"`);
+  }
+  return n;
+}
+
+// The value of hex digit `c`, or -1.
+function hexDigit(c: u8): i64 {
+  if (c >= 48 && c <= 57) {
+    return (c as i64) - 48;
+  }
+  if (c >= 97 && c <= 102) {
+    return (c as i64) - 87;
+  }
+  if (c >= 65 && c <= 70) {
+    return (c as i64) - 55;
+  }
+  return -1;
+}
+
+// `s` percent-decoded.
+function decode(s: string): string {
+  if (s.indexOf("%") < 0) {
+    return s;
+  }
+  const bytes = utf8Encode(s);
+  const out: u8[] = [];
+  let i: usize = 0;
+  while (i < bytes.length) {
+    if (bytes[i] != 37) {
+      out.push(bytes[i]);
+      i++;
+      continue;
+    }
+    const hi = i + 2 < bytes.length ? hexDigit(bytes[i + 1]) : -1;
+    const lo = i + 2 < bytes.length ? hexDigit(bytes[i + 2]) : -1;
+    if (hi < 0 || lo < 0) {
+      throw invalid("invalid Redis URL: bad percent escape");
+    }
+    out.push((hi * 16 + lo) as u8);
+    i += 3;
+  }
+  try {
+    return utf8Decode(out);
+  } catch (e) {
+    throw invalid("invalid Redis URL: credentials are not UTF-8");
+  }
+}
