@@ -5,6 +5,7 @@
 import {
   arraySetLen,
   arrayWithCapacity,
+  share,
   strByteAt,
   strByteLen,
   strLen,
@@ -197,11 +198,12 @@ function writeEntity(buf: u8[], o: usize, b: u8, hexApos: bool): usize {
   return o + 5;
 }
 
-// `s` with its bytes to escape replaced; `s` itself, shared, when it has none.
+// `s` with its bytes to escape replaced; `s` itself, shared, when it has none. The share keeps
+// `s` borrowed (returning `s` would move it, and callers would copy a field they pass in).
 function escapeEntities(s: string, hexApos: bool): string {
   const n = strByteLen(s);
   const first = nextSpecial(s, 0, n);
-  return first == n ? s : escapeFrom(s, first, n, hexApos);
+  return first == n ? share(s) : escapeFrom(s, first, n, hexApos);
 }
 
 /**
