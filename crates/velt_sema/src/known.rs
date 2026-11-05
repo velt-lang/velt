@@ -21,7 +21,7 @@ const ASYNC_RESULTS: [&str; 3] = ["AsyncIterator", "AsyncIterable", "AsyncIterab
 
 /// How many levels of fields, elements and payloads the searches for a resource look through: a
 /// generic type that grows as it recurses (`class A<T> { next: A<T[]> }`) has no end.
-const MAX_LEVELS: u32 = 32;
+pub(crate) const MAX_LEVELS: u32 = 32;
 
 impl Ctx<'_> {
     /// `interface Comparable<T> { compareTo(other: T): i64 }` from the prelude.
@@ -785,29 +785,6 @@ impl Ctx<'_> {
                 .is_some_and(|e| !matches!(self.ty.kind(e), TyKind::Never));
         (f.owner == Some(d) && f.params.is_empty() && !f.is_async && !throws && returns_self)
             .then_some(m.def)
-    }
-
-    /// Does a deep copy of a `t` run its class's own `clone()`? Only for a class that owns a
-    /// resource, its own or a part's, or holds a promise (velt_vir `Cx::own_clone`); any other class
-    /// is copied field by field whatever its `clone()` does.
-    pub fn runs_own_clone(&mut self, t: TyId) -> bool {
-        let TyKind::Adt(d, _) = *self.ty.kind(t) else {
-            return false;
-        };
-        if self.own_clone(d).is_none() {
-            return false;
-        }
-        let mut look = |cx: &mut Self, t: TyId| match cx.ty.kind(t).clone() {
-            TyKind::Shared(_) | TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_) => {
-                Look::Stop
-            }
-            TyKind::Promise(..) => Look::Found,
-            TyKind::Adt(d, _) if matches!(&cx.info[d.0 as usize], DefInfo::Adt(a) if a.has_dispose) => {
-                Look::Found
-            }
-            k => Look::Parts(cx.parts_of(k)),
-        };
-        self.find_within(t, MAX_LEVELS, &mut look).is_some()
     }
 
     /// The dynamic JSON value class: the prelude's `JsonValue` itself, not a user class of the

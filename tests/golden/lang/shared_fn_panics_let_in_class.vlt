@@ -8,20 +8,6 @@ class H {
   }
 }
 
-interface I {
-  call(x: i64): i64;
-}
-
-class W implements I {
-  f: F;
-  constructor(f: F) {
-    this.f = f;
-  }
-  call(x: i64): i64 {
-    return this.f(x);
-  }
-}
-
 interface Fi {
   make(): F;
 }

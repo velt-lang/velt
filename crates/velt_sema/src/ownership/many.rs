@@ -16,10 +16,13 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::defs::BodyState;
+use crate::defs::DefInfo;
 use crate::hir::{
     Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalDef, LocalId, PassMode, Stmt,
     StmtKind as S, TyId, TyKind,
 };
+use crate::known::MAX_LEVELS;
+use crate::type_reach::Look;
 use crate::visit::{self, VisitMut};
 
 /// Report closures reachable from several threads at once that capture a resource without
@@ -72,6 +75,31 @@ pub(crate) fn check_many_threads(cx: &mut Ctx) {
 fn lock_type(cx: &Ctx, t: TyId) -> bool {
     matches!(cx.ty.kind(t), TyKind::Adt(d, _)
         if Some(*d) == cx.mutex_ty() || Some(*d) == cx.rwlock_ty())
+}
+
+impl Ctx<'_> {
+    /// Does a deep copy of a `t` run its class's own `clone()`? Only for a class that owns a
+    /// resource, its own or a part's, or holds a promise (velt_vir `Cx::own_clone`); any other class
+    /// is copied field by field whatever its `clone()` does.
+    fn runs_own_clone(&mut self, t: TyId) -> bool {
+        let TyKind::Adt(d, _) = *self.ty.kind(t) else {
+            return false;
+        };
+        if self.own_clone(d).is_none() {
+            return false;
+        }
+        let mut look = |cx: &mut Self, t: TyId| match cx.ty.kind(t).clone() {
+            TyKind::Shared(_) | TyKind::Dyn(..) | TyKind::FnPtr { .. } | TyKind::Closure(_) => {
+                Look::Stop
+            }
+            TyKind::Promise(..) => Look::Found,
+            TyKind::Adt(d, _) if matches!(&cx.info[d.0 as usize], DefInfo::Adt(a) if a.has_dispose) => {
+                Look::Found
+            }
+            k => Look::Parts(cx.parts_of(k)),
+        };
+        self.find_within(t, MAX_LEVELS, &mut look).is_some()
+    }
 }
 
 /// What a capture holds that a function in `shared(...)` can't have, each call running on a copy.

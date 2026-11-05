@@ -5,6 +5,7 @@
 
 use velt_sema::hir::{DefId, PassMode, TyId};
 
+use super::transfer::NO_TRANSFER;
 use crate::lower::closure::closure_name;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
@@ -241,6 +242,32 @@ impl<'c, 'h> FnLower<'c, 'h> {
             lw.cx.instance_symbol(&closure_name(lw.cx.hir, def), targs)
         );
         lw.finish(sym, vec![Ty::Ptr], Ty::Ptr)
+    }
+
+    /// Prologue of an environment's clone entry: returns the copy of `env` made in this transfer, if
+    /// there is one. What `find_copy` answered, for `record_copy`.
+    pub(in crate::lower) fn return_env_copy(&mut self, env: Operand) -> Operand {
+        self.return_env_copy_then(env, |_| {})
+    }
+
+    /// `return_env_copy`, running `give_up` before it returns one.
+    fn return_env_copy_then(&mut self, env: Operand, give_up: impl FnOnce(&mut Self)) -> Operand {
+        let found = self.temp(Ty::Ptr);
+        self.call_rt(Rt::XferFind, vec![env], Some(Place::local(found)));
+        let f = Operand::Copy(Place::local(found));
+        let n = self.cast_to(f.clone(), Ty::Ptr, Ty::U64);
+        let is_copy = self.rvalue_temp(
+            Ty::Bool,
+            Rvalue::Binary(BinOp::Gt, n, cint(NO_TRANSFER, Ty::U64)),
+        );
+        let (hit, go) = (self.new_block(), self.new_block());
+        self.branch(is_copy, hit, go);
+        self.switch_to(hit);
+        self.retain(f.clone());
+        give_up(self);
+        self.terminate(Terminator::Return(f.clone()));
+        self.switch_to(go);
+        f
     }
 
     /// One reference to the shared env `env` given up: others hold it.

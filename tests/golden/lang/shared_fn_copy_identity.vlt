@@ -50,6 +50,20 @@ function holdsItself(): F {
   return g;
 }
 
+// The check at `shared(...)` walks an object holding a function once, through its own cycle.
+class Holder {
+  f: F | null = null;
+  me: Holder | null = null;
+  v: i64 = 1;
+}
+
+function walked(): F {
+  const h = new Holder();
+  h.me = h;
+  h.f = (x: i64): i64 => x;
+  return (x: i64): i64 => h.v + x;
+}
+
 function plainClone(): F {
   const v = new V();
   return (x: i64): i64 => v.x + x;
@@ -112,4 +126,6 @@ async function main() {
   const v = new V();
   const direct = shared((x: i64): i64 => v.x + x);
   console.log(direct(1), shared(plainClone())(1));
+
+  console.log(shared(walked())(1));
 }

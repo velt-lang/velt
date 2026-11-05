@@ -18,7 +18,7 @@ use crate::lower::{cfunc, cint, unit, FnLower, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 /// What velt_rt's `velt_rt_xfer_find` returns outside a transfer.
-const NO_TRANSFER: i128 = 1;
+pub(super) const NO_TRANSFER: i128 = 1;
 
 impl<'c, 'h> FnLower<'c, 'h> {
     /// A whole value's transfer (a `spawn` argument, a channel message, a task's result): one
@@ -653,36 +653,6 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.switch_to(hit_bb);
         self.retain(f.clone());
         hit(self, f.clone());
-        self.switch_to(go);
-        f
-    }
-
-    /// Prologue of an environment's clone entry: returns the copy of `env` made in this transfer, if
-    /// there is one. What `find_copy` answered, for `record_copy`.
-    pub(in crate::lower) fn return_env_copy(&mut self, env: Operand) -> Operand {
-        self.return_env_copy_then(env, |_| {})
-    }
-
-    /// `return_env_copy`, running `give_up` before it returns one.
-    pub(super) fn return_env_copy_then(
-        &mut self,
-        env: Operand,
-        give_up: impl FnOnce(&mut Self),
-    ) -> Operand {
-        let found = self.temp(Ty::Ptr);
-        self.call_rt(Rt::XferFind, vec![env], Some(Place::local(found)));
-        let f = Operand::Copy(Place::local(found));
-        let n = self.cast_to(f.clone(), Ty::Ptr, Ty::U64);
-        let is_copy = self.rvalue_temp(
-            Ty::Bool,
-            Rvalue::Binary(BinOp::Gt, n, cint(NO_TRANSFER, Ty::U64)),
-        );
-        let (hit, go) = (self.new_block(), self.new_block());
-        self.branch(is_copy, hit, go);
-        self.switch_to(hit);
-        self.retain(f.clone());
-        give_up(self);
-        self.terminate(Terminator::Return(f.clone()));
         self.switch_to(go);
         f
     }
