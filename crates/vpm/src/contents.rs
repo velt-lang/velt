@@ -9,13 +9,17 @@ use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-use crate::manifest::{legacy, LEGACY_MANIFEST_FILE, MANIFEST_FILE, SRC_DIR};
+use crate::manifest::{legacy, LEGACY_MANIFEST_FILE, MANIFEST_FILE, OLD_MANIFEST_FILE, SRC_DIR};
 
 /// Package files relative to `root`, `/`-separated, sorted (deterministic hashing).
 pub fn list_files(root: &Path) -> Result<Vec<String>, String> {
     let manifest = root.join(MANIFEST_FILE);
     if !manifest.is_file() && root.join(LEGACY_MANIFEST_FILE).is_file() {
         return Err(format!("`{}`: {}", root.display(), legacy::REPUBLISH));
+    }
+    if !manifest.is_file() && root.join(OLD_MANIFEST_FILE).is_file() {
+        let why = legacy::republish_old_name();
+        return Err(format!("`{}`: {why}", root.display()));
     }
     if !manifest.is_file() {
         return Err(format!("`{}` has no {MANIFEST_FILE}", root.display()));

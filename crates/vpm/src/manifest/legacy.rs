@@ -4,11 +4,19 @@
 
 use std::path::Path;
 
-use super::{Manifest, LEGACY_MANIFEST_FILE, MANIFEST_FILE};
+use super::{Manifest, LEGACY_MANIFEST_FILE, MANIFEST_FILE, OLD_MANIFEST_FILE};
 
 /// Why a package version published with a `velt.toml` cannot be installed.
 pub const REPUBLISH: &str = "it was published with a `velt.toml`, which this velt no longer \
 reads (the manifest is `package.velt`); its author must publish a new version";
+
+/// Why a fetched package whose manifest has the old name cannot be installed.
+pub fn republish_old_name() -> String {
+    format!(
+        "it has a `{OLD_MANIFEST_FILE}`, the manifest's old name, which this velt no longer reads \
+         (the manifest is `{MANIFEST_FILE}`); its author must publish a new version"
+    )
+}
 
 /// Decode `velt.toml` text into a [`Manifest`]. Nothing is validated: the converted file is,
 /// when it is read as `package.velt`.

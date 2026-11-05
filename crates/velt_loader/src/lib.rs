@@ -158,6 +158,7 @@ pub fn load_program(
         extra_phase: false,
         dir_names: case::DirNames::default(),
         globals: vec![],
+        warned_old_extension: Default::default(),
         npm: vpm::npm::NpmResolver::default(),
         ambient: ambient::Ambients::new(opts.packages),
         global_vars: vec![],
@@ -251,6 +252,8 @@ struct Loader<'a, 'o> {
     dir_names: case::DirNames,
     /// The globals loaded on demand ([`globals`]) not loaded yet.
     globals: Vec<globals::Global>,
+    /// Dependencies already warned about for the old source extension.
+    warned_old_extension: std::collections::HashSet<String>,
     /// npm packages found so far ([`vpm::npm`]).
     npm: vpm::npm::NpmResolver,
     /// Build-time constants and ambient declarations ([`ambient`]).
@@ -362,18 +365,7 @@ impl Loader<'_, '_> {
     ) -> usize {
         let file = self.sm.add(path, src);
         let is_std = matches!(origin, Origin::Std(_));
-        if path
-            .extension()
-            .is_some_and(|e| e == vpm::sources::OLD_EXTENSION)
-        {
-            self.diags.push(Diagnostic::warning(
-                format!(
-                    "`.{}` files are read for one more release: rename this one to `.velt`",
-                    vpm::sources::OLD_EXTENSION
-                ),
-                Span::new(file, 0, 0),
-            ));
-        }
+        self.warn_old_extension(file, path, &origin);
         let plain_ts = vpm::sources::is_plain_ts(path);
         let mut ast = if is_std {
             let src = &self.sm.get(file).src;
@@ -759,6 +751,32 @@ impl Loader<'_, '_> {
         }
         let file = self.opts.packages?.path_alias(importer, spec)?;
         Some(vpm::relpath::normalize(&file))
+    }
+
+    /// A file with the old extension: named when it is the user's to rename, and once per package
+    /// when it is a dependency's, which its user cannot fix.
+    fn warn_old_extension(&mut self, file: velt_common::FileId, path: &Path, origin: &Origin) {
+        let old = vpm::sources::OLD_EXTENSION;
+        if path.extension().is_none_or(|e| e != old) {
+            return;
+        }
+        let message = match origin {
+            Origin::Std(_) => return,
+            Origin::Root(_) => {
+                format!("`.{old}` files are read for one more release: rename this one to `.velt`")
+            }
+            Origin::Package { name, .. } => {
+                if !self.warned_old_extension.insert(name.clone()) {
+                    return;
+                }
+                format!(
+                    "package `{name}` has `.{old}` files, read for one more release: its author \
+                     must rename them to `.velt`"
+                )
+            }
+        };
+        self.diags
+            .push(Diagnostic::warning(message, Span::new(file, 0, 0)));
     }
 
     fn error(&mut self, msg: String, notes: Vec<String>, span: Span) -> Option<usize> {

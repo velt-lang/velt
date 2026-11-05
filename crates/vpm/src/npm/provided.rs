@@ -64,6 +64,9 @@ pub fn packages_at_limited(dir: &Path, max_dirs: usize) -> Result<Packages, Stri
             }
         }
     }
+    if by_name.is_empty() && dir.join(crate::manifest::OLD_MANIFEST_FILE).is_file() {
+        return Err(crate::manifest::legacy::republish_old_name());
+    }
     if by_name.is_empty() {
         let mut message = "has neither a package.velt nor an npm package (a package.json with a `name`, or a workspace of them)".to_string();
         if let Some(pattern) = &cut {

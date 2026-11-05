@@ -112,6 +112,24 @@ fn a_directory_with_no_package_is_an_error() {
 }
 
 #[test]
+fn a_package_with_the_old_manifest_name_says_its_author_must_publish_again() {
+    let e = env();
+    e.upstream.commit_package(".", "lib", "x");
+    let dir = &e.upstream.dir;
+    std::fs::rename(
+        dir.join(crate::manifest::MANIFEST_FILE),
+        dir.join(crate::manifest::OLD_MANIFEST_FILE),
+    )
+    .unwrap();
+    e.upstream.git(&["add", "-A"]);
+    e.upstream.git(&["commit", "-q", "-m", "old manifest name"]);
+    let app = e.app(&format!("lib: {{ git: \"{}\" }}", e.upstream.url()));
+    let err = e.install(&app, false).unwrap_err();
+    assert!(err.contains(crate::manifest::OLD_MANIFEST_FILE), "{err}");
+    assert!(err.contains("must publish a new version"), "{err}");
+}
+
+#[test]
 fn two_git_dependencies_providing_one_package_are_an_error() {
     let e = env();
     npm_monorepo(&e);

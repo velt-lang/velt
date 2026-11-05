@@ -17,7 +17,7 @@ use std::path::Path;
 use sha2::{Digest, Sha256};
 
 use crate::contents;
-use crate::manifest::{legacy, LEGACY_MANIFEST_FILE, MANIFEST_FILE, SRC_DIR};
+use crate::manifest::{legacy, LEGACY_MANIFEST_FILE, MANIFEST_FILE, OLD_MANIFEST_FILE, SRC_DIR};
 
 const MAGIC: &[u8] = b"VELTPKG1\n";
 
@@ -66,6 +66,12 @@ pub fn entries(archive: &[u8]) -> Result<Vec<Entry>, String> {
             return Err(format!(
                 "cannot use this package archive: {}",
                 legacy::REPUBLISH
+            ));
+        }
+        if e.path == OLD_MANIFEST_FILE {
+            return Err(format!(
+                "cannot use this package archive: {}",
+                legacy::republish_old_name()
             ));
         }
         if !allowed {
@@ -290,6 +296,10 @@ mod tests {
         assert!(entries(&legacy)
             .unwrap_err()
             .contains("must publish a new version"));
+        let old_name = [MAGIC, OLD_MANIFEST_FILE.as_bytes(), b"\n0\n"].concat();
+        let err = entries(&old_name).unwrap_err();
+        assert!(err.contains("must publish a new version"), "{err}");
+        assert!(err.contains(OLD_MANIFEST_FILE), "{err}");
         let truncated = [MAGIC, b"package.velt\n10\nabc"].concat();
         assert!(entries(&truncated).unwrap_err().contains("truncated"));
     }

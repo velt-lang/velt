@@ -233,3 +233,33 @@ fn a_module_with_both_extensions_is_ambiguous() {
         .count();
     assert_eq!(errors, 1, "{:?}", messages(&diags));
 }
+
+#[test]
+fn a_dependency_with_the_old_extension_is_named_once() {
+    let t = Tree::new();
+    let old = vpm::sources::OLD_EXTENSION;
+    t.write(
+        &format!("dep/src/lib.{old}"),
+        "import { a } from \"./a\";\nexport function lib() {}\n",
+    );
+    t.write(&format!("dep/src/a.{old}"), "export function a() {}\n");
+    let root = t.write(
+        "app/src/main.velt",
+        "import { lib } from \"dep\";\nfunction main() {}\n",
+    );
+    let resolver = super::tests::MapResolver(std::collections::BTreeMap::from([(
+        "dep".to_string(),
+        t.path("dep"),
+    )]));
+    let (_, diags, _) = load(
+        &root,
+        LoadOptions {
+            packages: Some(&resolver),
+            ..Default::default()
+        },
+    );
+    let messages = messages(&diags);
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].contains("package `dep`"), "{messages:?}");
+    assert!(messages[0].contains("its author"), "{messages:?}");
+}

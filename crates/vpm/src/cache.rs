@@ -142,5 +142,16 @@ mod tests {
         let err = fetch(&loc, "p", &v, &entry.checksum).unwrap_err();
         assert!(err.starts_with("`p` 1.0.0: "), "{err}");
         assert!(err.contains("must publish a new version"), "{err}");
+
+        // Nor one published with the manifest's old name.
+        std::fs::rename(
+            old.join("velt.toml"),
+            old.join(crate::manifest::OLD_MANIFEST_FILE),
+        )
+        .unwrap();
+        let _ = std::fs::remove_dir_all(&dir);
+        let err = fetch(&loc, "p", &v, &entry.checksum).unwrap_err();
+        assert!(err.contains(crate::manifest::OLD_MANIFEST_FILE), "{err}");
+        assert!(err.contains("must publish a new version"), "{err}");
     }
 }
