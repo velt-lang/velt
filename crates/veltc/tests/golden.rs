@@ -1,7 +1,8 @@
 //! End-to-end golden tests: every `tests/golden/**/*.vlt` is compiled and run with the real `velt` binary.
 //!
 //! - `foo.vlt` + `foo.out`  → `velt run foo.vlt` must exit 0 (or the code in `foo.code`) and stdout
-//!   must equal `foo.out` (CRLF normalized).
+//!   must equal `foo.out` (CRLF normalized). Half of the debug runs build with `velt build` first,
+//!   which describes variables for debuggers (`with_variables`).
 //! - `foo.vlt` + `foo.err`  → `velt build foo.vlt` must fail and stderr must contain every non-empty
 //!   line of `foo.err`.
 //! - `foo.stderr` next to a `foo.out`: the run's stderr must contain every non-empty line of it
@@ -227,6 +228,17 @@ fn is_pending(file: &Path, root: &Path) -> bool {
         .any(|d| d.join(".pending").exists())
 }
 
+/// Whether the debug run of the golden at `rel` goes through `velt build`, which describes variables
+/// for debuggers as it does for its users, instead of `velt run`, which doesn't. Half of them, by a
+/// hash of the path: the same compile then also checks that path through to the running program,
+/// where `every_golden_compiles_with_variables` samples the programs and stops at VIR.
+fn with_variables(rel: &str) -> bool {
+    let hash = rel.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    (hash >> 8) % 2 == 0
+}
+
 fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
     let mut failures = vec![];
     let err_file = f.with_extension("err");
@@ -299,23 +311,25 @@ fn check_file(velt: &str, f: &Path, rel: &str, work: &Path) -> Vec<String> {
             // (Defender scan), so the release link must not overwrite the debug executable.
             let dir = work.join(if mode.is_some() { "release" } else { "debug" });
             std::fs::create_dir_all(&dir).unwrap();
-            // In a package: `velt build -o` into this directory, then the program itself.
+            // In a package, and half of the debug runs: `velt build -o` into this directory, then
+            // the program itself.
             let mut built_stderr = String::new();
-            let mut cmd = match &package {
-                None => {
+            let through_build = package.is_some() || (mode.is_none() && with_variables(rel));
+            let mut cmd = match through_build {
+                false => {
                     let mut cmd = crate::no_window::command(velt);
                     cmd.arg("run").args(mode).arg(f);
                     cmd
                 }
-                Some(_) => {
+                true => {
                     // `-o` with the platform's suffix: a stem with a dot (`a.b`) would get no
                     // `.exe` on Windows otherwise.
                     let exe = dir.join(format!("{stem}{}", std::env::consts::EXE_SUFFIX));
                     let mut build = crate::no_window::command(velt);
                     build.arg("build").args(mode);
-                    // As `velt run` builds to run here: a debug build for this CPU. (It also
+                    // As `velt run` builds to run here: a debug build for this CPU. (`velt run`
                     // leaves out the variable descriptions for debuggers, which `velt build`
-                    // has no flag for; they don't change what a program does.)
+                    // has no flag for; they must not change what a program does.)
                     if mode.is_none() && std::env::var_os("VELT_CPU").is_none() {
                         build.args(["--cpu", "native"]);
                     }
