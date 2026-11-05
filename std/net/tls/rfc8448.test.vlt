@@ -409,6 +409,26 @@ describe("TLS 1.3 client, RFC 8448 §3", () => {
     );
   });
 
+  it("rejects a legacy_version other than 0x0303, with the matching alert", async () => {
+    const cases: [u8, string, string][] = [
+      [2, "the server does not speak TLS 1.3 (it chose version 0x0302)", "46"],
+      [4, "the ServerHello's legacy_version is 0x0304, not 0x0303", "2f"],
+    ];
+    for (const [minor, message, alert] of cases) {
+      const sh = hexDecode(SERVER_HELLO_RECORD);
+      sh[10] = minor;
+      const t = new Playback(sh, 1000000);
+      let got = "";
+      try {
+        await handshake(t);
+      } catch (e) {
+        got = e instanceof IoError ? e.message : `${e}`;
+      }
+      expect(got).toBe(`TLS: ${message}`);
+      expect(hexEncode(t.written)).toBe(CLIENT_HELLO_RECORD + "150303000202" + alert);
+    }
+  });
+
   it("reports the server's alert, a closed connection and an unexpected message", async () => {
     expect(await failure("1503030002022800")).toBe(
       "EPROTO TLS: the server sent the alert handshake_failure (40)",
