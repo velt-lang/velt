@@ -1,0 +1,48 @@
+// velt/net (internal): TLS 1.3's key schedule (RFC 8446 §7.1) over HKDF-SHA256, for the two
+// SHA-256 suites: HKDF-Expand-Label, Derive-Secret, the handshake and master secrets, Finished
+// MACs and KeyUpdate's next secret.
+
+import { hkdfExpandSha256, hkdfExtractSha256 } from "velt/crypto/hkdf";
+import { hmacSha256 } from "velt/crypto/hmac";
+import { sha256 } from "velt/crypto/sha256";
+import { utf8Encode } from "velt/encoding/utf8";
+import { ByteWriter } from "velt/net/tls/byte_writer";
+
+/** HKDF-Expand-Label(secret, label, context, length) (RFC 8446 §7.1), "tls13 " prefixed. */
+export function expandLabel(secret: u8[], label: string, context: u8[], length: usize): u8[] {
+  const w = new ByteWriter();
+  w.u16(length);
+  const l = w.begin(1);
+  w.put(utf8Encode(`tls13 ${label}`));
+  w.end(l, 1);
+  const c = w.begin(1);
+  w.put(context);
+  w.end(c, 1);
+  return hkdfExpandSha256(secret, w.bytes, length);
+}
+
+// Derive-Secret(secret, "derived", "") for the next extract.
+function derived(secret: u8[]): u8[] {
+  return expandLabel(secret, "derived", sha256([]), 32);
+}
+
+/** The handshake secret from the (EC)DHE shared secret, without a PSK. */
+export function handshakeSecret(shared: u8[]): u8[] {
+  const early = hkdfExtractSha256(Buffer.alloc(32), Buffer.alloc(32));
+  return hkdfExtractSha256(derived(early), shared);
+}
+
+/** The master secret after `handshake`. */
+export function masterSecret(handshake: u8[]): u8[] {
+  return hkdfExtractSha256(derived(handshake), Buffer.alloc(32));
+}
+
+/** The Finished verify_data for the traffic secret `base` over the transcript hash `hash`. */
+export function finishedMac(base: u8[], hash: u8[]): u8[] {
+  return hmacSha256(expandLabel(base, "finished", [], 32), hash);
+}
+
+/** The next traffic secret after a KeyUpdate (RFC 8446 §7.2). */
+export function nextSecret(secret: u8[]): u8[] {
+  return expandLabel(secret, "traffic upd", [], 32);
+}

@@ -1,0 +1,17 @@
+// velt/net (internal): `ByteStream`, the reading and writing a TLS stream runs over and offers:
+// a `TcpStream`, a `TlsStream`, or a program's own transport (#2392).
+
+import { Uint8Array } from "velt/lang/typed_array/uint8_array";
+
+/**
+ * A duplex byte stream: what `startTls` runs over and what `TcpStream` and `TlsStream` both
+ * are, so code can hold either (a database driver that may or may not upgrade its connection).
+ */
+export interface ByteStream {
+  /** Reads what has arrived into `buf`: the number of bytes, or null at the end of the stream. */
+  readInto(buf: Uint8Array): Promise<number | null>;
+  /** Resolves once `data[start..end]` is written. */
+  writeBytes(data: u8[] | Uint8Array, start: number, end?: number): Promise<void>;
+  /** Closes the stream at once. */
+  close(): void;
+}

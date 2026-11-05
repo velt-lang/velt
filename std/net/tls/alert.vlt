@@ -1,0 +1,71 @@
+// velt/net (internal): TLS alerts (RFC 8446 §6) and `TlsFailure`, the `IoError` a TLS stream
+// throws when the protocol fails, carrying the alert to send the peer.
+
+import { IoError } from "velt/io/error";
+
+export const CLOSE_NOTIFY: u8 = 0;
+export const UNEXPECTED_MESSAGE: u8 = 10;
+export const BAD_RECORD_MAC: u8 = 20;
+export const RECORD_OVERFLOW: u8 = 22;
+export const HANDSHAKE_FAILURE: u8 = 40;
+export const ILLEGAL_PARAMETER: u8 = 47;
+export const DECODE_ERROR: u8 = 50;
+export const DECRYPT_ERROR: u8 = 51;
+export const PROTOCOL_VERSION: u8 = 70;
+export const INTERNAL_ERROR: u8 = 80;
+export const MISSING_EXTENSION: u8 = 109;
+export const NO_APPLICATION_PROTOCOL: u8 = 120;
+
+/**
+ * A TLS protocol failure: an `IoError` with code `EPROTO` and a message starting "TLS: ";
+ * `alert` is what this side tells the peer (none when the peer sent the alert).
+ */
+export class TlsFailure extends IoError {
+  alert: u8;
+  sendAlert: bool;
+
+  constructor(alert: u8, message: string, sendAlert: bool = true) {
+    super("EPROTO", `TLS: ${message}`);
+    this.alert = alert;
+    this.sendAlert = sendAlert;
+  }
+}
+
+/** The RFC 8446 name of alert `d`, for messages ("handshake_failure"). */
+export function alertName(d: u8): string {
+  const names: [u8, string][] = [
+    [0, "close_notify"],
+    [10, "unexpected_message"],
+    [20, "bad_record_mac"],
+    [22, "record_overflow"],
+    [40, "handshake_failure"],
+    [42, "bad_certificate"],
+    [43, "unsupported_certificate"],
+    [44, "certificate_revoked"],
+    [45, "certificate_expired"],
+    [46, "certificate_unknown"],
+    [47, "illegal_parameter"],
+    [48, "unknown_ca"],
+    [49, "access_denied"],
+    [50, "decode_error"],
+    [51, "decrypt_error"],
+    [70, "protocol_version"],
+    [71, "insufficient_security"],
+    [80, "internal_error"],
+    [86, "inappropriate_fallback"],
+    [90, "user_canceled"],
+    [109, "missing_extension"],
+    [110, "unsupported_extension"],
+    [112, "unrecognized_name"],
+    [113, "bad_certificate_status_response"],
+    [115, "unknown_psk_identity"],
+    [116, "certificate_required"],
+    [120, "no_application_protocol"],
+  ];
+  for (const n of names) {
+    if (n[0] == d) {
+      return n[1];
+    }
+  }
+  return "unknown alert";
+}
