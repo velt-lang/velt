@@ -142,9 +142,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if self.cx.is_generator_obj(ty) {
             // Its state may share objects with this thread, and cannot be walked or copied.
             // Sema rejects the visible cases; this is one behind an interface value.
-            self.panic_msg(
-                "a generator cannot go to another thread (`spawn`, a channel, or `shared(...)`)",
-            );
+            let msg =
+                "a generator cannot go to another thread (`spawn`, a channel, or `shared(...)`)";
+            self.check_if_tagged(obj, |lw, _| lw.walk_panic(msg));
+            self.panic_msg(msg);
             return;
         }
         self.check_if_tagged(obj, |lw, o| {

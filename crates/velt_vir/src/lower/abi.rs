@@ -48,6 +48,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             cx,
             targs,
             glue: false,
+            many_strict: false,
             inline: crate::vir::Inline::Default,
             locals: vec![],
             blocks: vec![],

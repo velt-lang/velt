@@ -597,6 +597,8 @@ struct FnLower<'c, 'h> {
     targs: Vec<TyId>,
     /// Building a glue function: its comparisons are counted where it is called (fresh_fns.rs).
     glue: bool,
+    /// Generating the many-threads check's strict walk (glue/many.rs).
+    many_strict: bool,
     /// The body's marker, `inline()` or `noInline()` (`Function::inline`).
     inline: crate::vir::Inline,
     locals: Vec<LocalDecl>,

@@ -97,6 +97,8 @@ pub(crate) enum Glue {
     ObjTransfer,
     DynTransfer,
     ManyCheck,
+    /// `ManyCheck`'s strict walk, for a function in `shared(...)` (many.rs).
+    ManyCheckStrict,
     Trace,
     TraceIn,
     WeakRetain,
@@ -175,6 +177,7 @@ impl Glue {
             Glue::ObjTransfer => "objtransfer",
             Glue::DynTransfer => "dyntransfer",
             Glue::ManyCheck => "manycheck",
+            Glue::ManyCheckStrict => "manycheckstrict",
             Glue::Trace => "trace",
             Glue::TraceIn => "tracein",
             Glue::WeakRetain => "weakretain",
@@ -218,6 +221,7 @@ impl Glue {
             | Glue::Transfer
             | Glue::TransferRoot
             | Glue::ManyCheck
+            | Glue::ManyCheckStrict
             | Glue::ViewDrop
             | Glue::MirrorDrop => (vec![Ptr], Unit),
             Glue::Clone | Glue::Share | Glue::ShareSlot => (vec![Ptr, Ptr], Unit),
@@ -283,6 +287,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::ObjTransfer => lw.obj_transfer_body(args[0], ty),
             Glue::DynTransfer => lw.dyn_transfer_body(args[0], ty),
             Glue::ManyCheck => lw.many_check_body(args[0], ty),
+            Glue::ManyCheckStrict => {
+                lw.many_strict = true;
+                lw.many_check_body(args[0], ty);
+            }
             Glue::Trace => lw.trace_body(args[0], args[1], args[2], ty),
             Glue::TraceIn => lw.trace_in_body(args[0], args[1], args[2], ty),
             Glue::WeakBoxTrace => lw.weak_box_trace_body(args[0], args[1], args[2], ty),

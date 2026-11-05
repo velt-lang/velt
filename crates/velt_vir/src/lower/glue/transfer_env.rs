@@ -162,35 +162,36 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let here = Operand::Copy(Place::local(env));
         // Only a program that calls a function in `shared(...)` asks for a call's copy, so only
         // its environments' entries have the answer.
-        if lw.cx.boxing.calls_shared_fn {
+        if lw.cx.boxing.shared_fns {
             lw.answer_call_copy(here, def, targs, &caps, sync);
         }
         // A function in `shared(...)` (the strict walk, many.rs) runs each call on a copy, so a
         // change it makes would be lost.
         let changes = lw.cx.fn_def(def).changes_held || (sync && !cells.is_empty());
         let (caps2, cells2) = (caps.clone(), cells.clone());
-        lw.check_if_tagged(env, |lw, e| {
+        lw.check_if_tagged(env, move |lw, e| {
             if changes {
                 lw.panic_if_strict(
                     "a function that changes or shares a variable it captured is in `shared(...)`: each call runs on a copy of what it captured, so the change would be lost; keep what changes in a `shared(...)`, or put the function in a `Mutex`",
                 );
             }
             if let Some(t) = unshareable {
+                lw.call_rt(Rt::XferEnd, vec![], None);
                 lw.panic_many_threads(t);
             }
             if local {
-                lw.panic_msg(
+                lw.walk_panic(
                     "an async closure that changes or shares what it captured is shared between threads (`shared(...)`, a `Mutex`'s value, or an HTTP handler): its calls would use the captured values from several threads at once; capture `shared` values instead",
                 );
             }
             let ep = lw.operand_place(e, Ty::Ptr);
             let base = proj(&ep, Proj::Deref(Ty::Agg(ea)));
-            for (field, mode, ty) in caps2 {
+            for &(field, mode, ty) in &caps2 {
                 if mode == PassMode::Owned {
                     lw.many_check(proj(&base, Proj::Field(field)), ty);
                 }
             }
-            for (field, ty) in cells2 {
+            for &(field, ty) in &cells2 {
                 let vt = lw.cx.ty(ty);
                 let cell = lw.rvalue_temp(
                     Ty::Ptr,
@@ -215,7 +216,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         }
         // An environment that holds itself (through an array of functions, say) ends: its copy in
         // this transfer takes the place of the sender's reference.
-        if lw.cx.boxing.calls_shared_fn {
+        if lw.cx.boxing.shared_fns {
             let ev = Operand::Copy(Place::local(env));
             let give = ev.clone();
             lw.return_env_copy_then(ev, |lw| lw.release_count(give));

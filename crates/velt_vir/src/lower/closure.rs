@@ -499,7 +499,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
         let found = lw
             .cx
             .boxing
-            .calls_shared_fn
+            .shared_fns
             .then(|| lw.return_env_copy(Operand::Copy(Place::local(env))));
         let new = lw.counted_alloc(Ty::Agg(ea));
         if let Some(found) = found {

@@ -129,8 +129,6 @@ impl Interp<'_> {
             "velt_rt_fut_transfer" => 0,
             // Transfers copy as if each object were reached once (velt_rt's transfer_map is not
             // emulated): `find` answers "no transfer under way", `defer` "release it now".
-            "velt_rt_many_begin" | "velt_rt_many_end" | "velt_rt_many_strict" => 0,
-            "velt_rt_many_first" => 1,
             "velt_rt_xfer_begin" | "velt_rt_xfer_end" | "velt_rt_xfer_record" => 0,
             "velt_rt_xfer_keep_begin" | "velt_rt_xfer_share_begin" | "velt_rt_xfer_keeps" => 0,
             "velt_rt_xfer_suspend" | "velt_rt_xfer_resume" => 0,

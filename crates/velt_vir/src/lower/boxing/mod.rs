@@ -60,9 +60,10 @@ pub(super) struct Boxing {
     /// The program tests `key in x` on an `any` (`AnyHas`): the `any` tables have the `has`
     /// slot (any_has.rs).
     pub(super) any_has: bool,
-    /// A call of a function in `shared(...)` (callee.rs `shared_call_env`): only then do
-    /// environments' transfer entries answer for a call's copy (glue/transfer_env.rs).
-    pub(super) calls_shared_fn: bool,
+    /// A function in `shared(...)` is made or called: only then do environments' transfer entries
+    /// answer for a call's copy and the check's entries have a strict walk (glue/transfer_env.rs,
+    /// glue/many.rs).
+    pub(super) shared_fns: bool,
     /// The prelude deletes a property of an `any` that is not a proxy (`AnyDelete`): the `any`
     /// tables have the delete slot (any_delete.rs).
     pub(super) any_delete: bool,
@@ -239,9 +240,10 @@ pub(super) struct Facts {
     any_set: bool,
     /// `key in x` is tested on an `any`.
     any_has: bool,
-    /// A call of a function in `shared(...)` (callee.rs `shared_call_env`): only then do
-    /// environments' transfer entries answer for a call's copy (glue/transfer_env.rs).
-    calls_shared_fn: bool,
+    /// A function in `shared(...)` is made or called: only then do environments' transfer entries
+    /// answer for a call's copy and the check's entries have a strict walk (glue/transfer_env.rs,
+    /// glue/many.rs).
+    shared_fns: bool,
     /// A property of an `any` is deleted.
     any_delete: bool,
     /// `Object.keys` of an `any` is listed.
@@ -288,9 +290,9 @@ pub(super) struct Facts {
 }
 
 impl Cx<'_> {
-    /// Record that the program calls a function in `shared(...)`.
-    pub(super) fn note_shared_fn_call(&mut self) {
-        self.facts.calls_shared_fn = true;
+    /// Record that the program makes or calls a function in `shared(...)`.
+    pub(super) fn note_shared_fn(&mut self) {
+        self.facts.shared_fns = true;
     }
 
     /// Record that a value of type `t` is shared.
@@ -527,7 +529,7 @@ impl Cx<'_> {
         next.any_identity |= self.facts.any_identity;
         next.any_writes |= self.facts.any_set;
         next.any_has |= self.facts.any_has;
-        next.calls_shared_fn |= self.facts.calls_shared_fn;
+        next.shared_fns |= self.facts.shared_fns;
         next.any_delete |= self.facts.any_delete;
         next.any_keys |= self.facts.any_keys;
         next.any_reflect |= self.facts.any_reflect;

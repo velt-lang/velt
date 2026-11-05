@@ -253,8 +253,8 @@ on the rest. A `shared<F>` of a function type is called directly (`Intrinsic::Sh
 `call_value`), without a lock, and each call runs on its own copy of what the function captured:
 an async closure copies for itself, and for any other function the call asks the environment's
 transfer entry for a copy (lower/callee.rs `shared_call_env`), with one transfer scope, so cycles
-and identity are kept, at a cost proportional to the captures. Only a program with such a call
-has that answer in its entries (`Boxing::calls_shared_fn`). So a change to a capture would be lost.
+and identity are kept, at a cost proportional to the captures. Only a program with a function in
+`shared(...)` has that answer in its entries (`Boxing::shared_fns`). So a change to a capture would be lost.
 Sema refuses it where it follows the function to `shared(...)`, with the closures it calls
 (`ownership/local_async`), and refuses captures holding, at any depth of their static type, a lock
 or an `Atomic` by value (each call would have its own) or a class whose `clone()` may change its

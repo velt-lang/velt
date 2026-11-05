@@ -334,7 +334,7 @@ impl FnLower<'_, '_> {
     /// transfer entry makes when the code won't copy for itself (glue/transfer_env.rs); an async
     /// closure does, for each call. The copy is dropped after the statement.
     fn shared_call_env(&mut self, fp: &Place, fty: TyId) -> (Operand, Operand) {
-        self.cx.note_shared_fn_call();
+        self.cx.note_shared_fn();
         let code = self.rvalue_temp(
             Ty::Ptr,
             Rvalue::Use(Operand::Copy(proj(fp, Proj::Field(0)))),
