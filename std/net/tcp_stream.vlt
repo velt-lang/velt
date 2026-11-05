@@ -2,6 +2,7 @@
 // `close()` (std/net/index.vlt).
 
 import { unwrapIo } from "velt/native/result";
+import { ByteStream } from "velt/net/byte_stream";
 import { checkIo } from "velt/native/status";
 import { tryWriteTo, writeBytesTo } from "velt/net/bytes";
 import { clampTo, toIndex } from "velt/net/offsets";
@@ -29,7 +30,7 @@ import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 import { AbortSignal } from "velt/task";
 
 /** A connected TCP stream. */
-export struct TcpStream {
+export struct TcpStream implements ByteStream {
   private handle: u64;
 
   /** The next 1..max bytes (`max == 0`: up to 64 KiB); an empty array means end of stream. */

@@ -1,0 +1,84 @@
+// velt/net (internal): `TlsStream`, a TLS 1.3 client stream written in Velt (#2392) over any
+// `ByteStream`, as `startTls` returns it.
+
+import { utf8Encode } from "velt/encoding/utf8";
+import { Uint8Array } from "velt/lang/typed_array/uint8_array";
+import { ByteStream } from "velt/net/byte_stream";
+import { clampTo } from "velt/net/offsets";
+import { TlsEngine } from "velt/net/tls/tls_engine";
+
+/**
+ * A TLS 1.3 connection over another stream (`startTls`): the reading and writing of a
+ * `TcpStream`, encrypted. It is itself a `ByteStream`. `shutdown()` sends TLS's close_notify
+ * before closing, and `close()` closes at once.
+ */
+export class TlsStream implements ByteStream {
+  private e: TlsEngine;
+
+  /** The stream of a connection whose handshake is done (std only: `startTls`). */
+  constructor(engine: TlsEngine) {
+    this.e = engine;
+  }
+
+  /** The next 1..max bytes (`max == 0`: whatever has arrived); an empty array means end of stream. */
+  async read(max: u64 = 0): Promise<u8[]> {
+    if (!(await this.e.fill())) {
+      return [];
+    }
+    const have = this.e.available();
+    const n = max == 0 || (max as usize) > have ? have : (max as usize);
+    return this.e.take(n);
+  }
+
+  /**
+   * Reads what has arrived into `buf`, at most `buf.length` bytes: the number of bytes read, or
+   * `null` at the end of the stream. Waits only when nothing has arrived yet.
+   */
+  async readInto(buf: Uint8Array): Promise<number | null> {
+    if (buf.len == 0) {
+      return 0;
+    }
+    if (!(await this.e.fill())) {
+      return null;
+    }
+    const have = this.e.available();
+    const n = have < buf.len ? have : buf.len;
+    this.e.takeInto(buf.buf.bytes, buf.off, n);
+    return n as number;
+  }
+
+  /** Resolves once `data` (as UTF-8) is written. */
+  async write(data: string): Promise<void> {
+    const b = utf8Encode(data);
+    await this.e.write(b, 0, b.length);
+  }
+
+  /** Resolves once `data[start..end]` is written, in records of at most 16 KiB. */
+  async writeBytes(data: u8[] | Uint8Array, start: number = 0, end?: number): Promise<void> {
+    if (data instanceof Uint8Array) {
+      const len = data.len as number;
+      const at = data.off as u64;
+      const from = at + clampTo(start, len);
+      const to = at + clampTo(end ?? len, len);
+      await this.e.write(data.buf.bytes, from as usize, to as usize);
+      return;
+    }
+    const len = data.length as number;
+    await this.e.write(data, clampTo(start, len) as usize, clampTo(end ?? len, len) as usize);
+  }
+
+  /** The protocol agreed with ALPN, or null. */
+  async alpnProtocol(): Promise<string | null> {
+    return this.e.alpn;
+  }
+
+  /** Sends close_notify, then closes the underlying stream. */
+  async shutdown(): Promise<void> {
+    await this.e.shutdown();
+  }
+
+  /** Closes the underlying stream at once (no close_notify). */
+  close() {
+    this.e.close();
+  }
+}

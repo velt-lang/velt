@@ -1,0 +1,287 @@
+// velt/net (internal): `ClientHandshake`, the TLS 1.3 client's handshake logic (RFC 8446 §4,
+// full handshake without PSK): the transcript, the key schedule's secrets, the server's flight
+// checked in order (EncryptedExtensions, CertificateRequest, Certificate, CertificateVerify,
+// Finished) and the client's last flight. It does no I/O: `TlsEngine` feeds it messages and
+// sends what it says. With `verify: false` the certificate and its signature are kept unchecked
+// (#2392 step 3 adds verification); the server's Finished is always checked.
+
+import { x25519 } from "velt/crypto/x25519";
+import { sha256 } from "velt/crypto/sha256";
+import { utf8Decode } from "velt/encoding/utf8";
+import {
+  DECRYPT_ERROR,
+  ILLEGAL_PARAMETER,
+  NO_APPLICATION_PROTOCOL,
+  TlsFailure,
+  UNEXPECTED_MESSAGE,
+} from "velt/net/tls/alert";
+import { clientHello, EXT_ALPN, HelloInput } from "velt/net/tls/client_hello";
+import { ByteReader } from "velt/net/tls/byte_reader";
+import { ByteWriter } from "velt/net/tls/byte_writer";
+import { expandLabel, finishedMac, handshakeSecret, masterSecret } from "velt/net/tls/key_schedule";
+import { parseServerHello } from "velt/net/tls/server_hello";
+
+// Handshake message types.
+export const CLIENT_HELLO: u8 = 1;
+export const SERVER_HELLO: u8 = 2;
+export const NEW_SESSION_TICKET: u8 = 4;
+export const ENCRYPTED_EXTENSIONS: u8 = 8;
+export const CERTIFICATE: u8 = 11;
+export const CERTIFICATE_REQUEST: u8 = 13;
+export const CERTIFICATE_VERIFY: u8 = 15;
+export const FINISHED: u8 = 20;
+export const KEY_UPDATE: u8 = 24;
+
+// Where the handshake is: what the next message from the server must be.
+const WAIT_SERVER_HELLO = 0;
+const WAIT_ENCRYPTED_EXTENSIONS = 1;
+const WAIT_CERTIFICATE = 2;
+const WAIT_CERTIFICATE_VERIFY = 3;
+const WAIT_FINISHED = 4;
+const DONE = 5;
+
+/** What the engine must do after a message. */
+export const KEEP_READING = 0;
+/** Send `retryHello` (after a ChangeCipherSpec in compatibility mode), keep reading. */
+export const SEND_RETRY = 1;
+/** Switch to the handshake traffic keys (`clientHandshake`, `serverHandshake`), keep reading. */
+export const HANDSHAKE_KEYS = 2;
+/** Send `lastFlight` under the client's handshake keys, then switch to the application keys. */
+export const FINISHED_DONE = 3;
+
+/** The client's side of one handshake. */
+export class ClientHandshake {
+  private input: HelloInput;
+  private privateKey: u8[];
+  private transcript: u8[];
+  private state: i32;
+  private retried: bool;
+  private certRequestContext: u8[] | null;
+  /** The cipher suite the server chose. */
+  suite: usize;
+  /** The traffic secrets, once known. */
+  clientHandshake: u8[];
+  serverHandshake: u8[];
+  clientApplication: u8[];
+  serverApplication: u8[];
+  private master: u8[];
+  /** The protocol the server chose with ALPN, or null. */
+  alpn: string | null;
+  /** The server's certificate chain (DER, leaf first) and its CertificateVerify, unchecked. */
+  certificates: u8[][];
+  certificateVerify: u8[];
+  /** The second ClientHello, after `SEND_RETRY`. */
+  retryHello: u8[];
+  /** The client's last flight (Certificate when asked for, Finished), after `FINISHED_DONE`. */
+  lastFlight: u8[];
+
+  /** A handshake for `input`, with the X25519 private key `privateKey`. */
+  constructor(input: HelloInput, privateKey: u8[]) {
+    this.input = input;
+    this.privateKey = privateKey;
+    this.transcript = [];
+    this.state = WAIT_SERVER_HELLO;
+    this.retried = false;
+    this.certRequestContext = null;
+    this.suite = 0;
+    this.clientHandshake = [];
+    this.serverHandshake = [];
+    this.clientApplication = [];
+    this.serverApplication = [];
+    this.master = [];
+    this.alpn = null;
+    this.certificates = [];
+    this.certificateVerify = [];
+    this.retryHello = [];
+    this.lastFlight = [];
+  }
+
+  /** The first ClientHello message. */
+  hello(): u8[] {
+    const m = clientHello(this.input, null);
+    this.add(m);
+    return m;
+  }
+
+  /** Whether the server's Finished was checked. */
+  done(): bool {
+    return this.state == DONE;
+  }
+
+  private add(m: u8[]) {
+    for (let i: usize = 0; i < m.length; i++) {
+      this.transcript.push(m[i]);
+    }
+  }
+
+  private hash(): u8[] {
+    return sha256(this.transcript);
+  }
+
+  /** Handles the server's handshake message `m` (with its 4-byte header): what to do next. */
+  onMessage(m: u8[]): i32 {
+    const type = m[0];
+    const body = m.slice(4);
+    if (this.state == WAIT_SERVER_HELLO && type == SERVER_HELLO) {
+      return this.serverHello(m, body);
+    }
+    if (this.state == WAIT_ENCRYPTED_EXTENSIONS && type == ENCRYPTED_EXTENSIONS) {
+      this.encryptedExtensions(body);
+      this.add(m);
+      this.state = WAIT_CERTIFICATE;
+      return KEEP_READING;
+    }
+    if (
+      this.state == WAIT_CERTIFICATE &&
+      type == CERTIFICATE_REQUEST &&
+      this.certRequestContext == null
+    ) {
+      const r = new ByteReader(body, 0, body.length, "CertificateRequest");
+      const c = r.vector(1);
+      this.certRequestContext = c.bytes(c.left());
+      this.add(m);
+      return KEEP_READING;
+    }
+    if (this.state == WAIT_CERTIFICATE && type == CERTIFICATE) {
+      this.certificate(body);
+      this.add(m);
+      this.state = WAIT_CERTIFICATE_VERIFY;
+      return KEEP_READING;
+    }
+    if (this.state == WAIT_CERTIFICATE_VERIFY && type == CERTIFICATE_VERIFY) {
+      this.certificateVerify = body;
+      this.add(m);
+      this.state = WAIT_FINISHED;
+      return KEEP_READING;
+    }
+    if (this.state == WAIT_FINISHED && type == FINISHED) {
+      return this.finished(m, body);
+    }
+    throw new TlsFailure(
+      UNEXPECTED_MESSAGE,
+      `unexpected handshake message ${type} during the handshake`,
+    );
+  }
+
+  private serverHello(m: u8[], body: u8[]): i32 {
+    const sh = parseServerHello(body, this.input.sessionId);
+    if (sh.retry) {
+      if (this.retried) {
+        throw new TlsFailure(UNEXPECTED_MESSAGE, "a second HelloRetryRequest");
+      }
+      if (sh.cookie == null) {
+        throw new TlsFailure(ILLEGAL_PARAMETER, "a HelloRetryRequest that changes nothing");
+      }
+      this.retried = true;
+      this.suite = sh.suite;
+      // The transcript restarts with message_hash(ClientHello1) (RFC 8446 §4.4.1).
+      const first = this.hash();
+      this.transcript = [254, 0, 0, 32];
+      this.add(first);
+      this.add(m);
+      const again = clientHello(this.input, sh.cookie);
+      this.add(again);
+      this.retryHello = again;
+      return SEND_RETRY;
+    }
+    if (this.retried && sh.suite != this.suite) {
+      throw new TlsFailure(
+        ILLEGAL_PARAMETER,
+        "the ServerHello's suite differs from the HelloRetryRequest's",
+      );
+    }
+    this.suite = sh.suite;
+    this.add(m);
+    let shared: u8[];
+    try {
+      shared = x25519(this.privateKey, sh.keyShare);
+    } catch (e) {
+      throw new TlsFailure(ILLEGAL_PARAMETER, "the server's X25519 share is a small-order point");
+    }
+    const hs = handshakeSecret(shared);
+    const h = this.hash();
+    this.clientHandshake = expandLabel(hs, "c hs traffic", h, 32);
+    this.serverHandshake = expandLabel(hs, "s hs traffic", h, 32);
+    this.master = masterSecret(hs);
+    this.state = WAIT_ENCRYPTED_EXTENSIONS;
+    return HANDSHAKE_KEYS;
+  }
+
+  private encryptedExtensions(body: u8[]) {
+    const r = new ByteReader(body, 0, body.length, "EncryptedExtensions");
+    const exts = r.vector(2);
+    r.finish();
+    while (exts.left() > 0) {
+      const type = exts.u16();
+      const e = exts.vector(2);
+      if (type == EXT_ALPN) {
+        const list = e.vector(2);
+        const one = list.vector(1);
+        list.finish();
+        const p = utf8Decode(one.bytes(one.left()));
+        if (!this.input.alpn.includes(p)) {
+          throw new TlsFailure(
+            NO_APPLICATION_PROTOCOL,
+            `the server chose ALPN protocol "${p}", which was not offered`,
+          );
+        }
+        this.alpn = p;
+      } else {
+        e.bytes(e.left());
+      }
+      e.finish();
+    }
+  }
+
+  private certificate(body: u8[]) {
+    const r = new ByteReader(body, 0, body.length, "Certificate");
+    r.vector(1);
+    const list = r.vector(3);
+    r.finish();
+    while (list.left() > 0) {
+      const cert = list.vector(3);
+      this.certificates.push(cert.bytes(cert.left()));
+      list.vector(2);
+    }
+  }
+
+  private finished(m: u8[], body: u8[]): i32 {
+    const expected = finishedMac(this.serverHandshake, this.hash());
+    let diff: u8 = body.length == 32 ? 0 : 1;
+    for (let i: usize = 0; i < 32 && i < body.length; i++) {
+      diff |= expected[i] ^ body[i];
+    }
+    if (diff != 0) {
+      throw new TlsFailure(DECRYPT_ERROR, "the server's Finished does not match the handshake");
+    }
+    this.add(m);
+    const h = this.hash();
+    this.clientApplication = expandLabel(this.master, "c ap traffic", h, 32);
+    this.serverApplication = expandLabel(this.master, "s ap traffic", h, 32);
+    const w = new ByteWriter();
+    const context = this.certRequestContext;
+    if (context != null) {
+      // No client certificate: an empty Certificate (RFC 8446 §4.4.2).
+      const cert = new ByteWriter();
+      cert.u8(CERTIFICATE);
+      const b = cert.begin(3);
+      const c = cert.begin(1);
+      cert.put(context);
+      cert.end(c, 1);
+      cert.begin(3);
+      cert.end(b, 3);
+      this.add(cert.bytes);
+      w.put(cert.bytes);
+    }
+    const fin = new ByteWriter();
+    fin.u8(FINISHED);
+    const f = fin.begin(3);
+    fin.put(finishedMac(this.clientHandshake, this.hash()));
+    fin.end(f, 3);
+    this.add(fin.bytes);
+    w.put(fin.bytes);
+    this.lastFlight = w.bytes;
+    this.state = DONE;
+    return FINISHED_DONE;
+  }
+}
