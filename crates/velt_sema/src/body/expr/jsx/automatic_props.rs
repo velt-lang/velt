@@ -94,7 +94,7 @@ impl FnCx<'_, '_> {
         let mut slots = vec![None; slot_names.len()];
         if let Some(at) = super::props::type_args_span(el) {
             let n = slots.len();
-            self.explicit_type_args(&mut slots, n, &el.type_args, &[], at);
+            self.explicit_type_args(&mut slots, n, &el.type_args, (&[], &[]), at);
         }
         let mut parts: Vec<(usize, Part)> = vec![];
         let mut given: Vec<(String, TyId)> = vec![];
