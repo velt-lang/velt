@@ -125,6 +125,16 @@ impl PB {
 
     pub fn finish(mut self) -> Program {
         self.console_writers();
+        // Sema demands the writers of a program that prints a number; a hand-built program says
+        // so here, for the hooks it defines above.
+        let mut hooks_demanded = velt_common::std_hooks::HookSet::default();
+        for i in [
+            velt_common::std_hooks::hook_index::int_write,
+            velt_common::std_hooks::hook_index::uint_write,
+            velt_common::std_hooks::hook_index::number_write,
+        ] {
+            hooks_demanded.insert(i);
+        }
         Program {
             types: self.types,
             defs: self
@@ -159,7 +169,7 @@ impl PB {
             lock_free_callbacks: Default::default(),
             any_fn_views: vec![],
             unchecked: Default::default(),
-            hooks_demanded: Default::default(),
+            hooks_demanded,
             live: None,
             decorators: Default::default(),
             c_exports: Default::default(),
