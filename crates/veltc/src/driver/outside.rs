@@ -38,7 +38,6 @@ const PURE_RUNTIME: &[&str] = &[
     "futs",
     "global",
     "group",
-    "html",
     "i64",
     "json",
     "jsx",

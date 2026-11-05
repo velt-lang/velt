@@ -712,6 +712,9 @@ pub const DELETED: &[&str] = &[
     "velt_rt_strbuf_push_u64",
     // #2196, only std called them: error-code names (std/native/error).
     "velt_rt_err_code_name",
+    // #2196: HTML escaping (std/text/html), which only std called, so no hook replaces it.
+    "velt_rt_html_escape",
+    "velt_rt_jsx_escape",
 ];
 
 /// The hook whose qualified name is `qualified` (`std/lang/hooks/number::f64ToString`).

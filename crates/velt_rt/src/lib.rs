@@ -39,7 +39,6 @@ pub mod handle;
 pub mod hash;
 pub mod hazard;
 pub mod host;
-pub mod html;
 pub mod inspect;
 mod inspect_cycles;
 mod inspect_layout;
