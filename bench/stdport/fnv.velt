@@ -1,6 +1,7 @@
 // FNV-1a: 2M short keys (as a shard index hashes them, each with its own text), then a 64 KiB
 // string and a 64 KiB byte array 300 times each. The Rust port is the same fold, which is what
 // the runtime ran.
+import { utf8Decode } from "velt/encoding";
 import { fnv1a64, fnv1a64Bytes } from "velt/hash";
 
 function main() {
@@ -16,7 +17,7 @@ function main() {
   for (let i: usize = 0; i < data.length; i++) {
     data[i] = (i % 96 + 32) as u8;
   }
-  const text = data.toString();
+  const text = utf8Decode(data);
   for (let round: usize = 0; round < 300; round++) {
     data[round] = 65;
     total += fnv1a64(text) + fnv1a64Bytes(data);
