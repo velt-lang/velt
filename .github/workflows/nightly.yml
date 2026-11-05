@@ -553,7 +553,7 @@ jobs:
           # An entry saved in the last hour stays: main may have just saved a key that this checkout
           # (from before that push) doesn't know yet.
           recent=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:%SZ)
-          gh cache list --limit 1000 --json id,key,sizeInBytes,createdAt \
+          gh cache list --limit 20000 --json id,key,sizeInBytes,createdAt \
             --jq '.[] | "\(.id)\t\(.key)\t\(.sizeInBytes)\t\(.createdAt)"' > "$RUNNER_TEMP/caches.tsv"
           freed=0
           while IFS=$'\t' read -r id key size created; do
