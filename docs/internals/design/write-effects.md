@@ -291,7 +291,7 @@ slot of `(a: any) => void`, and a call through the slot does not run it. The val
 of a function value (`h` of `t.forEach((h: Hk) => h(c, v))`, which std calls) also runs the values
 made as that type, as if it were read from the heap. So the wrapper's summary has `g`'s stores, in
 terms of the wrapper's own parameters, and the callback's has `h`'s, bound to what it captured where
-it is made. A named function used as a value is followed from where it is used, like a closure.
+it is made.
 
 - closures and named functions used as values;
 - method values;

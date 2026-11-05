@@ -261,6 +261,27 @@ fn a_store_by_key_through_a_function_called_in_a_callback_is_reported() {
         ),
         // A named function given to std, which nothing else runs.
         (
+            "a named callback in a local",
+            t("let cur: Holder | null = null;
+function visit(h: Hk): void { h(cur!, cur!.app.plugins); }
+"),
+            "cur = c; const v2 = visit; t.forEach(v2);",
+        ),
+        (
+            "a named callback chosen",
+            t("let cur: Holder | null = null;
+function visit(h: Hk): void { h(cur!, cur!.app.plugins); }
+"),
+            "cur = c; t.forEach(l.plugins.length > 0 ? visit : visit);",
+        ),
+        (
+            "a named callback through an any",
+            t("let cur: Holder | null = null;
+function visit(h: Hk): void { h(cur!, cur!.app.plugins); }
+"),
+            "cur = c; const a: any = visit; t.forEach(a);",
+        ),
+        (
             "a named callback",
             t("let cur: Holder | null = null;\nfunction visit(h: Hk): void { h(cur!, cur!.app.plugins); }\n"),
             "cur = c; t.forEach(visit);",

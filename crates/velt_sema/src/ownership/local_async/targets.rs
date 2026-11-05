@@ -206,7 +206,7 @@ impl Visit for Scan<'_> {
                         self.1.calls.push((me, c));
                     }
                 }
-                E::Closure(k) | E::FnRef(k, _) => self.1.calls.push((me, *k)),
+                E::Closure(k) => self.1.calls.push((me, *k)),
                 E::Call { callee, args } => match callee {
                     Callee::Def(d, _) => self.1.calls.push((me, *d)),
                     Callee::Virtual { .. } | Callee::Dyn { .. } | Callee::ParamMethod { .. } => {

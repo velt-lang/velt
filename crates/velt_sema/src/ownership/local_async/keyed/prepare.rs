@@ -164,13 +164,6 @@ impl Visit for Prep<'_, '_> {
                 let caps = self.shapes.id(&caps);
                 self.events.push(Ev::Closure { k: *k, caps, site });
             }
-            // A named function used as a value may run where nothing here follows it (std's
-            // `forEach`): its own stores count, as a closure's do. It captures nothing.
-            E::FnRef(g, _) => {
-                let site = self.at(e, "(…) => …".to_string());
-                let caps = self.shapes.id(&[]);
-                self.events.push(Ev::Closure { k: *g, caps, site });
-            }
             E::Call { callee, args } => match callee {
                 Callee::Intrinsic(Intrinsic::AnySet) if args.len() >= 3 => {
                     let key = match &args[1].kind {
