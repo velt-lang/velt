@@ -22,5 +22,6 @@ function mk(): F {
 async function main() {
   console.log("before");
   const f = shared(mk());
-  console.log("made", f(1));
+  console.log("made");
+  console.log(f(1));
 }
