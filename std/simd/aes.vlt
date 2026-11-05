@@ -77,7 +77,8 @@ function detect(): u32 {
   if (disabled()) {
     return found;
   }
-  // CPUID leaf 1, ECX bit 25: AES-NI (the flag covers PCLMULQDQ, SSSE3 and SSE4.1).
+  // CPUID leaf 1, ECX bit 25 is AES-NI alone; PCLMULQDQ, SSSE3 and SSE4.1, which the AES
+  // extension also guarantees, are the runtime's clmul flag (velt_simd_has_clmul_x86).
   if (
     velt_simd_has_clmul_x86() && (velt_simd_u32x4_lane(velt_simd_cpuid(1, 0), 2) & (1 << 25)) != 0
   ) {

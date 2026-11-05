@@ -33,10 +33,16 @@ function up4(v: u8x16): u8x16 {
 // Every 32-bit lane set to lane `lane` of `v`.
 function broadcast(v: u8x16, lane: u32): u8x16 {
   const w = v.asU32x4();
-  if (lane == 3) {
-    return u32x4.shuffle(w, w, 3, 3, 3, 3).asU8x16();
+  if (lane == 0) {
+    return u32x4.shuffle(w, w, 0, 0, 0, 0).asU8x16();
   }
-  return u32x4.shuffle(w, w, 2, 2, 2, 2).asU8x16();
+  if (lane == 1) {
+    return u32x4.shuffle(w, w, 1, 1, 1, 1).asU8x16();
+  }
+  if (lane == 2) {
+    return u32x4.shuffle(w, w, 2, 2, 2, 2).asU8x16();
+  }
+  return u32x4.shuffle(w, w, 3, 3, 3, 3).asU8x16();
 }
 
 // k ^ (k << 32) ^ (k << 64) ^ (k << 96) ^ t: one step of the key schedule.

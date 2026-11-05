@@ -61,16 +61,17 @@ pub(super) fn op(b: &mut Body, op: ExtOp) -> String {
 }
 
 /// `CPUID` with EAX = `%a0` and ECX = `%a1`, as EAX, EBX, ECX, EDX in the lanes of a `u32x4`; zeros
-/// off x86-64. RBX is saved around it in a scratch register (LLVM may reserve RBX as a base
-/// pointer, as Rust's `__cpuid_count` does). Not `sideeffect`: the answers never change, so LLVM
-/// may merge or hoist it.
+/// off x86-64. RBX is saved around it in RSI, named rather than left to the allocator so the
+/// scratch is never RBX itself (LLVM may reserve RBX as a base pointer, so it cannot be an output
+/// or a clobber; Rust's `__cpuid_count` saves it the same way). Not `sideeffect`: the answers
+/// never change, so LLVM may merge or hoist it.
 pub(super) fn cpuid(b: &mut Body, arch: Arch) -> String {
     if arch != Arch::Sse2 {
         return "zeroinitializer".to_string();
     }
     let r = b.inst(
         "call { i32, i64, i32, i32 } asm \"movq %rbx, $1\\0Acpuid\\0Axchgq %rbx, $1\", \
-         \"={ax},=r,={cx},={dx},0,2,~{dirflag},~{fpsr},~{flags}\"(i32 %a0, i32 %a1)"
+         \"={ax},={si},={cx},={dx},0,2,~{dirflag},~{fpsr},~{flags}\"(i32 %a0, i32 %a1)"
             .to_string(),
     );
     let eax = b.inst(format!("extractvalue {{ i32, i64, i32, i32 }} {r}, 0"));

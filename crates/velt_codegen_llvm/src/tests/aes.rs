@@ -98,11 +98,13 @@ fn each_architecture_lowers_its_own_aes_instructions() {
 fn cpuid_is_inline_asm_on_x86_and_zeros_elsewhere() {
     let p = sample("velt_simd_u8x16_aesenc", 2);
     let x86 = ir(&p, "x86_64-unknown-linux-gnu");
-    // RBX saved around it, and not `sideeffect`: its answers never change.
+    // RBX saved around it in RSI (never in RBX itself), and not `sideeffect`: its answers
+    // never change.
     assert!(
         x86.contains("asm \"movq %rbx, $1\\0Acpuid\\0Axchgq %rbx, $1\""),
         "{x86}"
     );
+    assert!(x86.contains("\"={ax},={si},={cx},={dx},0,2,"), "{x86}");
     assert!(!x86.contains("asm sideeffect \"movq %rbx"), "{x86}");
     let arm = ir(&p, "aarch64-unknown-linux-gnu");
     assert!(!arm.contains("cpuid\\0A"), "{arm}");

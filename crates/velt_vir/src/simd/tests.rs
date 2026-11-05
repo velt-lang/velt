@@ -168,7 +168,8 @@ fn sha_symbols_and_signatures() {
     assert_eq!(ExtOp::Aeskeygenassist.ext(), Ext::AesX86);
     assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_aesenc"), None);
     assert!(Ext::AesX86.covers(Ext::ClmulX86) && !Ext::ClmulX86.covers(Ext::AesX86));
-    assert!(!Ext::AesArm.covers(Ext::ClmulX86) && Ext::AesArm.covers(Ext::AesArm));
+    assert!(Ext::AesArm.covers(Ext::ClmulArm) && !Ext::ClmulArm.covers(Ext::AesArm));
+    assert!(!Ext::AesArm.covers(Ext::ClmulX86) && !Ext::AesX86.covers(Ext::ClmulArm));
 }
 
 #[test]
