@@ -159,11 +159,13 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
         &opts,
     )?;
     let dirs = fetch(loc, resolution.packages.values())?;
-    allow_native::check(
+    let native = allow_native::check(
         (&manifest, &root, &resolution.root_dependencies),
         resolution.packages.values(),
         &dirs,
     )?;
+    notes.extend(override_notes(&resolution));
+    notes.extend(native_changes(existing.as_ref(), &lockfile, &native));
     let natives = natives(
         loc,
         Some((&root, &manifest)),
@@ -189,6 +191,58 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
         warnings: resolution.warnings.clone(),
         notes,
     })
+}
+
+/// One note per package whose root entry replaced other packages' requirements for it: printed
+/// by `velt install` when it resolves, and recorded in the lock's `overrides`.
+pub(crate) fn override_notes(resolution: &Resolution) -> Vec<String> {
+    resolution
+        .overrides
+        .iter()
+        .map(|(name, replaced)| {
+            let asked: Vec<String> = replaced
+                .iter()
+                .map(|o| format!("`{}` asks for {}", o.by, o.wanted))
+                .collect();
+            format!(
+                "`{name}` comes from this package's own entry, which overrides what other packages ask for: {}",
+                asked.join("; ")
+            )
+        })
+        .collect()
+}
+
+/// One note per package with native code (`native`, by name) whose version, source or checksum
+/// differs between the `old` lock and the `new` one, so an update that changes native code says
+/// so; a new one is already in `allowNative`'s diff.
+pub(crate) fn native_changes(
+    old: Option<&Lockfile>,
+    new: &Lockfile,
+    native: &[String],
+) -> Vec<String> {
+    let Some(old) = old else {
+        return vec![];
+    };
+    let mut notes = vec![];
+    for name in native {
+        let (Some(was), Some(now)) = (old.get(name), new.get(name)) else {
+            continue;
+        };
+        if (&was.version, &was.source, &was.checksum) == (&now.version, &now.source, &now.checksum)
+        {
+            continue;
+        }
+        let show = |p: &LockedPackage| match &p.checksum {
+            Some(sum) if p.source == REGISTRY_SOURCE => format!("{} ({sum})", p.version),
+            _ => format!("{} ({})", p.version, p.source),
+        };
+        notes.push(format!(
+            "native code of `{name}` changes: {} → {}",
+            show(was),
+            show(now)
+        ));
+    }
+    notes
 }
 
 /// The lockfile to keep, from the `existing` one and the resolution's `lockfile`: the toolchain
@@ -528,6 +582,15 @@ fn to_lockfile(resolution: &Resolution, root: &Path, members: &[PathBuf]) -> Loc
                     BTreeMap::new(),
                 ),
             };
+            let mut overrides: Vec<String> = resolution
+                .overrides
+                .get(&p.name)
+                .into_iter()
+                .flatten()
+                .map(|o| o.by.clone())
+                .collect();
+            overrides.sort();
+            overrides.dedup();
             LockedPackage {
                 name: p.name.clone(),
                 version: p.version.to_string(),
@@ -535,6 +598,7 @@ fn to_lockfile(resolution: &Resolution, root: &Path, members: &[PathBuf]) -> Loc
                 checksum,
                 dependencies: p.dependencies.clone(),
                 native,
+                overrides,
             }
         })
         .collect();
@@ -620,7 +684,12 @@ fn build_graph<'r>(
     let mut graph = PackageGraph::default();
     if let Some((manifest, root, dependencies)) = root {
         add(&mut graph, &manifest.package.name, root, dependencies);
-        graph.set_allow_native(root, &manifest.allow_native);
+        let allowed: Vec<String> = manifest
+            .allow_native
+            .iter()
+            .map(|a| a.name.clone())
+            .collect();
+        graph.set_allow_native(root, &allowed);
         let added = graph.last_mut();
         configure(added, manifest);
         added.native = natives.remove(&manifest.package.name);

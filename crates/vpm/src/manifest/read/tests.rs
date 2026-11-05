@@ -768,5 +768,6 @@ fn std_imports_file() {
     read_std_imports(FILE, &std::fs::read_to_string(path).unwrap()).unwrap();
 }
 
+mod allow_native;
 mod host;
 mod native_c;

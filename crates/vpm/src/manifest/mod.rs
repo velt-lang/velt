@@ -34,12 +34,14 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use velt_common::{Diagnostics, FileId, SourceMap};
 
+pub mod allow_native;
 mod c_library;
 pub mod ide;
 pub mod legacy;
 mod lint;
 pub mod read;
 pub mod schema;
+pub use allow_native::{AllowNative, AllowedFrom};
 pub use c_library::CLibraryConfig;
 
 pub use lint::{LintConfig, LintLevel};
@@ -100,9 +102,10 @@ pub struct Manifest {
     /// stays `None`).
     #[serde(skip)]
     pub c_libraries: Option<BTreeMap<String, CLibraryConfig>>,
-    /// `allowNative`: the packages with native code the program allows (the root package's).
+    /// `allowNative`: the packages with native code the program allows, and where from (the root
+    /// package's).
     #[serde(skip)]
-    pub allow_native: Vec<String>,
+    pub allow_native: Vec<AllowNative>,
     /// `jsx`: how the package's modules compile JSX.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub jsx: Option<JsxConfig>,

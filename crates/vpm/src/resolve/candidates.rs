@@ -18,6 +18,9 @@ pub(super) struct Candidate {
     pub version: Version,
     pub source: Source,
     pub dependencies: Vec<(String, Want)>,
+    /// Whether the root controls the manifest that wrote `dependencies`: a path package's (only
+    /// the root's own manifests can name a path; a git package's paths become git sources).
+    pub root_controlled: bool,
 }
 
 pub(super) struct Provider<'a> {
@@ -171,7 +174,7 @@ impl<'a> Provider<'a> {
         }
         let version = manifest.version();
         let chain = [req.chain.clone(), vec![format!("{} {version}", req.name)]].concat();
-        let dependencies = dependency_requirements(&manifest, dir, &chain)?
+        let dependencies = dependency_requirements(&manifest, dir, &chain, true)?
             .into_iter()
             .map(|r| (r.name, r.want))
             .collect();
@@ -181,6 +184,7 @@ impl<'a> Provider<'a> {
                 dir: dir.to_path_buf(),
             },
             dependencies,
+            root_controlled: true,
         })
     }
 }
@@ -250,6 +254,7 @@ impl Provider<'_> {
                     npm,
                 },
                 dependencies: vec![],
+                root_controlled: false,
             });
         }
         let manifest = Manifest::from_dir(&dir).map_err(named)?;
@@ -266,7 +271,7 @@ impl Provider<'_> {
         let version = manifest.version();
         let chain = [req.chain.clone(), vec![format!("{} {version}", req.name)]].concat();
         let mut dependencies = vec![];
-        for r in dependency_requirements(&manifest, &dir, &chain)? {
+        for r in dependency_requirements(&manifest, &dir, &chain, false)? {
             let want = match r.want {
                 // A path dependency of a git package is another package of the same commit,
                 // locked and verified as part of it, never a directory elsewhere (as in Cargo).
@@ -299,6 +304,7 @@ impl Provider<'_> {
                 npm: BTreeMap::new(),
             },
             dependencies,
+            root_controlled: false,
         })
     }
 }
@@ -328,5 +334,6 @@ fn registry_candidate(name: &str, entry: &registry::IndexEntry) -> Result<Candid
             native_abi: entry.native_abi,
         },
         dependencies,
+        root_controlled: false,
     })
 }

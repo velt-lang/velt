@@ -2,11 +2,18 @@
 //! safety net, so a package with native code (C declarations, `native.c`, or a Rust crate) is
 //! installed only when the root package lists it. A new dependency with native code, or one that
 //! gains it in a patch release, is then a change to the root manifest, not a line nobody reads.
+//!
+//! An entry binds to a source (#2367, `crate::manifest::allow_native`), checked after resolution
+//! so the source that won is the one checked: a bare name accepts the registry and local paths, a
+//! `git` entry that repository, a `url` entry archives under its prefix. A git repository names
+//! its packages whatever it likes, so a bare `"sqlite"` never allows a `sqlite` from git.
+//! Every `path` source was written by a manifest the root controls (a git package's paths are
+//! its repository, a registry package has none: `crate::resolve`), so a bare name covers them.
 
 use std::collections::{BTreeMap, VecDeque};
 use std::path::{Path, PathBuf};
 
-use crate::manifest::Manifest;
+use crate::manifest::{AllowNative, AllowedFrom, Manifest};
 use crate::resolve::{ResolvedPackage, Source};
 
 /// Whether `a` and `b` are one directory.
@@ -17,22 +24,55 @@ fn same_dir(a: &Path, b: &Path) -> bool {
     }
 }
 
-/// An error for each package of `packages` (in `dirs`) with native code that `root` (the root
-/// package's manifest, its directory and its direct dependencies) doesn't list in `allowNative`,
-/// naming the chain of dependencies that brings it in and the line to add. A package that depends
-/// back on the root is the root only if it is in the root's directory: anything can have its name.
+/// Where `source` is, for messages.
+fn describe_source(source: &Source) -> String {
+    match source {
+        Source::Registry { .. } => "the registry".to_string(),
+        Source::Path { dir } => format!("the local path {}", dir.display()),
+        Source::Git { spec, .. } => format!("the git repository {}", spec.url.escape_default()),
+    }
+}
+
+/// Whether `entry` allows a package from `source`; an error when a URL can't be compared safely.
+fn allows(entry: &AllowNative, source: &Source) -> Result<bool, String> {
+    match (&entry.from, source) {
+        (AllowedFrom::Root, Source::Registry { .. } | Source::Path { .. }) => Ok(true),
+        (AllowedFrom::Git(url), Source::Git { spec, .. }) => {
+            let allowed = crate::source_url::git_identity(url)?;
+            Ok(allowed == crate::source_url::git_identity(&spec.url)?)
+        }
+        _ => Ok(false),
+    }
+}
+
+/// The entry that would allow `name` from `source`, as package.vlt writes it.
+fn suggested(name: &str, source: &Source) -> AllowNative {
+    match source {
+        Source::Git { spec, .. } => AllowNative {
+            name: name.to_string(),
+            from: AllowedFrom::Git(spec.url.clone()),
+        },
+        Source::Registry { .. } | Source::Path { .. } => AllowNative::named(name),
+    }
+}
+
+/// Check each package of `packages` (in `dirs`) with native code against the `allowNative` of
+/// `root` (the root package's manifest, its directory and its direct dependencies): an error
+/// naming each one it doesn't list, through the chain of dependencies that brings it in, with
+/// the line to add; and each one it lists from another source, with both sources. A package that
+/// depends back on the root is the root only if it is in the root's directory: anything can have
+/// its name. Returns the names of the packages with native code.
 pub(crate) fn check<'r>(
     root: (&Manifest, &Path, &[String]),
     packages: impl Iterator<Item = &'r ResolvedPackage> + Clone,
     dirs: &BTreeMap<String, PathBuf>,
-) -> Result<(), String> {
+) -> Result<Vec<String>, String> {
     let (manifest, root_dir, direct) = root;
-    // Each refused package and its C libraries declared `unchecked` (no headers).
-    let mut refused: Vec<(String, Vec<String>)> = vec![];
+    let mut native = vec![];
+    // Each refused package and what its C libraries declared `unchecked` add to the message.
+    let mut refused: Vec<(&ResolvedPackage, String)> = vec![];
+    let mut elsewhere = vec![];
     for p in packages.clone() {
-        if manifest.allow_native.contains(&p.name) {
-            continue;
-        }
         // A git target with no `package.vlt` is npm packages: JavaScript, nothing to read here.
         if matches!(&p.source, Source::Git { npm, .. } if !npm.is_empty()) {
             continue;
@@ -50,30 +90,66 @@ pub(crate) fn check<'r>(
         }
         let m = Manifest::from_dir(dir)
             .map_err(|e| format!("package `{}` can't be checked for native code: {e}", p.name))?;
-        if m.has_native_code() {
-            let unchecked = m
-                .c_libraries
-                .iter()
-                .flatten()
-                .filter(|(_, lib)| lib.unchecked)
-                .map(|(name, _)| name.clone())
-                .collect();
-            refused.push((p.name.clone(), unchecked));
+        if !m.has_native_code() {
+            continue;
+        }
+        native.push(p.name.clone());
+        // A repository no entry can name (its URL can't be compared safely) gets no suggestion:
+        // the entry it would suggest is refused when added.
+        if let Source::Git { spec, .. } = &p.source {
+            if let Err(e) = crate::source_url::git_identity(&spec.url) {
+                elsewhere.push(format!(
+                    "package `{}` has native code and comes from a git repository that allowNative can't name: {e}",
+                    p.name
+                ));
+                continue;
+            }
+        }
+        let entries: Vec<&AllowNative> = (manifest.allow_native.iter())
+            .filter(|a| a.name == p.name)
+            .collect();
+        if entries.is_empty() {
+            refused.push((p, unchecked_note(&m)));
+            continue;
+        }
+        let mut allowed = false;
+        for entry in &entries {
+            allowed |= allows(entry, &p.source).map_err(|e| {
+                format!(
+                    "package `{}` can't be checked against allowNative: {e}",
+                    p.name
+                )
+            })?;
+        }
+        if !allowed {
+            let from: Vec<String> = entries.iter().map(|e| e.describe_from()).collect();
+            elsewhere.push(format!(
+                "package `{}` has native code and comes from {}, but allowNative allows it only from {}: if you trust this source, add {}{}",
+                p.name,
+                describe_source(&p.source),
+                from.join(" or "),
+                suggested(&p.name, &p.source).to_source(),
+                unchecked_note(&m)
+            ));
         }
     }
+    native.sort();
+    if refused.is_empty() && elsewhere.is_empty() {
+        return Ok(native);
+    }
     if refused.is_empty() {
-        return Ok(());
+        return Err(elsewhere.join("\n"));
     }
     let deps: BTreeMap<&str, &[String]> = packages
         .map(|p| (p.name.as_str(), p.dependencies.as_slice()))
         .collect();
     let mut allowed = manifest.allow_native.clone();
-    allowed.extend(refused.iter().map(|(name, _)| name.clone()));
-    let list: Vec<String> = allowed.iter().map(|n| format!("{n:?}")).collect();
-    let lines: Vec<String> = refused
+    allowed.extend(refused.iter().map(|(p, _)| suggested(&p.name, &p.source)));
+    let list: Vec<String> = allowed.iter().map(AllowNative::to_source).collect();
+    let mut lines: Vec<String> = refused
         .iter()
-        .map(|(name, unchecked)| {
-            let via = match chain(direct, &deps, name) {
+        .map(|(p, unchecked)| {
+            let via = match chain(direct, &deps, &p.name) {
                 Some(path) if path.len() > 1 => format!(
                     " (through {})",
                     path.iter()
@@ -83,32 +159,38 @@ pub(crate) fn check<'r>(
                 ),
                 _ => String::new(),
             };
-            let unchecked = match unchecked.as_slice() {
-                [] => String::new(),
-                libs => format!(
-                    "; its C {} {} not checked against headers (`unchecked: true`)",
-                    if libs.len() == 1 {
-                        "library"
-                    } else {
-                        "libraries"
-                    },
-                    libs.iter()
-                        .map(|l| format!("`{l}`"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                        + if libs.len() == 1 { " is" } else { " are" }
-                ),
-            };
             format!(
-                "package `{name}`{via} has native code, which runs with no safety net{unchecked}"
+                "package `{}`{via} has native code, which runs with no safety net{unchecked}",
+                p.name
             )
         })
         .collect();
+    lines.extend(elsewhere);
     Err(format!(
         "{}\nallow it in package.vlt, if you trust it: allowNative: [{}]",
         lines.join("\n"),
         list.join(", ")
     ))
+}
+
+/// What a refusal adds for `m`'s C libraries declared `unchecked: true` (no headers): empty when
+/// there are none.
+fn unchecked_note(m: &Manifest) -> String {
+    let libs: Vec<String> = (m.c_libraries.iter().flatten())
+        .filter(|(_, lib)| lib.unchecked)
+        .map(|(name, _)| format!("`{name}`"))
+        .collect();
+    match libs.len() {
+        0 => String::new(),
+        1 => format!(
+            "; its C library {} is not checked against headers (`unchecked: true`)",
+            libs[0]
+        ),
+        _ => format!(
+            "; its C libraries {} are not checked against headers (`unchecked: true`)",
+            libs.join(", ")
+        ),
+    }
 }
 
 /// The packages from one of `direct` to `target`, shortest first (breadth-first).
@@ -134,6 +216,8 @@ fn chain(direct: &[String], deps: &BTreeMap<&str, &[String]>, target: &str) -> O
 
 #[cfg(test)]
 mod tests {
+    mod sources;
+
     use super::*;
     use crate::git::{GitRef, GitSpec};
     use crate::manifest::MANIFEST_FILE;
@@ -180,6 +264,7 @@ mod tests {
             [lib].iter(),
             &dirs,
         )
+        .map(drop)
     }
 
     /// A dependency with the root's name and native code, in the root's directory or not.
@@ -203,6 +288,7 @@ mod tests {
                 [&named_app].into_iter(),
                 &dirs,
             )
+            .map(drop)
         };
         run(root.path()).unwrap();
         let e = run(elsewhere.path()).unwrap_err();
@@ -253,5 +339,43 @@ mod tests {
         assert!(e.contains("can't be checked for native code"), "{e}");
         let npm = BTreeMap::from([("lib".to_string(), empty.path().to_path_buf())]);
         run_from(git(npm), "", Some(empty.path())).unwrap();
+    }
+
+    /// An install that moves a package with native code to another commit, version or checksum
+    /// names it; one without native code, or an unchanged one, isn't named.
+    #[test]
+    fn changed_native_code_is_named() {
+        use crate::lockfile::{LockedPackage, Lockfile};
+        let locked = |name: &str, version: &str, source: &str| LockedPackage {
+            name: name.into(),
+            version: version.into(),
+            source: source.into(),
+            checksum: Some(format!("sha256:{version}")),
+            dependencies: vec![],
+            native: BTreeMap::new(),
+            overrides: vec![],
+        };
+        let old = Lockfile::new(vec![
+            locked("llama", "0.1.0", "git+https://h/o/llama#1111"),
+            locked("sqlite", "1.0.0", "registry"),
+            locked("plain", "1.0.0", "registry"),
+            locked("same", "1.0.0", "registry"),
+        ]);
+        let new = Lockfile::new(vec![
+            locked("llama", "0.1.0", "git+https://h/o/llama#2222"),
+            locked("sqlite", "1.1.0", "registry"),
+            locked("plain", "2.0.0", "registry"),
+            locked("same", "1.0.0", "registry"),
+        ]);
+        let native = ["llama", "same", "sqlite"].map(String::from);
+        let notes = crate::install::native_changes(Some(&old), &new, &native);
+        assert_eq!(
+            notes,
+            [
+                "native code of `llama` changes: 0.1.0 (git+https://h/o/llama#1111) → 0.1.0 (git+https://h/o/llama#2222)",
+                "native code of `sqlite` changes: 1.0.0 (sha256:1.0.0) → 1.1.0 (sha256:1.1.0)",
+            ]
+        );
+        assert!(crate::install::native_changes(None, &new, &native).is_empty());
     }
 }

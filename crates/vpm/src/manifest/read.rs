@@ -381,7 +381,7 @@ impl Reader<'_> {
                 "jsx" => manifest.jsx = self.jsx(v),
                 "define" => manifest.define = self.define(v),
                 "native" => (manifest.native, manifest.c_libraries) = self.native(v),
-                "allowNative" => manifest.allow_native = self.string_list(v, "allowNative"),
+                "allowNative" => manifest.allow_native = self.allow_native(v),
                 "tsCompat" => manifest.ts_compat = self.ts_compat(v),
                 "lint" => manifest.lint = self.lint(v),
                 "build" => manifest.build = self.build(v),
@@ -659,6 +659,7 @@ pub(crate) fn edit_distance(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
+mod allow_native;
 mod host;
 mod host_modules;
 mod imports;

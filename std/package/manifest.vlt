@@ -52,10 +52,12 @@ export type Package = {
   define?: Record<string, string>;
   /// A Rust crate in the package, built into a native library.
   native?: Native;
-  /// The packages with native code (C libraries or a Rust crate) the program allows, by name,
-  /// such as `["sqlite"]`: installing or building with any other package that has native code is
-  /// an error. Only the root package's applies.
-  allowNative?: string[];
+  /// The packages with native code (C libraries or a Rust crate) the program allows:
+  /// `["sqlite"]` from the registry (or a local path), `{ name: "llama", git: "https://…" }` from
+  /// that repository, `{ name: "duck", url: "https://…/releases/download/" }` from archives under
+  /// that prefix. Installing or building with any other package that has native code, or with a
+  /// listed one from another source, is an error. Only the root package's applies.
+  allowNative?: AllowNative[];
   /// Folders whose modules stay valid TypeScript too, such as `["src/components", "src/models"]`:
   /// `/`-separated paths relative to the package root. `velt check --ts-compat` and the editor
   /// lint them.
@@ -95,6 +97,24 @@ export type Host = {
 /// The standard library's conditional imports (`std/imports.vlt`): the `imports` of a package,
 /// its files `./`-relative to the std root.
 export type Imports = Record<string, Import>;
+
+/// A package whose native code the program allows: its name (from the registry, or a local path),
+/// or its name and the source it is allowed from.
+export type AllowNative = string | AllowNativeSource;
+
+/// An `allowNative` entry bound to a source: exactly one of `git` and `url`.
+export type AllowNativeSource = {
+  /// The package's name.
+  name: string;
+  /// The git repository it is allowed from, at any commit. Compared without a trailing `/` or
+  /// `.git`, the host in any case, a default port dropped, and `user@host:/path` as
+  /// `ssh://user@host/path`; a home-relative `user@host:path` is `ssh://user@host/~/path`, so it
+  /// matches only that spelling.
+  git?: string;
+  /// An https URL prefix its archives are allowed from, with a path under the host:
+  /// `https://github.com/o/duck/releases/download/`. It matches whole path segments.
+  url?: string;
+};
 
 /// A dependency: a semver requirement such as `"^1.2"`, or where to get it.
 export type Dependency = string | DependencySource;

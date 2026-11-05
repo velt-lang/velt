@@ -25,6 +25,8 @@ pub enum Kind {
     StrArray {
         values: &'static [&'static str],
     },
+    /// An array whose elements are strings or objects with these fields (`allowNative`).
+    Entries(&'static [Field]),
     /// An object with these fields.
     Object(&'static [Field]),
     /// An object whose keys the user picks (package names, alias patterns).
@@ -174,12 +176,16 @@ pub const PACKAGE: &[Field] = &[
     },
     Field {
         key: "allowNative",
-        kind: Kind::StrArray { values: &[] },
-        ty: "string[]",
+        kind: Kind::Entries(ALLOW_NATIVE),
+        ty: "AllowNative[]",
         required: false,
-        doc: "The packages with native code (C libraries or a Rust crate) the program allows, by \
-              name, such as `[\"sqlite\"]`: installing or building with any other package that \
-              has native code is an error. Only the root package's applies.",
+        doc: "The packages with native code (C libraries or a Rust crate) the program allows: \
+              `[\"sqlite\"]` from the registry (or a local path), \
+              `{ name: \"llama\", git: \"https://…\" }` from that repository, \
+              `{ name: \"duck\", url: \"https://…/releases/download/\" }` from archives under that \
+              prefix. Installing or building with any other package that has native code, or \
+              with a listed one from another source, is an error. Only the root package's \
+              applies.",
     },
     Field {
         key: "tsCompat",
@@ -291,6 +297,35 @@ pub const DEPENDENCY: &[Field] = &[
         ty: "string",
         required: false,
         doc: "With `git`: a full commit hash.",
+    },
+];
+
+/// The object form of an `allowNative` entry (`crate::manifest::allow_native`).
+pub const ALLOW_NATIVE: &[Field] = &[
+    Field {
+        key: "name",
+        kind: Kind::Str,
+        ty: "string",
+        required: true,
+        doc: "The package's name.",
+    },
+    Field {
+        key: "git",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "The git repository it is allowed from, at any commit. Compared without a \
+              trailing `/` or `.git`, the host in any case, a default port dropped, and \
+              `user@host:/path` as `ssh://user@host/path`; a home-relative `user@host:path` is \
+              `ssh://user@host/~/path`, so it matches only that spelling.",
+    },
+    Field {
+        key: "url",
+        kind: Kind::Str,
+        ty: "string",
+        required: false,
+        doc: "An https URL prefix its archives are allowed from, with a path under the host: \
+              `https://github.com/o/duck/releases/download/`. It matches whole path segments.",
     },
 ];
 
@@ -460,6 +495,14 @@ pub fn object_at(path: &[String]) -> Option<&'static [Field]> {
     while let Some((key, tail)) = rest.split_first() {
         match field(fields, key)?.kind {
             Kind::Object(inner) => fields = inner,
+            Kind::Entries(inner) => {
+                // `allowNative.*` is an entry's object form.
+                let (element, tail) = tail.split_first()?;
+                if element != "*" || !tail.is_empty() {
+                    return None;
+                }
+                return Some(inner);
+            }
             Kind::Map(Entry::Dependency) => {
                 // `dependencies.<name>` is a dependency object.
                 let (_, tail) = tail.split_first()?;
