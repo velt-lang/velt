@@ -514,6 +514,10 @@ fn a_fetched_package_s_headers_are_only_listed() {
         "path: \"../bind\"",
         &format!("git: \"{url}\", branch: \"main\""),
     );
+    let text = text.replace(
+        ALLOW,
+        &format!("allowNative: [{{ name: \"bind\", git: \"{url}\" }}], "),
+    );
     std::fs::write(&manifest, text).unwrap();
     let o = check_without_zig(dir.path(), &home, "x86_64-unknown-linux-gnu");
     assert!(o.status.success(), "{}", output(&o));
