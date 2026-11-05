@@ -126,7 +126,7 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
         fields.push(format!("native: {}", inline_object(parts.into_iter())));
     }
     if !m.allow_native.is_empty() {
-        let names: Vec<String> = m.allow_native.iter().map(|n| string_lit(n)).collect();
+        let names: Vec<String> = m.allow_native.iter().map(|n| n.to_source()).collect();
         fields.push(format!("allowNative: [{}]", names.join(", ")));
     }
     if !m.ts_compat.is_empty() {
@@ -270,7 +270,8 @@ pub(super) fn to_json(m: &Manifest) -> Value {
         out.insert("native".into(), Value::Object(o));
     }
     if !m.allow_native.is_empty() {
-        out.insert("allowNative".into(), json!(m.allow_native));
+        let entries = m.allow_native.iter().map(|n| n.to_json()).collect();
+        out.insert("allowNative".into(), Value::Array(entries));
     }
     if !m.ts_compat.is_empty() {
         out.insert("tsCompat".into(), json!(m.ts_compat));

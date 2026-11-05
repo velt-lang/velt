@@ -8,6 +8,8 @@
 //   export const pkg: Package = { name: "hello", version: "0.1.0" };
 
 export type {
+  AllowNative,
+  AllowNativeSource,
   Build,
   CLibrary,
   Dependency,

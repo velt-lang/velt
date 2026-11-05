@@ -32,8 +32,11 @@
 //! ([`crate::install`]). The velt launcher runs that version in the package, when the pin
 //! accepts it, so every machine builds a commit with the same compiler; `--locked` fails on
 //! another. Optional: a lock without it is still format 1.
-//! `allowNative` is the root package's list (package.vlt), sorted and without duplicates; a
+//! `allowNative` is the root package's list (package.vlt), sorted and without duplicates, each
+//! entry a name or `{ "name": …, "git": … }` / `{ "name": …, "url": … }` as written; a
 //! workspace's lock has none (each member is checked when it builds). Optional, like `velt`.
+//! `overrides` lists the packages whose requirement for a package the root's own entry replaced
+//! with another source (`crate::resolve`: the root's direct dependency wins).
 //! Path sources are relative to the root package, `/`-separated. The root package itself is not
 //! listed (its dependencies come from package.vlt). A workspace has one lockfile, at its root,
 //! for all its members ([`crate::workspace`]): they are listed, as
@@ -60,10 +63,11 @@ pub struct Lockfile {
     /// The toolchain version that builds the package.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub velt: Option<String>,
-    /// The root package's `allowNative`, sorted: the packages whose native code the program
-    /// allows, so a change of trust shows in the lockfile's diff.
+    /// The root package's `allowNative`, sorted, as package.vlt writes the entries: the packages
+    /// whose native code the program allows and where from, so a change of trust shows in the
+    /// lockfile's diff.
     #[serde(default, rename = "allowNative", skip_serializing_if = "Vec::is_empty")]
-    pub allow_native: Vec<String>,
+    pub allow_native: Vec<crate::manifest::AllowNative>,
     /// Resolved packages, sorted by name.
     #[serde(default)]
     pub packages: Vec<LockedPackage>,
@@ -88,6 +92,10 @@ pub struct LockedPackage {
     /// Registry packages with native code: target triple → checksum of its prebuilt library.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub native: BTreeMap<String, String>,
+    /// The packages whose requirement for this one the root's own entry overrode (another
+    /// source), sorted: the root's direct dependency wins, and the diff shows it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub overrides: Vec<String>,
 }
 
 /// The `source` value for registry packages.
@@ -170,6 +178,30 @@ impl Lockfile {
 mod tests {
     use super::*;
 
+    /// `allowNative` entries keep the form package.vlt gives them.
+    #[test]
+    fn allow_native_entries_round_trip() {
+        use crate::manifest::{AllowNative, AllowedFrom};
+        let mut lock = Lockfile::new(vec![]);
+        lock.allow_native = vec![
+            AllowNative::named("sqlite"),
+            AllowNative {
+                name: "llama".into(),
+                from: AllowedFrom::Git("https://github.com/o/llama".into()),
+            },
+        ];
+        let text = lock.to_json();
+        let json: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            json["allowNative"],
+            serde_json::json!(["sqlite", { "name": "llama", "git": "https://github.com/o/llama" }]),
+            "{text}"
+        );
+        assert_eq!(Lockfile::parse(&text).unwrap(), lock);
+        let both = "{ \"version\": 1, \"allowNative\": [{ \"name\": \"x\", \"git\": \"a\", \"url\": \"b\" }] }";
+        assert!(Lockfile::parse(both).is_err());
+    }
+
     #[test]
     fn round_trip() {
         let lock = Lockfile::new(vec![
@@ -180,6 +212,7 @@ mod tests {
                 checksum: None,
                 dependencies: vec![],
                 native: BTreeMap::new(),
+                overrides: vec![],
             },
             LockedPackage {
                 name: "json".into(),
@@ -188,6 +221,7 @@ mod tests {
                 checksum: Some("sha256:00".into()),
                 dependencies: vec!["util".into()],
                 native: BTreeMap::from([("x86_64-unknown-linux-gnu".into(), "sha256:01".into())]),
+                overrides: vec!["app".into()],
             },
         ]);
         assert_eq!(lock.packages[0].name, "json");

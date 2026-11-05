@@ -201,28 +201,6 @@ impl Reader<'_> {
             }
         }
     }
-
-    /// An array of strings (`allowNative`), each in the order written.
-    pub(super) fn string_list(&mut self, value: &Value, what: &str) -> Vec<String> {
-        let ValueKind::Array(elems) = &value.kind else {
-            self.error(
-                format!("`{what}` must be an array, not {}", value.kind.describe()),
-                value.span,
-            );
-            return Vec::new();
-        };
-        let mut out = Vec::new();
-        for elem in elems {
-            match &elem.kind {
-                ValueKind::Str(s) => out.push(s.clone()),
-                other => self.error(
-                    format!("`{what}` entries must be strings, not {}", other.describe()),
-                    elem.span,
-                ),
-            }
-        }
-        out
-    }
 }
 
 /// A `system` library: `name` (linked as `-lname`, `name.lib` on Windows) or `framework:Name`

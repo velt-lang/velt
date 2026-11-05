@@ -21,6 +21,12 @@ inputs:
       on PATH. The runners have only GNU ld, which takes seconds per program with the static
       runtime. The nightly gate keeps GNU ld, what a machine without lld links with.
     default: "true"
+  code-cache:
+    description: >-
+      Restore clang's objects from the last nightly gate (Linux, for jobs that run tests: `tools`). Clang's object is keyed by the IR
+      and the clang, not by the compiler (crates/velt_build_cache), and a change leaves most
+      programs' IR as it was. A cache that doesn't apply is only misses.
+    default: "true"
   save-cache:
     description: >-
       Save the build cache. Only the pushes to main do (`main` job in ci.yml): caches saved
@@ -110,7 +116,10 @@ runs:
         cache-on-failure: true
     # The workspace's own crates: rust-cache keeps only the dependencies, so without this every job
     # compiles all of them again, however little changed. Keyed by each crate's sources and flags
-    # in the Actions cache; a failure there is only a miss (SCCACHE_IGNORE_SERVER_IO_ERROR).
+    # in the Actions cache; a failure there is only a miss (SCCACHE_IGNORE_SERVER_IO_ERROR). A merge
+    # queue entry reads and doesn't write: its branch is deleted when it ends and no other can read
+    # what it saved, at 600-900 MiB an entry, which would push out what others can use. Pushes to
+    # `main` save what every other run reads, and a pull request's later pushes read its own.
     - uses: mozilla-actions/sccache-action@v0.0.11
       if: inputs.cache == 'true'
     - name: compile through sccache
@@ -121,7 +130,20 @@ runs:
           echo "RUSTC_WRAPPER=sccache"
           echo "SCCACHE_GHA_ENABLED=true"
           echo "SCCACHE_IGNORE_SERVER_IO_ERROR=1"
+          if [ "$GITHUB_EVENT_NAME" = merge_group ]; then
+            echo "SCCACHE_GHA_RW_MODE=READ_ONLY"
+          fi
         } >> "$GITHUB_ENV"
+    - uses: actions/cache/restore@v4
+      if: inputs.code-cache == 'true' && inputs.tools == 'true' && runner.os == 'Linux'
+      with:
+        path: target/velt-build-cache/v*/llvm
+        key: velt-clang-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+        restore-keys: velt-clang-objects-${{ runner.os }}-${{ runner.arch }}-
+    - name: room for clang's objects
+      if: inputs.code-cache == 'true' && inputs.tools == 'true' && runner.os == 'Linux'
+      shell: bash
+      run: echo "VELT_BUILD_CACHE_SIZE=4G" >> "$GITHUB_ENV"
     - uses: taiki-e/install-action@v2
       with:
         tool: cargo-nextest

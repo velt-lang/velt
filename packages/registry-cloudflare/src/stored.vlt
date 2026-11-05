@@ -1,0 +1,13 @@
+// registry-cloudflare (internal): what a client may be told when a binding fails.
+
+import { StoreError } from "registry-core";
+
+/**
+ * The answer to a failure of `what` (the database, the blob store, …). Bindings' messages can
+ * show internals (D1's show SQL), so the message goes to the Worker's log, and the client gets
+ * only `what`.
+ */
+export function storeFailure(what: string, e: Error): StoreError {
+  console.error(`${what} failed: ${e.message}`);
+  return new StoreError(`${what} failed`);
+}

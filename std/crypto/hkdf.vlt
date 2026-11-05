@@ -1,0 +1,48 @@
+// velt/crypto (internal): HKDF (RFC 5869) over HMAC-SHA256: extract a pseudorandom key from
+// input keying material, expand it into output keying material (TLS 1.3's key schedule).
+
+import { CryptoError } from "velt/crypto/errors";
+import { hmacSha256 } from "velt/crypto/hmac";
+import { arrayWithCapacity } from "velt/lang/intrinsics";
+
+/**
+ * HKDF-Extract with SHA-256: the 32-byte pseudorandom key HMAC(`salt`, `ikm`). An empty salt
+ * acts as 32 zero bytes, as the RFC says (HMAC zero-pads its key either way).
+ */
+export function hkdfExtractSha256(salt: u8[], ikm: u8[]): u8[] {
+  return hmacSha256(salt, ikm);
+}
+
+/**
+ * HKDF-Expand with SHA-256: `length` bytes of output keying material from the pseudorandom key
+ * `prk` and the context `info`. Throws `CryptoError` past 255 * 32 = 8160 bytes.
+ */
+export function hkdfExpandSha256(prk: u8[], info: u8[], length: usize): u8[] {
+  if (length > 255 * 32) {
+    throw new CryptoError(`HKDF-SHA256 output is at most 8160 bytes, asked for ${length}`);
+  }
+  const out: u8[] = arrayWithCapacity(length);
+  let t: u8[] = [];
+  let counter: u8 = 1;
+  while (out.length < length) {
+    const input: u8[] = arrayWithCapacity(t.length + info.length + 1);
+    for (let i: usize = 0; i < t.length; i++) {
+      input.push(t[i]);
+    }
+    for (let i: usize = 0; i < info.length; i++) {
+      input.push(info[i]);
+    }
+    input.push(counter);
+    t = hmacSha256(prk, input);
+    for (let i: usize = 0; i < t.length && out.length < length; i++) {
+      out.push(t[i]);
+    }
+    counter = counter + 1;
+  }
+  return out;
+}
+
+/** HKDF with SHA-256 (RFC 5869): Expand(Extract(`salt`, `ikm`), `info`, `length`). */
+export function hkdfSha256(ikm: u8[], salt: u8[], info: u8[], length: usize): u8[] {
+  return hkdfExpandSha256(hkdfExtractSha256(salt, ikm), info, length);
+}

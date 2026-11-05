@@ -1,0 +1,26 @@
+import type { Package } from "velt/package";
+
+export const pkg: Package = {
+  name: "registry-cloudflare",
+  version: "0.1.0",
+  description:
+    "The Velt package registry on Cloudflare Workers: registry-core over R2, D1 and a Durable Object",
+  dependencies: {
+    cloudflare: { path: "../cloudflare" },
+    "http-server": { path: "../http-server" },
+    "registry-core": { path: "../registry-core" },
+  },
+  // The JavaScript of the host module `registry-cloudflare` (src/purge.vlt declares its function).
+  hostModules: { "registry-cloudflare": "./src/purge.mjs" },
+  // Its own host, not host-cloudflare: a Durable Object's class has to be exported by the Worker's
+  // entry, so the entry here also holds the publish lock's class.
+  host: {
+    target: "wasm32-unknown-unknown",
+    condition: "workers",
+    entry: "./src/worker.mjs",
+    scaffold: {
+      "wrangler.toml": "./src/wrangler.toml",
+      "migrations/0001_init.sql": "./src/migrations/0001_init.sql",
+    },
+  },
+};

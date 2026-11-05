@@ -1,0 +1,33 @@
+// registry-cloudflare: package archives in an R2 bucket.
+
+import { R2Bucket, r2Bucket } from "cloudflare";
+import { BlobStore } from "registry-core";
+import { storeFailure } from "./stored";
+
+/** Package archives in the R2 bucket bound as `binding`, under their keys as they are. */
+export class R2BlobStore implements BlobStore {
+  private bucket: R2Bucket;
+
+  constructor(binding: string) {
+    this.bucket = r2Bucket(binding);
+  }
+
+  async putIfAbsent(key: string, bytes: u8[]): Promise<bool> {
+    try {
+      // Null when a blob is there already.
+      const put = await this.bucket.put(key, bytes, { onlyIf: { etagDoesNotMatch: "*" } });
+      return put != null;
+    } catch (e) {
+      throw storeFailure("the blob store", e);
+    }
+  }
+
+  async get(key: string): Promise<u8[] | null> {
+    try {
+      const object = await this.bucket.get(key);
+      return object == null ? null : await object.bytes();
+    } catch (e) {
+      throw storeFailure("the blob store", e);
+    }
+  }
+}

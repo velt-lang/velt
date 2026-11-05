@@ -280,6 +280,7 @@ fn std_package_types_match_the_schema() {
     for (name, fields) in [
         ("Package", schema::PACKAGE),
         ("DependencySource", schema::DEPENDENCY),
+        ("AllowNativeSource", schema::ALLOW_NATIVE),
         ("Jsx", schema::JSX),
         ("Native", schema::NATIVE),
         ("Build", schema::BUILD),

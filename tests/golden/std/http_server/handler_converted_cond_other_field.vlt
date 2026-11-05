@@ -1,0 +1,50 @@
+// A conditional that converts a function next to another conversion of it (`pick`): the arm that
+// narrows from `any` is called with a shared count on its argument, which is still the same object.
+// The store feeds `k7`; the handler changes only `other`, its own, so this compiles.
+import { serve } from "http-server";
+
+class Lists {
+  plugins: string[] = ["a"];
+}
+
+class Holder {
+  app: Lists;
+  k7: string[] = [];
+  other: string[] = [];
+  constructor(a: Lists) {
+    this.app = a;
+  }
+}
+
+class S {
+  put(p: any, v: any): void {
+    p["k7"] = v;
+  }
+}
+
+type Hk = (o: Holder, v: string[]) => void;
+
+function noop(o: Holder, v: string[]): void {}
+
+function g(o: any, v: any): void {
+  const w: string[] = v;
+  new S().put(o, w);
+}
+
+function pick(): Hk {
+  return g;
+}
+
+async function main() {
+  const l = new Lists();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const c = new Holder(l);
+    const h: Hk = l.plugins.length > 0 ? g : noop;
+    h(c, l.plugins);
+    c.other.push("x");
+    return new Response(`${l.plugins.length} ${c.k7.length} ${c.other.length}`);
+  });
+  const res = await fetch(`http://127.0.0.1:${server.port}/`);
+  console.log(await res.text());
+  await server.shutdown();
+}

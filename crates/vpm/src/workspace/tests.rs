@@ -313,3 +313,50 @@ fn find_root_is_the_nearest_workspace_file() {
     assert_eq!(find_root(&a.join("src")), Some(e.root.clone()));
     assert_eq!(find_root(e.root.parent().unwrap()), None);
 }
+
+/// A workspace install prints the notes a single package's does: a member overriding a
+/// transitive source of its name, and native code that changes.
+#[test]
+fn a_workspace_install_prints_override_and_native_notes() {
+    let e = env(r#"{ members: ["app", "util"] }"#);
+    let native = |dir: &Path, version: &str| {
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        std::fs::write(
+            dir.join(MANIFEST_FILE),
+            format!("export const pkg: Package = {{ name: \"util\", version: \"{version}\", native: {{ c: {{}} }} }};"),
+        )
+        .unwrap();
+        std::fs::write(dir.join("src/lib.vlt"), "\n").unwrap();
+    };
+    // `mid`, from the registry, asks for the registry's `util`; the member `util` wins.
+    e.publish("util", "0.1.0");
+    let mid = e.root.join("../published/mid-0.1.0");
+    write_package(&mid, "mid", r#"dependencies: { util: "0.1" }"#);
+    crate::registry::publish(&mid, &e.loc).unwrap();
+    native(&e.root.join("util"), "0.1.0");
+    let app = e.root.join("app");
+    write_package(
+        &app,
+        "app",
+        r#"allowNative: ["util"], dependencies: { mid: "0.1" }"#,
+    );
+    let first = e.install(&app).unwrap();
+    assert!(
+        first.notes.iter().any(
+            |n| n.starts_with("`util` comes from this package's own entry")
+                && n.contains("`mid` asks for")
+        ),
+        "{:?}",
+        first.notes
+    );
+    native(&e.root.join("util"), "0.1.1");
+    let second = e.install(&app).unwrap();
+    assert!(
+        second
+            .notes
+            .iter()
+            .any(|n| n.starts_with("native code of `util` changes: 0.1.0")),
+        "{:?}",
+        second.notes
+    );
+}

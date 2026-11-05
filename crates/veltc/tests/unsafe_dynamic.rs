@@ -496,7 +496,7 @@ fn npm_packages_have_no_package_s_trust() {
         "app",
         "app",
         &format!(
-            "allowNative: [\"good\"],\n  dependencies: {{ good: {{ git: \"{url}\" }}, x: {{ git: \"{url}\", path: \"js\" }} }},"
+            "allowNative: [{{ name: \"good\", git: \"{url}\" }}],\n  dependencies: {{ good: {{ git: \"{url}\" }}, x: {{ git: \"{url}\", path: \"js\" }} }},"
         ),
     );
     write(root, "app/src/main.vlt", call);

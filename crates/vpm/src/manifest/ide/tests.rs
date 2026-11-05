@@ -78,6 +78,12 @@ fn nested_objects_complete_their_own_fields() {
         labels("{ dependencies: { util: { path: \"../u\", | } } }"),
         ["version", "git", "branch", "tag", "rev"]
     );
+    // An `allowNative` entry's object form, not a string element.
+    assert_eq!(
+        labels("{ allowNative: [\"sqlite\", { name: \"llama\", | }] }"),
+        ["git", "url"]
+    );
+    assert!(labels("{ allowNative: [|] }").is_empty());
     // The keys of `dependencies` and `paths` are the user's.
     assert!(labels("{ dependencies: { | } }").is_empty());
     assert!(labels("{ paths: { | } }").is_empty());

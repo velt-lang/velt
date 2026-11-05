@@ -1,0 +1,30 @@
+// velt/crypto (tests): white-box tests of the AEADs' message length limits, run by `velt test std/`.
+//
+// A message at the limit needs a buffer of hundreds of GiB, so these call the length checks that
+// `seal` and `open` run first.
+import { describe, expect, it } from "velt/test";
+import { chachaCheckLength } from "velt/crypto/chacha20_poly1305";
+import { CryptoError } from "velt/crypto/errors";
+
+// Whether `check(n)` throws a `CryptoError`.
+function throwsCryptoError(check: (n: u64) => void throws CryptoError, n: u64): bool {
+  try {
+    check(n);
+  } catch (e) {
+    return e instanceof CryptoError;
+  }
+  return false;
+}
+
+describe("ChaCha20-Poly1305's length limit", () => {
+  it("allows 2^32 - 1 blocks of 64 bytes and throws CryptoError past them", () => {
+    chachaCheckLength(0);
+    chachaCheckLength(274877906880);
+    expect(() => chachaCheckLength(274877906881)).toThrow(
+      "ChaCha20-Poly1305 message must be at most 274877906880 bytes, got 274877906881",
+    );
+    expect(throwsCryptoError(chachaCheckLength, 274877906880)).toBe(false);
+    expect(throwsCryptoError(chachaCheckLength, 274877906881)).toBe(true);
+    expect(throwsCryptoError(chachaCheckLength, 0xffffffffffffffff)).toBe(true);
+  });
+});

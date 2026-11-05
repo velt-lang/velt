@@ -1,0 +1,104 @@
+// registry-cloudflare: packages and their owners in a D1 database (migrations/0001_init.sql). The
+// handler changes a package only while it holds that package's lock, so a whole index can be
+// replaced at once.
+
+import { D1Database, d1Database } from "cloudflare";
+import { MetadataDb, PackageIndex } from "registry-core";
+import { indexFromJson } from "./index_json";
+import { storeFailure } from "./stored";
+
+struct IndexRow {
+  name: string;
+  index_json: string;
+}
+
+struct NameRow {
+  name: string;
+}
+
+struct UserRow {
+  user: string;
+}
+
+/** The registry's metadata in the D1 database bound as `binding`. */
+export class D1MetadataDb implements MetadataDb {
+  private db: D1Database;
+
+  constructor(binding: string) {
+    this.db = d1Database(binding);
+  }
+
+  async index(name: string): Promise<PackageIndex | null> {
+    try {
+      const row = await this.db
+        .prepare("SELECT name, index_json FROM packages WHERE name = ?")
+        .bind(name)
+        .first<IndexRow>();
+      return row == null ? null : indexFromJson(row.name, row.index_json);
+    } catch (e) {
+      throw storeFailure("the database", e);
+    }
+  }
+
+  async putIndex(name: string, index: PackageIndex): Promise<void> {
+    try {
+      await this.db
+        .prepare(
+          "INSERT INTO packages (name, index_json) VALUES (?, ?) " +
+            "ON CONFLICT (name) DO UPDATE SET index_json = excluded.index_json",
+        )
+        .bind(name, index.toJson())
+        .run();
+    } catch (e) {
+      throw storeFailure("the database", e);
+    }
+  }
+
+  async packageNames(): Promise<string[]> {
+    try {
+      const rows = await this.db.prepare("SELECT name FROM packages").all<NameRow>();
+      return rows.results.map((r: NameRow): string => r.name);
+    } catch (e) {
+      throw storeFailure("the database", e);
+    }
+  }
+
+  /** Every package: the handler ranks them, and full-text search can narrow this later. */
+  async searchCandidates(terms: string[]): Promise<PackageIndex[]> {
+    try {
+      const rows = await this.db.prepare("SELECT name, index_json FROM packages").all<IndexRow>();
+      return rows.results.map((r: IndexRow): PackageIndex => indexFromJson(r.name, r.index_json));
+    } catch (e) {
+      throw storeFailure("the database", e);
+    }
+  }
+
+  async owners(name: string): Promise<string[]> {
+    try {
+      const rows = await this.db
+        .prepare("SELECT user FROM owners WHERE package = ? ORDER BY position")
+        .bind(name)
+        .all<UserRow>();
+      return rows.results.map((r: UserRow): string => r.user);
+    } catch (e) {
+      throw storeFailure("the database", e);
+    }
+  }
+
+  async putOwners(name: string, owners: string[]): Promise<void> {
+    try {
+      // One transaction: a failure leaves the old list.
+      const statements = [this.db.prepare("DELETE FROM owners WHERE package = ?").bind(name)];
+      for (let i = 0; i < owners.length; i++) {
+        statements.push(
+          this.db
+            .prepare("INSERT INTO owners (package, position, user) VALUES (?, ?, ?)")
+            .bind(name, i, owners[i]),
+        );
+      }
+      await this.db.batch(statements);
+    } catch (e) {
+      throw storeFailure("the database", e);
+    }
+  }
+}

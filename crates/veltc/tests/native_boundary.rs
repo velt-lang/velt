@@ -277,7 +277,7 @@ fn an_npm_package_in_an_allowed_git_package_is_not_that_package() {
         "app",
         "app",
         &format!(
-            "allowNative: [\"good\"],\n  dependencies: {{ good: {{ git: \"{url}\" }}, jsx: {{ git: \"{url}\", path: \"js\" }} }},"
+            "allowNative: [{{ name: \"good\", git: \"{url}\" }}],\n  dependencies: {{ good: {{ git: \"{url}\" }}, jsx: {{ git: \"{url}\", path: \"js\" }} }},"
         ),
     );
     write(

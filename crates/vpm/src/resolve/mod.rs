@@ -5,6 +5,14 @@
 //! locked version goes first), an already-selected one must satisfy the new requirement or the
 //! branch fails. When every branch fails, the error of the first (most preferred) branch is
 //! reported, listing each conflicting requirement with the chain that introduced it.
+//!
+//! **Sources** (#2367): one name has one source. The requirements written by manifests the root
+//! controls (the root's, a workspace member's, a path package's: only those can name a `path`,
+//! since a git package's paths become its repository) are solved first, and they win: a
+//! transitive requirement of the same name from another source is replaced by the root's entry,
+//! as long as the version still matches, and [`Resolution::overrides`] records it. Two such
+//! root-controlled entries that disagree, or two transitive ones the root doesn't settle, are an
+//! error naming both; never a silent pick.
 
 mod candidates;
 mod report;
@@ -76,6 +84,18 @@ pub struct Resolution {
     pub yanked: Vec<(String, Version)>,
     /// Things the user should know about the packages (a git package's links on Windows).
     pub warnings: Vec<String>,
+    /// Package name → the requirements of other packages for it that the root's own entry
+    /// replaced with its source (the root's direct dependency wins).
+    pub overrides: BTreeMap<String, Vec<Override>>,
+}
+
+/// A transitive requirement that the root's entry for the same package overrode.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Override {
+    /// The package that asked.
+    pub by: String,
+    /// What it asked for, as messages show it (`` `foo ^1.2` ``, `` `foo` from https://… ``).
+    pub wanted: String,
 }
 
 /// What a requirement asks for.
@@ -99,6 +119,10 @@ struct Requirement {
     name: String,
     want: Want,
     chain: Vec<String>,
+    /// The package whose manifest wrote it.
+    by: String,
+    /// Whether that manifest is one the root controls (module docs).
+    root: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -122,7 +146,7 @@ pub fn resolve(
     prefer: Option<&Lockfile>,
 ) -> Result<Resolution, String> {
     let root_label = format!("{} {}", manifest.package.name, manifest.package.version);
-    let root_reqs = dependency_requirements(manifest, root_dir, &[root_label])?;
+    let root_reqs = dependency_requirements(manifest, root_dir, &[root_label], true)?;
     let resolution = solve_root(root_dir, root_reqs, loc, prefer, &BTreeMap::new())?;
     refuse_root_name(root_dir, &manifest.package.name, &resolution)?;
     Ok(resolution)
@@ -181,6 +205,8 @@ pub fn resolve_members(
                 req: None,
             },
             chain: vec!["the workspace".to_string()],
+            by: "the workspace".to_string(),
+            root: true,
         })
         .collect();
     solve_root(root_dir, root_reqs, loc, prefer, members)
@@ -200,6 +226,21 @@ fn solve_root(
         pending: root_reqs.into(),
     };
     let solved = solve(state, &mut provider)?;
+    let mut overrides = BTreeMap::new();
+    for (name, sel) in &solved.selected {
+        let replaced: Vec<Override> = sel
+            .by
+            .iter()
+            .filter(|r| !r.root && !same_source(&sel.pkg.source, &r.want))
+            .map(|r| Override {
+                by: r.by.clone(),
+                wanted: report::describe_want(&r.name, &r.want),
+            })
+            .collect();
+        if !replaced.is_empty() {
+            overrides.insert(name.clone(), replaced);
+        }
+    }
     let packages: BTreeMap<String, ResolvedPackage> = solved
         .selected
         .into_iter()
@@ -218,14 +259,30 @@ fn solve_root(
         packages,
         yanked,
         warnings: provider.warnings.into_iter().collect(),
+        overrides,
     })
 }
 
 fn solve(mut state: State, provider: &mut Provider) -> Result<State, String> {
-    let Some(req) = state.pending.pop_front() else {
+    // The root's own requirements first, so each of its entries is selected before any
+    // transitive requirement of the same name arrives.
+    let next = state.pending.iter().position(|r| r.root).unwrap_or(0);
+    let Some(req) = state.pending.remove(next) else {
         return Ok(state);
     };
     if let Some(sel) = state.selected.get_mut(&req.name) {
+        if !same_source(&sel.pkg.source, &req.want) {
+            let root_chose = sel.by.iter().any(|r| r.root);
+            if !root_chose || req.root {
+                return Err(report::two_sources(&req, sel));
+            }
+            // The root's entry wins over a transitive one, if the version still fits.
+            if !version_fits(&sel.pkg, &req.want) {
+                return Err(report::overridden_version(&req, sel));
+            }
+            sel.by.push(req);
+            return solve(state, provider);
+        }
         if satisfies(&sel.pkg, &req.want) {
             sel.by.push(req);
             return solve(state, provider);
@@ -263,6 +320,8 @@ fn select(state: &State, req: &Requirement, cand: Candidate) -> State {
             name,
             want,
             chain: chain.clone(),
+            by: req.name.clone(),
+            root: cand.root_controlled,
         });
     }
     let pkg = ResolvedPackage {
@@ -281,6 +340,27 @@ fn select(state: &State, req: &Requirement, cand: Candidate) -> State {
     next
 }
 
+/// Whether `want` asks for the source `source` is: the registry for the registry, the same
+/// directory, the same repository, reference and directory.
+fn same_source(source: &Source, want: &Want) -> bool {
+    match (want, source) {
+        (Want::Registry(_), Source::Registry { .. }) => true,
+        (Want::Path { dir, .. }, Source::Path { dir: selected }) => dir == selected,
+        (Want::Git { spec, .. }, Source::Git { spec: selected, .. }) => spec == selected,
+        _ => false,
+    }
+}
+
+/// Whether `pkg`'s version is one `want` accepts, whatever its source.
+fn version_fits(pkg: &ResolvedPackage, want: &Want) -> bool {
+    match want {
+        Want::Registry(req) => req.matches(&pkg.version),
+        Want::Path { req, .. } | Want::Git { req, .. } => {
+            req.as_ref().is_none_or(|r| r.matches(&pkg.version))
+        }
+    }
+}
+
 fn satisfies(pkg: &ResolvedPackage, want: &Want) -> bool {
     match (want, &pkg.source) {
         (Want::Registry(req), _) => req.matches(&pkg.version),
@@ -294,12 +374,15 @@ fn satisfies(pkg: &ResolvedPackage, want: &Want) -> bool {
     }
 }
 
-/// The requirements declared by `manifest` (whose package root is `dir`).
+/// The requirements declared by `manifest` (whose package root is `dir`); `root`: whether the
+/// root controls that manifest (module docs).
 fn dependency_requirements(
     manifest: &Manifest,
     dir: &Path,
     chain: &[String],
+    root: bool,
 ) -> Result<Vec<Requirement>, String> {
+    let by = &manifest.package.name;
     let mut out = vec![];
     for (name, dep) in &manifest.dependencies {
         if dep.is_workspace() {
@@ -314,6 +397,8 @@ fn dependency_requirements(
                 name: name.clone(),
                 want: Want::Git { spec, req },
                 chain: chain.to_vec(),
+                by: by.clone(),
+                root,
             });
             continue;
         }
@@ -333,6 +418,8 @@ fn dependency_requirements(
             name: name.clone(),
             want,
             chain: chain.to_vec(),
+            by: by.clone(),
+            root,
         });
     }
     Ok(out)

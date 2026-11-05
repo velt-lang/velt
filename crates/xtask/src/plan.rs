@@ -85,6 +85,7 @@ const TOOLING: &[(&str, &[&str])] = &[
             "workers",
             "cloudflare",
             "workerd",
+            "registry_worker",
         ],
     ),
 ];

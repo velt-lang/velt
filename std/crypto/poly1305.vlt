@@ -1,0 +1,159 @@
+// velt/crypto (internal): the Poly1305 one-time authenticator (RFC 8439 §2.5), in five 26-bit
+// limbs (products fit a `u64`). Constant time: the final reduction mod 2^130 - 5 selects with a
+// mask, never a branch on the accumulator or the key.
+
+import { load32le, store32le } from "velt/crypto/chacha20";
+import { CryptoError } from "velt/crypto/errors";
+import { newBytes } from "velt/crypto/vectors";
+
+const M26: u64 = 0x3ffffff;
+
+/** A running Poly1305 MAC: `updatePadded` pieces, then `finish`. */
+export class Poly1305 {
+  private r: u64[];
+  private h: u64[];
+  private pad: u64[];
+
+  /** A MAC under the one-time `key` (32 bytes: r, then s); throws `CryptoError` for another length. */
+  constructor(key: u8[]) {
+    if (key.length != 32) {
+      throw new CryptoError(`Poly1305 key must be 32 bytes, got ${key.length}`);
+    }
+    this.r = [
+      (load32le(key, 0) as u64) & 0x3ffffff,
+      ((load32le(key, 3) as u64) >> 2) & 0x3ffff03,
+      ((load32le(key, 6) as u64) >> 4) & 0x3ffc0ff,
+      ((load32le(key, 9) as u64) >> 6) & 0x3f03fff,
+      ((load32le(key, 12) as u64) >> 8) & 0x00fffff,
+    ];
+    this.pad = [
+      load32le(key, 16) as u64,
+      load32le(key, 20) as u64,
+      load32le(key, 24) as u64,
+      load32le(key, 28) as u64,
+    ];
+    this.h = [0, 0, 0, 0, 0];
+  }
+
+  // One 16-byte block at `m[off..]`, `hibit` the 2^128 marker (1 << 24 in the top limb).
+  private block(m: u8[], off: usize, hibit: u64) {
+    const r0 = this.r[0];
+    const r1 = this.r[1];
+    const r2 = this.r[2];
+    const r3 = this.r[3];
+    const r4 = this.r[4];
+    const s1 = r1 * 5;
+    const s2 = r2 * 5;
+    const s3 = r3 * 5;
+    const s4 = r4 * 5;
+    const h0 = this.h[0] + ((load32le(m, off) as u64) & M26);
+    const h1 = this.h[1] + (((load32le(m, off + 3) as u64) >> 2) & M26);
+    const h2 = this.h[2] + (((load32le(m, off + 6) as u64) >> 4) & M26);
+    const h3 = this.h[3] + (((load32le(m, off + 9) as u64) >> 6) & M26);
+    const h4 = this.h[4] + (((load32le(m, off + 12) as u64) >> 8) | hibit);
+    const d0 = h0 * r0 + h1 * s4 + h2 * s3 + h3 * s2 + h4 * s1;
+    let d1 = h0 * r1 + h1 * r0 + h2 * s4 + h3 * s3 + h4 * s2;
+    let d2 = h0 * r2 + h1 * r1 + h2 * r0 + h3 * s4 + h4 * s3;
+    let d3 = h0 * r3 + h1 * r2 + h2 * r1 + h3 * r0 + h4 * s4;
+    let d4 = h0 * r4 + h1 * r3 + h2 * r2 + h3 * r1 + h4 * r0;
+    let c = d0 >> 26;
+    let n0 = d0 & M26;
+    d1 += c;
+    c = d1 >> 26;
+    const n1 = d1 & M26;
+    d2 += c;
+    c = d2 >> 26;
+    this.h[2] = d2 & M26;
+    d3 += c;
+    c = d3 >> 26;
+    this.h[3] = d3 & M26;
+    d4 += c;
+    c = d4 >> 26;
+    this.h[4] = d4 & M26;
+    n0 += c * 5;
+    c = n0 >> 26;
+    this.h[0] = n0 & M26;
+    this.h[1] = n1 + c;
+  }
+
+  /** Absorbs `m[start..end]`, zero-padded to whole 16-byte blocks (as the AEAD's padding). */
+  updatePadded(m: u8[], start: usize, end: usize) {
+    let off = start;
+    while (end - off >= 16) {
+      this.block(m, off, 1 << 24);
+      off += 16;
+    }
+    if (off < end) {
+      const last = Buffer.alloc(16);
+      for (let i: usize = 0; i < end - off; i++) {
+        last[i] = m[off + i];
+      }
+      this.block(last, 0, 1 << 24);
+    }
+  }
+
+  /** The 16-byte tag: h fully reduced mod 2^130 - 5, plus s, mod 2^128. */
+  finish(): u8[] {
+    let h0 = this.h[0];
+    let h1 = this.h[1];
+    let h2 = this.h[2];
+    let h3 = this.h[3];
+    let h4 = this.h[4];
+    let c = h1 >> 26;
+    h1 &= M26;
+    h2 += c;
+    c = h2 >> 26;
+    h2 &= M26;
+    h3 += c;
+    c = h3 >> 26;
+    h3 &= M26;
+    h4 += c;
+    c = h4 >> 26;
+    h4 &= M26;
+    h0 += c * 5;
+    c = h0 >> 26;
+    h0 &= M26;
+    h1 += c;
+    // g = h + 5 - 2^130: if it does not borrow, h >= p and g is the reduced value.
+    let g0 = h0 + 5;
+    c = g0 >> 26;
+    g0 &= M26;
+    let g1 = h1 + c;
+    c = g1 >> 26;
+    g1 &= M26;
+    let g2 = h2 + c;
+    c = g2 >> 26;
+    g2 &= M26;
+    let g3 = h3 + c;
+    c = g3 >> 26;
+    g3 &= M26;
+    let g4 = h4 + c - (1 << 26);
+    // All ones when g4 did not go negative (top bit clear).
+    const mask = (g4 >> 63) - 1;
+    g0 &= mask;
+    g1 &= mask;
+    g2 &= mask;
+    g3 &= mask;
+    g4 &= mask;
+    const keep = ~mask;
+    h0 = (h0 & keep) | g0;
+    h1 = (h1 & keep) | g1;
+    h2 = (h2 & keep) | g2;
+    h3 = (h3 & keep) | g3;
+    h4 = (h4 & keep) | g4;
+    const w0 = (h0 | (h1 << 26)) & 0xffffffff;
+    const w1 = ((h1 >> 6) | (h2 << 20)) & 0xffffffff;
+    const w2 = ((h2 >> 12) | (h3 << 14)) & 0xffffffff;
+    const w3 = ((h3 >> 18) | (h4 << 8)) & 0xffffffff;
+    const out = newBytes(16);
+    let f = w0 + this.pad[0];
+    store32le(out, 0, f as u32);
+    f = w1 + this.pad[1] + (f >> 32);
+    store32le(out, 4, f as u32);
+    f = w2 + this.pad[2] + (f >> 32);
+    store32le(out, 8, f as u32);
+    f = w3 + this.pad[3] + (f >> 32);
+    store32le(out, 12, f as u32);
+    return out;
+  }
+}

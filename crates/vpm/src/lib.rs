@@ -35,6 +35,7 @@ pub mod remote;
 pub mod resolve;
 pub mod scaffold;
 pub mod search;
+pub mod source_url;
 pub mod sources;
 pub mod workspace;
 pub mod yank;
