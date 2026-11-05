@@ -1,0 +1,10 @@
+// `Object.freeze(o) as unknown as T`: the object it holds.
+interface Sig { aborted: boolean; }
+let cached: Sig | undefined;
+function inert(): Sig {
+  return (cached ??= Object.freeze({ aborted: false, onabort: null, stop() {} }) as unknown as Sig);
+}
+const made = new Proxy({}, {});
+console.log(inert().aborted);
+const u: unknown = Object.freeze({ a: 1 });
+console.log(u);
