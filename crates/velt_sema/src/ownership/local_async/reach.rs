@@ -175,16 +175,7 @@ pub(super) fn reaches(
     match &e.kind {
         E::Local(l, _) => taint.get(l).copied(),
         // A closure handing out a buffer it captured, or a view over one: its result is that buffer.
-        E::Closure(c) => {
-            if !hands_out_held(cx, *c, memo) {
-                return None;
-            }
-            let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
-                return None;
-            };
-            let found = f.captures.iter().find_map(|k| taint.get(&k.outer).copied());
-            found.map(|(r, _)| (r, true))
-        }
+        E::Closure(c) => held_through(cx, *c, taint, memo),
         E::Lit(_) | E::Global(_) | E::FnRef(..) => None,
         E::Block(b) => b.value.as_deref().and_then(|v| reaches(cx, v, taint, memo)),
         // A conversion keeps the value: a new value converted to an `any` or an interface
@@ -227,6 +218,11 @@ pub(super) fn reaches(
             }
             Some((r, !own))
         }
+        // A function declared in the body, called by name: as a closure handing out what it captured.
+        E::Call {
+            callee: Callee::Def(d, _),
+            ..
+        } if held_through(cx, *d, taint, memo).is_some() => held_through(cx, *d, taint, memo),
         _ => {
             let mut found: Option<(Root, bool)> = None;
             walk::children(e, &mut |x| {
@@ -237,18 +233,21 @@ pub(super) fn reaches(
                 }
             });
             let (r, _) = found?;
-            if let E::Call {
-                callee: Callee::Def(d, _),
-                ..
-            } = &e.kind
-            {
-                if hands_out_held(cx, *d, memo) {
-                    return Some((r, true));
-                }
-            }
             Some((r, !fresh(cx, e, memo)))
         }
     }
+}
+
+/// What the closure or function `c` hands out, if it hands out a reached capture (`hands_out_held`).
+fn held_through(cx: &mut Ctx, c: DefId, taint: &Roots, memo: &mut Memo) -> Option<(Root, bool)> {
+    if !hands_out_held(cx, c, memo) {
+        return None;
+    }
+    let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
+        return None;
+    };
+    let found = f.captures.iter().find_map(|k| taint.get(&k.outer).copied());
+    found.map(|(r, _)| (r, true))
 }
 
 const VIEWS: &[&str] = &[
