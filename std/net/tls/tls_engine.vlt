@@ -5,6 +5,10 @@
 // Built for throughput: `RecordReader` reads and decrypts records in place in one reused
 // buffer, and writes seal up to four records in place in a second reused buffer and go out in
 // one transport write. Only the handshake allocates.
+//
+// Writes take turns (`turn`, `done`): records carry implicit sequence numbers, so each write
+// seals and sends its records while no other does, in the order the writes were called; a
+// KeyUpdate and close_notify wait their turn the same way.
 
 import { IoError } from "velt/io/error";
 import { ByteStream } from "velt/net/byte_stream";
@@ -43,6 +47,7 @@ export class TlsEngine {
   private writer: RecordCipher | null;
   private wbuf: u8[];
   private writing: bool;
+  private waiting: (() => void)[];
   private suite: usize;
   private readSecret: u8[];
   private writeSecret: u8[];
@@ -61,6 +66,7 @@ export class TlsEngine {
     this.writer = null;
     this.wbuf = Buffer.alloc(BATCH * RECORD);
     this.writing = false;
+    this.waiting = [];
     this.suite = 0;
     this.readSecret = [];
     this.writeSecret = [];
@@ -156,24 +162,22 @@ export class TlsEngine {
     return this.r.take(n);
   }
 
-  /** Writes `bytes[from..to]` as application data. */
+  /** Writes `bytes[from..to]` as application data, after the writes called before. */
   async write(bytes: u8[], from: usize, to: usize): Promise<void> {
-    const f = this.failure;
-    if (f != null) {
-      throw f;
-    }
-    if (this.shutDown) {
-      throw new IoError("EPIPE", "TLS stream: write after shutdown()");
-    }
-    const writer = this.writer;
-    if (writer == null) {
-      throw new IoError("ENOTCONN", "TLS stream: no handshake");
-    }
-    // A second writer while one waits on the transport gets a buffer of its own.
-    const own = !this.writing;
-    const buf = own ? this.wbuf : Buffer.alloc(BATCH * RECORD);
-    this.writing = true;
+    this.checkWritable();
+    await this.turn();
     try {
+      // The connection may have failed while this write waited (a shutdown since lets the
+      // writes called before it finish first).
+      const f = this.failure;
+      if (f != null) {
+        throw f;
+      }
+      const writer = this.writer;
+      if (writer == null) {
+        throw new IoError("ENOTCONN", "TLS stream: no handshake");
+      }
+      const buf = this.wbuf;
       let off = from;
       while (off < to) {
         let n: usize = 0;
@@ -189,9 +193,7 @@ export class TlsEngine {
         await this.t.writeBytes(buf, 0, n as number);
       }
     } finally {
-      if (own) {
-        this.writing = false;
-      }
+      this.done();
     }
   }
 
@@ -200,7 +202,12 @@ export class TlsEngine {
     if (!this.shutDown && this.writer != null && this.failure == null) {
       this.shutDown = true;
       try {
-        await this.sendProtected(ALERT, [1, CLOSE_NOTIFY]);
+        await this.turn();
+        try {
+          await this.sendProtected(ALERT, [1, CLOSE_NOTIFY]);
+        } finally {
+          this.done();
+        }
       } finally {
         this.t.close();
       }
@@ -253,9 +260,49 @@ export class TlsEngine {
     this.readSecret = nextSecret(this.readSecret);
     this.r.cipher = new RecordCipher(this.suite, this.readSecret);
     if (m[4] == 1 && !this.shutDown) {
-      await this.sendProtected(HANDSHAKE, [KEY_UPDATE, 0, 0, 1, 0]);
-      this.writeSecret = nextSecret(this.writeSecret);
-      this.writer = new RecordCipher(this.suite, this.writeSecret);
+      // After the writes in progress, which keep the old keys; the ones after it use the next.
+      await this.turn();
+      try {
+        await this.sendProtected(HANDSHAKE, [KEY_UPDATE, 0, 0, 1, 0]);
+        this.writeSecret = nextSecret(this.writeSecret);
+        this.writer = new RecordCipher(this.suite, this.writeSecret);
+      } finally {
+        this.done();
+      }
+    }
+  }
+
+  // Throws the connection's failure, or EPIPE after `shutdown` or `close`.
+  private checkWritable() {
+    const f = this.failure;
+    if (f != null) {
+      throw f;
+    }
+    if (this.shutDown) {
+      throw new IoError("EPIPE", "TLS stream: write after shutdown()");
+    }
+  }
+
+  // Waits until no other write is sealing or sending (writes go in the order they call it).
+  private async turn(): Promise<void> {
+    if (!this.writing) {
+      this.writing = true;
+      return;
+    }
+    const w = Promise.withResolvers<void>();
+    this.waiting.push(w.resolve);
+    await w.promise;
+  }
+
+  // Ends a write's turn: the next waiting write's starts (`writing` stays true for it).
+  private done() {
+    if (this.waiting.length == 0) {
+      this.writing = false;
+      return;
+    }
+    const next = this.waiting.shift();
+    if (next != null) {
+      next();
     }
   }
 
@@ -317,7 +364,8 @@ export class TlsEngine {
     const err = e instanceof IoError ? e : new IoError("EPROTO", `TLS: ${e}`);
     if (this.failure == null) {
       this.failure = err;
-      if (e instanceof TlsFailure && e.sendAlert && !this.shutDown) {
+      // The alert only when no write is in progress: it may wait on the transport for good.
+      if (e instanceof TlsFailure && e.sendAlert && !this.shutDown && !this.writing) {
         try {
           if (this.writer != null) {
             await this.sendProtected(ALERT, [2, e.alert]);

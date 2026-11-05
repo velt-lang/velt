@@ -100,12 +100,17 @@ const CLIENT_ALERT_RECORD = "1703030013c9872760655666b74d7ff1153efd6db6d0b0e3";
 const SERVER_ALERT_RECORD = "1703030013b58fd67166ebf599d24720cfbe7efa7a8864a9";
 
 // A transport that plays back `input` in pieces of `chunk` bytes and records what is written.
+// With `slow`, a write takes the bytes at once but finishes a turn of the event loop later, as
+// a socket's does when its buffer is full; `mostWrites` counts the writes in flight at once.
 class Playback implements ByteStream {
   private input: u8[];
   private pos: usize;
   private chunk: usize;
   written: u8[];
   closed: bool;
+  slow: bool;
+  private writes: usize;
+  mostWrites: usize;
 
   constructor(input: u8[], chunk: usize) {
     this.input = input;
@@ -113,6 +118,9 @@ class Playback implements ByteStream {
     this.chunk = chunk;
     this.written = [];
     this.closed = false;
+    this.slow = false;
+    this.writes = 0;
+    this.mostWrites = 0;
   }
 
   async readInto(buf: Uint8Array): Promise<number | null> {
@@ -140,6 +148,18 @@ class Playback implements ByteStream {
     const to = end ?? (data.length as number);
     for (let i = start as usize; i < (to as usize); i++) {
       this.written.push(data[i]);
+    }
+    if (this.slow) {
+      this.writes++;
+      if (this.writes > this.mostWrites) {
+        this.mostWrites = this.writes;
+      }
+      const later = Promise.withResolvers<void>();
+      setImmediate(async () => {
+        later.resolve();
+      });
+      await later.promise;
+      this.writes--;
     }
   }
 
@@ -238,6 +258,19 @@ function sealAll(cipher: RecordCipher, inners: u8[][]): string {
     }
     const n = cipher.seal(buf, 0, inner.length);
     out += hexEncode(buf.slice(0, n as i64));
+  }
+  return out;
+}
+
+// The application data in the records `rec[at..]` under `cipher`, in order.
+function openAll(cipher: RecordCipher, rec: u8[], at: usize): string {
+  let out = "";
+  let pos = at;
+  while (pos < rec.length) {
+    const [inner, next] = openAt(cipher, rec, pos);
+    expect(inner.endsWith("17")).toBe(true);
+    out += inner.slice(0, (inner.length - 2) as i64);
+    pos = next;
   }
   return out;
 }
@@ -451,6 +484,77 @@ describe("TLS 1.3 client, RFC 8448 §3", () => {
     expect(second).toBe(hexEncode(payload(5)) + "17");
     expect(end).toBe(out.length);
     expect((await s.read()).length).toBe(0);
+  });
+
+  it("writes one write's records after another's, one transport write at a time", async () => {
+    const t = new Playback(hexDecode(server()), 1000000);
+    const s = await handshake(t);
+    t.slow = true;
+    // Five records, sealed in two batches; the second write starts while the first waits.
+    const big = payload(5 * 16384);
+    for (let i: usize = 0; i < big.length; i++) {
+      big[i] = (i % 251) as u8;
+    }
+    const small = payload(7);
+    await Promise.all([s.writeBytes(big), s.writeBytes(small)]);
+    expect(t.mostWrites).toBe(1);
+    const cipher = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
+    expect(openAll(cipher, t.written, 259) == hexEncode(big) + hexEncode(small)).toBe(true);
+  });
+
+  it("lets the writes called before shutdown() finish before its close_notify", async () => {
+    const t = new Playback(hexDecode(server()), 1000000);
+    const s = await handshake(t);
+    t.slow = true;
+    const first = s.writeBytes(payload(5 * 16384));
+    const second = s.writeBytes(payload(9));
+    await s.shutdown();
+    await first;
+    await second;
+    const c = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
+    let pos: usize = 259;
+    for (let r = 0; r < 6; r++) {
+      pos = openAt(c, t.written, pos)[1];
+    }
+    expect(openAt(c, t.written, pos)[0]).toBe("010015");
+    expect(t.closed).toBe(true);
+  });
+
+  it("sends a KeyUpdate after the write it waits behind, under the old keys", async () => {
+    const old = new RecordCipher(0x1301, hexDecode(SERVER_AP_SECRET));
+    sealAll(old, [[0]]);
+    const ku = sealAll(old, [[24, 0, 0, 1, 1, 22]]);
+    const data = payload(50);
+    data.push(23);
+    const after = sealAll(new RecordCipher(0x1301, updated(SERVER_AP_SECRET)), [data]);
+    const t = new Playback(
+      hexDecode(SERVER_HELLO_RECORD + SERVER_FLIGHT_RECORD + TICKET_RECORD + ku + after),
+      1000000,
+    );
+    const s = await handshake(t);
+    t.slow = true;
+    const big = payload(5 * 16384);
+    const writing = s.writeBytes(big);
+    expect(hexEncode(await s.read())).toBe(hexEncode(payload(50)));
+    await writing;
+    await s.writeBytes(payload(5));
+    // The write's five records under the old keys, the KeyUpdate under them too, then the
+    // next write under the new keys.
+    const out = t.written;
+    const c = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
+    let pos: usize = 259;
+    let sent = "";
+    for (let r = 0; r < 5; r++) {
+      const [inner, next] = openAt(c, out, pos);
+      sent += inner.slice(0, (inner.length - 2) as i64);
+      pos = next;
+    }
+    expect(sent == hexEncode(big)).toBe(true);
+    const [update, next] = openAt(c, out, pos);
+    expect(update).toBe("180000010016");
+    expect(openAll(new RecordCipher(0x1301, updated(CLIENT_AP_SECRET)), out, next)).toBe(
+      hexEncode(payload(5)),
+    );
   });
 
   it("reassembles a handshake message split across records", async () => {
