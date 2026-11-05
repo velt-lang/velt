@@ -64,6 +64,7 @@ export class ChaCha20Poly1305 implements Aead {
 
   /** Encrypts `buf[start..end]` in place under `nonce` and writes the tag to `buf[end..end + 16]`. */
   sealInPlace(nonce: u8[], aad: u8[], buf: u8[], start: usize, end: usize) {
+    checkNonce(nonce);
     chachaCheckLength((end - start) as u64);
     this.begin(nonce, aad);
     chachaXorInPlace(this.state, this.x, 1, buf, start, end);
@@ -77,6 +78,7 @@ export class ChaCha20Poly1305 implements Aead {
    * matches (true); false and `buf` unchanged otherwise.
    */
   openInPlace(nonce: u8[], aad: u8[], buf: u8[], start: usize, end: usize): bool {
+    checkNonce(nonce);
     if (end < start + 16) {
       return false;
     }
@@ -93,11 +95,8 @@ export class ChaCha20Poly1305 implements Aead {
     return true;
   }
 
-  // The nonce in the state, the one-time Poly1305 key, the additional data absorbed.
+  // The nonce (checked) in the state, the one-time Poly1305 key, the additional data absorbed.
   private begin(nonce: u8[], aad: u8[]) {
-    if (nonce.length != 12) {
-      throw new CryptoError(`ChaCha20-Poly1305 nonce must be 12 bytes, got ${nonce.length}`);
-    }
     chachaSetNonce(this.state, nonce);
     chachaPolyKey(this.state, this.x, this.polyKey);
     this.mac.reset(this.polyKey);
@@ -112,6 +111,12 @@ export class ChaCha20Poly1305 implements Aead {
     store32le(l, 8, c as u32);
     store32le(l, 12, ((c as u64) >> 32) as u32);
     this.mac.updatePadded(l, 0, 16);
+  }
+}
+
+function checkNonce(nonce: u8[]) {
+  if (nonce.length != 12) {
+    throw new CryptoError(`ChaCha20-Poly1305 nonce must be 12 bytes, got ${nonce.length}`);
   }
 }
 
