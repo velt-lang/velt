@@ -1,8 +1,15 @@
-// The same with a primitive for the union's other member: `(string | symbol)[]` as
-// `(string | typeof K)[]` is refused (#923). Node prints 1.
+// The same with a primitive for the union's other member (#923). Node gives a TypeError that
+// `x.toUpperCase` is not a function; a thrown TypeError with another message is the accepted
+// difference.
 const K = Symbol("k");
 
 type S = string | typeof K;
-const l: (string | symbol)[] = [Symbol("z")];
+
+function use(x: S): string {
+  return x === K ? "k" : x.toUpperCase();
+}
+
+const l: (string | symbol)[] = [K, "a", Symbol("z")];
 const s = l as S[];
-console.log(s.length);
+console.log(use(s[0]), use(s[1]));
+console.log(use(s[2]));

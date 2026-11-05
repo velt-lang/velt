@@ -1,0 +1,10 @@
+// The fresh array of `unique_symbol_cast_erased` read by a test of `K`: a symbol that is not `K`
+// stops (#923). Node reads `undefined` from it and gives a TypeError; a thrown TypeError with
+// another message is the accepted difference.
+const K = Symbol("k");
+
+type S = { p: string } | typeof K;
+const fresh = [Symbol("z")] as S[];
+console.log(fresh.length);
+const x = fresh[0];
+console.log(x !== K ? x.p.length : "k");

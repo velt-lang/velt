@@ -1,0 +1,16 @@
+// A union with a member made from a type parameter: the member's slot is decided per instance, so
+// a symbol that is not `K` stops at the test (#923). Here `T[F]` at an object field. Node prints `symbol`; a stop with
+// a TypeError is the accepted difference: the value is in no slot of this instance.
+const K = Symbol("k");
+
+function c<T>(x: any): T {
+  return x as T;
+}
+
+function h<T, F extends keyof T>(x: T[F] | typeof K): string {
+  return x === K ? "k" : typeof x;
+}
+
+type A = { a: { o: number } };
+console.log(h<A, "a">({ o: 1 }), h<A, "a">(K));
+console.log(h<A, "a">(c<{ o: number } | typeof K>(Symbol("z"))));

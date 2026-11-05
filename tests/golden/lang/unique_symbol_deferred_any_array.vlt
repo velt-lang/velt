@@ -1,0 +1,13 @@
+// A union with a member made from a type parameter: the member's slot is decided per instance, so
+// a symbol that is not `K` stops at the test (#923). Here from an `any` array, in `.map`. Node gives a TypeError on
+// `undefined`; a thrown TypeError with another message is the accepted difference.
+const K = Symbol("k");
+
+function all<T>(xs: ((T & { n: string }) | typeof K)[]): string[] {
+  return xs.map((x) => (x !== K ? x.n.toUpperCase() + x.n.length : "k"));
+}
+
+type Q = { q: number };
+const a: any = [K, Symbol("z")];
+console.log(all<Q>([K]).join());
+console.log(all<Q>(a).join());

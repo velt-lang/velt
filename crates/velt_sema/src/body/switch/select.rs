@@ -418,6 +418,8 @@ impl FnCx<'_, '_> {
         let v = self.expr(test, Some(ty), Want::Borrow);
         let v = self.try_coerce(v, ty).unwrap_or_else(|v| v);
         let cur = self.mk(hir::ExprKind::Local(l, mode), ty, span);
+        let (cur, v) = self.erased_operands(cur, v);
+        let v = self.try_coerce(v, cur.ty).unwrap_or_else(|v| v);
         let guard = self.eq_values(cur, v, span);
         Sel {
             pat: self.pat(P::Binding(l, mode), ty, span),

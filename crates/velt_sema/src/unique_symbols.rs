@@ -105,35 +105,80 @@ impl Ctx<'_> {
 }
 
 impl Ctx<'_> {
-    /// Does `t` hold a `unique symbol` type (`unique`) or a plain `symbol`: itself, or in its
-    /// elements, members or fields?
-    pub(crate) fn holds_symbol(&mut self, t: TyId, unique: bool, depth: u32) -> bool {
-        if self.unique_symbols.is_empty() || depth > 4 {
+    /// `t` with each `unique symbol` type a `symbol`, as it is once brands are erased.
+    pub(crate) fn erase_unique(&mut self, t: TyId) -> TyId {
+        self.erased(t, false, 0)
+    }
+
+    /// Are `a` and `b`, one of them holding a brand, one type once brands are erased?
+    pub(crate) fn erases_alike(&mut self, a: TyId, b: TyId) -> bool {
+        if self.unique_symbols.is_empty()
+            || (self.erase_unique(a) == a && self.erase_unique(b) == b)
+        {
             return false;
         }
-        let found = match unique {
-            true => self.unique_symbols.values().any(|&u| u == t),
-            false => matches!(self.ty.kind(t), TyKind::Symbol),
-        };
-        if found {
-            return true;
+        // A field-only interface lowers as the object type of its fields.
+        self.erased(a, true, 0) == self.erased(b, true, 0)
+    }
+
+    fn erased(&mut self, t: TyId, ifaces: bool, depth: u32) -> TyId {
+        if self.unique_symbols.is_empty() || depth > 6 {
+            return t;
         }
-        let parts: Vec<TyId> = match self.ty.kind(t).clone() {
-            TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => vec![e],
-            TyKind::Promise(e, _) => vec![e],
-            TyKind::Map(k, v) => vec![k, v],
-            TyKind::Tuple(ts) => ts,
-            _ => match self.union_members(t) {
-                Some(ms) => ms,
-                None if self.is_object_type(t) => {
-                    self.public_fields(t).iter().map(|f| f.ty).collect()
-                }
-                None => vec![],
-            },
+        if self.unique_symbols.values().any(|&u| u == t) {
+            return self.ty.intern(TyKind::Symbol);
+        }
+        let d = depth + 1;
+        let go = |cx: &mut Self, x: TyId| cx.erased(x, ifaces, d);
+        let kind = match self.ty.kind(t).clone() {
+            TyKind::Array(e) => TyKind::Array(go(self, e)),
+            TyKind::Option(e, n) => TyKind::Option(go(self, e), n),
+            TyKind::Shared(e) => TyKind::Shared(go(self, e)),
+            TyKind::Promise(v, e) => TyKind::Promise(go(self, v), e),
+            TyKind::Map(k, v) => TyKind::Map(go(self, k), go(self, v)),
+            TyKind::Tuple(ts) => TyKind::Tuple(ts.into_iter().map(|e| go(self, e)).collect()),
+            TyKind::Adt(a, args) if !args.is_empty() => {
+                TyKind::Adt(a, args.into_iter().map(|e| go(self, e)).collect())
+            }
+            _ => return self.erased_shape(t, ifaces, d),
         };
-        parts
-            .into_iter()
-            .any(|p| self.holds_symbol(p, unique, depth + 1))
+        self.ty.intern(kind)
+    }
+
+    /// [`Self::erased`] for a concrete union or an object type.
+    fn erased_shape(&mut self, t: TyId, ifaces: bool, depth: u32) -> TyId {
+        if let Some(members) = self.union_members(t) {
+            let mut erased: Vec<TyId> = vec![];
+            for m in &members {
+                let e = self.erased(*m, ifaces, depth);
+                if !erased.contains(&e) {
+                    erased.push(e);
+                }
+            }
+            return match (erased == members, erased.as_slice()) {
+                (true, _) => t,
+                (false, [one]) => *one,
+                (false, _) => self.union_of(&erased, false, Span::DUMMY),
+            };
+        }
+        let TyKind::Adt(d, _) = *self.ty.kind(t) else {
+            return t;
+        };
+        let (Some(a), true) = (self.adt(d), self.is_object_type(t)) else {
+            return t;
+        };
+        let (module, anon) = (a.module, a.kind == AdtKind::Anon);
+        let mut fields = self.public_fields(t);
+        let mut changed = ifaces && !anon;
+        for f in &mut fields {
+            let e = self.erased(f.ty, ifaces, depth);
+            changed |= e != f.ty;
+            f.ty = e;
+        }
+        match changed {
+            true => self.anon_type_with(&fields, module),
+            false => t,
+        }
     }
 }
 

@@ -1,0 +1,19 @@
+// A union with a member made from a type parameter: the member's slot is decided per instance, so
+// a symbol that is not `K` stops at the test (#923). Node gives a TypeError on `undefined`;
+// a thrown TypeError with another message is the accepted difference.
+const K = Symbol("k");
+
+function c<T>(x: any): T {
+  return x as T;
+}
+
+function h<T>(x: (T & { n: string }) | typeof K): string {
+  if (x !== K) {
+    return x.n.toUpperCase() + x.n.length;
+  }
+  return "k";
+}
+
+type Q = { q: number };
+console.log(h<Q>(c<(Q & { n: string }) | typeof K>({ q: 1, n: "a" })), h<Q>(K));
+console.log(h<Q>(c<(Q & { n: string }) | typeof K>(Symbol("z"))));

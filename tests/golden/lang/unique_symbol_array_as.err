@@ -1,2 +1,0 @@
-cannot cast `(L)[]` as `(S)[]`
-a copy checks each element (`xs.map(x => x as S)`)

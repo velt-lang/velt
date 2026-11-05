@@ -32,12 +32,6 @@ impl FnCx<'_, '_> {
             let (s, d) = (self.cx.display(h.ty), self.cx.display(target));
             let diag = Diagnostic::error(format!("cannot cast `{s}` as `{d}`"), span);
             let mut diag = self.cx.with_layout_note(diag, target);
-            if let Some(te) = self.array_narrows_to_unique(h.ty, target) {
-                let name = self.cx.display(te);
-                diag = diag.with_note(format!(
-                    "`{name}` holds a `unique symbol`, which only its constant has: a copy checks each element (`xs.map(x => x as {name})`)"
-                ));
-            }
             if self.cx.has_literal_member(target) {
                 diag = diag.with_note(
                     "a value takes a literal type after a test that narrows it (`if (k === \"a\")`)",

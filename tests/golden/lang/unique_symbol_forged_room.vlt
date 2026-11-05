@@ -60,3 +60,23 @@ const a: any = [K, { p: "a" }];
 const t: S[] = a;
 console.log(t.map((x) => (x === K ? "k" : x.p)).join());
 console.log(t.filter((x) => x !== K).length, t.includes(K), t.indexOf(K));
+
+type Tag = symbol & { __tag: 1 };
+type Branded = { p: string } | typeof K | Tag;
+
+function branded(x: Branded): string {
+  if (x === K) {
+    return "k";
+  }
+  return typeof x === "symbol" ? "tag" : x.p;
+}
+
+console.log(branded(K), branded(Symbol("z") as Tag), branded({ p: "a" }));
+
+type Top = object | typeof K;
+
+function top(x: Top): string {
+  return x === K ? "k" : "other";
+}
+
+console.log(top(K), top({}), top(c<Top>(Symbol("z"))));

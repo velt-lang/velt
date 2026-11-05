@@ -362,7 +362,10 @@ impl FnCx<'_, '_> {
                 self.cast_member_numbers.truncate(mark);
                 lr
             }
-            None => self.operands(lhs, rhs, hint, Want::Borrow),
+            None => {
+                let (l, r) = self.operands(lhs, rhs, hint, Want::Borrow);
+                self.erased_operands(l, r)
+            }
         };
         // An `any` or `unknown` operand, by its checked type (a variable, a field, an element,
         // a call, a capture).

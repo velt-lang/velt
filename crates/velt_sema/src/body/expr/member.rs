@@ -657,7 +657,12 @@ impl FnCx<'_, '_> {
         let asserted = matches!(arrow.kind, ast::ExprKind::Arrow { .. })
             && matches!(self.cx.ty.kind(target), TyKind::FnPtr { .. });
         let outer = std::mem::replace(&mut self.asserted_fn, asserted.then_some(arrow.span));
-        let inner = self.expr(expr, Some(target), want);
+        // A fresh literal is built at the erased type (`[Symbol("z")] as S[]`), then retyped.
+        let hint = match arrow.kind {
+            ast::ExprKind::Array(..) | ast::ExprKind::Object(..) => self.cx.erase_unique(target),
+            _ => target,
+        };
+        let inner = self.expr(expr, Some(hint), want);
         // An `object | null` converts as the `object` holding its nothing (#2144).
         let inner = match inner.ty == target {
             true => inner,
@@ -693,9 +698,10 @@ impl FnCx<'_, '_> {
             Ok(h) => return Ok(h),
             Err(h) => h,
         };
-        // `xs as (typeof K)[]`: nothing below looks for `K` in each element.
-        if self.array_narrows_to_unique(inner.ty, target).is_some() {
-            return Err(inner);
+        // Two types of one erased form (`l as S[]`, `{ v: L }` as `{ v: S }`): a test of `K` stops
+        // on a symbol that is not.
+        if inner.ty != target && self.cx.erases_alike(inner.ty, target) {
+            return Ok(self.unique_retype(inner, target));
         }
         // `x as object` of an unbounded `T` (issue #926): checked at run time.
         self.object_view_cast(inner, target, span)

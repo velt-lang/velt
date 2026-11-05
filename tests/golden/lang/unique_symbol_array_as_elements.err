@@ -1,2 +1,0 @@
-cannot cast `Plain[]` as `Branded[]`
-`Branded` holds a `unique symbol`

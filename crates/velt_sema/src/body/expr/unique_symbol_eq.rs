@@ -159,24 +159,22 @@ impl FnCx<'_, '_> {
     /// Can union member `m` hold a symbol that is not a constant's `unique symbol`, whatever
     /// the type arguments are?
     fn member_holds_symbols(&mut self, m: TyId) -> bool {
-        if self.unique_symbol_of(m).is_some() || matches!(self.cx.ty.kind(m), TyKind::Param(_)) {
+        if self.unique_symbol_of(m).is_some() || self.cx.deferred_part(m) {
             return false;
         }
         let symbol = self.cx.ty.intern(TyKind::Symbol);
-        m == symbol
-            || self.cx.brand_base(m) == Some(symbol)
-            || self.cx.dynamic(m).is_some()
-            || self.cx.deferred_part(m)
+        m == symbol || self.cx.brand_base(m) == Some(symbol)
     }
 
-    /// `fail`, unless the union `inner` has a type parameter member whose slot holds a symbol
-    /// in this instance (`T | typeof K` at `symbol`, the two one member once lowered): then
-    /// `false`, as the value is that member. `T` at an object type has its own slot.
+    /// `fail`, unless the union `inner` has a member of a type parameter whose slot holds a
+    /// symbol in this instance (`T | typeof K` at `symbol`, `T[F] | typeof K` at a `symbol`
+    /// field, the two one member once lowered): then `false`, as the value is that member. At
+    /// an object type (`T & { n: string }`) the member has its own slot.
     fn unless_param_member(&mut self, read: hir::Expr, inner: TyId, fail: hir::Expr) -> hir::Expr {
         let span = read.span;
         let members = self.cx.union_members(inner).unwrap_or_default();
         let params: Vec<usize> = (0..members.len())
-            .filter(|&i| matches!(self.cx.ty.kind(members[i]), TyKind::Param(_)))
+            .filter(|&i| self.cx.deferred_part(members[i]))
             .collect();
         let Some((def, _)) = self.cx.union_def(inner).filter(|_| !params.is_empty()) else {
             return fail;
@@ -358,6 +356,40 @@ impl FnCx<'_, '_> {
 }
 
 impl FnCx<'_, '_> {
+    /// `l === r` with no constant named (`x === y` for `x: { p } | typeof K`, `y: symbol`): where
+    /// the operands differ only in brands they compare as their erased types, with no narrowing.
+    pub(crate) fn erased_operands(&mut self, l: hir::Expr, r: hir::Expr) -> (hir::Expr, hir::Expr) {
+        if l.ty == r.ty || self.cx.unique_symbols.is_empty() {
+            return (l, r);
+        }
+        let (el, er) = (self.cx.erase_unique(l.ty), self.cx.erase_unique(r.ty));
+        if (el, er) == (l.ty, r.ty)
+            || !(el == er || self.core_has_member(el, er) || self.core_has_member(er, el))
+        {
+            return (l, r);
+        }
+        let l = if el == l.ty {
+            l
+        } else {
+            self.unique_retype(l, el)
+        };
+        let r = if er == r.ty {
+            r
+        } else {
+            self.unique_retype(r, er)
+        };
+        self.union_operands(l, r)
+    }
+
+    /// Is `m` (without its nothing) a member of the union `u` (without its)?
+    fn core_has_member(&mut self, u: TyId, m: TyId) -> bool {
+        let (u, m) = (
+            self.cx.ty.core(u).unwrap_or(u),
+            self.cx.ty.core(m).unwrap_or(m),
+        );
+        (self.cx.union_members(u)).is_some_and(|ms| ms.contains(&m))
+    }
+
     /// `h` as `exp`, which it is once brands are erased (`Ctx::widens_unique`).
     pub(super) fn unique_retype(&mut self, h: hir::Expr, exp: TyId) -> hir::Expr {
         let span = h.span;

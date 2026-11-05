@@ -1,0 +1,20 @@
+// A union with a member made from a type parameter: the member's slot is decided per instance, so
+// a symbol that is not `K` stops at the test (#923). Here `Partial<T>`. Node reads `undefined` and prints it; a stop
+// with a TypeError is the accepted difference.
+const K = Symbol("k");
+
+function c<T>(x: any): T {
+  return x as T;
+}
+
+function h<T>(x: Partial<T> | typeof K, read: (p: Partial<T>) => unknown): string {
+  if (x !== K) {
+    return String(read(x));
+  }
+  return "k";
+}
+
+type Q = { n: string };
+const read = (p: Partial<Q>) => p.n;
+console.log(h<Q>({ n: "a" }, read), h<Q>(K, read));
+console.log(h<Q>(c<Partial<Q> | typeof K>(Symbol("z")), read));

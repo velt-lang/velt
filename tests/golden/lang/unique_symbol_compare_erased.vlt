@@ -1,0 +1,78 @@
+// Operands that differ only in brands compare as their erased types, with no narrowing, and no
+// constant named (#923). Node's output.
+const K = Symbol("k");
+const J = Symbol("j");
+
+type S = { p: string } | typeof K;
+type P = string | typeof K;
+type L = { p: string } | symbol;
+type T = { p: string } | typeof J;
+
+function sym(): symbol {
+  return K;
+}
+
+function f(x: S, y: symbol): boolean {
+  return x === y;
+}
+
+console.log(f(K, K), f(K, Symbol("z")), f({ p: "a" }, K));
+
+function ne(x: P, y: symbol): boolean {
+  return x !== y;
+}
+
+console.log(ne(K, K), ne("a", K));
+
+function pick(x: S, y: symbol): string {
+  switch (x) {
+    case y:
+      return "y";
+    default:
+      return "d";
+  }
+}
+
+console.log(pick(K, K), pick(K, J), pick({ p: "a" }, K));
+
+function first(x: S): boolean {
+  return sym() === x;
+}
+
+console.log(first(K), first({ p: "a" }));
+
+const h: { s: S } = { s: K };
+const tag: symbol = K;
+console.log(h.s === tag);
+
+function loose(x: S, y: L): boolean {
+  return x === y;
+}
+
+const o = { p: "a" };
+console.log(loose(K, K), loose(o, o), loose(o, Symbol("z")));
+
+function other(x: S, y: T): boolean {
+  return x === y;
+}
+
+console.log(other(o, o), other(K, J));
+
+function alias(x: S): string {
+  const A = K;
+  let cur = K;
+  return `${x === A} ${x === cur}`;
+}
+
+console.log(alias(K), alias({ p: "a" }));
+
+function pickNull(x: S | null, y: symbol | null): string {
+  switch (x) {
+    case y:
+      return "y";
+    default:
+      return "d";
+  }
+}
+
+console.log(pickNull(K, K), pickNull(null, null), pickNull(K, null));

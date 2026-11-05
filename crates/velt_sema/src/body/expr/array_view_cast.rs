@@ -3,9 +3,6 @@
 //! conversion through `any` that a view comes from: `AnyTo(U[], xs as any)`. The element
 //! types must be comparable (one converts to the other), as `as` needs in TypeScript; a union
 //! target with one array member (`result as JSXChildren`) takes the view as that member.
-//! Elements that can hold any symbol, as a type holding a `unique symbol`, are refused
-//! ([`FnCx::array_narrows_to_unique`]): a view reads them without looking for that symbol, and a
-//! copy (`.map`) checks each.
 
 use velt_common::Span;
 
@@ -47,22 +44,6 @@ impl FnCx<'_, '_> {
             return Ok(v);
         }
         self.try_coerce(v, target).map_err(|_| orig)
-    }
-
-    /// `xs as U[]` for `h` the type of `xs`: the element type of `target`, when it claims a
-    /// `unique symbol` for a symbol that may be another (`symbol[]` as `(typeof K)[]`).
-    pub(super) fn array_narrows_to_unique(&mut self, h: TyId, target: TyId) -> Option<TyId> {
-        if self.cx.unique_symbols.is_empty() {
-            return None;
-        }
-        let TyKind::Array(se) = self.cx.ty.kind(h).clone() else {
-            return None;
-        };
-        let arr = self.array_member(target)?;
-        let TyKind::Array(te) = self.cx.ty.kind(arr).clone() else {
-            return None;
-        };
-        (self.cx.holds_symbol(te, true, 0) && self.cx.holds_symbol(se, false, 0)).then_some(te)
     }
 
     /// An existing array `h` (a variable or a field, `vnode.children`) where an `any[]` or

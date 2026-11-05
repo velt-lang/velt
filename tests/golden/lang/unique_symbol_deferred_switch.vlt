@@ -1,0 +1,21 @@
+// A union with a member made from a type parameter: the member's slot is decided per instance, so
+// a symbol that is not `K` stops at the test (#923). Here through `case K` and `default`. Node gives a TypeError on
+// `undefined`; a thrown TypeError with another message is the accepted difference.
+const K = Symbol("k");
+
+function c<T>(x: any): T {
+  return x as T;
+}
+
+function h<T>(x: (T & { n: string }) | typeof K): string {
+  switch (x) {
+    case K:
+      return "k";
+    default:
+      return x.n.toUpperCase() + x.n.length;
+  }
+}
+
+type Q = { q: number };
+console.log(h<Q>(K));
+console.log(h<Q>(c<(Q & { n: string }) | typeof K>(Symbol("z"))));

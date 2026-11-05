@@ -1,0 +1,13 @@
+// A symbol stored through the array `l as S[]` came from stops at the test (#923). Node reads
+// `undefined` from it and gives a TypeError; a thrown TypeError with another message is the
+// accepted difference.
+const K = Symbol("k");
+
+type S = { p: string } | typeof K;
+type L = { p: string } | symbol;
+const l: L[] = [];
+const s = l as S[];
+l.push(Symbol("z"));
+console.log(s.length);
+const x = s[0];
+console.log(x !== K ? x.p.length : "k");
