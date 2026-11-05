@@ -4,9 +4,10 @@ import { Handler, Middleware } from "../types";
 
 /**
  * Answers 413 for a request body over `maxBytes`. A `Content-Length` over it is refused at once,
- * without reading the body. A body without one is read until it passes the limit, so at most
- * `maxBytes` is held, and is passed on from memory. `serve`'s `maxBodySize` is the limit for a whole
- * server; this one is for a route or a prefix that takes less.
+ * without reading the body. A body without one, or with one that isn't a whole number of bytes, is
+ * read until it passes the limit, so at most `maxBytes` is held, and its chunks are passed on as
+ * they came, not copied. `serve`'s `maxBodySize` is the limit for a whole server; this one is for a
+ * route or a prefix that takes less.
  */
 export function bodyLimit(maxBytes: number): Middleware {
   return (next: Handler): Handler => async (req: Request): Promise<Response> => {
@@ -14,9 +15,8 @@ export function bodyLimit(maxBytes: number): Middleware {
     if (body == null) {
       return await next(req);
     }
-    const length = req.headers.get("content-length");
-    if (length != null) {
-      const declared = parseInt(length);
+    const declared = byteCount(req.headers.get("content-length"));
+    if (declared >= 0) {
       return declared > maxBytes ? tooLarge() : await next(req);
     }
     const kept: Uint8Array[] = [];
@@ -28,16 +28,30 @@ export function bodyLimit(maxBytes: number): Middleware {
       }
       kept.push(chunk);
     }
-    const whole = new Uint8Array(total);
-    let at = 0;
-    for (const chunk of kept) {
-      whole.set(chunk, at);
-      at += chunk.length;
-    }
-    return await next(
-      new Request(req.url, { method: req.method, headers: req.headers, body: whole }),
-    );
+    return await next(new Request(req, { body: ReadableStream.from(replay(kept)) }));
   };
+}
+
+// The number a `Content-Length` holds, or -1 when there is none or it isn't only digits.
+function byteCount(header: string | null): number {
+  if (header == null || header.length == 0 || header.length > 15) {
+    return -1;
+  }
+  let n = 0;
+  for (let i = 0; i < header.length; i++) {
+    const c = header.charCodeAt(i);
+    if (c < 48 || c > 57) {
+      return -1;
+    }
+    n = n * 10 + (c - 48);
+  }
+  return n;
+}
+
+async function* replay(chunks: Uint8Array[]): AsyncGenerator<Uint8Array> {
+  for (const chunk of chunks) {
+    yield chunk;
+  }
 }
 
 function tooLarge(): Response {

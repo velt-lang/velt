@@ -128,6 +128,35 @@ describe("bodyLimit", () => {
     expect(await res.text()).toBe("123123");
   });
 
+  it("counts a body whose length isn't a whole number of bytes", async () => {
+    const h = bodyLimit(5)(echo);
+    for (const length of ["-1", "abc", "1e9", ""]) {
+      const res = await h(
+        new Request("http://t/", {
+          method: "POST",
+          body: "123456",
+          headers: { "content-length": length },
+        }),
+      );
+      expect(res.status).toBe(413);
+    }
+  });
+
+  it("keeps the method and headers of a request it read", async () => {
+    const seen = bodyLimit(5)(async (req: Request): Promise<Response> => {
+      const text = await req.text();
+      return new Response(`${req.method} ${req.headers.get("x-a")} ${text}`);
+    });
+    const res = await seen(
+      new Request("http://t/", {
+        method: "PUT",
+        body: BodyStream.from(parts(1)),
+        headers: { "x-a": "1" },
+      }),
+    );
+    expect(await res.text()).toBe("PUT 1 123");
+  });
+
   it("leaves a request without a body alone", async () => {
     const res = await bodyLimit(1)(ok)(new Request("http://t/"));
     expect(res.status).toBe(200);

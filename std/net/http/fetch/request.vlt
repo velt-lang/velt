@@ -46,13 +46,13 @@ export class Request {
 
   /**
    * Throws `IoError` "EINVAL" (JS: `TypeError`) for a GET or HEAD request with a body, and
-   * for a `Request` input whose body was already used.
+   * for a `Request` input whose body was already used when `init` gives no body of its own.
    */
   constructor(input: string | URL | Request, init?: RequestInit) throws IoError {
     if (typeof input == "string") {
       this.#target = input;
     } else {
-      this.from(input);
+      this.from(input, init != null && init.body != null);
     }
     if (init != null) {
       this.apply(init);
@@ -61,11 +61,11 @@ export class Request {
 
   // The constructor's `input` when it is not a string (kept out of the constructor, which
   // every received request runs).
-  private from(input: URL | Request) throws IoError {
+  private from(input: URL | Request, newBody: bool) throws IoError {
     if (input instanceof URL) {
       this.#target = input.href;
     } else {
-      this.copy(input);
+      this.copy(input, newBody);
     }
   }
 
@@ -115,20 +115,25 @@ export class Request {
   }
 
   // `new Request(input)` of another request: its fields, and its body, which `input` no longer
-  // has afterwards.
-  private copy(input: Request) throws IoError {
+  // has afterwards. With `newBody` (`init` gives one), `input`'s body is neither read nor taken,
+  // as the Fetch standard has it, so a request whose body was read can be passed on with a new one.
+  private copy(input: Request, newBody: bool) throws IoError {
     this.#target = input.url;
     this.#verb = input.method;
     this.carry(input);
     this.#fields = new Headers(input.headers);
-    if (!input.hasBody()) {
+    if (newBody) {
       return;
     }
+    // Before `hasBody()`: a received body that was read has none left, but is still used.
     if (input.bodyUsed) {
       throw new IoError(
         "EINVAL",
         "Cannot construct a Request with a Request object that has already been used.",
       );
+    }
+    if (!input.hasBody()) {
+      return;
     }
     if (input.fromServer() != null) {
       // The connection's chunks themselves: `chunks()` claims the body when first read, which
