@@ -2,9 +2,10 @@
 // /api/v1/<name>/owners/<user>` (crates/velt_registry/src/owners.rs). Only an owner changes
 // the owners, only to users that exist, and the last owner stays.
 
-import { checkUserName, isValidPackageName } from "../names";
-import { authorize, isPublished, writer } from "./access";
+import { checkUserName, isValidPackageName, normalizedName } from "../names";
+import { authorize, isPublished, ownerOf } from "./access";
 import { text } from "./answer";
+import { Caller } from "./caller";
 import { purgeAfterWrite } from "./purge_after_write";
 import { Refusal } from "./refusal";
 import { RegistryStores } from "./registry_stores";
@@ -36,7 +37,29 @@ export async function changeOwners(
   if (bad != null) {
     return text(400, bad);
   }
-  const caller = await writer(stores, req);
+  // Only a caller who may write gets to hold the lock; by its normalized name, so `my-pkg` and
+  // `my_pkg` wait for each other.
+  const caller = await ownerOf(stores, req, name);
+  // An unpublished name has nothing to change, and a caller who may "write" to `my_pkg` mustn't
+  // get the lock it shares with a published `my-pkg`.
+  if (!(await isPublished(stores, name))) {
+    return text(404, `no package \`${name}\``);
+  }
+  const held = await stores.lock.acquire(normalizedName(name));
+  try {
+    return await change(stores, caller, name, user, add);
+  } finally {
+    await held.release();
+  }
+}
+
+async function change(
+  stores: RegistryStores,
+  caller: Caller,
+  name: string,
+  user: string,
+  add: bool,
+): Promise<Response> {
   if (!(await isPublished(stores, name))) {
     return text(404, `no package \`${name}\``);
   }

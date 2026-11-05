@@ -12,7 +12,6 @@ import { RegistryStores } from "./registry_stores";
 import { search } from "./search";
 import { StoreError } from "../stores/store_error";
 import { yank } from "./yank";
-import { isValidPackageName, normalizedName } from "../names";
 
 /**
  * The path and query (without `?`) of `url` as sent: not resolved as the URL standard would
@@ -50,7 +49,8 @@ function isApi(p: string[]): bool {
 /**
  * A package registry. Reads are public; writes (publishing, yanking, owners) need a user's
  * token unless the registry is open, and an owner for a published package. Each write holds its
- * package's `PublishLock`. A store that fails answers 500 with its message.
+ * package's `PublishLock`, taken only once the caller may write. A store that fails answers 500
+ * with its message.
  */
 export class Registry {
   private stores: RegistryStores;
@@ -66,18 +66,6 @@ export class Registry {
     const [path, query] = target(req.url);
     const parts = trimSlashes(path).split("/");
     try {
-      // Every write to a package holds that package's lock (by its normalized name, so
-      // `my-pkg` and `my_pkg` wait for each other); an invalid name is refused unlocked. A publish
-      // takes it itself, once its body has arrived.
-      const isPublish = req.method == "PUT" && parts.length == 4 && isApi(parts);
-      if (req.method != "GET" && !isPublish && parts.length > 2 && isValidPackageName(parts[2])) {
-        const held = await this.stores.lock.acquire(normalizedName(parts[2]));
-        try {
-          return await this.route(req, parts, query);
-        } finally {
-          await held.release();
-        }
-      }
       return await this.route(req, parts, query);
     } catch (e) {
       if (e instanceof Refusal) {
