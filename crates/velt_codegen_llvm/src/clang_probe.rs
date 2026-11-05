@@ -81,6 +81,10 @@ pub fn ask_every_clang() {
 /// asks again. A second within [`HUNG_HOLD`] with no answer between them is what leaves the
 /// candidate alone. Holding it after one would pass over a clang that works for the whole period.
 ///
+/// A timeout of `--version` and one of the target check are counted apart, since a wrapper can answer
+/// the one every build and hang on the other, and an answer ends only its own count. Either one's
+/// hold leaves the candidate alone: the search then doesn't get as far as the check.
+///
 /// Both are kept under the file's key. The cache has no way to replace or delete a value, so the
 /// hour number is in the key, and the time in the value says exactly how old the note is: a note
 /// counts from the moment it is written until [`HUNG_HOLD`] later, whichever of two hours it falls
@@ -97,6 +101,13 @@ pub(crate) struct Waits<'a> {
     pub(crate) tell: &'a dyn Fn(&str),
 }
 
+/// What a candidate was asked, each with a count of its own ([`Waits`]).
+#[derive(Clone, Copy)]
+enum Asked {
+    Version,
+    Check,
+}
+
 /// What is known of a candidate hanging.
 struct HungNote {
     /// There is a note, in force or not.
@@ -110,14 +121,15 @@ struct HungNote {
 impl Waits<'_> {
     /// What `clang` says it is. If `hold`, a candidate that hung lately isn't asked.
     pub(crate) fn version(&self, clang: &Path, hold: bool) -> Probe {
-        let note = self.hung_note(clang);
-        if hold && note.in_force {
+        let note = self.hung_note(clang, Asked::Version);
+        let check_held = self.hung_note(clang, Asked::Check).in_force;
+        if hold && (note.in_force || check_held) {
             return Probe::Held;
         }
         let probe = probe_with(clang, self.memo, self.limit);
         match probe {
-            Probe::TimedOut => self.hung(clang, "`--version`"),
-            _ if note.seen => self.answered(clang),
+            Probe::TimedOut => self.hung(clang, Asked::Version),
+            _ if note.seen => self.answered(clang, Asked::Version),
             _ => {}
         }
         probe
@@ -125,14 +137,17 @@ impl Waits<'_> {
 
     /// Whether `clang` compiles for this machine, as [`compiles_with`].
     pub(crate) fn check(&self, clang: &Path, banner: &str) -> Result<(), String> {
+        let note = self.hung_note(clang, Asked::Check);
         let result = check_with(clang, banner, self.memo, self.limit);
-        if matches!(result, Err(Failure::TimedOut(_))) {
-            self.hung(clang, "a small compile");
+        match result {
+            Err(Failure::TimedOut(_)) => self.hung(clang, Asked::Check),
+            _ if note.seen => self.answered(clang, Asked::Check),
+            _ => {}
         }
         result.map_err(Failure::into_text)
     }
 
-    fn hung_note(&self, clang: &Path) -> HungNote {
+    fn hung_note(&self, clang: &Path, asked: Asked) -> HungNote {
         let mut note = HungNote {
             seen: false,
             timed_out_once: false,
@@ -141,7 +156,7 @@ impl Waits<'_> {
         let (Some(memo), Some(now)) = (self.memo, self.now) else {
             return note;
         };
-        let Some(base) = hung_key(clang) else {
+        let Some(base) = hung_key(clang, asked) else {
             return note;
         };
         let base = current(base, memo);
@@ -166,17 +181,18 @@ impl Waits<'_> {
         note
     }
 
-    /// `clang` didn't answer `what` in time: keep that, and say the build waited.
-    fn hung(&self, clang: &Path, what: &str) {
-        if let (Some(memo), Some(now), Some(base)) = (self.memo, self.now, hung_key(clang)) {
-            let kind = match self.hung_note(clang).timed_out_once {
+    /// `clang` didn't answer `asked` in time: keep that, and say the build waited.
+    fn hung(&self, clang: &Path, asked: Asked) {
+        let key = hung_key(clang, asked);
+        if let (Some(memo), Some(now), Some(base)) = (self.memo, self.now, key) {
+            let kind = match self.hung_note(clang, asked).timed_out_once {
                 true => HELD,
                 false => ONCE,
             };
             let base = current(base, memo);
             memo.put(&in_hour(&base, kind, now / HUNG_HOLD), &now.to_le_bytes());
         }
-        let note = self.hung_note(clang);
+        let note = self.hung_note(clang, asked);
         let then = if note.in_force {
             "it isn't asked again for an hour unless no other clang will do; `velt doctor` asks it \
              now"
@@ -185,6 +201,10 @@ impl Waits<'_> {
         } else {
             "`velt doctor` says which clang builds use"
         };
+        let what = match asked {
+            Asked::Version => "`--version`",
+            Asked::Check => "a small compile",
+        };
         (self.tell)(&format!(
             "note: this build waited {} s for `{}`, which did not answer {what}; {then}",
             self.limit.as_secs(),
@@ -192,9 +212,9 @@ impl Waits<'_> {
         ));
     }
 
-    /// `clang`, which a note says hung, did answer: later builds can ask it again.
-    fn answered(&self, clang: &Path) {
-        if let (Some(memo), Some(base)) = (self.memo, hung_key(clang)) {
+    /// `clang`, which a note says hung on `asked`, did answer: later builds can ask it again.
+    fn answered(&self, clang: &Path, asked: Asked) {
+        if let (Some(memo), Some(base)) = (self.memo, hung_key(clang, asked)) {
             take_back(&base, memo);
         }
     }
@@ -202,9 +222,12 @@ impl Waits<'_> {
 
 /// The key of the notes that `clang` hung: the file's key and the name it is started as, since a
 /// link to a program that picks what to run by that name (mise, asdf) is a clang per name.
-fn hung_key(clang: &Path) -> Option<Vec<u8>> {
+fn hung_key(clang: &Path, asked: Asked) -> Option<Vec<u8>> {
     let path = real_file(clang)?;
-    let mut key = b"velt clang hung 1-".to_vec();
+    let mut key = match asked {
+        Asked::Version => b"velt clang hung 1-".to_vec(),
+        Asked::Check => b"velt clang check hung 1-".to_vec(),
+    };
     key.extend(file_key(&path, &behind(&path))?);
     key.push(0);
     if let Some(name) = clang.file_name() {

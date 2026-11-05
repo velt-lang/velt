@@ -397,8 +397,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   modification time, so a release build doesn't start clang to learn its version: only for a native
   program whose real file is named `clang…`; a script, or a link to something else, is a wrapper and
   is asked each build; and whether it compiles for the host, keyed also by its version; and that a candidate timed out
-  once or is left alone, keyed by the same three, its name and the hour, the value being the time it
-  was written).
+  once or is left alone, for `--version` and for the target check apart, keyed by the same three,
+  its name and the hour, the value being the time it was written).
   Entries under 16 KiB are packed: 64 shards per kind by the key's first byte, each `<nn>.pack`
   (values) + `<nn>.idx` (56-byte records: key, offset, length, 8-byte checksum (CRC-32) of the
   value, minutes since 1970 of the last use; the last record of a key wins) appended under an

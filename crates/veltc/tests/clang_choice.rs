@@ -560,6 +560,59 @@ fn a_planted_clang_in_the_current_directory_is_never_started() {
     }
 }
 
+/// A clang that answers `--version` and hangs on the target check is left alone too, through a
+/// build's real order. Its answer can take the limit under a load, which only makes fewer checks.
+#[test]
+fn a_clang_that_hangs_on_the_target_check_costs_two_waits() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    std::fs::write(dir.join("a.vlt"), HELLO).unwrap();
+    let (hung, other) = (dir.join("hung"), dir.join("other"));
+    std::fs::create_dir_all(&hung).unwrap();
+    std::fs::create_dir_all(&other).unwrap();
+    let checks = dir.join("checks");
+    script(
+        &hung.join("clang"),
+        &format!(
+            "[ \"$1\" = --version ] && {{ echo clang version 98.0.0; exit 0; }}\n\
+             echo x >> '{}'\nexec tail -f /dev/null",
+            checks.display()
+        ),
+    );
+    script(&other.join("clang-29"), ANSWERS_97);
+    let log = dir.join("log");
+    let path = path_with(&[&hung, &other]);
+    for _ in 0..3 {
+        velt_with_limit(dir, &RELEASE_BUILD, &log, &path, 2000);
+    }
+    let started = std::fs::read_to_string(&checks).map_or(0, |t| t.lines().count());
+    assert!((1..=2).contains(&started), "{started} target checks");
+}
+
+/// `$VELT_CLANG` is final, so it is never left alone: each build asks it and says why it didn't do.
+#[test]
+fn a_velt_clang_that_hangs_is_asked_by_every_build() {
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    std::fs::write(dir.join("a.vlt"), HELLO).unwrap();
+    let (clang, starts, log) = (dir.join("clang-hung"), dir.join("starts"), dir.join("log"));
+    script(
+        &clang,
+        &format!("echo x >> '{}'\nexec tail -f /dev/null", starts.display()),
+    );
+    for build in 1..=3 {
+        let env = [
+            ("VELT_CLANG", clang.as_path()),
+            ("VELT_CLANG_PROBE_LIMIT_MS", Path::new("1000")),
+        ];
+        let o = velt(dir, &RELEASE_BUILD, &log, &env);
+        let err = text(&o.stderr);
+        assert!(err.contains("did not answer"), "build {build}: {err}");
+        let started = std::fs::read_to_string(&starts).unwrap().lines().count();
+        assert_eq!(started, build, "build {build}");
+    }
+}
+
 /// A clang that hangs costs two builds a wait and a line each, not every build, and `velt doctor`
 /// asks it all the same. The limit is a second, and only the clang that hangs is ever waited for.
 #[test]
