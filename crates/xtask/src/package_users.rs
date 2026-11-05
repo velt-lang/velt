@@ -300,7 +300,9 @@ mod tests {
         let entries = std::fs::read_dir(root.join("packages")).expect("packages/");
         for entry in entries.flatten() {
             let dir = entry.path();
-            if !dir.join("package.velt").is_file() || dir.join("native").is_dir() {
+            let manifest = std::fs::read_to_string(dir.join("package.velt")).unwrap_or_default();
+            // A crate, or C libraries (`native.c`): `docs` leaves such a package out.
+            if manifest.is_empty() || manifest.contains("native: {") {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().into_owned();

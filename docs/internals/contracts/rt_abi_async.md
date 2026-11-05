@@ -1409,8 +1409,8 @@ Stable hash (`velt/hash`, additive):
 
 ### 14.11 SQLite (moved)
 
-The SQLite driver left the runtime for the `sqlite` package (`packages/sqlite`, a package with
-native code); its library's functions are documented there (`packages/sqlite/docs/native_abi.md`).
+The SQLite driver left the runtime for the `sqlite` package (`packages/sqlite`), which calls SQLite
+through `declare c` (c-ffi.md).
 
 ### 14.12 Redis (moved)
 

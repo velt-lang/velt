@@ -1,8 +1,7 @@
 # sqlite
 
-`import { open, Database, Statement, SqliteError } from "sqlite"`. Embedded SQLite, compiled
-into the package's native library (Rust over rusqlite, no system library), with an API close to
-better-sqlite3. The package also holds a SQLite engine written in Velt, `sqlite/engine`
+`import { open, Database, Statement, SqliteError } from "sqlite"`. The real SQLite engine,
+called through `declare c` from plain Velt, with an API close to better-sqlite3. The package also holds a SQLite engine written in Velt, `sqlite/engine`
 (read-only for now: [docs/engine.md](docs/engine.md)).
 
 ```ts ignore
@@ -18,12 +17,9 @@ dependencies: {
 },
 ```
 
-The package has native code (a Rust crate in `native/`), which `velt` builds with cargo, so a
-Rust toolchain is needed. A git dependency builds it only when you allow that with
-`VELT_NATIVE_FROM_SOURCE=1` (it runs the crate's build scripts):
-`VELT_NATIVE_FROM_SOURCE=1 velt install`. A path dependency (this repository's examples use one)
-builds it the first time, into `packages/sqlite/target/velt-native/`, and again when it changes.
-The full guide: https://veltlang.com/docs/packages/sqlite/.
+The package binds the real SQLite engine through `declare c` (`src/sqlite3.velt`): list it in
+`allowNative`. For now it links the system's SQLite (`libsqlite3`), which must be installed;
+building SQLite's own source with the package comes with the FFI's bundled sources.
 
 ([Packages with native code](https://veltlang.com/docs/book/native-packages/).) The driver is
 **synchronous**: a typical query takes microseconds, which is less than handing it to a thread
@@ -40,7 +36,7 @@ pool and back would cost. Run a long query inside `spawn(...)`.
   `all<T>(): T[]`, plus `runWith(params)`, `getWith<T>(params)` and `allWith<T>(params)`, and
   `close()`. `T` is usually inferred from the annotation (`const u: User | null = s.getWith(…)`).
   A statement releases itself when dropped, and preparing the same SQL again is a cache hit.
-- **Parameters** bind as their `JSON.stringify` text would (velt/db's `bindParams` hands
+- **Parameters** bind as their `JSON.stringify` text would (velt/db's `writeParams` hands
   numbers, strings, bools, `null` and `u8[]` to SQLite directly, without making the text). An object binds
   `:name`/`@name`/`$name` by field name (extra fields are ignored; a missing one throws
   `SQLITE_RANGE`). An array, or a single number or string, binds `?` by position. Mapping:
@@ -106,14 +102,14 @@ can't be used there).
 ## Layout
 
 - `src/lib.velt`: the API (re-exports); `src/database.velt`, `statement.velt`, `transaction.velt`,
-  `run_result.velt`, `errors.velt`: one type each; `src/native.velt`: the native library's
-  functions, the only `declare`s.
-- `native/`: the Rust crate (`velt_native_sqlite`), on the native SDK (`velt_native`) and
-  `velt_text` (row cursors and parameter sinks); its ABI is [docs/native_abi.md](docs/native_abi.md).
+  `run_result.velt`, `errors.velt`: one type each; `src/sqlite3.velt`: SQLite's C functions, the only
+  `declare c`s, with `src/connection.velt` (the handle and its gate), `src/book.velt` (its statement cache),
+  `src/info.velt` (what the cache remembers of a statement), `src/compiled.velt` (a stepped statement
+  as a `RowSource`) and `src/binder.velt` (a `ParamSink`).
 - `src/engine/`: the SQLite engine in Velt ([docs/engine.md](docs/engine.md); the design is
   [sqlite-engine.md](../../docs/internals/design/sqlite-engine.md)).
 - `tests/`: `velt test` in this directory runs them (the repository runs it for every package,
   `crates/veltc/tests/packages.rs`).
 
-The package uses only public std APIs: velt/db (`decodeRows`, `bindParams`, `readRows`),
-velt/native (`IoResult`), velt/encoding (`utf8ByteAt`, `utf8Length`), velt/fs.
+The package uses only public std APIs: velt/db (`readRows`, `readRow`, `writeParams`),
+velt/ffi, velt/encoding (`utf8ByteAt`, `utf8Length`), velt/fs.

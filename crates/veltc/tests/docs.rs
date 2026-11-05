@@ -233,7 +233,7 @@ fn packages(root: &Path) -> (PathBuf, vpm::PackageGraph) {
                 let Ok(manifest) = vpm::Manifest::from_dir(&path) else {
                     continue;
                 };
-                if manifest.native.is_none() {
+                if !manifest.has_native_code() {
                     let at = path.to_string_lossy().replace('\\', "/");
                     deps.push(format!("\"{}\": {{ path: \"{at}\" }}", manifest.package.name));
                 }

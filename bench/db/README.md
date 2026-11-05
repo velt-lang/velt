@@ -16,7 +16,9 @@ rust/src/bin/<backend>.rs  + src/lib.rs; standalone Cargo project (not a workspa
 
 ## Servers
 
-SQLite needs nothing (a file database in the temp directory, deleted afterwards). Postgres and
+SQLite needs its library at link time for the Velt driver (`declare c`, the system's `libsqlite3`;
+compare with the same SQLite as `rusqlite`'s bundled one, or the race measures two versions) and a
+file database in the temp directory, deleted afterwards. Postgres and
 Redis come from `BENCH_PG_URL` / `BENCH_REDIS_URL`, falling back to the goldens'
 `VELT_TEST_PG_URL` / `VELT_TEST_REDIS_URL`; a backend without a URL shows as `n/a`. Every run
 uses its own table (`bench_db_<lang>_<unique>`, dropped at the end) or key prefix

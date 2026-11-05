@@ -1,6 +1,6 @@
-// sqlite: embedded SQLite, with an API close to better-sqlite3 (README.md). The driver is the
-// package's native library (native/, Rust over rusqlite, SQLite compiled in); `sqlite/engine` is
-// a SQLite engine written in Velt (read-only for now; docs/engine.md).
+// sqlite: embedded SQLite, with an API close to better-sqlite3 (README.md). The driver is plain Velt
+// on the real SQLite engine, through `declare c` (src/sqlite3.velt); `sqlite/engine` is a SQLite
+// engine written in Velt (read-only for now; docs/engine.md).
 //
 // Synchronous by design: a typical query takes microseconds, less than handing it to a
 // blocking thread pool and back would cost, and SQLite serializes writers anyway. Run a long
@@ -9,7 +9,7 @@
 // Parameters bind as their JSON text would: an object binds by name (`:id`, `@id`, `$id` all
 // take the field `id`), an array (or a single number or string) binds `?` by position. int →
 // INTEGER, float → REAL, string → TEXT, bool → 0/1, null → NULL, `u8[]` → BLOB. Rows are decoded
-// by velt/db's `decodeRows` from the library's row cursor: each column fills the field of the
+// by velt/db's `readRows`: each column fills the field of the
 // same name (rename with `AS`). INTEGER decodes into integer fields exactly (all of i64) and into
 // `f64` fields; REAL into `f64`; TEXT into `string`; BLOB into `u8[]`; NULL into `T | null`
 // fields. SQLite has no booleans: a column declared `BOOLEAN` decodes into `bool`, any other 0/1

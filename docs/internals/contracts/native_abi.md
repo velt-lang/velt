@@ -283,8 +283,7 @@ cell per column: a tag byte and its payload, `NULL` 0, `FALSE` 1, `TRUE` 2, `INT
 bytes (integers little-endian); bit 31 of a name's length says the name is ASCII. The reader
 trusts what the tags say about text (UTF-8, ASCII; `BinRows` checks), and a buffer cut short
 reads as a type mismatch, never out of bounds. packages/postgres still writes JSON text (its arrays
-and json/jsonb columns are nested values, which the format has no cell for yet); packages/sqlite
-hands std a row cursor instead (below).
+and json/jsonb columns are nested values, which the format has no cell for yet).
 
 ## Row cursors
 
@@ -304,7 +303,7 @@ closed cursor's handle, a sink's), and otherwise runs the generated decoder over
 (reader flag 8, rt_abi_async.md). No Velt code ever holds an address. Then it gives the handle
 back to the driver, whose library takes the cursor back with `close_cursor::<C>(handle)` (`None`
 for a handle that is not an open cursor of type `C`: the runtime checks the key and a tag of the
-type), releases what it held (packages/sqlite: the connection's lock) and reports a failure met
+type), releases what it held and reports a failure met
 while stepping. The decoder reads cells between two steps; a decoder that looks ahead across rows (a
 union of whole results) gets the remaining rows copied into binary form once, and a nested value
 is read with a JSON reader over its text.
@@ -312,8 +311,7 @@ is read with a JSON reader over its text.
 When the row type is an object of plain fields (numbers, bools, strings, `T | null` of those,
 `u8[]`), the generated decoder reads the rows by column instead of through the JSON reader
 (`velt_rt_rows_*`, rt_abi_async.md; velt/db/generate/columns.velt), with the same results and
-messages. packages/sqlite and
-packages/postgres use cursors. A driver written in Velt offers its rows as std/db' `RowSource`
+messages. packages/postgres uses cursors. A driver written in Velt (packages/sqlite) offers its rows as std/db' `RowSource`
 instead ([velt/db](https://veltlang.com/docs/std/db/)), read the same way through its own methods.
 
 ## Parameter sinks
@@ -330,8 +328,7 @@ or a lone value, `object()` and then names and values for an object, each value 
 text would read back (an integral number below 1e21 an int, NaN null, a `u8[]` member a blob).
 It does so for numbers, bools, strings, `T | null` of those, `u8[]` members and objects of such
 fields, and returns false, doing nothing, for any other type: the driver then takes the JSON
-text, so the binding never depends on which way the parameters went (packages/sqlite:
-`bind_begin` … `open_rows_bound`, its docs/native_abi.md).
+text, so the binding never depends on which way the parameters went.
 
 ## Helper crates
 
@@ -340,7 +337,7 @@ Two crates of this repository help a native library and are shared with the runt
 sinks; its `sdk` feature writes into Velt strings) and `velt_tls` (one rustls client setup per
 process: the `ring` provider, Mozilla's roots plus extra PEM CAs, cached per CA text; the
 runtime's `fetch` and WebSockets use it too). The database drivers in the repository's
-`packages/` (`sqlite`, `postgres`, `redis`) are built on them. (Until they left std, those drivers
+`packages/` that still have a crate are built on them. (Until they left std, those drivers
 were crates linked into the runtime, whose `velt_std_<driver>__…` exports std declared.)
 
 ## Start-up

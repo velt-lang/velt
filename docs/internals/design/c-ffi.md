@@ -682,6 +682,12 @@ no thread hops, and prove that `velt/net` and Velt's async carry real database p
   than made per command. Channel operations are what cost most in `velt_rt`; Postgres will meet the
   same.
 
+SQLite goes the other way (owner, 2026-11-04): it is a C library, so `packages/sqlite` calls the
+real engine through `declare c` and its Rust crate is gone; the engine written in Velt moves out
+later. `declare c`'s own numbers, per operation in instructions against the crate it replaced
+(rusqlite in brackets): insert in a transaction 0.53× (1.05×), point select 0.68× (1.13×), range
+select 0.94× (0.99×), autocommit insert 0.76× (1.02×).
+
 ## As built
 
 Step 1 lands in layers, each its own pull request:

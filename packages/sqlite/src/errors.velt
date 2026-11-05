@@ -1,11 +1,12 @@
-// sqlite (internal): `SqliteError`, the package's one error class (the native driver's and the
-// engine's), and the checks that turn a failed native result into one.
-
-import { IoResult, IoStatus } from "velt/native";
-import { velt_sqlite__error_name } from "./native";
+// sqlite (internal): `SqliteError`, the package's one error class (the driver's and the engine's),
+// and the names of SQLite's result codes.
 
 /** SQLite's `SQLITE_MISMATCH`: a row that does not decode into the requested type. */
 export const SQLITE_MISMATCH: i32 = 20;
+/** SQLite's `SQLITE_MISUSE`: a closed handle, or several statements in `prepare`. */
+export const SQLITE_MISUSE: i32 = 21;
+/** SQLite's `SQLITE_RANGE`: wrong parameters. */
+export const SQLITE_RANGE: i32 = 25;
 
 /**
  * A failed SQLite operation. `code` is SQLite's result code name, e.g. "SQLITE_ERROR" (bad
@@ -24,20 +25,95 @@ export class SqliteError extends Error {
 
 /** The error for SQLite result code `code`. */
 export function sqliteError(code: i32, message: string): SqliteError {
-  return new SqliteError(velt_sqlite__error_name(code), message);
+  return new SqliteError(codeName(code), message);
 }
 
-/** Throws the error of a failed status. */
-export function check(s: IoStatus) {
-  if (s.code != 0) {
-    throw sqliteError(s.code, s.message);
+// The extended codes with a name of their own; any other falls back to its primary code.
+function extendedName(code: i32): string | null {
+  if (code == 275) {
+    return "SQLITE_CONSTRAINT_CHECK";
   }
+  if (code == 787) {
+    return "SQLITE_CONSTRAINT_FOREIGNKEY";
+  }
+  if (code == 1299) {
+    return "SQLITE_CONSTRAINT_NOTNULL";
+  }
+  if (code == 1555) {
+    return "SQLITE_CONSTRAINT_PRIMARYKEY";
+  }
+  if (code == 1811) {
+    return "SQLITE_CONSTRAINT_TRIGGER";
+  }
+  if (code == 2067) {
+    return "SQLITE_CONSTRAINT_UNIQUE";
+  }
+  if (code == 2579) {
+    return "SQLITE_CONSTRAINT_ROWID";
+  }
+  if (code == 3091) {
+    return "SQLITE_CONSTRAINT_DATATYPE";
+  }
+  if (code == 261) {
+    return "SQLITE_BUSY_RECOVERY";
+  }
+  if (code == 517) {
+    return "SQLITE_BUSY_SNAPSHOT";
+  }
+  if (code == 773) {
+    return "SQLITE_BUSY_TIMEOUT";
+  }
+  if (code == 262) {
+    return "SQLITE_LOCKED_SHAREDCACHE";
+  }
+  if (code == 1032) {
+    return "SQLITE_READONLY_DBMOVED";
+  }
+  if (code == 526) {
+    return "SQLITE_CANTOPEN_ISDIR";
+  }
+  if (code == 782) {
+    return "SQLITE_CANTOPEN_FULLPATH";
+  }
+  return null;
 }
 
-/** The value of a successful result; throws its error otherwise. */
-export function unwrap<T>(r: IoResult<T>): T {
-  if (r.code != 0) {
-    throw sqliteError(r.code, r.message);
-  }
-  return r.value;
+function primaryName(code: i32): string {
+  const names = [
+    "SQLITE_OK",
+    "SQLITE_ERROR",
+    "SQLITE_INTERNAL",
+    "SQLITE_PERM",
+    "SQLITE_ABORT",
+    "SQLITE_BUSY",
+    "SQLITE_LOCKED",
+    "SQLITE_NOMEM",
+    "SQLITE_READONLY",
+    "SQLITE_INTERRUPT",
+    "SQLITE_IOERR",
+    "SQLITE_CORRUPT",
+    "SQLITE_NOTFOUND",
+    "SQLITE_FULL",
+    "SQLITE_CANTOPEN",
+    "SQLITE_PROTOCOL",
+    "SQLITE_EMPTY",
+    "SQLITE_SCHEMA",
+    "SQLITE_TOOBIG",
+    "SQLITE_CONSTRAINT",
+    "SQLITE_MISMATCH",
+    "SQLITE_MISUSE",
+    "SQLITE_NOLFS",
+    "SQLITE_AUTH",
+    "SQLITE_FORMAT",
+    "SQLITE_RANGE",
+    "SQLITE_NOTADB",
+    "SQLITE_NOTICE",
+    "SQLITE_WARNING",
+  ];
+  return code >= 0 && (code as usize) < names.length ? names[code as usize] : "SQLITE_ERROR";
+}
+
+/** The name of a result code: the extended name when it has a common one, else the primary. */
+export function codeName(code: i32): string {
+  return extendedName(code) ?? primaryName(code & 0xff);
 }

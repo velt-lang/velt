@@ -1,0 +1,198 @@
+// sqlite (internal): `Compiled`, a statement SQLite compiled, with what the driver remembers of it,
+// and the rows it reads as a velt/db `RowSource`.
+
+import { Ptr, readBytes, readUtf8 } from "velt/ffi";
+import { CellKind, RowSource } from "velt/db";
+import {
+  SQLITE_BLOB,
+  SQLITE_FLOAT,
+  SQLITE_INTEGER,
+  SQLITE_ROW,
+  SQLITE_DONE,
+  SQLITE_STMTSTATUS_REPREPARE,
+  SQLITE_TEXT,
+  memcpy,
+  sqlite3_clear_bindings,
+  sqlite3_column_blob,
+  sqlite3_column_bytes,
+  sqlite3_column_double,
+  sqlite3_column_int64,
+  sqlite3_column_text,
+  sqlite3_column_type,
+  sqlite3_reset,
+  sqlite3_step,
+  sqlite3_stmt,
+  sqlite3_stmt_status,
+} from "./sqlite3";
+import { Info } from "./info";
+
+// Text longer than this isn't copied through the scratch, which would stay that large.
+const LARGE_CELL: usize = 65536;
+
+/**
+ * One `Statement`'s use of its compiled statement, inside the connection's gate: the steps of a
+ * run, and the cells of its rows. Its first step happens before anything asks for the columns, so
+ * that they are the ones of the statement as compiled now.
+ */
+export class Compiled implements RowSource {
+  stmt: Ptr<sqlite3_stmt>;
+  /** What the last step returned, when it was neither a row nor the end. */
+  failed: i32 = 0;
+  info: shared<Info>;
+  /** Whether `info` is newer than the one the connection keeps. */
+  changed: bool = false;
+  // Where text cells are copied to on their way to a string: one allocation per cell, not two.
+  private scratch: u8[] = [];
+  // Whether the first step was taken for a run, and whether it found a row.
+  private started: bool = false;
+  private first: bool = false;
+  // Whether `next` has yet to hand out what the first step found.
+  private pending: bool = false;
+
+  constructor(info: shared<Info>) {
+    this.info = info;
+    this.stmt = info.stmt;
+  }
+
+  /**
+   * Ends the current run, so that nothing stays locked in the database. Every run binds every
+   * parameter, so values only stay bound to keep memory: `large` ones are let go now.
+   */
+  finish(large: bool) {
+    this.started = false;
+    // SAFETY: the statement is open.
+    unsafe {
+      sqlite3_reset(this.stmt);
+    }
+    if (large) {
+      // SAFETY: the statement is open.
+      unsafe {
+        sqlite3_clear_bindings(this.stmt);
+      }
+    }
+  }
+
+  // Reads the columns again if SQLite compiled the statement anew: it has stepped, so it has.
+  private shape() {
+    // SAFETY: the statement is open.
+    const compiled = unsafe { sqlite3_stmt_status(this.stmt, SQLITE_STMTSTATUS_REPREPARE, 0) };
+    if (compiled != this.info.compiled) {
+      this.info = shared(new Info(this.stmt.clone(), compiled));
+      this.changed = true;
+    }
+  }
+
+  /** Steps to the next row; true on one, false at the end or on a failure (`failed`). */
+  step(): bool {
+    // SAFETY: the statement is open.
+    const rc = unsafe { sqlite3_step(this.stmt) };
+    if (rc == SQLITE_ROW) {
+      return true;
+    }
+    if (rc != SQLITE_DONE) {
+      this.failed = rc;
+    }
+    return false;
+  }
+
+  // Takes the first step of a run, which compiles the statement anew if the schema changed.
+  private start() {
+    if (!this.started) {
+      this.started = true;
+      this.pending = true;
+      this.first = this.step();
+      this.shape();
+    }
+  }
+
+  columnCount(): i64 {
+    this.start();
+    return this.info.columns.length;
+  }
+
+  columnName(i: i64): string {
+    return this.info.columns[i];
+  }
+
+  next(): bool {
+    this.start();
+    if (this.pending) {
+      this.pending = false;
+      return this.first;
+    }
+    return this.step();
+  }
+
+  // SQLite has no booleans: a 0 or 1 in a column declared `BOOL` or `BOOLEAN` is one.
+  kind(i: i64): CellKind {
+    // SAFETY: on a row of the statement.
+    const t = unsafe { sqlite3_column_type(this.stmt, i as i32) };
+    if (t == SQLITE_INTEGER) {
+      if (this.info.anyBool && this.info.bools[i]) {
+        const v = this.int(i);
+        if (v == 0 || v == 1) {
+          return CellKind.Bool;
+        }
+      }
+      return CellKind.Int;
+    }
+    if (t == SQLITE_FLOAT) {
+      return CellKind.Float;
+    }
+    if (t == SQLITE_TEXT) {
+      return CellKind.Text;
+    }
+    return t == SQLITE_BLOB ? CellKind.Blob : CellKind.Null;
+  }
+
+  bool(i: i64): bool {
+    return this.int(i) != 0;
+  }
+
+  int(i: i64): i64 {
+    // SAFETY: on a row of the statement.
+    return unsafe { sqlite3_column_int64(this.stmt, i as i32) };
+  }
+
+  float(i: i64): f64 {
+    // SAFETY: on a row of the statement.
+    return unsafe { sqlite3_column_double(this.stmt, i as i32) };
+  }
+
+  text(i: i64): string {
+    // SAFETY: on a row of the statement.
+    const p = unsafe { sqlite3_column_text(this.stmt, i as i32) };
+    // SAFETY: on a row of the statement, after `sqlite3_column_text`, as SQLite asks.
+    const n = unsafe { sqlite3_column_bytes(this.stmt, i as i32) };
+    if (p === null || n == 0) {
+      return "";
+    }
+    const size = n as usize;
+    if (size > LARGE_CELL) {
+      // SAFETY: the pointer and length describe the current cell, valid until the next step.
+      return unsafe { readUtf8(p, size) };
+    }
+    if (size > this.scratch.length) {
+      this.scratch = Buffer.alloc(size < 32 ? 64 : size * 2);
+    }
+    // SAFETY: the pointer and length describe the current cell, valid until the next step, and the
+    // scratch holds that many bytes.
+    unsafe {
+      memcpy(this.scratch, p, size);
+    }
+    return this.scratch.utf8Slice(0, n as i64);
+  }
+
+  blob(i: i64): u8[] {
+    // SAFETY: on a row of the statement.
+    const p = unsafe { sqlite3_column_blob(this.stmt, i as i32) };
+    // SAFETY: on a row of the statement, after `sqlite3_column_blob`, as SQLite asks.
+    const n = unsafe { sqlite3_column_bytes(this.stmt, i as i32) };
+    // SAFETY: the pointer and length describe the current cell, valid until the next step.
+    return p === null ? [] : unsafe { readBytes(p, n as usize) };
+  }
+
+  json(i: i64): string {
+    return this.text(i);
+  }
+}

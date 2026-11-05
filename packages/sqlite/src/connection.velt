@@ -1,0 +1,414 @@
+// sqlite (internal): `State`, what every copy of a `Database` and its statements share: the SQLite
+// connection, a gate that keeps it to one thread at a time, and its bookkeeping.
+//
+// The connection was opened with SQLITE_OPEN_NOMUTEX, so the gate is what makes using it safe: every
+// call to SQLite happens between `enter` and `leave`. They are one atomic swap and one store. The
+// driver is synchronous, so nothing between them suspends and a thread that finds the gate shut
+// waits only that long, and never for a task. What a statement's run needs belongs to its
+// `Statement` (compiled.velt), so that nothing is moved or copied between threads for a query.
+//
+// The connection counts failed operations and keeps the last one: `Database.transaction` compares
+// the count before and after its callback, so a failure the callback caught still rolls the
+// transaction back. A nested transaction that rolled back resets the count, so its failure only
+// undoes its own savepoint.
+
+import { CString, OutPtr, Ptr, readCString, readUtf8 } from "velt/ffi";
+import { Backoff } from "velt/sync";
+import { codeName, SQLITE_MISMATCH, SQLITE_MISUSE, SqliteError } from "./errors";
+import { Book } from "./book";
+import { Info } from "./info";
+import {
+  SQLITE_DONE,
+  SQLITE_FLOAT,
+  SQLITE_INTEGER,
+  SQLITE_LIMIT_LENGTH,
+  SQLITE_OK,
+  SQLITE_OPEN_CREATE,
+  SQLITE_OPEN_NOMUTEX,
+  SQLITE_OPEN_READONLY,
+  SQLITE_OPEN_READWRITE,
+  SQLITE_OPEN_URI,
+  SQLITE_PREPARE_PERSISTENT,
+  SQLITE_ROW,
+  SQLITE_TEXT,
+  sqlite3,
+  sqlite3_busy_timeout,
+  sqlite3_close_v2,
+  sqlite3_column_bytes,
+  sqlite3_column_double,
+  sqlite3_column_int64,
+  sqlite3_column_text,
+  sqlite3_column_type,
+  sqlite3_errmsg,
+  sqlite3_error_offset,
+  sqlite3_exec,
+  sqlite3_extended_errcode,
+  sqlite3_extended_result_codes,
+  sqlite3_finalize,
+  sqlite3_limit,
+  sqlite3_get_autocommit,
+  sqlite3_open_v2,
+  sqlite3_prepare_v3,
+  sqlite3_step,
+  sqlite3_stmt,
+} from "./sqlite3";
+
+// The longest cell, in bytes: SQLite's default, which a string can hold. Some builds of the library
+// allow more (Apple's), and a longer cell could only stop the program.
+const MAX_CELL: i32 = 1000000000;
+
+// The longest busy timeout SQLite can take, in milliseconds.
+const LONGEST_WAIT: i64 = 2147483647;
+
+const SQLITE_CANTOPEN: i32 = 14;
+
+/** What every copy of a `Database` and its statements share (see the module header). */
+export class State {
+  db: Ptr<sqlite3>;
+  private gate: Atomic<bool> = new Atomic<bool>(false);
+  private isOpen: Atomic<bool> = new Atomic<bool>(true);
+  private errors: Atomic<u64> = new Atomic<u64>(0);
+  // Its own shared value: one this object holds directly could not be read in place.
+  private book: shared<Mutex<Book>>;
+
+  constructor(db: Ptr<sqlite3>, book: shared<Mutex<Book>>) {
+    this.db = db;
+    this.book = book;
+  }
+
+  /** Shuts the gate behind this thread, waiting for whoever is inside. */
+  enter() {
+    if (this.gate.exchange(true, "acquire")) {
+      const wait = Backoff.create();
+      while (this.gate.exchange(true, "acquire")) {
+        wait.snooze();
+      }
+    }
+  }
+
+  /** Opens the gate again. */
+  leave() {
+    this.gate.store(false, "release");
+  }
+
+  /** Whether the connection is open; ask inside the gate. */
+  get open(): bool {
+    return this.isOpen.load("acquire");
+  }
+
+  get errorCount(): u64 {
+    return this.errors.load("acquire");
+  }
+
+  setErrorCount(count: u64) {
+    this.errors.store(count, "release");
+  }
+
+  /** The last failure on the connection. */
+  last(): SqliteError {
+    return this.book.with((b) => new SqliteError(b.lastCode.clone(), b.lastMessage.clone()));
+  }
+
+  /** Counts a failure against the connection, and returns it. */
+  note(e: SqliteError): SqliteError {
+    const code = e.code.clone();
+    const message = e.message.clone();
+    this.book.with((b) => {
+      b.lastCode = code;
+      b.lastMessage = message;
+    });
+    // After the failure is in place: who sees the count may ask for it.
+    this.errors.add(1, "acqrel");
+    return e;
+  }
+
+  /** The failure of the call just made on the connection, counted. */
+  failure(): SqliteError {
+    return this.note(errorOf(this.db));
+  }
+
+  /** The error of a closed connection, counted. */
+  closedError(): SqliteError {
+    return this.note(
+      new SqliteError(codeName(SQLITE_MISUSE), "The database connection is not open"),
+    );
+  }
+
+  find(sql: string): shared<Info> | null {
+    return this.book.with((b) => b.find(sql));
+  }
+
+  keep(sql: string, info: shared<Info>) {
+    this.book.with((b) => b.keep(sql, info));
+  }
+
+  update(sql: string, info: shared<Info>) {
+    this.book.with((b) => b.update(sql, info));
+  }
+
+  release(sql: string) {
+    this.book.with((b) => b.release(sql));
+  }
+
+  /** Closes the connection, finalizing its statements; the caller is inside the gate. */
+  close(): SqliteError | null {
+    if (!this.isOpen.exchange(false, "acqrel")) {
+      return null;
+    }
+    this.book.with((b) => b.finalizeAll());
+    // SAFETY: every statement is finalized, and handles find the connection closed.
+    const rc = unsafe { sqlite3_close_v2(this.db) };
+    return rc == SQLITE_OK ? null : new SqliteError(codeName(rc), "closing the database failed");
+  }
+}
+
+// `s` for a C function; a NUL in it is an error, as C would stop there.
+function cString(s: string): CString | SqliteError {
+  try {
+    return new CString(s);
+  } catch (e) {
+    return new SqliteError(codeName(SQLITE_MISMATCH), e.message);
+  }
+}
+
+// What the last call on `db` failed with.
+// The failure of the call just made with `sql`, which says where in it if SQLite knows.
+function errorIn(db: Ptr<sqlite3>, sql: string): SqliteError {
+  // SAFETY: `db` is open.
+  const offset = unsafe { sqlite3_error_offset(db) };
+  const e = errorOf(db);
+  return offset >= 0 ? new SqliteError(e.code, `${e.message} in ${sql} at offset ${offset}`) : e;
+}
+
+function errorOf(db: Ptr<sqlite3>): SqliteError {
+  // SAFETY: `db` is open.
+  const code = unsafe { sqlite3_extended_errcode(db) };
+  // SAFETY: SQLite's message is NUL-terminated and valid until the next call.
+  return new SqliteError(codeName(code), unsafe { readCString(sqlite3_errmsg(db)) });
+}
+
+/** Opens a connection; a failure throws. */
+export function openState(path: string, readonly: bool, create: bool, timeoutMs: i64): State {
+  let flags = SQLITE_OPEN_URI | SQLITE_OPEN_NOMUTEX;
+  if (readonly) {
+    flags |= SQLITE_OPEN_READONLY;
+  } else {
+    flags |= SQLITE_OPEN_READWRITE;
+    if (create) {
+      flags |= SQLITE_OPEN_CREATE;
+    }
+  }
+  const name = cString(path);
+  if (name instanceof SqliteError) {
+    throw name;
+  }
+  const out = new OutPtr<sqlite3>();
+  // SAFETY: the name is NUL-terminated, and `out` is written before the call returns.
+  const rc = unsafe { sqlite3_open_v2(name, out, flags, null) };
+  const db = out.value;
+  if (db === null) {
+    throw new SqliteError(codeName(rc), "out of memory opening the database");
+  }
+  // SAFETY: `db` is open; SQLite gives one even when opening failed, to ask what went wrong.
+  unsafe {
+    sqlite3_extended_result_codes(db, 1);
+  }
+  if (rc != SQLITE_OK) {
+    const failed = errorOf(db);
+    // SQLite's message doesn't say which file.
+    const e =
+      (rc & 255) == SQLITE_CANTOPEN
+        ? new SqliteError(failed.code, `${failed.message}: ${path}`)
+        : failed;
+    // SAFETY: nothing uses the failed connection after this.
+    unsafe {
+      sqlite3_close_v2(db);
+    }
+    throw e;
+  }
+  // SAFETY: `db` is open.
+  unsafe {
+    sqlite3_busy_timeout(db, timeoutMs > LONGEST_WAIT ? LONGEST_WAIT as i32 : timeoutMs as i32);
+    sqlite3_limit(db, SQLITE_LIMIT_LENGTH, MAX_CELL);
+  }
+  // On, as the SQLite this package used to bundle had it by default; many builds have it off.
+  const foreignKeys = cString("PRAGMA foreign_keys = ON");
+  if (!(foreignKeys instanceof SqliteError)) {
+    // SAFETY: `db` is open; the SQL is NUL-terminated and borrowed for the call.
+    unsafe {
+      sqlite3_exec(db, foreignKeys, null, null, null);
+    }
+  }
+  return new State(db, shared(new Mutex<Book>(new Book())));
+}
+
+/** Runs `;`-separated statements without parameters. */
+export function exec(s: shared<State>, sql: string): SqliteError | null {
+  s.enter();
+  let error: SqliteError | null = null;
+  if (!s.open) {
+    error = s.closedError();
+  } else {
+    const text = cString(sql);
+    if (text instanceof SqliteError) {
+      error = s.note(text);
+    } else {
+      // SAFETY: inside the gate; the SQL is NUL-terminated and borrowed for the call.
+      const rc = unsafe { sqlite3_exec(s.db, text, null, null, null) };
+      if (rc != SQLITE_OK) {
+        error = s.note(errorIn(s.db, sql));
+      }
+    }
+  }
+  s.leave();
+  return error;
+}
+
+// Whether the rest of the SQL is more than blanks and comments.
+// What's wrong with what follows a statement: blanks and comments may, a statement or a syntax error
+// may not.
+function tailProblem(s: shared<State>, rest: string): SqliteError | null {
+  if (rest.trim().length == 0) {
+    return null;
+  }
+  const several = new SqliteError(
+    codeName(SQLITE_MISUSE),
+    "The supplied SQL string contains more than one statement",
+  );
+  const text = cString(rest);
+  if (text instanceof SqliteError) {
+    return several;
+  }
+  const out = new OutPtr<sqlite3_stmt>();
+  const tail = new OutPtr<u8>();
+  // SAFETY: inside the gate; the SQL is NUL-terminated and borrowed for the call.
+  const rc = unsafe { sqlite3_prepare_v3(s.db, text, -1, 0, out, tail) };
+  const stmt = out.value;
+  if (stmt !== null) {
+    // SAFETY: nothing uses the statement after this.
+    unsafe {
+      sqlite3_finalize(stmt);
+    }
+    return several;
+  }
+  return rc == SQLITE_OK ? null : errorIn(s.db, rest);
+}
+
+// Compiles one statement, which must be all of `sql`; the caller is inside the gate.
+function compile(s: shared<State>, sql: string, flags: u32): Ptr<sqlite3_stmt> | SqliteError {
+  const text = cString(sql);
+  if (text instanceof SqliteError) {
+    return s.note(text);
+  }
+  const out = new OutPtr<sqlite3_stmt>();
+  const tail = new OutPtr<u8>();
+  // SAFETY: inside the gate; the SQL is NUL-terminated, and `tail` points into it while it lives.
+  const rc = unsafe { sqlite3_prepare_v3(s.db, text, -1, flags, out, tail) };
+  if (rc != SQLITE_OK) {
+    return s.note(errorIn(s.db, sql));
+  }
+  const stmt = out.value;
+  if (stmt === null) {
+    // Only blanks and comments: a statement that does nothing, as running them does nothing.
+    return compile(s, "SELECT 1 WHERE 0", flags);
+  }
+  const left = tail.value;
+  // SAFETY: SQLite's tail points at the rest of `text`, NUL-terminated; `text` is used below, so it
+  // is still alive here.
+  const rest = left === null ? "" : unsafe { readCString(left) };
+  CString.bytesOf(text);
+  const problem = tailProblem(s, rest);
+  if (problem != null) {
+    // SAFETY: nothing uses the statement after this.
+    unsafe {
+      sqlite3_finalize(stmt);
+    }
+    return s.note(problem);
+  }
+  return stmt;
+}
+
+/** The statement of `sql`, compiled now or kept from before, for a new handle. */
+export function prepare(s: shared<State>, sql: string): shared<Info> | SqliteError {
+  s.enter();
+  let result: shared<Info> | SqliteError;
+  if (!s.open) {
+    result = s.closedError();
+  } else {
+    const known = s.find(sql);
+    if (known !== null) {
+      result = known;
+    } else {
+      const made = compile(s, sql, SQLITE_PREPARE_PERSISTENT);
+      if (made instanceof SqliteError) {
+        result = made;
+      } else {
+        const info = shared(new Info(made, -1));
+        s.keep(sql, info);
+        result = info;
+      }
+    }
+  }
+  s.leave();
+  return result;
+}
+
+/** `PRAGMA <source>`: the first column of the first row as text ("" for none, NULL or a blob). */
+export function pragma(s: shared<State>, source: string): string | SqliteError {
+  s.enter();
+  let result: string | SqliteError = "";
+  if (!s.open) {
+    result = s.closedError();
+  } else {
+    const made = compile(s, `PRAGMA ${source}`, 0);
+    if (made instanceof SqliteError) {
+      result = made;
+    } else {
+      // SAFETY: inside the gate.
+      const rc = unsafe { sqlite3_step(made) };
+      if (rc == SQLITE_ROW) {
+        // SAFETY: on a row of the statement.
+        const t = unsafe { sqlite3_column_type(made, 0) };
+        if (t == SQLITE_INTEGER) {
+          // SAFETY: on a row of the statement.
+          result = `${unsafe { sqlite3_column_int64(made, 0) }}`;
+        } else if (t == SQLITE_FLOAT) {
+          // SAFETY: on a row of the statement.
+          result = `${unsafe { sqlite3_column_double(made, 0) }}`;
+        } else if (t == SQLITE_TEXT) {
+          // SAFETY: on a row of the statement.
+          const p = unsafe { sqlite3_column_text(made, 0) };
+          // SAFETY: on a row of the statement, after `sqlite3_column_text`, as SQLite asks.
+          const n = unsafe { sqlite3_column_bytes(made, 0) };
+          // SAFETY: the pointer and length describe the cell, valid until the statement steps.
+          result = p === null ? "" : unsafe { readUtf8(p, n as usize) };
+        }
+      } else if (rc != SQLITE_DONE) {
+        result = s.failure();
+      }
+      // SAFETY: nothing uses the statement after this.
+      unsafe {
+        sqlite3_finalize(made);
+      }
+    }
+  }
+  s.leave();
+  return result;
+}
+
+/** Whether a transaction is open. */
+export function inTransaction(s: shared<State>): bool {
+  s.enter();
+  // SAFETY: inside the gate, on an open connection.
+  const open = s.open && unsafe { sqlite3_get_autocommit(s.db) } == 0;
+  s.leave();
+  return open;
+}
+
+/** Closes the connection; closing again does nothing. */
+export function close(s: shared<State>): SqliteError | null {
+  s.enter();
+  const e = s.close();
+  s.leave();
+  return e;
+}
