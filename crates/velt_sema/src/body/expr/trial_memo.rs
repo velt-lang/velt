@@ -8,14 +8,83 @@
 //!   one tried for what it returns (`arrow_tried`) when that fits what is now expected.
 //!
 //! The real check of an argument is not affected: it runs once, outside every trial.
+//!
+//! The inputs include what is known about each local at this point, not only its declared type
+//! (`let u: number | string = x` holds a `number` where `x` is one), so an answer isn't reused
+//! where a local is narrowed differently.
 
-use velt_common::Span;
 use velt_syntax::ast;
 
-use crate::body::{FnCx, Want};
-use crate::hir::{self, TyId, TyKind};
+use crate::body::frame::Frame;
+use crate::body::{FnCx, LocalId, Want};
+use crate::hir::{self, Nothing, TyId, TyKind};
+
+/// A local an expression names, as it reads at that point: what decides how the expression checks.
+#[derive(Clone, PartialEq, Eq, Hash)]
+pub(crate) struct NamedLocal {
+    ty: TyId,
+    /// Narrowed to its payload.
+    payload: bool,
+    excluded: Vec<Nothing>,
+    members: Option<Vec<u32>>,
+    class: Option<TyId>,
+}
+
+impl NamedLocal {
+    /// Local (or field or module variable token) `l` of frame `f`, of type `ty`.
+    fn at(f: &Frame, l: LocalId, ty: TyId) -> NamedLocal {
+        let scopes = || f.scopes.iter();
+        NamedLocal {
+            ty,
+            payload: scopes().any(|s| s.narrowed.contains(&l)),
+            excluded: scopes()
+                .flat_map(|s| s.excluded.iter())
+                .filter(|(x, _)| *x == l)
+                .map(|(_, n)| *n)
+                .collect(),
+            members: scopes().rev().find_map(|s| {
+                let known = s.members.iter().rev().find(|(x, _)| *x == l);
+                known.map(|(_, vs)| vs.clone())
+            }),
+            class: scopes().rev().find_map(|s| {
+                let known = s.classes.iter().rev().find(|(x, _)| *x == l);
+                known.map(|(_, t)| *t)
+            }),
+        }
+    }
+}
 
 impl FnCx<'_, '_> {
+    /// The locals (of this function and of those it is nested in) named like a value expression
+    /// `e` takes from its surroundings, or `this`, as they read here, with the field paths and
+    /// module variables it names narrowed.
+    pub(super) fn named_local_types(&mut self, e: &ast::Expr) -> Vec<NamedLocal> {
+        let free = self.arrow_scans.free_names(e);
+        let named = |name: &str| free.binary_search_by(|n| n.as_str().cmp(name)).is_ok();
+        let unit = self.cx.ty.unit;
+        let mut out = vec![];
+        for f in self.outer.iter().chain(std::iter::once(&self.f)) {
+            let mut roots = vec![];
+            for (i, l) in f.locals.iter().enumerate() {
+                if named(&l.name) {
+                    let id = LocalId(i as u32);
+                    roots.push(id);
+                    out.push(NamedLocal::at(f, id, l.ty));
+                }
+            }
+            for g in &f.global_tokens {
+                if self.cx.global(g.def).is_some_and(|d| named(&d.name)) {
+                    roots.push(g.token);
+                    out.push(NamedLocal::at(f, g.token, unit));
+                }
+            }
+            for t in f.field_tokens.iter().filter(|t| roots.contains(&t.root)) {
+                out.push(NamedLocal::at(f, t.token, unit));
+            }
+        }
+        out
+    }
+
     /// The type `check` gives for `e` against `expected` as a trial, remembered.
     pub(super) fn remembered_trial(
         &mut self,
@@ -27,6 +96,7 @@ impl FnCx<'_, '_> {
         if let Some(&answer) = self.trial_answers.get(&key) {
             return answer;
         }
+        crate::check_work::add_memo_trial();
         self.memo_trials += 1;
         let answer = self.trial_with(check);
         self.memo_trials -= 1;
@@ -49,7 +119,7 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         escaping: bool,
     ) -> hir::Expr {
-        let key: (Span, Option<TyId>, Vec<TyId>) = (e.span, exp, self.named_local_types(e));
+        let key = (e.span, exp, self.named_local_types(e));
         if let Some(&ty) = self.trial_closures.get(&key) {
             let mut h = self.error_expr(e.span);
             h.ty = ty;
@@ -81,7 +151,7 @@ impl FnCx<'_, '_> {
         &mut self,
         e: &ast::Expr,
         exp: Option<TyId>,
-        locals: &[TyId],
+        locals: &[NamedLocal],
     ) -> Option<TyId> {
         let exp = exp?;
         let found = *self.arrow_trials.get(&(e.span, locals.to_vec()))?;

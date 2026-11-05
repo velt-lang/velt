@@ -499,16 +499,27 @@ fn nested_argument_trials_grow_linearly() {
     let _serial = serial();
     let programs: Vec<Vec<String>> = sizes.iter().map(|&n| nested_argument_trials(n)).collect();
     for shape in 0..programs[0].len() {
-        let checks: Vec<u64> = (sizes.iter().zip(&programs))
+        let checks: Vec<(u64, u64)> = (sizes.iter().zip(&programs))
             .map(|(&n, p)| {
-                let [c] = counted_work(&load_src(&p[shape]), &|| [check_work().closure_checks]);
-                eprintln!("shape {shape}, depth {n:>2}: {c} arrows checked");
-                c
+                let [c, t] = counted_work(&load_src(&p[shape]), &|| {
+                    [check_work().closure_checks, check_work().memo_trials]
+                });
+                eprintln!("shape {shape}, depth {n:>2}: {c} arrows checked, {t} trials run");
+                (c, t)
             })
             .collect();
-        if let Err(e) = slopes_within(&sizes, &checks, 1.6) {
+        let arrows: Vec<u64> = checks.iter().map(|c| c.0).collect();
+        if let Err(e) = slopes_within(&sizes, &arrows, 1.6) {
             panic!("shape {shape}: {e}");
         }
+        // Each level's trial runs once: the real check of an enclosing arrow reaches it again,
+        // and asking again would still be linear, so the count itself is what is held.
+        let trials = checks[2].1 - checks[0].1;
+        let levels = (sizes[2] - sizes[0]) as u64;
+        assert!(
+            trials <= levels,
+            "shape {shape}: {trials} trials run for {levels} more levels: an answer wasn't reused"
+        );
     }
 }
 

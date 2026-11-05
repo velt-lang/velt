@@ -206,7 +206,7 @@ mod this_type;
 mod three_state;
 mod throws_mismatch;
 mod top_level_await;
-mod trial_memo;
+pub(super) mod trial_memo;
 mod truthiness;
 mod tuple_text;
 mod type_tests;

@@ -1,0 +1,20 @@
+// What is known about a local at a call is part of what a trial of an argument depends on. The
+// first overload tries `x: number`, so `u` holds a number and `fold`'s callback fits its literal.
+// The second has `x: number | string`, and that answer must not be reused there.
+function fold<T>(cb: (a: T) => T, init: T): T {
+  return cb(init);
+}
+function over(o: { m(x: number): boolean }): "a";
+function over(o: { m(x: number | string): number | string }): "b";
+function over(o: any): any {
+  return "b";
+}
+console.log(
+  over({
+    m: (x) => {
+      let u: number | string = x;
+      const r = fold((a: number | string) => u, 1);
+      return r;
+    },
+  }),
+);
