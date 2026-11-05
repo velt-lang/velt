@@ -1,0 +1,9 @@
+/** @jsxImportSource ./_jsx_react */
+// A tag is a use of its name: a generic arrow function captures the local it names.
+function page(s: string): any {
+  const Inner = (p: { t: string }): any => s + p.t;
+  const G = <T,>(x: T): any => <Inner t="z" />;
+  const e = G(1);
+  return e.type(e.props);
+}
+console.log(page("a"));

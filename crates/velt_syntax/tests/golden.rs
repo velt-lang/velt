@@ -65,6 +65,7 @@ fn golden_m1_files_parse() {
                 | "static_block_return.vlt"
                 | "global_this_declare_global.vlt"
                 | "global_this_declare_let.vlt"
+                | "jsx_tag_declared_no_value.vlt"
                 | "_global_this_declared_lib.vlt"
                 | "abstract_class_syntax.vlt"
                 | "operator_index_syntax.vlt"
