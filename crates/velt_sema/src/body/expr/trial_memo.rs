@@ -177,7 +177,13 @@ impl FnCx<'_, '_> {
         };
         let same_inputs = wanted.len() == tried.len()
             && (params.iter().enumerate()).all(|(i, p)| {
-                p.ty.is_some() || (wanted.get(i).is_some() && wanted.get(i) == tried.get(i))
+                // An annotated parameter must take what is expected now, not only what it was
+                // tried with.
+                match (p.ty.is_some(), wanted.get(i), tried.get(i)) {
+                    (true, Some(&w), Some(&t)) => self.converts_to(w, t),
+                    (false, Some(w), Some(t)) => w == t,
+                    _ => false,
+                }
             });
         let known =
             !self.cx.ty.has_error(wanted_ret) && !wanted.iter().any(|t| self.cx.ty.has_error(*t));
