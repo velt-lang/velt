@@ -125,7 +125,8 @@ struct Value {
 
 enum ValueKind {
     Str(String),
-    Num,
+    /// A number; its value when it is an integer literal without a suffix.
+    Num(Option<u128>),
     Bool(bool),
     Array(Vec<Value>),
     Object(Vec<(ast::Ident, Value)>),
@@ -135,7 +136,7 @@ impl ValueKind {
     fn describe(&self) -> &'static str {
         match self {
             ValueKind::Str(_) => "a string",
-            ValueKind::Num => "a number",
+            ValueKind::Num(_) => "a number",
             ValueKind::Bool(_) => "a boolean",
             ValueKind::Array(_) => "an array",
             ValueKind::Object(_) => "an object",
@@ -218,7 +219,11 @@ impl Reader<'_> {
         let expr: &ast::Expr = &unpacked;
         let kind = match &expr.kind {
             ExprKind::Lit(Lit::Str(s)) => ValueKind::Str(s.clone()),
-            ExprKind::Lit(Lit::Int { .. } | Lit::Float { .. }) => ValueKind::Num,
+            ExprKind::Lit(Lit::Int {
+                value,
+                suffix: None,
+            }) => ValueKind::Num(Some(*value)),
+            ExprKind::Lit(Lit::Int { .. } | Lit::Float { .. }) => ValueKind::Num(None),
             ExprKind::Lit(Lit::Bool(b)) => ValueKind::Bool(*b),
             ExprKind::Lit(Lit::Null) => {
                 self.error("`null` is not allowed; leave the key out", expr.span);
@@ -459,6 +464,10 @@ impl Reader<'_> {
                 ValueKind::Object(fields) => {
                     let mut detailed = DetailedDependency::default();
                     for (k, fv) in fields {
+                        if k.name == "strip" {
+                            detailed.strip = self.small_integer(fv, "strip");
+                            continue;
+                        }
                         let slot = match k.name.as_str() {
                             "version" => &mut detailed.version,
                             "path" => &mut detailed.path,
@@ -466,6 +475,8 @@ impl Reader<'_> {
                             "branch" => &mut detailed.branch,
                             "tag" => &mut detailed.tag,
                             "rev" => &mut detailed.rev,
+                            "url" => &mut detailed.url,
+                            "sha256" => &mut detailed.sha256,
                             _ => {
                                 self.unknown_key(k, schema::DEPENDENCY);
                                 continue;
@@ -563,6 +574,20 @@ impl Reader<'_> {
             other => {
                 self.error(
                     format!("{what} must be an object, not {}", other.describe()),
+                    value.span,
+                );
+                None
+            }
+        }
+    }
+
+    /// `value` as a small non-negative integer (`strip: 1`), or an error naming `key`.
+    fn small_integer(&mut self, value: &Value, key: &str) -> Option<u32> {
+        match value.kind {
+            ValueKind::Num(Some(n)) if n <= 16 => Some(n as u32),
+            _ => {
+                self.error(
+                    format!("`{key}` must be a whole number from 0 to 16"),
                     value.span,
                 );
                 None

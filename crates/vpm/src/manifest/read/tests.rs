@@ -237,7 +237,7 @@ fn field_rules_point_at_the_value() {
     let (message, covered) = error(&with("dependencies: { y: {} }"));
     assert_eq!(
         message,
-        "dependency `y` needs a `version`, a `path` or a `git` repository"
+        "dependency `y` needs a `version`, a `path`, a `git` repository or a `url`"
     );
     assert_eq!(covered, "{}");
     let (message, _) = error(&with("dependencies: { y: \"one\" }"));

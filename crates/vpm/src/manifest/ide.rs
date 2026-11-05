@@ -123,6 +123,7 @@ fn field_completion(f: &Field, cursor: &Cursor) -> Completion {
         let value = match f.kind {
             Kind::Str => "\"$1\"",
             Kind::Bool => "${1|false,true|}",
+            Kind::Num => "$1",
             Kind::StrArray { .. } | Kind::Entries(_) => "[$1]",
             Kind::Object(_) | Kind::Map(_) => "{ $1 }",
         };

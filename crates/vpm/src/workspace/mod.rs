@@ -194,8 +194,11 @@ impl Workspace {
                     ..Default::default()
                 }),
                 None => match &self.file.dependencies[name] {
-                    // A `path` beside `git` is inside the repository, and stays as written.
-                    Dependency::Detailed(d) if d.path.is_some() && d.git.is_none() => {
+                    // A `path` beside `git` or `url` is inside the repository or archive, and stays
+                    // as written.
+                    Dependency::Detailed(d)
+                        if d.path.is_some() && d.git.is_none() && d.url.is_none() =>
+                    {
                         let path = self.root.join(d.path.as_deref().unwrap_or_default());
                         Dependency::Detailed(DetailedDependency {
                             version: d.version.clone(),

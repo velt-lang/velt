@@ -76,7 +76,7 @@ fn nested_objects_complete_their_own_fields() {
     );
     assert_eq!(
         labels("{ dependencies: { util: { path: \"../u\", | } } }"),
-        ["version", "git", "branch", "tag", "rev"]
+        ["version", "git", "branch", "tag", "rev", "url", "sha256", "strip"]
     );
     // An `allowNative` entry's object form, not a string element.
     assert_eq!(

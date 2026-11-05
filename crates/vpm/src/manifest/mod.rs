@@ -238,8 +238,8 @@ pub struct DetailedDependency {
     /// Semver requirement.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub version: Option<String>,
-    /// Local package directory, relative to the depending manifest; with `git`, the package's
-    /// directory in the repository.
+    /// Local package directory, relative to the depending manifest; with `git` or `url`, the
+    /// package's directory in the repository or archive.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub path: Option<String>,
     /// A git repository URL ([`crate::git`]).
@@ -254,6 +254,17 @@ pub struct DetailedDependency {
     /// With `git`: a full commit hash.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rev: Option<String>,
+    /// A release archive's URL (`.tar.gz` or `.zip`, [`crate::url_source`]); `path` is then the
+    /// package's directory in the archive.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub url: Option<String>,
+    /// With `url`: the archive's SHA-256, in lowercase hex. Required.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sha256: Option<String>,
+    /// With `url`: how many leading directories to remove (each must be the only entry at its
+    /// level, as `tar --strip-components` on a release's one top directory).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strip: Option<u32>,
 }
 
 impl Dependency {
@@ -532,13 +543,15 @@ pub(crate) fn check_dependency(name: &str, dep: &Dependency) -> Result<(), Strin
     }
     if let Dependency::Detailed(d) = dep {
         crate::git::check_fields(name, d)?;
+        crate::url_source::check_fields(name, d)?;
     }
-    if dep.version().is_none() && dep.path().is_none() && dep.git().is_none() {
+    let remote = dep.git().is_some() || dep.url_spec().is_some();
+    if dep.version().is_none() && dep.path().is_none() && !remote {
         return Err(format!(
-            "dependency `{name}` needs a `version`, a `path` or a `git` repository"
+            "dependency `{name}` needs a `version`, a `path`, a `git` repository or a `url`"
         ));
     }
-    if split_scoped(name).is_some() && dep.path().is_none() && dep.git().is_none() {
+    if split_scoped(name).is_some() && dep.path().is_none() && !remote {
         return Err(format!(
             "dependency `{name}` needs a `path`: registries hold unscoped packages only"
         ));

@@ -13,6 +13,8 @@ use crate::lockfile::{Lockfile, REGISTRY_SOURCE};
 use crate::manifest::Manifest;
 use crate::registry::{self, Index};
 
+mod url;
+
 /// One version that could be selected.
 pub(super) struct Candidate {
     pub version: Version,
@@ -83,6 +85,18 @@ impl<'a> Provider<'a> {
                 req: version_req,
             } => {
                 let cand = self.git_candidate(req, spec)?;
+                Ok(version_req
+                    .as_ref()
+                    .is_none_or(|r| r.matches(&cand.version))
+                    .then_some(cand)
+                    .into_iter()
+                    .collect())
+            }
+            Want::Url {
+                spec,
+                req: version_req,
+            } => {
+                let cand = self.url_candidate(req, spec)?;
                 Ok(version_req
                     .as_ref()
                     .is_none_or(|r| r.matches(&cand.version))

@@ -248,6 +248,12 @@ fn https_parts(url: &str) -> Result<(String, String), String> {
     ))
 }
 
+/// `Err` unless `url`, an `https` URL to download from, is safe to compare against an
+/// `allowNative` prefix: what [`prefix_matches`] would refuse in it is refused when it is written.
+pub fn check_downloadable(url: &str) -> Result<(), String> {
+    https_parts(url).map(drop)
+}
+
 /// Whether `url` (a source as the manifest writes it) is under `prefix` (an `allowNative` entry,
 /// which must pass [`check_prefix`], or this is an error): same scheme, host and port, and the prefix's path is the URL's
 /// path or ends where one of its segments ends (`…/o/duck` never matches `…/o/duck-evil`). The

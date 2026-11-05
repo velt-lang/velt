@@ -30,6 +30,7 @@ fn describe_source(source: &Source) -> String {
         Source::Registry { .. } => "the registry".to_string(),
         Source::Path { dir } => format!("the local path {}", dir.display()),
         Source::Git { spec, .. } => format!("the git repository {}", spec.url.escape_default()),
+        Source::Url { spec, .. } => format!("the archive {}", spec.url.escape_default()),
     }
 }
 
@@ -40,6 +41,9 @@ fn allows(entry: &AllowNative, source: &Source) -> Result<bool, String> {
         (AllowedFrom::Git(url), Source::Git { spec, .. }) => {
             let allowed = crate::source_url::git_identity(url)?;
             Ok(allowed == crate::source_url::git_identity(&spec.url)?)
+        }
+        (AllowedFrom::Url(prefix), Source::Url { spec, .. }) => {
+            crate::source_url::prefix_matches(prefix, &spec.url)
         }
         _ => Ok(false),
     }
@@ -52,7 +56,22 @@ fn suggested(name: &str, source: &Source) -> AllowNative {
             name: name.to_string(),
             from: AllowedFrom::Git(spec.url.clone()),
         },
+        Source::Url { spec, .. } => AllowNative {
+            name: name.to_string(),
+            from: AllowedFrom::Url(url_directory(&spec.url)),
+        },
         Source::Registry { .. } | Source::Path { .. } => AllowNative::named(name),
+    }
+}
+
+/// The directory a release archive's URL is in, as an `allowNative` prefix: `https://h/o/p/
+/// releases/download/v1/x.tar.gz` → `https://h/o/p/releases/download/v1/`. Narrower than a
+/// project's whole release tree on purpose: the user widens it if they trust more.
+fn url_directory(url: &str) -> String {
+    let without_query = url.split(['?', '#']).next().unwrap_or(url);
+    match without_query.rsplit_once('/') {
+        Some((dir, _)) => format!("{dir}/"),
+        None => without_query.to_string(),
     }
 }
 
@@ -100,6 +119,15 @@ pub(crate) fn check<'r>(
             if let Err(e) = crate::source_url::git_identity(&spec.url) {
                 elsewhere.push(format!(
                     "package `{}` has native code and comes from a git repository that allowNative can't name: {e}",
+                    p.name
+                ));
+                continue;
+            }
+        }
+        if let Source::Url { spec, .. } = &p.source {
+            if let Err(e) = crate::source_url::check_prefix(&url_directory(&spec.url)) {
+                elsewhere.push(format!(
+                    "package `{}` has native code and comes from an archive whose URL allowNative can't name: {e}",
                     p.name
                 ));
                 continue;

@@ -206,13 +206,35 @@ dependent's
 `GraphPackage::npm` gets the packages, and the loader resolves a bare import of one in its
 directory (`NpmResolver::resolve_in`) before Node's search.
 
+## Archive dependencies (additive, #2367)
+`vpm::url_source`. `DetailedDependency` gains `url`, `sha256` and `strip` (a whole number, 0-16;
+the reader's `ValueKind::Num` keeps an unsuffixed integer's value); `Dependency::url_spec` gives
+the `UrlSpec { url, sha256, strip, subdir }` (`subdir` is `path`). `url_source::check_fields`:
+`sha256` and `strip` need `url`; `url` needs `sha256` (64 lowercase hex digits), not with `git`,
+`branch`, `tag` or `rev`; `path` is a `/`-separated directory inside the archive; `url` passes
+`url_source::check_url`: `source_url::check_downloadable` (what an `allowNative` prefix
+comparison would refuse) and `https`, or plain `http` to this machine. The resolver's
+`Want::Url`/`Source::Url { spec, checksum, dir }`: `url_source::checkout` downloads the archive
+unless `<cache>/url/<sha256>/` holds it (`velt_toolchain::install::download`: every redirect hop
+`https` or this machine, at most `MAX_ARCHIVE` = 512 MiB read), checks the SHA-256 of the bytes,
+extracts it there with `vpm::extract` (a concurrent install's equal tree is taken), then goes
+`strip` levels down (each the only entry at its level) and into `path`, which must stay inside;
+`git::check_links` checks that directory's links again from it. The lock's `source` is
+`url+<url>[?strip=n][&path=…]#sha256:<hex>` (`UrlSpec::source`/`parse_source`, `&=#?%` escaped),
+its `checksum` the chosen directory's `git::tree_checksum`, verified on every use. A url package's
+`path` dependencies are other directories of the same archive (`Want::Url` with the same hash),
+never outside it. Native code builds only with `VELT_NATIVE_FROM_SOURCE=1`, from a copy in
+`<cache>/url-native/<name>/<sha256>-<strip>[-<path>]/`. `registry::publish` refuses a dependency
+with only `url`. A tree without `package.velt` is an error (no npm sources from archives yet).
+
 ## One source per package, and `allowNative` by source (additive, #2367)
 `vpm::resolve`, `vpm::install::allow_native`, `vpm::manifest::allow_native`, `vpm::source_url`.
 - **Who wins.** A requirement is the root's when a manifest the root controls wrote it: the
   root's, a workspace member's, or a path package's (only those name a `path`: a git package's
   paths become its repository, a registry package has none). The solver takes the root's
   requirements first (`Requirement::root`). A transitive requirement of the same name from
-  another source (`same_source`: registry, the same directory, or the same git spec) is replaced
+  another source (`same_source`: registry, the same directory, the same git spec, or the same
+  archive by hash with the same `strip` and `path`, from whichever URL) is replaced
   by the root's entry when its version still fits (else "this package's entry for `x` gives …,
   which … does not accept"), and `Resolution::overrides` records it (`Override { by, wanted }`).
   Two of the root's entries that disagree, or two transitive ones the root doesn't settle, are an
@@ -222,7 +244,9 @@ directory (`NpmResolver::resolve_in`) before Node's search.
   (`Installed::notes`), not builds.
 - **`allowNative`** entries are a name (`AllowedFrom::Root`: the registry or a path source) or
   `{ name, git }` (that repository at any commit and directory) or `{ name, url }` (archives
-  under an https prefix; no such sources until step 2). Read with each check at its value: `git`
+  under an https prefix, matched by `source_url::prefix_matches` against the url source's URL as
+  written; a refusal suggests the URL's directory, and none when that can't be a prefix, such as
+  plain `http` to this machine). Read with each check at its value: `git`
   through `source_url::git_identity`, `url` through `source_url::check_prefix` (a path under the
   host, no credentials, query, fragment, characters past ASCII, `.`/`..` segments or one
   starting with `..` and empty segments but a trailing `/` (each judged before a `;`), backslash,

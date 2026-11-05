@@ -116,7 +116,7 @@ impl GitSpec {
 
 /// `value` with the characters a lockfile source uses as delimiters (`&`, `=`, `#`, `?`) and `%`
 /// percent-encoded: git allows them in branch and directory names.
-fn encode(value: &str) -> String {
+pub(crate) fn encode(value: &str) -> String {
     let mut out = String::with_capacity(value.len());
     for c in value.chars() {
         match c {
@@ -128,7 +128,7 @@ fn encode(value: &str) -> String {
 }
 
 /// [`encode`] undone; `None` for a malformed escape.
-fn decode(value: &str) -> Option<String> {
+pub(crate) fn decode(value: &str) -> Option<String> {
     let mut out = Vec::with_capacity(value.len());
     let mut bytes = value.bytes();
     while let Some(b) = bytes.next() {
@@ -366,7 +366,7 @@ fn fetch(url: &str, commit: &str, dir: &Path) -> Result<(), String> {
 /// file elsewhere on this machine) would build what the lock doesn't pin. Each link is resolved
 /// inside the checkout, following the checkout's own links, so a chain can't leave it either; a
 /// part that doesn't exist yet is taken as written.
-fn check_links(tree: &Path) -> Result<(), String> {
+pub(crate) fn check_links(tree: &Path) -> Result<(), String> {
     let mut files = vec![];
     collect(tree, "", &mut files)?;
     for rel in files {

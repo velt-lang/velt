@@ -39,6 +39,8 @@ pub enum DependencySource {
     Workspace,
     /// It has a `git` repository.
     Git,
+    /// It has a release archive's `url`.
+    Url,
 }
 
 /// The dependencies of manifest text `src`, in order.
@@ -66,6 +68,8 @@ pub fn dependencies(src: &str) -> Vec<DependencyEntry> {
             let has_key = |key: &str| detail.is_some_and(|f| f.keys.iter().any(|(k, _)| k == key));
             let source = if has_key("git") {
                 DependencySource::Git
+            } else if has_key("url") {
+                DependencySource::Url
             } else if has_key("path") {
                 DependencySource::Path
             } else if version
@@ -393,6 +397,7 @@ pub fn hover(entry: &DependencyEntry, index: Option<&Index>, locked: Option<&str
     match (index, entry.source) {
         (_, DependencySource::Path) => lines.push("local package (`path`)".into()),
         (_, DependencySource::Git) => lines.push("from a git repository (`git`)".into()),
+        (_, DependencySource::Url) => lines.push("from a release archive (`url`)".into()),
         (_, DependencySource::Workspace) => {
             lines.push("from the workspace (`velt.workspace.velt`)".into())
         }
