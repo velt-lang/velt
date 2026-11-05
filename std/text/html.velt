@@ -44,8 +44,14 @@ function marks(v: u8x16): mask8x16 {
   return velt_simd_mask8x16_or(
     velt_simd_u8x16_eq(v, velt_simd_u8x16_splat(QUOTE)),
     velt_simd_mask8x16_or(
-      velt_simd_u8x16_eq(velt_simd_u8x16_or(v, velt_simd_u8x16_splat(1)), velt_simd_u8x16_splat(0x27)),
-      velt_simd_u8x16_eq(velt_simd_u8x16_or(v, velt_simd_u8x16_splat(2)), velt_simd_u8x16_splat(GT)),
+      velt_simd_u8x16_eq(
+        velt_simd_u8x16_or(v, velt_simd_u8x16_splat(1)),
+        velt_simd_u8x16_splat(0x27),
+      ),
+      velt_simd_u8x16_eq(
+        velt_simd_u8x16_or(v, velt_simd_u8x16_splat(2)),
+        velt_simd_u8x16_splat(GT),
+      ),
     ),
   );
 }
