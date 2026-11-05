@@ -1,0 +1,213 @@
+// velt/net (tests): the TLS 1.3 client against RFC 8448 §5's HelloRetryRequest trace, run by
+// `velt test std/`.
+//
+// The client offers X25519; the server asks for secp256r1 with a cookie. The trace's two
+// ClientHellos and P-256 key go in, the server's records come from a fake transport, and the
+// client's Finished must be the trace's byte for byte: it is a MAC over the transcript that
+// restarts with message_hash(ClientHello1) (RFC 8446 §4.4.1) and over the P-256 shared secret.
+import { p256PublicKey } from "velt/crypto/p256";
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import { IoError } from "velt/io/error";
+import { Uint8Array } from "velt/lang/typed_array/uint8_array";
+import { ByteStream } from "velt/net/byte_stream";
+import { TlsEngine } from "velt/net/tls/tls_engine";
+import { TlsStream } from "velt/net/tls/tls_stream";
+import { describe, expect, it } from "velt/test";
+
+// The first ClientHello (X25519 share) (180 bytes).
+const HRR_CLIENT_HELLO =
+  "010000b00303b0b1c5a5aa37c5919f2ed1d5c6fff7fcb7849716945a2b8cee9258a346677b6f0000061301130313" +
+  "02010000810000000b0009000006736572766572ff01000100000a00080006001d00170018003300260024001d00" +
+  "20e8e8e3f3b93a25ed97a14a7dcacb8a272c6288e585c6484d05262fcad062ad1f002b0003020304000d0020001e" +
+  "040305030603020308040805080604010501060102010402050206020202002d00020101001c00024001";
+// The HelloRetryRequest record (secp256r1, a cookie) (181 bytes).
+const HRR_RECORD =
+  "16030300b0020000ac0303cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c001301" +
+  "000084003300020017002c0074007271dcd04bb88bc3189119398a00000000eefafc76c146b823b096f8aacad365" +
+  "dd0030953f4edf625636e5f21bb2e23fcc654b1b5b40318d10d137abcbb87574e36e8a1f025f7dfa5d6e50781b5e" +
+  "da4aa15b0c8be778257d16aa3030e9e7841dd9e4c0342267e8ca0caf571fb2b7cff0f934b0002b00020304";
+// The second ClientHello (P-256 share, the cookie) (512 bytes).
+const HRR_CLIENT_HELLO_2 =
+  "010001fc0303b0b1c5a5aa37c5919f2ed1d5c6fff7fcb7849716945a2b8cee9258a346677b6f0000061301130313" +
+  "02010001cd0000000b0009000006736572766572ff01000100000a00080006001d00170018003300470045001700" +
+  "4104a6da7392ec591e17abfd535964b99894d13befb221b3def2ebe3830eac8f0151812677c4d6d2237e85cf01d6" +
+  "910cfb83954e76ba7352830534159897e8065780002b0003020304000d0020001e04030503060302030804080508" +
+  "0604010501060102010402050206020202002c0074007271dcd04bb88bc3189119398a00000000eefafc76c146b8" +
+  "23b096f8aacad365dd0030953f4edf625636e5f21bb2e23fcc654b1b5b40318d10d137abcbb87574e36e8a1f025f" +
+  "7dfa5d6e50781b5eda4aa15b0c8be778257d16aa3030e9e7841dd9e4c0342267e8ca0caf571fb2b7cff0f934b000" +
+  "2d00020101001c00024001001500af00000000000000000000000000000000000000000000000000000000000000" +
+  "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+  "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+  "00000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000" +
+  "000000000000";
+// The client's P-256 private key (32 bytes).
+const HRR_P256_PRIVATE = "ab5473467e19346ceb0a0414e41da21d4d2445bc3025afe97c4e8dc8d513da39";
+// and its public key (65 bytes).
+const HRR_P256_PUBLIC =
+  "04a6da7392ec591e17abfd535964b99894d13befb221b3def2ebe3830eac8f0151812677c4d6d2237e85cf01d691" +
+  "0cfb83954e76ba7352830534159897e8065780";
+// The client's X25519 private key (32 bytes).
+const HRR_X25519_PRIVATE = "0ed02f8e8117efc75ca7ac32aa7e34eda64cdc0ddad154a5e85289f959f63204";
+// The ServerHello record (128 bytes).
+const HRR_SERVER_HELLO_RECORD =
+  "160303007b020000770303bb341d847fd789c47c387172dc0c9bf147fccacb5043d86ca4c598d3ff571b98001301" +
+  "00004f003300450017004104583e054b7a66672ae020ad9d2686fcc85b5ad41a134a0f03ee72b893052bd85b4c8d" +
+  "e6776f5b04ac07d83540eab3e3d9c547bc6528c4317d294686093a6cad7d002b00020304";
+// The server's encrypted flight (667 bytes).
+const HRR_SERVER_FLIGHT_RECORD =
+  "170303029699bee20baf5b7fc727bfab6223928a381e6d0cf9c4da653f9d2a7b23f7de11cce842d5cf7563176345" +
+  "0ffb8b0cc1d238e658af7a12adc86243114ab14a1da2fae42621ce483fb6242eabfaad52566b02b31d2eddedefeb" +
+  "80e66a9900d5f973b40c4fdf74719ecf1b68d7f9c3b6ceb903ca13dd1bb8f8187ae33417e1d152522c5822a1a03a" +
+  "d52c838c55953d610222874cce8e1790b229a2aa0b53c8d377ee720182951dc6181dc5d90bd1f0105ed1e84aa5f7" +
+  "5957c6661897079e5ea5007449e3197bdc7c9beeedddeafdd844afa5c315ecfe65e576afe909812880620ec7048b" +
+  "42d7f5c78d76f299d6d82534bdd8f512febc0ed3814aca470cd8000d3e1cb9962b052fbb950df683a52c2ba77ed3" +
+  "713b122937a6e5170964e2ab7969dcd980b3db9b458da7603124d6dc005e4d6e04b4d0c4baf3275db827dbba0a6d" +
+  "b09672171fc057b3851d7e026841e2978fbd2346bbefdd0376bb1108fe9acc92189f5650aa5e85d8e8c7b67ac510" +
+  "dba003d3d7e16350bb66d45013efd44c9b607c0d318c4c7d1a1f5cbc57e20611804e3787d7b4a4b5f08ed8fd70bd" +
+  "aeade02260b12ab842ef690b4a3ee7911e841b374ecd5ebbbc2a54d047b600336dd7d0c88b4bc10e58ee6cb656de" +
+  "7247fa20d8e91deb84628608cf80615b62e96c1491c7ac3755eb6901405d3474fe1ac79d106a0cee56c2577fc884" +
+  "80f96cb6b8c681b7b68b53c146093908f350888175bdfb0b1e31ad61e30ba0adfe6d223aa03c0783b5001a57587c" +
+  "328a9afcfcfb978d1cd4328f7d9d60530e630befd96c0c816ee20b0100768ae2a6df51fc68f172740a79af11398e" +
+  "e3be1252491fa9c693479e877f94ab7c5f8cad480203e6ab7b87dd71e8a0729113df17f5eee86ce108d1d72007ec" +
+  "1cd13c85a6c149621e77b7d78d805a30f0be030c315e54";
+// The client's Finished record (58 bytes).
+const HRR_CLIENT_FINISHED_RECORD =
+  "1703030035d74f1923c662fd34137c6f502f3dd2b93d951d1b3bc97e42afe23c31abea92fe91b474999e85e3b791" +
+  "ce252fe8c3e9f939a4120cb2";
+// The client's close_notify (24 bytes).
+const HRR_CLIENT_ALERT_RECORD = "17030300132ea6cdf749196023e2b3a49491695536426047";
+// The server's close_notify (24 bytes).
+const HRR_SERVER_ALERT_RECORD = "1703030013519fc5075cb0884349759ff9ef6f011bb4c6f2";
+
+// A transport that plays `input` back `chunk` bytes at a time and keeps what is written.
+class Playback implements ByteStream {
+  private input: u8[];
+  private pos: usize;
+  private chunk: usize;
+  written: u8[];
+  closed: bool;
+
+  constructor(input: u8[], chunk: usize) {
+    this.input = input;
+    this.pos = 0;
+    this.chunk = chunk;
+    this.written = [];
+    this.closed = false;
+  }
+
+  async readInto(buf: Uint8Array): Promise<number | null> {
+    if (this.pos == this.input.length) {
+      return null;
+    }
+    let n = this.input.length - this.pos;
+    if (n > this.chunk) {
+      n = this.chunk;
+    }
+    if (n > buf.len) {
+      n = buf.len;
+    }
+    for (let i: usize = 0; i < n; i++) {
+      buf.buf.bytes[buf.off + i] = this.input[this.pos + i];
+    }
+    this.pos += n;
+    return n as number;
+  }
+
+  async writeBytes(data: u8[] | Uint8Array, start: number = 0, end?: number): Promise<void> {
+    if (data instanceof Uint8Array) {
+      return;
+    }
+    const to = end ?? (data.length as number);
+    for (let i = start as usize; i < (to as usize); i++) {
+      this.written.push(data[i]);
+    }
+  }
+
+  close() {
+    this.closed = true;
+  }
+}
+
+// The server's side of the trace. (A function: a constant built from constants fails to
+// resolve in a test file, #2409.)
+function server(): string {
+  return HRR_RECORD + HRR_SERVER_HELLO_RECORD + HRR_SERVER_FLIGHT_RECORD + HRR_SERVER_ALERT_RECORD;
+}
+
+// The client's handshake against `server`, with the trace's ClientHellos and keys.
+async function handshake(t: Playback): Promise<TlsStream> {
+  const e = new TlsEngine(t);
+  await e.handshake(
+    {
+      random: [],
+      sessionId: [],
+      publicKey: [],
+      serverName: "",
+      alpn: [],
+      fixed: hexDecode(HRR_CLIENT_HELLO),
+      fixedRetry: hexDecode(HRR_CLIENT_HELLO_2),
+      retryKey: hexDecode(HRR_P256_PRIVATE),
+    },
+    hexDecode(HRR_X25519_PRIVATE),
+  );
+  return new TlsStream(e);
+}
+
+// The error message of a handshake against `server`, "" if it succeeds.
+async function failure(server: string): Promise<string> {
+  try {
+    await handshake(new Playback(hexDecode(server), 1000000));
+    return "";
+  } catch (e) {
+    return e instanceof IoError ? `${e.code} ${e.message}` : `${e}`;
+  }
+}
+
+describe("TLS 1.3 client, RFC 8448 §5", () => {
+  it("derives the trace's P-256 public key", () => {
+    expect(hexEncode(p256PublicKey(hexDecode(HRR_P256_PRIVATE)))).toBe(HRR_P256_PUBLIC);
+  });
+
+  const chunks: usize[] = [1000000, 1];
+  for (const chunk of chunks) {
+    it(`retries with P-256 and writes the trace's records, in pieces of ${chunk}`, async () => {
+      const t = new Playback(hexDecode(server()), chunk);
+      const s = await handshake(t);
+      const ch1 = "16030100b4" + HRR_CLIENT_HELLO;
+      const ch2 = "1603030200" + HRR_CLIENT_HELLO_2;
+      expect(hexEncode(t.written)).toBe(ch1 + ch2 + HRR_CLIENT_FINISHED_RECORD);
+      await s.shutdown();
+      expect(hexEncode(t.written.slice(185 + 517 + 58))).toBe(HRR_CLIENT_ALERT_RECORD);
+      expect((await s.read()).length).toBe(0);
+    });
+  }
+
+  it("fails when the server's P-256 share is another point", async () => {
+    // The ServerHello's share (after its "0017 0041" header) with x and y swapped for the
+    // base point's: on the curve, but not the server's key.
+    const sh = HRR_SERVER_HELLO_RECORD;
+    const at = sh.indexOf("00170041") + 8;
+    const g =
+      "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296" +
+      "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+    const other = sh.slice(0, at) + g + sh.slice(at + 130);
+    const f = await failure(HRR_RECORD + other + HRR_SERVER_FLIGHT_RECORD);
+    // Other handshake keys: the server's flight does not decrypt.
+    expect(f).toBe("EPROTO TLS: a record failed authentication (bad_record_mac)");
+    // And a share off the curve is refused before any decryption.
+    const off = sh.slice(0, at) + g.slice(0, 128) + "f6" + sh.slice(at + 130);
+    expect(await failure(HRR_RECORD + off + HRR_SERVER_FLIGHT_RECORD)).toBe(
+      "EPROTO TLS: the server's secp256r1 share is not a point on the curve",
+    );
+  });
+
+  it("refuses a ServerHello whose share is for another group than the retry's", async () => {
+    // secp384r1 (0x0018), with the 65 bytes of the P-256 share.
+    const sh = HRR_SERVER_HELLO_RECORD;
+    const at = sh.indexOf("00170041");
+    const x = sh.slice(0, at) + "00180041" + sh.slice(at + 8);
+    expect(await failure(HRR_RECORD + x + HRR_SERVER_FLIGHT_RECORD)).toBe(
+      "EPROTO TLS: the server's key share is not a secp256r1 key",
+    );
+  });
+});

@@ -5,6 +5,7 @@
 // sends what it says. With `verify: false` the certificate and its signature are kept unchecked
 // (#2392 step 3 adds verification); the server's Finished is always checked.
 
+import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto/p256";
 import { x25519 } from "velt/crypto/x25519";
 import { sha256 } from "velt/crypto/sha256";
 import { utf8Decode } from "velt/encoding/utf8";
@@ -16,7 +17,7 @@ import {
   TlsFailure,
   UNEXPECTED_MESSAGE,
 } from "velt/net/tls/alert";
-import { clientHello, EXT_ALPN, HelloInput } from "velt/net/tls/client_hello";
+import { clientHello, EXT_ALPN, HelloInput, SECP256R1, X25519 } from "velt/net/tls/client_hello";
 import { ByteReader } from "velt/net/tls/byte_reader";
 import { ByteWriter } from "velt/net/tls/byte_writer";
 import { expandLabel, finishedMac, handshakeSecret, masterSecret } from "velt/net/tls/key_schedule";
@@ -65,6 +66,8 @@ export function checkKeyUpdate(m: u8[]) {
 export class ClientHandshake {
   private input: HelloInput;
   private privateKey: u8[];
+  /** The group of the key share sent last. */
+  private group: usize;
   private transcript: u8[];
   private state: i32;
   private retried: bool;
@@ -91,6 +94,7 @@ export class ClientHandshake {
   constructor(input: HelloInput, privateKey: u8[]) {
     this.input = input;
     this.privateKey = privateKey;
+    this.group = X25519;
     this.transcript = [];
     this.state = WAIT_SERVER_HELLO;
     this.retried = false;
@@ -110,7 +114,7 @@ export class ClientHandshake {
 
   /** The first ClientHello message. */
   hello(): u8[] {
-    const m = clientHello(this.input, null);
+    const m = clientHello(this.input, false, null, X25519, this.input.publicKey);
     this.add(m);
     return m;
   }
@@ -176,12 +180,12 @@ export class ClientHandshake {
   }
 
   private serverHello(m: u8[], body: u8[]): i32 {
-    const sh = parseServerHello(body, this.input.sessionId);
+    const sh = parseServerHello(body, this.input.sessionId, this.group);
     if (sh.retry) {
       if (this.retried) {
         throw new TlsFailure(UNEXPECTED_MESSAGE, "a second HelloRetryRequest");
       }
-      if (sh.cookie == null) {
+      if (sh.cookie == null && sh.group == 0) {
         throw new TlsFailure(ILLEGAL_PARAMETER, "a HelloRetryRequest that changes nothing");
       }
       this.retried = true;
@@ -191,7 +195,14 @@ export class ClientHandshake {
       this.transcript = [254, 0, 0, 32];
       this.add(first);
       this.add(m);
-      const again = clientHello(this.input, sh.cookie);
+      let publicKey = this.input.publicKey;
+      if (sh.group == SECP256R1) {
+        // A P-256 share instead (parseServerHello allows no other group).
+        this.privateKey = this.input.retryKey ?? p256PrivateKey();
+        this.group = SECP256R1;
+        publicKey = p256PublicKey(this.privateKey);
+      }
+      const again = clientHello(this.input, true, sh.cookie, this.group, publicKey);
       this.add(again);
       this.retryHello = again;
       return SEND_RETRY;
@@ -206,9 +217,17 @@ export class ClientHandshake {
     this.add(m);
     let shared: u8[];
     try {
-      shared = x25519(this.privateKey, sh.keyShare);
+      shared =
+        this.group == X25519
+          ? x25519(this.privateKey, sh.keyShare)
+          : p256Ecdh(this.privateKey, sh.keyShare);
     } catch (e) {
-      throw new TlsFailure(ILLEGAL_PARAMETER, "the server's X25519 share is a small-order point");
+      throw new TlsFailure(
+        ILLEGAL_PARAMETER,
+        this.group == X25519
+          ? "the server's X25519 share is a small-order point"
+          : "the server's secp256r1 share is not a point on the curve",
+      );
     }
     const hs = handshakeSecret(shared);
     const h = this.hash();

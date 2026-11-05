@@ -1,0 +1,345 @@
+// velt/crypto (internal): arithmetic mod p = 2^256 - 2^224 + 2^192 + 2^96 - 1 (NIST P-256) in
+// four 64-bit limbs, little-endian, in the Montgomery domain (x stands for x * 2^256 mod p), as
+// ring: a product (or a square, with its 10 distinct limb products) is reduced in four rounds
+// whose multiplier is the low limb itself (p = -1 mod 2^64), with p's sparse limbs as shifts.
+// Each limb product is a 128-bit value from `*` and `Math.umulh`; carries and borrows are
+// `(s < a) as u64`, never a ternary; the final subtraction of p is a masked select. Constant
+// time: nothing branches on or indexes by a limb's value.
+//
+// Elements live in registers (four limbs each) of one array inside `FeP256`, like `Fe25519`:
+// operations name registers by number, load operands into locals and store the result once,
+// so `mul(a, a, b)` works in place (#2403). Every result is fully reduced (below p).
+
+// p, little-endian limbs.
+const P0: u64 = 0xffffffffffffffff;
+const P1: u64 = 0x00000000ffffffff;
+const P3: u64 = 0xffffffff00000001;
+
+/** 2^512 mod p: multiplying by it enters the Montgomery domain. */
+const R2: u64[] = [0x0000000000000003, 0xfffffffbffffffff, 0xfffffffffffffffe, 0x00000004fffffffd];
+
+// `t + a * b + c` as 128 bits (it cannot overflow).
+function mac(t: u64, a: u64, b: u64, c: u64): [u64, u64] {
+  const lo = a * b;
+  const s = lo + t;
+  const s2 = s + c;
+  return [s2, Math.umulh(a, b) + ((s < lo) as u64) + ((s2 < c) as u64)];
+}
+
+// `a + b + c` (c is 0 or 1) and its carry.
+function adc(a: u64, b: u64, c: u64): [u64, u64] {
+  const s = a + b;
+  const s2 = s + c;
+  return [s2, ((s < a) as u64) | ((s2 < c) as u64)];
+}
+
+// `a - b - c` (c is 0 or 1) and its borrow.
+function sbb(a: u64, b: u64, c: u64): [u64, u64] {
+  const d = a - b;
+  return [d - c, ((a < b) as u64) | ((d < c) as u64)];
+}
+
+/** `n` registers of elements mod the P-256 prime, all zero. */
+export class FeP256 {
+  r: u64[];
+
+  /** `n` registers, each zero. */
+  constructor(n: usize) {
+    this.r = [];
+    for (let i: usize = 0; i < 4 * n; i++) {
+      this.r.push(0);
+    }
+  }
+
+  /** Register `d` = the four limbs `x` (already in the domain the caller wants). */
+  load(d: usize, x: u64[]) {
+    for (let i: usize = 0; i < 4; i++) {
+      this.r[4 * d + i] = x[i];
+    }
+  }
+
+  /** Register `d` = register `a`. */
+  copy(d: usize, a: usize) {
+    for (let i: usize = 0; i < 4; i++) {
+      this.r[4 * d + i] = this.r[4 * a + i];
+    }
+  }
+
+  /** Register `d` = 0. */
+  zero(d: usize) {
+    for (let i: usize = 0; i < 4; i++) {
+      this.r[4 * d + i] = 0;
+    }
+  }
+
+  // Stores `t` (with the carry `t4`, the value below 2p) minus p when that is not negative.
+  private store(d: usize, t0: u64, t1: u64, t2: u64, t3: u64, t4: u64) {
+    const [d0, b0] = sbb(t0, P0, 0);
+    const [d1, b1] = sbb(t1, P1, b0);
+    const [d2, b2] = sbb(t2, 0, b1);
+    const [d3, b3] = sbb(t3, P3, b2);
+    const [_, b4] = sbb(t4, 0, b3);
+    // b4 is 1 when t < p: keep t.
+    const keep = 0 - b4;
+    const o = 4 * d;
+    this.r[o + 3] = (t3 & keep) | (d3 & ~keep);
+    this.r[o] = (t0 & keep) | (d0 & ~keep);
+    this.r[o + 1] = (t1 & keep) | (d1 & ~keep);
+    this.r[o + 2] = (t2 & keep) | (d2 & ~keep);
+  }
+
+  /** `d = a + b`. */
+  add(d: usize, a: usize, b: usize) {
+    const r = this.r;
+    const oa = 4 * a;
+    const ob = 4 * b;
+    // The highest index first: its bounds check covers the others.
+    const a3 = r[oa + 3];
+    const b3 = r[ob + 3];
+    const [s0, c0] = adc(r[oa], r[ob], 0);
+    const [s1, c1] = adc(r[oa + 1], r[ob + 1], c0);
+    const [s2, c2] = adc(r[oa + 2], r[ob + 2], c1);
+    const [s3, c3] = adc(a3, b3, c2);
+    this.store(d, s0, s1, s2, s3, c3);
+  }
+
+  /** `d = a - b`. */
+  sub(d: usize, a: usize, b: usize) {
+    const r = this.r;
+    const oa = 4 * a;
+    const ob = 4 * b;
+    const a3 = r[oa + 3];
+    const b3 = r[ob + 3];
+    const [s0, w0] = sbb(r[oa], r[ob], 0);
+    const [s1, w1] = sbb(r[oa + 1], r[ob + 1], w0);
+    const [s2, w2] = sbb(r[oa + 2], r[ob + 2], w1);
+    const [s3, w3] = sbb(a3, b3, w2);
+    // Negative: add p back.
+    const m = 0 - w3;
+    const [t0, c0] = adc(s0, P0 & m, 0);
+    const [t1, c1] = adc(s1, P1 & m, c0);
+    const [t2, c2] = adc(s2, 0, c1);
+    const [t3, _] = adc(s3, P3 & m, c2);
+    const o = 4 * d;
+    this.r[o + 3] = t3;
+    this.r[o] = t0;
+    this.r[o + 1] = t1;
+    this.r[o + 2] = t2;
+  }
+
+  /** `d = a * b / 2^256` mod p (the Montgomery product); `d` may be `a` or `b`. */
+  mul(d: usize, a: usize, b: usize) {
+    const r = this.r;
+    const oa = 4 * a;
+    const ob = 4 * b;
+    // The highest indexes first: their bounds checks cover the others.
+    const a3 = r[oa + 3];
+    const b3 = r[ob + 3];
+    const a0 = r[oa];
+    const a1 = r[oa + 1];
+    const a2 = r[oa + 2];
+    const b0 = r[ob];
+    const b1 = r[ob + 1];
+    const b2 = r[ob + 2];
+    // The 512-bit product, row by row.
+    let c: u64 = 0;
+    let [t0, t1] = mac(0, a0, b0, 0);
+    [t1, c] = mac(t1, a0, b1, 0);
+    let [t2, t3] = mac(c, a0, b2, 0);
+    [t3, c] = mac(t3, a0, b3, 0);
+    let t4 = c;
+    [t1, c] = mac(t1, a1, b0, 0);
+    [t2, c] = mac(t2, a1, b1, c);
+    [t3, c] = mac(t3, a1, b2, c);
+    let t5: u64 = 0;
+    [t4, t5] = mac(t4, a1, b3, c);
+    [t2, c] = mac(t2, a2, b0, 0);
+    [t3, c] = mac(t3, a2, b1, c);
+    [t4, c] = mac(t4, a2, b2, c);
+    let t6: u64 = 0;
+    [t5, t6] = mac(t5, a2, b3, c);
+    [t3, c] = mac(t3, a3, b0, 0);
+    [t4, c] = mac(t4, a3, b1, c);
+    [t5, c] = mac(t5, a3, b2, c);
+    let t7: u64 = 0;
+    [t6, t7] = mac(t6, a3, b3, c);
+    this.reduce(d, t0, t1, t2, t3, t4, t5, t6, t7);
+  }
+
+  /** `d = a^2 / 2^256` mod p: the 10 distinct products of `mul`'s 16. */
+  square(d: usize, a: usize) {
+    const r = this.r;
+    const oa = 4 * a;
+    const a3 = r[oa + 3];
+    const a0 = r[oa];
+    const a1 = r[oa + 1];
+    const a2 = r[oa + 2];
+    // The products of distinct limbs, once.
+    let c: u64 = 0;
+    let [t1, t2] = mac(0, a0, a1, 0);
+    [t2, c] = mac(t2, a0, a2, 0);
+    let [t3, t4] = mac(c, a0, a3, 0);
+    [t3, c] = mac(t3, a1, a2, 0);
+    let t5: u64 = 0;
+    [t4, t5] = mac(t4, a1, a3, c);
+    let t6: u64 = 0;
+    [t5, t6] = mac(t5, a2, a3, 0);
+    // Twice that, plus the squares.
+    const t7 = t6 >> 63;
+    t6 = (t6 << 1) | (t5 >> 63);
+    t5 = (t5 << 1) | (t4 >> 63);
+    t4 = (t4 << 1) | (t3 >> 63);
+    t3 = (t3 << 1) | (t2 >> 63);
+    t2 = (t2 << 1) | (t1 >> 63);
+    t1 = t1 << 1;
+    let [t0, h] = mac(0, a0, a0, 0);
+    [t1, c] = adc(t1, h, 0);
+    [t2, h] = mac(t2, a1, a1, c);
+    [t3, c] = adc(t3, h, 0);
+    [t4, h] = mac(t4, a2, a2, c);
+    [t5, c] = adc(t5, h, 0);
+    [t6, h] = mac(t6, a3, a3, c);
+    this.reduce(d, t0, t1, t2, t3, t4, t5, t6, t7 + h);
+  }
+
+  // Stores the Montgomery reduction of the 512-bit `t` (below p^2): four rounds add m p, with m
+  // the lowest limb (p = -1 mod 2^64), and shift down a limb. Each round's m p is spelled out
+  // from p's limbs: m (2^64 - 1) + the limb below makes m 2^64, m (2^32 - 1) + m is m << 32,
+  // limb 2 of p is zero, and only limb 3 needs a product. The low half reduced is at most p;
+  // adding the high half (below p) leaves less than 2p.
+  private reduce(d: usize, t0: u64, t1: u64, t2: u64, t3: u64, t4: u64, t5: u64, t6: u64, t7: u64) {
+    let u0 = t0;
+    let u1 = t1;
+    let u2 = t2;
+    let u3 = t3;
+    for (let i = 0; i < 4; i++) {
+      const m = u0;
+      const s1 = u1 + (m << 32);
+      const c1 = (m >> 32) + ((s1 < u1) as u64);
+      const s2 = u2 + c1;
+      const c2 = (s2 < c1) as u64;
+      const [s3, c3] = mac(u3, m, P3, c2);
+      u0 = s1;
+      u1 = s2;
+      u2 = s3;
+      u3 = c3;
+    }
+    const [v0, k0] = adc(u0, t4, 0);
+    const [v1, k1] = adc(u1, t5, k0);
+    const [v2, k2] = adc(u2, t6, k1);
+    const [v3, k3] = adc(u3, t7, k2);
+    this.store(d, v0, v1, v2, v3, k3);
+  }
+
+  /** `d = a^(2^n)` in the domain (n squarings, n >= 1). */
+  squareN(d: usize, a: usize, n: usize) {
+    this.square(d, a);
+    for (let i: usize = 1; i < n; i++) {
+      this.square(d, d);
+    }
+  }
+
+  /**
+   * `d = 1 / a` (0 for 0) as a^(p - 2), by a fixed chain of 255 squarings and 12 products.
+   * Uses registers `s` to `s + 3` as scratch (none of them `d` or `a`).
+   */
+  invert(d: usize, a: usize, s: usize) {
+    const x2 = s;
+    const t = s + 1;
+    const x30 = s + 2;
+    const x32 = s + 3;
+    // xk = a^(2^k - 1): x2, x3 (in t), x6, x12, x15, x30, x32.
+    this.square(x2, a);
+    this.mul(x2, x2, a);
+    this.square(t, x2);
+    this.mul(t, t, a);
+    this.squareN(x30, t, 3);
+    this.mul(x30, x30, t); // x6
+    this.squareN(x32, x30, 6);
+    this.mul(x32, x32, x30); // x12
+    this.squareN(x30, x32, 3);
+    this.mul(x30, x30, t); // x15
+    this.squareN(x32, x30, 15);
+    this.mul(x30, x32, x30); // x30
+    this.squareN(x32, x30, 2);
+    this.mul(x32, x32, x2);
+    // p - 2 = ffffffff 00000001 [96 zero bits] ffffffff ffffffff ffffffff fffffffd: 32 ones,
+    // 31 zeros and a one, 96 zeros and 32 ones, 32 ones, 30 ones, then 0 and 1.
+    this.squareN(d, x32, 32);
+    this.mul(d, d, a);
+    this.squareN(d, d, 128);
+    this.mul(d, d, x32);
+    this.squareN(d, d, 32);
+    this.mul(d, d, x32);
+    this.squareN(d, d, 30);
+    this.mul(d, d, x30);
+    this.squareN(d, d, 2);
+    this.mul(d, d, a);
+  }
+
+  /** Swaps registers `a` and `b` when `swap` is 1, leaves them when it is 0, without a branch. */
+  cswap(a: usize, b: usize, swap: u64) {
+    const mask = 0 - swap;
+    for (let i: usize = 0; i < 4; i++) {
+      const x = (this.r[4 * a + i] ^ this.r[4 * b + i]) & mask;
+      this.r[4 * a + i] ^= x;
+      this.r[4 * b + i] ^= x;
+    }
+  }
+
+  /** `d |= a & mask` limb by limb (`mask` all ones or zero): a constant-time table select. */
+  orMasked(d: usize, a: usize, mask: u64) {
+    for (let i: usize = 0; i < 4; i++) {
+      this.r[4 * d + i] |= this.r[4 * a + i] & mask;
+    }
+  }
+
+  /** `d = a` where `mask` is all ones, `d = b` where it is zero, without a branch. */
+  blend(d: usize, a: usize, b: usize, mask: u64) {
+    for (let i: usize = 0; i < 4; i++) {
+      this.r[4 * d + i] = (this.r[4 * a + i] & mask) | (this.r[4 * b + i] & ~mask);
+    }
+  }
+
+  /** All ones when register `a` is zero, else 0, without a branch. */
+  isZero(a: usize): u64 {
+    const o = 4 * a;
+    const x = this.r[o] | this.r[o + 1] | this.r[o + 2] | this.r[o + 3];
+    // (x | -x) has its top bit set unless x is 0.
+    return ((x | (0 - x)) >> 63) - 1;
+  }
+
+  /**
+   * Register `d` = the 32 big-endian bytes `b[at..at + 32]` in the Montgomery domain; false (and
+   * `d` unchanged) when they are not below p.
+   */
+  decode(d: usize, b: u8[], at: usize, tmp: usize): bool {
+    let w: u64[] = [0, 0, 0, 0];
+    for (let i: usize = 0; i < 32; i++) {
+      w[3 - (i >> 3)] = (w[3 - (i >> 3)] << 8) | (b[at + i] as u64);
+    }
+    const [_0, b0] = sbb(w[0], P0, 0);
+    const [_1, b1] = sbb(w[1], P1, b0);
+    const [_2, b2] = sbb(w[2], 0, b1);
+    const [_3, b3] = sbb(w[3], P3, b2);
+    if (b3 == 0) {
+      return false;
+    }
+    this.load(tmp, w);
+    this.load(d, R2);
+    this.mul(d, tmp, d);
+    return true;
+  }
+
+  /** Writes register `a`, out of the Montgomery domain, as 32 big-endian bytes at `out[at]`. */
+  encode(a: usize, out: u8[], at: usize, tmp: usize) {
+    // a * 1 / 2^256 leaves the domain.
+    this.zero(tmp);
+    this.r[4 * tmp] = 1;
+    this.mul(tmp, a, tmp);
+    for (let i: usize = 0; i < 32; i++) {
+      const limb = this.r[4 * tmp + 3 - (i >> 3)];
+      out[at + i] = ((limb >> ((56 - 8 * (i & 7)) as u64)) & 0xff) as u8;
+    }
+  }
+}

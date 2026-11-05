@@ -1,13 +1,15 @@
 // velt/net (internal): the ClientHello (RFC 8446 §4.1.2) a TLS 1.3 client sends: both SHA-256
-// suites, X25519 only, SNI and ALPN when given, the cookie of a HelloRetryRequest, and a
-// legacy session id so middleboxes see what looks like a resumed TLS 1.2 session (§D.4).
+// suites, an X25519 key share (and secp256r1 supported, for a HelloRetryRequest to ask for),
+// SNI and ALPN when given, the cookie of a HelloRetryRequest, and a legacy session id so
+// middleboxes see what looks like a resumed TLS 1.2 session (§D.4).
 
 import { utf8Encode } from "velt/encoding/utf8";
 import { ByteWriter } from "velt/net/tls/byte_writer";
 import { AES_128_GCM_SHA256, CHACHA20_POLY1305_SHA256 } from "velt/net/tls/record_cipher";
 
-/** The X25519 named group. */
+/** The named groups (RFC 8446 §4.2.7): X25519 and secp256r1 (NIST P-256). */
 export const X25519: usize = 0x001d;
+export const SECP256R1: usize = 0x0017;
 
 // Extension numbers (RFC 8446 §4.2).
 
@@ -29,7 +31,7 @@ export struct HelloInput {
   random: u8[];
   /** The legacy session id: 32 random bytes (middlebox compatibility), or none. */
   sessionId: u8[];
-  /** The X25519 public key (32 bytes). */
+  /** The X25519 public key (32 bytes) of the first ClientHello. */
   publicKey: u8[];
   /** The server's DNS name for SNI ("" for none). */
   serverName: string;
@@ -37,6 +39,9 @@ export struct HelloInput {
   alpn: string[];
   /** The whole first ClientHello message to send instead (RFC 8448's trace), or null. */
   fixed: u8[] | null;
+  /** The second ClientHello and its P-256 private key to use instead (RFC 8448 §5), or null. */
+  fixedRetry: u8[] | null;
+  retryKey: u8[] | null;
 }
 
 /** Whether `name` is an IP address (no SNI for those, RFC 6066 §3). */
@@ -54,10 +59,19 @@ function isIpLiteral(name: string): bool {
   return true;
 }
 
-/** The ClientHello handshake message (with its 4-byte header), with `cookie` when not null. */
-export function clientHello(h: HelloInput, cookie: u8[] | null): u8[] {
-  const fixed = h.fixed;
-  if (fixed != null && cookie == null) {
+/**
+ * The ClientHello handshake message (with its 4-byte header) with the key share `publicKey` for
+ * `group`; a second one (`retry`) carries `cookie` when not null.
+ */
+export function clientHello(
+  h: HelloInput,
+  retry: bool,
+  cookie: u8[] | null,
+  group: usize,
+  publicKey: u8[],
+): u8[] {
+  const fixed = retry ? h.fixedRetry : h.fixed;
+  if (fixed != null) {
     return fixed.slice();
   }
   const w = new ByteWriter();
@@ -91,9 +105,10 @@ export function clientHello(h: HelloInput, cookie: u8[] | null): u8[] {
   w.u8(2);
   w.u16(0x0304);
   w.u16(EXT_SUPPORTED_GROUPS);
+  w.u16(6);
   w.u16(4);
-  w.u16(2);
   w.u16(X25519);
+  w.u16(SECP256R1);
   w.u16(EXT_SIGNATURE_ALGORITHMS);
   const sa = w.begin(2);
   const sl = w.begin(2);
@@ -105,9 +120,9 @@ export function clientHello(h: HelloInput, cookie: u8[] | null): u8[] {
   w.u16(EXT_KEY_SHARE);
   const ks = w.begin(2);
   const shares = w.begin(2);
-  w.u16(X25519);
+  w.u16(group);
   const key = w.begin(2);
-  w.put(h.publicKey);
+  w.put(publicKey);
   w.end(key, 2);
   w.end(shares, 2);
   w.end(ks, 2);
