@@ -213,6 +213,12 @@ export async function publish(
   }
   // Only a caller who may publish gets a body read.
   await ownerOf(stores, req, name);
+  // Any valid token passes the owner check for a new name, and the other spelling of a published
+  // package's name shares that package's lock: it's refused before the lock (and checked again
+  // inside it, where two publishes of a new name can't race).
+  if ((await stores.db.index(name)) == null) {
+    await checkNameIsFree(stores, name);
+  }
   const body = await uploadBody(req, limits.maxArchiveBytes);
   const held = await stores.lock.acquire(normalizedName(name));
   try {

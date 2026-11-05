@@ -148,6 +148,8 @@ describe("the lock", () => {
       ]) {
         expect((await r.call(method, path, token)).status).toBe(404);
       }
+      // A publish to that spelling is refused for the name, before its lock.
+      expect((await r.publish("my_lib", "1.0.0", token)).status).toBe(400);
     }
     expect(lock.keys).toEqual([]);
   });
@@ -243,6 +245,33 @@ describe("uploads", () => {
     const answer = await r.send("PUT", "/api/v1/lib/1.0.1", headers, stream);
     expect(answer.status).toBe(403);
   });
+
+  it("read no body for another spelling of a published name", async () => {
+    const r = new TestRegistry();
+    r.user("bob");
+    await r.publish("my-lib", "1.0.0", r.user("alice"));
+    const stream = new ReadableStream<Uint8Array>({
+      pull: (c: ReadableStreamDefaultController<Uint8Array>): void => {
+        c.error(new Error("the body was read"));
+      },
+    });
+    const headers: [string, string][] = [["authorization", "Bearer token-of-bob"]];
+    const answer = await r.send("PUT", "/api/v1/my_lib/1.0.0", headers, stream);
+    expect(answer.status).toBe(400);
+  });
+
+  it("go on for both spellings when both were published before the rule", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    await r.publish("my-lib", "1.0.0", alice);
+    const index = await r.db.index("my-lib");
+    if (index == null) {
+      throw new Error("my-lib has no index");
+    }
+    await r.db.putIndex("my_lib", index);
+    await r.db.putOwners("my_lib", ["alice"]);
+    expect((await r.publish("my_lib", "1.0.1", alice)).status).toBe(201);
+  });
 });
 
 describe("a cache that can't be purged", () => {
@@ -278,15 +307,17 @@ describe("a cache that can't be purged", () => {
 describe("stores", () => {
   it("publish one name's spellings one at a time", async () => {
     const db = new GatedDb();
-    const gate = channel<bool>(2);
+    // Each reads the names twice: before reading its body, and under the lock.
+    const gate = channel<bool>(4);
     db.gate = gate;
     const r = new TestRegistry(new RegistryLimits(), db);
     // Both reach the name check before either is let through; without the lock both would
     // find the name free.
     const first = r.publish("my-pkg", "1.0.0");
     const second = r.publish("my_pkg", "1.0.0");
-    gate.trySend(true);
-    gate.trySend(true);
+    for (let i = 0; i < 4; i++) {
+      gate.trySend(true);
+    }
     const answers: Answer[] = [await first, await second];
     expect(answers.map((a: Answer): i64 => a.status)).toEqual([201, 400]);
   });
