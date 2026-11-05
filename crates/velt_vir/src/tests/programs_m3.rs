@@ -252,7 +252,7 @@ pub(super) fn io_types(pb: &mut PB) -> Io {
     );
     r.generics = 1;
     let result = pb.add_def(Def::Adt(r));
-    let code_name = extern_fn(pb, "velt_rt_err_code_name", vec![t.i32], t.str, false);
+    let code_name = extern_fn(pb, "test_err_code_name", vec![t.i32], t.str, false);
     Io {
         err,
         err_def,
