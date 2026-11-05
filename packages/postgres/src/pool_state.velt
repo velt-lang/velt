@@ -9,6 +9,8 @@ import { PgConfig } from "./config";
 import { Channel, channel } from "velt/sync";
 import { currentWorker } from "velt/task";
 import { Conn } from "./line";
+import { Grant } from "./grant";
+import { Taken } from "./taken";
 
 /** A pool shared by every copy of its handle. */
 export type PoolHandle = shared<Mutex<PoolState>>;
@@ -26,20 +28,6 @@ export const TAKE_IDLE: u8 = 0;
 export const TAKE_OPEN: u8 = 1;
 export const TAKE_WAIT: u8 = 2;
 export const TAKE_ENDED: u8 = 3;
-
-/** What a waiting task is handed: a connection, or leave to open one. */
-export struct Grant {
-  conn: Conn | null;
-}
-
-/** What `take` found. */
-export struct Taken {
-  status: u8;
-  conn: Conn | null;
-  /** How long it was idle, in milliseconds. */
-  idleMs: f64;
-  wait: Channel<Grant> | null;
-}
 
 // A connection, when it went idle, and the worker that last read it.
 struct Idle {

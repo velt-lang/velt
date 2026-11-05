@@ -1,7 +1,7 @@
 // postgres (internal): `Line`, the state behind a connection's lock: the requests waiting for replies
 // in the order they were written, and the session's bookkeeping. See connection.velt.
 
-import { TcpStream } from "velt/net";
+import { PgStream } from "./transport";
 import { Channel, channel } from "velt/sync";
 import { Builder, FAILED, NOT_PREPARED, SENT } from "./builder";
 import { closed, connectionClosed, Failure } from "./failure";
@@ -11,25 +11,13 @@ import { Input } from "./input";
 import { PgType } from "./pg_type";
 import { PoolHandle } from "./pool_state";
 import { Prepared } from "./prepared";
+import { Sent } from "./sent";
 
 /** A connection shared by every copy of its handle. */
 export type Conn = shared<Mutex<Line>>;
 
-/** What sending a request found (builder.velt). */
-export struct Sent {
-  status: u8;
-  /** Hands over the `Input` when the request's replies come next. */
-  turn: Channel<Input>;
-  statement: shared<Prepared>;
-  problem: Failure | null;
-  /** Whether the values bind by name. */
-  named: bool;
-  /** Nothing is ahead of this request: `turn` has the `Input` now. */
-  first: bool;
-}
-
 /** Who gets the `Input` when a reply was taken in full. */
-export struct Next {
+struct Next {
   turn: Channel<Input>;
   /** Nobody is in line: it waits at home. */
   idle: bool;
@@ -58,7 +46,7 @@ export class Line {
   status: u8 = 73;
   /** What failed on this client. */
   failures: FailureLog = new FailureLog();
-  private stream: TcpStream;
+  private stream: PgStream;
   private home: Channel<Input>;
   private none: shared<Prepared>;
   private builder: Builder;
@@ -77,7 +65,7 @@ export class Line {
   // Types read from the catalog, by OID.
   private types: Map<i64, PgType> = new Map<i64, PgType>();
 
-  constructor(stream: TcpStream, home: Channel<Input>, none: shared<Prepared>) {
+  constructor(stream: PgStream, home: Channel<Input>, none: shared<Prepared>) {
     this.stream = stream;
     this.home = home;
     this.none = none;

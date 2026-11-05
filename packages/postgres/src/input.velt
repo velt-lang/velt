@@ -7,7 +7,7 @@
 // the server still owes that request, so the next one finds the connection in step.
 
 import { CellKind, RowSource } from "velt/db";
-import { TcpStream } from "velt/net";
+import { PgStream } from "./transport";
 import { arrayJson } from "./array_json";
 import {
   COMMAND_COMPLETE,
@@ -47,7 +47,7 @@ import { renderValue } from "./values";
 export class Input implements RowSource {
   /** The bytes arrived and not taken yet. */
   buffer: ReadBuffer = new ReadBuffer();
-  stream: TcpStream;
+  stream: PgStream;
   /** The connection this reads for; null while connecting, and then nothing is owed. */
   conn: Conn | null = null;
   /** Nobody is owed anything through this one: dropping it does nothing. */
@@ -84,7 +84,7 @@ export class Input implements RowSource {
   /** Why a value could not be read, once rows were read. */
   failure: Failure | null = null;
 
-  constructor(stream: TcpStream, none: shared<Prepared>) {
+  constructor(stream: PgStream, none: shared<Prepared>) {
     this.stream = stream;
     this.statement = none;
   }

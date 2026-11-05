@@ -1,0 +1,14 @@
+// postgres (internal): `PgStream`, the byte stream under a connection.
+//
+// Today it is velt/net's `TcpStream`, plain or with direct TLS. It is named here so that another
+// stream can take its place without touching the rest of the driver: a TLS client in Velt that runs
+// over an open `TcpStream`, for `prefer` and `require` without a certificate check and for the
+// `SSLRequest` upgrade a server before PostgreSQL 17 needs (README.md, "TLS"). What the driver
+// calls on it: `tryRead`, `readable`, `readableWithin`, `tryWrite`, `writeBytes`,
+// `writeBytesLater`, `drained`, `abort` and `close`, with `TcpStream`'s meaning. An alias rather
+// than an interface, so a connection's reads and writes stay direct calls.
+
+import { TcpStream } from "velt/net";
+
+/** The byte stream under a connection. */
+export type PgStream = TcpStream;

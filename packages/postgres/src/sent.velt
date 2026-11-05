@@ -1,0 +1,19 @@
+// postgres (internal): `Sent`, what sending a request found (builder.velt).
+
+import { Channel } from "velt/sync";
+import { Failure } from "./failure";
+import { Input } from "./input";
+import { Prepared } from "./prepared";
+
+/** What sending a request found (builder.velt). */
+export struct Sent {
+  status: u8;
+  /** Hands over the `Input` when the request's replies come next. */
+  turn: Channel<Input>;
+  statement: shared<Prepared>;
+  problem: Failure | null;
+  /** Whether the values bind by name. */
+  named: bool;
+  /** Nothing is ahead of this request: `turn` has the `Input` now. */
+  first: bool;
+}
