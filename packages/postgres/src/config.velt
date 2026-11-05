@@ -156,8 +156,9 @@ function option(c: PgConfig, key: string, value: string) {
       }
       c.requireBinding = value == "require";
       break;
-    // Options that are read and have nothing to do here: velt/net sets no socket options beyond
-    // TCP_NODELAY, and the first host that accepts is used.
+    // Options that are read and do nothing: velt/net sets no socket option but TCP_NODELAY and hands
+    // out no descriptor to set one on, so there's no keepalive (README.md); and the first host that
+    // accepts is used.
     case "tcp_user_timeout":
     case "keepalives":
     case "keepalives_idle":
