@@ -391,6 +391,12 @@ fn hands_out_held(cx: &mut Ctx, d: DefId, memo: &mut Memo) -> bool {
 /// Is `e` a new value: `new`, a literal, a builtin copy, a call of a function that returns new
 /// values (`crate::fresh_returns`), or a library call that returns a copy ([`FRESH`])?
 pub(super) fn fresh(cx: &mut Ctx, e: &Expr, memo: &mut Memo) -> bool {
+    // Stored in a field (fed.rs): a view over a buffer that isn't new here isn't a new value.
+    if let Some(x) = viewed_buffer(cx, e) {
+        if !fresh(cx, &x, memo) {
+            return false;
+        }
+    }
     // `new` always makes a new object (whatever its constructor keeps), as a literal and a
     // spread object (`{ ...cfg }` in a generic function) do.
     if matches!(
