@@ -1,0 +1,50 @@
+// `fits(a, j) && fits(b, j)` is one test in release builds, and where the first fails it must not
+// read `b`, which can be null: a field holding a pointer, read during construction.
+// crates/veltc/tests/simd_fits_both.rs runs this with each release backend. The first array is short:
+// with a long one the two tests read the null too (#349).
+// Here a method the constructor calls reads the field before the constructor assigns it.
+
+import { i8x16 } from "velt/simd";
+import { args } from "velt/process";
+
+function mk(n: usize): i8[] {
+  const a: i8[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    a.push(1 as i8);
+  }
+  return a;
+}
+
+// Out of line, behind a function value chosen at run time: inlined, the null would be a constant,
+// and the pass does not merge a known null.
+function t0(a: i8[], b: i8[], j: usize): bool {
+  if (i8x16.fits(a, j) && i8x16.fits(b, j)) {
+    return true;
+  }
+  return false;
+}
+
+function t1(a: i8[], b: i8[], j: usize): bool {
+  return false;
+}
+
+const F: (a: i8[], b: i8[], j: usize) => bool = args().length > 100 ? t1 : t0;
+
+const shared = mk(40);
+
+class H {
+  ok: bool = false;
+  b: i8[];
+
+  constructor(a: i8[], o: i8[]) {
+    this.ok = this.m(a);
+    this.b = o;
+  }
+
+  m(a: i8[]): bool {
+    return F(a, this.b, 0);
+  }
+}
+
+const d = new H(mk(3), shared);
+console.log(d.ok, d.b.length, shared.length);

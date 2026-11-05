@@ -218,6 +218,7 @@ fn vector(b: &mut Body, lanes: Lanes, op: Op, dotprod: bool) -> Option<String> {
         Op::LoadPartial => return Some(partial::load(b, lanes)),
         // These give something other than this vector type.
         Op::Fits => return Some(fits(b, lanes.count())),
+        Op::FitsBoth => return Some(fits_both(b, lanes.count())),
         Op::As(_) => return Some("%a0".to_string()),
         Op::Lane => {
             let x = b.arg(0, &ty);
@@ -458,12 +459,31 @@ fn not(b: &mut Body, ty: &str, n: u32, x: &str) -> String {
 /// Nothing in it can wrap, unlike `%a1 + n <= len`, so LLVM 18 too removes the range checks of
 /// the loads a loop on `fits(xs, i + 48)` makes at `i`, `i + 16` and `i + 32`.
 fn fits(b: &mut Body, n: u32) -> String {
-    let at = b.inst("getelementptr inbounds i8, ptr %a0, i64 8".to_string());
+    let len = array_len(b, 0);
+    fits_len(b, &len, "%a1", n)
+}
+
+/// Whether the `n` elements from `%a2` are inside both arrays `%a0` and `%a1`: [`fits`] against
+/// the smaller length, one exit test for a loop over two arrays, where LLVM cannot merge two of
+/// `fits`'s form.
+fn fits_both(b: &mut Body, n: u32) -> String {
+    let (x, y) = (array_len(b, 0), array_len(b, 1));
+    let len = b.intrinsic("umin", "i64", "i64", &[&x, &y], "");
+    fits_len(b, &len, "%a2", n)
+}
+
+/// The length of the array `%a{array}` (the second word of its header).
+fn array_len(b: &mut Body, array: usize) -> String {
+    let at = b.inst(format!("getelementptr inbounds i8, ptr %a{array}, i64 8"));
     let tag = HEADER.suffix();
-    let len = b.inst(format!("load i64, ptr {at}, align 8{tag}"));
+    b.inst(format!("load i64, ptr {at}, align 8{tag}"))
+}
+
+/// Whether the `n` elements from `at` are inside the length `len`, as a `bool` result.
+fn fits_len(b: &mut Body, len: &str, at: &str, n: u32) -> String {
     let room = b.inst(format!("icmp uge i64 {len}, {n}"));
     let last = b.inst(format!("sub i64 {len}, {n}"));
-    let inside = b.inst(format!("icmp ule i64 %a1, {last}"));
+    let inside = b.inst(format!("icmp ule i64 {at}, {last}"));
     let both = b.inst(format!("and i1 {room}, {inside}"));
     b.inst(format!("zext i1 {both} to i8"))
 }

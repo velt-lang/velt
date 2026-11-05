@@ -1,0 +1,51 @@
+// `fits(a, j) && fits(b, j)` is one test in release builds, and where the first fails it must not
+// read `b`, which can be null: a field holding a pointer, read during construction.
+// crates/veltc/tests/simd_fits_both.rs runs this with each release backend. The first array is short:
+// with a long one the two tests read the null too (#349).
+// Here a function called by name holds the pair in a loop, too large to inline.
+
+import { i8x16 } from "velt/simd";
+
+function mk(n: usize): i8[] {
+  const a: i8[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    a.push(1 as i8);
+  }
+  return a;
+}
+
+const shared = mk(40);
+
+function sum(a: i8[], b: i8[], j: usize): bool {
+  let n = 0;
+  let i = j;
+  while (i8x16.fits(a, i) && i8x16.fits(b, i)) {
+    n += i8x16.load(a, i).add(i8x16.load(b, i)).sum() as i32;
+    i += 16;
+    if (n > 100000) {
+      console.log("large", n);
+      console.log("large", i);
+      console.log(n, i);
+      console.log(n + 1, i);
+      console.log(n + 2, i);
+      console.log(n + 3, i);
+      console.log(n + 4, i);
+      console.log(n + 5, i);
+    }
+  }
+  return n > 0;
+}
+
+class H {
+  ok: bool = false;
+  b: i8[];
+
+  constructor(a: i8[], o: i8[]) {
+    this.ok = sum(a, this.b, 0);
+    this.b = o;
+  }
+}
+
+const d = new H(mk(3), shared);
+console.log(d.ok, d.b.length, shared.length);
+console.log(sum(shared, shared, 0), sum(shared, shared, 1));

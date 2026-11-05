@@ -44,6 +44,9 @@
 //!   path.
 //! - `simplify_cfg`: jump threading, unreachable-block removal, block merging, renumbering.
 //! - `dead_funcs`: drops internal functions unreachable from exported ones.
+//! - `fits_pair`: once the rounds are done (inlining left `fits` as bare externs),
+//!   `fits(a, j) && fits(b, j)` with the same lane type and index becomes one test against the
+//!   smaller length, one exit test for a loop over two arrays.
 //! - `module_state`: once the rounds are done, a function asks the runtime for the module state
 //!   block once per slot range rather than at every access to a module-level `let` (#1571).
 //! - `map_probe`: once the rounds are done, a `Map` probe (`lookup`, the key's string hash)
@@ -106,6 +109,7 @@ mod dead_fills;
 mod dead_funcs;
 mod divisions;
 mod enum_sroa;
+mod fits_pair;
 mod frame_slots;
 mod fresh;
 mod frozen;
@@ -254,6 +258,12 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
             }
             // What inlining left without callers, before the passes below go over every function.
             t.time("dead_funcs", || dead_funcs::run(program));
+            let paired = t.time("fits_pair", || fits_pair::run(program));
+            for f in paired {
+                let func = &mut program.funcs[f];
+                t.time("simplify_cfg", || simplify_cfg::run(func));
+                t.time("dce", || dce::run(&program.aggs, func));
+            }
             let borrowed = t.time("borrowed_copies", || borrowed_copies::counted::run(program));
             for (func, _) in program.funcs.iter_mut().zip(borrowed).filter(|(_, b)| *b) {
                 // The releases' tests now branch to one block either way.
