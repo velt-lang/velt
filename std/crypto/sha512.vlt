@@ -62,15 +62,27 @@ function rotr(x: u64, n: u64): u64 {
   return (x >> n) | (x << (64 - n));
 }
 
-// One block of `data` at `off` into the state `h`; `w` is the 16-word schedule ring.
+// One block of `data` at `off` into the state `h`; `w` is the 16-word schedule ring. The rounds
+// go eight at a time with the working variables' roles rotated in the source, so no round moves
+// eight registers around; the schedule's next 8 words are computed once per 8 rounds.
 function block(h: u64[], w: u64[], data: u8[], off: usize) {
+  // Writing w[15] and reading K512[79] first lets the compiler drop the later bounds checks
+  // (every index below is masked to 0..15 or below 80).
+  w[15] = K512[79];
   for (let t: usize = 0; t < 16; t++) {
-    let x: u64 = 0;
-    for (let i: usize = 0; i < 8; i++) {
-      x = (x << 8) | (data[off + 8 * t + i] as u64);
-    }
-    w[t] = x;
+    const p = off + 8 * t;
+    const last = data[p + 7] as u64;
+    w[t] =
+      ((data[p] as u64) << 56) |
+      ((data[p + 1] as u64) << 48) |
+      ((data[p + 2] as u64) << 40) |
+      ((data[p + 3] as u64) << 32) |
+      ((data[p + 4] as u64) << 24) |
+      ((data[p + 5] as u64) << 16) |
+      ((data[p + 6] as u64) << 8) |
+      last;
   }
+  let hh = h[7];
   let a = h[0];
   let b = h[1];
   let c = h[2];
@@ -78,28 +90,73 @@ function block(h: u64[], w: u64[], data: u8[], off: usize) {
   let e = h[4];
   let f = h[5];
   let g = h[6];
-  let hh = h[7];
-  for (let t: usize = 0; t < 80; t++) {
+  for (let t: usize = 0; t < 80; t += 8) {
     if (t >= 16) {
-      const x = w[(t - 15) & 15];
-      const y = w[(t - 2) & 15];
-      const s0 = rotr(x, 1) ^ rotr(x, 8) ^ (x >> 7);
-      const s1 = rotr(y, 19) ^ rotr(y, 61) ^ (y >> 6);
-      w[t & 15] = w[t & 15] + s0 + w[(t - 7) & 15] + s1;
+      for (let j: usize = 0; j < 8; j++) {
+        const i = (t + j) & 15;
+        const x = w[(i + 1) & 15];
+        const y = w[(i + 14) & 15];
+        const s0 = rotr(x, 1) ^ rotr(x, 8) ^ (x >> 7);
+        const s1 = rotr(y, 19) ^ rotr(y, 61) ^ (y >> 6);
+        w[i] = w[i] + s0 + w[(i + 9) & 15] + s1;
+      }
     }
-    const s1 = rotr(e, 14) ^ rotr(e, 18) ^ rotr(e, 41);
-    const ch = (e & f) ^ (~e & g);
-    const t1 = hh + s1 + ch + K512[t] + w[t & 15];
-    const s0 = rotr(a, 28) ^ rotr(a, 34) ^ rotr(a, 39);
-    const maj = (a & b) ^ (a & c) ^ (b & c);
-    hh = g;
-    g = f;
-    f = e;
-    e = d + t1;
-    d = c;
-    c = b;
-    b = a;
-    a = t1 + s0 + maj;
+    hh +=
+      (rotr(e, 14) ^ rotr(e, 18) ^ rotr(e, 41)) +
+      ((e & f) ^ (~e & g)) +
+      K512[t + 0] +
+      w[0 + (t & 8)];
+    d += hh;
+    hh += (rotr(a, 28) ^ rotr(a, 34) ^ rotr(a, 39)) + ((a & b) ^ (a & c) ^ (b & c));
+    g +=
+      (rotr(d, 14) ^ rotr(d, 18) ^ rotr(d, 41)) +
+      ((d & e) ^ (~d & f)) +
+      K512[t + 1] +
+      w[1 + (t & 8)];
+    c += g;
+    g += (rotr(hh, 28) ^ rotr(hh, 34) ^ rotr(hh, 39)) + ((hh & a) ^ (hh & b) ^ (a & b));
+    f +=
+      (rotr(c, 14) ^ rotr(c, 18) ^ rotr(c, 41)) +
+      ((c & d) ^ (~c & e)) +
+      K512[t + 2] +
+      w[2 + (t & 8)];
+    b += f;
+    f += (rotr(g, 28) ^ rotr(g, 34) ^ rotr(g, 39)) + ((g & hh) ^ (g & a) ^ (hh & a));
+    e +=
+      (rotr(b, 14) ^ rotr(b, 18) ^ rotr(b, 41)) +
+      ((b & c) ^ (~b & d)) +
+      K512[t + 3] +
+      w[3 + (t & 8)];
+    a += e;
+    e += (rotr(f, 28) ^ rotr(f, 34) ^ rotr(f, 39)) + ((f & g) ^ (f & hh) ^ (g & hh));
+    d +=
+      (rotr(a, 14) ^ rotr(a, 18) ^ rotr(a, 41)) +
+      ((a & b) ^ (~a & c)) +
+      K512[t + 4] +
+      w[4 + (t & 8)];
+    hh += d;
+    d += (rotr(e, 28) ^ rotr(e, 34) ^ rotr(e, 39)) + ((e & f) ^ (e & g) ^ (f & g));
+    c +=
+      (rotr(hh, 14) ^ rotr(hh, 18) ^ rotr(hh, 41)) +
+      ((hh & a) ^ (~hh & b)) +
+      K512[t + 5] +
+      w[5 + (t & 8)];
+    g += c;
+    c += (rotr(d, 28) ^ rotr(d, 34) ^ rotr(d, 39)) + ((d & e) ^ (d & f) ^ (e & f));
+    b +=
+      (rotr(g, 14) ^ rotr(g, 18) ^ rotr(g, 41)) +
+      ((g & hh) ^ (~g & a)) +
+      K512[t + 6] +
+      w[6 + (t & 8)];
+    f += b;
+    b += (rotr(c, 28) ^ rotr(c, 34) ^ rotr(c, 39)) + ((c & d) ^ (c & e) ^ (d & e));
+    a +=
+      (rotr(f, 14) ^ rotr(f, 18) ^ rotr(f, 41)) +
+      ((f & g) ^ (~f & hh)) +
+      K512[t + 7] +
+      w[7 + (t & 8)];
+    e += a;
+    a += (rotr(b, 28) ^ rotr(b, 34) ^ rotr(b, 39)) + ((b & c) ^ (b & d) ^ (c & d));
   }
   h[0] = h[0] + a;
   h[1] = h[1] + b;
