@@ -154,6 +154,8 @@ pub(crate) fn emit_unit_capped(
         (i, how)
     });
     let imported = unit.imports.iter().map(|&i| (i, Definition::Import));
+    let program_features =
+        crate::function::program_extension_features(program, crate::simd::Arch::of(target));
     for (i, how) in own.chain(imported) {
         let func = program
             .funcs
@@ -167,6 +169,7 @@ pub(crate) fn emit_unit_capped(
             &mut intrinsics,
             debug.as_mut(),
             target,
+            program_features.as_deref(),
         )
         .map_err(|e| format!("codegen: in function `{}`: {e}", func.symbol))?;
         bodies.push('\n');
