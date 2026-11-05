@@ -180,21 +180,20 @@ export class TlsProbes {
 
 /**
  * A server on a free port for a TLS negotiation: it answers `SSLRequest` with `answer` ("S" or "N"),
- * closes on a TLS ClientHello as a server before PostgreSQL 17 does, and lets a startup in, or
- * refuses it when `refuse` is set. It serves `connections` connections. Its port.
+ * closes on a TLS ClientHello as a server before PostgreSQL 17 does, and lets a startup in. It
+ * serves `connections` connections. Its port.
  */
 export async function serveTlsProbes(
   probes: shared<Mutex<TlsProbes>>,
   answer: string,
   connections: i64,
-  refuse: bool = false,
 ): Promise<number> {
   const l = await listen("127.0.0.1:0");
   spawn(async () => {
     for (let i: i64 = 0; i < connections; i++) {
       const s = await l.accept();
       try {
-        await tlsProbe(s, probes, answer, refuse);
+        await tlsProbe(s, probes, answer);
       } catch (e) {
         // A client that goes away is what's being tested.
       }
@@ -205,12 +204,7 @@ export async function serveTlsProbes(
   return l.port;
 }
 
-async function tlsProbe(
-  s: TcpStream,
-  probes: shared<Mutex<TlsProbes>>,
-  answer: string,
-  refuse: bool,
-) {
+async function tlsProbe(s: TcpStream, probes: shared<Mutex<TlsProbes>>, answer: string) {
   while (true) {
     const first = await s.read();
     if (first.length == 0) {
@@ -224,10 +218,6 @@ async function tlsProbe(
       continue;
     }
     if (kind == "tls") {
-      return;
-    }
-    if (refuse) {
-      await s.writeBytes(serverError("28000", "no pg_hba.conf entry: no encryption"));
       return;
     }
     const ok = be32(0);
