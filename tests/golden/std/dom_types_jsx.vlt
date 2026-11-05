@@ -1,0 +1,4 @@
+// `velt/jsx`'s own `Element`, imported, is that one and not the global type of `lib.dom`.
+import { Element } from "velt/jsx";
+function isEl(e: Element | null): boolean { return e === null; }
+console.log(isEl(null));

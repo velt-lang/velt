@@ -1,0 +1,29 @@
+// `typeof` of a type the program declares, or imports, is refused (TS2693), also when a global of
+// the same name exists only as a type: only the prelude's own global is answered.
+import { RequestInit } from "velt/net/http";
+
+interface Widget {
+  id: number;
+}
+type Size = number;
+interface Node {
+  own: number;
+}
+interface Iterable {
+  own: number;
+}
+console.log(typeof Widget);
+console.log(typeof Size);
+console.log(typeof Node);
+console.log(typeof Iterable);
+console.log(typeof RequestInit);
+if (typeof Widget !== "undefined") {
+  console.log("no");
+}
+function f(): string {
+  interface Inner {
+    id: number;
+  }
+  return typeof Inner;
+}
+console.log(f());
