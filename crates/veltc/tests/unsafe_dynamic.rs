@@ -288,13 +288,14 @@ fn generated_code_can_t_contain_unsafe_code() {
 const POINTERS: &str = r#"import { CString, Out, OutPtr, Ptr } from "velt/ffi";
 
 declare c("c") function strlen(s: Ptr<u8>): usize;
-declare c("c") function strdup(s: CString): Ptr<u8>;
+declare c("c") function calloc(n: usize, size: usize): Ptr<u8>;
+declare c("c") function strcpy(dst: Ptr<u8>, src: CString): Ptr<u8>;
 declare c("c") function strtoll(s: CString, end: OutPtr<u8>, base: i32): i64;
 declare c("c") function strnlen(s: CString, n: usize): usize;
 
 export function getp(): Ptr<u8> {
   // SAFETY: a copy of a NUL-terminated string, never freed.
-  return unsafe { strdup(new CString("hi")) };
+  return unsafe { strcpy(calloc(3 as usize, 1 as usize), new CString("hi")) };
 }
 
 export function deref(p: Ptr<u8>): usize {
