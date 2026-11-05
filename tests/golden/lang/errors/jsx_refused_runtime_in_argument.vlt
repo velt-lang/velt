@@ -1,0 +1,4 @@
+/** @jsxImportSource ./_jsx_auto_any */
+// The first check of the first JSX is a trial, which rolls its error back: it is reported once.
+console.log(JSON.stringify(<box />));
+console.log(JSON.stringify(<box />));

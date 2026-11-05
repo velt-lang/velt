@@ -1,0 +1,17 @@
+// Vue's export set: `jsx`, `jsxs`, `jsxDEV` and `Fragment`, with the `JSX` types global.
+import "./dom";
+
+export const Fragment = Symbol.for("v-fgt");
+
+export type VNode = { how: string; type: any; props: Record<string, any>; key: any };
+
+function h(how: string, type: any, props: Record<string, any>, key?: string | number): VNode {
+  return { how, type, props, key };
+}
+export function jsx(type: any, props: Record<string, any>, key?: string | number): VNode {
+  return h("jsx", type, props, key);
+}
+export function jsxs(type: any, props: Record<string, any>, key?: string | number): VNode {
+  return h("jsxs", type, props, key);
+}
+export const jsxDEV = jsx;

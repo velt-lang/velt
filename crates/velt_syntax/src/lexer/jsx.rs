@@ -187,10 +187,10 @@ impl Lexer<'_> {
     }
 }
 
-/// React's JSX whitespace rules (Babel's `cleanJSXElementLiteralChild`): tabs count as spaces;
-/// every line but the first loses its leading spaces and every line but the last its trailing
-/// ones; whitespace-only lines are dropped and the remaining lines are joined with one space.
-/// Whitespace within a line is kept as written.
+/// React's JSX whitespace rules (Babel's `cleanJSXElementLiteralChild`): every line but the first
+/// loses its leading spaces and tabs and every line but the last its trailing ones; whitespace-only
+/// lines are dropped and the remaining lines are joined with one space. Whitespace within a line
+/// is kept as written, a tab too (as `tsc` and esbuild keep it; Babel makes it a space).
 pub(crate) fn clean_text(raw: &str) -> String {
     let unified = raw.replace("\r\n", "\n");
     let lines: Vec<&str> = unified.split(['\n', '\r']).collect();
@@ -200,13 +200,12 @@ pub(crate) fn clean_text(raw: &str) -> String {
         .unwrap_or(0);
     let mut out = String::new();
     for (i, line) in lines.iter().enumerate() {
-        let spaced = line.replace('\t', " ");
-        let mut trimmed = spaced.as_str();
+        let mut trimmed = *line;
         if i != 0 {
-            trimmed = trimmed.trim_start_matches(' ');
+            trimmed = trimmed.trim_start_matches([' ', '\t']);
         }
         if i != lines.len() - 1 {
-            trimmed = trimmed.trim_end_matches(' ');
+            trimmed = trimmed.trim_end_matches([' ', '\t']);
         }
         if !trimmed.is_empty() {
             out.push_str(trimmed);
@@ -232,6 +231,6 @@ mod tests {
         assert_eq!(clean_text(" "), " ");
         assert_eq!(clean_text("a \n "), "a");
         assert_eq!(clean_text("\r\n a\r\n\tb \r\n"), "a b");
-        assert_eq!(clean_text("x\t\ty"), "x  y");
+        assert_eq!(clean_text("x\t\ty"), "x\t\ty");
     }
 }

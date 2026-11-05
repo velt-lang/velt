@@ -1,0 +1,7 @@
+// `jsxComponent` beside a three-parameter `jsx`: `jsxComponent` chooses the provider contract.
+export function jsx(type: any, props: any, key?: any): any {
+  return type;
+}
+export function jsxComponent(c: any, props: any, key: string | null, name: string): any {
+  return c;
+}

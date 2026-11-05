@@ -1,0 +1,4 @@
+/** @jsxImportSource ../_jsx_react */
+// A tag is a use of its name: this one is declared, and has no value.
+declare const Amb: any;
+const a = <Amb />;

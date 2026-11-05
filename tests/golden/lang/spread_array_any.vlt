@@ -1,0 +1,10 @@
+// `[...x]` of an `any` holding an array: its elements, as in JavaScript.
+const a: any = [1, "two", true];
+const copy = [...a];
+console.log(copy.length, copy[1]);
+console.log([0, ...a, 9].length);
+const nums: any = [1, 2];
+const total: number[] = [...nums];
+console.log(total.length);
+function f(...xs: any[]): number { return xs.length; }
+console.log(f(...a));

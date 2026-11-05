@@ -1,0 +1,18 @@
+// A key checked against `JSX.IntrinsicAttributes`, and a required extra parameter elsewhere.
+export function jsx(type: any, props: any, key?: string): string {
+  return "x";
+}
+declare global {
+  namespace JSX {
+    interface IntrinsicAttributes {
+      key?: string;
+      ref?: string;
+    }
+    interface IntrinsicElements {
+      div: { id?: string };
+    }
+    interface ElementChildrenAttribute {
+      children: {};
+    }
+  }
+}

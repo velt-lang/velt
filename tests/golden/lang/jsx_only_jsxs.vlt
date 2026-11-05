@@ -1,0 +1,6 @@
+/** @jsxImportSource ./_jsx_only_jsxs */
+// Only what a module uses must be exported: `jsxs` for its elements, no `Fragment`, and no
+// `JSX.IntrinsicElements` for components.
+function C(p: { key?: number; children?: any }): any { return null; }
+console.log(<C>{1}{2}</C>);
+console.log(<C key={1}>{1}{2}</C>);

@@ -1,0 +1,7 @@
+<box></box>
+<text color="red">one</text>
+<box label="x">first,1,<text>third</text></box>
+C:Card{title="hi" tone="warm"}(<box label="hi" border="single">body</box>)
+C:Card{title="bare"}(<box label="bare" border="single"></box>)
+F{n=2 #p}(<text bold=true>n=2</text>)
+[<text #a>a</text>,<text #b>b</text>]

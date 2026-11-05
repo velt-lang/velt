@@ -406,7 +406,7 @@ fn self_typed(fcx: &mut FnCx, d: DefId, e: &velt_syntax::ast::Expr) {
     let Some(name) = fcx.cx.global(d).map(|g| g.name.clone()) else {
         return;
     };
-    if !reads_in_fn_value(e, &name) {
+    if !crate::ast_walk::reads_in_fn_value(e, &name) {
         return;
     }
     let kept = fcx.cx.global(d).is_some_and(|g| g.stored);
@@ -428,31 +428,6 @@ fn self_typed(fcx: &mut FnCx, d: DefId, e: &velt_syntax::ast::Expr) {
             g.ty = t;
         }
     }
-}
-
-/// Does `e` name `name` inside an arrow or function expression?
-fn reads_in_fn_value(e: &velt_syntax::ast::Expr, name: &str) -> bool {
-    use velt_syntax::ast::ExprKind as E;
-    use velt_syntax::visit::{walk_expr, Visit};
-    struct Names<'n>(&'n str, bool);
-    impl Visit<'_> for Names<'_> {
-        fn expr(&mut self, e: &velt_syntax::ast::Expr) {
-            self.1 |= matches!(&e.kind, E::Ident(i) if i.name == self.0);
-        }
-    }
-    struct Fns<'n>(&'n str, bool);
-    impl Visit<'_> for Fns<'_> {
-        fn expr(&mut self, e: &velt_syntax::ast::Expr) {
-            if !self.1 && matches!(e.kind, E::Arrow { .. } | E::Function(_)) {
-                let mut n = Names(self.0, false);
-                walk_expr(e, &mut n);
-                self.1 = n.1;
-            }
-        }
-    }
-    let mut f = Fns(name, false);
-    walk_expr(e, &mut f);
-    f.1
 }
 
 fn set_global_state(cx: &mut Ctx, d: DefId, s: BodyState) {

@@ -92,6 +92,56 @@ fn jsx_exprs<'a>(el: &'a ast::JsxElement, f: &mut dyn FnMut(&'a ast::Expr)) {
     }
 }
 
+/// Call `f` on the name each component tag of JSX element `el` reads (`Card`, `ui` of `ui.Card`):
+/// `el` and the elements nested in it. Intrinsic tags read nothing.
+pub(crate) fn jsx_tag_roots<'a>(el: &'a ast::JsxElement, f: &mut dyn FnMut(&'a ast::Ident)) {
+    if let Some(id) = el.tag_root() {
+        f(id);
+    }
+    for attr in &el.attrs {
+        if let JsxAttr::Named {
+            value: Some(JsxAttrValue::Element(inner)),
+            ..
+        } = attr
+        {
+            jsx_tag_roots(inner, f);
+        }
+    }
+    for child in &el.children {
+        if let JsxChild::Element(inner) = child {
+            jsx_tag_roots(inner, f);
+        }
+    }
+}
+
+/// Does `e` name `name` inside an arrow or function expression?
+pub(crate) fn reads_in_fn_value(e: &velt_syntax::ast::Expr, name: &str) -> bool {
+    use velt_syntax::ast::ExprKind as E;
+    use velt_syntax::visit::{walk_expr, Visit};
+    struct Names<'n>(&'n str, bool);
+    impl Visit<'_> for Names<'_> {
+        fn expr(&mut self, e: &velt_syntax::ast::Expr) {
+            self.1 |= matches!(&e.kind, E::Ident(i) if i.name == self.0);
+            if let E::Jsx(el) = &e.kind {
+                jsx_tag_roots(el, &mut |id| self.1 |= id.name == self.0);
+            }
+        }
+    }
+    struct Fns<'n>(&'n str, bool);
+    impl Visit<'_> for Fns<'_> {
+        fn expr(&mut self, e: &velt_syntax::ast::Expr) {
+            if !self.1 && matches!(e.kind, E::Arrow { .. } | E::Function(_)) {
+                let mut n = Names(self.0, false);
+                walk_expr(e, &mut n);
+                self.1 = n.1;
+            }
+        }
+    }
+    let mut f = Fns(name, false);
+    walk_expr(e, &mut f);
+    f.1
+}
+
 /// Like [`children`], mutably.
 pub(crate) fn children_mut(e: &mut ast::Expr, f: &mut dyn FnMut(&mut ast::Expr)) {
     match &mut e.kind {

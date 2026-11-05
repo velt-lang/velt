@@ -1,0 +1,12 @@
+// A generic `jsx`, and a further optional parameter.
+export const Fragment = Symbol.for("f");
+export function jsx<P>(type: any, props: P, key?: string, source?: string): string {
+  return JSON.stringify(props) + ":" + String(key) + ":" + String(source);
+}
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      box: { key?: string; a?: string; children?: any };
+    }
+  }
+}

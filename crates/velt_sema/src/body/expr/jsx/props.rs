@@ -167,7 +167,7 @@ impl FnCx<'_, '_> {
         }
         self.missing_props(d, &shown, name_span, &mut filled);
         self.missing_common(name_span, &filled);
-        let type_args = self.solve_props_slots(c, tag, name_span, &filled.slots);
+        let type_args = self.solve_props_slots(&c.slot_names, tag, name_span, &filled.slots);
         let what = format!("in the props of type '{shown}'");
         let mut values = vec![];
         for (i, v) in std::mem::take(&mut filled.values).into_iter().enumerate() {
@@ -273,7 +273,7 @@ impl FnCx<'_, '_> {
     }
 
     /// A temporary holding `h` (appended to `lets`), moved (or copied) out where it is read.
-    fn moved_temp(&mut self, h: hir::Expr, lets: &mut Vec<hir::Stmt>) -> hir::Expr {
+    pub(super) fn moved_temp(&mut self, h: hir::Expr, lets: &mut Vec<hir::Stmt>) -> hir::Expr {
         let mut t = self.temp("<attr>", h, lets);
         let mode = match self.cx.is_copy(t.ty) {
             true => hir::UseMode::Copy,
@@ -417,15 +417,15 @@ impl FnCx<'_, '_> {
     }
 
     /// The component's type arguments; unknown ones are errors.
-    fn solve_props_slots(
+    pub(super) fn solve_props_slots(
         &mut self,
-        c: &Component,
+        slot_names: &[String],
         tag: &str,
         span: Span,
         slots: &[Option<TyId>],
     ) -> Vec<TyId> {
         let mut out = vec![];
-        for (s, name) in slots.iter().zip(&c.slot_names) {
+        for (s, name) in slots.iter().zip(slot_names) {
             out.push(s.unwrap_or_else(|| {
                 self.cx.error(
                     Diagnostic::error(
@@ -615,7 +615,7 @@ impl FnCx<'_, '_> {
 
 /// A value whose evaluation has no effect and that nothing else affects (a literal, a function),
 /// so its place in the evaluation order does not matter.
-fn is_constant(h: &hir::Expr) -> bool {
+pub(super) fn is_constant(h: &hir::Expr) -> bool {
     use hir::ExprKind as H;
     match &h.kind {
         H::Lit(_) | H::FnRef(..) => true,
@@ -631,7 +631,7 @@ fn is_spread(a: &ast::JsxAttr) -> bool {
 }
 
 /// `{(x) => …}` among the children.
-fn is_arrow_child(c: &ast::JsxChild) -> bool {
+pub(super) fn is_arrow_child(c: &ast::JsxChild) -> bool {
     matches!(c, ast::JsxChild::Expr { expr: Some(e), .. } if as_arrow(e).is_some())
 }
 
@@ -642,7 +642,7 @@ pub(super) fn type_args_span(el: &ast::JsxElement) -> Option<Span> {
 }
 
 /// `name={(x) => …}`: checked after the other props.
-fn is_arrow_attr(a: &ast::JsxAttr) -> bool {
+pub(super) fn is_arrow_attr(a: &ast::JsxAttr) -> bool {
     matches!(
         a,
         ast::JsxAttr::Named {

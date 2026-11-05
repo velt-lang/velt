@@ -1,0 +1,23 @@
+// A runtime whose `type` parameter names its shapes, as sigx's does, with a further parameter.
+export const Fragment = Symbol.for("typed.Fragment");
+
+export type Node = { type: string | symbol | Function; props: Record<string, any>; key: string | undefined };
+
+export function jsx(type: string | symbol | Function, props: Record<string, any>, key?: string): Node {
+  return { type, props, key };
+}
+export const jsxs = (type: string | symbol | Function, props: Record<string, any>, key?: string, source?: string): Node => {
+  return { type, props: { ...props, many: true }, key };
+};
+
+declare global {
+  namespace JSX {
+    type Element = Node;
+    interface IntrinsicElements {
+      box: { a?: string; children?: any };
+    }
+    interface IntrinsicAttributes {
+      key?: string;
+    }
+  }
+}

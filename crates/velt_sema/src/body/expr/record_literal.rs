@@ -204,7 +204,7 @@ impl FnCx<'_, '_> {
 
     /// The calls that fill the record in the temporary `t` (of type `ty`) from `props`, onto
     /// `stmts`. Returns the keys set, and whether a spread may have set every key.
-    fn record_literal_entries(
+    pub(super) fn record_literal_entries(
         &mut self,
         (t, ty): (hir::LocalId, TyId),
         k: TyId,
@@ -279,6 +279,56 @@ impl FnCx<'_, '_> {
             });
         }
         (seen, complete)
+    }
+
+    /// `...e` of an `any` into the record in temporary `t` (of type `ty`) of another value type:
+    /// its members into a `Record<string, any>`, then those converted one by one.
+    pub(super) fn spread_any_converted(
+        &mut self,
+        (t, ty): (hir::LocalId, TyId),
+        e: &ast::Expr,
+        stmts: &mut Vec<hir::Stmt>,
+    ) {
+        let span = e.span;
+        let (str_, Some(any)) = (self.cx.ty.str_, self.any_ty()) else {
+            return;
+        };
+        let TyKind::Adt(d, _) = self.cx.ty.kind(ty).clone() else {
+            return;
+        };
+        let inner_ty = self.cx.ty.intern(TyKind::Adt(d, vec![str_, any]));
+        let new = self.mk(
+            H::New {
+                def: d,
+                type_args: vec![str_, any],
+                args: vec![],
+            },
+            inner_ty,
+            span,
+        );
+        let inner = self.new_local("<spread>", inner_ty, false, span, LocalKind::Temp);
+        stmts.push(hir::Stmt {
+            kind: S::Let {
+                local: inner,
+                init: Some(new),
+            },
+            span,
+        });
+        let props = [ast::ObjectProp::Spread(e.clone())];
+        self.record_literal_entries((inner, inner_ty), str_, &props, vec![], stmts, span);
+        let name = format!("<converted@{}>", span.lo);
+        if let Some(scope) = self.f.scopes.last_mut() {
+            scope.names.insert(name.clone(), inner);
+        }
+        let ident = ast::Ident { name, span };
+        let source = synth(ast::ExprKind::Ident(ident), span);
+        let args = [source, identity_arrow(span), identity_arrow(span)];
+        let recv = self.mk(H::Local(t, UseMode::Borrow), ty, span);
+        let call = self.record_call(recv, velt_common::std_key!(record_extend_from), &args, span);
+        stmts.push(hir::Stmt {
+            kind: S::Expr(call),
+            span,
+        });
     }
 
     /// Reports the `keys` of the closed key type `k` that a literal (at `span`) left out.

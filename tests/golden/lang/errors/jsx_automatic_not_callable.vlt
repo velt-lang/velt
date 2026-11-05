@@ -1,0 +1,3 @@
+/** @jsxImportSource ./_jsx_auto_value */
+// The message names both forms a runtime can have.
+const a = <div />;

@@ -1,0 +1,25 @@
+// @jsxImportSource ./_jsx_automatic
+// TypeScript's automatic JSX runtime (`jsx(type, props, key)`, no `jsxComponent`): every element
+// is one `jsx` call with a props object, as tsc emits it; a component is passed as itself, so a
+// function with properties keeps them; the JSX types come from the global namespace `JSX`.
+import { component, render } from "./_jsx_automatic/component";
+
+type CardProps = { title: string; tone?: string };
+
+const Card = component<CardProps>(
+  (props) => <box label={props.title} border="single">{props.children}</box>,
+  "Card",
+);
+
+function Plain(props: { n: number }): JSX.Element {
+  return <text bold>{`n=${props.n}`}</text>;
+}
+
+const items = ["a", "b"];
+console.log(render(<box />));
+console.log(render(<text color="red">one</text>));
+console.log(render(<box label="x">first{1}<text>third</text></box>));
+console.log(render(<Card title="hi" tone="warm">body</Card>));
+console.log(render(<Card title="bare" />));
+console.log(render(<Plain n={2} key="p" />));
+console.log(render(<>{items.map((i) => <text key={i}>{i}</text>)}</>));

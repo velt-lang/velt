@@ -1,0 +1,36 @@
+/** @jsxImportSource ./_jsx_sigx */
+// sigx's own signatures: `jsx` with an index signature, `jsxs` with a `Record<string, unknown>`, re-exported;
+// an `any` spread into each, and a `null` key where the parameter takes only `undefined`.
+import type { VNode } from "./_jsx_sigx/impl";
+function show(v: any): string {
+  if (v === null || v === undefined) return String(v);
+  if (typeof v === "function") return "function";
+  if (typeof v !== "object") return String(v);
+  if (Array.isArray(v)) return "[" + v.map((x: any) => show(x)).join(",") + "]";
+  if (!("props" in v)) return JSON.stringify(v);
+  const n = v as VNode;
+  const keys = Object.keys(n.props).map((k: string) => k + "=" + show(n.props[k])).join(" ");
+  return (typeof n.type === "function" ? "fn" : String(n.type)) + "{" + keys + "}" + String(n.key);
+}
+function C(p: { a?: string; children?: any }): VNode { return <div />; }
+const held: any = { a: "x", z: 1 };
+const rec: Record<string, string> = { r: "1" };
+const obj = { a: "o", y: 2 };
+const maybeRec: Record<string, string> | null = null as Record<string, string> | null;
+console.log(show(<div {...held}>{1}{2}</div>));
+console.log(show(<C {...held}>{1}{2}</C>));
+console.log(show(<div {...rec}>{1}{2}</div>));
+console.log(show(<div {...obj}>{1}{2}</div>));
+console.log(show(<div {...maybeRec}>{1}{2}</div>));
+console.log(show(<div {...held} />));
+console.log(show(<div {...rec} />));
+console.log(show(<div {...maybeRec} />));
+console.log(show(<C key="k" a="1" />));
+console.log(show(<C key={3} />));
+console.log(show(<C key={null} />));
+console.log(show(<>{1}</>));
+console.log(show(<>{1}{2}</>));
+console.log(show(<div>{[1, [2, 3]]}</div>));
+console.log(show(<div style={{ color: "red" }} onClick={() => 1} data-x={1}>{null}{false}{"t"}</div>));
+const u: string | undefined = undefined;
+console.log(show(<div a={u} b={null} c={undefined} d />));

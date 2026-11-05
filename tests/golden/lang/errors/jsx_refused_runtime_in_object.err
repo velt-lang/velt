@@ -1,0 +1,1 @@
+jsx_refused_runtime_in_object.vlt:3:33: error: the `props` parameter of `jsx` of the JSX provider '_jsx_auto_props' has type `Props`, which Velt cannot pass element props as

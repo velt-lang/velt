@@ -1,0 +1,34 @@
+/** @jsxImportSource ./_jsx_vue */
+// Vue's export set, with `JSX.IntrinsicElements` declared by two renderers and by this module, and
+// attributes of `JSX.IntrinsicAttributes` besides `key` passed in the props, as `tsc` emits them.
+import "./_jsx_vue/svg";
+import type { VNode } from "./_jsx_vue/jsx-runtime";
+
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      mine: { m?: string };
+    }
+  }
+}
+
+function show(n: VNode): string {
+  const keys = Object.keys(n.props).map((k: string) => k + "=" + JSON.stringify(n.props[k])).join(" ");
+  const type = typeof n.type === "function" ? "fn" : String(n.type);
+  return n.how + "(" + type + " {" + keys + "} " + String(n.key) + ")";
+}
+
+function Card(p: { title: string }): JSX.Element {
+  return <div id={p.title} />;
+}
+
+console.log(show(<div id="a" />));
+console.log(show(<circle r={2} />));
+console.log(show(<mine m="x" />));
+console.log(show(<div>{1}{"two"}</div>));
+console.log(show(<>{1}{2}</>));
+console.log(show(<Card title="t" key={1} />));
+console.log(show(<Card ref="r" title="t" client:load />));
+const extra: { ref?: string; title: string } = { title: "s" };
+console.log(show(<Card {...extra} />));
+console.log(show(<Card title="t" {...{ ref: "from-spread" }} />));

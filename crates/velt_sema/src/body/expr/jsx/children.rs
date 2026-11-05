@@ -131,7 +131,7 @@ impl FnCx<'_, '_> {
     }
 
     /// The array type `t` is or contains (`T[]`, `T[] | null`, a union with an array member).
-    fn array_form(&mut self, t: TyId) -> Option<TyId> {
+    pub(super) fn array_form(&mut self, t: TyId) -> Option<TyId> {
         let t = self.cx.ty.core(t).unwrap_or(t);
         if matches!(self.cx.ty.kind(t), TyKind::Array(_)) {
             return Some(t);

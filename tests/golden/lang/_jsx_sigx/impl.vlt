@@ -1,0 +1,27 @@
+export const Fragment = Symbol.for("sg.Fragment");
+export type VNode = { type: string | typeof Fragment | Function; props: Record<string, any>; key: string | number | null };
+export type JSXChild = VNode | string | number | boolean | null | undefined | JSXChild[];
+interface JSXProps {
+  children?: JSXChild;
+  [key: string]: any;
+}
+export function jsx(type: string | Function | typeof Fragment, props: JSXProps | null, key?: string): VNode {
+  return { type, props: props ?? {}, key: key ?? null };
+}
+export function jsxs(type: string | typeof Fragment | Function, props?: Record<string, unknown>, key?: string): VNode {
+  return jsx(type, props as any, key);
+}
+declare global {
+  namespace JSX {
+    type Element = VNode;
+    interface IntrinsicAttributes {
+      key?: string | number | null;
+    }
+    interface ElementChildrenAttribute {
+      children: {};
+    }
+    interface IntrinsicElements {
+      [tag: string]: any;
+    }
+  }
+}

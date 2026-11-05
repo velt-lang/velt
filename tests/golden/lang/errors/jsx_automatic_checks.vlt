@@ -1,0 +1,34 @@
+/** @jsxImportSource ./_jsx_auto_check */
+// Accepted before, and refused by `tsc --strict`, with its code.
+function G<T extends { n: number }>(p: { a: T }): any { return null; }
+function S<T extends string>(p: { a: T }): any { return null; }
+const g1 = <G a={1} />; // TS2322
+const g2 = <S a={1} />; // TS2322
+const g3 = <G a={{ n: 1 }} />;
+const g4 = <S a="s" />;
+
+const k1 = <box key="1" key="2" />; // TS17001
+
+const t1 = <my-unknown />; // TS2339
+const t2 = <my-el a={1} />; // TS2322
+const t3 = <my-el a="ok" />;
+const t4 = <my-fn on={(e) => e + 1} />;
+const t5 = <svg:rect w={1} />;
+const t6 = <svg:circle />; // TS2339
+function C(p: { a?: string }): any { return null; }
+const t7 = <C x:y="2" />; // TS2322
+const t8 = <C data-ok="2" />;
+
+const c1 = <box children="x">y</box>; // TS2710
+const c2 = <box>{..."ab"}</box>; // TS2609
+const c3 = <box>{...new Map<string, number>()}</box>; // TS2609
+
+function R(p: Record<string, number>): any { return null; }
+const r1 = <R a="x" />; // TS2322
+const r2 = <R a={1} />;
+
+const s = { a: "over" };
+const o1 = <C a="first" {...s} />; // TS2783
+const o2 = <C {...s} a="last" />;
+const u: { a?: string } = {};
+const o3 = <C a="kept" {...u} />;

@@ -1,0 +1,18 @@
+import type { VNode } from "./jsx-runtime";
+
+declare global {
+  namespace JSX {
+    type Element = VNode;
+    interface IntrinsicAttributes {
+      key?: string | number;
+      "client:load"?: boolean;
+      ref?: string;
+    }
+    interface ElementChildrenAttribute {
+      children: {};
+    }
+    interface IntrinsicElements {
+      div: { id?: string; children?: any };
+    }
+  }
+}

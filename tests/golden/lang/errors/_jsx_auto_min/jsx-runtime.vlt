@@ -1,0 +1,4 @@
+// `jsx` only: no `jsxs`, no `Fragment`, no `JSX` types.
+export function jsx(type: any, props: any, key?: unknown): string {
+  return "x";
+}

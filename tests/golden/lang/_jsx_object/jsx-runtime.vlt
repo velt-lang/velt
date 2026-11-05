@@ -1,0 +1,12 @@
+// `props: object` and a `jsx` with two parameters.
+export const Fragment = "fragment";
+export function jsx(type: any, props: object): string {
+  return JSON.stringify(props);
+}
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      box: { key?: string; a?: string };
+    }
+  }
+}

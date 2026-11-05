@@ -1,0 +1,9 @@
+box {a="1"} undefined
+fn {a="1"} undefined
+fn {a=2} k
+fn {} undefined
+fn {x="1" y=2} undefined
+fn {a="p"} undefined
+box {children=["a","b"] many=true} undefined
+Symbol(typed.Fragment) {children="a"} undefined
+function

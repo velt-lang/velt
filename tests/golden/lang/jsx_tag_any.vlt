@@ -1,0 +1,18 @@
+/** @jsxImportSource ./_jsx_react */
+// A tag of type `any`, taken as in TypeScript with props of type `any`, and a constant whose own
+// initializer names it as a tag, inside a closure.
+import { show } from "./_jsx_react/show";
+
+function mk<P>(render: (p: P) => any): any {
+  return (p: P): any => render(p);
+}
+const A = mk<{ a: string }>((p) => <box a={p.a} />);
+console.log(show(<A a="1" />));
+console.log(show(<A a="1" extra={2} key="k">{1}{2}</A>));
+console.log(show(A({ a: "called" })));
+
+const L = mk<{ d: number }>((p) => {
+  return (): any => <box>{p.d <= 1 ? "leaf" : <L d={p.d - 1} key={"x"} />}</box>;
+});
+console.log(show(<L d={2} />));
+console.log(show(L({ d: 2 })()));

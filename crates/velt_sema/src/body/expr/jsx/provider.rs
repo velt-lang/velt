@@ -61,6 +61,10 @@ pub(crate) struct Provider {
     pub intrinsics: TyId,
     /// The props field receiving component children (`JSX.ElementChildrenAttribute`).
     pub children_field: String,
+    /// A TypeScript automatic runtime (`jsx(type, props, key)`, no `jsxComponent`): every
+    /// element is one `jsx` call (`super::automatic`). `fragment` and `component` are then
+    /// `jsx` too, and never called.
+    pub automatic: Option<super::automatic::Automatic>,
 }
 
 /// `JSX.IntrinsicAttributes` with fields besides `key` (docs/internals/contracts/jsx.md
@@ -79,16 +83,39 @@ const DEFAULT_CHILDREN: &str = "children";
 const RUNTIME_SUFFIX: &str = "/jsx-runtime";
 
 impl FnCx<'_, '_> {
-    /// The current module's JSX runtime (`None` once the reason was reported at `at`).
+    /// The current module's JSX runtime (`None` once the reason was reported at `at`). A refusal
+    /// is one error, however many elements the module has, for as long as that error stands: a
+    /// first check inside a trial loses it to the rollback, and the next check reports it again.
     pub(super) fn jsx_provider(&mut self, at: Span) -> Option<Rc<Provider>> {
         if let Some(p) = self.cx.jsx_providers.get(&self.module) {
-            return p.clone();
+            if p.is_some() || self.jsx_refusal_stands() {
+                return p.clone();
+            }
         }
+        let reported = self.cx.diags.len();
         let p = load(self.cx, self.module, at)
             .filter(|p| self.component_attrs_fit(p, at))
             .map(Rc::new);
+        self.cx.jsx_refusals.remove(&self.module);
+        if let (None, Some(d)) = (&p, self.cx.diags.get(reported)) {
+            if let Some(label) = d.labels.first() {
+                let reason = (d.message.clone(), label.span);
+                self.cx.jsx_refusals.insert(self.module, reason);
+            }
+        }
         self.cx.jsx_providers.insert(self.module, p.clone());
         p
+    }
+
+    /// Is the error behind this module's cached `None` still among the diagnostics?
+    fn jsx_refusal_stands(&self) -> bool {
+        let Some((message, span)) = self.cx.jsx_refusals.get(&self.module) else {
+            return true;
+        };
+        self.cx
+            .diags
+            .iter()
+            .any(|d| d.message == *message && d.labels.first().is_some_and(|l| l.span == *span))
     }
 
     /// `jsxComponentAttributes` takes what the compiler passes (`key`, `name`, `names`,
@@ -167,6 +194,24 @@ impl FnCx<'_, '_> {
     }
 }
 
+/// How a runtime's JSX compiles.
+enum Lowering {
+    /// Calls of its `jsx` and `jsxs` (`super::automatic`).
+    Automatic,
+    /// Velt's provider contract: `jsxComponent` and name and value lists.
+    Contract,
+}
+
+/// What runtime module `t`'s exports choose; the one place that decides. Only `jsxComponent` marks
+/// the provider contract: anything else a runtime exports next to `jsx` and `jsxs` (`jsxDEV`,
+/// Deno's `jsxTemplate`, `jsxAttr` and `jsxEscape`) changes nothing.
+fn lowering_of(cx: &mut Ctx, t: usize) -> Lowering {
+    if export_of(cx, t, "jsxComponent").is_none() && super::automatic::exports_automatic(cx, t) {
+        return Lowering::Automatic;
+    }
+    Lowering::Contract
+}
+
 fn load(cx: &mut Ctx, m: usize, at: Span) -> Option<Provider> {
     let Some(path) = cx.modules[m].jsx_runtime.clone() else {
         cx.error(
@@ -189,6 +234,16 @@ fn load(cx: &mut Ctx, m: usize, at: Span) -> Option<Provider> {
         }
         d
     };
+    match lowering_of(cx, t) {
+        Lowering::Automatic => return super::automatic::load(cx, m, t, source, at),
+        Lowering::Contract => {
+            if export_of(cx, t, "jsxComponent").is_none()
+                && super::automatic::report_not_callable(cx, t, &source, at)
+            {
+                return None;
+            }
+        }
+    }
     let (jsx, fragment, component) = (
         func(cx, "jsx"),
         func(cx, "Fragment"),
@@ -245,6 +300,7 @@ fn load(cx: &mut Ctx, m: usize, at: Span) -> Option<Provider> {
         attr_value: attr_value?,
         intrinsics: intrinsics?,
         children_field,
+        automatic: None,
     })
 }
 
@@ -301,7 +357,7 @@ fn component_attrs(
 }
 
 /// Exported function `name` of module `t`.
-fn function(cx: &Ctx, t: usize, name: &str) -> Option<DefId> {
+pub(super) fn function(cx: &Ctx, t: usize, name: &str) -> Option<DefId> {
     match export_of(cx, t, name)? {
         Item::Def(d) if cx.try_fn(d).is_some() => Some(d),
         _ => None,
@@ -347,7 +403,7 @@ const FOLDED: &str = "the compiler folds it into the template strings";
 /// The value of the optional string constant export `name` (`jsxTextSeparator`, `jsxSoleEmpty`,
 /// `jsxVoidElements`; `example` and `why` for the message): `Some(None)` without one, `None` once
 /// an export that is not a string constant was reported.
-fn string_const(
+pub(super) fn string_const(
     cx: &mut Ctx,
     t: usize,
     source: &str,
@@ -403,6 +459,11 @@ fn children_field(cx: &mut Ctx, t: usize, source: &str, at: Span) -> Option<Stri
     let Some(ty) = type_export(cx, t, "ElementChildrenAttribute", at) else {
         return Some(DEFAULT_CHILDREN.to_string());
     };
+    children_field_of(cx, ty, source, at)
+}
+
+/// The one field name of the `ElementChildrenAttribute` type `ty`.
+pub(super) fn children_field_of(cx: &mut Ctx, ty: TyId, source: &str, at: Span) -> Option<String> {
     if let TyKind::Adt(d, _) = cx.ty.kind(ty) {
         if let Some([f]) = cx.adt(*d).map(|a| a.fields.as_slice()) {
             return Some(f.name.clone());
@@ -429,7 +490,7 @@ fn report_missing(cx: &mut Ctx, source: &str, missing: &[&str], at: Span) {
             at,
         )
         .with_note(format!(
-            "`{source}{RUNTIME_SUFFIX}` must export the types `Element`, `Child`, `AttrValue` and `IntrinsicElements` and the functions `jsx`, `Fragment` and `jsxComponent` (docs/internals/contracts/jsx.md)"
+            "`{source}{RUNTIME_SUFFIX}` must export the types `Element`, `Child`, `AttrValue` and `IntrinsicElements` and the functions `jsx`, `Fragment` and `jsxComponent` (docs/internals/contracts/jsx.md); a runtime with `jsx(type, props, key)` and `jsxs` instead is TypeScript's automatic one"
         )),
     );
 }

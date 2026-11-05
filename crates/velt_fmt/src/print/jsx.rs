@@ -56,7 +56,9 @@ impl Printer<'_> {
             .children
             .first()
             .map_or(el.span.hi, |c| child_bounds(c).0);
-        let self_closing = el.children.is_empty() && is_self_closing(slice(self.src, el.span));
+        let self_closing = el.name.is_some()
+            && el.children.is_empty()
+            && is_self_closing(slice(self.src, el.span));
         let tag = cat![name.clone(), self.type_args(&el.type_args)];
         let open = self.jsx_opening(tag, &el.attrs, open_end, self_closing);
         if self_closing {

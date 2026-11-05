@@ -1,0 +1,12 @@
+jsx_automatic_checks.vlt:5:13: error: the type `f64` does not implement `{ n: f64 }`
+jsx_automatic_checks.vlt:6:13: error: the type `f64` does not satisfy the constraint `string`
+jsx_automatic_checks.vlt:10:25: error: JSX elements cannot have multiple attributes with the same name.
+jsx_automatic_checks.vlt:12:13: error: Property 'my-unknown' does not exist on type 'JSX.IntrinsicElements'.
+jsx_automatic_checks.vlt:13:22: error: Type 'f64' is not assignable to type 'string'.
+jsx_automatic_checks.vlt:17:13: error: Property 'svg:circle' does not exist on type 'JSX.IntrinsicElements'.
+jsx_automatic_checks.vlt:19:15: error: Property 'x:y' does not exist on type '{ a?: string }'.
+jsx_automatic_checks.vlt:22:12: error: 'children' are specified twice. The attribute named 'children' will be overwritten.
+jsx_automatic_checks.vlt:23:17: error: JSX spread child must be an array type.
+jsx_automatic_checks.vlt:24:17: error: JSX spread child must be an array type.
+jsx_automatic_checks.vlt:27:17: error: Type 'string' is not assignable to type 'f64'.
+jsx_automatic_checks.vlt:31:17: error: 'a' is specified more than once, so this usage will be overwritten.

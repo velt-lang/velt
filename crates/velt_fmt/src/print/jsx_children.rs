@@ -10,6 +10,10 @@
 //! Text is printed from the source, so entities stay as written. Unlike prettier, runs of several
 //! spaces within a line are kept (prettier collapses them, which changes the text): between words
 //! they stay inside one unbreakable word, next to a tag they become `{"  "}` where the line breaks.
+//! A tab within a line is kept the same way, as `tsc` and esbuild keep it: as written inside a word
+//! and next to a tag while the line holds, `{"\t"}` where the line breaks (a tab at the end or the
+//! start of a line would be stripped, and a space or a line break in its place would change the
+//! text).
 //! What happens around these parts (merging, `{" "}` at the edges) is in [`super::jsx_layout`].
 
 use velt_syntax::ast::{ExprKind, JsxChild, JsxElement, Lit};
@@ -33,7 +37,7 @@ pub(super) enum Part {
     Soft,
     /// A line break.
     Hard,
-    /// Spaces that matter (cooked), next to a tag, a `{…}` or the element's edge.
+    /// Spaces and tabs that matter, next to a tag, a `{…}` or the element's edge.
     Space(String),
 }
 
@@ -62,11 +66,6 @@ pub(super) fn is_meaningful(raw: &str) -> bool {
     raw.contains(|c| !is_jsx_space(c)) || !raw.contains(['\n', '\r'])
 }
 
-/// A whitespace run within a line, cooked (tabs count as spaces).
-fn cooked(run: &str) -> String {
-    run.replace('\t', " ")
-}
-
 /// The words of a text and the whitespace before the first and after the last.
 struct Words<'a> {
     lead: Option<&'a str>,
@@ -74,8 +73,8 @@ struct Words<'a> {
     trail: Option<&'a str>,
 }
 
-/// Splits raw text on JSX whitespace. A run of several spaces within a line keeps the words
-/// around it together (breaking there, or printing one space, would change the text).
+/// Splits raw text on JSX whitespace. A tab or a run of several spaces within a line keeps the
+/// words around it together (breaking there, or printing one space, would change the text).
 fn split_words(raw: &str) -> Words<'_> {
     let mut pieces: Vec<&str> = vec![];
     let mut rest = raw;
@@ -100,10 +99,10 @@ fn split_words(raw: &str) -> Words<'_> {
     let mut glue = false;
     for piece in body {
         if is_space(piece) {
-            glue = !piece.contains(['\n', '\r']) && piece.chars().count() > 1;
+            glue = !piece.contains(['\n', '\r']) && (piece.len() > 1 || *piece == "\t");
             if glue {
                 if let Some(last) = words.last_mut() {
-                    last.push_str(&cooked(piece));
+                    last.push_str(piece);
                 }
             }
             continue;
@@ -126,6 +125,23 @@ fn self_closing(src: &str, child: Option<Child<'_>>) -> bool {
 /// Length as JavaScript counts it (UTF-16 units).
 fn js_len(word: &str) -> usize {
     word.encode_utf16().count()
+}
+
+/// What a separator after `word` measures: the part after its last tab. `x{"\t"}y` prints as the
+/// one word `x<tab>y` while its line holds, and must lay out the same when read back.
+fn last_piece(word: &str) -> &str {
+    word.rsplit('\t')
+        .next()
+        .unwrap_or(word)
+        .trim_start_matches(' ')
+}
+
+/// What a separator before `word` measures: the part before its first tab.
+fn first_piece(word: &str) -> &str {
+    word.split('\t')
+        .next()
+        .unwrap_or(word)
+        .trim_end_matches(' ')
 }
 
 /// Separator where no whitespace is written (prettier's `separatorNoWhitespace`).
@@ -177,9 +193,9 @@ impl Builder {
         if let Some(lead) = lead {
             self.push_line(if lead.contains(['\n', '\r']) {
                 let first = words.first().map_or("", String::as_str);
-                separator_with_whitespace(first, next_closes)
+                separator_with_whitespace(first_piece(first), next_closes)
             } else {
-                Part::Space(cooked(lead))
+                Part::Space(lead.to_string())
             });
         }
         if words.is_empty() {
@@ -191,34 +207,41 @@ impl Builder {
             }
             self.push(text(word.as_str()));
         }
-        let last = words.last().map_or("", String::as_str);
+        let last = last_piece(words.last().map_or("", String::as_str));
         let sep = match trail {
             Some(t) if t.contains(['\n', '\r']) => separator_with_whitespace(last, next_closes),
-            Some(t) => Part::Space(cooked(t)),
+            Some(t) => Part::Space(t.to_string()),
             None => separator_no_whitespace(last, next_closes),
         };
         self.push_line(sep);
     }
 }
 
-/// The source of a `{" "}` child, as prettier recognises it.
-fn is_space_container(src: &str, child: &JsxChild) -> bool {
+/// The value of a child written `{" "}`, as prettier recognises it, or as the formatter writes a
+/// kept tab where a line breaks (`{"\t"}`, `{" \t"}`). Several spaces alone stay a container.
+fn space_container<'e>(src: &str, child: &'e JsxChild) -> Option<&'e str> {
     let JsxChild::Expr {
         expr: Some(expr),
         span,
     } = child
     else {
-        return false;
+        return None;
     };
     let ExprKind::Lit(Lit::Str(value)) = &expr.kind else {
-        return false;
+        return None;
     };
     let inner = slice(src, *span)
         .strip_prefix('{')
         .and_then(|s| s.strip_suffix('}'))
         .unwrap_or("")
         .trim_matches(is_jsx_space);
-    value == " " && (inner == "\" \"" || inner == "' '")
+    let written = inner
+        .strip_prefix('"')
+        .and_then(|s| s.strip_suffix('"'))
+        .or_else(|| inner.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')))?
+        .replace("\\t", "\t");
+    let spaces = value.chars().all(|c| c == ' ' || c == '\t');
+    (written == *value && spaces && (value == " " || value.contains('\t'))).then_some(value)
 }
 
 impl<'a> Printer<'a> {
@@ -243,8 +266,8 @@ impl<'a> Printer<'a> {
             }
             out.push(if is_text {
                 Child::Text(&src[lo as usize..hi as usize])
-            } else if !exact && is_space_container(src, child) {
-                Child::Text(" ")
+            } else if let Some(value) = space_container(src, child).filter(|_| !exact) {
+                Child::Text(value)
             } else {
                 Child::Node(child)
             });
@@ -277,7 +300,7 @@ impl<'a> Printer<'a> {
                         Some(Child::Text(raw)) if is_meaningful(raw) => {
                             let first = split_words(raw.trim_matches(is_jsx_space)).words;
                             let first = first.first().map_or("", String::as_str);
-                            separator_no_whitespace(first, closes)
+                            separator_no_whitespace(first_piece(first), closes)
                         }
                         _ => Part::Hard,
                     };
@@ -348,8 +371,10 @@ mod tests {
         assert_eq!(w.lead, Some("  "));
         assert_eq!(w.words, ["a   b", "c", "d"]);
         assert_eq!(w.trail, Some("\t"));
-        let w = split_words("x\t\ty");
-        assert_eq!(w.words, ["x  y"]);
+        assert_eq!(split_words("x\t\ty").words, ["x\t\ty"]);
+        assert_eq!(split_words("a x\ty b").words, ["a", "x\ty", "b"]);
+        // Next to a line break a tab is stripped like a space.
+        assert_eq!(split_words("x\t\n\ty").words, ["x", "y"]);
         assert!(split_words(" ").words.is_empty());
     }
 }

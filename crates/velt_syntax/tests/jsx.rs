@@ -126,7 +126,7 @@ fn children_whitespace_rules() {
     assert_eq!(j("<p>{a} {b}</p>"), r#"<p>[{a} " " {b}]"#);
     assert_eq!(j("<p>{a}\n  {b}</p>"), "<p>[{a} {b}]");
     assert_eq!(j("<p>a   b</p>"), r#"<p>["a   b"]"#);
-    assert_eq!(j("<p>\t</p>"), r#"<p>[" "]"#);
+    assert_eq!(j("<p>\t</p>"), r#"<p>["\t"]"#);
 }
 
 #[test]

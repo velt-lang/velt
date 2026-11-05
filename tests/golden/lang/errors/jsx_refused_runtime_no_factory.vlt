@@ -1,0 +1,3 @@
+/** @jsxImportSource ./_jsx_incomplete_provider */
+// A runtime with no factory, first used inside a trial.
+console.log(JSON.stringify(<box />));

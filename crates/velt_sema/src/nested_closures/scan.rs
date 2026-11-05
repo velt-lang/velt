@@ -192,6 +192,10 @@ impl Scan {
 
     fn expr(&mut self, e: &ast::Expr) {
         match &e.kind {
+            E::Jsx(el) => crate::ast_walk::jsx_tag_roots(el, &mut |id| {
+                self.refs.insert(id.name.clone());
+                self.values.insert(id.name.clone());
+            }),
             E::Ident(id) => {
                 self.refs.insert(id.name.clone());
                 if !self.member_roots.contains(&e.span) {

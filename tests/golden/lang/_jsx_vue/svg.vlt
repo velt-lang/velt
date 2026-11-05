@@ -1,0 +1,9 @@
+// A second renderer adding to the same global interface.
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      circle: { r: number; children?: any };
+    }
+  }
+}
+export const svg = true;

@@ -1,0 +1,7 @@
+/** @jsxImportSource ./_jsx_auto_key */
+// `JSX.IntrinsicAttributes`: its `key` and other fields are checked for components, as `tsc` does.
+function C(p: { a?: string }): any { return null; }
+const k = <C key={true} />;
+const r = <C ref={1} />;
+const u = <C nope="x" />;
+const kids = <div>text</div>;

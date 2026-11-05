@@ -1,0 +1,4 @@
+// `jsxs` only, no `Fragment` and no `JSX.IntrinsicElements`: enough for what the module below uses.
+export function jsxs(type: any, props: any, key?: unknown): any {
+  return "jsxs:" + JSON.stringify(Object.keys(props)) + ":" + String(key);
+}

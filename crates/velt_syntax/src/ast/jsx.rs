@@ -92,6 +92,19 @@ pub enum JsxChild {
     Element(JsxElement),
 }
 
+impl JsxElement {
+    /// The name a component tag reads (`Card`, `ui` of `ui.Card`); an intrinsic tag reads none.
+    pub fn tag_root(&self) -> Option<&Ident> {
+        match &self.name {
+            Some(JsxName::Ident(id)) if !id.name.starts_with(|c: char| c.is_ascii_lowercase()) => {
+                Some(id)
+            }
+            Some(JsxName::Member(parts)) => parts.first(),
+            _ => None,
+        }
+    }
+}
+
 impl JsxName {
     /// The name as written: `div`, `ui.Card`, `svg:rect`.
     pub fn to_source(&self) -> String {

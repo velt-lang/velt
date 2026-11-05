@@ -1,0 +1,5 @@
+jsx(fn {a=1} undefined)
+jsxs(fn {a=1 extra=2 children=[1,2]} k)
+jsx(box {a=called} undefined)
+jsx(fn {d=2} undefined)
+jsx(box {children=jsx(fn {d=1} x)} undefined)

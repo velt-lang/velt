@@ -1,0 +1,28 @@
+// A component factory as sigx's `component()`: a function with properties, whose props are an
+// intersection with an interface other packages may merge attributes into.
+import type { VNode } from "./jsx-runtime";
+
+export interface AttributeExtensions {}
+
+export type Props<P> = P & AttributeExtensions & { children?: any };
+
+export function component<P>(render: (props: Props<P>) => VNode, name: string): ((props: Props<P>) => VNode) & { __setup: string } {
+  const f = (props: Props<P>): VNode => render(props);
+  return Object.assign(f, { __setup: name });
+}
+
+export function render(v: any): string {
+  if (v === null || v === undefined || v === false || v === true) return "";
+  if (typeof v === "string" || typeof v === "number") return String(v);
+  if (Array.isArray(v)) return v.map((x: any) => render(x)).join(",");
+  const node = v as VNode;
+  const kids = render(node.props.children);
+  const keys = Object.keys(node.props).filter((k) => k !== "children");
+  const attrs = keys.map((k) => `${k}=${JSON.stringify(node.props[k])}`).join(" ");
+  const key = node.key === null ? "" : ` #${node.key}`;
+  if (typeof node.type === "string") return `<${node.type}${attrs ? " " + attrs : ""}${key}>${kids}</${node.type}>`;
+  if (typeof node.type === "symbol") return `[${kids}]${key}`;
+  const f = node.type as any;
+  const tag = "__setup" in f ? `C:${f.__setup}` : "F";
+  return `${tag}{${attrs}${key}}(${render(f(node.props))})`;
+}

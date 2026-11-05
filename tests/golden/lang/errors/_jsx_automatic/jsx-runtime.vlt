@@ -1,0 +1,22 @@
+// A TypeScript automatic JSX runtime shaped like sigx's: `jsx(type, props, key)` with props
+// of an index signature, a `Fragment` value, and components told apart by a property.
+import "./types";
+
+export const Fragment = Symbol.for("rx.Fragment");
+
+export type VNode = {
+  type: string | symbol | Function;
+  props: Record<string, any>;
+  key: string | null;
+};
+
+interface JSXProps {
+  children?: any;
+  [key: string]: any;
+}
+
+export function jsx(type: string | Function | typeof Fragment, props: JSXProps | null, key?: string): VNode {
+  return { type, props: props ?? {}, key: key ?? null };
+}
+
+export const jsxs = jsx;

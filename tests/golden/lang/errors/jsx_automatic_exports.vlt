@@ -1,0 +1,7 @@
+/** @jsxImportSource ./_jsx_auto_min */
+// What a module's JSX uses must be exported, and only that.
+function C(p: { children?: any }): any { return null; }
+const ok = <C>one</C>;
+const several = <C>{1}{2}</C>;
+const fragment = <>one</>;
+const tag = <div />;

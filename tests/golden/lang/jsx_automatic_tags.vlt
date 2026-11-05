@@ -1,0 +1,52 @@
+/** @jsxImportSource ./_jsx_react */
+// Tags and components as `tsc` takes them: a text tab kept, a tag naming a later constant, a tag
+// holding a string, a component with a second parameter, a later attribute over a spread field of
+// another type, a spread child of type `any`, and `children` of a tuple type.
+import { show } from "./_jsx_react/show";
+
+console.log(show(<box a="tab	in	text">x	y</box>));
+console.log(show(<box>{"keep"}	tab</box>));
+
+const App = (): any => <box><Header t="x" /></box>;
+const Header = (p: { t: string }): any => <box a={p.t} />;
+console.log(show(App()));
+function Page(): any { return <Later t="y" />; }
+const Later = (p: { t: string }): any => null;
+console.log(show(Page()));
+
+function page(): any {
+  const Top = (): any => <box><Inner t="z" /></box>;
+  const Inner = (p: { t: string }): any => <box a={p.t} />;
+  return Top();
+}
+console.log(show(page()));
+
+const flag = App !== null;
+const Tag = flag ? "box" : "list";
+console.log(show(<Tag>{1}{2}</Tag>));
+const Named: string = "custom";
+console.log(show(<Named a="1" z={2}>{1}{2}</Named>));
+const lit = "box" as const;
+const Lit = lit;
+console.log(show(<Lit a="1" />));
+function Fn(p: {}): any { return null; }
+const Either: string | ((p: {}) => any) = flag ? "box" : Fn;
+console.log(show(<Either />));
+
+function Vue(props: { a?: string }, ctx: { slots: any }): any { return null; }
+function VueOpt(props: { a?: string }, ctx?: { slots: any }): any { return null; }
+const VueArrow = (props: { a?: string }, ctx: any): any => null;
+console.log(show(<Vue a="1" />), show(<VueOpt a="2" />), show(<VueArrow a="3" />));
+
+function Num(p: { a: string }): any { return null; }
+const s = { a: 1, b: "kept" };
+console.log(show(<Num {...s} a="x" />));
+
+function Anyc(p: { children?: any }): any { return <box>{...p.children}</box>; }
+console.log(show(Anyc({ children: [1, "two"] })));
+const held: any = [3, 4];
+console.log(show(<box>{1}{...held}</box>));
+console.log(show(<box>{...held}</box>));
+
+function Pair(p: { children: [string, number] }): any { return null; }
+console.log(show(<Pair>{"a"}{1}</Pair>));

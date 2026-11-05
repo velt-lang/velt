@@ -1,0 +1,18 @@
+/** @jsxImportSource ./_jsx_react */
+// `tsc` and esbuild lower a key after a spread to `createElement` from the import source's root
+// module; here it is the factory (docs/internals/contracts/jsx.md), with the key evaluated in its
+// place. The output is not Node's: a runtime need not have that root module.
+import { show } from "./_jsx_react/show";
+
+function t(s: string): string {
+  console.log("eval " + s);
+  return s;
+}
+function o(): { a: string } {
+  console.log("eval spread");
+  return { a: "s" };
+}
+const s = { x: "1" };
+console.log(show(<box {...s} key="k" />));
+console.log(show(<box b={t("b")} {...o()} key={t("k")} c={t("c")} />));
+console.log(show(<box {...{ key: "inner", a: "1" }} key="k" />));

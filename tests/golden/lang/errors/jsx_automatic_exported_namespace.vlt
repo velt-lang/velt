@@ -1,0 +1,20 @@
+/** @jsxImportSource ./_jsx_auto_ns */
+// The exported namespace wins: a global `JSX` adds nothing (TS2339), and a component must return
+// its `Element` (TS2786).
+declare global {
+  namespace JSX {
+    interface IntrinsicElements {
+      mine: {};
+    }
+  }
+}
+const a = <box />;
+const b = <mine />;
+function S(p: {}): string { return "s"; }
+async function P(p: {}): Promise<number> { return 1; }
+function Ok(p: {}): number { return 1; }
+function Maybe(p: {}): number | null { return null; }
+const c = <S />;
+const d = <P />;
+const e = <Ok />;
+const f = <Maybe />;

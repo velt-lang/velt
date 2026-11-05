@@ -1,0 +1,3 @@
+// `jsx` is no function.
+export const jsx = "not a function";
+export const Fragment = "f";

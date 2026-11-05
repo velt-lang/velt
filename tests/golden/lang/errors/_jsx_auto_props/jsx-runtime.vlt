@@ -1,0 +1,5 @@
+// A named object type for `props`, which cannot hold what an element is given.
+export interface Props { children?: any }
+export function jsx(type: any, props: Props, key?: string): string {
+  return "x";
+}
