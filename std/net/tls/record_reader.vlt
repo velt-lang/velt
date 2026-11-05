@@ -1,0 +1,209 @@
+// velt/net (internal): `RecordReader`, the reading half of the TLS record layer (RFC 8446 §5):
+// records read with `readInto` into one reused buffer, framed, decrypted in place, alerts
+// handled, and application data handed out from where it was decrypted. Nothing is allocated
+// per record.
+
+import "velt/lang/typed_array/bytes_view";
+import { ByteStream } from "velt/net/byte_stream";
+import {
+  alertName,
+  CLOSE_NOTIFY,
+  ILLEGAL_PARAMETER,
+  RECORD_OVERFLOW,
+  TlsFailure,
+  UNEXPECTED_MESSAGE,
+} from "velt/net/tls/alert";
+import { HEADER, RecordCipher, TAG } from "velt/net/tls/record_cipher";
+
+// Content types.
+export const CHANGE_CIPHER_SPEC: u8 = 20;
+export const ALERT: u8 = 21;
+export const HANDSHAKE: u8 = 22;
+export const APPLICATION_DATA: u8 = 23;
+/** Not a content type: the stream ended (close_notify, or the transport at a record boundary). */
+export const END: u8 = 0;
+
+/** The most content a record carries. */
+export const MAX_PLAIN: usize = 16384;
+const MAX_CIPHER: usize = 16384 + 256;
+// Room for two whole records, so one can be completed behind another.
+const BUFFER: usize = 2 * (5 + 16384 + 256);
+
+/** Reads and opens the records of one connection. */
+export class RecordReader {
+  private t: ByteStream;
+  /** The buffer; the last record's content is `buf[cstart..cend]`. */
+  buf: u8[];
+  cstart: usize;
+  cend: usize;
+  private rstart: usize;
+  private rend: usize;
+  // Application data not yet handed out: buf[pstart..pend].
+  private pstart: usize;
+  private pend: usize;
+  /** The read keys (null before the handshake keys). */
+  cipher: RecordCipher | null;
+  /** Whether ChangeCipherSpec records are still allowed (until the handshake is done). */
+  handshaking: bool;
+  /** Whether the stream has ended. */
+  ended: bool;
+
+  constructor(t: ByteStream) {
+    this.t = t;
+    this.buf = Buffer.alloc(BUFFER);
+    this.cstart = 0;
+    this.cend = 0;
+    this.rstart = 0;
+    this.rend = 0;
+    this.pstart = 0;
+    this.pend = 0;
+    this.cipher = null;
+    this.handshaking = true;
+    this.ended = false;
+  }
+
+  /** Application data not yet handed out. */
+  available(): usize {
+    return this.pend - this.pstart;
+  }
+
+  /** Makes the last record's content the application data to hand out. */
+  keepContent() {
+    this.pstart = this.cstart;
+    this.pend = this.cend;
+  }
+
+  /** Copies `n` bytes of application data (at most `available()`) to `out[at..]`. */
+  takeInto(out: u8[], at: usize, n: usize) {
+    for (let i: usize = 0; i < n; i++) {
+      out[at + i] = this.buf[this.pstart + i];
+    }
+    this.pstart += n;
+  }
+
+  /** The next `n` bytes of application data (at most `available()`). */
+  take(n: usize): u8[] {
+    const out = this.buf.slice(this.pstart as i64, (this.pstart + n) as i64);
+    this.pstart += n;
+    return out;
+  }
+
+  /**
+   * Reads the next record and decrypts it in place: its content type, the content at
+   * `buf[cstart..cend]`. END when the stream ended: close_notify, or the transport closing at a
+   * record boundary once the handshake is done (`after`; an error during it). Alerts other than
+   * close_notify throw.
+   */
+  async next(after: bool): Promise<u8> {
+    while (true) {
+      const avail = this.rend - this.rstart;
+      if (avail >= HEADER) {
+        const at = this.rstart;
+        const len = ((this.buf[at + 3] as usize) << 8) | (this.buf[at + 4] as usize);
+        if (len > MAX_CIPHER) {
+          throw new TlsFailure(RECORD_OVERFLOW, `a record of ${len} bytes`);
+        }
+        if (avail >= HEADER + len) {
+          this.rstart = at + HEADER + len;
+          const type = this.open(at, len);
+          if (type != ALERT) {
+            return type;
+          }
+          if (this.alert()) {
+            return END;
+          }
+          continue;
+        }
+      }
+      if (!(await this.readMore())) {
+        if (after && avail == 0) {
+          this.ended = true;
+          return END;
+        }
+        throw new TlsFailure(
+          CLOSE_NOTIFY,
+          after
+            ? "the connection closed in the middle of a record"
+            : "the connection closed during the handshake",
+          false,
+        );
+      }
+    }
+  }
+
+  // The content type of the record at buf[at..at + 5 + len], its content decrypted in place.
+  private open(at: usize, len: usize): u8 {
+    const type = this.buf[at];
+    const cipher = this.cipher;
+    if (type == CHANGE_CIPHER_SPEC || cipher == null) {
+      if (type == APPLICATION_DATA || (type == CHANGE_CIPHER_SPEC && !this.handshaking)) {
+        throw new TlsFailure(UNEXPECTED_MESSAGE, `an unprotected record of type ${type}`);
+      }
+      this.cstart = at + HEADER;
+      this.cend = at + HEADER + len;
+      return type;
+    }
+    if (type != APPLICATION_DATA) {
+      throw new TlsFailure(
+        UNEXPECTED_MESSAGE,
+        `an unprotected record of type ${type} after encryption started`,
+      );
+    }
+    if (len < TAG + 1) {
+      throw new TlsFailure(UNEXPECTED_MESSAGE, "a protected record too short for its tag");
+    }
+    const n = cipher.open(this.buf, at, at + HEADER + len);
+    // The content type is the last non-zero byte; zeros after it are padding.
+    let end = at + HEADER + n;
+    while (end > at + HEADER && this.buf[end - 1] == 0) {
+      end--;
+    }
+    if (end == at + HEADER) {
+      throw new TlsFailure(UNEXPECTED_MESSAGE, "a protected record without a content type");
+    }
+    if (end - 1 - (at + HEADER) > MAX_PLAIN) {
+      throw new TlsFailure(RECORD_OVERFLOW, "a record with more than 2^14 bytes of content");
+    }
+    this.cstart = at + HEADER;
+    this.cend = end - 1;
+    return this.buf[end - 1];
+  }
+
+  // Handles the alert just read: true for close_notify (the end of the stream).
+  private alert(): bool {
+    if (this.cend - this.cstart != 2) {
+      throw new TlsFailure(ILLEGAL_PARAMETER, "a malformed alert");
+    }
+    const d = this.buf[this.cstart + 1];
+    if (d == CLOSE_NOTIFY) {
+      this.ended = true;
+      return true;
+    }
+    if (d == 90) {
+      // user_canceled: a warning, followed by close_notify.
+      return false;
+    }
+    throw new TlsFailure(d, `the server sent the alert ${alertName(d)} (${d})`, false);
+  }
+
+  // Reads more of the transport behind the unread records: false at its end. Called only when
+  // no application data is waiting, so the unread records can move to the front.
+  private async readMore(): Promise<bool> {
+    if (this.rstart > 0 && this.pstart == this.pend) {
+      const n = this.rend - this.rstart;
+      for (let i: usize = 0; i < n; i++) {
+        this.buf[i] = this.buf[this.rstart + i];
+      }
+      this.rstart = 0;
+      this.rend = n;
+      this.pstart = 0;
+      this.pend = 0;
+    }
+    const got = await this.t.readInto(this.buf.subarray(this.rend as number, BUFFER as number));
+    if (got == null) {
+      return false;
+    }
+    this.rend += got as usize;
+    return true;
+  }
+}

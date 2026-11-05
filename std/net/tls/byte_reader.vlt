@@ -1,0 +1,79 @@
+// velt/net (internal): `ByteReader`, which reads TLS messages (RFC 8446 §3) from untrusted
+// bytes: every read is checked, and running past the end throws a `decode_error` `TlsFailure`,
+// never an index panic.
+
+import { DECODE_ERROR, TlsFailure } from "velt/net/tls/alert";
+
+/** Reads `b[pos..end]`; each read past `end` throws a `decode_error` `TlsFailure`. */
+export class ByteReader {
+  private b: u8[];
+  pos: usize;
+  private end: usize;
+  private what: string;
+
+  /** A reader of `b[start..end]` for the message `what` (named in errors). */
+  constructor(b: u8[], start: usize, end: usize, what: string) {
+    this.b = b;
+    this.pos = start;
+    this.end = end;
+    this.what = what;
+  }
+
+  /** The bytes left. */
+  left(): usize {
+    return this.end - this.pos;
+  }
+
+  private need(n: usize) {
+    if (this.end - this.pos < n) {
+      throw new TlsFailure(DECODE_ERROR, `truncated ${this.what}`);
+    }
+  }
+
+  u8(): u8 {
+    this.need(1);
+    const x = this.b[this.pos];
+    this.pos += 1;
+    return x;
+  }
+
+  u16(): usize {
+    this.need(2);
+    const x = ((this.b[this.pos] as usize) << 8) | (this.b[this.pos + 1] as usize);
+    this.pos += 2;
+    return x;
+  }
+
+  u24(): usize {
+    this.need(3);
+    const p = this.pos;
+    const x =
+      ((this.b[p] as usize) << 16) | ((this.b[p + 1] as usize) << 8) | (this.b[p + 2] as usize);
+    this.pos += 3;
+    return x;
+  }
+
+  /** A copy of the next `n` bytes. */
+  bytes(n: usize): u8[] {
+    this.need(n);
+    const out = this.b.slice(this.pos as i64, (this.pos + n) as i64);
+    this.pos += n;
+    return out;
+  }
+
+  /** The next vector with a `size`-byte length prefix, as a reader of its own; skips it here. */
+  vector(size: usize): ByteReader {
+    const n = size == 1 ? (this.u8() as usize) : size == 2 ? this.u16() : this.u24();
+    this.need(n);
+    const r = new ByteReader(this.b, this.pos, this.pos + n, this.what);
+    this.pos += n;
+    return r;
+  }
+
+  /** Throws a `decode_error` unless every byte was read. */
+  finish() {
+    if (this.pos != this.end) {
+      throw new TlsFailure(DECODE_ERROR, `${this.end - this.pos} stray bytes after ${this.what}`);
+    }
+  }
+}

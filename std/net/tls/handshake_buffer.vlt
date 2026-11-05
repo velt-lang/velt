@@ -1,0 +1,57 @@
+// velt/net (internal): `HandshakeBuffer`, handshake messages reassembled from records (a
+// message may span records, and a record may hold several, RFC 8446 §5.1).
+
+import { DECODE_ERROR, TlsFailure, UNEXPECTED_MESSAGE } from "velt/net/tls/alert";
+
+// The largest handshake message accepted (a certificate chain with room to spare).
+const MAX_MESSAGE: usize = 1 << 17;
+
+/** Handshake bytes read but not yet taken as whole messages. */
+export class HandshakeBuffer {
+  private bytes: u8[];
+
+  constructor() {
+    this.bytes = [];
+  }
+
+  /** Appends `buf[start..end]`. */
+  append(buf: u8[], start: usize, end: usize) {
+    for (let i = start; i < end; i++) {
+      this.bytes.push(buf[i]);
+    }
+  }
+
+  /** Whether a whole message is buffered (throws for one too large to accept). */
+  hasMessage(): bool {
+    if (this.bytes.length < 4) {
+      return false;
+    }
+    const n =
+      ((this.bytes[1] as usize) << 16) | ((this.bytes[2] as usize) << 8) | (this.bytes[3] as usize);
+    if (n > MAX_MESSAGE) {
+      throw new TlsFailure(DECODE_ERROR, `a handshake message of ${n} bytes`);
+    }
+    return this.bytes.length >= 4 + n;
+  }
+
+  /** The next whole message with its 4-byte header (after `hasMessage`). */
+  take(): u8[] {
+    const n =
+      4 +
+      (
+        ((this.bytes[1] as usize) << 16) |
+        ((this.bytes[2] as usize) << 8) |
+        (this.bytes[3] as usize)
+      );
+    const m = this.bytes.slice(0, n as i64);
+    this.bytes = this.bytes.slice(n as i64);
+    return m;
+  }
+
+  /** Throws `unexpected_message` when bytes are left: keys change only at a record boundary. */
+  checkEmpty() {
+    if (this.bytes.length != 0) {
+      throw new TlsFailure(UNEXPECTED_MESSAGE, "handshake data across a key change");
+    }
+  }
+}
