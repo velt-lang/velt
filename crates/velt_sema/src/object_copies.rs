@@ -21,6 +21,15 @@
 //!
 //! The fix keeps Node's behavior: an object literal with the fields (`{ a: x.a }`) is a new
 //! object in TypeScript too. Generic code is checked where it has concrete types (`JSON.stringify` everywhere).
+//!
+//! In a program with typed proxies (#823) an object type can hold a view of another object
+//! (velt_vir lower/any_view.rs), so a conversion that a write, an identity test or `in` could tell
+//! from a copy is no error: it is the conversion through `any` a view comes from (`AnyTo(to, x as
+//! any)`), and its reads and writes go to the one object, as in Node. The other conversions stay
+//! copies, which cost a view's field access nothing. What prints, serializes or spreads a value
+//! goes by its static type, so a view would show too few fields: those stay as above, or
+//! `Conversion::ProxyOnly` where no object literal builds the source type (a proxy keeps its
+//! identity through it, a plain value throws a `TypeError`).
 
 use std::cell::RefCell;
 
@@ -103,9 +112,8 @@ pub(crate) struct Copies {
     /// The optional fields without a presence flag an object literal's property gives a value
     /// that may be null, by name (`crate::absent_fields`).
     pub null_literals: Vec<(String, Span)>,
-    /// The program's own code constructs a `Proxy` (#823): a conversion that would be reported
-    /// but whose source type no object literal builds is `Conversion::ProxyOnly` instead (a
-    /// proxy keeps its identity through it, a plain value throws a `TypeError`).
+    /// The program's own code constructs a `Proxy` (#823): views and `Conversion::ProxyOnly`
+    /// (module docs).
     pub proxies: bool,
     /// Where the value of each `Seen::Dynamic` conversion may come from.
     pub dyn_sources: Vec<Vec<Store>>,
@@ -176,28 +184,43 @@ pub(crate) fn check(cx: &mut Ctx) {
         dynamic: Default::default(),
         generic: Default::default(),
     };
+    // Conversions that keep the one object, as views (module docs); a type with its own
+    // methods (a class) has no view, nor has a copy with no conversion in the source to rewrite.
+    let views = |cx: &Ctx, c: &Copy| {
+        proxies && !c.generic && c.span != Span::DUMMY && cx.class_of(c.to).is_none()
+    };
     let built = match proxies {
         true => built_types(cx),
         false => vec![],
     };
+    let mut viewed = vec![];
     // Conversions allowed only for proxies: a plain source throws instead of being copied.
     let mut strict = vec![];
     for (ci, c) in copies.iter().enumerate() {
         let proxy_only = proxies && !built.iter().any(|&t| related(cx, t, c.from));
         if let Some(w) = assigned(cx, (c, ci), &writes, &looks) {
-            match proxy_only {
-                true => strict.push((c.span, c.to)),
+            match views(cx, c) {
+                true => viewed.push((c.span, c.to)),
+                false if proxy_only => strict.push((c.span, c.to)),
                 false => report_write(cx, c, w),
             }
         } else if let Some(&(t, span, how)) = seen
             .iter()
             .find(|s| sees(cx, (c, ci), s.0, s.2, &in_keys, &looks))
         {
-            match proxy_only {
-                true => strict.push((c.span, c.to)),
+            let shown = matches!(
+                how,
+                Seen::Printed | Seen::Serialized | Seen::Keys | Seen::Spread
+            );
+            match views(cx, c) && !shown {
+                true => viewed.push((c.span, c.to)),
+                false if proxy_only => strict.push((c.span, c.to)),
                 false => report_seen(cx, c, t, span, how, &in_keys),
             }
         }
+    }
+    if !viewed.is_empty() {
+        convert_to_views(cx, &viewed);
     }
     if !strict.is_empty() {
         mark_proxy_only(cx, &strict);
@@ -216,16 +239,87 @@ fn mark_proxy_only(cx: &mut Ctx, strict: &[(Span, TyId)]) {
             }
         }
     }
-    let mut v = Mark(strict);
+    each_body(cx, &mut Mark(strict));
+}
+
+/// Make the conversions at `viewed` (span and converted-to type) conversions through `any`, each
+/// of the object its fields were read from (`AnyTo(to, ToDyn(Share(source)))`).
+fn convert_to_views(cx: &mut Ctx, viewed: &[(Span, TyId)]) {
+    use crate::hir::{Callee, Conversion, Expr, ExprKind as E, Intrinsic, TyKind, UseMode};
+    /// The source place a field of a converted object literal reads (`src.f`, or a share of it).
+    fn source(f: &Expr) -> Option<&Expr> {
+        match &f.kind {
+            E::Field { base, .. } => Some(base),
+            E::Call {
+                callee: Callee::Intrinsic(Intrinsic::Share),
+                args,
+            } => args.first().and_then(source),
+            _ => None,
+        }
+    }
+    struct Mark<'a> {
+        viewed: &'a [(Span, TyId)],
+        any: TyId,
+        imp: u32,
+    }
+    impl crate::visit::VisitMut for Mark<'_> {
+        fn expr(&mut self, e: &mut Expr) {
+            let E::AdtLit {
+                converted: Conversion::Copy,
+                fields,
+                ..
+            } = &e.kind
+            else {
+                return;
+            };
+            if !self.viewed.contains(&(e.span, e.ty)) {
+                return;
+            }
+            let Some(mut src) = fields.iter().find_map(source).cloned() else {
+                return;
+            };
+            crate::body::places::set_place_mode(&mut src, UseMode::Borrow);
+            let (span, ty) = (src.span, src.ty);
+            let share = E::Call {
+                callee: Callee::Intrinsic(Intrinsic::Share),
+                args: vec![src],
+            };
+            let boxed = E::ToDyn {
+                expr: Box::new(Expr {
+                    kind: share,
+                    ty,
+                    span,
+                }),
+                impl_index: self.imp,
+            };
+            e.kind = E::Call {
+                callee: Callee::Intrinsic(Intrinsic::AnyTo),
+                args: vec![Expr {
+                    kind: boxed,
+                    ty: self.any,
+                    span,
+                }],
+            };
+        }
+    }
+    let (Some(imp), Some(defs)) = (cx.any_impl(), cx.any) else {
+        return;
+    };
+    let any = cx.ty.intern(TyKind::Dyn(defs.any, vec![]));
+    each_body(cx, &mut Mark { viewed, any, imp });
+}
+
+/// Visit the program's function bodies and constants' initializers.
+fn each_body(cx: &mut Ctx, v: &mut dyn crate::visit::VisitMut) {
     for d in cx.defs.iter_mut().flatten() {
         if let crate::hir::Def::Fn(f) = d {
-            crate::visit::block(&mut f.body.block, &mut v);
+            crate::visit::block(&mut f.body.block, v);
         }
     }
     for i in cx.info.iter_mut() {
         if let crate::defs::DefInfo::Global(g) = i {
             if let Some(e) = &mut g.init {
-                crate::visit::expr(e, &mut v);
+                crate::visit::expr(e, v);
             }
         }
     }
@@ -549,6 +643,11 @@ fn with_notes(cx: &mut Ctx, d: Diagnostic, c: &Copy) -> Diagnostic {
     ))
 }
 
+/// Is `t` an anonymous object type?
+fn anon(cx: &Ctx, t: TyId) -> bool {
+    matches!(cx.ty.kind(t), TyKind::Adt(d, _) if cx.adt(*d).is_some_and(|a| a.kind == crate::hir::AdtKind::Anon))
+}
+
 /// The types of the object literals (`AdtLit`) in the program's bodies and constants. Generated
 /// code is left out: the objects a generator builds (a value `JSON.parse` decodes) are made as
 /// the compiler's own glue made them, which no literal of the program built.
@@ -583,9 +682,4 @@ fn built_types(cx: &mut Ctx) -> Vec<TyId> {
         }
     }
     v.0.into_iter().collect()
-}
-
-/// Is `t` an anonymous object type?
-fn anon(cx: &Ctx, t: TyId) -> bool {
-    matches!(cx.ty.kind(t), TyKind::Adt(d, _) if cx.adt(*d).is_some_and(|a| a.kind == crate::hir::AdtKind::Anon))
 }
