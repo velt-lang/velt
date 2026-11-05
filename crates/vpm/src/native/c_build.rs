@@ -202,9 +202,12 @@ impl Tool<'_> {
     /// `zig <args>` in `dir`, with zig's caches in one place and the clock fixed (C's `__DATE__`
     /// and `__TIME__`, a DLL's timestamp). `Err` holds what it printed.
     fn run(&self, dir: &Path, args: &[String]) -> Result<(), String> {
+        // `CPATH` and `C_INCLUDE_PATH` would add this machine's directories to every include.
         let out = Command::new(self.zig)
             .args(args)
             .current_dir(dir)
+            .env_remove("CPATH")
+            .env_remove("C_INCLUDE_PATH")
             .env("ZIG_GLOBAL_CACHE_DIR", self.cache)
             .env("ZIG_LOCAL_CACHE_DIR", self.cache)
             .env("SOURCE_DATE_EPOCH", "0")
@@ -291,8 +294,17 @@ fn compile_all(
                 .map(|(n, source)| {
                     scope.spawn(move || {
                         let object = absolute(&objects.join(object_name(*n)))?;
-                        tool.run(root, &compile_args(tool.target, config, source, &object))
-                            .map_err(|e| format!("compiling `{source}`: {e}"))
+                        let deps = objects.join(format!("{n}.d"));
+                        let args =
+                            compile_args(tool.target, config, source, &object, &absolute(&deps)?);
+                        tool.run(root, &args)
+                            .map_err(|e| format!("compiling `{source}`: {e}"))?;
+                        let list = std::fs::read_to_string(&deps).map_err(|e| {
+                            format!(
+                                "compiling `{source}`: zig wrote no list of the files it read: {e}"
+                            )
+                        })?;
+                        check_reads(root, tool.zig, source, &list)
                     })
                 })
                 .collect();
@@ -314,6 +326,7 @@ fn compile_args(
     config: &CLibraryConfig,
     source: &str,
     object: &str,
+    deps: &str,
 ) -> Vec<String> {
     let mut args: Vec<String> = ["cc", "-target", zig_target]
         .iter()
@@ -323,7 +336,55 @@ fn compile_args(
     args.extend(defines_args(&config.defines));
     args.extend(["-c".to_string(), source.to_string()]);
     args.extend(["-o".to_string(), object.to_string()]);
+    args.extend(["-MD", "-MT", "deps", "-MF", deps].map(str::to_string));
     args
+}
+
+/// Refuse a file that compiling `source` read (`list`, clang's dependency list) outside the
+/// package's `native/` and zig's own headers: the build's key covers only `native/`, and only
+/// `native/` is published, so a file elsewhere (`#include "../inc/x.h"`, `-I.`'s package root)
+/// would neither rebuild the library when it changes nor reach those who rebuild it.
+fn check_reads(root: &Path, zig: &Path, source: &str, list: &str) -> Result<(), String> {
+    let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
+    let native = canonical(&root.join(C_SOURCES_DIR));
+    let toolchain = canonical(zig).parent().map(Path::to_path_buf);
+    for file in dependency_paths(list) {
+        let path = canonical(&root.join(&file));
+        let inside =
+            path.starts_with(&native) || toolchain.as_ref().is_some_and(|t| path.starts_with(t));
+        if !inside {
+            return Err(format!(
+                "`{source}` includes `{file}`, which is outside `{C_SOURCES_DIR}/`: a library's C files are all under `{C_SOURCES_DIR}/`, which is what the package ships and what its build is keyed on"
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The paths of clang's dependency list (`-MD -MT deps`) `deps: a.h b\\ c.h \\\n d.h`: separated by white space,
+/// with `\\ `, `\\#` and `$$` for what make would read otherwise. Other backslashes are a Windows
+/// path's.
+pub fn dependency_paths(list: &str) -> Vec<String> {
+    let list = list.strip_prefix("deps:").unwrap_or(list);
+    let mut paths = Vec::new();
+    let mut path = String::new();
+    let mut chars = list.chars().peekable();
+    while let Some(c) = chars.next() {
+        match (c, chars.peek()) {
+            ('\\', Some(' ' | '#')) | ('$', Some('$')) => path.extend(chars.next()),
+            ('\\', Some('\n' | '\r')) => {}
+            (c, _) if c.is_whitespace() => {
+                if !path.is_empty() {
+                    paths.push(std::mem::take(&mut path));
+                }
+            }
+            (c, _) => path.push(c),
+        }
+    }
+    if !path.is_empty() {
+        paths.push(path);
+    }
+    paths
 }
 
 /// `-DNAME=value` for each of `defines`.
@@ -464,14 +525,78 @@ mod tests {
             defines: vec![("X".into(), "a b".into())],
             ..CLibraryConfig::default()
         };
-        let args = compile_args("x86_64-linux-gnu", &config, "native/a.c", "/o/0.o");
+        let args = compile_args(
+            "x86_64-linux-gnu",
+            &config,
+            "native/a.c",
+            "/o/0.o",
+            "/o/0.d",
+        );
         let all = args.join(" ");
         assert!(
             all.starts_with("cc -target x86_64-linux-gnu -O2 -g0"),
             "{all}"
         );
-        assert!(all.ends_with("-c native/a.c -o /o/0.o"), "{all}");
+        assert!(
+            all.ends_with("-c native/a.c -o /o/0.o -MD -MT deps -MF /o/0.d"),
+            "{all}"
+        );
         // One argument, whatever the value holds.
         assert!(args.contains(&"-DX=a b".to_string()), "{args:?}");
+    }
+
+    #[test]
+    fn clang_s_dependency_list_gives_the_files_read() {
+        assert_eq!(
+            dependency_paths("deps: headers.c /p/a\\ b.h \\\n  /p/c\\#d.h \\\r\n C:\\z\\e$$.h\n"),
+            ["headers.c", "/p/a b.h", "/p/c#d.h", "C:\\z\\e$.h"]
+        );
+    }
+
+    /// A compile may read the package's `native/` and zig's headers, nothing else of the package
+    /// or the machine.
+    #[test]
+    fn a_compile_reads_only_native_and_zig_s_headers() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("p");
+        let zig_dir = tmp.path().join("zig");
+        for dir in ["native/inc", "inc", "src"] {
+            std::fs::create_dir_all(root.join(dir)).unwrap();
+        }
+        std::fs::create_dir_all(zig_dir.join("lib")).unwrap();
+        for file in ["native/a.c", "native/inc/a.h", "inc/more.h", "src/x.h"] {
+            std::fs::write(root.join(file), "").unwrap();
+        }
+        std::fs::write(tmp.path().join("outside.h"), "").unwrap();
+        std::fs::write(zig_dir.join("lib/string.h"), "").unwrap();
+        let zig = zig_dir.join("zig");
+        std::fs::write(&zig, "").unwrap();
+        let string_h = zig_dir.join("lib/string.h");
+        let ok = format!(
+            "deps: native/a.c native/inc/a.h ./native/inc/a.h {}\n",
+            string_h.display()
+        );
+        check_reads(&root, &zig, "native/a.c", &ok).unwrap();
+        for read in [
+            "inc/more.h",
+            "native/../inc/more.h",
+            "src/x.h",
+            "../outside.h",
+        ] {
+            let e = check_reads(
+                &root,
+                &zig,
+                "native/a.c",
+                &format!("deps: native/a.c {read}\n"),
+            )
+            .unwrap_err();
+            assert!(
+                e.contains(&format!("includes `{read}`, which is outside `native/`")),
+                "{e}"
+            );
+        }
+        let absolute = tmp.path().join("outside.h");
+        let list = format!("deps: native/a.c {}\n", absolute.display());
+        assert!(check_reads(&root, &zig, "native/a.c", &list).is_err());
     }
 }

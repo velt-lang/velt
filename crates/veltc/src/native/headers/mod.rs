@@ -136,7 +136,7 @@ pub fn check(
         };
         let read = LibraryHeaders { headers, defines };
         let record = match package.fetched {
-            true => compare_record(package, &library, &decls, headers, zig_target, diags),
+            true => compare_record(package, &library, &decls, read, zig_target, diags),
             false => check_library(&root, &library, read, &decls, (zig_target, target), diags),
         };
         if let Some(record) = record {
@@ -181,7 +181,7 @@ fn check_library(
     (zig_target, target): (&str, &str),
     diags: &mut Diagnostics,
 ) -> Option<LibraryRecord> {
-    let headers = read.headers;
+    let (headers, defines) = (read.headers, read.defines);
     let first = decls[0].span;
     let home = match vpm::locations::velt_home() {
         Ok(home) => home,
@@ -193,7 +193,7 @@ fn check_library(
     let key = cache_key(root, read, decls, target);
     let remembered = home.join("cache").join("headers").join(&key);
     if let Some(read) = still_holds(&remembered) {
-        return Some(library_record(root, decls, &read));
+        return Some(library_record(root, decls, defines, &read));
     }
     let parsed =
         velt_toolchain::zig::zig(&home).and_then(|zig| parse(&zig, &home, root, read, zig_target));
@@ -235,7 +235,7 @@ fn check_library(
     };
     // Remembered only when it passed; a failure to write it costs a check next time.
     remember(&remembered, &read);
-    Some(library_record(root, decls, &read))
+    Some(library_record(root, decls, defines, &read))
 }
 
 /// Remember at `remembered` that a check which read `read` passed. The file is replaced whole
@@ -539,37 +539,11 @@ const DEPENDENCIES: &str = "deps.d";
 /// The files a parse in `dir` read, from clang's dependency list: its own `headers.c` aside.
 fn files_read(dir: &Path, dependencies: &str) -> Vec<PathBuf> {
     let canonical = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-    dependency_paths(dependencies)
+    vpm::native::c_build::dependency_paths(dependencies)
         .into_iter()
         .map(|file| dir.join(file))
         .filter(|file| !file.starts_with(dir) && !file.starts_with(&canonical))
         .collect()
-}
-
-/// The paths of clang's dependency list `deps: a.h b\\ c.h \\\n d.h`: separated by white space,
-/// with `\\ `, `\\#` and `$$` for what make would read otherwise. Other backslashes are a Windows
-/// path's.
-fn dependency_paths(list: &str) -> Vec<String> {
-    let list = list.strip_prefix("deps:").unwrap_or(list);
-    let mut paths = Vec::new();
-    let mut path = String::new();
-    let mut chars = list.chars().peekable();
-    while let Some(c) = chars.next() {
-        match (c, chars.peek()) {
-            ('\\', Some(' ' | '#')) | ('$', Some('$')) => path.extend(chars.next()),
-            ('\\', Some('\n' | '\r')) => {}
-            (c, _) if c.is_whitespace() => {
-                if !path.is_empty() {
-                    paths.push(std::mem::take(&mut path));
-                }
-            }
-            (c, _) => path.push(c),
-        }
-    }
-    if !path.is_empty() {
-        paths.push(path);
-    }
-    paths
 }
 
 /// The words of a command line clang printed: each in double quotes, with `\"` and `\\`.
@@ -611,10 +585,6 @@ mod tests {
 
     #[test]
     fn clang_s_dependency_list_gives_the_files_read() {
-        assert_eq!(
-            dependency_paths("deps: headers.c /p/a\\ b.h \\\n  /p/c\\#d.h \\\r\n C:\\z\\e$$.h\n"),
-            ["headers.c", "/p/a b.h", "/p/c#d.h", "C:\\z\\e$.h"]
-        );
         // A file outside the parse's directory, as an absolute path of this host (a drive
         // letter on Windows), with spaces escaped as clang does.
         let dir = tempfile::tempdir().unwrap();
@@ -684,6 +654,7 @@ mod tests {
                 ("native/own.h".to_string(), String::new()),
                 ("native/gone.h".to_string(), String::new()),
             ]),
+            defines: String::new(),
         };
         checked
             .entry(dir.path().to_path_buf())

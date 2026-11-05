@@ -311,6 +311,102 @@ fn declarations_are_checked_against_the_package_s_headers() {
     ok(velt(&app, &home, &[], &["check"]));
 }
 
+/// `defines` change what a header declares, so the record holds them: a git dependency whose
+/// `defines` changed after its author's check is refused, not run with a wrong signature (here a
+/// `long long` result read as `i32`).
+#[test]
+fn changed_defines_are_refused_from_a_git_dependency() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = home_with_zig_cache(dir.path());
+    let tiny = dir.path().join("tiny");
+    package(&tiny, &native(""));
+    let header = HEADER.replace(
+        "int tiny_answer(void);\n",
+        "#ifdef WIDE\nlong long tiny_answer(void);\n#else\nint tiny_answer(void);\n#endif\n",
+    );
+    std::fs::write(tiny.join("native/tiny.h"), header).unwrap();
+    let wide = source(0).replace(
+        "int tiny_answer(void) { return ANSWER + MORE + 0; }",
+        "#ifdef WIDE\nlong long tiny_answer(void) { return 0x100000000LL + ANSWER - 2 + MORE; }\n#else\nint tiny_answer(void) { return ANSWER - 2 + MORE; }\n#endif",
+    );
+    assert_ne!(wide, source(0));
+    std::fs::write(tiny.join("native/tiny.c"), wide).unwrap();
+    ok(velt(&tiny, &home, &[], &["native", "headers"]));
+    git(&tiny, &["init", "-q", "-b", "main"]);
+    git(&tiny, &["add", "-A"]);
+    git(&tiny, &["commit", "-q", "-m", "checked"]);
+    let url = tiny.display().to_string().replace('\\', "/");
+    let url = match url.starts_with('/') {
+        true => format!("file://{url}"),
+        false => format!("file:///{url}"),
+    };
+    let app_dir = dir.path().join("app");
+    let dependency = format!("{{ git: \"{url}\", branch: \"main\" }}");
+    let allow = format!("allowNative: [{{ name: \"tiny\", git: \"{url}\" }}], ");
+    app(&app_dir, &allow, &dependency);
+    let from_source = [("VELT_NATIVE_FROM_SOURCE", "1")];
+    let o = ok(velt(&app_dir, &home, &from_source, &["check"]));
+    assert!(text(&o).contains("headers checked"), "{}", text(&o));
+    assert_eq!(run_host(&app_dir, &home, &from_source, false), "40\n4\n9\n");
+    // A later commit adds `WIDE` and keeps the record.
+    let manifest = std::fs::read_to_string(tiny.join("package.vlt")).unwrap();
+    let widened = manifest.replace("ANSWER: \"40\"", "ANSWER: \"40\", WIDE: \"1\"");
+    assert_ne!(manifest, widened);
+    std::fs::write(tiny.join("package.vlt"), widened).unwrap();
+    git(&tiny, &["commit", "-q", "-am", "wide"]);
+    let _ = std::fs::remove_file(app_dir.join("velt.lock.json"));
+    for args in [&["check"][..], &["run"][..]] {
+        let o = velt(&app_dir, &home, &from_source, args);
+        let out = text(&o);
+        assert!(!o.status.success(), "{args:?}: {out}");
+        assert!(
+            out.contains("C library `tiny` in package `tiny` has other `defines` than its author checked its headers with"),
+            "{args:?}: {out}"
+        );
+    }
+}
+
+/// A source may include only what is under `native/`, which the build is keyed on and the
+/// package ships: a header elsewhere in the package (through `-I.`) is refused.
+#[test]
+fn an_include_outside_native_is_refused() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = home_with_zig_cache(dir.path());
+    let app = project(dir.path());
+    let tiny = dir.path().join("tiny");
+    std::fs::create_dir_all(tiny.join("inc")).unwrap();
+    std::fs::write(tiny.join("inc/more.h"), "#define EXTRA 1\n").unwrap();
+    let source = format!("#include \"inc/more.h\"\n{}", source(0));
+    std::fs::write(tiny.join("native/tiny.c"), source).unwrap();
+    let o = velt(&app, &home, &[], &["run"]);
+    let out = text(&o);
+    assert!(!o.status.success(), "{out}");
+    assert!(
+        out.contains("`native/tiny.c` includes `inc/more.h`, which is outside `native/`"),
+        "{out}"
+    );
+}
+
+fn git(dir: &Path, args: &[&str]) {
+    let o = std::process::Command::new("git")
+        .arg("-C")
+        .arg(dir)
+        .args([
+            "-c",
+            "user.name=t",
+            "-c",
+            "user.email=t@t",
+            "-c",
+            "commit.gpgsign=false",
+        ])
+        .args(args)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "git {args:?}: {}", text(&o));
+}
+
 /// The bytes of every file of a bundle, by path.
 fn bundle_files(dir: &Path) -> Vec<(String, Vec<u8>)> {
     let mut out = Vec::new();

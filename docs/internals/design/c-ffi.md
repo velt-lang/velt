@@ -876,7 +876,8 @@ Step 1 lands in layers, each its own pull request:
      does.
    - `velt native build [--target]` compiles with the pinned `zig cc`, for any target from any
      machine (macOS 11 on arm64 and 10.12 on x86_64, glibc 2.17, so a library neither raises what a
-     program needs nor depends on the builder) into a bundle: `-O2 -g0 -fPIC`, `-ffunction-sections`,
+     program needs nor depends on the builder; glibc 2.17 is an assumption, as nothing states the
+     runtime's floor) into a bundle: `-O2 -g0 -fPIC`, `-ffunction-sections`,
      no sanitizer, run in the package's root with relative paths and `SOURCE_DATE_EPOCH=0`. Two
      builds, in other directories, give the same bytes; a test compares them per target. On
      Windows clang records zig's random temporary path in each object whatever `-g0` says, so
@@ -884,10 +885,13 @@ Step 1 lands in layers, each its own pull request:
    - The bundle is reused while a hash of what it's built from is the same (`<out>.key` beside
      it): zig's version, the flags, target, package name and version, each library's sources and
      definitions, and every file under `native/` (a change to an included file rebuilds), never
-     their times. An unchanged build runs no zig. A library is built when a program links or
+     their times. A source may read only `native/` and zig's own headers: clang's dependency list
+     says what it read, and anything else (`-I.`'s package root, `../`) is refused, since the key
+     wouldn't cover it and the package doesn't ship it. zig runs without `CPATH` and
+     `C_INCLUDE_PATH`. An unchanged build runs no zig. A library is built when a program links or
      loads it (`native::c_sources`), not at install: `velt check`, `velt native headers` and the
-     editor never compile C, and a package's libraries its program doesn't call aren't built or
-     linked.
+     editor never compile C. Every `sources` library of a package is built, and a package's
+     libraries its program doesn't call aren't linked.
    - Linked as the design says: debug the shared library (by `-l`, with an rpath), release the
      static one (`static/lib….a`, as an archive so unreferenced objects stay out), and a musl
      program always the static one. **Windows links the DLL in both modes**, as a Rust crate does:
@@ -904,7 +908,9 @@ Step 1 lands in layers, each its own pull request:
      as for a crate. `--macos-sdk` waits for sources that link frameworks.
    - `velt check` lists the sources (`tiny (built from native/tiny.c; headers checked)`, `sources`
      in `--json`); `allowNative` asks for such a package as for any with native code; the header
-     check reads a library's own `headers` with its `defines`.
+     check reads a library's own `headers` with its `defines`, and `c-headers.json` records a
+     digest of them per library (none for a library without), so a fetched package whose
+     `defines` changed after its author's check is refused.
    - Not yet: the registry or CI rebuilding a bundle and comparing checksums (what reproducibility
      is for); `packages/sqlite` on `sources`. Sources fetched from `git` or a `url` with a pinned
      hash are #2367's: its `fetch` is a key beside these fields, and only changes where `sources`

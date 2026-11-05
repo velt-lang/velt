@@ -10,7 +10,7 @@ use velt_common::{Diagnostic, Diagnostics, Span};
 use vpm::c_headers::{CHeaders, LibraryRecord, FILE as RECORD};
 use vpm::graph::GraphPackage;
 
-use super::{compare, file_digest, Decl};
+use super::{compare, file_digest, Decl, LibraryHeaders};
 
 /// Compare what a fetched package's `library` declares (`decls`, those this program compiles)
 /// and the headers it has with what its author checked on `zig_target`, as its `c-headers.json`
@@ -19,7 +19,7 @@ pub(super) fn compare_record(
     package: &GraphPackage,
     library: &str,
     decls: &[Decl],
-    listed: &[String],
+    read: LibraryHeaders,
     zig_target: &str,
     diags: &mut Diagnostics,
 ) -> Option<LibraryRecord> {
@@ -78,9 +78,22 @@ pub(super) fn compare_record(
             );
         }
     }
+    if recorded.defines != vpm::c_headers::defines_digest(read.defines) {
+        diags.push(
+            Diagnostic::error(
+                format!(
+                    "C library `{library}` in package `{name}` has other `defines` than its author checked its headers with for {zig_target}"
+                ),
+                at,
+            )
+            .with_note(format!(
+                "{RECORD} records other `defines`: the package changed after the check"
+            )),
+        );
+    }
     let of = format!("of C library `{library}` in package `{name}`");
     let headers = &recorded.headers;
-    compare_headers(package, &of, headers, listed, zig_target, at, diags);
+    compare_headers(package, &of, headers, read.headers, zig_target, at, diags);
     (diags.len() == before).then(|| recorded.clone())
 }
 
@@ -161,11 +174,13 @@ fn declaration_digest(d: &Decl) -> String {
 pub(super) fn library_record(
     root: &Path,
     decls: &[Decl],
+    defines: &[(String, String)],
     read: &[(PathBuf, String)],
 ) -> LibraryRecord {
     LibraryRecord {
         declarations: decls.iter().map(declaration_digest).collect(),
         headers: package_headers(root, read),
+        defines: vpm::c_headers::defines_digest(defines),
     }
 }
 
@@ -234,7 +249,11 @@ mod tests {
     fn compared(package: &GraphPackage, decls: &[Decl], listed: &[&str]) -> (Vec<String>, bool) {
         let listed: Vec<String> = listed.iter().map(|h| h.to_string()).collect();
         let mut diags = Diagnostics::default();
-        let record = compare_record(package, "own", decls, &listed, TARGET, &mut diags);
+        let read = LibraryHeaders {
+            headers: &listed,
+            defines: &[],
+        };
+        let record = compare_record(package, "own", decls, read, TARGET, &mut diags);
         let messages = diags.iter().map(|d| d.message.clone()).collect();
         (messages, record.is_some())
     }
@@ -261,6 +280,7 @@ mod tests {
             LibraryRecord {
                 declarations: [&f, &g].map(declaration_digest).into(),
                 headers: BTreeMap::new(),
+                defines: String::new(),
             },
         );
         record.write(tmp.path()).unwrap();
@@ -279,7 +299,10 @@ mod tests {
             package,
             "own",
             &[decl("g", vec![])],
-            &[],
+            LibraryHeaders {
+                headers: &[],
+                defines: &[],
+            },
             "aarch64-macos",
             &mut diags,
         );
@@ -305,6 +328,7 @@ mod tests {
             library_record(
                 root,
                 std::slice::from_ref(&g),
+                &[],
                 &[(header.clone(), file_digest(&header).unwrap())],
             ),
         );
@@ -377,5 +401,49 @@ mod tests {
             e[0].contains("`../x.h`") && e[0].contains("is gone"),
             "{e:?}"
         );
+    }
+
+    /// `defines` change what a library's headers declare: a record holds whose they were.
+    #[test]
+    fn a_fetched_package_s_defines_are_compared() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut graph = PackageGraph::default();
+        graph.add("bind", tmp.path(), BTreeMap::new()).fetched = true;
+        let package = &graph.packages()[0];
+        let g = decl("g", vec![]);
+        let answer = [("ANSWER".to_string(), "40".to_string())];
+        let mut record = CHeaders::default();
+        let checked = library_record(tmp.path(), std::slice::from_ref(&g), &answer, &[]);
+        record
+            .checked
+            .entry(TARGET.into())
+            .or_default()
+            .insert("own".into(), checked);
+        record.write(tmp.path()).unwrap();
+        let wide = [answer[0].clone(), ("WIDE".to_string(), "1".to_string())];
+        for (defines, refused) in [(&answer[..], false), (&wide[..], true), (&[][..], true)] {
+            let mut diags = Diagnostics::default();
+            let read = LibraryHeaders {
+                headers: &[],
+                defines,
+            };
+            let passed = compare_record(
+                package,
+                "own",
+                std::slice::from_ref(&g),
+                read,
+                TARGET,
+                &mut diags,
+            );
+            assert_eq!(passed.is_none(), refused, "{defines:?}");
+            if refused {
+                assert!(
+                    diags.iter().any(|d| d
+                        .message
+                        .contains("has other `defines` than its author checked")),
+                    "{defines:?}"
+                );
+            }
+        }
     }
 }
