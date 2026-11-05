@@ -598,7 +598,7 @@ fn random_function(env: &Env, seed: u64) -> Function {
         ptrs,
         pairs,
         blocks,
-        quiet: seed % 2 == 0,
+        quiet: seed.is_multiple_of(2),
         loaded,
     };
     for &b in &ids {
