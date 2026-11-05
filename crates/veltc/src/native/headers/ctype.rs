@@ -182,6 +182,27 @@ impl Headers {
         }
     }
 
+    /// Whether C can't write through a pointer to `written`: `const` qualifies `written` itself,
+    /// not what it points at. `const char` and `char *const` are; `const char *` isn't, so C
+    /// writes the pointer a `const char **` points at.
+    fn is_const(&self, written: &str, depth: u32) -> bool {
+        let own = written.rsplit('*').next().unwrap_or(written);
+        if own.split_whitespace().any(|w| w == "const") {
+            return true;
+        }
+        if written.contains('*') || depth >= 32 {
+            return false;
+        }
+        let base: Vec<&str> = own
+            .split_whitespace()
+            .filter(|w| *w != "volatile")
+            .collect();
+        match self.typedefs.get(&base.join(" ")) {
+            Some(under) if under.trim() != base.join(" ") => self.is_const(under, depth + 1),
+            _ => false,
+        }
+    }
+
     /// The C type `written` (`size_t`, `const char *`) for a target whose `long` has `long_bits`.
     pub fn resolve(&self, written: &str, long_bits: u32) -> CType {
         self.resolve_in(written, long_bits, &mut Vec::new())
@@ -197,7 +218,7 @@ impl Headers {
         let t = t.strip_suffix(" const").unwrap_or(&t).trim().to_string();
         if let Some(inner) = t.strip_suffix('*') {
             let inner = inner.trim();
-            let is_const = inner.split_whitespace().any(|w| w == "const");
+            let is_const = self.is_const(inner, 0);
             return CType::Pointer {
                 pointee: Box::new(self.resolve_in(inner, long_bits, &mut Vec::new())),
                 is_const,
@@ -541,6 +562,37 @@ mod tests {
             h.resolve("enum tiny", 64),
             CType::Unknown("packed enum tiny".into())
         );
+    }
+
+    #[test]
+    fn const_is_about_what_the_pointer_points_at() {
+        let json = serde_json::json!({ "inner": [
+            { "kind": "TypedefDecl", "name": "fixed_text", "type": { "qualType": "char *const" } },
+            { "kind": "TypedefDecl", "name": "text", "type": { "qualType": "const char *" } }
+        ]});
+        let h = Headers::from_json(&json);
+        let is_const = |written: &str| match h.resolve(written, 64) {
+            CType::Pointer { is_const, .. } => is_const,
+            other => panic!("{other:?}"),
+        };
+        for yes in [
+            "const char *",
+            "char const *",
+            "char *const *",
+            "const char *const *",
+            "fixed_text *",
+        ] {
+            assert!(is_const(yes), "{yes}");
+        }
+        for no in [
+            "char *",
+            "const char **",
+            "text *",
+            "char *const",
+            "const char *restrict *",
+        ] {
+            assert!(!is_const(no), "{no}");
+        }
     }
 
     #[test]

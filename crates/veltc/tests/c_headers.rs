@@ -283,3 +283,30 @@ fn enums_are_as_wide_as_their_types() {
     }
 }
 
+/// `const char **` is a pointer C writes (sqlite's `pzTail`); `char *const *` isn't.
+#[test]
+fn an_out_pointer_is_the_pointer_c_can_write() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let header = "typedef struct stmt stmt;\nint prep(stmt *db, const char *sql, int n, stmt **out, const char **tail);\nint fixed(char *const *tail);\n";
+    let files = [("native/p.h", header)];
+    let native = ", native: { c: { c: { headers: [\"<string.h>\"] }, p: { system: { default: \"p\" }, headers: [\"native/p.h\"] } } }";
+    let lib = "import { OutPtr, Ptr } from \"velt/ffi\";\n\ndeclare c type stmt;\n\ndeclare c(\"p\") function prep(db: Ptr<stmt>, sql: Ptr<u8>, n: i32, out: OutPtr<stmt>, tail: OutPtr<u8>): i32;\n";
+    let args = ["check", "--target", "x86_64-unknown-linux-gnu"];
+    let text = format!("{lib}{DECLS_STRLEN}{LEN}");
+    project(dir.path(), native, &text, &files, ALLOW);
+    let o = velt(dir.path(), &home, &args);
+    assert!(o.status.success(), "{}", output(&o));
+    let wrong = "declare c(\"p\") function fixed(tail: OutPtr<u8>): i32;\n";
+    let text = format!("{lib}{wrong}{DECLS_STRLEN}{LEN}");
+    project(dir.path(), native, &text, &files, ALLOW);
+    let o = velt(dir.path(), &home, &args);
+    let out = output(&o);
+    assert!(!o.status.success(), "{out}");
+    assert!(
+        out.contains("parameter 1 of C function `fixed` is `char *const *` in p.h:3"),
+        "{out}"
+    );
+}
+

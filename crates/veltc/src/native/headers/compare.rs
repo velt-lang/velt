@@ -435,6 +435,16 @@ mod tests {
             &[],
         );
         assert!(compare(&out_ptr, &end).is_ok());
+        // `const char **`: C writes the pointer, whose bytes are const. `char *const *`: C can't.
+        let tail = ptr(ptr(int(8, true), true, &["char"]), false, &[]);
+        let fixed = ptr(ptr(int(8, true), false, &["char"]), true, &[]);
+        let signed_out = Shape::OutPtr(Pointee::Scalar(Scalar::Int {
+            bits: 8,
+            signed: true,
+            pointer_sized: false,
+        }));
+        assert!(compare(&signed_out, &tail).is_ok());
+        assert!(compare(&signed_out, &fixed).is_err());
         assert!(compare(&Shape::Void, &CType::Void).is_ok());
         assert!(compare(&Shape::Void, &int(32, true)).is_err());
     }
