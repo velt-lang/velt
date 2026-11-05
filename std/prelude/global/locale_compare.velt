@@ -1,0 +1,6 @@
+// Global, conditional (crates/velt_loader/src/globals): `s.localeCompare(t)`
+// (velt/lang/string/collate), with its table of weights, for a program that mentions
+// `localeCompare`; other programs don't load the table for it.
+// load when std/prelude/string uses: localeCompare
+import "velt/lang/string/collate";
+import "velt/lang/hooks/locale_compare";
