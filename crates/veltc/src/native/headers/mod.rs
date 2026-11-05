@@ -46,12 +46,15 @@ pub type Checked = BTreeMap<PathBuf, BTreeMap<String, LibraryRecord>>;
 
 /// Build-stamp `file` entries for the package headers the checks in `checked` read, with what
 /// they include: a build with nothing changed isn't checked again, so a changed header has to
-/// change the stamp.
+/// change the stamp. A header the package doesn't have (a registry archive ships none) is no
+/// input: an entry for it would never hold, and every build would compile again.
 pub fn stamp_inputs(checked: &Checked, inputs: &mut Vec<String>) {
     for (root, libraries) in checked {
         for header in libraries.values().flat_map(|l| l.headers.keys()) {
             let file = root.join(header);
-            let bytes = std::fs::read(&file).unwrap_or_default();
+            let Ok(bytes) = std::fs::read(&file) else {
+                continue;
+            };
             inputs.push(format!(
                 "file {}\t{}",
                 vpm::probe::content_hash(&bytes),
@@ -648,7 +651,8 @@ mod tests {
         assert_eq!(still_holds(&remembered).unwrap(), read);
     }
 
-    /// What the stamp gets: the package headers each check read, by digest.
+    /// What the stamp gets: the package headers each check read, by digest; not one the
+    /// package doesn't have.
     #[test]
     fn the_stamp_has_the_package_files_a_check_read() {
         let dir = tempfile::tempdir().unwrap();
@@ -658,7 +662,10 @@ mod tests {
         let mut checked = Checked::new();
         let record = LibraryRecord {
             declarations: Default::default(),
-            headers: BTreeMap::from([("native/own.h".to_string(), String::new())]),
+            headers: BTreeMap::from([
+                ("native/own.h".to_string(), String::new()),
+                ("native/gone.h".to_string(), String::new()),
+            ]),
         };
         checked
             .entry(dir.path().to_path_buf())

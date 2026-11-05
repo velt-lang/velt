@@ -411,6 +411,51 @@ fn a_changed_header_checks_the_next_build_again() {
     }
 }
 
+/// A registry package's archive has its record but not its headers: what the check didn't
+/// read is no stamp input, so a second build of a program using it compiles nothing.
+#[test]
+fn an_unchanged_build_with_a_registry_package_is_not_compiled_again() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let header = "#include <stddef.h>\nsize_t strlen(const char *s);\n";
+    let files = [("native/t.h", header)];
+    let native = ", native: { c: { c: { headers: [\"native/t.h\"] } } }";
+    let lib = format!("import {{ CString }} from \"velt/ffi\";\n\ndeclare c(\"c\") function strlen(s: CString): usize;\n\n{LEN}");
+    project(dir.path(), native, &lib, &files, ALLOW);
+    let bind = dir.path().join("bind");
+    for args in [&["native", "headers"][..], &["publish"][..]] {
+        let o = no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(args)
+            .current_dir(&bind)
+            .env("NO_COLOR", "1")
+            .env("VELT_HOME", &home)
+            .env_remove("VELT_REGISTRY")
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{args:?}: {}", output(&o));
+    }
+    let manifest = dir.path().join("app/package.vlt");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(
+        &manifest,
+        text.replace("{ path: \"../bind\" }", "\"0.1.0\""),
+    )
+    .unwrap();
+    // Built outside `app`, whose listing the stamp records.
+    std::fs::create_dir(dir.path().join("out")).unwrap();
+    let stamp = dir.path().join("out/app.build-stamp");
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        let o = velt(dir.path(), &home, &["build", "-o", "../out/app"]);
+        assert!(o.status.success(), "{}", output(&o));
+        let written = std::fs::metadata(&stamp).unwrap().modified().unwrap();
+        seen.push((written, std::fs::read_to_string(&stamp).unwrap()));
+    }
+    assert!(!seen[0].1.contains("native/t.h"), "{}", seen[0].1);
+    assert_eq!(seen[0], seen[1], "the second build wrote the stamp again");
+}
+
 /// `const char **` is a pointer C writes (sqlite's `pzTail`); `char *const *` isn't.
 #[test]
 fn an_out_pointer_is_the_pointer_c_can_write() {
