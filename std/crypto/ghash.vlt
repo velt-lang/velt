@@ -1,0 +1,169 @@
+// velt/crypto (internal): GHASH, GCM's universal hash over GF(2^128) (NIST SP 800-38D §6.4).
+//
+// The 128-bit carry-less products come from the CPU's instruction where it has one (x86
+// PCLMULQDQ, ARM PMULL: `u64x2.hasClmul()`), else from BearSSL's constant-time `bmul64`: integer
+// multiplications of the operands with three of every four bits masked out, so the carries land
+// in the holes. The `clmul*` methods' own emulation loops over set bits and is never used here:
+// H is secret. Field elements are two big-endian `u64` halves with GCM's reflected bit order;
+// the products are computed unreflected and shifted left by one before the reduction.
+
+import { u64x2 } from "velt/simd";
+
+// The low 64 bits of the carry-less product of `x` and `y`, in constant time.
+function bmul64(x: u64, y: u64): u64 {
+  const m0: u64 = 0x1111111111111111;
+  const m1: u64 = 0x2222222222222222;
+  const m2: u64 = 0x4444444444444444;
+  const m3: u64 = 0x8888888888888888;
+  const x0 = x & m0;
+  const x1 = x & m1;
+  const x2 = x & m2;
+  const x3 = x & m3;
+  const y0 = y & m0;
+  const y1 = y & m1;
+  const y2 = y & m2;
+  const y3 = y & m3;
+  const z0 = (x0 * y0) ^ (x1 * y3) ^ (x2 * y2) ^ (x3 * y1);
+  const z1 = (x0 * y1) ^ (x1 * y0) ^ (x2 * y3) ^ (x3 * y2);
+  const z2 = (x0 * y2) ^ (x1 * y1) ^ (x2 * y0) ^ (x3 * y3);
+  const z3 = (x0 * y3) ^ (x1 * y2) ^ (x2 * y1) ^ (x3 * y0);
+  return (z0 & m0) | (z1 & m1) | (z2 & m2) | (z3 & m3);
+}
+
+// `x` with its 64 bits in reverse order.
+function rev64(x: u64): u64 {
+  let v = x;
+  v = ((v & 0x5555555555555555) << 1) | ((v >> 1) & 0x5555555555555555);
+  v = ((v & 0x3333333333333333) << 2) | ((v >> 2) & 0x3333333333333333);
+  v = ((v & 0x0f0f0f0f0f0f0f0f) << 4) | ((v >> 4) & 0x0f0f0f0f0f0f0f0f);
+  v = ((v & 0x00ff00ff00ff00ff) << 8) | ((v >> 8) & 0x00ff00ff00ff00ff);
+  v = ((v & 0x0000ffff0000ffff) << 16) | ((v >> 16) & 0x0000ffff0000ffff);
+  return (v << 32) | (v >> 32);
+}
+
+function load64be(b: u8[], off: usize): u64 {
+  let v: u64 = 0;
+  for (let i: usize = 0; i < 8; i++) {
+    v = (v << 8) | (b[off + i] as u64);
+  }
+  return v;
+}
+
+function store64be(b: u8[], off: usize, v: u64) {
+  for (let i: usize = 0; i < 8; i++) {
+    b[off + i] = ((v >> (56 - 8 * (i as u64))) & 0xff) as u8;
+  }
+}
+
+/** A running GHASH under the hash key H: absorb zero-padded pieces, then read the state. */
+export class Ghash {
+  private h1: u64;
+  private h0: u64;
+  private y1: u64;
+  private y0: u64;
+  private hw: bool;
+
+  /**
+   * A GHASH under `h` (16 bytes, E(K, 0^128) in GCM), state zero. It uses the carry-less
+   * multiply instruction only where the CPU has one (`u64x2.hasClmul()`), never the `clmul*`
+   * methods' emulation; `hardware: false` forces the constant-time integer products there too
+   * (the tests compare both).
+   */
+  constructor(h: u8[], hardware: bool = true) {
+    this.h1 = load64be(h, 0);
+    this.h0 = load64be(h, 8);
+    this.y1 = 0;
+    this.y0 = 0;
+    this.hw = hardware && u64x2.hasClmul();
+  }
+
+  /** Absorbs `data[start..end]`, its last block zero-padded to 16 bytes. */
+  update(data: u8[], start: usize, end: usize) {
+    let off = start;
+    const tmp = Buffer.alloc(16);
+    while (off < end) {
+      let src = data;
+      let at = off;
+      if (end - off < 16) {
+        for (let i: usize = 0; i < 16; i++) {
+          tmp[i] = off + i < end ? data[off + i] : 0;
+        }
+        src = tmp;
+        at = 0;
+      }
+      this.y1 ^= load64be(src, at);
+      this.y0 ^= load64be(src, at + 8);
+      this.multiply();
+      off += 16;
+    }
+  }
+
+  /** The state as 16 bytes (the tag before GCM masks it). */
+  digest(): u8[] {
+    const out = Buffer.alloc(16);
+    store64be(out, 0, this.y1);
+    store64be(out, 8, this.y0);
+    return out;
+  }
+
+  // Y = Y * H in GF(2^128): a Karatsuba product (three 64-bit carry-less products), then the
+  // reduction by x^128 + x^7 + x^2 + x + 1 in the reflected representation.
+  private multiply() {
+    const y0 = this.y0;
+    const y1 = this.y1;
+    const h0 = this.h0;
+    const h1 = this.h1;
+    let z0: u64;
+    let z1: u64;
+    let z2: u64;
+    let z0h: u64;
+    let z1h: u64;
+    let z2h: u64;
+    if (this.hw) {
+      const a = u64x2.splat(y0).withLane(1, y1);
+      const b = u64x2.splat(h0).withLane(1, h1);
+      const p0 = a.clmulLow(b);
+      const p1 = a.clmulHigh(b);
+      const c = u64x2.splat(y0 ^ y1);
+      const d = u64x2.splat(h0 ^ h1);
+      const p2 = c.clmulLow(d);
+      z0 = p0.lane(0);
+      z0h = p0.lane(1);
+      z1 = p1.lane(0);
+      z1h = p1.lane(1);
+      z2 = p2.lane(0) ^ z0 ^ z1;
+      z2h = p2.lane(1) ^ z0h ^ z1h;
+    } else {
+      const y2 = y0 ^ y1;
+      const h2 = h0 ^ h1;
+      z0 = bmul64(y0, h0);
+      z1 = bmul64(y1, h1);
+      z2 = bmul64(y2, h2) ^ z0 ^ z1;
+      // The high halves: the low half of the bit-reversed operands' product, reversed back.
+      const y0r = rev64(y0);
+      const y1r = rev64(y1);
+      const h0r = rev64(h0);
+      const h1r = rev64(h1);
+      const a = bmul64(y0r, h0r);
+      const b = bmul64(y1r, h1r);
+      const c = bmul64(y0r ^ y1r, h0r ^ h1r) ^ a ^ b;
+      z0h = rev64(a) >> 1;
+      z1h = rev64(b) >> 1;
+      z2h = rev64(c) >> 1;
+    }
+    let v0 = z0;
+    let v1 = z0h ^ z2;
+    let v2 = z1 ^ z2h;
+    let v3 = z1h;
+    v3 = (v3 << 1) | (v2 >> 63);
+    v2 = (v2 << 1) | (v1 >> 63);
+    v1 = (v1 << 1) | (v0 >> 63);
+    v0 = v0 << 1;
+    v2 ^= v0 ^ (v0 >> 1) ^ (v0 >> 2) ^ (v0 >> 7);
+    v1 ^= (v0 << 63) ^ (v0 << 62) ^ (v0 << 57);
+    v3 ^= v1 ^ (v1 >> 1) ^ (v1 >> 2) ^ (v1 >> 7);
+    v2 ^= (v1 << 63) ^ (v1 << 62) ^ (v1 << 57);
+    this.y0 = v2;
+    this.y1 = v3;
+  }
+}

@@ -1,0 +1,134 @@
+// velt/crypto (internal): AES (FIPS 197) key expansion and counter mode on the bitsliced core:
+// four counter blocks are encrypted together, which is what GCM needs. Constant time (the key
+// schedule's S-box is the same circuit).
+
+import {
+  interleaveIn,
+  interleaveOut,
+  mixColumns,
+  ortho,
+  sbox,
+  shiftRows,
+} from "velt/crypto/aes_bitslice";
+import { load32le, store32le } from "velt/crypto/chacha20";
+
+const RCON: u32[] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36];
+
+// The S-box on each byte of `x` (the key schedule's SubWord).
+function subWord(x: u32): u32 {
+  const q: u64[] = [x as u64, 0, 0, 0, 0, 0, 0, 0];
+  ortho(q);
+  sbox(q);
+  ortho(q);
+  return q[0] as u32;
+}
+
+/**
+ * The round keys of a 16- or 32-byte AES `key` (10 or 14 rounds), bitsliced: eight words per
+ * round key, each round key repeated for the four blocks.
+ */
+export function aesExpandKey(key: u8[]): u64[] {
+  const nk = key.length / 4;
+  const rounds = nk + 6;
+  const total = (rounds + 1) * 4;
+  const w: u32[] = [];
+  for (let i: usize = 0; i < nk; i++) {
+    w.push(load32le(key, 4 * i));
+  }
+  let tmp = w[nk - 1];
+  let j: usize = 0;
+  let k: usize = 0;
+  for (let i = nk; i < total; i++) {
+    if (j == 0) {
+      tmp = subWord(tmp.rotateRight(8)) ^ RCON[k];
+    } else if (nk > 6 && j == 4) {
+      tmp = subWord(tmp);
+    }
+    tmp ^= w[i - nk];
+    w.push(tmp);
+    j++;
+    if (j == nk) {
+      j = 0;
+      k++;
+    }
+  }
+  const out: u64[] = [];
+  const q: u64[] = [0, 0, 0, 0, 0, 0, 0, 0];
+  for (let i: usize = 0; i < total; i += 4) {
+    interleaveIn(q, 0, w[i], w[i + 1], w[i + 2], w[i + 3]);
+    q[1] = q[0];
+    q[2] = q[0];
+    q[3] = q[0];
+    q[5] = q[4];
+    q[6] = q[4];
+    q[7] = q[4];
+    ortho(q);
+    for (let b: usize = 0; b < 8; b++) {
+      out.push(q[b]);
+    }
+  }
+  return out;
+}
+
+function addRoundKey(q: u64[], skey: u64[], round: usize) {
+  for (let i: usize = 0; i < 8; i++) {
+    q[i] ^= skey[8 * round + i];
+  }
+}
+
+/** Encrypts the four bitsliced blocks in `q` under the expanded key `skey`. */
+export function aesEncrypt4(skey: u64[], q: u64[]) {
+  const rounds = skey.length / 8 - 1;
+  addRoundKey(q, skey, 0);
+  for (let r: usize = 1; r < rounds; r++) {
+    sbox(q);
+    shiftRows(q);
+    mixColumns(q);
+    addRoundKey(q, skey, r);
+  }
+  sbox(q);
+  shiftRows(q);
+  addRoundKey(q, skey, rounds);
+}
+
+/**
+ * `data[start..end]` XORed with the keystream of the counter blocks `iv` (12 bytes) followed
+ * by the big-endian 32-bit counter from `counter` on (wrapping, as GCM's inc32), written to
+ * `out` from `outStart`.
+ */
+export function aesCtrXor(
+  skey: u64[],
+  iv: u8[],
+  counter: u32,
+  data: u8[],
+  start: usize,
+  end: usize,
+  out: u8[],
+  outStart: usize,
+) {
+  const w0 = load32le(iv, 0);
+  const w1 = load32le(iv, 4);
+  const w2 = load32le(iv, 8);
+  const q: u64[] = [0, 0, 0, 0, 0, 0, 0, 0];
+  const ks = Buffer.alloc(64);
+  let ctr = counter;
+  for (let off = start; off < end; off += 64) {
+    for (let b: usize = 0; b < 4; b++) {
+      interleaveIn(q, b, w0, w1, w2, (ctr + (b as u32)).swapBytes());
+    }
+    ctr = ctr + 4;
+    ortho(q);
+    aesEncrypt4(skey, q);
+    ortho(q);
+    for (let b: usize = 0; b < 4; b++) {
+      for (let k: usize = 0; k < 4; k++) {
+        store32le(ks, 16 * b + 4 * k, interleaveOut(q[b], q[b + 4], k));
+      }
+    }
+    const n = end - off < 64 ? end - off : 64;
+    const dst = outStart + (off - start);
+    for (let i: usize = 0; i < n; i++) {
+      out[dst + i] = data[off + i] ^ ks[i];
+    }
+  }
+}

@@ -1,0 +1,127 @@
+// AES-GCM (velt/crypto `AesGcm`): the GCM specification's test cases 1-4 (AES-128) and 13-16
+// (AES-256) from McGrew and Viega, as NIST's validation uses them, longer messages, and tampering
+// checks.
+import { AesGcm, CryptoError } from "velt/crypto";
+import { hexDecode, hexEncode } from "velt/encoding";
+import { describe, expect, it } from "velt/test";
+
+const K = "feffe9928665731c6d6a8f9467308308";
+const IV = "cafebabefacedbaddecaf888";
+const P =
+  "d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255";
+const A = "feedfacedeadbeeffeedfacedeadbeefabaddad2";
+const C128 =
+  "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091473f5985";
+const C256 =
+  "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad";
+
+// 300 bytes (i * 31 + 7) under 20 bytes of additional data (0, 1, ..., 19): ciphertext and tag
+// from OpenSSL's AES-CTR and a separate GHASH, past the four-block batches.
+const LONG128 =
+  "9c9469835a51b3211135152e50bf4bde921bbd284aa4e2eaf4836352c8178294daef3d63a28c3b8f8dbe7942be588698" +
+  "7d3ff3f89375db7048d5968416fa02781a4e62e08d90305107770255f17af2f9a10e01e5f09b56af8c19b510e8398de9" +
+  "57d8b9bb866d2172cfb2da38040d2809560b21417354d2000b2467da0d30de3079703855eb19e57f5ce78b77bd7a1c98" +
+  "b7206952d157b96afd5d5518d0338f6315ebe3d24eabc5f15e39033deff83f87d6caee75763b26193c82332e51155e08" +
+  "e3d5815a5973a88e909ab93d148457aa19c4cbb7c9a1420764ac88b42b534c3297db1b752ad43ba6e8bf204fdef9f36b" +
+  "a6a66fad04d527e0c9bf5d46818f6d84264744ed733b644dbb9731d063199c3076744f0f1f9e20cb93ed9ebc123d4105" +
+  "691ebe6cab9729c5bcc2c178ae985ab93172a9648bd204617c722b66";
+const LONG256 =
+  "8c3ab6b1e270ba02ae38033afeebdd3f158b10dbd94386c3b4dabfccc4eef210778aa799afe713ae57819808445ea4a5" +
+  "a36ae6a26ac50dedc9448077d8454e50a3497e72a38ffceaf74b7301cda299776b481ba0d844d899f4b9f0da738e707d" +
+  "c03d718c3936f2f3cae100816b0d94d51738bc4b7df955bf219de6431ea3ad3b3b3ff405e7c66c43f5707262f4327507" +
+  "3dc77cb61cc6cb653898dd6dd2f2a7319b77de507b04ba770e6b3ecc1d0664b31a298ce67da86c21bf829009b717cefa" +
+  "9f7aa0b065e50d82922cf62c5d5b135da098ad79ebd1d7e765e0d03a65b9939292b870600004a8f92ad321b5655683a9" +
+  "f0da6e0a8d304c7e8f429893cf1ffda57a5c97f15879c96f365231e04301cf6179cb08aa8ad7a0b13c6d1fc2379d687e" +
+  "54fa0a4e67b3d929400c7f6efa6f1f8d3cd23bc7dbe0e544938c3a52";
+
+// Seals `p` and checks ciphertext and tag, then opens the result again.
+function check(key: string, iv: string, p: string, aad: string, c: string, tag: string) {
+  const aead = new AesGcm(hexDecode(key));
+  const sealed = aead.seal(hexDecode(iv), hexDecode(p), hexDecode(aad));
+  expect(hexEncode(sealed)).toBe(c + tag);
+  const opened = aead.open(hexDecode(iv), sealed, hexDecode(aad));
+  expect(opened == null ? "null" : hexEncode(opened)).toBe(p);
+}
+
+describe("AesGcm", () => {
+  it("matches test cases 1-4 (AES-128)", () => {
+    const zero = "00000000000000000000000000000000";
+    check(zero, "000000000000000000000000", "", "", "", "58e2fccefa7e3061367f1d57a4e7455a");
+    check(
+      zero,
+      "000000000000000000000000",
+      zero,
+      "",
+      "0388dace60b6a392f328c2b971b2fe78",
+      "ab6e47d42cec13bdf53a67b21257bddf",
+    );
+    check(K, IV, P, "", C128, "4d5c2af327cd64a62cf35abd2ba6fab4");
+    check(K, IV, P.slice(0, 120), A, C128.slice(0, 120), "5bc94fbc3221a5db94fae95ae7121a47");
+  });
+
+  it("matches test cases 13-16 (AES-256)", () => {
+    const zero = "0000000000000000000000000000000000000000000000000000000000000000";
+    const block = "00000000000000000000000000000000";
+    check(zero, "000000000000000000000000", "", "", "", "530f8afbc74536b9a963b4f1c4cb738b");
+    check(
+      zero,
+      "000000000000000000000000",
+      block,
+      "",
+      "cea7403d4d606b6e074ec5d3baf39d18",
+      "d0d1c8a799996bf0265b98b5d48ab919",
+    );
+    check(K + K, IV, P, "", C256, "b094dac5d93471bdec1a502270e3cc6c");
+    check(K + K, IV, P.slice(0, 120), A, C256.slice(0, 120), "76fc6ece0f4e1768cddf8853bb2d551b");
+  });
+
+  it("matches long messages that span several four-block batches", () => {
+    let p = "";
+    for (let i = 0; i < 300; i++) {
+      p += hexEncode([((i * 31 + 7) & 0xff) as u8]);
+    }
+    const aad = "000102030405060708090a0b0c0d0e0f10111213";
+    check(K, IV, p, aad, LONG128.slice(0, 600), LONG128.slice(600));
+    check(K + K, IV, p, aad, LONG256.slice(0, 600), LONG256.slice(600));
+  });
+
+  it("opens what it seals at every length around the four-block batches", () => {
+    const aead = new AesGcm(hexDecode(K));
+    const nonce = hexDecode(IV);
+    for (let n: usize = 0; n < 200; n++) {
+      const text: u8[] = [];
+      for (let i: usize = 0; i < n; i++) {
+        text.push((i * 7 + n) as u8);
+      }
+      const sealed = aead.seal(nonce, text, [n as u8]);
+      expect(sealed.length).toBe((n + 16) as number);
+      const opened = aead.open(nonce, sealed, [n as u8]);
+      expect(opened == null ? "null" : hexEncode(opened)).toBe(hexEncode(text));
+    }
+  });
+
+  it("rejects a changed byte anywhere, other additional data and too short input", () => {
+    const aead = new AesGcm(hexDecode(K));
+    const nonce = hexDecode(IV);
+    const sealed = aead.seal(nonce, hexDecode(P), hexDecode(A));
+    for (let i: usize = 0; i < sealed.length; i++) {
+      const bad = sealed.slice();
+      bad[i] ^= 0x80;
+      expect(aead.open(nonce, bad, hexDecode(A)) == null).toBe(true);
+    }
+    expect(aead.open(nonce, sealed, []) == null).toBe(true);
+    expect(aead.open(nonce, sealed.slice(0, 15), []) == null).toBe(true);
+  });
+
+  it("throws CryptoError for a wrong key or nonce length", () => {
+    expect(() => new AesGcm(Buffer.alloc(24))).toThrow(
+      "AES-GCM key must be 16 or 32 bytes, got 24",
+    );
+    expect(() => new AesGcm(hexDecode(K)).open(Buffer.alloc(16), Buffer.alloc(32))).toThrow(
+      "AES-GCM nonce must be 12 bytes, got 16",
+    );
+    expect(() => new AesGcm(hexDecode(K)).seal(Buffer.alloc(16), [])).toThrow(
+      "AES-GCM nonce must be 12 bytes, got 16",
+    );
+  });
+});

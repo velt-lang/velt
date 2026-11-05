@@ -1,0 +1,105 @@
+// velt/crypto (internal): `AesGcm`, AES in Galois/Counter Mode (NIST SP 800-38D) with 96-bit
+// nonces and 128-bit tags: TLS 1.3's mandatory TLS_AES_128_GCM_SHA256 suite (and the AES-256
+// one). Counter mode on the bitsliced AES, GHASH over the additional data and the ciphertext.
+
+import { aesCtrXor, aesExpandKey } from "velt/crypto/aes_ctr";
+import { timingSafeEqual } from "velt/crypto/compare";
+import { CryptoError } from "velt/crypto/errors";
+import { Ghash } from "velt/crypto/ghash";
+import { newBytes } from "velt/crypto/vectors";
+
+/**
+ * AES-GCM (NIST SP 800-38D) under a 16-byte (AES-128) or 32-byte (AES-256) key, with 12-byte
+ * nonces and 16-byte tags: `seal` encrypts and appends the tag, `open` checks it (in constant
+ * time) and decrypts. A nonce must never be used twice with one key. A message is at most
+ * 68,719,476,704 bytes (2^32 - 2 blocks, SP 800-38D §5.2.1.1); a longer one throws
+ * `CryptoError`. The AES rounds are bitsliced, with no table lookups, so the time does not
+ * depend on the key or the data.
+ */
+export class AesGcm {
+  private skey: u64[];
+  private h: u8[];
+
+  /** An AEAD under `key`; throws `CryptoError` unless it is 16 or 32 bytes. */
+  constructor(key: u8[]) {
+    if (key.length != 16 && key.length != 32) {
+      throw new CryptoError(`AES-GCM key must be 16 or 32 bytes, got ${key.length}`);
+    }
+    this.skey = aesExpandKey(key);
+    const zero = Buffer.alloc(16);
+    const h = Buffer.alloc(16);
+    aesCtrXor(this.skey, zero, 0, zero, 0, 16, h, 0);
+    this.h = h;
+  }
+
+  /** `plaintext` encrypted under `nonce` (12 bytes), followed by the 16-byte tag over `aad` and it. */
+  seal(nonce: u8[], plaintext: u8[], aad: u8[] = []): u8[] {
+    checkNonce(nonce);
+    const n = plaintext.length;
+    gcmCheckLength(n as u64);
+    const out = newBytes(n + 16);
+    aesCtrXor(this.skey, nonce, 2, plaintext, 0, n, out, 0);
+    const tag = this.tag(nonce, aad, out, n);
+    for (let i: usize = 0; i < 16; i++) {
+      out[n + i] = tag[i];
+    }
+    return out;
+  }
+
+  /**
+   * The plaintext of `sealed` (ciphertext and tag, as `seal` returns them) under `nonce` and
+   * `aad`, or null when the tag does not match (nothing is decrypted then).
+   */
+  open(nonce: u8[], sealed: u8[], aad: u8[] = []): u8[] | null {
+    checkNonce(nonce);
+    if (sealed.length < 16) {
+      return null;
+    }
+    const n = sealed.length - 16;
+    gcmCheckLength(n as u64);
+    const tag = this.tag(nonce, aad, sealed, n);
+    if (!timingSafeEqual(tag, sealed.slice(n as i64))) {
+      return null;
+    }
+    const out = newBytes(n);
+    aesCtrXor(this.skey, nonce, 2, sealed, 0, n, out, 0);
+    return out;
+  }
+
+  // GHASH(aad, ct[0..n], lengths) XORed with E(K, nonce || 1).
+  private tag(nonce: u8[], aad: u8[], ct: u8[], n: usize): u8[] {
+    const g = new Ghash(this.h);
+    g.update(aad, 0, aad.length);
+    g.update(ct, 0, n);
+    const lens = Buffer.alloc(16);
+    const abits = (aad.length as u64) * 8;
+    const cbits = (n as u64) * 8;
+    for (let i: usize = 0; i < 8; i++) {
+      const sh = 56 - 8 * (i as u64);
+      lens[i] = ((abits >> sh) & 0xff) as u8;
+      lens[8 + i] = ((cbits >> sh) & 0xff) as u8;
+    }
+    g.update(lens, 0, 16);
+    const s = g.digest();
+    const out = Buffer.alloc(16);
+    aesCtrXor(this.skey, nonce, 1, s, 0, 16, out, 0);
+    return out;
+  }
+}
+
+function checkNonce(nonce: u8[]) {
+  if (nonce.length != 12) {
+    throw new CryptoError(`AES-GCM nonce must be 12 bytes, got ${nonce.length}`);
+  }
+}
+
+// SP 800-38D's limit, 2^32 - 2 blocks of 16 bytes: past it the 32-bit counter, which starts at 2,
+// would wrap to 1, whose block masks the tag, and reuse keystream.
+const GCM_MAX_BYTES: u64 = 68719476704;
+
+/** Throws `CryptoError` when a message of `n` bytes is longer than AES-GCM allows. */
+export function gcmCheckLength(n: u64) {
+  if (n > GCM_MAX_BYTES) {
+    throw new CryptoError(`AES-GCM message must be at most ${GCM_MAX_BYTES} bytes, got ${n}`);
+  }
+}
