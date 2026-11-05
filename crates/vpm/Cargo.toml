@@ -4,6 +4,10 @@ version.workspace = true
 edition.workspace = true
 
 [dependencies]
+# The archive extractor (extract.rs): gzip and deflate in Rust (miniz_oxide), and Unicode
+# normalisation for the paths that clash on macOS.
+flate2 = "1.1.10"
+icu_normalizer = { version = "2.3.0", default-features = false, features = ["compiled_data"] }
 object = { version = "0.39", default-features = false, features = ["read", "std"] }
 semver = "1.0.28"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -26,3 +30,6 @@ windows-sys = { version = "0.61.2", features = ["Win32_Foundation", "Win32_Secur
 # Writes the COFF and Mach-O objects of the bundle-check tests.
 object = { version = "0.39", default-features = false, features = ["read", "std", "write_std", "coff", "elf", "macho"] }
 tempfile = "3.27.0"
+# Archives written by other tools, read back by the extractor's tests.
+tar = "0.4"
+zip = { version = "9.3.0", default-features = false, features = ["deflate-flate2"] }
