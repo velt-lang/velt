@@ -172,6 +172,71 @@ export async function serveThenClose(script: u8[][]): Promise<number> {
   return l.port;
 }
 
+/** How `serveTlsProbes` answers a client. */
+export class TlsProbes {
+  /** What each connection opened with, in order: "ssl", "tls" or "startup". */
+  seen: string[] = [];
+}
+
+/**
+ * A server on a free port for a TLS negotiation: it answers `SSLRequest` with `answer` ("S" or "N"),
+ * closes on a TLS ClientHello as a server before PostgreSQL 17 does, and lets a startup in, or
+ * refuses it when `refuse` is set. It serves `connections` connections. Its port.
+ */
+export async function serveTlsProbes(
+  probes: shared<Mutex<TlsProbes>>,
+  answer: string,
+  connections: i64,
+  refuse: bool = false,
+): Promise<number> {
+  const l = await listen("127.0.0.1:0");
+  spawn(async () => {
+    for (let i: i64 = 0; i < connections; i++) {
+      const s = await l.accept();
+      try {
+        await tlsProbe(s, probes, answer, refuse);
+      } catch (e) {
+        // A client that goes away is what's being tested.
+      }
+      s.close();
+    }
+    l.close();
+  });
+  return l.port;
+}
+
+async function tlsProbe(
+  s: TcpStream,
+  probes: shared<Mutex<TlsProbes>>,
+  answer: string,
+  refuse: bool,
+) {
+  while (true) {
+    const first = await s.read();
+    if (first.length == 0) {
+      return;
+    }
+    const isRequest = first.length == 8 && first[4] == 4 && first[5] == 210;
+    const kind = isRequest ? "ssl" : first[0] == 22 ? "tls" : "startup";
+    probes.with((p) => p.seen.push(kind));
+    if (isRequest) {
+      await s.writeBytes(ascii(answer));
+      continue;
+    }
+    if (kind == "tls") {
+      return;
+    }
+    if (refuse) {
+      await s.writeBytes(serverError("28000", "no pg_hba.conf entry: no encryption"));
+      return;
+    }
+    const ok = be32(0);
+    await s.writeBytes(join([msg("R", ok), ready()]));
+    while ((await s.read()).length > 0) {}
+    return;
+  }
+}
+
 /** A URL for a server on `port`. */
 export function fakeUrl(port: number): string {
   return `postgres://fake@127.0.0.1:${port}/db?sslmode=disable`;

@@ -1,11 +1,11 @@
 // postgres (internal): the socket under a connection.
 //
 // TLS: PostgreSQL 17's direct negotiation is what velt/net can do, a TLS connection from its first
-// byte with the ALPN protocol "postgresql". The older `SSLRequest` needs a plain socket to turn into a
-// TLS one, and velt/net has no such upgrade; nor can it accept a certificate unchecked. So `require`
-// and `verify-ca` are as strict as `verify-full` here. `prefer` asks with `SSLRequest` whether the
-// server has TLS at all: if it says no the connection goes on in plain text, as ever, and if yes it
-// reopens with TLS. A server whose TLS can't be used this way fails with "ETLS", naming the choices
+// byte with the ALPN protocol "postgresql". The older `SSLRequest` upgrade needs a plain socket to
+// turn into a TLS one, and velt/net has no such upgrade; nor can it accept a certificate unchecked.
+// So `require` and `verify-ca` are as strict as `verify-full` here. `prefer` means TLS if it can be
+// had, otherwise plain text: it asks with `SSLRequest` whether the server has TLS at all, goes on in
+// plain text if not, and if so reopens with direct TLS and, when that fails, reopens in plain text
 // (README.md, "TLS").
 
 import { IoError } from "velt/io";
@@ -25,7 +25,7 @@ const HANDSHAKE_MS: i64 = 30000;
 function tlsFailure(host: string, why: string): Failure {
   return failure(
     "ETLS",
-    `TLS to ${host} failed: ${why} (velt/net connects with direct TLS, which needs PostgreSQL 17 or later and a certificate the name and sslrootcert verify; or use sslmode=disable)`,
+    `TLS to ${host} failed: ${why} (velt/net connects with direct TLS, which needs PostgreSQL 17 or later and a certificate the name and sslrootcert verify; or use sslmode=prefer or disable)`,
   );
 }
 
@@ -111,19 +111,30 @@ async function serverOffersTls(s: TcpStream, deadline: f64): Promise<bool> throw
   }
 }
 
+/** A connected socket, and why `prefer` had to do without TLS on it ("" if it didn't). */
+export class Opened {
+  stream: TcpStream;
+  tlsFailure: string;
+
+  constructor(stream: TcpStream, tlsFailure: string = "") {
+    this.stream = stream;
+    this.tlsFailure = tlsFailure;
+  }
+}
+
 // The socket for one host, as `sslmode` says.
 export async function socket(
   c: PgConfig,
   address: string,
   name: string,
   deadline: f64,
-): Promise<TcpStream> throws PgError {
+): Promise<Opened> throws PgError {
   if (c.sslMode > SSL_PREFER) {
-    return await tlsSocket(c, address, name);
+    return new Opened(await tlsSocket(c, address, name));
   }
   const plain = await plainSocket(c, address);
   if (c.sslMode == SSL_DISABLE) {
-    return plain;
+    return new Opened(plain);
   }
   let offered = false;
   try {
@@ -134,9 +145,17 @@ export async function socket(
     throw e;
   }
   if (!offered) {
-    return plain;
+    return new Opened(plain);
   }
   plain.abort();
   plain.close();
-  return await tlsSocket(c, address, name);
+  try {
+    return new Opened(await tlsSocket(c, address, name));
+  } catch (e) {
+    // A network failure would meet the next connection too, and TLS failing isn't one.
+    if (e.code != "ETLS") {
+      throw e;
+    }
+    return new Opened(await plainSocket(c, address), e.message.clone());
+  }
 }

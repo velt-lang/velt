@@ -18,6 +18,8 @@ import {
   row,
   serve,
   serveThenClose,
+  serveTlsProbes,
+  TlsProbes,
   serverError,
   ascii,
 } from "./support/fake";
@@ -356,4 +358,82 @@ export async function test_statements_without_values_say_none_were_given() {
   }
   assertEq(what, "the statement takes 1 parameter(s) but none were given");
   c.close();
+}
+
+// What connecting with `mode` to a server on `port` ends in: "connected", or the failure's code.
+async function connectAs(port: number, mode: string): Promise<string> {
+  try {
+    const db = await connect(`postgres://fake@127.0.0.1:${port}/db?sslmode=${mode}`);
+    db.close();
+    return "connected";
+  } catch (e) {
+    return e.code.clone();
+  }
+}
+
+function seenBy(probes: shared<Mutex<TlsProbes>>): string {
+  return probes.with((p) => p.seen.join(","));
+}
+
+// A server before PostgreSQL 17 says it has TLS, and then closes on a direct ClientHello.
+export async function test_prefer_goes_on_in_plain_text_when_direct_tls_fails() {
+  const probes = shared(new Mutex<TlsProbes>(new TlsProbes()));
+  const port = await serveTlsProbes(probes, "S", 3);
+  assertEq(await connectAs(port, "prefer"), "connected");
+  assertEq(seenBy(probes), "ssl,tls,startup");
+}
+
+// A server with no TLS: no second connection, and nothing that isn't PostgreSQL's for it to log.
+export async function test_prefer_stays_on_the_socket_when_the_server_has_no_tls() {
+  const probes = shared(new Mutex<TlsProbes>(new TlsProbes()));
+  const port = await serveTlsProbes(probes, "N", 1);
+  assertEq(await connectAs(port, "prefer"), "connected");
+  assertEq(seenBy(probes), "ssl,startup");
+}
+
+export async function test_stricter_modes_never_fall_back() {
+  for (const mode of ["require", "verify-ca", "verify-full"]) {
+    const probes = shared(new Mutex<TlsProbes>(new TlsProbes()));
+    const port = await serveTlsProbes(probes, "S", 1);
+    assertEq(await connectAs(port, mode), "ETLS");
+    assertEq(seenBy(probes), "tls");
+  }
+}
+
+export async function test_disable_asks_nothing() {
+  const probes = shared(new Mutex<TlsProbes>(new TlsProbes()));
+  const port = await serveTlsProbes(probes, "S", 1);
+  assertEq(await connectAs(port, "disable"), "connected");
+  assertEq(seenBy(probes), "startup");
+}
+
+// A server that only takes TLS refuses the plain connection: the error says what came first.
+export async function test_a_refused_fallback_names_the_tls_failure() {
+  const probes = shared(new Mutex<TlsProbes>(new TlsProbes()));
+  const port = await serveTlsProbes(probes, "S", 3, true);
+  let code = "connected";
+  let message = "";
+  try {
+    const db = await connect(`postgres://fake@127.0.0.1:${port}/db?sslmode=prefer`);
+    db.close();
+  } catch (e) {
+    code = e.code.clone();
+    message = e.message.clone();
+  }
+  assertEq(code, "28000");
+  assert(message.includes("no encryption"), message);
+  assert(message.includes("sslmode=prefer went on in plain text"), message);
+  assert(message.includes("TLS to 127.0.0.1 failed"), message);
+}
+
+// A server that closes instead of answering is a lost connection, not a panic or a wait.
+export async function test_a_probe_answered_by_a_closed_socket() {
+  const l = await listen("127.0.0.1:0");
+  spawn(async () => {
+    const s = await l.accept();
+    await s.read();
+    s.close();
+    l.close();
+  });
+  assertEq(await connectAs(l.port, "prefer"), "ECONNRESET");
 }
