@@ -69,4 +69,8 @@ describe("Poly1305", () => {
       expect(hexEncode(p.finish())).toBe(c[2]);
     }
   });
+
+  it("throws CryptoError for a key that is not 32 bytes", () => {
+    expect(() => new Poly1305([1, 2])).toThrow("Poly1305 key must be 32 bytes, got 2");
+  });
 });

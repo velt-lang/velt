@@ -3,6 +3,7 @@
 // mask, never a branch on the accumulator or the key.
 
 import { load32le, store32le } from "velt/crypto/chacha20";
+import { CryptoError } from "velt/crypto/errors";
 import { newBytes } from "velt/crypto/vectors";
 
 const M26: u64 = 0x3ffffff;
@@ -13,8 +14,11 @@ export class Poly1305 {
   private h: u64[];
   private pad: u64[];
 
-  /** A MAC under the one-time `key` (32 bytes: r, then s). */
+  /** A MAC under the one-time `key` (32 bytes: r, then s); throws `CryptoError` for another length. */
   constructor(key: u8[]) {
+    if (key.length != 32) {
+      throw new CryptoError(`Poly1305 key must be 32 bytes, got ${key.length}`);
+    }
     this.r = [
       (load32le(key, 0) as u64) & 0x3ffffff,
       ((load32le(key, 3) as u64) >> 2) & 0x3ffff03,
