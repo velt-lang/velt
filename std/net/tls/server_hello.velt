@@ -180,7 +180,13 @@ function hex4(v: usize): string {
   return v.toString(16).padStart(4, "0");
 }
 
-/** The name of the named group `g` (X25519 or secp256r1), for messages. */
+/** The name of the named group `g` for messages: X25519, secp256r1, else its number in hex. */
 export function groupName(g: usize): string {
-  return g == X25519 ? "X25519" : "secp256r1";
+  if (g == X25519) {
+    return "X25519";
+  }
+  if (g == SECP256R1) {
+    return "secp256r1";
+  }
+  return `group 0x${hex4(g)}`;
 }
