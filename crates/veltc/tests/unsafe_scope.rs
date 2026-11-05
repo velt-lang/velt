@@ -226,3 +226,112 @@ fn unsafe_code_in_a_package_needs_a_safety_comment() {
     );
     assert_eq!(out.matches("needs a").count(), 3, "{out}");
 }
+
+/// `velt check` lists each allowed package with native code: its C libraries and its unsafe
+/// code by file and line (`--json` too). The lockfile records what the program allows.
+#[test]
+fn velt_check_lists_the_allowed_native_code() {
+    let dir = test_dir::TestDir::new();
+    let native = ", native: { c: { m: { system: { default: \"m\" } } } }";
+    project(dir.path(), UNSAFE_CODE, native, DEMO, ALLOW);
+    assert_eq!(
+        passes(dir.path(), &["check"]),
+        "Native code the program allows (allowNative):\n  \
+         bind: C libraries m (m); 6 places of unsafe code\n    \
+         src/lib.vlt:2   unsafe function `raw`\n    \
+         src/lib.vlt:10  unsafe function `at`\n    \
+         src/lib.vlt:18  unsafe block\n    \
+         src/lib.vlt:28  unsafe expression\n    \
+         src/lib.vlt:30  unsafe block\n    \
+         src/lib.vlt:34  unsafe expression\n"
+    );
+    let json: serde_json::Value =
+        serde_json::from_str(&passes(dir.path(), &["check", "--json"])).unwrap();
+    assert_eq!(json["native"][0]["package"], "bind");
+    assert_eq!(
+        json["native"][0]["unsafe"][1]["what"],
+        "unsafe function `at`"
+    );
+    let lock = std::fs::read_to_string(dir.path().join("app/velt.lock.json")).unwrap();
+    assert!(
+        lock.contains("\"allowNative\": [\n    \"bind\"\n  ]"),
+        "{lock}"
+    );
+    // Nothing is listed for a program without native packages.
+    project(
+        dir.path(),
+        "export function demo(): void {}\n",
+        "",
+        DEMO,
+        "",
+    );
+    assert_eq!(passes(dir.path(), &["check"]), "");
+}
+
+/// The listing says what a check that passed allows: not a failed check's, with `--json` or
+/// without, whether the errors are the compiler's or `--ts-compat`'s.
+#[test]
+fn only_a_check_that_passes_lists_the_native_code() {
+    const HEADER: &str = "Native code the program allows";
+    let dir = test_dir::TestDir::new();
+    let lib = "declare c(\"c\") function getpid(): i32;\n\nexport function f(): i32 {\n  // SAFETY: `getpid` takes nothing and always succeeds.\n  return unsafe { getpid() };\n}\n";
+    let main = "import { f } from \"bind\";\n\nfunction main() {\n  console.log(f());\n}\n";
+    let typed = "import { f } from \"bind\";\n\nfunction main() {\n  const s: string = 1;\n  console.log(f(), s);\n}\n";
+    let lint = "import { f } from \"bind\";\n\nfunction main() {\n  let x: i32 = f();\n  console.log(x);\n}\n";
+    let compat = "tsCompat: [\"src\"], ";
+    let allow = format!("{ALLOW}{compat}");
+    let json_has_native = |args: &[&str]| -> (bool, u64) {
+        let o = velt(dir.path(), args);
+        let json: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
+        (!json["native"].is_null(), json["errors"].as_u64().unwrap())
+    };
+    let stdout = |args: &[&str]| {
+        let o = velt(dir.path(), args);
+        String::from_utf8_lossy(&o.stdout).into_owned()
+    };
+
+    project(dir.path(), lib, NATIVE, main, &allow);
+    assert!(stdout(&["check"]).contains(HEADER));
+    assert!(stdout(&["check", "--ts-compat"]).contains(HEADER));
+    assert_eq!(json_has_native(&["check", "--json"]), (true, 0));
+    assert_eq!(
+        json_has_native(&["check", "--ts-compat", "--json"]),
+        (true, 0)
+    );
+
+    project(dir.path(), lib, NATIVE, typed, &allow);
+    assert!(!stdout(&["check"]).contains(HEADER));
+    let (native, errors) = json_has_native(&["check", "--json"]);
+    assert!(!native && errors > 0);
+
+    project(dir.path(), lib, NATIVE, lint, &allow);
+    let o = velt(dir.path(), &["check", "--ts-compat"]);
+    assert!(!o.status.success());
+    assert!(!String::from_utf8_lossy(&o.stdout).contains(HEADER));
+    let (native, errors) = json_has_native(&["check", "--ts-compat", "--json"]);
+    assert!(!native && errors > 0);
+}
+
+/// `--locked` refuses a lock whose `allowNative` differs from package.vlt's, wider or narrower,
+/// so a change of what the program trusts is never installed unseen.
+#[test]
+fn locked_refuses_a_changed_allow_native() {
+    let dir = test_dir::TestDir::new();
+    let main = "function main() {}\n";
+    let lib = "export const n = 1;\n";
+    project(dir.path(), lib, NATIVE, main, ALLOW);
+    passes(dir.path(), &["install"]);
+    passes(dir.path(), &["install", "--locked"]);
+    for changed in ["allowNative: [\"bind\", \"other\"], ", ""] {
+        project(dir.path(), lib, "", main, changed);
+        let o = velt(dir.path(), &["install", "--locked"]);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(!o.status.success(), "{changed}: {stderr}");
+        assert!(
+            stderr.contains("needs to be updated"),
+            "{changed}: {stderr}"
+        );
+    }
+    project(dir.path(), lib, NATIVE, main, ALLOW);
+    passes(dir.path(), &["install", "--locked"]);
+}

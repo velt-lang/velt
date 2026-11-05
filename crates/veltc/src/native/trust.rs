@@ -16,7 +16,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use velt_common::{std_module, Diagnostic, Diagnostics, SourceMap, Span};
+use velt_common::{std_module, Diagnostic, Diagnostics, FileId, SourceMap, Span};
 use velt_sema::SourceModule;
 use velt_syntax::ast;
 use vpm::PackageGraph;
@@ -80,14 +80,17 @@ impl Trust {
 }
 
 /// Check where `modules` (the loaded program) have unsafe code and raw imports, and the safety
-/// comments of the trusted packages' unsafe code. Reports errors into `diags`.
-pub fn check(
+/// comments of the trusted packages' unsafe code. Reports errors into `diags`; returns the
+/// unsafe code of the allowed packages' modules (std's aside), per module, for `velt check`'s
+/// listing ([`super::report`]).
+pub(super) fn check(
     modules: &[SourceModule],
     sm: &SourceMap,
     graph: Option<&PackageGraph>,
     diags: &mut Diagnostics,
-) {
+) -> Vec<(FileId, Vec<unsafe_sites::Site>)> {
     let mut raw = RawExports::new(modules);
+    let mut trusted = Vec::new();
     for m in modules {
         // std is trusted, and its safety comments are a test's (module docs).
         if m.is_std {
@@ -97,6 +100,7 @@ pub fn check(
         let found = unsafe_sites::find(&m.ast);
         if let Trust::Trusted = trust {
             lint(&found.sites, &sm.get(m.file).src, diags);
+            trusted.push((m.file, found.sites));
             continue;
         }
         for site in &found.sites {
@@ -112,6 +116,7 @@ pub fn check(
         }
         raw_imports(m, &found.qualified, &trust, &mut raw, diags);
     }
+    trusted
 }
 
 /// The `// SAFETY:` lint over a trusted package module's unsafe code (`src`: its text).

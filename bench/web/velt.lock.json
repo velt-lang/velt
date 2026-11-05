@@ -1,5 +1,8 @@
 {
   "version": 1,
+  "allowNative": [
+    "postgres"
+  ],
   "packages": [
     {
       "name": "http-server",

@@ -708,7 +708,15 @@ Step 1 lands in layers, each its own pull request:
        an error. std follows it too, checked by a test rather than at each build.
      - `addressLoad` is `declare unsafe intrinsic function`: its callers are unsafe code.
      - The language server doesn't run these checks yet (builds and `velt check` do).
-   - 5c: `velt check`'s listing; `allowNative` recorded in `velt.lock.json`.
+   - 5c: what the program trusts, in view.
+     - `velt check` ends, when it passes, with each package with native code that the program
+       allows: its C libraries (with the system library each links on the target), whether it
+       has a Rust crate, and each piece of its unsafe code by file and line. `--json` has the
+       same under `native`. Nothing is listed for a program without such packages.
+     - `velt.lock.json` records the root's `allowNative` (sorted), so a change of trust shows in
+       the lockfile's diff and `--locked` refuses a lock that doesn't have it. A workspace's
+       lock has none, as its install has no root.
+     - Not yet: header-checked or `unchecked` libraries (layer 6) in the listing.
 6. The header check and `declare c const`.
 
 ## Decisions
