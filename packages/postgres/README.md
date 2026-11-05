@@ -172,10 +172,10 @@ server still owes, so the next request finds the connection in step.
 
 - `src/lib.velt`: the API (re-exports); `client.velt`, `pool.velt`, `transaction.velt`, `copy_reader.velt`,
   `copy_writer.velt`, `errors.velt`: the public types.
-- The connection: `line.velt` (the state behind its lock), `connection.velt` (requests), `ops.velt` (what
+- The connection: `line.velt` (the state behind its lock), `failure_log.velt`, `connection.velt` (requests), `ops.velt` (what
   `Client` and `Pool` share), `builder.velt` and `encoder.velt` (a request's bytes), `input.velt` and
   `reply.velt` (a reply, and rows through velt/db's `readRows`), `drain.velt` (after a task went away),
-  `startup.velt`, `config.velt`, `describe.velt` and `prepared.velt` (statements), `pool_state.velt`,
+  `startup.velt`, `socket.velt`, `config.velt`, `describe.velt` and `prepared.velt` (statements), `pool_state.velt`,
   `copy_state.velt`.
 - The protocol: `frontend.velt`, `backend.velt`, `scram.velt`, `md5.velt`, `placeholders.velt`,
   `pg_type.velt`, `values.velt`, `temporal.velt`, `network.velt`, `array_json.velt`, `json_params.velt`.
