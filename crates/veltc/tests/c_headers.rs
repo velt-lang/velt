@@ -181,3 +181,72 @@ fn a_check_that_passed_is_remembered() {
         output(&o)
     );
 }
+/// `int (void) __attribute__((__cdecl__))`: what Windows headers declare most things as.
+#[test]
+fn attributed_function_types_are_read_on_windows_targets() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let decls = r#"import { CString, Ptr } from "velt/ffi";
+
+declare c("c") function getpid(): i32;
+declare c("c") function _getpid(): i32;
+declare c("c") function _strdup(s: CString): Ptr<u8> | null;
+declare c("c") function getenv(name: CString): Ptr<u8> | null;
+declare c("c") function close(fd: i32): i32;
+declare c("c") function _close(fd: i32): i32;
+declare c("c") function write(fd: i32, data: readonly u8[], n: u32): i32;
+declare c("c") function strlen(s: CString): usize;
+
+"#;
+    let native = ", native: { c: { c: { headers: [\"<process.h>\", \"<string.h>\", \"<stdlib.h>\", \"<io.h>\"] } } }";
+    project(dir.path(), native, &format!("{decls}{LEN}"), &[], ALLOW);
+    for target in ["x86_64-pc-windows-msvc", "aarch64-pc-windows-msvc"] {
+        let o = velt(dir.path(), &home, &["check", "--target", target]);
+        assert!(o.status.success(), "{target}: {}", output(&o));
+    }
+    // A mismatch is still one, and variadic behind an attribute is still variadic.
+    let wrong = decls.replace(
+        "getenv(name: CString): Ptr<u8> | null",
+        "getenv(name: CString): i32",
+    );
+    let wrong = format!("{wrong}declare c(\"c\") function _cprintf(s: CString): i32;\n{LEN}");
+    let native = native.replace("\"<io.h>\"", "\"<io.h>\", \"<conio.h>\"");
+    project(dir.path(), &native, &wrong, &[], ALLOW);
+    let o = velt(
+        dir.path(),
+        &home,
+        &["check", "--target", "x86_64-pc-windows-msvc"],
+    );
+    let out = output(&o);
+    assert!(!o.status.success(), "{out}");
+    assert!(
+        out.contains("C function `getenv` returns `char *` in stdlib.h:"),
+        "{out}"
+    );
+    assert!(
+        out.contains("C function `_cprintf` is variadic in conio.h:"),
+        "{out}"
+    );
+    assert_eq!(out.matches("error:").count(), 2, "{out}");
+}
+
+/// `GetLastError`, whose header takes most of `windows.h` to parse.
+#[test]
+fn a_win32_function_is_read_on_windows_targets() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let lib = format!("declare c(\"kernel32\") function GetLastError(): u32;\n{DECLS_STRLEN}{LEN}");
+    let native = ", native: { c: { c: { headers: [\"<string.h>\"] }, kernel32: { system: { win32: \"kernel32\" }, headers: [\"<windef.h>\", \"<errhandlingapi.h>\"] } } }";
+    project(dir.path(), native, &lib, &[], ALLOW);
+    let o = velt(
+        dir.path(),
+        &home,
+        &["check", "--target", "x86_64-pc-windows-msvc"],
+    );
+    assert!(o.status.success(), "{}", output(&o));
+}
+
+const DECLS_STRLEN: &str = "import { CString } from \"velt/ffi\";\n\ndeclare c(\"c\") function strlen(s: CString): usize;\n\n";
+

@@ -254,31 +254,43 @@ fn builtin(words: &[&str], long_bits: u32) -> Option<CType> {
 }
 
 /// A function type's result and whether it is variadic: `long (const char *, char **, int)`
-/// → (`long`, false).
+/// → (`long`, false). Attributes after the parameters are skipped: `int (void)
+/// __attribute__((cdecl))`, which is how clang prints a calling convention.
 fn split_function_type(ty: &str) -> (String, bool) {
+    let mut end = ty.trim_end().len();
+    while let Some(open) = opening_paren(&ty[..end]) {
+        let before = ty[..open].trim_end();
+        match before.strip_suffix("__attribute__") {
+            Some(rest) => end = rest.trim_end().len(),
+            None => {
+                let params = ty[open + 1..end - 1].trim_end();
+                return (before.to_string(), params.ends_with("..."));
+            }
+        }
+    }
+    (ty.to_string(), false)
+}
+
+/// Where the parenthesis that the `)` closing `text` opens is; `None` when `text` doesn't end
+/// with one.
+fn opening_paren(text: &str) -> Option<usize> {
+    if !text.ends_with(')') {
+        return None;
+    }
     let mut depth = 0i32;
-    let bytes = ty.as_bytes();
-    let mut open = None;
-    for i in (0..bytes.len()).rev() {
-        match bytes[i] {
+    for (i, b) in text.bytes().enumerate().rev() {
+        match b {
             b')' => depth += 1,
             b'(' => {
                 depth -= 1;
                 if depth == 0 {
-                    open = Some(i);
-                    break;
+                    return Some(i);
                 }
             }
             _ => {}
         }
     }
-    match open {
-        Some(i) => (
-            ty[..i].trim().to_string(),
-            ty[i..].trim_end_matches(')').trim_end().ends_with("..."),
-        ),
-        None => (ty.to_string(), false),
-    }
+    None
 }
 
 /// The file and line clang printed last: it leaves either out of a location when it is the
@@ -366,6 +378,27 @@ mod tests {
         let p = &h.functions["printf"];
         assert!(p.variadic);
         assert_eq!(p.at, "stdio.h:7");
+    }
+
+    #[test]
+    fn attributes_after_the_parameters_are_not_the_parameters() {
+        let split = |ty: &str| split_function_type(ty);
+        assert_eq!(split("long (const char *, int)"), ("long".into(), false));
+        assert_eq!(
+            split("int (void) __attribute__((cdecl))"),
+            ("int".into(), false)
+        );
+        assert_eq!(
+            split("char *(const char *) __attribute__((__cdecl__))"),
+            ("char *".into(), false)
+        );
+        assert_eq!(
+            split("int (const char *, ...) __attribute__((cdecl)) __attribute__((noreturn))"),
+            ("int".into(), true)
+        );
+        assert_eq!(split("int (const char *, ...)"), ("int".into(), true));
+        assert_eq!(split("void (void (*)(int, ...))"), ("void".into(), false));
+        assert_eq!(split("int"), ("int".into(), false));
     }
 
     #[test]
