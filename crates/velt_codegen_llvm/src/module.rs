@@ -177,11 +177,12 @@ pub(crate) fn emit_unit_capped(
     let externs: FxHashSet<String> = (program.externs.iter())
         .flat_map(|e| [global_name(&e.symbol), format!("@{}", e.symbol)])
         .collect();
+    let stated = target.has_neon() && bodies.contains("\"target-features\"");
     for decl in &intrinsics.0 {
         if declared_name(decl).is_some_and(|n| externs.contains(n)) {
             continue;
         }
-        let _ = writeln!(out, "{decl}");
+        let _ = writeln!(out, "{}", with_target_features(decl, stated));
     }
     out.push_str(&bodies);
     let _ = writeln!(
@@ -231,6 +232,29 @@ fn unit_defines_main(program: &vir::Program, unit: &Unit) -> bool {
         .position(|f| f.symbol == "velt_main")
         .unwrap_or(0);
     unit.defines.contains(&main) || program.funcs.is_empty()
+}
+
+/// `decl` (an intrinsic's declaration or a helper's definition) with NEON as its explicit target
+/// features where it states none, when `stated`: on arm64, in a module whose functions state
+/// features. A function of a program that uses a CPU extension has explicit features
+/// (`function::extension_features`), and LLVM 23 does not inline an `alwaysinline` helper without
+/// the attribute into a function with it ("conflicting target features"; LLVM 21 did), which left
+/// every SIMD operation of such a program a call. NEON is the arm64 baseline, so it is a subset
+/// of every function's features.
+fn with_target_features(decl: &str, stated: bool) -> std::borrow::Cow<'_, str> {
+    const PLAIN: &str = " alwaysinline nounwind {";
+    if !stated || !decl.starts_with("define ") || decl.contains("\"target-features\"") {
+        return decl.into();
+    }
+    match decl.find(PLAIN) {
+        Some(at) => format!(
+            "{} alwaysinline nounwind \"target-features\"=\"+neon\" {{{}",
+            &decl[..at],
+            &decl[at + PLAIN.len()..]
+        )
+        .into(),
+        None => decl.into(),
+    }
 }
 
 /// One `declare` per distinct extern symbol not defined in this module, except the atomic

@@ -465,6 +465,7 @@ mod half;
 mod inlining;
 mod placement;
 mod static_symbols;
+mod target_features;
 mod tbaa;
 mod units;
 mod wasm;

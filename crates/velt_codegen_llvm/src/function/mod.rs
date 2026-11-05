@@ -198,29 +198,32 @@ pub(crate) fn emit_function(
 }
 
 /// The target features `function` gets for the CPU-extension operations of the program (#1330):
-/// a gated function's whole set; any other function, when the program uses an extension of this
-/// architecture, only the extension itself. LLVM uses `+sha2` / `+sha` for nothing but those
-/// operations (each behind the runtime check), so every function may have it, and an operation's
-/// helper, and the `u32x4` method around it, inline into any caller (as `+simd128` does for
-/// WebAssembly programs that use vectors).
+/// a gated function's whole set; any other function, when the program uses extensions of this
+/// architecture, only the extensions themselves (each one's, so a program with both SHA and
+/// PCLMULQDQ gets both). LLVM uses `+sha2` / `+sha` / `+pclmul` / `+aes` for nothing but those
+/// operations (each behind the runtime check), so every function may have them, and an
+/// operation's helper, and the `u32x4` method around it, inline into any caller (as `+simd128`
+/// does for WebAssembly programs that use vectors).
 fn extension_features(
     program: &vir::Program,
     function: &vir::Function,
     arch: crate::simd::Arch,
-) -> Option<&'static str> {
+) -> Option<String> {
     use velt_vir::simd::SimdCall;
     if let Some(ext) = function.target {
-        return crate::simd::has_ext(arch, ext).then(|| ext.gated_features());
+        return crate::simd::has_ext(arch, ext).then(|| ext.gated_features().to_string());
     }
-    program
-        .externs
-        .iter()
-        .find_map(|e| match SimdCall::of_symbol(&e.symbol)? {
-            SimdCall::Inst(op) if crate::simd::has_ext(arch, op.ext()) => {
-                Some(op.ext().op_features())
+    let mut features: Vec<&str> = Vec::new();
+    for e in &program.externs {
+        if let Some(SimdCall::Inst(op)) = SimdCall::of_symbol(&e.symbol) {
+            let f = op.ext().op_features();
+            if crate::simd::has_ext(arch, op.ext()) && !features.contains(&f) {
+                features.push(f);
             }
-            _ => None,
-        })
+        }
+    }
+    features.sort_unstable();
+    (!features.is_empty()).then(|| features.join(","))
 }
 
 fn check_shape(function: &vir::Function) -> CodegenResult<()> {
