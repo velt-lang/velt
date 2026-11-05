@@ -118,10 +118,11 @@ impl FnCx<'_, '_> {
 
     /// An arrow's annotated parameter fixes a slot before a literal argument for that slot, when
     /// the literal has no type of its own to offer (`xs.reduce((acc: number[], x) => …, [])`, with
-    /// `null`, `{}`, `new Map()`), or when the arrow's result also has the slot
-    /// (`xs.reduce((acc: string | number, s) => acc, 0)`). TypeScript prefers what a value gives
-    /// over what a parameter takes (`on((x: number | string) => {}, 1)` is a `number`), but what
-    /// a result gives counts as a value too, and the wider candidate wins.
+    /// `null`, `{}`, `new Map()`), or when what the arrow returns doesn't fit the literal's type
+    /// (`fold((a: number | string) => a, 1)`). TypeScript prefers what a value gives over what a
+    /// parameter takes (`on((x: number | string) => {}, 1)` and `fold((a: number | string) => 2, 1)`
+    /// are `number`s), but what a result gives is a value too, and the wider candidate wins.
+    /// Callbacks whose annotations for one slot differ leave it to the literal.
     pub(super) fn annotations_before_literals(
         &mut self,
         c: &Callable,
@@ -131,12 +132,16 @@ impl FnCx<'_, '_> {
         if slots.iter().all(Option::is_some) || !args.iter().any(|a| as_arrow(a).is_some()) {
             return;
         }
+        let mut found: Vec<(usize, TyId, bool)> = vec![];
         for (arg, p) in args.iter().zip(&c.params) {
-            let Some(ast::ExprKind::Arrow {
+            let Some(arrow) = as_arrow(arg) else {
+                continue;
+            };
+            let ast::ExprKind::Arrow {
                 type_params,
                 params,
                 ..
-            }) = as_arrow(arg).map(|a| &a.kind)
+            } = &arrow.kind
             else {
                 continue;
             };
@@ -163,19 +168,106 @@ impl FnCx<'_, '_> {
                 if slots.get(k as usize).is_none_or(Option::is_some) {
                     continue;
                 }
-                let literal = args.iter().zip(&c.params).any(|(a, p)| {
-                    matches!(*self.cx.ty.kind(p.ty), TyKind::Param(s) if s == k)
-                        && (self.has_no_type_of_its_own(a)
-                            || (in_result.contains(&k) && literal_arg(a)))
-                });
-                if literal {
-                    let before = self.cx.diags.len();
-                    let resolved = self.resolve(written);
-                    self.cx.diags.truncate(before);
-                    slots[k as usize] = Some(resolved);
+                let literals: Vec<&ast::Expr> = (args.iter().zip(&c.params))
+                    .filter(|(_, p)| matches!(*self.cx.ty.kind(p.ty), TyKind::Param(s) if s == k))
+                    .map(|(a, _)| a)
+                    .collect();
+                let before = self.cx.diags.len();
+                let resolved = self.resolve(written);
+                self.cx.diags.truncate(before);
+                let mut takes = false;
+                for a in literals {
+                    takes |= self.has_no_type_of_its_own(a)
+                        || (in_result.contains(&k)
+                            && literal_arg(a)
+                            && self.result_needs_annotation(
+                                (c, arrow, core),
+                                (k as usize, resolved),
+                                a,
+                                slots,
+                            ));
                 }
+                found.push((k as usize, resolved, takes));
             }
         }
+        // Only annotations a literal is passed beside count, and they must agree.
+        for &(k, t, takes) in &found {
+            if !takes {
+                continue;
+            }
+            let agree = found
+                .iter()
+                .filter(|(other, _, _)| *other == k)
+                .all(|&(_, u, _)| u == t || (self.converts_to(u, t) && self.converts_to(t, u)));
+            if agree {
+                slots[k] = Some(t);
+            }
+        }
+    }
+
+    /// Does what `arrow` returns for slot `k`, checked with `written` for it, not fit the type of
+    /// the literal argument for that slot? The check is a trial; one that fails says yes, and the
+    /// real check reports what is wrong.
+    fn result_needs_annotation(
+        &mut self,
+        (c, arrow, core): (&Callable, &ast::Expr, TyId),
+        (k, written): (usize, TyId),
+        literal: &ast::Expr,
+        slots: &[Option<TyId>],
+    ) -> bool {
+        let TyKind::FnPtr { ret, .. } = *self.cx.ty.kind(core) else {
+            return true;
+        };
+        let mut with = slots.to_vec();
+        with[k] = Some(written);
+        let expected = self.cx.subst_known(core, &with);
+        let open_ret = self.cx.subst_known(ret, slots);
+        let TyKind::FnPtr {
+            params,
+            throws,
+            rest,
+            ..
+        } = self.cx.ty.kind(expected).clone()
+        else {
+            return true;
+        };
+        // The arrow's result is what the body gives, not the annotation.
+        let expected = self.cx.ty.intern(TyKind::FnPtr {
+            params,
+            ret: open_ret,
+            throws,
+            rest,
+        });
+        let notes = match self.cx.ty.kind(core) {
+            TyKind::FnPtr { params, .. } if c.js_api => {
+                Some(params.iter().map(|t| self.cx.ty.is_int(*t)).collect())
+            }
+            _ => None,
+        };
+        let found = self.trial_with(|lw| {
+            lw.std_callback = notes;
+            lw.closure(arrow, Some(expected), false).ty
+        });
+        let Some(found) = found else {
+            return true;
+        };
+        let TyKind::FnPtr { ret: returned, .. } = *self.cx.ty.kind(found) else {
+            return true;
+        };
+        let mut from_result = slots.to_vec();
+        self.cx.match_ty(ret, returned, &mut from_result);
+        // Nothing for the slot: the arrow doesn't return a value, which the annotation can't help.
+        let Some(given) = from_result[k].filter(|t| *t != self.cx.ty.unit) else {
+            return false;
+        };
+        let Some(literal_ty) = self.trial_type(literal) else {
+            return true;
+        };
+        if self.cx.ty.has_error(given) {
+            return true;
+        }
+        let (given, literal_ty) = (self.cx.widened(given), self.cx.widened(literal_ty));
+        !self.converts_to(given, literal_ty)
     }
 
     /// `null`, `undefined`, `[]`, `{}`, or `new C()` of a generic class without type arguments:
