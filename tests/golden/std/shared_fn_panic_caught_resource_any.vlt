@@ -1,0 +1,32 @@
+import { catchPanic, PanicError } from "velt/task";
+type F = (x: i64) => i64;
+class B { n: i64 = 1; }
+async function bump(b: B): Promise<i64> { b.n += 1; return b.n; }
+interface Fi { make(): F; }
+function* gen(): Generator<i64> { yield 1; }
+class K { n: i64 = 0; clone(): K { this.n += 1; return new K(); } [Symbol.dispose]() {} }
+class R { v: i64 = 1; [Symbol.dispose]() {} }
+interface Rd { get(): i64; }
+class RI implements Rd { v: i64 = 1; get(): i64 { return this.v; } [Symbol.dispose]() {} }
+class KI implements Rd { v: i64 = 1; get(): i64 { return this.v; } clone(): KI { this.v += 1; return new KI(); } [Symbol.dispose]() {} }
+class GI implements Rd { g: Generator<i64> = gen(); get(): i64 { return 1; } }
+class C { n: i64 = 0; }
+class Hm { m: Mutex<i64> = new Mutex<i64>(0); }
+class Ha { a: Atomic<i64> = new Atomic<i64>(0); }
+class Hk { k: K = new K(); }
+class Hg { g: Generator<i64> = gen(); }
+class FaX implements Fi { make(): F { const h: any = new R(); return (x: i64): i64 => { const q = h; return x; }; } }
+async function main() {
+  const m: Fi = new FaX();
+  try {
+    const r = await catchPanic(async () => {
+      const f = shared(m.make());
+      return f(1);
+    });
+    console.log("no panic", r);
+  } catch (e) {
+    console.log(e instanceof PanicError);
+  }
+  const b = new B();
+  console.log(await spawn(bump(b)), await spawn(bump(b)), b.n);
+}

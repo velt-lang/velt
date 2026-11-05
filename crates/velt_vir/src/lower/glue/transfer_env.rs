@@ -176,7 +176,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 );
             }
             if let Some(t) = unshareable {
-                lw.call_rt(Rt::XferEnd, vec![], None);
+                lw.end_walk_scope();
                 lw.panic_many_threads(t);
             }
             if local {

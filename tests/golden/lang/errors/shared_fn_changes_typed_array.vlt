@@ -1,0 +1,26 @@
+// What changes a typed array through its buffer, in a function in `shared(...)`.
+type F = (x: i64) => i64;
+
+async function main() {
+  const a = new Uint8Array(2);
+  const fill = shared((x: i64): i64 => {
+    a.fill(1);
+    return x;
+  });
+  const b = new Uint8Array(2);
+  const within = shared((x: i64): i64 => {
+    b.copyWithin(0, 1);
+    return x;
+  });
+  const c = new Uint8Array(2);
+  const reverse = shared((x: i64): i64 => {
+    c.reverse();
+    return x;
+  });
+  const d = new Uint8Array(2);
+  const sort = shared((x: i64): i64 => {
+    d.sort();
+    return x;
+  });
+  console.log(fill(1), within(1), reverse(1), sort(1));
+}

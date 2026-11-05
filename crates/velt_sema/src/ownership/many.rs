@@ -47,18 +47,21 @@ pub(crate) fn check_many_threads(cx: &mut Ctx) {
             };
             if let Callee::Intrinsic(Intrinsic::SharedNew) = callee {
                 for a in args {
-                    points.push((closures_in(a, &bound), lock_type(cx, a.ty)));
+                    points.push((closures_in(a, &bound), fn_type(cx, a.ty)));
                 }
             }
         });
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
         let mut reported = FxHashSet::default();
-        for (closures, locked) in points {
+        for (closures, is_fn) in points {
             for c in closures {
                 if reported.insert(c) {
                     check_closure(cx, c, &Copied::Shared);
-                    check_shared_captures(cx, c, locked);
-                    checked.insert(c);
+                }
+                // Only a function in `shared(...)` runs each call on a copy: not one in a `Mutex`,
+                // or held by an object in `shared(...)`.
+                if is_fn && checked.insert(c) {
+                    check_shared_captures(cx, c);
                 }
             }
         }
@@ -66,9 +69,14 @@ pub(crate) fn check_many_threads(cx: &mut Ctx) {
     // The closures `local_async` followed to a `shared(...)` from elsewhere.
     for c in std::mem::take(&mut cx.in_shared) {
         if checked.insert(c) {
-            check_shared_captures(cx, c, false);
+            check_shared_captures(cx, c);
         }
     }
+}
+
+/// Is `t` a function type?
+fn fn_type(cx: &Ctx, t: TyId) -> bool {
+    matches!(cx.ty.kind(t), TyKind::FnPtr { .. })
 }
 
 /// Is `t` a `Mutex` or an `RwLock`, whose value one thread at a time has?
@@ -109,15 +117,15 @@ enum Barred {
     /// An `Atomic` held by value: the call would change its own copy.
     Atomic(TyId),
     /// A class whose `clone()` may change its object, which would run on one object from several
-    /// threads at once, unless a lock (`locked`) runs the calls one at a time. A standard library
-    /// `clone()` that changes nothing is fine (`FnDef::changes_held`), as `RegExp`'s.
+    /// threads at once. A standard library `clone()` that changes nothing is fine
+    /// (`FnDef::changes_held`), as `RegExp`'s.
     Clone(TyId),
 }
 
 /// The first thing `t` holds that a function in `shared(...)` can't capture (`Barred`). What a
 /// `shared` holds is one object for every thread; a function or interface value is checked by the
 /// many-threads check at run time (velt_vir glue/many.rs).
-fn barred(cx: &mut Ctx, t: TyId, locked: bool, seen: &mut FxHashSet<TyId>) -> Option<Barred> {
+fn barred(cx: &mut Ctx, t: TyId, seen: &mut FxHashSet<TyId>) -> Option<Barred> {
     if !seen.insert(t) {
         return None;
     }
@@ -132,10 +140,10 @@ fn barred(cx: &mut Ctx, t: TyId, locked: bool, seen: &mut FxHashSet<TyId>) -> Op
             if lock_type(cx, t) {
                 return Some(Barred::Lock(t));
             }
-            if !locked && Some(d) == cx.atomic_ty() {
+            if Some(d) == cx.atomic_ty() {
                 return Some(Barred::Atomic(t));
             }
-            if !locked && cx.runs_own_clone(t) {
+            if cx.runs_own_clone(t) {
                 let changes = cx.own_clone(d).is_some_and(
                     |m| matches!(&cx.defs[m.0 as usize], Some(Def::Fn(f)) if f.changes_held),
                 );
@@ -147,11 +155,11 @@ fn barred(cx: &mut Ctx, t: TyId, locked: bool, seen: &mut FxHashSet<TyId>) -> Op
         _ => {}
     }
     let parts = cx.parts_of(k);
-    parts.into_iter().find_map(|p| barred(cx, p, locked, seen))
+    parts.into_iter().find_map(|p| barred(cx, p, seen))
 }
 
 /// The captures that a function in `shared(...)` can't have (`Barred`).
-fn check_shared_captures(cx: &mut Ctx, c: DefId, locked: bool) {
+fn check_shared_captures(cx: &mut Ctx, c: DefId) {
     let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
         return;
     };
@@ -168,7 +176,7 @@ fn check_shared_captures(cx: &mut Ctx, c: DefId, locked: bool) {
             true => format!("`{name}`, a `{}` held by value", cx.display(part)),
             false => format!("`{name}`, which holds a `{}` by value", cx.display(part)),
         };
-        let d = match barred(cx, ty, locked, &mut FxHashSet::default()) {
+        let d = match barred(cx, ty, &mut FxHashSet::default()) {
             None => continue,
             Some(Barred::Lock(p)) => {
                 let tn = cx.display(p);

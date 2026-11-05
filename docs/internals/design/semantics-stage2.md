@@ -255,18 +255,23 @@ an async closure copies for itself, and for any other function the call asks the
 transfer entry for a copy (lower/callee.rs `shared_call_env`), with one transfer scope, so cycles
 and identity are kept, at a cost proportional to the captures. Only a program with a function in
 `shared(...)` has that answer in its entries (`Boxing::shared_fns`). So a change to a capture would be lost.
-Sema refuses it where it follows the function to `shared(...)`, with the closures it calls
-(`ownership/local_async`), and refuses captures holding, at any depth of their static type, a lock
-or an `Atomic` by value (each call would have its own) or a class whose `clone()` may change its
-object (each call would run it on one object at once; a standard library `clone()` that changes
-nothing, as `RegExp`'s, is fine) (`ownership/many.rs`). Where sema can't follow it, `shared(x)` runs
-the many-threads check's strict walk (glue/many.rs), which goes through arrays, classes, interface
-values and captured functions, and panics on all of these, on a captured variable's cell, and on a
-closure that changes what it captured (`FnDef::changes_held`, `ownership/local_async/record.rs`). A
-`Mutex` around the function runs the calls one at a time on the function's own captures, so it allows
-changes and `clone()`. A captured cycle is copied per call as a cycle, and reference counting doesn't
-free a cycle, so it stays allocated per call, as with an async closure. A lock shared by value
-(`const q = m`, a generic `T`) is an error (boxing `counted_lock_diagnostics`). `spawn` of an async
+Sema refuses it where it follows the function by flow to `shared(...)` of the function itself, with
+the closures it calls (`ownership/local_async`); a closure that only has the same function type as
+something in `shared(...)` isn't refused, as it may never get there. For those closures sema also
+refuses captures holding, at any depth of their static type, a lock or an `Atomic` by value (each
+call would have its own) or a class whose `clone()` may change its object (each call would run it
+on one object at once; a standard library `clone()` that changes nothing, as `RegExp`'s, is fine)
+(`ownership/many.rs`). Where sema didn't follow it, `shared(x)` runs the many-threads check's strict
+walk (glue/many.rs), which goes through arrays, classes, interface values and captured functions,
+and panics on all of these, on a captured variable's cell, on a closure that changes what it
+captured (`FnDef::changes_held`, `ownership/local_async/record.rs`), on a resource no copy can be
+made of, and on a `g` or `y` `RegExp`, whose `lastIndex` would be lost. What it can't see is a change
+in a function it never walks: one that goes into a value in `shared(...)` by another route later. A
+`Mutex` around the function runs the calls one at a time on the function's own captures, so it
+allows changes and `clone()`. A captured cycle is copied per call as a cycle, and reference counting
+doesn't free a cycle, so it stays allocated per call, as with an async closure. A lock shared by
+value (`const q = m`, a generic `T`) is an error (boxing `counted_lock_diagnostics`). A caught panic
+ends the transfers it unwound out of (velt_rt `transfer_map::forget_open`). `spawn` of an async
 closure literal called at once is the literal's task (captures transferred, async_fn/spawn.rs).
 A deep copy that reaches a resource without `clone()` elsewhere (a generic `T`, a function
 value's captures, an interface value's implementor) panics (glue/clone.rs). Strings keep their atomic counts (stage 1); `shared<T>` stays atomic.

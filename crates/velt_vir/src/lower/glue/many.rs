@@ -18,11 +18,12 @@
 //! time. It is generated apart (`Glue::ManyCheckStrict`, [`FnLower::many_strict`]), and an entry
 //! knows it by the pointer's other tag, in a program with a function in `shared(...)` only.
 //!
-//! A walk goes through an object once, so a cycle ends: it is a transfer scope with nothing copied
-//! (velt_rt `transfer_map`), each object it reaches recorded as its own copy. A walk runs no user
+//! The strict walk goes through an object once, so a cycle ends: it is a transfer scope with nothing
+//! copied (velt_rt `transfer_map`), each object it reaches recorded as its own copy. It runs no user
 //! code and is never inside a transfer (the glue that transfers runs user code only with the
-//! transfer suspended), so its scope has only its own objects, and its `end` only forgets them. It
-//! ends the scope before it panics, so a panic someone catches leaves no scope open.
+//! transfer suspended, and a caught panic forgets what it left open), so its scope has only its own
+//! objects, and its `end` only forgets them. It ends the scope before it panics. The plain walk runs
+//! at every `Mutex.with` and has no scope.
 
 use velt_sema::hir::{TyId, TyKind};
 
@@ -54,8 +55,15 @@ impl FnLower<'_, '_> {
 
     /// Stop the program with `msg` from inside a walk (module docs).
     pub(super) fn walk_panic(&mut self, msg: &str) {
-        self.call_rt(Rt::XferEnd, vec![], None);
+        self.end_walk_scope();
         self.panic_msg(msg);
+    }
+
+    /// The strict walk's scope ends (module docs).
+    pub(super) fn end_walk_scope(&mut self) {
+        if self.many_strict {
+            self.call_rt(Rt::XferEnd, vec![], None);
+        }
     }
 
     /// In the strict walk: panic with `msg`.
@@ -67,6 +75,9 @@ impl FnLower<'_, '_> {
 
     /// Continue only the first time this walk reaches the object at `p`; otherwise go to `done`.
     fn walk_first(&mut self, p: Operand, done: vir::BlockId) {
+        if !self.many_strict {
+            return;
+        }
         let found = self.temp(Ty::Ptr);
         self.call_rt(Rt::XferFind, vec![p.clone()], Some(Place::local(found)));
         let bits = self.cast_to(Operand::Copy(Place::local(found)), Ty::Ptr, Ty::U64);
@@ -76,27 +87,68 @@ impl FnLower<'_, '_> {
         self.call_rt(Rt::XferRecord, vec![p.clone(), p], None);
     }
 
-    /// The panic of the strict walk for a value of `ty` itself, a lock or an `Atomic`.
+    /// The panic of the strict walk for a value of `ty` itself, a lock or an `Atomic`, or a resource
+    /// that isn't a class.
     fn panic_if_strict_held(&mut self, ty: TyId) {
+        if !self.many_strict {
+            return;
+        }
         let name = self.cx.type_name(ty);
         match self.cx.kind(ty) {
-            TyKind::Adt(d, _) if crate::lower::atomic::is_atomic(self.cx, d) => self.panic_if_strict(&format!(
+            TyKind::Adt(d, _) if crate::lower::atomic::is_atomic(self.cx, d) => self.walk_panic(&format!(
                 "a function that captured an `{name}` by value is in `shared(...)`: each call would change an `Atomic` of its own, so the change would be lost; keep the value in a `shared(...)`"
             )),
-            _ if self.cx.is_lock(ty) => self.panic_if_strict(&format!(
+            _ if self.cx.is_lock(ty) => self.walk_panic(&format!(
                 "a function that captured a `{name}` by value is in `shared(...)`: each call would have a lock of its own; share the lock: `shared(new {name}(…))`"
             )),
+            _ if !self.cx.is_class(ty) => self.panic_if_uncopyable(ty),
             _ => {}
         }
     }
 
-    /// The panic of the strict walk for an object of class `ty` (module docs).
-    pub(super) fn panic_if_strict_clone(&mut self, ty: TyId) {
-        if self.cx.clone_may_change(ty) {
+    /// In the strict walk, a resource no call's copy can be made of: panic where the function is put
+    /// in `shared(...)`, not at every call.
+    fn panic_if_uncopyable(&mut self, ty: TyId) {
+        if self.cx.uncopyable(ty) {
+            let why = self.uncopyable_why(ty);
             let name = self.cx.type_name(ty);
-            self.panic_if_strict(&format!(
+            self.walk_panic(&format!(
+                "a function that captured a `{name}` is in `shared(...)`: each call runs on a copy of what it captured, and {why}"
+            ));
+        }
+    }
+
+    /// The panics of the strict walk for the object at `obj` of class `ty` (module docs).
+    pub(super) fn panic_if_strict_object(&mut self, obj: &Place, ty: TyId) {
+        if !self.many_strict {
+            return;
+        }
+        let name = self.cx.type_name(ty);
+        if self.cx.clone_may_change(ty) {
+            self.walk_panic(&format!(
                 "a function that captured a `{name}` is in `shared(...)`: calls from several threads would run its `clone()` on the same object at once; put the function in a `Mutex`"
             ));
+        }
+        self.panic_if_uncopyable(ty);
+        if self.cx.is_regexp(ty) {
+            self.panic_if_regexp_moves(obj, ty);
+        }
+    }
+
+    /// A `g` or `y` regex changes its `lastIndex` as it matches, which a call's copy would lose.
+    fn panic_if_regexp_moves(&mut self, obj: &Place, ty: TyId) {
+        for flag in ["global", "sticky"] {
+            let Some(i) = self.cx.field_index(ty, flag) else {
+                continue;
+            };
+            let set = Operand::Copy(self.field_place(obj, ty, i));
+            let done = self.new_block();
+            self.when(set, done);
+            self.walk_panic(
+                "a function that captured a `g` or `y` `RegExp` is in `shared(...)`: each call runs on a copy of what it captured, so the change to its `lastIndex` would be lost; make the regex inside the function, or put the function in a `Mutex`",
+            );
+            self.goto(done);
+            self.switch_to(done);
         }
     }
 
@@ -318,14 +370,14 @@ impl FnLower<'_, '_> {
         if !self.cx.reaches_fn(ty) {
             return;
         }
+        self.many_strict = strict;
         if strict {
             self.cx.note_shared_fn();
+            self.call_rt(Rt::XferBegin, vec![], None);
         }
-        self.call_rt(Rt::XferBegin, vec![], None);
-        self.many_strict = strict;
         self.many_check(p, ty);
+        self.end_walk_scope();
         self.many_strict = false;
-        self.call_rt(Rt::XferEnd, vec![], None);
     }
 
     /// Can the walk being generated find anything in a value of `t`?

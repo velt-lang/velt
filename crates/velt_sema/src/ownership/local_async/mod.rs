@@ -70,23 +70,15 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
     }
     let mut seen = FxHashMap::default();
     let mut fns: FxHashMap<TyId, Why> = FxHashMap::default();
-    // The function types a value in `shared(...)` holds, whatever else they cross.
-    let (mut shared_seen, mut shared_fns) = (FxHashMap::default(), FxHashMap::default());
     let mut rooted = 0;
     loop {
         p.run(cx, &g);
         types::crossing_fns(cx, &p.roots[rooted..], &mut seen, &mut fns);
-        let in_shared: Vec<(TyId, Why)> = (p.roots[rooted..].iter())
-            .filter(|(_, w)| w.boundary == Boundary::Shared)
-            .copied()
-            .collect();
-        types::crossing_fns(cx, &in_shared, &mut shared_seen, &mut shared_fns);
         rooted = p.roots.len();
         let mut changed = false;
         for (n, node) in g.nodes.iter().enumerate() {
             let Node::Lit(c) = *node else { continue };
-            let crosses = p.flags[n] & CROSSES != 0;
-            if p.flags[n] & STORED == 0 || (crosses && p.shared[n].is_some()) {
+            if p.flags[n] & CROSSES != 0 || p.flags[n] & STORED == 0 {
                 continue;
             }
             // A callback wrapper of an async closure (`body/expr/callback.rs`) is matched by the
@@ -105,19 +97,6 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
                 None if sync => !types::mentions_param(cx, t) && types::may_be(cx, g.tys[n], t),
                 None => types::may_be(cx, g.tys[n], t),
             };
-            // Crossing already, by another boundary: it may also reach `shared(...)`, where a sync
-            // closure's change would be lost.
-            if crosses {
-                let why = (shared_fns.iter())
-                    .filter(|(t, w)| sync && heap_reaches(cx, w, c) && matches(**t))
-                    .map(|(_, w)| *w)
-                    .min_by_key(|w| w.rank(cx));
-                if let Some(w) = why {
-                    p.set(n, CROSSES, Some(w));
-                    changed = true;
-                }
-                continue;
-            }
             // Several crossing types may match: report one in user code, the earliest.
             let why = fns
                 .iter()
@@ -147,8 +126,10 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
         if let (Some(w), false) = (to_std, reported.contains(&c)) {
             crossing_sync(cx, c, Some(w));
         }
-        // In `shared(...)`: every thread holding it calls it, each call on a copy of what it
-        // captured, so a change would be lost. A `Mutex` around it runs the calls one at a time.
+        // Followed to `shared(...)` by flow: every thread holding it calls it, each call on a copy of
+        // what it captured, so a change would be lost. A match by function type alone isn't enough
+        // to refuse a closure that may never get there: the many-threads check's strict walk panics
+        // on the exact closure if it does. A `Mutex` around it runs the calls one at a time.
         let in_shared = p.shared[n].filter(|_| p.flags[n] & CROSSES != 0);
         if let Some(w) = in_shared {
             cx.in_shared.push(c);
@@ -477,8 +458,8 @@ const SHARED_WALK: u8 = 8;
 struct Propagation {
     flags: Vec<u8>,
     why: Vec<[Option<Why>; 2]>,
-    /// How a crossing node reaches `shared(...)`, if it does, whichever boundary came first: a sync
-    /// closure may change its copy when spawned, and not when it is in `shared(...)`.
+    /// How a crossing node is followed by flow to a function in `shared(...)`, if it is, whichever
+    /// boundary came first: a sync closure may change its copy when spawned, and not there.
     shared: Vec<Option<Why>>,
     work: Vec<(usize, u8)>,
     roots: Vec<(TyId, Why)>,
@@ -497,7 +478,7 @@ impl Propagation {
 
     fn set(&mut self, n: usize, f: u8, why: Option<Why>) {
         if let (CROSSES, Some(w), None) = (f, why, self.shared[n]) {
-            if w.boundary == Boundary::Shared {
+            if w.boundary == Boundary::Shared && w.via.is_none() && !w.in_value {
                 self.shared[n] = Some(w);
                 if self.flags[n] & CROSSES != 0 {
                     self.work.push((n, SHARED_WALK));

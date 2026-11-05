@@ -188,7 +188,11 @@ pub(crate) fn catch<R>(poll: impl FnOnce() -> R) -> Result<R, Box<[u8]>> {
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(poll)) {
         Ok(r) => Ok(r),
         Err(payload) => match payload.downcast::<VeltPanic>() {
-            Ok(p) => Err(p.0),
+            Ok(p) => {
+                // The panic may have left a transfer open on this thread.
+                crate::transfer_map::forget_open();
+                Err(p.0)
+            }
             Err(other) => std::panic::resume_unwind(other),
         },
     }

@@ -13,6 +13,21 @@ use crate::visit;
 
 use super::changes::{callee_changes, changes, in_library, Memo, Root, Roots};
 
+/// Is function `d` a typed array's method that writes its elements through the array's buffer, so
+/// that neither its receiver's mode nor its parameter says so?
+pub(super) fn writer(cx: &Ctx, d: DefId) -> bool {
+    let Some(Def::Fn(f)) = &cx.defs[d.0 as usize] else {
+        return false;
+    };
+    let name = f.name.rsplit("::").next().unwrap_or(&f.name);
+    let Some((class, method)) = name.rsplit_once('.') else {
+        return false;
+    };
+    f.name.contains("typed_array")
+        && class.ends_with("Array")
+        && matches!(method, "fill" | "copyWithin" | "reverse" | "sort" | "set")
+}
+
 /// Set `changes_held` on every closure and class `clone()` (module docs).
 pub(crate) fn record_changed_captures(cx: &mut Ctx) {
     if !shares_a_function(cx) {

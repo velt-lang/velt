@@ -1,0 +1,12 @@
+// Valid: a closure of the same function type as one in `shared(...)` isn't refused for that.
+type F = (x: i64) => i64;
+class Counter { n: i64 = 0; inc: F; constructor() { this.inc = (x: i64): i64 => x; } }
+function pure(): F { return (x: i64): i64 => x * 2; }
+async function main() {
+  const c = new Counter();
+  let k: i64 = 0;
+  c.inc = (x: i64): i64 => { k += x; return k; };
+  console.log(c.inc(2), c.inc(3));
+  const s = shared(pure());
+  console.log(s(4));
+}

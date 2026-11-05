@@ -1,1 +1,0 @@
-shared_fn_route_field_clone.vlt:10:5: error: this closure modifies captured `b`, so it must stay on the task that created it

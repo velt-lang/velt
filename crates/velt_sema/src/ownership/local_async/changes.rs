@@ -45,6 +45,7 @@ use crate::hir::{
 use crate::ownership::local_closures::walk::{self, Visit};
 
 use super::reach::{constructor, plain, reached_locals, reaches};
+use super::record::writer;
 use super::targets::Read;
 
 /// A callback that a library runs on other threads: the closure, and where (with the label) the
@@ -437,7 +438,7 @@ fn call_changes(
                     Some(Def::Fn(f)) => f.params.get(f.captures.len() + i).map(|p| p.mode),
                     _ => None,
                 };
-                let changes = mutable || param == Some(PassMode::BorrowMut);
+                let changes = mutable || param == Some(PassMode::BorrowMut) || writer(cx, d);
                 if !changes || reader(cx, d) {
                     return None;
                 }

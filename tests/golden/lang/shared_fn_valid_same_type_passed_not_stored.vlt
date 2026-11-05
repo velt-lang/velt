@@ -1,0 +1,10 @@
+// Valid: a closure of the same function type as one in `shared(...)` isn't refused for that.
+type F = (v: i64) => void;
+function each(a: i64[], f: F): void { for (const v of a) { f(v); } }
+function share(f: F): shared<F> { return shared(f); }
+async function main() {
+  const s = share((v: i64): void => {});
+  let n: i64 = 0;
+  each([1, 2], (v: i64): void => { n += v; });
+  console.log(n, s == null);
+}

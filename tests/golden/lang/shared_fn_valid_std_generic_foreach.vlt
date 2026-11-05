@@ -1,0 +1,10 @@
+// Valid: a closure of the same function type as one in `shared(...)` isn't refused for that.
+type F = (x: number) => number;
+function share(f: F): shared<F> { return shared(f); }
+async function main() {
+  const s = share((x: number): number => x);
+  let total = 0;
+  const r = [1, 2, 3].map((x: number): number => { total += x; return x; });
+  const kept = [1].map((x) => (y: number): number => { total += y; return y; });
+  console.log(total, r.length, kept[0](1), total, s == null);
+}

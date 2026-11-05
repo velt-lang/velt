@@ -1,1 +1,0 @@
-shared_fn_route_mutex_in_array.vlt:6:10: error: this function captures `m`, a `Mutex<i64[]>` held by value, and it is in `shared(...)`, so each call would have a lock of its own

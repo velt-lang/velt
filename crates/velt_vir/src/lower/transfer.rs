@@ -98,8 +98,8 @@ impl Cx<'_> {
     }
 
     /// Can a value of `t` reach what the many-threads check looks at (glue/many.rs): a function or
-    /// interface value, or what its strict walk panics on, a lock or an `Atomic` held by value or a
-    /// class whose `clone()` may change its object?
+    /// interface value, or what its strict walk panics on, a lock or an `Atomic` held by value, a
+    /// class whose `clone()` may change its object, a `g` or `y` regex or a resource without `clone()`?
     pub(super) fn reaches_held(&mut self, t: TyId) -> bool {
         self.reaches_held_in(t, &mut FxHashSet::default())
     }
@@ -115,7 +115,11 @@ impl Cx<'_> {
             TyKind::Adt(d, _) if super::atomic::is_atomic(self, d) || self.is_lock(t) => {
                 return true
             }
-            TyKind::Adt(..) if self.clone_may_change(t) => return true,
+            TyKind::Adt(..)
+                if self.clone_may_change(t) || self.is_regexp(t) || self.uncopyable(t) =>
+            {
+                return true
+            }
             TyKind::Adt(d, _) if self.is_class(t) && self.has_subclasses(d) => return true,
             TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
             _ => self.part_types(t),
@@ -131,6 +135,28 @@ impl Cx<'_> {
         matches!(self.hir.def(d), hir::Def::Adt(a)
             if a.name.starts_with(velt_common::std_dir!(prelude))
                 && (a.name.ends_with("::Mutex") || a.name.ends_with("::RwLock")))
+    }
+
+    /// Is `t` the standard library's `RegExp`?
+    pub(super) fn is_regexp(&self, t: TyId) -> bool {
+        let TyKind::Adt(d, _) = self.kind(t) else {
+            return false;
+        };
+        matches!(self.hir.def(d), hir::Def::Adt(a)
+            if velt_common::std_modules::is_std(&a.name) && a.name.ends_with("::RegExp"))
+    }
+
+    /// The index of field `name` of class or struct `t`.
+    pub(super) fn field_index(&self, t: TyId, name: &str) -> Option<u32> {
+        let TyKind::Adt(d, _) = self.kind(t) else {
+            return None;
+        };
+        match self.hir.def(d) {
+            hir::Def::Adt(a) => (a.fields.iter())
+                .position(|f| f.name == name)
+                .map(|i| i as u32),
+            _ => None,
+        }
     }
 
     /// A deep copy of a `t` runs a class's own `clone()`, which may change the object

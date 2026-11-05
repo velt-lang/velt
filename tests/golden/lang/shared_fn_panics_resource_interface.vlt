@@ -1,0 +1,26 @@
+// A resource without `clone()` behind an interface value: no call's copy can be made of it, so
+// `shared(...)` panics, not every call.
+type F = (x: i64) => i64;
+
+interface Rd {
+  get(): i64;
+}
+
+class RI implements Rd {
+  v: i64 = 1;
+  get(): i64 {
+    return this.v;
+  }
+  [Symbol.dispose]() {}
+}
+
+function mk(): F {
+  const h: Rd = new RI();
+  return (x: i64): i64 => h.get();
+}
+
+async function main() {
+  console.log("before");
+  const f = shared(mk());
+  console.log("made", f(1));
+}

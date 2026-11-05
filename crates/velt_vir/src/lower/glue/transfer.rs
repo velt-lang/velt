@@ -149,8 +149,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             return;
         }
         self.check_if_tagged(obj, |lw, o| {
-            lw.panic_if_strict_clone(ty);
             let op = lw.operand_place(o, Ty::Ptr);
+            lw.panic_if_strict_object(&op, ty);
             for (i, t) in lw.cx.adt_field_tys(ty).into_iter().enumerate() {
                 let fp = lw.field_place(&op, ty, i as u32);
                 lw.many_check(fp, t);

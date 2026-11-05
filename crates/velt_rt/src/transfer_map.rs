@@ -95,6 +95,15 @@ pub extern "C" fn velt_rt_xfer_resume(depth: u32) {
     DEPTH.with(|d| d.set(depth));
 }
 
+/// A panic was caught: the transfers it unwound out of are over. Their copies are forgotten, so
+/// the next transfer starts with an empty map, and what they deferred leaks with the rest of what
+/// the panicked code held.
+pub fn forget_open() {
+    DEPTH.with(|d| d.set(0));
+    TRANSFER.with(|t| *t.borrow_mut() = Transfer::default());
+    SUSPENDED.with(|s| s.borrow_mut().clear());
+}
+
 /// Start transferring a value (nested calls nest).
 #[no_mangle]
 pub extern "C" fn velt_rt_xfer_begin() {

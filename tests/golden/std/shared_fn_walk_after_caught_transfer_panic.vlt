@@ -1,0 +1,16 @@
+import { catchPanic } from "velt/task";
+type F = (x: i64) => i64;
+class B { n: i64 = 1; f: F = (x: i64): i64 => x; }
+async function bump(b: B): Promise<i64> { b.n += 100; return b.n; }
+interface Rd { get(): i64; }
+class RI implements Rd { v: i64 = 1; get(): i64 { return this.v; } [Symbol.dispose]() {} }
+async function use(r: Rd): Promise<i64> { return r.get(); }
+async function main() {
+  const m = shared(new Mutex<B>(new B()));
+  const r: Rd = new RI();
+  try { await catchPanic(async () => { const p = spawn(use(r)); return await p; }); } catch (e) { console.log("caught"); }
+  console.log(r.get());
+  m.with((b) => { b.n = 5; });
+  const t = m.with((b) => spawn(bump(b)));
+  console.log(await t, m.with((b) => b.n));
+}
