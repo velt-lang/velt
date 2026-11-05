@@ -250,7 +250,14 @@ transfers `x`, and an HTTP handler's environment), per-call sharing of such a ca
 race: sema rejects the closures it sees there (ownership/many.rs), and the many-threads check
 glue (glue/many.rs, entered through tagged env-transfer and `SLOT_TRANSFER` pointers) panics
 on the rest. A `shared<F>` of a function type is called directly (`Intrinsic::SharedRead`, sema
-`call_value`), without a lock: each call reads its own copy out of the box. `spawn` of an async
+`call_value`), without a lock, and each call runs on its own copy of what the function captured:
+an async closure copies for itself, and for any other function the call asks the environment's
+transfer entry for a copy (lower/callee.rs `shared_call_env`), a cost proportional to the captures.
+So a capture such a function changes would be lost: sema refuses it where it sees it, with the
+closures it calls (`ownership/local_async`), and the check at `shared(x)` panics on a function that
+holds a captured variable's cell or a class with its own `clone()`, whose `clone()` would run on
+one object from several threads (glue/transfer_env.rs). A `Mutex` around the function runs the
+calls one at a time, and allows all of these. `spawn` of an async
 closure literal called at once is the literal's task (captures transferred, async_fn/spawn.rs).
 A deep copy that reaches a resource without `clone()` elsewhere (a generic `T`, a function
 value's captures, an interface value's implementor) panics (glue/clone.rs). Strings keep their atomic counts (stage 1); `shared<T>` stays atomic.

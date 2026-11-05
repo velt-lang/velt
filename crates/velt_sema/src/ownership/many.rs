@@ -14,7 +14,7 @@ use crate::ctx::Ctx;
 use crate::defs::BodyState;
 use crate::hir::{
     Callee, Def, DefId, Expr, ExprKind as E, Intrinsic, LocalDef, LocalId, PassMode, Stmt,
-    StmtKind as S, TyId,
+    StmtKind as S, TyId, TyKind,
 };
 use crate::visit::{self, VisitMut};
 
@@ -32,24 +32,72 @@ pub(crate) fn check_many_threads(cx: &mut Ctx) {
             continue;
         };
         let bound = closure_consts(&mut f.body.block, &f.body.locals);
-        let mut points: Vec<Vec<DefId>> = vec![];
+        let mut points: Vec<(Vec<DefId>, bool)> = vec![];
         visit::exprs_mut(&mut f.body.block, &mut |e: &mut Expr| {
             let E::Call { callee, args } = &e.kind else {
                 return;
             };
             if let Callee::Intrinsic(Intrinsic::SharedNew) = callee {
                 for a in args {
-                    points.push(closures_in(a, &bound));
+                    points.push((closures_in(a, &bound), lock_type(cx, a.ty)));
                 }
             }
         });
         cx.defs[d.0 as usize] = Some(Def::Fn(f));
         let mut reported = FxHashSet::default();
-        for closures in points {
+        for (closures, locked) in points {
             for c in closures {
                 if reported.insert(c) {
                     check_closure(cx, c, &Copied::Shared);
+                    check_shared_captures(cx, c, locked);
                 }
+            }
+        }
+    }
+}
+
+/// Is `t` a `Mutex` or an `RwLock`, whose value one thread at a time has?
+fn lock_type(cx: &Ctx, t: TyId) -> bool {
+    matches!(cx.ty.kind(t), TyKind::Adt(d, _)
+        if Some(*d) == cx.mutex_ty() || Some(*d) == cx.rwlock_ty())
+}
+
+/// The captures that a function in `shared(...)` can't have. A lock held by value would be
+/// copied with the function, which would then lock its own copy. A class with its own `clone()`
+/// would run that `clone()` on the same object from several threads at once for the calls' copies,
+/// unless a lock (`locked`) runs the calls one at a time.
+fn check_shared_captures(cx: &mut Ctx, c: DefId, locked: bool) {
+    let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
+        return;
+    };
+    let span = f.span;
+    let caps: Vec<(String, TyId)> = (f.captures.iter())
+        .filter(|k| k.mode == PassMode::Owned)
+        .map(|k| {
+            let l = &f.body.locals[k.inner.0 as usize];
+            (l.name.clone(), l.ty)
+        })
+        .collect();
+    for (name, ty) in caps {
+        if lock_type(cx, ty) {
+            let tn = cx.display(ty);
+            cx.error(
+                Diagnostic::error(
+                    format!("this function captures `{name}`, a `{tn}` held by value, and it is in `shared(...)`, so each call would have a lock of its own"),
+                    span,
+                )
+                .with_note(format!("share the lock: `const {name} = shared(new {tn}(…))`")),
+            );
+        } else if let (false, TyKind::Adt(d, _)) = (locked, cx.ty.kind(ty).clone()) {
+            if cx.own_clone(d).is_some() {
+                let tn = cx.display(ty);
+                cx.error(
+                    Diagnostic::error(
+                        format!("this function captures `{name}`, and it is in `shared(...)`, so each call would run `{tn}`'s `clone()` on the same object, from several threads at once"),
+                        span,
+                    )
+                    .with_note(format!("share the object: `const {name} = shared(new Mutex(…))`, or put the function itself in a `Mutex`")),
+                );
             }
         }
     }

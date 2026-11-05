@@ -349,11 +349,11 @@ impl FnCx<'_, '_> {
             };
             return self.iface_call(f, s, &[], args, None, span);
         }
-        // A function in `shared(...)`: every thread may call it, each call on its own copy of
-        // what the function captured.
+        // A function in `shared(...)`: every thread may call it without a lock, each call on its
+        // own copy of what the function captured, sync or async (velt_vir callee.rs
+        // `shared_call_env`). What would change a capture is refused (`ownership::local_async`).
         if let TyKind::Shared(inner) = *self.cx.ty.kind(f.ty) {
             if matches!(self.cx.ty.kind(inner), TyKind::FnPtr { .. }) {
-                self.cx.frozen_reads = true;
                 let mut held = f;
                 set_place_mode(&mut held, UseMode::Borrow);
                 let read = H::Call {

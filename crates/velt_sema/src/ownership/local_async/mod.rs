@@ -123,6 +123,23 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
         if let (Some(w), false) = (to_std, reported.contains(&c)) {
             crossing_sync(cx, c, Some(w));
         }
+        // In `shared(...)`: every thread holding it calls it, each call on a copy of what it
+        // captured, so a change would be lost. A `Mutex` around it runs the calls one at a time.
+        let in_shared =
+            (p.why[n][0]).filter(|w| p.flags[n] & CROSSES != 0 && w.boundary == Boundary::Shared);
+        if let Some(w) = in_shared {
+            crossing_sync(cx, c, Some(w));
+            if !cx.callback_wrappers.contains_key(&c)
+                && !cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_library)
+            {
+                let label = reaches(cx, &w);
+                cx.crossing_callbacks.push(Crossing {
+                    closure: c,
+                    at: w.span,
+                    label,
+                });
+            }
+        }
         if let Some(w) = to_std {
             let copied = crate::ownership::Copied::Crossing(w.span, reaches(cx, &w));
             crate::ownership::check_copied_closure(cx, c, &copied);
@@ -281,7 +298,19 @@ fn crossing_sync(cx: &mut Ctx, c: DefId, why: Option<Why>) {
     {
         return;
     }
+    count_through(cx, c, why);
     report_mutated(cx, c, why, "closure");
+}
+
+/// Counts what closure `c` changes through the closures it captured with what it changes itself,
+/// at a boundary in the program. What a library runs on other threads has its own check, which
+/// names the call (`callbacks`).
+fn count_through(cx: &mut Ctx, c: DefId, why: Option<Why>) {
+    if why.is_some_and(|w| !w.in_library) {
+        let info = cx.fn_info_mut(c);
+        let through = std::mem::take(&mut info.mutated_through);
+        info.mutated_captures.extend(through);
+    }
 }
 
 /// Record what was decided for async closure `c`.
@@ -302,6 +331,7 @@ fn finish(cx: &mut Ctx, c: DefId, local: bool, why: Option<Why>) {
         f.shares_captures = true;
         return;
     }
+    count_through(cx, c, why);
     report_mutated(cx, c, why, "async closure");
     report_generators(cx, c, why);
     report_atomics(cx, c, why, false);
@@ -525,6 +555,11 @@ fn report_mutated(cx: &mut Ctx, c: DefId, why: Option<Why>, what: &str) {
     let mutated = std::mem::take(&mut cx.fn_info_mut(c).mutated_captures);
     let closure = cx.def_spans.get(c.0 as usize).copied();
     for (name, at) in mutated {
+        // Also through the closures that call `c` (`mutated_captures`): one change, one error.
+        if cx.reported_mutations.contains(&(name.clone(), at)) {
+            continue;
+        }
+        cx.reported_mutations.push((name.clone(), at));
         // The capture is then moved into the closure: no second error for a later use of it.
         if let Some(span) = closure {
             cx.reported_captures.push((name.clone(), span));

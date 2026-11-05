@@ -387,6 +387,7 @@ impl FnCx<'_, '_> {
         }
         // Allowed while the closure stays on its task (`ownership::local_async`).
         let mutated = mutated_captures(&frame);
+        let through = self.mutated_through(&frame);
         let captures = self.capture_modes(&frame, span);
         let clause = throws.as_ref().map_or(span, |t| t.span);
         if declared_err.is_none() {
@@ -405,6 +406,7 @@ impl FnCx<'_, '_> {
         let info = self.cx.fn_info_mut(def);
         info.escaping = escaping || is_async;
         info.mutated_captures = mutated;
+        info.mutated_through = through;
         self.finish_closure(Checked {
             def,
             frame,
@@ -732,6 +734,22 @@ impl FnCx<'_, '_> {
                 }
             }
         }
+    }
+}
+
+impl FnCx<'_, '_> {
+    /// What a closure with this frame changes through the closures it captured: a call of one of
+    /// those changes the same variable, wherever this one runs.
+    fn mutated_through(&self, frame: &Frame) -> Vec<(String, Span)> {
+        let mut out = vec![];
+        for c in &frame.captures {
+            if let Some(inner) = frame.closure_consts.get(&c.inner) {
+                let f = self.cx.fn_info(*inner);
+                out.extend(f.mutated_captures.iter().cloned());
+                out.extend(f.mutated_through.iter().cloned());
+            }
+        }
+        out
     }
 }
 

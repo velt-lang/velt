@@ -3,13 +3,18 @@
 //! environment, copies a shared one, and gives the environment captured variables' cells of
 //! its own. Called with a tagged pointer, it runs the many-threads check instead (many.rs).
 
-use velt_sema::hir::{DefId, PassMode, TyId};
+use velt_sema::hir::{DefId, PassMode, TyId, TyKind};
 
 use crate::lower::closure::closure_name;
 use crate::lower::operand::proj;
 use crate::lower::rt::Rt;
 use crate::lower::{cfunc, cint, Cx, FnLower, Work};
 use crate::vir::{BinOp, Function, Operand, Place, Proj, Rvalue, Terminator, Ty};
+
+/// The tags of an environment pointer given to its transfer entry for something other than a
+/// transfer, beside the many-threads check's low bit (many.rs). Environments are aligned to 8.
+const ASK_CALL_COPY: i128 = 2;
+const ASK_SHARED_CHECK: i128 = 4;
 
 impl<'c, 'h> FnLower<'c, 'h> {
     /// `{ code, env }`: a heap env goes through its transfer entry; a null env (no captures)
@@ -31,9 +36,61 @@ impl<'c, 'h> FnLower<'c, 'h> {
         self.switch_to(done);
     }
 
+    /// What a call of a `shared` function runs on, from its environment `env`'s transfer `entry`:
+    /// a copy for the caller to drop, or null when the code copies what it captured itself.
+    pub(in crate::lower) fn env_call_copy(&mut self, entry: Operand, env: Operand) -> Operand {
+        let asked = self.rvalue_temp(
+            Ty::Ptr,
+            Rvalue::Binary(BinOp::PtrAdd, env, cint(ASK_CALL_COPY, Ty::I64)),
+        );
+        self.call_entry(entry, vec![asked], vec![Ty::Ptr], Ty::Ptr)
+    }
+
+    /// `f`, just put in `shared(...)` at `place`: its environment's transfer entry panics if the
+    /// function is one that needs to change what it captured.
+    pub(in crate::lower) fn check_shared_fn(&mut self, place: &Place) {
+        let env = self.rvalue_temp(
+            Ty::Ptr,
+            Rvalue::Use(Operand::Copy(proj(place, Proj::Field(1)))),
+        );
+        let done = self.new_block();
+        let has = self.non_null(env.clone());
+        self.when(has, done);
+        let entry = self.env_transfer_entry(env.clone());
+        let has = self.non_null(entry.clone());
+        self.when(has, done);
+        let asked = self.rvalue_temp(
+            Ty::Ptr,
+            Rvalue::Binary(BinOp::PtrAdd, env, cint(ASK_SHARED_CHECK, Ty::I64)),
+        );
+        self.call_entry(entry, vec![asked], vec![Ty::Ptr], Ty::Ptr);
+        self.goto(done);
+        self.switch_to(done);
+    }
+
+    /// Prologue of an environment's transfer entry for the two asks above: returns from the entry
+    /// when `p` has one of their tags.
+    fn answer_asked(&mut self, p: Operand, ask: i128, answer: impl FnOnce(&mut Self, Operand)) {
+        let bits = self.rvalue_temp(Ty::U64, Rvalue::Cast(p.clone(), Ty::U64));
+        let low = self.rvalue_temp(
+            Ty::U64,
+            Rvalue::Binary(BinOp::BitAnd, bits, cint(ask, Ty::U64)),
+        );
+        let is = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, low, cint(0, Ty::U64)));
+        let (yes, no) = (self.new_block(), self.new_block());
+        self.branch(is, yes, no);
+        self.switch_to(yes);
+        let untagged = self.rvalue_temp(
+            Ty::Ptr,
+            Rvalue::Binary(BinOp::PtrAdd, p, cint(-ask, Ty::I64)),
+        );
+        answer(self, untagged);
+        self.switch_to(no);
+    }
+
     /// The transfer entry of heap env `env`: it follows the drop and clone entries
     /// (closure.rs `ENV_HEADER`).
-    pub(super) fn env_transfer_entry(&mut self, env: Operand) -> Operand {
+    pub(in crate::lower) fn env_transfer_entry(&mut self, env: Operand) -> Operand {
         let (word, _) = self.cx.size_align(Ty::Ptr);
         let tp = self.rvalue_temp(
             Ty::Ptr,
@@ -86,6 +143,41 @@ impl<'c, 'h> FnLower<'c, 'h> {
                 || caps
                     .iter()
                     .any(|(_, mode, ty)| *mode == PassMode::Owned && lw.cx.holds_counted(*ty)));
+        let sync = !lw.cx.fn_def(def).is_async || lw.cx.fn_def(def).is_generator;
+        let here = Operand::Copy(Place::local(env));
+        let copier = cfunc(lw.cx.func(Work::EnvClone(def, targs.to_vec())));
+        lw.answer_asked(here.clone(), ASK_CALL_COPY, |lw, e| {
+            let copy = match sync {
+                true => lw.call_entry(copier, vec![e], vec![Ty::Ptr], Ty::Ptr),
+                false => cint(0, Ty::Ptr),
+            };
+            lw.terminate(Terminator::Return(copy));
+        });
+        let cells3 = cells.clone();
+        let caps3 = caps.clone();
+        lw.answer_asked(here, ASK_SHARED_CHECK, |lw, e| {
+            if sync && !cells3.is_empty() {
+                lw.panic_msg(
+                    "a function that changes or shares a variable it captured is in `shared(...)`: each call runs on a copy of what it captured, so the change would be lost; keep the variable in a `shared(...)`, an `Atomic` or a `Mutex`",
+                );
+            }
+            let ep = lw.operand_place(e.clone(), Ty::Ptr);
+            let base = proj(&ep, Proj::Deref(Ty::Agg(ea)));
+            for (field, mode, ty) in caps3 {
+                if mode != PassMode::Owned {
+                    continue;
+                }
+                if matches!(lw.cx.kind(ty), TyKind::FnPtr { .. }) {
+                    lw.check_shared_fn(&proj(&base, Proj::Field(field)));
+                } else if lw.cx.own_clone(ty).is_some() {
+                    let name = lw.cx.type_name(ty);
+                    lw.panic_msg(&format!(
+                        "a function that captured a `{name}` is in `shared(...)`: calls from several threads would run its `clone()` on the same object at once; put the function in a `Mutex`"
+                    ));
+                }
+            }
+            lw.terminate(Terminator::Return(e));
+        });
         let (caps2, cells2) = (caps.clone(), cells.clone());
         lw.check_if_tagged(env, |lw, e| {
             if let Some(t) = unshareable {

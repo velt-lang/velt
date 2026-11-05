@@ -1,0 +1,1 @@
+panic: a function that changes or shares a variable it captured is in `shared(...)`: each call runs on a copy of what it captured, so the change would be lost; keep the variable in a `shared(...)`, an `Atomic` or a `Mutex`
