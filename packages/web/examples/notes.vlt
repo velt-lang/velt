@@ -1,0 +1,65 @@
+// A small JSON API on `web`: a sub-app, typed variables set by middleware, state requests share,
+// and a directory of files. `velt run examples/notes.vlt`, then:
+//   curl -H 'x-user: ann' -d 'hello' localhost:8080/api/notes
+//   curl localhost:8080/api/notes/1
+import { serve } from "http-server";
+import { App, cors, logger, requestId, serveStatic } from "../src/lib";
+
+struct Vars {
+  user: string;
+}
+
+struct Note {
+  id: number;
+  by: string;
+  text: string;
+}
+
+function vars(): Vars {
+  return { user: "anonymous" };
+}
+
+async function main() {
+  // What requests share is explicit: a handler copies anything else it captures.
+  const notes = shared(new Mutex<Note[]>([]));
+
+  const api = new App<Vars>(vars);
+  api.around(async (c, next) => {
+    c.vars.user = c.req.headers.get("x-user") ?? c.vars.user;
+    return await next(c);
+  });
+  api.get("/notes", async (c) => c.json(notes.with((all) => structuredClone(all))));
+  api.get("/notes/:id", async (c) => {
+    const id = parseInt(c.param("id") ?? "");
+    const note = notes.with((all) => {
+      const found = all.find((n) => n.id == id);
+      return found == null ? null : structuredClone(found);
+    });
+    return note == null ? c.json({ error: "no such note" }, 404) : c.json(note);
+  });
+  api.post("/notes", async (c) => {
+    const text = await c.req.text();
+    const by = c.vars.user;
+    const note = notes.with((all) => {
+      const made: Note = { id: all.length + 1, by, text };
+      all.push(structuredClone(made));
+      return made;
+    });
+    return c.json(note, 201);
+  });
+
+  const app = new App<Vars>(vars);
+  app.use(logger());
+  app.use(requestId());
+  app.use(cors());
+  app.use(serveStatic("./public"));
+  app.route("/api", api);
+  app.onError(async (e, c) => {
+    console.error("failed:", e);
+    return c.json({ error: "something went wrong" }, 500);
+  });
+
+  const handler = app.handler();
+  const server = await serve({ port: 8080 }, (req: Request) => handler(req));
+  console.log(`listening on http://127.0.0.1:${server.port}`);
+}

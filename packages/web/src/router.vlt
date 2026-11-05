@@ -1,0 +1,146 @@
+// web (internal): `Router`, a tree of path segments. A request walks it once, by index, and only
+// the values of parameters and wildcards are copied out of the path.
+
+/** A pattern's segments, by index: `/users/:id/*`. */
+class Node {
+  /** The children for literal segments. */
+  literals: Map<string, Node> = new Map();
+  /** The child for a `:name` segment. */
+  param: Node | null = null;
+  /** The number of the route ending here, by method. */
+  routes: Map<string, number> = new Map();
+  /** The number of the route of a trailing `*`, which takes the rest of the path, by method. */
+  wildcard: Map<string, number> = new Map();
+}
+
+const SLASH = 47;
+const COLON = 58;
+
+/**
+ * The routes of an app: `(method, pattern)` to a number. A literal beats `:name` beats `*`. It holds
+ * no function values, so all threads read one tree in place (`shared`) and `find` writes only what
+ * it is given.
+ */
+export class Router {
+  root: Node = new Node();
+
+  /**
+   * Adds a route; a later one for the same method and pattern replaces the earlier. A pattern is
+   * segments between slashes: literal, `:name`, or a last `*`, which matches the rest of the path,
+   * also nothing. Returns its parameter names in path order, the value of a `*` being named `*`.
+   */
+  add(method: string, pattern: string, route: number): string[] {
+    let node = this.root;
+    const names: string[] = [];
+    const parts = pattern.split("/");
+    for (let i = 0; i < parts.length; i++) {
+      const part = parts[i];
+      if (i == 0 && part == "") {
+        continue;
+      }
+      if (part == "*" && i == parts.length - 1) {
+        names.push("*");
+        node.wildcard.set(method, route);
+        return names;
+      }
+      if (part.length > 1 && part.charCodeAt(0) == COLON) {
+        names.push(part.slice(1));
+        let next = node.param;
+        if (next == null) {
+          next = new Node();
+          node.param = next;
+        }
+        node = next;
+      } else {
+        let next = node.literals.get(part);
+        if (next == null) {
+          next = new Node();
+          node.literals.set(part, next);
+        }
+        node = next;
+      }
+    }
+    node.routes.set(method, route);
+    return names;
+  }
+
+  /**
+   * The number of the route for `method` and `path` (a pathname starting with `/`), its parameters'
+   * raw values added to `values`; or -1, with the methods the path has added to `allowed` (none:
+   * no such path).
+   */
+  find(method: string, path: string, values: string[], allowed: string[]): number {
+    return walk(this.root, method, path, 1, values, allowed);
+  }
+}
+
+function walk(
+  node: Node,
+  method: string,
+  path: string,
+  from: number,
+  values: string[],
+  allowed: string[],
+): number {
+  if (from > path.length) {
+    const hit = pick(node.routes, method, allowed);
+    return hit >= 0 ? hit : rest(node, method, path, path.length, values, allowed);
+  }
+  let end = from;
+  while (end < path.length && path.charCodeAt(end) != SLASH) {
+    end++;
+  }
+  const segment = path.slice(from, end);
+  const literal = node.literals.get(segment);
+  if (literal != null) {
+    const hit = walk(literal, method, path, end + 1, values, allowed);
+    if (hit >= 0) {
+      return hit;
+    }
+  }
+  const param = node.param;
+  if (param != null && end > from) {
+    values.push(segment);
+    const hit = walk(param, method, path, end + 1, values, allowed);
+    if (hit >= 0) {
+      return hit;
+    }
+    values.pop();
+  }
+  return rest(node, method, path, from, values, allowed);
+}
+
+function rest(
+  node: Node,
+  method: string,
+  path: string,
+  from: number,
+  values: string[],
+  allowed: string[],
+): number {
+  const hit = pick(node.wildcard, method, allowed);
+  if (hit >= 0) {
+    values.push(path.slice(from));
+  }
+  return hit;
+}
+
+/** The route for `method`, HEAD also taking GET's; or -1, noting the methods there are. */
+function pick(routes: Map<string, number>, method: string, allowed: string[]): number {
+  const hit = routes.get(method);
+  if (hit != null) {
+    return hit;
+  }
+  if (method == "HEAD") {
+    const get = routes.get("GET");
+    if (get != null) {
+      return get;
+    }
+  }
+  for (const name of routes.keys()) {
+    if (!allowed.includes(name)) {
+      allowed.push(name);
+    }
+  }
+  return -1;
+}

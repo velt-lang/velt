@@ -1,0 +1,70 @@
+// web (internal): `cors()`, the Fetch standard's CORS protocol as a plain middleware.
+
+import { Handler, Middleware } from "../types";
+
+/** The options of `cors`. */
+export struct CorsOptions {
+  /** The origins allowed (default: any, answered with `*`). */
+  origins?: string[];
+  /** The methods a preflight allows (default: GET, HEAD, PUT, POST, PATCH, DELETE). */
+  methods?: string[];
+  /** The request headers a preflight allows (default: those the preflight asks for). */
+  headers?: string[];
+  /** The response headers a page may read. */
+  exposeHeaders?: string[];
+  /** Whether requests may carry credentials; needs `origins`, as `*` can't be sent with them. */
+  credentials?: bool;
+  /** How many seconds a browser may keep a preflight's answer. */
+  maxAge?: number;
+}
+
+/**
+ * Answers CORS preflights (204) and marks other responses for the origins allowed. A request from
+ * an origin that isn't allowed goes on without the headers, so the browser refuses it: the server's
+ * work isn't stopped, as CORS doesn't protect the server.
+ */
+export function cors(options: CorsOptions = {}): Middleware {
+  const origins = options.origins ?? [];
+  const anyOrigin = origins.length == 0;
+  const credentials = options.credentials ?? false;
+  const methods = (options.methods ?? ["GET", "HEAD", "PUT", "POST", "PATCH", "DELETE"]).join(", ");
+  const allowHeaders = (options.headers ?? []).join(", ");
+  const expose = (options.exposeHeaders ?? []).join(", ");
+  const maxAge = options.maxAge ?? -1;
+  return (next: Handler): Handler => async (req: Request): Promise<Response> => {
+    const origin = req.headers.get("origin");
+    if (origin == null) {
+      return await next(req);
+    }
+    const allowed = anyOrigin || origins.includes(origin);
+    const preflight =
+      req.method == "OPTIONS" && req.headers.get("access-control-request-method") != null;
+    const res = preflight ? new Response(null, { status: 204 }) : await next(req);
+    if (!anyOrigin) {
+      res.headers.append("vary", "Origin");
+    }
+    if (!allowed) {
+      return res;
+    }
+    res.headers.set("access-control-allow-origin", anyOrigin ? "*" : origin);
+    if (credentials && !anyOrigin) {
+      res.headers.set("access-control-allow-credentials", "true");
+    }
+    if (preflight) {
+      res.headers.set("access-control-allow-methods", methods);
+      const asked = req.headers.get("access-control-request-headers");
+      if (allowHeaders.length > 0) {
+        res.headers.set("access-control-allow-headers", allowHeaders);
+      } else if (asked != null) {
+        res.headers.set("access-control-allow-headers", asked);
+        res.headers.append("vary", "Access-Control-Request-Headers");
+      }
+      if (maxAge >= 0) {
+        res.headers.set("access-control-max-age", `${maxAge}`);
+      }
+    } else if (expose.length > 0) {
+      res.headers.set("access-control-expose-headers", expose);
+    }
+    return res;
+  };
+}

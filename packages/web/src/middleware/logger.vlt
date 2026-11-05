@@ -1,0 +1,21 @@
+// web (internal): `logger()`, a line per request.
+
+import { Handler, Middleware } from "../types";
+import { pathOf } from "../path";
+
+/**
+ * Writes a line for each request when its head is ready: `GET /a 200 3ms`. `write` takes the line
+ * (default: `console.log`). The time doesn't include a streamed body's.
+ */
+export function logger(write: (line: string) => void = defaultWrite): Middleware {
+  return (next: Handler): Handler => async (req: Request): Promise<Response> => {
+    const start = Date.now();
+    const res = await next(req);
+    write(`${req.method} ${pathOf(req.url)} ${res.status} ${Date.now() - start}ms`);
+    return res;
+  };
+}
+
+function defaultWrite(line: string) {
+  console.log(line);
+}

@@ -1,0 +1,260 @@
+// `App`: routes, parameters, the onion and its errors, as a client sees them over `serve`.
+import { serve } from "http-server";
+import { describe, expect, it } from "velt/test";
+import { App, Context, Handler, Middleware } from "../src/lib";
+
+struct Vars {
+  user: string;
+}
+
+function vars(): Vars {
+  return { user: "anon" };
+}
+
+function tag(name: string): Middleware {
+  return (next: Handler): Handler => async (req: Request): Promise<Response> => {
+    const res = await next(req);
+    res.headers.append("x-tag", name);
+    return res;
+  };
+}
+
+async function get(h: Handler, path: string, method: string = "GET"): Promise<Response> {
+  return await h(new Request(`http://t${path}`, { method }));
+}
+
+describe("App", () => {
+  it("routes by method and path, literal before parameter before wildcard", async () => {
+    const app = new App<Vars>(vars);
+    app.get("/users/me", async (c) => c.text("me"));
+    app.get("/users/:id", async (c) => c.text(`user ${c.param("id")}`));
+    app.get("/users/:id/posts/:post", async (c) => c.text(`${c.param("id")}/${c.param("post")}`));
+    app.get("/files/*", async (c) => c.text(`rest ${c.param("*")}`));
+    app.post("/users", async (c) => c.text("made", 201));
+    const h = app.handler();
+    expect(await (await get(h, "/users/me")).text()).toBe("me");
+    expect(await (await get(h, "/users/42?x=1")).text()).toBe("user 42");
+    expect(await (await get(h, "/users/a%20b")).text()).toBe("user a b");
+    expect(await (await get(h, "/users/%zz")).text()).toBe("user %zz");
+    expect(await (await get(h, "/users/1/posts/2")).text()).toBe("1/2");
+    expect(await (await get(h, "/files/a/b.txt")).text()).toBe("rest a/b.txt");
+    expect(await (await get(h, "/files/")).text()).toBe("rest ");
+    expect((await get(h, "/users", "POST")).status).toBe(201);
+  });
+
+  it("falls back from a failed literal to the parameter", async () => {
+    const app = new App<Vars>(vars);
+    app.get("/a/b/c", async (c) => c.text("literal"));
+    app.get("/a/:x/d", async (c) => c.text(`param ${c.param("x")}`));
+    const h = app.handler();
+    expect(await (await get(h, "/a/b/d")).text()).toBe("param b");
+    expect(await (await get(h, "/a/b/c")).text()).toBe("literal");
+  });
+
+  it("forgets a parameter's value when a lookup goes back", async () => {
+    const app = new App<Vars>(vars);
+    app.get("/a/:x/c", async (c) => c.text("param"));
+    app.get("/a/*", async (c) => c.text(`rest ${c.param("*")}`));
+    expect(await (await get(app.handler(), "/a/b/d")).text()).toBe("rest b/d");
+  });
+
+  it("doesn't take an empty segment for a parameter", async () => {
+    const app = new App<Vars>(vars);
+    app.get("/u/:id", async (c) => c.text("user"));
+    const h = app.handler();
+    expect((await get(h, "/u/")).status).toBe(404);
+    expect((await get(h, "/u/1")).status).toBe(200);
+  });
+
+  it("says 404 for no path and 405 with Allow for another method; HEAD takes GET", async () => {
+    const app = new App<Vars>(vars);
+    app.get("/x", async (c) => c.text("x"));
+    app.delete("/x", async (c) => c.text("gone"));
+    const h = app.handler();
+    expect((await get(h, "/nope")).status).toBe(404);
+    const res = await get(h, "/x", "POST");
+    expect(res.status).toBe(405);
+    expect(res.headers.get("allow")).toBe("DELETE, GET, HEAD");
+    expect((await get(h, "/x", "HEAD")).status).toBe(200);
+  });
+
+  it("runs the onion in order, and a layer changes the response after next", async () => {
+    const app = new App<Vars>(vars);
+    app.use(tag("outer"));
+    app.use(tag("inner"));
+    app.around(async (c, next) => {
+      c.vars.user = "ann";
+      const res = await next(c);
+      res.headers.set("x-user", c.vars.user);
+      return res;
+    });
+    app.around(async (c, next) => {
+      c.vars.user = `${c.vars.user} too`;
+      return await next(c);
+    });
+    app.get("/", async (c) => c.text(c.vars.user));
+    const res = await get(app.handler(), "/");
+    expect(await res.text()).toBe("ann too");
+    expect(res.headers.get("x-tag")).toBe("inner, outer");
+    expect(res.headers.get("x-user")).toBe("ann too");
+  });
+
+  it(
+    "around wraps only the routes added after it, and every not-found; use wraps all",
+    async () => {
+      const app = new App<Vars>(vars);
+      app.get("/before", async (c) => c.text("b"));
+      app.use(tag("plain"));
+      app.around(async (c, next) => {
+        const res = await next(c);
+        res.headers.set("x-around", "1");
+        return res;
+      });
+      app.get("/after", async (c) => c.text("a"));
+      const h = app.handler();
+      const before = await get(h, "/before");
+      expect(before.headers.get("x-around")).toBe(null);
+      expect(before.headers.get("x-tag")).toBe("plain");
+      expect((await get(h, "/after")).headers.get("x-around")).toBe("1");
+      expect((await get(h, "/nope")).headers.get("x-around")).toBe("1");
+    },
+  );
+
+  it("scopes a layer to a prefix on a segment boundary", async () => {
+    const app = new App<Vars>(vars);
+    app.use(tag("api"), "/api");
+    app.get("/api/x", async (c) => c.text("x"));
+    app.get("/apix", async (c) => c.text("y"));
+    const h = app.handler();
+    expect((await get(h, "/api/x")).headers.get("x-tag")).toBe("api");
+    expect((await get(h, "/apix")).headers.get("x-tag")).toBe(null);
+  });
+
+  it("a plain middleware's new request reaches the route", async () => {
+    const app = new App<Vars>(vars);
+    app.use(
+      (next: Handler): Handler => async (req: Request): Promise<Response> => {
+        const headers = new Headers(req.headers);
+        headers.set("x-added", "1");
+        return await next(new Request(req.url, { method: req.method, headers }));
+      },
+    );
+    app.get("/", async (c) => c.text(c.req.headers.get("x-added") ?? "none"));
+    expect(await (await get(app.handler(), "/")).text()).toBe("1");
+  });
+
+  it("mounts a sub-app on a prefix, its layers inside the parent's", async () => {
+    const sub = new App<Vars>(vars);
+    sub.use(tag("sub"));
+    sub.get("/items/:id", async (c) => c.text(`item ${c.param("id")}`));
+    const app = new App<Vars>(vars);
+    app.use(tag("app"));
+    app.get("/other", async (c) => c.text("other"));
+    app.route("/api", sub);
+    const h = app.handler();
+    const res = await get(h, "/api/items/7");
+    expect(await res.text()).toBe("item 7");
+    expect(res.headers.get("x-tag")).toBe("sub, app");
+    expect((await get(h, "/other")).headers.get("x-tag")).toBe("app");
+  });
+
+  it("keeps a parent's around layers around a mounted route", async () => {
+    const sub = new App<Vars>(vars);
+    sub.get("/x", async (c) => c.text(c.vars.user));
+    const app = new App<Vars>(vars);
+    app.around(async (c, next) => {
+      c.vars.user = "parent";
+      return await next(c);
+    });
+    app.route("/api", sub);
+    expect(await (await get(app.handler(), "/api/x")).text()).toBe("parent");
+  });
+
+  it("an error reaches onError, and the layers outside still see the response", async () => {
+    const app = new App<Vars>(vars);
+    app.around(async (c, next) => {
+      const res = await next(c);
+      res.headers.set("x-seen", "1");
+      return res;
+    });
+    app.use(tag("outer"));
+    app.onError(async (e, c) => c.text("handled", 503));
+    app.get("/boom", async (c) => {
+      throw new Error("boom");
+    });
+    const res = await get(app.handler(), "/boom");
+    expect(res.status).toBe(503);
+    expect(await res.text()).toBe("handled");
+    expect(res.headers.get("x-tag")).toBe("outer");
+    expect(res.headers.get("x-seen")).toBe("1");
+  });
+
+  it("an error in a plain middleware or an around reaches onError", async () => {
+    const app = new App<Vars>(vars);
+    app.onError(async (e, c) => c.text("handled", 503));
+    app.use(
+      (next: Handler): Handler => async (req: Request): Promise<Response> => {
+        if (req.url.endsWith("/plain")) {
+          throw new Error("plain");
+        }
+        return await next(req);
+      },
+    );
+    app.around(async (c, next) => {
+      if (c.path == "/around") {
+        throw new Error("around");
+      }
+      return await next(c);
+    });
+    app.get("/plain", async (c) => c.text("no"));
+    app.get("/around", async (c) => c.text("no"));
+    const h = app.handler();
+    expect((await get(h, "/plain")).status).toBe(503);
+    expect((await get(h, "/around")).status).toBe(503);
+  });
+
+  it("a custom not-found answers, with query and json helpers", async () => {
+    const app = new App<Vars>(vars);
+    app.notFound(async (c) => {
+      const missing = c.query("q") ?? "";
+      return c.json({ missing }, 404);
+    });
+    const res = await get(app.handler(), "/nope?q=hi");
+    expect(res.status).toBe(404);
+    expect(await res.text()).toBe('{"missing":"hi"}');
+  });
+
+  it("makes as many handlers as it is asked for, each with fresh variables", async () => {
+    const app = new App<Vars>(vars);
+    app.around(async (c, next) => {
+      c.vars.user = `${c.vars.user}!`;
+      return await next(c);
+    });
+    app.get("/", async (c) => c.text(c.vars.user));
+    const one = app.handler();
+    const two = app.handler();
+    expect(await (await get(one, "/")).text()).toBe("anon!");
+    expect(await (await get(one, "/")).text()).toBe("anon!");
+    expect(await (await get(two, "/")).text()).toBe("anon!");
+  });
+
+  it("serves over HTTP, keeping each request's variables apart", async () => {
+    const app = new App<Vars>(vars);
+    app.around(async (c, next) => {
+      c.vars.user = c.req.headers.get("x-user") ?? "anon";
+      return await next(c);
+    });
+    app.get("/who/:n", async (c) => c.text(`${c.param("n")} ${c.vars.user}`));
+    const h = app.handler();
+    const server = await serve({ port: 0 }, (req: Request) => h(req));
+    const base = `http://127.0.0.1:${server.port}`;
+    try {
+      const a = await fetch(`${base}/who/1`, { headers: { "x-user": "ann" } });
+      const b = await fetch(`${base}/who/2`);
+      expect(await a.text()).toBe("1 ann");
+      expect(await b.text()).toBe("2 anon");
+    } finally {
+      await server.shutdown();
+    }
+  });
+});
