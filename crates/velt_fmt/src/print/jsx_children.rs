@@ -127,6 +127,23 @@ fn js_len(word: &str) -> usize {
     word.encode_utf16().count()
 }
 
+/// What a separator after `word` measures: the part after its last tab. `x{"\t"}y` prints as the
+/// one word `x<tab>y` while its line holds, and must lay out the same when read back.
+fn last_piece(word: &str) -> &str {
+    word.rsplit('\t')
+        .next()
+        .unwrap_or(word)
+        .trim_start_matches(' ')
+}
+
+/// What a separator before `word` measures: the part before its first tab.
+fn first_piece(word: &str) -> &str {
+    word.split('\t')
+        .next()
+        .unwrap_or(word)
+        .trim_end_matches(' ')
+}
+
 /// Separator where no whitespace is written (prettier's `separatorNoWhitespace`).
 fn separator_no_whitespace(word: &str, closes_itself: bool) -> Part {
     if closes_itself && js_len(word) != 1 {
@@ -176,7 +193,7 @@ impl Builder {
         if let Some(lead) = lead {
             self.push_line(if lead.contains(['\n', '\r']) {
                 let first = words.first().map_or("", String::as_str);
-                separator_with_whitespace(first, next_closes)
+                separator_with_whitespace(first_piece(first), next_closes)
             } else {
                 Part::Space(lead.to_string())
             });
@@ -190,7 +207,7 @@ impl Builder {
             }
             self.push(text(word.as_str()));
         }
-        let last = words.last().map_or("", String::as_str);
+        let last = last_piece(words.last().map_or("", String::as_str));
         let sep = match trail {
             Some(t) if t.contains(['\n', '\r']) => separator_with_whitespace(last, next_closes),
             Some(t) => Part::Space(t.to_string()),
@@ -283,7 +300,7 @@ impl<'a> Printer<'a> {
                         Some(Child::Text(raw)) if is_meaningful(raw) => {
                             let first = split_words(raw.trim_matches(is_jsx_space)).words;
                             let first = first.first().map_or("", String::as_str);
-                            separator_no_whitespace(first, closes)
+                            separator_no_whitespace(first_piece(first), closes)
                         }
                         _ => Part::Hard,
                     };

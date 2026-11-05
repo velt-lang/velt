@@ -305,6 +305,28 @@ const c = <p></p>;
     );
 }
 
+/// `x{"\\t"}y` prints as the one word `x<tab>y`: next to a tag written `<br />`, where the length
+/// of a word decides on the line break, it lays out the same when read back.
+#[test]
+fn a_container_lays_out_like_the_tab_it_becomes() {
+    let long = "a-word-long-enough-that-three-of-them-make-the-line-break-somewhere-ok";
+    for body in [
+        "<br />x{\"\\t\"}x".to_string(),
+        "x{\"\\t\"}x<br />".to_string(),
+        "<br />x{\" \\t\"}x".to_string(),
+        "x{\"\\t \"}x<br />".to_string(),
+        format!("<br />x{{\"\\t\"}}{long}"),
+        format!("{long}{{\"\\t\"}}x<br />"),
+        "<br />x\ty".to_string(),
+        "x\ty<br />".to_string(),
+    ] {
+        let src = format!("const a = <p>{body}</p>;\n");
+        if let Err(msg) = common::check(&src) {
+            panic!("{src:?}: {msg}");
+        }
+    }
+}
+
 /// Every sequence of three of these children with a tab in it, in an element and a component, on
 /// a short line and on one long enough to break: the text never changes and a second run changes
 /// nothing.
