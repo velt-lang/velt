@@ -1,0 +1,187 @@
+// postgres (internal): the binary array format as JSON, for a row's `T[]` fields: dimensions, then
+// every element (length-prefixed, -1 for NULL) in row-major order, as nested arrays. An element is
+// the JSON its type gives (values.velt).
+
+import { i32At } from "./backend";
+import {
+  C_ARRAY,
+  C_BOOL,
+  C_BYTEA,
+  C_FLOAT4,
+  C_FLOAT8,
+  C_INT2,
+  C_INT4,
+  C_INT8,
+  C_JSON,
+  C_JSONB,
+  C_OID,
+  C_TEXT,
+} from "./pg_type";
+import { Prepared } from "./prepared";
+import { byteArrayJson, floatValue, integerValue, renderValue } from "./values";
+
+// PostgreSQL's own limit on an array's dimensions.
+const MAX_DIMENSIONS: i64 = 6;
+
+/** Where an array's parse is, and what went wrong. */
+class ArrayReader {
+  b: u8[];
+  pos: i64;
+  end: i64;
+  statement: shared<Prepared>;
+  out: StringBuilder = new StringBuilder();
+  problem: string = "";
+
+  constructor(b: u8[], from: i64, len: i64, statement: shared<Prepared>) {
+    this.b = b;
+    this.pos = from;
+    this.end = from + len;
+    this.statement = statement;
+  }
+
+  i32(): i64 {
+    if (this.end - this.pos < 4) {
+      this.problem = "truncated array";
+      return 0;
+    }
+    const v = i32At(this.b, this.pos);
+    this.pos += 4;
+    return v;
+  }
+}
+
+/**
+ * The array at `b[from..from + len]` as JSON; "" with `problem` set in what's returned if it isn't
+ * one. `at` is where its element codecs start in the statement's `chains`.
+ */
+export function arrayJson(
+  b: u8[],
+  from: i64,
+  len: i64,
+  statement: shared<Prepared>,
+  at: i64,
+): ArrayResult {
+  const r = new ArrayReader(b, from, len, statement);
+  array(r, at);
+  return { json: r.out.toString(), problem: r.problem };
+}
+
+/** What `arrayJson` returns. */
+export struct ArrayResult {
+  json: string;
+  problem: string;
+}
+
+// A chain holds an array's codec chain within `CHAIN` places (decodable), so this recursion ends.
+function array(r: ArrayReader, at: i64) {
+  const ndim = r.i32();
+  r.i32(); // has-nulls flag
+  r.i32(); // element OID
+  if (ndim < 0 || ndim > MAX_DIMENSIONS) {
+    r.problem = `an array of ${ndim} dimensions`;
+    return;
+  }
+  const dims: i64[] = [];
+  let total: i64 = 1;
+  for (let i: i64 = 0; i < ndim; i++) {
+    const d = r.i32();
+    r.i32(); // lower bound
+    if (r.problem.length > 0) {
+      return;
+    }
+    if (d < 0) {
+      r.problem = "an array with a negative dimension";
+      return;
+    }
+    // Every element takes at least its 4 bytes of length, so more than fit can't be there.
+    total *= d;
+    if (total > (r.end - r.pos) / 4 + 1) {
+      r.problem = "truncated array";
+      return;
+    }
+    dims.push(d);
+  }
+  if (ndim == 0 || total == 0) {
+    r.out.append("[]");
+    return;
+  }
+  dimension(r, dims, 0, at);
+}
+
+function dimension(r: ArrayReader, dims: i64[], i: i64, at: i64) {
+  r.out.append("[");
+  const n = dims[i];
+  for (let k: i64 = 0; k < n && r.problem.length == 0; k++) {
+    if (k > 0) {
+      r.out.append(",");
+    }
+    if (i + 1 < (dims.length as i64)) {
+      dimension(r, dims, i + 1, at);
+    } else {
+      element(r, at);
+    }
+  }
+  r.out.append("]");
+}
+
+function element(r: ArrayReader, at: i64) {
+  const len = r.i32();
+  if (r.problem.length > 0) {
+    return;
+  }
+  if (len < 0) {
+    r.out.append("null");
+    return;
+  }
+  if (len > r.end - r.pos) {
+    r.problem = "truncated array";
+    return;
+  }
+  const from = r.pos;
+  r.pos = from + len;
+  const b = r.b;
+  const codec = r.statement.chains[at];
+  if (codec == C_INT2 || codec == C_INT4 || codec == C_INT8 || codec == C_OID) {
+    const v = integerValue(b, from, len, codec);
+    if (v.problem.length > 0) {
+      r.problem = v.problem;
+    } else {
+      r.out.append(`${v.value}`);
+    }
+  } else if (codec == C_FLOAT4 || codec == C_FLOAT8) {
+    const v = floatValue(b, from, len, codec);
+    if (v.problem.length > 0) {
+      r.problem = v.problem;
+    } else {
+      r.out.append(
+        v.value !== v.value || v.value == Infinity || v.value == -Infinity
+          ? "null"
+          : JSON.stringify(v.value),
+      );
+    }
+  } else if (codec == C_BOOL) {
+    r.out.append(len > 0 && b[from] == 0 ? "false" : "true");
+  } else if (codec == C_TEXT) {
+    r.out.append(JSON.stringify(b.utf8Slice(from, from + len)));
+  } else if (codec == C_BYTEA) {
+    r.out.append(byteArrayJson(b, from, len));
+  } else if (codec == C_JSON) {
+    r.out.append(b.utf8Slice(from, from + len));
+  } else if (codec == C_JSONB) {
+    r.out.append(b.utf8Slice(from + 1, from + len));
+  } else if (codec == C_ARRAY) {
+    const saved = r.end;
+    r.pos = from;
+    r.end = from + len;
+    array(r, at + 1);
+    r.pos = from + len;
+    r.end = saved;
+  } else {
+    const t = renderValue(b, from, len, codec);
+    if (t.problem.length > 0) {
+      r.problem = t.problem;
+    } else {
+      r.out.append(JSON.stringify(t.text));
+    }
+  }
+}

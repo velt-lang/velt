@@ -1,0 +1,155 @@
+// The protocol's messages on their own, no server.
+import { hexEncode } from "velt/encoding";
+import {
+  cstrEnd,
+  errorFields,
+  frameSize,
+  i16At,
+  i32At,
+  i64At,
+  rowsAffected,
+  u32At,
+} from "../src/backend";
+import {
+  closeStatement,
+  copyDone,
+  copyFail,
+  describeStatement,
+  execute,
+  Out,
+  parse,
+  passwordMessage,
+  query,
+  saslInitial,
+  sslRequest,
+  startup,
+  sync,
+  terminate,
+} from "../src/frontend";
+import { ascii, be16, be32, cstr, join, msg } from "./support/fake";
+
+function hex(o: Out): string {
+  return hexEncode(o.bytes.slice(0, o.len));
+}
+
+export function test_messages_are_framed() {
+  const o = new Out(4);
+  sync(o);
+  assertEq(hex(o), "5300000004");
+  o.len = 0;
+  execute(o);
+  assertEq(hex(o), "45000000090000000000");
+  o.len = 0;
+  query(o, "SELECT 1");
+  assertEq(hex(o), "510000000d53454c454354203100");
+  o.len = 0;
+  parse(o, "s", "q");
+  assertEq(hex(o), "500000000a73007100" + "0000");
+  o.len = 0;
+  describeStatement(o, "s");
+  assertEq(hex(o), "4400000007537300");
+  o.len = 0;
+  closeStatement(o, "s");
+  assertEq(hex(o), "4300000007537300");
+  o.len = 0;
+  sslRequest(o);
+  assertEq(hex(o), "0000000804d2162f");
+  o.len = 0;
+  terminate(o);
+  assertEq(hex(o), "5800000004");
+  o.len = 0;
+  copyDone(o);
+  assertEq(hex(o), "6300000004");
+  o.len = 0;
+  copyFail(o, "x");
+  assertEq(hex(o), "66000000067800");
+  o.len = 0;
+  passwordMessage(o, "pw");
+  assertEq(hex(o), "7000000007707700");
+  o.len = 0;
+  startup(o, ["user", "me"]);
+  assertEq(hex(o), "000000110003000075736572006d650000");
+  o.len = 0;
+  saslInitial(o, "M", "ab");
+  assertEq(hex(o), "700000000c4d00000000026162");
+}
+
+export function test_out_grows_past_its_first_size() {
+  const o = new Out(4);
+  const text = "x".repeat(100000);
+  o.text(text);
+  o.i32(1);
+  assertEq(o.len, 100004);
+  assertEq(o.bytes[99999], 120);
+  assertEq(o.bytes[100003], 1);
+}
+
+export function test_numbers_read_as_sent() {
+  const b: u8[] = [0xff, 0xff, 0xff, 0xfe, 0x7f, 0xff, 0xff, 0xff];
+  assertEq(i32At(b, 0), -2);
+  assertEq(u32At(b, 0), 4294967294);
+  assertEq(i16At(b, 0), -1);
+  assertEq(i32At(b, 4), 2147483647);
+  const c: u8[] = [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xfe];
+  assertEq(i64At(c, 0), -2);
+}
+
+export function test_frame_size_never_reads_past_the_end() {
+  const z = msg("Z", [73]);
+  assertEq(frameSize(z, 0, 6), 6);
+  for (let cut: i64 = 0; cut < 6; cut++) {
+    assertEq(frameSize(z, 0, cut), 0);
+  }
+  const short: u8[] = [90, 0, 0, 0, 3];
+  assertEq(frameSize(short, 0, 5), -1);
+  const huge: u8[] = [90, 0x40, 0, 0, 0];
+  assertEq(frameSize(huge, 0, 5), -1);
+  const big: u8[] = [90, 0x3f, 0xff, 0xff, 0xff];
+  assertEq(frameSize(big, 0, 5), 0);
+}
+
+export function test_error_fields() {
+  const body = join([
+    cstr("SERROR"),
+    cstr("C23505"),
+    cstr("Mduplicate"),
+    cstr("Dthe detail"),
+    cstr("nthe_key"),
+    [0],
+  ]);
+  const f = errorFields(body, 0, body.length as i64);
+  assertEq(f.code, "23505");
+  assertEq(f.message, "duplicate");
+  assertEq(f.detail, "the detail");
+  assertEq(f.constraint, "the_key");
+  // Cut anywhere: what's whole is kept, nothing past the end is read.
+  for (let cut: i64 = 0; cut < (body.length as i64); cut++) {
+    const part = errorFields(body, 0, cut);
+    assert(part.code.length > 0, "a code");
+  }
+  // Not one field at all.
+  assertEq(errorFields(ascii("Cunterminated"), 0, 13).code, "UNKNOWN");
+}
+
+export function test_rows_affected() {
+  const n = (tag: string): i64 => {
+    const b = ascii(tag);
+    return rowsAffected(b, 0, b.length as i64);
+  };
+  assertEq(n("UPDATE 3"), 3);
+  assertEq(n("INSERT 0 12"), 12);
+  assertEq(n("SELECT 5"), 5);
+  assertEq(n("BEGIN"), 0);
+  assertEq(n("CREATE TABLE"), 0);
+  assertEq(n(""), 0);
+  assertEq(n("7"), 0);
+  assertEq(n("COPY 99999999999999999999999"), 0);
+}
+
+export function test_cstr_end() {
+  const b: u8[] = [65, 0, 66];
+  assertEq(cstrEnd(b, 0, 3), 1);
+  assertEq(cstrEnd(b, 2, 3), -1);
+  assertEq(cstrEnd(b, 3, 3), -1);
+  assert(be16(1).length == 2 && be32(1).length == 4, "the helpers");
+}
