@@ -375,12 +375,23 @@ function seenBy(probes: shared<Mutex<TlsProbes>>): string {
   return probes.with((p) => p.seen.join(","));
 }
 
-// A server before PostgreSQL 17 says it has TLS, and then closes on a direct ClientHello.
-export async function test_prefer_goes_on_in_plain_text_when_direct_tls_fails() {
+// A server before PostgreSQL 17 says it has TLS, and then closes on a direct ClientHello. A server
+// that offers TLS never gets plain text: the failure is "ETLS", and nothing is sent unencrypted.
+export async function test_prefer_never_goes_on_in_plain_text_when_tls_fails() {
   const probes = shared(new Mutex<TlsProbes>(new TlsProbes()));
-  const port = await serveTlsProbes(probes, "S", 3);
-  assertEq(await connectAs(port, "prefer"), "connected");
-  assertEq(seenBy(probes), "ssl,tls,startup");
+  const port = await serveTlsProbes(probes, "S", 2);
+  let code = "connected";
+  let message = "";
+  try {
+    const db = await connect(`postgres://fake@127.0.0.1:${port}/db?sslmode=prefer`);
+    db.close();
+  } catch (e) {
+    code = e.code.clone();
+    message = e.message.clone();
+  }
+  assertEq(code, "ETLS");
+  assert(message.includes("TLS to 127.0.0.1 failed"), message);
+  assertEq(seenBy(probes), "ssl,tls");
 }
 
 // A server with no TLS: no second connection, and nothing that isn't PostgreSQL's for it to log.
@@ -405,25 +416,6 @@ export async function test_disable_asks_nothing() {
   const port = await serveTlsProbes(probes, "S", 1);
   assertEq(await connectAs(port, "disable"), "connected");
   assertEq(seenBy(probes), "startup");
-}
-
-// A server that only takes TLS refuses the plain connection: the error says what came first.
-export async function test_a_refused_fallback_names_the_tls_failure() {
-  const probes = shared(new Mutex<TlsProbes>(new TlsProbes()));
-  const port = await serveTlsProbes(probes, "S", 3, true);
-  let code = "connected";
-  let message = "";
-  try {
-    const db = await connect(`postgres://fake@127.0.0.1:${port}/db?sslmode=prefer`);
-    db.close();
-  } catch (e) {
-    code = e.code.clone();
-    message = e.message.clone();
-  }
-  assertEq(code, "28000");
-  assert(message.includes("no encryption"), message);
-  assert(message.includes("sslmode=prefer went on in plain text"), message);
-  assert(message.includes("TLS to 127.0.0.1 failed"), message);
 }
 
 // A server that closes instead of answering is a lost connection, not a panic or a wait.

@@ -108,27 +108,31 @@ async function outcome(url: string): Promise<string> {
   }
 }
 
-// `prefer` connects with what it can have; the stricter modes refuse.
-async function preferDoesWithout(url: string) {
-  assertEq(await outcome(url), "plain");
-  assertEq(await outcome(withMode(url, "prefer")), "plain");
-  assertEq(await outcome(withMode(url, "disable")), "plain");
-  assertEq(await outcome(withMode(url, "require")), "ETLS");
-  assertEq(await outcome(withMode(url, "verify-ca")), "ETLS");
-  assertEq(await outcome(withMode(url, "verify-full")), "ETLS");
-}
-
+// Every mode but `disable` refuses a server whose certificate nothing verifies: `prefer` doesn't go
+// on in plain text with a server that offers TLS. (libpq's `prefer` and `require` use TLS there with
+// the certificate unchecked, which velt/net can't do yet: README.md, "TLS".)
 export async function test_a_certificate_nothing_verifies() {
   const url = urlFrom(process.env.VELT_TEST_PG_TLS_UNTRUSTED_URL);
   if (url != null) {
-    await preferDoesWithout(url);
+    assertEq(await outcome(url), "ETLS");
+    assertEq(await outcome(withMode(url, "prefer")), "ETLS");
+    assertEq(await outcome(withMode(url, "disable")), "plain");
+    assertEq(await outcome(withMode(url, "require")), "ETLS");
+    assertEq(await outcome(withMode(url, "verify-ca")), "ETLS");
+    assertEq(await outcome(withMode(url, "verify-full")), "ETLS");
   }
 }
 
+// A server without TLS: `prefer` goes on in plain text; the stricter modes refuse.
 export async function test_a_server_without_tls() {
   const url = urlFrom(process.env.VELT_TEST_PG_PLAIN_URL);
   if (url != null) {
-    await preferDoesWithout(url);
+    assertEq(await outcome(url), "plain");
+    assertEq(await outcome(withMode(url, "prefer")), "plain");
+    assertEq(await outcome(withMode(url, "disable")), "plain");
+    assertEq(await outcome(withMode(url, "require")), "ETLS");
+    assertEq(await outcome(withMode(url, "verify-ca")), "ETLS");
+    assertEq(await outcome(withMode(url, "verify-full")), "ETLS");
   }
 }
 

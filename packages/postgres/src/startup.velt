@@ -3,7 +3,7 @@
 // `ReadyForQuery`.
 
 import { utf8Encode } from "velt/encoding";
-import { TcpStream } from "velt/net";
+import { PgStream } from "./transport";
 import { channel } from "velt/sync";
 import {
   AUTHENTICATION,
@@ -94,7 +94,7 @@ async function nextMessage(input: Input, deadline: f64): Promise<i64> throws PgE
   }
 }
 
-async function send(s: TcpStream, o: Out) {
+async function send(s: PgStream, o: Out) {
   await s.writeBytes(o.bytes, 0, o.len as number);
   o.len = 0;
 }
@@ -217,20 +217,6 @@ async function authenticate(c: PgConfig, input: Input, deadline: f64) {
   }
 }
 
-// A failed startup in plain text after `prefer` lost TLS says so: a server that requires TLS refuses
-// the plain connection, and its reason doesn't name the one that came first.
-function afterFallback(e: PgError, tlsFailure: string): PgError {
-  if (tlsFailure.length == 0) {
-    return e;
-  }
-  return new PgError(
-    e.code,
-    `${e.message} (sslmode=prefer went on in plain text after: ${tlsFailure})`,
-    e.detail,
-    e.constraint,
-  );
-}
-
 // One host: the socket, then the startup over it; the connection.
 async function attempt(
   c: PgConfig,
@@ -239,8 +225,7 @@ async function attempt(
   none: shared<Prepared>,
 ): Promise<Conn> throws PgError {
   const deadline = performance.now() + STARTUP_TIMEOUT_MS;
-  const opened = await socket(c, address, host, deadline);
-  const stream = opened.stream;
+  const stream = await socket(c, address, host, deadline);
   const input = new Input(stream, none);
   try {
     const o = new Out(256);
@@ -250,7 +235,7 @@ async function attempt(
   } catch (e) {
     stream.abort();
     stream.close();
-    throw afterFallback(ioError(e), opened.tlsFailure);
+    throw ioError(e);
   }
   const home = channel<Input>(1);
   const line = new Line(stream, home, none);

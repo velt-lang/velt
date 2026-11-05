@@ -107,27 +107,22 @@ The full guide: https://veltlang.com/docs/packages/postgres/.
   direct negotiation (ALPN `postgresql`), with the certificate always checked against Mozilla's
   roots and the PEM file named by `sslrootcert`, name included.
   - `disable` is plain text.
-  - `prefer` (the default) means TLS if it can be had, otherwise plain text. The client asks with
-    `SSLRequest`: a server without TLS goes on in plain text on that socket; one with TLS is
-    reopened with direct TLS, and if that fails for any reason but the network (a server older than
-    17, a certificate that doesn't verify) it is reopened in plain text.
+  - `prefer` (the default) asks with `SSLRequest` whether the server has TLS. A server without TLS
+    goes on in plain text on that socket. A server with TLS is reopened with direct TLS, and if that
+    fails the connection fails with `"ETLS"`: a server that offers TLS never gets plain text.
   - `require`, `verify-ca` and `verify-full` all connect with direct TLS and are equally strict: a
     failure is `"ETLS"`, never plain text.
 
-  **How `prefer` differs from libpq and from this package's earlier Rust driver.** They upgrade the
-  socket after `SSLRequest` and don't check the certificate, so those two servers get TLS there and
-  **plain text here: a server with a self-signed certificate is read and written unencrypted, and
-  nothing tells you**. Require TLS with `sslmode=verify-full` when that matters. A server that only
-  takes TLS (`hostssl`) and is older than 17 or has a certificate that doesn't verify refuses the
-  plain connection, so `prefer` fails there, with an error naming both failures. As in the Rust
-  driver and unlike libpq, a server that refuses a TLS connection (`hostnossl`) is not tried again
-  in plain text. Under `prefer` a server with TLS takes two connections to open one, three when direct
-  TLS then fails, and an older one logs "invalid length of startup packet" for the direct attempt.
-
-  `require` is stricter than libpq's too, which takes any certificate, and a server older than 17
-  can't be used with TLS at all. Both need `velt/net` to upgrade a plain socket and to connect
-  without checking the certificate, which it can't yet; `sslnegotiation=postgres` is accepted and
-  changes nothing, for that reason. SCRAM channel binding isn't offered.
+  **Not yet like libpq.** libpq's `prefer` and `require` upgrade the socket after `SSLRequest` and
+  use TLS without checking the certificate, so a server with a self-signed certificate, or one older
+  than 17, still gets an encrypted connection. Here they fail with `"ETLS"` under every mode but
+  `disable`, until `velt/net` can upgrade a plain socket and connect without checking the
+  certificate. Plain text in their place is not an option: only a server without TLS gets it.
+  `sslnegotiation=postgres` is accepted and changes nothing, for that reason. `verify-full` is the
+  mode that authenticates the server. As in the Rust driver and unlike libpq, a server that refuses
+  a TLS connection (`hostnossl`) is not tried again in plain text. Under `prefer` a server with TLS
+  takes two connections to open one, and an older one logs "invalid length of startup packet" for
+  the direct attempt. SCRAM channel binding isn't offered.
 - **SCRAM** has no SASLprep, since std has no Unicode normalization: a password goes as its own UTF-8
   bytes. ASCII passwords and those already in Unicode's compatibility normal form (NFKC) work. One
   that SASLprep would change (`Ⅸ` for `IX`, a no-break space, a soft hyphen) is refused by the
@@ -197,11 +192,14 @@ server still owes, so the next request finds the connection in step.
 
 - `src/lib.velt`: the API (re-exports); `client.velt`, `pool.velt`, `transaction.velt`, `copy_reader.velt`,
   `copy_writer.velt`, `errors.velt`: the public types.
-- The connection: `line.velt` (the state behind its lock), `failure_log.velt`, `connection.velt` (requests), `ops.velt` (what
-  `Client` and `Pool` share), `builder.velt` and `encoder.velt` (a request's bytes), `input.velt` and
-  `reply.velt` (a reply, and rows through velt/db's `readRows`), `drain.velt` (after a task went away),
-  `startup.velt`, `socket.velt`, `config.velt`, `describe.velt` and `prepared.velt` (statements), `pool_state.velt`,
-  `copy_state.velt`.
+- The connection: `line.velt` (the state behind its lock) and `sent.velt`, `failure.velt`, `failure_log.velt`,
+  `connection.velt` (requests), `ops.velt` (what `Client` and `Pool` share), `builder.velt` and
+  `encoder.velt` (a request's bytes), `input.velt`, `read_buffer.velt` and `reply.velt` (a reply, and
+  rows through velt/db's `readRows`), `drain.velt` (after a task went away), `startup.velt`,
+  `socket.velt`, `transport.velt` (the stream under it), `config.velt`, `describe.velt`, `prepared.velt`
+  and `statement_cache.velt` (statements), `copy_state.velt`.
+- The pool: `pool_state.velt` (the state behind its lock), `grant.velt`, `taken.velt`,
+  `waiting_for_pool.velt`, `opening.velt`, `pool_options.velt`.
 - The protocol: `frontend.velt`, `backend.velt`, `scram.velt`, `md5.velt`, `placeholders.velt`,
   `pg_type.velt`, `values.velt`, `temporal.velt`, `network.velt`, `array_json.velt`, `json_params.velt`.
 - `tests/`: `velt test` in this directory. `values`, `auth`, `config`, `placeholders` and
