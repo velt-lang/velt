@@ -1,0 +1,91 @@
+// web (internal): `rateLimit()`, requests per key per window, kept in a table every request
+// shares: a middleware's state between requests, which a plain `Map` in a closure can't be (each
+// request would count on its own copy).
+
+import { Handler, Middleware } from "../types";
+
+/** The options of `rateLimit`. */
+export struct RateLimitOptions {
+  /** The requests a key may make per window. */
+  limit: number;
+  /** The window's length, in milliseconds. */
+  windowMs: number;
+  /** What a request counts against, such as a client's address or an API key. */
+  key: (req: Request) => string;
+  /** The clock, in milliseconds (default: `Date.now`). */
+  now?: () => number;
+}
+
+/** A key's count in its window. */
+struct Window {
+  start: number;
+  count: number;
+}
+
+/** The table, and when it was last cleared of old windows. */
+class Counts {
+  windows: Map<string, Window> = new Map();
+  swept: number = 0;
+}
+
+/** The longest the table grows between sweeps of the windows that ended. */
+const SWEEP_SIZE = 10000;
+
+/**
+ * Answers 429 with `Retry-After` (in seconds) once a key has made `limit` requests in a fixed
+ * window, and says how many are left in `RateLimit-Limit`, `RateLimit-Remaining` and
+ * `RateLimit-Reset`. Counts are per process. A key can make up to twice the limit across the edge of
+ * two windows, the known cost of fixed windows, which keep one small record per key.
+ */
+export function rateLimit(options: RateLimitOptions): Middleware {
+  const limit = options.limit;
+  const windowMs = options.windowMs;
+  const key = options.key;
+  const now = options.now ?? systemClock;
+  const counts = shared(new Mutex(new Counts()));
+  return (next: Handler): Handler => async (req: Request): Promise<Response> => {
+    const id = key(req);
+    const at = now();
+    // [the count so far in this window, when the window ends]
+    const [count, ends] = counts.with((c) => count_(c, id, at, windowMs));
+    const reset = `${Math.ceil((ends - at) / 1000)}`;
+    if (count > limit) {
+      return new Response("Too Many Requests", {
+        status: 429,
+        headers: {
+          "retry-after": reset,
+          "ratelimit-limit": `${limit}`,
+          "ratelimit-remaining": "0",
+          "ratelimit-reset": reset,
+        },
+      });
+    }
+    const res = await next(req);
+    res.headers.set("ratelimit-limit", `${limit}`);
+    res.headers.set("ratelimit-remaining", `${limit - count}`);
+    res.headers.set("ratelimit-reset", reset);
+    return res;
+  };
+}
+
+function count_(c: Counts, id: string, at: number, windowMs: number): [number, number] {
+  if (c.windows.size >= SWEEP_SIZE && at - c.swept >= windowMs) {
+    c.swept = at;
+    for (const [k, w] of [...c.windows]) {
+      if (at - w.start >= windowMs) {
+        c.windows.delete(k);
+      }
+    }
+  }
+  const w = c.windows.get(id);
+  if (w == null || at - w.start >= windowMs) {
+    c.windows.set(id, { start: at, count: 1 });
+    return [1, at + windowMs];
+  }
+  w.count++;
+  return [w.count, w.start + windowMs];
+}
+
+function systemClock(): number {
+  return Date.now() as number;
+}

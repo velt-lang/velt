@@ -1,0 +1,45 @@
+// web (internal): `bodyLimit()`, the largest request body a part of an app takes.
+
+import { Handler, Middleware } from "../types";
+
+/**
+ * Answers 413 for a request body over `maxBytes`. A `Content-Length` over it is refused at once,
+ * without reading the body. A body without one is read until it passes the limit, so at most
+ * `maxBytes` is held, and is passed on from memory. `serve`'s `maxBodySize` is the limit for a whole
+ * server; this one is for a route or a prefix that takes less.
+ */
+export function bodyLimit(maxBytes: number): Middleware {
+  return (next: Handler): Handler => async (req: Request): Promise<Response> => {
+    const body = req.body;
+    if (body == null) {
+      return await next(req);
+    }
+    const length = req.headers.get("content-length");
+    if (length != null) {
+      const declared = parseInt(length);
+      return declared > maxBytes ? tooLarge() : await next(req);
+    }
+    const kept: Uint8Array[] = [];
+    let total = 0;
+    for await (const chunk of body) {
+      total += chunk.length;
+      if (total > maxBytes) {
+        return tooLarge();
+      }
+      kept.push(chunk);
+    }
+    const whole = new Uint8Array(total);
+    let at = 0;
+    for (const chunk of kept) {
+      whole.set(chunk, at);
+      at += chunk.length;
+    }
+    return await next(
+      new Request(req.url, { method: req.method, headers: req.headers, body: whole }),
+    );
+  };
+}
+
+function tooLarge(): Response {
+  return new Response("Payload Too Large", { status: 413 });
+}

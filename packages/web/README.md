@@ -116,6 +116,8 @@ proxy handler that wants middleware to mark its response wraps it:
 | `cors(options?)` | Answers preflights (204) and marks responses for the origins allowed. Never sends credentials with `*` |
 | `logger(write?)` | A line per request when its head is ready: `GET /a 200 3ms`, with the canonical path. No query, which may hold secrets |
 | `requestId(options?)` | An identifier on the request and response headers. A client's is kept only if it is safe to log |
+| `rateLimit({ limit, windowMs, key })` | Requests per key per fixed window, shared by all requests; 429 with `Retry-After` and `RateLimit-*` headers |
+| `bodyLimit(maxBytes)` | 413 for a request body over the limit, without holding more than the limit |
 | `serveStatic(root, options?)` | Files under `root`, with `serveFile`'s validators, 304 and `Range`; passes on what it has no file for |
 
 `serveStatic` keeps requests inside `root` (`resolveUnder`) and refuses dotfiles by default. A

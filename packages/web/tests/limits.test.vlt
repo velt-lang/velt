@@ -1,0 +1,135 @@
+// `rateLimit` and `bodyLimit`: state requests share, and what a client sees over `serve`.
+import { serve } from "http-server";
+import { BodyStream } from "velt/net/http";
+import { describe, expect, it } from "velt/test";
+import { bodyLimit, Handler, rateLimit } from "../src/lib";
+
+const ok: Handler = async (req: Request): Promise<Response> => new Response("ok");
+const echo: Handler = async (req: Request): Promise<Response> => new Response(await req.text());
+
+function byHeader(req: Request): string {
+  return req.headers.get("x-key") ?? "none";
+}
+
+async function* parts(n: i64): AsyncGenerator<u8[]> {
+  for (let i: i64 = 0; i < n; i++) {
+    const chunk: u8[] = [49, 50, 51];
+    yield chunk;
+  }
+}
+
+function request(key: string): Request {
+  return new Request("http://t/", { headers: { "x-key": key } });
+}
+
+describe("rateLimit", () => {
+  it("counts across requests over HTTP, also concurrent ones", async () => {
+    const limited = rateLimit({ limit: 5, windowMs: 3600000, key: byHeader })(ok);
+    const server = await serve({ port: 0 }, (req: Request) => limited(req));
+    try {
+      const url = `http://127.0.0.1:${server.port}/`;
+      const all: Promise<Response>[] = [];
+      for (let i = 0; i < 8; i++) {
+        all.push(spawn(fetch(url, { headers: { "x-key": "a" } })));
+      }
+      let passed = 0;
+      let refused = 0;
+      for (const p of all) {
+        const res = await p;
+        await res.text();
+        if (res.status == 200) {
+          passed++;
+        } else if (res.status == 429) {
+          refused++;
+        }
+      }
+      expect(passed).toBe(5);
+      expect(refused).toBe(3);
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("keeps keys apart, and says what is left", async () => {
+    const h = rateLimit({ limit: 1, windowMs: 1000, key: byHeader, now: () => 5000 })(ok);
+    const first = await h(request("a"));
+    expect(first.status).toBe(200);
+    expect(first.headers.get("ratelimit-limit")).toBe("1");
+    expect(first.headers.get("ratelimit-remaining")).toBe("0");
+    const refused = await h(request("a"));
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get("retry-after")).toBe("1");
+    expect((await h(request("b"))).status).toBe(200);
+  });
+
+  it("starts a new window when the old one ends", async () => {
+    const clock = shared(0 as i64);
+    const now = (): number => clock.get() as number;
+    const h = rateLimit({ limit: 1, windowMs: 1000, key: byHeader, now })(ok);
+    expect((await h(request("a"))).status).toBe(200);
+    clock.set(999);
+    expect((await h(request("a"))).status).toBe(429);
+    clock.set(1000);
+    expect((await h(request("a"))).status).toBe(200);
+  });
+});
+
+describe("bodyLimit", () => {
+  it("takes a body at the limit and refuses one past it, by its length", async () => {
+    const h = bodyLimit(5)(echo);
+    const fits = await h(
+      new Request("http://t/", {
+        method: "POST",
+        body: "12345",
+        headers: { "content-length": "5" },
+      }),
+    );
+    expect(await fits.text()).toBe("12345");
+    const over = await h(
+      new Request("http://t/", {
+        method: "POST",
+        body: "123456",
+        headers: { "content-length": "6" },
+      }),
+    );
+    expect(over.status).toBe(413);
+  });
+
+  it("counts a body without a length, and passes on what it read", async () => {
+    const h = bodyLimit(5)(echo);
+    const fits = await h(new Request("http://t/", { method: "POST", body: "12345" }));
+    expect(await fits.text()).toBe("12345");
+    const over = await h(new Request("http://t/", { method: "POST", body: "123456" }));
+    expect(over.status).toBe(413);
+  });
+
+  it("works over HTTP, chunked too", async () => {
+    const h = bodyLimit(5)(echo);
+    const server = await serve({ port: 0 }, (req: Request) => h(req));
+    try {
+      const url = `http://127.0.0.1:${server.port}/`;
+      expect((await fetch(url, { method: "POST", body: "123456" })).status).toBe(413);
+      const res = await fetch(url, { method: "POST", body: "1234" });
+      expect(await res.text()).toBe("1234");
+      const chunked = await fetch(url, { method: "POST", body: BodyStream.from(parts(3)) });
+      expect(chunked.status).toBe(413);
+      const fits = await fetch(url, { method: "POST", body: BodyStream.from(parts(1)) });
+      expect(await fits.text()).toBe("123");
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("keeps the order of a body in several chunks", async () => {
+    const h = bodyLimit(6)(echo);
+    const res = await h(
+      new Request("http://t/", { method: "POST", body: BodyStream.from(parts(2)) }),
+    );
+    expect(await res.text()).toBe("123123");
+  });
+
+  it("leaves a request without a body alone", async () => {
+    const res = await bodyLimit(1)(ok)(new Request("http://t/"));
+    expect(res.status).toBe(200);
+  });
+});
