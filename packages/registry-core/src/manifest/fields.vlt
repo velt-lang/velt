@@ -9,7 +9,6 @@ import {
   isControl,
   isLowerHex,
   isWhitespace,
-  isWordChar,
   trim,
 } from "./chars";
 import { Dependency } from "./dependency";
