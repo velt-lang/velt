@@ -29,7 +29,7 @@ impl Cx<'_> {
     /// Is an interface value's box of a `ty` value counted and shared by copies (module docs)?
     pub(super) fn shared_dyn_box(&self, ty: TyId) -> bool {
         matches!(
-            self.types.kind(ty),
+            self.kind(ty),
             TyKind::Str | TyKind::Float(_) | TyKind::Int(_) | TyKind::Bool
         ) && !self.boxed(ty)
             && !self.has_lock_set()

@@ -616,7 +616,7 @@ impl FnLower<'_, '_> {
             v
         } else {
             let vt = self.cx.ty(t);
-            let b = self.alloc(vt);
+            let b = self.dyn_box_alloc(t);
             let bp = self.operand_place(b.clone(), Ty::Ptr);
             self.store(proj(&bp, Proj::Deref(vt)), v);
             b
