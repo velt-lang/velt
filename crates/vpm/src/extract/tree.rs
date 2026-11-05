@@ -192,11 +192,11 @@ impl Tree {
             let Node::Link(target) = node else {
                 continue;
             };
-            let parent: Vec<&str> = match path.rsplit_once('/') {
-                Some((dir, _)) => dir.split('/').collect(),
-                None => vec![],
-            };
-            resolve(parent, target, &links, 0, &mut steps).map_err(|why| {
+            let mut walk = Walk::default();
+            if let Some((dir, _)) = path.rsplit_once('/') {
+                dir.split('/').for_each(|segment| walk.push(segment));
+            }
+            resolve(&mut walk, target, &links, 0, &mut steps).map_err(|why| {
                 format!(
                     "`{}`: a link to `{}`, which {why}",
                     path.escape_debug(),
@@ -214,17 +214,53 @@ const MAX_LINK_DEPTH: usize = 40;
 /// targets multiply (`b` → `a/a/…`, `c` → `b/b/…`).
 const MAX_LINK_STEPS: usize = 1_000_000;
 
-/// Follow `target` from the directory `at`, through the archive's `links` (by [`clash_key`]), as
-/// the OS would: the path it leads to, or why it leaves the tree. A target is checked through
-/// other links, not by its text alone: `a/l/../..` with `a/l` a link to `..` leaves a tree its
-/// text stays in.
-fn resolve<'a>(
-    mut at: Vec<&'a str>,
-    target: &'a str,
-    links: &HashMap<String, &'a str>,
+/// Where a link lookup is: the [`clash_key`] of the path so far, kept segment by segment (a
+/// path's key is its segments' keys joined by `/`, which never composes or changes case), so a
+/// step doesn't rebuild the whole path.
+#[derive(Default)]
+struct Walk {
+    key: String,
+    /// Where each segment starts in `key`.
+    starts: Vec<usize>,
+}
+
+impl Walk {
+    fn push(&mut self, segment: &str) {
+        self.starts.push(self.key.len());
+        if !self.key.is_empty() {
+            self.key.push('/');
+        }
+        if segment.is_ascii() {
+            self.key
+                .extend(segment.chars().map(|c| c.to_ascii_lowercase()));
+        } else {
+            self.key.push_str(&clash_key(segment));
+        }
+    }
+
+    /// Back one segment; `false` above the root.
+    fn pop(&mut self) -> bool {
+        match self.starts.pop() {
+            Some(start) => {
+                self.key.truncate(start);
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// Follow `target` from where `walk` is, through the archive's `links` (by [`clash_key`]), as the
+/// OS would, leaving `walk` where it leads, or say why it leaves the tree. A target is checked
+/// through other links, not by its text alone: `a/l/../..` with `a/l` a link to `..` leaves a
+/// tree its text stays in.
+fn resolve(
+    walk: &mut Walk,
+    target: &str,
+    links: &HashMap<String, &str>,
     depth: usize,
     steps: &mut usize,
-) -> Result<Vec<&'a str>, String> {
+) -> Result<(), String> {
     if depth > MAX_LINK_DEPTH {
         return Err(format!(
             "passes through more than {MAX_LINK_DEPTH} links (a loop?)"
@@ -238,18 +274,45 @@ fn resolve<'a>(
         match segment {
             "" | "." => {}
             ".." => {
-                if at.pop().is_none() {
+                if !walk.pop() {
                     return Err("leads outside the archive".to_string());
                 }
             }
             name => {
-                at.push(name);
-                if let Some(next) = links.get(&clash_key(&at.join("/"))) {
-                    at.pop();
-                    at = resolve(at, next, links, depth + 1, steps)?;
+                walk.push(name);
+                if let Some(next) = links.get(walk.key.as_str()) {
+                    walk.pop();
+                    resolve(walk, next, links, depth + 1, steps)?;
                 }
             }
         }
     }
-    Ok(at)
+    Ok(())
+}
+
+#[cfg(test)]
+mod walk_tests {
+    use super::*;
+
+    /// The key kept segment by segment is the key of the whole path.
+    #[test]
+    fn a_walks_key_is_the_paths_key() {
+        let segments = [
+            "Src",
+            "caf\u{e9}",
+            "Cafe\u{301}",
+            "\u{17f}TRASSE",
+            "\u{3a3}\u{3c2}",
+            "x",
+        ];
+        let mut walk = Walk::default();
+        for (i, segment) in segments.iter().enumerate() {
+            walk.push(segment);
+            assert_eq!(walk.key, clash_key(&segments[..=i].join("/")));
+        }
+        assert!(walk.pop() && walk.pop());
+        assert_eq!(walk.key, clash_key(&segments[..4].join("/")));
+        while walk.pop() {}
+        assert_eq!(walk.key, "");
+    }
 }

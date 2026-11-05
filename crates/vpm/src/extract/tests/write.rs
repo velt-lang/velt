@@ -96,3 +96,13 @@ fn one_archive_has_one_checksum_on_every_os() {
     extract(&other, &changed).unwrap();
     assert_ne!(sum, tree_checksum(&changed).unwrap());
 }
+
+#[test]
+fn extractions_into_one_parent_get_their_own_staging_directories() {
+    let dir = tempfile::tempdir().unwrap();
+    let tar = TarBuilder::default().file("a", b"x").gz();
+    for i in 0..50 {
+        extract(&tar, &dir.path().join(format!("{i}"))).unwrap();
+    }
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 50);
+}

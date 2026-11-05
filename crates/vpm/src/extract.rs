@@ -164,13 +164,18 @@ fn staging(dest: &Path) -> Result<PathBuf, String> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    let nanos = std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.subsec_nanos())
-        .unwrap_or(0);
-    let staging = parent.join(format!(".{name}.partial-{}-{nanos}", std::process::id()));
-    std::fs::create_dir(&staging)
-        .map_err(|e| format!("cannot create `{}`: {e}", staging.display()))?;
+    // Unique within the process (a counter) and between processes (the pid); one left behind by
+    // a process that died with the same pid is skipped.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let staging = loop {
+        let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let staging = parent.join(format!(".{name}.partial-{}-{n}", std::process::id()));
+        match std::fs::create_dir(&staging) {
+            Ok(()) => break staging,
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists && n < 1 << 20 => {}
+            Err(e) => return Err(format!("cannot create `{}`: {e}", staging.display())),
+        }
+    };
     Ok(staging)
 }
 

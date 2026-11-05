@@ -36,6 +36,9 @@ pub(super) fn read(archive: &[u8], limits: Limits, tree: &mut Tree) -> Result<()
     let mut unpacked: u64 = 0;
     for _ in 0..count {
         let c = z.central(at)?;
+        if c.next > cd_end {
+            return Err("an entry of the zip's central directory runs past its end".to_string());
+        }
         at = c.next;
         let name = c.name()?;
         let named = |why: String| format!("`{}`: {why}", name.escape_debug());
@@ -167,7 +170,10 @@ impl<'a> Zip<'a> {
             name: self.bytes(at + 46, name_len)?,
             external: self.u32(at + 38)?,
             offset: self.u32(at + 42)?,
-            next: at + 46 + name_len + extra_len + comment_len,
+            next: [46, name_len, extra_len, comment_len]
+                .iter()
+                .try_fold(at, |sum, n| sum.checked_add(*n))
+                .ok_or_else(Self::short)?,
         };
         let extra = self.bytes(at + 46 + name_len, extra_len)?;
         if self.u16(at + 34)? != 0 {

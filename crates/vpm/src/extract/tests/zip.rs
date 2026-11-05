@@ -167,6 +167,11 @@ fn damaged_zips_are_refused() {
         e.contains("damaged") || e.contains("CRC") || e.contains("size"),
         "{e}"
     );
+    // A central entry whose name runs past the central directory into the end record.
+    let mut long = zip(&[ZipEntry::file("a", b"x")], false);
+    let cd = find(&long, &0x0201_4b50u32.to_le_bytes());
+    long[cd + 28] = 10;
+    refused(&long, "runs past its end");
     // The stored CRC wrong.
     let mut crc = zip(&[ZipEntry::file("a", b"x")], false);
     let cd = find(&crc, &0x0201_4b50u32.to_le_bytes());
