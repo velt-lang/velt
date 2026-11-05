@@ -45,16 +45,6 @@ describe("p256Verify", () => {
     }
     expect(valid).toBe(174);
     expect(invalid).toBe(310);
-
-    it("doubles when an addition meets the same point", () => {
-      expect(p256Verify(hexDecode(G_KEY), hexDecode(E_IS_R), hexDecode(E_IS_R_SIG))).toBe(true);
-    });
-
-    it("refuses an INTEGER with a needless leading zero", () => {
-      // r (top bit clear) written as 33 bytes with a leading zero: BER, not DER.
-      const ber = "3045022100" + E_IS_R_SIG.slice(8);
-      expect(p256Verify(hexDecode(G_KEY), hexDecode(E_IS_R), hexDecode(ber))).toBe(false);
-    });
   });
 
   it("verifies OpenSSL's signature, and refuses it for another message or key", () => {
@@ -70,16 +60,6 @@ describe("p256Verify", () => {
     msg[0] = 104;
     key[64] ^= 1;
     expect(p256Verify(key, sha256(msg), sig)).toBe(false);
-
-    it("doubles when an addition meets the same point", () => {
-      expect(p256Verify(hexDecode(G_KEY), hexDecode(E_IS_R), hexDecode(E_IS_R_SIG))).toBe(true);
-    });
-
-    it("refuses an INTEGER with a needless leading zero", () => {
-      // r (top bit clear) written as 33 bytes with a leading zero: BER, not DER.
-      const ber = "3045022100" + E_IS_R_SIG.slice(8);
-      expect(p256Verify(hexDecode(G_KEY), hexDecode(E_IS_R), hexDecode(ber))).toBe(false);
-    });
   });
 
   it("doubles when an addition meets the same point", () => {
