@@ -1,0 +1,9 @@
+task start
+yielded
+task after yieldNow
+task
+a start
+b start
+b after sleep(0)
+a after sleep(200)
+[ 'a', 'b' ]

@@ -41,7 +41,7 @@ mod transfer;
 mod waker;
 
 pub(super) use self::transfer::set_transfer;
-pub(super) use self::waker::{local_awaiter, queue};
+pub(super) use self::waker::{firing_end, firing_start, local_awaiter, queue};
 
 pub(super) use self::loc::of as loc_of;
 pub(super) use self::owner::{deliver_unadopted, is_done, poll_unadopted};
@@ -86,6 +86,8 @@ const CATCHES: u32 = 4096;
 /// A Velt panic stopped at its poll: it counts as finished, its state and result slot are never
 /// touched again, and the node is never freed ([`panicked`]). Its owner's await raises the panic.
 const PANICKED: u32 = 8192;
+/// A timer that wakes it is among those its task fires now (timers.rs `fire`).
+const FIRING: u32 = 16384;
 
 /// `owner` bit of a lazy node: its state finished (it is polled by its owner only).
 const OWNER_DONE: u32 = 1;

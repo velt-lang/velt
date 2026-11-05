@@ -76,6 +76,12 @@ struct TaskCx {
     /// Something yielded during this poll (`yieldNow()`): it must not run again before the
     /// task's next poll (losers.rs).
     yielded: Cell<bool>,
+    /// The task's root yielded during this poll, itself or through a promise it adopted (whose
+    /// leaves hold its waker): it is not resumed again before the task's next poll, which its
+    /// wake brings. A promise it merely started yields on its own waker.
+    root_yielded: Cell<bool>,
+    /// Microtask jobs under way, one inside the other (micro.rs `timer_turn_free`).
+    micro_jobs: Cell<u32>,
     /// The task's await word (micro.rs): its queued microtasks plus the synchronous runs under
     /// way. Generated code reads it through `cx` (`await_word`).
     word: Cell<u32>,
@@ -125,12 +131,16 @@ fn current_turn() -> u32 {
 }
 
 /// `yieldNow()` in the task being polled: what yielded waits for the task's next poll, so no
-/// promise of this poll runs early (losers.rs).
-pub(crate) fn note_yield() {
+/// promise of this poll runs early (losers.rs). `waker` is the yielding code's.
+pub(crate) fn note_yield(waker: &Waker) {
     let tcx = CURRENT.with(Cell::get);
     // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`).
     if let Some(t) = unsafe { tcx.as_ref() } {
         t.yielded.set(true);
+        // SAFETY: `t.waker` is the waker of the task being polled.
+        if waker.will_wake(unsafe { &*t.waker }) {
+            t.root_yielded.set(true);
+        }
     }
 }
 
@@ -144,16 +154,16 @@ fn next_turn(turn: u32) -> u32 {
 }
 
 /// Run `f` with the timers of the task being polled, created on first use; `None` outside a task.
-/// `f` also gets the task's waker.
-fn with_timers<R>(f: impl FnOnce(&Arc<Timers>, &Waker) -> R) -> Option<R> {
+/// `f` also gets the task's waker and context.
+fn with_timers<R>(f: impl FnOnce(&Arc<Timers>, &Waker, &TaskCx) -> R) -> Option<R> {
     let tcx = CURRENT.with(Cell::get);
     if tcx.is_null() {
         return None;
     }
     // SAFETY: `CURRENT` is only set while its `TaskCx` lives (`Enter`); `timers` points into the
     // task's own `SetPtr`, which only this task's polls touch.
-    let (timers, task) = unsafe { (&mut *(*tcx).timers, &*(*tcx).waker) };
-    Some(f(timers.get_or_insert_with(Default::default), task))
+    let (timers, task, tcx) = unsafe { (&mut *(*tcx).timers, &*(*tcx).waker, &*tcx) };
+    Some(f(timers.get_or_insert_with(Default::default), task, tcx))
 }
 
 /// Run local promise `f` of the task being polled now (queued if it is being polled already, or
@@ -205,7 +215,9 @@ impl SetPtr {
 
     /// Poll with this set current: drain its woken promises (resuming the task's root with
     /// `root` when a promise it awaits finishes), then poll the root once more if a promise ran
-    /// after its last poll, then run the microtasks that queued.
+    /// after its last poll, then run the microtasks that queued. A root that yielded
+    /// (`yieldNow()`) is not polled again in this poll: the wake it made brings the next one,
+    /// after the other ready tasks had their turn.
     ///
     /// # Safety
     /// `waker` must stay valid during the call.
@@ -223,6 +235,8 @@ impl SetPtr {
             },
             turn: self.3,
             yielded: Cell::new(false),
+            root_yielded: Cell::new(false),
+            micro_jobs: Cell::new(0),
             word: Cell::new(self.0.as_ref().map_or(0, |s| s.micro.len() as u32)),
             credit: Cell::new(false),
         };
@@ -230,6 +244,11 @@ impl SetPtr {
         if let Some(g) = self.0.as_ref().and_then(|s| s.gate.as_ref()) {
             g.enter();
         }
+        let root = &mut || {
+            if !tcx.root_yielded.get() {
+                root();
+            }
+        };
         let timers = self.2.as_deref();
         if self.0.is_null() {
             // Only the root can wait for timers here; it is polled below.
@@ -261,6 +280,10 @@ impl SetPtr {
         // Rejections nobody handles, reported once the queue is drained (unhandled.rs).
         if !self.0.is_null() && unhandled::waiting(self.0) {
             unhandled::flush(self.0);
+        }
+        // The due timers this poll held back, if any are left, get a poll of their own.
+        if let Some(t) = timers {
+            t.end_poll(&*waker);
         }
         // The poll is over: timers this task created may run their callbacks (gate.rs).
         if let Some(g) = self.0.as_ref().and_then(|s| s.gate.as_ref()) {

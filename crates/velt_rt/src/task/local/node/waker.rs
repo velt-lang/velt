@@ -5,7 +5,7 @@ use std::sync::Arc;
 use std::task::{RawWaker, RawWakerVTable, Waker};
 
 use super::super::set::Shared;
-use super::{head, release, retain, CANCELLED, DONE, NO_MEMBER, QUEUED};
+use super::{head, release, retain, CANCELLED, DONE, FIRING, NO_MEMBER, QUEUED};
 use crate::task::VeltFut;
 
 /// The started node of set `shared` that waker `w` belongs to, if it is one that is still
@@ -22,6 +22,27 @@ pub(in crate::task::local) unsafe fn local_awaiter(
     let running = h.flags.load(Ordering::Acquire) & (DONE | CANCELLED) == 0;
     let member = h.member.load(Ordering::Relaxed) != NO_MEMBER;
     (std::ptr::eq(h.set, Arc::as_ptr(shared)) && running && member).then_some(g)
+}
+
+/// A due timer that wakes through `w` is about to fire: false when another one that wakes the
+/// same started node is firing in this batch already (a waker of anything else: true). Ended by
+/// [`firing_end`].
+pub(in crate::task::local) fn firing_start(w: &Waker) -> bool {
+    if !std::ptr::eq(w.vtable(), &NODE_WAKER) {
+        return true;
+    }
+    // SAFETY: the data of a node waker is a live node (the waker holds a reference).
+    let h = unsafe { head(w.data() as *mut VeltFut) };
+    h.flags.fetch_or(FIRING, Ordering::Relaxed) & FIRING == 0
+}
+
+/// The batch that [`firing_start`] counted `w` in is over.
+pub(in crate::task::local) fn firing_end(w: &Waker) {
+    if std::ptr::eq(w.vtable(), &NODE_WAKER) {
+        // SAFETY: as in `firing_start`.
+        let h = unsafe { head(w.data() as *mut VeltFut) };
+        h.flags.fetch_and(!FIRING, Ordering::Relaxed);
+    }
 }
 
 /// Queue started node `f` in its set's ready list, as its waker does.

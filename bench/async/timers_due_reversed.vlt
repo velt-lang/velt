@@ -1,0 +1,21 @@
+// `Promise.all` over stored promises whose timers are due at once, polled against timer order:
+// the one case where each timer does take a poll of its waiter, for Node's order:
+// bench/async/timers_due_join.vlt is the other. It counts about 30% more than when both timers
+// fired together in one poll, because of the second task poll each round, which is what Node's
+// order takes here (the join polls `a` before `b`'s timer has fired). In bench/nightly.sh so that
+// nothing lets it grow beyond that.
+async function step(ms: i64): Promise<i64> {
+  await sleep(ms);
+  return ms + 1;
+}
+
+async function main() {
+  let sum = 0;
+  for (let i = 0; i < 20000; i++) {
+    const b = step(0);
+    const a = step(0);
+    const r = await Promise.all([a, b]);
+    sum += r[0] + r[1];
+  }
+  console.log(sum);
+}

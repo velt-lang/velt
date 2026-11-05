@@ -1,0 +1,70 @@
+Promise.all in main
+b after sleep(0)
+a after sleep(30)
+[ 'a', 'b' ]
+Promise.all in a promise
+d after sleep(0)
+c after sleep(30)
+[ 'c', 'd' ]
+three, with another waiter between them
+g after sleep(0)
+h after sleep(1)
+f after sleep(2)
+e after sleep(30)
+[ 'e', 'f', 'g' ]
+Promise.race
+j after sleep(0)
+j
+i after sleep(30)
+yieldNow after a timer
+other after yieldNow
+main after yieldNow
+a promise settled beside a started one that yields
+started
+main after settled
+started after yieldNow
+a timer resumes the root beside a started one that yields
+started
+later
+main after later
+started after yieldNow
+a resolved promise beside a started one that yields
+yields 1
+yields 2
+ticker 0
+main after a resolved promise
+ticker 1
+timers in timer order, a microtask after the first
+first
+microtask of the first
+first, one step on
+first, two steps on
+second after sleep(30)
+third after sleep(60)
+[ 'first', 'second', 'third' ]
+timers in timer order, the first yields
+first
+second after sleep(30)
+first after yieldNow
+[ 'first', 'second' ]
+a timer does not pass what a microtask job made ready
+e2
+e0
+e0, one step on
+waits for e0
+e3 after sleep(1)
+[ 'e2', 'e3', 'e0' ]
+an inline join over due timers, then only a later timer
+joined
+later
+a join over due timers, then only a later timer
+joined
+later
+the same, reversed
+joined
+later
+the same, the join in a promise
+joined in a promise
+later
+a timer not due yet, polled after the due ones
+true

@@ -1,0 +1,3 @@
+sleep(0), one after the other
+sleep(1), one after the other
+then a join of the rest

@@ -1,5 +1,5 @@
-a start
 b start
+a start
 main sync end
 microtask 1
 then 1
@@ -11,8 +11,8 @@ a after a resolved promise
 [ 'a', 'b' ]
 timeout 1
 timeout 2
-task start
 yielded
+task start
 task after sleep(1)
 task after a resolved promise
 task

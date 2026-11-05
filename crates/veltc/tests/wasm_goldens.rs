@@ -25,9 +25,10 @@ use std::sync::Mutex;
 
 use wasm_tools::{build_runtime, copy_dir, for_node, missing_tools, root};
 
-/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt/http`), a
-/// `resolve` called later, or a shared promise settling, resumes its waiters at the executor's
-/// next step instead of queueing them as microtasks (https://veltlang.com/docs/reference/async/).
+/// Goldens that cannot run on WebAssembly: the runtime has no sockets (nor `velt/http`), and a
+/// shared promise settling resumes its waiters at the executor's next step instead of queueing
+/// them as microtasks, so `.then` callbacks and `queueMicrotask` jobs around a `resolve` called
+/// later do not keep Node's order (https://veltlang.com/docs/reference/async/).
 const UNSUPPORTED: &[&str] = &[
     "tcp_echo",
     "http_server",
@@ -452,6 +453,7 @@ fn async_host_functions_under_node() {
             ("stuck", host(), None, read("stuck.out")),
             ("many", Some(dir.join("many.mjs")), None, read("many.out")),
             ("order", None, None, order.clone()),
+            ("spawn_yield", None, None, read("spawn_yield.out")),
         ]) {
             let module = work.join(format!("{program}.wasm"));
             // Built where it was copied, so messages name it by its file name.

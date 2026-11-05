@@ -1,0 +1,28 @@
+// On a JS host, with its one thread, a task spawned runs while the task that spawned it yields.
+// (Natively it runs in parallel: order.vlt has nothing beside a spawned task.) And a longer timer
+// created first resumes second: the gap keeps a stall of the host from reordering them, and with
+// no native run to match, there is nothing here that a late poll could race.
+
+async function step(name: string, ms: i64): Promise<string> {
+  console.log(`${name} start`);
+  await sleep(ms);
+  console.log(`${name} after sleep(${ms})`);
+  return name;
+}
+
+async function task(): Promise<string> {
+  console.log("task start");
+  await yieldNow();
+  console.log("task after yieldNow");
+  return "task";
+}
+
+async function main() {
+  const t = spawn(task());
+  await yieldNow();
+  console.log("yielded");
+  console.log(await t);
+  const a = step("a", 200);
+  const b = step("b", 0);
+  console.log(await Promise.all([a, b]));
+}

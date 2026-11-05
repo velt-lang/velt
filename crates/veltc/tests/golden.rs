@@ -628,7 +628,6 @@ fn can_symlink(work: &Path) -> bool {
 /// `velt run` output, killing it and the program it started after `VELT_GOLDEN_TIMEOUT` seconds
 /// (default 120): a hanging golden fails instead of stalling the whole run or running on.
 fn run_with_timeout(mut cmd: Command) -> std::process::Output {
-    use std::io::Read;
     use std::process::Stdio;
     use std::time::{Duration, Instant};
     let limit = Duration::from_secs(
@@ -642,17 +641,8 @@ fn run_with_timeout(mut cmd: Command) -> std::process::Output {
             .unwrap();
     // Drain the pipes on threads so a chatty program cannot block on a full pipe. A process the
     // program started may still hold them open after it exits: collect with a grace period.
-    let drain = |mut r: Box<dyn Read + Send>| {
-        let (tx, rx) = std::sync::mpsc::channel();
-        std::thread::spawn(move || {
-            let mut v = vec![];
-            let _ = r.read_to_end(&mut v);
-            let _ = tx.send(v);
-        });
-        move || rx.recv_timeout(Duration::from_secs(5)).unwrap_or_default()
-    };
-    let out = drain(Box::new(tree.child().stdout.take().unwrap()));
-    let err = drain(Box::new(tree.child().stderr.take().unwrap()));
+    let out = Drain::start(Box::new(tree.child().stdout.take().unwrap()));
+    let err = Drain::start(Box::new(tree.child().stderr.take().unwrap()));
     let start = Instant::now();
     let mut timed_out = false;
     let status = loop {
@@ -667,15 +657,90 @@ fn run_with_timeout(mut cmd: Command) -> std::process::Output {
         }
         std::thread::sleep(Duration::from_millis(10));
     };
-    let mut stderr = err();
+    let grace = Duration::from_secs(5);
+    let (mut stderr, err_open) = err.finish(grace);
+    let (stdout, out_open) = out.finish(grace);
     if timed_out {
         stderr.extend_from_slice(format!("\n(killed after {} s)\n", limit.as_secs()).as_bytes());
     }
+    // Said in the failure: what was read so far is not all the program printed, perhaps.
+    for (open, name) in [(out_open, "stdout"), (err_open, "stderr")] {
+        if open {
+            let note = format!(
+                "\n({name} still open {} s after the exit)\n",
+                grace.as_secs()
+            );
+            stderr.extend_from_slice(note.as_bytes());
+        }
+    }
     std::process::Output {
         status,
-        stdout: out(),
+        stdout,
         stderr,
     }
+}
+
+/// A pipe read to its end on a thread of its own.
+struct Drain {
+    read: std::sync::Arc<std::sync::Mutex<Vec<u8>>>,
+    ended: std::sync::mpsc::Receiver<()>,
+}
+
+impl Drain {
+    fn start(mut r: Box<dyn std::io::Read + Send>) -> Drain {
+        let read = std::sync::Arc::new(std::sync::Mutex::new(vec![]));
+        let (tx, ended) = std::sync::mpsc::channel();
+        let into = read.clone();
+        std::thread::spawn(move || {
+            let mut chunk = [0; 8192];
+            while let Ok(n @ 1..) = r.read(&mut chunk) {
+                into.lock().unwrap().extend_from_slice(&chunk[..n]);
+            }
+            let _ = tx.send(());
+        });
+        Drain { read, ended }
+    }
+
+    /// What was read once the pipe ended or `grace` passed, and whether it is still open then.
+    fn finish(self, grace: std::time::Duration) -> (Vec<u8>, bool) {
+        let open = self.ended.recv_timeout(grace).is_err();
+        let read = self.read.lock().unwrap().clone();
+        (read, open)
+    }
+}
+
+#[test]
+fn what_a_pipe_gave_is_kept_when_it_stays_open() {
+    use std::sync::mpsc::{channel, Receiver, Sender};
+    /// Gives its bytes, then waits; the test reads once `given` says the bytes are in.
+    struct Gives(Vec<u8>, Sender<()>, Receiver<()>);
+    impl std::io::Read for Gives {
+        fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+            if self.0.is_empty() {
+                let _ = self.1.send(());
+                let _ = self.2.recv();
+                return Ok(0);
+            }
+            let n = self.0.len();
+            buf[..n].copy_from_slice(&self.0);
+            self.0.clear();
+            Ok(n)
+        }
+    }
+    let (given_tx, given) = channel();
+    let (_hold, wait) = channel();
+    let drain = Drain::start(Box::new(Gives(b"started".to_vec(), given_tx, wait)));
+    given.recv().unwrap();
+    assert_eq!(
+        drain.finish(std::time::Duration::ZERO),
+        (b"started".to_vec(), true)
+    );
+
+    let drain = Drain::start(Box::new(&b"all of it"[..]));
+    assert_eq!(
+        drain.finish(std::time::Duration::from_secs(60)),
+        (b"all of it".to_vec(), false)
+    );
 }
 
 /// A timed-out run kills the program `velt run` started too, not only `velt run` (#475): the

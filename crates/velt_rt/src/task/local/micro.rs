@@ -141,7 +141,7 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
         };
         // A root that yielded during this poll waits for the task's next poll (an entry queued
         // for it before it handed the promise on cannot resume it early).
-        if t.yielded.get() && w.will_wake(d.task) {
+        if t.root_yielded.get() && w.will_wake(d.task) {
             w.wake();
             continue;
         }
@@ -149,7 +149,9 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
         // only while the word is not 0; with the queue empty it goes on without one, and the
         // credit must not pass to a later `await` of the same run.
         t.credit.set(e.credit && t.word.get() != 0);
+        t.micro_jobs.set(t.micro_jobs.get() + 1);
         set::resume(d, w);
+        t.micro_jobs.set(t.micro_jobs.get() - 1);
         t.credit.set(false);
     }
     // Rejections nobody handles, reported now that the queue is empty (unhandled.rs).
@@ -162,6 +164,15 @@ pub(super) unsafe fn drain(d: &mut Driver<'_>) {
 /// waiting: the task's word is 0)? False outside a task.
 pub(crate) fn step_free() -> bool {
     tcx().is_some_and(|t| t.word.get() == 0)
+}
+
+/// Is a due timer's turn free to come now (timers.rs)? Nothing is queued or waits to go on, as in
+/// [`step_free`], and this is not a microtask's job: what that job goes on to run was made ready
+/// before the next timer's turn (Node drains the microtask queue, the promises a job resolves
+/// included, before it runs the next timer).
+#[inline]
+pub(super) fn timer_turn_free(t: &TaskCx) -> bool {
+    t.word.get() == 0 && t.micro_jobs.get() == 0
 }
 
 /// The job being polled resumes as the reaction of a promise that settled now, ahead of the

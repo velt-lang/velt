@@ -55,7 +55,7 @@ pub unsafe extern "C" fn velt_rt_latch_free(h: Handle<Latch>) {
 pub unsafe extern "C" fn velt_rt_latch_open(h: Handle<Latch>) {
     let l = h.obj();
     if !l.open.replace(true) {
-        l.waiters.wake_all();
+        l.waiters.wake_all_micro();
     }
 }
 
