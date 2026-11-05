@@ -50,6 +50,13 @@ use crate::visit::successors;
 
 /// Callees at most this big are always inlined.
 const TRIVIAL_COST: u64 = 8;
+/// Callees at most this big that call nothing (but functions that never return) are inlined
+/// without charging the budget: a 128-bit multiply-add (`mulAdd` in std/crypto's field
+/// arithmetic), a carry, an accessor with its bounds check. Inlined, such a body replaces the
+/// call and the moves of its arguments and results with about as many statements, and LLVM
+/// would inline it anyway; out of line in a loop that had no budget left, it costs a call per
+/// operation.
+const TINY_LEAF_COST: u64 = 24;
 /// Callees at most this big are inlined while the growth budget lasts.
 pub const SMALL_COST: u64 = 40;
 /// Leaf callees (no calls but of functions that never return) at most this big count as small:
@@ -65,6 +72,8 @@ const LOOP_COST: u64 = 1_000;
 const RECURSIVE_COST: u64 = 200;
 /// Callers are not grown past this size (keeps compile time and register pressure sane).
 pub const CALLER_LIMIT: u64 = 10_000;
+/// Sites at least this many loops deep share the first pass (`Heat::tier`).
+const MAX_TIER: u32 = 3;
 /// Growth allowed on top of the program's size: the program may at most double, plus this.
 const BUDGET_SLACK: u64 = 2_000;
 
@@ -91,8 +100,15 @@ impl Budget {
     /// Allow the program to double in size, plus `BUDGET_SLACK`.
     pub fn for_program(program: &Program) -> Budget {
         let size: u64 = program.funcs.iter().map(cost).sum();
+        let mut remaining = size + BUDGET_SLACK;
+        if let Some(v) = std::env::var("VELT_INLINE_BUDGET")
+            .ok()
+            .and_then(|v| v.parse().ok())
+        {
+            remaining = v;
+        }
         Budget {
-            remaining: size + BUDGET_SLACK,
+            remaining,
             cycles: FxHashMap::default(),
         }
     }
@@ -121,20 +137,30 @@ pub(crate) fn run(program: &mut Program, budget: &mut Budget) -> bool {
         call_sites: graph.call_sites.clone(),
         address_taken: graph.address_taken,
     };
+    let depth = loop_depths(program, &sccs, &state.scc_of);
+    let top = depth.iter().copied().max().unwrap_or(0) + 1;
     let mut changed = false;
-    for scc in &sccs {
-        for &caller in scc {
-            if inline_into(program, caller, &mut state, budget) {
-                changed = true;
-                // Its callees' reads of its `frozen` params are its own now, while it still
-                // has the params: read them once before it is inlined into its own callers.
-                let f = &mut program.funcs[caller.0 as usize];
-                crate::frozen::run(&program.aggs, f);
-                // Checks of inlined callees (a node read through helpers) and the caller's own
-                // range check are in one function now, while its frozen params still name the
-                // array lengths.
-                if f.param_attrs.iter().any(|a| a.frozen) {
-                    crate::bounds::run(&program.aggs, f);
+    // Hottest first: the budget goes to the call sites with the most loops around them before
+    // any other (module docs).
+    for tier in (0..=top.min(MAX_TIER)).rev() {
+        for scc in &sccs {
+            for &caller in scc {
+                let at = Heat {
+                    tier,
+                    caller: depth[caller.0 as usize],
+                };
+                if inline_into(program, caller, &mut state, budget, at) {
+                    changed = true;
+                    // Its callees' reads of its `frozen` params are its own now, while it still
+                    // has the params: read them once before it is inlined into its own callers.
+                    let f = &mut program.funcs[caller.0 as usize];
+                    crate::frozen::run(&program.aggs, f);
+                    // Checks of inlined callees (a node read through helpers) and the caller's
+                    // own range check are in one function now, while its frozen params still
+                    // name the array lengths.
+                    if f.param_attrs.iter().any(|a| a.frozen) {
+                        crate::bounds::run(&program.aggs, f);
+                    }
                 }
             }
         }
@@ -236,6 +262,23 @@ enum Decision {
     Charged(u64),
 }
 
+/// Which pass of a round this is, and how deep in loops the caller is (`loop_depths`).
+#[derive(Clone, Copy)]
+struct Heat {
+    /// The pass takes the charged sites at least this many loops deep (`MAX_TIER`: deeper
+    /// still), and only those: free ones go in the first pass.
+    tier: u32,
+    caller: u32,
+}
+
+impl Heat {
+    /// Whether a site of the caller (in a loop of it or not) is this pass's to charge.
+    fn charges(self, in_loop: bool) -> bool {
+        let deep = (self.caller + u32::from(in_loop)).min(MAX_TIER);
+        deep >= self.tier
+    }
+}
+
 /// Where a call site is, for [`decide`].
 struct Site<'a> {
     caller: FuncId,
@@ -284,6 +327,9 @@ fn decide(
     if site.caller_cost + size > CALLER_LIMIT {
         return None;
     }
+    if size <= TINY_LEAF_COST && !recursive && calls_only_cold(program, target) {
+        return Some(Decision::Free);
+    }
     let once = target.linkage == velt_vir::vir::Linkage::Internal
         && !recursive
         && state.call_sites[ci] == 1
@@ -317,18 +363,22 @@ fn decide(
 fn is_leaf(program: &Program, func: &Function) -> bool {
     let math = (func.blocks.iter().flat_map(|b| &b.stmts))
         .any(|s| matches!(s, Stmt::Assign(_, Rvalue::Intrinsic(..))));
-    !math
-        && func.blocks.iter().all(|b| match &b.term {
-            Terminator::Call { callee, .. } => match callee {
-                Callee::Func(f) => program.funcs.get(f.0 as usize).is_some_and(never_returns),
-                Callee::Extern(e) => program
-                    .externs
-                    .get(e.0 as usize)
-                    .is_some_and(|e| e.noreturn),
-                Callee::Ptr { .. } => false,
-            },
-            _ => true,
-        })
+    !math && calls_only_cold(program, func)
+}
+
+/// Whether `func` calls nothing but functions that never return (math operations aside).
+fn calls_only_cold(program: &Program, func: &Function) -> bool {
+    func.blocks.iter().all(|b| match &b.term {
+        Terminator::Call { callee, .. } => match callee {
+            Callee::Func(f) => program.funcs.get(f.0 as usize).is_some_and(never_returns),
+            Callee::Extern(e) => program
+                .externs
+                .get(e.0 as usize)
+                .is_some_and(|e| e.noreturn),
+            Callee::Ptr { .. } => false,
+        },
+        _ => true,
+    })
 }
 
 /// Whether no call of `func` returns normally: no path through it returns (a panic helper such
@@ -353,6 +403,7 @@ fn inline_into(
     caller: FuncId,
     state: &mut State,
     budget: &mut Budget,
+    heat: Heat,
 ) -> bool {
     let fi = caller.0 as usize;
     let mut caller_cost = cost(&program.funcs[fi]);
@@ -398,9 +449,28 @@ fn inline_into(
             in_loop: in_loop[here],
             from: &from[here],
         };
-        let Some(decision) = decide(state, program, callee, &site, budget) else {
+        let d = decide(state, program, callee, &site, budget);
+        if std::env::var_os("VELT_INLINE_TRACE").is_some() {
+            eprintln!(
+                "INL {} <- {} loop={} size={} budget={} -> {}",
+                program.funcs[fi].symbol,
+                program.funcs[callee.0 as usize].symbol,
+                in_loop[here],
+                cost(&program.funcs[callee.0 as usize]),
+                budget.remaining,
+                match &d {
+                    None => "no".to_string(),
+                    Some(Decision::Free) => "free".into(),
+                    Some(Decision::Charged(n)) => format!("charged {n}"),
+                }
+            );
+        }
+        let Some(decision) = d else {
             continue;
         };
+        if matches!(decision, Decision::Charged(_)) && !heat.charges(in_loop[here]) {
+            continue;
+        }
         // What the callee's blocks come with: the call's own provenance, the callee if it is
         // recursive, and the recursive functions the callee has copies of.
         let mut brings = from[here].clone();
@@ -438,6 +508,37 @@ fn inline_into(
         }
     }
     changed
+}
+
+/// Per function: the most loops the calls on a path from a root (a function nothing calls
+/// directly: an entry point, a closure, a virtual method) to it are in, counting a loop of
+/// each caller once and the calls within a recursive cycle not at all.
+fn loop_depths(program: &Program, sccs: &[Vec<FuncId>], scc_of: &[usize]) -> Vec<u32> {
+    let n = program.funcs.len();
+    let mut depth = vec![0u32; n];
+    // Callers first (`sccs` is bottom-up).
+    for scc in sccs.iter().rev() {
+        let d = scc.iter().map(|f| depth[f.0 as usize]).max().unwrap_or(0);
+        for &f in scc {
+            depth[f.0 as usize] = d;
+            let func = &program.funcs[f.0 as usize];
+            let in_loop = loop_blocks(func);
+            for (block, looped) in func.blocks.iter().zip(in_loop) {
+                let Terminator::Call {
+                    callee: Callee::Func(g),
+                    ..
+                } = &block.term
+                else {
+                    continue;
+                };
+                let g = g.0 as usize;
+                if g < n && scc_of[g] != scc_of[f.0 as usize] {
+                    depth[g] = depth[g].max(d + u32::from(looped));
+                }
+            }
+        }
+    }
+    depth
 }
 
 /// Per block of `func`: whether it lies on a cycle of the control-flow graph (in a loop).
