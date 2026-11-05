@@ -1,0 +1,209 @@
+// An arrow adapted to a function type that can throw (its errors come from another function
+// stored there), passed to a parameter that keeps it, after its creator returned (#2327).
+class Failure extends Error {}
+
+class H {
+  names: string[] = ["a", "b"];
+  async handle(n: i64): Promise<i64> {
+    await Promise.resolve(1);
+    return n + this.names.length;
+  }
+}
+
+class T {
+  send: (n: i64) => Promise<i64>;
+  constructor(send: (n: i64) => Promise<i64>) {
+    this.send = send;
+  }
+}
+
+async function fails(n: i64): Promise<i64> {
+  throw new Failure("no");
+}
+
+// The captured object has no other owner.
+function make(): T {
+  const h = new H();
+  return new T((n: i64): Promise<i64> => h.handle(n));
+}
+
+// It is still used after the arrow.
+function usedAfter(): T {
+  const h = new H();
+  const t = new T((n: i64): Promise<i64> => h.handle(n));
+  h.names.push("c");
+  console.log(`names ${h.names.length}`);
+  return t;
+}
+
+// A variable the arrow changes.
+function counting(): T {
+  let calls: i64 = 0;
+  return new T((n: i64): Promise<i64> => {
+    calls = calls + 1;
+    return Promise.resolve(n + calls);
+  });
+}
+
+// Through a method that stores it, and an optional parameter.
+class Later {
+  send: ((n: i64) => Promise<i64>) | null = null;
+  keep(send: (n: i64) => Promise<i64>): void {
+    this.send = send;
+  }
+  keepMaybe(send?: (n: i64) => Promise<i64>): void {
+    if (send != null) {
+      this.send = send;
+    }
+  }
+}
+
+function kept(l: Later): void {
+  const h = new H();
+  l.keep((n: i64): Promise<i64> => h.handle(n));
+}
+
+function keptMaybe(l: Later): void {
+  const h = new H();
+  l.keepMaybe((n: i64): Promise<i64> => h.handle(n));
+}
+
+// A generic function keeping it as a `V`.
+class Slot<V> {
+  v: V;
+  constructor(v: V) {
+    this.v = v;
+  }
+}
+
+function hold<V>(v: V): Slot<V> {
+  return new Slot<V>(v);
+}
+
+function held(): T {
+  const h = new H();
+  const s = hold<(n: i64) => Promise<i64>>((n: i64): Promise<i64> => h.handle(n));
+  return new T(s.v);
+}
+
+// Callees with fixed modes: an interface method, a function value, and a generic interface
+// method keeping it as a `V`.
+interface Keeper {
+  keep(send: (n: i64) => Promise<i64>): void;
+}
+
+interface Sink<V> {
+  put(v: V): void;
+}
+
+class Store implements Keeper, Sink<(n: i64) => Promise<i64>> {
+  send: ((n: i64) => Promise<i64>) | null = null;
+  keep(send: (n: i64) => Promise<i64>): void {
+    this.send = send;
+  }
+  put(v: (n: i64) => Promise<i64>): void {
+    this.send = v;
+  }
+}
+
+function throughInterface(k: Keeper): void {
+  const h = new H();
+  k.keep((n: i64): Promise<i64> => h.handle(n));
+}
+
+function throughGeneric(k: Sink<(n: i64) => Promise<i64>>): void {
+  const h = new H();
+  k.put((n: i64): Promise<i64> => h.handle(n));
+}
+
+// A direct call whose generic parameter hands it to a callee with fixed modes.
+function forward<V>(sink: Sink<V>, v: V): void {
+  sink.put(v);
+}
+
+function throughForward(store: Store): void {
+  const h = new H();
+  forward<(n: i64) => Promise<i64>>(store, (n: i64): Promise<i64> => h.handle(n));
+}
+
+function throughValue(store: Store): void {
+  const put = (f: (n: i64) => Promise<i64>): void => {
+    store.send = f;
+  };
+  const h = new H();
+  put((n: i64): Promise<i64> => h.handle(n));
+}
+
+// A callee that only calls it: changes to a captured variable are seen by the caller.
+async function callsIt(f: (n: i64) => Promise<i64>): Promise<i64> {
+  return await f(1);
+}
+
+async function borrowed(): Promise<i64> {
+  let seen: i64 = 0;
+  const r = await callsIt((n: i64): Promise<i64> => {
+    seen = n + 10;
+    return Promise.resolve(n);
+  });
+  return r + seen;
+}
+
+const other = new T(fails);
+
+function churn(): i64 {
+  const xs: i64[] = [];
+  for (let i: i64 = 0; i < 64; i = i + 1) {
+    xs.push(i);
+  }
+  return xs.length;
+}
+
+const a = make();
+churn();
+console.log(await a.send(40));
+console.log(await a.send(41));
+
+const b = usedAfter();
+churn();
+console.log(await b.send(40));
+
+const c = counting();
+churn();
+console.log(await c.send(10));
+console.log(await c.send(10));
+
+const l = new Later();
+kept(l);
+churn();
+console.log(await l.send!(1));
+keptMaybe(l);
+churn();
+console.log(await l.send!(2));
+
+const s = held();
+churn();
+console.log(await s.send(3));
+
+const store = new Store();
+throughInterface(store);
+churn();
+console.log(await store.send!(4));
+throughGeneric(store);
+churn();
+console.log(await store.send!(5));
+throughForward(store);
+churn();
+console.log(await store.send!(7));
+throughValue(store);
+churn();
+console.log(await store.send!(6));
+
+console.log(await borrowed());
+
+try {
+  await other.send(1);
+} catch (e) {
+  if (e instanceof Failure) {
+    console.log(e.message);
+  }
+}

@@ -344,6 +344,9 @@ impl VisitMut for Flip<'_> {
 
 /// Consume place `e` (through `Upcast` / `WrapSome`); returns whether a mode changed.
 pub(crate) fn force_move(cx: &mut Ctx, e: &mut Expr, errors: &mut Vec<Diagnostic>) -> bool {
+    if let (E::Block(_), Some(def)) = (&e.kind, super::fn_values::literal_arg(e)) {
+        return super::fn_values::escape_closure(cx, def);
+    }
     match &mut e.kind {
         E::Upcast(inner) | E::Downcast(inner) | E::WrapSome(inner) => force_move(cx, inner, errors),
         E::Closure(def) => super::fn_values::escape_closure(cx, *def),
