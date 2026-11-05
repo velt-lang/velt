@@ -46,8 +46,9 @@ fn narrowed(b: &mut Body, x: &str, to: Lanes, half: HalfNative) -> String {
         return b.inst(format!("bitcast <4 x half> {h} to <4 x i16>"));
     }
     if native(to, half) {
-        // Immediate 0: to nearest even, whatever MXCSR says, as `narrow` documents and as every
-        // other path rounds (bit 2 set, as in 4, would take the rounding from MXCSR instead).
+        // Immediate 0: to nearest even, whatever MXCSR says, as `narrow` documents (bit 2 set, as
+        // in 4, would take the rounding from MXCSR instead). The soft sequences' `fadd` follows
+        // MXCSR, so the paths agree at its default, which no Velt API changes.
         let name = "llvm.x86.vcvtps2ph.128";
         b.declarations
             .push(format!("declare <8 x i16> @{name}({FLOATS}, i32)"));

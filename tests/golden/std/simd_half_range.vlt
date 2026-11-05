@@ -1,0 +1,156 @@
+// Every range check of `f16x8` and `bf16x8`, each caught and printed: one past the last place that
+// fits, the length, past it, far past it, and the largest `usize` and that less 7, where adding 8
+// would wrap. The places that are allowed are printed too: the last 8 elements, and for the partial
+// forms the length itself, where nothing is left. A store that is refused writes nothing. The
+// expected output comes from a Python model of the documented rules, not from a run of this file.
+
+import { bf16x8, f16x8 } from "velt/simd";
+import { catchPanic, PanicError } from "velt/task";
+
+const MAX: usize = 18446744073709551615;
+const WHOLE: usize[] = [1, 2, 9, 10, 2000000000, MAX - 7, MAX];
+const PARTIAL: usize[] = [1, 2, 8, 9, 10, 2000000000, MAX - 7, MAX];
+const INDEXES: usize[] = [7, 8, 2000000000, MAX - 7, MAX];
+
+async function attempt(what: string, at: usize, body: () => Promise<string, Error>) {
+  try {
+    console.log(what, at, await catchPanic(body));
+  } catch (e) {
+    if (e instanceof PanicError) {
+      console.log(what, at, e.message.split(" at ")[0]);
+    } else {
+      console.log(what, at, "other error:", (e as Error).message);
+    }
+  }
+}
+
+function f16s(): f16[] {
+  return [1, 2, 3, 4, 5, 6, 7, 8, 9];
+}
+
+function bf16s(): bf16[] {
+  return [1, 2, 3, 4, 5, 6, 7, 8, 9];
+}
+
+// Each of these yields first, as `catch_panic`'s do: with no `await` in it, the panic of a
+// release build ended the program instead of reaching `catchPanic`.
+async function f16Load(at: usize): Promise<string> {
+  await yieldNow();
+  return `${f16x8.load(f16s(), at).lane(7)}`;
+}
+
+async function f16Store(at: usize, to: f16[]): Promise<string> {
+  await yieldNow();
+  f16x8.splat(0.5).store(to, at);
+  return to.join(" ");
+}
+
+async function f16LoadPartial(at: usize): Promise<string> {
+  await yieldNow();
+  const v = f16x8.loadPartial(f16s(), at);
+  return `${v.lane(0)} ${v.lane(7)}`;
+}
+
+async function f16StorePartial(at: usize, to: f16[]): Promise<string> {
+  await yieldNow();
+  f16x8.splat(0.5).storePartial(to, at);
+  return to.join(" ");
+}
+
+async function f16Lane(index: usize): Promise<string> {
+  await yieldNow();
+  return `${f16x8.splat(0.5).lane(index)}`;
+}
+
+async function f16WithLane(index: usize): Promise<string> {
+  await yieldNow();
+  return `${f16x8.splat(0.5).withLane(index, 3).lane(7)}`;
+}
+
+async function bf16Load(at: usize): Promise<string> {
+  await yieldNow();
+  return `${bf16x8.load(bf16s(), at).lane(7)}`;
+}
+
+async function bf16Store(at: usize, to: bf16[]): Promise<string> {
+  await yieldNow();
+  bf16x8.splat(0.5).store(to, at);
+  return to.join(" ");
+}
+
+async function bf16LoadPartial(at: usize): Promise<string> {
+  await yieldNow();
+  const v = bf16x8.loadPartial(bf16s(), at);
+  return `${v.lane(0)} ${v.lane(7)}`;
+}
+
+async function bf16StorePartial(at: usize, to: bf16[]): Promise<string> {
+  await yieldNow();
+  bf16x8.splat(0.5).storePartial(to, at);
+  return to.join(" ");
+}
+
+async function bf16Lane(index: usize): Promise<string> {
+  await yieldNow();
+  return `${bf16x8.splat(0.5).lane(index)}`;
+}
+
+async function bf16WithLane(index: usize): Promise<string> {
+  await yieldNow();
+  return `${bf16x8.splat(0.5).withLane(index, 3).lane(7)}`;
+}
+
+async function checkF16() {
+  for (const at of WHOLE) {
+    await attempt("f16x8.load", at, () => f16Load(at));
+  }
+  for (const at of WHOLE) {
+    const to = f16s();
+    await attempt("f16x8.store", at, () => f16Store(at, to));
+    console.log("  array", to.join(" "));
+  }
+  for (const at of PARTIAL) {
+    await attempt("f16x8.loadPartial", at, () => f16LoadPartial(at));
+  }
+  for (const at of PARTIAL) {
+    const to = f16s();
+    await attempt("f16x8.storePartial", at, () => f16StorePartial(at, to));
+    console.log("  array", to.join(" "));
+  }
+  for (const index of INDEXES) {
+    await attempt("f16x8.lane", index, () => f16Lane(index));
+  }
+  for (const index of INDEXES) {
+    await attempt("f16x8.withLane", index, () => f16WithLane(index));
+  }
+}
+
+async function checkBf16() {
+  for (const at of WHOLE) {
+    await attempt("bf16x8.load", at, () => bf16Load(at));
+  }
+  for (const at of WHOLE) {
+    const to = bf16s();
+    await attempt("bf16x8.store", at, () => bf16Store(at, to));
+    console.log("  array", to.join(" "));
+  }
+  for (const at of PARTIAL) {
+    await attempt("bf16x8.loadPartial", at, () => bf16LoadPartial(at));
+  }
+  for (const at of PARTIAL) {
+    const to = bf16s();
+    await attempt("bf16x8.storePartial", at, () => bf16StorePartial(at, to));
+    console.log("  array", to.join(" "));
+  }
+  for (const index of INDEXES) {
+    await attempt("bf16x8.lane", index, () => bf16Lane(index));
+  }
+  for (const index of INDEXES) {
+    await attempt("bf16x8.withLane", index, () => bf16WithLane(index));
+  }
+}
+
+async function main() {
+  await checkF16();
+  await checkBf16();
+}
