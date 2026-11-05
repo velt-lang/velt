@@ -10,10 +10,17 @@ use std::path::Path;
 
 fn vir(golden: &str, check: &str) -> Vec<u8> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    build(&root, &[golden], check)
+}
+
+/// `velt build <args> --emit vir` in `dir`: the VIR.
+fn build(dir: &Path, args: &[&str], check: &str) -> Vec<u8> {
     let home = test_dir::TestDir::new();
     let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .current_dir(&root)
-        .args(["build", golden, "--emit", "vir"])
+        .current_dir(dir)
+        .arg("build")
+        .args(args)
+        .args(["--emit", "vir"])
         .env("VELT_LIVE_CHECK", check)
         .env("VELT_HOME", home.path())
         .env("VELT_BUILD_CACHE", "off")
@@ -22,7 +29,7 @@ fn vir(golden: &str, check: &str) -> Vec<u8> {
         .expect("velt runs");
     assert!(
         out.status.success(),
-        "{golden} with VELT_LIVE_CHECK={check}: {}",
+        "{args:?} with VELT_LIVE_CHECK={check}: {}",
         String::from_utf8_lossy(&out.stderr)
     );
     out.stdout
@@ -41,4 +48,19 @@ fn the_check_changes_no_vir() {
     ] {
         assert!(vir(golden, "0") == vir(golden, "1"), "{golden}");
     }
+}
+
+/// No golden is built for a host target: lowering awaits this call through `hostAwait`, which only
+/// the rule for `HostSettled` makes live.
+#[test]
+fn an_async_host_function_lowers_with_the_check_on() {
+    let dir = test_dir::TestDir::new();
+    std::fs::write(
+        dir.path().join("main.vlt"),
+        "declare host(\"env\") async function f(): Promise<i64>;\n\
+         function main(): void {\n  spawn(f());\n  console.log(\"ok\");\n}\n",
+    )
+    .expect("write");
+    let args = ["main.vlt", "--target", "wasm32-unknown-unknown"];
+    assert!(build(dir.path(), &args, "1") == build(dir.path(), &args, "0"));
 }

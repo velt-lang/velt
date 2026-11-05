@@ -64,7 +64,7 @@ fn an_async_generator_behind_an_interface_is_an_async_generator() {
 }
 
 /// Lowering calls `hostAwait`, gated on `HostSettled`, which no code names. Only the live set is
-/// looked at: lowering a host function needs a host target.
+/// looked at: lowering a host function needs a host target (`veltc`'s `live_check` lowers one).
 #[test]
 fn an_async_host_function_is_awaited_through_a_host_settled() {
     let p = std_src::check_src(
