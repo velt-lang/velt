@@ -1,0 +1,30 @@
+// velt/hash: FNV-1a over the bytes wherever a string keeps them (literal, inline, heap, a slice
+// sharing its parent), and over byte arrays. The expected values come from an independent
+// BigInt implementation in Node, on Buffer.from(s) (BigInt.asUintN(64, (h ^ b) * 0x100000001b3n)).
+import { fnv1a64, fnv1a64Bytes } from "velt/hash";
+import { utf8Encode } from "velt/encoding";
+
+function repeated(part: string, times: i64): string {
+  let s = "";
+  for (let i = 0; i < times; i++) {
+    s += part;
+  }
+  return s;
+}
+
+function main() {
+  // Lengths around the inline limit (23 bytes), built at run time.
+  console.log(fnv1a64(repeated("a", 22)), fnv1a64(repeated("a", 23)), fnv1a64(repeated("a", 24)));
+  console.log(fnv1a64(repeated("xyz", 1000)));
+  // Bytes with the top bit set: each must count as 0..255, not sign-extended.
+  console.log(fnv1a64("héllo wörld — ベンチマーク 🎉"));
+  console.log(fnv1a64Bytes([0x80, 0xff, 0x00, 0x7f]));
+  console.log(fnv1a64Bytes([]));
+  // A slice of a long string hashes as its own text.
+  const long = repeated("0123456789", 20);
+  console.log(fnv1a64(long.slice(5, 150)) == fnv1a64(repeated("5678901234", 14) + "56789"));
+  console.log(fnv1a64(long.slice(5, 150)));
+  // Same text through both entry points.
+  const text = repeated("héllo", 10);
+  console.log(fnv1a64(text) == fnv1a64Bytes(utf8Encode(text)));
+}

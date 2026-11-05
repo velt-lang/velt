@@ -739,6 +739,9 @@ pub const DELETED: &[&str] = &[
     "velt_rt_prng_range",
     // #2196: collation (std/lang/string/collate).
     "velt_rt_str_locale_compare",
+    // #2196: FNV-1a (std/hash/fnv), which only std called, so no hook replaces it.
+    "velt_rt_fnv1a64_str",
+    "velt_rt_fnv1a64_bytes",
 ];
 
 /// The hook whose qualified name is `qualified` (`std/lang/hooks/number::f64ToString`).
