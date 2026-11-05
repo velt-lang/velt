@@ -5,10 +5,12 @@
 import {
   arraySetLen,
   arrayWithCapacity,
+  noInline,
   share,
   strByteAt,
   strByteLen,
   strLen,
+  strLoadPartialU8x16,
   strLoadU8x16,
 } from "velt/lang/intrinsics";
 
@@ -19,6 +21,8 @@ declare function velt_simd_u8x16_select(m: mask8x16, a: u8x16, b: u8x16): u8x16;
 declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
 declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
 declare function velt_simd_u64x2_lane(v: u64x2, lane: u64): u64;
+declare function velt_simd_u64x2_splat(x: u64): u64x2;
+declare function velt_simd_u64x2_as_u8x16(v: u64x2): u8x16;
 declare function velt_simd_mask8x16_or(a: mask8x16, b: mask8x16): mask8x16;
 declare function velt_simd_mask8x16_any(m: mask8x16): bool;
 declare function velt_rt_strbuf_new(cap: u64, out: string);
@@ -29,15 +33,8 @@ const AMP: u8 = 0x26;
 const LT: u8 = 0x3c;
 const GT: u8 = 0x3e;
 const QUOTE: u8 = 0x22;
-// Bit `b` is set for each byte `b` to escape: `"`, `&`, `'`, `<`, `>`, all below 64.
-const SPECIAL: u64 = 0x500000c400000000;
 // The length of a text that says "unknown" to the builder, which then counts its UTF-16 units.
 const UNITS_UNKNOWN: u64 = 0xffffffffffffffff;
-
-// Whether byte `b` is one to escape.
-function special(b: u8): bool {
-  return b < 64 && ((SPECIAL >> (b as u64)) & 1) != 0;
-}
 
 // The lanes of `v` to escape. `&` and `'` differ in one bit, as do `<` and `>`, so three
 // comparisons cover the five bytes.
@@ -70,7 +67,8 @@ function firstLane(m: mask8x16): usize {
   return 8 + (velt_simd_u64x2_lane(halves, 1).trailingZeros() >> 3);
 }
 
-// The first byte of `s` (`n` bytes) from `from` to escape, or `n`.
+// The first byte of `s` (`n` bytes) from `from` to escape, or `n`. The last bytes are a partial
+// block, zero in the lanes past them (zero is not a byte to escape).
 function nextSpecial(s: string, from: usize, n: usize): usize {
   let i = from;
   while (i + 16 <= n) {
@@ -80,73 +78,51 @@ function nextSpecial(s: string, from: usize, n: usize): usize {
     }
     i += 16;
   }
-  while (i < n) {
-    if (special(strByteAt(s, i as u64))) {
-      return i;
+  if (i < n) {
+    const m = marks(strLoadPartialU8x16(s, i as u64, (n - i) as u64));
+    if (velt_simd_mask8x16_any(m)) {
+      return i + firstLane(m);
     }
-    i++;
   }
   return n;
 }
 
+// The 16 bytes of `s` (`n` bytes) from `i`, which is below `n`: a partial block at the end.
+function block(s: string, i: usize, n: usize): u8x16 {
+  return i + 16 <= n ? strLoadU8x16(s, i as u64) : strLoadPartialU8x16(s, i as u64, (n - i) as u64);
+}
+
 // `s` (`n` bytes), whose first byte to escape is at `first`, with the entities written into a byte
-// array and then made a string once. Each byte becomes at most six and the bytes before
-// `first` stay one each, so a block stored while sixteen bytes of `s` are left fits. After each
-// entity comes the plain run up to the next one: a block is stored whole when four or more of
-// its bytes are plain, as std's JSON writer does (byte stores into a block just stored stall on
-// Apple M-series).
+// array and then made a string once. The text is copied in 16-byte blocks, each stored whole: a
+// block holding a byte to escape is overwritten from there by its entity, and the entity by the
+// plain run after it. Each byte becomes at most six and the bytes before `first` stay one each,
+// so with ten bytes to spare every store fits, even at the last byte. Out of line (as is
+// `escapeEntities`): each caller would otherwise compile its own copy of the loops.
 function escapeFrom(s: string, first: usize, n: usize, hexApos: bool): string {
-  const room = first + (n - first) * 6;
+  noInline();
+  const room = first + (n - first) * 6 + 10;
   const buf: u8[] = arrayWithCapacity(room);
   arraySetLen(buf, room);
   let i: usize = 0;
-  let o: usize = 0;
-  while (i + 16 <= first) {
-    velt_simd_u8x16_store(strLoadU8x16(s, i as u64), buf, o as u64);
-    i += 16;
-    o += 16;
-  }
   while (i < first) {
-    buf[o] = strByteAt(s, i as u64);
-    i++;
-    o++;
+    velt_simd_u8x16_store(block(s, i, n), buf, i as u64);
+    i += 16;
   }
+  i = first;
+  let o = first;
   while (i < n) {
     o = writeEntity(buf, o, strByteAt(s, i as u64), hexApos);
     i++;
     let run = true;
-    while (run && i + 16 <= n) {
-      const v = strLoadU8x16(s, i as u64);
-      const m = marks(v);
-      if (velt_simd_mask8x16_any(m)) {
-        const k = firstLane(m);
-        if (k >= 4) {
-          velt_simd_u8x16_store(v, buf, o as u64);
-          i += k;
-          o += k;
-        } else {
-          for (let j: usize = 0; j < k; j++) {
-            buf[o] = strByteAt(s, i as u64);
-            i++;
-            o++;
-          }
-        }
-        run = false;
-      } else {
-        velt_simd_u8x16_store(v, buf, o as u64);
-        i += 16;
-        o += 16;
-      }
-    }
     while (run && i < n) {
-      const c = strByteAt(s, i as u64);
-      if (special(c)) {
-        run = false;
-      } else {
-        buf[o] = c;
-        i++;
-        o++;
-      }
+      const v = block(s, i, n);
+      const m = marks(v);
+      velt_simd_u8x16_store(v, buf, o as u64);
+      const k = velt_simd_mask8x16_any(m) ? firstLane(m) : 16;
+      const step = k < n - i ? k : n - i;
+      i += step;
+      o += step;
+      run = k == 16;
     }
   }
   // ASCII stays ASCII, which the builder needn't scan; otherwise the text may hold a lone surrogate.
@@ -160,47 +136,35 @@ function escapeFrom(s: string, first: usize, n: usize, hexApos: bool): string {
   return text;
 }
 
-// Writes the entity of byte `b` at `buf[o]`; the position after it.
+// Writes the entity of byte `b` at `buf[o]`, as one 16-byte store of its bytes (the rest of the
+// block is overwritten by what follows, or past the end); the position after it.
 function writeEntity(buf: u8[], o: usize, b: u8, hexApos: bool): usize {
-  buf[o] = AMP;
+  const word = entityWord(b, hexApos);
+  velt_simd_u8x16_store(velt_simd_u64x2_as_u8x16(velt_simd_u64x2_splat(word)), buf, o as u64);
+  return o + 8 - (word.leadingZeros() >> 3);
+}
+
+// The entity of byte `b`, its bytes in a word from the lowest (all targets are little-endian).
+function entityWord(b: u8, hexApos: bool): u64 {
   if (b == AMP) {
-    buf[o + 1] = 0x61; // amp;
-    buf[o + 2] = 0x6d;
-    buf[o + 3] = 0x70;
-    buf[o + 4] = 0x3b;
-    return o + 5;
+    return 0x3b706d6126; // &amp;
   }
-  if (b == LT || b == GT) {
-    buf[o + 1] = b == LT ? 0x6c : 0x67; // lt; or gt;
-    buf[o + 2] = 0x74;
-    buf[o + 3] = 0x3b;
-    return o + 4;
+  if (b == LT) {
+    return 0x3b746c26; // &lt;
+  }
+  if (b == GT) {
+    return 0x3b746726; // &gt;
   }
   if (b == QUOTE) {
-    buf[o + 1] = 0x71; // quot;
-    buf[o + 2] = 0x75;
-    buf[o + 3] = 0x6f;
-    buf[o + 4] = 0x74;
-    buf[o + 5] = 0x3b;
-    return o + 6;
+    return 0x3b746f757126; // &quot;
   }
-  buf[o + 1] = 0x23; // #
-  if (hexApos) {
-    buf[o + 2] = 0x78; // x27;
-    buf[o + 3] = 0x32;
-    buf[o + 4] = 0x37;
-    buf[o + 5] = 0x3b;
-    return o + 6;
-  }
-  buf[o + 2] = 0x33; // 39;
-  buf[o + 3] = 0x39;
-  buf[o + 4] = 0x3b;
-  return o + 5;
+  return hexApos ? 0x3b3732782326 : 0x3b39332326; // &#x27; or &#39;
 }
 
 // `s` with its bytes to escape replaced; `s` itself, shared, when it has none. The share keeps
 // `s` borrowed (returning `s` would move it, and callers would copy a field they pass in).
 function escapeEntities(s: string, hexApos: bool): string {
+  noInline();
   const n = strByteLen(s);
   const first = nextSpecial(s, 0, n);
   return first == n ? share(s) : escapeFrom(s, first, n, hexApos);
