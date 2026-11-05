@@ -7,8 +7,10 @@ async function main() {
     const v = new Uint8Array(u.buffer);
     return v[0] + x;
   });
+  const w = new Uint8Array(4);
+  w[0] = 5;
   const copy = shared((x: number): number => {
-    const v = new Uint8Array(u);
+    const v = new Uint8Array(w);
     v[0] = v[0] + x;
     return v[0];
   });

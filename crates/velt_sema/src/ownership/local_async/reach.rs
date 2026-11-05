@@ -234,22 +234,42 @@ fn view_over_buffer(cx: &mut Ctx, e: &Expr, memo: &mut Memo) -> bool {
     let E::New { def, args, .. } = &e.kind else {
         return false;
     };
-    let is_view = cx.adt(*def).is_some_and(|a| {
-        velt_common::std_modules::is_std(&a.name)
-            && (a.name.ends_with("Array") || a.name.ends_with("::DataView"))
-    });
+    let is_view = cx.std_class(
+        *def,
+        &[
+            "Int8Array",
+            "Uint8Array",
+            "Uint8ClampedArray",
+            "Int16Array",
+            "Uint16Array",
+            "Int32Array",
+            "Uint32Array",
+            "Float16Array",
+            "Float32Array",
+            "Float64Array",
+            "BigInt64Array",
+            "BigUint64Array",
+            "DataView",
+        ],
+    );
     is_view && args.first().is_some_and(|a| over_buffer(cx, a, memo))
 }
 
 /// Is `e`, through conversions, an `ArrayBuffer` that isn't a new one?
 fn over_buffer(cx: &mut Ctx, e: &Expr, memo: &mut Memo) -> bool {
-    let buffer = matches!(cx.ty.kind(e.ty), TyKind::Adt(d, _)
-        if cx.adt(*d).is_some_and(|a| velt_common::std_modules::is_std(&a.name)
-            && a.name.ends_with("::ArrayBuffer")));
+    let buffer =
+        matches!(cx.ty.kind(e.ty), TyKind::Adt(d, _) if cx.std_class(*d, &["ArrayBuffer"]));
     if buffer {
         return !fresh(cx, e, memo);
     }
-    if matches!(e.kind, E::New { .. } | E::Call { .. }) {
+    if matches!(
+        e.kind,
+        E::New { .. }
+            | E::Call {
+                callee: Callee::Def(..),
+                ..
+            }
+    ) {
         return false;
     }
     let mut found = false;
