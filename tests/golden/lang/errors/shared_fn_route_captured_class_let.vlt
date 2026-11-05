@@ -1,0 +1,23 @@
+// The function calls one in a captured object's field, which changes a `let`.
+type F = (x: i64) => i64;
+
+function mk(): F {
+  let n: i64 = 0;
+  return (x: i64): i64 => {
+    n += 1;
+    return n;
+  };
+}
+
+class H {
+  f: F;
+  constructor(f: F) {
+    this.f = f;
+  }
+}
+
+async function main() {
+  const h = new H(mk());
+  const f = shared((x: i64): i64 => h.f(x));
+  console.log(f(1));
+}

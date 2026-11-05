@@ -1,0 +1,44 @@
+// The compiler can't follow a function an interface method returns, so `shared(...)` panics.
+type F = (x: i64) => i64;
+
+class H {
+  f: F;
+  constructor(f: F) {
+    this.f = f;
+  }
+}
+
+interface I {
+  call(x: i64): i64;
+}
+
+class W implements I {
+  f: F;
+  constructor(f: F) {
+    this.f = f;
+  }
+  call(x: i64): i64 {
+    return this.f(x);
+  }
+}
+
+interface Fi {
+  make(): F;
+}
+
+class Fa implements Fi {
+  make(): F {
+    let n: i64 = 0;
+    return (x: i64): i64 => {
+      n += 1;
+      return n;
+    };
+  }
+}
+
+async function main() {
+  const m: Fi = new Fa();
+  const h = new H(m.make());
+  const f = shared((x: i64): i64 => h.f(x));
+  console.log(f(1));
+}

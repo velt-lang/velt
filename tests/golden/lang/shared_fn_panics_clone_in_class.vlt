@@ -1,0 +1,47 @@
+// The compiler can't follow the function out of the generic class, so `shared(...)` panics.
+type F = (x: i64) => i64;
+
+class K {
+  n: i64 = 0;
+  clone(): K {
+    this.n += 1;
+    return new K();
+  }
+  [Symbol.dispose]() {}
+}
+
+class H {
+  k: K | null = new K();
+}
+
+function mk(): F {
+  const b: B = new D();
+  return (x: i64): i64 => b.v;
+}
+
+class B {
+  v: i64 = 0;
+}
+
+class D extends B {
+  h: H = new H();
+}
+
+class Bx<T> {
+  v: T;
+  constructor(v: T) {
+    this.v = v;
+  }
+  take(): T {
+    return this.v;
+  }
+}
+
+function hidden(): F {
+  return new Bx<F>(mk()).take();
+}
+
+async function main() {
+  const f = shared(hidden());
+  console.log(f(1));
+}

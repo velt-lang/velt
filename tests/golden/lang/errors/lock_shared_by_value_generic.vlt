@@ -1,0 +1,13 @@
+// A generic function holding what it is given in a closure gets a `Mutex` by value.
+type F = (x: i64) => i64;
+
+function mk<T>(v: T): F {
+  return (x: i64): i64 => {
+    const q = v;
+    return x;
+  };
+}
+
+async function main() {
+  console.log(mk(new Mutex<i64>(0))(1));
+}

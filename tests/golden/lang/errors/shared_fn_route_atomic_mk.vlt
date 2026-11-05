@@ -1,0 +1,15 @@
+// An `Atomic` held by value, from a function the compiler can't follow: each call would change its own.
+type F = (x: i64) => i64;
+
+function mk(): F {
+  const a = new Atomic<i64>(0);
+  return (x: i64): i64 => {
+    a.store(a.load() + 1);
+    return a.load();
+  };
+}
+
+async function main() {
+  const f = shared(mk());
+  console.log(f(1));
+}

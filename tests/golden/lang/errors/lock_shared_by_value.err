@@ -1,0 +1,1 @@
+lock_shared_by_value.vlt:7:15: error: this shares a `Mutex` held by value, which would make it a second lock

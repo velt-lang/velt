@@ -1,0 +1,10 @@
+// A spawned closure calling one that changes a `let` would change the task's copy, out of sight.
+async function main() {
+  let n: i64 = 0;
+  const inner = (): i64 => {
+    n += 1;
+    return n;
+  };
+  const r = await spawn((async (): Promise<i64> => inner())());
+  console.log(r, n);
+}

@@ -1,0 +1,26 @@
+// A cell in a field of an object the function captured.
+class H {
+  f: F;
+  constructor(f: F) {
+    this.f = f;
+  }
+}
+
+type F = (x: i64) => i64;
+
+// `n` is assigned outside the closure too, so it lives in a cell the function holds.
+function mk(): F {
+  let n: i64 = 0;
+  const g = (x: i64): i64 => {
+    n += 1;
+    return n;
+  };
+  n = 0;
+  return g;
+}
+
+async function main() {
+  const h = new H(mk());
+  const f = shared((x: i64): i64 => h.f(x));
+  console.log(f(1));
+}
