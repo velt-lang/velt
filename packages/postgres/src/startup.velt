@@ -279,7 +279,10 @@ export async function openConnection(c: PgConfig): Promise<Conn> throws PgError 
     const target = i < c.hostaddrs.length ? c.hostaddrs[i] : name;
     try {
       if (target.startsWith("/")) {
-        throw new PgError("ENOTSUP", "Unix-domain sockets need velt/net to have them");
+        throw new PgError(
+          "ENOTSUP",
+          `host "${target}" is a Unix-domain socket, which velt/net can't open: connect over TCP`,
+        );
       }
       return await attempt(c, name.length > 0 ? name : target, addressOf(target, port), none);
     } catch (e) {
