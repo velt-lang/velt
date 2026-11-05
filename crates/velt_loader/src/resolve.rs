@@ -112,7 +112,10 @@ mod tests {
             Some(std.join("collections/set.velt"))
         );
         assert_eq!(resolve("./util"), Some(root.join("app/util.velt")));
-        assert_eq!(resolve("./shapes"), Some(root.join("app/shapes/index.velt")));
+        assert_eq!(
+            resolve("./shapes"),
+            Some(root.join("app/shapes/index.velt"))
+        );
         assert_eq!(resolve("./dup.ts"), Some(root.join("app/dup.ts")));
         // From a std file, relative imports stay in std.
         let net = std.join("net.velt");

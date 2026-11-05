@@ -57,7 +57,11 @@ fn reports_changes(notify: bool) {
 fn saves_during_builds(w: &mut Watcher, dir: &Path) {
     let file = dir.join("main.velt");
     let snap = w.snapshot();
-    let read = [file.clone(), dir.join("added.velt"), dir.join("missing.velt")];
+    let read = [
+        file.clone(),
+        dir.join("added.velt"),
+        dir.join("missing.velt"),
+    ];
     w.set(read.clone(), &snap);
     assert!(!wait(w, SETTLE * 3), "a build during which nothing changed");
     // A watched file saved again while the build that read it was running.

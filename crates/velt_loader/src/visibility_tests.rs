@@ -6,7 +6,10 @@ use super::*;
 /// A std root with the module `velt/x` (`x/index.velt`), its internal file `x/inner.velt` and a
 /// white-box test of it next to them.
 fn std_with_a_test(t: &Tree) -> PathBuf {
-    t.write("std/x/index.velt", "export { one } from \"velt/x/inner\";\n");
+    t.write(
+        "std/x/index.velt",
+        "export { one } from \"velt/x/inner\";\n",
+    );
     t.write(
         "std/x/inner.velt",
         "export function one(): i64 { return 1; }\n",

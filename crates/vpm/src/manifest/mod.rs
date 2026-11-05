@@ -51,6 +51,8 @@ pub(crate) mod write;
 pub const MANIFEST_FILE: &str = "package.velt";
 /// The manifest's former name: still found, to report how to migrate it ([`legacy`]).
 pub const LEGACY_MANIFEST_FILE: &str = "velt.toml";
+/// The manifest's name before sources moved to `.velt` (#2419): renaming it is all a package needs.
+pub const OLD_MANIFEST_FILE: &str = "package.vlt"; // velt-ext: keep
 /// Default runnable entry, relative to the package root.
 pub const DEFAULT_ENTRY: &str = "src/main.velt";
 /// Entry module seen by importers of a library package, relative to the package root.
@@ -316,6 +318,12 @@ impl Manifest {
     /// the migration error ([`legacy::migration_error`]).
     pub fn from_dir(dir: &Path) -> Result<Manifest, String> {
         let path = dir.join(MANIFEST_FILE);
+        if !path.is_file() && dir.join(OLD_MANIFEST_FILE).is_file() {
+            return Err(format!(
+                "`{}` is no longer read: rename it to `{MANIFEST_FILE}`",
+                dir.join(OLD_MANIFEST_FILE).display()
+            ));
+        }
         if !path.is_file() && dir.join(LEGACY_MANIFEST_FILE).is_file() {
             return Err(legacy::migration_error(dir));
         }
@@ -778,7 +786,11 @@ pub fn find_package_root(start: &Path) -> Option<PathBuf> {
     };
     start
         .ancestors()
-        .find(|d| d.join(MANIFEST_FILE).is_file() || d.join(LEGACY_MANIFEST_FILE).is_file())
+        .find(|d| {
+            [MANIFEST_FILE, OLD_MANIFEST_FILE, LEGACY_MANIFEST_FILE]
+                .iter()
+                .any(|name| d.join(name).is_file())
+        })
         .map(Path::to_path_buf)
 }
 

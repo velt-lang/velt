@@ -362,6 +362,18 @@ impl Loader<'_, '_> {
     ) -> usize {
         let file = self.sm.add(path, src);
         let is_std = matches!(origin, Origin::Std(_));
+        if path
+            .extension()
+            .is_some_and(|e| e == vpm::sources::OLD_EXTENSION)
+        {
+            self.diags.push(Diagnostic::warning(
+                format!(
+                    "`.{}` files are read for one more release: rename this one to `.velt`",
+                    vpm::sources::OLD_EXTENSION
+                ),
+                Span::new(file, 0, 0),
+            ));
+        }
         let plain_ts = vpm::sources::is_plain_ts(path);
         let mut ast = if is_std {
             let src = &self.sm.get(file).src;

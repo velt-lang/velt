@@ -121,6 +121,11 @@ impl Loader<'_, '_> {
             .candidates
             .iter()
             .flatten()
+            // The old extension is still read, and not worth suggesting.
+            .filter(|f| {
+                f.extension()
+                    .is_none_or(|e| e != vpm::sources::OLD_EXTENSION)
+            })
             .map(|f| format!("tried `{}`", shown.show(f)))
             .collect();
         // A module of the standard library's former layout: where it went.

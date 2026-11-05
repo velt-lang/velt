@@ -479,3 +479,16 @@ fn define_values_are_literals() {
     // Written back and printed as JSON.
     assert!(m.to_velt().contains("define: {"), "{}", m.to_velt());
 }
+
+#[test]
+fn a_manifest_with_the_old_name_is_found_and_told_to_rename() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join(OLD_MANIFEST_FILE), "").unwrap();
+    let err = Manifest::from_dir(tmp.path()).unwrap_err();
+    assert!(err.contains("rename it to `package.velt`"), "{err}");
+    assert_eq!(find_package_root(tmp.path()).as_deref(), Some(tmp.path()));
+    let renamed = crate::scaffold::manifest_text("p");
+    std::fs::write(tmp.path().join(MANIFEST_FILE), renamed).unwrap();
+    let read = Manifest::from_dir(tmp.path());
+    assert!(read.is_ok(), "{read:?}");
+}

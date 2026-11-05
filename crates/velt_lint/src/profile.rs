@@ -97,7 +97,10 @@ mod tests {
         let p = Profiles::new(Some(tmp.clone()), vec![shared.clone()]);
         assert_eq!(p.of(&shared.join("App.tsx")), Profile::Portable);
         assert_eq!(p.of(&tmp.join("src/server.velt")), Profile::Native);
-        assert_eq!(p.of(&tmp.join("node_modules/x/a.velt")), Profile::Dependency);
+        assert_eq!(
+            p.of(&tmp.join("node_modules/x/a.velt")),
+            Profile::Dependency
+        );
         assert_eq!(p.of(Path::new("/elsewhere/a.velt")), Profile::Dependency);
         // Outside a package every user file is native.
         assert_eq!(

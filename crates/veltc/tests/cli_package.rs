@@ -129,7 +129,9 @@ fn add_without_version_uses_latest_and_path_deps_work() {
     let found = s.velt("app", &["search", "beta"]);
     assert!(String::from_utf8_lossy(&found.stdout).contains("beta  0.2.0-beta.1"));
     s.ok("app", &["add", "beta"]);
-    assert!(s.read("app/package.velt").contains("beta: \"0.2.0-beta.1\""));
+    assert!(s
+        .read("app/package.velt")
+        .contains("beta: \"0.2.0-beta.1\""));
 
     s.ok("", &["new", "local", "--lib"]);
     s.ok("app", &["add", "local", "--path", "../local"]);
@@ -210,7 +212,11 @@ fn check_in_a_package_checks_every_module_under_src_and_tests() {
     s.ok("app", &["check", "src/main.velt"]);
 
     // A module both the entry and the library import is checked, and reported, once.
-    for file in ["src/lib.velt", "src/util/unused.velt", "tests/lib.test.velt"] {
+    for file in [
+        "src/lib.velt",
+        "src/util/unused.velt",
+        "tests/lib.test.velt",
+    ] {
         std::fs::remove_file(s.dir.join("app").join(file)).unwrap();
     }
     s.write("app/src/shared.velt", BAD);

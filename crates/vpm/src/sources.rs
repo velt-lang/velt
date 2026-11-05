@@ -17,8 +17,11 @@ use crate::manifest::{LEGACY_MANIFEST_FILE, MANIFEST_FILE};
 pub const SKIPPED_DIRS: [&str; 2] = ["target", "node_modules"];
 
 /// Source file extensions, in the order a relative import tries them (`./x` → `x.velt`, `x.ts`,
-/// `x.tsx`).
-pub const SOURCE_EXTENSIONS: [&str; 3] = ["velt", "ts", "tsx"];
+/// `x.tsx`). The last is the old name of the first, read with a warning for one release (#2419).
+pub const SOURCE_EXTENSIONS: [&str; 4] = ["velt", "ts", "tsx", OLD_EXTENSION];
+
+/// The extension Velt sources had before `.velt`.
+pub const OLD_EXTENSION: &str = "vlt"; // velt-ext: keep
 
 /// Whether a file named `name` is a source module (`a.velt`, `a.ts`, `a.tsx`; not `a.d.ts`).
 pub fn is_source_name(name: &str) -> bool {
@@ -156,7 +159,11 @@ mod tests {
         assert!(err.contains("`src/lib.velt`, `src/lib.ts`"), "{err}");
         assert_eq!(
             source_files("types.d"),
-            [PathBuf::from("types.d.velt"), PathBuf::from("types.d.tsx")]
+            [
+                PathBuf::from("types.d.velt"),
+                PathBuf::from("types.d.tsx"),
+                PathBuf::from(format!("types.d.{OLD_EXTENSION}")),
+            ]
         );
     }
 

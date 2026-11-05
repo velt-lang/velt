@@ -402,7 +402,11 @@ fn cache_warm_compiles_the_warm_up_programs_once() {
 
     // A program that does not compile is reported, and leaves the cache unmarked.
     std::fs::remove_dir_all(&cache).unwrap();
-    std::fs::write(warm.join("broken.velt"), "function main() {\n  nope();\n}\n").unwrap();
+    std::fs::write(
+        warm.join("broken.velt"),
+        "function main() {\n  nope();\n}\n",
+    )
+    .unwrap();
     let o = velt(dir, &["cache", "warm"], &env);
     let err = text(&o.stderr);
     assert!(!o.status.success() && err.contains("broken.velt"), "{err}");

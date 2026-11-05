@@ -211,7 +211,12 @@ fn a_new_clang_does_not_serve_the_old_ones_std_functions() {
             ("VELT_STD_OBJECT", on),
             ("VELT_STD_OBJECT_STATS", on),
         ];
-        let o = velt(dir, &["build", "a.velt", "--release", "-o", "a"], &log, &env);
+        let o = velt(
+            dir,
+            &["build", "a.velt", "--release", "-o", "a"],
+            &log,
+            &env,
+        );
         let err = text(&o.stderr);
         assert!(o.status.success(), "{err}");
         let line = (err.lines())

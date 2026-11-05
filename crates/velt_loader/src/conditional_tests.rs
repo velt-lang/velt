@@ -236,7 +236,10 @@ fn std_with_imports(t: &Tree, imports: &str) -> PathBuf {
         "std/x/t/native.velt",
         "export function t(): i64 { return 1; }\n",
     );
-    t.write("std/x/t/js.velt", "export function t(): i64 { return 2; }\n");
+    t.write(
+        "std/x/t/js.velt",
+        "export function t(): i64 { return 2; }\n",
+    );
     t.path("std")
 }
 

@@ -209,7 +209,10 @@ mod tests {
         let name = server.name().to_os_string();
         let bound = TcpListener::bind("127.0.0.1:0").unwrap();
         let port = bound.local_addr().unwrap().port();
-        let files = vec![PathBuf::from("/a/main.velt"), PathBuf::from("/std/http.velt")];
+        let files = vec![
+            PathBuf::from("/a/main.velt"),
+            PathBuf::from("/std/http.velt"),
+        ];
         let (socket, sent) = (name.clone(), files.clone());
         let program = std::thread::spawn(move || {
             report_build(&socket, false, &sent[..1]).unwrap();

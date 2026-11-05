@@ -143,7 +143,9 @@ fn a_test_calling_a_system_function_runs_every_time() {
     for _ in 0..2 {
         let running = p.running(&[]);
         // Also `__error` on macOS, where errno is read through it.
-        let sys = running.iter().find(|l| l.starts_with("tests/sys.test.velt"));
+        let sys = running
+            .iter()
+            .find(|l| l.starts_with("tests/sys.test.velt"));
         assert!(
             sys.is_some_and(
                 |l| l.contains("not cacheable") && l.contains("a system function `close`")

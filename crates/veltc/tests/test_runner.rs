@@ -328,7 +328,11 @@ fn what_a_test_does_cannot_break_the_run() {
         "{stdout}"
     );
     assert!(f[2].contains("missing.json"), "{stdout}");
-    assert_eq!(block(&stdout, "h.test.velt")[1..], ["ok test_h"], "{stdout}");
+    assert_eq!(
+        block(&stdout, "h.test.velt")[1..],
+        ["ok test_h"],
+        "{stdout}"
+    );
     assert_eq!(
         block(&stdout, "g.test.velt")[1..],
         [
@@ -466,7 +470,11 @@ fn a_test_that_never_ends_times_out() {
         "export function test_before() {}\n\nexport function test_loops() {\n  let i = 0;\n  \
          while (i >= 0) {\n    i = (i + 1) % 10;\n  }\n}\n\nexport function test_after() {}\n",
     );
-    write(dir, "t/other.test.velt", "export function test_other() {}\n");
+    write(
+        dir,
+        "t/other.test.velt",
+        "export function test_other() {}\n",
+    );
     let mut command = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
     let o = command
         .args(["test", "--no-cache", "t"])

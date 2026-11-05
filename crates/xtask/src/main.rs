@@ -25,6 +25,7 @@ mod graph;
 mod hook_tests;
 mod hooks;
 mod junit;
+mod old_extension;
 mod os;
 mod package_users;
 mod plan;

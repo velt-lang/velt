@@ -241,7 +241,10 @@ fn a_large_integer_literal_has_no_fix_and_says_why() {
     assert_eq!(findings.len(), 1);
     assert!(findings[0].fix.is_none());
     assert!(findings[0].notes[1].contains("`i64`"), "{:?}", findings[0]);
-    let findings = lint_source(Path::new("edge.velt"), "const edge = 9007199254740992i64;\n");
+    let findings = lint_source(
+        Path::new("edge.velt"),
+        "const edge = 9007199254740992i64;\n",
+    );
     assert!(findings[0].fix.is_some());
 }
 

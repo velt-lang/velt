@@ -89,7 +89,13 @@ async function manifestsAreData(run: Run): Promise<void> {
     [file("src/lib.velt", ""), file("velt.toml", "[package]\n")],
     "velt.toml",
   );
-  await refusal(run, "no manifest", p, [file("src/lib.velt", "")], "the archive has no package.velt");
+  await refusal(
+    run,
+    "no manifest",
+    p,
+    [file("src/lib.velt", "")],
+    "the archive has no package.velt",
+  );
   const code = `import { readFile } from "velt/fs";\nexport const pkg: Package = { name: "${p}", version: "1.0.0" };\n`;
   await refusal(run, "code in the manifest", p, [file("package.velt", code)], "package.velt");
   const huge = `// ${"x".repeat(64 * 1024)}\n`;

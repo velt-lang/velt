@@ -447,7 +447,11 @@ fn npm_packages_have_no_package_s_trust() {
         "app",
         "allowNative: [\"good\"],\n  dependencies: { good: { path: \"../good\" } },",
     );
-    write(root, "app/src/main.velt", &call.replace("\"x\"", "\"good\""));
+    write(
+        root,
+        "app/src/main.velt",
+        &call.replace("\"x\"", "\"good\""),
+    );
     check(root, "good/node_modules/x");
 
     // Under the root, which has native code.

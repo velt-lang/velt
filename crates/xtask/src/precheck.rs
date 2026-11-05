@@ -247,6 +247,7 @@ impl Runner<'_> {
 /// Runs the checks `sel` selects. `Err` lists the failures and their fixes.
 pub fn run(root: &Path, sel: &Selection, reason: &str) -> Result<(), String> {
     println!("precheck: {reason}");
+    crate::old_extension::check(root)?;
     let start = Instant::now();
     let mut r = Runner {
         root,

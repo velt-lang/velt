@@ -447,7 +447,10 @@ fn findings_follow_the_check_after_a_blank_line() {
     let dir = tmp.path();
     write(dir, "bad.velt", "export const x: number = \"a\";\n");
     write(dir, "good.velt", "export const y: f64 = 1.5;\n");
-    let err = stderr(&velt(dir, &["check", "--ts-compat", "bad.velt", "good.velt"]));
+    let err = stderr(&velt(
+        dir,
+        &["check", "--ts-compat", "bad.velt", "good.velt"],
+    ));
     let (check, lint) = err.split_once("good.velt:1:").expect(&err);
     assert!(
         check.ends_with("\n\n") && !check.ends_with("\n\n\n"),
@@ -488,7 +491,11 @@ fn without_paths_the_packages_ts_compat_folders_are_linted() {
         &manifest_with_ts_compat("[\"src/models\", \"src/ui\"]"),
     );
     write(dir, "src/main.velt", "export function main() {}\n");
-    write(dir, "src/server.velt", "export const port: number = 8080;\n");
+    write(
+        dir,
+        "src/server.velt",
+        "export const port: number = 8080;\n",
+    );
     // Outside the folders: not linted.
     write(dir, "src/jobs.velt", "export const big: i64 = 1;\n");
     write(dir, "src/models/user.ts", "export const age: i32 = 1;\n");
@@ -539,7 +546,11 @@ fn without_paths_the_packages_ts_compat_folders_are_linted() {
 fn a_package_nested_in_a_folder_is_left_out() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    write(dir, "package.velt", &manifest_with_ts_compat("[\"shared\"]"));
+    write(
+        dir,
+        "package.velt",
+        &manifest_with_ts_compat("[\"shared\"]"),
+    );
     write(dir, "shared/user.ts", "export const age: number = 1;\n");
     // Another package's files, with findings of their own, and its manifest are not linted.
     write(dir, "shared/inner/package.velt", &manifest("inner"));

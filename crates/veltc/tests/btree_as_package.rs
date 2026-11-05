@@ -30,9 +30,9 @@ fn relative(src: &str, here: &str, std: &Path) -> String {
         let file = format!("{rel}.velt");
         let module = match std.join(rel).join("index.velt").is_file() {
             true => None,
-            false => {
-                velt_common::std_modules::owner(&file, &|d| std.join(d).join("index.velt").is_file())
-            }
+            false => velt_common::std_modules::owner(&file, &|d| {
+                std.join(d).join("index.velt").is_file()
+            }),
         };
         match module {
             Some(m) => out.push_str(&format!("velt/{m}")),

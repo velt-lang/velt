@@ -120,7 +120,8 @@ fn files_to_format(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
 }
 
 fn is_velt(file: &Path) -> bool {
-    file.extension().is_some_and(|e| e == "velt")
+    file.extension()
+        .is_some_and(|e| e == "velt" || e == vpm::sources::OLD_EXTENSION)
 }
 
 /// Whether a file found in a directory named on the command line is formatted: a `.velt` file, or

@@ -27,9 +27,9 @@ describe("the publish policy", () => {
     // 20,000 directories: each prefix rebuilt as a string would be some 400 MB of keys.
     const r = new TestRegistry();
     const deep = `src/${"a/".repeat(20000)}x.velt`;
-    expect(await publishWith(r, [file(deep, ""), file(`src/${"a/".repeat(19999)}y.velt`, "")])).toBe(
-      "201 published `p` 1.0.0\n",
-    );
+    expect(
+      await publishWith(r, [file(deep, ""), file(`src/${"a/".repeat(19999)}y.velt`, "")]),
+    ).toBe("201 published `p` 1.0.0\n");
   });
 
   it("refuses paths a client could not unpack faithfully", async () => {

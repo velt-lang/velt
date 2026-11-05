@@ -235,7 +235,10 @@ mod tests {
             assert_eq!(found.len(), 1, "{wait}: {found:?}");
         }
         // A method call waits too.
-        assert_eq!(check("t.test.velt", "x;\nawait timers.sleep(1);\n").len(), 1);
+        assert_eq!(
+            check("t.test.velt", "x;\nawait timers.sleep(1);\n").len(),
+            1
+        );
     }
 
     #[test]
@@ -288,7 +291,11 @@ mod tests {
         );
         // A marker in a file's header needs to come before its code.
         assert_eq!(
-            check("t.test.velt", "x;\n// timing: late\nf();\nawait sleep(5);\n").len(),
+            check(
+                "t.test.velt",
+                "x;\n// timing: late\nf();\nawait sleep(5);\n"
+            )
+            .len(),
             1
         );
     }

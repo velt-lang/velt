@@ -161,7 +161,10 @@ mod tests {
         std::fs::create_dir_all(base.join("Lib")).unwrap();
         std::fs::write(base.join("Lib/util.velt"), "").unwrap();
         let names = DirNames::default();
-        assert_eq!(names.case_of(&base.join("Lib/util.velt"), base), Case::Exact);
+        assert_eq!(
+            names.case_of(&base.join("Lib/util.velt"), base),
+            Case::Exact
+        );
         assert_eq!(
             names.case_of(&base.join("lib/Util.velt"), base),
             Case::Differs(base.join("Lib").join("util.velt"))

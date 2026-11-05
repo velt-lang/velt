@@ -3,6 +3,7 @@
 
 use super::tests::{imports, jsx_runtime, load, messages, paths, AliasResolver, JsxResolver, Tree};
 use super::*;
+use velt_common::Severity;
 
 #[test]
 fn relative_imports_find_velt_ts_and_tsx_files() {
@@ -77,7 +78,10 @@ fn explicit_extensions_name_one_file() {
     );
 
     // `./a.velt` names `a.velt`; the same module path as `a.ts` loaded through another import.
-    let root = t.write("app/both.velt", "import \"./a.velt\";\nimport \"./a.ts\";\n");
+    let root = t.write(
+        "app/both.velt",
+        "import \"./a.velt\";\nimport \"./a.ts\";\n",
+    );
     let (l, diags, _) = load(&root, LoadOptions::default());
     assert_eq!(paths(&l), ["main", "a"]);
     assert!(
@@ -192,4 +196,40 @@ fn type_assertions_are_reported_in_ts_files_only() {
         ["type assertions `<T>x` are not supported"]
     );
     assert!(diags[0].render(&sm).contains("cast.ts:1:18"));
+}
+
+#[test]
+fn a_file_with_the_old_extension_loads_with_a_warning() {
+    let t = Tree::new();
+    t.write("app/util.vlt", "export function util() {}\n"); // velt-ext: keep
+    let root = t.write(
+        "app/main.velt",
+        "import { util } from \"./util\";\nfunction main() {}\n",
+    );
+    let (l, diags, _) = load(&root, LoadOptions::default());
+    assert_eq!(paths(&l), ["main", "util"]);
+    let messages = messages(&diags);
+    assert_eq!(messages.len(), 1, "{messages:?}");
+    assert!(messages[0].contains("rename"), "{messages:?}");
+    assert!(
+        diags.iter().all(|d| d.severity != Severity::Error),
+        "{messages:?}"
+    );
+}
+
+#[test]
+fn a_module_with_both_extensions_is_ambiguous() {
+    let t = Tree::new();
+    t.write("app/util.velt", "export function util() {}\n");
+    t.write("app/util.vlt", "export function util() {}\n"); // velt-ext: keep
+    let root = t.write(
+        "app/main.velt",
+        "import { util } from \"./util\";\nfunction main() {}\n",
+    );
+    let (_, diags, _) = load(&root, LoadOptions::default());
+    let errors = diags
+        .iter()
+        .filter(|d| d.severity == Severity::Error)
+        .count();
+    assert_eq!(errors, 1, "{:?}", messages(&diags));
 }

@@ -78,7 +78,11 @@ describe("archives", () => {
   });
 
   it("hold only a package's files", () => {
-    const ok = [entry("package.velt", ""), entry("src/lib.velt", ""), entry("native/Cargo.toml", "")];
+    const ok = [
+      entry("package.velt", ""),
+      entry("src/lib.velt", ""),
+      entry("native/Cargo.toml", ""),
+    ];
     checkPackagePaths(ok, "native");
     expect(pathRefusal(() => checkPackagePaths(ok, null))).toBe(
       "archive contains a disallowed path `native/Cargo.toml`",

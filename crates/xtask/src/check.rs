@@ -107,6 +107,7 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         dry_run: opts.dry_run,
         timings: vec![],
     };
+    crate::old_extension::check(root)?;
     let ws = workspace_args(root);
     // The build leaves this running binary alone (rebuilding it fails on Windows); clippy and
     // the tests only build `xtask`'s check data and test harness, not the binary.

@@ -124,9 +124,10 @@ fn check_offered(
     let mut sources: Vec<SourceModule> = vec![];
     let mut input = GenInput::default();
     for f in offer.files {
-        let file = sess
-            .sm
-            .add(PathBuf::from(&f.path).with_extension("velt"), f.text.clone());
+        let file = sess.sm.add(
+            PathBuf::from(&f.path).with_extension("velt"),
+            f.text.clone(),
+        );
         let (ast, errors) = velt_syntax::parse_file(file, &f.text);
         if !errors.is_empty() || crate::native::first_unsafe_code(&ast).is_some() {
             return None;
