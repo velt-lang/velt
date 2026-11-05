@@ -1,4 +1,5 @@
-//! A package's C libraries in its manifest (`native.c`, docs/internals/design/c-ffi.md).
+//! `native.c.<library>` of package.vlt (docs/internals/design/c-ffi.md): where a C library
+//! comes from per target, and the headers its declarations are checked against.
 
 use super::Manifest;
 
@@ -8,6 +9,13 @@ pub struct CLibraryConfig {
     /// `system`: the platform's library by build condition, in the order written
     /// (`"sqlite3"`, `"framework:Accelerate"`).
     pub system: Vec<(String, String)>,
+    /// `headers`: the C headers the library's declarations are checked against, as written: a
+    /// path relative to the package root (`native/sqlite3.h`), or `<string.h>` for a header of
+    /// the C library's.
+    pub headers: Vec<String>,
+    /// `unchecked: true`: the library has no headers (a binary-only SDK), so its declarations
+    /// go unchecked, which `velt check` and `allowNative`'s error say.
+    pub unchecked: bool,
 }
 
 impl Manifest {

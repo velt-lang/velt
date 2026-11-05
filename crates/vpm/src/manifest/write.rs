@@ -108,8 +108,17 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
                     .system
                     .iter()
                     .map(|(cond, s)| format!("{}: {}", key(cond), string_lit(s)));
-                let fields =
-                    (!lib.system.is_empty()).then(|| format!("system: {}", inline_object(system)));
+                let mut fields: Vec<String> = Vec::new();
+                if !lib.system.is_empty() {
+                    fields.push(format!("system: {}", inline_object(system)));
+                }
+                if !lib.headers.is_empty() {
+                    let headers: Vec<String> = lib.headers.iter().map(|h| string_lit(h)).collect();
+                    fields.push(format!("headers: [{}]", headers.join(", ")));
+                }
+                if lib.unchecked {
+                    fields.push("unchecked: true".into());
+                }
                 format!("{}: {}", key(name), inline_object(fields.into_iter()))
             });
             parts.push(format!("c: {}", inline_object(libs)));
@@ -243,7 +252,17 @@ pub(super) fn to_json(m: &Manifest) -> Value {
                         .iter()
                         .map(|(c, s)| (c.clone(), json!(s)))
                         .collect();
-                    (name.clone(), json!({ "system": system }))
+                    let mut entry = json!({});
+                    if !system.is_empty() {
+                        entry["system"] = json!(system);
+                    }
+                    if !lib.headers.is_empty() {
+                        entry["headers"] = json!(lib.headers);
+                    }
+                    if lib.unchecked {
+                        entry["unchecked"] = json!(true);
+                    }
+                    (name.clone(), entry)
                 })
                 .collect();
             o.insert("c".into(), Value::Object(libs));
