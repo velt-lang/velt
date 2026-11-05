@@ -1,0 +1,19 @@
+// The types of TypeScript's `lib.dom`, named by code shared with the browser: types only.
+interface Hooks {
+  beforeHydrate?(container: Element): boolean | void;
+  hydrate?(dom: Node | null, parent: Node, end?: Node | null): Node | null | undefined;
+  onEvent?(e: Event, target: HTMLElement | SVGElement): void;
+}
+const hooks: Hooks = {};
+console.log(hooks.beforeHydrate === undefined, hooks.hydrate === undefined);
+function onInput(el: HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement): string {
+  return el.value;
+}
+function title(el: Element | null): string | null {
+  return el == null ? null : el.getAttribute("title");
+}
+console.log(title(null), typeof onInput);
+function listen(t: EventTarget, l: EventListener): void {
+  t.addEventListener("x", l);
+}
+console.log(typeof listen);

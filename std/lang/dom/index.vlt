@@ -1,0 +1,115 @@
+// velt/lang/dom: the types of TypeScript's `lib.dom` that code shared between server and browser
+// names (`beforeHydrate?(container: Element): void`). Velt has no DOM, so no value of these types
+// is made here: as interfaces, they describe what such code reads on a value that comes from
+// elsewhere, and they cost nothing in a program that never names them. The members are those of
+// `lib.dom.d.ts`, as far as they are listed.
+
+/** A listener of events. */
+export interface EventListener {
+  (evt: Event): void;
+}
+
+/** An event being dispatched. */
+export interface Event {
+  readonly type: string;
+  readonly target: EventTarget | null;
+  readonly currentTarget: EventTarget | null;
+  readonly defaultPrevented: boolean;
+  preventDefault(): void;
+  stopPropagation(): void;
+  stopImmediatePropagation(): void;
+}
+
+/** An event with data of its own. */
+export interface CustomEvent<T = any> extends Event {
+  readonly detail: T;
+}
+
+/** What events are dispatched on. */
+export interface EventTarget {
+  addEventListener(type: string, listener: any, options?: any): void;
+  removeEventListener(type: string, listener: any, options?: any): void;
+  dispatchEvent(event: Event): boolean;
+}
+
+/** A node of a document tree. */
+export interface Node extends EventTarget {
+  readonly nodeType: number;
+  readonly nodeName: string;
+  readonly parentNode: Node | null;
+  readonly firstChild: Node | null;
+  readonly lastChild: Node | null;
+  readonly nextSibling: Node | null;
+  readonly previousSibling: Node | null;
+  readonly isConnected: boolean;
+  nodeValue: string | null;
+  textContent: string | null;
+  appendChild(node: Node): Node;
+  insertBefore(node: Node, child: Node | null): Node;
+  removeChild(child: Node): Node;
+  replaceChild(node: Node, child: Node): Node;
+  cloneNode(deep?: boolean): Node;
+  contains(other: Node | null): boolean;
+}
+
+/** An element of a document. */
+export interface Element extends Node {
+  readonly tagName: string;
+  id: string;
+  className: string;
+  innerHTML: string;
+  getAttribute(name: string): string | null;
+  setAttribute(name: string, value: string): void;
+  setAttributeNS(namespace: string | null, name: string, value: string): void;
+  removeAttribute(name: string): void;
+  removeAttributeNS(namespace: string | null, name: string): void;
+  hasAttribute(name: string): boolean;
+  matches(selectors: string): boolean;
+  querySelector(selectors: string): Element | null;
+  querySelectorAll(selectors: string): any;
+  remove(): void;
+}
+
+/** The root of a shadow tree. */
+export interface ShadowRoot extends Node {
+  readonly host: Element;
+  innerHTML: string;
+}
+
+/** An HTML element. */
+export interface HTMLElement extends Element {
+  title: string;
+  hidden: boolean;
+  readonly style: any;
+  focus(): void;
+  blur(): void;
+  click(): void;
+}
+
+/** An SVG element. */
+export interface SVGElement extends Element {
+  readonly style: any;
+}
+
+/** A `<div>`. */
+export interface HTMLDivElement extends HTMLElement {}
+
+/** An `<input>`. */
+export interface HTMLInputElement extends HTMLElement {
+  type: string;
+  value: string;
+  checked: boolean;
+  valueAsNumber: number;
+}
+
+/** A `<textarea>`. */
+export interface HTMLTextAreaElement extends HTMLElement {
+  value: string;
+}
+
+/** A `<select>`. */
+export interface HTMLSelectElement extends HTMLElement {
+  value: string;
+  multiple: boolean;
+  readonly options: any;
+}

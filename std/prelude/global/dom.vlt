@@ -1,0 +1,17 @@
+// Global (loaded when a module names one of these): the types of TypeScript's `lib.dom` that code
+// shared between server and browser names. Types only: Velt has no DOM.
+export {
+  CustomEvent,
+  Element,
+  Event,
+  EventListener,
+  EventTarget,
+  HTMLDivElement,
+  HTMLElement,
+  HTMLInputElement,
+  HTMLSelectElement,
+  HTMLTextAreaElement,
+  Node,
+  ShadowRoot,
+  SVGElement,
+} from "velt/lang/dom";
