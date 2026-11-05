@@ -71,6 +71,8 @@ fn golden_m1_files_parse() {
                 | "operator_index_syntax.velt"
                 | "decorators_placement.velt"
                 | "decorators_tc39_forms.velt"
+                | "decorators_default_placement.velt"
+                | "decorators_default_expression.velt"
         ) {
             continue;
         }

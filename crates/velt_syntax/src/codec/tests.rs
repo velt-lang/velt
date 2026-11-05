@@ -30,6 +30,9 @@ const SAMPLE: &str = r#"
 export declare decorator function g(a: i64 = 3): Repeatable<TypeDecorator | FieldDecorator>;
 import { a, type B as C } from "velt/x";
 import * as ns from "./y";
+import dflt, { other } from "./w";
+import dflt2, * as ns2 from "./w2";
+import type * as typesOnly from "./v";
 export * from "./z";
 export { q } from "./q";
 // @ts-ignore
@@ -84,6 +87,38 @@ fn every_kind_of_node_round_trips() {
         true,
     );
     round_trips("", false);
+    round_trips("export default @a class C { @b f = 1; }\n", false);
+    round_trips("@a export default class {}\n", false);
+    round_trips(
+        "export default function f(a: string): string;\n@a export default function f(a: any) {}\n",
+        false,
+    );
+}
+
+/// What the `Import` literals of the desugarings say, and that the encoding keeps what parsed
+/// ones say instead.
+#[test]
+fn an_import_keeps_how_it_was_written() {
+    let flags = |src: &str| -> Vec<(bool, bool)> {
+        let parsed = parse(FileId(3), src, false);
+        let decoded = decode_module(&encode_module(&parsed, FileId(3)), FileId(3)).unwrap();
+        let flags = |m: &ast::Module| -> Vec<(bool, bool)> {
+            (m.items.iter())
+                .filter_map(|item| match &item.kind {
+                    ast::ItemKind::Import(i) => Some((i.default_import, i.type_only)),
+                    _ => None,
+                })
+                .collect()
+        };
+        assert_eq!(flags(&parsed), flags(&decoded), "{src}");
+        flags(&parsed)
+    };
+    assert_eq!(flags("import d from \"./a\";"), [(true, false)]);
+    assert_eq!(flags("import type * as t from \"./a\";"), [(false, true)]);
+    assert_eq!(flags("import { a } from \"./a\";"), [(false, false)]);
+    // `export { C as default }`, after a decorated class on either side of `export`.
+    assert_eq!(flags("export default @d class C {}"), [(false, false)]);
+    assert_eq!(flags("@d export default class C {}"), [(false, false)]);
 }
 
 #[test]

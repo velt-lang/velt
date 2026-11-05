@@ -6,7 +6,7 @@
 use super::members::Member;
 use super::{PResult, Parser};
 use crate::ast::*;
-use crate::lexer::Tok;
+use crate::lexer::{Kw, Tok};
 
 impl<'a> Parser<'a> {
     /// The decorators at the cursor, none in the usual case (which allocates nothing).
@@ -112,7 +112,27 @@ impl<'a> Parser<'a> {
                 return;
             }
         };
-        *slot = ds;
+        // A function's implementation may have some of its own, written after its overloads.
+        slot.splice(0..0, ds);
+    }
+
+    /// After an overload signature of `name`: the decorators before the next signature, which
+    /// are the implementation's as all of a function's are, on either side of its `export`, and
+    /// whether that `export` (with `default`, in `export default function`) is behind the cursor.
+    pub(super) fn before_next_signature(
+        &mut self,
+        name: &Ident,
+    ) -> PResult<(Vec<Decorator>, bool)> {
+        let mut decorators = self.parse_decorators()?;
+        let mut exported = self.eat_default_overload(name);
+        if !exported && self.at_kw(Kw::Export) && self.nth(1) == Tok::At {
+            self.bump();
+            exported = true;
+        }
+        if exported {
+            self.decorators_after_export(&mut decorators)?;
+        }
+        Ok((decorators, exported))
     }
 
     /// At `@` before a member of a `struct`, `class` or `extend` block.

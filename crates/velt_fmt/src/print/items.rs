@@ -9,8 +9,9 @@ use velt_syntax::ast::{
 use super::lists::delimited;
 use super::script::{blank_before, Top};
 use super::Printer;
-use crate::doc::{cat, concat, group, hardline, if_break, indent, join, line, text, Doc};
+use crate::doc::{cat, concat, group, hardline, if_break, indent, join, line, nil, text, Doc};
 use crate::source::{slice, string_literal};
+use velt_common::Span;
 
 /// Items of these kinds may sit on consecutive lines (a run of imports, constants, ...);
 /// every other pair of top-level items is separated by a blank line.
@@ -40,16 +41,40 @@ pub(super) fn blank_between(prev: &Item, cur: &Item) -> bool {
     }
 }
 
+/// The decorators written on item `kind`.
+fn decorators_of(kind: &ItemKind) -> &[Decorator] {
+    match kind {
+        ItemKind::Function(f) => &f.sig.decorators,
+        ItemKind::ExternFn(s) => &s.decorators,
+        ItemKind::Struct(t) | ItemKind::Class(t) => &t.decorators,
+        ItemKind::Enum(e) => &e.decorators,
+        _ => &[],
+    }
+}
+
+/// `src` from its first token.
+fn skip_comments(mut src: &str) -> &str {
+    loop {
+        src = src.trim_start();
+        let (close, skip) = match src.get(..2) {
+            Some("//") => ("\n", 1),
+            Some("/*") => ("*/", 2),
+            _ => return src,
+        };
+        match src.find(close) {
+            Some(end) => src = &src[end + skip..],
+            None => return "",
+        }
+    }
+}
+
 impl<'a> Printer<'a> {
     pub(super) fn item(&mut self, item: &Item) -> Doc {
-        let decorators: &[Decorator] = match &item.kind {
-            ItemKind::Function(f) => &f.sig.decorators,
-            ItemKind::ExternFn(s) => &s.decorators,
-            ItemKind::Struct(t) | ItemKind::Class(t) => &t.decorators,
-            ItemKind::Enum(e) => &e.decorators,
-            _ => &[],
+        let decorators = match &item.kind {
+            // Those of a function with overloads go after the signatures, on the implementation.
+            ItemKind::Function(f) if !f.overloads.is_empty() => nil(),
+            kind => self.decorators(decorators_of(kind)),
         };
-        let decorators = self.decorators(decorators);
         let body = match self.default_export(item) {
             Some(doc) => doc,
             None => self.undecorated_item(item),
@@ -126,14 +151,15 @@ impl<'a> Printer<'a> {
             return velt_syntax::written_default(i).then(|| cat![KW, n.name.name.clone(), ";"]);
         }
         if !item.exported {
-            let written = slice(self.src, item.span).starts_with("export");
-            return written.then(|| match &item.kind {
-                // Each overload signature says `export default` too.
-                ItemKind::Function(f) if f.sig.generator.is_none() => {
-                    self.fn_decl_with(f, "function ", KW)
-                }
-                _ => cat![KW, self.undecorated_item(item)],
-            });
+            return self
+                .written_after_decorators(item)
+                .then(|| match &item.kind {
+                    // Each overload signature says `export default` too.
+                    ItemKind::Function(f) if f.sig.generator.is_none() => {
+                        self.fn_decl_with(f, "function ", KW)
+                    }
+                    _ => cat![KW, self.undecorated_item(item)],
+                });
         }
         let mut anonymous = item.clone();
         anonymous.exported = false;
@@ -156,6 +182,16 @@ impl<'a> Printer<'a> {
             return Some(self.fn_decl_with(f, "function ", KW));
         }
         Some(cat![KW, self.undecorated_item(&anonymous)])
+    }
+
+    /// Does the source of `item` start with `export`, after any decorators before that?
+    fn written_after_decorators(&self, item: &Item) -> bool {
+        let lo = decorators_of(&item.kind)
+            .last()
+            .map_or(item.span.lo, |d| d.span.hi.max(item.span.lo));
+        let rest = slice(self.src, Span::new(item.span.file, lo, item.span.hi));
+        slice(self.src, item.span).starts_with("export")
+            || skip_comments(rest).starts_with("export")
     }
 
     /// `declare c("<library>"[, { errno: true }]) [async] function f(…): R;`.

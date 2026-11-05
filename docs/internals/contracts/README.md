@@ -140,7 +140,8 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   `FnSig::is_decorator` for `declare decorator function name(…): Target;`, where `Target` says
   where it may be used (`FunctionDecorator`, `MethodDecorator`, `TypeDecorator`, `FieldDecorator`,
   `ParamDecorator`, a union of them, `Repeatable<…>` around them). Those names mean this only
-  there. `AST_FORMAT` 8. Sema records the uses in `Program::decorators` (hir_encodings.md
+  there. A function's decorators are on its implementation's `FnSig`, wherever they are written
+  among its overloads. `AST_FORMAT` 8. Sema records the uses in `Program::decorators` (hir_encodings.md
   "Decorators") and `DefKind::Decorator` names the declarations for editors.
 - `FnSig::host: Option<HostModule { module, span }>` (`ast.rs`): `declare host("<module>")
   function name(…): R;`, an `ItemKind::ExternFn` like `declare system function` (`host` is a

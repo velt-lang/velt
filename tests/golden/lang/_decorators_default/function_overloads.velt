@@ -1,0 +1,7 @@
+import { mark } from "./marks";
+
+export default function pick(a: string): string;
+@mark export default function pick(a: i64): string;
+export default function pick(a: any): string {
+  return "overloads";
+}

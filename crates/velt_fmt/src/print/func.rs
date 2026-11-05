@@ -20,12 +20,18 @@ impl<'a> Printer<'a> {
     /// [`fn_decl`](Self::fn_decl) after `mods` (`export `, `static `, ...), which its overload
     /// signatures (`FnDecl::overloads`, each on a line of its own before it) repeat.
     pub(super) fn fn_decl_with(&mut self, f: &FnDecl, keyword: &str, mods: &str) -> Doc {
-        self.fn_decl_mods(f, keyword, mods, true, &[])
+        // Those of a function without overloads are printed by `item`, before its `export`.
+        let decorators: &[Decorator] = match f.overloads.is_empty() {
+            true => &[],
+            false => &f.sig.decorators,
+        };
+        self.fn_decl_mods(f, keyword, mods, true, decorators)
     }
 
     /// [`fn_decl_with`](Self::fn_decl_with), printing `unsafe` itself (`own_unsafe`) or not (a
     /// method's `mods` hold it, before `get` / `set`). `decorators` go on the implementation:
-    /// TypeScript refuses a decorator on a method's overload signature (TS1249).
+    /// TypeScript refuses a decorator on a method's overload signature (TS1249), and a function's
+    /// go the same way.
     pub(super) fn fn_decl_mods(
         &mut self,
         f: &FnDecl,

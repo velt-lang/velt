@@ -216,3 +216,140 @@ fn type_arguments_without_a_call_are_refused() {
         "{errs:?}"
     );
 }
+
+/// The declaration of `export default …` in `src`, and whether it is exported itself (one with
+/// no name is; one with a name comes with an export list).
+fn default_declaration(src: &str) -> (Module, bool) {
+    let m = parse_ok(src);
+    let exported = m.items[0].exported;
+    (m, exported)
+}
+
+#[test]
+fn either_side_of_export_default() {
+    for (src, want) in [
+        ("export default @a class C {}", "C"),
+        ("@a export default class C {}", "C"),
+        ("export default @a class {}", "default"),
+        ("@a export default class {}", "default"),
+        ("export default @a class extends B {}", "default"),
+        ("@a export default class extends B {}", "default"),
+        ("export default @a abstract class C {}", "C"),
+        ("@a export default abstract class C {}", "C"),
+        ("export default @a struct S {}", "S"),
+        ("@a export default struct S {}", "S"),
+    ] {
+        let (m, exported) = default_declaration(src);
+        let (ItemKind::Class(t) | ItemKind::Struct(t)) = &m.items[0].kind else {
+            panic!("{src}: {:?}", m.items[0].kind)
+        };
+        assert_eq!(names(&t.decorators), ["a"], "{src}");
+        assert_eq!(t.name.name, want, "{src}");
+        assert_eq!(exported, want == "default", "{src}");
+        assert_eq!(m.items.len(), if exported { 1 } else { 2 }, "{src}");
+    }
+    let (m, _) = default_declaration("export default @a enum E { A }");
+    let ItemKind::Enum(e) = &m.items[0].kind else {
+        panic!()
+    };
+    assert_eq!(names(&e.decorators), ["a"]);
+    for src in [
+        "export default @a function f() {}",
+        "@a export default function f() {}",
+        "export default @a function () {}",
+        "@a export default async function f() {}",
+    ] {
+        let (m, _) = default_declaration(src);
+        let ItemKind::Function(f) = &m.items[0].kind else {
+            panic!()
+        };
+        assert_eq!(names(&f.sig.decorators), ["a"], "{src}");
+    }
+    // Its span starts at what is written first, and its export list stays a list.
+    let m = parse_ok("@a export default class C {}");
+    assert_eq!(m.items[0].span.lo, 0);
+    assert!(matches!(&m.items[1].kind, ItemKind::Import(i) if velt_syntax::written_default(i)));
+}
+
+#[test]
+fn refused_around_export_default() {
+    refuses(
+        "@a export default @b class C {}",
+        "before `export` or after it",
+    );
+    let declaration = "a decorator cannot be applied to this declaration";
+    refuses("export default @a interface I {}", declaration);
+    refuses("@a export default interface I {}", declaration);
+    let expression = "a decorator cannot be applied to an expression";
+    refuses("const x = 1; export default @a x;", expression);
+    refuses("const x = 1; @a export default x;", expression);
+    refuses("@a export default 1 + 2;", expression);
+    // A decorator on a class expression is still that, in parentheses.
+    refuses(
+        "export default (@a class {});",
+        "TC39 run-time decorators are not supported yet (#2204)",
+    );
+}
+
+#[test]
+fn a_functions_decorators_are_its_implementations() {
+    for src in [
+        // Before the first signature, on either side of `export`.
+        "@a export default function f(x: string): string; export default function f(x: any): any {}",
+        "export default @a function f(x: string): string; export default function f(x: any): any {}",
+        // On the implementation, on either side of `export`.
+        "export default function f(x: string): string; @a export default function f(x: any): any {}",
+        "export default function f(x: string): string; export default @a function f(x: any): any {}",
+        // With no name, and on a signature between.
+        "@a export default function (x: string): string; export default function (x: any): any {}",
+        "export default function (x: string): string; @a export default function (x: any): any {}",
+        "export default function f(x: string): string; @a export default function f(x: i64): i64; export default function f(x: any): any {}",
+        // Not a default.
+        "@a function f(x: string): string; function f(x: any): any {}",
+        "function f(x: string): string; @a function f(x: any): any {}",
+        "@a export function f(x: string): string; export function f(x: any): any {}",
+        "export @a function f(x: string): string; export function f(x: any): any {}",
+        "export function f(x: string): string; @a export function f(x: any): any {}",
+        "export function f(x: string): string; export @a function f(x: any): any {}",
+    ] {
+        let m = parse_ok(src);
+        let ItemKind::Function(f) = &m.items[0].kind else {
+            panic!()
+        };
+        assert_eq!(names(&f.sig.decorators), ["a"], "{src}");
+        assert!(!f.overloads.is_empty(), "{src}");
+        for o in &f.overloads {
+            assert!(o.decorators.is_empty(), "{src}");
+        }
+    }
+    // In the order written, the first signature's first.
+    let m = parse_ok("@a function f(x: string): string; @b function f(x: any): any {}");
+    let ItemKind::Function(f) = &m.items[0].kind else {
+        panic!()
+    };
+    assert_eq!(names(&f.sig.decorators), ["a", "b"]);
+    refuses(
+        "export function f(x: string): string; @a export @b function f(x: any): any {}",
+        "before `export` or after it",
+    );
+    // A signature that says `export` while the next doesn't is still TS2383, decorated or not.
+    let overloads = "overload signatures must all be exported";
+    refuses(
+        "@a export function f(x: string): string; function f(x: any): any {}",
+        overloads,
+    );
+    refuses(
+        "function f(x: string): string; @a export function f(x: any): any {}",
+        overloads,
+    );
+    refuses(
+        "export function f(x: string): string; @a function f(x: any): any {}",
+        overloads,
+    );
+    // A decorator after a signature doesn't stand for its implementation.
+    refuses(
+        "function f(x: string): string; @a function g(x: any): any {}",
+        "",
+    );
+    refuses("function f(x: string): string; @a const y = 1;", "");
+}

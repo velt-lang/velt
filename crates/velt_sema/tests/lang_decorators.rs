@@ -462,3 +462,60 @@ fn type_arguments_on_a_decorator() {
         "{e}"
     );
 }
+
+#[test]
+fn a_default_export_is_decorated_on_either_side() {
+    for (src, name) in [
+        (r#"export default @policy("a") class C {}"#, "C"),
+        (r#"@policy("a") export default class C {}"#, "C"),
+        (r#"export default @policy("a") class {}"#, "default"),
+        (r#"@policy("a") export default class {}"#, "default"),
+    ] {
+        let p = program(src);
+        let uses = on(&p, T::Def(def_named(&p, name)));
+        assert_eq!(uses.len(), 1, "{src}");
+        assert_eq!(uses[0].def, def_named(&p, "policy"), "{src}");
+    }
+}
+
+#[test]
+fn an_ordinary_function_on_a_default_export_is_run_time() {
+    for decorated in [
+        "export default @logged class C {}",
+        "@logged export default class C {}",
+        "export default @logged class {}",
+        "@logged export default class {}",
+    ] {
+        let src = format!("function logged(v: any, c: any): any {{ return v; }}\n{decorated}\nfunction main() {{}}");
+        let e = err_src(&src);
+        assert!(
+            e.contains("TC39 run-time decorators are not supported yet (#2204)"),
+            "{decorated}: {e}"
+        );
+    }
+    let e = err_src("export default @nosuch class C {}\nfunction main() {}");
+    assert!(e.contains("nosuch"), "{e}");
+}
+
+#[test]
+fn a_default_functions_overloads_keep_its_decorators_on_the_implementation() {
+    for src in [
+        r#"@tag("t") export default function f(a: string): string; export default function f(a: any): any { return a; }"#,
+        r#"export default function f(a: string): string; @tag("t") export default function f(a: any): any { return a; }"#,
+        r#"export default function f(a: string): string; export default @tag("t") function f(a: any): any { return a; }"#,
+    ] {
+        let p = program(src);
+        let uses = on(&p, T::Def(def_named(&p, "f")));
+        assert_eq!(uses.len(), 1, "{src}");
+        assert_eq!(uses[0].args, [C::Str("t".into())], "{src}");
+    }
+    // Written on two signatures it is used twice: it can repeat only if it says so.
+    let p = program(
+        r#"@tag("a") function f(a: string): string; @tag("b") function f(a: any): any { return a; }"#,
+    );
+    let uses = on(&p, T::Def(def_named(&p, "f")));
+    assert_eq!(
+        uses.iter().map(|u| &u.args[0]).collect::<Vec<_>>(),
+        [&C::Str("a".into()), &C::Str("b".into())]
+    );
+}

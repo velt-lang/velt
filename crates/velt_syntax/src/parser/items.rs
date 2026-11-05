@@ -81,6 +81,7 @@ impl<'a> Parser<'a> {
     fn parse_item_here(&mut self, top: bool) -> PResult<Item> {
         let lo = self.cur_lo();
         let mut decorators = self.parse_decorators()?;
+        self.after_decorators = self.cur_lo();
         let mut exported = self.at_kw(Kw::Export);
         if exported {
             self.saw_module_syntax |= top;
@@ -99,7 +100,7 @@ impl<'a> Parser<'a> {
                 });
             }
             if self.at_kw(Kw::Default) {
-                return self.parse_export_default(lo, top);
+                return self.parse_export_default(lo, top, decorators);
             }
             self.decorators_after_export(&mut decorators)?;
         }
@@ -252,11 +253,15 @@ impl<'a> Parser<'a> {
     ) -> PResult<FnDecl> {
         let mut sig = self.parse_fn_sig(lo, is_async)?;
         sig.is_unsafe = is_unsafe;
-        let mut exported = self.text(lo, self.src.len() as u32).starts_with("export");
+        let keyword = lo.max(self.after_decorators);
+        let mut exported = self
+            .text(keyword, self.src.len() as u32)
+            .starts_with("export");
         let mut sigs: Vec<(FnSig, bool)> = vec![];
+        let mut decorators = vec![];
         while self.eat_signature_end() {
             self.signature_defaults(&sig);
-            let next_default = self.eat_default_overload(&sig.name);
+            let (written, eaten_export) = self.before_next_signature(&sig.name)?;
             let (next_exported, next_unsafe, next_async) =
                 match self.at_function_after(&sig.name.name) {
                     Some(Ok(next)) => next,
@@ -269,17 +274,19 @@ impl<'a> Parser<'a> {
                         return Err(Fail);
                     }
                 };
-            let next_lo = self.cur_lo();
+            let next_lo = written.first().map_or(self.cur_lo(), |d| d.span.lo);
+            decorators.extend(written);
             for skip in [next_exported, next_unsafe, next_async] {
                 if skip {
                     self.bump();
                 }
             }
             sigs.push((sig, exported));
-            exported = next_exported || next_default;
+            exported = next_exported || eaten_export;
             sig = self.parse_fn_sig(next_lo, next_async)?;
             sig.is_unsafe = next_unsafe;
         }
+        sig.decorators = decorators;
         let this_param = self.this_param.take();
         let body = self.parse_fn_body()?;
         // `this` in a function declaration is sema's to report, but for `this: void`. A

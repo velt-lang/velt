@@ -530,3 +530,65 @@ fn a_method_decorator_stays_on_the_implementation() {
 fn a_decorator_keeps_its_type_arguments() {
     round_trips("@fac<string>(\"a\")\nclass C {\n  @ns.fac<Array<i64>>()\n  m() {}\n}\n");
 }
+
+#[test]
+fn decorators_on_a_default_export() {
+    let class = "@a\nexport default class C {\n  @b\n  m() {}\n}\n";
+    round_trips(class);
+    assert_eq!(
+        formats_stably("export default @a class C { @b m() {} }"),
+        class
+    );
+    assert_eq!(
+        formats_stably("@a export default class C { @b m() {} }"),
+        class
+    );
+    for want in [
+        "@a\nexport default class {}\n",
+        "@a(1)\n@b\nexport default class extends B {}\n",
+        "@a\nexport default abstract class C {}\n",
+        "@a\nexport default struct S {}\n",
+        "@a\nexport default function f() {}\n",
+        "@a\nexport default function () {}\n",
+        "@a\nexport default async function f() {}\n",
+    ] {
+        round_trips(want);
+    }
+    assert_eq!(
+        formats_stably("export default @a class {}"),
+        "@a\nexport default class {}\n"
+    );
+    // A comment after the decorator is no reason to lose `export default`.
+    assert!(formats_stably("@a /* why */ export default class C {}\n")
+        .contains("export default class C {"));
+    assert!(formats_stably("@a // export\nclass C {}\n").starts_with("@a"));
+    // Without `export default`, a comment that says it changes nothing.
+    assert!(!formats_stably("@a /* export */ class C {}\n").contains("export default"));
+}
+
+#[test]
+fn a_functions_decorators_stay_on_the_implementation() {
+    let named = "export default function f(a: string): string;\n@d\nexport default function f(a: any): any {\n  return a;\n}\n";
+    round_trips(named);
+    for written in [
+        "@d export default function f(a: string): string;\nexport default function f(a: any): any {\n  return a;\n}\n",
+        "export default @d function f(a: string): string;\nexport default function f(a: any): any {\n  return a;\n}\n",
+        "export default function f(a: string): string;\nexport default @d function f(a: any): any {\n  return a;\n}\n",
+    ] {
+        assert_eq!(formats_stably(written), named);
+    }
+    round_trips("export default function (a: string): string;\n@d\nexport default function (a: any): any {}\n");
+    round_trips("export default async function f(a: string): Promise<string>;\n@d\nexport default async function f(a: any): Promise<any> {}\n");
+    // Not a default: the same place, and comments stay where they were.
+    round_trips("function f(a: string): string;\n@d\nfunction f(a: any): any {}\n");
+    round_trips("export function f(a: string): string;\n@d\nexport function f(a: any): any {}\n");
+    round_trips("// a\nfunction f(a: string): string;\n// b\n@d\nfunction f(a: any): any {}\n");
+    assert_eq!(
+        formats_stably(
+            "@d\nexport function f(a: string): string;\nexport function f(a: any): any {}\n"
+        ),
+        "export function f(a: string): string;\n@d\nexport function f(a: any): any {}\n"
+    );
+    // One without overloads keeps them before `export`.
+    round_trips("@d\nexport default function f(a: any): any {}\n");
+}

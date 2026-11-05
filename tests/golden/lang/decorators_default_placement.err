@@ -1,0 +1,2 @@
+decorators_default_placement.velt:5:16: error: decorators may come before `export` or after it, not both
+decorators_default_placement.velt:8:1: error: a decorator cannot be applied to this declaration

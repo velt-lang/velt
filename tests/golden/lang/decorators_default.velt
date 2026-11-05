@@ -1,0 +1,18 @@
+// Compile-time decorators on a default export (#2203, #1916), on either side of `export`: nothing
+// changes at run time. With a TC39 decorator in their place, `tsc` and Node print the same classes.
+import AfterNamed from "./_decorators_default/after_named";
+import BeforeNamed from "./_decorators_default/before_named";
+import AfterAnonymous from "./_decorators_default/after_anonymous";
+import BeforeAnonymous from "./_decorators_default/before_anonymous";
+import pick from "./_decorators_default/function_overloads";
+
+function main() {
+  console.log(AfterNamed.who);
+  console.log(BeforeNamed.who);
+  console.log(new AfterAnonymous().who);
+  console.log(new BeforeAnonymous().who);
+  console.log(pick("s"));
+  console.log(pick(1));
+}
+
+main();
