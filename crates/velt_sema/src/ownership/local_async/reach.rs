@@ -181,6 +181,11 @@ pub(super) fn reaches(
         | E::Upcast(x)
         | E::WrapSome(x)
         | E::ToDyn { expr: x, .. } => reaches(cx, x, taint, memo),
+        // Back from an `any`, or one more count on it: the same object, new if it was.
+        E::Call {
+            callee: Callee::Intrinsic(Intrinsic::AnyTo | Intrinsic::AnyToExact | Intrinsic::Share),
+            args,
+        } if !args.is_empty() => reaches(cx, &args[0], taint, memo),
         // A part of a value that may be the captured one may be captured too; a part of a new
         // value only when its type can hold the captured value (`ctx.app` of `new Ctx(app)`,
         // not `ctx.depth`).
