@@ -367,6 +367,44 @@ fn changed_defines_are_refused_from_a_git_dependency() {
     }
 }
 
+/// A `declare c const` reads the library's headers with its `defines`, as its sources see them,
+/// and a changed define reads the value again though no header changed.
+#[test]
+fn a_define_changes_a_constant_s_value() {
+    let Some(_zig) = zig() else { return };
+    reload_support::build_runtime();
+    let dir = test_dir::TestDir::new();
+    let home = home_with_zig_cache(dir.path());
+    let app = project(dir.path());
+    let tiny = dir.path().join("tiny");
+    std::fs::write(
+        tiny.join("native/limit.h"),
+        "#ifndef ANSWER\n#define ANSWER 1\n#endif\n#define TINY_LIMIT (ANSWER + 1)\n",
+    )
+    .unwrap();
+    let manifest = std::fs::read_to_string(tiny.join("package.vlt")).unwrap();
+    let limited = manifest.replace(
+        "headers: [\"native/tiny.h\"]",
+        "headers: [\"native/tiny.h\", \"native/limit.h\"]",
+    );
+    assert_ne!(manifest, limited);
+    std::fs::write(tiny.join("package.vlt"), &limited).unwrap();
+    let lib = format!("{LIB}\ndeclare c const TINY_LIMIT: i32;\n\nexport function limit(): i32 {{\n  return TINY_LIMIT;\n}}\n");
+    std::fs::write(tiny.join("src/lib.vlt"), lib).unwrap();
+    std::fs::write(
+        app.join("src/main.vlt"),
+        "import { answer, limit } from \"tiny\";\n\nfunction main() {\n  console.log(answer());\n  console.log(limit());\n}\n",
+    )
+    .unwrap();
+    assert_eq!(run_host(&app, &home, &[], false), "42\n41\n");
+    std::fs::write(
+        tiny.join("package.vlt"),
+        limited.replace("ANSWER: \"40\"", "ANSWER: \"50\""),
+    )
+    .unwrap();
+    assert_eq!(run_host(&app, &home, &[], false), "52\n51\n");
+}
+
 /// A source may include only what is under `native/`, which the build is keyed on and the
 /// package ships: a header elsewhere in the package (through `-I.`) is refused.
 #[test]

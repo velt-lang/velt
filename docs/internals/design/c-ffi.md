@@ -908,7 +908,8 @@ Step 1 lands in layers, each its own pull request:
      as for a crate. `--macos-sdk` waits for sources that link frameworks.
    - `velt check` lists the sources (`tiny (built from native/tiny.c; headers checked)`, `sources`
      in `--json`); `allowNative` asks for such a package as for any with native code; the header
-     check reads a library's own `headers` with its `defines`, and `c-headers.json` records a
+     check, and the clang runs that read a `declare c const`'s value, read a library's own
+     `headers` with its `defines` (which key the remembered values too), and `c-headers.json` records a
      digest of them per library (none for a library without), so a fetched package whose
      `defines` changed after its author's check is refused.
    - Not yet: the registry or CI rebuilding a bundle and comparing checksums (what reproducibility

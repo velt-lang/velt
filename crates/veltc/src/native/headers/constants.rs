@@ -23,6 +23,7 @@ use super::compare::{self, Scalar, Shape};
 use super::ctype::{CType, Headers};
 use super::probe;
 use super::shape::shape;
+use super::LibraryHeaders;
 
 /// The constants that were read, per package root (what `c-headers.json` records for the target).
 pub type Constants = BTreeMap<PathBuf, ConstantsRecord>;
@@ -258,11 +259,15 @@ fn from_headers(
     target: &str,
     diags: &mut Diagnostics,
 ) -> (Vec<(usize, CConstant)>, HeaderDigests) {
-    let libraries: Vec<(&String, &[String])> = package
+    let libraries: Vec<(&String, LibraryHeaders)> = package
         .c_libraries
         .iter()
         .filter(|(_, lib)| !lib.headers.is_empty())
-        .map(|(name, lib)| (name, lib.headers.as_slice()))
+        .map(|(name, lib)| {
+            let headers = lib.headers.as_slice();
+            let defines = lib.defines.as_slice();
+            (name, LibraryHeaders { headers, defines })
+        })
         .collect();
     if libraries.is_empty() {
         diags.push(
@@ -282,8 +287,8 @@ fn from_headers(
     let mut found: BTreeMap<&str, (&str, Probe)> = BTreeMap::new();
     let mut failed = false;
     let mut read = Vec::new();
-    for (library, headers) in &libraries {
-        let probes = match probes_of(&package.root, headers, &names, zig_target, long_bits) {
+    for (library, read_with) in &libraries {
+        let probes = match probes_of(&package.root, *read_with, &names, zig_target, long_bits) {
             Ok((probes, files)) => {
                 read.extend(files);
                 probes
@@ -325,7 +330,7 @@ fn from_headers(
     }
     let listed: Vec<&str> = libraries
         .iter()
-        .flat_map(|(_, h)| h.iter().map(String::as_str))
+        .flat_map(|(_, h)| h.headers.iter().map(String::as_str))
         .collect();
     let mut out = Vec::new();
     for (i, d) in decls.iter().enumerate() {
@@ -445,24 +450,27 @@ pub(super) fn fit(
 /// What [`probes_of`] remembers: what clang said, and the files it read, with their digests.
 type Remembered = (BTreeMap<String, Probe>, Vec<(PathBuf, String)>);
 
-/// What clang says about `names` in `headers` and the files it read, remembered like a check's
-/// result (`still_holds`): while none of those files change, a target's C headers from zig
-/// among them.
+/// What clang says about `names` in a library's headers, read with its `defines` as its own
+/// sources are, and the files it read, remembered like a check's result (`still_holds`): while
+/// none of those files change, a target's C headers from zig among them.
 fn probes_of(
     root: &Path,
-    headers: &[String],
+    read_with: LibraryHeaders,
     names: &[&str],
     zig_target: &str,
     long_bits: u32,
 ) -> Result<Remembered, String> {
     let home = vpm::locations::velt_home()?;
     let mut h = Sha256::new();
+    for (name, value) in read_with.defines {
+        h.update(format!("{name}={value}\0"));
+    }
     h.update(velt_toolchain::zig::VERSION);
     h.update([0]);
     h.update(zig_target);
     h.update([0]);
     h.update(root.to_string_lossy().as_bytes());
-    for header in headers {
+    for header in read_with.headers {
         h.update([0]);
         h.update(header);
     }
@@ -485,7 +493,7 @@ fn probes_of(
     let zig = velt_toolchain::zig::zig(&home)?;
     let dir = super::work_dir(&home);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let result = probe::run_clang(&zig, &dir, root, headers, names, zig_target, long_bits);
+    let result = probe::run_clang(&zig, &dir, root, read_with, names, zig_target, long_bits);
     let _ = std::fs::remove_dir_all(&dir);
     let (probes, files) = result?;
     let read = files
