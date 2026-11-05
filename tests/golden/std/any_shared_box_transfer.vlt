@@ -17,6 +17,27 @@ async function consume(ch: Channel<any>): Promise<[string, i64]> {
   return [out, currentWorker()];
 }
 
+// Copies of `v` pushed and dropped again and again: every one of them changes the count of its box.
+function churn(v: any): i64 {
+  let n: i64 = 0;
+  for (let round = 0; round < 300; round++) {
+    const copies: any[] = [];
+    for (let i = 0; i < 100; i++) {
+      copies.push(v);
+    }
+    n += copies.length as i64;
+  }
+  return n;
+}
+
+async function churnEach(ch: Channel<any>): Promise<i64> {
+  let n: i64 = 0;
+  for await (const v of ch) {
+    n += churn(v);
+  }
+  return n;
+}
+
 async function main(): Promise<void> {
   const here = currentWorker();
   const other = (here + 1) % workerCount();
@@ -39,6 +60,14 @@ async function main(): Promise<void> {
   ch2.close();
   const [gotUnique, second] = await d;
   console.log(gotUnique);
+  // This side and the consumer change the counts at the same time: if the box sent were still
+  // the one kept here, counts would be lost, and a box leaked or freed while in use.
+  const ch3 = channel<any>(1);
+  const e = spawn(churnEach(ch3), { worker: other });
+  await ch3.send(text);
+  const mine = churn(text);
+  ch3.close();
+  console.log(mine, await e);
   // One worker (a single-core machine) has no other thread to cross to.
   const crossed = workerCount() == 1 || (first != here && second != here);
   console.log("consumers on another worker:", crossed);
