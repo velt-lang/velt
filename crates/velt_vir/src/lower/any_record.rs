@@ -159,7 +159,7 @@ impl FnLower<'_, '_> {
             self.drop_glue(tmp.clone(), any);
             // An absent `a?: any` holds the dynamic `undefined`, any other the option's nothing.
             let none = match self.cx.hir.any_impl.filter(|_| self.cx.is_dynamic(fty)) {
-                Some(imp) => self.dynamic_undefined(imp, fty),
+                Some(imp) => self.dynamic_undefined_moved(imp, fty),
                 None => self.none_value(fty),
             };
             self.assign(val.clone(), Rvalue::Use(none));

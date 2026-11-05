@@ -1,0 +1,27 @@
+// check: no leaks
+// `{} as Partial<T>` in a program makes a `Record` held in an `any` convert through
+// `any_record_fill`: an optional `any` member keeps its value, present and absent (#2338).
+function show(label: string, v: any): void {
+  console.log(label, typeof v, v === undefined ? "undefined" : JSON.stringify(v));
+}
+function emptyP<T>(o: T): Partial<T> {
+  const r = {} as Partial<T>;
+  return r;
+}
+function copyOne<T>(o: T, k: string): Partial<T> {
+  const r = {} as Partial<T>;
+  (r as Record<string, any>)[k] = (o as any)[k];
+  return r;
+}
+type S = { a: any; b: string };
+const src: S = { a: "held" + 1, b: "B" };
+const e = emptyP(src);
+show("empty a", e.a);
+const c = copyOne(src, "a");
+show("copy a", c.a);
+const n: Record<string, any> = { children: 7 };
+const cn: any = n;
+show("record number", (cn as { children?: any }).children);
+const m: Record<string, any> = {};
+const cm: any = m;
+show("record absent", (cm as { children?: any }).children);

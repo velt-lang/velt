@@ -1,0 +1,60 @@
+record number number 7
+record string string "made"
+string true 4
+object string string "made"
+true 4
+object absent undefined undefined
+record absent undefined undefined
+object null object null
+record null object null
+call record string "x"
+call object string "y"
+call absent undefined undefined
+call null object null
+mixed a string "A"
+mixed b string "B"
+mixed absent a undefined undefined
+mixed absent b string "B"
+mixed null a object null
+many a undefined undefined
+many b number 2
+many c undefined undefined
+many d string "D"
+many e undefined undefined
+many rec a string "ra"
+many rec b undefined undefined
+many rec c object [1,2]
+nested inner string "deep"
+nested opt number 1
+nested list object [1,"two"]
+nested absent inner v undefined undefined
+nested absent opt undefined undefined
+nested absent list undefined undefined
+nested null object null
+nested opt null object null
+union object string "va"
+union absent undefined undefined
+union null object null
+union other string "text"
+opt struct present string "here"
+opt struct undefined undefined undefined
+opt struct null undefined undefined
+opt struct absent undefined undefined
+array 0 string "first"
+array 1 undefined undefined
+array 2 object null
+tuple 0 string "tup"
+tuple 1 number 3
+generic g string "gee"
+generic h string "aitch"
+generic any g number 1
+generic any h undefined undefined
+generic fn string "in fn"
+iface i string "eye"
+iface j number 1
+iface absent undefined undefined
+iface null object null
+class absent undefined undefined
+class n number 1
+class set string "set"
+loop 1004927

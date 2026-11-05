@@ -499,6 +499,14 @@ impl FnLower<'_, '_> {
         };
         self.make_dyn(&e, any, t)
     }
+
+    /// [`dynamic_undefined`](Self::dynamic_undefined) for a caller that moves it into a place
+    /// of its own, usually on one path of a branch: the scope around must not drop it, as it
+    /// would on every path (where the temporary was never written) and again through that place.
+    pub(super) fn dynamic_undefined_moved(&mut self, any: u32, t: TyId) -> Operand {
+        let u = self.dynamic_undefined(any, t);
+        self.take_owned(u)
+    }
 }
 
 impl FnLower<'_, '_> {

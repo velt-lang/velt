@@ -103,6 +103,12 @@ impl FnLower<'_, '_> {
             self.terminate(Terminator::Unreachable);
         }
         self.switch_to(done);
+        // Every way through ends here, so a temporary left to this scope was written on one of
+        // them only: its drop would read an unwritten place on the others.
+        debug_assert!(
+            self.scopes.last().is_none_or(|s| s.drops.is_empty()),
+            "ICE: a conversion from `any` left a temporary to the scope of its glue"
+        );
         self.pop_scope();
         self.terminate(Terminator::Return(super::unit()));
     }
