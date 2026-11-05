@@ -64,15 +64,17 @@ export class Ghash {
   private hw: bool;
 
   /**
-   * A GHASH under `h` (16 bytes, E(K, 0^128) in GCM), state zero; `hardware` picks the
-   * carry-less multiply instruction over the constant-time integer products (tests run both).
+   * A GHASH under `h` (16 bytes, E(K, 0^128) in GCM), state zero. It uses the carry-less
+   * multiply instruction only where the CPU has one (`u64x2.hasClmul()`), never the `clmul*`
+   * methods' emulation; `hardware: false` forces the constant-time integer products there too
+   * (the tests compare both).
    */
-  constructor(h: u8[], hardware: bool = u64x2.hasClmul()) {
+  constructor(h: u8[], hardware: bool = true) {
     this.h1 = load64be(h, 0);
     this.h0 = load64be(h, 8);
     this.y1 = 0;
     this.y0 = 0;
-    this.hw = hardware;
+    this.hw = hardware && u64x2.hasClmul();
   }
 
   /** Absorbs `data[start..end]`, its last block zero-padded to 16 bytes. */

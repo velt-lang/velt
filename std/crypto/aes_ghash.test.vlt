@@ -2,7 +2,8 @@
 //
 // The bitsliced S-box is checked against the S-box computed from its definition (FIPS 197 §5.1.1:
 // the inverse in GF(2^8), then the affine map) for all 256 inputs, and GHASH's constant-time
-// integer products against the carry-less multiply (the instruction, or its exact emulation).
+// integer products against the carry-less multiply instruction (where the CPU has one: release
+// builds on x86-64 and arm64; elsewhere both sides take the integer path).
 import { describe, expect, it } from "velt/test";
 import { ortho, sbox } from "velt/crypto/aes_bitslice";
 import { Ghash } from "velt/crypto/ghash";
