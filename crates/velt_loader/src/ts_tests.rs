@@ -232,6 +232,11 @@ fn a_module_with_both_extensions_is_ambiguous() {
         .filter(|d| d.severity == Severity::Error)
         .count();
     assert_eq!(errors, 1, "{:?}", messages(&diags));
+    let messages = messages(&diags);
+    assert!(
+        messages.iter().any(|m| m.contains("is ambiguous")),
+        "{messages:?}"
+    );
 }
 
 #[test]

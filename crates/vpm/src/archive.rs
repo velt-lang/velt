@@ -70,7 +70,7 @@ pub fn entries(archive: &[u8]) -> Result<Vec<Entry>, String> {
         }
         if e.path == OLD_MANIFEST_FILE {
             return Err(format!(
-                "cannot use this package archive: {}",
+                "cannot use this package archive: it {}",
                 legacy::republish_old_name()
             ));
         }

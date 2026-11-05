@@ -10,10 +10,11 @@ use super::{Manifest, LEGACY_MANIFEST_FILE, MANIFEST_FILE, OLD_MANIFEST_FILE};
 pub const REPUBLISH: &str = "it was published with a `velt.toml`, which this velt no longer \
 reads (the manifest is `package.velt`); its author must publish a new version";
 
-/// Why a fetched package whose manifest has the old name cannot be installed.
+/// Why a fetched package whose manifest has the old name cannot be installed, after "it" or a
+/// package's name.
 pub fn republish_old_name() -> String {
     format!(
-        "it has a `{OLD_MANIFEST_FILE}`, the manifest's old name, which this velt no longer reads \
+        "has a `{OLD_MANIFEST_FILE}`, the manifest's old name, which this velt no longer reads \
          (the manifest is `{MANIFEST_FILE}`); its author must publish a new version"
     )
 }

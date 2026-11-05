@@ -19,7 +19,7 @@ pub fn list_files(root: &Path) -> Result<Vec<String>, String> {
     }
     if !manifest.is_file() && root.join(OLD_MANIFEST_FILE).is_file() {
         let why = legacy::republish_old_name();
-        return Err(format!("`{}`: {why}", root.display()));
+        return Err(format!("`{}`: it {why}", root.display()));
     }
     if !manifest.is_file() {
         return Err(format!("`{}` has no {MANIFEST_FILE}", root.display()));

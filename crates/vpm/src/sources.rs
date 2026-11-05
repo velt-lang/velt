@@ -11,7 +11,7 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::manifest::{LEGACY_MANIFEST_FILE, MANIFEST_FILE};
+use crate::manifest::{LEGACY_MANIFEST_FILE, MANIFEST_FILE, OLD_MANIFEST_FILE};
 
 /// Directories a walk for source files never enters (besides hidden ones).
 pub const SKIPPED_DIRS: [&str; 2] = ["target", "node_modules"];
@@ -68,12 +68,13 @@ pub fn walks_into(dir: &Path) -> bool {
         && !name.starts_with('.')
         && !dir.join(MANIFEST_FILE).is_file()
         && !dir.join(LEGACY_MANIFEST_FILE).is_file()
+        && !dir.join(OLD_MANIFEST_FILE).is_file()
 }
 
 /// Whether a walk for source files keeps a file named `name`: a source module that
 /// is not a package manifest.
 pub fn walk_keeps(name: &str) -> bool {
-    name != MANIFEST_FILE && is_source_name(name)
+    name != MANIFEST_FILE && name != OLD_MANIFEST_FILE && is_source_name(name)
 }
 
 /// Whether the walk of `folder` finds the source file `file`: `file` is under it, every directory
@@ -195,6 +196,8 @@ mod tests {
             "nested/f.velt",
             "legacy/velt.toml",
             "legacy/g.velt",
+            &format!("older/{OLD_MANIFEST_FILE}"),
+            "older/h.velt",
         ] {
             let p = root.join(f);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -211,6 +214,7 @@ mod tests {
             "nested/f.velt",
             "nested/package.velt",
             "legacy/g.velt",
+            "older/h.velt",
             "package.velt",
             "x.d.ts",
             "x.json",
@@ -218,6 +222,10 @@ mod tests {
             assert!(!in_folder(root, &root.join(f)), "{f}");
         }
         assert!(!in_folder(&root.join("sub"), &root.join("a.velt")));
+        // Walked from inside, a package with the old manifest name keeps it out of its sources.
+        let older = root.join("older");
+        assert!(!in_folder(&older, &older.join(OLD_MANIFEST_FILE)));
+        assert!(in_folder(&older, &older.join("h.velt")));
         // The folder itself may be anything: only what is below it counts.
         assert!(in_folder(&root.join("nested"), &root.join("nested/f.velt")));
     }
