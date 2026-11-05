@@ -1,0 +1,253 @@
+// velt/crypto (internal): ECDSA signature verification on P-256 (SEC 1 §4.1.4, FIPS 186-5):
+// R = (e/s) G + (r/s) Q, and the signature holds when R's x-coordinate is r mod n. Everything
+// here is public (the key, the digest, the signature), so it runs in variable time: both
+// scalars are recoded to width-5 NAF and added in one pass of 256 doublings, from tables of
+// the odd multiples 1..15 of G and of Q. The x-coordinate is compared without an inversion
+// (r Z^2 = X, or (r + n) Z^2 = X when r + n < p). The signature is DER (RFC 3279 §2.2.3's
+// ECDSA-Sig-Value), read strictly: anything but minimal, positive INTEGERs below n is refused.
+
+import { FeP256 } from "velt/crypto/field_p256";
+import { add, decodePoint, double, GX_M, GY_M, ONE_M } from "velt/crypto/p256";
+import { ScalarP256 } from "velt/crypto/scalar_p256";
+
+// n in the Montgomery domain of the field (for the r + n check).
+const N_M: u64[] = [0x9ad169483335f568, 0x89b1054463fe9931, 0x9c0166ce652e96b7, 0x98648c200fe30feb];
+// p - n, little-endian limbs: r + n < p when r is below it.
+const P_MINUS_N: u64[] = [0x0c46353d039cdaae, 0x4319055358e8617b, 0, 0];
+
+// Field registers: add/double's temporaries are 0..7.
+const ACC: usize = 8;
+const NEG: usize = 11;
+const GT: usize = 14; // 8 points: G, 3G, .., 15G
+const QT: usize = GT + 24; // 8 points: Q, 3Q, .., 15Q
+const RX: usize = QT + 24;
+const ZERO: usize = RX + 1;
+const REGS: usize = ZERO + 1;
+
+// Scalar registers.
+const S_E: usize = 0;
+const S_R: usize = 1;
+const S_S: usize = 2;
+const S_W: usize = 3;
+const S_TMP: usize = 4;
+
+/**
+ * Whether `signature` (DER) is a valid P-256 ECDSA signature of `digest` (a hash of the
+ * message: its leftmost 256 bits are used, SEC 1 §4.1.4) by the uncompressed public key
+ * `publicKey` (65 bytes). False for a malformed key or signature, never an exception.
+ */
+export function p256Verify(publicKey: u8[], digest: u8[], signature: u8[]): bool {
+  const rs = derIntegers(signature);
+  if (rs.length != 4) {
+    return false;
+  }
+  const f = new FeP256(REGS);
+  if (!decodePoint(f, publicKey, QT)) {
+    return false;
+  }
+  const s = new ScalarP256(5);
+  const elen = digest.length < 32 ? digest.length : 32;
+  s.decode(S_E, digest, 0, elen, S_TMP);
+  if (
+    !s.decode(S_R, signature, rs[0], rs[1], S_TMP) ||
+    !s.decode(S_S, signature, rs[2], rs[3], S_TMP) ||
+    s.isZero(S_R) ||
+    s.isZero(S_S)
+  ) {
+    return false;
+  }
+  // u1 = e / s, u2 = r / s.
+  s.invert(S_W, S_S);
+  s.mul(S_E, S_E, S_W);
+  s.mul(S_R, S_R, S_W);
+  const u1 = naf(s.limbs(S_E, S_TMP));
+  const u2 = naf(s.limbs(S_R, S_TMP));
+  // The tables of odd multiples.
+  f.load(GT, GX_M);
+  f.load(GT + 1, GY_M);
+  f.load(GT + 2, ONE_M);
+  oddMultiples(f, GT);
+  oddMultiples(f, QT);
+  // R = u1 G + u2 Q, from the top digit down; the accumulator starts as the identity.
+  f.load(ACC, ONE_M);
+  f.load(ACC + 1, ONE_M);
+  f.zero(ACC + 2);
+  f.zero(ZERO);
+  let top = u1.length > u2.length ? u1.length : u2.length;
+  let started = false;
+  while (top > 0) {
+    top -= 1;
+    if (started) {
+      double(f, ACC, ACC);
+    }
+    const d1 = top < u1.length ? u1[top] : 0;
+    const d2 = top < u2.length ? u2[top] : 0;
+    if (d1 != 0) {
+      addDigit(f, GT, d1);
+      started = true;
+    }
+    if (d2 != 0) {
+      addDigit(f, QT, d2);
+      started = true;
+    }
+  }
+  if (f.isZero(ACC + 2) != 0) {
+    return false;
+  }
+  // x = X / Z^2 is r mod n: r Z^2 = X, or (r + n) Z^2 = X (x is below p, so x = r + n can
+  // happen when r + n < p).
+  const sig = signature;
+  const r32 = Buffer.alloc(32);
+  for (let i: usize = 0; i < rs[1]; i++) {
+    r32[32 - rs[1] + i] = sig[rs[0] + i];
+  }
+  f.decode(RX, r32, 0, NEG);
+  f.square(NEG, ACC + 2);
+  f.mul(NEG + 1, RX, NEG);
+  if (same(f, NEG + 1, ACC)) {
+    return true;
+  }
+  if (!belowPMinusN(r32)) {
+    return false;
+  }
+  f.load(NEG + 2, N_M);
+  f.add(RX, RX, NEG + 2);
+  f.mul(NEG + 1, RX, NEG);
+  return same(f, NEG + 1, ACC);
+}
+
+// ACC += digit times the point whose odd multiples start at `table` (digit odd, |digit| < 16).
+function addDigit(f: FeP256, table: usize, digit: i32) {
+  const k = digit > 0 ? digit : -digit;
+  const e = table + 3 * (((k - 1) >> 1) as usize);
+  let q = e;
+  if (digit < 0) {
+    f.copy(NEG, e);
+    f.sub(NEG + 1, ZERO, e + 1);
+    f.copy(NEG + 2, e + 2);
+    q = NEG;
+  }
+  if (add(f, ACC, ACC, q) != 0) {
+    double(f, ACC, q);
+  }
+}
+
+// Fills table[1..8] with 3P, 5P, .., 15P from table[0] = P (ACC is scratch for 2P).
+function oddMultiples(f: FeP256, table: usize) {
+  double(f, ACC, table);
+  for (let i: usize = 1; i < 8; i++) {
+    add(f, table + 3 * i, table + 3 * (i - 1), ACC);
+  }
+}
+
+// Whether field registers `a` and `b` hold the same (fully reduced) element.
+function same(f: FeP256, a: usize, b: usize): bool {
+  for (let i: usize = 0; i < 4; i++) {
+    if (f.r[4 * a + i] != f.r[4 * b + i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Whether the 32 big-endian bytes `r` are below p - n.
+function belowPMinusN(r: u8[]): bool {
+  for (let i: usize = 0; i < 32; i++) {
+    const limb = P_MINUS_N[3 - (i >> 3)];
+    const byte = ((limb >> ((56 - 8 * (i & 7)) as u64)) & 0xff) as u8;
+    if (r[i] != byte) {
+      return r[i] < byte;
+    }
+  }
+  return false;
+}
+
+// The width-5 NAF of the little-endian 256-bit `k`: digits 0 or odd in -15..15, least
+// significant first, with at least 4 zeros after each non-zero digit.
+function naf(k: u64[]): i32[] {
+  const w: u64[] = [k[0], k[1], k[2], k[3], 0];
+  const out: i32[] = [];
+  while ((w[0] | w[1] | w[2] | w[3] | w[4]) != 0) {
+    let d: i32 = 0;
+    if ((w[0] & 1) == 1) {
+      d = (w[0] & 31) as i32;
+      if (d > 16) {
+        d -= 32;
+      }
+      // w -= d.
+      if (d > 0) {
+        let borrow = d as u64;
+        for (let i: usize = 0; i < 5 && borrow != 0; i++) {
+          const x = w[i];
+          w[i] = x - borrow;
+          borrow = (x < borrow) as u64;
+        }
+      } else {
+        let carry = (-d) as u64;
+        for (let i: usize = 0; i < 5 && carry != 0; i++) {
+          const x = w[i] + carry;
+          carry = (x < carry) as u64;
+          w[i] = x;
+        }
+      }
+    }
+    out.push(d);
+    // w >>= 1.
+    for (let i: usize = 0; i < 4; i++) {
+      w[i] = (w[i] >> 1) | (w[i + 1] << 63);
+    }
+    w[4] = w[4] >> 1;
+  }
+  return out;
+}
+
+// The INTEGERs r and s of the DER SEQUENCE `b`, as [rStart, rLen, sStart, sLen] without a sign
+// byte, each at most 32 bytes; [] when `b` is not exactly that in strict DER.
+function derIntegers(b: u8[]): usize[] {
+  if (b.length < 8 || b[0] != 0x30) {
+    return [];
+  }
+  let p: usize = 2;
+  let len = b[1] as usize;
+  if (len == 0x81) {
+    len = b[2] as usize;
+    p = 3;
+    if (len < 0x80) {
+      return [];
+    }
+  } else if (len >= 0x80) {
+    return [];
+  }
+  if (p + len != b.length) {
+    return [];
+  }
+  const out: usize[] = [];
+  for (let k = 0; k < 2; k++) {
+    if (p + 2 > b.length || b[p] != 0x02) {
+      return [];
+    }
+    const n = b[p + 1] as usize;
+    p += 2;
+    if (n == 0 || n > 33 || p + n > b.length || (b[p] & 0x80) != 0) {
+      return [];
+    }
+    let start = p;
+    if (b[p] == 0) {
+      // A leading zero only in front of a set top bit.
+      if (n == 1 || (b[p + 1] & 0x80) == 0) {
+        return [];
+      }
+      start += 1;
+    }
+    if (p + n - start > 32) {
+      return [];
+    }
+    out.push(start);
+    out.push(p + n - start);
+    p += n;
+  }
+  if (p != b.length) {
+    return [];
+  }
+  return out;
+}

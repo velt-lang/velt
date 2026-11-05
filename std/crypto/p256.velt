@@ -13,21 +13,21 @@ import { CryptoError } from "velt/crypto/errors";
 import { FeP256 } from "velt/crypto/field_p256";
 import { randomBytes } from "velt/crypto/random";
 
-// The constants, in the Montgomery domain, little-endian limbs.
+// The constants, in the Montgomery domain, little-endian limbs (ECDSA uses G and 1 too).
 const B_M: u64[] = [0xd89cdf6229c4bddf, 0xacf005cd78843090, 0xe5a220abf7212ed6, 0xdc30061d04874834];
-const ONE_M: u64[] = [
+export const ONE_M: u64[] = [
   0x0000000000000001,
   0xffffffff00000000,
   0xffffffffffffffff,
   0x00000000fffffffe,
 ];
-const GX_M: u64[] = [
+export const GX_M: u64[] = [
   0x79e730d418a9143c,
   0x75ba95fc5fedb601,
   0x79fb732b77622510,
   0x18905f76a53755c6,
 ];
-const GY_M: u64[] = [
+export const GY_M: u64[] = [
   0xddf25357ce95560a,
   0x8b4ab8e4ba19e45c,
   0xd2e88688dd21f325,
@@ -224,9 +224,11 @@ function select(f: FeP256, nibble: u64) {
 
 /**
  * `d = p + q` (points at registers `d`, `p`, `q`; `d` may be either), add-2007-bl, with the
- * identity on either side selected by masks. Wrong for p = q, which callers rule out.
+ * identity on either side selected by masks. Wrong for p = q (neither the identity): the
+ * result then has Z = 0, which constant-time callers rule out; the returned mask is all ones
+ * then, and verification (public data) answers it by doubling.
  */
-export function add(f: FeP256, d: usize, p: usize, q: usize) {
+export function add(f: FeP256, d: usize, p: usize, q: usize): u64 {
   const z1z1 = T;
   const z2z2 = T + 1;
   const u1 = T + 2;
@@ -267,15 +269,17 @@ export function add(f: FeP256, d: usize, p: usize, q: usize) {
   f.mul(s1, s1, j);
   f.add(s1, s1, s1);
   f.sub(z2z2, i, s1);
-  // p is the identity: q; q is: p.
+  // p is the identity: q; q is: p. Equal points have H = 0 and r = 0.
   const pZero = f.isZero(p + 2);
   const qZero = f.isZero(q + 2);
+  const same = f.isZero(h) & f.isZero(r) & ~pZero & ~qZero;
   f.blend(z1z1, p, z1z1, qZero);
   f.blend(z2z2, p + 1, z2z2, qZero);
   f.blend(u1, p + 2, u1, qZero);
   f.blend(d, q, z1z1, pZero);
   f.blend(d + 1, q + 1, z2z2, pZero);
   f.blend(d + 2, q + 2, u1, pZero);
+  return same;
 }
 
 /** `d = 2p` (`d` may be `p`), dbl-2001-b for a = -3; the identity stays the identity. */

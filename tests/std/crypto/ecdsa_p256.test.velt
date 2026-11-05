@@ -1,0 +1,94 @@
+// ECDSA verification on P-256 (velt/crypto `p256Verify`): every Project Wycheproof
+// ecdsa_secp256r1_sha256 case, and a signature made by OpenSSL 4.0.3.
+import { p256Verify, sha256 } from "velt/crypto";
+import { hexDecode } from "velt/encoding";
+import { describe, expect, it } from "velt/test";
+import { ECDSA_P256_SHA256_CASES } from "./wycheproof_ecdsa_p256_sha256";
+
+// OpenSSL's signature of "hello velt" (SHA-256) by the key in the test below.
+const SIG =
+  "3046022100e027b81530be1d8ed9698ee73a454afe6d9f72f03d06284becad46141ece82ad0221009df9279471233173f9cab47a954e531ae058ffb2f57a0b5140dc2d7a8ff81938";
+
+// The base point G as a public key (private key 1), and a signature by it with e = r: the
+// verification's u1 G and u2 Q are then the same point, so its first addition doubles.
+const G_KEY =
+  "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296" +
+  "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+const E_IS_R = "471c3e758c4904285bba7e53118ed0f524adeb0757d25bd2f8e7b0d76dfa714c";
+const E_IS_R_SIG =
+  "30440220471c3e758c4904285bba7e53118ed0f524adeb0757d25bd2f8e7b0d76dfa714c02201ab01dd8c7986e" +
+  "701d9b3e8309260983824fbc63a2a8153dc7b0b661def5a045";
+
+function bytes(s: string): u8[] {
+  return s == "-" ? [] : hexDecode(s);
+}
+
+describe("p256Verify", () => {
+  it("matches every Wycheproof ecdsa_secp256r1_sha256 case", () => {
+    let key: u8[] = [];
+    let valid = 0;
+    let invalid = 0;
+    for (const line of ECDSA_P256_SHA256_CASES) {
+      const f = line.split(" ");
+      if (f[0] == "K") {
+        key = hexDecode(f[1]);
+        continue;
+      }
+      const ok = p256Verify(key, sha256(bytes(f[2])), bytes(f[3]));
+      if (f[1] == "v") {
+        expect(`${f[0]} ${ok}`).toBe(`${f[0]} true`);
+        valid++;
+      } else if (f[1] == "i") {
+        expect(`${f[0]} ${ok}`).toBe(`${f[0]} false`);
+        invalid++;
+      }
+    }
+    expect(valid).toBe(174);
+    expect(invalid).toBe(310);
+
+    it("doubles when an addition meets the same point", () => {
+      expect(p256Verify(hexDecode(G_KEY), hexDecode(E_IS_R), hexDecode(E_IS_R_SIG))).toBe(true);
+    });
+
+    it("refuses an INTEGER with a needless leading zero", () => {
+      // r (top bit clear) written as 33 bytes with a leading zero: BER, not DER.
+      const ber = "3045022100" + E_IS_R_SIG.slice(8);
+      expect(p256Verify(hexDecode(G_KEY), hexDecode(E_IS_R), hexDecode(ber))).toBe(false);
+    });
+  });
+
+  it("verifies OpenSSL's signature, and refuses it for another message or key", () => {
+    const key = hexDecode(
+      "044135d2a1dc67a663dba01fecfbad4da41e1f43373d3b7af0d8c4bdd23fdf4efa" +
+        "7f7c3b8f1a2ea9a5ae03a9d1d9f0751504ac975b28930b9dd31ea3d10e779bbb",
+    );
+    const sig = hexDecode(SIG);
+    const msg: u8[] = [104, 101, 108, 108, 111, 32, 118, 101, 108, 116]; // "hello velt"
+    expect(p256Verify(key, sha256(msg), sig)).toBe(true);
+    msg[0] = 72;
+    expect(p256Verify(key, sha256(msg), sig)).toBe(false);
+    msg[0] = 104;
+    key[64] ^= 1;
+    expect(p256Verify(key, sha256(msg), sig)).toBe(false);
+
+    it("doubles when an addition meets the same point", () => {
+      expect(p256Verify(hexDecode(G_KEY), hexDecode(E_IS_R), hexDecode(E_IS_R_SIG))).toBe(true);
+    });
+
+    it("refuses an INTEGER with a needless leading zero", () => {
+      // r (top bit clear) written as 33 bytes with a leading zero: BER, not DER.
+      const ber = "3045022100" + E_IS_R_SIG.slice(8);
+      expect(p256Verify(hexDecode(G_KEY), hexDecode(E_IS_R), hexDecode(ber))).toBe(false);
+    });
+  });
+
+  it("doubles when an addition meets the same point", () => {
+    expect(p256Verify(hexDecode(G_KEY), hexDecode(E_IS_R), hexDecode(E_IS_R_SIG))).toBe(true);
+  });
+
+  it("refuses an INTEGER with a needless leading zero", () => {
+    // r (top bit clear) written as 33 bytes with a leading zero: BER, not DER.
+    const ber = "3045022100" + E_IS_R_SIG.slice(8);
+    expect(p256Verify(hexDecode(G_KEY), hexDecode(E_IS_R), hexDecode(ber))).toBe(false);
+  });
+});
