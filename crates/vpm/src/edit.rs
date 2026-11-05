@@ -17,8 +17,12 @@ use crate::manifest::{
 pub struct DependencySpec {
     /// Semver requirement.
     pub version: Option<String>,
-    /// Local path, relative to the manifest.
+    /// Local path, relative to the manifest; with `url`, the package's directory in the archive.
     pub path: Option<String>,
+    /// A release archive's URL, with its `sha256` and `strip` ([`crate::url_source`]).
+    pub url: Option<String>,
+    pub sha256: Option<String>,
+    pub strip: Option<u32>,
 }
 
 /// Add or replace `dependencies.<name>` in the manifest text; returns the new text (validated).
@@ -31,6 +35,14 @@ pub fn add_dependency_text(
         return Err(format!("invalid package name `{name}`"));
     }
     let dep = match (&spec.version, &spec.path) {
+        _ if spec.url.is_some() => Dependency::Detailed(DetailedDependency {
+            version: spec.version.clone(),
+            path: spec.path.clone(),
+            url: spec.url.clone(),
+            sha256: spec.sha256.clone(),
+            strip: spec.strip,
+            ..Default::default()
+        }),
         (Some(v), None) => Dependency::Version(v.clone()),
         (None, None) => return Err(format!("dependency `{name}` needs a version or a path")),
         (version, Some(path)) => Dependency::Detailed(DetailedDependency {
@@ -174,6 +186,7 @@ export const pkg: Package = {
         DependencySpec {
             version: version.map(Into::into),
             path: path.map(Into::into),
+            ..Default::default()
         }
     }
 

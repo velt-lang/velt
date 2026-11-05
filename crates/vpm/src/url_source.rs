@@ -217,11 +217,69 @@ pub fn checkout(
     Ok((dir, actual))
 }
 
+/// The bytes at `url` (at most [`MAX_ARCHIVE`]).
+fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
+    check_url(url)?;
+    velt_toolchain::install::download(url, MAX_ARCHIVE)?
+        .ok_or_else(|| format!("{url} doesn't exist (HTTP 404)"))
+}
+
+/// The entry `velt add <url>` writes: the archive is downloaded once, its SHA-256 computed and
+/// the archive extracted into the cache, and the package found in it: at `path` (inside the
+/// archive's one top directory when the archive has one and its root has no `package.velt`,
+/// `strip: 1`). Returns the package's name and the spec.
+pub fn entry_for(
+    loc: &Locations,
+    url: &str,
+    path: Option<&str>,
+) -> Result<(String, UrlSpec), String> {
+    if let Some(p) = path {
+        if !is_inner_path(p) {
+            return Err(format!(
+                "`--path` with a URL is a `/`-separated directory inside the archive, not `{p}`"
+            ));
+        }
+    }
+    let bytes = fetch_bytes(url)?;
+    let sha256 = velt_toolchain::install::sha256_hex(&bytes);
+    let raw = raw_dir(loc, &sha256);
+    if !raw.is_dir() {
+        unpack(&bytes, &raw, url)?;
+    }
+    let mut spec = UrlSpec {
+        url: url.to_string(),
+        sha256,
+        strip: 0,
+        subdir: path.map(String::from),
+    };
+    let has_manifest = |spec: &UrlSpec| {
+        choose(&raw, spec).is_ok_and(|d| d.join(crate::manifest::MANIFEST_FILE).is_file())
+    };
+    if !has_manifest(&spec) {
+        spec.strip = 1;
+        if !has_manifest(&spec) {
+            let at = path.map_or("its root".to_string(), |p| format!("`{p}`"));
+            return Err(format!(
+                "the archive at {url} has no `package.velt` at {at}, nor inside one top directory there: name the package's directory with `--path`"
+            ));
+        }
+    }
+    let dir = choose(&raw, &spec)?;
+    let manifest = crate::manifest::Manifest::from_dir(&dir)?;
+    Ok((manifest.package.name, spec))
+}
+
+/// Extract `bytes` (from `url`) into `raw`; a concurrent install's equal tree is taken.
+fn unpack(bytes: &[u8], raw: &Path, url: &str) -> Result<(), String> {
+    match crate::extract::extract(bytes, raw) {
+        Err(_) if raw.is_dir() => Ok(()),
+        result => result.map_err(|e| format!("the archive at {url} can't be used: {e}")),
+    }
+}
+
 /// Download `spec`'s archive, check its hash, and extract it into `raw`.
 fn download(spec: &UrlSpec, raw: &Path) -> Result<(), String> {
-    check_url(&spec.url)?;
-    let bytes = velt_toolchain::install::download(&spec.url, MAX_ARCHIVE)?
-        .ok_or_else(|| format!("{} doesn't exist (HTTP 404)", spec.url))?;
+    let bytes = fetch_bytes(&spec.url)?;
     let actual = velt_toolchain::install::sha256_hex(&bytes);
     if actual != spec.sha256 {
         return Err(format!(
@@ -229,11 +287,7 @@ fn download(spec: &UrlSpec, raw: &Path) -> Result<(), String> {
             spec.url, spec.sha256
         ));
     }
-    match crate::extract::extract(&bytes, raw) {
-        // Another install extracted the same archive meanwhile: the same bytes, the same tree.
-        Err(_) if raw.is_dir() => Ok(()),
-        result => result.map_err(|e| format!("the archive at {} can't be used: {e}", spec.url)),
-    }
+    unpack(&bytes, raw, &spec.url)
 }
 
 /// The archive's root after `strip` (what `path` is relative to), from the package directory

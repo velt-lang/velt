@@ -417,3 +417,52 @@ fn two_urls_of_one_archive_are_one_source() {
     let err = e.install(&app).unwrap_err();
     assert!(err.contains("`vue` is asked for from two sources"), "{err}");
 }
+
+#[test]
+fn velt_add_finds_the_package_and_writes_its_hash() {
+    let e = env();
+    let s = Serve::new();
+    let archive = vue();
+    s.put("/vue.tar.gz", Body::Bytes(archive.clone()));
+    let url = s.url("/vue.tar.gz");
+    // The package is inside the one top directory: `strip: 1` is found.
+    let (name, spec) = super::super::entry_for(&e.loc, &url, Some("packages/vue")).unwrap();
+    assert_eq!(name, "vue");
+    assert_eq!(
+        (spec.sha256.as_str(), spec.strip, spec.subdir.as_deref()),
+        (hex(&archive).as_str(), 1, Some("packages/vue"))
+    );
+    // Without `--path` there is no package at the top: the error says what to give.
+    let err = super::super::entry_for(&e.loc, &url, None).unwrap_err();
+    assert!(
+        err.contains("name the package's directory with `--path`"),
+        "{err}"
+    );
+    // A flat archive needs no `strip`.
+    let flat = tar_gz(&[
+        ("package.velt", &manifest("flat", "0.1.0", "")),
+        ("src/lib.velt", "\n"),
+    ]);
+    s.put("/flat.zip", Body::Bytes(flat.clone()));
+    let (name, spec) = super::super::entry_for(&e.loc, &s.url("/flat.zip"), None).unwrap();
+    assert_eq!((name.as_str(), spec.strip, spec.subdir), ("flat", 0, None));
+    // What `velt add` writes installs, and downloads nothing more.
+    let app = e.app("", "");
+    let (_, spec) = super::super::entry_for(&e.loc, &url, Some("packages/vue")).unwrap();
+    let dep = crate::edit::DependencySpec {
+        path: spec.subdir.clone(),
+        url: Some(spec.url.clone()),
+        sha256: Some(spec.sha256.clone()),
+        strip: Some(spec.strip),
+        ..Default::default()
+    };
+    crate::edit::add_dependency(&app, "vue", &dep).unwrap();
+    let text = std::fs::read_to_string(app.join("package.velt")).unwrap();
+    assert!(
+        text.contains(&format!("sha256: \"{}\"", hex(&archive))) && text.contains("strip: 1"),
+        "{text}"
+    );
+    let before = s.requests();
+    e.install(&app).unwrap();
+    assert_eq!(s.requests(), before);
+}

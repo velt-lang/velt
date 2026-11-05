@@ -112,6 +112,7 @@ pub fn execute(cmd: Command) -> ExitCode {
             version,
             path,
         } => package::add(&name, version, path),
+        Command::AddUrl { url, path } => package::add_url(&url, path),
         Command::Install { locked } => package::install(vpm::InstallOptions {
             locked,
             update: false,

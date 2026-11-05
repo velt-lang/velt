@@ -290,6 +290,7 @@ mod tests {
             &vpm::edit::DependencySpec {
                 version: None,
                 path: Some("../util".into()),
+                ..Default::default()
             },
         )
         .unwrap();
@@ -314,6 +315,7 @@ mod tests {
         let spec = vpm::edit::DependencySpec {
             version: None,
             path: Some("../util".into()),
+            ..Default::default()
         };
         vpm::edit::add_dependency(&app, "util", &spec).unwrap();
         let main = app.join("src/main.velt");
@@ -422,6 +424,7 @@ mod tests {
         let path_dep = |path: &str| vpm::edit::DependencySpec {
             version: None,
             path: Some(path.into()),
+            ..Default::default()
         };
         vpm::edit::add_dependency(&app, "dep", &path_dep("../dep")).unwrap();
         vpm::edit::add_dependency(&dep, "dep2", &path_dep("../dep2")).unwrap();
