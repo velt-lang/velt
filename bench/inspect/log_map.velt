@@ -1,0 +1,5 @@
+function main(): void {
+  const m = new Map<string, number>([["a", 1]]);
+  const s = new Set<string>(["a"]);
+  console.log(m, s);
+}

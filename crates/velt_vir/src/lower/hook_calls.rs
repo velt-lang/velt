@@ -61,6 +61,7 @@ pub mod ty {
         Error,
         HostRef,
         HostSettled,
+        Map,
         Ptr,
         Record
     );
@@ -531,6 +532,15 @@ macro_rules! builders {
     };
     (@fn [yes no] $name:ident [$($ret:tt)*] [$targs:expr] [$($decl:tt)*] [$($pass:tt)*]) => {
         #[doc = concat!("A call of the fallback hook `", stringify!($name), "`, if std has it checked.")]
+        #[inline]
+        pub(in crate::lower) fn $name(lw: &mut FnLower<'_, '_>, $($decl)*)
+            -> Option<Call<rty!($($ret)*)>> {
+            Call::find(lw, velt_common::std_hook!($name), $targs, [$($pass)*])
+        }
+    };
+    (@fn [yes yes] $name:ident [$($ret:tt)*] [$targs:expr] [$($decl:tt)*] [$($pass:tt)*]) => {
+        #[doc = concat!("A call of the fallback hook `", stringify!($name), "`, if sema demanded \
+            it (velt_common `hook_demand.rs`) and so std has it checked.")]
         #[inline]
         pub(in crate::lower) fn $name(lw: &mut FnLower<'_, '_>, $($decl)*)
             -> Option<Call<rty!($($ret)*)>> {

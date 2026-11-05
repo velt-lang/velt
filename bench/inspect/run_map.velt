@@ -1,0 +1,8 @@
+function main(): void {
+  const m = new Map<string, number>([["a", 1], ["b", 2], ["c", 3]]);
+  const s = new Set<string>(["a", "b", "c"]);
+  for (let i = 0; i < 10000; i++) {
+    console.log(m);
+    console.log(s);
+  }
+}

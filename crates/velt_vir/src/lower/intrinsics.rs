@@ -108,6 +108,16 @@ impl FnLower<'_, '_> {
             (I::ToString, [a]) => self.stringify(a, ty, false),
             (I::ErrorText, [a]) => self.text_of(a, Self::push_error_text),
             (I::Inspect, [a]) => self.text_of(a, Self::format_top_inspect),
+            (I::InspectNested, [buf, v, depth]) => {
+                let bp = self.place_expr(buf);
+                let ba = self.addr(bp);
+                let t = self.sub(v.ty);
+                let val = self.expr(v);
+                let p = self.place_of(val, t);
+                let d = self.expr(depth);
+                self.format_nested(&ba, &p, t, &d);
+                unit()
+            }
             (I::ThrowLoc, []) => {
                 let (_, buf) = self.new_strbuf(0);
                 self.push_throw_loc(&buf);

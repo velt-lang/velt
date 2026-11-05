@@ -1,0 +1,57 @@
+{ a: 1, Symbol(tag): 5 }
+[ [ 1, [ 2, [Array] ] ] ]
+[ [] ] [ {} ] [ [ [] ] ]
+Map(2) { 'a' => [ 1, 2 ], 'b' => [] }
+Map(1) { 'w' => Map(1) { 'x' => Map(1) { 'y' => [Map] } } }
+Set(3) { 1, 2, 3 } Set(0) {} Map(0) {}
+101 1
+<ref *1> Node2 {
+  name: 'a',
+  next: Node2 { name: 'b', next: [Circular *1], kids: [] },
+  kids: [ [Circular *1], Node2 { name: 'b', next: [Circular *1], kids: [] } ]
+}
+[
+  <ref *1> Node2 {
+    name: 'a',
+    next: Node2 { name: 'b', next: [Circular *1], kids: [] },
+    kids: [ [Circular *1], [Node2] ]
+  },
+  <ref *2> Node2 {
+    name: 'b',
+    next: <ref *1> Node2 { name: 'a', next: [Circular *2], kids: [Array] },
+    kids: []
+  }
+]
+{ list: [ Node2 { name: 'a', next: [Node2], kids: [Array] } ] }
+Point { x: 1, y: 2 } [ Point { x: 3, y: 4 } ] { p: { q: { r: [Point] } } }
+1 [ 0, 2, 4 ]
+<ref *1> Holder {
+  m: Map(1) { 'me' => [Circular *1] },
+  s: Set(1) { [Circular *1] }
+}
+[
+  <ref *1> Holder {
+    m: Map(1) { 'me' => [Circular *1] },
+    s: Set(1) { [Circular *1] }
+  }
+] {
+  h: <ref *1> Holder {
+    m: Map(1) { 'me' => [Circular *1] },
+    s: Set(1) { [Circular *1] }
+  }
+}
+[
+  <ref *1> Holder {
+    m: Map(1) { 'self' => [Circular *1] },
+    s: Set(0) {}
+  },
+  <ref *2> Holder {
+    m: Map(1) { 'self' => [Circular *2] },
+    s: Set(0) {}
+  },
+  <ref *3> Holder {
+    m: Map(1) { 'self' => [Circular *3] },
+    s: Set(0) {}
+  }
+]
+str 1.5 -0 [ -0 ] [ NaN, Infinity ] [ "it's", 'a"b' ] [ true, null, undefined ]

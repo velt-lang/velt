@@ -1,0 +1,143 @@
+// velt/lang/hooks (internal): what `console.log` and `util.inspect` write the same way for every
+// type (docs/internals/design/inspect-shapes.md): the depth limit, objects that hold themselves
+// (`<ref *1>`, `[Circular *1]`), arrays, `Map` and `Set`. Lowering writes what differs per type
+// around these (an object's fields, the member a union holds) and calls them with the line's own
+// builder, so a value has no builder of its own. Sema checks them where live code may print one
+// (velt_common `std_hooks.rs`), so a program without arrays or objects does not pay for them.
+
+import { identity, inspectNested } from "velt/lang/intrinsics";
+import {
+  inspectCircular,
+  inspectEnter,
+  inspectLeave,
+  inspectMore,
+} from "velt/lang/hooks/inspect_cycles";
+import { MAP_LIVE_AT } from "velt/lang/hooks/keys";
+import { pushU64 } from "velt/lang/number/integer";
+
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+
+/**
+ * Opens the object with identity `id` (0: its values never hold themselves): false past the depth
+ * limit (after `cut`, `[Name]`, or `[Circular *N]` when it is being written) and when it is being
+ * written already (after `[Circular *N]`, marking the object it refers back to with `<ref *N>`).
+ * After a true with an identity, the caller ends the object with `inspectLeave`.
+ */
+export function openObject(buf: string, cut: string, id: u64, depth: u32): bool {
+  if (depth > 2) {
+    if (id == 0 || !inspectCircular(buf, id)) {
+      velt_rt_strbuf_push_str(buf, cut);
+    }
+    return false;
+  }
+  return id == 0 || inspectEnter(buf, id);
+}
+
+/** An array: `[ a, b ]`, its first 100 elements, `[Array]` past the depth limit. */
+export function inspectArray<E>(buf: string, a: E[], depth: u32): void {
+  const n = a.length;
+  if (n == 0) {
+    velt_rt_strbuf_push_str(buf, "[]");
+    return;
+  }
+  if (depth > 2) {
+    velt_rt_strbuf_push_str(buf, "[Array]");
+    return;
+  }
+  const c = depth + 1;
+  const shown = n > 100 ? 100 : n;
+  velt_rt_strbuf_push_str(buf, "[ ");
+  for (let i: usize = 0; i < shown; i++) {
+    if (i > 0) {
+      velt_rt_strbuf_push_str(buf, ", ");
+    }
+    inspectNested(buf, a[i], c);
+  }
+  if (n > 100) {
+    const more = (n - 100) as u64;
+    inspectMore(buf, more);
+  }
+  velt_rt_strbuf_push_str(buf, " ]");
+}
+
+/**
+ * Opens a `Map` or a `Set` of `size` entries (`Map(1) { `): false when it shows no entries
+ * (`Map(0) {}`), is past the depth limit (`[Map]`) or is being written already (`[Circular *1]`).
+ */
+function openCollection(buf: string, kind: string, size: u64, id: u64, depth: u32): bool {
+  if (size == 0) {
+    velt_rt_strbuf_push_str(buf, kind);
+    velt_rt_strbuf_push_str(buf, "(0) {}");
+    return false;
+  }
+  if (depth > 2) {
+    if (!inspectCircular(buf, id)) {
+      velt_rt_strbuf_push_str(buf, "[");
+      velt_rt_strbuf_push_str(buf, kind);
+      velt_rt_strbuf_push_str(buf, "]");
+    }
+    return false;
+  }
+  if (!inspectEnter(buf, id)) {
+    return false;
+  }
+  velt_rt_strbuf_push_str(buf, kind);
+  velt_rt_strbuf_push_str(buf, "(");
+  pushU64(buf, size);
+  velt_rt_strbuf_push_str(buf, ") { ");
+  return true;
+}
+
+/** Ends a collection `openCollection` opened: `... n more items`, ` }`. */
+function closeCollection(buf: string, size: u64): void {
+  if (size > 100) {
+    const more = size - 100;
+    inspectMore(buf, more);
+  }
+  velt_rt_strbuf_push_str(buf, " }");
+  inspectLeave(buf);
+}
+
+/** A `Map`: `Map(1) { 'a' => 1 }`, its first 100 entries. */
+export function inspectMap<K, V>(buf: string, m: Map<K, V>, depth: u32): void {
+  const size = m._size as u64;
+  if (!openCollection(buf, "Map", size, identity(m), depth)) {
+    return;
+  }
+  const c = depth + 1;
+  const n = m.entryKeys.length;
+  let shown: u64 = 0;
+  for (let i: usize = 0; i < n && shown < 100; i++) {
+    if (m[MAP_LIVE_AT](i)) {
+      if (shown > 0) {
+        velt_rt_strbuf_push_str(buf, ", ");
+      }
+      shown++;
+      inspectNested(buf, m.entryKeys[i], c);
+      velt_rt_strbuf_push_str(buf, " => ");
+      inspectNested(buf, m.entryValues[i], c);
+    }
+  }
+  closeCollection(buf, size);
+}
+
+/** A `Set` of the members `m` keeps and of identity `id`: `Set(1) { 'a' }`, its first 100. */
+export function inspectSet<T>(buf: string, m: Map<T, bool>, id: u64, depth: u32): void {
+  const size = m._size as u64;
+  if (!openCollection(buf, "Set", size, id, depth)) {
+    return;
+  }
+  const c = depth + 1;
+  const n = m.entryKeys.length;
+  let shown: u64 = 0;
+  for (let i: usize = 0; i < n && shown < 100; i++) {
+    if (m[MAP_LIVE_AT](i)) {
+      if (shown > 0) {
+        velt_rt_strbuf_push_str(buf, ", ");
+      }
+      shown++;
+      inspectNested(buf, m.entryKeys[i], c);
+    }
+  }
+  closeCollection(buf, size);
+}
