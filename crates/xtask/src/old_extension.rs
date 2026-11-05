@@ -49,6 +49,23 @@ mod tests {
         assert!(ok, "git {args:?}");
     }
 
+    /// The script decides what happens to every open branch, so its own tests are in the gate.
+    /// Unix only: the way back it prints is a shell line.
+    #[cfg(unix)]
+    #[test]
+    fn velt_ext_passes_its_tests() {
+        let out = Command::new("python3")
+            .arg("-I")
+            .arg(Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scripts/velt-ext-test.py"))
+            .output()
+            .expect("python3");
+        assert!(
+            out.status.success(),
+            "{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
     #[test]
     fn a_tracked_file_with_the_old_extension_fails_and_says_how_to_fix_it() {
         let dir = std::env::temp_dir().join(format!("xtask-old-ext-{}", std::process::id()));
