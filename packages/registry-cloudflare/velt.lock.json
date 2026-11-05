@@ -1,0 +1,20 @@
+{
+  "version": 1,
+  "packages": [
+    {
+      "name": "cloudflare",
+      "version": "0.1.0",
+      "source": "path+../cloudflare"
+    },
+    {
+      "name": "http-server",
+      "version": "0.1.0",
+      "source": "path+../http-server"
+    },
+    {
+      "name": "registry-core",
+      "version": "0.1.0",
+      "source": "path+../registry-core"
+    }
+  ]
+}

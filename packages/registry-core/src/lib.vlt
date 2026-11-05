@@ -56,4 +56,4 @@ export { MemoryBlobStore } from "./memory/memory_blob_store";
 export { MemoryMetadataDb } from "./memory/memory_metadata_db";
 export { MemoryPublishLock } from "./memory/memory_publish_lock";
 export { RecordingCachePurge } from "./memory/recording_cache_purge";
-export { TokenAuth, tokenHash } from "./memory/token_auth";
+export { bearerToken, TokenAuth, tokenHash } from "./memory/token_auth";

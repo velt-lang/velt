@@ -16,8 +16,8 @@ pub(crate) const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
     // The `tsc` oracle's samples and configuration: velt_tscompat's tests read them (and skip
     // the `tsc` run without its Node packages), `veltc`'s check that the samples are valid Velt.
     ("tests/tscompat-oracle/", &["velt_tscompat"], &["ts_compat"]),
-    // The pinned Miniflare and workerd that `workerd` runs its Worker under.
-    ("tests/workerd/", &[], &["workerd"]),
+    // The pinned Miniflare and workerd that `workerd` and `registry_worker` run their Workers under.
+    ("tests/workerd/", &[], &["workerd", "registry_worker"]),
     // The standard library's `velt test` suites (`std_tests`; std and the compiler run it too:
     // they select every `veltc` test).
     ("tests/std/", &[], &["std_tests"]),

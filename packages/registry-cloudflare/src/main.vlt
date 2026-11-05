@@ -1,0 +1,19 @@
+// The registry's Worker (`velt build --release --host registry-cloudflare`, README.md).
+
+import { serve } from "http-server";
+import { Registry } from "registry-core";
+import { CloudflareCachePurge } from "./cloudflare_cache_purge";
+import { D1MetadataDb } from "./d1_metadata_db";
+import { D1TokenAuth } from "./d1_token_auth";
+import { DurableObjectPublishLock } from "./durable_object_publish_lock";
+import { R2BlobStore } from "./r2_blob_store";
+
+const registry = new Registry({
+  blobs: new R2BlobStore("BLOBS"),
+  db: new D1MetadataDb("DB"),
+  lock: new DurableObjectPublishLock("LOCKS"),
+  purge: new CloudflareCachePurge(),
+  auth: new D1TokenAuth("DB"),
+});
+
+await serve({ port: 8080 }, (req: Request): Promise<Response> => registry.handle(req));
