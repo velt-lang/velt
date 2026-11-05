@@ -429,6 +429,7 @@ fn github_output_text(plan: &Plan) -> String {
         ("robustness_files", "VELT_ROBUSTNESS_FILES"),
         ("fmt_corpus", "VELT_FMT_CORPUS"),
         ("fmt_corpus_files", "VELT_FMT_CORPUS_FILES"),
+        ("debug_vars", "VELT_DEBUG_VARS"),
     ] {
         let value = sweep.iter().find(|(v, _)| *v == var).map_or("", |(_, x)| x);
         text.push_str(&format!("{output}={value}\n"));
@@ -677,7 +678,7 @@ name = \"a\"
         plan.fmt_corpus = sweep::Sweep::Full;
         let text = github_output_text(&plan);
         assert!(
-            text.contains("\nrobustness=full\nrobustness_files=\nfmt_corpus=\nfmt_corpus_files=\n"),
+            text.contains("\nrobustness=full\nrobustness_files=\nfmt_corpus=\nfmt_corpus_files=\ndebug_vars=\n"),
             "{text}"
         );
     }

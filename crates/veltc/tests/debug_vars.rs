@@ -298,10 +298,51 @@ fn closure_captures_are_not_params() {
     assert!(!vars["base"].2, "{vars:?}");
 }
 
-/// Every golden program that compiles also compiles with variables described, and its VIR
-/// verifies (the golden suite builds with `velt run`, which describes none).
+/// One in this many goldens is in [`in_sample`]'s sample.
+const SAMPLE_ONE_IN: u64 = 16;
+
+/// Goldens the sample keeps by name: the one a bug was found through (#1760), and one that reaches
+/// the branch the sample would otherwise miss (a string enum's members, in `debug_kind`).
+const ALWAYS_SAMPLED: &[&str] = &[
+    "lang/closure_nested_assigns_capture.vlt",
+    "lang/array_join_enum.vlt",
+];
+
+/// Whether the golden at `rel` (relative to `tests/golden`, with `/`) is in the sample: chosen by
+/// a hash of its path, so a new golden moves no other in or out, and the same on every machine.
+fn in_sample(rel: &str) -> bool {
+    let hash = rel.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    hash % SAMPLE_ONE_IN == 0 || ALWAYS_SAMPLED.contains(&rel)
+}
+
+#[test]
+fn the_sample_is_a_fixed_fraction_by_name() {
+    assert!(in_sample("lang/array_join_enum.vlt"));
+    assert!(in_sample("lang/closure_nested_assigns_capture.vlt"));
+    let sampled = (0..16_000)
+        .filter(|i| in_sample(&format!("lang/g{i}.vlt")))
+        .count();
+    assert!((800..1200).contains(&sampled), "{sampled} of 16,000");
+}
+
+/// Golden programs that compile also compile with variables described, and their VIR verifies
+/// (the golden suite builds with `velt run`, which describes none). A program's std code describes
+/// most kinds of type, so most programs ask nearly the same question: this checks [`in_sample`]'s
+/// sample and the goldens a change touches (`VELT_GOLDEN`, as for the goldens themselves), which
+/// together reach every branch of `lower/debug_vars.rs` that any golden reaches.
+/// `VELT_DEBUG_VARS=all` checks all of them: the nightly gate sets it, and `cargo xtask check`
+/// and the merge queue do when the code describing variables changes.
 #[test]
 fn every_golden_compiles_with_variables() {
+    let all = std::env::var("VELT_DEBUG_VARS").is_ok_and(|v| v == "all");
+    let touched = std::env::var("VELT_GOLDEN").unwrap_or_default();
+    let touched: Vec<&str> = touched
+        .split(',')
+        .map(str::trim)
+        .filter(|f| !f.is_empty())
+        .collect();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden");
     let mut programs = vec![];
     for category in std::fs::read_dir(&root).unwrap().flatten() {
@@ -318,6 +359,12 @@ fn every_golden_compiles_with_variables() {
     }
     programs.sort();
     assert!(programs.len() > 100, "found {} goldens", programs.len());
+    programs.retain(|path| {
+        let rel = path.strip_prefix(&root).unwrap_or(path);
+        let rel = rel.to_string_lossy().replace('\\', "/");
+        let name = format!("tests/golden/{rel}");
+        all || in_sample(&rel) || touched.iter().any(|f| name.contains(f))
+    });
     let next = std::sync::atomic::AtomicUsize::new(0);
     let failures = std::sync::Mutex::new(vec![]);
     std::thread::scope(|scope| {
