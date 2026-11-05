@@ -200,10 +200,6 @@ export function anyStr_concat(s: string, args: any[]): any {
   return out;
 }
 
-export function anyStr_localeCompare(s: string, args: any[]): any {
-  return s.localeCompare(anyStrArg(args, 0)) as number;
-}
-
 // Numbers and booleans.
 
 /**

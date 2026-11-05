@@ -123,6 +123,7 @@ table! {
     lang_record => "lang/record",
     lang_sort => "lang/sort",
     lang_sort_stable => "lang/sort/stable",
+    lang_string_collate => "lang/string/collate",
     lang_symbol => "lang/symbol",
     lang_this_fn => "lang/this_fn",
     lang_typed_array => "lang/typed_array",
