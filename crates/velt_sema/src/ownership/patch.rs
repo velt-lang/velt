@@ -52,8 +52,8 @@ pub(super) fn patch_calls(
                 // escapes (`super::kept_fns`).
                 let generic = super::kept_fns::generic_param_args(cx, callee, args);
                 for (a, g) in args.iter().zip(&generic) {
-                    if let (E::Closure(def), true) = (&a.kind, *g) {
-                        changed |= super::fn_values::escape_closure(cx, *def);
+                    if let (Some(def), true) = (super::fn_values::literal_arg(a), *g) {
+                        changed |= super::fn_values::escape_closure(cx, def);
                     }
                 }
                 if super::kept_fns::may_keep_args(cx, callee, args) {
@@ -179,7 +179,7 @@ fn escape_literal_args(
 ) -> bool {
     let mut changed = false;
     for (k, a) in args.iter().enumerate() {
-        if let E::Closure(def) = a.kind {
+        if let Some(def) = super::fn_values::literal_arg(a) {
             let forwards = match &cx.defs[def.0 as usize] {
                 Some(Def::Fn(c)) => c.captures.iter().any(|cap| borrowed.contains(&cap.outer)),
                 _ => false,

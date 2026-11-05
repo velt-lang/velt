@@ -54,6 +54,30 @@ pub(super) fn escape_closure(cx: &mut Ctx, def: DefId) -> bool {
     true
 }
 
+/// The closure literal argument `e` passes: the literal itself, or the one an adapter holds
+/// (`{ const f = (…) => …; (p…) => f(p…) }`, an arrow converted to the parameter's function type,
+/// sema's `adapt_fn`). The adapter owns a heap environment of its own, so what decides whether the
+/// literal may stay in the caller's frame is the same as for the literal passed directly: kept by
+/// the callee, it would point into a frame that is gone (#2327).
+pub(super) fn literal_arg(e: &Expr) -> Option<DefId> {
+    match &e.kind {
+        E::Closure(def) => Some(*def),
+        E::Block(b) if matches!(b.value.as_deref(), Some(v) if matches!(v.kind, E::Closure(_))) => {
+            match b.stmts.as_slice() {
+                [crate::hir::Stmt {
+                    kind:
+                        crate::hir::StmtKind::Let {
+                            init: Some(init), ..
+                        },
+                    ..
+                }] => literal_arg(init),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 /// The borrowed function-typed parameters and captures of `f` (body of `d`): closures that may
 /// live in a caller's frame, which `f` must not keep (see [`borrowed_fn_copy`]).
 pub(super) fn borrowed_fn_locals(cx: &Ctx, d: DefId, f: &FnDef) -> FxHashSet<LocalId> {
