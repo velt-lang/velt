@@ -62,6 +62,21 @@ export function test_scram_exchange_with_the_empty_name() {
 const EXPECTED_PROOF = "qvT2SWdEH5Q06albL+hjSYuUhCG7VndFyzIb7CK4n9k=";
 const EXPECTED_SERVER_SIGNATURE = "3HO6Qt1M4MKJrmlKaoOqLAI0/0TV0HZe7J9H3MBtSOg=";
 
+function proofOf(password: string): string {
+  const s = new Scram(password, NONCE);
+  const reply = s.final(SERVER_FIRST);
+  return reply.slice(reply.indexOf(",p=") + 3);
+}
+
+// No SASLprep: a password's own UTF-8 bytes, as computed with Python's hashlib. For one already in
+// its normal form that is what SASLprep would give. U+2168 is the limit: SASLprep makes it "IX", so a
+// server that prepared it expects the second proof, and this one is refused.
+export function test_scram_uses_the_password_as_it_is() {
+  assertEq(proofOf("pässwörd"), "p45sT3IzJIZAhH3e3k7+nQUG8s3REE6aihsNfY6YJLo=");
+  assertEq(proofOf("\u2168"), "AqLT8T409h6JTQPerK1DoHZrns+rY2eNJ06aa6YJrVM=");
+  assert(proofOf("\u2168") != "2b5mOdeOFNUaOWSdK05u8Z+vtErTpXDPfs6KR0NuxVw=", "not prepared");
+}
+
 // RFC 7677, section 3, exactly.
 export function test_scram_rfc_7677_vector() {
   const s = new Scram("pencil", NONCE, "user");

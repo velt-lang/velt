@@ -125,6 +125,10 @@ The full guide: https://veltlang.com/docs/packages/postgres/.
   can't be used with TLS at all. Both need `velt/net` to upgrade a plain socket and to connect
   without checking the certificate, which it can't yet; `sslnegotiation=postgres` is accepted and
   changes nothing, for that reason. SCRAM channel binding isn't offered.
+- **SCRAM** has no SASLprep, since std has no Unicode normalization: a password goes as its own UTF-8
+  bytes. ASCII passwords and those already in Unicode's compatibility normal form (NFKC) work. One
+  that SASLprep would change (`Ⅸ` for `IX`, a no-break space, a soft hyphen) is refused by the
+  server with `"28P01"`; md5 and cleartext passwords aren't affected.
 - Unix-domain sockets (`host=/dir`) throw `"ENOTSUP"`, and keepalive options are accepted and do
   nothing, so a connection gets no `SO_KEEPALIVE` (the Rust driver had it on by default, 2 hours
   idle): `velt/net` has no Unix-domain stream and no socket options, and a socket made in Velt with
