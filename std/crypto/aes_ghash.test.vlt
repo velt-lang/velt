@@ -81,7 +81,11 @@ describe("GHASH", () => {
       const hard = new Ghash(h, true);
       soft.update(data, 0, data.length);
       hard.update(data, 0, data.length);
-      expect(soft.digest()).toEqual(hard.digest());
+      const a = Buffer.alloc(16);
+      const b = Buffer.alloc(16);
+      soft.digestInto(a, 0);
+      hard.digestInto(b, 0);
+      expect(a).toEqual(b);
     }
   });
 });

@@ -121,4 +121,30 @@ describe("AesGcm", () => {
       "AES-GCM nonce must be 12 bytes, got 16",
     );
   });
+
+  it("seals and opens in place at an offset, as seal and open do", () => {
+    const aead = new AesGcm(hexDecode(K));
+    const nonce: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const aad: u8[] = [23, 3, 3, 0, 99];
+    for (let n: usize = 0; n < 140; n += 13) {
+      const text: u8[] = [];
+      for (let i: usize = 0; i < n; i++) {
+        text.push((i * 3 + 1) as u8);
+      }
+      const buf = Buffer.alloc(n + 16 + 7);
+      for (let i: usize = 0; i < n; i++) {
+        buf[5 + i] = text[i];
+      }
+      aead.sealInPlace(nonce, aad, buf, 5, 5 + n);
+      expect(hexEncode(buf.slice(5, (5 + n + 16) as i64))).toBe(
+        hexEncode(aead.seal(nonce, text, aad)),
+      );
+      expect(buf[0]).toBe(0);
+      expect(buf[n + 21]).toBe(0);
+      expect(aead.openInPlace(nonce, [], buf, 5, 5 + n + 16)).toBe(false);
+      expect(aead.openInPlace(nonce, aad, buf, 5, 5 + n + 16)).toBe(true);
+      expect(hexEncode(buf.slice(5, (5 + n) as i64))).toBe(hexEncode(text));
+    }
+    expect(aead.openInPlace(nonce, aad, Buffer.alloc(15), 0, 15)).toBe(false);
+  });
 });

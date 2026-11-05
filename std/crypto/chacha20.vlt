@@ -1,7 +1,7 @@
 // velt/crypto (internal): the ChaCha20 stream cipher (RFC 8439 §2.3-2.4): add-rotate-xor on
-// `u32` words, constant time by construction (no branches or indexes on the key or the data).
-
-import { newBytes } from "velt/crypto/vectors";
+// `u32` words, constant time by construction (no branches or indexes on the key or the data). It works in
+// place on the caller's buffer, with the state and the block in the caller's scratch words, so
+// encrypting a record allocates nothing.
 
 /** Little-endian `u32` at `off` of `b`. */
 export function load32le(b: u8[], off: usize): u32 {
@@ -22,19 +22,25 @@ export function store32le(b: u8[], off: usize, x: u32) {
 }
 
 /**
- * The initial state for `key` (32 bytes) and `nonce` (12 bytes), the block counter (word 12)
- * left at zero: "expand 32-byte k", the key words, the counter, the nonce words.
+ * The state for `key` (32 bytes): "expand 32-byte k", the key words, then the block counter
+ * (word 12) and the nonce (words 13-15), both zero until `chachaSetNonce`.
  */
-export function chachaState(key: u8[], nonce: u8[]): u32[] {
+export function chachaState(key: u8[]): u32[] {
   const s: u32[] = [0x61707865, 0x3320646e, 0x79622d32, 0x6b206574];
   for (let i: usize = 0; i < 8; i++) {
     s.push(load32le(key, 4 * i));
   }
-  s.push(0);
-  for (let i: usize = 0; i < 3; i++) {
-    s.push(load32le(nonce, 4 * i));
+  for (let i = 0; i < 4; i++) {
+    s.push(0);
   }
   return s;
+}
+
+/** Sets the nonce words of `state` to the 12-byte `nonce`. */
+export function chachaSetNonce(state: u32[], nonce: u8[]) {
+  for (let i: usize = 0; i < 3; i++) {
+    state[13 + i] = load32le(nonce, 4 * i);
+  }
 }
 
 function quarter(x: u32[], a: usize, b: usize, c: usize, d: usize) {
@@ -69,44 +75,42 @@ export function chachaBlock(state: u32[], x: u32[]) {
 }
 
 /**
- * `data` XORed with the ChaCha20 keystream for `key` and `nonce` from block `counter` on
- * (encryption and decryption are the same operation).
+ * XORs `buf[start..end]` in place with the keystream of `state` from block `counter` on
+ * (encryption and decryption are the same operation); `x` is 16 words of scratch.
  */
-export function chacha20Xor(key: u8[], nonce: u8[], counter: u32, data: u8[]): u8[] {
-  const state = chachaState(key, nonce);
-  const x: u32[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-  const ks = newBytes(64);
-  const out = newBytes(data.length);
+export function chachaXorInPlace(
+  state: u32[],
+  x: u32[],
+  counter: u32,
+  buf: u8[],
+  start: usize,
+  end: usize,
+) {
   let block = counter;
-  for (let off: usize = 0; off < data.length; off += 64) {
+  let off = start;
+  while (end - off >= 64) {
     state[12] = block;
     chachaBlock(state, x);
-    const n = data.length - off < 64 ? data.length - off : 64;
-    if (n == 64) {
-      for (let i: usize = 0; i < 16; i++) {
-        store32le(out, off + 4 * i, load32le(data, off + 4 * i) ^ x[i]);
-      }
-    } else {
-      for (let i: usize = 0; i < 16; i++) {
-        store32le(ks, 4 * i, x[i]);
-      }
-      for (let i: usize = 0; i < n; i++) {
-        out[off + i] = data[off + i] ^ ks[i];
-      }
+    for (let i: usize = 0; i < 16; i++) {
+      store32le(buf, off + 4 * i, load32le(buf, off + 4 * i) ^ x[i]);
     }
     block = block + 1;
+    off += 64;
   }
-  return out;
+  if (off < end) {
+    state[12] = block;
+    chachaBlock(state, x);
+    for (let i: usize = 0; i < end - off; i++) {
+      buf[off + i] ^= ((x[i >> 2] >>> (8 * ((i & 3) as u32))) & 0xff) as u8;
+    }
+  }
 }
 
-/** The first 32 bytes of keystream block 0: the one-time Poly1305 key (RFC 8439 §2.6). */
-export function chachaPolyKey(key: u8[], nonce: u8[]): u8[] {
-  const state = chachaState(key, nonce);
-  const x: u32[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+/** The one-time Poly1305 key (the first 32 bytes of block 0, RFC 8439 §2.6) into `out[0..32]`. */
+export function chachaPolyKey(state: u32[], x: u32[], out: u8[]) {
+  state[12] = 0;
   chachaBlock(state, x);
-  const out = newBytes(32);
   for (let i: usize = 0; i < 8; i++) {
     store32le(out, 4 * i, x[i]);
   }
-  return out;
 }
