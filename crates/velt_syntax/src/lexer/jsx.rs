@@ -187,10 +187,10 @@ impl Lexer<'_> {
     }
 }
 
-/// React's JSX whitespace rules (Babel's `cleanJSXElementLiteralChild`): tabs count as spaces;
-/// every line but the first loses its leading spaces and every line but the last its trailing
-/// ones; whitespace-only lines are dropped and the remaining lines are joined with one space.
-/// Whitespace within a line is kept as written.
+/// React's JSX whitespace rules (Babel's `cleanJSXElementLiteralChild`): every line but the first
+/// loses its leading spaces and tabs and every line but the last its trailing ones; whitespace-only
+/// lines are dropped and the remaining lines are joined with one space. Whitespace within a line
+/// is kept as written, a tab too (as `tsc` and esbuild keep it; Babel makes it a space).
 pub(crate) fn clean_text(raw: &str) -> String {
     let unified = raw.replace("\r\n", "\n");
     let lines: Vec<&str> = unified.split(['\n', '\r']).collect();
@@ -200,7 +200,6 @@ pub(crate) fn clean_text(raw: &str) -> String {
         .unwrap_or(0);
     let mut out = String::new();
     for (i, line) in lines.iter().enumerate() {
-        // As `tsc` and esbuild do: a tab inside a line stays one.
         let mut trimmed = *line;
         if i != 0 {
             trimmed = trimmed.trim_start_matches([' ', '\t']);

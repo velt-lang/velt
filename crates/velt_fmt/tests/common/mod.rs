@@ -192,7 +192,7 @@ fn joined_children(lines: &[&str], indent: usize, join: bool) -> Vec<String> {
     out
 }
 
-/// The (escaped) text of a text child or of a `{"  "}` child.
+/// The (escaped) text of a text child or of a `{"  "}` or `{"\\t"}` child.
 fn text_value(item: &[&str]) -> Option<String> {
     let flat: String = item.iter().map(|l| l.trim()).collect();
     if let Some(rest) = flat.strip_prefix("Text {value: \"") {
@@ -201,7 +201,11 @@ fn text_value(item: &[&str]) -> Option<String> {
     let value = flat
         .strip_prefix("Expr {expr: Some(Expr {id: NodeId(),kind: Lit(Str(\"")?
         .strip_suffix("\",),),},),},")?;
-    value.chars().all(|c| c == ' ').then(|| value.to_string())
+    let without_tabs = value.replace("\\t", "");
+    without_tabs
+        .chars()
+        .all(|c| c == ' ')
+        .then(|| value.to_string())
 }
 
 /// First differing line of two texts, for readable assertion messages.

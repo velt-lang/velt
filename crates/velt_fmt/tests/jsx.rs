@@ -111,7 +111,7 @@ const s4 = <p>{\" \"}leading and trailing{\" \"}</p>;
     <b>x</b>{\" \"}
   </p>
 );
-const s3 = <p> x </p>;
+const s3 = <p>	x	</p>;
 const s4 = <p> leading and trailing </p>;
 ",
     );
@@ -178,6 +178,176 @@ b`}</p>
 );
 const r = <p>{`a`}</p>;
 ",
+    );
+}
+
+/// `{tab}` in a case stands for a literal tab.
+fn assert_fmt_tabs(input: &str, expected: &str) {
+    assert_fmt(
+        &input.replace("{tab}", "\t"),
+        &expected.replace("{tab}", "\t"),
+    );
+}
+
+#[test]
+fn a_tab_in_text_stays_a_tab() {
+    // Inside a line, at each edge of a one-line text and next to a tag: as written.
+    assert_fmt_tabs(
+        "const a = <p>x{tab}y</p>;
+const b = <p>{tab}x</p>;
+const c = <p>x{tab}</p>;
+const d = <p>{tab}</p>;
+const e = <p>a b{tab}c d</p>;
+const f = <p>a {tab} b</p>;
+const g = <p>a<b>c</b>{tab}d</p>;
+const h = <p>a{tab}<b>c</b>d</p>;
+const i = <p>{tab}{x}{tab}</p>;
+const j = <Comp>{tab}x{tab}y{tab}</Comp>;
+",
+        "const a = <p>x{tab}y</p>;
+const b = <p>{tab}x</p>;
+const c = <p>x{tab}</p>;
+const d = <p>{tab}</p>;
+const e = <p>a b{tab}c d</p>;
+const f = <p>a {tab} b</p>;
+const g = (
+  <p>
+    a<b>c</b>{tab}d
+  </p>
+);
+const h = (
+  <p>
+    a{tab}<b>c</b>d
+  </p>
+);
+const i = <p>{tab}{x}{tab}</p>;
+const j = <Comp>{tab}x{tab}y{tab}</Comp>;
+",
+    );
+}
+
+#[test]
+fn a_tab_where_a_line_breaks_becomes_a_container() {
+    // At both edges of a long text, and next to tags where the fill breaks the line.
+    assert_fmt_tabs(
+        "const a = <p>{tab}one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen{tab}</p>;
+const b = <p>This is a long paragraph with an <a href=\"https://example.com/a/very/long/link\">inline link</a>{tab}and some <em>emphasis</em> right in the middle of it, isn't it?</p>;
+const c = <p><a href=\"https://example.com/a/very/long/link\">a link that is long</a>{tab}<a href=\"https://example.com/a/very/long/link\">another long one</a></p>;
+const d = <p a=\"1\" b=\"2\">{tab}x{tab}</p>;
+",
+        "const a = (
+  <p>
+    {\"\\t\"}
+    one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen
+    seventeen{\"\\t\"}
+  </p>
+);
+const b = (
+  <p>
+    This is a long paragraph with an <a href=\"https://example.com/a/very/long/link\">inline link</a>{\"\\t\"}
+    and some <em>emphasis</em> right in the middle of it, isn't it?
+  </p>
+);
+const c = (
+  <p>
+    <a href=\"https://example.com/a/very/long/link\">a link that is long</a>{\"\\t\"}
+    <a href=\"https://example.com/a/very/long/link\">another long one</a>
+  </p>
+);
+const d = (
+  <p a=\"1\" b=\"2\">
+    {\"\\t\"}
+    x{\"\\t\"}
+  </p>
+);
+",
+    );
+    // A tab and a space side by side stay in their order.
+    assert_fmt_tabs(
+        "const a = <p>one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen {tab}</p>;
+",
+        "const a = (
+  <p>
+    one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen
+    seventeen{\" \\t\"}
+  </p>
+);
+",
+    );
+    // A container that fits on its line again reads like the space it stands for.
+    assert_fmt_tabs(
+        "const a = <p>{\"\\t\"}x{'\\t'}</p>;
+const b = <Comp>{\"\\t\"}x</Comp>;
+",
+        "const a = <p>{tab}x{tab}</p>;
+const b = <Comp>{\"\\t\"}x</Comp>;
+",
+    );
+}
+
+#[test]
+fn a_tab_at_a_line_edge_is_still_stripped() {
+    // JSX strips these, so no container appears: the words join with one space.
+    assert_fmt_tabs(
+        "const a = <p>x{tab}
+{tab}y</p>;
+const b = <p>
+{tab}x{tab}
+</p>;
+const c = <p>
+{tab}
+</p>;
+",
+        "const a = <p>x y</p>;
+const b = <p>x</p>;
+const c = <p></p>;
+",
+    );
+}
+
+/// Every sequence of three of these children with a tab in it, in an element and a component, on
+/// a short line and on one long enough to break: the text never changes and a second run changes
+/// nothing.
+#[test]
+fn a_tab_next_to_anything_keeps_the_text() {
+    let long = "a-word-long-enough-that-three-of-them-make-the-line-break-somewhere-ok";
+    let long_tag = format!("<b>{long}</b>");
+    // No short word: `long`, `long_tag`, `x` settles only on a second run, tab or no tab.
+    let pieces = [
+        long,
+        " ",
+        "\t",
+        " \t",
+        "\t\n\t",
+        "<b>y</b>",
+        &long_tag,
+        "{z}",
+        "{\" \"}",
+        "{\"\\t\"}",
+    ];
+    let mut failures = vec![];
+    for a in pieces {
+        for b in pieces {
+            for c in pieces {
+                let body = format!("{a}{b}{c}");
+                if !body.contains('\t') && !body.contains("\\t") {
+                    continue;
+                }
+                for tag in ["p", "Comp"] {
+                    let src = format!("const a = <{tag}>{body}</{tag}>;\n");
+                    if let Err(msg) = common::check(&src) {
+                        failures.push(format!("{src:?}: {msg}"));
+                    }
+                }
+            }
+        }
+    }
+    let total = failures.len();
+    failures.truncate(10);
+    assert!(
+        failures.is_empty(),
+        "{total} failures:\n{}",
+        failures.join("\n")
     );
 }
 

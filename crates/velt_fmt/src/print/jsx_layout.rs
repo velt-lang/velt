@@ -104,9 +104,9 @@ fn glue(out: &mut Vec<Doc>, doc: Doc) {
     out.push(cat![last, doc]);
 }
 
-/// `{"…"}`: spaces that must survive a line break next to them.
+/// `{"…"}`: spaces and tabs that must survive a line break next to them.
 fn raw_space(s: &str) -> Doc {
-    text(format!("{{\"{s}\"}}"))
+    text(format!("{{\"{}\"}}", s.replace('\t', "\\t")))
 }
 
 /// A part as a document: a [`Part::Space`] prints as is while its line holds, else (unless
