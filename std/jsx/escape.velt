@@ -2,22 +2,20 @@
 // "Escaping").
 //
 // Text and attribute values escape `&`, `<`, `>`, `"` and `'` as react-dom does: like std/html
-// `escapeHtml`, but `'` is `&#x27;` (`velt_rt_jsx_escape`, one pass in the runtime). The compiler
+// `escapeHtml`, but `'` is `&#x27;` (std/text/html). The compiler
 // escapes static text and attributes of precompiled templates the same way, and leaves those with a
 // `'` to `jsxEscape`/`jsxAttr`, so both lowerings render the same bytes.
 
 import type { AttrValue } from "velt/jsx/node";
 import { renderStyle } from "velt/jsx/style";
-
-// `(const VeltStr* s, VeltStr* out)`: `s` with `& < > " '` replaced by entities (`'`: `&#x27;`).
-declare function velt_rt_jsx_escape(s: string): string;
+import { escapeHtmlHexApos } from "velt/text/html";
 
 /**
  * `s` with `&`, `<`, `>`, `"` and `'` replaced by `&amp;`, `&lt;`, `&gt;`, `&quot;` and
  * `&#x27;`, as react-dom writes them.
  */
 export function escapeText(s: string): string {
-  return velt_rt_jsx_escape(s);
+  return escapeHtmlHexApos(s);
 }
 
 /**
