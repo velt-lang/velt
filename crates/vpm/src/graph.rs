@@ -34,6 +34,9 @@ pub struct GraphPackage {
     /// Fetched from a registry or a git repository, not the program's own or a path dependency:
     /// its C declarations were checked against its headers where it was published.
     pub fetched: bool,
+    /// Fetched from a git repository: the commit's whole tree is here, its C headers too, where
+    /// a registry archive doesn't ship them.
+    pub checkout: bool,
     /// The package's `jsx.importSource`, as written.
     pub jsx_import_source: Option<String>,
     /// The package's `define` (name → literal source); the root package's apply to the build.
@@ -117,6 +120,7 @@ impl PackageGraph {
             c_libraries: BTreeMap::new(),
             has_native_code: false,
             fetched: false,
+            checkout: false,
             jsx_import_source: None,
             define: BTreeMap::new(),
             npm: BTreeMap::new(),

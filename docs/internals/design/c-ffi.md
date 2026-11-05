@@ -278,9 +278,10 @@ native: { c: {
   `extern "C"` exports (cbindgen-style, or from the SDK's derive); Zig against `zig build`'s
   emitted header. libc is checked against each CI target's libc headers in Velt's CI (std's
   declarations), replacing the compiler's table.
-- **Installs check what was checked**: `c-headers.json`, at the package root, records a digest
-  of the checked declarations per target and library, and the compiler compares it with what it
-  compiles. Users never run clang. (A package with only C libraries has no bundle, so the record
+- **Installs check what was checked**: `c-headers.json`, at the package root, records per target
+  and library a digest of each checked declaration and of each of the package's own headers the
+  check read, and the compiler compares them with what it compiles and the headers it has. Users
+  never run clang. (A package with only C libraries has no bundle, so the record
   is not in a bundle's `native.json`.)
 - **No headers** (a binary-only SDK): `unchecked: true` on the library's entry, shown in
   `allowNative`'s error and `velt check`.
@@ -808,14 +809,25 @@ Step 1 lands in layers, each its own pull request:
        ["<string.h>"] } }`). One doing neither is an error where it is declared.
      - `velt native headers` checks the package on every target with C headers (macOS, Linux
        gnu and musl, Windows; x86_64 and aarch64) and writes `c-headers.json`: per zig target
-       and library, a SHA-256 of each declaration's name and the Velt types its parameters and
-       result pass. Nothing is written when a check fails. `velt publish` runs it for a package
-       with `native.c`; git packages commit the file. It is part of the package's contents.
-     - A fetched package's (registry, git) declarations are compared with its record for the
-       build's target: a missing record, a target missing from it, or other declarations is an
-       error. Its `unchecked` libraries aren't compared.
-     - The digest is of the declarations, not the headers: a fetched package is not checked
-       again when its headers change, only when its declarations no longer match.
+       and library, a SHA-256 of each declaration (its name and the Velt types its parameters
+       and result pass) and of each of the package's own headers the parse read, with what they
+       include. Nothing is written when a check fails, or when there is nothing to record.
+       `velt publish` runs it for a package with `native.c`; git packages commit the file. It is
+       part of the package's contents.
+     - A fetched package (registry, git) is compared with its record for the build's target. A
+       missing record or target is an error. Each declaration the program compiles must be in
+       the set: a program loads some of a package's modules, so the set can hold more. Its
+       `unchecked` libraries aren't compared.
+     - Each recorded header the package has must have its digest (line endings aside, which a
+       checkout may change). A git dependency has the commit's whole tree, so a recorded or
+       listed header it lacks is an error too.
+     - **Limits.** A registry archive doesn't ship `native/`, so there the headers can't be
+       compared: a registry package is trusted to have run the check on the headers it
+       published. And the record isn't a signature: an author can write any digest, so it catches
+       mistakes, not a hostile package, which is what `allowNative` is for.
+     - `velt check` says "headers checked" only for a library that passed here on this target,
+       by the check or by its record; on a target without C headers (WebAssembly), or with
+       nothing of the library declared, it says "headers listed".
 
 ## Decisions
 

@@ -31,7 +31,7 @@ pub enum Checked {
     /// Against the headers package.vlt lists, on the build's target.
     Headers,
     /// It lists headers, but no check looked here: the target has no C headers (WebAssembly),
-    /// or nothing of the library is declared, or the package was fetched.
+    /// or nothing of the library is declared.
     Listed,
     /// `unchecked: true`: the library has no headers.
     Unchecked,
@@ -260,7 +260,7 @@ mod tests {
         checked
             .entry("/p/bind".into())
             .or_default()
-            .insert("own".to_string(), (String::new(), vec![]));
+            .insert("own".to_string(), Default::default());
         note_checked(&mut packages, Some(&graph), &checked);
         assert_eq!(packages[0].c_libraries[0].2, Checked::Headers);
         assert_eq!(packages[0].c_libraries[1].2, Checked::Listed);

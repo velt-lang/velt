@@ -66,8 +66,7 @@ pub(super) fn record(root: &Path) -> Result<CHeaders, String> {
             .into_iter()
             .find(|(r, _)| r.canonicalize().unwrap_or_else(|_| r.clone()) == canonical);
         if let Some((_, libraries)) = mine {
-            let digests = libraries.into_iter().map(|(l, (d, _))| (l, d)).collect();
-            record.checked.insert(zig_target.to_string(), digests);
+            record.checked.insert(zig_target.to_string(), libraries);
         }
     }
     record.write(root)?;

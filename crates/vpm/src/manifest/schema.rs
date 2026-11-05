@@ -472,7 +472,8 @@ pub const C_LIBRARY: &[Field] = &[
               `\"<string.h>\"` for a C library header. Other libraries' headers aren't there \
               to find (`\"<sqlite3.h>\"`): the package ships its copy. A library the package \
               declares functions of lists them or says `unchecked`. `velt native headers` (run \
-              by `velt publish`) records the check in c-headers.json for those who install it.",
+              by `velt publish`) records the check in c-headers.json for those who install it. A registry archive \
+              ships no `native/`, so only a git dependency's headers are compared with it.",
     },
     Field {
         key: "unchecked",
