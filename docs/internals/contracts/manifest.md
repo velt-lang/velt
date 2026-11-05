@@ -224,12 +224,15 @@ directory (`NpmResolver::resolve_in`) before Node's search.
   `{ name, git }` (that repository at any commit and directory) or `{ name, url }` (archives
   under an https prefix; no such sources until step 2). Read with each check at its value: `git`
   through `source_url::git_identity`, `url` through `source_url::check_prefix` (a path under the
-  host, no credentials, query, fragment, `.`/`..` segments, backslash or `%2e`/`%2f`/`%5c`); an
+  host, no credentials, query, fragment, `.`/`..` segments or one starting with `..`, empty
+  segments but a trailing `/`, backslash, `%2e`/`%2f`/`%5c`/`%25`/`%00`, or escapes that don't
+  decode to UTF-8; a matched URL is held to the same); an
   object needs `name` and exactly one of the two. After resolution, a package with native code
   whose entries all name another source is an error naming both sources and the entry to add;
   an unlisted one's error suggests `{ name, git }` for a git source. Git URLs compare in one form
-  (scheme and host lowercase, default port dropped, `user@host:path` as `ssh://user@host/path`,
-  trailing `/` and `.git` removed); prefixes match whole path segments, compared as written in
+  (scheme and host lowercase, default port dropped, `user@host:/path` as `ssh://user@host/path`
+  and a home-relative `user@host:path` as `ssh://user@host/~/path`, a trailing `/` and a `.git`
+  ending the last segment's name removed); prefixes match whole path segments, compared as written in
   the manifest, before redirects or mirrors. `velt.lock.json`'s `allowNative` holds the entries
   as written (a string, or an object with `name` first), sorted. The compiler's check
   (`PackageGraph::allows_native`) stays by name: install has checked the sources.

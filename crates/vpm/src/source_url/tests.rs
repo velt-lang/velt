@@ -20,12 +20,17 @@ fn git_urls_compare_in_one_normal_form() {
             "https://github.com/o/llama",
             "https://github.com:443/o/llama",
         ),
-        ("ssh://git@github.com/o/llama", "git@github.com:o/llama.git"),
+        // A home-relative scp path is `/~/` in an ssh URL; an absolute one is the path.
+        (
+            "ssh://git@github.com/~/o/llama",
+            "git@github.com:o/llama.git",
+        ),
+        ("ssh://git@h.example/srv/x", "git@h.example:/srv/x"),
         (
             "ssh://git@github.com/o/llama",
             "ssh://git@github.com:22/o/llama",
         ),
-        ("ssh://git@github.com/o/llama", "git@GITHUB.com:o/llama/"),
+        ("ssh://git@github.com/~/o/llama", "git@GITHUB.com:o/llama/"),
         ("file:///srv/repos/llama", "file:///srv/repos/llama.git"),
     ];
     for (a, b) in same {
@@ -56,6 +61,12 @@ fn git_urls_compare_in_one_normal_form() {
             "ssh://git@github.com/o/llama",
             "ssh://evil@github.com/o/llama",
         ),
+        // Relative to the home, or from the root: two repositories.
+        ("git@h.example:/srv/x", "git@h.example:srv/x"),
+        ("ssh://git@h.example/srv/x", "git@h.example:srv/x"),
+        // `.git` is removed from the last name, not as a whole segment.
+        ("https://github.com/a/b", "https://github.com/a/b/.git"),
+        ("file:///srv/x", "file:///srv/x/.git"),
     ];
     for (a, b) in different {
         assert_ne!(
@@ -63,6 +74,27 @@ fn git_urls_compare_in_one_normal_form() {
             git_identity(b).unwrap(),
             "{a} vs {b}"
         );
+    }
+}
+
+/// The identity's text: what a lock or a message shows.
+#[test]
+fn identities_are_spelled_one_way() {
+    for (url, identity) in [
+        (
+            "https://GitHub.com:443/o/llama.git/",
+            "https://github.com/o/llama",
+        ),
+        (
+            "git@github.com:o/llama.git",
+            "ssh://git@github.com/~/o/llama",
+        ),
+        ("git@h.example:/srv/x", "ssh://git@h.example/srv/x"),
+        // A segment that is only `.git` is a path of its own, kept.
+        ("https://github.com/a/b/.git", "https://github.com/a/b/.git"),
+        ("file:///srv/x/.git/", "file:///srv/x/.git"),
+    ] {
+        assert_eq!(git_identity(url).unwrap(), identity, "{url}");
     }
 }
 
@@ -78,6 +110,17 @@ fn git_urls_that_cant_be_compared_safely_are_refused() {
         "https://user:token@github.com/o/llama",
         "https://user@github.com/o/llama",
         "git@github.com:o/../evil",
+        // Double encoding, encoded NUL, overlong UTF-8, `..;`.
+        "https://github.com/a/%252e%252e/a/b",
+        "https://github.com/a/b%00",
+        "https://github.com/a/%c0%ae%c0%ae/b",
+        "https://github.com/a/..;/b",
+        "https://github.com/a/%zz",
+        // Empty segments, which a normal form would erase.
+        "https://github.com//a/b",
+        "https://github.com/a//b",
+        "https://github.com/a/b//",
+        "https://github.com/a/b///.git",
         "-oProxyCommand=evil",
         "github.com/o/llama",
     ] {
@@ -142,6 +185,12 @@ fn urls_that_escape_a_prefix_are_refused() {
         "https://github.com/o/duck/releases/download/..%2f..%2fevil/x.zip",
         "https://github.com/o/duck/releases/download/v1\\..\\..\\x.zip",
         "https://github.com/o/duck/releases/download/./x.zip",
+        "https://github.com/o/duck/releases/download/%252e%252e/%252e%252e/evil/x",
+        "https://github.com/o/duck/releases/download/%252F..%252Fevil",
+        "https://github.com/o/duck/releases/download/..;/..;/evil/x",
+        "https://github.com/o/duck/releases/download/%00/x",
+        "https://github.com/o/duck/releases/download/%c0%ae%c0%ae/x",
+        "https://github.com/o/duck/releases/download//x",
         "https://token@github.com/o/duck/releases/download/v1/x.zip",
         "https://u:p@github.com/o/duck/releases/download/v1/x.zip",
         "http://github.com/o/duck/releases/download/v1/x.zip",
@@ -169,8 +218,25 @@ fn prefixes_must_name_a_path_under_an_https_host() {
         "https://u:p@github.com/o/duck/",
         "https://github.com/o/../duck/",
         "https://github.com/o/%2E%2E/",
+        "https://github.com/%252e%252e/",
+        "https://github.com/a/b%00/",
+        "https://github.com//x",
+        "https://github.com/a//b/",
         "ftp://github.com/o/duck/",
     ] {
         assert!(check_prefix(bad).is_err(), "{bad}");
+    }
+}
+
+/// A prefix [`check_prefix`] refuses is an error in [`prefix_matches`] too, not a match.
+#[test]
+fn matching_checks_the_prefix() {
+    let url = "https://github.com/o/duck/x.zip";
+    for bad in [
+        "https://github.com/",
+        "https://github.com//o/",
+        "http://github.com/o/",
+    ] {
+        assert!(prefix_matches(bad, url).is_err(), "{bad}");
     }
 }

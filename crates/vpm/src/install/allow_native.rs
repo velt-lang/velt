@@ -69,8 +69,8 @@ pub(crate) fn check<'r>(
 ) -> Result<Vec<String>, String> {
     let (manifest, root_dir, direct) = root;
     let mut native = vec![];
-    // Each refused package and its C libraries declared `unchecked` (no headers).
-    let mut refused: Vec<(&ResolvedPackage, Vec<String>)> = vec![];
+    // Each refused package and what its C libraries declared `unchecked` add to the message.
+    let mut refused: Vec<(&ResolvedPackage, String)> = vec![];
     let mut elsewhere = vec![];
     for p in packages.clone() {
         // A git target with no `package.vlt` is npm packages: JavaScript, nothing to read here.
@@ -98,14 +98,7 @@ pub(crate) fn check<'r>(
             .filter(|a| a.name == p.name)
             .collect();
         if entries.is_empty() {
-            let unchecked = m
-                .c_libraries
-                .iter()
-                .flatten()
-                .filter(|(_, lib)| lib.unchecked)
-                .map(|(name, _)| name.clone())
-                .collect();
-            refused.push((p, unchecked));
+            refused.push((p, unchecked_note(&m)));
             continue;
         }
         let mut allowed = false;
@@ -120,11 +113,12 @@ pub(crate) fn check<'r>(
         if !allowed {
             let from: Vec<String> = entries.iter().map(|e| e.describe_from()).collect();
             elsewhere.push(format!(
-                "package `{}` has native code and comes from {}, but allowNative allows it only from {}: if you trust this source, add {}",
+                "package `{}` has native code and comes from {}, but allowNative allows it only from {}: if you trust this source, add {}{}",
                 p.name,
                 describe_source(&p.source),
                 from.join(" or "),
-                suggested(&p.name, &p.source).to_source()
+                suggested(&p.name, &p.source).to_source(),
+                unchecked_note(&m)
             ));
         }
     }
@@ -154,22 +148,6 @@ pub(crate) fn check<'r>(
                 ),
                 _ => String::new(),
             };
-            let unchecked = match unchecked.as_slice() {
-                [] => String::new(),
-                libs => format!(
-                    "; its C {} {} not checked against headers (`unchecked: true`)",
-                    if libs.len() == 1 {
-                        "library"
-                    } else {
-                        "libraries"
-                    },
-                    libs.iter()
-                        .map(|l| format!("`{l}`"))
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                        + if libs.len() == 1 { " is" } else { " are" }
-                ),
-            };
             format!(
                 "package `{}`{via} has native code, which runs with no safety net{unchecked}",
                 p.name
@@ -182,6 +160,26 @@ pub(crate) fn check<'r>(
         lines.join("\n"),
         list.join(", ")
     ))
+}
+
+/// What a refusal adds for `m`'s C libraries declared `unchecked: true` (no headers): empty when
+/// there are none.
+fn unchecked_note(m: &Manifest) -> String {
+    let libs: Vec<String> = (m.c_libraries.iter().flatten())
+        .filter(|(_, lib)| lib.unchecked)
+        .map(|(name, _)| format!("`{name}`"))
+        .collect();
+    match libs.len() {
+        0 => String::new(),
+        1 => format!(
+            "; its C library {} is not checked against headers (`unchecked: true`)",
+            libs[0]
+        ),
+        _ => format!(
+            "; its C libraries {} are not checked against headers (`unchecked: true`)",
+            libs.join(", ")
+        ),
+    }
 }
 
 /// The packages from one of `direct` to `target`, shortest first (breadth-first).
@@ -207,6 +205,8 @@ fn chain(direct: &[String], deps: &BTreeMap<&str, &[String]>, target: &str) -> O
 
 #[cfg(test)]
 mod tests {
+    mod sources;
+
     use super::*;
     use crate::git::{GitRef, GitSpec};
     use crate::manifest::MANIFEST_FILE;

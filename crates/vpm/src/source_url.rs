@@ -3,22 +3,25 @@
 //! only from there.
 //!
 //! Both sides are refused, not repaired, when they hold anything that could make two spellings
-//! of one place compare unequal or two places compare equal: `..` or `.` segments, a backslash,
-//! percent-encoded `.`, `/` or `\`, and credentials. Git URLs compare in one normal form
+//! of one place compare unequal or two places compare equal: `..` or `.` segments (also once
+//! decoded, and any segment starting with `..`, as `..;` reads to some servers), empty segments,
+//! a backslash, percent-encoded `.`, `/`, `\`, `%` or NUL, escapes that don't decode to UTF-8
+//! (overlong forms of `.` and `/`), and credentials. Git URLs compare in one normal form
 //! ([`git_identity`]); a URL prefix matches on a `/` boundary ([`prefix_matches`]).
 
 /// Characters and escapes refused anywhere in a compared URL: a backslash (a separator on
-/// Windows), and percent-encoded `.`, `/` and `\`, which servers may decode into a path that a
-/// textual comparison never saw.
+/// Windows); percent-encoded `.`, `/` and `\`, which servers may decode into a path that a
+/// textual comparison never saw; an encoded `%` (double encoding: `%252e` decodes to `%2e`, then
+/// `.`) and an encoded NUL; and escapes that don't decode to UTF-8 (`%c0%ae`, an overlong `.`).
 fn refuse_escapes(url: &str) -> Result<(), String> {
     let lower = url.to_ascii_lowercase();
     if url.contains('\\') {
         return Err(format!("`{url}` contains a backslash"));
     }
-    for escape in ["%2e", "%2f", "%5c"] {
+    for escape in ["%2e", "%2f", "%5c", "%25", "%00"] {
         if lower.contains(escape) {
             return Err(format!(
-                "`{url}` contains `{escape}` (an encoded `.`, `/` or `\\`)"
+                "`{url}` contains `{escape}` (an encoded `.`, `/`, `\\`, `%` or NUL)"
             ));
         }
     }
@@ -27,13 +30,56 @@ fn refuse_escapes(url: &str) -> Result<(), String> {
             "`{url}` contains whitespace or a control character"
         ));
     }
+    let decoded =
+        percent_decode(url).ok_or_else(|| format!("`{url}` has a malformed `%` escape"))?;
+    if String::from_utf8(decoded).is_err() {
+        return Err(format!(
+            "`{url}` has escapes that don't decode to UTF-8 (an overlong `.` or `/`?)"
+        ));
+    }
     Ok(())
 }
 
-/// `path` (a URL's path, after the authority) has no `.` or `..` segment.
+/// `url` with its `%XX` escapes decoded; `None` for a `%` not followed by two hex digits.
+fn percent_decode(url: &str) -> Option<Vec<u8>> {
+    let b = url.as_bytes();
+    let mut out = Vec::with_capacity(b.len());
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'%' {
+            let hex = std::str::from_utf8(b.get(i + 1..i + 3)?).ok()?;
+            out.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            out.push(b[i]);
+            i += 1;
+        }
+    }
+    Some(out)
+}
+
+/// `path` (a URL's path after the authority, `/`-led or empty) has no `.` or `..` segment, no
+/// segment starting with `..` (`..;` is `..` to some servers), and no empty segment but for one
+/// trailing `/`: `https://h//a/b` and `https://h/a//b` are other paths on a server, and a
+/// normal form that dropped the empty segments would make them equal to `/a/b`.
 fn refuse_dot_segments(url: &str, path: &str) -> Result<(), String> {
-    if path.split('/').any(|s| s == "." || s == "..") {
-        return Err(format!("`{url}` has a `.` or `..` path segment"));
+    let Some(rest) = path.strip_prefix('/') else {
+        return match path.is_empty() {
+            true => Ok(()),
+            false => Err(format!("`{url}` has a path that doesn't start with `/`")),
+        };
+    };
+    let rest = rest.strip_suffix('/').unwrap_or(rest);
+    if rest.is_empty() {
+        return Ok(());
+    }
+    for segment in rest.split('/') {
+        if segment == "." || segment.starts_with("..") {
+            return Err(format!("`{url}` has a `.` or `..` path segment"));
+        }
+        if segment.is_empty() {
+            return Err(format!("`{url}` has an empty path segment (`//`)"));
+        }
     }
     Ok(())
 }
@@ -45,7 +91,7 @@ struct Parts<'a> {
     user: Option<&'a str>,
     host: String,
     port: Option<&'a str>,
-    path: &'a str,
+    path: String,
 }
 
 fn split(url: &str) -> Result<Parts<'_>, String> {
@@ -82,12 +128,13 @@ fn split(url: &str) -> Result<Parts<'_>, String> {
         user,
         host: host.to_ascii_lowercase(),
         port,
-        path,
+        path: path.to_string(),
     })
 }
 
 /// `user@host:path`, as git reads it: SSH to `host`, `path` relative to the user's home unless
-/// it starts with `/`.
+/// it starts with `/`. A relative path is spelled `/~/path`, as an `ssh://` URL writes the home,
+/// so `git@h:srv/x` and `git@h:/srv/x` stay two repositories.
 fn split_scp(url: &str) -> Result<Parts<'_>, String> {
     let Some((userhost, path)) = url.split_once(':') else {
         return Err(format!("`{url}` is not a URL"));
@@ -99,31 +146,39 @@ fn split_scp(url: &str) -> Result<Parts<'_>, String> {
     if host.is_empty() || host.contains('/') || path.is_empty() {
         return Err(format!("`{url}` is not a URL"));
     }
+    let path = match path.starts_with('/') {
+        true => path.to_string(),
+        false => format!("/~/{path}"),
+    };
     Ok(Parts {
         scheme: "ssh".to_string(),
         user,
         host: host.to_ascii_lowercase(),
         port: None,
-        path: path.strip_prefix('/').unwrap_or(path),
+        path,
     })
 }
 
 /// One spelling for every way of writing one git repository's URL: scheme and host lowercase,
-/// a default port dropped, `user@host:path` as `ssh://user@host/path`, and a trailing `/` and
-/// `.git` removed. The path keeps its case (hosts differ on whether it matters). An error for a
-/// URL that can't be compared safely (module docs) or that `crate::git::check_url` refuses.
+/// a default port dropped, `user@host:/path` as `ssh://user@host/path` (and a home-relative
+/// `user@host:path` as `ssh://user@host/~/path`), and a trailing `/` and a `.git` ending the
+/// last segment's name removed (a segment that is only `.git` is kept: it is another path). The
+/// path keeps its case (hosts differ on whether it matters). An error for a URL that can't be
+/// compared safely (module docs) or that `crate::git::check_url` refuses.
 pub fn git_identity(url: &str) -> Result<String, String> {
     crate::git::check_url(url)?;
     refuse_escapes(url)?;
     let parts = split(url)?;
-    refuse_dot_segments(url, parts.path)?;
-    let mut path = parts.path.trim_end_matches('/');
-    path = path.strip_suffix(".git").unwrap_or(path);
-    let path = path.trim_end_matches('/').trim_start_matches('/');
+    refuse_dot_segments(url, &parts.path)?;
+    let path = parts.path.strip_suffix('/').unwrap_or(&parts.path);
+    let path = match path.rsplit_once('/') {
+        Some((_, last)) if last.len() > ".git".len() => path.strip_suffix(".git").unwrap_or(path),
+        _ => path,
+    };
     let user = parts.user.map(|u| format!("{u}@")).unwrap_or_default();
     let port = parts.port.map(|p| format!(":{p}")).unwrap_or_default();
     Ok(format!(
-        "{}://{user}{}{port}/{path}",
+        "{}://{user}{}{port}{path}",
         parts.scheme, parts.host
     ))
 }
@@ -145,7 +200,7 @@ pub fn check_prefix(prefix: &str) -> Result<(), String> {
 }
 
 /// The lowercase `scheme://host[:port]` and the path of an `https` URL that is safe to compare.
-fn https_parts(url: &str) -> Result<(String, &str), String> {
+fn https_parts(url: &str) -> Result<(String, String), String> {
     refuse_escapes(url)?;
     if !url
         .get(..8)
@@ -163,20 +218,24 @@ fn https_parts(url: &str) -> Result<(String, &str), String> {
     let path = parts.path.split(['?', '#']).next().unwrap_or("");
     refuse_dot_segments(url, path)?;
     let port = parts.port.map(|p| format!(":{p}")).unwrap_or_default();
-    Ok((format!("{}://{}{port}", parts.scheme, parts.host), path))
+    Ok((
+        format!("{}://{}{port}", parts.scheme, parts.host),
+        path.to_string(),
+    ))
 }
 
 /// Whether `url` (a source as the manifest writes it) is under `prefix` (an `allowNative` entry,
-/// checked by [`check_prefix`]): same scheme, host and port, and the prefix's path is the URL's
+/// which must pass [`check_prefix`], or this is an error): same scheme, host and port, and the prefix's path is the URL's
 /// path or ends where one of its segments ends (`…/o/duck` never matches `…/o/duck-evil`). The
 /// URL's query and fragment are not compared. An error when `url` can't be compared safely.
 pub fn prefix_matches(prefix: &str, url: &str) -> Result<bool, String> {
+    check_prefix(prefix)?;
     let (prefix_origin, prefix_path) = https_parts(prefix)?;
     let (origin, path) = https_parts(url)?;
     if prefix_origin != origin {
         return Ok(false);
     }
-    let prefix_path = prefix_path.trim_end_matches('/');
+    let prefix_path = prefix_path.strip_suffix('/').unwrap_or(&prefix_path);
     Ok(match path.strip_prefix(prefix_path) {
         Some(rest) => rest.is_empty() || rest.starts_with('/'),
         None => false,

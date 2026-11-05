@@ -98,7 +98,6 @@ export type Host = {
 /// its files `./`-relative to the std root.
 export type Imports = Record<string, Import>;
 
-/// A dependency: a semver requirement such as `"^1.2"`, or where to get it.
 /// A package whose native code the program allows: its name (from the registry, or a local path),
 /// or its name and the source it is allowed from.
 export type AllowNative = string | AllowNativeSource;
@@ -115,6 +114,7 @@ export type AllowNativeSource = {
   url?: string;
 };
 
+/// A dependency: a semver requirement such as `"^1.2"`, or where to get it.
 export type Dependency = string | DependencySource;
 
 /// Where a dependency comes from: a registry version, a local directory, a git repository, or a
