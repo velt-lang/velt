@@ -332,6 +332,24 @@ fn a_package_s_c_library_is_linked_per_target() {
         .unwrap_or_else(|e| panic!("{e}"));
 }
 
+/// A build with nothing changed links again from its stamp, without the check that finds the C
+/// libraries, and they must still reach the linker (on macOS libm is part of the C library, so only
+/// Linux shows it).
+#[cfg(unix)]
+#[test]
+fn an_unchanged_build_keeps_its_c_libraries() {
+    let dir = test_dir::TestDir::new();
+    let main = "import { cubeRoot } from \"cmath\";\n\nfunction main() {\n  console.log(Math.round(cubeRoot(27)));\n}\n";
+    let native = ", native: { c: { m: { system: { linux: \"m\", darwin: \"m\" } } } }";
+    project_with(dir.path(), LIBM, main, native, "allowNative: [\"cmath\"], ");
+    for round in ["first", "unchanged"] {
+        let o = velt(dir.path(), &["run"]);
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "{round} build failed:\n{stderr}");
+        assert_eq!(String::from_utf8_lossy(&o.stdout), "3\n", "{round}");
+    }
+}
+
 /// A library a package lists without an entry for the build's target, and system library names
 /// that aren't library names, are errors.
 #[test]

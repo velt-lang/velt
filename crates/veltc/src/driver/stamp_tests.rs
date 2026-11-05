@@ -32,6 +32,7 @@ fn render_of(sm: &SourceMap, seen: &Seen, link_inputs: &[PathBuf]) -> String {
         std_objects: &[],
         outside: "-",
         generator_inputs: &[],
+        c_libs: &[],
     };
     render(&Key::of(&[b"opts"]), sm, &built)
 }
@@ -175,6 +176,7 @@ fn a_generated_root_is_left_to_the_key() {
         std_objects: &[],
         outside: "-",
         generator_inputs: &[],
+        c_libs: &[],
     };
     let stamp = render(&key, &sm, &built);
     assert!(!stamp.contains("harness.vlt"));
@@ -203,11 +205,12 @@ fn std_objects_are_linked_again_and_must_stay_as_they_were() {
         std_objects: std::slice::from_ref(&member),
         outside: "-",
         generator_inputs: &[],
+        c_libs: &[],
     };
     let stamp = render(&key, &SourceMap::new(), &built);
     let path = tmp.path().join("app.build-stamp");
     std::fs::write(&path, &stamp).unwrap();
-    let (objects, std) = read(&path, &key).unwrap();
+    let (objects, std, _) = read(&path, &key).unwrap();
     assert_eq!((objects, std), (1, vec![vpm::relpath::absolute(&member)]));
     set(&member, std::time::SystemTime::now());
     assert_eq!(read(&path, &key), None, "touched");
@@ -315,4 +318,31 @@ fn the_host_is_part_of_the_key() {
     assert_ne!(key(&browser), key(&edge));
     // Another condition loads other variants.
     assert_ne!(key(&edge), key(&other));
+}
+
+/// An unchanged build isn't checked, and the check finds the C libraries: its link gets them from
+/// the stamp.
+#[test]
+fn the_c_libraries_are_handed_back() {
+    let dir = tempfile::tempdir().unwrap();
+    let sm = SourceMap::new();
+    let key = Key::of(&[b"opts"]);
+    for libs in [
+        vec![],
+        vec!["sqlite3".to_string(), "framework:Accelerate".to_string()],
+    ] {
+        let built = Built {
+            seen: &Seen::default(),
+            virtual_root: None,
+            objects: 1,
+            link_inputs: &[],
+            std_objects: &[],
+            outside: "-",
+            generator_inputs: &[],
+            c_libs: &libs,
+        };
+        let path = dir.path().join("a.build-stamp");
+        write(&path, &render(&key, &sm, &built)).unwrap();
+        assert_eq!(read(&path, &key).unwrap().2, libs);
+    }
 }
