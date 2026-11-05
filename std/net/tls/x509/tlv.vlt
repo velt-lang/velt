@@ -1,0 +1,10 @@
+// velt/net (internal): `Tlv`, a DER element as a range of its input (velt/net/tls/x509/der).
+
+/** One element: its tag and the range `start..end` of its contents in the input. */
+export struct Tlv {
+  tag: u8;
+  /** Where the element's header starts. */
+  head: usize;
+  start: usize;
+  end: usize;
+}
