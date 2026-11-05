@@ -306,3 +306,39 @@ fn a_function_that_only_reads_is_not_reported() {
         assert!(compiled.is_some(), "{}", loaded.render(&diags));
     }
 }
+
+/// A function nothing else names is bound by its callers, so a helper given one that only reads runs
+/// only that: not every value of the parameter's type, one of which stores by key.
+#[test]
+fn a_helper_given_a_function_that_only_reads_runs_only_that() {
+    let decl = "const t: Hk[] = [(o: Holder, v: string[]): void => { new S().put(o, v); }];\n\
+                function reads(o: Holder, v: string[]): void { const m = o.k7.length + v.length; }\n\
+                function stores(o: Holder, v: string[]): void { new S().put(o, v); }\n\
+                class Rn { run(f: Hk, o: Holder, v: string[]): void { f(o, v); } }\n";
+    let decl = format!("{decl}{RUN}");
+    let mut wrong = vec![];
+    for call in [
+        "run(reads, c, l.plugins);",
+        "new Rn().run(reads, c, l.plugins);",
+    ] {
+        let loaded = program(&decl, call, "k7");
+        let (compiled, diags) = loaded.check();
+        if compiled.is_none() {
+            wrong.push(format!("{call}:\n{}", loaded.render(&diags)));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+    let rows: Vec<(&str, String, &str)> = vec![
+        (
+            "a helper given the store",
+            decl.clone(),
+            "run(stores, c, l.plugins);",
+        ),
+        (
+            "a method given the store",
+            decl.clone(),
+            "new Rn().run(stores, c, l.plugins);",
+        ),
+    ];
+    all_right(&rows);
+}

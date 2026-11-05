@@ -304,7 +304,7 @@ fn take_in(cx: &Ctx, run: &mut Run, t: Node, g: DefId) -> bool {
 /// own adds one entry per member, not one per member and type.
 fn add_latent(cx: &Ctx, run: &mut Run, n: Node, fp: u32, args: Vec<Vec<Arg>>) {
     let typed = |a: &Arg| match a {
-        Arg::Ty(t) => !matches!(cx.ty.kind(strip(cx, *t)), TyKind::FnPtr { .. }),
+        Arg::Ty(t) => !matches!(cx.ty.kind(*t), TyKind::FnPtr { .. }),
         Arg::Payload(_) => true,
         _ => false,
     };
