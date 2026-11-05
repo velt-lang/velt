@@ -125,7 +125,7 @@ impl Ctx<'_> {
         if !self.has_type_params(t) {
             return Some(t);
         }
-        if !self.defer_param_form() {
+        if !self.defer_param_form() && !self.erase_field_form() {
             // At the use of the alias whose body has the form, where the type parameter is.
             let span = self.type_level.alias_site.unwrap_or(span);
             let msg = format!("{what} over a type parameter is not supported yet");

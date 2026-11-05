@@ -1,0 +1,3 @@
+// The type parameter is at its constraint: a number is no `string` (TS2322).
+function lengthOf<S extends string>(s: S): number { return s.length; }
+const args: Parameters<typeof lengthOf> = [1];
