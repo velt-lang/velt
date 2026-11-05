@@ -1,0 +1,32 @@
+// Array.isArray of each dynamic type in a program with proxies: the proxy of an array is one.
+const list = new Proxy([1, 2], {});
+const plain = new Proxy({ a: 1 }, {});
+
+function ofUnknown(x: unknown): boolean {
+  return Array.isArray(x);
+}
+
+function ofAny(x: any): boolean {
+  return Array.isArray(x);
+}
+
+function ofObject(x: object): boolean {
+  return Array.isArray(x);
+}
+
+function ofGeneric<T>(x: T): boolean {
+  return Array.isArray(x);
+}
+
+function narrowed(x: unknown): number {
+  if (Array.isArray(x)) {
+    return x.length;
+  }
+  return -1;
+}
+
+console.log(ofUnknown(list), ofUnknown(plain), ofUnknown([1]), ofUnknown(1), ofUnknown(null));
+console.log(ofAny(list), ofAny(plain), ofAny([1]), ofAny("a"));
+console.log(ofObject(list), ofObject(plain), ofObject([1]), ofObject({}));
+console.log(ofGeneric(list), ofGeneric(plain), ofGeneric([1]), ofGeneric(2));
+console.log(narrowed(list), narrowed(plain), narrowed([1, 2, 3]));

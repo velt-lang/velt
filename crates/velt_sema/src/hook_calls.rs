@@ -248,9 +248,14 @@ impl<R> Call<R, ast::Expr> {
 /// is under `targs`: `decl` itself, or the type argument when `decl` is a type parameter. A
 /// `decl` that mentions a type parameter deeper (`A[]`) is not compared (comparing it would
 /// intern the substituted type, which a debug check must not do); `never` (an argument that
-/// does not return) fits anything.
+/// does not return) fits anything, and so does any dynamic type (`unknown`, `object`,
+/// `Function`) where the hook takes an `any`: they are one representation, and sema passes
+/// such a value to the hook as it is (`Array.isArray` of an `unknown`).
 fn fits(cx: &Ctx<'_>, decl: TyId, got: TyId, targs: &[TyId]) -> bool {
     if got == decl || got == cx.ty.never {
+        return true;
+    }
+    if cx.dynamic(decl) == Some(crate::any::Dynamic::Any) && cx.dynamic(got).is_some() {
         return true;
     }
     if let TyKind::Param(i) = cx.ty.kind(decl) {
