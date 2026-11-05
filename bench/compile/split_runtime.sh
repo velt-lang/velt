@@ -96,7 +96,7 @@ def fasta(n):
     return path
 
 # name: (source, arguments, stdin size)
-programs = {os.path.basename(p)[:-4]: (f"{root}/bench/{p}", [], None)
+programs = {os.path.basename(p)[:-5]: (f"{root}/bench/{p}", [], None)
             for p in sorted(os.listdir(f"{root}/bench")) if p.endswith(".velt")}
 programs.update({
     "binary-trees": (f"{game}/binary-trees/main.velt", ["18"], None),

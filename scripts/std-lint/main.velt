@@ -318,7 +318,7 @@ function lint(std: Std): Problem[] {
         ),
       );
     }
-    const stem = file.slice(0, file.length - 4);
+    const stem = file.slice(0, file.length - ".velt".length);
     if (!std.isIndex(file) && all.includes("\n" + stem + "/") || all.startsWith(stem + "/")) {
       problems.push(
         new Problem(

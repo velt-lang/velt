@@ -252,7 +252,7 @@ class Definitions(unittest.TestCase):
         self.assertTrue(programs)
         for p in programs:
             table = suites.GAME_THREADS.get(p, {})
-            files = [("velt", f[:-4]) for f in os.listdir(os.path.join(here, p)) if f.endswith(".velt")]
+            files = [("velt", f[:-5]) for f in os.listdir(os.path.join(here, p)) if f.endswith(".velt")]
             files += [("js", f[:-3]) for f in os.listdir(os.path.join(here, p)) if f.endswith(".js")]
             files += [("rust", f[:-3]) for f in bins if f == f"{p}.rs" or f.startswith(f"{p}_")]
             for f in files:

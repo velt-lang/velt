@@ -30,7 +30,7 @@ pub fn check(root: &Path) -> Result<(), String> {
     Err(format!(
         "{} file(s) still have the old source extension (first: {first}). Sources are `.velt` \
          now; move this branch with `git show origin/main:scripts/velt-ext.py > \
-         \"$TMPDIR/velt-ext.py\" && python3 \"$TMPDIR/velt-ext.py\" branch`",
+         \"${{TMPDIR:-/tmp}}/velt-ext.py\" && python3 \"${{TMPDIR:-/tmp}}/velt-ext.py\" branch`",
         files.len()
     ))
 }

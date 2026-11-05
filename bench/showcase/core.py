@@ -53,11 +53,11 @@ def core_benchmarks(ctx):
     # the suites (Rust has no such dynamic or UTF-16 semantics to compare): Node is the reference.
     js_suites = [
         ("language", "iter", lambda n: os.path.join(b, "iter", "node", f"{n}.js"),
-         sorted(f[:-4] for f in os.listdir(os.path.join(b, "iter")) if f.endswith(".velt"))),
+         sorted(f[:-5] for f in os.listdir(os.path.join(b, "iter")) if f.endswith(".velt"))),
         ("strings", "strings_utf16", lambda n: os.path.join(b, "strings_utf16", f"{n}.js"),
-         sorted(f[:-4] for f in os.listdir(os.path.join(b, "strings_utf16")) if f.endswith(".velt"))),
+         sorted(f[:-5] for f in os.listdir(os.path.join(b, "strings_utf16")) if f.endswith(".velt"))),
         ("collections", "key_order", lambda n: os.path.join(b, "key_order", f"{n}.js"),
-         sorted(f[:-4] for f in os.listdir(os.path.join(b, "key_order")) if f.endswith(".velt"))),
+         sorted(f[:-5] for f in os.listdir(os.path.join(b, "key_order")) if f.endswith(".velt"))),
     ]
     for area, suite, js, names in js_suites:
         for name in names:
@@ -134,7 +134,7 @@ def core_benchmarks(ctx):
     # Std components against the Rust crate for the same job (bench/stdport): number formatting
     # and parsing, UTF-8, base64, hex, SHA-256, URLs, big integers, decompression. One thread, as
     # its own harness runs them.
-    ports = sorted(f[:-4] for f in os.listdir(os.path.join(b, "stdport")) if f.endswith(".velt"))
+    ports = sorted(f[:-5] for f in os.listdir(os.path.join(b, "stdport")) if f.endswith(".velt"))
     ports = [n for n in ports if ctx.wanted_name(n) or ctx.wanted_name("stdport")]
     if ports:
         target = os.path.join(out, "stdport-rust")
