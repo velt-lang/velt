@@ -1,0 +1,18 @@
+// velt/random and Math.random: each run seeds its generator afresh, so two runs of this program
+// (the child is this very program, selected by its argument) print different numbers.
+import { random } from "velt/random";
+import { execSync } from "velt/process/child";
+import { argv, args } from "velt/process";
+
+function main() {
+  const a = args();
+  if (a.length > 0 && a[0] == "child") {
+    console.log(`${random()} ${Math.random()}`);
+    return;
+  }
+  const self = argv()[0].clone();
+  const one = execSync(self, ["child"]).stdout;
+  const two = execSync(self, ["child"]).stdout;
+  console.log("children printed:", one.length > 0 && two.length > 0);
+  console.log("runs differ:", one != two);
+}

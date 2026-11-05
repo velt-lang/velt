@@ -1,0 +1,25 @@
+// The fast generator: 40M numbers from `Math.random()`, `random()` and `randomInt()`. Prints how
+// many fell in range, which every run has the same. The Rust port is the generator the runtime
+// ran, a thread-local wyrand.
+import { random, randomInt } from "velt/random";
+
+function main() {
+  let inside: i64 = 0;
+  for (let i = 0; i < 15000000; i++) {
+    if (Math.random() < 1.0) {
+      inside++;
+    }
+  }
+  for (let i = 0; i < 15000000; i++) {
+    if (random() < 1.0) {
+      inside++;
+    }
+  }
+  for (let i: i64 = 0; i < 10000000; i++) {
+    const v = randomInt(-i, 1000000 + i);
+    if (v >= -i && v < 1000000 + i) {
+      inside++;
+    }
+  }
+  console.log(inside);
+}
