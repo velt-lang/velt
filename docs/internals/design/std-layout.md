@@ -98,7 +98,7 @@ have their own docs page.
 | `velt/cli` | `ArgParser`, `ParsedArgs`, `CliError` (cli) |
 | `velt/collections` | `Deque`, `PriorityQueue`, `SortedMap`, `BTreeMap`, `ConcurrentMap`, `Set` (collections/*) |
 | `velt/compress` | gzip, zlib, DEFLATE, Brotli (compress/*) |
-| `velt/crypto` | SHA-256, SHA-1, HMAC, HKDF, X25519, ChaCha20-Poly1305, secure random, `timingSafeEqual` (crypto) |
+| `velt/crypto` | SHA-256, SHA-1, HMAC, HKDF, X25519, ChaCha20-Poly1305, AES-GCM, secure random, `timingSafeEqual` (crypto) |
 | `velt/db` | `RowSource`, `readRows`, `CellKind`, `RowError`, and the public row and parameter API drivers build on (db) |
 | `velt/encoding` | Base64, hex, UTF-8, `TextEncoder`, `btoa`/`atob` (encoding, encoding/*) |
 | `velt/encoding/json` | `Value` and the JSON engine (json, json/*) |

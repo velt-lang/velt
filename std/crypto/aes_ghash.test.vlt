@@ -1,0 +1,86 @@
+// velt/crypto (tests): white-box tests of the AES and GHASH internals, run by `velt test std/`.
+//
+// The bitsliced S-box is checked against the S-box computed from its definition (FIPS 197 §5.1.1:
+// the inverse in GF(2^8), then the affine map) for all 256 inputs, and GHASH's constant-time
+// integer products against the carry-less multiply (the instruction, or its exact emulation).
+import { describe, expect, it } from "velt/test";
+import { ortho, sbox } from "velt/crypto/aes_bitslice";
+import { Ghash } from "velt/crypto/ghash";
+
+// Multiplication in GF(2^8) mod x^8 + x^4 + x^3 + x + 1, bit by bit.
+function gmul(a: u32, b: u32): u32 {
+  let x = a;
+  let y = b;
+  let p: u32 = 0;
+  for (let i = 0; i < 8; i++) {
+    if ((y & 1) == 1) {
+      p ^= x;
+    }
+    x = (x << 1) ^ ((x & 0x80) != 0 ? 0x11b : 0);
+    y >>>= 1;
+  }
+  return p;
+}
+
+// FIPS 197's S-box entry for `b`.
+function reference(b: u32): u32 {
+  let inv: u32 = 0;
+  for (let c: u32 = 1; c < 256; c++) {
+    if (gmul(b, c) == 1) {
+      inv = c;
+    }
+  }
+  let s = inv;
+  for (let r: u32 = 1; r < 5; r++) {
+    s ^= ((inv << r) | (inv >>> (8 - r))) & 0xff;
+  }
+  return s ^ 0x63;
+}
+
+describe("bitsliced AES", () => {
+  it("has FIPS 197's S-box for every byte", () => {
+    let wrong = 0;
+    for (let b: u32 = 0; b < 256; b += 4) {
+      // Four bytes in one word, run through the circuit as the key schedule's SubWord does.
+      const w = b | ((b + 1) << 8) | ((b + 2) << 16) | ((b + 3) << 24);
+      const q: u64[] = [w as u64, 0, 0, 0, 0, 0, 0, 0];
+      ortho(q);
+      sbox(q);
+      ortho(q);
+      const out = q[0] as u32;
+      for (let i: u32 = 0; i < 4; i++) {
+        if (((out >>> (8 * i)) & 0xff) != reference(b + i)) {
+          wrong++;
+        }
+      }
+    }
+    expect(wrong).toBe(0);
+  });
+});
+
+describe("GHASH", () => {
+  it("gives the same digest with the integer products as with carry-less multiplication", () => {
+    let seed: u64 = 0x9e3779b97f4a7c15;
+    const next = (): u8 => {
+      seed ^= seed << 13;
+      seed ^= seed >> 7;
+      seed ^= seed << 17;
+      return (seed & 0xff) as u8;
+    };
+    for (let round = 0; round < 50; round++) {
+      const h: u8[] = [];
+      for (let i = 0; i < 16; i++) {
+        h.push(next());
+      }
+      const data: u8[] = [];
+      for (let i = 0; i < round * 5; i++) {
+        data.push(next());
+      }
+      const soft = new Ghash(h, false);
+      const hard = new Ghash(h, true);
+      soft.update(data, 0, data.length);
+      hard.update(data, 0, data.length);
+      expect(soft.digest()).toEqual(hard.digest());
+    }
+  });
+});
