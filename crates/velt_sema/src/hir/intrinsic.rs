@@ -25,6 +25,10 @@ pub enum Intrinsic {
     /// it (`'a'`, `[ 1, 2 ]`, `{ a: 1 }`: as `console.log` prints it inside an array), for
     /// messages that show values, such as a failed `assertEq`.
     Inspect,
+    /// `(buf: borrow mut string, x: borrow T, depth: u32)`: appends `x` as `console.log` shows
+    /// it inside a container, at Node's depth `depth`, to the string builder `buf`
+    /// (std/lang/hooks/inspect.velt: a leaf in place, anything else through its format function).
+    InspectNested,
     /// (Str borrow, Str borrow) → new owned Str.
     StrConcat,
     /// `s.length` → usize (byte length in POC).

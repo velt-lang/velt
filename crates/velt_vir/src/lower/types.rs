@@ -52,8 +52,8 @@ impl<'h> Cx<'h> {
         self.types.intern(k)
     }
 
-    /// Is the type being made part of the prelude `Map` or `Record` (a function of theirs being
-    /// built, or a map's field types)? Their `V | null` entry slots tell a deleted entry from
+    /// Is the type being made part of the prelude `Map` or `Record` (a function of theirs or the
+    /// one that prints a map being built, or a map's field types)? Their `V | null` entry slots tell a deleted entry from
     /// a live one by the map's index where `V` holds a nothing (`holdsNull`), so a
     /// `V` that allows `undefined` keeps its values (velt_sema `undefined_args`).
     fn keeps_nothings_apart(&self) -> bool {
@@ -66,6 +66,7 @@ impl<'h> Cx<'h> {
                 concat!(velt_common::std_module!(prelude_map), "::"),
                 concat!(velt_common::std_module!(prelude_map_utf8), "::"),
                 concat!(velt_common::std_module!(prelude_record), "::"),
+                concat!(velt_common::std_module!(lang_hooks_inspect), "::"),
                 velt_common::std_dir!(lang_map),
             ]
             .iter()

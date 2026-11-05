@@ -1,0 +1,227 @@
+// velt/lang/hooks (internal): objects that hold themselves in what `console.log` and
+// `util.inspect` print. Node writes a reference back to an object being printed as
+// `[Circular *N]` and prefixes that object with `<ref *N> `, numbering once per top-level value.
+// Lowering's format glue (`velt_vir` `glue/format*.rs`) and inspect.velt report each class
+// instance, recursive object, `Map` and `Set` they start and finish (`inspectEnter`,
+// `inspectLeave`). The state is this thread's: a top-level value is printed on one thread, with
+// no await in between. It lives in two blocks of words, given back when the value is done.
+
+import { addressLoad, addressStore, rawAlloc, rawFree, strLen } from "velt/lang/intrinsics";
+import { pushU64 } from "velt/lang/number/integer";
+
+declare function velt_rt_strbuf_push_str(buf: string, s: string);
+declare function velt_rt_strbuf_finish(buf: string, out: string);
+
+/**
+ * The objects being printed, innermost last: 0, or a block of words `[capacity, length, (identity,
+ * start)…]` (`length` counts words), `start` where the object's text starts in the builder, in
+ * UTF-16 units.
+ */
+const BEING = new ThreadLocal<u64>(0);
+
+/**
+ * The objects given a `<ref *N>` number while printing the current top-level value: 0, or a block
+ * of words `[capacity, length, identity…]`, an object's number its position + 1. Node numbers once
+ * per `console.log` argument, so an object keeps its number and the next cycle takes the next one.
+ */
+const NUMBERED = new ThreadLocal<u64>(0);
+
+/** The word at `a`, in a block of this module's. */
+function load(a: usize): usize {
+  // SAFETY: `a` is a word of a block `grown` allocated and not yet freed.
+  return unsafe { addressLoad<usize>(a) };
+}
+
+function store(a: usize, v: usize): void {
+  // SAFETY: as `load`.
+  unsafe {
+    addressStore<usize>(a, v);
+  }
+}
+
+/** Gives back block `p` (not 0). */
+function release(p: usize): void {
+  const bytes = (load(p) + 2) * 8;
+  // SAFETY: `p` came from `rawAlloc(bytes)` in `grown` and nothing uses it after.
+  unsafe {
+    rawFree(p, bytes);
+  }
+}
+
+/** Block `p` (0: none yet) with room for `extra` more words: `p`, or a larger copy of it. */
+function grown(p: usize, extra: usize): usize {
+  let cap: usize = 0;
+  let len: usize = 0;
+  if (p != 0) {
+    cap = load(p);
+    len = load(p + 8);
+    if (len + extra <= cap) {
+      return p;
+    }
+  }
+  let next: usize = cap * 2;
+  if (next < 8) {
+    next = 8;
+  }
+  while (next < len + extra) {
+    next = next * 2;
+  }
+  const q = rawAlloc((next + 2) * 8);
+  store(q, next);
+  store(q + 8, len);
+  for (let i: usize = 0; i < len; i++) {
+    store(q + 16 + i * 8, load(p + 16 + i * 8));
+  }
+  if (p != 0) {
+    release(p);
+  }
+  return q;
+}
+
+/** Is the object with identity `id` being printed? */
+function isBeing(id: u64): bool {
+  const b = BEING.get() as usize;
+  if (b == 0) {
+    return false;
+  }
+  const len = load(b + 8);
+  for (let i: usize = 0; i < len; i += 2) {
+    if (load(b + 16 + i * 8) as u64 == id) {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** The `<ref *N>` number of the object with identity `id`: 0 when it has none. */
+function numberOf(id: u64): usize {
+  const p = NUMBERED.get() as usize;
+  if (p == 0) {
+    return 0;
+  }
+  const len = load(p + 8);
+  for (let i: usize = 0; i < len; i++) {
+    if (load(p + 16 + i * 8) as u64 == id) {
+      return i + 1;
+    }
+  }
+  return 0;
+}
+
+/** Appends `[Circular *N]` for the object with identity `id`, numbering it if it has no number. */
+function pushCircular(buf: string, id: u64): void {
+  let n = numberOf(id);
+  if (n == 0) {
+    const p = grown(NUMBERED.get() as usize, 1);
+    NUMBERED.set(p as u64);
+    const len = load(p + 8);
+    store(p + 16 + len * 8, id as usize);
+    store(p + 8, len + 1);
+    n = len + 1;
+  }
+  velt_rt_strbuf_push_str(buf, "[Circular *");
+  pushU64(buf, n as u64);
+  velt_rt_strbuf_push_str(buf, "]");
+}
+
+/**
+ * Starts a top-level value (a `console.log` argument, `${x}`, `String(x)`): the numbering starts
+ * over, and true. False while an object is being printed (a value printed from inside one, by a
+ * custom inspect): its numbering goes on.
+ */
+export function inspectBegin(): bool {
+  const b = BEING.get() as usize;
+  if (b != 0 && load(b + 8) != 0) {
+    return false;
+  }
+  const p = NUMBERED.get() as usize;
+  if (p != 0) {
+    store(p + 8, 0);
+  }
+  return true;
+}
+
+/** Ends a top-level value: gives back the blocks, unless an object is still being printed. */
+export function inspectEnd(): void {
+  const b = BEING.get() as usize;
+  if (b != 0) {
+    if (load(b + 8) != 0) {
+      return;
+    }
+    release(b);
+    BEING.set(0);
+  }
+  const p = NUMBERED.get() as usize;
+  if (p != 0) {
+    release(p);
+    NUMBERED.set(0);
+  }
+}
+
+/**
+ * Starts printing the object with identity `id` (its address): true, or, when it is being printed
+ * already (the graph has a cycle), false after `[Circular *N]`; the caller then skips it. After a
+ * true, the caller ends the object with `inspectLeave`.
+ */
+export function inspectEnter(buf: string, id: u64): bool {
+  if (isBeing(id)) {
+    pushCircular(buf, id);
+    return false;
+  }
+  const start = strLen(buf);
+  const b = grown(BEING.get() as usize, 2);
+  BEING.set(b as u64);
+  const len = load(b + 8);
+  store(b + 16 + len * 8, id as usize);
+  store(b + 24 + len * 8, start);
+  store(b + 8, len + 2);
+  return true;
+}
+
+/**
+ * Node's check for a container past its depth limit: when the object with identity `id` is being
+ * printed (a reference back to it), true after `[Circular *N]`; else false, and the caller writes
+ * `[Name]`. The object is not entered, so it takes no `<ref *N>` prefix, as in Node.
+ */
+export function inspectCircular(buf: string, id: u64): bool {
+  if (!isBeing(id)) {
+    return false;
+  }
+  pushCircular(buf, id);
+  return true;
+}
+
+/**
+ * Done printing the innermost object `inspectEnter` started: when something refers back to it,
+ * its text takes Node's `<ref *N> ` prefix.
+ */
+export function inspectLeave(buf: string): void {
+  const b = BEING.get() as usize;
+  const len = load(b + 8) - 2;
+  store(b + 8, len);
+  const n = numberOf(load(b + 16 + len * 8) as u64);
+  if (n == 0) {
+    return;
+  }
+  const start = load(b + 24 + len * 8) as i64;
+  let text = "";
+  velt_rt_strbuf_finish(buf, text);
+  const head = text.slice(0, start);
+  const tail = text.slice(start);
+  velt_rt_strbuf_push_str(buf, head);
+  velt_rt_strbuf_push_str(buf, "<ref *");
+  pushU64(buf, n as u64);
+  velt_rt_strbuf_push_str(buf, "> ");
+  velt_rt_strbuf_push_str(buf, tail);
+}
+
+/** Node's `, ... n more items` (`, ... 1 more item`) after the first 100 entries of a container. */
+export function inspectMore(buf: string, remaining: u64): void {
+  velt_rt_strbuf_push_str(buf, ", ... ");
+  pushU64(buf, remaining);
+  if (remaining == 1) {
+    velt_rt_strbuf_push_str(buf, " more item");
+  } else {
+    velt_rt_strbuf_push_str(buf, " more items");
+  }
+}

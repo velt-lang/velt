@@ -267,6 +267,45 @@ hooks! {
     /// freed or moved.
     str_epoch => lang_hooks_process_statics, "STR_EPOCH", process_static, lowered;
 
+    // inspect_cycles.velt: objects that hold themselves in what `console.log` prints (`<ref *1>`,
+    // `[Circular *1]`), numbered once per top-level value, as Node does.
+    /// The start of a top-level value: the numbering starts over (true), unless an object is being
+    /// printed. Skipped where unchecked (a program that prints no object).
+    inspect_begin => lang_hooks_inspect_cycles, "inspectBegin", sig(() -> bool), lowered, fallback,
+        constructs(Format, Dynamic);
+    /// The end of a top-level value: the state's blocks are given back.
+    inspect_end => lang_hooks_inspect_cycles, "inspectEnd", sig(() -> void), lowered, fallback,
+        constructs(Format, Dynamic);
+    /// The start of an object that may hold itself: false after `[Circular *N]` when it is being
+    /// printed already.
+    inspect_enter => lang_hooks_inspect_cycles, "inspectEnter", sig((&mut string, u64) -> bool),
+        lowered, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_enter");
+    /// The end of the innermost object `inspect_enter` started: its `<ref *N> ` prefix.
+    inspect_leave => lang_hooks_inspect_cycles, "inspectLeave", sig((&mut string) -> void),
+        lowered, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_leave");
+    /// Past the depth limit: `[Circular *N]` (true) when the object is being printed.
+    inspect_circular => lang_hooks_inspect_cycles, "inspectCircular", sig((&mut string, u64) -> bool),
+        lowered, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_circular");
+    /// `, ... n more items` after the first 100 entries of an array, `Map` or `Set`.
+    inspect_more => lang_hooks_inspect_cycles, "inspectMore", sig((&mut string, u64) -> void),
+        lowered, constructs(Format, Dynamic), replaces("velt_rt_strbuf_inspect_more");
+
+    // inspect.velt: what `console.log` and `util.inspect` write the same way for every type
+    // (`velt_vir` `glue/format*.rs` write what differs per type around it). Checked where live
+    // code may print one; lowering's own glue writes the same where one is unchecked.
+    /// An object's depth limit and cycle check, before lowering writes its fields.
+    open_object => lang_hooks_inspect, "openObject", sig((&mut string, &string, u64, u32) -> bool),
+        lowered, fallback, constructs(Format, Dynamic);
+    /// An array: `[ 1, 2 ]`, its first 100 elements, `[Array]` past the depth limit.
+    inspect_array => lang_hooks_inspect, "inspectArray", sig(<A>(&mut string, &[A], u32) -> void),
+        lowered, fallback, constructs(Format, Dynamic);
+    /// A `Map`: `Map(1) { 'a' => 1 }`.
+    inspect_map => lang_hooks_inspect, "inspectMap", sig(<A, B>(&mut string, &Map(A, B), u32) -> void),
+        lowered, fallback, constructs(Format, Dynamic);
+    /// A `Set`, of the map holding its members and the identity of the `Set`: `Set(1) { 'a' }`.
+    inspect_set => lang_hooks_inspect, "inspectSet", sig(<A>(&mut string, &Map(A, bool), u64, u32) -> void),
+        lowered, fallback, constructs(Format, Dynamic);
+
     // process.velt: the builtin `process` namespace (`velt_sema` `process.rs`).
     /// `process.stdout.write(s)` / `process.stderr.write(s)`.
     process_write => lang_hooks_process, "processWrite", sig((u32, &string) -> bool);
@@ -752,7 +791,9 @@ pub use scheduler::{std_scheduler, SCHEDULER_ENV, SCHED_EXTERNS, SCHED_UNREF_DUE
 mod lookup;
 pub use lookup::{find, is_lowered};
 mod on_demand;
-pub use on_demand::{on_demand, ON_DEMAND_FLOAT, ON_DEMAND_MODULES, ON_DEMAND_WRITE};
+pub use on_demand::{
+    on_demand, INSPECT_SHAPES, ON_DEMAND_FLOAT, ON_DEMAND_MODULES, ON_DEMAND_WRITE,
+};
 
 #[cfg(test)]
 #[path = "std_hooks_tests.rs"]

@@ -1,0 +1,262 @@
+// `console.log` of typed values against Node: arrays, `Map`, `Set`, objects
+// and classes through std/lang/hooks/inspect.velt, at every depth, in cycles, past 100 entries, and
+// with every kind of key and leaf. Expected output from node (the same file, with `main()` called).
+
+const TAG = Symbol("tag");
+
+class Point {
+  x: number;
+  y: number;
+  constructor(x: number, y: number) {
+    this.x = x;
+    this.y = y;
+  }
+}
+
+class Point3 extends Point {
+  z: number = 3;
+}
+
+class Empty {}
+
+class Hidden {
+  #secret: number = 1;
+  shown: string = "s";
+}
+
+class Node1 {
+  value: number;
+  next: Node1 | null = null;
+  constructor(value: number) {
+    this.value = value;
+  }
+}
+
+class Holder {
+  items: Holder[] = [];
+  byName: Map<string, Holder> = new Map();
+  members: Set<Holder> = new Set();
+}
+
+class WithGetter {
+  v: number = 1;
+  get twice(): number {
+    return this.v * 2;
+  }
+}
+
+type Tree = { label: string; kids: Tree[] };
+type Deep = { a: { b: { c: { d: { e: number } } } } };
+type Opt = { a?: number; b?: string | null; c: number };
+
+function tree(depth: number): Tree {
+  const kids: Tree[] = [];
+  if (depth > 0) {
+    kids.push(tree(depth - 1));
+  }
+  return { label: "t" + depth, kids };
+}
+
+function numbers(n: number): number[] {
+  const out: number[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push(i);
+  }
+  return out;
+}
+
+function arrays(): void {
+  console.log([] as number[]);
+  console.log([1, 2, 3]);
+  console.log(["a", "it's", 'q"x', "new\nline"]);
+  console.log([true, false]);
+  console.log([[1, [2, [3, [4, [5]]]]]]);
+  const nestedEmpty: number[][][][] = [[], [[]], [[[]]], [[[1]]], [[[1], [2]]]];
+  console.log(nestedEmpty);
+  console.log([-0, 0, 1.5, NaN, Infinity, -Infinity]);
+  console.log(numbers(100));
+  console.log(numbers(101));
+  console.log(numbers(102));
+  console.log(numbers(7).map((n) => "item number " + n));
+  console.log([null, 1] as (number | null)[]);
+  console.log([undefined, "x"] as (string | undefined)[]);
+  console.log([1, "a", [2, ["b", [3, ["c"]]]]] as any[]);
+}
+
+function objects(): void {
+  console.log({});
+  console.log({ a: 1, b: "two", c: [3], d: { e: true } });
+  console.log({ "not an id": 1, "valid_id": 2, 404: "n", 7: "m" });
+  const deep: Deep = { a: { b: { c: { d: { e: 1 } } } } };
+  console.log(deep);
+  console.log(deep);
+  console.log(tree(5));
+  const opt: Opt = { c: 1 };
+  console.log(opt);
+  const opt2: Opt = { a: 1, b: null, c: 2 };
+  console.log(opt2);
+  console.log({ neg: -0, nan: NaN, big: 1e21, small: 1e-7 });
+  console.log({
+    longKeyNumberOne: "a fairly long string value",
+    longKeyNumberTwo: "another fairly long string value",
+    longKeyNumberThree: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10],
+    nested: { alpha: "first of the nested values", beta: "second of the nested values" },
+  });
+}
+
+function classes(): void {
+  console.log(new Point(1, 2));
+  console.log(new Point3(1, 2));
+  console.log(new Empty());
+  console.log(new Hidden());
+  console.log(new WithGetter());
+  console.log([new Point(1, 2), new Point3(3, 4)]);
+  console.log({ p: { q: { r: new Point(0, 0) } } });
+  console.log({ p: { q: { r: { s: new Point(0, 0) } } } });
+  console.log({ p: { q: { r: { s: new Empty() } } } });
+  const up: Point = new Point3(5, 6);
+  console.log(up);
+  console.log(new Point(-0, 1));
+}
+
+function cycles(): void {
+  const a = new Node1(1);
+  a.next = a;
+  console.log(a);
+  const b = new Node1(1);
+  const c = new Node1(2);
+  b.next = c;
+  c.next = b;
+  console.log(b);
+  console.log([b, c]);
+  console.log(c);
+
+  const h = new Holder();
+  h.items.push(h);
+  h.byName.set("me", h);
+  h.members.add(h);
+  console.log(h);
+
+  const m: Map<string, any> = new Map();
+  m.set("self", m);
+  console.log(m);
+  const s: Set<any> = new Set();
+  s.add(s);
+  console.log(s);
+
+  // Far down, past the depth limit: the cut, or `[Circular *1]` for what is being written.
+  const n1 = new Node1(1);
+  const n2 = new Node1(2);
+  const n3 = new Node1(3);
+  const n4 = new Node1(4);
+  const n5 = new Node1(5);
+  n1.next = n2;
+  n2.next = n3;
+  n3.next = n4;
+  n4.next = n5;
+  console.log(n1);
+  n5.next = n1;
+  console.log(n1);
+  n4.next = n1;
+  console.log(n1);
+  n3.next = n1;
+  console.log(n1);
+}
+
+function collections(): void {
+  console.log(new Map<string, number>());
+  console.log(new Set<string>());
+  const m = new Map<string, number>([
+    ["a", 1],
+    ["it's", 2],
+  ]);
+  console.log(m);
+  m.delete("a");
+  console.log(m);
+  m.delete("it's");
+  console.log(m);
+  console.log(new Map<number, string>([[0, "zero"], [1.5, "x"]]));
+  console.log(new Map<string, number | null>([["n", null], ["v", 1]]));
+  console.log(new Map<string, number | undefined>([["u", undefined], ["v", 1]]));
+  const am = new Map<string, any>();
+  am.set("u", undefined);
+  am.set("n", null);
+  am.set("o", { a: 1 });
+  console.log(am);
+  console.log(new Map<string, number[]>([["list", [1, 2]]]));
+  console.log(new Map<Point, Point>([[new Point(1, 2), new Point(3, 4)]]));
+  console.log(new Set<number>([1, 2, 3]));
+  const del = new Set<string>(["x", "y", "z"]);
+  del.delete("y");
+  console.log(del);
+  console.log(new Set<number[]>([[1], [2, 3]]));
+  console.log(new Set<Point>([new Point(1, 2)]));
+  const big = new Map<number, number>();
+  const bigSet = new Set<number>();
+  for (let i = 0; i < 103; i++) {
+    big.set(i, i * 2);
+    bigSet.add(i);
+  }
+  console.log(big);
+  console.log(bigSet);
+  big.delete(3);
+  bigSet.delete(3);
+  big.delete(4);
+  bigSet.delete(4);
+  console.log(big);
+  console.log(bigSet);
+  console.log([[[new Map<string, number>([["k", 1]]), new Set<number>([1])]]]);
+  console.log([[[[new Map<string, number>([["k", 1]]), new Set<number>([1])]]]]);
+  console.log([[[[new Map<string, number>(), new Set<number>()]]]]);
+  console.log({ m: new Map<string, Map<string, Set<number>>>([["a", new Map([["b", new Set([1])]])]]) });
+  console.log(new Map<string, number>([["k", 1]]));
+  console.log(new Set<string>(["k"]));
+}
+
+function symbolsAndAny(): void {
+  const tag = TAG;
+  console.log(tag);
+  console.log({ [TAG]: 5, plain: 1 });
+  console.log({ s: tag });
+  const accessors = {
+    v: 1,
+    get g(): number {
+      return 1;
+    },
+    set st(x: number) {},
+    get both(): number {
+      return 2;
+    },
+    set both(x: number) {},
+  };
+  console.log(accessors);
+  console.log([tag, Symbol.for("reg")]);
+  console.log(new Map<symbol, symbol>([[tag, tag]]));
+  console.log(new Set<symbol>([tag]));
+  const u: any = [1, "a", { b: [2, { c: new Map<string, number>([["d", 3]]) }] }];
+  console.log(u);
+  console.log(u);
+  const anyArr: any[] = [1, [2], new Point(1, 2), new Set<number>([1]), null, undefined];
+  console.log(anyArr);
+}
+
+function typed(): void {
+  console.log(new Uint8Array([1, 2, 3]));
+  console.log(new Float64Array([1.5, -0]));
+  console.log(new Int32Array(0));
+  console.log({ bytes: new Uint8Array([1]) });
+  console.log([[[[new Uint8Array([1])]]]]);
+  console.log(new Uint16Array(2));
+  const long = new Uint8Array(101);
+  console.log(long);
+}
+
+function main(): void {
+  arrays();
+  objects();
+  classes();
+  cycles();
+  collections();
+  symbolsAndAny();
+  typed();
+}

@@ -1,0 +1,443 @@
+type T0Inner = { v0: number };
+type T0 = { a0: number; b0: string; c0: boolean[]; d0: T0Inner | null };
+class C0 {
+  x0: number = 0;
+  y0: string = "y";
+  z0: T0Inner = { v0: 1 };
+}
+type T1Inner = { v1: number };
+type T1 = { a1: number; b1: string; c1: boolean[]; d1: T1Inner | null };
+class C1 {
+  x1: number = 1;
+  y1: string = "y";
+  z1: T1Inner = { v1: 1 };
+}
+type T2Inner = { v2: number };
+type T2 = { a2: number; b2: string; c2: boolean[]; d2: T2Inner | null };
+class C2 {
+  x2: number = 2;
+  y2: string = "y";
+  z2: T2Inner = { v2: 1 };
+}
+type T3Inner = { v3: number };
+type T3 = { a3: number; b3: string; c3: boolean[]; d3: T3Inner | null };
+class C3 {
+  x3: number = 3;
+  y3: string = "y";
+  z3: T3Inner = { v3: 1 };
+}
+type T4Inner = { v4: number };
+type T4 = { a4: number; b4: string; c4: boolean[]; d4: T4Inner | null };
+class C4 {
+  x4: number = 4;
+  y4: string = "y";
+  z4: T4Inner = { v4: 1 };
+}
+type T5Inner = { v5: number };
+type T5 = { a5: number; b5: string; c5: boolean[]; d5: T5Inner | null };
+class C5 {
+  x5: number = 5;
+  y5: string = "y";
+  z5: T5Inner = { v5: 1 };
+}
+type T6Inner = { v6: number };
+type T6 = { a6: number; b6: string; c6: boolean[]; d6: T6Inner | null };
+class C6 {
+  x6: number = 6;
+  y6: string = "y";
+  z6: T6Inner = { v6: 1 };
+}
+type T7Inner = { v7: number };
+type T7 = { a7: number; b7: string; c7: boolean[]; d7: T7Inner | null };
+class C7 {
+  x7: number = 7;
+  y7: string = "y";
+  z7: T7Inner = { v7: 1 };
+}
+type T8Inner = { v8: number };
+type T8 = { a8: number; b8: string; c8: boolean[]; d8: T8Inner | null };
+class C8 {
+  x8: number = 8;
+  y8: string = "y";
+  z8: T8Inner = { v8: 1 };
+}
+type T9Inner = { v9: number };
+type T9 = { a9: number; b9: string; c9: boolean[]; d9: T9Inner | null };
+class C9 {
+  x9: number = 9;
+  y9: string = "y";
+  z9: T9Inner = { v9: 1 };
+}
+type T10Inner = { v10: number };
+type T10 = { a10: number; b10: string; c10: boolean[]; d10: T10Inner | null };
+class C10 {
+  x10: number = 10;
+  y10: string = "y";
+  z10: T10Inner = { v10: 1 };
+}
+type T11Inner = { v11: number };
+type T11 = { a11: number; b11: string; c11: boolean[]; d11: T11Inner | null };
+class C11 {
+  x11: number = 11;
+  y11: string = "y";
+  z11: T11Inner = { v11: 1 };
+}
+type T12Inner = { v12: number };
+type T12 = { a12: number; b12: string; c12: boolean[]; d12: T12Inner | null };
+class C12 {
+  x12: number = 12;
+  y12: string = "y";
+  z12: T12Inner = { v12: 1 };
+}
+type T13Inner = { v13: number };
+type T13 = { a13: number; b13: string; c13: boolean[]; d13: T13Inner | null };
+class C13 {
+  x13: number = 13;
+  y13: string = "y";
+  z13: T13Inner = { v13: 1 };
+}
+type T14Inner = { v14: number };
+type T14 = { a14: number; b14: string; c14: boolean[]; d14: T14Inner | null };
+class C14 {
+  x14: number = 14;
+  y14: string = "y";
+  z14: T14Inner = { v14: 1 };
+}
+type T15Inner = { v15: number };
+type T15 = { a15: number; b15: string; c15: boolean[]; d15: T15Inner | null };
+class C15 {
+  x15: number = 15;
+  y15: string = "y";
+  z15: T15Inner = { v15: 1 };
+}
+type T16Inner = { v16: number };
+type T16 = { a16: number; b16: string; c16: boolean[]; d16: T16Inner | null };
+class C16 {
+  x16: number = 16;
+  y16: string = "y";
+  z16: T16Inner = { v16: 1 };
+}
+type T17Inner = { v17: number };
+type T17 = { a17: number; b17: string; c17: boolean[]; d17: T17Inner | null };
+class C17 {
+  x17: number = 17;
+  y17: string = "y";
+  z17: T17Inner = { v17: 1 };
+}
+type T18Inner = { v18: number };
+type T18 = { a18: number; b18: string; c18: boolean[]; d18: T18Inner | null };
+class C18 {
+  x18: number = 18;
+  y18: string = "y";
+  z18: T18Inner = { v18: 1 };
+}
+type T19Inner = { v19: number };
+type T19 = { a19: number; b19: string; c19: boolean[]; d19: T19Inner | null };
+class C19 {
+  x19: number = 19;
+  y19: string = "y";
+  z19: T19Inner = { v19: 1 };
+}
+type T20Inner = { v20: number };
+type T20 = { a20: number; b20: string; c20: boolean[]; d20: T20Inner | null };
+class C20 {
+  x20: number = 20;
+  y20: string = "y";
+  z20: T20Inner = { v20: 1 };
+}
+type T21Inner = { v21: number };
+type T21 = { a21: number; b21: string; c21: boolean[]; d21: T21Inner | null };
+class C21 {
+  x21: number = 21;
+  y21: string = "y";
+  z21: T21Inner = { v21: 1 };
+}
+type T22Inner = { v22: number };
+type T22 = { a22: number; b22: string; c22: boolean[]; d22: T22Inner | null };
+class C22 {
+  x22: number = 22;
+  y22: string = "y";
+  z22: T22Inner = { v22: 1 };
+}
+type T23Inner = { v23: number };
+type T23 = { a23: number; b23: string; c23: boolean[]; d23: T23Inner | null };
+class C23 {
+  x23: number = 23;
+  y23: string = "y";
+  z23: T23Inner = { v23: 1 };
+}
+type T24Inner = { v24: number };
+type T24 = { a24: number; b24: string; c24: boolean[]; d24: T24Inner | null };
+class C24 {
+  x24: number = 24;
+  y24: string = "y";
+  z24: T24Inner = { v24: 1 };
+}
+type T25Inner = { v25: number };
+type T25 = { a25: number; b25: string; c25: boolean[]; d25: T25Inner | null };
+class C25 {
+  x25: number = 25;
+  y25: string = "y";
+  z25: T25Inner = { v25: 1 };
+}
+type T26Inner = { v26: number };
+type T26 = { a26: number; b26: string; c26: boolean[]; d26: T26Inner | null };
+class C26 {
+  x26: number = 26;
+  y26: string = "y";
+  z26: T26Inner = { v26: 1 };
+}
+type T27Inner = { v27: number };
+type T27 = { a27: number; b27: string; c27: boolean[]; d27: T27Inner | null };
+class C27 {
+  x27: number = 27;
+  y27: string = "y";
+  z27: T27Inner = { v27: 1 };
+}
+type T28Inner = { v28: number };
+type T28 = { a28: number; b28: string; c28: boolean[]; d28: T28Inner | null };
+class C28 {
+  x28: number = 28;
+  y28: string = "y";
+  z28: T28Inner = { v28: 1 };
+}
+type T29Inner = { v29: number };
+type T29 = { a29: number; b29: string; c29: boolean[]; d29: T29Inner | null };
+class C29 {
+  x29: number = 29;
+  y29: string = "y";
+  z29: T29Inner = { v29: 1 };
+}
+type T30Inner = { v30: number };
+type T30 = { a30: number; b30: string; c30: boolean[]; d30: T30Inner | null };
+class C30 {
+  x30: number = 30;
+  y30: string = "y";
+  z30: T30Inner = { v30: 1 };
+}
+type T31Inner = { v31: number };
+type T31 = { a31: number; b31: string; c31: boolean[]; d31: T31Inner | null };
+class C31 {
+  x31: number = 31;
+  y31: string = "y";
+  z31: T31Inner = { v31: 1 };
+}
+type T32Inner = { v32: number };
+type T32 = { a32: number; b32: string; c32: boolean[]; d32: T32Inner | null };
+class C32 {
+  x32: number = 32;
+  y32: string = "y";
+  z32: T32Inner = { v32: 1 };
+}
+type T33Inner = { v33: number };
+type T33 = { a33: number; b33: string; c33: boolean[]; d33: T33Inner | null };
+class C33 {
+  x33: number = 33;
+  y33: string = "y";
+  z33: T33Inner = { v33: 1 };
+}
+type T34Inner = { v34: number };
+type T34 = { a34: number; b34: string; c34: boolean[]; d34: T34Inner | null };
+class C34 {
+  x34: number = 34;
+  y34: string = "y";
+  z34: T34Inner = { v34: 1 };
+}
+type T35Inner = { v35: number };
+type T35 = { a35: number; b35: string; c35: boolean[]; d35: T35Inner | null };
+class C35 {
+  x35: number = 35;
+  y35: string = "y";
+  z35: T35Inner = { v35: 1 };
+}
+type T36Inner = { v36: number };
+type T36 = { a36: number; b36: string; c36: boolean[]; d36: T36Inner | null };
+class C36 {
+  x36: number = 36;
+  y36: string = "y";
+  z36: T36Inner = { v36: 1 };
+}
+type T37Inner = { v37: number };
+type T37 = { a37: number; b37: string; c37: boolean[]; d37: T37Inner | null };
+class C37 {
+  x37: number = 37;
+  y37: string = "y";
+  z37: T37Inner = { v37: 1 };
+}
+type T38Inner = { v38: number };
+type T38 = { a38: number; b38: string; c38: boolean[]; d38: T38Inner | null };
+class C38 {
+  x38: number = 38;
+  y38: string = "y";
+  z38: T38Inner = { v38: 1 };
+}
+type T39Inner = { v39: number };
+type T39 = { a39: number; b39: string; c39: boolean[]; d39: T39Inner | null };
+class C39 {
+  x39: number = 39;
+  y39: string = "y";
+  z39: T39Inner = { v39: 1 };
+}
+
+function main(): void {
+  const t0: T0 = { a0: 0, b0: "b", c0: [true], d0: null };
+  console.log(t0);
+  console.log(new C0());
+  console.log([t0]);
+  const t1: T1 = { a1: 1, b1: "b", c1: [true], d1: null };
+  console.log(t1);
+  console.log(new C1());
+  console.log([t1]);
+  const t2: T2 = { a2: 2, b2: "b", c2: [true], d2: null };
+  console.log(t2);
+  console.log(new C2());
+  console.log([t2]);
+  const t3: T3 = { a3: 3, b3: "b", c3: [true], d3: null };
+  console.log(t3);
+  console.log(new C3());
+  console.log([t3]);
+  const t4: T4 = { a4: 4, b4: "b", c4: [true], d4: null };
+  console.log(t4);
+  console.log(new C4());
+  console.log([t4]);
+  const t5: T5 = { a5: 5, b5: "b", c5: [true], d5: null };
+  console.log(t5);
+  console.log(new C5());
+  console.log([t5]);
+  const t6: T6 = { a6: 6, b6: "b", c6: [true], d6: null };
+  console.log(t6);
+  console.log(new C6());
+  console.log([t6]);
+  const t7: T7 = { a7: 7, b7: "b", c7: [true], d7: null };
+  console.log(t7);
+  console.log(new C7());
+  console.log([t7]);
+  const t8: T8 = { a8: 8, b8: "b", c8: [true], d8: null };
+  console.log(t8);
+  console.log(new C8());
+  console.log([t8]);
+  const t9: T9 = { a9: 9, b9: "b", c9: [true], d9: null };
+  console.log(t9);
+  console.log(new C9());
+  console.log([t9]);
+  const t10: T10 = { a10: 10, b10: "b", c10: [true], d10: null };
+  console.log(t10);
+  console.log(new C10());
+  console.log([t10]);
+  const t11: T11 = { a11: 11, b11: "b", c11: [true], d11: null };
+  console.log(t11);
+  console.log(new C11());
+  console.log([t11]);
+  const t12: T12 = { a12: 12, b12: "b", c12: [true], d12: null };
+  console.log(t12);
+  console.log(new C12());
+  console.log([t12]);
+  const t13: T13 = { a13: 13, b13: "b", c13: [true], d13: null };
+  console.log(t13);
+  console.log(new C13());
+  console.log([t13]);
+  const t14: T14 = { a14: 14, b14: "b", c14: [true], d14: null };
+  console.log(t14);
+  console.log(new C14());
+  console.log([t14]);
+  const t15: T15 = { a15: 15, b15: "b", c15: [true], d15: null };
+  console.log(t15);
+  console.log(new C15());
+  console.log([t15]);
+  const t16: T16 = { a16: 16, b16: "b", c16: [true], d16: null };
+  console.log(t16);
+  console.log(new C16());
+  console.log([t16]);
+  const t17: T17 = { a17: 17, b17: "b", c17: [true], d17: null };
+  console.log(t17);
+  console.log(new C17());
+  console.log([t17]);
+  const t18: T18 = { a18: 18, b18: "b", c18: [true], d18: null };
+  console.log(t18);
+  console.log(new C18());
+  console.log([t18]);
+  const t19: T19 = { a19: 19, b19: "b", c19: [true], d19: null };
+  console.log(t19);
+  console.log(new C19());
+  console.log([t19]);
+  const t20: T20 = { a20: 20, b20: "b", c20: [true], d20: null };
+  console.log(t20);
+  console.log(new C20());
+  console.log([t20]);
+  const t21: T21 = { a21: 21, b21: "b", c21: [true], d21: null };
+  console.log(t21);
+  console.log(new C21());
+  console.log([t21]);
+  const t22: T22 = { a22: 22, b22: "b", c22: [true], d22: null };
+  console.log(t22);
+  console.log(new C22());
+  console.log([t22]);
+  const t23: T23 = { a23: 23, b23: "b", c23: [true], d23: null };
+  console.log(t23);
+  console.log(new C23());
+  console.log([t23]);
+  const t24: T24 = { a24: 24, b24: "b", c24: [true], d24: null };
+  console.log(t24);
+  console.log(new C24());
+  console.log([t24]);
+  const t25: T25 = { a25: 25, b25: "b", c25: [true], d25: null };
+  console.log(t25);
+  console.log(new C25());
+  console.log([t25]);
+  const t26: T26 = { a26: 26, b26: "b", c26: [true], d26: null };
+  console.log(t26);
+  console.log(new C26());
+  console.log([t26]);
+  const t27: T27 = { a27: 27, b27: "b", c27: [true], d27: null };
+  console.log(t27);
+  console.log(new C27());
+  console.log([t27]);
+  const t28: T28 = { a28: 28, b28: "b", c28: [true], d28: null };
+  console.log(t28);
+  console.log(new C28());
+  console.log([t28]);
+  const t29: T29 = { a29: 29, b29: "b", c29: [true], d29: null };
+  console.log(t29);
+  console.log(new C29());
+  console.log([t29]);
+  const t30: T30 = { a30: 30, b30: "b", c30: [true], d30: null };
+  console.log(t30);
+  console.log(new C30());
+  console.log([t30]);
+  const t31: T31 = { a31: 31, b31: "b", c31: [true], d31: null };
+  console.log(t31);
+  console.log(new C31());
+  console.log([t31]);
+  const t32: T32 = { a32: 32, b32: "b", c32: [true], d32: null };
+  console.log(t32);
+  console.log(new C32());
+  console.log([t32]);
+  const t33: T33 = { a33: 33, b33: "b", c33: [true], d33: null };
+  console.log(t33);
+  console.log(new C33());
+  console.log([t33]);
+  const t34: T34 = { a34: 34, b34: "b", c34: [true], d34: null };
+  console.log(t34);
+  console.log(new C34());
+  console.log([t34]);
+  const t35: T35 = { a35: 35, b35: "b", c35: [true], d35: null };
+  console.log(t35);
+  console.log(new C35());
+  console.log([t35]);
+  const t36: T36 = { a36: 36, b36: "b", c36: [true], d36: null };
+  console.log(t36);
+  console.log(new C36());
+  console.log([t36]);
+  const t37: T37 = { a37: 37, b37: "b", c37: [true], d37: null };
+  console.log(t37);
+  console.log(new C37());
+  console.log([t37]);
+  const t38: T38 = { a38: 38, b38: "b", c38: [true], d38: null };
+  console.log(t38);
+  console.log(new C38());
+  console.log([t38]);
+  const t39: T39 = { a39: 39, b39: "b", c39: [true], d39: null };
+  console.log(t39);
+  console.log(new C39());
+  console.log([t39]);
+}

@@ -2,6 +2,7 @@
 // `util.inspect` write them.
 
 import { intrinsic } from "./decorators";
+import type { Mut } from "./modes";
 
 /**
  * What the report of `error` thrown and not caught writes after `Uncaught ` and before the
@@ -24,3 +25,11 @@ export declare function throwLoc(): string;
  */
 @intrinsic
 export declare function inspect<T>(value: T): string;
+
+/**
+ * Appends `value` as `console.log` shows it inside a container (`'a'`, `[ 1, 2 ]`, `Point { x: 1 }`)
+ * at Node's depth `depth` to the string builder `buf`: what velt/lang/hooks/inspect calls for each
+ * element. A number, a string or a boolean is appended in place.
+ */
+@intrinsic
+export declare function inspectNested<T>(buf: Mut<string>, value: T, depth: u32): void;

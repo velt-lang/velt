@@ -1,0 +1,4 @@
+function main(): void {
+  const n: number = 1.5;
+  console.log(n);
+}
