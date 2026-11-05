@@ -10,6 +10,7 @@ Needs a nightly toolchain and `cargo install cargo-fuzz`; on Windows use WSL or 
 | `opt` | seed + 2 args | a random VIR program (the LLVM backend tests' generator) gives the same result and extern calls in the reference interpreter before and after `velt_opt` (`None` and `Speed`), and stays valid |
 | `codegen` | seed | the same programs, plain and optimized, compile with Cranelift (plain and optimizing) and to LLVM IR |
 | `json` | bytes | the runtime JSON reader never panics; `stringify(parse(x))` parses back and is a fixpoint |
+| `extract` (in `extract/`) | mode byte + archive | the package manager's archive extractor (`vpm::extract`) never panics; an accepted tree has only clean relative paths (no `..`, `\`, `:`), relative link targets, and stays within its limits |
 | `float_fmt` | 8 bytes (f64 bits) | the runtime's number formatting equals ECMAScript `Number::toString` (reference in `src/numbers.rs`) and round-trips |
 
 ```sh
@@ -18,6 +19,7 @@ cd fuzz
 cargo +nightly fuzz run parse -- -max_total_time=600
 cargo +nightly fuzz run compile -s none      # no sanitizer: ~20x faster for this target
 cargo +nightly test --lib                    # the properties on known inputs
+(cd extract && cargo +nightly fuzz run --fuzz-dir . extract -- -max_total_time=600)  # vpm only
 ```
 
 `seeds/<target>/` holds hand-written seeds for syntax no golden covers yet (`seeds/parse/jsx.vlt`:

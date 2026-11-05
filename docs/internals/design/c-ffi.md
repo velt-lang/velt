@@ -476,6 +476,35 @@ native: {
 - **`c`, the C library**, is predefined: libc, libSystem, or the UCRT on Windows; WASI's libc on
   `wasm32-wasip1` where system functions exist today.
 
+### Fetched archives (#2367)
+
+Sources and packages may come from a release archive at a URL, pinned by its sha256 (#2367
+step 2). One extractor, `vpm::extract`, unpacks every such archive (`.tar.gz` or `.zip`, chosen by
+the first bytes). It reads the whole tree and checks it before writing anything:
+
+- **Paths:** it refuses absolute paths, `..`, a backslash, NUL and other control characters, and
+  what Windows can't hold or reads differently (`:`, `CON`/`NUL`/`COM1`…, a trailing dot or
+  space, an 8.3 short name such as `PROGRA~1`). It also refuses paths deeper than 128 directories,
+  two paths that differ only by case or Unicode normalisation (NFC, case-folded), an entry written
+  twice, a path that is both a file and a directory, and anything under a link.
+- **Links:** symbolic links are followed through the archive's other links, as the OS would
+  (finding a link by any case or normalisation of its name, as macOS and Windows do), and refused
+  when they leave the tree. A hard link becomes a copy of an earlier file.
+- **Entry types and formats:** it refuses devices, FIFOs, sparse files, and encrypted, zip64 or
+  multi-disk zips. It also refuses a zip whose local header disagrees with its central directory,
+  whose entries share data, or that has bytes no entry accounts for. All of this is checked for
+  every entry before anything is decompressed.
+- **Limits:** unpacked size, entry count and the compression ratio are enforced while
+  decompressing. The bytes of all paths, and the bytes looked at while following links, are
+  capped too.
+- **Writing:** it writes into a staging directory beside the destination, then renames that into
+  place. Every directory and file is created new, never through what is already on disk, so a
+  name the filesystem folds in a way the clash key doesn't know is an error, not an escape. Modes and timestamps are ignored. On Windows, links are written as files holding their
+  target, as git's `core.symlinks=false` does, so `git::tree_checksum` gives one archive one
+  checksum on every OS.
+
+The `extract` fuzz target (`fuzz/extract/`) covers the extractor.
+
 ### Rust is a source language, not an ABI
 
 `velt_native` (the Rust SDK) shrinks to a convenience crate: `#[repr(C)]` types matching Velt's C

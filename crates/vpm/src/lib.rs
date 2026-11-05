@@ -6,6 +6,7 @@
 //!   `velt new`.
 //! - [`registry`]: the registry (`publish`, index), local or remote ([`remote`], packages as
 //!   [`archive`]s over HTTP); [`yank`] and [`search`]; [`cache`]: verified extraction.
+//! - [`extract`]: the hardened extractor for `.tar.gz` and `.zip` archives fetched from a URL.
 //! - [`resolve`]: semver resolution with backtracking; [`lockfile`]: `velt.lock.json`.
 //! - [`install`]: resolve + lock + fetch → [`PackageGraph`] for the compiler's module loader;
 //!   [`workspace`]: members of a `velt.workspace.vlt` share one resolution and lock.
@@ -15,6 +16,7 @@ pub mod cache;
 pub mod contents;
 pub mod credentials;
 pub mod edit;
+pub mod extract;
 pub mod git;
 pub mod graph;
 pub mod host;

@@ -1989,11 +1989,14 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vpm"
 version = "0.5.0"
 dependencies = [
+ "flate2",
+ "icu_normalizer",
  "object",
  "semver",
  "serde",
  "serde_json",
  "sha2",
+ "tar",
  "tempfile",
  "toml",
  "velt_common",
@@ -2002,6 +2005,7 @@ dependencies = [
  "velt_syntax",
  "velt_toolchain",
  "windows-sys 0.61.2",
+ "zip",
 ]
 
 [[package]]

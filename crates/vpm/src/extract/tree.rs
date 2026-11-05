@@ -1,0 +1,339 @@
+//! The tree an archive holds, checked entry by entry as the readers add them ([`Tree::add`]) and
+//! as a whole once they are done ([`Tree::finish`]): names, clashes, duplicates, paths under
+//! links, hard links, and where each symbolic link leads.
+
+use std::collections::{BTreeMap, HashMap};
+
+use super::names::{self, clash_key};
+use super::Limits;
+
+/// One entry, as an archive gives it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum Entry {
+    File(Vec<u8>),
+    Dir,
+    /// A symbolic link and its target, as written.
+    Symlink(String),
+    /// A hard link to an earlier file of the archive (its path in the archive).
+    HardLink(String),
+}
+
+/// What is written at one path.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Node {
+    File(Vec<u8>),
+    Dir,
+    /// A symbolic link's target text (relative, inside the tree).
+    Link(String),
+}
+
+/// The checked tree: `/`-separated relative paths to what is written there.
+#[derive(Debug)]
+pub struct Tree {
+    nodes: BTreeMap<String, Node>,
+    /// [`clash_key`] of each path (and of each directory above one) → that path.
+    keys: HashMap<String, String>,
+    limits: Limits,
+    entries: usize,
+    bytes: u64,
+    /// The bytes of every path (and directory above one) recorded.
+    names: usize,
+    /// The work the tree cost: one per path claimed, one more per clash key computed. The tests
+    /// bound it.
+    #[cfg(test)]
+    pub(super) work: usize,
+}
+
+impl Tree {
+    pub(super) fn new(limits: Limits) -> Tree {
+        Tree {
+            nodes: BTreeMap::new(),
+            keys: HashMap::new(),
+            limits,
+            entries: 0,
+            bytes: 0,
+            names: 0,
+            #[cfg(test)]
+            work: 0,
+        }
+    }
+
+    /// The paths, sorted, with what is written at each.
+    pub fn nodes(&self) -> impl Iterator<Item = (&str, &Node)> {
+        self.nodes.iter().map(|(p, n)| (p.as_str(), n))
+    }
+
+    /// The bytes of every file together.
+    pub fn bytes(&self) -> u64 {
+        self.bytes
+    }
+
+    /// One more entry: `Err` naming it when the archive is refused.
+    pub(super) fn add(&mut self, raw: &str, entry: Entry, packed: usize) -> Result<(), String> {
+        self.entries += 1;
+        if self.entries > self.limits.entries {
+            return Err(format!(
+                "it holds more than {} entries",
+                self.limits.entries
+            ));
+        }
+        let at = |why: String| format!("`{}`: {why}", raw.escape_debug());
+        let Some(path) = names::clean(raw).map_err(at)? else {
+            // The archive's root itself (`./`).
+            return match entry {
+                Entry::Dir => Ok(()),
+                _ => Err(at("the archive's root must be a directory".into())),
+            };
+        };
+        let node = match entry {
+            Entry::File(bytes) => Node::File(bytes),
+            Entry::Dir => Node::Dir,
+            Entry::Symlink(target) => {
+                names::check_link_target(&target).map_err(at)?;
+                Node::Link(target)
+            }
+            Entry::HardLink(target) => Node::File(self.hard_link(&target).map_err(at)?),
+        };
+        if let Node::File(bytes) = &node {
+            self.bytes = self.bytes.saturating_add(bytes.len() as u64);
+            self.limits.check_size(self.bytes, packed)?;
+        }
+        self.place(&path, node).map_err(at)
+    }
+
+    /// The bytes of the earlier file `target` names.
+    fn hard_link(&self, target: &str) -> Result<Vec<u8>, String> {
+        let path = names::clean(target)
+            .map_err(|e| format!("its hard link target: {e}"))?
+            .unwrap_or_default();
+        match self.nodes.get(&path) {
+            Some(Node::File(bytes)) => Ok(bytes.clone()),
+            _ => Err(format!(
+                "a hard link to `{}`, which is not a file earlier in the archive",
+                target.escape_debug()
+            )),
+        }
+    }
+
+    /// Put `node` at `path`, with every directory above it.
+    fn place(&mut self, path: &str, node: Node) -> Result<(), String> {
+        // A parent already placed as a directory had its own parents placed then: walking them
+        // again for every entry under one deep directory would cost time quadratic in its depth.
+        let parent_known = path
+            .rsplit_once('/')
+            .is_some_and(|(parent, _)| self.nodes.get(parent) == Some(&Node::Dir));
+        let mut end = if parent_known { path.len() } else { 0 };
+        while let Some(slash) = path[end..].find('/') {
+            end += slash;
+            self.claim(&path[..end], &Node::Dir)?;
+            end += 1;
+        }
+        self.claim(path, &node)?;
+        self.nodes.insert(path.to_string(), node);
+        Ok(())
+    }
+
+    /// Record that `path` is `node`'s kind, refusing a clash with a path already there.
+    fn claim(&mut self, path: &str, node: &Node) -> Result<(), String> {
+        #[cfg(test)]
+        {
+            self.work += 1;
+        }
+        // A directory listed again (or above another entry) is settled without its key.
+        if *node == Node::Dir && self.nodes.get(path) == Some(&Node::Dir) {
+            return Ok(());
+        }
+        #[cfg(test)]
+        {
+            self.work += 1;
+        }
+        let key = clash_key(path);
+        match self.keys.get(&key) {
+            Some(other) if other != path => {
+                return Err(format!(
+                    "`{}` and `{}` differ only by case or Unicode normalisation, so they are one \
+                     file on macOS and Windows",
+                    other.escape_debug(),
+                    path.escape_debug()
+                ))
+            }
+            Some(_) => match (self.nodes.get(path), node) {
+                // A directory above several entries, or listed again.
+                (Some(Node::Dir) | None, Node::Dir) => return Ok(()),
+                (Some(Node::Link(_)), Node::Dir) => {
+                    return Err(format!(
+                        "`{}` is a link, so nothing can be under it",
+                        path.escape_debug()
+                    ))
+                }
+                (Some(Node::Dir) | None, _) => {
+                    return Err(format!(
+                        "`{}` is a directory and also a file or link",
+                        path.escape_debug()
+                    ))
+                }
+                (Some(_), Node::Dir) => {
+                    return Err(format!(
+                        "`{}` is a file, so nothing can be under it",
+                        path.escape_debug()
+                    ))
+                }
+                (Some(_), _) => return Err("the archive holds this path twice".to_string()),
+            },
+            None => {}
+        }
+        // Every directory above a path is recorded too: deep paths with new prefixes would cost
+        // memory quadratic in their length, which no file size counts.
+        self.names += path.len();
+        if self.names > self.limits.names {
+            return Err(format!(
+                "its paths add up to more than {} KiB",
+                self.limits.names >> 10
+            ));
+        }
+        self.keys.insert(key, path.to_string());
+        if *node == Node::Dir {
+            self.nodes.entry(path.to_string()).or_insert(Node::Dir);
+        }
+        Ok(())
+    }
+
+    /// Check what is known only once every entry is in: where each link leads.
+    pub(super) fn finish(&mut self) -> Result<(), String> {
+        // By clash key: on macOS and Windows `d/UP` is the link `d/up`.
+        let links: HashMap<String, &str> = (self.nodes.iter())
+            .filter_map(|(p, n)| match n {
+                Node::Link(t) => Some((clash_key(p), t.as_str())),
+                _ => None,
+            })
+            .collect();
+        let mut steps = 0;
+        for (path, node) in &self.nodes {
+            let Node::Link(target) = node else {
+                continue;
+            };
+            let mut walk = Walk::default();
+            if let Some((dir, _)) = path.rsplit_once('/') {
+                dir.split('/').for_each(|segment| walk.push(segment));
+            }
+            resolve(&mut walk, target, &links, 0, &mut steps).map_err(|why| {
+                format!(
+                    "`{}`: a link to `{}`, which {why}",
+                    path.escape_debug(),
+                    target.escape_debug()
+                )
+            })?;
+        }
+        Ok(())
+    }
+}
+
+/// How many links one lookup may pass through (Linux's limit).
+const MAX_LINK_DEPTH: usize = 40;
+/// How much work following every link of an archive may take, in bytes looked at (each step
+/// costs its segment and the key it looks up): links to links with long targets multiply (`b` →
+/// `a/a/…`, `c` → `b/b/…`), and so do long keys.
+const MAX_LINK_STEPS: usize = 64 << 20;
+
+/// Where a link lookup is: the [`clash_key`] of the path so far, kept segment by segment (a
+/// path's key is its segments' keys joined by `/`, which never composes or changes case), so a
+/// step doesn't rebuild the whole path.
+#[derive(Default)]
+struct Walk {
+    key: String,
+    /// Where each segment starts in `key`.
+    starts: Vec<usize>,
+}
+
+impl Walk {
+    fn push(&mut self, segment: &str) {
+        self.starts.push(self.key.len());
+        if !self.key.is_empty() {
+            self.key.push('/');
+        }
+        if segment.is_ascii() {
+            self.key
+                .extend(segment.chars().map(|c| c.to_ascii_lowercase()));
+        } else {
+            self.key.push_str(&clash_key(segment));
+        }
+    }
+
+    /// Back one segment; `false` above the root.
+    fn pop(&mut self) -> bool {
+        match self.starts.pop() {
+            Some(start) => {
+                self.key.truncate(start);
+                true
+            }
+            None => false,
+        }
+    }
+}
+
+/// Follow `target` from where `walk` is, through the archive's `links` (by [`clash_key`]), as the
+/// OS would, leaving `walk` where it leads, or say why it leaves the tree. A target is checked
+/// through other links, not by its text alone: `a/l/../..` with `a/l` a link to `..` leaves a
+/// tree its text stays in.
+fn resolve(
+    walk: &mut Walk,
+    target: &str,
+    links: &HashMap<String, &str>,
+    depth: usize,
+    steps: &mut usize,
+) -> Result<(), String> {
+    if depth > MAX_LINK_DEPTH {
+        return Err(format!(
+            "passes through more than {MAX_LINK_DEPTH} links (a loop?)"
+        ));
+    }
+    for segment in target.split('/') {
+        *steps += 1 + segment.len() + walk.key.len();
+        if *steps > MAX_LINK_STEPS {
+            return Err("takes too many steps to follow, with the archive's other links".into());
+        }
+        match segment {
+            "" | "." => {}
+            ".." => {
+                if !walk.pop() {
+                    return Err("leads outside the archive".to_string());
+                }
+            }
+            name => {
+                walk.push(name);
+                if let Some(next) = links.get(walk.key.as_str()) {
+                    walk.pop();
+                    resolve(walk, next, links, depth + 1, steps)?;
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod walk_tests {
+    use super::*;
+
+    /// The key kept segment by segment is the key of the whole path.
+    #[test]
+    fn a_walks_key_is_the_paths_key() {
+        let segments = [
+            "Src",
+            "caf\u{e9}",
+            "Cafe\u{301}",
+            "\u{17f}TRASSE",
+            "\u{3a3}\u{3c2}",
+            "x",
+        ];
+        let mut walk = Walk::default();
+        for (i, segment) in segments.iter().enumerate() {
+            walk.push(segment);
+            assert_eq!(walk.key, clash_key(&segments[..=i].join("/")));
+        }
+        assert!(walk.pop() && walk.pop());
+        assert_eq!(walk.key, clash_key(&segments[..4].join("/")));
+        while walk.pop() {}
+        assert_eq!(walk.key, "");
+    }
+}

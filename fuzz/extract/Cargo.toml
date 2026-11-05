@@ -1,0 +1,27 @@
+[package]
+name = "velt_fuzz_extract"
+version = "0.0.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+publish = false
+description = "cargo-fuzz target for the package manager's archive extractor (vpm::extract)"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Standalone, like ../ (libFuzzer needs nightly), and apart from it so it builds only vpm, not
+# the compiler and runtime.
+[workspace]
+members = ["."]
+
+[dependencies]
+libfuzzer-sys = "0.4"
+vpm = { path = "../../crates/vpm" }
+flate2 = "1.1.10"
+
+[[bin]]
+name = "extract"
+path = "fuzz_targets/extract.rs"
+test = false
+doc = false
+bench = false
