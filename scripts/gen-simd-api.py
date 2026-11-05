@@ -371,4 +371,6 @@ open(f"{STD}/simd.vlt","w",encoding="utf-8",newline="\n").write(f"""// velt/simd
 import "velt/simd/sha";
 // Carry-less multiplication on `u64x2` (hand-written, not generated).
 import "velt/simd/clmul";
+// The AES round instructions on `u8x16` (hand-written, not generated).
+import "velt/simd/aes";
 """)

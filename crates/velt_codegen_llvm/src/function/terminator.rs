@@ -215,7 +215,7 @@ impl Emitter<'_> {
         matches!(
             velt_vir::simd::SimdCall::of_symbol(&e.symbol),
             Some(velt_vir::simd::SimdCall::Has(ext))
-                if (self.function.target == Some(ext) || self.baseline_has(ext))
+                if (self.function.target.is_some_and(|t| t.covers(ext)) || self.baseline_has(ext))
                     && crate::simd::has_ext(self.simd, ext)
         )
     }

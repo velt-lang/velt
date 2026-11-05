@@ -218,7 +218,7 @@ export function probe(): i64 {
         MAIN_PROBE,
         &[
             "`targetFeature` must be the first statement of a function (not a method or closure)",
-            "`targetFeature` takes the target as a string literal: one of sha-arm, sha-x86, clmul-x86, clmul-arm",
+            "`targetFeature` takes the target as a string literal: one of sha-arm, sha-x86, clmul-x86, clmul-arm, aes-x86, aes-arm",
         ],
     );
 }
@@ -501,5 +501,99 @@ fn clmul_gated_functions_are_the_bare_instruction() {
             reached.iter().any(|(_, body)| body.contains(instruction)),
             "{triple}: {gated} uses {instruction}"
         );
+    }
+}
+
+/// The AES rounds and a carry-less product in a function gated on the AES target, per
+/// architecture: the target covers the carry-less multiplication too (#2401).
+const AES_PROBE: &str = r#"
+import { u8x16 } from "velt/simd";
+
+export function roundsX86(a: u8x16, k: u8x16, n: i64): u8x16 {
+  targetFeature("aes-x86");
+  let x = a;
+  for (let i = 0; i < n; i++) {
+    x = x.aesenc(k).aesenclast(k).aesdec(k).aesdeclast(k).aesimc().aeskeygenassist(1);
+    x = x.xor(x.asU64x2().clmulLow(k.asU64x2()).asU8x16());
+  }
+  return x;
+}
+
+export function roundsArm(a: u8x16, k: u8x16, n: i64): u8x16 {
+  targetFeature("aes-arm");
+  let x = a;
+  for (let i = 0; i < n; i++) {
+    x = x.aese(k).aesmc().aesd(k).aesimc();
+    x = x.xor(x.asU64x2().clmulHigh(k.asU64x2()).asU8x16());
+  }
+  return x;
+}
+"#;
+
+const AES_MAIN: &str = "import { roundsArm, roundsX86 } from \"velt/zz_gated\";\nimport { u8x16 } from \"velt/simd\";\n\nfunction main() {\n  const a = u8x16.splat(3);\n  if (u8x16.hasAesX86()) {\n    console.log(roundsX86(a, a, 3).lane(0));\n  }\n  if (u8x16.hasAesArm()) {\n    console.log(roundsArm(a, a, 3).lane(0));\n  }\n}\n";
+
+#[test]
+fn aes_gated_functions_are_the_bare_instructions() {
+    // In a function gated on `aes-x86` (`aes-arm`), the methods are AES-NI (ARMv8 AES) and the
+    // carry-less product PCLMULQDQ (PMULL), with no check, no CPUID and no emulation left.
+    let dir = test_dir::TestDir::new();
+    for (triple, gated, instructions) in [
+        (
+            "x86_64-unknown-linux-gnu",
+            "N9roundsX86",
+            &[
+                "@llvm.x86.aesni.aesenc(",
+                "@llvm.x86.aesni.aesenclast(",
+                "@llvm.x86.aesni.aesdec(",
+                "@llvm.x86.aesni.aesdeclast(",
+                "@llvm.x86.aesni.aesimc(",
+                "@llvm.x86.aesni.aeskeygenassist(",
+                "@llvm.x86.pclmulqdq(",
+            ][..],
+        ),
+        (
+            "aarch64-unknown-linux-gnu",
+            "N9roundsArm",
+            &[
+                "@llvm.aarch64.crypto.aese(",
+                "@llvm.aarch64.crypto.aesmc(",
+                "@llvm.aarch64.crypto.aesd(",
+                "@llvm.aarch64.crypto.aesimc(",
+                "@llvm.aarch64.neon.pmull64(",
+            ][..],
+        ),
+    ] {
+        let args = ["build", "--release", "--emit", "llvm", "--target", triple];
+        let out = velt(&dir, AES_PROBE, AES_MAIN, &args);
+        let ir = String::from_utf8_lossy(&out.stdout);
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(out.status.success(), "{triple}: {stderr}");
+        let functions = llvm_functions(&ir);
+        let gated = functions
+            .iter()
+            .find(|(f, _)| f.contains("zz__gated") && f.contains(gated))
+            .map(|(f, _)| f.clone())
+            .unwrap_or_else(|| panic!("{triple}: no {gated}"));
+        let reached = reachable(&functions, &gated);
+        for (f, body) in &reached {
+            for check in [
+                "@velt.simd.has_",
+                "velt_cpu_",
+                "@velt.simd.cpuid",
+                "aes__emulation",
+                "N6detect",
+            ] {
+                assert!(
+                    !body.contains(check),
+                    "{triple}: {f}, reached from {gated}, has {check}:\n{body}"
+                );
+            }
+        }
+        for instruction in instructions {
+            assert!(
+                reached.iter().any(|(_, body)| body.contains(instruction)),
+                "{triple}: {gated} uses {instruction}"
+            );
+        }
     }
 }

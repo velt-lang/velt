@@ -11,14 +11,17 @@ use super::{Arch, Body};
 pub(crate) fn has_ext(arch: Arch, ext: Ext) -> bool {
     matches!(
         (arch, ext),
-        (Arch::Neon, Ext::ShaArm | Ext::ClmulArm) | (Arch::Sse2, Ext::ShaX86 | Ext::ClmulX86)
+        (Arch::Neon, Ext::ShaArm | Ext::ClmulArm | Ext::AesArm)
+            | (Arch::Sse2, Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86)
     )
 }
 
 /// `velt_simd_has_<ext>()`: the runtime's flag byte (0 or 1), read as invariant: it is set
-/// before any Velt code runs and never changes, so LLVM hoists the read out of loops.
+/// before any Velt code runs and never changes, so LLVM hoists the read out of loops. An
+/// extension without a flag (AES, `Ext::has_flag`) is 0 here: its check is 1 only where the
+/// function is gated on it (`own_extension_check`), and std computes the run-time answer.
 pub(super) fn has(b: &mut Body, arch: Arch, ext: Ext) -> String {
-    if !has_ext(arch, ext) {
+    if !has_ext(arch, ext) || !ext.has_flag() {
         return "0".to_string();
     }
     let flag = ext.flag_symbol();
@@ -39,6 +42,9 @@ pub(super) fn op(b: &mut Body, arch: Arch, op: ExtOp) -> String {
     }
     if let ExtOp::Pclmulqdq(imm) | ExtOp::Pmull(imm) = op {
         return clmul(b, op, imm);
+    }
+    if matches!(op.ext(), Ext::AesX86 | Ext::AesArm) {
+        return super::aes::op(b, op);
     }
     if op == ExtOp::Sha1H {
         b.declarations
@@ -75,8 +81,8 @@ pub(super) fn op(b: &mut Body, arch: Arch, op: ExtOp) -> String {
             let vectors = op.vector_operands();
             let values: Vec<String> = (0..vectors).map(|i| b.arg(i, V)).collect();
             let prefix = match op.ext() {
-                Ext::ShaArm | Ext::ClmulArm => "aarch64.crypto",
-                Ext::ShaX86 | Ext::ClmulX86 => "x86",
+                Ext::ShaArm | Ext::ClmulArm | Ext::AesArm => "aarch64.crypto",
+                Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 => "x86",
             };
             (
                 format!("{prefix}.{}", op.name()),

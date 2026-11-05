@@ -119,7 +119,8 @@ impl FnCx<'_, '_> {
         let Some(target) = self.fn_target(d) else {
             return;
         };
-        if self.f.target == Some(target) || self.f.cpu_guards.contains(&target) {
+        let covered = |t: &CpuTarget| t.covers(target);
+        if self.f.target.as_ref().is_some_and(covered) || self.f.cpu_guards.iter().any(covered) {
             return;
         }
         let d = Diagnostic::error(

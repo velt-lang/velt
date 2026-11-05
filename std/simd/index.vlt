@@ -21,6 +21,8 @@ export { dotI8 } from "velt/simd/dot_bytes";
 import "velt/simd/sha";
 // Carry-less multiplication on `u64x2` (hand-written, not generated).
 import "velt/simd/clmul";
+// The AES round instructions on `u8x16` (hand-written, not generated).
+import "velt/simd/aes";
 // The int8 dot product on `i32x4` (hand-written, not generated).
 import "velt/simd/dot";
 // The operators: `a + b`, `-v`, `v << n`, `v[i]`, … (scripts/gen-simd-ops.py).

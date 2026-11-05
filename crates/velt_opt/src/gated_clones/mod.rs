@@ -6,6 +6,9 @@
 //! trivial callee. Without the clone, the method inlines only while it is small or called once,
 //! and otherwise keeps the check and the emulation inside the gated function.
 //!
+//! An AES target also has its architecture's carry-less multiplication (`Ext::covers`), and in
+//! any gated function the other architecture's checks are false: the clone folds those too.
+//!
 //! Cloned are ordinary callees that check the extension themselves or through ordinary callees
 //! of their own (which the clone's own calls then reach as clones too). Each callee is cloned
 //! once per extension.
@@ -97,15 +100,24 @@ fn checking(program: &Program, ext: Ext) -> Vec<bool> {
     }
 }
 
-fn is_check(program: &Program, id: velt_vir::vir::ExternId, ext: Ext) -> bool {
-    program
-        .externs
-        .get(id.0 as usize)
-        .and_then(|e| SimdCall::of_symbol(&e.symbol))
-        == Some(SimdCall::Has(ext))
+/// What the check extern `id` is in code gated on `ext`: `true` for an extension it has
+/// (`Ext::covers`: the carry-less multiplication of an AES target too), `false` for one of the
+/// other architecture (the code runs only on `ext`'s), `None` for any other extern.
+fn check_value(program: &Program, id: velt_vir::vir::ExternId, ext: Ext) -> Option<bool> {
+    let e = program.externs.get(id.0 as usize)?;
+    match SimdCall::of_symbol(&e.symbol)? {
+        SimdCall::Has(checked) if ext.covers(checked) => Some(true),
+        SimdCall::Has(checked) if !ext.same_arch(checked) => Some(false),
+        _ => None,
+    }
 }
 
-/// A copy of `func` gated on `ext`, with its checks of `ext` replaced by `true`.
+fn is_check(program: &Program, id: velt_vir::vir::ExternId, ext: Ext) -> bool {
+    check_value(program, id, ext).is_some()
+}
+
+/// A copy of `func` gated on `ext`, with its checks replaced by their values there
+/// ([`check_value`]).
 fn clone_for(program: &mut Program, func: FuncId, ext: Ext) -> FuncId {
     let mut body = program.funcs[func.0 as usize].clone();
     body.symbol = format!("{}${}", body.symbol, ext.name().replace('-', "_"));
@@ -121,13 +133,13 @@ fn clone_for(program: &mut Program, func: FuncId, ext: Ext) -> FuncId {
         else {
             continue;
         };
-        if !is_check(program, *id, ext) {
+        let Some(value) = check_value(program, *id, ext) else {
             continue;
-        }
+        };
         let (dest, next) = (dest.clone(), *next);
         if let Some(dest) = dest {
             let at = body.locs.get(bi).and_then(|l| l.last().copied().flatten());
-            let yes = Rvalue::Use(Operand::Const(Const::Bool(true), Ty::Bool));
+            let yes = Rvalue::Use(Operand::Const(Const::Bool(value), Ty::Bool));
             srclocs::push_stmt(&mut body, bi, Stmt::Assign(dest, yes), at);
         }
         body.blocks[bi].term = Terminator::Goto(next);

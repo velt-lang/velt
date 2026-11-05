@@ -1,0 +1,10 @@
+// `u8x16.aeskeygenassist`'s `rcon` is AESKEYGENASSIST's 8-bit immediate: past 255 it is a
+// RangeError, on every CPU (the check comes before the instruction or the emulation).
+import { u8x16 } from "velt/simd";
+
+function main() {
+  const key = u8x16.splat(0x2b);
+  for (const rcon of [0, 1, 0x36, 255, 256]) {
+    console.log(rcon, key.aeskeygenassist(rcon as u32).lane(4));
+  }
+}

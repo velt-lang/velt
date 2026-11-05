@@ -161,6 +161,7 @@ table! {
     ops_operators => "ops/operators",
     process_stdout => "process/stdout",
     simd => "simd",
+    simd_aes => "simd/aes",
     simd_clmul => "simd/clmul",
     simd_sha => "simd/sha",
     sync_channel => "sync/channel",

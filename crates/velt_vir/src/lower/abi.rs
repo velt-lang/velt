@@ -301,6 +301,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
             hir::CpuTarget::ShaX86 => crate::simd::Ext::ShaX86,
             hir::CpuTarget::ClmulX86 => crate::simd::Ext::ClmulX86,
             hir::CpuTarget::ClmulArm => crate::simd::Ext::ClmulArm,
+            hir::CpuTarget::AesX86 => crate::simd::Ext::AesX86,
+            hir::CpuTarget::AesArm => crate::simd::Ext::AesArm,
         });
         func
     }

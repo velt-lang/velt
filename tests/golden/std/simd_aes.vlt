@@ -1,0 +1,183 @@
+// check: also with VELT_SIMD_DISABLE=aes
+// The AES instructions of `velt/simd` (#2401): AES-128 and AES-256 with the published AES-NI
+// (Intel) and ARMv8 (ACLE) instruction sequences, against FIPS-197's key expansion and test
+// vectors, encryption and decryption, and every operation on 10,000 pseudo-random inputs folded
+// into a checksum. Where the CPU has the instructions (arm64 and x86-64 release builds) they run
+// as instructions, the other architecture's methods through its own instructions, and elsewhere
+// (debug builds, WebAssembly, VELT_SIMD_DISABLE=aes) as the emulation: the same output everywhere
+// is the differential test between them.
+import { u8x16, u32x4 } from "velt/simd";
+
+function bytes(text: string): u8x16 {
+  const out: u8[] = [];
+  for (let i: i64 = 0; i < 32; i += 2) {
+    out.push(Number.parseInt(text.substring(i, i + 2), 16) as u8);
+  }
+  return u8x16.load(out, 0);
+}
+
+function hex(v: u8x16): string {
+  let s = "";
+  for (let i: usize = 0; i < 16; i++) {
+    s += v.lane(i).toString(16).padStart(2, "0");
+  }
+  return s;
+}
+
+// `v` moved up by 4 bytes (x86's PSLLDQ 4), zeros in.
+function up4(v: u8x16): u8x16 {
+  const z = u8x16.splat(0);
+  return u8x16.shuffle(z, v, 0, 0, 0, 0, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27);
+}
+
+// Every 32-bit lane set to lane `lane` of `v`.
+function broadcast(v: u8x16, lane: u32): u8x16 {
+  const w = v.asU32x4();
+  if (lane == 3) {
+    return u32x4.shuffle(w, w, 3, 3, 3, 3).asU8x16();
+  }
+  return u32x4.shuffle(w, w, 2, 2, 2, 2).asU8x16();
+}
+
+// k ^ (k << 32) ^ (k << 64) ^ (k << 96) ^ t: one step of the key schedule.
+function step(k: u8x16, t: u8x16): u8x16 {
+  let x = k;
+  x = x.xor(up4(x));
+  x = x.xor(up4(x));
+  x = x.xor(up4(x));
+  return x.xor(t);
+}
+
+const RCON: u32[] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36];
+
+// The AES-128 round keys, with AESKEYGENASSIST (Intel's white paper).
+function expand128(key: u8x16): u8x16[] {
+  const keys: u8x16[] = [key];
+  let k = key;
+  for (const rcon of RCON) {
+    k = step(k, broadcast(k.aeskeygenassist(rcon), 3));
+    keys.push(k);
+  }
+  return keys;
+}
+
+// The AES-256 round keys: the odd steps take SubWord without rotation or constant (rcon 0, lane 2).
+function expand256(key0: u8x16, key1: u8x16): u8x16[] {
+  const keys: u8x16[] = [key0, key1];
+  let a = key0;
+  let b = key1;
+  for (let i: usize = 0; i < 7; i++) {
+    a = step(a, broadcast(b.aeskeygenassist(RCON[i]), 3));
+    keys.push(a);
+    if (i < 6) {
+      b = step(b, broadcast(a.aeskeygenassist(0), 2));
+      keys.push(b);
+    }
+  }
+  return keys;
+}
+
+function encryptX86(keys: u8x16[], block: u8x16): u8x16 {
+  const last = keys.length - 1;
+  let s = block.xor(keys[0]);
+  for (let i: usize = 1; i < last; i++) {
+    s = s.aesenc(keys[i]);
+  }
+  return s.aesenclast(keys[last]);
+}
+
+function encryptArm(keys: u8x16[], block: u8x16): u8x16 {
+  const last = keys.length - 1;
+  let s = block;
+  for (let i: usize = 0; i < last - 1; i++) {
+    s = s.aese(keys[i]).aesmc();
+  }
+  return s.aese(keys[last - 1]).xor(keys[last]);
+}
+
+// The equivalent inverse cipher: the middle round keys through InvMixColumns.
+function decryptX86(keys: u8x16[], block: u8x16): u8x16 {
+  const last = keys.length - 1;
+  let s = block.xor(keys[last]);
+  for (let i = last - 1; i >= 1; i--) {
+    s = s.aesdec(keys[i].aesimc());
+  }
+  return s.aesdeclast(keys[0]);
+}
+
+function decryptArm(keys: u8x16[], block: u8x16): u8x16 {
+  const last = keys.length - 1;
+  let s = block.aesd(keys[last]).aesimc();
+  for (let i = last - 1; i >= 2; i--) {
+    s = s.aesd(keys[i].aesimc()).aesimc();
+  }
+  return s.aesd(keys[1].aesimc()).xor(keys[0]);
+}
+
+function check(name: string, keys: u8x16[], plain: string, cipher: string) {
+  const p = bytes(plain);
+  const c = bytes(cipher);
+  console.log(
+    name,
+    hex(encryptX86(keys, p)) == cipher,
+    hex(encryptArm(keys, p)) == cipher,
+    hex(decryptX86(keys, c)) == plain,
+    hex(decryptArm(keys, c)) == plain,
+  );
+}
+
+let seed: u64 = 0x9e3779b97f4a7c15;
+
+function next(): u64 {
+  seed ^= seed << 13;
+  seed ^= seed >> 7;
+  seed ^= seed << 17;
+  return seed;
+}
+
+function random(): u8x16 {
+  const lo = next();
+  const hi = next();
+  return u32x4.splat(lo as u32)
+    .withLane(1, (lo >> 32) as u32)
+    .withLane(2, hi as u32)
+    .withLane(3, (hi >> 32) as u32)
+    .asU8x16();
+}
+
+function main() {
+  // FIPS-197 Appendix A.1: the AES-128 key expansion.
+  const keys = expand128(bytes("2b7e151628aed2a6abf7158809cf4f3c"));
+  console.log(hex(keys[1]), hex(keys[10]));
+  // Appendix B, and Appendix C.1 (AES-128) and C.3 (AES-256).
+  check("B", keys, "3243f6a8885a308d313198a2e0370734", "3925841d02dc09fbdc118597196a0b32");
+  const c1 = expand128(bytes("000102030405060708090a0b0c0d0e0f"));
+  check("C.1", c1, "00112233445566778899aabbccddeeff", "69c4e0d86a7b0430d8cdb78070b4c55a");
+  const c3 = expand256(bytes("000102030405060708090a0b0c0d0e0f"), bytes("101112131415161718191a1b1c1d1e1f"));
+  console.log(c3.length, hex(c3[14]));
+  check("C.3", c3, "00112233445566778899aabbccddeeff", "8ea2b7ca516745bfeafc49904b496089");
+  // Every operation on random inputs, folded in.
+  let sum = u8x16.splat(0);
+  for (let i = 0; i < 10000; i++) {
+    const a = random();
+    const k = random();
+    const rcon = (next() & 0xff) as u32;
+    const outs: u8x16[] = [
+      a.aesenc(k),
+      a.aesenclast(k),
+      a.aesdec(k),
+      a.aesdeclast(k),
+      a.aesimc(),
+      a.aeskeygenassist(rcon),
+      a.aese(k),
+      a.aesd(k),
+      a.aesmc(),
+    ];
+    for (const out of outs) {
+      // Rotate the bytes by one, so the order of the results counts.
+      sum = u8x16.shuffle(sum, sum, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0).xor(out);
+    }
+  }
+  console.log(hex(sum));
+  console.log(typeof u8x16.hasAes(), typeof u8x16.hasAesX86(), typeof u8x16.hasAesArm());
+}
