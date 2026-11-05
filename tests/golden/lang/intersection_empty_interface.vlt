@@ -1,0 +1,14 @@
+// An interface without members in an intersection with object types adds nothing, as in
+// TypeScript: other modules may merge members into it, and until then `P & Extensions` is `P`.
+interface Extensions {}
+
+type Props<P> = P & Extensions & { children?: string };
+
+function show(p: Props<{ title: string }>): string {
+  return p.title + ":" + (p.children ?? "none");
+}
+
+const a: Props<{ title: string }> = { title: "t" };
+console.log(show(a));
+console.log(show({ title: "u", children: "c" }));
+console.log(JSON.stringify(a));
