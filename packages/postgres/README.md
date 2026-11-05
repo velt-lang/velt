@@ -17,7 +17,10 @@ dependencies: {
 },
 ```
 
-The package has no native code, so it needs no toolchain beyond `velt`.
+Nothing here runs native code, so using the package needs no toolchain beyond `velt`. The `native/`
+folder is the Rust driver this client replaces, with its ABI in `docs/native_abi.md`. Nothing in
+`src/` uses it. It stays until this client also matches it on `pool_select_64`
+([#2370](https://github.com/velt-lang/velt/issues/2370)), and then goes.
 The full guide: https://veltlang.com/docs/packages/postgres/.
 
 - `connect(url): Promise<Client>`. `url` is `postgres://user:password@host:port/db?options` or
@@ -118,8 +121,8 @@ The full guide: https://veltlang.com/docs/packages/postgres/.
   takes TLS (`hostssl`) and is older than 17 or has a certificate that doesn't verify refuses the
   plain connection, so `prefer` fails there, with an error naming both failures. As in the Rust
   driver and unlike libpq, a server that refuses a TLS connection (`hostnossl`) is not tried again
-  in plain text. Each server with TLS costs two connections under `prefer`, and an older one logs
-  an "invalid length of startup packet" for the direct attempt.
+  in plain text. Under `prefer` a server with TLS takes two connections to open one, three when direct
+  TLS then fails, and an older one logs "invalid length of startup packet" for the direct attempt.
 
   `require` is stricter than libpq's too, which takes any certificate, and a server older than 17
   can't be used with TLS at all. Both need `velt/net` to upgrade a plain socket and to connect
@@ -204,7 +207,9 @@ server still owes, so the next request finds the connection in step.
 - `tests/`: `velt test` in this directory. `values`, `auth`, `config`, `placeholders` and
   `fake_server` need no server; the rest need one: set `VELT_TEST_PG_URL`
   (`postgres://user:password@host/db`), without which they do nothing. `VELT_TEST_PG_MD5_URL`,
-  `VELT_TEST_PG_SCRAM_URL` and `VELT_TEST_PG_TLS_URL` add the password exchanges and TLS. The
+  `VELT_TEST_PG_SCRAM_URL` and `VELT_TEST_PG_TLS_URL` add the password exchanges and TLS;
+  `VELT_TEST_PG_TLS_UNTRUSTED_URL` (a server with TLS that nothing verifies) and
+  `VELT_TEST_PG_PLAIN_URL` (one without TLS), both without `sslmode`, what each `sslmode` does. The
   repository's `scripts/linux-check.sh --services` starts a server, as CI does.
 
-The package uses only public std APIs: velt/db (`readRows`, `writeParams`), velt/net, velt/crypto.
+`src/` uses only public std APIs: velt/db (`readRows`, `writeParams`), velt/net, velt/crypto.
