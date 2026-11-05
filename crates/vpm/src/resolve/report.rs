@@ -22,6 +22,49 @@ pub(super) fn conflict(req: &Requirement, sel: &Selected) -> String {
     out
 }
 
+/// `req` names another source than the one selected for its package, and the root's own entry
+/// doesn't settle it: two of the root's entries disagree, or two transitive ones do.
+pub(super) fn two_sources(req: &Requirement, sel: &Selected) -> String {
+    let fix = match req.root {
+        true => "make them name the same source".to_string(),
+        false => format!(
+            "name `{0}` in this package's dependencies to choose one: the root's own entry wins",
+            req.name
+        ),
+    };
+    let mut out = format!(
+        "cannot resolve dependencies: `{}` is asked for from two sources ({fix})",
+        req.name
+    );
+    for r in sel.by.iter().chain([req]) {
+        out.push_str(&format!(
+            "\n  {} requires {}",
+            r.chain.join(" → "),
+            describe_want(&r.name, &r.want)
+        ));
+    }
+    out
+}
+
+/// The root's entry for `req`'s package (selected in `sel`) has a version `req` doesn't accept:
+/// overriding a source never breaks a version requirement.
+pub(super) fn overridden_version(req: &Requirement, sel: &Selected) -> String {
+    let mut out = format!(
+        "cannot resolve dependencies: this package's entry for `{}` gives {}, which {} does not accept",
+        req.name,
+        describe_selected(sel),
+        req.chain.last().map_or("its dependent", String::as_str),
+    );
+    for r in sel.by.iter().chain([req]) {
+        out.push_str(&format!(
+            "\n  {} requires {}",
+            r.chain.join(" → "),
+            describe_want(&r.name, &r.want)
+        ));
+    }
+    out
+}
+
 /// Nothing matches `req`. `available` lists the published versions if the package exists.
 pub(super) fn no_match(req: &Requirement, available: Option<&str>, registry: &Path) -> String {
     let by = req.chain.join(" → ");
@@ -43,7 +86,7 @@ pub(super) fn no_match(req: &Requirement, available: Option<&str>, registry: &Pa
     }
 }
 
-fn describe_want(name: &str, want: &Want) -> String {
+pub(super) fn describe_want(name: &str, want: &Want) -> String {
     match want {
         Want::Registry(req) => format!("`{name} {req}`"),
         Want::Path {

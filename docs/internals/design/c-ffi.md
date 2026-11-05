@@ -430,6 +430,12 @@ add nothing (their captures are their own), so a C call is never an unknown call
   `velt.lock.json`. The error names the dependency chain and prints the exact line to add. It is
   an error from the start (owner: no outside users yet); the PR that adds it updates the
   templates, examples and playground so `main` stays green.
+  An entry binds to a source (#2367): a bare name allows the registry and local paths, a
+  `{ name, git }` entry that repository at any commit, a `{ name, url }` entry archives under an
+  https prefix. A git repository or an archive names its package whatever it likes, so a bare
+  `"sqlite"` never allows a `sqlite` from git; the check runs after resolution, on the source
+  that won (the root's own dependency entry wins over transitive ones). Contract:
+  [manifest.md](../contracts/manifest.md) "One source per package".
 - **`unsafe`** only in `allowNative` packages and std (above).
 - **Raw types and unsafe functions stay among native packages.** `Ptr`, `CFunction`,
   `CallbackContext`, `Lease`, `declare c type`s and `unsafe function`s can be imported only by

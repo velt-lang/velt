@@ -206,6 +206,37 @@ dependent's
 `GraphPackage::npm` gets the packages, and the loader resolves a bare import of one in its
 directory (`NpmResolver::resolve_in`) before Node's search.
 
+## One source per package, and `allowNative` by source (additive, #2367)
+`vpm::resolve`, `vpm::install::allow_native`, `vpm::manifest::allow_native`, `vpm::source_url`.
+- **Who wins.** A requirement is the root's when a manifest the root controls wrote it: the
+  root's, a workspace member's, or a path package's (only those name a `path`: a git package's
+  paths become its repository, a registry package has none). The solver takes the root's
+  requirements first (`Requirement::root`). A transitive requirement of the same name from
+  another source (`same_source`: registry, the same directory, or the same git spec) is replaced
+  by the root's entry when its version still fits (else "this package's entry for `x` gives …,
+  which … does not accept"), and `Resolution::overrides` records it (`Override { by, wanted }`).
+  Two of the root's entries that disagree, or two transitive ones the root doesn't settle, are an
+  error: "`x` is asked for from two sources (…)", each requirement with its chain.
+- **The lock** records an override as the package's `"overrides": ["<package that asked>", …]`
+  (sorted, optional); `velt install` prints a note per overridden package when it resolves
+  (`Installed::notes`), not builds.
+- **`allowNative`** entries are a name (`AllowedFrom::Root`: the registry or a path source) or
+  `{ name, git }` (that repository at any commit and directory) or `{ name, url }` (archives
+  under an https prefix; no such sources until step 2). Read with each check at its value: `git`
+  through `source_url::git_identity`, `url` through `source_url::check_prefix` (a path under the
+  host, no credentials, query, fragment, `.`/`..` segments, backslash or `%2e`/`%2f`/`%5c`); an
+  object needs `name` and exactly one of the two. After resolution, a package with native code
+  whose entries all name another source is an error naming both sources and the entry to add;
+  an unlisted one's error suggests `{ name, git }` for a git source. Git URLs compare in one form
+  (scheme and host lowercase, default port dropped, `user@host:path` as `ssh://user@host/path`,
+  trailing `/` and `.git` removed); prefixes match whole path segments, compared as written in
+  the manifest, before redirects or mirrors. `velt.lock.json`'s `allowNative` holds the entries
+  as written (a string, or an object with `name` first), sorted. The compiler's check
+  (`PackageGraph::allows_native`) stays by name: install has checked the sources.
+- **Changed native code.** `velt install` and `velt update` print "native code of `x` changes:
+  <old> → <new>" for each package with native code whose locked version, source or checksum
+  changed (`install::native_changes`).
+
 ## Fields
 - `import ... from "json"` / `"json/sub"` resolve through `dependencies`; `"velt/x"` and `"./x"`
   never do.

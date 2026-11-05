@@ -426,17 +426,41 @@ fn native_code_from_a_repository_is_not_built_unasked() {
     };
     // Not allowed (`allowNative`) yet: refused before anything is built, through its chain.
     let err = install(&app, &e.loc, opts.clone()).unwrap_err();
+    let url = e.upstream.url();
+    let entry = format!("{{ name: \"sib\", git: \"{url}\" }}");
     assert!(
-        err.contains("package `sib` (through `lib` → `sib`) has native code"),
+        err.contains("package `sib` (through `lib` → `sib`) has native code")
+            && err.contains(&format!("allowNative: [{entry}]")),
         "{err}"
     );
     let manifest = std::fs::read_to_string(app.join("package.vlt")).unwrap();
-    let allowed = manifest.replacen(
-        "version: \"0.1.0\",",
-        "version: \"0.1.0\", allowNative: [\"sib\"],",
-        1,
+    let allow = |list: &str| {
+        let text = manifest.replacen(
+            "version: \"0.1.0\",",
+            &format!("version: \"0.1.0\", allowNative: [{list}],"),
+            1,
+        );
+        std::fs::write(app.join("package.vlt"), text).unwrap();
+    };
+    // A bare name is the registry's: a repository's package of that name isn't it. Its path
+    // sibling comes from the repository too, not from a local path.
+    allow("\"sib\"");
+    let err = install(&app, &e.loc, opts.clone()).unwrap_err();
+    assert!(
+        err.contains("package `sib` has native code and comes from the git repository")
+            && err.contains("allows it only from the registry or a local path")
+            && err.contains(&entry),
+        "{err}"
     );
-    std::fs::write(app.join("package.vlt"), allowed).unwrap();
+    // Another repository's entry doesn't allow it either.
+    allow("{ name: \"sib\", git: \"https://example.com/other/upstream\" }");
+    let err = install(&app, &e.loc, opts.clone()).unwrap_err();
+    assert!(
+        err.contains("allows it only from the git repository https://example.com/other/upstream"),
+        "{err}"
+    );
+    // The repository's entry, spelled with `.git`, does.
+    allow(&format!("{{ name: \"sib\", git: \"{url}.git\" }}"));
     let err = install(&app, &e.loc, opts).unwrap_err();
     assert!(
         err.contains("`sib` from") && err.contains("VELT_NATIVE_FROM_SOURCE=1"),
@@ -638,3 +662,4 @@ fn a_package_with_links_is_told_about_them_on_windows() {
 }
 
 mod npm;
+mod sources;

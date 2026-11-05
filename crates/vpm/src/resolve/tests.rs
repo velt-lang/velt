@@ -119,6 +119,7 @@ fn prefers_locked_version_while_it_satisfies() {
         checksum: None,
         dependencies: vec![],
         native: Default::default(),
+        overrides: vec![],
     }]);
     assert_eq!(
         versions(&e.resolve("lib: \"^1.0\", ", Some(&lock)).unwrap()),
@@ -172,6 +173,7 @@ fn yanked_versions_are_only_kept_when_locked() {
         checksum: None,
         dependencies: vec![],
         native: Default::default(),
+        overrides: vec![],
     }]);
     let kept = e.resolve("lib: \"^1.0\"", Some(&lock)).unwrap();
     assert_eq!(versions(&kept), ["lib 1.1.0"]);
@@ -183,4 +185,85 @@ fn yanked_versions_are_only_kept_when_locked() {
         err.contains("available: 1.0.0 (yanked), 1.1.0 (yanked)"),
         "{err}"
     );
+}
+
+/// The root's own entry wins over a transitive requirement from another source, with the
+/// override recorded, but never breaks a version requirement.
+#[test]
+fn the_roots_entry_overrides_a_transitive_source() {
+    let e = env();
+    e.publish("util", "0.2.1", "");
+    e.publish("lib", "1.0.0", "util: \"^0.2\", ");
+    let local = e.root.join("util");
+    write_package(&local, "util", "0.2.5", "");
+    let r = e
+        .resolve("lib: \"1\", util: { path: \"../util\" }, ", None)
+        .unwrap();
+    assert_eq!(
+        r.packages["util"].source,
+        Source::Path { dir: local.clone() }
+    );
+    assert_eq!(
+        r.overrides["util"],
+        [Override {
+            by: "lib".into(),
+            wanted: "`util ^0.2`".into(),
+        }]
+    );
+    // Without the root's entry, nothing is overridden.
+    let plain = e.resolve("lib: \"1\", ", None).unwrap();
+    assert!(plain.overrides.is_empty(), "{:?}", plain.overrides);
+    // A version the transitive requirement doesn't accept is an error naming both.
+    write_package(&local, "util", "0.3.0", "");
+    let err = e
+        .resolve("lib: \"1\", util: { path: \"../util\" }, ", None)
+        .unwrap_err();
+    assert!(
+        err.contains("this package's entry for `util` gives 0.3.0 at path")
+            && err.contains("which lib 1.0.0 does not accept")
+            && err.contains("app 0.1.0 → lib 1.0.0 requires `util ^0.2`"),
+        "{err}"
+    );
+}
+
+/// Two manifests the root controls (its own and a path package's) naming different sources for
+/// one package is an error, whichever comes first: neither wins.
+#[test]
+fn two_root_entries_with_different_sources_are_an_error() {
+    let e = env();
+    e.publish("util", "0.2.1", "");
+    write_package(&e.root.join("util"), "util", "0.2.5", "");
+    write_package(&e.root.join("mid"), "mid", "0.1.0", "util: \"^0.2\", ");
+    for deps in [
+        "mid: { path: \"../mid\" }, util: { path: \"../util\" }, ",
+        "util: { path: \"../util\" }, mid: { path: \"../mid\" }, ",
+    ] {
+        let err = e.resolve(deps, None).unwrap_err();
+        assert!(
+            err.contains("`util` is asked for from two sources (make them name the same source)"),
+            "{deps}: {err}"
+        );
+    }
+}
+
+/// A path package's entry is the root's too, and is selected before any transitive requirement
+/// of the same name, even one queued first (`lib`'s, breadth-first before `mid`'s).
+#[test]
+fn the_roots_entries_are_solved_first() {
+    let e = env();
+    e.publish("util", "0.2.1", "");
+    e.publish("lib", "1.0.0", "util: \"^0.2\", ");
+    let local = e.root.join("util");
+    write_package(&local, "util", "0.2.5", "");
+    write_package(
+        &e.root.join("mid"),
+        "mid",
+        "0.1.0",
+        "util: { path: \"../util\" }, ",
+    );
+    let r = e
+        .resolve("lib: \"1\", mid: { path: \"../mid\" }, ", None)
+        .unwrap();
+    assert_eq!(r.packages["util"].source, Source::Path { dir: local });
+    assert_eq!(r.overrides["util"][0].by, "lib");
 }
