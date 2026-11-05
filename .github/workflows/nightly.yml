@@ -76,6 +76,8 @@ jobs:
           df -h /
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
+        with:
+          fast-linker: "false"
       - run: scripts/check-all.sh
       - name: disk used by the gate
         if: ${{ !cancelled() }}
