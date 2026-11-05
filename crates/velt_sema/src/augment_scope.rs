@@ -298,6 +298,9 @@ fn namespace_import(alias: &str, spec: &str) -> ast::Item {
                 span: Span::DUMMY,
             }),
             all: false,
+            default_import: false,
+            // Only its types are used here: the target doesn't evaluate the module.
+            type_only: true,
         }),
         exported: false,
         span: Span::DUMMY,
@@ -321,6 +324,8 @@ fn type_import(original: &str, alias: &str, spec: &str) -> ast::Item {
             from_span: Span::DUMMY,
             namespace: None,
             all: false,
+            default_import: false,
+            type_only: false,
         }),
         exported: false,
         span: Span::DUMMY,
