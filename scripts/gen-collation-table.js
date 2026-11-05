@@ -129,7 +129,7 @@ if (process.argv[2] === "--alnum") {
   process.exit(0);
 }
 const [alnumUnicode, ...boundaries] = process.argv[2]
-  ? require("fs").readFileSync(process.argv[2], "utf8").trim().split("\n")
+  ? require("fs").readFileSync(process.argv[2], "utf8").trim().split(/\r?\n/)
   : alnumLines();
 if (alnumUnicode !== ALNUM_UNICODE) throw new Error(`${process.argv[2]} is from Unicode ${alnumUnicode}`);
 const hex = (n) => "0x" + n.toString(16);
