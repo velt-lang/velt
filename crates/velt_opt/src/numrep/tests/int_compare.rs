@@ -48,7 +48,7 @@ fn compare_program(x_ty: Ty, op: BinOp, swapped: bool, lo: i128) -> Program {
 }
 
 /// Whether some comparison of `f` still compares doubles.
-fn compares_doubles(f: &Function) -> bool {
+pub(super) fn compares_doubles(f: &Function) -> bool {
     f.blocks.iter().flat_map(|b| &b.stmts).any(|s| {
         matches!(s, Stmt::Assign(_, Rvalue::Binary(op, a, _))
             if super::super::flow::is_comparison(*op)

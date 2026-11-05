@@ -1,7 +1,7 @@
 //! Branch refinement for `numrep`: which comparison decides a branch, and what it proves about
 //! the compared values on each edge.
 
-use velt_vir::vir::{BinOp, Function, Local, Operand, Rvalue, Stmt, Terminator, Ty, UnOp};
+use velt_vir::vir::{BinOp, Const, Function, Local, Operand, Rvalue, Stmt, Terminator, Ty, UnOp};
 
 use super::fact::{Fact, TWO_53};
 use super::flow::is_comparison;
@@ -69,7 +69,7 @@ pub(super) fn condition(func: &Function, b: usize) -> Option<Condition> {
                 });
             }
             Rvalue::Binary(join @ (BinOp::BitAnd | BinOp::BitOr), p, q) => {
-                return signed_bound(&block.stmts[..at], *join, p, q, &block.stmts[at + 1..])
+                return signed_bound(&block.stmts, at, *join, p, q)
                     .map(|c| Condition { negated, ..c });
             }
             _ => return None,
@@ -86,38 +86,44 @@ pub(super) fn condition(func: &Function, b: usize) -> Option<Condition> {
     None
 }
 
-/// `int_compare`'s form of `x op y` for an unsigned `x` and a signed `y`, the join `join` of
-/// `sign = y test 0` and `cmp = x op (y as u64)` (`before` holds their definitions, `after` the
-/// statements after the join), read back as `x op y`: the form is exactly that comparison (a
-/// negative `y` decides it through `sign`, any other through `cmp`), so both edges refine.
+/// `int_compare`'s form of `x op y` for an unsigned `x` and a signed `y`, the join `join` at
+/// statement `at` of `sign = y test 0` and `cmp = x op (y as u64)`, read back as `x op y`: the form
+/// is exactly that comparison (a negative `y` decides it through `sign`, any other through `cmp`),
+/// so both edges refine. Only that form: another constant, an equality, or an operand changed
+/// after it was read is some other condition.
 fn signed_bound(
-    before: &[Stmt],
+    stmts: &[Stmt],
+    at: usize,
     join: BinOp,
     p: &Operand,
     q: &Operand,
-    after: &[Stmt],
 ) -> Option<Condition> {
     let def = |op: &Operand| {
         let Operand::Copy(l) = op else { return None };
         if !l.proj.is_empty() {
             return None;
         }
-        last_def(before, l.local, before.len())
+        last_def(stmts, l.local, at)
     };
-    let (_, Rvalue::Binary(test, Operand::Copy(ys), Operand::Const(_, Ty::I64))) = def(p)? else {
+    let (sign_at, Rvalue::Binary(test, Operand::Copy(ys), Operand::Const(Const::Int(0), Ty::I64))) =
+        def(p)?
+    else {
         return None;
     };
-    let (_, Rvalue::Binary(op, x, Operand::Copy(yu))) = def(q)? else {
+    let (cmp_at, Rvalue::Binary(op, x, Operand::Copy(yu))) = def(q)? else {
         return None;
     };
-    let (_, Rvalue::Cast(Operand::Copy(src), Ty::U64)) = def(&Operand::Copy(yu.clone()))? else {
+    let (cast_at, Rvalue::Cast(Operand::Copy(src), Ty::U64)) = def(&Operand::Copy(yu.clone()))?
+    else {
         return None;
     };
     let y = Operand::Copy(ys.clone());
-    if src != ys
+    if !matches!(op, BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge)
+        || src != ys
         || (*test, join) != super::int_compare::sign_test(*op)
-        || assigned_in(after, x)
-        || assigned_in(after, &y)
+        || cast_at > cmp_at
+        || assigned_in(&stmts[cmp_at + 1..], x)
+        || assigned_in(&stmts[cast_at.min(sign_at) + 1..], &y)
     {
         return None;
     }
