@@ -112,4 +112,39 @@ describe("ChaCha20Poly1305", () => {
     }
     expect(aead.openInPlace(nonce, aad, Buffer.alloc(15), 0, 15)).toBe(false);
   });
+
+  it("throws CryptoError for a range outside the buffer, before writing anything", () => {
+    const aead = new ChaCha20Poly1305(hexDecode(RFC_KEY));
+    const nonce: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const seal = "ChaCha20-Poly1305 sealInPlace needs start <= end and end + 16 <= buffer length";
+    const open = "ChaCha20-Poly1305 openInPlace needs start <= end <= buffer length";
+    const buf = patterned(40);
+    expect(() => aead.sealInPlace(nonce, [], buf, 10, 5)).toThrow(
+      `${seal}, got start 10, end 5, length 40`,
+    );
+    expect(() => aead.sealInPlace(nonce, [], buf, 0, 30)).toThrow(seal);
+    expect(() => aead.sealInPlace(nonce, [], buf, 0, 50)).toThrow(seal);
+    expect(() => aead.openInPlace(nonce, [], buf, 30, 20)).toThrow(
+      `${open}, got start 30, end 20, length 40`,
+    );
+    expect(() => aead.openInPlace(nonce, [], buf, 0, 41)).toThrow(open);
+    expect(hexEncode(buf)).toBe(hexEncode(patterned(40)));
+    let caught = false;
+    try {
+      aead.sealInPlace(nonce, [], buf, 0, 25);
+    } catch (e) {
+      caught = e instanceof CryptoError;
+    }
+    expect(caught).toBe(true);
+    expect(hexEncode(buf)).toBe(hexEncode(patterned(40)));
+  });
 });
+
+// `n` bytes 0, 7, 14, ...: data a failed call must leave as it was.
+function patterned(n: usize): u8[] {
+  const out = Buffer.alloc(n);
+  for (let i: usize = 0; i < n; i++) {
+    out[i] = (i * 7) as u8;
+  }
+  return out;
+}

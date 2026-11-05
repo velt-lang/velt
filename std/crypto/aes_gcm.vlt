@@ -4,7 +4,7 @@
 // the scratch is kept, so sealing and opening in place allocate nothing.
 
 import { Aead } from "velt/crypto/aead";
-import { tagMatches, withRoom } from "velt/crypto/aead_tag";
+import { checkOpenRange, checkSealRange, tagMatches, withRoom } from "velt/crypto/aead_tag";
 import { aesCtrInPlace, aesExpandKey } from "velt/crypto/aes_ctr";
 import { CryptoError } from "velt/crypto/errors";
 import { Ghash } from "velt/crypto/ghash";
@@ -60,9 +60,13 @@ export class AesGcm implements Aead {
     return out;
   }
 
-  /** Encrypts `buf[start..end]` in place under `nonce` and writes the tag to `buf[end..end + 16]`. */
+  /**
+   * Encrypts `buf[start..end]` in place under `nonce` and writes the tag to `buf[end..end + 16]`;
+   * throws `CryptoError`, before writing anything, unless `start <= end` and the tag fits in `buf`.
+   */
   sealInPlace(nonce: u8[], aad: u8[], buf: u8[], start: usize, end: usize) {
     checkNonce(nonce);
+    checkSealRange("AES-GCM", buf, start, end);
     gcmCheckLength((end - start) as u64);
     aesCtrInPlace(this.skey, this.q, this.ks, nonce, 2, buf, start, end);
     this.tag(nonce, aad, buf, start, end);
@@ -73,10 +77,12 @@ export class AesGcm implements Aead {
 
   /**
    * Checks the tag `buf[end - 16..end]` and decrypts `buf[start..end - 16]` in place when it
-   * matches (true); false and `buf` unchanged otherwise.
+   * matches (true); false and `buf` unchanged otherwise. Throws `CryptoError` unless
+   * `start <= end <= buf.length`.
    */
   openInPlace(nonce: u8[], aad: u8[], buf: u8[], start: usize, end: usize): bool {
     checkNonce(nonce);
+    checkOpenRange("AES-GCM", buf, start, end);
     if (end < start + 16) {
       return false;
     }

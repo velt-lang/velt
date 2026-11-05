@@ -15,13 +15,15 @@ export interface Aead {
   open(nonce: u8[], sealed: u8[], aad?: u8[]): u8[] | null;
   /**
    * Encrypts `buf[start..end]` in place and writes the tag over `aad` and it to
-   * `buf[end..end + 16]` (`buf` must be that long). Allocates nothing.
+   * `buf[end..end + 16]`; throws `CryptoError`, before writing anything, unless `start <= end`
+   * and `buf` is that long. Allocates nothing.
    */
   sealInPlace(nonce: u8[], aad: u8[], buf: u8[], start: usize, end: usize): void;
   /**
    * Checks the tag in `buf[end - 16..end]` over `aad` and the ciphertext `buf[start..end - 16]`
    * and, when it matches, decrypts that ciphertext in place: true. False (and `buf` unchanged)
-   * for a wrong tag or fewer than 16 bytes. Allocates nothing.
+   * for a wrong tag or fewer than 16 bytes; throws `CryptoError` unless
+   * `start <= end <= buf.length`. Allocates nothing.
    */
   openInPlace(nonce: u8[], aad: u8[], buf: u8[], start: usize, end: usize): bool;
 }
