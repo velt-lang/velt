@@ -251,6 +251,21 @@ describe("Certificate", () => {
     expect(pss.signatureAlgorithm).toBe(SIG_UNKNOWN);
   });
 
+  it("reads an authorityKeyIdentifier and refuses stray bytes inside it", () => {
+    // The CA's subjectKeyIdentifier rewritten as an authorityKeyIdentifier of the same length:
+    // a [0] keyIdentifier, then (bad) an element AuthorityKeyIdentifier has no field for.
+    const ski = "0603551d0e0416041402a11f9b75bc74000b4387c2bf1879a7d531d958";
+    const aki = "0603551d230416301480" + "1202a11f9b75bc74000b4387c2bf1879a7d531";
+    const c = new Certificate(hexDecode(CA_DER.replace(ski, aki)));
+    expect(hexOf(c, c.authorityKeyId)).toBe("02a11f9b75bc74000b4387c2bf1879a7d531");
+    const serial = "0603551d230416301480" + "0f02a11f9b75bc74000b4387c2bf1879" + "820101";
+    expect(failure(hexDecode(CA_DER.replace(ski, serial)))).toBe("");
+    const stray = "0603551d230416301480" + "1002a11f9b75bc74000b4387c2bf1879a7" + "0500";
+    expect(broken(CA_DER, ski, stray)).toContain("stray bytes");
+    const garbage = "0603551d230416301480" + "1002a11f9b75bc74000b4387c2bf1879a7" + "ffff";
+    expect(broken(CA_DER, ski, garbage)).toContain("malformed certificate");
+  });
+
   it("skips an unknown extension that is not critical", () => {
     // extKeyUsage renamed to policyConstraints (2.5.29.36), which nobody reads.
     const hex = LEAF_DER.replace("0603551d25040c", "0603551d24040c");

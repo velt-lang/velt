@@ -61,11 +61,19 @@ export function readExtension(
   if (n == CE_SUBJECT_KEY_ID) {
     c.subjectKeyId = r.next(OCTET_STRING, end);
   } else if (n == CE_AUTHORITY_KEY_ID) {
+    // keyIdentifier [0], authorityCertIssuer [1] (GeneralNames) and authorityCertSerialNumber
+    // [2], each optional and in that order; nothing else may follow.
     const s = r.enter(SEQUENCE, end);
     if (r.peek(s.end) == 0x80) {
       c.authorityKeyId = r.next(0x80, s.end);
     }
-    r.pos = s.end;
+    if (r.peek(s.end) == 0xa1) {
+      r.next(0xa1, s.end);
+    }
+    if (r.peek(s.end) == 0x82) {
+      r.next(0x82, s.end);
+    }
+    r.done(s.end);
   } else if (n == CE_KEY_USAGE) {
     const ku = r.next(BIT_STRING, end);
     c.keyUsage = keyUsageBits(r, ku);
