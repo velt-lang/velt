@@ -1,0 +1,135 @@
+// velt/crypto (internal): X25519 Diffie-Hellman (RFC 7748 §5): the Montgomery ladder on
+// Curve25519's u-coordinate. Constant time: 255 ladder steps whatever the scalar, the scalar's
+// bits only drive a masked swap, and the inversion is a fixed chain.
+
+import { CryptoError } from "velt/crypto/errors";
+import { Fe25519 } from "velt/crypto/field25519";
+
+// The base point's u-coordinate, 9.
+const BASE: u8[] = [
+  9,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+];
+
+/**
+ * X25519 (RFC 7748): the shared secret of the 32-byte private `scalar` and the peer's 32-byte
+ * public `u`-coordinate. The scalar is clamped as the RFC says. Throws `CryptoError` for a
+ * wrong length or when the result is all zeros (a small-order peer point, which TLS must
+ * reject, RFC 8446 §7.4.2).
+ */
+export function x25519(scalar: u8[], u: u8[]): u8[] {
+  if (scalar.length != 32 || u.length != 32) {
+    throw new CryptoError(
+      `X25519 needs a 32-byte scalar and a 32-byte point, got ${scalar.length} and ${u.length}`,
+    );
+  }
+  const out = ladder(scalar, u);
+  let any: u8 = 0;
+  for (let i: usize = 0; i < 32; i++) {
+    any |= out[i];
+  }
+  if (any == 0) {
+    throw new CryptoError("X25519 produced the all-zero shared secret (small-order point)");
+  }
+  return out;
+}
+
+/** The X25519 public key (the base point times the clamped 32-byte private `scalar`). */
+export function x25519PublicKey(scalar: u8[]): u8[] {
+  if (scalar.length != 32) {
+    throw new CryptoError(`X25519 needs a 32-byte scalar, got ${scalar.length}`);
+  }
+  return ladder(scalar, BASE);
+}
+
+// Registers of the ladder's field elements.
+const X1: usize = 0;
+const X2: usize = 1;
+const Z2: usize = 2;
+const X3: usize = 3;
+const Z3: usize = 4;
+const A: usize = 5;
+const AA: usize = 6;
+const B: usize = 7;
+const BB: usize = 8;
+const E: usize = 9;
+const C: usize = 10;
+const D: usize = 11;
+const A24: usize = 12;
+const SCRATCH: usize = 13;
+
+// RFC 7748 §5's ladder, with a24 = 121665.
+function ladder(scalar: u8[], u: u8[]): u8[] {
+  const k = scalar.slice();
+  k[0] &= 248;
+  k[31] &= 127;
+  k[31] |= 64;
+  const f = new Fe25519(SCRATCH + 5);
+  f.decode(X1, u);
+  f.set(X2, 1);
+  f.copy(X3, X1);
+  f.set(Z3, 1);
+  f.set(A24, 121665);
+  let swap: i64 = 0;
+  for (let i: usize = 0; i < 255; i++) {
+    const pos = 254 - i;
+    const bit = ((k[pos >> 3] >> ((pos & 7) as u8)) & 1) as i64;
+    swap ^= bit;
+    f.swap(X2, X3, swap);
+    f.swap(Z2, Z3, swap);
+    swap = bit;
+    f.add(A, X2, Z2);
+    f.mul(AA, A, A);
+    f.sub(B, X2, Z2);
+    f.mul(BB, B, B);
+    f.sub(E, AA, BB);
+    f.add(C, X3, Z3);
+    f.sub(D, X3, Z3);
+    f.mul(D, D, A); // DA
+    f.mul(C, C, B); // CB
+    f.add(X3, D, C);
+    f.mul(X3, X3, X3);
+    f.sub(Z3, D, C);
+    f.mul(Z3, Z3, Z3);
+    f.mul(Z3, Z3, X1);
+    f.mul(X2, AA, BB);
+    f.mul(Z2, E, A24);
+    f.add(Z2, Z2, AA);
+    f.mul(Z2, Z2, E);
+  }
+  f.swap(X2, X3, swap);
+  f.swap(Z2, Z3, swap);
+  f.invert(A, Z2, SCRATCH);
+  f.mul(X2, X2, A);
+  return f.encode(X2);
+}

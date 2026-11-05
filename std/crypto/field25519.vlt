@@ -1,0 +1,220 @@
+// velt/crypto (internal): arithmetic mod p = 2^255 - 19 for X25519, in ten signed limbs of 26
+// and 25 bits alternately (radix 2^25.5, as ref10). Every product of two limbs fits an `i64`
+// with room for the ten-term sums, so no 128-bit arithmetic is needed. Constant time: the
+// loops and branches depend only on limb positions, never on limb values.
+//
+// The elements live in one array of registers (ten limbs each) inside `Fe25519`, so operations
+// name registers by number and `mul(a, a, a)` squares in place: arrays passed separately could
+// not alias that way.
+//
+// Bounds: `mul` takes inputs whose limbs are at most 2^27 in magnitude (a reduced element, or
+// the sum or difference of two) and returns limbs below 2^26 (2^25 + a little for limb 1).
+
+/** Bits in limb `i`: 26 for even limbs, 25 for odd ones. */
+function width(i: usize): i64 {
+  return (i & 1) == 0 ? 26 : 25;
+}
+
+/** `n` registers of field elements mod 2^255 - 19, all zero, with the scratch `mul` needs. */
+export class Fe25519 {
+  private r: i64[];
+  private t: i64[];
+
+  /** `n` registers, each zero. */
+  constructor(n: usize) {
+    this.r = [];
+    for (let i: usize = 0; i < 10 * n; i++) {
+      this.r.push(0);
+    }
+    this.t = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  }
+
+  /** Register `d` = the small non-negative constant `x`. */
+  set(d: usize, x: i64) {
+    for (let i: usize = 0; i < 10; i++) {
+      this.r[10 * d + i] = i == 0 ? x : 0;
+    }
+  }
+
+  /** Register `d` = register `a`. */
+  copy(d: usize, a: usize) {
+    for (let i: usize = 0; i < 10; i++) {
+      this.r[10 * d + i] = this.r[10 * a + i];
+    }
+  }
+
+  /** `d = a + b`, limb by limb (no carry). */
+  add(d: usize, a: usize, b: usize) {
+    for (let i: usize = 0; i < 10; i++) {
+      this.r[10 * d + i] = this.r[10 * a + i] + this.r[10 * b + i];
+    }
+  }
+
+  /** `d = a - b`, limb by limb (no carry; limbs may go negative). */
+  sub(d: usize, a: usize, b: usize) {
+    for (let i: usize = 0; i < 10; i++) {
+      this.r[10 * d + i] = this.r[10 * a + i] - this.r[10 * b + i];
+    }
+  }
+
+  /**
+   * `d = a * b` mod p (`d` may be `a` or `b`). Limb products whose positions add past 9 wrap
+   * around times 19 (2^255 = 19 mod p); two odd limbs' product counts twice (each is 2^0.5
+   * short of the radix).
+   */
+  mul(d: usize, a: usize, b: usize) {
+    const t = this.t;
+    for (let k: usize = 0; k < 10; k++) {
+      t[k] = 0;
+    }
+    for (let i: usize = 0; i < 10; i++) {
+      const fi = this.r[10 * a + i];
+      for (let j: usize = 0; j < 10; j++) {
+        let p = fi * this.r[10 * b + j];
+        if ((i & j & 1) == 1) {
+          p *= 2;
+        }
+        if (i + j >= 10) {
+          t[i + j - 10] += p * 19;
+        } else {
+          t[i + j] += p;
+        }
+      }
+    }
+    carry(t);
+    for (let k: usize = 0; k < 10; k++) {
+      this.r[10 * d + k] = t[k];
+    }
+  }
+
+  /** `d = a^(2^n)` (n squarings, n >= 1). */
+  squareN(d: usize, a: usize, n: usize) {
+    this.mul(d, a, a);
+    for (let i: usize = 1; i < n; i++) {
+      this.mul(d, d, d);
+    }
+  }
+
+  /**
+   * `d = 1 / a` (0 for 0): a^(p - 2) by ref10's fixed chain of 254 squarings and 11 products.
+   * Uses registers `s` to `s + 4` as scratch (none of them `d` or `a`).
+   */
+  invert(d: usize, a: usize, s: usize) {
+    const z2 = s;
+    const z9 = s + 1;
+    const z11 = s + 2;
+    const b = s + 3;
+    const c = s + 4;
+    this.mul(z2, a, a);
+    this.squareN(b, z2, 2);
+    this.mul(z9, b, a);
+    this.mul(z11, z9, z2);
+    this.mul(b, z11, z11);
+    this.mul(z2, b, z9); // 2^5 - 1 (z2 is free again)
+    this.squareN(b, z2, 5);
+    this.mul(b, b, z2); // 2^10 - 1
+    this.squareN(c, b, 10);
+    this.mul(c, c, b); // 2^20 - 1
+    this.squareN(d, c, 20);
+    this.mul(d, d, c); // 2^40 - 1
+    this.squareN(d, d, 10);
+    this.mul(z2, d, b); // 2^50 - 1
+    this.squareN(b, z2, 50);
+    this.mul(b, b, z2); // 2^100 - 1
+    this.squareN(c, b, 100);
+    this.mul(c, c, b); // 2^200 - 1
+    this.squareN(c, c, 50);
+    this.mul(c, c, z2); // 2^250 - 1
+    this.squareN(c, c, 5);
+    this.mul(d, c, z11); // 2^255 - 21
+  }
+
+  /** Swaps registers `a` and `b` when `swap` is 1, leaves them when it is 0, without a branch. */
+  swap(a: usize, b: usize, swap: i64) {
+    const mask = 0 - swap;
+    for (let i: usize = 0; i < 10; i++) {
+      const x = (this.r[10 * a + i] ^ this.r[10 * b + i]) & mask;
+      this.r[10 * a + i] ^= x;
+      this.r[10 * b + i] ^= x;
+    }
+  }
+
+  /**
+   * Register `d` = the element of 32 little-endian bytes, the top bit ignored (RFC 7748 §5):
+   * limb 9 takes bits 230..254 only.
+   */
+  decode(d: usize, b: u8[]) {
+    const w: u64[] = [0, 0, 0, 0];
+    for (let i: usize = 0; i < 32; i++) {
+      w[i >> 3] |= (b[i] as u64) << (((i & 7) * 8) as u64);
+    }
+    let off: usize = 0;
+    for (let i: usize = 0; i < 10; i++) {
+      const n = width(i) as usize;
+      const sh = (off & 63) as u64;
+      let v = w[off >> 6] >> sh;
+      if ((off & 63) + n > 64) {
+        v |= w[(off >> 6) + 1] << (64 - sh);
+      }
+      this.r[10 * d + i] = (v & (((1 as u64) << (n as u64)) - 1)) as i64;
+      off += n;
+    }
+  }
+
+  /** The canonical 32 little-endian bytes of register `a` (fully reduced mod p). */
+  encode(a: usize): u8[] {
+    const h = this.r.slice((10 * a) as i64, (10 * a + 10) as i64);
+    return encodeLimbs(h);
+  }
+}
+
+/** Carries `t` so each limb fits its width again (limb 1 may keep a few extra bits). */
+function carry(t: i64[]) {
+  for (let i: usize = 0; i < 9; i++) {
+    const w = width(i);
+    const c = t[i] >> w;
+    t[i + 1] += c;
+    t[i] -= c << w;
+  }
+  const c9 = t[9] >> 25;
+  t[9] -= c9 << 25;
+  t[0] += c9 * 19;
+  const c0 = t[0] >> 26;
+  t[0] -= c0 << 26;
+  t[1] += c0;
+}
+
+// The canonical bytes of the limbs `h` (changed on the way).
+function encodeLimbs(h: i64[]): u8[] {
+  carry(h);
+  carry(h);
+  // q = 1 when h >= p: adding 19 then carries out of bit 255.
+  let q = (h[0] + 19) >> 26;
+  for (let i: usize = 1; i < 10; i++) {
+    q = (h[i] + q) >> width(i);
+  }
+  h[0] += 19 * q;
+  for (let i: usize = 0; i < 9; i++) {
+    const w = width(i);
+    const c = h[i] >> w;
+    h[i + 1] += c;
+    h[i] -= c << w;
+  }
+  h[9] &= (1 << 25) - 1;
+  const w: u64[] = [0, 0, 0, 0];
+  let off: usize = 0;
+  for (let i: usize = 0; i < 10; i++) {
+    const v = h[i] as u64;
+    const sh = (off & 63) as u64;
+    w[off >> 6] |= v << sh;
+    if ((off & 63) + (width(i) as usize) > 64) {
+      w[(off >> 6) + 1] |= v >> (64 - sh);
+    }
+    off += width(i) as usize;
+  }
+  const out = Buffer.alloc(32);
+  for (let i: usize = 0; i < 32; i++) {
+    out[i] = ((w[i >> 3] >> (((i & 7) * 8) as u64)) & 0xff) as u8;
+  }
+  return out;
+}
