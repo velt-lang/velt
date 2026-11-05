@@ -162,9 +162,15 @@ describe("a new request made from a received one", () => {
       const text = await copy.text();
       return new Response(`${used} ${copy.headers.get("x-added")} ${text}`);
     });
-    const res = await fetch(`http://127.0.0.1:${server.port}/`, { method: "POST", body: "hello" });
-    expect(await res.text()).toBe("true 1 hello");
-    await server.shutdown();
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/`, {
+        method: "POST",
+        body: "hello",
+      });
+      expect(await res.text()).toBe("true 1 hello");
+    } finally {
+      await server.shutdown();
+    }
   });
 
   it("works without a body", async () => {
@@ -172,8 +178,11 @@ describe("a new request made from a received one", () => {
       const copy = new Request(req);
       return new Response(`${copy.method} ${await copy.text()}|`);
     });
-    const res = await fetch(`http://127.0.0.1:${server.port}/`);
-    expect(await res.text()).toBe("GET |");
-    await server.shutdown();
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/`);
+      expect(await res.text()).toBe("GET |");
+    } finally {
+      await server.shutdown();
+    }
   });
 });
