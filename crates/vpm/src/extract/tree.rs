@@ -7,9 +7,6 @@ use std::collections::{BTreeMap, HashMap};
 use super::names::{self, clash_key};
 use super::Limits;
 
-/// The most bytes all paths and the directories above them may add up to.
-const MAX_NAME_BYTES: usize = 64 << 20;
-
 /// One entry, as an archive gives it.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(super) enum Entry {
@@ -41,6 +38,10 @@ pub struct Tree {
     bytes: u64,
     /// The bytes of every path (and directory above one) recorded.
     names: usize,
+    /// The work the tree cost: one per path claimed, one more per clash key computed. The tests
+    /// bound it.
+    #[cfg(test)]
+    pub(super) work: usize,
 }
 
 impl Tree {
@@ -52,6 +53,8 @@ impl Tree {
             entries: 0,
             bytes: 0,
             names: 0,
+            #[cfg(test)]
+            work: 0,
         }
     }
 
@@ -114,7 +117,12 @@ impl Tree {
 
     /// Put `node` at `path`, with every directory above it.
     fn place(&mut self, path: &str, node: Node) -> Result<(), String> {
-        let mut end = 0;
+        // A parent already placed as a directory had its own parents placed then: walking them
+        // again for every entry under one deep directory would cost time quadratic in its depth.
+        let parent_known = path
+            .rsplit_once('/')
+            .is_some_and(|(parent, _)| self.nodes.get(parent) == Some(&Node::Dir));
+        let mut end = if parent_known { path.len() } else { 0 };
         while let Some(slash) = path[end..].find('/') {
             end += slash;
             self.claim(&path[..end], &Node::Dir)?;
@@ -127,6 +135,18 @@ impl Tree {
 
     /// Record that `path` is `node`'s kind, refusing a clash with a path already there.
     fn claim(&mut self, path: &str, node: &Node) -> Result<(), String> {
+        #[cfg(test)]
+        {
+            self.work += 1;
+        }
+        // A directory listed again (or above another entry) is settled without its key.
+        if *node == Node::Dir && self.nodes.get(path) == Some(&Node::Dir) {
+            return Ok(());
+        }
+        #[cfg(test)]
+        {
+            self.work += 1;
+        }
         let key = clash_key(path);
         match self.keys.get(&key) {
             Some(other) if other != path => {
@@ -165,10 +185,10 @@ impl Tree {
         // Every directory above a path is recorded too: deep paths with new prefixes would cost
         // memory quadratic in their length, which no file size counts.
         self.names += path.len();
-        if self.names > MAX_NAME_BYTES {
+        if self.names > self.limits.names {
             return Err(format!(
-                "its paths add up to more than {} MiB",
-                MAX_NAME_BYTES >> 20
+                "its paths add up to more than {} KiB",
+                self.limits.names >> 10
             ));
         }
         self.keys.insert(key, path.to_string());
@@ -210,9 +230,10 @@ impl Tree {
 
 /// How many links one lookup may pass through (Linux's limit).
 const MAX_LINK_DEPTH: usize = 40;
-/// How many path segments following every link of an archive may take: links to links with long
-/// targets multiply (`b` → `a/a/…`, `c` → `b/b/…`).
-const MAX_LINK_STEPS: usize = 1_000_000;
+/// How much work following every link of an archive may take, in bytes looked at (each step
+/// costs its segment and the key it looks up): links to links with long targets multiply (`b` →
+/// `a/a/…`, `c` → `b/b/…`), and so do long keys.
+const MAX_LINK_STEPS: usize = 64 << 20;
 
 /// Where a link lookup is: the [`clash_key`] of the path so far, kept segment by segment (a
 /// path's key is its segments' keys joined by `/`, which never composes or changes case), so a
@@ -267,7 +288,7 @@ fn resolve(
         ));
     }
     for segment in target.split('/') {
-        *steps += 1;
+        *steps += 1 + segment.len() + walk.key.len();
         if *steps > MAX_LINK_STEPS {
             return Err("takes too many steps to follow, with the archive's other links".into());
         }

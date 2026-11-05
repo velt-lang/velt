@@ -6,6 +6,7 @@ const SMALL: Limits = Limits {
     total: 4 << 20,
     entries: 10,
     ratio: 200,
+    names: 1 << 20,
 };
 
 /// [`SMALL`] without the ratio, for archives of repeated bytes.

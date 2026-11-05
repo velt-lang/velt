@@ -44,14 +44,18 @@ pub struct Limits {
     /// Unpacked bytes per archive byte, past the first MiB: deflate reaches about 1000, real
     /// source archives 5-20.
     pub ratio: u64,
+    /// The bytes of every path, and of every directory above one, together: deep paths with new
+    /// prefixes cost memory and time no file size counts.
+    pub names: usize,
 }
 
 impl Limits {
-    /// 512 MiB, 100,000 entries, a ratio of 200.
+    /// 512 MiB, 100,000 entries, a ratio of 200, 64 MiB of names.
     pub const DEFAULT: Limits = Limits {
         total: 512 << 20,
         entries: 100_000,
         ratio: 200,
+        names: 64 << 20,
     };
 
     /// `Err` when `unpacked` bytes from an archive of `packed` bytes are more than allowed.
@@ -180,16 +184,15 @@ fn staging(dest: &Path) -> Result<PathBuf, String> {
 }
 
 fn write_into(tree: &Tree, root: &Path, links: Links) -> Result<(), String> {
-    // Paths are sorted, so a directory comes before what is in it, and no path is under a link
-    // (`Tree::add`), so nothing is written through one.
+    // Every directory above a path is a node of its own and paths are sorted, so a directory is
+    // made before what is in it, and each is made new (`create_dir`, `create_new`): a name the
+    // filesystem takes for one already there (a case or Unicode fold the clash key doesn't
+    // know, an 8.3 name) is an error, never a write through what is there.
     for (path, node) in tree.nodes() {
         let out = root.join(path);
         let fail = |e: std::io::Error| format!("cannot write `{}`: {e}", out.display());
-        if let Some(parent) = out.parent() {
-            std::fs::create_dir_all(parent).map_err(fail)?;
-        }
         match node {
-            Node::Dir => std::fs::create_dir_all(&out).map_err(fail)?,
+            Node::Dir => std::fs::create_dir(&out).map_err(fail)?,
             Node::File(bytes) => write_new(&out, bytes).map_err(fail)?,
             Node::Link(target) => match links {
                 Links::Files => write_new(&out, target.as_bytes()).map_err(fail)?,

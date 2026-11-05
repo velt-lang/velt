@@ -34,13 +34,19 @@ fn long_names_come_from_pax_gnu_and_ustar_prefixes() {
 }
 
 #[test]
-fn a_global_pax_header_is_ignored_unless_it_names_a_path() {
+fn a_global_pax_header_is_ignored() {
     // `git archive` writes the commit in one.
     let git = TarBuilder::default()
         .pax(b'g', &[("comment", "0123abcd")])
         .file("a", b"")
         .gz();
     assert_eq!(nodes(&git).len(), 1);
+    // A path in one renames nothing: only an entry's own (`x`) header does.
+    let named = TarBuilder::default()
+        .pax(b'g', &[("path", "elsewhere")])
+        .file("a", b"")
+        .gz();
+    assert_eq!(nodes(&named), [("a".to_string(), Node::File(vec![]))]);
     let sized = TarBuilder::default()
         .pax(b'x', &[("size", "99999999999")])
         .file("a", b"")

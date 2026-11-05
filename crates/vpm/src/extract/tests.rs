@@ -1,5 +1,6 @@
 //! Archives built byte by byte, so each refusal can be given exactly the input it is about.
 
+mod hostile;
 mod limits;
 mod links;
 mod mutate;

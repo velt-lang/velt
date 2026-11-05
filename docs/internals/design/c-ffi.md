@@ -486,11 +486,14 @@ the first bytes). It reads the whole tree and checks it before writing anything:
   when they leave the tree. A hard link becomes a copy of an earlier file.
 - **Entry types and formats:** it refuses devices, FIFOs, sparse files, and encrypted, zip64 or
   multi-disk zips. It also refuses a zip whose local header disagrees with its central directory,
-  or whose entries share data.
+  whose entries share data, or that has bytes no entry accounts for. All of this is checked for
+  every entry before anything is decompressed.
 - **Limits:** unpacked size, entry count and the compression ratio are enforced while
-  decompressing. The bytes of all paths, and the steps taken following links, are capped too.
+  decompressing. The bytes of all paths, and the bytes looked at while following links, are
+  capped too.
 - **Writing:** it writes into a staging directory beside the destination, then renames that into
-  place. Modes and timestamps are ignored. On Windows, links are written as files holding their
+  place. Every directory and file is created new, never through what is already on disk, so a
+  name the filesystem folds in a way the clash key doesn't know is an error, not an escape. Modes and timestamps are ignored. On Windows, links are written as files holding their
   target, as git's `core.symlinks=false` does, so `git::tree_checksum` gives one archive one
   checksum on every OS.
 

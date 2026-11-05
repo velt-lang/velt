@@ -27,11 +27,15 @@ const FLAG_MASKED_HEADER: u16 = 1 << 13;
 /// The longest link target read from an entry's data.
 const MAX_LINK: u32 = 4096;
 
-/// Add the entries of the `.zip` `archive` to `tree`.
+/// Add the entries of the `.zip` `archive` to `tree`. Everything that can be checked without
+/// decompressing is checked first, for every entry: the central directory, each local header,
+/// the declared sizes against the limits, and that the entries tile the archive (no overlap, no
+/// gap before or between them), so a hostile zip costs nothing to refuse.
 pub(super) fn read(archive: &[u8], limits: Limits, tree: &mut Tree) -> Result<(), String> {
     let z = Zip { b: archive };
     let (count, cd_start, cd_end) = z.end_of_central_directory()?;
     let mut at = cd_start;
+    let mut entries = vec![];
     let mut regions = vec![];
     let mut unpacked: u64 = 0;
     for _ in 0..count {
@@ -41,20 +45,51 @@ pub(super) fn read(archive: &[u8], limits: Limits, tree: &mut Tree) -> Result<()
         }
         at = c.next;
         let name = c.name()?;
-        let named = |why: String| format!("`{}`: {why}", name.escape_debug());
         unpacked = unpacked.saturating_add(c.size as u64);
         limits.check_size(unpacked, archive.len())?;
-        let (start, end) = z.local(&c, cd_start).map_err(named)?;
+        let (start, end) = z
+            .local(&c, cd_start)
+            .map_err(|why| format!("`{}`: {why}", name.escape_debug()))?;
         regions.push((c.offset as usize, end));
-        let entry = z.entry(&c, &name, start).map_err(named)?;
-        tree.add(&name, entry, archive.len())?;
+        entries.push((c, name, start));
     }
     if at != cd_end {
         return Err("the zip's central directory has data after its last entry".to_string());
     }
+    check_regions(regions, cd_start)?;
+    for (c, name, start) in entries {
+        let entry = z
+            .entry(&c, &name, start)
+            .map_err(|why| format!("`{}`: {why}", name.escape_debug()))?;
+        tree.add(&name, entry, archive.len())?;
+    }
+    Ok(())
+}
+
+/// The entries' regions (local header to the end of the data or descriptor) must tile the
+/// archive from its start to the central directory: an overlap shares data (the overlapping-files
+/// bomb), and a gap holds bytes no entry accounts for (a prepended stub, or a hidden entry
+/// another tool would read).
+fn check_regions(mut regions: Vec<(usize, usize)>, cd_start: usize) -> Result<(), String> {
     regions.sort_unstable();
-    if regions.windows(2).any(|w| w[1].0 < w[0].1) {
-        return Err("two entries of the zip share data (a zip bomb?)".to_string());
+    let mut end = 0;
+    for (start, stop) in regions {
+        if start < end {
+            return Err("two entries of the zip share data (a zip bomb?)".to_string());
+        }
+        if start > end {
+            return Err(format!(
+                "the zip has {} bytes before or between its entries that no entry accounts for",
+                start - end
+            ));
+        }
+        end = stop;
+    }
+    if end != cd_start {
+        return Err(format!(
+            "the zip has {} bytes between its last entry and its central directory",
+            cd_start - end
+        ));
     }
     Ok(())
 }

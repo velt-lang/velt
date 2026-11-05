@@ -52,6 +52,7 @@ fn check(archive: &[u8]) {
         total: 1 << 20,
         entries: 1000,
         ratio: 1000,
+        names: 1 << 20,
     };
     let Ok(tree) = read(archive, limits) else {
         return;

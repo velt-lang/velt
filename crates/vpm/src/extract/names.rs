@@ -131,9 +131,13 @@ pub(super) fn check_link_target(target: &str) -> Result<(), String> {
 
 /// The same string for two paths that macOS or Windows would take for one file: the path in
 /// Unicode normalisation form C, case-folded. Uppercasing before lowercasing folds what
-/// lowercasing alone keeps apart (`ſ` and `s`, `ς` and `σ`, which APFS takes for one name).
+/// lowercasing alone keeps apart (`ſ` and `s`, `ς` and `σ`, which APFS takes for one name), and
+/// a second round folds what one round leaves apart (`ẞ` lowercases to `ß`, which uppercases to
+/// `SS`). Writing never goes through what is on disk (`write_into`), so a fold this misses is
+/// an error, not an escape.
 pub(super) fn clash_key(path: &str) -> String {
     const NFC: ComposingNormalizerBorrowed<'static> = ComposingNormalizerBorrowed::new_nfc();
-    let folded = NFC.normalize(path).to_uppercase().to_lowercase();
-    NFC.normalize(&folded).into_owned()
+    let once = NFC.normalize(path).to_uppercase().to_lowercase();
+    let twice = once.to_uppercase().to_lowercase();
+    NFC.normalize(&twice).into_owned()
 }

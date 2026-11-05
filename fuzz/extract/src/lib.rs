@@ -13,6 +13,7 @@ const LIMITS: Limits = Limits {
     total: 4 << 20,
     entries: 2000,
     ratio: 1000,
+    names: 1 << 20,
 };
 
 pub fn check(data: &[u8]) {
