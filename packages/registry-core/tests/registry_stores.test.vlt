@@ -137,6 +137,18 @@ describe("the lock", () => {
         expect(answer.status == 401 || answer.status == 403).toBe(true);
       }
     }
+    // The other spelling of a published package's name shares its lock, and isn't published: any
+    // valid token passes the owner check for it, so the lock has to wait for the name to exist.
+    for (const token of [r.user("bob"), r.user("alice")]) {
+      for (const [method, path] of [
+        ["PUT", "my_lib/1.0.0/yank"],
+        ["DELETE", "my_lib/1.0.0/yank"],
+        ["PUT", "my_lib/owners/bob"],
+        ["DELETE", "my_lib/owners/alice"],
+      ]) {
+        expect((await r.call(method, path, token)).status).toBe(404);
+      }
+    }
     expect(lock.keys).toEqual([]);
   });
 
@@ -147,10 +159,6 @@ describe("the lock", () => {
     expect((await r.call("PUT", "my-lib/owners/bob", alice)).status).toBe(200);
     const key = normalizedName("my-lib");
     expect(lock.keys).toEqual([key, key]);
-    // `my_lib` is the same name as far as the registry counts.
-    lock.keys = [];
-    await r.call("PUT", "my_lib/1.0.0/yank", alice);
-    expect(lock.keys).toEqual([key]);
   });
 
   it("is no help to an owner removed while waiting for it", async () => {
@@ -165,8 +173,10 @@ describe("the lock", () => {
       // Another write holds the lock while carol, still an owner, gets past the first check.
       const other = await lock.acquire(key);
       const waiting = r.call(method, path, r.user("carol"));
-      // timing: only waits for the call to reach the lock; nothing orders by how long.
+      // timing: only waits for the call to reach the lock; the deadline is a hang guard.
+      const deadline = Date.now() + 60000;
       while (lock.keys.length < 2) {
+        expect(Date.now() < deadline).toBe(true);
         await sleep(1);
       }
       await r.db.putOwners("my-lib", ["alice"]);
