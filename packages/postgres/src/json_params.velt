@@ -1,0 +1,168 @@
+// postgres (internal): parameters as JSON text, for the types `writeParams` can't hand over value by
+// value (a union, an optional member, an `i64[]` for a `bytea`): `JSON.stringify(params)` read into the
+// same `Encoder`, so the values bind alike either way. `JSON.stringify` wrote the text, so it is well
+// formed. An object binds by name, an array by position, anything else as one value.
+
+import { Encoder } from "./encoder";
+
+const BLOB_MESSAGE = "arrays bind as blobs and must hold only integers 0-255 (a u8[])";
+
+/** One value set as JSON text (see the module header). */
+export class JsonParams {
+  private text: string;
+  private at: usize = 0;
+
+  constructor(text: string) {
+    this.text = text;
+  }
+
+  private peek(): string {
+    return this.at < this.text.length ? this.text.charAt(this.at as i64) : "";
+  }
+
+  // The end of the string starting at `at`, past its closing quote.
+  private stringEnd(): usize {
+    let i = this.at + 1;
+    while (i < this.text.length) {
+      const c = this.text.charAt(i as i64);
+      if (c == '"') {
+        return i + 1;
+      }
+      i += c == "\\" ? 2 : 1;
+    }
+    return i;
+  }
+
+  // The end of the number or word starting at `at`.
+  private tokenEnd(): usize {
+    let i = this.at;
+    while (i < this.text.length) {
+      const c = this.text.charAt(i as i64);
+      if (c == "," || c == "}" || c == "]") {
+        return i;
+      }
+      i++;
+    }
+    return i;
+  }
+
+  private string(): string {
+    const end = this.stringEnd();
+    const quoted = this.text.slice(this.at as i64, end as i64);
+    this.at = end;
+    try {
+      return JSON.parse<string>(quoted);
+    } catch (e) {
+      panic("ICE: postgres: JSON.stringify wrote a string JSON.parse refuses");
+    }
+  }
+
+  // An array of integers 0-255 at `at` goes as a blob; an error otherwise.
+  private bytes(to: Encoder): string | null {
+    this.at++;
+    const out: u8[] = [];
+    while (this.peek() != "]") {
+      const end = this.tokenEnd();
+      const n = Number(this.text.slice(this.at as i64, end as i64));
+      if (!(n >= 0 && n <= 255 && Math.trunc(n) == n)) {
+        return BLOB_MESSAGE;
+      }
+      out.push(n as u8);
+      this.at = end;
+      if (this.peek() == ",") {
+        this.at++;
+      }
+    }
+    this.at++;
+    to.blob(out);
+    return null;
+  }
+
+  // Hands the value at `at` to `to`; what's wrong with it, or null.
+  private value(to: Encoder): string | null {
+    const c = this.peek();
+    if (c == '"') {
+      to.text(this.string());
+      return null;
+    }
+    if (c == "[") {
+      return this.bytes(to);
+    }
+    if (c == "{") {
+      return "nested objects cannot be bound as parameters";
+    }
+    const end = this.tokenEnd();
+    const word = this.text.slice(this.at as i64, end as i64);
+    this.at = end;
+    if (word == "true" || word == "false") {
+      to.bool(word == "true");
+    } else if (word == "null") {
+      to.null();
+    } else if (word.includes(".") || word.includes("e") || word.includes("E")) {
+      to.float(Number(word));
+    } else {
+      const exact = integer(word);
+      if (exact != null) {
+        to.int(exact);
+      } else {
+        to.float(Number(word));
+      }
+    }
+    return null;
+  }
+
+  /** Hands the values to `to`; what's wrong with them, or null. */
+  bindTo(to: Encoder): string | null {
+    if (this.peek() == "{") {
+      to.object();
+      this.at++;
+      while (this.peek() != "}") {
+        const key = this.string();
+        this.at++;
+        to.name(key);
+        const wrong = this.value(to);
+        if (wrong != null) {
+          return `parameter "${key}": ${wrong}`;
+        }
+        if (this.peek() == ",") {
+          this.at++;
+        }
+      }
+      return null;
+    }
+    if (this.peek() == "[") {
+      this.at++;
+      let i: usize = 0;
+      while (this.peek() != "]") {
+        i++;
+        const wrong = this.value(to);
+        if (wrong != null) {
+          return `parameter ${i}: ${wrong}`;
+        }
+        if (this.peek() == ",") {
+          this.at++;
+        }
+      }
+      return null;
+    }
+    return this.value(to);
+  }
+}
+
+// The integer `word` spells, if it fits an `i64`: built as a negative number, whose range holds
+// i64's minimum.
+function integer(word: string): i64 | null {
+  const negative = word.startsWith("-");
+  let n: i64 = 0;
+  for (let i: i64 = negative ? 1 : 0; i < (word.length as i64); i++) {
+    const d = (word.charCodeAt(i) as i64) - 48;
+    if (n < (-9223372036854775807 - 1 + d) / 10) {
+      return null;
+    }
+    n = n * 10 - d;
+  }
+  if (negative) {
+    return n;
+  }
+  return n == -9223372036854775807 - 1 ? null : -n;
+}

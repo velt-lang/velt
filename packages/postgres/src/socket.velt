@@ -1,0 +1,142 @@
+// postgres (internal): the socket under a connection.
+//
+// TLS: PostgreSQL 17's direct negotiation is what velt/net can do, a TLS connection from its first
+// byte with the ALPN protocol "postgresql". The older `SSLRequest` needs a plain socket to turn into a
+// TLS one, and velt/net has no such upgrade; nor can it accept a certificate unchecked. So `require`
+// and `verify-ca` are as strict as `verify-full` here. `prefer` asks with `SSLRequest` whether the
+// server has TLS at all: if it says no the connection goes on in plain text, as ever, and if yes it
+// reopens with TLS. A server whose TLS can't be used this way fails with "ETLS", naming the choices
+// (README.md, "TLS").
+
+import { IoError } from "velt/io";
+import { connect as tcpConnect, connectTls, TcpStream, TlsConnectOptions } from "velt/net";
+import { timeout, TimeoutError } from "velt/task";
+import { PgConfig, SSL_DISABLE, SSL_PREFER } from "./config";
+import { errorOf, PgError } from "./errors";
+import { connectionClosed, Failure, failure } from "./failure";
+import { Out, sslRequest } from "./frontend";
+
+// The ALPN protocol direct TLS needs.
+const POSTGRES_ALPN = "postgresql";
+
+// What a timed out `SSLRequest` reports.
+const HANDSHAKE_MS: i64 = 30000;
+
+function tlsFailure(host: string, why: string): Failure {
+  return failure(
+    "ETLS",
+    `TLS to ${host} failed: ${why} (velt/net connects with direct TLS, which needs PostgreSQL 17 or later and a certificate the name and sslrootcert verify; or use sslmode=disable)`,
+  );
+}
+
+/** `host:port`, an IPv6 host in brackets. */
+export function addressOf(host: string, port: i64): string {
+  return host.includes(":") ? `[${host}]:${port}` : `${host}:${port}`;
+}
+
+/** What a failure to connect or read is, as `PgError`. */
+export function ioError(e: Error): PgError {
+  if (e instanceof TimeoutError) {
+    return new PgError("ETIMEDOUT", "connection timed out");
+  }
+  if (e instanceof IoError) {
+    return new PgError(e.code, e.message);
+  }
+  if (e instanceof PgError) {
+    return e;
+  }
+  return new PgError("UNKNOWN", e.message);
+}
+
+// Connects without TLS.
+async function plainSocket(c: PgConfig, address: string): Promise<TcpStream> throws PgError {
+  try {
+    if (c.connectTimeoutMs > 0) {
+      return await timeout(tcpConnect(address), c.connectTimeoutMs);
+    }
+    return await tcpConnect(address);
+  } catch (e) {
+    throw ioError(e);
+  }
+}
+
+// Connects with direct TLS.
+async function tlsSocket(
+  c: PgConfig,
+  address: string,
+  name: string,
+): Promise<TcpStream> throws PgError {
+  const opts: TlsConnectOptions = { serverName: name, ca: c.rootCert, alpn: [POSTGRES_ALPN] };
+  try {
+    if (c.connectTimeoutMs > 0) {
+      return await timeout(connectTls(address, opts), c.connectTimeoutMs);
+    }
+    return await connectTls(address, opts);
+  } catch (e) {
+    if (
+      e instanceof IoError &&
+      (e.code == "ECONNREFUSED" || e.code == "ETIMEDOUT" || e.code == "ENOTFOUND")
+    ) {
+      throw ioError(e);
+    }
+    if (e instanceof TimeoutError) {
+      throw ioError(e);
+    }
+    throw errorOf(tlsFailure(name, e.message));
+  }
+}
+
+// Asks a plain socket whether the server has TLS.
+async function serverOffersTls(s: TcpStream, deadline: f64): Promise<bool> throws PgError {
+  const o = new Out(16);
+  sslRequest(o);
+  const buf: u8[] = Buffer.alloc(1);
+  try {
+    await s.writeBytes(o.bytes, 0, o.len as number);
+    while (true) {
+      const left = deadline - performance.now();
+      if (left <= 0 || !(await s.readableWithin(left))) {
+        throw new TimeoutError(HANDSHAKE_MS);
+      }
+      const n = s.tryRead(buf, 0, 1);
+      if (n == null) {
+        throw errorOf(connectionClosed());
+      }
+      if (n > 0) {
+        return buf[0] == 83;
+      }
+    }
+  } catch (e) {
+    throw ioError(e);
+  }
+}
+
+// The socket for one host, as `sslmode` says.
+export async function socket(
+  c: PgConfig,
+  address: string,
+  name: string,
+  deadline: f64,
+): Promise<TcpStream> throws PgError {
+  if (c.sslMode > SSL_PREFER) {
+    return await tlsSocket(c, address, name);
+  }
+  const plain = await plainSocket(c, address);
+  if (c.sslMode == SSL_DISABLE) {
+    return plain;
+  }
+  let offered = false;
+  try {
+    offered = await serverOffersTls(plain, deadline);
+  } catch (e) {
+    plain.abort();
+    plain.close();
+    throw e;
+  }
+  if (!offered) {
+    return plain;
+  }
+  plain.abort();
+  plain.close();
+  return await tlsSocket(c, address, name);
+}

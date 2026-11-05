@@ -1,12 +1,6 @@
 // postgres (internal): `CopyWriter`, the data side of `COPY … FROM STDIN`.
 
-import {
-  velt_postgres__copy_abort,
-  velt_postgres__copy_end,
-  velt_postgres__copy_write,
-  velt_postgres__copy_write_bytes,
-} from "./native";
-import { check, unwrap } from "./errors";
+import { copyAbort, copyEnd, CopyHandle, copyWrite, copyWriteBytes } from "./copy_state";
 
 /**
  * The data side of `client.copyFrom(sql)`: chunks in the COPY's format (text, CSV or binary),
@@ -14,30 +8,30 @@ import { check, unwrap } from "./errors";
  * the statement back.
  */
 export struct CopyWriter {
-  private handle: u64;
+  private handle: CopyHandle;
 
-  /** The package's own: the writer of a handle its native library returned. */
-  static fromHandle(handle: u64): CopyWriter {
-    return { handle: handle };
+  /** The package's own: the writer of a started copy. */
+  static of(handle: CopyHandle): CopyWriter {
+    return CopyWriter { handle: handle };
   }
 
   /** Sends a chunk (any split: rows may span chunks). */
   async write(data: string): Promise<void> {
-    check(await velt_postgres__copy_write(this.handle, data));
+    await copyWrite(this.handle, data);
   }
 
   /** Sends a chunk of bytes (the binary format). */
   async writeBytes(data: u8[]): Promise<void> {
-    check(await velt_postgres__copy_write_bytes(this.handle, data));
+    await copyWriteBytes(this.handle, data);
   }
 
   /** Completes the copy; the number of rows copied. Releases the writer. */
   async end(): Promise<i64> {
-    return unwrap(await velt_postgres__copy_end(this.handle));
+    return await copyEnd(this.handle);
   }
 
   /** Cancels the copy (nothing is copied) and releases the writer. */
   abort() {
-    velt_postgres__copy_abort(this.handle);
+    copyAbort(this.handle);
   }
 }

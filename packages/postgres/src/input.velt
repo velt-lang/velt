@@ -1,0 +1,343 @@
+// postgres (internal): `Input`, a connection's reading end. Its holder is the request whose replies
+// come next: it reads, in its own task, until its reply is whole, decodes the rows right out of the
+// read buffer, and hands the `Input` to the next request in line (connection.velt).
+//
+// A value that crosses tasks moves, so handing it over copies nothing. A holder that is cancelled
+// (its promise lost a race, say) drops its `Input`; `[Symbol.dispose]` then starts a task to read what
+// the server still owes that request, so the next one finds the connection in step.
+
+import { CellKind, RowSource } from "velt/db";
+import { TcpStream } from "velt/net";
+import { arrayJson } from "./array_json";
+import {
+  COMMAND_COMPLETE,
+  DATA_ROW,
+  EMPTY_QUERY,
+  errorFields,
+  i16At,
+  i32At,
+  i64At,
+  PORTAL_SUSPENDED,
+  rowsAffected,
+  u32At,
+} from "./backend";
+import { Failure, failure } from "./failure";
+import { drainAbandoned } from "./drain";
+import {
+  C_BOOL,
+  C_BYTEA,
+  C_FLOAT4,
+  C_FLOAT8,
+  C_INT2,
+  C_INT4,
+  C_INT8,
+  C_JSON,
+  C_JSONB,
+  C_OID,
+  C_TEXT,
+  C_ARRAY,
+  CHAIN,
+} from "./pg_type";
+import { Conn } from "./line";
+import { Prepared, unsupported } from "./prepared";
+import { ReadBuffer } from "./read_buffer";
+import { renderValue } from "./values";
+
+/** A connection's reading end (see the module header). */
+export class Input implements RowSource {
+  /** The bytes arrived and not taken yet. */
+  buffer: ReadBuffer = new ReadBuffer();
+  stream: TcpStream;
+  /** The connection this reads for; null while connecting, and then nothing is owed. */
+  conn: Conn | null = null;
+  /** Nobody is owed anything through this one: dropping it does nothing. */
+  parked: bool = false;
+
+  // The reply being read: the messages in `pos..scan` are whole, and `done` once it has all come.
+  scan: i64 = 0;
+  /** The reply's end, when `done`. */
+  replyEnd: i64 = 0;
+  done: bool = false;
+  /** The server's transaction status in the last `ReadyForQuery`: I, T or E. */
+  status: u8 = 73;
+  /** Where its first `ErrorResponse` is, or -1, and how long. */
+  errorAt: i64 = -1;
+  errorSize: i64 = 0;
+  // Where its last `CommandComplete` is, or -1, and how long.
+  completeAt: i64 = -1;
+  completeSize: i64 = 0;
+  /** Bytes that broke the protocol: the connection must end. */
+  broken: Failure | null = null;
+  /** Stop at `CopyInResponse` and `CopyOutResponse`, for `COPY`'s start. */
+  stopAtCopy: bool = false;
+  /** The `CopyInResponse` or `CopyOutResponse` `stopAtCopy` stopped at. */
+  copyStarted: bool = false;
+  /** Whether what started is a `COPY … FROM STDIN`. */
+  copyFromStream: bool = false;
+
+  // The rows being read out of the reply.
+  private statement: shared<Prepared>;
+  at: i64 = 0;
+  private columns: i64 = 0;
+  private starts: i64[] = [];
+  private lens: i64[] = [];
+  /** Why a value could not be read, once rows were read. */
+  failure: Failure | null = null;
+
+  constructor(stream: TcpStream, none: shared<Prepared>) {
+    this.stream = stream;
+    this.statement = none;
+  }
+
+  // --- Reading ---
+
+  /** After `COPY`'s data: the rest of its reply is read from here on. */
+  continueReply() {
+    this.scan = this.buffer.pos;
+    this.done = false;
+    this.errorAt = -1;
+    this.completeAt = -1;
+  }
+
+  /** Starts reading a new reply, whose rows follow `statement`. */
+  begin(statement: shared<Prepared>) {
+    const n = statement.columnNames.length as i64;
+    this.statement = statement;
+    this.columns = n;
+    while ((this.starts.length as i64) < n) {
+      this.starts.push(0);
+      this.lens.push(0);
+    }
+    this.scan = this.buffer.pos;
+    this.done = false;
+    this.errorAt = -1;
+    this.completeAt = -1;
+    this.failure = null;
+    this.stopAtCopy = false;
+    this.copyStarted = false;
+  }
+
+  /** The first server error of the reply. */
+  serverError(): Failure {
+    const p = this.errorAt;
+    return errorFields(this.buffer.bytes, p + 5, p + this.errorSize);
+  }
+
+  /** The count in the reply's last `CommandComplete`. */
+  affected(): i64 {
+    const p = this.completeAt;
+    if (p < 0) {
+      return 0;
+    }
+    // The tag ends in a NUL.
+    return rowsAffected(this.buffer.bytes, p + 5, p + this.completeSize - 1);
+  }
+
+  /** The reply is dealt with: what follows is the next request's. */
+  takeReply() {
+    const buf = this.buffer;
+    if (this.replyEnd >= buf.end) {
+      buf.rewind();
+    } else {
+      buf.pos = this.replyEnd;
+    }
+    this.scan = buf.pos;
+  }
+
+  // --- Rows (RowSource) ---
+
+  columnCount(): i64 {
+    return this.columns;
+  }
+
+  columnName(i: i64): string {
+    return this.statement.columnNames[i];
+  }
+
+  /** Moves to the next row of the current execution: false at its end. */
+  next(): bool {
+    const b = this.buffer.bytes;
+    const stop = this.replyEnd;
+    let p = this.at;
+    while (p < stop) {
+      const tag = b[p];
+      const size = u32At(b, p + 1) + 1;
+      if (tag == DATA_ROW) {
+        this.at = p + size;
+        return this.cells(b, p + 5, p + size);
+      }
+      p += size;
+      if (tag == COMMAND_COMPLETE || tag == EMPTY_QUERY || tag == PORTAL_SUSPENDED) {
+        this.at = p;
+        return false;
+      }
+    }
+    this.at = p;
+    return false;
+  }
+
+  /** Skips what's left of the current execution's rows. */
+  skipRows() {
+    while (this.next()) {}
+  }
+
+  // The row's values in `b[from..to]`: every one inside the message, or the row is refused.
+  private cells(b: u8[], from: i64, to: i64): bool {
+    const n = this.columns;
+    if (to - from < 2 || i16At(b, from) != n) {
+      this.broke("a row with the wrong number of columns");
+      return false;
+    }
+    let p = from + 2;
+    const starts = this.starts;
+    const lens = this.lens;
+    for (let c: i64 = 0; c < n; c++) {
+      if (to - p < 4) {
+        this.broke("a truncated row");
+        return false;
+      }
+      const len = i32At(b, p);
+      p += 4;
+      lens[c] = len;
+      if (len >= 0) {
+        if (len > to - p) {
+          this.broke("a truncated row");
+          return false;
+        }
+        starts[c] = p;
+        p += len;
+      }
+    }
+    return true;
+  }
+
+  private broke(what: string) {
+    if (this.failure == null) {
+      this.failure = failure("UNKNOWN", `unexpected batch reply: ${what}`);
+    }
+  }
+
+  // A value could not be read: the first such failure is what the query throws.
+  private bad(i: i64, what: string) {
+    if (this.failure == null) {
+      this.failure = failure("ENOTSUP", unsupported(this.statement.columnNames[i], what));
+    }
+  }
+
+  private wrongWidth(i: i64, want: i64): CellKind {
+    this.bad(i, `expected ${want} bytes, got ${this.lens[i]}`);
+    return CellKind.Null;
+  }
+
+  kind(i: i64): CellKind {
+    const len = this.lens[i];
+    if (len < 0) {
+      return CellKind.Null;
+    }
+    const codec = this.statement.chains[i * CHAIN];
+    if (codec == C_INT4 || codec == C_OID) {
+      return len == 4 ? CellKind.Int : this.wrongWidth(i, 4);
+    }
+    if (codec == C_TEXT) {
+      return CellKind.Text;
+    }
+    if (codec == C_INT8) {
+      return len == 8 ? CellKind.Int : this.wrongWidth(i, 8);
+    }
+    if (codec == C_FLOAT8 || codec == C_FLOAT4) {
+      const want: i64 = codec == C_FLOAT8 ? 8 : 4;
+      if (len != want) {
+        return this.wrongWidth(i, want);
+      }
+      const v = this.float(i);
+      // As their JSON would read back.
+      return v !== v || v == Infinity || v == -Infinity ? CellKind.Null : CellKind.Float;
+    }
+    if (codec == C_BOOL) {
+      return CellKind.Bool;
+    }
+    if (codec == C_INT2) {
+      return len == 2 ? CellKind.Int : this.wrongWidth(i, 2);
+    }
+    if (codec == C_BYTEA) {
+      return CellKind.Blob;
+    }
+    if (codec == C_JSON || codec == C_JSONB || codec == C_ARRAY) {
+      return CellKind.Json;
+    }
+    return CellKind.Text;
+  }
+
+  bool(i: i64): bool {
+    return this.lens[i] == 0 || this.buffer.bytes[this.starts[i]] != 0;
+  }
+
+  int(i: i64): i64 {
+    const b = this.buffer.bytes;
+    const p = this.starts[i];
+    const codec = this.statement.chains[i * CHAIN];
+    if (codec == C_INT4) {
+      return i32At(b, p);
+    }
+    if (codec == C_INT8) {
+      return i64At(b, p);
+    }
+    return codec == C_OID ? u32At(b, p) : i16At(b, p);
+  }
+
+  float(i: i64): f64 {
+    const b = this.buffer.bytes;
+    const p = this.starts[i];
+    if (this.statement.chains[i * CHAIN] == C_FLOAT8) {
+      return f64.fromBits(i64At(b, p) as u64);
+    }
+    return f32.fromBits(u32At(b, p) as u32) as f64;
+  }
+
+  text(i: i64): string {
+    const b = this.buffer.bytes;
+    const p = this.starts[i];
+    const len = this.lens[i];
+    const codec = this.statement.chains[i * CHAIN];
+    if (codec == C_TEXT) {
+      return b.utf8Slice(p, p + len);
+    }
+    const r = renderValue(b, p, len, codec);
+    if (r.problem.length > 0) {
+      this.bad(i, r.problem);
+    }
+    return r.text;
+  }
+
+  blob(i: i64): u8[] {
+    const p = this.starts[i];
+    return this.buffer.bytes.slice(p, p + this.lens[i]);
+  }
+
+  json(i: i64): string {
+    const b = this.buffer.bytes;
+    const p = this.starts[i];
+    const len = this.lens[i];
+    const codec = this.statement.chains[i * CHAIN];
+    if (codec == C_JSON) {
+      return b.utf8Slice(p, p + len);
+    }
+    if (codec == C_JSONB) {
+      return b.utf8Slice(p + 1, p + len);
+    }
+    const r = arrayJson(b, p, len, this.statement, i * CHAIN + 1);
+    if (r.problem.length > 0) {
+      this.bad(i, r.problem);
+      return "null";
+    }
+    return r.json;
+  }
+
+  [Symbol.dispose]() {
+    const conn = this.conn;
+    if (!this.parked && conn != null) {
+      const buf = this.buffer;
+      spawn(drainAbandoned(conn, this.stream, buf.bytes.slice(buf.pos, buf.end)));
+    }
+  }
+}

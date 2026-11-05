@@ -1,0 +1,87 @@
+// postgres (internal): `ReadBuffer`, what has arrived from a socket and isn't taken yet, as in
+// packages/redis: bytes of an incomplete reply stay where they are while more arrive, and move only
+// when room runs out, into a buffer that doubles, so a reply of any size costs linear time.
+
+import { TcpStream } from "velt/net";
+import { copyBytes } from "./frontend";
+
+// The buffer's first size, and the room each read asks for.
+const INITIAL: i64 = 16 * 1024;
+const MIN_READ: i64 = 8 * 1024;
+
+// A buffer past this size doesn't stay with an idle connection: one large reply mustn't hold it.
+const KEEP: i64 = 1024 * 1024;
+
+/** Bytes arrived and not taken yet: `bytes[pos..end]`. */
+export class ReadBuffer {
+  bytes: u8[] = Buffer.allocUnsafe(INITIAL as usize);
+  pos: i64 = 0;
+  end: i64 = 0;
+  /** Bytes moved so far to make room (what makes large replies linear). */
+  moved: i64 = 0;
+
+  /** Starts with `leftover` already arrived. */
+  load(leftover: u8[]) {
+    this.pos = 0;
+    this.end = 0;
+    const n = leftover.length as i64;
+    while ((this.bytes.length as i64) < n + MIN_READ) {
+      this.bytes = Buffer.allocUnsafe((this.bytes.length * 2) as usize);
+    }
+    copyBytes(leftover, this.bytes, 0, 0, n);
+    this.end = n;
+  }
+
+  /**
+   * Waits for more bytes; false at the end of the stream, whose failure throws. `pos` may have moved
+   * when this returns: what `shift` says is how far.
+   */
+  async fill(s: TcpStream): Promise<bool> {
+    while (true) {
+      // Waits first: what arrived has just been handled, so reading now would mostly find nothing,
+      // a system call per reply for no bytes.
+      await s.readable();
+      const n = s.tryRead(this.bytes, this.end as number, this.bytes.length as number);
+      if (n == null) {
+        return false;
+      }
+      if (n > 0) {
+        this.end += n as i64;
+        return true;
+      }
+    }
+  }
+
+  /** What's held is gone: starts over at the front, and lets a large buffer go. */
+  rewind() {
+    this.pos = 0;
+    this.end = 0;
+    if ((this.bytes.length as i64) > KEEP) {
+      this.bytes = Buffer.allocUnsafe(INITIAL as usize);
+    }
+  }
+
+  /**
+   * Makes room to read into, and returns how far back the held bytes moved: a caller's positions in
+   * them move as far.
+   */
+  makeRoom(): i64 {
+    const size = this.bytes.length as i64;
+    if (size - this.end >= MIN_READ) {
+      return 0;
+    }
+    const held = this.end - this.pos;
+    const shift = this.pos;
+    this.moved += held;
+    if (size - held >= MIN_READ && held * 2 <= size) {
+      this.bytes.copyWithin(0, this.pos, this.end);
+    } else {
+      const bigger: u8[] = Buffer.allocUnsafe((size * 2) as usize);
+      copyBytes(this.bytes, bigger, 0, this.pos, this.end);
+      this.bytes = bigger;
+    }
+    this.pos = 0;
+    this.end = held;
+    return shift;
+  }
+}
