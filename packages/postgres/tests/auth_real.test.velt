@@ -1,6 +1,8 @@
 // The password exchanges and TLS against a real server, when a URL for each is set:
 // VELT_TEST_PG_MD5_URL, VELT_TEST_PG_SCRAM_URL, VELT_TEST_PG_PASSWORD_URL (cleartext),
-// VELT_TEST_PG_TLS_URL (direct TLS, with `sslmode` and `sslrootcert` in it).
+// VELT_TEST_PG_TLS_URL (direct TLS, with `sslmode` and `sslrootcert` in it),
+// VELT_TEST_PG_TLS_UNTRUSTED_URL (a server with TLS whose certificate nothing verifies, without
+// `sslmode`), VELT_TEST_PG_PLAIN_URL (a server without TLS, without `sslmode`).
 import { connect } from "../src/lib";
 
 class One {
@@ -80,17 +82,60 @@ export async function test_direct_tls() {
   }
 }
 
-// A certificate that doesn't verify is an error, never plain text: there's no CA here for it.
-export async function test_untrusted_tls_is_refused_not_downgraded() {
+class Ssl {
+  ssl: bool;
+
+  constructor(ssl: bool) {
+    this.ssl = ssl;
+  }
+}
+
+function withMode(url: string, mode: string): string {
+  return `${url}${url.includes("?") ? "&" : "?"}sslmode=${mode}`;
+}
+
+// What connecting says: "plain", "tls", or the failure's code.
+async function outcome(url: string): Promise<string> {
+  try {
+    const db = await connect(url);
+    const s: Ssl | null = await db.selectOne(
+      "SELECT ssl FROM pg_stat_ssl WHERE pid = pg_backend_pid()",
+    );
+    db.close();
+    return s?.ssl == true ? "tls" : "plain";
+  } catch (e) {
+    return e.code.clone();
+  }
+}
+
+// `prefer` connects with what it can have; the stricter modes refuse.
+async function preferDoesWithout(url: string) {
+  assertEq(await outcome(url), "plain");
+  assertEq(await outcome(withMode(url, "prefer")), "plain");
+  assertEq(await outcome(withMode(url, "disable")), "plain");
+  assertEq(await outcome(withMode(url, "require")), "ETLS");
+  assertEq(await outcome(withMode(url, "verify-ca")), "ETLS");
+  assertEq(await outcome(withMode(url, "verify-full")), "ETLS");
+}
+
+export async function test_a_certificate_nothing_verifies() {
   const url = urlFrom(process.env.VELT_TEST_PG_TLS_UNTRUSTED_URL);
   if (url != null) {
-    let code = "connected";
-    try {
-      const db = await connect(url);
-      db.close();
-    } catch (e) {
-      code = e.code.clone();
-    }
-    assertEq(code, "ETLS");
+    await preferDoesWithout(url);
+  }
+}
+
+export async function test_a_server_without_tls() {
+  const url = urlFrom(process.env.VELT_TEST_PG_PLAIN_URL);
+  if (url != null) {
+    await preferDoesWithout(url);
+  }
+}
+
+// With a root that verifies it, `prefer` does use TLS.
+export async function test_prefer_uses_tls_when_it_can() {
+  const url = urlFrom(process.env.VELT_TEST_PG_TLS_URL);
+  if (url != null) {
+    assertEq(await outcome(url.replace("sslmode=verify-full", "sslmode=prefer")), "tls");
   }
 }

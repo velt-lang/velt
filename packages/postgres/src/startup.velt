@@ -217,6 +217,20 @@ async function authenticate(c: PgConfig, input: Input, deadline: f64) {
   }
 }
 
+// A failed startup in plain text after `prefer` lost TLS says so: a server that requires TLS refuses
+// the plain connection, and its reason doesn't name the one that came first.
+function afterFallback(e: PgError, tlsFailure: string): PgError {
+  if (tlsFailure.length == 0) {
+    return e;
+  }
+  return new PgError(
+    e.code,
+    `${e.message} (sslmode=prefer went on in plain text after: ${tlsFailure})`,
+    e.detail,
+    e.constraint,
+  );
+}
+
 // One host: the socket, then the startup over it; the connection.
 async function attempt(
   c: PgConfig,
@@ -225,7 +239,8 @@ async function attempt(
   none: shared<Prepared>,
 ): Promise<Conn> throws PgError {
   const deadline = performance.now() + STARTUP_TIMEOUT_MS;
-  const stream = await socket(c, address, host, deadline);
+  const opened = await socket(c, address, host, deadline);
+  const stream = opened.stream;
   const input = new Input(stream, none);
   try {
     const o = new Out(256);
@@ -235,7 +250,7 @@ async function attempt(
   } catch (e) {
     stream.abort();
     stream.close();
-    throw ioError(e);
+    throw afterFallback(ioError(e), opened.tlsFailure);
   }
   const home = channel<Input>(1);
   const line = new Line(stream, home, none);

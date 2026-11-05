@@ -102,15 +102,33 @@ The full guide: https://veltlang.com/docs/packages/postgres/.
   doesn't fit `T`).
 - **TLS** goes through `velt/net`, which connects with TLS from the first byte: PostgreSQL 17's
   direct negotiation (ALPN `postgresql`), with the certificate always checked against Mozilla's
-  roots and the PEM file named by `sslrootcert`, name included. `sslmode=disable` is plain text.
-  `prefer` (the default) asks the server with `SSLRequest`: if it has no TLS the connection goes on
-  in plain text; if it has, it reopens with direct TLS, and a failure is `"ETLS"`, never a quiet
-  step down to plain text. `require`, `verify-ca` and `verify-full` all connect that way and are
-  equally strict. So a server older than 17 with TLS on, and a certificate that doesn't verify, need
-  `sslmode=disable`, or the `velt/net` features that would serve them (upgrading a plain socket,
-  connecting without checking the certificate or its name). SCRAM channel binding isn't offered.
-- Unix-domain sockets (`host=/dir`) throw `"ENOTSUP"`: `velt/net` has none. Keepalive options are
-  accepted and do nothing, for the same reason.
+  roots and the PEM file named by `sslrootcert`, name included.
+  - `disable` is plain text.
+  - `prefer` (the default) means TLS if it can be had, otherwise plain text. The client asks with
+    `SSLRequest`: a server without TLS goes on in plain text on that socket; one with TLS is
+    reopened with direct TLS, and if that fails for any reason but the network (a server older than
+    17, a certificate that doesn't verify) it is reopened in plain text.
+  - `require`, `verify-ca` and `verify-full` all connect with direct TLS and are equally strict: a
+    failure is `"ETLS"`, never plain text.
+
+  **How `prefer` differs from libpq and from this package's earlier Rust driver.** They upgrade the
+  socket after `SSLRequest` and don't check the certificate, so those two servers get TLS there and
+  **plain text here: a server with a self-signed certificate is read and written unencrypted, and
+  nothing tells you**. Require TLS with `sslmode=verify-full` when that matters. A server that only
+  takes TLS (`hostssl`) and is older than 17 or has a certificate that doesn't verify refuses the
+  plain connection, so `prefer` fails there, with an error naming both failures. As in the Rust
+  driver and unlike libpq, a server that refuses a TLS connection (`hostnossl`) is not tried again
+  in plain text. Each server with TLS costs two connections under `prefer`, and an older one logs
+  an "invalid length of startup packet" for the direct attempt.
+
+  `require` is stricter than libpq's too, which takes any certificate, and a server older than 17
+  can't be used with TLS at all. Both need `velt/net` to upgrade a plain socket and to connect
+  without checking the certificate, which it can't yet; `sslnegotiation=postgres` is accepted and
+  changes nothing, for that reason. SCRAM channel binding isn't offered.
+- Unix-domain sockets (`host=/dir`) throw `"ENOTSUP"`, and keepalive options are accepted and do
+  nothing, so a connection gets no `SO_KEEPALIVE` (the Rust driver had it on by default, 2 hours
+  idle): `velt/net` has no Unix-domain stream and no socket options, and a socket made in Velt with
+  `declare c` can't become a `TcpStream`.
 
 ```ts
 import { connect, createPool } from "postgres";
