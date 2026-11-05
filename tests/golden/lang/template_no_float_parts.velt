@@ -1,0 +1,52 @@
+// A value whose parts can't hold a float prints the same whether or not std's float printer is
+// checked for it (#2161 step 3), and one whose parts can still prints every float as in Node.
+
+enum Dir {
+  Up = "UP",
+  Down = "DOWN",
+}
+
+enum Plain {
+  A,
+  B,
+}
+
+class Shape {
+  w: number = 1.5;
+  toString(): string {
+    return `w=${this.w}`;
+  }
+}
+
+function name(n: boolean): string | null {
+  return n ? "world" : null;
+}
+
+function pick(up: boolean): Dir {
+  return up ? Dir.Up : Dir.Down;
+}
+
+function strings(): void {
+  const a: string[] = ["a", "b"];
+  const nested: string[][] = [["a"], ["b", "c"]];
+  const holes: (string | null)[] = ["a", null, "c"];
+  const pair: [string, boolean] = ["a", true];
+  const u: string | boolean = name(true) == null ? false : "s";
+  console.log(`${name(true)} ${name(false)} ${a} ${nested} ${holes} ${pair} ${u}`);
+  console.log(`${pick(true)} ${pick(false)} ${Plain.B} ${[pick(true)]}`);
+  console.log(String(name(false)) + String(a) + pair);
+}
+
+function floats(): void {
+  const a: number[] = [0.1, -0, 1e21, 1.5e-7];
+  const mixed: (string | number)[] = ["a", 2.5, 1e300];
+  const pair: [string, number] = ["a", 0.25];
+  const none: number | null = a.length > 100 ? null : 0.3;
+  const s: Shape | null = new Shape();
+  console.log(`${a} ${mixed} ${pair} ${none} ${s} ${[new Shape()]}`);
+}
+
+function main(): void {
+  strings();
+  floats();
+}

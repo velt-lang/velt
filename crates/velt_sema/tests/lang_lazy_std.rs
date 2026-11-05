@@ -483,3 +483,65 @@ fn number_printing_is_checked_once_the_program_prints_a_number() {
         assert!(checked(&floats, f), "{f} is not checked");
     }
 }
+
+#[test]
+fn a_value_that_cannot_hold_a_float_does_not_check_the_float_printer() {
+    let float_hook = "std/lang/hooks/number_float::floatPush";
+    let checked = |p: &Program| {
+        p.defs
+            .iter()
+            .any(|d| matches!(d, Def::Fn(x) if x.name == float_hook))
+            && !unchecked(p).contains(&float_hook.to_string())
+    };
+    // Declarations, and the type of the `v` converted.
+    let cases = |decls: &str, ty: &str| {
+        let src = format!(
+            "{decls}\nfunction text(v: {ty}): string {{\n  return `v=${{v}}`;\n}}\nfunction main() {{}}\n"
+        );
+        ok_src(&src)
+    };
+    let enums = "enum Dir { Up = \"UP\", Down = \"DOWN\" }\nenum Plain { A, B }\ntype Nest = string | Nest[];\nclass Shape { w: number = 1.5; }";
+    for ty in [
+        "string",
+        "string | null",
+        "string | undefined",
+        "string | boolean",
+        "string | i64",
+        "string[]",
+        "(string | null)[]",
+        "string[][]",
+        "[string, i64]",
+        "[string, boolean] | null",
+        "\"a\" | \"b\"",
+        "Dir",
+        "Dir | null",
+        "Dir[]",
+        "Plain",
+        "Nest",
+    ] {
+        let p = cases(enums, ty);
+        assert!(!checked(&p), "the float printer is checked for `{ty}`");
+    }
+    for ty in [
+        "number",
+        "f32",
+        "number | null",
+        "string | number",
+        "number[]",
+        "(string | number)[]",
+        "[string, number]",
+        "[string, number] | null",
+        "any",
+        "Shape",
+        "Shape | null",
+        "Shape[]",
+    ] {
+        let p = cases(enums, ty);
+        assert!(checked(&p), "the float printer is not checked for `{ty}`");
+    }
+    // A type parameter may be instantiated with a float.
+    let p = ok_src(
+        "function text<T>(v: T): string {\n  return `v=${v}`;\n}\nfunction main() {\n  console.log(text(\"a\"));\n}\n",
+    );
+    assert!(checked(&p), "the float printer is not checked for `T`");
+}
