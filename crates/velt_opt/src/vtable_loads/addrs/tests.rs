@@ -146,7 +146,7 @@ fn in_a_loop(next: impl FnOnce(&Env, &mut FuncBuilder, Local) -> Rvalue) -> usiz
 #[test]
 fn a_slot_around_a_loop() {
     assert_eq!(in_a_loop(|_, _, x| Rvalue::Use(copy_local(x))), 1);
-    // The back edge brings another value: only a second visit of the head can see it.
+    // The back edge brings another value, and the load at the head must see it.
     let moved = |_: &Env, _: &mut FuncBuilder, x| bin(BinOp::PtrAdd, copy_local(x), int(8, I64));
     assert_eq!(in_a_loop(moved), 0);
     assert_eq!(
