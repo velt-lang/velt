@@ -1,0 +1,112 @@
+// velt/crypto (internal): SHA-512 and SHA-384 (FIPS 180-4 §6.4, §6.5): 80 rounds over `u64`
+// words on 128-byte blocks, the working variables in locals, the message schedule in a
+// 16-word ring; SHA-384 is SHA-512 with other initial values, cut to 48 bytes.
+
+import { utf8Encode } from "velt/encoding/utf8";
+import { hexEncode } from "velt/encoding/hex";
+import { H384, H512, K512 } from "velt/crypto/sha512_tables";
+
+/** SHA-512 digest (64 bytes) of `data`. */
+export function sha512(data: u8[]): u8[] {
+  return digest(H512, data, 64);
+}
+
+/** SHA-384 digest (48 bytes) of `data`. */
+export function sha384(data: u8[]): u8[] {
+  return digest(H384, data, 48);
+}
+
+/** Lowercase hex SHA-512 of the UTF-8 bytes of `s`. */
+export function sha512Hex(s: string): string {
+  return hexEncode(sha512(utf8Encode(s)));
+}
+
+/** Lowercase hex SHA-384 of the UTF-8 bytes of `s`. */
+export function sha384Hex(s: string): string {
+  return hexEncode(sha384(utf8Encode(s)));
+}
+
+// The first `n` bytes of the hash of `data` from the initial value `iv`.
+function digest(iv: u64[], data: u8[], n: usize): u8[] {
+  const h = iv.slice();
+  const w: u64[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+  const full = data.length - (data.length & 127);
+  for (let off: usize = 0; off < full; off += 128) {
+    block(h, w, data, off);
+  }
+  // The padding: 0x80, zeros, and the length in bits as 128 bits (the top 64 are zero here).
+  const rest = data.length - full;
+  const tail = Buffer.alloc(rest < 112 ? 128 : 256);
+  for (let i: usize = 0; i < rest; i++) {
+    tail[i] = data[full + i];
+  }
+  tail[rest] = 0x80;
+  const bits = (data.length as u64) << 3;
+  const top = (data.length as u64) >> 61;
+  const end = tail.length;
+  for (let i: usize = 0; i < 8; i++) {
+    tail[end - 1 - i] = ((bits >> ((8 * i) as u64)) & 0xff) as u8;
+    tail[end - 9 - i] = ((top >> ((8 * i) as u64)) & 0xff) as u8;
+  }
+  for (let off: usize = 0; off < end; off += 128) {
+    block(h, w, tail, off);
+  }
+  const out = Buffer.alloc(n);
+  for (let i: usize = 0; i < n; i++) {
+    out[i] = ((h[i >> 3] >> ((56 - 8 * (i & 7)) as u64)) & 0xff) as u8;
+  }
+  return out;
+}
+
+function rotr(x: u64, n: u64): u64 {
+  return (x >> n) | (x << (64 - n));
+}
+
+// One block of `data` at `off` into the state `h`; `w` is the 16-word schedule ring.
+function block(h: u64[], w: u64[], data: u8[], off: usize) {
+  for (let t: usize = 0; t < 16; t++) {
+    let x: u64 = 0;
+    for (let i: usize = 0; i < 8; i++) {
+      x = (x << 8) | (data[off + 8 * t + i] as u64);
+    }
+    w[t] = x;
+  }
+  let a = h[0];
+  let b = h[1];
+  let c = h[2];
+  let d = h[3];
+  let e = h[4];
+  let f = h[5];
+  let g = h[6];
+  let hh = h[7];
+  for (let t: usize = 0; t < 80; t++) {
+    if (t >= 16) {
+      const x = w[(t - 15) & 15];
+      const y = w[(t - 2) & 15];
+      const s0 = rotr(x, 1) ^ rotr(x, 8) ^ (x >> 7);
+      const s1 = rotr(y, 19) ^ rotr(y, 61) ^ (y >> 6);
+      w[t & 15] = w[t & 15] + s0 + w[(t - 7) & 15] + s1;
+    }
+    const s1 = rotr(e, 14) ^ rotr(e, 18) ^ rotr(e, 41);
+    const ch = (e & f) ^ (~e & g);
+    const t1 = hh + s1 + ch + K512[t] + w[t & 15];
+    const s0 = rotr(a, 28) ^ rotr(a, 34) ^ rotr(a, 39);
+    const maj = (a & b) ^ (a & c) ^ (b & c);
+    hh = g;
+    g = f;
+    f = e;
+    e = d + t1;
+    d = c;
+    c = b;
+    b = a;
+    a = t1 + s0 + maj;
+  }
+  h[0] = h[0] + a;
+  h[1] = h[1] + b;
+  h[2] = h[2] + c;
+  h[3] = h[3] + d;
+  h[4] = h[4] + e;
+  h[5] = h[5] + f;
+  h[6] = h[6] + g;
+  h[7] = h[7] + hh;
+}
