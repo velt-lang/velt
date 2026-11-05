@@ -261,7 +261,12 @@ impl FnCx<'_, '_> {
         let Some(given) = from_result[k].filter(|t| *t != self.cx.ty.unit) else {
             return false;
         };
-        let Some(literal_ty) = self.remembered_type(literal) else {
+        // A literal value's check changes nothing, so it needs no trial.
+        let literal_ty = match &strip_parens(literal).kind {
+            ast::ExprKind::Lit(_) => Some(self.expr(literal, None, crate::body::Want::Borrow).ty),
+            _ => self.remembered_type(literal),
+        };
+        let Some(literal_ty) = literal_ty else {
             return true;
         };
         if self.cx.ty.has_error(given) {
