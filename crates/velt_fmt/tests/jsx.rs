@@ -65,6 +65,26 @@ fn long_attribute_lists_break_one_per_line() {
 }
 
 #[test]
+fn an_empty_fragment_is_not_self_closing() {
+    // `</>` ends in `/>` like `<x />` does; `< />` does not parse.
+    assert_fmt(
+        "const a = <></>;
+const b = <>
+</>;
+const c = <p><></></p>;
+",
+        "const a = <></>;
+const b = <></>;
+const c = (
+  <p>
+    <></>
+  </p>
+);
+",
+    );
+}
+
+#[test]
 fn text_reflows_like_a_paragraph() {
     assert_fmt(
         "const x = <p>Lorem ipsum dolor sit amet, consectetur adipiscing elit, sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam.</p>;",
