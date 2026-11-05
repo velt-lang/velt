@@ -15,6 +15,12 @@ inputs:
       Restore the build cache. Jobs that build nothing (the queue's golden shards, which run a
       build another job packed) skip it.
     default: "true"
+  fast-linker:
+    description: >-
+      Link Velt programs with the Rust toolchain's lld on Linux, as `velt` does wherever `ld.lld` is
+      on PATH. The runners have only GNU ld, which takes seconds per program with the static
+      runtime. The nightly gate keeps GNU ld, what a machine without lld links with.
+    default: "true"
   save-cache:
     description: >-
       Save the build cache. Only the pushes to main do (`main` job in ci.yml): caches saved
@@ -70,6 +76,14 @@ runs:
     - name: rust (pinned)
       shell: bash
       run: rustup toolchain install && rustc --version
+    - name: lld on PATH (Linux)
+      if: runner.os == 'Linux' && inputs.fast-linker == 'true'
+      shell: bash
+      run: |
+        dir="$(rustc --print sysroot)/lib/rustlib/$(rustc -vV | sed -n 's/host: //p')/bin/gcc-ld"
+        echo "ld.lld on PATH before this step: $(command -v ld.lld || echo none)"
+        [ -x "$dir/ld.lld" ] || { echo "::error::no ld.lld in $dir"; exit 1; }
+        echo "$dir" >> "$GITHUB_PATH"
     # Keyed by OS, architecture and rust-cache-key.sh's hash of what the dependencies' compiled
     # output depends on: rust-toolchain.toml, Cargo.lock's external packages, and the manifests'
     # profiles, dependency tables and features (not `[package]`, so a release keeps the key), plus

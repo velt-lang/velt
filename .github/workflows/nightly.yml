@@ -69,6 +69,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
+        with:
+          fast-linker: "false"
       - run: scripts/check-all.sh
       # Node is the oracle: the hand-written corpus and short generated runs must agree with it.
       # All three run even when one finds a mismatch (each finds different bugs); the step fails
