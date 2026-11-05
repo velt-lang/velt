@@ -204,7 +204,9 @@ impl<'m> Ctx<'m> {
         // The passes after the bodies' check have run: they would not see what this adds.
         if self.lazy.finishing() {
             self.err(
-                format!("ICE: std module `{path}` was demanded after the passes that follow the check"),
+                format!(
+                    "ICE: std module `{path}` was demanded after the passes that follow the check"
+                ),
                 Span::DUMMY,
             );
             return;

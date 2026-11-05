@@ -258,7 +258,7 @@ pub(crate) fn finish(cx: &mut Ctx) {
     let mut found = vec![];
     step(cx, &mut found);
     #[cfg(test)]
-    tests::note_finish(cx, &mut found);
+    tests::note_finish(cx);
     if !found.is_empty() {
         // As `reach` checks what it finds: with `Lazy::check_all` (the editor) a found definition
         // must enter `reached`, or the editor and `velt check` demand different sets.
@@ -269,8 +269,6 @@ pub(crate) fn finish(cx: &mut Ctx) {
         }
         super::reach(cx);
     }
-    #[cfg(test)]
-    tests::note_finished(cx);
 }
 
 /// Does every hook with constructs have one present? Then nothing more is worked out

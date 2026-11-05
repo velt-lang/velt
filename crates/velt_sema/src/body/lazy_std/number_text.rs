@@ -48,7 +48,9 @@ fn may_hold_float(cx: &mut Ctx, t: TyId, seen: &mut FxHashSet<TyId>, depth: u32)
         return false;
     }
     let parts: Vec<TyId> = match cx.ty.kind(t) {
-        TyKind::Int(_) | TyKind::Bool | TyKind::Str | TyKind::Symbol | TyKind::Unit => return false,
+        TyKind::Int(_) | TyKind::Bool | TyKind::Str | TyKind::Symbol | TyKind::Unit => {
+            return false
+        }
         TyKind::Never => return false,
         TyKind::Literal(lit) => return matches!(lit, hir::LitValue::Float(..)),
         TyKind::Array(e) | TyKind::Option(e, _) | TyKind::Shared(e) => vec![*e],

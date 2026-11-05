@@ -236,7 +236,9 @@ fn a_demand_that_is_no_std_module_stays_an_internal_error() {
     let d = ["not/std".to_string()];
     load_more(&mut sm, &mut l.state, &l.modules, &d, &opts, &mut diags);
     assert!(
-        diags.iter().any(|d| d.message.starts_with("ICE: `not/std`")),
+        diags
+            .iter()
+            .any(|d| d.message.starts_with("ICE: `not/std`")),
         "{diags:?}"
     );
 }

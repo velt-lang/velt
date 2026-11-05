@@ -275,7 +275,9 @@ impl FnCx<'_, '_> {
         // loads. Two classes at one place are the same class to `===` (no source rewrite copies a
         // class under its own name).
         let (name, span, module) = (&a.name, a.span, a.module);
-        let own_module = (self.cx.scopes[..module].iter()).filter(|s| !s.is_std).count();
+        let own_module = (self.cx.scopes[..module].iter())
+            .filter(|s| !s.is_std)
+            .count();
         Some(Proto {
             tag: format!("class#{own_module}:{}:{name}", span.lo),
             shown,
