@@ -3,23 +3,25 @@
 //! and the set of hooks sema demanded ([`HookSet`], `hir::Program::hooks_demanded`).
 //! CONTRACT FILE — changes need maintainer review (docs/internals/contracts/README.md).
 //!
-//! Sema (`velt_sema` `body/lazy_std/live.rs`) evaluates the constructs on *live* code (user code,
-//! and the std definitions that code reaches, that lowering looks up by name, or that are
-//! methods of a type in live code), with the operand's type, and demands each hook one of whose
-//! constructs occurs; a hook whose entry lists no construct is always demanded. It checks the
+//! Sema (`velt_sema` `body/lazy_std/live.rs`) evaluates the constructs on *live* code, a superset
+//! of the functions lowering builds (user code, and the std definitions that code reaches, that
+//! lowering looks up by name, that are methods of a type in live code, or that lowering makes
+//! values of), with the operand's type, and demands each hook one of whose constructs occurs; a
+//! hook whose entry lists no construct is always demanded. It checks the
 //! demanded hooks, and leaves the others unchecked. Lowering's builder of a hook with constructs
 //! (`velt_vir` `lower/hook_calls.rs`) asserts, in release compilers too, that its entry lists the
 //! construct and that sema demanded it:
 //! `ICE: hook <name> reached by lowering but not demanded by sema (construct <c>)` names the
 //! construct missing from the table.
 //!
-//! **Why this is sound: the integer hooks act as one bit.** Live code is not a superset of what
-//! lowering builds, so a construct can occur in a function sema did not walk. That does no harm
-//! today because any one construct brings all of them: once one integer hook is live, its std
-//! code has arrays, integers and so on, which demand the other three. So a program demands none of
-//! the hooks, and then nothing lowering builds calls one, or all four. A hook whose demand is
-//! narrower than that must not get `constructs(…)` until the live set covers what lowering builds
-//! (#2161). `velt_sema`'s `live_hooks` test pins the one bit.
+//! **Why a hook may have a narrow demand.** A construct in a function lowering builds is in a
+//! function sema walked. A debug compiler, or `VELT_LIVE_CHECK=1`, has lowering assert that each
+//! function it builds was live (`hir::Program::live`), and the goldens run such a compiler; the
+//! exception a release compiler doesn't walk is in `live.rs`'s `live_defs`. Glue is lowered per
+//! type, not per function: its call site's construct must be listed in the table and found on
+//! the type, which the builder's assertion above checks. Today's table doesn't exercise this:
+//! once one integer hook is live its std code has arrays, integers and so on, which demand the
+//! other three, so a program demands none of them or all four (`velt_sema`'s `live_hooks` test).
 //!
 //! ```
 //! use velt_common::std_hooks::{hook_index, Construct, HookSet, HOOKS};

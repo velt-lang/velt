@@ -291,6 +291,7 @@ impl FnLower<'_, '_> {
                 g.name
             ));
         }
+        self.cx.assert_live(d);
         if let Some(slot) = g.slot {
             // A module-level `let`: its slot, read in place (sema shares what it moves out).
             return Operand::Copy(self.module_slot(slot));

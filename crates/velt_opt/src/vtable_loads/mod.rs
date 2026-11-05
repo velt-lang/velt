@@ -155,12 +155,9 @@ fn slot_loads(aggs: &[AggLayout], statics: &[StaticData], func: &Function) -> Ve
             let Some((id, base)) = known(p.local) else {
                 return;
             };
-            let Touch::At(a) = access::of(aggs, base, p) else {
+            let Some(a) = slot_read(aggs, base, p) else {
                 return;
             };
-            if a.ty != Ty::Ptr || a.through {
-                return;
-            }
             let relocs = statics
                 .get(id.0 as usize)
                 .map_or(&[][..], |s| &s.relocs[..]);
@@ -175,6 +172,15 @@ fn slot_loads(aggs: &[AggLayout], statics: &[StaticData], func: &Function) -> Ve
         }
     });
     out
+}
+
+/// The bytes `p`, through a pointer that holds `base`, reads when they are a pointer it loads:
+/// what a relocation of a static can answer.
+fn slot_read(aggs: &[AggLayout], base: i128, p: &Place) -> Option<Access> {
+    match access::of(aggs, base, p) {
+        Touch::At(a) if a.ty == Ty::Ptr && !a.through => Some(a),
+        _ => None,
+    }
 }
 
 /// Replace the reads of `place` by the statement at `at` with the constant `c`.

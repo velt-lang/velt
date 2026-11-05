@@ -211,6 +211,7 @@ impl FnLower<'_, '_> {
             let hir::Def::Global(g) = lw.cx.hir.def(d) else {
                 super::ice("module state slot is not a global")
             };
+            lw.cx.assert_live(d);
             lw.push_scope(ScopeKind::Uncaught);
             lw.push_scope(ScopeKind::Block);
             // An imported module's top-level statements are a call of a throwing function

@@ -270,6 +270,9 @@ impl<'h> Cx<'h> {
                 "`{name}` was left unchecked: no checked code reaches it"
             ));
         }
+        if let Some(d) = work_def(work) {
+            self.assert_live(d);
+        }
         self.cur_def = work_def(work).or(outer);
         let site = self.fn_sites.get(&fid).copied();
         let outer_site = std::mem::replace(&mut self.user_site, site.unwrap_or_default());
@@ -308,6 +311,30 @@ impl<'h> Cx<'h> {
         self.building.remove(&fid);
         self.glue_slots.leave();
         self.claim_deferred(fid, deferred_mark);
+    }
+
+    /// Where sema worked the live set out in full (`hir::Program::live`: a debug compiler, or
+    /// `VELT_LIVE_CHECK=1`), `d`, a function lowering builds or a constant or module slot it
+    /// reads, must be in it: what lowering builds that sema's walk didn't see could have a
+    /// construct that demands a hook (velt_common `hook_demand.rs`).
+    #[inline]
+    pub(super) fn assert_live(&self, d: DefId) {
+        if self
+            .hir
+            .live
+            .as_ref()
+            .is_some_and(|live| !live.contains(&d))
+        {
+            let name = match self.hir.def(d) {
+                hir::Def::Fn(f) => f.name.as_str(),
+                hir::Def::Global(g) => g.name.as_str(),
+                _ => "?",
+            };
+            ice(format_args!(
+                "`{name}` built by lowering but not live: the live set (velt_sema \
+                 `body/lazy_std/live.rs`) has no rule for what reached it"
+            ));
+        }
     }
 
     /// Instance of a user function with concrete type args.
