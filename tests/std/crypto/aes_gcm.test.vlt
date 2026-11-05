@@ -122,6 +122,13 @@ describe("AesGcm", () => {
     );
   });
 
+  it("throws for a wrong nonce length before it looks at the input's length", () => {
+    const aead = new AesGcm(hexDecode(K));
+    const msg = "AES-GCM nonce must be 12 bytes, got 1";
+    expect(() => aead.open([0], [1, 2, 3])).toThrow(msg);
+    expect(() => aead.openInPlace([0], [], Buffer.alloc(15), 0, 15)).toThrow(msg);
+  });
+
   it("seals and opens through Aead without additional data", () => {
     const direct = new AesGcm(hexDecode(K));
     const aead: Aead = new AesGcm(hexDecode(K));
