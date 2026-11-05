@@ -2,7 +2,16 @@
 // value (crates/vpm/src/manifest/mod.rs `check_dependency`, crates/vpm/src/git.rs, `define`
 // literals).
 
-import { anyChar, componentsNormal, isControl, isWhitespace, trim } from "./chars";
+import {
+  allChars,
+  anyChar,
+  componentsNormal,
+  isControl,
+  isLowerHex,
+  isWhitespace,
+  isWordChar,
+  trim,
+} from "./chars";
 import { Dependency } from "./dependency";
 import { isValidRequirement } from "../semver/requirement";
 import { splitScoped } from "../names";
@@ -40,7 +49,7 @@ function gitUrlOk(url: string): string | null {
 }
 
 function isCommit(s: string): bool {
-  return (s.length == 40 || s.length == 64) && /^[0-9a-f]+$/.test(s);
+  return (s.length == 40 || s.length == 64) && allChars(s, isLowerHex);
 }
 
 /** `git`'s fields of a dependency (crates/vpm/src/git.rs `check_fields`). */
