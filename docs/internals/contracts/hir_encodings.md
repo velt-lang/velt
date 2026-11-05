@@ -923,8 +923,9 @@ where *live* code has one of those constructs (velt_common `hook_demand.rs`). Li
 superset of the functions lowering builds: the program's definitions and, closed over, the std
 definitions they name, the methods of the types in them, the implementations they call, the std
 functions lowering looks up by name for a value live code has, the classes lowering makes values
-of (`Generator` and `AsyncGenerator` for a generator function; `ArrayView` and `Error`, with its
-subclasses, for an `any`), and what sema makes after checking bodies. `Program::hooks_demanded` (a
+of (`Generator` and `AsyncGenerator` for a generator function; `HostSettled` for an async host
+function; `ArrayView` and `Error`, with its subclasses, for an `any`), and what sema makes after
+checking bodies. `Program::hooks_demanded` (a
 `HookSet`, one bit per table entry) lists the hooks sema demanded: those with a construct in live
 code, and every hook whose entry lists none. Lowering may call a hook with constructs only for a
 construct its entry lists and where it is in `hooks_demanded`; its builder checks both, in release

@@ -63,6 +63,17 @@ fn an_async_generator_behind_an_interface_is_an_async_generator() {
     );
 }
 
+/// Lowering calls `hostAwait`, gated on `HostSettled`, which no code names. Only the live set is
+/// looked at: lowering a host function needs a host target.
+#[test]
+fn an_async_host_function_is_awaited_through_a_host_settled() {
+    let p = std_src::check_src(
+        "declare host(\"env\") async function f(): Promise<i32>;\n\
+         function main() {\n  spawn(f());\n}\n",
+    );
+    assert!(is_live(&p, "std/host/promise::hostAwait"));
+}
+
 /// `make_dynamic_impls` runs after the last `reach`: its functions are in the program's module,
 /// and this row needs them walked.
 #[test]

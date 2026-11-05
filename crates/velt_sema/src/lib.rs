@@ -494,7 +494,7 @@ fn check_timed(
         lock_free_callbacks: lock_free_callbacks.into_iter().collect(),
         unchecked: unchecked.into_iter().collect(),
         hooks_demanded,
-        live,
+        live: live.map(|l| l.into_iter().collect()),
         any_fn_views,
         generated: generated.into_iter().collect(),
     };

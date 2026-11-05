@@ -9,7 +9,8 @@
 //! implementations of the live types, and every module slot, whose initializer lowering runs
 //! whether or not code reads it. Three more rules are about what lowering makes that no
 //! code in the program names: a generator function's value is a `Generator` or `AsyncGenerator`,
-//! whatever its written result says; an `any` may become an `ArrayView` and may hold an `Error`
+//! whatever its written result says; a call of an async host function is awaited through a
+//! `HostSettled`; an `any` may become an `ArrayView` and may hold an `Error`
 //! ([`dynamic_classes`]); and what sema makes once the bodies are checked (the implementations
 //! of interfaces through `any`, the conversions of its functions, the adapters of `toString`
 //! and `toJSON`) is added by [`finish`]. What [`super::reach`] checks only because checked code
@@ -124,6 +125,8 @@ struct Walk {
     /// Generator functions, and async ones: their values are `Generator`s and `AsyncGenerator`s
     /// whatever their written result says.
     generators: [bool; 2],
+    /// An async host function: lowering awaits its call's `HostSettled` (`velt_vir` `host.rs`).
+    async_host: bool,
 }
 
 /// The hooks lowering may call (`hir::Program::hooks_demanded`): those the constructs of live
@@ -142,10 +145,7 @@ pub(crate) fn demanded(cx: &Ctx) -> HookSet {
 /// converted to another (`Ctx::upcast_tables`), made once ownership is settled, so that a hook can
 /// no longer be checked. Each reads a field or a getter and calls what it holds, so they demand
 /// nothing; this asserts it. A release compiler doesn't walk them.
-pub(crate) fn live_defs(
-    cx: &mut Ctx,
-    unchecked: &FxHashSet<DefId>,
-) -> Option<std::collections::HashSet<DefId>> {
+pub(crate) fn live_defs(cx: &mut Ctx, unchecked: &FxHashSet<DefId>) -> Option<FxHashSet<DefId>> {
     if !cx.lazy.live.exact || cx.lazy.modules.is_empty() {
         return None;
     }
@@ -217,6 +217,10 @@ pub(super) fn step(cx: &mut Ctx, found: &mut Vec<DefId>) {
         let generators = [cx.generator_class(), cx.async_generator_class()];
         for (_, d) in (w.generators.iter().zip(generators)).filter(|(g, _)| **g) {
             live_classes(cx, d);
+        }
+        if w.async_host {
+            let settled = hook_class(cx, hook_index::host_settled);
+            live_classes(cx, settled);
         }
     }
     // Not checked yet: walked once checked. `reach` checks what checked code names and the
@@ -405,13 +409,18 @@ fn open(cx: &mut Ctx) {
 /// operations throw among their subclasses.
 fn dynamic_classes(cx: &mut Ctx) {
     if !std::mem::replace(&mut cx.lazy.live.dynamic_classes, true) {
-        let view = match cx.std_def(&HOOKS[hook_index::array_view].qualified()) {
-            Some(crate::ctx::Item::Def(d)) => Some(d),
-            _ => None,
-        };
+        let view = hook_class(cx, hook_index::array_view);
         let error = cx.prelude_adt("Error");
         live_classes(cx, view);
         live_classes(cx, error);
+    }
+}
+
+/// The class of hook `index` of the table, when the program has it.
+fn hook_class(cx: &Ctx, index: usize) -> Option<DefId> {
+    match cx.std_def(&HOOKS[index].qualified()) {
+        Some(crate::ctx::Item::Def(d)) => Some(d),
+        _ => None,
     }
 }
 
@@ -450,6 +459,9 @@ fn mark(cx: &mut Ctx, d: DefId) {
 fn walk_def(cx: &mut Ctx, d: DefId, w: &mut Walk) -> bool {
     let i = d.0 as usize;
     let ty = &cx.ty;
+    if let DefInfo::Fn(f) = &cx.info[i] {
+        w.async_host |= f.host.is_some() && f.is_async;
+    }
     match (&mut cx.defs[i], &mut cx.info[i]) {
         (Some(hir::Def::Fn(f)), info) => {
             if let DefInfo::Fn(fi) = info {
@@ -553,71 +565,6 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
         }
         _ => {}
     }
-}
-
-/// The constructs of `w`'s conversions and formatted values.
-fn evaluate(cx: &mut Ctx, w: &Walk) {
-    let mut present = 0;
-    for &t in &w.texts {
-        present |= match cx.ty.kind(t) {
-            TyKind::Int(it) if it.is_signed() => Construct::TextInt.bit(),
-            TyKind::Int(_) => Construct::TextUint.bit(),
-            // Floats print through the float hooks (`number_text::reach_hooks`).
-            TyKind::Float(_) | TyKind::Bool | TyKind::Str => 0,
-            // An instance may be an integer of either sign.
-            TyKind::Param(_) | TyKind::Op(..) => {
-                Construct::TextInt.bit() | Construct::TextUint.bit() | Construct::Format.bit()
-            }
-            _ => format_bit(cx, t),
-        };
-    }
-    for &t in &w.formats {
-        present |= format_bit(cx, t);
-    }
-    cx.lazy.live.present |= present;
-}
-
-fn format_bit(cx: &mut Ctx, t: TyId) -> ConstructSet {
-    match may_print_int(cx, t) {
-        true => Construct::Format.bit(),
-        false => 0,
-    }
-}
-
-/// May lowering's text or formatting glue for a value of type `t` print an integer: is it, or
-/// may it hold, anything but a float, a boolean, a string, a symbol, `undefined` or a function?
-/// An array prints its length past 100 elements, a map its size, a class its fields (and may
-/// be a subclass's instance), an enum its discriminant; `any` and a type parameter may hold
-/// anything.
-fn may_print_int(cx: &mut Ctx, t: TyId) -> bool {
-    if let Some(&known) = cx.lazy.live.int_text.get(&t) {
-        return known;
-    }
-    // A recursive type comes back here through its children: no integer so far.
-    cx.lazy.live.int_text.insert(t, false);
-    let kind = cx.ty.kind(t).clone();
-    let may = match &kind {
-        TyKind::Float(_)
-        | TyKind::Bool
-        | TyKind::Str
-        | TyKind::Unit
-        | TyKind::Never
-        | TyKind::Error
-        | TyKind::Symbol
-        | TyKind::FnPtr { .. }
-        | TyKind::Closure(_)
-        | TyKind::Literal(hir::LitValue::Str(_) | hir::LitValue::Bool(_)) => false,
-        TyKind::Tuple(_)
-        | TyKind::Option(..)
-        | TyKind::Result(..)
-        | TyKind::Promise(..)
-        | TyKind::Shared(_) => {
-            (crate::types::children(&kind).into_iter()).any(|c| may_print_int(cx, c))
-        }
-        _ => true,
-    };
-    cx.lazy.live.int_text.insert(t, may);
-    may
 }
 
 /// Record the types `todo` and their parts as live: their constructs, and the methods of each
@@ -783,6 +730,10 @@ const GATE_KINDS: u32 = (1 << 21) | (1 << 22) | DYNAMIC | (1 << 24) | (1 << 25) 
 
 /// The bit of a dynamic type (`any`, `unknown`, `object`, `Function`) among [`kind_bit`]'s.
 const DYNAMIC: u32 = 1 << 23;
+
+#[path = "live_constructs.rs"]
+mod constructs;
+use constructs::{evaluate, format_bit};
 
 #[cfg(test)]
 #[path = "live_tests.rs"]
