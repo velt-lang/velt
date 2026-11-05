@@ -1,0 +1,6 @@
+// `signal.reason` is an `any`, as in TypeScript.
+const c = new AbortController();
+c.abort("why");
+const reason = c.signal.reason;
+console.log(reason, typeof reason);
+console.log(reason instanceof Error ? "error" : "other");
