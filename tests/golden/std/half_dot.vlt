@@ -126,6 +126,15 @@ function fixed() {
   d0[8] = 1;
   console.log("f16 accumulator 1 apart", dotF16(a, b));
   console.log("bf16 accumulator 1 apart", dotBf16(c0, d0));
+  // Exactly 32 weights are a round of four accumulators: the 1 of weight 8 goes to accumulator 1,
+  // so it is not lost on the 2^24 of accumulator 0, as it would be in steps of eight.
+  const c32: bf16[] = new Array<bf16>(32).fill(0);
+  const d32: bf16[] = new Array<bf16>(32).fill(0);
+  c32[0] = 4096;
+  d32[0] = 4096;
+  c32[8] = 1;
+  d32[8] = 1;
+  console.log("bf16 length 32", dotBf16(c32, d32));
   const c: bf16[] = [2, 3, 0, 0, 0, 0, 0, 0, 5];
   const d: bf16[] = [4, 5, 0, 0, 0, 0, 0, 0, 7];
   console.log("bf16 tail", dotBf16(c, d));

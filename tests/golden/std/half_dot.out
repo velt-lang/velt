@@ -4,6 +4,7 @@ f16 accumulator 0 16777216
 bf16 accumulator 0 16777216
 f16 accumulator 1 apart 16777217
 bf16 accumulator 1 apart 16777217
+bf16 length 32 16777217
 bf16 tail 58
 f16 special Infinity NaN NaN
 empty 0 0 0
