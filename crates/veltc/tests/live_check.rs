@@ -4,22 +4,22 @@
 //! is demanded, so this also says that going on demands nothing more.
 
 mod no_window;
+mod test_dir;
 
 use std::path::Path;
 
 fn vir(golden: &str, check: &str) -> Vec<u8> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
-    let home = std::env::temp_dir().join(format!("velt-live-check-{}", std::process::id()));
+    let home = test_dir::TestDir::new();
     let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
         .current_dir(&root)
         .args(["build", golden, "--emit", "vir"])
         .env("VELT_LIVE_CHECK", check)
-        .env("VELT_HOME", &home)
+        .env("VELT_HOME", home.path())
         .env("VELT_BUILD_CACHE", "off")
         .env("VELT_BUILD_STAMP", "off")
         .output()
         .expect("velt runs");
-    let _ = std::fs::remove_dir_all(&home);
     assert!(
         out.status.success(),
         "{golden} with VELT_LIVE_CHECK={check}: {}",
