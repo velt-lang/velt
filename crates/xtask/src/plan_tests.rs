@@ -1,4 +1,5 @@
 use super::*;
+use crate::sweep::MAX_SWEPT_FILES;
 
 fn graph() -> Graph {
     let krate = |dir: &str, deps: &[&str]| {
@@ -557,20 +558,27 @@ fn the_parser_and_its_dependencies_sweep_every_golden_in_full() {
     ] {
         let p = plan(&[path, "tests/golden/lang/foo.vlt"]);
         assert_eq!(p.sweep, Sweep::Full, "{path}");
-        assert_eq!(p.sweep_env(), [("VELT_ROBUSTNESS", "full".to_string())]);
+        assert_eq!(p.sweep_env()[0], ("VELT_ROBUSTNESS", "full".to_string()));
     }
 }
 
 #[test]
-fn other_changes_sweep_the_changed_goldens_in_full_and_sample_the_rest() {
+fn other_changes_sweep_only_the_changed_goldens() {
     for path in [
         "crates/velt_sema/src/check.rs",
         "std/string.vlt",
         "docs/internals/README.md",
         ".github/workflows/ci.yml",
     ] {
-        assert_eq!(plan(&[path]).sweep, Sweep::Sampled(set(&[])), "{path}");
-        assert!(plan(&[path]).sweep_env().is_empty(), "{path}");
+        assert_eq!(plan(&[path]).sweep, Sweep::Changed(set(&[])), "{path}");
+        assert_eq!(
+            plan(&[path]).sweep_env()[..2],
+            [
+                ("VELT_ROBUSTNESS", "changed".to_string()),
+                ("VELT_ROBUSTNESS_FILES", String::new())
+            ],
+            "{path}"
+        );
     }
     let p = plan(&[
         "tests/golden/lang/foo.vlt",
@@ -581,22 +589,66 @@ fn other_changes_sweep_the_changed_goldens_in_full_and_sample_the_rest() {
     ]);
     assert_eq!(
         p.sweep,
-        Sweep::Sampled(set(&[
+        Sweep::Changed(set(&[
             "tests/golden/lang/foo.vlt",
             "tests/golden/m1/errors/bar.vlt"
         ]))
     );
     assert_eq!(
-        p.sweep_env(),
-        [(
+        p.sweep_env()[1],
+        (
             "VELT_ROBUSTNESS_FILES",
             "tests/golden/lang/foo.vlt,tests/golden/m1/errors/bar.vlt".to_string()
-        )]
+        )
     );
     // A change that selects everything still says which goldens it touched.
-    let p = plan(&["Cargo.lock", "tests/golden/lang/foo.vlt"]);
+    let p = plan(&[".github/workflows/ci.yml", "tests/golden/lang/foo.vlt"]);
     assert!(p.full);
-    assert_eq!(p.sweep, Sweep::Sampled(set(&["tests/golden/lang/foo.vlt"])));
+    assert_eq!(p.sweep, Sweep::Changed(set(&["tests/golden/lang/foo.vlt"])));
+}
+
+#[test]
+fn the_formatter_corpus_is_the_changed_files_unless_the_formatter_changed() {
+    let p = plan(&[
+        "std/string.vlt",
+        "tests/golden/lang/foo.vlt",
+        "tests/golden/lang/foo.out",
+        "fuzz/seeds/a.vlt",
+        "examples/hello.vlt",
+        "crates/velt_sema/src/check.rs",
+    ]);
+    assert_eq!(
+        p.fmt_corpus,
+        Sweep::Changed(set(&[
+            "fuzz/seeds/a.vlt",
+            "std/string.vlt",
+            "tests/golden/lang/foo.vlt"
+        ]))
+    );
+    let env = p.sweep_env();
+    assert!(env.contains(&("VELT_FMT_CORPUS", "changed".to_string())));
+    assert!(env.contains(&(
+        "VELT_FMT_CORPUS_FILES",
+        "fuzz/seeds/a.vlt,std/string.vlt,tests/golden/lang/foo.vlt".to_string()
+    )));
+    // The formatter, what it depends on, and how it is built: the whole corpus. A change of the
+    // parser is one, a change of the formatter leaves the parser's goldens alone.
+    for path in [
+        "crates/velt_syntax/src/lexer.rs",
+        "crates/velt_common/src/span.rs",
+        "rust-toolchain.toml",
+        "Cargo.toml",
+    ] {
+        let p = plan(&[path, "std/string.vlt"]);
+        assert_eq!(p.fmt_corpus, Sweep::Full, "{path}");
+        assert!(
+            !p.sweep_env().iter().any(|(v, _)| v.contains("FMT")),
+            "{path}"
+        );
+    }
+    let p = plan(&["crates/velt_fmt/src/lib.rs"]);
+    assert_eq!(p.fmt_corpus, Sweep::Full);
+    assert_eq!(p.sweep, Sweep::Changed(set(&[])));
 }
 
 #[test]
@@ -607,14 +659,14 @@ fn comment_only_parser_changes_and_many_goldens() {
         &paths,
         &set(&["crates/velt_syntax/src/lexer/mod.rs"]),
     );
-    assert_eq!(p.sweep, Sweep::Sampled(set(&[])));
-    let many: Vec<String> = (0..=MAX_SWEPT_GOLDENS)
+    assert_eq!(p.sweep, Sweep::Changed(set(&[])));
+    let many: Vec<String> = (0..=MAX_SWEPT_FILES)
         .map(|i| format!("tests/golden/lang/g{i}.vlt"))
         .collect();
     assert_eq!(Plan::for_paths(&graph(), &many).sweep, Sweep::Full);
     assert!(matches!(
         Plan::for_paths(&graph(), &many[1..]).sweep,
-        Sweep::Sampled(files) if files.len() == MAX_SWEPT_GOLDENS
+        Sweep::Changed(files) if files.len() == MAX_SWEPT_FILES
     ));
 }
 
@@ -623,11 +675,21 @@ fn the_toolchain_and_the_root_manifest_sweep_in_full() {
     for path in ["rust-toolchain.toml", "Cargo.toml"] {
         assert_eq!(plan(&[path]).sweep, Sweep::Full, "{path}");
     }
-    // A crate's manifest other than the parser's keeps the sample.
+    // A crate's manifest other than the parser's changes nothing about it.
     assert_eq!(
         plan(&["crates/velt_sema/Cargo.toml"]).sweep,
-        Sweep::Sampled(set(&[]))
+        Sweep::Changed(set(&[]))
     );
+}
+
+#[test]
+fn the_dependencies_sweep_all_the_files_at_the_tests_default() {
+    for path in ["Cargo.lock", ".cargo/config.toml"] {
+        let p = plan(&[path, "tests/golden/lang/foo.vlt"]);
+        assert_eq!(p.sweep, Sweep::Default, "{path}");
+        assert_eq!(p.fmt_corpus, Sweep::Default, "{path}");
+        assert!(p.sweep_env().is_empty(), "{path}");
+    }
 }
 
 #[test]
@@ -640,7 +702,8 @@ fn unknown_changes_sweep_in_full_but_explicit_full_leaves_it_to_the_environment(
         [("VELT_ROBUSTNESS", "full".to_string())]
     );
     let full = Plan::everything("--full");
-    assert_eq!(full.sweep, Sweep::Sampled(set(&[])));
+    assert_eq!(full.sweep, Sweep::Default);
+    assert_eq!(full.fmt_corpus, Sweep::Default);
     assert!(full.sweep_env().is_empty());
 }
 

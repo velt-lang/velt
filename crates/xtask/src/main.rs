@@ -34,6 +34,7 @@ mod read_by_tests;
 mod repeat;
 #[cfg(test)]
 mod requeue_tests;
+mod sweep;
 mod timing_lint;
 
 use std::path::{Path, PathBuf};
@@ -383,7 +384,8 @@ fn precheck_paths(root: &Path, args: &Args) -> Result<(Vec<String>, String), Str
 /// checks (`os`), the OSes besides Linux a pull request lints on (`other_os`, the same ones: PR CI
 /// otherwise runs on Linux only), and how the
 /// parser's robustness test cuts the goldens in the queue, which runs `--full` and so knows no
-/// changes (`robustness`, `robustness_files`: `VELT_ROBUSTNESS`, `VELT_ROBUSTNESS_FILES`), nor
+/// changes (`robustness`, `robustness_files`: `VELT_ROBUSTNESS`, `VELT_ROBUSTNESS_FILES`; the
+/// formatter's corpus: `fmt_corpus`, `fmt_corpus_files`), nor
 /// whether the WebAssembly goldens run (`wasm_goldens`: `skip` when they don't). The goldens and
 /// the WebAssembly goldens run in shards per OS (`golden_shards`, `wasm_shards`). After a push to
 /// `main`, `main_os` lists the OSes of the `main` job: Linux (it saves the build cache) and,
@@ -425,6 +427,8 @@ fn github_output_text(plan: &Plan) -> String {
     for (output, var) in [
         ("robustness", "VELT_ROBUSTNESS"),
         ("robustness_files", "VELT_ROBUSTNESS_FILES"),
+        ("fmt_corpus", "VELT_FMT_CORPUS"),
+        ("fmt_corpus_files", "VELT_FMT_CORPUS_FILES"),
     ] {
         let value = sweep.iter().find(|(v, _)| *v == var).map_or("", |(_, x)| x);
         text.push_str(&format!("{output}={value}\n"));
@@ -655,22 +659,25 @@ name = \"a\"
             text.contains("\nrobustness=\nrobustness_files=\n"),
             "{text}"
         );
-        plan.sweep = plan::Sweep::Sampled(
+        plan.sweep = sweep::Sweep::Changed(
             ["tests/golden/a/x.vlt", "tests/golden/b.vlt"]
                 .map(String::from)
                 .into(),
         );
+        plan.fmt_corpus = sweep::Sweep::Changed(["std/a.vlt"].map(String::from).into());
         let text = github_output_text(&plan);
         assert!(
             text.contains(
-                "\nrobustness=\nrobustness_files=tests/golden/a/x.vlt,tests/golden/b.vlt\n"
+                "\nrobustness=changed\nrobustness_files=tests/golden/a/x.vlt,tests/golden/b.vlt\n\
+                 fmt_corpus=changed\nfmt_corpus_files=std/a.vlt\n"
             ),
             "{text}"
         );
-        plan.sweep = plan::Sweep::Full;
+        plan.sweep = sweep::Sweep::Full;
+        plan.fmt_corpus = sweep::Sweep::Full;
         let text = github_output_text(&plan);
         assert!(
-            text.contains("\nrobustness=full\nrobustness_files=\n"),
+            text.contains("\nrobustness=full\nrobustness_files=\nfmt_corpus=\nfmt_corpus_files=\n"),
             "{text}"
         );
     }

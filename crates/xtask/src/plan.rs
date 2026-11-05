@@ -11,6 +11,7 @@ use crate::graph::Graph;
 use crate::os;
 use crate::package_users;
 use crate::read_by_tests::READ_BY_TESTS;
+use crate::sweep::{Sweep, FORMATTER_FILES, PARSER_FILES};
 
 /// Crates whose change can change what any compiled Velt program does: every end-to-end test
 /// runs. (A crate not listed here or in [`TOOLING`] is treated like these.)
@@ -174,58 +175,6 @@ pub enum Goldens {
     All,
 }
 
-/// How velt_syntax's robustness test (`prefixes_never_panic_*`, which parses what is before and
-/// after cuts through every golden) cuts the goldens.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum Sweep {
-    /// At every character of the kitchen sink and of these goldens (paths relative to the
-    /// workspace root), and at a sample of positions in the others.
-    Sampled(BTreeSet<String>),
-    /// At every character of every golden (`VELT_ROBUSTNESS=full`): the parser changed.
-    Full,
-}
-
-/// Files outside the parser's crates that change what it compiles to: the toolchain, and the
-/// root manifest's profiles (`overflow-checks`, `debug-assertions` decide what panics).
-const PARSER_BUILD: &[&str] = &["rust-toolchain.toml", "Cargo.toml"];
-
-/// More changed goldens than this sweep every golden in full, which keeps the list of files out
-/// of a long environment variable.
-const MAX_SWEPT_GOLDENS: usize = 200;
-
-impl Sweep {
-    /// The sweep for a change touching `paths` (only comments changed in `comment_only`): full
-    /// when code of velt_syntax or of a crate it depends on changed, or how it is compiled
-    /// ([`PARSER_BUILD`]), every character of the
-    /// changed goldens otherwise.
-    fn for_changes(graph: &Graph, paths: &[String], comment_only: &BTreeSet<String>) -> Sweep {
-        let parser = BTreeSet::from(["velt_syntax".to_string()]);
-        let mut goldens = BTreeSet::new();
-        for path in paths.iter().filter(|p| !comment_only.contains(*p)) {
-            if PARSER_BUILD.contains(&path.as_str()) {
-                return Sweep::Full;
-            }
-            if let Some(rest) = path.strip_prefix("crates/") {
-                let dir = rest.split('/').next().unwrap_or(rest);
-                let affects_parser = graph.dirs.get(dir).is_some_and(|name| {
-                    graph
-                        .with_dependents(&BTreeSet::from([name.clone()]))
-                        .is_superset(&parser)
-                });
-                if affects_parser {
-                    return Sweep::Full;
-                }
-            } else if path.starts_with("tests/golden/") && path.ends_with(".vlt") {
-                goldens.insert(path.clone());
-            }
-        }
-        if goldens.len() > MAX_SWEPT_GOLDENS {
-            return Sweep::Full;
-        }
-        Sweep::Sampled(goldens)
-    }
-}
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Plan {
     /// Everything runs; `reasons` says why.
@@ -260,6 +209,8 @@ pub struct Plan {
     pub after_merge: Option<String>,
     /// How velt_syntax's robustness test cuts the goldens, if it runs.
     pub sweep: Sweep,
+    /// The files velt_fmt's corpus tests format, if they run.
+    pub fmt_corpus: Sweep,
     /// The WebAssembly goldens (`veltc::wasm_goldens`, every golden built twice more and run
     /// under wasmtime: about half of the test time) run with all of `veltc`'s tests. A change
     /// runs them only when it touches WebAssembly code ([`WASM_TOO`]); a changed golden alone
@@ -291,7 +242,8 @@ impl Plan {
             vscode: true,
             // `--full` (the merge queue, nightly) knows no changes: the environment chooses
             // (`VELT_ROBUSTNESS`, as `cargo xtask affected` sets it for the queue).
-            sweep: Sweep::Sampled(BTreeSet::new()),
+            sweep: Sweep::Default,
+            fmt_corpus: Sweep::Default,
             wasm: true,
         }
     }
@@ -301,6 +253,7 @@ impl Plan {
     pub fn unknown_changes(reason: impl Into<String>) -> Plan {
         Plan {
             sweep: Sweep::Full,
+            fmt_corpus: Sweep::Full,
             ..Plan::everything(reason)
         }
     }
@@ -321,7 +274,8 @@ impl Plan {
             native_crates: false,
             difftest: false,
             vscode: false,
-            sweep: Sweep::Sampled(BTreeSet::new()),
+            sweep: Sweep::Default,
+            fmt_corpus: Sweep::Default,
             wasm: false,
         }
     }
@@ -335,7 +289,9 @@ impl Plan {
     /// `comment_only`.
     pub fn for_changes(graph: &Graph, paths: &[String], comment_only: &BTreeSet<String>) -> Plan {
         let mut plan = Plan::nothing();
-        plan.sweep = Sweep::for_changes(graph, paths, comment_only);
+        plan.sweep = Sweep::for_changes(graph, paths, comment_only, "velt_syntax", PARSER_FILES);
+        plan.fmt_corpus =
+            Sweep::for_changes(graph, paths, comment_only, "velt_fmt", FORMATTER_FILES);
         plan.wasm = paths.iter().any(|p| is_wasm(p));
         let mut changed_crates = BTreeSet::new();
         let mut comment_crates = BTreeSet::new();
@@ -350,6 +306,7 @@ impl Plan {
                     let everything = Plan::everything(format!("{path} changed"));
                     return Plan {
                         sweep: plan.sweep,
+                        fmt_corpus: plan.fmt_corpus,
                         macos: os::macos_reason(&code),
                         after_merge: os::after_merge_reason(paths),
                         // The WebAssembly goldens stay with the nightly unless the change builds
@@ -586,17 +543,18 @@ impl Plan {
     }
 
     /// The environment variables that tell velt_syntax's robustness test how to cut the goldens
-    /// (crates/velt_syntax/tests/robustness.rs); none for its default, so a `VELT_ROBUSTNESS`
-    /// set by the caller (nightly, the merge queue) stays.
+    /// (crates/velt_syntax/tests/robustness.rs) and velt_fmt's corpus tests what to format
+    /// (crates/velt_fmt/tests/common/mod.rs); none for their defaults, so a `VELT_ROBUSTNESS` set by
+    /// the caller (nightly, the merge queue) stays.
     pub fn sweep_env(&self) -> Vec<(&'static str, String)> {
-        match &self.sweep {
-            Sweep::Full => vec![("VELT_ROBUSTNESS", "full".into())],
-            Sweep::Sampled(files) if files.is_empty() => vec![],
-            Sweep::Sampled(files) => {
-                let files: Vec<&str> = files.iter().map(String::as_str).collect();
-                vec![("VELT_ROBUSTNESS_FILES", files.join(","))]
-            }
-        }
+        let mut env = self
+            .sweep
+            .env("VELT_ROBUSTNESS", "VELT_ROBUSTNESS_FILES", true);
+        env.extend(
+            self.fmt_corpus
+                .env("VELT_FMT_CORPUS", "VELT_FMT_CORPUS_FILES", false),
+        );
+        env
     }
 
     pub fn describe(&self) -> String {
@@ -628,12 +586,17 @@ impl Plan {
             _ => "no",
         };
         out.push_str(&format!("  WebAssembly goldens: {wasm}\n"));
-        let sweep = match &self.sweep {
-            Sweep::Full => "every character of every golden (VELT_ROBUSTNESS=full)".to_string(),
-            Sweep::Sampled(files) if files.is_empty() => "sampled".to_string(),
-            Sweep::Sampled(files) => format!("sampled, every character of: {}", join(files)),
-        };
-        out.push_str(&format!("  parser robustness sweep: {sweep}\n"));
+        out.push_str(&format!(
+            "  parser robustness sweep: {}\n",
+            self.sweep.describe(
+                "a sample of every golden",
+                "every character of every golden (VELT_ROBUSTNESS=full)"
+            )
+        ));
+        out.push_str(&format!(
+            "  formatter corpus: {}\n",
+            self.fmt_corpus.describe("every file", "every file")
+        ));
         out.push_str(&format!(
             "  velt fmt --check std examples packages: {}\n",
             yes(self.vlt_fmt)
