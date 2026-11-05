@@ -272,6 +272,25 @@ fn assert_linear_counted<const K: usize>(
     counters: impl Fn() -> [u64; K],
     slack: f64,
 ) {
+    let failed = nonlinear_counted(sizes, load, names, counters, slack);
+    assert!(
+        failed.is_empty(),
+        "{}",
+        failed.join(
+            "
+"
+        )
+    );
+}
+
+/// What [`assert_linear_counted`] asserts: each way the work grew too fast.
+fn nonlinear_counted<const K: usize>(
+    sizes: &[usize],
+    load: impl Fn(usize) -> Loaded,
+    names: [&str; K],
+    counters: impl Fn() -> [u64; K],
+    slack: f64,
+) -> Vec<String> {
     let _serial = serial();
     let empty = counted_work(&load_src("function main() {}"), &counters);
     let per_unit: Vec<[f64; K]> = sizes
@@ -282,17 +301,18 @@ fn assert_linear_counted<const K: usize>(
             std::array::from_fn(|i| work[i].saturating_sub(empty[i]) as f64 / n as f64)
         })
         .collect();
+    let mut failed = vec![];
     for (n, u) in sizes.iter().zip(&per_unit).skip(1) {
         for (i, name) in names.iter().enumerate() {
-            assert!(
-                u[i] <= slack * per_unit[0][i],
-                "{name}: work per unit grew from {:.1} (N = {}) to {:.1} (N = {n})",
-                per_unit[0][i],
-                sizes[0],
-                u[i],
-            );
+            if u[i] > slack * per_unit[0][i] {
+                failed.push(format!(
+                    "{name}: work per unit grew from {:.1} (N = {}) to {:.1} (N = {n})",
+                    per_unit[0][i], sizes[0], u[i],
+                ));
+            }
         }
     }
+    failed
 }
 
 #[test]
@@ -684,6 +704,7 @@ const KEYED_OK: &str =
 #[test]
 fn stores_by_key_grow_linearly() {
     let keyed = || [check_work().keyed];
+    let mut failed = vec![];
     for shape in ["A", "B", "B2", "T", "TK", "TW", "L"] {
         let load = |n| keyed_program(shape, n, KEYED_OK);
         // The check runs on these programs: no work at all would pass the comparison below.
@@ -691,8 +712,22 @@ fn stores_by_key_grow_linearly() {
         let work = counted_work(&load(100), &keyed)[0];
         drop(_serial);
         assert!(work >= 100, "{shape}: only {work} steps at N = 100");
-        assert_linear_counted(&[100, 200, 400, 800], load, [shape], keyed, 1.5);
+        failed.extend(nonlinear_counted(
+            &[100, 200, 400, 800],
+            load,
+            [shape],
+            keyed,
+            1.5,
+        ));
     }
+    assert!(
+        failed.is_empty(),
+        "{}",
+        failed.join(
+            "
+"
+        )
+    );
 }
 
 /// However the keys are kept, a key still reaches the store it is for, and only that one: `k7` goes
