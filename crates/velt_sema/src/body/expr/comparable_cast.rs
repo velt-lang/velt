@@ -2,19 +2,25 @@
 //! has every required member of the other, and the members they share compare. These are the
 //! assertions on objects TypeScript accepts that no other form covers: a target with optional
 //! members the source lacks (`(ctx as { provides?: Map<symbol, unknown> }).provides`, `(i as {
-//! dispose?: unknown } | null)?.dispose` of a `T`), a source with fewer members (`{ name: "a" }
-//! as Named`), or an extra marker to write (`(d as Marked<T>)[KEY] = true`).
+//! dispose?: unknown } | null)?.dispose` of a `T`), or a source with fewer members (`{ name: "a" }
+//! as Named`).
 //!
 //! TypeScript keeps the one object, and so does this: in a program with typed proxies (#823)
 //! the cast is the conversion through `any` that a view comes from (velt_vir lower/any_view.rs),
 //! whose reads and writes go to the object, a member's value checked as its type where it is
-//! read. Without typed proxies an object type holds only its own layout, and the cast stays an
+//! read: a required member the object lacks is a `TypeError` there, and a member its layout has
+//! no room for (a marker written through the view) a `TypeError` at the write, where Node goes on.
+//! Without typed proxies an object type holds only its own layout, and the cast stays an
 //! error. A class target stays one too: its methods would run on another type's layout.
+//!
+//! `x as Record<K, V>` has no view: the record holds a copy of the fields, one
+//! `crate::object_copies` reports once the program could tell it from the object.
 
 use velt_common::Span;
 
 use crate::body::FnCx;
 use crate::hir::{self, TyId, TyKind};
+use crate::object_copies::Copy;
 
 /// How deep the comparison of member types goes before it takes them as comparable (recursive
 /// types: TypeScript assumes the same of a pair it is already comparing).
@@ -43,7 +49,36 @@ impl FnCx<'_, '_> {
         if !record && !self.objects_overlap(h.ty, core, span, 0) {
             return Err(h);
         }
-        self.through_any(h, target)
+        let from = h.ty;
+        let source = self.place_text(&h);
+        let view = self.through_any(h, target)?;
+        if record {
+            self.note_record_copy(from, core, source, span);
+        }
+        Ok(view)
+    }
+
+    /// The record `to` holds a copy of the fields of a `from` (`Copy::record`).
+    fn note_record_copy(&mut self, from: TyId, to: TyId, source: Option<String>, span: Span) {
+        let from = self.cx.ty.core(from).unwrap_or(from);
+        let members = self.object_members(from).unwrap_or_default();
+        let fields = (members.into_iter())
+            .filter(|m| m.1.is_some())
+            .map(|m| m.0)
+            .collect();
+        self.cx.object_copies.copies.push(Copy {
+            from,
+            to,
+            fields,
+            absent: vec![],
+            span,
+            source,
+            fresh: false,
+            in_order: true,
+            generic: false,
+            view_of: None,
+            record: true,
+        });
     }
 
     /// An object `h` where the object type `exp` is expected, whose members its type has
@@ -74,8 +109,17 @@ impl FnCx<'_, '_> {
         };
         let weak = want.iter().all(|m| m.2);
         let shares = want.iter().any(|m| have.iter().any(|n| n.0 == m.0));
-        if (weak && !shares) || !self.has_members(&have, &want, span, 0) {
+        if weak && !shares {
             return Err(h);
+        }
+        let pair = (from, core);
+        if !self.cx.object_copies.view_pairs.contains(&pair) {
+            self.cx.object_copies.view_pairs.push(pair);
+            let has = self.has_members(&have, &want, span, 0);
+            self.cx.object_copies.view_pairs.pop();
+            if !has {
+                return Err(h);
+            }
         }
         self.through_any(h, exp)
     }
@@ -132,9 +176,17 @@ impl FnCx<'_, '_> {
 
     /// Is a value of type `a` comparable to a `b`, in either direction (module docs)?
     fn objects_overlap(&mut self, a: TyId, b: TyId, span: Span, depth: u32) -> bool {
-        if a == b || depth > MAX_DEPTH {
+        if a == b || depth > MAX_DEPTH || self.cx.object_copies.view_pairs.contains(&(a, b)) {
             return true;
         }
+        self.cx.object_copies.view_pairs.push((a, b));
+        let overlap = self.objects_overlap_at(a, b, span, depth);
+        self.cx.object_copies.view_pairs.pop();
+        overlap
+    }
+
+    /// [`Self::objects_overlap`], with the pair `a`, `b` being compared.
+    fn objects_overlap_at(&mut self, a: TyId, b: TyId, span: Span, depth: u32) -> bool {
         let open = |s: &Self, t: TyId| {
             s.cx.dynamic(t).is_some() || matches!(s.cx.ty.kind(t), TyKind::Param(_))
         };

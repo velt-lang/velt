@@ -1,0 +1,1 @@
+record_cast_deleted.velt:5:6: error: a value of type `{ href?: string; target?: string }` converts to `Record<string, string | undefined>` by copying its fields, and this program writes to such a record, which the object would not see

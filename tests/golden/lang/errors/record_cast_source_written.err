@@ -1,0 +1,1 @@
+record_cast_source_written.velt:5:11: error: a value of type `{ href?: string; target?: string }` converts to `Record<string, string | undefined>` by copying its fields, and this program assigns field `href`, which the other object would not see

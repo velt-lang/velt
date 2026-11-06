@@ -58,6 +58,13 @@ impl FnCx<'_, '_> {
         .filter(|s| !s.starts_with('<'));
         let fresh = crate::fresh_returns::fresh_callees(&h).is_some_and(|c| c.is_empty());
         let in_order = self.in_order(from, &fields, &slots);
+        let mut lets = vec![];
+        let mut base = match path {
+            true => h,
+            false => self.temp("<copy>", h, &mut lets),
+        };
+        set_place_mode(&mut base, UseMode::Borrow);
+        let view_of = self.program_makes_proxies().then(|| base.clone());
         self.cx.object_copies.copies.push(Copy {
             from,
             to: exp,
@@ -68,13 +75,9 @@ impl FnCx<'_, '_> {
             fresh,
             in_order,
             generic: false,
+            view_of,
+            record: false,
         });
-        let mut lets = vec![];
-        let mut base = match path {
-            true => h,
-            false => self.temp("<copy>", h, &mut lets),
-        };
-        set_place_mode(&mut base, UseMode::Borrow);
         let mut values = vec![];
         let mut posts = vec![];
         for (k, slot) in slots.into_iter().enumerate() {

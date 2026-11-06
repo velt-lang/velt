@@ -352,7 +352,9 @@ impl FnCx<'_, '_> {
     /// Does the visible local `name` hold a method read as a value (`const f = o.m`)?
     /// `f.call(o, …)` where `f`, a dynamic value, was read as `o.m` (`const d = (o as T)?.m`): a
     /// method read through `any` is no function value yet (#823), and this is the call
-    /// `(o as any).m(…)`, on the object it was read from, as in JavaScript.
+    /// `(o as any).m(…)`, on the object it was read from, as in JavaScript. That reads the member
+    /// again: a program that assigns a member of that name is an error (`crate::object_copies`).
+    /// Limit: a write through `any` with a key known only at run time is not counted.
     fn read_method_call(
         &mut self,
         f: &ast::Expr,
@@ -369,6 +371,10 @@ impl FnCx<'_, '_> {
         let (ty, prop) = self.member_read_of(&id.name)?;
         self.cx.dynamic(ty)?;
         let span = f.span;
+        self.cx
+            .object_copies
+            .method_rereads
+            .push((prop.clone(), span));
         let any = ast::TypeExpr {
             kind: ast::TypeExprKind::Named {
                 path: vec![ast::Ident {

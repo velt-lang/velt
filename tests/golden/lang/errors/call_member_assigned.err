@@ -1,0 +1,1 @@
+call_member_assigned.velt:8:46: error: this `call` reads member `m` again when it runs (a method read through `any` is no function value yet, #823), and this program assigns `m`

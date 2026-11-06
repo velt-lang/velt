@@ -1,0 +1,8 @@
+// A cast to an interface with methods of an object that has none stops at the cast: Node goes on
+// until the method is called.
+const made = new Proxy({}, {});
+interface Cx { name: string; hello(): string; }
+function up(c: { name?: string }): Cx { return c as Cx; }
+console.log("before");
+const v = up({ name: "a" });
+console.log(v.name);

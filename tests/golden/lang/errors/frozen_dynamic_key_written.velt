@@ -1,0 +1,6 @@
+// As `frozen_dynamic_written`, with a key known only at run time.
+const f = Object.freeze({ a: 1 });
+const x = f as any;
+const k = "a";
+x[k] = 2;
+console.log(f.a);
