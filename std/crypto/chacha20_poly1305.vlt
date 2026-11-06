@@ -1,58 +1,124 @@
 // velt/crypto (internal): `ChaCha20Poly1305`, the AEAD of RFC 8439 §2.8 (one of TLS 1.3's
 // cipher suites): ChaCha20 from block 1 encrypts, Poly1305 under block 0's key authenticates
-// the additional data and the ciphertext.
+// the additional data and the ciphertext. Its scratch (state, block, MAC) is kept, so sealing
+// and opening in place allocate nothing.
 
-import { chacha20Xor, chachaPolyKey, store32le } from "velt/crypto/chacha20";
-import { timingSafeEqual } from "velt/crypto/compare";
+import { Aead } from "velt/crypto/aead";
+import { checkOpenRange, checkSealRange, tagMatches, withRoom } from "velt/crypto/aead_tag";
+import {
+  chachaPolyKey,
+  chachaSetNonce,
+  chachaState,
+  chachaXorInPlace,
+  store32le,
+} from "velt/crypto/chacha20";
 import { CryptoError } from "velt/crypto/errors";
 import { Poly1305 } from "velt/crypto/poly1305";
-import { newBytes } from "velt/crypto/vectors";
+import { arrayTruncate } from "velt/lang/intrinsics";
 
 /**
  * The ChaCha20-Poly1305 AEAD (RFC 8439) under a 32-byte key: `seal` encrypts and appends a
- * 16-byte tag, `open` checks the tag (in constant time) and decrypts. A nonce (12 bytes) must
- * never be used twice with one key. A message is at most 274,877,906,880 bytes (2^32 - 1
- * blocks, RFC 8439 §2.8); a longer one throws `CryptoError`.
+ * 16-byte tag, `open` checks the tag (in constant time) and decrypts; `sealInPlace` and
+ * `openInPlace` do the same in the caller's buffer. A nonce (12 bytes) must never be used
+ * twice with one key. A message is at most 274,877,906,880 bytes (2^32 - 1 blocks, RFC 8439
+ * §2.8); a longer one throws `CryptoError`.
+ * An object keeps its scratch between calls, so it must not be used by two threads at once
+ * (tasks on one thread may share it: no call awaits).
  */
-export class ChaCha20Poly1305 {
-  private key: u8[];
+export class ChaCha20Poly1305 implements Aead {
+  private state: u32[];
+  private x: u32[];
+  private polyKey: u8[];
+  private mac: Poly1305;
+  private scratch: u8[];
 
   /** An AEAD under `key`; throws `CryptoError` unless it is 32 bytes. */
   constructor(key: u8[]) {
     if (key.length != 32) {
       throw new CryptoError(`ChaCha20-Poly1305 key must be 32 bytes, got ${key.length}`);
     }
-    this.key = key.slice();
+    this.state = chachaState(key);
+    this.x = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    this.polyKey = Buffer.alloc(32);
+    this.mac = new Poly1305(this.polyKey);
+    this.scratch = Buffer.alloc(16);
   }
 
   /** `plaintext` encrypted under `nonce` (12 bytes), followed by the 16-byte tag over `aad` and it. */
-  seal(nonce: u8[], plaintext: u8[], aad: u8[] = []): u8[] {
-    checkNonce(nonce);
-    chachaCheckLength(plaintext.length as u64);
-    const ct = chacha20Xor(this.key, nonce, 1, plaintext);
-    const tag = mac(this.key, nonce, aad, ct, ct.length);
-    for (let i: usize = 0; i < 16; i++) {
-      ct.push(tag[i]);
-    }
-    return ct;
+  seal(nonce: u8[], plaintext: u8[], aad: u8[] | undefined = []): u8[] {
+    const out = withRoom(plaintext, 16);
+    this.sealInPlace(nonce, aad, out, 0, plaintext.length);
+    return out;
   }
 
   /**
    * The plaintext of `sealed` (ciphertext and tag, as `seal` returns them) under `nonce` and
    * `aad`, or null when the tag does not match (nothing of the plaintext is computed then).
    */
-  open(nonce: u8[], sealed: u8[], aad: u8[] = []): u8[] | null {
+  open(nonce: u8[], sealed: u8[], aad: u8[] | undefined = []): u8[] | null {
+    const out = sealed.slice();
+    if (!this.openInPlace(nonce, aad, out, 0, out.length)) {
+      return null;
+    }
+    arrayTruncate(out, sealed.length - 16);
+    return out;
+  }
+
+  /**
+   * Encrypts `buf[start..end]` in place under `nonce` and writes the tag to `buf[end..end + 16]`;
+   * throws `CryptoError`, before writing anything, unless `start <= end` and the tag fits in `buf`.
+   */
+  sealInPlace(nonce: u8[], aad: u8[], buf: u8[], start: usize, end: usize) {
     checkNonce(nonce);
-    if (sealed.length < 16) {
-      return null;
+    checkSealRange("ChaCha20-Poly1305", buf, start, end);
+    chachaCheckLength((end - start) as u64);
+    this.begin(nonce, aad);
+    chachaXorInPlace(this.state, this.x, 1, buf, start, end);
+    this.mac.updatePadded(buf, start, end);
+    this.lengths(aad.length, end - start);
+    this.mac.finishInto(buf, end);
+  }
+
+  /**
+   * Checks the tag `buf[end - 16..end]` and decrypts `buf[start..end - 16]` in place when it
+   * matches (true); false and `buf` unchanged otherwise. Throws `CryptoError` unless
+   * `start <= end <= buf.length`.
+   */
+  openInPlace(nonce: u8[], aad: u8[], buf: u8[], start: usize, end: usize): bool {
+    checkNonce(nonce);
+    checkOpenRange("ChaCha20-Poly1305", buf, start, end);
+    if (end < start + 16) {
+      return false;
     }
-    const n = sealed.length - 16;
-    chachaCheckLength(n as u64);
-    const tag = mac(this.key, nonce, aad, sealed, n);
-    if (!timingSafeEqual(tag, sealed.slice(n as i64))) {
-      return null;
+    const n = end - 16;
+    chachaCheckLength((n - start) as u64);
+    this.begin(nonce, aad);
+    this.mac.updatePadded(buf, start, n);
+    this.lengths(aad.length, n - start);
+    this.mac.finishInto(this.scratch, 0);
+    if (!tagMatches(this.scratch, buf, n)) {
+      return false;
     }
-    return chacha20Xor(this.key, nonce, 1, sealed.slice(0, n as i64));
+    chachaXorInPlace(this.state, this.x, 1, buf, start, n);
+    return true;
+  }
+
+  // The nonce (checked) in the state, the one-time Poly1305 key, the additional data absorbed.
+  private begin(nonce: u8[], aad: u8[]) {
+    chachaSetNonce(this.state, nonce);
+    chachaPolyKey(this.state, this.x, this.polyKey);
+    this.mac.reset(this.polyKey);
+    this.mac.updatePadded(aad, 0, aad.length);
+  }
+
+  // le64(aad length) | le64(ciphertext length), the MAC's last block.
+  private lengths(a: usize, c: usize) {
+    const l = this.scratch;
+    store32le(l, 0, a as u32);
+    store32le(l, 4, ((a as u64) >> 32) as u32);
+    store32le(l, 8, c as u32);
+    store32le(l, 12, ((c as u64) >> 32) as u32);
+    this.mac.updatePadded(l, 0, 16);
   }
 }
 
@@ -73,18 +139,4 @@ export function chachaCheckLength(n: u64) {
       `ChaCha20-Poly1305 message must be at most ${CHACHA_MAX_BYTES} bytes, got ${n}`,
     );
   }
-}
-
-// Poly1305 over aad | pad16 | ct[0..n] | pad16 | le64(aad length) | le64(n).
-function mac(key: u8[], nonce: u8[], aad: u8[], ct: u8[], n: usize): u8[] {
-  const p = new Poly1305(chachaPolyKey(key, nonce));
-  p.updatePadded(aad, 0, aad.length);
-  p.updatePadded(ct, 0, n);
-  const lens = newBytes(16);
-  store32le(lens, 0, aad.length as u32);
-  store32le(lens, 4, ((aad.length as u64) >> 32) as u32);
-  store32le(lens, 8, n as u32);
-  store32le(lens, 12, ((n as u64) >> 32) as u32);
-  p.updatePadded(lens, 0, 16);
-  return p.finish();
 }

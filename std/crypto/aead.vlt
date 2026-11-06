@@ -1,0 +1,29 @@
+// velt/crypto (internal): `Aead`, what the AEAD classes have in common, so a protocol (TLS's
+// record layer) can hold either and seal and open records in place.
+
+/**
+ * An authenticated cipher with associated data (`ChaCha20Poly1305`, `AesGcm`): 12-byte nonces,
+ * 16-byte tags.
+ */
+export interface Aead {
+  /** `plaintext` encrypted under `nonce`, followed by the tag over `aad` (default none) and it. */
+  seal(nonce: u8[], plaintext: u8[], aad?: u8[]): u8[];
+  /**
+   * The plaintext of `sealed` under `nonce` and `aad` (default none), or null when the tag does
+   * not match.
+   */
+  open(nonce: u8[], sealed: u8[], aad?: u8[]): u8[] | null;
+  /**
+   * Encrypts `buf[start..end]` in place and writes the tag over `aad` and it to
+   * `buf[end..end + 16]`; throws `CryptoError`, before writing anything, unless `start <= end`
+   * and `buf` is that long. Allocates nothing.
+   */
+  sealInPlace(nonce: u8[], aad: u8[], buf: u8[], start: usize, end: usize): void;
+  /**
+   * Checks the tag in `buf[end - 16..end]` over `aad` and the ciphertext `buf[start..end - 16]`
+   * and, when it matches, decrypts that ciphertext in place: true. False (and `buf` unchanged)
+   * for a wrong tag or fewer than 16 bytes; throws `CryptoError` unless
+   * `start <= end <= buf.length`. Allocates nothing.
+   */
+  openInPlace(nonce: u8[], aad: u8[], buf: u8[], start: usize, end: usize): bool;
+}

@@ -1,0 +1,46 @@
+// velt/crypto (internal): what both AEADs do with their tags and buffers: check the range an
+// in-place call is given, compare a computed tag with the one in a buffer in constant time, and
+// copy data into a buffer with room for it.
+
+import { CryptoError } from "velt/crypto/errors";
+
+/**
+ * Throws `CryptoError` from `name`'s `sealInPlace` unless `buf[start..end]` is a range with 16
+ * bytes after it for the tag, so nothing is written before the arguments are known to fit.
+ */
+export function checkSealRange(name: string, buf: u8[], start: usize, end: usize) {
+  if (start > end || end > buf.length || buf.length - end < 16) {
+    throw new CryptoError(
+      `${name} sealInPlace needs start <= end and end + 16 <= buffer length, ` +
+        `got start ${start}, end ${end}, length ${buf.length}`,
+    );
+  }
+}
+
+/** Throws `CryptoError` from `name`'s `openInPlace` unless `buf[start..end]` is a range. */
+export function checkOpenRange(name: string, buf: u8[], start: usize, end: usize) {
+  if (start > end || end > buf.length) {
+    throw new CryptoError(
+      `${name} openInPlace needs start <= end <= buffer length, ` +
+        `got start ${start}, end ${end}, length ${buf.length}`,
+    );
+  }
+}
+
+/** Whether `tag[0..16]` equals `buf[at..at + 16]`, in time independent of where they differ. */
+export function tagMatches(tag: u8[], buf: u8[], at: usize): bool {
+  let diff: u8 = 0;
+  for (let i: usize = 0; i < 16; i++) {
+    diff |= tag[i] ^ buf[at + i];
+  }
+  return diff == 0;
+}
+
+/** `data` followed by `extra` bytes of room (zeros), for in-place sealing of a copy. */
+export function withRoom(data: u8[], extra: usize): u8[] {
+  const out = Buffer.alloc(data.length + extra);
+  for (let i: usize = 0; i < data.length; i++) {
+    out[i] = data[i];
+  }
+  return out;
+}

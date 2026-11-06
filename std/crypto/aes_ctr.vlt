@@ -1,5 +1,5 @@
 // velt/crypto (internal): AES (FIPS 197) key expansion and counter mode on the bitsliced core:
-// four counter blocks are encrypted together, which is what GCM needs. Constant time (the key
+// four counter blocks are encrypted together, which is what GCM needs, in place. Constant time (the key
 // schedule's S-box is the same circuit).
 
 import {
@@ -92,25 +92,23 @@ export function aesEncrypt4(skey: u64[], q: u64[]) {
 }
 
 /**
- * `data[start..end]` XORed with the keystream of the counter blocks `iv` (12 bytes) followed
- * by the big-endian 32-bit counter from `counter` on (wrapping, as GCM's inc32), written to
- * `out` from `outStart`.
+ * XORs `buf[start..end]` in place with the keystream of the counter blocks `iv` (12 bytes)
+ * followed by the big-endian 32-bit counter from `counter` on (wrapping, as GCM's inc32). `q`
+ * (eight words) and `ks` (64 bytes) are the caller's scratch, so nothing is allocated.
  */
-export function aesCtrXor(
+export function aesCtrInPlace(
   skey: u64[],
+  q: u64[],
+  ks: u8[],
   iv: u8[],
   counter: u32,
-  data: u8[],
+  buf: u8[],
   start: usize,
   end: usize,
-  out: u8[],
-  outStart: usize,
 ) {
   const w0 = load32le(iv, 0);
   const w1 = load32le(iv, 4);
   const w2 = load32le(iv, 8);
-  const q: u64[] = [0, 0, 0, 0, 0, 0, 0, 0];
-  const ks = Buffer.alloc(64);
   let ctr = counter;
   for (let off = start; off < end; off += 64) {
     for (let b: usize = 0; b < 4; b++) {
@@ -120,15 +118,23 @@ export function aesCtrXor(
     ortho(q);
     aesEncrypt4(skey, q);
     ortho(q);
-    for (let b: usize = 0; b < 4; b++) {
-      for (let k: usize = 0; k < 4; k++) {
-        store32le(ks, 16 * b + 4 * k, interleaveOut(q[b], q[b + 4], k));
-      }
-    }
     const n = end - off < 64 ? end - off : 64;
-    const dst = outStart + (off - start);
-    for (let i: usize = 0; i < n; i++) {
-      out[dst + i] = data[off + i] ^ ks[i];
+    if (n == 64) {
+      for (let b: usize = 0; b < 4; b++) {
+        for (let k: usize = 0; k < 4; k++) {
+          const at = off + 16 * b + 4 * k;
+          store32le(buf, at, load32le(buf, at) ^ interleaveOut(q[b], q[b + 4], k));
+        }
+      }
+    } else {
+      for (let b: usize = 0; b < 4; b++) {
+        for (let k: usize = 0; k < 4; k++) {
+          store32le(ks, 16 * b + 4 * k, interleaveOut(q[b], q[b + 4], k));
+        }
+      }
+      for (let i: usize = 0; i < n; i++) {
+        buf[off + i] ^= ks[i];
+      }
     }
   }
 }

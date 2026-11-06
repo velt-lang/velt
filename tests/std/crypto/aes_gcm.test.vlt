@@ -1,7 +1,7 @@
 // AES-GCM (velt/crypto `AesGcm`): the GCM specification's test cases 1-4 (AES-128) and 13-16
 // (AES-256) from McGrew and Viega, as NIST's validation uses them, longer messages, and tampering
 // checks.
-import { AesGcm, CryptoError } from "velt/crypto";
+import { Aead, AesGcm, CryptoError } from "velt/crypto";
 import { hexDecode, hexEncode } from "velt/encoding";
 import { describe, expect, it } from "velt/test";
 
@@ -124,4 +124,97 @@ describe("AesGcm", () => {
       "AES-GCM nonce must be 12 bytes, got 16",
     );
   });
+
+  it("throws for a wrong nonce length before it looks at the input's length", () => {
+    const aead = new AesGcm(hexDecode(K));
+    const msg = "AES-GCM nonce must be 12 bytes, got 1";
+    expect(() => aead.open([0], [1, 2, 3])).toThrow(msg);
+    expect(() => aead.openInPlace([0], [], Buffer.alloc(15), 0, 15)).toThrow(msg);
+  });
+
+  it("seals and opens through Aead without additional data", () => {
+    const direct = new AesGcm(hexDecode(K));
+    const aead: Aead = new AesGcm(hexDecode(K));
+    const nonce = hexDecode(IV);
+    const sealed = aead.seal(nonce, hexDecode(P));
+    expect(hexEncode(sealed)).toBe(hexEncode(direct.seal(nonce, hexDecode(P), [])));
+    const opened = aead.open(nonce, sealed);
+    expect(opened == null ? "null" : hexEncode(opened)).toBe(P);
+  });
+
+  it("seals and opens in place at an offset, as seal and open do", () => {
+    const aead = new AesGcm(hexDecode(K));
+    const nonce: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const aad: u8[] = [23, 3, 3, 0, 99];
+    for (let n: usize = 0; n < 140; n += 13) {
+      const text: u8[] = [];
+      for (let i: usize = 0; i < n; i++) {
+        text.push((i * 3 + 1) as u8);
+      }
+      const buf = Buffer.alloc(n + 16 + 7);
+      for (let i: usize = 0; i < n; i++) {
+        buf[5 + i] = text[i];
+      }
+      aead.sealInPlace(nonce, aad, buf, 5, 5 + n);
+      expect(hexEncode(buf.slice(5, (5 + n + 16) as i64))).toBe(
+        hexEncode(aead.seal(nonce, text, aad)),
+      );
+      expect(buf[0]).toBe(0);
+      expect(buf[n + 21]).toBe(0);
+      expect(aead.openInPlace(nonce, [], buf, 5, 5 + n + 16)).toBe(false);
+      expect(aead.openInPlace(nonce, aad, buf, 5, 5 + n + 16)).toBe(true);
+      expect(hexEncode(buf.slice(5, (5 + n) as i64))).toBe(hexEncode(text));
+    }
+    expect(aead.openInPlace(nonce, aad, Buffer.alloc(15), 0, 15)).toBe(false);
+  });
+
+  it("throws for a wrong nonce length in sealInPlace", () => {
+    const aead = new AesGcm(hexDecode(K));
+    expect(() => aead.sealInPlace(Buffer.alloc(16), [], Buffer.alloc(32), 0, 0)).toThrow(
+      "AES-GCM nonce must be 12 bytes, got 16",
+    );
+  });
+
+  it("opens nothing shorter than a tag at a non-zero start", () => {
+    const aead = new AesGcm(hexDecode(K));
+    const nonce: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const buf = patterned(40);
+    expect(aead.openInPlace(nonce, [], buf, 10, 25)).toBe(false);
+    expect(hexEncode(buf)).toBe(hexEncode(patterned(40)));
+  });
+
+  it("throws CryptoError for a range outside the buffer, before writing anything", () => {
+    const aead = new AesGcm(hexDecode(K));
+    const nonce: u8[] = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
+    const seal = "AES-GCM sealInPlace needs start <= end and end + 16 <= buffer length";
+    const open = "AES-GCM openInPlace needs start <= end <= buffer length";
+    const buf = patterned(40);
+    expect(() => aead.sealInPlace(nonce, [], buf, 10, 5)).toThrow(
+      `${seal}, got start 10, end 5, length 40`,
+    );
+    expect(() => aead.sealInPlace(nonce, [], buf, 0, 30)).toThrow(seal);
+    expect(() => aead.sealInPlace(nonce, [], buf, 0, 50)).toThrow(seal);
+    expect(() => aead.openInPlace(nonce, [], buf, 30, 20)).toThrow(
+      `${open}, got start 30, end 20, length 40`,
+    );
+    expect(() => aead.openInPlace(nonce, [], buf, 0, 41)).toThrow(open);
+    expect(hexEncode(buf)).toBe(hexEncode(patterned(40)));
+    let caught = false;
+    try {
+      aead.sealInPlace(nonce, [], buf, 0, 25);
+    } catch (e) {
+      caught = e instanceof CryptoError;
+    }
+    expect(caught).toBe(true);
+    expect(hexEncode(buf)).toBe(hexEncode(patterned(40)));
+  });
 });
+
+// `n` bytes 0, 7, 14, ...: data a failed call must leave as it was.
+function patterned(n: usize): u8[] {
+  const out = Buffer.alloc(n);
+  for (let i: usize = 0; i < n; i++) {
+    out[i] = (i * 7) as u8;
+  }
+  return out;
+}

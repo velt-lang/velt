@@ -4,35 +4,44 @@
 
 import { load32le, store32le } from "velt/crypto/chacha20";
 import { CryptoError } from "velt/crypto/errors";
-import { newBytes } from "velt/crypto/vectors";
 
 const M26: u64 = 0x3ffffff;
 
-/** A running Poly1305 MAC: `updatePadded` pieces, then `finish`. */
+/**
+ * A running Poly1305 MAC: `reset` with a key, `updatePadded` pieces, then `finishInto`;
+ * reusable.
+ */
 export class Poly1305 {
   private r: u64[];
   private h: u64[];
   private pad: u64[];
+  private tail: u8[];
 
   /** A MAC under the one-time `key` (32 bytes: r, then s); throws `CryptoError` for another length. */
   constructor(key: u8[]) {
+    this.r = [0, 0, 0, 0, 0];
+    this.pad = [0, 0, 0, 0];
+    this.h = [0, 0, 0, 0, 0];
+    this.tail = Buffer.alloc(16);
+    this.reset(key);
+  }
+
+  /** Starts a new MAC under the one-time 32-byte `key`, keeping the arrays. */
+  reset(key: u8[]) {
     if (key.length != 32) {
       throw new CryptoError(`Poly1305 key must be 32 bytes, got ${key.length}`);
     }
-    this.r = [
-      (load32le(key, 0) as u64) & 0x3ffffff,
-      ((load32le(key, 3) as u64) >> 2) & 0x3ffff03,
-      ((load32le(key, 6) as u64) >> 4) & 0x3ffc0ff,
-      ((load32le(key, 9) as u64) >> 6) & 0x3f03fff,
-      ((load32le(key, 12) as u64) >> 8) & 0x00fffff,
-    ];
-    this.pad = [
-      load32le(key, 16) as u64,
-      load32le(key, 20) as u64,
-      load32le(key, 24) as u64,
-      load32le(key, 28) as u64,
-    ];
-    this.h = [0, 0, 0, 0, 0];
+    this.r[0] = (load32le(key, 0) as u64) & 0x3ffffff;
+    this.r[1] = ((load32le(key, 3) as u64) >> 2) & 0x3ffff03;
+    this.r[2] = ((load32le(key, 6) as u64) >> 4) & 0x3ffc0ff;
+    this.r[3] = ((load32le(key, 9) as u64) >> 6) & 0x3f03fff;
+    this.r[4] = ((load32le(key, 12) as u64) >> 8) & 0x00fffff;
+    for (let i: usize = 0; i < 4; i++) {
+      this.pad[i] = load32le(key, 16 + 4 * i) as u64;
+    }
+    for (let i: usize = 0; i < 5; i++) {
+      this.h[i] = 0;
+    }
   }
 
   // One 16-byte block at `m[off..]`, `hibit` the 2^128 marker (1 << 24 in the top limb).
@@ -84,16 +93,16 @@ export class Poly1305 {
       off += 16;
     }
     if (off < end) {
-      const last = Buffer.alloc(16);
-      for (let i: usize = 0; i < end - off; i++) {
-        last[i] = m[off + i];
+      const last = this.tail;
+      for (let i: usize = 0; i < 16; i++) {
+        last[i] = off + i < end ? m[off + i] : 0;
       }
       this.block(last, 0, 1 << 24);
     }
   }
 
-  /** The 16-byte tag: h fully reduced mod 2^130 - 5, plus s, mod 2^128. */
-  finish(): u8[] {
+  /** The 16-byte tag (h fully reduced mod 2^130 - 5, plus s, mod 2^128) into `out[at..at + 16]`. */
+  finishInto(out: u8[], at: usize) {
     let h0 = this.h[0];
     let h1 = this.h[1];
     let h2 = this.h[2];
@@ -145,15 +154,13 @@ export class Poly1305 {
     const w1 = ((h1 >> 6) | (h2 << 20)) & 0xffffffff;
     const w2 = ((h2 >> 12) | (h3 << 14)) & 0xffffffff;
     const w3 = ((h3 >> 18) | (h4 << 8)) & 0xffffffff;
-    const out = newBytes(16);
     let f = w0 + this.pad[0];
-    store32le(out, 0, f as u32);
+    store32le(out, at, f as u32);
     f = w1 + this.pad[1] + (f >> 32);
-    store32le(out, 4, f as u32);
+    store32le(out, at + 4, f as u32);
     f = w2 + this.pad[2] + (f >> 32);
-    store32le(out, 8, f as u32);
+    store32le(out, at + 8, f as u32);
     f = w3 + this.pad[3] + (f >> 32);
-    store32le(out, 12, f as u32);
-    return out;
+    store32le(out, at + 12, f as u32);
   }
 }

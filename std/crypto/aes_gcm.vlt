@@ -1,24 +1,31 @@
 // velt/crypto (internal): `AesGcm`, AES in Galois/Counter Mode (NIST SP 800-38D) with 96-bit
 // nonces and 128-bit tags: TLS 1.3's mandatory TLS_AES_128_GCM_SHA256 suite (and the AES-256
-// one). Counter mode on the bitsliced AES, GHASH over the additional data and the ciphertext.
+// one). Counter mode on the bitsliced AES, GHASH over the additional data and the ciphertext;
+// the scratch is kept, so sealing and opening in place allocate nothing.
 
-import { aesCtrXor, aesExpandKey } from "velt/crypto/aes_ctr";
-import { timingSafeEqual } from "velt/crypto/compare";
+import { Aead } from "velt/crypto/aead";
+import { checkOpenRange, checkSealRange, tagMatches, withRoom } from "velt/crypto/aead_tag";
+import { aesCtrInPlace, aesExpandKey } from "velt/crypto/aes_ctr";
 import { CryptoError } from "velt/crypto/errors";
 import { Ghash } from "velt/crypto/ghash";
-import { newBytes } from "velt/crypto/vectors";
+import { arrayTruncate } from "velt/lang/intrinsics";
 
 /**
  * AES-GCM (NIST SP 800-38D) under a 16-byte (AES-128) or 32-byte (AES-256) key, with 12-byte
  * nonces and 16-byte tags: `seal` encrypts and appends the tag, `open` checks it (in constant
- * time) and decrypts. A nonce must never be used twice with one key. A message is at most
- * 68,719,476,704 bytes (2^32 - 2 blocks, SP 800-38D §5.2.1.1); a longer one throws
- * `CryptoError`. The AES rounds are bitsliced, with no table lookups, so the time does not
- * depend on the key or the data.
+ * time) and decrypts; `sealInPlace` and `openInPlace` do the same in the caller's buffer. A
+ * nonce must never be used twice with one key. A message is at most 68,719,476,704 bytes
+ * (2^32 - 2 blocks, SP 800-38D §5.2.1.1); a longer one throws `CryptoError`. The AES rounds are
+ * bitsliced, with no table lookups, so the time does not depend on the key or the data.
+ * An object keeps its scratch between calls, so it must not be used by two threads at once
+ * (tasks on one thread may share it: no call awaits).
  */
-export class AesGcm {
+export class AesGcm implements Aead {
   private skey: u64[];
-  private h: u8[];
+  private ghash: Ghash;
+  private q: u64[];
+  private ks: u8[];
+  private block: u8[];
 
   /** An AEAD under `key`; throws `CryptoError` unless it is 16 or 32 bytes. */
   constructor(key: u8[]) {
@@ -26,23 +33,19 @@ export class AesGcm {
       throw new CryptoError(`AES-GCM key must be 16 or 32 bytes, got ${key.length}`);
     }
     this.skey = aesExpandKey(key);
-    const zero = Buffer.alloc(16);
+    this.q = [0, 0, 0, 0, 0, 0, 0, 0];
+    this.ks = Buffer.alloc(64);
+    // H = E(K, 0^128): the zero block under counter 0 of the zero nonce.
     const h = Buffer.alloc(16);
-    aesCtrXor(this.skey, zero, 0, zero, 0, 16, h, 0);
-    this.h = h;
+    aesCtrInPlace(this.skey, this.q, this.ks, Buffer.alloc(12), 0, h, 0, 16);
+    this.ghash = new Ghash(h);
+    this.block = Buffer.alloc(16);
   }
 
   /** `plaintext` encrypted under `nonce` (12 bytes), followed by the 16-byte tag over `aad` and it. */
-  seal(nonce: u8[], plaintext: u8[], aad: u8[] = []): u8[] {
-    checkNonce(nonce);
-    const n = plaintext.length;
-    gcmCheckLength(n as u64);
-    const out = newBytes(n + 16);
-    aesCtrXor(this.skey, nonce, 2, plaintext, 0, n, out, 0);
-    const tag = this.tag(nonce, aad, out, n);
-    for (let i: usize = 0; i < 16; i++) {
-      out[n + i] = tag[i];
-    }
+  seal(nonce: u8[], plaintext: u8[], aad: u8[] | undefined = []): u8[] {
+    const out = withRoom(plaintext, 16);
+    this.sealInPlace(nonce, aad, out, 0, plaintext.length);
     return out;
   }
 
@@ -50,40 +53,68 @@ export class AesGcm {
    * The plaintext of `sealed` (ciphertext and tag, as `seal` returns them) under `nonce` and
    * `aad`, or null when the tag does not match (nothing is decrypted then).
    */
-  open(nonce: u8[], sealed: u8[], aad: u8[] = []): u8[] | null {
-    checkNonce(nonce);
-    if (sealed.length < 16) {
+  open(nonce: u8[], sealed: u8[], aad: u8[] | undefined = []): u8[] | null {
+    const out = sealed.slice();
+    if (!this.openInPlace(nonce, aad, out, 0, out.length)) {
       return null;
     }
-    const n = sealed.length - 16;
-    gcmCheckLength(n as u64);
-    const tag = this.tag(nonce, aad, sealed, n);
-    if (!timingSafeEqual(tag, sealed.slice(n as i64))) {
-      return null;
-    }
-    const out = newBytes(n);
-    aesCtrXor(this.skey, nonce, 2, sealed, 0, n, out, 0);
+    arrayTruncate(out, sealed.length - 16);
     return out;
   }
 
-  // GHASH(aad, ct[0..n], lengths) XORed with E(K, nonce || 1).
-  private tag(nonce: u8[], aad: u8[], ct: u8[], n: usize): u8[] {
-    const g = new Ghash(this.h);
+  /**
+   * Encrypts `buf[start..end]` in place under `nonce` and writes the tag to `buf[end..end + 16]`;
+   * throws `CryptoError`, before writing anything, unless `start <= end` and the tag fits in `buf`.
+   */
+  sealInPlace(nonce: u8[], aad: u8[], buf: u8[], start: usize, end: usize) {
+    checkNonce(nonce);
+    checkSealRange("AES-GCM", buf, start, end);
+    gcmCheckLength((end - start) as u64);
+    aesCtrInPlace(this.skey, this.q, this.ks, nonce, 2, buf, start, end);
+    this.tag(nonce, aad, buf, start, end);
+    for (let i: usize = 0; i < 16; i++) {
+      buf[end + i] = this.block[i];
+    }
+  }
+
+  /**
+   * Checks the tag `buf[end - 16..end]` and decrypts `buf[start..end - 16]` in place when it
+   * matches (true); false and `buf` unchanged otherwise. Throws `CryptoError` unless
+   * `start <= end <= buf.length`.
+   */
+  openInPlace(nonce: u8[], aad: u8[], buf: u8[], start: usize, end: usize): bool {
+    checkNonce(nonce);
+    checkOpenRange("AES-GCM", buf, start, end);
+    if (end < start + 16) {
+      return false;
+    }
+    const n = end - 16;
+    gcmCheckLength((n - start) as u64);
+    this.tag(nonce, aad, buf, start, n);
+    if (!tagMatches(this.block, buf, n)) {
+      return false;
+    }
+    aesCtrInPlace(this.skey, this.q, this.ks, nonce, 2, buf, start, n);
+    return true;
+  }
+
+  // GHASH(aad, ct, lengths) XORed with E(K, nonce || 1), into `this.block`.
+  private tag(nonce: u8[], aad: u8[], ct: u8[], start: usize, end: usize) {
+    const g = this.ghash;
+    g.reset();
     g.update(aad, 0, aad.length);
-    g.update(ct, 0, n);
-    const lens = Buffer.alloc(16);
+    g.update(ct, start, end);
+    const lens = this.block;
     const abits = (aad.length as u64) * 8;
-    const cbits = (n as u64) * 8;
+    const cbits = ((end - start) as u64) * 8;
     for (let i: usize = 0; i < 8; i++) {
       const sh = 56 - 8 * (i as u64);
       lens[i] = ((abits >> sh) & 0xff) as u8;
       lens[8 + i] = ((cbits >> sh) & 0xff) as u8;
     }
     g.update(lens, 0, 16);
-    const s = g.digest();
-    const out = Buffer.alloc(16);
-    aesCtrXor(this.skey, nonce, 1, s, 0, 16, out, 0);
-    return out;
+    g.digestInto(lens, 0);
+    aesCtrInPlace(this.skey, this.q, this.ks, nonce, 1, lens, 0, 16);
   }
 }
 

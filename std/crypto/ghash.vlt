@@ -55,13 +55,17 @@ function store64be(b: u8[], off: usize, v: u64) {
   }
 }
 
-/** A running GHASH under the hash key H: absorb zero-padded pieces, then read the state. */
+/**
+ * A running GHASH under the hash key H: absorb zero-padded pieces, read the state, `reset` for
+ * the next message (the scratch is kept: nothing is allocated per message).
+ */
 export class Ghash {
   private h1: u64;
   private h0: u64;
   private y1: u64;
   private y0: u64;
   private hw: bool;
+  private tmp: u8[];
 
   /**
    * A GHASH under `h` (16 bytes, E(K, 0^128) in GCM), state zero. It uses the carry-less
@@ -75,12 +79,19 @@ export class Ghash {
     this.y1 = 0;
     this.y0 = 0;
     this.hw = hardware && u64x2.hasClmul();
+    this.tmp = Buffer.alloc(16);
+  }
+
+  /** Back to the zero state, for the next message under the same H. */
+  reset() {
+    this.y1 = 0;
+    this.y0 = 0;
   }
 
   /** Absorbs `data[start..end]`, its last block zero-padded to 16 bytes. */
   update(data: u8[], start: usize, end: usize) {
     let off = start;
-    const tmp = Buffer.alloc(16);
+    const tmp = this.tmp;
     while (off < end) {
       let src = data;
       let at = off;
@@ -98,12 +109,10 @@ export class Ghash {
     }
   }
 
-  /** The state as 16 bytes (the tag before GCM masks it). */
-  digest(): u8[] {
-    const out = Buffer.alloc(16);
-    store64be(out, 0, this.y1);
-    store64be(out, 8, this.y0);
-    return out;
+  /** The state as 16 bytes (the tag before GCM masks it) into `out[at..at + 16]`. */
+  digestInto(out: u8[], at: usize) {
+    store64be(out, at, this.y1);
+    store64be(out, at + 8, this.y0);
   }
 
   // Y = Y * H in GF(2^128): a Karatsuba product (three 64-bit carry-less products), then the
