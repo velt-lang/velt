@@ -6,7 +6,10 @@
 // Three levels, as in the Unicode Collation Algorithm: base letters first (`"a" < "B"`), then
 // accents (`"e" < "é"`), then case (`"a" < "A"`). The characters of the table
 // (std/lang/string/collate_table.velt) order exactly like `Intl.Collator("und")`, except the few
-// that expand to three or more collation elements (`¼`, `½`, `¾`, `ϗ`; the table holds two).
+// that expand to three or more collation elements (`¼`, `½`, `¾`, `ϗ`; the table holds two), and
+// `…` and the primes `″ ‴ ⁗ ‶ ‷`, which ICU reads as three `.` and as two to four `′` or `‵`, and
+// the table as one character each: strings that go on past one of them can order differently
+// (against `‥`, `′` or `‵`, for example).
 // Everything else is approximate: combining marks (U+0300..U+036F) weigh only as accents, so a
 // decomposed `e` + U+0301 sorts next to `é` but not equal to it (ICU normalizes first); other
 // letters and digits sort after the table's letters (Hangul, kana and Han last, in that order),
@@ -215,8 +218,9 @@ extend string {
    * `localeCompare` follows the host's locale instead. Exact for strings made of U+0020..U+024F,
    * U+0370..U+04FF, U+1E00..U+1EFF, U+2000..U+206F and U+20A0..U+20CF (Latin with Vietnamese,
    * Greek, Cyrillic, general punctuation, currency signs), except a few characters that stand
-   * for three or more (`¼`, `½`, `¾`, `ϗ`); approximate for everything else. No locale or
-   * options arguments.
+   * for three or more (`¼`, `½`, `¾`, `ϗ`), and `…` and the primes `″ ‴ ⁗ ‶ ‷` (three `.`, two
+   * to four `′` or `‵`) in strings that go on past them, which can order differently against
+   * `‥`, `′`, `‵` and the like; approximate for everything else. No locale or options arguments.
    */
   localeCompare(that: string): i64 {
     return localeOrder(this, that);
