@@ -20,7 +20,7 @@ export function anyArgList(args: any): any[] {
   if (typeof n === "number") {
     const len = n as number;
     for (let i = 0; i < len; i++) {
-      list.push(args[i]);
+      list.push(Array.isArray(args) ? args[i] : args[`${i}`]);
     }
   }
   return list;
