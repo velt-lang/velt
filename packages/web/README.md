@@ -2,8 +2,8 @@
 
 A small router and middleware on [`http-server`](../http-server/README.md), over the Fetch types:
 method routes with path parameters and wildcards, sub-apps, onion middleware, typed per-request
-variables, error and not-found handlers, and `cors`, `logger`, `requestId`, `rateLimit`, `bodyLimit`
-and `serveStatic`.
+variables, error and not-found handlers, and `cors`, `logger`, `requestId`, `rateLimit`, `bodyLimit`,
+`compress` and `serveStatic`.
 
 This is a reference package, held to full quality: read it as the guide to building a framework on
 `http-server`. Its API may change until it is promoted to a supported framework.
@@ -119,7 +119,18 @@ proxy handler that wants middleware to mark its response wraps it:
 | `requestId(options?)` | An identifier on the request and response headers. A client's is kept only if it is safe to log |
 | `rateLimit({ limit, windowMs, key, maxKeys? })` | Requests per key per fixed window, shared by all requests; 429 with `Retry-After` and `RateLimit-*` headers. Holds at most `maxKeys` keys |
 | `bodyLimit(maxBytes)` | 413 for a request body over the limit, without holding more than the limit |
+| `compress(options?)` | Response bodies in Brotli or gzip, as `Accept-Encoding` prefers, streamed; leaves short, encoded and incompressible ones alone. Other codings are `Encoding` providers |
 | `serveStatic(root, options?)` | Files under `root`, with `serveFile`'s validators, 304 and `Range`; passes on what it has no file for |
+
+`compress()` goes outside the middleware whose responses it compresses: `app.use(compress())`
+first, or `serve(opts, compress()(handler))`. It picks the encoding with the highest q in
+`Accept-Encoding` (Brotli on a tie, then gzip; `*` counts for both), and sets `Vary:
+Accept-Encoding` on every response of a type that compresses. It skips a body under `threshold`
+(1 KB) by its `Content-Length`, or by its first chunk when it has none, so a stream is never held
+back; an event stream (`text/event-stream`) is flushed after every chunk, so each event arrives
+when it is sent. The default encoders are Brotli quality 4 and gzip level 6, the levels for
+dynamic responses; pass `encodings: [new BrotliEncoding("fastest"), …]` for others, or a
+package's `Encoding` (zstd, say) with no change here.
 
 `serveStatic` keeps requests inside `root` (`resolveUnder`) and refuses dotfiles by default. A
 directory redirects to its path with a `/`, which answers with `index.html`. A client accepting `br`
