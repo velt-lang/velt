@@ -7,7 +7,7 @@ use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 
 use super::foreign::ForeignBuf;
 use super::operand::proj;
-use super::sequence::{root_local, Later};
+use super::sequence::Later;
 use super::stabilize::ArgReach;
 use super::view_unswitch_plain::FLOAT_INDEX;
 use super::{ice, unit, FnLower, LkMode, Work};
@@ -752,50 +752,6 @@ impl FnLower<'_, '_> {
         match vt {
             Ty::Agg(_) => self.addr(p),
             _ => Operand::Copy(p),
-        }
-    }
-}
-
-impl FnLower<'_, '_> {
-    /// What argument `i` of a direct call may have changed under it (stabilize.rs): `changed`
-    /// says which params the callee modifies though they are `Borrow` (call_def).
-    fn arg_reach(
-        &mut self,
-        how: Stabilize,
-        args: &[hir::Expr],
-        i: usize,
-        changed: u64,
-    ) -> ArgReach {
-        let others = if i < 64 { changed & !(1 << i) } else { changed };
-        ArgReach {
-            callee: match how {
-                Stabilize::Direct(d) => Some(d),
-                _ => None,
-            },
-            sibling: others != 0 && self.sibling_container(args, i),
-        }
-    }
-
-    /// Does an argument beside `args[i]` hold something a part of `args[i]` could lie in: `r` in
-    /// `f(r, r.s)`, or a param that may be the same object as the one `w.s` is read from? A callee
-    /// that changes its params' insides then replaces what this argument points at.
-    fn sibling_container(&mut self, args: &[hir::Expr], i: usize) -> bool {
-        (args.iter().enumerate()).any(|(j, o)| {
-            let ty = self.sub(o.ty);
-            j != i
-                && !self.plain_value(ty)
-                && !matches!(self.cx.kind(ty), TyKind::FnPtr { .. } | TyKind::Closure(_))
-        })
-    }
-
-    /// Can the place `a` starts from get another value while a call through a function value runs,
-    /// so an argument passed by pointer must not still point at it? A variable a closure assigns
-    /// by reference (in a cell it is shared, stabilize.rs), or anything this function only reaches
-    /// by reference.
-    fn changes_during_call(&mut self, a: &hir::Expr) -> bool {
-        match root_local(a) {
-            Some(l) => self.info[l.0 as usize].indirect || self.body_changes(l),
-            None => true,
         }
     }
 }

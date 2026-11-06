@@ -12,11 +12,13 @@
 //! and shared for the statement, so a closure the callee runs cannot free it. A module `let`'s
 //! slot is such a cell too: every function reaches it, so the callee may replace its value.
 
-use velt_sema::hir::{self, TyId};
+use velt_sema::hir::{self, TyId, TyKind};
 
 use super::boxing::ShareKind;
+use super::call::Stabilize;
 use super::cint;
 use super::operand::proj;
+use super::sequence::root_local;
 use super::FnLower;
 use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
@@ -421,6 +423,77 @@ impl FnLower<'_, '_> {
                 !self.cx.array_view(bty) && self.runs_no_code(base) && self.runs_no_code(index)
             }
             _ => false,
+        }
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// What argument `i` of a direct call may have changed under it (stabilize.rs): `changed`
+    /// says which params the callee modifies though they are `Borrow` (call_def).
+    pub(super) fn arg_reach(
+        &mut self,
+        how: Stabilize,
+        args: &[hir::Expr],
+        i: usize,
+        changed: u64,
+    ) -> ArgReach {
+        let others = if i < 64 { changed & !(1 << i) } else { changed };
+        ArgReach {
+            callee: match how {
+                Stabilize::Direct(d) => Some(d),
+                _ => None,
+            },
+            sibling: others != 0 && self.sibling_container(args, i),
+        }
+    }
+
+    /// Does an argument beside `args[i]` hold something a part of `args[i]` could lie in: `r` in
+    /// `f(r, r.s)`, `xs` in `f(xs, xs[0])`, or a param that may be the same object as the one
+    /// `w.s` is read from? A callee that changes its params' insides then replaces what this
+    /// argument points at. Told apart by type: an object can be any object, an interface or `any`
+    /// value anything, and an array or tuple only one of its own type.
+    pub(super) fn sibling_container(&mut self, args: &[hir::Expr], i: usize) -> bool {
+        use hir::ExprKind as K;
+        let mut bases = vec![];
+        let mut e = &args[i];
+        while let K::Field { base, .. }
+        | K::Index { base, .. }
+        | K::UnwrapSome(base, _)
+        | K::UnwrapVariant { expr: base, .. }
+        | K::Downcast(base) = &e.kind
+        {
+            bases.push(self.sub(base.ty));
+            e = base;
+        }
+        if bases.is_empty() {
+            return false;
+        }
+        (args.iter().enumerate()).any(|(j, o)| {
+            if j == i {
+                return false;
+            }
+            let mut ty = self.sub(o.ty);
+            while let TyKind::Option(x, _) = self.cx.kind(ty) {
+                ty = self.sub(x);
+            }
+            match self.cx.kind(ty) {
+                TyKind::Dyn(..) => true,
+                TyKind::Adt(..) => {
+                    (bases.iter()).any(|&b| matches!(self.cx.kind(b), TyKind::Adt(..)))
+                }
+                _ => bases.contains(&ty),
+            }
+        })
+    }
+
+    /// Can the place `a` starts from get another value while a call through a function value runs,
+    /// so an argument passed by pointer must not still point at it? A variable a closure assigns
+    /// by reference (in a cell it is shared, stabilize.rs), or anything this function only reaches
+    /// by reference.
+    pub(super) fn changes_during_call(&mut self, a: &hir::Expr) -> bool {
+        match root_local(a) {
+            Some(l) => self.info[l.0 as usize].indirect || self.body_changes(l),
+            None => true,
         }
     }
 }

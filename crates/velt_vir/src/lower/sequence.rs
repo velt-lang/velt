@@ -525,7 +525,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Is a value of type `ty` a number, a boolean or a string (it holds no reference)?
-    pub(super) fn plain_value(&mut self, ty: TyId) -> bool {
+    fn plain_value(&mut self, ty: TyId) -> bool {
         matches!(
             self.kind(ty),
             hir::TyKind::Int(_) | hir::TyKind::Float(_) | hir::TyKind::Bool | hir::TyKind::Str
