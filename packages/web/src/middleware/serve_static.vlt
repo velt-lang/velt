@@ -23,7 +23,9 @@ export struct ServeStaticOptions {
  * 304, Range), and passes on the requests it has no file for. A directory redirects to its path with
  * a `/`, which answers with its index file. A client accepting `br` or `gzip` gets a `file.br` or
  * `file.gz` next to the file when there is one, brotli first, with the type of the file itself.
- * A path with an empty segment names no file.
+ * A path with an empty segment names no file. On a case-insensitive disk (Windows, macOS by default)
+ * a prefix doesn't guard files here, as `/PRIVATE/s.txt` opens `private/s.txt`: keep those outside
+ * `root`.
  */
 export function serveStatic(root: string, options: ServeStaticOptions = {}): Middleware {
   const index = options.index ?? "index.html";

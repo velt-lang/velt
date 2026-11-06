@@ -1,6 +1,7 @@
 // web (internal): the path of a request's URL, in the one form the router, prefixes, `c.path` and
-// `serveStatic` all read, so that no spelling of a path reaches a file or a route past a check
-// made on another spelling.
+// `serveStatic` all read, so that an escape, a dot segment or a `\` can't reach a file or a route
+// past a check made on another spelling. Case is not folded: on a case-insensitive disk
+// `/PRIVATE/s.txt` is another path to a prefix, and the same file to `serveStatic` (README).
 
 const PERCENT = 37;
 const DOT = 46;

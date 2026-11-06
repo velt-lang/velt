@@ -55,13 +55,18 @@ prefixes join the same way.
 ### The path
 
 Routes, prefixes, `c.path` and `serveStatic` read one canonical path (`pathOf(req.url)`, exported for
-a plain middleware that decides by path), so no spelling of a path gets past a check made on
-another. As a URL parser does, `\` is `/` and `.` and `..` segments are removed, `%2e` included. Each
+a plain middleware that decides by path), so an escape, a dot segment or a `\` doesn't get past a
+check made on another spelling. As a URL parser does, `\` is `/` and `.` and `..` segments are removed, `%2e` included. Each
 character has one spelling: an escape of a character that can stand for itself in a path is decoded
 (`/%61dmin` is `/admin`), the others stay escaped, in capitals (`%2F` stays inside its segment). The
 same goes for the literals and prefixes you write. An empty segment stays, so `//admin` isn't under
 `/admin`: it matches no literal or parameter, and `serveStatic` passes it on. Decide on `c.path`, not
 on `c.req.url`, which is what the client sent.
+
+**Case isn't folded, so on a case-insensitive disk a prefix doesn't guard files under `serveStatic`.**
+On Windows, and on macOS by default, `/PRIVATE/s.txt` isn't under `/private`, but the disk gives
+`serveStatic` the file `private/s.txt` for it. Keep files a prefix protects outside `serveStatic`'s
+root.
 
 **A parameter is data the client chose.** Once decoded it can hold what the path can't:
 `/files/a%2Fb/..%2F..%2Fetc` gives `*` as `a/b/../../etc`. Don't join one to a file path; use

@@ -306,6 +306,24 @@ describe("App", () => {
     expect((await get(h, "/other")).headers.get("x-around")).toBe(null);
   });
 
+  it("reads an around's prefix as it reads a request's path", async () => {
+    const app = new App<Vars>(vars);
+    app.around(
+      async (c, next) => {
+        const res = await next(c);
+        res.headers.set("x-around", "1");
+        return res;
+      },
+      "/%61pi",
+    );
+    app.get("/api/x", async (c) => c.text("x"));
+    app.get("/other", async (c) => c.text("y"));
+    const h = app.handler();
+    expect((await get(h, "/api/x")).headers.get("x-around")).toBe("1");
+    expect((await get(h, "/%61pi/x")).headers.get("x-around")).toBe("1");
+    expect((await get(h, "/other")).headers.get("x-around")).toBe(null);
+  });
+
   it("scopes a mounted sub-app's around to the mount", async () => {
     const sub = new App<Vars>(vars);
     sub.around(async (c, next) => {
