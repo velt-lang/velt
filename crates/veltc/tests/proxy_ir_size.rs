@@ -49,13 +49,12 @@ fn one_proxy_stays_within_its_budget() {
 #[test]
 fn array_algorithms_only_when_a_method_can_be_called() {
     let ir = release_ir(READ);
-    for name in [
-        "proxySplice",
-        "proxySort",
-        "proxySearch",
-        "proxyReverse",
-        "proxyFind",
-    ] {
+    // Small enough to be inlined in release: the debug IR has its definition.
+    assert!(
+        !ir_of(READ, &[]).contains("proxyFind"),
+        "`find` in a program that calls none"
+    );
+    for name in ["proxySplice", "proxySort", "proxySearch", "proxyReverse"] {
         assert!(!ir.contains(name), "`{name}` in a program that calls none");
     }
     let ir = release_ir("const p = new Proxy([2, 1] as any, {});\np.sort();\n");
