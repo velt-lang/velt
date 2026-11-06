@@ -6,6 +6,7 @@ mod builder;
 mod builder_m2;
 mod builder_m3;
 mod builder_prelude;
+mod c_wasi;
 mod const_arrays;
 mod control;
 mod drop_chain;

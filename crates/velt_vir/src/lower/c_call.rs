@@ -1,8 +1,10 @@
 //! Calls of C functions (`declare c("lib") function`, docs/internals/design/c-ffi.md): a direct
 //! call with the target's C calling convention, the arguments as the declaration types them,
-//! and `errno` captured right after it, as for system functions (`lastOsError()` reads it). A
-//! target without native code (WebAssembly) can't call one: an error once lowering is done
-//! (system.rs `unavailable_diagnostics`). C constants (`declare c const`) are read here too.
+//! and `errno` captured right after it, as for system functions (`lastOsError()` reads it).
+//! On `wasm32-wasip1`, std may call the C library `c`, which is wasi-libc
+//! (docs/internals/design/wasi-libc.md). Any other WebAssembly call can't be made: an error once
+//! lowering is done (system.rs `unavailable_diagnostics`). C constants (`declare c const`) are
+//! read here too.
 
 use velt_sema::hir::{self, CTy, DefId, IntTy, TyId, TyKind};
 
@@ -42,7 +44,7 @@ impl FnLower<'_, '_> {
             ice("not a C function")
         };
         let (symbol, ret) = (x.symbol.clone(), x.ret);
-        if system::target_os(&self.cx.target).is_none() {
+        if !self.c_callable(x.span, &c.library) {
             self.cx
                 .unavailable
                 .push((def, self.cx.cur_def, self.cx.user_site));
@@ -58,8 +60,9 @@ impl FnLower<'_, '_> {
         let mut vals = vec![];
         let laters = self.later_each(args);
         let callee = format!("C function `{}`", base_symbol(&symbol));
+        let wasm = wasm32(&self.cx.target);
         for (k, ((a, t), later)) in args.iter().zip(&c.params).zip(laters).enumerate() {
-            ctys.push(c_vir(*t));
+            ctys.push(c_vir(*t, wasm));
             if let CTy::Buf { .. } = t {
                 let name = format!("argument {}", k + 1);
                 let arg = match self.system_view(&callee, &name, a, later) {
@@ -122,7 +125,11 @@ impl FnLower<'_, '_> {
                 }
                 _ => {
                     let v = self.expr(a);
-                    self.freeze(v, a.ty)
+                    let v = self.freeze(v, a.ty);
+                    match (narrow(*t, wasm), c_vir(*t, wasm)) {
+                        (true, ct) => self.rvalue_temp(ct, Rvalue::Cast(v, ct)),
+                        (false, _) => v,
+                    }
                 }
             };
             vals.push(CArg::Ready(v));
@@ -145,7 +152,7 @@ impl FnLower<'_, '_> {
                 }
             });
         }
-        let cret = c_vir(c.ret);
+        let cret = c_vir(c.ret, wasm);
         let link = base_symbol(&symbol);
         let decl = (self.cx.locs.as_ref())
             .and_then(|m| m.loc(x.span).map(|l| m.describe(l)))
@@ -218,8 +225,25 @@ impl FnLower<'_, '_> {
                     self.call_def(d, vec![targ], vec![addr], &[])
                 }
             }
+            t if narrow(t, wasm) => {
+                // `size_t`/`ssize_t` are 32 bits on wasm32; Velt's `usize`/`isize` are 64.
+                let wide = c_vir(t, false);
+                self.rvalue_temp(wide, Rvalue::Cast(result, wide))
+            }
             _ => result,
         }
+    }
+
+    /// Can this target call the C function of `library` declared at `span`? Every native target
+    /// can. On `wasm32-wasip1` only std can, and only the C library `c` (wasi-libc, linked into
+    /// every program): a package's declarations can't be checked against WASI's headers yet.
+    fn c_callable(&self, span: velt_common::Span, library: &str) -> bool {
+        if system::target_os(&self.cx.target).is_some() {
+            return true;
+        }
+        wasi(&self.cx.target)
+            && library == "c"
+            && self.cx.locs.as_ref().is_some_and(|m| m.is_std(span))
     }
 
     /// A read of the C constant `d` of type `ty` (`declare c const`): its value for this target,
@@ -308,8 +332,27 @@ impl FnLower<'_, '_> {
 }
 
 /// The VIR type a C type crosses as.
-fn c_vir(t: CTy) -> Ty {
+/// `wasm32-wasip1` (`wasm32-wasi` is its older name): WebAssembly with wasi-libc.
+pub(super) fn wasi(target: &str) -> bool {
+    matches!(target.trim(), "wasm32-wasip1" | "wasm32-wasi")
+}
+
+/// A 32-bit WebAssembly target, where C's `size_t` and pointers are 32 bits.
+fn wasm32(target: &str) -> bool {
+    target.trim().starts_with("wasm32")
+}
+
+/// Does `t` cross as a narrower integer than Velt's (`usize`/`isize` as 32 bits on wasm32)?
+fn narrow(t: CTy, wasm32: bool) -> bool {
+    wasm32 && matches!(t, CTy::Int(IntTy::USize | IntTy::ISize))
+}
+
+/// The VIR type `t` crosses as; on wasm32 (`wasm32`), `usize`/`isize` are C's 32-bit `size_t`
+/// and `ssize_t`.
+fn c_vir(t: CTy, wasm32: bool) -> Ty {
     match t {
+        CTy::Int(IntTy::USize) if wasm32 => Ty::U32,
+        CTy::Int(IntTy::ISize) if wasm32 => Ty::I32,
         CTy::Int(i) => match i {
             IntTy::I8 => Ty::I8,
             IntTy::I16 => Ty::I16,
