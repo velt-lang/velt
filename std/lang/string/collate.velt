@@ -13,150 +13,130 @@
 // and other symbols (emoji included) just before the digits, each group by code point. Controls
 // are ignored, as in ICU. A lone surrogate weighs as U+FFFD.
 //
-// A character's *word* holds its collation elements: a table word (collate_table.velt), or for a
-// character outside the table `OUTSIDE` and its primary weight. A weight here is a level's weight
-// plus what keeps 0 free for "no element", which also sorts a string that ends before one that
-// goes on.
+// Every program that mentions `localeCompare` compiles this code, so it is small: one function
+// reads a character's collation elements at a level (`elementsAt`), out of line, and `orderAt`
+// compares what it returns, also out of line, so that the three levels share one copy. A weight
+// here is a level's weight plus what keeps 0 free for "no element", which also sorts a string
+// that ends before one that goes on.
 
 import {
-  ALNUM,
-  BLOCK_AT,
-  BLOCK_END,
-  BLOCK_FIRST,
+  CLASS_RUNS,
+  CLASSES,
   LAST_PRIMARY,
+  PAGES,
+  PAGES_END,
   WEIGHTS,
   ZERO_PRIMARY,
 } from "velt/lang/string/collate_table";
-import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { noInline, strByteAt, strByteLen } from "velt/lang/intrinsics";
 
-/** The bit of a word for a character outside the table; the bits below it are its primary. */
-const OUTSIDE: u64 = 0x8000000000000000;
 /** A table's primary rank `p` weighs `p << 21`, leaving room for code points between ranks. */
 const PRIMARY_SHIFT: u64 = 21;
+/** The bits of one weight in what `elementsAt` returns. */
+const WEIGHT_MASK: u64 = 0x3fffffff;
 
-/** Is `cp` a letter or digit outside the table? A binary search of the inversion list. */
-function isAlnum(cp: u64): bool {
-  let lo: usize = 0;
-  let hi: usize = ALNUM.length;
+/**
+ * The class (`CLASSES`) of `cp`, a code point outside the table: that of the last run that starts
+ * at or before it, by a binary search.
+ */
+function classOf(cp: u64): u64 {
+  const t = CLASSES;
+  let lo: u64 = 0;
+  let hi: u64 = CLASS_RUNS;
+  let found: u64 = 0;
   while (lo < hi) {
     const mid = (lo + hi) / 2;
-    if ((ALNUM[mid] as u64) <= cp) {
+    const at = mid * 4;
+    const run =
+      (strByteAt(t, at) as u64) |
+      ((strByteAt(t, at + 1) as u64) << 7) |
+      ((strByteAt(t, at + 2) as u64) << 14) |
+      ((strByteAt(t, at + 3) as u64) << 21);
+    if (run >> 3 <= cp) {
+      found = run & 7;
       lo = mid + 1;
     } else {
       hi = mid;
     }
   }
-  return lo % 2 == 1;
+  return found;
 }
 
 /**
- * The rank of a letter or digit outside the table among the scripts the root collation orders
- * last: 0 for most, then Hangul, kana, and Han ideographs after every other script.
+ * The collation elements at `level` of the character at byte `i` of `s`: the first's weight in
+ * bits 0..30 and the second's (of a character that stands for two, such as `æ`) in bits 30..60,
+ * 0 for no element; and the character's length in bytes, less 1, in bits 62..64. One function
+ * with no calls on the common paths, as a debug build calls each function it doesn't inline.
  */
-function scriptTier(cp: u64): u64 {
-  if (
-    (cp >= 0x1100 && cp <= 0x11ff) ||
-    (cp >= 0x3130 && cp <= 0x318f) ||
-    (cp >= 0xac00 && cp <= 0xd7af)
-  ) {
-    return 1;
-  }
-  if ((cp >= 0x3040 && cp <= 0x30ff) || (cp >= 0x31f0 && cp <= 0x31ff)) {
-    return 2;
-  }
-  if (
-    (cp >= 0x3400 && cp <= 0x4dbf) ||
-    (cp >= 0x4e00 && cp <= 0x9fff) ||
-    (cp >= 0xf900 && cp <= 0xfaff) ||
-    (cp >= 0x20000 && cp <= 0x323af)
-  ) {
-    return 3;
-  }
-  return 0;
-}
-
-/** The word of a character outside the table. */
-function outsideWord(cp: u64): u64 {
-  if (cp < 0x20) {
-    return 0;
-  }
-  if (cp >= 0x300 && cp <= 0x36f) {
-    return (1 + cp - 0x300) << 24;
-  }
-  const tier = scriptTier(cp);
-  // A symbol weighs just below the digits.
-  const rank = tier > 0 || isAlnum(cp) ? LAST_PRIMARY + tier : ZERO_PRIMARY - 1;
-  return OUTSIDE | (rank << PRIMARY_SHIFT) | cp;
-}
-
-/** The word of `cp`. */
-function wordOf(cp: u64): u64 {
-  for (let k: usize = 0; k < BLOCK_FIRST.length; k++) {
-    if (cp < (BLOCK_END[k] as u64)) {
-      const first = BLOCK_FIRST[k] as u64;
-      if (cp >= first) {
-        return WEIGHTS[(cp - first + (BLOCK_AT[k] as u64)) as usize];
+function elementsAt(s: string, i: u64, level: i64): u64 {
+  noInline();
+  const lead = strByteAt(s, i) as u64;
+  let size: u64 = 0;
+  let cp = lead;
+  if (lead >= 0x80) {
+    const b1 = (strByteAt(s, i + 1) as u64) & 0x3f;
+    if (lead < 0xe0) {
+      size = 1;
+      cp = ((lead & 0x1f) << 6) | b1;
+    } else {
+      const b2 = (strByteAt(s, i + 2) as u64) & 0x3f;
+      if (lead < 0xf0) {
+        size = 2;
+        cp = ((lead & 0x0f) << 12) | (b1 << 6) | b2;
+        if (cp >= 0xd800 && cp <= 0xdfff) {
+          // A lone surrogate weighs as U+FFFD.
+          cp = 0xfffd;
+        }
+      } else {
+        size = 3;
+        cp = ((lead & 0x07) << 18) | (b1 << 12) | (b2 << 6) | ((strByteAt(s, i + 3) as u64) & 0x3f);
       }
-      break;
     }
   }
-  return outsideWord(cp);
-}
-
-/** How many bytes the character with lead byte `lead` takes. */
-function charBytes(lead: u64): usize {
-  if (lead < 0x80) {
-    return 1;
+  const page: u64 = cp < PAGES_END ? strByteAt(PAGES, cp >> 4) as u64 : 0;
+  let w: u64 = 0;
+  if (page != 0) {
+    const t = WEIGHTS;
+    const at = (((page - 1) << 4) | (cp & 15)) * 5;
+    w =
+      (strByteAt(t, at) as u64) |
+      ((strByteAt(t, at + 1) as u64) << 7) |
+      ((strByteAt(t, at + 2) as u64) << 14) |
+      ((strByteAt(t, at + 3) as u64) << 21) |
+      ((strByteAt(t, at + 4) as u64) << 28);
+    if (w == 0) {
+      // Ignorable.
+      return size << 62;
+    }
+  } else if (cp >= 0x300 && cp <= 0x36f) {
+    // A combining mark has an accent only, ranked by code point.
+    w = (1 + cp - 0x300) << 24;
+  } else if (cp < 0x20) {
+    // A control is ignorable.
+    return size << 62;
+  } else {
+    // Outside the table: one element, of weight 1 at the accent and case levels.
+    if (level > 0) {
+      return (size << 62) | 1;
+    }
+    // A symbol weighs just below the digits, the other classes after the table's letters.
+    const c = classOf(cp);
+    const rank = c == 0 ? ZERO_PRIMARY - 1 : LAST_PRIMARY + c - 1;
+    return (size << 62) | (rank << PRIMARY_SHIFT) | cp;
   }
-  if (lead < 0xe0) {
-    return 2;
-  }
-  return lead < 0xf0 ? 3 : 4;
-}
-
-/** The word of the character at byte `i` of `s`, whose lead byte is `lead`. */
-function wordAt(s: string, i: u64, lead: u64): u64 {
-  if (lead < 0x80) {
-    return wordOf(lead);
-  }
-  const b1 = (strByteAt(s, i + 1) as u64) & 0x3f;
-  if (lead < 0xe0) {
-    return wordOf(((lead & 0x1f) << 6) | b1);
-  }
-  const b2 = (strByteAt(s, i + 2) as u64) & 0x3f;
-  if (lead < 0xf0) {
-    const cp = ((lead & 0x0f) << 12) | (b1 << 6) | b2;
-    return wordOf(cp >= 0xd800 && cp <= 0xdfff ? 0xfffd : cp);
-  }
-  return wordOf(
-    ((lead & 0x07) << 18) | (b1 << 12) | (b2 << 6) | ((strByteAt(s, i + 3) as u64) & 0x3f),
-  );
-}
-
-/** The weight of the word's first element at `level`; 0 if it has none there. */
-function firstWeight(w: u64, level: i64): u64 {
+  // A table word packs primary 1 (bits 0..12), primary 2 (12..24), secondary (24..32) and
+  // tertiary (32..36) ranks.
+  const p2 = (w >> 12) & 0xfff;
   if (level == 0) {
-    return (w & OUTSIDE) != 0 ? w & ~OUTSIDE : (w & 0xfff) << PRIMARY_SHIFT;
+    return (size << 62) | ((w & 0xfff) << PRIMARY_SHIFT) | (p2 << (PRIMARY_SHIFT + 30));
   }
-  if (w == 0) {
-    return 0;
-  }
-  if ((w & OUTSIDE) != 0) {
-    return 1;
-  }
-  return 1 + (level == 1 ? (w >> 24) & 0xff : (w >> 32) & 0xf);
-}
-
-/** The weight of the word's second element at `level`; 0 if it has none. */
-function secondWeight(w: u64, level: i64): u64 {
-  if ((w & OUTSIDE) != 0 || ((w >> 12) & 0xfff) == 0) {
-    return 0;
-  }
-  return level == 0 ? ((w >> 12) & 0xfff) << PRIMARY_SHIFT : 1;
+  const first = 1 + (level == 1 ? (w >> 24) & 0xff : (w >> 32) & 0xf);
+  return (size << 62) | first | (p2 == 0 ? 0 : 1 << 30);
 }
 
 /** The order of `a` and `b` at `level`, both read from byte `from`. */
 function orderAt(a: string, b: string, from: u64, level: i64): i64 {
+  noInline();
   const aEnd = strByteLen(a) as u64;
   const bEnd = strByteLen(b) as u64;
   let i = from;
@@ -168,11 +148,10 @@ function orderAt(a: string, b: string, from: u64, level: i64): i64 {
     let x = aNext;
     aNext = 0;
     while (x == 0 && i < aEnd) {
-      const lead = strByteAt(a, i) as u64;
-      const w = wordAt(a, i, lead);
-      i += charBytes(lead) as u64;
-      x = firstWeight(w, level);
-      aNext = secondWeight(w, level);
+      const e = elementsAt(a, i, level);
+      i += (e >> 62) + 1;
+      x = e & WEIGHT_MASK;
+      aNext = (e >> 30) & WEIGHT_MASK;
       if (x == 0) {
         x = aNext;
         aNext = 0;
@@ -181,11 +160,10 @@ function orderAt(a: string, b: string, from: u64, level: i64): i64 {
     let y = bNext;
     bNext = 0;
     while (y == 0 && j < bEnd) {
-      const lead = strByteAt(b, j) as u64;
-      const w = wordAt(b, j, lead);
-      j += charBytes(lead) as u64;
-      y = firstWeight(w, level);
-      bNext = secondWeight(w, level);
+      const e = elementsAt(b, j, level);
+      j += (e >> 62) + 1;
+      y = e & WEIGHT_MASK;
+      bNext = (e >> 30) & WEIGHT_MASK;
       if (y == 0) {
         y = bNext;
         bNext = 0;
@@ -202,9 +180,11 @@ function orderAt(a: string, b: string, from: u64, level: i64): i64 {
 
 /**
  * -1, 0 or 1: the order of `a` and `b` in the collation of this module. What the two strings
- * start with alike weighs alike at every level, so the levels read only what follows.
+ * start with alike weighs alike at every level, so the levels read only what follows. Out of
+ * line, so that a caller such as a sort's comparator stays small.
  */
 export function localeOrder(a: string, b: string): i64 {
+  noInline();
   const aEnd = strByteLen(a) as u64;
   const bEnd = strByteLen(b) as u64;
   const end = aEnd < bEnd ? aEnd : bEnd;
