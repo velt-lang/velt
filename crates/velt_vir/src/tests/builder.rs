@@ -90,6 +90,8 @@ impl PB {
             module_state: None,
             type_ops: Default::default(),
             any_impl: None,
+            array_methods_open: false,
+            any_call_names: vec![],
             dyn_members: None,
             generator_throw: false,
             object: None,

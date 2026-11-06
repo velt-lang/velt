@@ -187,17 +187,14 @@ impl<'a> Visit<'a> for Scan {
                 for p in props {
                     match p {
                         ast::ObjectProp::KeyValue(name, value) if name.name == "get" => {
-                            if let ast::ExprKind::Arrow { params, .. } = &value.kind {
+                            if let ast::ExprKind::Arrow { params, body, .. } = &value.kind {
                                 let key = params
                                     .get(1)
                                     .filter(|k| k.pattern.is_none() && !k.rest)
                                     .map(|k| k.name.name.as_str());
-                                self.trap(key, &mut |t| match &value.kind {
-                                    ast::ExprKind::Arrow { body, .. } => match body {
-                                        ast::ArrowBody::Expr(b) => walk_expr(b, t),
-                                        ast::ArrowBody::Block(b) => walk_block(b, t),
-                                    },
-                                    _ => {}
+                                self.trap(key, &mut |t| match body {
+                                    ast::ArrowBody::Expr(b) => walk_expr(b, t),
+                                    ast::ArrowBody::Block(b) => walk_block(b, t),
                                 });
                             }
                         }
