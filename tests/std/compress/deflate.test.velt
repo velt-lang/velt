@@ -1,0 +1,245 @@
+// The DEFLATE encoder (velt/compress `gzip`, `deflate`, `deflateRaw`, `DeflateEncoding`): what
+// std's own decoders read back, in one piece and streamed with flushes, its frames' bytes, and its
+// levels. Node's zlib and gzip read the same streams in tests/std/compress/interop (not in the suite).
+import {
+  CompressError,
+  deflate,
+  deflateRaw,
+  DeflateEncoding,
+  DeflateFormat,
+  gunzip,
+  gzip,
+  inflate,
+  InflateDecoder,
+  inflateRaw,
+} from "velt/compress";
+import { describe, expect, it } from "velt/test";
+
+/** `n` bytes of a fixed xorshift sequence, each byte taken modulo `alphabet`. */
+function noise(n: i64, alphabet: u32, seed: u32): u8[] {
+  const out: u8[] = [];
+  let x = seed;
+  for (let i: i64 = 0; i < n; i++) {
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    out.push((x % alphabet) as u8);
+  }
+  return out;
+}
+
+/** 16-bit counters, little-endian: no three bytes repeat, so a level-1 block is all literals. */
+function counters(n: i64): u8[] {
+  const out: u8[] = [];
+  for (let k: i64 = 0; out.length < (n as usize); k++) {
+    out.push((k & 255) as u8);
+    out.push(((k >> 8) & 255) as u8);
+  }
+  return out;
+}
+
+function text(n: i64): u8[] {
+  const words = [
+    "the",
+    "window",
+    "slides",
+    "down",
+    "and",
+    "a",
+    "match",
+    "is",
+    "found",
+    "or",
+    "not",
+  ];
+  let s = "";
+  let x: u32 = 7;
+  while (s.length < (n as usize)) {
+    x = x * 1103515245 + 12345;
+    s += words[((x >> 16) % 11) as i64] + ((x >> 8) % 9 == 0 ? ".\n" : " ");
+  }
+  const out: u8[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    out.push(s.charCodeAt(i) as u8);
+  }
+  return out;
+}
+
+function run(n: i64, b: u8): u8[] {
+  return new Array<u8>(n as usize).fill(b);
+}
+
+function same(a: u8[], b: u8[]): bool {
+  if (a.length != b.length) {
+    return false;
+  }
+  for (let i: usize = 0; i < a.length; i++) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Everything `d` can output now. */
+function drain(d: InflateDecoder): u8[] {
+  let out: u8[] = [];
+  while (true) {
+    const chunk = d.read(65536);
+    if (chunk.length == 0) {
+      return out;
+    }
+    out = out.concat(chunk);
+  }
+}
+
+const CORPUS: [string, u8[]][] = [
+  ["empty", []],
+  ["one byte", [42]],
+  ["text, 100 KB", text(100000)],
+  ["literals past a block's symbol limit", counters(40000)],
+  ["four letters, 200 KB", noise(200000, 4, 1)],
+  ["a run of 1 MB", run(1000000, 97)],
+  ["random, 100 KB", noise(100000, 256, 2)],
+];
+
+describe("deflate encoder", () => {
+  it("gives the input back through gunzip, inflate and inflateRaw, at every level", () => {
+    for (const [name, input] of CORPUS) {
+      for (let level = 1; level <= 9; level++) {
+        const ok =
+          same(gunzip(gzip(input, level)), input) &&
+          same(inflate(deflate(input, level)), input) &&
+          same(inflateRaw(deflateRaw(input, level)), input);
+        expect(ok ? "" : `${name} at level ${level}`).toBe("");
+      }
+    }
+  });
+
+  it("writes an empty stream as zlib does", () => {
+    expect(deflate([], 6)).toEqual([0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01]);
+    expect(deflateRaw([], 6)).toEqual([0x03, 0x00]);
+    expect(gzip([], 6)).toEqual([
+      0x1f,
+      0x8b,
+      8,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      255,
+      0x03,
+      0x00,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+    ]);
+  });
+
+  it("marks the level in the zlib and gzip headers", () => {
+    expect(deflate([1], "fastest").slice(0, 2)).toEqual([0x78, 0x01]);
+    expect(deflate([1], 3).slice(0, 2)).toEqual([0x78, 0x5e]);
+    expect(deflate([1]).slice(0, 2)).toEqual([0x78, 0x9c]);
+    expect(deflate([1], "smallest").slice(0, 2)).toEqual([0x78, 0xda]);
+    expect(gzip([1], "fastest")[8]).toBe(4);
+    expect(gzip([1], "smallest")[8]).toBe(2);
+  });
+
+  it("compresses text, more at higher levels, and grows random bytes by little", () => {
+    const t = text(100000);
+    const fast = gzip(t, "fastest").length;
+    const small = gzip(t, "smallest").length;
+    expect(small < fast).toBe(true);
+    expect(small * 4 < t.length).toBe(true);
+    const r = noise(100000, 256, 3);
+    // Stored blocks, 5 bytes of header each, one per 16,383 symbols as in zlib: 7 here.
+    expect(deflateRaw(r).length <= r.length + 5 * 7).toBe(true);
+    expect(deflateRaw(run(1000000, 0)).length < 2000).toBe(true);
+  });
+
+  it("refuses a level that isn't a whole number from 1 to 9", () => {
+    for (const level of [0, 10, 2.5, NaN, -1]) {
+      let threw = false;
+      try {
+        gzip([1], level);
+      } catch (e) {
+        threw = e instanceof RangeError;
+      }
+      expect(threw ? "" : `level ${level}`).toBe("");
+    }
+  });
+});
+
+describe("DeflateEncoding", () => {
+  it("is named by its format", () => {
+    const formats: DeflateFormat[] = ["gzip", "deflate", "deflate-raw"];
+    for (const f of formats) {
+      expect(new DeflateEncoding(f).name).toBe(f);
+    }
+  });
+
+  it("outputs everything written so far at each flush, in pieces of any size", () => {
+    const input = text(60000).concat(noise(90000, 4, 5)).concat(counters(30000));
+    const steps: i64[] = [1, 7, 4099, 70000];
+    for (const step of steps) {
+      for (const level of [1, 6, 9]) {
+        const e = new DeflateEncoding("deflate-raw", level).encoder();
+        const d = new InflateDecoder("raw");
+        let decoded: u8[] = [];
+        let at: i64 = 0;
+        let pieces = 0;
+        const end = input.length as i64;
+        let ok = true;
+        // A piece of 1 byte is slow in debug builds: 3,000 of them make the point.
+        const stop = step == 1 ? 3000 : end;
+        while (at < stop) {
+          const to = at + step < stop ? at + step : stop;
+          d.feed(e.write(input, at, to));
+          at = to;
+          pieces++;
+          if (pieces % 3 == 0 || at == stop) {
+            d.feed(e.flush());
+            decoded = decoded.concat(drain(d));
+            ok = ok && same(decoded, input.slice(0, at));
+          }
+        }
+        d.feed(e.finish());
+        d.finish();
+        decoded = decoded.concat(drain(d));
+        ok = ok && d.done && same(decoded, input.slice(0, stop));
+        expect(ok ? "" : `pieces of ${step} at level ${level}`).toBe("");
+      }
+    }
+  });
+
+  it("gives nothing for a flush with nothing new, and nothing after finish", () => {
+    const e = new DeflateEncoding("gzip").encoder();
+    e.write([1, 2, 3], 0, 3);
+    expect(e.flush().length > 0).toBe(true);
+    expect(e.flush()).toEqual([]);
+    const tail = e.finish();
+    expect(tail.length > 0).toBe(true);
+    expect(e.finish()).toEqual([]);
+    let threw = false;
+    try {
+      e.write([4], 0, 1);
+    } catch (err) {
+      threw = err instanceof CompressError;
+    }
+    expect(threw).toBe(true);
+  });
+
+  it("reads only the part of the array it is given", () => {
+    const e = new DeflateEncoding("deflate").encoder();
+    const bytes = text(1000);
+    const out = e.write(bytes, 100, 600).concat(e.finish());
+    expect(same(inflate(out), bytes.slice(100, 600))).toBe(true);
+  });
+});

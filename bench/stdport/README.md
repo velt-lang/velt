@@ -146,6 +146,23 @@ load per symbol, decodes a second literal without a refill, and copies matches 1
 time; its output is allocated without zeroing (`Buffer.allocUnsafe`), which was 21 % of the
 instructions before.
 
+## gzip compression
+
+`gzip_fast` and `gzip_default` are `velt/compress`'s `gzip` at levels 1 and 6 against `flate2`
+(its default `miniz_oxide` backend) at the same levels: the 1 MB JSON of `gen_inputs.rs`,
+compressed 20 times. The runtime had no encoder, so these rows measure a new component, not a
+port. Instructions retired (`/usr/bin/time -l`, Apple M4, macOS, `VELT_THREADS=1`, load about
+150), and the size of one stream (Node's zlib for comparison):
+
+| benchmark | Velt | Rust | Velt / Rust | Velt bytes | flate2 bytes | zlib bytes |
+|---|---:|---:|---:|---:|---:|---:|
+| gzip_fast | 654 M | 337 M | 1.94 | 148,814 | | 141,166 |
+| gzip_default | 1,780 M | 2,176 M | 0.82 | 127,698 | 126,411 | 127,619 |
+
+The match finder follows zlib (hash chains, lazy matching from level 4, zlib's parameters per
+level), so the sizes track zlib's. Level 1 takes zlib's `deflate_fast` path, where `miniz_oxide`
+probes a single candidate per position: that is the gap in the first row.
+
 ## Brotli
 
 `brotli_decode` is `velt/compress`'s `brotliDecompress` against `brotli-decompressor`

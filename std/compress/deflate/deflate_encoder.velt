@@ -1,0 +1,128 @@
+// velt/compress (internal): one stream of DEFLATE (RFC 1951), in a zlib (RFC 1950) or gzip
+// (RFC 1952) frame or none: its header, its check of the input, its trailer, and the output so
+// far handed out as it is asked for.
+
+import { adler32, crc32 } from "velt/compress/inflate/checksum";
+import { Matcher } from "velt/compress/deflate/matcher";
+import { Encoder } from "velt/compress/encoding";
+import { CompressError } from "velt/compress/errors";
+
+/**
+ * A stream's frame, by its `CompressionStream` name: `"gzip"` (RFC 1952), `"deflate"` (zlib,
+ * RFC 1950, what HTTP calls `deflate`) or `"deflate-raw"` (DEFLATE alone, RFC 1951).
+ */
+export type DeflateFormat = "gzip" | "deflate" | "deflate-raw";
+
+/** Below this share of the output buffer, a piece is copied and the buffer kept. */
+const HAND_OVER_DIVISOR: i64 = 4;
+
+/** Compresses one stream at a level from 1 to 9. */
+export class DeflateEncoder extends Matcher implements Encoder {
+  private format: DeflateFormat;
+  private check: u32;
+  private size: u64 = 0;
+  private finished: bool = false;
+
+  constructor(format: DeflateFormat, level: i64) {
+    super(level);
+    this.format = format;
+    this.check = format == "deflate" ? 1 : 0;
+    if (format == "gzip") {
+      // No time, no name. The extra flags say 2 for the slowest level, 4 for the fastest.
+      const head: u8[] = [31, 139, 8, 0, 0, 0, 0, 0, level == 9 ? 2 : level == 1 ? 4 : 0, 255];
+      for (const b of head) {
+        this.byte(b);
+      }
+    } else if (format == "deflate") {
+      // A 32 KiB window; the level class in FLEVEL; 31 divides the two bytes.
+      const flg: i64 = level == 1 ? 0x01 : level < 6 ? 0x5e : level == 6 ? 0x9c : 0xda;
+      this.byte(0x78);
+      this.byte(flg as u8);
+    }
+  }
+
+  /** See `Encoder.write`. */
+  write(bytes: u8[], start: i64, end: i64): u8[] throws CompressError {
+    if (this.finished) {
+      throw new CompressError("write after finish");
+    }
+    this.absorb(bytes, start, end);
+    return this.take();
+  }
+
+  /** See `Encoder.flush`: a sync flush, ending in the empty stored block `00 00 ff ff`. */
+  flush(): u8[] throws CompressError {
+    if (this.finished) {
+      throw new CompressError("flush after finish");
+    }
+    if (this.unwritten) {
+      this.endBlock(false);
+      this.emptyStored();
+    }
+    return this.take();
+  }
+
+  /** See `Encoder.finish`. */
+  finish(): u8[] throws CompressError {
+    if (!this.finished) {
+      this.end();
+    }
+    return this.take();
+  }
+
+  /** The whole of `bytes` as one stream, in one array (the one-shot functions). */
+  all(bytes: u8[]): u8[] {
+    this.absorb(bytes, 0, bytes.length as i64);
+    this.end();
+    return this.take();
+  }
+
+  private absorb(bytes: u8[], start: i64, end: i64) {
+    if (end <= start) {
+      return;
+    }
+    if (this.format == "gzip") {
+      this.check = crc32(this.check, bytes, start, end);
+      this.size += (end - start) as u64;
+    } else if (this.format == "deflate") {
+      this.check = adler32(this.check, bytes, start, end);
+    }
+    this.compress(bytes, start, end);
+  }
+
+  private end() {
+    this.finished = true;
+    this.endBlock(true);
+    this.align();
+    const c = this.check;
+    if (this.format == "gzip") {
+      const n = (this.size & 0xffffffff) as u32;
+      for (let i: u32 = 0; i < 4; i++) {
+        this.byte(((c >> (8 * i)) & 255) as u8);
+      }
+      for (let i: u32 = 0; i < 4; i++) {
+        this.byte(((n >> (8 * i)) & 255) as u8);
+      }
+    } else if (this.format == "deflate") {
+      for (let i: u32 = 0; i < 4; i++) {
+        this.byte(((c >> (24 - 8 * i)) & 255) as u8);
+      }
+    }
+  }
+
+  /** The output so far: the buffer itself when it is mostly full, else a copy of the part. */
+  private take(): u8[] {
+    const n = this.op;
+    if (n == 0) {
+      return [];
+    }
+    this.op = 0;
+    if (n * HAND_OVER_DIVISOR < (this.out.length as i64)) {
+      return this.out.slice(0, n);
+    }
+    const piece = this.out;
+    piece.truncate(n);
+    this.out = [];
+    return piece;
+  }
+}

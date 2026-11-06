@@ -1,0 +1,313 @@
+// velt/compress (internal): the match finder of the DEFLATE encoder (RFC 1951 §4): a sliding
+// window of 64 KiB, hash chains over three-byte prefixes, and the greedy (levels 1 to 3) or lazy
+// (4 to 9) choice between a match and a literal.
+//
+// The parameters of each level are zlib's, so its levels compare with zlib's. Input is copied into
+// the window; when the position reaches the top, the upper half moves down and the chains are
+// rebased. Chain links are `u16` positions in the window, 0 ending a chain, in arrays made once.
+
+import { BlockWriter } from "velt/compress/deflate/block_writer";
+import { copyBytes } from "velt/lang/bytes/copy";
+
+const W_SIZE: i64 = 32768;
+const W_MASK: i64 = 32767;
+const WINDOW: i64 = 65536;
+const MIN_MATCH: i64 = 3;
+const MAX_MATCH: i64 = 258;
+/** A match is searched for only with this much input ahead, until the input ends. */
+const MIN_LOOKAHEAD: i64 = 262;
+const MAX_DIST: i64 = 32506;
+/** When the window slides: a match never starts this far up without a full lookahead. */
+const SLIDE_AT: i64 = 65274;
+/** A match of 3 bytes farther back than this costs about as much as its literals. */
+const TOO_FAR: i64 = 4096;
+const HASH_SIZE: usize = 32768;
+const HASH_MULTIPLIER: u64 = 0x9e3779b1;
+const HASH_SHIFT: u64 = 17;
+const SYMBOL_LIMIT: i64 = 16383;
+
+/** Below this level, the greedy loop; `MAX_LAZY` is then its limit for inserting a match. */
+const FIRST_LAZY_LEVEL: i64 = 4;
+/** By level, as in zlib's table: a match length that cuts the search, and so on. */
+const GOOD_LENGTH: i64[] = [0, 4, 4, 4, 4, 8, 8, 8, 32, 32];
+const MAX_LAZY: i64[] = [0, 4, 5, 6, 4, 16, 16, 32, 128, 258];
+const NICE_LENGTH: i64[] = [0, 8, 16, 32, 16, 32, 128, 128, 258, 258];
+const MAX_CHAIN: i64[] = [0, 4, 8, 32, 16, 32, 128, 256, 1024, 4096];
+
+/** The match finder, writing the symbols it chooses to the block it inherits. */
+export class Matcher extends BlockWriter {
+  private head: u16[] = new Array<u16>(HASH_SIZE).fill(0);
+  private prev: u16[] = new Array<u16>(W_SIZE as usize).fill(0);
+  /** The window holds input up to `fill`; symbols were chosen up to `pos`. */
+  private fill: i64 = 0;
+  private pos: i64 = 0;
+  /** Where the current block starts; below 0 once its start has slid out of the window. */
+  private blockStart: i64 = 0;
+  private matchLen: i64 = MIN_MATCH - 1;
+  private matchStart: i64 = 0;
+  /** Lazy matching: the byte before `pos` has no symbol yet. */
+  private pending: bool = false;
+  private lazyMode: bool;
+  private good: i64;
+  private maxLazy: i64;
+  private nice: i64;
+  private maxChain: i64;
+
+  constructor(level: i64) {
+    super();
+    this.lazyMode = level >= FIRST_LAZY_LEVEL;
+    this.good = GOOD_LENGTH[level];
+    this.maxLazy = MAX_LAZY[level];
+    this.nice = NICE_LENGTH[level];
+    this.maxChain = MAX_CHAIN[level];
+  }
+
+  /** Whether input has come in since the last block ended. */
+  get unwritten(): bool {
+    return this.fill != this.blockStart;
+  }
+
+  /** Takes `bytes[start..end]`, choosing symbols while a full lookahead is left. */
+  compress(bytes: u8[], start: i64, end: i64) {
+    let at = start;
+    while (true) {
+      if (this.pos >= SLIDE_AT) {
+        this.slide();
+      }
+      let n = WINDOW - this.fill;
+      if (n > end - at) {
+        n = end - at;
+      }
+      if (n > 0) {
+        copyBytes(bytes, this.window, this.fill, at, at + n);
+        this.fill += n;
+        at += n;
+      }
+      const stop = this.fill - MIN_LOOKAHEAD;
+      if (this.pos >= stop && at == end) {
+        return;
+      }
+      this.choose(stop);
+    }
+  }
+
+  /** Chooses symbols for all the input taken, and writes the block they end. */
+  endBlock(last: bool) {
+    while (this.pos < this.fill) {
+      if (this.pos >= SLIDE_AT) {
+        this.slide();
+      }
+      this.choose(this.fill < SLIDE_AT ? this.fill : SLIDE_AT);
+    }
+    if (this.pending) {
+      this.literal(this.window[this.pos - 1]);
+      this.pending = false;
+    }
+    this.matchLen = MIN_MATCH - 1;
+    if (last || this.count > 0) {
+      this.flushBlock(this.blockStart, this.pos, last);
+      this.blockStart = this.pos;
+    }
+  }
+
+  private choose(stop: i64) {
+    if (this.lazyMode) {
+      this.lazy(stop);
+    } else {
+      this.greedy(stop);
+    }
+  }
+
+  private literal(b: u8) {
+    this.syms[this.count] = b as u32;
+    this.count++;
+    this.litFreq[b as i64] += 1;
+  }
+
+  /** Adds a match of `len` bytes, `dist` back, to the block. */
+  private match(len: i64, dist: i64) {
+    const x = (len - MIN_MATCH) as u64;
+    this.syms[this.count] = ((dist as u32) << 16) | (x as u32);
+    this.count++;
+    let symbol: i64;
+    if (x < 8) {
+      symbol = 257 + (x as i64);
+    } else if (x == 255) {
+      symbol = 285;
+    } else {
+      const extra = 61 - (x.leadingZeros() as u64);
+      symbol = 257 + ((((extra + 1) << 2) | ((x >> extra) & 3)) as i64);
+    }
+    this.litFreq[symbol] += 1;
+    const y = (dist - 1) as u64;
+    if (y < 4) {
+      this.distFreq[y as i64] += 1;
+    } else {
+      const more = 62 - (y.leadingZeros() as u64);
+      this.distFreq[(((more + 1) << 1) | ((y >> more) & 1)) as i64] += 1;
+    }
+  }
+
+  /** Adds `at` to the chain of its three bytes, which `fill` has, and returns the chain's next. */
+  private insert(at: i64): i64 {
+    const w = this.window;
+    const x = (w[at] as u64) | ((w[at + 1] as u64) << 8) | ((w[at + 2] as u64) << 16);
+    const h = (((x * HASH_MULTIPLIER) & 0xffffffff) >> HASH_SHIFT) as i64;
+    const next = this.head[h];
+    this.prev[at & W_MASK] = next;
+    this.head[h] = at as u16;
+    return next as i64;
+  }
+
+  /**
+   * Level 1 to 3: takes the match at each position if there is one. Up to `maxLazy` bytes of it
+   * go into the chains; a longer one is skipped, which is what makes the level fast on long runs.
+   */
+  private greedy(stop: i64) {
+    const fill = this.fill;
+    const tail = fill - MIN_MATCH;
+    let pos = this.pos;
+    while (pos < stop) {
+      let len: i64 = 0;
+      if (pos <= tail) {
+        const candidate = this.insert(pos);
+        if (candidate != 0 && pos - candidate <= MAX_DIST) {
+          len = this.longest(pos, candidate, MIN_MATCH - 1);
+        }
+      }
+      if (len >= MIN_MATCH) {
+        this.match(len, pos - this.matchStart);
+        const end = pos + len;
+        if (len <= this.maxLazy) {
+          const last = end - 1 < tail ? end - 1 : tail;
+          for (let p = pos + 1; p <= last; p++) {
+            this.insert(p);
+          }
+        }
+        pos = end;
+      } else {
+        this.literal(this.window[pos]);
+        pos++;
+      }
+      if (this.count == SYMBOL_LIMIT) {
+        this.flushBlock(this.blockStart, pos, false);
+        this.blockStart = pos;
+      }
+    }
+    this.pos = pos;
+  }
+
+  /**
+   * Level 4 to 9: a match is kept back one position, and given up for a longer one that starts
+   * at the next byte. Below `maxLazy` the next position is searched; `good` shortens that search.
+   */
+  private lazy(stop: i64) {
+    const fill = this.fill;
+    const tail = fill - MIN_MATCH;
+    let pos = this.pos;
+    while (pos < stop) {
+      const candidate = pos <= tail ? this.insert(pos) : 0;
+      const prevLen = this.matchLen;
+      const prevStart = this.matchStart;
+      let len: i64 = MIN_MATCH - 1;
+      if (candidate != 0 && prevLen < this.maxLazy && pos - candidate <= MAX_DIST) {
+        len = this.longest(pos, candidate, prevLen);
+        if (len == MIN_MATCH && pos - this.matchStart > TOO_FAR) {
+          len = MIN_MATCH - 1;
+        } else if (len <= prevLen) {
+          len = MIN_MATCH - 1;
+        }
+      }
+      if (prevLen >= MIN_MATCH && len <= prevLen) {
+        this.match(prevLen, pos - 1 - prevStart);
+        const end = pos - 1 + prevLen;
+        const last = end - 1 < tail ? end - 1 : tail;
+        for (let p = pos + 1; p <= last; p++) {
+          this.insert(p);
+        }
+        pos = end;
+        this.pending = false;
+        this.matchLen = MIN_MATCH - 1;
+        if (this.count == SYMBOL_LIMIT) {
+          this.flushBlock(this.blockStart, pos, false);
+          this.blockStart = pos;
+        }
+      } else {
+        this.matchLen = len;
+        if (this.pending) {
+          this.literal(this.window[pos - 1]);
+          if (this.count == SYMBOL_LIMIT) {
+            this.flushBlock(this.blockStart, pos, false);
+            this.blockStart = pos;
+          }
+        }
+        this.pending = true;
+        pos++;
+      }
+    }
+    this.pos = pos;
+  }
+
+  /**
+   * The longest match for `pos` along the chain from `candidate`, if longer than `shortest`
+   * (it sets `matchStart` then); otherwise `shortest`.
+   */
+  private longest(pos: i64, candidate: i64, shortest: i64): i64 {
+    const w = this.window;
+    const prev = this.prev;
+    const room = this.fill - pos;
+    const maxLen = room < MAX_MATCH ? room : MAX_MATCH;
+    let best = shortest;
+    if (best >= maxLen) {
+      return best;
+    }
+    const nice = this.nice < maxLen ? this.nice : maxLen;
+    let chain = shortest >= this.good ? this.maxChain >> 2 : this.maxChain;
+    const limit = pos > MAX_DIST ? pos - MAX_DIST : 0;
+    const first = w[pos];
+    const second = w[pos + 1];
+    let tail = w[pos + best];
+    let m = candidate;
+    while (true) {
+      if (w[m + best] == tail && w[m] == first && w[m + 1] == second) {
+        let len: i64 = 2;
+        while (len < maxLen && w[m + len] == w[pos + len]) {
+          len++;
+        }
+        if (len > best) {
+          best = len;
+          this.matchStart = m;
+          if (len >= nice) {
+            return best;
+          }
+          tail = w[pos + best];
+        }
+      }
+      m = prev[m & W_MASK] as i64;
+      chain--;
+      if (m <= limit || chain == 0) {
+        return best;
+      }
+    }
+  }
+
+  /** Moves the upper half of the window down, and every position with it. */
+  private slide() {
+    this.window.copyWithin(0, W_SIZE, this.fill);
+    this.fill -= W_SIZE;
+    this.pos -= W_SIZE;
+    this.blockStart -= W_SIZE;
+    this.matchStart -= W_SIZE;
+    rebase(this.head);
+    rebase(this.prev);
+  }
+}
+
+/** Positions `W_SIZE` lower; those that were below it end the chain. */
+function rebase(links: u16[]) {
+  const n = links.length;
+  for (let i: usize = 0; i < n; i++) {
+    const v = links[i];
+    links[i] = v >= 32768 ? v - 32768 : 0;
+  }
+}

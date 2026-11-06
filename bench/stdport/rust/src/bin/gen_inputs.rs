@@ -2,7 +2,8 @@
 //! only argument (run.sh passes `$OUT/inputs` and exports it as `STDPORT_INPUTS`): `json.gz` is
 //! a 1 MB JSON array of users (the body of bench/http/fetch's `/json`), gzip-compressed at the
 //! default level; `json.q5.br` and `json.q11.br` the same JSON compressed with Brotli at quality 5
-//! and 11 (window 2^22, the `brotli` crate's defaults otherwise).
+//! and 11 (window 2^22, the `brotli` crate's defaults otherwise); `json` the JSON itself, the input
+//! of the compression benchmarks.
 
 use std::io::Write;
 
@@ -29,6 +30,7 @@ fn main() {
     let dir = std::env::args().nth(1).expect("usage: gen_inputs <dir>");
     std::fs::create_dir_all(&dir).unwrap();
     let json = users();
+    std::fs::write(format!("{dir}/json"), &json).unwrap();
     let mut gz = flate2::write::GzEncoder::new(vec![], flate2::Compression::default());
     gz.write_all(&json).unwrap();
     std::fs::write(format!("{dir}/json.gz"), gz.finish().unwrap()).unwrap();

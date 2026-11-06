@@ -1,0 +1,233 @@
+// velt/compress (internal): the Huffman codes of a DEFLATE block (RFC 1951 §3.2.2): code lengths
+// from symbol frequencies, limited to the format's maximum, and the codes those lengths define.
+//
+// The symbols are sorted by frequency and the lengths computed in place (Moffat and Katajainen's
+// algorithm), with no heap of tree nodes; a length over the limit is cut and the counts rebalanced
+// so the code stays complete. A code is stored bit-reversed, as it goes out, with its length in
+// the bits from 16 up: `code | (length << 16)`.
+
+const LENGTH_SHIFT: u32 = 16;
+/** Symbols are kept as `(frequency << 9) | symbol`; a block's frequencies fit in 16 bits. */
+const SYMBOL_BITS: u32 = 9;
+const MAX_SYMBOLS: usize = 286;
+/** Above any depth a block's frequencies can reach (a Fibonacci-like run within 2^16 symbols). */
+const MAX_DEPTH: usize = 32;
+
+/** The length a code entry holds. */
+export function entryLength(entry: u32): u32 {
+  return entry >> LENGTH_SHIFT;
+}
+
+/** Builds code lengths and codes for one alphabet at a time; its scratch arrays are reused. */
+export class CodeBuilder {
+  private keys: u32[] = new Array<u32>(MAX_SYMBOLS).fill(0);
+  private depth: u32[] = new Array<u32>(MAX_SYMBOLS).fill(0);
+  private count: u32[] = new Array<u32>(MAX_DEPTH).fill(0);
+  private next: u32[] = new Array<u32>(MAX_DEPTH).fill(0);
+
+  constructor() {}
+
+  /**
+   * Sets `lens[0..n]` and `codes[0..n]` for `freq[0..n]`, no code longer than `maxBits`, and
+   * returns how many symbols the tree spans (the last used one plus one). A tree always has at
+   * least two codes, as zlib's have: decoders may refuse an incomplete one.
+   */
+  build(freq: u32[], n: i64, maxBits: i64, lens: u8[], codes: u32[]): i64 {
+    const keys = this.keys;
+    const depth = this.depth;
+    let m: i64 = 0;
+    for (let s: i64 = 0; s < n; s++) {
+      lens[s] = 0;
+      if (freq[s] != 0) {
+        keys[m] = (freq[s] << SYMBOL_BITS) | (s as u32);
+        m++;
+      }
+    }
+    let filler: i64 = 0;
+    while (m < 2) {
+      if (freq[filler] == 0) {
+        keys[m] = (1 << SYMBOL_BITS) | (filler as u32);
+        m++;
+      }
+      filler++;
+    }
+    sortKeys(keys, m);
+    for (let i: i64 = 0; i < m; i++) {
+      depth[i] = keys[i] >> SYMBOL_BITS;
+    }
+    minimumRedundancy(depth, m);
+    const count = this.count;
+    count.fill(0);
+    for (let i: i64 = 0; i < m; i++) {
+      count[depth[i] as i64] += 1;
+    }
+    limitLengths(count, maxBits);
+    // The longest codes go to the rarest symbols, which the sort put first.
+    let i: i64 = 0;
+    let used: i64 = 0;
+    for (let len = maxBits; len >= 1; len--) {
+      for (let c = count[len]; c > 0; c--) {
+        const s = (keys[i] & 511) as i64;
+        lens[s] = len as u8;
+        if (s >= used) {
+          used = s + 1;
+        }
+        i++;
+      }
+    }
+    this.assign(lens, n, maxBits, codes);
+    return used;
+  }
+
+  /** The canonical codes of `lens[0..n]` (RFC 1951 §3.2.2), counted by length in `this.count`. */
+  private assign(lens: u8[], n: i64, maxBits: i64, codes: u32[]) {
+    const count = this.count;
+    const next = this.next;
+    let code: u32 = 0;
+    count[0] = 0;
+    for (let len: i64 = 1; len <= maxBits; len++) {
+      code = (code + count[len - 1]) << 1;
+      next[len] = code;
+    }
+    for (let s: i64 = 0; s < n; s++) {
+      const len = lens[s] as i64;
+      if (len != 0) {
+        codes[s] = reverse(next[len], len as u32) | ((len as u32) << LENGTH_SHIFT);
+        next[len] += 1;
+      }
+    }
+  }
+
+  /** The codes of the fixed trees (RFC 1951 §3.2.6) from their lengths. */
+  fixed(lens: u8[], n: i64, codes: u32[]) {
+    const count = this.count;
+    count.fill(0);
+    for (let s: i64 = 0; s < n; s++) {
+      count[lens[s] as i64] += 1;
+    }
+    this.assign(lens, n, 9, codes);
+  }
+}
+
+/** The low `len` bits of `code`, in reverse order. */
+function reverse(code: u32, len: u32): u32 {
+  let x = code;
+  x = ((x & 0x5555) << 1) | ((x >> 1) & 0x5555);
+  x = ((x & 0x3333) << 2) | ((x >> 2) & 0x3333);
+  x = ((x & 0x0f0f) << 4) | ((x >> 4) & 0x0f0f);
+  x = ((x & 0x00ff) << 8) | ((x >> 8) & 0x00ff);
+  return x >> (16 - len);
+}
+
+/** Sorts `keys[0..n]` ascending, in place (a heap sort: no allocation, at most 286 keys). */
+function sortKeys(keys: u32[], n: i64) {
+  for (let i = n / 2 - 1; i >= 0; i--) {
+    siftDown(keys, i, n);
+  }
+  for (let end = n - 1; end > 0; end--) {
+    const top = keys[0];
+    keys[0] = keys[end];
+    keys[end] = top;
+    siftDown(keys, 0, end);
+  }
+}
+
+function siftDown(keys: u32[], from: i64, n: i64) {
+  const key = keys[from];
+  let at = from;
+  while (true) {
+    let child = 2 * at + 1;
+    if (child >= n) {
+      break;
+    }
+    if (child + 1 < n && keys[child + 1] > keys[child]) {
+      child++;
+    }
+    if (keys[child] <= key) {
+      break;
+    }
+    keys[at] = keys[child];
+    at = child;
+  }
+  keys[at] = key;
+}
+
+/**
+ * Replaces the frequencies `a[0..n]`, ascending, with the lengths of a minimum-redundancy code,
+ * descending (Moffat and Katajainen, 1995). `n` is at least 2. Three passes over the array:
+ * internal nodes' weights, their depths, then the leaves' depths.
+ */
+function minimumRedundancy(a: u32[], n: i64) {
+  a[0] += a[1];
+  let root: i64 = 0;
+  let leaf: i64 = 2;
+  for (let next: i64 = 1; next < n - 1; next++) {
+    if (leaf >= n || a[root] < a[leaf]) {
+      a[next] = a[root];
+      a[root] = next as u32;
+      root++;
+    } else {
+      a[next] = a[leaf];
+      leaf++;
+    }
+    if (leaf >= n || (root < next && a[root] < a[leaf])) {
+      a[next] += a[root];
+      a[root] = next as u32;
+      root++;
+    } else {
+      a[next] += a[leaf];
+      leaf++;
+    }
+  }
+  a[n - 2] = 0;
+  for (let next = n - 3; next >= 0; next--) {
+    a[next] = a[a[next] as i64] + 1;
+  }
+  let avail: i64 = 1;
+  let used: i64 = 0;
+  let depth: u32 = 0;
+  root = n - 2;
+  let next = n - 1;
+  while (avail > 0) {
+    while (root >= 0 && a[root] == depth) {
+      used++;
+      root--;
+    }
+    while (avail > used) {
+      a[next] = depth;
+      next--;
+      avail--;
+    }
+    avail = 2 * used;
+    depth++;
+    used = 0;
+  }
+}
+
+/**
+ * Cuts the code lengths counted in `count` (`count[len]` codes of each length) to `maxBits`,
+ * keeping the code complete: each step lengthens one shorter code by one, making room for the
+ * longest ones.
+ */
+function limitLengths(count: u32[], maxBits: i64) {
+  for (let len = maxBits + 1; len < (MAX_DEPTH as i64); len++) {
+    count[maxBits] += count[len];
+    count[len] = 0;
+  }
+  let total: u64 = 0;
+  for (let len = maxBits; len > 0; len--) {
+    total += (count[len] as u64) << ((maxBits - len) as u64);
+  }
+  const full: u64 = 1 << (maxBits as u64);
+  while (total > full) {
+    count[maxBits] -= 1;
+    for (let len = maxBits - 1; len > 0; len--) {
+      if (count[len] != 0) {
+        count[len] -= 1;
+        count[len + 1] += 2;
+        break;
+      }
+    }
+    total -= 1;
+  }
+}
