@@ -12,16 +12,16 @@ import { anyJoin, anyOwnFn, anyPrimText, anyText } from "./any_text";
  * an array-like both work, and a proxy's traps run.
  */
 export function anyArgList(args: any): any[] {
-  if (typeof args !== "object") {
+  const t = typeof args;
+  if (t !== "object" && t !== "function") {
     panic("TypeError: CreateListFromArrayLike called on non-object");
   }
-  const n: any = args.length;
+  // `ToLength`: `NaN` and a negative length are 0.
+  const n = Number(args.length);
+  const len = n > 0 ? Math.floor(n) : 0;
   const list: any[] = [];
-  if (typeof n === "number") {
-    const len = n as number;
-    for (let i = 0; i < len; i++) {
-      list.push(Array.isArray(args) ? args[i] : args[`${i}`]);
-    }
+  for (let i = 0; i < len; i++) {
+    list.push(Array.isArray(args) ? args[i] : args[`${i}`]);
   }
   return list;
 }

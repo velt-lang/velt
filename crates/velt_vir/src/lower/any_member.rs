@@ -66,7 +66,8 @@ impl Cx<'_> {
     }
 
     /// `Intrinsic::StdUsed`: is `NoteStdUse(name)` in code the program reaches? It is kept with
-    /// the call keys, under a name no key can have, and grows from pass to pass like them.
+    /// the call keys under the prefix U+0001, and grows from pass to pass like them. A method a
+    /// program itself names with that prefix could only turn a guard on, which is safe.
     pub(super) fn std_used(&self, name: &str) -> bool {
         self.boxing.any_call_keys.contains(&format!("\u{1}{name}"))
     }

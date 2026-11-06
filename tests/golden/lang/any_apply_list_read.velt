@@ -20,3 +20,5 @@ console.log(push.apply(arr, list));
 console.log(JSON.stringify(arr));
 const like: any = { length: 2, 0: 1, 1: 2 };
 console.log(f.apply({ base: 30 }, like));
+const counted: any = { length: "2", 0: 3, 1: 4 };
+console.log(f.apply({ base: 40 }, counted));
