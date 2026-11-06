@@ -8,6 +8,7 @@
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 
 use sha2::{Digest, Sha256};
 
@@ -101,30 +102,44 @@ pub fn zig(home: &Path) -> Result<PathBuf, String> {
     let bytes = crate::install::download(&url, MAX_ARCHIVE)?
         .ok_or_else(|| format!("{url} does not exist"))?;
     verify(&bytes, sha, &url)?;
-    // Unpacked next to its final place and renamed, so a cut-off unpack is never used.
-    let partial = dir.join(format!(".unpacking-{}", std::process::id()));
+    let top = format!("zig-{host}-{VERSION}");
+    install(&dir, &top, &exe, |into| match ext {
+        "zip" => unzip(&bytes, into),
+        _ => untar_xz(&bytes, into),
+    })
+    .map_err(|e| format!("{url}: {e}"))
+}
+
+/// Put the tree `top` in `dir`, as `unpack` writes it into the directory it is given, and return
+/// `exe` in it. Unpacked next to its final place and renamed, so a cut-off unpack is never used.
+/// Each call unpacks into a directory of its own, also beside other threads of this process: an
+/// in-process compile of several programs at once installs on each of them.
+fn install(
+    dir: &Path,
+    top: &str,
+    exe: &Path,
+    unpack: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<PathBuf, String> {
+    static NEXT: AtomicU64 = AtomicU64::new(0);
+    let n = NEXT.fetch_add(1, Ordering::Relaxed);
+    let partial = dir.join(format!(".unpacking-{}-{n}", std::process::id()));
     let _ = std::fs::remove_dir_all(&partial);
     std::fs::create_dir_all(&partial).map_err(|e| format!("{}: {e}", partial.display()))?;
-    let unpacked = match ext {
-        "zip" => unzip(&bytes, &partial),
-        _ => untar_xz(&bytes, &partial),
-    };
-    if let Err(e) = unpacked {
+    if let Err(e) = unpack(&partial) {
         let _ = std::fs::remove_dir_all(&partial);
-        return Err(format!("unpacking {url}: {e}"));
+        return Err(format!("unpacking: {e}"));
     }
-    let top = format!("zig-{host}-{VERSION}");
-    match std::fs::rename(partial.join(&top), dir.join(&top)) {
+    match std::fs::rename(partial.join(top), dir.join(top)) {
         Ok(()) => {}
         // Another build unpacked it meanwhile.
         Err(_) if exe.is_file() => {}
-        Err(e) => return Err(format!("{}: {e}", dir.join(&top).display())),
+        Err(e) => return Err(format!("{}: {e}", dir.join(top).display())),
     }
     let _ = std::fs::remove_dir_all(&partial);
     if !exe.is_file() {
-        return Err(format!("{url} has no {top}/{}", exe_name()));
+        return Err(format!("no {top}/{}", exe_name()));
     }
-    Ok(exe)
+    Ok(exe.to_path_buf())
 }
 
 /// The target as zig names it, for reading its C headers; `None` for one without them
@@ -292,6 +307,64 @@ mod tests {
         assert!(verify(b"hello", sha, "x").is_ok());
         let e = verify(b"hellp", sha, "zig.tar.xz").unwrap_err();
         assert!(e.contains("not the pinned"), "{e}");
+    }
+
+    /// Two installs at once in one process, as when it compiles programs on several threads
+    /// (veltc's `bench_programs` test, on eight): the second one's start must not delete what the
+    /// first has unpacked so far. It did, since both unpacked into one directory named by the
+    /// process, and the first renamed a tree without the files deleted under it (CI's zig lost
+    /// `lib/include/__stddef_size_t.h` and `__stdarg_header_macro.h` that way).
+    #[test]
+    fn installs_at_once_in_one_process_each_unpack_their_own_tree() {
+        use std::sync::mpsc::channel;
+        let dir = tempfile::tempdir().unwrap();
+        let dir = dir.path();
+        let exe = dir.join("top/f0");
+        let write = |into: &Path, files: std::ops::Range<usize>| -> Result<(), String> {
+            std::fs::create_dir_all(into.join("top")).map_err(|e| e.to_string())?;
+            for i in files {
+                std::fs::write(into.join(format!("top/f{i}")), b"x").map_err(|e| e.to_string())?;
+            }
+            Ok(())
+        };
+        let (half, at_half) = channel();
+        let (started, has_started) = channel();
+        let (done, is_done) = channel();
+        let (exe, write) = (&exe, &write);
+        std::thread::scope(|s| {
+            let first = s.spawn(move || {
+                let installed = install(dir, "top", exe, |into| {
+                    write(into, 0..10)?;
+                    half.send(()).unwrap();
+                    has_started.recv().unwrap();
+                    write(into, 10..20)
+                });
+                done.send(()).unwrap();
+                installed
+            });
+            let second = s.spawn(move || {
+                at_half.recv().unwrap();
+                install(dir, "top", exe, |into| {
+                    write(into, 0..3)?;
+                    started.send(()).unwrap();
+                    is_done.recv().unwrap();
+                    write(into, 3..20)
+                })
+            });
+            assert_eq!(first.join().unwrap(), Ok(exe.clone()));
+            assert_eq!(second.join().unwrap(), Ok(exe.clone()));
+        });
+        let missing: Vec<usize> = (0..20)
+            .filter(|i| !dir.join(format!("top/f{i}")).is_file())
+            .collect();
+        assert!(missing.is_empty(), "missing from the tree: {missing:?}");
+        // Neither left its unpacking directory behind.
+        let left: Vec<_> = std::fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name())
+            .collect();
+        assert_eq!(left, ["top"]);
     }
 
     #[test]
