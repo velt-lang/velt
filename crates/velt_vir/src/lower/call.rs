@@ -7,7 +7,7 @@ use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 
 use super::foreign::ForeignBuf;
 use super::operand::proj;
-use super::sequence::Later;
+use super::sequence::{root_local, Later};
 use super::view_unswitch_plain::FLOAT_INDEX;
 use super::{ice, unit, FnLower, LkMode, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
@@ -562,7 +562,9 @@ impl FnLower<'_, '_> {
             match t {
                 Ty::Unit => {}
                 Ty::Agg(_) => {
-                    let v = if any_mut && mode != Some(PassMode::BorrowMut) && is_copy_read(a) {
+                    // A closure the callee runs may also give the place another value.
+                    let copy = any_mut || self.changes_during_call(a);
+                    let v = if copy && mode != Some(PassMode::BorrowMut) && is_copy_read(a) {
                         let tmp = self.copy_to_temp(v, t);
                         Operand::Copy(Place::local(tmp))
                     } else {
@@ -734,6 +736,19 @@ impl FnLower<'_, '_> {
         match vt {
             Ty::Agg(_) => self.addr(p),
             _ => Operand::Copy(p),
+        }
+    }
+}
+
+impl FnLower<'_, '_> {
+    /// Can the place `a` starts from get another value while a call through a function value runs,
+    /// so an argument passed by pointer must not still point at it? A variable a closure assigns
+    /// by reference (in a cell it is shared, stabilize.rs), or anything this function only reaches
+    /// by reference.
+    fn changes_during_call(&mut self, a: &hir::Expr) -> bool {
+        match root_local(a) {
+            Some(l) => self.info[l.0 as usize].indirect || self.body_changes(l),
+            None => true,
         }
     }
 }

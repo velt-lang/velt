@@ -57,10 +57,11 @@ impl FnLower<'_, '_> {
             let s = self.share_value(v, ty);
             return self.own_value(s, ty);
         }
-        // A value held in a module state slot, or inside what one holds, is like an element:
-        // any callee may replace it there and drop it.
-        let movable = self.in_array_buffer(a) || self.in_module_slot(a);
-        if movable && self.cx.share_kind(ty) != ShareKind::Promise {
+        // Retaining the containers keeps them, not what they hold: the callee may replace the value
+        // through another reference and drop it (`relabel(REG.label)` setting `REG.label`, a
+        // closure assigning the variable it was called with, `f(o.name)` where `f` sets `o.name`),
+        // and it may read the parameter after that. JavaScript's callee keeps what it was passed.
+        if self.cx.share_kind(ty) != ShareKind::Promise {
             // Retaining the containers does not keep an element in place: a push through
             // another reference to the array moves its buffer, and `pop`, `truncate` or a store
             // drops the element. The callee gets a share of it instead (a copy for elements
@@ -194,24 +195,6 @@ impl FnLower<'_, '_> {
             }
             K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
                 self.in_array_buffer(base)
-            }
-            _ => false,
-        }
-    }
-
-    /// Does the place `e` lie in a module state slot, or inside what one holds? Every function
-    /// reaches the slot, so a callee may replace the value there, even behind a counted object
-    /// (retaining keeps the object, not what its field holds: `relabel(REG.label)` where
-    /// `relabel` sets `REG.label` still sees the old string, as in JavaScript). Called only for
-    /// places `in_shared_cell` accepted (the slot itself when a call may change it, or a place
-    /// inside a slot).
-    fn in_module_slot(&mut self, e: &hir::Expr) -> bool {
-        use hir::ExprKind as K;
-        match &e.kind {
-            K::Global(d) => self.slot_of(*d).is_some(),
-            K::Field { base, .. } | K::Index { base, .. } => self.in_module_slot(base),
-            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
-                self.in_module_slot(base)
             }
             _ => false,
         }

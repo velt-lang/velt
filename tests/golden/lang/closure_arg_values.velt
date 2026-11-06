@@ -1,0 +1,183 @@
+// A closure or nested function called with a variable it assigns keeps what it was passed (#2480):
+// each kind of value, each way of holding the closure. Output checked against Node.
+type P = { x: number };
+type M = { x: number; name: string };
+type Mut = { x: number; name: string };
+class C { n: number; constructor(n: number) { this.n = n; } }
+function opt<T>(x: T): T | null { return x; }
+function und<T>(x: T): T | undefined { return x; }
+
+function strings() {
+  let s = "one";
+  const f = (v: string) => { s = "nine"; return v; };
+  console.log("str", f(s), s);
+  let t = "one" + "-".repeat(40);
+  const g = (v: string) => { t = "nine" + "-".repeat(40); return v; };
+  console.log("str heap", g(t), t);
+}
+function numbers() {
+  let n = 1;
+  const f = (v: number) => { n = 9; return v; };
+  console.log("num", f(n), n);
+  let b = true;
+  const h = (v: boolean) => { b = false; return v; };
+  console.log("bool", h(b), b);
+}
+function objects() {
+  let p: P = { x: 1 };
+  const f = (v: P) => { p = { x: 9 }; return v.x; };
+  console.log("obj", f(p), p.x);
+  let m: M = { x: 1, name: "a" + "-".repeat(40) };
+  const g = (v: M) => { m = { x: 9, name: "z" + "-".repeat(40) }; return v.name + v.x; };
+  console.log("obj str", g(m), m.name);
+  let q: Mut = { x: 1, name: "a" };
+  const h = (v: Mut) => { q = { x: 9, name: "z" }; v.x = 5; return v.x; };
+  const before = q;
+  console.log("obj mut", h(q), q.x, before.x);
+}
+function unions() {
+  let u: string | number = "one";
+  const f = (v: string | number) => { u = 9; return v; };
+  console.log("union", f(u), u);
+  let w: { a: string } | { b: number } = { a: "x" };
+  const g = (v: { a: string } | { b: number }) => { w = { b: 9 }; return "a" in v ? v.a : v.b; };
+  console.log("union obj", g(w));
+  let o: string | null = opt("one");
+  const h = (v: string | null) => { o = null; return v; };
+  console.log("opt", h(o), o);
+  let d: string | undefined = und("one");
+  const i = (v?: string) => { d = undefined; return v; };
+  console.log("opt param", i(d), d);
+  let on: number | null = opt(1);
+  const j = (v: number | null) => { on = null; return v; };
+  console.log("opt num", j(on), on);
+  let op: P | null = opt<P>({ x: 1 });
+  const k = (v: P | null) => { op = null; return v === null ? -1 : v.x; };
+  console.log("opt obj", k(op), op);
+}
+function anys() {
+  let a: any = "one";
+  const f = (v: any) => { a = 9; return v; };
+  console.log("any", f(a), a);
+  let b: any = { x: 1 };
+  const g = (v: any) => { b = { x: 9 }; return v.x; };
+  console.log("any obj", g(b), b.x);
+  let c: unknown = [1];
+  const h = (v: unknown) => { c = 9; return v; };
+  console.log("unknown", h(c), c);
+}
+function arraysClasses() {
+  let xs = [1, 2];
+  const f = (v: number[]) => { xs = [9]; return v.length; };
+  console.log("arr", f(xs), xs.length);
+  let c = new C(1);
+  const g = (v: C) => { c = new C(9); return v.n; };
+  console.log("class", g(c), c.n);
+  let t: [number, string] = [1, "a"];
+  const h = (v: [number, string]) => { t = [9, "z"]; return v[0] + v[1]; };
+  console.log("tuple", h(t), t[0]);
+  let fn = () => 1;
+  const i = (v: () => number) => { fn = () => 9; return v(); };
+  console.log("fn", i(fn), fn());
+}
+function nested() {
+  let s = "one";
+  function f(v: string) { s = "nine"; return v; }
+  console.log("nested", f(s), s);
+  let n = { x: 1 };
+  function g(v: { x: number }) { n = { x: 9 }; return v.x; }
+  console.log("nested obj", g(n), n.x);
+}
+class Holder {
+  f: (v: string) => string = (v) => v;
+  s = "one";
+}
+function stored() {
+  let s = "one";
+  const h = new Holder();
+  h.f = (v) => { s = "nine"; return v; };
+  console.log("field", h.f(s), s);
+  let t = "one";
+  const arr = [(v: string) => { t = "nine"; return v; }];
+  console.log("elem", arr[0](t), t);
+  let w = "one";
+  const mk = () => (v: string) => { w = "nine"; return v; };
+  console.log("ret", mk()(w), w);
+  let u = "one";
+  const cb = (v: string) => { u = "nine"; return v; };
+  const apply = (c: (x: string) => string, a: string) => c(a);
+  const ru = apply(cb, u); console.log("cb", ru, u);
+}
+function defaultsRest() {
+  let s = "one";
+  const f = (v: string, w: string = "dflt") => { s = "nine"; return v + w; };
+  console.log("default", f(s), s);
+  let t = "one";
+  const g = (...vs: string[]) => { t = "nine"; return vs.join(","); };
+  console.log("rest", g(t, t), t);
+  let arr = ["a"];
+  const i = (...vs: string[]) => { arr = ["z"]; return vs.join(","); };
+  console.log("spread", i(...arr), arr[0]);
+}
+function loops() {
+  let cur = "s0";
+  const f = (v: string) => { cur = "next"; return v; };
+  for (let i = 0; i < 3; i++) { cur = "s" + i; console.log("loop", f(cur), cur); }
+  for (let i = 0, s = "a"; i < 2; i++, s = s + "b") {
+    const g = (v: string) => { s = "c"; return v; };
+    console.log("loop var", g(s), s);
+  }
+  for (const x of ["p", "q"]) {
+    let y = x;
+    const h = (v: string) => { y = "r"; return v; };
+    console.log("for of", h(y), y);
+  }
+}
+let mod = "one";
+const modF = (v: string) => { mod = "nine"; return v; };
+let modObj: P = { x: 1 };
+function modG(v: P) { modObj = { x: 9 }; return v.x; }
+let modNum = 1;
+function modH(v: number) { modNum = 9; return v; }
+let modOpt: string | null = opt("one");
+function modI(v: string | null) { modOpt = null; return v; }
+let modAny: any = "one";
+function modJ(v: any) { modAny = 9; return v; }
+function moduleLevel() {
+  console.log("module", modF(mod), mod);
+  console.log("module obj", modG(modObj), modObj.x);
+  console.log("module num", modH(modNum), modNum);
+  console.log("module opt", modI(modOpt), modOpt);
+  console.log("module any", modJ(modAny), modAny);
+}
+function reads() {
+  let s = "one";
+  const f = (v: string) => { s = "nine"; return v + "|" + s + "|" + v; };
+  console.log("both", f(s), s);
+  let o = { x: 1 };
+  const g = (v: { x: number }) => { const a = v.x; o = { x: 9 }; return a + "|" + v.x + "|" + o.x; };
+  console.log("both obj", g(o), o.x);
+}
+function recursion() {
+  let s = "a";
+  const f = (v: string, d: number): string => {
+    s = s + "b";
+    if (d > 0) return v + f(s, d - 1) + v;
+    return v;
+  };
+  console.log("rec", f(s, 3), s);
+  let t = "x";
+  function g(v: string, d: number): string {
+    t = "y" + d;
+    return d > 0 ? v + "," + g(t, d - 1) + "," + v : v;
+  }
+  console.log("rec nested", g(t, 2), t);
+}
+function param(p: string, q: { x: number }) {
+  const f = (v: string) => { p = "nine"; return v; };
+  console.log("param", f(p), p);
+  const g = (v: { x: number }) => { q = { x: 9 }; return v.x; };
+  console.log("param obj", g(q), q.x);
+}
+strings(); numbers(); objects(); unions(); anys(); arraysClasses(); nested(); stored();
+defaultsRest(); loops(); moduleLevel(); reads(); recursion(); param("one", { x: 1 });
