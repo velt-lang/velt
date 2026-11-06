@@ -1,8 +1,13 @@
 // velt/net (internal): `Certificate`, an X.509 v3 certificate (RFC 5280 §4.1) parsed from DER
 // for path validation: the fields a TLS client checks, as ranges into the certificate's bytes
-// (no copies). Parsing is strict where webpki is: v3 only, the outer and inner signature
-// algorithms byte-identical, extensions at most once each, and an unknown critical extension
-// refused. Malformed input throws a `bad_certificate` `TlsFailure`.
+// (no copies). Parsing is strict where webpki is: v3 only, no unique IDs, the outer and inner
+// signature algorithms byte-identical, each extension this parser reads at most once, and an
+// unknown critical extension refused. As in webpki, an extension it does not read may repeat when
+// it is not critical. Malformed input throws a `bad_certificate` `TlsFailure`.
+//
+// Parsing does not verify: signatures, chains, hostnames, validity against a clock, and the
+// encoding of the public key are for verification to check. See also velt/net/tls/x509/der for
+// the contents it leaves unread.
 
 import { daysFromCivil, daysInMonth } from "velt/time/civil";
 import { keyAlgorithm, signatureAlgorithm } from "velt/net/tls/x509/algorithms";
@@ -30,11 +35,15 @@ export class Certificate {
   der: u8[];
   /** The signed part, header included: what `signature` signs. */
   tbs: Tlv;
-  /** The signature algorithm (`SIG_*` of velt/net/tls/algorithms). */
+  /** The signature algorithm (`SIG_*` of velt/net/tls/x509/algorithms). */
   signatureAlgorithm: i32;
   /** The signature's bytes. */
   signature: Tlv;
-  /** The serial number's contents. */
+  /**
+   * The serial number's contents: a minimal INTEGER, of any length and value. Zero, negative and
+   * over 20 bytes are outside RFC 5280 §4.1.2.2, which asks users to accept them; trust anchors
+   * use them, and webpki accepts them.
+   */
   serial: Tlv;
   /** The issuer and subject Names, headers included (compared byte for byte, as webpki does). */
   issuer: Tlv;
@@ -46,7 +55,10 @@ export class Certificate {
   spki: Tlv;
   /** The key algorithm (`KEY_*`). */
   keyAlgorithm: i32;
-  /** The key's bytes: an RSAPublicKey, an uncompressed EC point, or 32 Ed25519 bytes. */
+  /**
+   * The key's bytes: for verification an RSAPublicKey, an uncompressed EC point or 32 Ed25519
+   * bytes. Parsing does not look inside, so they may be empty or malformed; verification checks.
+   */
   publicKey: Tlv;
   /** basicConstraints: whether this is a CA, and its pathLenConstraint (-1 for none). */
   isCa: bool;
@@ -113,9 +125,7 @@ export class Certificate {
     }
     r.done(v.end);
     this.serial = r.next(INTEGER, end);
-    if (this.serial.end == this.serial.start || this.serial.end - this.serial.start > 21) {
-      r.fail("bad serial number");
-    }
+    r.integer(this.serial);
     const alg = r.next(SEQUENCE, end);
     if (!this.sameBytes(alg, outerAlg)) {
       r.fail("the signature algorithm differs inside and outside the signed part");
@@ -134,13 +144,7 @@ export class Certificate {
     this.publicKey = key;
     this.keyAlgorithm = keyAlgorithm(r, keyAlg);
     r.pos = this.spki.end;
-    // issuerUniqueID [1] and subjectUniqueID [2] (RFC 5280 §4.1.2.8): skipped.
-    if (r.peek(end) == 0x81) {
-      r.any(end);
-    }
-    if (r.peek(end) == 0x82) {
-      r.any(end);
-    }
+    // Unique IDs (RFC 5280 §4.1.2.8) are refused by the final `done`, as in webpki.
     if (r.peek(end) == 0xa3) {
       const x = r.enter(0xa3, end);
       const list = r.enter(SEQUENCE, x.end);

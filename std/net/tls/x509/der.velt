@@ -1,8 +1,13 @@
 // velt/net (internal): `DerReader`, a reader of DER (ITU-T X.690 §10), the encoding of X.509
-// certificates, over untrusted bytes. Strict as DER is: definite lengths in their shortest
-// form, single-byte tags (all that X.509 uses), and every element inside its parent. A
-// malformed input throws a `bad_certificate` `TlsFailure`, never an index panic. Elements are
-// ranges of the input (`Tlv`), not copies.
+// certificates, over untrusted bytes. Every element it reads is strict DER: definite lengths in
+// their shortest form, single-byte tags (all that X.509 uses), and every element inside its
+// parent. A malformed input throws a `bad_certificate` `TlsFailure`, never an index panic.
+// Elements are ranges of the input (`Tlv`), not copies.
+//
+// It reads only what the certificate parser asks for, so these stay unchecked until verification
+// uses them: the contents of Names, of GeneralNames and of nameConstraints, and the arcs of OIDs
+// (a leading 0x80 or a truncated arc is accepted, as in webpki). An explicit BOOLEAN FALSE, which
+// DER forbids, is accepted, as in webpki.
 
 import { BAD_CERTIFICATE, TlsFailure } from "velt/net/tls/alert";
 import { Tlv } from "velt/net/tls/x509/tlv";
@@ -132,16 +137,6 @@ export class DerReader {
     return true;
   }
 
-  /** A copy of the contents of `t`. */
-  bytes(t: Tlv): u8[] {
-    return this.b.slice(t.start as i64, t.end as i64);
-  }
-
-  /** A copy of the whole element `t`, header included. */
-  whole(t: Tlv): u8[] {
-    return this.b.slice(t.head as i64, t.end as i64);
-  }
-
   /** A BOOLEAN's value (DER: 0x00 or 0xff only). */
   boolean(t: Tlv): bool {
     if (t.end - t.start != 1 || (this.b[t.start] != 0 && this.b[t.start] != 0xff)) {
@@ -151,16 +146,31 @@ export class DerReader {
   }
 
   /**
+   * Throws unless `t` holds an INTEGER's two's-complement contents: at least one byte, and no
+   * leading byte that only repeats the sign of the next (`00 01`, `ff 80`). Any value and any
+   * length pass.
+   */
+  integer(t: Tlv) {
+    if (t.end == t.start) {
+      this.fail("empty INTEGER");
+    }
+    if (t.end - t.start > 1) {
+      const first = this.b[t.start];
+      const sign = this.b[t.start + 1] & 0x80;
+      if ((first == 0 && sign == 0) || (first == 0xff && sign != 0)) {
+        this.fail("INTEGER not in its shortest form");
+      }
+    }
+  }
+
+  /**
    * A non-negative INTEGER below 2^62 (a version, a path length): minimal encoding, no sign
    * bit set.
    */
   smallInt(t: Tlv): i64 {
-    const n = t.end - t.start;
-    if (n == 0 || n > 8 || (this.b[t.start] & 0x80) != 0) {
+    this.integer(t);
+    if (t.end - t.start > 8 || (this.b[t.start] & 0x80) != 0) {
       this.fail("bad small INTEGER");
-    }
-    if (n > 1 && this.b[t.start] == 0 && (this.b[t.start + 1] & 0x80) == 0) {
-      this.fail("INTEGER not in its shortest form");
     }
     let v: u64 = 0;
     for (let i = t.start; i < t.end; i++) {
@@ -170,26 +180,6 @@ export class DerReader {
       this.fail("INTEGER too large");
     }
     return v as i64;
-  }
-
-  /**
-   * The magnitude of a positive INTEGER (an RSA modulus, an ECDSA r or s): the range of its
-   * contents without the leading zero DER adds when the top bit is set. Throws for zero, a
-   * negative value or a non-minimal encoding.
-   */
-  unsigned(t: Tlv): Tlv {
-    const b = this.b;
-    if (t.end == t.start || (b[t.start] & 0x80) != 0) {
-      this.fail("INTEGER is not positive");
-    }
-    let s = t.start;
-    if (b[s] == 0) {
-      if (s + 1 == t.end || (b[s + 1] & 0x80) == 0) {
-        this.fail("INTEGER not in its shortest form or zero");
-      }
-      s += 1;
-    }
-    return { tag: t.tag, head: t.head, start: s, end: t.end };
   }
 
   /** The bits of a BIT STRING that must be whole bytes (a key, a signature): its byte range. */

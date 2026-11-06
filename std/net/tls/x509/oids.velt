@@ -30,7 +30,6 @@ export const CE_SUBJECT_ALT_NAME: u8 = 17;
 export const CE_BASIC_CONSTRAINTS: u8 = 19;
 export const CE_NAME_CONSTRAINTS: u8 = 30;
 export const CE_CRL_DISTRIBUTION_POINTS: u8 = 31;
-export const CE_CERTIFICATE_POLICIES: u8 = 32;
 export const CE_AUTHORITY_KEY_ID: u8 = 35;
 export const CE_EXT_KEY_USAGE: u8 = 37;
 

@@ -129,8 +129,9 @@ function pssAlgorithm(r: DerReader, end: usize): i32 {
   const saltInt = r.next(0x02, s0.end);
   const salt = r.smallInt(saltInt);
   r.done(s0.end);
-  // A trailerField, even the default one, is not DER (defaults are omitted).
-  const rest = r.pos != p.end;
+  // A trailerField, even the default one, is not DER (defaults are omitted), and nothing follows
+  // the parameters.
+  const rest = r.pos != p.end || p.end != end;
   r.pos = end;
   if (rest || !r.equals(mgfOid, OID_MGF1) || hash == 0 || mgfHash != hash || salt != hash) {
     return SIG_UNKNOWN;
@@ -138,15 +139,17 @@ function pssAlgorithm(r: DerReader, end: usize): i32 {
   return hash == 32 ? SIG_RSA_PSS_SHA256 : hash == 48 ? SIG_RSA_PSS_SHA384 : SIG_RSA_PSS_SHA512;
 }
 
-// The output length of the hash AlgorithmIdentifier `t` (SHA-256/384/512, with NULL or no
-// parameters), or 0 for another.
+// The output length of the hash AlgorithmIdentifier `t` (SHA-256/384/512, with an empty NULL or
+// no parameters), or 0 for another.
 function hashOf(r: DerReader, t: Tlv): i64 {
   r.pos = t.start;
   const oid = r.next(OID, t.end);
+  let nullBody = false;
   if (r.peek(t.end) == (NULL as i32)) {
-    r.next(NULL, t.end);
+    const n = r.next(NULL, t.end);
+    nullBody = n.end != n.start;
   }
-  const extra = r.pos != t.end;
+  const extra = nullBody || r.pos != t.end;
   r.pos = t.end;
   if (extra) {
     return 0;

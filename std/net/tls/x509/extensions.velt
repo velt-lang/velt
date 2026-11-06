@@ -2,6 +2,10 @@
 // rustls's webpki does: keyUsage, subjectAltName, basicConstraints, nameConstraints,
 // cRLDistributionPoints (read, not used) and extKeyUsage, plus the key identifiers for chain
 // building. Any other extension is skipped, or refused when it is critical.
+//
+// Some are only checked to have the right outer tags, for verification to read: nameConstraints,
+// cRLDistributionPoints, and the authority issuer and serial of an authorityKeyIdentifier. So a
+// critical nameConstraints counts as understood here, and verification must enforce it.
 
 import { Certificate } from "velt/net/tls/x509/certificate";
 import {
@@ -135,7 +139,9 @@ function keyUsageBits(r: DerReader, t: Tlv): i64 {
   return bits;
 }
 
-// The GeneralNames SEQUENCE (RFC 5280 §4.2.1.6) below `end`: each name a well-formed element.
+// The GeneralNames SEQUENCE (RFC 5280 §4.2.1.6) below `end`: each name a well-formed element
+// with one of GeneralName's nine tags, as webpki requires, so that no name reaches the matcher
+// under a tag it would skip. Their contents are for verification, except an iPAddress's length.
 function generalNames(r: DerReader, end: usize): Tlv {
   const s = r.enter(SEQUENCE, end);
   if (s.end == s.start) {
@@ -143,8 +149,24 @@ function generalNames(r: DerReader, end: usize): Tlv {
   }
   while (r.pos < s.end) {
     const name = r.any(s.end);
+    const tag = name.tag;
+    // otherName [0], x400Address [3], directoryName [4] and ediPartyName [5] are constructed;
+    // rfc822Name [1], dNSName [2], URI [6], iPAddress [7] and registeredID [8] primitive.
+    const known =
+      tag == 0xa0 ||
+      tag == 0x81 ||
+      tag == 0x82 ||
+      tag == 0xa3 ||
+      tag == 0xa4 ||
+      tag == 0xa5 ||
+      tag == 0x86 ||
+      tag == 0x87 ||
+      tag == 0x88;
+    if (!known) {
+      r.fail(`bad GeneralName tag ${tag}`);
+    }
     // iPAddress [7]: 4 or 16 bytes in a certificate's SAN.
-    if (name.tag == 0x87 && name.end - name.start != 4 && name.end - name.start != 16) {
+    if (tag == 0x87 && name.end - name.start != 4 && name.end - name.start != 16) {
       r.fail("bad iPAddress");
     }
   }
