@@ -19,8 +19,9 @@ const MAX_DOC_CHARS: usize = 160;
 /// The public modules of the standard library at `std_root`, sorted by specifier.
 pub fn std_module_entries(std_root: &Path) -> Vec<ModuleEntry> {
     let mut files = vec![];
-    // std modules are `.velt` files; its `package.velt` is the module `velt/package`.
-    source_files(std_root, &|name| name.ends_with(".velt"), &mut files);
+    // Only a folder's `index.velt` can be a module: the walk's limit counts what it keeps, so the
+    // files inside a module must not use it up.
+    source_files(std_root, &|name| name == "index.velt", &mut files);
     let mut out: Vec<ModuleEntry> = files
         .into_iter()
         .filter_map(|path| {
@@ -167,6 +168,24 @@ fn describe(header: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_module_with_many_files_leaves_room_for_the_modules_after_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let (first, last) = (dir.path().join("first"), dir.path().join("zz"));
+        std::fs::create_dir_all(&first).unwrap();
+        std::fs::create_dir_all(&last).unwrap();
+        for i in 0..super::MAX_MODULES + 1 {
+            std::fs::write(first.join(format!("part{i}.velt")), "").unwrap();
+        }
+        std::fs::write(first.join("index.velt"), "").unwrap();
+        std::fs::write(last.join("index.velt"), "").unwrap();
+        let specs: Vec<String> = super::std_module_entries(dir.path())
+            .into_iter()
+            .map(|e| e.spec)
+            .collect();
+        assert_eq!(specs, ["velt/first", "velt/zz"]);
+    }
+
     use super::*;
 
     fn write(root: &Path, rel: &str, text: &str) {

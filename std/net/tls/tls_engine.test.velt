@@ -1,6 +1,7 @@
 // velt/net (tests): what `TlsEngine` does with what `RecordReader` passes up (records the
 // protocol forbids, each with the alert it answers), a connection cut without close_notify, and
 // the write key's record limit, after the handshake of RFC 8448's trace. Run by `velt test std/`.
+import { CryptoError } from "velt/crypto/errors";
 import { hkdfExpandSha256 } from "velt/crypto/hkdf";
 import { hexDecode, hexEncode } from "velt/encoding/hex";
 import { IoError } from "velt/io/error";
@@ -68,11 +69,18 @@ class Playback implements ByteStream {
   private input: u8[];
   private pos: usize;
   written: u8[];
+  closed: bool;
+  // What the write after `writesBeforeFailing` more writes throws, if anything.
+  failure: Error | null;
+  writesBeforeFailing: usize;
 
   constructor(input: u8[]) {
     this.input = input;
     this.pos = 0;
     this.written = [];
+    this.closed = false;
+    this.failure = null;
+    this.writesBeforeFailing = 0;
   }
 
   async readInto(buf: Uint8Array): Promise<number | null> {
@@ -91,6 +99,13 @@ class Playback implements ByteStream {
   }
 
   async writeBytes(data: u8[] | Uint8Array, start: number = 0, end?: number): Promise<void> {
+    const failure = this.failure;
+    if (failure != null) {
+      if (this.writesBeforeFailing == 0) {
+        throw failure;
+      }
+      this.writesBeforeFailing--;
+    }
     if (data instanceof Uint8Array) {
       return;
     }
@@ -100,7 +115,9 @@ class Playback implements ByteStream {
     }
   }
 
-  close() {}
+  close() {
+    this.closed = true;
+  }
 }
 
 // The client's handshake as in the trace, against the server's bytes in `t`.
@@ -295,6 +312,47 @@ describe("the write key's record limit", () => {
     }
     expect(pos).toBe(out.length);
     expect(sent == hexEncode(big)).toBe(true);
+  });
+
+  it("turns a failure that is no IoError during a KeyUpdate into the stream's EPROTO", async () => {
+    const t = new Playback(hexDecode(flight() + SERVER_DATA_RECORD + SERVER_ALERT_RECORD));
+    const e = await handshaken(t);
+    e.writeLimit = 1;
+    t.failure = new CryptoError("no new key");
+    t.writesBeforeFailing = 1;
+    let code = "";
+    let message = "";
+    try {
+      await e.write(payload(2 * 16384), 0, 2 * 16384);
+    } catch (err) {
+      code = err.code;
+      message = err.message;
+    }
+    expect(code).toBe("EPROTO");
+    expect(message.startsWith("TLS: ")).toBe(true);
+    expect(message.includes("no new key")).toBe(true);
+    // The connection is over: the transport is closed, and every later call says why.
+    expect(t.closed).toBe(true);
+    await expect(e.write(payload(1), 0, 1)).rejects.toThrow("no new key");
+    await expect(e.fill()).rejects.toThrow("no new key");
+  });
+
+  it("ends the connection when the transport's write fails, with its error", async () => {
+    const t = new Playback(hexDecode(flight() + SERVER_DATA_RECORD + SERVER_ALERT_RECORD));
+    const e = await handshaken(t);
+    e.writeLimit = 1;
+    t.failure = new IoError("EPIPE", "the pipe broke");
+    t.writesBeforeFailing = 1;
+    let code = "";
+    try {
+      await e.write(payload(2 * 16384), 0, 2 * 16384);
+    } catch (err) {
+      code = err.code;
+    }
+    expect(code).toBe("EPIPE");
+    expect(t.closed).toBe(true);
+    await expect(e.write(payload(1), 0, 1)).rejects.toThrow("the pipe broke");
+    await expect(e.fill()).rejects.toThrow("the pipe broke");
   });
 
   it("waits for the next record: a write that ends at the limit sends no KeyUpdate", async () => {
