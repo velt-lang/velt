@@ -2,7 +2,7 @@
 interface Sig { aborted: boolean; }
 let cached: Sig | undefined;
 function inert(): Sig {
-  return (cached ??= Object.freeze({ aborted: false, onabort: null, stop() {} }) as unknown as Sig);
+  return (cached ??= Object.freeze({ aborted: false, stop() {} }) as unknown as Sig);
 }
 const made = new Proxy({}, {});
 console.log(inert().aborted);
