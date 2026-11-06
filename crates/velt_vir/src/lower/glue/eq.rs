@@ -370,6 +370,11 @@ impl FnLower<'_, '_> {
                 let e = self.promise_identity(&a, &b);
                 self.when(e, no);
             }
+            // A vector in `any`: by its bits, as a vector field compares (`eq_values`).
+            TyKind::Simd(_) => {
+                let e = self.simd_same_bits(Operand::Copy(a.clone()), Operand::Copy(b.clone()));
+                self.when(e, no);
+            }
             // No value has type `never` (the payload of `null`'s type, `T & object` at
             // `T = null`): the glue is never called with one.
             TyKind::Never => {}
