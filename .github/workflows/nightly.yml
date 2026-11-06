@@ -85,6 +85,8 @@ jobs:
           code-cache: "false"
       # The whole gate builds packages/sqlite's C sources (crates/xtask/src/zig.rs).
       - uses: ./.github/actions/zig
+        with:
+          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
       # Every golden's release object, for the merge queue and pull requests (only a run on `main`
       # saves what other branches can restore). From an empty cache, so entries no program uses
       # any more go with it; the limit keeps them all (.cargo/config.toml has 500M for local builds).
@@ -212,6 +214,8 @@ jobs:
         with:
           tools: false
       - uses: ./.github/actions/zig
+        with:
+          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
       # The tests that link a program need the runtime, which `cargo test` doesn't build.
       - name: the runtime
         run: cargo build -p velt_rt

@@ -13,7 +13,10 @@ inputs:
   working-directory:
     description: >-
       Where to run cargo: the Dev Drive copy on Windows (`DEV_DRIVE_WORKSPACE`), so the build
-      shares the job's target directory.
+      shares the job's target directory. Every use passes the same expression, the Dev Drive
+      copy or else the absolute github.workspace: actions/cache keys on the literal `path`
+      string, so a job that wrote `./packages/...` would never restore what one with the
+      absolute path saved (crates/xtask/src/zig.rs checks it).
     default: .
 runs:
   using: composite

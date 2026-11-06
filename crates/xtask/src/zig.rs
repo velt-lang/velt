@@ -129,6 +129,58 @@ mod tests {
         }
     }
 
+    /// Every use of the zig action passes the same absolute working directory: actions/cache
+    /// keys on the literal `path` string, so `./packages/...` and the absolute path are two
+    /// caches, and a merge queue entry would never restore the bundle `main` saved.
+    #[test]
+    fn every_use_of_the_zig_action_names_one_working_directory() {
+        let root = root();
+        let wanted = "working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}";
+        let mut missing = vec![];
+        let mut uses = 0;
+        for entry in std::fs::read_dir(root.join(".github/workflows"))
+            .expect("workflows")
+            .flatten()
+        {
+            let path = entry.path();
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let lines: Vec<&str> = text.lines().collect();
+            for (i, line) in lines.iter().enumerate() {
+                if line.trim() != "- uses: ./.github/actions/zig" {
+                    continue;
+                }
+                uses += 1;
+                let indent = line.len() - line.trim_start().len();
+                // The step runs until the next line at the step's indentation or less.
+                let named = lines[i + 1..]
+                    .iter()
+                    .take_while(|l| l.trim().is_empty() || l.len() - l.trim_start().len() > indent)
+                    .any(|l| l.trim() == wanted);
+                if !named {
+                    let name = path.file_name().unwrap_or_default().to_string_lossy();
+                    missing.push(format!("{name}:{}", i + 1));
+                }
+            }
+        }
+        assert!(uses > 0, "no workflow uses the zig action");
+        // GitHub evaluates `${{` in an action's descriptions too (and fails every job that uses
+        // it on `env`), which actionlint doesn't check in composite actions.
+        let action = std::fs::read_to_string(root.join(".github/actions/zig/action.yml"))
+            .expect("the zig action");
+        let head = action.split("\nruns:").next().unwrap_or_default();
+        assert!(
+            !head.contains("${{"),
+            "the zig action's descriptions hold an expression"
+        );
+        assert!(
+            missing.is_empty(),
+            "these pass no `{wanted}`: {}",
+            missing.join(", ")
+        );
+    }
+
     /// Each program outside `packages/` that depends on a package with C `sources` is a
     /// benchmark (`bench_programs`) or one of the [`DEPENDENTS`].
     #[test]

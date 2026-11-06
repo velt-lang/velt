@@ -83,6 +83,8 @@ jobs:
         if: >-
           (matrix.part == 'test' && steps.plan.outputs.zig_tests == 'true')
           || (matrix.part == 'golden' && steps.plan.outputs.zig_goldens == 'true')
+        with:
+          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
       - name: cargo xtask check --part ${{ matrix.part }}
         env:
           # `--full` knows no changes, so it leaves the robustness sweep to the environment.
@@ -475,6 +477,8 @@ jobs:
         with:
           tools: false
       - uses: ./.github/actions/zig
+        with:
+          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
       # The tests that link a program need the runtime, which `cargo test` doesn't build.
       - name: the runtime
         run: cargo build -p velt_rt
