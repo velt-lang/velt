@@ -1,0 +1,129 @@
+From 19c39b307ede8c83f7ab5177a053008910d73bb8 Mon Sep 17 00:00:00 2001
+From: Andreas Ekdahl <1434571+andtii@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 18:53:37 +0100
+Subject: [PATCH 2/3] llvm, vir, simd: CPUID saves RBX in RSI; the AES coverage
+ test checks AesArm covers ClmulArm
+
+The CPUID inline asm saved RBX in a scratch register the allocator chose
+(`=r`); it now names RSI (`={si}`), so the scratch is never RBX and the
+save is plain to read (RBX may be LLVM's base pointer, so it cannot be an
+output or a clobber). The velt_vir test asserted AesArm covers itself; it
+now asserts AesArm covers ClmulArm and not the other way, and no
+cross-architecture coverage. velt/simd's comment says CPUID.1:ECX bit 25 is
+AES-NI alone and the rest comes from the clmul flag, and the golden's
+broadcast helper honours every lane.
+
+Tested: the codegen test now asserts the constraint string and fails with
+`=r`; the velt_vir test fails with AesArm covering AesX86 instead of
+ClmulArm; cargo test and clippy -D warnings on velt_vir and
+velt_codegen_llvm; an x86_64-unknown-linux-gnu object of the golden
+disassembles to movq %rbx, %rsi / cpuid / xchgq %rbx, %rsi; simd_aes runs
+in debug and release with the expected output; VELT_GOLDEN=crypto,net,simd.
+---
+ crates/velt_codegen_llvm/src/simd/aes.rs  |  9 +++++----
+ crates/velt_codegen_llvm/src/tests/aes.rs |  4 +++-
+ crates/velt_vir/src/simd/tests.rs         |  3 ++-
+ std/simd/aes.vlt                          |  3 ++-
+ tests/golden/std/simd_aes.vlt             | 12 +++++++++---
+ 5 files changed, 21 insertions(+), 10 deletions(-)
+
+diff --git a/crates/velt_codegen_llvm/src/simd/aes.rs b/crates/velt_codegen_llvm/src/simd/aes.rs
+index f60df7dc5..324e362cc 100644
+--- a/crates/velt_codegen_llvm/src/simd/aes.rs
++++ b/crates/velt_codegen_llvm/src/simd/aes.rs
+@@ -61,16 +61,17 @@ pub(super) fn op(b: &mut Body, op: ExtOp) -> String {
+ }
+ 
+ /// `CPUID` with EAX = `%a0` and ECX = `%a1`, as EAX, EBX, ECX, EDX in the lanes of a `u32x4`; zeros
+-/// off x86-64. RBX is saved around it in a scratch register (LLVM may reserve RBX as a base
+-/// pointer, as Rust's `__cpuid_count` does). Not `sideeffect`: the answers never change, so LLVM
+-/// may merge or hoist it.
++/// off x86-64. RBX is saved around it in RSI, named rather than left to the allocator so the
++/// scratch is never RBX itself (LLVM may reserve RBX as a base pointer, so it cannot be an output
++/// or a clobber; Rust's `__cpuid_count` saves it the same way). Not `sideeffect`: the answers
++/// never change, so LLVM may merge or hoist it.
+ pub(super) fn cpuid(b: &mut Body, arch: Arch) -> String {
+     if arch != Arch::Sse2 {
+         return "zeroinitializer".to_string();
+     }
+     let r = b.inst(
+         "call { i32, i64, i32, i32 } asm \"movq %rbx, $1\\0Acpuid\\0Axchgq %rbx, $1\", \
+-         \"={ax},=r,={cx},={dx},0,2,~{dirflag},~{fpsr},~{flags}\"(i32 %a0, i32 %a1)"
++         \"={ax},={si},={cx},={dx},0,2,~{dirflag},~{fpsr},~{flags}\"(i32 %a0, i32 %a1)"
+             .to_string(),
+     );
+     let eax = b.inst(format!("extractvalue {{ i32, i64, i32, i32 }} {r}, 0"));
+diff --git a/crates/velt_codegen_llvm/src/tests/aes.rs b/crates/velt_codegen_llvm/src/tests/aes.rs
+index 9cdb9a931..19f04d8f8 100644
+--- a/crates/velt_codegen_llvm/src/tests/aes.rs
++++ b/crates/velt_codegen_llvm/src/tests/aes.rs
+@@ -98,11 +98,13 @@ fn each_architecture_lowers_its_own_aes_instructions() {
+ fn cpuid_is_inline_asm_on_x86_and_zeros_elsewhere() {
+     let p = sample("velt_simd_u8x16_aesenc", 2);
+     let x86 = ir(&p, "x86_64-unknown-linux-gnu");
+-    // RBX saved around it, and not `sideeffect`: its answers never change.
++    // RBX saved around it in RSI (never in RBX itself), and not `sideeffect`: its answers
++    // never change.
+     assert!(
+         x86.contains("asm \"movq %rbx, $1\\0Acpuid\\0Axchgq %rbx, $1\""),
+         "{x86}"
+     );
++    assert!(x86.contains("\"={ax},={si},={cx},={dx},0,2,"), "{x86}");
+     assert!(!x86.contains("asm sideeffect \"movq %rbx"), "{x86}");
+     let arm = ir(&p, "aarch64-unknown-linux-gnu");
+     assert!(!arm.contains("cpuid\\0A"), "{arm}");
+diff --git a/crates/velt_vir/src/simd/tests.rs b/crates/velt_vir/src/simd/tests.rs
+index c9f15a22c..5a787d32a 100644
+--- a/crates/velt_vir/src/simd/tests.rs
++++ b/crates/velt_vir/src/simd/tests.rs
+@@ -168,7 +168,8 @@ fn sha_symbols_and_signatures() {
+     assert_eq!(ExtOp::Aeskeygenassist.ext(), Ext::AesX86);
+     assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_aesenc"), None);
+     assert!(Ext::AesX86.covers(Ext::ClmulX86) && !Ext::ClmulX86.covers(Ext::AesX86));
+-    assert!(!Ext::AesArm.covers(Ext::ClmulX86) && Ext::AesArm.covers(Ext::AesArm));
++    assert!(Ext::AesArm.covers(Ext::ClmulArm) && !Ext::ClmulArm.covers(Ext::AesArm));
++    assert!(!Ext::AesArm.covers(Ext::ClmulX86) && !Ext::AesX86.covers(Ext::ClmulArm));
+ }
+ 
+ #[test]
+diff --git a/std/simd/aes.vlt b/std/simd/aes.vlt
+index 8cb59a3a0..25a4ae837 100644
+--- a/std/simd/aes.vlt
++++ b/std/simd/aes.vlt
+@@ -77,7 +77,8 @@ function detect(): u32 {
+   if (disabled()) {
+     return found;
+   }
+-  // CPUID leaf 1, ECX bit 25: AES-NI (the flag covers PCLMULQDQ, SSSE3 and SSE4.1).
++  // CPUID leaf 1, ECX bit 25 is AES-NI alone; PCLMULQDQ, SSSE3 and SSE4.1, which the AES
++  // extension also guarantees, are the runtime's clmul flag (velt_simd_has_clmul_x86).
+   if (
+     velt_simd_has_clmul_x86() && (velt_simd_u32x4_lane(velt_simd_cpuid(1, 0), 2) & (1 << 25)) != 0
+   ) {
+diff --git a/tests/golden/std/simd_aes.vlt b/tests/golden/std/simd_aes.vlt
+index a2a1c8dc9..83473e659 100644
+--- a/tests/golden/std/simd_aes.vlt
++++ b/tests/golden/std/simd_aes.vlt
+@@ -33,10 +33,16 @@ function up4(v: u8x16): u8x16 {
+ // Every 32-bit lane set to lane `lane` of `v`.
+ function broadcast(v: u8x16, lane: u32): u8x16 {
+   const w = v.asU32x4();
+-  if (lane == 3) {
+-    return u32x4.shuffle(w, w, 3, 3, 3, 3).asU8x16();
++  if (lane == 0) {
++    return u32x4.shuffle(w, w, 0, 0, 0, 0).asU8x16();
+   }
+-  return u32x4.shuffle(w, w, 2, 2, 2, 2).asU8x16();
++  if (lane == 1) {
++    return u32x4.shuffle(w, w, 1, 1, 1, 1).asU8x16();
++  }
++  if (lane == 2) {
++    return u32x4.shuffle(w, w, 2, 2, 2, 2).asU8x16();
++  }
++  return u32x4.shuffle(w, w, 3, 3, 3, 3).asU8x16();
+ }
+ 
+ // k ^ (k << 32) ^ (k << 64) ^ (k << 96) ^ t: one step of the key schedule.
+-- 
+2.54.0 (Apple Git-157)
+

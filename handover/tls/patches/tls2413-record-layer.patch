@@ -1,0 +1,642 @@
+diff --git a/std/net/tls/record_cipher.vlt b/std/net/tls/record_cipher.vlt
+index 5240108d0..7a51130c2 100644
+--- a/std/net/tls/record_cipher.vlt
++++ b/std/net/tls/record_cipher.vlt
+@@ -5,7 +5,7 @@
+ import { Aead } from "velt/crypto/aead";
+ import { AesGcm } from "velt/crypto/aes_gcm";
+ import { ChaCha20Poly1305 } from "velt/crypto/chacha20_poly1305";
+-import { BAD_RECORD_MAC, TlsFailure } from "velt/net/tls/alert";
++import { BAD_RECORD_MAC, INTERNAL_ERROR, TlsFailure } from "velt/net/tls/alert";
+ import { expandLabel } from "velt/net/tls/key_schedule";
+ 
+ /** TLS_AES_128_GCM_SHA256. */
+@@ -32,7 +32,8 @@ export class RecordCipher {
+   private iv: u8[];
+   private nonce: u8[];
+   private aad: u8[];
+-  private seq: u64;
++  /** The next record's sequence number. */
++  seq: u64;
+ 
+   /** The protection of `suite` for the traffic `secret`, sequence number 0. */
+   constructor(suite: usize, secret: u8[]) {
+@@ -44,7 +45,11 @@ export class RecordCipher {
+   }
+ 
+   // The nonce of the next record: the IV with the sequence number XORed into its last 8 bytes.
++  // Throws at the last sequence number, which must not wrap (RFC 8446 §5.3).
+   private next() {
++    if (this.seq == 0xffffffffffffffff) {
++      throw new TlsFailure(INTERNAL_ERROR, "the record sequence number would wrap");
++    }
+     for (let i: usize = 0; i < 12; i++) {
+       this.nonce[i] = this.iv[i];
+     }
+diff --git a/std/net/tls/record_layer.test.vlt b/std/net/tls/record_layer.test.vlt
+index 798b90045..9f606dbe9 100644
+--- a/std/net/tls/record_layer.test.vlt
++++ b/std/net/tls/record_layer.test.vlt
+@@ -8,12 +8,19 @@ import { hexDecode, hexEncode } from "velt/encoding/hex";
+ import { IoError } from "velt/io/error";
+ import { Uint8Array } from "velt/lang/typed_array/uint8_array";
+ import { ByteStream } from "velt/net/byte_stream";
++import { TlsFailure } from "velt/net/tls/alert";
+ import { ByteReader } from "velt/net/tls/byte_reader";
+ import { ByteWriter } from "velt/net/tls/byte_writer";
+ import { HandshakeBuffer } from "velt/net/tls/handshake_buffer";
+-import { expandLabel, handshakeSecret, nextSecret } from "velt/net/tls/key_schedule";
++import {
++  expandLabel,
++  finishedMac,
++  handshakeSecret,
++  masterSecret,
++  nextSecret,
++} from "velt/net/tls/key_schedule";
+ import { RecordCipher } from "velt/net/tls/record_cipher";
+-import { END, HANDSHAKE, RecordReader } from "velt/net/tls/record_reader";
++import { APPLICATION_DATA, END, HANDSHAKE, RecordReader } from "velt/net/tls/record_reader";
+ import { describe, expect, it } from "velt/test";
+ 
+ // 95 bytes.
+@@ -75,6 +82,21 @@ const HELLO_HASH = "860c06edc07858ee8e78f0e7428c58edd6b43f2ca3e6e95f02ed063cf0e1
+ const CLIENT_HS_SECRET = "b3eddb126e067f35a780b3abf45e2d8f3b1a950738f52e9600746a0e27a55a21";
+ const CLIENT_AP_SECRET = "9e40646ce79a7f9dc05af8889bce6552875afa0b06df0087f792ebb7c17504a5";
+ const CLIENT_FINISHED = "14000020a8ec436d677634ae525ac1fcebe11a039ec17694fac6e98527b642f2edd5ce61";
++// The trace's hash of ClientHello..server Finished, and its master secret.
++const FINISHED_HASH = "9608102a0f1ccc6db6250b7b7e417b1a000eaada3daae4777a7686c9ff83df13";
++const MASTER_SECRET = "18df06843d13a08bf2a449844c5f8a478001bc4d4c627984d5a41da8d0402919";
++// "velt" and type 23 sealed by Node under CLIENT_AP_SECRET: AES-128-GCM at sequence
++// 0x0102030405060708, ChaCha20-Poly1305 at 0 and at 0x0102030405060708, and AES-128-GCM at 0 with
++// legacy_record_version 0x0301 in the header (and so in the AAD).
++const AES_HIGH_SEQ = "17030300158c5274d424b37c4e43d99dfcbef743ef6871a4c95a";
++const CHACHA_SEQ_0 = "170303001569b4261984c7bae1101a370207e9458928621062bd";
++const CHACHA_HIGH_SEQ = "1703030015b2aa06d0712ca61e97bf3554286b019cf2b156fea6";
++const AES_VERSION_0301 = "1703010015d45b1e23a5b938d369a31e8063ebe4b37580096452";
++// The header and tag Node computes for 300 bytes (i & 255) and type 23 at sequence 0: the length
++// has a high byte.
++const AES_300_HEADER = "170303013d";
++const AES_300_TAG = "341b44f9d915f29f1c77b40333a3c6f2";
++const HIGH_SEQ: u64 = 0x0102030405060708;
+ 
+ // A transport that plays back `input` in pieces of `chunk` bytes and records what is written.
+ class Playback implements ByteStream {
+@@ -125,16 +147,98 @@ class Playback implements ByteStream {
+   }
+ }
+ 
+-// The message of what reading the next record from `r` throws, "" when it returns.
++// The alert and message of what reading the next record from `r` throws ("50: TLS: ..."), ""
++// when it returns.
+ async function thrown(r: RecordReader, after: bool): Promise<string> {
+   try {
+     await r.next(after);
+     return "";
+   } catch (e) {
+-    return e instanceof IoError ? e.message : `${e}`;
++    return e instanceof TlsFailure ? `${e.alert}: ${e.message}` : `${e}`;
+   }
+ }
+ 
++// The alert and message of what `f` throws, "" when it returns.
++function failure(f: () => void throws Error): string {
++  try {
++    f();
++    return "";
++  } catch (e) {
++    return e instanceof TlsFailure ? `${e.alert}: ${e.message}` : `${e}`;
++  }
++}
++
++// The inner plaintext `content`, `type`, then `padding` zeros.
++function inner(content: u8[], type: u8, padding: usize): u8[] {
++  const out: u8[] = [];
++  for (const b of content) {
++    out.push(b);
++  }
++  out.push(type);
++  for (let i: usize = 0; i < padding; i++) {
++    out.push(0);
++  }
++  return out;
++}
++
++// The record that seals the inner plaintext `p` under `cipher`.
++function sealed(cipher: RecordCipher, p: u8[]): u8[] {
++  const buf = Buffer.alloc(5 + p.length + 16);
++  for (let i: usize = 0; i < p.length; i++) {
++    buf[5 + i] = p[i];
++  }
++  cipher.seal(buf, 0, p.length);
++  return buf;
++}
++
++// The bytes of `parts`, one after another.
++function joined(parts: u8[][]): u8[] {
++  const out: u8[] = [];
++  for (const part of parts) {
++    for (const b of part) {
++      out.push(b);
++    }
++  }
++  return out;
++}
++
++// A record of `type` whose body is `len` bytes of `fill`.
++function raw(type: u8, len: usize, fill: u8): u8[] {
++  const out = Buffer.alloc(5 + len);
++  out[0] = type;
++  out[1] = 3;
++  out[2] = 3;
++  out[3] = (len >> 8) as u8;
++  out[4] = (len & 0xff) as u8;
++  for (let i: usize = 0; i < len; i++) {
++    out[5 + i] = fill;
++  }
++  return out;
++}
++
++// `n` bytes counting up from `from`.
++function counting(n: usize, from: usize): u8[] {
++  const out = Buffer.alloc(n);
++  for (let i: usize = 0; i < n; i++) {
++    out[i] = ((from + i) & 0xff) as u8;
++  }
++  return out;
++}
++
++// A reader of `bytes` read 1000 at a time, with the server handshake keys when `keyed`.
++function readerOf(bytes: u8[], keyed: bool): RecordReader {
++  const r = new RecordReader(new Playback(bytes, 1000));
++  if (keyed) {
++    r.cipher = new RecordCipher(0x1301, hexDecode(SERVER_HS_SECRET));
++  }
++  return r;
++}
++
++// The server handshake keys' cipher, at sequence 0.
++function serverCipher(): RecordCipher {
++  return new RecordCipher(0x1301, hexDecode(SERVER_HS_SECRET));
++}
++
+ // The inner plaintext of the record `rec` under `cipher`.
+ function opened(cipher: RecordCipher, rec: string): string {
+   const buf = hexDecode(rec);
+@@ -157,6 +261,13 @@ describe("TLS key schedule", () => {
+     const secret = hexDecode(CLIENT_AP_SECRET);
+     expect(hexEncode(nextSecret(secret))).toBe(hexEncode(hkdfExpandSha256(secret, info, 32)));
+   });
++
++  it("derives RFC 8448's master secret and the client's Finished verify_data", () => {
++    expect(hexEncode(masterSecret(hexDecode(HANDSHAKE_SECRET)))).toBe(MASTER_SECRET);
++    expect(hexEncode(finishedMac(hexDecode(CLIENT_HS_SECRET), hexDecode(FINISHED_HASH)))).toBe(
++      CLIENT_FINISHED.slice(8),
++    );
++  });
+ });
+ 
+ describe("RecordCipher", () => {
+@@ -203,6 +314,56 @@ describe("RecordCipher", () => {
+     }
+     expect(message).toBe("TLS: a record failed authentication (bad_record_mac)");
+   });
++
++  it("puts every byte of a high sequence number into the nonce, as Node does", () => {
++    const c = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
++    c.seq = HIGH_SEQ;
++    expect(hexEncode(sealed(c, inner(hexDecode("76656c74"), 23, 0)))).toBe(AES_HIGH_SEQ);
++    const o = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
++    o.seq = HIGH_SEQ;
++    expect(opened(o, AES_HIGH_SEQ)).toBe("76656c7417");
++  });
++
++  it("seals and opens ChaCha20-Poly1305 records as Node does", () => {
++    const c = new RecordCipher(0x1303, hexDecode(CLIENT_AP_SECRET));
++    expect(hexEncode(sealed(c, inner(hexDecode("76656c74"), 23, 0)))).toBe(CHACHA_SEQ_0);
++    c.seq = HIGH_SEQ;
++    expect(hexEncode(sealed(c, inner(hexDecode("76656c74"), 23, 0)))).toBe(CHACHA_HIGH_SEQ);
++    const o = new RecordCipher(0x1303, hexDecode(CLIENT_AP_SECRET));
++    expect(opened(o, CHACHA_SEQ_0)).toBe("76656c7417");
++    o.seq = HIGH_SEQ;
++    expect(opened(o, CHACHA_HIGH_SEQ)).toBe("76656c7417");
++  });
++
++  it("authenticates the header: both length bytes when sealing, the version as read", () => {
++    const rec = sealed(
++      new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET)),
++      inner(counting(300, 0), 23, 0),
++    );
++    expect(hexEncode(rec.slice(0, 5))).toBe(AES_300_HEADER);
++    expect(hexEncode(rec.slice((rec.length - 16) as i64))).toBe(AES_300_TAG);
++    expect(opened(new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET)), AES_VERSION_0301)).toBe(
++      "76656c7417",
++    );
++  });
++
++  it("throws at the last sequence number instead of wrapping", () => {
++    const c = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
++    c.seq = 0xfffffffffffffffe;
++    sealed(c, inner([], 23, 0));
++    expect(
++      failure(() => {
++        sealed(c, inner([], 23, 0));
++      }),
++    ).toBe("80: TLS: the record sequence number would wrap");
++    const o = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
++    o.seq = 0xffffffffffffffff;
++    expect(
++      failure(() => {
++        opened(o, AES_HIGH_SEQ);
++      }),
++    ).toBe("80: TLS: the record sequence number would wrap");
++  });
+ });
+ 
+ describe("RecordReader", () => {
+@@ -233,11 +394,29 @@ describe("RecordReader", () => {
+     expect(hexEncode(r.buf.slice(r.cstart as i64, r.cend as i64))).toBe("0708");
+   });
+ 
+-  it("ends at close_notify and at the transport's end after the handshake", async () => {
+-    expect(await new RecordReader(new Playback(hexDecode("15030300020100"), 3)).next(true)).toBe(
+-      END,
+-    );
+-    expect(await new RecordReader(new Playback([], 3)).next(true)).toBe(END);
++  it("ends at close_notify, and throws without an alert at the transport's end", async () => {
++    const notified = new RecordReader(new Playback(hexDecode("15030300020100"), 3));
++    expect(await notified.next(true)).toBe(END);
++    expect(notified.ended).toBe(true);
++    const cut = new RecordReader(new Playback([], 3));
++    let sent = true;
++    let message = "";
++    try {
++      await cut.next(true);
++    } catch (e) {
++      if (e instanceof TlsFailure) {
++        sent = e.sendAlert;
++        message = e.message;
++      }
++    }
++    expect(message).toBe("TLS: the connection closed without close_notify");
++    expect(sent).toBe(false);
++    expect(cut.ended).toBe(false);
++    // After a record, too.
++    const after = readerOf(hexDecode("1603030001ff"), false);
++    expect(await after.next(true)).toBe(HANDSHAKE);
++    expect(await thrown(after, true)).toBe("0: TLS: the connection closed without close_notify");
++    expect(after.ended).toBe(false);
+   });
+ 
+   it("rejects what a record layer must reject", async () => {
+@@ -245,26 +424,154 @@ describe("RecordReader", () => {
+       new Playback(hexDecode(hex), 1000),
+     );
+     expect(await thrown(reader("15030300020228"), false)).toBe(
+-      "TLS: the server sent the alert handshake_failure (40)",
++      "40: TLS: the server sent the alert handshake_failure (40)",
+     );
+-    expect(await thrown(reader("1603034101"), false)).toBe("TLS: a record of 16641 bytes");
++    expect(await thrown(reader("1603034101"), false)).toBe("22: TLS: a record of 16641 bytes");
+     expect(await thrown(reader("16030300"), true)).toBe(
+-      "TLS: the connection closed in the middle of a record",
++      "0: TLS: the connection closed in the middle of a record",
++    );
++    expect(await thrown(reader(""), false)).toBe(
++      "0: TLS: the connection closed during the handshake",
+     );
+-    expect(await thrown(reader(""), false)).toBe("TLS: the connection closed during the handshake");
+     expect(await thrown(reader("170303000100"), false)).toBe(
+-      "TLS: an unprotected record of type 23",
++      "10: TLS: an unprotected record of type 23",
+     );
+-    expect(await thrown(reader("15030300030100ff"), false)).toBe("TLS: a malformed alert");
+     const done = reader("140303000101");
+     done.handshaking = false;
+-    expect(await thrown(done, true)).toBe("TLS: an unprotected record of type 20");
++    expect(await thrown(done, true)).toBe("10: TLS: an unprotected record of type 20");
+     const keyed = reader("1603030001ff");
+     keyed.cipher = new RecordCipher(0x1301, hexDecode(SERVER_HS_SECRET));
+     expect(await thrown(keyed, false)).toBe(
+-      "TLS: an unprotected record of type 22 after encryption started",
++      "10: TLS: an unprotected record of type 22 after encryption started",
++    );
++  });
++
++  it("keeps the first failure: a forged record, then a valid one, throws twice", async () => {
++    const c = serverCipher();
++    const a = sealed(c, inner([1, 2, 3], 22, 0));
++    a[7] ^= 1;
++    const b = sealed(c, inner([4, 5, 6], 22, 0));
++    const r = readerOf(joined([a, b]), true);
++    const bad = "20: TLS: a record failed authentication (bad_record_mac)";
++    expect(await thrown(r, false)).toBe(bad);
++    expect(await thrown(r, false)).toBe(bad);
++  });
++
++  it("limits records to 2^14 bytes, and an inner plaintext to 2^14 + 1", async () => {
++    const plain = readerOf(raw(22, 16384, 7), false);
++    expect(await plain.next(false)).toBe(HANDSHAKE);
++    expect(plain.cend - plain.cstart).toBe(16384);
++    expect(await thrown(readerOf(raw(22, 16385, 7), false), false)).toBe(
++      "22: TLS: an unprotected record of 16385 bytes",
++    );
++    // 100 bytes of content padded to 16,386 bytes, and to the most a record carries.
++    expect(
++      await thrown(
++        readerOf(sealed(serverCipher(), inner(counting(100, 1), 22, 16285)), true),
++        false,
++      ),
++    ).toBe("22: TLS: a record with an inner plaintext of 16386 bytes");
++    expect(
++      await thrown(
++        readerOf(sealed(serverCipher(), inner(counting(100, 1), 22, 16523)), true),
++        false,
++      ),
++    ).toBe("22: TLS: a record with an inner plaintext of 16624 bytes");
++    // 2^14 of content and its type pass; 2^14 + 256 bytes are framed (the tag fails), one more not.
++    const full = readerOf(sealed(serverCipher(), inner(counting(16384, 1), 22, 0)), true);
++    expect(await full.next(false)).toBe(HANDSHAKE);
++    expect(full.cend - full.cstart).toBe(16384);
++    expect(await thrown(readerOf(raw(23, 16640, 0), true), false)).toBe(
++      "20: TLS: a record failed authentication (bad_record_mac)",
++    );
++    expect(await thrown(readerOf(raw(23, 16641, 0), true), false)).toBe(
++      "22: TLS: a record of 16641 bytes",
+     );
+   });
++
++  it("gives bad_record_mac for forged records too short for a tag", async () => {
++    for (const len of [0, 1, 15, 16]) {
++      expect(await thrown(readerOf(raw(23, len as usize, 0), true), false)).toBe(
++        "20: TLS: a record failed authentication (bad_record_mac)",
++      );
++    }
++  });
++
++  it("rejects an inner plaintext of zeros, and a protected change_cipher_spec", async () => {
++    // 16 bytes, a valid tag and no inner plaintext; 10 zeros.
++    expect(await thrown(readerOf(sealed(serverCipher(), []), true), false)).toBe(
++      "10: TLS: a protected record without a content type",
++    );
++    expect(await thrown(readerOf(sealed(serverCipher(), Buffer.alloc(10)), true), false)).toBe(
++      "10: TLS: a protected record without a content type",
++    );
++    // 240 zeros: the record's length, 256, has a zero low byte, and the scan stops at the content.
++    expect(await thrown(readerOf(sealed(serverCipher(), Buffer.alloc(240)), true), false)).toBe(
++      "10: TLS: a protected record without a content type",
++    );
++    expect(await thrown(readerOf(sealed(serverCipher(), inner([1], 20, 0)), true), false)).toBe(
++      "10: TLS: a protected change_cipher_spec record",
++    );
++  });
++
++  it("handles alerts: decode_error for a malformed one, user_canceled, warnings", async () => {
++    for (const hex of ["1503030000", "150303000101", "15030300030100ff"]) {
++      expect(await thrown(readerOf(hexDecode(hex), false), false)).toBe(
++        "50: TLS: a malformed alert",
++      );
++    }
++    // user_canceled, then close_notify.
++    const canceled = readerOf(hexDecode("1503030002015a" + "15030300020100"), false);
++    expect(await canceled.next(true)).toBe(END);
++    expect(canceled.ended).toBe(true);
++    // A warning-level handshake_failure is fatal too.
++    const warning = readerOf(hexDecode("15030300020128"), false);
++    expect(await thrown(warning, true)).toBe(
++      "40: TLS: the server sent the alert handshake_failure (40)",
++    );
++    expect(warning.ended).toBe(false);
++    // A protected close_notify.
++    const closed = readerOf(sealed(serverCipher(), inner([1, 0], 21, 3)), true);
++    expect(await closed.next(true)).toBe(END);
++    expect(closed.ended).toBe(true);
++  });
++
++  it("hands out several full-size records read in pieces", async () => {
++    const c = serverCipher();
++    const parts: u8[][] = [];
++    for (let i: usize = 0; i < 4; i++) {
++      parts.push(sealed(c, inner(counting(16384, 31 * i), 23, 0)));
++    }
++    parts.push(sealed(c, inner([1, 0], 21, 0)));
++    const stream = joined(parts);
++    for (const chunk of [5000, 100000]) {
++      const r = new RecordReader(new Playback(stream, chunk as usize));
++      r.cipher = serverCipher();
++      r.handshaking = false;
++      const got = Buffer.alloc(4 * 16384);
++      let at: usize = 0;
++      while ((await r.next(true)) == APPLICATION_DATA) {
++        r.keepContent();
++        // 1000 bytes at a time with takeInto, the rest with take.
++        while (r.available() > 1000) {
++          r.takeInto(got, at, 1000);
++          at += 1000;
++        }
++        const rest = r.take(r.available());
++        for (const b of rest) {
++          got[at] = b;
++          at++;
++        }
++      }
++      expect(at).toBe(4 * 16384);
++      let same = true;
++      for (let i: usize = 0; i < 4 * 16384; i++) {
++        same = same && got[i] == (((i % 16384) + 31 * (i / 16384)) & 0xff) as u8;
++      }
++      expect(same).toBe(true);
++      expect(r.ended).toBe(true);
++    }
++  });
+ });
+ 
+ describe("TLS codec", () => {
+@@ -294,6 +601,16 @@ describe("TLS codec", () => {
+     const stray = new ByteReader([1, 2], 0, 2, "test message");
+     stray.u8();
+     expect(() => stray.finish()).toThrow("TLS: 1 stray bytes after test message");
++    expect(new ByteReader([1, 2, 3], 0, 3, "test message").u24()).toBe(0x010203);
++    expect(() => new ByteReader([1, 2], 0, 2, "test message").u24()).toThrow(
++      "TLS: truncated test message",
++    );
++    const two = new ByteReader([1, 2], 0, 2, "test message");
++    expect(
++      failure(() => {
++        two.bytes(3);
++      }),
++    ).toBe("50: TLS: truncated test message");
+   });
+ });
+ 
+@@ -312,6 +629,10 @@ describe("HandshakeBuffer", () => {
+     expect(hs.hasMessage()).toBe(true);
+     hs.take();
+     hs.checkEmpty();
++    // 2^17 bytes are accepted (and wait for the rest), one more is not.
++    const most = new HandshakeBuffer();
++    most.append([4, 2, 0, 0], 0, 4);
++    expect(most.hasMessage()).toBe(false);
+     hs.append([4, 2, 0, 1], 0, 4);
+     expect(() => hs.hasMessage()).toThrow("TLS: a handshake message of 131073 bytes");
+   });
+diff --git a/std/net/tls/record_reader.vlt b/std/net/tls/record_reader.vlt
+index f2182e91e..dd2e5e543 100644
+--- a/std/net/tls/record_reader.vlt
++++ b/std/net/tls/record_reader.vlt
+@@ -1,26 +1,30 @@
+ // velt/net (internal): `RecordReader`, the reading half of the TLS record layer (RFC 8446 §5):
+ // records read with `readInto` into one reused buffer, framed, decrypted in place, alerts
+-// handled, and application data handed out from where it was decrypted. Nothing is allocated
+-// per record.
++// handled, and application data handed out from where it was decrypted. Records that one
++// transport read brings are opened without allocating; each transport read allocates the view
++// it reads into (3 blocks).
+ 
+ import "velt/lang/typed_array/bytes_view";
+ import { ByteStream } from "velt/net/byte_stream";
+ import {
+   alertName,
+   CLOSE_NOTIFY,
+-  ILLEGAL_PARAMETER,
++  DECODE_ERROR,
+   RECORD_OVERFLOW,
+   TlsFailure,
+   UNEXPECTED_MESSAGE,
+ } from "velt/net/tls/alert";
+-import { HEADER, RecordCipher, TAG } from "velt/net/tls/record_cipher";
++import { HEADER, RecordCipher } from "velt/net/tls/record_cipher";
+ 
+-// Content types.
++/** The change_cipher_spec content type. */
+ export const CHANGE_CIPHER_SPEC: u8 = 20;
++/** The alert content type. */
+ export const ALERT: u8 = 21;
++/** The handshake content type. */
+ export const HANDSHAKE: u8 = 22;
++/** The application_data content type. */
+ export const APPLICATION_DATA: u8 = 23;
+-/** Not a content type: the stream ended (close_notify, or the transport at a record boundary). */
++/** Not a content type: the stream ended with close_notify. */
+ export const END: u8 = 0;
+ 
+ /** The most content a record carries. */
+@@ -45,8 +49,10 @@ export class RecordReader {
+   cipher: RecordCipher | null;
+   /** Whether ChangeCipherSpec records are still allowed (until the handshake is done). */
+   handshaking: bool;
+-  /** Whether the stream has ended. */
++  /** Whether the stream has ended (close_notify). */
+   ended: bool;
++  // The first failure, thrown again by every later `next`.
++  private failure: TlsFailure | null;
+ 
+   constructor(t: ByteStream) {
+     this.t = t;
+@@ -60,6 +66,7 @@ export class RecordReader {
+     this.cipher = null;
+     this.handshaking = true;
+     this.ended = false;
++    this.failure = null;
+   }
+ 
+   /** Application data not yet handed out. */
+@@ -90,11 +97,27 @@ export class RecordReader {
+ 
+   /**
+    * Reads the next record and decrypts it in place: its content type, the content at
+-   * `buf[cstart..cend]`. END when the stream ended: close_notify, or the transport closing at a
+-   * record boundary once the handshake is done (`after`; an error during it). Alerts other than
+-   * close_notify throw.
++   * `buf[cstart..cend]`. END when the stream ended with close_notify. Alerts other than
++   * close_notify throw, and so does a transport that ends without close_notify (the message says
++   * whether that was during the handshake, `after` false, in the middle of a record, or at a
++   * record boundary). After a failure, every call throws it again.
+    */
+   async next(after: bool): Promise<u8> {
++    const f = this.failure;
++    if (f != null) {
++      throw f;
++    }
++    try {
++      return await this.read(after);
++    } catch (e) {
++      if (e instanceof TlsFailure) {
++        this.failure = e;
++      }
++      throw e;
++    }
++  }
++
++  private async read(after: bool): Promise<u8> {
+     while (true) {
+       const avail = this.rend - this.rstart;
+       if (avail >= HEADER) {
+@@ -116,15 +139,13 @@ export class RecordReader {
+         }
+       }
+       if (!(await this.readMore())) {
+-        if (after && avail == 0) {
+-          this.ended = true;
+-          return END;
+-        }
+         throw new TlsFailure(
+           CLOSE_NOTIFY,
+-          after
+-            ? "the connection closed in the middle of a record"
+-            : "the connection closed during the handshake",
++          !after
++            ? "the connection closed during the handshake"
++            : avail == 0
++              ? "the connection closed without close_notify"
++              : "the connection closed in the middle of a record",
+           false,
+         );
+       }
+@@ -139,6 +160,9 @@ export class RecordReader {
+       if (type == APPLICATION_DATA || (type == CHANGE_CIPHER_SPEC && !this.handshaking)) {
+         throw new TlsFailure(UNEXPECTED_MESSAGE, `an unprotected record of type ${type}`);
+       }
++      if (len > MAX_PLAIN) {
++        throw new TlsFailure(RECORD_OVERFLOW, `an unprotected record of ${len} bytes`);
++      }
+       this.cstart = at + HEADER;
+       this.cend = at + HEADER + len;
+       return type;
+@@ -149,10 +173,10 @@ export class RecordReader {
+         `an unprotected record of type ${type} after encryption started`,
+       );
+     }
+-    if (len < TAG + 1) {
+-      throw new TlsFailure(UNEXPECTED_MESSAGE, "a protected record too short for its tag");
+-    }
+     const n = cipher.open(this.buf, at, at + HEADER + len);
++    if (n > MAX_PLAIN + 1) {
++      throw new TlsFailure(RECORD_OVERFLOW, `a record with an inner plaintext of ${n} bytes`);
++    }
+     // The content type is the last non-zero byte; zeros after it are padding.
+     let end = at + HEADER + n;
+     while (end > at + HEADER && this.buf[end - 1] == 0) {
+@@ -161,18 +185,19 @@ export class RecordReader {
+     if (end == at + HEADER) {
+       throw new TlsFailure(UNEXPECTED_MESSAGE, "a protected record without a content type");
+     }
+-    if (end - 1 - (at + HEADER) > MAX_PLAIN) {
+-      throw new TlsFailure(RECORD_OVERFLOW, "a record with more than 2^14 bytes of content");
++    const inner = this.buf[end - 1];
++    if (inner == CHANGE_CIPHER_SPEC) {
++      throw new TlsFailure(UNEXPECTED_MESSAGE, "a protected change_cipher_spec record");
+     }
+     this.cstart = at + HEADER;
+     this.cend = end - 1;
+-    return this.buf[end - 1];
++    return inner;
+   }
+ 
+   // Handles the alert just read: true for close_notify (the end of the stream).
+   private alert(): bool {
+     if (this.cend - this.cstart != 2) {
+-      throw new TlsFailure(ILLEGAL_PARAMETER, "a malformed alert");
++      throw new TlsFailure(DECODE_ERROR, "a malformed alert");
+     }
+     const d = this.buf[this.cstart + 1];
+     if (d == CLOSE_NOTIFY) {

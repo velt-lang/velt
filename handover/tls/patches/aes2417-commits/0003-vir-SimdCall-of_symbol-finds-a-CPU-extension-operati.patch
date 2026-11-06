@@ -1,0 +1,106 @@
+From aed8ff214a966861e58bfe2847c4426c3170e6fe Mon Sep 17 00:00:00 2001
+From: Andreas Ekdahl <1434571+andtii@users.noreply.github.com>
+Date: Fri, 6 Nov 2026 04:27:26 +0100
+Subject: [PATCH 3/3] vir: SimdCall::of_symbol finds a CPU-extension operation
+ without allocating
+
+of_symbol built `format!("{type}_{name}")` for each of ExtOp::ALL's 38
+entries on every velt_simd_* symbol, and ExtOp::name itself formatted the
+Debug name and lowercased it. It now splits the symbol at the first `_`,
+searches only for u32x4, u64x2 and u8x16, and compares `&'static str`
+names: ExtOp::name returns one from a match.
+
+Tested: cargo test -p velt_vir; the simd tests fail with u8x16 left out of
+the types searched and with one name misspelt (aesdx).
+---
+ crates/velt_vir/src/simd/ext.rs | 46 ++++++++++++++++++++++++++++-----
+ crates/velt_vir/src/simd/mod.rs | 14 +++++-----
+ 2 files changed, 47 insertions(+), 13 deletions(-)
+
+diff --git a/crates/velt_vir/src/simd/ext.rs b/crates/velt_vir/src/simd/ext.rs
+index 9861806bc..050f68941 100644
+--- a/crates/velt_vir/src/simd/ext.rs
++++ b/crates/velt_vir/src/simd/ext.rs
+@@ -265,14 +265,46 @@ impl ExtOp {
+ 
+     /// The operation's part of its symbol (`velt_simd_<type>_<name>`): `sha256h`, `sha1rnds4_2`,
+     /// `pclmulqdq_16`, `aesenc`, `aesimc_arm`.
+-    pub fn name(self) -> String {
++    pub fn name(self) -> &'static str {
+         match self {
+-            ExtOp::AesimcX86 => "aesimc".to_string(),
+-            ExtOp::AesimcArm => "aesimc_arm".to_string(),
+-            ExtOp::Sha1Rnds4(f) => format!("sha1rnds4_{f}"),
+-            ExtOp::Pclmulqdq(imm) => format!("pclmulqdq_{imm}"),
+-            ExtOp::Pmull(imm) => format!("pmull_{imm}"),
+-            other => format!("{other:?}").to_lowercase(),
++            ExtOp::Sha1C => "sha1c",
++            ExtOp::Sha1P => "sha1p",
++            ExtOp::Sha1M => "sha1m",
++            ExtOp::Sha1H => "sha1h",
++            ExtOp::Sha1Su0 => "sha1su0",
++            ExtOp::Sha1Su1 => "sha1su1",
++            ExtOp::Sha256H => "sha256h",
++            ExtOp::Sha256H2 => "sha256h2",
++            ExtOp::Sha256Su0 => "sha256su0",
++            ExtOp::Sha256Su1 => "sha256su1",
++            ExtOp::Sha256Rnds2 => "sha256rnds2",
++            ExtOp::Sha256Msg1 => "sha256msg1",
++            ExtOp::Sha256Msg2 => "sha256msg2",
++            ExtOp::Sha1Rnds4(0) => "sha1rnds4_0",
++            ExtOp::Sha1Rnds4(1) => "sha1rnds4_1",
++            ExtOp::Sha1Rnds4(2) => "sha1rnds4_2",
++            ExtOp::Sha1Rnds4(_) => "sha1rnds4_3",
++            ExtOp::Sha1Nexte => "sha1nexte",
++            ExtOp::Sha1Msg1 => "sha1msg1",
++            ExtOp::Sha1Msg2 => "sha1msg2",
++            ExtOp::Pclmulqdq(0) => "pclmulqdq_0",
++            ExtOp::Pclmulqdq(1) => "pclmulqdq_1",
++            ExtOp::Pclmulqdq(16) => "pclmulqdq_16",
++            ExtOp::Pclmulqdq(_) => "pclmulqdq_17",
++            ExtOp::Pmull(0) => "pmull_0",
++            ExtOp::Pmull(1) => "pmull_1",
++            ExtOp::Pmull(16) => "pmull_16",
++            ExtOp::Pmull(_) => "pmull_17",
++            ExtOp::Aesenc => "aesenc",
++            ExtOp::Aesenclast => "aesenclast",
++            ExtOp::Aesdec => "aesdec",
++            ExtOp::Aesdeclast => "aesdeclast",
++            ExtOp::AesimcX86 => "aesimc",
++            ExtOp::Aeskeygenassist => "aeskeygenassist",
++            ExtOp::Aese => "aese",
++            ExtOp::Aesd => "aesd",
++            ExtOp::Aesmc => "aesmc",
++            ExtOp::AesimcArm => "aesimc_arm",
+         }
+     }
+ 
+diff --git a/crates/velt_vir/src/simd/mod.rs b/crates/velt_vir/src/simd/mod.rs
+index e50e721cb..0019f6670 100644
+--- a/crates/velt_vir/src/simd/mod.rs
++++ b/crates/velt_vir/src/simd/mod.rs
+@@ -334,13 +334,15 @@ impl SimdCall {
+         if let Some(ext) = rest.strip_prefix("has_") {
+             return Ext::named(&ext.replace('_', "-")).map(SimdCall::Has);
+         }
+-        if let Some(op) = ExtOp::ALL
+-            .into_iter()
+-            .find(|o| rest == format!("{}_{}", o.type_name(), o.name()))
+-        {
+-            return Some(SimdCall::Inst(op));
+-        }
+         let (ty, op) = rest.split_once('_')?;
++        if matches!(ty, "u32x4" | "u64x2" | "u8x16") {
++            if let Some(found) = ExtOp::ALL
++                .into_iter()
++                .find(|o| o.name() == op && o.type_name() == ty)
++            {
++                return Some(SimdCall::Inst(found));
++            }
++        }
+         if let Some(bits) = mask_bits(ty) {
+             return Some(SimdCall::Mask(bits, mask_op(op)?));
+         }
+-- 
+2.54.0 (Apple Git-157)
+

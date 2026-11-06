@@ -1,0 +1,1756 @@
+From f5ed2090eedc233c7ba9d567c0e59fa4d3e0655f Mon Sep 17 00:00:00 2001
+From: Andreas Ekdahl <1434571+andtii@users.noreply.github.com>
+Date: Thu, 5 Nov 2026 17:00:08 +0100
+Subject: [PATCH 1/3] simd: AES round instructions on u8x16 (AES-NI, ARMv8 AES)
+ with checks and targetFeature
+
+`u8x16` gets x86's aesenc, aesenclast, aesdec, aesdeclast, aesimc and
+aeskeygenassist(rcon), and ARM's aese, aesd and aesmc, with the checks
+`u8x16.hasAesX86()`, `hasAesArm()` and `hasAes()`. Each method is the
+instruction where the CPU has it, the other architecture's instructions
+where those are what it has, and otherwise an exact emulation in Velt
+(table based, for correctness only; std's AES keeps its constant-time
+path when `hasAes()` is false).
+
+Compiler: `Ext::AesX86`/`AesArm` and their `ExtOp`s in velt_vir's
+registry, `targetFeature("aes-x86" | "aes-arm")` in sema, LLVM lowering to
+`llvm.x86.aesni.*` and `llvm.aarch64.crypto.*`, zeros under Cranelift.
+An AES target includes the carry-less multiplication of its architecture
+(`Ext::covers`), so a gated AES-GCM loop is bare instructions for both,
+and in any gated function the other architecture's checks fold to false.
+
+No runtime flag (no new Rust in velt_rt, #2241): the check is true where
+the build guarantees the extension (a gated function and its clones), and
+otherwise std/simd/aes.vlt computes it once in Velt from the carry-less
+flag plus `velt_simd_cpuid` (CPUID leaf 1, ECX bit 25; a new inline-asm
+intrinsic, zeros off x86-64) on x86-64, and from the PMULL flag on arm64,
+honoring `VELT_SIMD_DISABLE=aes`. `--cpu` does not make the check
+constant, since the start-up check's feature lists are Rust.
+
+Tested: golden std/simd_aes (FIPS-197 A.1 key expansion, Appendix B,
+C.1 and C.3 vectors through both instruction sequences, encrypt and
+decrypt, and every operation on 10,000 random inputs folded into one
+checksum, so debug/emulation, release/instructions and
+VELT_SIMD_DISABLE=aes agree; also run on wasm) and
+std/simd_aeskeygenassist_range; veltc gated_functions (the gated AES
+functions reach no check, CPUID or emulation, on x86-64 and arm64);
+velt_opt gated_clones and velt_codegen_llvm unit tests; the x86-64 build
+run under Rosetta in Docker (instructions and emulation give the same
+checksum). Each test was seen failing on a deliberately broken version.
+---
+ crates/velt_codegen_cl/src/cpu.rs             |   4 +-
+ crates/velt_codegen_cl/src/function/simd.rs   |   2 +-
+ .../src/function/terminator.rs                |   2 +-
+ crates/velt_codegen_llvm/src/simd/aes.rs      |  86 ++++++
+ crates/velt_codegen_llvm/src/simd/mod.rs      |   2 +
+ crates/velt_codegen_llvm/src/simd/sha.rs      |  16 +-
+ crates/velt_codegen_llvm/src/tests/aes.rs     | 113 ++++++++
+ crates/velt_codegen_llvm/src/tests/mod.rs     |   1 +
+ crates/velt_common/src/std_modules.rs         |   1 +
+ crates/velt_opt/src/gated_clones/mod.rs       |  30 ++-
+ crates/velt_opt/src/gated_clones/tests.rs     |  54 +++-
+ crates/velt_opt/src/invariant_reads/mod.rs    |   2 +-
+ crates/velt_sema/src/body/gated.rs            |   3 +-
+ crates/velt_sema/src/hir/numeric.rs           |  23 +-
+ crates/velt_vir/src/lower/abi.rs              |   2 +
+ crates/velt_vir/src/simd/ext.rs               | 111 +++++++-
+ crates/velt_vir/src/simd/mod.rs               |   8 +
+ crates/velt_vir/src/simd/tests.rs             |  11 +
+ crates/veltc/tests/gated_functions.rs         |  96 ++++++-
+ crates/veltc/tests/wasm_goldens.rs            |   1 +
+ docs/internals/contracts/rt_abi.md            |  22 +-
+ scripts/gen-simd-api.py                       |   2 +
+ std/lang/intrinsics/simd.vlt                  |   9 +-
+ std/simd/aes.vlt                              | 246 ++++++++++++++++++
+ std/simd/aes_emulation.vlt                    | 102 ++++++++
+ std/simd/index.vlt                            |   2 +
+ tests/golden/std/simd_aes.out                 |   7 +
+ tests/golden/std/simd_aes.vlt                 | 183 +++++++++++++
+ .../std/simd_aeskeygenassist_range.code       |   1 +
+ .../golden/std/simd_aeskeygenassist_range.out |   4 +
+ .../std/simd_aeskeygenassist_range.stderr     |   1 +
+ .../golden/std/simd_aeskeygenassist_range.vlt |  10 +
+ 32 files changed, 1115 insertions(+), 42 deletions(-)
+ create mode 100644 crates/velt_codegen_llvm/src/simd/aes.rs
+ create mode 100644 crates/velt_codegen_llvm/src/tests/aes.rs
+ create mode 100644 std/simd/aes.vlt
+ create mode 100644 std/simd/aes_emulation.vlt
+ create mode 100644 tests/golden/std/simd_aes.out
+ create mode 100644 tests/golden/std/simd_aes.vlt
+ create mode 100644 tests/golden/std/simd_aeskeygenassist_range.code
+ create mode 100644 tests/golden/std/simd_aeskeygenassist_range.out
+ create mode 100644 tests/golden/std/simd_aeskeygenassist_range.stderr
+ create mode 100644 tests/golden/std/simd_aeskeygenassist_range.vlt
+
+diff --git a/crates/velt_codegen_cl/src/cpu.rs b/crates/velt_codegen_cl/src/cpu.rs
+index 399236374..682ffbd87 100644
+--- a/crates/velt_codegen_cl/src/cpu.rs
++++ b/crates/velt_codegen_cl/src/cpu.rs
+@@ -66,7 +66,9 @@ pub fn ext_x86_features(ext: velt_vir::simd::Ext) -> u32 {
+     match ext {
+         Ext::ShaX86 => bit("SHA") | bit("SSSE3") | bit("SSE4.1"),
+         Ext::ClmulX86 => bit("PCLMULQDQ") | bit("SSSE3") | bit("SSE4.1"),
+-        Ext::ShaArm | Ext::ClmulArm => 0,
++        // AES is not in the start-up check's list (its table is Rust in velt_rt, #2241): a
++        // build never guarantees it, only a gated function does.
++        Ext::ShaArm | Ext::ClmulArm | Ext::AesX86 | Ext::AesArm => 0,
+     }
+ }
+ 
+diff --git a/crates/velt_codegen_cl/src/function/simd.rs b/crates/velt_codegen_cl/src/function/simd.rs
+index ce856af98..df2c9ff6a 100644
+--- a/crates/velt_codegen_cl/src/function/simd.rs
++++ b/crates/velt_codegen_cl/src/function/simd.rs
+@@ -90,7 +90,7 @@ impl Translator<'_, '_> {
+             SimdCall::Inst(ExtOp::Sha1H) => {
+                 Inlined::Value(self.builder.ins().iconst(types::I32, 0))
+             }
+-            SimdCall::Inst(_) => Inlined::Value(self.zero_vector()),
++            SimdCall::Inst(_) | SimdCall::Cpuid => Inlined::Value(self.zero_vector()),
+             // Cranelift has no prefetch: the hint is dropped.
+             SimdCall::Prefetch => Inlined::Unit,
+         })
+diff --git a/crates/velt_codegen_llvm/src/function/terminator.rs b/crates/velt_codegen_llvm/src/function/terminator.rs
+index c29d82840..cc2621476 100644
+--- a/crates/velt_codegen_llvm/src/function/terminator.rs
++++ b/crates/velt_codegen_llvm/src/function/terminator.rs
+@@ -215,7 +215,7 @@ impl Emitter<'_> {
+         matches!(
+             velt_vir::simd::SimdCall::of_symbol(&e.symbol),
+             Some(velt_vir::simd::SimdCall::Has(ext))
+-                if (self.function.target == Some(ext) || self.baseline_has(ext))
++                if (self.function.target.is_some_and(|t| t.covers(ext)) || self.baseline_has(ext))
+                     && crate::simd::has_ext(self.simd, ext)
+         )
+     }
+diff --git a/crates/velt_codegen_llvm/src/simd/aes.rs b/crates/velt_codegen_llvm/src/simd/aes.rs
+new file mode 100644
+index 000000000..f60df7dc5
+--- /dev/null
++++ b/crates/velt_codegen_llvm/src/simd/aes.rs
+@@ -0,0 +1,86 @@
++//! The AES round instructions on `u8x16` (#2401): x86 AES-NI (`llvm.x86.aesni.*`, on `<2 x i64>`)
++//! and the ARMv8 AES instructions (`llvm.aarch64.crypto.*`, on `<16 x i8>`), and x86's `CPUID`,
++//! from which velt/simd computes the AES check in Velt (std/simd/aes.vlt; no runtime flag).
++
++use velt_vir::simd::ExtOp;
++
++use super::{Arch, Body};
++
++/// The AES operation `op` on the helper's arguments (`%a0`, `%a1`), as the `<16 x i8>` the helper
++/// returns; the caller has checked that the architecture has it.
++pub(super) fn op(b: &mut Body, op: ExtOp) -> String {
++    let arm = |name: &str| format!("aarch64.crypto.{name}");
++    let (name, operands) = match op {
++        ExtOp::Aesenc => ("x86.aesni.aesenc".to_string(), 2),
++        ExtOp::Aesenclast => ("x86.aesni.aesenclast".to_string(), 2),
++        ExtOp::Aesdec => ("x86.aesni.aesdec".to_string(), 2),
++        ExtOp::Aesdeclast => ("x86.aesni.aesdeclast".to_string(), 2),
++        ExtOp::AesimcX86 => ("x86.aesni.aesimc".to_string(), 1),
++        ExtOp::Aeskeygenassist => {
++            const Q: &str = "<2 x i64>";
++            let a = b.arg(0, Q);
++            b.declarations.push(format!(
++                "declare {Q} @llvm.x86.aesni.aeskeygenassist({Q}, i8 immarg)"
++            ));
++            let r = b.inst(format!(
++                "call {Q} @llvm.x86.aesni.aeskeygenassist({Q} {a}, i8 0)"
++            ));
++            return b.bytes(&r, Q);
++        }
++        ExtOp::Aese => (arm("aese"), 2),
++        ExtOp::Aesd => (arm("aesd"), 2),
++        ExtOp::Aesmc => (arm("aesmc"), 1),
++        ExtOp::AesimcArm => (arm("aesimc"), 1),
++        other => unreachable!("ICE: {other:?} is not an AES operation"),
++    };
++    // The x86 intrinsics take `<2 x i64>`, the ARM ones the bytes themselves.
++    let ty = if name.starts_with("x86") {
++        "<2 x i64>"
++    } else {
++        "<16 x i8>"
++    };
++    let args: Vec<String> = (0..operands)
++        .map(|i| {
++            let v = if ty == "<16 x i8>" {
++                format!("%a{i}")
++            } else {
++                b.arg(i, ty)
++            };
++            format!("{ty} {v}")
++        })
++        .collect();
++    let params = vec![ty; operands].join(", ");
++    b.declarations
++        .push(format!("declare {ty} @llvm.{name}({params})"));
++    let r = b.inst(format!("call {ty} @llvm.{name}({})", args.join(", ")));
++    if ty == "<16 x i8>" {
++        r
++    } else {
++        b.bytes(&r, ty)
++    }
++}
++
++/// `CPUID` with EAX = `%a0` and ECX = `%a1`, as EAX, EBX, ECX, EDX in the lanes of a `u32x4`; zeros
++/// off x86-64. RBX is saved around it in a scratch register (LLVM may reserve RBX as a base
++/// pointer, as Rust's `__cpuid_count` does). Not `sideeffect`: the answers never change, so LLVM
++/// may merge or hoist it.
++pub(super) fn cpuid(b: &mut Body, arch: Arch) -> String {
++    if arch != Arch::Sse2 {
++        return "zeroinitializer".to_string();
++    }
++    let r = b.inst(
++        "call { i32, i64, i32, i32 } asm \"movq %rbx, $1\\0Acpuid\\0Axchgq %rbx, $1\", \
++         \"={ax},=r,={cx},={dx},0,2,~{dirflag},~{fpsr},~{flags}\"(i32 %a0, i32 %a1)"
++            .to_string(),
++    );
++    let eax = b.inst(format!("extractvalue {{ i32, i64, i32, i32 }} {r}, 0"));
++    let rbx = b.inst(format!("extractvalue {{ i32, i64, i32, i32 }} {r}, 1"));
++    let ebx = b.inst(format!("trunc i64 {rbx} to i32"));
++    let ecx = b.inst(format!("extractvalue {{ i32, i64, i32, i32 }} {r}, 2"));
++    let edx = b.inst(format!("extractvalue {{ i32, i64, i32, i32 }} {r}, 3"));
++    let mut v = "undef".to_string();
++    for (i, lane) in [eax, ebx, ecx, edx].iter().enumerate() {
++        v = b.inst(format!("insertelement <4 x i32> {v}, i32 {lane}, i32 {i}"));
++    }
++    b.bytes(&v, "<4 x i32>")
++}
+diff --git a/crates/velt_codegen_llvm/src/simd/mod.rs b/crates/velt_codegen_llvm/src/simd/mod.rs
+index 4f312071a..c5037d528 100644
+--- a/crates/velt_codegen_llvm/src/simd/mod.rs
++++ b/crates/velt_codegen_llvm/src/simd/mod.rs
+@@ -10,6 +10,7 @@ use crate::types::{abi_ret, abi_type};
+ use masks::mask;
+ use reshape::{convert, narrow, widen, zip};
+ 
++mod aes;
+ mod half;
+ mod masks;
+ mod partial;
+@@ -104,6 +105,7 @@ pub(crate) fn helper(
+         SimdCall::Mask(bits, op) => mask(&mut body, bits, op, arch == Arch::Neon),
+         SimdCall::Has(ext) => Some(sha::has(&mut body, arch, ext)),
+         SimdCall::Inst(op) => Some(sha::op(&mut body, arch, op)),
++        SimdCall::Cpuid => Some(aes::cpuid(&mut body, arch)),
+         SimdCall::Prefetch => {
+             // A read, kept in every cache level (`locality` 3), of data (cache type 1).
+             body.declarations.push(
+diff --git a/crates/velt_codegen_llvm/src/simd/sha.rs b/crates/velt_codegen_llvm/src/simd/sha.rs
+index 66d27f481..9a99866fe 100644
+--- a/crates/velt_codegen_llvm/src/simd/sha.rs
++++ b/crates/velt_codegen_llvm/src/simd/sha.rs
+@@ -11,14 +11,17 @@ use super::{Arch, Body};
+ pub(crate) fn has_ext(arch: Arch, ext: Ext) -> bool {
+     matches!(
+         (arch, ext),
+-        (Arch::Neon, Ext::ShaArm | Ext::ClmulArm) | (Arch::Sse2, Ext::ShaX86 | Ext::ClmulX86)
++        (Arch::Neon, Ext::ShaArm | Ext::ClmulArm | Ext::AesArm)
++            | (Arch::Sse2, Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86)
+     )
+ }
+ 
+ /// `velt_simd_has_<ext>()`: the runtime's flag byte (0 or 1), read as invariant: it is set
+-/// before any Velt code runs and never changes, so LLVM hoists the read out of loops.
++/// before any Velt code runs and never changes, so LLVM hoists the read out of loops. An
++/// extension without a flag (AES, `Ext::has_flag`) is 0 here: its check is 1 only where the
++/// function is gated on it (`own_extension_check`), and std computes the run-time answer.
+ pub(super) fn has(b: &mut Body, arch: Arch, ext: Ext) -> String {
+-    if !has_ext(arch, ext) {
++    if !has_ext(arch, ext) || !ext.has_flag() {
+         return "0".to_string();
+     }
+     let flag = ext.flag_symbol();
+@@ -40,6 +43,9 @@ pub(super) fn op(b: &mut Body, arch: Arch, op: ExtOp) -> String {
+     if let ExtOp::Pclmulqdq(imm) | ExtOp::Pmull(imm) = op {
+         return clmul(b, op, imm);
+     }
++    if matches!(op.ext(), Ext::AesX86 | Ext::AesArm) {
++        return super::aes::op(b, op);
++    }
+     if op == ExtOp::Sha1H {
+         b.declarations
+             .push("declare i32 @llvm.aarch64.crypto.sha1h(i32)".to_string());
+@@ -75,8 +81,8 @@ pub(super) fn op(b: &mut Body, arch: Arch, op: ExtOp) -> String {
+             let vectors = op.vector_operands();
+             let values: Vec<String> = (0..vectors).map(|i| b.arg(i, V)).collect();
+             let prefix = match op.ext() {
+-                Ext::ShaArm | Ext::ClmulArm => "aarch64.crypto",
+-                Ext::ShaX86 | Ext::ClmulX86 => "x86",
++                Ext::ShaArm | Ext::ClmulArm | Ext::AesArm => "aarch64.crypto",
++                Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 => "x86",
+             };
+             (
+                 format!("{prefix}.{}", op.name()),
+diff --git a/crates/velt_codegen_llvm/src/tests/aes.rs b/crates/velt_codegen_llvm/src/tests/aes.rs
+new file mode 100644
+index 000000000..9cdb9a931
+--- /dev/null
++++ b/crates/velt_codegen_llvm/src/tests/aes.rs
+@@ -0,0 +1,113 @@
++//! The AES operations (#2401) and `CPUID`.
++
++use super::builder::*;
++use velt_vir::vir::Ty::*;
++use velt_vir::vir::*;
++
++/// `velt_main` running `op` (one or two `u8x16` operands) on zeros, then `xor` on the result,
++/// returning byte 0; and a call of `velt_simd_cpuid(1, 0)`.
++fn sample(op: &str, operands: usize) -> Program {
++    let mut pb = ProgramBuilder::new();
++    let inst = pb.ext(op, &vec![V128; operands], V128, false);
++    let xor = pb.ext("velt_simd_u8x16_xor", &[V128, V128], V128, false);
++    let lane = pb.ext("velt_simd_u8x16_lane", &[V128, U64], U8, false);
++    let cpuid = pb.ext("velt_simd_cpuid", &[U32, U32], V128, false);
++    let mut fb = FuncBuilder::export("velt_main", &[], I32);
++    let (v, c, r) = (fb.local(V128), fb.local(V128), fb.local(U8));
++    let w = fb.local(I32);
++    let zero = Operand::Const(Const::Int(0), V128);
++    let b = fb.block();
++    let b = fb.call(
++        b,
++        Callee::Extern(inst),
++        vec![zero.clone(); operands],
++        Some(v),
++    );
++    let b = fb.call(
++        b,
++        Callee::Extern(cpuid),
++        vec![int(1, U32), int(0, U32)],
++        Some(c),
++    );
++    let b = fb.call(
++        b,
++        Callee::Extern(xor),
++        vec![copy_local(v), copy_local(c)],
++        Some(v),
++    );
++    let b = fb.call(
++        b,
++        Callee::Extern(lane),
++        vec![copy_local(v), int(0, U64)],
++        Some(r),
++    );
++    fb.assign(b, w, Rvalue::Cast(copy_local(r), I32));
++    fb.ret(b, copy_local(w));
++    pb.add(fb.finish());
++    pb.finish()
++}
++
++fn ir(p: &Program, triple: &str) -> String {
++    let target = crate::target::normalize(triple).unwrap();
++    crate::checked_ir(p, &target, false).unwrap()
++}
++
++/// The definition line of helper `name` in `ir`.
++fn helper<'a>(ir: &'a str, name: &str) -> &'a str {
++    ir.lines()
++        .find(|l| l.starts_with("define") && l.contains(&format!("@velt.simd.{name}(")))
++        .unwrap_or_else(|| panic!("no helper {name} in\n{ir}"))
++}
++
++#[test]
++fn each_architecture_lowers_its_own_aes_instructions() {
++    let x86 = ir(
++        &sample("velt_simd_u8x16_aesenc", 2),
++        "x86_64-unknown-linux-gnu",
++    );
++    assert!(
++        x86.contains("call <2 x i64> @llvm.x86.aesni.aesenc(<2 x i64>"),
++        "{x86}"
++    );
++    let keygen = ir(
++        &sample("velt_simd_u8x16_aeskeygenassist", 1),
++        "x86_64-unknown-linux-gnu",
++    );
++    assert!(
++        keygen.contains("@llvm.x86.aesni.aeskeygenassist(<2 x i64> %v0, i8 0)"),
++        "{keygen}"
++    );
++    let arm = ir(
++        &sample("velt_simd_u8x16_aesimc_arm", 1),
++        "aarch64-unknown-linux-gnu",
++    );
++    assert!(
++        arm.contains("call <16 x i8> @llvm.aarch64.crypto.aesimc(<16 x i8> %a0)"),
++        "{arm}"
++    );
++    // The other architecture's operation is dead behind its check: zeros, no intrinsic.
++    let off = ir(
++        &sample("velt_simd_u8x16_aese", 2),
++        "x86_64-unknown-linux-gnu",
++    );
++    assert!(!off.contains("llvm.aarch64"), "{off}");
++    assert!(helper(&off, "u8x16_aese").contains("alwaysinline"));
++}
++
++#[test]
++fn cpuid_is_inline_asm_on_x86_and_zeros_elsewhere() {
++    let p = sample("velt_simd_u8x16_aesenc", 2);
++    let x86 = ir(&p, "x86_64-unknown-linux-gnu");
++    // RBX saved around it, and not `sideeffect`: its answers never change.
++    assert!(
++        x86.contains("asm \"movq %rbx, $1\\0Acpuid\\0Axchgq %rbx, $1\""),
++        "{x86}"
++    );
++    assert!(!x86.contains("asm sideeffect \"movq %rbx"), "{x86}");
++    let arm = ir(&p, "aarch64-unknown-linux-gnu");
++    assert!(!arm.contains("cpuid\\0A"), "{arm}");
++    assert!(
++        arm.contains("define internal <16 x i8> @velt.simd.cpuid"),
++        "{arm}"
++    );
++}
+diff --git a/crates/velt_codegen_llvm/src/tests/mod.rs b/crates/velt_codegen_llvm/src/tests/mod.rs
+index 5dc8f6122..1c9a9815d 100644
+--- a/crates/velt_codegen_llvm/src/tests/mod.rs
++++ b/crates/velt_codegen_llvm/src/tests/mod.rs
+@@ -460,6 +460,7 @@ fn param_attributes_become_llvm_attributes() {
+     assert!(ir.contains(needle), "missing `{needle}` in\n{ir}");
+ }
+ 
++mod aes;
+ mod atomics;
+ mod half;
+ mod inlining;
+diff --git a/crates/velt_common/src/std_modules.rs b/crates/velt_common/src/std_modules.rs
+index 88cecf1ae..c4dc3ebbf 100644
+--- a/crates/velt_common/src/std_modules.rs
++++ b/crates/velt_common/src/std_modules.rs
+@@ -161,6 +161,7 @@ table! {
+     ops_operators => "ops/operators",
+     process_stdout => "process/stdout",
+     simd => "simd",
++    simd_aes => "simd/aes",
+     simd_clmul => "simd/clmul",
+     simd_sha => "simd/sha",
+     sync_channel => "sync/channel",
+diff --git a/crates/velt_opt/src/gated_clones/mod.rs b/crates/velt_opt/src/gated_clones/mod.rs
+index 50bfd0dda..eb814b91b 100644
+--- a/crates/velt_opt/src/gated_clones/mod.rs
++++ b/crates/velt_opt/src/gated_clones/mod.rs
+@@ -6,6 +6,9 @@
+ //! trivial callee. Without the clone, the method inlines only while it is small or called once,
+ //! and otherwise keeps the check and the emulation inside the gated function.
+ //!
++//! An AES target also has its architecture's carry-less multiplication (`Ext::covers`), and in
++//! any gated function the other architecture's checks are false: the clone folds those too.
++//!
+ //! Cloned are ordinary callees that check the extension themselves or through ordinary callees
+ //! of their own (which the clone's own calls then reach as clones too). Each callee is cloned
+ //! once per extension.
+@@ -97,15 +100,24 @@ fn checking(program: &Program, ext: Ext) -> Vec<bool> {
+     }
+ }
+ 
++/// What the check extern `id` is in code gated on `ext`: `true` for an extension it has
++/// (`Ext::covers`: the carry-less multiplication of an AES target too), `false` for one of the
++/// other architecture (the code runs only on `ext`'s), `None` for any other extern.
++fn check_value(program: &Program, id: velt_vir::vir::ExternId, ext: Ext) -> Option<bool> {
++    let e = program.externs.get(id.0 as usize)?;
++    match SimdCall::of_symbol(&e.symbol)? {
++        SimdCall::Has(checked) if ext.covers(checked) => Some(true),
++        SimdCall::Has(checked) if !ext.same_arch(checked) => Some(false),
++        _ => None,
++    }
++}
++
+ fn is_check(program: &Program, id: velt_vir::vir::ExternId, ext: Ext) -> bool {
+-    program
+-        .externs
+-        .get(id.0 as usize)
+-        .and_then(|e| SimdCall::of_symbol(&e.symbol))
+-        == Some(SimdCall::Has(ext))
++    check_value(program, id, ext).is_some()
+ }
+ 
+-/// A copy of `func` gated on `ext`, with its checks of `ext` replaced by `true`.
++/// A copy of `func` gated on `ext`, with its checks replaced by their values there
++/// ([`check_value`]).
+ fn clone_for(program: &mut Program, func: FuncId, ext: Ext) -> FuncId {
+     let mut body = program.funcs[func.0 as usize].clone();
+     body.symbol = format!("{}${}", body.symbol, ext.name().replace('-', "_"));
+@@ -121,13 +133,13 @@ fn clone_for(program: &mut Program, func: FuncId, ext: Ext) -> FuncId {
+         else {
+             continue;
+         };
+-        if !is_check(program, *id, ext) {
++        let Some(value) = check_value(program, *id, ext) else {
+             continue;
+-        }
++        };
+         let (dest, next) = (dest.clone(), *next);
+         if let Some(dest) = dest {
+             let at = body.locs.get(bi).and_then(|l| l.last().copied().flatten());
+-            let yes = Rvalue::Use(Operand::Const(Const::Bool(true), Ty::Bool));
++            let yes = Rvalue::Use(Operand::Const(Const::Bool(value), Ty::Bool));
+             srclocs::push_stmt(&mut body, bi, Stmt::Assign(dest, yes), at);
+         }
+         body.blocks[bi].term = Terminator::Goto(next);
+diff --git a/crates/velt_opt/src/gated_clones/tests.rs b/crates/velt_opt/src/gated_clones/tests.rs
+index 7a13e3f8c..7be53b33f 100644
+--- a/crates/velt_opt/src/gated_clones/tests.rs
++++ b/crates/velt_opt/src/gated_clones/tests.rs
+@@ -17,6 +17,11 @@ struct Probe {
+ }
+ 
+ fn probe(checked: Ext) -> Probe {
++    probe_gated(checked, Ext::ShaArm)
++}
++
++/// [`probe`] with the function gated on `gate`.
++fn probe_gated(checked: Ext, gate: Ext) -> Probe {
+     let mut pb = ProgramBuilder::new();
+     let has = pb.ext(
+         &format!("velt_simd_has_{}", checked.name().replace('-', "_")),
+@@ -41,7 +46,7 @@ fn probe(checked: Ext) -> Probe {
+     ));
+     let main = pb.add(calling("main", &[method, gated], Linkage::Export));
+     let mut p = pb.finish();
+-    p.funcs[gated.0 as usize].target = Some(Ext::ShaArm);
++    p.funcs[gated.0 as usize].target = Some(gate);
+     assert_valid(&p);
+     Probe {
+         p,
+@@ -133,7 +138,8 @@ fn a_gated_function_calls_clones_without_the_check() {
+ 
+ #[test]
+ fn a_check_of_another_extension_stays() {
+-    let Probe { mut p, gated, .. } = probe(Ext::ShaX86);
++    // Another extension of the same architecture (`sha-arm` code may run on a CPU without PMULL).
++    let Probe { mut p, gated, .. } = probe(Ext::ClmulArm);
+     let before = callees(&p.funcs[gated.0 as usize]);
+     assert!(!run(&mut p));
+     assert_eq!(callees(&p.funcs[gated.0 as usize]), before);
+@@ -154,3 +160,47 @@ fn the_pipeline_leaves_the_bare_operation_in_the_gated_function() {
+     assert!(callees(gated).is_empty(), "{:?}", callees(gated));
+     assert_eq!(extern_calls(gated), 0);
+ }
++
++#[test]
++fn an_aes_target_takes_the_carry_less_check_as_true() {
++    // Every CPU with the AES target has the carry-less multiplication (`Ext::covers`): the
++    // carry-less method is cloned for it, with its check folded away.
++    for (checked, gate) in [(Ext::ClmulArm, Ext::AesArm), (Ext::ClmulX86, Ext::AesX86)] {
++        let Probe { mut p, gated, .. } = probe_gated(checked, gate);
++        assert!(run(&mut p));
++        assert_valid(&p);
++        let clones: Vec<&Function> = callees(&p.funcs[gated.0 as usize])
++            .into_iter()
++            .map(|c| &p.funcs[c.0 as usize])
++            .collect();
++        assert!(!clones.is_empty());
++        for clone in clones {
++            assert_eq!(clone.target, Some(gate));
++            assert_eq!(extern_calls(clone), 0, "{}", clone.symbol);
++        }
++    }
++    // Not the other way round.
++    let Probe { mut p, .. } = probe_gated(Ext::AesArm, Ext::ClmulArm);
++    assert!(!run(&mut p));
++}
++
++#[test]
++fn the_other_architectures_checks_are_false_in_a_gated_function() {
++    // Code gated on an arm64 extension runs only on arm64: an x86 check there is `false`, and
++    // the clone keeps the emulation without testing anything.
++    for (checked, gate) in [(Ext::ClmulX86, Ext::AesArm), (Ext::ShaArm, Ext::ShaX86)] {
++        let Probe {
++            mut p,
++            gated,
++            method,
++            ..
++        } = probe_gated(checked, gate);
++        assert!(run(&mut p), "{checked:?} under {gate:?}");
++        assert_valid(&p);
++        let calls = callees(&p.funcs[gated.0 as usize]);
++        let clone = &p.funcs[calls[0].0 as usize];
++        assert!(calls[0] != method);
++        assert_eq!(extern_calls(clone), 0, "no check");
++        assert_eq!(callees(clone).len(), 1, "the emulation");
++    }
++}
+diff --git a/crates/velt_opt/src/invariant_reads/mod.rs b/crates/velt_opt/src/invariant_reads/mod.rs
+index 6d55e034c..a2b950243 100644
+--- a/crates/velt_opt/src/invariant_reads/mod.rs
++++ b/crates/velt_opt/src/invariant_reads/mod.rs
+@@ -513,7 +513,7 @@ fn computes_only(ext: &ExternFn) -> bool {
+         Some(SimdCall::Vector(_, op)) => {
+             !matches!(op, Op::Store | Op::StorePartial | Op::LoadOptimistic)
+         }
+-        Some(SimdCall::Mask(..) | SimdCall::Has(_) | SimdCall::Prefetch) => true,
++        Some(SimdCall::Mask(..) | SimdCall::Has(_) | SimdCall::Cpuid | SimdCall::Prefetch) => true,
+         Some(SimdCall::Inst(_)) | None => false,
+     }
+ }
+diff --git a/crates/velt_sema/src/body/gated.rs b/crates/velt_sema/src/body/gated.rs
+index 9eb7cd590..c0723f76e 100644
+--- a/crates/velt_sema/src/body/gated.rs
++++ b/crates/velt_sema/src/body/gated.rs
+@@ -119,7 +119,8 @@ impl FnCx<'_, '_> {
+         let Some(target) = self.fn_target(d) else {
+             return;
+         };
+-        if self.f.target == Some(target) || self.f.cpu_guards.contains(&target) {
++        let covered = |t: &CpuTarget| t.covers(target);
++        if self.f.target.as_ref().is_some_and(covered) || self.f.cpu_guards.iter().any(covered) {
+             return;
+         }
+         let d = Diagnostic::error(
+diff --git a/crates/velt_sema/src/hir/numeric.rs b/crates/velt_sema/src/hir/numeric.rs
+index e1184ce3b..0f7d7b929 100644
+--- a/crates/velt_sema/src/hir/numeric.rs
++++ b/crates/velt_sema/src/hir/numeric.rs
+@@ -98,15 +98,21 @@ pub enum CpuTarget {
+     ClmulX86,
+     /// The ARMv8 64-bit polynomial multiplication, PMULL.
+     ClmulArm,
++    /// The x86 AES round instructions with PCLMULQDQ (and SSSE3, SSE4.1).
++    AesX86,
++    /// The ARMv8 AES instructions with PMULL.
++    AesArm,
+ }
+ 
+ impl CpuTarget {
+     /// Every target.
+-    pub const ALL: [CpuTarget; 4] = [
++    pub const ALL: [CpuTarget; 6] = [
+         CpuTarget::ShaArm,
+         CpuTarget::ShaX86,
+         CpuTarget::ClmulX86,
+         CpuTarget::ClmulArm,
++        CpuTarget::AesX86,
++        CpuTarget::AesArm,
+     ];
+ 
+     /// The name `targetFeature` takes.
+@@ -116,6 +122,8 @@ impl CpuTarget {
+             CpuTarget::ShaX86 => "sha-x86",
+             CpuTarget::ClmulX86 => "clmul-x86",
+             CpuTarget::ClmulArm => "clmul-arm",
++            CpuTarget::AesX86 => "aes-x86",
++            CpuTarget::AesArm => "aes-arm",
+         }
+     }
+ 
+@@ -124,6 +132,17 @@ impl CpuTarget {
+         CpuTarget::ALL.into_iter().find(|t| t.name() == name)
+     }
+ 
++    /// Whether code gated on (or behind the check of) `self` has `other` too: `other` is
++    /// `self`, or the carry-less multiplication every CPU with the AES target has (as
++    /// `velt_vir::simd::Ext::covers`).
++    pub fn covers(self, other: CpuTarget) -> bool {
++        self == other
++            || matches!(
++                (self, other),
++                (CpuTarget::AesX86, CpuTarget::ClmulX86) | (CpuTarget::AesArm, CpuTarget::ClmulArm)
++            )
++    }
++
+     /// The static method of velt/simd that checks for it, by its definition's full name.
+     pub fn check(self) -> &'static str {
+         match self {
+@@ -131,6 +150,8 @@ impl CpuTarget {
+             CpuTarget::ShaX86 => velt_common::std_item!(simd_sha, "u32x4.hasShaX86"),
+             CpuTarget::ClmulX86 => velt_common::std_item!(simd_clmul, "u64x2.hasClmulX86"),
+             CpuTarget::ClmulArm => velt_common::std_item!(simd_clmul, "u64x2.hasClmulArm"),
++            CpuTarget::AesX86 => velt_common::std_item!(simd_aes, "u8x16.hasAesX86"),
++            CpuTarget::AesArm => velt_common::std_item!(simd_aes, "u8x16.hasAesArm"),
+         }
+     }
+ 
+diff --git a/crates/velt_vir/src/lower/abi.rs b/crates/velt_vir/src/lower/abi.rs
+index 433a0e6cf..7d252e0e0 100644
+--- a/crates/velt_vir/src/lower/abi.rs
++++ b/crates/velt_vir/src/lower/abi.rs
+@@ -300,6 +300,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
+             hir::CpuTarget::ShaX86 => crate::simd::Ext::ShaX86,
+             hir::CpuTarget::ClmulX86 => crate::simd::Ext::ClmulX86,
+             hir::CpuTarget::ClmulArm => crate::simd::Ext::ClmulArm,
++            hir::CpuTarget::AesX86 => crate::simd::Ext::AesX86,
++            hir::CpuTarget::AesArm => crate::simd::Ext::AesArm,
+         });
+         func
+     }
+diff --git a/crates/velt_vir/src/simd/ext.rs b/crates/velt_vir/src/simd/ext.rs
+index 8a7db9b13..9861806bc 100644
+--- a/crates/velt_vir/src/simd/ext.rs
++++ b/crates/velt_vir/src/simd/ext.rs
+@@ -1,5 +1,6 @@
+ //! The CPU extensions beyond the 128-bit baseline that some SIMD operations use (#1330): the SHA
+-//! instructions and carry-less multiplication, and the instructions of each.
++//! instructions, carry-less multiplication and the AES rounds (#2401), and the instructions of
++//! each.
+ 
+ /// A CPU extension beyond the 128-bit baseline that some operations use (#1330).
+ #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+@@ -13,22 +14,55 @@ pub enum Ext {
+     ClmulX86,
+     /// The ARMv8 64-bit polynomial multiplication (PMULL, FEAT_PMULL: LLVM's `aes`).
+     ClmulArm,
++    /// The x86 AES round instructions (AES-NI) with the PCLMULQDQ, SSSE3 and SSE4.1 every such
++    /// CPU has: what AES-GCM needs, so a function gated on it also has [`Ext::ClmulX86`].
++    AesX86,
++    /// The ARMv8 AES instructions with PMULL (FEAT_AES and FEAT_PMULL, LLVM's `aes`; FEAT_PMULL
++    /// implies FEAT_AES), so a function gated on it also has [`Ext::ClmulArm`].
++    AesArm,
+ }
+ 
+ impl Ext {
+     /// Every extension.
+-    pub const ALL: [Ext; 4] = [Ext::ShaArm, Ext::ShaX86, Ext::ClmulX86, Ext::ClmulArm];
++    pub const ALL: [Ext; 6] = [
++        Ext::ShaArm,
++        Ext::ShaX86,
++        Ext::ClmulX86,
++        Ext::ClmulArm,
++        Ext::AesX86,
++        Ext::AesArm,
++    ];
+ 
+-    /// The name `targetFeature` takes: `sha-arm`, `sha-x86`, `clmul-x86`, `clmul-arm`.
++    /// The name `targetFeature` takes: `sha-arm`, `sha-x86`, `clmul-x86`, `clmul-arm`,
++    /// `aes-x86`, `aes-arm`.
+     pub fn name(self) -> &'static str {
+         match self {
+             Ext::ShaArm => "sha-arm",
+             Ext::ShaX86 => "sha-x86",
+             Ext::ClmulX86 => "clmul-x86",
+             Ext::ClmulArm => "clmul-arm",
++            Ext::AesX86 => "aes-x86",
++            Ext::AesArm => "aes-arm",
+         }
+     }
+ 
++    /// Whether code gated on `self` may take `other`'s check as true: `other` is `self`, or an
++    /// extension every CPU with `self` has (the carry-less multiplication of an AES target).
++    pub fn covers(self, other: Ext) -> bool {
++        self == other
++            || matches!(
++                (self, other),
++                (Ext::AesX86, Ext::ClmulX86) | (Ext::AesArm, Ext::ClmulArm)
++            )
++    }
++
++    /// Whether the runtime keeps a flag byte for it ([`Ext::flag_symbol`]). The AES extensions
++    /// have none (no new runtime code, #2241): their check is true only where the build
++    /// guarantees them, and velt/simd computes the run-time answer in Velt (std/simd/aes.vlt).
++    pub fn has_flag(self) -> bool {
++        !matches!(self, Ext::AesX86 | Ext::AesArm)
++    }
++
+     /// The extension `targetFeature(name)` names.
+     pub fn named(name: &str) -> Option<Ext> {
+         Ext::ALL.into_iter().find(|e| e.name() == name)
+@@ -43,14 +77,21 @@ impl Ext {
+             Ext::ShaX86 => "velt_cpu_sha_x86",
+             Ext::ClmulX86 => "velt_cpu_clmul_x86",
+             Ext::ClmulArm => "velt_cpu_clmul_arm",
++            Ext::AesX86 | Ext::AesArm => "",
+         }
+     }
+ 
++    /// Whether it is an extension of the same architecture as `other` (code gated on one runs
++    /// only there, so the other architecture's checks are false in it).
++    pub fn same_arch(self, other: Ext) -> bool {
++        self.on_arch("aarch64") == other.on_arch("aarch64")
++    }
++
+     /// Whether its instructions exist on an architecture (`aarch64`, `x86_64`, …).
+     pub fn on_arch(self, arch: &str) -> bool {
+         match self {
+-            Ext::ShaArm | Ext::ClmulArm => arch == "aarch64",
+-            Ext::ShaX86 | Ext::ClmulX86 => arch == "x86_64",
++            Ext::ShaArm | Ext::ClmulArm | Ext::AesArm => arch == "aarch64",
++            Ext::ShaX86 | Ext::ClmulX86 | Ext::AesX86 => arch == "x86_64",
+         }
+     }
+ 
+@@ -62,7 +103,8 @@ impl Ext {
+             Ext::ShaArm => "+sha2",
+             Ext::ShaX86 => "+sha",
+             Ext::ClmulX86 => "+pclmul",
+-            Ext::ClmulArm => "+aes",
++            Ext::ClmulArm | Ext::AesArm => "+aes",
++            Ext::AesX86 => "+aes",
+         }
+     }
+ 
+@@ -73,14 +115,16 @@ impl Ext {
+             Ext::ShaArm => "+sha2",
+             Ext::ShaX86 => "+sha,+ssse3,+sse4.1",
+             Ext::ClmulX86 => "+pclmul,+ssse3,+sse4.1",
+-            Ext::ClmulArm => "+aes",
++            Ext::ClmulArm | Ext::AesArm => "+aes",
++            Ext::AesX86 => "+aes,+pclmul,+ssse3,+sse4.1",
+         }
+     }
+ }
+ 
+ /// An instruction of a CPU extension, with the operands in the instruction's own order: the SHA
+-/// ones on `u32x4` values (lane 0 the low 32 bits), the carry-less multiplications on `u64x2`.
+-/// Every one is also emulated in Velt (std/simd/sha.vlt, std/simd/clmul.vlt), which runs where
++/// ones on `u32x4` values (lane 0 the low 32 bits), the carry-less multiplications on `u64x2`,
++/// the AES ones on `u8x16` (byte 0 first, FIPS-197's column-major state). Every one is also
++/// emulated in Velt (std/simd/sha.vlt, std/simd/clmul.vlt, std/simd/aes.vlt), which runs where
+ /// the CPU lacks it.
+ #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+ pub enum ExtOp {
+@@ -127,11 +171,32 @@ pub enum ExtOp {
+     /// ARM `PMULL` (`PMULL2` for both high lanes) as `Pclmulqdq` takes its lanes: the 64-bit
+     /// lanes of `a` and `b` that `imm` selects, multiplied without carries.
+     Pmull(u8),
++    /// x86 `AESENC (state, rk)`: ShiftRows, SubBytes, MixColumns, then XOR `rk`.
++    Aesenc,
++    /// x86 `AESENCLAST (state, rk)`: ShiftRows, SubBytes, then XOR `rk`.
++    Aesenclast,
++    /// x86 `AESDEC (state, rk)`: InvShiftRows, InvSubBytes, InvMixColumns, then XOR `rk`.
++    Aesdec,
++    /// x86 `AESDECLAST (state, rk)`: InvShiftRows, InvSubBytes, then XOR `rk`.
++    Aesdeclast,
++    /// x86 `AESIMC (a)`: InvMixColumns.
++    AesimcX86,
++    /// x86 `AESKEYGENASSIST (a, 0)`: SubWord of words 1 and 3, each also rotated; a round
++    /// constant is an XOR after it (std/simd/aes.vlt), so the immediate is always 0.
++    Aeskeygenassist,
++    /// ARM `AESE (state, key)`: XOR `key`, then ShiftRows and SubBytes.
++    Aese,
++    /// ARM `AESD (state, key)`: XOR `key`, then InvShiftRows and InvSubBytes.
++    Aesd,
++    /// ARM `AESMC (a)`: MixColumns.
++    Aesmc,
++    /// ARM `AESIMC (a)`: InvMixColumns.
++    AesimcArm,
+ }
+ 
+ impl ExtOp {
+     /// Every operation (with each immediate of `Sha1Rnds4`).
+-    pub const ALL: [ExtOp; 28] = [
++    pub const ALL: [ExtOp; 38] = [
+         ExtOp::Sha1C,
+         ExtOp::Sha1P,
+         ExtOp::Sha1M,
+@@ -160,6 +225,16 @@ impl ExtOp {
+         ExtOp::Pmull(1),
+         ExtOp::Pmull(16),
+         ExtOp::Pmull(17),
++        ExtOp::Aesenc,
++        ExtOp::Aesenclast,
++        ExtOp::Aesdec,
++        ExtOp::Aesdeclast,
++        ExtOp::AesimcX86,
++        ExtOp::Aeskeygenassist,
++        ExtOp::Aese,
++        ExtOp::Aesd,
++        ExtOp::Aesmc,
++        ExtOp::AesimcArm,
+     ];
+ 
+     /// The extension it belongs to.
+@@ -177,14 +252,23 @@ impl ExtOp {
+             | ExtOp::Sha256Su1 => Ext::ShaArm,
+             ExtOp::Pclmulqdq(_) => Ext::ClmulX86,
+             ExtOp::Pmull(_) => Ext::ClmulArm,
++            ExtOp::Aesenc
++            | ExtOp::Aesenclast
++            | ExtOp::Aesdec
++            | ExtOp::Aesdeclast
++            | ExtOp::AesimcX86
++            | ExtOp::Aeskeygenassist => Ext::AesX86,
++            ExtOp::Aese | ExtOp::Aesd | ExtOp::Aesmc | ExtOp::AesimcArm => Ext::AesArm,
+             _ => Ext::ShaX86,
+         }
+     }
+ 
+     /// The operation's part of its symbol (`velt_simd_<type>_<name>`): `sha256h`, `sha1rnds4_2`,
+-    /// `pclmulqdq_16`.
++    /// `pclmulqdq_16`, `aesenc`, `aesimc_arm`.
+     pub fn name(self) -> String {
+         match self {
++            ExtOp::AesimcX86 => "aesimc".to_string(),
++            ExtOp::AesimcArm => "aesimc_arm".to_string(),
+             ExtOp::Sha1Rnds4(f) => format!("sha1rnds4_{f}"),
+             ExtOp::Pclmulqdq(imm) => format!("pclmulqdq_{imm}"),
+             ExtOp::Pmull(imm) => format!("pmull_{imm}"),
+@@ -192,10 +276,12 @@ impl ExtOp {
+         }
+     }
+ 
+-    /// The vector type whose symbols it is among: `u32x4` (SHA) or `u64x2` (carry-less).
++    /// The vector type whose symbols it is among: `u32x4` (SHA), `u64x2` (carry-less) or
++    /// `u8x16` (AES).
+     pub fn type_name(self) -> &'static str {
+         match self {
+             ExtOp::Pclmulqdq(_) | ExtOp::Pmull(_) => "u64x2",
++            _ if matches!(self.ext(), Ext::AesX86 | Ext::AesArm) => "u8x16",
+             _ => "u32x4",
+         }
+     }
+@@ -204,6 +290,7 @@ impl ExtOp {
+     pub fn vector_operands(self) -> usize {
+         match self {
+             ExtOp::Sha1H => 0,
++            ExtOp::AesimcX86 | ExtOp::Aeskeygenassist | ExtOp::Aesmc | ExtOp::AesimcArm => 1,
+             ExtOp::Sha1Su0
+             | ExtOp::Sha256H
+             | ExtOp::Sha256H2
+diff --git a/crates/velt_vir/src/simd/mod.rs b/crates/velt_vir/src/simd/mod.rs
+index 34e5931da..e50e721cb 100644
+--- a/crates/velt_vir/src/simd/mod.rs
++++ b/crates/velt_vir/src/simd/mod.rs
+@@ -312,6 +312,10 @@ pub enum SimdCall {
+     /// `velt_simd_has_<ext>() -> bool`: whether the CPU has the extension (the runtime's flag;
+     /// `false` on another architecture, on wasm and under Cranelift).
+     Has(Ext),
++    /// `velt_simd_cpuid(leaf, subleaf) -> u32x4`: x86's `CPUID` (EAX, EBX, ECX, EDX in lanes 0 to
++    /// 3), how velt/simd computes the AES check in Velt (#2401, #2241). Zeros on every other
++    /// architecture, on wasm and under Cranelift. Pure: its answers never change.
++    Cpuid,
+     /// `velt_simd_prefetch(addr)`: start loading the cache line at `addr` for a read soon
+     /// (`arrayPrefetch`); never faults. Nothing under Cranelift and on wasm.
+     Prefetch,
+@@ -324,6 +328,9 @@ impl SimdCall {
+         if rest == "prefetch" {
+             return Some(SimdCall::Prefetch);
+         }
++        if rest == "cpuid" {
++            return Some(SimdCall::Cpuid);
++        }
+         if let Some(ext) = rest.strip_prefix("has_") {
+             return Ext::named(&ext.replace('_', "-")).map(SimdCall::Has);
+         }
+@@ -351,6 +358,7 @@ impl SimdCall {
+         match self {
+             SimdCall::Has(_) => (vec![], Bool),
+             SimdCall::Prefetch => (vec![Ptr], Unit),
++            SimdCall::Cpuid => (vec![U32, U32], V128),
+             SimdCall::Inst(ExtOp::Sha1H) => (vec![U32], U32),
+             SimdCall::Inst(op) => {
+                 let mut params = vec![V128; op.vector_operands()];
+diff --git a/crates/velt_vir/src/simd/tests.rs b/crates/velt_vir/src/simd/tests.rs
+index 9a9244cde..c9f15a22c 100644
+--- a/crates/velt_vir/src/simd/tests.rs
++++ b/crates/velt_vir/src/simd/tests.rs
+@@ -158,6 +158,17 @@ fn sha_symbols_and_signatures() {
+     assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_pmull_0"), None);
+     assert_eq!(ExtOp::Pmull(17).ext(), Ext::ClmulArm);
+     assert_eq!(ExtOp::Pclmulqdq(1).ext(), Ext::ClmulX86);
++    assert_eq!(sig("velt_simd_u8x16_aesenc"), (vec![V128, V128], V128));
++    assert_eq!(sig("velt_simd_u8x16_aesimc"), (vec![V128], V128));
++    assert_eq!(sig("velt_simd_u8x16_aesimc_arm"), (vec![V128], V128));
++    assert_eq!(sig("velt_simd_u8x16_aeskeygenassist"), (vec![V128], V128));
++    assert_eq!(sig("velt_simd_has_aes_arm"), (vec![], Bool));
++    assert_eq!(sig("velt_simd_cpuid"), (vec![U32, U32], V128));
++    assert_eq!(ExtOp::AesimcArm.ext(), Ext::AesArm);
++    assert_eq!(ExtOp::Aeskeygenassist.ext(), Ext::AesX86);
++    assert_eq!(SimdCall::of_symbol("velt_simd_u32x4_aesenc"), None);
++    assert!(Ext::AesX86.covers(Ext::ClmulX86) && !Ext::ClmulX86.covers(Ext::AesX86));
++    assert!(!Ext::AesArm.covers(Ext::ClmulX86) && Ext::AesArm.covers(Ext::AesArm));
+ }
+ 
+ #[test]
+diff --git a/crates/veltc/tests/gated_functions.rs b/crates/veltc/tests/gated_functions.rs
+index 9571e09ce..f198e0cdf 100644
+--- a/crates/veltc/tests/gated_functions.rs
++++ b/crates/veltc/tests/gated_functions.rs
+@@ -218,7 +218,7 @@ export function probe(): i64 {
+         MAIN_PROBE,
+         &[
+             "`targetFeature` must be the first statement of a function (not a method or closure)",
+-            "`targetFeature` takes the target as a string literal: one of sha-arm, sha-x86, clmul-x86, clmul-arm",
++            "`targetFeature` takes the target as a string literal: one of sha-arm, sha-x86, clmul-x86, clmul-arm, aes-x86, aes-arm",
+         ],
+     );
+ }
+@@ -503,3 +503,97 @@ fn clmul_gated_functions_are_the_bare_instruction() {
+         );
+     }
+ }
++
++/// The AES rounds and a carry-less product in a function gated on the AES target, per
++/// architecture: the target covers the carry-less multiplication too (#2401).
++const AES_PROBE: &str = r#"
++import { u8x16 } from "velt/simd";
++
++export function roundsX86(a: u8x16, k: u8x16, n: i64): u8x16 {
++  targetFeature("aes-x86");
++  let x = a;
++  for (let i = 0; i < n; i++) {
++    x = x.aesenc(k).aesenclast(k).aesdec(k).aesdeclast(k).aesimc().aeskeygenassist(1);
++    x = x.xor(x.asU64x2().clmulLow(k.asU64x2()).asU8x16());
++  }
++  return x;
++}
++
++export function roundsArm(a: u8x16, k: u8x16, n: i64): u8x16 {
++  targetFeature("aes-arm");
++  let x = a;
++  for (let i = 0; i < n; i++) {
++    x = x.aese(k).aesmc().aesd(k).aesimc();
++    x = x.xor(x.asU64x2().clmulHigh(k.asU64x2()).asU8x16());
++  }
++  return x;
++}
++"#;
++
++const AES_MAIN: &str = "import { roundsArm, roundsX86 } from \"velt/zz_gated\";\nimport { u8x16 } from \"velt/simd\";\n\nfunction main() {\n  const a = u8x16.splat(3);\n  if (u8x16.hasAesX86()) {\n    console.log(roundsX86(a, a, 3).lane(0));\n  }\n  if (u8x16.hasAesArm()) {\n    console.log(roundsArm(a, a, 3).lane(0));\n  }\n}\n";
++
++#[test]
++fn aes_gated_functions_are_the_bare_instructions() {
++    // In a function gated on `aes-x86` (`aes-arm`), the methods are AES-NI (ARMv8 AES) and the
++    // carry-less product PCLMULQDQ (PMULL), with no check, no CPUID and no emulation left.
++    let dir = test_dir::TestDir::new();
++    for (triple, gated, instructions) in [
++        (
++            "x86_64-unknown-linux-gnu",
++            "N9roundsX86",
++            &[
++                "@llvm.x86.aesni.aesenc(",
++                "@llvm.x86.aesni.aesenclast(",
++                "@llvm.x86.aesni.aesdec(",
++                "@llvm.x86.aesni.aesdeclast(",
++                "@llvm.x86.aesni.aesimc(",
++                "@llvm.x86.aesni.aeskeygenassist(",
++                "@llvm.x86.pclmulqdq(",
++            ][..],
++        ),
++        (
++            "aarch64-unknown-linux-gnu",
++            "N9roundsArm",
++            &[
++                "@llvm.aarch64.crypto.aese(",
++                "@llvm.aarch64.crypto.aesmc(",
++                "@llvm.aarch64.crypto.aesd(",
++                "@llvm.aarch64.crypto.aesimc(",
++                "@llvm.aarch64.neon.pmull64(",
++            ][..],
++        ),
++    ] {
++        let args = ["build", "--release", "--emit", "llvm", "--target", triple];
++        let out = velt(&dir, AES_PROBE, AES_MAIN, &args);
++        let ir = String::from_utf8_lossy(&out.stdout);
++        let stderr = String::from_utf8_lossy(&out.stderr);
++        assert!(out.status.success(), "{triple}: {stderr}");
++        let functions = llvm_functions(&ir);
++        let gated = functions
++            .iter()
++            .find(|(f, _)| f.contains("zz__gated") && f.contains(gated))
++            .map(|(f, _)| f.clone())
++            .unwrap_or_else(|| panic!("{triple}: no {gated}"));
++        let reached = reachable(&functions, &gated);
++        for (f, body) in &reached {
++            for check in [
++                "@velt.simd.has_",
++                "velt_cpu_",
++                "@velt.simd.cpuid",
++                "aes__emulation",
++                "N6detect",
++            ] {
++                assert!(
++                    !body.contains(check),
++                    "{triple}: {f}, reached from {gated}, has {check}:\n{body}"
++                );
++            }
++        }
++        for instruction in instructions {
++            assert!(
++                reached.iter().any(|(_, body)| body.contains(instruction)),
++                "{triple}: {gated} uses {instruction}"
++            );
++        }
++    }
++}
+diff --git a/crates/veltc/tests/wasm_goldens.rs b/crates/veltc/tests/wasm_goldens.rs
+index a9549bd9b..115dd192b 100644
+--- a/crates/veltc/tests/wasm_goldens.rs
++++ b/crates/veltc/tests/wasm_goldens.rs
+@@ -170,6 +170,7 @@ const WASI_DIRS: &[&str] = &["m1", "m2", "m3", "m4", "lang"];
+ /// and the std code written with them.
+ const WASI_STD: &[&str] = &[
+     "bytes_search",
++    "simd_aes",
+     "simd_dot",
+     "simd_floats",
+     "simd_generic",
+diff --git a/docs/internals/contracts/rt_abi.md b/docs/internals/contracts/rt_abi.md
+index 56c2c83cb..812e48e7a 100644
+--- a/docs/internals/contracts/rt_abi.md
++++ b/docs/internals/contracts/rt_abi.md
+@@ -502,10 +502,26 @@ uint8_t velt_cpu_clmul_x86;  /* 1: x86-64 with PCLMULQDQ, SSSE3 and SSE4.1 */
+ uint8_t velt_cpu_clmul_arm;  /* 1: aarch64 with PMULL (64-bit polynomial multiply) */
+ ```
+ 
++**AES (#2401) [additive].** `velt_simd_u8x16_<op>` for the AES round instructions (`aesenc`,
++`aesenclast`, `aesdec`, `aesdeclast`, `aesimc`, `aeskeygenassist` (immediate 0) on x86-64;
++`aese`, `aesd`, `aesmc`, `aesimc_arm` on aarch64), `(state, key) -> state` or `(a) -> a` on the
++bytes. Their extensions `aes-x86` (AES-NI with PCLMULQDQ, SSSE3 and SSE4.1) and `aes-arm`
++(FEAT_AES with FEAT_PMULL) have **no runtime flag**: `velt_simd_has_aes_x86()` /
++`velt_simd_has_aes_arm()` is `1` only in a function gated on the extension (and `velt_opt`'s
++clones for it) and `0` everywhere else. std/simd/aes.vlt computes the run-time answer in Velt,
++once: the carry-less flag of the architecture, plus CPUID leaf 1 ECX bit 25 on x86-64 (FEAT_PMULL
++implies FEAT_AES on aarch64), and not with `VELT_SIMD_DISABLE=aes`. `velt_simd_cpuid(leaf,
++subleaf) -> u32x4` [additive] is x86's `CPUID` (EAX, EBX, ECX, EDX in lanes 0 to 3), emitted
++inline (no runtime function) and pure; it gives zeros on another architecture, on wasm and under
++Cranelift. A function gated on `aes-x86` (`aes-arm`) has the carry-less extension of its
++architecture too (`Ext::covers`): its `velt_simd_has_clmul_x86` (`_arm`) is `1` as well, and in
++any gated function the checks of the other architecture's extensions are `0`. `--cpu` never makes
++the AES checks constant: the CPU check's lists (below) do not have AES.
++
+ LLVM gives a function that calls one of these operations the extension's own feature (`+sha2`,
+-`+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated* function (VIR
+-`Function::target`, HIR `Program::cpu_targets`, from std's `targetFeature("sha-arm" |
+-"sha-x86" | "clmul-x86" | "clmul-arm")`, every call of
++`+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated*
++function (VIR `Function::target`, HIR `Program::cpu_targets`, from std's `targetFeature("sha-arm" |
++"sha-x86" | "clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm")`, every call of
+ which sema keeps behind the check) gets the extension's whole set (`+sha,+ssse3,+sse4.1` on x86),
+ and the check of its own extension (`velt_simd_has_<ext>`) is the constant `1` there, so the
+ emulation behind it is dead code. The ordinary functions it calls that check that extension
+diff --git a/scripts/gen-simd-api.py b/scripts/gen-simd-api.py
+index f67d1cf7e..27ca12ac1 100755
+--- a/scripts/gen-simd-api.py
++++ b/scripts/gen-simd-api.py
+@@ -371,4 +371,6 @@ open(f"{STD}/simd.vlt","w",encoding="utf-8",newline="\n").write(f"""// velt/simd
+ import "velt/simd/sha";
+ // Carry-less multiplication on `u64x2` (hand-written, not generated).
+ import "velt/simd/clmul";
++// The AES round instructions on `u8x16` (hand-written, not generated).
++import "velt/simd/aes";
+ """)
+diff --git a/std/lang/intrinsics/simd.vlt b/std/lang/intrinsics/simd.vlt
+index b44a8a2d7..23643cf28 100644
+--- a/std/lang/intrinsics/simd.vlt
++++ b/std/lang/intrinsics/simd.vlt
+@@ -12,9 +12,10 @@ export declare intrinsic function strLoadPartialU8x16(s: string, at: u64, count:
+ 
+ /**
+  * As the first statement of a std function (not a method or closure): the function is compiled
+- * for the CPU extension `name` (`"sha-arm"`, `"sha-x86"`, `"clmul-x86"` or `"clmul-arm"`, a
+- * string literal), which backends may use anywhere in it. Every call of it must then sit behind
+- * velt/simd's check of that extension (`if (u32x4.hasShaX86())`) or in a function gated on the
+- * same one.
++ * for the CPU extension `name` (`"sha-arm"`, `"sha-x86"`, `"clmul-x86"`, `"clmul-arm"`,
++ * `"aes-x86"` or `"aes-arm"`, a string literal), which backends may use anywhere in it. Every call
++ * of it must then sit behind velt/simd's check of that extension (`if (u32x4.hasShaX86())`) or in
++ * a function gated on the same one. An AES target includes its architecture's carry-less
++ * multiplication (`u8x16.hasAesArm()` implies `u64x2.hasClmulArm()`).
+  */
+ export declare intrinsic function targetFeature(name: string): void;
+diff --git a/std/simd/aes.vlt b/std/simd/aes.vlt
+new file mode 100644
+index 000000000..8cb59a3a0
+--- /dev/null
++++ b/std/simd/aes.vlt
+@@ -0,0 +1,246 @@
++// velt/simd (internal): the CPU's AES round instructions as methods of `u8x16` (#2401,
++// https://veltlang.com/docs/std/simd/ "AES instructions"): x86's AES-NI (Intel's `_mm_aesenc_si128`
++// & co.) and the ARMv8 ones (ACLE `vaeseq_u8` & co.), named after the instruction, on the state
++// as FIPS-197 lays it out (byte 0 first, column by column).
++//
++// Every method always works, on every CPU: it is the instruction where the CPU has it, the other
++// architecture's instructions where those are what the CPU has (`aesenc` is ARM's `aese` and
++// `aesmc` with a zero key, `aese` is x86's `aesenclast` after an XOR), and otherwise an exact
++// emulation (std/simd/aes_emulation.vlt). The emulation looks bytes up in tables, so it is not
++// constant time: code for secrets (std/crypto's AES) checks `u8x16.hasAes()` first and keeps its
++// own constant-time path where it is false.
++//
++// `u8x16.hasAesX86()` is AES-NI with the PCLMULQDQ, SSSE3 and SSE4.1 every such CPU has, and
++// `u8x16.hasAesArm()` FEAT_AES with FEAT_PMULL: what AES-GCM needs, so a function gated on one
++// (`targetFeature("aes-x86")`, std only) has the carry-less multiplication too, and both are bare
++// instructions there. The checks are false on another architecture, on WebAssembly, in debug
++// (Cranelift) builds, and with `VELT_SIMD_DISABLE=aes` (or `clmul`). The runtime keeps no flag for
++// them (#2241): the answer comes from the CPU (`cpuid` on x86-64, the PMULL flag on arm64), read
++// once and kept in `DETECTED`; `--cpu` does not make them constant, as the start-up check does not
++// know AES.
++
++import { noInline } from "velt/lang/intrinsics";
++import {
++  invMixColumns,
++  invSubShift,
++  mixColumns,
++  subBytes,
++  subShift,
++} from "velt/simd/aes_emulation";
++
++// True only where the build guarantees the extension: in a function gated on it (and the clones
++// of what it calls); false elsewhere, where `DETECTED` answers.
++declare function velt_simd_has_aes_x86(): bool;
++declare function velt_simd_has_aes_arm(): bool;
++// The carry-less flags (the runtime's), which the AES checks include.
++declare function velt_simd_has_clmul_x86(): bool;
++declare function velt_simd_has_clmul_arm(): bool;
++// x86's CPUID (EAX, EBX, ECX, EDX); zeros elsewhere.
++declare function velt_simd_cpuid(leaf: u32, subleaf: u32): u32x4;
++// A lane without the index check (whose panic would make `detect` track its callers).
++declare function velt_simd_u32x4_lane(v: u32x4, index: u64): u32;
++// The instructions themselves: only where the check is true.
++declare function velt_simd_u8x16_aesenc(state: u8x16, rk: u8x16): u8x16;
++declare function velt_simd_u8x16_aesenclast(state: u8x16, rk: u8x16): u8x16;
++declare function velt_simd_u8x16_aesdec(state: u8x16, rk: u8x16): u8x16;
++declare function velt_simd_u8x16_aesdeclast(state: u8x16, rk: u8x16): u8x16;
++declare function velt_simd_u8x16_aesimc(a: u8x16): u8x16;
++declare function velt_simd_u8x16_aeskeygenassist(a: u8x16): u8x16;
++declare function velt_simd_u8x16_aese(state: u8x16, key: u8x16): u8x16;
++declare function velt_simd_u8x16_aesd(state: u8x16, key: u8x16): u8x16;
++declare function velt_simd_u8x16_aesmc(a: u8x16): u8x16;
++declare function velt_simd_u8x16_aesimc_arm(a: u8x16): u8x16;
++
++// What this CPU has, once computed: bit 0 set (computed), bit 1 the x86 instructions, bit 2 the
++// ARM ones. A static atomic (a word of writable data, no module state); threads that race to
++// compute it store the same value.
++const DETECTED = new Atomic<u32>(0);
++
++// Whether `VELT_SIMD_DISABLE` (a comma-separated list) names `aes`.
++function disabled(): bool {
++  const list = process.env.VELT_SIMD_DISABLE;
++  if (list === undefined) {
++    return false;
++  }
++  for (const name of list.split(",")) {
++    if (name.trim() == "aes") {
++      return true;
++    }
++  }
++  return false;
++}
++
++// Out of line: it runs once, and every check would otherwise carry a copy.
++function detect(): u32 {
++  noInline();
++  let found: u32 = 1;
++  if (disabled()) {
++    return found;
++  }
++  // CPUID leaf 1, ECX bit 25: AES-NI (the flag covers PCLMULQDQ, SSSE3 and SSE4.1).
++  if (
++    velt_simd_has_clmul_x86() && (velt_simd_u32x4_lane(velt_simd_cpuid(1, 0), 2) & (1 << 25)) != 0
++  ) {
++    found |= 2;
++  }
++  // FEAT_PMULL implies FEAT_AES (Arm ARM, ID_AA64ISAR0_EL1.AES = 0b0010).
++  if (velt_simd_has_clmul_arm()) {
++    found |= 4;
++  }
++  return found;
++}
++
++// `DETECTED`, computing it the first time.
++function cpu(): u32 {
++  let found = DETECTED.load("relaxed");
++  if (found == 0) {
++    found = detect();
++    DETECTED.store(found, "relaxed");
++  }
++  return found;
++}
++
++// The checks. The carry-less flag first: it is the constant `false` on the other architecture,
++// so there the whole check folds away, and in a function gated on the AES target both are true.
++function x86(): bool {
++  return velt_simd_has_aes_x86() || (velt_simd_has_clmul_x86() && (cpu() & 2) != 0);
++}
++
++function arm(): bool {
++  return velt_simd_has_aes_arm() || (velt_simd_has_clmul_arm() && (cpu() & 4) != 0);
++}
++
++extend u8x16 {
++  /** Whether the CPU has x86's AES-NI, with PCLMULQDQ, SSSE3 and SSE4.1 (false off x86-64, in debug builds, and with `VELT_SIMD_DISABLE=aes` or `clmul`). */
++  static hasAesX86(): bool {
++    return x86();
++  }
++
++  /** Whether the CPU has the ARMv8 AES instructions, with PMULL (false off arm64, in debug builds, and with `VELT_SIMD_DISABLE=aes` or `clmul`). */
++  static hasAesArm(): bool {
++    return arm();
++  }
++
++  /** Whether the AES methods are instructions here rather than the (not constant-time) emulation. */
++  static hasAes(): bool {
++    return x86() || arm();
++  }
++
++  /** x86 AESENC: one encryption round, ShiftRows, SubBytes and MixColumns of `this`, then XOR the round key `rk`. */
++  aesenc(rk: u8x16): u8x16 {
++    if (x86()) {
++      return velt_simd_u8x16_aesenc(this, rk);
++    }
++    if (arm()) {
++      return velt_simd_u8x16_aesmc(velt_simd_u8x16_aese(this, u8x16.splat(0))).xor(rk);
++    }
++    return mixColumns(subShift(this)).xor(rk);
++  }
++
++  /** x86 AESENCLAST: the last encryption round, ShiftRows and SubBytes of `this`, then XOR `rk`. */
++  aesenclast(rk: u8x16): u8x16 {
++    if (x86()) {
++      return velt_simd_u8x16_aesenclast(this, rk);
++    }
++    if (arm()) {
++      return velt_simd_u8x16_aese(this, u8x16.splat(0)).xor(rk);
++    }
++    return subShift(this).xor(rk);
++  }
++
++  /** x86 AESDEC: one round of the equivalent inverse cipher, InvShiftRows, InvSubBytes and InvMixColumns of `this`, then XOR `rk` (a decryption key passed through `aesimc`). */
++  aesdec(rk: u8x16): u8x16 {
++    if (x86()) {
++      return velt_simd_u8x16_aesdec(this, rk);
++    }
++    if (arm()) {
++      return velt_simd_u8x16_aesimc_arm(velt_simd_u8x16_aesd(this, u8x16.splat(0))).xor(rk);
++    }
++    return invMixColumns(invSubShift(this)).xor(rk);
++  }
++
++  /** x86 AESDECLAST: the last decryption round, InvShiftRows and InvSubBytes of `this`, then XOR `rk`. */
++  aesdeclast(rk: u8x16): u8x16 {
++    if (x86()) {
++      return velt_simd_u8x16_aesdeclast(this, rk);
++    }
++    if (arm()) {
++      return velt_simd_u8x16_aesd(this, u8x16.splat(0)).xor(rk);
++    }
++    return invSubShift(this).xor(rk);
++  }
++
++  /** AESIMC (x86 and ARM): InvMixColumns of `this`, which turns an encryption round key into one for `aesdec`. */
++  aesimc(): u8x16 {
++    if (x86()) {
++      return velt_simd_u8x16_aesimc(this);
++    }
++    if (arm()) {
++      return velt_simd_u8x16_aesimc_arm(this);
++    }
++    return invMixColumns(this);
++  }
++
++  /**
++   * x86 AESKEYGENASSIST with round constant `rcon` (0–255): with X1 and X3 the 32-bit lanes 1 and 3
++   * of `this`, lanes SubWord(X1), RotWord(SubWord(X1)) ^ rcon, SubWord(X3), RotWord(SubWord(X3)) ^ rcon.
++   */
++  aeskeygenassist(rcon: u32): u8x16 {
++    if (rcon > 255) {
++      panic("RangeError: u8x16.aeskeygenassist: rcon must be 0 to 255");
++    }
++    const constant = u32x4.splat(0).withLane(1, rcon).withLane(3, rcon).asU8x16();
++    if (x86()) {
++      return velt_simd_u8x16_aeskeygenassist(this).xor(constant);
++    }
++    if (arm()) {
++      // `aese` with a zero key is SubBytes after ShiftRows: byte `j` of SubBytes(this) is byte
++      // `i` of it where ShiftRows moves byte `j` to `i`.
++      const t = velt_simd_u8x16_aese(this, u8x16.splat(0));
++      return u8x16
++        .shuffle(t, t, 4, 1, 14, 11, 1, 14, 11, 4, 12, 9, 6, 3, 9, 6, 3, 12)
++        .xor(constant);
++    }
++    const s = subBytes(this);
++    return u8x16
++      .shuffle(s, s, 4, 5, 6, 7, 5, 6, 7, 4, 12, 13, 14, 15, 13, 14, 15, 12)
++      .xor(constant);
++  }
++
++  /** ARM AESE: XOR the round key `key` into `this`, then ShiftRows and SubBytes. */
++  aese(key: u8x16): u8x16 {
++    if (arm()) {
++      return velt_simd_u8x16_aese(this, key);
++    }
++    if (x86()) {
++      return velt_simd_u8x16_aesenclast(this.xor(key), u8x16.splat(0));
++    }
++    return subShift(this.xor(key));
++  }
++
++  /** ARM AESD: XOR `key` into `this`, then InvShiftRows and InvSubBytes. */
++  aesd(key: u8x16): u8x16 {
++    if (arm()) {
++      return velt_simd_u8x16_aesd(this, key);
++    }
++    if (x86()) {
++      return velt_simd_u8x16_aesdeclast(this.xor(key), u8x16.splat(0));
++    }
++    return invSubShift(this.xor(key));
++  }
++
++  /** ARM AESMC: MixColumns of `this`. */
++  aesmc(): u8x16 {
++    if (arm()) {
++      return velt_simd_u8x16_aesmc(this);
++    }
++    if (x86()) {
++      // InvShiftRows and InvSubBytes, undone by AESENC's ShiftRows and SubBytes: its MixColumns is left.
++      return velt_simd_u8x16_aesenc(
++        velt_simd_u8x16_aesdeclast(this, u8x16.splat(0)),
++        u8x16.splat(0),
++      );
++    }
++    return mixColumns(this);
++  }
++}
+diff --git a/std/simd/aes_emulation.vlt b/std/simd/aes_emulation.vlt
+new file mode 100644
+index 000000000..61df40254
+--- /dev/null
++++ b/std/simd/aes_emulation.vlt
+@@ -0,0 +1,102 @@
++// velt/simd (internal): the exact emulation of the CPU's AES round instructions
++// (std/simd/aes.vlt), from FIPS-197's SubBytes, ShiftRows and MixColumns and their inverses, for a
++// CPU without them. For correctness only: it looks bytes up in tables, so its time depends on the
++// data, and std's AES (std/crypto) keeps its constant-time bitsliced code where the CPU lacks the
++// instructions.
++
++// FIPS-197's S-box (Figure 7) and its inverse (Figure 14), as hex text: a string is one token,
++// where 256 number literals would cost every program that loads velt/simd time to compile.
++const SBOX =
++  "637c777bf26b6fc53001672bfed7ab76ca82c97dfa5947f0add4a2af9ca472c0b7fd9326363ff7cc34a5e5f171d8311504c723c31896059a071280e2eb27b27509832c1a1b6e5aa0523bd6b329e32f8453d100ed20fcb15b6acbbe394a4c58cfd0efaafb434d338545f9027f503c9fa851a3408f929d38f5bcb6da2110fff3d2cd0c13ec5f974417c4a77e3d645d197360814fdc222a908846eeb814de5e0bdbe0323a0a4906245cc2d3ac629195e479e7c8376d8dd54ea96c56f4ea657aae08ba78252e1ca6b4c6e8dd741f4bbd8b8a703eb5664803f60e613557b986c11d9ee1f8981169d98e949b1e87e9ce5528df8ca1890dbfe6426841992d0fb054bb16";
++
++// InvSubBytes.
++const INV_SBOX =
++  "52096ad53036a538bf40a39e81f3d7fb7ce339829b2fff87348e4344c4dee9cb547b9432a6c2233dee4c950b42fac34e082ea16628d924b2765ba2496d8bd12572f8f66486689816d4a45ccc5d65b6926c704850fdedb9da5e154657a78d9d8490d8ab008cbcd30af7e45805b8b34506d02c1e8fca3f0f02c1afbd0301138a6b3a9111414f67dcea97f2cfcef0b4e67396ac7422e7ad3585e2f937e81c75df6e47f11a711d29c5896fb7620eaa18be1bfc563e4bc6d279209adbc0fe78cd5af41fdda8338807c731b11210592780ec5f60517fa919b54a0d2de57a9f93c99cefa0e03b4dae2af5b0c8ebbb3c83539961172b047eba77d626e169146355210c7d";
++
++// ShiftRows (byte `i` of the result is byte `SHIFT[i]` of the state, column-major as FIPS-197's
++// state is), InvShiftRows, and no shift.
++const SHIFT: u8[] = [0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11];
++const INV_SHIFT: u8[] = [0, 13, 10, 7, 4, 1, 14, 11, 8, 5, 2, 15, 12, 9, 6, 3];
++const NO_SHIFT: u8[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
++
++// The value of hex digit `c` (a character code).
++function digit(c: u32): u32 {
++  return c <= 0x39 ? c - 0x30 : c - 0x57;
++}
++
++// Entry `x` of the table `box` (hex text).
++function entry(box: string, x: u32): u8 {
++  const at = (2 * x) as i64;
++  return ((digit(box.charCodeAt(at) as u32) << 4) | digit(box.charCodeAt(at + 1) as u32)) as u8;
++}
++
++// Byte `i` of the result: `box[v[from[i]]]`.
++function substitute(v: u8x16, from: u8[], box: string): u8x16 {
++  const out: u8[] = [];
++  for (let i: usize = 0; i < 16; i++) {
++    out.push(entry(box, v.lane(from[i] as usize) as u32));
++  }
++  return u8x16.load(out, 0);
++}
++
++/** ShiftRows then SubBytes (they commute). */
++export function subShift(v: u8x16): u8x16 {
++  return substitute(v, SHIFT, SBOX);
++}
++
++/** InvShiftRows then InvSubBytes. */
++export function invSubShift(v: u8x16): u8x16 {
++  return substitute(v, INV_SHIFT, INV_SBOX);
++}
++
++/** SubBytes alone. */
++export function subBytes(v: u8x16): u8x16 {
++  return substitute(v, NO_SHIFT, SBOX);
++}
++
++// The product of `a` and `b` in GF(2^8) modulo x^8 + x^4 + x^3 + x + 1.
++function gmul(a: u32, b: u32): u32 {
++  let x = a;
++  let y = b;
++  let r: u32 = 0;
++  while (y != 0) {
++    if ((y & 1) != 0) {
++      r ^= x;
++    }
++    x = ((x << 1) ^ ((x >> 7) * 0x1b)) & 0xff;
++    y >>= 1;
++  }
++  return r;
++}
++
++// Each column times the circulant matrix with first row `c0 c1 c2 c3`.
++function mixWith(v: u8x16, c0: u32, c1: u32, c2: u32, c3: u32): u8x16 {
++  const out: u8[] = [];
++  for (let c: usize = 0; c < 16; c += 4) {
++    const a: u32[] = [
++      v.lane(c) as u32,
++      v.lane(c + 1) as u32,
++      v.lane(c + 2) as u32,
++      v.lane(c + 3) as u32,
++    ];
++    for (let r: usize = 0; r < 4; r++) {
++      const x =
++        gmul(c0, a[r]) ^
++        gmul(c1, a[(r + 1) % 4]) ^
++        gmul(c2, a[(r + 2) % 4]) ^
++        gmul(c3, a[(r + 3) % 4]);
++      out.push(x as u8);
++    }
++  }
++  return u8x16.load(out, 0);
++}
++
++/** MixColumns. */
++export function mixColumns(v: u8x16): u8x16 {
++  return mixWith(v, 2, 3, 1, 1);
++}
++
++/** InvMixColumns. */
++export function invMixColumns(v: u8x16): u8x16 {
++  return mixWith(v, 14, 11, 13, 9);
++}
+diff --git a/std/simd/index.vlt b/std/simd/index.vlt
+index 7560f6335..c042f9f30 100644
+--- a/std/simd/index.vlt
++++ b/std/simd/index.vlt
+@@ -19,6 +19,8 @@ export { bf16x8 } from "velt/simd/bf16x8";
+ import "velt/simd/sha";
+ // Carry-less multiplication on `u64x2` (hand-written, not generated).
+ import "velt/simd/clmul";
++// The AES round instructions on `u8x16` (hand-written, not generated).
++import "velt/simd/aes";
+ // The int8 dot product on `i32x4` (hand-written, not generated).
+ import "velt/simd/dot";
+ // The operators: `a + b`, `-v`, `v << n`, `v[i]`, … (scripts/gen-simd-ops.py).
+diff --git a/tests/golden/std/simd_aes.out b/tests/golden/std/simd_aes.out
+new file mode 100644
+index 000000000..32fed027b
+--- /dev/null
++++ b/tests/golden/std/simd_aes.out
+@@ -0,0 +1,7 @@
++a0fafe1788542cb123a339392a6c7605 d014f9a8c9ee2589e13f0cc8b6630ca6
++B true true true true
++C.1 true true true true
++15 24fc79ccbf0979e9371ac23c6d68de36
++C.3 true true true true
++f2271a79bdf22d14d47b1db11be39cb8
++boolean boolean boolean
+diff --git a/tests/golden/std/simd_aes.vlt b/tests/golden/std/simd_aes.vlt
+new file mode 100644
+index 000000000..a2a1c8dc9
+--- /dev/null
++++ b/tests/golden/std/simd_aes.vlt
+@@ -0,0 +1,183 @@
++// check: also with VELT_SIMD_DISABLE=aes
++// The AES instructions of `velt/simd` (#2401): AES-128 and AES-256 with the published AES-NI
++// (Intel) and ARMv8 (ACLE) instruction sequences, against FIPS-197's key expansion and test
++// vectors, encryption and decryption, and every operation on 10,000 pseudo-random inputs folded
++// into a checksum. Where the CPU has the instructions (arm64 and x86-64 release builds) they run
++// as instructions, the other architecture's methods through its own instructions, and elsewhere
++// (debug builds, WebAssembly, VELT_SIMD_DISABLE=aes) as the emulation: the same output everywhere
++// is the differential test between them.
++import { u8x16, u32x4 } from "velt/simd";
++
++function bytes(text: string): u8x16 {
++  const out: u8[] = [];
++  for (let i: i64 = 0; i < 32; i += 2) {
++    out.push(Number.parseInt(text.substring(i, i + 2), 16) as u8);
++  }
++  return u8x16.load(out, 0);
++}
++
++function hex(v: u8x16): string {
++  let s = "";
++  for (let i: usize = 0; i < 16; i++) {
++    s += v.lane(i).toString(16).padStart(2, "0");
++  }
++  return s;
++}
++
++// `v` moved up by 4 bytes (x86's PSLLDQ 4), zeros in.
++function up4(v: u8x16): u8x16 {
++  const z = u8x16.splat(0);
++  return u8x16.shuffle(z, v, 0, 0, 0, 0, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27);
++}
++
++// Every 32-bit lane set to lane `lane` of `v`.
++function broadcast(v: u8x16, lane: u32): u8x16 {
++  const w = v.asU32x4();
++  if (lane == 3) {
++    return u32x4.shuffle(w, w, 3, 3, 3, 3).asU8x16();
++  }
++  return u32x4.shuffle(w, w, 2, 2, 2, 2).asU8x16();
++}
++
++// k ^ (k << 32) ^ (k << 64) ^ (k << 96) ^ t: one step of the key schedule.
++function step(k: u8x16, t: u8x16): u8x16 {
++  let x = k;
++  x = x.xor(up4(x));
++  x = x.xor(up4(x));
++  x = x.xor(up4(x));
++  return x.xor(t);
++}
++
++const RCON: u32[] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1b, 0x36];
++
++// The AES-128 round keys, with AESKEYGENASSIST (Intel's white paper).
++function expand128(key: u8x16): u8x16[] {
++  const keys: u8x16[] = [key];
++  let k = key;
++  for (const rcon of RCON) {
++    k = step(k, broadcast(k.aeskeygenassist(rcon), 3));
++    keys.push(k);
++  }
++  return keys;
++}
++
++// The AES-256 round keys: the odd steps take SubWord without rotation or constant (rcon 0, lane 2).
++function expand256(key0: u8x16, key1: u8x16): u8x16[] {
++  const keys: u8x16[] = [key0, key1];
++  let a = key0;
++  let b = key1;
++  for (let i: usize = 0; i < 7; i++) {
++    a = step(a, broadcast(b.aeskeygenassist(RCON[i]), 3));
++    keys.push(a);
++    if (i < 6) {
++      b = step(b, broadcast(a.aeskeygenassist(0), 2));
++      keys.push(b);
++    }
++  }
++  return keys;
++}
++
++function encryptX86(keys: u8x16[], block: u8x16): u8x16 {
++  const last = keys.length - 1;
++  let s = block.xor(keys[0]);
++  for (let i: usize = 1; i < last; i++) {
++    s = s.aesenc(keys[i]);
++  }
++  return s.aesenclast(keys[last]);
++}
++
++function encryptArm(keys: u8x16[], block: u8x16): u8x16 {
++  const last = keys.length - 1;
++  let s = block;
++  for (let i: usize = 0; i < last - 1; i++) {
++    s = s.aese(keys[i]).aesmc();
++  }
++  return s.aese(keys[last - 1]).xor(keys[last]);
++}
++
++// The equivalent inverse cipher: the middle round keys through InvMixColumns.
++function decryptX86(keys: u8x16[], block: u8x16): u8x16 {
++  const last = keys.length - 1;
++  let s = block.xor(keys[last]);
++  for (let i = last - 1; i >= 1; i--) {
++    s = s.aesdec(keys[i].aesimc());
++  }
++  return s.aesdeclast(keys[0]);
++}
++
++function decryptArm(keys: u8x16[], block: u8x16): u8x16 {
++  const last = keys.length - 1;
++  let s = block.aesd(keys[last]).aesimc();
++  for (let i = last - 1; i >= 2; i--) {
++    s = s.aesd(keys[i].aesimc()).aesimc();
++  }
++  return s.aesd(keys[1].aesimc()).xor(keys[0]);
++}
++
++function check(name: string, keys: u8x16[], plain: string, cipher: string) {
++  const p = bytes(plain);
++  const c = bytes(cipher);
++  console.log(
++    name,
++    hex(encryptX86(keys, p)) == cipher,
++    hex(encryptArm(keys, p)) == cipher,
++    hex(decryptX86(keys, c)) == plain,
++    hex(decryptArm(keys, c)) == plain,
++  );
++}
++
++let seed: u64 = 0x9e3779b97f4a7c15;
++
++function next(): u64 {
++  seed ^= seed << 13;
++  seed ^= seed >> 7;
++  seed ^= seed << 17;
++  return seed;
++}
++
++function random(): u8x16 {
++  const lo = next();
++  const hi = next();
++  return u32x4.splat(lo as u32)
++    .withLane(1, (lo >> 32) as u32)
++    .withLane(2, hi as u32)
++    .withLane(3, (hi >> 32) as u32)
++    .asU8x16();
++}
++
++function main() {
++  // FIPS-197 Appendix A.1: the AES-128 key expansion.
++  const keys = expand128(bytes("2b7e151628aed2a6abf7158809cf4f3c"));
++  console.log(hex(keys[1]), hex(keys[10]));
++  // Appendix B, and Appendix C.1 (AES-128) and C.3 (AES-256).
++  check("B", keys, "3243f6a8885a308d313198a2e0370734", "3925841d02dc09fbdc118597196a0b32");
++  const c1 = expand128(bytes("000102030405060708090a0b0c0d0e0f"));
++  check("C.1", c1, "00112233445566778899aabbccddeeff", "69c4e0d86a7b0430d8cdb78070b4c55a");
++  const c3 = expand256(bytes("000102030405060708090a0b0c0d0e0f"), bytes("101112131415161718191a1b1c1d1e1f"));
++  console.log(c3.length, hex(c3[14]));
++  check("C.3", c3, "00112233445566778899aabbccddeeff", "8ea2b7ca516745bfeafc49904b496089");
++  // Every operation on random inputs, folded in.
++  let sum = u8x16.splat(0);
++  for (let i = 0; i < 10000; i++) {
++    const a = random();
++    const k = random();
++    const rcon = (next() & 0xff) as u32;
++    const outs: u8x16[] = [
++      a.aesenc(k),
++      a.aesenclast(k),
++      a.aesdec(k),
++      a.aesdeclast(k),
++      a.aesimc(),
++      a.aeskeygenassist(rcon),
++      a.aese(k),
++      a.aesd(k),
++      a.aesmc(),
++    ];
++    for (const out of outs) {
++      // Rotate the bytes by one, so the order of the results counts.
++      sum = u8x16.shuffle(sum, sum, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 0).xor(out);
++    }
++  }
++  console.log(hex(sum));
++  console.log(typeof u8x16.hasAes(), typeof u8x16.hasAesX86(), typeof u8x16.hasAesArm());
++}
+diff --git a/tests/golden/std/simd_aeskeygenassist_range.code b/tests/golden/std/simd_aeskeygenassist_range.code
+new file mode 100644
+index 000000000..398050c62
+--- /dev/null
++++ b/tests/golden/std/simd_aeskeygenassist_range.code
+@@ -0,0 +1 @@
++101
+diff --git a/tests/golden/std/simd_aeskeygenassist_range.out b/tests/golden/std/simd_aeskeygenassist_range.out
+new file mode 100644
+index 000000000..7f1f45a80
+--- /dev/null
++++ b/tests/golden/std/simd_aeskeygenassist_range.out
+@@ -0,0 +1,4 @@
++0 241
++1 240
++54 199
++255 14
+diff --git a/tests/golden/std/simd_aeskeygenassist_range.stderr b/tests/golden/std/simd_aeskeygenassist_range.stderr
+new file mode 100644
+index 000000000..c1d38b148
+--- /dev/null
++++ b/tests/golden/std/simd_aeskeygenassist_range.stderr
+@@ -0,0 +1 @@
++RangeError: u8x16.aeskeygenassist: rcon must be 0 to 255
+diff --git a/tests/golden/std/simd_aeskeygenassist_range.vlt b/tests/golden/std/simd_aeskeygenassist_range.vlt
+new file mode 100644
+index 000000000..0360f53c0
+--- /dev/null
++++ b/tests/golden/std/simd_aeskeygenassist_range.vlt
+@@ -0,0 +1,10 @@
++// `u8x16.aeskeygenassist`'s `rcon` is AESKEYGENASSIST's 8-bit immediate: past 255 it is a
++// RangeError, on every CPU (the check comes before the instruction or the emulation).
++import { u8x16 } from "velt/simd";
++
++function main() {
++  const key = u8x16.splat(0x2b);
++  for (const rcon of [0, 1, 0x36, 255, 256]) {
++    console.log(rcon, key.aeskeygenassist(rcon as u32).lane(4));
++  }
++}
+-- 
+2.54.0 (Apple Git-157)
+

@@ -1,0 +1,2 @@
+const m = process.argv.length > 3 ? (parseInt(process.argv[3]) as i64) : 1;
+console.log(`${process.argv.length} ${m} ${process.argv[3]}`);

@@ -1,0 +1,10 @@
+[package]
+name = "ringbench"
+version = "0.1.0"
+edition = "2021"
+[dependencies]
+ring = "=0.17.14"
+rustls-webpki = { version = "=0.103.15", default-features = false, features = ["std", "ring"] }
+rustls-pki-types = "=1.15.1"
+[profile.release]
+opt-level = 3

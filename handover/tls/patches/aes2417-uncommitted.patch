@@ -1,0 +1,534 @@
+diff --git a/crates/veltc/tests/gated_functions.rs b/crates/veltc/tests/gated_functions.rs
+index f198e0cdf..c25dc199a 100644
+--- a/crates/veltc/tests/gated_functions.rs
++++ b/crates/veltc/tests/gated_functions.rs
+@@ -597,3 +597,162 @@ fn aes_gated_functions_are_the_bare_instructions() {
+         }
+     }
+ }
++
++/// Functions gated on the carry-less targets and on the AES targets, called both ways.
++const COVERS_PROBE: &str = r#"
++import { u8x16, u64x2 } from "velt/simd";
++
++function clmulX86(): i64 {
++  targetFeature("clmul-x86");
++  return 1;
++}
++
++function clmulArm(): i64 {
++  targetFeature("clmul-arm");
++  return 2;
++}
++
++function aesX86(): i64 {
++  targetFeature("aes-x86");
++  return 3;
++}
++
++function aesArm(): i64 {
++  targetFeature("aes-arm");
++  return 4;
++}
++
++// AES code may call the carry-less functions: the AES target has the instruction too.
++function fromAesX86(): i64 {
++  targetFeature("aes-x86");
++  return clmulX86();
++}
++
++function fromAesArm(): i64 {
++  targetFeature("aes-arm");
++  return clmulArm();
++}
++
++export function probe(): i64 {
++  let n: i64 = 0;
++  if (u8x16.hasAesX86()) {
++    n += clmulX86() + fromAesX86() + aesX86();
++  }
++  if (u8x16.hasAesArm()) {
++    n += clmulArm() + fromAesArm() + aesArm();
++  }
++  REVERSE
++  return n;
++}
++"#;
++
++#[test]
++fn the_aes_targets_cover_the_carry_less_ones_and_not_the_reverse() {
++    // A function gated on `clmul-x86` (`clmul-arm`) is called behind the AES check and from a
++    // function gated on the AES target of its architecture.
++    let dir = test_dir::TestDir::new();
++    let good = COVERS_PROBE.replace("REVERSE", "");
++    for release in [false, true] {
++        let args: &[&str] = if release {
++            &["run", "--release"]
++        } else {
++            &["run"]
++        };
++        let out = velt(&dir, &good, MAIN_PROBE, args);
++        let stderr = String::from_utf8_lossy(&out.stderr);
++        assert!(out.status.success(), "{stderr}");
++    }
++    // The carry-less check, or a function gated on the carry-less target, does not cover AES.
++    for (arch, reverse) in [
++        (
++            "x86",
++            "if (u64x2.hasClmulX86()) {\n    n += aesX86();\n  }",
++        ),
++        (
++            "arm",
++            "if (u64x2.hasClmulArm()) {\n    n += aesArm();\n  }",
++        ),
++    ] {
++        let message = format!(
++            "`aes{}` runs only where the CPU has `aes-{arch}`, so it must be called behind that check",
++            if arch == "x86" { "X86" } else { "Arm" }
++        );
++        check_fails(
++            &COVERS_PROBE.replace("REVERSE", reverse),
++            MAIN_PROBE,
++            &[&message],
++        );
++    }
++    let from_clmul = "\nfunction fromClmulX86(): i64 {\n  targetFeature(\"clmul-x86\");\n  return aesX86();\n}\n\nfunction fromClmulArm(): i64 {\n  targetFeature(\"clmul-arm\");\n  return aesArm();\n}\n";
++    check_fails(
++        &format!("{}{from_clmul}", COVERS_PROBE.replace("REVERSE", "")),
++        MAIN_PROBE,
++        &[
++            "`aesX86` runs only where the CPU has `aes-x86`, so it must be called behind that check",
++            "`aesArm` runs only where the CPU has `aes-arm`, so it must be called behind that check",
++        ],
++    );
++}
++
++/// What the CPU has, as `u8x16.hasAesX86()` / `hasAesArm()` define it (std/simd/aes.vlt): AES-NI
++/// with PCLMULQDQ, SSSE3 and SSE4.1, or FEAT_PMULL (which implies FEAT_AES).
++fn cpu_has_aes() -> (bool, bool) {
++    #[cfg(target_arch = "x86_64")]
++    {
++        let x86 = std::arch::is_x86_feature_detected!("aes")
++            && std::arch::is_x86_feature_detected!("pclmulqdq")
++            && std::arch::is_x86_feature_detected!("ssse3")
++            && std::arch::is_x86_feature_detected!("sse4.1");
++        (x86, false)
++    }
++    #[cfg(target_arch = "aarch64")]
++    {
++        (false, std::arch::is_aarch64_feature_detected!("pmull"))
++    }
++    #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
++    {
++        (false, false)
++    }
++}
++
++#[test]
++fn the_aes_checks_follow_the_cpu_and_velt_simd_disable() {
++    // A release build (debug builds report no extension): the checks answer what the CPU has,
++    // and false with `VELT_SIMD_DISABLE=aes` or `clmul`.
++    let dir = test_dir::TestDir::new();
++    let main = "import { u8x16 } from \"velt/simd\";\n\nfunction main() {\n  console.log(u8x16.hasAes(), u8x16.hasAesX86(), u8x16.hasAesArm());\n}\n";
++    let exe = dir
++        .path()
++        .join(format!("aes_checks{}", std::env::consts::EXE_SUFFIX));
++    let out = velt(
++        &dir,
++        "export const unused = 0;\n",
++        main,
++        &["build", "--release", "-o", exe.to_str().unwrap()],
++    );
++    assert!(
++        out.status.success(),
++        "{}",
++        String::from_utf8_lossy(&out.stderr)
++    );
++    let (x86, arm) = cpu_has_aes();
++    for (disable, want) in [
++        (None, (x86 || arm, x86, arm)),
++        (Some("aes"), (false, false, false)),
++        (Some("clmul"), (false, false, false)),
++        (Some("sha,aes"), (false, false, false)),
++    ] {
++        let mut cmd = no_window::command(&exe);
++        match disable {
++            Some(v) => cmd.env("VELT_SIMD_DISABLE", v),
++            None => cmd.env_remove("VELT_SIMD_DISABLE"),
++        };
++        let run = cmd.output().unwrap();
++        assert!(run.status.success(), "{disable:?}");
++        assert_eq!(
++            String::from_utf8_lossy(&run.stdout).trim(),
++            format!("{} {} {}", want.0, want.1, want.2),
++            "VELT_SIMD_DISABLE={disable:?}"
++        );
++    }
++}
+diff --git a/std/simd/aes.vlt b/std/simd/aes.vlt
+index 25a4ae837..53b77aadb 100644
+--- a/std/simd/aes.vlt
++++ b/std/simd/aes.vlt
+@@ -6,18 +6,21 @@
+ // Every method always works, on every CPU: it is the instruction where the CPU has it, the other
+ // architecture's instructions where those are what the CPU has (`aesenc` is ARM's `aese` and
+ // `aesmc` with a zero key, `aese` is x86's `aesenclast` after an XOR), and otherwise an exact
+-// emulation (std/simd/aes_emulation.vlt). The emulation looks bytes up in tables, so it is not
+-// constant time: code for secrets (std/crypto's AES) checks `u8x16.hasAes()` first and keeps its
+-// own constant-time path where it is false.
++// emulation (std/simd/aes_emulation.vlt). The emulation is constant time (a boolean circuit for the
++// S-box, no tables, and no branch, loop or product that depends on the data) but far slower than
++// the instructions: code that needs speed (std/crypto's AES) checks `u8x16.hasAes()` first and
++// keeps its own bitsliced path, four blocks at a time, where it is false.
+ //
+ // `u8x16.hasAesX86()` is AES-NI with the PCLMULQDQ, SSSE3 and SSE4.1 every such CPU has, and
+ // `u8x16.hasAesArm()` FEAT_AES with FEAT_PMULL: what AES-GCM needs, so a function gated on one
+ // (`targetFeature("aes-x86")`, std only) has the carry-less multiplication too, and both are bare
+ // instructions there. The checks are false on another architecture, on WebAssembly, in debug
+-// (Cranelift) builds, and with `VELT_SIMD_DISABLE=aes` (or `clmul`). The runtime keeps no flag for
+-// them (#2241): the answer comes from the CPU (`cpuid` on x86-64, the PMULL flag on arm64), read
+-// once and kept in `DETECTED`; `--cpu` does not make them constant, as the start-up check does not
+-// know AES.
++// (Cranelift) builds, and with `VELT_SIMD_DISABLE=aes`. `VELT_SIMD_DISABLE=clmul` makes them false
++// too, except in x86-64 code built for a CPU with PCLMULQDQ (`--cpu native`, or a CPU name with
++// it): there the carry-less check is constant (std/simd/clmul.vlt), so `hasAesX86()` stays true
++// and only `aes` turns it off. The runtime keeps no flag for them (#2241): the answer comes from the CPU
++// (`cpuid` on x86-64, the PMULL flag on arm64), read once and kept in `DETECTED`; `--cpu` does not
++// make them constant, as the start-up check does not know AES.
+ 
+ import { noInline } from "velt/lang/intrinsics";
+ import {
+@@ -112,7 +115,7 @@ function arm(): bool {
+ }
+ 
+ extend u8x16 {
+-  /** Whether the CPU has x86's AES-NI, with PCLMULQDQ, SSSE3 and SSE4.1 (false off x86-64, in debug builds, and with `VELT_SIMD_DISABLE=aes` or `clmul`). */
++  /** Whether the CPU has x86's AES-NI, with PCLMULQDQ, SSSE3 and SSE4.1 (false off x86-64, in debug builds, and with `VELT_SIMD_DISABLE=aes`; with `clmul` too, unless built with `--cpu native` or a CPU name that has PCLMULQDQ). */
+   static hasAesX86(): bool {
+     return x86();
+   }
+@@ -122,7 +125,7 @@ extend u8x16 {
+     return arm();
+   }
+ 
+-  /** Whether the AES methods are instructions here rather than the (not constant-time) emulation. */
++  /** Whether the AES methods are instructions here rather than the (constant-time but much slower) emulation. */
+   static hasAes(): bool {
+     return x86() || arm();
+   }
+diff --git a/std/simd/aes_emulation.vlt b/std/simd/aes_emulation.vlt
+index 61df40254..cd0735170 100644
+--- a/std/simd/aes_emulation.vlt
++++ b/std/simd/aes_emulation.vlt
+@@ -1,102 +1,212 @@
+ // velt/simd (internal): the exact emulation of the CPU's AES round instructions
+ // (std/simd/aes.vlt), from FIPS-197's SubBytes, ShiftRows and MixColumns and their inverses, for a
+-// CPU without them. For correctness only: it looks bytes up in tables, so its time depends on the
+-// data, and std's AES (std/crypto) keeps its constant-time bitsliced code where the CPU lacks the
+-// instructions.
++// CPU without them. It is constant time: no table, no branch and no loop depends on the data, and
++// nothing multiplies by a secret bit. Every step is a lane operation on the whole state:
++// SubBytes is Boyar and Peralta's boolean circuit (as std/crypto/aes_bitslice.vlt has it) on the
++// state's eight bit planes, the shifts of rows are fixed shuffles, and MixColumns doubles in
++// GF(2^8) with a mask made from each byte's top bit.
+ 
+-// FIPS-197's S-box (Figure 7) and its inverse (Figure 14), as hex text: a string is one token,
+-// where 256 number literals would cost every program that loads velt/simd time to compile.
+-const SBOX =
+-  "637c777bf26b6fc53001672bfed7ab76ca82c97dfa5947f0add4a2af9ca472c0b7fd9326363ff7cc34a5e5f171d8311504c723c31896059a071280e2eb27b27509832c1a1b6e5aa0523bd6b329e32f8453d100ed20fcb15b6acbbe394a4c58cfd0efaafb434d338545f9027f503c9fa851a3408f929d38f5bcb6da2110fff3d2cd0c13ec5f974417c4a77e3d645d197360814fdc222a908846eeb814de5e0bdbe0323a0a4906245cc2d3ac629195e479e7c8376d8dd54ea96c56f4ea657aae08ba78252e1ca6b4c6e8dd741f4bbd8b8a703eb5664803f60e613557b986c11d9ee1f8981169d98e949b1e87e9ce5528df8ca1890dbfe6426841992d0fb054bb16";
+-
+-// InvSubBytes.
+-const INV_SBOX =
+-  "52096ad53036a538bf40a39e81f3d7fb7ce339829b2fff87348e4344c4dee9cb547b9432a6c2233dee4c950b42fac34e082ea16628d924b2765ba2496d8bd12572f8f66486689816d4a45ccc5d65b6926c704850fdedb9da5e154657a78d9d8490d8ab008cbcd30af7e45805b8b34506d02c1e8fca3f0f02c1afbd0301138a6b3a9111414f67dcea97f2cfcef0b4e67396ac7422e7ad3585e2f937e81c75df6e47f11a711d29c5896fb7620eaa18be1bfc563e4bc6d279209adbc0fe78cd5af41fdda8338807c731b11210592780ec5f60517fa919b54a0d2de57a9f93c99cefa0e03b4dae2af5b0c8ebbb3c83539961172b047eba77d626e169146355210c7d";
++// Bit 0 of every byte: the planes are 0 or 1 in each lane.
++function ones(): u8x16 {
++  return u8x16.splat(1);
++}
+ 
+-// ShiftRows (byte `i` of the result is byte `SHIFT[i]` of the state, column-major as FIPS-197's
+-// state is), InvShiftRows, and no shift.
+-const SHIFT: u8[] = [0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11];
+-const INV_SHIFT: u8[] = [0, 13, 10, 7, 4, 1, 14, 11, 8, 5, 2, 15, 12, 9, 6, 3];
+-const NO_SHIFT: u8[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
++// FIPS-197's S-box on every byte of `v`: plane `k` (bit `k` of each byte) goes in as input
++// `x(7 - k)` of Boyar and Peralta's 113-gate circuit, whose outputs `s0` to `s7` are bits 7 to 0.
++function sbox(v: u8x16): u8x16 {
++  const one = ones();
++  const x0 = (v >> 7) & one;
++  const x1 = (v >> 6) & one;
++  const x2 = (v >> 5) & one;
++  const x3 = (v >> 4) & one;
++  const x4 = (v >> 3) & one;
++  const x5 = (v >> 2) & one;
++  const x6 = (v >> 1) & one;
++  const x7 = v & one;
++  // Top linear transformation.
++  const y14 = x3 ^ x5;
++  const y13 = x0 ^ x6;
++  const y9 = x0 ^ x3;
++  const y8 = x0 ^ x5;
++  const t0 = x1 ^ x2;
++  const y1 = t0 ^ x7;
++  const y4 = y1 ^ x3;
++  const y12 = y13 ^ y14;
++  const y2 = y1 ^ x0;
++  const y5 = y1 ^ x6;
++  const y3 = y5 ^ y8;
++  const t1 = x4 ^ y12;
++  const y15 = t1 ^ x5;
++  const y20 = t1 ^ x1;
++  const y6 = y15 ^ x7;
++  const y10 = y15 ^ t0;
++  const y11 = y20 ^ y9;
++  const y7 = x7 ^ y11;
++  const y17 = y10 ^ y11;
++  const y19 = y10 ^ y8;
++  const y16 = t0 ^ y11;
++  const y21 = y13 ^ y16;
++  const y18 = x0 ^ y16;
++  // Non-linear section.
++  const t2 = y12 & y15;
++  const t3 = y3 & y6;
++  const t4 = t3 ^ t2;
++  const t5 = y4 & x7;
++  const t6 = t5 ^ t2;
++  const t7 = y13 & y16;
++  const t8 = y5 & y1;
++  const t9 = t8 ^ t7;
++  const t10 = y2 & y7;
++  const t11 = t10 ^ t7;
++  const t12 = y9 & y11;
++  const t13 = y14 & y17;
++  const t14 = t13 ^ t12;
++  const t15 = y8 & y10;
++  const t16 = t15 ^ t12;
++  const t17 = t4 ^ t14;
++  const t18 = t6 ^ t16;
++  const t19 = t9 ^ t14;
++  const t20 = t11 ^ t16;
++  const t21 = t17 ^ y20;
++  const t22 = t18 ^ y19;
++  const t23 = t19 ^ y21;
++  const t24 = t20 ^ y18;
++  const t25 = t21 ^ t22;
++  const t26 = t21 & t23;
++  const t27 = t24 ^ t26;
++  const t28 = t25 & t27;
++  const t29 = t28 ^ t22;
++  const t30 = t23 ^ t24;
++  const t31 = t22 ^ t26;
++  const t32 = t31 & t30;
++  const t33 = t32 ^ t24;
++  const t34 = t23 ^ t33;
++  const t35 = t27 ^ t33;
++  const t36 = t24 & t35;
++  const t37 = t36 ^ t34;
++  const t38 = t27 ^ t36;
++  const t39 = t29 & t38;
++  const t40 = t25 ^ t39;
++  const t41 = t40 ^ t37;
++  const t42 = t29 ^ t33;
++  const t43 = t29 ^ t40;
++  const t44 = t33 ^ t37;
++  const t45 = t42 ^ t41;
++  const z0 = t44 & y15;
++  const z1 = t37 & y6;
++  const z2 = t33 & x7;
++  const z3 = t43 & y16;
++  const z4 = t40 & y1;
++  const z5 = t29 & y7;
++  const z6 = t42 & y11;
++  const z7 = t45 & y17;
++  const z8 = t41 & y10;
++  const z9 = t44 & y12;
++  const z10 = t37 & y3;
++  const z11 = t33 & y4;
++  const z12 = t43 & y13;
++  const z13 = t40 & y5;
++  const z14 = t29 & y2;
++  const z15 = t42 & y9;
++  const z16 = t45 & y14;
++  const z17 = t41 & y8;
++  // Bottom linear transformation.
++  const t46 = z15 ^ z16;
++  const t47 = z10 ^ z11;
++  const t48 = z5 ^ z13;
++  const t49 = z9 ^ z10;
++  const t50 = z2 ^ z12;
++  const t51 = z2 ^ z5;
++  const t52 = z7 ^ z8;
++  const t53 = z0 ^ z3;
++  const t54 = z6 ^ z7;
++  const t55 = z16 ^ z17;
++  const t56 = z12 ^ t48;
++  const t57 = t50 ^ t53;
++  const t58 = z4 ^ t46;
++  const t59 = z3 ^ t54;
++  const t60 = t46 ^ t57;
++  const t61 = z14 ^ t57;
++  const t62 = t52 ^ t58;
++  const t63 = t49 ^ t58;
++  const t64 = z4 ^ t59;
++  const t65 = t61 ^ t62;
++  const t66 = z1 ^ t63;
++  const s0 = t59 ^ t63;
++  const s6 = t56 ^ one ^ t62;
++  const s7 = t48 ^ one ^ t60;
++  const t67 = t64 ^ t65;
++  const s3 = t53 ^ t66;
++  const s4 = t51 ^ t66;
++  const s5 = t47 ^ t65;
++  const s1 = t64 ^ one ^ s3;
++  const s2 = t55 ^ one ^ t67;
++  return (
++    (s0 << 7) | (s1 << 6) | (s2 << 5) | (s3 << 4) | (s4 << 3) | (s5 << 2) | (s6 << 1) | s7
++  );
++}
+ 
+-// The value of hex digit `c` (a character code).
+-function digit(c: u32): u32 {
+-  return c <= 0x39 ? c - 0x30 : c - 0x57;
++// Each byte rotated left by `n` bits.
++function rotl(v: u8x16, n: u32): u8x16 {
++  return (v << n) | (v >> (8 - n));
+ }
+ 
+-// Entry `x` of the table `box` (hex text).
+-function entry(box: string, x: u32): u8 {
+-  const at = (2 * x) as i64;
+-  return ((digit(box.charCodeAt(at) as u32) << 4) | digit(box.charCodeAt(at + 1) as u32)) as u8;
++// The linear part of the S-box's inverse affine map (FIPS-197 5.3.2): bit i is the XOR of bits
++// i + 2, i + 5 and i + 7 (mod 8).
++function inverseLinear(v: u8x16): u8x16 {
++  return rotl(v, 1) ^ rotl(v, 3) ^ rotl(v, 6);
+ }
+ 
+-// Byte `i` of the result: `box[v[from[i]]]`.
+-function substitute(v: u8x16, from: u8[], box: string): u8x16 {
+-  const out: u8[] = [];
+-  for (let i: usize = 0; i < 16; i++) {
+-    out.push(entry(box, v.lane(from[i] as usize) as u32));
+-  }
+-  return u8x16.load(out, 0);
++// InvSubBytes from the forward circuit. With A the affine map and L its linear part's inverse,
++// S(y) = A(y^-1) ^ 0x63 and InvS(x) = (L(x) ^ 0x05)^-1, and y^-1 = L(S(y)) ^ 0x05.
++function invSbox(v: u8x16): u8x16 {
++  const five = u8x16.splat(5);
++  return inverseLinear(sbox(inverseLinear(v) ^ five)) ^ five;
+ }
+ 
+ /** ShiftRows then SubBytes (they commute). */
+ export function subShift(v: u8x16): u8x16 {
+-  return substitute(v, SHIFT, SBOX);
++  return sbox(u8x16.shuffle(v, v, 0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11));
+ }
+ 
+ /** InvShiftRows then InvSubBytes. */
+ export function invSubShift(v: u8x16): u8x16 {
+-  return substitute(v, INV_SHIFT, INV_SBOX);
++  return invSbox(u8x16.shuffle(v, v, 0, 13, 10, 7, 4, 1, 14, 11, 8, 5, 2, 15, 12, 9, 6, 3));
+ }
+ 
+ /** SubBytes alone. */
+ export function subBytes(v: u8x16): u8x16 {
+-  return substitute(v, NO_SHIFT, SBOX);
++  return sbox(v);
++}
++
++// Every byte times x in GF(2^8) modulo x^8 + x^4 + x^3 + x + 1: shifted left, and XOR 0x1b where
++// the top bit was set, by a mask (0 - bit is 0x00 or 0xff), not a branch or a product.
++function xtime(v: u8x16): u8x16 {
++  const top = u8x16.splat(0) - (v >> 7);
++  return (v << 1) ^ (top & u8x16.splat(0x1b));
+ }
+ 
+-// The product of `a` and `b` in GF(2^8) modulo x^8 + x^4 + x^3 + x + 1.
+-function gmul(a: u32, b: u32): u32 {
+-  let x = a;
+-  let y = b;
+-  let r: u32 = 0;
+-  while (y != 0) {
+-    if ((y & 1) != 0) {
+-      r ^= x;
+-    }
+-    x = ((x << 1) ^ ((x >> 7) * 0x1b)) & 0xff;
+-    y >>= 1;
+-  }
+-  return r;
++// Row `r` of each column (byte 4c + r) replaced by row r + 1 (mod 4).
++function rot1(v: u8x16): u8x16 {
++  return u8x16.shuffle(v, v, 1, 2, 3, 0, 5, 6, 7, 4, 9, 10, 11, 8, 13, 14, 15, 12);
+ }
+ 
+-// Each column times the circulant matrix with first row `c0 c1 c2 c3`.
+-function mixWith(v: u8x16, c0: u32, c1: u32, c2: u32, c3: u32): u8x16 {
+-  const out: u8[] = [];
+-  for (let c: usize = 0; c < 16; c += 4) {
+-    const a: u32[] = [
+-      v.lane(c) as u32,
+-      v.lane(c + 1) as u32,
+-      v.lane(c + 2) as u32,
+-      v.lane(c + 3) as u32,
+-    ];
+-    for (let r: usize = 0; r < 4; r++) {
+-      const x =
+-        gmul(c0, a[r]) ^
+-        gmul(c1, a[(r + 1) % 4]) ^
+-        gmul(c2, a[(r + 2) % 4]) ^
+-        gmul(c3, a[(r + 3) % 4]);
+-      out.push(x as u8);
+-    }
+-  }
+-  return u8x16.load(out, 0);
++// Row `r` of each column replaced by row r + 2 (mod 4).
++function rot2(v: u8x16): u8x16 {
++  return u8x16.shuffle(v, v, 2, 3, 0, 1, 6, 7, 4, 5, 10, 11, 8, 9, 14, 15, 12, 13);
+ }
+ 
+-/** MixColumns. */
++/** MixColumns: row r of a column becomes 2 a(r) ^ 3 a(r+1) ^ a(r+2) ^ a(r+3). */
+ export function mixColumns(v: u8x16): u8x16 {
+-  return mixWith(v, 2, 3, 1, 1);
++  const r1 = rot1(v);
++  const r2 = rot2(v);
++  return xtime(v ^ r1) ^ r1 ^ r2 ^ rot1(r2);
+ }
+ 
+-/** InvMixColumns. */
++/**
++ * InvMixColumns: the circulant matrix (0e 0b 0d 09) is MixColumns' times (05 00 04 00), so each
++ * column is first multiplied by that, a(r) ^ 4 (a(r) ^ a(r+2)), then mixed.
++ */
+ export function invMixColumns(v: u8x16): u8x16 {
+-  return mixWith(v, 14, 11, 13, 9);
++  return mixColumns(v ^ xtime(xtime(v ^ rot2(v))));
+ }
+diff --git a/tests/golden/std/simd_aes.out b/tests/golden/std/simd_aes.out
+index 32fed027b..9054c819d 100644
+--- a/tests/golden/std/simd_aes.out
++++ b/tests/golden/std/simd_aes.out
+@@ -4,4 +4,4 @@ C.1 true true true true
+ 15 24fc79ccbf0979e9371ac23c6d68de36
+ C.3 true true true true
+ f2271a79bdf22d14d47b1db11be39cb8
+-boolean boolean boolean
++false false false
+diff --git a/tests/golden/std/simd_aes.vlt b/tests/golden/std/simd_aes.vlt
+index 83473e659..b99e112a3 100644
+--- a/tests/golden/std/simd_aes.vlt
++++ b/tests/golden/std/simd_aes.vlt
+@@ -185,5 +185,13 @@ function main() {
+     }
+   }
+   console.log(hex(sum));
+-  console.log(typeof u8x16.hasAes(), typeof u8x16.hasAesX86(), typeof u8x16.hasAesArm());
++  // With VELT_SIMD_DISABLE set the checks are false on every CPU, so the methods above ran as the
++  // emulation; without it they follow the CPU, which crates/veltc/tests/gated_functions.rs
++  // compares them with. Both runs print `false false false`.
++  const off = process.env.VELT_SIMD_DISABLE !== undefined;
++  console.log(
++    off ? u8x16.hasAes() : false,
++    off ? u8x16.hasAesX86() : false,
++    off ? u8x16.hasAesArm() : false,
++  );
+ }
