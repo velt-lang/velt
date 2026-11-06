@@ -9,6 +9,13 @@
 import { BlockWriter } from "velt/compress/deflate/block_writer";
 import { copyBytes } from "velt/lang/bytes/copy";
 import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
+import { u64x2, u8x16 } from "velt/simd";
+
+// Unchecked: `common` keeps its 16-byte loads inside the window.
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_xor(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
 
 const W_SIZE: i64 = 32768;
 const W_MASK: i64 = 32767;
@@ -277,10 +284,7 @@ export class Matcher extends BlockWriter {
     let m = candidate;
     while (true) {
       if (w[m + best] == tail && w[m + best - 1] == tail1 && w[m] == first && w[m + 1] == second) {
-        let len: i64 = 2;
-        while (len < maxLen && w[m + len] == w[pos + len]) {
-          len++;
-        }
+        const len = common(w, m, pos, maxLen);
         if (len > best) {
           best = len;
           this.matchStart = m;
@@ -324,4 +328,38 @@ function rebase(links: u16[]) {
     const v = links[i];
     links[i] = v >= 32768 ? v - 32768 : 0;
   }
+}
+
+/**
+ * The bytes `w[a..]` and `w[b..]` (a < b) have in common, from the third (the first two are
+ * known to be), at most `max`: 16 at a time while the loads stay inside `w` (bytes past what
+ * came in may be compared, but the result is cut to `max`), then one at a time.
+ */
+function common(w: u8[], a: i64, b: i64, max: i64): i64 {
+  let n: i64 = 2;
+  const wide = (w.length as i64) - 16 - b;
+  const most = max < wide ? max : wide;
+  while (n < most) {
+    const x = velt_simd_u8x16_as_u64x2(
+      velt_simd_u8x16_xor(
+        velt_simd_u8x16_load(w, (a + n) as u64),
+        velt_simd_u8x16_load(w, (b + n) as u64),
+      ),
+    );
+    const lo = velt_simd_u64x2_lane(x, 0);
+    if (lo != 0) {
+      n += (lo.trailingZeros() >> 3) as i64;
+      return n < max ? n : max;
+    }
+    const hi = velt_simd_u64x2_lane(x, 1);
+    if (hi != 0) {
+      n += 8 + (hi.trailingZeros() >> 3) as i64;
+      return n < max ? n : max;
+    }
+    n += 16;
+  }
+  while (n < max && w[a + n] == w[b + n]) {
+    n++;
+  }
+  return n < max ? n : max;
 }
