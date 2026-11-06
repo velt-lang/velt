@@ -190,7 +190,7 @@ commit into a scratch bare repository, checked out into a staging directory, ren
 `GIT_TERMINAL_PROMPT=0`). The lock's `source` is `git+<url>[?branch=|tag=|rev=…][&path=…]#<commit>`
 (`GitSpec::source`/`parse_source`), and its `checksum` is `git::tree_checksum` of the whole
 checkout (every file, path order, `contents::checksum`'s encoding; symbolic links by target),
-verified on every use. Native code of a git package builds only with `VELT_NATIVE_FROM_SOURCE=1`,
+checked on every use as "Fetched trees" below says. Native code of a git package builds only with `VELT_NATIVE_FROM_SOURCE=1`,
 from a copy of the package in `<cache>/git-native/<name>/<commit>/`. `registry::publish` refuses a dependency with only
 `git` (a `version` beside it is published as the requirement). A target without `package.velt` is
 an npm source (`npm::provided::packages_at`): the `package.json` there, plus a workspace root's
@@ -212,20 +212,41 @@ the reader's `ValueKind::Num` keeps an unsuffixed integer's value); `Dependency:
 the `UrlSpec { url, sha256, strip, subdir }` (`subdir` is `path`). `url_source::check_fields`:
 `sha256` and `strip` need `url`; `url` needs `sha256` (64 lowercase hex digits), not with `git`,
 `branch`, `tag` or `rev`; `path` is a `/`-separated directory inside the archive; `url` passes
-`url_source::check_url`: `source_url::check_downloadable` (what an `allowNative` prefix
-comparison would refuse) and `https`, or plain `http` to this machine. The resolver's
-`Want::Url`/`Source::Url { spec, checksum, dir }`: `url_source::checkout` downloads the archive
-unless `<cache>/url/<sha256>/` holds it (`velt_toolchain::install::download`: every redirect hop
-`https` or this machine, at most `MAX_ARCHIVE` = 512 MiB read), checks the SHA-256 of the bytes,
-extracts it there with `vpm::extract` (a concurrent install's equal tree is taken), then goes
+`url_source::check_url`: a lowercase scheme, `source_url::check_downloadable` (what an
+`allowNative` prefix comparison would refuse) and `https`, or plain `http` to this machine, which
+only a manifest the root controls may name (`dependency_requirements` refuses it in a fetched
+one). The resolver's `Want::Url`/`Source::Url { spec, checksum, dir }`: `url_source::checkout`
+downloads the archive (`url_source::fetch`: each redirect hop checked as the first URL, plain
+`http` only after `http`, a relative `Location` resolved; at most `MAX_ARCHIVE` = 512 MiB read)
+unless `<cache>/url/<sha256>/` holds it for this URL, checks the SHA-256 of the bytes, extracts it
+there with `vpm::extract` (a concurrent install's equal tree is taken), and records beside it in
+`<sha256>.verified` the raw tree's checksum, each URL whose bytes hashed to it, and its links. A
+cache hit from a URL not recorded downloads and checks once (the raw tree is keyed by hash alone,
+and `allowNative` matches the URL as written); without a lock, a cached raw tree is read in full
+against the recorded checksum, so a changed tree never reaches a new lock. Then it goes
 `strip` levels down (each the only entry at its level) and into `path`, which must stay inside;
 `git::check_links` checks that directory's links again from it. The lock's `source` is
 `url+<url>[?strip=n][&path=…]#sha256:<hex>` (`UrlSpec::source`/`parse_source`, `&=#?%` escaped),
-its `checksum` the chosen directory's `git::tree_checksum`, verified on every use. A url package's
+its `checksum` the chosen directory's `git::tree_checksum`, checked as "Fetched trees" below
+says. A url package's
 `path` dependencies are other directories of the same archive (`Want::Url` with the same hash),
 never outside it. Native code builds only with `VELT_NATIVE_FROM_SOURCE=1`, from a copy in
 `<cache>/url-native/<name>/<sha256>-<strip>[-<path>]/`. `registry::publish` refuses a dependency
 with only `url`. A tree without `package.velt` is an error (no npm sources from archives yet).
+`velt add <url> [--path <dir>]` (`url_source::entry_for`) downloads once and writes `{ url, sha256,
+strip?, path? }` under the package's own name, refusing to replace an entry of that name from
+another source or hash (`url_source::check_replace`).
+
+**Fetched trees** (git checkouts, archives' package directories) are checked against the lock's
+checksum through a stamp in `<cache>/stamps/` (`vpm::tree_stamp`): the checksum with fingerprints
+of the tree's metadata, taken before it is read, and not written for a tree changed within 3 s
+of now. `InstallOptions::tree_check` says how much is looked at:
+- `TreeCheck::Files` (`velt install`, `update`, `add`, the default): every entry's name, type,
+  size, mtime and, on Unix, ctime; the tree is read in full when they differ.
+- `TreeCheck::Directories` (a build, `Project::open`): only the directories' times, so a file
+  added, removed or renamed is seen but an edit in place is not. When the build is no longer a
+  no-op, the driver runs `PackageGraph::verify_fetched` (every file) before compiling.
+- `TreeCheck::Bytes` (`velt install --locked`): every byte, whatever a stamp says.
 
 ## One source per package, and `allowNative` by source (additive, #2367)
 `vpm::resolve`, `vpm::install::allow_native`, `vpm::manifest::allow_native`, `vpm::source_url`.
