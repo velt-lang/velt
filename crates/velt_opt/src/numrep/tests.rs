@@ -12,7 +12,7 @@ use super::*;
 use crate::interp::{Host, Interp, Memory, Trap};
 use crate::testkit::builder::*;
 use crate::testkit::validate::assert_valid;
-use velt_vir::vir::{BinOp, BlockId, FuncId, Intrinsic, LocalDecl, Place, Program, UnOp};
+use velt_vir::vir::{BinOp, BlockId, Intrinsic, LocalDecl, Place, Program, UnOp};
 
 /// The runtime's ToInt32, which the tests' programs call (`as_intrinsics` makes it a statement).
 pub(in crate::numrep) const TO_INT32: &str = velt_vir::math::MathOp::ToInt32.symbol();
@@ -510,6 +510,25 @@ enum Printed {
 /// twin `intWrite` in the program (bodies left empty: only the calls matter).
 fn formatted_program(x_is: Printed) -> Program {
     let mut pb = ProgramBuilder::new();
+    // `f` is the first function, as `callees` reads it; the hooks follow it.
+    let f_id = pb.reserve();
+    let mut hooks = Vec::new();
+    for (hook, ty) in [
+        (velt_common::std_hook!(number_write), Ty::F64),
+        (velt_common::std_hook!(int_write), Ty::I64),
+    ] {
+        let symbol = velt_vir::mangle::mangle(hook);
+        let mut h = FuncBuilder::internal(&symbol, &[Ty::U32, ty, Ty::U8], Ty::Unit);
+        let b = h.block();
+        h.ret(b, Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit));
+        hooks.push((symbol, pb.add(h.finish())));
+    }
+    let number_write = velt_vir::mangle::mangle(velt_common::std_hook!(number_write));
+    let write = hooks
+        .iter()
+        .find(|(symbol, _)| *symbol == number_write)
+        .map(|&(_, id)| id)
+        .expect("numberWrite is in the program");
     let mut f = FuncBuilder::export("f", &[Ty::I32], Ty::Unit);
     let a = f.param(0);
     let (af, x) = (f.local(Ty::F64), f.local(Ty::F64));
@@ -521,21 +540,10 @@ fn formatted_program(x_is: Printed) -> Program {
         Printed::Zero => bin(BinOp::Mul, copy_local(af), float(0.0, Ty::F64)),
     };
     f.assign(b0, x, value);
-    let write = FuncId(1);
     let args = vec![int(1, Ty::U32), copy_local(x), int(10, Ty::U8)];
     let b1 = f.call(b0, Callee::Func(write), args, None);
     f.ret(b1, Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit));
-    pb.add(f.finish());
-    for (hook, ty) in [
-        (velt_common::std_hook!(number_write), Ty::F64),
-        (velt_common::std_hook!(int_write), Ty::I64),
-    ] {
-        let symbol = velt_vir::mangle::mangle(hook);
-        let mut h = FuncBuilder::internal(&symbol, &[Ty::U32, ty, Ty::U8], Ty::Unit);
-        let b = h.block();
-        h.ret(b, Operand::Const(velt_vir::vir::Const::Unit, Ty::Unit));
-        pb.add(h.finish());
-    }
+    pb.set(f_id, f.finish());
     as_intrinsics(pb.finish())
 }
 
