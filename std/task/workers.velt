@@ -6,8 +6,6 @@ import { velt_rt_current_worker, velt_rt_worker_count } from "velt/task/rt";
  * How many workers run tasks: fixed for the process (`VELT_THREADS`, else the number of cores;
  * 1 on WebAssembly), with either scheduler. Threads the runtime adds while every worker is busy
  * are not counted, so an array sized by it at start-up has a slot for every `currentWorker()`.
- * Calling it doesn't change the scheduler: only pinning a task (`spawn(p, { worker })`) selects
- * the per-core one.
  */
 export function workerCount(): i64 {
   return velt_rt_worker_count() as i64;
@@ -15,10 +13,10 @@ export function workerCount(): i64 {
 
 /**
  * The worker running this task, from `0` to `workerCount() - 1`; `0` outside a task (a
- * synchronous `main`). A task stays on its worker with the per-core scheduler (which a program
- * that pins a task gets); otherwise it may move at any `await`. A thread the runtime adds while
- * every worker is busy reports one of these indices, so two tasks running at once may see the
- * same one: per-worker data needs an atomic or a lock, as it does for a task that moves.
+ * synchronous `main`). A task pinned with `spawn(p, { worker })` stays on its worker; any other
+ * task may move at any `await`. A thread the runtime adds while every worker is busy reports one
+ * of these indices, so two tasks running at once may see the same one: per-worker data needs an
+ * atomic or a lock, as it does for a task that moves.
  */
 export function currentWorker(): i64 {
   return velt_rt_current_worker() as i64;
