@@ -102,37 +102,33 @@ function leadingZeroBits(d: u64, stop: u64): u64 {
 /** The decimal digits of `v`, after a `-` when `neg`. */
 export function intWords(v: u64, neg: bool): Words {
   if (v < 100000000) {
-    return shortWords(v, neg);
+    return neg ? eightWords(v, true) : shortWords(v);
   }
   return neg ? longNegative(v) : longPositive(v);
 }
 
 /**
- * `intWords` of a `v` below 10^8: one group of digits, its leading zeros shifted out. Inlined
- * into every caller (`inline()`): the entry points' common case, whose three-word result would
- * otherwise go through memory.
+ * The digits of a `v` below 10^8: one group, its leading zeros shifted out, the four-digit split
+ * for the smallest numbers (counters, coordinates, indexes). Inlined into every caller
+ * (`inline()`): the entry points' common case, whose three-word result would otherwise go through
+ * memory. A negative number's text is `eightWords`'.
  */
-export function shortWords(v: u64, neg: bool): Words {
+function shortWords(v: u64): Words {
   inline();
   if (v >= 10000) {
-    return eightWords(v, neg);
+    return eightWords(v, false);
   }
-  // Up to four digits (counters, coordinates, indexes): four with their leading zeros, then the
-  // zeros shifted out.
+  // Up to four digits: four with their leading zeros, then the zeros shifted out.
   const all = digits4(v);
   const z = leadingZeroBits(all, 0x01000000);
-  const d = all >> z;
-  const n = 4 - (z >> 3);
-  if (!neg) {
-    return Words { w0: d, w1: 0, w2: 0, len: n as usize };
-  }
-  return Words { w0: (d << 8) | MINUS, w1: 0, w2: 0, len: (n + 1) as usize };
+  return Words { w0: all >> z, w1: 0, w2: 0, len: (4 - (z >> 3)) as usize };
 }
 
 /**
- * `shortWords` by eight digits alone, for any `v` below 10^8: their leading zeros shifted out.
- * Inlined (`inline()`): `console.log`'s writer (velt/lang/number/integer_write) uses it for every
- * number below 10^8, the others from 10^4 up.
+ * The digits of a `v` below 10^8, after a `-` when `neg`, by eight at a time alone: their leading
+ * zeros shifted out. Inlined (`inline()`): `console.log`'s writer
+ * (velt/lang/number/integer_write) and negative text use it for every number below 10^8,
+ * `shortWords` from 10^4 up.
  */
 export function eightWords(v: u64, neg: bool): Words {
   inline();
@@ -215,7 +211,7 @@ export function i64Text(v: i64): string {
     return strAsciiWords(w.w0, 0, 0, w.len);
   }
   if (u < 100000000) {
-    const w = shortWords(u, false);
+    const w = shortWords(u);
     return strAsciiWords(w.w0, 0, 0, w.len);
   }
   if (v < 0) {
@@ -228,7 +224,7 @@ export function i64Text(v: i64): string {
 export function u64Text(v: u64): string {
   noInline();
   if (v < 100000000) {
-    const w = shortWords(v, false);
+    const w = shortWords(v);
     return strAsciiWords(w.w0, 0, 0, w.len);
   }
   return longText(v);
@@ -275,7 +271,7 @@ export function pushU64(buf: string, v: u64): void {
 function push(buf: string, a: u64): void {
   inline();
   if (a < 100000000) {
-    const w = shortWords(a, false);
+    const w = shortWords(a);
     const w0 = w.w0;
     const len = w.len;
     strbufPushAsciiWord(buf, w0, len);
