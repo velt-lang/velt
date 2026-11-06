@@ -164,9 +164,8 @@ export function longWords(v: u64, neg: bool): Words {
   // The leading zeros: in the first group, or, when it is 0, in the second, which isn't then (`v`
   // is at least 10^8). The first group's lower half is 0, not "0", and is dropped either way.
   const first = a0 ^ 0x3030303000000000;
-  const z = first != 0
-    ? velt_rt_math_ctz64(first) & 56
-    : 64 + leadingZeroBits(a1, 0x0100000000000000);
+  const z =
+    first != 0 ? velt_rt_math_ctz64(first) & 56 : 64 + leadingZeroBits(a1, 0x0100000000000000);
   const n = 24 - (z >> 3);
   const len = neg ? n + 1 : n;
   const k = 24 - len;
