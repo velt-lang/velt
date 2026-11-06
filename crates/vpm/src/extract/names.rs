@@ -64,6 +64,13 @@ fn check_segment(name: &str) -> Result<(), String> {
                 .to_string(),
         );
     }
+    if is_dot_git(name) {
+        return Err(
+            "a `.git` directory or file (a git command run in the tree would read it: its config \
+             can name commands to run)"
+                .to_string(),
+        );
+    }
     if is_short_name(name) {
         return Err(format!(
             "`{name}`, a Windows short (8.3) name, which can be another file's second name there"
@@ -75,6 +82,21 @@ fn check_segment(name: &str) -> Result<(), String> {
         ));
     }
     Ok(())
+}
+
+/// Whether `name` is `.git` as any filesystem might take it: in any case or Unicode
+/// normalisation, and with the code points HFS+ ignores in names removed (`.g\u{200c}it` is
+/// `.git` there), as git itself checks a tree's names. Its 8.3 form `GIT~1` is a short name, and
+/// `.git.` and `.git ` end in a dot or a space: refused as those.
+fn is_dot_git(name: &str) -> bool {
+    let kept: String = name.chars().filter(|c| !is_hfs_ignorable(*c)).collect();
+    clash_key(&kept) == ".git"
+}
+
+/// The code points HFS+ drops when it compares names (git's `is_hfs_dotgit` list).
+fn is_hfs_ignorable(c: char) -> bool {
+    matches!(c,
+        '\u{200c}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{206a}'..='\u{206f}' | '\u{feff}')
 }
 
 /// A name in the form Windows gives long names as their second, short name: up to six characters,

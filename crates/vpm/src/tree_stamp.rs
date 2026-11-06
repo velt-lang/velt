@@ -31,10 +31,23 @@ pub enum TreeCheck {
     /// Every file's metadata: any edit is caught (`velt install`, `update`, `add`).
     #[default]
     Files,
+    /// Every byte, whatever a stamp says (`velt install --locked`, the check CI can rely on:
+    /// a stamp is a file anything running as the user could have written).
+    Bytes,
     /// Only the directories': a file added, removed or renamed is caught, an edit in place
     /// only by the next [`TreeCheck::Files`]. What a build uses, so that a fetched dependency
     /// costs a no-op build a few `stat` calls rather than one per file.
     Directories,
+}
+
+/// How much of each fetched tree an install looks at: every byte for `velt install --locked`,
+/// the check CI relies on (a stamp is a file anything running as the user could have written);
+/// otherwise what `opts` asks (a build keeps its directories-only check, `--locked` or not).
+pub(crate) fn for_install(opts: &crate::install::InstallOptions) -> TreeCheck {
+    match (opts.locked, opts.tree_check) {
+        (true, TreeCheck::Files) => TreeCheck::Bytes,
+        (_, check) => check,
+    }
 }
 
 /// What a stamp records.
@@ -86,13 +99,19 @@ pub(crate) fn checksum(
     check: impl FnOnce() -> Result<(), String>,
 ) -> Result<String, String> {
     let path = stamp_path(loc, dir);
-    let stamp = Stamp::read(&path);
+    let stamp = match depth {
+        TreeCheck::Bytes => None,
+        _ => Stamp::read(&path),
+    };
     if let (TreeCheck::Directories, Some(stamp)) = (depth, &stamp) {
         if dirs_fingerprint(dir, &stamp.dir_list).as_deref() == Ok(stamp.dirs.as_str()) {
             return compare(stamp.checksum.clone(), expected, mismatch);
         }
     }
-    let (files, dir_list) = fingerprint(dir)?;
+    // Both fingerprints before the tree is read: a change while it is read is then a change
+    // since the stamp, not one the stamp says was checked.
+    let (files, dir_list, newest) = fingerprint(dir)?;
+    let dirs = dirs_fingerprint(dir, &dir_list)?;
     let actual = match stamp.filter(|s| s.files == files) {
         Some(s) => s.checksum,
         None => {
@@ -101,17 +120,37 @@ pub(crate) fn checksum(
         }
     };
     let actual = compare(actual, expected, mismatch)?;
-    // Only a checksum the lock agrees with (or that nothing locked yet) is stamped; a failed
-    // write only costs the next build a full read.
-    let dirs = dirs_fingerprint(dir, &dir_list)?;
-    let stamp = Stamp {
-        checksum: actual.clone(),
-        files,
-        dirs,
-        dir_list,
-    };
-    stamp.write(&path);
+    // Only a checksum the lock agrees with (or that nothing locked yet) is stamped, and only
+    // when no entry changed within the times' resolution of now (as git's "racily clean"
+    // rule): an edit in that window would leave the times as they were stamped. A failed write
+    // only costs the next build a full read.
+    if !is_racy(newest) {
+        let stamp = Stamp {
+            checksum: actual.clone(),
+            files,
+            dirs,
+            dir_list,
+        };
+        stamp.write(&path);
+    }
     Ok(actual)
+}
+
+/// How close to now an entry's time may be for the tree to be stamped: FAT and HFS+ keep times
+/// to 2 s.
+const RACY: std::time::Duration = std::time::Duration::from_secs(3);
+
+/// Whether `newest` (the latest time of any entry, in nanoseconds since the epoch) is within
+/// [`RACY`] of now.
+fn is_racy(newest: u128) -> bool {
+    #[cfg(test)]
+    if tests::NO_RACY_WINDOW.with(std::cell::Cell::get) {
+        return false;
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_nanos());
+    newest + RACY.as_nanos() > now
 }
 
 fn compare(
@@ -136,11 +175,15 @@ fn stamp_path(loc: &Locations, dir: &Path) -> PathBuf {
 /// that order is stable while a directory is unchanged, and if it does change, the fingerprint
 /// differs and the tree is read in full once, which is only slower. Bytes are hashed as they
 /// are, with no text formatting or sorting: this runs on every build.
-pub(crate) fn fingerprint(dir: &Path) -> Result<(String, Vec<String>), String> {
+pub(crate) fn fingerprint(dir: &Path) -> Result<(String, Vec<String>, u128), String> {
     let mut hasher = Sha256::new();
     let mut dirs = vec![".".to_string()];
-    walk(dir, "", &mut hasher, &mut dirs)?;
-    Ok((hex(hasher), dirs))
+    let mut newest = 0;
+    walk(dir, "", &mut hasher, (&mut dirs, &mut newest))?;
+    let root = std::fs::symlink_metadata(dir)
+        .map_err(|e| format!("cannot read `{}`: {e}", dir.display()))?;
+    newest = newest.max(latest(&root));
+    Ok((hex(hasher), dirs, newest))
 }
 
 /// A hash of the times of `dir`'s directories `dirs` (relative): a directory's times change
@@ -169,7 +212,12 @@ fn hex(hasher: Sha256) -> String {
         .collect()
 }
 
-fn walk(dir: &Path, rel: &str, hasher: &mut Sha256, dirs: &mut Vec<String>) -> Result<(), String> {
+fn walk(
+    dir: &Path,
+    rel: &str,
+    hasher: &mut Sha256,
+    (dirs, newest): (&mut Vec<String>, &mut u128),
+) -> Result<(), String> {
     let read =
         std::fs::read_dir(dir).map_err(|e| format!("cannot read `{}`: {e}", dir.display()))?;
     for entry in read {
@@ -190,6 +238,7 @@ fn walk(dir: &Path, rel: &str, hasher: &mut Sha256, dirs: &mut Vec<String>) -> R
         // unless it keeps the length too.
         hasher.update(meta.len().to_le_bytes());
         hasher.update(times(&meta));
+        *newest = (*newest).max(latest(&meta));
         if kind == b'd' {
             let name = entry.file_name().to_string_lossy().into_owned();
             let child = match rel.is_empty() {
@@ -198,10 +247,18 @@ fn walk(dir: &Path, rel: &str, hasher: &mut Sha256, dirs: &mut Vec<String>) -> R
             };
             dirs.push(child.clone());
             // A file moved between directories changes their times, so no level marker is needed.
-            walk(&entry.path(), &child, hasher, dirs)?;
+            walk(&entry.path(), &child, hasher, (dirs, newest))?;
         }
     }
     Ok(())
+}
+
+/// The later of the modification and (on Unix) inode change times, in nanoseconds.
+fn latest(meta: &std::fs::Metadata) -> u128 {
+    let t = times(meta);
+    let modified = u128::from_le_bytes(t[..16].try_into().unwrap_or_default());
+    let changed = i128::from_le_bytes(t[16..].try_into().unwrap_or_default()).max(0) as u128;
+    modified.max(changed)
 }
 
 /// The modification time, and on Unix the inode change time, in nanoseconds.

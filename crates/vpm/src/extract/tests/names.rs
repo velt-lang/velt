@@ -185,3 +185,37 @@ fn zip_names_must_be_utf8() {
     cp437.flags = 1 << 11;
     refused(&zip(&[cp437], false), "not flagged UTF-8");
 }
+
+#[test]
+fn dot_git_is_refused_in_every_spelling() {
+    // A git command run in the tree would read it: `core.fsmonitor` runs a command.
+    for name in [
+        ".git/config",
+        ".GIT/config",
+        "sub/.git",
+        ".Git",
+        ".g\u{200c}it/config",
+        "\u{feff}.git",
+        "GIT~1/config",
+        ".git./x",
+        ".git /x",
+    ] {
+        let tar = TarBuilder::default()
+            .pax(b'x', &[("path", name)])
+            .file("x", b"")
+            .gz();
+        let e = refusal(&tar);
+        assert!(
+            e.contains(".git") || e.contains("short (8.3)") || e.contains("dot or a space"),
+            "{name:?}: {e}"
+        );
+    }
+    // Names that only start like it are files like any other.
+    for name in [".github/x", ".gitignore", "git", "x.git"] {
+        let tar = TarBuilder::default()
+            .pax(b'x', &[("path", name)])
+            .file("x", b"")
+            .gz();
+        assert!(read(&tar, Limits::DEFAULT).is_ok(), "{name}");
+    }
+}

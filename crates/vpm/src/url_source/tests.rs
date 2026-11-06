@@ -151,6 +151,18 @@ fn fields_are_checked() {
             vec![("url", url), ("sha256", &hash), ("path", "a\\b")],
             "inside the archive",
         ),
+        (
+            vec![("url", url), ("sha256", &hash), ("path", "a/./b")],
+            "inside the archive",
+        ),
+        (
+            vec![("url", url), ("sha256", &hash), ("path", ".")],
+            "inside the archive",
+        ),
+        (
+            vec![("url", "HTTPS://example.com/p.tar.gz"), ("sha256", &hash)],
+            "scheme in lowercase",
+        ),
     ] {
         let e = check_fields("p", &detailed(&fields)).unwrap_err();
         assert!(e.contains(why), "{fields:?}: expected {why:?} in {e}");

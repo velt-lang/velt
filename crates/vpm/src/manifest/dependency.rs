@@ -4,6 +4,22 @@
 use super::*;
 
 impl Dependency {
+    /// How the dependency reads in messages: `version ^1.2`, `path ../util`, `git https://…`,
+    /// `url https://… (sha256 0123abcd…)`.
+    pub fn describe(&self) -> String {
+        if let Some(spec) = self.url_spec() {
+            return format!("url {}", spec.describe());
+        }
+        if let Some(spec) = self.git() {
+            return format!("git {}", spec.describe());
+        }
+        match (self.version(), self.path()) {
+            (_, Some(path)) => format!("path {path}"),
+            (Some(v), None) => format!("version {v}"),
+            (None, None) => "no source".to_string(),
+        }
+    }
+
     /// The semver requirement, if any.
     pub fn version(&self) -> Option<&str> {
         match self {

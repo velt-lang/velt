@@ -2,6 +2,12 @@
 
 use super::*;
 
+thread_local! {
+    /// Stamp trees made just now, which [`is_racy`] otherwise leaves unstamped: these tests make
+    /// a tree and stamp it at once, with no sleep.
+    pub(super) static NO_RACY_WINDOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
 struct Tree {
     _tmp: tempfile::TempDir,
     loc: Locations,
@@ -9,6 +15,7 @@ struct Tree {
 }
 
 fn tree() -> Tree {
+    NO_RACY_WINDOW.with(|c| c.set(true));
     let tmp = tempfile::tempdir().unwrap();
     let loc = Locations::under(&tmp.path().join("home"));
     let dir = tmp.path().join("tree");
@@ -136,4 +143,73 @@ fn a_build_looks_only_at_directories() {
             "{change}"
         );
     }
+}
+
+/// A tree changed within the times' resolution of now isn't stamped: an edit in that window
+/// could leave every time as stamped.
+#[test]
+fn a_tree_changed_just_now_is_not_stamped() {
+    let t = tree();
+    NO_RACY_WINDOW.with(|c| c.set(false));
+    sum(&t, None).unwrap();
+    assert!(!stamp_path(&t.loc, &t.dir).exists());
+    // The same tree, its times an hour old, is.
+    let earlier = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    for f in ["package.velt", "src/lib.velt"] {
+        std::fs::File::options()
+            .write(true)
+            .open(t.dir.join(f))
+            .unwrap()
+            .set_modified(earlier)
+            .unwrap();
+    }
+    // Inode change times can't be set back, so only where they don't count.
+    if cfg!(not(unix)) {
+        sum(&t, None).unwrap();
+        assert!(stamp_path(&t.loc, &t.dir).exists());
+    }
+}
+
+/// `velt install --locked` reads every byte: a forged stamp is not believed.
+#[test]
+fn every_byte_ignores_the_stamp() {
+    let t = tree();
+    let real = sum(&t, None).unwrap();
+    std::fs::write(t.dir.join("src/lib.velt"), "export const v = 7;\n").unwrap();
+    let edited = crate::git::tree_checksum(&t.dir).unwrap();
+    // A stamp written for the edited tree, naming the lock's checksum.
+    sum(&t, None).unwrap();
+    let stamp = stamp_path(&t.loc, &t.dir);
+    let text = std::fs::read_to_string(&stamp).unwrap();
+    std::fs::write(&stamp, text.replacen(&edited, &real, 1)).unwrap();
+    assert_eq!(sum_by(&t, Some(&real), TreeCheck::Files).unwrap(), real);
+    let e = sum_by(&t, Some(&real), TreeCheck::Bytes).unwrap_err();
+    assert!(e.starts_with("mismatch"), "{e}");
+}
+
+/// The directory check still compares the stamped checksum with the lock's.
+#[test]
+fn the_directory_check_compares_with_the_lock() {
+    let t = tree();
+    sum(&t, None).unwrap();
+    let e = sum_by(&t, Some("sha256:other"), TreeCheck::Directories).unwrap_err();
+    assert!(e.starts_with("mismatch"), "{e}");
+}
+
+/// `velt install --locked` reads every byte; a build keeps its directory check, `--locked` or not.
+#[test]
+fn an_install_with_locked_reads_every_byte() {
+    use crate::install::InstallOptions;
+    let opts = |locked, tree_check| InstallOptions {
+        locked,
+        tree_check,
+        ..Default::default()
+    };
+    assert_eq!(for_install(&opts(true, TreeCheck::Files)), TreeCheck::Bytes);
+    assert_eq!(
+        for_install(&opts(false, TreeCheck::Files)),
+        TreeCheck::Files
+    );
+    let build = TreeCheck::Directories;
+    assert_eq!(for_install(&opts(true, build)), build);
 }

@@ -45,6 +45,8 @@ pub fn add_url(url: &str, path: Option<String>) -> Result<(), String> {
     let project_root = Project::current_root()?;
     let loc = Locations::from_env()?.with_manifest(&vpm::Manifest::from_dir(&project_root)?);
     let (name, found) = vpm::url_source::entry_for(&loc, url, path.as_deref())?;
+    // The name is the archive's own, not the user's: never a silent replace of an entry.
+    vpm::url_source::check_replace(&vpm::Manifest::from_dir(&project_root)?, &name, &found)?;
     let spec = DependencySpec {
         path: found.subdir.clone(),
         url: Some(found.url.clone()),
@@ -53,7 +55,22 @@ pub fn add_url(url: &str, path: Option<String>) -> Result<(), String> {
         ..Default::default()
     };
     let installed = edit_and_install(&project_root, &loc, &name, &spec)?;
-    style::status("Adding", &format!("`{name}` from {}", found.describe()));
+    style::status("Adding", &format!("`{name}` from {}", found.url));
+    let strip = match found.strip {
+        0 => String::new(),
+        n => format!(", strip {n}"),
+    };
+    let at = found
+        .subdir
+        .as_ref()
+        .map_or(String::new(), |p| format!(", path {p}"));
+    style::status("Pinned", &format!("sha256 {}{strip}{at}", found.sha256));
+    style::status(
+        "Note",
+        "the sha256 was computed from this download; nothing checked it against the publisher. \
+         Pin a project's real release asset (a forge's generated archive of a tag can change \
+         bytes), or use `git` with a commit for source.",
+    );
     report_native(&installed.graph);
     Ok(())
 }

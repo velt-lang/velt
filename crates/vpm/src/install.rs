@@ -153,7 +153,13 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
     let loc = &loc.clone().with_manifest(&manifest);
     let existing = Lockfile::read(&root)?;
     let prefer = if opts.update { None } else { existing.as_ref() };
-    let resolution = crate::resolve::resolve_with(&root, &manifest, loc, prefer, opts.tree_check)?;
+    let resolution = crate::resolve::resolve_with(
+        &root,
+        &manifest,
+        loc,
+        prefer,
+        crate::tree_stamp::for_install(&opts),
+    )?;
     let mut lockfile = to_lockfile(&resolution, &root, &[]);
     lockfile.allow_native = manifest.allow_native.clone();
     lockfile.allow_native.sort();
@@ -546,12 +552,16 @@ fn check_locked_checksums(old: &Lockfile, new: &Lockfile) -> Result<(), String> 
             continue;
         }
         if locked.checksum != pkg.checksum {
+            let now = match pkg.source == REGISTRY_SOURCE {
+                true => "the registry has {} (the published package changed)",
+                false => "the fetched tree hashes to {} (it changed in the cache: delete it there to fetch it again)",
+            };
+            let now = now.replace("{}", pkg.checksum.as_deref().unwrap_or("none"));
             return Err(format!(
-                "checksum mismatch for `{}` {}: {LOCK_FILE} has {}, the registry has {} (the published package changed)",
+                "checksum mismatch for `{}` {}: {LOCK_FILE} has {}, {now}",
                 pkg.name,
                 pkg.version,
                 locked.checksum.as_deref().unwrap_or("none"),
-                pkg.checksum.as_deref().unwrap_or("none"),
             ));
         }
         for (target, sum) in &locked.native {

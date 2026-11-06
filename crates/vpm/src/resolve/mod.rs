@@ -452,6 +452,14 @@ fn dependency_requirements(
             continue;
         }
         if let Some(spec) = dep.url_spec() {
+            // Plain `http` reaches this machine only: a manifest fetched from elsewhere naming
+            // it would make an install send requests to local services.
+            if !root && crate::url_source::is_plain_http(&spec.url) {
+                return Err(format!(
+                    "dependency `{name}` of `{by}`: plain http ({}) is allowed only in a manifest this package controls (its own, a workspace member's or a local path's), not in one fetched from elsewhere",
+                    spec.url
+                ));
+            }
             out.push(Requirement {
                 name: name.clone(),
                 want: Want::Url { spec, req },

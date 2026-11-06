@@ -17,7 +17,12 @@
 use std::path::{Path, PathBuf};
 
 use crate::locations::Locations;
+
+mod cache;
+mod fetch;
+
 use crate::manifest::{Dependency, DetailedDependency};
+use cache::Verified;
 
 /// The `source` prefix of a url package in `velt.lock.json`.
 pub const URL_SOURCE: &str = "url";
@@ -95,7 +100,7 @@ impl UrlSpec {
         format!(
             "{} (sha256 {}…){strip}{path}",
             self.url.escape_default(),
-            &self.sha256[..12]
+            self.sha256.get(..12).unwrap_or(&self.sha256)
         )
     }
 }
@@ -124,14 +129,21 @@ impl Dependency {
 /// nothing [`crate::source_url`] refuses when it compares a URL (an `allowNative` prefix matches
 /// it as written).
 pub fn check_url(url: &str) -> Result<(), String> {
+    // One spelling of the scheme: a check that matched only one case would let `HTTPS://…`
+    // past the comparison's checks.
+    let scheme = url.split_once("://").map(|(s, _)| s);
+    if scheme.is_some_and(|s| s != s.to_ascii_lowercase()) {
+        return Err(format!("`{url}`: write the scheme in lowercase"));
+    }
     // The comparison's checks first: they say what is wrong (credentials, an escape) where the
-    // download's would only say the URL can't be fetched.
+    // download's would only say the URL can't be fetched. `http` is checked as `https`, and
+    // messages name the URL as written.
     let as_https = match url.strip_prefix("http://") {
         Some(rest) => format!("https://{rest}"),
         None => url.to_string(),
     };
     if as_https.starts_with("https://") {
-        crate::source_url::check_downloadable(&as_https)?;
+        crate::source_url::check_downloadable(&as_https).map_err(|e| e.replace(&as_https, url))?;
     }
     velt_toolchain::install::check_download_url(url)
 }
@@ -193,15 +205,33 @@ fn raw_dir(loc: &Locations, sha256: &str) -> PathBuf {
 }
 
 /// The package directory of `spec` and its tree checksum, downloading and extracting the archive
-/// unless the cache has it. With `checksum` (the lock's), the tree must hash to it.
+/// unless the cache has it for this URL ([`cache`]). With `checksum` (the lock's), the tree must
+/// hash to it; without one, a cached raw tree is read in full against the checksum taken when it
+/// was extracted, so a changed tree never reaches a new lock.
 pub fn checkout(
     loc: &Locations,
     spec: &UrlSpec,
     (checksum, depth): (Option<&str>, crate::tree_stamp::TreeCheck),
 ) -> Result<(PathBuf, String), String> {
     let raw = raw_dir(loc, &spec.sha256);
-    if !raw.is_dir() {
-        download(spec, &raw)?;
+    match (raw.is_dir(), Verified::read(&raw)) {
+        (true, Some(mut record)) if !record.knows(&spec.url) => {
+            // Cached from another URL: this one must serve the same bytes before the hit counts.
+            download_checked(spec)?;
+            record.check_tree(&raw, spec)?;
+            record.add_and_write(&spec.url)?;
+        }
+        (true, Some(record)) if checksum.is_none() => record.check_tree(&raw, spec)?,
+        (true, Some(_)) => {}
+        (had_raw, _) => {
+            if had_raw {
+                // A raw tree with no record: not known to be what any URL served.
+                remove_raw(&raw)?;
+            }
+            let bytes = download_checked(spec)?;
+            let links = unpack(&bytes, &raw, &spec.url)?;
+            Verified::new(&raw, &spec.url, links)?.add_and_write(&spec.url)?;
+        }
     }
     let dir = choose(&raw, spec)?;
     // From its stamp while the tree is unchanged (`crate::tree_stamp`); its links are checked
@@ -218,11 +248,66 @@ pub fn checkout(
     Ok((dir, actual))
 }
 
-/// The bytes at `url` (at most [`MAX_ARCHIVE`]).
-fn fetch_bytes(url: &str) -> Result<Vec<u8>, String> {
-    check_url(url)?;
-    velt_toolchain::install::download(url, MAX_ARCHIVE)?
-        .ok_or_else(|| format!("{url} doesn't exist (HTTP 404)"))
+/// Whether `url` is plain `http`: allowed only to this machine, and only from a manifest the
+/// root controls (the resolver checks), so a package from elsewhere can't make the developer's
+/// machine send requests to a local service.
+pub fn is_plain_http(url: &str) -> bool {
+    fetch::is_plain_http(url)
+}
+
+/// On Windows (`windows`), a note per symbolic link inside the package directory `dir` of
+/// `spec`'s archive: there it is a file holding its target, so importing through it fails with
+/// errors that don't say why.
+pub fn link_warnings(loc: &Locations, spec: &UrlSpec, dir: &Path, windows: bool) -> Vec<String> {
+    let raw = raw_dir(loc, &spec.sha256);
+    let (true, Some(record)) = (windows, Verified::read(&raw)) else {
+        return vec![];
+    };
+    let prefix = match dir.strip_prefix(&raw) {
+        Ok(rel) if rel.as_os_str().is_empty() => String::new(),
+        Ok(rel) => format!("{}/", rel.to_string_lossy().replace('\\', "/")),
+        Err(_) => return vec![],
+    };
+    (record.links.iter())
+        .filter(|link| link.starts_with(&prefix))
+        .map(|link| {
+            format!(
+                "`{link}` is a symbolic link in {}; on Windows an archive's links are written as files holding their target, so it can't be imported or read through",
+                spec.url
+            )
+        })
+        .collect()
+}
+
+/// `Err` unless `velt add` may write `found` as dependency `name` of `manifest`: an entry of that
+/// name from another source or hash is never replaced silently, since the name comes from the
+/// archive, not from the user.
+pub fn check_replace(
+    manifest: &crate::manifest::Manifest,
+    name: &str,
+    found: &UrlSpec,
+) -> Result<(), String> {
+    let Some(existing) = manifest.dependencies.get(name) else {
+        return Ok(());
+    };
+    let same = existing.url_spec().is_some_and(|e| {
+        (&e.url, &e.sha256, e.strip, &e.subdir)
+            == (&found.url, &found.sha256, found.strip, &found.subdir)
+    });
+    match same {
+        true => Ok(()),
+        false => Err(format!(
+            "package.velt already has a dependency `{name}` ({}), and the archive at {} is a package named `{name}` with sha256 {}: remove that entry first to replace it",
+            existing.describe(),
+            found.url,
+            found.sha256
+        )),
+    }
+}
+
+/// Remove a raw tree the cache can't vouch for.
+fn remove_raw(raw: &Path) -> Result<(), String> {
+    std::fs::remove_dir_all(raw).map_err(|e| format!("cannot remove `{}`: {e}", raw.display()))
 }
 
 /// The entry `velt add <url>` writes: the archive is downloaded once, its SHA-256 computed and
@@ -241,18 +326,29 @@ pub fn entry_for(
             ));
         }
     }
-    let bytes = fetch_bytes(url)?;
+    let bytes = fetch::fetch_bytes(url)?;
     let sha256 = velt_toolchain::install::sha256_hex(&bytes);
     let raw = raw_dir(loc, &sha256);
-    if !raw.is_dir() {
-        unpack(&bytes, &raw, url)?;
-    }
     let mut spec = UrlSpec {
         url: url.to_string(),
         sha256,
         strip: 0,
         subdir: path.map(String::from),
     };
+    // A raw tree already there is used only if it is still what was extracted.
+    match (raw.is_dir(), Verified::read(&raw)) {
+        (true, Some(mut record)) => {
+            record.check_tree(&raw, &spec)?;
+            record.add_and_write(url)?;
+        }
+        (had_raw, _) => {
+            if had_raw {
+                remove_raw(&raw)?;
+            }
+            let links = unpack(&bytes, &raw, url)?;
+            Verified::new(&raw, url, links)?.add_and_write(url)?;
+        }
+    }
     let has_manifest = |spec: &UrlSpec| {
         choose(&raw, spec).is_ok_and(|d| d.join(crate::manifest::MANIFEST_FILE).is_file())
     };
@@ -270,17 +366,25 @@ pub fn entry_for(
     Ok((manifest.package.name, spec))
 }
 
-/// Extract `bytes` (from `url`) into `raw`; a concurrent install's equal tree is taken.
-fn unpack(bytes: &[u8], raw: &Path, url: &str) -> Result<(), String> {
-    match crate::extract::extract(bytes, raw) {
-        Err(_) if raw.is_dir() => Ok(()),
-        result => result.map_err(|e| format!("the archive at {url} can't be used: {e}")),
+/// Extract `bytes` (from `url`) into `raw`; a concurrent install's equal tree is taken. Returns
+/// the archive's symbolic links, as the extractor read them (on Windows they are written as
+/// files, so the tree on disk can't tell).
+fn unpack(bytes: &[u8], raw: &Path, url: &str) -> Result<Vec<String>, String> {
+    let failed = |e: String| format!("the archive at {url} can't be used: {e}");
+    let tree = crate::extract::read(bytes, crate::extract::Limits::DEFAULT).map_err(failed)?;
+    let links = (tree.nodes())
+        .filter(|(_, n)| matches!(n, crate::extract::Node::Link(_)))
+        .map(|(p, _)| p.to_string())
+        .collect();
+    match crate::extract::write(&tree, raw, crate::extract::Links::NATIVE) {
+        Err(_) if raw.is_dir() => Ok(links),
+        result => result.map(|()| links).map_err(failed),
     }
 }
 
-/// Download `spec`'s archive, check its hash, and extract it into `raw`.
-fn download(spec: &UrlSpec, raw: &Path) -> Result<(), String> {
-    let bytes = fetch_bytes(&spec.url)?;
+/// Download `spec`'s archive and check its hash; the bytes.
+fn download_checked(spec: &UrlSpec) -> Result<Vec<u8>, String> {
+    let bytes = fetch::fetch_bytes(&spec.url)?;
     let actual = velt_toolchain::install::sha256_hex(&bytes);
     if actual != spec.sha256 {
         return Err(format!(
@@ -288,7 +392,7 @@ fn download(spec: &UrlSpec, raw: &Path) -> Result<(), String> {
             spec.url, spec.sha256
         ));
     }
-    unpack(&bytes, raw, &spec.url)
+    Ok(bytes)
 }
 
 /// The archive's root after `strip` (what `path` is relative to), from the package directory

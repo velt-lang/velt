@@ -12,6 +12,8 @@ use crate::install::{install, InstallOptions};
 use crate::locations::Locations;
 use crate::lockfile::Lockfile;
 
+mod trust;
+
 /// A local server of `files` (path → bytes, or `Redirect` to a URL), logging each request.
 struct Serve {
     server: Option<Server>,
@@ -370,50 +372,36 @@ fn native_code_from_an_archive_needs_an_entry_naming_its_source() {
 
 #[test]
 fn two_urls_of_one_archive_are_one_source() {
-    // `x` and `y`, each from its own archive, ask for `vue` from two URLs serving the same bytes:
-    // one tree, so not two sources. Another archive is two sources.
+    // `x` and `y` (local packages: only a manifest the root controls may name plain http) ask
+    // for `vue` from two URLs serving the same bytes: one tree, so not two sources. Another
+    // archive is two sources.
     let e = env();
     let s = Serve::new();
     let archive = vue();
     s.put("/a/vue.tar.gz", Body::Bytes(archive.clone()));
     s.put("/mirror/vue.tar.gz", Body::Bytes(archive.clone()));
-    let wrapper = |name: &str, url: &str, archive: &[u8]| {
-        let manifest = manifest(
-            name,
-            "1.0.0",
-            &format!(
-                ", dependencies: {{ vue: {{ url: \"{url}\", sha256: \"{}\", strip: 1, path: \"packages/vue\" }} }}",
-                hex(archive)
-            ),
+    let local = |name: &str, url: &str, archive: &[u8]| {
+        let dir = e.root.join(name);
+        std::fs::create_dir_all(dir.join("src")).unwrap();
+        let deps = format!(
+            ", dependencies: {{ vue: {{ url: \"{url}\", sha256: \"{}\", strip: 1, path: \"packages/vue\" }} }}",
+            hex(archive)
         );
-        tar_gz(&[
-            (&format!("{name}/package.velt"), &manifest),
-            (&format!("{name}/src/lib.velt"), "\n"),
-        ])
+        std::fs::write(dir.join("package.velt"), manifest(name, "1.0.0", &deps)).unwrap();
+        std::fs::write(dir.join("src/lib.velt"), "\n").unwrap();
     };
-    let x = wrapper("x", &s.url("/a/vue.tar.gz"), &archive);
-    let y = wrapper("y", &s.url("/mirror/vue.tar.gz"), &archive);
-    s.put("/x.tar.gz", Body::Bytes(x.clone()));
-    s.put("/y.tar.gz", Body::Bytes(y.clone()));
-    let deps = |y: &[u8], y_url: &str| {
-        format!(
-            "x: {{ url: \"{}\", sha256: \"{}\", path: \"x\" }}, y: {{ url: \"{y_url}\", sha256: \"{}\", path: \"y\" }}",
-            s.url("/x.tar.gz"),
-            hex(&x),
-            hex(y)
-        )
-    };
-    let app = e.app(&deps(&y, &s.url("/y.tar.gz")), "");
+    local("x", &s.url("/a/vue.tar.gz"), &archive);
+    local("y", &s.url("/mirror/vue.tar.gz"), &archive);
+    let deps = "x: { path: \"../x\" }, y: { path: \"../y\" }";
+    let app = e.app(deps, "");
     e.install(&app).unwrap();
-    // `y` asking for another archive is two sources until the root names one.
+    // `y` asking for another archive is two sources.
     let other = tar_gz(&[
         ("v/packages/vue/package.velt", &manifest("vue", "3.6.1", "")),
         ("v/packages/vue/src/lib.velt", "\n"),
     ]);
     s.put("/other/vue.tar.gz", Body::Bytes(other.clone()));
-    let y2 = wrapper("y", &s.url("/other/vue.tar.gz"), &other);
-    s.put("/y2.tar.gz", Body::Bytes(y2.clone()));
-    let app = e.app(&deps(&y2, &s.url("/y2.tar.gz")), "");
+    local("y", &s.url("/other/vue.tar.gz"), &other);
     let err = e.install(&app).unwrap_err();
     assert!(err.contains("`vue` is asked for from two sources"), "{err}");
 }

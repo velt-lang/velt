@@ -38,8 +38,13 @@ pub fn install(
     let existing = Lockfile::read(&ws.root)?;
     let prefer = if opts.update { None } else { existing.as_ref() };
     let manifests = ws.effective_manifests();
-    let resolution =
-        crate::resolve::resolve_members_with(&ws.root, &manifests, &loc, prefer, opts.tree_check)?;
+    let resolution = crate::resolve::resolve_members_with(
+        &ws.root,
+        &manifests,
+        &loc,
+        prefer,
+        crate::tree_stamp::for_install(&opts),
+    )?;
     let member_dirs: Vec<PathBuf> = ws.members.iter().map(|m| m.dir.clone()).collect();
     let lockfile = to_lockfile(&resolution, &ws.root, &member_dirs);
     let (lockfile, lock_changed) = settle_lock(
