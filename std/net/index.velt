@@ -1,6 +1,8 @@
 // velt/net: TCP, and TLS over TCP, over the runtime (docs/internals/contracts/rt_abi_async.md
 // §6). A TLS connection (`connectTls`, a `listenTls` listener) is a `TcpStream` like any other.
-// `startTls` is the TLS 1.3 client written in Velt (#2392): over any `ByteStream`, so it also
+// `startTls` is the TLS 1.3 client written in Velt (#2392). Its `verify: false`, required for now,
+// protects against passive observers only: anyone who can intercept the connection can
+// impersonate the server. It runs over any `ByteStream`, so it also
 // upgrades an open connection; for now without certificate checks (`verify: false`).
 //
 // Handles: the runtime's `VeltListener` / `VeltStream` are opaque `u64` handles (rt_abi_async.md

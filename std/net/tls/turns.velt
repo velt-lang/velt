@@ -1,0 +1,38 @@
+// velt/net (internal): `Turns`, one at a time and in the order they asked: a TLS connection's
+// writes (records carry implicit sequence numbers, so one write seals and sends at a time) and
+// its reads (they share one buffer).
+
+/** Whose turn it is. */
+export class Turns {
+  /** Whether someone has the turn. */
+  busy: bool;
+  private waiting: (() => void)[];
+
+  constructor() {
+    this.busy = false;
+    this.waiting = [];
+  }
+
+  /** Waits until nobody else has the turn (they go in the order they call this). */
+  async turn(): Promise<void> {
+    if (!this.busy) {
+      this.busy = true;
+      return;
+    }
+    const w = Promise.withResolvers<void>();
+    this.waiting.push(w.resolve);
+    await w.promise;
+  }
+
+  /** Ends a turn: the next waiting one's starts (`busy` stays true for it). */
+  done() {
+    if (this.waiting.length == 0) {
+      this.busy = false;
+      return;
+    }
+    const next = this.waiting.shift();
+    if (next != null) {
+      next();
+    }
+  }
+}

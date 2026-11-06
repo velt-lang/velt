@@ -1,0 +1,56 @@
+// A `TlsStream` holds keys and sequence numbers: a copy for another task would seal under the same
+// key and sequence number, which repeats a nonce on the wire. So it is a resource, and a task may
+// only take the last reference, also through a class holding it.
+import { connect, startTls, TlsStream } from "velt/net";
+
+class Holder {
+  stream: TlsStream;
+
+  constructor(stream: TlsStream) {
+    this.stream = stream;
+  }
+}
+
+async function direct(s: TlsStream) {
+  await s.write("main-1");
+  await spawn(async () => {
+    await s.write("task-1");
+  });
+  await s.write("main-2");
+}
+
+async function twoTasks(s: TlsStream) {
+  const a = spawn(async () => {
+    await s.write("task-a");
+  });
+  const b = spawn(async () => {
+    await s.write("task-b");
+  });
+  await a;
+  await b;
+}
+
+async function held(s: TlsStream) {
+  const h = new Holder(s);
+  await spawn(async () => {
+    await h.stream.write("task");
+  });
+  await h.stream.write("main");
+}
+
+async function thenRead(s: TlsStream) {
+  await spawn(async () => {
+    await s.write("task");
+  });
+  await s.read();
+}
+
+async function main() {
+  const s = await startTls(await connect("127.0.0.1:1"), { verify: false });
+  await direct(s);
+  await twoTasks(s);
+  await held(s);
+  await thenRead(s);
+}
+
+await main();

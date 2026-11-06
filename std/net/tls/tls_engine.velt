@@ -5,10 +5,10 @@
 // Built for throughput: `RecordReader` reads and decrypts records in place in one reused
 // buffer, and writes seal up to four records in place in a second reused buffer and go out in
 // one transport write. Opening and sealing a record allocate nothing; each transport read
-// allocates its view of the buffer (3 blocks, all freed), and the handshake and each
-// post-handshake message allocate.
+// allocates its view of the buffer (3 blocks, all freed), `TlsStream.read` its result, and the
+// handshake and each post-handshake message allocate.
 //
-// Writes take turns (`WriteTurns`): records carry implicit sequence numbers, so each write
+// Writes take turns (`Turns`): records carry implicit sequence numbers, so each write
 // seals and sends its records while no other does, in the order the writes were called; a
 // KeyUpdate and close_notify wait their turn the same way.
 
@@ -16,6 +16,7 @@ import { IoError } from "velt/io/error";
 import { ByteStream } from "velt/net/byte_stream";
 import { CLOSE_NOTIFY, TlsFailure, UNEXPECTED_MESSAGE } from "velt/net/tls/alert";
 import {
+  checkKeyUpdate,
   ClientHandshake,
   FINISHED_DONE,
   HANDSHAKE_KEYS,
@@ -36,7 +37,7 @@ import {
   MAX_PLAIN,
   RecordReader,
 } from "velt/net/tls/record_reader";
-import { WriteTurns } from "velt/net/tls/write_turns";
+import { Turns } from "velt/net/tls/turns";
 
 // Records sealed per transport write, and the room each takes.
 const BATCH: usize = 4;
@@ -55,7 +56,7 @@ export class TlsEngine {
   /** Records one write key seals before a KeyUpdate. */
   writeLimit: u64;
   private wbuf: u8[];
-  private turns: WriteTurns;
+  private turns: Turns;
   private suite: usize;
   private readSecret: u8[];
   private writeSecret: u8[];
@@ -74,7 +75,7 @@ export class TlsEngine {
     this.writer = null;
     this.writeLimit = KEY_RECORDS;
     this.wbuf = Buffer.alloc(BATCH * RECORD);
-    this.turns = new WriteTurns();
+    this.turns = new Turns();
     this.suite = 0;
     this.readSecret = [];
     this.writeSecret = [];
@@ -213,23 +214,21 @@ export class TlsEngine {
     }
   }
 
-  /** Sends close_notify (once) and closes the transport. */
+  /** Sends close_notify (once) and half-closes the transport: reading stays open (§6.1). */
   async shutdown(): Promise<void> {
-    if (!this.shutDown && this.writer != null && this.failure == null) {
-      this.shutDown = true;
-      try {
-        await this.turns.turn();
-        try {
-          await this.sendProtected(ALERT, [1, CLOSE_NOTIFY]);
-        } finally {
-          this.turns.done();
-        }
-      } finally {
-        this.t.close();
-      }
+    if (this.shutDown || this.writer == null || this.failure != null) {
       return;
     }
-    this.t.close();
+    this.shutDown = true;
+    await this.turns.turn();
+    try {
+      await this.sendProtected(ALERT, [1, CLOSE_NOTIFY]);
+      await this.t.halfClose();
+    } catch (e) {
+      throw await this.failed(e);
+    } finally {
+      this.turns.done();
+    }
   }
 
   /** Closes the transport at once. */
@@ -275,12 +274,13 @@ export class TlsEngine {
     if (type == NEW_SESSION_TICKET) {
       return;
     }
-    if (type != KEY_UPDATE || m.length != 5 || m[4] > 1) {
+    if (type != KEY_UPDATE) {
       throw new TlsFailure(
         UNEXPECTED_MESSAGE,
         `unexpected handshake message ${type} after the handshake`,
       );
     }
+    checkKeyUpdate(m);
     // New read keys from the next record on (RFC 8446 §4.6.3).
     this.hs.checkEmpty();
     this.readSecret = nextSecret(this.readSecret);
@@ -376,7 +376,7 @@ export class TlsEngine {
     if (this.failure == null) {
       this.failure = err;
       // The alert only when no write is in progress: it may wait on the transport for good.
-      if (e instanceof TlsFailure && e.sendAlert && !this.shutDown && !this.turns.writing) {
+      if (e instanceof TlsFailure && e.sendAlert && !this.shutDown && !this.turns.busy) {
         try {
           if (this.writer != null) {
             await this.sendProtected(ALERT, [2, e.alert]);

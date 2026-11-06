@@ -222,6 +222,11 @@ export struct TcpStream implements ByteStream {
     checkIo(velt_rt_tcp_shutdown(this.handle));
   }
 
+  /** `shutdown()`, as `ByteStream` has it: a transport that must send something first can wait. */
+  async halfClose(): Promise<void> {
+    this.shutdown();
+  }
+
   /** The peer's "ip:port" ("" once the handle is closed). */
   peerAddr(): string {
     return velt_rt_tcp_peer_addr(this.handle);

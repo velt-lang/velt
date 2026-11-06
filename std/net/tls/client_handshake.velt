@@ -9,6 +9,7 @@ import { x25519 } from "velt/crypto/x25519";
 import { sha256 } from "velt/crypto/sha256";
 import { utf8Decode } from "velt/encoding/utf8";
 import {
+  DECODE_ERROR,
   DECRYPT_ERROR,
   ILLEGAL_PARAMETER,
   NO_APPLICATION_PROTOCOL,
@@ -49,6 +50,16 @@ export const SEND_RETRY = 1;
 export const HANDSHAKE_KEYS = 2;
 /** Send `lastFlight` under the client's handshake keys, then switch to the application keys. */
 export const FINISHED_DONE = 3;
+
+/** Checks a KeyUpdate message `m` (RFC 8446 §4.6.3): its length, then `request_update`. */
+export function checkKeyUpdate(m: u8[]) {
+  if (m.length != 5) {
+    throw new TlsFailure(DECODE_ERROR, `a KeyUpdate of ${m.length} bytes`);
+  }
+  if (m[4] > 1) {
+    throw new TlsFailure(ILLEGAL_PARAMETER, `a KeyUpdate with request_update ${m[4]}`);
+  }
+}
 
 /** The client's side of one handshake. */
 export class ClientHandshake {

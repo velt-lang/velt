@@ -2,7 +2,6 @@
 // (§4.1.4) when its random is the special value: version, suite, key share, cookie.
 
 import {
-  HANDSHAKE_FAILURE,
   ILLEGAL_PARAMETER,
   MISSING_EXTENSION,
   PROTOCOL_VERSION,
@@ -145,7 +144,7 @@ export function parseServerHello(body: u8[], sessionId: u8[]): ServerHello {
     );
   } else if (group != 0) {
     throw new TlsFailure(
-      HANDSHAKE_FAILURE,
+      ILLEGAL_PARAMETER,
       `the server requires key exchange group 0x${group.toString(16)}, which is not supported yet (X25519 only)`,
     );
   }

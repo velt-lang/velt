@@ -68,6 +68,7 @@ describe("startTls against rustls", () => {
     }
     await tls.shutdown();
     expect(await server).toBe(`h2 ${sent}`);
+    tls.close();
     l.close();
   });
 
@@ -119,6 +120,106 @@ describe("startTls against rustls", () => {
     await expect(tls.read()).rejects.toThrow("TLS: the connection closed without close_notify");
     await server;
     tls.close();
+    l.close();
+  });
+
+  it("reads the server's answer after shutdown: a half-close", async () => {
+    const l = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
+    const accepting = l;
+    const server = spawn(async () => {
+      const conn: TcpStream = await accepting.accept();
+      const got = await conn.readString();
+      while (true) {
+        const more = await conn.read();
+        if (more.length == 0) {
+          break;
+        }
+      }
+      await conn.write(`answer to ${got}`);
+      await conn.shutdown();
+      conn.close();
+    });
+    const tls = await startTls(await connect(`127.0.0.1:${l.port}`), { verify: false });
+    await tls.write("request");
+    await tls.shutdown();
+    let text = "";
+    while (true) {
+      const chunk = await tls.read();
+      if (chunk.length == 0) {
+        break;
+      }
+      text += String.fromCharCode(...chunk.map((b) => b as number));
+    }
+    expect(text).toBe("answer to request");
+    await server;
+    tls.close();
+    l.close();
+  });
+
+  it("gives concurrent reads the server's data in call order", async () => {
+    const l = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
+    const accepting = l;
+    const server = spawn(async () => {
+      const conn: TcpStream = await accepting.accept();
+      await conn.write("AAAA");
+      await conn.readString();
+      await conn.write("BBBB");
+      await conn.readString();
+      await conn.write("CCCC");
+      await conn.shutdown();
+      await conn.read();
+      conn.close();
+    });
+    const tls = await startTls(await connect(`127.0.0.1:${l.port}`), { verify: false });
+    const a = tls.read();
+    const b = tls.read();
+    const c = tls.read();
+    const text = (bytes: u8[]): string => String.fromCharCode(...bytes.map((x) => x as number));
+    expect(text(await a)).toBe("AAAA");
+    await tls.write("1");
+    expect(text(await b)).toBe("BBBB");
+    await tls.write("2");
+    expect(text(await c)).toBe("CCCC");
+    await tls.shutdown();
+    await server;
+    tls.close();
+    l.close();
+  });
+
+  it("keeps sequence numbers apart across closures and a task it moves to", async () => {
+    const l = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
+    const accepting = l;
+    const server = spawn(async () => {
+      const conn: TcpStream = await accepting.accept();
+      let text = "";
+      while (true) {
+        const chunk = await conn.read();
+        if (chunk.length == 0) {
+          break;
+        }
+        text += String.fromCharCode(...chunk.map((b) => b as number));
+      }
+      conn.close();
+      return text;
+    });
+    const tls = await startTls(await connect(`127.0.0.1:${l.port}`), { verify: false });
+    await tls.write("a");
+    const say = async (f: () => Promise<void, Error>) => {
+      await f();
+    };
+    await say(async () => {
+      await tls.write("b");
+    });
+    await say(async () => {
+      await tls.write("c");
+    });
+    await spawn(async () => {
+      await tls.write("d");
+      await tls.shutdown();
+      tls.close();
+    });
+    // rustls opens each record at the next sequence number: a repeat ends the stream with an error.
+    expect(await server).toBe("abcd");
     l.close();
   });
 

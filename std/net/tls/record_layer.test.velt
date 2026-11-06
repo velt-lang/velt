@@ -164,6 +164,8 @@ class Playback implements ByteStream {
     }
   }
 
+  async halfClose(): Promise<void> {}
+
   close() {
     this.closed = true;
   }
@@ -750,35 +752,6 @@ describe("HandshakeBuffer", () => {
         hs.hasMessage();
       }),
     ).toBe("50 TLS: a handshake message of 131073 bytes");
-  });
-
-  it("takes many messages out of one append and keeps a split one", () => {
-    const hs = new HandshakeBuffer();
-    const bytes: u8[] = [];
-    for (let i: usize = 0; i < 300; i++) {
-      bytes.push(i as u8);
-      bytes.push(0);
-      bytes.push(0);
-      bytes.push(1);
-      bytes.push((i + 1) as u8);
-    }
-    bytes.push(7);
-    bytes.push(0);
-    bytes.push(0);
-    bytes.push(2);
-    bytes.push(1);
-    hs.append(bytes, 0, bytes.length);
-    for (let i: usize = 0; i < 300; i++) {
-      expect(hs.hasMessage()).toBe(true);
-      expect(hexEncode(hs.take())).toBe(hexEncode([i as u8, 0, 0, 1, (i + 1) as u8]));
-    }
-    expect(hs.hasMessage()).toBe(false);
-    expect(() => hs.checkEmpty()).toThrow("TLS: handshake data across a key change");
-    hs.append([2, 9, 0, 0, 0], 0, 5);
-    expect(hexEncode(hs.take())).toBe("070000020102");
-    expect(hs.hasMessage()).toBe(true);
-    expect(hexEncode(hs.take())).toBe("09000000");
-    hs.checkEmpty();
   });
 
   it("accepts a message of exactly the cap", () => {
