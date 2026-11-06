@@ -753,3 +753,42 @@ fn to_equal_compares_as_vitest_does() {
         "{stdout}"
     );
 }
+
+/// A module constant built from other constants, read by a test, while a function and a class
+/// method read another constant (#2409): the test file is an imported module of the harness,
+/// whose top-level statements are split into chunks, and `AB`'s initializer couldn't find `A`.
+const CHAINED_CONSTANTS: &str = r#"import { describe, expect, it } from "velt/test";
+const A = "aa";
+const AB = A + "b";
+const ABC = AB + "c";
+const N = 3;
+const N2 = N * 2;
+const H = "cf";
+function f(): number {
+  return H.length;
+}
+class K {
+  name(): string {
+    return H + "!";
+  }
+}
+describe("x", () => {
+  it("y", () => {
+    expect(AB + `${f()}`).toBe("aab2");
+    expect(`${ABC} ${N2} ${new K().name()}`).toBe("aabc 6 cf!");
+  });
+});
+"#;
+
+#[test]
+fn module_constants_built_from_constants() {
+    runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
+    let tmp = test_dir::TestDir::new();
+    let dir = tmp.path();
+    write(dir, "t/m.test.velt", CHAINED_CONSTANTS);
+    let o = velt_test(dir, &["t"]);
+    let stdout = String::from_utf8_lossy(&o.stdout);
+    let stderr = String::from_utf8_lossy(&o.stderr);
+    assert!(o.status.success(), "{stdout}\n{stderr}");
+    assert_eq!(block(&stdout, "m.test.velt")[1..], ["ok x > y"], "{stdout}");
+}

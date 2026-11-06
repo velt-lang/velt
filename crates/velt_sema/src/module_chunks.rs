@@ -117,8 +117,12 @@ fn split_module(module: &SourceModule, out: &mut Split) -> Option<Vec<ast::Item>
                 continue;
             }
             let names = bound(&v.pattern);
-            let used_later = (i + 1..stmts.len())
-                .any(|j| chunk_of(j) != chunk_of(i) && names.iter().any(|n| refs[j].contains(n)));
+            // A promoted variable's initializer runs at module level, in no chunk: what it
+            // reads must be module-level too (`const AB = A + "b"`, #2409).
+            let used_later = (i + 1..stmts.len()).any(|j| {
+                (chunk_of(j) != chunk_of(i) || promoted.contains(&j))
+                    && names.iter().any(|n| refs[j].contains(n))
+            });
             if used_later {
                 if !matches!(v.pattern.kind, ast::PatternKind::Ident(_)) || v.init.is_none() {
                     if !failed.insert(i) {
