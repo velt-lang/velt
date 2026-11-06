@@ -1,4 +1,4 @@
-jsx_automatic_props.vlt:10:18: error: Property 'lable' does not exist on type 'JSX.IntrinsicElements["box"]'. Did you mean 'label'?
-jsx_automatic_props.vlt:11:24: error: Type 'string' is not assignable to type 'boolean | undefined'.
-jsx_automatic_props.vlt:12:14: error: Property 'title' is missing in type '{}' but required in type '{ title: string; children?: any }'.
-jsx_automatic_props.vlt:13:29: error: Property 'extra' does not exist on type '{ title: string; children?: any }'.
+jsx_automatic_props.velt:10:18: error: Property 'lable' does not exist on type 'JSX.IntrinsicElements["box"]'. Did you mean 'label'?
+jsx_automatic_props.velt:11:24: error: Type 'string' is not assignable to type 'boolean | undefined'.
+jsx_automatic_props.velt:12:14: error: Property 'title' is missing in type '{}' but required in type '{ title: string; children?: any }'.
+jsx_automatic_props.velt:13:29: error: Property 'extra' does not exist on type '{ title: string; children?: any }'.

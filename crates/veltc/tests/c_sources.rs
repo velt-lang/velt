@@ -41,11 +41,11 @@ fn package(dir: &Path, manifest: &str) {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("native")).unwrap();
     std::fs::write(
-        dir.join("package.vlt"),
+        dir.join("package.velt"),
         format!("import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{ name: \"tiny\", version: \"0.1.0\"{manifest} }};\n"),
     )
     .unwrap();
-    std::fs::write(dir.join("src/lib.vlt"), LIB).unwrap();
+    std::fs::write(dir.join("src/lib.velt"), LIB).unwrap();
     std::fs::write(dir.join("native/tiny.h"), HEADER).unwrap();
     std::fs::write(dir.join("native/tiny.c"), source(0)).unwrap();
     std::fs::write(dir.join("native/tiny_more.inc"), "#define MORE 2\n").unwrap();
@@ -55,11 +55,11 @@ fn package(dir: &Path, manifest: &str) {
 fn app(dir: &Path, allow: &str, dependency: &str) {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(
-        dir.join("package.vlt"),
+        dir.join("package.velt"),
         format!("import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"app\",\n  version: \"0.1.0\",\n  {allow}dependencies: {{ tiny: {dependency} }},\n}};\n"),
     )
     .unwrap();
-    std::fs::write(dir.join("src/main.vlt"), MAIN).unwrap();
+    std::fs::write(dir.join("src/main.velt"), MAIN).unwrap();
 }
 
 /// `dir/tiny` and `dir/app`, which allows it by path.
@@ -171,7 +171,7 @@ fn a_package_s_c_sources_build_and_link_in_every_mode() {
     std::fs::rename(bundles.with_extension("gone"), &bundles).unwrap();
 
     // `velt dev` finds the library's functions in what it loaded.
-    std::fs::write(app.join("main.vlt"), MAIN).unwrap();
+    std::fs::write(app.join("main.velt"), MAIN).unwrap();
     let env = [("VELT_HOME", home.to_str().unwrap())];
     let dev = reload_support::Dev::start_with_env(&app, &[], &env);
     dev.wait_stdout(reload_support::Mark::default(), "9")
@@ -230,9 +230,9 @@ fn a_changed_source_rebuilds_and_an_unchanged_one_does_not() {
     for release in [false, true] {
         assert_eq!(run_host(&app, &home, &[], release), "143\n4\n9\n");
     }
-    let manifest = std::fs::read_to_string(tiny.join("package.vlt")).unwrap();
+    let manifest = std::fs::read_to_string(tiny.join("package.velt")).unwrap();
     std::fs::write(
-        tiny.join("package.vlt"),
+        tiny.join("package.velt"),
         manifest.replace("ANSWER: \"40\"", "ANSWER: \"50\""),
     )
     .unwrap();
@@ -279,7 +279,7 @@ fn declarations_are_checked_against_the_package_s_headers() {
     let wrong = LIB
         .replace("tiny_answer(): i32", "tiny_answer(): i64")
         .replace("answer(): i32", "answer(): i64");
-    std::fs::write(tiny.join("src/lib.vlt"), wrong).unwrap();
+    std::fs::write(tiny.join("src/lib.velt"), wrong).unwrap();
     let o = velt(&app, &home, &[], &["check"]);
     let out = text(&o);
     assert!(!o.status.success(), "{out}");
@@ -297,9 +297,9 @@ fn declarations_are_checked_against_the_package_s_headers() {
         ),
     )
     .unwrap();
-    let manifest = std::fs::read_to_string(tiny.join("package.vlt")).unwrap();
+    let manifest = std::fs::read_to_string(tiny.join("package.velt")).unwrap();
     std::fs::write(
-        tiny.join("package.vlt"),
+        tiny.join("package.velt"),
         manifest.replace("ANSWER: \"40\"", "ANSWER: \"40\", WIDE: \"1\""),
     )
     .unwrap();
@@ -345,10 +345,10 @@ fn changed_defines_are_refused_from_a_git_dependency() {
     assert!(text(&o).contains("headers checked"), "{}", text(&o));
     assert_eq!(run_host(&app_dir, &home, &from_source, false), "40\n4\n9\n");
     // A later commit adds `WIDE` and keeps the record.
-    let manifest = std::fs::read_to_string(tiny.join("package.vlt")).unwrap();
+    let manifest = std::fs::read_to_string(tiny.join("package.velt")).unwrap();
     let widened = manifest.replace("ANSWER: \"40\"", "ANSWER: \"40\", WIDE: \"1\"");
     assert_ne!(manifest, widened);
-    std::fs::write(tiny.join("package.vlt"), widened).unwrap();
+    std::fs::write(tiny.join("package.velt"), widened).unwrap();
     git(&tiny, &["commit", "-q", "-am", "wide"]);
     let _ = std::fs::remove_file(app_dir.join("velt.lock.json"));
     for args in [&["check"][..], &["run"][..]] {
@@ -377,23 +377,23 @@ fn a_define_changes_a_constant_s_value() {
         "#ifndef ANSWER\n#define ANSWER 1\n#endif\n#define TINY_LIMIT (ANSWER + 1)\n",
     )
     .unwrap();
-    let manifest = std::fs::read_to_string(tiny.join("package.vlt")).unwrap();
+    let manifest = std::fs::read_to_string(tiny.join("package.velt")).unwrap();
     let limited = manifest.replace(
         "headers: [\"native/tiny.h\"]",
         "headers: [\"native/tiny.h\", \"native/limit.h\"]",
     );
     assert_ne!(manifest, limited);
-    std::fs::write(tiny.join("package.vlt"), &limited).unwrap();
+    std::fs::write(tiny.join("package.velt"), &limited).unwrap();
     let lib = format!("{LIB}\ndeclare c const TINY_LIMIT: i32;\n\nexport function limit(): i32 {{\n  return TINY_LIMIT;\n}}\n");
-    std::fs::write(tiny.join("src/lib.vlt"), lib).unwrap();
+    std::fs::write(tiny.join("src/lib.velt"), lib).unwrap();
     std::fs::write(
-        app.join("src/main.vlt"),
+        app.join("src/main.velt"),
         "import { answer, limit } from \"tiny\";\n\nfunction main() {\n  console.log(answer());\n  console.log(limit());\n}\n",
     )
     .unwrap();
     assert_eq!(run_host(&app, &home, &[], false), "42\n41\n");
     std::fs::write(
-        tiny.join("package.vlt"),
+        tiny.join("package.velt"),
         limited.replace("ANSWER: \"40\"", "ANSWER: \"50\""),
     )
     .unwrap();

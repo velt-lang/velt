@@ -308,10 +308,10 @@ pub(crate) mod tests {
         let dest = tmp.path().join("d/0.1.0");
         let a = archive(&[
             ("top/bin/velt", b"exe", 0o755),
-            ("top/std/x.vlt", b"", 0o644),
+            ("top/std/x.velt", b"", 0o644),
         ]);
         install_dir(&a, "top", &dest, "toolchain", Existing::Replace, |_| None).unwrap();
-        assert!(dest.join("std/x.vlt").is_file());
+        assert!(dest.join("std/x.velt").is_file());
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -322,7 +322,7 @@ pub(crate) mod tests {
                     .mode()
             };
             assert_eq!(mode("bin/velt") & 0o111, 0o111);
-            assert_eq!(mode("std/x.vlt") & 0o111, 0);
+            assert_eq!(mode("std/x.velt") & 0o111, 0);
         }
         std::fs::write(dest.join("stale"), b"").unwrap();
         install_dir(&a, "top", &dest, "toolchain", Existing::Replace, |_| None).unwrap();

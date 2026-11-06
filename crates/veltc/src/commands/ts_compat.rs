@@ -120,7 +120,7 @@ fn package_folders() -> Result<Vec<PathBuf>, String> {
     let Some(root) = vpm::manifest::find_package_root(&cwd) else {
         return Err(format!(
             "`velt check --ts-compat` without paths lints the folders a package's `tsCompat` \
-             lists, but there is no `package.vlt` in `{}` or any parent directory. {NAME_PATHS}",
+             lists, but there is no `package.velt` in `{}` or any parent directory. {NAME_PATHS}",
             cwd.display()
         ));
     };
@@ -128,7 +128,7 @@ fn package_folders() -> Result<Vec<PathBuf>, String> {
     let name = &manifest.package.name;
     if manifest.ts_compat.is_empty() {
         return Err(format!(
-            "package `{name}` has no `tsCompat` folders to lint: list them in package.vlt \
+            "package `{name}` has no `tsCompat` folders to lint: list them in package.velt \
              (`tsCompat: [\"src/models\"]`). {NAME_PATHS}"
         ));
     }
@@ -163,12 +163,12 @@ fn folder_files(dirs: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
         files.extend(found.map(|f| f.strip_prefix(".").map(Path::to_path_buf).unwrap_or(f)));
     }
     if files.is_empty() {
-        return Err("the `tsCompat` folders have no `.vlt`, `.ts` or `.tsx` files to lint".into());
+        return Err("the `tsCompat` folders have no `.velt`, `.ts` or `.tsx` files to lint".into());
     }
     Ok(files)
 }
 
-/// The source files `paths` name: files as given, directories' `.vlt`, `.ts` and `.tsx` files
+/// The source files `paths` name: files as given, directories' `.velt`, `.ts` and `.tsx` files
 /// (recursively, as `velt check` finds a package's modules), each once.
 fn expand(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     let mut files = vec![];
@@ -177,7 +177,7 @@ fn expand(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
             let found = discover::source_files(path)?;
             if found.is_empty() {
                 return Err(format!(
-                    "`{}` has no `.vlt`, `.ts` or `.tsx` files to lint",
+                    "`{}` has no `.velt`, `.ts` or `.tsx` files to lint",
                     path.display()
                 ));
             }

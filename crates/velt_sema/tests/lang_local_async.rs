@@ -144,7 +144,7 @@ fn a_boundary_in_std_is_reported_at_the_users_call() {
          }",
     );
     assert!(r.contains("is sent on a channel here"), "{r}");
-    assert!(!r.contains("channel.vlt"), "{r}");
+    assert!(!r.contains("channel.velt"), "{r}");
 }
 
 #[test]

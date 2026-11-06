@@ -30,7 +30,7 @@ in the request future. The runtime links mimalloc; the baselines use the system 
 likely why velt_rt is slightly ahead with many workers.
 
 ## End-to-end: compiled Velt program vs Node (after M4)
-`examples/http_hello.vlt` built with `velt build --release` (LLVM) vs an equivalent Node 22 `http`
+`examples/http_hello.velt` built with `velt build --release` (LLVM) vs an equivalent Node 22 `http`
 server; `oha -z 10s -c 256` on the same machine (client competes for CPU), Windows 11, i9-12900HK.
 
 | server | req/s | avg latency | p99 | peak RSS under load |
@@ -41,7 +41,7 @@ server; `oha -z 10s -c 256` on the same machine (client competes for CPU), Windo
 (The rt-only numbers above, with a Rust client, put hyper/axum at 47–53k req/s on this machine.)
 
 ## End-to-end on Apple silicon (stream A, 2026-09-30)
-Same setup as above on an Apple M4 (4P + 6E cores), macOS 26.6: `examples/http_hello.vlt` built
+Same setup as above on an Apple M4 (4P + 6E cores), macOS 26.6: `examples/http_hello.velt` built
 with `velt build --release` (LLVM, Apple clang 21) vs the same Node server on Node 24.11.1
 (`http.createServer`, one process). `oha -z 10s -c 256` on the same machine; peak RSS from
 `/usr/bin/time -l`. Three runs each; the ranges are run-to-run spread.

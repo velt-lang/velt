@@ -1,4 +1,4 @@
-// Recursive Fibonacci: call overhead and integer arithmetic (same algorithm as fib.vlt).
+// Recursive Fibonacci: call overhead and integer arithmetic (same algorithm as fib.velt).
 fn fib(n: i64) -> i64 {
     if n < 2 {
         return n;

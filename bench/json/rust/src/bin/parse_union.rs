@@ -1,4 +1,4 @@
-//! Union parse (see parse_union.vlt): an internally tagged serde enum (the tag may come last).
+//! Union parse (see parse_union.velt): an internally tagged serde enum (the tag may come last).
 use serde::Deserialize;
 
 #[derive(Deserialize)]

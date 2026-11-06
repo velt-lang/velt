@@ -1,11 +1,11 @@
 //! Conditional imports, Node's `imports` field (CONTRACT: docs/internals/contracts/manifest.md):
-//! a package (or the standard library, `std/imports.vlt`) maps `#name` specifiers to one of
+//! a package (or the standard library, `std/imports.velt`) maps `#name` specifiers to one of
 //! several files, chosen by the build's conditions.
 //!
 //! ```ts ignore
 //! imports: {
-//!   "#transport": { js: "./src/transport/js.vlt", default: "./src/transport/native.vlt" },
-//!   "#config": "./src/config.vlt",          // one file: the same as { default: … }
+//!   "#transport": { js: "./src/transport/js.velt", default: "./src/transport/native.velt" },
+//!   "#config": "./src/config.velt",          // one file: the same as { default: … }
 //! },
 //! ```
 //!
@@ -21,7 +21,7 @@ use std::path::{Component, Path};
 
 /// The standard library's map, in the std root: `export const imports: Imports = { … }`, its
 /// variants `./`-relative to the std root.
-pub const STD_IMPORTS_FILE: &str = "imports.vlt";
+pub const STD_IMPORTS_FILE: &str = "imports.velt";
 
 /// The condition every build has: the variant used when no other one applies.
 pub const DEFAULT: &str = "default";
@@ -41,7 +41,7 @@ pub struct Variant {
     /// A name of [`CONDITIONS`], or a host package's condition.
     pub condition: String,
     /// The file, `./`-relative to the package root (to the std root for std's map), with its
-    /// source extension: `./src/transport/js.vlt`.
+    /// source extension: `./src/transport/js.velt`.
     pub target: String,
 }
 
@@ -94,7 +94,7 @@ const REPRESENTATIVE_TARGETS: &[&str] = &[
 /// of `map`, when a build for `host` does not: the editor checks an open variant as the build
 /// that uses it. `None` when `host` uses it, or no `#name` names it.
 pub fn target_selecting(map: &ImportMap, target: &str, host: &str) -> Option<&'static str> {
-    // `./src//js.vlt` and `./src/./js.vlt` name `src/js.vlt`.
+    // `./src//js.velt` and `./src/./js.velt` name `src/js.velt`.
     let file = |t: &str| -> Vec<String> {
         t.split('/')
             .filter(|s| !s.is_empty() && *s != ".")
@@ -189,7 +189,7 @@ pub(crate) fn check_host_condition(condition: &str) -> Result<(), String> {
 pub(crate) fn check_target(target: &str, src: bool) -> Result<(), String> {
     let Some(rel) = target.strip_prefix("./") else {
         return Err(format!(
-            "`{target}`: a variant is a `./`-relative path (`./src/x.vlt`)"
+            "`{target}`: a variant is a `./`-relative path (`./src/x.velt`)"
         ));
     };
     let inside = !rel.contains('\\')
@@ -208,7 +208,7 @@ pub(crate) fn check_target(target: &str, src: bool) -> Result<(), String> {
     }
     if !crate::sources::is_source_name(rel) {
         return Err(format!(
-            "`{target}`: name the file with its extension (`.vlt`, `.ts` or `.tsx`)"
+            "`{target}`: name the file with its extension (`.velt`, `.ts` or `.tsx`)"
         ));
     }
     Ok(())
@@ -283,24 +283,24 @@ mod tests {
     #[test]
     fn the_first_variant_the_build_has_wins() {
         let v = variants(&[
-            ("js", "./src/js.vlt"),
-            ("wasm", "./src/wasm.vlt"),
-            ("default", "./src/native.vlt"),
+            ("js", "./src/js.velt"),
+            ("wasm", "./src/wasm.velt"),
+            ("default", "./src/native.velt"),
         ]);
         let pick = |triple: &str| select(&v, &conditions(triple, None)).map(|v| v.target.as_str());
         // A host's variant comes before the target's when written first.
-        let edge = variants(&[("edge", "./src/w.vlt"), ("js", "./src/js.vlt")]);
+        let edge = variants(&[("edge", "./src/w.velt"), ("js", "./src/js.velt")]);
         let on = |host| select(&edge, &conditions("wasm32-unknown-unknown", host));
         assert_eq!(
             on(Some("edge")).map(|v| v.target.as_str()),
-            Some("./src/w.vlt")
+            Some("./src/w.velt")
         );
-        assert_eq!(on(None).map(|v| v.target.as_str()), Some("./src/js.vlt"));
-        assert_eq!(pick("wasm32-unknown-unknown"), Some("./src/js.vlt"));
-        assert_eq!(pick("wasm32-wasip1"), Some("./src/wasm.vlt"));
-        assert_eq!(pick("x86_64-unknown-linux-gnu"), Some("./src/native.vlt"));
+        assert_eq!(on(None).map(|v| v.target.as_str()), Some("./src/js.velt"));
+        assert_eq!(pick("wasm32-unknown-unknown"), Some("./src/js.velt"));
+        assert_eq!(pick("wasm32-wasip1"), Some("./src/wasm.velt"));
+        assert_eq!(pick("x86_64-unknown-linux-gnu"), Some("./src/native.velt"));
         // Without `default`, a build no variant names has none.
-        let no_default = variants(&[("js", "./src/js.vlt")]);
+        let no_default = variants(&[("js", "./src/js.velt")]);
         assert_eq!(
             select(&no_default, &conditions("wasm32-wasip1", None)),
             None
@@ -312,24 +312,24 @@ mod tests {
         let map = ImportMap::from([(
             "#io".to_string(),
             variants(&[
-                ("js", "./src/io/js.vlt"),
-                ("win32", "./src/io/win.vlt"),
-                ("default", "./src/io/native.vlt"),
+                ("js", "./src/io/js.velt"),
+                ("win32", "./src/io/win.velt"),
+                ("default", "./src/io/native.velt"),
             ]),
         )]);
         let host = "aarch64-apple-darwin";
         assert_eq!(
-            target_selecting(&map, "./src/io/js.vlt", host),
+            target_selecting(&map, "./src/io/js.velt", host),
             Some("wasm32-unknown-unknown")
         );
         assert_eq!(
-            target_selecting(&map, "./src/io/win.vlt", host),
+            target_selecting(&map, "./src/io/win.velt", host),
             Some("x86_64-pc-windows-msvc")
         );
-        assert_eq!(target_selecting(&map, "./src/io/native.vlt", host), None);
-        assert_eq!(target_selecting(&map, "./src/other.vlt", host), None);
+        assert_eq!(target_selecting(&map, "./src/io/native.velt", host), None);
+        assert_eq!(target_selecting(&map, "./src/other.velt", host), None);
         assert_eq!(
-            target_selecting(&map, "./src//io/./js.vlt", host),
+            target_selecting(&map, "./src//io/./js.velt", host),
             Some("wasm32-unknown-unknown")
         );
         assert_eq!(
@@ -367,13 +367,13 @@ mod tests {
             .contains("only the built-in"));
         let err = check_condition("No_de", true).unwrap_err();
         assert!(err.contains("native, darwin"), "{err}");
-        assert!(check_target("./src/a/b.vlt", true).is_ok());
-        assert!(check_target("./net/x.vlt", false).is_ok());
+        assert!(check_target("./src/a/b.velt", true).is_ok());
+        assert!(check_target("./net/x.velt", false).is_ok());
         for (bad, why) in [
-            ("src/a.vlt", "`./`-relative"),
-            ("./src/../../x.vlt", "inside the package"),
-            ("./src\\a.vlt", "inside the package"),
-            ("./lib/a.vlt", "below `./src/`"),
+            ("src/a.velt", "`./`-relative"),
+            ("./src/../../x.velt", "inside the package"),
+            ("./src\\a.velt", "inside the package"),
+            ("./lib/a.velt", "below `./src/`"),
             ("./src/a", "extension"),
             ("./src/a.d.ts", "extension"),
         ] {

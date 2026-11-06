@@ -71,7 +71,7 @@ impl Documents {
 /// exist, so the loader reads them from the overlay only.
 pub fn uri_to_path(uri: &Url) -> PathBuf {
     uri.to_file_path()
-        .unwrap_or_else(|_| PathBuf::from(format!("{}.vlt", uri.as_str().replace(':', "_"))))
+        .unwrap_or_else(|_| PathBuf::from(format!("{}.velt", uri.as_str().replace(':', "_"))))
 }
 
 /// The `file:` URI of `path` (made absolute first; `None` if that fails).

@@ -10,7 +10,7 @@ Velt does not have yet and the cost of in-process dispatch.
 
 Six of the eight bugs sat at the same crossroads: async code, calls through an interface or a
 function value, and objects with more than one owner. That is the shape of an actor or RPC
-runtime. The fixes came with goldens for that combination (#202), and `demo.vlt` is a golden
+runtime. The fixes came with goldens for that combination (#202), and `demo.velt` is a golden
 too.
 
 | # | Bug | Issue | What the port does now |

@@ -1,6 +1,6 @@
 //! `for...of` over an iterable (docs/internals/design/iteration.md): a value whose type has a
 //! `[Symbol.iterator]()` method returning an `Iterator<T, E>` (the prelude's protocol,
-//! std/prelude/iter.vlt). Arrays, `Map`s and `entries()` classes keep their own loops
+//! std/prelude/iter.velt). Arrays, `Map`s and `entries()` classes keep their own loops
 //! (`loops.rs`). The loop is desugared here, before checking, into
 //!
 //! ```text
@@ -74,7 +74,7 @@ pub(super) struct ForOfParts<'a> {
 
 impl FnCx<'_, '_> {
     /// Can `for...of` iterate a value of type `t` through `[Symbol.iterator]()`? Arrays,
-    /// strings and `Map`s are iterable too (std/prelude/iter.vlt), but keep their own loops.
+    /// strings and `Map`s are iterable too (std/prelude/iter.velt), but keep their own loops.
     pub(super) fn is_iterable(&mut self, t: TyId) -> bool {
         self.cx.ty.array_elem(t).is_none()
             && t != self.cx.ty.str_

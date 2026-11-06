@@ -16,9 +16,9 @@ Official description: https://benchmarksgame-team.pages.debian.net/benchmarksgam
 | `main_st.go` | Go #1, chaishushan: fastest single-threaded Go (tied with Go #8 officially) |
 | `main.js` | Node.js #6, Ian Osgood / Roy Williams / Isaac Gouy / Andrey Filatkin: worker threads, one per CPU |
 | `main_st.js` | Node.js #1, Ian Osgood / Isaac Gouy: single-threaded Node (officially 0.01 s behind Node #7) |
-| `main.vlt` | idiomatic single-threaded Velt in the Node #1 shape (one running sum per row) |
-| `main_mt.vlt` | `main.vlt` with each product split into `availableParallelism() * 4` row blocks: `spawn` + `Promise.all` |
-| `main_opt.vlt` | single-threaded, the Rust #5 shape: two rows at a time, two lanes each in a Copy struct `F64x2` |
+| `main.velt` | idiomatic single-threaded Velt in the Node #1 shape (one running sum per row) |
+| `main_mt.velt` | `main.velt` with each product split into `availableParallelism() * 4` row blocks: `spawn` + `Promise.all` |
+| `main_opt.velt` | single-threaded, the Rust #5 shape: two rows at a time, two lanes each in a Copy struct `F64x2` |
 
 The official files are unchanged apart from a first `// Source:` line (`_st.rs`: three lines).
 Naming: `main.go` / `main.js` are the fastest published programs (parallel); `main_st.*` the
@@ -26,7 +26,7 @@ fastest single-threaded ones; Rust `_st` is the reference for single-threaded Ve
 
 ## Deviations
 - `toFixed` is declared with `extend f64` (Velt has none; see n-body/NOTES.md).
-- `main_opt.vlt` (like Rust #5) needs an even N.
+- `main_opt.velt` (like Rust #5) needs an even N.
 
 ## Correctness
 Every implementation prints the official output at N = 100 and the Rust output (`1.274224153`)
@@ -43,12 +43,12 @@ loaded machine). "× Rust" compares with the Rust program of the same thread cou
 |---|---|---:|---:|---:|---:|---:|
 | Rust `spectral-norm.rs` | all | 0.16 | 0.83 | 2.2 | 1.00 | 1.00 |
 | Rust `spectral-norm_st.rs` | 1 | 0.57 | 0.57 | 1.8 | 1.00 | 1.00 |
-| Velt LLVM `main.vlt` | 1 | 1.21 | 1.20 | 2.4 | 2.12 | 2.11 |
-| Velt LLVM `main_mt.vlt` | all | 0.29 | 1.46 | 22.8 | 1.81 | 1.76 |
-| Velt LLVM `main_opt.vlt` | 1 | 0.64 | 0.64 | 2.4 | 1.12 | 1.12 |
-| Velt Cranelift `main.vlt` | 1 | 1.58 | 1.56 | 2.4 | 2.77 | 2.74 |
-| Velt Cranelift `main_mt.vlt` | all | 0.78 | 3.39 | 20.5 | 4.88 | 4.08 |
-| Velt Cranelift `main_opt.vlt` | 1 | 1.03 | 1.02 | 2.4 | 1.81 | 1.79 |
+| Velt LLVM `main.velt` | 1 | 1.21 | 1.20 | 2.4 | 2.12 | 2.11 |
+| Velt LLVM `main_mt.velt` | all | 0.29 | 1.46 | 22.8 | 1.81 | 1.76 |
+| Velt LLVM `main_opt.velt` | 1 | 0.64 | 0.64 | 2.4 | 1.12 | 1.12 |
+| Velt Cranelift `main.velt` | 1 | 1.58 | 1.56 | 2.4 | 2.77 | 2.74 |
+| Velt Cranelift `main_mt.velt` | all | 0.78 | 3.39 | 20.5 | 4.88 | 4.08 |
+| Velt Cranelift `main_opt.velt` | 1 | 1.03 | 1.02 | 2.4 | 1.81 | 1.79 |
 | Go `main.go` | 4 | 0.42 | 1.47 | 5.2 | 2.62 | 1.77 |
 | Go `main_st.go` | 1 | 3.91 | 3.83 | 5.0 | 6.86 | 6.72 |
 | Node `main.js` | all | 0.61 | 2.92 | 160.0 | 3.81 | 3.52 |
@@ -58,7 +58,7 @@ loaded machine). "× Rust" compares with the Rust program of the same thread cou
 
 ## Gaps (Velt LLVM > 1.2× Rust)
 
-### `main.vlt` 2.1× and `main_mt.vlt` 1.8×: one dependency chain per row
+### `main.velt` 2.1× and `main_mt.velt` 1.8×: one dependency chain per row
 The Node #1 shape sums each row into one accumulator, so the loop runs at the latency of a
 dependent `fadd` chain. Rust #5 computes two rows at once, each in two lanes (even/odd `j`): four
 independent sums, and LLVM turns them into `fdiv.2d`. Measured with scratch programs, CPU s at
@@ -66,17 +66,17 @@ N = 5500, two sessions:
 
 | program | CPU s |
 |---|---:|
-| `main.vlt` | 1.20–1.33 |
-| `main.vlt` with `>> 1` instead of `/ 2` in `a(i, j)` | 1.08–1.11 |
-| Rust with exactly the `main.vlt` loops (`usize`, `Vec<f64>`) | 1.05–1.06 |
-| `main_opt.vlt` (Rust #5 shape) | 0.64 |
+| `main.velt` | 1.20–1.33 |
+| `main.velt` with `>> 1` instead of `/ 2` in `a(i, j)` | 1.08–1.11 |
+| Rust with exactly the `main.velt` loops (`usize`, `Vec<f64>`) | 1.05–1.06 |
+| `main_opt.velt` (Rust #5 shape) | 0.64 |
 | Rust `spectral-norm_st.rs` | 0.57 |
 
-So the shape explains most of the gap; `main_opt.vlt` is within 1.12× of Rust. LLVM does hoist
+So the shape explains most of the gap; `main_opt.velt` is within 1.12× of Rust. LLVM does hoist
 the bounds check of `u[j]` out of the loop (loop versioning) and vectorizes the index math, so
 no bounds checks remain in the hot loop.
 
-The remaining ~10 % of `main.vlt` is `/ 2` on `i64`:
+The remaining ~10 % of `main.velt` is `/ 2` on `i64`:
 
 ```
     _26 = mul _23, _25
@@ -90,10 +90,10 @@ for counters that start at 0 and only increase could mark such products non-nega
 bounds prove no overflow (here `i, j < n` with `n` from `Number(...)` is unbounded, so the
 program-side fix `>> 1` is what works today).
 
-`main_mt.vlt` has the same per-row shape; each task also gets its own copy of the input vector
+`main_mt.velt` has the same per-row shape; each task also gets its own copy of the input vector
 (async parameters are owned: `u.clone()` per task, 44 KB), which is negligible in time.
 
-### `main_mt.vlt` peak RSS 23 MB (Rust 2.2 MB)
+### `main_mt.velt` peak RSS 23 MB (Rust 2.2 MB)
 It grows with the worker count, not with N: `VELT_THREADS=1` 5.8 MB, 2 → 9.4 MB, 4 → 13.2 MB,
 10 → 24.0 MB (N = 5500). A trivial program that spawns 40 tasks peaks at 3.0 MB, so it comes
 from what the tasks allocate (a 44 KB input copy and a result array each, on every worker
@@ -101,7 +101,7 @@ thread). That is consistent with mimalloc's per-thread heaps (velt_rt's allocato
 pages per thread; not investigated further.
 
 ### Cranelift
-`main.vlt` 1.3× LLVM, `main_opt.vlt` 1.6× LLVM: no vectorization of the `F64x2` lanes.
+`main.velt` 1.3× LLVM, `main_opt.velt` 1.6× LLVM: no vectorization of the `F64x2` lanes.
 
 ## Friction for a TypeScript developer
 - No `new Array(n).fill(0)` / `Float64Array`: arrays are filled with `push` loops.

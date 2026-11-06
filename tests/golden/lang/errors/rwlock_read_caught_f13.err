@@ -1,1 +1,1 @@
-rwlock_read_caught_f13.vlt:7:44: error: this `read` returns a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it
+rwlock_read_caught_f13.velt:7:44: error: this `read` returns a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it

@@ -28,7 +28,7 @@ pub(crate) const TO_STRING: &str = "toString";
 /// The `toJSON()` hook's name.
 pub(crate) const TO_JSON: &str = "toJSON";
 /// The inspect hook's member name: a method keyed by `Symbol.for("nodejs.util.inspect.custom")`
-/// (Node's `util.inspect.custom`; std/lang/hooks/keys.vlt `INSPECT`).
+/// (Node's `util.inspect.custom`; std/lang/hooks/keys.velt `INSPECT`).
 pub const INSPECT: &str = velt_common::std_key!(inspect);
 
 /// The hooks' names, in the order `toJSON`, `toString`, `[INSPECT]` (velt/reflect lists them).

@@ -1,8 +1,8 @@
-// Seeds doc comments in std/prelude/*.vlt from the JSDoc of TypeScript's lib.*.d.ts (issue #515).
+// Seeds doc comments in std/prelude/*.velt from the JSDoc of TypeScript's lib.*.d.ts (issue #515).
 // Run by hand; the edited prelude files are committed (and reviewed: see below).
 //
 //   (cd tests/tscompat-oracle && npm ci)   # the pinned `typescript`
-//   node scripts/gen-prelude-docs.js        # edits std/prelude/*.vlt in place
+//   node scripts/gen-prelude-docs.js        # edits std/prelude/*.velt in place
 //   node scripts/gen-prelude-docs.js --dry  # only prints what it would insert
 //
 // For every prelude declaration that TypeScript has with the same meaning (`TS_GLOBALS` and
@@ -259,7 +259,7 @@ const hasDoc = (lines, i) => {
 const noDoc = [];
 let inserted = 0;
 const preludeDir = path.join(repo, "std/prelude");
-for (const f of fs.readdirSync(preludeDir).filter((f) => f.endsWith(".vlt")).sort()) {
+for (const f of fs.readdirSync(preludeDir).filter((f) => f.endsWith(".velt")).sort()) {
   const file = path.join(preludeDir, f);
   const lines = fs.readFileSync(file, "utf8").split("\n");
   const inserts = []; // [line index, comment lines]

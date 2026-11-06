@@ -1,4 +1,4 @@
-//! `package.vlt`: the reader's diagnostics (not a program's), schema completion and hover.
+//! `package.velt`: the reader's diagnostics (not a program's), schema completion and hover.
 
 use serde_json::{json, Value};
 
@@ -26,7 +26,7 @@ fn messages(diags: &Value) -> Vec<String> {
 #[test]
 fn a_manifest_gets_the_readers_diagnostics_not_a_programs() {
     let mut client = Client::start();
-    let doc = uri("manifest_diags/package.vlt");
+    let doc = uri("manifest_diags/package.velt");
     client.open(&doc, MANIFEST);
     // Records and arrays in a module constant are fine here: the file is never compiled.
     assert_eq!(messages(&client.diagnostics(&doc)), Vec::<String>::new());
@@ -49,7 +49,7 @@ fn a_manifest_gets_the_readers_diagnostics_not_a_programs() {
 #[test]
 fn completion_and_hover_come_from_the_schema() {
     let mut client = Client::start();
-    let doc = uri("manifest_complete/package.vlt");
+    let doc = uri("manifest_complete/package.velt");
     let text = MANIFEST.replace("  native:", "  \n  native:");
     client.open(&doc, &text);
     let (line, _) = pos_of(&text, "  \n", 0);
@@ -97,7 +97,7 @@ fn completion_and_hover_come_from_the_schema() {
 #[test]
 fn a_quote_triggers_nothing_in_a_program() {
     let mut client = Client::start();
-    let doc = uri("quote_trigger.vlt");
+    let doc = uri("quote_trigger.velt");
     let text = "function main() {\n  const s = \"\n}\n";
     client.open(&doc, text);
     let (line, character) = pos_of(text, "= \"", 3);

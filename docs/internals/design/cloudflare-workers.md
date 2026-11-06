@@ -44,7 +44,7 @@ Objects.
   way to call the JS host) and conditional imports (the way std and packages choose code per
   host). No runtime registration of transports, no overridable single functions.
 - **The compiler knows no platform** (the owner's decision on #2047). Cloudflare is a package,
-  `host-cloudflare`, whose `package.vlt` says everything the build needs: the target, the
+  `host-cloudflare`, whose `package.velt` says everything the build needs: the target, the
   condition its builds get, its entry (the platform's adapter over a host-neutral server core
   in the runtime glue) and the configuration files to scaffold. Deno Deploy, Fastly or a
   Node/Bun server is another package, with no compiler change; help text and diagnostics name
@@ -117,21 +117,21 @@ browser glue uses the same protocol, so `sleep` does not busy-wait there.
 ## 3. Conditional imports (std and packages)
 
 Node's `imports` with conditions choose code per host, for std and packages alike:
-`"#transport": { "js": "./transport/js.vlt", "default": "./transport/tcp.vlt" }`. The build
+`"#transport": { "js": "./transport/js.velt", "default": "./transport/tcp.velt" }`. The build
 sets the conditions (`native`, `wasi`, `js`, and the host: `workers`, `browser`), and the
 compiler checks that every variant exports the same names with the same signatures (a `velt
-check` mode and the gate). This replaces a loader that prefers `x.workers.vlt` files.
+check` mode and the gate). This replaces a loader that prefers `x.workers.velt` files.
 
 ## 4. `fetch` on JS hosts (#1785)
 
-`fetch` is Velt code; its transport is the conditional import `#http-transport` (std/imports.vlt):
+`fetch` is Velt code; its transport is the conditional import `#http-transport` (std/imports.velt):
 the Velt HTTP/1.1 and HTTP/2 client over velt/net by default (natively and under WASI), and the
 host's own `fetch` under `js` (browser, Node, Deno and Workers alike), so a JS host's module
 links no TCP, TLS, HTTP/2 or decompression code. The seam is two names, which both variants
 export with the same signatures (the variant check compares them):
 
 - `send(o: ClientRequest): Promise<Fetched, IoError | AbortError>`: the request as `fetch` made
-  it (client/client_request.vlt: method, URL, headers, the body as text or bytes, the redirect
+  it (client/client_request.velt: method, URL, headers, the body as text or bytes, the redirect
   mode, the signal, `ca`), resolved once the response's head arrived;
 - `class Fetched`: `status`, `url`, `redirected`, `statusText()`, `headers()`, `decoded()`,
   `bytes()`, `text()`, `chunk()` and `close()`. `Request`, `Response`, `Headers` and the body
@@ -167,14 +167,14 @@ browser gives the host's opaque redirect (status 0).
 ## 5. Host builds and host packages (#1736)
 
 The contract is [contracts/workers.md](../contracts/workers.md). `velt build --host <package>`
-resolves `<package>` to a host package among the build's dependencies; its `package.vlt`'s
+resolves `<package>` to a host package among the build's dependencies; its `package.velt`'s
 `host` (`vpm::host`) gives the target (`wasm32-unknown-unknown`), the condition added to the
 target's (`workers` for host-cloudflare), the entry and the files to scaffold. The build writes
 a directory (`target/velt/app-workers/`): `program.wasm`, the glue (velt_web.mjs's `loadVelt`
 and the server core `velt_serve.mjs` on it), `velt_modules.mjs` (the host modules the program
 imports), the host modules of packages, the host package's entry (`worker.mjs`, every build)
 and its scaffolded files (`wrangler.toml`, written once, kept when edited). Packages ship the
-JavaScript of their host modules through `hostModules` in `package.vlt` (a file below `src/`
+JavaScript of their host modules through `hostModules` in `package.velt` (a file below `src/`
 whose default export makes the functions, given the request's context as the entry passes it:
 host-cloudflare's `env` and `ctx`); the build checks that every module the program calls has
 it, from the glue (`velt:…`, whose functions only std declares) or from the one package
@@ -209,7 +209,7 @@ package's. The glue answers each JS `Request` with the `Response` the loop
 hands back for it; a task that outlives its response is kept alive with the adapter's
 `waitUntil` (`ctx.waitUntil()` on Workers).
 
-As built: `imports: { "#standard": { js: "./src/hosted/standard.vlt", default: … } }`.
+As built: `imports: { "#standard": { js: "./src/hosted/standard.velt", default: … } }`.
 `serve` spawns the accept loop over std's `velt/host/worker` in a task scope and returns an
 `HttpServer` (which holds a close callback, not a `TcpListener`), so `main` may await before
 `serve` and return after it (#1787: the runtime keeps the program while the loop's task waits).
@@ -227,7 +227,7 @@ Object stubs (`stub.fetch(req)`). Bindings are looked up by name on the `env` ho
 entry passes as the request's context (`host.env` in a host module).
 
 As built: Velt over one host module, `cloudflare` (`packages/cloudflare/src/cloudflare.mjs`,
-shipped through `hostModules`; its functions are declared in `src/host.vlt`). The package needs
+shipped through `hostModules`; its functions are declared in `src/host.velt`). The package needs
 no compiler or runtime change and names nothing the compiler knows.
 
 - **Bindings by name.** `r2Bucket("BUCKET")`, `d1Database("DB")`, `kvNamespace("KV")`,
@@ -241,7 +241,7 @@ no compiler or runtime change and names nothing the compiler knows.
   is its namespace and id; the host gets the stub again for each `fetch`.
 - **D1's rows** go through `velt/db`: the host writes a result as one binary frame (meta as
   JSON, column names, tagged cells: null, i64, f64, text, blob, bool, JSON text;
-  `src/frame_writer.vlt`), which `D1Rows` reads as a `RowSource`; rows are filled as velt/db's
+  `src/frame_writer.velt`), which `D1Rows` reads as a `RowSource`; rows are filled as velt/db's
   `readRows<T>` fills them from a source through JSON text (the same fields, conversions and
   `RowError`s as every Velt driver's). Not `readRows` itself yet: its by-column path for plain
   row types calls two runtime functions the wasm runtime lacks (#2121). A frame rather than the

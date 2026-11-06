@@ -1,4 +1,4 @@
-// Sorting (same workload as sort.vlt), with the unstable sort like Velt' `sort()`.
+// Sorting (same workload as sort.velt), with the unstable sort like Velt' `sort()`.
 fn checksum(xs: &[i64]) -> i64 {
     let mut h = 0i64;
     for &v in xs {

@@ -75,7 +75,7 @@ function main() {
 #[test]
 fn inlay_hints_show_inferred_throws_and_mutation() {
     let mut client = Client::start();
-    let doc = uri("effects_hints.vlt");
+    let doc = uri("effects_hints.velt");
     client.open(&doc, APP);
     assert_eq!(client.diagnostics(&doc)["diagnostics"], json!([]));
     let params = json!({
@@ -137,7 +137,7 @@ fn inlay_hints_show_inferred_throws_and_mutation() {
 #[test]
 fn calls_that_modify_are_marked_mutating() {
     let mut client = Client::start();
-    let doc = uri("effects_tokens.vlt");
+    let doc = uri("effects_tokens.velt");
     client.open(&doc, APP);
     client.diagnostics(&doc);
     let legend = &client.init["capabilities"]["semanticTokensProvider"]["legend"];
@@ -177,7 +177,7 @@ fn hints_land_after_the_real_parameter_list() {
 }
 ";
     let mut client = Client::start();
-    let doc = uri("effects_generic.vlt");
+    let doc = uri("effects_generic.velt");
     client.open(&doc, text);
     client.diagnostics(&doc);
     let params = json!({

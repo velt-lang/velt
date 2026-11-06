@@ -3,8 +3,8 @@
 # it works in WSL and VMs; two runs agree within about 0.1%), for comparing two builds of
 # Velt's server stack.
 # Usage: bench/http/count.sh <techempower-server> <web-server>
-#   The two servers are release builds of bench/http/techempower/server.vlt and
-#   bench/web/velt/server.vlt (each takes its port as the first argument); pass "-" to skip one.
+#   The two servers are release builds of bench/http/techempower/server.velt and
+#   bench/web/velt/server.velt (each takes its port as the first argument); pass "-" to skip one.
 # Knobs: N (4000 requests per scenario), RUNS (2), SCENARIOS (all of them, as
 #        server:mode:path:connections; mode `ab` is keep-alive `ab -k`, `pipe` one connection
 #        pipelined 16 deep, as wrk's pipeline.lua).

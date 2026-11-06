@@ -113,7 +113,7 @@ fn a_damaged_entry_on_disk_is_a_miss() {
 fn std_sources() -> Vec<(String, bool)> {
     let std = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
     let mut files = vec![];
-    files_in(&std, "vlt", &mut files);
+    files_in(&std, "velt", &mut files);
     files_in(&std, "ts", &mut files);
     files.sort();
     assert!(files.len() > 100, "{} std files", files.len());

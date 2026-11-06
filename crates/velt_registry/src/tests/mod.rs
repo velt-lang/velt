@@ -15,9 +15,9 @@ fn package(dir: &Path, name: &str, version: &str, fields: &str) {
     let manifest = format!(
         "export const pkg: Package = {{ name: \"{name}\", version: \"{version}\", {fields} }};\n"
     );
-    std::fs::write(dir.join("package.vlt"), manifest).unwrap();
+    std::fs::write(dir.join("package.velt"), manifest).unwrap();
     std::fs::write(
-        dir.join("src/lib.vlt"),
+        dir.join("src/lib.velt"),
         format!("export const V: i64 = 1; // {version}\n"),
     )
     .unwrap();
@@ -60,7 +60,7 @@ fn publish_and_install_over_http() {
     assert_eq!(index.versions[0], entry);
     assert_eq!(vpm::registry::read_index(&loc, "nope").unwrap(), None);
 
-    // An app on another "machine" (its own home/cache) names the registry in package.vlt.
+    // An app on another "machine" (its own home/cache) names the registry in package.velt.
     let app = tmp.path().join("app");
     let fields = format!("registry: \"{url}\", dependencies: {{ lib: \"1\" }}");
     package(&app, "app", "0.1.0", &fields);
@@ -68,7 +68,7 @@ fn publish_and_install_over_http() {
     let installed = vpm::install(&app, &other, InstallOptions::default()).unwrap();
     let locked = installed.lockfile.get("lib").unwrap();
     assert_eq!(locked.version, "1.1.0");
-    let cached = tmp.path().join("home2/cache/lib-1.1.0/src/lib.vlt");
+    let cached = tmp.path().join("home2/cache/lib-1.1.0/src/lib.velt");
     assert!(std::fs::read_to_string(cached).unwrap().contains("1.1.0"));
     let listing = velt_http::fetch("GET", &format!("{url}/"), &[], b"").unwrap();
     assert!(
@@ -407,7 +407,7 @@ fn owners_yank_and_search() {
             .collect::<Vec<_>>(),
         [("1.0.0", false), ("1.1.0", true)]
     );
-    // The server takes the description and keywords from the uploaded package.vlt, per
+    // The server takes the description and keywords from the uploaded package.velt, per
     // version; search shows the newest version's (1.1.0 is yanked, so 1.0.0's).
     assert_eq!(
         index.versions[0].description.as_deref(),

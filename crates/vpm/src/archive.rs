@@ -7,8 +7,8 @@
 //! ```
 //!
 //! so its [`checksum`] equals [`contents::checksum`] of the directory it was packed from or is
-//! unpacked into. Unpacking accepts only `package.vlt`, files under `src/` and under the native
-//! crate directory its `package.vlt` names (no `..`, no absolute paths), so an archive cannot write
+//! unpacked into. Unpacking accepts only `package.velt`, files under `src/` and under the native
+//! crate directory its `package.velt` names (no `..`, no absolute paths), so an archive cannot write
 //! outside its destination. Native bundles ([`crate::native`]) use the same format with their own
 //! path rule ([`entries_with`]).
 
@@ -17,7 +17,7 @@ use std::path::Path;
 use sha2::{Digest, Sha256};
 
 use crate::contents;
-use crate::manifest::{legacy, LEGACY_MANIFEST_FILE, MANIFEST_FILE, SRC_DIR};
+use crate::manifest::{legacy, LEGACY_MANIFEST_FILE, MANIFEST_FILE, OLD_MANIFEST_FILE, SRC_DIR};
 
 const MAGIC: &[u8] = b"VELTPKG1\n";
 
@@ -66,6 +66,12 @@ pub fn entries(archive: &[u8]) -> Result<Vec<Entry>, String> {
             return Err(format!(
                 "cannot use this package archive: {}",
                 legacy::REPUBLISH
+            ));
+        }
+        if e.path == OLD_MANIFEST_FILE {
+            return Err(format!(
+                "cannot use this package archive: it {}",
+                legacy::republish_old_name()
             ));
         }
         if !allowed {
@@ -169,12 +175,12 @@ mod tests {
         let pkg = tmp.path().join("p");
         std::fs::create_dir_all(pkg.join("src/sub")).unwrap();
         std::fs::write(
-            pkg.join("package.vlt"),
+            pkg.join("package.velt"),
             "export const pkg: Package = { name: \"p\", version: \"1.0.0\" };",
         )
         .unwrap();
-        std::fs::write(pkg.join("src/lib.vlt"), "export function f() {}\n").unwrap();
-        std::fs::write(pkg.join("src/sub/x.vlt"), "").unwrap();
+        std::fs::write(pkg.join("src/lib.velt"), "export function f() {}\n").unwrap();
+        std::fs::write(pkg.join("src/sub/x.velt"), "").unwrap();
         let archive = pack(&pkg).unwrap();
         assert_eq!(
             checksum(&archive).unwrap(),
@@ -205,7 +211,7 @@ mod tests {
             MANIFEST_FILE,
             &format!("import type {{ Package }} from \"velt/package\";\n{source}"),
         );
-        write("src/lib.vlt", "");
+        write("src/lib.velt", "");
         write("native/a.h", "int x;\n");
         write(crate::c_headers::FILE, "{}");
         write("notes.txt", "not distributed");
@@ -216,7 +222,7 @@ mod tests {
             .collect();
         assert_eq!(
             names,
-            [crate::c_headers::FILE, MANIFEST_FILE, "src/lib.vlt"]
+            [crate::c_headers::FILE, MANIFEST_FILE, "src/lib.velt"]
         );
     }
 
@@ -237,7 +243,7 @@ mod tests {
             MANIFEST_FILE,
             &format!("import type {{ Package }} from \"velt/package\";\n{source}"),
         );
-        write("src/lib.vlt", "");
+        write("src/lib.velt", "");
         write("native/a.c", "int x;\n");
         write("native/a.h", "int x;\n");
         write("native/inc/more.inc", "\n");
@@ -257,7 +263,7 @@ mod tests {
                 "native/a.h",
                 "native/inc/more.inc",
                 MANIFEST_FILE,
-                "src/lib.vlt"
+                "src/lib.velt"
             ]
         );
     }
@@ -282,7 +288,7 @@ mod tests {
         let with_native = [
             MAGIC,
             b"native/Cargo.toml\n0\n",
-            format!("package.vlt\n{}\n{manifest}", manifest.len()).as_bytes(),
+            format!("package.velt\n{}\n{manifest}", manifest.len()).as_bytes(),
         ]
         .concat();
         assert_eq!(entries(&with_native).unwrap().len(), 2);
@@ -290,7 +296,11 @@ mod tests {
         assert!(entries(&legacy)
             .unwrap_err()
             .contains("must publish a new version"));
-        let truncated = [MAGIC, b"package.vlt\n10\nabc"].concat();
+        let old_name = [MAGIC, OLD_MANIFEST_FILE.as_bytes(), b"\n0\n"].concat();
+        let err = entries(&old_name).unwrap_err();
+        assert!(err.contains("must publish a new version"), "{err}");
+        assert!(err.contains(OLD_MANIFEST_FILE), "{err}");
+        let truncated = [MAGIC, b"package.velt\n10\nabc"].concat();
         assert!(entries(&truncated).unwrap_err().contains("truncated"));
     }
 }

@@ -5,12 +5,12 @@
 mod no_window;
 mod test_dir;
 
-/// `velt build main.vlt <args>` of `src`: (stdout, stderr).
+/// `velt build main.velt <args>` of `src`: (stdout, stderr).
 fn build(src: &str, args: &[&str]) -> (String, String) {
     let dir = test_dir::TestDir::new();
-    std::fs::write(dir.path().join("main.vlt"), src).unwrap();
+    std::fs::write(dir.path().join("main.velt"), src).unwrap();
     let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["build", "main.vlt"])
+        .args(["build", "main.velt"])
         .args(args)
         .current_dir(dir.path())
         .output()
@@ -56,7 +56,7 @@ fn report_names_the_doubles_and_why() {
         // Nothing compares `count`, but it counts the iterations of a bounded loop.
         assert!(!stderr.contains("`count`"), "{stderr}");
         assert!(
-            stderr.contains("main.vlt:7:5: `total`"),
+            stderr.contains("main.velt:7:5: `total`"),
             "locations: {stderr}"
         );
         // `k` is whole and bounded by the loop test: an integer.

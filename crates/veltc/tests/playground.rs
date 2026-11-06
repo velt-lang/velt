@@ -123,7 +123,7 @@ fn server_compiles_over_http() {
     .expect("POST");
     assert_eq!(bad.status, 422);
     assert!(
-        bad.body_text().contains("main.vlt:1:"),
+        bad.body_text().contains("main.velt:1:"),
         "{}",
         bad.body_text()
     );

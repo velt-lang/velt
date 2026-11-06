@@ -1,9 +1,0 @@
-// A `.vlt` wrapper of a TypeScript default (#1916: a `.vlt` file can re-export one).
-import greet from "./greet";
-
-export { greet as default };
-export { default as emitter } from "./emitter";
-
-export function shout(name: string): string {
-  return greet(name).toUpperCase();
-}

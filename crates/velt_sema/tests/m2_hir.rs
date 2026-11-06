@@ -10,7 +10,7 @@ use velt_sema::hir::{
 };
 
 fn golden(name: &str) -> Program {
-    let l = load_file(&repo_root().join(format!("tests/golden/m2/{name}.vlt")));
+    let l = load_file(&repo_root().join(format!("tests/golden/m2/{name}.velt")));
     let (p, d) = l.check();
     p.unwrap_or_else(|| panic!("{}", l.render(&d)))
 }

@@ -16,7 +16,7 @@ fn golden_files(dir: &str) -> Vec<PathBuf> {
     let mut files: Vec<PathBuf> = rd
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "vlt"))
+        .filter(|p| p.extension().is_some_and(|e| e == "velt"))
         .filter(|p| !p.file_name().unwrap().to_string_lossy().starts_with('_'))
         .collect();
     files.sort();

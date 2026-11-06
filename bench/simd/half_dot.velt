@@ -1,0 +1,79 @@
+// The f16 and bf16 dot product over 1M weights (#2049's acceptance bar), against
+// half_dot_rust/ (`half` + `std::arch`). One kernel a run; half_dot.sh runs each with 0 and with
+// `passes` passes and subtracts, so the numbers are instructions retired per 1M weights.
+//   velt run half_dot.velt <kernel> <passes>
+// *_one: one accumulator. *_four: four, 32 weights a round. Both with the two-array `fits` test.
+// *_bulk: velt/half's functions, and velt/simd's `dotI8`.
+// bf16_fast_*: `dotAddFast`, `bfdot` with `--cpu` naming a CPU that has it.
+//
+// Here LLVM inlines each kernel into `main` and sees that both arrays have one length. Rust's
+// kernels are `#[inline(never)]` and get no such help:
+// half_dot_far.velt is the fair comparison, and half_dot.sh reports both.
+import { dotI8 } from "velt/simd";
+import { dotBf16, dotF16 } from "velt/half";
+import {
+  bf16FastFour,
+  bf16FastOne,
+  bf16Four,
+  bf16One,
+  bf16Weights,
+  f16Four,
+  f16One,
+  f16Weights,
+  i8Weights,
+} from "./_half_dot_kernels";
+
+function run(passes: usize, kernel: () => number) {
+  let sink: number = 0;
+  for (let p: usize = 0; p < passes; p++) {
+    sink += kernel();
+  }
+  console.log(sink);
+}
+
+function main() {
+  const kernel = process.argv[2];
+  const passes = Number(process.argv[3]) as usize;
+  const n: usize = 1000000;
+  if (kernel.startsWith("i8")) {
+    const a = i8Weights(n);
+    const b = i8Weights(n);
+    let sink: i32 = 0;
+    for (let p: usize = 0; p < passes; p++) {
+      sink ^= dotI8(a, b);
+    }
+    console.log(sink);
+  } else if (kernel.startsWith("f16")) {
+    const a = f16Weights(n);
+    const b = f16Weights(n);
+    switch (kernel) {
+      case "f16_one":
+        run(passes, () => f16One(a, b));
+        break;
+      case "f16_four":
+        run(passes, () => f16Four(a, b));
+        break;
+      default:
+        run(passes, () => dotF16(a, b));
+    }
+  } else {
+    const a = bf16Weights(n);
+    const b = bf16Weights(n);
+    switch (kernel) {
+      case "bf16_one":
+        run(passes, () => bf16One(a, b));
+        break;
+      case "bf16_four":
+        run(passes, () => bf16Four(a, b));
+        break;
+      case "bf16_fast_one":
+        run(passes, () => bf16FastOne(a, b));
+        break;
+      case "bf16_fast_four":
+        run(passes, () => bf16FastFour(a, b));
+        break;
+      default:
+        run(passes, () => dotBf16(a, b));
+    }
+  }
+}

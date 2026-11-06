@@ -92,7 +92,7 @@ fn velt_with_limit(
         .unwrap()
 }
 
-const RELEASE_BUILD: [&str; 5] = ["build", "a.vlt", "--release", "-o", "a"];
+const RELEASE_BUILD: [&str; 5] = ["build", "a.velt", "--release", "-o", "a"];
 
 /// The real clang; tests that need one pass when there is none, as the other LLVM tests do.
 fn real_clang() -> Option<PathBuf> {
@@ -176,11 +176,11 @@ fn a_new_clang_does_not_serve_the_old_ones_objects() {
     let Some(real) = real_clang() else { return };
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    std::fs::write(dir.join("a.vlt"), HELLO).unwrap();
+    std::fs::write(dir.join("a.velt"), HELLO).unwrap();
     let clangs = TwoClangs::new(dir, &real);
     let log = dir.join("log");
     let build = || {
-        let args = ["build", "a.vlt", "--release", "-o", "a"];
+        let args = ["build", "a.velt", "--release", "-o", "a"];
         let o = velt(dir, &args, &log, &[("VELT_CLANG", &clangs.link)]);
         assert!(o.status.success(), "{}", text(&o.stderr));
         compiles(&log)
@@ -201,7 +201,7 @@ fn a_new_clang_does_not_serve_the_old_ones_std_functions() {
     let Some(real) = real_clang() else { return };
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    std::fs::write(dir.join("a.vlt"), STD_PROGRAM).unwrap();
+    std::fs::write(dir.join("a.velt"), STD_PROGRAM).unwrap();
     let clangs = TwoClangs::new(dir, &real);
     let log = dir.join("log");
     let on = Path::new("1");
@@ -211,7 +211,12 @@ fn a_new_clang_does_not_serve_the_old_ones_std_functions() {
             ("VELT_STD_OBJECT", on),
             ("VELT_STD_OBJECT_STATS", on),
         ];
-        let o = velt(dir, &["build", "a.vlt", "--release", "-o", "a"], &log, &env);
+        let o = velt(
+            dir,
+            &["build", "a.velt", "--release", "-o", "a"],
+            &log,
+            &env,
+        );
         let err = text(&o.stderr);
         assert!(o.status.success(), "{err}");
         let line = (err.lines())
@@ -241,7 +246,7 @@ fn a_new_clang_behind_a_wrapper_compiles_again() {
     let Some(real) = real_clang() else { return };
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    std::fs::write(dir.join("a.vlt"), HELLO).unwrap();
+    std::fs::write(dir.join("a.velt"), HELLO).unwrap();
     let clang = dir.join("clang-29");
     wrapper(&clang);
     fake_clang(&dir.join("real"), "clang version 97.0.0", &real);
@@ -266,7 +271,7 @@ fn a_clang_that_broke_after_a_build_falls_back_to_the_next() {
     let Some(real) = real_clang() else { return };
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    std::fs::write(dir.join("a.vlt"), HELLO).unwrap();
+    std::fs::write(dir.join("a.velt"), HELLO).unwrap();
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     wrapper(&bin.join("clang"));
@@ -277,7 +282,7 @@ fn a_clang_that_broke_after_a_build_falls_back_to_the_next() {
     assert!(o.status.success(), "{}", text(&o.stderr));
     assert!(compiles(&log) > 0, "the wrapper compiled");
     std::fs::remove_file(bin.join("real")).unwrap();
-    std::fs::write(dir.join("a.vlt"), HELLO.replace("hello", "again")).unwrap();
+    std::fs::write(dir.join("a.velt"), HELLO.replace("hello", "again")).unwrap();
     let o = velt_on_path(dir, &RELEASE_BUILD, &log, &path);
     assert!(o.status.success(), "{}", text(&o.stderr));
     let out = text(&velt_on_path(dir, &["doctor"], &log, &path).stdout);
@@ -292,7 +297,7 @@ fn a_clang_that_compiles_nothing_falls_back_to_the_next() {
     let Some(_) = real_clang() else { return };
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    std::fs::write(dir.join("a.vlt"), HELLO).unwrap();
+    std::fs::write(dir.join("a.velt"), HELLO).unwrap();
     let bin = dir.join("bin");
     std::fs::create_dir_all(&bin).unwrap();
     let clang = bin.join("clang");
@@ -319,7 +324,7 @@ fn a_clang_that_compiles_nothing_falls_back_to_the_next() {
 fn a_clang_that_compiles_nothing_is_named_not_called_a_compiler_bug() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    std::fs::write(dir.join("a.vlt"), HELLO).unwrap();
+    std::fs::write(dir.join("a.velt"), HELLO).unwrap();
     let clang = dir.join("my-clang");
     script(
         &clang,
@@ -342,7 +347,7 @@ fn a_clang_that_compiles_nothing_is_named_not_called_a_compiler_bug() {
 fn a_clang_that_will_not_start_is_named_not_called_a_compiler_bug() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    std::fs::write(dir.join("a.vlt"), HELLO).unwrap();
+    std::fs::write(dir.join("a.velt"), HELLO).unwrap();
     let clang = dir.join("my-clang");
     script(
         &clang,
@@ -363,7 +368,7 @@ fn a_clang_that_will_not_start_is_named_not_called_a_compiler_bug() {
 fn a_clang_that_rejects_only_the_generated_ir_is_a_compiler_bug() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    std::fs::write(dir.join("a.vlt"), HELLO).unwrap();
+    std::fs::write(dir.join("a.velt"), HELLO).unwrap();
     let clang = dir.join("my-clang");
     script(
         &clang,
@@ -387,7 +392,7 @@ fn a_file_that_cannot_start_does_not_hide_the_clang_behind_it() {
     let Some(real) = real_clang() else { return };
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    std::fs::write(dir.join("a.vlt"), HELLO).unwrap();
+    std::fs::write(dir.join("a.velt"), HELLO).unwrap();
     let (first, second) = (dir.join("first"), dir.join("second"));
     std::fs::create_dir_all(&first).unwrap();
     std::fs::create_dir_all(&second).unwrap();
@@ -519,7 +524,7 @@ const ANSWERS_97: &str = "if [ \"$1\" = --version ]; then echo clang version 97.
 fn a_planted_clang_in_the_current_directory_is_never_started() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    std::fs::write(dir.join("a.vlt"), HELLO).unwrap();
+    std::fs::write(dir.join("a.velt"), HELLO).unwrap();
     let bin = dir.join("bin");
     let tools = dir.join("tools");
     std::fs::create_dir_all(&bin).unwrap();
@@ -566,7 +571,7 @@ fn a_planted_clang_in_the_current_directory_is_never_started() {
 fn a_clang_that_hangs_on_the_target_check_costs_two_waits() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    std::fs::write(dir.join("a.vlt"), HELLO).unwrap();
+    std::fs::write(dir.join("a.velt"), HELLO).unwrap();
     let (hung, other) = (dir.join("hung"), dir.join("other"));
     std::fs::create_dir_all(&hung).unwrap();
     std::fs::create_dir_all(&other).unwrap();
@@ -594,7 +599,7 @@ fn a_clang_that_hangs_on_the_target_check_costs_two_waits() {
 fn a_velt_clang_that_hangs_is_asked_by_every_build() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    std::fs::write(dir.join("a.vlt"), HELLO).unwrap();
+    std::fs::write(dir.join("a.velt"), HELLO).unwrap();
     let (clang, starts, log) = (dir.join("clang-hung"), dir.join("starts"), dir.join("log"));
     script(
         &clang,
@@ -619,7 +624,7 @@ fn a_velt_clang_that_hangs_is_asked_by_every_build() {
 fn a_clang_that_hangs_costs_two_waits_not_one_a_build() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    std::fs::write(dir.join("a.vlt"), HELLO).unwrap();
+    std::fs::write(dir.join("a.velt"), HELLO).unwrap();
     let (hung, other) = (dir.join("hung"), dir.join("other"));
     std::fs::create_dir_all(&hung).unwrap();
     std::fs::create_dir_all(&other).unwrap();

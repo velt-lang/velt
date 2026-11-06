@@ -12,16 +12,16 @@ use super::{TS_GLOBALS, TS_MEMBERS, VELT_GLOBALS, VELT_MEMBERS};
 /// modules (`std/prelude/global`) and the JSON module its global loads (`std/prelude/json`).
 fn prelude() -> (BTreeSet<String>, BTreeSet<(String, String)>) {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/prelude");
-    let vlt = |d: &Path| {
+    let velt = |d: &Path| {
         std::fs::read_dir(d)
             .expect("std/prelude")
             .map(|e| e.expect("entry").path())
-            .filter(|p| p.extension().is_some_and(|e| e == "vlt"))
+            .filter(|p| p.extension().is_some_and(|e| e == "velt"))
             .collect::<Vec<_>>()
     };
-    let mut files = vlt(&dir);
-    files.extend(vlt(&dir.join("global")));
-    files.extend(vlt(&dir.join("json")));
+    let mut files = velt(&dir);
+    files.extend(velt(&dir.join("global")));
+    files.extend(velt(&dir.join("json")));
     files.sort();
     let (mut exports, mut members) = (BTreeSet::new(), BTreeSet::new());
     for file in files {

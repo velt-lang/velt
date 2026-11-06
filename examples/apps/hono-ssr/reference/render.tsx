@@ -1,5 +1,5 @@
 // The same shop as a real Hono app on Node: the shared routes and components, rendered by
-// `hono/jsx` and served with `c.html`. It prints what demo.vlt prints from the Velt server, so
+// `hono/jsx` and served with `c.html`. It prints what demo.velt prints from the Velt server, so
 // `npm run reference | diff - demo.out` checks that both render the same bytes (README).
 
 import { Hono } from "hono";

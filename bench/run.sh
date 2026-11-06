@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Benchmark harness (Linux / macOS): same as run.ps1. Builds every bench/*.vlt with Velt' three
+# Benchmark harness (Linux / macOS): same as run.ps1. Builds every bench/*.velt with Velt' three
 # configurations plus the Rust (rustc -O) and Node equivalents, checks that all print the same
 # output, and prints a Markdown table of the best wall-clock time (ms) over RUNS runs.
 #
@@ -44,8 +44,8 @@ header="| benchmark"
 for c in "${CONFIGS[@]}"; do header="$header | ${c%%|*}"; done
 echo "$header | Rust -O | Node |"
 echo "|---|---|---|---|---|---|"
-for src in "$ROOT"/bench/*.vlt; do
-  name=$(basename "$src" .vlt)
+for src in "$ROOT"/bench/*.velt; do
+  name=$(basename "$src" .velt)
   [[ -n "$ONLY" && "$name" != "$ONLY" ]] && continue
   # Programs only bench/nightly.sh counts (weakmap) have no Rust and Node versions.
   if [[ ! -f "$ROOT/bench/rust/$name.rs" || ! -f "$ROOT/bench/node/$name.js" ]]; then

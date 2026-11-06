@@ -1,6 +1,6 @@
 # todo-api
 
-A JSON REST API over a todo list, grown from `examples/todo_api.vlt`: routing, validation with
+A JSON REST API over a todo list, grown from `examples/todo_api.velt`: routing, validation with
 typed errors mapped to status codes, shared state behind a `Mutex`, and two interchangeable
 stores: a JSON file (atomic rewrite) or a SQLite database.
 
@@ -33,7 +33,7 @@ Errors are `{"error":{"code","message"}}` with 400 (`invalid`, `bad_json`), 404 
 500 (`db_error`).
 
 **Storage.** The JSON store keeps the list in memory and, after every change, writes the whole list
-to `$TODO_DB` (default `todos.json`) via a temp file + rename. The SQLite store (the repository's `sqlite` package, a path dependency in `package.vlt`)
+to `$TODO_DB` (default `todos.json`) via a temp file + rename. The SQLite store (the repository's `sqlite` package, a path dependency in `package.velt`)
 creates its table on open (`CREATE TABLE IF NOT EXISTS`), runs in WAL mode, prepares each query
 once and commits every change as one statement (`INSERT/UPDATE … RETURNING *`); tags are a JSON
 array column, filtered with `json_each`. Both hand out ids as max(id) + 1 after a restart. The
@@ -42,12 +42,12 @@ return their `ApiError` and two small adapters wrap the stores' ordinary throwin
 
 | File | What |
 |---|---|
-| `src/model.vlt` | `Todo`, request bodies, `ApiError` / `ValidationError` / `NotFoundError`, validation |
-| `src/store.vlt` | `TodoStore`: list/get/create/update/delete in memory, JSON snapshot |
-| `src/sqlite_store.vlt` | `SqliteTodoStore`: the same operations on a SQLite database |
-| `src/repository.vlt` | `TodoRepository` interface, `JsonRepository` / `SqliteRepository` adapters |
-| `src/api.vlt` | `route(store, method, path, query, body)` → `{ status, body, changed }` (no sockets) |
-| `src/server.vlt` | `std/http` server, `shared<Mutex<S>>`, store selection, JSON persistence |
-| `tests/*.test.vlt` | `velt test` (router on both stores, validation, SQLite store on a file) |
-| `demo.vlt` / `demo.out` | real HTTP session incl. restart; a golden in `cargo test --workspace --test golden` |
-| `demo_sqlite.vlt` / `demo_sqlite.out` | the same session on SQLite, then the rows read back with SQL |
+| `src/model.velt` | `Todo`, request bodies, `ApiError` / `ValidationError` / `NotFoundError`, validation |
+| `src/store.velt` | `TodoStore`: list/get/create/update/delete in memory, JSON snapshot |
+| `src/sqlite_store.velt` | `SqliteTodoStore`: the same operations on a SQLite database |
+| `src/repository.velt` | `TodoRepository` interface, `JsonRepository` / `SqliteRepository` adapters |
+| `src/api.velt` | `route(store, method, path, query, body)` → `{ status, body, changed }` (no sockets) |
+| `src/server.velt` | `std/http` server, `shared<Mutex<S>>`, store selection, JSON persistence |
+| `tests/*.test.velt` | `velt test` (router on both stores, validation, SQLite store on a file) |
+| `demo.velt` / `demo.out` | real HTTP session incl. restart; a golden in `cargo test --workspace --test golden` |
+| `demo_sqlite.velt` / `demo_sqlite.out` | the same session on SQLite, then the rows read back with SQL |

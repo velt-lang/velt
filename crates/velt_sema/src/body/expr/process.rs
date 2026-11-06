@@ -3,7 +3,7 @@
 //! like Node), and `process.env.NAME` / `process.env[name]` (`string | null`: there is no
 //! `undefined`), and `process.argv` (Node's layout). They are calls of the prelude's
 //! `processWrite` / `processEnv` / `processArgv`
-//! (std/prelude/process.vlt). `process.exit` is an intrinsic (`builtins`); the rest of Node's
+//! (std/prelude/process.velt). `process.exit` is an intrinsic (`builtins`); the rest of Node's
 //! `process` lives in `velt/process`.
 
 use velt_common::Span;

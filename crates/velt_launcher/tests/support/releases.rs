@@ -222,7 +222,7 @@ impl Machine {
         std::fs::create_dir_all(dir.join("src")).unwrap();
         let pin = velt.map_or(String::new(), |v| format!(", velt: \"{v}\""));
         std::fs::write(
-            dir.join("package.vlt"),
+            dir.join("package.velt"),
             format!(
                 "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = \
                  {{ name: \"{name}\", version: \"0.1.0\"{pin} }};\n"

@@ -17,7 +17,7 @@ With the JSON writer written in Velt (#1668, a later pull request), a profile of
 them; the pull request that implements step 1 commits the profile's numbers with the script that
 measures them.
 
-Velt code has no better way to build strings. The Velt JSON writer (`std/encoding/json/writer.vlt`, in
+Velt code has no better way to build strings. The Velt JSON writer (`std/encoding/json/writer.velt`, in
 the engine's `std/json/` modules, json-engine.md §0) passes the glue's builder
 around as an opaque `string` and calls `velt_rt_strbuf_*` externs on it. That is a trap, as
 #1668 found: an argument after it that is a call makes the compiler copy the "string" first, so

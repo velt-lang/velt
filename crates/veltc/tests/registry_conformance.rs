@@ -77,7 +77,7 @@ fn work(name: &str) -> (PathBuf, PathBuf) {
 
 fn suite(package: &Path, args: &[&str]) {
     let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["run", "src/main.vlt"])
+        .args(["run", "src/main.velt"])
         .args(args)
         .current_dir(package)
         .output()

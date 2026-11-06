@@ -98,7 +98,7 @@ def cargo(ctx, what, manifest_dir, target, native=False):
               cwd=manifest_dir, env=rust_profile(native))
 
 
-# ---- CPU micro-benchmarks (bench/*.vlt, bench/rust, bench/node) ----
+# ---- CPU micro-benchmarks (bench/*.velt, bench/rust, bench/node) ----
 
 def micro_benchmarks(ctx):
     out = os.path.join(ctx.out, "micro")
@@ -110,7 +110,7 @@ def micro_benchmarks(ctx):
         rust = os.path.join(out, f"{name}-rust")
         rerr = rustc(ctx, f"rustc {name}", os.path.join(ctx.bench, "rust", f"{name}.rs"), rust)
         velt = os.path.join(out, f"{name}-velt")
-        verr = velt_build(ctx, os.path.join(ctx.bench, f"{name}.vlt"), velt)
+        verr = velt_build(ctx, os.path.join(ctx.bench, f"{name}.velt"), velt)
         benches.append({
             "category": "cpu", "name": name, "check": "ref",
             "impls": [impl("Rust", "rust", [rust], rerr, threads=ST), impl("Velt", "velt", [velt], verr, threads=ST),
@@ -190,7 +190,7 @@ def game_benchmarks(ctx, category):
                                    ctx.game_rust_err, stdin=stdin))
         for f in sorted(os.listdir(dirp)):
             stem, ext = os.path.splitext(f)
-            if ext == ".vlt":
+            if ext == ".velt":
                 exe = os.path.join(out, f"{program}-{stem}")
                 err = velt_build(ctx, os.path.join(dirp, f), exe, ["--cpu", "native"])
                 impls.append(game_impl(program, "velt", stem, f"Velt {stem}", "velt", [exe, *args], err, stdin=stdin))
@@ -218,7 +218,7 @@ def fasta_input(ctx, rust_bin, n):
     if not os.path.isfile(gen):
         gen = os.path.join(ctx.out, "game", "fasta-main")
         if not os.path.isfile(gen):
-            velt_build(ctx, os.path.join(ctx.bench, "benchmarks-game", "fasta", "main.vlt"), gen, ["--cpu", "native"])
+            velt_build(ctx, os.path.join(ctx.bench, "benchmarks-game", "fasta", "main.velt"), gen, ["--cpu", "native"])
     with open(path, "wb") as f:
         try:
             subprocess.run([gen, n], stdout=f, check=False)
@@ -241,7 +241,7 @@ def async_benchmarks(ctx):
             continue
         rust = os.path.join(target, "release", name)
         velt = os.path.join(out, name)
-        verr = velt_build(ctx, os.path.join(here, f"{name}.vlt"), velt)
+        verr = velt_build(ctx, os.path.join(here, f"{name}.velt"), velt)
         benches.append({
             "category": "async", "name": name, "check": "ref",
             "impls": [impl("Rust tokio multi-thread", "rust", [rust], rerr, threads=MT),
@@ -253,7 +253,7 @@ def async_benchmarks(ctx):
     if ctx.wanted_name("concurrent_map"):
         here = os.path.join(ctx.bench, "concurrent_map")
         velt = os.path.join(out, "concurrent_map")
-        verr = velt_build(ctx, os.path.join(here, "map.vlt"), velt, ["--cpu", "native"])
+        verr = velt_build(ctx, os.path.join(here, "map.velt"), velt, ["--cpu", "native"])
         # rust/.cargo/config.toml builds for this CPU, as bbtree's own benchmark does.
         rtarget = os.path.join(out, "cmap-rust")
         rerr = cargo(ctx, "concurrent_map bbtree (git dependency)", os.path.join(here, "rust"), rtarget, native=True)
@@ -280,7 +280,7 @@ def json_benchmarks(ctx):
         if not ctx.wanted_name(name):
             continue
         velt = os.path.join(out, name)
-        verr = velt_build(ctx, os.path.join(here, f"{name}.vlt"), velt)
+        verr = velt_build(ctx, os.path.join(here, f"{name}.velt"), velt)
         benches.append({
             "category": "json", "name": name, "check": "ref",
             "impls": [impl("Rust serde_json", "rust", [os.path.join(target, "release", name)], rerr, threads=ST),
@@ -294,7 +294,7 @@ def json_benchmarks(ctx):
     rounds = "1" if ctx.smoke else "50"
     for op in ("value", "write"):
         velt = os.path.join(out, f"corpora-{op}")
-        verr = ferr or velt_build(ctx, os.path.join(corpora, f"{op}.vlt"), velt)
+        verr = ferr or velt_build(ctx, os.path.join(corpora, f"{op}.velt"), velt)
         rust_check = "ref" if op == "value" else "json"
         for corpus in CORPORA:
             if not ctx.wanted_name(f"{corpus} {op}"):
@@ -324,7 +324,7 @@ def json_benchmarks(ctx):
     ttarget = os.path.join(out, "typed-rust-target")
     terr = ferr or cargo(ctx, "typed JSON (serde derive)", os.path.join(typed, "rust"), ttarget)
     tvelt = os.path.join(out, "typed")
-    tverr = ferr or velt_build(ctx, os.path.join(typed, "typed.vlt"), tvelt)
+    tverr = ferr or velt_build(ctx, os.path.join(typed, "typed.velt"), tvelt)
     trust = os.path.join(ttarget, "release", "showcase_json_typed")
     for corpus, key in (("canada", "canada"), ("citm_catalog", "citm"), ("twitter", "twitter")):
         data = os.path.join(corpora, "data", f"{corpus}.json")
@@ -358,7 +358,7 @@ def sqlite_benchmarks(ctx):
     target = os.path.join(out, "db-rust-target")
     rerr = cargo(ctx, "db rusqlite", os.path.join(db, "rust"), target)
     velt = os.path.join(out, "db-sqlite")
-    verr = velt_build(ctx, os.path.join(db, "velt", "sqlite.vlt"), velt)
+    verr = velt_build(ctx, os.path.join(db, "velt", "sqlite.velt"), velt)
     nerr = None
     if not os.path.isdir(os.path.join(db, "node", "node_modules")):
         nerr = sh(ctx, "npm ci (better-sqlite3)", [ctx.npm or "npm", "ci", "--no-audit", "--no-fund"],
@@ -379,7 +379,7 @@ def sqlite_benchmarks(ctx):
     rtarget = os.path.join(out, "rows-rust-target")
     rrerr = cargo(ctx, "sqlite rows rusqlite + serde_json", os.path.join(rows, "rust"), rtarget)
     rvelt = os.path.join(out, "rows")
-    rverr = velt_build(ctx, os.path.join(rows, "rows.vlt"), rvelt)
+    rverr = velt_build(ctx, os.path.join(rows, "rows.velt"), rvelt)
     n = "200" if ctx.smoke else "20000"
     for q in ("feed", "post"):
         benches.append({
@@ -400,7 +400,7 @@ def startup_benchmarks(ctx):
     rust = os.path.join(out, "hello-rust")
     rerr = rustc(ctx, "rustc hello", os.path.join(src, "hello.rs"), rust)
     velt = os.path.join(out, "hello-velt")
-    verr = velt_build(ctx, os.path.join(src, "hello.vlt"), velt)
+    verr = velt_build(ctx, os.path.join(src, "hello.velt"), velt)
     sizes = {}
     for label, path in (("Rust", rust), ("Velt", velt), ("Node", ctx.node), ("Bun", ctx.bun)):
         if path and os.path.isfile(path):
@@ -432,9 +432,9 @@ def compile_benchmarks(ctx):
     cold = {"VELT_BUILD_CACHE": "off", "VELT_BUILD_STAMP": "off"}
     nocache = {"RUSTC_WRAPPER": "", "CARGO_BUILD_RUSTC_WRAPPER": ""}
     cases = [
-        ("hello world", os.path.join(ctx.here, "programs", "hello", "hello.vlt"),
+        ("hello world", os.path.join(ctx.here, "programs", "hello", "hello.velt"),
          os.path.join(ctx.here, "programs", "hello", "hello.rs")),
-        ("nbody (CPU micro-benchmark)", os.path.join(ctx.bench, "nbody.vlt"),
+        ("nbody (CPU micro-benchmark)", os.path.join(ctx.bench, "nbody.velt"),
          os.path.join(ctx.bench, "rust", "nbody.rs")),
     ]
     benches = []
@@ -448,11 +448,11 @@ def compile_benchmarks(ctx):
                       impl("rustc -C opt-level=3, fat LTO, x86-64-v2 (as the runtime rows)", "rust",
                            [*RUSTC, "-C", f"target-cpu={RUST_CPU}", "-o", o + "-rr", rsrc], env=nocache, threads=UNPAIRED)],
         })
-    # The HTTP server: the http-server package (written in Velt, techempower/server.vlt) against axum. Cargo compiles axum, hyper and tokio from source
+    # The HTTP server: the http-server package (written in Velt, techempower/server.velt) against axum. Cargo compiles axum, hyper and tokio from source
     # on a clean build (Velt's runtime, which holds its hyper and tokio, is prebuilt); the
     # rebuild row (main.rs touched, dependencies built) is the comparable edit-compile time.
     te = os.path.join(ctx.bench, "http", "techempower")
-    vte = os.path.join(te, "server.vlt")
+    vte = os.path.join(te, "server.velt")
     axum_src = os.path.join(out, "axum-src")
     shutil.rmtree(axum_src, ignore_errors=True)
     shutil.copytree(os.path.join(te, "axum"), axum_src, ignore=shutil.ignore_patterns("target"))

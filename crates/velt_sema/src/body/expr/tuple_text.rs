@@ -124,7 +124,7 @@ impl FnCx<'_, '_> {
     /// A method of arrays that doesn't change its receiver, on a tuple (`t.map(f)`, `t.reduce(f)`),
     /// over the tuple's elements as an array has them: their type is their union, as TypeScript
     /// types a tuple's methods. One that calls back reads each element when it reaches it, after
-    /// the callbacks before it ran (`tupleElements`, std/lang/hooks/tuple_elements.vlt); the
+    /// the callbacks before it ran (`tupleElements`, std/lang/hooks/tuple_elements.velt); the
     /// others are called on an array of the elements. `Err` gives `recv` back for other receivers
     /// and methods.
     pub(super) fn tuple_array_call(
@@ -143,7 +143,7 @@ impl FnCx<'_, '_> {
         Ok(self.with_temp("<tuple>", recv, span, span, |lw, t| {
             let parts = (0..elems).map(|i| element(t, i, span)).collect();
             let array = synth(ast::ExprKind::Array(parts), span);
-            // std code doesn't load the hook (std/prelude/global/tuple_elements.vlt).
+            // std code doesn't load the hook (std/prelude/global/tuple_elements.velt).
             let tuple_elements_hook = velt_common::std_hook!(tuple_elements);
             let loaded = lw.cx.std_def(tuple_elements_hook).is_some();
             let live = match (prop.name.as_str(), args.len()) {

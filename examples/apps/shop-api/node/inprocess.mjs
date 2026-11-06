@@ -1,4 +1,4 @@
-// The Node twin's per-request cost on one core, without HTTP (inprocess.vlt does the same).
+// The Node twin's per-request cost on one core, without HTTP (inprocess.velt does the same).
 //   node node/inprocess.mjs
 import { Store, route } from "./server.mjs";
 

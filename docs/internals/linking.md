@@ -161,7 +161,7 @@ another system library.
 - `release.yml` `clean-machine`: the packaged toolchain in `debian:bookworm-slim` (no
   `build-essential`; glibc and musl targets), in a Windows Server Core container (no Visual
   Studio, SDK or Visual C++ runtime) and on macOS, with `VELT_LINKER=bundled`, builds and runs
-  hello and `examples/http_hello.vlt` in debug and release mode (`scripts/smoke-clean.*`).
+  hello and `examples/http_hello.velt` in debug and release mode (`scripts/smoke-clean.*`).
 
 ## Cross-linking
 
@@ -176,6 +176,6 @@ links statically. Code generation needs nothing more: both backends take the tar
 the standard library asks the runtime for the platform at run time (`velt_rt_os_platform`).
 
 `release.yml` checks it end to end: `cross-build` installs every other target's pack into the
-Linux x86_64, macOS arm64 and Windows toolchains and builds hello and `examples/http_hello.vlt`
+Linux x86_64, macOS arm64 and Windows toolchains and builds hello and `examples/http_hello.velt`
 for those targets (debug and release), and `cross-run` runs the results on each target's own
 runner (`scripts/cross.sh`).

@@ -1,5 +1,5 @@
 //! `Math.min(a, b, …)` and `Math.max(a, b, …)` with a fixed list of arguments: a balanced tree
-//! of the prelude's two-value `min2` / `max2` (`std/prelude/math.vlt`), its arguments evaluated
+//! of the prelude's two-value `min2` / `max2` (`std/prelude/math.velt`), its arguments evaluated
 //! left to right. The prelude's `Math.min` takes the values past the second as a rest array,
 //! which a call builds on the heap each time; this keeps calls in loops allocation-free whether
 //! or not the inliner reaches them (#1570). A spread argument (`Math.min(...xs)`), no argument,

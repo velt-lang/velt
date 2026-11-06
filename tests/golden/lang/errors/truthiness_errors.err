@@ -1,3 +1,3 @@
-truthiness_errors.vlt:6:7: error: an expression of type `void` cannot be tested for truthiness
+truthiness_errors.velt:6:7: error: an expression of type `void` cannot be tested for truthiness
 a `void` value is never a condition
-truthiness_errors.vlt:9:13: error: an expression of type `void` cannot be tested for truthiness
+truthiness_errors.velt:9:13: error: an expression of type `void` cannot be tested for truthiness

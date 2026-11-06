@@ -108,7 +108,7 @@ fn barrel_package(n: usize) -> Loaded {
     let dir = std::env::temp_dir().join(format!("velt-barrels-{}-{n}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let write =
-        |name: &str, src: &str| std::fs::write(dir.join(format!("{name}.vlt")), src).unwrap();
+        |name: &str, src: &str| std::fs::write(dir.join(format!("{name}.velt")), src).unwrap();
     let mut index = String::new();
     for i in 0..n {
         write(
@@ -132,7 +132,7 @@ fn barrel_package(n: usize) -> Loaded {
     }
     main += "  console.log(s);\n}\n";
     // The loader reads every module now: the directory is not needed after.
-    let loaded = load_src_at(&dir.join("main.vlt"), &main);
+    let loaded = load_src_at(&dir.join("main.velt"), &main);
     let _ = std::fs::remove_dir_all(&dir);
     loaded
 }
@@ -661,7 +661,7 @@ fn keyed_program(shape: &str, n: usize, handler: &str) -> Loaded {
     let dir = std::env::temp_dir().join(format!("velt-keyed-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
-        dir.join("pool.vlt"),
+        dir.join("pool.velt"),
         "export async function onEachWorker(work: () => Promise<void>) {\n  await spawn(work());\n}\n",
     )
     .unwrap();
@@ -748,7 +748,7 @@ fn keyed_program(shape: &str, n: usize, handler: &str) -> Loaded {
     src += &format!(
         "async function main() {{\n  const app = new App();\n  await onEachWorker(async (): Promise<void> => {{\n{handler}\n  }});\n}}\n"
     );
-    let mut loaded = load_src_at(&dir.join("main.vlt"), &src);
+    let mut loaded = load_src_at(&dir.join("main.velt"), &src);
     for m in &mut loaded.modules {
         m.is_dependency |= m.path.ends_with("pool");
     }

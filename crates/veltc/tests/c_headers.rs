@@ -19,23 +19,23 @@ fn project(dir: &Path, native: &str, lib: &str, files: &[(&str, &str)], allow: &
     std::fs::create_dir_all(pkg.join("src")).unwrap();
     std::fs::create_dir_all(app.join("src")).unwrap();
     std::fs::write(
-        pkg.join("package.vlt"),
+        pkg.join("package.velt"),
         format!("import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{ name: \"bind\", version: \"0.1.0\"{native} }};\n"),
     )
     .unwrap();
-    std::fs::write(pkg.join("src/lib.vlt"), lib).unwrap();
+    std::fs::write(pkg.join("src/lib.velt"), lib).unwrap();
     for (path, text) in files {
         let path = pkg.join(path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
     }
     std::fs::write(
-        app.join("package.vlt"),
+        app.join("package.velt"),
         format!("import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"app\",\n  version: \"0.1.0\",\n  {allow}dependencies: {{ bind: {{ path: \"../bind\" }} }},\n}};\n"),
     )
     .unwrap();
     std::fs::write(
-        app.join("src/main.vlt"),
+        app.join("src/main.velt"),
         "import { len } from \"bind\";\n\nfunction main() {\n  console.log(len(\"abc\"));\n}\n",
     )
     .unwrap();
@@ -463,7 +463,7 @@ fn an_unchanged_build_with_a_registry_package_is_not_compiled_again() {
             .unwrap();
         assert!(o.status.success(), "{args:?}: {}", output(&o));
     }
-    let manifest = dir.path().join("app/package.vlt");
+    let manifest = dir.path().join("app/package.velt");
     let text = std::fs::read_to_string(&manifest).unwrap();
     std::fs::write(
         &manifest,
@@ -628,9 +628,9 @@ fn a_fetched_package_s_declarations_are_compared_with_its_record() {
     let o = check_from_git(dir.path(), &home);
     assert!(o.status.success(), "{}", output(&o));
     // A declaration changed after the check.
-    let lib = std::fs::read_to_string(bind.join("src/lib.vlt")).unwrap();
+    let lib = std::fs::read_to_string(bind.join("src/lib.velt")).unwrap();
     let changed = lib.replace("thing_free(t: Ptr<thing>)", "thing_free(t: Ptr<u8>)");
-    std::fs::write(bind.join("src/lib.vlt"), changed).unwrap();
+    std::fs::write(bind.join("src/lib.velt"), changed).unwrap();
     git(&bind, &["commit", "-q", "-am", "changed"]);
     let out = output(&check_from_git(dir.path(), &home));
     assert!(
@@ -655,7 +655,7 @@ fn depend_by_git(dir: &Path) {
         true => format!("file://{url}"),
         false => format!("file:///{url}"),
     };
-    let manifest = dir.join("app/package.vlt");
+    let manifest = dir.join("app/package.velt");
     let text = std::fs::read_to_string(&manifest).unwrap();
     let text = text.replace(
         "path: \"../bind\"",
@@ -706,16 +706,16 @@ fn a_consumer_of_some_modules_is_compared_with_the_record() {
         "strspn(new CString(s), new CString(s))",
     );
     let files = [
-        ("src/a.vlt", a.as_str()),
-        ("src/b.vlt", b.as_str()),
-        ("src/extra.vlt", extra.as_str()),
+        ("src/a.velt", a.as_str()),
+        ("src/b.velt", b.as_str()),
+        ("src/extra.velt", extra.as_str()),
     ];
     let native = ", native: { c: { c: { headers: [\"<string.h>\"] } } }";
     let lib = "export { al } from \"./a\";\nexport { bl } from \"./b\";\n";
     project(dir.path(), native, lib, &files, ALLOW);
     record_and_commit(dir.path(), &home);
     depend_by_git(dir.path());
-    let main = dir.path().join("app/src/main.vlt");
+    let main = dir.path().join("app/src/main.velt");
     let program = |imports: &str, uses: &str| {
         format!("{imports}\n\nfunction main() {{\n  console.log({uses});\n}}\n")
     };
@@ -744,7 +744,7 @@ fn a_consumer_of_some_modules_is_compared_with_the_record() {
         "strcmp(a: CString, b: CString): i64",
     );
     let bind = dir.path().join("bind");
-    std::fs::write(bind.join("src/b.vlt"), changed).unwrap();
+    std::fs::write(bind.join("src/b.velt"), changed).unwrap();
     git(&bind, &["commit", "-q", "-am", "changed"]);
     std::fs::write(&main, program(ways[0].0, ways[0].1)).unwrap();
     let o = check_from_git(dir.path(), &home);

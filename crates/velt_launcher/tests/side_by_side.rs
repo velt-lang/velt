@@ -99,7 +99,7 @@ fn a_pin_no_release_satisfies_lists_the_published_versions() {
     let bad = m.package("bad", Some("latest"));
     let err = m.fail(&bad, &["build"], &[]);
     assert!(
-        err.contains("package.vlt:3: `velt`: `latest` is not"),
+        err.contains("package.velt:3: `velt`: `latest` is not"),
         "{err}"
     );
 }
@@ -138,7 +138,7 @@ fn the_toolchain_commands() {
     let loose = m.work.clone();
 
     // Outside a package, without a default, nothing is selected.
-    let err = m.fail(&loose, &["run", "x.vlt"], &[]);
+    let err = m.fail(&loose, &["run", "x.velt"], &[]);
     assert!(err.contains("no velt toolchain is selected"), "{err}");
     assert!(m
         .ok(&loose, &["toolchain", "list"])
@@ -150,7 +150,7 @@ fn the_toolchain_commands() {
         out.contains("installed velt 0.1.1") && out.contains("0.1.1 is the default"),
         "{out}"
     );
-    let stdout = m.ok(&loose, &["run", "x.vlt"]);
+    let stdout = m.ok(&loose, &["run", "x.velt"]);
     assert!(same(&prefix_of(&stdout), &m.toolchain("0.1.1")));
     assert!(stdout.contains("selected=0.1.1 (the default)"), "{stdout}");
     let out = m.ok(&loose, &["toolchain", "install", "0.2.0"]);
@@ -313,7 +313,7 @@ fn an_index_names_a_newer_launcher_and_is_never_older_than_one_seen() {
 fn a_requirement_after_plus_installs_its_newest_release() {
     let releases = Releases::new(&["0.1.0", "0.2.0", "0.2.1"]);
     let m = Machine::new(&releases);
-    let stdout = m.ok(&m.work, &["+0.2", "run", "x.vlt"]);
+    let stdout = m.ok(&m.work, &["+0.2", "run", "x.velt"]);
     assert!(same(&prefix_of(&stdout), &m.toolchain("0.2.1")), "{stdout}");
 }
 

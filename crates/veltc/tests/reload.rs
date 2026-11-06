@@ -126,7 +126,7 @@ fn steps(case: &Path) -> Vec<PathBuf> {
 /// unchanged).
 /// The project the cases run in: their servers are packages/http-server's, a path dependency.
 fn manifest(dir: &Path) {
-    let manifest = dir.join("package.vlt");
+    let manifest = dir.join("package.velt");
     if manifest.exists() {
         return;
     }
@@ -157,7 +157,7 @@ fn apply(step: &Path, dir: &Path) {
     }
 }
 
-/// Write `path` like an editor: to a temporary name next to it (not a `.vlt` file), then renamed
+/// Write `path` like an editor: to a temporary name next to it (not a `.velt` file), then renamed
 /// into place, so a watcher never sees it half-written.
 fn save(path: &Path, contents: impl AsRef<[u8]>) {
     let mut tmp_name = std::ffi::OsString::from(".");
@@ -346,8 +346,8 @@ fn spare_host_is_discarded() {
     let dir = TestDir::new();
     let case = root().join("tests/reload/hello_server/1");
     apply(&case, dir.path());
-    let main = std::fs::read_to_string(case.join("main.vlt")).unwrap();
-    let write = |text: String| save(&dir.path().join("main.vlt"), text);
+    let main = std::fs::read_to_string(case.join("main.velt")).unwrap();
+    let write = |text: String| save(&dir.path().join("main.velt"), text);
     let dev = Dev::start(dir.path(), &[]);
     let ok = |r: Result<Instant, String>| r.unwrap_or_else(|e| panic!("{e}"));
     ok(dev.wait_stderr(Mark::default(), "velt dev: started"));
@@ -400,12 +400,12 @@ fn crash_during_reload_is_reported() {
     let dir = TestDir::new();
     let case = root().join("tests/reload/hello_server/1");
     apply(&case, dir.path());
-    let main = std::fs::read_to_string(case.join("main.vlt")).unwrap();
+    let main = std::fs::read_to_string(case.join("main.velt")).unwrap();
     let dev = Dev::start_with_env(dir.path(), &[], &[("VELT_DEV_CRASH_ON_RELOAD", "1")]);
     let ok = |r: Result<Instant, String>| r.unwrap_or_else(|e| panic!("{e}"));
     ok(dev.wait_stderr(Mark::default(), "velt dev: started"));
     let mark = dev.mark();
-    save(&dir.path().join("main.vlt"), main.replace("v1", "v2"));
+    save(&dir.path().join("main.velt"), main.replace("v1", "v2"));
     let crashed = "velt dev: the running program crashed during the reload (";
     ok(dev.wait_stderr(mark, crashed));
     let lines = dev.stderr_since(mark);
@@ -428,13 +428,13 @@ fn crash_during_reload_is_reported() {
 #[test]
 fn quiet_host_prints_no_diagnostics() {
     let dir = TestDir::new();
-    let main = std::fs::read_to_string(root().join("tests/reload/hello_server/1/main.vlt"));
+    let main = std::fs::read_to_string(root().join("tests/reload/hello_server/1/main.velt"));
     let bad = main.unwrap().replace("new Response(", "Response.txt(");
     manifest(dir.path());
-    save(&dir.path().join("main.vlt"), bad);
+    save(&dir.path().join("main.velt"), bad);
     let host = |quiet: bool| {
         let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
-        cmd.args(["dev", "--host", "main.vlt"])
+        cmd.args(["dev", "--host", "main.velt"])
             .current_dir(dir.path());
         if quiet {
             cmd.env("VELT_DEV_QUIET", "1");
@@ -593,7 +593,7 @@ fn bench(mode: Mode, edit: BenchEdit) -> Vec<Duration> {
     let case = root().join("tests/reload/hello_server/1");
     let dir = TestDir::new();
     apply(&case, dir.path());
-    let source = std::fs::read_to_string(dir.path().join("main.vlt")).unwrap();
+    let source = std::fs::read_to_string(dir.path().join("main.velt")).unwrap();
     let dev = Dev::start(dir.path(), mode.flags());
     dev.wait_stderr(Mark::default(), "velt dev: started")
         .unwrap();
@@ -607,7 +607,7 @@ fn bench(mode: Mode, edit: BenchEdit) -> Vec<Duration> {
             text = text.replace("sleep(1000000000)", &format!("sleep(100000000{n})"));
         }
         let saved = Instant::now();
-        save(&dir.path().join("main.vlt"), text);
+        save(&dir.path().join("main.velt"), text);
         while get(port, "/").ok().as_deref() != Some(body.as_str()) {
             std::thread::sleep(Duration::from_millis(1));
         }

@@ -75,10 +75,10 @@ fn build(name: &str) -> Option<(PathBuf, PathBuf, PathBuf)> {
     let server = root.join("packages/http-server");
     std::fs::create_dir_all(base.join("http-server")).expect("http-server dir");
     std::fs::copy(
-        server.join("package.vlt"),
-        base.join("http-server/package.vlt"),
+        server.join("package.velt"),
+        base.join("http-server/package.velt"),
     )
-    .expect("http-server package.vlt");
+    .expect("http-server package.velt");
     copy_dir(&server.join("src"), &base.join("http-server/src"));
     copy_dir(
         &root.join("crates/veltc/tests/registry_worker"),
@@ -149,7 +149,7 @@ fn the_conformance_suite_passes() {
     let purges = base.join("purges.log");
     let (server, url) = serve(&base, &modules, &worker, &purges, &users);
     let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["run", "src/main.vlt", &url, "--alice", alice, "--bob", bob])
+        .args(["run", "src/main.velt", &url, "--alice", alice, "--bob", bob])
         .current_dir(base.join("registry-conformance"))
         .output()
         .expect("run velt");

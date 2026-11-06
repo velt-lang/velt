@@ -19,12 +19,12 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-/// The VIR of `src`, compiled as `main.vlt`.
+/// The VIR of `src`, compiled as `main.velt`.
 fn vir(src: &str) -> String {
     let dir = test_dir::TestDir::new();
-    std::fs::write(dir.path().join("main.vlt"), src).unwrap();
+    std::fs::write(dir.path().join("main.velt"), src).unwrap();
     let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["build", "main.vlt", "--emit", "vir"])
+        .args(["build", "main.velt", "--emit", "vir"])
         .current_dir(dir.path())
         .output()
         .unwrap();
@@ -79,17 +79,17 @@ fn std_constants_with_literal_and_computed_starts() {
         &std,
     );
     let probe = "function start(): u64 {\n  return 10;\n}\nconst ONE = new Atomic<u64>(0);\nconst EACH = new Atomic<u64>(start());\n\nexport function bump(): u64 {\n  return ONE.add(1) + 1;\n}\n\nexport function each(): u64 {\n  return EACH.add(1) + 1;\n}\n";
-    // A module of its own (a folder's index.vlt): user code imports only modules.
+    // A module of its own (a folder's index.velt): user code imports only modules.
     std::fs::create_dir_all(std.join("zz_static_atomic")).unwrap();
-    std::fs::write(std.join("zz_static_atomic/index.vlt"), probe).unwrap();
+    std::fs::write(std.join("zz_static_atomic/index.velt"), probe).unwrap();
     let main = "import { bump, each } from \"velt/zz_static_atomic\";\n\nfunction main() {\n  console.log(bump(), bump(), each());\n}\n";
-    std::fs::write(dir.path().join("main.vlt"), main).unwrap();
+    std::fs::write(dir.path().join("main.velt"), main).unwrap();
     for release in [false, true] {
         let mut args = vec!["run"];
         if release {
             args.push("--release");
         }
-        args.push("main.vlt");
+        args.push("main.velt");
         let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
             .args(&args)
             .env("VELT_STD", &std)

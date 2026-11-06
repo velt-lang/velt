@@ -33,17 +33,17 @@ fn project_with(dir: &Path, lib: &str, main: &str, native: &str, allow: &str) {
     std::fs::create_dir_all(pkg.join("src")).unwrap();
     std::fs::create_dir_all(app.join("src")).unwrap();
     std::fs::write(
-        pkg.join("package.vlt"),
+        pkg.join("package.velt"),
         format!("import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{ name: \"cmath\", version: \"0.1.0\"{native} }};\n"),
     )
     .unwrap();
-    std::fs::write(pkg.join("src/lib.vlt"), lib).unwrap();
+    std::fs::write(pkg.join("src/lib.velt"), lib).unwrap();
     std::fs::write(
-        app.join("package.vlt"),
+        app.join("package.velt"),
         format!("import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"app\",\n  version: \"0.1.0\",\n  {allow}dependencies: {{ cmath: {{ path: \"../cmath\" }} }},\n}};\n"),
     )
     .unwrap();
-    std::fs::write(app.join("src/main.vlt"), main).unwrap();
+    std::fs::write(app.join("src/main.velt"), main).unwrap();
 }
 
 fn velt(dir: &Path, args: &[&str]) -> Output {
@@ -172,7 +172,7 @@ fn check(dir: &Path) -> String {
 #[test]
 fn a_file_without_a_package_cant_declare_c_functions() {
     let dir = test_dir::TestDir::new();
-    let main = dir.path().join("main.vlt");
+    let main = dir.path().join("main.velt");
     std::fs::write(
         &main,
         "declare c(\"c\") function llabs(x: i64): i64;\n\nfunction main() {\n  // SAFETY: any long long but LLONG_MIN.\n  console.log(unsafe { llabs(-1) });\n}\n",
@@ -188,7 +188,7 @@ fn a_file_without_a_package_cant_declare_c_functions() {
     assert!(!o.status.success(), "{out}");
     assert!(
         out.contains(
-            "`declare c function llabs` is only allowed in a package: this file has no package.vlt"
+            "`declare c function llabs` is only allowed in a package: this file has no package.velt"
         ),
         "{out}"
     );
@@ -296,7 +296,7 @@ fn what_cant_cross_and_unknown_libraries_are_errors() {
     let out = check(dir.path());
     assert!(
         out.contains(
-            "C library `sqlite3` is not in package.vlt's `native.c`: package `cmath` lists `c`"
+            "C library `sqlite3` is not in package.velt's `native.c`: package `cmath` lists `c`"
         ),
         "{out}"
     );
@@ -309,7 +309,7 @@ fn a_program_allows_a_package_s_c_declarations() {
     let dir = test_dir::TestDir::new();
     project_with(dir.path(), LIB, MAIN, "", "allowNative: [\"cmath\"], ");
     let out = check(dir.path());
-    let unsaid = "package `cmath` declares C function `llabs`, but its package.vlt doesn't say it has native code";
+    let unsaid = "package `cmath` declares C function `llabs`, but its package.velt doesn't say it has native code";
     assert!(out.contains(unsaid), "{out}");
     assert_eq!(
         out.matches("doesn't say it has native code").count(),
@@ -356,7 +356,7 @@ fn a_package_s_c_library_is_linked_per_target() {
         assert_eq!(String::from_utf8_lossy(&o.stdout), "3\n", "velt {args:?}");
     }
     reload_support::build_runtime();
-    std::fs::write(dir.path().join("app/main.vlt"), main).unwrap();
+    std::fs::write(dir.path().join("app/main.velt"), main).unwrap();
     let dev = reload_support::Dev::start(&dir.path().join("app"), &[]);
     dev.wait_stdout(reload_support::Mark::default(), "3")
         .unwrap_or_else(|e| panic!("{e}"));
@@ -393,7 +393,7 @@ fn a_c_library_lists_its_headers_or_says_it_has_none() {
     project_with(dir.path(), LIBM, main, native, allow);
     let out = check(dir.path());
     assert!(
-        out.contains("error: package `cmath` declares functions of C library `m`, but its package.vlt lists no headers to check them against"),
+        out.contains("error: package `cmath` declares functions of C library `m`, but its package.velt lists no headers to check them against"),
         "{out}"
     );
     assert!(
@@ -404,7 +404,7 @@ fn a_c_library_lists_its_headers_or_says_it_has_none() {
     project_with(dir.path(), LIB, MAIN, ", native: { c: {} }", allow);
     let out = check(dir.path());
     assert!(
-        out.contains("declares functions of C library `c`, but its package.vlt lists no headers")
+        out.contains("declares functions of C library `c`, but its package.velt lists no headers")
             && out.contains("headers: [\"<string.h>\"]"),
         "{out}"
     );
@@ -468,13 +468,13 @@ fn velt_dev_calls_c_functions_and_reports_a_missing_one() {
     let dir = test_dir::TestDir::new();
     let main = "import { absolute, cubeRoot } from \"cmath\";\n\nfunction main() {\n  console.log(absolute(-42), cubeRoot(27));\n}\n";
     project(dir.path(), LIB, main);
-    std::fs::write(dir.path().join("app/main.vlt"), main).unwrap();
+    std::fs::write(dir.path().join("app/main.velt"), main).unwrap();
     let dev = reload_support::Dev::start(&dir.path().join("app"), &[]);
     dev.wait_stdout(reload_support::Mark::default(), "42 3")
         .unwrap_or_else(|e| panic!("{e}"));
     drop(dev);
     std::fs::write(
-        dir.path().join("cmath/src/lib.vlt"),
+        dir.path().join("cmath/src/lib.velt"),
         "declare c(\"c\") function velt_no_such_c_function(x: i32): i32;\n\nexport function absolute(x: i64): i64 {\n  // SAFETY: none needed.\n  return unsafe { velt_no_such_c_function(1) } as i64 + x;\n}\n\nexport function cubeRoot(x: f32): f32 {\n  return x;\n}\n",
     )
     .unwrap();
@@ -485,11 +485,11 @@ fn velt_dev_calls_c_functions_and_reports_a_missing_one() {
     )
     .unwrap_or_else(|e| panic!("{e}"));
     let err = dev.stderr_since(reload_support::Mark::default()).join("\n");
-    assert!(err.contains("lib.vlt:1:1)"), "{err}");
+    assert!(err.contains("lib.velt:1:1)"), "{err}");
     assert!(!err.contains("panicked"), "{err}");
 }
 
-const POINTERS: &str = include_str!("c_functions/pointers.vlt");
+const POINTERS: &str = include_str!("c_functions/pointers.velt");
 
 /// Pointers to C types (`declare c type`), `Ptr<T> | null` and `null`, arrays of numbers and
 /// byte views as buffers, and strings as `StrBytes` (a lone surrogate passes as U+FFFD), in
@@ -598,7 +598,7 @@ fn empty_arrays_are_never_null_and_a_null_ptr_result_is_caught() {
     }
 }
 
-const RAW: &str = include_str!("c_functions/raw.vlt");
+const RAW: &str = include_str!("c_functions/raw.velt");
 
 /// `CString` (refused with a NUL inside), `Out<T>` and `OutPtr<T>` written by C, and C memory
 /// read back with `readCString`, `readUtf8` and `readBytes`, in debug and release builds.

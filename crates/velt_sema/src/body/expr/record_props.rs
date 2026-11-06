@@ -1,4 +1,4 @@
-//! Property operations on a string-keyed record (std/prelude/record.vlt), which holds its
+//! Property operations on a string-keyed record (std/prelude/record.velt), which holds its
 //! symbol keys in a table of their own and the accessors `Object.defineProperty` defines in
 //! another, as Node keeps them:
 //!
@@ -121,7 +121,7 @@ impl FnCx<'_, '_> {
                 ast::ExprKind::Lit(ast::Lit::Bool(configurable == Some(true))),
                 span,
             );
-            // The getter and setter may throw (std/lang/record/symbols.vlt): each is a call's own
+            // The getter and setter may throw (std/lang/record/symbols.velt): each is a call's own
             // argument, so what it throws is inferred from it.
             let (method, call_args) = match (get, set) {
                 (Some(g), Some(s)) => (
@@ -152,7 +152,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `Object.getOwnPropertyDescriptor(r, k)` on a string-keyed record: its property `k` as
-    /// Node describes it (std/lang/record/reflect.vlt), or `undefined`.
+    /// Node describes it (std/lang/record/reflect.velt), or `undefined`.
     pub(super) fn record_descriptor(
         &mut self,
         args: &[ast::Expr],

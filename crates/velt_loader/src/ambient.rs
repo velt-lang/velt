@@ -11,7 +11,7 @@
 //!   imports or exports; otherwise they belong to their module (and those of a declaration
 //!   file, which no one imports here, are not read). Declaration files are not modules: each
 //!   package's are read once, when the first of its modules loads; a package is the nearest
-//!   directory above the module with a `package.json` or `package.vlt`, and its declaration
+//!   directory above the module with a `package.json` or `package.velt`, and its declaration
 //!   files are those in that directory and below its `src/` (outside `node_modules`, `target`,
 //!   `dist`, hidden directories and nested packages). Only their ambient variables are read
 //!   (anything else in them is skipped, as are their syntax errors: they may use TypeScript
@@ -150,7 +150,7 @@ impl Ambients {
                             let written = self.written.get(name).map_or("", String::as_str);
                             out.push(Diagnostic::error(
                                 format!(
-                                    "`{name}` is declared `{declared}`, but its `define` in package.vlt is `{written}`, a {actual}"
+                                    "`{name}` is declared `{declared}`, but its `define` in package.velt is `{written}`, a {actual}"
                                 ),
                                 decl.span,
                             ));
@@ -169,7 +169,7 @@ impl Ambients {
                             decl.span,
                         )
                         .with_note(format!(
-                            "Velt has no global variables: give it one at build time with `define: {{ {name}: {example} }}` in package.vlt (as Vite's `define`)"
+                            "Velt has no global variables: give it one at build time with `define: {{ {name}: {example} }}` in package.velt (as Vite's `define`)"
                         )),
                     );
                 }
@@ -207,7 +207,7 @@ fn lit_type(lit: &Lit) -> &'static str {
 }
 
 /// The package directory of module `path`: the nearest directory above it with a
-/// `package.json` or `package.vlt`.
+/// `package.json` or `package.velt`.
 fn package_dir(path: &Path) -> Option<PathBuf> {
     let abs = vpm::relpath::absolute(path);
     abs.ancestors().skip(1).find_map(|dir| {

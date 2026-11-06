@@ -1,4 +1,4 @@
-//! Shared helpers for the formatter's integration tests: the corpus of real `.vlt` files and a
+//! Shared helpers for the formatter's integration tests: the corpus of real `.velt` files and a
 //! span/NodeId-insensitive AST comparison, and the formatter's guarantees as one check.
 
 // Each test binary uses a different subset of these helpers.
@@ -14,7 +14,7 @@ pub fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
-/// Every `.vlt` file under `tests/golden`, `std` and `fuzz/seeds` (whatever exists), plus the
+/// Every `.velt` file under `tests/golden`, `std` and `fuzz/seeds` (whatever exists), plus the
 /// directories listed in `VELT_FMT_EXTRA_CORPUS` (separated like `PATH`), sorted.
 /// `VELT_FMT_CORPUS=changed` keeps the files in `VELT_FMT_CORPUS_FILES` (comma-separated paths
 /// relative to the workspace root) and the extra directories: `cargo xtask check` and the merge
@@ -66,7 +66,7 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             collect(&path, out);
-        } else if path.extension().is_some_and(|e| e == "vlt") {
+        } else if path.extension().is_some_and(|e| e == "velt") {
             out.push(path);
         }
     }

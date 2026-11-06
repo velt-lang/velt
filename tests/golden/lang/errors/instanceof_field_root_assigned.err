@@ -1,1 +1,1 @@
-instanceof_field_root_assigned.vlt:21:22: error: no field `s` on type `Base`
+instanceof_field_root_assigned.velt:21:22: error: no field `s` on type `Base`

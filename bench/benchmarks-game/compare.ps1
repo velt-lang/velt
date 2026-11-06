@@ -1,5 +1,5 @@
 # A/B gate over the Benchmarks Game programs (docs/design/semantics.md "Gates"), Windows: builds
-# every <program>/main.vlt with two Velt compilers (LLVM release), runs them interleaved
+# every <program>/main.velt with two Velt compilers (LLVM release), runs them interleaved
 # (A B A B ...) with the official N from bench.conf (stdin = the fasta output of that N when
 # STDIN=fasta), checks that both print the same bytes, and prints the median wall-clock time.
 #
@@ -54,7 +54,7 @@ function Median([double[]]$xs) {
 }
 
 $fasta = Join-Path $out "fasta-base.exe"
-Build $Baseline (Join-Path $here "fasta/main.vlt") $fasta
+Build $Baseline (Join-Path $here "fasta/main.velt") $fasta
 $failed = @()
 Write-Output "| program | N | baseline median ms | candidate median ms | change |"
 Write-Output "|---|---|---|---|---|"
@@ -68,7 +68,7 @@ foreach ($conf in Get-ChildItem $here -Recurse -Filter bench.conf | Sort-Object 
         $stdin = Join-Path $out "fasta-$n.txt"
         if (-not (Test-Path $stdin)) { Time-Once $fasta $n "" $stdin | Out-Null }
     }
-    $src = Join-Path $dir "main.vlt"
+    $src = Join-Path $dir "main.velt"
     $exeA = Join-Path $out "$name-base.exe"
     $exeB = Join-Path $out "$name-cand.exe"
     Build $Baseline $src $exeA

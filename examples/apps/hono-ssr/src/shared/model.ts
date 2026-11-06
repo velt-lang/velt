@@ -1,5 +1,5 @@
 // The shop's data: plain types and pure helpers, shared by the Velt server and the Node reference
-// (`tsCompat` in package.vlt).
+// (`tsCompat` in package.velt).
 
 export type Product = {
   slug: string;

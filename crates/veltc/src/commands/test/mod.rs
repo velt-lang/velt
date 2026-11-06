@@ -1,4 +1,4 @@
-//! `velt test [file|dir]`: find `*.test.vlt` / `*.test.ts` / `*.test.tsx` files ([`discover`]),
+//! `velt test [file|dir]`: find `*.test.velt` / `*.test.ts` / `*.test.tsx` files ([`discover`]),
 //! compile a generated harness ([`harness`]) and run it, printing `ok <name>` / `FAILED <name>`
 //! and a summary. Exit code 1 if any test failed or did not build.
 //!
@@ -255,7 +255,7 @@ impl Run<'_> {
             .unwrap_or_default();
         let Some(module_name) = vpm::sources::strip_source_extension(&name) else {
             return Err(format!(
-                "`{}` is not a source file (`.vlt`, `.ts` or `.tsx`)",
+                "`{}` is not a source file (`.velt`, `.ts` or `.tsx`)",
                 file.display()
             ));
         };
@@ -564,7 +564,7 @@ impl Run<'_> {
         let harness_files: Vec<harness::HarnessFile> = files
             .iter()
             .map(|p| harness::HarnessFile {
-                // With its extension: `a.test.vlt` and `a.test.ts` side by side are not ambiguous
+                // With its extension: `a.test.velt` and `a.test.ts` side by side are not ambiguous
                 // here.
                 import_spec: import_spec(&dir, &p.file),
                 tests: &p.found.tests,
@@ -597,7 +597,7 @@ impl Run<'_> {
             h.finish()
         };
         let opts = BuildOptions {
-            input: dir.join(format!("__velt_test_{name}.vlt")),
+            input: dir.join(format!("__velt_test_{name}.velt")),
             root_source: Some(source),
             test_harness: true,
             packages: self.packages.clone(),
@@ -662,7 +662,7 @@ fn keep_passed(
 }
 
 /// Which files of `planned` share a harness: those that only declare, in one; each other one
-/// alone. Of two files with the same module path (`a.test.ts` and `a.test.vlt` side by side,
+/// alone. Of two files with the same module path (`a.test.ts` and `a.test.velt` side by side,
 /// which one program cannot import both of), the second is alone too.
 fn groups(planned: &[Planned]) -> Vec<Vec<usize>> {
     let mut shared = vec![];
@@ -716,7 +716,7 @@ fn common_dir<'p>(mut files: impl Iterator<Item = &'p Path>) -> PathBuf {
     dir
 }
 
-/// `./sub/a.test.vlt`: how a harness in `dir` imports `file`.
+/// `./sub/a.test.velt`: how a harness in `dir` imports `file`.
 fn import_spec(dir: &Path, file: &Path) -> String {
     let rel = file.strip_prefix(dir).unwrap_or(file);
     let parts: Vec<String> = rel
@@ -754,10 +754,10 @@ mod tests {
     #[test]
     fn files_that_only_declare_share_a_harness() {
         let files = [
-            planned("p/tests/a.test.vlt", false),
-            planned("p/tests/b.test.vlt", true),
-            planned("p/src/c.test.vlt", false),
-            // Same module path as `a.test.vlt`: one program can't import both.
+            planned("p/tests/a.test.velt", false),
+            planned("p/tests/b.test.velt", true),
+            planned("p/src/c.test.velt", false),
+            // Same module path as `a.test.velt`: one program can't import both.
             planned("p/tests/a.test.ts", false),
         ];
         assert_eq!(groups(&files), [vec![0, 2], vec![1], vec![3]]);
@@ -767,13 +767,13 @@ mod tests {
     #[test]
     fn harness_goes_where_it_can_import_every_file() {
         let (a, c) = (
-            Path::new("p/tests/a.test.vlt"),
-            Path::new("p/src/x/c.test.vlt"),
+            Path::new("p/tests/a.test.velt"),
+            Path::new("p/src/x/c.test.velt"),
         );
         assert_eq!(common_dir([a].into_iter()), Path::new("p/tests"));
         let dir = common_dir([a, c].into_iter());
         assert_eq!(dir, Path::new("p"));
-        assert_eq!(import_spec(&dir, c), "./src/x/c.test.vlt");
-        assert_eq!(import_spec(Path::new("p/tests"), a), "./a.test.vlt");
+        assert_eq!(import_spec(&dir, c), "./src/x/c.test.velt");
+        assert_eq!(import_spec(Path::new("p/tests"), a), "./a.test.velt");
     }
 }

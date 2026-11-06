@@ -123,9 +123,9 @@ fn archives_from_the_tar_crate_read_back() {
     // What GNU tar, bsdtar and git archive write is built by `tar` here: ustar and GNU headers,
     // long names, links.
     let mut b = ::tar::Builder::new(vec![]);
-    let long = format!("pkg/{}/mod.vlt", "n".repeat(120));
+    let long = format!("pkg/{}/mod.velt", "n".repeat(120));
     for (path, data) in [
-        ("pkg/package.vlt", &b"export const pkg = {}"[..]),
+        ("pkg/package.velt", &b"export const pkg = {}"[..]),
         (&long[..], b"x"),
     ] {
         let mut h = ::tar::Header::new_gnu();
@@ -136,9 +136,9 @@ fn archives_from_the_tar_crate_read_back() {
     let mut h = ::tar::Header::new_ustar();
     h.set_entry_type(::tar::EntryType::Symlink);
     h.set_size(0);
-    b.append_link(&mut h, "pkg/link", "package.vlt").unwrap();
+    b.append_link(&mut h, "pkg/link", "package.velt").unwrap();
     let archive = gz(&b.into_inner().unwrap());
     let got = nodes(&archive);
     assert!(got.contains(&(long, Node::File(b"x".to_vec()))));
-    assert!(got.contains(&("pkg/link".to_string(), Node::Link("package.vlt".into()))));
+    assert!(got.contains(&("pkg/link".to_string(), Node::Link("package.velt".into()))));
 }

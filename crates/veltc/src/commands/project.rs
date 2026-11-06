@@ -1,4 +1,4 @@
-//! The package a build happens in: found by searching upward for `package.vlt`, with its
+//! The package a build happens in: found by searching upward for `package.velt`, with its
 //! dependencies installed (lockfile honored/updated) so the loader can resolve package imports.
 
 use std::path::{Path, PathBuf};
@@ -7,7 +7,7 @@ use vpm::{InstallOptions, Locations, Manifest, PackageGraph};
 
 /// An installed package.
 pub struct Project {
-    /// Package root (directory of package.vlt), absolute.
+    /// Package root (directory of package.velt), absolute.
     pub root: PathBuf,
     /// Its manifest.
     pub manifest: Manifest,
@@ -59,7 +59,7 @@ impl Project {
         super::package::warn_yanked(&installed);
         for c in vpm::host::unreachable_conditions(&installed.graph) {
             crate::style::warning(&format!(
-                "`imports` in {}/package.vlt names the condition `{c}`, which is not a built-in one \
+                "`imports` in {}/package.velt names the condition `{c}`, which is not a built-in one \
                  ({}) nor any dependency's host condition: its variants are never chosen",
                 root.display(),
                 vpm::imports::CONDITIONS.join(", ")
@@ -72,7 +72,7 @@ impl Project {
         })
     }
 
-    /// The runnable entry file (`package.entry`, default `src/main.vlt`, `src/main.ts` or
+    /// The runnable entry file (`package.entry`, default `src/main.velt`, `src/main.ts` or
     /// `src/main.tsx`).
     pub fn entry(&self) -> Result<PathBuf, String> {
         let entry = &self.manifest.package.entry;
@@ -98,8 +98,8 @@ impl Project {
 }
 
 /// Why the package at `root` has nothing to build: it names the missing entry, and says the
-/// package is a library only when the entry is the default (`src/main.vlt`) and `src/lib.vlt`
-/// (or `.ts`, `.tsx`) exists (a custom entry that is missing is a mistake in package.vlt, not a
+/// package is a library only when the entry is the default (`src/main.velt`) and `src/lib.velt`
+/// (or `.ts`, `.tsx`) exists (a custom entry that is missing is a mistake in package.velt, not a
 /// library).
 fn missing_entry_message(root: &Path, manifest: &Manifest) -> String {
     let entry = &manifest.package.entry;
@@ -120,13 +120,13 @@ fn missing_entry_message(root: &Path, manifest: &Manifest) -> String {
 fn no_package_message(cwd: &Path) -> String {
     if let Some(ws) = vpm::workspace::find_root(cwd) {
         return format!(
-            "no `package.vlt` in `{}`, which is in the workspace of `{}`\n  hint: run the command in a member's directory",
+            "no `package.velt` in `{}`, which is in the workspace of `{}`\n  hint: run the command in a member's directory",
             cwd.display(),
             ws.join(vpm::workspace::WORKSPACE_FILE).display()
         );
     }
     let mut msg = format!(
-        "no `package.vlt` in `{}` or any parent directory, so there is no package here",
+        "no `package.velt` in `{}` or any parent directory, so there is no package here",
         cwd.display()
     );
     let files = velt_files(cwd);
@@ -144,7 +144,7 @@ fn no_package_message(cwd: &Path) -> String {
     msg
 }
 
-/// Names of the source files (`.vlt`, `.ts`, `.tsx`; not tests) directly in `dir`, sorted (at
+/// Names of the source files (`.velt`, `.ts`, `.tsx`; not tests) directly in `dir`, sorted (at
 /// most five).
 fn velt_files(dir: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(dir) else {
@@ -161,7 +161,7 @@ fn velt_files(dir: &Path) -> Vec<String> {
 }
 
 /// Check that the input file of `velt build`/`run`/`dev` exists; if not, suggest what the user
-/// probably meant (the same name with `.vlt`, a similarly named file, or the package inside a
+/// probably meant (the same name with `.velt`, a similarly named file, or the package inside a
 /// directory).
 pub fn check_input_file(file: &Path) -> Result<(), String> {
     if file.is_file() {
@@ -174,12 +174,12 @@ pub fn check_input_file(file: &Path) -> Result<(), String> {
                 file.display()
             )
         } else {
-            "name a `.vlt`, `.ts` or `.tsx` file".to_string()
+            "name a `.velt`, `.ts` or `.tsx` file".to_string()
         };
         return Err(format!("`{}` is a directory ({hint})", file.display()));
     }
     let mut msg = format!("`{}` does not exist", file.display());
-    let with_ext = file.with_extension("vlt");
+    let with_ext = file.with_extension("velt");
     if file.extension().is_none() && with_ext.is_file() {
         msg.push_str(&format!("; did you mean `{}`?", with_ext.display()));
         return Err(msg);
@@ -248,7 +248,7 @@ mod tests {
         assert_eq!(
             toolchain_mismatch(&manifest(", velt: \"0.2\""), "0.1.0").as_deref(),
             Some(
-                "package.vlt asks for velt \"0.2\", but this is velt 0.1.0; it may not build the \
+                "package.velt asks for velt \"0.2\", but this is velt 0.1.0; it may not build the \
                  package"
             )
         );
@@ -259,23 +259,23 @@ mod tests {
     fn missing_input_hints() {
         let tmp = tempfile::tempdir().unwrap();
         let dir = tmp.path();
-        std::fs::write(dir.join("hello.vlt"), "").unwrap();
+        std::fs::write(dir.join("hello.velt"), "").unwrap();
         std::fs::create_dir(dir.join("pkg")).unwrap();
-        std::fs::write(dir.join("pkg/package.vlt"), "").unwrap();
-        assert!(check_input_file(&dir.join("hello.vlt")).is_ok());
+        std::fs::write(dir.join("pkg/package.velt"), "").unwrap();
+        assert!(check_input_file(&dir.join("hello.velt")).is_ok());
         let err = check_input_file(&dir.join("hello")).unwrap_err();
         assert!(
-            err.contains("did you mean") && err.contains("hello.vlt"),
+            err.contains("did you mean") && err.contains("hello.velt"),
             "{err}"
         );
-        let err = check_input_file(&dir.join("helo.vlt")).unwrap_err();
+        let err = check_input_file(&dir.join("helo.velt")).unwrap_err();
         assert!(err.contains("does not exist; did you mean"), "{err}");
         let err = check_input_file(&dir.join("pkg")).unwrap_err();
         assert!(
             err.contains("is a directory") && err.contains("it is a package"),
             "{err}"
         );
-        let err = check_input_file(&dir.join("zzz.vlt")).unwrap_err();
+        let err = check_input_file(&dir.join("zzz.velt")).unwrap_err();
         assert!(err.ends_with("does not exist"), "{err}");
     }
 
@@ -289,15 +289,15 @@ mod tests {
             Manifest::parse(&src).unwrap()
         };
         let default = manifest(vpm::manifest::DEFAULT_ENTRY);
-        let custom = manifest("src/app.vlt");
+        let custom = manifest("src/app.velt");
         let msg = missing_entry_message(tmp.path(), &default);
-        assert_eq!(msg, "package `util` has no `src/main.vlt` to build");
+        assert_eq!(msg, "package `util` has no `src/main.velt` to build");
         std::fs::create_dir(tmp.path().join("src")).unwrap();
         std::fs::write(tmp.path().join(vpm::manifest::LIB_ENTRY), "").unwrap();
         let msg = missing_entry_message(tmp.path(), &default);
         assert!(msg.ends_with("(it is a library: import it from another package instead)"));
         let msg = missing_entry_message(tmp.path(), &custom);
-        assert_eq!(msg, "package `util` has no `src/app.vlt` to build");
+        assert_eq!(msg, "package `util` has no `src/app.velt` to build");
     }
 
     #[test]
@@ -305,19 +305,19 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let msg = no_package_message(tmp.path());
         assert!(
-            msg.contains("no `package.vlt`") && msg.contains("velt init"),
+            msg.contains("no `package.velt`") && msg.contains("velt init"),
             "{msg}"
         );
         assert!(!msg.contains("single file"));
-        std::fs::write(tmp.path().join("app.vlt"), "").unwrap();
-        std::fs::write(tmp.path().join("x.test.vlt"), "").unwrap();
+        std::fs::write(tmp.path().join("app.velt"), "").unwrap();
+        std::fs::write(tmp.path().join("x.test.velt"), "").unwrap();
         let msg = no_package_message(tmp.path());
         assert!(
-            msg.contains("`velt run app.vlt`") && !msg.contains("files here"),
+            msg.contains("`velt run app.velt`") && !msg.contains("files here"),
             "{msg}"
         );
         // A workspace's root is no file to run.
-        std::fs::write(tmp.path().join("velt.workspace.vlt"), "").unwrap();
+        std::fs::write(tmp.path().join("velt.workspace.velt"), "").unwrap();
         let msg = no_package_message(tmp.path());
         assert!(
             msg.contains("in the workspace of") && msg.contains("a member's directory"),

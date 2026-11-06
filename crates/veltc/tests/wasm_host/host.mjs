@@ -1,4 +1,4 @@
-// Runs main.wasm (built from main.vlt) with the host functions it declares, then checks that
+// Runs main.wasm (built from main.velt) with the host functions it declares, then checks that
 // the program released every HostRef and that a missing host function is an error before it
 // runs: `node host.mjs <velt_web.mjs> <main.wasm>`.
 

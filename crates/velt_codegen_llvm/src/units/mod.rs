@@ -77,7 +77,7 @@ pub(crate) struct Plan {
 /// Statements (VIR, after `velt_opt`) per unit when the count is chosen from the program's size:
 /// a program below twice this is one unit. Small programs build fast in one unit and lose the
 /// most to a split (cross-unit calls in their hot loops); every benchmark program stays one unit
-/// (the largest, `bench/sort.vlt`, has about 4 000 statements).
+/// (the largest, `bench/sort.velt`, has about 4 000 statements).
 const MIN_UNIT_WEIGHT: usize = 16_000;
 /// At most this many units when the count is chosen from the size, up to `MAX_UNIT_WEIGHT`
 /// statements per unit. Programs split into 4 run as fast as in one unit (within ±3 %,

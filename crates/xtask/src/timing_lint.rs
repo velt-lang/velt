@@ -10,7 +10,7 @@
 //! or the comments above it), or at the top or the end of the file (before its first line of
 //! code or after its last), which covers the whole file.
 //!
-//! Checked: `velt test` files (`*.test.vlt`, `.test.ts`, `.test.tsx`), every `.vlt` file under
+//! Checked: `velt test` files (`*.test.velt`, `.test.ts`, `.test.tsx`), every `.velt` file under
 //! `tests/std/`, and the goldens outside `tests/golden/lang/` and `tests/golden/m1/`…`m4/`. Those
 //! are language programs on one event loop (they run on WebAssembly too, without threads,
 //! sockets or the file system): timers there fire in deadline order, as in Node, so a wait
@@ -26,13 +26,13 @@ const MARKER: &str = "timing:";
 
 /// Whether the lint checks `path` (relative, `/`-separated).
 pub fn linted(path: &str) -> bool {
-    let test_file = [".test.vlt", ".test.ts", ".test.tsx"]
+    let test_file = [".test.velt", ".test.ts", ".test.tsx"]
         .iter()
         .any(|s| path.ends_with(s));
     if test_file && !path.starts_with("tests/golden/") {
         return true;
     }
-    if !path.ends_with(".vlt") {
+    if !path.ends_with(".velt") {
         return false;
     }
     if path.starts_with("tests/std/") {
@@ -198,20 +198,20 @@ mod tests {
     #[test]
     fn the_lint_covers_tests_and_goldens_outside_the_language_ones() {
         for path in [
-            "packages/http-server/tests/h2/limits.test.vlt",
-            "std/text/format.test.vlt",
+            "packages/http-server/tests/h2/limits.test.velt",
+            "std/text/format.test.velt",
             "examples/apps/chat/tests/room.test.ts",
-            "tests/std/fetch/_server.vlt",
-            "tests/golden/std/timers.vlt",
-            "tests/golden/async_dispatch/pending.vlt",
+            "tests/std/fetch/_server.velt",
+            "tests/golden/std/timers.velt",
+            "tests/golden/async_dispatch/pending.velt",
         ] {
             assert!(linted(path), "{path}");
         }
         for path in [
-            "packages/http-server/src/server.vlt",
-            "std/prelude/timers.vlt",
-            "tests/golden/lang/timer_order.vlt",
-            "tests/golden/m3/async_basic.vlt",
+            "packages/http-server/src/server.velt",
+            "std/prelude/timers.velt",
+            "tests/golden/lang/timer_order.velt",
+            "tests/golden/m3/async_basic.velt",
             "tests/golden/std/timers.out",
             "tests/std/README.md",
         ] {
@@ -223,19 +223,22 @@ mod tests {
     fn an_unmarked_wait_is_reported_with_its_line() {
         let text = "import { sleep } from \"velt/time\";\n\nit(\"x\", async () => {\n  \
                     startServer();\n  await sleep(50);\n  expect(seen).toBe(1);\n});\n";
-        let found = check("t.test.vlt", text);
+        let found = check("t.test.velt", text);
         assert_eq!(found.len(), 1, "{found:?}");
-        assert!(found[0].starts_with("t.test.vlt:5: `sleep(`"), "{found:?}");
+        assert!(found[0].starts_with("t.test.velt:5: `sleep(`"), "{found:?}");
         for wait in [
             "delay(5)",
             "setTimeout(() => done(), 10)",
             "setInterval(tick, 1)",
         ] {
-            let found = check("t.test.vlt", &format!("let x = 1;\n{wait};\n"));
+            let found = check("t.test.velt", &format!("let x = 1;\n{wait};\n"));
             assert_eq!(found.len(), 1, "{wait}: {found:?}");
         }
         // A method call waits too.
-        assert_eq!(check("t.test.vlt", "x;\nawait timers.sleep(1);\n").len(), 1);
+        assert_eq!(
+            check("t.test.velt", "x;\nawait timers.sleep(1);\n").len(),
+            1
+        );
     }
 
     #[test]
@@ -243,44 +246,44 @@ mod tests {
         let text = "x;\nasync function sleep(ms: number) {}\nfunction delay(ms: number) {}\n\
                     // await sleep(5) would race\nconst s = \"sleep(5)\";\nnosleep(1);\n\
                     clearTimeout(t);\nawait asleep(3);\n";
-        assert_eq!(check("t.test.vlt", text), Vec::<String>::new());
+        assert_eq!(check("t.test.velt", text), Vec::<String>::new());
     }
 
     #[test]
     fn a_marker_covers_its_line_the_lines_below_its_test_or_its_file() {
         let on_line = "x;\nawait sleep(5); // timing: idle timeout is the subject\n";
-        assert!(check("t.test.vlt", on_line).is_empty());
+        assert!(check("t.test.velt", on_line).is_empty());
         let above = "x;\n// The server closes idle connections.\n// timing: idle timeout\n\
                      await sleep(5);\n";
-        assert!(check("t.test.vlt", above).is_empty());
+        assert!(check("t.test.velt", above).is_empty());
         let test = "x;\n// timing: the keep-alive timer is the subject\nit(\"idle\", async () => {\n  \
                     open();\n  await sleep(5);\n  await sleep(10);\n});\nit(\"other\", async () => {\n  \
                     await sleep(1);\n});\n";
-        let found = check("t.test.vlt", test);
+        let found = check("t.test.velt", test);
         assert_eq!(found.len(), 1, "{found:?}");
-        assert!(found[0].starts_with("t.test.vlt:9:"), "{found:?}");
+        assert!(found[0].starts_with("t.test.velt:9:"), "{found:?}");
         let in_test = "x;\nexport async function test_idle() {\n  // timing: idle timeout\n  \
                        open();\n  await sleep(5);\n}\n";
-        assert!(check("t.test.vlt", in_test).is_empty());
+        assert!(check("t.test.velt", in_test).is_empty());
         let file = "// Timer tests.\n// timing: timers are the subject\n\nimport x;\n\
                     setTimeout(f, 1);\nawait sleep(2);\n";
-        assert!(check("tests/golden/std/t.vlt", file).is_empty());
+        assert!(check("tests/golden/std/t.velt", file).is_empty());
         let footer = "import x;\nawait sleep(2);\n\n// timing: timers are the subject\n";
-        assert!(check("tests/golden/std/t.vlt", footer).is_empty());
+        assert!(check("tests/golden/std/t.velt", footer).is_empty());
         let describe = "x;\n// timing: timeouts are the subject\ndescribe(\"t\", () => {\n  \
                         it(\"a\", async () => {\n    await sleep(5);\n  });\n});\n";
-        assert!(check("t.test.vlt", describe).is_empty());
+        assert!(check("t.test.velt", describe).is_empty());
     }
 
     #[test]
     fn a_marker_needs_a_reason_and_a_gap_breaks_the_comment_block() {
         assert_eq!(
-            check("t.test.vlt", "x;\nawait sleep(5); // timing:\n").len(),
+            check("t.test.velt", "x;\nawait sleep(5); // timing:\n").len(),
             1
         );
         assert_eq!(
             check(
-                "t.test.vlt",
+                "t.test.velt",
                 "x;\n// timing: idle timeout\n\nawait sleep(5);\n"
             )
             .len(),
@@ -288,7 +291,11 @@ mod tests {
         );
         // A marker in a file's header needs to come before its code.
         assert_eq!(
-            check("t.test.vlt", "x;\n// timing: late\nf();\nawait sleep(5);\n").len(),
+            check(
+                "t.test.velt",
+                "x;\n// timing: late\nf();\nawait sleep(5);\n"
+            )
+            .len(),
             1
         );
     }

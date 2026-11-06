@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Struct benchmarks for the value-type design (#641): the same algorithm written with today's
-# `struct` (<name>_struct.vlt), a `class` (<name>_class.vlt), by hand without objects
-# (<name>_flat.vlt: parallel `number[]` arrays or packed keys, the code a guaranteed-inline
+# `struct` (<name>_struct.velt), a `class` (<name>_class.velt), by hand without objects
+# (<name>_flat.velt: parallel `number[]` arrays or packed keys, the code a guaranteed-inline
 # value type should reach), where present today's `struct` updated field by field
-# (<name>_mut.vlt: what a mutable struct allows today and the value type forbids) and the same
-# with one shared value (<name>_shared.vlt: the struct type becomes a counted object), in Rust
+# (<name>_mut.velt: what a mutable struct allows today and the value type forbids) and the same
+# with one shared value (<name>_shared.velt: the struct type becomes a counted object), in Rust
 # with a `#[derive(Clone, Copy)]` struct (rust/<name>.rs) and, for reference, the class and
 # flat versions in Node (they are TypeScript as written; the harness appends `main();`).
 #
@@ -56,23 +56,23 @@ if [ -z "$RT_DEBUG" ]; then
 fi
 
 names=()
-for src in "$HERE"/*_struct.vlt; do
-  name=$(basename "$src" _struct.vlt)
+for src in "$HERE"/*_struct.velt; do
+  name=$(basename "$src" _struct.velt)
   [[ -n "$ONLY" && "$name" != "$ONLY" ]] && continue
   echo "$name..." >&2
   kinds=(struct class flat)
   for extra in mut shared; do
-    [ -f "$HERE/${name}_$extra.vlt" ] && kinds+=("$extra")
+    [ -f "$HERE/${name}_$extra.velt" ] && kinds+=("$extra")
   done
   for kind in "${kinds[@]}"; do
     [[ -n "$REUSE" && -f "$OUT/$name-$kind" && -f "$OUT/$name-$kind-counting" ]] && continue
-    "$VELT" build --release --backend llvm "$HERE/${name}_$kind.vlt" -o "$OUT/$name-$kind"
-    VELT_RT_LIB="$RT_DEBUG" "$VELT" build --release --backend llvm "$HERE/${name}_$kind.vlt" \
+    "$VELT" build --release --backend llvm "$HERE/${name}_$kind.velt" -o "$OUT/$name-$kind"
+    VELT_RT_LIB="$RT_DEBUG" "$VELT" build --release --backend llvm "$HERE/${name}_$kind.velt" \
       -o "$OUT/$name-$kind-counting"
   done
   rustc -O --edition 2021 -o "$OUT/$name-rust" "$HERE/rust/$name.rs"
   for kind in class flat; do
-    { cat "$HERE/${name}_$kind.vlt"; echo; echo "main();"; } > "$OUT/$name-$kind.ts"
+    { cat "$HERE/${name}_$kind.velt"; echo; echo "main();"; } > "$OUT/$name-$kind.ts"
   done
   names+=("$name")
 done

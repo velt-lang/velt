@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Instructions per b-tree cell decoded from SQLite-like pages in a `Uint8Array` (_pages.vlt):
-# through a `DataView` (dataview.vlt), a `subarray` per page with shifts (subarray.vlt), the whole
-# `Uint8Array` with shifts (flat.vlt), and Velt's `u8[]` with integer types (bytes.vlt, the
+# Instructions per b-tree cell decoded from SQLite-like pages in a `Uint8Array` (_pages.velt):
+# through a `DataView` (dataview.velt), a `subarray` per page with shifts (subarray.velt), the whole
+# `Uint8Array` with shifts (flat.velt), and Velt's `u8[]` with integer types (bytes.velt, the
 # baseline), against Rust's `&[u8]` with `u16::from_be_bytes`/`u32::from_be_bytes` (rust/).
 # Counts user-space instructions, which a loaded machine does not change: the difference between
 # R2 and R1 rounds of decoding, divided by the cells decoded.
@@ -21,7 +21,7 @@ OUT="$TARGET/bench-page-cells"
 mkdir -p "$OUT"
 cargo build --release -q -p veltc -p velt_rt --manifest-path "$ROOT/Cargo.toml"
 for v in dataview subarray flat bytes; do
-  "$TARGET/release/velt" build --release --backend llvm "$HERE/$v.vlt" -o "$OUT/$v"
+  "$TARGET/release/velt" build --release --backend llvm "$HERE/$v.velt" -o "$OUT/$v"
 done
 (cd "$HERE/rust" && cargo build --release -q --target-dir "$OUT/rust")
 instr() { # <exe> <rounds>
@@ -42,6 +42,6 @@ per_cell() { # <exe>
 echo "| program | instructions per cell |"
 echo "|---|---:|"
 for v in dataview subarray flat bytes; do
-  echo "| Velt $v.vlt | $(per_cell "$OUT/$v") |"
+  echo "| Velt $v.velt | $(per_cell "$OUT/$v") |"
 done
 echo "| Rust \`&[u8]\` | $(per_cell "$OUT/rust/release/cells_bench") |"

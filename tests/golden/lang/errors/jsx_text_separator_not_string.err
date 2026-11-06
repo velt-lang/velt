@@ -1,2 +1,2 @@
-jsx_text_separator_not_string.vlt:7:13: error: `jsxTextSeparator` of the JSX provider '_jsx_bad_separator' must be a string constant
+jsx_text_separator_not_string.velt:7:13: error: `jsxTextSeparator` of the JSX provider '_jsx_bad_separator' must be a string constant
 write it as `export const jsxTextSeparator = "<!--t-->";`

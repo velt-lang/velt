@@ -4,7 +4,7 @@ Gaps to Rust found with the M2 benchmarks that the backends and `velt_opt` canno
 alone, because they come from lowering (`crates/velt_vir/src/lower`), the prelude
 (`std/prelude`) or a missing language/contract guarantee. Each item shows the VIR (or IR)
 and the proposed change. Numbers are best-of-7 wall-clock ms on the machine described in
-RESULTS.md; VIR snippets are from `velt build --release --emit vir bench/<name>.vlt`.
+RESULTS.md; VIR snippets are from `velt build --release --emit vir bench/<name>.velt`.
 
 ## 1. Vtables are dispatcher functions: two indirect calls per virtual call (lowering)
 
@@ -114,7 +114,7 @@ unsound today. Proposed:
 
 ## 4. ~~Integer `sort()` is a textbook introsort~~ (prelude, done)
 
-Owner: `std/prelude/sort.vlt`. `sort()` is now pdqsort with branchless Lomuto partitioning:
+Owner: `std/prelude/sort.velt`. `sort()` is now pdqsort with branchless Lomuto partitioning:
 1M i64 88 → 32 ms, 200k strings 43 → 30 ms (Rust `sort_unstable`: 15 / 23 ms). Details and
 what was tried in RESULTS.md ("Prelude work"). The remaining integer gap is item 3 (header
 reloads and bounds checks in the partition loop) plus the lack of a generic move out of an
@@ -139,7 +139,7 @@ be hoisted or CSE'd, but `str_eq` rejects keys of different lengths without touc
 
 ## 6. `charCodeAt` is an opaque runtime call per byte (prelude / lowering)
 
-Owner: `std/prelude/string.vlt` (`charCodeAt` → `velt_rt_str_char_code_at`). Affects
+Owner: `std/prelude/string.velt` (`charCodeAt` → `velt_rt_str_char_code_at`). Affects
 `strings` (25M calls in its scan loop).
 
 Proposed: an intrinsic `__intrinsic_str_byte_at(s, i): i64` lowered inline to a bounds check
@@ -209,7 +209,7 @@ other tasks. Checking `has_budget_remaining()` before each `set.next()` is not e
 budget runs out in the middle of a `poll_next`, which then still scans every pending child
 once, so each 128 results cost a full scan and the join stays quadratic. A regression test:
 `Promise.all` over 200k spawned handles that each `yieldNow()` once should finish in well
-under a second (`bench/async/spawn_many.vlt` is the 1M version).
+under a second (`bench/async/spawn_many.velt` is the 1M version).
 
 Fix (as implemented, `gated` in the repro): children keep their budget instead of running
 unconstrained, because a child is arbitrary compiled code: a child looping over an always-ready
@@ -348,7 +348,7 @@ after a match (difftest regex-empty-after-match).
 Affects k-nucleotide at 3.07×. About 75% of its time is in `Map.upsert`, which runs 2–2.5×
 slower than an Fx hashbrown map once there are 16 or more keys. A hit touches three bounds-checked
 arrays (`slots`, `entryKeys`, then `slots` and `entryValues` again), and values are a 16-byte
-`V | null`. Proposed changes to `std/prelude/map.vlt`:
+`V | null`. Proposed changes to `std/prelude/map.velt`:
 - `find` returns the entry position on a hit.
 - Store key and value together in one entry array.
 - Mark tombstones in the slot word, so values are plain `V`.
@@ -395,13 +395,13 @@ fs_stream handle code) was out of scope this round and still reads through its p
 **Done** (std/runtime round):
 - `Buffer.alloc(n)` (zeroed, calloc), and `indexOf(byte, from)` (memchr), `lastIndexOf`,
   `set(src, offset)` (memmove), `copyWithin` and `fill` (memset) on `u8[]`
-  (std/prelude/bytes.vlt). reverse-complement `main` now reads all of stdin as bytes
+  (std/prelude/bytes.velt). reverse-complement `main` now reads all of stdin as bytes
   (`readAllBytesSync`, the runtime's buffer handed over), fills a preallocated output and writes
   it once: 3.1× fewer cycles.
 - `std/bigint` on `dashu-int`, which ran the spigot 4× faster than `num-bigint` in a Rust
   comparison, with in-place operators. pidigits `main` is now the Node program on it: −39% cycles
-  against the old limb class, which stays as `main_limbs.vlt`. Also `Math.umulh`.
-- `std/arena` (typed `u32`-index pool, `reset()` keeps the memory): `binary-trees/main_arena.vlt`
+  against the old limb class, which stays as `main_limbs.velt`. Also `Math.umulh`.
+- `std/arena` (typed `u32`-index pool, `reset()` keeps the memory): `binary-trees/main_arena.velt`
   uses 3.7× fewer cycles than `main`.
 - `stdout.write(bytes)` (`import { stdout } from "velt/process"`): synchronous, portable, and ordered
   with `console.log`; 64 KiB and up go straight from the caller's array. fasta and mandelbrot use
@@ -453,6 +453,6 @@ with exactly the Velt loops runs at parity or slower:
 
 One caveat remains: after the 8.3 fix, n-body is still 1.3× a Rust `Vec` version with the same
 optimized IR. It was attributed to Rust's LLVM 22 vectorizing more than Apple clang 21. Re-measured
-on x86_64 (RESULTS "Codegen round"): clang 22 and clang 18 compile `main.vlt` and `main_opt.vlt`
+on x86_64 (RESULTS "Codegen round"): clang 22 and clang 18 compile `main.velt` and `main_opt.velt`
 to equally fast code (1.5–1.6× Rust #3 without `target-cpu`), so the LLVM version does not explain
 the gap there; the loop shape does (see above). Not re-measured on Apple silicon.

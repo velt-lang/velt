@@ -2,7 +2,7 @@
 //!
 //! `$VELT_HOME` (default `~/.velt`) holds `cache/`; the registry is `$VELT_REGISTRY` or
 //! `<home>/registry`. A remote registry is an `http(s)://` URL: `$VELT_REGISTRY` set to one, or
-//! the root package's `registry: "…"` in `package.vlt` ([`Locations::with_manifest`]). Everything else in vpm takes a [`Locations`] explicitly so tests can use
+//! the root package's `registry: "…"` in `package.velt` ([`Locations::with_manifest`]). Everything else in vpm takes a [`Locations`] explicitly so tests can use
 //! isolated temp dirs without touching process-wide environment variables.
 
 use std::path::{Path, PathBuf};

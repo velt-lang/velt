@@ -59,9 +59,9 @@ fn rss(dir: &std::path::Path, threads: u32, env: &[(&str, &str)]) -> u64 {
 #[test]
 fn workers_allocating_a_little_keep_the_process_small() {
     let dir = test_dir::TestDir::new();
-    std::fs::write(dir.path().join("main.vlt"), PROGRAM).unwrap();
+    std::fs::write(dir.path().join("main.velt"), PROGRAM).unwrap();
     let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["build", "main.vlt", "-o", "main"])
+        .args(["build", "main.velt", "-o", "main"])
         .current_dir(dir.path())
         .output()
         .unwrap();

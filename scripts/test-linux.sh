@@ -1,7 +1,7 @@
 #!/usr/bin/env sh
 # Build and test Velt on Linux: cargo build + cargo test --workspace (goldens in debug and
 # release; release uses LLVM when clang 16+ is installed), `velt doctor`, `velt new` + `run`, and
-# an HTTP smoke test of examples/http_hello.vlt.
+# an HTTP smoke test of examples/http_hello.velt.
 #
 # - From Windows (Git Bash): runs inside WSL. The committed HEAD of this checkout is fetched into
 #   a clone on the WSL filesystem (default ~/velt-linux; building on /mnt/c is very slow) and the

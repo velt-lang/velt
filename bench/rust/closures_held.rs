@@ -1,4 +1,4 @@
-// Closures held in locals (same workload as closures_held.vlt): plain Rust closures, which
+// Closures held in locals (same workload as closures_held.velt): plain Rust closures, which
 // live on the stack.
 fn main() {
     let words = ["alpha", "beta", "gamma", "delta"];

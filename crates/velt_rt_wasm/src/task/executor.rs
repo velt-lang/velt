@@ -477,7 +477,7 @@ pub fn count_local(started: bool) {
     });
 }
 
-/// `velt_rt_keep_alive_acquire()`: a ref'd timer is pending (std/prelude/timers.vlt); like the
+/// `velt_rt_keep_alive_acquire()`: a ref'd timer is pending (std/prelude/timers.velt); like the
 /// native runtime, the program does not end while it is.
 #[no_mangle]
 pub extern "C" fn velt_rt_keep_alive_acquire() {

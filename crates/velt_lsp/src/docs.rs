@@ -361,7 +361,7 @@ type Props = {
 
     fn docs() -> (Analysis, FileId) {
         let mut sm = velt_common::SourceMap::new();
-        let file = sm.add("docs_test.vlt", SRC);
+        let file = sm.add("docs_test.velt", SRC);
         let (ast, diags) = velt_syntax::parse_file(file, SRC);
         assert!(diags.is_empty(), "{diags:?}");
         let module = velt_sema::SourceModule {

@@ -1,0 +1,5 @@
+// velt/net/http (internal): `fetch`'s transport everywhere but on JS hosts (`#http-transport`,
+// std/imports.velt): the Velt HTTP/1.1 and HTTP/2 client over velt/net (send.velt, fetched.velt).
+
+export { send } from "../send";
+export { Fetched } from "../fetched";

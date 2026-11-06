@@ -1,4 +1,4 @@
-//! `velt_rt_signal_*`: the runtime half of `AbortController` / `AbortSignal` (std/task/signal.vlt,
+//! `velt_rt_signal_*`: the runtime half of `AbortController` / `AbortSignal` (std/task/signal.velt,
 //! https://veltlang.com/docs/std/task/). A signal is a reference-counted object: a flag, the abort reason, the tasks
 //! waiting for it, and the signals derived from it (`AbortSignal.any`). Cancellation is
 //! cooperative: aborting only sets the flag and wakes the waiters; Velt code reacts. No code

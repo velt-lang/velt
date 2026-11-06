@@ -1,0 +1,18 @@
+import type { Package } from "velt/package";
+
+// A Hono-style shop rendered by Velt. The components in src/shared compile with tsc against the
+// real `hono/jsx` (package.json, reference/) and with Velt against ./hono, a JSX provider that
+// renders the same HTML. The `paths` aliases make `hono/jsx` name that provider here, so shared
+// code imports from the same specifier in both compilers.
+export const pkg: Package = {
+  name: "hono-ssr",
+  version: "0.1.0",
+  jsx: { importSource: "hono/jsx" },
+  paths: {
+    "hono/jsx": "hono/jsx/index.velt",
+    "hono/jsx/*": "hono/jsx/*",
+    "hono/html": "hono/html.velt",
+  },
+  tsCompat: ["src/shared"],
+  dependencies: { "http-server": { path: "../../../packages/http-server" } },
+};

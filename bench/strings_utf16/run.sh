@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Non-ASCII string benchmark (issue #377): builds every bench/strings_utf16/*.vlt with Velt's two
+# Non-ASCII string benchmark (issue #377): builds every bench/strings_utf16/*.velt with Velt's two
 # release backends, runs the Node equivalent, and prints a Markdown table of the best wall-clock
 # time (ms) over RUNS runs. "output matches Node" must say yes for every part since #377 phase 2b
 # gave Velt strings JavaScript's UTF-16 semantics.
@@ -40,8 +40,8 @@ PY
 
 echo "| part | Velt cranelift release | Velt LLVM release | Node | output matches Node |"
 echo "|---|---:|---:|---:|---|"
-for src in "$HERE"/*.vlt; do
-  name=$(basename "$src" .vlt)
+for src in "$HERE"/*.velt; do
+  name=$(basename "$src" .velt)
   [[ -n "$ONLY" && "$name" != "$ONLY" ]] && continue
   node_ms=$(best_ms "$OUT/$name.node.out" node "$HERE/$name.js")
   row="| $name"

@@ -1,4 +1,4 @@
-//! `native.c` and `allowNative` of package.vlt (docs/internals/design/c-ffi.md).
+//! `native.c` and `allowNative` of package.velt (docs/internals/design/c-ffi.md).
 
 use super::*;
 
@@ -171,7 +171,7 @@ fn c_libraries_and_allow_native_are_written_back() {
     let m = read(&with(
         "native: { c: { sqlite3: { system: { linux: \"sqlite3\", default: \"winsqlite3\" } }, \"my-lib\": {} } }, allowNative: [\"sqlite\", \"llama\"]",
     ));
-    let text = m.to_vlt();
+    let text = m.to_velt();
     assert!(
         text.contains("allowNative: [\"sqlite\", \"llama\"]"),
         "{text}"
@@ -183,14 +183,14 @@ fn c_libraries_and_allow_native_are_written_back() {
     assert_eq!(read(&text), m, "{text}");
     // Only the C library's: `c: {}` stays, so the package still says it has native code.
     let libc = read(&with("native: { c: {} }"));
-    let text = libc.to_vlt();
+    let text = libc.to_velt();
     assert!(text.contains("native: { c: {} }"), "{text}");
     assert_eq!(read(&text), libc);
     // Beside a crate.
     let both = read(&with(
         "native: { targets: [\"x86_64-unknown-linux-gnu\"], c: {} }",
     ));
-    assert_eq!(read(&both.to_vlt()), both);
+    assert_eq!(read(&both.to_velt()), both);
     let json = both.to_json();
     assert_eq!(json["native"]["c"], serde_json::json!({}));
     assert_eq!(json["native"]["path"], "native");
@@ -208,7 +208,7 @@ fn headers_and_unchecked_are_read_checked_and_written_back() {
     // The platform's C library lists only headers.
     assert_eq!(libraries["c"].headers, ["<string.h>", "<sys/stat.h>"]);
     assert!(libraries["c"].system.is_empty());
-    let text = m.to_vlt();
+    let text = m.to_velt();
     assert!(text.contains("headers: [\"native/sqlite3.h\"]"), "{text}");
     assert!(text.contains("unchecked: true"), "{text}");
     assert_eq!(read(&text), m, "{text}");
@@ -282,7 +282,7 @@ fn c_sources_are_decoded_and_are_no_crate() {
             ("_Y".to_string(), String::new())
         ]
     );
-    let again = Manifest::parse(&m.to_vlt()).unwrap();
+    let again = Manifest::parse(&m.to_velt()).unwrap();
     assert_eq!(again.c_libraries, m.c_libraries);
     assert_eq!(again.c_targets, m.c_targets);
     assert!(again.native.is_none());

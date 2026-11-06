@@ -1,4 +1,4 @@
-// An await-free hot loop inside an async function (see hot_loop.vlt).
+// An await-free hot loop inside an async function (see hot_loop.velt).
 async fn seed(round: i64) -> i64 {
     (round * 7919 + 17) % 65537
 }

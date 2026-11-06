@@ -564,7 +564,7 @@ mod tests {
             "has_avx2",
             "a b",
             "x86-64-v2;",
-            "a.vlt",
+            "a.velt",
         ] {
             assert!(
                 check_cpu(LINUX, bad)

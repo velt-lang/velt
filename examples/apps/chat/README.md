@@ -21,12 +21,12 @@ connection stays open. A client that disconnects without `leave` is removed like
 
 | File | What |
 |---|---|
-| `src/protocol.vlt` | message unions decoded with `JSON.parse<ClientMessage>` (picked by `type`), display |
-| `src/room.vlt` | `Room`: members, names, sockets (behind a `Mutex` in the server) |
-| `src/server.vlt` | `serve` + WebSocket upgrade, one spawned `session` per connection, broadcast |
-| `src/client.vlt` | terminal client: a spawned receiver prints, the stdin loop sends |
-| `tests/*.test.vlt` | `velt test` (protocol and room, no sockets) |
-| `demo.vlt` / `demo.out` | three clients on a real server, step by step; a golden |
+| `src/protocol.velt` | message unions decoded with `JSON.parse<ClientMessage>` (picked by `type`), display |
+| `src/room.velt` | `Room`: members, names, sockets (behind a `Mutex` in the server) |
+| `src/server.velt` | `serve` + WebSocket upgrade, one spawned `session` per connection, broadcast |
+| `src/client.velt` | terminal client: a spawned receiver prints, the stdin loop sends |
+| `tests/*.test.velt` | `velt test` (protocol and room, no sockets) |
+| `demo.velt` / `demo.out` | three clients on a real server, step by step; a golden |
 
 Known gap: `WebSocket` is a Copy handle that `close()` frees. The client therefore closes only
 from the receiving task, after the server ended the conversation. On the server a broadcast that

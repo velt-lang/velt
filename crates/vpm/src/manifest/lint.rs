@@ -1,4 +1,4 @@
-//! The `lint` object of `package.vlt`: how loud the lint rules are in the package's own modules
+//! The `lint` object of `package.velt`: how loud the lint rules are in the package's own modules
 //! (docs/internals/design/lint-profiles.md §5).
 //!
 //! ```ts ignore
@@ -28,7 +28,7 @@ pub enum LintLevel {
 }
 
 impl LintLevel {
-    /// The levels as `package.vlt` writes them.
+    /// The levels as `package.velt` writes them.
     pub const NAMES: [&'static str; 4] = ["off", "hint", "warn", "deny"];
 
     /// The level named `name` (one of [`Self::NAMES`]).
@@ -42,7 +42,7 @@ impl LintLevel {
         }
     }
 
-    /// The level's name in `package.vlt`.
+    /// The level's name in `package.velt`.
     pub fn name(self) -> &'static str {
         Self::NAMES[self as usize]
     }

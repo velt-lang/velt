@@ -1,4 +1,4 @@
-//! Decoding `tsCompat` of `package.vlt`: the folders whose modules stay in the TypeScript/Velt
+//! Decoding `tsCompat` of `package.velt`: the folders whose modules stay in the TypeScript/Velt
 //! common subset (docs/internals/design/tsx.md "Sharing components with the client").
 //!
 //! The reader checks what the text says (relative paths inside the package, each folder once);

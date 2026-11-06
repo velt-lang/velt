@@ -6,7 +6,7 @@ import type { Package } from "velt/package";
 export const pkg: Package = {
   name: "hello",
   version: "0.1.0",
-  entry: "src/app.vlt",
+  entry: "src/app.velt",
   registry: "https://registry.example.com",
   dependencies: { json: "1.2", "my-util": { path: "../util" }, http: { version: "0.3" } },
   paths: { "@app/*": "src/*" },
@@ -17,9 +17,9 @@ export const pkg: Package = {
 "#;
 
 #[test]
-fn to_vlt_round_trips_and_is_formatted() {
+fn to_velt_round_trips_and_is_formatted() {
     let m = Manifest::parse(FULL).unwrap();
-    let text = m.to_vlt();
+    let text = m.to_velt();
     assert!(
         text.starts_with("import type { Package } from \"velt/package\";\n"),
         "{text}"
@@ -36,7 +36,7 @@ fn to_vlt_round_trips_and_is_formatted() {
     let minimal =
         Manifest::parse("export const pkg: Package = { name: \"a\", version: \"1.0.0\" };")
             .unwrap()
-            .to_vlt();
+            .to_velt();
     assert_eq!(
         minimal,
         "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = { name: \"a\", version: \"1.0.0\" };\n"
@@ -68,7 +68,7 @@ fn strings_are_escaped() {
             ..Default::default()
         }),
     );
-    let text = m.to_vlt();
+    let text = m.to_velt();
     assert_eq!(
         Manifest::parse(&text).unwrap().dependencies["odd"].path(),
         Some(path)
@@ -93,7 +93,7 @@ fn json_has_the_package_shape_with_defaults() {
     assert!(minimal.get("native").is_none() && minimal.get("registry").is_none());
 }
 
-/// `lint` round-trips through `to_vlt`, and the JSON has only the parts that are set.
+/// `lint` round-trips through `to_velt`, and the JSON has only the parts that are set.
 #[test]
 fn lint_levels_round_trip() {
     let src = "export const pkg: Package = { name: \"a\", version: \"1.0.0\", lint: { rules: { \"perf/number-double\": \"off\" } } };";
@@ -105,7 +105,7 @@ fn lint_levels_round_trip() {
         m.to_json()["lint"],
         serde_json::json!({ "rules": { "perf/number-double": "off" } })
     );
-    assert_eq!(Manifest::parse(&m.to_vlt()).unwrap().lint, Some(lint));
+    assert_eq!(Manifest::parse(&m.to_velt()).unwrap().lint, Some(lint));
     let err = Manifest::parse("export const pkg: Package = { name: \"a\", version: \"1.0.0\", lint: { perf: \"loud\" } };")
         .unwrap_err();
     assert!(err.contains("`lint.perf` must be"), "{err}");
@@ -130,7 +130,7 @@ fn errors_name_the_file_and_line() {
     );
     let err = Manifest::parse("export const pkg: Package = { name: null };").unwrap_err();
     assert!(
-        err.starts_with("package.vlt:1:37: error: `null` is not allowed"),
+        err.starts_with("package.velt:1:37: error: `null` is not allowed"),
         "{err}"
     );
 }
@@ -159,7 +159,7 @@ fn a_velt_toml_gets_the_converted_manifest() {
     .unwrap();
     let err = Manifest::from_dir(tmp.path()).unwrap_err();
     assert!(
-        err.contains("velt.toml` is no longer read; the manifest is `package.vlt`"),
+        err.contains("velt.toml` is no longer read; the manifest is `package.velt`"),
         "{err}"
     );
     let converted = &err[err.find("import type").expect("the converted manifest")..];
@@ -170,10 +170,10 @@ fn a_velt_toml_gets_the_converted_manifest() {
     let err = Manifest::from_dir(tmp.path()).unwrap_err();
     assert!(err.contains("could not be converted"), "{err}");
 
-    // Once package.vlt exists, velt.toml is ignored.
+    // Once package.velt exists, velt.toml is ignored.
     std::fs::write(
         tmp.path().join(MANIFEST_FILE),
-        Manifest::parse(converted).unwrap().to_vlt(),
+        Manifest::parse(converted).unwrap().to_velt(),
     )
     .unwrap();
     assert!(Manifest::from_dir(tmp.path()).is_ok());
@@ -184,14 +184,14 @@ fn entry_stays_inside_the_package() {
     for entry in [
         "",
         "/etc/passwd",
-        "../../x.vlt",
-        "src/../../x.vlt",
-        "src\\\\main.vlt",
-        "C:/x.vlt",
-        "c:x.vlt",
+        "../../x.velt",
+        "src/../../x.velt",
+        "src\\\\main.velt",
+        "C:/x.velt",
+        "c:x.velt",
         ".",
         "./",
-        "src//main.vlt",
+        "src//main.velt",
     ] {
         let src = format!(
             "export const pkg: Package = {{ name: \"a\", version: \"1.0.0\", entry: \"{entry}\" }};"
@@ -203,21 +203,21 @@ fn entry_stays_inside_the_package() {
         );
     }
     let ok =
-        "export const pkg: Package = { name: \"a\", version: \"1.0.0\", entry: \"./main.vlt\" };";
-    assert_eq!(Manifest::parse(ok).unwrap().package.entry, "./main.vlt");
+        "export const pkg: Package = { name: \"a\", version: \"1.0.0\", entry: \"./main.velt\" };";
+    assert_eq!(Manifest::parse(ok).unwrap().package.entry, "./main.velt");
 }
 
 #[test]
 fn finds_enclosing_package() {
     let tmp = tempfile::tempdir().unwrap();
     std::fs::create_dir_all(tmp.path().join("a/src/deep")).unwrap();
-    std::fs::write(tmp.path().join("a/package.vlt"), "").unwrap();
+    std::fs::write(tmp.path().join("a/package.velt"), "").unwrap();
     assert_eq!(
         find_package_root(&tmp.path().join("a/src/deep")),
         Some(tmp.path().join("a"))
     );
     assert_eq!(
-        find_package_root(&tmp.path().join("a/src/deep/x.vlt")),
+        find_package_root(&tmp.path().join("a/src/deep/x.velt")),
         Some(tmp.path().join("a"))
     );
     // A package that still has a velt.toml is found, so it can be told to migrate.
@@ -229,14 +229,14 @@ fn finds_enclosing_package() {
     );
 }
 
-/// `std/package/` (`manifest.vlt` and `workspace.vlt`, which velt/package re-exports: the types
+/// `std/package/` (`manifest.velt` and `workspace.velt`, which velt/package re-exports: the types
 /// editors and `velt doc` show) declares exactly the schema's fields, with the same optionality
 /// and types.
 #[test]
 fn std_package_types_match_the_schema() {
     use velt_syntax::ast::{ItemKind, TypeExprKind};
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/package");
-    let sources: Vec<(String, velt_syntax::ast::Module)> = ["manifest.vlt", "workspace.vlt"]
+    let sources: Vec<(String, velt_syntax::ast::Module)> = ["manifest.velt", "workspace.velt"]
         .iter()
         .map(|file| {
             let src = std::fs::read_to_string(dir.join(file)).unwrap();
@@ -477,5 +477,18 @@ fn define_values_are_literals() {
         "{err}"
     );
     // Written back and printed as JSON.
-    assert!(m.to_vlt().contains("define: {"), "{}", m.to_vlt());
+    assert!(m.to_velt().contains("define: {"), "{}", m.to_velt());
+}
+
+#[test]
+fn a_manifest_with_the_old_name_is_found_and_told_to_rename() {
+    let tmp = tempfile::tempdir().unwrap();
+    std::fs::write(tmp.path().join(OLD_MANIFEST_FILE), "").unwrap();
+    let err = Manifest::from_dir(tmp.path()).unwrap_err();
+    assert!(err.contains("rename it to `package.velt`"), "{err}");
+    assert_eq!(find_package_root(tmp.path()).as_deref(), Some(tmp.path()));
+    let renamed = crate::scaffold::manifest_text("p");
+    std::fs::write(tmp.path().join(MANIFEST_FILE), renamed).unwrap();
+    let read = Manifest::from_dir(tmp.path());
+    assert!(read.is_ok(), "{read:?}");
 }

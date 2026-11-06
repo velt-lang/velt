@@ -1,4 +1,4 @@
-// charCodeAt scan (same workload as char_code_at.vlt): two sequential index scans over each of
+// charCodeAt scan (same workload as char_code_at.velt): two sequential index scans over each of
 // three 2M-character texts: Latin with ~5% accented letters, CJK, and emoji-heavy.
 class Rng {
   seed = 42;

@@ -1,5 +1,5 @@
 //! The descriptor slots of a proxy (issue #823; hir_encodings.md "Proxy and Reflect"). A
-//! proxy is an `any` holding the prelude's `Proxy` object (std/lang/proxy/index.vlt); the
+//! proxy is an `any` holding the prelude's `Proxy` object (std/lang/proxy/index.velt); the
 //! member slots of its table (any_member.rs, any_set.rs) call that class's methods, which run
 //! the handler's traps or forward to the target:
 //!
@@ -28,11 +28,11 @@ pub(super) const PRELUDE_REFLECT: &str = velt_common::std_item!(lang_proxy_refle
 /// The start of the names of `Reflect`'s methods.
 pub(super) const PRELUDE_REFLECT_METHODS: &str =
     velt_common::std_item!(lang_proxy_reflect, "Reflect.");
-/// The prelude's array method read through a proxy (std/lang/proxy/array.vlt).
+/// The prelude's array method read through a proxy (std/lang/proxy/array.velt).
 pub(super) const PRELUDE_ARRAY_METHOD: &str = velt_common::std_hook!(array_method);
 
 /// The prelude's `Object.prototype.hasOwnProperty` read as a value (std/lang/hooks)
-/// and its version that asks a proxy (std/lang/hooks/proxy.vlt).
+/// and its version that asks a proxy (std/lang/hooks/proxy.velt).
 pub(super) const PRELUDE_HAS_OWN: &str = velt_common::std_hook!(has_own_property);
 pub(super) const PROXY_HAS_OWN: &str = velt_common::std_hook!(has_own_property_proxy);
 

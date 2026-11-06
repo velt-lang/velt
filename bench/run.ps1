@@ -1,4 +1,4 @@
-# Benchmark harness (Windows / PowerShell 7): builds every bench/*.vlt with Velt' three
+# Benchmark harness (Windows / PowerShell 7): builds every bench/*.velt with Velt' three
 # configurations plus the Rust (rustc -O) and Node equivalents, checks that all of them print
 # the same output, and prints a Markdown table of the best wall-clock time over -Runs runs.
 #
@@ -40,7 +40,7 @@ $configs = @(
     @{ name = "Velt LLVM release"; args = @("--release", "--backend", "llvm") }
 )
 $rows = @()
-foreach ($src in Get-ChildItem (Join-Path $root "bench") -Filter *.vlt | Sort-Object Name) {
+foreach ($src in Get-ChildItem (Join-Path $root "bench") -Filter *.velt | Sort-Object Name) {
     $name = $src.BaseName
     if ($Only -and $name -ne $Only) { continue }
     $cells = [ordered]@{}

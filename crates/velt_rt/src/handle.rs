@@ -3,7 +3,7 @@
 //! The standard library holds runtime objects (sockets, regexes, child processes, HTTP requests,
 //! `json.Value` nodes …) as `u64` fields and passes them to the runtime as `u64` arguments: Velt
 //! has no pointer type, and a `u64` is the same width everywhere, so the `declare function` in
-//! `std/*.vlt` and the definition here have the same signature even on wasm32, where
+//! `std/*.velt` and the definition here have the same signature even on wasm32, where
 //! WebAssembly links only exactly matching signatures. A handle carries the object's address
 //! (0 = none); [`Handle`] is `repr(transparent)` over that `u64`, so it *is* a `u64` in every
 //! `extern "C"` signature while keeping the pointee type on the Rust side.

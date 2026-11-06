@@ -1,4 +1,4 @@
-//! Golden-file tests: every `tests/golden/**/*.vlt` parses (except the parse-error goldens and
+//! Golden-file tests: every `tests/golden/**/*.velt` parses (except the parse-error goldens and
 //! pending bug repros);
 //! the parse-error golden reports at 2:16.
 
@@ -10,7 +10,7 @@ use common::*;
 fn golden_m1_files_parse() {
     let files = golden_files();
     assert!(
-        files.iter().any(|f| f.ends_with("hello.vlt")),
+        files.iter().any(|f| f.ends_with("hello.velt")),
         "golden files not found"
     );
     for f in files {
@@ -23,56 +23,56 @@ fn golden_m1_files_parse() {
         let (m, diags) = parse(&src);
         if matches!(
             name.as_str(),
-            "parse.vlt"
-                | "mut_keyword.vlt"
-                | "removed_syntax.vlt"
-                | "removed_question.vlt"
-                | "class_field_uninferred.vlt"
-                | "using_syntax.vlt"
-                | "_default_export_twice_lib.vlt"
-                | "default_name_reserved.vlt"
-                | "import_type_default_and_named.vlt"
-                | "strict_mode_names.vlt"
-                | "generator_syntax.vlt"
-                | "generator_done_undefined.vlt"
-                | "private_names_syntax.vlt"
-                | "quoted_property_names_reserved.vlt"
-                | "type_param_defaults_required.vlt"
-                | "class_expression_named.vlt"
-                | "for_in_outer_variable.vlt"
-                | "destructuring_computed_key_expr.vlt"
-                | "overloads_missing_impl.vlt"
-                | "overloads_declarations.vlt"
-                | "ts_syntax_errors.vlt"
-                | "ts_parse_leftovers_errors.vlt"
-                | "catch_types_errors.vlt"
-                | "type_operators_unsupported.vlt"
-                | "param_property_pattern.vlt"
-                | "param_defaults_unsupported.vlt"
-                | "param_defaults_in_body_order.vlt"
-                | "dynamic_import.vlt"
-                | "namespace_values.vlt"
-                | "overload_signature_asi_no_body.vlt"
-                | "cast_union_number_literal.vlt"
-                | "function_expression_errors.vlt"
-                | "function_expression_this_errors.vlt"
-                | "string_escape_octal.vlt"
-                | "asi_restricted.vlt"
-                | "computed_key_errors.vlt"
-                | "destructure_computed_path.vlt"
-                | "literal_method_names.vlt"
-                | "define_property_accessor_this.vlt"
-                | "static_block_return.vlt"
-                | "global_this_declare_global.vlt"
-                | "global_this_declare_let.vlt"
-                | "jsx_tag_declared_no_value.vlt"
-                | "_global_this_declared_lib.vlt"
-                | "abstract_class_syntax.vlt"
-                | "operator_index_syntax.vlt"
+            "parse.velt"
+                | "mut_keyword.velt"
+                | "removed_syntax.velt"
+                | "removed_question.velt"
+                | "class_field_uninferred.velt"
+                | "using_syntax.velt"
+                | "_default_export_twice_lib.velt"
+                | "default_name_reserved.velt"
+                | "import_type_default_and_named.velt"
+                | "strict_mode_names.velt"
+                | "generator_syntax.velt"
+                | "generator_done_undefined.velt"
+                | "private_names_syntax.velt"
+                | "quoted_property_names_reserved.velt"
+                | "type_param_defaults_required.velt"
+                | "class_expression_named.velt"
+                | "for_in_outer_variable.velt"
+                | "destructuring_computed_key_expr.velt"
+                | "overloads_missing_impl.velt"
+                | "overloads_declarations.velt"
+                | "ts_syntax_errors.velt"
+                | "ts_parse_leftovers_errors.velt"
+                | "catch_types_errors.velt"
+                | "type_operators_unsupported.velt"
+                | "param_property_pattern.velt"
+                | "param_defaults_unsupported.velt"
+                | "param_defaults_in_body_order.velt"
+                | "dynamic_import.velt"
+                | "namespace_values.velt"
+                | "overload_signature_asi_no_body.velt"
+                | "cast_union_number_literal.velt"
+                | "function_expression_errors.velt"
+                | "function_expression_this_errors.velt"
+                | "string_escape_octal.velt"
+                | "asi_restricted.velt"
+                | "computed_key_errors.velt"
+                | "destructure_computed_path.velt"
+                | "literal_method_names.velt"
+                | "define_property_accessor_this.velt"
+                | "static_block_return.velt"
+                | "global_this_declare_global.velt"
+                | "global_this_declare_let.velt"
+                | "jsx_tag_declared_no_value.velt"
+                | "_global_this_declared_lib.velt"
+                | "abstract_class_syntax.velt"
+                | "operator_index_syntax.velt"
         ) {
             continue;
         }
-        // Warnings are fine (`asi_continuation.vlt` expects some).
+        // Warnings are fine (`asi_continuation.velt` expects some).
         assert!(
             diags.iter().all(|d| !d.is_error()),
             "{}: unexpected diagnostics: {:?}",
@@ -85,10 +85,10 @@ fn golden_m1_files_parse() {
 
 #[test]
 fn golden_parse_error_location() {
-    let path = workspace_root().join("tests/golden/m1/errors/parse.vlt");
+    let path = workspace_root().join("tests/golden/m1/errors/parse.velt");
     let src = std::fs::read_to_string(&path).unwrap();
     let mut sm = SourceMap::new();
-    let file = sm.add("parse.vlt", src.clone());
+    let file = sm.add("parse.velt", src.clone());
     let (m, diags) = parse_file(file, &src);
     assert_eq!(diags.len(), 1, "{:?}", diags);
     let d = &diags[0];
@@ -96,7 +96,7 @@ fn golden_parse_error_location() {
     assert_eq!(sm.line_col(file, d.labels[0].span.lo), (2, 16));
     assert!(
         d.render(&sm)
-            .starts_with("parse.vlt:2:16: error: expected expression"),
+            .starts_with("parse.velt:2:16: error: expected expression"),
         "{}",
         d.render(&sm)
     );
@@ -120,7 +120,7 @@ fn golden_hello_shape() {
 
 #[test]
 fn strings_golden_escapes() {
-    // `strings.vlt` writes `\\` for its backslash; an unknown escape such as `\ ` is the
+    // `strings.velt` writes `\\` for its backslash; an unknown escape such as `\ ` is the
     // character alone, as in JS.
     let e = expr(r#""esc: \"q\" \\ \t|""#);
     assert_eq!(sx(&e), format!("{:?}", "esc: \"q\" \\ \t|"));

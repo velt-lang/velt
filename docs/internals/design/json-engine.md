@@ -126,8 +126,8 @@ mode when wasmtime is on the machine.
 Port `velt_text/src/json_scan.rs`, `velt_rt/src/json/reader.rs`, `json_escape.rs`, the JSON
 pushes of `strbuf.rs` and float printing (`ryu`, as a std port) to Velt, as internal std modules
 in `std/json/` (`velt/encoding/json/scan`, `velt/encoding/json/reader`, `velt/encoding/json/writer`, `velt/encoding/json/tape`),
-which the prelude's JSON module imports (`std/prelude/json/json.vlt`, a global a program loads
-only when its code names `JSON` or `JsonValue`: std/prelude/global/json.vlt). Then switch the
+which the prelude's JSON module imports (`std/prelude/json/json.velt`, a global a program loads
+only when its code names `JSON` or `JsonValue`: std/prelude/global/json.velt). Then switch the
 glue in `crates/velt_vir/src/lower/json/` from `Rt::Json*` calls to calls of those Velt methods.
 
 Error messages and paths stay the same, and the golden tests do not change. Node's exact
@@ -147,7 +147,7 @@ ported. The Rust JSON code is deleted once nothing calls it.
   (`compile_speed`) and binary size; if debug speed regresses badly, std's JSON modules get
   optimized in debug builds;
 - the Node-differential fuzz (`bench/json/fuzz/run.sh`) passes, and the escape kinds benchmark
-  (`bench/json/fuzz/escape_kinds.vlt`, #1066's `kinds.vlt`) is no slower per shape;
+  (`bench/json/fuzz/escape_kinds.velt`, #1066's `kinds.velt`) is no slower per shape;
 - every gap found is filed and fixed in the compiler, not with a Rust fast path.
 
 ### 1. Matching a key to a field (no API change)
@@ -335,7 +335,7 @@ class User {
 The rules for v1:
 
 - **The syntax is TypeScript's** (TC39 stage 3). `@expr` goes before a class, a field, a
-  method or an accessor. A `.vlt` file still parses as TypeScript.
+  method or an accessor. A `.velt` file still parses as TypeScript.
 - **A decorator is data, not a call.** It must name a function that std marks as a compile-time
   decorator (a `@decorator` doc tag on a declaration in `std/`, read by sema). Its arguments
   must be constants: literals, object and array literals of literals, enum members or type

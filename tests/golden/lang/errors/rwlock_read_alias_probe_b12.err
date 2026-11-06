@@ -1,1 +1,1 @@
-rwlock_read_alias_probe_b12.vlt:24:12: error: this puts what may be the caller's object into an object the `read` callback made, after storing that object into the caller's containers
+rwlock_read_alias_probe_b12.velt:24:12: error: this puts what may be the caller's object into an object the `read` callback made, after storing that object into the caller's containers

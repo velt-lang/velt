@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# partial.vlt at the array lengths of the last-elements question: the tail one element at a
+# partial.velt at the array lengths of the last-elements question: the tail one element at a
 # time against `loadPartial` / `storePartial`, both built from this tree with the LLVM backend:
 #
 #   bench/simd/partial.sh [RUNS]
@@ -16,7 +16,7 @@ TARGET=$(cargo metadata --format-version 1 --no-deps --manifest-path "$ROOT/Carg
 OUT="$TARGET/bench-simd"
 mkdir -p "$OUT"
 cargo build --release -q -p veltc -p velt_rt --manifest-path "$ROOT/Cargo.toml"
-"$TARGET/release/velt" build --release --backend llvm "$HERE/partial.vlt" -o "$OUT/partial"
+"$TARGET/release/velt" build --release --backend llvm "$HERE/partial.velt" -o "$OUT/partial"
 
 python3 - "$OUT/partial" "$RUNS" <<'PY'
 import os, re, subprocess, sys, time

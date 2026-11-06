@@ -213,7 +213,7 @@ copied, so the task's assignments stay in the task. A promise is marked
 (`velt_rt_fut_transfer`): its result is transferred by the task that produces it as it finishes
 (#160); a lazy one is started first, so its inputs stay on this task. A value settled on a
 promise from another task is transferred by a promise that task drives, at its next step, after
-the settling statement released its own reference (std/prelude/promise.vlt, #263); a value
+the settling statement released its own reference (std/prelude/promise.velt, #263); a value
 whose type cannot reach a counted object (`Intrinsic::NeedsTransfer`, a constant) settles at
 once, so plain replies cost no extra step.
 
@@ -298,7 +298,7 @@ value's captures, an interface value's implementor) panics (glue/clone.rs). Stri
 ## 8. Gates and accounting
 - Benchmarks: `bench/compare.ps1` (bench/, bench/async) and `bench/benchmarks-game/compare.ps1`,
   interleaved, LLVM release, ±3%.
-- Goldens `tests/golden/lang/share_*.vlt` (aliasing, prelude results, identity, closures cells,
+- Goldens `tests/golden/lang/share_*.velt` (aliasing, prelude results, identity, closures cells,
   dispose at the last reference, async/spawn, objects): JS-identical where the program is valid
   TS (checked with node), every debug run under the checking allocator, and `// check: no
   leaks` goldens assert `blocks=A/F` with A = F (`VELT_RC_STATS=1`; the runtime counts every

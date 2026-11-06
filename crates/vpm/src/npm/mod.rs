@@ -472,7 +472,7 @@ impl NpmResolver {
             Some((_, target)) => target.as_str(),
             None => targets[0].as_str(),
         };
-        notes.push("Velt compiles npm packages from their `.ts` sources; map the specifier to one with `paths` in package.vlt".to_string());
+        notes.push("Velt compiles npm packages from their `.ts` sources; map the specifier to one with `paths` in package.velt".to_string());
         Err((
             format!(
                 "package `{name}` maps `{spec}` to `{}`, which has no TypeScript source in the package",

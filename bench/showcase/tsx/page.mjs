@@ -1,4 +1,4 @@
-// The component tree of _page.vlt for React or Preact, written as the calls their automatic
+// The component tree of _page.velt for React or Preact, written as the calls their automatic
 // JSX runtimes take (`jsx(type, props, key)`: what a JSX compiler emits for this tree), so Node
 // runs it without a build step. Used by render.mjs and server.mjs.
 

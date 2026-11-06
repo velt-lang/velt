@@ -2,7 +2,7 @@
   "name": "velt",
   "displayName": "Velt",
   "description": "Velt language support: syntax highlighting, diagnostics, quick fixes, formatting, outline, go to definition, hover, completion, inlay hints, signature help and semantic highlighting (via `velt lsp`), and F5 debugging.",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "publisher": "andtii",
   "icon": "images/icon.png",
   "galleryBanner": {
@@ -36,7 +36,7 @@
     "onDebugResolve:velt",
     "onDebugDynamicConfigurations:velt",
     "onDebugInitialConfigurations",
-    "workspaceContains:package.vlt"
+    "workspaceContains:package.velt"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -53,7 +53,7 @@
           "velt"
         ],
         "extensions": [
-          ".vlt"
+          ".velt"
         ],
         "configuration": "./language-configuration.json",
         "icon": {

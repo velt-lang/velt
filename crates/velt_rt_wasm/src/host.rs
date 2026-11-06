@@ -1,5 +1,5 @@
 //! What host functions (https://veltlang.com/docs/reference/host-functions/) need of the runtime on WebAssembly:
-//! - `HostRef`'s release and clone (std/host/rt.vlt), which reach the JS glue's table of values
+//! - `HostRef`'s release and clone (std/host/rt.velt), which reach the JS glue's table of values
 //!   through its imports `velt.host_release` and `velt.host_clone` (wasm32-unknown-unknown;
 //!   under WASI no host function can make a `HostRef`, calling one is a compile error);
 //! - the exports the glue (crates/velt_rt_wasm/js/velt_web.mjs) calls to convert the values that

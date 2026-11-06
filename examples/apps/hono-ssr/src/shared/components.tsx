@@ -1,5 +1,5 @@
 // The shop's components, written once: tsc compiles them with the real `hono/jsx`, Velt with
-// ./hono (package.vlt `paths`), and both render the same HTML. They are functions of typed props
+// ./hono (package.velt `paths`), and both render the same HTML. They are functions of typed props
 // in the common subset of TypeScript and Velt.
 
 import type { Child } from "hono/jsx";

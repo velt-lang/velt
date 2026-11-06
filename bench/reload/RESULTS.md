@@ -3,7 +3,7 @@
 `cargo test --release -p veltc --test reload -- --ignored --nocapture`
 (`bench_save_to_first_response` in `crates/veltc/tests/reload.rs`):
 - start `velt dev` on `tests/reload/hello_server/1`;
-- 10 times: rewrite `main.vlt` with a new body string, then poll `GET /` every 1 ms until the
+- 10 times: rewrite `main.velt` with a new body string, then poll `GET /` every 1 ms until the
   new body arrives;
 - reported: the time from the write to that response (median, min, max).
 
@@ -112,5 +112,5 @@ change. Not on Windows: there a spare host on every save made the hot swap about
   executable (200–600 ms, much more under load). The Developer Tools setting in
   https://veltlang.com/docs/tooling/platforms/ removes that check. I have not measured it with the setting enabled, because
   that needs admin rights and a System Settings change on this machine.
-- For comparison, `velt run examples/http_hello.vlt` to the first response took ~240 ms in the
+- For comparison, `velt run examples/http_hello.velt` to the first response took ~240 ms in the
   design doc's measurements (before the sema regression).

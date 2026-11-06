@@ -1,6 +1,6 @@
 //! Throughput sanity checks: the results are checked, the timings only printed (run with
 //! `--release --nocapture` for real numbers). No time limit: on a loaded machine any limit is a
-//! guess. Speed is measured by the benchmarks (`bench/async/spawn_many.vlt`, `bench/async/run.sh`).
+//! guess. Speed is measured by the benchmarks (`bench/async/spawn_many.velt`, `bench/async/run.sh`).
 
 use super::core::run_fanout;
 use super::fake::block_on_fut;

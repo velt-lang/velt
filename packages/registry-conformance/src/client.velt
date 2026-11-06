@@ -1,0 +1,96 @@
+// registry-conformance: requests to the registry under test. Nothing here knows how a registry is
+// built: a request goes in through `Target.send`, an answer comes back.
+
+import { utf8Encode } from "velt/encoding";
+import { ArchiveEntry, contentChecksum, packArchive } from "registry-core";
+import { Reply } from "./reply";
+import { Target } from "./target";
+
+/** The entry `path` with the text `text`. */
+export function file(path: string, text: string): ArchiveEntry {
+  return { path, bytes: utf8Encode(text) };
+}
+
+/** A package's files: `package.velt` (with `fields` after name and version) and `src/lib.velt`. */
+export function packageFiles(name: string, version: string, fields: string = ""): ArchiveEntry[] {
+  const extra = fields.length > 0 ? `, ${fields}` : "";
+  return [
+    file(
+      "package.velt",
+      `export const pkg: Package = { name: "${name}", version: "${version}"${extra} };\n`,
+    ),
+    file("src/lib.velt", `export const V: i64 = 1; // ${version}\n`),
+  ];
+}
+
+/** An archive of `entries` written as given (`packArchive` refuses what these tests send). */
+export function rawArchive(entries: ArchiveEntry[]): u8[] {
+  const out: u8[] = [...utf8Encode("VELTPKG1\n")];
+  for (const e of entries) {
+    out.push(...utf8Encode(`${e.path}\n${e.bytes.length}\n`));
+    out.push(...e.bytes);
+  }
+  return out;
+}
+
+/** Requests to a target as registry clients send them. */
+export class Client {
+  private target: Target;
+
+  constructor(target: Target) {
+    this.target = target;
+  }
+
+  /** Sends `method` `path` (from the registry's root). */
+  async send(
+    method: string,
+    path: string,
+    headers: [string, string][],
+    body: u8[] | null,
+  ): Promise<Reply> {
+    const init: RequestInit = { method, headers };
+    if (body != null) {
+      init.body = body;
+    }
+    const res = await this.target.send(new Request(`${this.target.url}${path}`, init));
+    const bytes = (await res.bytes()).toBytes();
+    return new Reply(res.status as i64, res.headers.get("content-type") ?? "", bytes);
+  }
+
+  /** `method` `/api/v1/<path>` with `token` ("": none). */
+  async call(method: string, path: string, token: string = ""): Promise<Reply> {
+    return await this.send(method, `/api/v1/${path}`, bearer(token), null);
+  }
+
+  /** Uploads `body` as `name` `version`, declaring checksum `sum`. */
+  async upload(
+    name: string,
+    version: string,
+    body: u8[],
+    sum: string,
+    token: string = "",
+  ): Promise<Reply> {
+    const headers = bearer(token);
+    headers.push(["x-velt-checksum", sum]);
+    return await this.send("PUT", `/api/v1/${name}/${version}`, headers, body);
+  }
+
+  /** Publishes the package `name` `version`, with `fields` in its manifest. */
+  async publish(
+    name: string,
+    version: string,
+    token: string = "",
+    fields: string = "",
+  ): Promise<Reply> {
+    const files = packageFiles(name, version, fields);
+    return await this.upload(name, version, packArchive(files), contentChecksum(files), token);
+  }
+}
+
+function bearer(token: string): [string, string][] {
+  const headers: [string, string][] = [];
+  if (token.length > 0) {
+    headers.push(["authorization", `Bearer ${token}`]);
+  }
+  return headers;
+}

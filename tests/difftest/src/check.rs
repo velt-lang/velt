@@ -169,7 +169,7 @@ pub fn check(cfg: &Config, src: &Path, scratch: &Path) -> Result<Verdict, String
 /// Like [`check`], for in-memory source (generated programs, shrinker candidates).
 pub fn check_source(cfg: &Config, text: &str, scratch: &Path) -> Result<Verdict, String> {
     fs::create_dir_all(scratch).map_err(|e| format!("cannot create {}: {e}", scratch.display()))?;
-    let prog = scratch.join("prog.vlt");
+    let prog = scratch.join("prog.velt");
     fs::write(&prog, text).map_err(|e| format!("cannot write program: {e}"))?;
     let oracle = match cfg.oracle {
         Oracle::Node => node_behavior(cfg, text, scratch)?,
@@ -282,7 +282,7 @@ fn formatted(
     prog: &Path,
     scratch: &Path,
 ) -> Result<Result<std::path::PathBuf, Verdict>, String> {
-    let copy = scratch.join("prog_fmt.vlt");
+    let copy = scratch.join("prog_fmt.velt");
     fs::copy(prog, &copy).map_err(|e| format!("cannot copy program: {e}"))?;
     let out = exec::run(
         Command::new(&cfg.velt).arg("fmt").arg(&copy),
@@ -432,11 +432,11 @@ mod tests {
 
     #[test]
     fn a_diagnostic_keeps_its_notes_and_stops_at_the_next() {
-        let stderr = "   Compiling\np.vlt:3:4: error: mismatched types\n  \
-                      = note: expected i64, found f64\n\np.vlt:9:1: error: unknown name\n";
+        let stderr = "   Compiling\np.velt:3:4: error: mismatched types\n  \
+                      = note: expected i64, found f64\n\np.velt:9:1: error: unknown name\n";
         assert_eq!(
             first_diagnostic(stderr),
-            "p.vlt:3:4: error: mismatched types\n  = note: expected i64, found f64"
+            "p.velt:3:4: error: mismatched types\n  = note: expected i64, found f64"
         );
     }
 
@@ -460,8 +460,8 @@ mod tests {
             message: message.into(),
             diagnostic: String::new(),
         };
-        let a = rejected("a.vlt:3:4: error: mismatched types");
-        let b = rejected("b.vlt:9:1: error: mismatched types");
+        let a = rejected("a.velt:3:4: error: mismatched types");
+        let b = rejected("b.velt:9:1: error: mismatched types");
         assert_eq!(a.signature(), b.signature());
         assert_eq!(a.signature(), "velt-rejected: error: mismatched types");
     }

@@ -1,7 +1,7 @@
 # Compile-time benchmark (Windows / PowerShell 7): `velt build --release --emit vir` (load + parse,
 # sema, lowering to VIR, verification, the optimizer) on a few programs, best of -Runs runs per
-# stage as `velt build -v` reports it. Programs: examples/http_hello.vlt (std/http + the
-# prelude), all_std.vlt (every std module), two generated ones of -Units units from unit.tmpl
+# stage as `velt build -v` reports it. Programs: examples/http_hello.velt (std/http + the
+# prelude), all_std.velt (every std module), two generated ones of -Units units from unit.tmpl
 # (a class hierarchy, an interface impl and functions modifying an array param per unit):
 # "units" with call chains of 8, "chain" with one call chain through the whole program (worst
 # case for modification inference), and "long_main": 4 × -Units classes with an override and a
@@ -67,15 +67,15 @@ function New-LongMain([int]$n) {
     return $sb.ToString()
 }
 
-$unitsFile = Join-Path $out "units_$Units.vlt"
-$chainFile = Join-Path $out "chain_$Units.vlt"
-$longFile = Join-Path $out "long_main_$($Units * 4).vlt"
+$unitsFile = Join-Path $out "units_$Units.velt"
+$chainFile = Join-Path $out "chain_$Units.velt"
+$longFile = Join-Path $out "long_main_$($Units * 4).velt"
 [IO.File]::WriteAllText($unitsFile, (New-Program $Units 8))
 [IO.File]::WriteAllText($chainFile, (New-Program $Units $Units))
 [IO.File]::WriteAllText($longFile, (New-LongMain ($Units * 4)))
 $programs = [ordered]@{
-    "http_hello"     = Join-Path $root "examples/http_hello.vlt"
-    "all_std"        = Join-Path $PSScriptRoot "all_std.vlt"
+    "http_hello"     = Join-Path $root "examples/http_hello.velt"
+    "all_std"        = Join-Path $PSScriptRoot "all_std.velt"
     "units_$Units"   = $unitsFile
     "chain_$Units"   = $chainFile
     "long_main_$($Units * 4)" = $longFile

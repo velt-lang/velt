@@ -1,1 +1,1 @@
-rwlock_read_probe_m22.vlt:11:10: error: the function passed to `read` may use module state: it uses `out` (through `take`)
+rwlock_read_probe_m22.velt:11:10: error: the function passed to `read` may use module state: it uses `out` (through `take`)

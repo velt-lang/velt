@@ -1,7 +1,7 @@
 #!/bin/bash
 # Instruction counts (cachegrind, VELT_THREADS=1) of programs built (LLVM release) by two refs.
 #
-# usage: GIT_DIR=<repo> WORK=<dir> bench/program_instr.sh <base-ref> <head-ref> <program.vlt>...
+# usage: GIT_DIR=<repo> WORK=<dir> bench/program_instr.sh <base-ref> <head-ref> <program.velt>...
 # Each ref is exported into $WORK/<sha> and its compiler built there once; every program (a path
 # in the head ref, read from the head tree) is built by both. Needs valgrind. Prints
 # `<program> base=<n> head=<n> change=<%>` lines. RUNS=<n> (default 1) runs each program n times
@@ -30,7 +30,7 @@ build() {
 
 instr() { # <sha> <program>: the median count of ${RUNS:-1} runs
   local exe
-  exe="$WORK/$1/$(basename "$2" .vlt)"
+  exe="$WORK/$1/$(basename "$2" .velt)"
   (cd "$WORK/$1" && VELT_STD="$WORK/$1/std" target/release/velt build --release --backend llvm \
     "$WORK/$h/$2" -o "$exe" >/dev/null)
   for _ in $(seq 1 "${RUNS:-1}"); do

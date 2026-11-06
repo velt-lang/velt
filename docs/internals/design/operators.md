@@ -187,7 +187,7 @@ intrinsic and no runtime function was added.
 | `a op= b`, `++`/`--`; `opAssign` in read-then-writes | `body/expr/operator_assign.rs` (hooked in `assign.rs`, `accessor_rmw.rs`, `indexers.rs`) |
 | `[]` | `body/expr/indexers.rs` (`indexes_through`; std's `INDEX` keys removed) |
 | `[i, j]` | `ast::ExprKind::Index`'s `more` (the keys after the first; the AST cache format is `vast` 4), `parser/postfix.rs`, `body/expr/index_keys.rs`, the key check in `collect/operators.rs` (`same_keys`) |
-| std | `std/ops` and `std/simd/ops_*.vlt` (generated: `scripts/gen-ops.py`, `scripts/gen-simd-ops.py`), `std/math/bigint_ops.vlt`, `std/time/duration.vlt` |
+| std | `std/ops` and `std/simd/ops_*.velt` (generated: `scripts/gen-ops.py`, `scripts/gen-simd-ops.py`), `std/math/bigint_ops.velt`, `std/time/duration.velt` |
 | Tooling | hover and go-to-definition on the operator (the call's name span is the operator); `--ts-compat` rule `operator` |
 
 Operands are evaluated left to right. A literal, a variable or field path, or an element of one
@@ -206,10 +206,10 @@ before `numrep` runs; release inlines them anyway.
 
 ## Cost
 
-- **Run time** (instructions retired, `bench/ops/dot_generic.vlt` = `dot<number>` through
-  `Arithmetic` vs `bench/ops/dot_number.vlt`, the loop on numbers, on the Linux builder under
+- **Run time** (instructions retired, `bench/ops/dot_generic.velt` = `dot<number>` through
+  `Arithmetic` vs `bench/ops/dot_number.velt`, the loop on numbers, on the Linux builder under
   cachegrind): equal within 7 instructions in both pipelines, release 75.67M and debug 461.46M.
-  (An earlier measurement on a busy Mac showed debug +1.7%; it does not reproduce.) A generated golden (`lang/operators_numbers.vlt`) checks 3028 operator
+  (An earlier measurement on a busy Mac showed debug +1.7%; it does not reproduce.) A generated golden (`lang/operators_numbers.velt`) checks 3028 operator
   results through generic code against the built-in operators.
 - **Compile time:** measured with the pull request (hello, `json/parse_typed`, `check_all_std`,
   `bench/simd/kernels`).

@@ -12,7 +12,7 @@ use vpm::{InstallOptions, Locations};
 use super::project::Project;
 use crate::style;
 
-/// `velt add <name>[@<req>] [--path <dir>]`: edit package.vlt, then install; the manifest is
+/// `velt add <name>[@<req>] [--path <dir>]`: edit package.velt, then install; the manifest is
 /// restored if the install fails.
 pub fn add(name: &str, version: Option<String>, path: Option<String>) -> Result<(), String> {
     let project_root = Project::current_root()?;
@@ -53,7 +53,7 @@ pub fn add(name: &str, version: Option<String>, path: Option<String>) -> Result<
 }
 
 /// `velt manifest [--json]`: read and validate the package's manifest; with `json`, print it on
-/// stdout with defaults filled in, for tools that cannot read `package.vlt` themselves.
+/// stdout with defaults filled in, for tools that cannot read `package.velt` themselves.
 pub fn manifest(json: bool) -> Result<(), String> {
     let root = Project::current_root()?;
     let manifest = vpm::Manifest::from_dir(&root)?;
@@ -208,7 +208,7 @@ fn collect_bundles(
     if !manifest.has_bundles() {
         if artifacts.is_some() || native_only {
             return Err(format!(
-                "package `{}` has no `native` in package.vlt",
+                "package `{}` has no `native` in package.velt",
                 manifest.package.name
             ));
         }
@@ -288,7 +288,7 @@ pub fn native_build(target: Option<String>) -> Result<(), String> {
     }
     if !manifest.has_bundles() {
         return Err(format!(
-            "package `{}` has no `native` in package.vlt",
+            "package `{}` has no `native` in package.velt",
             manifest.package.name
         ));
     }

@@ -5,10 +5,10 @@ use crate::git::tree_checksum;
 
 fn sample_tar() -> Vec<u8> {
     TarBuilder::default()
-        .file("pkg/package.vlt", b"export const pkg = {}")
-        .file("pkg/src/main.vlt", b"console.log(1)")
-        .symlink("pkg/src/alias.vlt", "main.vlt")
-        .hardlink("pkg/copy.vlt", "pkg/src/main.vlt")
+        .file("pkg/package.velt", b"export const pkg = {}")
+        .file("pkg/src/main.velt", b"console.log(1)")
+        .symlink("pkg/src/alias.velt", "main.velt")
+        .hardlink("pkg/copy.velt", "pkg/src/main.velt")
         .dir("pkg/empty/")
         .gz()
 }
@@ -19,19 +19,19 @@ fn the_tree_is_written_and_renamed_into_place() {
     let dest = dir.path().join("cache/abc");
     extract(&sample_tar(), &dest).unwrap();
     assert_eq!(
-        std::fs::read_to_string(dest.join("pkg/src/main.vlt")).unwrap(),
+        std::fs::read_to_string(dest.join("pkg/src/main.velt")).unwrap(),
         "console.log(1)"
     );
     assert_eq!(
-        std::fs::read_to_string(dest.join("pkg/copy.vlt")).unwrap(),
+        std::fs::read_to_string(dest.join("pkg/copy.velt")).unwrap(),
         "console.log(1)"
     );
     assert!(dest.join("pkg/empty").is_dir());
-    let link = dest.join("pkg/src/alias.vlt");
+    let link = dest.join("pkg/src/alias.velt");
     if cfg!(windows) {
-        assert_eq!(std::fs::read_to_string(&link).unwrap(), "main.vlt");
+        assert_eq!(std::fs::read_to_string(&link).unwrap(), "main.velt");
     } else {
-        assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("main.vlt"));
+        assert_eq!(std::fs::read_link(&link).unwrap(), Path::new("main.velt"));
     }
     // Only the destination is left in its parent: the staging directory was renamed.
     let left: Vec<_> = std::fs::read_dir(dir.path().join("cache"))
@@ -71,14 +71,14 @@ fn one_archive_has_one_checksum_on_every_os() {
     let sum = tree_checksum(&as_links).unwrap();
     assert_eq!(sum, tree_checksum(&as_files).unwrap());
     // The same tree from a zip hashes the same too.
-    let mut stored = ZipEntry::file("pkg/package.vlt", b"export const pkg = {}");
+    let mut stored = ZipEntry::file("pkg/package.velt", b"export const pkg = {}");
     stored.method = 0;
     let zip = zip(
         &[
             stored,
-            ZipEntry::file("pkg/src/main.vlt", b"console.log(1)"),
-            ZipEntry::symlink("pkg/src/alias.vlt", "main.vlt"),
-            ZipEntry::file("pkg/copy.vlt", b"console.log(1)"),
+            ZipEntry::file("pkg/src/main.velt", b"console.log(1)"),
+            ZipEntry::symlink("pkg/src/alias.velt", "main.velt"),
+            ZipEntry::file("pkg/copy.velt", b"console.log(1)"),
         ],
         true,
     );
@@ -87,10 +87,10 @@ fn one_archive_has_one_checksum_on_every_os() {
     assert_eq!(sum, tree_checksum(&from_zip).unwrap());
     // And the checksum sees the link: another target is another checksum.
     let other = TarBuilder::default()
-        .file("pkg/package.vlt", b"export const pkg = {}")
-        .file("pkg/src/main.vlt", b"console.log(1)")
-        .symlink("pkg/src/alias.vlt", "./main.vlt")
-        .hardlink("pkg/copy.vlt", "pkg/src/main.vlt")
+        .file("pkg/package.velt", b"export const pkg = {}")
+        .file("pkg/src/main.velt", b"console.log(1)")
+        .symlink("pkg/src/alias.velt", "./main.velt")
+        .hardlink("pkg/copy.velt", "pkg/src/main.velt")
         .gz();
     let changed = dir.path().join("changed");
     extract(&other, &changed).unwrap();

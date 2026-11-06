@@ -1,1 +1,1 @@
-instanceof_promise_value.vlt:4:15: error: this `instanceof` test is always false: `f64` is not a `Promise`
+instanceof_promise_value.velt:4:15: error: this `instanceof` test is always false: `f64` is not a `Promise`

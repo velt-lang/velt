@@ -715,7 +715,7 @@ impl super::Cx<'_> {
 
 impl super::Cx<'_> {
     /// A standard-library function as a program imports it: `std/fs/fd/open::openSync` is
-    /// "`openSync` (velt/fs)", the module whose `index.vlt` re-exports it.
+    /// "`openSync` (velt/fs)", the module whose `index.velt` re-exports it.
     fn std_name(&self, qualified: &str) -> String {
         match qualified.rsplit_once("::") {
             Some((module, name)) => {

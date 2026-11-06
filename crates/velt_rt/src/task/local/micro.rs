@@ -1,5 +1,5 @@
 //! A task's microtask queue: the steps of `await` (`velt_rt_await_tick`), the callbacks of
-//! `then`, `catch` and `finally`, and `queueMicrotask` (std/prelude/promise.vlt), in JS's order.
+//! `then`, `catch` and `finally`, and `queueMicrotask` (std/prelude/promise.velt), in JS's order.
 //!
 //! The queue is drained at every job boundary of the task, after the root's poll and after each
 //! local promise the task runs from its ready queue (local/set.rs `drain`): the entries run first

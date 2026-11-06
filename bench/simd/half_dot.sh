@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
-# The f16 and bf16 dot products against Rust (half_dot.vlt, half_dot_rust/), arm64 only: instructions
+# The f16 and bf16 dot products against Rust (half_dot.velt, half_dot_rust/), arm64 only: instructions
 # retired per 1M weights, each kernel run with 0 and with PASSES passes and subtracted. Never wall
 # clock. Set VELT_CLANG to a clang as new as rustc's LLVM. bf16's fast kernels are built with
 # `--cpu $FAST_CPU` (default apple-m2), which needs a CPU with FEAT_BF16 to run.
 #
 # Two Velt columns, because Rust's kernels are `#[inline(never)]`. "Velt out of line"
-# (half_dot_far.vlt) is the fair comparison; "Velt inlined" (half_dot.vlt) lets LLVM see in `main`
+# (half_dot_far.velt) is the fair comparison; "Velt inlined" (half_dot.velt) lets LLVM see in `main`
 # that both arrays have one length. The explicit two-array `fits` kernels have one exit test
 # either way because velt_opt's `fits_pair` makes `fits(a, j) && fits(b, j)` one test; without it,
 # out of line, they were 1.06 to 1.65 times Rust.
@@ -20,10 +20,10 @@ VELT=${VELT:-$ROOT/target/release/velt}
 OUT=${OUT:-$ROOT/target/bench-half-dot}
 FAST_CPU=${FAST_CPU:-apple-m2}
 mkdir -p "$OUT"
-"$VELT" build --release --backend llvm "$HERE/half_dot.vlt" -o "$OUT/velt"
-"$VELT" build --release --backend llvm --cpu "$FAST_CPU" "$HERE/half_dot.vlt" -o "$OUT/velt-fast"
-"$VELT" build --release --backend llvm "$HERE/half_dot_far.vlt" -o "$OUT/far"
-"$VELT" build --release --backend llvm --cpu "$FAST_CPU" "$HERE/half_dot_far.vlt" -o "$OUT/far-fast"
+"$VELT" build --release --backend llvm "$HERE/half_dot.velt" -o "$OUT/velt"
+"$VELT" build --release --backend llvm --cpu "$FAST_CPU" "$HERE/half_dot.velt" -o "$OUT/velt-fast"
+"$VELT" build --release --backend llvm "$HERE/half_dot_far.velt" -o "$OUT/far"
+"$VELT" build --release --backend llvm --cpu "$FAST_CPU" "$HERE/half_dot_far.velt" -o "$OUT/far-fast"
 RUSTC_BOOTSTRAP=1 RUSTFLAGS="-C target-cpu=apple-m1" CARGO_TARGET_DIR="$OUT/rust-target" \
   cargo build --release -q --manifest-path "$HERE/half_dot_rust/Cargo.toml"
 rust=$OUT/rust-target/release/half_dot

@@ -1,4 +1,4 @@
-# A/B gate for language changes (docs/internals/design/semantics.md "Gates"): builds every bench/*.vlt
+# A/B gate for language changes (docs/internals/design/semantics.md "Gates"): builds every bench/*.velt
 # with two Velt compilers (LLVM release), runs the executables interleaved (A B A B ...) so both
 # see the same machine state, and prints the median wall-clock time of each and the change.
 #
@@ -46,7 +46,7 @@ function Median([double[]]$xs) {
 $failed = @()
 Write-Output "| benchmark | baseline median ms | candidate median ms | change |"
 Write-Output "|---|---|---|---|"
-foreach ($src in Get-ChildItem (Join-Path $root $Dir) -Filter *.vlt | Sort-Object Name) {
+foreach ($src in Get-ChildItem (Join-Path $root $Dir) -Filter *.velt | Sort-Object Name) {
     $name = $src.BaseName
     if ($Only -and $name -ne $Only) { continue }
     $exeA = Join-Path $out "$name-base.exe"

@@ -1,9 +1,9 @@
 //! A package registry server: vpm's registry directory (`<root>/<name>/index.json`,
 //! `<root>/<name>/<version>/`) served over the HTTP protocol of `vpm::remote`, so packages can be
-//! shared across machines (`registry: "http://host:port"` in `package.vlt`).
+//! shared across machines (`registry: "http://host:port"` in `package.velt`).
 //!
 //! Uploads are verified before they are stored ([`packages`]): the archive must be well-formed,
-//! its content hash must equal the `X-Velt-Checksum` header, its `package.vlt` must be a valid
+//! its content hash must equal the `X-Velt-Checksum` header, its `package.velt` must be a valid
 //! manifest (read without running anything, within the reader's size limits) naming the package
 //! and version of the URL, and versions are immutable. An archive with a `velt.toml` is refused.
 //! Native bundles (`vpm::native`) are uploaded per target to a published version: verified the

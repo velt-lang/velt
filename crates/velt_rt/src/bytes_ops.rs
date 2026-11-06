@@ -1,4 +1,4 @@
-//! Bulk operations on `u8[]` (std/prelude/bytes.vlt: `Buffer.alloc`, and `indexOf`, `set`,
+//! Bulk operations on `u8[]` (std/prelude/bytes.velt: `Buffer.alloc`, and `indexOf`, `set`,
 //! `copyWithin`, `fill` on byte arrays): memchr / memmove / memset instead of byte loops.
 //!
 //! Positions follow JS: `copyWithin` and `fill` take relative indices (negative counts from the

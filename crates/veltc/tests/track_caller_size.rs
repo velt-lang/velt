@@ -10,7 +10,7 @@ mod test_dir;
 #[test]
 fn a_large_caller_tracking_function_has_one_instance_for_all_call_sites() {
     let dir = test_dir::TestDir::new();
-    let main = dir.path().join("main.vlt");
+    let main = dir.path().join("main.velt");
     std::fs::write(
         &main,
         "import { BTreeMap } from \"velt/collections\";\n\
@@ -46,7 +46,7 @@ fn an_internal_error_does_not_track_the_caller() {
     // `Uint8Array.subarray` can only panic with an internal error (`panic(`ICE: …`)`): that is
     // std's bug, reported where it is, so the method keeps one instance with no location.
     let dir = test_dir::TestDir::new();
-    let main = dir.path().join("main.vlt");
+    let main = dir.path().join("main.velt");
     std::fs::write(
         &main,
         "function main() {\n\

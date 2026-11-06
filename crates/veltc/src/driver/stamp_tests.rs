@@ -51,7 +51,7 @@ fn set_time(path: &Path, secs: u64) -> u128 {
 fn unchanged_inputs_match() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    let (sm, seen) = build(dir, &[("main.vlt", "a"), ("lib.vlt", "b")]);
+    let (sm, seen) = build(dir, &[("main.velt", "a"), ("lib.velt", "b")]);
     let key = Key::of(&[b"opts"]);
     let stamp = render_of(&sm, &seen, &[]);
     assert_eq!(check(&stamp, &key, LATER), Some(2));
@@ -62,12 +62,12 @@ fn unchanged_inputs_match() {
     );
 
     // Same contents, new time: still unchanged.
-    std::fs::write(dir.join("lib.vlt"), "b").unwrap();
+    std::fs::write(dir.join("lib.velt"), "b").unwrap();
     assert_eq!(check(&stamp, &key, LATER), Some(2));
     // Another content: changed.
-    std::fs::write(dir.join("lib.vlt"), "c").unwrap();
+    std::fs::write(dir.join("lib.velt"), "c").unwrap();
     assert_eq!(check(&stamp, &key, LATER), None);
-    std::fs::write(dir.join("lib.vlt"), "b").unwrap();
+    std::fs::write(dir.join("lib.velt"), "b").unwrap();
     assert_eq!(check(&stamp, &key, LATER), Some(2));
 
     // A new entry in a directory resolution listed: changed.
@@ -88,7 +88,7 @@ fn unchanged_inputs_match() {
     assert_eq!(check(&stamp, &key, LATER), None);
     // A deleted file: changed.
     std::fs::remove_file(pkg.join("package.json")).unwrap();
-    std::fs::remove_file(dir.join("main.vlt")).unwrap();
+    std::fs::remove_file(dir.join("main.velt")).unwrap();
     assert_eq!(check(&stamp, &key, LATER), None);
 }
 
@@ -96,7 +96,7 @@ fn unchanged_inputs_match() {
 fn a_file_changed_after_it_was_read_is_a_change() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    let lib = dir.join("lib.vlt");
+    let lib = dir.join("lib.velt");
     std::fs::write(&lib, "aaaa").unwrap();
     let read_at = set_time(&lib, 1_000_000);
     let (sm, seen) = probe::record(|| {
@@ -124,7 +124,7 @@ fn a_file_changed_after_it_was_read_is_a_change() {
 #[test]
 fn a_stamp_cut_short_misses() {
     let tmp = tempfile::tempdir().unwrap();
-    let (sm, seen) = build(tmp.path(), &[("main.vlt", "a")]);
+    let (sm, seen) = build(tmp.path(), &[("main.velt", "a")]);
     let key = Key::of(&[b"opts"]);
     let stamp = render_of(&sm, &seen, &[]);
     assert_eq!(check(&stamp, &key, LATER), Some(2));
@@ -151,7 +151,7 @@ fn link_inputs_keep_their_size_and_time() {
     let tmp = tempfile::tempdir().unwrap();
     let lib = tmp.path().join("member.o");
     std::fs::write(&lib, "o").unwrap();
-    let (sm, seen) = build(tmp.path(), &[("main.vlt", "a")]);
+    let (sm, seen) = build(tmp.path(), &[("main.velt", "a")]);
     let key = Key::of(&[b"opts"]);
     let stamp = render_of(&sm, &seen, std::slice::from_ref(&lib));
     assert_eq!(check(&stamp, &key, LATER), Some(2));
@@ -165,7 +165,7 @@ fn link_inputs_keep_their_size_and_time() {
 fn a_generated_root_is_left_to_the_key() {
     let tmp = tempfile::tempdir().unwrap();
     let mut sm = SourceMap::new();
-    let root = tmp.path().join("harness.vlt");
+    let root = tmp.path().join("harness.velt");
     sm.add(&root, "generated");
     let key = Key::of(&[b"opts"]);
     let built = Built {
@@ -179,7 +179,7 @@ fn a_generated_root_is_left_to_the_key() {
         c_libs: &[],
     };
     let stamp = render(&key, &sm, &built);
-    assert!(!stamp.contains("harness.vlt"));
+    assert!(!stamp.contains("harness.velt"));
     assert_eq!(check(&stamp, &key, LATER), Some(1));
 }
 
@@ -227,7 +227,7 @@ fn std_objects_are_linked_again_and_must_stay_as_they_were() {
 fn a_rebuild_hashes_only_files_that_may_have_changed() {
     let tmp = tempfile::tempdir().unwrap();
     let dir = tmp.path();
-    let (main, lib) = (dir.join("main.vlt"), dir.join("lib.vlt"));
+    let (main, lib) = (dir.join("main.velt"), dir.join("lib.velt"));
     std::fs::write(&main, "a").unwrap();
     std::fs::write(&lib, "b").unwrap();
     set_time(&main, 1_000_000);
@@ -283,7 +283,7 @@ fn a_rebuild_hashes_only_files_that_may_have_changed() {
         (probe::content_hash(b"d"), probe::content_hash(b"b"))
     );
     // No stamp, or one of another format: nothing known.
-    std::fs::write(&stamp_path, "velt-build-stamp 0\nfile x 1 1\tlib.vlt\n").unwrap();
+    std::fs::write(&stamp_path, "velt-build-stamp 0\nfile x 1 1\tlib.velt\n").unwrap();
     assert!(known(&stamp_path).is_empty());
     assert!(known(&dir.join("none.build-stamp")).is_empty());
 }
@@ -291,7 +291,7 @@ fn a_rebuild_hashes_only_files_that_may_have_changed() {
 #[test]
 fn the_host_is_part_of_the_key() {
     let browser = BuildOptions {
-        input: "app.vlt".into(),
+        input: "app.velt".into(),
         target: Some("wasm32-unknown-unknown".into()),
         ..Default::default()
     };

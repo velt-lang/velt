@@ -36,7 +36,7 @@ if (typeof nodeModule.registerHooks === "function") {
 }
 
 // A panic's location without the directory the test built in.
-console.error = (...args) => console.log("log:", ...args.map((a) => String(a).replace(/ at \S*main\.vlt:/, " at main.vlt:")));
+console.error = (...args) => console.log("log:", ...args.map((a) => String(a).replace(/ at \S*main\.velt:/, " at main.velt:")));
 const contexts = new AsyncLocalStorage();
 const ended = new Set();
 const NativeResponse = Response;
@@ -152,7 +152,7 @@ async function send(path, init = {}) {
 }
 
 const scenarios = {
-  // hello.vlt: `main` returns without accepting.
+  // hello.velt: `main` returns without accepting.
   async never() {
     await send("a");
     await send("b");

@@ -1,0 +1,4 @@
+// registry-core (internal): the error of text that is not a valid `package.velt`.
+
+/** Why a `package.velt` is refused: each problem on a line of its own. */
+export class ManifestError extends Error {}

@@ -41,14 +41,14 @@ How a program uses the binary depends on the mode:
 ```text
 sqlite/
   velt.toml
-  src/lib.vlt          # the Velt API; `declare function velt_sqlite__open(...)` etc.
+  src/lib.velt          # the Velt API; `declare function velt_sqlite__open(...)` etc.
   native/Cargo.toml    # crate-type = ["cdylib", "staticlib"]; depends on `velt_native`
   native/src/lib.rs
 ```
 
 ## Manifest: the `[native]` table
 
-This addition to `velt.toml` is parsed by `vpm::manifest`. (The manifest is now `package.vlt`,
+This addition to `velt.toml` is parsed by `vpm::manifest`. (The manifest is now `package.velt`,
 where this table is `native: { … }`: [manifest.md](../contracts/manifest.md).)
 
 ```toml
@@ -85,7 +85,7 @@ pass modes are the ones in `rt_abi.md` and `rt_abi_async.md` §3:
 Nothing changes in the parser, HIR or VIR.
 
 ```ts planned
-// sqlite/src/lib.vlt
+// sqlite/src/lib.velt
 declare function velt_sqlite__open(path: string, flags: u32): IoResult<u64>;
 declare async function velt_sqlite__query(db: u64, sql: string): Promise<IoResult<Rows>>;
 ```
@@ -326,7 +326,7 @@ and the link stamp (`veltc/src/link.rs::link_key`) hashes the bundles.
 The prototype driver is **sqlite**:
 - It is synchronous, bundles its C library through rusqlite, needs no server, and exercises
   handles and `fut_new_blocking`.
-- `packages/sqlite` mirrors `std/sqlite.vlt` with `velt_sqlite__*` exports.
+- `packages/sqlite` mirrors `std/sqlite.velt` with `velt_sqlite__*` exports.
 - `std/sqlite` stays until the drivers are migrated as a follow-up (done: see As built).
 
 Each step below lands with its own tests:

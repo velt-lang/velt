@@ -55,12 +55,12 @@ pub enum Intrinsic {
     /// bits of `src[s..s + n)` written to `dst[d..d + n)` (both ranges bounds-checked; `dst`
     /// and `src` are different arrays): what `dst` held there is not dropped, nothing is
     /// shared, and `src` keeps stale copies. A raw move for algorithms that keep every element
-    /// owned exactly once themselves (the stable sort's scratch buffer, std/lang/sort/stable.vlt).
+    /// owned exactly once themselves (the stable sort's scratch buffer, std/lang/sort/stable.velt).
     ArrayMove,
     /// std only: `(dst (modified), d: usize, src: borrow u8[], s: usize, n: usize)` — the bytes
     /// `src[s..s + n * size)` written as the bits of `dst[d..d + n)`, `size` the byte size of
     /// `dst`'s element, which owns nothing (both ranges bounds-checked; one memcpy). The bulk
-    /// load of `velt/half` (`f16FromBytes`, std/half/bytes.vlt). Additive.
+    /// load of `velt/half` (`f16FromBytes`, std/half/bytes.velt). Additive.
     ArrayCopyBytes,
     /// std only: `(xs (modified), len: usize)` set the length to `len` (growing the capacity
     /// when it is smaller) without dropping or initializing any element: slots past the old
@@ -87,7 +87,7 @@ pub enum Intrinsic {
     /// std only: as `ArrayRotateRight`, one slot down: the element at `lo` moves to `hi`.
     /// Additive.
     ArrayRotateLeft,
-    /// std only (`xs.swapIn`, std/prelude/array_nested.vlt): `(xs: T[][] (modified), a: usize,
+    /// std only (`xs.swapIn`, std/prelude/array_nested.velt): `(xs: T[][] (modified), a: usize,
     /// i: usize, b: usize, j: usize)`, exchanges `xs[a][i]` and `xs[b][j]` (all four
     /// bounds-checked): the bits of two elements, nothing copied or dropped, also between two
     /// inner arrays, which one call may not otherwise change both of. Additive.
@@ -152,31 +152,31 @@ pub enum Intrinsic {
     /// `(field: borrow T | null) -> bool`, `field` a `Field` place of a `presence` field: whether
     /// it is present (written, or given in the literal that made the object)
     FieldPresent,
-    /// std only (std/prelude/promise.vlt): `transfer<T>(value: T) -> T`, the value
+    /// std only (std/prelude/promise.velt): `transfer<T>(value: T) -> T`, the value
     /// made safe for another task (moved where this task held the only reference, deep-copied
     /// where it is still shared; velt_vir transfer.rs), like a `spawn` argument. Also emitted
     /// by sema around a value a `Mutex.with` callback stores across the lock
     /// (ownership/locked).
     Transfer,
-    /// std only (std/prelude/promise.vlt): `needsTransfer<T>(value: borrow T) ->
+    /// std only (std/prelude/promise.velt): `needsTransfer<T>(value: borrow T) ->
     /// bool`, a constant: can a `T` reach a counted object, so that `Transfer` has work to do
     /// (the value itself is not read)?
     NeedsTransfer,
-    /// std only (std/lang/sort/stable.vlt): `needsDrop<T>(value: borrow T) -> bool`,
+    /// std only (std/lang/sort/stable.velt): `needsDrop<T>(value: borrow T) -> bool`,
     /// a constant: does a `T` own anything that dropping it releases (strings, arrays,
     /// objects, closures with a heap environment)? A bit copy of a `T` that does not is an
     /// independent value. The value itself is not evaluated.
     NeedsDrop,
-    /// std only (std/prelude/array.vlt): `mayAlias<T>(value: borrow T) -> bool`, a
+    /// std only (std/prelude/array.velt): `mayAlias<T>(value: borrow T) -> bool`, a
     /// constant: can a value of type `T` that a call borrows be reached through another
     /// reference while the call runs (lowering counts the type, or borrows values of it inside
     /// counted objects)? Only then can a callback change it. The value is not evaluated.
     MayAlias,
-    /// std only (std/prelude/map.vlt): `holdsNull<T>(probe: borrow T) -> bool`, a
+    /// std only (std/prelude/map.velt): `holdsNull<T>(probe: borrow T) -> bool`, a
     /// constant: is `null` a value of `T` (is `T` an option, `X | null`, once substituted)? Then
     /// a generic `T | null` is `T` itself and its `null` is a `T`. The probe is not evaluated.
     HoldsNull,
-    /// std only (std/prelude/map.vlt): `nullAs<T>() -> T`, `null` as a `T` that
+    /// std only (std/prelude/map.velt): `nullAs<T>() -> T`, `null` as a `T` that
     /// holds null (`HoldsNull`). For any other `T` it stops the program with an internal error:
     /// std reaches it only behind a `HoldsNull` test.
     NullAs,
@@ -214,7 +214,7 @@ pub enum Intrinsic {
     /// class: the condition of the text of a `T` value in a string `+`, which asks a class
     /// instance for its `valueOf()` first. The probe is not evaluated.
     HoldsDynamicOrClass,
-    /// std only (std/lang/sort/stable.vlt): `fnCapturesNothing<F>(f: borrow F) ->
+    /// std only (std/lang/sort/stable.velt): `fnCapturesNothing<F>(f: borrow F) ->
     /// bool` for a function value: true when its environment is null, which only closures
     /// without captures and named functions have (a program that compares function values
     /// gives every closure an environment, so it is false there). Such a function reaches no
@@ -257,9 +257,9 @@ pub enum Intrinsic {
     /// running.
     PromiseRace,
     /// std only: `firstFulfilled(ps: Promise<T, E>[]): Promise<T, E>` — the first to
-    /// fulfill, or the last rejection when all reject (std/prelude/promise.vlt `promiseAny`).
+    /// fulfill, or the last rejection when all reject (std/prelude/promise.velt `promiseAny`).
     PromiseAny,
-    /// std only (std/sync/channel.vlt): `chanSend<T>(ch: u64, value: T):
+    /// std only (std/sync/channel.velt): `chanSend<T>(ch: u64, value: T):
     /// Promise<bool>` — moves `value` into the channel; false (and `value` dropped) if it is
     /// closed.
     ChanSend,
@@ -273,13 +273,13 @@ pub enum Intrinsic {
     /// is queued.
     ChanTryReceive,
     /// Compiler-internal (no source syntax): the location of the call's span as a string,
-    /// `"path:line:col"` (the site of a `new Promise`, std/prelude/promise.vlt).
+    /// `"path:line:col"` (the site of a `new Promise`, std/prelude/promise.velt).
     SourceLocation,
     /// Compiler-internal (std: `symbolStatic(id, desc, described)`): `(id: i64
     /// literal, desc: string literal, described: bool literal) -> symbol`, the address of a
     /// read-only symbol record made at compile time (rt_abi.md "Symbols"): one record per `id`
     /// in a program, whatever the call site, so every evaluation gives the same symbol. Ids
-    /// below 64 are the well-known symbols (`Symbol.iterator`, std/lang/symbol/index.vlt), ids from 64 the
+    /// below 64 are the well-known symbols (`Symbol.iterator`, std/lang/symbol/index.velt), ids from 64 the
     /// module constants initialized with `Symbol()` / `Symbol("d")`, and ids from 2^40 the
     /// registry's symbols of module constants initialized with `Symbol.for("k")` (`desc` is the
     /// key; such a record is listed in [`Intrinsic::SymbolRegistry`]'s table). With `described`
@@ -471,7 +471,7 @@ pub enum Intrinsic {
     /// is cancelled instead (drops only, like a cancelled async function).
     AsyncGeneratorDispose,
 
-    // Weak references (std/prelude/weak.vlt; rt_abi.md "Weak references")
+    // Weak references (std/prelude/weak.velt; rt_abi.md "Weak references")
     /// std only: `weakMapSet<K, V>(m: u32, key: borrow K, value: owned V): u32` —
     /// store `value` for the object `key` in weak map `m`, creating the map first when `m` is 0
     /// (with `K`'s and `V`'s glue); returns the map. `K` is counted and weak-capable.
@@ -551,7 +551,7 @@ pub enum Intrinsic {
     /// not supported yet. Sets `Program::dyn_members`.
     AnyHas,
     /// std only: `(x: borrow any, key: borrow string) -> bool`, `delete x[key]` of a value that
-    /// is not a proxy (std/lang/proxy/index.vlt, `Reflect.deleteProperty`): a record's entry is
+    /// is not a proxy (std/lang/proxy/index.velt, `Reflect.deleteProperty`): a record's entry is
     /// removed and an optional field made absent (`true`), a key the value does not have is
     /// `true`, an array's `length` is `false`; a `TypeError` for anything else (a fixed field).
     AnyDelete,

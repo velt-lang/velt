@@ -14,11 +14,11 @@ fn write(root: &Path, rel: &str, text: &str) {
     std::fs::write(path, text).unwrap();
 }
 
-/// A package.vlt with `fields` after the name and version.
+/// A package.velt with `fields` after the name and version.
 fn manifest(root: &Path, rel: &str, name: &str, fields: &str) {
     write(
         root,
-        &format!("{rel}/package.vlt"),
+        &format!("{rel}/package.velt"),
         &format!("import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"{name}\",\n  version: \"1.0.0\",\n  {fields}\n}};\n"),
     );
 }
@@ -69,7 +69,7 @@ fn named_like_the_root(root: &Path, evil_fields: &str) {
     );
     write(
         root,
-        "app/src/main.vlt",
+        "app/src/main.velt",
         "import { pid } from \"mid\";\n\nfunction main() {\n  console.log(pid() > 0);\n}\n",
     );
     manifest(
@@ -78,9 +78,9 @@ fn named_like_the_root(root: &Path, evil_fields: &str) {
         "mid",
         "dependencies: { app: { path: \"../evil\" } },",
     );
-    write(root, "mid/src/lib.vlt", "export { pid } from \"app\";\n");
+    write(root, "mid/src/lib.velt", "export { pid } from \"app\";\n");
     manifest(root, "evil", "app", evil_fields);
-    write(root, "evil/src/lib.vlt", C_CALL);
+    write(root, "evil/src/lib.velt", C_CALL);
 }
 
 /// With and without native code, install and compile both stop at the name, before any of the
@@ -142,10 +142,10 @@ fn a_dependency_may_depend_back_on_the_root() {
         "app",
         "native: { c: { c: { unchecked: true } } },\n  dependencies: { mid: { path: \"../mid\" } },",
     );
-    write(root, "app/src/lib.vlt", C_CALL);
+    write(root, "app/src/lib.velt", C_CALL);
     write(
         root,
-        "app/src/main.vlt",
+        "app/src/main.velt",
         "import { name } from \"mid\";\n\nfunction main() {\n  console.log(name());\n}\n",
     );
     manifest(
@@ -156,7 +156,7 @@ fn a_dependency_may_depend_back_on_the_root() {
     );
     write(
         root,
-        "mid/src/lib.vlt",
+        "mid/src/lib.velt",
         "export function name(): string {\n  return \"mid\";\n}\n",
     );
     let o = velt(&root.join("app"), &["run"]);
@@ -173,7 +173,7 @@ fn an_npm_package_in_an_allowed_package_is_not_that_package() {
     let dir = test_dir::TestDir::new();
     let root = dir.path();
     manifest(root, "good", "good", "native: { c: {} },");
-    write(root, "good/src/lib.vlt", "export { pid } from \"x\";\n");
+    write(root, "good/src/lib.velt", "export { pid } from \"x\";\n");
     write(
         root,
         "good/node_modules/x/package.json",
@@ -188,7 +188,7 @@ fn an_npm_package_in_an_allowed_package_is_not_that_package() {
     );
     write(
         root,
-        "app/src/main.vlt",
+        "app/src/main.velt",
         &CALLS_PID.replace("\"x\"", "\"good\""),
     );
     let out = refused(&root.join("app"), &["check"]);
@@ -206,7 +206,7 @@ fn an_npm_package_in_the_root_is_not_the_root() {
     manifest(root, "app", "app", "native: { c: {} },");
     write(
         root,
-        "app/src/main.vlt",
+        "app/src/main.velt",
         "import { pid } from \"evil\";\n\nfunction main() {\n  console.log(pid() > 0);\n}\n",
     );
     write(
@@ -242,7 +242,7 @@ fn an_npm_package_in_an_allowed_git_package_is_not_that_package() {
     let root = dir.path();
     let repo = root.join("repo");
     manifest(root, "repo", "good", "native: { c: {} },");
-    write(root, "repo/src/lib.vlt", "export const v = 1;\n");
+    write(root, "repo/src/lib.velt", "export const v = 1;\n");
     write(
         root,
         "repo/js/package.json",
@@ -282,7 +282,7 @@ fn an_npm_package_in_an_allowed_git_package_is_not_that_package() {
     );
     write(
         root,
-        "app/src/main.vlt",
+        "app/src/main.velt",
         "import { pid } from \"jsx\";\n\nfunction main() {\n  console.log(pid() > 0);\n}\n",
     );
     let out = refused(&root.join("app"), &["check"]);
@@ -301,7 +301,7 @@ fn a_whole_workspace_install_checks_each_member_s_list() {
     let marker = root.join("build-script-ran");
     write(
         root,
-        "velt.workspace.vlt",
+        "velt.workspace.velt",
         "import type { Workspace } from \"velt/package\";\n\nexport const workspace: Workspace = { members: [\"app\"] };\n",
     );
     manifest(
@@ -310,9 +310,9 @@ fn a_whole_workspace_install_checks_each_member_s_list() {
         "app",
         "dependencies: { evil: { path: \"../evil\" } },",
     );
-    write(root, "app/src/main.vlt", "function main() {}\n");
+    write(root, "app/src/main.velt", "function main() {}\n");
     manifest(root, "evil", "evil", "native: {},");
-    write(root, "evil/src/lib.vlt", "export const x = 1;\n");
+    write(root, "evil/src/lib.velt", "export const x = 1;\n");
     write(
         root,
         "evil/native/Cargo.toml",

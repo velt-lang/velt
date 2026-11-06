@@ -12,7 +12,7 @@
 //! form sema resolves in the code it writes (`Ctx::std_def`: an identifier or type name spelled
 //! that way, which no source can write) and lowering finds a definition by. The built-in methods
 //! of values held as `any` are found by name prefix instead (`anyStr_<method>`, std/lang/hooks/
-//! any_methods.vlt; `velt_vir` `any_builtin.rs`).
+//! any_methods.velt; `velt_vir` `any_builtin.rs`).
 //!
 //! Each entry gives the hook's signature in a small type language (`sig(<A>(&string, i64) ->
 //! void)`, or `class`; [`crate::hook_sig`]), which the table turns into a [`Sig`]: `velt_sema`'s
@@ -71,7 +71,7 @@ pub struct Hook {
     /// one of [`ON_DEMAND_FLOAT`]): its `velt_vir` builder returns an `Option`. Every other
     /// lowered hook missing is an internal compiler error.
     pub fallback: bool,
-    /// The program of `bench/stdport/` (`int_to_string` for `bench/stdport/int_to_string.vlt`)
+    /// The program of `bench/stdport/` (`int_to_string` for `bench/stdport/int_to_string.velt`)
     /// that measures this hook against the Rust it replaced, if one does.
     pub bench: Option<&'static str>,
     /// The HIR constructs whose lowering calls it ([`crate::hook_demand`]): sema checks it only
@@ -175,7 +175,7 @@ macro_rules! hooks {
 }
 
 hooks! {
-    // array.vlt: array constructors.
+    // array.velt: array constructors.
     /// `new Array<T>(n).fill(v)` (`velt_sema` `array_ctor.rs`).
     array_filled => lang_hooks_array, "arrayFilled", sig(<A>(f64, &A) -> [A]);
     /// `new Array<T>(x).fill(v)` with an `x` that is no number.
@@ -183,7 +183,7 @@ hooks! {
     /// `Array.from({ length: n }, f)`.
     array_from_length => lang_hooks_array, "arrayFromLength", sig(<A, B>(i64, &Fn((i64) -> A throws B)) -> [A] throws B);
 
-    // number.vlt: numbers as text, and the conversions of a float index.
+    // number.velt: numbers as text, and the conversions of a float index.
     /// `n.toString(radix)` of a float (`velt_sema` `builtins.rs`).
     f64_to_string => lang_hooks_number, "f64ToString", sig((f64, f64) -> string);
     /// `n.toString(radix)` of a signed integer.
@@ -227,14 +227,14 @@ hooks! {
         replaces("velt_rt_strbuf_push_f64"), bench("float_to_string");
     /// `String(x)` of a float, all of it by std's printing (velt/lang/number/format): lowering
     /// calls it instead of `number_text` where its module is loaded (std/prelude/global/
-    /// number_float.vlt, for a program that converts an operand that may be a float).
+    /// number_float.velt, for a program that converts an operand that may be a float).
     float_text => lang_hooks_number_float, "floatText", sig((f64) -> string), lowered, fallback,
         replaces("velt_rt_str_from_f64"), bench("float_to_string");
     /// A float appended to a builder, as `float_text`.
     float_push => lang_hooks_number_float, "floatPush", sig((&mut string, f64) -> void), lowered, fallback,
         replaces("velt_rt_strbuf_push_f64"), bench("float_to_string");
 
-    // process.vlt: the builtin `process` namespace (`velt_sema` `process.rs`).
+    // process.velt: the builtin `process` namespace (`velt_sema` `process.rs`).
     /// `process.stdout.write(s)` / `process.stderr.write(s)`.
     process_write => lang_hooks_process, "processWrite", sig((u32, &string) -> bool);
     /// `process.env.NAME` / `process.env[name]`.
@@ -245,7 +245,7 @@ hooks! {
     /// replaces its calls by the runtime's (`async_fn/suspend.rs`).
     top_level_await_at => lang_hooks_process, "topLevelAwaitAt", sig((&string) -> void), lowered;
 
-    // syntax.vlt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
+    // syntax.velt: what the parser writes some syntax as (velt_syntax `ast_names.rs`).
     /// `value satisfies T`.
     satisfies => lang_hooks_syntax, "satisfies", sig(<A>(move A) -> A);
     /// A getter in an object literal.
@@ -255,7 +255,7 @@ hooks! {
     /// `{ [key]: value }` with a key known only at run time.
     computed_key => lang_hooks_syntax, "computedKey", sig(<A>(move string, move A) -> Record(string, A));
 
-    // adapt.vlt: interface adapters of `unknown[]` and `Map<unknown, unknown>` (`velt_sema`
+    // adapt.velt: interface adapters of `unknown[]` and `Map<unknown, unknown>` (`velt_sema`
     // `iface_adapt.rs`).
     /// The `unknown[]` copy of an array an adapter passes for an `unknown[]` parameter.
     unknown_array_in => lang_hooks_adapt, "unknownArrayIn", sig((&unknown) -> [unknown]);
@@ -266,7 +266,7 @@ hooks! {
     /// The entries of that copy written back into the map after the call.
     unknown_map_out => lang_hooks_adapt, "unknownMapOut", sig((&unknown, move Map(unknown, unknown)) -> void);
 
-    // any_text.vlt: the text of an `any` (`velt_sema` `any_text.rs`); lowering keeps one instance of
+    // any_text.velt: the text of an `any` (`velt_sema` `any_text.rs`); lowering keeps one instance of
     // each and passes the call site (`velt_vir` `track_caller.rs`).
     /// `String(v)` and `${v}` of an `any`: sema writes the dispatch over the program's classes.
     any_string => lang_hooks_any_text, "anyString", sig((&any, &string) -> string), lowered;
@@ -293,7 +293,7 @@ hooks! {
     /// `any_join` with the arrays being joined around it, so a cycle prints as empty text.
     any_join_seen => lang_hooks_any_text, "anyJoinSeen", sig((move any, &string, &mut [any], &string) -> string), lowered;
 
-    // any_object.vlt: `Object.*`, spreads, prototypes and `delete` of an `any`.
+    // any_object.velt: `Object.*`, spreads, prototypes and `delete` of an `any`.
     /// `{ ...o }` of an `any` in an object literal (`velt_sema` `record_literal.rs`).
     spread_any => lang_hooks_any_object, "spreadAny", sig((&mut Record(string, any), &any) -> void);
     /// `Object.hasOwn(o, k)` of an `any` (`velt_sema` `object_own.rs`).
@@ -323,15 +323,15 @@ hooks! {
     /// `Object.prototype.hasOwnProperty` as a value (`object_prototypes.rs`, `velt_vir` `any_proxy.rs`).
     has_own_property => lang_hooks_any_object, "HasOwnProperty", class, lowered;
 
-    // any_record.vlt: an `any` holding another object converted to a record (`velt_vir`
+    // any_record.velt: an `any` holding another object converted to a record (`velt_vir`
     // `any_to_record.rs`), loaded for a program that mentions `Record`
-    // (std/prelude/global/record_any.vlt).
+    // (std/prelude/global/record_any.velt).
     /// `x as Record<string, any>` of an `any` holding an object that is no such record: a copy.
     any_to_record_any => lang_hooks_any_record, "anyToRecordAny", sig((&any) -> Record(string, any)), lowered;
     /// `x as Record<string, V>` of such an `any`: `any_to_record_any`, each value a `V`.
     any_to_record => lang_hooks_any_record, "anyToRecord", sig(<A>(&any) -> Record(string, A)), lowered;
 
-    // any_ops.vlt: operators on `any` values holding objects (`ToPrimitive` first).
+    // any_ops.velt: operators on `any` values holding objects (`ToPrimitive` first).
     /// `ToPrimitive(v, hint)` of an `any` holding an object or a function.
     any_primitive => lang_hooks_any_ops, "anyPrimitive", sig((&any, &string, &string) -> any), lowered;
     /// `ToPrimitive(v, hint)` of an object no class method of the program answers (`any_prim.rs`).
@@ -349,7 +349,7 @@ hooks! {
     /// `a == b` of an object and a primitive (`velt_vir` `any_eq.rs`).
     any_loose_eq => lang_hooks_any_ops, "anyLooseEq", sig((&any, &any, &string) -> bool), lowered;
 
-    // class_object.vlt: classes as values, and `x.constructor` of an `any`.
+    // class_object.velt: classes as values, and `x.constructor` of an `any`.
     /// The rest element type of a class object's function type, read by `velt_vir` `glue/format.rs`.
     class_marker => lang_hooks_class_object, "ClassMarker", class, lowered;
     /// A class used as a value (`velt_sema` `ctor_objects.rs`; printed by `glue/format.rs`).
@@ -367,13 +367,13 @@ hooks! {
     /// `v.constructor` of an instance of a std class JavaScript doesn't name: an error.
     any_ctor_unsupported => lang_hooks_class_object, "anyCtorUnsupported", sig((&string) -> any);
 
-    // tuple_elements.vlt: a tuple's array methods that call back (`velt_sema` `tuple_text.rs`).
+    // tuple_elements.velt: a tuple's array methods that call back (`velt_sema` `tuple_text.rs`).
     /// The elements of one tuple, read when a method reaches them.
     tuple_elements_class => lang_hooks_tuple_elements, "TupleElements", class;
     /// `TupleElements` of a tuple: an array of its elements for their type, and how to read one.
     tuple_elements => lang_hooks_tuple_elements, "tupleElements", sig(<A>(&[A], move Fn((i64) -> A)) -> TupleElements(A));
 
-    // array_view.vlt: an `any` holding an array viewed as `T[]` (`velt_vir` `array_view.rs`).
+    // array_view.velt: an `any` holding an array viewed as `T[]` (`velt_vir` `array_view.rs`).
     /// One view's state: the original array and the mirror of its elements as `T`.
     array_view => lang_hooks_array_view, "ArrayView", class, lowered;
     /// A view of the array an `any` holds, as a `T[]`.
@@ -396,7 +396,7 @@ hooks! {
     array_view_sort => lang_hooks_array_view, "arrayViewSort", sig(<A, B>(&mut ArrayView(A), &Fn((A, A) -> B), &Fn((B) -> bool)) -> void), lowered;
 
 
-    // record.vlt: `k in r` for a key known only at run time, and `===` on prototypes.
+    // record.velt: `k in r` for a key known only at run time, and `===` on prototypes.
     /// `a === b` on prototypes (`velt_sema` `object_prototypes.rs`).
     prototype_same => lang_hooks_record, "prototypeSame", sig((&or_null(ObjectPrototype), &or_null(ObjectPrototype)) -> bool);
     /// `key in p` of a prototype for a key known only at run time (`velt_sema` `in_keys.rs`).
@@ -405,27 +405,27 @@ hooks! {
     record_in => lang_hooks_record, "recordIn", sig(<A>(&string, &Record(string, A)) -> bool);
     /// `record_in` in a program that calls `Object.create(null)`.
     record_in_maybe_null_proto => lang_hooks_record, "recordInMaybeNullProto", sig(<A>(&string, &Record(string, A)) -> bool);
-    // error.vlt: the first line of the report of an uncaught error (`velt_vir` `entry.rs`).
+    // error.velt: the first line of the report of an uncaught error (`velt_vir` `entry.rs`).
     /// The first line of Node's report of an uncaught error (`E [TypeError]: m`).
     uncaught_header => lang_hooks_error, "uncaughtHeader", sig((&Error, &string) -> string), lowered;
 
-    // string.vlt: the characters a `for...of` over a string iterates.
+    // string.velt: the characters a `for...of` over a string iterates.
     /// The code points `for (const c of s)` iterates (`velt_sema` `loops.rs`).
     string_code_points => lang_hooks_string, "stringCodePoints", sig((&string) -> [string]);
 
-    // iter.vlt, async_iter.vlt: iterable object literals.
+    // iter.velt, async_iter.velt: iterable object literals.
     /// `{ async *[Symbol.asyncIterator]() { … } }` (`velt_sema` `object_method.rs`).
     async_iterable_object => lang_hooks_async_iter, "AsyncIterableObject", class;
     /// `{ *[Symbol.iterator]() { … } }` (`velt_sema` `object_method.rs`).
     iterable_object => lang_hooks_iter, "IterableObject", class;
 
-    // json.vlt: `JSON.parse(text) as T`, loaded with the global `JSON`
-    // (std/prelude/global/json.vlt).
+    // json.velt: `JSON.parse(text) as T`, loaded with the global `JSON`
+    // (std/prelude/global/json.velt).
     /// `JSON.parse(text)` with its type from the context (`velt_sema` `static_call.rs`).
     json_parse_from_context => lang_hooks_json, "jsonParseFromContext", sig(<A>(&string, &or_null(object("{ unknownKeys?: \"ignore\" | \"reject\", maxDepth?: i64, comments?: \"error\" | \"skip\", trailingCommas?: boolean }"))) -> A throws JsonError);
 
-    // proxy.vlt: the operations on `any` that ask a proxy, used once a program has loaded `Proxy`
-    // (std/prelude/global/proxy.vlt).
+    // proxy.velt: the operations on `any` that ask a proxy, used once a program has loaded `Proxy`
+    // (std/prelude/global/proxy.velt).
     /// `delete o.k` / `delete o[k]` of an `any`: a proxy's `deleteProperty` trap (`proxy.rs`).
     any_delete_proxy => lang_hooks_proxy, "anyDeleteProxy", sig((&any, move any) -> bool);
     /// `delete o[KEY]` of an `any` with a symbol constant `KEY` (`velt_sema` `proxy.rs`).
@@ -476,7 +476,7 @@ hooks! {
     spread_any_proxy => lang_hooks_proxy, "spreadAnyProxy", sig((&mut Record(string, any), move any) -> void);
 
     // Outside lang/hooks, defined where what they need is (none is exported to programs):
-    // lang/proxy/array.vlt: an array method read through a proxy.
+    // lang/proxy/array.velt: an array method read through a proxy.
     /// An array method read through a proxy or `Array.prototype` (`velt_vir` `any_proxy.rs`).
     array_method => lang_proxy_array, "ArrayMethod", class, lowered;
     /// `Array.prototype[key]` read through `any` (`velt_vir` `any_get_body`).
@@ -490,13 +490,13 @@ hooks! {
     /// A function value whose `this` is bound at the call (`this_fn_expr.rs`, `velt_vir` `this_fn.rs`).
     this_fn => lang_this_fn, "ThisFn", class, lowered;
 
-    // collections/set.vlt: the adapter of `Set<unknown>` (not exported).
+    // collections/set.velt: the adapter of `Set<unknown>` (not exported).
     /// The `Set<unknown>` copy of a set an interface adapter passes (`velt_sema` `iface_adapt.rs`).
     unknown_set_in => collections_set, "unknownSetIn", sig((&unknown) -> Set(unknown));
     /// The elements of that copy written back into the set after the call.
     unknown_set_out => collections_set, "unknownSetOut", sig((&unknown, &Set(unknown)) -> void);
 
-    // text/regex/string_methods.vlt: the string methods called with a `RegExp` (`velt_sema`
+    // text/regex/string_methods.velt: the string methods called with a `RegExp` (`velt_sema`
     // `regex_args.rs`), loaded with `RegExp`.
     /// `s.replace(re, replacement)`.
     replace_reg_exp => text_regex_string_methods, "replaceRegExp", sig((&string, &RegExp, &string) -> string);
@@ -515,7 +515,7 @@ hooks! {
     /// `s.split(re, limit)`.
     split_reg_exp => text_regex_string_methods, "splitRegExp", sig((&string, &RegExp, or_undefined(f64)) -> [string]);
 
-    // test/registry.vlt, test/run.vlt: what `velt test`'s generated `main` calls (veltc
+    // test/registry.velt, test/run.velt: what `velt test`'s generated `main` calls (veltc
     // `commands/test/harness.rs`; the loader lets only the harness import these files).
     /// Starts the registrations of the next test file.
     register_file => test_registry, "registerFile", sig((i64) -> void);
@@ -527,36 +527,36 @@ hooks! {
     run_registered => test_run, "runRegistered", sig(() -> void throws union(IoError, JsonError));
 
     // The record a JSON decoder generated by velt/encoding/json makes of a map
-    // (std/encoding/json/generated.vlt imports it for the code it generates).
+    // (std/encoding/json/generated.velt imports it for the code it generates).
     /// A record of a map's entries in its order (code generated by velt/encoding/json).
     record_from_map => lang_hooks_record, "recordFromMap", sig(<A, B>(move Map(A, B)) -> Record(A, B));
     // The map of a record's entries the comparisons velt/lang/equal generates compare
-    // (std/lang/equal/generated.vlt imports it for the code it generates).
+    // (std/lang/equal/generated.velt imports it for the code it generates).
     /// The map of a record's string-keyed entries (code generated by velt/lang/equal).
     record_entries_of => lang_hooks_record, "recordEntriesOf", sig(<A, B>(&Record(A, B)) -> Map(A, B));
 
-    // lang/typed_array/buffer_view.vlt: the bytes of a typed array.
+    // lang/typed_array/buffer_view.velt: the bytes of a typed array.
     /// The bytes a typed array or `DataView` passed to a system function views (`system_views.rs`).
     view_bytes => lang_typed_array_buffer_view, "viewBytes", sig((&BufferView) -> usize), lowered;
 
-    // ffi/ptr.vlt: a `Ptr` from and to a C function (velt_vir's lower/c_call.rs).
+    // ffi/ptr.velt: a `Ptr` from and to a C function (velt_vir's lower/c_call.rs).
     ffi_ptr_of => ffi_ptr, "ptrOf", sig(<A>(usize) -> Ptr(A)), lowered;
     ffi_ptr_or_null => ffi_ptr, "ptrOrNull", sig(<A>(usize) -> or_null(Ptr(A))), lowered;
     ffi_ptr_address => ffi_ptr, "ptrAddress", sig(<A>(&Ptr(A)) -> usize), lowered;
     ffi_ptr_address_or_zero => ffi_ptr, "ptrAddressOrZero", sig(<A>(&or_null(Ptr(A))) -> usize), lowered;
-    // ffi/str_bytes.vlt: the string whose bytes a `StrBytes` argument passes.
+    // ffi/str_bytes.velt: the string whose bytes a `StrBytes` argument passes.
     ffi_str_bytes_of => ffi_str_bytes, "strBytesOf", sig((move string) -> string), lowered;
-    // ffi/c_string.vlt: the bytes a `CString` argument passes.
+    // ffi/c_string.velt: the bytes a `CString` argument passes.
     ffi_c_string_bytes => ffi_c_string, "cStringBytes", sig((&CString) -> [u8]), lowered;
 
-    // host/host_ref.vlt: a `HostRef` from and to a host function (velt_vir's lower/host.rs).
+    // host/host_ref.velt: a `HostRef` from and to a host function (velt_vir's lower/host.rs).
     /// The `HostRef` of the slot a host function returned.
     host_ref_of => host_host_ref, "hostRefOf", sig((u32) -> HostRef), lowered;
     /// The `HostRef` of a returned slot, or `null` for 0.
     host_ref_or_null => host_host_ref, "hostRefOrNull", sig((u32) -> or_null(HostRef)), lowered;
     /// The slot of a `HostRef` (0 for `null`) passed to a host function.
     host_ref_handle => host_host_ref, "hostRefHandle", sig((&or_null(HostRef)) -> u32), lowered;
-    // host/promise.vlt: the promise of an async host function's call (velt_vir's lower/host.rs).
+    // host/promise.velt: the promise of an async host function's call (velt_vir's lower/host.rs).
     /// How a host promise settled, as the JS glue writes it.
     host_settled => host_promise, "HostSettled", class, lowered;
     /// The value a host promise fulfills with; an `IoError` when it rejects.
@@ -569,12 +569,12 @@ hooks! {
     host_await_ref_or_null => host_promise, "hostAwaitRefOrNull", sig((move Promise(HostSettled(u32), never)) -> or_null(HostRef) throws IoError), lowered;
 }
 
-/// One key of a std method the compiler calls: a symbol constant of std/lang/hooks/keys.vlt.
+/// One key of a std method the compiler calls: a symbol constant of std/lang/hooks/keys.velt.
 #[derive(Clone, Copy, Debug)]
 pub struct Key {
     /// The entry's name (`map_cursor`).
     pub name: &'static str,
-    /// The constant in std/lang/hooks/keys.vlt (`MAP_CURSOR`).
+    /// The constant in std/lang/hooks/keys.velt (`MAP_CURSOR`).
     pub constant: &'static str,
     /// The symbol's description (`mapCursor`), or its registry key for a registered one.
     pub description: &'static str,

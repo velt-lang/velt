@@ -61,7 +61,7 @@ mod tests {
 
     fn program() -> Program {
         let opts = BuildOptions {
-            input: "main.vlt".into(),
+            input: "main.velt".into(),
             root_source: Some("function main() {\n  console.log(\"hi\");\n}\n".into()),
             ..Default::default()
         };

@@ -1,6 +1,6 @@
 //! Debug info: the LLVM IR of a debug build (and of `--release -g`) carries `!dbg` metadata
-//! pointing into the `.vlt` sources; a plain `--release` build carries none. With clang
-//! installed, a `-g` release executable resolves addresses to `.vlt` file:line (PDB on
+//! pointing into the `.velt` sources; a plain `--release` build carries none. With clang
+//! installed, a `-g` release executable resolves addresses to `.velt` file:line (PDB on
 //! Windows, DWARF elsewhere), checked with `llvm-symbolizer` when it sits next to clang.
 
 use std::path::{Path, PathBuf};
@@ -20,7 +20,7 @@ fn emit_llvm(args: &[&str]) -> String {
     let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["build", "--emit", "llvm"])
         .args(args)
-        .arg("tests/golden/lang/panic_div.vlt")
+        .arg("tests/golden/lang/panic_div.velt")
         .current_dir(root())
         .output()
         .expect("run velt");
@@ -34,7 +34,7 @@ fn llvm_ir_has_debug_metadata_unless_plain_release() {
         let ir = emit_llvm(args);
         assert!(ir.contains("!llvm.dbg.cu"), "{args:?}");
         assert!(
-            ir.contains("filename: \"tests/golden/lang/panic_div.vlt\""),
+            ir.contains("filename: \"tests/golden/lang/panic_div.velt\""),
             "{args:?}"
         );
         assert!(ir.contains("!DISubprogram(name: \"velt_main\""), "{args:?}");
@@ -72,7 +72,7 @@ fn g_release_binary_maps_addresses_to_velt_lines() {
     let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["build", "--release", "-g", "--backend", "llvm", "-o"])
         .arg(&out)
-        .arg("tests/golden/lang/panic_div.vlt")
+        .arg("tests/golden/lang/panic_div.velt")
         .current_dir(&root)
         .output()
         .expect("run velt");
@@ -102,7 +102,7 @@ fn g_release_binary_maps_addresses_to_velt_lines() {
         .expect("run llvm-symbolizer");
     let text = String::from_utf8_lossy(&s.stdout).replace('\\', "/");
     assert!(
-        text.contains("tests/golden/lang/panic_div.vlt:"),
-        "no .vlt line info:\n{text}"
+        text.contains("tests/golden/lang/panic_div.velt:"),
+        "no .velt line info:\n{text}"
     );
 }

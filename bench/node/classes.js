@@ -1,4 +1,4 @@
-// Dynamic dispatch (same workload as classes.vlt).
+// Dynamic dispatch (same workload as classes.velt).
 class Shape {
   constructor(id) {
     this.id = id;

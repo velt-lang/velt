@@ -6,15 +6,15 @@ the answers, and know nothing about how a registry is built, so every host is he
 behaviour.
 
 ```sh
-velt run src/main.vlt <url> --alice <token> --bob <token>   # a registry with users alice and bob
-velt run src/main.vlt <url> --open                          # a registry without users
+velt run src/main.velt <url> --alice <token> --bob <token>   # a registry with users alice and bob
+velt run src/main.velt <url> --open                          # a registry without users
 ```
 
 A run publishes packages named `conf-<id>-…` and leaves them there, so it needs no empty registry.
 It exits 1 and lists every failed check when a case fails.
 
 `crates/veltc/tests/registry_conformance.rs` runs the suite over HTTP against `velt registry serve`,
-and `tests/memory.test.vlt` runs it against registry-core's `Registry.handle` over in-memory stores.
+and `tests/memory.test.velt` runs it against registry-core's `Registry.handle` over in-memory stores.
 
 **Not covered:**
 

@@ -1,5 +1,5 @@
 //! A task's gate: lets a timer's callback, which runs on a task of its own, wait until the task
-//! that created the timer has finished the poll it is in (`std/prelude/timers.vlt`). That poll
+//! that created the timer has finished the poll it is in (`std/prelude/timers.velt`). That poll
 //! ends with the task's microtask queue drained (micro.rs), so a `setTimeout` callback never runs
 //! before the callbacks queued before it fired, as in Node, where timers run only once the
 //! microtask queue is empty.

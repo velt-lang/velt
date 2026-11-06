@@ -48,7 +48,7 @@ pub(super) fn run(
             continue;
         };
         // Absolute: the host's root is put beside it, and the caches key hosts by that root, so
-        // two projects' `main.vlt` run from their own directories never share a host.
+        // two projects' `main.velt` run from their own directories never share a host.
         let decl_path = vpm::relpath::absolute(&sess.sm.get(decl.file).path);
         let Some((file, dir, spec)) = locate_generator(&decl_path, &f.generator, packages) else {
             let msg = format!("cannot find the generator module `{}`", f.generator);
@@ -417,7 +417,7 @@ fn run_host(
         instance,
         at,
     } = failing;
-    let host_root = plan.dir.join("__velt_generate_host.vlt");
+    let host_root = plan.dir.join("__velt_generate_host.velt");
     // The key leaves out the marker, which is new for every run.
     let key = cache::output_key(&host_root, src, &input.to_string());
     if let Some((entry, files)) = key.as_ref().and_then(cache::cached_output) {

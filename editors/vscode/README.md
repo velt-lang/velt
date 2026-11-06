@@ -1,6 +1,6 @@
 # Velt for Visual Studio Code
 
-Language support for Velt (`.vlt` files; see the [language reference](https://veltlang.com/docs/reference/)):
+Language support for Velt (`.velt` files; see the [language reference](https://veltlang.com/docs/reference/)):
 
 - Syntax highlighting (keywords, types, strings, template literals with `${}` substitutions,
   numbers with type suffixes such as `10u8` / `1.5f32`, comments).
@@ -28,7 +28,7 @@ Language support for Velt (`.vlt` files; see the [language reference](https://ve
     `let` bindings carry the `mutable` modifier (to underline them, add
     `"editor.semanticTokenColorCustomizations": { "rules": { "*.mutable:velt": { "underline": true } } }`);
   - **▶ Run | Debug** above `main`, and **▶ Run test | Debug test** above each test.
-- Debugging (F5): breakpoints in `.vlt` files, stepping and the call stack, with nothing to
+- Debugging (F5): breakpoints in `.velt` files, stepping and the call stack, with nothing to
   configure. See [Debugging](#debugging).
 
 ## Requirements
@@ -48,7 +48,7 @@ elsewhere, point the `velt.serverPath` setting at it. Other options:
 
 Install a debugger extension: [CodeLLDB](https://marketplace.visualstudio.com/items?itemName=vadimcn.vscode-lldb)
 (recommended; it includes LLDB), LLDB DAP, or Microsoft's C/C++. Then press **F5** in a package
-(a folder with `package.vlt`) or on an open `.vlt` file: the extension runs `velt build --json`,
+(a folder with `package.velt`) or on an open `.velt` file: the extension runs `velt build --json`,
 shows build errors in *Problems*, and starts the debugger on the program. No `launch.json` is
 needed; **Velt: Generate launch.json** (or `velt init --editor vscode`) writes one to customize
 (`args`, `env`, `cwd`, `program`, `file`, `build`, `buildArgs`, `stopOnEntry`):

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Instruction counts (cachegrind, Linux) of regex programs built by the two trees that
 # bench/compare_refs.sh exported into WORK_DIR ({base,head}, compilers in target-{base,head}):
-# regex-redux on the output of `fasta 100000`, and bench/regex/literal.vlt (a loop of
+# regex-redux on the output of `fasta 100000`, and bench/regex/literal.velt (a loop of
 # literal-pattern replace/test/split calls through the RegExp API). Run compare_refs.sh first:
 #
 #   bench/compare_refs.sh BASE_REF HEAD_REF WORK_DIR
@@ -17,12 +17,12 @@ WORK=$(cd "$1" && pwd)
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=$WORK/regex
 mkdir -p "$OUT"
-cp "$HERE/literal.vlt" "$OUT/literal.vlt"
+cp "$HERE/literal.velt" "$OUT/literal.velt"
 for side in base head; do
   velt="$WORK/target-$side/release/velt"
-  (cd "$WORK/$side" && "$velt" build --release bench/benchmarks-game/fasta/main.vlt -o "$OUT/fasta-$side" >/dev/null)
-  (cd "$WORK/$side" && "$velt" build --release bench/benchmarks-game/regex-redux/main.vlt -o "$OUT/redux-$side" >/dev/null)
-  (cd "$WORK/$side" && "$velt" build --release "$OUT/literal.vlt" -o "$OUT/literal-$side" >/dev/null)
+  (cd "$WORK/$side" && "$velt" build --release bench/benchmarks-game/fasta/main.velt -o "$OUT/fasta-$side" >/dev/null)
+  (cd "$WORK/$side" && "$velt" build --release bench/benchmarks-game/regex-redux/main.velt -o "$OUT/redux-$side" >/dev/null)
+  (cd "$WORK/$side" && "$velt" build --release "$OUT/literal.velt" -o "$OUT/literal-$side" >/dev/null)
 done
 "$OUT/fasta-base" 100000 > "$OUT/fasta.txt"
 count() {

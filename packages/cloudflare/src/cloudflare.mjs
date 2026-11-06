@@ -1,11 +1,11 @@
-// The host module `cloudflare` (its functions are declared in src/host.vlt): Cloudflare's
+// The host module `cloudflare` (its functions are declared in src/host.velt): Cloudflare's
 // bindings, looked up by name on the Worker's `env` (`host.env`, the context host-cloudflare's
 // entry passes) each time a function is called, so a wrapper never holds an object of another
 // request's.
 //
 // What crosses (docs/internals/contracts/workers.md in the Velt repository): strings, bytes,
 // numbers and `HostRef`s. Metadata and options cross as JSON text; D1's parameters and rows as
-// the frames of src/frame_writer.vlt (`writeValue` and `readValue` below are their JavaScript side). An
+// the frames of src/frame_writer.velt (`writeValue` and `readValue` below are their JavaScript side). An
 // async function rejects with an error whose `name` becomes the `IoError`'s code. A synchronous
 // one never throws (a throw would end the program's instance): it records the failure, which
 // `failure()` hands over, and returns an empty result.
@@ -20,7 +20,7 @@ function named(name, message) {
   return e;
 }
 
-/** The value tags of a frame (src/frame_writer.vlt). */
+/** The value tags of a frame (src/frame_writer.velt). */
 const NULL = 0, INT = 1, FLOAT = 2, TEXT = 3, BLOB = 4, BOOL = 5, JSON_TEXT = 6;
 
 /** Bytes appended little-endian, growing as needed. */
@@ -58,7 +58,7 @@ class Writer {
   }
 }
 
-/** Reads what a `Writer` (or src/frame_writer.vlt's `FrameWriter`) wrote. */
+/** Reads what a `Writer` (or src/frame_writer.velt's `FrameWriter`) wrote. */
 class Reader {
   constructor(bytes) {
     this.bytes = bytes;
@@ -117,7 +117,7 @@ function writeValue(w, v) {
   }
 }
 
-/** A parameter of a D1 statement, as src/frame_writer.vlt's `FrameWriter` wrote it. */
+/** A parameter of a D1 statement, as src/frame_writer.velt's `FrameWriter` wrote it. */
 function readValue(r) {
   const tag = r.u8();
   switch (tag) {
@@ -171,7 +171,7 @@ function writeResult(w, meta, rows) {
   for (const row of rows) for (const c of columns) writeValue(w, row[c]);
 }
 
-/** An R2 object's metadata as src/r2_object.vlt reads it. */
+/** An R2 object's metadata as src/r2_object.velt reads it. */
 function r2Info(o) {
   const h = o.httpMetadata ?? {};
   // Absent fields stay out (the struct's fields are optional).

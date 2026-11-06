@@ -1,0 +1,4 @@
+import { addName } from "./names";
+// `names.velt` imports this module, so this one is evaluated first: `names` is not initialized
+// yet when `addName` runs.
+export let first = "a" + addName("a");

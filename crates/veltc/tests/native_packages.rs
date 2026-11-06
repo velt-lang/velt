@@ -199,7 +199,7 @@ fn sqlite_package_with_native_code() {
     let mut manifest = vpm::Manifest::from_dir(&lib).unwrap();
     manifest.registry = Some(url.clone());
     manifest.native.as_mut().unwrap().targets = vec![host.to_string()];
-    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).unwrap();
+    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_velt()).unwrap();
     let home_a = tmp.path().join("author");
     let artifacts_arg = artifacts.to_string_lossy().into_owned();
     let published = velt(
@@ -220,7 +220,7 @@ fn sqlite_package_with_native_code() {
     let app = tmp.path().join("app");
     let mut manifest = vpm::Manifest::from_dir(&app).unwrap();
     manifest.registry = Some(url.clone());
-    std::fs::write(app.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).unwrap();
+    std::fs::write(app.join(vpm::manifest::MANIFEST_FILE), manifest.to_velt()).unwrap();
     // Not allowed yet: `velt add` names the line, and adds once it's there.
     let refused = velt(&app, &home, &["add", "sqlite"]);
     let text = String::from_utf8_lossy(&refused.stderr);
@@ -232,7 +232,7 @@ fn sqlite_package_with_native_code() {
     );
     let mut manifest = vpm::Manifest::from_dir(&app).unwrap();
     manifest.allow_native = vec!["sqlite".into()];
-    std::fs::write(app.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).unwrap();
+    std::fs::write(app.join(vpm::manifest::MANIFEST_FILE), manifest.to_velt()).unwrap();
     let added = ok(velt(&app, &home, &["add", "sqlite"]), "velt add");
     let text = String::from_utf8_lossy(&added.stderr);
     assert!(
@@ -243,7 +243,7 @@ fn sqlite_package_with_native_code() {
     assert!(lock.contains(&format!("\"{host}\": \"sha256:")), "{lock}");
 
     // Debug build: linked against the shared library.
-    std::fs::write(app.join("src/main.vlt"), PROGRAM).unwrap();
+    std::fs::write(app.join("src/main.velt"), PROGRAM).unwrap();
     let run = ok(velt(&app, &home, &["run"]), "velt run");
     assert_eq!(String::from_utf8_lossy(&run.stdout), EXPECTED);
 
@@ -275,7 +275,7 @@ fn sqlite_package_with_native_code() {
     copy_dir(&repo().join("packages/http-server"), &http);
     let mut manifest = vpm::Manifest::from_dir(&http).unwrap();
     manifest.registry = Some(url.clone());
-    std::fs::write(http.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).unwrap();
+    std::fs::write(http.join(vpm::manifest::MANIFEST_FILE), manifest.to_velt()).unwrap();
     ok(
         velt(&http, &home_a, &["publish"]),
         "velt publish http-server",
@@ -287,7 +287,7 @@ fn sqlite_package_with_native_code() {
 
     // `velt dev`: the JIT host loads the library; a Velt edit hot-swaps and the database the
     // program opened before the swap is still there.
-    std::fs::write(app.join("main.vlt"), server("v1")).unwrap();
+    std::fs::write(app.join("main.velt"), server("v1")).unwrap();
     let dev = DevIn::start(&app, &home);
     dev.0
         .wait_stderr(Mark::default(), "velt dev: started")
@@ -296,7 +296,7 @@ fn sqlite_package_with_native_code() {
     assert_eq!(get(port, "/").unwrap(), "v1 1");
     assert_eq!(get(port, "/").unwrap(), "v1 2");
     let mark = dev.0.mark();
-    std::fs::write(app.join("main.vlt"), server("v2")).unwrap();
+    std::fs::write(app.join("main.velt"), server("v2")).unwrap();
     // The swap that took the edit in: it compiled changed functions. A reload that started
     // before the edit was saved (e.g. one more after the first build) reports
     // `hot-swapped 0 functions` and leaves `v1` running.
@@ -311,7 +311,7 @@ fn sqlite_package_with_native_code() {
     drop(served);
 }
 
-/// `velt dev main.vlt` in the app, with the user's home and no cargo.
+/// `velt dev main.velt` in the app, with the user's home and no cargo.
 struct DevIn(Dev);
 
 impl DevIn {

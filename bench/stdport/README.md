@@ -1,6 +1,6 @@
 # Standard-library components against the Rust crate for the same job
 
-Each `<name>.vlt` exercises one part of the standard library, and `rust/src/bin/<name>.rs` is the
+Each `<name>.velt` exercises one part of the standard library, and `rust/src/bin/<name>.rs` is the
 same program on the crate the runtime uses for it today (`itoa`, `ryu`, `url`, `dashu-int`), or,
 where the standard library is already Velt code (`velt/crypto`, `velt/encoding`), on the crate a
 Rust program would use (`sha2`, `base64`). Both print the same output; the harness fails

@@ -141,7 +141,7 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   `Intrinsic::PromiseAny` (`firstFulfilled`, same signature: the first to fulfill, or
   the last rejection). `Promise.allSettled(ps)` and
   `Promise.any(ps)` are `Call { Def(promiseAllSettled / promiseAny, [T]) }` of the prelude's
-  async functions (std/prelude/promise.vlt), so a directly awaited `Promise.any` throws its
+  async functions (std/prelude/promise.velt), so a directly awaited `Promise.any` throws its
   `AggregateError` like any async call. `new Promise<T, E>(arrow)` is a `Call` of the prelude's
   `promiseNew` (or `promiseNewResolveOnly`) with two more arguments: the compiler-internal
   `Intrinsic::SourceLocation` (no arguments; lowered to the `"path:line:col"` string of its
@@ -160,7 +160,7 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
 - std wraps rt I/O with `declare async function` externs (`ExternFnDef::is_async`); rt results
   use `IoResult` layout = Velt `struct { code: i32; message: string; value: T }`.
 
-- The prelude (`std/prelude/*.vlt`) is ordinary Velt code; methods in `extend` blocks are
+- The prelude (`std/prelude/*.velt`) is ordinary Velt code; methods in `extend` blocks are
   `Def::Fn`s whose `self_ty` is the extended (possibly builtin) type.
 - `Intrinsic::HoldsNull` (`holdsNull(probe)`, std only) is a constant per
   instantiation: whether the probe's type is an option once substituted, so that a generic
@@ -169,7 +169,7 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
   is a run-time internal error). Lowering evaluates a condition built from `HoldsNull` with `!`,
   `&&` and `||` itself (`const_cond`): an `if` lowers only the branch taken and `&&` / `||` only
   the operand that decides, so the code of an instantiation for which the test is false is the
-  code without it (std/prelude/map.vlt: a `Map` whose `V` excludes null keeps its VIR).
+  code without it (std/prelude/map.velt: a `Map` whose `V` excludes null keeps its VIR).
 - Type predicates on a type parameter (issue #1251): `if (g(x)) A else B`, where `g` is a type
   predicate `v is P` whose `P` has only primitive members and `x` has the type of a type
   parameter `T`, has the condition `Logical { And, g(x), Call { Intrinsic(MayHoldPrimitive),
@@ -447,7 +447,7 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
   member (`V(m) => <m as T>`); re-tagging into a wider union may convert members the same way.
 - `Print`/`PrintErr`/`ToString` of a union format the active member (top-level
   style for `console.log` args: a string member prints raw). `JSON.parse` into a union
-  picks the member by the JSON value (velt/encoding/json/generate/read_union.vlt); its
+  picks the member by the JSON value (velt/encoding/json/generate/read_union.velt); its
   generator rejects unions whose members it cannot tell apart.
 - Clone/drop/eq/hash glue is the ordinary enum glue.
 
@@ -595,19 +595,19 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
   class's own `clone()` (no params, returns the class) is what a deep copy of it calls.
   `Intrinsic::Transfer(value)` (written in std only, value owned, result owned, same type): the
   value made safe for another thread like a `spawn` argument — moved where nothing else
-  references it, deep-copied where it is still shared (std/prelude/promise.vlt settles promises
+  references it, deep-copied where it is still shared (std/prelude/promise.velt settles promises
   with it; sema wraps the values a `Mutex.with` callback stores across the lock in it,
   velt_sema ownership/locked).
   `Intrinsic::NeedsTransfer(value)` (std only, value borrowed and not read): a constant `bool`,
   whether `Transfer` of a value of that type has anything to do (it can reach a counted object).
 - `Intrinsic::ArrayMove(dst, d, src, s, n)` and `Intrinsic::ArraySetLen(xs, len)` (std only,
-  std/lang/sort/stable.vlt): the bits of `src[s..s + n)` copied into `dst[d..d + n)` of a different
+  std/lang/sort/stable.velt): the bits of `src[s..s + n)` copied into `dst[d..d + n)` of a different
   array (both ranges bounds-checked; nothing dropped, nothing shared), and a length change that
   neither drops nor initializes (growing the capacity when it is smaller). They bypass
   ownership: the std code keeps every element owned by exactly one array, cuts stale copies off
   before an array is dropped, and keeps the elements out of any array a callback could reach
   through an alias while it runs.
-  `Intrinsic::ArrayCopyBytes(dst, d, src, s, n)` (std only, std/half/bytes.vlt): the bytes
+  `Intrinsic::ArrayCopyBytes(dst, d, src, s, n)` (std only, std/half/bytes.velt): the bytes
   `src[s..s + n * size(T))` of a `u8[]` copied as the bits of `dst[d..d + n)`, a different array
   whose element type is a number type or `bool` (both ranges bounds-checked; one memcpy, in the
   target's byte order). Sema rejects any other concrete element type; a generic instance whose
@@ -1233,7 +1233,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `R | null` rest.
 
 ## any and unknown (issue #924, phase 1a)
-- `any` and `unknown` are interfaces of the prelude (`std/prelude/dynamic.vlt`), so their type is
+- `any` and `unknown` are interfaces of the prelude (`std/prelude/dynamic.velt`), so their type is
   `TyKind::Dyn(any | unknown, [])`: an interface value `{ data, vtable }`. Sema adds one
   implementation for every type, `ImplDef { ty: Param(0), generics: 1, iface: any, methods: [] }`,
   whose index is `Program::any_impl` (`Program::unknown` names the `unknown` interface). Converting a value to either type is `ToDyn` with that
@@ -1333,7 +1333,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   them the tables and the VIR are unchanged. The `AnyCall` slot of a string, an array, a number
   or a boolean dispatches by name to the hook `anyStr_<name>(s, args)`,
   `anyArr_<name><T>(a, args)`, `anyNum_<name>(n, args)` and `anyBool_<name>(b, args)`
-  (std/lang/hooks/any_methods.vlt; the arguments packed into an `any[]`, the result an `any`),
+  (std/lang/hooks/any_methods.velt; the arguments packed into an `any[]`, the result an `any`),
   comparing only the names the program calls through `any` (`Boxing::any_call_keys`); another
   JavaScript built-in of that kind gives 1, any other name 2.
 - Member writes (phase 1b of #924): `x.f = v` / `x["f"] = v` / `x[k] = v` with a `string` or
@@ -1384,9 +1384,9 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `lower/json/any.rs`; present only when the program writes one), after testing the tag for
   `undefined`, a function or a symbol (left out as a member, `null` as an element, a
   `TypeError` at the top).
-- Proxy and Reflect (#823): the `Proxy` class (std/lang/proxy/index.vlt; `#target: any`, `#handler:
+- Proxy and Reflect (#823): the `Proxy` class (std/lang/proxy/index.velt; `#target: any`, `#handler:
   ProxyHandler<any>`) and `Reflect` (static methods), globals that a program loads when a module
-  names one of them (std/prelude/global/proxy.vlt); a program that doesn't has no proxies, and
+  names one of them (std/prelude/global/proxy.velt); a program that doesn't has no proxies, and
   sema calls the prelude's helpers below, which don't test for one. Sema converts `new
   Proxy(...)` (written outside the standard library; type arguments dropped) to `any` at once
   (`ToDyn`); `AnyTo` converts it to a typed value like any other `any`. The member slots of the
@@ -1402,7 +1402,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   called instead once `Proxy` is loaded) run a proxy's traps in Node's order. With a symbol constant as
   the key, `o[KEY]`, `o[KEY] = v`, `KEY in o`, `delete o[KEY]` and `Object.hasOwn(o, KEY)` of
   an `any` in a program that has loaded `Proxy` are calls of `anyGetSym` / `anySetSym` / `anyHasSym` /
-  `anyDeleteSym` / `anyHasOwnSym(o, name, KEY)` (std/lang/hooks/proxy.vlt), which
+  `anyDeleteSym` / `anyHasOwnSym(o, name, KEY)` (std/lang/hooks/proxy.velt), which
   pass the symbol to a proxy and use the member name `name` on other values; `new Proxy(t, h)`
   with an `h` typed `any` is `proxyNewAny(t, h)`. In a program whose own code has a `new
   Proxy`, `Object.keys(x)` of a class instance or object `x` is `IsTypedProxy(x) ?
@@ -1416,7 +1416,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   named `Proxy` is its own) and numbers them last among class ids, so programs without them
   keep theirs.
 - Traps that throw (#1174, stage 1): the function types of `ProxyHandler`'s traps
-  (std/lang/proxy/index.vlt) are sites like the function types a user module writes without `throws`
+  (std/lang/proxy/index.velt) are sites like the function types a user module writes without `throws`
   (sema `throws/fn_types.rs`): a closure stored into one adds its errors (`Error` classes) to it,
   so a call of a trap in `Proxy[RECORD_GET]` & co. throws them and the `Proxy` methods' error types are
   inferred as any function's. `Intrinsic::AnyGet` / `AnyIndex` (`[RECORD_GET]`), `AnySet` /
@@ -1544,7 +1544,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   value shares the adapter and the one original it holds. A parameter of type `unknown[]`,
   `Map<unknown, unknown>` or `Set<unknown>` is passed as a `const` initialized by a call of the
   prelude's `unknownArrayIn` / `unknownMapIn` (std/lang/hooks) or
-  `unknownSetIn` (std/collections/set.vlt) on the `unknown` argument, and after the slot call
+  `unknownSetIn` (std/collections/set.velt) on the `unknown` argument, and after the slot call
   (its result kept in a temporary) the matching `…Out` writes the copy back; the helpers use
   `AnyCall` / `AnyIndex` / `AnySetIndex`, and such an adapter sets `Program::dyn_members`.
   Once a field of `I` is written through an interface value (`iface_writes`), the impl gets a
@@ -1574,7 +1574,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
 - `Program::type_names` names structural types as messages do: a type alias's (`type P = …`)
   and a field-only interface's object type, after `readonly` erasure; a type two names reach
   has none. Lowering's `TypeError`s use it.
-- `object` and `Function` (issue #926) are two more interfaces of `prelude/dynamic.vlt`:
+- `object` and `Function` (issue #926) are two more interfaces of `prelude/dynamic.velt`:
   `TyKind::Dyn(object | Function, [])`, named by `Program::object` / `Program::function` (set
   with `any_impl`). They are dynamic types like `any`: the same representation, `ToDyn` with
   `any_impl`, the same tables, `AnyTo` to convert out, and lowering's `is_dynamic` covers them.
@@ -1618,7 +1618,7 @@ one; an error type that was only variables solved empty is no error type (`FnDef
 - `Program::null_proto_records` (additive): the program calls `Object.create(null)` (sema's scan
   of the user modules, `null` in any parentheses; sema accepts the call only when the scan found
   it). Such a call is an empty `Record<string, V>` whose map is marked with the top bit of its
-  `edits` counter (`[RECORD_MARK_NULL_PROTO]`, std/prelude/map.vlt). Only when the flag is set does sema
+  `edits` counter (`[RECORD_MARK_NULL_PROTO]`, std/prelude/map.velt). Only when the flag is set does sema
   test the mark (`in` on a record with a key known only at run time or one `Object.prototype`
   has; `structuredClone` of a record is an error then) and lowering print a marked record as `[Object: null prototype] { … }`;
   other programs are unchanged.
@@ -1648,7 +1648,7 @@ captured by closures like any local. `new C(x)` calls `#new`
 (`Callee::Indirect` through a `Field` read) and `v instanceof C` calls `#is`. Held as `any` or
 `unknown`, its `typeof` tag is `function` (lowering tells by the first field, `#new`).
 
-## Type tests (std/prelude/type_tests.vlt; additive)
+## Type tests (std/prelude/type_tests.velt; additive)
 
 `typeIs<A, B>()` and `asType<B>(x)` are ordinary `Call { Def(prelude fn, [A, B]) }` /
 `Call { Def(prelude fn, [B, A]), [x] }` nodes (sema `body/type_guards.rs` checks `asType`'s

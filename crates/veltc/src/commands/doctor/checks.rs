@@ -138,7 +138,7 @@ fn std_lib() -> Check {
             Ok(files) if files.is_empty() => Check::bad(
                 "std",
                 Status::Warn,
-                format!("{} (no prelude/*.vlt found)", root.display()),
+                format!("{} (no prelude/*.velt found)", root.display()),
                 "the prelude (Array/Map methods, assert...) will be unavailable; reinstall the std sources",
             ),
             Ok(_) => Check::ok("std", root.display().to_string()),
@@ -270,7 +270,7 @@ fn velt_home() -> Check {
 /// Create `dir` if needed, then write and delete a probe file in it.
 fn probe_writable(dir: &Path) -> Result<(), String> {
     std::fs::create_dir_all(dir).map_err(|e| format!("cannot create `{}`: {e}", dir.display()))?;
-    let probe = dir.join(format!(".vlt-doctor-{}", std::process::id()));
+    let probe = dir.join(format!(".velt-doctor-{}", std::process::id()));
     std::fs::write(&probe, b"ok")
         .map_err(|e| format!("`{}` is not writable: {e}", dir.display()))?;
     let _ = std::fs::remove_file(&probe);
@@ -306,7 +306,7 @@ mod tests {
         );
         let tmp = tempfile::tempdir().unwrap();
         let launcher = tmp.path().join("bin").join("velt");
-        let selected = "0.1.2 (velt: \"0.1\" in /p/package.vlt:3)".to_string();
+        let selected = "0.1.2 (velt: \"0.1\" in /p/package.velt:3)".to_string();
         let check = toolchain_from(Some(&launcher), Some(selected.clone()));
         assert!(check.detail.starts_with(&selected), "{}", check.detail);
         assert!(check.detail.ends_with("no default"), "{}", check.detail);

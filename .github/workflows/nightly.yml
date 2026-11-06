@@ -440,7 +440,7 @@ jobs:
               rm "$out/logs/$log"
               ids=
             elif [ "$SUITE" = golden ]; then
-              ids=$(grep -oE '^tests[\\/]golden[\\/][^ :]+\.vlt' "$out/logs/$log" | sed 's|\\|/|g' | sort -u || true)
+              ids=$(grep -oE '^tests[\\/]golden[\\/][^ :]+\.velt' "$out/logs/$log" | sed 's|\\|/|g' | sort -u || true)
             elif [ "$SUITE" = packages ]; then
               # `packages/<name> (debug|release): …` heads each failed package's report.
               ids=$(grep -oE '^packages/[A-Za-z0-9_-]+ \((debug|release)\)' "$out/logs/$log" | cut -d' ' -f1 | sort -u || true)
@@ -497,7 +497,7 @@ jobs:
           script: |
             const fs = require('fs');
             const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            const shortName = id => id.split('/').pop().replace(/\.vlt$/, '');
+            const shortName = id => id.split('/').pop().replace(/\.velt$/, '');
             // The test's part of a log: from the line naming it (else from the panic).
             const excerpt = (file, id, where) => {
               let lines;
@@ -506,7 +506,7 @@ jobs:
               let at = lines.findIndex(l => l.replace(/\\/g, '/').startsWith(id) || l.startsWith(`${name} `));
               if (at < 0) at = Math.max(0, lines.findIndex(l => /panicked|FAILED/.test(l)));
               // Up to the next failure (another golden or reload case), at most 40 lines.
-              const next = lines.findIndex((l, i) => i > at && /^(tests[\\/]golden[\\/]\S+\.vlt[ :]|\w+ (Jit|Exe): )/.test(l));
+              const next = lines.findIndex((l, i) => i > at && /^(tests[\\/]golden[\\/]\S+\.velt[ :]|\w+ (Jit|Exe): )/.test(l));
               const text = lines.slice(at, Math.min(at + 40, next < 0 ? Infinity : next)).join('\n')
                 .replace(/```/g, '~~~').slice(0, 4000);
               return `${where}:\n\`\`\`\n${text}\n\`\`\``;

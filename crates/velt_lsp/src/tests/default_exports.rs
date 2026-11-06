@@ -19,10 +19,10 @@ function main() {
 
 fn open_app() -> (Client, lsp_types::Url, lsp_types::Url) {
     let mut client = Client::start();
-    let app = uri("dflt_app.vlt");
-    let lib = uri("dflt_lib.vlt");
+    let app = uri("dflt_app.velt");
+    let lib = uri("dflt_lib.velt");
     client.open(&lib, LIB);
-    client.open(&uri("dflt_anon.vlt"), ANON);
+    client.open(&uri("dflt_anon.velt"), ANON);
     client.open(&app, APP);
     let diags = client.diagnostics(&app);
     assert_eq!(
@@ -66,11 +66,11 @@ fn definition_through_a_default_import() {
     let (mut client, app, _) = open_app();
     let (line, col) = pos_of(APP, "hello(\"a\")", 0);
     let loc = client.request("textDocument/definition", at(&app, line, col));
-    assert_eq!(place(&loc), ("dflt_lib.vlt".to_string(), 0, 24), "{loc}");
+    assert_eq!(place(&loc), ("dflt_lib.velt".to_string(), 0, 24), "{loc}");
     // An anonymous default: its `default` keyword.
     let (line, col) = pos_of(APP, "one()", 0);
     let loc = client.request("textDocument/definition", at(&app, line, col));
-    assert_eq!(place(&loc), ("dflt_anon.vlt".to_string(), 0, 7), "{loc}");
+    assert_eq!(place(&loc), ("dflt_anon.velt".to_string(), 0, 7), "{loc}");
     client.shutdown();
 }
 
@@ -143,11 +143,11 @@ fn convert_to_named_is_not_offered_when_an_open_document_imports_the_default() {
 fn convert_to_named_is_not_offered_when_a_workspace_file_imports_the_default() {
     let dir = std::env::temp_dir().join(format!("velt_lsp_default_{}", std::process::id()));
     std::fs::create_dir_all(dir.join("sub")).unwrap();
-    let lib_path = dir.join("lib.vlt");
+    let lib_path = dir.join("lib.velt");
     std::fs::write(&lib_path, LIB).unwrap();
-    std::fs::write(dir.join("other.vlt"), LIB).unwrap();
+    std::fs::write(dir.join("other.velt"), LIB).unwrap();
     std::fs::write(
-        dir.join("sub/user.vlt"),
+        dir.join("sub/user.velt"),
         "import hello from \"../lib\";\nconsole.log(hello(\"a\"));\n",
     )
     .unwrap();
@@ -159,7 +159,7 @@ fn convert_to_named_is_not_offered_when_a_workspace_file_imports_the_default() {
     let titles = titles_on_first_line(&mut client, &lib);
     assert!(!titles.iter().any(|t| t == CONVERT), "{titles:?}");
 
-    let other = lsp_types::Url::from_file_path(dir.join("other.vlt")).unwrap();
+    let other = lsp_types::Url::from_file_path(dir.join("other.velt")).unwrap();
     client.open(&other, LIB);
     let _ = client.diagnostics(&other);
     let titles = titles_on_first_line(&mut client, &other);

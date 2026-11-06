@@ -2,7 +2,7 @@
 //!
 //! ```ts ignore
 //! paths: {
-//!   "@app/*": "src/*",          // import { x } from "@app/util"  →  src/util.vlt
+//!   "@app/*": "src/*",          // import { x } from "@app/util"  →  src/util.velt
 //!   "@config": "src/config",    // exact alias
 //! },
 //! ```

@@ -1,7 +1,7 @@
-http_handler_fn_value_changes.vlt:54:5: error: this async closure changes `hits` of captured `c1` (`…(c1)` changes `c1.hits`), so it must stay on the task that created it
-http_handler_fn_value_changes.vlt:60:7: error: this async closure changes `hits` of captured `c2` (`…(c2)` changes `c2.hits`), so it must stay on the task that created it
-http_handler_fn_value_changes.vlt:66:5: error: this async closure changes `hits` of captured `c3` (`withCallback(…)` changes `c3.hits`), so it must stay on the task that created it
-http_handler_fn_value_changes.vlt:76:5: error: this async closure changes `hits` of captured `c4` (`…(c4)` changes `c4.hits`), so it must stay on the task that created it
-http_handler_fn_value_changes.vlt:81:5: error: this async closure changes `hits` of captured `c5` (`…(c5)` changes `c5.hits`), so it must stay on the task that created it
-http_handler_fn_value_changes.vlt:86:5: error: this async closure changes `items` of captured `l6` (`…(l6.items)` changes `l6.items`), so it must stay on the task that created it
-http_handler_fn_value_changes.vlt:91:5: error: this async closure changes `items` of captured `l7` (`…(l7.items)` changes `l7.items`), so it must stay on the task that created it
+http_handler_fn_value_changes.velt:54:5: error: this async closure changes `hits` of captured `c1` (`…(c1)` changes `c1.hits`), so it must stay on the task that created it
+http_handler_fn_value_changes.velt:60:7: error: this async closure changes `hits` of captured `c2` (`…(c2)` changes `c2.hits`), so it must stay on the task that created it
+http_handler_fn_value_changes.velt:66:5: error: this async closure changes `hits` of captured `c3` (`withCallback(…)` changes `c3.hits`), so it must stay on the task that created it
+http_handler_fn_value_changes.velt:76:5: error: this async closure changes `hits` of captured `c4` (`…(c4)` changes `c4.hits`), so it must stay on the task that created it
+http_handler_fn_value_changes.velt:81:5: error: this async closure changes `hits` of captured `c5` (`…(c5)` changes `c5.hits`), so it must stay on the task that created it
+http_handler_fn_value_changes.velt:86:5: error: this async closure changes `items` of captured `l6` (`…(l6.items)` changes `l6.items`), so it must stay on the task that created it
+http_handler_fn_value_changes.velt:91:5: error: this async closure changes `items` of captured `l7` (`…(l7.items)` changes `l7.items`), so it must stay on the task that created it

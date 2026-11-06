@@ -1,4 +1,4 @@
-//! The M1 golden programs (`tests/golden/m1/*.vlt`) as hand-built ASTs: each must type-check
+//! The M1 golden programs (`tests/golden/m1/*.velt`) as hand-built ASTs: each must type-check
 //! cleanly; error goldens must produce the expected message at the expected position.
 
 mod common;
@@ -552,7 +552,7 @@ fn check_err(name: &str, src: &Src, items: Vec<velt_syntax::ast::Item>) {
 
 #[test]
 fn error_undefined() {
-    let src = Src::load("errors/undefined.vlt");
+    let src = Src::load("errors/undefined.velt");
     let y = src.sp("log(y", 0);
     let y = velt_common::Span::new(y.file, y.lo + 4, y.lo + 5);
     let items = vec![func("main", &[], None, vec![es(log(vec![var("y").at(y)]))])];
@@ -587,7 +587,7 @@ fn string_copy_keeps_the_source() {
 
 #[test]
 fn error_type_mismatch() {
-    let src = Src::load("errors/type_mismatch.vlt");
+    let src = Src::load("errors/type_mismatch.velt");
     let init = str_("hello").at(src.sp("\"hello\"", 0));
     let items = vec![func("main", &[], None, vec![const_t("x", "i64", init)])];
     let d = errs(items.clone());
@@ -597,7 +597,7 @@ fn error_type_mismatch() {
 
 #[test]
 fn error_const_assign() {
-    let src = Src::load("errors/const_assign.vlt");
+    let src = Src::load("errors/const_assign.velt");
     let asg = assign(var("x").at(src.sp("x = 2", 0)), int(2)).at(src.sp("x = 2", 0));
     let items = vec![func("main", &[], None, vec![const_("x", int(1)), es(asg)])];
     check_err("const_assign", &src, items);
@@ -624,10 +624,10 @@ fn goldens_with_real_parser() {
     files.sort();
     for f in files
         .iter()
-        .filter(|f| f.extension().is_some_and(|e| e == "vlt"))
+        .filter(|f| f.extension().is_some_and(|e| e == "velt"))
     {
         let name = f.file_name().unwrap().to_string_lossy().to_string();
-        if name == "parse.vlt" {
+        if name == "parse.velt" {
             continue;
         }
         let text = std::fs::read_to_string(f).unwrap().replace("\r\n", "\n");

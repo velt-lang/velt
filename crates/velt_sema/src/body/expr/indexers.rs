@@ -1,7 +1,7 @@
 //! Indexing a type that defines the operator method `[Symbol.index](i)`, and
 //! `[Symbol.setIndex](i, v)` for writes (design operators.md, #2050): a user class, struct or
 //! vector, and std's typed arrays (`Uint8Array`, `Float64Array`, …,
-//! std/lang/typed_array/index.vlt), whose elements live in an `ArrayBuffer` rather than in a
+//! std/lang/typed_array/index.velt), whose elements live in an `ArrayBuffer` rather than in a
 //! Velt array, and `RegExpMatch`. `xs[i]` reads `xs[Symbol.index](i)`; `xs[i] = v` is
 //! `xs[Symbol.setIndex](i, v)`, and `xs[i] op= v` (in place on the element with its
 //! `[Symbol.opAssign]`), `xs[i]++` and `xs[i] ??= v` read, then write, as in JS:
@@ -31,7 +31,7 @@ use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H, Nothing, TyId};
 
 use velt_syntax::operators::{INDEX, SET_INDEX};
-/// An array's checked read (`T | undefined`), std/prelude/array.vlt.
+/// An array's checked read (`T | undefined`), std/prelude/array.velt.
 const GET: &str = velt_common::std_key!(array_get);
 const INDEX_TEMP: &str = "<index>";
 const OLD: &str = "<old>";

@@ -2,7 +2,7 @@
 
 A Redis-compatible server: the RESP2 protocol over `velt/net`, with pipelining, 65 commands
 over strings, lists, hashes, sets and sorted sets, and key expiry (on access, plus a background
-sweep). `redis-cli` and `redis-benchmark` work against it unchanged, and `parity.vlt` checks
+sweep). `redis-cli` and `redis-benchmark` work against it unchanged, and `parity.velt` checks
 that its replies match a real Redis (started with `--databases 1`, like this server) byte for
 byte: 269 cases, including errors, integer and
 float edge cases, inline commands, commands split across reads, and malformed input.
@@ -12,7 +12,7 @@ velt run                       # 127.0.0.1:6380 (velt run -- <port> for another)
 redis-cli -p 6380 set greeting hello EX 60
 redis-cli -p 6380 rpush queue a b c
 velt test                      # tests/: protocol, commands, expiry with a fixed clock
-velt run demo.vlt              # a client session against an in-process server (golden: demo.out)
+velt run demo.velt              # a client session against an in-process server (golden: demo.out)
 ./bench.sh                     # parity, then redis-benchmark against a real redis-server
 ```
 
@@ -52,13 +52,13 @@ velt run demo.vlt              # a client session against an in-process server (
 
 | File | What |
 |---|---|
-| `src/resp.vlt` | `RespParser` (incremental and amortized: commands may arrive split or pipelined; Redis's length and line limits), `Writer` (replies into a growable `u8[]`, headers written in place) |
-| `src/db.vlt` | `Db`: one map per value type plus an expiry index; lazy and active expiry |
-| `src/structs.vlt` | a skip list with spans for sorted sets (O(log n) insert, remove and rank), `MemberSet` (O(1) random member for SPOP), `Expires` (an expiry index the sweep walks in place) |
-| `src/commands.vlt` | `execute(db, args, out)`: each command with Redis's argument rules and error messages |
-| `src/server.vlt` | a task per connection; each read's commands run in batches, one per run of commands on the same shard |
-| `src/shards.vlt` | which shard a command runs on, and commands over several shards: their locks in order, their replies merged |
-| `parity.vlt` | 269 cases against this server and a real Redis, replies compared byte for byte: commands, then raw protocol input on fresh connections |
+| `src/resp.velt` | `RespParser` (incremental and amortized: commands may arrive split or pipelined; Redis's length and line limits), `Writer` (replies into a growable `u8[]`, headers written in place) |
+| `src/db.velt` | `Db`: one map per value type plus an expiry index; lazy and active expiry |
+| `src/structs.velt` | a skip list with spans for sorted sets (O(log n) insert, remove and rank), `MemberSet` (O(1) random member for SPOP), `Expires` (an expiry index the sweep walks in place) |
+| `src/commands.velt` | `execute(db, args, out)`: each command with Redis's argument rules and error messages |
+| `src/server.velt` | a task per connection; each read's commands run in batches, one per run of commands on the same shard |
+| `src/shards.velt` | which shard a command runs on, and commands over several shards: their locks in order, their replies merged |
+| `parity.velt` | 269 cases against this server and a real Redis, replies compared byte for byte: commands, then raw protocol input on fresh connections |
 | `bench.sh` | parity, then `redis-benchmark` (median of 3, interleaved), CPU per request, memory |
 
 ## Performance

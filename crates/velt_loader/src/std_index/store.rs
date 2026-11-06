@@ -122,7 +122,7 @@ pub(crate) fn package_index(
 }
 
 /// What [`super::ModuleIndex::imports`] keeps of `spec`, imported by a std file in `dir`: the
-/// canonical path of the std module it names (no disk access: `x.vlt` and `x/index.vlt` have the
+/// canonical path of the std module it names (no disk access: `x.velt` and `x/index.velt` have the
 /// same one), else `spec` as written.
 fn import_path(std_root: &Path, dir: &Path, spec: &str) -> String {
     match resolve_spec(spec, dir) {
@@ -132,7 +132,7 @@ fn import_path(std_root: &Path, dir: &Path, spec: &str) -> String {
     }
 }
 
-/// Is `path` a std module: a source file, not one of std's own tests (`*.test.vlt`, which no
+/// Is `path` a std module: a source file, not one of std's own tests (`*.test.velt`, which no
 /// program loads)?
 fn is_module(path: &Path) -> bool {
     let name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -140,12 +140,12 @@ fn is_module(path: &Path) -> bool {
 }
 
 /// Every std module (`is_module`) below `dir`, with the canonical path of the package it
-/// belongs to: the nearest folder above it with an `index.vlt`, else `package`.
+/// belongs to: the nearest folder above it with an `index.velt`, else `package`.
 fn source_files(origin: &Origin, dir: &Path, package: &str, out: &mut Vec<(PathBuf, String)>) {
     let Ok(entries) = vpm::probe::read_dir(dir) else {
         return;
     };
-    let index = dir.join("index.vlt");
+    let index = dir.join("index.velt");
     let package = match entries.iter().any(|e| e.path() == index) {
         true => origin.canonical(&index),
         false => package.to_string(),

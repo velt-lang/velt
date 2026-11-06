@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# TypeScript-style workloads: each bench/typical/*.vlt is also a TypeScript program Node runs
+# TypeScript-style workloads: each bench/typical/*.velt is also a TypeScript program Node runs
 # as is (the harness appends the `main();` call), and rust/<name>.rs is the same algorithm in
 # idiomatic Rust. Builds Velt (LLVM release), Rust (rustc -O) and runs Node (type stripping),
 # checks that all three print the same output, and prints a Markdown table of the best
@@ -24,8 +24,8 @@ cargo build --release -q -p veltc -p velt_rt --manifest-path "$ROOT/Cargo.toml"
 VELT="$TARGET/release/velt"
 
 names=()
-for src in "$HERE"/*.vlt; do
-  name=$(basename "$src" .vlt)
+for src in "$HERE"/*.velt; do
+  name=$(basename "$src" .velt)
   [[ -n "$ONLY" && "$name" != "$ONLY" ]] && continue
   echo "$name..." >&2
   "$VELT" build --release "$src" -o "$OUT/$name-velt"

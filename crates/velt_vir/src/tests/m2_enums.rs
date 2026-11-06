@@ -1,4 +1,4 @@
-//! Enums and matches: `tests/golden/m2/enums_switch.vlt` (payload enums, C-like enums with
+//! Enums and matches: `tests/golden/m2/enums_switch.velt` (payload enums, C-like enums with
 //! explicit discriminants, matches with or-patterns / guards / by-reference bindings), loaded
 //! from source with the real std since it prints numbers through std's hooks (#2197), and
 //! hand-lowered HIR for the rest.

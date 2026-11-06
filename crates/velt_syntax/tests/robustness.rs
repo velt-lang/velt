@@ -20,7 +20,7 @@ fn kitchen_sink_parses_cleanly() {
 /// file), and it was the slowest test of the gate. So by default the full every-character sweep
 /// covers the kitchen sink and the goldens the change touches (`VELT_ROBUSTNESS_FILES`, set by
 /// `cargo xtask check` from the changed paths: comma-separated paths relative to the workspace
-/// root, such as `tests/golden/lang/foo.vlt`), and every other golden is cut where each token
+/// root, such as `tests/golden/lang/foo.velt`), and every other golden is cut where each token
 /// starts or ends, within its top-level item, plus a deterministic sample of the characters,
 /// within the whole file ([`sampled_cuts`]). `VELT_ROBUSTNESS=full` sweeps every character of
 /// every file; the nightly gate sets it, and `cargo xtask check` does for a change to the parser
@@ -109,7 +109,7 @@ fn a_panic_in_the_sweep_names_the_file_and_the_cut() {
     let src = "let a = 1;\nlet b = 2;\n";
     let cut = (0, 4, src.len());
     let caught = std::panic::catch_unwind(|| {
-        parse_cut("tests/golden/lang/x.vlt", src, cut, |text| {
+        parse_cut("tests/golden/lang/x.velt", src, cut, |text| {
             if text.starts_with("a =") {
                 panic!("deliberate");
             }
@@ -121,11 +121,11 @@ fn a_panic_in_the_sweep_names_the_file_and_the_cut() {
         .expect("a formatted message");
     assert_eq!(
         message,
-        "the parser panicked on tests/golden/lang/x.vlt cut at byte 4 (lo 0, hi 22): parsing the \
+        "the parser panicked on tests/golden/lang/x.velt cut at byte 4 (lo 0, hi 22): parsing the \
          text after the cut, bytes 4..22: deliberate"
     );
     // No panic: both sides parse.
-    parse_cut("tests/golden/lang/x.vlt", src, cut, |_| {});
+    parse_cut("tests/golden/lang/x.velt", src, cut, |_| {});
 }
 
 /// Besides the token boundaries, one character in this many is cut, within its item.

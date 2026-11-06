@@ -1,4 +1,4 @@
-//! Editor support for `package.vlt` (docs/internals/design/package-manifest.md "Editors"): where
+//! Editor support for `package.velt` (docs/internals/design/package-manifest.md "Editors"): where
 //! the cursor is in the manifest object, and the completions and hover text the [`schema`] gives
 //! there. Diagnostics are the reader's own ([`super::Manifest::read`]).
 //!

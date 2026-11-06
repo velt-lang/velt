@@ -1,0 +1,18 @@
+// velt/net/http (internal): what only a `Request` to be sent has (request.velt): `fetch`'s options
+// beyond method, headers and body.
+
+import { AbortSignal } from "velt/task";
+import { RequestRedirect } from "velt/net/http/fetch/request_init";
+
+/** What only a request to be sent has: `fetch`'s options beyond method, headers and body. */
+export class Sending {
+  redirect: RequestRedirect;
+  signal: AbortSignal | null;
+  ca: string;
+
+  constructor(redirect: RequestRedirect, signal: AbortSignal | null, ca: string) {
+    this.redirect = redirect;
+    this.signal = signal;
+    this.ca = ca;
+  }
+}

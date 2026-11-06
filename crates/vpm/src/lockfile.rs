@@ -32,13 +32,13 @@
 //! ([`crate::install`]). The velt launcher runs that version in the package, when the pin
 //! accepts it, so every machine builds a commit with the same compiler; `--locked` fails on
 //! another. Optional: a lock without it is still format 1.
-//! `allowNative` is the root package's list (package.vlt), sorted and without duplicates, each
+//! `allowNative` is the root package's list (package.velt), sorted and without duplicates, each
 //! entry a name or `{ "name": …, "git": … }` / `{ "name": …, "url": … }` as written; a
 //! workspace's lock has none (each member is checked when it builds). Optional, like `velt`.
 //! `overrides` lists the packages whose requirement for a package the root's own entry replaced
 //! with another source (`crate::resolve`: the root's direct dependency wins).
 //! Path sources are relative to the root package, `/`-separated. The root package itself is not
-//! listed (its dependencies come from package.vlt). A workspace has one lockfile, at its root,
+//! listed (its dependencies come from package.velt). A workspace has one lockfile, at its root,
 //! for all its members ([`crate::workspace`]): they are listed, as
 //! `{ "name": "core", "version": "0.1.0", "source": "workspace+packages/core", "dependencies": […] }`,
 //! and path sources are relative to the workspace root. The former `velt.lock` (TOML) is not read: a
@@ -63,7 +63,7 @@ pub struct Lockfile {
     /// The toolchain version that builds the package.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub velt: Option<String>,
-    /// The root package's `allowNative`, sorted, as package.vlt writes the entries: the packages
+    /// The root package's `allowNative`, sorted, as package.velt writes the entries: the packages
     /// whose native code the program allows and where from, so a change of trust shows in the
     /// lockfile's diff.
     #[serde(default, rename = "allowNative", skip_serializing_if = "Vec::is_empty")]
@@ -178,7 +178,7 @@ impl Lockfile {
 mod tests {
     use super::*;
 
-    /// `allowNative` entries keep the form package.vlt gives them.
+    /// `allowNative` entries keep the form package.velt gives them.
     #[test]
     fn allow_native_entries_round_trip() {
         use crate::manifest::{AllowNative, AllowedFrom};

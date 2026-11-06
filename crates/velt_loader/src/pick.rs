@@ -121,6 +121,11 @@ impl Loader<'_, '_> {
             .candidates
             .iter()
             .flatten()
+            // The old extension is still read, and not worth suggesting.
+            .filter(|f| {
+                f.extension()
+                    .is_none_or(|e| e != vpm::sources::OLD_EXTENSION)
+            })
             .map(|f| format!("tried `{}`", shown.show(f)))
             .collect();
         // A module of the standard library's former layout: where it went.
@@ -138,7 +143,7 @@ impl Loader<'_, '_> {
 
     /// Warn when `file`, found in candidate group `group`, is a file module that hides a folder
     /// module (a later group) of another extension: `./ui` loads `ui.ts` although
-    /// `ui/index.vlt` exists, as TypeScript does, which is easy to miss.
+    /// `ui/index.velt` exists, as TypeScript does, which is easy to miss.
     fn warn_hidden_folder(
         &mut self,
         spec: &str,

@@ -1,4 +1,4 @@
-# Standard library layout: `velt/…` modules, folders, `index.vlt`
+# Standard library layout: `velt/…` modules, folders, `index.velt`
 
 Status: in progress, one pull request (#1946). Owners: std (the layout), the `veltc` loader (specifiers
 and visibility), `std-lint` (the rules, written in Velt). The move itself is a one-time script
@@ -16,12 +16,12 @@ conflicts by hand.
 
 | Problem | Evidence |
 |---|---|
-| A flat root | 51 `.vlt` files directly in `std/` next to 24 folders; `fetch.vlt` + `fetch/`, `http.vlt` + `http/`, `sqlite.vlt` + `sqlite/` are the Rust-2015 `foo.rs` + `foo/` pattern. |
+| A flat root | 51 `.velt` files directly in `std/` next to 24 folders; `fetch.velt` + `fetch/`, `http.velt` + `http/`, `sqlite.velt` + `sqlite/` are the Rust-2015 `foo.rs` + `foo/` pattern. |
 | No areas | `udp`, `dns`, `net`, `http`, `websocket`, `url`, `fetch` are siblings of `arena`, `symbol`, `this_fn`. Nothing says "networking". |
 | Internals look public | `net_bytes`, `import_meta`, `this_fn`, `number/*`, `sort/*`, `record/*`, `json/scan`, `url/encode` can all be imported as `velt:…`; "internal" exists only as README prose. The LSP even ships a hard-coded list to hide some (`crates/veltc/src/commands/lsp.rs:312`). |
 | Global-only modules | `symbol`, `proxy`, `dom_exception`, `string_builder`, `typed_array` exist to provide globals but are also importable modules, so there are two ways to reach the same thing. |
-| Big files, many types per file | 72 files over the 400 lines std's README asks for, 31 over 600 (`compress/inflate/tables.vlt` 2187, `collections/concurrent_map.vlt` 1282, `crypto.vlt` 1003, `proxy.vlt` 978). `jsx/attrs/svg.vlt` exports 27 types, `prelude/iter.vlt` 14. Nothing checks the 400: the file-size rule (`crates/xtask/src/file_size.rs`) covers only `crates/**/*.rs`. |
-| Load order in file names | `prelude/z_dynamic.vlt`, `zzz_adapt.vlt`, `zzzz_any_methods.vlt`, `zzzzz_any_ops.vlt`: the loader reads the prelude in directory order. |
+| Big files, many types per file | 72 files over the 400 lines std's README asks for, 31 over 600 (`compress/inflate/tables.velt` 2187, `collections/concurrent_map.velt` 1282, `crypto.velt` 1003, `proxy.velt` 978). `jsx/attrs/svg.velt` exports 27 types, `prelude/iter.velt` 14. Nothing checks the 400: the file-size rule (`crates/xtask/src/file_size.rs`) covers only `crates/**/*.rs`. |
+| Load order in file names | `prelude/z_dynamic.velt`, `zzz_adapt.velt`, `zzzz_any_methods.velt`, `zzzzz_any_ops.velt`: the loader reads the prelude in directory order. |
 | The compiler knows std paths everywhere | 77 non-test compiler sources contain `"std/…"` or `"velt:…"` literals (lazy std's `EAGER` list, lowering's builtin lookups, mangling, the doc site). Each move today means hunting them. |
 | Specifier | `velt/fs` cannot be resolved by `tsc`, so `velt check --ts-compat` has to reject every std import (`velt-import` rule). |
 
@@ -49,34 +49,34 @@ import { Headers } from "velt/net/http";
   protect, and two spellings would end up in docs and examples forever.
 - `vitest` keeps resolving to `velt/test`.
 
-### 2. Every module is a folder, and its `index.vlt` is its public surface
+### 2. Every module is a folder, and its `index.velt` is its public surface
 
 ```
 std/net/http/
-  index.vlt        ← the public API of velt/net/http: explicit re-exports, the module doc
-  fetch.vlt        ← implementation, owned by the module
-  serve.vlt
-  headers.vlt
-  client/          ← implementation folder (no index.vlt), still owned by velt/net/http
+  index.velt        ← the public API of velt/net/http: explicit re-exports, the module doc
+  fetch.velt        ← implementation, owned by the module
+  serve.velt
+  headers.velt
+  client/          ← implementation folder (no index.velt), still owned by velt/net/http
   server/
-    index.vlt      ← a submodule: velt/net/http/server
+    index.velt      ← a submodule: velt/net/http/server
 ```
 
 The rules, all checked by the std lint (§6):
 
-1. **A folder with an `index.vlt` is a module.** Its import path is the folder's path below
+1. **A folder with an `index.velt` is a module.** Its import path is the folder's path below
    `std/`.
-2. **Every other `.vlt` file belongs to the nearest folder above it that has an `index.vlt`.**
+2. **Every other `.velt` file belongs to the nearest folder above it that has an `index.velt`.**
    A file with no such folder is an error (only `prelude/` and `lang/` are exempt, §4). This
-   makes "internal" structural: a file outside an `index.vlt` is never imported by user code.
-3. **A folder without an `index.vlt` is either a namespace or an implementation folder.** A
+   makes "internal" structural: a file outside an `index.velt` is never imported by user code.
+3. **A folder without an `index.velt` is either a namespace or an implementation folder.** A
    namespace holds only modules (`std/net/` holds the folders `http/`, `udp/` … and its own
-   `index.vlt` for TCP). An implementation folder sits inside a module and holds its files
+   `index.velt` for TCP). An implementation folder sits inside a module and holds its files
    (`collections/btree/`).
-4. **`index.vlt` re-exports by name**: `export { Deque } from "./deque";`. No `export *`, no
-   implementation in `index.vlt` beyond small glue: the file *is* the reviewable public API, and
+4. **`index.velt` re-exports by name**: `export { Deque } from "./deque";`. No `export *`, no
+   implementation in `index.velt` beyond small glue: the file *is* the reviewable public API, and
    `velt doc` documents a module from it.
-5. **No `x.vlt` next to an `x/` folder.** The pair becomes `x/index.vlt` (module) or moves
+5. **No `x.velt` next to an `x/` folder.** The pair becomes `x/index.velt` (module) or moves
    into `x/` (implementation).
 6. **Every public name has one import path.** If `velt/net/http` exports `Headers`, no other
    module does. Globals (`fetch`, `URL`, `Set`, `RegExp` …) are also importable from their
@@ -90,7 +90,7 @@ any std file by its `velt/` path. The loader enforces both (§5).
 The top level is short and named for what a program does, after Go's `net/http`,
 `encoding/json` and .NET's `System.Net.Http`, `System.Text.Json`. Names stay Node's where a TS
 programmer looks for them (`fs`, `path`, `os`, `process`). An area is usually *one* module with
-one `index.vlt`, like a .NET namespace. Submodules exist only for large or optional parts that
+one `index.velt`, like a .NET namespace. Submodules exist only for large or optional parts that
 have their own docs page.
 
 | Module | Contents (from today's modules) |
@@ -164,7 +164,7 @@ The hyper-based server (`velt:http` `serve`, `crates/velt_rt/src/http/`, the `hy
 removed. The examples and `velt new` templates depend on the package by path, as the sqlite
 examples do.
 
-As built (commit 6): each package has `src/lib.vlt` (its API, named re-exports), `native/` (the
+As built (commit 6): each package has `src/lib.velt` (its API, named re-exports), `native/` (the
 crate, outside the cargo workspace and the runtime), `tests/` (`velt test`, run for every package
 by `crates/veltc/tests/packages.rs`), `README.md` and `docs/` (the native ABI; the engine for
 sqlite). packages/sqlite keeps the driver's API (the prototype's is gone: its README maps one to
@@ -173,20 +173,20 @@ drivers took from std-only intrinsics is public std API now: velt/db's `decodeRo
 and `bindParams`, velt/native's `errorCodeName`, `Array.reserve`/`truncate` and velt/encoding's
 `utf8ByteAt`/`utf8Length` (the last ones existed).
 
-Every row maps to entries in `layout.vlt`; that file is authoritative where they differ. The
+Every row maps to entries in `layout.velt`; that file is authoritative where they differ. The
 whole tree after the move is in the appendix.
 
 ### 4. `prelude/` and `lang/` are never imported
 
 - `std/prelude/` stays the implicit prelude. Its load order is an explicit list in
-  `std/prelude/index.vlt` (`import "./array"; …`), which the loader follows (done: the `z_`…`zzzzz_`
+  `std/prelude/index.velt` (`import "./array"; …`), which the loader follows (done: the `z_`…`zzzzz_`
   prefixes are gone; `velt_common::std_modules::prelude_order` reads the list, and a test checks
   that it names every prelude file once).
 - `std/lang/` is new: what implements the language and its globals, which no program imports:
   `symbol`, `proxy`, `record`, `this_fn`, `import_meta`, `dom_exception`, `typed_array`,
   `number` (float parsing), `sort` (the sort algorithms), `intrinsics` (the compiler's
   intrinsics, declared: §10). Each is a folder; since nothing
-  imports `lang/`, its folders need no `index.vlt`. `prelude/global/*.vlt` re-exports from here
+  imports `lang/`, its folders need no `index.velt`. `prelude/global/*.velt` re-exports from here
   as today.
 
 ### 5. The compiler names std modules in one place
@@ -209,8 +209,8 @@ exactly the modules the rule lets a program import, so its own list of hidden mo
 The loader gains:
 
 - `velt/` resolution to std (with the folder-module lookup it already has for
-  `std/net/index.vlt`, `crates/velt_loader/src/locate.rs:182`);
-- the visibility rule: from user code, the target must be an `index.vlt` outside `prelude/` and
+  `std/net/index.velt`, `crates/velt_loader/src/locate.rs:182`);
+- the visibility rule: from user code, the target must be an `index.velt` outside `prelude/` and
   `lang/`; otherwise "`velt/json/scan` is internal to `velt/encoding/json`" (done: user code is
   any module not loaded from std, packages included; the error notes the module to import from;
   the import the parser adds for `import.meta` is exempt, and so are std's test files, which
@@ -219,12 +219,12 @@ The loader gains:
 - the error for a `velt:` specifier (§1);
 - the explicit prelude order;
 - conditional imports (`#name`, `crates/velt_loader/src/conditional.rs`): std's map is
-  `std/imports.vlt`, `export const imports: Imports = { … }`, the same data as a package's
+  `std/imports.velt`, `export const imports: Imports = { … }`, the same data as a package's
   `imports` field (`vpm::imports`), read by the manifest's reader and only when a std module
   imports a `#name`. It is a std file rather than a table in `velt_common` so that std authors
   change it beside the variants, in the package form, and the packaged std carries it. Its
   `#name`s resolve only in std's modules; a variant must be an internal file (never an
-  `index.vlt`), and the variants of one name export the same API (`loader/variants.rs`, run by
+  `index.velt`), and the variants of one name export the same API (`loader/variants.rs`, run by
   `velt check --std`, `velt test` and the editor). `std-lint` exempts the file from the rule that
   every std file lies in a module's folder.
 
@@ -235,13 +235,13 @@ The loader gains:
 
 | Rule | Limit |
 |---|---|
-| File size | 400 lines, not counting doc comments (`/** … */` blocks: a public API's TypeScript-style docs are not code a reader follows; `//` comments count) (tables generated by a script: 2,500, marked by a `// generated by scripts/<script>` header). The current oversized files are listed in `layout.vlt` `oversize` with the PR that splits them, as `ALLOWED_OVERSIZE` does for Rust. The list may only shrink. |
-| One primary type per file | A file exports at most one class (or class-like interface) and names the file after it: `Deque` in `deque.vlt`. Its small helpers may come along: option interfaces, a result union, its iterator. Type-only files (`types.vlt`) and the module's errors (`errors.vlt`) are the exceptions. |
-| Header | The first line is `// velt/<module>: <role>.` (`// velt/<module> (internal): …` for files that are not `index.vlt`). |
-| Doc comments | Every name an `index.vlt` exports has a doc comment (docs/internals/design/doc-comments.md). `velt doc --std` runs with warnings as errors. |
-| Errors | One error class per module, or a few in `errors.vlt`, extending `Error`; messages as in https://veltlang.com/docs/std/ "Conventions". |
+| File size | 400 lines, not counting doc comments (`/** … */` blocks: a public API's TypeScript-style docs are not code a reader follows; `//` comments count) (tables generated by a script: 2,500, marked by a `// generated by scripts/<script>` header). The current oversized files are listed in `layout.velt` `oversize` with the PR that splits them, as `ALLOWED_OVERSIZE` does for Rust. The list may only shrink. |
+| One primary type per file | A file exports at most one class (or class-like interface) and names the file after it: `Deque` in `deque.velt`. Its small helpers may come along: option interfaces, a result union, its iterator. Type-only files (`types.velt`) and the module's errors (`errors.velt`) are the exceptions. |
+| Header | The first line is `// velt/<module>: <role>.` (`// velt/<module> (internal): …` for files that are not `index.velt`). |
+| Doc comments | Every name an `index.velt` exports has a doc comment (docs/internals/design/doc-comments.md). `velt doc --std` runs with warnings as errors. |
+| Errors | One error class per module, or a few in `errors.velt`, extending `Error`; messages as in https://veltlang.com/docs/std/ "Conventions". |
 | Names | Files and folders `snake_case`; `*Sync` for blocking twins; Node's name where Node has the function. |
-| No duplicate exports | Rule 6 of §2, across all `index.vlt`. |
+| No duplicate exports | Rule 6 of §2, across all `index.velt`. |
 | Docs mirror the tree | The website has a page for every module at its path (https://veltlang.com/docs/std/net/http/), with a page per part of a module below it (https://veltlang.com/docs/std/time/datetime/). The pages moved from `docs/std` to the website's repository; std-lint no longer checks them. |
 | Tests mirror the tree | Every module has end-to-end tests under `tests/golden/std/<module path>/`. |
 
@@ -251,13 +251,13 @@ answer one question. Split by responsibility, never by line count:
 - **A class gets a file of its own**, named after it, with its small companions (its options
   interface, its iterator).
 - **Free functions group by the operation family they implement**, the way Node's documentation
-  groups them: opening and closing, reading, writing, metadata. `fs/fd.vlt` (490 lines, no
-  classes) becomes `fs/fd/system.vlt` (the `declare system function` bindings and the C
-  layouts), `fs/errors.vlt` (errno → Node's `IoError`, shared by all of `velt/fs`),
-  `fs/fd/args.vlt` (Node's argument checks and their `RangeError`/`TypeError` messages),
-  `fs/fd/open.vlt`, `fs/fd/read.vlt`, `fs/fd/write.vlt` and `fs/fd/sync.vlt`.
+  groups them: opening and closing, reading, writing, metadata. `fs/fd.velt` (490 lines, no
+  classes) becomes `fs/fd/system.velt` (the `declare system function` bindings and the C
+  layouts), `fs/errors.velt` (errno → Node's `IoError`, shared by all of `velt/fs`),
+  `fs/fd/args.velt` (Node's argument checks and their `RangeError`/`TypeError` messages),
+  `fs/fd/open.velt`, `fs/fd/read.velt`, `fs/fd/write.velt` and `fs/fd/sync.velt`.
 - **Native bindings** (`declare function velt_rt_*`, `declare system function`) sit in one file
-  per module (`system.vlt` or `rt.vlt`), so a module's native surface is reviewable in one place
+  per module (`system.velt` or `rt.velt`), so a module's native surface is reviewable in one place
   and its other files are plain Velt.
 - **Helpers two files need** become a file of their own that both import, rather than a copy or
   a cross-import between two operation files.
@@ -267,8 +267,8 @@ answer one question. Split by responsibility, never by line count:
   the area did not compile it (`velt:fs/fd`) folds back into its area: the loader loads an
   index's re-exports only for the names a program imports (§2), so `openSync` is exported from
   `velt/fs`, where Node has it, and costs nothing to a program that does not use it.
-- **An index.vlt holds no code**: what an area's index implemented (`readFile` in
-  `fs/index.vlt`) moves to a file of the area, and the index lists it.
+- **An index.velt holds no code**: what an area's index implemented (`readFile` in
+  `fs/index.velt`) moves to a file of the area, and the index lists it.
 
 ### 7. Rules for agents and contributors, enforced by `precheck`
 
@@ -279,14 +279,14 @@ what is wrong:
 
 | Check in `precheck` | Message (example) |
 |---|---|
-| A new `.vlt` file directly in `std/`, or outside every module | `std/foo.vlt: std files live in a module folder; put it in std/<area>/ (docs/internals/design/std-layout.md §3 lists the areas)` |
-| A `velt:` specifier anywhere | `use "velt/fs" (velt: specifiers were removed)`, with the target from `layout.vlt` |
+| A new `.velt` file directly in `std/`, or outside every module | `std/foo.velt: std files live in a module folder; put it in std/<area>/ (docs/internals/design/std-layout.md §3 lists the areas)` |
+| A `velt:` specifier anywhere | `use "velt/fs" (velt: specifiers were removed)`, with the target from `layout.velt` |
 | A user-facing file (tests, examples, docs) imports a non-index std file | `velt/json/scan is internal to velt/encoding/json; import from "velt/encoding/json"` |
-| A new export in an implementation file that no `index.vlt` re-exports, or a re-export without a doc comment | `Deque is exported from collections/deque.vlt but not re-exported by collections/index.vlt` |
-| `export *` in an `index.vlt` | `re-export by name so the module's API is reviewable` |
+| A new export in an implementation file that no `index.velt` re-exports, or a re-export without a doc comment | `Deque is exported from collections/deque.velt but not re-exported by collections/index.velt` |
+| `export *` in an `index.velt` | `re-export by name so the module's API is reviewable` |
 | A file over 400 lines besides its doc comments, or one more exported class in a file | `split by type: one exported class per file (docs/internals/design/std-layout.md §6)` |
-| A module (an `index.vlt`) without tests: an end-to-end test that imports it (`tests/golden`, `tests/std`) or white-box tests in its folder | `velt/text has no tests: add an end-to-end test that imports it (tests/golden/std, tests/std) or white-box tests in std/text/` |
-| A file added to an allow list in `layout.vlt` (`oversize` …) | `the allow lists only shrink` |
+| A module (an `index.velt`) without tests: an end-to-end test that imports it (`tests/golden`, `tests/std`) or white-box tests in its folder | `velt/text has no tests: add an end-to-end test that imports it (tests/golden/std, tests/std) or white-box tests in std/text/` |
+| A file added to an allow list in `layout.velt` (`oversize` …) | `the allow lists only shrink` |
 | Header line missing or naming the wrong module | the expected first line |
 
 These checks look only at changed files, so they cost almost nothing on top of today's
@@ -294,30 +294,30 @@ These checks look only at changed files, so they cost almost nothing on top of t
 
 To make the right thing the easy thing:
 
-- `std-lint new <module path>` scaffolds a module: `index.vlt` with the header, the docs
+- `std-lint new <module path>` scaffolds a module: `index.velt` with the header, the docs
   page and a golden test folder.
 - **CLAUDE.md** "Rules for agents" gets one rule: *std code lives in module folders; a module's
-  API is its `index.vlt`; one exported class per file; run `std-lint new` for a new
+  API is its `index.velt`; one exported class per file; run `std-lint new` for a new
   module; the layout and its rules: docs/internals/design/std-layout.md*.
 - **CONTRIBUTING.md** "Coding standards" gets a "Standard library" subsection with the rules of
   §2 and §6, replacing the "Rules for std code" section of `std/README.md`, which then only
   points there.
 - **The pull request self-check** (CONTRIBUTING.md "Before opening a pull request") gets:
-  *std API change: `index.vlt` re-export with a doc comment, the docs page, a golden test*.
+  *std API change: `index.velt` re-export with a doc comment, the docs page, a golden test*.
 
 ### 8. The layout was Velt data, and the move a one-time Velt script
 
-Velt describes its own configuration in Velt: `package.vlt` is a typed data file that tools
-parse and never run. The layout followed that pattern: `scripts/std-layout/layout.vlt` was
-`export const layout: StdLayout = { … }` (typed by `types.vlt`): `dirs` and `files` (old → new
+Velt describes its own configuration in Velt: `package.velt` is a typed data file that tools
+parse and never run. The layout followed that pattern: `scripts/std-layout/layout.velt` was
+`export const layout: StdLayout = { … }` (typed by `types.velt`): `dirs` and `files` (old → new
 below `std/`), `leaving` (what went to `packages/` or away), `newIndex` (area modules whose
-`index.vlt` was written by hand), `modules` (old public specifier → its module, `null` for
+`index.velt` was written by hand), `modules` (old public specifier → its module, `null` for
 globals) and `docs`.
 
-`scripts/std-layout/main.vlt`, written in Velt on std, did the mechanical part: `git mv` of
+`scripts/std-layout/main.velt`, written in Velt on std, did the mechanical part: `git mv` of
 every file (history follows), then every `velt:` specifier rewritten (inside std to the moved
 file's own path, elsewhere to the module of `modules`, names that moved to another module per
-`names`), `std/<file>.vlt` paths in comments, docs and expected outputs, the compiler's
+`names`), `std/<file>.velt` paths in comments, docs and expected outputs, the compiler's
 `"std/<module>"` names and the conditional globals' `load when` lines. While pull requests kept
 merging to `main`, `scripts/std-layout/replay.sh` replayed the branch onto a newer `main`: the
 commits before the move, the script run again (one generated commit, subject `std: the move to
@@ -341,7 +341,7 @@ for example the B+ tree's invariant checks. Rule 2 forbids that from user code, 
 a test that reaches into internals belongs next to them. So:
 
 - **Black-box tests** (the public API) stay end-to-end under `tests/golden/std/<module path>/`.
-- **White-box tests** move next to the code as `std/<module>/<name>.test.vlt` (Vitest's
+- **White-box tests** move next to the code as `std/<module>/<name>.test.velt` (Vitest's
   convention, which `velt test` already follows), run in the gate with `velt test std/`, and
   are left out of the toolchain's packaged std.
 
@@ -371,8 +371,8 @@ runtime bindings are written in Velt and checked against the runtime, which is t
 
 The fix, as Rust's `#[rustc_intrinsic]` and Swift's `Builtin` do it:
 
-- `std/lang/intrinsics/` declares every intrinsic in Velt, grouped by area (`array.vlt`,
-  `string.vlt`, `atomic.vlt`, `types.vlt` for the compile-time type facts, `simd.vlt`, …), with
+- `std/lang/intrinsics/` declares every intrinsic in Velt, grouped by area (`array.velt`,
+  `string.velt`, `atomic.velt`, `types.velt` for the compile-time type facts, `simd.velt`, …), with
   a doc comment and named, typed parameters: `export declare intrinsic function
   arraySwap<T>(xs: T[], i: i64, j: i64): void;`. The declaration is the signature sema checks.
 - std code imports them like anything else (`import { arraySwap } from
@@ -386,10 +386,10 @@ The fix, as Rust's `#[rustc_intrinsic]` and Swift's `Builtin` do it:
   packages of §3 use only those.
 
 Done: `std/lang/intrinsics/` declares the 83 intrinsics std calls in 18 files by area (`array`,
-`string`, `simd`, `types`, `compare`, `atomic`, `generator`, `json`, `db`, …; `index.vlt`
+`string`, `simd`, `types`, `compare`, `atomic`, `generator`, `json`, `db`, …; `index.velt`
 re-exports them), with `declare intrinsic function` (`ast::FnSig::is_intrinsic`, additive). A
 declaration's parameters are borrowed or copied by their type as a function's start out;
-`Mut<T>`, `Owned<T>` and `Copied<T>` (aliases of `T` in `modes.vlt`) mark the ones the
+`Mut<T>`, `Owned<T>` and `Copied<T>` (aliases of `T` in `modes.velt`) mark the ones the
 intrinsic modifies, takes over or copies. `crates/velt_sema/src/intrinsic_decls.rs` is the one
 table from name to `Intrinsic` (plus `targetFeature` and `anyToPrimitive`, which sema writes out
 itself); a call is checked against the declaration (errors say `` intrinsic `arraySwap` ``) and
@@ -429,8 +429,8 @@ What is wrong is the mechanism, not the idea:
 
 The fix, together with §10:
 
-- Hooks live in `std/lang/hooks/` (grouped: `number.vlt`, `any.vlt`, `json.vlt`, `proxy.vlt`,
-  `inspect.vlt`, …), plain functions with ordinary names (`f64ToString`, `anyText`), never
+- Hooks live in `std/lang/hooks/` (grouped: `number.velt`, `any.velt`, `json.velt`, `proxy.velt`,
+  `inspect.velt`, …), plain functions with ordinary names (`f64ToString`, `anyText`), never
   prelude exports, so user code cannot see them (`lang/` is not importable). A hook that needs a
   class's private state takes it as a parameter or becomes a function in the class's own module
   that the class does not export, instead of a public `__method`.
@@ -449,7 +449,7 @@ The fix, together with §10:
 `crates/velt_sema/tests/std_hooks.rs` checks against std (and that no program can name one).
 They live in `std/lang/hooks/` (`adapt`, `any_methods`, `any_object`, `any_ops`, `any_text`,
 `array`, `array_view`, `class_object`, `iter`, `number`, `process`, `proxy`, `record`,
-`syntax`), loaded by the prelude (`std/prelude/hooks.vlt`) except `proxy.vlt`, which comes with
+`syntax`), loaded by the prelude (`std/prelude/hooks.velt`) except `proxy.velt`, which comes with
 `Proxy`; a few stay next to what they need, unexported or in `lang/` (`lang/proxy/array`,
 `lang/this_fn`, `lang/typed_array/core`, `collections/set`). Sema names a hook by its qualified
 name (`std/lang/hooks/number::f64ToString`), an identifier or type name no source can write
@@ -459,7 +459,7 @@ as `any` keep a name prefix (`anyStr_trim`, found by `velt_vir` `any_builtin.rs`
 generated `main` calls the runner's hooks `registerFile`, `registerTest`, `registerAsyncTest`
 and `runRegistered` from velt/test's internal files, which the loader lets only the harness
 import (`LoadOptions::test_harness`). The JSON hooks came with the JSON port (#1946):
-`JSON.parse(text) as T` calls `jsonParseFromContext<T>` (`std/lang/hooks/json.vlt`, loaded with
+`JSON.parse(text) as T` calls `jsonParseFromContext<T>` (`std/lang/hooks/json.velt`, loaded with
 the global `JSON`), and `JsonValue`'s methods the compiler and generated code call are keyed by
 std's symbols (`[JSON_RUNTIME_HANDLE]()`, `[JSON_WRITE](b)`, `static [JSON_FROM_READER](r)`).
 
@@ -494,10 +494,10 @@ its private fields. It gets its own design document and issue.
 One pull request, with all other pull requests stopped meanwhile. Commits in this order, each
 building and passing its tests:
 
-1. This design and `layout.vlt`.
+1. This design and `layout.velt`.
 2. Compiler: `velt/` specifiers, `velt:` an error, `velt` reserved as a package name.
-3. The move: the script's run, the new `index.vlt` files, `velt/io`'s plumbing split from its
-   API (`io/error.vlt`, `io/result.vlt`), and the fixes the tests need.
+3. The move: the script's run, the new `index.velt` files, `velt/io`'s plumbing split from its
+   API (`io/error.velt`, `io/result.velt`), and the fixes the tests need.
 4. The hyper server removed (`velt:http` `serve`, `crates/velt_rt/src/http/`, the hyper
    crates, the `http_handler` intrinsic); the Velt server gets a web-standard `serve`, HTTP/2,
    and moves to `packages/http-server` on public APIs (§3).
@@ -507,12 +507,12 @@ building and passing its tests:
    by a test that runs `velt test` in every package (as for the example apps).
 7. Intrinsics declared in `std/lang/intrinsics` (§10); compiler hooks moved to `std/lang/hooks`
    with one table in the compiler, and no `__` names left in std's public surface (§10b).
-8. The prelude's load order explicit (`prelude/index.vlt`), the `z_` file names gone; the
+8. The prelude's load order explicit (`prelude/index.velt`), the `z_` file names gone; the
    compiler's std module names in one table (§5).
 9. Enforcement: the loader's visibility rule, white-box tests next to the code (§9), `std-lint`
    in `precheck` and `check.sh`, `std-lint new`, the CLAUDE.md and CONTRIBUTING.md rules (§7).
 10. Quality, area by area (one commit per area): one class per file, files under 400 lines,
-    `index.vlt` doc comments, `errors.vlt`, docs pages per module, tests per module.
+    `index.velt` doc comments, `errors.velt`, docs pages per module, tests per module.
 11. Docs: the website's std pages (https://veltlang.com/docs/std/) mirror the tree, `std/README.md` points to CONTRIBUTING.md; the
     docs-sync issue on the website; the `velt` type package for `tsc` (`velt doc --std --format
     types`, https://veltlang.com/docs/tooling/cli/ "TypeScript declarations"), so ts-compat accepts `import type`
@@ -520,7 +520,7 @@ building and passing its tests:
 
 ## Open questions
 
-- **The JSON engine in the prelude.** `prelude/json/json.vlt` belongs in `velt/encoding/json`
+- **The JSON engine in the prelude.** `prelude/json/json.velt` belongs in `velt/encoding/json`
   but lowering treats `std/prelude/` specially; it moves with commit 8, when the module table
   (§5) carries that privilege instead of the path.
 - **Path dependencies with native code** (resolved in commit 6): a path dependency on a package
@@ -530,7 +530,7 @@ building and passing its tests:
 
 ## Appendix: the tree after the move
 
-Generated from `layout.vlt` against `main` (2026-10-30); file counts are per folder, before
+Generated from `layout.velt` against `main` (2026-10-30); file counts are per folder, before
 the commit 10 splits. Implementation folders more than three levels deep (`net/http/fetch/client`)
 are not shown.
 

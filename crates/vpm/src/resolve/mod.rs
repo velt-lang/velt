@@ -53,7 +53,7 @@ pub enum Source {
         checksum: String,
         /// The package root: the checkout's `spec.subdir`.
         dir: PathBuf,
-        /// For a target with no `package.vlt`: the npm packages it provides, by name (one, or
+        /// For a target with no `package.velt`: the npm packages it provides, by name (one, or
         /// every package of its workspace), which its dependents import as npm packages
         /// (`crate::npm::provided`). Empty for a Velt package.
         npm: BTreeMap<String, PathBuf>,
@@ -387,7 +387,7 @@ fn dependency_requirements(
     for (name, dep) in &manifest.dependencies {
         if dep.is_workspace() {
             return Err(format!(
-                "dependency `{name}` of `{0}` is `\"workspace\"`, but `{0}` is not a member of a workspace (no velt.workspace.vlt above it lists it)",
+                "dependency `{name}` of `{0}` is `\"workspace\"`, but `{0}` is not a member of a workspace (no velt.workspace.velt above it lists it)",
                 manifest.package.name
             ));
         }

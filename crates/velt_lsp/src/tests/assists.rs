@@ -62,7 +62,7 @@ fn hints(client: &mut Client, app: &Url) -> Vec<(u64, u64, String)> {
 
 #[test]
 fn inlay_hints_show_inferred_types_and_parameter_names() {
-    let (mut client, app) = open_app("assist_hints.vlt");
+    let (mut client, app) = open_app("assist_hints.velt");
     let hints = hints(&mut client, &app);
     let has = |needle: &str, delta: usize, label: &str| {
         let (line, col) = pos_of(APP, needle, delta);
@@ -93,7 +93,7 @@ fn inlay_hints_show_inferred_types_and_parameter_names() {
 fn hover_and_hints_print_bool_as_boolean() {
     let text = "function flip(a: bool): boolean {\n  return !a;\n}\n\nfunction main() {\n  const on = flip(false);\n  console.log(on);\n}\n";
     let mut client = Client::start();
-    let doc = uri("assist_boolean.vlt");
+    let doc = uri("assist_boolean.velt");
     client.open(&doc, text);
     assert_eq!(client.diagnostics(&doc)["diagnostics"], json!([]));
     let (line, col) = pos_of(text, "flip(false)", 0);
@@ -113,10 +113,10 @@ fn hover_and_hints_print_bool_as_boolean() {
 #[test]
 fn signature_help_while_typing_a_call() {
     let mut client = Client::start();
-    let app = uri("assist_sig_app.vlt");
+    let app = uri("assist_sig_app.velt");
     client.open(&app, APP);
     client.diagnostics(&app);
-    let doc = uri("assist_sig.vlt");
+    let doc = uri("assist_sig.velt");
     let text = APP.replace(
         "  console.log(total);\n",
         "  console.log(total);\n  area(1.0, \n",
@@ -188,7 +188,7 @@ fn tokens(client: &mut Client, doc: &Url) -> Vec<(u32, u32, u32, String, Vec<Str
 
 #[test]
 fn semantic_tokens_classify_names() {
-    let (mut client, app) = open_app("assist_tokens.vlt");
+    let (mut client, app) = open_app("assist_tokens.velt");
     let tokens = tokens(&mut client, &app);
     let token = |needle: &str, delta: usize| {
         let (line, col) = pos_of(APP, needle, delta);
@@ -218,7 +218,7 @@ fn semantic_tokens_classify_names() {
 
 #[test]
 fn document_highlight_marks_reads_and_writes() {
-    let (mut client, app) = open_app("assist_highlight.vlt");
+    let (mut client, app) = open_app("assist_highlight.velt");
     let (line, col) = pos_of(APP, "total = area", 0);
     let result = client.request("textDocument/documentHighlight", at(&app, line, col));
     let mut kinds: Vec<(u64, u64, u64)> = result
@@ -258,21 +258,21 @@ fn workspace_symbols_search_open_programs_and_folders() {
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::create_dir_all(dir.join("target")).unwrap();
     std::fs::write(
-        dir.join("src/geometry.vlt"),
+        dir.join("src/geometry.velt"),
         "export function areaOfSquare(s: f64): f64 {\n  return s * s;\n}\n",
     )
     .unwrap();
-    std::fs::write(dir.join("target/skip.vlt"), "function areaSkipped() {}\n").unwrap();
+    std::fs::write(dir.join("target/skip.velt"), "function areaSkipped() {}\n").unwrap();
     // `.ts` and `.tsx` files are indexed in a package's `src/` and `tests/` only, not in the
     // TypeScript frontend next to it.
     std::fs::write(
-        dir.join("package.vlt"),
+        dir.join("package.velt"),
         "export const pkg: Package = { name: \"ws\", version: \"0.1.0\" };\n",
     )
     .unwrap();
     std::fs::create_dir_all(dir.join("web/src")).unwrap();
     std::fs::write(dir.join("web/src/app.ts"), "export function areaWeb() {}\n").unwrap();
-    std::fs::write(dir.join("web/tool.vlt"), "export function areaTool() {}\n").unwrap();
+    std::fs::write(dir.join("web/tool.velt"), "export function areaTool() {}\n").unwrap();
     std::fs::write(dir.join("src/shapes.ts"), "export function areaOfTs() {}\n").unwrap();
     std::fs::write(dir.join("src/card.tsx"), "export function areaCard() {}\n").unwrap();
     std::fs::write(
@@ -283,7 +283,7 @@ fn workspace_symbols_search_open_programs_and_folders() {
     let root = Url::from_file_path(&dir).unwrap();
 
     let mut client = Client::start_with(json!({ "capabilities": {}, "rootUri": root }));
-    let app = uri("assist_ws.vlt");
+    let app = uri("assist_ws.velt");
     client.open(&app, APP);
     client.diagnostics(&app);
     let result = client.request("workspace/symbol", json!({ "query": "area" }));
@@ -301,11 +301,11 @@ fn workspace_symbols_search_open_programs_and_folders() {
     assert_eq!(
         names,
         [
-            ("area".to_string(), "assist_ws.vlt".to_string()),
+            ("area".to_string(), "assist_ws.velt".to_string()),
             ("areaCard".to_string(), "card.tsx".to_string()),
-            ("areaOfSquare".to_string(), "geometry.vlt".to_string()),
+            ("areaOfSquare".to_string(), "geometry.velt".to_string()),
             ("areaOfTs".to_string(), "shapes.ts".to_string()),
-            ("areaTool".to_string(), "tool.vlt".to_string()),
+            ("areaTool".to_string(), "tool.velt".to_string()),
         ]
     );
     let members = client.request("workspace/symbol", json!({ "query": "scaled" }));

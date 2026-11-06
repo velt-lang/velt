@@ -1,4 +1,4 @@
-//! Navigation (see navigate.vlt): `Value::get` by index and key.
+//! Navigation (see navigate.velt): `Value::get` by index and key.
 use serde_json::Value;
 
 fn main() {

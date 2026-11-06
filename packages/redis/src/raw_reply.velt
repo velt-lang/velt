@@ -1,0 +1,8 @@
+// redis (internal): `RawReply`, a parsed reply as three parallel arrays (see reply.velt).
+
+/** One reply: a node per value in pre-order, a node before its children (see reply.velt). */
+export struct RawReply {
+  tags: u8[];
+  nums: i64[];
+  strs: string[];
+}

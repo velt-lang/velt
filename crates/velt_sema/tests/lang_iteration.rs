@@ -1,4 +1,4 @@
-//! The iteration protocol (std/prelude/iter.vlt, docs/internals/design/iteration.md): type
+//! The iteration protocol (std/prelude/iter.velt, docs/internals/design/iteration.md): type
 //! parameter defaults, `throws` clauses naming a generic interface's parameters, `bool`
 //! discriminant narrowing and `for...of` over iterables.
 

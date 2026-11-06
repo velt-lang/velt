@@ -39,7 +39,7 @@ def core_benchmarks(ctx):
         for name in names:
             if not ctx.wanted_name(name):
                 continue
-            src = os.path.join(b, "typical", f"{name}.vlt")
+            src = os.path.join(b, "typical", f"{name}.velt")
             rust = os.path.join(out, f"typical-{name}-rust")
             rerr = rustc(ctx, f"rustc typical/{name}", os.path.join(b, "typical", "rust", f"{name}.rs"), rust)
             velt = os.path.join(out, f"typical-{name}")
@@ -53,18 +53,18 @@ def core_benchmarks(ctx):
     # the suites (Rust has no such dynamic or UTF-16 semantics to compare): Node is the reference.
     js_suites = [
         ("language", "iter", lambda n: os.path.join(b, "iter", "node", f"{n}.js"),
-         sorted(f[:-4] for f in os.listdir(os.path.join(b, "iter")) if f.endswith(".vlt"))),
+         sorted(f[:-5] for f in os.listdir(os.path.join(b, "iter")) if f.endswith(".velt"))),
         ("strings", "strings_utf16", lambda n: os.path.join(b, "strings_utf16", f"{n}.js"),
-         sorted(f[:-4] for f in os.listdir(os.path.join(b, "strings_utf16")) if f.endswith(".vlt"))),
+         sorted(f[:-5] for f in os.listdir(os.path.join(b, "strings_utf16")) if f.endswith(".velt"))),
         ("collections", "key_order", lambda n: os.path.join(b, "key_order", f"{n}.js"),
-         sorted(f[:-4] for f in os.listdir(os.path.join(b, "key_order")) if f.endswith(".vlt"))),
+         sorted(f[:-5] for f in os.listdir(os.path.join(b, "key_order")) if f.endswith(".velt"))),
     ]
     for area, suite, js, names in js_suites:
         for name in names:
             if not ctx.wanted_name(name) or not os.path.isfile(js(name)):
                 continue
             velt = os.path.join(out, f"{suite}-{name}")
-            verr = velt_build(ctx, os.path.join(b, suite, f"{name}.vlt"), velt)
+            verr = velt_build(ctx, os.path.join(b, suite, f"{name}.velt"), velt)
             benches.append({"category": "core", "area": area, "name": f"{area}: {name} ({suite})", "check": "ref",
                             "impls": [*js_impls(ctx, js(name), threads=ST), impl("Velt", "velt", [velt], verr, threads=ST),
                                       impl("Rust", "rust", [], "n/a: no Rust program in the suite", threads=ST)]})
@@ -103,9 +103,9 @@ def core_benchmarks(ctx):
         impls = [impl("Rust (Copy struct)", "rust", [rust], rerr, threads=ST)]
         for kind in ("struct", "class"):
             exe = os.path.join(out, f"structs-{name}-{kind}")
-            err = velt_build(ctx, os.path.join(b, "structs", f"{name}_{kind}.vlt"), exe)
+            err = velt_build(ctx, os.path.join(b, "structs", f"{name}_{kind}.velt"), exe)
             impls.append(impl(f"Velt {kind}", "velt", [exe], err, threads=ST))
-        ts = as_ts(ctx, os.path.join(b, "structs", f"{name}_class.vlt"), out)
+        ts = as_ts(ctx, os.path.join(b, "structs", f"{name}_class.velt"), out)
         impls += js_impls(ctx, ts, label_suffix=" class", threads=ST)
         benches.append({"category": "core", "area": "language", "name": f"language: {name} (structs)",
                         "check": "ref", "impls": impls})
@@ -113,8 +113,8 @@ def core_benchmarks(ctx):
     # Ordered maps and atomics: Velt against Rust (rust/.cargo/config.toml builds for this CPU,
     # so Velt does too). The programs time each workload themselves: `<name> <ms> <check>`.
     for suite, src, label, bins, kind in (
-            ("btree", "btree.vlt", "Velt BTreeMap", [("Rust std BTreeMap", "std"), ("Rust bbtree", "bbtree")], ST),
-            ("atomics", "atomics.vlt", "Velt Atomic<T>", [("Rust std::sync::atomic", "atomics_bench")], MT)):
+            ("btree", "btree.velt", "Velt BTreeMap", [("Rust std BTreeMap", "std"), ("Rust bbtree", "bbtree")], ST),
+            ("atomics", "atomics.velt", "Velt Atomic<T>", [("Rust std::sync::atomic", "atomics_bench")], MT)):
         if not ctx.wanted_name(suite):
             continue
         area = "collections" if suite == "btree" else "concurrency"
@@ -134,7 +134,7 @@ def core_benchmarks(ctx):
     # Std components against the Rust crate for the same job (bench/stdport): number formatting
     # and parsing, UTF-8, base64, hex, SHA-256, URLs, big integers, decompression. One thread, as
     # its own harness runs them.
-    ports = sorted(f[:-4] for f in os.listdir(os.path.join(b, "stdport")) if f.endswith(".vlt"))
+    ports = sorted(f[:-5] for f in os.listdir(os.path.join(b, "stdport")) if f.endswith(".velt"))
     ports = [n for n in ports if ctx.wanted_name(n) or ctx.wanted_name("stdport")]
     if ports:
         target = os.path.join(out, "stdport-rust")
@@ -145,7 +145,7 @@ def core_benchmarks(ctx):
         env = {"VELT_THREADS": "1", "STDPORT_INPUTS": inputs}
         for name in ports:
             exe = os.path.join(out, f"stdport-{name}")
-            verr = velt_build(ctx, os.path.join(b, "stdport", f"{name}.vlt"), exe)
+            verr = velt_build(ctx, os.path.join(b, "stdport", f"{name}.velt"), exe)
             benches.append({"category": "core", "area": "strings", "name": f"std: {name} (stdport)", "check": "ref",
                             "impls": [impl("Rust crate", "rust", [os.path.join(target, "release", name)], rerr, env=env,
                                            threads=ST),
@@ -168,7 +168,7 @@ def tsx_benchmarks(ctx):
     out = os.path.join(ctx.out, "tsx")
     os.makedirs(out, exist_ok=True)
     velt = os.path.join(out, "render")
-    verr = velt_build(ctx, os.path.join(here, "render.vlt"), velt)
+    verr = velt_build(ctx, os.path.join(here, "render.velt"), velt)
     nerr = npm_install(ctx, here, "react, react-dom, preact, preact-render-to-string")
     scale = ["10"] if ctx.smoke else ["1"]
     prod = {"NODE_ENV": "production"}
@@ -196,15 +196,15 @@ def tsx_benchmarks(ctx):
 def tsx_servers(ctx, server_threads):
     """([(label, lang, cmds(port), env, error, threads)] for the TSX page servers, like
     servers.http_servers, and a function giving the expected bodies {route: bytes}: the pages
-    render.vlt prints, which the tsx category compares with React's and Preact's)."""
+    render.velt prints, which the tsx category compares with React's and Preact's)."""
     here = os.path.join(ctx.here, "tsx")
     out = os.path.join(ctx.out, "tsx")
     os.makedirs(out, exist_ok=True)
     velt = os.path.join(out, "server")
-    verr = velt_build(ctx, os.path.join(here, "server.vlt"), velt)
+    verr = velt_build(ctx, os.path.join(here, "server.velt"), velt)
     nerr = npm_install(ctx, here, "react, react-dom, preact, preact-render-to-string")
     js = os.path.join(here, "server.mjs")
-    # tsx/server.vlt serves through the http-server package, written in Velt on std/net.
+    # tsx/server.velt serves through the http-server package, written in Velt on std/net.
     servers = [("Velt TSX on http-server (written in Velt)", "velt", lambda p: [[velt, str(p)]],
                 {"VELT_THREADS": str(server_threads)}, verr, MT),
                ("Velt TSX on http-server (written in Velt, 1 thread)", "velt", lambda p: [[velt, str(p)]],
@@ -226,7 +226,7 @@ def tsx_servers(ctx, server_threads):
                         {**prod, "REUSE_PORT": "1"}, bun_err, MT))
     render = os.path.join(out, "render")
     if not os.path.isfile(render):
-        velt_build(ctx, os.path.join(here, "render.vlt"), render)
+        velt_build(ctx, os.path.join(here, "render.velt"), render)
 
     def expected():
         pages = {}

@@ -1,5 +1,5 @@
 //! TypeScript's `Object.keys`, `Object.values` and `Object.entries` (the prelude's `Object`,
-//! std/prelude/record.vlt), checked here rather than as ordinary generic calls:
+//! std/prelude/record.velt), checked here rather than as ordinary generic calls:
 //!
 //! - `Object.keys(x)` accepts any object, as in TypeScript (issue #230), and returns a
 //!   `string[]`: a record's keys in insertion order (`r[RECORD_KEY_NAMES]()`), or the field names of an

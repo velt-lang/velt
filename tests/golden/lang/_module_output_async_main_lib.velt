@@ -1,0 +1,7 @@
+// Imported by module_output_async_main.velt and module_output_timer.velt.
+console.log("lib top");
+
+export function f(): number {
+  console.log("f");
+  return 1;
+}

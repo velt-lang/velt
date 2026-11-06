@@ -107,6 +107,7 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         dry_run: opts.dry_run,
         timings: vec![],
     };
+    crate::old_extension::check(root)?;
     let ws = workspace_args(root);
     // The build leaves this running binary alone (rebuilding it fails on Windows); clippy and
     // the tests only build `xtask`'s check data and test harness, not the binary.
@@ -200,7 +201,7 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
     if part.has(Part::Test) && plan.vscode {
         gate.vscode()?;
     }
-    if part.has(Part::Test) && plan.vlt_fmt {
+    if part.has(Part::Test) && plan.velt_fmt {
         let velt = target_dir(root).join("debug").join(exe("velt"));
         let mut fmt = Command::new(&velt);
         fmt.args(["fmt", "--check", "std", "examples", "packages"]);
@@ -209,7 +210,7 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
         // the base revision, an allow-list entry it lacks fails: the lists only shrink.
         let mut lint = Command::new(&velt);
         lint.current_dir(root)
-            .args(["run", "scripts/std-lint/main.vlt"]);
+            .args(["run", "scripts/std-lint/main.velt"]);
         if let Some(base) = &opts.base {
             lint.args(["--", "--base", base]);
         }

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Standard-library components against the Rust crate that does the same job (Linux / macOS):
-# each bench/stdport/<name>.vlt has a port in rust/src/bin/<name>.rs on the crate the runtime
+# each bench/stdport/<name>.velt has a port in rust/src/bin/<name>.rs on the crate the runtime
 # uses today (or, for what is already Velt code, the crate a Rust program would use). Builds
 # both, checks that they print the same output, and prints a Markdown table of the best
 # wall-clock time (ms) over RUNS runs, interleaved so a busy machine affects both columns alike.
@@ -34,8 +34,8 @@ export STDPORT_INPUTS="$OUT/inputs"
 "$OUT/rust/release/gen_inputs" "$STDPORT_INPUTS"
 
 names=()
-for src in "$HERE"/*.vlt; do
-  name=$(basename "$src" .vlt)
+for src in "$HERE"/*.velt; do
+  name=$(basename "$src" .velt)
   [[ -n "$ONLY" && "$name" != "$ONLY" ]] && continue
   echo "$name..." >&2
   "$VELT" build --release "$src" -o "$OUT/$name-velt"

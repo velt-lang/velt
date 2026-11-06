@@ -212,7 +212,7 @@ not a reason for another round.
     only=bench -f bench_baseline=accept`; say on the issue which commits it was and why, then
     close it. More of `std/` to check is not a regression: `compile/check_all_std` is compared
     per code line of `std/` (blank and comment lines don't count, so added documentation can't
-    hide a slowdown); `bench/compile/all_std.vlt` imports every std module and the row runs it
+    hide a slowdown); `bench/compile/all_std.velt` imports every std module and the row runs it
     with `VELT_EAGER_STD=1`, so that all those lines are checked (a test in
     `crates/veltc/tests/bench_programs.rs` names a missing one).
     The bench job runs on a fixed runner image: the counts depend on its C library and valgrind,

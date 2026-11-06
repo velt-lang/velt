@@ -1,4 +1,4 @@
-intersection_type_params.vlt:15:35: error: no value has type `{ id: f64 } & { id: string }`: field `id` is `f64` in one part and `string` in another
+intersection_type_params.velt:15:35: error: no value has type `{ id: f64 } & { id: string }`: field `id` is `f64` in one part and `string` in another
   = note: a value of an intersection has every part's fields at once
-intersection_type_params.vlt:16:19: error: no value has type `{ a: f64; id: f64 } & { id: string }`: field `id` is `f64` in one part and `string` in another
+intersection_type_params.velt:16:19: error: no value has type `{ a: f64; id: f64 } & { id: string }`: field `id` is `f64` in one part and `string` in another
   = note: a value of an intersection has every part's fields at once

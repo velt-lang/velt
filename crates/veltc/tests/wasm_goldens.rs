@@ -1,4 +1,4 @@
-//! The goldens on WebAssembly: every `tests/golden/{m1,m2,m3,m4,lang}/*.vlt` with a `.out`
+//! The goldens on WebAssembly: every `tests/golden/{m1,m2,m3,m4,lang}/*.velt` with a `.out`
 //! file, except the ones using sockets or threads-only features (see [`UNSUPPORTED`]), built
 //! with `--target wasm32-wasip1` (debug and `--release`) and run under wasmtime by
 //! `velt run`, must print exactly that output and exit with its `.code` (default 0). The M1, M2
@@ -78,7 +78,7 @@ fn programs(root: &Path, dirs: &[&str], skip: &[&str]) -> Vec<PathBuf> {
         };
         files.extend(rd.flatten().map(|e| e.path()).filter(|p| {
             let stem = p.file_stem().unwrap_or_default().to_string_lossy();
-            p.extension().is_some_and(|e| e == "vlt")
+            p.extension().is_some_and(|e| e == "velt")
                 && p.with_extension("out").exists()
                 && !skip.contains(&stem.as_ref())
                 && !declares_system_functions(p)
@@ -337,7 +337,7 @@ fn conditional_imports_pick_the_target_variant() {
         copy_dir(&fixture, &work);
         let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
             .args(["run", "--target", target])
-            .arg(work.join("src/main.vlt"))
+            .arg(work.join("src/main.velt"))
             .current_dir(&work)
             .output()
             .expect("run velt");
@@ -352,7 +352,7 @@ fn conditional_imports_pick_the_target_variant() {
     }
 }
 
-/// Host functions (https://veltlang.com/docs/reference/host-functions/) under node: tests/wasm_host/main.vlt, built
+/// Host functions (https://veltlang.com/docs/reference/host-functions/) under node: tests/wasm_host/main.velt, built
 /// for wasm32-unknown-unknown in debug and release mode, calls the host functions host.mjs
 /// passes with every type that crosses, holds and drops `HostRef`s (host.mjs checks the glue's
 /// table is empty at the end), and fails to start without the functions.
@@ -376,7 +376,7 @@ fn host_functions_under_node() {
         let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
             .args(["build", "--target", "wasm32-unknown-unknown"])
             .args(mode)
-            .arg(dir.join("main.vlt"))
+            .arg(dir.join("main.velt"))
             .arg("-o")
             .arg(&module)
             .output()
@@ -404,15 +404,15 @@ fn host_functions_under_node() {
 }
 
 /// Async host functions and the turns the host drives (rt_abi_async.md §1.4, §2.5) under node:
-/// tests/wasm_host_async/main.vlt awaits host promises of every result type, a rejection as an
+/// tests/wasm_host_async/main.velt awaits host promises of every result type, a rejection as an
 /// `IoError`, promises settled out of order and interleaved with timers, drops a disposable and
 /// a `HostRef` held across awaits, and sleeps while the host's event loop runs (host.mjs counts
-/// its ticks); uncaught.vlt ends with a rejection nothing catches after it waited; ends.vlt,
-/// stuck.vlt and sync_main.vlt end in later turns with `main`'s code, `process.exit`, exit code
+/// its ticks); uncaught.velt ends with a rejection nothing catches after it waited; ends.velt,
+/// stuck.velt and sync_main.velt end in later turns with `main`'s code, `process.exit`, exit code
 /// 13, a spawned task waiting for a host promise after `main`, and an uncaught error reported at
 /// once while a host promise is pending;
-/// many.vlt runs thousands of turns, after which the wasm stack
-/// pointer and the memory are as they were (many.mjs); order.vlt's promises, microtasks and
+/// many.velt runs thousands of turns, after which the wasm stack
+/// pointer and the memory are as they were (many.mjs); order.velt's promises, microtasks and
 /// timers print what the native build prints. Debug and release mode.
 #[test]
 fn async_host_functions_under_node() {
@@ -432,10 +432,10 @@ fn async_host_functions_under_node() {
     let velt = || crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
     // Built in the work directory: a build leaves its files next to the program.
     std::fs::create_dir_all(&work).expect("work dir");
-    std::fs::copy(dir.join("order.vlt"), work.join("order.vlt")).expect("copy order.vlt");
+    std::fs::copy(dir.join("order.velt"), work.join("order.velt")).expect("copy order.velt");
     let native = velt()
         .arg("run")
-        .arg(work.join("order.vlt"))
+        .arg(work.join("order.velt"))
         .output()
         .expect("run velt");
     let order = String::from_utf8_lossy(&native.stdout).replace("\r\n", "\n");
@@ -449,13 +449,13 @@ fn async_host_functions_under_node() {
         let _ = std::fs::remove_dir_all(&work);
         std::fs::create_dir_all(&work).expect("work dir");
         let host = || Some(dir.join("host.mjs"));
-        // ends.vlt, by what `how()` returns: the end and the exit code.
+        // ends.velt, by what `how()` returns: the end and the exit code.
         let ends = [
             ("return", "exit 7"),
             ("exit", "exit 3"),
             ("stuck", "exit 0"),
             ("spawn", "background got 42\nexit 0"),
-            ("uncaught", "Uncaught Error: bad at ends.vlt:18:3\nexit 1"),
+            ("uncaught", "Uncaught Error: bad at ends.velt:18:3\nexit 1"),
         ]
         .map(|(how, end)| {
             let want = format!("ending by {how}\n{end}, 0 values held\n");
@@ -472,7 +472,7 @@ fn async_host_functions_under_node() {
         ]) {
             let module = work.join(format!("{program}.wasm"));
             // Built where it was copied, so messages name it by its file name.
-            let source = format!("{program}.vlt");
+            let source = format!("{program}.velt");
             std::fs::copy(dir.join(&source), work.join(&source)).expect("copy the program");
             let o = velt()
                 .current_dir(&work)
@@ -507,8 +507,8 @@ fn async_host_functions_under_node() {
     let _ = std::fs::remove_dir_all(&work);
 }
 
-/// `fetch` on JS hosts (std/net/http/fetch/client/transport/js.vlt, the host's own `fetch`)
-/// under node: tests/wasm_fetch/src/main.vlt fetches from drive.mjs's local server (text, JSON,
+/// `fetch` on JS hosts (std/net/http/fetch/client/transport/js.velt, the host's own `fetch`)
+/// under node: tests/wasm_fetch/src/main.velt fetches from drive.mjs's local server (text, JSON,
 /// a 404, a large body, redirects followed, manual and refused, headers and text and bytes
 /// bodies both ways, a body whose first piece arrives before the server sends the rest, an abort
 /// before the response and between two pieces of the body, a timeout, a refused connection) and
@@ -546,7 +546,7 @@ fn fetch_on_js_hosts() {
             .current_dir(&work)
             .arg("build")
             .args(args)
-            .arg("src/main.vlt")
+            .arg("src/main.velt")
             .arg("-o")
             .arg(module)
             .output()

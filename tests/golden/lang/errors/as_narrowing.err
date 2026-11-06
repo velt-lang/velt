@@ -1,2 +1,2 @@
-as_narrowing.vlt:5:10: error: cannot cast `string | null` as `f64`
-as_narrowing.vlt:9:10: error: cannot cast `string | f64` as `boolean`
+as_narrowing.velt:5:10: error: cannot cast `string | null` as `f64`
+as_narrowing.velt:9:10: error: cannot cast `string | f64` as `boolean`

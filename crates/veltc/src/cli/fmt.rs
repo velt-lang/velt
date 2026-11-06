@@ -36,9 +36,9 @@ mod tests {
             }
         );
         assert_eq!(
-            p(&["fmt", "a.vlt", "--check", "src"]).unwrap(),
+            p(&["fmt", "a.velt", "--check", "src"]).unwrap(),
             Command::Fmt {
-                paths: vec![PathBuf::from("a.vlt"), PathBuf::from("src")],
+                paths: vec![PathBuf::from("a.velt"), PathBuf::from("src")],
                 check: true
             }
         );

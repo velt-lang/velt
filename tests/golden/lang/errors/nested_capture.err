@@ -1,1 +1,1 @@
-nested_capture.vlt:12:13: error: cannot find struct `Local` in this scope
+nested_capture.velt:12:13: error: cannot find struct `Local` in this scope

@@ -2,7 +2,7 @@
 name = "velt_toolchain"
 version.workspace = true
 edition.workspace = true
-# Side-by-side toolchain versions (#948): the `velt` pin of package.vlt, the installed versions
+# Side-by-side toolchain versions (#948): the `velt` pin of package.velt, the installed versions
 # under `<root>/toolchains/`, and downloading a release. Shared by the launcher (`velt-launcher`),
 # vpm (it checks the pin) and veltc (`velt target add` reuses the download and install code),
 # so it stays small: no compiler crates and no vpm.

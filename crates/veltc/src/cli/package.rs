@@ -378,7 +378,7 @@ mod tests {
         assert_eq!(
             p(&[
                 "test",
-                "a.test.vlt",
+                "a.test.velt",
                 "--filter",
                 "test_add",
                 "--no-run",
@@ -386,7 +386,7 @@ mod tests {
             ])
             .unwrap(),
             Command::Test {
-                path: Some(PathBuf::from("a.test.vlt")),
+                path: Some(PathBuf::from("a.test.velt")),
                 release: false,
                 locked: false,
                 watch: false,

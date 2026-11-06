@@ -35,12 +35,12 @@ for ($i = 0; $i -lt $Classes; $i++) {
     [void]$sb.Append("  const b${i}: C$i = new S$i($i);`n  t += b$i.area() + count([b$i]);`n")
 }
 [void]$sb.Append("  console.log(t);`n}`n")
-$file = Join-Path $out "long_main_$Classes.vlt"
+$file = Join-Path $out "long_main_$Classes.velt"
 [IO.File]::WriteAllText($file, $sb.ToString())
 $exe = Join-Path $out "long_main_${Classes}_stress"
 Remove-Item -ErrorAction SilentlyContinue "$exe.exe", "$exe.exe.link-stamp"
 
-Write-Host "velt build -v long_main_$Classes.vlt (debug)..."
+Write-Host "velt build -v long_main_$Classes.velt (debug)..."
 # Poll the peak working set while the build runs (it is not readable after the process exits).
 $log = Join-Path $out "stress.log"
 $proc = Start-Process -FilePath $Velt -ArgumentList @("build", "-v", "`"$file`"", "-o", "`"$exe`"") `

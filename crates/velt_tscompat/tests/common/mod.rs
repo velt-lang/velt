@@ -59,7 +59,7 @@ fn relative(dir: &Path, spec: &str) -> Option<PathBuf> {
     if !spec.starts_with("./") && !spec.starts_with("../") {
         return None;
     }
-    let found = ["vlt", "ts", "tsx"]
+    let found = ["velt", "ts", "tsx"]
         .iter()
         .map(|ext| dir.join(format!("{spec}.{ext}")))
         .find(|f| f.is_file())?;
@@ -80,12 +80,12 @@ pub fn load(path: &Path, src: &str) -> Loaded {
         sm: SourceMap::new(),
         files: vec![],
     };
-    // In the order std/prelude/index.vlt lists the files, as veltc's loader reads them.
-    let index = std::fs::read_to_string(std_dir().join("prelude/index.vlt")).expect("index");
-    let order = velt_common::std_modules::prelude_order(&index).expect("std/prelude/index.vlt");
+    // In the order std/prelude/index.velt lists the files, as veltc's loader reads them.
+    let index = std::fs::read_to_string(std_dir().join("prelude/index.velt")).expect("index");
+    let order = velt_common::std_modules::prelude_order(&index).expect("std/prelude/index.velt");
     for file in order
         .iter()
-        .map(|n| std_dir().join(format!("prelude/{n}.vlt")))
+        .map(|n| std_dir().join(format!("prelude/{n}.velt")))
     {
         let stem = file.file_stem().unwrap().to_string_lossy().into_owned();
         let text = std::fs::read_to_string(&file).expect("read the prelude");
@@ -130,7 +130,7 @@ impl Loader {
         self.modules.len() - 1
     }
 
-    /// The globals loaded on demand (`std/prelude/global/*.vlt`) whose re-exported names `src`
+    /// The globals loaded on demand (`std/prelude/global/*.velt`) whose re-exported names `src`
     /// mentions as whole words, as the driver's loader loads them for a user module.
     fn globals(&mut self, src: &str) {
         let mut files: Vec<PathBuf> = std::fs::read_dir(std_dir().join("prelude/global"))
@@ -161,19 +161,19 @@ impl Loader {
     fn import(&mut self, from: usize, spec: &str) -> Option<usize> {
         let (path, is_std, file) = match spec.strip_prefix("velt/") {
             Some(rest) => {
-                let file = std_dir().join(format!("{rest}.vlt"));
-                // A folder module: `velt/fs` is `std/fs/index.vlt`.
+                let file = std_dir().join(format!("{rest}.velt"));
+                // A folder module: `velt/fs` is `std/fs/index.velt`.
                 let file = if file.is_file() {
                     file
                 } else {
-                    std_dir().join(rest).join("index.vlt")
+                    std_dir().join(rest).join("index.velt")
                 };
                 (format!("std/{rest}"), true, file)
             }
             None => {
                 let file = relative(self.files[from].parent()?, spec)?;
                 // A std file's relative import names a std module (`./number` in
-                // std/lang/hooks/index.vlt is `std/lang/hooks/number`).
+                // std/lang/hooks/index.velt is `std/lang/hooks/number`).
                 let std = std_dir().canonicalize().expect("std");
                 match file.strip_prefix(&std) {
                     Ok(rel) if self.modules[from].is_std => {

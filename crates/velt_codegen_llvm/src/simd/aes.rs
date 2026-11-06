@@ -1,6 +1,6 @@
 //! The AES round instructions on `u8x16` (#2401): x86 AES-NI (`llvm.x86.aesni.*`, on `<2 x i64>`)
 //! and the ARMv8 AES instructions (`llvm.aarch64.crypto.*`, on `<16 x i8>`), and x86's `CPUID`,
-//! from which velt/simd computes the AES check in Velt (std/simd/aes.vlt; no runtime flag).
+//! from which velt/simd computes the AES check in Velt (std/simd/aes.velt; no runtime flag).
 
 use velt_vir::simd::ExtOp;
 

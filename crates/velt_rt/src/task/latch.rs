@@ -1,5 +1,5 @@
 //! `velt_rt_latch_*`: a one-shot latch, the waking half of `new Promise((resolve, reject) => …)`
-//! (std/prelude/promise.vlt). The settled value lives in Velt code (`shared<Mutex<…>>`); the
+//! (std/prelude/promise.velt). The settled value lives in Velt code (`shared<Mutex<…>>`); the
 //! latch only tells a waiting task that it was settled. Opening is thread-safe, so `resolve`
 //! may run on any task. No callbacks are stored (hot-reload rule, rt_abi_async.md §13.5).
 

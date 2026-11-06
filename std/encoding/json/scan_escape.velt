@@ -1,0 +1,228 @@
+// velt/encoding/json (internal): escape sequences in a JSON string as the scanner (scan.velt) reads
+// them (`\n`, `\u00e9`, surrogate pairs), the text of a scan error, and comments (JSONC: `//` and
+// `/* */`), blanked out so the scanner reads the rest as JSON.
+
+import {
+  BACKSLASH,
+  CONTROL_CHAR,
+  EXPECTED_COLON,
+  EXPECTED_COMMA_BRACE,
+  EXPECTED_COMMA_BRACKET,
+  EXPECTED_KEY,
+  hexValue,
+  INVALID_ESCAPE,
+  INVALID_NUMBER,
+  INVALID_U_ESCAPE,
+  QUOTE,
+  Scanner,
+  TOO_DEEP,
+  TRAILING,
+  UNEXPECTED_CHAR,
+  UNEXPECTED_EOF,
+} from "velt/encoding/json/scan";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import { utf8Substring } from "velt/encoding";
+
+/**
+ * One escape (the backslash consumed): its UTF-16 length, or -1. Decoding puts its text in
+ * `decoded`.
+ */
+export function scannerEscape(sc: Scanner, decode: bool): i32 {
+  if (sc.pos >= sc.len) {
+    sc.fail(UNEXPECTED_EOF);
+    return -1;
+  }
+  const c = strByteAt(sc.src, sc.pos as u64);
+  let unit: u32 = 0;
+  if (c == QUOTE || c == BACKSLASH || c == 47) {
+    unit = c as u32;
+  } else if (c == 98) {
+    unit = 8;
+  } else if (c == 102) {
+    unit = 12;
+  } else if (c == 110) {
+    unit = 10;
+  } else if (c == 114) {
+    unit = 13;
+  } else if (c == 116) {
+    unit = 9;
+  } else if (c == 117) {
+    sc.pos++;
+    const cp = scannerUnicodeEscape(sc);
+    if (cp < 0) {
+      return -1;
+    }
+    if (cp >= 0xd800 && cp < 0xe000) {
+      sc.lone = true;
+    }
+    if (decode) {
+      sc.decoded =
+        cp < 0x10000
+          ? String.fromCharCode(cp as number)
+          : String.fromCharCode((0xd800 + ((cp - 0x10000) >> 10)) as number) +
+            String.fromCharCode((0xdc00 + ((cp - 0x10000) & 0x3ff)) as number);
+    }
+    return cp >= 0x10000 ? 2 : 1;
+  } else {
+    sc.fail(INVALID_ESCAPE);
+    return -1;
+  }
+  sc.pos++;
+  if (decode) {
+    sc.decoded = String.fromCharCode(unit as number);
+  }
+  return 1;
+}
+
+/**
+ * `XXXX` after `\u`, combined with a following `\uXXXX` low surrogate into the pair's code
+ * point; a lone surrogate is kept. -1 on error.
+ */
+export function scannerUnicodeEscape(sc: Scanner): i64 {
+  const unit = scannerHex4(sc);
+  if (unit < 0xd800 || unit >= 0xdc00) {
+    return unit;
+  }
+  if (
+    sc.pos + 1 < sc.len &&
+    strByteAt(sc.src, sc.pos as u64) == BACKSLASH &&
+    strByteAt(sc.src, (sc.pos + 1) as u64) == 117
+  ) {
+    const save = sc.pos;
+    sc.pos += 2;
+    const low = scannerHex4(sc);
+    if (low < 0) {
+      return -1;
+    }
+    if (low >= 0xdc00 && low < 0xe000) {
+      return 0x10000 + ((unit - 0xd800) << 10) + (low - 0xdc00);
+    }
+    // Not a pair: the second escape is decoded on its own.
+    sc.pos = save;
+  }
+  return unit;
+}
+
+export function scannerHex4(sc: Scanner): i64 {
+  let v: i64 = 0;
+  for (let i = 0; i < 4; i++) {
+    const d = sc.pos < sc.len ? hexValue(strByteAt(sc.src, sc.pos as u64)) : -1;
+    if (d < 0) {
+      sc.fail(INVALID_U_ESCAPE);
+      return -1;
+    }
+    v = v * 16 + d;
+    sc.pos++;
+  }
+  return v;
+}
+
+/** The text of a failure `code`. */
+export function detailText(code: u8): string {
+  if (code == UNEXPECTED_EOF) {
+    return "unexpected end of input";
+  }
+  if (code == UNEXPECTED_CHAR) {
+    return "unexpected character";
+  }
+  if (code == INVALID_NUMBER) {
+    return "invalid number";
+  }
+  if (code == CONTROL_CHAR) {
+    return "control character in string";
+  }
+  if (code == INVALID_ESCAPE) {
+    return "invalid escape";
+  }
+  if (code == INVALID_U_ESCAPE) {
+    return "invalid \\u escape";
+  }
+  if (code == TOO_DEEP) {
+    return "nested too deeply";
+  }
+  if (code == EXPECTED_KEY) {
+    return "expected string key";
+  }
+  if (code == EXPECTED_COLON) {
+    return "expected ':'";
+  }
+  if (code == EXPECTED_COMMA_BRACE) {
+    return "expected ',' or '}'";
+  }
+  if (code == EXPECTED_COMMA_BRACKET) {
+    return "expected ',' or ']'";
+  }
+  if (code == TRAILING) {
+    return "unexpected trailing characters";
+  }
+  return "";
+}
+
+/**
+ * JSONC: `src` with its line (`// …`) and block (`/* … *\/`) comments outside strings turned
+ * into spaces (newlines kept), so every byte keeps its offset and the scanner never meets a
+ * comment: strict JSON pays nothing for JSONC. An unclosed `/*` and a `/` that starts no comment
+ * stay, so the scan fails at that byte, as it did when the scanner skipped comments itself.
+ */
+export function blankComments(src: string): string {
+  const n = strByteLen(src);
+  let i: usize = 0;
+  let from: usize = 0;
+  let out = "";
+  while (i < n) {
+    const b = strByteAt(src, i as u64);
+    if (b == QUOTE) {
+      // A string: skip to its closing quote, past escapes.
+      i++;
+      while (i < n) {
+        const c = strByteAt(src, i as u64);
+        if (c == BACKSLASH) {
+          i += 2;
+          continue;
+        }
+        i++;
+        if (c == QUOTE) {
+          break;
+        }
+      }
+      continue;
+    }
+    if (b != 47 || i + 1 >= n) {
+      i++;
+      continue;
+    }
+    const next = strByteAt(src, (i + 1) as u64);
+    let end = i;
+    if (next == 47) {
+      end = i + 2;
+      while (end < n && strByteAt(src, end as u64) != 10) {
+        end++;
+      }
+    } else if (next == 42) {
+      let j = i + 2;
+      while (
+        j + 1 < n && !(strByteAt(src, j as u64) == 42 && strByteAt(src, (j + 1) as u64) == 47)
+      ) {
+        j++;
+      }
+      if (j + 1 >= n) {
+        // Unclosed: left for the scan to fail at.
+        break;
+      }
+      end = j + 2;
+    } else {
+      i++;
+      continue;
+    }
+    out += utf8Substring(src, from, i);
+    for (let k = i; k < end; k++) {
+      out += strByteAt(src, k as u64) == 10 ? "\n" : " ";
+    }
+    i = end;
+    from = end;
+  }
+  if (from == 0) {
+    return src;
+  }
+  return out + utf8Substring(src, from, n);
+}

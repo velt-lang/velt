@@ -29,7 +29,7 @@
 //! A user module's code is always checked, and so is a std module it imports: `velt check`
 //! reports everything in what a program imports, except the prelude's unreached free functions,
 //! statics and extension methods. All of std is checked with laziness off (`VELT_EAGER_STD=1`),
-//! as veltc's `all_of_std_checks_without_diagnostics` does for bench/compile/all_std.vlt. The
+//! as veltc's `all_of_std_checks_without_diagnostics` does for bench/compile/all_std.velt. The
 //! editor's analysis checks everything.
 
 use rustc_hash::{FxHashMap, FxHashSet};
@@ -61,7 +61,7 @@ const EAGER: &[&str] = &[
 /// value of the type (`JsonValue[JSON_RUNTIME_HANDLE]` prints one; generated decoders call
 /// [`LAZY_PRELUDE_STATICS`]), and their code reaches large modules most programs never load (`JsonValue`'s the tape,
 /// velt/encoding/json/tape). `TupleElements`: a program that mentions `.map` loads it
-/// (std/prelude/global/tuple_elements.vlt), and only a tuple method call uses it.
+/// (std/prelude/global/tuple_elements.velt), and only a tuple method call uses it.
 const LAZY_PRELUDE_TYPES: &[&str] = &[
     velt_common::std_item!(prelude_json_value, "JsonValue"),
     velt_common::std_item!(lang_hooks_tuple_elements, "TupleElements"),
@@ -478,7 +478,7 @@ pub(crate) fn reach(cx: &mut Ctx) {
             }
         }
         used_types(cx, std::mem::take(&mut sc.types), &mut sc.found);
-        // Loaded (std/prelude/global/record_any.vlt) for a program that mentions `Record`.
+        // Loaded (std/prelude/global/record_any.velt) for a program that mentions `Record`.
         let hooks: Vec<DefId> = match cx.lazy.record_hooks {
             true => vec![],
             false => RECORD_HOOKS

@@ -1,6 +1,6 @@
-//! The decoder generated (velt/encoding/json/generate/read_union.vlt) for a union told apart by
+//! The decoder generated (velt/encoding/json/generate/read_union.velt) for a union told apart by
 //! a discriminant skips the fields before the discriminant with the reader's `skipLookahead`
-//! (std/encoding/json/reader.vlt), which remembers where skipped objects end, so nested unions
+//! (std/encoding/json/reader.velt), which remembers where skipped objects end, so nested unions
 //! decode in linear time. A plain skip here would rescan every subtree once per enclosing level.
 
 mod no_window;
@@ -9,7 +9,7 @@ mod test_dir;
 #[test]
 fn union_lookahead_uses_the_remembering_skip() {
     let dir = test_dir::TestDir::new();
-    let src = dir.path().join("main.vlt");
+    let src = dir.path().join("main.velt");
     std::fs::write(
         &src,
         "class Leaf { v: i64 = 0; kind: \"leaf\" = \"leaf\"; }\n\
@@ -21,7 +21,7 @@ fn union_lookahead_uses_the_remembering_skip() {
     )
     .unwrap();
     let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["build", "main.vlt", "--emit", "vir"])
+        .args(["build", "main.velt", "--emit", "vir"])
         .current_dir(dir.path())
         .output()
         .unwrap();

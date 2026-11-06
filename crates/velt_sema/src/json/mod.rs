@@ -138,7 +138,7 @@ pub(crate) fn check_json_types(cx: &mut Ctx) {
             } else if let Need::Json(_) = parse {
                 // A type `JSON.parse` decodes: an object type's layout its extensions widen
                 // (`collect::extended_layouts`). What it cannot decode is reported by its
-                // generator (velt/encoding/json/generate/parse_check.vlt).
+                // generator (velt/encoding/json/generate/parse_check.velt).
                 if !cx.objects.layouts.families.is_empty() {
                     cx.objects.layouts.parsed.push(t);
                 }

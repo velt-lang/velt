@@ -11,8 +11,8 @@ engine and doesn't wrap one: there is no interpreter, no JIT warm-up, no garbage
 single-threaded event loop. Your program is a native binary that uses every core of the machine.
 
 ```ts
-// src/main.vlt of a package made with `velt new hello --template api`
-// (its package.vlt depends on the http-server package): `velt run`
+// src/main.velt of a package made with `velt new hello --template api`
+// (its package.velt depends on the http-server package): `velt run`
 import { serve } from "http-server";
 
 interface User {
@@ -67,7 +67,7 @@ Xcode or a C compiler, and `velt toolchain self-update` keeps it current. Then c
 ```sh
 velt new hello              # or: --template api | cli | websocket | lib
 cd hello
-velt run                    # build and run src/main.vlt
+velt run                    # build and run src/main.velt
 velt dev                    # run it, and hot-swap your changes on every save
 velt test                   # run the tests
 velt build --release        # an optimized native executable in target/velt/
@@ -88,7 +88,7 @@ Next, read [Getting started](https://veltlang.com/docs/book/getting-started/) an
 - **Start from the TypeScript you have.** Velt reads `.ts` and `.tsx` files directly. That
   covers classes, interfaces, generics, unions and narrowing, closures, `async`/`await`,
   generators, destructuring, enums, ES modules, template literals and TSX. `velt run app.ts`
-  compiles and runs your code. `.ts` and `.vlt` files import each other freely, so you can move a
+  compiles and runs your code. `.ts` and `.velt` files import each other freely, so you can move a
   project over one file at a time.
 - **Then go further than TypeScript can.** Typed errors, real integer types, methods on any type,
   and parallel tasks: the things a compiler makes possible. See
@@ -241,7 +241,7 @@ export async function compress(data: u8[], level: i32 = 3): Promise<u8[], ZstdEr
 ```
 
 Programs then use it like any other package (`velt add zstd` from a registry, or a git or path
-dependency in `package.vlt`), then `const packed = await compress(bytes);`.
+dependency in `package.velt`), then `const packed = await compress(bytes);`.
 
 - **Checked at compile time.** `velt` compares every `declare` with what the library actually
   exports, so a wrong name or type is a compile error, not a crash at run time.

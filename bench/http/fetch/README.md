@@ -14,13 +14,13 @@ server (`rust/src/bin/server.rs`), in five scenarios:
 Run `bench/http/fetch/run.sh` (Linux, macOS; it adds the instructions each client executed
 when `perf` is available) or `pwsh bench/http/fetch/run.ps1` (Windows). Both build the Rust
 server and the reqwest client in a temporary target directory (`BENCH_TARGET_DIR` overrides
-it), build `client.vlt` with a release `velt`, and print each client's own result with its CPU
+it), build `client.velt` with a release `velt`, and print each client's own result with its CPU
 time and peak memory. `COUNT=valgrind bench/http/fetch/run.sh` runs each client once under
 cachegrind instead and prints the instructions it executed (`I refs`). It needs no PMU, so it
 works in WSL and VMs where `perf` can't count, and the count varies far less between runs than
 times on a busy machine.
 
-The nightly benchmark guard (`bench/nightly.sh`) counts `bench/fetch/loopback.vlt` instead: the
+The nightly benchmark guard (`bench/nightly.sh`) counts `bench/fetch/loopback.velt` instead: the
 client against a Velt server in the same process (small, JSON and gzip bodies, sequential), which
 needs no Rust build and whose count repeats to within about 0.2%.
 

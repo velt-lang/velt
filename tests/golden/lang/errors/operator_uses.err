@@ -1,8 +1,8 @@
-operator_uses.vlt:13:10: error: cannot apply binary operator `*` to type `T`
+operator_uses.velt:13:10: error: cannot apply binary operator `*` to type `T`
 help: bound the type parameter
-operator_uses.vlt:18:11: error: cannot apply binary operator `*` to type `V`
+operator_uses.velt:18:11: error: cannot apply binary operator `*` to type `V`
 help: define `[Symbol.mul](other: V)` in `V` or in an `extend V` block
-operator_uses.vlt:19:11: error: cannot apply binary operator `-` to type `V`
+operator_uses.velt:19:11: error: cannot apply binary operator `-` to type `V`
 help: define `static [Symbol.sub](left: f64, right: V)` in `V` or in an `extend V` block
-operator_uses.vlt:20:11: error: ambiguous operator `+` for `V` and `W`
-operator_uses.vlt:26:1: error: cannot assign through `[]`: `Squares` has `[Symbol.index]` but no `[Symbol.setIndex]`
+operator_uses.velt:20:11: error: ambiguous operator `+` for `V` and `W`
+operator_uses.velt:26:1: error: cannot assign through `[]`: `Squares` has `[Symbol.index]` but no `[Symbol.setIndex]`

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Writes std/compress/brotli/command.vlt: Brotli's insert-and-copy alphabet (RFC 7932 §5), one
+"""Writes std/compress/brotli/command.velt: Brotli's insert-and-copy alphabet (RFC 7932 §5), one
 entry per symbol: the insert length's extra bits (bits 0-7) and the copy length's (8-15), then
 their base lengths (16-31 and 32-47), from the RFC's tables of insert and copy length codes and
 its cells of 64 symbols.
 
-    python3 scripts/gen-brotli-commands.py > std/compress/brotli/command.vlt
+    python3 scripts/gen-brotli-commands.py > std/compress/brotli/command.velt
 """
 
 # (base, extra bits) of insert length codes 0..23 and copy length codes 0..23 (RFC 7932 §5).

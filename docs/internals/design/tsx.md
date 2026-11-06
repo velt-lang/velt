@@ -26,7 +26,7 @@ already solved it; add nothing JavaScript-specific that causes bugs; keep Rust-l
   member name (`<ui.List<number> …>`); the closing tag takes none (`</List>`). Inside a tag a
   `<` that does not follow `=` opens the type arguments, which are lexed as code up to the
   matching `>` (an element as an attribute value, `icon=<Star />`, still follows `=`).
-- Allowed in every `.vlt` file: Velt has no `<T>expr` casts (only `as`), so TypeScript's `.ts`
+- Allowed in every `.velt` file: Velt has no `<T>expr` casts (only `as`), so TypeScript's `.ts`
   / `.tsx` split isn't needed. `velt fmt` formats JSX like Prettier.
 - **The parser decides where an element starts**, not the lexer: in code the lexer always
   emits `<` as a plain `Lt`. Where the parser expects an expression and finds `<` directly
@@ -44,7 +44,7 @@ already solved it; add nothing JavaScript-specific that causes bugs; keep Rust-l
 
 Configuration, like TypeScript (`jsx: "react-jsx"` plus `jsxImportSource`):
 
-- `jsx: { importSource: "sigx" }` in `package.vlt` (a package or `velt/jsx`), or per file
+- `jsx: { importSource: "sigx" }` in `package.velt` (a package or `velt/jsx`), or per file
   `/** @jsxImportSource sigx */` among the comments before the first token. The default is
   `velt/jsx`. Velt reads the pragma from a line comment (`// @jsxImportSource sigx`) too, but
   `tsc` reads it only from a block comment, so files shared with a client use the block form
@@ -268,7 +268,7 @@ request gate doesn't need Node; the nightly job sets `VELT_TSC_ORACLE=1`, which 
 Documented but not linted: `i64` past 2^53, integer `/ 0`, out-of-bounds indexing, `-0` printing,
 exit codes.
 
-**Where it runs** (step 4). `tsCompat: ["src/components", "src/models"]` in `package.vlt` lists
+**Where it runs** (step 4). `tsCompat: ["src/components", "src/models"]` in `package.velt` lists
 the shared folders ([the manifest](https://veltlang.com/docs/tooling/manifest/#tscompat)): `/`-separated, inside the
 package, each once and none inside another. `velt check --ts-compat` without paths lints their
 files; outside a package or without `tsCompat` it fails with a message pointing at the field. A

@@ -1,4 +1,4 @@
-// Tagged unions (same workload as shapes.vlt): discriminated objects and `switch`.
+// Tagged unions (same workload as shapes.velt): discriminated objects and `switch`.
 function area(s) {
   switch (s.kind) {
     case "circle":

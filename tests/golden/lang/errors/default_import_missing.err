@@ -1,10 +1,10 @@
-default_import_missing.vlt:4:8: error: module `./_default_import_missing_lib` has no default export
+default_import_missing.velt:4:8: error: module `./_default_import_missing_lib` has no default export
 it exports `one`, `two`
 import one by name, `import { one } from "./_default_import_missing_lib"`, or the whole module, `import * as lib from "./_default_import_missing_lib"`
-default_import_missing.vlt:5:21: error: module `./_default_import_missing_lib` has no default export
-default_import_missing.vlt:6:8: error: module `./_default_import_missing_star` has no default export
+default_import_missing.velt:5:21: error: module `./_default_import_missing_lib` has no default export
+default_import_missing.velt:6:8: error: module `./_default_import_missing_star` has no default export
 it exports `named`
-default_import_missing.vlt:7:8: error: module `velt/path` has no default export
+default_import_missing.velt:7:8: error: module `velt/path` has no default export
 the standard library's modules have named exports only: import a name, `import { … } from "velt/path"`, or the whole module, `import * as path from "velt/path"`
-default_import_missing.vlt:8:8: error: module `velt/process` has no default export
+default_import_missing.velt:8:8: error: module `velt/process` has no default export
 `process` is a builtin: write `import { process } from "velt/process"`, or leave the import out

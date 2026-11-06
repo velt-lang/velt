@@ -5,7 +5,7 @@ orders priced against it. Its JSON work covers filtering, sorting and paging, ty
 decoding, bulk imports, stock-taking orders with all-or-nothing validation, and aggregate
 statistics. `node/server.mjs` is the same service in idiomatic Node (`node:http`, no
 dependencies). Both are seeded from the same generator, and every response is identical byte
-for byte (`parity.vlt` checks 61 of them, reads and writes).
+for byte (`parity.velt` checks 61 of them, reads and writes).
 
 ```sh
 velt run                                   # http://127.0.0.1:8080, 5000 products, 20000 orders
@@ -13,7 +13,7 @@ curl 'localhost:8080/products?category=coffee&sort=-price&limit=5'
 curl -X POST localhost:8080/orders -d '{"customer":{"id":1,"name":"Ada","email":"ada@example.com"},
   "items":[{"sku":"P1-1","quantity":2}],"shipping":{"line1":"1 Main St","city":"Oslo","postalCode":"0150","country":"NO"}}'
 velt test                                  # tests/: validation, money, stock, paging
-velt run demo.vlt                          # a scripted session (golden: demo.out)
+velt run demo.velt                          # a scripted session (golden: demo.out)
 ./bench.sh [seconds] [connections]         # parity check, then Velt vs Node under load (oha)
 ```
 
@@ -31,22 +31,22 @@ velt run demo.vlt                          # a scripted session (golden: demo.ou
 
 Errors are `{"error":{"code","message"}}`: 400 `invalid` / `bad_json`, 404 `not_found`, 405
 `method_not_allowed`, 409 `conflict`. Money is in cents (`i64`); request bodies are decoded with
-`JSON.parse<T>` into the types in `src/model.vlt`, which reports the path of the first mismatch
+`JSON.parse<T>` into the types in `src/model.velt`, which reports the path of the first mismatch
 (`expected i64 at $.variants[0].stock`).
 
 | File | What |
 |---|---|
-| `src/model.vlt` | the documents, request bodies and `ApiError` |
-| `src/seed.vlt` | the deterministic generator (a 32-bit LCG that node mirrors with `Math.imul`), order pricing |
-| `src/store.vlt` | `Store`: products with id and SKU indexes, orders, listing, validation, stock, stats |
-| `src/api.vlt` | `route(store, method, path, query, body)` → `{ status, body }` (no sockets) |
-| `src/server.vlt` | `std/http`: the store behind one `shared(new RwLock(…))`: GETs that only read it run at once (`read`), other requests one at a time (`write`) |
+| `src/model.velt` | the documents, request bodies and `ApiError` |
+| `src/seed.velt` | the deterministic generator (a 32-bit LCG that node mirrors with `Math.imul`), order pricing |
+| `src/store.velt` | `Store`: products with id and SKU indexes, orders, listing, validation, stock, stats |
+| `src/api.velt` | `route(store, method, path, query, body)` → `{ status, body }` (no sockets) |
+| `src/server.velt` | `std/http`: the store behind one `shared(new RwLock(…))`: GETs that only read it run at once (`read`), other requests one at a time (`write`) |
 | `node/server.mjs` | the same service on `node:http`, with decoders as strict as `JSON.parse<T>` |
-| `parity.vlt` | 61 requests against both servers (via `fetch`), compared byte for byte |
+| `parity.velt` | 61 requests against both servers (via `fetch`), compared byte for byte |
 | `bench.sh` | parity, then each scenario against each server with `oha` (raw results: `bench-results/`) |
-| `inprocess.vlt` / `node/inprocess.mjs` | per-request cost on one core, without HTTP |
+| `inprocess.velt` / `node/inprocess.mjs` | per-request cost on one core, without HTTP |
 | `tests/` | `velt test`: the API through `route`, and concurrent orders against the real server |
-| `demo.vlt` | a scripted session (golden: `demo.out`) |
+| `demo.velt` | a scripted session (golden: `demo.out`) |
 
 ## Performance
 
@@ -76,7 +76,7 @@ raw oha output is in `bench-results/`.
 - **"create order" memory:** Velt ends with more RSS because it stored over twice as many orders
   in the same 5 s (931k vs 428k).
 
-**Per request on one core,** with no HTTP: `velt run --release inprocess.vlt` and `node node/inprocess.mjs` time `route` on the same seeded
+**Per request on one core,** with no HTTP: `velt run --release inprocess.velt` and `node node/inprocess.mjs` time `route` on the same seeded
 shop. Same machine, same quiet period:
 
 | In-process, per request | Velt | Node |
@@ -88,17 +88,17 @@ shop. Same machine, same quiet period:
 | product by id | 0.8 µs | 1.1 µs |
 
 **Checking the parity check:** a Node server seeded with one order fewer
-(`SHOP_ORDERS=19999 PORT=8081 node node/server.mjs`) makes `parity.vlt` report more than 10
+(`SHOP_ORDERS=19999 PORT=8081 node node/server.mjs`) makes `parity.velt` report more than 10
 differences.
 
 **Numbers above 2^53:** `JSON.parse<i64>` reads integers exactly, while Node's numbers round
 (`9007199254740993` becomes `…992`). They agree on `2.0`, `2e0` and out-of-range values. Both
 servers therefore bound the integers they echo back (price amounts, customer ids), and
-`parity.vlt` covers those cases.
+`parity.velt` covers those cases.
 
 ## What limits it (#705, #708)
 
-The store is behind one `RwLock`. GETs that only read it (`readRoute` in `src/api.vlt`) run under
+The store is behind one `RwLock`. GETs that only read it (`readRoute` in `src/api.velt`) run under
 its read lock, on every core at once; their callbacks count and copy nothing the readers share
 (velt_rt's read mode). Requests that change the store run under the write lock, one at a time,
 as they did under the `Mutex` this used before. Measured against that `Mutex` version (same

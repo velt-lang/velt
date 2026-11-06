@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use super::*;
 
-/// A temp dir with helpers to write `.vlt` files.
+/// A temp dir with helpers to write `.velt` files.
 pub(super) struct Tree(tempfile::TempDir);
 
 impl Tree {
@@ -48,15 +48,15 @@ pub(super) fn messages(diags: &Diagnostics) -> Vec<String> {
 fn relative_imports_cycles_and_dedupe() {
     let t = Tree::new();
     let root = t.write(
-        "app/main.vlt",
+        "app/main.velt",
         "import { a } from \"./a\";\nimport { b } from \"./lib/b\";\nfunction main() {}\n",
     );
     t.write(
-        "app/a.vlt",
+        "app/a.velt",
         "import { b } from \"./lib/b\";\nexport function a() {}\n",
     );
     t.write(
-        "app/lib/b.vlt",
+        "app/lib/b.velt",
         "import { a } from \"../a\";\nimport { main } from \"../main\";\nexport function b() {}\n",
     );
     let (l, diags, _) = load(&root, LoadOptions::default());
@@ -83,12 +83,12 @@ fn relative_imports_cycles_and_dedupe() {
 fn missing_module_reports_tried_paths_at_the_specifier() {
     let t = Tree::new();
     let src = "import { x } from \"./nope\";\nfunction main() {}\n";
-    let root = t.write("main.vlt", src);
+    let root = t.write("main.velt", src);
     let (l, diags, sm) = load(&root, LoadOptions::default());
     assert_eq!(messages(&diags), ["cannot find module `./nope`"]);
-    assert!(diags[0].notes[0].starts_with("tried `") && diags[0].notes[0].contains("nope.vlt"));
+    assert!(diags[0].notes[0].starts_with("tried `") && diags[0].notes[0].contains("nope.velt"));
     let rendered = diags[0].render(&sm);
-    assert!(rendered.contains("main.vlt:1:19"), "{rendered}");
+    assert!(rendered.contains("main.velt:1:19"), "{rendered}");
     assert!(l.modules[0].imports.is_empty());
 }
 
@@ -98,26 +98,26 @@ fn std_modules_and_prelude_come_first() {
     let std = t.path("std");
     // The index decides the prelude's order, not the file names.
     t.write(
-        "std/prelude/index.vlt",
+        "std/prelude/index.velt",
         "// Prelude.\nimport \"./b_array\";\nimport \"./a_core\";\n",
     );
     t.write(
-        "std/prelude/b_array.vlt",
+        "std/prelude/b_array.velt",
         "export function len(): i64 { return 0; }\n",
     );
     t.write(
-        "std/prelude/a_core.vlt",
+        "std/prelude/a_core.velt",
         "import { clamp } from \"velt/math\";\nexport function id(): i64 { return 0; }\n",
     );
     t.write(
-        "std/math/index.vlt",
+        "std/math/index.velt",
         "export function clamp(x: i64, lo: i64, hi: i64): i64 { return x; }\n",
     );
     t.write(
-        "std/net/index.vlt",
+        "std/net/index.velt",
         "import { clamp } from \"../math\";\nexport function connect() {}\n",
     );
-    let root = t.write("p/main.vlt", "import { clamp } from \"velt/math\";\nimport { connect } from \"velt/net\";\nfunction main() {}\n");
+    let root = t.write("p/main.velt", "import { clamp } from \"velt/math\";\nimport { connect } from \"velt/net\";\nfunction main() {}\n");
     let (l, diags, _) = load(
         &root,
         LoadOptions {
@@ -151,7 +151,7 @@ fn std_modules_and_prelude_come_first() {
 fn std_import_without_std_root() {
     let t = Tree::new();
     let root = t.write(
-        "main.vlt",
+        "main.velt",
         "import { f } from \"velt/fs\";\nfunction main() {}\n",
     );
     let (_, diags, _) = load(&root, LoadOptions::default());
@@ -174,12 +174,12 @@ impl PackageResolver for MapResolver {
 fn package_imports() {
     let t = Tree::new();
     t.write(
-        "json/src/lib.vlt",
+        "json/src/lib.velt",
         "import { tok } from \"./lexer\";\nexport function parse() {}\n",
     );
-    t.write("json/src/lexer.vlt", "export function tok() {}\n");
+    t.write("json/src/lexer.velt", "export function tok() {}\n");
     let root = t.write(
-        "app/src/main.vlt",
+        "app/src/main.velt",
         "import { parse } from \"json\";\nimport { tok } from \"json/lexer\";\nimport { y } from \"yaml\";\nfunction main() {}\n",
     );
     let resolver = MapResolver(BTreeMap::from([("json".to_string(), t.path("json"))]));
@@ -204,9 +204,9 @@ fn package_imports() {
 #[test]
 fn root_source_override_and_bad_specs() {
     let t = Tree::new();
-    t.write("dir/math.test.vlt", "export function test_add() {}\n");
-    let virtual_root = t.path("dir/__harness.vlt");
-    let src = "import { test_add } from \"./math.test\";\nimport { q } from \"./q.vlt\";\nfunction main() {}\n".to_string();
+    t.write("dir/math.test.velt", "export function test_add() {}\n");
+    let virtual_root = t.path("dir/__harness.velt");
+    let src = "import { test_add } from \"./math.test\";\nimport { q } from \"./q.velt\";\nfunction main() {}\n".to_string();
     let (l, diags, _) = load(
         &virtual_root,
         LoadOptions {
@@ -215,7 +215,7 @@ fn root_source_override_and_bad_specs() {
         },
     );
     assert_eq!(paths(&l), ["main", "math.test"]);
-    assert_eq!(messages(&diags), ["cannot find module `./q.vlt`"]);
+    assert_eq!(messages(&diags), ["cannot find module `./q.velt`"]);
 }
 
 #[test]
@@ -224,7 +224,7 @@ fn missing_root_file() {
     let mut diags = vec![];
     let err = load_program(
         &mut sm,
-        Path::new("definitely/missing.vlt"),
+        Path::new("definitely/missing.velt"),
         LoadOptions::default(),
         &mut diags,
     )
@@ -236,15 +236,15 @@ fn missing_root_file() {
 #[test]
 fn overlay_wins_over_disk_and_supplies_unsaved_files() {
     let t = Tree::new();
-    let root = t.write("main.vlt", "function main() {}\n");
-    t.write("a.vlt", "export function old() {}\n");
+    let root = t.write("main.velt", "function main() {}\n");
+    t.write("a.velt", "export function old() {}\n");
     let overlay = HashMap::from([
         (
             root.clone(),
             "import { a } from \"./a\";\nimport { n } from \"./new\";\nfunction main() {}\n".into(),
         ),
-        (t.path("a.vlt"), "export function a() {}\n".into()),
-        (t.path("new.vlt"), "export function n() {}\n".into()),
+        (t.path("a.velt"), "export function a() {}\n".into()),
+        (t.path("new.velt"), "export function n() {}\n".into()),
     ]);
     let (l, diags, sm) = load(
         &root,
@@ -262,12 +262,12 @@ fn overlay_wins_over_disk_and_supplies_unsaved_files() {
 fn folder_modules_load_index_velt() {
     let t = Tree::new();
     t.write(
-        "app/shapes/index.vlt",
+        "app/shapes/index.velt",
         "export { square } from \"./square\";\n",
     );
-    t.write("app/shapes/square.vlt", "export function square() {}\n");
+    t.write("app/shapes/square.velt", "export function square() {}\n");
     let root = t.write(
-        "app/main.vlt",
+        "app/main.velt",
         "import { square } from \"./shapes\";\nexport { square as sq };\nfunction main() {}\n",
     );
     let (l, diags, _) = load(&root, LoadOptions::default());
@@ -275,10 +275,10 @@ fn folder_modules_load_index_velt() {
     assert_eq!(paths(&l), ["main", "shapes", "shapes/square"]);
     assert_eq!(imports(&l, "main"), [("./shapes".into(), "shapes".into())]);
 
-    let missing = t.write("other/main.vlt", "import { x } from \"./gone\";\n");
+    let missing = t.write("other/main.velt", "import { x } from \"./gone\";\n");
     let (_, diags, _) = load(&missing, LoadOptions::default());
     assert!(
-        diags[0].notes.iter().any(|n| n.contains("index.vlt")),
+        diags[0].notes.iter().any(|n| n.contains("index.velt")),
         "{:?}",
         diags[0]
     );
@@ -301,10 +301,10 @@ impl PackageResolver for AliasResolver {
 #[test]
 fn path_aliases_resolve_like_relative_imports() {
     let t = Tree::new();
-    t.write("p/src/util/strings.vlt", "export function up() {}\n");
-    t.write("p/src/ui/index.vlt", "export function draw() {}\n");
+    t.write("p/src/util/strings.velt", "export function up() {}\n");
+    t.write("p/src/ui/index.velt", "export function draw() {}\n");
     let root = t.write(
-        "p/src/main.vlt",
+        "p/src/main.velt",
         "import { up } from \"@app/util/strings\";\nimport { draw } from \"@app/ui\";\nimport { x } from \"@other/x\";\nfunction main() {}\n",
     );
     let resolver = AliasResolver(t.path("p"));
@@ -332,13 +332,13 @@ pub(super) fn jsx_runtime<'l>(l: &'l Loaded, module: &str) -> Option<&'l str> {
 #[test]
 fn jsx_runtime_from_the_pragma() {
     let t = Tree::new();
-    t.write("app/ui/jsx-runtime.vlt", "export class Element {}\n");
+    t.write("app/ui/jsx-runtime.velt", "export class Element {}\n");
     let root = t.write(
-        "app/main.vlt",
+        "app/main.velt",
         "// @jsxImportSource ./ui\nimport { f } from \"./plain\";\nfunction main() { const e = <p />; }\n",
     );
     t.write(
-        "app/plain.vlt",
+        "app/plain.velt",
         "// @jsxImportSource ./nowhere\nexport function f(a: i64, b: i64): bool { return a < b; }\n",
     );
     let (l, diags, _) = load(&root, LoadOptions::default());
@@ -364,14 +364,14 @@ impl PackageResolver for JsxResolver {
 #[test]
 fn jsx_runtime_from_the_package_unless_the_file_names_one() {
     let t = Tree::new();
-    t.write("app/pkg-ui/jsx-runtime.vlt", "export class Element {}\n");
-    t.write("app/own/jsx-runtime.vlt", "export class Element {}\n");
+    t.write("app/pkg-ui/jsx-runtime.velt", "export class Element {}\n");
+    t.write("app/own/jsx-runtime.velt", "export class Element {}\n");
     let root = t.write(
-        "app/main.vlt",
+        "app/main.velt",
         "import { g } from \"./other\";\nfunction main() { const e = <></>; }\n",
     );
     t.write(
-        "app/other.vlt",
+        "app/other.velt",
         "// @jsxImportSource ./own\nexport function g() { const e = <b />; }\n",
     );
     let resolver = JsxResolver("./pkg-ui".into());
@@ -390,7 +390,7 @@ fn jsx_runtime_from_the_package_unless_the_file_names_one() {
 #[test]
 fn missing_jsx_runtime_says_where_it_came_from() {
     let t = Tree::new();
-    let root = t.write("app/main.vlt", "function main() { const e = <p />; }\n");
+    let root = t.write("app/main.velt", "function main() { const e = <p />; }\n");
     let (l, diags, _) = load(&root, LoadOptions::default());
     assert_eq!(
         messages(&diags),
@@ -401,9 +401,9 @@ fn missing_jsx_runtime_says_where_it_came_from() {
     assert_eq!(jsx_runtime(&l, "main"), None);
 }
 
-/// Loads `p/main.vlt` (with `main`) against the std root `std/` of `t`.
+/// Loads `p/main.velt` (with `main`) against the std root `std/` of `t`.
 fn load_with_std(t: &Tree, main: &str) -> (Loaded, Diagnostics) {
-    let root = t.write("p/main.vlt", main);
+    let root = t.write("p/main.velt", main);
     let (l, d, _) = load(
         &root,
         LoadOptions {
@@ -418,14 +418,14 @@ fn load_with_std(t: &Tree, main: &str) -> (Loaded, Diagnostics) {
 fn only_files_below_the_std_root_are_std() {
     let t = Tree::new();
     t.write(
-        "std/math/index.vlt",
+        "std/math/index.velt",
         "export function one(): i64 { return 1; }\n",
     );
     t.write(
-        "std/escape/index.vlt",
+        "std/escape/index.velt",
         "import { x } from \"../../outside\";\nexport function y() {}\n",
     );
-    t.write("outside.vlt", "export function x() {}\n");
+    t.write("outside.velt", "export function x() {}\n");
     // std modules are std; the root and its own modules are not.
     let (l, d) = load_with_std(
         &t,
@@ -465,10 +465,10 @@ fn only_files_below_the_std_root_are_std() {
 fn windows_std_specifiers_cannot_leave_the_std_root() {
     let t = Tree::new();
     t.write(
-        "std/math/index.vlt",
+        "std/math/index.velt",
         "export function one(): i64 { return 1; }\n",
     );
-    let evil = t.write("evil.vlt", "export function x() {}\n");
+    let evil = t.write("evil.velt", "export function x() {}\n");
     let absolute = evil
         .with_extension("")
         .display()
@@ -498,20 +498,20 @@ fn windows_std_specifiers_cannot_leave_the_std_root() {
 fn extra_roots_load_once_after_the_root_program() {
     let t = Tree::new();
     let root = t.write(
-        "pkg/src/main.vlt",
+        "pkg/src/main.velt",
         "import { a } from \"./a\";\nfunction main() {}\n",
     );
-    let a = t.write("pkg/src/a.vlt", "export function a() {}\n");
+    let a = t.write("pkg/src/a.velt", "export function a() {}\n");
     let lib = t.write(
-        "pkg/src/lib.vlt",
+        "pkg/src/lib.velt",
         "import { a } from \"./a\";\nimport { h } from \"./util/h\";\n",
     );
-    t.write("pkg/src/util/h.vlt", "export function h() {}\n");
+    t.write("pkg/src/util/h.velt", "export function h() {}\n");
     let test = t.write(
-        "pkg/tests/lib.test.vlt",
+        "pkg/tests/lib.test.velt",
         "import { h } from \"../src/util/h\";\n",
     );
-    let main = t.write("pkg/tests/main.vlt", "");
+    let main = t.write("pkg/tests/main.velt", "");
     let mut sm = SourceMap::new();
     let mut diags = vec![];
     let extra = [a, lib, test, root.clone(), main];
@@ -538,15 +538,15 @@ fn extra_roots_load_once_after_the_root_program() {
 #[test]
 fn extra_roots_with_taken_or_reserved_paths_get_fallback_names() {
     let t = Tree::new();
-    t.write("package.vlt", "");
-    let root = t.write("src/app.vlt", "function main() {}\n");
-    let main = t.write("src/main.vlt", "");
-    let std = t.write("src/std/x.vlt", "");
+    t.write("package.velt", "");
+    let root = t.write("src/app.velt", "function main() {}\n");
+    let main = t.write("src/main.velt", "");
+    let std = t.write("src/std/x.velt", "");
     let b = t.write(
-        "src/b.vlt",
+        "src/b.velt",
         "import { f } from \"./main\";\nimport { g } from \"./main/index\";\n",
     );
-    t.write("src/main/index.vlt", "");
+    t.write("src/main/index.velt", "");
     let mut sm = SourceMap::new();
     let mut diags = vec![];
     let extra = [main.clone(), std, b];
@@ -567,9 +567,9 @@ fn extra_roots_with_taken_or_reserved_paths_get_fallback_names() {
 #[test]
 fn unreadable_extra_roots_are_reported_in_their_file() {
     let t = Tree::new();
-    t.write("package.vlt", "");
-    let root = t.write("src/main.vlt", "function main() {}\n");
-    let gone = t.path("src/gone.vlt");
+    t.write("package.velt", "");
+    let root = t.write("src/main.velt", "function main() {}\n");
+    let gone = t.path("src/gone.velt");
     let mut sm = SourceMap::new();
     let mut diags = vec![];
     let extra = [gone.clone()];
@@ -582,7 +582,7 @@ fn unreadable_extra_roots_are_reported_in_their_file() {
     let msgs = messages(&diags);
     assert_eq!(msgs.len(), 1, "{msgs:?}");
     assert!(
-        msgs[0].starts_with("cannot read `src/gone.vlt`: "),
+        msgs[0].starts_with("cannot read `src/gone.velt`: "),
         "{msgs:?}"
     );
     let span = diags[0].labels[0].span;
@@ -607,7 +607,7 @@ fn npm_workspace_packages_load_from_their_sources() {
         "packages/reactivity/src/internals.ts",
         "export function track(): void {}\n",
     );
-    t.write("packages/json/src/lib.vlt", "export function parse() {}\n");
+    t.write("packages/json/src/lib.velt", "export function parse() {}\n");
     t.write(
         "packages/json/package.json",
         r#"{ "name": "json", "main": "./dist/x.js" }"#,

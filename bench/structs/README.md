@@ -5,11 +5,11 @@ written several ways, all printing the same output:
 
 | file | what it is |
 |---|---|
-| `<name>_struct.vlt` | today's `struct`, used as a value: new values from small methods, whole elements replaced |
-| `<name>_mut.vlt` | today's `struct` updated field by field (`bs[i].vel = …`, `p.y = -p.y`): allowed today, an error under the value-type design |
-| `particles_shared.vlt` | `particles_mut.vlt` plus one second reference to an element: the struct type becomes a counted heap object |
-| `<name>_class.vlt` | a `class` with `new` for every value, the usual TypeScript style (valid TypeScript) |
-| `<name>_flat.vlt` | the objects flattened by hand into parallel `number[]` arrays or a packed number key: the code a guaranteed-inline value type should reach (valid TypeScript) |
+| `<name>_struct.velt` | today's `struct`, used as a value: new values from small methods, whole elements replaced |
+| `<name>_mut.velt` | today's `struct` updated field by field (`bs[i].vel = …`, `p.y = -p.y`): allowed today, an error under the value-type design |
+| `particles_shared.velt` | `particles_mut.velt` plus one second reference to an element: the struct type becomes a counted heap object |
+| `<name>_class.velt` | a `class` with `new` for every value, the usual TypeScript style (valid TypeScript) |
+| `<name>_flat.velt` | the objects flattened by hand into parallel `number[]` arrays or a packed number key: the code a guaranteed-inline value type should reach (valid TypeScript) |
 | `rust/<name>.rs` | Rust with a `#[derive(Clone, Copy)]` struct |
 
 Workloads:

@@ -67,7 +67,7 @@ loop("elements", (v) => `table[${v}]`);
 loop("calls", (v) => `at(table, ${v})`);
 out.push("}");
 const src = out.join("\n") + "\n";
-require("fs").writeFileSync("matrix.vlt", src);
+require("fs").writeFileSync("matrix.velt", src);
 require("fs").writeFileSync("matrix.ts", src + "main();\n");
 let skipped = 0; for (let i = 0; i < n; i++) for (let j = 0; j < n; j++) for (const op of ops) if (skip(i, j, op)) skipped++;
 console.log("values", n, "skipped per form", skipped, "compared per form", n * n * 4 - skipped);

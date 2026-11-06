@@ -13,22 +13,22 @@ a user installs, develops, builds and deploys such an app.
 sigx-velt/                 the npm package @sigx/velt: both halves in one package
   package.json             exports the Vite plugin; "files" ships velt/ too
   src/index.js, index.d.ts velt(): runs `velt dev`, proxies documents, builds the server
-  velt/package.vlt         a Velt package named `sigx`: the JSX provider (Velt code)
+  velt/package.velt         a Velt package named `sigx`: the JSX provider (Velt code)
   src/router.js, data.js   the browser halves of @sigx/velt/router and @sigx/velt/data
-  velt/src/*.vlt           component, reactivity, jsx-runtime (with precompile), router, data,
+  velt/src/*.velt           component, reactivity, jsx-runtime (with precompile), router, data,
                            server (streaming documents, static files, server functions)
-  velt/tests/*.test.vlt    provider unit tests (expected strings taken from real sigx output)
+  velt/tests/*.test.velt    provider unit tests (expected strings taken from real sigx output)
 app/                       what a user's app looks like
   package.json             sigx, @sigx/vite and @sigx/velt (here linked from ../sigx-velt)
-  package.vlt              dependencies: { sigx: { path: "node_modules/@sigx/velt/velt" } },
+  package.velt              dependencies: { sigx: { path: "node_modules/@sigx/velt/velt" } },
                            paths: { "@sigx/velt/*": "node_modules/@sigx/velt/velt/src/*" }
   vite.config.ts           plugins: [sigx(), velt()]
   index.html               <!--ssr-outlet--> and the client entry
   src/shared/*.tsx         components, compiled by Vite (JS sigx) and by Velt (the provider)
   src/entry-client.js      the browser entry: hydrates (plain JS, which Velt's tools skip; it
                            also works around a sigx HMR ordering issue, below)
-  src/api.server.vlt       server functions, written in Velt (api.server.d.ts types them for TS)
-  src/server.vlt           the native server: serveApp(options(), render, serverFns)
+  src/api.server.velt       server functions, written in Velt (api.server.d.ts types them for TS)
+  src/server.velt           the native server: serveApp(options(), render, serverFns)
   scripts/reference.mjs    renders the same components with JavaScript sigx (api.reference.js
                            stands in for the server functions)
   scripts/e2e.mjs          the end-to-end check
@@ -39,7 +39,7 @@ app/                       what a user's app looks like
 Velt cannot load npm packages: it never reads `package.json`, its package names cannot be
 scoped, and it resolves dependencies from a Velt registry or a local path. So `@sigx/velt` ships
 the Velt provider as a complete Velt package inside the npm tarball (`velt/`). The app's
-`package.vlt` depends on it by path, and `pnpm install` brings both halves at one version.
+`package.velt` depends on it by path, and `pnpm install` brings both halves at one version.
 The dependency goes through pnpm's symlinked `node_modules` and resolves as is.
 
 The provider's Velt package is named `sigx`. A shared component therefore imports from the same
@@ -90,7 +90,7 @@ export const App = component<{ path: string }>((ctx) => {
   `renderDocumentToWebStream` does: the shell with the `pending` state first, then a
   `$SIGX_REPLACE` script with the `ready` content and the data (`__SIGX_ASYNC__`) once it
   arrives, then the completion signal. The browser restores the data without fetching it again.
-- **Server functions.** These are `export async function`s in a `*.server.vlt` file.
+- **Server functions.** These are `export async function`s in a `*.server.velt` file.
   - The server calls them directly while rendering.
   - When browser code imports `./api.server`, the Vite plugin turns the import into sigx client
     stubs (`__serverFnStub`) that `POST /_sigx/fn/<key>`.
@@ -161,7 +161,7 @@ The `velt()` plugin:
 |---|---|---|---|
 | `src/shared/*.tsx` | sigx HMR swaps the component in place and keeps its state | hot-swaps the changed functions (~150 ms); the next load renders the new markup | nothing more |
 | `src/entry-client.js`, CSS | Vite HMR | not involved | nothing |
-| `src/server.vlt`, the provider | not in Vite's module graph | hot-swap, or a restart when a layout or signature changed (the port is kept) | a full reload once Velt reports the swap |
+| `src/server.velt`, the provider | not in Vite's module graph | hot-swap, or a restart when a layout or signature changed (the port is kept) | a full reload once Velt reports the swap |
 | a Velt compile error | Vite's error overlay shows the diagnostics | the previous version keeps serving | shows the diagnostics; reloads (clearing it) once a build succeeds |
 
 Between a save and Velt's status line, document and server-function requests wait (up to 2 s),
@@ -186,7 +186,7 @@ gets the old server's HTML.
    - a compile error shows in the overlay while the old server keeps serving.
 
 `velt test` in `sigx-velt/velt` runs the provider's unit tests, and `npx tsc -p .` in `app`
-type-checks the shared components against JavaScript sigx. This example has no `package.vlt` at
+type-checks the shared components against JavaScript sigx. This example has no `package.velt` at
 its top level, so the gate's example-apps test skips it: it needs `pnpm install` first.
 
 ## Known limits
@@ -234,7 +234,7 @@ its top level, so the gate's example-apps test skips it: it needs `pnpm install`
 1. **npm-aware dependencies.** `{ npm: "@sigx/velt" }` would find the package in `node_modules`
    the way Node does, and use a `"velt"` field in its `package.json` to locate the Velt package
    inside. No hand-written `node_modules/...` path.
-2. **Browser-only files.** A `package.vlt` field (`browser: ["src/client"]`) that Velt's tools
+2. **Browser-only files.** A `package.velt` field (`browser: ["src/client"]`) that Velt's tools
    skip, or at least parsing `import()` and `import.meta` so `velt fmt` and `velt check` can
    handle mixed folders.
 3. **`velt dev --events json`.** Machine-readable status for the plugin and editors: `started`,
@@ -256,7 +256,7 @@ its top level, so the gate's example-apps test skips it: it needs `pnpm install`
 8. **Server functions from Velt signatures.** `velt check --exports json` (or emitted `.d.ts`)
    would give the plugin each function's name and types. It would then generate both the
    browser stubs and the TypeScript declarations, and the server's registration list, which
-   today are a regex, a hand-written `.d.ts` and a list in `server.vlt`.
+   today are a regex, a hand-written `.d.ts` and a list in `server.velt`.
 9. **`JSX.IntrinsicAttributes`** (`<Counter client:load />`), for sigx islands: attributes
    every component takes, checked as in TypeScript and passed to the provider separately
    (#815 on #826, used by `/islands`).

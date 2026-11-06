@@ -27,7 +27,7 @@ pub fn install(
                 false => "move it there to keep its versions, or delete it",
             };
             return Err(format!(
-                "{rel}/{LOCK_FILE}: a member of a workspace has no lockfile of its own; the workspace's is the {LOCK_FILE} beside velt.workspace.vlt ({fix})"
+                "{rel}/{LOCK_FILE}: a member of a workspace has no lockfile of its own; the workspace's is the {LOCK_FILE} beside velt.workspace.velt ({fix})"
             ));
         }
     }

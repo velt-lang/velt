@@ -29,7 +29,7 @@ pub struct NativePackage {
 /// declarations against C headers").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Checked {
-    /// Against the headers package.vlt lists, on the build's target.
+    /// Against the headers package.velt lists, on the build's target.
     Headers,
     /// It lists headers, but no check looked here: the target has no C headers (WebAssembly),
     /// or nothing of the library is declared.
@@ -294,12 +294,12 @@ mod tests {
                 rust_crate: false,
                 unsafe_code: vec![
                     UnsafeCode {
-                        file: "src/db.vlt".into(),
+                        file: "src/db.velt".into(),
                         line: 12,
                         what: "unsafe block".into(),
                     },
                     UnsafeCode {
-                        file: "src/stmt.vlt".into(),
+                        file: "src/stmt.velt".into(),
                         line: 7,
                         what: "unsafe function `step`".into(),
                     },
@@ -316,8 +316,8 @@ mod tests {
             render(&packages),
             "Native code the program allows (allowNative):\n  \
              sqlite: C libraries sqlite3 (sqlite3; headers checked), blas (none on this target; unchecked), tiny (built from native/tiny.c; headers checked); 2 places of unsafe code\n    \
-             src/db.vlt:12   unsafe block\n    \
-             src/stmt.vlt:7  unsafe function `step`\n  \
+             src/db.velt:12   unsafe block\n    \
+             src/stmt.velt:7  unsafe function `step`\n  \
              pg: a Rust crate; no unsafe code\n"
         );
         assert_eq!(render(&[]), "");

@@ -11,7 +11,7 @@ pub(crate) fn is_std_path(path: &str) -> bool {
 }
 
 /// `file` as shown in a message: relative to its package's root (the directory with
-/// `package.vlt`), or as given outside a package.
+/// `package.velt`), or as given outside a package.
 pub(crate) fn shown_in_package(file: &Path) -> String {
     let dir = file.parent().unwrap_or(Path::new(""));
     match vpm::manifest::find_package_root(dir) {
@@ -37,7 +37,7 @@ pub(crate) fn file_key(path: &Path) -> PathBuf {
 }
 
 /// How a message names `file`, a candidate for an import in directory `dir`: relative to `dir`
-/// for relative (and path alias) imports (`dup.ts`, `../lib/x.vlt`), the full path otherwise.
+/// for relative (and path alias) imports (`dup.ts`, `../lib/x.velt`), the full path otherwise.
 pub(crate) fn shown_path(file: &Path, dir: &Path, relative: bool) -> String {
     if relative {
         vpm::relpath::relative(file, dir)

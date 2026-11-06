@@ -38,7 +38,7 @@ for i in range(n):
                  f"  override area(): i64 {{\n    return this.id + 1;\n  }}\n}}\n\n")
 parts.append("function main() {\n  let t = 0;\n")
 parts += [f"  const b{i}: C{i} = new S{i}({i});\n  t += b{i}.area() + count([b{i}]);\n" for i in range(n)]
-path = f"{out}/long_main_{n}.vlt"
+path = f"{out}/long_main_{n}.velt"
 open(path, "w").write("".join(parts) + "  console.log(t);\n}\n")
 exe = f"{out}/long_main_{n}_stress"
 for stale in (exe, exe + ".link-stamp"):
@@ -49,7 +49,7 @@ def bound():
     # Linux only: macOS does not enforce RLIMIT_AS.
     if sys.platform.startswith("linux"):
         resource.setrlimit(resource.RLIMIT_AS, (bound_mb << 20, bound_mb << 20))
-print(f"velt build -v long_main_{n}.vlt (debug; {os.path.getsize(path) >> 10} KiB of source)...",
+print(f"velt build -v long_main_{n}.velt (debug; {os.path.getsize(path) >> 10} KiB of source)...",
       file=sys.stderr, flush=True)
 # The stage times go straight to stderr.
 r = subprocess.run([velt, "build", "-v", path, "-o", exe], stdout=subprocess.DEVNULL,

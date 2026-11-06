@@ -5,7 +5,7 @@
 //! nothing in a build yet: steps 2-4 of #2161 consume it.
 //!
 //! - **Unit and storage** ([`store`]): one entry per std package (`std/<module>/`, a folder with
-//!   an `index.vlt`, with the files of its implementation folders; package-cache.md "Units", open
+//!   an `index.velt`, with the files of its implementation folders; package-cache.md "Units", open
 //!   question 2 answered per package), of kind [`KIND`]: the per-package interface layer
 //!   (package-cache.md layer 1), of which this index is the first fields. #2236's step 4 adds the
 //!   checked signatures and summaries to the same entry, under the same kind, so std is described
@@ -58,7 +58,7 @@ pub struct PackageIndex {
 /// One std module (a file).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ModuleIndex {
-    /// Its canonical path (`std/host/promise`, `std/net/http` for `std/net/http/index.vlt`).
+    /// Its canonical path (`std/host/promise`, `std/net/http` for `std/net/http/index.velt`).
     pub path: String,
     /// The names of the hook table's entries it defines (`host_await`; velt_common
     /// `std_hooks::HOOKS`), in table order.

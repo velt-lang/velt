@@ -312,7 +312,7 @@ fn staticlib_links_and_runs() {
 }
 
 /// String builder, JSON reader error path and `json.Value` from C, like generated code for
-/// tests/golden/m4/json.vlt.
+/// tests/golden/m4/json.velt.
 const JSON: &str = r#"
 typedef struct Reader Reader;
 void velt_rt_strbuf_new(uint64_t, VeltStr*);

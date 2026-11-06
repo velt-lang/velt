@@ -8,12 +8,12 @@
 mod no_window;
 mod test_dir;
 
-/// `velt run` of `src` (as `main.vlt`) with `env` set: (exit success, stdout, stderr).
+/// `velt run` of `src` (as `main.velt`) with `env` set: (exit success, stdout, stderr).
 fn run(src: &str, env: &[(&str, &str)]) -> (bool, String, String) {
     let dir = test_dir::TestDir::new();
-    std::fs::write(dir.path().join("main.vlt"), src).unwrap();
+    std::fs::write(dir.path().join("main.velt"), src).unwrap();
     let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
-    cmd.args(["run", "main.vlt"]).current_dir(dir.path());
+    cmd.args(["run", "main.velt"]).current_dir(dir.path());
     for (k, v) in env {
         cmd.env(k, v);
     }
@@ -66,7 +66,7 @@ fn a_weak_capable_class_has_a_shape_of_its_own() {
 
 /// Views of two recursive object types of one size: their own answers agree, but once one's
 /// children are pushed onto through the view, `Tree[]` and `Tree2[]` don't
-/// (tests/golden/lang/array_view_shapes_tree.vlt), so the key covers `T[]`.
+/// (tests/golden/lang/array_view_shapes_tree.velt), so the key covers `T[]`.
 const TREES: &str = "
 type Tree = { v: number; kids: Tree[] };
 type Tree2 = { w: string; kids: Tree2[] };

@@ -1,4 +1,4 @@
-// Sort (same workload as sort.vlt): `sort()` without a comparator on 200k generated words that
+// Sort (same workload as sort.velt): `sort()` without a comparator on 200k generated words that
 // mix ASCII, accented Latin, CJK and emoji.
 class Rng {
   seed = 42;

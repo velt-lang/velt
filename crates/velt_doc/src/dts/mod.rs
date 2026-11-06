@@ -2,7 +2,7 @@
 //! editors and bundlers resolve `velt/*` imports (docs/internals/design/std-layout.md §1).
 //! `velt doc --std --format types` writes it.
 //!
-//! Each public module (an `index.vlt` user code may import) gets an `index.d.ts`, and
+//! Each public module (an `index.velt` user code may import) gets an `index.d.ts`, and
 //! `package.json` maps its specifier to it (`"./fs": { "types": "./fs/index.d.ts" }`). A type is
 //! declared in the file of the module that owns its source file; other modules that export it
 //! re-export it from there, and declarations that refer to it import it from there with
@@ -112,7 +112,7 @@ impl<'a> Package<'a> {
     fn new(modules: &'a [DocModule], files: &'a [&'a str]) -> Package<'a> {
         let index = ModuleIndex::new(modules);
         let mut public: Vec<usize> = (0..modules.len())
-            .filter(|&m| files[m].ends_with("/index.vlt") && std_modules::importable(files[m]))
+            .filter(|&m| files[m].ends_with("/index.velt") && std_modules::importable(files[m]))
             .collect();
         public.sort_by(|&a, &b| modules[a].name.cmp(&modules[b].name));
         let internal = [

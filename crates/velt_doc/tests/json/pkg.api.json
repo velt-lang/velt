@@ -5,7 +5,7 @@
     {
       "module": "pkg/lib",
       "specifier": "pkg/lib",
-      "file": "lib.vlt",
+      "file": "lib.velt",
       "doc": "The fixture package of `velt doc --format json`: every kind of export, members, tags, links\nand re-exports. See `Point`.",
       "summary": "The fixture package of `velt doc --format json`: every kind of export, members, tags, links and re-exports.",
       "links": [
@@ -53,7 +53,7 @@
             }
           ],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 11
           },
           "reexportedFrom": null,
@@ -78,7 +78,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 14
           },
           "reexportedFrom": null,
@@ -103,7 +103,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 17
           },
           "reexportedFrom": null,
@@ -127,7 +127,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 19
               },
               "reexportedFrom": null,
@@ -152,7 +152,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 20
               },
               "reexportedFrom": null,
@@ -179,7 +179,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 24
           },
           "reexportedFrom": null,
@@ -203,7 +203,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 26
               },
               "reexportedFrom": null,
@@ -230,7 +230,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 28
               },
               "reexportedFrom": null,
@@ -255,7 +255,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 32
               },
               "reexportedFrom": null,
@@ -295,7 +295,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 38
               },
               "reexportedFrom": null,
@@ -320,7 +320,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 43
               },
               "reexportedFrom": null,
@@ -345,7 +345,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 48
               },
               "reexportedFrom": null,
@@ -383,7 +383,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 53
               },
               "reexportedFrom": null,
@@ -442,7 +442,7 @@
                 }
               ],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 64
               },
               "reexportedFrom": null,
@@ -469,7 +469,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 72
           },
           "reexportedFrom": null,
@@ -493,7 +493,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 73
               },
               "reexportedFrom": null,
@@ -518,7 +518,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 74
               },
               "reexportedFrom": null,
@@ -556,7 +556,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 76
               },
               "reexportedFrom": null,
@@ -583,7 +583,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 80
           },
           "reexportedFrom": null,
@@ -620,7 +620,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 82
               },
               "reexportedFrom": null,
@@ -718,7 +718,7 @@
             }
           ],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 96
           },
           "reexportedFrom": null,
@@ -768,7 +768,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 101
           },
           "reexportedFrom": null,
@@ -792,7 +792,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 103
               },
               "reexportedFrom": null,
@@ -819,7 +819,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 107
           },
           "reexportedFrom": null,
@@ -869,7 +869,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 110
           },
           "reexportedFrom": null,
@@ -934,7 +934,7 @@
             }
           ],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 122
           },
           "reexportedFrom": null,
@@ -972,7 +972,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 127
           },
           "reexportedFrom": null,
@@ -1021,7 +1021,7 @@
                 }
               ],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 129
               },
               "reexportedFrom": null,
@@ -1048,7 +1048,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 135
           },
           "reexportedFrom": null,
@@ -1086,7 +1086,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 138
           },
           "reexportedFrom": null,
@@ -1148,7 +1148,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 141
           },
           "reexportedFrom": null,
@@ -1210,7 +1210,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 146
           },
           "reexportedFrom": null,
@@ -1248,7 +1248,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 151
           },
           "reexportedFrom": null,
@@ -1273,7 +1273,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 156
           },
           "reexportedFrom": null,
@@ -1297,7 +1297,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 158
               },
               "reexportedFrom": null,
@@ -1322,7 +1322,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 164
               },
               "reexportedFrom": null,
@@ -1362,7 +1362,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 168
           },
           "reexportedFrom": null,
@@ -1387,7 +1387,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 173
           },
           "reexportedFrom": null,
@@ -1411,7 +1411,7 @@
               },
               "links": [],
               "source": {
-                "file": "lib.vlt",
+                "file": "lib.velt",
                 "line": 175
               },
               "reexportedFrom": null,
@@ -1451,7 +1451,7 @@
           },
           "links": [],
           "source": {
-            "file": "lib.vlt",
+            "file": "lib.velt",
             "line": 179
           },
           "reexportedFrom": null,
@@ -1476,7 +1476,7 @@
           },
           "links": [],
           "source": {
-            "file": "shapes.vlt",
+            "file": "shapes.velt",
             "line": 4
           },
           "reexportedFrom": {
@@ -1503,7 +1503,7 @@
               },
               "links": [],
               "source": {
-                "file": "shapes.vlt",
+                "file": "shapes.velt",
                 "line": 6
               },
               "reexportedFrom": null,
@@ -1528,7 +1528,7 @@
               },
               "links": [],
               "source": {
-                "file": "shapes.vlt",
+                "file": "shapes.velt",
                 "line": 8
               },
               "reexportedFrom": null,
@@ -1563,7 +1563,7 @@
     {
       "module": "pkg/shapes",
       "specifier": "pkg/shapes",
-      "file": "shapes.vlt",
+      "file": "shapes.velt",
       "doc": "Shapes, re-exported by `pkg/lib`.",
       "summary": "Shapes, re-exported by `pkg/lib`.",
       "links": [],
@@ -1587,7 +1587,7 @@
           },
           "links": [],
           "source": {
-            "file": "shapes.vlt",
+            "file": "shapes.velt",
             "line": 4
           },
           "reexportedFrom": null,
@@ -1611,7 +1611,7 @@
               },
               "links": [],
               "source": {
-                "file": "shapes.vlt",
+                "file": "shapes.velt",
                 "line": 6
               },
               "reexportedFrom": null,
@@ -1636,7 +1636,7 @@
               },
               "links": [],
               "source": {
-                "file": "shapes.vlt",
+                "file": "shapes.velt",
                 "line": 8
               },
               "reexportedFrom": null,
@@ -1676,7 +1676,7 @@
           },
           "links": [],
           "source": {
-            "file": "shapes.vlt",
+            "file": "shapes.velt",
             "line": 12
           },
           "reexportedFrom": null,
@@ -1700,7 +1700,7 @@
               },
               "links": [],
               "source": {
-                "file": "shapes.vlt",
+                "file": "shapes.velt",
                 "line": 13
               },
               "reexportedFrom": null,
@@ -1725,7 +1725,7 @@
               },
               "links": [],
               "source": {
-                "file": "shapes.vlt",
+                "file": "shapes.velt",
                 "line": 15
               },
               "reexportedFrom": null,
@@ -1750,7 +1750,7 @@
               },
               "links": [],
               "source": {
-                "file": "shapes.vlt",
+                "file": "shapes.velt",
                 "line": 17
               },
               "reexportedFrom": null,
@@ -1775,7 +1775,7 @@
               },
               "links": [],
               "source": {
-                "file": "shapes.vlt",
+                "file": "shapes.velt",
                 "line": 21
               },
               "reexportedFrom": null,

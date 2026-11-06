@@ -21,12 +21,12 @@ velt test
 | `DELETE /items/:id` | → 204 |
 
 Errors are `{"error":{"code","message"}}`: 400 (`invalid`, `bad_json`), 404 (`not_found`), 405
-(`method_not_allowed`). To add an error, subclass `ApiError` in `src/model.vlt`.
+(`method_not_allowed`). To add an error, subclass `ApiError` in `src/model.velt`.
 
 | File | What |
 |---|---|
-| `src/model.vlt` | `Item`, request bodies, `ApiError` and its subclasses, validation |
-| `src/store.vlt` | `ItemStore`: the items in memory |
-| `src/api.vlt` | `route(store, method, path, body)` → `{ status, body }` |
-| `src/server.vlt` | `startServer(port)`: std/http + `shared<Mutex<ItemStore>>` |
-| `tests/*.test.vlt` | `velt test`: validation, and HTTP requests against port 0 |
+| `src/model.velt` | `Item`, request bodies, `ApiError` and its subclasses, validation |
+| `src/store.velt` | `ItemStore`: the items in memory |
+| `src/api.velt` | `route(store, method, path, body)` → `{ status, body }` |
+| `src/server.velt` | `startServer(port)`: std/http + `shared<Mutex<ItemStore>>` |
+| `tests/*.test.velt` | `velt test`: validation, and HTTP requests against port 0 |

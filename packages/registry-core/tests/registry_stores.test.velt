@@ -1,0 +1,386 @@
+// The registry over stores that wait, fail or lose data (src/server/registry.velt, publish.velt):
+// writes to one package hold its lock, a failed write takes its owner claim back, a failing
+// store answers 500, and what the cache in front is told to forget. An upload's body is read
+// outside the lock, and a cache that can't be purged fails no write.
+import { channel, Channel } from "velt/sync";
+import { describe, expect, it } from "velt/test";
+import {
+  contentChecksum,
+  HeldLock,
+  MemoryBlobStore,
+  MemoryMetadataDb,
+  MemoryPublishLock,
+  normalizedName,
+  PackageIndex,
+  packArchive,
+  RecordingCachePurge,
+  RegistryLimits,
+  StoreError,
+} from "../src/lib";
+import { Answer, packageFiles, TestRegistry } from "./_registry";
+
+// A database whose `packageNames` waits for a token from `gate` (while it is set).
+class GatedDb extends MemoryMetadataDb {
+  gate: Channel<bool> | null = null;
+
+  override async packageNames(): Promise<string[]> {
+    const gate = this.gate;
+    if (gate != null) {
+      await gate.receive();
+    }
+    return await super.packageNames();
+  }
+}
+
+// A database whose `putIndex` fails.
+class FailingDb extends MemoryMetadataDb {
+  override async putIndex(name: string, index: PackageIndex): Promise<void> {
+    throw new StoreError("the database is down");
+  }
+}
+
+// A database that fails with an error no adapter worded for clients.
+class BrokenDb extends MemoryMetadataDb {
+  override async putIndex(name: string, index: PackageIndex): Promise<void> {
+    throw new Error("open /srv/registry/db.sqlite: permission denied");
+  }
+}
+
+// A blob store that has lost every blob.
+class EmptyBlobs extends MemoryBlobStore {
+  override async get(key: string): Promise<u8[] | null> {
+    return null;
+  }
+}
+
+// A lock that lists the keys it was asked for, in order.
+class RecordingLock extends MemoryPublishLock {
+  keys: string[] = [];
+
+  override async acquire(key: string): Promise<HeldLock> {
+    this.keys.push(key);
+    return await super.acquire(key);
+  }
+}
+
+// A cache that can't be purged.
+class FailingPurge extends RecordingCachePurge {
+  override async purge(paths: string[]): Promise<void> {
+    throw new StoreError("the cache is down");
+  }
+}
+
+// An upload of `lib` 1.0.0 whose body arrives only when `finish` is called.
+class SlowUpload {
+  private ctl: ReadableStreamDefaultController<Uint8Array> | null = null;
+  answer: Promise<Answer>;
+
+  constructor(r: TestRegistry, token: string = "") {
+    const stream = new ReadableStream<Uint8Array>({
+      start: (c: ReadableStreamDefaultController<Uint8Array>): void => {
+        this.ctl = c;
+      },
+    });
+    const headers: [string, string][] = [
+      ["x-velt-checksum", contentChecksum(packageFiles("lib", "1.0.0"))],
+    ];
+    if (token.length > 0) {
+      headers.push(["authorization", `Bearer ${token}`]);
+    }
+    this.answer = r.send("PUT", "/api/v1/lib/1.0.0", headers, stream);
+  }
+
+  finish(): void {
+    this.ctl?.enqueue(Uint8Array.fromBytes(packArchive(packageFiles("lib", "1.0.0"))));
+    this.ctl?.close();
+  }
+}
+
+describe("the lock", () => {
+  // A package of alice's, a user who owns nothing, and a lock that starts counting after that.
+  async function published(): Promise<[TestRegistry, RecordingLock]> {
+    const lock = new RecordingLock();
+    const r = new TestRegistry(
+      new RegistryLimits(),
+      new MemoryMetadataDb(),
+      new MemoryBlobStore(),
+      lock,
+    );
+    r.user("bob");
+    await r.publish("my-lib", "1.0.0", r.user("alice"));
+    lock.keys = [];
+    return [r, lock];
+  }
+
+  it("isn't taken for a request that can't write", async () => {
+    const [r, lock] = await published();
+    // No such route, whatever its third part is.
+    for (const [method, path] of [
+      ["POST", "/a/b/my-lib"],
+      ["DELETE", "/x/y/my-lib"],
+      ["POST", "/api/v1/my-lib"],
+      ["DELETE", "/api/v1/my-lib/1.0.0"],
+      ["HEAD", "/api/v1/my-lib/1.0.0"],
+      ["PUT", "/api/v1/my-lib/1.0.0/native/x"],
+    ]) {
+      await r.send(method, path, [], null);
+    }
+    // No token, a token of nobody's, and a user who owns nothing.
+    for (const token of ["", "not-a-token", r.user("bob")]) {
+      for (const [method, path] of [
+        ["PUT", "my-lib/1.0.0/yank"],
+        ["DELETE", "my-lib/1.0.0/yank"],
+        ["PUT", "my-lib/owners/bob"],
+        ["DELETE", "my-lib/owners/alice"],
+      ]) {
+        const answer = await r.call(method, path, token);
+        expect(answer.status == 401 || answer.status == 403).toBe(true);
+      }
+    }
+    // The other spelling of a published package's name shares its lock, and isn't published: any
+    // valid token passes the owner check for it, so the lock has to wait for the name to exist.
+    for (const token of [r.user("bob"), r.user("alice")]) {
+      for (const [method, path] of [
+        ["PUT", "my_lib/1.0.0/yank"],
+        ["DELETE", "my_lib/1.0.0/yank"],
+        ["PUT", "my_lib/owners/bob"],
+        ["DELETE", "my_lib/owners/alice"],
+      ]) {
+        expect((await r.call(method, path, token)).status).toBe(404);
+      }
+      // A publish to that spelling is refused for the name, before its lock.
+      expect((await r.publish("my_lib", "1.0.0", token)).status).toBe(400);
+    }
+    expect(lock.keys).toEqual([]);
+  });
+
+  it("is taken by an owner's write, by the package's normalized name", async () => {
+    const [r, lock] = await published();
+    const alice = r.user("alice");
+    expect((await r.call("PUT", "my-lib/1.0.0/yank", alice)).status).toBe(200);
+    expect((await r.call("PUT", "my-lib/owners/bob", alice)).status).toBe(200);
+    const key = normalizedName("my-lib");
+    expect(lock.keys).toEqual([key, key]);
+  });
+
+  it("is no help to an owner removed while waiting for it", async () => {
+    for (const [method, path] of [
+      ["PUT", "my-lib/1.0.0/yank"],
+      ["PUT", "my-lib/owners/bob"],
+    ]) {
+      const [r, lock] = await published();
+      const key = normalizedName("my-lib");
+      await r.db.putOwners("my-lib", ["alice", "carol"]);
+      r.user("carol");
+      // Another write holds the lock while carol, still an owner, gets past the first check.
+      const other = await lock.acquire(key);
+      const waiting = r.call(method, path, r.user("carol"));
+      // timing: only waits for the call to reach the lock; the deadline is a hang guard.
+      const deadline = Date.now() + 60000;
+      while (lock.keys.length < 2) {
+        expect(Date.now() < deadline).toBe(true);
+        await sleep(1);
+      }
+      await r.db.putOwners("my-lib", ["alice"]);
+      await other.release();
+      expect((await waiting).status).toBe(403);
+    }
+  });
+});
+
+describe("uploads", () => {
+  it("take the package's lock only once the body has arrived", async () => {
+    const lock = new RecordingLock();
+    const r = new TestRegistry(
+      new RegistryLimits(),
+      new MemoryMetadataDb(),
+      new MemoryBlobStore(),
+      lock,
+    );
+    const slow = new SlowUpload(r);
+    // Another package's publish runs start to finish while lib's body is on its way.
+    expect((await r.publish("other", "1.0.0")).status).toBe(201);
+    expect(lock.keys).toEqual(["other"]);
+    slow.finish();
+    expect((await slow.answer).status).toBe(201);
+    expect(lock.keys).toEqual(["other", "lib"]);
+  });
+
+  it("let a package's other writes through while a body is on its way", async () => {
+    const r = new TestRegistry();
+    await r.publish("lib", "0.9.0");
+    const slow = new SlowUpload(r);
+    await r.publish("other", "1.0.0");
+    expect((await r.publish("lib", "0.9.1")).status).toBe(201);
+    slow.finish();
+    expect((await slow.answer).status).toBe(201);
+  });
+
+  it("check the caller again once the body has arrived", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    const slow = new SlowUpload(r, alice);
+    // Past the first check by now: this publish has run through more steps than that takes.
+    await r.publish("other", "1.0.0", alice);
+    await r.db.putOwners("lib", ["bob"]);
+    slow.finish();
+    const answer = await slow.answer;
+    expect(answer.status).toBe(403);
+    expect(await r.db.index("lib")).toBeNull();
+    expect(await r.db.owners("lib")).toEqual(["bob"]);
+  });
+
+  it("read no body for a caller who may not publish", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    r.user("bob");
+    await r.publish("lib", "1.0.0", alice);
+    // A body that fails when read: reading it would answer 500.
+    const stream = new ReadableStream<Uint8Array>({
+      pull: (c: ReadableStreamDefaultController<Uint8Array>): void => {
+        c.error(new Error("the body was read"));
+      },
+    });
+    const headers: [string, string][] = [["authorization", "Bearer token-of-bob"]];
+    const answer = await r.send("PUT", "/api/v1/lib/1.0.1", headers, stream);
+    expect(answer.status).toBe(403);
+  });
+
+  it("read no body for another spelling of a published name", async () => {
+    const r = new TestRegistry();
+    r.user("bob");
+    await r.publish("my-lib", "1.0.0", r.user("alice"));
+    const stream = new ReadableStream<Uint8Array>({
+      pull: (c: ReadableStreamDefaultController<Uint8Array>): void => {
+        c.error(new Error("the body was read"));
+      },
+    });
+    const headers: [string, string][] = [["authorization", "Bearer token-of-bob"]];
+    const answer = await r.send("PUT", "/api/v1/my_lib/1.0.0", headers, stream);
+    expect(answer.status).toBe(400);
+  });
+
+  it("go on for both spellings when both were published before the rule", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    await r.publish("my-lib", "1.0.0", alice);
+    const index = await r.db.index("my-lib");
+    if (index == null) {
+      throw new Error("my-lib has no index");
+    }
+    await r.db.putIndex("my_lib", index);
+    await r.db.putOwners("my_lib", ["alice"]);
+    expect((await r.publish("my_lib", "1.0.1", alice)).status).toBe(201);
+  });
+});
+
+describe("a cache that can't be purged", () => {
+  function registry(): TestRegistry {
+    return new TestRegistry(
+      new RegistryLimits(),
+      new MemoryMetadataDb(),
+      new MemoryBlobStore(),
+      new MemoryPublishLock(),
+      new FailingPurge(),
+    );
+  }
+
+  it("still answers 201 for a publish, and a retry 409", async () => {
+    const r = registry();
+    const first = await r.publish("lib", "1.0.0");
+    expect(first.status).toBe(201);
+    expect((await r.call("GET", "lib/index")).text).toContain(`"1.0.0"`);
+    expect((await r.publish("lib", "1.0.0")).status).toBe(409);
+  });
+
+  it("still answers 200 for a yank and a change of owners", async () => {
+    const r = registry();
+    const alice = r.user("alice");
+    r.user("bob");
+    await r.publish("lib", "1.0.0", alice);
+    expect((await r.call("PUT", "lib/1.0.0/yank", alice)).status).toBe(200);
+    expect((await r.call("PUT", "lib/owners/bob", alice)).status).toBe(200);
+    expect(await r.db.owners("lib")).toEqual(["alice", "bob"]);
+  });
+});
+
+describe("stores", () => {
+  it("publish one name's spellings one at a time", async () => {
+    const db = new GatedDb();
+    // Each reads the names twice: before reading its body, and under the lock.
+    const gate = channel<bool>(4);
+    db.gate = gate;
+    const r = new TestRegistry(new RegistryLimits(), db);
+    // Both reach the name check before either is let through; without the lock both would
+    // find the name free.
+    const first = r.publish("my-pkg", "1.0.0");
+    const second = r.publish("my_pkg", "1.0.0");
+    for (let i = 0; i < 4; i++) {
+      gate.trySend(true);
+    }
+    const answers: Answer[] = [await first, await second];
+    expect(answers.map((a: Answer): i64 => a.status)).toEqual([201, 400]);
+  });
+
+  it("take an owner claim back when the index can't be written", async () => {
+    const r = new TestRegistry(new RegistryLimits(), new FailingDb());
+    const alice = r.user("alice");
+    const failed = await r.publish("lib", "1.0.0", alice);
+    expect(failed.status).toBe(500);
+    expect(failed.text).toBe("the database is down");
+    expect(await r.db.owners("lib")).toEqual([]);
+  });
+
+  it("show only a StoreError's message", async () => {
+    const r = new TestRegistry(new RegistryLimits(), new BrokenDb());
+    const failed = await r.publish("lib", "1.0.0");
+    expect(`${failed.status} ${failed.text}`).toBe("500 the registry failed");
+  });
+
+  it("answer 500 for an archive the blob store lost", async () => {
+    const r = new TestRegistry(new RegistryLimits(), new MemoryMetadataDb(), new EmptyBlobs());
+    expect((await r.publish("lib", "1.0.0")).status).toBe(201);
+    const lost = await r.call("GET", "lib/1.0.0");
+    expect(lost.status).toBe(500);
+    expect(lost.text).toContain("missing from the registry's store");
+  });
+});
+
+describe("caches and choices", () => {
+  it("purge what a write changed, and nothing for a yank that changes nothing", async () => {
+    const r = new TestRegistry();
+    const alice = r.user("alice");
+    r.user("bob");
+    await r.publish("lib", "1.0.0", alice);
+    expect(r.purge.purged).toEqual(["/api/v1/lib/index", "/api/v1/lib/1.0.0", "/"]);
+    r.purge.purged = [];
+    await r.call("PUT", "lib/1.0.0/yank", alice);
+    await r.call("PUT", "lib/1.0.0/yank", alice);
+    expect(r.purge.purged).toEqual(["/api/v1/lib/index"]);
+    r.purge.purged = [];
+    await r.call("PUT", "lib/owners/bob", alice);
+    expect(r.purge.purged).toEqual(["/api/v1/lib/owners"]);
+  });
+
+  it("show a stable version before a newer pre-release, and no package all yanked", async () => {
+    const r = new TestRegistry();
+    await r.publish("lib", "1.0.0");
+    await r.publish("lib", "2.0.0-rc.1");
+    expect((await r.call("GET", "search?q=lib")).text).toContain(`"version":"1.0.0"`);
+    await r.call("PUT", "lib/1.0.0/yank");
+    expect((await r.call("GET", "search?q=lib")).text).toContain(`"version":"2.0.0-rc.1"`);
+    await r.call("PUT", "lib/2.0.0-rc.1/yank");
+    expect((await r.call("GET", "search?q=lib")).text).toBe(`{"packages":[]}`);
+  });
+
+  it("refuse a body announced too large before anything else", async () => {
+    const limits = new RegistryLimits();
+    limits.maxArchiveBytes = 1000;
+    const r = new TestRegistry(limits);
+    r.user("alice");
+    const headers: [string, string][] = [["content-length", "1001"]];
+    const answer = await r.send("PUT", "/api/v1/lib/1.0.0", headers, null);
+    expect(answer.status).toBe(413);
+    expect(answer.text).toBe("the upload is larger than 1000 bytes");
+  });
+});

@@ -36,7 +36,7 @@ test("a configured engine is used only when installed", () => {
 test("build arguments: the package, or one file", () => {
   const base: VeltConfig = { type: "velt", request: "launch", name: "Debug" };
   assert.deepEqual(buildArgs(base), ["build", "--json"]);
-  assert.deepEqual(buildArgs({ ...base, file: "/w/app.vlt" }), ["build", "/w/app.vlt", "--json"]);
+  assert.deepEqual(buildArgs({ ...base, file: "/w/app.velt" }), ["build", "/w/app.velt", "--json"]);
   assert.deepEqual(buildArgs({ ...base, buildArgs: ["--backend", "llvm"] }), [
     "build",
     "--backend",
@@ -47,9 +47,9 @@ test("build arguments: the package, or one file", () => {
 
 test("a test builds its harness with velt test", () => {
   const config: VeltConfig = { type: "velt", request: "launch", name: "Debug test_add" };
-  assert.deepEqual(buildArgs({ ...config, file: "/w/math.test.vlt", test: "test_add" }), [
+  assert.deepEqual(buildArgs({ ...config, file: "/w/math.test.velt", test: "test_add" }), [
     "test",
-    "/w/math.test.vlt",
+    "/w/math.test.velt",
     "--filter",
     "test_add",
     "--exact",
@@ -60,10 +60,10 @@ test("a test builds its harness with velt test", () => {
     JSON.stringify({
       harnesses: [
         {
-          file: "/w/math.test.vlt",
+          file: "/w/math.test.velt",
           executable: "/w/target/velt/test/math_test_0",
           tests: ["test_add"],
-          env: { VELT_SCRIPT: "/w/math.test.vlt" },
+          env: { VELT_SCRIPT: "/w/math.test.velt" },
           debugInfo: false,
         },
       ],
@@ -74,7 +74,7 @@ test("a test builds its harness with velt test", () => {
     }),
   );
   assert.equal(built.executable, "/w/target/velt/test/math_test_0");
-  assert.deepEqual(built.env, { VELT_SCRIPT: "/w/math.test.vlt" });
+  assert.deepEqual(built.env, { VELT_SCRIPT: "/w/math.test.velt" });
   assert.equal(built.lldbScript, "/opt/velt/share/velt/lldb/velt_lldb.py");
   // The harness's own debugInfo (a Windows build without line information warns).
   assert.equal(built.debugInfo, false);
@@ -92,7 +92,7 @@ const failed = JSON.stringify({
     {
       severity: "error",
       message: "mismatched types",
-      location: { file: "src/main.vlt", line: 2, column: 5, endLine: 2, endColumn: 9 },
+      location: { file: "src/main.velt", line: 2, column: 5, endLine: 2, endColumn: 9 },
       labels: [],
       notes: ["expected string, found f64"],
     },
@@ -104,7 +104,7 @@ test("build results: diagnostics by absolute file, failures without a location",
   const result = parseBuildResult(failed);
   assert.equal(result.errors, 2);
   const byFile = diagnosticsByFile(result, "/w");
-  assert.deepEqual([...byFile.keys()], [path.resolve("/w", "src/main.vlt")]);
+  assert.deepEqual([...byFile.keys()], [path.resolve("/w", "src/main.velt")]);
   assert.deepEqual(failureMessages(result), ["could not find the runtime"]);
   assert.throws(() => parseBuildResult("error: no such command"));
   assert.throws(() => parseBuildResult("{}"));

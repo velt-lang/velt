@@ -16,8 +16,8 @@ official 10 KB `knucleotide-input.txt`, and `expected-quick.txt` is the official
 | `rust/src/bin/k-nucleotide_st.rs` | Rust #7 with the frame lengths counted one after another | | 1 |
 | `main.go` | [Go #7](https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/knucleotide-go-7.html) | Mark van Weert (based on Go #6 / C++ #2) | all cores |
 | `main.js` | [Node #3](https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/knucleotide-node-3.html) | Dani Biro (based on Node #2 by Jesse Millikan, Matt Baker, Roman Pletnev) | 4 workers |
-| `main.vlt` | idiomatic Velt: `readLineSync` line by line, `Map<i64, i64>` counts keyed by the 2-bit packed k-nucleotide, `upsert` | | 1 |
-| `main_mt.vlt` | `main.vlt` with one spawned task per length (like Rust #7), `Promise.all` | | 7 tasks |
+| `main.velt` | idiomatic Velt: `readLineSync` line by line, `Map<i64, i64>` counts keyed by the 2-bit packed k-nucleotide, `upsert` | | 1 |
+| `main_mt.velt` | `main.velt` with one spawned task per length (like Rust #7), `Promise.all` | | 7 tasks |
 
 Deviations:
 - Rust #7 depends on hashbrown, futures, tokio_threadpool, itertools and num. The bench project
@@ -52,7 +52,7 @@ times are inflated and noisy; CPU seconds are the more reliable column. Versions
 
 ## Gap: Velt main vs Rust single-threaded, ~2.5× CPU
 
-A `sample` profile of `main.vlt` (LLVM): ~75% in `frequencies` (the `Map` code is inlined into
+A `sample` profile of `main.velt` (LLVM): ~75% in `frequencies` (the `Map` code is inlined into
 it), ~15% reading stdin.
 
 ### 1. `Map` upsert costs 2–2.5× hashbrown's for maps of 16+ keys (std prelude)
@@ -86,7 +86,7 @@ A hit touches three arrays (`slots` → `entryKeys[pos]` in `find`, then `slots[
 `entryValues[pos]` in `upsert`), each with a bounds check, and the value is a 16-byte `V | null`.
 hashbrown touches a control group and one bucket holding key and value. The design (dense
 insertion-ordered entries + Robin Hood index) is needed for JS iteration order, but the hit path
-can be made cheaper. **Proposed (std/prelude/map.vlt):**
+can be made cheaper. **Proposed (std/prelude/map.velt):**
 - `find` returns the entry position on a hit (it already has it: `(w & POS_MASK) - 1`), so
   `upsert` / `get` / `update` don't re-read `slots[s]` (one load and one bounds check less);
 - store entries as one array of `{ key, value }` (AoS) so a hit's key compare and value update
@@ -116,7 +116,7 @@ adding `line.charCodeAt(i)` per byte adds ~0.4 s. Causes:
   **Fix:** make it an intrinsic lowered inline (`i < len ? ptr[i] : -1`), like `StrLen`.
 
 ### 3. Multi-threaded: read-only sharing across tasks (#36, done)
-`main_mt.vlt` used to pass `seq.clone()` to each of the 7 tasks (async parameters are owned),
+`main_mt.velt` used to pass `seq.clone()` to each of the 7 tasks (async parameters are owned),
 copying 7 × 125 MB and peaking at 1 GB RSS (Rust #7: 133 MB with an `Arc<Vec<u8>>`), because a
 `shared<u8[]>` could not be read. A `shared<T>` without a `Mutex` is now read like a `T`
 (index, `length`, `T`'s methods, passed where a `T` is read), so the tasks take one
@@ -125,16 +125,16 @@ shared box (the 24-byte header is copied into a local, so the loop keeps it in r
 Measured on an M-series Mac (macOS, 10 cores, under heavy load; 5 interleaved runs, 25M input,
 identical output):
 
-| `main_mt.vlt` | peak RSS | instructions | user CPU | sys CPU |
+| `main_mt.velt` | peak RSS | instructions | user CPU | sys CPU |
 |---|---:|---:|---:|---:|
 | `seq.clone()` per task | 971–1011 MB | 50.9–51.4 G | 9.11–9.24 s | 0.39–0.62 s |
 | one `shared(seq)` | 252–272 MB | 49.9–50.0 G | 8.83–9.03 s | 0.14–0.18 s |
 
 ## Friction for a TypeScript developer
-- No `Number.prototype.toFixed` at the time (filed as `std_number_to_fixed.vlt`): `main.vlt`
+- No `Number.prototype.toFixed` at the time (filed as `std_number_to_fixed.velt`): `main.velt`
   uses a small `toFixed3` helper. (`Array.prototype.sort(compareFn)` has since shipped; the
   former `sortBy(cmp)` is gone.)
 - Index loops need `usize` counters and casts (`2 * (length - 1 - i) as i64`).
 - `while ((line = readLineSync()) != null)` doesn't compile: an assignment expression has type
-  `void` (filed as `tests/golden/bugs/sema_assignment_expression_value.vlt`);
+  `void` (filed as `tests/golden/bugs/sema_assignment_expression_value.velt`);
   `for (;;) { const line = readLineSync(); if (line == null) break; … }` works.

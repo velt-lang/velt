@@ -20,10 +20,10 @@ fn line_of(func: usize, block: usize, stmt: usize) -> u32 {
     (1000 * func + 10 * block + stmt + 1) as u32
 }
 
-/// `fib` with a source location on every statement and terminator, all in `fib.vlt`.
+/// `fib` with a source location on every statement and terminator, all in `fib.velt`.
 fn located_fib() -> Program {
     let mut program = programs::fib().program;
-    program.files = vec!["/src/fib.vlt".into()];
+    program.files = vec!["/src/fib.velt".into()];
     for (fi, f) in program.funcs.iter_mut().enumerate() {
         f.locs = (f.blocks.iter().enumerate())
             .map(|(bi, b)| {
@@ -190,7 +190,7 @@ fn objects_carry_line_tables() {
         );
         let lines: BTreeSet<u64> = rows.iter().map(|r| r.2).filter(|&l| l > 0).collect();
         assert!(lines.is_subset(&all_lines(&program)), "{triple}: {lines:?}");
-        assert!(rows.iter().all(|r| r.1 == "fib.vlt"), "{triple}: {rows:?}");
+        assert!(rows.iter().all(|r| r.1 == "fib.velt"), "{triple}: {rows:?}");
         // Most statements produce code with their own row (some are folded into others).
         assert!(
             lines.len() * 2 > all_lines(&program).len(),

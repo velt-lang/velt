@@ -394,7 +394,7 @@ pub fn hover(entry: &DependencyEntry, index: Option<&Index>, locked: Option<&str
         (_, DependencySource::Path) => lines.push("local package (`path`)".into()),
         (_, DependencySource::Git) => lines.push("from a git repository (`git`)".into()),
         (_, DependencySource::Workspace) => {
-            lines.push("from the workspace (`velt.workspace.vlt`)".into())
+            lines.push("from the workspace (`velt.workspace.velt`)".into())
         }
         (None, DependencySource::Registry) => lines.push("not in the registry".into()),
         (Some(index), DependencySource::Registry) => {

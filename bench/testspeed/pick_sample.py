@@ -23,6 +23,6 @@ while allm-cov:
 print('extra for stride 16',extra)
 for b in sorted(allm,key=lambda x:sum(x in c for c in comp.values()))[:8]:
     print(b,[r for r,c in comp.items() if b in c][:6])
-print('closure',sorted(comp.get('lang/closure_nested_assigns_capture.vlt',[])))
+print('closure',sorted(comp.get('lang/closure_nested_assigns_capture.velt',[])))
 print('total marks',len(allm),'compiled',len(comp),'not compiled',len(m)-len(comp))
 print('avg marks',sum(len(c) for c in comp.values())/len(comp))

@@ -21,9 +21,9 @@ function main(): void {
 }
 EOF
 }
-loop 'Symbol.for("r")' 'Symbol.for' >"$tmp/for.vlt"
-loop 'Symbol("r")' 'Symbol' >"$tmp/own.vlt"
-cat >"$tmp/fresh.vlt" <<'EOF'
+loop 'Symbol.for("r")' 'Symbol.for' >"$tmp/for.velt"
+loop 'Symbol("r")' 'Symbol' >"$tmp/own.velt"
+cat >"$tmp/fresh.velt" <<'EOF'
 function main(): void {
   let n = 0;
   for (let i = 0; i < 10000000; i++) {
@@ -34,7 +34,7 @@ function main(): void {
 }
 EOF
 for p in for own fresh; do
-  "$velt" build --release "$tmp/$p.vlt" -o "$tmp/$p.exe" >/dev/null
+  "$velt" build --release "$tmp/$p.velt" -o "$tmp/$p.exe" >/dev/null
 done
 for _ in 1 2 3 4 5; do
   "$tmp/for.exe"

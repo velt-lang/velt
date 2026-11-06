@@ -1,7 +1,7 @@
 //! String methods called with a regex: `s.replace(/a/g, "b")`, `s.replace(re, (m, p1) => …)`,
 //! `match`, `matchAll`, `search`, `split` and `replaceAll`. Velt has no overloads, so a call
 //! whose first argument is std's `RegExp` goes to the hook named after it, which takes the string
-//! first (`replaceRegExp(s, re, r)`, `matchRegExp(s, re)`, …: std/text/regex/string_methods.vlt);
+//! first (`replaceRegExp(s, re, r)`, `matchRegExp(s, re)`, …: std/text/regex/string_methods.velt);
 //! the string-argument methods stay as they are, at no cost.
 //!
 //! A replacer function gets JavaScript's arguments: the match, the groups, the match's offset

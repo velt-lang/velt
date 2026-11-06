@@ -15,7 +15,7 @@
 # it exits 1 when a benchmark executes more than PERCENT (default 3, the review rule) more
 # instructions. Counts repeat to within 0.1%, so the band needs no room for noise.
 # compile/check_all_std is compared per code line of std/ (its row has a fourth column, the
-# non-blank, non-comment lines of std/**/*.vlt, its tests aside): the standard library grows with almost every
+# non-blank, non-comment lines of std/**/*.velt, its tests aside): the standard library grows with almost every
 # feature, and checking more of it is not a slowdown, while checking each line more slowly is. A
 # baseline row without the lines is compared in total.
 # Benchmarks with a Node version (bench/node/<name>.js, bench/json/node/<name>.js) also run under
@@ -57,20 +57,20 @@ fi
 # HTTP/1.1 over TLS, 40,000 requests by default, compared by hand (docs/internals/design/http2.md).
 # Each runs with no arguments: one that takes a mode on its command line lives in a directory not
 # listed here (bench/half, bench/shared; a test in crates/veltc/tests/bench_programs.rs checks).
-BENCHES=("$ROOT"/bench/*.vlt "$ROOT"/bench/iter/*.vlt "$ROOT"/bench/json/*.vlt
-  "$ROOT"/bench/strings_utf16/*.vlt "$ROOT"/bench/stdport/*.vlt "$ROOT"/bench/spread_order/*.vlt
-  "$ROOT"/bench/fetch/loopback.vlt)
-# NIGHTLY_EXTRA_DIRS="typical …": also the benchmarks in bench/<dir>/*.vlt (for an A/B of a change).
+BENCHES=("$ROOT"/bench/*.velt "$ROOT"/bench/iter/*.velt "$ROOT"/bench/json/*.velt
+  "$ROOT"/bench/strings_utf16/*.velt "$ROOT"/bench/stdport/*.velt "$ROOT"/bench/spread_order/*.velt
+  "$ROOT"/bench/fetch/loopback.velt)
+# NIGHTLY_EXTRA_DIRS="typical …": also the benchmarks in bench/<dir>/*.velt (for an A/B of a change).
 for dir in ${NIGHTLY_EXTRA_DIRS:-}; do
-  BENCHES+=("$ROOT/bench/$dir"/*.vlt)
+  BENCHES+=("$ROOT/bench/$dir"/*.velt)
 done
 # Not programs (as in crates/veltc/tests/bench_programs.rs): a directory's package manifest
-# (`package.vlt`, the benchmarks there depend on the repository's packages) and the modules a
-# program imports (`_name.vlt`).
+# (`package.velt`, the benchmarks there depend on the repository's packages) and the modules a
+# program imports (`_name.velt`).
 programs=()
 for src in "${BENCHES[@]}"; do
   case "$(basename "$src")" in
-    package.vlt | _*) ;;
+    package.velt | _*) ;;
     *) programs+=("$src") ;;
   esac
 done
@@ -79,7 +79,7 @@ for name in await_chain await_deep hot_loop fanout_all fanout_all_throwing all_s
   spawn_many channel_pipeline timers_fire timers_due_join timers_due_stored timers_due_in_promise \
   timers_due_reversed top_level_await timer_await timer_await_top \
   promise_identity_loop; do
-  BENCHES+=("$ROOT/bench/async/$name.vlt")
+  BENCHES+=("$ROOT/bench/async/$name.velt")
 done
 
 # count <name> <command...>: one line "<name>\t<instructions>\t<native ms>" on stdout.
@@ -143,7 +143,7 @@ NODE_FILE="${OUT_FILE%.tsv}.node.tsv"
 : > "$NODE_FILE"
 for src in "${BENCHES[@]}"; do
   rel=${src#"$ROOT/bench/"}
-  name=${rel%.vlt}
+  name=${rel%.velt}
   exe="$OUT/$(echo "$name" | tr '/' '_')"
   echo "$name" >&2
   "$VELT" build --release --backend llvm "$src" -o "$exe" >&2
@@ -158,7 +158,7 @@ echo "compile/check_all_std" >&2
 # Code lines only: documentation added to std/ would otherwise lower the cost per line and hide a
 # slowdown of the same size. Not blank lines, `//` lines, or the lines of a comment that starts a
 # line (`/** … */`).
-std_lines=$(find "$ROOT/std" -name '*.vlt' ! -name '*.test.vlt' -exec cat {} + | awk '
+std_lines=$(find "$ROOT/std" -name '*.velt' ! -name '*.test.velt' -exec cat {} + | awk '
   block { if (/\*\//) block = 0; next }
   /^[ \t]*(\/\/|$)/ { next }
   /^[ \t]*\/\*/ { if (!/\*\//) block = 1; next }

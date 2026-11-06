@@ -1,0 +1,309 @@
+// velt/lang/proxy: JavaScript's `Proxy` and `Reflect` (issue #823; https://veltlang.com/docs/reference/types/ "Proxy
+// and Reflect"), globals loaded when a module names one of them (std/prelude/global/proxy.velt).
+//
+// A proxy is a dynamic value: `new Proxy(target, handler)` has the type `any` and holds a
+// `Proxy` object. Its descriptor slots (velt_vir `lower/any_proxy.rs`) call the keyed methods
+// below, so `p.k` runs the handler's `get` trap, `p.k = v` its `set` trap and `"k" in p` its
+// `has` trap, each with the target, the key and the proxy itself as the receiver. A trap the
+// handler leaves out forwards to the target, as in JavaScript. `Reflect.get` / `set` / `has`
+// do what the operations do on a plain value, and pass the receiver on to a proxy target.
+//
+// Its bodies use dynamic operations without making the program pay for them: sema counts a
+// program as using `any` members only when its own code constructs a `Proxy` or calls `Reflect`.
+// A program that never names them doesn't load this module, and its operations on `any` don't
+// test for a proxy (velt/lang/hooks/proxy).
+
+import { ArrayMethod, proxyArrayInvoke } from "velt/lang/proxy/array";
+import {
+  PROXY_ARRAY_CALL,
+  PROXY_DEFINE_PROPERTY,
+  PROXY_DEFINES,
+  PROXY_DELETE,
+  PROXY_DELETE_PROPERTY,
+  PROXY_GET,
+  PROXY_GET_GETTER,
+  PROXY_GET_OWN_PROPERTY_DESCRIPTOR,
+  PROXY_HAS,
+  PROXY_HAS_GET,
+  PROXY_HAS_OWN,
+  PROXY_IS_ARRAY,
+  PROXY_IS_VIEW,
+  PROXY_JSON,
+  PROXY_KEYS,
+  PROXY_OWN_KEYS,
+  PROXY_PLAIN,
+  PROXY_READS_GETTER,
+  PROXY_RECEIVE,
+  PROXY_SELF,
+  PROXY_SET,
+  PROXY_TARGET,
+  PROXY_VIEW,
+} from "velt/lang/hooks/keys";
+import { PropertyDescriptor, ProxyHandler } from "velt/lang/proxy/descriptor";
+import { proxyKey, proxyKeyText } from "velt/lang/proxy/keys";
+import { Reflect } from "velt/lang/proxy/reflect";
+import {
+  proxyDefine,
+  proxyDeleteProperty,
+  proxyJson,
+  proxyKeys,
+  proxyOwnDescriptor,
+  proxyOwnKeys,
+  proxyReceive,
+} from "velt/lang/proxy/traps";
+
+export { PropertyDescriptor, ProxyHandler } from "velt/lang/proxy/descriptor";
+export { symbolKeyName } from "velt/lang/proxy/keys";
+export { Reflect } from "velt/lang/proxy/reflect";
+
+/**
+ * A proxy for another object: the operations on it run the handler's traps. Create one with
+ * `new Proxy(target, handler)`; the result is an `any`.
+ */
+export class Proxy {
+  #target: any;
+  #handler: ProxyHandler<any>;
+  #view: boolean;
+  // Whether this proxy's `get` trap is answering a class getter read on a class instance brand
+  // (`[PROXY_GET_GETTER]`), and the getter's key then.
+  #getterMarked: boolean;
+  #getterKey: string;
+
+  /** A proxy of `target` whose operations run the traps of `handler`. */
+  constructor(target: any, handler: ProxyHandler<any>) {
+    this.#target = target;
+    this.#handler = handler;
+    this.#view = false;
+    this.#getterMarked = false;
+    this.#getterKey = "";
+  }
+
+  /**
+   * `p.twice` of a class getter on a class instance brand that is this proxy (velt_sema
+   * `proxy_getters.rs`): the `get` trap's answer, with the proxy as its receiver. While the trap
+   * runs, the read is marked on the proxy, so a trap that forwards it with
+   * `Reflect.get(target, key, receiver)` stops with a `TypeError` there (#1732): Node would run
+   * the getter with `this` the proxy, Velt runs it on the target. Without a `get` trap nothing
+   * forwards a receiver, and the read is the target's, as in Node.
+   */
+  [PROXY_GET_GETTER](key: string): any {
+    const me: any = this;
+    const trap = this.#handler.get;
+    if (trap == null) {
+      return Reflect.get(this.#target, key, me);
+    }
+    const outerMarked = this.#getterMarked;
+    const outerKey = this.#getterKey;
+    this.#getterMarked = true;
+    this.#getterKey = key;
+    try {
+      return trap(this.#target, key, me);
+    } finally {
+      this.#getterMarked = outerMarked;
+      this.#getterKey = outerKey;
+    }
+  }
+
+  /** Whether this proxy's `get` trap is answering a brand's class getter read of `key`. */
+  [PROXY_READS_GETTER](key: any): boolean {
+    return this.#getterMarked && this.#getterKey === key;
+  }
+
+  /**
+   * A view of `target` as an object type (velt_vir `lower/any_view.rs`): an `any` holding an
+   * object of another type converted to an object type. It has no traps, so every read and
+   * write reaches the target, and converting the view back to `any` gives the target itself:
+   * to the program the view is the target, as in Node. The conversion calls this only for an
+   * object without a live view: it asks the runtime's table of views first (`any_view.rs`).
+   */
+  static [PROXY_VIEW](target: any): Proxy {
+    const p = new Proxy(target, {});
+    p.#view = true;
+    return p;
+  }
+
+  /** Whether this proxy is a view (`[PROXY_VIEW]`). */
+  [PROXY_IS_VIEW](): boolean {
+    return this.#view;
+  }
+
+  /**
+   * Whether the handler has no `get`, `set` or `has` trap: then a method call through this
+   * proxy is the call on the target (`[PROXY_TARGET]`), since the method's reads and writes of `this`
+   * could not tell the difference. (The key traps, `ownKeys`, `deleteProperty`, ..., don't run
+   * for a method call.) An array target's methods run through the proxy (`[PROXY_ARRAY_CALL]`).
+   */
+  [PROXY_PLAIN](): boolean {
+    const h = this.#handler;
+    return h.get == null && h.set == null && h.has == null && !this[PROXY_IS_ARRAY]();
+  }
+
+  /**
+   * Whether the handler has a `get` trap: a method called on a typed proxy needs it to read
+   * the method (not supported yet, #823).
+   */
+  [PROXY_HAS_GET](): boolean {
+    return this.#handler.get != null;
+  }
+
+  /** `Array.isArray(p)`: whether the target, through proxies of proxies, is an array. */
+  [PROXY_IS_ARRAY](): boolean {
+    const t = this.#target;
+    if (t instanceof Proxy) {
+      return t[PROXY_IS_ARRAY]();
+    }
+    return Array.isArray(t);
+  }
+
+  /** This proxy, as an `any`. */
+  [PROXY_SELF](): any {
+    return this;
+  }
+
+  /** The target. */
+  [PROXY_TARGET](): any {
+    return this.#target;
+  }
+
+  // The traps (std only: the trap bodies in traps.velt read them).
+  private handlerOf(): ProxyHandler<any> {
+    return this.#handler;
+  }
+
+  /** `receiver[key]` where the read reached this proxy: the `get` trap. */
+  [PROXY_GET](key: any, receiver: any): any {
+    const trap = this.#handler.get;
+    if (trap == null) {
+      return Reflect.get(this.#target, key, receiver);
+    }
+    if (this.#getterMarked) {
+      return this.#getWhileMarked(key, receiver);
+    }
+    if (typeof key === "string") {
+      return trap(this.#target, key, receiver);
+    }
+    return trap(this.#target, proxyKey(key), receiver);
+  }
+
+  // `[PROXY_GET]` while a brand's getter read is marked (`[PROXY_GET_GETTER]`): this read is another one, so
+  // the mark is off while its trap runs.
+  #getWhileMarked(key: any, receiver: any): any {
+    const trap = this.#handler.get!;
+    const outerKey = this.#getterKey;
+    this.#getterMarked = false;
+    try {
+      return trap(this.#target, proxyKey(key), receiver);
+    } finally {
+      this.#getterMarked = true;
+      this.#getterKey = outerKey;
+    }
+  }
+
+  /** `receiver[key] = value` where the write reached this proxy: the `set` trap. */
+  [PROXY_SET](key: any, value: any, receiver: any): boolean {
+    const trap = this.#handler.set;
+    if (trap == null) {
+      return Reflect.set(this.#target, key, value, receiver);
+    }
+    if (typeof key === "string") {
+      return trap(this.#target, key, value, receiver);
+    }
+    return trap(this.#target, proxyKey(key), value, receiver);
+  }
+
+  /** `key in` this proxy: the `has` trap. */
+  [PROXY_HAS](key: any): boolean {
+    const trap = this.#handler.has;
+    if (trap == null) {
+      return Reflect.has(this.#target, key);
+    }
+    if (typeof key === "string") {
+      return trap(this.#target, key);
+    }
+    return trap(this.#target, proxyKey(key));
+  }
+
+  /** `Reflect.deleteProperty(p, key)`: the `deleteProperty` trap; whether the key is gone. */
+  [PROXY_DELETE_PROPERTY](key: any): boolean {
+    return proxyDeleteProperty(this, key);
+  }
+
+  /** `delete p[key]` (strict code): `[PROXY_DELETE_PROPERTY]`, and Node's `TypeError` on `false`. */
+  [PROXY_DELETE](key: any): boolean {
+    if (!this[PROXY_DELETE_PROPERTY](key)) {
+      const k = proxyKeyText(proxyKey(key));
+      panic(`TypeError: 'deleteProperty' on proxy: trap returned falsish for property '${k}'`);
+    }
+    return true;
+  }
+
+  /**
+   * The own keys of this proxy (`[[OwnPropertyKeys]]`): the `ownKeys` trap's answer, checked as
+   * Node checks it (an array of strings and symbols, each at most once).
+   */
+  [PROXY_OWN_KEYS](): (string | symbol)[] {
+    return proxyOwnKeys(this);
+  }
+
+  /**
+   * The own property `key` of this proxy (`[[GetOwnProperty]]`): the `getOwnPropertyDescriptor`
+   * trap's answer, completed (an attribute left out is `false`). A target's properties are all
+   * configurable, so a trap may not report one that is not (Node's `TypeError`).
+   */
+  [PROXY_GET_OWN_PROPERTY_DESCRIPTOR](key: any): PropertyDescriptor | undefined {
+    return proxyOwnDescriptor(this, key);
+  }
+
+  /** `Reflect.defineProperty(p, key, attributes)`: the `defineProperty` trap. */
+  [PROXY_DEFINE_PROPERTY](key: any, attributes: PropertyDescriptor): boolean {
+    return proxyDefine(this, key, attributes);
+  }
+
+  /**
+   * `Object.keys(p)`: the string keys `[PROXY_OWN_KEYS]` lists whose property
+   * (`[PROXY_GET_OWN_PROPERTY_DESCRIPTOR]`) exists and is enumerable, in that order.
+   */
+  [PROXY_KEYS](): string[] {
+    return proxyKeys(this);
+  }
+
+  /** Whether the handler has a `getOwnPropertyDescriptor` or `defineProperty` trap. */
+  [PROXY_DEFINES](): boolean {
+    return this.#handler.getOwnPropertyDescriptor != null || this.#handler.defineProperty != null;
+  }
+
+  /**
+   * `Reflect.set(target, key, value, p)` of a plain target with this proxy as the receiver
+   * (JavaScript's OrdinarySet): the property is described (`getOwnPropertyDescriptor`) and then
+   * defined (`defineProperty`) on this proxy; an existing one that is not writable is not.
+   */
+  [PROXY_RECEIVE](key: any, value: any): boolean {
+    return proxyReceive(this, key, value);
+  }
+
+  /**
+   * `JSON.stringify` of this proxy: the value Node serializes in its place, read through the
+   * traps in Node's order: `toJSON` (a function there is not supported yet), then for an array
+   * target `length` and each element, else the keys (`ownKeys`), whether each is enumerable
+   * (`getOwnPropertyDescriptor`) and then their values. `self` is this proxy, the receiver.
+   */
+  [PROXY_JSON](self: any): any {
+    return proxyJson(this, self);
+  }
+
+  /**
+   * `p.m(...args)` where the `get` trap answered an array method `m` (`ArrayMethod`, velt_vir's
+   * proxy call slot): the method's generic algorithm with `receiver` (the proxy) as `this`.
+   */
+  [PROXY_ARRAY_CALL](m: any, args: any[], receiver: any): any {
+    if (m instanceof ArrayMethod) {
+      return proxyArrayInvoke(this, m.name, args, receiver);
+    }
+    return undefined;
+  }
+
+  /** `Object.hasOwn(p, key)`: whether `[PROXY_GET_OWN_PROPERTY_DESCRIPTOR]` finds the property. */
+  [PROXY_HAS_OWN](key: any): boolean {
+    return this[PROXY_GET_OWN_PROPERTY_DESCRIPTOR](key) !== undefined;
+  }
+}

@@ -1,2 +1,2 @@
-intersection_array_part.vlt:9:13
+intersection_array_part.velt:9:13
 error: `&` combines object types; `D[]` is an array

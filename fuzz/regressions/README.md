@@ -6,4 +6,4 @@ once its bug is fixed.
 
 | File | Target | Finding |
 |---|---|---|
-| `parse/exponential_type_parens.vlt` | `parse` | parse time doubles with every nested `(` in a type (26 levels ≈ 15 s) |
+| `parse/exponential_type_parens.velt` | `parse` | parse time doubles with every nested `(` in a type (26 levels ≈ 15 s) |

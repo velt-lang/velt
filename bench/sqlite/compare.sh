@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Time per query of bench/sqlite/rows.vlt against rust/ (rusqlite + serde_json):
+# Time per query of bench/sqlite/rows.velt against rust/ (rusqlite + serde_json):
 #
 #   bench/sqlite/compare.sh            (VELT: a release velt, default target/release/velt)
 #
@@ -15,7 +15,7 @@ velt="${VELT:-$root/target/release/velt}"
 export VELT_STD="${VELT_STD:-$root/std}"
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
-"$velt" build --release "$here/rows.vlt" -o "$work/rows-velt" >/dev/null
+"$velt" build --release "$here/rows.velt" -o "$work/rows-velt" >/dev/null
 rust_target="${RUST_TARGET_DIR:-$here/rust/target}"
 (cd "$here/rust" && CARGO_TARGET_DIR="$rust_target" cargo build -q --release)
 rust="$rust_target/release/sqlite_rows_bench"

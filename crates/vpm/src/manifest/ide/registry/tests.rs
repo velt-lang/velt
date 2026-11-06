@@ -264,7 +264,7 @@ fn a_workspace_dependency_is_not_a_registry_requirement() {
     assert_eq!(dep.version, None);
     assert_eq!(
         hover(&dep, None, None),
-        "**core**  \nfrom the workspace (`velt.workspace.vlt`)"
+        "**core**  \nfrom the workspace (`velt.workspace.velt`)"
     );
 }
 

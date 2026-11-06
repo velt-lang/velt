@@ -5,7 +5,7 @@
 The package's native library (`native/`, crate `velt_postgres_native`, library
 `velt_native_postgres`), built on the native-package SDK (`velt_native` with `tokio`, `velt_text`,
 `velt_tls`); its functions are `velt_postgres__*` exports with the signatures below, declared in
-`src/native.vlt`. Over `tokio-postgres` (`default-features = false`), connected over the runtime's own sockets (`velt_native::net::TcpStream`) and wire stream ("Batches" below). Rows are written into the result string itself (`velt_native::StrBuf`); `sql` and `params` are kept by reference, not copied.
+`src/native.velt`. Over `tokio-postgres` (`default-features = false`), connected over the runtime's own sockets (`velt_native::net::TcpStream`) and wire stream ("Batches" below). Rows are written into the result string itself (`velt_native::StrBuf`); `sql` and `params` are kept by reference, not copied.
 TLS is a hand-written `TlsConnect` over tokio-rustls with the runtime's `ring` provider and
 roots (`velt_tls`); `sslmode` = `disable`, `prefer` (default), `require` (no certificate check),
 `verify-ca`, `verify-full`, plus `sslrootcert=<PEM file>` (extra roots; turns `require` into

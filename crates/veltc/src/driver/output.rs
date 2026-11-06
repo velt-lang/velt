@@ -157,14 +157,14 @@ mod tests {
     #[test]
     fn codegen_unit_objects_sit_beside_the_first() {
         let p = OutputPaths::new(
-            Path::new("app.vlt"),
+            Path::new("app.velt"),
             Some(Path::new("out/app")),
             Emit::Exe,
             LINUX,
         );
         assert_eq!(p.unit_object(0), PathBuf::from("out/app.o"));
         assert_eq!(p.unit_object(2), PathBuf::from("out/app.cgu2.o"));
-        let p = OutputPaths::new(Path::new("app.vlt"), None, Emit::Exe, WIN);
+        let p = OutputPaths::new(Path::new("app.velt"), None, Emit::Exe, WIN);
         let dir = Path::new("target").join("velt");
         assert_eq!(p.unit_object(1), dir.join("app.cgu1.obj"));
     }
@@ -173,7 +173,7 @@ mod tests {
     fn fewer_codegen_units_remove_stale_objects() {
         let dir = tempfile::tempdir().unwrap();
         let p = OutputPaths::new(
-            Path::new("app.vlt"),
+            Path::new("app.velt"),
             Some(&dir.path().join("app")),
             Emit::Exe,
             LINUX,
@@ -192,19 +192,19 @@ mod tests {
     fn default_output_paths() {
         let dir = Path::new("target").join("velt");
         assert_eq!(
-            paths("tests/hello.vlt", None, Emit::Exe, WIN),
+            paths("tests/hello.velt", None, Emit::Exe, WIN),
             (dir.join("hello.exe"), dir.join("hello.obj"))
         );
         assert_eq!(
-            paths("hello.vlt", None, Emit::Exe, LINUX),
+            paths("hello.velt", None, Emit::Exe, LINUX),
             (dir.join("hello"), dir.join("hello.o"))
         );
         assert_eq!(
-            paths("a.b.vlt", None, Emit::Exe, LINUX),
+            paths("a.b.velt", None, Emit::Exe, LINUX),
             (dir.join("a.b"), dir.join("a.b.o"))
         );
         assert_eq!(
-            paths("hello.vlt", None, Emit::Obj, LINUX).1,
+            paths("hello.velt", None, Emit::Obj, LINUX).1,
             dir.join("hello.o")
         );
     }
@@ -212,19 +212,19 @@ mod tests {
     #[test]
     fn explicit_output_paths() {
         assert_eq!(
-            paths("h.vlt", Some("out/app"), Emit::Exe, WIN),
+            paths("h.velt", Some("out/app"), Emit::Exe, WIN),
             (PathBuf::from("out/app.exe"), PathBuf::from("out/app.obj"))
         );
         assert_eq!(
-            paths("h.vlt", Some("out/app.exe"), Emit::Exe, WIN).1,
+            paths("h.velt", Some("out/app.exe"), Emit::Exe, WIN).1,
             PathBuf::from("out/app.obj")
         );
         assert_eq!(
-            paths("h.vlt", Some("out/app"), Emit::Exe, LINUX),
+            paths("h.velt", Some("out/app"), Emit::Exe, LINUX),
             (PathBuf::from("out/app"), PathBuf::from("out/app.o"))
         );
         assert_eq!(
-            paths("h.vlt", Some("x.o"), Emit::Obj, LINUX).1,
+            paths("h.velt", Some("x.o"), Emit::Obj, LINUX).1,
             PathBuf::from("x.o")
         );
     }
@@ -234,8 +234,8 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let member = vpm::relpath::absolute(tmp.path()).join("apps/server");
         std::fs::create_dir_all(member.join("src")).unwrap();
-        std::fs::write(member.join("package.vlt"), "").unwrap();
-        let p = OutputPaths::new(&member.join("src/main.vlt"), None, Emit::Exe, LINUX);
+        std::fs::write(member.join("package.velt"), "").unwrap();
+        let p = OutputPaths::new(&member.join("src/main.velt"), None, Emit::Exe, LINUX);
         assert_eq!(p.executable, member.join("target/velt/main"));
         assert_eq!(p.object, member.join("target/velt/main.o"));
     }
@@ -244,12 +244,12 @@ mod tests {
     fn wasm_output_paths() {
         let dir = Path::new("target").join("velt");
         assert_eq!(
-            paths("hi.vlt", None, Emit::Exe, "wasm32-wasip1"),
+            paths("hi.velt", None, Emit::Exe, "wasm32-wasip1"),
             (dir.join("hi.wasm"), dir.join("hi.o"))
         );
         assert_eq!(
             paths(
-                "hi.vlt",
+                "hi.velt",
                 Some("out/app"),
                 Emit::Exe,
                 "wasm32-unknown-unknown"
@@ -257,7 +257,7 @@ mod tests {
             (PathBuf::from("out/app.wasm"), PathBuf::from("out/app.o"))
         );
         assert_eq!(
-            paths("hi.vlt", None, Emit::Obj, "wasm32-wasip1").1,
+            paths("hi.velt", None, Emit::Obj, "wasm32-wasip1").1,
             dir.join("hi.o")
         );
     }

@@ -1,4 +1,4 @@
-# HTTP A/B gate (docs/internals/design/semantics.md "Gates"): builds examples/http_hello.vlt with two Velt
+# HTTP A/B gate (docs/internals/design/semantics.md "Gates"): builds examples/http_hello.velt with two Velt
 # compilers (LLVM release), serves it on 127.0.0.1:8080 and loads it with oha, alternating A and B
 # for -Rounds rounds. Prints req/s and peak working set per round and the medians. With -SoakSeconds
 # it then runs the candidate alone under load for that long, sampling its working set every
@@ -23,7 +23,7 @@ $target = if ($env:CARGO_TARGET_DIR) { $env:CARGO_TARGET_DIR } else { Join-Path 
 if (-not $Candidate) { $Candidate = Join-Path $target "release/velt.exe" }
 $out = Join-Path $target "bench-http"
 New-Item -ItemType Directory -Force $out | Out-Null
-$src = Join-Path $root "examples/http_hello.vlt"
+$src = Join-Path $root "examples/http_hello.velt"
 $exes = @{ baseline = (Join-Path $out "hello-base.exe"); candidate = (Join-Path $out "hello-cand.exe") }
 & $Baseline build --release --backend llvm $src -o $exes.baseline
 if ($LASTEXITCODE -ne 0) { throw "baseline build failed" }

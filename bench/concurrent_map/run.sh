@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# velt/collections (map.vlt, LLVM release) against bbtree's concurrent
+# velt/collections (map.velt, LLVM release) against bbtree's concurrent
 # `BBTreeMap` (rust/: fat LTO, built for this CPU) on the same workloads. Checks that both print
 # the same checksums, and prints a Markdown table of the best Mops/s over RUNS runs of each,
 # interleaved so a busy machine affects them alike.
@@ -20,7 +20,7 @@ mkdir -p "$OUT"
 
 echo "building velt (release) and the runtime..." >&2
 cargo build --release -q -p veltc -p velt_rt --manifest-path "$ROOT/Cargo.toml"
-"$TARGET/release/velt" build --release --backend llvm "$HERE/map.vlt" -o "$OUT/map-velt"
+"$TARGET/release/velt" build --release --backend llvm "$HERE/map.velt" -o "$OUT/map-velt"
 (cd "$HERE/rust" && cargo build --release -q --target-dir "$OUT/rust")
 cp "$OUT/rust/release/concurrent_map_bench" "$OUT/map-bbtree"
 

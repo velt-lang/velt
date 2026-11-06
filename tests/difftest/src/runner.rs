@@ -1,4 +1,4 @@
-//! `difftest run <paths>`: checks every `.vlt` file under the given paths and prints one line per
+//! `difftest run <paths>`: checks every `.velt` file under the given paths and prints one line per
 //! program plus a summary; details of each bug go to the report directory.
 
 use crate::check::{self, Config, Verdict};
@@ -15,7 +15,7 @@ pub fn run(cfg: &Config, paths: &[PathBuf], jobs: usize, out: &Path) -> Result<u
     }
     files.sort();
     if files.is_empty() {
-        return Err("no .vlt files found under the given paths".into());
+        return Err("no .velt files found under the given paths".into());
     }
     // Stale cases from an earlier run would read as new findings.
     let _ = fs::remove_dir_all(out.join("cases"));
@@ -55,7 +55,7 @@ fn collect(path: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
             .is_some_and(|n| n.starts_with('_'));
         if p.is_dir() {
             collect(&p, out)?;
-        } else if p.extension().is_some_and(|e| e == "vlt") && !helper {
+        } else if p.extension().is_some_and(|e| e == "velt") && !helper {
             out.push(p);
         }
     }

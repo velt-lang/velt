@@ -211,12 +211,12 @@ fn verify_rejects_dangling_debug_descriptions() {
         param: false,
     };
     let mut p = base_program();
-    p.files.push("main.vlt".into());
+    p.files.push("main.velt".into());
     p.funcs[0].locals[0].debug = Some(described(DebugTyId(3)));
     expect_err(&p, "unknown debug type #3");
 
     let mut p = base_program();
-    p.files.push("main.vlt".into());
+    p.files.push("main.velt".into());
     p.debug_types.push(DebugTy {
         name: "Point".into(),
         kind: DebugKind::Struct {

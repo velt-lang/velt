@@ -5,12 +5,12 @@
 mod no_window;
 mod test_dir;
 
-/// The `velt_tls_*` symbols in the VIR of `src`, compiled as `main.vlt`, sorted.
+/// The `velt_tls_*` symbols in the VIR of `src`, compiled as `main.velt`, sorted.
 fn tls_symbols(src: &str) -> Vec<String> {
     let dir = test_dir::TestDir::new();
-    std::fs::write(dir.path().join("main.vlt"), src).unwrap();
+    std::fs::write(dir.path().join("main.velt"), src).unwrap();
     let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["build", "main.vlt", "--emit", "vir"])
+        .args(["build", "main.velt", "--emit", "vir"])
         .current_dir(dir.path())
         .output()
         .unwrap();

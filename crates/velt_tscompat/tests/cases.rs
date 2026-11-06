@@ -1,4 +1,4 @@
-//! Rule fixtures: every `tests/cases/*.{vlt,ts,tsx}` (except helpers starting with `_`) is
+//! Rule fixtures: every `tests/cases/*.{velt,ts,tsx}` (except helpers starting with `_`) is
 //! linted on its own, and its findings must match the `//~ code…` annotations (`//~^` for the
 //! line above): the codes found on each line, in order. A case with fixes has `<name>.fixed`,
 //! the case with every fix applied (`VELT_BLESS=1` rewrites them). Every case also passes
@@ -22,7 +22,7 @@ fn cases() -> Vec<PathBuf> {
         .filter(|p| {
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("_");
             let ext = p.extension().and_then(|e| e.to_str()).unwrap_or("");
-            !name.starts_with('_') && ["vlt", "ts", "tsx"].contains(&ext)
+            !name.starts_with('_') && ["velt", "ts", "tsx"].contains(&ext)
         })
         .collect();
     files.sort();
@@ -116,7 +116,7 @@ fn every_finding_explains_itself() {
 #[test]
 fn declare_function_is_reported() {
     let src = "declare function add(a: number, b: number): number;\n";
-    let findings = lint_syntax(Path::new("declare.vlt"), src);
+    let findings = lint_syntax(Path::new("declare.velt"), src);
     let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
     assert_eq!(codes, ["declare-fn"]);
     assert_eq!(findings[0].span, Span::new(FileId(0), 0, 7));
@@ -125,7 +125,7 @@ fn declare_function_is_reported() {
 #[test]
 fn a_host_function_is_not_typescript() {
     let src = "export declare host(\"env\") function now(): number;\n";
-    let findings = lint_syntax(Path::new("host.vlt"), src);
+    let findings = lint_syntax(Path::new("host.velt"), src);
     let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
     assert_eq!(codes, ["declare-fn"]);
     assert!(
@@ -191,8 +191,8 @@ fn only_a_pragma_velt_reads_is_reported() {
 fn imports_of_linted_files_are_inside() {
     let dir = cases_dir();
     let (case, helper) = (
-        dir.join("outside_import.vlt"),
-        dir.join("_outside_helper.vlt"),
+        dir.join("outside_import.velt"),
+        dir.join("_outside_helper.velt"),
     );
     let src = std::fs::read_to_string(&case).expect("read case");
     let helper_src = std::fs::read_to_string(&helper).expect("read helper");
@@ -228,7 +228,7 @@ fn defaults_in_for_of_and_catch_patterns_are_linted() {
                \x20 for (const { x = 1.5f64 } of ps) {}\n\
                \x20 try {} catch ({ message = 2.5f64 }) {}\n\
                }\n";
-    let codes: Vec<&str> = lint_syntax(Path::new("patterns.vlt"), src)
+    let codes: Vec<&str> = lint_syntax(Path::new("patterns.velt"), src)
         .iter()
         .map(|f| f.code)
         .collect();
@@ -237,18 +237,21 @@ fn defaults_in_for_of_and_catch_patterns_are_linted() {
 
 #[test]
 fn a_large_integer_literal_has_no_fix_and_says_why() {
-    let findings = lint_source(Path::new("big.vlt"), "const big = 9007199254740993i64;\n");
+    let findings = lint_source(Path::new("big.velt"), "const big = 9007199254740993i64;\n");
     assert_eq!(findings.len(), 1);
     assert!(findings[0].fix.is_none());
     assert!(findings[0].notes[1].contains("`i64`"), "{:?}", findings[0]);
-    let findings = lint_source(Path::new("edge.vlt"), "const edge = 9007199254740992i64;\n");
+    let findings = lint_source(
+        Path::new("edge.velt"),
+        "const edge = 9007199254740992i64;\n",
+    );
     assert!(findings[0].fix.is_some());
 }
 
 #[test]
 fn an_operator_method_note_names_its_symbol() {
     let src = "class V {\n  [Symbol.mul](o: V): V { return o; }\n}\n";
-    let findings = lint_syntax(Path::new("op.vlt"), src);
+    let findings = lint_syntax(Path::new("op.velt"), src);
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(
         findings[0].notes[0],
@@ -261,7 +264,7 @@ fn an_operator_method_note_names_its_symbol() {
 #[test]
 fn unsafe_code_is_reported() {
     let src = "unsafe function raw(n: number): number { return n; }\nfunction f(n: number): number { unsafe { n = raw(n); } return unsafe { raw(n) }; }\n";
-    let findings = lint_syntax(Path::new("unsafe.vlt"), src);
+    let findings = lint_syntax(Path::new("unsafe.velt"), src);
     let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
     assert_eq!(codes, ["unsafe", "unsafe", "unsafe"]);
     assert_eq!(findings[0].span, Span::new(FileId(0), 0, 6));
@@ -270,7 +273,7 @@ fn unsafe_code_is_reported() {
 #[test]
 fn a_c_function_is_reported() {
     let src = "declare c(\"c\") function labs(x: number): number;\n";
-    let findings = lint_syntax(Path::new("c.vlt"), src);
+    let findings = lint_syntax(Path::new("c.velt"), src);
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].code, "declare-fn");
     assert!(
@@ -285,7 +288,7 @@ fn a_c_function_is_reported() {
 #[test]
 fn a_c_constant_is_reported() {
     let src = "declare c const SQLITE_OK: number;\n";
-    let findings = lint_syntax(Path::new("c.vlt"), src);
+    let findings = lint_syntax(Path::new("c.velt"), src);
     let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
     assert_eq!(codes, ["declare-fn"]);
     assert!(
@@ -298,7 +301,7 @@ fn a_c_constant_is_reported() {
 #[test]
 fn a_c_type_is_reported() {
     let src = "declare c type sqlite3;\n";
-    let findings = lint_syntax(Path::new("c.vlt"), src);
+    let findings = lint_syntax(Path::new("c.velt"), src);
     let codes: Vec<&str> = findings.iter().map(|f| f.code).collect();
     assert_eq!(codes, ["declare-fn"]);
     assert!(

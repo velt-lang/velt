@@ -1,4 +1,4 @@
-//! The Rust side of half_dot.vlt: `half` for the weights, `std::arch` for the kernels, on arm64.
+//! The Rust side of half_dot.velt: `half` for the weights, `std::arch` for the kernels, on arm64.
 //! `vfmlalq_low_f16`/`vfmlalq_high_f16` are still unstable (`RUSTC_BOOTSTRAP=1`, half_dot.sh).
 //! `std::arch` has no `vbfdotq_f32` in Rust 1.99 and no `bf16` vector type, so `bfdot` is the
 //! same one instruction by `asm!`. The bf16 exact kernels widen as `half` does (a shift and a

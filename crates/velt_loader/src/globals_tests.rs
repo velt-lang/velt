@@ -8,41 +8,41 @@ use super::*;
 fn globals_load_when_a_user_module_names_them() {
     let t = Tree::new();
     let std = t.path("std");
-    t.write("std/prelude/index.vlt", "import \"./core\";\n");
+    t.write("std/prelude/index.velt", "import \"./core\";\n");
     t.write(
-        "std/prelude/core.vlt",
+        "std/prelude/core.velt",
         "export function id(): i64 { return 0; }\n",
     );
     t.write(
-        "std/prelude/global/web.vlt",
+        "std/prelude/global/web.velt",
         "export { fetch, Response } from \"velt/web\";\n",
     );
     t.write(
-        "std/prelude/global/url.vlt",
+        "std/prelude/global/url.velt",
         "export { URL } from \"velt/net/url\";\n",
     );
     // A std module that mentions a global's name does not load it.
     t.write(
-        "std/web.vlt",
+        "std/web.velt",
         "// URL\nexport function fetch() {}\nexport class Response {}\n",
     );
-    t.write("std/net/url/index.vlt", "export class URL {}\n");
-    t.write("std/server/index.vlt", "export class Response {}\n");
+    t.write("std/net/url/index.velt", "export class URL {}\n");
+    t.write("std/server/index.velt", "export class Response {}\n");
     let opts = || LoadOptions {
         std_root: Some(std.clone()),
         ..Default::default()
     };
-    let plain = t.write("p/plain.vlt", "// prefetch\nfunction main() {}\n");
+    let plain = t.write("p/plain.velt", "// prefetch\nfunction main() {}\n");
     let (l, diags, _) = load(&plain, opts());
     assert!(diags.is_empty(), "{:?}", messages(&diags));
     assert_eq!(paths(&l), ["std/prelude/core", "main"]);
 
     t.write(
-        "p/lib.vlt",
+        "p/lib.velt",
         "export async function get() { await fetch(); }\n",
     );
     let root = t.write(
-        "p/main.vlt",
+        "p/main.velt",
         "import { get } from \"./lib\";\nfunction main() {}\n",
     );
     let (l, diags, _) = load(&root, opts());
@@ -58,7 +58,7 @@ fn globals_load_when_a_user_module_names_them() {
 
     // Names a module binds itself (an import, a declaration) hide the global: nothing loads.
     let own = t.write(
-        "p/own.vlt",
+        "p/own.velt",
         "import { Response } from \"velt/server\";\nclass URL {}\n\
          function main() { const r = new Response(); const u = new URL(); }\n",
     );
@@ -72,16 +72,16 @@ fn a_conditional_global_loads_with_its_module_and_a_word() {
     let t = Tree::new();
     let std = t.path("std");
     t.write(
-        "std/prelude/global/web.vlt",
+        "std/prelude/global/web.velt",
         "export { Response } from \"velt/web\";\n",
     );
     t.write(
-        "std/prelude/global/web_bytes.vlt",
+        "std/prelude/global/web_bytes.velt",
         "// load when std/web uses: bytes arrayBuffer\nimport \"velt/web_bytes\";\n",
     );
-    t.write("std/web.vlt", "export class Response {}\n");
+    t.write("std/web.velt", "export class Response {}\n");
     t.write(
-        "std/web_bytes.vlt",
+        "std/web_bytes.velt",
         "import { Response } from \"velt/web\";\nextend Response {\n  bytes(): i64 { return 1; }\n}\n",
     );
     let opts = || LoadOptions {
@@ -90,7 +90,7 @@ fn a_conditional_global_loads_with_its_module_and_a_word() {
     };
     // The module and a word: loaded, after the rest.
     let both = t.write(
-        "p/both.vlt",
+        "p/both.velt",
         "function main() { const n = new Response().bytes(); }\n",
     );
     let (l, diags, _) = load(&both, opts());
@@ -104,10 +104,10 @@ fn a_conditional_global_loads_with_its_module_and_a_word() {
     ];
     assert_eq!(paths(&l), want);
     // The module without a word, or a word without the module: not loaded.
-    let module_only = t.write("p/module.vlt", "function main() { new Response(); }\n");
+    let module_only = t.write("p/module.velt", "function main() { new Response(); }\n");
     let (l, _, _) = load(&module_only, opts());
     assert_eq!(paths(&l), ["main", "std/prelude/global/web", "std/web"]);
-    let word_only = t.write("p/word.vlt", "function main() { const bytes = 1; }\n");
+    let word_only = t.write("p/word.velt", "function main() { const bytes = 1; }\n");
     let (l, _, _) = load(&word_only, opts());
     assert_eq!(paths(&l), ["main"]);
 }
@@ -117,7 +117,7 @@ fn a_conditional_global_loads_with_its_module_and_a_word() {
 fn std_modules(main: &str, prefixes: &[&str]) -> Vec<String> {
     let t = Tree::new();
     let std = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
-    let root = t.write("p/main.vlt", main);
+    let root = t.write("p/main.velt", main);
     let opts = LoadOptions {
         std_root: Some(std),
         ..Default::default()
@@ -132,7 +132,7 @@ fn std_modules(main: &str, prefixes: &[&str]) -> Vec<String> {
 }
 
 /// The JSON modules of the repository's std a program loads (`JSON` and `JsonValue` are
-/// globals: std/prelude/global/json.vlt).
+/// globals: std/prelude/global/json.velt).
 fn json_modules(main: &str) -> Vec<String> {
     std_modules(main, &["std/encoding/json", "std/prelude/json"])
 }
@@ -221,7 +221,7 @@ fn a_test_file_without_a_regex_loads_no_regex_engine() {
     );
 }
 
-/// An area's `index.vlt` re-exports its files by name; a program that imports one name loads
+/// An area's `index.velt` re-exports its files by name; a program that imports one name loads
 /// that file, not the area's other files (docs/internals/design/std-layout.md §2), but a file
 /// with `extend` blocks loads whenever its area does (velt/simd's methods).
 #[test]

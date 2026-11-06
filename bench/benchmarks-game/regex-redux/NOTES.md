@@ -16,8 +16,8 @@ the official `regexredux-output.txt`.
 | `rust/src/bin/regex-redux_st.rs` | Rust #6 on a one-thread rayon pool | | 1 |
 | `main.go` | [Go #3](https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/regexredux-go-3.html) (unchanged) | Dean Becker | goroutines |
 | `main.js` | [Node #3](https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/regexredux-node-3.html) (unchanged) | Jesse Millikan, jose fco. gonzalez, Matthew Wilson, Roman Pletnev, Josh Goldfoot, Andrey Filatkin | 2 (1 worker) |
-| `main.vlt` | idiomatic Velt: `readAll()` into a string, `new RegExp(p, "g")`, `.matches(s).length`, `.replace(s, r)` | | 1 |
-| `main_mt.vlt` | `main.vlt` with the substitution chain and each variant count in spawned tasks (like Rust #6's `rayon::join` + `par_iter`) | | 10 tasks |
+| `main.velt` | idiomatic Velt: `readAll()` into a string, `new RegExp(p, "g")`, `.matches(s).length`, `.replace(s, r)` | | 1 |
+| `main_mt.velt` | `main.velt` with the substitution chain and each variant count in spawned tasks (like Rust #6's `rayon::join` + `par_iter`) | | 10 tasks |
 
 Why not the fastest published programs: Rust #7 (0.78 s) binds PCRE2 (`pcre2_sys`, `libc`) and
 Go #5 / #4 bind PCRE through third-party cgo modules; the bench project only has rayon and
@@ -50,7 +50,7 @@ dominated by the serial substitution chain (~1 s), so the multi-threaded version
 
 ## Gap: Velt main vs Rust #6 single-threaded, ~1.2×
 
-Phase times of `main.vlt` (`performance.now()`, ms) vs the same phases in Rust with the
+Phase times of `main.velt` (`performance.now()`, ms) vs the same phases in Rust with the
 `regex` crate, using `find_iter` (what Rust #6 does) or `captures_iter`:
 
 | phase | Velt | Rust `find_iter` | Rust `captures_iter` |
@@ -78,7 +78,7 @@ Smaller: `readAll` (`crates/velt_rt/src/stdin.rs`) does `String::from_utf8_lossy
 `String::from_utf8(buf)` with a lossy fallback avoids the copy.
 
 ## Multi-threaded version
-`main_mt.vlt` gives each of the 10 tasks `sequence.clone()`. For a string that is another
+`main_mt.velt` gives each of the 10 tasks `sequence.clone()`. For a string that is another
 reference (strings count atomically), not a copy: passing one `shared(sequence)` instead (#36)
 measured the same peak RSS and instructions, so the program keeps `clone()`. Its memory is the
 substitution chain's intermediate strings.
@@ -87,7 +87,7 @@ substitution chain's intermediate strings.
 - Module-level `const VARIANTS = [...]` is rejected ("module-level constants must be constant
   expressions"): the pattern tables are locals of `main`.
 - No regex literals (`/agggtaaa|tttaccct/g` is a parse error; filed as
-  `tests/golden/bugs/parse_regex_literal.vlt`); `new RegExp("…", "g")` works the same.
+  `tests/golden/bugs/parse_regex_literal.velt`); `new RegExp("…", "g")` works the same.
 - `seq.match(re)` with `g` is spelled `re.matches(seq)`; `str.replace(re, s)` is
   `re.replace(str, s)` (receiver swapped vs JS).
 - `let replaced = sequence;` moves `sequence`, so its length has to be read into a local first

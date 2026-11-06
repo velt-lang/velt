@@ -10,7 +10,7 @@ and the execution are Velt (`src/engine/`: `format`, `cursor` and `btree_*`, `sc
 `sql/*`, `exec/*`). Answers are
 SQLite's, value for value: type affinity, collations, NULL rules, integer overflow to REAL and
 the text form of REAL values are kept; the tests, and a differential fuzzer
-(`bench/sqlite/fuzz.vlt`) against the `sqlite3` shell, compare it with C SQLite. Rows a query
+(`bench/sqlite/fuzz.velt`) against the `sqlite3` shell, compare it with C SQLite. Rows a query
 does not order come in the order SQLite's plan gives them where this engine picks the same plan
 (the same index, the same scan direction); where SQLite's cost model would pick another plan
 they can come in another order, and DISTINCT or GROUP BY can then show another row of a group
@@ -24,7 +24,7 @@ for its bare columns.
   lookup. SQL the engine can't run yet fails here with a message naming it.
 - `Statement`, as in the driver (`sqlite`): `all<T>(): T[]`, `get<T>(): T | null` (stops after the first
   row), `allWith<T>(params)`, `getWith<T>(params)`; also `columns(): string[]` and
-  `values()` / `valuesWith(params)`, every value as a `Val` (`src/engine/exec/value/val.vlt`),
+  `values()` / `valuesWith(params)`, every value as a `Val` (`src/engine/exec/value/val.velt`),
   `columns().length` a row; `plan(): string[]`, how each FROM item is read, in the words of
   SQLite's `EXPLAIN QUERY PLAN` (`SEARCH posts USING INTEGER PRIMARY KEY (rowid=?)`).
 - **Rows** fill `T` by column name through `velt/db`'s `readRows`, straight from the engine's

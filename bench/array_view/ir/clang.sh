@@ -3,7 +3,7 @@
 # Python script `$PATCH` before compiling it, for measuring what a change to the IR would do:
 #
 #   PATCH=bench/array_view/ir/exit_unreachable.py VELT_CLANG=bench/array_view/ir/clang.sh \
-#     velt build --release rows_index.vlt
+#     velt build --release rows_index.velt
 #
 # `$CLANG` is the real clang (default: clang on PATH).
 for a in "$@"; do

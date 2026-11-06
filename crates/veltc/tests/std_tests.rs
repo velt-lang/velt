@@ -1,6 +1,6 @@
 //! The standard library's tests: its black-box behaviour tests, `velt test` over each
 //! `tests/std/<module>/`, and its white-box tests next to the code, `velt test std/` (the
-//! `std/<module>/<name>.test.vlt` files, docs/internals/design/std-layout.md §9). Each runs in a
+//! `std/<module>/<name>.test.velt` files, docs/internals/design/std-layout.md §9). Each runs in a
 //! debug build that also checks that every test file's process frees every block it allocates
 //! (`VELT_RC_STATS=1`, as the goldens' `// check: no leaks`) and uses the checking allocator
 //! (`VELT_RT_DEBUG_ALLOC=1`, as the goldens' debug runs), and in a release build. Each run
@@ -33,7 +33,7 @@ fn modules(root: &Path) -> Vec<PathBuf> {
         .flatten()
         .map(|e| e.path())
         // `target/`: the build output of `velt test` in the package tests/std is (its
-        // `package.vlt` depends on the HTTP server for the clients' tests).
+        // `package.velt` depends on the HTTP server for the clients' tests).
         .filter(|p| p.is_dir() && p.file_name().is_some_and(|n| n != "target"))
         .filter(|p| wanted(&p.file_name().unwrap().to_string_lossy()))
         .collect();

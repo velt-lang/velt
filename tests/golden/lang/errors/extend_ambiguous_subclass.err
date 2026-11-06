@@ -1,2 +1,2 @@
-extend_ambiguous_subclass.vlt:24:28
+extend_ambiguous_subclass.velt:24:28
 error: ambiguous extension method `m` on `Base<string>`

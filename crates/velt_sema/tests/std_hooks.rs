@@ -53,7 +53,7 @@ fn edit_module(l: &mut Loaded, module: &str, edit: impl FnOnce(&str) -> String) 
     let m = (l.modules.iter().position(|m| m.path == module))
         .unwrap_or_else(|| panic!("`{module}` is not loaded"));
     let src = edit(&l.sm.get(l.modules[m].file).src);
-    let id = l.sm.add(format!("{module}.vlt"), src.clone());
+    let id = l.sm.add(format!("{module}.velt"), src.clone());
     let (ast, diags) = velt_syntax::parse_file(id, &src);
     assert!(diags.is_empty(), "the edit of `{module}` does not parse");
     l.modules[m].file = id;
@@ -403,7 +403,7 @@ fn a_program_cannot_call_a_hook_by_its_old_name_or_its_new_one() {
     ok_src("function main() {\n  console.log((255).toString(16));\n}\n");
 }
 
-/// Each key of the table (std/lang/hooks/keys.vlt) names a std method under the member name
+/// Each key of the table (std/lang/hooks/keys.velt) names a std method under the member name
 /// `std_key!` spells: sema names std's symbols first, so a program's own symbol of the same
 /// description cannot take the name.
 #[test]

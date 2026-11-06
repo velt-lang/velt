@@ -1,0 +1,152 @@
+// velt/lang/symbol: JavaScript's `Symbol` (a global, std/prelude/global/symbol.velt;
+// https://veltlang.com/docs/std/prelude/symbol/).
+//
+// A `symbol` is the address of a record the runtime or the compiler made (rt_abi.md "Symbols"),
+// compared by identity. A module constant initialized with `Symbol("d")` is a record the
+// compiler emits (as is one initialized with `Symbol.for("k")`, which `Symbol.for` at run time
+// finds), so each use of the constant is the same symbol, and such a constant can name a member: `[KEY]: T` in an object type, an
+// interface or a class, `{ [KEY]: v }` in an object literal, `o[KEY]` and `KEY in o`. The
+// well-known symbols are records the compiler emits too.
+
+import { symbolRegistry, symbolStatic } from "velt/lang/intrinsics";
+
+// `out` is a fresh local the runtime overwrites (std/README.md "Runtime bindings").
+declare function velt_rt_symbol_new(description: string, described: bool): symbol;
+// `table`: the compiler's records of the registry's symbols (`symbolRegistry()`).
+declare function velt_rt_symbol_for(key: string, table: symbol): symbol;
+declare function velt_rt_symbol_registered(s: symbol): bool;
+declare function velt_rt_symbol_described(s: symbol): bool;
+declare function velt_rt_symbol_description(s: symbol): string;
+
+/**
+ * A new symbol, different from every other one, with an optional description (shown by
+ * `console.log` and `toString()` as `Symbol(description)`). Called in the initializer of a module
+ * constant (`const KEY = Symbol("key")`), the symbol is made once, as in JavaScript.
+ */
+export function Symbol(description?: string): symbol {
+  if (description == null) {
+    return velt_rt_symbol_new("", false);
+  }
+  return velt_rt_symbol_new(description, true);
+}
+
+/**
+ * The static members of `Symbol` (`Symbol.for(key)`, `Symbol.iterator` & co.; TypeScript calls
+ * the type of `Symbol` `SymbolConstructor` too).
+ */
+export class SymbolConstructor {
+  /** The method `await using` calls to dispose of a value. */
+  static readonly asyncDispose: symbol = symbolStatic(0, "Symbol.asyncDispose", true);
+  /** The method `for await` calls to get an async iterator. */
+  static readonly asyncIterator: symbol = symbolStatic(1, "Symbol.asyncIterator", true);
+  /** The method `using` calls to dispose of a value. */
+  static readonly dispose: symbol = symbolStatic(2, "Symbol.dispose", true);
+  /** The method `instanceof` consults in JavaScript. */
+  static readonly hasInstance: symbol = symbolStatic(3, "Symbol.hasInstance", true);
+  /** Whether `Array.prototype.concat` flattens an object in JavaScript. */
+  static readonly isConcatSpreadable: symbol = symbolStatic(4, "Symbol.isConcatSpreadable", true);
+  /** The method `for...of` calls to get an iterator. */
+  static readonly iterator: symbol = symbolStatic(5, "Symbol.iterator", true);
+  /** The method `String.prototype.match` calls in JavaScript. */
+  static readonly match: symbol = symbolStatic(6, "Symbol.match", true);
+  /** The method `String.prototype.matchAll` calls in JavaScript. */
+  static readonly matchAll: symbol = symbolStatic(7, "Symbol.matchAll", true);
+  /** The method `String.prototype.replace` calls in JavaScript. */
+  static readonly replace: symbol = symbolStatic(8, "Symbol.replace", true);
+  /** The method `String.prototype.search` calls in JavaScript. */
+  static readonly search: symbol = symbolStatic(9, "Symbol.search", true);
+  /** The constructor JavaScript uses for derived objects. */
+  static readonly species: symbol = symbolStatic(10, "Symbol.species", true);
+  /** The method `String.prototype.split` calls in JavaScript. */
+  static readonly split: symbol = symbolStatic(11, "Symbol.split", true);
+  /** The method JavaScript calls to convert an object to a primitive. */
+  static readonly toPrimitive: symbol = symbolStatic(12, "Symbol.toPrimitive", true);
+  /** The string `Object.prototype.toString` shows for an object in JavaScript. */
+  static readonly toStringTag: symbol = symbolStatic(13, "Symbol.toStringTag", true);
+  /** The names `with` statements leave out in JavaScript. */
+  static readonly unscopables: symbol = symbolStatic(14, "Symbol.unscopables", true);
+  /** The operator method `a + b` calls: `[Symbol.add](other)` (Velt). */
+  static readonly add: symbol = symbolStatic(15, "Symbol.add", true);
+  /** The operator method `a - b` calls (Velt). */
+  static readonly sub: symbol = symbolStatic(16, "Symbol.sub", true);
+  /** The operator method `a * b` calls (Velt). */
+  static readonly mul: symbol = symbolStatic(17, "Symbol.mul", true);
+  /** The operator method `a / b` calls (Velt). */
+  static readonly div: symbol = symbolStatic(18, "Symbol.div", true);
+  /** The operator method `a % b` calls (Velt). */
+  static readonly rem: symbol = symbolStatic(19, "Symbol.rem", true);
+  /** The operator method `a ** b` calls (Velt). */
+  static readonly pow: symbol = symbolStatic(20, "Symbol.pow", true);
+  /** The operator method `a & b` calls (Velt). */
+  static readonly bitAnd: symbol = symbolStatic(21, "Symbol.bitAnd", true);
+  /** The operator method `a | b` calls (Velt). */
+  static readonly bitOr: symbol = symbolStatic(22, "Symbol.bitOr", true);
+  /** The operator method `a ^ b` calls (Velt). */
+  static readonly bitXor: symbol = symbolStatic(23, "Symbol.bitXor", true);
+  /** The operator method `a << b` calls (Velt). */
+  static readonly shl: symbol = symbolStatic(24, "Symbol.shl", true);
+  /** The operator method `a >> b` calls (Velt). */
+  static readonly shr: symbol = symbolStatic(25, "Symbol.shr", true);
+  /** The operator method `a >>> b` calls (Velt). */
+  static readonly ushr: symbol = symbolStatic(26, "Symbol.ushr", true);
+  /** The operator method `-a` calls: `[Symbol.neg]()` (Velt). */
+  static readonly neg: symbol = symbolStatic(27, "Symbol.neg", true);
+  /** The operator method `~a` calls: `[Symbol.bitNot]()` (Velt). */
+  static readonly bitNot: symbol = symbolStatic(28, "Symbol.bitNot", true);
+  /** The operator method `a += b` calls to change `a` in place (Velt). */
+  static readonly addAssign: symbol = symbolStatic(29, "Symbol.addAssign", true);
+  /** The operator method `a -= b` calls to change `a` in place (Velt). */
+  static readonly subAssign: symbol = symbolStatic(30, "Symbol.subAssign", true);
+  /** The operator method `a *= b` calls to change `a` in place (Velt). */
+  static readonly mulAssign: symbol = symbolStatic(31, "Symbol.mulAssign", true);
+  /** The operator method `a /= b` calls to change `a` in place (Velt). */
+  static readonly divAssign: symbol = symbolStatic(32, "Symbol.divAssign", true);
+  /** The operator method `a %= b` calls to change `a` in place (Velt). */
+  static readonly remAssign: symbol = symbolStatic(33, "Symbol.remAssign", true);
+  /** The operator method `a **= b` calls to change `a` in place (Velt). */
+  static readonly powAssign: symbol = symbolStatic(34, "Symbol.powAssign", true);
+  /** The operator method `a &= b` calls to change `a` in place (Velt). */
+  static readonly bitAndAssign: symbol = symbolStatic(35, "Symbol.bitAndAssign", true);
+  /** The operator method `a |= b` calls to change `a` in place (Velt). */
+  static readonly bitOrAssign: symbol = symbolStatic(36, "Symbol.bitOrAssign", true);
+  /** The operator method `a ^= b` calls to change `a` in place (Velt). */
+  static readonly bitXorAssign: symbol = symbolStatic(37, "Symbol.bitXorAssign", true);
+  /** The operator method `a <<= b` calls to change `a` in place (Velt). */
+  static readonly shlAssign: symbol = symbolStatic(38, "Symbol.shlAssign", true);
+  /** The operator method `a >>= b` calls to change `a` in place (Velt). */
+  static readonly shrAssign: symbol = symbolStatic(39, "Symbol.shrAssign", true);
+  /** The operator method `a >>>= b` calls to change `a` in place (Velt). */
+  static readonly ushrAssign: symbol = symbolStatic(40, "Symbol.ushrAssign", true);
+  /** The operator method `a[i]` calls: `[Symbol.index](i)` (Velt). */
+  static readonly index: symbol = symbolStatic(41, "Symbol.index", true);
+  /** The operator method `a[i] = v` calls: `[Symbol.setIndex](i, v)` (Velt). */
+  static readonly setIndex: symbol = symbolStatic(42, "Symbol.setIndex", true);
+
+  /** The symbol of the global registry for `key`, made on first use: the same for every call. */
+  static for(key: string): symbol {
+    return velt_rt_symbol_for(key, symbolRegistry());
+  }
+
+  /** The key of a symbol `Symbol.for` made, or `undefined` for others. */
+  static keyFor(sym: symbol): string | undefined {
+    if (!velt_rt_symbol_registered(sym)) {
+      return undefined;
+    }
+    return velt_rt_symbol_description(sym);
+  }
+}
+
+extend symbol {
+  /** The description given to `Symbol(description)`, or `undefined`. */
+  get description(): string | undefined {
+    if (!velt_rt_symbol_described(this)) {
+      return undefined;
+    }
+    return velt_rt_symbol_description(this);
+  }
+
+  /** `Symbol(description)`. */
+  toString(): string {
+    return "Symbol(" + velt_rt_symbol_description(this) + ")";
+  }
+}

@@ -6,7 +6,7 @@
 #
 # Versions install side by side (#948, https://veltlang.com/docs/tooling/platforms/): the toolchain goes into
 # <root>/toolchains/<version>/, and the launcher into <root>/bin/velt, the one directory on PATH.
-# It runs the version each package pins (`velt` in package.vlt), else the default. Running this
+# It runs the version each package pins (`velt` in package.velt), else the default. Running this
 # again with another version adds it beside the others.
 #
 # Options (environment variable in parentheses):

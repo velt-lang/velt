@@ -18,7 +18,7 @@ use std::process::ExitCode;
 use std::time::Duration;
 
 const USAGE: &str = "usage:
-  difftest run <file|dir>...          check programs (every .vlt file, `_*` helpers skipped)
+  difftest run <file|dir>...          check programs (every .velt file, `_*` helpers skipped)
   difftest gen <seed>                 print the generated program for a seed
   difftest fuzz --seeds A..B          generate + check seeds A..B-1, group failures, shrink one per group
   difftest shrink <file>              minimize a failing program (keeps its verdict)

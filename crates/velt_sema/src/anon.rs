@@ -55,7 +55,7 @@ pub(crate) struct ObjectState {
     /// The program calls `Object.create(null)`: records may have no prototype.
     pub null_proto_records: bool,
     /// The program defines accessors with `Object.defineProperty`, which a record may hold:
-    /// its record operations go through the `Keyed` methods (std/prelude/record.vlt), which
+    /// its record operations go through the `Keyed` methods (std/prelude/record.velt), which
     /// look at a record's accessors first.
     pub record_accessors: bool,
     /// The program reads a `constructor` property (`body::expr::ctor_objects`).

@@ -1,4 +1,4 @@
-//! The symbols of the source files under the workspace folders (`.vlt` files, and `.ts` and
+//! The symbols of the source files under the workspace folders (`.velt` files, and `.ts` and
 //! `.tsx` files in a package's `src/` and `tests/`: [`collect_files`]), for
 //! workspace symbol queries: each file is parsed once and its symbols kept with its modification
 //! time. When the client reports file changes (`workspace/didChangeWatchedFiles`, registered at

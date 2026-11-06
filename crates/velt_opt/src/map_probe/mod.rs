@@ -1,6 +1,6 @@
 //! Repeated `Map` probes reuse the first one's result (#563).
 //!
-//! Every `Map` method (std/prelude/map.vlt) probes with `lookup(key, hash(key) * FIB)`, so
+//! Every `Map` method (std/prelude/map.velt) probes with `lookup(key, hash(key) * FIB)`, so
 //! `m.set(k, (m.get(k) ?? 0) + 1)`, `m.has(k) ? m.get(k)! : …` or a `Record` update hash the key
 //! and walk the probe sequence twice once the methods are inlined. Both are pure: `lookup` only
 //! reads the map, and `velt_rt_str_hash` only reads the string. This pass replaces a call `P` to

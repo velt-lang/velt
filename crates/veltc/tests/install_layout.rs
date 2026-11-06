@@ -144,11 +144,11 @@ fn installed_prefix_runs_doctor_and_programs() {
     }
 
     std::fs::write(
-        work.join("hello.vlt"),
+        work.join("hello.velt"),
         "function main() {\n  console.log(\"installed ok\");\n}\n",
     )
     .unwrap();
-    let o = velt(&prefix, &work, &home, &["run", "hello.vlt"]);
+    let o = velt(&prefix, &work, &home, &["run", "hello.velt"]);
     assert_eq!(
         String::from_utf8_lossy(&o.stdout),
         "installed ok\n",
@@ -161,7 +161,7 @@ fn installed_prefix_runs_doctor_and_programs() {
     assert!(exe.is_file());
 
     // What the VS Code extension asks for: the program and the LLDB script, as absolute paths.
-    let o = velt(&prefix, &work, &home, &["build", "hello.vlt", "--json"]);
+    let o = velt(&prefix, &work, &home, &["build", "hello.velt", "--json"]);
     let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
     assert_eq!(out["errors"], 0, "{out}");
     // On Windows the default (Cranelift) build keeps its DWARF only when the bundled lld links it,
@@ -202,7 +202,7 @@ fn installed_prefix_runs_doctor_and_programs() {
         &prefix,
         &release,
         &home,
-        &["run", "--release", "../hello.vlt"],
+        &["run", "--release", "../hello.velt"],
     );
     assert_eq!(String::from_utf8_lossy(&o.stdout), "installed ok\n");
     let stderr = String::from_utf8_lossy(&o.stderr);

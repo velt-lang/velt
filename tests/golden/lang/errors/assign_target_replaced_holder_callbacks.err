@@ -1,5 +1,5 @@
-assign_target_replaced_holder_callbacks.vlt:11:1: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
-assign_target_replaced_holder_callbacks.vlt:12:1: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
-assign_target_replaced_holder_callbacks.vlt:14:1: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
-assign_target_replaced_holder_callbacks.vlt:16:1: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
-assign_target_replaced_holder_callbacks.vlt:18:1: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
+assign_target_replaced_holder_callbacks.velt:11:1: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
+assign_target_replaced_holder_callbacks.velt:12:1: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
+assign_target_replaced_holder_callbacks.velt:14:1: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
+assign_target_replaced_holder_callbacks.velt:16:1: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into
+assign_target_replaced_holder_callbacks.velt:18:1: error: the right-hand side may replace `o.inner`, the object `o.inner.v = …` writes into

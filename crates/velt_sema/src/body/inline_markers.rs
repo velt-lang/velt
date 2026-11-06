@@ -1,4 +1,4 @@
-//! std's inlining markers, `inline()` and `noInline()` (std/lang/intrinsics/inline.vlt): the
+//! std's inlining markers, `inline()` and `noInline()` (std/lang/intrinsics/inline.velt): the
 //! checks lowering and `velt_opt` rely on.
 //!
 //! - A marker is the first statement of a declared function's or method's body, and not of a

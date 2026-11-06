@@ -46,7 +46,7 @@ pub enum FixMode {
     Review,
 }
 
-/// Parse `velt check [<file.vlt>] [--target <triple>] [--perf [--deps]] [--fix[=review]]
+/// Parse `velt check [<file.velt>] [--target <triple>] [--perf [--deps]] [--fix[=review]]
 /// [--json] [--locked] [-v]`, `velt check --std` and `velt check --ts-compat [<file|dir>...]
 /// [--fix[=review]] [--json] [--locked] [-v]`.
 pub(super) fn parse_check(args: Vec<OsString>) -> Result<Command, String> {
@@ -123,18 +123,18 @@ mod tests {
             })
         );
         assert_eq!(
-            p(&["check", "a.vlt", "--json", "--locked", "-v"]).unwrap(),
+            p(&["check", "a.velt", "--json", "--locked", "-v"]).unwrap(),
             Command::Check(CheckArgs {
-                input: Some(PathBuf::from("a.vlt")),
+                input: Some(PathBuf::from("a.velt")),
                 json: true,
                 locked: true,
                 verbose: true,
                 ..CheckArgs::default()
             })
         );
-        assert!(p(&["check", "a.vlt", "b.vlt"])
+        assert!(p(&["check", "a.velt", "b.velt"])
             .unwrap_err()
-            .contains("unexpected argument `b.vlt`"));
+            .contains("unexpected argument `b.velt`"));
         assert!(p(&["check", "--jsn"]).unwrap_err().contains("`--json`"));
         for args in [
             &["check", "--target", "wasm32-unknown-unknown"][..],

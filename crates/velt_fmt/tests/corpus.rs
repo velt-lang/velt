@@ -1,4 +1,4 @@
-//! Formats every `.vlt` file of the repository (goldens, std) and checks the formatter's
+//! Formats every `.velt` file of the repository (goldens, std) and checks the formatter's
 //! guarantees: the output parses to the same AST, keeps every comment, and is a fixed point.
 
 mod common;
@@ -12,7 +12,7 @@ fn corpus_is_idempotent_and_preserves_ast_and_comments() {
     let only_changed = std::env::var("VELT_FMT_CORPUS").is_ok_and(|v| v == "changed");
     assert!(
         only_changed || !files.is_empty(),
-        "no .vlt files found under tests/golden or std"
+        "no .velt files found under tests/golden or std"
     );
     let mut failures = vec![];
     let mut formatted = 0;
@@ -47,6 +47,6 @@ fn corpus_is_idempotent_and_preserves_ast_and_comments() {
 #[test]
 fn the_changed_corpus_is_the_listed_files_that_exist() {
     let files =
-        changed_files(" tests/golden/m1/hello.vlt, ,tests/golden/deleted_by_the_change.vlt");
-    assert_eq!(files, [root().join("tests/golden/m1/hello.vlt")]);
+        changed_files(" tests/golden/m1/hello.velt, ,tests/golden/deleted_by_the_change.velt");
+    assert_eq!(files, [root().join("tests/golden/m1/hello.velt")]);
 }

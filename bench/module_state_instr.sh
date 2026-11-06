@@ -1,7 +1,7 @@
 #!/bin/bash
 # Instruction counts (cachegrind) of two refs for programs with module state in a root file with
-# top-level statements (bench/proxy/proxy_signal.vlt, proxy_tick_proxiable.vlt), built with
-# `--release`, and of `velt check bench/compile/all_std.vlt` (one thread).
+# top-level statements (bench/proxy/proxy_signal.velt, proxy_tick_proxiable.velt), built with
+# `--release`, and of `velt check bench/compile/all_std.velt` (one thread).
 #
 # usage: GIT_DIR=<repo> WORK=<dir> bench/module_state_instr.sh <base-ref> <head-ref>
 # Each ref is exported into $WORK/<sha> and built there (release) once. Needs valgrind.
@@ -32,8 +32,8 @@ for ref in "$1" "$2"; do
   for p in proxy/proxy_signal proxy/proxy_tick_proxiable; do
     exe=$dir/$(basename $p)
     (cd "$dir" && VELT_RT_LIB="$dir/target/release/libvelt_rt.a" "$dir/target/release/velt" build \
-      --release "bench/$p.vlt" -o "$exe" >/dev/null)
+      --release "bench/$p.velt" -o "$exe" >/dev/null)
     echo "$ref $(basename $p) instr=$(refs "$exe")"
   done
-  echo "$ref check_all_std instr=$(cd "$dir" && VELT_THREADS=1 refs "$dir/target/release/velt" check bench/compile/all_std.vlt)"
+  echo "$ref check_all_std instr=$(cd "$dir" && VELT_THREADS=1 refs "$dir/target/release/velt" check bench/compile/all_std.velt)"
 done

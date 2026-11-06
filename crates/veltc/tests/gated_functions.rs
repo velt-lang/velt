@@ -23,7 +23,7 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-/// A std with `probe.vlt` added, and `main.vlt` beside it; runs `velt <args> main.vlt`.
+/// A std with `probe.velt` added, and `main.velt` beside it; runs `velt <args> main.velt`.
 fn velt(dir: &test_dir::TestDir, probe: &str, main: &str, args: &[&str]) -> Output {
     let std: PathBuf = dir.path().join("std");
     if !std.exists() {
@@ -32,12 +32,12 @@ fn velt(dir: &test_dir::TestDir, probe: &str, main: &str, args: &[&str]) -> Outp
             &std,
         );
     }
-    // A module of its own (a folder's index.vlt): user code imports only modules.
+    // A module of its own (a folder's index.velt): user code imports only modules.
     std::fs::create_dir_all(std.join("zz_gated")).unwrap();
     // Each probe gates its functions with the intrinsic, which std imports like any function.
     let probe = format!("import {{ targetFeature }} from \"velt/lang/intrinsics\";\n{probe}");
-    std::fs::write(std.join("zz_gated/index.vlt"), probe).unwrap();
-    let file = dir.path().join("main.vlt");
+    std::fs::write(std.join("zz_gated/index.velt"), probe).unwrap();
+    let file = dir.path().join("main.velt");
     std::fs::write(&file, main).unwrap();
     let mut all: Vec<&str> = args.to_vec();
     all.push(file.to_str().unwrap());

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Instructions retired by bench/json/stringify.vlt (the compiler's JSON glue) and by
-# generated/stringify.vlt (the same work through velt/encoding/json's source-generated
+# Instructions retired by bench/json/stringify.velt (the compiler's JSON glue) and by
+# generated/stringify.velt (the same work through velt/encoding/json's source-generated
 # `writeJson`), built by the same compiler with the same runtime, best of RUNS.
 #
 #   bench/json/generated/compare.sh [runs]
@@ -12,10 +12,10 @@ RUNS=${1:-3}
 HERE=$(cd "$(dirname "$0")" && pwd)
 VELT=${VELT:-velt}
 OUT=$(mktemp -d)
-"$VELT" build --release "$HERE/../stringify.vlt" -o "$OUT/glue"
-"$VELT" build --release "$HERE/stringify.vlt" -o "$OUT/generated"
-"$VELT" build --release "$HERE/check.vlt" -o "$OUT/check"
-# The generated writer must write what JSON.stringify writes (check.vlt prints pairs).
+"$VELT" build --release "$HERE/../stringify.velt" -o "$OUT/glue"
+"$VELT" build --release "$HERE/stringify.velt" -o "$OUT/generated"
+"$VELT" build --release "$HERE/check.velt" -o "$OUT/check"
+# The generated writer must write what JSON.stringify writes (check.velt prints pairs).
 "$OUT/check" | awk 'NR % 2 == 1 { a = $0 } NR % 2 == 0 && $0 != a { print "differs: " a " / " $0; bad = 1 } END { exit bad }'
 count() {
   if [ "$(uname)" = Darwin ]; then

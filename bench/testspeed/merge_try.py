@@ -11,11 +11,11 @@ gold = os.path.join(repo, "tests/golden", sub)
 os.makedirs(work, exist_ok=True)
 gen = os.path.join(work, f"gen-{mode}")
 shutil.rmtree(gen, ignore_errors=True); os.makedirs(gen)
-names = sorted(n[:-4] for n in os.listdir(gold) if n.endswith(".vlt") and not n.startswith("_"))
+names = sorted(n[:-4] for n in os.listdir(gold) if n.endswith(".velt") and not n.startswith("_"))
 picked, skipped = [], {}
 for n in names:
     p = os.path.join(gold, n)
-    src = open(p + ".vlt", encoding="utf8").read()
+    src = open(p + ".velt", encoding="utf8").read()
     why = None
     if not os.path.exists(p + ".out"): why = "compile-error golden"
     elif re.search(r'^\s*(import|export)\b.*from\s+"\.', src, re.M): why = "relative import"
@@ -37,20 +37,20 @@ def run(cmd, **kw):
     return o, r1.ru_utime + r1.ru_stime - r0.ru_utime - r0.ru_stime
 single_cpu = 0.0
 for n in picked:
-    o, c = run([velt, "build", "-o", os.path.join(gen, "single")] + args + [os.path.join(gold, n + ".vlt")], env=env(), cwd=gen)
+    o, c = run([velt, "build", "-o", os.path.join(gen, "single")] + args + [os.path.join(gold, n + ".velt")], env=env(), cwd=gen)
     single_cpu += c
     if o.returncode: print("single build failed", n, o.stderr[:300])
 print(f"one by one: {single_cpu:.1f} s CPU for {len(picked)} ({single_cpu/len(picked):.2f} per program)")
 imports, arms = [], []
 for i, n in enumerate(picked):
-    src = open(os.path.join(gold, n + ".vlt"), encoding="utf8").read()
+    src = open(os.path.join(gold, n + ".velt"), encoding="utf8").read()
     is_async = re.search(r'^async\s+function main\s*\(', src, re.M) is not None
     src = re.sub(r'^(async\s+)?function main\s*\(', lambda m: "export " + (m.group(1) or "") + "function main(", src, count=1, flags=re.M)
-    open(os.path.join(gen, f"g{i}.vlt"), "w", encoding="utf8").write(src)
-    imports.append(f'import * as g{i} from "./g{i}.vlt";')
+    open(os.path.join(gen, f"g{i}.velt"), "w", encoding="utf8").write(src)
+    imports.append(f'import * as g{i} from "./g{i}.velt";')
     arms.append(f'  if (k == "{i}") {{ {"await " if is_async else ""}g{i}.main(); return; }}')
-open(os.path.join(gen, "all.vlt"), "w", encoding="utf8").write("\n".join(imports) + '\nasync function main() {\n  const k = process.env["GOLDEN_INDEX"] ?? "";\n' + "\n".join(arms) + "\n}\n")
-o, merged_cpu = run([velt, "build", "--timings", "-o", os.path.join(gen, "all")] + args + [os.path.join(gen, "all.vlt")], env=env(), cwd=gen)
+open(os.path.join(gen, "all.velt"), "w", encoding="utf8").write("\n".join(imports) + '\nasync function main() {\n  const k = process.env["GOLDEN_INDEX"] ?? "";\n' + "\n".join(arms) + "\n}\n")
+o, merged_cpu = run([velt, "build", "--timings", "-o", os.path.join(gen, "all")] + args + [os.path.join(gen, "all.velt")], env=env(), cwd=gen)
 print(f"merged: {merged_cpu:.1f} s CPU, exit {o.returncode}")
 print("\n".join(l for l in o.stderr.splitlines() if re.match(r"velt: \w", l))[:1500])
 if o.returncode:

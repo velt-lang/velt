@@ -1,4 +1,4 @@
-//! std's inlining markers (std/lang/intrinsics/inline.vlt, std only): `inline()` inlines every
+//! std's inlining markers (std/lang/intrinsics/inline.velt, std only): `inline()` inlines every
 //! call of a function whatever its size, `noInline()` keeps every call a call, and sema rejects
 //! `inline()` on a recursive function and a marker that is not the first statement of a plain
 //! function or method. The markers are std-only, so
@@ -23,8 +23,8 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-/// A std with the module `velt/zz_marked` (`probe`) added, and `main.vlt` beside it; runs
-/// `velt <args> main.vlt`.
+/// A std with the module `velt/zz_marked` (`probe`) added, and `main.velt` beside it; runs
+/// `velt <args> main.velt`.
 fn velt(dir: &test_dir::TestDir, probe: &str, args: &[&str]) -> Output {
     let std: PathBuf = dir.path().join("std");
     if !std.exists() {
@@ -35,8 +35,8 @@ fn velt(dir: &test_dir::TestDir, probe: &str, args: &[&str]) -> Output {
     }
     std::fs::create_dir_all(std.join("zz_marked")).unwrap();
     let probe = format!("import {{ inline, noInline }} from \"velt/lang/intrinsics\";\n{probe}");
-    std::fs::write(std.join("zz_marked/index.vlt"), probe).unwrap();
-    let file = dir.path().join("main.vlt");
+    std::fs::write(std.join("zz_marked/index.velt"), probe).unwrap();
+    let file = dir.path().join("main.velt");
     std::fs::write(&file, MAIN).unwrap();
     let mut all: Vec<&str> = args.to_vec();
     all.push(file.to_str().unwrap());

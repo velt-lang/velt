@@ -6,10 +6,10 @@
 #
 # With <dir> and programs (paths relative to it), those are compared instead, for example the
 # goldens that never write `undefined`:
-#   (cd tests/golden && grep -L undefined m*/*.vlt lang/*.vlt std/*.vlt) |
+#   (cd tests/golden && grep -L undefined m*/*.velt lang/*.velt std/*.velt) |
 #     xargs bench/vir_identical.sh <base velt> <head velt> <base std> <head std> tests/golden
 #
-# The VIR holds the paths of std files (in panic locations, " at <std>/prelude/array.vlt:127:22",
+# The VIR holds the paths of std files (in panic locations, " at <std>/prelude/array.velt:127:22",
 # and in their lengths), so each compiler reads its std from a copy at one and the same path
 # ($VELT_STD): the base's for every base build, then the head's for every head build.
 # $JOBS compilers run at a time (default 8). RELEASE=1 emits the VIR of `--release` builds: the
@@ -27,7 +27,7 @@ else
   cd "$(dirname "$0")"
   # TypeScript benchmarks too (bench/any_ops/*.ts); a pattern matching nothing is left out.
   shopt -s nullglob
-  programs=(*.vlt */*.vlt *.ts */*.ts)
+  programs=(*.velt */*.velt *.ts */*.ts)
   shopt -u nullglob
 fi
 tmp=$(mktemp -d)

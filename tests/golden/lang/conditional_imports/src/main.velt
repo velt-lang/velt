@@ -1,0 +1,6 @@
+// Conditional imports: `#platform` resolves through `imports` in package.velt to the variant the
+// target selects (crates/veltc/tests/wasm_goldens.rs runs this on WebAssembly too).
+import { platform } from "#platform";
+import { GREETING } from "#greeting";
+
+console.log(`${GREETING}, ${platform().describe()}`);

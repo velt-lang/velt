@@ -33,7 +33,7 @@ fn cpu() -> (bool, bool) {
 
 /// `velt build <args>` of the program, in `dir`; the executable.
 fn build(dir: &Path, name: &str, args: &[&str]) -> PathBuf {
-    let source = dir.join("main.vlt");
+    let source = dir.join("main.velt");
     std::fs::write(&source, PROGRAM).unwrap();
     let exe = dir.join(format!("{name}{}", std::env::consts::EXE_SUFFIX));
     let out = no_window::command(env!("CARGO_BIN_EXE_velt"))

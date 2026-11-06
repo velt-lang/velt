@@ -7,7 +7,7 @@ pipelines, `MULTI`/`EXEC` transactions and pub/sub, over `redis://` or `rediss:/
 it in order, so it already works as a connection pool (there is no separate `createPool`).
 
 ```ts ignore
-// package.vlt
+// package.velt
 dependencies: {
   // From the Velt repository (there is no public registry yet):
   redis: {
@@ -107,16 +107,16 @@ WebAssembly.
 
 ## Layout and tests
 
-- `src/lib.vlt`: the API (re-exports); `src/client.vlt`, `subscriber.vlt`, `pipeline.vlt`,
-  `reply.vlt`, `message.vlt`, `errors.vlt`: one type each; `src/types.vlt`: the options and
+- `src/lib.velt`: the API (re-exports); `src/client.velt`, `subscriber.velt`, `pipeline.velt`,
+  `reply.velt`, `message.velt`, `errors.velt`: one type each; `src/types.velt`: the options and
   `ZMember`.
-- `src/resp.vlt`: the wire protocol; `src/url.vlt`: connection URLs; `src/connection.vlt`: TCP or
-  TLS and the handshake; `src/read_buffer.vlt`: what has arrived; `src/multiplex.vlt`,
-  `line.vlt`, `reader.vlt`: one connection shared by every task.
+- `src/resp.velt`: the wire protocol; `src/url.velt`: connection URLs; `src/connection.velt`: TCP or
+  TLS and the handshake; `src/read_buffer.velt`: what has arrived; `src/multiplex.velt`,
+  `line.velt`, `reader.velt`: one connection shared by every task.
 - `tests/`: `velt test` in this directory. Most need a server: set `VELT_TEST_REDIS_URL`
   (`redis://host:6379`), and for TLS `VELT_TEST_REDISS_URL` and `VELT_TEST_REDISS_CA` (a PEM
   file); without them those tests do nothing. The repository's `scripts/linux-check.sh --services`
-  starts both servers, as CI does. `reconnect.test.vlt`, `client_edges.test.vlt`,
-  `resp.test.vlt` and `url.test.vlt` need none.
+  starts both servers, as CI does. `reconnect.test.velt`, `client_edges.test.velt`,
+  `resp.test.velt` and `url.test.velt` need none.
 
 The package uses only public std APIs (velt/net, velt/sync, velt/encoding, velt/task, velt/io).

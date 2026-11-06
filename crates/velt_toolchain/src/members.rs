@@ -1,4 +1,4 @@
-//! Workspace member globs (`members` of `velt.workspace.vlt`, and the npm workspaces vpm reads):
+//! Workspace member globs (`members` of `velt.workspace.velt`, and the npm workspaces vpm reads):
 //! `/`-separated, `*` any run of characters within one directory name, `**` any number of
 //! directories, `!` in front to exclude, names matched exactly (also where the file system ignores
 //! case). The launcher asks [`lists`] whether the package it runs in is a member, so a package

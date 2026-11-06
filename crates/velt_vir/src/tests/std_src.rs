@@ -20,7 +20,7 @@ pub fn check_src(src: &str) -> hir::Program {
         root_source: Some(src.to_string()),
         ..Default::default()
     };
-    let root = manifest.join("src/tests/main.vlt");
+    let root = manifest.join("src/tests/main.velt");
     let loaded = velt_loader::load_program(&mut sm, &root, opts, &mut diags)
         .unwrap_or_else(|e| panic!("load: {e}"));
     assert!(

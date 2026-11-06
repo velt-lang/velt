@@ -1,5 +1,5 @@
-// The Node and Bun side of typed.vlt: JavaScript has no typed decode, so this is JSON.parse of
-// the whole document followed by the same field reads and checksum as typed.vlt.
+// The Node and Bun side of typed.velt: JavaScript has no typed decode, so this is JSON.parse of
+// the whole document followed by the same field reads and checksum as typed.velt.
 //   node typed.mjs <canada|citm|twitter> <file> <rounds>
 import { readFileSync } from "node:fs";
 

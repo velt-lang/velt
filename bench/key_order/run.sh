@@ -20,7 +20,7 @@ for prog in set_index_keys record_reads; do
       cmd=(node "$HERE/$prog.js")
     else
       exe="$OUT/$prog-$(echo "$velt" | md5sum | cut -c1-8)"
-      "$velt" build --release --backend llvm "$HERE/$prog.vlt" -o "$exe" > /dev/null
+      "$velt" build --release --backend llvm "$HERE/$prog.velt" -o "$exe" > /dev/null
       cmd=("$exe")
     fi
     for _ in $(seq 1 "$RUNS"); do

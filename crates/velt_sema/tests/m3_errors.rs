@@ -132,7 +132,7 @@ fn json_types() {
     );
     // What `JSON.stringify` cannot write and `JSON.parse` cannot decode is reported by their
     // generators, which a check without generators does not run:
-    // tests/golden/lang/errors/json_stringify_unwritable.vlt and json_parse_no_form.vlt.
+    // tests/golden/lang/errors/json_stringify_unwritable.velt and json_parse_no_form.velt.
     // An unknown type is reported once, not again as having no JSON form.
     let r = err_src("type W = { s: Nope }; function main() { JSON.parse<W>(\"{}\"); }");
     assert!(!r.contains("JSON"), "{r}");

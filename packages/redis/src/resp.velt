@@ -1,0 +1,197 @@
+// redis (internal): RESP2, the Redis wire protocol. Commands are encoded as arrays of bulk strings;
+// replies are parsed incrementally into a `RawReply`, with no tree on the way.
+//
+// `Parser` takes one frame at a time (a scalar or an array's header) and counts the elements arrays
+// still wait for, so a large reply arriving in many reads is parsed once, in linear time: an
+// incomplete frame's bytes stay in the caller's buffer until more arrive.
+
+import { utf8Length } from "velt/encoding";
+import { RawReply } from "./raw_reply";
+
+// Node kinds (`RawReply.tags`, reply.velt).
+export const NIL: u8 = 0;
+export const STATUS: u8 = 1;
+export const ERROR: u8 = 2;
+export const INT: u8 = 3;
+export const STRING: u8 = 4;
+export const ARRAY: u8 = 5;
+
+// Bulk strings and arrays larger than Redis' own 512 MiB limit are protocol errors.
+const MAX_LEN: i64 = 512 * 1024 * 1024;
+
+// Arrays nested deeper than this are protocol errors: decoding a reply into `RedisReply`s recurses,
+// and a server must not be able to overflow the stack. Redis' own replies nest a few levels.
+const MAX_DEPTH: usize = 1024;
+
+const CR: u8 = 13;
+const LF: u8 = 10;
+
+/** Appends the RESP encoding of the command `args[from..to]` (its name first) to `out`. */
+export function encodeCommand(out: StringBuilder, args: string[], from: usize, to: usize) {
+  out.append("*");
+  out.appendInt((to - from) as i64);
+  out.append("\r\n");
+  for (let i = from; i < to; i++) {
+    const arg = args[i];
+    out.append("$");
+    out.appendInt(utf8Length(arg) as i64);
+    out.append("\r\n");
+    out.append(arg);
+    out.append("\r\n");
+  }
+}
+
+/** An empty reply. */
+export function emptyReply(): RawReply {
+  return RawReply { tags: [], nums: [], strs: [] };
+}
+
+/** Incremental reply parser (see the module header). */
+export class Parser {
+  /** The reply being parsed: `take()` it once `complete`. */
+  reply: RawReply = emptyReply();
+  /** Whether the last `step` finished a reply. */
+  complete: bool = false;
+  /** Why the last `step` returned -1. */
+  error: string = "";
+  // How many elements each array still being received waits for, innermost last.
+  private open: i64[] = [];
+
+  /**
+   * Parses the frame at `buf[pos..end]`: the bytes it took, 0 if it is incomplete, or -1 if the
+   * bytes are not RESP (`error` says why).
+   */
+  step(buf: u8[], pos: i64, end: i64): i64 {
+    this.complete = false;
+    let eol = pos;
+    while (eol + 1 < end && !(buf[eol] == CR && buf[eol + 1] == LF)) {
+      eol++;
+    }
+    if (eol + 1 >= end) {
+      return 0;
+    }
+    if (eol == pos) {
+      return this.fail("empty reply line");
+    }
+    const tag = buf[pos];
+    const after = eol + 2;
+    if (tag == 43) {
+      this.scalar(STATUS, 0, buf.utf8Slice(pos + 1, eol));
+      return after - pos;
+    }
+    if (tag == 45) {
+      this.scalar(ERROR, 0, buf.utf8Slice(pos + 1, eol));
+      return after - pos;
+    }
+    if (tag != 58 && tag != 36 && tag != 42) {
+      const hex = (tag as i64).toString(16).padStart(2, "0");
+      return this.fail(`unexpected reply type byte 0x${hex}`);
+    }
+    const n = this.number(buf, pos + 1, eol);
+    if (this.error.length > 0) {
+      return -1;
+    }
+    if (tag == 58) {
+      this.scalar(INT, n, "");
+      return after - pos;
+    }
+    if (tag == 36) {
+      return this.bulk(buf, n, pos, after, end);
+    }
+    if (n < 0) {
+      this.scalar(NIL, 0, "");
+      return after - pos;
+    }
+    if (n > MAX_LEN) {
+      return this.fail(`array too long (${n})`);
+    }
+    if (n == 0) {
+      this.scalar(ARRAY, 0, "");
+      return after - pos;
+    }
+    if (this.open.length >= MAX_DEPTH) {
+      return this.fail(`reply nested deeper than ${MAX_DEPTH} arrays`);
+    }
+    this.push(ARRAY, n, "");
+    this.open.push(n);
+    return after - pos;
+  }
+
+  /** The finished reply; the next `step` starts a new one. */
+  take(): RawReply {
+    const r = this.reply;
+    this.reply = emptyReply();
+    return r;
+  }
+
+  private bulk(buf: u8[], len: i64, pos: i64, start: i64, end: i64): i64 {
+    if (len < 0) {
+      this.scalar(NIL, 0, "");
+      return start - pos;
+    }
+    if (len > MAX_LEN) {
+      return this.fail(`bulk string too long (${len})`);
+    }
+    const stop = start + len;
+    if (end < stop + 2) {
+      return 0;
+    }
+    if (buf[stop] != CR || buf[stop + 1] != LF) {
+      return this.fail("bulk string not terminated by CRLF");
+    }
+    this.scalar(STRING, 0, buf.utf8Slice(start, stop));
+    return stop + 2 - pos;
+  }
+
+  // The digits in `buf[from..to]`, as Rust's `i64::from_str` reads them.
+  private number(buf: u8[], from: i64, to: i64): i64 {
+    let i = from;
+    const negative = i < to && buf[i] == 45;
+    if (i < to && (buf[i] == 45 || buf[i] == 43)) {
+      i++;
+    }
+    let n: i64 = 0;
+    let ok = i < to;
+    while (i < to && ok) {
+      const d = (buf[i] as i64) - 48;
+      // Built as a negative number, whose range includes i64's minimum.
+      if (d < 0 || d > 9 || n < (-9223372036854775807 - 1 + d) / 10) {
+        ok = false;
+      } else {
+        n = n * 10 - d;
+      }
+      i++;
+    }
+    if (!ok || (!negative && n == -9223372036854775807 - 1)) {
+      this.error = `invalid number "${buf.utf8Slice(from, to)}"`;
+      return 0;
+    }
+    return negative ? n : -n;
+  }
+
+  private fail(message: string): i64 {
+    this.error = message;
+    return -1;
+  }
+
+  private push(tag: u8, num: i64, text: string) {
+    this.reply.tags.push(tag);
+    this.reply.nums.push(num);
+    this.reply.strs.push(text);
+  }
+
+  // A finished value: it fills a place in the array around it, which may finish that array in
+  // turn; with no array left, the reply is complete.
+  private scalar(tag: u8, num: i64, text: string) {
+    this.push(tag, num, text);
+    while (this.open.length > 0) {
+      const last = this.open.length - 1;
+      this.open[last] -= 1;
+      if (this.open[last] > 0) {
+        return;
+      }
+      this.open.pop();
+    }
+    this.complete = true;
+  }
+}

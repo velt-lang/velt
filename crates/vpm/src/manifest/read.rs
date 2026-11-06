@@ -1,4 +1,4 @@
-//! Reading `package.vlt`, the manifest written in Velt
+//! Reading `package.velt`, the manifest written in Velt
 //! (docs/internals/design/package-manifest.md):
 //!
 //! ```ts ignore
@@ -9,7 +9,7 @@
 //!   version: "0.1.0",
 //!   dependencies: { json: "1.2", util: { path: "../util" } },
 //!   paths: { "@app/*": "src/*" },
-//!   imports: { "#io": { js: "./src/io/js.vlt", default: "./src/io/native.vlt" } },
+//!   imports: { "#io": { js: "./src/io/js.velt", default: "./src/io/native.velt" } },
 //!   hostModules: { kv: "./src/kv.mjs" },
 //!   host: { target: "wasm32-unknown-unknown", condition: "edge", entry: "./src/entry.mjs" },
 //!   jsx: { importSource: "sigx" },
@@ -47,7 +47,7 @@ pub const MAX_VALUES: usize = 10_000;
 
 const TYPES_MODULE: &str = "velt/package";
 
-/// What a data file declares: `package.vlt`'s `pkg`, or `velt.workspace.vlt`'s `workspace`.
+/// What a data file declares: `package.velt`'s `pkg`, or `velt.workspace.velt`'s `workspace`.
 struct Shape {
     file: &'static str,
     binding: &'static str,
@@ -64,7 +64,7 @@ const PACKAGE_SHAPE: Shape = Shape {
 };
 
 impl Manifest {
-    /// Read and validate the text of a `package.vlt`. Every problem is a diagnostic in `file`.
+    /// Read and validate the text of a `package.velt`. Every problem is a diagnostic in `file`.
     pub fn read(file: FileId, src: &str) -> Result<Manifest, Diagnostics> {
         read_with_value(file, src).map(|(manifest, _)| manifest)
     }

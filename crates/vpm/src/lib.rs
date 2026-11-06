@@ -1,7 +1,7 @@
 //! vpm — the Velt package manager library, used by the `velt` CLI.
 //! Manifest format is a contract: docs/internals/contracts/manifest.md.
 //!
-//! - [`manifest`]: the `package.vlt` model, read by [`manifest::read`] without running anything
+//! - [`manifest`]: the `package.velt` model, read by [`manifest::read`] without running anything
 //!   ([`paths`]: its import aliases, [`imports`]: its conditional imports); [`edit`]: comment-preserving `velt add`; [`scaffold`]:
 //!   `velt new`.
 //! - [`registry`]: the registry (`publish`, index), local or remote ([`remote`], packages as
@@ -9,7 +9,7 @@
 //! - [`extract`]: the hardened extractor for `.tar.gz` and `.zip` archives fetched from a URL.
 //! - [`resolve`]: semver resolution with backtracking; [`lockfile`]: `velt.lock.json`.
 //! - [`install`]: resolve + lock + fetch → [`PackageGraph`] for the compiler's module loader;
-//!   [`workspace`]: members of a `velt.workspace.vlt` share one resolution and lock.
+//!   [`workspace`]: members of a `velt.workspace.velt` share one resolution and lock.
 
 pub mod archive;
 pub mod c_headers;

@@ -1,5 +1,5 @@
 // Closures capturing the object in its constructor and methods (same workload as
-// closures_this.vlt): one heap object per iteration, closures borrowing it.
+// closures_this.velt): one heap object per iteration, closures borrowing it.
 struct Particle {
     x: f64,
     v: f64,

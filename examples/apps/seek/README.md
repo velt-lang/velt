@@ -12,7 +12,7 @@ seek -l TODO                     # only the file names
 seek -f '\.test\.'               # list files (like fd), filtered by a regex
 seek -s unsafe > /dev/null       # stats: files, MiB, time, threads
 velt test                        # unit tests: matcher, .gitignore rules, options
-velt run demo.vlt                # the whole pipeline on a generated tree (golden: demo.out)
+velt run demo.velt                # the whole pipeline on a generated tree (golden: demo.out)
 ./bench.sh                       # seek vs ripgrep vs git grep on this repository (hyperfine)
 ```
 
@@ -46,15 +46,15 @@ roots ─▶ walk tasks (N) ─▶ channel<FileJob> ─▶ search tasks (N) ─�
 
 | File | What |
 |---|---|
-| `src/walk.vlt` | N tasks share one queue of directories; a `shared` counter of pending directories tells the last one to close the queue. `.gitignore` rules travel with each directory as plain data, and each task compiles and caches its own regexes |
-| `src/search.vlt` | N `spawn`ed workers read files (sync reads, on their own thread), search, and format output in parallel |
-| `src/matcher.vlt` | a plain word uses `indexOf` (memchr/memmem in the runtime), anything else a `RegExp` (linear time). It finds the first match in the whole file before splitting out lines, so a file without a match costs one scan |
-| `src/ignore.vlt` | gitignore globs → regexes, nested files, `!` negation, directory-only rules |
-| `src/app.vlt` | the pipeline as `execute(argv, noColor, write, writeErr)`; the printer writes in 64 KiB batches |
-| `src/options.vlt` | the `velt/cli` parser |
-| `src/main.vlt` | process glue: args, `NO_COLOR`, stdout/stderr, exit code |
-| `tests/*.test.vlt` | `velt test` |
-| `demo.vlt` / `demo.out` | the pipeline on a generated tree; a golden in `cargo test --workspace --test golden` |
+| `src/walk.velt` | N tasks share one queue of directories; a `shared` counter of pending directories tells the last one to close the queue. `.gitignore` rules travel with each directory as plain data, and each task compiles and caches its own regexes |
+| `src/search.velt` | N `spawn`ed workers read files (sync reads, on their own thread), search, and format output in parallel |
+| `src/matcher.velt` | a plain word uses `indexOf` (memchr/memmem in the runtime), anything else a `RegExp` (linear time). It finds the first match in the whole file before splitting out lines, so a file without a match costs one scan |
+| `src/ignore.velt` | gitignore globs → regexes, nested files, `!` negation, directory-only rules |
+| `src/app.velt` | the pipeline as `execute(argv, noColor, write, writeErr)`; the printer writes in 64 KiB batches |
+| `src/options.velt` | the `velt/cli` parser |
+| `src/main.velt` | process glue: args, `NO_COLOR`, stdout/stderr, exit code |
+| `tests/*.test.velt` | `velt test` |
+| `demo.velt` / `demo.out` | the pipeline on a generated tree; a golden in `cargo test --workspace --test golden` |
 
 ## Performance
 

@@ -1,6 +1,6 @@
 // @jsxImportSource ./_jsx_test_provider
 
-// A component in a `.tsx` module, imported by `ts_modules.vlt`.
+// A component in a `.tsx` module, imported by `ts_modules.velt`.
 
 export function Badge(props: { label: string; count: number }): JSX.Element {
   return (

@@ -1,5 +1,5 @@
 // Renders the shared App with JavaScript sigx (@sigx/server-renderer) through Vite's
-// ssrLoadModule: the same .tsx files Velt compiles, with api.server.vlt's functions replaced by
+// ssrLoadModule: the same .tsx files Velt compiles, with api.server.velt's functions replaced by
 // their JavaScript twins (api.reference.js).
 //   node scripts/reference.mjs [path]            the app's HTML (renderToString, data awaited)
 //   node scripts/reference.mjs --stream [path]   the whole streamed document, as sigx streams
@@ -33,7 +33,7 @@ const vite = await createServer({
 try {
   const server = await vite.ssrLoadModule("@sigx/server-renderer/server");
   const { jsx } = await vite.ssrLoadModule("sigx/jsx-runtime");
-  // The islands page renders as an islands app (server.vlt does the same).
+  // The islands page renders as an islands app (server.velt does the same).
   let app;
   if (path === "/islands") {
     const { IslandsPage } = await vite.ssrLoadModule("/src/shared/IslandsPage.tsx");

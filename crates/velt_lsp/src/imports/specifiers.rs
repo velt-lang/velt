@@ -114,7 +114,7 @@ fn file_spelling<'a>(name: &'a str, siblings: &[&str]) -> &'a str {
 
 /// The relative specifier that names the source file `file` from the document at `doc`, as the
 /// loader resolves relative imports: the extension stays when another file shares the stem; a
-/// folder module (`shapes/index.vlt`) is named by its folder (`./shapes`) unless a file module of
+/// folder module (`shapes/index.velt`) is named by its folder (`./shapes`) unless a file module of
 /// that name would win over it or the folder has no name to spell (`../index`).
 pub fn relative_spec(doc: &Path, file: &Path) -> Option<String> {
     let doc_dir = doc.parent()?;
@@ -171,27 +171,27 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         for f in [
-            "app/main.vlt",
-            "app/util.vlt",
-            "app/dup.vlt",
+            "app/main.velt",
+            "app/util.velt",
+            "app/dup.velt",
             "app/dup.ts",
-            "app/shapes/index.vlt",
-            "app/hidden.vlt",
-            "app/hidden/index.vlt",
-            "index.vlt",
+            "app/shapes/index.velt",
+            "app/hidden.velt",
+            "app/hidden/index.velt",
+            "index.velt",
             "lib/math.ts",
         ] {
             let p = root.join(f);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, "").unwrap();
         }
-        let doc = root.join("app/main.vlt");
+        let doc = root.join("app/main.velt");
         let spec = |f: &str| relative_spec(&doc, &root.join(f)).unwrap();
-        assert_eq!(spec("app/util.vlt"), "./util");
+        assert_eq!(spec("app/util.velt"), "./util");
         assert_eq!(spec("app/dup.ts"), "./dup.ts");
-        assert_eq!(spec("app/shapes/index.vlt"), "./shapes");
-        assert_eq!(spec("app/hidden/index.vlt"), "./hidden/index");
-        assert_eq!(spec("index.vlt"), "../index");
+        assert_eq!(spec("app/shapes/index.velt"), "./shapes");
+        assert_eq!(spec("app/hidden/index.velt"), "./hidden/index");
+        assert_eq!(spec("index.velt"), "../index");
         assert_eq!(spec("lib/math.ts"), "../lib/math");
     }
 }

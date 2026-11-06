@@ -1,9 +1,9 @@
 //! `velt fmt [<file|dir>...] [--check]`: format source files in place with [`velt_fmt`].
 //!
-//! Without paths: the enclosing package's `package.vlt` and the `.vlt`, `.ts` and `.tsx` files of
-//! its `src/` directory, or every `.vlt` file under the current directory when not in a package (a
+//! Without paths: the enclosing package's `package.velt` and the `.velt`, `.ts` and `.tsx` files of
+//! its `src/` directory, or every `.velt` file under the current directory when not in a package (a
 //! TypeScript project's own files are left alone). Directories named on the command line contribute
-//! their `.vlt` files, and the `.ts` and `.tsx` files under a package's `src/` and `tests/`
+//! their `.velt` files, and the `.ts` and `.tsx` files under a package's `src/` and `tests/`
 //! directories. Directories are searched recursively, skipping `target/`, `node_modules/` and
 //! hidden directories. `--check` writes nothing and lists the files that would change. Exit code 1
 //! if a file does not parse, cannot be read/written, or (with `--check`) is not formatted.
@@ -101,7 +101,7 @@ fn files_to_format(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
                 }
                 (root.join("src"), vpm::sources::is_source_file)
             }
-            None => (cwd, is_vlt),
+            None => (cwd, is_velt),
         };
         collect(&dir, keep, &mut out)?;
     }
@@ -119,15 +119,16 @@ fn files_to_format(paths: &[PathBuf]) -> Result<Vec<PathBuf>, String> {
     Ok(out)
 }
 
-fn is_vlt(file: &Path) -> bool {
-    file.extension().is_some_and(|e| e == "vlt")
+fn is_velt(file: &Path) -> bool {
+    file.extension()
+        .is_some_and(|e| e == "velt" || e == vpm::sources::OLD_EXTENSION)
 }
 
-/// Whether a file found in a directory named on the command line is formatted: a `.vlt` file, or
+/// Whether a file found in a directory named on the command line is formatted: a `.velt` file, or
 /// a `.ts` or `.tsx` file under its package's `src/` or `tests/` (elsewhere, and outside a
 /// package, it may belong to a TypeScript project, as with `velt fmt` without paths).
 fn in_named_dir(file: &Path) -> bool {
-    if is_vlt(file) {
+    if is_velt(file) {
         return true;
     }
     if !vpm::sources::is_source_file(file) {
@@ -168,9 +169,9 @@ mod tests {
     #[test]
     fn formats_in_place_and_checks() {
         let tmp = tempfile::tempdir().unwrap();
-        let messy = tmp.path().join("a.vlt");
-        let clean = tmp.path().join("sub/b.vlt");
-        let skipped = tmp.path().join("target/c.vlt");
+        let messy = tmp.path().join("a.velt");
+        let clean = tmp.path().join("sub/b.velt");
+        let skipped = tmp.path().join("target/c.velt");
         for p in [&messy, &clean, &skipped] {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         }
@@ -191,7 +192,7 @@ mod tests {
             std::fs::write(p, src).unwrap();
         }
 
-        // Outside a package, only `.vlt` files; in a package, `.ts` and `.tsx` files under `src/`
+        // Outside a package, only `.velt` files; in a package, `.ts` and `.tsx` files under `src/`
         // and `tests/` too.
         let files = files_to_format(&[tmp.path().to_path_buf()]).unwrap();
         assert_eq!(files, [messy.clone(), clean.clone()]);
@@ -201,15 +202,15 @@ mod tests {
             "src/b.d.ts",
             "tests/c.tsx",
             "scripts/d.ts",
-            "e.vlt",
+            "e.velt",
         ];
-        for rel in in_pkg.iter().chain(&["package.vlt"]) {
+        for rel in in_pkg.iter().chain(&["package.velt"]) {
             let p = pkg.join(rel);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, "").unwrap();
         }
         let files = files_to_format(std::slice::from_ref(&pkg)).unwrap();
-        let expected = ["e.vlt", "package.vlt", "src/a.ts", "tests/c.tsx"].map(|f| pkg.join(f));
+        let expected = ["e.velt", "package.velt", "src/a.ts", "tests/c.tsx"].map(|f| pkg.join(f));
         assert_eq!(files, expected);
         std::fs::remove_dir_all(&pkg).unwrap();
         // Named explicitly, any file is formatted.
@@ -228,7 +229,7 @@ mod tests {
     #[test]
     fn refuses_parse_errors() {
         let tmp = tempfile::tempdir().unwrap();
-        let bad = tmp.path().join("bad.vlt");
+        let bad = tmp.path().join("bad.velt");
         std::fs::write(&bad, "function main( {").unwrap();
         let err = format_file(&bad, false).unwrap_err();
         assert!(err.contains("does not parse"), "{err}");

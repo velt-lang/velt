@@ -1,6 +1,6 @@
 # Windows counterpart of scripts/smoke-clean.sh: an installed toolchain on a machine without
 # Visual Studio (release.yml runs it in a Windows Server Core container: no Build Tools, no
-# Windows SDK, no Visual C++ runtime) builds and runs hello and examples/http_hello.vlt in debug
+# Windows SDK, no Visual C++ runtime) builds and runs hello and examples/http_hello.velt in debug
 # and release mode with the bundled linker, and `velt doctor` reports it. Runs under Windows
 # PowerShell 5.1 (what Server Core has).
 #
@@ -18,11 +18,11 @@ function Velt { & $Velt @args; if ($LASTEXITCODE -ne 0) { throw "velt $args fail
 
 function RunBoth($Label, [string[]]$Flags) {
     $Hello = Join-Path $Work "hello.exe"
-    Velt build @Flags (Join-Path $Repo "tests\golden\m1\hello.vlt") -o $Hello
+    Velt build @Flags (Join-Path $Repo "tests\golden\m1\hello.velt") -o $Hello
     $Out = & $Hello
     if ($LASTEXITCODE -ne 0 -or $Out -ne "Hello, Velt!") { throw "$Label hello printed '$Out' (exit $LASTEXITCODE)" }
     $Http = Join-Path $Work "http.exe"
-    Velt build @Flags (Join-Path $Repo "examples\http_hello.vlt") -o $Http
+    Velt build @Flags (Join-Path $Repo "examples\http_hello.velt") -o $Http
     $env:VELT_HELLO_SECONDS = "3"
     $Server = Start-Process -FilePath $Http -PassThru -NoNewWindow -RedirectStandardOutput (Join-Path $Work "http.out")
     Remove-Item Env:VELT_HELLO_SECONDS

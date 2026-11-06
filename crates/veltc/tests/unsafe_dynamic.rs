@@ -15,11 +15,11 @@ fn write(root: &Path, rel: &str, text: &str) {
     std::fs::write(path, text).unwrap();
 }
 
-/// A package.vlt with `fields` after the name and version.
+/// A package.velt with `fields` after the name and version.
 fn manifest(root: &Path, rel: &str, name: &str, fields: &str) {
     write(
         root,
-        &format!("{rel}/package.vlt"),
+        &format!("{rel}/package.velt"),
         &format!("import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"{name}\",\n  version: \"1.0.0\",\n  {fields}\n}};\n"),
     );
 }
@@ -58,14 +58,14 @@ fn project(root: &Path, good: &str, evil: &str) {
         "good",
         "native: { c: { c: { unchecked: true } } },",
     );
-    write(root, "good/src/lib.vlt", good);
+    write(root, "good/src/lib.velt", good);
     manifest(
         root,
         "evil",
         "evil",
         "dependencies: { good: { path: \"../good\" } },",
     );
-    write(root, "evil/src/lib.vlt", evil);
+    write(root, "evil/src/lib.velt", evil);
     manifest(
         root,
         "app",
@@ -74,7 +74,7 @@ fn project(root: &Path, good: &str, evil: &str) {
     );
     write(
         root,
-        "app/src/main.vlt",
+        "app/src/main.velt",
         "import { e } from \"evil\";\n\nfunction main() {\n  e();\n}\n",
     );
 }
@@ -263,7 +263,7 @@ fn generated_code_can_t_contain_unsafe_code() {
         BUF,
         "import { Buf } from \"good\";\n\nexport declare generated(\"./gen\") function boom<T>(b: Buf): i64;\n\nexport function e() {\n  console.log(boom<i64>(new Buf()));\n}\n",
     );
-    write(root, "evil/src/gen.vlt", GENERATOR);
+    write(root, "evil/src/gen.velt", GENERATOR);
     let out = errors(&root.join("app"));
     assert!(
         out.contains("generated code cannot contain `unsafe` code"),
@@ -273,15 +273,15 @@ fn generated_code_can_t_contain_unsafe_code() {
     let lone = root.join("lone");
     write(
         &lone,
-        "main.vlt",
+        "main.velt",
         "declare generated(\"./gen\") function x<T>(): i64;\n\nfunction main() {\n  console.log(x<i64>());\n}\n",
     );
     write(
         &lone,
-        "gen.vlt",
+        "gen.velt",
         "import { InstanceRequest, Output } from \"velt/generate\";\n\nexport function x(req: InstanceRequest, out: Output): void {\n  out.line(\"const y = unsafe { 1 };\");\n  out.line(\"return y;\");\n}\n",
     );
-    let o = velt(&lone, &["check", "main.vlt"]);
+    let o = velt(&lone, &["check", "main.velt"]);
     let out = text(&o);
     assert!(!o.status.success(), "{out}");
     assert!(
@@ -391,7 +391,7 @@ fn raw_exports_go_around_an_import_cycle() {
         "import { Ptr } from \"good\";\n\nexport function e() {}\n",
     ] {
         project(root, good, evil);
-        write(root, "good/src/b.vlt", "export * from \"./lib\";\n");
+        write(root, "good/src/b.velt", "export * from \"./lib\";\n");
         let out = errors(&root.join("app"));
         assert!(out.contains("`Ptr` of `good"), "{evil}: {out}");
         assert!(out.contains("is raw native API"), "{evil}: {out}");
@@ -438,7 +438,7 @@ fn npm_packages_have_no_package_s_trust() {
     let dir = test_dir::TestDir::new();
     let root = dir.path();
     manifest(root, "good", "good", "native: { c: {} },");
-    write(root, "good/src/lib.vlt", "export { v } from \"x\";\n");
+    write(root, "good/src/lib.velt", "export { v } from \"x\";\n");
     write(root, "good/node_modules/x/package.json", package_json);
     write(root, "good/node_modules/x/src/index.ts", npm);
     manifest(
@@ -447,14 +447,18 @@ fn npm_packages_have_no_package_s_trust() {
         "app",
         "allowNative: [\"good\"],\n  dependencies: { good: { path: \"../good\" } },",
     );
-    write(root, "app/src/main.vlt", &call.replace("\"x\"", "\"good\""));
+    write(
+        root,
+        "app/src/main.velt",
+        &call.replace("\"x\"", "\"good\""),
+    );
     check(root, "good/node_modules/x");
 
     // Under the root, which has native code.
     let dir = test_dir::TestDir::new();
     let root = dir.path();
     manifest(root, "app", "app", "native: { c: {} },");
-    write(root, "app/src/main.vlt", call);
+    write(root, "app/src/main.velt", call);
     write(root, "app/node_modules/x/package.json", package_json);
     write(root, "app/node_modules/x/src/index.ts", npm);
     check(root, "app/node_modules/x");
@@ -463,7 +467,7 @@ fn npm_packages_have_no_package_s_trust() {
     let dir = test_dir::TestDir::new();
     let root = dir.path();
     manifest(root, "repo", "good", "native: { c: {} },");
-    write(root, "repo/src/lib.vlt", "export const n = 1;\n");
+    write(root, "repo/src/lib.velt", "export const n = 1;\n");
     write(root, "repo/js/package.json", package_json);
     write(root, "repo/js/src/index.ts", npm);
     let repo: PathBuf = root.join("repo");
@@ -504,7 +508,7 @@ fn npm_packages_have_no_package_s_trust() {
             "allowNative: [{{ name: \"good\", git: \"{url}\" }}],\n  dependencies: {{ good: {{ git: \"{url}\" }}, x: {{ git: \"{url}\", path: \"js\" }} }},"
         ),
     );
-    write(root, "app/src/main.vlt", call);
+    write(root, "app/src/main.velt", call);
     check(root, "repo/js");
 }
 

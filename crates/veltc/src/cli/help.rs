@@ -48,7 +48,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "new",
         summary: "Create a package in a new directory from a template",
         usage: &["new <name> [--template <name>] [--lib]"],
-        about: "Creates <name>/ with package.vlt, .gitignore, README.md, src/ and tests/. Every \
+        about: "Creates <name>/ with package.velt, .gitignore, README.md, src/ and tests/. Every \
                 template builds, passes `velt test` and is formatted.",
         options: &[TEMPLATE, ("--lib", "same as --template lib")],
         examples: &[
@@ -89,10 +89,10 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "build",
         summary: "Compile a file or the current package",
         usage: &[
-            "build [<file.vlt>] [-o <out>] [--release] [-g] [--target <triple> | --host <package>] [--cpu <name>] [--backend <name>] [--emit <kind>] [--locked] [--json] [-v] [--timings] [--report numbers]",
+            "build [<file.velt>] [-o <out>] [--release] [-g] [--target <triple> | --host <package>] [--cpu <name>] [--backend <name>] [--emit <kind>] [--locked] [--json] [-v] [--timings] [--report numbers]",
             "build (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<build options>]",
         ],
-        about: "Without a file, builds the package found by searching upward for package.vlt \
+        about: "Without a file, builds the package found by searching upward for package.velt \
                 (output: <package>/target/velt/<name>[.exe]). A single file builds to \
                 ./target/velt/<stem>[.exe]. `--host <package>` builds for the platform of a host \
                 package among the dependencies: a directory (target/velt/<name>-<condition>/, \
@@ -129,8 +129,8 @@ pub const COMMANDS: &[CommandHelp] = &[
         examples: &[
             ("velt build", "build the current package"),
             ("velt build --release", "optimized build"),
-            ("velt build hello.vlt -o hello", "build one file"),
-            ("velt build app.vlt --target wasm32-wasip1", "build WebAssembly"),
+            ("velt build hello.velt -o hello", "build one file"),
+            ("velt build app.velt --target wasm32-wasip1", "build WebAssembly"),
             ("velt build --release --host host-edge", "build for host package host-edge's platform"),
             ("velt build --release --report numbers", "which loop variables stay doubles"),
         ],
@@ -139,7 +139,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "run",
         summary: "Build and run a file or the current package",
         usage: &[
-            "run [--release] [-g] [--target <triple>] [--cpu <name>] [--backend <name>] [--locked] [-v] <file.vlt> [<program args>...]",
+            "run [--release] [-g] [--target <triple>] [--cpu <name>] [--backend <name>] [--locked] [-v] <file.velt> [<program args>...]",
             "run [--release] [-g] [--target <triple>] [--cpu <name>] [--backend <name>] [--locked] [-v] [-- <program args>...]",
             "run -p <member> [<run options>]",
         ],
@@ -148,8 +148,8 @@ pub const COMMANDS: &[CommandHelp] = &[
         options: &[MEMBER, RELEASE, DEBUG_INFO, TARGET, CPU, BACKEND, LOCKED, NO_GENERATORS, VERBOSE],
         examples: &[
             ("velt run", "run the current package"),
-            ("velt run hello.vlt", "run one file"),
-            ("velt run server.vlt --port 8080", "pass arguments to the program"),
+            ("velt run hello.velt", "run one file"),
+            ("velt run server.velt --port 8080", "pass arguments to the program"),
             ("velt run -- --port 8080", "pass arguments to the package's program"),
         ],
     },
@@ -157,7 +157,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "check",
         summary: "Type-check a file or the current package without building it",
         usage: &[
-            "check [<file.vlt>] [--target <triple>] [--perf [--deps]] [--fix[=safe|review]] [--json] [--locked] [-v]",
+            "check [<file.velt>] [--target <triple>] [--perf [--deps]] [--fix[=safe|review]] [--json] [--locked] [-v]",
             "check --ts-compat [<file|dir>...] [--fix[=safe|review]] [--json] [--locked] [-v]",
             "check --std [--json] [-v]",
             "check (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<check options>]",
@@ -165,10 +165,10 @@ pub const COMMANDS: &[CommandHelp] = &[
         about: "Parses and type-checks like `velt build`, prints the diagnostics and exits \
                 with 1 if there are errors. Nothing is lowered, compiled or linked. With a \
                 file, checks it and every file it imports; a library module needs no `main`. \
-                Without one, checks every `.vlt` module under `src/` and `tests/` of the \
+                Without one, checks every `.velt` module under `src/` and `tests/` of the \
                 current package; its entry must define `main` (a library package's root is \
-                `src/lib.vlt`, with no `main`). With `--ts-compat`, checks the given files \
-                (directories: their `.vlt`, `.ts` and `.tsx` files), or without paths the \
+                `src/lib.velt`, with no `main`). With `--ts-compat`, checks the given files \
+                (directories: their `.velt`, `.ts` and `.tsx` files), or without paths the \
                 folders the package's `tsCompat` lists, then reports what in them `tsc` would \
                 reject or run differently, for code shared with TypeScript. With `--perf`, also \
                 reports what costs speed: TypeScript habits with a faster Velt form, and the \
@@ -193,7 +193,7 @@ pub const COMMANDS: &[CommandHelp] = &[
             (
                 "--perf",
                 "also report what costs speed (the `perf/…` rules), with hints; `lint` in \
-                 package.vlt sets how loud they are",
+                 package.velt sets how loud they are",
             ),
             ("--deps", "with `--perf`: also list what the optimizer could not do in dependencies"),
             (
@@ -213,9 +213,9 @@ pub const COMMANDS: &[CommandHelp] = &[
         ],
         examples: &[
             ("velt check", "check the current package"),
-            ("velt check app.vlt --json", "machine-readable diagnostics for one file"),
+            ("velt check app.velt --json", "machine-readable diagnostics for one file"),
             ("velt check --ts-compat src/models", "check code shared with a TypeScript client"),
-            ("velt check --ts-compat", "lint the folders `tsCompat` lists in package.vlt"),
+            ("velt check --ts-compat", "lint the folders `tsCompat` lists in package.velt"),
             ("velt check --perf", "also report what costs speed, with fixes"),
             ("velt check --perf --fix", "apply the fixes that keep the behaviour"),
         ],
@@ -224,11 +224,11 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "dev",
         summary: "Run, then rebuild and restart on every change",
         usage: &[
-            "dev [<file.vlt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]",
+            "dev [<file.velt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]",
             "dev -p <member> [<dev options>]",
         ],
         about: "Runs the program like `velt run`, then rebuilds and restarts it whenever a file \
-                it imports (or package.vlt/velt.lock.json) changes; a failed build leaves the old \
+                it imports (or package.velt/velt.lock.json) changes; a failed build leaves the old \
                 version running. The program runs JIT-compiled inside `velt`, and listening \
                 sockets stay open across restarts.",
         options: &[
@@ -244,19 +244,19 @@ pub const COMMANDS: &[CommandHelp] = &[
         ],
         examples: &[
             ("velt dev", "develop the current package"),
-            ("velt dev server.vlt -- --port 8080", "one file, with program arguments"),
+            ("velt dev server.velt -- --port 8080", "one file, with program arguments"),
         ],
     },
     CommandHelp {
         name: "test",
-        summary: "Run the tests (`export function test_*` in *.test.vlt, .ts, .tsx)",
+        summary: "Run the tests (`export function test_*` in *.test.velt, .ts, .tsx)",
         usage: &[
             "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] [--jobs <n>] [--watch] [--no-cache]",
             "test [<file|dir>] [--filter <text> [--exact]] [--release] [--cpu <name>] [--locked] --no-run [--json]",
             "test (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<test options>]",
         ],
         about: "Every `export function test_*()` (or `export async function test_*()`) in a \
-                *.test.vlt (or .test.ts, .test.tsx) file is a test. Prints `ok <name>` / `FAILED <name>` and exits \
+                *.test.velt (or .test.ts, .test.tsx) file is a test. Prints `ok <name>` / `FAILED <name>` and exits \
                 with 1 if any test failed. A file whose program didn't change since its tests passed, and \
                 reaches nothing outside itself (files, network, clock, environment, random numbers), \
                 isn't run again: its report is printed as `(cached)`.",
@@ -284,20 +284,20 @@ pub const COMMANDS: &[CommandHelp] = &[
         ],
         examples: &[
             ("velt test", "every test of the package (or under the current directory)"),
-            ("velt test tests/api.test.vlt", "one file"),
+            ("velt test tests/api.test.velt", "one file"),
             ("velt test --filter parse", "the tests whose name contains `parse`"),
             ("velt test --watch", "rerun on every change"),
         ],
     },
     CommandHelp {
         name: "fmt",
-        summary: "Format .vlt (and .ts, .tsx) files",
+        summary: "Format .velt (and .ts, .tsx) files",
         usage: &[
             "fmt [<file|dir>...] [--check]",
             "fmt (--workspace | -p <glob>... | --affected [<base>]) [--fail-fast] [<fmt options>]",
         ],
-        about: "Without paths, formats the package's package.vlt and the .vlt, .ts and .tsx \
-                files of src/ (or every .vlt file under the current directory).",
+        about: "Without paths, formats the package's package.velt and the .velt, .ts and .tsx \
+                files of src/ (or every .velt file under the current directory).",
         options: &[
             WORKSPACE,
             PACKAGE,
@@ -341,7 +341,7 @@ pub const COMMANDS: &[CommandHelp] = &[
     },
     CommandHelp {
         name: "add",
-        summary: "Add a dependency to package.vlt and install it",
+        summary: "Add a dependency to package.velt and install it",
         usage: &["add <pkg>[@<req>] [--path <dir>]"],
         about: "Without a version requirement, uses the latest published version.",
         options: &[("--path <dir>", "a local package instead of a registry one")],
@@ -372,7 +372,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         summary: "Publish the package to the registry",
         usage: &["publish [--native-artifacts <dir>] [--native-only]"],
         about: "Publishes to the package's `registry`, else $VELT_REGISTRY, else the local \
-                registry (~/.velt/registry). A package with `native` in package.vlt also publishes a \
+                registry (~/.velt/registry). A package with `native` in package.velt also publishes a \
                 prebuilt native library for every target it lists: from <dir>/<triple>/, else \
                 target/velt-native/<triple>/ (the host's is built if missing; every target's, for \
                 a package of C `sources`).",
@@ -389,12 +389,12 @@ pub const COMMANDS: &[CommandHelp] = &[
         name: "manifest",
         summary: "Check the package's manifest, or print it as JSON",
         usage: &["manifest [--json]"],
-        about: "Reads package.vlt the way every command does (as data, without running anything) \
+        about: "Reads package.velt the way every command does (as data, without running anything) \
                 and reports its errors. With --json it prints the manifest as JSON with the \
                 defaults filled in, for tools that cannot read Velt.",
         options: &[("--json", "print the manifest as JSON on stdout")],
         examples: &[
-            ("velt manifest", "check package.vlt"),
+            ("velt manifest", "check package.velt"),
             ("velt manifest --json", "the current package's manifest as JSON"),
         ],
     },
@@ -459,7 +459,7 @@ pub const COMMANDS: &[CommandHelp] = &[
         ],
         about: "Versions are installed side by side in <root>/toolchains/<version>/, and the \
                 `velt` on PATH (<root>/bin/velt, the launcher) runs the one a package pins with \
-                `velt: \"0.1\"` in package.vlt, else the default, installing it on first use. \
+                `velt: \"0.1\"` in package.velt, else the default, installing it on first use. \
                 `velt +<toolchain> <command>` or $VELT_TOOLCHAIN (a version or a linked name) \
                 overrides the choice for one command. The launcher implements this command, the same for every version.",
         options: &[

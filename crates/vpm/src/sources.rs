@@ -1,4 +1,4 @@
-//! Which files are Velt source modules: `.vlt`, and TypeScript's `.ts` and `.tsx` (so a folder
+//! Which files are Velt source modules: `.velt`, and TypeScript's `.ts` and `.tsx` (so a folder
 //! can be shared with a TypeScript project). Declaration files (`.d.ts`) are not modules. Every
 //! tool that enumerates source files (the loader's relative imports, `velt check` in a package,
 //! `velt test`, `velt fmt`, `velt doc`, the language server) uses these rules.
@@ -11,16 +11,19 @@
 
 use std::path::{Path, PathBuf};
 
-use crate::manifest::{LEGACY_MANIFEST_FILE, MANIFEST_FILE};
+use crate::manifest::{LEGACY_MANIFEST_FILE, MANIFEST_FILE, OLD_MANIFEST_FILE};
 
 /// Directories a walk for source files never enters (besides hidden ones).
 pub const SKIPPED_DIRS: [&str; 2] = ["target", "node_modules"];
 
-/// Source file extensions, in the order a relative import tries them (`./x` → `x.vlt`, `x.ts`,
-/// `x.tsx`).
-pub const SOURCE_EXTENSIONS: [&str; 3] = ["vlt", "ts", "tsx"];
+/// Source file extensions, in the order a relative import tries them (`./x` → `x.velt`, `x.ts`,
+/// `x.tsx`). The last is the old name of the first, read with a warning for one release (#2419).
+pub const SOURCE_EXTENSIONS: [&str; 4] = ["velt", "ts", "tsx", OLD_EXTENSION];
 
-/// Whether a file named `name` is a source module (`a.vlt`, `a.ts`, `a.tsx`; not `a.d.ts`).
+/// The extension Velt sources had before `.velt`.
+pub const OLD_EXTENSION: &str = "vlt"; // velt-ext: keep
+
+/// Whether a file named `name` is a source module (`a.velt`, `a.ts`, `a.tsx`; not `a.d.ts`).
 pub fn is_source_name(name: &str) -> bool {
     strip_source_extension(name).is_some()
 }
@@ -45,7 +48,7 @@ pub fn strip_source_extension(name: &str) -> Option<&str> {
     })
 }
 
-/// Whether a file named `name` is a test file (`velt test`'s `*.test.vlt`, `*.test.ts`,
+/// Whether a file named `name` is a test file (`velt test`'s `*.test.velt`, `*.test.ts`,
 /// `*.test.tsx`): a source module whose name without the extension ends in `.test`. The loader
 /// keeps a package's test files out of what other packages may import by this rule too.
 pub fn is_test_file(name: &str) -> bool {
@@ -65,12 +68,13 @@ pub fn walks_into(dir: &Path) -> bool {
         && !name.starts_with('.')
         && !dir.join(MANIFEST_FILE).is_file()
         && !dir.join(LEGACY_MANIFEST_FILE).is_file()
+        && !dir.join(OLD_MANIFEST_FILE).is_file()
 }
 
 /// Whether a walk for source files keeps a file named `name`: a source module that
 /// is not a package manifest.
 pub fn walk_keeps(name: &str) -> bool {
-    name != MANIFEST_FILE && is_source_name(name)
+    name != MANIFEST_FILE && name != OLD_MANIFEST_FILE && is_source_name(name)
 }
 
 /// Whether the walk of `folder` finds the source file `file`: `file` is under it, every directory
@@ -96,13 +100,13 @@ pub fn in_folder(folder: &Path, file: &Path) -> bool {
 }
 
 /// Whether `path` is a TypeScript file without JSX (`.ts`): JSX is allowed only in `.tsx` (and
-/// `.vlt`) files, as in TypeScript.
+/// `.velt`) files, as in TypeScript.
 pub fn is_plain_ts(path: &Path) -> bool {
     path.extension().is_some_and(|e| e == "ts")
 }
 
 /// The files a module path `base` (no extension) may name, in [`SOURCE_EXTENSIONS`] order:
-/// `base.vlt`, `base.ts`, `base.tsx` (`types.d` names none of them as `types.d.ts`: a
+/// `base.velt`, `base.ts`, `base.tsx` (`types.d` names none of them as `types.d.ts`: a
 /// declaration file is not a module).
 pub fn source_files(base: &str) -> Vec<PathBuf> {
     SOURCE_EXTENSIONS
@@ -113,12 +117,12 @@ pub fn source_files(base: &str) -> Vec<PathBuf> {
         .collect()
 }
 
-/// The file of a package's default module `rel` (`src/main.vlt` or `src/lib.vlt`), below `root`:
+/// The file of a package's default module `rel` (`src/main.velt` or `src/lib.velt`), below `root`:
 /// that file, or the same name with `.ts` or `.tsx`, so a package written in TypeScript needs no
 /// `entry`. `Ok(None)` when none exists, an error naming them when more than one does (as for an
 /// ambiguous import).
 pub fn default_module(root: &Path, rel: &str) -> Result<Option<PathBuf>, String> {
-    let base = rel.strip_suffix(".vlt").unwrap_or(rel);
+    let base = rel.strip_suffix(".velt").unwrap_or(rel);
     let found: Vec<PathBuf> = source_files(base)
         .into_iter()
         .filter(|f| root.join(f).is_file())
@@ -145,24 +149,28 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         std::fs::create_dir(root.join("src")).unwrap();
-        assert_eq!(default_module(root, "src/lib.vlt"), Ok(None));
+        assert_eq!(default_module(root, "src/lib.velt"), Ok(None));
         std::fs::write(root.join("src/lib.ts"), "").unwrap();
         assert_eq!(
-            default_module(root, "src/lib.vlt"),
+            default_module(root, "src/lib.velt"),
             Ok(Some(root.join("src/lib.ts")))
         );
-        std::fs::write(root.join("src/lib.vlt"), "").unwrap();
-        let err = default_module(root, "src/lib.vlt").unwrap_err();
-        assert!(err.contains("`src/lib.vlt`, `src/lib.ts`"), "{err}");
+        std::fs::write(root.join("src/lib.velt"), "").unwrap();
+        let err = default_module(root, "src/lib.velt").unwrap_err();
+        assert!(err.contains("`src/lib.velt`, `src/lib.ts`"), "{err}");
         assert_eq!(
             source_files("types.d"),
-            [PathBuf::from("types.d.vlt"), PathBuf::from("types.d.tsx")]
+            [
+                PathBuf::from("types.d.velt"),
+                PathBuf::from("types.d.tsx"),
+                PathBuf::from(format!("types.d.{OLD_EXTENSION}")),
+            ]
         );
     }
 
     #[test]
     fn source_names() {
-        for name in ["a.vlt", "a.ts", "a.tsx", "a.test.ts", "dir/x.tsx"] {
+        for name in ["a.velt", "a.ts", "a.tsx", "a.test.ts", "dir/x.tsx"] {
             assert!(is_source_name(name), "{name}");
         }
         for name in ["a.d.ts", "a.js", "a.vltx", "ts", ".ts", "a.json", "a.mts"] {
@@ -179,40 +187,47 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         for f in [
-            "a.vlt",
+            "a.velt",
             "sub/b.ts",
             "node_modules/c.ts",
-            "target/d.vlt",
-            ".hidden/e.vlt",
-            "nested/package.vlt",
-            "nested/f.vlt",
+            "target/d.velt",
+            ".hidden/e.velt",
+            "nested/package.velt",
+            "nested/f.velt",
             "legacy/velt.toml",
-            "legacy/g.vlt",
+            "legacy/g.velt",
+            &format!("older/{OLD_MANIFEST_FILE}"),
+            "older/h.velt",
         ] {
             let p = root.join(f);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, "").unwrap();
         }
-        assert!(in_folder(root, &root.join("a.vlt")));
+        assert!(in_folder(root, &root.join("a.velt")));
         assert!(in_folder(root, &root.join("sub/b.ts")));
         // A file not saved yet counts by its name and folders.
-        assert!(in_folder(root, &root.join("sub/new.vlt")));
+        assert!(in_folder(root, &root.join("sub/new.velt")));
         for f in [
             "node_modules/c.ts",
-            "target/d.vlt",
-            ".hidden/e.vlt",
-            "nested/f.vlt",
-            "nested/package.vlt",
-            "legacy/g.vlt",
-            "package.vlt",
+            "target/d.velt",
+            ".hidden/e.velt",
+            "nested/f.velt",
+            "nested/package.velt",
+            "legacy/g.velt",
+            "older/h.velt",
+            "package.velt",
             "x.d.ts",
             "x.json",
         ] {
             assert!(!in_folder(root, &root.join(f)), "{f}");
         }
-        assert!(!in_folder(&root.join("sub"), &root.join("a.vlt")));
+        assert!(!in_folder(&root.join("sub"), &root.join("a.velt")));
+        // Walked from inside, a package with the old manifest name keeps it out of its sources.
+        let older = root.join("older");
+        assert!(!in_folder(&older, &older.join(OLD_MANIFEST_FILE)));
+        assert!(in_folder(&older, &older.join("h.velt")));
         // The folder itself may be anything: only what is below it counts.
-        assert!(in_folder(&root.join("nested"), &root.join("nested/f.vlt")));
+        assert!(in_folder(&root.join("nested"), &root.join("nested/f.velt")));
     }
 
     #[cfg(unix)]
@@ -222,7 +237,7 @@ mod tests {
         let root = tmp.path();
         std::fs::create_dir(root.join("real")).unwrap();
         std::os::unix::fs::symlink("real", root.join("link")).unwrap();
-        assert!(in_folder(root, &root.join("real/a.vlt")));
-        assert!(!in_folder(root, &root.join("link/a.vlt")));
+        assert!(in_folder(root, &root.join("real/a.velt")));
+        assert!(!in_folder(root, &root.join("link/a.velt")));
     }
 }

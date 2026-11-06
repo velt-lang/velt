@@ -70,7 +70,7 @@ impl FnLower<'_, '_> {
     /// (`Glue::AnyNumberError`), so that the optimizer keeps it cold when it inlines the glue
     /// into a loop. (Inline at every site, the conversion made the `Ganycall` glue a fifth
     /// larger; with a branch per site and the error in the glue, compiling
-    /// `tests/golden/lang/any_view_object.vlt` took 16% more instructions.) A site that names
+    /// `tests/golden/lang/any_view_object.velt` took 16% more instructions.) A site that names
     /// what it converts (`any_context`) has its own message: it calls `Glue::AnyNumeric` and
     /// branches to it on `false`.
     pub(super) fn any_number_convert(

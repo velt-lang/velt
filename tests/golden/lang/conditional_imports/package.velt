@@ -1,0 +1,15 @@
+import type { Package } from "velt/package";
+
+export const pkg: Package = {
+  name: "conditional-imports",
+  version: "0.1.0",
+  // `#platform` is one of three files, chosen by the build's target; `#greeting` is one file.
+  imports: {
+    "#platform": {
+      js: "./src/_platform/js.velt",
+      wasi: "./src/_platform/wasi.velt",
+      default: "./src/_platform/native.velt",
+    },
+    "#greeting": "./src/_greeting.velt",
+  },
+};

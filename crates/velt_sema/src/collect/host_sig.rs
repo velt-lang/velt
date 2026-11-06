@@ -12,11 +12,11 @@ use crate::ctx::Ctx;
 use crate::defs::ParamSig;
 use crate::hir::{FloatTy, HostImport, HostTy, Nothing, TyId, TyKind};
 
-/// std's handle to a JS value (std/host/host_ref.vlt).
+/// std's handle to a JS value (std/host/host_ref.velt).
 pub(crate) const HOST_REF: &str = velt_common::std_item!(host_host_ref, "HostRef");
 
 /// What the promise of an async host function rejects with (loaded with the hooks that await it,
-/// std/prelude/global/host_async.vlt).
+/// std/prelude/global/host_async.velt).
 const IO_ERROR: &str = velt_common::std_item!(io_error, "IoError");
 
 /// The import module the runtime's own imports come from (crates/velt_rt_wasm/js/velt_web.mjs):

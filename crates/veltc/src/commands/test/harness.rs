@@ -1,11 +1,11 @@
 //! The generated root module of a test program: it imports the test files and registers their
-//! tests with `velt/test` (`std/test/registry.vlt`, `std/test/run.vlt`), which runs them. For `math.test.vlt` and
-//! `io.test.vlt` it is (a virtual file in a directory above both)
+//! tests with `velt/test` (`std/test/registry.velt`, `std/test/run.velt`), which runs them. For `math.test.velt` and
+//! `io.test.velt` it is (a virtual file in a directory above both)
 //! ```text
 //! import { registerFile, registerTest, registerAsyncTest } from "velt/test/registry";
 //! import { runRegistered } from "velt/test/run";
-//! import * as __velt_t0 from "./math.test.vlt";
-//! import * as __velt_t1 from "./io.test.vlt";
+//! import * as __velt_t0 from "./math.test.velt";
+//! import * as __velt_t1 from "./io.test.velt";
 //! function __velt_r0() {
 //!   registerFile(0);
 //!   registerTest("test_add", __velt_t0.test_add);
@@ -20,7 +20,7 @@
 //!   await runRegistered();
 //! }
 //! ```
-//! `registerFile(n)` gives the file the next `n` registrations its top level queued (`io.test.vlt` has
+//! `registerFile(n)` gives the file the next `n` registrations its top level queued (`io.test.velt` has
 //! two top-level `describe` or `it` calls): the test files are evaluated in import order, before
 //! `main`. A file alone in its harness takes them all (`-1`), whatever its top level does.
 //! A function per file keeps `main` small whatever the number of tests: an `async` function's
@@ -45,7 +45,7 @@ pub const CHILD_VARS: [&str; 5] = [
 
 /// One test file of a harness.
 pub struct HarnessFile<'a> {
-    /// How the harness imports it (`./tests/math.test.vlt`).
+    /// How the harness imports it (`./tests/math.test.velt`).
     pub import_spec: String,
     /// Its tests, in the order they run.
     pub tests: &'a [String],
@@ -124,7 +124,7 @@ mod tests {
             names(&["test_z"]),
         );
         let src = harness_source(&[
-            file("./a.test.vlt", &a, &[]),
+            file("./a.test.velt", &a, &[]),
             HarnessFile {
                 queued: Some(2),
                 ..file("./sub/b.test.ts", &b, &b_async)

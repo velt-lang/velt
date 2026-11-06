@@ -1,4 +1,4 @@
-//! Conditional imports (`#name` specifiers, `imports` in package.vlt) through the `velt` binary:
+//! Conditional imports (`#name` specifiers, `imports` in package.velt) through the `velt` binary:
 //! `velt check` compares the variants of each `#name` and checks only the variant its target
 //! selects as code of the build; `velt check --target` checks another target's. (Which variant a
 //! build runs: the golden tests/golden/lang/conditional_imports, natively and in
@@ -16,7 +16,7 @@ export const pkg: Package = {
   name: "app",
   version: "0.1.0",
   imports: {
-    "#io": { js: "./src/io/js.vlt", default: "./src/io/native.vlt" },
+    "#io": { js: "./src/io/js.velt", default: "./src/io/native.velt" },
   },
 };
 "##;
@@ -45,7 +45,7 @@ fn velt_with_home(dir: &Path, home: &Path, args: &[&str]) -> Output {
 
 /// A package whose `#io` has a native and a `js` variant with the same API.
 fn package(dir: &Path) {
-    write(dir, "package.vlt", MANIFEST);
+    write(dir, "package.velt", MANIFEST);
     write(
         dir,
         "velt.lock.json",
@@ -53,17 +53,17 @@ fn package(dir: &Path) {
     );
     write(
         dir,
-        "src/main.vlt",
+        "src/main.velt",
         "import { read } from \"#io\";\n\nconsole.log(read(1));\n",
     );
     write(
         dir,
-        "src/io/native.vlt",
+        "src/io/native.velt",
         "export function read(n: i64): string {\n  return `native ${n}`;\n}\n",
     );
     write(
         dir,
-        "src/io/js.vlt",
+        "src/io/js.velt",
         "export function read(n: i64): string {\n  return `js ${n}`;\n}\n",
     );
 }
@@ -77,14 +77,14 @@ fn check_compares_the_variants() {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     write(
         dir,
-        "src/io/js.vlt",
+        "src/io/js.velt",
         "export function read(n: f64): string {\n  return `js ${n}`;\n}\n",
     );
     let o = velt(dir, &["check"]);
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(!o.status.success(), "{err}");
     assert!(
-        err.contains("`#io`: `read` has another signature in `./src/io/native.vlt` than in `./src/io/js.vlt`"),
+        err.contains("`#io`: `read` has another signature in `./src/io/native.velt` than in `./src/io/js.velt`"),
         "{err}"
     );
 }
@@ -97,7 +97,7 @@ fn check_checks_the_variant_of_its_target() {
     // A type error in the `js` variant only: a native check does not compile it.
     write(
         dir,
-        "src/io/js.vlt",
+        "src/io/js.velt",
         "export function read(n: i64): string {\n  return n;\n}\n",
     );
     let o = velt(dir, &["check"]);
@@ -105,8 +105,8 @@ fn check_checks_the_variant_of_its_target() {
     let o = velt(dir, &["check", "--target", "wasm32-unknown-unknown"]);
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(!o.status.success(), "{err}");
-    // The location is a path as the system writes it: `src\io\js.vlt` on Windows.
-    let path = Path::new("src").join("io").join("js.vlt");
+    // The location is a path as the system writes it: `src\io\js.velt` on Windows.
+    let path = Path::new("src").join("io").join("js.velt");
     assert!(err.contains(&format!("{}:2", path.display())), "{err}");
 }
 

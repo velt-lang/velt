@@ -1,4 +1,4 @@
-//! Compile-time type tests (std/prelude/type_tests.vlt; sema `body/type_guards.rs`). A call of
+//! Compile-time type tests (std/prelude/type_tests.velt; sema `body/type_guards.rs`). A call of
 //! the prelude's `typeIs<A, B>()` is the constant whether this instance's `A` and `B` are the
 //! same type, so the `if` it is the condition of takes one branch, and the other is never
 //! emitted (`branch` on a constant is a `goto`, and code in a block nothing reaches is dropped).

@@ -28,29 +28,29 @@ fn workspace() -> (test_dir::TestDir, PathBuf) {
     let dir = tmp.path().to_path_buf();
     write(
         &dir,
-        "velt.workspace.vlt",
+        "velt.workspace.velt",
         "export const workspace: Workspace = { members: [\"packages/*\", \"apps/*\"] };\n",
     );
     write(
         &dir,
-        "packages/gens/package.vlt",
+        "packages/gens/package.velt",
         "export const pkg: Package = { name: \"gens\", version: \"0.1.0\" };\n",
     );
     write(
         &dir,
-        "packages/gens/src/lib.vlt",
+        "packages/gens/src/lib.velt",
         "export declare generated(\"./gen\") function fields<T>(): string;\n",
     );
-    write(&dir, "packages/gens/src/gen.vlt", GENERATOR);
+    write(&dir, "packages/gens/src/gen.velt", GENERATOR);
     write(
         &dir,
-        "apps/app/package.vlt",
+        "apps/app/package.velt",
         "export const pkg: Package = { name: \"app\", version: \"0.1.0\", \
          dependencies: { gens: \"workspace\" } };\n",
     );
     write(
         &dir,
-        "apps/app/src/main.vlt",
+        "apps/app/src/main.velt",
         "import { fields } from \"gens\";\n\
          class User { name = \"\"; age = 0; }\n\
          console.log(fields<User>());\n",
@@ -63,7 +63,7 @@ fn generators_come_from_packages() {
     let (_tmp, dir) = workspace();
     let run = |cwd: &Path| {
         let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
-            .args(["run", "src/main.vlt"])
+            .args(["run", "src/main.velt"])
             .current_dir(cwd)
             .env("VELT_HOME", dir.join("home"))
             .env("VELT_BUILD_CACHE", dir.join("cache"))
@@ -80,7 +80,7 @@ fn generators_come_from_packages() {
     // `fields`: the generator module exports a function of the declaration's name).
     write(
         &dir,
-        "apps/app/src/main.vlt",
+        "apps/app/src/main.velt",
         "declare generated(\"gens/gen\") function fields<T>(): string;\n\
          class Team { size = 2; }\n\
          console.log(fields<Team>());\n",

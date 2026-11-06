@@ -1,4 +1,4 @@
-//! Stringify (see stringify.vlt): serde derive.
+//! Stringify (see stringify.velt): serde derive.
 use serde::Serialize;
 
 #[derive(Serialize)]

@@ -1,5 +1,0 @@
-// `export default enum` is an error in TypeScript, so in a `.ts` file (a `.vlt` file may export a
-// default enum, as a default struct).
-import Color from "./_default_export_enum_ts";
-
-console.log(Color.Red);

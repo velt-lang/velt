@@ -1,1 +1,1 @@
-shared_fn_route_atomic_in_class.vlt:10:10: error: this function captures `h`, which holds an `Atomic<i64>` by value, and it is in `shared(...)`, so each call would change an `Atomic` of its own
+shared_fn_route_atomic_in_class.velt:10:10: error: this function captures `h`, which holds an `Atomic<i64>` by value, and it is in `shared(...)`, so each call would change an `Atomic` of its own

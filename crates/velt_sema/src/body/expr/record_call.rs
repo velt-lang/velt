@@ -1,4 +1,4 @@
-//! Calls of the `__` methods of `Record<K, V>` (std/prelude/record.vlt) that the record syntax
+//! Calls of the `__` methods of `Record<K, V>` (std/prelude/record.velt) that the record syntax
 //! turns into (see `record.rs`), and the rule that user code cannot call them itself: a record
 //! has no methods of its own (`r.size` reads the key "size").
 //!
@@ -63,7 +63,7 @@ fn record_method_fix(name: &str) -> &'static str {
 
 impl FnCx<'_, '_> {
     /// `r.__name(...)` written in user code, as a record's methods were once named: a record has
-    /// none (its own are keyed by std's symbols, std/lang/hooks/keys.vlt). Reports and returns
+    /// none (its own are keyed by std's symbols, std/lang/hooks/keys.velt). Reports and returns
     /// `true` if `recv` is such a call; the note says what does what the user meant.
     pub(super) fn record_internal_call(&mut self, recv: &hir::Expr, prop: &ast::Ident) -> bool {
         // A call the compiler wrote (a `for...in` loop's key test) has an empty span.
@@ -249,7 +249,7 @@ impl FnCx<'_, '_> {
         if k != self.cx.ty.str_ || plain {
             return Err(None);
         }
-        // The methods of std/lang/record/symbols.vlt, which a program loads when it
+        // The methods of std/lang/record/symbols.velt, which a program loads when it
         // mentions symbols: without them, a symbol key is the type error it was.
         let keyed = keyed_method(method).filter(|m| self.has_record_method(m));
         let mut h = self.payload_expr(e, None, want);
@@ -423,7 +423,7 @@ fn well_known_symbol(id: &ast::Ident) -> Option<ast::Expr> {
 }
 
 impl FnCx<'_, '_> {
-    /// Does the prelude's `Record` have the method `name` (std/lang/record/symbols.vlt
+    /// Does the prelude's `Record` have the method `name` (std/lang/record/symbols.velt
     /// adds the `Keyed` ones when the program loads it)?
     pub(super) fn has_record_method(&mut self, name: &str) -> bool {
         let Some(d) = self.cx.prelude_adt("Record") else {

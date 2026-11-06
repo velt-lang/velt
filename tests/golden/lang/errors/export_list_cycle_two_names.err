@@ -1,1 +1,1 @@
-export_list_cycle_two_names.vlt:3:10: error: module `./_export_list_cycle_a` has no member `p`
+export_list_cycle_two_names.velt:3:10: error: module `./_export_list_cycle_a` has no member `p`

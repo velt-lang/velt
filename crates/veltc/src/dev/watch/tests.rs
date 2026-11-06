@@ -12,30 +12,30 @@ fn wait(w: &mut Watcher, limit: Duration) -> bool {
     false
 }
 
-/// Edits, files that appear, saves during the build and new `.vlt` files next to watched
+/// Edits, files that appear, saves during the build and new `.velt` files next to watched
 /// ones, each reported once after it settles.
 fn reports_changes(notify: bool) {
     let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("main.vlt");
+    let file = dir.path().join("main.velt");
     std::fs::write(&file, "a").unwrap();
     // Saved long before the first build (a recent save may have been made during it).
     touch(&file, SystemTime::now() - Duration::from_secs(60));
     let mut w = Watcher::new(notify);
     assert_eq!(w.notifies(), notify);
     let snap = w.snapshot();
-    w.set([file.clone(), dir.path().join("missing.vlt")], &snap);
+    w.set([file.clone(), dir.path().join("missing.velt")], &snap);
     assert!(!wait(&mut w, SETTLE * 3), "nothing changed");
     std::fs::write(&file, "bb").unwrap();
     assert!(w.poll().is_none(), "not settled yet");
     assert!(wait(&mut w, Duration::from_secs(5)));
     assert!(!wait(&mut w, SETTLE * 3), "reported once");
     // A file that appears counts as a change.
-    std::fs::write(dir.path().join("missing.vlt"), "x").unwrap();
+    std::fs::write(dir.path().join("missing.velt"), "x").unwrap();
     assert!(wait(&mut w, Duration::from_secs(5)));
     // So does a new module nothing has read yet; other new files don't.
     std::fs::write(dir.path().join("notes.txt"), "x").unwrap();
     assert!(!wait(&mut w, SETTLE * 5), "not a source file");
-    let added = dir.path().join("added.vlt");
+    let added = dir.path().join("added.velt");
     std::fs::write(&added, "x").unwrap();
     assert!(wait(&mut w, Duration::from_secs(5)));
     // Deleted and created again (`git stash`, a branch switch): new again.
@@ -44,7 +44,7 @@ fn reports_changes(notify: bool) {
     std::fs::write(&added, "x").unwrap();
     assert!(wait(&mut w, Duration::from_secs(5)), "recreated");
     // An editor's atomic save: write a temporary file, rename it over the original.
-    let tmp = dir.path().join("main.vlt.tmp");
+    let tmp = dir.path().join("main.velt.tmp");
     std::fs::write(&tmp, "atomic save").unwrap();
     std::fs::rename(&tmp, &file).unwrap();
     assert!(wait(&mut w, Duration::from_secs(5)), "renamed over");
@@ -55,9 +55,13 @@ fn reports_changes(notify: bool) {
 /// A build starts (snapshot), reads its files, and the watcher learns what it read only when it
 /// ends: every save in between must lead to another build, none may be lost.
 fn saves_during_builds(w: &mut Watcher, dir: &Path) {
-    let file = dir.join("main.vlt");
+    let file = dir.join("main.velt");
     let snap = w.snapshot();
-    let read = [file.clone(), dir.join("added.vlt"), dir.join("missing.vlt")];
+    let read = [
+        file.clone(),
+        dir.join("added.velt"),
+        dir.join("missing.velt"),
+    ];
     w.set(read.clone(), &snap);
     assert!(!wait(w, SETTLE * 3), "a build during which nothing changed");
     // A watched file saved again while the build that read it was running.
@@ -67,7 +71,7 @@ fn saves_during_builds(w: &mut Watcher, dir: &Path) {
     assert!(wait(w, Duration::from_secs(5)), "saved during a build");
     // A new module the failed build read half-written: its last write came during the build,
     // after the build read it and before the watcher knew the file (#271).
-    let late = dir.join("late.vlt");
+    let late = dir.join("late.velt");
     let snap = w.snapshot();
     std::fs::write(&late, "").unwrap();
     std::fs::write(&late, "export function late() {}").unwrap();
@@ -79,7 +83,7 @@ fn saves_during_builds(w: &mut Watcher, dir: &Path) {
     assert!(!wait(w, SETTLE * 3), "reported once");
     // The same with the module already there, empty, when the build started: its creation
     // started the build, which read it before its content was written.
-    let half = dir.join("half.vlt");
+    let half = dir.join("half.velt");
     std::fs::write(&half, "").unwrap();
     assert!(wait(w, Duration::from_secs(5)), "a new module");
     let snap = w.snapshot();
@@ -91,7 +95,7 @@ fn saves_during_builds(w: &mut Watcher, dir: &Path) {
     );
     // A module that appeared during a build that didn't read it (the import still failed).
     let snap = w.snapshot();
-    std::fs::write(dir.join("other.vlt"), "x").unwrap();
+    std::fs::write(dir.join("other.velt"), "x").unwrap();
     w.add([file.clone()], &snap);
     assert!(
         wait(w, Duration::from_secs(5)),
@@ -121,8 +125,8 @@ fn touch(path: &Path, time: SystemTime) {
 /// build's start, so a save during the build can look a few milliseconds older than the start.
 fn first_build(notify: bool) {
     let dir = tempfile::tempdir().unwrap();
-    let main = dir.path().join("main.vlt");
-    let module = dir.path().join("module.vlt");
+    let main = dir.path().join("main.velt");
+    let module = dir.path().join("module.velt");
     let old = SystemTime::now() - Duration::from_secs(60);
     for f in [&main, &module] {
         std::fs::write(f, "x").unwrap();
@@ -146,7 +150,7 @@ fn first_build(notify: bool) {
     let mut w = Watcher::new(notify);
     let before = SystemTime::now();
     let snap = w.snapshot();
-    let created = dir.path().join("created.vlt");
+    let created = dir.path().join("created.velt");
     std::fs::write(&created, "x").unwrap();
     touch(&created, before - Duration::from_millis(5));
     w.set([main.clone()], &snap);

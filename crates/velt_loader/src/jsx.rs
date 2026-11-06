@@ -1,6 +1,6 @@
 //! The JSX runtime import (docs/internals/contracts/jsx.md "Choosing the provider"): a module
 //! containing JSX implicitly imports `<source>/jsx-runtime`, where the source is the file's `//
-//! @jsxImportSource` pragma, else its package's `jsx.importSource` (package.vlt), else `velt/jsx`. A
+//! @jsxImportSource` pragma, else its package's `jsx.importSource` (package.velt), else `velt/jsx`. A
 //! module without JSX loads no runtime.
 
 use std::collections::VecDeque;
@@ -172,7 +172,7 @@ impl super::Loader<'_, '_> {
                 .packages
                 .and_then(|p| p.jsx_import_source(&self.origins[index].0))
             {
-                Some(s) => (s, "`jsx.importSource` in package.vlt"),
+                Some(s) => (s, "`jsx.importSource` in package.velt"),
                 None => (DEFAULT_IMPORT_SOURCE.to_string(), "the default"),
             },
         };

@@ -25,7 +25,7 @@ fn two_checks(oob_returns: bool) -> (Program, usize) {
         }
     }
     let oob = pb.add(fb.finish());
-    let (at1, at2) = (pb.stat(b"a.vlt:1:1", 1), pb.stat(b"a.vlt:2:1", 1));
+    let (at1, at2) = (pb.stat(b"a.velt:1:1", 1), pb.stat(b"a.velt:2:1", 1));
     let mut fb = FuncBuilder::new("check", &[Ty::I64, Ty::I64], Ty::I64, Linkage::Export);
     let (i, n) = (fb.param(0), fb.param(1));
     let (c, j) = (fb.local(Ty::Bool), fb.local(Ty::I64));

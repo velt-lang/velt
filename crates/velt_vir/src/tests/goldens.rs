@@ -1,4 +1,4 @@
-//! The M1 golden programs (`tests/golden/m1/*.vlt`), hand-lowered to HIR the way sema will
+//! The M1 golden programs (`tests/golden/m1/*.velt`), hand-lowered to HIR the way sema will
 //! produce them, run through lower → verify → interpreter and compared with the `.out` files.
 //! `strings`, which converts numbers to text through std's hooks, is loaded from its source with
 //! the real std instead (std_src.rs).
@@ -310,7 +310,7 @@ pub(super) fn functions() -> Program {
     pb.finish()
 }
 
-/// `tests/golden/m1/strings.vlt`, which converts numbers to text: std's hooks (#2197), so it is
+/// `tests/golden/m1/strings.velt`, which converts numbers to text: std's hooks (#2197), so it is
 /// loaded with the real std (std_src.rs), not hand-built.
 pub(super) fn strings_src() -> String {
     super::golden_src("m1", "strings")

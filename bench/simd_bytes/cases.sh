@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# `u8[]` `indexOf` and `TextDecoder.decode` (search.vlt, decode.vlt) at the array lengths and
+# `u8[]` `indexOf` and `TextDecoder.decode` (search.velt, decode.velt) at the array lengths and
 # kinds of text where SIMD code and the runtime's memchr trade places, and the bench/stdport
 # rows on them, for two git refs:
 #
@@ -36,7 +36,7 @@ for side in base head; do
   for prog in simd_bytes/search simd_bytes/decode stdport/bytes_search stdport/utf8_decode \
     stdport/utf8_valid; do
     "$WORK/target-$side/release/velt" build --release --backend llvm \
-      "$WORK/head/bench/$prog.vlt" -o "$WORK/$(basename "$prog")-$side"
+      "$WORK/head/bench/$prog.velt" -o "$WORK/$(basename "$prog")-$side"
   done
 done
 

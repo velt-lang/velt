@@ -20,11 +20,11 @@ ids print `notes: <message>` and exit 2.
 
 | File | What |
 |---|---|
-| `src/store.vlt` | `Note`, `NoteStore` (load/save, add, tag, remove, search, tag counts) |
-| `src/commands.vlt` | argv → one command → output lines (testable without a process) |
-| `src/main.vlt` | process glue: args, `$NOTES_DB`, clock, exit code |
-| `tests/*.test.vlt` | `velt test` |
-| `demo.vlt` / `demo.out` | scripted session; a golden in `cargo test --workspace --test golden` |
+| `src/store.velt` | `Note`, `NoteStore` (load/save, add, tag, remove, search, tag counts) |
+| `src/commands.velt` | argv → one command → output lines (testable without a process) |
+| `src/main.velt` | process glue: args, `$NOTES_DB`, clock, exit code |
+| `tests/*.test.velt` | `velt test` |
+| `demo.velt` / `demo.out` | scripted session; a golden in `cargo test --workspace --test golden` |
 
 Tests and the demo import the sources as `"@notes/commands"` through the `paths` alias
-`"@notes/*": "src/*"` in `package.vlt`.
+`"@notes/*": "src/*"` in `package.velt`.

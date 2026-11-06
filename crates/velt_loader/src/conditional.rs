@@ -1,6 +1,6 @@
 //! `#name` specifiers: conditional imports ([`vpm::imports`]). A module imports `#name` from the
-//! `imports` of its own package (`package.vlt`), or, for a std module, from std's map
-//! (`std/imports.vlt`); the build's conditions ([`LoadOptions::target`](super::LoadOptions))
+//! `imports` of its own package (`package.velt`), or, for a std module, from std's map
+//! (`std/imports.velt`); the build's conditions ([`LoadOptions::target`](super::LoadOptions))
 //! select the variant, which is then loaded like a relative import of that file.
 //!
 //! A `#name` resolves only in the package (or std) that defines it, so a package's variants are
@@ -109,7 +109,7 @@ impl Loader<'_, '_> {
         Ok(file)
     }
 
-    /// std's conditional imports: `std/imports.vlt` below `root`, read once (none without the
+    /// std's conditional imports: `std/imports.velt` below `root`, read once (none without the
     /// file; its errors are reported in it).
     fn std_imports(&mut self, root: &Path) -> &ImportMap {
         if self.std_imports.is_none() {
@@ -140,7 +140,7 @@ impl Loader<'_, '_> {
 /// `package.json` between it and the Velt root (the root's own excluded) is an npm package's: it
 /// names a package, has `exports` or `imports`, is a workspace member (`pnpm-workspace.yaml`,
 /// `workspaces`), lies below `node_modules`, or comes from a git dependency. Only nameless folder
-/// files (`{ "type": "module" }`) all the way up leave its `#name`s to `package.vlt`.
+/// files (`{ "type": "module" }`) all the way up leave its `#name`s to `package.velt`.
 fn npm_scope(
     npm: &mut vpm::npm::NpmResolver,
     importer: &Path,
@@ -192,7 +192,7 @@ fn package_scope(
                 "`{spec}` names a conditional import of the importing package, and `{}` is in no package",
                 importer.display()
             ),
-            vec!["a `#name` resolves through `imports` in the `package.vlt` of the package that imports it".into()],
+            vec!["a `#name` resolves through `imports` in the `package.velt` of the package that imports it".into()],
         )),
     }
 }
@@ -202,7 +202,7 @@ fn unknown(spec: &str, scope: &Scope, std_has: bool) -> LocateError {
     let mut notes = vec![if scope.std {
         format!("std's conditional imports are in `std/{STD_IMPORTS_FILE}`")
     } else {
-        format!("add it to `imports` in the package's `package.vlt`: `\"{spec}\": {{ js: \"./src/…\", default: \"./src/…\" }}`")
+        format!("add it to `imports` in the package's `package.velt`: `\"{spec}\": {{ js: \"./src/…\", default: \"./src/…\" }}`")
     }];
     if std_has {
         notes.push(format!(

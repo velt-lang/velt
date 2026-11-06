@@ -91,34 +91,37 @@ mod tests {
         let root = tmp.path().canonicalize().unwrap();
         let std = root.join("std");
         for f in [
-            "std/fs/index.vlt",
-            "std/net/index.vlt",
-            "std/net/bytes.vlt",
-            "app/std/x.vlt",
-            "std/collections/set.vlt",
-            "app/util.vlt",
-            "app/dup.vlt",
+            "std/fs/index.velt",
+            "std/net/index.velt",
+            "std/net/bytes.velt",
+            "app/std/x.velt",
+            "std/collections/set.velt",
+            "app/util.velt",
+            "app/dup.velt",
             "app/dup.ts",
-            "app/shapes/index.vlt",
-            "secret.vlt",
+            "app/shapes/index.velt",
+            "secret.velt",
         ] {
             write(&root, f);
         }
-        let main = root.join("app/main.vlt");
+        let main = root.join("app/main.velt");
         let resolve = |spec: &str| resolve_module(spec, &main, Some(&std), None, None);
-        assert_eq!(resolve("velt/fs"), Some(std.join("fs/index.vlt")));
+        assert_eq!(resolve("velt/fs"), Some(std.join("fs/index.velt")));
         assert_eq!(
             resolve("velt/collections/set"),
-            Some(std.join("collections/set.vlt"))
+            Some(std.join("collections/set.velt"))
         );
-        assert_eq!(resolve("./util"), Some(root.join("app/util.vlt")));
-        assert_eq!(resolve("./shapes"), Some(root.join("app/shapes/index.vlt")));
+        assert_eq!(resolve("./util"), Some(root.join("app/util.velt")));
+        assert_eq!(
+            resolve("./shapes"),
+            Some(root.join("app/shapes/index.velt"))
+        );
         assert_eq!(resolve("./dup.ts"), Some(root.join("app/dup.ts")));
         // From a std file, relative imports stay in std.
-        let net = std.join("net.vlt");
+        let net = std.join("net.velt");
         assert_eq!(
             resolve_module("./net/bytes", &net, Some(&std), None, None),
-            Some(std.join("net/bytes.vlt"))
+            Some(std.join("net/bytes.velt"))
         );
         // Ambiguous, wrong case, missing, or escaping the std root: nothing.
         for spec in [

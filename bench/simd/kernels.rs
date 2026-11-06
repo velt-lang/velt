@@ -1,4 +1,4 @@
-// The Rust side of kernels.vlt: the same plain loops, and the SIMD versions written the way
+// The Rust side of kernels.velt: the same plain loops, and the SIMD versions written the way
 // stable Rust offers, with the target's intrinsics (`core::arch`: NEON on aarch64, SSE2 on
 // x86-64), since `std::simd` is nightly-only.
 use std::hint::black_box;

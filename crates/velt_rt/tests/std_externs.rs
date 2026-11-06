@@ -1,4 +1,4 @@
-//! Every `declare function` in `std/**/*.vlt` must match the runtime's definition exactly, as the
+//! Every `declare function` in `std/**/*.velt` must match the runtime's definition exactly, as the
 //! compiler lowers it: WebAssembly links only identical signatures, so a mismatch native builds
 //! tolerate (an ignored `i32` result, a `u64` where a pointer is 64 bits wide) breaks wasm32.
 //!
@@ -90,14 +90,14 @@ fn velt_class(ty: &str) -> String {
 /// function`).
 fn velt_declarations() -> BTreeMap<String, (Sig, PathBuf)> {
     let mut paths = vec![];
-    files(&repo().join("std"), "vlt", &mut paths);
+    files(&repo().join("std"), "velt", &mut paths);
     let mut out = BTreeMap::new();
     for path in paths {
         let text = std::fs::read_to_string(&path).expect("read std source");
         let mut rest = text.as_str();
         while let Some(i) = rest.find("declare ") {
             let line_start = rest[..i].rfind('\n').map_or(0, |n| n + 1);
-            // `export declare …`: a module's bindings file (`rt.vlt`) shares them with the
+            // `export declare …`: a module's bindings file (`rt.velt`) shares them with the
             // module's other files.
             let lead = rest[line_start..i].trim();
             if !lead.is_empty() && lead != "export" {

@@ -120,7 +120,7 @@ mod tests {
         });
         assert_eq!(resp.status, 422, "{}", resp.body_text());
         assert!(
-            resp.body_text().contains("main.vlt"),
+            resp.body_text().contains("main.velt"),
             "{}",
             resp.body_text()
         );

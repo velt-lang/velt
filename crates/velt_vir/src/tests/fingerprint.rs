@@ -37,7 +37,7 @@ const BASE: Variant = Variant {
     offset: 8,
     callee: "_V1g",
     state_size: 24,
-    throw_loc: b" at std/a.vlt:1:1",
+    throw_loc: b" at std/a.velt:1:1",
     noalias: false,
     far: b"far",
     noreturn: true,
@@ -255,7 +255,7 @@ fn link_mode_counts_what_hot_reload_leaves_out() {
             ..BASE
         },
         Variant {
-            throw_loc: b" at std/a.vlt:2:1",
+            throw_loc: b" at std/a.velt:2:1",
             ..BASE
         },
         Variant {

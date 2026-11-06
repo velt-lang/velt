@@ -1,0 +1,100 @@
+// Package archives (src/archive.velt). crates/veltc/tests/registry_core.rs compares checksums and
+// refusals with vpm's.
+import { utf8Encode } from "velt/encoding";
+import { describe, expect, it } from "velt/test";
+import {
+  ArchiveEntry,
+  checkPackagePaths,
+  contentChecksum,
+  packArchive,
+  readArchive,
+} from "../src/archive";
+import { ArchiveError } from "../src/archive_error";
+
+function entry(path: string, text: string): ArchiveEntry {
+  return { path, bytes: utf8Encode(text) };
+}
+
+function raw(text: string): u8[] {
+  return utf8Encode(text);
+}
+
+function refusal(archive: u8[]): string {
+  try {
+    readArchive(archive, (p: string): bool => true);
+    return "accepted";
+  } catch (e) {
+    return e instanceof ArchiveError ? e.message : `not an ArchiveError: ${e.message}`;
+  }
+}
+
+/** The message of the `ArchiveError` `f` throws, or what happened instead. */
+function pathRefusal(f: () => void): string {
+  try {
+    f();
+    return "accepted";
+  } catch (e) {
+    return e instanceof ArchiveError ? e.message : `not an ArchiveError: ${e.message}`;
+  }
+}
+
+describe("archives", () => {
+  it("round-trip", () => {
+    const entries = [
+      entry("package.velt", "x"),
+      entry("src/lib.velt", "export function f() {}\n"),
+      entry("src/sub/x.velt", ""),
+    ];
+    const read = readArchive(packArchive(entries), (p: string): bool => true);
+    expect(read.length).toBe(3);
+    expect(read[1].path).toBe("src/lib.velt");
+    expect(read[1].bytes).toEqual(entries[1].bytes);
+    expect(contentChecksum(read)).toBe(contentChecksum(entries));
+  });
+
+  it("checksum the contents in path order", () => {
+    const a = [entry("package.velt", "p"), entry("src/a.velt", "a")];
+    const b = [entry("src/a.velt", "a"), entry("package.velt", "p")];
+    expect(contentChecksum(a)).toBe(contentChecksum(b));
+    expect(contentChecksum(a).startsWith("sha256:")).toBe(true);
+    expect(contentChecksum(a).length).toBe(7 + 64);
+    expect(contentChecksum([entry("package.velt", "q"), entry("src/a.velt", "a")])).not.toBe(
+      contentChecksum(a),
+    );
+  });
+
+  it("refuse unsafe paths and malformed archives", () => {
+    expect(refusal(raw("nope"))).toBe("not a Velt package archive");
+    for (const path of ["../x", "/etc/passwd", "src/../../x", "src//x", "./x", "a\\b", "c:x"]) {
+      expect(refusal(raw(`VELTPKG1\n${path}\n1\nx`))).toBe(
+        `archive contains a disallowed path \`${path}\``,
+      );
+    }
+    expect(refusal(raw("VELTPKG1\npackage.velt\n10\nabc"))).toBe("corrupt archive: truncated file");
+    expect(refusal(raw("VELTPKG1\npackage.velt\nten\nabc"))).toBe("corrupt archive: bad length");
+    expect(refusal(raw("VELTPKG1\npackage.velt"))).toBe("corrupt archive: missing newline");
+    expect(refusal(raw("VELTPKG1\npackage.velt\n+3\nabc"))).toBe("accepted");
+    expect(refusal([...raw("VELTPKG1\n"), 255, ...raw("\n0\n")])).toBe("corrupt archive: bad path");
+  });
+
+  it("hold only a package's files", () => {
+    const ok = [
+      entry("package.velt", ""),
+      entry("src/lib.velt", ""),
+      entry("native/Cargo.toml", ""),
+    ];
+    checkPackagePaths(ok, "native");
+    expect(pathRefusal(() => checkPackagePaths(ok, null))).toBe(
+      "archive contains a disallowed path `native/Cargo.toml`",
+    );
+    expect(pathRefusal(() => checkPackagePaths([entry("target/x", "")], null))).toBe(
+      "archive contains a disallowed path `target/x`",
+    );
+    expect(pathRefusal(() => checkPackagePaths([entry("velt.toml", "")], null))).toContain(
+      "cannot use this package archive",
+    );
+    expect(pathRefusal(() => packArchive([entry("src/a\nb", "")]))).toBe(
+      "archive contains a disallowed path `src/a\nb`",
+    );
+  });
+});

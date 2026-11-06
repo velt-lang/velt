@@ -279,18 +279,18 @@ fn overlapping_blocks_in_two_modules_are_errors_whatever_the_import_order() {
     std::fs::create_dir_all(&dir).unwrap();
     let write = |name: &str, src: &str| std::fs::write(dir.join(name), src).unwrap();
     write(
-        "d.vlt",
+        "d.velt",
         "export interface D { d(): string; }
          export struct Pair<A, B> { a: A; b: B; }",
     );
-    for (name, block) in [("first.vlt", PAIR_FIRST), ("second.vlt", PAIR_SECOND)] {
+    for (name, block) in [("first.velt", PAIR_FIRST), ("second.velt", PAIR_SECOND)] {
         write(
             name,
             &format!("import {{ D, Pair }} from \"./d\"; {block} export const x = 1;"),
         );
     }
     for order in [["first", "second"], ["second", "first"]] {
-        let main = dir.join(format!("main_{}.vlt", order[0]));
+        let main = dir.join(format!("main_{}.velt", order[0]));
         std::fs::write(
             &main,
             format!(

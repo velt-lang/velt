@@ -175,7 +175,7 @@ impl<T> IoResult<T> {
 }
 
 /// Node-style name of an error code, for the messages the runtime builds itself ([`fs_error`],
-/// [`op_error`]); `IoError.code` in Velt comes from the same table in std/native/error.vlt.
+/// [`op_error`]); `IoError.code` in Velt comes from the same table in std/native/error.velt.
 pub fn code_name(c: i32) -> &'static str {
     match c {
         code::OK => "",

@@ -95,7 +95,7 @@ as in Node.
   points. Positions count UTF-16 code units since #377 phase 2b
   ([design/strings.md](strings.md)).
 - `Math.random()`.
-- `Date` (prelude, `std/prelude/date.vlt`): JavaScript's, on velt/time, with months 0-11 and
+- `Date` (prelude, `std/prelude/date.velt`): JavaScript's, on velt/time, with months 0-11 and
   local-time getters. `console.log` prints a `Date` through its `[util.inspect.custom]()` (the ISO string, as
   Node). Loading it costs about 7 ms of checking per program (velt/time's modules join the
   prelude).

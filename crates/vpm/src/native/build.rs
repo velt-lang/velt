@@ -20,7 +20,7 @@ use crate::native::{
 /// What to build.
 #[derive(Clone, Copy, Debug)]
 pub struct BuildRequest<'a> {
-    /// Package root (contains package.vlt and the `native` crate directory).
+    /// Package root (contains package.velt and the `native` crate directory).
     pub root: &'a Path,
     /// Its manifest (must have `native`).
     pub manifest: &'a Manifest,
@@ -64,7 +64,7 @@ pub fn build(req: BuildRequest) -> Result<NativeMeta, String> {
         .manifest
         .native
         .as_ref()
-        .ok_or_else(|| format!("package `{name}` has no `native` in package.vlt"))?;
+        .ok_or_else(|| format!("package `{name}` has no `native` in package.velt"))?;
     let crate_manifest = req.root.join(&native.path).join("Cargo.toml");
     if !crate_manifest.is_file() {
         return Err(format!(

@@ -16,7 +16,7 @@ const CELL: &str = "function main() {
 ";
 
 fn velt(dir: &test_dir::TestDir, args: &[&str]) -> std::process::Output {
-    std::fs::write(dir.path().join("main.vlt"), CELL).unwrap();
+    std::fs::write(dir.path().join("main.velt"), CELL).unwrap();
     let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(args)
         .current_dir(dir.path())
@@ -33,7 +33,7 @@ fn velt(dir: &test_dir::TestDir, args: &[&str]) -> std::process::Output {
 #[test]
 fn debug_builds_report_cells_and_release_builds_do_not() {
     let dir = test_dir::TestDir::new();
-    let debug = velt(&dir, &["build", "main.vlt", "--emit", "vir"]);
+    let debug = velt(&dir, &["build", "main.velt", "--emit", "vir"]);
     let debug = String::from_utf8_lossy(&debug.stdout);
     // The checks follow the compiler's own build: a debug `velt` links the debug runtime.
     let checked = cfg!(debug_assertions);
@@ -44,7 +44,7 @@ fn debug_builds_report_cells_and_release_builds_do_not() {
     ] {
         assert_eq!(debug.contains(call), checked, "{call}:\n{debug}");
     }
-    let release = velt(&dir, &["build", "--release", "main.vlt", "--emit", "vir"]);
+    let release = velt(&dir, &["build", "--release", "main.velt", "--emit", "vir"]);
     let release = String::from_utf8_lossy(&release.stdout);
     assert!(!release.contains("velt_rt_cell_"), "{release}");
 }
@@ -52,6 +52,6 @@ fn debug_builds_report_cells_and_release_builds_do_not() {
 #[test]
 fn a_cell_used_by_one_task_runs() {
     let dir = test_dir::TestDir::new();
-    let out = velt(&dir, &["run", "main.vlt"]);
+    let out = velt(&dir, &["run", "main.velt"]);
     assert_eq!(String::from_utf8_lossy(&out.stdout), "a\n");
 }

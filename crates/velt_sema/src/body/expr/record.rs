@@ -1,4 +1,4 @@
-//! `Record<K, V>` (docs/internals/design/record.md): the prelude class std/prelude/record.vlt
+//! `Record<K, V>` (docs/internals/design/record.md): the prelude class std/prelude/record.velt
 //! with TypeScript's object syntax. `K` is `string` (an *open* record: keys may be missing) or a
 //! union of string literal types / a string enum (a *closed* record: every key is present).
 //!

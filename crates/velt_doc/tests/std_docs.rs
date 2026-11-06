@@ -5,7 +5,7 @@
 
 use std::path::{Path, PathBuf};
 
-fn vlt_files(dir: &Path, out: &mut Vec<PathBuf>) {
+fn velt_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let mut entries: Vec<PathBuf> = std::fs::read_dir(dir)
         .expect("read std")
         .map(|e| e.expect("dir entry").path())
@@ -13,8 +13,8 @@ fn vlt_files(dir: &Path, out: &mut Vec<PathBuf>) {
     entries.sort();
     for path in entries {
         if path.is_dir() {
-            vlt_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "vlt") {
+            velt_files(&path, out);
+        } else if path.extension().is_some_and(|e| e == "velt") {
             out.push(path);
         }
     }
@@ -24,7 +24,7 @@ fn vlt_files(dir: &Path, out: &mut Vec<PathBuf>) {
 fn std_declarations_have_doc_comments_not_plain_comments() {
     let std_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
     let mut files = vec![];
-    vlt_files(&std_dir, &mut files);
+    velt_files(&std_dir, &mut files);
     assert!(files.len() > 50, "{} std files", files.len());
     let mut lost = vec![];
     for file in &files {

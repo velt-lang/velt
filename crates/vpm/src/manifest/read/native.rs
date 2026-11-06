@@ -1,4 +1,4 @@
-//! Decoding the `native` object of `package.vlt`, with each check located at the value it
+//! Decoding the `native` object of `package.velt`, with each check located at the value it
 //! rejects.
 
 use super::{Reader, Value, ValueKind};

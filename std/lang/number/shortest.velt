@@ -1,0 +1,102 @@
+// velt/lang/number (internal): the shortest decimal digits of a double, in Velt (#1982): the
+// Schubfach algorithm (R. Giulietti, "The Schubfach way to render doubles", 2020; the JDK's
+// `DoubleToDecimal`). The double's rounding interval is scaled by a 126-bit power of ten
+// (std/lang/number/pow10.velt) to integers at 17 digits; the shortest decimal inside it is either
+// one digit shorter (a multiple of ten) or one of the two integers around the scaled value, the
+// closer one, the even one on a tie. JavaScript prints the same digits (Number::toString).
+//
+// Two changes from the JDK: a tiny subnormal is not given a second digit (Java prints
+// `4.9E-324`, JavaScript `5e-324`), so the one-digit-shorter test runs from two digits up.
+
+import { G, G_K_MIN } from "velt/lang/number/pow10";
+
+declare function velt_rt_math_umulh(a: u64, b: u64): u64;
+
+const MASK63: u64 = 0x7fffffffffffffff;
+const C_MIN: u64 = 0x10000000000000;
+const Q_MIN: i64 = -1074;
+// ceil(2^64 / 10), so `umulh(s, TENTH)` is `s / 10` for every `s` here (below 2^61).
+const TENTH: u64 = 0x19999999999999a0;
+
+/** A positive double as `f * 10^e`: `f` its shortest digits, possibly with trailing zeros. */
+export struct Shortest {
+  f: u64;
+  e: i64;
+}
+
+// floor(log10(2^e)).
+function flog10pow2(e: i64): i64 {
+  return (e * 661971961083) >> 41;
+}
+
+// floor(log10(3/4 * 2^e)).
+function flog10ThreeQuartersPow2(e: i64): i64 {
+  return (e * 661971961083 - 274743187321) >> 41;
+}
+
+// floor(log2(10^e)).
+function flog2pow10(e: i64): i64 {
+  return (e * 913124641741) >> 38;
+}
+
+// `g * cp / 2^127`, rounded to odd: the scaled value, with its last bit set when it is inexact.
+function rop(g1: u64, g0: u64, cp: u64): u64 {
+  const x1 = velt_rt_math_umulh(g0, cp);
+  const y0 = g1 * cp;
+  const y1 = velt_rt_math_umulh(g1, cp);
+  const z = (y0 >> 1) + x1;
+  const vbp = y1 + (z >> 63);
+  return vbp | (((z & MASK63) + MASK63) >> 63);
+}
+
+// The shortest digits of `c * 2^q`.
+function toDecimal(q: i64, c: u64): Shortest {
+  const out = c & 1;
+  const cb = c << 2;
+  const cbr = cb + 2;
+  let cbl = cb - 2;
+  let k = flog10pow2(q);
+  if (c == C_MIN && q != Q_MIN) {
+    // A power of two: the interval below it is half as wide.
+    cbl = cb - 1;
+    k = flog10ThreeQuartersPow2(q);
+  }
+  const h = (q + flog2pow10(-k) + 2) as u64;
+  const at = ((k - G_K_MIN) * 2) as usize;
+  const g1 = G[at];
+  const g0 = G[at + 1];
+  const vb = rop(g1, g0, cb << h);
+  const vbl = rop(g1, g0, cbl << h);
+  const vbr = rop(g1, g0, cbr << h);
+  const s = vb >> 2;
+  if (s >= 10) {
+    // One digit shorter: the multiples of ten around the value, when exactly one is inside.
+    const sp10 = 10 * velt_rt_math_umulh(s, TENTH);
+    const tp10 = sp10 + 10;
+    const upin = vbl + out <= sp10 << 2;
+    const wpin = (tp10 << 2) + out <= vbr;
+    if (upin != wpin) {
+      return Shortest { f: upin ? sp10 : tp10, e: k };
+    }
+  }
+  const t = s + 1;
+  const uin = vbl + out <= s << 2;
+  const win = (t << 2) + out <= vbr;
+  if (uin != win) {
+    return Shortest { f: uin ? s : t, e: k };
+  }
+  // Both inside: the closer one, the even one on a tie.
+  const cmp = (vb as i64) - (((s + t) << 1) as i64);
+  return Shortest { f: cmp < 0 || (cmp == 0 && (s & 1) == 0) ? s : t, e: k };
+}
+
+/** The shortest digits of `x`, finite and above 0. */
+export function shortest(x: f64): Shortest {
+  const bits = x.toBits();
+  const bq = ((bits >> 52) & 0x7ff) as i64;
+  const t = bits & 0xfffffffffffff;
+  if (bq != 0) {
+    return toDecimal(bq - 1075, C_MIN | t);
+  }
+  return toDecimal(Q_MIN, t);
+}

@@ -1,5 +1,5 @@
 // 4 owner tasks each keep a HashMap; 64 callers make 5000 request/reply calls each to the owner of
-// their key, over an unbounded mpsc channel plus a oneshot for the reply (pingpong_pinned.vlt).
+// their key, over an unbounded mpsc channel plus a oneshot for the reply (pingpong_pinned.velt).
 use std::collections::HashMap;
 use tokio::sync::{mpsc, oneshot};
 

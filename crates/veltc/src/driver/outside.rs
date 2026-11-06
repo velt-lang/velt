@@ -1,6 +1,6 @@
 //! Whether a program can reach the outside world (#1855 step 3): the runtime functions it can
 //! call from its entry ([`velt_opt::used_externs`]) that read or change something besides the
-//! program's own memory. A test harness is also the test runner (`std/test/run.vlt` `runRegistered`, which
+//! program's own memory. A test harness is also the test runner (`std/test/run.velt` `runRegistered`, which
 //! starts processes and reads files and the clock), so the runner is left out: what counts is
 //! what the tests reach, through the functions the harness registers. `velt test` keeps a test's result only
 //! for a program that reaches none: such a test passes again as long as its program is the same.

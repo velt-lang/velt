@@ -19,7 +19,7 @@ const PROGRAM: &str = r#"function main() {
   for (const a of argv.slice(2)) {
     console.log(`[${a}]`);
   }
-  console.log(argv[1].endsWith("argv_prog.vlt") || argv[1].endsWith("argv_prog.ts"));
+  console.log(argv[1].endsWith("argv_prog.velt") || argv[1].endsWith("argv_prog.ts"));
   console.log(argv[1] == argv[0]);
   console.log(process.env.VELT_SCRIPT == null);
   console.log(argv[0]);
@@ -79,7 +79,7 @@ fn run_and_built_program_follow_node() {
     runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
     let dir = test_dir::TestDir::new();
     let spaced = spaced_dir(dir.path());
-    let src = spaced.join("argv_prog.vlt");
+    let src = spaced.join("argv_prog.velt");
     std::fs::write(&src, PROGRAM).unwrap();
 
     // `velt run`: the script is the source file. What follows the file is the program's, with
@@ -146,11 +146,11 @@ fn test_files_see_themselves_as_the_script() {
     runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
     let dir = test_dir::TestDir::new();
     let spaced = spaced_dir(dir.path());
-    let file = spaced.join("argv.test.vlt");
+    let file = spaced.join("argv.test.velt");
     std::fs::write(
         &file,
         "export function test_script() {\n  const argv = process.argv;\n  \
-         assertEq(argv.length, 2);\n  assert(argv[1].endsWith(\"argv.test.vlt\"));\n  \
+         assertEq(argv.length, 2);\n  assert(argv[1].endsWith(\"argv.test.velt\"));\n  \
          assert(argv[1] != argv[0]);\n}\n",
     )
     .unwrap();
@@ -171,7 +171,7 @@ fn stdout_is_flushed_before_stdin_is_read() {
     use std::io::{Read, Write};
     runtime_support::build_native_runtime(Path::new(env!("CARGO_MANIFEST_DIR")));
     let dir = test_dir::TestDir::new();
-    let file = dir.path().join("prompt.vlt");
+    let file = dir.path().join("prompt.velt");
     std::fs::write(
         &file,
         "import { readLineSync } from \"velt/process\";\n\

@@ -51,7 +51,7 @@ impl ModuleIndex {
         }
         if spec.starts_with("./") || spec.starts_with("../") {
             // `./x.ts`, `./x.js` (TypeScript's spelling of `x.ts`): the module `x`.
-            let spec = [".vlt", ".tsx", ".ts", ".jsx", ".js"]
+            let spec = [".velt", ".tsx", ".ts", ".jsx", ".js"]
                 .iter()
                 .find_map(|ext| spec.strip_suffix(ext))
                 .unwrap_or(spec);
@@ -255,13 +255,13 @@ mod tests {
         assert_eq!(idx.resolve("pkg", "./util.ts"), Some(4));
         assert_eq!(idx.resolve("pkg", "./util.js"), Some(4));
         assert_eq!(idx.resolve("pkg/shapes/circle", "../util"), Some(4));
-        // `pkg/shapes` is shapes/index.vlt: `./circle` is next to it.
+        // `pkg/shapes` is shapes/index.velt: `./circle` is next to it.
         assert_eq!(idx.resolve("pkg/shapes", "./circle"), Some(3));
         assert_eq!(idx.resolve("pkg/util", "./shapes/index"), Some(2));
         assert_eq!(idx.resolve("pkg", "pkg/util"), Some(4));
         assert_eq!(idx.resolve("pkg", "../../x"), None);
         assert_eq!(idx.resolve("pkg", "other"), None);
-        // `pkg/shapes/index.vlt` next to `pkg/circle.vlt`: its `./circle` is in its folder.
+        // `pkg/shapes/index.velt` next to `pkg/circle.velt`: its `./circle` is in its folder.
         let mut ms: Vec<DocModule> = ["pkg/circle", "pkg/shapes", "pkg/shapes/circle"]
             .iter()
             .map(|n| extract(n, ""))

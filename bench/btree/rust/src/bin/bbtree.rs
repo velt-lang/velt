@@ -1,4 +1,4 @@
-//! bbtree's single-threaded `BBTreeMap` on btree.vlt's workloads (`get16`: its `get_many`).
+//! bbtree's single-threaded `BBTreeMap` on btree.velt's workloads (`get16`: its `get_many`).
 use bbtree::unsync::BBTreeMap;
 use btree_bench::{fold, ints, strings, Map};
 

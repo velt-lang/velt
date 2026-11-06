@@ -8,8 +8,8 @@ W=bench/websocket/.work
 mkdir -p $W
 cargo build --release -q -p veltc -p velt_rt
 V=target/release/velt
-$V build --release bench/websocket/velt-raw/server.vlt -o $W/velt-raw-server
-$V build --release bench/websocket/velt/server.vlt -o $W/velt-server
+$V build --release bench/websocket/velt-raw/server.velt -o $W/velt-raw-server
+$V build --release bench/websocket/velt/server.velt -o $W/velt-server
 (cd bench/websocket/load && cargo build --release -q)
 (cd bench/websocket/rust && cargo build --release -q)
 (cd bench/websocket/node && npm ci --silent)

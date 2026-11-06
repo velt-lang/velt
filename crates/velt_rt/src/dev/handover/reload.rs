@@ -89,7 +89,7 @@ mod tests {
     fn reload_round_trip() {
         let mut server = Server::bind().unwrap();
         let name = server.name().to_os_string();
-        let files = vec![PathBuf::from("/a/main.vlt")];
+        let files = vec![PathBuf::from("/a/main.velt")];
         let sent = files.clone();
         let host = std::thread::spawn(move || {
             let stream = report_build(&name, true, &sent).unwrap().unwrap();

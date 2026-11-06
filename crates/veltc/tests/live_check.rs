@@ -38,13 +38,13 @@ fn build(dir: &Path, args: &[&str], check: &str) -> Vec<u8> {
 #[test]
 fn the_check_changes_no_vir() {
     for golden in [
-        "tests/golden/m1/hello.vlt",
-        "tests/golden/lang/any_array_view_args.vlt",
-        "tests/golden/lang/any_call_order.vlt",
-        "tests/golden/lang/generator_iface_to_thread_panics.vlt",
-        "tests/golden/lang/iface_any_args_optional_array_field.vlt",
-        "tests/golden/lang/hook_shapes.vlt",
-        "tests/golden/lang/interface_upcast_write.vlt",
+        "tests/golden/m1/hello.velt",
+        "tests/golden/lang/any_array_view_args.velt",
+        "tests/golden/lang/any_call_order.velt",
+        "tests/golden/lang/generator_iface_to_thread_panics.velt",
+        "tests/golden/lang/iface_any_args_optional_array_field.velt",
+        "tests/golden/lang/hook_shapes.velt",
+        "tests/golden/lang/interface_upcast_write.velt",
     ] {
         assert!(vir(golden, "0") == vir(golden, "1"), "{golden}");
     }
@@ -56,11 +56,11 @@ fn the_check_changes_no_vir() {
 fn an_async_host_function_lowers_with_the_check_on() {
     let dir = test_dir::TestDir::new();
     std::fs::write(
-        dir.path().join("main.vlt"),
+        dir.path().join("main.velt"),
         "declare host(\"env\") async function f(): Promise<i64>;\n\
          function main(): void {\n  spawn(f());\n  console.log(\"ok\");\n}\n",
     )
     .expect("write");
-    let args = ["main.vlt", "--target", "wasm32-unknown-unknown"];
+    let args = ["main.velt", "--target", "wasm32-unknown-unknown"];
     assert!(build(dir.path(), &args, "1") == build(dir.path(), &args, "0"));
 }

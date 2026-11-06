@@ -2,7 +2,7 @@
 //! which libraries wrap and call with an explicit `this`
 //! (`original.apply(this, arguments)`). In a program that has loaded `Proxy`, a member read of
 //! the prelude's `ObjectPrototype` naming `Array.prototype` asks std's hook
-//! `arrayPrototypeMember(key)` (std/lang/proxy/array_apply.vlt): an array method is an
+//! `arrayPrototypeMember(key)` (std/lang/proxy/array_apply.velt): an array method is an
 //! `ArrayMethod`, whose `apply`, `call` and `bind` run it on the `this` they pass, through the
 //! traps of a proxy of an array, or of a proxy without traps around an array. Any other
 //! prototype or key, and a program without `Proxy`, read `undefined` as before.
@@ -18,7 +18,7 @@ use crate::vir::{self, Operand, Place, Rvalue, Ty};
 /// `hook_calls.rs`).
 const PROTOTYPE_MEMBER: &str = velt_common::std_hook!(array_prototype_member);
 
-/// The name of the prelude's prototype class (std/prelude/object_prototype.vlt).
+/// The name of the prelude's prototype class (std/prelude/object_prototype.velt).
 const OBJECT_PROTOTYPE: &str = "::ObjectPrototype";
 
 impl FnLower<'_, '_> {

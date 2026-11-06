@@ -29,7 +29,7 @@ use crate::body::recheck::Mark;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H};
 
-/// The standard arrays' `map` (std/prelude/array.vlt).
+/// The standard arrays' `map` (std/prelude/array.velt).
 const ARRAY_MAP: &str = velt_common::std_item!(prelude_array, "T[].map");
 
 /// The element of `e` = `xs.map((x) => <el>)` that a fold would make a string, if `e` has that

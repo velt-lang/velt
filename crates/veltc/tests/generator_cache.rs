@@ -7,7 +7,7 @@ use std::process::Command;
 fn run(dir: &Path, cache: &Path) -> String {
     let out = Command::new(env!("CARGO_BIN_EXE_velt"))
         .arg("run")
-        .arg(dir.join("main.vlt"))
+        .arg(dir.join("main.velt"))
         // Its own `target/velt`: the tests run at once.
         .current_dir(dir)
         .env("VELT_BUILD_CACHE", cache)
@@ -21,10 +21,10 @@ fn run(dir: &Path, cache: &Path) -> String {
     String::from_utf8_lossy(&out.stdout).into_owned()
 }
 
-/// `velt run main.vlt` in `dir` (the path as typed: relative): its output, or its errors.
+/// `velt run main.velt` in `dir` (the path as typed: relative): its output, or its errors.
 fn run_relative(dir: &Path, cache: &Path) -> Result<String, String> {
     let out = Command::new(env!("CARGO_BIN_EXE_velt"))
-        .args(["run", "main.vlt"])
+        .args(["run", "main.velt"])
         .current_dir(dir)
         .env("VELT_BUILD_CACHE", cache)
         .output()
@@ -51,22 +51,22 @@ fn a_changed_generator_is_run_again() {
     let cache = tmp.path().join("cache");
     std::fs::create_dir_all(&dir).expect("dir");
     std::fs::write(
-        dir.join("main.vlt"),
+        dir.join("main.velt"),
         "declare generated(\"./gen\") function hello<T>(): string;\n\
          class User {}\n\
          function main() { console.log(hello<User>()); }\n",
     )
     .expect("main");
-    std::fs::write(dir.join("gen.vlt"), generator("hello")).expect("gen");
+    std::fs::write(dir.join("gen.velt"), generator("hello")).expect("gen");
     assert_eq!(run(&dir, &cache), "hello User\n");
     // A cached result: the same output.
     assert_eq!(run(&dir, &cache), "hello User\n");
     // The generator changed: its output must not come from the cache.
-    std::fs::write(dir.join("gen.vlt"), generator("goodbye")).expect("gen");
+    std::fs::write(dir.join("gen.velt"), generator("goodbye")).expect("gen");
     assert_eq!(run(&dir, &cache), "goodbye User\n");
 }
 
-/// Programs run by the same relative path (`velt run main.vlt`) from their own directories are
+/// Programs run by the same relative path (`velt run main.velt`) from their own directories are
 /// different programs to the caches: each gets its own generators' output, and a generator that
 /// reads the clock is rejected as when run by its full path.
 #[test]
@@ -80,8 +80,8 @@ fn programs_at_the_same_relative_path_have_their_own_generators() {
     for (name, text) in [("a", "hello"), ("b", "goodbye"), ("c", "welcome")] {
         let dir = tmp.path().join(name);
         std::fs::create_dir_all(&dir).expect("dir");
-        std::fs::write(dir.join("main.vlt"), main).expect("main");
-        std::fs::write(dir.join("gen.vlt"), generator(text)).expect("gen");
+        std::fs::write(dir.join("main.velt"), main).expect("main");
+        std::fs::write(dir.join("gen.velt"), generator(text)).expect("gen");
         assert_eq!(
             run_relative(&dir, &cache),
             Ok(format!(
@@ -100,9 +100,9 @@ fn programs_at_the_same_relative_path_have_their_own_generators() {
     }
     let dir = tmp.path().join("clock");
     std::fs::create_dir_all(&dir).expect("dir");
-    std::fs::write(dir.join("main.vlt"), main).expect("main");
+    std::fs::write(dir.join("main.velt"), main).expect("main");
     std::fs::write(
-        dir.join("gen.vlt"),
+        dir.join("gen.velt"),
         "import { InstanceRequest, Output } from \"velt/generate\";
          export function hello(req: InstanceRequest, out: Output): void {
            out.line(`return ${out.literal(Date.now().toString())};`);
@@ -116,7 +116,7 @@ fn programs_at_the_same_relative_path_have_their_own_generators() {
     }
 }
 
-/// The generator module resolves to another file (`./gen` was `gen/index.vlt`; a `gen.vlt` added
+/// The generator module resolves to another file (`./gen` was `gen/index.velt`; a `gen.velt` added
 /// next to it wins): the cached output and the offered code are stale.
 #[test]
 fn a_generator_that_resolves_to_another_file_is_run_again() {
@@ -125,16 +125,16 @@ fn a_generator_that_resolves_to_another_file_is_run_again() {
     let cache = tmp.path().join("cache");
     std::fs::create_dir_all(dir.join("gen")).expect("dir");
     std::fs::write(
-        dir.join("main.vlt"),
+        dir.join("main.velt"),
         "declare generated(\"./gen\") function hello<T>(): string;\n\
          class User {}\n\
          function main() { console.log(hello<User>()); }\n",
     )
     .expect("main");
-    std::fs::write(dir.join("gen").join("index.vlt"), generator("hello")).expect("gen");
+    std::fs::write(dir.join("gen").join("index.velt"), generator("hello")).expect("gen");
     assert_eq!(run(&dir, &cache), "hello User\n");
     assert_eq!(run(&dir, &cache), "hello User\n");
-    std::fs::write(dir.join("gen.vlt"), generator("goodbye")).expect("gen");
+    std::fs::write(dir.join("gen.velt"), generator("goodbye")).expect("gen");
     assert_eq!(run(&dir, &cache), "goodbye User\n");
 }
 
@@ -144,7 +144,7 @@ fn a_generator_that_resolves_to_another_file_is_run_again() {
 #[test]
 fn a_refused_instance_is_reported_once() {
     let tmp = tempfile::tempdir().expect("temp dir");
-    let main = tmp.path().join("main.vlt");
+    let main = tmp.path().join("main.velt");
     std::fs::write(
         &main,
         "class Client {\n\
@@ -198,8 +198,8 @@ fn offered_code_is_used_only_while_it_fits() {
     let dir = tmp.path().join("prog");
     let cache = tmp.path().join("cache");
     std::fs::create_dir_all(&dir).expect("dir");
-    std::fs::write(dir.join("gen.vlt"), FIELDS).expect("gen");
-    let main = dir.join("main.vlt");
+    std::fs::write(dir.join("gen.velt"), FIELDS).expect("gen");
+    let main = dir.join("main.velt");
     let write = |text: String| std::fs::write(&main, text).expect("main");
     write(program(
         "class User { name = \"\"; }\nclass Admin { level = 1; }",
@@ -234,9 +234,9 @@ fn generated_code_is_added_to_the_check_that_needs_it() {
     let tmp = tempfile::tempdir().expect("temp dir");
     let dir = tmp.path().join("prog");
     std::fs::create_dir_all(&dir).expect("dir");
-    std::fs::write(dir.join("gen.vlt"), FIELDS).expect("gen");
+    std::fs::write(dir.join("gen.velt"), FIELDS).expect("gen");
     std::fs::write(
-        dir.join("main.vlt"),
+        dir.join("main.velt"),
         program(
             "class User { name = \"\"; }",
             "console.log(fields<User>()); console.log(fields<User[]>());",
@@ -245,7 +245,7 @@ fn generated_code_is_added_to_the_check_that_needs_it() {
     .expect("main");
     let out = Command::new(env!("CARGO_BIN_EXE_velt"))
         .args(["check", "-v"])
-        .arg(dir.join("main.vlt"))
+        .arg(dir.join("main.velt"))
         .current_dir(&dir)
         .env("VELT_BUILD_CACHE", tmp.path().join("cache"))
         .output()
@@ -276,7 +276,7 @@ fn comparisons_of_maps_are_generated_in_one_run() {
     let emitted = tmp.path().join("emitted");
     std::fs::create_dir_all(&dir).expect("dir");
     std::fs::write(
-        dir.join("main.vlt"),
+        dir.join("main.velt"),
         "type Inner = { x: number; m: Map<string, number>; r: Record<string, boolean[]> };\n\
          function main() {\n\
          \x20 const a: Inner = { x: 1, m: new Map([[\"a\", 1]]), r: { k: [true] } };\n\
@@ -287,7 +287,7 @@ fn comparisons_of_maps_are_generated_in_one_run() {
     .expect("main");
     let out = Command::new(env!("CARGO_BIN_EXE_velt"))
         .arg("run")
-        .arg(dir.join("main.vlt"))
+        .arg(dir.join("main.velt"))
         .current_dir(&dir)
         .env("VELT_BUILD_CACHE", tmp.path().join("cache"))
         .env("VELT_EMIT_GENERATED", &emitted)
@@ -301,7 +301,7 @@ fn comparisons_of_maps_are_generated_in_one_run() {
         .map(|e| e.expect("entry").file_name().to_string_lossy().into_owned())
         .collect();
     runs.sort();
-    assert_eq!(runs, ["1.vlt"], "one run of the generator");
+    assert_eq!(runs, ["1.velt"], "one run of the generator");
 }
 
 /// Generated comparisons report no call site (they never panic): each is one function, not a
@@ -310,7 +310,7 @@ fn comparisons_of_maps_are_generated_in_one_run() {
 #[test]
 fn generated_comparisons_are_not_copied_per_call_site() {
     let tmp = tempfile::tempdir().expect("temp dir");
-    let main = tmp.path().join("main.vlt");
+    let main = tmp.path().join("main.velt");
     std::fs::write(
         &main,
         "function main() {\n\
@@ -347,7 +347,7 @@ fn generated_comparisons_are_not_copied_per_call_site() {
 #[test]
 fn a_type_with_an_error_reaches_no_generator() {
     let tmp = tempfile::tempdir().expect("temp dir");
-    let main = tmp.path().join("main.vlt");
+    let main = tmp.path().join("main.velt");
     std::fs::write(
         &main,
         "type W = { s: Nope };\n\
@@ -374,7 +374,7 @@ fn a_type_with_an_error_reaches_no_generator() {
     assert!(!stderr.contains("JSON form"), "{stderr}");
 }
 
-/// `velt <args>` in a new project `dir` whose `main.vlt` asks `gen.vlt` for `hello<User>()`, with
+/// `velt <args>` in a new project `dir` whose `main.velt` asks `gen.velt` for `hello<User>()`, with
 /// `env` set: whether it succeeded, and its stdout and stderr.
 fn velt_in(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String, String) {
     let mut cmd = Command::new(env!("CARGO_BIN_EXE_velt"));
@@ -392,13 +392,13 @@ fn velt_in(dir: &Path, args: &[&str], env: &[(&str, &str)]) -> (bool, String, St
 fn hello_project(gen: &str) -> tempfile::TempDir {
     let tmp = tempfile::tempdir().expect("temp dir");
     std::fs::write(
-        tmp.path().join("main.vlt"),
+        tmp.path().join("main.velt"),
         "declare generated(\"./gen\") function hello<T>(): string;\n\
          class User {}\n\
          function main() { console.log(hello<User>()); }\n",
     )
     .expect("main");
-    std::fs::write(tmp.path().join("gen.vlt"), gen).expect("gen");
+    std::fs::write(tmp.path().join("gen.velt"), gen).expect("gen");
     tmp
 }
 
@@ -417,7 +417,7 @@ fn an_endless_generator_is_stopped() {
     for _ in 0..2 {
         let (ok, _, err) = velt_in(
             tmp.path(),
-            &["check", "main.vlt"],
+            &["check", "main.velt"],
             &[("VELT_GENERATOR_TIMEOUT", "0.5")],
         );
         assert!(!ok, "{err}");
@@ -440,7 +440,7 @@ fn printed_records_are_not_read() {
          \x20 out.line(`return ${out.literal(\"hello \" + req.model.type(req.args[0]).display)};`);\n\
          }\n",
     );
-    let (ok, out, err) = velt_in(tmp.path(), &["run", "main.vlt"], &[]);
+    let (ok, out, err) = velt_in(tmp.path(), &["run", "main.velt"], &[]);
     assert!(ok, "{err}");
     assert_eq!(out, "hello User\n");
 }
@@ -450,11 +450,11 @@ fn printed_records_are_not_read() {
 #[test]
 fn no_generators_names_the_generator() {
     let tmp = hello_project(&generator("hello"));
-    let (ok, _, err) = velt_in(tmp.path(), &["build", "main.vlt"], &[]);
+    let (ok, _, err) = velt_in(tmp.path(), &["build", "main.velt"], &[]);
     assert!(ok, "{err}");
     for args in [
-        &["build", "--no-generators", "main.vlt"][..],
-        &["check", "--no-generators", "main.vlt"],
+        &["build", "--no-generators", "main.velt"][..],
+        &["check", "--no-generators", "main.velt"],
     ] {
         let (ok, _, err) = velt_in(tmp.path(), args, &[]);
         assert!(!ok, "{args:?}: {err}");
@@ -476,7 +476,7 @@ fn a_generator_asks_only_for_its_own_functions() {
          \x20 out.line(`return \"x\";`);\n\
          }\n",
     );
-    let (ok, _, err) = velt_in(tmp.path(), &["check", "main.vlt"], &[]);
+    let (ok, _, err) = velt_in(tmp.path(), &["check", "main.velt"], &[]);
     assert!(!ok, "{err}");
     assert!(
         err.contains("is not a generated function of this generator"),
@@ -497,7 +497,7 @@ fn a_generator_that_prints_too_much_is_stopped() {
          \x20 out.line(`return \"never\";`);\n\
          }\n",
     );
-    let (ok, _, err) = velt_in(tmp.path(), &["check", "main.vlt"], &[]);
+    let (ok, _, err) = velt_in(tmp.path(), &["check", "main.velt"], &[]);
     assert!(!ok, "{err}");
     assert!(
         err.contains("wrote more than 128 MB to its standard output"),

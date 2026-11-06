@@ -1,4 +1,4 @@
-// Re-exported defaults, from a `.ts` module of `.vlt` and `.ts` modules.
+// Re-exported defaults, from a `.ts` module of `.velt` and `.ts` modules.
 export { default } from "./greet";
 export { default as Point } from "./point";
 export { default as sum, default as plus } from "./add";

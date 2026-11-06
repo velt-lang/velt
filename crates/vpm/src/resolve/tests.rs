@@ -26,7 +26,7 @@ fn write_package(dir: &Path, name: &str, version: &str, deps: &str) {
         "export const pkg: Package = {{ name: \"{name}\", version: \"{version}\", dependencies: {{ {deps} }} }};"
     );
     std::fs::write(dir.join(crate::manifest::MANIFEST_FILE), manifest).unwrap();
-    std::fs::write(dir.join("src/lib.vlt"), format!("// {name} {version}\n")).unwrap();
+    std::fs::write(dir.join("src/lib.velt"), format!("// {name} {version}\n")).unwrap();
 }
 
 impl Env {

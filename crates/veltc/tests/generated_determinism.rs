@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 /// The golden whose generated JSON writers erase to one layout.
 fn program() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/lang/union_erased_layout.vlt")
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/lang/union_erased_layout.velt")
 }
 
 /// The generated modules (path and text, sorted) and the VIR of one build in a fresh home.

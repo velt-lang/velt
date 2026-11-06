@@ -1,4 +1,4 @@
-// N-body simulation (same algorithm and operation order as nbody.vlt).
+// N-body simulation (same algorithm and operation order as nbody.velt).
 use std::f64::consts::PI;
 const SOLAR_MASS: f64 = 4.0 * PI * PI;
 const DAYS_PER_YEAR: f64 = 365.24;

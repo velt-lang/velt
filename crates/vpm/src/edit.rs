@@ -1,4 +1,4 @@
-//! `velt add`'s edit of a user's `package.vlt`: the new dependency is spliced into the source text
+//! `velt add`'s edit of a user's `package.velt`: the new dependency is spliced into the source text
 //! at syntax-tree spans and the file is formatted with `velt fmt`, so comments survive.
 
 use std::path::Path;
@@ -68,7 +68,7 @@ pub fn add_dependency_text(
     Ok(out)
 }
 
-/// [`add_dependency_text`] applied to `<root>/package.vlt` on disk.
+/// [`add_dependency_text`] applied to `<root>/package.velt` on disk.
 pub fn add_dependency(root: &Path, name: &str, spec: &DependencySpec) -> Result<(), String> {
     let path = root.join(MANIFEST_FILE);
     let text = std::fs::read_to_string(&path)

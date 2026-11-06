@@ -1,7 +1,7 @@
-//! The Rust counterpart of `bench/sqlite/rows.vlt`: the same in-memory database, queries and
+//! The Rust counterpart of `bench/sqlite/rows.velt`: the same in-memory database, queries and
 //! output, with rusqlite (bundled SQLite, cached statements), serde_json and mimalloc (the Velt
 //! runtime's allocator). Prints the bytes written, which must equal the Velt program's. Usage:
-//! rows [feed|post|both|scan|point] [rounds]; `scan` and `point` are bench/sqlite/engine.vlt's
+//! rows [feed|post|both|scan|point] [rounds]; `scan` and `point` are bench/sqlite/engine.velt's
 //! (all 2000 posts into structs per round; one post by its rowid, 10 a round).
 
 use rusqlite::Connection;

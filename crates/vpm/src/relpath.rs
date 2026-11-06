@@ -107,6 +107,9 @@ mod tests {
         assert_eq!(relative(Path::new("/a/b/c"), Path::new("/a/x")), "../b/c");
         assert_eq!(relative(Path::new("/a/b"), Path::new("/a/b")), ".");
         assert_eq!(relative(Path::new("/a/b/c/d"), Path::new("/a/b")), "c/d");
-        assert_eq!(relative(Path::new("src/x.vlt"), Path::new("")), "src/x.vlt");
+        assert_eq!(
+            relative(Path::new("src/x.velt"), Path::new("")),
+            "src/x.velt"
+        );
     }
 }

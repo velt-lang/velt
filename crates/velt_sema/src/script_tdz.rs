@@ -37,7 +37,7 @@ pub(crate) fn check(cx: &mut Ctx) {
         cx.promoted_consts.extend(early.promoted);
         for (name, what, at) in early.direct {
             // Without statements, constants may be declared in any order; only the default
-            // export is held to it, as `.ts` and `.vlt` files alike read it where it stands.
+            // export is held to it, as `.ts` and `.velt` files alike read it where it stands.
             if scripts.is_empty() && !default_expr.is_some_and(|s| s.lo <= at.lo && at.hi <= s.hi) {
                 continue;
             }

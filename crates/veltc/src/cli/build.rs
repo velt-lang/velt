@@ -149,14 +149,14 @@ pub(super) fn take_value(
     }
 }
 
-/// `--cpu`'s value, which is not a source file: `velt build --cpu a.vlt` lacks the CPU.
+/// `--cpu`'s value, which is not a source file: `velt build --cpu a.velt` lacks the CPU.
 pub(super) fn take_cpu(
     inline: Option<&str>,
     it: &mut impl Iterator<Item = OsString>,
 ) -> Result<String, String> {
     let cpu = take_value(inline, it, "--cpu")?;
     let file =
-        [".vlt", ".ts", ".tsx"].iter().any(|e| cpu.ends_with(e)) || cpu.contains(['/', '\\']);
+        [".velt", ".ts", ".tsx"].iter().any(|e| cpu.ends_with(e)) || cpu.contains(['/', '\\']);
     if file {
         return Err(format!(
             "`--cpu` expects a CPU name (such as `x86-64-v3` or `native`), not the file `{cpu}`"
@@ -192,8 +192,8 @@ mod tests {
 
     #[test]
     fn build_defaults() {
-        let b = build(&["build", "main.vlt"]);
-        assert_eq!(b.input, Some(PathBuf::from("main.vlt")));
+        let b = build(&["build", "main.velt"]);
+        assert_eq!(b.input, Some(PathBuf::from("main.velt")));
         assert_eq!(
             (b.output, b.release, b.target, b.emit, b.verbose, b.locked),
             (None, false, None, Emit::Exe, false, false)
@@ -210,7 +210,7 @@ mod tests {
             "out/x",
             "--release",
             "-g",
-            "a.vlt",
+            "a.velt",
             "--target",
             "x86_64-unknown-linux-gnu",
             "--emit",
@@ -220,40 +220,40 @@ mod tests {
             "--backend",
             "llvm",
         ]);
-        assert_eq!(b.input, Some(PathBuf::from("a.vlt")));
+        assert_eq!(b.input, Some(PathBuf::from("a.velt")));
         assert_eq!(b.output, Some(PathBuf::from("out/x")));
         assert!(b.release && b.debug_info && b.verbose && b.locked);
         assert_eq!(b.target.as_deref(), Some("x86_64-unknown-linux-gnu"));
         assert_eq!(b.emit, Emit::Vir);
         assert_eq!(b.backend, Some(Backend::Llvm));
-        let b = build(&["build", "a.vlt", "--emit=llvm", "--backend=cranelift"]);
+        let b = build(&["build", "a.velt", "--emit=llvm", "--backend=cranelift"]);
         assert_eq!((b.emit, b.backend), (Emit::Llvm, Some(Backend::Cranelift)));
-        let b = build(&["build", "a.vlt", "--report", "numbers"]);
+        let b = build(&["build", "a.velt", "--report", "numbers"]);
         assert!(b.report_numbers);
-        assert!(p(&["build", "a.vlt", "--report=speed"]).is_err());
+        assert!(p(&["build", "a.velt", "--report=speed"]).is_err());
         assert!(build(&["build", "--json"]).json);
         assert!(
-            p(&["run", "--json", "a.vlt"]).is_err(),
+            p(&["run", "--json", "a.velt"]).is_err(),
             "only `build` prints JSON"
         );
-        let b = build(&["build", "a.vlt", "--cpu", "x86-64-v3"]);
+        let b = build(&["build", "a.velt", "--cpu", "x86-64-v3"]);
         assert_eq!(b.cpu.as_deref(), Some("x86-64-v3"));
         assert_eq!(
             build(&["build", "--cpu=native"]).cpu.as_deref(),
             Some("native")
         );
-        let err = p(&["build", "--cpu", "a.vlt"]).unwrap_err();
-        assert!(err.contains("not the file `a.vlt`"), "{err}");
-        assert!(p(&["run", "--cpu=src/main.vlt"]).is_err());
-        let b = build(&["build", "a.vlt", "--timings"]);
+        let err = p(&["build", "--cpu", "a.velt"]).unwrap_err();
+        assert!(err.contains("not the file `a.velt`"), "{err}");
+        assert!(p(&["run", "--cpu=src/main.velt"]).is_err());
+        let b = build(&["build", "a.velt", "--timings"]);
         assert!(b.timings && b.verbose, "--timings implies -v");
-        match p(&["run", "--target", "wasm32-wasip1", "a.vlt"]).unwrap() {
+        match p(&["run", "--target", "wasm32-wasip1", "a.velt"]).unwrap() {
             Command::Run { build, .. } => {
                 assert_eq!(build.target.as_deref(), Some("wasm32-wasip1"))
             }
             other => panic!("{other:?}"),
         }
-        let b = build(&["build", "a.vlt", "--emit=obj", "--target=t", "--output=o"]);
+        let b = build(&["build", "a.velt", "--emit=obj", "--target=t", "--output=o"]);
         assert_eq!(
             (b.emit, b.target.as_deref(), b.output),
             (Emit::Obj, Some("t"), Some(PathBuf::from("o")))
@@ -263,7 +263,7 @@ mod tests {
     #[test]
     fn host_names_a_package() {
         // The package (a host package of the build's dependencies) sets the target, later.
-        let b = build(&["build", "--host", "host-edge", "a.vlt"]);
+        let b = build(&["build", "--host", "host-edge", "a.velt"]);
         assert_eq!(
             (b.host.as_deref(), b.target.as_deref()),
             (Some("host-edge"), None)
@@ -273,7 +273,7 @@ mod tests {
             (b.host.as_deref(), b.target.as_deref()),
             (Some("@acme/host"), Some("t"))
         );
-        let err = p(&["run", "--host", "host-edge", "a.vlt"]).unwrap_err();
+        let err = p(&["run", "--host", "host-edge", "a.velt"]).unwrap_err();
         assert!(
             err.contains("`velt run` cannot run a `--host` build"),
             "{err}"
@@ -281,7 +281,7 @@ mod tests {
         assert!(p(&["build", "--host"])
             .unwrap_err()
             .contains("expects a value"));
-        assert_eq!(build(&["build", "a.vlt"]).host, None);
+        assert_eq!(build(&["build", "a.velt"]).host, None);
     }
 
     #[test]
@@ -291,7 +291,7 @@ mod tests {
             "--release",
             "--backend",
             "llvm",
-            "a.vlt",
+            "a.velt",
             "--",
             "x",
             "--release",
@@ -316,50 +316,50 @@ mod tests {
             Command::Run { build, args } => (build, args),
             other => panic!("{other:?}"),
         };
-        let (b, args) = run(&["run", "--release", "a.vlt", "x", "--release", "-h"]);
+        let (b, args) = run(&["run", "--release", "a.velt", "x", "--release", "-h"]);
         assert!(b.release);
-        assert_eq!(b.input, Some(PathBuf::from("a.vlt")));
+        assert_eq!(b.input, Some(PathBuf::from("a.velt")));
         assert_eq!(args, ["x", "--release", "-h"].map(OsString::from));
-        let (b, args) = run(&["run", "a.vlt", "-v"]);
+        let (b, args) = run(&["run", "a.velt", "-v"]);
         assert!(!b.verbose, "`-v` after the file is the program's");
         assert_eq!(args, ["-v"].map(OsString::from));
         // A `--` right after the file separates as before; a later one is the program's.
-        let (_, args) = run(&["run", "a.vlt", "--", "a", "--", "b"]);
+        let (_, args) = run(&["run", "a.velt", "--", "a", "--", "b"]);
         assert_eq!(args, ["a", "--", "b"].map(OsString::from));
         // Without a file (a package), program arguments still need `--`.
-        let (b, args) = run(&["run", "--", "a.vlt"]);
-        assert_eq!((b.input, args), (None, vec![OsString::from("a.vlt")]));
+        let (b, args) = run(&["run", "--", "a.velt"]);
+        assert_eq!((b.input, args), (None, vec![OsString::from("a.velt")]));
         assert_eq!(
-            run_options(&["--backend", "llvm", "-h", "a.vlt", "--help"].map(OsString::from)),
+            run_options(&["--backend", "llvm", "-h", "a.velt", "--help"].map(OsString::from)),
             ["--backend", "llvm", "-h"].map(OsString::from)
         );
     }
 
     #[test]
     fn errors() {
-        assert!(p(&["build", "a.vlt", "b.vlt"])
+        assert!(p(&["build", "a.velt", "b.velt"])
             .unwrap_err()
             .contains("unexpected argument"));
-        assert!(p(&["build", "a.vlt", "--emit", "asm"])
+        assert!(p(&["build", "a.velt", "--emit", "asm"])
             .unwrap_err()
             .contains("--emit"));
-        assert!(p(&["build", "a.vlt", "--backend", "gcc"])
+        assert!(p(&["build", "a.velt", "--backend", "gcc"])
             .unwrap_err()
             .contains("unknown backend"));
-        assert!(p(&["build", "a.vlt", "-o"])
+        assert!(p(&["build", "a.velt", "-o"])
             .unwrap_err()
             .contains("expects a value"));
-        assert!(p(&["build", "a.vlt", "--bogus"])
+        assert!(p(&["build", "a.velt", "--bogus"])
             .unwrap_err()
             .contains("unknown option"));
         assert!(
-            p(&["run", "a.vlt", "-o", "x"]).is_ok(),
+            p(&["run", "a.velt", "-o", "x"]).is_ok(),
             "the program's options"
         );
-        assert!(p(&["run", "-o", "x", "a.vlt"])
+        assert!(p(&["run", "-o", "x", "a.velt"])
             .unwrap_err()
             .contains("unknown option"));
-        assert!(p(&["build", "a.vlt", "extra"])
+        assert!(p(&["build", "a.velt", "extra"])
             .unwrap_err()
             .contains("after `--`"));
     }

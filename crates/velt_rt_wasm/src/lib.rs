@@ -17,7 +17,7 @@
 //!   JS host drives), `entry`, `io`, `localtime` (UTC),
 //!   `memory_usage`, `panic`, `prng`, `process`, `shared`, `net` and the current-thread executor in
 //!   `task` (no tokio, no threads). Every
-//!   function has exactly the signature `std/*.vlt` declares (WebAssembly links only exact
+//!   function has exactly the signature `std/*.velt` declares (WebAssembly links only exact
 //!   matches; crates/velt_rt/tests/std_externs.rs checks both runtimes).
 //!
 //! Not provided: TCP, the HTTP server and child processes (programs using them fail to link,

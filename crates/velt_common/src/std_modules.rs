@@ -4,7 +4,7 @@
 //! CONTRACT FILE — changes need maintainer review (docs/internals/contracts/README.md).
 //!
 //! Each entry names a module by its path below the std root (`prelude/map` for
-//! `std/prelude/map.vlt`, `lang/proxy` for `std/lang/proxy/index.vlt`). The compiler spells a
+//! `std/prelude/map.velt`, `lang/proxy` for `std/lang/proxy/index.velt`). The compiler spells a
 //! module's canonical path (`"std/lang/proxy"`), a definition's qualified name
 //! (`"std/lang/proxy::Proxy"`) or a module's import specifier (`"velt/jsx"`) only through the
 //! macros below, never as a string literal of its own, so moving a std file changes this table
@@ -64,7 +64,7 @@ table! {
     prelude_error => "prelude/errors",
     prelude_int_arith => "prelude/int_arith",
     prelude_int_arith_wide => "prelude/int_arith_wide",
-    /// The globals loaded on demand (`prelude/global/*.vlt`).
+    /// The globals loaded on demand (`prelude/global/*.velt`).
     prelude_global => "prelude/global",
     prelude_iter => "prelude/iter",
     prelude_json => "prelude/json/json",
@@ -118,7 +118,7 @@ table! {
     lang_proxy_keys => "lang/proxy/keys",
     lang_proxy_reflect => "lang/proxy/reflect",
     lang_proxy_traps => "lang/proxy/traps",
-    /// The prelude `Map`'s internals (std/lang/map/*.vlt).
+    /// The prelude `Map`'s internals (std/lang/map/*.velt).
     lang_map => "lang/map",
     lang_record => "lang/record",
     lang_sort => "lang/sort",
@@ -214,7 +214,7 @@ macro_rules! std_dir {
 }
 
 /// The modules that implement `Proxy` and `Reflect` (std/lang/proxy, apart from the array
-/// methods of array.vlt): their operations on `any` throw what a proxy's traps throw, as a user
+/// methods of array.velt): their operations on `any` throw what a proxy's traps throw, as a user
 /// module's do (sema `proxy.rs`, lowering's `proxy_routes`), and their function types are trap
 /// sites (`ProxyHandler`).
 pub const PROXY_MODULES: [&str; 5] = [
@@ -234,9 +234,9 @@ macro_rules! std_specifier {
 }
 
 /// The file listing the prelude's modules in load order, below the std root.
-pub const PRELUDE_INDEX: &str = "prelude/index.vlt";
+pub const PRELUDE_INDEX: &str = "prelude/index.velt";
 
-/// The prelude's modules in load order, as `prelude/index.vlt` (`index_src`) lists them: one
+/// The prelude's modules in load order, as `prelude/index.velt` (`index_src`) lists them: one
 /// side-effect import per module (`import "./array";`), comments and blank lines between. Each
 /// is a file name below `prelude/` without its extension (`array`). A line that is not such an
 /// import is an error naming it (1-based line number).
@@ -277,15 +277,15 @@ pub fn prelude_order(index_src: &str) -> Result<Vec<String>, String> {
 const NOT_IMPORTABLE: [&str; 2] = ["prelude", "lang"];
 
 /// Whether user code (any module not loaded from std) may import the std file at `rel_file`
-/// (its path below the std root, `/`-separated: `net/http/index.vlt`): a module's `index.vlt`
+/// (its path below the std root, `/`-separated: `net/http/index.velt`): a module's `index.velt`
 /// outside `prelude/` and `lang/` (std-layout.md §2).
 pub fn importable(rel_file: &str) -> bool {
     let first = rel_file.split('/').next().unwrap_or("");
-    rel_file.ends_with("/index.vlt") && !NOT_IMPORTABLE.contains(&first)
+    rel_file.ends_with("/index.velt") && !NOT_IMPORTABLE.contains(&first)
 }
 
 /// The module that owns the std file at `rel_file` (as for [`importable`]): the nearest folder
-/// above it with an `index.vlt` (`has_index("encoding/json")`), as its module path
+/// above it with an `index.velt` (`has_index("encoding/json")`), as its module path
 /// (`encoding/json`). `None` for a file in no module, and in `prelude/` and `lang/`, which are
 /// not modules.
 pub fn owner(rel_file: &str, has_index: &dyn Fn(&str) -> bool) -> Option<String> {
@@ -314,8 +314,8 @@ mod tests {
             .map(|(_, rel)| *rel)
             .filter(|rel| {
                 let dir = std.join(rel);
-                !dir.with_extension("vlt").is_file()
-                    && !dir.join("index.vlt").is_file()
+                !dir.with_extension("velt").is_file()
+                    && !dir.join("index.velt").is_file()
                     && !dir.is_dir()
             })
             .collect();
@@ -367,15 +367,15 @@ mod tests {
     #[test]
     fn std_prelude_index_lists_every_prelude_file() {
         let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/prelude");
-        let src = std::fs::read_to_string(dir.join("index.vlt")).expect("std/prelude/index.vlt");
-        let mut listed = prelude_order(&src).expect("std/prelude/index.vlt");
+        let src = std::fs::read_to_string(dir.join("index.velt")).expect("std/prelude/index.velt");
+        let mut listed = prelude_order(&src).expect("std/prelude/index.velt");
         let mut files: Vec<String> = std::fs::read_dir(&dir)
             .expect("std/prelude")
             .flatten()
             .filter_map(|e| {
                 e.file_name()
                     .to_str()?
-                    .strip_suffix(".vlt")
+                    .strip_suffix(".velt")
                     .map(str::to_string)
             })
             .filter(|f| f != "index")
@@ -384,20 +384,20 @@ mod tests {
         files.sort();
         assert_eq!(
             listed, files,
-            "std/prelude/index.vlt must list every prelude file once"
+            "std/prelude/index.velt must list every prelude file once"
         );
     }
 
     #[test]
     fn user_code_imports_module_indexes_outside_prelude_and_lang() {
-        assert!(importable("fs/index.vlt"));
-        assert!(importable("net/http/index.vlt"));
-        assert!(!importable("encoding/json/scan.vlt"));
-        assert!(!importable("lang/proxy/index.vlt"));
-        assert!(!importable("prelude/array.vlt"));
-        assert!(!importable("prelude/index.vlt"));
-        // A file directly in std is in no module (what was `sqlite.vlt` left for packages/).
-        assert!(!importable("sqlite.vlt") && !importable("fs.vlt"));
+        assert!(importable("fs/index.velt"));
+        assert!(importable("net/http/index.velt"));
+        assert!(!importable("encoding/json/scan.velt"));
+        assert!(!importable("lang/proxy/index.velt"));
+        assert!(!importable("prelude/array.velt"));
+        assert!(!importable("prelude/index.velt"));
+        // A file directly in std is in no module (what was `sqlite.velt` left for packages/).
+        assert!(!importable("sqlite.velt") && !importable("fs.velt"));
     }
 
     #[test]
@@ -405,19 +405,19 @@ mod tests {
         let indexes = ["encoding", "encoding/json", "net/http"];
         let has = |d: &str| indexes.contains(&d);
         assert_eq!(
-            owner("encoding/json/scan.vlt", &has).as_deref(),
+            owner("encoding/json/scan.velt", &has).as_deref(),
             Some("encoding/json")
         );
         assert_eq!(
-            owner("encoding/utf8.vlt", &has).as_deref(),
+            owner("encoding/utf8.velt", &has).as_deref(),
             Some("encoding")
         );
         assert_eq!(
-            owner("net/http/fetch/client/wire.vlt", &has).as_deref(),
+            owner("net/http/fetch/client/wire.velt", &has).as_deref(),
             Some("net/http")
         );
-        assert_eq!(owner("lang/proxy/ops.vlt", &|_| true), None);
-        assert_eq!(owner("stray.vlt", &has), None);
-        assert_eq!(owner("x/y.vlt", &has), None);
+        assert_eq!(owner("lang/proxy/ops.velt", &|_| true), None);
+        assert_eq!(owner("stray.velt", &has), None);
+        assert_eq!(owner("x/y.velt", &has), None);
     }
 }

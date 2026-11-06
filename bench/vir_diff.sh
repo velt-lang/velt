@@ -4,7 +4,7 @@
 #
 #   bench/vir_diff.sh BASE_VELT HEAD_VELT [WORK_DIR]
 #
-# Runs `velt build --emit vir` on each bench/**/*.vlt (except `_` modules) with both binaries
+# Runs `velt build --emit vir` on each bench/**/*.velt (except `_` modules) with both binaries
 # and prints one line per program whose VIR differs, then a summary; exits 1 if any differs. A
 # program that names `WeakMap`, `WeakSet` or `WeakRef` is listed but not compared. Before
 # comparing, what only numbers definitions is normalized: the path of the tree each binary
@@ -76,6 +76,6 @@ while IFS= read -r src; do
     echo "DIFFERS: $rel"
     differ=$((differ + 1))
   fi
-done < <(find "$ROOT/bench" -name '*.vlt' ! -name '_*' | sort)
+done < <(find "$ROOT/bench" -name '*.velt' ! -name '_*' | sort)
 echo "identical: $same, differ: $differ, use weak references: $skipped"
 [ "$differ" -eq 0 ]

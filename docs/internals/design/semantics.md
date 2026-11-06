@@ -169,8 +169,8 @@ of doing things, even when ported code must change (with a precise error and a f
   (run automatically when the value is dropped); `using x = …` disposes at the end of the
   enclosing block; `await using` and `[Symbol.asyncDispose]()` work too.
 - **Modules** (implemented). `import * as ns`, `export { x } from`, `export * from`, folders
-  through `index.vlt`, `paths` aliases in `package.vlt`, `import type`, `export * as ns from`.
-  Default exports and imports as in TypeScript (#1916): `export default` in every file, `.vlt`
+  through `index.velt`, `paths` aliases in `package.velt`, `import type`, `export * as ns from`.
+  Default exports and imports as in TypeScript (#1916): `export default` in every file, `.velt`
   included, desugared by the parser into a named export `default` (`export default expr` a
   constant kept in module state, evaluated once in module order; `export default x` too when `x`
   may change or isn't there yet: a `let`, an imported `let`, a declaration below it, or no module

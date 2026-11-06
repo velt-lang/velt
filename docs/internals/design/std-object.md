@@ -64,7 +64,7 @@ functions in `velt_build_cache` (kind `stdfn`, file entries), for release builds
 
 - Std's code includes what std's generators write for a program (`<generated>/std/…` in the
   source map: `JSON.parse<T>`'s reader of `T`). It is served like a generic instance: an
-  edited program that generates the same code links it, and `bench/json/parse_typed.vlt`
+  edited program that generates the same code links it, and `bench/json/parse_typed.velt`
   rebuilt after an edit of `main` costs 13% fewer instructions than with std's own code alone
   (#2189).
 - After lowering, each std function the cache serves gets a key: its canonical code
@@ -108,7 +108,7 @@ a build by reason):
   same static. The program defines it (`Export`, and exports the functions its relocations
   name), and the function's own program declares it (`Import`, with its contents, so the code
   is optimized as it would be in the program). Only two statics of one program with the same
-  contents can't be named. On `bench/json/parse_typed.vlt` this serves 7,137 of its 8,124
+  contents can't be named. On `bench/json/parse_typed.velt` this serves 7,137 of its 8,124
   std statements instead of 5,264.
 - **Functions that call through a function pointer** (callbacks): in the program `const_fields`
   specializes them for the closure their caller passes and inlines it; compiled on their own,
@@ -126,7 +126,7 @@ a build by reason):
 | One whose VIR in this program differs from the object's (next section) | Program, as today | The object's code would be wrong for this program |
 
 A fast path is marked with a statement at the top of its body, as gated functions use
-`__intrinsic_target("sha-arm")` (`std/crypto/sha256_simd.vlt`):
+`__intrinsic_target("sha-arm")` (`std/crypto/sha256_simd.velt`):
 
 ```text
 export function numberToString(x: number): string {
@@ -260,7 +260,7 @@ pointer"), and the runtime compares some statics' addresses (type descriptors;
 So is the module state descriptor: `velt_rt_module_state` gives a different descriptor a block
 of its own (rt_abi.md "Module state"), so an object's std module-level `let` would live in a
 second block. Std has no module-level `let` today, so this is for later. Static atomics
-(`StaticData::mutable`, such as the four words of `std/sync/epoch/reclaim.vlt`) are written by address,
+(`StaticData::mutable`, such as the four words of `std/sync/epoch/reclaim.velt`) are written by address,
 and a second copy would be a second word. Fingerprints compare statics by contents, so they do not
 catch any of this. Two copies, the program's and the object's, would compare unequal, so the
 first version kept every function that refers to such a static in the program. Now such
@@ -322,7 +322,7 @@ named, and the code reaching them stays in the program.
 
 `velt` builds the object itself, the first time a build needs it and finds none:
 
-1. Load the prelude and every std module, as `bench/compile/all_std.vlt` does, and check them.
+1. Load the prelude and every std module, as `bench/compile/all_std.velt` does, and check them.
    Number std's classes and decide their headers for the fixed tables (above).
 2. Lower with a root set instead of `main`: every non-generic, non-caller-tracking, unmarked
    std function, plus what they reach. This is a new mode of lowering (today "only functions
@@ -346,7 +346,7 @@ and a debug link, which does not collect unused sections, pulls in no unused mod
 
 Std's file paths appear in panic messages (`lower/srcloc.rs`, `panic_suffix`). For the
 fingerprint, and a prebuilt object, to be the same in every install, the object and the
-program must write std paths relative to the std root (`std/encoding/json/scan.vlt:12:3`), not as the
+program must write std paths relative to the std root (`std/encoding/json/scan.velt:12:3`), not as the
 absolute path of one machine. That is a small change of its own, first in the order of work.
 
 ## Cache key
@@ -608,5 +608,5 @@ head, with interleaved runs:
    decorators (#1664) and write `@inline`? **Recommendation:** the intrinsic now, since only the
    number formatter needs it at first, and a decorator later replaces it mechanically.
    **Decided:** `inline()`, with its twin `noInline()` (#1884), in
-   `std/lang/intrinsics/inline.vlt`, carried by `vir::Function::inline` (contracts README
+   `std/lang/intrinsics/inline.velt`, carried by `vir::Function::inline` (contracts README
    "Inlining markers"); both become `@inline` / `@noInline` with #1664.

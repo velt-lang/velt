@@ -1,0 +1,10 @@
+import type { Package } from "velt/package";
+
+// Single files built with `--host host-cloudflare` (crates/veltc/tests/workers.rs): `hello.velt`
+// never accepts, `missing.velt` and `glue.velt` don't build.
+export const pkg: Package = {
+  name: "single",
+  version: "0.1.0",
+  // packages/host-cloudflare, copied beside the fixtures by the test.
+  dependencies: { "host-cloudflare": { path: "../host-cloudflare" } },
+};

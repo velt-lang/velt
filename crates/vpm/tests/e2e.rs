@@ -35,7 +35,7 @@ impl World {
             "export const pkg: Package = {{ name: \"{name}\", version: \"{version}\", dependencies: {{ {deps} }} }};"
         );
         std::fs::write(root.join(vpm::manifest::MANIFEST_FILE), manifest).unwrap();
-        std::fs::write(root.join("src/lib.vlt"), body).unwrap();
+        std::fs::write(root.join("src/lib.velt"), body).unwrap();
         vpm::registry::publish(&root, &self.loc).unwrap();
     }
 
@@ -100,10 +100,10 @@ fn publish_install_lock_and_upgrade() {
     // The graph points the app at the cached copy.
     let lib_dir = first
         .graph
-        .dependency_root(&w.app().join("src/main.vlt"), "lib")
+        .dependency_root(&w.app().join("src/main.velt"), "lib")
         .unwrap();
     assert_eq!(lib_dir, w.loc.cache.join("lib-1.0.0"));
-    assert!(std::fs::read_to_string(lib_dir.join("src/lib.vlt"))
+    assert!(std::fs::read_to_string(lib_dir.join("src/lib.velt"))
         .unwrap()
         .contains("100"));
 
@@ -205,7 +205,7 @@ fn path_dependency_with_registry_dependency() {
     assert_eq!(local.dependencies, ["util"]);
     assert_eq!(lock.get("util").unwrap().version, "0.3.0");
 
-    let main = w.app().join("src/main.vlt");
+    let main = w.app().join("src/main.velt");
     assert_eq!(
         installed.graph.dependency_root(&main, "local").unwrap(),
         w.dir.join("local")
@@ -216,7 +216,7 @@ fn path_dependency_with_registry_dependency() {
         .dependency_root(&main, "util")
         .unwrap_err()
         .contains("not a dependency"));
-    let local_file = w.dir.join("local/src/lib.vlt");
+    let local_file = w.dir.join("local/src/lib.velt");
     assert_eq!(
         installed
             .graph
@@ -232,7 +232,7 @@ fn tampered_registry_is_detected() {
     w.publish_lib("lib", "1.0.0", "", "export const A: i64 = 1;\n");
     w.add("lib", Some("1"), None);
     w.install(InstallOptions::default()).unwrap();
-    std::fs::write(w.loc.registry.join("lib/1.0.0/src/lib.vlt"), "evil").unwrap();
+    std::fs::write(w.loc.registry.join("lib/1.0.0/src/lib.velt"), "evil").unwrap();
     std::fs::remove_dir_all(w.loc.cache.join("lib-1.0.0")).unwrap();
     let err = w.install(InstallOptions::default()).unwrap_err();
     assert!(err.contains("checksum mismatch"), "{err}");

@@ -1,4 +1,4 @@
-//! std's `arrayCopyBytes<T>` (std/lang/intrinsics/array.vlt, std only) writes the bytes of a
+//! std's `arrayCopyBytes<T>` (std/lang/intrinsics/array.velt, std only) writes the bytes of a
 //! `u8[]` as `T`s, so sema takes it only for a number type or `bool` as `T`: an element that owns
 //! something or holds an address is a diagnostic, not an ICE in lowering. The intrinsic is
 //! std-only, so a golden file cannot call it: std is copied to a temp directory with a probe
@@ -22,8 +22,8 @@ fn copy_tree(from: &Path, to: &Path) {
     }
 }
 
-/// A std with the module `velt/zz_bytes` (`probe`) added, and `main.vlt` calling `probe()`;
-/// runs `velt <cmd> main.vlt`.
+/// A std with the module `velt/zz_bytes` (`probe`) added, and `main.velt` calling `probe()`;
+/// runs `velt <cmd> main.velt`.
 fn velt(probe: &str, cmd: &str) -> Output {
     let dir = test_dir::TestDir::new();
     let std: PathBuf = dir.path().join("std");
@@ -35,8 +35,8 @@ fn velt(probe: &str, cmd: &str) -> Output {
     let probe = format!(
         "import {{ arrayCopyBytes, arraySetLen, arrayWithCapacity }} from \"velt/lang/intrinsics\";\n{probe}"
     );
-    std::fs::write(std.join("zz_bytes/index.vlt"), probe).unwrap();
-    let file = dir.path().join("main.vlt");
+    std::fs::write(std.join("zz_bytes/index.velt"), probe).unwrap();
+    let file = dir.path().join("main.velt");
     std::fs::write(
         &file,
         "import { probe } from \"velt/zz_bytes\";\n\nfunction main() {\n  probe();\n}\n",

@@ -12,7 +12,7 @@
 # that use the database.
 #
 # How the description of #1533 compared velt-native on public APIs with the private runtime
-# calls before them: build bench/web/velt-native/server.vlt at both commits with a release
+# calls before them: build bench/web/velt-native/server.velt at both commits with a release
 # `velt` of each, then run this script on both binaries.
 set -euo pipefail
 if [ $# -lt 1 ]; then

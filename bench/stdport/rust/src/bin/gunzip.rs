@@ -1,4 +1,4 @@
-//! `gunzip.vlt` on `flate2` (its default `miniz_oxide` backend), which the runtime's `fetch`
+//! `gunzip.velt` on `flate2` (its default `miniz_oxide` backend), which the runtime's `fetch`
 //! decodes gzip bodies with today: the 1 MB JSON of `json.gz`, decoded 50 times.
 
 use std::io::Read;

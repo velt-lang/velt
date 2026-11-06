@@ -3,7 +3,7 @@
 //! besides the packages' own (crates/xtask/src/read_by_tests.rs).
 //!
 //! The table is kept by hand and checked against the repository: [`tests`] finds every
-//! `package.vlt` outside `packages/` with a path dependency on a package, every Rust test that
+//! `package.velt` outside `packages/` with a path dependency on a package, every Rust test that
 //! names a package's directory (`packages/<name>`, as a manifest it writes at run time does), and
 //! every package the documentation test compiles snippets against, and fails when the plan for
 //! a change to that package would not run their tests.
@@ -128,7 +128,7 @@ mod tests {
             .expect("repository root")
     }
 
-    /// Every `package.vlt` under `dir` (relative to `root`, `/`-separated), skipping build
+    /// Every `package.velt` under `dir` (relative to `root`, `/`-separated), skipping build
     /// output and installed dependencies.
     fn manifests(root: &Path, dir: &Path, out: &mut Vec<String>) {
         let Ok(entries) = std::fs::read_dir(dir) else {
@@ -141,7 +141,7 @@ mod tests {
                 if !(name.starts_with('.') || name == "target" || name == "node_modules") {
                     manifests(root, &path, out);
                 }
-            } else if name == "package.vlt" {
+            } else if name == "package.velt" {
                 let rel = path.strip_prefix(root).expect("under the root");
                 out.push(rel.to_string_lossy().replace('\\', "/"));
             }
@@ -171,7 +171,7 @@ mod tests {
     fn plan_for(package: &str) -> Plan {
         Plan::for_paths(
             &Graph::default(),
-            &[format!("packages/{package}/src/lib.vlt")],
+            &[format!("packages/{package}/src/lib.velt")],
         )
     }
 
@@ -206,11 +206,11 @@ mod tests {
         for top in ["tests", "bench", "examples", "docs"] {
             manifests(&root, &root.join(top), &mut found);
         }
-        assert!(!found.is_empty(), "no package.vlt outside packages/");
+        assert!(!found.is_empty(), "no package.velt outside packages/");
         let mut missing = vec![];
         for manifest in &found {
             let text = std::fs::read_to_string(root.join(manifest)).expect("manifest");
-            let dir = manifest.strip_suffix("package.vlt").expect("package.vlt");
+            let dir = manifest.strip_suffix("package.velt").expect("package.velt");
             for package in path_dependencies(&text) {
                 let plan = plan_for(&package);
                 let tested = if dir.starts_with("tests/golden/") {
@@ -245,7 +245,7 @@ mod tests {
         let packages: Vec<String> = std::fs::read_dir(root.join("packages"))
             .expect("packages/")
             .flatten()
-            .filter(|e| e.path().join("package.vlt").is_file())
+            .filter(|e| e.path().join("package.velt").is_file())
             .map(|e| e.file_name().to_string_lossy().into_owned())
             .collect();
         let mut missing = vec![];
@@ -300,7 +300,7 @@ mod tests {
         let entries = std::fs::read_dir(root.join("packages")).expect("packages/");
         for entry in entries.flatten() {
             let dir = entry.path();
-            if !dir.join("package.vlt").is_file() || dir.join("native").is_dir() {
+            if !dir.join("package.velt").is_file() || dir.join("native").is_dir() {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().into_owned();

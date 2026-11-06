@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Smoke test of an installed toolchain on a machine without a C toolchain (no cc, ld or Xcode):
 # with the bundled linker forced ($VELT_LINKER=bundled), `velt doctor` reports it, and hello and
-# examples/http_hello.vlt build in debug and release mode, run and answer a request. Extra
+# examples/http_hello.velt build in debug and release mode, run and answer a request. Extra
 # arguments are more targets to build and run the same way (e.g. x86_64-unknown-linux-musl).
 # release.yml runs it in debian:bookworm-slim and on macOS; scripts/smoke-clean.ps1 is the
 # Windows counterpart. Needs bash (for /dev/tcp: slim images have no curl).
@@ -35,10 +35,10 @@ get() {
 run_both() { # <label> [velt build flags...]
     local label=$1
     shift
-    "$velt" build "$@" "$repo/tests/golden/m1/hello.vlt" -o "$work/hello"
+    "$velt" build "$@" "$repo/tests/golden/m1/hello.velt" -o "$work/hello"
     out=$("$work/hello")
     [ "$out" = "Hello, Velt!" ] || { echo "$label hello printed '$out'" >&2; exit 1; }
-    "$velt" build "$@" "$repo/examples/http_hello.vlt" -o "$work/http"
+    "$velt" build "$@" "$repo/examples/http_hello.velt" -o "$work/http"
     VELT_HELLO_SECONDS=3 "$work/http" >/dev/null &
     pid=$!
     body=$(get || true)

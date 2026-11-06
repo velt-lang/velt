@@ -1,5 +1,5 @@
 // SQLite workloads with better-sqlite3 (bench/db/README.md): a file database in the temp
-// directory with WAL and synchronous = NORMAL. Same SQL and sizes as bench/db/velt/sqlite.vlt.
+// directory with WAL and synchronous = NORMAL. Same SQL and sizes as bench/db/velt/sqlite.velt.
 import Database from "better-sqlite3";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";

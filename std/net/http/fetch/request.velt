@@ -1,0 +1,411 @@
+// velt/net/http (internal): the WHATWG `Request` (https://veltlang.com/docs/std/net/http/; `RequestInit` is in
+// request_init.velt): a request
+// `fetch` can send, made from a URL and the same options `fetch` takes, or one a server received
+// (`serverRequest`, source.velt).
+//
+// A received request reads its server's `RequestSource` lazily, as a fetched
+// `Response` does: its URL, method and headers are made the first time they are read, and its
+// body is received while it is read (`text()`, `json()`, `bytes()`, or chunk by chunk through
+// `req.body`). So a handler pays only for what it looks at, and the state only a request made
+// here has (body, redirect mode, signal, CA) is one null field. It is valid until its handler
+// settles; what was read stays readable.
+
+import { JSON } from "velt/prelude/json/json";
+import { JsonError } from "velt/prelude/json/json_error";
+import { IoError } from "velt/io/error";
+import { AbortController, AbortError, AbortSignal } from "velt/task";
+import { URL } from "velt/net/url";
+import { BodyParts, bodyParts, impliedType, sourceType } from "velt/net/http/fetch/body";
+import { BodyStream } from "velt/net/http/fetch/body_stream";
+import { Headers } from "velt/net/http/fetch/headers";
+import { tee } from "velt/net/http/fetch/tee";
+import { RequestSource } from "velt/net/http/fetch/source";
+import { INSPECT } from "velt/lang/hooks/keys";
+import { Extra } from "velt/net/http/fetch/request_extra";
+import { Sending } from "velt/net/http/fetch/request_sending";
+import {
+  noBody,
+  requestBytes,
+  requestChunks,
+  requestText,
+  streamed,
+} from "velt/net/http/fetch/request_body";
+import { normalizeMethod, RequestInit, RequestRedirect } from "velt/net/http/fetch/request_init";
+
+export class Request {
+  // Null until `headers` is first read.
+  #fields: Headers | null = null;
+  // A request a server received (null for one made with `new Request`).
+  #received: RequestSource | null = null;
+  // The URL and method; a received request's are null until first read (a request made here
+  // has its URL, and a null method is "GET").
+  #target: string | null = null;
+  #verb: string | null = null;
+  // Null while its defaults hold, so a received request makes and drops none of it.
+  #extra: Extra | null = null;
+
+  /**
+   * Throws `IoError` "EINVAL" (JS: `TypeError`) for a GET or HEAD request with a body, and
+   * for a `Request` input whose body was already used when `init` gives no body of its own.
+   */
+  constructor(input: string | URL | Request, init?: RequestInit) throws IoError {
+    if (typeof input == "string") {
+      this.#target = input;
+    } else {
+      this.from(input, init != null && init.body != null);
+    }
+    if (init != null) {
+      this.apply(init);
+    }
+  }
+
+  // The constructor's `input` when it is not a string (kept out of the constructor, which
+  // every received request runs).
+  private from(input: URL | Request, newBody: bool) throws IoError {
+    if (input instanceof URL) {
+      this.#target = input.href;
+    } else {
+      this.copy(input, newBody);
+    }
+  }
+
+  // The constructor's `init`.
+  private apply(init: RequestInit) throws IoError {
+    const method = init.method;
+    if (method != null) {
+      this.#verb = normalizeMethod(method);
+    }
+    const headers = init.headers;
+    if (headers != null) {
+      this.#fields = new Headers(headers);
+    }
+    if (init.body != null) {
+      this.extra().body = bodyParts(init.body);
+    }
+    const redirect = init.redirect;
+    const signal = init.signal;
+    const ca = init.ca;
+    if (redirect != null || signal != null || ca != null) {
+      this.extra().sending = new Sending(
+        redirect ?? this.redirect,
+        signal ?? this.givenSignal(),
+        ca ?? this.ca(),
+      );
+    }
+    const body = this.made();
+    if (body == null) {
+      return;
+    }
+    const verb = this.method;
+    if (verb == "GET" || verb == "HEAD") {
+      throw new IoError("EINVAL", "Request with GET/HEAD method cannot have body.");
+    }
+    const ct = sourceType(init.body ?? null) ?? impliedType(body.implied);
+    if (ct != null && !this.headers.has("content-type")) {
+      this.headers.set("content-type", ct);
+    }
+  }
+
+  // A request a server received (`serverRequest`, source.velt).
+  private static ofSource(received: RequestSource): Request {
+    const r = new Request("");
+    r.#target = null;
+    r.#received = received;
+    return r;
+  }
+
+  // `new Request(input)` of another request: its fields, and its body, which `input` no longer
+  // has afterwards. With `newBody` (`init` gives one), `input`'s body is neither read nor taken,
+  // as the Fetch standard has it, so a request whose body was read can be passed on with a new one.
+  private copy(input: Request, newBody: bool) throws IoError {
+    this.#target = input.url;
+    this.#verb = input.method;
+    this.carry(input);
+    this.#fields = new Headers(input.headers);
+    if (newBody) {
+      return;
+    }
+    // Before `hasBody()`: a received body that was read has none left, but is still used.
+    if (input.bodyUsed) {
+      throw new IoError(
+        "EINVAL",
+        "Cannot construct a Request with a Request object that has already been used.",
+      );
+    }
+    if (!input.hasBody()) {
+      return;
+    }
+    if (input.fromServer() != null) {
+      // The connection's chunks themselves: `chunks()` claims the body when first read, which
+      // this copy's `input` already has by then.
+      const body = BodyStream.adopt(input.received());
+      this.extra().body = { kind: 3, text: "", bytes: [], stream: body, implied: 0 };
+    } else {
+      this.extra().body = input.made();
+    }
+    input.extra().used = true;
+  }
+
+  // The redirect mode, CA and signal of `input` (`new Request(input)`, `clone()`), as the Fetch
+  // standard copies them: a received request's server signal too, so a copy made in a handler
+  // still stops with the client.
+  private carry(input: Request) {
+    const given = input.#extra;
+    if (given != null && given.sending != null && given.sending.signal != null) {
+      this.extra().sending = given.sending;
+      return;
+    }
+    const signal = input.givenSignal();
+    if (signal != null || (given != null && given.sending != null)) {
+      this.extra().sending = new Sending(input.redirect, signal, input.ca());
+    }
+  }
+
+  /**
+   * A copy of the request whose body can be read on its own: a streamed or received body is
+   * teed, each chunk going to both. Throws `IoError` "EINVAL" (JS: `TypeError`) when the body
+   * was already read.
+   */
+  clone(): Request throws IoError {
+    if (this.bodyUsed) {
+      throw new IoError("EINVAL", "unusable");
+    }
+    const r = new Request(this.url);
+    r.#verb = this.method;
+    r.#fields = new Headers(this.headers);
+    r.carry(this);
+    if (!this.hasBody()) {
+      return r;
+    }
+    const body = this.made();
+    if (body == null || body.kind == 3) {
+      // A received body, or a stream: both read it through a tee from here on.
+      const s = body == null ? null : body.stream;
+      const source = s == null ? this.received() : s[Symbol.asyncIterator]();
+      const [mine, theirs] = tee(source);
+      this.extra().body = streamed(mine);
+      r.extra().body = streamed(theirs);
+      return r;
+    }
+    r.extra().body = {
+      kind: body.kind,
+      text: body.text,
+      bytes: body.bytes.slice(),
+      stream: null,
+      implied: body.implied,
+    };
+    return r;
+  }
+
+  // `#extra`, made if there is none.
+  private extra(): Extra {
+    const known = this.#extra;
+    if (known != null) {
+      return known;
+    }
+    const made = new Extra();
+    this.#extra = made;
+    return made;
+  }
+
+  /** The URL; a received request's is absolute (`http://host/path?query`), as in Deno and Bun. */
+  get url(): string {
+    const known = this.#target;
+    if (known != null) {
+      return known;
+    }
+    const received = this.#received;
+    const s = received == null ? "" : received.url();
+    this.#target = s;
+    return s;
+  }
+
+  get method(): string {
+    const known = this.#verb;
+    if (known != null) {
+      return known;
+    }
+    const received = this.#received;
+    if (received == null) {
+      return "GET";
+    }
+    const s = received.method();
+    this.#verb = s;
+    return s;
+  }
+
+  /** The headers; a received request's are immutable. */
+  get headers(): Headers {
+    const known = this.#fields;
+    if (known != null) {
+      return known;
+    }
+    const received = this.#received;
+    const h = received != null ? Headers.ofSource(received) : new Headers();
+    this.#fields = h;
+    return h;
+  }
+
+  get redirect(): RequestRedirect {
+    const s = this.sending();
+    return s == null ? "follow" : s.redirect;
+  }
+
+  /**
+   * The signal passed in `init`. A request a server received (`serverRequest`) has its server's
+   * signal: aborted when the client goes away or the server closes, as in Deno and Bun. Otherwise
+   * a signal that is never aborted (as in JS).
+   */
+  get signal(): AbortSignal {
+    const given = this.givenSignal();
+    if (given != null) {
+      return given;
+    }
+    const e = this.extra();
+    const known = e.idle;
+    if (known != null) {
+      return known;
+    }
+    const made = new AbortController().signal;
+    e.idle = made;
+    return made;
+  }
+
+  // The signal that can abort the request, null without one (std only: `fetch` races only
+  // that one): the one passed in `init` (or carried over from the request it was made from),
+  // else a received request's server signal.
+  private givenSignal(): AbortSignal | null {
+    const s = this.sending();
+    if (s != null && s.signal != null) {
+      return s.signal;
+    }
+    const source = this.fromServer();
+    return source == null ? null : source.signal();
+  }
+
+  // `body` is in velt/net/http/fetch/streams, loaded with the streams it gives
+  // (std/prelude/global/fetch_body.velt).
+
+  get bodyUsed(): bool {
+    const e = this.#extra;
+    return e != null && e.used;
+  }
+
+  /** The body as text (invalid UTF-8 becomes U+FFFD, as in JS). */
+  async text(): Promise<string, IoError | AbortError> {
+    return await requestText(this);
+  }
+
+  /** `JSON.parse<T>` of the body (see `Response.json`). */
+  async json<T>(): Promise<T, IoError | AbortError | JsonError> {
+    return JSON.parse<T>(await this.text());
+  }
+
+  // The body's bytes, as Velt's byte array.
+  private rawBytes(): Promise<u8[], IoError | AbortError> {
+    return requestBytes(this);
+  }
+
+  // `bytes()` and `arrayBuffer()` are in velt/net/http/fetch/typed, loaded with the typed arrays they
+  // give (std/prelude/global/fetch_bytes.velt).
+
+  // A received request's body as the connection receives it, chunk by chunk.
+  private async *received(): AsyncIterator<u8[], IoError | AbortError> {
+    const received = this.#received;
+    if (received == null) {
+      return;
+    }
+    while (true) {
+      const chunk = await received.read();
+      if (chunk == null) {
+        return;
+      }
+      if (chunk.length > 0) {
+        yield chunk;
+      }
+    }
+  }
+
+  // Where the body is read from when it is a received request's, unless `clone` teed it: the
+  // server's side of the request; null otherwise.
+  private fromServer(): RequestSource | null {
+    return this.made() == null ? this.#received : null;
+  }
+
+  // Whether there is a body (a received request without one, a GET, has none).
+  private hasBody(): bool {
+    const received = this.#received;
+    if (received != null && this.made() == null) {
+      return received.hasBody();
+    }
+    return this.made() != null;
+  }
+
+  // The body's chunks, for `BodyStream` (std only); reading them uses the body up.
+  private chunks(): AsyncIterator<u8[], IoError | AbortError> {
+    return requestChunks(this);
+  }
+
+  /**
+   * How `console.log` shows the request, like Node: its state, with Node's values for the
+   * options Velt's `fetch` does not have (`mode: 'cors'`, `cache: 'default'`, …).
+   */
+  [INSPECT]() {
+    return {
+      method: this.method,
+      url: this.url,
+      headers: this.headers,
+      destination: "",
+      referrer: "about:client",
+      referrerPolicy: "",
+      mode: "cors",
+      credentials: "same-origin",
+      cache: "default",
+      redirect: this.redirect,
+      integrity: "",
+      keepalive: false,
+      isReloadNavigation: false,
+      isHistoryNavigation: false,
+      signal: this.signal,
+    };
+  }
+
+  // What `fetch` sends (std only): marks the body used, as sending it does in JS.
+  private parts(): BodyParts throws IoError {
+    this.claim();
+    return this.made() ?? noBody();
+  }
+
+  // The body of a request made here; null without one and for a received request.
+  private made(): BodyParts | null {
+    const e = this.#extra;
+    return e == null ? null : e.body;
+  }
+
+  // `fetch`'s options beyond the defaults; null without any.
+  private sending(): Sending | null {
+    const e = this.#extra;
+    return e == null ? null : e.sending;
+  }
+
+  private ca(): string {
+    const s = this.sending();
+    return s == null ? "" : s.ca;
+  }
+
+  // The source of a received request, null for one made with `new Request` (`requestSource`,
+  // source.velt).
+  private serverSide(): RequestSource | null {
+    return this.#received;
+  }
+
+  private claim() throws IoError {
+    if (!this.hasBody()) {
+      return;
+    }
+    if (this.bodyUsed) {
+      throw new IoError("EINVAL", "Body is unusable: Body has already been read");
+    }
+    this.extra().used = true;
+  }
+}

@@ -1,0 +1,192 @@
+// registry-core (internal): the sections of `package.velt` that declare files and builds
+// (crates/vpm/src/manifest/read/{imports,host_modules,host,native}.rs): `imports`,
+// `hostModules`, `host` and `native`, checked as vpm checks them.
+
+import { Data, DataKind } from "./data";
+import { HostConfig } from "./host_config";
+import { NativeConfig } from "./native_config";
+import { Variant } from "./variant";
+import { Problems } from "./problems";
+import {
+  checkCondition,
+  checkHostCondition,
+  checkHostEntry,
+  checkHostModuleName,
+  checkHostTarget,
+  checkImportKey,
+  checkImportTarget,
+  checkModuleFile,
+  checkNativePath,
+  checkNativeTarget,
+  checkScaffold,
+} from "./checks";
+
+/** `imports`: conditional imports, each a file or an object of conditions in order. */
+export function decodeImports(p: Problems, v: Data): Map<string, Variant[]> {
+  const out: Map<string, Variant[]> = new Map();
+  if (!p.object(v, "`imports`")) {
+    return out;
+  }
+  for (let i = 0; i < v.keys.length; i++) {
+    const key = v.keys[i];
+    const value = v.items[i];
+    p.check(checkImportKey(key));
+    const variants: Variant[] = [];
+    if (value.kind == DataKind.Str) {
+      p.check(checkImportTarget(value.str));
+      variants.push({ condition: "default", target: value.str });
+    } else if (value.kind == DataKind.Object) {
+      if (value.keys.length == 0) {
+        p.problems.push(`\`${key}\` has no variants`);
+      }
+      let afterDefault = false;
+      for (let k = 0; k < value.keys.length; k++) {
+        const condition = value.keys[k];
+        if (afterDefault) {
+          p.problems.push(
+            `\`${condition}\` comes after \`default\`, which every build has: it never applies (put \`default\` last)`,
+          );
+        }
+        afterDefault = afterDefault || condition == "default";
+        p.check(checkCondition(condition));
+        const target = p.string(value.items[k], condition);
+        if (target == null) {
+          continue;
+        }
+        p.check(checkImportTarget(target));
+        variants.push({ condition, target });
+      }
+    } else {
+      p.problems.push(
+        `\`${key}\` must be a file or an object of conditions, not ${value.describe()}`,
+      );
+      continue;
+    }
+    out.set(key, variants);
+  }
+  return out;
+}
+
+/** `hostModules`: the JavaScript modules the package provides to `--host` builds. */
+export function decodeHostModules(p: Problems, v: Data): Map<string, string> {
+  const out: Map<string, string> = new Map();
+  if (!p.object(v, "`hostModules`")) {
+    return out;
+  }
+  for (let i = 0; i < v.keys.length; i++) {
+    p.check(checkHostModuleName(v.keys[i]));
+    const file = p.string(v.items[i], v.keys[i]);
+    if (file != null) {
+      p.check(checkModuleFile(file, "a host module"));
+      out.set(v.keys[i], file);
+    }
+  }
+  return out;
+}
+
+/** `host`: what `velt build --host` with this package builds. */
+export function decodeHost(p: Problems, v: Data): HostConfig | null {
+  if (!p.object(v, "`host`")) {
+    return null;
+  }
+  const config: HostConfig = { target: "", condition: "", entry: "", scaffold: new Map() };
+  const scaffold: [string, string][] = [];
+  for (let i = 0; i < v.keys.length; i++) {
+    const key = v.keys[i];
+    const value = v.items[i];
+    if (key == "target") {
+      const s = p.string(value, "target");
+      if (s != null) {
+        p.check(checkHostTarget(s));
+        config.target = s;
+      }
+    } else if (key == "condition") {
+      const s = p.string(value, "condition");
+      if (s != null) {
+        p.check(checkHostCondition(s));
+        config.condition = s;
+      }
+    } else if (key == "entry") {
+      const s = p.string(value, "entry");
+      if (s != null) {
+        p.check(checkHostEntry(s));
+        config.entry = s;
+      }
+    } else if (key == "scaffold") {
+      if (p.object(value, "`scaffold`")) {
+        for (let k = 0; k < value.keys.length; k++) {
+          const file = p.string(value.items[k], value.keys[k]);
+          if (file != null) {
+            scaffold.push([value.keys[k], file]);
+          }
+        }
+      }
+    } else {
+      p.unknown(key);
+    }
+  }
+  for (const [field, given] of [
+    ["target", config.target],
+    ["condition", config.condition],
+    ["entry", config.entry],
+  ]) {
+    if (given.length == 0) {
+      p.problems.push(`\`host\` needs \`${field}\``);
+    }
+  }
+  for (const [path, file] of scaffold) {
+    p.check(checkScaffold(path, file, config.entry));
+    config.scaffold.set(path, file);
+  }
+  return config;
+}
+
+/** `native`: the package's native crate. */
+export function decodeNative(p: Problems, v: Data): NativeConfig | null {
+  if (!p.object(v, "`native`")) {
+    return null;
+  }
+  const config: NativeConfig = { path: "native", targets: [], wasm: false };
+  for (let i = 0; i < v.keys.length; i++) {
+    const key = v.keys[i];
+    const value = v.items[i];
+    if (key == "path") {
+      const s = p.string(value, "path");
+      if (s != null) {
+        p.check(checkNativePath(s));
+        config.path = s;
+      }
+    } else if (key == "targets") {
+      if (value.kind != DataKind.Array) {
+        p.problems.push(`\`targets\` must be an array, not ${value.describe()}`);
+        config.targets = [];
+        continue;
+      }
+      const targets: string[] = [];
+      for (const e of value.items) {
+        if (e.kind == DataKind.Str) {
+          p.check(checkNativeTarget(e.str));
+          targets.push(e.str);
+        } else {
+          p.problems.push(`\`targets\` entries must be strings, not ${e.describe()}`);
+        }
+      }
+      config.targets = targets;
+    } else if (key == "wasm") {
+      if (value.kind == DataKind.Bool) {
+        if (value.bool) {
+          p.problems.push(
+            "`wasm: true` is not supported yet: packages with native code cannot target WebAssembly",
+          );
+        }
+        config.wasm = value.bool;
+      } else {
+        p.problems.push(`\`wasm\` must be a boolean, not ${value.describe()}`);
+        config.wasm = false;
+      }
+    } else {
+      p.unknown(key);
+    }
+  }
+  return config;
+}

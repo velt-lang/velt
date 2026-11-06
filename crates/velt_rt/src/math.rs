@@ -125,7 +125,7 @@ pub extern "C" fn velt_rt_math_clz32(x: i32) -> i32 {
     x.leading_zeros() as i32
 }
 
-/// `x.leadingZeros()` (std/prelude/bits.vlt): the leading zero bits of a 64-bit pattern (64 for
+/// `x.leadingZeros()` (std/prelude/bits.velt): the leading zero bits of a 64-bit pattern (64 for
 /// 0). Backends emit it as one instruction, as the three below.
 #[no_mangle]
 pub extern "C" fn velt_rt_math_clz64(x: u64) -> u64 {

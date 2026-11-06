@@ -136,8 +136,8 @@ non-escaping closures, `noalias` for `mut` borrows, the sort algorithm, string `
 
 ## Prelude work (sort, join)
 
-`sort()` is now a pattern-defeating quicksort (std/prelude/sort.vlt) and `join` builds its
-result with the runtime string builder (std/prelude/array.vlt). Time of the operation alone
+`sort()` is now a pattern-defeating quicksort (std/prelude/sort.velt) and `join` builds its
+result with the runtime string builder (std/prelude/array.velt). Time of the operation alone
 (`performance.now()` around it, best of 7 in one process, LLVM release; Rust in the same
 harness):
 
@@ -199,7 +199,7 @@ to Rust's `sort_unstable` is the pivot reload and remaining bounds check (FINDIN
 
 ## Prelude work (Map)
 
-`Map<K, V>` (std/prelude/map.vlt) keeps its insertion-ordered layout (dense entry arrays plus
+`Map<K, V>` (std/prelude/map.velt) keeps its insertion-ordered layout (dense entry arrays plus
 an open-addressing index) with these changes:
 - **Packed index words**: each slot is one `u64`, the top 32 bits of the scrambled hash
   (`hash * 2^64/phi`) plus the entry position. A probe rejects non-matching slots without
@@ -221,7 +221,7 @@ an open-addressing index) with these changes:
 
 Whole benchmark (wall clock, best of 12, interleaved runs, LLVM release):
 
-| hashmap.vlt | ms |
+| hashmap.velt | ms |
 |---|---|
 | Velt, old Map (get + set word count) | 214 |
 | Velt, new Map, same source (get + set) | 191 |
@@ -394,7 +394,7 @@ bytes, and the joined text) and frees all of them; every other benchmark allocat
 strings are static or inline). The baseline runtime has no counters (it deep-copied on every
 `.clone()`).
 
-HTTP (`pwsh bench/http/compare.ps1 -Rounds 5`: `examples/http_hello.vlt`, `oha -z 10s -c 256`
+HTTP (`pwsh bench/http/compare.ps1 -Rounds 5`: `examples/http_hello.velt`, `oha -z 10s -c 256`
 on the same machine, A/B alternating): baseline median 53,000 req/s / 18.6 MB peak working set,
 candidate 52,289 req/s / 19.2 MB — within the round-to-round spread (baseline 49.1k–54.4k,
 17.6–19.3 MB; candidate 50.1k–54.2k, 18.6–19.9 MB).
@@ -484,7 +484,7 @@ tests/golden/lang/share_aliasing: 4.3 ms). Sema of examples/http_hello: 5.5 → 
 
 `pwsh bench/compile/run.ps1 -Runs 10` (Linux/macOS: `bench/compile/run.sh 10`): the front end of
 `velt build -v --emit vir` — load + parse, sema, lowering to VIR — best of 10 runs per stage, in
-milliseconds (Windows, release `velt`). `http_hello` is examples/http_hello.vlt (std/http + the
+milliseconds (Windows, release `velt`). `http_hello` is examples/http_hello.velt (std/http + the
 prelude), `all_std` imports every std module, `units_1000` / `chain_1000` are 1000 generated units
 (bench/compile/unit.tmpl: a class and an overriding subclass, a struct implementing a shared
 interface, functions modifying an array param; call chains of 8, resp. one chain through the whole
@@ -527,7 +527,7 @@ min / median of interleaved runs (A B A B …), which is steadier than wall time
 Before = the compiler and runtime at `01ecac6`; "runtime only" = the old compiler linked against
 the new runtime (`VELT_RT_LIB`), which separates the two parts of 8.3. The Benchmarks Game
 programs run with their official N. reverse-complement reads the 25M fasta file through a copy
-of `main.vlt` that opens the file by path (`/dev/stdin` does not exist on Windows); same loop.
+of `main.velt` that opens the file by path (`/dev/stdin` does not exist on Windows); same loop.
 
 | program | runs | before | runtime only | after | change (min) |
 |---|---:|---|---|---|---:|
@@ -548,7 +548,7 @@ of `main.vlt` that opens the file by path (`/dev/stdin` does not exist on Window
   phis of `alloc` / `realloc` results, which LLVM's alias analysis does not look through
   (FINDINGS 8.3).
 - **Async frames (8.2 part 2).** `velt_opt::frame_slots` keeps the frame fields a poll
-  function reads in a loop in locals. `bench/async/hot_loop.vlt` (new, with Rust and Node
+  function reads in a loop in locals. `bench/async/hot_loop.velt` (new, with Rust and Node
   versions) is the reverse-complement shape made measurable: a 5M-iteration byte loop in
   `async main` between awaits, pushing to a frame-resident `u8[]` and summing into a frame
   `i64`. In its optimized IR the loop used to load `total`, `bytes.length` and
@@ -566,7 +566,7 @@ and `-Dir bench/async`) is unchanged within noise: classes 224.8 → 224.9 ms, c
 192.8 → 193.1, shapes 103.7 → 103.6, sort 101.4 → 101.0, strings 125.7 → 128.6 (21 runs each for
 the last four; the CPU-time rerun of strings, 15 runs, has equal medians); await_chain 68.1 →
 66.5, await_deep 432.2 → 429.5, fanout_all 146.3 → 146.0, spawn_many 659.2 → 667.3, timers
-77.3 → 78.7. The two passes add about 0.8 ms to `optimize` for examples/http_hello.vlt (7.2 →
+77.3 → 78.7. The two passes add about 0.8 ms to `optimize` for examples/http_hello.velt (7.2 →
 8.0 ms median of 11; the whole release build takes seconds, mostly in clang and the linker).
 
 ## Compiler perf round 3: class params, poll frames, compile-time scaling (2026-10-01)
@@ -648,7 +648,7 @@ Before: release optimize 6.4–11.6 s, lower 0.35–0.96 s. Remaining costs, not
 
 Machine: cloud VM, x86_64 Linux (Ubuntu 24.04, kernel 6.18), 4 × Intel Xeon @ 2.10 GHz, 15 GB;
 GNU ld 2.42, LLD 18, no mold. `bench/compile/run.sh 5 1000 target/release/velt` (second table)
-plus the link stage of `velt build -v examples/http_hello.vlt` (debug build, best of 5, ms):
+plus the link stage of `velt build -v examples/http_hello.velt` (debug build, best of 5, ms):
 
 | runtime the debug build links | before: static, GNU ld | static, lld | **shared** (new default) | nothing changed (link skipped) |
 |---|---|---|---|---|
@@ -763,7 +763,7 @@ in four (−12 %), smaller than what units give.
 
 Run time, CPU seconds, best of 5 interleaved runs (`--release`; reduced sizes: binary-trees 18,
 fannkuch 10, fasta 5M, k-nucleotide and reverse-complement on fasta 2M, mandelbrot 4000, n-body
-1e7, pidigits 3000 / limbs 5000, regex-redux on fasta 500k, spectral-norm 3000; `bench/*.vlt`
+1e7, pidigits 3000 / limbs 5000, regex-redux on fasta 500k, spectral-norm 3000; `bench/*.velt`
 as is). "4 units" forces `VELT_CODEGEN_UNITS=4` on these small programs (by default they are one
 unit): the cost of losing cross-unit inlining.
 
@@ -860,10 +860,10 @@ N = 50 000 000, CPU seconds, best of 5:
 |---|---:|---:|
 | Rust `n-body.rs` (rustc 1.97, LLVM 22, `-C target-cpu=native`) | 2.11 | 0.92 |
 | Rust `n-body.rs` (same, no `target-cpu`) | 2.29 | 1.00 |
-| Velt `main.vlt`, clang 18 | 3.41–3.60 | 1.49–1.57 |
-| Velt `main.vlt`, clang 22 | 3.39–3.40 | 1.48 |
-| Velt `main_opt.vlt`, clang 18 | 3.75 | 1.64 |
-| Velt `main_opt.vlt`, clang 22 | 3.69 | 1.61 |
+| Velt `main.velt`, clang 18 | 3.41–3.60 | 1.49–1.57 |
+| Velt `main.velt`, clang 22 | 3.39–3.40 | 1.48 |
+| Velt `main_opt.velt`, clang 18 | 3.75 | 1.64 |
+| Velt `main_opt.velt`, clang 22 | 3.69 | 1.61 |
 
 clang 22 compiles the same IR to code as fast as clang 18 (within noise) on x86_64: the newer
 LLVM does not close the gap here.
@@ -946,7 +946,7 @@ Composites in one unit take 8.5 s of codegen, 2.6 s in 4 units and 2.0 s in 8.
 
 Decision: release builds of large programs are split by default. The unit count depends on the
 program's size only (so objects do not depend on the machine): one unit below 32 000 VIR
-statements (every benchmark program is one unit; the largest, `bench/sort.vlt`, has about
+statements (every benchmark program is one unit; the largest, `bench/sort.velt`, has about
 4 000), else one per 16 000, at most 4; clang runs at most one process per core.
 `VELT_CODEGEN_UNITS=N` overrides the count, `=1` turns splitting off.
 
@@ -975,7 +975,7 @@ Each JIT version registers an in-memory ELF image with DWARF line tables for deb
 interface). The first version holds every function, std included. Release `velt dev --host
 --timings` on an Apple M4 (10 cores, macOS 26) shared with other builds; with and without
 `VELT_DEV_DEBUG_INFO=0`, 15 interleaved runs each, best (median in brackets), ms. Peak RSS from
-`/usr/bin/time -l`. log-pipeline is `examples/apps/log-pipeline` running `src/main.vlt -- gen
+`/usr/bin/time -l`. log-pipeline is `examples/apps/log-pipeline` running `src/main.velt -- gen
 x.log --lines 10`. units_1000 is the 1000-unit program of `bench/compile/run.sh`.
 
 | program | functions (image) | `debug info` step | `jit` stage, on / off | time to first run, on / off | peak RSS, on / off |
@@ -1179,7 +1179,7 @@ Velt LLVM 3732, Velt Cranelift release 6395, Node 7360.
 
 `bench/typical/run.sh 7`: 15 programs written the way TypeScript code is written (`number`
 parameters, classes, closures, `Map<string, number>`, comparator sorts, string building). Each
-`.vlt` file is also the TypeScript program Node runs (the harness appends the `main();` call),
+`.velt` file is also the TypeScript program Node runs (the harness appends the `main();` call),
 and `rust/<name>.rs` is an idiomatic Rust port that allocates where JavaScript does (`Box` per
 class instance, `Box<dyn Fn>` for stored closures); `vec2.rs` uses a `Copy` struct, what a Rust
 programmer writes there. All three print the same output. Best of 7 interleaved runs, wall ms;
@@ -1216,7 +1216,7 @@ the table is from `main` at 8949f2c7):
 ## Stable sort with a comparator (#530, 2026-10-05)
 
 `sort(cmp)` / `toSorted(cmp)` moved from an in-place SymMerge (O(n log² n) swaps) to a stable
-sort shaped like Rust's driftsort through a scratch buffer (std/lang/sort/stable.vlt), and velt_opt
+sort shaped like Rust's driftsort through a scratch buffer (std/lang/sort/stable.velt), and velt_opt
 now inlines the comparator through `cmp: F | null` and through every closure argument of a
 recursive helper. Instructions and branch mispredictions of the sort alone (a run with the sort
 minus a run with only the setup), valgrind cachegrind on Linux (WSL2), clang 18; before is
@@ -1339,7 +1339,7 @@ clang 23.1.3 (LLVM backend), rustc 1.99.0 (`rustc -O`, the repository's toolchai
 of both runs. The compiler of the 2026-10-04 typical table (119b25df, the commit that added
 `bench/typical`) was built and run on the same machine, alternating with `main`, with its own
 copies of the programs: its columns are the same-machine "then". The old tables' columns are
-the numbers above (Windows i9-12900HK and Node 22.22 for `bench/*.vlt` and `bench/typical`, an
+the numbers above (Windows i9-12900HK and Node 22.22 for `bench/*.velt` and `bench/typical`, an
 Apple M4 and Node 24.11 for JSON). Ratios above 1 against Node are bold.
 
 `bench/run.sh 10` (the programs added since have no 119b25df row; `int32`'s old ratios are from
@@ -1415,7 +1415,7 @@ What changed:
   programs and within 5% on two more (`strings`, `vec2`), and under Node on all 19 (`tokenize`
   went from 1.87× Node to 0.41×). Left: `record` (1.41× Rust) and `consume` (3.5× Rust, 0.95×
   Node).
-- **`bench/*.vlt` is at Rust parity with LLVM**, as at 119b25df on this machine (`sort` 0.99×,
+- **`bench/*.velt` is at Rust parity with LLVM**, as at 119b25df on this machine (`sort` 0.99×,
   1.23× in the old Windows table). Cranelift release is 0.9–2.8× LLVM release.
 - **JSON** against 119b25df: `parse_typed` 0.80 → 0.62 × serde_json, `parse_union` 1.64 → 1.21,
   `navigate` 2.11 → 1.63 × Node.
@@ -1425,7 +1425,7 @@ What changed:
     `idiv` (#1470).
   - `int32` (1.12× here; 0.96× and 0.95× in two interleaved runs, best of 5): Velt is at Rust's
     speed (1.11×; it was 1.35×), and Node 26 is too (Node 22 was 2.7× Rust in the old run), so
-    the two are within noise of each other. Each half on its own (int32.vlt without one of its
+    the two are within noise of each other. Each half on its own (int32.velt without one of its
     `console.log` lines, best of 7 interleaved), Velt is ahead: `(y * k) | 0` 1429 ms against
     Node's 1495, `Math.imul` 453 against 505.
   - JSON `navigate` (1.63×) and `parse_value` (1.2–1.3×): slower than Node in the 2026-10-02

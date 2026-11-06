@@ -1,4 +1,4 @@
-# Iteration benchmark harness (Windows / PowerShell 7): builds every bench/iter/*.vlt (LLVM
+# Iteration benchmark harness (Windows / PowerShell 7): builds every bench/iter/*.velt (LLVM
 # release), checks that each prints what its Node version (node/<name>.js) prints, and prints a
 # Markdown table of the best wall-clock time over -Runs interleaved rounds, with each program's
 # time relative to hand_loop (the async_* programs: to async_hand; the array_* ones: to
@@ -20,7 +20,7 @@ if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
 $velt = Join-Path $target "release/velt.exe"
 
 $names = @()
-foreach ($src in Get-ChildItem (Join-Path $PSScriptRoot "*.vlt")) {
+foreach ($src in Get-ChildItem (Join-Path $PSScriptRoot "*.velt")) {
     $name = $src.BaseName
     $names += $name
     & $velt build --release --backend llvm $src.FullName -o (Join-Path $out "$name.exe")

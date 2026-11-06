@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Async benchmark harness (Linux / macOS): same as run.ps1. Builds every bench/async/*.vlt (LLVM
+# Async benchmark harness (Linux / macOS): same as run.ps1. Builds every bench/async/*.velt (LLVM
 # release) plus the Rust/tokio and Node versions, checks that all print the same output, and prints
 # Markdown tables of the best wall-clock time (ms) over RUNS runs and of the peak RSS (MB).
 #
@@ -55,8 +55,8 @@ EOF
 times="| benchmark | Velt (all cores) | Velt (1 thread) | Rust tokio multi-thread | Rust tokio current-thread | Node |
 |---|---|---|---|---|---|"
 mems=$times
-for src in "$HERE"/*.vlt; do
-  name=$(basename "$src" .vlt)
+for src in "$HERE"/*.velt; do
+  name=$(basename "$src" .velt)
   [[ -n "$ONLY" && "$name" != "$ONLY" ]] && continue
   echo "$name..." >&2
   "$VELT" build --release "$src" -o "$OUT/$name"

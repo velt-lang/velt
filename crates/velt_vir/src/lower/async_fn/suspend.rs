@@ -239,7 +239,7 @@ impl FnLower<'_, '_> {
     /// word (`*(*cx)`) is not 0 can another job run first; then `velt_rt_await_tick` queues the
     /// step and its ticket is waited for. `drop_held` drops the settled value when the state is
     /// cancelled meanwhile. Standard-library code takes no step: the prelude counts Node's steps
-    /// itself (std/prelude/promise.vlt). Nor does a program in which nothing can make the word
+    /// itself (std/prelude/promise.velt). Nor does a program in which nothing can make the word
     /// non-0 (await_order.rs): it is lowered again without any step code.
     /// Returns whether step code was emitted.
     pub(super) fn await_step(&mut self, drop_held: impl FnOnce(&mut Self)) -> bool {
@@ -400,7 +400,7 @@ impl FnLower<'_, '_> {
     }
 }
 
-/// The fully qualified name of the prelude's top-level `await` mark (std/prelude/process.vlt).
+/// The fully qualified name of the prelude's top-level `await` mark (std/prelude/process.velt).
 const TLA_MARK: &str = velt_common::std_hook!(top_level_await_at);
 
 impl super::super::Cx<'_> {

@@ -18,8 +18,8 @@ function main() {
 
 fn open() -> (Client, lsp_types::Url, lsp_types::Url) {
     let mut client = Client::start();
-    let lib = uri("ref_lib.vlt");
-    let main = uri("ref_main.vlt");
+    let lib = uri("ref_lib.velt");
+    let main = uri("ref_main.velt");
     client.open(&lib, LIB);
     client.open(&main, MAIN);
     assert_eq!(client.diagnostics(&main)["diagnostics"], json!([]));

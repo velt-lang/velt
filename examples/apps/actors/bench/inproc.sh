@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # In-process comparison: @sigx/actors' own benchmark scenarios (dispatch/warm-actor,
 # dispatch/fan-out-actors, activation/cold-cycle, mem/per-actor-footprint) against
-# `actors bench`, the Velt runtime's equivalents (src/bench.vlt), on this machine.
+# `actors bench`, the Velt runtime's equivalents (src/bench.velt), on this machine.
 #
 #   bench/inproc.sh          # needs SIGX_ACTORS_REPO: a BUILT signalxjs/actors checkout
 #

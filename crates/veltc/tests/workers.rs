@@ -2,7 +2,7 @@
 //! packages/host-cloudflare, under node with a fake Workers environment: tests/workers/drive.mjs
 //! imports the build's `worker.mjs` (the host package's entry over the glue's core) as Workers do
 //! and sends it requests. `serve/` is an accept loop in a package that uses `probe/`, a package
-//! shipping its own host module through `hostModules`; `single/hello.vlt` never accepts. Debug
+//! shipping its own host module through `hostModules`; `single/hello.velt` never accepts. Debug
 //! and release builds; the release builds must stay within their size budgets. Also the build's
 //! errors: host modules nothing provides, `velt:` modules outside std, a host that isn't one, a
 //! directory of the user's.
@@ -25,7 +25,7 @@ const TRIPLE: &str = "wasm32-unknown-unknown";
 /// The host package the fixtures depend on (copied beside them).
 const HOST: &str = "host-cloudflare";
 
-/// The most a release Worker of `hello.vlt` may weigh, its files gzipped one by one (what
+/// The most a release Worker of `hello.velt` may weigh, its files gzipped one by one (what
 /// Cloudflare's limit measures, 3 MB on the Free plan): 1.5 times its 59,872 bytes.
 const HELLO_BUDGET: usize = 90_000;
 /// The same for `serve/`, an accept loop with a package host module: 1.5 times 117,799 bytes.
@@ -52,10 +52,10 @@ fn fixtures(name: &str) -> Option<(PathBuf, PathBuf)> {
     let server = root.join("packages/http-server");
     std::fs::create_dir_all(work.join("http-server")).expect("http-server dir");
     std::fs::copy(
-        server.join("package.vlt"),
-        work.join("http-server/package.vlt"),
+        server.join("package.velt"),
+        work.join("http-server/package.velt"),
     )
-    .expect("http-server package.vlt");
+    .expect("http-server package.velt");
     copy_dir(&server.join("src"), &work.join("http-server/src"));
     Some((root, work))
 }
@@ -183,7 +183,7 @@ fn a_program_that_never_accepts_answers_500() {
         let args: Vec<&str> = ["build", "--host", HOST]
             .into_iter()
             .chain(mode)
-            .chain(["hello.vlt", "-o", "hello-worker"])
+            .chain(["hello.velt", "-o", "hello-worker"])
             .collect();
         drive(&work, &dir, &args, "hello-worker", "never");
     }
@@ -204,27 +204,27 @@ fn a_host_module_nothing_provides_is_an_error() {
         return;
     };
     let dir = work.join("single");
-    let o = velt(&dir, &["build", "--host", HOST, "missing.vlt"]);
+    let o = velt(&dir, &["build", "--host", HOST, "missing.velt"]);
     let err = String::from_utf8_lossy(&o.stderr);
     assert!(!o.status.success(), "{err}");
     assert!(
         err.contains(
             "the `--host host-cloudflare` build has no JavaScript for host module `nowhere`"
-        ) && err.contains("missing.vlt:4:")
-            && err.contains("list it in `single`'s package.vlt"),
+        ) && err.contains("missing.velt:4:")
+            && err.contains("list it in `single`'s package.velt"),
         "{err}"
     );
-    let o = velt(&dir, &["build", "--host", HOST, "glue.vlt"]);
+    let o = velt(&dir, &["build", "--host", HOST, "glue.velt"]);
     let err = String::from_utf8_lossy(&o.stderr);
     for want in [
-        "glue.vlt:4:",
-        "glue.vlt:5:",
+        "glue.velt:4:",
+        "glue.velt:5:",
         "the import modules `velt:…` are the runtime glue's",
     ] {
         assert!(!o.status.success() && err.contains(want), "{want}:\n{err}");
     }
     // A plain browser build leaves the host functions to its embedder.
-    let o = velt(&dir, &["build", "--target", TRIPLE, "missing.vlt"]);
+    let o = velt(&dir, &["build", "--target", TRIPLE, "missing.velt"]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     let _ = std::fs::remove_dir_all(&work);
 }
@@ -241,22 +241,22 @@ fn host_option_errors() {
     std::fs::create_dir_all(&mine).expect("mkdir");
     std::fs::write(mine.join("worker.mjs"), "// the user's\n").expect("write");
     let outside = tempfile::tempdir().expect("temp dir");
-    std::fs::write(outside.path().join("a.vlt"), "function main() {}\n").expect("write");
+    std::fs::write(outside.path().join("a.velt"), "function main() {}\n").expect("write");
     for (at, args, want) in [
         (
             &dir,
-            &["build", "--host", HOST, "--target", "wasm32-wasip1", "hello.vlt"][..],
+            &["build", "--host", HOST, "--target", "wasm32-wasip1", "hello.velt"][..],
             "`--host host-cloudflare` builds for `wasm32-unknown-unknown`: leave out `--target wasm32-wasip1`",
         ),
-        (&dir, &["build", "--host", "nope", "hello.vlt"], "no package `nope` among the build's dependencies"),
-        (&dir, &["build", "--host", "single", "hello.vlt"], "package `single` is not a host package"),
+        (&dir, &["build", "--host", "nope", "hello.velt"], "no package `nope` among the build's dependencies"),
+        (&dir, &["build", "--host", "single", "hello.velt"], "package `single` is not a host package"),
         (
             &dir,
-            &["build", "--host", HOST, "hello.vlt", "-o", "mine"],
+            &["build", "--host", HOST, "hello.velt", "-o", "mine"],
             "holds files a `--host` build did not write (`worker.mjs`…)",
         ),
-        (&outside.path().to_path_buf(), &["build", "--host", HOST, "a.vlt"], "builds a package"),
-        (&dir, &["run", "--host", HOST, "hello.vlt"], "`velt run` cannot run a `--host` build"),
+        (&outside.path().to_path_buf(), &["build", "--host", HOST, "a.velt"], "builds a package"),
+        (&dir, &["run", "--host", HOST, "hello.velt"], "`velt run` cannot run a `--host` build"),
     ] {
         let o = velt(at, args);
         let err = String::from_utf8_lossy(&o.stderr);

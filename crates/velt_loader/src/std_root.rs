@@ -49,7 +49,7 @@ pub fn in_std(file: &Path, std_root: &Path) -> bool {
     key(file).starts_with(key(std_root))
 }
 
-/// The prelude's files in load order, as `std/prelude/index.vlt` lists them
+/// The prelude's files in load order, as `std/prelude/index.velt` lists them
 /// ([`velt_common::std_modules::prelude_order`], docs/internals/design/std-layout.md §4). No
 /// prelude file is no prelude; prelude files without a readable, valid index are an error.
 pub fn prelude_files(std_root: &Path) -> Result<Vec<PathBuf>, String> {
@@ -59,7 +59,7 @@ pub fn prelude_files(std_root: &Path) -> Result<Vec<PathBuf>, String> {
         vpm::probe::read_dir(&dir).is_ok_and(|entries| {
             entries.iter().any(|e| {
                 let p = e.path();
-                vpm::probe::is_file(&p) && p.extension().is_some_and(|x| x == "vlt")
+                vpm::probe::is_file(&p) && p.extension().is_some_and(|x| x == "velt")
             })
         })
     };
@@ -76,7 +76,7 @@ pub fn prelude_files(std_root: &Path) -> Result<Vec<PathBuf>, String> {
         std_modules::prelude_order(&src).map_err(|e| format!("`{}`, {e}", index.display()))?;
     Ok(order
         .into_iter()
-        .map(|name| dir.join(format!("{name}.vlt")))
+        .map(|name| dir.join(format!("{name}.velt")))
         .collect())
 }
 
@@ -90,7 +90,7 @@ mod tests {
         assert!(prelude_files(tmp.path()).unwrap().is_empty());
         let dir = tmp.path().join("prelude");
         std::fs::create_dir_all(&dir).unwrap();
-        for f in ["b.vlt", "a.vlt", "notes.md"] {
+        for f in ["b.velt", "a.velt", "notes.md"] {
             std::fs::write(dir.join(f), "").unwrap();
         }
         let err = prelude_files(tmp.path()).unwrap_err();
@@ -100,15 +100,15 @@ mod tests {
         );
         // The index decides the order, not the file names.
         std::fs::write(
-            dir.join("index.vlt"),
+            dir.join("index.velt"),
             "// Prelude.\nimport \"./b\";\nimport \"./a\";\n",
         )
         .unwrap();
         assert_eq!(
             prelude_files(tmp.path()).unwrap(),
-            [dir.join("b.vlt"), dir.join("a.vlt")]
+            [dir.join("b.velt"), dir.join("a.velt")]
         );
-        std::fs::write(dir.join("index.vlt"), "export { x } from \"./a\";\n").unwrap();
+        std::fs::write(dir.join("index.velt"), "export { x } from \"./a\";\n").unwrap();
         let err = prelude_files(tmp.path()).unwrap_err();
         assert!(err.contains("line 1: expected `import"), "{err}");
     }

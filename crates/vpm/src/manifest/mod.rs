@@ -1,4 +1,4 @@
-//! The package manifest, `package.vlt` (CONTRACT: docs/internals/contracts/manifest.md):
+//! The package manifest, `package.velt` (CONTRACT: docs/internals/contracts/manifest.md):
 //!
 //! ```ts ignore
 //! import type { Package } from "velt/package";
@@ -6,14 +6,14 @@
 //! export const pkg: Package = {
 //!   name: "hello",
 //!   version: "0.1.0",
-//!   entry: "src/main.vlt",              // optional, this is the default
+//!   entry: "src/main.velt",              // optional, this is the default
 //!   registry: "https://registry.example.com",   // optional remote registry
 //!   dependencies: {
 //!     json: "1.2",                      // registry package, semver requirement
 //!     util: { path: "../util" },        // local package
 //!   },
 //!   paths: { "@app/*": "src/*" },       // import aliases (`crate::paths`)
-//!   imports: { "#io": { js: "./src/io/js.vlt", default: "./src/io/native.vlt" } },
+//!   imports: { "#io": { js: "./src/io/js.velt", default: "./src/io/native.velt" } },
 //!                                       // conditional imports (`crate::imports`)
 //!   hostModules: { kv: "./src/kv.mjs" }, // JS of `declare host("kv")` (`crate::host_modules`)
 //!   host: { target: "…", condition: "…", entry: "./src/entry.mjs" },
@@ -48,13 +48,15 @@ pub use lint::{LintConfig, LintLevel};
 pub(crate) mod write;
 
 /// File name of the manifest at a package root.
-pub const MANIFEST_FILE: &str = "package.vlt";
+pub const MANIFEST_FILE: &str = "package.velt";
 /// The manifest's former name: still found, to report how to migrate it ([`legacy`]).
 pub const LEGACY_MANIFEST_FILE: &str = "velt.toml";
+/// The manifest's name before sources moved to `.velt` (#2419): renaming it is all a package needs.
+pub const OLD_MANIFEST_FILE: &str = "package.vlt"; // velt-ext: keep
 /// Default runnable entry, relative to the package root.
-pub const DEFAULT_ENTRY: &str = "src/main.vlt";
+pub const DEFAULT_ENTRY: &str = "src/main.velt";
 /// Entry module seen by importers of a library package, relative to the package root.
-pub const LIB_ENTRY: &str = "src/lib.vlt";
+pub const LIB_ENTRY: &str = "src/lib.velt";
 /// Directory holding a package's modules, relative to the package root.
 pub const SRC_DIR: &str = "src";
 /// The requirement of a dependency that a workspace provides: the member of that name, or the
@@ -62,7 +64,7 @@ pub const SRC_DIR: &str = "src";
 pub const WORKSPACE_REQUIREMENT: &str = "workspace";
 
 /// A parsed and validated manifest. The serde attributes describe the legacy `velt.toml` layout
-/// ([`legacy`]); `package.vlt` is decoded by [`read`].
+/// ([`legacy`]); `package.velt` is decoded by [`read`].
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct Manifest {
     /// Top-level `registry = "https://…"`: the remote registry for this package's registry
@@ -278,7 +280,7 @@ impl Dependency {
 }
 
 impl Manifest {
-    /// Read and validate `package.vlt` text; errors are rendered against the name `package.vlt`.
+    /// Read and validate `package.velt` text; errors are rendered against the name `package.velt`.
     pub fn parse(src: &str) -> Result<Manifest, String> {
         Manifest::read(FileId(0), src).map_err(|d| render(Path::new(MANIFEST_FILE), src, &d))
     }
@@ -316,19 +318,25 @@ impl Manifest {
     /// the migration error ([`legacy::migration_error`]).
     pub fn from_dir(dir: &Path) -> Result<Manifest, String> {
         let path = dir.join(MANIFEST_FILE);
+        if !path.is_file() && dir.join(OLD_MANIFEST_FILE).is_file() {
+            return Err(format!(
+                "`{}` is no longer read: rename it to `{MANIFEST_FILE}`",
+                dir.join(OLD_MANIFEST_FILE).display()
+            ));
+        }
         if !path.is_file() && dir.join(LEGACY_MANIFEST_FILE).is_file() {
             return Err(legacy::migration_error(dir));
         }
         Manifest::from_path(&path)
     }
 
-    /// The manifest as `package.vlt` text, formatted like `velt fmt` formats it. Defaults are left
+    /// The manifest as `package.velt` text, formatted like `velt fmt` formats it. Defaults are left
     /// out.
-    pub fn to_vlt(&self) -> String {
-        write::to_vlt(self)
+    pub fn to_velt(&self) -> String {
+        write::to_velt(self)
     }
 
-    /// The manifest as JSON in `package.vlt`'s shape (`velt manifest --json`), with defaults
+    /// The manifest as JSON in `package.velt`'s shape (`velt manifest --json`), with defaults
     /// filled in.
     pub fn to_json(&self) -> serde_json::Value {
         write::to_json(self)
@@ -646,7 +654,7 @@ pub fn split_scoped(name: &str) -> Option<(&str, &str)> {
     name.strip_prefix('@')?.split_once('/')
 }
 
-/// Whether `name` may name a package in `package.vlt` (`name` and `dependencies`): a valid
+/// Whether `name` may name a package in `package.velt` (`name` and `dependencies`): a valid
 /// [package name](is_valid_package_name), or a scoped one, `@scope/name`, whose two parts are
 /// lowercase words like a package name's. Registries hold unscoped packages only, so a scoped
 /// package is a local (`path`) dependency.
@@ -768,7 +776,7 @@ fn reserved(name: &str) -> String {
 }
 
 /// The root directory of the nearest package enclosing `start` (a file or directory): the first
-/// ancestor containing a `package.vlt` (or a `velt.toml`, which [`Manifest::from_dir`] then
+/// ancestor containing a `package.velt` (or a `velt.toml`, which [`Manifest::from_dir`] then
 /// reports as needing migration).
 pub fn find_package_root(start: &Path) -> Option<PathBuf> {
     let start = if start.is_absolute() {
@@ -778,7 +786,11 @@ pub fn find_package_root(start: &Path) -> Option<PathBuf> {
     };
     start
         .ancestors()
-        .find(|d| d.join(MANIFEST_FILE).is_file() || d.join(LEGACY_MANIFEST_FILE).is_file())
+        .find(|d| {
+            [MANIFEST_FILE, OLD_MANIFEST_FILE, LEGACY_MANIFEST_FILE]
+                .iter()
+                .any(|name| d.join(name).is_file())
+        })
         .map(Path::to_path_buf)
 }
 

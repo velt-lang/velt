@@ -286,14 +286,14 @@ def main():
 
     def check(item):
         i, src, _ = item
-        vlt = os.path.join(work, f"p{i}.vlt")
+        src_path = os.path.join(work, f"p{i}.velt")
         ts = os.path.join(work, f"p{i}.ts")
-        with open(vlt, "w", newline="\n") as f:
+        with open(src_path, "w", newline="\n") as f:
             f.write(src)
         with open(ts, "w", newline="\n") as f:
             f.write(src + "\nmain();\n")
         exe = os.path.join(work, f"p{i}.exe")
-        b = subprocess.run([velt, "build", vlt, "-o", exe], cwd=work, capture_output=True)
+        b = subprocess.run([velt, "build", src_path, "-o", exe], cwd=work, capture_output=True)
         if b.returncode != 0:
             return None
         # The program itself under the timeout, so a hang is killed.

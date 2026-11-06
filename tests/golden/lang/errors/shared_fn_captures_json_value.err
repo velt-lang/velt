@@ -1,1 +1,1 @@
-shared_fn_captures_json_value.vlt:5:20: error: this function captures `h`, and it is in `shared(...)`, so each call would run `JsonValue`'s `clone()` on the same object, from several threads at once
+shared_fn_captures_json_value.velt:5:20: error: this function captures `h`, and it is in `shared(...)`, so each call would run `JsonValue`'s `clone()` on the same object, from several threads at once

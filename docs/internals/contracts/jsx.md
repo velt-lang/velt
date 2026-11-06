@@ -10,7 +10,7 @@ The import source of a file is, in order:
    before the first token). Velt also reads it from a line comment (`// @jsxImportSource
    <source>`), but `tsc` reads it only from a block comment, so a file shared with a TypeScript
    client uses the block form (`velt check --ts-compat` reports the line form);
-2. `jsx: { importSource: "<source>" }` in the package's `package.vlt` (manifest.md);
+2. `jsx: { importSource: "<source>" }` in the package's `package.velt` (manifest.md);
 3. `std/jsx`.
 
 What the runtime exports chooses how its JSX compiles ("Automatic runtimes" below, and
@@ -22,10 +22,10 @@ A module that contains JSX implicitly imports `<source>/jsx-runtime` (a package 
 `JSX` (`JSX.Element`, `JSX.IntrinsicElements`, …) in that module, exactly as if the file had
 `import * as JSX from "<source>/jsx-runtime"`; the factory functions are called by generated
 code only. A file that never uses JSX does not load the runtime. A relative pragma source
-(`./ui`) is relative to the file; a relative `importSource` in package.vlt to the package root. A
+(`./ui`) is relative to the file; a relative `importSource` in package.velt to the package root. A
 name `JSX` the module declares or imports itself wins over the implicit namespace.
 
-JSX is allowed in `.vlt` and `.tsx` modules; in a `.ts` module it is a loader error ("JSX is not
+JSX is allowed in `.velt` and `.tsx` modules; in a `.ts` module it is a loader error ("JSX is not
 allowed in a `.ts` file", at the first element, with a note to rename the file to `.tsx`), as in
 TypeScript. The provider is chosen the same way for every kind of file.
 
@@ -476,7 +476,7 @@ A provider whose attributes include handlers adds the handler type to `AttrValue
 attribute's type must convert to it) and decides what its `jsx` does with them; a server
 renderer drops them. TypeScript's other route, merging declarations of a global
 `JSX.IntrinsicElements` interface, does not exist: the provider module's export is the one
-definition. `tests/golden/lang/_jsx_events/jsx-runtime.vlt` is a complete provider (used by
+definition. `tests/golden/lang/_jsx_events/jsx-runtime.velt` is a complete provider (used by
 `lang/jsx_extend_intrinsic`).
 
 ## Known compatibility gaps (each is a compile error, never a behavior difference)

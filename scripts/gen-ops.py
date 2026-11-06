@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-# Generates `velt/ops` (std/ops/*.vlt): one interface per operator method (design
+# Generates `velt/ops` (std/ops/*.velt): one interface per operator method (design
 # docs/internals/design/operators.md) and the operator methods of the number types and
 # `string`, so that generic code bounded by the interfaces (`T extends Add<T>`) runs on them.
 # Each number method is the built-in operator itself (`return this + other;`), so it means
 # exactly what the operator means, overflow included. To change them, change this script and
 # run it from the repository root, then `velt fmt` the files:
 #
-#   python3 scripts/gen-ops.py && velt fmt std/ops/*.vlt
+#   python3 scripts/gen-ops.py && velt fmt std/ops/*.velt
 import os
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "std", "ops")
@@ -153,18 +153,18 @@ def index():
 
 
 FILES = [
-    ("operators.vlt", interfaces()),
-    ("signed.vlt", numbers("signed integer types", INTS[:5], False)),
-    ("unsigned.vlt", numbers("unsigned integer types", INTS[5:], False)),
-    ("floats.vlt", numbers("float types and `string`", FLOATS, True)),
-    ("index.vlt", index()),
+    ("operators.velt", interfaces()),
+    ("signed.velt", numbers("signed integer types", INTS[:5], False)),
+    ("unsigned.velt", numbers("unsigned integer types", INTS[5:], False)),
+    ("floats.velt", numbers("float types and `string`", FLOATS, True)),
+    ("index.velt", index()),
 ]
 for name, text in FILES:
     with open(os.path.join(OUT, name), "w") as f:
         f.write(text)
 
 
-# tests/golden/lang/operators_numbers.vlt: each number type's operator methods, called through
+# tests/golden/lang/operators_numbers.velt: each number type's operator methods, called through
 # generic code, give what the built-in operator gives on edge values (overflow included).
 EDGES = {
     "i8": ["-128", "-1", "0", "1", "7", "127"],
@@ -262,5 +262,5 @@ def golden():
 
 
 GOLDEN = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "golden", "lang")
-with open(os.path.join(GOLDEN, "operators_numbers.vlt"), "w") as f:
+with open(os.path.join(GOLDEN, "operators_numbers.velt"), "w") as f:
     f.write(golden())

@@ -1,4 +1,4 @@
-//! `HostRef` (std/host/host_ref.vlt; https://veltlang.com/docs/reference/host-functions/) natively: a native
+//! `HostRef` (std/host/host_ref.velt; https://veltlang.com/docs/reference/host-functions/) natively: a native
 //! program has no JS host, so no host function can make one (calling one is a compile error),
 //! and these functions only exist so that code dropping or cloning a `HostRef` links. The
 //! WebAssembly runtime's own `host.rs` reaches the JS glue's table of values.

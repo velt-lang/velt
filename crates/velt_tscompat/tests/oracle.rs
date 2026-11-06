@@ -316,11 +316,11 @@ fn write_project(oracle: &Path, project: &Path) -> (Vec<Checked>, Vec<Checked>, 
         }
         let (stem, ext) = (stem(path), path.extension().unwrap().to_string_lossy());
         let (name, lint_as) = match ext.as_ref() {
-            "vlt" => (format!("{stem}.ts"), path.clone()),
+            "velt" => (format!("{stem}.ts"), path.clone()),
             "ts" | "tsx" => (format!("{stem}.{ext}"), path.clone()),
             // A snapshot is linted as its case, which says how to parse it.
             "fixed" => {
-                let case = ["vlt", "ts", "tsx"]
+                let case = ["velt", "ts", "tsx"]
                     .iter()
                     .map(|e| path.with_extension(e))
                     .find(|p| p.is_file())

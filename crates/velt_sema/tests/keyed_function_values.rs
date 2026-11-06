@@ -48,14 +48,14 @@ fn program(decl: &str, call: &str, field: &str) -> Loaded {
     let dir = std::env::temp_dir().join(format!("velt-keyed-rows-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
-        dir.join("pool.vlt"),
+        dir.join("pool.velt"),
         "export async function onEachWorker(work: () => Promise<void>) {\n  await spawn(work());\n}\n",
     )
     .unwrap();
     let src = format!(
         "{HEAD}{decl}\nasync function main() {{\n  const l = new App();\n  await onEachWorker(async (): Promise<void> => {{\n    const c = new Holder(l);\n    {call}\n    c.{field}.push(\"x\");\n  }});\n}}\nmain();\n"
     );
-    let mut loaded = load_src_at(&dir.join("main.vlt"), &src);
+    let mut loaded = load_src_at(&dir.join("main.velt"), &src);
     for m in &mut loaded.modules {
         m.is_dependency |= m.path.ends_with("pool");
     }

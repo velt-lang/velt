@@ -1,4 +1,4 @@
-// Permutations (same workload as permutations.vlt): fannkuch-redux's algorithm, n = 9.
+// Permutations (same workload as permutations.velt): fannkuch-redux's algorithm, n = 9.
 function fannkuch(n) {
   const perm = [];
   const perm1 = [];

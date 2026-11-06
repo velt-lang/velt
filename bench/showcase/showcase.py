@@ -188,7 +188,7 @@ def package_versions(ctx):
                             f"console.log(new Database(':memory:').query('{q}').get().v)"])
     exe = os.path.join(ctx.out, "sqlite", "sqlite-version")
     os.makedirs(os.path.dirname(exe), exist_ok=True)
-    if suites.velt_build(ctx, os.path.join(ctx.bench, "sqlite", "version.vlt"), exe) is None:
+    if suites.velt_build(ctx, os.path.join(ctx.bench, "sqlite", "version.velt"), exe) is None:
         out["sqlite (the sqlite package)"] = version([exe])
     for lock in (os.path.join(ctx.bench, "db", "rust", "Cargo.lock"),
                  os.path.join(ctx.bench, "sqlite", "rust", "Cargo.lock")):

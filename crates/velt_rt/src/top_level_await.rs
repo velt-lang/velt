@@ -73,20 +73,20 @@ mod tests {
     fn the_await_waiting_now_is_the_one_stored_last() {
         assert_eq!(waiting_at(), None);
         let (outer, inner) = (
-            VeltStr::from_static(b"main.vlt:3:1"),
-            VeltStr::from_static(b"main.vlt:3:20"),
+            VeltStr::from_static(b"main.velt:3:1"),
+            VeltStr::from_static(b"main.velt:3:20"),
         );
-        let heap = VeltStr::from_vec(b"main.vlt:9:1".to_vec());
+        let heap = VeltStr::from_vec(b"main.velt:9:1".to_vec());
         // SAFETY: valid strings.
         unsafe {
             // `await f(await g())`: the inner one suspends, then the outer one.
             velt_rt_tla_at(&inner);
-            assert_eq!(waiting_at(), Some(&b"main.vlt:3:20"[..]));
+            assert_eq!(waiting_at(), Some(&b"main.velt:3:20"[..]));
             velt_rt_tla_at(&outer);
-            assert_eq!(waiting_at(), Some(&b"main.vlt:3:1"[..]));
+            assert_eq!(waiting_at(), Some(&b"main.velt:3:1"[..]));
             // Not a literal: not kept.
             velt_rt_tla_at(&heap);
-            assert_eq!(waiting_at(), Some(&b"main.vlt:3:1"[..]));
+            assert_eq!(waiting_at(), Some(&b"main.velt:3:1"[..]));
         }
     }
 }

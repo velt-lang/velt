@@ -416,7 +416,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
     }
 
     /// The first line Node prints for an uncaught error of class `err` (extending the prelude
-    /// `Error` class): `uncaughtHeader(e, <dynamic class name>)` (std/lang/hooks/error.vlt), which writes
+    /// `Error` class): `uncaughtHeader(e, <dynamic class name>)` (std/lang/hooks/error.velt), which writes
     /// `<name>: <message>` from the (possibly overridden) `name`, and the class in front when
     /// they differ (`E [TypeError]: m`).
     fn push_error_header(&mut self, buf: &Operand, ep: &Place, err: TyId) {

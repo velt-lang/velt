@@ -61,7 +61,7 @@ fi
 echo "building the Rust benchmarks..." >&2
 cargo build --release -q --manifest-path "$HERE/rust/Cargo.toml" --target-dir "$TARGET"
 for op in value write; do
-  "$VELT" build --release "$HERE/$op.vlt" -o "$OUT/$op"
+  "$VELT" build --release "$HERE/$op.velt" -o "$OUT/$op"
 done
 
 # best <check> <command...>: the best measurement over RUNS runs. <check> is `-` (store the

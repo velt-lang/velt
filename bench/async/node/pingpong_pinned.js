@@ -1,5 +1,5 @@
 // 4 owners each keep a Map; 64 callers make 5000 request/reply calls each to the owner of their
-// key, through an async queue plus a promise per call (pingpong_pinned.vlt).
+// key, through an async queue plus a promise per call (pingpong_pinned.velt).
 class Queue {
   constructor() { this.items = []; this.waiting = null; this.closed = false; }
   push(v) { if (this.waiting) { const w = this.waiting; this.waiting = null; w(v); } else this.items.push(v); }

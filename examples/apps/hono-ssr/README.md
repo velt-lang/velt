@@ -6,7 +6,7 @@ A small shop whose pages are [Hono](https://hono.dev) JSX components (`hono/jsx`
 - **tsc**, against the real `hono` npm package: `reference/render.tsx` is a Hono app on Node that
   serves the pages with `c.html(...)`;
 - **Velt**, against `hono/`, a Velt JSX provider whose output matches `hono/jsx`'s server
-  rendering byte for byte, served by a native Velt HTTP server (`src/server.vlt`).
+  rendering byte for byte, served by a native Velt HTTP server (`src/server.velt`).
 
 Both print the same bytes for every page: `demo.out` is the Velt server's output (a golden), and
 `npm run compare` renders the same pages with real Hono and diffs them against it.
@@ -32,17 +32,17 @@ npm install && npm run compare     # real Hono on Node renders the same bytes as
 | `src/shared/model.ts` | the `Product` type, the catalog and pure helpers |
 | `src/shared/components.tsx` | `Layout`, `ProductList`, `ProductCard`, `ProductPage`, `NotFound` |
 | `src/shared/pages.tsx` | routing: a path and query to a status, a title and an element |
-| `src/server.vlt`, `src/main.vlt` | the Velt server (packages/http-server) |
-| `hono/jsx/jsx-runtime.vlt` | the provider: what compiled JSX calls (docs/internals/contracts/jsx.md) |
-| `hono/jsx/node.vlt` | the element type and `renderToString` |
-| `hono/jsx/style.vlt` | `style={{ … }}` objects, with Hono's rules |
-| `hono/jsx/index.vlt`, `hono/html.vlt` | what shared code imports: `Child`, `PropsWithChildren`; `raw` |
+| `src/server.velt`, `src/main.velt` | the Velt server (packages/http-server) |
+| `hono/jsx/jsx-runtime.velt` | the provider: what compiled JSX calls (docs/internals/contracts/jsx.md) |
+| `hono/jsx/node.velt` | the element type and `renderToString` |
+| `hono/jsx/style.velt` | `style={{ … }}` objects, with Hono's rules |
+| `hono/jsx/index.velt`, `hono/html.velt` | what shared code imports: `Child`, `PropsWithChildren`; `raw` |
 | `reference/render.tsx` | the same pages as a Hono app on Node |
-| `demo.vlt`, `demo.out` | fetches each page from the Velt server (golden) |
+| `demo.velt`, `demo.out` | fetches each page from the Velt server (golden) |
 
 ## One import specifier in both compilers
 
-`package.vlt` points `jsx.importSource` at `hono/jsx` and maps `hono/jsx` and `hono/html` to the
+`package.velt` points `jsx.importSource` at `hono/jsx` and maps `hono/jsx` and `hono/html` to the
 provider with `paths`. tsc (`tsconfig.json`) resolves the same specifiers to the npm package. So
 a shared component is ordinary Hono code:
 
@@ -62,7 +62,7 @@ export function Layout(props: { title: string; children?: Child }) {
 
 ## What the provider renders like Hono
 
-Measured against hono 4.13.16 (`tests/render.test.vlt` holds the cases):
+Measured against hono 4.13.16 (`tests/render.test.velt` holds the cases):
 
 - text and attribute values escaped as `& < > " '` → `&amp; &lt; &gt; &quot; &#39;`;
 - empty void elements as `<br/>`; a void element with children keeps them (`<br>no</br>`);
@@ -85,7 +85,7 @@ velt-lang/velt#2251 tracks these; each is a compile error, never different HTML:
   `renderToReadableStream` (streaming);
 - the `html` tagged template from `hono/html` (Velt has no tagged templates);
 - children nested deeper than one array (`{[["a", <i />], "c"]}`);
-- `className` on tags other than those `hono/jsx/jsx-runtime.vlt` lists;
+- `className` on tags other than those `hono/jsx/jsx-runtime.velt` lists;
 - an async component's error type must be an `Error`: the provider fixes `jsxAsyncComponent`'s
   error type, because a generic one is not inferred for a component that cannot fail (#2259);
 - Hono's routing itself (`new Hono()`): the Velt side uses packages/http-server, and compiling

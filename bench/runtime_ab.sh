@@ -56,16 +56,16 @@ VELT="$TARGET/release/velt"
 # and SQLite rows into typed values.
 benches() {
   local b=$ROOT/bench f rel
-  for f in "$b"/strings.vlt "$b"/sort.vlt "$b"/hashmap.vlt "$b"/strings_utf16/*.vlt "$b"/json/*.vlt; do
+  for f in "$b"/strings.velt "$b"/sort.velt "$b"/hashmap.velt "$b"/strings_utf16/*.velt "$b"/json/*.velt; do
     rel=${f#"$b/"}
-    echo "${rel%.vlt}|$f|"
+    echo "${rel%.velt}|$f|"
   done
   for n in strings tokenize wordcount keys record sortcmp; do
-    echo "typical/$n|$b/typical/$n.vlt|"
+    echo "typical/$n|$b/typical/$n.velt|"
   done
-  echo "typical/consume 1000000|$b/typical/consume.vlt|1000000"
-  echo "sqlite/rows feed|$b/sqlite/rows.vlt|feed 2000"
-  echo "sqlite/rows post|$b/sqlite/rows.vlt|post 2000"
+  echo "typical/consume 1000000|$b/typical/consume.velt|1000000"
+  echo "sqlite/rows feed|$b/sqlite/rows.velt|feed 2000"
+  echo "sqlite/rows post|$b/sqlite/rows.velt|post 2000"
 }
 
 # one "name|source|arguments": prints "name\tA\tB\tsame|DIFF".

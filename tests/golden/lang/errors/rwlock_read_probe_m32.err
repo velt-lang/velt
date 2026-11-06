@@ -1,1 +1,1 @@
-rwlock_read_probe_m32.vlt:13:9: error: this function throws `Error`, but the function type it is used as does not allow throwing
+rwlock_read_probe_m32.velt:13:9: error: this function throws `Error`, but the function type it is used as does not allow throwing

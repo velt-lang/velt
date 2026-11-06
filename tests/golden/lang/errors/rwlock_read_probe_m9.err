@@ -1,1 +1,1 @@
-rwlock_read_probe_m9.vlt:9:16: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it
+rwlock_read_probe_m9.velt:9:16: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it

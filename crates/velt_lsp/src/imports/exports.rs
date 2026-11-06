@@ -294,12 +294,12 @@ mod tests {
         let dir = tmp.path();
         let files = [
             (
-                "a.vlt",
+                "a.velt",
                 "export * from \"./b\";\nexport * from \"./c\";\nexport const A: i64 = 1;\n",
             ),
-            ("b.vlt", "export * from \"./d\";\nexport * from \"./a\";\n"),
-            ("c.vlt", "export { D as E } from \"./d\";\n"),
-            ("d.vlt", "export const D: i64 = 1;\n"),
+            ("b.velt", "export * from \"./d\";\nexport * from \"./a\";\n"),
+            ("c.velt", "export { D as E } from \"./d\";\n"),
+            ("d.velt", "export const D: i64 = 1;\n"),
         ];
         for (name, text) in files {
             std::fs::write(dir.join(name), text).unwrap();
@@ -307,12 +307,12 @@ mod tests {
         let resolve = |spec: &str, from: &Path| {
             let file = from
                 .parent()?
-                .join(format!("{}.vlt", spec.strip_prefix("./")?));
+                .join(format!("{}.velt", spec.strip_prefix("./")?));
             file.is_file().then_some(file)
         };
         let mut cache = ExportCache::default();
         let names: Vec<String> = cache
-            .exports(&dir.join("a.vlt"), &resolve)
+            .exports(&dir.join("a.velt"), &resolve)
             .iter()
             .map(|e| e.name.clone())
             .collect();

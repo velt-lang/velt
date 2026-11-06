@@ -1,4 +1,4 @@
-//! Registry data for `package.vlt` (package indexes and name searches), fetched on background
+//! Registry data for `package.velt` (package indexes and name searches), fetched on background
 //! threads so that typing never waits for the network, and cached for the session. A lookup
 //! answers at once: the data, "not yet" (a fetch is running; the server asks again shortly), or
 //! "unavailable" (the registry could not be reached: the editor stays quiet about it).

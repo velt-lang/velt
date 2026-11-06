@@ -17,14 +17,14 @@ pub enum ModuleRef {
     Relative {
         /// The specifier's path joined to the importer's directory, lexically normalized, with
         /// its extension as written (`./util` → `<dir>/util`, `./card.tsx` → `<dir>/card.tsx`);
-        /// the loader picks the file (`util.vlt`, `util.ts`, …).
+        /// the loader picks the file (`util.velt`, `util.ts`, …).
         file: PathBuf,
     },
     /// Bare name — a package dependency (`name`) and optional sub-module path.
     Package {
         /// Dependency name.
         name: String,
-        /// Module inside the package's `src/` (`None` → `src/lib.vlt`).
+        /// Module inside the package's `src/` (`None` → `src/lib.velt`).
         sub: Option<String>,
     },
 }
@@ -117,7 +117,7 @@ pub fn resolve_spec(spec: &str, importer_dir: &Path) -> Result<ModuleRef, String
 }
 
 /// Standard library and package specifiers name modules without an extension (`velt/fs`, not
-/// `velt/fs.vlt`); only relative imports may name one.
+/// `velt/fs.velt`); only relative imports may name one.
 fn extension_check(spec: &str) -> Result<(), String> {
     match vpm::sources::SOURCE_EXTENSIONS
         .iter()
@@ -290,7 +290,7 @@ mod tests {
             "Bad",
             "./",
             "pkg/../x",
-            "pkg/x.vlt",
+            "pkg/x.velt",
             "pkg/x.ts",
             "@sigx",
             "@sigx/",
@@ -301,9 +301,9 @@ mod tests {
                 "`{bad}` should be rejected"
             );
         }
-        let err = resolve_spec("velt/fs.vlt", dir).unwrap_err();
+        let err = resolve_spec("velt/fs.velt", dir).unwrap_err();
         assert!(
-            err.contains("should not include the `.vlt` extension"),
+            err.contains("should not include the `.velt` extension"),
             "{err}"
         );
     }

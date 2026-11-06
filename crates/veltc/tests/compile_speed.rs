@@ -30,32 +30,32 @@ fn check_reports_diagnostics_without_building() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     std::fs::write(
-        dir.join("good.vlt"),
+        dir.join("good.velt"),
         "function main() {\n  console.log(1);\n}\n",
     )
     .unwrap();
     std::fs::write(
-        dir.join("bad.vlt"),
+        dir.join("bad.velt"),
         "function main() {\n  const x: number = \"a\";\n}\n",
     )
     .unwrap();
 
-    let o = velt(dir, &["check", "good.vlt"], &[]);
+    let o = velt(dir, &["check", "good.velt"], &[]);
     assert!(o.status.success(), "{}", text(&o.stderr));
     assert!(
         !dir.join("target").exists(),
         "check must not build anything"
     );
 
-    let o = velt(dir, &["check", "bad.vlt"], &[]);
+    let o = velt(dir, &["check", "bad.velt"], &[]);
     assert_eq!(o.status.code(), Some(1));
     assert!(
-        text(&o.stderr).contains("bad.vlt:2:"),
+        text(&o.stderr).contains("bad.velt:2:"),
         "{}",
         text(&o.stderr)
     );
 
-    let o = velt(dir, &["check", "bad.vlt", "--json"], &[]);
+    let o = velt(dir, &["check", "bad.velt", "--json"], &[]);
     assert_eq!(o.status.code(), Some(1));
     let out = text(&o.stdout);
     assert!(out.contains(r#""errors":1"#), "{out}");
@@ -64,7 +64,7 @@ fn check_reports_diagnostics_without_building() {
         "{out}"
     );
 
-    let o = velt(dir, &["check", "missing.vlt", "--json"], &[]);
+    let o = velt(dir, &["check", "missing.velt", "--json"], &[]);
     assert_eq!(o.status.code(), Some(1));
     assert!(text(&o.stdout).contains(r#""location":null"#));
 }
@@ -74,38 +74,38 @@ fn check_accepts_library_modules_without_main() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     std::fs::write(
-        dir.join("lib.vlt"),
+        dir.join("lib.velt"),
         "export function double(x: i64): i64 {\n  return x * 2;\n}\n",
     )
     .unwrap();
     // An exported function nothing calls is still type-checked.
     std::fs::write(
-        dir.join("badlib.vlt"),
+        dir.join("badlib.velt"),
         "export function double(x: i64): i64 {\n  return x * 2;\n}\n\
          export function name(): string {\n  return 1;\n}\n",
     )
     .unwrap();
 
-    let o = velt(dir, &["check", "lib.vlt"], &[]);
+    let o = velt(dir, &["check", "lib.velt"], &[]);
     assert!(o.status.success(), "{}", text(&o.stderr));
     assert_eq!(
         (text(&o.stdout), text(&o.stderr)),
         (String::new(), String::new())
     );
 
-    let o = velt(dir, &["check", "lib.vlt", "--json"], &[]);
+    let o = velt(dir, &["check", "lib.velt", "--json"], &[]);
     assert!(o.status.success(), "{}", text(&o.stderr));
     let out = text(&o.stdout);
     assert!(out.contains(r#""errors":0"#), "{out}");
     assert!(!out.contains("main"), "{out}");
 
-    let o = velt(dir, &["check", "badlib.vlt"], &[]);
+    let o = velt(dir, &["check", "badlib.velt"], &[]);
     assert_eq!(o.status.code(), Some(1));
     let err = text(&o.stderr);
-    assert!(err.contains("badlib.vlt:5:"), "{err}");
+    assert!(err.contains("badlib.velt:5:"), "{err}");
     assert!(!err.contains("`main` function not found"), "{err}");
 
-    let o = velt(dir, &["check", "badlib.vlt", "--json"], &[]);
+    let o = velt(dir, &["check", "badlib.velt", "--json"], &[]);
     assert_eq!(o.status.code(), Some(1));
     let out = text(&o.stdout);
     assert!(out.contains(r#""line":5"#), "{out}");
@@ -113,8 +113,8 @@ fn check_accepts_library_modules_without_main() {
 
     // In a library, `main` may name something other than a function.
     for (file, src) in [
-        ("type_main.vlt", "export type main = i64;\n"),
-        ("const_main.vlt", "export const main: i64 = 1;\n"),
+        ("type_main.velt", "export type main = i64;\n"),
+        ("const_main.velt", "export const main: i64 = 1;\n"),
     ] {
         std::fs::write(dir.join(file), src).unwrap();
         let o = velt(dir, &["check", file], &[]);
@@ -123,7 +123,7 @@ fn check_accepts_library_modules_without_main() {
 
     // Building or running a library is still an error.
     for cmd in ["build", "run"] {
-        let o = velt(dir, &[cmd, "lib.vlt"], &[]);
+        let o = velt(dir, &[cmd, "lib.velt"], &[]);
         assert_eq!(o.status.code(), Some(1), "velt {cmd}");
         let err = text(&o.stderr);
         assert!(
@@ -138,7 +138,7 @@ fn check_accepts_library_modules_without_main() {
 fn build(dir: &Path, env: &[(&str, &str)]) -> (bool, String) {
     // Links against the runtime libraries: current ones.
     runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
-    let o = velt(dir, &["build", "hello.vlt", "--timings"], env);
+    let o = velt(dir, &["build", "hello.velt", "--timings"], env);
     let err = text(&o.stderr);
     assert!(o.status.success(), "{err}");
     (err.contains("up to date"), err)
@@ -149,7 +149,7 @@ fn debug_links_are_skipped_when_nothing_changed() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     let hello = "function main() {\n  console.log(\"hi\");\n}\n";
-    std::fs::write(dir.join("hello.vlt"), hello).unwrap();
+    std::fs::write(dir.join("hello.velt"), hello).unwrap();
     let exe = dir
         .join("target/velt")
         .join(if cfg!(windows) { "hello.exe" } else { "hello" });
@@ -166,7 +166,7 @@ fn debug_links_are_skipped_when_nothing_changed() {
     assert_eq!(text(&run_copy(&exe, "hi").stdout), "hi\n");
 
     // A changed program links again; a deleted executable too.
-    std::fs::write(dir.join("hello.vlt"), hello.replace("hi", "ho")).unwrap();
+    std::fs::write(dir.join("hello.velt"), hello.replace("hi", "ho")).unwrap();
     let (skipped, err) = build(dir, &[]);
     assert!(!skipped, "{err}");
     std::fs::remove_file(&exe).unwrap();
@@ -182,14 +182,14 @@ fn code_compiled_once_comes_from_the_build_cache() {
     let cache = dir.join("cache");
     let cache = cache.to_str().unwrap();
     let main = "import { greet } from \"./lib\";\nfunction main() {\n  greet();\n}\n";
-    std::fs::write(dir.join("hello.vlt"), main).unwrap();
+    std::fs::write(dir.join("hello.velt"), main).unwrap();
     let lib = "export function greet() {\n  console.log(\"hi\");\n}\n";
-    std::fs::write(dir.join("lib.vlt"), lib).unwrap();
+    std::fs::write(dir.join("lib.velt"), lib).unwrap();
     // `(found, of)` from the codegen line of `-v`.
     let build = || {
         // Without the build stamp, which would skip compiling an unchanged program.
         let env = [("VELT_BUILD_CACHE", cache), ("VELT_BUILD_STAMP", "off")];
-        let o = velt(dir, &["build", "hello.vlt", "-v"], &env);
+        let o = velt(dir, &["build", "hello.velt", "-v"], &env);
         let err = text(&o.stderr);
         assert!(o.status.success(), "{err}");
         let line = err
@@ -219,7 +219,7 @@ fn code_compiled_once_comes_from_the_build_cache() {
         "console.log(\"hi\");",
         "console.log(\"ho\");\n  console.log(\"!\");",
     );
-    std::fs::write(dir.join("lib.vlt"), edited).unwrap();
+    std::fs::write(dir.join("lib.velt"), edited).unwrap();
     let (found, of) = build();
     assert_eq!(found + 1, of, "{found} of {of}");
     let exe = dir
@@ -233,11 +233,11 @@ fn unchanged_builds_compile_nothing() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     let main = "import { greet } from \"./lib\";\nfunction main() {\n  greet();\n}\n";
-    std::fs::write(dir.join("hello.vlt"), main).unwrap();
+    std::fs::write(dir.join("hello.velt"), main).unwrap();
     let lib = "export function greet() {\n  console.log(\"hi\");\n}\n";
-    std::fs::write(dir.join("lib.vlt"), lib).unwrap();
+    std::fs::write(dir.join("lib.velt"), lib).unwrap();
     let unchanged = || {
-        let o = velt(dir, &["build", "hello.vlt", "-v"], &[]);
+        let o = velt(dir, &["build", "hello.velt", "-v"], &[]);
         let err = text(&o.stderr);
         assert!(o.status.success(), "{err}");
         (err.contains("nothing to compile"), err)
@@ -246,9 +246,9 @@ fn unchanged_builds_compile_nothing() {
     let (skipped, err) = unchanged();
     assert!(skipped, "an unchanged build compiles nothing:\n{err}");
     // Saving a file without changing it changes nothing; changing an import does.
-    std::fs::write(dir.join("lib.vlt"), lib).unwrap();
+    std::fs::write(dir.join("lib.velt"), lib).unwrap();
     assert!(unchanged().0);
-    std::fs::write(dir.join("lib.vlt"), lib.replace("hi", "ho")).unwrap();
+    std::fs::write(dir.join("lib.velt"), lib.replace("hi", "ho")).unwrap();
     assert!(!unchanged().0);
     assert!(unchanged().0);
     // A new file where imports look is a change too.
@@ -256,7 +256,7 @@ fn unchanged_builds_compile_nothing() {
     assert!(!unchanged().0);
     let off = velt(
         dir,
-        &["build", "hello.vlt", "-v"],
+        &["build", "hello.velt", "-v"],
         &[("VELT_BUILD_STAMP", "off")],
     );
     assert!(!text(&off.stderr).contains("nothing to compile"));
@@ -307,10 +307,10 @@ fn outputs_written_without_a_stamp_are_a_change() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     let main = "import { word } from \"./lib\";\nfunction main() {\n  console.log(word());\n}\n";
-    std::fs::write(dir.join("main.vlt"), main).unwrap();
+    std::fs::write(dir.join("main.velt"), main).unwrap();
     let lib = |w: &str| {
         let src = format!("export function word(): string {{\n  return \"{w}\";\n}}\n");
-        std::fs::write(dir.join("lib.vlt"), src).unwrap();
+        std::fs::write(dir.join("lib.velt"), src).unwrap();
     };
     let build = |args: &[&str], env: &[(&str, &str)]| {
         let o = velt(dir, args, env);
@@ -330,28 +330,28 @@ fn outputs_written_without_a_stamp_are_a_change() {
     };
     type Build<'a> = (&'a [&'a str], &'a [(&'a str, &'a str)]);
     let middle: [Build; 2] = [
-        (&["build", "main.vlt"], &[("VELT_BUILD_STAMP", "off")]),
-        (&["build", "main.vlt", "--report", "numbers"], &[]),
+        (&["build", "main.velt"], &[("VELT_BUILD_STAMP", "off")]),
+        (&["build", "main.velt", "--report", "numbers"], &[]),
     ];
     for (i, (args, env)) in middle.iter().enumerate() {
         lib("BBBB");
-        build(&["build", "main.vlt"], &[]);
+        build(&["build", "main.velt"], &[]);
         lib("AAAA");
         build(args, env);
         lib("BBBB");
-        build(&["build", "main.vlt"], &[]);
+        build(&["build", "main.velt"], &[]);
         let out = run_copy(&exe, &format!("case{i}"));
         assert_eq!(text(&out.stdout), "BBBB\n", "case {i}");
     }
     // An object written by `--emit obj` where the stamped build keeps its own.
     lib("BBBB");
-    build(&["build", "main.vlt"], &[]);
+    build(&["build", "main.velt"], &[]);
     let obj = object();
     lib("AAAA");
     let obj_arg = obj.to_str().unwrap();
-    build(&["build", "main.vlt", "--emit", "obj", "-o", obj_arg], &[]);
+    build(&["build", "main.velt", "--emit", "obj", "-o", obj_arg], &[]);
     lib("BBBB");
-    build(&["build", "main.vlt"], &[]);
+    build(&["build", "main.velt"], &[]);
     assert_eq!(text(&run_copy(&exe, "obj").stdout), "BBBB\n");
 }
 
@@ -362,7 +362,7 @@ fn cache_warm_compiles_the_warm_up_programs_once() {
     let warm = dir.join("share/warm");
     std::fs::create_dir_all(&warm).unwrap();
     let program = "function main() {\n  const m = new Map<string, number>();\n  m.set(\"a\", 1);\n  console.log(m.get(\"a\"));\n}\n";
-    std::fs::write(warm.join("map.vlt"), program).unwrap();
+    std::fs::write(warm.join("map.velt"), program).unwrap();
     let cache = dir.join("cache");
     let env = [
         (
@@ -383,12 +383,12 @@ fn cache_warm_compiles_the_warm_up_programs_once() {
     assert!(text(&again.stderr).contains("warm for this velt already"));
 
     // A build of the same code then takes every function from the cache.
-    std::fs::write(dir.join("app.vlt"), program).unwrap();
+    std::fs::write(dir.join("app.velt"), program).unwrap();
     let mut build_env = env.clone();
     build_env.push(("VELT_BUILD_STAMP", "off"));
     let o = velt(
         dir,
-        &["build", "app.vlt", "-v", "--cpu", "native"],
+        &["build", "app.velt", "-v", "--cpu", "native"],
         &build_env,
     );
     let err = text(&o.stderr);
@@ -402,10 +402,14 @@ fn cache_warm_compiles_the_warm_up_programs_once() {
 
     // A program that does not compile is reported, and leaves the cache unmarked.
     std::fs::remove_dir_all(&cache).unwrap();
-    std::fs::write(warm.join("broken.vlt"), "function main() {\n  nope();\n}\n").unwrap();
+    std::fs::write(
+        warm.join("broken.velt"),
+        "function main() {\n  nope();\n}\n",
+    )
+    .unwrap();
     let o = velt(dir, &["cache", "warm"], &env);
     let err = text(&o.stderr);
-    assert!(!o.status.success() && err.contains("broken.vlt"), "{err}");
+    assert!(!o.status.success() && err.contains("broken.velt"), "{err}");
     let o = velt(dir, &["cache", "warm"], &env);
     assert!(text(&o.stderr).contains("warmed the build cache with 2 programs"));
 }
@@ -443,7 +447,7 @@ fn debug_builds_use_the_shared_runtime_when_built() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     std::fs::write(
-        dir.join("hello.vlt"),
+        dir.join("hello.velt"),
         "function main() {\n  console.log(\"shared\");\n}\n",
     )
     .unwrap();
@@ -481,11 +485,11 @@ fn debug_objects_are_the_same_on_any_number_of_threads() {
         src.push_str(&format!("  console.log(f{i}(xs, new Shape({i})));\n"));
     }
     src.push_str("}\n");
-    std::fs::write(dir.join("p.vlt"), src).unwrap();
+    std::fs::write(dir.join("p.velt"), src).unwrap();
     let object = |jobs: &str| {
         let out = format!("p{jobs}.o");
         let env = [("VELT_JOBS", jobs), ("VELT_BUILD_CACHE", "off")];
-        let o = velt(dir, &["build", "--emit", "obj", "p.vlt", "-o", &out], &env);
+        let o = velt(dir, &["build", "--emit", "obj", "p.velt", "-o", &out], &env);
         assert!(o.status.success(), "{}", text(&o.stderr));
         std::fs::read(dir.join(&out)).unwrap()
     };

@@ -4,7 +4,7 @@ use super::*;
 fn missing_input_is_an_error_not_a_panic() {
     let mut sess = Session::new();
     let opts = BuildOptions {
-        input: PathBuf::from("no/such/file.vlt"),
+        input: PathBuf::from("no/such/file.velt"),
         ..Default::default()
     };
     match build(&mut sess, &opts) {
@@ -16,7 +16,7 @@ fn missing_input_is_an_error_not_a_panic() {
 #[test]
 fn stops_after_first_failing_stage() {
     let dir = tempfile::tempdir().unwrap();
-    let file = dir.path().join("bad.vlt");
+    let file = dir.path().join("bad.velt");
     std::fs::write(&file, "function main( {").unwrap();
     let mut sess = Session::new();
     let r = compile_to_vir(
@@ -33,14 +33,14 @@ fn stops_after_first_failing_stage() {
         1,
         "only the parse stage should have run"
     );
-    assert!(sess.render_diagnostics().contains("bad.vlt:"));
+    assert!(sess.render_diagnostics().contains("bad.velt:"));
 }
 
 #[test]
 fn root_source_replaces_the_file() {
     let dir = tempfile::tempdir().unwrap();
     let opts = BuildOptions {
-        input: dir.path().join("virtual.vlt"),
+        input: dir.path().join("virtual.velt"),
         root_source: Some("function main( {".into()),
         ..Default::default()
     };
@@ -49,7 +49,7 @@ fn root_source_replaces_the_file() {
         compile_to_vir(&mut sess, &opts),
         Err(BuildError::Diagnostics)
     ));
-    assert!(sess.render_diagnostics().contains("virtual.vlt:"));
+    assert!(sess.render_diagnostics().contains("virtual.velt:"));
 }
 
 /// The compiler's memory is bounded by the stage it is in only when each stage's input is freed
@@ -59,7 +59,7 @@ fn root_source_replaces_the_file() {
 fn each_stage_frees_its_input_when_done() {
     let dir = tempfile::tempdir().unwrap();
     let opts = BuildOptions {
-        input: dir.path().join("main.vlt"),
+        input: dir.path().join("main.velt"),
         root_source: Some("function main() {\n  console.log(\"hi\");\n}\n".into()),
         output: Some(dir.path().join("main.o")),
         emit: Emit::Obj,
@@ -85,7 +85,7 @@ fn each_stage_frees_its_input_when_done() {
 fn codegen_does_not_verify_what_the_driver_verified() {
     let dir = tempfile::tempdir().unwrap();
     let opts = BuildOptions {
-        input: dir.path().join("main.vlt"),
+        input: dir.path().join("main.velt"),
         root_source: Some(
             "function main() {
   console.log(\"hi\");

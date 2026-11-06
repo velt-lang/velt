@@ -255,14 +255,14 @@ fn std_scope(
         .into_iter()
         .filter(|f| {
             let name = f.file_name().map(|n| n.to_string_lossy().into_owned());
-            name.is_some_and(|n| n.ends_with(".vlt") && !n.ends_with(".test.vlt"))
+            name.is_some_and(|n| n.ends_with(".velt") && !n.ends_with(".test.velt"))
         })
         .collect();
     // std's conditional imports are data the loader reads, as a manifest is, not a module.
     let imports = std.join(vpm::imports::STD_IMPORTS_FILE);
     extra_roots.retain(|f| *f != imports);
     extra_roots.sort();
-    let input = std.join("__velt_check_std.vlt");
+    let input = std.join("__velt_check_std.velt");
     let mut opts = options_for(&input, locked)?;
     opts.root_source = Some(String::new());
     opts.target = target;
@@ -384,7 +384,7 @@ fn package_scope() -> Result<(PathBuf, CheckScope, Vec<Vec<PathBuf>>), String> {
     Ok((input, scope, same_path))
 }
 
-/// The files among `files` that share a directory and a module path (`dup.vlt` and `dup.ts`),
+/// The files among `files` that share a directory and a module path (`dup.velt` and `dup.ts`),
 /// in groups of two or more: an import of `./dup` is ambiguous, and they cannot both be the
 /// module `dup`.
 pub(super) fn same_path_groups(files: &[PathBuf]) -> Vec<Vec<PathBuf>> {
@@ -426,8 +426,8 @@ pub(super) fn report_same_path(sess: &mut Session, groups: &[Vec<PathBuf>], inpu
 }
 
 /// The root module of the package at `root` and whether it must define `main`: its runnable
-/// entry (`package.entry`, default `src/main.vlt`, `.ts` or `.tsx`; `main` required), or
-/// `src/lib.vlt` (`.ts`, `.tsx`) for a library package (one without a configured entry and
+/// entry (`package.entry`, default `src/main.velt`, `.ts` or `.tsx`; `main` required), or
+/// `src/lib.velt` (`.ts`, `.tsx`) for a library package (one without a configured entry and
 /// without a default one). A configured entry that is missing is an error, as for `velt build`.
 fn package_root_module(root: &Path) -> Result<(PathBuf, bool), String> {
     let manifest = vpm::Manifest::from_dir(root)?;
@@ -558,7 +558,7 @@ mod tests {
     #[test]
     fn json_has_locations_labels_and_counts() {
         let mut sess = Session::new();
-        let file = sess.sm.add("a.vlt", "let x = 1;\nlet y = x;\n");
+        let file = sess.sm.add("a.velt", "let x = 1;\nlet y = x;\n");
         sess.diagnostics.push(
             Diagnostic::error("bad", Span::new(file, 15, 16))
                 .with_label(Span::new(file, 4, 5), "declared here")
@@ -568,13 +568,13 @@ mod tests {
             severity: Severity::Warning,
             ..Diagnostic::error("meh", Span::new(file, 0, 3))
         });
-        let v = report_json(&sess, Some("cannot read b.vlt"), &[]);
+        let v = report_json(&sess, Some("cannot read b.velt"), &[]);
         assert_eq!(
             (v["errors"].as_u64(), v["warnings"].as_u64()),
             (Some(2), Some(1))
         );
         let d = &v["diagnostics"][0];
-        assert_eq!(d["location"]["file"], "a.vlt");
+        assert_eq!(d["location"]["file"], "a.velt");
         assert_eq!(
             (
                 d["location"]["line"].as_u64(),

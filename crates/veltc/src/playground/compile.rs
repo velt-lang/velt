@@ -39,7 +39,7 @@ pub fn compile(source: &str, optimize: bool) -> Result<Vec<u8>, Diagnostics> {
 fn build_in(dir: &Path, source: &str, optimize: bool) -> Result<Vec<u8>, Diagnostics> {
     let module = dir.join("main.wasm");
     let opts = BuildOptions {
-        input: dir.join("main.vlt"),
+        input: dir.join("main.velt"),
         root_source: Some(source.to_string()),
         output: Some(module.clone()),
         release: optimize,
@@ -52,7 +52,7 @@ fn build_in(dir: &Path, source: &str, optimize: bool) -> Result<Vec<u8>, Diagnos
         let _one_at_a_time = BUILD.lock().unwrap_or_else(|e| e.into_inner());
         driver::build(&mut sess, &opts)
     };
-    // Show `main.vlt:3:5`, not the scratch directory.
+    // Show `main.velt:3:5`, not the scratch directory.
     let prefix = format!("{}{}", dir.display(), std::path::MAIN_SEPARATOR);
     let diagnostics = sess.render_diagnostics().replace(&prefix, "");
     match result {
@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn diagnostics_name_main_velt() {
         let err = compile("function main( {", false).unwrap_err();
-        assert!(err.contains("main.vlt:1:"), "{err}");
+        assert!(err.contains("main.velt:1:"), "{err}");
         assert!(!err.contains("velt-playground-"), "{err}");
     }
 }

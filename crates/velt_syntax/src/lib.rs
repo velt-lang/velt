@@ -122,7 +122,7 @@ pub struct ParseOptions<'a> {
     pub plain_ts: bool,
     /// A `.tsx` file: TypeScript's syntax rules, but not `<T>x` as a type assertion.
     pub tsx: bool,
-    /// Build-time constants (`define` in package.vlt, as Vite's `define`): each identifier
+    /// Build-time constants (`define` in package.velt, as Vite's `define`): each identifier
     /// expression of one of these names that nothing in its scope declares parses as the
     /// literal ([`scope::free_values`]).
     pub defines: Option<&'a std::collections::HashMap<String, ast::Lit>>,

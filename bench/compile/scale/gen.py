@@ -273,7 +273,7 @@ def main():
     velt, go = os.path.join(out, "velt"), os.path.join(out, "go")
     os.makedirs(velt, exist_ok=True)
     os.makedirs(os.path.join(go, "common"), exist_ok=True)
-    open(os.path.join(velt, "common.vlt"), "w").write(VELT_COMMON)
+    open(os.path.join(velt, "common.velt"), "w").write(VELT_COMMON)
     open(os.path.join(go, "common", "common.go"), "w").write(GO_COMMON)
     open(os.path.join(go, "go.mod"), "w").write("module scale\n\ngo 1.22\n")
     total = VELT_COMMON.count("\n")
@@ -284,7 +284,7 @@ def main():
         src = ['import { Box, first, count } from "./common";\n\n']
         src += [VELT_UNIT.replace("@K@", str(k)) + "\n" for k in ks]
         text = "".join(src)
-        open(os.path.join(velt, f"m{m}.vlt"), "w").write(text)
+        open(os.path.join(velt, f"m{m}.velt"), "w").write(text)
         total += text.count("\n")
         pkg = os.path.join(go, f"m{m}")
         os.makedirs(pkg, exist_ok=True)
@@ -302,7 +302,7 @@ def main():
         vmain += [f"  t += run{k}();\n" for k in ks]
     vmain.append("  console.log(t);\n}\n")
     text = "".join(vmain)
-    open(os.path.join(velt, "main.vlt"), "w").write(text)
+    open(os.path.join(velt, "main.velt"), "w").write(text)
     total += text.count("\n")
     gmain = ["package main\n\nimport (\n\t\"fmt\"\n\n"]
     gmain += [f'\t"scale/m{m}"\n' for m, _ in entries]

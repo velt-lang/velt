@@ -1,4 +1,4 @@
-// The reqwest baseline: the same four scenarios as client.vlt and client.mjs.
+// The reqwest baseline: the same four scenarios as client.velt and client.mjs.
 // Usage: client <base url> [seq|conc|big|json|gzip|all].
 use std::time::Instant;
 

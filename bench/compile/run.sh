@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Compile-time benchmark (Linux / macOS): same as run.ps1. `velt build --release --emit vir`
 # (load + parse, sema, lowering to VIR, verification, the optimizer) on
-# examples/http_hello.vlt, all_std.vlt, two programs of UNITS generated units (unit.tmpl;
+# examples/http_hello.velt, all_std.velt, two programs of UNITS generated units (unit.tmpl;
 # "units" with call chains of 8, "chain" with one call chain through the whole program) and
 # "long_main" (4 × UNITS classes with an override and a generic instance each, all used from one
 # `main`), best of RUNS runs per stage as `velt build -v` reports it. A second table times
@@ -62,10 +62,10 @@ def long_main(n):
               for i in range(n)]
     return "".join(parts) + "  console.log(t);\n}\n"
 
-programs = {"http_hello": f"{root}/examples/http_hello.vlt", "all_std": f"{here}/all_std.vlt"}
+programs = {"http_hello": f"{root}/examples/http_hello.velt", "all_std": f"{here}/all_std.velt"}
 for name, text in ((f"units_{units}", program(units, 8)), (f"chain_{units}", program(units, units)),
                    (f"long_main_{units * 4}", long_main(units * 4))):
-    path = f"{out}/{name}.vlt"
+    path = f"{out}/{name}.velt"
     open(path, "w").write(text)
     programs[name] = path
 

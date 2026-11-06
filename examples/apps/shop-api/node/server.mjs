@@ -294,7 +294,7 @@ export class Store {
     return pageOf(hits, q.page, q.limit);
   }
 
-  // A SKU must be new to the store and to this product (see store.vlt).
+  // A SKU must be new to the store and to this product (see store.velt).
   variantsOf(input) {
     if (input.length === 0 || input.length > 20) throw invalid("a product has 1 to 20 variants");
     const seen = [];

@@ -7,12 +7,12 @@
 mod no_window;
 mod test_dir;
 
-/// `velt build --emit vir` of `src` (as `main.vlt`) with `env` set: the VIR and stderr.
+/// `velt build --emit vir` of `src` (as `main.velt`) with `env` set: the VIR and stderr.
 fn lower(src: &str, env: &[(&str, &str)]) -> (String, String) {
     let dir = test_dir::TestDir::new();
-    std::fs::write(dir.path().join("main.vlt"), src).unwrap();
+    std::fs::write(dir.path().join("main.velt"), src).unwrap();
     let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
-    cmd.args(["build", "main.vlt", "--emit", "vir"])
+    cmd.args(["build", "main.velt", "--emit", "vir"])
         .current_dir(dir.path());
     for (k, v) in env {
         cmd.env(k, v);

@@ -1,1 +1,1 @@
-namespace_import_conflict_named.vlt:3:10: error: import declaration conflicts with local declaration of `NS`
+namespace_import_conflict_named.velt:3:10: error: import declaration conflicts with local declaration of `NS`

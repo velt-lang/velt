@@ -1,4 +1,4 @@
-// Closures (same workload as closures.vlt). Like JS `map`/`filter`, every step materializes a
+// Closures (same workload as closures.velt). Like JS `map`/`filter`, every step materializes a
 // new Vec; the stored closure is a `Box<dyn Fn>` like an escaping Velt closure.
 fn make_scaler(k: i64) -> Box<dyn Fn(i64) -> i64> {
     Box::new(move |x| x * k + 1)

@@ -13,7 +13,7 @@ has all three kinds:
 | Code | Example | Who compiles it | What the author wants to hear |
 |---|---|---|---|
 | Shared with TypeScript | `src/shared/*.tsx` (components), a `models/` folder | `tsc`/Vite and `velt` | what leaves the common subset; what is slow *and* has a fix inside it |
-| Native | `src/server.vlt`, `src/api.server.vlt` | `velt` only | what is slow, and the Velt way to write it |
+| Native | `src/server.velt`, `src/api.server.velt` | `velt` only | what is slow, and the Velt way to write it |
 | A dependency | `sigx` (`node_modules/@sigx/velt/velt`) | `velt` only | nothing, unless they ask (to report it upstream) |
 
 Today only the first kind has a lint (`velt check --ts-compat`, `velt_tscompat`, folders listed in
@@ -44,7 +44,7 @@ A file's **profile** says which rules apply and which fixes may be offered:
 
 So no new configuration is needed for the common case: `tsCompat` already marks the portable
 folders, and the rest is native. The sigx app gets the right behaviour from its existing
-`package.vlt`.
+`package.velt`.
 
 ### 2. A rule's fixes say where they are valid
 
@@ -72,7 +72,7 @@ shares; the rule checks the uses first). That is TypeScript too, so a portable f
 ### 3. Fixes never cross a stricter boundary
 
 A finding's cause may be in another file: a `number` field of a model in `src/models`
-(portable) makes a counter in `src/server.vlt` (native) stay a double. The rule is that **a fix
+(portable) makes a counter in `src/server.velt` (native) stay a double. The rule is that **a fix
 only edits files whose profile allows it**:
 - it never edits a dependency;
 - it never puts a Velt-only construct into a portable file.
@@ -164,7 +164,7 @@ left dynamic and copies left in place, which need the optimizer to say where it 
 3. **`velt_opt`:** `Unnarrowed::why` says the reason's kind (`UnnarrowedWhy`), so a rule can tell
    an unbounded integer (an `i64` holds it) from a fraction. Step 5 adds `remarks(program)` for
    the other passes.
-4. **Manifest (additive):** `lint` in `package.vlt` (contracts/manifest.md, `vpm::manifest`,
+4. **Manifest (additive):** `lint` in `package.velt` (contracts/manifest.md, `vpm::manifest`,
    std's `Lint` and `LintLevel` types).
 5. **Language server:** lint findings published with the document's diagnostics, quick fixes
    from the diagnostics' fixes (edits in other files go to those files), Safe ones preferred.

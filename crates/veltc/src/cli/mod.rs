@@ -283,7 +283,7 @@ pub fn parse(args: impl IntoIterator<Item = OsString>) -> Result<Command, String
     };
     let rest: Vec<OsString> = it.collect();
     let name = sub.to_string_lossy().into_owned();
-    // `velt run file.vlt --help` passes `--help` to the program.
+    // `velt run file.velt --help` passes `--help` to the program.
     let own = if name == "run" {
         build::run_options(&rest)
     } else {
@@ -547,21 +547,21 @@ mod tests {
             );
         }
         assert_eq!(
-            p(&["build", "a.vlt", "-h"]).unwrap(),
+            p(&["build", "a.velt", "-h"]).unwrap(),
             Command::Help(Some("build".into()))
         );
         assert_eq!(p(&["-h"]).unwrap(), Command::Help(None));
         // After `--` or the file, `--help` is the program's.
         assert!(matches!(
-            p(&["run", "a.vlt", "--", "--help"]).unwrap(),
+            p(&["run", "a.velt", "--", "--help"]).unwrap(),
             Command::Run { .. }
         ));
         assert!(matches!(
-            p(&["run", "a.vlt", "--help"]).unwrap(),
+            p(&["run", "a.velt", "--help"]).unwrap(),
             Command::Run { .. }
         ));
         assert_eq!(
-            p(&["run", "-h", "a.vlt"]).unwrap(),
+            p(&["run", "-h", "a.velt"]).unwrap(),
             Command::Help(Some("run".into()))
         );
         assert!(p(&["help", "biuld"])
@@ -577,9 +577,9 @@ mod tests {
             "{err}"
         );
         assert!(p(&["tset"]).unwrap_err().contains("`velt test`"));
-        assert!(p(&["hello.vlt"])
+        assert!(p(&["hello.velt"])
             .unwrap_err()
-            .contains("`velt run hello.vlt`"));
+            .contains("`velt run hello.velt`"));
         let err = p(&["build", "--relase"]).unwrap_err();
         assert!(
             err.contains("unknown option `--relase` for `velt build`; did you mean `--release`?"),

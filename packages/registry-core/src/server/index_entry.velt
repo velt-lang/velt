@@ -1,0 +1,68 @@
+// registry-core: one published version in a package's index (vpm's `IndexEntry`,
+// crates/vpm/src/registry.rs), and its JSON as `index.json` holds it.
+
+import { jsonArray, jsonField, jsonObject, jsonString, jsonStringMap } from "./json_text";
+
+/** One published version of a package. */
+export class IndexEntry {
+  /** The exact version, as semver writes it (`1.2.3-rc.1`). */
+  version: string;
+  /** `sha256:<hex>`: the content checksum of the version's files, and its archive's key. */
+  checksum: string;
+  /** The version's `description` from its `package.velt`. */
+  description: string | null = null;
+  /** The version's `keywords`. */
+  keywords: string[] = [];
+  /** Dependency name → semver requirement. */
+  dependencies: Map<string, string> = new Map();
+  /** The runtime table version its native libraries need (packages with native code). */
+  nativeAbi: i64 | null = null;
+  /** Target triple → checksum of the prebuilt native bundle. */
+  native: Map<string, string> = new Map();
+  /** Withdrawn by an owner: still downloadable, never chosen for a new requirement. */
+  yanked: bool = false;
+
+  constructor(version: string, checksum: string) {
+    this.version = version;
+    this.checksum = checksum;
+  }
+
+  /** A copy that shares nothing with this entry. */
+  copy(): IndexEntry {
+    const e = new IndexEntry(this.version, this.checksum);
+    e.description = this.description;
+    e.keywords = [...this.keywords];
+    e.dependencies = new Map(this.dependencies);
+    e.nativeAbi = this.nativeAbi;
+    e.native = new Map(this.native);
+    e.yanked = this.yanked;
+    return e;
+  }
+
+  /** The entry as serde_json writes vpm's (fields left out as `skip_serializing_if` does). */
+  toJson(depth: i64): string {
+    const fields = [
+      jsonField("version", jsonString(this.version)),
+      jsonField("checksum", jsonString(this.checksum)),
+    ];
+    if (this.description != null) {
+      fields.push(jsonField("description", jsonString(this.description)));
+    }
+    if (this.keywords.length > 0) {
+      fields.push(jsonField("keywords", jsonArray(this.keywords.map(jsonString), depth + 1)));
+    }
+    if (this.dependencies.size > 0) {
+      fields.push(jsonField("dependencies", jsonStringMap(this.dependencies, depth + 1)));
+    }
+    if (this.nativeAbi != null) {
+      fields.push(jsonField("native_abi", `${this.nativeAbi}`));
+    }
+    if (this.native.size > 0) {
+      fields.push(jsonField("native", jsonStringMap(this.native, depth + 1)));
+    }
+    if (this.yanked) {
+      fields.push(jsonField("yanked", "true"));
+    }
+    return jsonObject(fields, depth);
+  }
+}

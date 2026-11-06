@@ -26,7 +26,7 @@ shift
 WORK=${WORK:-$(mktemp -d)}
 mkdir -p "$WORK"
 
-cat >"$WORK/loop.vlt" <<'EOF'
+cat >"$WORK/loop.velt" <<'EOF'
 type Child = string | number | null;
 
 function best(f: () => number, reps: number): number {
@@ -94,7 +94,7 @@ function main() {
 }
 EOF
 
-cat >"$WORK/no_view.vlt" <<'EOF'
+cat >"$WORK/no_view.velt" <<'EOF'
 function main() {
   const m = new Map<string, string[]>();
   for (let i = 0; i < 200000; i++) {
@@ -123,7 +123,7 @@ function main() {
 }
 EOF
 
-cat >"$WORK/sigx_like.vlt" <<'EOF'
+cat >"$WORK/sigx_like.velt" <<'EOF'
 interface VNode {
   type: string;
   props: Record<string, string>;
@@ -188,7 +188,7 @@ fill='  const xs: string[] = [];
   for (let i = 0; i < 1000; i++) {
     xs.push("v" + (i % 10));
   }'
-cat >"$WORK/push_local.vlt" <<EOF
+cat >"$WORK/push_local.velt" <<EOF
 function main() {
   let total = 0;
   const xs: string[] = [];
@@ -200,7 +200,7 @@ $guard
   console.log(total);
 }
 EOF
-cat >"$WORK/forof_local.vlt" <<EOF
+cat >"$WORK/forof_local.velt" <<EOF
 function main() {
   let total = 0;
 $fill
@@ -213,7 +213,7 @@ $guard
   console.log(total);
 }
 EOF
-cat >"$WORK/index_local.vlt" <<EOF
+cat >"$WORK/index_local.velt" <<EOF
 function main() {
   let total = 0;
 $fill
@@ -226,7 +226,7 @@ $guard
   console.log(total);
 }
 EOF
-cat >"$WORK/index_inc.vlt" <<EOF
+cat >"$WORK/index_inc.velt" <<EOF
 function main() {
   let total = 0;
 $fill
@@ -244,7 +244,7 @@ EOF
 # Loops that a local's versioning alone does not cover: an array in an object field, a loop
 # that may reassign its array (never taken), the same for a push loop, a nested `rows[k][i]`,
 # a `string[]` parameter of a function called 200 times, and an array in a module variable.
-cat >"$WORK/field_index.vlt" <<EOF
+cat >"$WORK/field_index.velt" <<EOF
 function main() {
   let total = 0;
 $fill
@@ -258,7 +258,7 @@ $guard
   console.log(total);
 }
 EOF
-cat >"$WORK/maybe_assign.vlt" <<EOF
+cat >"$WORK/maybe_assign.velt" <<EOF
 function main() {
   let total = 0;
   let xs: string[] = [];
@@ -277,7 +277,7 @@ $guard
   console.log(total);
 }
 EOF
-cat >"$WORK/push_maybe.vlt" <<EOF
+cat >"$WORK/push_maybe.velt" <<EOF
 function main() {
   let total = 0;
   let xs: string[] = [];
@@ -292,7 +292,7 @@ $guard
   console.log(total);
 }
 EOF
-cat >"$WORK/rows_index.vlt" <<EOF
+cat >"$WORK/rows_index.velt" <<EOF
 function main() {
   let total = 0;
   const rows: string[][] = [];
@@ -314,7 +314,7 @@ $guard
   console.log(total);
 }
 EOF
-cat >"$WORK/sum_param.vlt" <<EOF
+cat >"$WORK/sum_param.velt" <<EOF
 function sum(xs: string[]): number {
   let n = 0;
   for (let i = 0; i < xs.length; i++) {
@@ -333,7 +333,7 @@ $guard
   console.log(total);
 }
 EOF
-cat >"$WORK/module_index.vlt" <<EOF
+cat >"$WORK/module_index.velt" <<EOF
 const gxs: string[] = [];
 
 function main() {
@@ -355,7 +355,7 @@ case $mode in
 time)
   velt=$1
   n=${2:-10000}
-  "$velt" build --release "$WORK/loop.vlt" -o "$WORK/loop" >/dev/null
+  "$velt" build --release "$WORK/loop.velt" -o "$WORK/loop" >/dev/null
   N=$n "$WORK/loop"
   ;;
 instr)
@@ -366,7 +366,7 @@ instr)
     for side in base head; do
       velt=$base_velt
       [ "$side" = head ] && velt=$head_velt
-      "$velt" build --release "$WORK/$p.vlt" -o "$WORK/$p.$side" >/dev/null
+      "$velt" build --release "$WORK/$p.velt" -o "$WORK/$p.$side" >/dev/null
       VELT_THREADS=1 valgrind --tool=cachegrind --cache-sim=no \
         --cachegrind-out-file="$WORK/$p.$side.cg" "$WORK/$p.$side" >/dev/null 2>"$WORK/$p.$side.log"
       n=$(grep -oE 'I +refs: +[0-9,]+' "$WORK/$p.$side.log" | grep -oE '[0-9,]+$' | tr -d ,)

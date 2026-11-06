@@ -1,7 +1,7 @@
-//! Anyone can write `BTreeMap`: its sources (std/collections/btree_map.vlt and btree/*.vlt) use
+//! Anyone can write `BTreeMap`: its sources (std/collections/btree_map.velt and btree/*.velt) use
 //! only what any program can use, no std-only intrinsics or runtime declarations. The test
 //! copies them out of std as plain modules of a program (imports made relative), and runs the
-//! map's golden (tests/golden/std/btree_map.vlt) against the copy: a program may not import the
+//! map's golden (tests/golden/std/btree_map.velt) against the copy: a program may not import the
 //! intrinsics (`velt/lang/intrinsics`) or declare runtime functions, so it builds only if the
 //! map does neither, and it prints the golden's output only if the copy is the same map.
 
@@ -27,12 +27,12 @@ fn relative(src: &str, here: &str, std: &Path) -> String {
         let end = rest.find('"').unwrap_or(rest.len());
         let spec = &rest[..end];
         let rel = &spec["velt/".len()..];
-        let file = format!("{rel}.vlt");
-        let module = match std.join(rel).join("index.vlt").is_file() {
+        let file = format!("{rel}.velt");
+        let module = match std.join(rel).join("index.velt").is_file() {
             true => None,
-            false => {
-                velt_common::std_modules::owner(&file, &|d| std.join(d).join("index.vlt").is_file())
-            }
+            false => velt_common::std_modules::owner(&file, &|d| {
+                std.join(d).join("index.velt").is_file()
+            }),
         };
         match module {
             Some(m) => out.push_str(&format!("velt/{m}")),
@@ -50,9 +50,9 @@ fn the_btree_map_builds_and_runs_as_a_program_s_own_module() {
     let dir = test_dir::TestDir::new();
     let parts = dir.path().join("btree");
     std::fs::create_dir_all(&parts).unwrap();
-    let map = std::fs::read_to_string(root.join("std/collections/btree_map.vlt")).unwrap();
+    let map = std::fs::read_to_string(root.join("std/collections/btree_map.velt")).unwrap();
     std::fs::write(
-        dir.path().join("btree_map.vlt"),
+        dir.path().join("btree_map.velt"),
         relative(&map, "", &root.join("std")),
     )
     .unwrap();
@@ -67,8 +67,8 @@ fn the_btree_map_builds_and_runs_as_a_program_s_own_module() {
         )
         .unwrap();
     }
-    let golden = std::fs::read_to_string(root.join("tests/golden/std/btree_map.vlt")).unwrap();
-    let main = dir.path().join("main.vlt");
+    let golden = std::fs::read_to_string(root.join("tests/golden/std/btree_map.velt")).unwrap();
+    let main = dir.path().join("main.velt");
     std::fs::write(&main, relative(&golden, "", &root.join("std"))).unwrap();
     let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["run", main.to_str().unwrap()])

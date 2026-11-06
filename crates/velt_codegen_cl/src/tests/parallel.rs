@@ -10,7 +10,7 @@ use crate::{emit_object_on, CodegenOptions};
 /// source locations (line tables), all called from `velt_main`.
 fn many_functions(n: u32) -> Program {
     let (mut pb, _rt) = ProgramBuilder::new();
-    pb.p.files = vec!["many.vlt".into()];
+    pb.p.files = vec!["many.velt".into()];
     let mut ids = Vec::new();
     for i in 0..n {
         let mut fb = FuncBuilder::internal(&format!("f{i}"), &[Ty::F64], Ty::F64);

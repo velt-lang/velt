@@ -101,10 +101,10 @@ fn golden(dir: &str, name: &str) -> String {
         .replace("\r\n", "\n")
 }
 
-/// The source of golden program `tests/golden/<dir>/<name>.vlt`, loaded with the real std: it
+/// The source of golden program `tests/golden/<dir>/<name>.velt`, loaded with the real std: it
 /// prints numbers through std's hooks (#2197).
 fn golden_program(dir: &str, name: &str) -> hir::Program {
-    let path = root().join(format!("tests/golden/{dir}/{name}.vlt"));
+    let path = root().join(format!("tests/golden/{dir}/{name}.velt"));
     let src = std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
     std_src::check_src(&src)
 }

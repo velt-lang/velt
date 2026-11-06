@@ -1,0 +1,9 @@
+import type { Package } from "velt/package";
+
+export const pkg: Package = {
+  name: "registry-conformance",
+  version: "0.1.0",
+  description: "What any Velt package registry must answer over `/api/v1`, as a black-box suite",
+  entry: "src/lib.velt",
+  dependencies: { "registry-core": { path: "../registry-core" } },
+};

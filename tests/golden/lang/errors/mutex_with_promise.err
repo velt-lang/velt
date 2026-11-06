@@ -1,15 +1,15 @@
-mutex_with_promise.vlt:53:33
-mutex_with_promise.vlt:54:33
-mutex_with_promise.vlt:57:13
-mutex_with_promise.vlt:60:15
-mutex_with_promise.vlt:63:21
-mutex_with_promise.vlt:66:17
-mutex_with_promise.vlt:68:26
-mutex_with_promise.vlt:70:17
-mutex_with_promise.vlt:72:15
-mutex_with_promise.vlt:74:13
-mutex_with_promise.vlt:75:19
-mutex_with_promise.vlt:77:17
+mutex_with_promise.velt:53:33
+mutex_with_promise.velt:54:33
+mutex_with_promise.velt:57:13
+mutex_with_promise.velt:60:15
+mutex_with_promise.velt:63:21
+mutex_with_promise.velt:66:17
+mutex_with_promise.velt:68:26
+mutex_with_promise.velt:70:17
+mutex_with_promise.velt:72:15
+mutex_with_promise.velt:74:13
+mutex_with_promise.velt:75:19
+mutex_with_promise.velt:77:17
 error: this `Promise<i64>` uses the locked value, and would run after `with` releases the lock
 error: `fire` starts a promise with the locked value, which would run after `with` releases the lock
 error: the function passed to `with` returns `Promise<i64>`, which would run after the lock is released

@@ -54,7 +54,7 @@ function isDocument(req) {
   return !last.includes(".") || last.endsWith(".html");
 }
 
-// Server functions: a `*.server.vlt` module's `export async function`s are callable from the
+// Server functions: a `*.server.velt` module's `export async function`s are callable from the
 // browser. An import of it from browser code becomes this stub module (sigx's own client,
 // `POST /_sigx/fn/<key>`); the Velt server registers the same keys (`serverFn` in sigx/server).
 const STUB_PREFIX = "\0sigx-velt-fns:";
@@ -63,7 +63,7 @@ const EXPORTED_FN = /^export\s+async\s+function\s+([A-Za-z_$][\w$]*)/gm;
 function serverFnStubs(file, root) {
   // Real paths on both sides, so a project under a symlink (/tmp → /private/tmp) gets the keys
   // its server registers.
-  const module = relative(realpathSync(root), realpathSync(file)).replace(/\\/g, "/").replace(/\.vlt$/, "");
+  const module = relative(realpathSync(root), realpathSync(file)).replace(/\\/g, "/").replace(/\.velt$/, "");
   const names = [...readFileSync(file, "utf8").matchAll(EXPORTED_FN)].map((m) => m[1]);
   return [
     `import { __serverFnStub } from "@sigx/server/client";`,
@@ -96,8 +96,8 @@ export default function velt(opts = {}) {
     },
 
     resolveId(source, importer) {
-      if (!importer || !/\.server(\.vlt)?$/.test(source) || !source.startsWith(".")) return null;
-      const file = resolve(dirname(importer.replace(/[?#].*$/, "")), source.replace(/\.vlt$/, "") + ".vlt");
+      if (!importer || !/\.server(\.velt)?$/.test(source) || !source.startsWith(".")) return null;
+      const file = resolve(dirname(importer.replace(/[?#].*$/, "")), source.replace(/\.velt$/, "") + ".velt");
       return existsSync(file) ? STUB_PREFIX + file : null;
     },
 
@@ -198,7 +198,7 @@ export default function velt(opts = {}) {
       const provider = existsSync(PROVIDER_DIR) ? realpathSync(PROVIDER_DIR) : null;
       if (provider) server.watcher.add(provider);
       const isServerFile = (file) =>
-        file.endsWith(".vlt") ||
+        file.endsWith(".velt") ||
         (provider && file.startsWith(provider + sep)) ||
         shared.some((d) => !relative(resolve(root, d), file).startsWith(".."));
       server.watcher.on("change", (file) => {

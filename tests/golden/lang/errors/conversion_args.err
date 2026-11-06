@@ -1,3 +1,3 @@
-conversion_args.vlt:4:13: error: function `String` takes 0 to 1 arguments but 2 arguments were supplied
-conversion_args.vlt:4:27: error: function `Number` takes 0 to 1 arguments but 2 arguments were supplied
-conversion_args.vlt:4:41: error: function `Boolean` takes 0 to 1 arguments but 2 arguments were supplied
+conversion_args.velt:4:13: error: function `String` takes 0 to 1 arguments but 2 arguments were supplied
+conversion_args.velt:4:27: error: function `Number` takes 0 to 1 arguments but 2 arguments were supplied
+conversion_args.velt:4:41: error: function `Boolean` takes 0 to 1 arguments but 2 arguments were supplied

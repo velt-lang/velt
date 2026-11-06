@@ -1,4 +1,4 @@
-// The server functions of ../src/api.server.vlt in JavaScript, with the same results, so
+// The server functions of ../src/api.server.velt in JavaScript, with the same results, so
 // reference.mjs can render the app with JavaScript sigx on Node (it cannot call Velt code).
 export async function getStats() {
   await new Promise((r) => setTimeout(r, 300));

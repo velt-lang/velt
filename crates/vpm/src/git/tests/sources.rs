@@ -9,11 +9,11 @@ fn write(e: &Env, subdir: &str, name: &str, deps: &str) {
     let pkg = e.upstream.dir.join(subdir);
     std::fs::create_dir_all(pkg.join("src")).unwrap();
     std::fs::write(
-        pkg.join("package.vlt"),
+        pkg.join("package.velt"),
         format!("export const pkg: Package = {{ name: \"{name}\", version: \"0.1.0\", dependencies: {{ {deps} }} }};"),
     )
     .unwrap();
-    std::fs::write(pkg.join("src/lib.vlt"), format!("// {name}\n")).unwrap();
+    std::fs::write(pkg.join("src/lib.velt"), format!("// {name}\n")).unwrap();
 }
 
 #[test]
@@ -26,7 +26,7 @@ fn two_transitive_sources_are_an_error_until_the_root_names_one() {
     e.upstream.git(&["add", "-A"]);
     e.upstream.git(&["commit", "-q", "-m", "one"]);
     let one = e.upstream.git(&["rev-parse", "HEAD"]);
-    std::fs::write(e.upstream.dir.join("util/src/lib.vlt"), "// two\n").unwrap();
+    std::fs::write(e.upstream.dir.join("util/src/lib.velt"), "// two\n").unwrap();
     e.upstream.git(&["commit", "-q", "-am", "two"]);
     let two = e.upstream.git(&["rev-parse", "HEAD"]);
     let url = e.upstream.url();
@@ -64,7 +64,7 @@ fn two_transitive_sources_are_an_error_until_the_root_names_one() {
     assert!(!note.contains("`b` asks"), "{note}");
     let util = &installed.graph.packages()[0].dependencies["util"];
     assert_eq!(
-        std::fs::read_to_string(util.join("src/lib.vlt")).unwrap(),
+        std::fs::read_to_string(util.join("src/lib.velt")).unwrap(),
         "// two\n"
     );
 }

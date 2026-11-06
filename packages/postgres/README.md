@@ -6,7 +6,7 @@ node-postgres. Every call that talks
 to the server is async.
 
 ```ts ignore
-// package.vlt
+// package.velt
 dependencies: {
   // From the Velt repository (there is no public registry yet):
   postgres: {
@@ -159,9 +159,9 @@ library can't be used there).
 
 ## Layout and tests
 
-- `src/lib.vlt`: the API (re-exports); `src/client.vlt`, `pool.vlt`, `transaction.vlt`,
-  `copy_reader.vlt`, `copy_writer.vlt`, `errors.vlt`: one type each; `src/rows.vlt`: rows into
-  typed values (velt/db's `decodeRows`); `src/native.vlt`: the native library's functions, the
+- `src/lib.velt`: the API (re-exports); `src/client.velt`, `pool.velt`, `transaction.velt`,
+  `copy_reader.velt`, `copy_writer.velt`, `errors.velt`: one type each; `src/rows.velt`: rows into
+  typed values (velt/db's `decodeRows`); `src/native.velt`: the native library's functions, the
   only `declare`s.
 - `native/`: the Rust crate (`velt_native_postgres`) on the native SDK (`velt_native` with its
   `tokio` feature: Velt's own sockets), `velt_text` and `velt_tls`; its ABI is

@@ -1,7 +1,7 @@
 //! npm packages compiled from their TypeScript sources, end to end through the `velt` binary:
 //! a pnpm workspace laid out like signalxjs/core (scoped packages whose `package.json`
 //! `exports` point at `dist/`, sources in `src/`, an `env.d.ts` declaring `__DEV__`), an app
-//! with a scoped name whose `package.vlt` has no `paths` and sets `define`.
+//! with a scoped name whose `package.velt` has no `paths` and sets `define`.
 
 use std::path::Path;
 use std::process::Output;
@@ -94,7 +94,7 @@ fn workspace(root: &Path) {
         "export function where(): string {\n  return document.title;\n}\n",
     );
     write(root, "apps/web/package.json", r#"{ "name": "@demo/web" }"#);
-    write(root, "apps/web/package.vlt", APP_MANIFEST);
+    write(root, "apps/web/package.velt", APP_MANIFEST);
     write(
         root,
         "apps/web/src/main.ts",
@@ -120,7 +120,7 @@ fn workspace_packages_compile_from_source_with_defines() {
 
     // With `__DEV__` true the dev branch runs.
     let dev = APP_MANIFEST.replace("__DEV__: \"false\"", "__DEV__: \"true\"");
-    write(root, "apps/web/package.vlt", &dev);
+    write(root, "apps/web/package.velt", &dev);
     let out = velt(&app, &["run"]);
     assert!(
         out.status.success(),
@@ -134,18 +134,18 @@ fn workspace_packages_compile_from_source_with_defines() {
 
     // Without a define, the declaration says what to add.
     let none = APP_MANIFEST.replace("__DEV__: \"false\", ", "");
-    write(root, "apps/web/package.vlt", &none);
+    write(root, "apps/web/package.velt", &none);
     let out = velt(&app, &["check"]);
     assert!(!out.status.success());
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
         stderr.contains("`__DEV__` is declared here but has no value")
-            && stderr.contains("`define: { __DEV__: \"false\" }` in package.vlt"),
+            && stderr.contains("`define: { __DEV__: \"false\" }` in package.velt"),
         "{stderr}"
     );
 
     // A subpath the package does not export.
-    write(root, "apps/web/package.vlt", APP_MANIFEST);
+    write(root, "apps/web/package.velt", APP_MANIFEST);
     write(
         root,
         "apps/web/src/main.ts",
@@ -171,7 +171,7 @@ fn define_leaves_the_programs_own_names_alone() {
     let root = tmp.path();
     write(
         root,
-        "app/package.vlt",
+        "app/package.velt",
         "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = {\n  name: \"scoped\",\n  version: \"0.1.0\",\n  entry: \"src/main.ts\",\n  define: { __DEV__: \"false\" },\n};\n",
     );
     write(

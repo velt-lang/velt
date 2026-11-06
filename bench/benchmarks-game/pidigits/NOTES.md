@@ -7,10 +7,10 @@
 | file | source | notes |
 |---|---|---|
 | `../rust/src/bin/pidigits.rs` | [Rust #4](https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/pidigits-rust-4.html) — TeXitoi, Ryohei Machida | unchanged; uses `rug` (GMP), added to `rust/Cargo.toml` (`default-features = false, features = ["integer"]`, builds its own GMP) |
-| `../rust/src/bin/pidigits_limbs.rs` | not a Benchmarks Game program | line-by-line Rust transliteration of `main.vlt` (same limb loops, no GMP): isolates Velt codegen from "hand-written limbs vs GMP" |
+| `../rust/src/bin/pidigits_limbs.rs` | not a Benchmarks Game program | line-by-line Rust transliteration of `main.velt` (same limb loops, no GMP): isolates Velt codegen from "hand-written limbs vs GMP" |
 | `main.go` | [Go #4](https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/pidigits-go-4.html) — Zhao Zhiqiang, Antonio Petri (after pidigits.c by Paolo Bonzini, Sean Bartlett, Michael Mellor) | cgo + GMP; added `#cgo darwin CFLAGS/LDFLAGS` for Homebrew's `/opt/homebrew` (`brew install gmp`); gofmt |
 | `main.js` | [Node #2](https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/pidigits-node-2.html) — Isaac Gouy after Alexander Fyodorov | unchanged; JS `BigInt` (the faster Node #4 needs the native `mpzjs` addon, i.e. GMP again) |
-| `main.vlt` | port of Node #2 | own `BigInt` class, see below |
+| `main.velt` | port of Node #2 | own `BigInt` class, see below |
 
 `expected-quick.txt` is the official `pidigits-output.txt` (N = 30, so `QUICK_N=30`). Checked
 byte-for-byte: every implementation at N = 30; Velt (both backends) and `pidigits_limbs` against
@@ -19,7 +19,7 @@ lines are padded with spaces like Node/Rust; Go #4 prints only full lines, which
 official N).
 
 ## Velt port
-Velt has no `BigInt`, so `main.vlt` carries a ~190-line `class BigInt` (sign + little-endian base
+Velt has no `BigInt`, so `main.velt` carries a ~190-line `class BigInt` (sign + little-endian base
 2^32 magnitude in a `u32[]`, u64 intermediates) with only the in-place operations the spigot
 needs: `mulSmall`, `addMul`/`subMul` by a small factor (sign-crossing handled by two's complement of
 the limbs), `compare`, `assign`, and `divRemSmallQuotient` (quotient estimated from the top three
@@ -95,6 +95,6 @@ Cranelift is 2.3× slower than LLVM here (not investigated; LLVM is the `--relea
   loops.
 
 ## Std and runtime round
-`main.vlt` is now the Node program on `std/bigint` (runtime-backed, dashu-int), using the in-place
+`main.velt` is now the Node program on `std/bigint` (runtime-backed, dashu-int), using the in-place
 methods where the JS assigns: 2.76× Rust+GMP. The round-5 hand-written limb class moved to
-`main_limbs.vlt`, which compares with the Rust `pidigits_limbs` baseline (same limb code).
+`main_limbs.velt`, which compares with the Rust `pidigits_limbs` baseline (same limb code).

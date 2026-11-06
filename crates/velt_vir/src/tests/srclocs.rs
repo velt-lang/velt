@@ -29,7 +29,7 @@ fn place_statements(p: &mut Program) {
 
 fn source_map() -> SourceMap {
     let mut sm = SourceMap::new();
-    sm.add("dir\\t.vlt", SRC);
+    sm.add("dir\\t.velt", SRC);
     sm
 }
 
@@ -71,10 +71,10 @@ fn division_program() -> Program {
 fn division_by_zero_names_its_location() {
     let p = division_program();
     let v = lower_located(&p, &source_map());
-    assert_eq!(v.files, ["dir/t.vlt"]);
+    assert_eq!(v.files, ["dir/t.velt"]);
     let out = interp::run(&v);
     assert_eq!(out.stdout, "before\n");
-    assert_eq!(out.stderr, "panic: division by zero at dir/t.vlt:3:3\n");
+    assert_eq!(out.stderr, "panic: division by zero at dir/t.velt:3:3\n");
     assert_eq!(out.code, 101);
 }
 
@@ -146,7 +146,7 @@ fn uncaught_error_names_the_throw() {
         (out.stdout.as_str(), out.stderr.as_str(), out.code),
         (
             "before\n",
-            "Uncaught BadThing { message: 'oh no' } at dir/t.vlt:2:3\n",
+            "Uncaught BadThing { message: 'oh no' } at dir/t.velt:2:3\n",
             1
         )
     );

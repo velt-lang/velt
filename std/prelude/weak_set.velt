@@ -1,0 +1,45 @@
+// Prelude: `WeakSet<T>` (https://veltlang.com/docs/std/prelude/#weakmap-weakset-and-weakref), a set of objects that does
+// not keep them alive, on velt_rt's weak maps (weak.velt; docs/internals/design/weak-refs.md).
+
+import { weakMapDelete, weakMapHas, weakMapSet } from "velt/lang/intrinsics";
+
+declare function velt_rt_weakmap_drop(m: u32);
+
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
+/**
+ * A set of objects that does not keep its members alive: a member leaves the set when it is
+ * freed. Members are compared by identity. Not iterable and without `size`, as in JS.
+ */
+export class WeakSet<T> {
+  #id: u32;
+
+  /** An empty set. */
+  constructor() {
+    this.#id = 0;
+  }
+
+  /** Adds `value` to the set. */
+  add(value: T): WeakSet<T> {
+    this.#id = weakMapSet(this.#id, value, true);
+    return this;
+  }
+
+  /** Whether `value` is in the set. */
+  has(value: T): bool {
+    return this.#id != 0 && weakMapHas(this.#id, value);
+  }
+
+  /** Removes `value`: true if it was in the set. */
+  delete(value: T): bool {
+    return this.#id != 0 && weakMapDelete(this.#id, value);
+  }
+
+  /** Drop hook: forgets the members. */
+  [Symbol.dispose]() {
+    if (this.#id != 0) {
+      velt_rt_weakmap_drop(this.#id);
+      this.#id = 0;
+    }
+  }
+}

@@ -3,7 +3,7 @@
 //! build writes. The runtime glue provides the `velt:` modules, whose functions only std declares
 //! (sema rejects a `declare host("velt:…")` elsewhere, and veltc's `glue_contract` test holds
 //! std's declarations to the glue's), so the compiler keeps no table of them. A package provides
-//! the others, through `hostModules` in its `package.vlt`. A package provides only modules its
+//! the others, through `hostModules` in its `package.velt`. A package provides only modules its
 //! own modules declare, so a dependency cannot take over another package's module, and each
 //! module comes from one package. Checked where the HIR and the VIR meet: the declarations say
 //! who declares a module, the VIR's externs which modules the program reaches.
@@ -151,11 +151,11 @@ fn missing(
     );
     match declarers.iter().find_map(|(p, _)| *p) {
         Some(p) => d.with_note(format!(
-            "list it in `{}`'s package.vlt: `hostModules: {{ \"{module}\": \"./src/{module}.mjs\" }}`",
+            "list it in `{}`'s package.velt: `hostModules: {{ \"{module}\": \"./src/{module}.mjs\" }}`",
             p.name
         )),
         None => d.with_note(
-            "only a package provides host modules (`hostModules` in its package.vlt): make the \
+            "only a package provides host modules (`hostModules` in its package.velt): make the \
              program a package, or import the module from one",
         ),
     }
@@ -210,7 +210,7 @@ mod tests {
         assert_eq!(got.len(), 1);
         assert!(
             got[0].contains("the `--host host-edge` build has no JavaScript for host module `kv`")
-                && got[0].contains("list it in `app`'s package.vlt"),
+                && got[0].contains("list it in `app`'s package.velt"),
             "{got:?}"
         );
         let got = messages(&g, &[None], "kv");
@@ -249,7 +249,7 @@ mod tests {
     }
 
     /// The functions std declares for a `velt:` module, from its `declare host("velt:…")`
-    /// declarations (std/**/*.vlt).
+    /// declarations (std/**/*.velt).
     fn std_declarations(module: &str) -> std::collections::BTreeSet<String> {
         let std = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
         let mut out = std::collections::BTreeSet::new();
@@ -261,7 +261,7 @@ mod tests {
                     dirs.push(path);
                     continue;
                 }
-                if path.extension().is_none_or(|e| e != "vlt") {
+                if path.extension().is_none_or(|e| e != "velt") {
                     continue;
                 }
                 let text = std::fs::read_to_string(&path).unwrap();

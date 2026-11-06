@@ -1,4 +1,4 @@
-numbers_division.vlt:7:18: error: mismatched types
+numbers_division.velt:7:18: error: mismatched types
 = note: expected i64, found f64
 = note: `/` on numbers gives a float (like JS); for integer division write `Math.trunc(a / b)`
-numbers_division.vlt:9:28: error: array index must be an integer, found `f64`
+numbers_division.velt:9:28: error: array index must be an integer, found `f64`

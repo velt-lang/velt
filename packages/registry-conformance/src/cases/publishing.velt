@@ -1,0 +1,170 @@
+// registry-conformance: publishing, reading back, and the checks of an upload
+// (crates/velt_registry/src/tests/mod.rs, uploads.rs).
+
+import { utf8Decode, utf8Encode } from "velt/encoding";
+import { ArchiveEntry, contentChecksum, packArchive, readArchive } from "registry-core";
+import { Case } from "../case";
+import { Run } from "../run";
+import { file, packageFiles, rawArchive } from "../client";
+import { IndexBody } from "../index_body";
+import { Reply } from "../reply";
+
+const JSON_TYPE = "application/json";
+
+async function versionsAreImmutable(run: Run): Promise<void> {
+  const { client, check } = run;
+  const lib = run.name("lib");
+  const token = run.users.alice;
+  check.answer("first publish", await client.publish(lib, "1.0.0", token), 201, "published");
+  const before = await client.call("GET", `${lib}/index`);
+  check.answer("index", before, 200);
+  check.mediaType("index type", before, JSON_TYPE);
+  const first = JSON.parse<IndexBody>(before.text).versions[0];
+  check.is("index version", first.version, "1.0.0");
+  check.is("index checksum", first.checksum, contentChecksum(packageFiles(lib, "1.0.0")));
+  const again = await client.publish(lib, "1.0.0", token);
+  check.answer("publishing a version twice", again, 409, "already published");
+  const changed = await client.publish(lib, "1.0.0", token, `description: "another"`);
+  check.answer("publishing other bytes as a version", changed, 409, "already published");
+  check.answer("next version", await client.publish(lib, "1.1.0", token), 201);
+  const after = JSON.parse<IndexBody>((await client.call("GET", `${lib}/index`)).text).versions;
+  check.is("versions", after.map((e) => e.version).join(), "1.0.0,1.1.0");
+  check.is("the first entry's checksum", after[0].checksum, first.checksum);
+}
+
+async function readsArePublic(run: Run): Promise<void> {
+  const { client, check } = run;
+  const lib = run.name("reads");
+  const files = packageFiles(lib, "1.0.0");
+  check.answer("publish", await client.publish(lib, "1.0.0", run.users.alice), 201);
+  const got = await client.call("GET", `${lib}/1.0.0`);
+  check.answer("download", got, 200);
+  check.mediaType("download type", got, "application/octet-stream");
+  const read = readArchive(got.bytes, (path: string): bool => true);
+  check.is("the archive's checksum", contentChecksum(read), contentChecksum(files));
+  const listing = await client.send("GET", "/", [], null);
+  check.answer("listing", listing, 200, lib);
+  check.answer("index of nothing", await client.call("GET", `${run.name("none")}/index`), 404);
+  check.answer("no such version", await client.call("GET", `${lib}/9.9.9`), 404);
+  check.answer("not a version", await client.call("GET", `${lib}/latest`), 400);
+}
+
+async function uploadsAreChecked(run: Run): Promise<void> {
+  const { client, check } = run;
+  const token = run.users.alice;
+  const p = run.name("p");
+  const other = run.name("q");
+  const files = packageFiles(p, "1.0.0");
+  const body = packArchive(files);
+  const sum = contentChecksum(files);
+  if (token.length > 0) {
+    check.answer("no token", await client.upload(p, "1.0.0", body, sum), 401);
+  }
+  check.answer("wrong checksum", await client.upload(p, "1.0.0", body, "sha256:0", token), 400);
+  const named = await client.upload(other, "1.0.0", body, sum, token);
+  check.answer("another package's archive", named, 400, `not \`${other}\` 1.0.0`);
+  const numbered = await client.upload(p, "2.0.0", body, sum, token);
+  check.answer("another version's archive", numbered, 400, `not \`${p}\` 2.0.0`);
+  check.answer("not an archive", await client.upload(p, "1.0.0", utf8Encode("x"), sum, token), 400);
+  check.answer("not a version", await client.upload(p, "one", body, sum, token), 400);
+  check.answer("refused uploads store nothing", await client.call("GET", `${p}/index`), 404);
+  check.answer("the upload", await client.upload(p, "1.0.0", body, sum, token), 201);
+  check.answer("the same again", await client.upload(p, "1.0.0", body, sum, token), 409);
+}
+
+// The refusal of an archive of `files`, as `name` 1.0.0.
+async function refusal(run: Run, what: string, name: string, files: ArchiveEntry[], words: string) {
+  const sum = contentChecksum(files);
+  const answer = await run.client.upload(name, "1.0.0", rawArchive(files), sum, run.users.alice);
+  run.check.answer(what, answer, 400, words);
+  run.check.lacks(what, answer.text, ".staging");
+}
+
+async function manifestsAreData(run: Run): Promise<void> {
+  const p = run.name("m");
+  await refusal(
+    run,
+    "velt.toml",
+    p,
+    [file("src/lib.velt", ""), file("velt.toml", "[package]\n")],
+    "velt.toml",
+  );
+  await refusal(
+    run,
+    "no manifest",
+    p,
+    [file("src/lib.velt", "")],
+    "the archive has no package.velt",
+  );
+  const code = `import { readFile } from "velt/fs";\nexport const pkg: Package = { name: "${p}", version: "1.0.0" };\n`;
+  await refusal(run, "code in the manifest", p, [file("package.velt", code)], "package.velt");
+  const huge = `// ${"x".repeat(64 * 1024)}\n`;
+  await refusal(run, "a huge manifest", p, [file("package.velt", huge)], "larger than 64 KiB");
+  const invalid: ArchiveEntry = { path: "package.velt", bytes: [0x2f, 0x2f, 0x20, 0xff, 0x0a] };
+  await refusal(run, "a manifest not UTF-8", p, [invalid], "not valid UTF-8");
+  const ok = `export const pkg: Package = { name: "${p}", version: "1.0.0" };\n`;
+  const files = [file("package.velt", ok)];
+  const accepted = await run.client.upload(
+    p,
+    "1.0.0",
+    rawArchive(files),
+    contentChecksum(files),
+    run.users.alice,
+  );
+  run.check.answer("only a manifest", accepted, 201);
+}
+
+// What the index keeps of a version, and that publishing another leaves it exactly as it was.
+async function theIndexKeepsEachVersion(run: Run): Promise<void> {
+  const { client, check } = run;
+  const lib = run.name("kept");
+  const token = run.users.alice;
+  const fields = `description: "said \\"hi\\" på svenska", keywords: ["kept", "index"], dependencies: { one: "^1.2", two: ">=2, <3" }`;
+  check.answer("publish", await client.publish(lib, "1.0.0", token, fields), 201);
+  const first = (await client.call("GET", `${lib}/index`)).text;
+  for (const part of [
+    `"description": "said \\"hi\\" på svenska"`,
+    `"kept"`,
+    `"index"`,
+    `"one": "^1.2"`,
+    `"two": ">=2, <3"`,
+  ]) {
+    check.is(`the index has ${part}`, `${first.includes(part)}`, "true");
+  }
+  check.answer("the next version", await client.publish(lib, "1.1.0", token), 201);
+  const second = (await client.call("GET", `${lib}/index`)).text;
+  // The text up to the end of the only entry.
+  const entry = first.slice(0, first.lastIndexOf("]")).trimEnd();
+  check.is("the first version's entry is unchanged", `${second.startsWith(entry)}`, "true");
+}
+
+// A registry that doesn't hold a package's lock across a write loses versions here: each publish
+// reads the index, adds its version and writes the index back.
+async function publishesAtOnceAllCount(run: Run): Promise<void> {
+  const { client, check } = run;
+  const lib = run.name("together");
+  const token = run.users.alice;
+  check.answer("the first version", await client.publish(lib, "1.0.0", token), 201);
+  const answers: Promise<Reply>[] = [];
+  const versions = ["1.0.0"];
+  for (let minor: i64 = 1; minor <= 8; minor++) {
+    versions.push(`1.${minor}.0`);
+    answers.push(client.publish(lib, `1.${minor}.0`, token));
+  }
+  for (const answer of answers) {
+    check.answer("a publish at the same time", await answer, 201);
+  }
+  const listed = JSON.parse<IndexBody>((await client.call("GET", `${lib}/index`)).text).versions;
+  const found = listed.map((e): string => e.version).sort().join();
+  check.is("every version is in the index", found, versions.sort().join());
+}
+
+/** Publishing and reading back. */
+export const publishing: Case[] = [
+  new Case("a version is published once, and never changes", versionsAreImmutable),
+  new Case("anyone reads a published version", readsArePublic),
+  new Case("an upload is checked before anything is stored", uploadsAreChecked),
+  new Case("a manifest is read as data, and refused by name", manifestsAreData),
+  new Case("the index keeps what each version says", theIndexKeepsEachVersion),
+  new Case("publishes of one package at the same time all count", publishesAtOnceAllCount),
+];

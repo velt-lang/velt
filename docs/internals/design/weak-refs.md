@@ -3,7 +3,7 @@
 Status: `WeakMap`, `WeakSet` and `WeakRef` are in the language (#823 step B); `weak T` fields
 (#11) are not yet. The core is in `velt_rt` (`crates/velt_rt/src/weak/`) with unit tests and a
 leak soak test; the ABI is in [rt_abi.md](../contracts/rt_abi.md#weak-references). The compiler's
-side is `std/prelude/weak.vlt`, `weak_set.vlt` and `weak_ref.vlt` (the classes), `velt_vir` `lower/boxing/weak.rs` (which types are
+side is `std/prelude/weak.velt`, `weak_set.velt` and `weak_ref.velt` (the classes), `velt_vir` `lower/boxing/weak.rs` (which types are
 weak-capable), `lower/weak.rs` (the intrinsics and map value words) and `lower/glue/trace.rs`
 (trace, retain and release glue).
 
@@ -156,9 +156,9 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
   the lock captures one. The table's lock protects the table, not the objects: a key from the
   locked value in a map of the caller's would be released by the next task to replace it, on its
   thread, together with the entry's value that the caller still uses
-  (`tests/golden/std/weakmap_mutex_value.vlt`), and a `WeakRef` taken out of `with` would hand
-  out a strong reference to an object the Mutex owns (`weakref_mutex.vlt`). A weak collection
-  made under the lock and dropped there is allowed (`weakmap_mutex_local.vlt`). Interface calls
+  (`tests/golden/std/weakmap_mutex_value.velt`), and a `WeakRef` taken out of `with` would hand
+  out a strong reference to an object the Mutex owns (`weakref_mutex.velt`). A weak collection
+  made under the lock and dropped there is allowed (`weakmap_mutex_local.velt`). Interface calls
   under the lock already get a copy of a part of the value (#398).
   These checks see the written type (`Ctx::holds_weak`). What it hides is found after all bodies
   by `weak_threads.rs`, over the whole program, for the same crossings (`with`'s result and the
@@ -167,14 +167,14 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
   interface anywhere (`ToDyn`) holds one, a class value when a subclass upcast to it does (a
   fixed point, since a class can hold an interface value); a crossing whose type mentions a type
   parameter is checked at every instantiation, propagated to the callers with the calls' type
-  arguments like `promise_copies.rs`'s copies (`weak_hidden_generic_*.vlt`), and so are
+  arguments like `promise_copies.rs`'s copies (`weak_hidden_generic_*.velt`), and so are
   conversions to an interface in generic code. A callback not written at the `with` (a generic
   helper's `m.with(f)`) has its result checked by `weak_across` too
-  (`weakref_mutex_generic.vlt`). A closure literal passed to another task, or stored into the
+  (`weakref_mutex_generic.velt`). A closure literal passed to another task, or stored into the
   locked value (`ownership/locked/stores.rs`), is checked by its captures: at run time either
   would panic (a function value's environment is opaque to the transfer). Plain interface use
   stays legal: an interface none of whose converted classes holds a weak collection is not
-  affected (`weak_hidden_ok_iface_plain.vlt`). The other way round, the rule is program-wide:
+  affected (`weak_hidden_ok_iface_plain.velt`). The other way round, the rule is program-wide:
   once any weak-holding class is converted to an interface, even one used on a single task,
   every value of that interface counts as holding a weak collection where it crosses threads
   (the diagnostic's note names the class).
@@ -188,22 +188,22 @@ The runtime relies on these; the compiler must keep them when it lowers weak ref
   them as having something to transfer so the glue is reached. Values holding no weak class get
   the same transfer glue as before (`bench/vir_diff.sh`: the benchmarks' VIR is unchanged). So
   the panic happens before anything crosses: no race
-  (`tests/golden/std/weakref_transfer_{spawn,field,timer,channel}.vlt`). The transfer goes by the
+  (`tests/golden/std/weakref_transfer_{spawn,field,timer,channel}.velt`). The transfer goes by the
   object's own class, not the written one: a class in a hierarchy with a vtable may be any
   subclass, so `holds_counted` takes it as having something to transfer, like an interface
   value, and the glue dispatches through the vtable to the subclass's fields
-  (`weakref_transfer_base_{class,result}.vlt`). A class that extends a weak collection
+  (`weakref_transfer_base_{class,result}.velt`). A class that extends a weak collection
   (`class Cache extends WeakMap<K, V>`) is one in every check: sema's `Ctx::is_weak_class` and
-  lowering's `Cx::weak_class` go by the root class (`weak_subclass*.vlt`). A function value made
+  lowering's `Cx::weak_class` go by the root class (`weak_subclass*.velt`). A function value made
   shared between threads (`shared(...)`, a `Mutex`'s value, an HTTP handler) panics in the
   many-threads check the same way. `async main` keeps its maps across `await`s and spawned tasks
-  use maps of their own at once (`weakmap_async.vlt`).
+  use maps of their own at once (`weakmap_async.velt`).
 - **User code a release runs** (#876, `crates/velt_sema/src/replaced_holders/implicit.rs` entry
   8): releasing a weak map's key drops its entries' values, and dropping a map drops all of them,
   running their `[Symbol.dispose]()` without a call in the program. The analysis counts a value
   of a key type (found from the program's `new WeakMap<K, V>()`) as reaching what its maps'
   values reach, and a `WeakMap<K, V>` as reaching what a `V` does
-  (`tests/golden/lang/errors/assign_target_replaced_holder_weak.vlt`).
+  (`tests/golden/lang/errors/assign_target_replaced_holder_weak.velt`).
 
 ## Weak maps and `WeakRef`
 

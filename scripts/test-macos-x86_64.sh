@@ -37,9 +37,9 @@ work="$root/target/golden-x86_64"
 mkdir -p "$work"
 
 goldens() {
-    find tests/golden -name '*.vlt' ! -name '_*' | sort
-    for f in examples/*.vlt; do
-        [ -f "${f%.vlt}.out" ] && echo "$f"
+    find tests/golden -name '*.velt' ! -name '_*' | sort
+    for f in examples/*.velt; do
+        [ -f "${f%.velt}.out" ] && echo "$f"
     done
 }
 
@@ -58,7 +58,7 @@ failures=0
 checked=0
 check() {
     local f=$1 mode=$2
-    local exe="$work/$(echo "${f%.vlt}" | tr / _)_$mode"
+    local exe="$work/$(echo "${f%.velt}" | tr / _)_$mode"
     local flags=()
     [ "$mode" = release ] && flags=(--release)
     if ! (cd "$work" && "$velt" build ${flags[@]+"${flags[@]}"} --target "$target" -o "$exe" "$root/$f") >"$exe.log" 2>&1; then
@@ -71,9 +71,9 @@ check() {
         return 1
     fi
     local want_code=0 code=0
-    [ -f "${f%.vlt}.code" ] && want_code=$(tr -d '[:space:]' <"${f%.vlt}.code")
+    [ -f "${f%.velt}.code" ] && want_code=$(tr -d '[:space:]' <"${f%.velt}.code")
     (cd "$work" && arch -x86_64 "$exe") >"$exe.stdout" 2>"$exe.stderr" || code=$?
-    if [ "$code" != "$want_code" ] || ! diff <(tr -d '\r' <"${f%.vlt}.out") <(tr -d '\r' <"$exe.stdout") >"$exe.diff"; then
+    if [ "$code" != "$want_code" ] || ! diff <(tr -d '\r' <"${f%.velt}.out") <(tr -d '\r' <"$exe.stdout") >"$exe.diff"; then
         echo "FAIL $f [$mode]: exit $code (want $want_code)"
         cat "$exe.diff" "$exe.stderr"
         return 1
@@ -82,7 +82,7 @@ check() {
 
 step "goldens: build --target $target, run under Rosetta"
 while read -r f; do
-    [ -f "${f%.vlt}.out" ] || continue
+    [ -f "${f%.velt}.out" ] || continue
     case "$f" in *"$filter"*) ;; *) continue ;; esac
     pending "$f" && continue
     for mode in debug release; do

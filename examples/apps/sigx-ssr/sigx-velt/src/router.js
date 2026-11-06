@@ -1,4 +1,4 @@
-// @sigx/velt/router in the browser: the same API as velt/src/router.vlt, so shared components
+// @sigx/velt/router in the browser: the same API as velt/src/router.velt, so shared components
 // route with either. Plain JavaScript (`jsx` calls) so the package needs no build step.
 import { component } from "sigx";
 import { jsx } from "sigx/jsx-runtime";

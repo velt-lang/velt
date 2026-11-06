@@ -87,7 +87,7 @@ class VeltConfigurationProvider implements vscode.DebugConfigurationProvider {
         const file = activeVeltFile();
         if (!file) {
           void vscode.window.showErrorMessage(
-            "Velt: open a .vlt file or a folder with package.vlt to debug it.",
+            "Velt: open a .velt file or a folder with package.velt to debug it.",
           );
           return undefined;
         }
@@ -258,7 +258,7 @@ function fileOf(uri: vscode.Uri | string | undefined): string | undefined {
 // "Debug File": the file of the editor (or of the CodeLens) as a single-file program.
 async function debugFile(file: string | undefined): Promise<void> {
   if (!file) {
-    void vscode.window.showErrorMessage("Velt: open a .vlt file to debug it.");
+    void vscode.window.showErrorMessage("Velt: open a .velt file to debug it.");
     return;
   }
   await vscode.debug.startDebugging(vscode.workspace.getWorkspaceFolder(vscode.Uri.file(file)), {
@@ -313,7 +313,7 @@ async function saveIfDirty(file: string): Promise<void> {
 // nothing in the file name is interpreted.
 async function runFile(file: string | undefined): Promise<void> {
   if (!file) {
-    void vscode.window.showErrorMessage("Velt: open a .vlt file to run it.");
+    void vscode.window.showErrorMessage("Velt: open a .velt file to run it.");
     return;
   }
   await saveIfDirty(file);
@@ -371,7 +371,7 @@ async function generateLaunchJson(): Promise<void> {
 }
 
 function isPackage(folder: vscode.WorkspaceFolder): boolean {
-  return fs.existsSync(path.join(folder.uri.fsPath, "package.vlt"));
+  return fs.existsSync(path.join(folder.uri.fsPath, "package.velt"));
 }
 
 function activeFolder(): vscode.WorkspaceFolder | undefined {
@@ -381,7 +381,7 @@ function activeFolder(): vscode.WorkspaceFolder | undefined {
 
 function activeVeltFile(): string | undefined {
   const doc = vscode.window.activeTextEditor?.document;
-  if (doc && doc.uri.scheme === "file" && /\.(vlt|ts|tsx)$/.test(doc.fileName)) {
+  if (doc && doc.uri.scheme === "file" && /\.(velt|ts|tsx)$/.test(doc.fileName)) {
     return doc.fileName;
   }
   return undefined;

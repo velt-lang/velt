@@ -495,7 +495,7 @@ pub fn golden_files() -> Vec<PathBuf> {
         for p in entries {
             if p.is_dir() {
                 collect(&p, out);
-            } else if p.extension().is_some_and(|e| e == "vlt") {
+            } else if p.extension().is_some_and(|e| e == "velt") {
                 out.push(p);
             }
         }

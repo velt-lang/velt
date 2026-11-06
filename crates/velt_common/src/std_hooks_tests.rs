@@ -25,17 +25,17 @@ fn the_fallback_hooks_are_the_on_demand_ones() {
 }
 
 #[test]
-fn every_key_is_a_constant_of_keys_vlt() {
+fn every_key_is_a_constant_of_keys_velt() {
     let path =
-        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/lang/hooks/keys.vlt");
-    let src = std::fs::read_to_string(path).expect("std/lang/hooks/keys.vlt");
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/lang/hooks/keys.velt");
+    let src = std::fs::read_to_string(path).expect("std/lang/hooks/keys.velt");
     for k in KEYS {
         let make = if k.registered { "Symbol.for" } else { "Symbol" };
         let decl = format!(
             "export const {} = {make}(\"{}\");",
             k.constant, k.description
         );
-        assert!(src.contains(&decl), "keys.vlt lacks `{decl}`");
+        assert!(src.contains(&decl), "keys.velt lacks `{decl}`");
     }
     assert_eq!(std_key!(map_cursor), "\u{FFFF}Symbol(mapCursor)");
 }
@@ -43,12 +43,12 @@ fn every_key_is_a_constant_of_keys_vlt() {
 #[test]
 fn every_hook_is_in_lang() {
     // Outside `lang/` only where the hook needs a module's internals, in a file no program
-    // can import (not a module's `index.vlt`).
+    // can import (not a module's `index.velt`).
     for h in HOOKS {
         let rel = crate::std_modules::rel(h.module_entry).expect("ICE: a std module");
         assert!(
             h.module().starts_with("std/lang/")
-                || !crate::std_modules::importable(&format!("{rel}.vlt")),
+                || !crate::std_modules::importable(&format!("{rel}.velt")),
             "{}: {}",
             h.name,
             h.module()

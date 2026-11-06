@@ -212,7 +212,7 @@ pub(crate) fn std_forwarders(funcs: &[Function], helpers: &mut [bool]) {
     }
 }
 
-/// The symbol prefix of std/lang/equal: `generated.vlt`'s helpers (`identity`, `beginPair`, …).
+/// The symbol prefix of std/lang/equal: `generated.velt`'s helpers (`identity`, `beginPair`, …).
 const STD_EQUAL: &str = "_V3stdP4langP5equal";
 
 /// The symbol prefix of the code generated for std's generated functions
@@ -311,7 +311,7 @@ fn decide(
 ///
 /// A math operation (`Rvalue::Intrinsic`) counts as the call of its runtime function it was
 /// lowered from before #1981, so this decides as it did then: taken as a leaf, a function like
-/// `energy` in `bench/nbody.vlt`, which divides by a `Math.sqrt`, is inlined into the caller
+/// `energy` in `bench/nbody.velt`, which divides by a `Math.sqrt`, is inlined into the caller
 /// that holds the hot loop, which then runs 1% more instructions. Whether functions doing math
 /// should be leaves is a decision of its own, to measure separately.
 fn is_leaf(program: &Program, func: &Function) -> bool {

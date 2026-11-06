@@ -16,7 +16,7 @@ fn real_std() -> PathBuf {
 /// The std modules a program of `src` loads.
 fn loaded(src: &str) -> BTreeSet<String> {
     let tmp = tempfile::tempdir().unwrap();
-    let root = tmp.path().join("main.vlt");
+    let root = tmp.path().join("main.velt");
     let mut sm = SourceMap::default();
     let mut diags = vec![];
     let opts = LoadOptions {
@@ -358,7 +358,7 @@ fn each_reason_of_the_rule() {
         ),
     ];
     for (name, src, _) in &files {
-        std::fs::write(tmp.path().join(format!("{name}.vlt")), src).unwrap();
+        std::fs::write(tmp.path().join(format!("{name}.velt")), src).unwrap();
     }
     let index = load(tmp.path(), None);
     for (name, src, want) in &files {

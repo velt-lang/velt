@@ -68,7 +68,7 @@ pub(super) fn check(
         };
         diags.push(
             Diagnostic::error(
-                format!("C library `{}` is not in package.vlt's `native.c`: {listed}", c.library),
+                format!("C library `{}` is not in package.velt's `native.c`: {listed}", c.library),
                 f.span,
             )
             .with_note(format!(
@@ -121,7 +121,7 @@ fn allowed_package<'g>(
                 "this file is in an npm package under `{}`, which isn't part of it",
                 p.name
             ),
-            None => "this file has no package.vlt".to_string(),
+            None => "this file has no package.velt".to_string(),
         };
         diags.push(
             Diagnostic::error(
@@ -141,7 +141,7 @@ fn allowed_package<'g>(
         diags.push(
             Diagnostic::error(
                 format!(
-                    "package `{}` declares C {noun} `{name}`, but its package.vlt doesn't say it has native code",
+                    "package `{}` declares C {noun} `{name}`, but its package.velt doesn't say it has native code",
                     package.name
                 ),
                 at,
@@ -165,7 +165,7 @@ fn allowed_package<'g>(
                 at,
             )
             .with_note(format!(
-                "if you trust it, list it in the program's package.vlt: `allowNative: [\"{}\"]`",
+                "if you trust it, list it in the program's package.velt: `allowNative: [\"{}\"]`",
                 package.name
             )),
         );

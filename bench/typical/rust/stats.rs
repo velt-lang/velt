@@ -1,4 +1,4 @@
-// bench/typical/stats.vlt in idiomatic Rust.
+// bench/typical/stats.velt in idiomatic Rust.
 #[derive(Clone, Copy, Default)]
 struct Stats {
     n: f64,
