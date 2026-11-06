@@ -18,11 +18,22 @@ thread_local! {
 
 /// `f` with every module it loads parsed without packing large array literals of numbers into
 /// `ast::ExprKind::NumArray` (as before #2421): what a packed array must check exactly like.
+/// The flag goes back to what it was when `f` returns or panics, so nested calls and a failed
+/// test leave the thread as they found it.
 pub fn unpacked<T>(f: impl FnOnce() -> T) -> T {
-    UNPACKED.with(|u| u.set(true));
-    let r = f();
-    UNPACKED.with(|u| u.set(false));
-    r
+    struct Restore(bool);
+    impl Drop for Restore {
+        fn drop(&mut self) {
+            UNPACKED.with(|u| u.set(self.0));
+        }
+    }
+    let _restore = Restore(UNPACKED.with(|u| u.replace(true)));
+    f()
+}
+
+/// Whether this thread parses without packing now (inside [`unpacked`]).
+pub fn is_unpacked() -> bool {
+    UNPACKED.with(|u| u.get())
 }
 
 pub fn repo_root() -> PathBuf {

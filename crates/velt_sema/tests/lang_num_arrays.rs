@@ -6,7 +6,7 @@
 
 mod common;
 
-use common::programs::{load_src, unpacked};
+use common::programs::{is_unpacked, load_src, unpacked};
 
 /// `[e0, e1, …]` of `n` elements, `f(i)` the text of element `i`.
 fn array(n: usize, f: impl Fn(usize) -> String) -> String {
@@ -295,4 +295,19 @@ fn the_editor_sees_every_element_of_a_packed_array() {
     let a = velt_sema::ide::check_for_ide(&l.modules, l.root);
     let at = src.find("113").expect("element") as u32;
     assert_eq!(a.type_at(file, at).as_deref(), Some("u8"));
+}
+
+/// `unpacked` puts the flag back when `f` returns, inside a nested call, and when `f` panics, so a
+/// failed test doesn't leave the next test on the thread unpacked.
+#[test]
+fn unpacked_restores_the_flag() {
+    assert!(!is_unpacked());
+    unpacked(|| {
+        unpacked(|| assert!(is_unpacked()));
+        assert!(is_unpacked(), "a nested call cleared the outer one's flag");
+    });
+    assert!(!is_unpacked());
+    let r = std::panic::catch_unwind(|| unpacked(|| panic!("a failing check")));
+    assert!(r.is_err());
+    assert!(!is_unpacked(), "a panic left the flag set");
 }
