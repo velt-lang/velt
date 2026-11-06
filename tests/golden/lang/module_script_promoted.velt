@@ -1,0 +1,6 @@
+// An imported module's top-level statement reads constants built from other constants of the
+// module (a chain, a number, a module `let`) while a function and a class method read another
+// constant (#2409).
+import { done } from "./_module_script_promoted/m";
+
+console.log("main", done);

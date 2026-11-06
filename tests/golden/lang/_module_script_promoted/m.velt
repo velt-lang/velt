@@ -1,0 +1,21 @@
+// Constants that a top-level statement after another module-level variable reads become module
+// state; the constants their initializers read must come along, or those initializers can't
+// find them (#2409).
+const A = "aa";
+const AB = A + "b";
+const ABC = AB + "c";
+const N = 3;
+const N2 = N * 2;
+let count = 1;
+const C2 = count + 1;
+const H = "cf";
+function f(): number {
+  return H.length;
+}
+class K {
+  name(): string {
+    return H + "!";
+  }
+}
+console.log("m", AB, ABC, N2, C2, f(), new K().name());
+export const done = AB.length + ABC.length;
