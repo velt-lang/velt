@@ -143,7 +143,7 @@ fn a_forwarding_trap_keeps_the_algorithms_out() {
         assert!(release_ir(&src).contains("proxySort"), "{trap}");
     }
     // Written elsewhere, a handler can be reached by more than the proxy.
-    let held = "const h = {\n  get(t: any, k: any, r: any) {\n    return Reflect.get(t, k, r);\n  },\n};\n";
+    let held = "const h: any = {\n  get(t: any, k: any, r: any) {\n    return Reflect.get(t, k, r);\n  },\n};\n";
     assert!(release_ir(&format!("{held}{}", program("h"))).contains("proxySort"));
 }
 
