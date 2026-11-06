@@ -29,10 +29,11 @@ export struct TlsStartOptions {
 /**
  * Runs a TLS 1.3 client handshake over `stream` and resolves to the encrypted stream; `stream`
  * belongs to it from then on. Cipher suites TLS_CHACHA20_POLY1305_SHA256 and
- * TLS_AES_128_GCM_SHA256, key exchange X25519. Throws `IoError` (`EPROTO`, "TLS: …") when the
- * handshake fails, and `EINVAL` unless `opts.verify` is `false`. With `verify: false` the server
- * is not authenticated: this protects against passive observers only, and anyone who can
- * intercept the connection can impersonate the server.
+ * TLS_AES_128_GCM_SHA256; key exchange X25519, or secp256r1 when the server asks for it with a
+ * HelloRetryRequest. Throws `IoError` (`EPROTO`, "TLS: …") when the handshake fails, and
+ * `EINVAL` unless `opts.verify` is `false`. With `verify: false` the server is not authenticated:
+ * this protects against passive observers only, and anyone who can intercept the connection can
+ * impersonate the server.
  */
 export async function startTls(stream: ByteStream, opts: TlsStartOptions = {}): Promise<TlsStream> {
   if (opts.verify !== false) {
@@ -51,6 +52,8 @@ export async function startTls(stream: ByteStream, opts: TlsStartOptions = {}): 
       serverName: opts.serverName ?? "",
       alpn: opts.alpn ?? [],
       fixed: null,
+      fixedRetry: null,
+      retryKey: null,
     },
     key,
   );

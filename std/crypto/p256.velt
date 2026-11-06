@@ -1,0 +1,318 @@
+// velt/crypto (internal): ECDH on NIST P-256 (SEC 1 §3.3.1, as TLS 1.3's secp256r1 group, RFC
+// 8446 §4.2.8.2): y^2 = x^3 - 3x + b over `FeP256`, in Jacobian coordinates (x = X/Z^2,
+// y = Y/Z^3; Z = 0 is the identity) with the a = -3 doubling dbl-2001-b (3M + 5S) and the
+// addition add-2007-bl (11M + 5S) of the Explicit-Formulas Database. Constant time: the scalar
+// goes through fixed 4-bit windows (256 doublings and 64 additions whatever its value), each
+// window's multiple is picked from the table by a masked scan of all 16 entries, an addition
+// with the identity is a masked select, and the inversion is a fixed chain. The addition has
+// one exceptional case, P = Q, which the windows never reach: with 0 < k < n, the accumulator
+// before an addition is 16 v for the prefix v of k, and 16 v = +-j (mod n) for a digit j < 16
+// only when both are zero, which is the identity case.
+
+import { CryptoError } from "velt/crypto/errors";
+import { FeP256 } from "velt/crypto/field_p256";
+import { randomBytes } from "velt/crypto/random";
+
+// The constants, in the Montgomery domain, little-endian limbs.
+const B_M: u64[] = [0xd89cdf6229c4bddf, 0xacf005cd78843090, 0xe5a220abf7212ed6, 0xdc30061d04874834];
+const ONE_M: u64[] = [
+  0x0000000000000001,
+  0xffffffff00000000,
+  0xffffffffffffffff,
+  0x00000000fffffffe,
+];
+const GX_M: u64[] = [
+  0x79e730d418a9143c,
+  0x75ba95fc5fedb601,
+  0x79fb732b77622510,
+  0x18905f76a53755c6,
+];
+const GY_M: u64[] = [
+  0xddf25357ce95560a,
+  0x8b4ab8e4ba19e45c,
+  0xd2e88688dd21f325,
+  0x8571ff1825885d85,
+];
+
+// The group order n, big-endian bytes.
+const N: u8[] = [
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0x00,
+  0x00,
+  0x00,
+  0x00,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xff,
+  0xbc,
+  0xe6,
+  0xfa,
+  0xad,
+  0xa7,
+  0x17,
+  0x9e,
+  0x84,
+  0xf3,
+  0xb9,
+  0xca,
+  0xc2,
+  0xfc,
+  0x63,
+  0x25,
+  0x51,
+];
+
+// Registers. A point is three (X, Y, Z); the table holds 0P..15P.
+const T: usize = 0; // eight temporaries, T..T + 7
+const ACC: usize = 8; // the accumulator point
+const SEL: usize = 11; // the selected table entry
+const TABLE: usize = 14; // 16 points
+const REGS: usize = TABLE + 48;
+
+/**
+ * Whether `k` is a valid scalar, 32 big-endian bytes with 0 < k < n. Callers pass private keys, so
+ * only its length and the answer are public: nothing branches on or indexes by a byte's value.
+ */
+export function p256ScalarOk(k: u8[]): bool {
+  if (k.length != 32) {
+    return false;
+  }
+  // k - n from the low byte up: the last borrow says k < n. `any` is non-zero unless k is 0.
+  let any: u64 = 0;
+  let borrow: u64 = 0;
+  for (let i: usize = 0; i < 32; i++) {
+    const d = (k[31 - i] as u64) - (N[31 - i] as u64) - borrow;
+    borrow = d >> 63;
+    any |= k[31 - i] as u64;
+  }
+  return (((any + 0xff) >> 8) & borrow) == 1;
+}
+
+/** A new random P-256 private key: 32 big-endian bytes in [1, n - 1]. */
+export function p256PrivateKey(): u8[] {
+  while (true) {
+    const k = randomBytes(32);
+    if (p256ScalarOk(k)) {
+      return k;
+    }
+  }
+}
+
+/** The uncompressed public key (0x04, x, y: 65 bytes) of the private key `scalar`. */
+export function p256PublicKey(scalar: u8[]): u8[] {
+  if (!p256ScalarOk(scalar)) {
+    throw new CryptoError("P-256 needs a 32-byte private key between 1 and n - 1");
+  }
+  const f = new FeP256(REGS);
+  f.load(TABLE + 3, GX_M);
+  f.load(TABLE + 4, GY_M);
+  f.load(TABLE + 5, ONE_M);
+  const out = Buffer.alloc(65);
+  out[0] = 4;
+  multiply(f, scalar, out, true);
+  return out;
+}
+
+/**
+ * The ECDH shared secret (the x-coordinate, 32 bytes) of the private key `scalar` and the
+ * peer's uncompressed public key `point`. Throws `CryptoError` for a point that is not on the
+ * curve (RFC 8446 §4.2.8.2 requires the check) or a bad scalar.
+ */
+export function p256Ecdh(scalar: u8[], point: u8[]): u8[] {
+  if (!p256ScalarOk(scalar)) {
+    throw new CryptoError("P-256 needs a 32-byte private key between 1 and n - 1");
+  }
+  const f = new FeP256(REGS);
+  if (!decodePoint(f, point, TABLE + 3)) {
+    throw new CryptoError("the P-256 public key is not an uncompressed point on the curve");
+  }
+  const out = Buffer.alloc(32);
+  multiply(f, scalar, out, false);
+  return out;
+}
+
+/**
+ * Registers `p..p + 2` = the uncompressed point `b` (0x04, x, y), with Z = 1; false unless it
+ * is on the curve with coordinates below p. Public data: variable time. Uses `T..T + 3`.
+ */
+export function decodePoint(f: FeP256, b: u8[], p: usize): bool {
+  if (b.length != 65 || b[0] != 4) {
+    return false;
+  }
+  if (!f.decode(p, b, 1, T) || !f.decode(p + 1, b, 33, T)) {
+    return false;
+  }
+  f.load(p + 2, ONE_M);
+  // y^2 == x^3 - 3x + b.
+  f.load(T + 3, B_M);
+  f.square(T, p + 1);
+  f.square(T + 1, p);
+  f.mul(T + 1, T + 1, p);
+  f.add(T + 2, p, p);
+  f.add(T + 2, T + 2, p);
+  f.sub(T + 1, T + 1, T + 2);
+  f.add(T + 1, T + 1, T + 3);
+  f.sub(T, T, T + 1);
+  return f.isZero(T) != 0;
+}
+
+// `scalar` times the point in `TABLE + 3..TABLE + 5`, written affine to `out` (x at 1 and y at
+// 33 when `both`, else x at 0).
+function multiply(f: FeP256, scalar: u8[], out: u8[], both: bool) {
+  // TABLE: the identity (1 : 1 : 0), P, then 2P..15P.
+  f.load(TABLE, ONE_M);
+  f.load(TABLE + 1, ONE_M);
+  f.zero(TABLE + 2);
+  double(f, TABLE + 6, TABLE + 3);
+  for (let i: usize = 3; i < 16; i++) {
+    add(f, TABLE + 3 * i, TABLE + 3 * (i - 1), TABLE + 3);
+  }
+  for (let w: usize = 0; w < 64; w++) {
+    const byte = scalar[w >> 1] as u64;
+    const nibble = (w & 1) == 0 ? byte >> 4 : byte & 15;
+    if (w > 0) {
+      for (let j = 0; j < 4; j++) {
+        double(f, ACC, ACC);
+      }
+    }
+    select(f, nibble);
+    if (w == 0) {
+      f.copy(ACC, SEL);
+      f.copy(ACC + 1, SEL + 1);
+      f.copy(ACC + 2, SEL + 2);
+    } else {
+      add(f, ACC, ACC, SEL);
+    }
+  }
+  // Affine: x = X / Z^2, y = Y / Z^3. A valid scalar times a point of prime order is never
+  // the identity, so Z is not zero.
+  f.invert(T, ACC + 2, T + 1);
+  f.square(T + 1, T);
+  f.mul(ACC, ACC, T + 1);
+  if (both) {
+    f.mul(T + 1, T + 1, T);
+    f.mul(ACC + 1, ACC + 1, T + 1);
+    f.encode(ACC, out, 1, T + 1);
+    f.encode(ACC + 1, out, 33, T + 1);
+  } else {
+    f.encode(ACC, out, 0, T + 1);
+  }
+}
+
+// SEL = TABLE[nibble], reading every entry.
+function select(f: FeP256, nibble: u64) {
+  f.zero(SEL);
+  f.zero(SEL + 1);
+  f.zero(SEL + 2);
+  for (let i: usize = 0; i < 16; i++) {
+    const x = (i as u64) ^ nibble;
+    // All ones when x == 0 (x is below 16, so x - 1 wraps only for 0).
+    const mask = 0 - ((x - 1) >> 63);
+    f.orMasked(SEL, TABLE + 3 * i, mask);
+    f.orMasked(SEL + 1, TABLE + 3 * i + 1, mask);
+    f.orMasked(SEL + 2, TABLE + 3 * i + 2, mask);
+  }
+}
+
+/**
+ * `d = p + q` (points at registers `d`, `p`, `q`; `d` may be either), add-2007-bl, with the
+ * identity on either side selected by masks. Wrong for p = q, which callers rule out.
+ */
+export function add(f: FeP256, d: usize, p: usize, q: usize) {
+  const z1z1 = T;
+  const z2z2 = T + 1;
+  const u1 = T + 2;
+  const h = T + 3;
+  const s1 = T + 4;
+  const r = T + 5;
+  const i = T + 6;
+  const j = T + 7;
+  f.square(z1z1, p + 2);
+  f.square(z2z2, q + 2);
+  f.mul(u1, p, z2z2);
+  f.mul(h, q, z1z1);
+  f.mul(s1, p + 1, q + 2);
+  f.mul(s1, s1, z2z2);
+  f.mul(r, q + 1, p + 2);
+  f.mul(r, r, z1z1);
+  f.sub(h, h, u1); // H = U2 - U1
+  f.sub(r, r, s1);
+  f.add(r, r, r); // r = 2 (S2 - S1)
+  f.add(i, h, h);
+  f.square(i, i); // I = (2H)^2
+  f.mul(j, h, i); // J = H I
+  f.mul(i, u1, i); // V = U1 I
+  // Z3 = ((Z1 + Z2)^2 - Z1Z1 - Z2Z2) H, in u1.
+  f.add(u1, p + 2, q + 2);
+  f.square(u1, u1);
+  f.sub(u1, u1, z1z1);
+  f.sub(u1, u1, z2z2);
+  f.mul(u1, u1, h);
+  // X3 = r^2 - J - 2V, in z1z1.
+  f.square(z1z1, r);
+  f.sub(z1z1, z1z1, j);
+  f.add(z2z2, i, i);
+  f.sub(z1z1, z1z1, z2z2);
+  // Y3 = r (V - X3) - 2 S1 J, in z2z2.
+  f.sub(i, i, z1z1);
+  f.mul(i, r, i);
+  f.mul(s1, s1, j);
+  f.add(s1, s1, s1);
+  f.sub(z2z2, i, s1);
+  // p is the identity: q; q is: p.
+  const pZero = f.isZero(p + 2);
+  const qZero = f.isZero(q + 2);
+  f.blend(z1z1, p, z1z1, qZero);
+  f.blend(z2z2, p + 1, z2z2, qZero);
+  f.blend(u1, p + 2, u1, qZero);
+  f.blend(d, q, z1z1, pZero);
+  f.blend(d + 1, q + 1, z2z2, pZero);
+  f.blend(d + 2, q + 2, u1, pZero);
+}
+
+/** `d = 2p` (`d` may be `p`), dbl-2001-b for a = -3; the identity stays the identity. */
+export function double(f: FeP256, d: usize, p: usize) {
+  const delta = T;
+  const gamma = T + 1;
+  const beta = T + 2;
+  const alpha = T + 3;
+  const t = T + 4;
+  const x3 = T + 5;
+  f.square(delta, p + 2);
+  f.square(gamma, p + 1);
+  f.mul(beta, p, gamma);
+  // alpha = 3 (X - delta) (X + delta).
+  f.sub(alpha, p, delta);
+  f.add(t, p, delta);
+  f.mul(alpha, alpha, t);
+  f.add(t, alpha, alpha);
+  f.add(alpha, t, alpha);
+  // Z3 = (Y + Z)^2 - gamma - delta.
+  f.add(t, p + 1, p + 2);
+  f.square(t, t);
+  f.sub(t, t, gamma);
+  f.sub(d + 2, t, delta);
+  // X3 = alpha^2 - 8 beta.
+  f.square(x3, alpha);
+  f.add(beta, beta, beta);
+  f.add(beta, beta, beta);
+  f.add(t, beta, beta);
+  f.sub(x3, x3, t);
+  // Y3 = alpha (4 beta - X3) - 8 gamma^2.
+  f.sub(beta, beta, x3);
+  f.mul(beta, alpha, beta);
+  f.square(gamma, gamma);
+  f.add(gamma, gamma, gamma);
+  f.add(gamma, gamma, gamma);
+  f.add(gamma, gamma, gamma);
+  f.sub(d + 1, beta, gamma);
+  f.copy(d, x3);
+}

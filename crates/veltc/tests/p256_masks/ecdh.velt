@@ -1,0 +1,5 @@
+// Both entry points to the scalar multiplication, as a program using P-256 calls them.
+import { p256Ecdh, p256PrivateKey, p256PublicKey } from "velt/crypto";
+
+const key = p256PrivateKey();
+console.log(p256Ecdh(key, p256PublicKey(p256PrivateKey())).length);

@@ -6,11 +6,13 @@ import {
   MISSING_EXTENSION,
   PROTOCOL_VERSION,
   TlsFailure,
+  UNEXPECTED_MESSAGE,
 } from "velt/net/tls/alert";
 import {
   EXT_COOKIE,
   EXT_KEY_SHARE,
   EXT_SUPPORTED_VERSIONS,
+  SECP256R1,
   X25519,
 } from "velt/net/tls/client_hello";
 import { ByteReader } from "velt/net/tls/byte_reader";
@@ -58,16 +60,25 @@ export struct ServerHello {
   retry: bool;
   /** The cipher suite chosen. */
   suite: usize;
-  /** The server's X25519 key share (ServerHello), empty in a HelloRetryRequest. */
+  /** The server's key share (ServerHello) for `group`, empty in a HelloRetryRequest. */
   keyShare: u8[];
-  /** The group a HelloRetryRequest asks for (0 when it asks for none). */
+  /** The key share's group, or the one a HelloRetryRequest asks for (0 when it asks for none). */
   group: usize;
   /** A HelloRetryRequest's cookie, or null. */
   cookie: u8[] | null;
 }
 
-/** The ServerHello in `body` (the message without its 4-byte header), checked against `sessionId`. */
-export function parseServerHello(body: u8[], sessionId: u8[]): ServerHello {
+/**
+ * The ServerHello in `body` (the message without its 4-byte header), checked against `sessionId`
+ * and the group `offered` of the client's last key share. `retried` says a HelloRetryRequest came
+ * already: another one is `unexpected_message` whatever it says (RFC 8446 §4.1.4).
+ */
+export function parseServerHello(
+  body: u8[],
+  sessionId: u8[],
+  offered: usize,
+  retried: bool,
+): ServerHello {
   const r = new ByteReader(body, 0, body.length, "ServerHello");
   checkLegacyVersion(r.u16());
   const random = r.bytes(32);
@@ -76,6 +87,9 @@ export function parseServerHello(body: u8[], sessionId: u8[]): ServerHello {
     if (random[i] != HRR_RANDOM[i]) {
       retry = false;
     }
+  }
+  if (retry && retried) {
+    throw new TlsFailure(UNEXPECTED_MESSAGE, "a second HelloRetryRequest");
   }
   const echo = r.vector(1);
   const sid = echo.bytes(echo.left());
@@ -134,18 +148,22 @@ export function parseServerHello(body: u8[], sessionId: u8[]): ServerHello {
     if (group == 0) {
       throw new TlsFailure(MISSING_EXTENSION, "the ServerHello has no key share");
     }
-    if (group != X25519 || keyShare.length != 32) {
-      throw new TlsFailure(ILLEGAL_PARAMETER, "the server's key share is not an X25519 key");
+    if (group != offered || keyShare.length != (group == X25519 ? 32 : 65)) {
+      throw new TlsFailure(
+        ILLEGAL_PARAMETER,
+        `the server's key share is not for ${groupName(offered)}`,
+      );
     }
-  } else if (group == X25519) {
+  } else if (group == offered) {
     throw new TlsFailure(
       ILLEGAL_PARAMETER,
-      "the HelloRetryRequest asks for the X25519 share already sent",
+      `the HelloRetryRequest asks for the ${groupName(group)} share already sent`,
     );
-  } else if (group != 0) {
+  } else if (group != 0 && group != X25519 && group != SECP256R1) {
+    // Not one of supported_groups (RFC 8446 §4.1.4).
     throw new TlsFailure(
       ILLEGAL_PARAMETER,
-      `the server requires key exchange group 0x${group.toString(16)}, which is not supported yet (X25519 only)`,
+      `the HelloRetryRequest asks for key exchange group 0x${group.toString(16)}, which was not offered`,
     );
   }
   return { retry: retry, suite: suite, keyShare: keyShare, group: group, cookie: cookie };
@@ -170,4 +188,15 @@ function checkLegacyVersion(v: usize) {
 
 function hex4(v: usize): string {
   return v.toString(16).padStart(4, "0");
+}
+
+/** The name of the named group `g` for messages: X25519, secp256r1, else its number in hex. */
+export function groupName(g: usize): string {
+  if (g == X25519) {
+    return "X25519";
+  }
+  if (g == SECP256R1) {
+    return "secp256r1";
+  }
+  return `group 0x${hex4(g)}`;
 }
