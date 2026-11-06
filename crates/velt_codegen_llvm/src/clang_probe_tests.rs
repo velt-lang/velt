@@ -1,7 +1,14 @@
 use std::collections::HashMap;
 #[cfg(unix)]
+use std::io::Write;
+#[cfg(unix)]
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::sync::Mutex;
+#[cfg(unix)]
+use std::time::Instant;
+
+#[cfg(unix)]
+use crate::clang_run::MOST_OUTPUT;
 
 use super::*;
 
@@ -484,7 +491,7 @@ fn only_so_much_of_a_candidates_output_is_kept() {
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     match run_limited(cmd, AMPLE) {
-        Ran::Exited(status, text) => {
+        Ran::Exited(status, text, _) => {
             assert!(status.success(), "{status}");
             assert_eq!(text.len() as u64, MOST_OUTPUT);
             assert!(text.starts_with(b"clang version 97.0.0\n"));
@@ -500,3 +507,108 @@ fn only_so_much_of_a_candidates_output_is_kept() {
 #[cfg(unix)]
 #[path = "clang_probe_hung_tests.rs"]
 mod hung;
+
+/// The CPU macros are asked with the probes' limit: a clang that hangs on `-dM -E` costs the
+/// limit, not the build. One that answers gives its macros, and one that fails says what it said.
+#[cfg(unix)]
+#[test]
+fn the_cpu_macros_are_asked_with_a_limit() {
+    use crate::clang::cpu_macros;
+    let tmp = TempDir::new("macros");
+    let clang = tmp.file("clang-29");
+    script(&clang, "exec tail -f /dev/null");
+    let short = Duration::from_millis(100);
+    let started = Instant::now();
+    let err = cpu_macros(&clang, "aarch64-apple-darwin", "-mcpu", "m9", short).unwrap_err();
+    assert!(err.contains("did not say what `-mcpu=m9` has"), "{err}");
+    assert!(
+        started.elapsed() < Duration::from_secs(10),
+        "the limit given"
+    );
+    script(&clang, "echo '#define __ARM_FEATURE_FP16_FML 1'");
+    let defines = cpu_macros(&clang, "aarch64-apple-darwin", "-mcpu", "m9", AMPLE).unwrap();
+    assert_eq!(defines, "#define __ARM_FEATURE_FP16_FML 1\n");
+    script(&clang, "echo 'error: no such target' >&2\nexit 1");
+    let err = cpu_macros(&clang, "x86_64-unknown-linux-gnu", "-march", "v9", AMPLE).unwrap_err();
+    assert!(
+        err.contains("`clang -march=v9` failed:\nerror: no such target"),
+        "{err}"
+    );
+}
+
+/// A refusal of the target check stands for a day, then the clang is asked again: what it said no
+/// to may have passed (a full disk). The new answer is kept the same way. A refusal kept before
+/// refusals had a time, or one given without a clock, isn't gone by.
+#[cfg(unix)]
+#[test]
+fn a_refusal_is_asked_again_after_a_day() {
+    let tmp = TempDir::new("refusal");
+    let clang = tmp.file("clang-29");
+    let log = tmp.file("log");
+    script(
+        &clang,
+        &format!(
+            "echo x >> '{}'\ncat >/dev/null\necho 'error: disk full' >&2\nexit 1",
+            log.display()
+        ),
+    );
+    let starts = || std::fs::read_to_string(&log).map_or(0, |t| t.lines().count());
+    let memo = Memo::default();
+    let at = |now| check_with(&clang, "b", Some(&memo), AMPLE, now).map_err(Failure::into_text);
+    let then = 50 * REFUSAL_HOLD;
+    assert_eq!(at(Some(then)), Err("error: disk full".into()));
+    assert_eq!(
+        at(Some(then + REFUSAL_HOLD - 1)),
+        Err("error: disk full".into())
+    );
+    assert_eq!(starts(), 1, "kept for a day");
+    assert!(at(Some(then + REFUSAL_HOLD)).is_err());
+    assert_eq!(starts(), 2, "asked again after it");
+    assert!(at(Some(then + 2 * REFUSAL_HOLD - 1)).is_err());
+    assert_eq!(starts(), 2, "the new refusal is kept");
+    assert!(at(Some(then - 10)).is_err());
+    assert_eq!(
+        starts(),
+        3,
+        "a refusal from the future (a clock gone back) is asked again"
+    );
+    assert!(at(None).is_err() && at(None).is_err());
+    assert_eq!(starts(), 5, "without a clock, nothing is kept");
+
+    let old = Memo::default();
+    old.put(
+        &check_key(&clang, "b").unwrap(),
+        b"error: no available targets",
+    );
+    let err = check_with(&clang, "b", Some(&old), AMPLE, Some(then)).unwrap_err();
+    assert_eq!(
+        err.into_text(),
+        "error: disk full",
+        "an old refusal is asked again"
+    );
+    assert_eq!(starts(), 6);
+}
+
+/// Two links to one clang key its objects alike, so swapping them on `PATH` doesn't compile again.
+/// A link that isn't named clang to a file that isn't either (ccache) keys by its name too.
+#[cfg(unix)]
+#[test]
+fn objects_are_keyed_by_the_clang_behind_a_link() {
+    use crate::clang::clang_id;
+    let tmp = TempDir::new("links");
+    let clang = tmp.file("clang-29");
+    script(&clang, "exit 0");
+    symlink(&clang, tmp.file("clang")).unwrap();
+    std::fs::create_dir(tmp.file("bin")).unwrap();
+    symlink(&clang, tmp.file("bin/clang")).unwrap();
+    assert_eq!(clang_id(&tmp.file("clang")), clang_id(&clang));
+    assert_eq!(clang_id(&tmp.file("bin/clang")), clang_id(&clang));
+    let ccache = tmp.file("ccache");
+    script(&ccache, "exit 0");
+    symlink(&ccache, tmp.file("clang-wrapped")).unwrap();
+    symlink(&ccache, tmp.file("cc")).unwrap();
+    assert_ne!(
+        clang_id(&tmp.file("clang-wrapped")),
+        clang_id(&tmp.file("cc"))
+    );
+}

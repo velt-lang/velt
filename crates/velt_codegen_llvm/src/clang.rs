@@ -5,8 +5,11 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
+use std::time::Duration;
 
-use crate::clang_probe::{try_compile, MIN_LLVM_MAJOR, PROBE_LIMIT};
+use crate::clang_probe::{
+    named_clang, probe_limit, real_file, run_limited, try_compile, Ran, MIN_LLVM_MAJOR, PROBE_LIMIT,
+};
 use crate::clang_search::{clang_version, find_clang, forget_clang, rejected_clang};
 use crate::target::Target;
 use crate::CodegenResult;
@@ -41,15 +44,14 @@ pub(crate) fn compile_cached(
         args.push("-moutline-atomics".into());
     }
     args.extend(["-", "-o", "-"].map(String::from));
-    // The key: this clang (path, size and time of its executable, and the version it reports: a
-    // new clang can sit behind the same three), its arguments (`-march=native` means this
-    // machine's CPU: the cache is the machine's), and the IR, hashed as it is read (a key of 32
-    // bytes is the cache's key as it is), so the IR is not copied into it.
+    // The key: this clang ([`clang_id`], and the version it reports: a new clang can sit behind
+    // the same file), its arguments (`-march=native` means this machine's CPU: the cache is the
+    // machine's), and the IR, hashed as it is read (a key of 32 bytes is the cache's key as it
+    // is), so the IR is not copied into it.
     let key = cache.map(|_| {
-        let meta = std::fs::metadata(&clang).ok();
-        let stamp = meta.map(|m| (m.len(), m.modified().ok()));
         let id = format!(
-            "clang {clang:?} {stamp:?} {:?} {args:?} {}",
+            "clang {} {:?} {args:?} {}",
+            clang_id(&clang),
             clang_version(),
             velt_codegen_cl::host_triple()
         );
@@ -79,6 +81,18 @@ pub(crate) fn compile_cached(
     Ok((obj, false))
 }
 
+/// What the objects `clang` compiles are keyed by, besides its version: the file it is, with links
+/// followed, so two links to one clang share objects; the name it is started as when that file
+/// isn't named clang, as a program such as ccache picks what to run by it; and the file's size and
+/// time.
+pub(crate) fn clang_id(clang: &Path) -> String {
+    let file = real_file(clang).unwrap_or_else(|| clang.to_path_buf());
+    let name = (!named_clang(&file)).then(|| clang.file_name()).flatten();
+    let meta = std::fs::metadata(&file).ok();
+    let stamp = meta.map(|m| (m.len(), m.modified().ok()));
+    format!("{file:?} {name:?} {stamp:?}")
+}
+
 /// The arm64 features clang lets code for `-mcpu=<cpu>` on `triple` use, as a mask over
 /// `velt_codegen_cl::ARM_FEATURES`: from the macros it defines, once per CPU and process. Without
 /// a clang, none (code then uses no feature beyond the baseline).
@@ -92,22 +106,8 @@ pub(crate) fn arm_features(triple: &str, cpu: &str) -> CodegenResult<u32> {
     let Some(clang) = find_clang() else {
         return Ok(0);
     };
-    let out = Command::new(&clang)
-        .args(["-dM", "-E", "-x", "c"])
-        .arg(format!("--target={triple}"))
-        .arg(format!("-mcpu={cpu}"))
-        .arg("-")
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("codegen: cannot run `{}`: {e}", clang.display()))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(unknown_cpu(
-            format!("codegen: `clang -mcpu={cpu}` failed:\n{err}"),
-            Some(cpu),
-        ));
-    }
-    let mask = velt_codegen_cl::arm_features_from_macros(&String::from_utf8_lossy(&out.stdout));
+    let defines = cpu_macros(&clang, triple, "-mcpu", cpu, probe_limit())?;
+    let mask = velt_codegen_cl::arm_features_from_macros(&defines);
     if let Ok(mut f) = features.lock() {
         f.insert(key, mask);
     }
@@ -128,22 +128,8 @@ pub(crate) fn x86_features(triple: &str, cpu: &str) -> CodegenResult<u32> {
     let Some(clang) = find_clang() else {
         return velt_codegen_cl::required_features(triple, Some(cpu));
     };
-    let out = Command::new(&clang)
-        .args(["-dM", "-E", "-x", "c"])
-        .arg(format!("--target={triple}"))
-        .arg(format!("-march={cpu}"))
-        .arg("-")
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("codegen: cannot run `{}`: {e}", clang.display()))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(unknown_cpu(
-            format!("codegen: `clang -march={cpu}` failed:\n{err}"),
-            Some(cpu),
-        ));
-    }
-    let mask = velt_codegen_cl::x86_features_from_macros(&String::from_utf8_lossy(&out.stdout));
+    let defines = cpu_macros(&clang, triple, "-march", cpu, probe_limit())?;
+    let mask = velt_codegen_cl::x86_features_from_macros(&defines);
     if let Ok(mut f) = features.lock() {
         f.insert(key, mask);
     }
@@ -175,26 +161,48 @@ pub(crate) fn half_dot(triple: &str, cpu: &str) -> CodegenResult<HalfDot> {
     };
     let x86 = triple.starts_with("x86_64");
     let flag = if x86 { "-march" } else { "-mcpu" };
-    let out = Command::new(&clang)
-        .args(["-dM", "-E", "-x", "c"])
-        .arg(format!("--target={triple}"))
-        .arg(format!("{flag}={cpu}"))
-        .arg("-")
-        .stdin(Stdio::null())
-        .output()
-        .map_err(|e| format!("codegen: cannot run `{}`: {e}", clang.display()))?;
-    if !out.status.success() {
-        let err = String::from_utf8_lossy(&out.stderr);
-        return Err(unknown_cpu(
-            format!("codegen: `clang {flag}={cpu}` failed:\n{err}"),
-            Some(cpu),
-        ));
-    }
-    let dot = half_dot_from_macros(&String::from_utf8_lossy(&out.stdout), x86);
+    let defines = cpu_macros(&clang, triple, flag, cpu, probe_limit())?;
+    let dot = half_dot_from_macros(&defines, x86);
     if let Ok(mut f) = features.lock() {
         f.insert(key, dot);
     }
     Ok(dot)
+}
+
+/// The macros `clang` defines for C on `triple` with `flag` (`-mcpu`, `-march`) set to `cpu`
+/// (`clang -dM -E`), given `limit` to answer, as the probes are.
+pub(crate) fn cpu_macros(
+    clang: &Path,
+    triple: &str,
+    flag: &str,
+    cpu: &str,
+    limit: Duration,
+) -> CodegenResult<String> {
+    let mut cmd = Command::new(clang);
+    cmd.args(["-dM", "-E", "-x", "c"])
+        .arg(format!("--target={triple}"))
+        .arg(format!("{flag}={cpu}"))
+        .arg("-")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    match run_limited(cmd, limit) {
+        Ran::Exited(status, out, _) if status.success() => {
+            Ok(String::from_utf8_lossy(&out).into_owned())
+        }
+        Ran::Exited(_, _, err) => Err(unknown_cpu(
+            format!(
+                "codegen: `clang {flag}={cpu}` failed:\n{}",
+                String::from_utf8_lossy(&err)
+            ),
+            Some(cpu),
+        )),
+        Ran::NotStarted(e) => Err(format!("codegen: cannot run `{}`: {e}", clang.display())),
+        Ran::TimedOut => Err(format!(
+            "codegen: `{}` did not say what `{flag}={cpu}` has within {limit:?}",
+            clang.display(),
+        )),
+    }
 }
 
 /// What the macros in `defines` (clang's `-dM -E` output) say of the half-precision dot products.
