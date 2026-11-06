@@ -6,7 +6,7 @@ export const pkg: Package = {
   description: "Embedded SQLite through declare c, and a SQLite engine written in Velt",
   native: {
     c: {
-      // memcpy, for blobs (src/sqlite3.velt).
+      // memcpy, which copies a text cell into the row's scratch (src/compiled.velt).
       c: { headers: ["<string.h>"] },
       // The real SQLite engine, through `declare c` (src/sqlite3.velt), compiled with the package
       // by the pinned zig. native/ holds sqlite3.c and sqlite3.h unchanged from SQLite 3.53.2,

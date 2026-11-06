@@ -23,7 +23,16 @@ released; the version and checksums are in `package.velt`), built with the packa
 zig, with the compile options rusqlite's bundled build had: FTS3/FTS5, R-Tree, STAT4, DBSTAT,
 column metadata, foreign keys on by default. No system library is needed, and every platform gets
 the same SQLite. `c-headers.json` records the check of `src/sqlite3.velt` against `sqlite3.h` on
-every target (`velt native headers`, run with `tests/errors/` moved aside for now).
+every target (`velt native headers`, run with `tests/errors/` moved aside for now). SQLite's
+authors put the amalgamation in the public domain (the notice at the top of `sqlite3.c` and
+`sqlite3.h`), so using or shipping it carries no licence terms.
+
+A git dependency builds the package's C sources only when you allow it with
+`VELT_NATIVE_FROM_SOURCE=1` (it compiles code it fetched): `VELT_NATIVE_FROM_SOURCE=1 velt install`.
+A path dependency (this repository's examples use one) builds them the first time, into
+`packages/sqlite/target/velt-native/`, and again when they change. The first build downloads the
+pinned zig once (about 55 MB, kept for every later build) and then compiles SQLite once, about
+25 s on a loaded M-series Mac; later builds reuse the result.
 
 ([Packages with native code](https://veltlang.com/docs/book/native-packages/).) The driver is
 **synchronous**: a typical query takes microseconds, which is less than handing it to a thread
@@ -45,7 +54,7 @@ pool and back would cost. Run a long query inside `spawn(...)`.
   `:name`/`@name`/`$name` by field name (extra fields are ignored; a missing one throws
   `SQLITE_RANGE`). An array, or a single number or string, binds `?` by position. Mapping:
   integer → INTEGER, float → REAL, string → TEXT, bool → 0/1, null → NULL, `u8[]` → BLOB.
-- **Rows** are decoded by velt/db's `decodeRows` (as `JSON.parse<T>` would decode them), so a
+- **Rows** are read by velt/db's `readRows` (as `JSON.parse<T>` would decode them), so a
   column fills the field with the same name
   (rename with `AS`). INTEGER goes into integer fields exactly (all of i64) and into `f64`
   fields, REAL into `f64`, TEXT into `string`, BLOB into `u8[]`, NULL into `T | null`. A row

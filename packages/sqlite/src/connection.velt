@@ -170,7 +170,6 @@ function cString(s: string): CString | SqliteError {
   }
 }
 
-// What the last call on `db` failed with.
 // The failure of the call just made with `sql`, which says where in it if SQLite knows.
 function errorIn(db: Ptr<sqlite3>, sql: string): SqliteError {
   // SAFETY: `db` is open.
@@ -179,6 +178,7 @@ function errorIn(db: Ptr<sqlite3>, sql: string): SqliteError {
   return offset >= 0 ? new SqliteError(e.code, `${e.message} in ${sql} at offset ${offset}`) : e;
 }
 
+// What the last call on `db` failed with.
 function errorOf(db: Ptr<sqlite3>): SqliteError {
   // SAFETY: `db` is open.
   const code = unsafe { sqlite3_extended_errcode(db) };
@@ -255,7 +255,6 @@ export function exec(s: shared<State>, sql: string): SqliteError | null {
   return error;
 }
 
-// Whether the rest of the SQL is more than blanks and comments.
 // What's wrong with what follows a statement: blanks and comments may, a statement or a syntax error
 // may not.
 function tailProblem(s: shared<State>, rest: string): SqliteError | null {
