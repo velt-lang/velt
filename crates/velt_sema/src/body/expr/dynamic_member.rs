@@ -377,7 +377,11 @@ impl FnCx<'_, '_> {
                     return lw.error_expr(span);
                 };
                 // A typed array's elements (`any` reads none yet), in a program that has them.
-                let list = if lw.cx.prelude_adt("TypedArray").is_some() {
+                let list = if lw
+                    .cx
+                    .prelude_fn(velt_common::std_hook!(typed_apply_list))
+                    .is_some()
+                {
                     hooks::typed_apply_list(ty::Any::of(list)).emit(lw, any, span)
                 } else {
                     list
