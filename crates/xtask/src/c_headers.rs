@@ -16,6 +16,10 @@ const PATHS: &[&str] = &[
     "crates/velt_toolchain/src/zig.rs",
     "crates/velt_toolchain/examples/zig.rs",
     "crates/vpm/src/c_headers.rs",
+    // Which package may declare C functions, and from which source (#2379): the fetched-package
+    // tests here depend on it.
+    "crates/vpm/src/install/allow_native.rs",
+    "crates/vpm/src/manifest/allow_native.rs",
     "crates/vpm/src/manifest/c_library.rs",
     "crates/vpm/src/manifest/read/native.rs",
     "std/ffi/",

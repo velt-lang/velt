@@ -66,6 +66,8 @@ fn the_header_check_runs_only_when_a_change_touches_what_it_checks() {
         "crates/veltc/tests/c_headers.rs",
         "crates/velt_toolchain/src/zig.rs",
         "crates/vpm/src/manifest/read/native.rs",
+        "crates/vpm/src/install/allow_native.rs",
+        "crates/vpm/src/manifest/allow_native.rs",
         "std/ffi/out.vlt",
         ".github/actions/zig/action.yml",
     ] {
