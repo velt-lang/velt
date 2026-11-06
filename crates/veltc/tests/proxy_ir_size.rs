@@ -63,7 +63,7 @@ fn array_algorithms_only_when_a_method_can_be_called() {
 #[test]
 fn getter_reads_only_with_a_brand_getter() {
     assert!(!release_ir(READ).contains("classGetterValue"));
-    let brand = "class C {\n  n: number = 1;\n  get twice(): number {\n    return this.n * 2;\n  }\n}\nconst p: any = new Proxy(new C() as any, {\n  get(t: any, k: any, r: any) {\n    return Reflect.get(t, k, r);\n  },\n});\nconst c = p as C;\nconsole.log(c.twice);\n";
+    let brand = include_str!("../../../tests/golden/lang/proxy_getter_receiver.velt");
     assert!(release_ir(brand).contains("classGetterValue"));
 }
 
