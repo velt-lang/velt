@@ -3,6 +3,7 @@
 // with PROTOCOL_ERROR, and the handler never sees it.
 
 import { FieldList } from "velt/net/http/h2";
+import { isAuthorityByte } from "../fields";
 
 /// Where a request's pseudo-header fields are in its `FieldList` (-1: absent), and its
 /// `content-length` (-1: none).
@@ -90,26 +91,6 @@ function tokenByte(c: u8): bool {
     c == 0x7e;
 }
 
-/// Whether byte `c` may be in `:authority`: a host (a name, or an IP literal in brackets) and a
-/// port, as RFC 3986 §3.2 has them (unreserved, `%`, sub-delims, `:`, `[`, `]`), without the
-/// userinfo RFC 9113 §8.3.1 forbids (no `@`).
-function authorityByte(c: u8): bool {
-  return alnum(c) ||
-    c == 0x2d ||
-    c == 0x2e ||
-    c == 0x5f ||
-    c == 0x7e ||
-    c == 0x25 ||
-    c == 0x21 ||
-    c == 0x24 ||
-    (c >= 0x26 && c <= 0x2c) ||
-    c == 0x3b ||
-    c == 0x3d ||
-    c == 0x3a ||
-    c == 0x5b ||
-    c == 0x5d;
-}
-
 /// Whether field `i`'s value is not empty and every byte of it passes `kind`'s check: 0 a
 /// token (`:method`), 1 a path (no control bytes, space or DEL: RFC 3986 has none), 2 an
 /// authority.
@@ -121,12 +102,17 @@ function valueOf(f: FieldList, i: i64, kind: i64): bool {
   }
   for (let k = start; k < end; k++) {
     const c = f.buf[k];
-    const ok = kind == 0 ? tokenByte(c) : kind == 1 ? c > 0x20 && c != 0x7f : authorityByte(c);
+    const ok = kind == 0 ? tokenByte(c) : kind == 1 ? c > 0x20 && c != 0x7f : isAuthorityByte(c);
     if (!ok) {
       return false;
     }
   }
   return true;
+}
+
+/// Whether field `i`, a `host`, is empty (as HTTP/1.1 allows) or an authority.
+function hostOk(f: FieldList, i: i64): bool {
+  return f.heads[i * 4 + 2] == f.heads[i * 4 + 3] || valueOf(f, i, 2);
 }
 
 /// A decimal `content-length` value, or -2 when it is not one.
@@ -194,6 +180,10 @@ export function checkRequest(f: FieldList, out: RequestFields): bool {
     }
     regular = true;
     if (!nameOk(f, i) || !valueOk(f, i) || connectionSpecific(f, i)) {
+      return false;
+    }
+    // A `host` field is read as the `:authority` is (`header`), so it passes the same check.
+    if (f.nameLength(i) == 4 && f.nameIs(i, "host") && !hostOk(f, i)) {
       return false;
     }
     if (f.nameLength(i) == 14 && f.nameIs(i, "content-length")) {

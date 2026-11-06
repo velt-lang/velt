@@ -1,0 +1,73 @@
+// web (internal): `Context`, what a route handler gets: the request, its parameters, the variables
+// middleware set, and helpers for a response.
+
+/** A request on its way through an app. `V` is the type of the variables middleware set. */
+export class Context<V> {
+  /** The request, as the app's plain middleware passed it on. */
+  req: Request;
+  /** The variables of this request, from the app's `vars` function. */
+  vars: V;
+  /** The request's pathname in its canonical form (`pathOf`): decide on this, not on `req.url`. */
+  path: string;
+  /** The route's parameter names, and what the path had for them (escapes not yet decoded). */
+  names: string[] = [];
+  values: string[] = [];
+  /** The methods the path has, when the request's method isn't one of them. */
+  allowed: string[] = [];
+
+  constructor(req: Request, vars: V, path: string) {
+    this.req = req;
+    this.vars = vars;
+    this.path = path;
+  }
+
+  /**
+   * The path parameter `name`, percent-decoded (`*` for a wildcard), or null. It is data the client
+   * chose, and can hold `/` and `..` once decoded: don't join it to a file path.
+   */
+  param(name: string): string | null {
+    for (let i = 0; i < this.names.length; i++) {
+      if (this.names[i] == name) {
+        return decoded(this.values[i]);
+      }
+    }
+    return null;
+  }
+
+  /** The first query parameter `name`, or null. */
+  query(name: string): string | null {
+    return new URL(this.req.url).searchParams.get(name);
+  }
+
+  /** A text response. */
+  text(body: string, status: number = 200): Response {
+    return new Response(body, { status, headers: { "content-type": "text/plain; charset=utf-8" } });
+  }
+
+  /** An HTML response. */
+  html(body: string, status: number = 200): Response {
+    return new Response(body, { status, headers: { "content-type": "text/html; charset=utf-8" } });
+  }
+
+  /** A JSON response of `value`. */
+  json<T>(value: T, status: number = 200): Response {
+    return Response.json(value, { status });
+  }
+
+  /** A redirect (302 unless told otherwise). */
+  redirect(location: string, status: number = 302): Response {
+    return new Response(null, { status, headers: { location } });
+  }
+}
+
+/** A malformed escape keeps the raw text: a parameter is data, and the handler decides. */
+function decoded(raw: string): string {
+  if (!raw.includes("%")) {
+    return raw;
+  }
+  try {
+    return decodeURIComponent(raw);
+  } catch (e) {
+    return raw;
+  }
+}

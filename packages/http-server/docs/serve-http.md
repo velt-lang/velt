@@ -69,7 +69,9 @@ serves each connection; requests on one connection are answered in order.
   find other request boundaries than it does (request smuggling). The request line is a token
   method, a target without spaces or control characters, and exactly `HTTP/1.0` or `HTTP/1.1`;
   header names are tokens, values have no control characters but TAB (no NUL, no bare CR or LF),
-  and no line is folded. An HTTP/1.1 request needs exactly one `Host` and no request two.
+  and no line is folded. An HTTP/1.1 request needs exactly one `Host` and no request two. A `Host`
+  holds a host and port only, as `:authority` does: one with `/`, `?`, `#`, `\`, `@` or a space,
+  which would change the URL a handler reads, gets 400. An empty one is accepted.
   Two `Content-Length` headers, `Transfer-Encoding` with `Content-Length`, `Transfer-Encoding` in
   HTTP/1.0, or codings that do not end in `chunked` get 400; another coding before `chunked`
   (`gzip, chunked`) gets 501. A chunked body takes CR LF line ends only, and nothing after a
@@ -261,7 +263,7 @@ write. What differs from HTTP/1.1, for a handler:
 Limits: a request head larger than `maxHeadSize` gets 431, a malformed request (an uppercase
 header name, a connection-specific header, a missing `:path`, a `:method` that is not a token,
 a `:path` with spaces or control bytes, an `:authority` with userinfo or characters a host and
-port do not have, a `content-length` that does not match the body) is reset without reaching
+port do not have, a `host` field with the same, a `content-length` that does not match the body) is reset without reaching
 the handler, and a connection that resets or opens streams it may not, sends empty DATA frames,
 or floods CONTINUATION frames is closed with `ENHANCE_YOUR_CALM` (rapid reset, CVE-2023-44487,
 and its relatives). `close()` sends GOAWAY: streams in flight finish, then each connection

@@ -1,0 +1,124 @@
+// web (internal): `serveStatic()`, a directory of files as a plain middleware on `http-server`'s
+// `resolveUnder` and `serveFile`.
+
+import { contentType, resolveUnder, serveFile } from "http-server";
+import { stat } from "velt/fs";
+import { Handler, Middleware } from "../types";
+import { pathOf } from "../path";
+
+/** The options of `serveStatic`. */
+export struct ServeStaticOptions {
+  /** The file a directory answers with (default: `index.html`; empty for none). */
+  index?: string;
+  /** Whether a path with a segment starting with `.` may be served (default: no). */
+  dotfiles?: bool;
+  /** Whether to answer with a precompressed `.br` or `.gz` sibling a client accepts (default: yes). */
+  precompressed?: bool;
+  /** Headers for a file's response, such as `Cache-Control`. */
+  headers?: [string, string][];
+}
+
+/**
+ * Serves GET and HEAD requests from the files under `root`, with what `serveFile` does (validators,
+ * 304, Range), and passes on the requests it has no file for. A directory redirects to its path with
+ * a `/`, which answers with its index file. A client accepting `br` or `gzip` gets a `file.br` or
+ * `file.gz` next to the file when there is one, brotli first, with the type of the file itself.
+ * A path with an empty segment names no file. On a case-insensitive disk (Windows, macOS by default)
+ * a prefix doesn't guard files here, as `/PRIVATE/s.txt` opens `private/s.txt`: keep those outside
+ * `root`.
+ */
+export function serveStatic(root: string, options: ServeStaticOptions = {}): Middleware {
+  const index = options.index ?? "index.html";
+  const dotfiles = options.dotfiles ?? false;
+  const precompressed = options.precompressed ?? true;
+  const headers = options.headers ?? [];
+  return (next: Handler): Handler => async (req: Request): Promise<Response> => {
+    if (req.method != "GET" && req.method != "HEAD") {
+      return await next(req);
+    }
+    const urlPath = pathOf(req.url);
+    // `resolveUnder` strips leading slashes, so this would be a file a prefix doesn't see as one.
+    if (urlPath.includes("//")) {
+      return await next(req);
+    }
+    let file = await resolveUnder(root, urlPath, { dotfiles });
+    if (file == null) {
+      return await next(req);
+    }
+    let found = await regularOrDirectory(file);
+    if (found == "directory") {
+      if (!urlPath.endsWith("/")) {
+        return redirectToDirectory(req.url, urlPath);
+      }
+      if (index.length == 0) {
+        return await next(req);
+      }
+      file = await resolveUnder(root, `${urlPath}${index}`, { dotfiles });
+      if (file == null) {
+        return await next(req);
+      }
+      found = await regularOrDirectory(file);
+    }
+    if (found != "file") {
+      return await next(req);
+    }
+    const all = [...headers];
+    let path: string = file;
+    if (precompressed) {
+      const accepts = req.headers.get("accept-encoding");
+      all.push(["vary", "Accept-Encoding"]);
+      const encoding = accepts == null ? null : await siblingEncoding(file, accepts);
+      if (encoding != null) {
+        path = `${file}.${encoding == "br" ? "br" : "gz"}`;
+        all.push(["content-encoding", encoding]);
+      }
+    }
+    return await serveFile(req, path, { contentType: contentType(file), headers: all });
+  };
+}
+
+async function regularOrDirectory(path: string): Promise<string> {
+  try {
+    const info = await stat(path);
+    return info.isDirectory() ? "directory" : info.isFile() ? "file" : "other";
+  } catch (e) {
+    return "none";
+  }
+}
+
+/** The redirect to `urlPath/`: a relative location, keeping the query, so a request can't send it elsewhere. */
+function redirectToDirectory(url: string, urlPath: string): Response {
+  const at = url.indexOf("?");
+  const query = at < 0 ? "" : url.slice(at);
+  // `urlPath` has no empty segment, so it can't be another host in a Location (`//evil.example`).
+  return new Response(null, { status: 301, headers: { location: `${urlPath}/${query}` } });
+}
+
+/** The encoding of the best precompressed sibling of `file` the `Accept-Encoding` value takes. */
+async function siblingEncoding(file: string, accepts: string): Promise<string | null> {
+  if (accepted(accepts, "br") && (await regularOrDirectory(`${file}.br`)) == "file") {
+    return "br";
+  }
+  if (accepted(accepts, "gzip") && (await regularOrDirectory(`${file}.gz`)) == "file") {
+    return "gzip";
+  }
+  return null;
+}
+
+/** Whether the value names `encoding` with a q above 0. A `*` doesn't count: siblings are named. */
+function accepted(header: string, encoding: string): bool {
+  for (const item of header.split(",")) {
+    const parts = item.split(";");
+    if (parts[0].trim().toLowerCase() != encoding) {
+      continue;
+    }
+    for (let i = 1; i < parts.length; i++) {
+      const p = parts[i].trim().toLowerCase();
+      if (p.startsWith("q=") && parseFloat(p.slice(2)) <= 0) {
+        return false;
+      }
+    }
+    return true;
+  }
+  return false;
+}

@@ -1,0 +1,258 @@
+// The built-in middleware, on a bare handler as `serve` would call it, and `serveStatic` on files.
+import { serve } from "http-server";
+import { mkdir, remove, writeFile } from "velt/fs";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { afterAll, beforeAll, describe, expect, it } from "velt/test";
+import { cors, Handler, logger, requestId, serveStatic } from "../src/lib";
+
+const ok: Handler = async (req: Request): Promise<Response> => new Response("ok");
+const missing: Handler = async (req: Request): Promise<Response> => new Response("passed on", {
+  status: 404,
+});
+
+function request(path: string, init: RequestInit = {}): Request {
+  return new Request(`http://t${path}`, init);
+}
+
+describe("cors", () => {
+  it("answers any origin with *, and leaves requests without an Origin alone", async () => {
+    const h = cors()(ok);
+    const res = await h(request("/", { headers: { origin: "https://a.example" } }));
+    expect(res.headers.get("access-control-allow-origin")).toBe("*");
+    const plain = await h(request("/"));
+    expect(plain.headers.get("access-control-allow-origin")).toBe(null);
+  });
+
+  it("names only an allowed origin, with Vary and credentials", async () => {
+    const h = cors({ origins: ["https://a.example"], credentials: true })(ok);
+    const yes = await h(request("/", { headers: { origin: "https://a.example" } }));
+    expect(yes.headers.get("access-control-allow-origin")).toBe("https://a.example");
+    expect(yes.headers.get("access-control-allow-credentials")).toBe("true");
+    expect(yes.headers.get("vary")).toBe("Origin");
+    const no = await h(request("/", { headers: { origin: "https://b.example" } }));
+    expect(no.headers.get("access-control-allow-origin")).toBe(null);
+    expect(no.headers.get("access-control-allow-credentials")).toBe(null);
+    expect(no.headers.get("vary")).toBe("Origin");
+    const none = await h(request("/"));
+    expect(none.headers.get("access-control-allow-origin")).toBe(null);
+    expect(none.headers.get("vary")).toBe("Origin");
+  });
+
+  it("varies on nothing with any origin, as its answer doesn't change", async () => {
+    const h = cors()(ok);
+    expect((await h(request("/"))).headers.get("vary")).toBe(null);
+  });
+
+  it("never sends credentials with *", async () => {
+    const h = cors({ credentials: true })(ok);
+    const res = await h(request("/", { headers: { origin: "https://a.example" } }));
+    expect(res.headers.get("access-control-allow-credentials")).toBe(null);
+  });
+
+  it("answers a preflight without running the handler", async () => {
+    const h = cors({ maxAge: 60 })(missing);
+    const res = await h(
+      request("/", {
+        method: "OPTIONS",
+        headers: {
+          origin: "https://a.example",
+          "access-control-request-method": "PUT",
+          "access-control-request-headers": "x-a",
+        },
+      }),
+    );
+    expect(res.status).toBe(204);
+    expect(res.headers.get("access-control-allow-methods")).toBe(
+      "GET, HEAD, PUT, POST, PATCH, DELETE",
+    );
+    expect(res.headers.get("access-control-allow-headers")).toBe("x-a");
+    expect(res.headers.get("access-control-max-age")).toBe("60");
+  });
+
+  it("passes a plain OPTIONS request on", async () => {
+    const h = cors()(missing);
+    const res = await h(
+      request("/", { method: "OPTIONS", headers: { origin: "https://a.example" } }),
+    );
+    expect(res.status).toBe(404);
+  });
+});
+
+describe("requestId", () => {
+  it("makes an identifier, for the handler and the response", async () => {
+    const echo: Handler = async (req: Request): Promise<Response> => new Response(
+      req.headers.get("x-request-id") ?? "none",
+    );
+    const res = await requestId()(echo)(request("/"));
+    const id = res.headers.get("x-request-id") ?? "";
+    expect(id.length).toBe(36);
+    expect(await res.text()).toBe(id);
+  });
+
+  it("keeps a client's safe identifier and replaces another", async () => {
+    const h = requestId()(ok);
+    const kept = await h(request("/", { headers: { "x-request-id": "abc-1.2_3" } }));
+    expect(kept.headers.get("x-request-id")).toBe("abc-1.2_3");
+    const bad = await h(request("/", { headers: { "x-request-id": "a b" } }));
+    expect(bad.headers.get("x-request-id") == "a b").toBe(false);
+    const long = await h(request("/", { headers: { "x-request-id": "a".repeat(129) } }));
+    expect((long.headers.get("x-request-id") ?? "").length).toBe(36);
+  });
+
+  it("doesn't trust a client when told not to", async () => {
+    const h = requestId({ trustClient: false })(ok);
+    const res = await h(request("/", { headers: { "x-request-id": "abc" } }));
+    expect(res.headers.get("x-request-id") == "abc").toBe(false);
+  });
+});
+
+describe("logger", () => {
+  it("writes the method, path and status, not the query", async () => {
+    const lines = shared(new Mutex<string[]>([]));
+    const h = logger((line: string) => {
+      lines.with((l) => {
+        l.push(line);
+      });
+    })(ok);
+    await h(request("/a/b?secret=1"));
+    const line = lines.with((l) => l[0].slice(0));
+    expect(line.startsWith("GET /a/b 200 ")).toBe(true);
+    expect(line.endsWith("ms")).toBe(true);
+  });
+});
+
+describe("serveStatic", () => {
+  const root = `${tmpdir()}/velt-web-${uuidv4()}`;
+
+  beforeAll(async () => {
+    await mkdir(`${root}/docs/empty`, { recursive: true });
+    await writeFile(`${root}/a.txt`, "text");
+    await writeFile(`${root}/page.html`, "plain");
+    await writeFile(`${root}/page.html.br`, "brotli");
+    await writeFile(`${root}/page.html.gz`, "gzipped");
+    await writeFile(`${root}/docs/index.html`, "index");
+    await writeFile(`${root}/.env`, "secret");
+  });
+
+  afterAll(async () => {
+    await remove(root, { recursive: true });
+  });
+
+  it("serves a file with its validators and ranges", async () => {
+    const h = serveStatic(root)(missing);
+    const res = await h(request("/a.txt"));
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("text");
+    expect(res.headers.get("etag") != null).toBe(true);
+    const etag = res.headers.get("etag") ?? "";
+    const again = await h(request("/a.txt", { headers: { "if-none-match": etag } }));
+    expect(again.status).toBe(304);
+    const part = await h(request("/a.txt", { headers: { range: "bytes=1-2" } }));
+    expect(part.status).toBe(206);
+    expect(await part.text()).toBe("ex");
+  });
+
+  it("passes on what it has no file for, other methods, traversal and dotfiles", async () => {
+    const h = serveStatic(root)(missing);
+    expect(await (await h(request("/nope"))).text()).toBe("passed on");
+    expect(await (await h(request("/a.txt", { method: "POST" }))).text()).toBe("passed on");
+    expect(await (await h(request("/%2e%2e/%2e%2e/etc/passwd"))).text()).toBe("passed on");
+    expect(await (await h(request("/.env"))).text()).toBe("passed on");
+    expect(await (await h(request("/docs/empty/"))).text()).toBe("passed on");
+  });
+
+  it("redirects a directory to its slash, keeping the query, then serves its index", async () => {
+    const h = serveStatic(root)(missing);
+    const res = await h(request("/docs?x=1"));
+    expect(res.status).toBe(301);
+    expect(res.headers.get("location")).toBe("/docs/?x=1");
+    expect(await (await h(request("/docs/"))).text()).toBe("index");
+  });
+
+  it("doesn't redirect a path starting // to another host", async () => {
+    const h = serveStatic(root)(missing);
+    const res = await h(request("//docs"));
+    if (res.status == 301) {
+      expect((res.headers.get("location") ?? "").startsWith("//")).toBe(false);
+    }
+  });
+
+  it("answers with the precompressed sibling the client takes, with the file's type", async () => {
+    const h = serveStatic(root)(missing);
+    const br = await h(request("/page.html", { headers: { "accept-encoding": "gzip, br" } }));
+    expect(await br.text()).toBe("brotli");
+    expect(br.headers.get("content-encoding")).toBe("br");
+    expect(br.headers.get("content-type")).toBe("text/html; charset=utf-8");
+    expect(br.headers.get("vary")).toBe("Accept-Encoding");
+    const gz = await h(request("/page.html", { headers: { "accept-encoding": "br;q=0, gzip" } }));
+    expect(await gz.text()).toBe("gzipped");
+    expect(gz.headers.get("content-encoding")).toBe("gzip");
+    const none = await h(request("/page.html"));
+    expect(await none.text()).toBe("plain");
+    expect(none.headers.get("content-encoding")).toBe(null);
+    expect(none.headers.get("vary")).toBe("Accept-Encoding");
+  });
+
+  it("can leave siblings and the index off", async () => {
+    const h = serveStatic(root, { precompressed: false, index: "" })(missing);
+    const res = await h(request("/page.html", { headers: { "accept-encoding": "br" } }));
+    expect(await res.text()).toBe("plain");
+    expect(await (await h(request("/docs/"))).text()).toBe("passed on");
+  });
+});
+
+describe("over HTTP", () => {
+  it("every middleware works on a request from `serve`, its body kept", async () => {
+    const root = `${tmpdir()}/velt-web-${uuidv4()}`;
+    await mkdir(root, { recursive: true });
+    await writeFile(`${root}/a.txt`, "text");
+    const echo: Handler = async (req: Request): Promise<Response> => {
+      const id = req.headers.get("x-request-id") ?? "none";
+      return new Response(`${req.method} ${id.length} ${await req.text()}`);
+    };
+    const silent = (line: string) => {};
+    const h = logger(silent)(requestId()(cors()(serveStatic(root)(echo))));
+    const server = await serve({ port: 0 }, (req: Request) => h(req));
+    const base = `http://127.0.0.1:${server.port}`;
+    try {
+      const sent = await fetch(`${base}/x`, {
+        method: "POST",
+        body: "the body",
+        headers: { origin: "https://a.example" },
+      });
+      expect(await sent.text()).toBe("POST 36 the body");
+      expect(sent.headers.get("access-control-allow-origin")).toBe("*");
+      expect((sent.headers.get("x-request-id") ?? "").length).toBe(36);
+      const file = await fetch(`${base}/a.txt`);
+      expect(await file.text()).toBe("text");
+      expect((file.headers.get("x-request-id") ?? "").length).toBe(36);
+    } finally {
+      await server.shutdown();
+      await remove(root, { recursive: true });
+    }
+  });
+
+  it("marks a fetched response a handler wrapped, whose headers it can change", async () => {
+    const upstream = await serve({ port: 0 }, (req: Request) => new Response("from upstream"));
+    const url = `http://127.0.0.1:${upstream.port}/`;
+    const proxy: Handler = async (req: Request): Promise<Response> => {
+      const fetched = await fetch(url);
+      return new Response(fetched.body, { status: fetched.status, headers: fetched.headers });
+    };
+    const h = requestId()(cors()(proxy));
+    const server = await serve({ port: 0 }, (req: Request) => h(req));
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/`, {
+        headers: { origin: "https://a.example" },
+      });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe("from upstream");
+      expect(res.headers.get("access-control-allow-origin")).toBe("*");
+      expect((res.headers.get("x-request-id") ?? "").length).toBe(36);
+    } finally {
+      await server.shutdown();
+      await upstream.shutdown();
+    }
+  });
+});

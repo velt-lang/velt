@@ -1,0 +1,51 @@
+// web (internal): `requestId()`, an identifier for each request, on the request and the response.
+
+import { uuidv4 } from "velt/random/uuid";
+import { Handler, Middleware } from "../types";
+
+/** The options of `requestId`. */
+export struct RequestIdOptions {
+  /** The header (default: `x-request-id`). */
+  header?: string;
+  /** Whether to keep an identifier the client sent (default: yes, if it is safe to log). */
+  trustClient?: bool;
+}
+
+/**
+ * Sets a request header to an identifier, so the handler and what it calls can read it, and the
+ * same header on the response. A client's identifier is kept when it is 1 to 128 characters of
+ * letters, digits, `-`, `_` and `.`, so it can't forge log lines; otherwise a new UUID is made.
+ */
+export function requestId(options: RequestIdOptions = {}): Middleware {
+  const header = options.header ?? "x-request-id";
+  const trust = options.trustClient ?? true;
+  return (next: Handler): Handler => async (req: Request): Promise<Response> => {
+    const sent = req.headers.get(header);
+    const id = trust && sent != null && safe(sent) ? sent : uuidv4();
+    // A received request's headers can't be changed, as in the Fetch standard.
+    let passed = req;
+    if (sent != id) {
+      const headers = new Headers(req.headers);
+      headers.set(header, id);
+      passed = new Request(req, { headers });
+    }
+    const res = await next(passed);
+    res.headers.set(header, id);
+    return res;
+  };
+}
+
+function safe(id: string): bool {
+  const n = id.length;
+  if (n == 0 || n > 128) {
+    return false;
+  }
+  for (let i = 0; i < n; i++) {
+    const c = id.charCodeAt(i);
+    const word = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122);
+    if (!word && c != 45 && c != 95 && c != 46) {
+      return false;
+    }
+  }
+  return true;
+}

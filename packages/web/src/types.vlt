@@ -1,0 +1,10 @@
+// web (internal): the function types everything else is built from.
+
+/** A request handler over the Fetch types, what `serve` takes. */
+export type Handler = (req: Request) => Promise<Response>;
+
+/**
+ * A middleware: a plain function from the handler it wraps to a new handler. It works on bare
+ * `serve()` (`serve(opts, cors()(handler))`) and with `App.use`.
+ */
+export type Middleware = (next: Handler) => Handler;

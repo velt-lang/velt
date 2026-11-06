@@ -34,6 +34,7 @@ const DOCS: &[&str] = &[
     "README.md",
     "packages/http-server/README.md",
     "packages/http-server/docs",
+    "packages/web/README.md",
 ];
 
 /// What a fenced block's info string asks for.

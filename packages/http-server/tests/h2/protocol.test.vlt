@@ -129,12 +129,21 @@ describe("HTTP/2 connection rules", () => {
       ["GET", "/a\tb", "x"],
       ["GET", "/", "user@x"],
       ["GET", "/", "x/y"],
+      ["GET", "/", "x?"],
+      ["GET", "/", "x#"],
+      ["GET", "/", "x\\y"],
       ["GET", "/", "x y"],
       ["GET", "/", ""],
     ];
     let id: i64 = 1;
     for (const b of bad) {
       c.headers(id, [":method", b[0], ":scheme", "http", ":path", b[1], ":authority", b[2]], true);
+      id += 2;
+    }
+    // A `host` field a handler would read, as it would the authority.
+    for (const host of ["x/users/9?", "x?", "x#", "x\\y", "u@x", "x y"]) {
+      const f = [":method", "GET", ":scheme", "http", ":path", "/", ":authority", "x"];
+      c.headers(id, f.concat(["host", host]), true);
       id += 2;
     }
     // Still served: a method of tchars, a path with `%`, `?`, `'`, an IPv6 authority and port.

@@ -11,7 +11,7 @@
 import { utf8Encode } from "velt/encoding";
 import { mask8x16, u8x16 } from "velt/simd";
 import { BadRequest } from "./bad_request";
-import { isTchar } from "../fields";
+import { isAuthorityByte, isTchar } from "../fields";
 import { BODY_BUFFERED, BODY_CHUNKED, BODY_LENGTH, BODY_NONE, Head } from "./head";
 import { setBytes } from "../bytes";
 
@@ -43,15 +43,15 @@ function checkCodings(te: i64, length: i64, http11: bool) {
   }
 }
 
-/// The bit of `byteClasses()` for a token character.
+/// The bits of `byteClasses()`: a token character, and one a `Host` value may hold.
 const TOKEN: u8 = 1;
+const AUTHORITY: u8 = 2;
 
-/// For each byte value, its `TOKEN` bit: a method's and a header name's scan take one load a
-/// byte.
+/// For each byte value, its `TOKEN` and `AUTHORITY` bits: a scan takes one load a byte.
 function byteClasses(): u8[] {
   const t: u8[] = Buffer.alloc(256);
   for (let c: i64 = 0; c < 256; c++) {
-    t[c] = isTchar(c as u8) ? TOKEN : 0;
+    t[c] = (isTchar(c as u8) ? TOKEN : 0) | (isAuthorityByte(c as u8) ? AUTHORITY : 0);
   }
   return t;
 }
@@ -220,6 +220,12 @@ export class HeadParser {
         (b[nameStart + 3] | 32) == 116
       ) {
         hosts++;
+        // The handler's URL is built from it: `/`, `?`, `#`, `\` or `@` would change the path.
+        for (let i = valueStart; i < valueEnd; i++) {
+          if ((classes[b[i]] & AUTHORITY) == 0) {
+            throw new BadRequest(400);
+          }
+        }
       } else if (len == 14 && this.nameIs(b, nameStart, len, this.contentLength)) {
         // Two of them, even equal, are refused: a proxy may have used the other (§6.3).
         if (length >= 0) {

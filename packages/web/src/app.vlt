@@ -1,0 +1,295 @@
+// web (internal): `App`, method routes and onion middleware over the router. `handler()` composes
+// each route's layers once, so a request allocates no closure per layer.
+
+import { Context } from "./context";
+import { canonicalPrefix, pathOf } from "./path";
+import { Router } from "./router";
+import { Handler, Middleware } from "./types";
+
+/** A route handler. */
+export type Route<V> = (c: Context<V>) => Promise<Response>;
+/** Middleware that sees the context: `await next(c)` runs the rest of the onion. */
+export type Around<V> = (c: Context<V>, next: Route<V>) => Promise<Response>;
+/** What a request gets when something throws. */
+export type OnError<V> = (e: unknown, c: Context<V>) => Promise<Response>;
+
+/** A layer of `around` middleware and the path prefix it applies to ("": every path). */
+struct AroundLayer<V> {
+  middleware: Around<V>;
+  prefix: string;
+}
+
+/** A layer of plain middleware and the path prefix it applies to ("": every path). */
+struct PlainLayer {
+  middleware: Middleware;
+  prefix: string;
+}
+
+/** A route as added: how many `around` layers came before it. */
+struct Added<V> {
+  method: string;
+  pattern: string;
+  route: Route<V>;
+  layers: number;
+}
+
+/**
+ * A small web framework on the Fetch types. `V` is the type of each request's variables. A request
+ * goes through the plain middleware, is routed, then goes through the `around` middleware added
+ * before its route to the route.
+ */
+export class App<V> {
+  private added: Added<V>[] = [];
+  private arounds: AroundLayer<V>[] = [];
+  private plains: PlainLayer[] = [];
+  private vars: () => V;
+  private notFoundRoute: Route<V> = notFoundDefault;
+  private errorRoute: OnError<V> = errorDefault;
+
+  /** `vars` makes each request's variables. */
+  constructor(vars: () => V) {
+    this.vars = vars;
+  }
+
+  /** Adds a route for `method` (in any case), inside the `around` middleware added so far. */
+  on(method: string, pattern: string, route: Route<V>): App<V> {
+    const name = method.toUpperCase();
+    this.added.push({ method: name, pattern, route, layers: this.arounds.length });
+    return this;
+  }
+
+  get(pattern: string, route: Route<V>): App<V> {
+    return this.on("GET", pattern, route);
+  }
+
+  post(pattern: string, route: Route<V>): App<V> {
+    return this.on("POST", pattern, route);
+  }
+
+  put(pattern: string, route: Route<V>): App<V> {
+    return this.on("PUT", pattern, route);
+  }
+
+  patch(pattern: string, route: Route<V>): App<V> {
+    return this.on("PATCH", pattern, route);
+  }
+
+  delete(pattern: string, route: Route<V>): App<V> {
+    return this.on("DELETE", pattern, route);
+  }
+
+  /**
+   * Wraps the whole app in a plain middleware, for every request under `prefix`: routed or not,
+   * and whenever it is added. The first added is the outermost. It runs before routing and has no
+   * context: it can change the request and the response.
+   */
+  use(middleware: Middleware, prefix: string = ""): App<V> {
+    this.plains.push({ middleware, prefix });
+    return this;
+  }
+
+  /** Wraps the routes added from now on and the not-found answer in middleware with a context. */
+  around(middleware: Around<V>, prefix: string = ""): App<V> {
+    this.arounds.push({ middleware, prefix });
+    return this;
+  }
+
+  /**
+   * Mounts `sub`'s routes and middleware on `prefix`, inside this app's middleware. A `/` ending the
+   * prefix doesn't count, and a sub-app's `/` is the prefix alone: `/api`, not `/api/`.
+   */
+  route(prefix: string, sub: App<V>): App<V> {
+    const base = this.arounds.length;
+    for (const layer of sub.plains) {
+      this.plains.push({ middleware: layer.middleware, prefix: joined(prefix, layer.prefix) });
+    }
+    for (const layer of sub.arounds) {
+      this.arounds.push({ middleware: layer.middleware, prefix: joined(prefix, layer.prefix) });
+    }
+    for (const a of sub.added) {
+      this.added.push({
+        method: a.method,
+        pattern: joined(prefix, a.pattern),
+        route: a.route,
+        layers: base + a.layers,
+      });
+    }
+    return this;
+  }
+
+  /** What a request no route matches gets (default: 404). */
+  notFound(route: Route<V>): App<V> {
+    this.notFoundRoute = route;
+    return this;
+  }
+
+  /** What a request gets when a handler or middleware throws (default: logged, then 500). */
+  onError(route: OnError<V>): App<V> {
+    this.errorRoute = route;
+    return this;
+  }
+
+  /** The app as a handler, for `serve`. Later changes to the app don't reach it. */
+  handler(): Handler {
+    const arounds = this.arounds;
+    const failed = this.errorRoute;
+    const table = new Router();
+    const composed: shared<Route<V>>[] = [];
+    const namesOf: string[][] = [];
+    for (const a of this.added) {
+      namesOf.push(table.add(a.method, a.pattern, composed.length));
+      composed.push(shared(compose(arounds, a.layers, a.route, failed)));
+    }
+    const missing = compose(arounds, arounds.length, this.notFoundRoute, failed);
+    const refused = compose(arounds, arounds.length, methodNotAllowed, failed);
+    const made = this.vars;
+    const vars = shared(made);
+    // Handlers copy what they capture, per request. Shared, so that a request costs the same
+    // whatever the number of routes: every thread reads the tree and the tables in place, and
+    // calls the one route it needs.
+    const router = shared(table);
+    const names = shared(namesOf);
+    const routes = shared(composed);
+    let h: Handler = async (req: Request): Promise<Response> => {
+      const path = pathOf(req.url);
+      const c = new Context<V>(req, vars(), path);
+      const allowed: string[] = [];
+      const values: string[] = [];
+      const index = router.find(req.method, path, values, allowed);
+      if (index < 0) {
+        if (allowed.length == 0) {
+          return await missing(c);
+        }
+        c.allowed = allowed;
+        return await refused(c);
+      }
+      c.values = values;
+      c.names = copyOf(names[index]);
+      const route = routes[index];
+      return await route(c);
+    };
+    for (let i = this.plains.length - 1; i >= 0; i--) {
+      h = wrapPlain(this.plains[i], h, vars, failed);
+    }
+    return h;
+  }
+}
+
+async function notFoundDefault<V>(c: Context<V>): Promise<Response> {
+  return new Response("Not Found", { status: 404 });
+}
+
+async function errorDefault<V>(e: unknown, c: Context<V>): Promise<Response> {
+  console.error("web: a handler failed:", e);
+  return new Response("Internal Server Error", { status: 500 });
+}
+
+async function methodNotAllowed<V>(c: Context<V>): Promise<Response> {
+  return new Response("Method Not Allowed", {
+    status: 405,
+    headers: { allow: allowOf(c.allowed) },
+  });
+}
+
+/** `route` inside the first `count` `around` layers; what throws goes to `failed`. */
+function compose<V>(
+  layers: AroundLayer<V>[],
+  count: number,
+  route: Route<V>,
+  failed: OnError<V>,
+): Route<V> {
+  let inner: Route<V> = async (c: Context<V>): Promise<Response> => {
+    try {
+      return await route(c);
+    } catch (e) {
+      return await failed(e, c);
+    }
+  };
+  for (let i = count - 1; i >= 0; i--) {
+    inner = wrapAround(layers[i], inner, failed);
+  }
+  return inner;
+}
+
+function wrapAround<V>(layer: AroundLayer<V>, next: Route<V>, failed: OnError<V>): Route<V> {
+  const middleware = layer.middleware;
+  const prefix = canonicalPrefix(layer.prefix);
+  return async (c: Context<V>): Promise<Response> => {
+    if (!under(prefix, c.path)) {
+      return await next(c);
+    }
+    try {
+      return await middleware(c, next);
+    } catch (e) {
+      return await failed(e, c);
+    }
+  };
+}
+
+function wrapPlain<V>(
+  layer: PlainLayer,
+  next: Handler,
+  vars: shared<() => V>,
+  failed: OnError<V>,
+): Handler {
+  const wrapped = layer.middleware(next);
+  const prefix = canonicalPrefix(layer.prefix);
+  return async (req: Request): Promise<Response> => {
+    // No prefix, the usual case, needs no path.
+    if (prefix.length > 0 && !under(prefix, pathOf(req.url))) {
+      return await next(req);
+    }
+    try {
+      return await wrapped(req);
+    } catch (e) {
+      return await failed(e, new Context<V>(req, vars(), pathOf(req.url)));
+    }
+  };
+}
+
+/** `pattern`, a path or a layer's prefix ("": all of it), below the mount point `prefix`. */
+function joined(prefix: string, pattern: string): string {
+  let base = prefix;
+  while (base.endsWith("/")) {
+    base = base.slice(0, (base.length as i64) - 1);
+  }
+  if (pattern.length == 0) {
+    return base;
+  }
+  if (pattern == "/") {
+    return base.length == 0 ? "/" : base;
+  }
+  return pattern.startsWith("/") ? `${base}${pattern}` : `${base}/${pattern}`;
+}
+
+/** Whether `path` is `prefix` or below it, both canonical. */
+function under(prefix: string, path: string): boolean {
+  if (prefix.length == 0) {
+    return true;
+  }
+  if (!path.startsWith(prefix)) {
+    return false;
+  }
+  return path.length == prefix.length ||
+    prefix.endsWith("/") ||
+    path.charCodeAt(prefix.length) == 47;
+}
+
+/** The `Allow` value, GET bringing HEAD with it. */
+function allowOf(methods: string[]): string {
+  const all = [...methods];
+  if (all.includes("GET") && !all.includes("HEAD")) {
+    all.push("HEAD");
+  }
+  all.sort();
+  return all.join(", ");
+}
+
+/** A request's own copy of what the shared tables hold. */
+function copyOf(from: string[]): string[] {
+  const to: string[] = [];
+  for (const s of from) {
+    to.push(s);
+  }
+  return to;
+}

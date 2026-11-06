@@ -17,6 +17,12 @@ pub(crate) struct Users {
 }
 
 pub(crate) const USERS: &[Users] = &[
+    // The documentation (`docs` compiles snippets against every package without native code).
+    Users {
+        package: "web",
+        goldens: &[],
+        binaries: &["docs"],
+    },
     Users {
         package: "http-server",
         goldens: &[
