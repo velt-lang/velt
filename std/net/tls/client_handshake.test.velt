@@ -271,6 +271,26 @@ describe("a HelloRetryRequest with a cookie, over X25519", () => {
       "10 TLS: a second HelloRetryRequest",
     );
   });
+
+  it("answers any second retry with unexpected_message, whatever it asks for", () => {
+    const hrr = "cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c";
+    const p256 = serverHello(hrr, "1301", `${VERSION}003300020017`);
+    function second(m: u8[]): string {
+      const h = traced(0);
+      expect(h.onMessage(p256)).toBe(SEND_RETRY);
+      return failure(() => h.onMessage(m));
+    }
+    // The group of the share just sent, one not offered, and one offered but not the last.
+    expect(second(p256)).toBe("10 TLS: a second HelloRetryRequest");
+    expect(second(serverHello(hrr, "1301", `${VERSION}003300020018`))).toBe(
+      "10 TLS: a second HelloRetryRequest",
+    );
+    expect(second(serverHello(hrr, "1301", `${VERSION}00330002001d`))).toBe(
+      "10 TLS: a second HelloRetryRequest",
+    );
+    // A bad suite does not change what it is either.
+    expect(second(serverHello(hrr, "9999", VERSION))).toBe("10 TLS: a second HelloRetryRequest");
+  });
 });
 
 describe("what a ServerHello must say", () => {

@@ -6,6 +6,7 @@ import {
   MISSING_EXTENSION,
   PROTOCOL_VERSION,
   TlsFailure,
+  UNEXPECTED_MESSAGE,
 } from "velt/net/tls/alert";
 import {
   EXT_COOKIE,
@@ -69,9 +70,15 @@ export struct ServerHello {
 
 /**
  * The ServerHello in `body` (the message without its 4-byte header), checked against `sessionId`
- * and the group `offered` of the client's last key share.
+ * and the group `offered` of the client's last key share. `retried` says a HelloRetryRequest came
+ * already: another one is `unexpected_message` whatever it says (RFC 8446 §4.1.4).
  */
-export function parseServerHello(body: u8[], sessionId: u8[], offered: usize): ServerHello {
+export function parseServerHello(
+  body: u8[],
+  sessionId: u8[],
+  offered: usize,
+  retried: bool,
+): ServerHello {
   const r = new ByteReader(body, 0, body.length, "ServerHello");
   checkLegacyVersion(r.u16());
   const random = r.bytes(32);
@@ -80,6 +87,9 @@ export function parseServerHello(body: u8[], sessionId: u8[], offered: usize): S
     if (random[i] != HRR_RANDOM[i]) {
       retry = false;
     }
+  }
+  if (retry && retried) {
+    throw new TlsFailure(UNEXPECTED_MESSAGE, "a second HelloRetryRequest");
   }
   const echo = r.vector(1);
   const sid = echo.bytes(echo.left());

@@ -180,11 +180,8 @@ export class ClientHandshake {
   }
 
   private serverHello(m: u8[], body: u8[]): i32 {
-    const sh = parseServerHello(body, this.input.sessionId, this.group);
+    const sh = parseServerHello(body, this.input.sessionId, this.group, this.retried);
     if (sh.retry) {
-      if (this.retried) {
-        throw new TlsFailure(UNEXPECTED_MESSAGE, "a second HelloRetryRequest");
-      }
       if (sh.cookie == null && sh.group == 0) {
         throw new TlsFailure(ILLEGAL_PARAMETER, "a HelloRetryRequest that changes nothing");
       }
