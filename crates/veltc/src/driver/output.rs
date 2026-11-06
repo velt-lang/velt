@@ -1,7 +1,10 @@
-//! Where `build` puts its outputs: the executable and its objects (one per codegen unit).
+//! Where `build` puts its outputs, the executable and its objects (one per codegen unit), and
+//! writing them: the objects, and the link into the executable.
 
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
+use super::{BuildError, BuildOptions, Session};
 use crate::cli::Emit;
 
 /// Where `build` puts its outputs (relative paths are relative to the current directory).
@@ -140,6 +143,57 @@ pub fn default_dir(input: &Path) -> PathBuf {
         return relative;
     }
     root.join(relative)
+}
+
+/// Link `objects` into `paths.executable` (nothing to do when its link stamp matches).
+pub(super) fn link_stage(
+    sess: &mut Session,
+    opts: &BuildOptions,
+    target: &str,
+    objects: &[PathBuf],
+    paths: &OutputPaths,
+) -> Result<(), BuildError> {
+    let t = Instant::now();
+    let (packages, crates) = (opts.packages.as_ref(), !sess.generator_build);
+    let native = crate::native::program_links(packages, &sess.c_libs, crates, opts.release, target);
+    let linked = crate::link::link_executable(
+        target,
+        objects,
+        &paths.executable,
+        opts.release,
+        // Release settings strip debug info (and PDB generation on Windows).
+        opts.release && !opts.debug_info,
+        &native.map_err(BuildError::Failed)?,
+        &crate::native::c_link_args(&sess.c_libs, target),
+    )
+    .map_err(BuildError::Failed)?;
+    sess.record("link", t);
+    if linked == crate::link::Linked::UpToDate {
+        sess.record_details("link", &[("up to date", t.elapsed())]);
+    }
+    Ok(())
+}
+
+/// `$VELT_CODEGEN_UNITS`: how many codegen units the LLVM backend splits a program into, at most
+/// the core count (unset or not a positive number: `None`, the backend picks the count from the
+/// program's size).
+pub(super) fn codegen_units() -> Option<usize> {
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    std::env::var("VELT_CODEGEN_UNITS")
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .filter(|&n: &usize| n > 0)
+        .map(|n: usize| n.min(cores))
+}
+
+/// Write `bytes` to `path`, making its directory first.
+pub(super) fn write_file(path: &Path, bytes: &[u8]) -> Result<(), BuildError> {
+    if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
+        std::fs::create_dir_all(dir)
+            .map_err(|e| BuildError::Failed(format!("cannot create `{}`: {e}", dir.display())))?;
+    }
+    std::fs::write(path, bytes)
+        .map_err(|e| BuildError::Failed(format!("cannot write `{}`: {e}", path.display())))
 }
 
 #[cfg(test)]
