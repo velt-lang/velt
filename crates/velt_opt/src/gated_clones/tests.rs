@@ -17,6 +17,11 @@ struct Probe {
 }
 
 fn probe(checked: Ext) -> Probe {
+    probe_gated(checked, Ext::ShaArm)
+}
+
+/// [`probe`] with the function gated on `gate`.
+fn probe_gated(checked: Ext, gate: Ext) -> Probe {
     let mut pb = ProgramBuilder::new();
     let has = pb.ext(
         &format!("velt_simd_has_{}", checked.name().replace('-', "_")),
@@ -41,7 +46,7 @@ fn probe(checked: Ext) -> Probe {
     ));
     let main = pb.add(calling("main", &[method, gated], Linkage::Export));
     let mut p = pb.finish();
-    p.funcs[gated.0 as usize].target = Some(Ext::ShaArm);
+    p.funcs[gated.0 as usize].target = Some(gate);
     assert_valid(&p);
     Probe {
         p,
@@ -133,7 +138,8 @@ fn a_gated_function_calls_clones_without_the_check() {
 
 #[test]
 fn a_check_of_another_extension_stays() {
-    let Probe { mut p, gated, .. } = probe(Ext::ShaX86);
+    // Another extension of the same architecture (`sha-arm` code may run on a CPU without PMULL).
+    let Probe { mut p, gated, .. } = probe(Ext::ClmulArm);
     let before = callees(&p.funcs[gated.0 as usize]);
     assert!(!run(&mut p));
     assert_eq!(callees(&p.funcs[gated.0 as usize]), before);
@@ -153,4 +159,48 @@ fn the_pipeline_leaves_the_bare_operation_in_the_gated_function() {
         .expect("the gated function");
     assert!(callees(gated).is_empty(), "{:?}", callees(gated));
     assert_eq!(extern_calls(gated), 0);
+}
+
+#[test]
+fn an_aes_target_takes_the_carry_less_check_as_true() {
+    // Every CPU with the AES target has the carry-less multiplication (`Ext::covers`): the
+    // carry-less method is cloned for it, with its check folded away.
+    for (checked, gate) in [(Ext::ClmulArm, Ext::AesArm), (Ext::ClmulX86, Ext::AesX86)] {
+        let Probe { mut p, gated, .. } = probe_gated(checked, gate);
+        assert!(run(&mut p));
+        assert_valid(&p);
+        let clones: Vec<&Function> = callees(&p.funcs[gated.0 as usize])
+            .into_iter()
+            .map(|c| &p.funcs[c.0 as usize])
+            .collect();
+        assert!(!clones.is_empty());
+        for clone in clones {
+            assert_eq!(clone.target, Some(gate));
+            assert_eq!(extern_calls(clone), 0, "{}", clone.symbol);
+        }
+    }
+    // Not the other way round.
+    let Probe { mut p, .. } = probe_gated(Ext::AesArm, Ext::ClmulArm);
+    assert!(!run(&mut p));
+}
+
+#[test]
+fn the_other_architectures_checks_are_false_in_a_gated_function() {
+    // Code gated on an arm64 extension runs only on arm64: an x86 check there is `false`, and
+    // the clone keeps the emulation without testing anything.
+    for (checked, gate) in [(Ext::ClmulX86, Ext::AesArm), (Ext::ShaArm, Ext::ShaX86)] {
+        let Probe {
+            mut p,
+            gated,
+            method,
+            ..
+        } = probe_gated(checked, gate);
+        assert!(run(&mut p), "{checked:?} under {gate:?}");
+        assert_valid(&p);
+        let calls = callees(&p.funcs[gated.0 as usize]);
+        let clone = &p.funcs[calls[0].0 as usize];
+        assert!(calls[0] != method);
+        assert_eq!(extern_calls(clone), 0, "no check");
+        assert_eq!(callees(clone).len(), 1, "the emulation");
+    }
 }

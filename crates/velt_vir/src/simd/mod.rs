@@ -312,6 +312,10 @@ pub enum SimdCall {
     /// `velt_simd_has_<ext>() -> bool`: whether the CPU has the extension (the runtime's flag;
     /// `false` on another architecture, on wasm and under Cranelift).
     Has(Ext),
+    /// `velt_simd_cpuid(leaf, subleaf) -> u32x4`: x86's `CPUID` (EAX, EBX, ECX, EDX in lanes 0 to
+    /// 3), how velt/simd computes the AES check in Velt (#2401, #2241). Zeros on every other
+    /// architecture, on wasm and under Cranelift. Pure: its answers never change.
+    Cpuid,
     /// `velt_simd_prefetch(addr)`: start loading the cache line at `addr` for a read soon
     /// (`arrayPrefetch`); never faults. Nothing under Cranelift and on wasm.
     Prefetch,
@@ -324,16 +328,21 @@ impl SimdCall {
         if rest == "prefetch" {
             return Some(SimdCall::Prefetch);
         }
+        if rest == "cpuid" {
+            return Some(SimdCall::Cpuid);
+        }
         if let Some(ext) = rest.strip_prefix("has_") {
             return Ext::named(&ext.replace('_', "-")).map(SimdCall::Has);
         }
-        if let Some(op) = ExtOp::ALL
-            .into_iter()
-            .find(|o| rest == format!("{}_{}", o.type_name(), o.name()))
-        {
-            return Some(SimdCall::Inst(op));
-        }
         let (ty, op) = rest.split_once('_')?;
+        if matches!(ty, "u32x4" | "u64x2" | "u8x16") {
+            let inst = ExtOp::ALL
+                .into_iter()
+                .find(|o| o.name() == op && o.type_name() == ty);
+            if let Some(inst) = inst {
+                return Some(SimdCall::Inst(inst));
+            }
+        }
         if let Some(bits) = mask_bits(ty) {
             return Some(SimdCall::Mask(bits, mask_op(op)?));
         }
@@ -351,6 +360,7 @@ impl SimdCall {
         match self {
             SimdCall::Has(_) => (vec![], Bool),
             SimdCall::Prefetch => (vec![Ptr], Unit),
+            SimdCall::Cpuid => (vec![U32, U32], V128),
             SimdCall::Inst(ExtOp::Sha1H) => (vec![U32], U32),
             SimdCall::Inst(op) => {
                 let mut params = vec![V128; op.vector_operands()];

@@ -66,7 +66,9 @@ pub fn ext_x86_features(ext: velt_vir::simd::Ext) -> u32 {
     match ext {
         Ext::ShaX86 => bit("SHA") | bit("SSSE3") | bit("SSE4.1"),
         Ext::ClmulX86 => bit("PCLMULQDQ") | bit("SSSE3") | bit("SSE4.1"),
-        Ext::ShaArm | Ext::ClmulArm => 0,
+        // AES is not in the start-up check's list (its table is Rust in velt_rt, #2241): a
+        // build never guarantees it, only a gated function does.
+        Ext::ShaArm | Ext::ClmulArm | Ext::AesX86 | Ext::AesArm => 0,
     }
 }
 

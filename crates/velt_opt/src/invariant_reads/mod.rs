@@ -513,7 +513,7 @@ fn computes_only(ext: &ExternFn) -> bool {
         Some(SimdCall::Vector(_, op)) => {
             !matches!(op, Op::Store | Op::StorePartial | Op::LoadOptimistic)
         }
-        Some(SimdCall::Mask(..) | SimdCall::Has(_) | SimdCall::Prefetch) => true,
+        Some(SimdCall::Mask(..) | SimdCall::Has(_) | SimdCall::Cpuid | SimdCall::Prefetch) => true,
         Some(SimdCall::Inst(_)) | None => false,
     }
 }

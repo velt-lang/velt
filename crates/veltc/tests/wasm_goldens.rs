@@ -175,6 +175,7 @@ const WASI_STD: &[&str] = &[
     "half_dot_bf16_lengths_short",
     "half_dot_lengths",
     "half_dot_lengths_short",
+    "simd_aes",
     "simd_dot",
     "simd_dot_i8_lengths",
     "simd_dot_i8_lengths_short",

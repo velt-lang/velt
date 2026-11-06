@@ -90,7 +90,7 @@ impl Translator<'_, '_> {
             SimdCall::Inst(ExtOp::Sha1H) => {
                 Inlined::Value(self.builder.ins().iconst(types::I32, 0))
             }
-            SimdCall::Inst(_) => Inlined::Value(self.zero_vector()),
+            SimdCall::Inst(_) | SimdCall::Cpuid => Inlined::Value(self.zero_vector()),
             // Cranelift has no prefetch: the hint is dropped.
             SimdCall::Prefetch => Inlined::Unit,
         })

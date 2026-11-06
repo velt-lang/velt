@@ -10,6 +10,7 @@ use crate::types::{abi_ret, abi_type};
 use masks::mask;
 use reshape::{convert, narrow, widen, zip};
 
+mod aes;
 mod half;
 mod masks;
 mod partial;
@@ -104,6 +105,7 @@ pub(crate) fn helper(
         SimdCall::Mask(bits, op) => mask(&mut body, bits, op, arch == Arch::Neon),
         SimdCall::Has(ext) => Some(sha::has(&mut body, arch, ext)),
         SimdCall::Inst(op) => Some(sha::op(&mut body, arch, op)),
+        SimdCall::Cpuid => Some(aes::cpuid(&mut body, arch)),
         SimdCall::Prefetch => {
             // A read, kept in every cache level (`locality` 3), of data (cache type 1).
             body.declarations.push(

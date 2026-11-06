@@ -1,7 +1,8 @@
 // velt/crypto (internal): bitsliced AES (BearSSL's `aes_ct64` layout, by Thomas Pornin): four
 // blocks spread over eight `u64` words, word i holding bit i of every byte. The S-box is the
 // Boyar-Peralta circuit (boolean gates on whole words), so nothing indexes a table and the
-// time never depends on the key or the data. `velt/simd` has no AES instructions yet (#2392).
+// time never depends on the key or the data. velt/simd's emulation of the AES instructions uses
+// the same S-box (std/simd/aes_emulation.vlt).
 
 /** Swaps the bits of `q[i]` selected by `lo` with those of `q[j]` selected by `lo << s`. */
 function swapBits(q: u64[], i: usize, j: usize, lo: u64, s: u64) {

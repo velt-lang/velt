@@ -460,6 +460,7 @@ fn param_attributes_become_llvm_attributes() {
     assert!(ir.contains(needle), "missing `{needle}` in\n{ir}");
 }
 
+mod aes;
 mod atomics;
 mod half;
 mod inlining;

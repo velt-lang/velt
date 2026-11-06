@@ -502,10 +502,26 @@ uint8_t velt_cpu_clmul_x86;  /* 1: x86-64 with PCLMULQDQ, SSSE3 and SSE4.1 */
 uint8_t velt_cpu_clmul_arm;  /* 1: aarch64 with PMULL (64-bit polynomial multiply) */
 ```
 
+**AES (#2401) [additive].** `velt_simd_u8x16_<op>` for the AES round instructions (`aesenc`,
+`aesenclast`, `aesdec`, `aesdeclast`, `aesimc`, `aeskeygenassist` (immediate 0) on x86-64;
+`aese`, `aesd`, `aesmc`, `aesimc_arm` on aarch64), `(state, key) -> state` or `(a) -> a` on the
+bytes. Their extensions `aes-x86` (AES-NI with PCLMULQDQ, SSSE3 and SSE4.1) and `aes-arm`
+(FEAT_AES with FEAT_PMULL) have **no runtime flag**: `velt_simd_has_aes_x86()` /
+`velt_simd_has_aes_arm()` is `1` only in a function gated on the extension (and `velt_opt`'s
+clones for it) and `0` everywhere else. std/simd/aes.vlt computes the run-time answer in Velt,
+once: the carry-less flag of the architecture, plus CPUID leaf 1 ECX bit 25 on x86-64 (FEAT_PMULL
+implies FEAT_AES on aarch64), and not with `VELT_SIMD_DISABLE=aes`. `velt_simd_cpuid(leaf,
+subleaf) -> u32x4` [additive] is x86's `CPUID` (EAX, EBX, ECX, EDX in lanes 0 to 3), emitted
+inline (no runtime function) and pure; it gives zeros on another architecture, on wasm and under
+Cranelift. A function gated on `aes-x86` (`aes-arm`) has the carry-less extension of its
+architecture too (`Ext::covers`): its `velt_simd_has_clmul_x86` (`_arm`) is `1` as well, and in
+any gated function the checks of the other architecture's extensions are `0`. `--cpu` never makes
+the AES checks constant: the CPU check's lists (below) do not have AES.
+
 LLVM gives a function that calls one of these operations the extension's own feature (`+sha2`,
-`+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated* function (VIR
-`Function::target`, HIR `Program::cpu_targets`, from std's `targetFeature("sha-arm" |
-"sha-x86" | "clmul-x86" | "clmul-arm")`, every call of
+`+sha`, `+pclmul`, `+aes`), which it uses for nothing else; a *gated*
+function (VIR `Function::target`, HIR `Program::cpu_targets`, from std's `targetFeature("sha-arm" |
+"sha-x86" | "clmul-x86" | "clmul-arm" | "aes-x86" | "aes-arm")`, every call of
 which sema keeps behind the check) gets the extension's whole set (`+sha,+ssse3,+sse4.1` on x86),
 and the check of its own extension (`velt_simd_has_<ext>`) is the constant `1` there, so the
 emulation behind it is dead code. The ordinary functions it calls that check that extension

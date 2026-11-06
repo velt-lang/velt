@@ -98,15 +98,21 @@ pub enum CpuTarget {
     ClmulX86,
     /// The ARMv8 64-bit polynomial multiplication, PMULL.
     ClmulArm,
+    /// The x86 AES round instructions with PCLMULQDQ (and SSSE3, SSE4.1).
+    AesX86,
+    /// The ARMv8 AES instructions with PMULL.
+    AesArm,
 }
 
 impl CpuTarget {
     /// Every target.
-    pub const ALL: [CpuTarget; 4] = [
+    pub const ALL: [CpuTarget; 6] = [
         CpuTarget::ShaArm,
         CpuTarget::ShaX86,
         CpuTarget::ClmulX86,
         CpuTarget::ClmulArm,
+        CpuTarget::AesX86,
+        CpuTarget::AesArm,
     ];
 
     /// The name `targetFeature` takes.
@@ -116,12 +122,25 @@ impl CpuTarget {
             CpuTarget::ShaX86 => "sha-x86",
             CpuTarget::ClmulX86 => "clmul-x86",
             CpuTarget::ClmulArm => "clmul-arm",
+            CpuTarget::AesX86 => "aes-x86",
+            CpuTarget::AesArm => "aes-arm",
         }
     }
 
     /// The target named `name`.
     pub fn named(name: &str) -> Option<CpuTarget> {
         CpuTarget::ALL.into_iter().find(|t| t.name() == name)
+    }
+
+    /// Whether code gated on (or behind the check of) `self` has `other` too: `other` is
+    /// `self`, or the carry-less multiplication every CPU with the AES target has (as
+    /// `velt_vir::simd::Ext::covers`).
+    pub fn covers(self, other: CpuTarget) -> bool {
+        self == other
+            || matches!(
+                (self, other),
+                (CpuTarget::AesX86, CpuTarget::ClmulX86) | (CpuTarget::AesArm, CpuTarget::ClmulArm)
+            )
     }
 
     /// The static method of velt/simd that checks for it, by its definition's full name.
@@ -131,6 +150,8 @@ impl CpuTarget {
             CpuTarget::ShaX86 => velt_common::std_item!(simd_sha, "u32x4.hasShaX86"),
             CpuTarget::ClmulX86 => velt_common::std_item!(simd_clmul, "u64x2.hasClmulX86"),
             CpuTarget::ClmulArm => velt_common::std_item!(simd_clmul, "u64x2.hasClmulArm"),
+            CpuTarget::AesX86 => velt_common::std_item!(simd_aes, "u8x16.hasAesX86"),
+            CpuTarget::AesArm => velt_common::std_item!(simd_aes, "u8x16.hasAesArm"),
         }
     }
 

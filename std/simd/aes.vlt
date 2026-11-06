@@ -1,0 +1,249 @@
+// velt/simd (internal): the CPU's AES round instructions as methods of `u8x16` (#2401,
+// https://veltlang.com/docs/std/simd/ "AES instructions"): x86's AES-NI (Intel's `_mm_aesenc_si128`
+// & co.) and the ARMv8 ones (ACLE `vaeseq_u8` & co.), named after the instruction, on the state
+// as FIPS-197 lays it out (byte 0 first, column by column).
+//
+// Every method always works, on every CPU: it is the instruction where the CPU has it, the other
+// architecture's instructions where those are what the CPU has (`aesenc` is ARM's `aese` and
+// `aesmc` with a zero key, `aese` is x86's `aesenclast` after an XOR), and otherwise an exact
+// emulation (std/simd/aes_emulation.vlt). The emulation is a boolean circuit with no tables, so
+// its work does not depend on the data, but it is far slower than the instructions: check
+// `u8x16.hasAes()` where speed matters.
+//
+// `u8x16.hasAesX86()` is AES-NI with the PCLMULQDQ, SSSE3 and SSE4.1 every such CPU has, and
+// `u8x16.hasAesArm()` FEAT_AES with FEAT_PMULL: what AES-GCM needs, so a function gated on one
+// (`targetFeature("aes-x86")`, std only) has the carry-less multiplication too, and both are bare
+// instructions there. The checks are false on another architecture, on WebAssembly, in debug
+// (Cranelift) builds, and with `VELT_SIMD_DISABLE=aes`. `VELT_SIMD_DISABLE=clmul` makes them false
+// too, except on x86-64 in a build whose `--cpu` includes PCLMULQDQ (`--cpu native` on such a CPU),
+// where the carry-less check they include is constant. The runtime keeps no flag for them (#2241):
+// the answer comes from the CPU (`cpuid` on x86-64, the PMULL flag on arm64), read once and kept in
+// `DETECTED`; `--cpu` does not make them constant, as the start-up check does not know AES.
+
+import { noInline } from "velt/lang/intrinsics";
+import {
+  invMixColumns,
+  invSubShift,
+  mixColumns,
+  subBytes,
+  subShift,
+} from "velt/simd/aes_emulation";
+
+// True only where the build guarantees the extension: in a function gated on it (and the clones
+// of what it calls); false elsewhere, where `DETECTED` answers.
+declare function velt_simd_has_aes_x86(): bool;
+declare function velt_simd_has_aes_arm(): bool;
+// The carry-less flags (the runtime's), which the AES checks include.
+declare function velt_simd_has_clmul_x86(): bool;
+declare function velt_simd_has_clmul_arm(): bool;
+// x86's CPUID (EAX, EBX, ECX, EDX); zeros elsewhere.
+declare function velt_simd_cpuid(leaf: u32, subleaf: u32): u32x4;
+// A lane without the index check (whose panic would make `detect` track its callers).
+declare function velt_simd_u32x4_lane(v: u32x4, index: u64): u32;
+// The instructions themselves: only where the check is true.
+declare function velt_simd_u8x16_aesenc(state: u8x16, rk: u8x16): u8x16;
+declare function velt_simd_u8x16_aesenclast(state: u8x16, rk: u8x16): u8x16;
+declare function velt_simd_u8x16_aesdec(state: u8x16, rk: u8x16): u8x16;
+declare function velt_simd_u8x16_aesdeclast(state: u8x16, rk: u8x16): u8x16;
+declare function velt_simd_u8x16_aesimc(a: u8x16): u8x16;
+declare function velt_simd_u8x16_aeskeygenassist(a: u8x16): u8x16;
+declare function velt_simd_u8x16_aese(state: u8x16, key: u8x16): u8x16;
+declare function velt_simd_u8x16_aesd(state: u8x16, key: u8x16): u8x16;
+declare function velt_simd_u8x16_aesmc(a: u8x16): u8x16;
+declare function velt_simd_u8x16_aesimc_arm(a: u8x16): u8x16;
+
+// What this CPU has, once computed: bit 0 set (computed), bit 1 the x86 instructions, bit 2 the
+// ARM ones. A static atomic (a word of writable data, no module state); threads that race to
+// compute it store the same value.
+const DETECTED = new Atomic<u32>(0);
+
+// Whether `VELT_SIMD_DISABLE` (a comma-separated list) names `aes`.
+function disabled(): bool {
+  const list = process.env.VELT_SIMD_DISABLE;
+  if (list === undefined) {
+    return false;
+  }
+  for (const name of list.split(",")) {
+    if (name.trim() == "aes") {
+      return true;
+    }
+  }
+  return false;
+}
+
+/** Whether ECX of CPUID leaf 1 says AES-NI: bit 25 (the carry-less flag covers PCLMULQDQ, SSSE3 and SSE4.1). */
+export function cpuidHasAes(ecx: u32): bool {
+  return (ecx & (1 << 25)) != 0;
+}
+
+// Out of line: it runs once, and every check would otherwise carry a copy.
+function detect(): u32 {
+  noInline();
+  let found: u32 = 1;
+  if (disabled()) {
+    return found;
+  }
+  if (velt_simd_has_clmul_x86() && cpuidHasAes(velt_simd_u32x4_lane(velt_simd_cpuid(1, 0), 2))) {
+    found |= 2;
+  }
+  // FEAT_PMULL implies FEAT_AES (Arm ARM, ID_AA64ISAR0_EL1.AES = 0b0010).
+  if (velt_simd_has_clmul_arm()) {
+    found |= 4;
+  }
+  return found;
+}
+
+// `DETECTED`, computing it the first time.
+function cpu(): u32 {
+  let found = DETECTED.load("relaxed");
+  if (found == 0) {
+    found = detect();
+    DETECTED.store(found, "relaxed");
+  }
+  return found;
+}
+
+// The checks. The carry-less flag first: it is the constant `false` on the other architecture,
+// so there the whole check folds away, and in a function gated on the AES target both are true.
+function x86(): bool {
+  return velt_simd_has_aes_x86() || (velt_simd_has_clmul_x86() && (cpu() & 2) != 0);
+}
+
+function arm(): bool {
+  return velt_simd_has_aes_arm() || (velt_simd_has_clmul_arm() && (cpu() & 4) != 0);
+}
+
+extend u8x16 {
+  /** Whether the CPU has x86's AES-NI, with PCLMULQDQ, SSSE3 and SSE4.1 (false off x86-64, in debug builds, with `VELT_SIMD_DISABLE=aes`, and with `clmul` unless `--cpu` includes PCLMULQDQ). */
+  static hasAesX86(): bool {
+    return x86();
+  }
+
+  /** Whether the CPU has the ARMv8 AES instructions, with PMULL (false off arm64, in debug builds, and with `VELT_SIMD_DISABLE=aes` or `clmul`). */
+  static hasAesArm(): bool {
+    return arm();
+  }
+
+  /** Whether the AES methods are instructions here rather than the much slower emulation: `hasAesX86()` or `hasAesArm()`. */
+  static hasAes(): bool {
+    return x86() || arm();
+  }
+
+  /** x86 AESENC: one encryption round, ShiftRows, SubBytes and MixColumns of `this`, then XOR the round key `rk`. */
+  aesenc(rk: u8x16): u8x16 {
+    if (x86()) {
+      return velt_simd_u8x16_aesenc(this, rk);
+    }
+    if (arm()) {
+      return velt_simd_u8x16_aesmc(velt_simd_u8x16_aese(this, u8x16.splat(0))).xor(rk);
+    }
+    return mixColumns(subShift(this)).xor(rk);
+  }
+
+  /** x86 AESENCLAST: the last encryption round, ShiftRows and SubBytes of `this`, then XOR `rk`. */
+  aesenclast(rk: u8x16): u8x16 {
+    if (x86()) {
+      return velt_simd_u8x16_aesenclast(this, rk);
+    }
+    if (arm()) {
+      return velt_simd_u8x16_aese(this, u8x16.splat(0)).xor(rk);
+    }
+    return subShift(this).xor(rk);
+  }
+
+  /** x86 AESDEC: one round of the equivalent inverse cipher, InvShiftRows, InvSubBytes and InvMixColumns of `this`, then XOR `rk` (a decryption key passed through `aesimc`). */
+  aesdec(rk: u8x16): u8x16 {
+    if (x86()) {
+      return velt_simd_u8x16_aesdec(this, rk);
+    }
+    if (arm()) {
+      return velt_simd_u8x16_aesimc_arm(velt_simd_u8x16_aesd(this, u8x16.splat(0))).xor(rk);
+    }
+    return invMixColumns(invSubShift(this)).xor(rk);
+  }
+
+  /** x86 AESDECLAST: the last decryption round, InvShiftRows and InvSubBytes of `this`, then XOR `rk`. */
+  aesdeclast(rk: u8x16): u8x16 {
+    if (x86()) {
+      return velt_simd_u8x16_aesdeclast(this, rk);
+    }
+    if (arm()) {
+      return velt_simd_u8x16_aesd(this, u8x16.splat(0)).xor(rk);
+    }
+    return invSubShift(this).xor(rk);
+  }
+
+  /** AESIMC (x86 and ARM): InvMixColumns of `this`, which turns an encryption round key into one for `aesdec`. */
+  aesimc(): u8x16 {
+    if (x86()) {
+      return velt_simd_u8x16_aesimc(this);
+    }
+    if (arm()) {
+      return velt_simd_u8x16_aesimc_arm(this);
+    }
+    return invMixColumns(this);
+  }
+
+  /**
+   * x86 AESKEYGENASSIST with round constant `rcon` (0–255): with X1 and X3 the 32-bit lanes 1 and 3
+   * of `this`, lanes SubWord(X1), RotWord(SubWord(X1)) ^ rcon, SubWord(X3), RotWord(SubWord(X3)) ^ rcon.
+   */
+  aeskeygenassist(rcon: u32): u8x16 {
+    if (rcon > 255) {
+      panic("RangeError: u8x16.aeskeygenassist: rcon must be 0 to 255");
+    }
+    const constant = u32x4.splat(0).withLane(1, rcon).withLane(3, rcon).asU8x16();
+    if (x86()) {
+      return velt_simd_u8x16_aeskeygenassist(this).xor(constant);
+    }
+    if (arm()) {
+      // `aese` with a zero key is SubBytes after ShiftRows: byte `j` of SubBytes(this) is byte
+      // `i` of it where ShiftRows moves byte `j` to `i`.
+      const t = velt_simd_u8x16_aese(this, u8x16.splat(0));
+      return u8x16
+        .shuffle(t, t, 4, 1, 14, 11, 1, 14, 11, 4, 12, 9, 6, 3, 9, 6, 3, 12)
+        .xor(constant);
+    }
+    const s = subBytes(this);
+    return u8x16
+      .shuffle(s, s, 4, 5, 6, 7, 5, 6, 7, 4, 12, 13, 14, 15, 13, 14, 15, 12)
+      .xor(constant);
+  }
+
+  /** ARM AESE: XOR the round key `key` into `this`, then ShiftRows and SubBytes. */
+  aese(key: u8x16): u8x16 {
+    if (arm()) {
+      return velt_simd_u8x16_aese(this, key);
+    }
+    if (x86()) {
+      return velt_simd_u8x16_aesenclast(this.xor(key), u8x16.splat(0));
+    }
+    return subShift(this.xor(key));
+  }
+
+  /** ARM AESD: XOR `key` into `this`, then InvShiftRows and InvSubBytes. */
+  aesd(key: u8x16): u8x16 {
+    if (arm()) {
+      return velt_simd_u8x16_aesd(this, key);
+    }
+    if (x86()) {
+      return velt_simd_u8x16_aesdeclast(this.xor(key), u8x16.splat(0));
+    }
+    return invSubShift(this.xor(key));
+  }
+
+  /** ARM AESMC: MixColumns of `this`. */
+  aesmc(): u8x16 {
+    if (arm()) {
+      return velt_simd_u8x16_aesmc(this);
+    }
+    if (x86()) {
+      // InvShiftRows and InvSubBytes, undone by AESENC's ShiftRows and SubBytes: its MixColumns is left.
+      return velt_simd_u8x16_aesenc(
+        velt_simd_u8x16_aesdeclast(this, u8x16.splat(0)),
+        u8x16.splat(0),
+      );
+    }
+    return mixColumns(this);
+  }
+}
