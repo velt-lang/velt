@@ -46,14 +46,28 @@ function bodyStream(
   return ReadableStream.body<Uint8Array>(byteChunks(chunks), used);
 }
 
+// Leaving early (the stream cancelled, or a `for await` left) ends `chunks` too, so the body's
+// source hears it: a generator's `finally`, a server's `ReadableStream` `cancel`.
 async function* byteChunks(
   chunks: AsyncIterator<u8[], IoError | AbortError>,
 ): AsyncGenerator<Uint8Array, Error> {
-  for (;;) {
-    const r = await chunks.next();
-    if (r.done) {
-      return;
+  let ended = false;
+  try {
+    for (;;) {
+      const r = await chunks.next();
+      if (r.done) {
+        ended = true;
+        return;
+      }
+      yield Uint8Array.wrap(r.value);
     }
-    yield Uint8Array.wrap(r.value);
+  } finally {
+    if (!ended) {
+      try {
+        await chunks.return();
+      } catch (e) {
+        // The stream was cancelled: there is no one to tell.
+      }
+    }
   }
 }

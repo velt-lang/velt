@@ -195,6 +195,36 @@ describe("compress", () => {
     }
   });
 
+  it("cancels the handler's body when the client stops reading", async () => {
+    // [compressed, sent as it is]: a first chunk past the threshold, then one under it.
+    const firsts = [TEXT, "short"];
+    for (const first of firsts) {
+      const cancelled = shared(0 as i64);
+      const pulls = shared(0 as i64);
+      const h: Handler = async (req: Request) => new Response(
+        new ReadableStream<Uint8Array>({
+          pull: (ctl) => {
+            pulls.add(1);
+            ctl.enqueue(Uint8Array.fromBytes(bytesOf(pulls.get() == 1 ? first : TEXT)));
+          },
+          cancel: (reason) => {
+            cancelled.set(1);
+          },
+        }),
+        { headers: { "content-type": "text/plain" } },
+      );
+      const res = await compress()(h)(get("gzip"));
+      const reader = res.body!.getReader();
+      await reader.read();
+      await reader.cancel();
+      expect(
+        cancelled.get() == 1
+          ? ""
+          : `${first.length}-byte first chunk: the body was never cancelled`,
+      ).toBe("");
+    }
+  });
+
   it("compresses over HTTP, through an App, and the client reads it back", async () => {
     const app = new App<number>(() => 0);
     app.use(compress());

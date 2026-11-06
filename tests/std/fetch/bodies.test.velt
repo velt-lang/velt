@@ -71,6 +71,34 @@ describe("a ReadableStream body", () => {
     expect(seen).toEqual(["one ", "two"]);
   });
 
+  it("cancels its source when the body's reader stops early", async () => {
+    // As in Node 22: the source's `cancel` runs, so what feeds it can stop.
+    for (const how of ["cancel", "break"]) {
+      const cancelled = shared(0 as i64);
+      const made = shared(0 as i64);
+      const stream = new ReadableStream<Uint8Array>({
+        pull: (c) => {
+          made.add(1);
+          c.enqueue(new TextEncoder().encode(`chunk ${made.get()} `));
+        },
+        cancel: (reason) => {
+          cancelled.set(1);
+        },
+      });
+      const body = new Response(stream).body!;
+      if (how == "cancel") {
+        const reader = body.getReader();
+        await reader.read();
+        await reader.cancel();
+      } else {
+        for await (const chunk of body) {
+          break;
+        }
+      }
+      expect(`${how} ${cancelled.get() == 1}`).toBe(`${how} true`);
+    }
+  });
+
   it("fails the read on a chunk that is not bytes", async () => {
     const bad = new ReadableStream<string>({
       start(c) {

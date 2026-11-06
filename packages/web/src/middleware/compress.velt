@@ -103,27 +103,65 @@ export function compress(options: CompressOptions = {}): Middleware {
   };
 }
 
-// The chunks of `head`, then the rest of `rest`, as they are.
+// The chunks of `head`, then the rest of `rest`, as they are. If the client stops reading (the
+// generator ends at a `yield`), the handler's body is cancelled, as it would be without
+// `compress()`, so what feeds it (an event stream's subscription, a cursor) stops too.
 async function* relay(
   head: u8[][],
   rest: ReadableStreamDefaultReader<Uint8Array>,
 ): AsyncGenerator<u8[]> {
-  for (const chunk of head) {
-    yield chunk;
-  }
-  while (true) {
-    const r = await rest.read();
-    if (r.done) {
-      return;
+  let ended = false;
+  try {
+    for (const chunk of head) {
+      yield chunk;
     }
-    yield r.value.toBytes();
+    while (true) {
+      const r = await rest.read();
+      if (r.done) {
+        ended = true;
+        return;
+      }
+      yield r.value.toBytes();
+    }
+  } finally {
+    if (!ended) {
+      await cancelQuietly(rest);
+    }
   }
 }
 
 // The chunks of `head`, then the rest from `rest`, through `e`: an event stream flushed after
 // each chunk, anything else after every `FLUSH_EVERY` bytes, the flush in the same piece as the
-// chunk's output so a piece the client gets is decodable to its end.
+// chunk's output so a piece the client gets is decodable to its end. If the client stops reading,
+// or the encoder throws, the handler's body is cancelled (see `relay`).
 async function* encode(
+  e: Encoder,
+  head: u8[][],
+  rest: ReadableStreamDefaultReader<Uint8Array>,
+  events: bool,
+): AsyncGenerator<u8[]> {
+  let ended = false;
+  try {
+    yield* encodeAll(e, head, rest, events);
+    ended = true;
+  } finally {
+    if (!ended) {
+      await cancelQuietly(rest);
+    }
+  }
+}
+
+// Cancels the handler's body; an error from that has no one to go to (the client has gone, or
+// the encoder's error is on its way), so it is dropped.
+async function cancelQuietly(rest: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+  try {
+    await rest.cancel();
+  } catch (e) {
+    // Nothing to tell: see above.
+  }
+}
+
+async function* encodeAll(
   e: Encoder,
   head: u8[][],
   rest: ReadableStreamDefaultReader<Uint8Array>,
