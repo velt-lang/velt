@@ -1,8 +1,10 @@
 // `rateLimit` and `bodyLimit`: state requests share, and what a client sees over `serve`.
-import { serve } from "http-server";
+import { serve, ServeInfo } from "http-server";
+import { connect } from "velt/net";
 import { BodyStream } from "velt/net/http";
 import { describe, expect, it } from "velt/test";
 import { App, bodyLimit, Handler, rateLimit } from "../src/lib";
+import { boundedKey } from "../src/middleware/rate_limit";
 
 const ok: Handler = async (req: Request): Promise<Response> => new Response("ok");
 const echo: Handler = async (req: Request): Promise<Response> => new Response(await req.text());
@@ -40,6 +42,22 @@ async function burst(url: string, n: number): Promise<[number, number]> {
 
 function request(key: string): Request {
   return new Request("http://t/", { headers: { "x-key": key } });
+}
+
+/** The whole answer to raw request bytes. */
+async function raw(port: number, bytes: string): Promise<string> {
+  const c = await connect(`127.0.0.1:${port}`);
+  await c.write(bytes);
+  let all = "";
+  while (true) {
+    const chunk = await c.readString();
+    if (chunk == "") {
+      break;
+    }
+    all += chunk;
+  }
+  c.close();
+  return all;
 }
 
 describe("rateLimit", () => {
@@ -126,6 +144,117 @@ describe("rateLimit", () => {
     clock.set(1000);
     expect((await h(request("a"))).status).toBe(200);
   });
+
+  it("rounds the seconds left up, in Retry-After and RateLimit-Reset", async () => {
+    const h = rateLimit({ limit: 1, windowMs: 1500, key: byHeader, now: () => 0 })(ok);
+    const first = await h(request("a"));
+    expect(first.headers.get("ratelimit-reset")).toBe("2");
+    const refused = await h(request("a"));
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get("retry-after")).toBe("2");
+  });
+
+  it("refuses a new key when the table is full, and goes on counting the keys it has", async () => {
+    const clock = shared(0 as i64);
+    const now = (): number => clock.get() as number;
+    const h = rateLimit({ limit: 2, windowMs: 3600000, key: byHeader, now, maxKeys: 2 })(ok);
+    expect((await h(request("a"))).status).toBe(200);
+    expect((await h(request("b"))).status).toBe(200);
+    clock.set(1000);
+    const refused = await h(request("c"));
+    expect(refused.status).toBe(429);
+    expect(refused.headers.get("ratelimit-remaining")).toBe("0");
+    // When the first window can end: at 3,600,000, 3,599 seconds from now.
+    expect(refused.headers.get("retry-after")).toBe("3599");
+    const held = await h(request("a"));
+    expect(held.status).toBe(200);
+    expect(held.headers.get("ratelimit-remaining")).toBe("0");
+    expect((await h(request("a"))).status).toBe(429);
+    clock.set(3600000);
+    expect((await h(request("c"))).status).toBe(200);
+  });
+
+  it("makes room from the windows that ended, and keeps the live ones", async () => {
+    const clock = shared(0 as i64);
+    const now = (): number => clock.get() as number;
+    const h = rateLimit({ limit: 1, windowMs: 1000, key: byHeader, now, maxKeys: 2 })(ok);
+    expect((await h(request("a"))).status).toBe(200);
+    clock.set(600);
+    expect((await h(request("b"))).status).toBe(200);
+    // Full, at 1,100: `a` has ended and `b` hasn't, so `c` takes `a`'s place.
+    clock.set(1100);
+    expect((await h(request("c"))).status).toBe(200);
+    expect((await h(request("b"))).status).toBe(429);
+    expect((await h(request("c"))).status).toBe(429);
+    // Full, and the last sweep was just now: `b` ending doesn't get a new key in until a second on.
+    expect((await h(request("d"))).status).toBe(429);
+    clock.set(1700);
+    expect((await h(request("d"))).status).toBe(429);
+    clock.set(2100);
+    expect((await h(request("d"))).status).toBe(200);
+  });
+
+  it("lets a key whose window ended start again when the table is full", async () => {
+    const clock = shared(0 as i64);
+    const now = (): number => clock.get() as number;
+    const h = rateLimit({ limit: 1, windowMs: 1000, key: byHeader, now, maxKeys: 1 })(ok);
+    expect((await h(request("a"))).status).toBe(200);
+    expect((await h(request("b"))).status).toBe(429);
+    clock.set(1000);
+    expect((await h(request("a"))).status).toBe(200);
+    expect((await h(request("a"))).status).toBe(429);
+  });
+
+  it("holds 100,000 keys by default", async () => {
+    const h = rateLimit({ limit: 1, windowMs: 1000, key: byHeader, now: () => 0 })(ok);
+    for (let i = 0; i < 100000; i++) {
+      await h(request(`${i}`));
+    }
+    expect((await h(request("0"))).status).toBe(429);
+    expect((await h(request("one more"))).status).toBe(429);
+  });
+
+  it("keeps a long key as its hash, apart from others", async () => {
+    const atLimit = "k".repeat(256);
+    expect(boundedKey(atLimit)).toBe(atLimit);
+    const long = "k".repeat(7000);
+    expect(boundedKey(long).length).toBe(64);
+    expect(boundedKey(long)).toBe(boundedKey("k".repeat(7000)));
+    expect(boundedKey(`${long}a`) == boundedKey(`${long}b`)).toBe(false);
+    const h = rateLimit({ limit: 1, windowMs: 1000, key: byHeader, now: () => 0 })(ok);
+    expect((await h(request(`${long}a`))).status).toBe(200);
+    expect((await h(request(`${long}b`))).status).toBe(200);
+    expect((await h(request(`${long}a`))).status).toBe(429);
+  });
+
+  it("counts by the client's address, as the README shows, whatever the client sends", async () => {
+    const app = new App<number>(() => 0);
+    app.use(
+      rateLimit({
+        limit: 1,
+        windowMs: 3600000,
+        key: (req) => req.headers.get("x-client-address") ?? "unknown",
+      }),
+    );
+    app.get("/", async (c) => c.text(c.req.headers.get("x-client-address") ?? "none"));
+    const h = app.handler();
+    const server = await serve({ port: 0 }, (req: Request, info: ServeInfo) => {
+      const headers = new Headers(req.headers);
+      headers.set("x-client-address", info.remoteAddr.hostname);
+      return h(new Request(req, { headers }));
+    });
+    try {
+      const url = `http://127.0.0.1:${server.port}/`;
+      const first = await fetch(url, { headers: { "x-client-address": "1.1.1.1" } });
+      expect(first.status).toBe(200);
+      expect(await first.text()).toBe("127.0.0.1");
+      const second = await fetch(url, { headers: { "x-client-address": "2.2.2.2" } });
+      expect(second.status).toBe(429);
+      await second.text();
+    } finally {
+      await server.shutdown();
+    }
+  });
 });
 
 describe("bodyLimit", () => {
@@ -193,6 +322,53 @@ describe("bodyLimit", () => {
         }),
       );
       expect(res.status).toBe(413);
+    }
+  });
+
+  it("counts a body with a Content-Length that only starts like a number", async () => {
+    // A bad character mustn't add to a number the body then seems to fit.
+    const h = bodyLimit(100)(echo);
+    const body = "x".repeat(200);
+    const res = await h(
+      new Request("http://t/", { method: "POST", body, headers: { "content-length": "1e" } }),
+    );
+    expect(res.status).toBe(413);
+  });
+
+  it("counts a body with a Content-Length too long to read as a number", async () => {
+    const h = bodyLimit(100)(echo);
+    const body = "x".repeat(200);
+    const res = await h(
+      new Request("http://t/", {
+        method: "POST",
+        body,
+        headers: { "content-length": "0".repeat(16) },
+      }),
+    );
+    expect(res.status).toBe(413);
+  });
+
+  it("gives a GET or HEAD with a chunked body to its route without the body", async () => {
+    const app = new App<number>(() => 0);
+    app.use(bodyLimit(10));
+    app.get("/", async (c) => {
+      return c.text(`${c.req.method} ${c.req.headers.get("x-a")} [${await c.req.text()}]`);
+    });
+    const h = app.handler();
+    const server = await serve({ port: 0 }, (req: Request) => h(req));
+    try {
+      const head = (
+        method: string,
+      ) => `${method} / HTTP/1.1\r\nHost: x\r\nx-a: 1\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n`;
+      const fits = await raw(server.port, `${head("GET")}4\r\nabcd\r\n0\r\n\r\n`);
+      expect(fits.slice(9, 12)).toBe("200");
+      expect(fits.endsWith("GET 1 []")).toBe(true);
+      const headed = await raw(server.port, `${head("HEAD")}4\r\nabcd\r\n0\r\n\r\n`);
+      expect(headed.slice(9, 12)).toBe("200");
+      const over = await raw(server.port, `${head("GET")}b\r\nabcdefghijk\r\n0\r\n\r\n`);
+      expect(over.slice(9, 12)).toBe("413");
+    } finally {
+      await server.shutdown();
     }
   });
 

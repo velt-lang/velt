@@ -7,7 +7,7 @@ import { Handler, Middleware } from "../types";
  * without reading the body. A body without one, or with one that isn't a whole number of bytes, is
  * read until it passes the limit, so at most `maxBytes` is held, and its chunks are passed on as
  * they came, not copied. `serve`'s `maxBodySize` is the limit for a whole server; this one is for a
- * route or a prefix that takes less.
+ * prefix that takes less. A GET or HEAD can't be given a body again, so its route gets none.
  */
 export function bodyLimit(maxBytes: number): Middleware {
   return (next: Handler): Handler => async (req: Request): Promise<Response> => {
@@ -27,6 +27,11 @@ export function bodyLimit(maxBytes: number): Middleware {
         return tooLarge();
       }
       kept.push(chunk);
+    }
+    if (req.method == "GET" || req.method == "HEAD") {
+      return await next(
+        new Request(req.url, { method: req.method, headers: req.headers, signal: req.signal }),
+      );
     }
     return await next(new Request(req, { body: ReadableStream.from(replay(kept)) }));
   };

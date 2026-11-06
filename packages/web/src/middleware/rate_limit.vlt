@@ -2,6 +2,7 @@
 // shares: a middleware's state between requests, which a plain `Map` in a closure can't be (each
 // request would count on its own copy).
 
+import { sha256Hex } from "velt/crypto";
 import { Handler, Middleware } from "../types";
 
 /** The options of `rateLimit`. */
@@ -10,10 +11,25 @@ export struct RateLimitOptions {
   limit: number;
   /** The window's length, in milliseconds. */
   windowMs: number;
-  /** What a request counts against, such as a client's address or an API key. */
+  /**
+   * What a request counts against, such as an API key or the client's address. A `Request` doesn't
+   * hold the address: set a header from it in `serve`'s handler and read that here (README). A
+   * forwarded header (`x-forwarded-for`) can be spoofed, and each new value gets a new allowance,
+   * unless a proxy you control sets it. Like a handler, `key` gets its own copy of what it captures
+   * on each call: a change to a capture is lost, silently (share it, as `shared(new Mutex(…))`).
+   */
   key: (req: Request) => string;
-  /** The clock, in milliseconds (default: `Date.now`). */
+  /**
+   * The clock, in milliseconds (default: `Date.now`). As with `key`, a change to a capture is lost:
+   * a clock that advances keeps its time in something shared (`shared(0 as i64)`).
+   */
   now?: () => number;
+  /**
+   * The most keys counted at once (default: 100,000), the table's bound in memory. When it is full
+   * and no window has ended, a new key is refused with a 429 until one has; the keys it holds go on
+   * as before. So choose it above the keys you expect in a window.
+   */
+  maxKeys?: number;
 }
 
 /** A key's count in its window. */
@@ -22,34 +38,50 @@ struct Window {
   count: number;
 }
 
-/** The table, and when it was last cleared of old windows. */
+/** The table, and the time from which a sweep of it can free room. */
 class Counts {
   windows: Map<string, Window> = new Map();
-  swept: number = 0;
+  nextSweep: number = 0;
 }
 
-/** The longest the table grows between sweeps of the windows that ended. */
-const SWEEP_SIZE = 10000;
+const DEFAULT_MAX_KEYS = 100000;
+
+/** The longest key kept as it is; a longer one is kept as its hash, of 64 characters. */
+const MAX_KEY_LENGTH = 256;
+
+/** The least time between sweeps of a full table, which each read all of it, with the lock held. */
+const SWEEP_EVERY_MS = 1000;
+
+/** What `count_` gives for a new key the table has no room for. */
+const NO_ROOM = -1;
 
 /**
  * Answers 429 with `Retry-After` (in seconds) once a key has made `limit` requests in a fixed
  * window, and says how many are left in `RateLimit-Limit`, `RateLimit-Remaining` and
  * `RateLimit-Reset`. Counts are per process. A key can make up to twice the limit across the edge of
  * two windows, the known cost of fixed windows, which keep one small record per key.
+ *
+ * The table is bounded. A window is never dropped to make room, which would hand back a client's
+ * allowance: with `maxKeys` keys in open windows, a new key is refused (see `maxKeys`). A key longer
+ * than 256 characters is kept as its hash.
+ *
+ * Build it once, outside the handler, as with `app.use(rateLimit(…))`. One built inside a route gets
+ * a new table on each request, and so never limits.
  */
 export function rateLimit(options: RateLimitOptions): Middleware {
   const limit = options.limit;
   const windowMs = options.windowMs;
   const key = options.key;
   const now = options.now ?? systemClock;
+  const maxKeys = options.maxKeys ?? DEFAULT_MAX_KEYS;
   const counts = shared(new Mutex(new Counts()));
   return (next: Handler): Handler => async (req: Request): Promise<Response> => {
-    const id = key(req);
+    const id = boundedKey(key(req));
     const at = now();
     // [the count so far in this window, when the window ends]
-    const [count, ends] = counts.with((c) => count_(c, id, at, windowMs));
+    const [count, ends] = counts.with((c) => count_(c, id, at, windowMs, maxKeys));
     const reset = `${Math.ceil((ends - at) / 1000)}`;
-    if (count > limit) {
+    if (count == NO_ROOM || count > limit) {
       return new Response("Too Many Requests", {
         status: 429,
         headers: {
@@ -68,22 +100,46 @@ export function rateLimit(options: RateLimitOptions): Middleware {
   };
 }
 
-function count_(c: Counts, id: string, at: number, windowMs: number): [number, number] {
-  if (c.windows.size >= SWEEP_SIZE && at - c.swept >= windowMs) {
-    c.swept = at;
-    for (const [k, w] of [...c.windows]) {
-      if (at - w.start >= windowMs) {
-        c.windows.delete(k);
-      }
+/** What the table keeps for `key`: a client can't make it hold long strings. */
+export function boundedKey(key: string): string {
+  return key.length > MAX_KEY_LENGTH ? sha256Hex(key) : key;
+}
+
+function count_(
+  c: Counts,
+  id: string,
+  at: number,
+  windowMs: number,
+  maxKeys: number,
+): [number, number] {
+  const w = c.windows.get(id);
+  if (w != null && at - w.start < windowMs) {
+    w.count++;
+    return [w.count, w.start + windowMs];
+  }
+  if (w == null && c.windows.size >= maxKeys) {
+    if (at >= c.nextSweep) {
+      sweep(c, at, windowMs);
+    }
+    if (c.windows.size >= maxKeys) {
+      return [NO_ROOM, c.nextSweep];
     }
   }
-  const w = c.windows.get(id);
-  if (w == null || at - w.start >= windowMs) {
-    c.windows.set(id, { start: at, count: 1 });
-    return [1, at + windowMs];
+  c.windows.set(id, { start: at, count: 1 });
+  return [1, at + windowMs];
+}
+
+/** Removes the windows that ended, and notes when the next can have: none before that frees room. */
+function sweep(c: Counts, at: number, windowMs: number) {
+  let earliest = at + windowMs;
+  for (const [k, w] of [...c.windows]) {
+    if (at - w.start >= windowMs) {
+      c.windows.delete(k);
+    } else if (w.start + windowMs < earliest) {
+      earliest = w.start + windowMs;
+    }
   }
-  w.count++;
-  return [w.count, w.start + windowMs];
+  c.nextSweep = Math.max(earliest, at + Math.min(windowMs, SWEEP_EVERY_MS));
 }
 
 function systemClock(): number {
