@@ -273,7 +273,7 @@ impl FnLower<'_, '_> {
                 Operand::Const(crate::vir::Const::Bool(!self.cx.object_only(t)), Ty::Bool)
             }
             (I::AnyMethodCalled | I::StdUsed, [name]) => {
-                let fact = self.cx.std_fact(i.clone(), name);
+                let fact = self.cx.std_fact(i, name);
                 Operand::Const(crate::vir::Const::Bool(fact), Ty::Bool)
             }
             (I::AnyIsList, [a]) => self.any_is_list(a),
