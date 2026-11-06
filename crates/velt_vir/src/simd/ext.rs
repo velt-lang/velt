@@ -264,15 +264,51 @@ impl ExtOp {
     }
 
     /// The operation's part of its symbol (`velt_simd_<type>_<name>`): `sha256h`, `sha1rnds4_2`,
-    /// `pclmulqdq_16`, `aesenc`, `aesimc_arm`.
-    pub fn name(self) -> String {
+    /// `pclmulqdq_16`, `aesenc`, `aesimc_arm`. Static text, because `SimdCall::of_symbol` compares
+    /// it for every SIMD call site. An immediate outside [`ExtOp::ALL`] names nothing.
+    pub fn name(self) -> &'static str {
         match self {
-            ExtOp::AesimcX86 => "aesimc".to_string(),
-            ExtOp::AesimcArm => "aesimc_arm".to_string(),
-            ExtOp::Sha1Rnds4(f) => format!("sha1rnds4_{f}"),
-            ExtOp::Pclmulqdq(imm) => format!("pclmulqdq_{imm}"),
-            ExtOp::Pmull(imm) => format!("pmull_{imm}"),
-            other => format!("{other:?}").to_lowercase(),
+            ExtOp::Sha1C => "sha1c",
+            ExtOp::Sha1P => "sha1p",
+            ExtOp::Sha1M => "sha1m",
+            ExtOp::Sha1H => "sha1h",
+            ExtOp::Sha1Su0 => "sha1su0",
+            ExtOp::Sha1Su1 => "sha1su1",
+            ExtOp::Sha256H => "sha256h",
+            ExtOp::Sha256H2 => "sha256h2",
+            ExtOp::Sha256Su0 => "sha256su0",
+            ExtOp::Sha256Su1 => "sha256su1",
+            ExtOp::Sha256Rnds2 => "sha256rnds2",
+            ExtOp::Sha256Msg1 => "sha256msg1",
+            ExtOp::Sha256Msg2 => "sha256msg2",
+            ExtOp::Sha1Rnds4(0) => "sha1rnds4_0",
+            ExtOp::Sha1Rnds4(1) => "sha1rnds4_1",
+            ExtOp::Sha1Rnds4(2) => "sha1rnds4_2",
+            ExtOp::Sha1Rnds4(3) => "sha1rnds4_3",
+            ExtOp::Sha1Nexte => "sha1nexte",
+            ExtOp::Sha1Msg1 => "sha1msg1",
+            ExtOp::Sha1Msg2 => "sha1msg2",
+            ExtOp::Pclmulqdq(0) => "pclmulqdq_0",
+            ExtOp::Pclmulqdq(1) => "pclmulqdq_1",
+            ExtOp::Pclmulqdq(16) => "pclmulqdq_16",
+            ExtOp::Pclmulqdq(17) => "pclmulqdq_17",
+            ExtOp::Pmull(0) => "pmull_0",
+            ExtOp::Pmull(1) => "pmull_1",
+            ExtOp::Pmull(16) => "pmull_16",
+            ExtOp::Pmull(17) => "pmull_17",
+            ExtOp::Aesenc => "aesenc",
+            ExtOp::Aesenclast => "aesenclast",
+            ExtOp::Aesdec => "aesdec",
+            ExtOp::Aesdeclast => "aesdeclast",
+            ExtOp::AesimcX86 => "aesimc",
+            ExtOp::Aeskeygenassist => "aeskeygenassist",
+            ExtOp::Aese => "aese",
+            ExtOp::Aesd => "aesd",
+            ExtOp::Aesmc => "aesmc",
+            ExtOp::AesimcArm => "aesimc_arm",
+            ExtOp::Sha1Rnds4(_) | ExtOp::Pclmulqdq(_) | ExtOp::Pmull(_) => {
+                panic!("ICE: {self:?} is not an instruction")
+            }
         }
     }
 
