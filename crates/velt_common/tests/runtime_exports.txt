@@ -96,7 +96,6 @@ velt_rt velt_rt_env_all
 velt_rt velt_rt_env_get
 velt_rt velt_rt_env_remove
 velt_rt velt_rt_env_set
-velt_rt velt_rt_err_code_name
 velt_rt velt_rt_exit
 velt_rt velt_rt_f64_to_exponential
 velt_rt velt_rt_f64_to_fixed
