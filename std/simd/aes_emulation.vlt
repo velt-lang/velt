@@ -1,102 +1,110 @@
 // velt/simd (internal): the exact emulation of the CPU's AES round instructions
 // (std/simd/aes.vlt), from FIPS-197's SubBytes, ShiftRows and MixColumns and their inverses, for a
-// CPU without them. For correctness only: it looks bytes up in tables, so its time depends on the
-// data, and std's AES (std/crypto) keeps its constant-time bitsliced code where the CPU lacks the
-// instructions.
+// CPU without them. Table-free: the S-box is the Boyar-Peralta circuit of std/crypto, the inverse
+// S-box that circuit between two affine maps, and the products in MixColumns shifts, masks and
+// XORs. Nothing indexes memory, branches, loops or multiplies by the data, so the work is the same
+// for every input.
 
-// FIPS-197's S-box (Figure 7) and its inverse (Figure 14), as hex text: a string is one token,
-// where 256 number literals would cost every program that loads velt/simd time to compile.
-const SBOX =
-  "637c777bf26b6fc53001672bfed7ab76ca82c97dfa5947f0add4a2af9ca472c0b7fd9326363ff7cc34a5e5f171d8311504c723c31896059a071280e2eb27b27509832c1a1b6e5aa0523bd6b329e32f8453d100ed20fcb15b6acbbe394a4c58cfd0efaafb434d338545f9027f503c9fa851a3408f929d38f5bcb6da2110fff3d2cd0c13ec5f974417c4a77e3d645d197360814fdc222a908846eeb814de5e0bdbe0323a0a4906245cc2d3ac629195e479e7c8376d8dd54ea96c56f4ea657aae08ba78252e1ca6b4c6e8dd741f4bbd8b8a703eb5664803f60e613557b986c11d9ee1f8981169d98e949b1e87e9ce5528df8ca1890dbfe6426841992d0fb054bb16";
+import { interleaveIn, interleaveOut, ortho, sbox } from "velt/crypto/aes_bitslice";
 
-// InvSubBytes.
-const INV_SBOX =
-  "52096ad53036a538bf40a39e81f3d7fb7ce339829b2fff87348e4344c4dee9cb547b9432a6c2233dee4c950b42fac34e082ea16628d924b2765ba2496d8bd12572f8f66486689816d4a45ccc5d65b6926c704850fdedb9da5e154657a78d9d8490d8ab008cbcd30af7e45805b8b34506d02c1e8fca3f0f02c1afbd0301138a6b3a9111414f67dcea97f2cfcef0b4e67396ac7422e7ad3585e2f937e81c75df6e47f11a711d29c5896fb7620eaa18be1bfc563e4bc6d279209adbc0fe78cd5af41fdda8338807c731b11210592780ec5f60517fa919b54a0d2de57a9f93c99cefa0e03b4dae2af5b0c8ebbb3c83539961172b047eba77d626e169146355210c7d";
-
-// ShiftRows (byte `i` of the result is byte `SHIFT[i]` of the state, column-major as FIPS-197's
-// state is), InvShiftRows, and no shift.
-const SHIFT: u8[] = [0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11];
-const INV_SHIFT: u8[] = [0, 13, 10, 7, 4, 1, 14, 11, 8, 5, 2, 15, 12, 9, 6, 3];
-const NO_SHIFT: u8[] = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15];
-
-// The value of hex digit `c` (a character code).
-function digit(c: u32): u32 {
-  return c <= 0x39 ? c - 0x30 : c - 0x57;
+// The bit planes of `v` (word i holds bit i of every byte), as `sbox` takes them.
+function planes(v: u8x16): u64[] {
+  const w = v.asU32x4();
+  const q: u64[] = [0, 0, 0, 0, 0, 0, 0, 0];
+  interleaveIn(q, 0, w.lane(0), w.lane(1), w.lane(2), w.lane(3));
+  ortho(q);
+  return q;
 }
 
-// Entry `x` of the table `box` (hex text).
-function entry(box: string, x: u32): u8 {
-  const at = (2 * x) as i64;
-  return ((digit(box.charCodeAt(at) as u32) << 4) | digit(box.charCodeAt(at + 1) as u32)) as u8;
+// The inverse of `planes`.
+function fromPlanes(q: u64[]): u8x16 {
+  ortho(q);
+  return u32x4
+    .splat(interleaveOut(q[0], q[4], 0))
+    .withLane(1, interleaveOut(q[0], q[4], 1))
+    .withLane(2, interleaveOut(q[0], q[4], 2))
+    .withLane(3, interleaveOut(q[0], q[4], 3))
+    .asU8x16();
 }
 
-// Byte `i` of the result: `box[v[from[i]]]`.
-function substitute(v: u8x16, from: u8[], box: string): u8x16 {
-  const out: u8[] = [];
-  for (let i: usize = 0; i < 16; i++) {
-    out.push(entry(box, v.lane(from[i] as usize) as u32));
-  }
-  return u8x16.load(out, 0);
-}
-
-/** ShiftRows then SubBytes (they commute). */
-export function subShift(v: u8x16): u8x16 {
-  return substitute(v, SHIFT, SBOX);
-}
-
-/** InvShiftRows then InvSubBytes. */
-export function invSubShift(v: u8x16): u8x16 {
-  return substitute(v, INV_SHIFT, INV_SBOX);
+// The inverse of the affine map A at the end of the S-box (FIPS-197 5.3.2) on bit planes:
+// XOR 0x63, then bit i is bits i + 2, i + 5 and i + 7 of that.
+function inverseAffine(q: u64[]) {
+  const q0 = ~q[0];
+  const q1 = ~q[1];
+  const q2 = q[2];
+  const q3 = q[3];
+  const q4 = q[4];
+  const q5 = ~q[5];
+  const q6 = ~q[6];
+  const q7 = q[7];
+  q[0] = q2 ^ q5 ^ q7;
+  q[1] = q3 ^ q6 ^ q0;
+  q[2] = q4 ^ q7 ^ q1;
+  q[3] = q5 ^ q0 ^ q2;
+  q[4] = q6 ^ q1 ^ q3;
+  q[5] = q7 ^ q2 ^ q4;
+  q[6] = q0 ^ q3 ^ q5;
+  q[7] = q1 ^ q4 ^ q6;
 }
 
 /** SubBytes alone. */
 export function subBytes(v: u8x16): u8x16 {
-  return substitute(v, NO_SHIFT, SBOX);
+  const q = planes(v);
+  sbox(q);
+  return fromPlanes(q);
 }
 
-// The product of `a` and `b` in GF(2^8) modulo x^8 + x^4 + x^3 + x + 1.
-function gmul(a: u32, b: u32): u32 {
-  let x = a;
-  let y = b;
-  let r: u32 = 0;
-  while (y != 0) {
-    if ((y & 1) != 0) {
-      r ^= x;
-    }
-    x = ((x << 1) ^ ((x >> 7) * 0x1b)) & 0xff;
-    y >>= 1;
-  }
-  return r;
+// InvSubBytes: the S-box is A after inversion, so A^-1, the S-box, A^-1 is inversion after A^-1.
+function invSubBytes(v: u8x16): u8x16 {
+  const q = planes(v);
+  inverseAffine(q);
+  sbox(q);
+  inverseAffine(q);
+  return fromPlanes(q);
 }
 
-// Each column times the circulant matrix with first row `c0 c1 c2 c3`.
-function mixWith(v: u8x16, c0: u32, c1: u32, c2: u32, c3: u32): u8x16 {
-  const out: u8[] = [];
-  for (let c: usize = 0; c < 16; c += 4) {
-    const a: u32[] = [
-      v.lane(c) as u32,
-      v.lane(c + 1) as u32,
-      v.lane(c + 2) as u32,
-      v.lane(c + 3) as u32,
-    ];
-    for (let r: usize = 0; r < 4; r++) {
-      const x =
-        gmul(c0, a[r]) ^
-        gmul(c1, a[(r + 1) % 4]) ^
-        gmul(c2, a[(r + 2) % 4]) ^
-        gmul(c3, a[(r + 3) % 4]);
-      out.push(x as u8);
-    }
-  }
-  return u8x16.load(out, 0);
+/** ShiftRows then SubBytes (they commute). */
+export function subShift(v: u8x16): u8x16 {
+  return subBytes(u8x16.shuffle(v, v, 0, 5, 10, 15, 4, 9, 14, 3, 8, 13, 2, 7, 12, 1, 6, 11));
+}
+
+/** InvShiftRows then InvSubBytes. */
+export function invSubShift(v: u8x16): u8x16 {
+  return invSubBytes(u8x16.shuffle(v, v, 0, 13, 10, 7, 4, 1, 14, 11, 8, 5, 2, 15, 12, 9, 6, 3));
+}
+
+// Each byte times 2 in GF(2^8) modulo x^8 + x^4 + x^3 + x + 1: the carry out of each byte, moved
+// to its bit 0, XORed back in at 0x1b's four bits.
+function xtime(x: u32x4): u32x4 {
+  const carry = x.shr(7).and(u32x4.splat(0x01010101));
+  return x
+    .shl(1)
+    .and(u32x4.splat(0xfefefefe))
+    .xor(carry)
+    .xor(carry.shl(1))
+    .xor(carry.shl(3))
+    .xor(carry.shl(4));
+}
+
+// Each column's bytes moved down by `bits` (8, 16 or 24), the low ones around to the top.
+function rotate(x: u32x4, bits: u32): u32x4 {
+  return x.shr(bits).or(x.shl(32 - bits));
+}
+
+// Each column times the circulant matrix with first row 2 3 1 1.
+function mix(x: u32x4): u32x4 {
+  const r1 = rotate(x, 8);
+  return xtime(x.xor(r1)).xor(r1).xor(rotate(x, 16)).xor(rotate(x, 24));
 }
 
 /** MixColumns. */
 export function mixColumns(v: u8x16): u8x16 {
-  return mixWith(v, 2, 3, 1, 1);
+  return mix(v.asU32x4()).asU8x16();
 }
 
-/** InvMixColumns. */
+/** InvMixColumns: 14 11 13 9 is 2 3 1 1 times 5 0 4 0, each column plus 4 times itself and its opposite. */
 export function invMixColumns(v: u8x16): u8x16 {
-  return mixWith(v, 14, 11, 13, 9);
+  const x = v.asU32x4();
+  return mix(x.xor(xtime(xtime(x.xor(rotate(x, 16)))))).asU8x16();
 }

@@ -6,18 +6,19 @@
 // Every method always works, on every CPU: it is the instruction where the CPU has it, the other
 // architecture's instructions where those are what the CPU has (`aesenc` is ARM's `aese` and
 // `aesmc` with a zero key, `aese` is x86's `aesenclast` after an XOR), and otherwise an exact
-// emulation (std/simd/aes_emulation.vlt). The emulation looks bytes up in tables, so it is not
-// constant time: code for secrets (std/crypto's AES) checks `u8x16.hasAes()` first and keeps its
-// own constant-time path where it is false.
+// emulation (std/simd/aes_emulation.vlt). The emulation is a boolean circuit with no tables, so
+// its work does not depend on the data, but it is far slower than the instructions: check
+// `u8x16.hasAes()` where speed matters.
 //
 // `u8x16.hasAesX86()` is AES-NI with the PCLMULQDQ, SSSE3 and SSE4.1 every such CPU has, and
 // `u8x16.hasAesArm()` FEAT_AES with FEAT_PMULL: what AES-GCM needs, so a function gated on one
 // (`targetFeature("aes-x86")`, std only) has the carry-less multiplication too, and both are bare
 // instructions there. The checks are false on another architecture, on WebAssembly, in debug
-// (Cranelift) builds, and with `VELT_SIMD_DISABLE=aes` (or `clmul`). The runtime keeps no flag for
-// them (#2241): the answer comes from the CPU (`cpuid` on x86-64, the PMULL flag on arm64), read
-// once and kept in `DETECTED`; `--cpu` does not make them constant, as the start-up check does not
-// know AES.
+// (Cranelift) builds, and with `VELT_SIMD_DISABLE=aes`. `VELT_SIMD_DISABLE=clmul` makes them false
+// too, except on x86-64 in a build whose `--cpu` includes PCLMULQDQ (`--cpu native` on such a CPU),
+// where the carry-less check they include is constant. The runtime keeps no flag for them (#2241):
+// the answer comes from the CPU (`cpuid` on x86-64, the PMULL flag on arm64), read once and kept in
+// `DETECTED`; `--cpu` does not make them constant, as the start-up check does not know AES.
 
 import { noInline } from "velt/lang/intrinsics";
 import {
@@ -70,6 +71,11 @@ function disabled(): bool {
   return false;
 }
 
+/** Whether ECX of CPUID leaf 1 says AES-NI: bit 25 (the carry-less flag covers PCLMULQDQ, SSSE3 and SSE4.1). */
+export function cpuidHasAes(ecx: u32): bool {
+  return (ecx & (1 << 25)) != 0;
+}
+
 // Out of line: it runs once, and every check would otherwise carry a copy.
 function detect(): u32 {
   noInline();
@@ -77,11 +83,7 @@ function detect(): u32 {
   if (disabled()) {
     return found;
   }
-  // CPUID leaf 1, ECX bit 25 is AES-NI alone; PCLMULQDQ, SSSE3 and SSE4.1, which the AES
-  // extension also guarantees, are the runtime's clmul flag (velt_simd_has_clmul_x86).
-  if (
-    velt_simd_has_clmul_x86() && (velt_simd_u32x4_lane(velt_simd_cpuid(1, 0), 2) & (1 << 25)) != 0
-  ) {
+  if (velt_simd_has_clmul_x86() && cpuidHasAes(velt_simd_u32x4_lane(velt_simd_cpuid(1, 0), 2))) {
     found |= 2;
   }
   // FEAT_PMULL implies FEAT_AES (Arm ARM, ID_AA64ISAR0_EL1.AES = 0b0010).
@@ -112,7 +114,7 @@ function arm(): bool {
 }
 
 extend u8x16 {
-  /** Whether the CPU has x86's AES-NI, with PCLMULQDQ, SSSE3 and SSE4.1 (false off x86-64, in debug builds, and with `VELT_SIMD_DISABLE=aes` or `clmul`). */
+  /** Whether the CPU has x86's AES-NI, with PCLMULQDQ, SSSE3 and SSE4.1 (false off x86-64, in debug builds, with `VELT_SIMD_DISABLE=aes`, and with `clmul` unless `--cpu` includes PCLMULQDQ). */
   static hasAesX86(): bool {
     return x86();
   }
@@ -122,7 +124,7 @@ extend u8x16 {
     return arm();
   }
 
-  /** Whether the AES methods are instructions here rather than the (not constant-time) emulation. */
+  /** Whether the AES methods are instructions here rather than the much slower emulation: `hasAesX86()` or `hasAesArm()`. */
   static hasAes(): bool {
     return x86() || arm();
   }
