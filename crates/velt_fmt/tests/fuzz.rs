@@ -23,12 +23,9 @@ struct Rng(u64);
 
 impl Rng {
     /// A generator seeded from `path` (FNV-1a; never zero, which xorshift can't leave).
-    /// Seeded by the path as it was before sources moved to `.velt` (#2419), so the rename does
-    /// not change which inputs a file gets (a new seed finds #2442).
     fn for_path(path: &std::path::Path) -> Rng {
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;
-        let key = path.with_extension("vlt"); // velt-ext: keep
-        for b in key.to_string_lossy().replace('\\', "/").bytes() {
+        for b in path.to_string_lossy().replace('\\', "/").bytes() {
             h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
         }
         Rng(h | 1)
