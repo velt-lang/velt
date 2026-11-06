@@ -24,7 +24,7 @@ import {
   OID_SHA512_RSA,
 } from "velt/net/tls/x509/oids";
 
-// Signature algorithms.
+/** Signature algorithms. */
 export const SIG_UNKNOWN: i32 = 0;
 export const SIG_RSA_PKCS1_SHA256: i32 = 1;
 export const SIG_RSA_PKCS1_SHA384: i32 = 2;
@@ -37,7 +37,7 @@ export const SIG_ECDSA_SHA384: i32 = 8;
 export const SIG_ECDSA_SHA512: i32 = 9;
 export const SIG_ED25519: i32 = 10;
 
-// Public key algorithms (with the curve for EC keys).
+/** Public key algorithms (with the curve for EC keys). */
 export const KEY_UNKNOWN: i32 = 0;
 export const KEY_RSA: i32 = 1;
 export const KEY_P256: i32 = 2;

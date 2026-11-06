@@ -7,7 +7,7 @@
 import { BAD_CERTIFICATE, TlsFailure } from "velt/net/tls/alert";
 import { Tlv } from "velt/net/tls/x509/tlv";
 
-// Universal tags (X.690 §8), with the constructed bit where DER requires it.
+/** Universal tags (X.690 §8), with the constructed bit where DER requires it. */
 export const BOOLEAN: u8 = 0x01;
 export const INTEGER: u8 = 0x02;
 export const BIT_STRING: u8 = 0x03;
