@@ -1,0 +1,24 @@
+// Closures called with the variables they capture and assign: a counter and a string held in
+// shared cells, each read before the call (#2480). The string is the costly case, one reference
+// more around each call.
+function main() {
+  let counter = 0;
+  let label = "label-".repeat(8);
+  let total = 0;
+  const bump = (d: number) => {
+    counter = (counter + d + 1) % 1000003;
+    return d;
+  };
+  const note = (v: string) => {
+    total += v.length;
+    if (total % 1024 === 0) {
+      label = label.slice(1) + "x";
+    }
+    return v.length;
+  };
+  for (let i = 0; i < 3000000; i++) {
+    bump(counter);
+    note(label);
+  }
+  console.log(counter, total, label.length);
+}
