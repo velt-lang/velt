@@ -4,6 +4,11 @@
 
 import { CryptoError } from "velt/crypto/errors";
 
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_xor(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
+
 /**
  * Throws `CryptoError` from `name`'s `sealInPlace` unless `buf[start..end]` is a range with 16
  * bytes after it for the tag, so nothing is written before the arguments are known to fit.
@@ -29,11 +34,21 @@ export function checkOpenRange(name: string, buf: u8[], start: usize, end: usize
 
 /** Whether `tag[0..16]` equals `buf[at..at + 16]`, in time independent of where they differ. */
 export function tagMatches(tag: u8[], buf: u8[], at: usize): bool {
-  let diff: u8 = 0;
-  for (let i: usize = 0; i < 16; i++) {
-    diff |= tag[i] ^ buf[at + i];
+  // All 128 bits in one comparison: LLVM unrolls a loop over the bytes into a branch per byte,
+  // which leaves at the first difference. No test run sees that from outside, so
+  // crates/veltc/tests/aead_tag_compare.rs reads the optimized IR. For the machine code, on x86-64,
+  // run under memcheck an `open` of a valid message, whose key and bytes a preload shim marked
+  // undefined (VALGRIND_MAKE_MEM_UNDEFINED, values unchanged), built with
+  // `velt build --release -g --backend llvm`:
+  //   LD_PRELOAD=./shim.so valgrind --tool=memcheck --error-limit=no ./program
+  // Expect one report, the caller's branch on this function's result; 16 is this loop returning.
+  if (tag.length < 16 || buf.length < 16 || at > buf.length - 16) {
+    throw new CryptoError(`tag range is out of bounds: at ${at}, length ${buf.length}`);
   }
-  return diff == 0;
+  const diff = velt_simd_u8x16_as_u64x2(
+    velt_simd_u8x16_xor(velt_simd_u8x16_load(tag, 0), velt_simd_u8x16_load(buf, at as u64)),
+  );
+  return (velt_simd_u64x2_lane(diff, 0) | velt_simd_u64x2_lane(diff, 1)) == 0;
 }
 
 /** `data` followed by `extra` bytes of room (zeros), for in-place sealing of a copy. */
