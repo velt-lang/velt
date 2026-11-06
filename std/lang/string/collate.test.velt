@@ -1,0 +1,37 @@
+// velt/lang/string (internal): white-box tests of collate.velt, run by `velt test std/`.
+//
+// A lone surrogate weighs as U+FFFD (std/lang/string/collate.velt), as it did in the Rust that
+// velt_rt had, whose lossy view of a string held one U+FFFD per lone surrogate. Node orders lone
+// surrogates by code unit instead (U+D800 before U+DBFF), so these expected values are the old
+// Rust's, which the port follows.
+import { describe, expect, it } from "velt/test";
+import { localeOrder } from "velt/lang/string/collate";
+
+/** The string of UTF-16 code unit `u` (a lone surrogate can't be written in a literal). */
+function unit(u: number): string {
+  return String.fromCharCode(u);
+}
+
+describe("localeOrder on lone surrogates", () => {
+  it("weighs a lone surrogate as U+FFFD", () => {
+    expect(localeOrder(unit(0xd800), "�")).toBe(0);
+    expect(localeOrder(unit(0xdfff), "�")).toBe(0);
+    expect(localeOrder(unit(0xdbff), unit(0xdc00))).toBe(0);
+    // U+FFFD is a symbol, ordered by code point among the symbols.
+    expect(localeOrder(unit(0xd800), "￼")).toBe(1);
+    expect(localeOrder(unit(0xd800), "￾")).toBe(-1);
+    expect(localeOrder("￼", unit(0xdc00))).toBe(-1);
+  });
+
+  it("reads a lone surrogate as one character", () => {
+    expect(localeOrder("a" + unit(0xdc00) + "b", "a�b")).toBe(0);
+    expect(localeOrder("a" + unit(0xdc00) + "c", "a�b")).toBe(1);
+    expect(localeOrder(unit(0xde00) + unit(0xd83d), "��")).toBe(0);
+    expect(localeOrder(unit(0xd800) + "x", unit(0xd800) + "y")).toBe(-1);
+  });
+
+  it("joins a pair built from its two halves", () => {
+    expect(localeOrder(unit(0xd83d) + unit(0xde00), "\u{1F600}")).toBe(0);
+    expect(localeOrder(unit(0xd83d) + unit(0xde00), "�")).toBe(1);
+  });
+});
