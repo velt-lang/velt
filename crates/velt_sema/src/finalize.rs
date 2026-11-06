@@ -265,6 +265,7 @@ fn adt_def(
         })
         .collect();
     let declared_struct = a.kind == AdtKind::Struct && a.decl.is_some();
+    let c_struct = a.decl.is_some_and(|t| t.c_struct);
     let (name, kind, base, ctor, vtable, span) = (
         a.qual_name.clone(),
         a.kind,
@@ -289,6 +290,7 @@ fn adt_def(
         fields,
         is_copy: cx.is_copy(st),
         declared_struct,
+        c_struct,
         private_fields,
         opaque,
         assigned,

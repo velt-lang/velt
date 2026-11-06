@@ -1,7 +1,8 @@
 //! C structs (`declare c struct S { x: f64; y: f64; }`, docs/internals/design/c-ffi.md "C
 //! structs"): fields in C's order, each of a type C has, and nothing else. In Velt a C struct is
-//! a value: Copy (`copy_types.rs`), its fields read-only, built from a literal of its type and
-//! never counted. What every struct can't have (`extends`, a constructor) is reported as for them.
+//! a value: Copy (`copy_types.rs`), its fields read-only, built from a literal of its type,
+//! never counted or boxed (`hir::AdtDef::c_struct`), and compared by content. What every struct
+//! can't have (`extends`, a constructor) is reported as for them.
 
 use velt_common::{Diagnostic, Span};
 use velt_syntax::ast;
@@ -12,8 +13,7 @@ use crate::hir::{DefId, FloatTy, Nothing, TyId, TyKind};
 
 /// What a C struct's field may be, for the errors.
 const FIELD_TYPES: &str = "a C struct's fields are integers (`i8` … `u64`, `isize`, `usize`), \
-                           `f32`, `f64`, `bool`, other C structs, and tuples of one of these as C \
-                           arrays (`[f32, f32, f32]` for `float[3]`)";
+                           `f32`, `f64`, `bool` and other C structs";
 
 impl Ctx<'_> {
     /// Is `d` a `declare c struct`?
@@ -25,39 +25,6 @@ impl Ctx<'_> {
     /// Is `t` a C struct type?
     pub(crate) fn is_c_struct_ty(&self, t: TyId) -> bool {
         matches!(self.ty.kind(t), TyKind::Adt(d, _) if self.is_c_struct(*d))
-    }
-
-    /// Why `==` can't compare values of `t`, when they are or hold a C struct.
-    pub(crate) fn c_struct_eq_note(&self, t: TyId) -> Option<&'static str> {
-        if self.is_c_struct_ty(t) {
-            Some("a C struct is a value without an identity: compare its fields")
-        } else if self.holds_c_struct(t) {
-            Some("it holds a C struct, a value without an identity: compare the C struct's fields")
-        } else {
-            None
-        }
-    }
-
-    /// Does a value of `t` hold a C struct inline: is it one, or an option, tuple or result of
-    /// one? An array holds its elements behind its own identity.
-    pub(crate) fn holds_c_struct(&self, t: TyId) -> bool {
-        self.holds_c_struct_depth(t, 0)
-    }
-
-    fn holds_c_struct_depth(&self, t: TyId, depth: u32) -> bool {
-        if depth > 32 {
-            return false;
-        }
-        let parts: Vec<TyId> = match self.ty.kind(t) {
-            _ if self.is_c_struct_ty(t) => return true,
-            TyKind::Option(x, _) => vec![*x],
-            TyKind::Tuple(ts) => ts.clone(),
-            TyKind::Result(a, b) => vec![*a, *b],
-            _ => return false,
-        };
-        parts
-            .iter()
-            .any(|&p| self.holds_c_struct_depth(p, depth + 1))
     }
 }
 
@@ -120,9 +87,11 @@ fn check(cx: &mut Ctx, d: DefId, decl: &ast::TypeDecl) {
         })
         .unwrap_or_default();
     for (field, ty, at) in fields {
+        if has_error(cx, ty) {
+            continue;
+        }
         let shown = cx.display(ty);
-        match field_ty(cx, ty) {
-            _ if ty == cx.ty.error => continue,
+        let note = match field_ty(cx, ty) {
             Field::Ok => continue,
             Field::Pointer => {
                 cx.error(
@@ -130,12 +99,24 @@ fn check(cx: &mut Ctx, d: DefId, decl: &ast::TypeDecl) {
                         format!("field `{field}` of C struct `{name}` is a pointer (`{shown}`), which a C struct can't hold yet"),
                         at,
                     )
-                    .with_note("a pointer field is stored as C's address, `NULL` as `null`, from a later layer of #2187; until then a C struct holds numbers, `bool`, other C structs and C arrays of them"),
+                    .with_note("a pointer field is stored as C's address, `NULL` as `null`, from a later layer of #2187; until then a C struct holds numbers, `bool` and other C structs"),
                 );
                 continue;
             }
-            Field::No => {}
-        }
+            Field::Array => {
+                cx.error(
+                    Diagnostic::error(
+                        format!("field `{field}` of C struct `{name}` is a C array (`{shown}`), which a C struct can't hold yet"),
+                        at,
+                    )
+                    .with_note("C arrays in C structs come with fixed-size arrays (`T[N]`, #1866 area 4): a tuple's storage isn't fixed to C's; until then declare the elements as fields of their own"),
+                );
+                continue;
+            }
+            Field::Enum => "a Velt enum is an `i64`, and a C enum is usually an `int`: declare the field as the C enum's integer type (`i32`), which the header check holds to the enum's width",
+            Field::CType => "a `declare c type` exists only behind a pointer: a `Ptr<T>` field comes in a later layer of #2187",
+            Field::No => FIELD_TYPES,
+        };
         cx.error(
             Diagnostic::error(
                 format!(
@@ -143,19 +124,37 @@ fn check(cx: &mut Ctx, d: DefId, decl: &ast::TypeDecl) {
                 ),
                 at,
             )
-            .with_note(FIELD_TYPES),
+            .with_note(note),
         );
     }
+}
+
+/// Is `ty`, or a part of it written in a field type, an error already reported?
+fn has_error(cx: &Ctx, ty: TyId) -> bool {
+    ty == cx.ty.error
+        || match cx.ty.kind(ty) {
+            TyKind::Tuple(es) => es.iter().any(|&e| has_error(cx, e)),
+            TyKind::Option(x, _) | TyKind::Array(x) => has_error(cx, *x),
+            _ => false,
+        }
 }
 
 /// Whether a C struct's field can be a `ty`.
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Field {
     Ok,
-    /// A C pointer (`Ptr<T>`, `Ptr<T> | null`), or a C array of them: C's, but not yet held.
-    /// `Ptr<T> | null` is a Velt option of the address, larger than C's pointer, so pointer
-    /// fields wait for their own storage (the address, `NULL` as `null`).
+    /// A C pointer (`Ptr<T>`, `Ptr<T> | null`): C's, but not yet held. `Ptr<T> | null` is a
+    /// Velt option of the address, larger than C's pointer, so pointer fields wait for their
+    /// own storage (the address, `NULL` as `null`).
     Pointer,
+    /// A tuple of one C type, C's array: not yet held. Lowering may count a tuple type the
+    /// program writes in place and copies (boxing/tuples.rs), which would make the field a
+    /// pointer, so C arrays wait for fixed-size arrays.
+    Array,
+    /// A Velt enum, an `i64`.
+    Enum,
+    /// A `declare c type` by value.
+    CType,
     No,
 }
 
@@ -165,11 +164,16 @@ fn field_ty(cx: &Ctx, ty: TyId) -> Field {
         TyKind::Option(inner, n) if *n != Nothing::Both && super::c_sig::is_c_ptr(cx, *inner) => {
             Field::Pointer
         }
-        // A C array: one element type, at least one element.
         TyKind::Tuple(es) => match es.first() {
-            Some(&e) if es.iter().all(|&x| x == e) => field_ty(cx, e),
+            Some(&e) if es.iter().all(|&x| x == e) && field_ty(cx, e) != Field::No => Field::Array,
             _ => Field::No,
         },
+        TyKind::Adt(d, _) if matches!(cx.info[d.0 as usize], crate::defs::DefInfo::Enum(_)) => {
+            Field::Enum
+        }
+        TyKind::Adt(d, _) if cx.adt(*d).is_some_and(|a| a.decl.is_some_and(|t| t.c_type)) => {
+            Field::CType
+        }
         _ if cx.is_c_struct_ty(ty) => Field::Ok,
         _ if super::c_sig::is_c_ptr(cx, ty) => Field::Pointer,
         _ => Field::No,

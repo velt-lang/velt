@@ -46,7 +46,7 @@ export declare c struct CGSize { width: f64; height: f64; }
 export declare c struct CGRect { origin: CGPoint; size: CGSize; }
 
 /** One of each kind of field, with padding between them as C has it. */
-export declare c struct Mixed { a: u8; b: i32; c: [f32, f32, f32]; ok: bool; d: f64; }
+export declare c struct Mixed { a: u8; b: i32; ok: bool; d: f64; s: CGSize; }
 
 declare c("c") function free(p: Ptr<CGPoint> | null): void;
 
@@ -73,10 +73,10 @@ function main() {
   const t = moved(s, 10);
   const u = { ...t, size: { width: 5, height: 6 } } as CGRect;
   const rs: CGRect[] = [r, t, u];
-  const m: Mixed = { a: 7, b: -3, c: [1.5, 2.5, 3.5], ok: true, d: 0.25 };
+  const m: Mixed = { a: 7, b: -3, ok: true, d: 0.25, s: { width: 3.5, height: 1 } };
   const later = () => r.origin.y + u.size.height;
   console.log(area(r), s.origin.x, t.origin.x, area(rs[2]), rs.length, later());
-  console.log(m.a, m.b, m.c[2], m.ok, m.d, freeNone());
+  console.log(m.a, m.b, m.s.width, m.ok, m.d, freeNone());
 }
 "#;
 
@@ -97,7 +97,7 @@ fn c_structs_are_values_in_debug_and_release_builds() {
 }
 
 /// A C struct is held inline with C's layout: fields in order, each at its alignment, the size
-/// rounded up to the largest alignment (`Mixed` is 32 bytes in C on every 64-bit target), and
+/// rounded up to the largest alignment (`Mixed` is 40 bytes in C on every 64-bit target), and
 /// never a counted box.
 #[test]
 fn c_structs_have_c_layout() {
@@ -117,8 +117,8 @@ fn c_structs_have_c_layout() {
     assert_eq!(agg("CGPoint"), "CGPoint size=16 align=8 { f64@0, f64@8 }");
     let mixed = agg("Mixed");
     assert!(
-        mixed.starts_with("Mixed size=32 align=8 { u8@0, i32@4, agg#")
-            && mixed.ends_with("@8, bool@20, f64@24 }"),
+        mixed.starts_with("Mixed size=40 align=8 { u8@0, i32@4, bool@8, f64@16, agg#")
+            && mixed.ends_with("@24 }"),
         "{mixed}"
     );
     let rect = agg("CGRect");
@@ -126,6 +126,116 @@ fn c_structs_have_c_layout() {
         rect.starts_with("CGRect size=32 align=8 {") && rect.contains("@16 }"),
         "{rect}"
     );
+}
+
+/// The layout of aggregate `name` in the VIR of `main` (a program on its own), after its id.
+fn layout_in(dir: &Path, name: &str, main: &str) -> String {
+    std::fs::create_dir_all(dir).unwrap();
+    std::fs::write(dir.join("main.velt"), main).unwrap();
+    let o = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["build", "main.velt", "--emit", "vir"])
+        .current_dir(dir)
+        .env("NO_COLOR", "1")
+        .output()
+        .unwrap();
+    let vir = String::from_utf8_lossy(&o.stdout).to_string();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    vir.lines()
+        .find(|l| l.split_whitespace().nth(1) == Some(name))
+        .unwrap_or_else(|| panic!("no aggregate `{name}` in:\n{vir}"))
+        .split_once(' ')
+        .map(|(_, rest)| rest.to_string())
+        .unwrap_or_default()
+}
+
+const BOXING: &str = "declare c struct P { x: f64; y: f64; }
+declare c struct H { a: u8; p: P; }
+const p0: P = { x: 1, y: 2 };
+const h0: H = { a: 4, p: p0 };
+";
+
+/// Nothing elsewhere in the program changes a C struct's layout: not a conversion to `object`
+/// or `any` (which count object types compared by identity), not `==` on `any` values, and not
+/// an unrelated tuple written in place and copied (boxing/tuples.rs counts that tuple type).
+/// Each would otherwise put a pointer where C has `p` inline. The programs of the review on
+/// #2475.
+#[test]
+fn nothing_else_in_the_program_boxes_a_c_struct() {
+    let dir = test_dir::TestDir::new();
+    let want = |l: &str| l.starts_with("H size=24 align=8 { u8@0, agg#") && l.ends_with("@8 }");
+    for (k, body) in [
+        "function main() { const o: object = p0; console.log(o !== null, h0.p.x); }",
+        "function main() { const a: any = h0; const b: any = p0; console.log(a == b, h0.p.y); }",
+        "function unrelated(): f64 { let t: [f64, f64] = [1, 2]; let u = t; u[0] = 9; console.log(t[0]); return u[0]; }
+function main() { const o: object = h0; console.log(o !== null, h0.p.x, unrelated()); }",
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let l = layout_in(&dir.path().join(k.to_string()), "H", &format!("{BOXING}{body}\n"));
+        assert!(want(&l), "program {k}: {l}");
+    }
+}
+
+/// A C struct has no identity: `===`, `==`, `Object.is`, `includes`, `indexOf`, `lastIndexOf`,
+/// generic code and `any` all compare its content, as `Map` and `Set` keys do; its numbers
+/// compare as each operation compares numbers (`NaN` is not `==` itself, but `Object.is` it).
+#[test]
+fn c_structs_compare_by_content_everywhere() {
+    let dir = test_dir::TestDir::new();
+    let main = r#"declare c struct P { x: f64; y: f64; }
+declare c struct H { a: u8; p: P; }
+const p0: P = { x: 1, y: 2 };
+const p1: P = { x: 1, y: 2 };
+const p2: P = { x: 3, y: 4 };
+function eq<T>(a: T, b: T): boolean { return a == b; }
+function same<T>(a: T): boolean { return a == a; }
+function find<T>(xs: T[], v: T): number { for (let i = 0; i < xs.length; i++) { if (xs[i] === v) { return i; } } return -1; }
+function main() {
+  const xs: P[] = [p0, p2];
+  console.log(eq(p0, p0), eq(p0, p1), eq(p0, p2), same(p0), find(xs, p2), find(xs, p1));
+  console.log(xs.includes(p2), xs.indexOf(p2), xs.lastIndexOf(p1), xs.includes({ x: 9, y: 9 }));
+  console.log(Object.is(p0, p0), Object.is(p0, p1), Object.is(p0, p2));
+  const a: any = p0;
+  const b: any = p0;
+  console.log(a == b, a == (p1 as any), a == (p2 as any), p0 == p1, p0 === p2, p0 != p2);
+  const h: H = { a: 1, p: p0 };
+  const k: H = { a: 1, p: p1 };
+  const o: P | null = p1;
+  const t1: [P, i32] = [p0, 1];
+  const t2: [P, i32] = [p1, 1];
+  console.log(h == k, eq(h, { ...k, a: 2 }), o == p0, t1 == t2);
+  const m = new Map<P, i32>();
+  m.set(p0, 1);
+  m.set(p1, 2);
+  const s = new Set<any>();
+  s.add(a);
+  s.add(p1 as any);
+  console.log(m.size, s.size);
+  const n: P = { x: NaN, y: 0 };
+  console.log(n == n, Object.is(n, n));
+}
+"#;
+    std::fs::create_dir_all(dir.path()).unwrap();
+    std::fs::write(dir.path().join("main.velt"), main).unwrap();
+    for args in [
+        &["run", "main.velt"][..],
+        &["run", "--release", "main.velt"][..],
+    ] {
+        let o = no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(args)
+            .current_dir(dir.path())
+            .env("NO_COLOR", "1")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "velt {args:?} failed:\n{stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "true true false true 1 0\ntrue 1 0 false\ntrue true false\ntrue true false true false true\ntrue false true true\n1 1\nfalse true\n",
+            "velt {args:?}:\n{stderr}"
+        );
+    }
 }
 
 #[test]

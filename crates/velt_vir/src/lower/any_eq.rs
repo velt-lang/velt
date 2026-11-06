@@ -145,6 +145,11 @@ impl FnLower<'_, '_> {
                 let p = self.deref_param(data, ty);
                 self.hash_value(&p, ty)
             }
+            // A C struct: its content, agreeing with `AnySame` (any.rs).
+            _ if self.cx.c_struct(ty) => {
+                let p = self.deref_param(data, ty);
+                self.hash_value(&p, ty)
+            }
             // An object: its pointer (a class object, a counted box, or the `any`'s own box).
             _ if self.cx.is_class(ty) || self.cx.boxed(ty) || self.cx.is_object(ty) => {
                 let x = self.cast_to(Operand::Copy(Place::local(data)), Ty::Ptr, Ty::U64);

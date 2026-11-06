@@ -252,8 +252,9 @@ impl FnLower<'_, '_> {
             // A function value boxed twice is the same function: its code and environment.
             let (pa, pb) = (self.deref_param(a, ty), self.deref_param(b, ty));
             self.ref_identity(&pa, &pb, ty)
-        } else if self.cx.is_object(ty) {
-            // An object stored in the box itself: the same box.
+        } else if self.cx.is_object(ty) && !self.cx.c_struct(ty) {
+            // An object stored in the box itself: the same box. A C struct compares its content
+            // (same.rs), below.
             let (x, y) = (
                 Operand::Copy(Place::local(a)),
                 Operand::Copy(Place::local(b)),

@@ -6,7 +6,7 @@
 //! that way, so comparing one records a fact that makes it counted once it is shared (boxing/).
 //! Interface and function values: see `ref_identity`. A promise is the promise its holder holds
 //! (`promise_identity`). As `Map` and `Set` keys (`KeyEq`), a type declared with `struct` compares
-//! by content instead, field by field.
+//! by content instead, field by field; a C struct (`declare c struct`) always does.
 
 use velt_sema::hir::{self, TyId, TyKind};
 
@@ -24,6 +24,11 @@ impl FnLower<'_, '_> {
         }
         // A `struct` key (`KeyEq`, not `===`) compares by content, field by field.
         if self.key_mode && !self.value_mode && self.cx.content_key(ty) {
+            return self.same_glue(a, b, ty);
+        }
+        // A C struct has no identity: every comparison compares its content (its fields as
+        // the mode compares numbers).
+        if self.cx.c_struct(ty) {
             return self.same_glue(a, b, ty);
         }
         if let TyKind::Promise(..) = self.cx.kind(ty) {
@@ -261,6 +266,15 @@ impl super::Cx<'_> {
             TyKind::Adt(d, _) => {
                 matches!(self.hir.def(*d), hir::Def::Adt(a) if a.declared_struct)
             }
+            _ => false,
+        }
+    }
+
+    /// Is `t` a C struct (`hir::AdtDef::c_struct`): a value with no identity, never counted or
+    /// boxed, whose `===`, `Object.is`, `includes` and keys compare its content?
+    pub(super) fn c_struct(&self, t: TyId) -> bool {
+        match self.raw_kind(t) {
+            TyKind::Adt(d, _) => matches!(self.hir.def(*d), hir::Def::Adt(a) if a.c_struct),
             _ => false,
         }
     }

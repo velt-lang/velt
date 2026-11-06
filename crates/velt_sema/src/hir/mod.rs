@@ -358,6 +358,9 @@ pub struct AdtDef {
     /// keys compare and hash by content, field by field (`Intrinsic::KeyEq`, `Intrinsic::Hash`),
     /// while `===` still compares it by identity.
     pub declared_struct: bool,
+    /// `declare c struct` (c-ffi.md "C structs"): a Copy value with C's layout and no identity,
+    /// never counted or boxed, compared by content. Additive.
+    pub c_struct: bool,
     /// Some field (own or inherited) is `private` or an ES private field (`#x`, whose name keeps
     /// the `#`). `JSON.parse` cannot build such a type: decoding does not run the constructor,
     /// and could forge the runtime handles std types keep in private fields.
