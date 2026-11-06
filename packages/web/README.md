@@ -177,9 +177,14 @@ The table holds at most `maxKeys` keys (default 100,000), and a key longer than 
 kept as its hash, so a client can't grow it past that. When it is full, the windows that ended are
 removed, and if there is still no room a new key gets a 429 until a window ends. The keys in the
 table go on being counted as before. It fails closed because dropping a live window would hand a
-client its allowance back: anyone able to send many keys could reset any count. So many keys in one
-window can keep new clients out until it ends: choose `maxKeys` above the clients you expect in a
-window, and a key an attacker can't vary at will, such as the address.
+client its allowance back: anyone able to send many keys could reset any count.
+
+The cost is a lockout. One client who can vary the key can fill the table in about a second and hold
+new keys out for the rest of the window, and do it again each window. A long window makes that worse,
+as the lockout lasts as long as the window. Keys already in the table and routes without the limiter
+are not affected. So choose `maxKeys` above the clients you expect in a window, and a key a client
+can't vary at will: the address, and for an IPv6 address its /64, not the whole address, as one client
+commonly holds a whole /64.
 
 ## Errors
 

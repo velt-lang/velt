@@ -27,7 +27,10 @@ export struct RateLimitOptions {
   /**
    * The most keys counted at once (default: 100,000), the table's bound in memory. When it is full
    * and no window has ended, a new key is refused with a 429 until one has; the keys it holds go on
-   * as before. So choose it above the keys you expect in a window.
+   * as before. So choose it above the keys you expect in a window. One client who can vary the key
+   * can fill the table in about a second and hold new keys out for the rest of the window, and do it
+   * again each window; a long window makes that worse. So key on something a client can't vary at
+   * will: the address, and for an IPv6 address its /64, not the whole address.
    */
   maxKeys?: number;
 }
