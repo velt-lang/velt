@@ -43,7 +43,8 @@ export function uintPush(buf: string, v: u64): void {
 /**
  * Writes `String(v)` of a signed integer and the byte `end` (the space or newline after a
  * `console.log` argument) to standard output (`stream` 1) or standard error (2), in one write. The
- * text is at most 20 digits, a sign and that byte, held inline: no allocation.
+ * text is at most 21 bytes (20 digits, or a minus and 19, then that byte), held inline: no
+ * allocation.
  */
 export function intWrite(stream: u32, v: i64, end: u8): void {
   velt_rt_write_str(stream, i64Ended(v, end));
