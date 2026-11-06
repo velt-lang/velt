@@ -51,7 +51,7 @@ fn a_large_array_of_numbers_is_data() {
         panic!("`paths` is not an array");
     };
     assert_eq!(paths.len(), 20);
-    assert!(paths.iter().all(|v| matches!(v.kind, ValueKind::Num)));
+    assert!(paths.iter().all(|v| matches!(v.kind, ValueKind::Num(_))));
     assert_eq!(
         &src[paths[19].span.lo as usize..paths[19].span.hi as usize],
         "19"
