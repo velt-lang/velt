@@ -292,6 +292,9 @@ impl FnLower<'_, '_> {
             ));
         }
         self.cx.assert_live(d);
+        if let Some(c) = g.c_const {
+            return self.c_const(d, c, g.ty);
+        }
         if let Some(slot) = g.slot {
             // A module-level `let`: its slot, read in place (sema shares what it moves out).
             return Operand::Copy(self.module_slot(slot));
@@ -445,7 +448,16 @@ impl FnLower<'_, '_> {
                     return None;
                 };
                 let from = self.vty(g.ty);
-                self.table_const(&g.init, from, depth + 1)?
+                match g.c_const {
+                    // Its value, or (no value on this target) no table: its read is the error.
+                    Some(c) => match c.value? {
+                        hir::CValue::Int(v) => Const::Int(v),
+                        hir::CValue::Float(v) => Const::Float(v),
+                        hir::CValue::Bool(v) => Const::Bool(v),
+                        hir::CValue::Address(_) => return None,
+                    },
+                    None => self.table_const(&g.init, from, depth + 1)?,
+                }
             }
             _ => return None,
         };

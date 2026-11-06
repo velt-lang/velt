@@ -81,6 +81,7 @@ fn expand(item: ast::Item) -> Vec<ast::Item> {
         pattern: v.pattern.clone(),
         ty: v.ty.clone(),
         init: Some(init.clone()),
+        c_const: false,
         span,
     };
     let result = names
@@ -136,6 +137,7 @@ fn expand(item: ast::Item) -> Vec<ast::Item> {
                 pattern: pattern(ast::PatternKind::Ident(name.clone()), name.span),
                 ty: None,
                 init: Some(read),
+                c_const: false,
                 span,
             }),
             exported: item.exported,
@@ -153,6 +155,7 @@ fn constant(name: &ast::Ident, init: ast::Expr, span: Span, item: Span) -> ast::
             pattern: pattern(ast::PatternKind::Ident(name.clone()), name.span),
             ty: None,
             init: Some(init),
+            c_const: false,
             span,
         }),
         exported: false,

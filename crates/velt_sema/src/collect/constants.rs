@@ -32,9 +32,11 @@ pub(super) fn declare_statics<'m>(cx: &mut Ctx<'m>, m: usize, owner: DefId, t: &
                 span: f.span,
                 owner: Some(owner),
                 is_private: f.is_private,
+                c_const: false,
             },
             mutable: !f.readonly,
             stored: !f.readonly,
+            c_const: None,
         };
         let g = cx.alloc_def(f.name.span, DefInfo::Global(Box::new(info)));
         if cx
@@ -77,14 +79,16 @@ pub(super) fn global_info<'m>(
             span: v.span,
             owner: None,
             is_private: false,
+            c_const: v.c_const,
         },
         mutable: v.kind == ast::VarKind::Let,
         // A `const` moved out of an imported module's statements is kept as they would keep it
         // (`module_chunks`). `export default expr;` (the constant `default`) is evaluated once,
         // in module order, as in Node, whatever its initializer (#1916).
         stored: v.kind == ast::VarKind::Let
-            || cx.promoted_consts.contains(&v.span)
+            || (cx.promoted_consts.contains(&v.span) && !v.c_const)
             || name.name == "default",
+        c_const: None,
     };
     Some((name, DefInfo::Global(Box::new(info))))
 }

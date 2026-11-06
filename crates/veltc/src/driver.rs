@@ -191,8 +191,8 @@ pub struct Session {
     /// Objects of std functions the program links instead of compiling (`std_cache`).
     pub std_objects: Vec<PathBuf>,
     /// What the source generators the build ran read, as build-stamp `file` entries
-    /// (`crate::generate`): a changed generator rebuilds the program. The package headers its C
-    /// functions were checked against too (`native::c_stamp_inputs`).
+    /// (`crate::generate`): a changed generator rebuilds the program. The C headers of its
+    /// constants and C functions too (`native::read_c_constants`, `native::c_stamp_inputs`).
     pub generator_inputs: Vec<String>,
     /// This builds a source generator host, whose generators must not reach outside the
     /// program (no I/O, clock, randomness or native code: [`check_generator_host`]).
@@ -211,6 +211,8 @@ pub struct Session {
     /// The digests of the C declarations of packages built here that passed the header check,
     /// per package root and library (set by the check; `velt native headers` records them).
     pub c_checked: crate::native::CChecked,
+    /// The `declare c const` values read from headers here, for `c-headers.json`; set by the check.
+    pub c_constants: crate::native::CConstants,
 }
 
 impl Session {
@@ -329,7 +331,7 @@ fn sema_stage(
     };
     let packages = opts.packages.as_ref();
     sess.no_generators |= opts.no_generators;
-    let hir = crate::generate::check(sess, &loaded.modules, loaded.root, sema_opts, packages);
+    let mut hir = crate::generate::check(sess, &loaded.modules, loaded.root, sema_opts, packages);
     sess.native = crate::native::check_trust(
         &loaded.modules,
         &sess.sm,
@@ -337,7 +339,7 @@ fn sema_stage(
         &opts.target(),
         &mut sess.diagnostics,
     );
-    if let Some(hir) = &hir {
+    if let Some(hir) = &mut hir {
         let std_root = loader::std_root();
         let std_files = loaded
             .modules
@@ -345,6 +347,15 @@ fn sema_stage(
             .filter(|m| m.is_std)
             .map(|m| m.file)
             .collect();
+        sess.c_constants = crate::native::read_c_constants(
+            hir,
+            &sess.sm,
+            opts.packages.as_ref(),
+            &std_files,
+            &opts.target(),
+            &mut sess.generator_inputs,
+            &mut sess.diagnostics,
+        );
         sess.c_checked = crate::native::check_declares(
             hir,
             &sess.sm,

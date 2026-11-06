@@ -75,6 +75,7 @@ impl FnCx<'_, '_> {
                 ty,
                 init: Some(init),
                 span: syn.at,
+                c_const: false,
             }))
         };
         let operand = if any {

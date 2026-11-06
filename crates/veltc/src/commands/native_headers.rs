@@ -2,7 +2,8 @@
 //! headers"): check the current package's `declare c` functions against their libraries'
 //! headers on every target that has C headers, and record what passed in `c-headers.json`
 //! ([`vpm::c_headers`]), which builds that fetch the package compare their declarations with.
-//! `velt publish` runs it first for a package with C libraries.
+//! The values of its `declare c const`s on each target are recorded there too. `velt publish`
+//! runs it first for a package with C libraries.
 
 use std::path::Path;
 
@@ -29,21 +30,34 @@ const TARGETS: &[&str] = &[
 pub fn native_headers() -> Result<(), String> {
     let root = Project::current_root()?;
     let record = record(&root)?;
-    if record.checked.is_empty() {
+    if record.checked.is_empty() && record.constants.is_empty() {
         style::status(
             "Checked",
-            "nothing: the package declares no C functions to check",
+            "nothing: the package declares no C functions or constants to check",
         );
         return Ok(());
     }
     let libraries: usize = record.checked.values().map(|l| l.len()).max().unwrap_or(0);
+    let constants: usize = record
+        .constants
+        .values()
+        .map(|c| c.values.len())
+        .max()
+        .unwrap_or(0);
+    let targets = record.checked.len().max(record.constants.len());
+    let what = match (libraries, constants) {
+        (l, 0) => format!("{l} C librar{}", if l == 1 { "y" } else { "ies" }),
+        (0, c) => format!("{c} C constant{}", if c == 1 { "" } else { "s" }),
+        (l, c) => format!(
+            "{l} C librar{} and {c} constant{}",
+            if l == 1 { "y" } else { "ies" },
+            if c == 1 { "" } else { "s" }
+        ),
+    };
     style::status(
         "Checked",
         &format!(
-            "{libraries} C librar{} against {} on {} targets; recorded in {}",
-            if libraries == 1 { "y" } else { "ies" },
-            "its headers",
-            record.checked.len(),
+            "{what} against its headers on {targets} targets; recorded in {}",
             vpm::c_headers::FILE
         ),
     );
@@ -76,8 +90,15 @@ pub(super) fn record(root: &Path) -> Result<CHeaders, String> {
         if let Some((_, libraries)) = mine {
             record.checked.insert(zig_target.to_string(), libraries);
         }
+        let constants = sess
+            .c_constants
+            .into_iter()
+            .find(|(r, _)| r.canonicalize().unwrap_or_else(|_| r.clone()) == canonical);
+        if let Some((_, constants)) = constants {
+            record.constants.insert(zig_target.to_string(), constants);
+        }
     }
-    if record.checked.is_empty() {
+    if record.checked.is_empty() && record.constants.is_empty() {
         let _ = std::fs::remove_file(root.join(vpm::c_headers::FILE));
     } else {
         record.write(root)?;

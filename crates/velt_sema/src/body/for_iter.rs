@@ -590,6 +590,7 @@ impl Hidden {
             ty: None,
             init: Some(init),
             span: self.at,
+            c_const: false,
         }))
     }
 

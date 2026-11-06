@@ -162,13 +162,11 @@ pub fn publish(native_artifacts: Option<&Path>, native_only: bool) -> Result<(),
     let manifest = vpm::Manifest::from_dir(&root)?;
     if manifest.c_libraries.is_some() && !native_only {
         let record = super::native_headers::record(&root)?;
-        if !record.checked.is_empty() {
+        let targets = record.checked.len().max(record.constants.len());
+        if targets > 0 {
             style::status(
                 "Checked",
-                &format!(
-                    "C declarations against their headers on {} targets",
-                    record.checked.len()
-                ),
+                &format!("C declarations against their headers on {targets} targets"),
             );
         }
     }

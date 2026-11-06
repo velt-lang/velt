@@ -388,6 +388,9 @@ pub struct VarDecl {
     pub ty: Option<TypeExpr>,
     pub init: Option<Expr>,
     pub span: Span,
+    /// `declare c const NAME: T;` (docs/internals/design/c-ffi.md): a constant whose value comes
+    /// from the C headers of its package, per target. It has a type and no `init`.
+    pub c_const: bool,
 }
 
 #[derive(Clone, Debug)]

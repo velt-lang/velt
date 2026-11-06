@@ -129,6 +129,7 @@ impl FnCx<'_, '_> {
                     ty: None,
                     init: Some(init),
                     span,
+                    c_const: false,
                 };
                 self.var_decl(&v, span, out);
             }
@@ -199,6 +200,7 @@ impl FnCx<'_, '_> {
             ty,
             init: Some(init),
             span,
+            c_const: false,
         };
         self.var_decl(&v, span, out);
         mk(E::Ident(name), span)
@@ -343,6 +345,7 @@ impl FnCx<'_, '_> {
             ty: None,
             init: Some(tmp),
             span,
+            c_const: false,
         };
         self.var_decl(&v, span, out);
     }

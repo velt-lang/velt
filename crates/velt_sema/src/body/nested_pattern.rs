@@ -134,6 +134,7 @@ impl FnCx<'_, '_> {
                 ty: None,
                 init: Some(init),
                 span,
+                c_const: false,
             };
             self.var_decl(&decl, span, out);
         }

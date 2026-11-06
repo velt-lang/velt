@@ -323,9 +323,11 @@ impl FnCx<'_, '_> {
                 span: decl,
                 owner: None,
                 is_private: false,
+                c_const: false,
             },
             mutable: false,
             stored: true,
+            c_const: None,
         };
         let g = self
             .cx

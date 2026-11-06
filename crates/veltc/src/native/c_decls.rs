@@ -7,8 +7,9 @@
 
 use std::collections::HashSet;
 
-use velt_common::{Diagnostic, Diagnostics, FileId, SourceMap};
+use velt_common::{Diagnostic, Diagnostics, FileId, SourceMap, Span};
 use velt_sema::hir;
+use vpm::graph::GraphPackage;
 use vpm::PackageGraph;
 
 /// The platform's C library: every target links it, and it needs no `native.c` entry.
@@ -34,74 +35,23 @@ pub(super) fn check(
     checked: &mut Checked,
     diags: &mut Diagnostics,
 ) {
-    let in_std = std_files.contains(&f.span.file);
-    let file = &sm.get(f.span.file).path;
-    let package = graph.and_then(|g| g.package_of(file));
     let name = velt_vir::system::base_name(&f.symbol);
-    let Some(package) = package.filter(|_| !in_std) else {
-        if !in_std {
-            let around = graph.and_then(|g| g.enclosing_package(file));
-            let why = match around {
-                Some(p) => format!(
-                    "this file is in an npm package under `{}`, which isn't part of it",
-                    p.name
-                ),
-                None => "this file has no package.vlt".to_string(),
-            };
-            diags.push(
-                Diagnostic::error(
-                    format!("`declare c function {name}` is only allowed in a package: {why}"),
-                    f.span,
-                )
-                .with_note(
-                    "put the declaration and a safe API around it in a package (a local one in the workspace works), and import the API",
-                ),
-            );
-        } else if c.library != C_LIBRARY {
+    if std_files.contains(&f.span.file) {
+        if c.library != C_LIBRARY {
             diags.push(Diagnostic::error(
                 format!("ICE: the standard library declares `{name}` in C library `{}`; std names only `c`", c.library),
                 f.span,
             ));
         }
         return;
+    }
+    let what = What {
+        keyword: "function",
+        noun: "function",
     };
-    if !package.has_native_code {
-        if !checked.refused.insert(package.name.clone()) {
-            return;
-        }
-        diags.push(
-            Diagnostic::error(
-                format!(
-                    "package `{}` declares C function `{name}`, but its package.vlt doesn't say it has native code",
-                    package.name
-                ),
-                f.span,
-            )
-            .with_note(
-                "list its C libraries and their headers in `native.c` (`native: { c: { c: { headers: [\"<string.h>\"] } } }` when it calls only the platform's C library, `c`): programs then see it has native code and allow it with `allowNative`",
-            ),
-        );
+    let Some(package) = allowed_package(what, name, f.span, sm, graph, checked, diags) else {
         return;
-    }
-    if graph.is_some_and(|g| !g.allows_native(package)) {
-        if !checked.refused.insert(package.name.clone()) {
-            return;
-        }
-        diags.push(
-            Diagnostic::error(
-                format!(
-                    "package `{}` declares C function `{name}`, and C code runs with no safety net: the program doesn't allow it",
-                    package.name
-                ),
-                f.span,
-            )
-            .with_note(format!(
-                "if you trust it, list it in the program's package.vlt: `allowNative: [\"{}\"]`",
-                package.name
-            )),
-        );
-        return;
-    }
+    };
     if c.library == C_LIBRARY {
         return;
     }
@@ -140,6 +90,113 @@ pub(super) fn check(
             .with_note("add a condition the target has (`native`, `darwin`, `linux`, `win32` or `default`) to its `system` object"),
         );
     }
+}
+
+/// How a kind of C declaration reads in the errors.
+#[derive(Clone, Copy)]
+struct What {
+    /// `declare c <keyword>`.
+    keyword: &'static str,
+    /// `C <noun>`.
+    noun: &'static str,
+}
+
+/// The package of the C declaration `name` at `at` (outside std), when it may be there: in a
+/// package with native code that the program allows.
+fn allowed_package<'g>(
+    what: What,
+    name: &str,
+    at: Span,
+    sm: &SourceMap,
+    graph: Option<&'g PackageGraph>,
+    checked: &mut Checked,
+    diags: &mut Diagnostics,
+) -> Option<&'g GraphPackage> {
+    let What { keyword, noun } = what;
+    let file = &sm.get(at.file).path;
+    let Some(package) = graph.and_then(|g| g.package_of(file)) else {
+        let around = graph.and_then(|g| g.enclosing_package(file));
+        let why = match around {
+            Some(p) => format!(
+                "this file is in an npm package under `{}`, which isn't part of it",
+                p.name
+            ),
+            None => "this file has no package.vlt".to_string(),
+        };
+        diags.push(
+            Diagnostic::error(
+                format!("`declare c {keyword} {name}` is only allowed in a package: {why}"),
+                at,
+            )
+            .with_note(
+                "put the declaration and a safe API around it in a package (a local one in the workspace works), and import the API",
+            ),
+        );
+        return None;
+    };
+    if !package.has_native_code {
+        if !checked.refused.insert(package.name.clone()) {
+            return None;
+        }
+        diags.push(
+            Diagnostic::error(
+                format!(
+                    "package `{}` declares C {noun} `{name}`, but its package.vlt doesn't say it has native code",
+                    package.name
+                ),
+                at,
+            )
+            .with_note(
+                "list its C libraries and their headers in `native.c` (`native: { c: { c: { headers: [\"<string.h>\"] } } }` when it calls only the platform's C library, `c`): programs then see it has native code and allow it with `allowNative`",
+            ),
+        );
+        return None;
+    }
+    if graph.is_some_and(|g| !g.allows_native(package)) {
+        if !checked.refused.insert(package.name.clone()) {
+            return None;
+        }
+        diags.push(
+            Diagnostic::error(
+                format!(
+                    "package `{}` declares C {noun} `{name}`, and C code runs with no safety net: the program doesn't allow it",
+                    package.name
+                ),
+                at,
+            )
+            .with_note(format!(
+                "if you trust it, list it in the program's package.vlt: `allowNative: [\"{}\"]`",
+                package.name
+            )),
+        );
+        return None;
+    }
+    Some(package)
+}
+
+/// Check that C constant `name` at `at` may be there; its package, when so. std has no manifest
+/// to name headers, so it declares none yet (its system numbers stay in Velt until #2187 step 2).
+pub(super) fn check_const<'g>(
+    name: &str,
+    at: Span,
+    sm: &SourceMap,
+    graph: Option<&'g PackageGraph>,
+    std_files: &HashSet<FileId>,
+    checked: &mut Checked,
+    diags: &mut Diagnostics,
+) -> Option<&'g GraphPackage> {
+    if std_files.contains(&at.file) {
+        diags.push(Diagnostic::error(
+            format!("the standard library can't declare C constant `{name}`: it has no manifest naming headers"),
+            at,
+        ));
+        return None;
+    }
+    let what = What {
+        keyword: "const",
+        noun: "constant",
+    };
+    allowed_package(what, name, at, sm, graph, checked, diags)
 }
 
 /// The system libraries (`sqlite3`, `framework:Accelerate`) of the C libraries `program`'s

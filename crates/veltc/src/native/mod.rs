@@ -341,7 +341,10 @@ pub fn links(graph: Option<&PackageGraph>, release: bool) -> Vec<velt_link::Nati
 mod c_decls;
 mod headers;
 pub use c_decls::{link_args as c_link_args, links as c_links};
-pub use headers::{stamp_inputs as c_stamp_inputs, zig_target, Checked as CChecked};
+pub use headers::{
+    read_constants as read_c_constants, stamp_inputs as c_stamp_inputs, zig_target,
+    Checked as CChecked, Constants as CConstants,
+};
 pub use report::note_checked;
 mod report;
 mod system;

@@ -2,7 +2,7 @@
 //! call with the target's C calling convention, the arguments as the declaration types them,
 //! and `errno` captured right after it, as for system functions (`lastOsError()` reads it). A
 //! target without native code (WebAssembly) can't call one: an error once lowering is done
-//! (system.rs `unavailable_diagnostics`).
+//! (system.rs `unavailable_diagnostics`). C constants (`declare c const`) are read here too.
 
 use velt_sema::hir::{self, CTy, DefId, IntTy, TyId, TyKind};
 
@@ -219,6 +219,35 @@ impl FnLower<'_, '_> {
                 }
             }
             _ => result,
+        }
+    }
+
+    /// A read of the C constant `d` of type `ty` (`declare c const`): its value for this target,
+    /// which C headers gave. A target without C headers can't read one: an error once lowering
+    /// is done (system.rs `unavailable_diagnostics`).
+    pub(super) fn c_const(&mut self, d: DefId, c: hir::CConst, ty: TyId) -> Operand {
+        let t = self.sub(ty);
+        let vt = self.cx.ty(t);
+        match c.value {
+            None => {
+                self.cx
+                    .unavailable
+                    .push((d, self.cx.cur_def, self.cx.user_site));
+                match vt {
+                    Ty::Unit => unit(),
+                    vt => Operand::Copy(Place::local(self.temp(vt))),
+                }
+            }
+            Some(hir::CValue::Int(v)) => cint(v, vt),
+            Some(hir::CValue::Float(v)) => Operand::Const(vir::Const::Float(v), vt),
+            Some(hir::CValue::Bool(v)) => Operand::Const(vir::Const::Bool(v), vt),
+            Some(hir::CValue::Address(a)) => {
+                let nullable = matches!(c.ty, CTy::Ptr { nullable: true });
+                let hook = if nullable { PTR_OR_NULL } else { PTR_OF };
+                let targ = self.ptr_target(ty);
+                let d = self.ffi_hook(hook);
+                self.call_def(d, vec![targ], vec![cint(i128::from(a), Ty::U64)], &[])
+            }
         }
     }
 

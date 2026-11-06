@@ -612,6 +612,24 @@ impl super::Cx<'_> {
         let mut seen_sites = rustc_hash::FxHashSet::default();
         let mut out = vec![];
         for &(d, caller, site) in &self.unavailable {
+            if let hir::Def::Global(g) = self.hir.def(d) {
+                if seen_decls.insert(d) {
+                    out.push(
+                        velt_common::Diagnostic::error(
+                            format!(
+                                "C constant `{}` is not available on {}",
+                                g.name.rsplit("::").next().unwrap_or(&g.name),
+                                self.target
+                            ),
+                            g.span,
+                        )
+                        .with_note(
+                            "C constants come from C headers per target: this target has none",
+                        ),
+                    );
+                }
+                continue;
+            }
             let hir::Def::ExternFn(x) = self.hir.def(d) else {
                 continue;
             };

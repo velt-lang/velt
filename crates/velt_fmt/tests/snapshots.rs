@@ -589,6 +589,14 @@ fn c_declarations_that_ask_for_errno() {
 }
 
 #[test]
+fn c_constants() {
+    assert_fmt(
+        "declare  c  const SQLITE_OK:i32\nexport declare c const SQLITE_TRANSIENT : Ptr<void>;\n",
+        "declare c const SQLITE_OK: i32;\nexport declare c const SQLITE_TRANSIENT: Ptr<void>;\n",
+    );
+}
+
+#[test]
 fn c_types() {
     assert_fmt(
         "declare  c  type sqlite3\nexport declare c type sqlite3_stmt;\n",

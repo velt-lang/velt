@@ -238,9 +238,9 @@ pub(crate) fn ensure_global(cx: &mut Ctx, d: DefId) {
     if let (Some(t), DefInfo::Global(g)) = (ann, &mut fcx.cx.info[d.0 as usize]) {
         g.ty = t;
     }
-    let own_symbol = fcx.cx.symbol_init(d, ann);
+    let made = fcx.cx.made_init(d, ann);
     let init = match (init_expr, ann) {
-        _ if own_symbol.is_some() => own_symbol,
+        _ if made.is_some() => made,
         (Some(e), Some(t)) => Some(fcx.expr_coerce(e, t, Want::Move)),
         (Some(e), None) => {
             self_typed(&mut fcx, d, e);

@@ -94,6 +94,7 @@ impl<'a> Parser<'a> {
                 ty: Some(class),
                 init: Some(init),
                 span,
+                c_const: false,
             }),
             exported: false,
             span,

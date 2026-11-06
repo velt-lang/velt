@@ -78,29 +78,29 @@ pub(super) fn compare_record(
             );
         }
     }
-    compare_headers(package, library, recorded, listed, zig_target, at, diags);
+    let of = format!("of C library `{library}` in package `{name}`");
+    let headers = &recorded.headers;
+    compare_headers(package, &of, headers, listed, zig_target, at, diags);
     (diags.len() == before).then(|| recorded.clone())
 }
 
-/// Compare the headers of a fetched package with those its author's check read. A git checkout
-/// has them all, so one missing is an error; a registry archive doesn't ship `native/`, so there
-/// only what is present can be compared (docs/internals/design/c-ffi.md).
-fn compare_headers(
+/// Compare the headers of a fetched package with those its author's check read (`recorded`,
+/// the headers `of` a library or the constants, as messages say). A git checkout has them all,
+/// so one missing is an error; a registry archive doesn't ship `native/`, so there only what is
+/// present can be compared (docs/internals/design/c-ffi.md).
+pub(super) fn compare_headers(
     package: &GraphPackage,
-    library: &str,
-    recorded: &LibraryRecord,
+    of: &str,
+    recorded: &BTreeMap<String, String>,
     listed: &[String],
     zig_target: &str,
     at: Span,
     diags: &mut Diagnostics,
 ) {
-    let name = &package.name;
     let mut refuse = |header: &str, what: &str| {
         diags.push(
             Diagnostic::error(
-                format!(
-                    "header `{header}` of C library `{library}` in package `{name}` {what} for {zig_target}"
-                ),
+                format!("header `{header}` {of} {what} for {zig_target}"),
                 at,
             )
             .with_note(format!(
@@ -108,7 +108,7 @@ fn compare_headers(
             )),
         );
     };
-    for (header, digest) in &recorded.headers {
+    for (header, digest) in recorded {
         // The record is the package's: nothing it names outside the package is read.
         let inside = Path::new(header)
             .components()
@@ -127,7 +127,7 @@ fn compare_headers(
     }
     for header in listed.iter().filter(|h| !h.starts_with('<')) {
         let here = package.checkout || package.root.join(header).is_file();
-        if here && !recorded.headers.contains_key(header) {
+        if here && !recorded.contains_key(header) {
             refuse(header, "is listed, but its author didn't check it");
         }
     }
@@ -154,6 +154,14 @@ pub(super) fn library_record(
     decls: &[Decl],
     read: &[(PathBuf, String)],
 ) -> LibraryRecord {
+    LibraryRecord {
+        declarations: decls.iter().map(declaration_digest).collect(),
+        headers: package_headers(root, read),
+    }
+}
+
+/// The files of `read` that are in the package at `root`: `/`-separated path in it → digest.
+pub(super) fn package_headers(root: &Path, read: &[(PathBuf, String)]) -> BTreeMap<String, String> {
     let canonical = |p: &Path| p.canonicalize().unwrap_or_else(|_| p.to_path_buf());
     let package = canonical(root);
     let mut headers = BTreeMap::new();
@@ -167,10 +175,7 @@ pub(super) fn library_record(
             headers.insert(parts.join("/"), digest.clone());
         }
     }
-    LibraryRecord {
-        declarations: decls.iter().map(declaration_digest).collect(),
-        headers,
-    }
+    headers
 }
 
 #[cfg(test)]

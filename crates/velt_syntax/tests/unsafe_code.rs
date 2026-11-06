@@ -217,6 +217,21 @@ fn c_declarations() {
 
 #[test]
 fn c_types() {
+    let m =
+        parse_ok("declare c const A: i32;\nexport declare c const B: Ptr<void> | null\nlet c = 1;");
+    assert!(m.items[1].exported);
+    let ItemKind::Var(a) = &m.items[0].kind else {
+        panic!("{:?}", m.items[0].kind)
+    };
+    assert!(a.c_const && a.ty.is_some() && a.init.is_none() && a.kind == VarKind::Const);
+    let ItemKind::Var(c) = &m.items[2].kind else {
+        panic!("{:?}", m.items[2].kind)
+    };
+    assert!(!c.c_const);
+    let e = errors("declare c const A: i32 = 5;");
+    assert!(e[0].contains("it has no initializer"), "{e:?}");
+    let e = errors("declare c const A;");
+    assert!(e[0].contains("a C constant says its type"), "{e:?}");
     let m = parse_ok("declare c type sqlite3;\nexport declare c type sqlite3_stmt;");
     let names: Vec<(String, bool)> = m
         .items

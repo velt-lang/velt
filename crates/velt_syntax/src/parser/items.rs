@@ -153,6 +153,7 @@ impl<'a> Parser<'a> {
                 ItemKind::Function(self.parse_generated_decl(lo)?)
             }
             Some(Kw::Declare) if self.at_c_type() => ItemKind::Class(self.parse_c_type()?),
+            Some(Kw::Declare) if self.at_c_const() => ItemKind::Var(self.parse_c_const(lo)?),
             Some(Kw::Declare) if self.at_c_decl() => ItemKind::ExternFn(self.parse_c_decl(lo)?),
             Some(Kw::Declare) if self.nth_word(1, "host") && self.nth(2) == Tok::LParen => {
                 ItemKind::ExternFn(self.parse_host_decl(lo)?)
@@ -791,6 +792,7 @@ impl<'a> Parser<'a> {
             ty,
             init,
             span: self.span_from(lo),
+            c_const: false,
         })
     }
 }

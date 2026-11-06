@@ -3,7 +3,7 @@
 
 use velt_common::Span;
 
-use super::{DefId, Expr, TyId};
+use super::{CTy, DefId, Expr, TyId};
 
 /// Module-level `let`s: one slot each in a process-wide tuple (hir_encodings.md "Module state").
 #[derive(Clone, Debug)]
@@ -30,4 +30,26 @@ pub struct GlobalDef {
     /// The slot of a module-level `let` in `Program::module_state`: `Global(d)` is then a place
     /// that is read, written and borrowed like a field.
     pub slot: Option<u32>,
+    /// `declare c const` (docs/internals/design/c-ffi.md): `init` is a placeholder, and lowering
+    /// reads the value the C headers gave. Additive.
+    pub c_const: Option<CConst>,
+}
+
+/// A C constant: what it crosses as, and its value on the build's target, which the compiler
+/// driver sets after sema from the package's C headers or its record of them. `None`: this
+/// target has no C headers (WebAssembly), and reading it is an error once lowering is done.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CConst {
+    pub ty: CTy,
+    pub value: Option<CValue>,
+}
+
+/// The value of a C constant.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum CValue {
+    Int(i128),
+    /// A `float` is widened.
+    Float(f64),
+    Bool(bool),
+    Address(u64),
 }

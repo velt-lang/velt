@@ -418,6 +418,7 @@ impl FnCx<'_, '_> {
                 ty: None,
                 init: Some(syn.name(&syn.value)),
                 span: p.pattern.span,
+                c_const: false,
             }),
             span: p.pattern.span,
         };
@@ -522,6 +523,7 @@ fn item_loop(
             ty: None,
             init: Some(read),
             span: at,
+            c_const: false,
         }),
         span: at,
     };
