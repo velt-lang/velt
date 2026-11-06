@@ -8,8 +8,8 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::ctx::Ctx;
 use crate::hir::{
-    AdtKind, Callee, Def, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, Pat, PatKind,
-    Stmt, StmtKind as S, TyId, TyKind,
+    AdtKind, Callee, DefId, Expr, ExprKind as E, FnDef, Intrinsic, LocalId, Pat, PatKind, Stmt,
+    StmtKind as S, TyId, TyKind,
 };
 use crate::ownership::local_closures::walk::{self, Visit};
 
@@ -46,14 +46,8 @@ pub(super) fn reached_locals(cx: &mut Ctx, f: &FnDef, roots: &Roots, memo: &mut 
     // the body, also for a long chain of assignments in a loop).
     let mut readers: FxHashMap<LocalId, Vec<usize>> = FxHashMap::default();
     for (i, (_, from, _)) in binds.iter().enumerate() {
-        let (mut read, mut made) = (vec![], vec![]);
-        walk::expr(from, &mut Reads(&mut read, &mut made));
-        // A closure made or a function called here reads what it captured.
-        for d in made {
-            if let Some(Def::Fn(k)) = &cx.defs[d.0 as usize] {
-                read.extend(k.captures.iter().map(|c| c.outer));
-            }
-        }
+        let mut read = vec![];
+        walk::expr(from, &mut Reads(&mut read));
         read.sort_by_key(|l| l.0);
         read.dedup();
         for l in read {
@@ -89,18 +83,12 @@ pub(super) fn reached_locals(cx: &mut Ctx, f: &FnDef, roots: &Roots, memo: &mut 
 }
 
 /// The locals an expression reads.
-struct Reads<'a>(&'a mut Vec<LocalId>, &'a mut Vec<DefId>);
+struct Reads<'a>(&'a mut Vec<LocalId>);
 
 impl Visit for Reads<'_> {
     fn expr(&mut self, e: &Expr) {
-        match &e.kind {
-            E::Local(l, _) => self.0.push(*l),
-            E::Closure(c) => self.1.push(*c),
-            E::Call {
-                callee: Callee::Def(d, _),
-                ..
-            } => self.1.push(*d),
-            _ => {}
+        if let E::Local(l, _) = e.kind {
+            self.0.push(l);
         }
     }
 }
@@ -186,9 +174,7 @@ pub(super) fn reaches(
     }
     match &e.kind {
         E::Local(l, _) => taint.get(l).copied(),
-        // A closure handing out a buffer it captured, or a view over one: its result is that buffer.
-        E::Closure(c) => held_through(cx, *c, taint, memo),
-        E::Lit(_) | E::Global(_) | E::FnRef(..) => None,
+        E::Closure(_) | E::Lit(_) | E::Global(_) | E::FnRef(..) => None,
         E::Block(b) => b.value.as_deref().and_then(|v| reaches(cx, v, taint, memo)),
         // A conversion keeps the value: a new value converted to an `any` or an interface
         // (`f(ctx)` through `any`) is still the request's own.
@@ -230,11 +216,6 @@ pub(super) fn reaches(
             }
             Some((r, !own))
         }
-        // A function declared in the body, called by name: as a closure handing out what it captured.
-        E::Call {
-            callee: Callee::Def(d, _),
-            ..
-        } if held_through(cx, *d, taint, memo).is_some() => held_through(cx, *d, taint, memo),
         _ => {
             let mut found: Option<(Root, bool)> = None;
             walk::children(e, &mut |x| {
@@ -248,18 +229,6 @@ pub(super) fn reaches(
             Some((r, !fresh(cx, e, memo)))
         }
     }
-}
-
-/// What the closure or function `c` hands out, if it hands out a reached capture (`hands_out_held`).
-fn held_through(cx: &mut Ctx, c: DefId, taint: &Roots, memo: &mut Memo) -> Option<(Root, bool)> {
-    if !hands_out_held(cx, c, memo) {
-        return None;
-    }
-    let Some(Def::Fn(f)) = &cx.defs[c.0 as usize] else {
-        return None;
-    };
-    let found = f.captures.iter().find_map(|k| taint.get(&k.outer).copied());
-    found.map(|(r, _)| (r, true))
 }
 
 const VIEWS: &[&str] = &[
@@ -278,7 +247,7 @@ const VIEWS: &[&str] = &[
     "DataView",
 ];
 
-fn is_view(cx: &Ctx, t: TyId) -> bool {
+pub(super) fn is_view(cx: &Ctx, t: TyId) -> bool {
     matches!(cx.ty.kind(t), TyKind::Adt(d, _) if cx.std_class(*d, VIEWS))
 }
 
@@ -353,50 +322,9 @@ pub(super) fn reads_buffer(cx: &Ctx, callee: &Callee, args: &[Expr]) -> bool {
         .is_some_and(|(n, _)| matches!(n.as_str(), "buffer" | "byteLength" | "byteOffset"))
 }
 
-/// Does closure `d`, which returns a buffer or a view, return what it captured or was given, or a
-/// view over that? `fresh` would call its result new, as its body may be a `new`.
-fn hands_out_held(cx: &mut Ctx, d: DefId, memo: &mut Memo) -> bool {
-    let wanted = matches!(&cx.defs[d.0 as usize], Some(Def::Fn(f))
-        if !f.captures.is_empty() && (is_view(cx, f.ret) || is_buffer(cx, f.ret)));
-    if !wanted {
-        return false;
-    }
-    let Some(Def::Fn(f)) = cx.defs[d.0 as usize].take() else {
-        return false;
-    };
-    let roots: Roots = (f.params.iter())
-        .map(|p| {
-            let ty = f.body.locals[p.local.0 as usize].ty;
-            (p.local, (Root { local: p.local, ty }, true))
-        })
-        .collect();
-    let taint = reached_locals(cx, &f, &roots, memo);
-    let mut results: Vec<Expr> = f.body.block.value.as_deref().cloned().into_iter().collect();
-    struct Returns<'a>(&'a mut Vec<Expr>);
-    impl Visit for Returns<'_> {
-        fn stmt(&mut self, s: &Stmt) {
-            if let S::Return(Some(x)) = &s.kind {
-                self.0.push(x.clone());
-            }
-        }
-    }
-    walk::block(&f.body.block, &mut Returns(&mut results));
-    let held = results
-        .iter()
-        .any(|r| reaches(cx, r, &taint, memo).is_some_and(|(_, direct)| direct));
-    cx.defs[d.0 as usize] = Some(Def::Fn(f));
-    held
-}
-
 /// Is `e` a new value: `new`, a literal, a builtin copy, a call of a function that returns new
 /// values (`crate::fresh_returns`), or a library call that returns a copy ([`FRESH`])?
 pub(super) fn fresh(cx: &mut Ctx, e: &Expr, memo: &mut Memo) -> bool {
-    // Stored in a field (fed.rs): a view over a buffer that isn't new here isn't a new value.
-    if let Some(x) = viewed_buffer(cx, e) {
-        if !fresh(cx, &x, memo) {
-            return false;
-        }
-    }
     // `new` always makes a new object (whatever its constructor keeps), as a literal and a
     // spread object (`{ ...cfg }` in a generic function) do.
     if matches!(

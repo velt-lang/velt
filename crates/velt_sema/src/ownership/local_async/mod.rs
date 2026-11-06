@@ -45,6 +45,7 @@ mod record;
 mod targets;
 mod types;
 mod values;
+mod views;
 
 use rustc_hash::FxHashMap;
 

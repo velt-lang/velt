@@ -56,7 +56,7 @@ pub(crate) struct Crossing {
     pub label: String,
 }
 
-/// Bodies deeper than this are not followed (a change found deeper is not reported).
+/// Bodies deeper than this are not followed.
 const MAX_DEPTH: u32 = 48;
 
 /// Library methods that take their receiver mutably without changing what a program reads of
@@ -258,9 +258,8 @@ pub(super) struct Memo {
     pub via_site: Option<super::keyed::Site>,
 }
 
-/// One change found in a body: (root, where, the place written, the call it goes through).
-/// The last part: where a field fed by key on the way got the captured value (keyed.rs).
-type Found = (
+/// One change in a body: (root, where, the place written, the call, where a field fed by key got it).
+pub(super) type Found = (
     LocalId,
     Span,
     String,
@@ -284,6 +283,7 @@ pub(super) fn changes(
         return;
     }
     let taint = reached_locals(cx, f, roots, memo);
+    super::views::held_views(cx, f, &taint, memo, out);
     let mut events = vec![];
     walk::block(&f.body.block, &mut Events(&mut events));
     let names: Vec<String> = f.body.locals.iter().map(|l| l.name.clone()).collect();
