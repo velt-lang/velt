@@ -199,9 +199,8 @@ pub(crate) fn cpu_macros(
         )),
         Ran::NotStarted(e) => Err(format!("codegen: cannot run `{}`: {e}", clang.display())),
         Ran::TimedOut => Err(format!(
-            "codegen: `{}` did not say what `{flag}={cpu}` has within {} s",
+            "codegen: `{}` did not say what `{flag}={cpu}` has within {limit:?}",
             clang.display(),
-            limit.as_secs()
         )),
     }
 }

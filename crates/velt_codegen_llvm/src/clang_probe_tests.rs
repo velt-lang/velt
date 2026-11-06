@@ -1,10 +1,13 @@
 use std::collections::HashMap;
+#[cfg(unix)]
 use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::{symlink, PermissionsExt};
 use std::sync::Mutex;
+#[cfg(unix)]
 use std::time::Instant;
 
+#[cfg(unix)]
 use crate::clang_run::MOST_OUTPUT;
 
 use super::*;
