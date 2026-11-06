@@ -19,6 +19,28 @@ const E_IS_R_SIG =
   "30440220471c3e758c4904285bba7e53118ed0f524adeb0757d25bd2f8e7b0d76dfa714c02201ab01dd8c7986e" +
   "701d9b3e8309260983824fbc63a2a8153dc7b0b661def5a045";
 
+// Digests of other lengths, signed by this key: a longer one counts by its leftmost 32 bytes, a
+// shorter one as that number (SEC 1 §4.1.3).
+const DIGEST_KEY =
+  "04001d7b94d7f3547d3f5519d24f39b38f57178cfaeefe641661ff3d9691d76d87" +
+  "d388d291f9897ca121070e8274d9bbcad8847df3c86e93b224b92aa9c3baf801";
+const DIGEST_64 =
+  "498e41a3d755a2d42804a50dd9fd483735232bf93f29ad125e76a3509a872cdc" +
+  "446592f4e51aca0d2abb8ab16ff0437160f39974e05f914ea9244b2fada0724a";
+const DIGEST_64_SIG =
+  "304402200d3637d9b8270d3410176e387e0dc4eab8e01833c2ff47fd86705386041c4337" +
+  "02201fe1d5422d4ebcf73559b6f8e6ae3df6fbae41829bbe5d367da7e3722a0040cb";
+const DIGEST_31 = "faef2d2b4d5f3c8bcc5be978cfa32fa932b6ff9c77d6a2355041d8f0e40b09";
+const DIGEST_31_SIG =
+  "3045022100cb89abb2fe30f1c67d433a344fd13dbca8dcfbe3706ca048676d64d84cea6702" +
+  "02200942d35ca24c6963ed1f2ee1267ee5086319f15425a34d4e2e471f82be868871";
+const DIGEST_EMPTY_SIG =
+  "3046022100b827f42c8d83de18b36f50390a84fb54f68182c344f7b57daeb310e350ebb64b" +
+  "0221008afed1b7d0d6a862389630e6dd104d9c79904eb24bf5ae85c29df91cb8241627";
+
+// The digest of the two signatures whose r + n is at or past p.
+const EDGE_DIGEST = "00000000000000000000000000000000000000000000000000000000000002a6";
+
 function bytes(s: string): u8[] {
   return s == "-" ? [] : hexDecode(s);
 }
@@ -70,5 +92,46 @@ describe("p256Verify", () => {
     // r (top bit clear) written as 33 bytes with a leading zero: BER, not DER.
     const ber = "3045022100" + E_IS_R_SIG.slice(8);
     expect(p256Verify(hexDecode(G_KEY), hexDecode(E_IS_R), hexDecode(ber))).toBe(false);
+  });
+
+  it("reads a longer digest by its leftmost 32 bytes", () => {
+    const key = hexDecode(DIGEST_KEY);
+    const sig = hexDecode(DIGEST_64_SIG);
+    const digest = hexDecode(DIGEST_64);
+    expect(p256Verify(key, digest, sig)).toBe(true);
+    digest[31] ^= 1;
+    expect(p256Verify(key, digest, sig)).toBe(false);
+  });
+
+  it("reads a shorter digest as that number", () => {
+    const key = hexDecode(DIGEST_KEY);
+    expect(p256Verify(key, hexDecode(DIGEST_31), hexDecode(DIGEST_31_SIG))).toBe(true);
+    expect(p256Verify(key, [], hexDecode(DIGEST_EMPTY_SIG))).toBe(true);
+  });
+
+  it("refuses r = p - n when R's x is 0: r + n is p, not 0", () => {
+    const key =
+      "04b8df54fbdd6c1ddc5f72a35f1c933feac7dc07f51ede4639c13a232b84393523" +
+      "8529b29692a605554ab926402c0d0fc3f6525bcaecfdf172a5f98422d05fc43f";
+    const sig = "301602104319055358e8617b0c46353d039cdaae02023039";
+    expect(p256Verify(hexDecode(key), hexDecode(EDGE_DIGEST), hexDecode(sig))).toBe(false);
+  });
+
+  it("refuses r above p - n whose r + n wraps past p to R's x", () => {
+    const key =
+      "04f5d5281523730ee21cde6e238cffb5481a7de1be6259fd02f7e247fed5947095" +
+      "16ed269bd55633ca0fd357efd44fcba5492bc8f2562ce63b4902c27bb431e0d6";
+    const sig = "30170211010000000000000000000000000000000202023039";
+    expect(p256Verify(hexDecode(key), hexDecode(EDGE_DIGEST), hexDecode(sig))).toBe(false);
+  });
+
+  it("adds two points that share a y but not an x, without doubling", () => {
+    // The key has G's y and another x.
+    const key =
+      "0465488bd7e2ef08a7b94e915132548f1bfc403a781b58b462f555794f39ba8ac7" +
+      "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5";
+    const e = "2f9fa2343be4b5114df487c96a072ff18cbc4807b6bc17fc16094d6aedacb2a2";
+    const sig = `30440220${e}0220${e}`;
+    expect(p256Verify(hexDecode(key), hexDecode(e), hexDecode(sig))).toBe(true);
   });
 });
