@@ -1,0 +1,250 @@
+// The Brotli encoder (velt/compress `brotliCompress`, `BrotliEncoding`): what std's decoder reads
+// back, one-shot and streamed with flushes, the stream's edges, and its qualities. Node's decoder
+// reads the same streams in tests/std/compress/interop/brotli_run.sh (not in the suite).
+import {
+  BrotliDecoder,
+  brotliCompress,
+  brotliDecompress,
+  BrotliEncoding,
+  CompressError,
+  CompressionLevel,
+} from "velt/compress";
+import { describe, expect, it } from "velt/test";
+
+/** `n` bytes of a fixed xorshift sequence, each byte taken modulo `alphabet`. */
+function noise(n: i64, alphabet: u32, seed: u32): u8[] {
+  const out: u8[] = [];
+  let x = seed;
+  for (let i: i64 = 0; i < n; i++) {
+    x ^= x << 13;
+    x ^= x >> 17;
+    x ^= x << 5;
+    out.push((x % alphabet) as u8);
+  }
+  return out;
+}
+
+function text(n: i64): u8[] {
+  const words = [
+    "the",
+    "window",
+    "slides",
+    "down",
+    "and",
+    "a",
+    "match",
+    "is",
+    "found",
+    "or",
+    "not",
+  ];
+  let s = "";
+  let x: u32 = 7;
+  while (s.length < (n as usize)) {
+    x = x * 1103515245 + 12345;
+    s += words[((x >> 16) % 11) as i64] + ((x >> 8) % 9 == 0 ? ".\n" : " ");
+  }
+  const out: u8[] = [];
+  for (let i: i64 = 0; i < n; i++) {
+    out.push(s.charCodeAt(i) as u8);
+  }
+  return out;
+}
+
+/** A random block, text, the block again past a meta-block, and once more: far matches. */
+function farRepeat(): u8[] {
+  const block = noise(20000, 256, 9);
+  return block.concat(text(1100000)).concat(block).concat(text(5000)).concat(block);
+}
+
+function same(a: u8[], b: u8[]): bool {
+  if (a.length != b.length) {
+    return false;
+  }
+  for (let i: usize = 0; i < a.length; i++) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** Everything `d` can output now. */
+function drain(d: BrotliDecoder): u8[] {
+  let out: u8[] = [];
+  while (true) {
+    const chunk = d.read(65536);
+    if (chunk.length == 0) {
+      return out;
+    }
+    out = out.concat(chunk);
+  }
+}
+
+const CORPUS: [string, u8[]][] = [
+  ["empty", []],
+  ["one byte", [42]],
+  ["two bytes", [1, 2]],
+  ["one symbol", noise(3000, 1, 1)],
+  ["two symbols", noise(3000, 2, 2)],
+  ["three symbols", noise(3000, 3, 3)],
+  ["four symbols", noise(3000, 4, 4)],
+  ["five symbols", noise(3000, 5, 5)],
+  ["seventeen symbols", noise(20000, 17, 6)],
+  ["text, 100 KB", text(100000)],
+  ["random, 70 KB", noise(70000, 256, 7)],
+  ["a run of 200 KB", new Array<u8>(200000).fill(97)],
+];
+
+describe("brotli encoder", () => {
+  it("gives the input back through brotliDecompress, at every quality", () => {
+    for (const [name, input] of CORPUS) {
+      for (let q = 0; q <= 11; q++) {
+        const ok = same(brotliDecompress(brotliCompress(input, q)), input);
+        expect(ok ? "" : `${name} at quality ${q}`).toBe("");
+      }
+    }
+  });
+
+  it("gives back several meta-blocks with matches across them", () => {
+    const input = farRepeat();
+    for (const q of [1, 4, 6]) {
+      const ok = same(brotliDecompress(brotliCompress(input, q)), input);
+      expect(ok ? "" : `quality ${q}`).toBe("");
+    }
+  });
+
+  it("gives the same bytes for the same input, whatever ran before it", () => {
+    const t = text(50000).concat(noise(30000, 5, 10));
+    for (const q of [1, 4, 9]) {
+      const first = brotliCompress(t, q);
+      // Other encoders' tables, freed, are the memory the next one may get.
+      brotliCompress(noise(80000, 7, 11), q);
+      brotliCompress(text(90000), q);
+      expect(same(brotliCompress(t, q), first) ? "" : `quality ${q}`).toBe("");
+    }
+  });
+
+  it("writes an empty stream as the reference encoder does", () => {
+    expect(brotliCompress([])).toEqual([6]);
+    const e = new BrotliEncoding().encoder();
+    expect(brotliDecompress(e.finish())).toEqual([]);
+  });
+
+  it("compresses text, more at higher qualities, and stores random bytes", () => {
+    const t = text(100000);
+    const fast = brotliCompress(t, "fastest").length;
+    const optimal = brotliCompress(t).length;
+    const small = brotliCompress(t, 9).length;
+    expect(optimal < fast).toBe(true);
+    expect(small < optimal).toBe(true);
+    expect(small * 4 < t.length).toBe(true);
+    const r = noise(70000, 256, 8);
+    expect(brotliCompress(r).length <= r.length + 8).toBe(true);
+  });
+
+  it("refuses a quality that isn't a whole number from 0 to 11", () => {
+    for (const level of [-1, 12, 2.5, NaN]) {
+      let threw = false;
+      try {
+        brotliCompress([1], level);
+      } catch (e) {
+        threw = e instanceof RangeError;
+      }
+      expect(threw ? "" : `quality ${level}`).toBe("");
+    }
+    const named: CompressionLevel[] = ["fastest", "optimal", "smallest"];
+    for (const level of named) {
+      expect(new BrotliEncoding(level).name).toBe("br");
+    }
+  });
+});
+
+describe("BrotliEncoding", () => {
+  it("outputs everything written so far at each flush, in pieces of any size", () => {
+    const input = text(60000).concat(noise(50000, 4, 5)).concat(noise(20000, 256, 6));
+    const steps: i64[] = [1, 7, 4099, 70000];
+    for (const step of steps) {
+      for (const q of [0, 4, 9]) {
+        const e = new BrotliEncoding(q).encoder();
+        const d = new BrotliDecoder();
+        let decoded: u8[] = [];
+        let at: i64 = 0;
+        let pieces = 0;
+        const end = input.length as i64;
+        let ok = true;
+        // A piece of 1 byte is slow in debug builds: 3,000 of them make the point.
+        const stop = step == 1 ? 3000 : end;
+        while (at < stop) {
+          const to = at + step < stop ? at + step : stop;
+          d.feed(e.write(input, at, to));
+          at = to;
+          pieces++;
+          if (pieces % 3 == 0 || at == stop) {
+            d.feed(e.flush());
+            decoded = decoded.concat(drain(d));
+            ok = ok && same(decoded, input.slice(0, at));
+          }
+        }
+        d.feed(e.finish());
+        d.finish();
+        decoded = decoded.concat(drain(d));
+        ok = ok && d.done && same(decoded, input.slice(0, stop));
+        expect(ok ? "" : `pieces of ${step} at quality ${q}`).toBe("");
+      }
+    }
+  });
+
+  it("streams more than its buffer holds, so the window slides", () => {
+    const e = new BrotliEncoding(1).encoder();
+    const chunk = text(1 << 20);
+    let out: u8[] = [];
+    for (let i = 0; i < 8; i++) {
+      out = out.concat(e.write(chunk, 0, chunk.length as i64));
+    }
+    out = out.concat(e.finish());
+    const back = brotliDecompress(out);
+    let ok = back.length == chunk.length * 8;
+    for (let i: usize = 0; ok && i < back.length; i += 4099) {
+      ok = back[i] == chunk[i % chunk.length];
+    }
+    expect(ok).toBe(true);
+  });
+
+  it("gives nothing for a flush with nothing new, and nothing after finish", () => {
+    const e = new BrotliEncoding().encoder();
+    e.write([1, 2, 3], 0, 3);
+    expect(e.flush().length > 0).toBe(true);
+    expect(e.flush()).toEqual([]);
+    expect(e.finish().length > 0).toBe(true);
+    expect(e.finish()).toEqual([]);
+    let threw = false;
+    try {
+      e.write([4], 0, 1);
+    } catch (err) {
+      threw = err instanceof CompressError;
+    }
+    expect(threw).toBe(true);
+  });
+
+  it("refuses a range outside the array, and goes on after it", () => {
+    const ranges: [i64, i64][] = [
+      [0, 50000000],
+      [0, 4],
+      [-1, 2],
+      [2, 1],
+    ];
+    for (const [start, end] of ranges) {
+      const e = new BrotliEncoding().encoder();
+      let threw = false;
+      try {
+        e.write([1, 2, 3], start, end);
+      } catch (err) {
+        threw = err instanceof RangeError;
+      }
+      const out = e.write([1, 2, 3], 0, 3).concat(e.finish());
+      const ok = threw && same(brotliDecompress(out), [1, 2, 3]);
+      expect(ok ? "" : `${start} to ${end}`).toBe("");
+    }
+  });
+});

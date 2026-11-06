@@ -1,0 +1,83 @@
+// Compresses every file of the directory in args[0] into the directory in args[1] with Brotli at
+// qualities 0, 1, 4, 6, 9 and 11: one-shot, in pieces, and in pieces with flushes, as
+// `<file>.<quality>.<kind>`, and checks that std's own decoder gives the input back.
+// brotli_run.sh runs it and has Node's decoder read the output.
+import { brotliCompress, brotliDecompress, BrotliEncoding } from "velt/compress";
+import { openWrite, readDirSync, readFileBytesSync } from "velt/fs";
+import { args, exit } from "velt/process";
+
+function same(a: u8[], b: u8[]): bool {
+  if (a.length != b.length) {
+    return false;
+  }
+  for (let i: usize = 0; i < a.length; i++) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** `input` written in pieces of `step` bytes, flushing every `every` of them. */
+function pieces(input: u8[], step: i64, every: i64, quality: number): u8[] {
+  const e = new BrotliEncoding(quality).encoder();
+  let out: u8[] = [];
+  let at: i64 = 0;
+  let n: i64 = 0;
+  const end = input.length as i64;
+  while (at < end) {
+    const to = at + step < end ? at + step : end;
+    out = out.concat(e.write(input, at, to));
+    at = to;
+    n++;
+    if (every > 0 && n % every == 0) {
+      out = out.concat(e.flush());
+    }
+  }
+  return out.concat(e.finish());
+}
+
+async function save(path: string, bytes: u8[]): Promise<void> {
+  const w = await openWrite(path);
+  await w.writeBytes(bytes);
+  await w.close();
+}
+
+async function main(): Promise<void> {
+  const inDir = args()[0];
+  const outDir = args()[1];
+  let failed = 0;
+  let streams = 0;
+  for (const name of readDirSync(inDir)) {
+    const input = readFileBytesSync(`${inDir}/${name}`);
+    for (const quality of [0, 1, 4, 6, 9, 11]) {
+      const one = brotliCompress(input, quality);
+      const p = pieces(input, 65537, 0, quality);
+      const f = pieces(input, 40961, 7, quality);
+      for (const [kind, bytes] of [
+        ["br", one],
+        ["pieces", p],
+        ["flushed", f],
+      ] as [string, u8[]][]) {
+        let ok = false;
+        try {
+          ok = same(brotliDecompress(bytes), input);
+        } catch (e) {
+          console.log(`std decoder: ${e}`);
+        }
+        if (!ok) {
+          console.log(`std decoder differs: ${name} quality ${quality} ${kind}`);
+          failed++;
+        }
+        await save(`${outDir}/${name}.${quality}.${kind}`, bytes);
+        streams++;
+      }
+    }
+  }
+  console.log(`std decoder: ${streams} streams, ${failed} wrong`);
+  if (failed > 0) {
+    exit(1);
+  }
+}
+
+await main();

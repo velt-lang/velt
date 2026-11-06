@@ -1,0 +1,57 @@
+// velt/compress (internal): the `Encoding` provider of Brotli (`br`), its qualities, and the
+// one-shot function.
+
+import { BrotliEncoder, windowFor } from "velt/compress/brotli/brotli_encoder";
+import { CompressionLevel, Encoder, Encoding } from "velt/compress/encoding";
+
+/** `fastest`, `optimal` and `smallest` are qualities 1, 4 and 11; a number from 0 to 11 is itself. */
+function qualityNumber(level: CompressionLevel): i64 throws RangeError {
+  if (typeof level == "number") {
+    if (!(level >= 0 && level <= 11) || level != Math.floor(level)) {
+      throw new RangeError(`The Brotli quality must be 0 to 11. Received ${level}`);
+    }
+    return level as i64;
+  }
+  if (level == "fastest") {
+    return 1;
+  }
+  if (level == "optimal") {
+    return 4;
+  }
+  if (level == "smallest") {
+    return 11;
+  }
+  // Not reached: a cast to `CompressionLevel` checks the value (a TypeError otherwise).
+  throw new RangeError(`The Brotli quality must be a name or 0 to 11. Received ${level}`);
+}
+
+/**
+ * The provider of Brotli (RFC 7932, the `br` content coding) at a quality: `"fastest"` is 1,
+ * `"optimal"` 4 (for dynamic responses) and `"smallest"` 11, or a whole number from 0 to 11;
+ * another number is a `RangeError`. A stream has a window of 4 MiB. `name` is `"br"`.
+ */
+export class BrotliEncoding implements Encoding {
+  name: string = "br";
+  private quality: i64;
+
+  constructor(level: CompressionLevel = "optimal") throws RangeError {
+    this.quality = qualityNumber(level);
+  }
+
+  /** A new stream at this quality. */
+  encoder(): Encoder {
+    return new BrotliEncoder(this.quality, 22, -1);
+  }
+}
+
+/**
+ * `input` as a Brotli stream, what `brotliDecompress` reads; see `BrotliEncoding` for the level.
+ * The window is the smallest that holds the input, up to 4 MiB.
+ */
+export function brotliCompress(
+  input: u8[],
+  level: CompressionLevel = "optimal",
+): u8[] throws RangeError {
+  const n = input.length as i64;
+  return new BrotliEncoder(qualityNumber(level), windowFor(n), n).all(input);
+}

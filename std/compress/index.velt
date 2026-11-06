@@ -1,5 +1,5 @@
 // velt/compress: compression and decompression written in Velt: gzip, zlib and raw DEFLATE
-// (RFC 1950-1952), one-shot or streamed, and decoding Brotli (RFC 7932).
+// (RFC 1950-1952) and Brotli (RFC 7932), one-shot or streamed.
 // https://veltlang.com/docs/std/compress/.
 
 export { CompressError } from "velt/compress/errors";
@@ -12,6 +12,7 @@ export {
   inflateRaw,
 } from "velt/compress/inflate/inflate_decoder";
 export { BrotliDecoder, brotliDecompress } from "velt/compress/brotli/brotli_decoder";
+export { brotliCompress, BrotliEncoding } from "velt/compress/brotli/brotli_encoding";
 export { CompressionLevel, Encoder, Encoding } from "velt/compress/encoding";
 export { DeflateFormat } from "velt/compress/deflate/deflate_encoder";
 export { deflate, deflateRaw, DeflateEncoding, gzip } from "velt/compress/deflate/deflate_encoding";

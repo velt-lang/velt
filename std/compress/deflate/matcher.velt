@@ -8,6 +8,7 @@
 
 import { BlockWriter } from "velt/compress/deflate/block_writer";
 import { copyBytes } from "velt/lang/bytes/copy";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
 const W_SIZE: i64 = 32768;
 const W_MASK: i64 = 32767;
@@ -37,7 +38,10 @@ const MAX_CHAIN: i64[] = [0, 4, 8, 32, 16, 32, 128, 256, 1024, 4096];
 /** The match finder, writing the symbols it chooses to the block it inherits. */
 export class Matcher extends BlockWriter {
   private head: u16[] = new Array<u16>(HASH_SIZE).fill(0);
-  private prev: u16[] = new Array<u16>(W_SIZE as usize).fill(0);
+  // Not zeroed: a chain only reaches a slot its position's insert wrote, as a slot a later
+  // position took over is past `MAX_DIST` by then, where the walk stops first. Zeroing it was
+  // most of the cost of a small input.
+  private prev: u16[] = unfilled16(W_SIZE as usize);
   /** The window holds input up to `fill`; symbols were chosen up to `pos`. */
   private fill: i64 = 0;
   private pos: i64 = 0;
@@ -305,6 +309,12 @@ export class Matcher extends BlockWriter {
     rebase(this.head);
     rebase(this.prev);
   }
+}
+
+function unfilled16(n: usize): u16[] {
+  const a: u16[] = arrayWithCapacity(n);
+  arraySetLen(a, n);
+  return a;
 }
 
 /** Positions `W_SIZE` lower; those that were below it end the chain. */

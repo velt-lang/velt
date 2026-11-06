@@ -1,0 +1,184 @@
+// velt/compress (internal): one Brotli stream (RFC 7932) being compressed: its header, the input
+// kept for the window, meta-blocks as the input arrives, and the output handed out as it is
+// asked for.
+//
+// Streamed input goes into a buffer that grows to the window plus two meta-blocks and then
+// slides, keeping the window behind the current position. One-shot input is read where it is.
+
+import { Matcher } from "velt/compress/brotli/backward_refs";
+import { Encoder } from "velt/compress/encoding";
+import { CompressError } from "velt/compress/errors";
+import { copyBytes } from "velt/lang/bytes/copy";
+
+/** The most input in one meta-block. */
+const META_LIMIT: i64 = 1 << 20;
+/** Streamed input this far from the end waits for more, so a match can run past it. */
+const LOOKAHEAD: i64 = 4096;
+const MIN_BUFFER: i64 = 65536;
+
+/** The window size, as a power of two, that a one-shot input of `n` bytes needs (16 to 22). */
+export function windowFor(n: i64): i64 {
+  let lgwin: i64 = 16;
+  while (lgwin < 22 && (1 << lgwin) - 16 < n) {
+    lgwin++;
+  }
+  return lgwin;
+}
+
+/** Compresses one stream at a quality from 0 to 11. */
+export class BrotliEncoder extends Matcher implements Encoder {
+  private windowSize: i64;
+  private finished: bool = false;
+  /** Input has come in since the last flush. */
+  private dirty: bool = false;
+
+  /**
+   * A stream with a window of `2^lgwin` bytes (16 to 22); `sizeHint`, the whole input's length
+   * when known, sizes the match finder's table, or -1.
+   */
+  constructor(quality: i64, lgwin: i64, sizeHint: i64) {
+    super(quality, lgwin, sizeHint);
+    this.windowSize = 1 << lgwin;
+    this.room(4);
+    // WBITS (section 9.1): 16 is one bit 0; 17 to 24 are 1 and three bits (17 as 1 000 000).
+    if (lgwin == 16) {
+      this.put(0, 1);
+    } else if (lgwin == 17) {
+      this.put(1, 7);
+    } else {
+      this.put(1, 1);
+      this.put((lgwin - 17) as u64, 3);
+    }
+  }
+
+  /** See `Encoder.write`. */
+  write(bytes: u8[], start: i64, end: i64): u8[] throws CompressError | RangeError {
+    if (this.finished) {
+      throw new CompressError("write after finish");
+    }
+    if (start < 0 || start > end || end > (bytes.length as i64)) {
+      throw new RangeError(
+        `The range ${start} to ${end} is outside an array of ${bytes.length} bytes`,
+      );
+    }
+    let at = start;
+    while (at < end) {
+      if (this.fill == (this.data.length as i64)) {
+        this.makeRoom(end - at);
+      }
+      let n = (this.data.length as i64) - this.fill;
+      if (n > end - at) {
+        n = end - at;
+      }
+      copyBytes(bytes, this.data, this.fill, at, at + n);
+      this.fill += n;
+      at += n;
+      this.dirty = true;
+      this.process(this.fill - LOOKAHEAD);
+    }
+    return this.take();
+  }
+
+  /**
+   * See `Encoder.flush`: the input so far as meta-blocks, then an empty metadata block, after
+   * which the output is on a byte boundary.
+   */
+  flush(): u8[] throws CompressError {
+    if (this.finished) {
+      throw new CompressError("flush after finish");
+    }
+    if (this.dirty) {
+      this.processAll();
+      if (this.pos > this.blockStart) {
+        this.endBlock(false);
+      }
+      this.emptyMetadata();
+      this.dirty = false;
+    }
+    return this.take();
+  }
+
+  /** See `Encoder.finish`. */
+  finish(): u8[] throws CompressError {
+    if (!this.finished) {
+      this.finished = true;
+      this.processAll();
+      if (this.pos > this.blockStart) {
+        this.endBlock(true);
+      } else {
+        this.emptyLast();
+      }
+    }
+    return this.take();
+  }
+
+  /** The whole of `input` as one stream (the one-shot function), read where it is. */
+  all(input: u8[]): u8[] {
+    this.data = input;
+    this.fill = input.length as i64;
+    this.finished = true;
+    this.processAll();
+    if (this.pos > this.blockStart) {
+      this.endBlock(true);
+    } else {
+      this.emptyLast();
+    }
+    return this.take();
+  }
+
+  // Chooses commands up to `stop`, writing each meta-block that fills up.
+  private process(stop: i64) {
+    while (true) {
+      this.choose(stop, META_LIMIT);
+      if (this.pos - this.blockStart < META_LIMIT) {
+        return;
+      }
+      this.endBlock(false);
+    }
+  }
+
+  // All the input taken: the last few bytes, too short for a match, are literals.
+  private processAll() {
+    this.process(this.fill);
+    this.rest();
+  }
+
+  // Writes the current meta-block, its last literals included.
+  private endBlock(last: bool) {
+    this.flushLiterals();
+    const stored = this.writeBlock(this.blockStart, this.pos, last);
+    this.blockWritten(stored);
+    this.blockStart = this.pos;
+  }
+
+  // Room for more input: a bigger buffer, up to the window and two meta-blocks; then the window
+  // slides, dropping what is farther back than it from the current position.
+  private makeRoom(want: i64) {
+    const limit = this.windowSize + 2 * META_LIMIT + LOOKAHEAD;
+    const size = this.data.length as i64;
+    if (size < limit) {
+      let bigger = size * 2;
+      if (bigger < MIN_BUFFER) {
+        bigger = MIN_BUFFER;
+      }
+      if (bigger < this.fill + want) {
+        bigger = this.fill + want;
+      }
+      if (bigger > limit) {
+        bigger = limit;
+      }
+      const grown: u8[] = Buffer.allocUnsafe(bigger as usize);
+      copyBytes(this.data, grown, 0, 0, this.fill);
+      this.data = grown;
+      return;
+    }
+    const drop = this.pos - this.windowSize;
+    if (drop <= 0) {
+      panic("ICE: brotli: the input buffer is full with the window not behind the position");
+    }
+    this.data.copyWithin(0, drop, this.fill);
+    this.base += drop;
+    this.fill -= drop;
+    this.shift(drop);
+  }
+}

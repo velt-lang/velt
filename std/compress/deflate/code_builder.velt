@@ -1,5 +1,6 @@
-// velt/compress (internal): the Huffman codes of a DEFLATE block (RFC 1951 §3.2.2): code lengths
-// from symbol frequencies, limited to the format's maximum, and the codes those lengths define.
+// velt/compress (internal): the Huffman codes of a DEFLATE block (RFC 1951 §3.2.2) or a Brotli
+// meta-block (RFC 7932 section 3.2, the same canonical codes): code lengths from symbol
+// frequencies, limited to the format's maximum, and the codes those lengths define.
 //
 // The symbols are sorted by frequency and the lengths computed in place (Moffat and Katajainen's
 // algorithm), with no heap of tree nodes; a length over the limit is cut and the counts rebalanced
@@ -7,11 +8,16 @@
 // the bits from 16 up: `code | (length << 16)`.
 
 const LENGTH_SHIFT: u32 = 16;
-/** Symbols are kept as `(frequency << 9) | symbol`; a block's frequencies fit in 16 bits. */
-const SYMBOL_BITS: u32 = 9;
-const MAX_SYMBOLS: usize = 286;
-/** Above any depth a block's frequencies can reach (a Fibonacci-like run within 2^16 symbols). */
-const MAX_DEPTH: usize = 32;
+/**
+ * Symbols are kept as `(frequency << 10) | symbol`: frequencies below 2^22 (a DEFLATE block has
+ * at most 16,384 symbols, a Brotli meta-block 2^20 bytes) and alphabets of up to 1,024 symbols.
+ */
+const SYMBOL_BITS: u32 = 10;
+const SYMBOL_MASK: u32 = 1023;
+/** Brotli's insert-and-copy alphabet, the largest. */
+const MAX_SYMBOLS: usize = 704;
+/** Above any depth frequencies below 2^22 can reach (a Fibonacci-like run). */
+const MAX_DEPTH: usize = 40;
 
 /** The length a code entry holds. */
 export function entryLength(entry: u32): u32 {
@@ -67,7 +73,7 @@ export class CodeBuilder {
     let used: i64 = 0;
     for (let len = maxBits; len >= 1; len--) {
       for (let c = count[len]; c > 0; c--) {
-        const s = (keys[i] & 511) as i64;
+        const s = (keys[i] & SYMBOL_MASK) as i64;
         lens[s] = len as u8;
         if (s >= used) {
           used = s + 1;

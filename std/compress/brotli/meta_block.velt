@@ -1,0 +1,236 @@
+// velt/compress (internal): the meta-blocks of the Brotli encoder (RFC 7932 section 9.2): the
+// commands of one, with a prefix code each for its literals, commands and distances, or its bytes
+// stored when that is smaller; and the stream's empty last meta-block and flush marker.
+//
+// Every meta-block has one block type in each category and one literal tree, so it needs no
+// block switches or context map: what the reference encoder writes at its fastest qualities.
+
+import { BitSink } from "velt/compress/brotli/bit_sink";
+import { PrefixWriter } from "velt/compress/brotli/prefix_writer";
+import {
+  commandSymbol,
+  copyCode,
+  copyExtraBits,
+  copyExtraValue,
+  distanceSymbol,
+  insertCode,
+  insertExtraBits,
+  insertExtraValue,
+} from "velt/compress/brotli/encode_codes";
+
+const LITERALS: i64 = 256;
+const COMMANDS: i64 = 704;
+/** 16 short codes and 48 for the distances, with no postfix bits and no direct codes. */
+const DISTANCES: i64 = 64;
+/** The copy length of a meta-block's last command when it only inserts (the decoder stops). */
+const NO_COPY: u64 = 4;
+
+/** The commands of the current meta-block, and how they are written. */
+export class MetaBlock extends BitSink {
+  /** The input the commands' literals and copies are in. */
+  data: u8[] = [];
+  /** Per command: the bytes it inserts, the bytes it copies, and its distance code (-1: none). */
+  private inserts: u32[] = [];
+  private copies: u32[] = [];
+  private dists: i64[] = [];
+  private litFreq: u32[] = new Array<u32>(LITERALS as usize).fill(0);
+  private cmdFreq: u32[] = new Array<u32>(COMMANDS as usize).fill(0);
+  private distFreq: u32[] = new Array<u32>(DISTANCES as usize).fill(0);
+  private litLens: u8[] = new Array<u8>(LITERALS as usize).fill(0);
+  private cmdLens: u8[] = new Array<u8>(COMMANDS as usize).fill(0);
+  private distLens: u8[] = new Array<u8>(DISTANCES as usize).fill(0);
+  private litCodes: u32[] = new Array<u32>(LITERALS as usize).fill(0);
+  private cmdCodes: u32[] = new Array<u32>(COMMANDS as usize).fill(0);
+  private distCodes: u32[] = new Array<u32>(DISTANCES as usize).fill(0);
+  private prefix: PrefixWriter = new PrefixWriter();
+  /** Per command, its symbol (bits 0-9) and distance symbol (10-15); scratch for `write`. */
+  private symbols: u32[] = [];
+  private dist: u64[] = [0, 0, 0];
+
+  constructor() {
+    super();
+  }
+
+  /** The commands so far. */
+  get commands(): i64 {
+    return this.inserts.length as i64;
+  }
+
+  /** Adds a command: `insert` literals, then `copy` bytes from distance code `code`. */
+  command(insert: i64, copy: i64, code: i64) {
+    this.inserts.push(insert as u32);
+    this.copies.push(copy as u32);
+    this.dists.push(code);
+  }
+
+  /** Adds the last command of a meta-block, which only inserts `insert` literals. */
+  insertOnly(insert: i64) {
+    this.inserts.push(insert as u32);
+    this.copies.push(NO_COPY as u32);
+    this.dists.push(-1);
+  }
+
+  /** The header of a meta-block of `length` bytes, up to the bit that says stored or not. */
+  private header(length: i64, last: bool) {
+    this.room(16);
+    this.put(last ? 1 : 0, 1);
+    if (last) {
+      this.put(0, 1);
+    }
+    const n = (length - 1) as u64;
+    const nibbles: u64 = n < 65536 ? 4 : n < 1048576 ? 5 : 6;
+    this.put(nibbles - 4, 2);
+    this.put(n, nibbles * 4);
+  }
+
+  /**
+   * Writes `data[start..end]` as one meta-block of the commands added, compressed or stored,
+   * whichever is smaller, and clears them. A stored one can't be last, so it is followed by an
+   * empty last one then. Returns whether it was stored: its commands never reach the decoder.
+   */
+  writeBlock(start: i64, end: i64, last: bool): bool {
+    const data = this.data;
+    const extra = this.count(data, start);
+    const at = this.mark();
+    const before = this.bits;
+    this.header(end - start, last);
+    if (!last) {
+      this.put(0, 1);
+    }
+    // One block type in each category, no postfix bits or direct codes, the literal context mode
+    // LSB6 (any would do with one tree), one literal tree and one distance tree.
+    this.put(0, 3);
+    this.put(0, 6);
+    this.put(0, 2);
+    this.put(0, 2);
+    const p = this.prefix;
+    const litSingle = p.build(this.litFreq, LITERALS, this.litLens, this.litCodes);
+    const cmdSingle = p.build(this.cmdFreq, COMMANDS, this.cmdLens, this.cmdCodes);
+    const distSingle = p.build(this.distFreq, DISTANCES, this.distLens, this.distCodes);
+    // Copies: `store` writes to this object, which holds them (1 KB a meta-block).
+    p.store(this, this.litLens.slice(), LITERALS, 8, litSingle);
+    p.store(this, this.cmdLens.slice(), COMMANDS, 10, cmdSingle);
+    p.store(this, this.distLens.slice(), DISTANCES, 6, distSingle);
+    const body =
+      PrefixWriter.cost(this.litFreq, this.litLens, LITERALS) +
+      PrefixWriter.cost(this.cmdFreq, this.cmdLens, COMMANDS) +
+      PrefixWriter.cost(this.distFreq, this.distLens, DISTANCES) +
+      extra;
+    const compressed = this.bits - before + body;
+    // A stored meta-block: its header, the padding, and the bytes.
+    const stored = 1 + 2 + 24 + 1 + 7 + (end - start) * 8;
+    const wasStored = compressed > stored;
+    if (wasStored) {
+      this.rewind(at);
+      this.stored(data, start, end);
+      if (last) {
+        this.emptyLast();
+      }
+    } else {
+      this.room(body / 8 + 16);
+      this.commandsOut(data, start);
+      if (last) {
+        this.align();
+      }
+    }
+    this.clear();
+    return wasStored;
+  }
+
+  /** `data[start..end]` as a stored meta-block (never the last). */
+  stored(data: u8[], start: i64, end: i64) {
+    this.header(end - start, false);
+    this.put(1, 1);
+    this.align();
+    this.bytes(data, start, end);
+  }
+
+  /** The last meta-block when it holds nothing: ISLAST and ISLASTEMPTY, then padding. */
+  emptyLast() {
+    this.room(8);
+    this.put(3, 2);
+    this.align();
+  }
+
+  /**
+   * A flush: an empty metadata meta-block, after which the output ends on a byte boundary and
+   * a decoder has output everything before it (as the reference encoder flushes).
+   */
+  emptyMetadata() {
+    this.room(8);
+    // ISLAST 0, MNIBBLES 3 (metadata), the reserved bit, MSKIPBYTES 0.
+    this.put(0b0110, 6);
+    this.align();
+  }
+
+  // Counts the symbols of the commands into the histograms; returns their extra bits.
+  private count(data: u8[], start: i64): i64 {
+    this.litFreq.fill(0);
+    this.cmdFreq.fill(0);
+    this.distFreq.fill(0);
+    const n = this.inserts.length;
+    const symbols = this.symbols;
+    symbols.truncate(0);
+    const dist = this.dist;
+    let extra: i64 = 0;
+    let pos = start;
+    for (let i: usize = 0; i < n; i++) {
+      const ins = this.inserts[i] as u64;
+      const copy = this.copies[i] as u64;
+      const code = this.dists[i];
+      for (let k: u64 = 0; k < ins; k++) {
+        this.litFreq[data[pos + (k as i64)] as i64] += 1;
+      }
+      pos += (ins + copy) as i64;
+      const ic = insertCode(ins);
+      const cc = copyCode(copy);
+      extra += (insertExtraBits(ic) + copyExtraBits(cc)) as i64;
+      const symbol = commandSymbol(ic, cc, code <= 0);
+      this.cmdFreq[symbol as i64] += 1;
+      let entry = symbol as u32;
+      if (symbol >= 128 && code >= 0) {
+        distanceSymbol(code, dist);
+        this.distFreq[dist[0] as i64] += 1;
+        extra += dist[1] as i64;
+        entry |= (dist[0] as u32) << 10;
+      }
+      symbols.push(entry);
+    }
+    return extra;
+  }
+
+  // Writes the commands, `data[start..]` holding their literals and copies.
+  private commandsOut(data: u8[], start: i64) {
+    const n = this.inserts.length;
+    const symbols = this.symbols;
+    const dist = this.dist;
+    let pos = start;
+    for (let i: usize = 0; i < n; i++) {
+      const ins = this.inserts[i] as u64;
+      const copy = this.copies[i] as u64;
+      const code = this.dists[i];
+      const symbol = (symbols[i] & 1023) as u64;
+      this.code(this.cmdCodes[symbol as i64]);
+      const ic = insertCode(ins);
+      const cc = copyCode(copy);
+      this.put(insertExtraValue(ic, ins), insertExtraBits(ic));
+      this.put(copyExtraValue(cc, copy), copyExtraBits(cc));
+      const litCodes = this.litCodes;
+      for (let k: u64 = 0; k < ins; k++) {
+        this.code(litCodes[data[pos + (k as i64)] as i64]);
+      }
+      pos += (ins + copy) as i64;
+      if (symbol >= 128 && code >= 0) {
+        distanceSymbol(code, dist);
+        this.code(this.distCodes[dist[0] as i64]);
+        this.put(dist[2], dist[1]);
+      }
+    }
+  }
+
+  private clear() {
+    this.inserts.truncate(0);
+    this.copies.truncate(0);
+    this.dists.truncate(0);
+  }
+}

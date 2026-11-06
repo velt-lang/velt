@@ -8,6 +8,7 @@
 import { CODE_ORDER, DIST_EXTRA, LENGTH_EXTRA } from "velt/compress/inflate/tables";
 import { CodeBuilder, entryLength } from "velt/compress/deflate/code_builder";
 import { copyBytes, setBytes } from "velt/lang/bytes/copy";
+import { arraySetLen, arrayWithCapacity } from "velt/lang/intrinsics";
 
 const LIT_SYMBOLS: i64 = 286;
 const DIST_SYMBOLS: i64 = 30;
@@ -27,6 +28,13 @@ const MIN_OUTPUT: usize = 16384;
 /** Zeroed frequencies or codes for `n` symbols. */
 function counters(n: i64): u32[] {
   return new Array<u32>(n as usize).fill(0);
+}
+
+/** `n` entries, not zeroed: for arrays written before they are read. */
+function unfilled32(n: i64): u32[] {
+  const a: u32[] = arrayWithCapacity(n as usize);
+  arraySetLen(a, n as usize);
+  return a;
 }
 
 function lengths(n: i64): u8[] {
@@ -51,11 +59,11 @@ export class BlockWriter {
   op: i64 = 0;
   private bb: u64 = 0;
   private bc: u64 = 0;
-  /** The current block's symbols: `syms[0..count]`. */
-  syms: u32[] = counters(BLOCK_SYMBOLS);
+  /** The current block's symbols: `syms[0..count]` (not zeroed: written before read). */
+  syms: u32[] = unfilled32(BLOCK_SYMBOLS);
   count: i64 = 0;
-  /** The input being compressed, which stored blocks copy from. */
-  window: u8[] = lengths(65536);
+  /** The input being compressed, which stored blocks copy from (read only below what came in). */
+  window: u8[] = Buffer.allocUnsafe(65536);
   litFreq: u32[] = counters(LIT_SYMBOLS);
   distFreq: u32[] = counters(DIST_SYMBOLS);
   private clFreq: u32[] = counters(CL_SYMBOLS);

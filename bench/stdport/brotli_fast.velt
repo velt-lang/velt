@@ -1,0 +1,22 @@
+// Brotli compression (`velt/compress`) at quality 1: the 1 MB JSON of `json`
+// (rust/src/bin/gen_inputs.rs, written by run.sh), compressed 20 times. The Rust port uses the
+// `brotli` crate (window 2^22). The sizes differ by encoder, so both print the bytes read and
+// whether the last stream decodes to the input.
+import { readFileBytesSync } from "velt/fs";
+import { brotliCompress, brotliDecompress } from "velt/compress";
+
+function main() {
+  const input = readFileBytesSync(`${process.env.STDPORT_INPUTS ?? "."}/json`);
+  let total: i64 = 0;
+  let last: u8[] = [];
+  for (let i = 0; i < 20; i++) {
+    last = brotliCompress(input, 1);
+    total += input.length as i64;
+  }
+  const back = brotliDecompress(last);
+  let same = back.length == input.length;
+  for (let i: usize = 0; same && i < back.length; i++) {
+    same = back[i] == input[i];
+  }
+  console.log(`${total} ${same}`);
+}
