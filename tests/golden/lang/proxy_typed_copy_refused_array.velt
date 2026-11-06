@@ -1,5 +1,5 @@
 // A plain value converted (inside an array literal) to a narrower object type that is later
-// written, in a program that creates proxies: a `TypeError` instead of a copy (#823).
+// written, in a program that creates proxies: the one object, as in Node.
 type Sig = { a: number; b: number };
 type A = { a: number };
 const p = new Proxy({ x: 1 }, {});

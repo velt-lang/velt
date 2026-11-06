@@ -52,8 +52,9 @@ impl FnCx<'_, '_> {
         let from = h.ty;
         let source = self.place_text(&h);
         let view = self.through_any(h, target)?;
-        if record {
-            self.note_record_copy(from, core, source, span);
+        match record {
+            true => self.note_record_copy(from, core, source, span),
+            false => self.cx.object_copies.view_casts.push((span, core)),
         }
         Ok(view)
     }
@@ -121,7 +122,9 @@ impl FnCx<'_, '_> {
                 return Err(h);
             }
         }
-        self.through_any(h, exp)
+        let view = self.through_any(h, exp)?;
+        self.cx.object_copies.view_casts.push((span, core));
+        Ok(view)
     }
 
     /// Is the brand `from` assignable to the brand `to`: `symbol & { t?: X[] }` to `symbol & { t?:

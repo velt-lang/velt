@@ -8,7 +8,7 @@ use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
 use crate::hir::{TyId, TyKind};
-use crate::object_copies::{each_body, holds_by, Copy, Seen, Write};
+use crate::object_copies::{each_body, holds_by, related, Copy, Seen, Write};
 
 /// Why a conversion can't stay a copy (`check`).
 #[derive(Clone, Copy)]
@@ -174,5 +174,37 @@ pub(crate) fn check_frozen_dynamic(cx: &mut Ctx, seen: &[(TyId, Span, Seen)], wr
                 .with_note("Node refuses a write to a frozen object, and Velt can't tell at run time that a value is one: pass it where a `Readonly<T>` is expected"),
             );
         }
+    }
+}
+
+/// A spread or rest of a type a cast makes a view of another object: Node copies all the object's
+/// fields, and the fixed shape of the result has no place for the others. A cast the program had
+/// to write through `any` keeps that limit (`any_view_spread`); this one is refused while no
+/// program that compiled before depends on it.
+pub(crate) fn check_view_spreads(
+    cx: &mut Ctx,
+    seen: &[(TyId, Span, Seen)],
+    view_casts: &[(Span, TyId)],
+) {
+    if view_casts.is_empty() {
+        return;
+    }
+    for &(t, at, how) in seen {
+        if !matches!(how, Seen::Spread) {
+            continue;
+        }
+        let t = cx.ty.core(t).unwrap_or(t);
+        let Some(&(cast, to)) = view_casts.iter().find(|v| related(cx, t, v.1)) else {
+            continue;
+        };
+        let shown = cx.display(to);
+        cx.error(
+            Diagnostic::error(
+                format!("a spread of a `{shown}`, which a cast in this program makes a view of another object, is not supported yet"),
+                at,
+            )
+            .with_label(cast, "the cast")
+            .with_note("Node copies all the object's fields, and a value of this fixed shape has no place for the others: take the fields by name"),
+        );
     }
 }

@@ -1,9 +1,8 @@
-// A spread of a view whose object has keys its type lacks stops: Node copies them, and a value of
-// this fixed shape has no place for them.
+// A spread of a type a cast makes a view of another object: Node copies all of the object's fields,
+// and a value of this fixed shape has no place for the others.
 const made = new Proxy({}, {});
 interface Cx { a: number; b: string; hello(): string; }
 const m: Cx = { a: 1, b: "s", hello() { return "x"; } };
 const v = m as { a?: number };
 console.log(v.a);
 console.log({ ...v });
-console.log("after");

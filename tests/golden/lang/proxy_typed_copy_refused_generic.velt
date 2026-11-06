@@ -1,6 +1,6 @@
 // A generic function builds the object, so no literal of `Box` is in the program, and a write
 // through the narrower `V` could tell a copy from the original: in a program that creates
-// proxies, the conversion keeps only a proxy's identity, and a plain value throws (#823).
+// proxies, the conversion keeps the one object, as in Node.
 type Box = { v: number; w: number };
 type V = { v: number };
 function mk<T>(x: T): { v: T; w: T } {

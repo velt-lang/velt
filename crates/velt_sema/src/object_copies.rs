@@ -124,6 +124,9 @@ pub(crate) struct Copies {
     pub null_literals: Vec<(String, Span)>,
     /// Writes to a record (`r[k] = v`, `delete r[k]`), which a record cast's copy would miss.
     pub record_writes: Vec<(TyId, Span)>,
+    /// Casts that make a view of another object (`FnCx::comparable_cast`, `FnCx::assignable_view`)
+    /// and the object type each is seen as.
+    pub view_casts: Vec<(Span, TyId)>,
     /// The pairs of object types being compared as a view (`FnCx::comparable_cast`): recursive
     /// types compare as TypeScript's assume-true does.
     pub view_pairs: Vec<(TyId, TyId)>,
@@ -141,7 +144,7 @@ pub(crate) struct Copies {
 
 impl Copies {
     /// How many of each there are now (`body::recheck::Lens`).
-    pub(crate) fn mark(&self) -> [usize; 7] {
+    pub(crate) fn mark(&self) -> [usize; 8] {
         [
             self.copies.len(),
             self.writes.len(),
@@ -150,11 +153,12 @@ impl Copies {
             self.null_literals.len(),
             self.record_writes.len(),
             self.method_rereads.len(),
+            self.view_casts.len(),
         ]
     }
 
     /// Drop what was added since `mark`.
-    pub(crate) fn rollback(&mut self, mark: [usize; 7]) {
+    pub(crate) fn rollback(&mut self, mark: [usize; 8]) {
         self.copies.truncate(mark[0]);
         self.writes.truncate(mark[1]);
         self.seen.truncate(mark[2]);
@@ -162,6 +166,7 @@ impl Copies {
         self.null_literals.truncate(mark[4]);
         self.record_writes.truncate(mark[5]);
         self.method_rereads.truncate(mark[6]);
+        self.view_casts.truncate(mark[7]);
     }
 
     /// The index of key `k` in `in_keys` (for `Seen::In`).
@@ -192,6 +197,7 @@ pub(crate) fn check(cx: &mut Ctx) {
         dyn_sources,
         record_writes,
         method_rereads,
+        view_casts,
         ..
     } = std::mem::take(&mut cx.object_copies);
     let spans: Vec<(Span, TyId)> = copies.iter().map(|c| (c.span, c.to)).collect();
@@ -267,6 +273,7 @@ pub(crate) fn check(cx: &mut Ctx) {
         }
     }
     crate::object_views::check_frozen_dynamic(cx, &seen, &writes);
+    crate::object_views::check_view_spreads(cx, &seen, &view_casts);
     for (name, at) in &method_rereads {
         if let Some(w) = writes.iter().find(|w| w.name == *name) {
             let shown = cx.shown_name(name);
@@ -458,7 +465,7 @@ fn dynamic_reaches(cx: &mut Ctx, (c, ci): (&Copy, usize), looks: &Dynamic) -> bo
 }
 
 /// Are `a` and `b` one object type, as conversions see it?
-fn related(cx: &mut Ctx, a: TyId, b: TyId) -> bool {
+pub(crate) fn related(cx: &mut Ctx, a: TyId, b: TyId) -> bool {
     a == b || cx.canon(a) == cx.canon(b) || cx.same_layout(a, b)
 }
 

@@ -374,61 +374,37 @@ impl FnCx<'_, '_> {
         self.with_temp("<operand>", h, e.span, span, f)
     }
 
-    /// `h` to spread, a value that may be a typed proxy or a view: a place, checked first
-    /// (`proxySpreadCheck`): only the fields of its type are copied.
-    pub(super) fn spread_view_check(
-        &mut self,
-        h: hir::Expr,
-        lets: &mut Vec<hir::Stmt>,
-    ) -> hir::Expr {
-        let span = h.span;
-        let names: Vec<String> = match self.adt_of(h.ty).and_then(|(d, _)| self.cx.adt(d)) {
-            Some(a) => a.fields.iter().map(|f| f.name.clone()).collect(),
-            None => vec![],
+    /// `{ ...e }` of a value of type `t` that may be a typed proxy: `proxySpreadCheck(e)`. A
+    /// value whose type holds a lock cannot convert to `any` (`coerce_dynamic`), so for one
+    /// only a typed proxy (or a view) is converted, under the test of its tag:
+    /// `if (IsTypedProxy(e)) proxySpreadCheck(e)`. Its fields are its traps' or the viewed
+    /// object's, which no lock guards.
+    pub(super) fn proxy_spread_check(&mut self, e: &ast::Expr, t: hir::TyId) -> hir::Expr {
+        let hook = |e: ast::Expr| hooks::proxy_spread_check(ty::Any::of(e));
+        let (Some(any), true) = (self.any_ty(), self.cx.holds_lock(t)) else {
+            return hook(e.clone()).check(self, e.span);
         };
-        let h = match crate::body::places::is_place(&h) {
-            true => h,
-            false => self.temp("<spread>", h, lets),
-        };
-        if let Some(check) = self.proxy_spread_check(&h, &names) {
-            lets.push(hir::Stmt {
-                kind: hir::StmtKind::Expr(check),
-                span,
-            });
-        }
-        h
-    }
-
-    /// `{ ...x }` of the place `x` (of an object type with fields `fields`) that may be a typed
-    /// proxy: `if (IsTypedProxy(x)) proxySpreadCheck(x as any, fields)`. `None` with no `any` in
-    /// the program.
-    fn proxy_spread_check(&mut self, x: &hir::Expr, fields: &[String]) -> Option<hir::Expr> {
-        let span = x.span;
-        let any = self.any_ty()?;
-        let mut x = x.clone();
-        crate::body::places::set_place_mode(&mut x, hir::UseMode::Borrow);
+        let span = e.span;
+        let x = self.expr(e, None, crate::body::Want::Borrow);
         let cond = self.intrinsic(
             hir::Intrinsic::IsTypedProxy,
-            vec![x.clone()],
+            vec![x],
             self.cx.ty.bool_,
             span,
         );
+        let x = self.expr(e, None, crate::body::Want::Borrow);
         let x = self.share_if_place(x);
-        let boxed = self
-            .box_value_dynamic(x, any, crate::any::Dynamic::Any)
-            .ok()?;
-        let names = ast::ExprKind::Lit(ast::Lit::Str(fields.join("\n")));
-        let names = super::setters::synth(names, span);
-        let names = self.expr(&names, None, crate::body::Want::Move);
+        let Ok(boxed) = self.box_value_dynamic(x, any, crate::any::Dynamic::Any) else {
+            return hook(e.clone()).check(self, span);
+        };
         let unit = self.cx.ty.unit;
-        let then = hooks::proxy_spread_check(ty::Any::of(boxed), ty::Str::of(names))
-            .emit(self, unit, span);
+        let then = hooks::proxy_spread_check(ty::Any::of(boxed)).emit(self, unit, span);
         let kind = H::If {
             cond: Box::new(cond),
             then: Box::new(then),
             els: Box::new(self.unit_expr(span)),
         };
-        Some(self.mk(kind, unit, span))
+        self.mk(kind, unit, span)
     }
 
     /// `delete obj.k` / `delete obj[k]` where `obj` is an `any` or `object`: the prelude's
