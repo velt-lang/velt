@@ -65,6 +65,67 @@ function text(n: i64): u8[] {
   return out;
 }
 
+/**
+ * Random bytes, then 8-byte copies whose distance codes run from 12 to 28 with counts growing
+ * 1.7 times per code: frequencies that skewed make the code-length code reach its 7-bit limit.
+ */
+function skewedDistances(): u8[] {
+  const out = noise(49400, 256, 11);
+  const counts: i64[] = [];
+  let c = 1.6;
+  for (let code = 12; code <= 28; code++) {
+    counts.push(Math.round(c) as i64);
+    c *= 1.7;
+  }
+  // The first distance of each code (RFC 1951 3.2.5), from 12 on.
+  const bases: i64[] = [
+    65,
+    97,
+    129,
+    193,
+    257,
+    385,
+    513,
+    769,
+    1025,
+    1537,
+    2049,
+    3073,
+    4097,
+    6145,
+    8193,
+    12289,
+    16385,
+  ];
+  const filler = noise(20000, 256, 12);
+  let f: usize = 0;
+  let left = true;
+  while (left) {
+    left = false;
+    for (let i: i64 = 0; i < 17; i++) {
+      if (counts[i] == 0) {
+        continue;
+      }
+      counts[i] -= 1;
+      left = true;
+      const from = (out.length as i64) - bases[i];
+      for (let k: i64 = 0; k < 8; k++) {
+        out.push(out[from + k]);
+      }
+      // A random byte between copies, so one copy doesn't run on into the next.
+      out.push(filler[f % filler.length]);
+      f++;
+    }
+  }
+  return out;
+}
+
+/** A random block repeated at a period of 32,769: one byte past the farthest distance used. */
+function farPeriod(): u8[] {
+  const block = noise(32769, 256, 13);
+  return block.concat(block).concat(block);
+}
+
 function run(n: i64, b: u8): u8[] {
   return new Array<u8>(n as usize).fill(b);
 }
@@ -101,6 +162,8 @@ const CORPUS: [string, u8[]][] = [
   ["four letters, 200 KB", noise(200000, 4, 1)],
   ["a run of 1 MB", run(1000000, 97)],
   ["random, 100 KB", noise(100000, 256, 2)],
+  ["distance codes skewed to the code-length code's limit", skewedDistances()],
+  ["a period one past the farthest distance", farPeriod()],
 ];
 
 describe("deflate encoder", () => {
@@ -162,6 +225,14 @@ describe("deflate encoder", () => {
     // Stored blocks, 5 bytes of header each, one per 16,383 symbols as in zlib: 7 here.
     expect(deflateRaw(r).length <= r.length + 5 * 7).toBe(true);
     expect(deflateRaw(run(1000000, 0)).length < 2000).toBe(true);
+  });
+
+  it("gives stock zlib's sizes on text, which a poor choice of codes would grow", () => {
+    // zlib 1.2.12's raw DEFLATE of the same bytes, at levels 1, 6 and 9.
+    const t = text(100000);
+    expect(deflateRaw(t, 1).length).toBe(24810);
+    expect(deflateRaw(t, 6).length).toBe(18321);
+    expect(deflateRaw(t, 9).length).toBe(17140);
   });
 
   it("refuses a level that isn't a whole number from 1 to 9", () => {
@@ -234,6 +305,33 @@ describe("DeflateEncoding", () => {
       threw = err instanceof CompressError;
     }
     expect(threw).toBe(true);
+  });
+
+  it("refuses a range outside the array, and goes on after it", () => {
+    const formats: DeflateFormat[] = ["gzip", "deflate", "deflate-raw"];
+    const ranges: [i64, i64][] = [
+      [0, 50000000],
+      [0, 64],
+      [0, 100],
+      [0, 4],
+      [-1, 2],
+      [2, 1],
+    ];
+    for (const f of formats) {
+      for (const [start, end] of ranges) {
+        const e = new DeflateEncoding(f).encoder();
+        let threw = false;
+        try {
+          e.write([1, 2, 3], start, end);
+        } catch (err) {
+          threw = err instanceof RangeError;
+        }
+        const out = e.write([1, 2, 3], 0, 3).concat(e.finish());
+        const back = f == "gzip" ? gunzip(out) : f == "deflate" ? inflate(out) : inflateRaw(out);
+        const ok = threw && same(back, [1, 2, 3]);
+        expect(ok ? "" : `${f} ${start} to ${end}`).toBe("");
+      }
+    }
   });
 
   it("reads only the part of the array it is given", () => {

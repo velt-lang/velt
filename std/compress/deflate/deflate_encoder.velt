@@ -42,9 +42,14 @@ export class DeflateEncoder extends Matcher implements Encoder {
   }
 
   /** See `Encoder.write`. */
-  write(bytes: u8[], start: i64, end: i64): u8[] throws CompressError {
+  write(bytes: u8[], start: i64, end: i64): u8[] throws CompressError | RangeError {
     if (this.finished) {
       throw new CompressError("write after finish");
+    }
+    if (start < 0 || start > end || end > (bytes.length as i64)) {
+      throw new RangeError(
+        `The range ${start} to ${end} is outside an array of ${bytes.length} bytes`,
+      );
     }
     this.absorb(bytes, start, end);
     return this.take();

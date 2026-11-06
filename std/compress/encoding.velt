@@ -14,9 +14,10 @@ export type CompressionLevel = "fastest" | "optimal" | "smallest" | number;
 export interface Encoder {
   /**
    * Compresses `bytes[start..end]` (not kept after the call) and returns the output ready so far,
-   * often `[]`: an encoder buffers what it has not decided how to code yet.
+   * often `[]`: an encoder buffers what it has not decided how to code yet. Throws `RangeError`
+   * unless `0 <= start <= end <= bytes.length`.
    */
-  write(bytes: u8[], start: i64, end: i64): u8[] throws CompressError;
+  write(bytes: u8[], start: i64, end: i64): u8[] throws CompressError | RangeError;
   /** Everything written so far, in a form a decoder can output now; the stream goes on. */
   flush(): u8[] throws CompressError;
   /** The rest of the stream, with its trailer. `[]` when called again; a `write` then throws. */
