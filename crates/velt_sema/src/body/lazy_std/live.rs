@@ -541,7 +541,8 @@ fn walk_expr(ty: &crate::types::Types, e: &hir::Expr, w: &mut Walk) {
             args,
         } => w.texts.extend(args.iter().map(|a| a.ty)),
         E::Call {
-            callee: Callee::Intrinsic(I::Print | I::PrintErr | I::Inspect | I::ErrorText),
+            callee:
+                Callee::Intrinsic(I::Print | I::PrintErr | I::Inspect | I::InspectNested | I::ErrorText),
             args,
         } => w.formats.extend(args.iter().map(|a| a.ty)),
         E::Call {

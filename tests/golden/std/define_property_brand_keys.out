@@ -1,2 +1,2 @@
 true true false
-Symbol(shared) local { v: 2, [Symbol(local)]: 7 }
+Symbol(shared) local { v: 2, Symbol(local): 7 }

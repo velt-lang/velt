@@ -426,6 +426,34 @@ impl FnLower<'_, '_> {
         Some(super::unit())
     }
 
+    /// `velt_rt_strbuf_push_str(buf, "text")` in std code (std/lang/hooks/inspect.velt): the
+    /// literal's bytes appended as lowering appends its own constant text, without making a
+    /// string of them first. `None`: not such a call.
+    pub(super) fn strbuf_push_literal(
+        &mut self,
+        symbol: &str,
+        args: &[velt_sema::hir::Expr],
+    ) -> Option<Operand> {
+        if symbol != "velt_rt_strbuf_push_str" {
+            return None;
+        }
+        let [buf, s] = args else {
+            return None;
+        };
+        let velt_sema::hir::ExprKind::Lit(velt_sema::hir::Lit::Str(text)) = &s.kind else {
+            return None;
+        };
+        let text = text.clone();
+        let argv = self.lower_args(
+            std::slice::from_ref(buf),
+            &[velt_sema::hir::PassMode::Borrow],
+            super::call::Stabilize::No,
+        );
+        let b = argv.into_iter().next()?;
+        self.push_text(&b, &text);
+        Some(super::unit())
+    }
+
     /// Append the string at address `s` to the builder at `buf`.
     pub(super) fn push_str(&mut self, buf: &Operand, s: Operand) {
         self.call_rt(Rt::StrbufPushStr, vec![buf.clone(), s], None);

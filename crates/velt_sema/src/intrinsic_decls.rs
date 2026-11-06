@@ -101,6 +101,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     // report.velt
     ("errorText", Op(I::ErrorText)),
     ("inspect", Op(I::Inspect)),
+    ("inspectNested", Op(I::InspectNested)),
     ("throwLoc", Op(I::ThrowLoc)),
     // simd.velt
     ("strLoadPartialU8x16", Op(I::StrLoadPartialU8x16)),

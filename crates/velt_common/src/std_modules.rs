@@ -99,6 +99,7 @@ table! {
     lang_hooks_error => "lang/hooks/error",
     lang_hooks_iter => "lang/hooks/iter",
     lang_hooks_json => "lang/hooks/json",
+    lang_hooks_inspect => "lang/hooks/inspect",
     lang_hooks_number => "lang/hooks/number",
     lang_hooks_number_float => "lang/hooks/number_float",
     lang_hooks_number_text => "lang/hooks/number_text",

@@ -72,16 +72,17 @@ pub(crate) fn atoms_of(buf: *const VeltStrBuf, start: usize, out: &mut Vec<Range
     })
 }
 
-/// Start printing the object at `p` (a class instance or a recursive object): 1, or, if it is
+/// Start printing the object with identity `id` (the address of a class instance or a recursive
+/// object, as velt/reflect's `identity` gives it): 1, or, if it is
 /// already being printed (the graph has a cycle), append `[Circular *N]` as node does and
 /// return 0 (the caller skips the object).
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_strbuf_inspect_enter(buf: *mut VeltStrBuf, p: *const u8) -> u8 {
+pub unsafe extern "C" fn velt_rt_strbuf_inspect_enter(buf: *mut VeltStrBuf, id: u64) -> u8 {
     PRINTING.with(|s| {
         let Printing {
             stack, numbered, ..
         } = &mut *s.borrow_mut();
-        let addr = p as usize;
+        let addr = id as usize;
         if stack.iter().any(|e| e.0 == addr) {
             push_circular(buf, numbered, addr);
             return 0;
@@ -91,17 +92,18 @@ pub unsafe extern "C" fn velt_rt_strbuf_inspect_enter(buf: *mut VeltStrBuf, p: *
     })
 }
 
-/// Node's check for a container past its `depth` limit: if the object at `p` is being printed
+/// Node's check for a container past its `depth` limit: if the object with identity `id` is
+/// being printed
 /// (a reference back to it), append `[Circular *N]` as `velt_rt_strbuf_inspect_enter` does and
 /// return 1; else 0, and the caller prints `[Name]` instead of the object. The object is not
 /// entered, so it gets no `<ref *N>` prefix, as in node.
 #[no_mangle]
-pub unsafe extern "C" fn velt_rt_strbuf_inspect_circular(buf: *mut VeltStrBuf, p: *const u8) -> u8 {
+pub unsafe extern "C" fn velt_rt_strbuf_inspect_circular(buf: *mut VeltStrBuf, id: u64) -> u8 {
     PRINTING.with(|s| {
         let Printing {
             stack, numbered, ..
         } = &mut *s.borrow_mut();
-        let addr = p as usize;
+        let addr = id as usize;
         if !stack.iter().any(|e| e.0 == addr) {
             return 0;
         }
@@ -144,6 +146,11 @@ mod tests {
     use super::*;
     use crate::str::VeltStr;
 
+    /// The identity of the object at `p`.
+    fn id(p: &u8) -> u64 {
+        p as *const u8 as u64
+    }
+
     unsafe fn text(b: &VeltStrBuf) -> String {
         String::from_utf8(b.as_bytes().to_vec()).unwrap()
     }
@@ -155,11 +162,11 @@ mod tests {
             let mut b = VeltStr::with_capacity(0);
             let (outer, other) = (1u8, 2u8);
             velt_rt_strbuf_inspect_begin();
-            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &outer), 1);
+            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, id(&outer)), 1);
             b.push_wtf8(b"A { a: ", None);
-            assert_eq!(velt_rt_strbuf_inspect_circular(&mut b, &other), 0);
+            assert_eq!(velt_rt_strbuf_inspect_circular(&mut b, id(&other)), 0);
             b.push_wtf8(b"[B], b: ", None);
-            assert_eq!(velt_rt_strbuf_inspect_circular(&mut b, &outer), 1);
+            assert_eq!(velt_rt_strbuf_inspect_circular(&mut b, id(&outer)), 1);
             b.push_wtf8(b" }", None);
             velt_rt_strbuf_inspect_leave(&mut b);
             assert_eq!(text(&b), "<ref *1> A { a: [B], b: [Circular *1] }");
@@ -174,11 +181,11 @@ mod tests {
             let (outer, inner) = (1u8, 2u8);
             velt_rt_strbuf_inspect_begin();
             b.push_wtf8(b"x: ", None);
-            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &outer), 1);
+            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, id(&outer)), 1);
             b.push_wtf8(b"A { b: ", None);
-            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &inner), 1);
+            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, id(&inner)), 1);
             b.push_wtf8(b"B { a: ", None);
-            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &outer), 0);
+            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, id(&outer)), 0);
             b.push_wtf8(b" }", None);
             velt_rt_strbuf_inspect_leave(&mut b);
             b.push_wtf8(b" }", None);
@@ -186,8 +193,8 @@ mod tests {
             assert_eq!(text(&b), "x: <ref *1> A { b: B { a: [Circular *1] } }");
             // Numbering starts over for the next value printed.
             velt_rt_strbuf_inspect_begin();
-            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &inner), 1);
-            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, &inner), 0);
+            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, id(&inner)), 1);
+            assert_eq!(velt_rt_strbuf_inspect_enter(&mut b, id(&inner)), 0);
             velt_rt_strbuf_inspect_leave(&mut b);
             assert!(text(&b).ends_with("<ref *1> [Circular *1]"));
             b.release();
@@ -198,9 +205,9 @@ mod tests {
     #[test]
     fn siblings_keep_one_numbering() {
         unsafe fn cyclic(b: &mut VeltStrBuf, p: &u8) {
-            assert_eq!(velt_rt_strbuf_inspect_enter(b, p), 1);
+            assert_eq!(velt_rt_strbuf_inspect_enter(b, id(p)), 1);
             b.push_wtf8(b"C { next: ", None);
-            assert_eq!(velt_rt_strbuf_inspect_enter(b, p), 0);
+            assert_eq!(velt_rt_strbuf_inspect_enter(b, id(p)), 0);
             b.push_wtf8(b" }", None);
             velt_rt_strbuf_inspect_leave(b);
         }
