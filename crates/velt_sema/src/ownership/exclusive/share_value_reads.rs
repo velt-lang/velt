@@ -25,6 +25,12 @@ pub(super) fn share_value_reads(
     first: usize,
     identity: bool,
 ) {
+    let changes = |(direct, nested): &(Vec<Use>, Vec<Use>)| {
+        !nested.is_empty() || direct.iter().any(|u| u.access != Access::Shared)
+    };
+    if !uses.iter().any(changes) {
+        return;
+    }
     for (i, a) in args.iter_mut().enumerate() {
         let k = i + first;
         let reads = uses[k].0.iter().any(|u| u.access == Access::Shared);
@@ -37,7 +43,11 @@ pub(super) fn share_value_reads(
                 .filter(|(j, _)| *j != k)
                 .any(|(j, (direct, nested))| {
                     let later = j > k;
-                    let hit = |w: &Use| w.place.overlaps(p) && replaces(col, w, later);
+                    let hit = |w: &Use| {
+                        w.place.overlaps(p)
+                            && w.place.proj.len() <= p.proj.len()
+                            && replaces(col, w, later)
+                    };
                     direct.iter().any(hit) || nested.iter().any(hit)
                 })
         };
@@ -72,9 +82,11 @@ pub(super) fn immediately_called(
     share_value_reads(col, args, &mut uses, 1, true);
 }
 
-/// Does use `w` take away the value a read sees? A write does. A move does when the read comes
-/// first (`later`), or when the variable is in a cell, which a closure's capture only shares; a
-/// closure taking over a variable it only reads is `share_borrowed_captures`' case.
+/// Does use `w`, of the place a read sees or one around it, take away the value? A write does (a
+/// write inside the value keeps the rule: a share of an object stored inline would not see it). A
+/// move does when the read comes first (`later`), or when the variable is in a cell, which a
+/// closure's capture only shares; a closure taking over a variable it only reads is
+/// `share_borrowed_captures`' case.
 fn replaces(col: &Collector<'_, '_>, w: &Use, later: bool) -> bool {
     match (w.access, w.capture) {
         (Access::Shared, _) => false,
@@ -95,7 +107,8 @@ fn share_reads(
 ) -> bool {
     if let Some((p, mode)) = col.place_of(e) {
         let take = mode == UseMode::Borrow && clash(&p);
-        if take && (identity || read_by_value(col.cx, e.ty)) {
+        let promise = matches!(col.cx.ty.kind(e.ty), TyKind::Promise(..));
+        if take && !promise && (identity || read_by_value(col.cx, e.ty)) {
             make_share(e);
             return true;
         }

@@ -1,0 +1,15 @@
+// An object behind `| null` whose fields are assigned somewhere, so it is counted, passed to a closure
+// that sets its variable to null: the assignment
+// freed the object while the parameter pointed at it, and the read aborted (use after free under
+// the debug allocator, a bad pointer otherwise) (#2480). Output checked against Node.
+function heap(a: string): string { return a + "-".repeat(40); }
+type N = { x: number; n: string };
+function opt<T>(x: T): T | null { return x; }
+function touch(w: N) { w.x = w.x + 0; }
+function main_() {
+  let s: N | null = opt<N>({ x: 1, n: heap("a") });
+  const f = (v: N | null, w: string = "dflt") => { s = null; const junk = heap("xxxxxxxxxxxxxxxxxxxx"); return (v === null ? "null" : v.n) + w; };
+  console.log("default", f(s), (s === null ? "null" : s.n));
+}
+async function all() { main_(); }
+all().then(() => console.log("done"));

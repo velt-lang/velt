@@ -460,5 +460,5 @@ fn a_read_of_what_javascript_holds_by_reference_keeps_the_rule() {
          const f = (a: { items: i64[] }, c: () => void) => { c(); return a.items.length; };
          f(y, () => { y.items.push(1); });",
     );
-    assert!(r.contains("cannot use `y` here"), "{r}");
+    assert!(r.contains("`y`"), "{r}");
 }

@@ -105,4 +105,21 @@ function fieldFree() {
   const want = sumCodes(a.name) + "/" + a.name.length;
   console.log("class field walk", f(a.name) === want);
 }
+// The parameter's text stays alive under the debug allocator.
+function freedByMethod() {
+  let s = heap("one");
+  const o = { go(v: string) { s = heap("nine"); const junk = heap("xxxxxxxxxxxxxxxxxxxx"); return v + junk.length; } };
+  console.log("object method", o.go(s), s);
+}
+function freedByImmediateCall() {
+  let s = heap("one");
+  const r = ((v: string) => { s = heap("nine"); const junk = heap("xxxxxxxxxxxxxxxxxxxx"); return v + junk.length; })(s);
+  console.log("immediate call", r, s);
+}
+function freedWithDefault() {
+  let s = heap("one");
+  const f = (v: string, w: string = "dflt") => { s = heap("nine"); const junk = heap("xxxxxxxxxxxxxxxxxxxx"); return v + w + junk.length; };
+  console.log("default parameter", f(s), s);
+}
 walk(); binding(); iterate(); objects(); loopFree(); fieldFree();
+freedByMethod(); freedByImmediateCall(); freedWithDefault();

@@ -139,7 +139,7 @@ const forms = [
   {
     name: "rest",
     body: (k, id) => `let s: ${k.t} = ${k.a};
-  const f = (a: string, ...vs: ${k.t.includes("|") ? `(${k.t})` : k.t}[]) => { s = ${k.b}; ${junk}const v = vs[0]; return a + ${k.show("v")}; };
+  const f = (a: string, ...vs: ${k.t.includes("|") ? `(${k.t})` : k.t}[]) => { s = ${k.b}; ${junk}const v = vs[0]; const r = ${k.show("v")}; return a + r; };
   console.log("${id}", f("r", s), ${k.show("s")});`,
   },
   {

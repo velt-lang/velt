@@ -2,8 +2,9 @@
 //! code the exclusivity rule guarantees that a value borrowed by a call stays put while the
 //! call runs. A place reached through a *counted* object has other owners, and the callee may
 //! reach the same object through one of them and replace or free what the borrow points to.
-//! Such borrows are kept alive for the statement: a counted value is shared into a temporary;
-//! anything else is read through containers that are retained ([`FnLower::retained_hop`]).
+//! Such borrows are kept alive for the statement: the value is shared into a temporary, which
+//! the callee gets instead of a pointer into the place. A promise has one owner: it is read through
+//! containers that are retained ([`FnLower::retained_hop`]).
 //! Every borrow examined here is recorded (`Cx::note_projection`), so a container that becomes
 //! counted makes the values borrowed through it counted too. A variable held in a shared cell
 //! (a closure assigns it) is like a counted container: the value borrowed from it is counted
