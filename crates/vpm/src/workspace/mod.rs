@@ -194,8 +194,9 @@ impl Workspace {
                     ..Default::default()
                 }),
                 None => match &self.file.dependencies[name] {
-                    // A `path` beside `git` or `url` is inside the repository or archive, and stays
-                    // as written.
+                    // A local `path` is made absolute here. One beside `git` or `url` names a
+                    // directory inside the repository or archive, so it takes the arm below and
+                    // stays as written.
                     Dependency::Detailed(d)
                         if d.path.is_some() && d.git.is_none() && d.url.is_none() =>
                     {
