@@ -776,7 +776,8 @@ Step 1 lands in layers, each its own pull request:
        offline machines).
      - CI: the `c-headers` job checks every target from one Linux machine, only when a change
        touches what it checks (`crates/xtask/src/c_headers.rs`), so nothing else
-       downloads zig; the nightly runs it whatever changed.
+       downloads zig; the nightly runs it whatever changed. Without `VELT_ZIG` the check
+       fails in CI instead of skipping, and the other test runs leave it out.
    - 6a-2: declarations checked against headers in the packages a build has locally (the
      root, path dependencies, workspace members); registry and git packages come with 6b's
      digest.

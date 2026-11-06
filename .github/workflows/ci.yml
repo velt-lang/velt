@@ -424,7 +424,8 @@ jobs:
             }
 
   # `declare c` against C headers through the pinned zig, for every target from this one Linux
-  # job (crates/veltc/tests/c_headers.rs, which skips without VELT_ZIG). It runs only when the
+  # job (crates/veltc/tests/c_headers.rs, which fails in CI without VELT_ZIG; the other jobs'
+  # tests leave it out, crates/xtask/src/c_headers.rs's TESTS). It runs only when the
   # change touches what it checks (crates/xtask/src/c_headers.rs), in pull requests and in
   # the queue: anything else doesn't download zig. The nightly runs it whatever changed.
   c-headers:

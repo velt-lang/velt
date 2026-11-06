@@ -464,6 +464,12 @@ impl Gate<'_> {
         let Some(filterset) = plan.filterset() else {
             return Ok(());
         };
+        // The tests that check through zig fail in CI without it, so only the `c-headers` job
+        // (or a machine with `VELT_ZIG`) runs them.
+        let filterset = match std::env::var_os("VELT_ZIG") {
+            Some(_) => filterset,
+            None => crate::c_headers::without_zig_tests(&filterset),
+        };
         // In CI, nextest's `ci` profile writes a JUnit report (.config/nextest.toml).
         let mut junit = None;
         let mut tests = if has_nextest() {

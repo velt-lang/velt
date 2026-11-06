@@ -62,6 +62,7 @@ fn the_header_check_runs_only_when_a_change_touches_what_it_checks() {
     for path in [
         "crates/veltc/src/native/headers/ctype.rs",
         "crates/veltc/src/native/c_decls.rs",
+        "crates/veltc/src/native/mod.rs",
         "crates/veltc/tests/c_headers.rs",
         "crates/velt_toolchain/src/zig.rs",
         "crates/vpm/src/manifest/read/native.rs",
@@ -74,7 +75,9 @@ fn the_header_check_runs_only_when_a_change_touches_what_it_checks() {
     for path in [
         "crates/velt_sema/src/check.rs",
         "crates/veltc/src/main.rs",
-        "crates/veltc/src/native/mod.rs",
+        "crates/veltc/src/commands/mod.rs",
+        "crates/veltc/tests/c_functions.rs",
+        "crates/veltc/tests/c_headers.rs.orig",
         "crates/velt_toolchain/src/lib.rs",
         "crates/vpm/src/manifest/read.rs",
         "std/fs/index.vlt",
