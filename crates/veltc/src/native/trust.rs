@@ -2,7 +2,7 @@
 //!
 //! - `unsafe` code (blocks, expressions, unsafe functions and methods) is allowed only in std
 //!   and in packages with native code that the program allows (`allowNative`, or the root's own
-//!   package.vlt declaring native code). Elsewhere it is an error, so an audit reads only those
+//!   package.velt declaring native code). Elsewhere it is an error, so an audit reads only those
 //!   packages.
 //! - The raw API, `Ptr`, `OutPtr`, `declare c type`s and unsafe functions, is imported only
 //!   there too: by name, through a namespace (`ffi.Ptr`) or re-exported by a package. User code
@@ -40,7 +40,7 @@ enum Trust {
     Trusted,
     /// A file outside any package.
     NoPackage,
-    /// A package whose package.vlt has no `native`.
+    /// A package whose package.velt has no `native`.
     NoNativeCode(String),
     /// A package with native code the root's `allowNative` doesn't list.
     NotAllowed(String),
@@ -68,12 +68,12 @@ impl Trust {
     fn note(&self) -> String {
         match self {
             Trust::Trusted => String::new(),
-            Trust::NoPackage => "put the native binding in a package with C libraries in its package.vlt (`native: { c: … }`), which the program allows with `allowNative`, and call its safe API".into(),
+            Trust::NoPackage => "put the native binding in a package with C libraries in its package.velt (`native: { c: … }`), which the program allows with `allowNative`, and call its safe API".into(),
             Trust::NoNativeCode(name) => format!(
-                "package `{name}` has no native code: list its C libraries in package.vlt (`native: {{ c: {{}} }}` for the platform's C library only), and allow it in the program's package.vlt with `allowNative: [\"{name}\"]`"
+                "package `{name}` has no native code: list its C libraries in package.velt (`native: {{ c: {{}} }}` for the platform's C library only), and allow it in the program's package.velt with `allowNative: [\"{name}\"]`"
             ),
             Trust::NotAllowed(name) => format!(
-                "if you trust package `{name}`, list it in the program's package.vlt: `allowNative: [\"{name}\"]`"
+                "if you trust package `{name}`, list it in the program's package.velt: `allowNative: [\"{name}\"]`"
             ),
         }
     }

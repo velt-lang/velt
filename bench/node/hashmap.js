@@ -1,4 +1,4 @@
-// Hash maps (same workload as hashmap.vlt).
+// Hash maps (same workload as hashmap.velt).
 function intMap(n) {
   const m = new Map();
   let x = 1;

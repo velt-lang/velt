@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-# Generates the operators of `velt/simd` (std/simd/ops_*.vlt): the operator methods (design
+# Generates the operators of `velt/simd` (std/simd/ops_*.velt): the operator methods (design
 # docs/internals/design/operators.md) of the ten vector types and four mask types, each the
 # lane operation its named method is (`a + b` is `a.add(b)`), calling the same `velt_simd_*`
 # operation directly so a debug build inlines it too. A scalar operand (`v * 2`) is splatted by
 # the compiler (velt_sema `operator_simd.rs`). To change them, change this script and run it
 # from the repository root, then `velt fmt` the files:
 #
-#   python3 scripts/gen-simd-ops.py && velt fmt std/simd/ops_*.vlt
+#   python3 scripts/gen-simd-ops.py && velt fmt std/simd/ops_*.velt
 import os
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "std", "simd")
@@ -170,6 +170,6 @@ for part, (what, ts) in FILES.items():
         decls += [x for x in d if x not in decls]
         bodies.append(b)
     text = HEAD.format(what=what) + "\n" + "\n".join(decls) + "\n\n" + "\n".join(bodies)
-    open(os.path.join(OUT, f"{part}.vlt"), "w", encoding="utf-8", newline="\n").write(text)
+    open(os.path.join(OUT, f"{part}.velt"), "w", encoding="utf-8", newline="\n").write(text)
 text = HEAD.format(what="masks") + "\n" + "\n".join(mask(b, 128 // b) for b in (8, 16, 32, 64))
-open(os.path.join(OUT, "ops_masks.vlt"), "w", encoding="utf-8", newline="\n").write(text)
+open(os.path.join(OUT, "ops_masks.velt"), "w", encoding="utf-8", newline="\n").write(text)

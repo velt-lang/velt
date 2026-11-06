@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Generated code and compile cost of velt_opt's `fits_pair`, by instructions executed: pair.vlt's
+# Generated code and compile cost of velt_opt's `fits_pair`, by instructions executed: pair.velt's
 # two kernels, as they are and with `i8[]` boxed, and `--emit vir` of one function with N pairs (the
 # pass's counts are per function), from this tree's compiler and, for the first column, another one:
 #
@@ -17,7 +17,7 @@ OUT="$TARGET/bench-simd"
 mkdir -p "$OUT"
 cargo build --release -q -p veltc -p velt_rt --manifest-path "$ROOT/Cargo.toml"
 
-python3 - "$HERE/pair.vlt" "$OUT" "$TARGET/release/velt" "${VELT_BASE:-}" <<'PY'
+python3 - "$HERE/pair.velt" "$OUT" "$TARGET/release/velt" "${VELT_BASE:-}" <<'PY'
 import os, re, subprocess, sys
 src, out, head, base = sys.argv[1:]
 def instructions(argv):
@@ -30,13 +30,13 @@ def instructions(argv):
                        check=True, capture_output=True, text=True)
     return int(re.search(r"I\s+refs:\s+([\d,]+)", open(log).read()).group(1).replace(",", "")), p.stdout
 def boxed():
-    path = out + "/pair_boxed.vlt"
+    path = out + "/pair_boxed.velt"
     text = open(src).read().replace("  const kernels:", "  console.log(new Held(a).xs.length + new Held(a).xs.length);\n  const kernels:")
     with open(path, "w") as f:
         f.write(text + "\nclass Held {\n  xs: i8[];\n\n  constructor(xs: i8[]) {\n    this.xs = xs;\n  }\n}\n")
     return path
 def stress(n):
-    path = f"{out}/pair_stress_{n}.vlt"
+    path = f"{out}/pair_stress_{n}.velt"
     tests = "".join(f"  if (i8x16.fits(a, j + {i}) && i8x16.fits(b, j + {i})) {{ c += {i}; }}\n" for i in range(n))
     with open(path, "w") as f:
         f.write('import { i8x16 } from "velt/simd";\nimport { args } from "velt/process";\n'

@@ -185,10 +185,10 @@ fn every_bench_row_exists() {
     for h in HOOKS {
         let Some(row) = h.bench else { continue };
         benched += 1;
-        let file = rows.join(format!("{row}.vlt"));
+        let file = rows.join(format!("{row}.velt"));
         assert!(
             file.is_file(),
-            "{}: bench(\"{row}\") names no bench/stdport/{row}.vlt",
+            "{}: bench(\"{row}\") names no bench/stdport/{row}.velt",
             h.name
         );
     }
@@ -260,7 +260,7 @@ fn files_with(dir: &Path, ext: &str, out: &mut Vec<PathBuf>) {
 fn a_deleted_extern_is_named_nowhere() {
     let mut files = vec![];
     files_with(&crates(), "rs", &mut files);
-    files_with(&crates().join("../std"), "vlt", &mut files);
+    files_with(&crates().join("../std"), "velt", &mut files);
     let this = Path::new(file!()).file_name().expect("this file");
     let mut wrong = vec![];
     for path in files {

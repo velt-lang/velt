@@ -1,17 +1,17 @@
-//! `.ts` and `.tsx` modules next to `.vlt` ones: resolution order, ambiguity, explicit
+//! `.ts` and `.tsx` modules next to `.velt` ones: resolution order, ambiguity, explicit
 //! extensions, JSX only in `.tsx`.
 
 use super::tests::{imports, jsx_runtime, load, messages, paths, AliasResolver, JsxResolver, Tree};
 use super::*;
 
 #[test]
-fn relative_imports_find_vlt_ts_and_tsx_files() {
+fn relative_imports_find_velt_ts_and_tsx_files() {
     let t = Tree::new();
     t.write("app/model.ts", "export function model() {}\n");
     t.write("app/view.tsx", "export function view() {}\n");
     t.write("app/shapes/index.ts", "export function square() {}\n");
     t.write(
-        "app/util.vlt",
+        "app/util.velt",
         "import { model } from \"./model\";\nexport function util() {}\n",
     );
     let root = t.write(
@@ -33,13 +33,13 @@ fn relative_imports_find_vlt_ts_and_tsx_files() {
 #[test]
 fn two_candidates_for_one_import_are_ambiguous() {
     let t = Tree::new();
-    t.write("app/a.vlt", "export function a() {}\n");
+    t.write("app/a.velt", "export function a() {}\n");
     t.write("app/a.ts", "export function a() {}\n");
     t.write("app/a.tsx", "export function a() {}\n");
-    t.write("app/b/index.vlt", "");
+    t.write("app/b/index.velt", "");
     t.write("app/b/index.tsx", "");
     let src = "import { a } from \"./a\";\nimport \"./b\";\nfunction main() {}\n";
-    let root = t.write("app/main.vlt", src);
+    let root = t.write("app/main.velt", src);
     let (l, diags, sm) = load(&root, LoadOptions::default());
     assert_eq!(paths(&l), ["main"]);
     let msgs = messages(&diags);
@@ -47,24 +47,24 @@ fn two_candidates_for_one_import_are_ambiguous() {
     assert_eq!(
         msgs,
         [
-            "module `./a` is ambiguous: it could be `a.vlt`, `a.ts` or `a.tsx`",
-            "module `./b` is ambiguous: it could be `b/index.vlt` or `b/index.tsx`",
+            "module `./a` is ambiguous: it could be `a.velt`, `a.ts` or `a.tsx`",
+            "module `./b` is ambiguous: it could be `b/index.velt` or `b/index.tsx`",
         ]
     );
     let rendered = diags[0].render(&sm);
-    assert!(rendered.contains("main.vlt:1:19"), "{rendered}");
+    assert!(rendered.contains("main.velt:1:19"), "{rendered}");
 }
 
 #[test]
 fn explicit_extensions_name_one_file() {
     let t = Tree::new();
-    for f in ["a.vlt", "a.ts", "b.ts", "c.tsx"] {
+    for f in ["a.velt", "a.ts", "b.ts", "c.tsx"] {
         t.write(&format!("app/{f}"), "export function f() {}\n");
     }
-    // `./a.ts` names `a.ts` even though `a.vlt` exists; `./b.js` and `./c.jsx` are TypeScript's
+    // `./a.ts` names `a.ts` even though `a.velt` exists; `./b.js` and `./c.jsx` are TypeScript's
     // spelling of `b.ts` and `c.tsx`.
     let root = t.write(
-        "app/main.vlt",
+        "app/main.velt",
         "import { f } from \"./a.ts\";\nimport \"./b.js\";\nimport \"./c.jsx\";\nimport \"./b.tsx\";\nimport \"./c.js\";\n",
     );
     let (l, diags, sm) = load(&root, LoadOptions::default());
@@ -76,8 +76,8 @@ fn explicit_extensions_name_one_file() {
         "`./c.js` finds `c.tsx`"
     );
 
-    // `./a.vlt` names `a.vlt`; the same module path as `a.ts` loaded through another import.
-    let root = t.write("app/both.vlt", "import \"./a.vlt\";\nimport \"./a.ts\";\n");
+    // `./a.velt` names `a.velt`; the same module path as `a.ts` loaded through another import.
+    let root = t.write("app/both.velt", "import \"./a.velt\";\nimport \"./a.ts\";\n");
     let (l, diags, _) = load(&root, LoadOptions::default());
     assert_eq!(paths(&l), ["main", "a"]);
     assert!(
@@ -90,7 +90,7 @@ fn explicit_extensions_name_one_file() {
 #[test]
 fn package_imports_name_modules_without_an_extension() {
     let resolve = |spec: &str| resolve_spec(spec, Path::new("."));
-    for spec in ["json/parse.ts", "json/parse.vlt", "json/x.tsx"] {
+    for spec in ["json/parse.ts", "json/parse.velt", "json/x.tsx"] {
         let err = resolve(spec).unwrap_err();
         assert!(err.contains("should not include"), "{spec}: {err}");
     }
@@ -102,7 +102,7 @@ fn path_aliases_find_ts_files() {
     t.write("p/src/util/strings.ts", "export function up() {}\n");
     t.write("p/src/ui/index.tsx", "export function draw() {}\n");
     let root = t.write(
-        "p/src/main.vlt",
+        "p/src/main.velt",
         "import { up } from \"@app/util/strings\";\nimport { draw } from \"@app/ui\";\n",
     );
     let resolver = AliasResolver(t.path("p"));
@@ -118,7 +118,7 @@ fn path_aliases_find_ts_files() {
 #[test]
 fn jsx_in_tsx_files_uses_the_package_provider_and_is_an_error_in_ts_files() {
     let t = Tree::new();
-    t.write("app/ui/jsx-runtime.vlt", "export class Element {}\n");
+    t.write("app/ui/jsx-runtime.velt", "export class Element {}\n");
     t.write(
         "app/card.tsx",
         "export function Card() { return <div />; }\n",
@@ -155,7 +155,7 @@ fn declaration_files_are_not_modules() {
     let t = Tree::new();
     t.write("app/types.d.ts", "export interface Point { x: number }\n");
     let root = t.write(
-        "app/main.vlt",
+        "app/main.velt",
         "import \"./types.d\";\nimport \"./types.d.ts\";\n",
     );
     let (l, diags, _) = load(&root, LoadOptions::default());
@@ -171,9 +171,9 @@ fn declaration_files_are_not_modules() {
     assert_eq!(
         tried,
         [
-            "tried `types.d.vlt`",
+            "tried `types.d.velt`",
             "tried `types.d.tsx`",
-            "tried `types.d/index.vlt`",
+            "tried `types.d/index.velt`",
             "tried `types.d/index.ts`",
             "tried `types.d/index.tsx`",
         ]
@@ -185,7 +185,7 @@ fn declaration_files_are_not_modules() {
 fn type_assertions_are_reported_in_ts_files_only() {
     let t = Tree::new();
     t.write("app/cast.ts", "export const n = <number>x;\n");
-    let root = t.write("app/main.vlt", "import \"./cast\";\n");
+    let root = t.write("app/main.velt", "import \"./cast\";\n");
     let (_, diags, sm) = load(&root, LoadOptions::default());
     assert_eq!(
         messages(&diags),

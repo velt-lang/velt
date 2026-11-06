@@ -292,7 +292,7 @@ fn repeat_selection(root: &Path, args: &Args) -> Result<(repeat::Selection, Stri
         .or_else(|| changes::default_base(root))
         .ok_or("no base revision (origin/main or main) to compare with: pass --base or --paths")?;
     let c = changes::changes(root, &base)?;
-    let sel = repeat::select(&c.paths, &c.vlt_comment_only, exists, list_dir);
+    let sel = repeat::select(&c.paths, &c.velt_comment_only, exists, list_dir);
     Ok((
         sel,
         format!("{} file(s) changed since {base}", c.paths.len()),
@@ -341,7 +341,7 @@ fn flake_guards(root: &Path, args: &Args) -> FlakeGuards {
                 return none;
             };
             match changes::changes(root, &base) {
-                Ok(c) => (c.paths, c.vlt_comment_only),
+                Ok(c) => (c.paths, c.velt_comment_only),
                 Err(_) => return none,
             }
         }
@@ -664,16 +664,16 @@ name = \"a\"
             "{text}"
         );
         plan.sweep = sweep::Sweep::Changed(
-            ["tests/golden/a/x.vlt", "tests/golden/b.vlt"]
+            ["tests/golden/a/x.velt", "tests/golden/b.velt"]
                 .map(String::from)
                 .into(),
         );
-        plan.fmt_corpus = sweep::Sweep::Changed(["std/a.vlt"].map(String::from).into());
+        plan.fmt_corpus = sweep::Sweep::Changed(["std/a.velt"].map(String::from).into());
         let text = github_output_text(&plan);
         assert!(
             text.contains(
-                "\nrobustness=changed\nrobustness_files=tests/golden/a/x.vlt,tests/golden/b.vlt\n\
-                 fmt_corpus=changed\nfmt_corpus_files=std/a.vlt\n"
+                "\nrobustness=changed\nrobustness_files=tests/golden/a/x.velt,tests/golden/b.velt\n\
+                 fmt_corpus=changed\nfmt_corpus_files=std/a.velt\n"
             ),
             "{text}"
         );

@@ -1,10 +1,10 @@
 # `shared<T>` reads
 
-`store_reads.vlt`: 8 tasks read one `shared<Store>` (200 products, a `Map`, counted classes)
+`store_reads.velt`: 8 tasks read one `shared<Store>` (200 products, a `Map`, counted classes)
 through ordinary functions, 300 rounds each. Every task must print the same total.
 
 ```sh
-velt build --release bench/shared/store_reads.vlt -o /tmp/store_reads
+velt build --release bench/shared/store_reads.velt -o /tmp/store_reads
 /usr/bin/time -l /tmp/store_reads   # macOS: peak RSS and instructions retired
 ```
 
@@ -17,11 +17,11 @@ Instructions retired (M-series Mac, release runtime, 3 runs each, identical outp
 
 ## `RwLock` against `Mutex`
 
-`lock_mix.vlt` (a `Map` lookup per operation) and `lock_mix_tiny.vlt` (one field per
+`lock_mix.velt` (a `Map` lookup per operation) and `lock_mix_tiny.velt` (one field per
 operation): tasks share one lock and read or write it in a fixed mix.
 
 ```sh
-velt build --release bench/shared/lock_mix.vlt -o /tmp/lock_mix
+velt build --release bench/shared/lock_mix.velt -o /tmp/lock_mix
 /tmp/lock_mix rwlock 10 90   # 10 tasks, 90 reads per 100 operations: M operations/s
 ```
 

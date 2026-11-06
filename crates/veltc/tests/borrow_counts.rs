@@ -11,11 +11,11 @@ use std::path::Path;
 use veltc::cli::Emit;
 use veltc::driver::{self, BuildOptions, Session};
 
-/// The debug VIR of `tests/borrow_counts/<name>.vlt` (no inlining: one function per function).
+/// The debug VIR of `tests/borrow_counts/<name>.velt` (no inlining: one function per function).
 fn vir(name: &str) -> String {
     let input = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/borrow_counts")
-        .join(format!("{name}.vlt"));
+        .join(format!("{name}.velt"));
     let opts = BuildOptions {
         input,
         release: false,
@@ -29,11 +29,11 @@ fn vir(name: &str) -> String {
     }
 }
 
-/// The release VIR of `tests/borrow_counts/<name>.vlt`.
+/// The release VIR of `tests/borrow_counts/<name>.velt`.
 fn release_vir(name: &str) -> String {
     let input = Path::new(env!("CARGO_MANIFEST_DIR"))
         .join("tests/borrow_counts")
-        .join(format!("{name}.vlt"));
+        .join(format!("{name}.velt"));
     let opts = BuildOptions {
         input,
         release: true,

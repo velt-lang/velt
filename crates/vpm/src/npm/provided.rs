@@ -1,5 +1,5 @@
 //! The npm packages a directory provides to a git dependency ([`crate::git`]) whose target has a
-//! `package.json` and no `package.vlt`: the package in its own `package.json`, as
+//! `package.json` and no `package.velt`: the package in its own `package.json`, as
 //! `npm install git+…` installs it, and when it is a workspace's root (`pnpm-workspace.yaml`, or
 //! `workspaces` in its `package.json`) every package of the workspace too.
 
@@ -65,7 +65,7 @@ pub fn packages_at_limited(dir: &Path, max_dirs: usize) -> Result<Packages, Stri
         }
     }
     if by_name.is_empty() {
-        let mut message = "has neither a package.vlt nor an npm package (a package.json with a `name`, or a workspace of them)".to_string();
+        let mut message = "has neither a package.velt nor an npm package (a package.json with a `name`, or a workspace of them)".to_string();
         if let Some(pattern) = &cut {
             message.push_str(&cut_note(pattern, max_dirs));
         }

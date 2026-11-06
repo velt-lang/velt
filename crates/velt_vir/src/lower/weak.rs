@@ -1,4 +1,4 @@
-//! `WeakMap`, `WeakSet` and `WeakRef` (std/prelude/weak.vlt, weak_set.vlt, weak_ref.vlt) on
+//! `WeakMap`, `WeakSet` and `WeakRef` (std/prelude/weak.velt, weak_set.velt, weak_ref.velt) on
 //! velt_rt's weak-reference core (rt_abi.md "Weak references"; docs/internals/design/weak-refs.md).
 //!
 //! Keys and `WeakRef` targets are counted objects passed by address (the map does not count

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Atomics: atomics.vlt (Velt `Atomic<T>` and velt/sync, LLVM release) against the same
+# Atomics: atomics.velt (Velt `Atomic<T>` and velt/sync, LLVM release) against the same
 # workloads in Rust (rust/: `std::sync::atomic`, fat LTO, built for this CPU). Checks that both
 # print the same checksums (for the timing-dependent `latch_reads_4t`: no torn read, 0), and
 # prints a Markdown table of the best time (ms) over RUNS runs, interleaved so a busy machine
@@ -20,7 +20,7 @@ mkdir -p "$OUT"
 
 echo "building velt (release) and the runtime..." >&2
 cargo build --release -q -p veltc -p velt_rt --manifest-path "$ROOT/Cargo.toml"
-"$TARGET/release/velt" build --release --backend llvm "$HERE/atomics.vlt" -o "$OUT/atomics-velt"
+"$TARGET/release/velt" build --release --backend llvm "$HERE/atomics.velt" -o "$OUT/atomics-velt"
 (cd "$HERE/rust" && cargo build --release -q --target-dir "$OUT/rust")
 cp "$OUT/rust/release/atomics_bench" "$OUT/atomics-rust"
 

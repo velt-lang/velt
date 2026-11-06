@@ -1,6 +1,6 @@
 //! `velt cache warm`: compile std into the build cache before a first build needs it (#1612).
 //!
-//! The warm-up programs (`<prefix>/share/velt/warm/*.vlt`; in a checkout, the std goldens that
+//! The warm-up programs (`<prefix>/share/velt/warm/*.velt`; in a checkout, the std goldens that
 //! `share/velt/warm/programs.txt` lists) together reach most of std and its common generic
 //! instances. Each is built in debug, as an executable (what `velt build`, `velt run` and `velt
 //! test` build: an object alone compiles some code differently), for this machine's CPU (what `velt run` and `velt test` build for) and for the
@@ -155,7 +155,7 @@ fn toolchain_key() -> velt_build_cache::Key {
     crate::build_cache::compiler_identity()
 }
 
-/// The warm-up programs: the `.vlt` files of `dir` by name, then those `programs.txt` there lists
+/// The warm-up programs: the `.velt` files of `dir` by name, then those `programs.txt` there lists
 /// (one path per line, relative to `dir`; `#` starts a comment line).
 fn programs(dir: &Path) -> Vec<PathBuf> {
     let mut programs: Vec<PathBuf> = std::fs::read_dir(dir)
@@ -163,7 +163,7 @@ fn programs(dir: &Path) -> Vec<PathBuf> {
         .flatten()
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "vlt"))
+        .filter(|p| p.extension().is_some_and(|e| e == "velt"))
         .collect();
     programs.sort();
     let list = std::fs::read_to_string(dir.join(LIST)).unwrap_or_default();
@@ -213,16 +213,16 @@ mod tests {
         std::fs::create_dir_all(&warm).unwrap();
         assert_eq!(warm_dir_of_std(&repo.join("std")), Some(warm.clone()));
         assert_eq!(warm_dir_of_std(&tmp.path().join("other/std")), None);
-        std::fs::write(warm.join("b.vlt"), "").unwrap();
-        std::fs::write(warm.join("a.vlt"), "").unwrap();
+        std::fs::write(warm.join("b.velt"), "").unwrap();
+        std::fs::write(warm.join("a.velt"), "").unwrap();
         std::fs::write(warm.join("notes.md"), "").unwrap();
-        std::fs::write(warm.join(LIST), "# goldens\n\n../g/c.vlt\n").unwrap();
+        std::fs::write(warm.join(LIST), "# goldens\n\n../g/c.velt\n").unwrap();
         assert_eq!(
             programs(&warm),
             [
-                warm.join("a.vlt"),
-                warm.join("b.vlt"),
-                warm.join("../g/c.vlt")
+                warm.join("a.velt"),
+                warm.join("b.velt"),
+                warm.join("../g/c.velt")
             ]
         );
     }

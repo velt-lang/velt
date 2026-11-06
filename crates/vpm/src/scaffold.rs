@@ -57,12 +57,12 @@ pub struct Written {
     pub updated: Vec<String>,
 }
 
-/// `package.vlt` of a new package.
+/// `package.velt` of a new package.
 pub fn manifest_text(name: &str) -> String {
     manifest_text_with(name, None)
 }
 
-/// `package.vlt` of a new package with a `description` (a library's placeholder, say).
+/// `package.velt` of a new package with a `description` (a library's placeholder, say).
 pub fn manifest_text_with(name: &str, description: Option<&str>) -> String {
     manifest_text_depending(name, description, &[])
 }
@@ -101,7 +101,7 @@ pub fn manifest_text_depending(
         lint: None,
         build: None,
     }
-    .to_vlt()
+    .to_velt()
 }
 
 /// The `velt` field of a new package: this toolchain's `major.minor`, so a newer velt installed
@@ -117,7 +117,7 @@ pub fn check_name(name: &str) -> Result<(), String> {
     crate::manifest::check_name(name)
 }
 
-/// Create package `<parent>/<name>`; `lib` selects `src/lib.vlt` instead of `src/main.vlt`.
+/// Create package `<parent>/<name>`; `lib` selects `src/lib.velt` instead of `src/main.velt`.
 /// Returns the new package root. Fails if the directory already exists.
 pub fn new_package(parent: &Path, name: &str, lib: bool) -> Result<PathBuf, String> {
     let (entry, template) = if lib {
@@ -233,7 +233,7 @@ mod tests {
             (m.package.name.as_str(), m.package.version.as_str()),
             ("app", "0.1.0")
         );
-        assert!(std::fs::read_to_string(app.join("src/main.vlt"))
+        assert!(std::fs::read_to_string(app.join("src/main.velt"))
             .unwrap()
             .contains("Hello, world!"));
         assert_eq!(
@@ -242,7 +242,7 @@ mod tests {
         );
 
         let lib = new_package(tmp.path(), "mylib", true).unwrap();
-        assert!(lib.join("src/lib.vlt").is_file() && !lib.join("src/main.vlt").exists());
+        assert!(lib.join("src/lib.velt").is_file() && !lib.join("src/main.velt").exists());
 
         assert!(new_package(tmp.path(), "app", false)
             .unwrap_err()
@@ -255,7 +255,7 @@ mod tests {
     fn skeleton() -> Vec<ScaffoldFile> {
         vec![
             ScaffoldFile::new(MANIFEST_FILE, manifest_text("p")),
-            ScaffoldFile::new("src/main.vlt", "function main() {}\n".into()),
+            ScaffoldFile::new("src/main.velt", "function main() {}\n".into()),
             ScaffoldFile {
                 if_exists: IfExists::Keep,
                 ..ScaffoldFile::new("README.md", "# p\n".into())
@@ -272,10 +272,10 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::write(root.join("src/main.vlt"), "mine").unwrap();
+        std::fs::write(root.join("src/main.velt"), "mine").unwrap();
         let err = write_files(root, &skeleton(), false).unwrap_err();
         assert!(
-            err.contains("src/main.vlt") && err.contains("--force"),
+            err.contains("src/main.velt") && err.contains("--force"),
             "{err}"
         );
         assert!(
@@ -286,7 +286,7 @@ mod tests {
         let w = write_files(root, &skeleton(), true).unwrap();
         assert_eq!(w.created.len(), 4);
         assert_eq!(
-            std::fs::read_to_string(root.join("src/main.vlt")).unwrap(),
+            std::fs::read_to_string(root.join("src/main.velt")).unwrap(),
             "function main() {}\n"
         );
     }
@@ -298,7 +298,7 @@ mod tests {
         std::fs::write(root.join("README.md"), "mine").unwrap();
         std::fs::write(root.join(".gitignore"), "node_modules/").unwrap();
         let w = write_files(root, &skeleton(), false).unwrap();
-        assert_eq!(w.created, [MANIFEST_FILE, "src/main.vlt"]);
+        assert_eq!(w.created, [MANIFEST_FILE, "src/main.velt"]);
         assert_eq!(w.kept, ["README.md"]);
         assert_eq!(w.updated, [".gitignore"]);
         assert_eq!(
@@ -311,7 +311,7 @@ mod tests {
         );
         // Running again: the .gitignore already has the line.
         std::fs::remove_file(root.join(MANIFEST_FILE)).unwrap();
-        std::fs::remove_file(root.join("src/main.vlt")).unwrap();
+        std::fs::remove_file(root.join("src/main.velt")).unwrap();
         let w = write_files(root, &skeleton(), false).unwrap();
         assert_eq!(w.kept, ["README.md", ".gitignore"]);
     }

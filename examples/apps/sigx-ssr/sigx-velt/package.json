@@ -19,7 +19,7 @@
   },
   "files": [
     "src",
-    "velt/package.vlt",
+    "velt/package.velt",
     "velt/src"
   ],
   "peerDependencies": {

@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# Generates tests/golden/std/simd_ints.vlt: every integer operation of every vector type
+# Generates tests/golden/std/simd_ints.velt: every integer operation of every vector type
 # against lanes computed here with Python integers, independent of both backends. Run it from
 # the repository root, format the file and record what it prints:
 #
-#   python3 scripts/gen-simd-golden.py && velt fmt tests/golden/std/simd_ints.vlt
-#   velt run tests/golden/std/simd_ints.vlt > tests/golden/std/simd_ints.out
+#   python3 scripts/gen-simd-golden.py && velt fmt tests/golden/std/simd_ints.velt
+#   velt run tests/golden/std/simd_ints.velt > tests/golden/std/simd_ints.out
 import os, re
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "tests", "golden", "std")
 INTS = [("i8",16),("u8",16),("i16",8),("u16",8),("i32",4),("u32",4),("i64",2),("u64",2)]
@@ -175,5 +175,5 @@ function main() {""")
     text="\n".join(o)+"\n"
     names=[t for t in SIMD_NAMES if re.search(rf"\b{t}\b", text)]
     o.insert(4, f"import {{ {', '.join(names)} }} from \"velt/simd\";\n")
-    open(f"{OUT}/simd_ints.vlt","w",encoding="utf-8",newline="\n").write("\n".join(o)+"\n")
+    open(f"{OUT}/simd_ints.velt","w",encoding="utf-8",newline="\n").write("\n".join(o)+"\n")
 ints()

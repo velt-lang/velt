@@ -1,10 +1,10 @@
 //! Node's `Map(2) { 'a' => 1, 'b' => 2 }` (empty: `Map(0) {}`) for the prelude `Map` class
-//! (std/prelude/map.vlt), instead of its private fields: the live entries of the dense
+//! (std/prelude/map.velt), instead of its private fields: the live entries of the dense
 //! `entryKeys` / `entryValues` arrays in insertion order (a deleted entry's value is null; where
 //! the value type includes null, `map_entry_live` asks the map's `[MAP_LIVE_AT]`).
-//! A prelude `Record` (std/prelude/record.vlt, a `Map` in field 0) prints like the object it
+//! A prelude `Record` (std/prelude/record.velt, a `Map` in field 0) prints like the object it
 //! stands for, in JavaScript's key order (array indices first: the entry positions its
-//! `[RECORD_POSITIONS]` gives, json/map.rs): `{ a: 1, 'b c': 2 }` (empty: `{}`), and std's `Set` (std/collections/set.vlt, a
+//! `[RECORD_POSITIONS]` gives, json/map.rs): `{ a: 1, 'b c': 2 }` (empty: `{}`), and std's `Set` (std/collections/set.velt, a
 //! `Map<T, bool>` in field 0) like node's: `Set(2) { 1, 2 }` (empty: `Set(0) {}`). Past node's
 //! depth limit they print as `[Map]`, `[Object]` and `[Set]`; a `Map` or `Set` shows its first
 //! 100 entries, then `... n more items`, and stops reading there.
@@ -67,7 +67,7 @@ impl FnLower<'_, '_> {
     /// `vt`) is live, with the place of its value: `slot` is the entry's `entryValues` element
     /// (of type `slot_t`). A null slot is a deleted entry unless `vt` includes null (the slot
     /// type is then `vt` itself and the slot the value); then the map's `[MAP_LIVE_AT]` decides
-    /// (std/prelude/map.vlt).
+    /// (std/prelude/map.velt).
     pub(in crate::lower) fn map_entry_live(
         &mut self,
         map: &Place,
@@ -312,7 +312,7 @@ impl FnLower<'_, '_> {
     }
 
     /// Is the prelude `Map` at `map` (of type `map_ty`) marked as a prototype-less record's
-    /// entries (the top bit of its `edits`, std/prelude/map.vlt `[RECORD_MARK_NULL_PROTO]`)? A Bool
+    /// entries (the top bit of its `edits`, std/prelude/map.velt `[RECORD_MARK_NULL_PROTO]`)? A Bool
     /// operand.
     pub(in crate::lower) fn null_proto_mark(&mut self, map: &Place, map_ty: TyId) -> Operand {
         let TyKind::Adt(d, _) = self.cx.kind(map_ty) else {

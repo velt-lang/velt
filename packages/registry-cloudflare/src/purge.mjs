@@ -1,4 +1,4 @@
-// The host module `registry-cloudflare` (src/purge.vlt declares its function): Cloudflare's cache
+// The host module `registry-cloudflare` (src/purge.velt declares its function): Cloudflare's cache
 // purge. The API token stays here, in the Worker's env; it never reaches the program.
 
 const PURGE_TIMEOUT_MS = 10_000;

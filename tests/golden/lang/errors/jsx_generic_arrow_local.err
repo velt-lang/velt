@@ -1,6 +1,6 @@
-jsx_generic_arrow_local.vlt:6:22: error: a generic arrow function needs typed parameters, or a generic function type where it is used
-jsx_generic_arrow_local.vlt:7:7: error: function `selfReturning` needs a return type annotation
-  jsx_generic_arrow_local.vlt:7:37: used here before its return type is known
+jsx_generic_arrow_local.velt:6:22: error: a generic arrow function needs typed parameters, or a generic function type where it is used
+jsx_generic_arrow_local.velt:7:7: error: function `selfReturning` needs a return type annotation
+  jsx_generic_arrow_local.velt:7:37: used here before its return type is known
   = note: its return type is inferred from its `return` expressions, which use `selfReturning` itself
   = note: write the return type: `const selfReturning = <T>(x: T): … =>`
-jsx_generic_arrow_local.vlt:23:41: error: `this` cannot be used in a generic arrow function
+jsx_generic_arrow_local.velt:23:41: error: `this` cannot be used in a generic arrow function

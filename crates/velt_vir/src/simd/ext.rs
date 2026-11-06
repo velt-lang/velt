@@ -58,7 +58,7 @@ impl Ext {
 
     /// Whether the runtime keeps a flag byte for it ([`Ext::flag_symbol`]). The AES extensions
     /// have none (no new runtime code, #2241): their check is true only where the build
-    /// guarantees them, and velt/simd computes the run-time answer in Velt (std/simd/aes.vlt).
+    /// guarantees them, and velt/simd computes the run-time answer in Velt (std/simd/aes.velt).
     pub fn has_flag(self) -> bool {
         !matches!(self, Ext::AesX86 | Ext::AesArm)
     }
@@ -124,7 +124,7 @@ impl Ext {
 /// An instruction of a CPU extension, with the operands in the instruction's own order: the SHA
 /// ones on `u32x4` values (lane 0 the low 32 bits), the carry-less multiplications on `u64x2`,
 /// the AES ones on `u8x16` (byte 0 first, FIPS-197's column-major state). Every one is also
-/// emulated in Velt (std/simd/sha.vlt, std/simd/clmul.vlt, std/simd/aes.vlt), which runs where
+/// emulated in Velt (std/simd/sha.velt, std/simd/clmul.velt, std/simd/aes.velt), which runs where
 /// the CPU lacks it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ExtOp {
@@ -182,7 +182,7 @@ pub enum ExtOp {
     /// x86 `AESIMC (a)`: InvMixColumns.
     AesimcX86,
     /// x86 `AESKEYGENASSIST (a, 0)`: SubWord of words 1 and 3, each also rotated; a round
-    /// constant is an XOR after it (std/simd/aes.vlt), so the immediate is always 0.
+    /// constant is an XOR after it (std/simd/aes.velt), so the immediate is always 0.
     Aeskeygenassist,
     /// ARM `AESE (state, key)`: XOR `key`, then ShiftRows and SubBytes.
     Aese,

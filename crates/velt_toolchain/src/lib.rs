@@ -3,7 +3,7 @@
 //! A machine keeps each velt version in its own prefix, `<root>/toolchains/<version>/`, beside
 //! the launcher `<root>/bin/velt`, which runs the version a package asks for:
 //!
-//! - [`requirement`]: the `velt` field of `package.vlt` (`"0.1"`, `"=0.1.3"`) and which version
+//! - [`requirement`]: the `velt` field of `package.velt` (`"0.1"`, `"=0.1.3"`) and which version
 //!   it selects;
 //! - [`pin`]: reading that field without the rest of the manifest (the launcher reads it on
 //!   every command; vpm checks the whole manifest), and [`members`]: whether a workspace lists

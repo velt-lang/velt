@@ -30,7 +30,7 @@ Rust crate, or a system library. The parts:
 
 Velt reaches native code today in two ways, neither general:
 
-- **A package's Rust crate** (`native` in `package.vlt`, native_abi.md), with a Velt-specific
+- **A package's Rust crate** (`native` in `package.velt`, native_abi.md), with a Velt-specific
   ABI: `VeltStr`/`VeltArray`/`IoResult` out-pointers, handle tables, `velt_p__` exports and
   their signature records, a function table into the runtime. The glue is code on the hot path
   that the compiler can't see: `packages/sqlite` ships rows and parameters through cursors,
@@ -121,7 +121,7 @@ Declaring is safe; calling needs `unsafe`.
 
 ## `unsafe` blocks and functions
 
-The trusted code is marked where a reviewer finds it, as in Rust and C#. A `.vlt` file is Velt,
+The trusted code is marked where a reviewer finds it, as in Rust and C#. A `.velt` file is Velt,
 which already has much that tsc doesn't accept (`declare c`, `f16`, operator methods, `spawn`,
 `shared`): the goal is the best language that looks like TypeScript, with no workarounds.
 
@@ -428,7 +428,7 @@ add nothing (their captures are their own), so a C call is never an unknown call
 ## The trust boundary
 
 - **`allowNative`.** Installing or building with a package that has native code is an error
-  until the root's `package.vlt` lists it (`allowNative: ["sqlite", "llama"]`), recorded in
+  until the root's `package.velt` lists it (`allowNative: ["sqlite", "llama"]`), recorded in
   `velt.lock.json`. The error names the dependency chain and prints the exact line to add. It is
   an error from the start (owner: no outside users yet); the PR that adds it updates the
   templates, examples and playground so `main` stays green.
@@ -532,8 +532,8 @@ state them; `velt/fs`'s public API is unchanged. std may use `unsafe` without `a
   Accelerate, OpenBLAS or MKL), one set of declarations.
 - **Different APIs**: conditional imports. Each variant declares its own library's functions and
   exports the same names and signatures (the variant check verifies it):
-  `"#backend": { darwin: "./src/backend/accelerate.vlt", linux: "./src/backend/openblas.vlt",
-  win32: "./src/backend/mkl.vlt" }`. Only the chosen variant's libraries link.
+  `"#backend": { darwin: "./src/backend/accelerate.velt", linux: "./src/backend/openblas.velt",
+  win32: "./src/backend/mkl.velt" }`. Only the chosen variant's libraries link.
 - Choosing between libraries on one platform needs a user-set condition (Node's `--conditions`),
   a separate change to the build CLI and lock file.
 
@@ -586,7 +586,7 @@ fold; every other benchmark within 3%.
 - `this unsafe block has no \`// SAFETY:\` comment saying why it is sound`.
 - `unsafe code needs a native package: \`unsafe\` is allowed only in packages with \`native.c\``.
 - `package \`llama\` (through \`chat-kit\` → \`llama\`) has native code; add it to \`allowNative\`
-  in package.vlt: allowNative: ["llama"]`.
+  in package.velt: allowNative: ["llama"]`.
 - `\`Ptr<sqlite3>\` can't be imported here: raw pointers stay among native packages`.
 - `\`sqlite3_bind_text\` parameter 4 is \`int\` in sqlite3.h:4581; \`n: i64\` declares
   \`int64_t\`: use \`i32\``.
@@ -702,7 +702,7 @@ Step 1 lands in layers, each its own pull request:
    `declare c type`, arrays of numbers and views of bytes as buffers (read at the call, after
    every argument), `StrBytes` (a well-formed string's own bytes; a std hook makes the U+FFFD
    copy otherwise) and `byteLength`. Lowering converts pointers through std hooks
-   (std/ffi/ptr.vlt), which LLVM inlines. A `declare c type` can't be made with `new`; an empty
+   (std/ffi/ptr.velt), which LLVM inlines. A `declare c type` can't be made with `new`; an empty
    array reaches C as a dangling non-null address; a `Ptr<T>` result (not `| null`) that is NULL
    stops the program, naming the C function, since C has no non-null pointer type a header
    could state.
@@ -735,11 +735,11 @@ Step 1 lands in layers, each its own pull request:
    - 5b: the code that needs trust stays in allowed packages and std.
      - `unsafe` blocks, expressions, functions and methods are errors outside std and the
        packages with native code that the program allows (a program's own files included, unless
-       the program's own package.vlt declares native code; and code hidden in a default value).
+       the program's own package.velt declares native code; and code hidden in a default value).
        veltc checks the loaded modules' ASTs (`native/trust.rs`); sema already requires an unsafe
        context for each unsafe call.
      - An npm package isn't part of the package around it: a file under a `node_modules`, or
-       under a directory below the package's root with its own `package.json` or package.vlt,
+       under a directory below the package's root with its own `package.json` or package.velt,
        has no package's trust (`PackageGraph::package_of`).
      - What the AST check can't see stays out of reach another way. Dynamic dispatch (`any`,
        `Proxy`, `Reflect`) doesn't reach unsafe methods and accessors: their names give a

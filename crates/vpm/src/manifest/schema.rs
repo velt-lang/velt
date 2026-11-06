@@ -1,5 +1,5 @@
-//! The fields of `package.vlt`, in one table: the reader's known keys, and what editors complete
-//! and explain ([`super::ide`]). `std/package/` (manifest.vlt, workspace.vlt) declares the same fields as Velt types (a test
+//! The fields of `package.velt`, in one table: the reader's known keys, and what editors complete
+//! and explain ([`super::ide`]). `std/package/` (manifest.velt, workspace.velt) declares the same fields as Velt types (a test
 //! keeps them in line).
 
 use super::NATIVE_TARGETS;
@@ -9,7 +9,7 @@ use super::NATIVE_TARGETS;
 pub struct Field {
     pub key: &'static str,
     pub kind: Kind,
-    /// Its type as `std/package/manifest.vlt` writes it.
+    /// Its type as `std/package/manifest.velt` writes it.
     pub ty: &'static str,
     /// Whether the field must be written.
     pub required: bool,
@@ -93,7 +93,7 @@ pub const PACKAGE: &[Field] = &[
         ty: "string",
         required: false,
         doc: "The program's root file, a `/`-separated path inside the package \
-              (default `\"src/main.vlt\"`).",
+              (default `\"src/main.velt\"`).",
     },
     Field {
         key: "registry",
@@ -127,8 +127,8 @@ pub const PACKAGE: &[Field] = &[
         ty: "Record<string, Import>",
         required: false,
         doc: "Conditional imports, like Node's `imports`: `#name` → a file, or the files per \
-              build condition, `{ \"#io\": { js: \"./src/io/js.vlt\", default: \
-              \"./src/io/native.vlt\" } }`. The first condition the build has wins; `default` \
+              build condition, `{ \"#io\": { js: \"./src/io/js.velt\", default: \
+              \"./src/io/native.velt\" } }`. The first condition the build has wins; `default` \
               comes last. A `#name` resolves only in the package's own modules.",
     },
     Field {
@@ -212,7 +212,7 @@ pub const PACKAGE: &[Field] = &[
     },
 ];
 
-/// The workspace object of `velt.workspace.vlt`: `export const workspace: Workspace = { … }`
+/// The workspace object of `velt.workspace.velt`: `export const workspace: Workspace = { … }`
 /// ([`crate::workspace`]).
 pub const WORKSPACE: &[Field] = &[
     Field {
@@ -222,7 +222,7 @@ pub const WORKSPACE: &[Field] = &[
         required: true,
         doc: "The member packages: `/`-separated globs relative to the workspace root \
               (`\"packages/*\"`, `\"apps/**\"`), each matching directories that hold a \
-              `package.vlt`; a `!` prefix excludes (`\"!packages/old\"`), and `\".\"` is \
+              `package.velt`; a `!` prefix excludes (`\"!packages/old\"`), and `\".\"` is \
               the root's own package.",
     },
     Field {

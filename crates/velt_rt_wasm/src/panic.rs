@@ -135,7 +135,7 @@ mod tests {
 
     #[test]
     fn throw_location_slot() {
-        let s = VeltStr::from_static(b" at a.vlt:1:2");
+        let s = VeltStr::from_static(b" at a.velt:1:2");
         assert!(velt_rt_throw_loc().is_null());
         velt_rt_set_throw_loc(&s);
         assert_eq!(velt_rt_throw_loc(), &s as *const _);

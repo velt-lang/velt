@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Typed proxies (#823): bench/proxy/proxy_signal.vlt in Velt (LLVM release) against Node 22
+# Typed proxies (#823): bench/proxy/proxy_signal.velt in Velt (LLVM release) against Node 22
 # running the same file as TypeScript, and the per-type microbenchmark (a type outside the
 # proxiable set against the same type inside it). Prints best wall-clock ms over RUNS runs and,
 # when valgrind is on PATH, instruction counts (VELT_THREADS=1, cachegrind).
@@ -40,9 +40,9 @@ instr() {
 }
 
 for p in proxy_signal proxy_tick_plain proxy_tick_proxiable; do
-  "$VELT" build --release --backend llvm "$HERE/$p.vlt" -o "$OUT/$p" >/dev/null
+  "$VELT" build --release --backend llvm "$HERE/$p.velt" -o "$OUT/$p" >/dev/null
 done
-cp "$HERE/proxy_signal.vlt" "$OUT/proxy_signal.ts"
+cp "$HERE/proxy_signal.velt" "$OUT/proxy_signal.ts"
 v=$("$OUT/proxy_signal")
 n=$(node --no-warnings --experimental-strip-types "$OUT/proxy_signal.ts")
 if [ "$v" != "$n" ]; then

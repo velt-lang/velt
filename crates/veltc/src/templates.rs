@@ -1,5 +1,5 @@
 //! Project templates for `velt new` / `velt init`, embedded in the binary. The sources live in
-//! `crates/veltc/templates/<template>/` as ordinary, formatted Velt projects (minus `package.vlt`,
+//! `crates/veltc/templates/<template>/` as ordinary, formatted Velt projects (minus `package.velt`,
 //! `.gitignore` and `.gitattributes`, which are generated); `{{name}}` in a file stands for the
 //! package name.
 //! `tests/templates.rs` builds, tests and format-checks every template. Every template also gets
@@ -7,9 +7,9 @@
 
 use vpm::scaffold::{IfExists, ScaffoldFile, GITIGNORE};
 
-/// `.gitattributes`: GitHub has no Velt language yet, so it highlights `.vlt` files as
+/// `.gitattributes`: GitHub has no Velt language yet, so it highlights `.velt` files as
 /// TypeScript (Velt is TypeScript syntax plus a few keywords and types).
-pub const GITATTRIBUTES: &str = "*.vlt linguist-language=TypeScript\n";
+pub const GITATTRIBUTES: &str = "*.velt linguist-language=TypeScript\n";
 
 /// A project template.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -99,16 +99,16 @@ macro_rules! embed {
 }
 
 const APP: &[Embedded] =
-    embed!("app": "README.md", "src/main.vlt", "src/greet.vlt", "tests/greet.test.vlt");
+    embed!("app": "README.md", "src/main.velt", "src/greet.velt", "tests/greet.test.velt");
 const CLI: &[Embedded] = embed!("cli":
-    "README.md", "src/main.vlt", "src/commands.vlt", "tests/commands.test.vlt");
+    "README.md", "src/main.velt", "src/commands.velt", "tests/commands.test.velt");
 const API: &[Embedded] = embed!("api":
-    "README.md", "src/main.vlt", "src/model.vlt", "src/store.vlt", "src/api.vlt",
-    "src/server.vlt", "tests/api.test.vlt", "tests/model.test.vlt");
+    "README.md", "src/main.velt", "src/model.velt", "src/store.velt", "src/api.velt",
+    "src/server.velt", "tests/api.test.velt", "tests/model.test.velt");
 const WEBSOCKET: &[Embedded] = embed!("websocket":
-    "README.md", "src/main.vlt", "src/protocol.vlt", "src/room.vlt", "src/server.vlt",
-    "src/client.vlt", "tests/protocol.test.vlt", "tests/chat.test.vlt");
-const LIB: &[Embedded] = embed!("lib": "README.md", "src/lib.vlt", "tests/lib.test.vlt");
+    "README.md", "src/main.velt", "src/protocol.velt", "src/room.velt", "src/server.velt",
+    "src/client.velt", "tests/protocol.test.velt", "tests/chat.test.velt");
+const LIB: &[Embedded] = embed!("lib": "README.md", "src/lib.velt", "tests/lib.test.velt");
 
 impl Template {
     /// Every template, in the order `--help` lists them.
@@ -183,7 +183,7 @@ impl Template {
         }
     }
 
-    /// The files of package `name` made from this template: `package.vlt`, `.gitignore` and
+    /// The files of package `name` made from this template: `package.velt`, `.gitignore` and
     /// `.gitattributes` (merged into existing ones), `README.md` and the VS Code files (existing
     /// ones are kept) and the
     /// sources.
@@ -270,12 +270,12 @@ mod tests {
             let files = t.files("demo-pkg");
             let paths: Vec<&str> = files.iter().map(|f| f.path.as_str()).collect();
             let entry = if t.is_lib() {
-                "src/lib.vlt"
+                "src/lib.velt"
             } else {
-                "src/main.vlt"
+                "src/main.velt"
             };
             assert!(paths.contains(&entry), "{t:?}: {paths:?}");
-            assert!(paths.iter().any(|p| p.ends_with(".test.vlt")), "{t:?}");
+            assert!(paths.iter().any(|p| p.ends_with(".test.velt")), "{t:?}");
             assert!(
                 files.iter().all(|f| !f.contents.contains("{{name}}")),
                 "{t:?}"

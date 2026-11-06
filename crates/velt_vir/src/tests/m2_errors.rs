@@ -1,5 +1,5 @@
 //! Throwing functions (Result via out-pointer), propagation, try/catch/finally, options:
-//! `tests/golden/m2/errors.vlt` loaded with the real std, and hand-lowered HIR for the edges.
+//! `tests/golden/m2/errors.velt` loaded with the real std, and hand-lowered HIR for the edges.
 
 use velt_sema::hir::{AdtKind, BinOp as B, Def, PassMode, StmtKind};
 
@@ -7,7 +7,7 @@ use super::builder::*;
 use super::builder_m2::*;
 use super::run;
 
-/// `tests/golden/m2/errors.vlt`, which indexes an array (the out-of-bounds report prints the
+/// `tests/golden/m2/errors.velt`, which indexes an array (the out-of-bounds report prints the
 /// index through std's hooks, #2197): loaded from source with the real std (std_src.rs).
 #[test]
 fn golden_errors() {

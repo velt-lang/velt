@@ -8,9 +8,9 @@ mod test_dir;
 /// The counted types lowering settles on for `src` (`VELT_DEBUG_COUNTED=1`).
 fn counted(src: &str) -> Vec<String> {
     let dir = test_dir::TestDir::new();
-    std::fs::write(dir.path().join("main.vlt"), src).unwrap();
+    std::fs::write(dir.path().join("main.velt"), src).unwrap();
     let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["build", "main.vlt", "--emit", "vir"])
+        .args(["build", "main.velt", "--emit", "vir"])
         .env("VELT_DEBUG_COUNTED", "1")
         .current_dir(dir.path())
         .output()
@@ -114,9 +114,9 @@ fn fields_borrowed_from_a_plain_variable_stay_uncounted() {
 /// The weak-capable types lowering settles on for `src` (`VELT_DEBUG_COUNTED=1`).
 fn weak_capable(src: &str) -> Vec<String> {
     let dir = test_dir::TestDir::new();
-    std::fs::write(dir.path().join("main.vlt"), src).unwrap();
+    std::fs::write(dir.path().join("main.velt"), src).unwrap();
     let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["build", "main.vlt", "--emit", "vir"])
+        .args(["build", "main.velt", "--emit", "vir"])
         .env("VELT_DEBUG_COUNTED", "1")
         .current_dir(dir.path())
         .output()

@@ -1,4 +1,4 @@
-// A TypeScript module imported by `ts_modules.vlt`.
+// A TypeScript module imported by `ts_modules.velt`.
 
 export type Rect = { width: number; height: number };
 

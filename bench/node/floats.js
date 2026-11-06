@@ -1,4 +1,4 @@
-// Floating point: Mandelbrot iteration counts and midpoint-rule integration (same as floats.vlt).
+// Floating point: Mandelbrot iteration counts and midpoint-rule integration (same as floats.velt).
 function mandelbrot(width, height, maxIter) {
   let total = 0;
   for (let py = 0; py < height; py++) {

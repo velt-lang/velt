@@ -73,7 +73,7 @@ fn the_header_check_runs_only_when_a_change_touches_what_it_checks() {
         "crates/vpm/src/manifest/read/native.rs",
         "crates/vpm/src/install/allow_native.rs",
         "crates/vpm/src/manifest/allow_native.rs",
-        "std/ffi/out.vlt",
+        "std/ffi/out.velt",
         ".github/actions/zig/action.yml",
     ] {
         assert!(plan(&[path]).c_headers, "{path}");
@@ -89,7 +89,7 @@ fn the_header_check_runs_only_when_a_change_touches_what_it_checks() {
         "crates/vpm/src/native/build.rs",
         "crates/velt_toolchain/src/lib.rs",
         "crates/vpm/src/manifest/read.rs",
-        "std/fs/index.vlt",
+        "std/fs/index.velt",
         "docs/internals/design/c-ffi.md",
         "Cargo.lock",
         "scripts/check.sh",
@@ -102,8 +102,8 @@ fn the_header_check_runs_only_when_a_change_touches_what_it_checks() {
     assert!(!Plan::everything("--full").c_headers);
     // A change that selects everything still runs it when it touches the check too, whichever
     // file comes first.
-    assert!(plan(&["Cargo.lock", "std/ffi/out.vlt"]).c_headers);
-    assert!(plan(&["std/ffi/out.vlt", "Cargo.lock"]).c_headers);
+    assert!(plan(&["Cargo.lock", "std/ffi/out.velt"]).c_headers);
+    assert!(plan(&["std/ffi/out.velt", "Cargo.lock"]).c_headers);
     // Comments change nothing it checks.
     let paths = vec!["crates/veltc/src/native/headers/ctype.rs".to_string()];
     let comments = Plan::for_changes(&graph(), &paths, &paths.iter().cloned().collect());
@@ -160,7 +160,7 @@ fn a_tooling_crate_runs_veltc_unit_tests_and_its_binaries_only() {
     assert_eq!(p.packages, set(&["velt_lsp"]));
     assert_eq!(p.veltc, Veltc::Some(set(&[])));
     assert_eq!(p.goldens, Goldens::None);
-    assert!(!p.vlt_fmt);
+    assert!(!p.velt_fmt);
     assert_eq!(
         p.filterset().unwrap(),
         "(package(velt_lsp) | (package(veltc) & (kind(lib) | kind(bin) | binary(standards)))) \
@@ -198,10 +198,10 @@ fn the_toolchain_crate_runs_with_vpm_on_every_os() {
 }
 
 #[test]
-fn the_formatter_reaches_its_dependents_and_the_vlt_format_check() {
+fn the_formatter_reaches_its_dependents_and_the_velt_format_check() {
     let p = plan(&["crates/velt_fmt/src/jsx.rs"]);
     assert_eq!(p.packages, set(&["velt_fmt", "velt_lsp", "vpm"]));
-    assert!(p.vlt_fmt);
+    assert!(p.velt_fmt);
     // vpm is a dependent and resolves every program's imports.
     assert_eq!(p.goldens, Goldens::All);
     let Veltc::Some(binaries) = &p.veltc else {
@@ -215,7 +215,7 @@ fn the_formatter_reaches_its_dependents_and_the_vlt_format_check() {
 /// goldens only when some depend on the package.
 #[test]
 fn a_changed_package_runs_the_package_tests() {
-    let p = plan(&["packages/redis/src/client.vlt"]);
+    let p = plan(&["packages/redis/src/client.velt"]);
     assert_eq!(
         p.veltc,
         Veltc::Some(set(&[
@@ -229,7 +229,7 @@ fn a_changed_package_runs_the_package_tests() {
     assert_eq!(p.goldens, Goldens::None);
     assert!(p.filterset().unwrap().contains("binary(packages)"));
     // Its Velt files are formatted like std's; its native crate is linted only when it changed.
-    assert!(p.vlt_fmt && !p.native_crates);
+    assert!(p.velt_fmt && !p.native_crates);
     let p = plan(&["packages/postgres/native/src/lib.rs"]);
     assert!(p.native_crates);
     assert!(!p.rust, "no workspace crate changed");
@@ -239,7 +239,7 @@ fn a_changed_package_runs_the_package_tests() {
 /// documentation: a change to it runs all of them.
 #[test]
 fn a_changed_http_server_runs_what_depends_on_it() {
-    let p = plan(&["packages/http-server/src/h2/request.vlt"]);
+    let p = plan(&["packages/http-server/src/h2/request.velt"]);
     assert_eq!(
         p.golden_env().unwrap(),
         "tests/golden/lang/errors/http_server/,tests/golden/std/http_server/"
@@ -265,7 +265,7 @@ fn a_changed_http_server_runs_what_depends_on_it() {
 #[test]
 fn a_changed_golden_runs_that_golden_and_the_tests_reading_goldens() {
     let p = plan(&[
-        "tests/golden/lang/foo.vlt",
+        "tests/golden/lang/foo.velt",
         "tests/golden/lang/foo.out",
         "tests/golden/m2/errors/bad.err",
     ]);
@@ -285,20 +285,20 @@ fn a_changed_golden_runs_that_golden_and_the_tests_reading_goldens() {
 fn shared_golden_files_select_their_directory() {
     let filter = |path: &str| golden_filter(path).unwrap();
     assert_eq!(
-        filter("tests/golden/lang/_helper.vlt"),
+        filter("tests/golden/lang/_helper.velt"),
         "tests/golden/lang/"
     );
     assert_eq!(
-        filter("tests/golden/lang/_mod/index.vlt"),
+        filter("tests/golden/lang/_mod/index.velt"),
         "tests/golden/lang/"
     );
     assert_eq!(
-        filter("tests/golden/lang/errors/_p/x.vlt"),
+        filter("tests/golden/lang/errors/_p/x.velt"),
         "tests/golden/lang/"
     );
     assert_eq!(filter("tests/golden/bugs/.pending"), "tests/golden/bugs/");
     assert_eq!(
-        filter("tests/golden/lang/jsx_package/pages/a.vlt"),
+        filter("tests/golden/lang/jsx_package/pages/a.velt"),
         "tests/golden/lang/"
     );
     assert_eq!(
@@ -310,12 +310,12 @@ fn shared_golden_files_select_their_directory() {
         "tests/golden/std/http."
     );
     assert_eq!(filter("examples/bank.out"), "examples/bank.");
-    assert_eq!(filter("examples/apps/todo/main.vlt"), "examples/apps/");
+    assert_eq!(filter("examples/apps/todo/main.velt"), "examples/apps/");
 }
 
 #[test]
 fn the_standard_library_runs_every_test_but_no_clippy() {
-    let p = plan(&["std/encoding/json/index.vlt"]);
+    let p = plan(&["std/encoding/json/index.velt"]);
     assert!(!p.full && !p.rust);
     assert!(p.packages.contains("velt_rt") && p.packages.contains("velt_fmt"));
     assert!(!p.packages.contains("veltc"));
@@ -325,7 +325,7 @@ fn the_standard_library_runs_every_test_but_no_clippy() {
     );
     assert_eq!(p.veltc, Veltc::All);
     assert_eq!(p.goldens, Goldens::All);
-    assert!(p.vlt_fmt);
+    assert!(p.velt_fmt);
 }
 
 #[test]
@@ -351,13 +351,13 @@ fn internals_docs_run_only_the_tests_that_read_them() {
 /// The benchmarks compile whenever they, the compiler or the standard library change (#429).
 #[test]
 fn benchmarks_are_compiled_when_they_the_compiler_or_std_change() {
-    let p = plan(&["bench/db/velt/postgres.vlt"]);
+    let p = plan(&["bench/db/velt/postgres.velt"]);
     assert_eq!(p.packages, set(&["velt_common", "velt_sema"]));
     assert_eq!(p.veltc, Veltc::Some(set(&["bench_programs"])));
     assert_eq!(p.goldens, Goldens::None);
     assert!(p.filterset().unwrap().contains("binary(bench_programs)"));
     // Every veltc test binary, `bench_programs` among them, runs for these.
-    assert_eq!(plan(&["std/db/index.vlt"]).veltc, Veltc::All);
+    assert_eq!(plan(&["std/db/index.velt"]).veltc, Veltc::All);
     assert_eq!(plan(&["crates/velt_sema/src/check.rs"]).veltc, Veltc::All);
 }
 
@@ -382,7 +382,7 @@ fn rules_combine() {
     let p = plan(&[
         "README.md",
         "crates/velt_lsp/src/a.rs",
-        "tests/golden/std/fs.vlt",
+        "tests/golden/std/fs.velt",
     ]);
     assert!(p.packages.contains("velt_lsp"));
     let Veltc::Some(binaries) = &p.veltc else {
@@ -451,7 +451,7 @@ fn the_portable_crates_exist() {
 fn the_differential_tester_checks_only_itself() {
     let p = plan(&[
         "tests/difftest/src/gen/expr_scalar.rs",
-        "tests/difftest/corpus/knapsack.vlt",
+        "tests/difftest/corpus/knapsack.velt",
     ]);
     assert!(!p.full);
     assert!(p.difftest);
@@ -496,7 +496,7 @@ fn comment_only_changes_check_the_crate_alone_on_linux() {
     );
     assert_eq!(p.veltc, Veltc::Some(set(&["docs"])));
     assert_eq!(p.goldens, Goldens::None);
-    assert!(!p.vlt_fmt);
+    assert!(!p.velt_fmt);
     assert_eq!(p.other_os, None);
     assert!(
         p.filterset().unwrap().contains("binary(standards)"),
@@ -551,8 +551,8 @@ fn crates_reading_other_crates_sources_run_with_them() {
 
 #[test]
 fn example_apps_run_their_velt_tests() {
-    // An app's tests or sources: its tests (`velt test`) and its goldens (`demo.vlt`).
-    let p = plan(&["examples/apps/chat/tests/room.test.vlt"]);
+    // An app's tests or sources: its tests (`velt test`) and its goldens (`demo.velt`).
+    let p = plan(&["examples/apps/chat/tests/room.test.velt"]);
     assert_eq!(p.veltc, Veltc::Some(set(&["templates", "example_apps"])));
     assert_eq!(p.goldens, Goldens::Matching(set(&["examples/apps/"])));
     assert!(p.filterset().unwrap().contains("binary(example_apps)"));
@@ -561,7 +561,7 @@ fn example_apps_run_their_velt_tests() {
     for path in [
         "crates/velt_sema/src/lib.rs",
         "crates/velt_rt/src/lib.rs",
-        "std/fs/index.vlt",
+        "std/fs/index.velt",
     ] {
         assert_eq!(plan(&[path]).veltc, Veltc::All, "{path}");
     }
@@ -574,18 +574,18 @@ fn example_apps_run_their_velt_tests() {
 
 #[test]
 fn std_suites_run_with_std_tests() {
-    let p = plan(&["tests/std/fetch/client.test.vlt"]);
+    let p = plan(&["tests/std/fetch/client.test.velt"]);
     assert_eq!(p.veltc, Veltc::Some(set(&["std_tests"])));
     assert!(p.filterset().unwrap().contains("binary(std_tests)"));
     // A change to std or the runner runs every `veltc` test, `std_tests` with them.
-    assert_eq!(plan(&["std/test/index.vlt"]).veltc, Veltc::All);
+    assert_eq!(plan(&["std/test/index.velt"]).veltc, Veltc::All);
     // std's white-box tests run only with `std_tests` (`velt test std/`), no goldens.
-    let p = plan(&["std/encoding/json/scan.test.vlt"]);
+    let p = plan(&["std/encoding/json/scan.test.velt"]);
     assert_eq!(p.veltc, Veltc::Some(set(&["std_tests"])));
     assert_eq!(p.goldens, Goldens::None);
     // They are formatted and linted with std.
-    assert!(p.vlt_fmt);
-    assert!(!plan(&["tests/std/fetch/client.test.vlt"]).vlt_fmt);
+    assert!(p.velt_fmt);
+    assert!(!plan(&["tests/std/fetch/client.test.velt"]).velt_fmt);
 }
 
 #[test]
@@ -610,7 +610,7 @@ fn the_webassembly_goldens_run_only_for_webassembly_code() {
     for paths in [
         &["crates/velt_sema/src/check.rs"][..],
         &["crates/velt_rt/src/http.rs"],
-        &["std/encoding/json/index.vlt"],
+        &["std/encoding/json/index.velt"],
         // Changes that select everything else leave them to the nightly too.
         &["Cargo.lock"],
         &[".github/workflows/ci.yml"],
@@ -640,7 +640,7 @@ fn the_webassembly_goldens_run_only_for_webassembly_code() {
     }
     // A changed golden, or the WebAssembly runtime alone, names the binary.
     for paths in [
-        &["tests/golden/lang/foo.vlt"][..],
+        &["tests/golden/lang/foo.velt"][..],
         &["crates/velt_rt_wasm/src/lib.rs"],
     ] {
         let filterset = plan(paths).filterset().unwrap();

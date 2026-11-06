@@ -1,4 +1,4 @@
-//! Builtin `Comparable<T>` (std/prelude/compare.vlt): ordering operators on bounded params,
+//! Builtin `Comparable<T>` (std/prelude/compare.velt): ordering operators on bounded params,
 //! impls from `extend` blocks, and extension lookup preferring exact targets.
 
 mod common;
@@ -111,7 +111,7 @@ fn exact_extensions_win_and_generic_ones_need_their_bounds() {
 
 #[test]
 fn velt_only_prelude_methods_keep_their_integer_results_in_user_code() {
-    // `compareTo` (std/prelude/compare.vlt) and the bit counts (std/prelude/bits.vlt) are Velt's
+    // `compareTo` (std/prelude/compare.velt) and the bit counts (std/prelude/bits.velt) are Velt's
     // own API: locals declared from them are a `usize` or `i64`, where a JS API integer
     // (`indexOf`) makes a `number` local.
     ok_src(

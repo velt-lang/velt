@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Instructions `velt build` executes for one long `async main` against the same function without
 # `await` (#1793), in two shapes:
-# - calls (default): async_N.vlt makes N calls and awaits once;
-# - awaits: async_N.vlt awaits N times, each value held to the end of `main`
+# - calls (default): async_N.velt makes N calls and awaits once;
+# - awaits: async_N.velt awaits N times, each value held to the end of `main`
 #   (`const v<i> = "s" + (await Promise.resolve("x<i>"));` and a use of it), like a long script
 #   with top-level await.
-# sync_N.vlt is the same file with a synchronous `main` (and the awaited values computed in
+# sync_N.velt is the same file with a synchronous `main` (and the awaited values computed in
 # place). Prints one row per N (instructions in millions: async, sync, and the extra for async).
 # With --spill it also runs callgrind and prints the instructions of the spill pass
 # (`velt_vir::lower::async_fn::spill::spill`, inclusive) for the async file.
@@ -59,17 +59,17 @@ program() { # kind n
 }
 
 count() { # file -> instructions
-  local log="$WORK/$(basename "$1" .vlt).cg.log"
+  local log="$WORK/$(basename "$1" .velt).cg.log"
   VELT_THREADS=1 valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null \
-    "$VELT" build "$1" -o "$WORK/$(basename "$1" .vlt)" > /dev/null 2> "$log" ||
+    "$VELT" build "$1" -o "$WORK/$(basename "$1" .velt)" > /dev/null 2> "$log" ||
     { echo "velt build $1 failed:" >&2; tail -20 "$log" >&2; exit 1; }
   grep -oP 'I\s+refs:\s+\K[0-9,]+' "$log" | tr -d ,
 }
 
 spill() { # file -> instructions inside the spill pass
-  local out="$WORK/$(basename "$1" .vlt).callgrind"
+  local out="$WORK/$(basename "$1" .velt).callgrind"
   VELT_THREADS=1 valgrind --tool=callgrind --callgrind-out-file="$out" \
-    "$VELT" build "$1" -o "$WORK/$(basename "$1" .vlt)" > /dev/null 2> "$out.log" ||
+    "$VELT" build "$1" -o "$WORK/$(basename "$1" .velt)" > /dev/null 2> "$out.log" ||
     { echo "velt build $1 failed:" >&2; tail -20 "$out.log" >&2; exit 1; }
   callgrind_annotate --inclusive=yes "$out" 2> /dev/null |
     awk '!found && /async_fn::spill::spill[^:]/ && !/</ { gsub(",", "", $1); print $1; found = 1 }'
@@ -82,12 +82,12 @@ else
 fi
 extra=0 sync=0
 for n in "${SIZES[@]}"; do
-  for kind in async sync; do program "$kind" "$n" > "$WORK/${kind}_$n.vlt"; done
-  a=$(count "$WORK/async_$n.vlt")
-  sync=$(count "$WORK/sync_$n.vlt")
+  for kind in async sync; do program "$kind" "$n" > "$WORK/${kind}_$n.velt"; done
+  a=$(count "$WORK/async_$n.velt")
+  sync=$(count "$WORK/sync_$n.velt")
   extra=$((a - sync))
   if [ -n "$SPILL" ]; then
-    sp=$(spill "$WORK/async_$n.vlt")
+    sp=$(spill "$WORK/async_$n.velt")
     printf '%8s %12s %12s %12s %12s\n' "$n" $((a / 1000000)) $((sync / 1000000)) $((extra / 1000000)) $((${sp:-0} / 1000000))
   else
     printf '%8s %12s %12s %12s\n' "$n" $((a / 1000000)) $((sync / 1000000)) $((extra / 1000000))

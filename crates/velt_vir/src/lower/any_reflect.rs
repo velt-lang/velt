@@ -2,7 +2,7 @@
 //! and the entries it lists, read through slot 18 of the descriptor, `AnyReflect (data, op,
 //! index, text: *string, value: *any) -> u64`, present only when the program reflects
 //! (`Boxing::any_reflect`). It is the runtime type description any library may read; std's
-//! `JSON.stringify` of an `any` is Velt code over it (std/encoding/json/any.vlt).
+//! `JSON.stringify` of an `any` is Velt code over it (std/encoding/json/any.velt).
 //!
 //! | op | does | answers |
 //! |---|---|---|

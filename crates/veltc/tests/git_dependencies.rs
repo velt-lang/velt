@@ -71,7 +71,7 @@ fn app(root: &Path, repo: &Path) -> PathBuf {
     let app = root.join("app");
     write(
         &app,
-        "package.vlt",
+        "package.velt",
         &format!(
             "export const pkg: Package = {{ name: \"app\", version: \"0.1.0\", dependencies: {{ demo: {{ git: \"{}\", branch: \"main\", path: \"packages/velt\" }} }} }};\n",
             file_url(repo)
@@ -79,7 +79,7 @@ fn app(root: &Path, repo: &Path) -> PathBuf {
     );
     write(
         &app,
-        "src/main.vlt",
+        "src/main.velt",
         "import { hello } from \"demo\";\n\nconsole.log(hello(\"velt\"));\n",
     );
     app
@@ -111,12 +111,12 @@ fn upstream(root: &Path, greeting: &str) -> PathBuf {
     );
     write(
         &repo,
-        "packages/velt/package.vlt",
+        "packages/velt/package.velt",
         "export const pkg: Package = { name: \"demo\", version: \"0.1.0\" };\n",
     );
     write(
         &repo,
-        "packages/velt/src/lib.vlt",
+        "packages/velt/src/lib.velt",
         "import { greeting } from \"@demo/signals\";\n\nexport function hello(who: string): string {\n  return greeting(who);\n}\n",
     );
     if !repo.join(".git").exists() {
@@ -237,10 +237,10 @@ fn npm_packages_come_straight_from_a_git_monorepo() {
     let app = root.join("app");
     write(
         &app,
-        "package.vlt",
+        "package.velt",
         &format!("export const pkg: Package = {{ name: \"app\", version: \"0.1.0\", dependencies: {{ \"@demo/signals\": {{ git: \"{url}\" }} }} }};\n"),
     );
-    write(&app, "src/main.vlt", main);
+    write(&app, "src/main.velt", main);
     let o = velt(&home, &app, &["run"]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(String::from_utf8_lossy(&o.stdout), "hello npm\n");
@@ -250,15 +250,15 @@ fn npm_packages_come_straight_from_a_git_monorepo() {
     let ws = root.join("ws");
     write(
         &ws,
-        "velt.workspace.vlt",
+        "velt.workspace.velt",
         &format!("export const workspace: Workspace = {{ members: [\"app\"], dependencies: {{ \"@demo/signals\": {{ git: \"{url}\", branch: \"main\" }} }} }};\n"),
     );
     write(
         &ws,
-        "app/package.vlt",
+        "app/package.velt",
         "export const pkg: Package = { name: \"app\", version: \"0.1.0\", dependencies: { \"@demo/signals\": \"workspace\" } };\n",
     );
-    write(&ws, "app/src/main.vlt", main);
+    write(&ws, "app/src/main.velt", main);
     let o = velt(&home, &ws.join("app"), &["run"]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     assert_eq!(String::from_utf8_lossy(&o.stdout), "hello npm\n");

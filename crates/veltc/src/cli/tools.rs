@@ -146,10 +146,10 @@ mod tests {
             other => panic!("{other:?}"),
         };
         assert_eq!(doc(&["doc"]), DocArgs::default());
-        let d = doc(&["doc", "--std", "-o", "out", "a.vlt"]);
+        let d = doc(&["doc", "--std", "-o", "out", "a.velt"]);
         assert!(d.std);
         assert_eq!(d.output, Some(PathBuf::from("out")));
-        assert_eq!(d.paths, [PathBuf::from("a.vlt")]);
+        assert_eq!(d.paths, [PathBuf::from("a.velt")]);
         assert!(p(&["doc", "--nope"]).is_err());
         assert_eq!(doc(&["doc", "--format", "json"]).format, DocFormat::Json);
         assert_eq!(

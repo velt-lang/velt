@@ -2,8 +2,8 @@
 //! is copied to a temporary directory (so its build output stays out of the source tree), at the
 //! same place relative to the repository's `packages/` (which apps depend on by path, `{ path:
 //! "../../../packages/http-server" }`), and its tests must pass, with an unchanged lock file
-//! (`--locked`); an app where no test ran fails too. The apps' `demo.vlt` programs run as goldens;
-//! this covers their `*.test.vlt` files.
+//! (`--locked`); an app where no test ran fails too. The apps' `demo.velt` programs run as goldens;
+//! this covers their `*.test.velt` files.
 //!
 //! Filter with `VELT_EXAMPLE_APPS=<name>` (several separated by `,`).
 
@@ -28,7 +28,7 @@ fn apps(root: &Path) -> Vec<PathBuf> {
         .expect("examples/apps")
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.join("tests").is_dir() && p.join("package.vlt").is_file())
+        .filter(|p| p.join("tests").is_dir() && p.join("package.velt").is_file())
         .filter(|p| wanted(&p.file_name().unwrap().to_string_lossy()))
         .collect();
     apps.sort();

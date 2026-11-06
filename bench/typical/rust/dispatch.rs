@@ -1,4 +1,4 @@
-// bench/typical/dispatch.vlt in idiomatic Rust: boxed trait objects.
+// bench/typical/dispatch.velt in idiomatic Rust: boxed trait objects.
 trait Shape {
     fn area(&self) -> f64;
 }

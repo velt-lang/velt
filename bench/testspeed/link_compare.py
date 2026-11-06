@@ -25,7 +25,7 @@ for top, dirs, names in os.walk(gold):
     dirs[:] = sorted(d for d in dirs if not d.startswith("_"))
     for n in sorted(names):
         p = os.path.join(top, n)
-        if n.endswith(".vlt") and not n.startswith("_") and n != "package.vlt" and os.path.exists(p[:-4] + ".out"):
+        if n.endswith(".velt") and not n.startswith("_") and n != "package.velt" and os.path.exists(p[:-4] + ".out"):
             files.append(p)
 files.sort()
 sample = files[::step]

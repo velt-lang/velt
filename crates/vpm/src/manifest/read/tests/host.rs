@@ -1,4 +1,4 @@
-//! `host` of package.vlt (`crate::host`).
+//! `host` of package.velt (`crate::host`).
 
 use super::*;
 
@@ -17,12 +17,12 @@ fn host_packages_are_read_checked_and_written_back() {
         ("wasm32-unknown-unknown", "edge", "./src/entry.mjs")
     );
     assert_eq!(host.scaffold["edge.toml"], "./src/edge.toml");
-    let again = Manifest::read(FILE, &m.to_vlt()).unwrap();
+    let again = Manifest::read(FILE, &m.to_velt()).unwrap();
     assert_eq!(again.host, m.host);
     assert_eq!(m.to_json()["host"]["condition"], "edge");
     // A variant may name a host's condition.
     let m = read(&with(
-        r##"imports: { "#io": { edge: "./src/a.vlt", default: "./src/b.vlt" } }"##,
+        r##"imports: { "#io": { edge: "./src/a.velt", default: "./src/b.velt" } }"##,
     ));
     assert_eq!(m.imports["#io"][0].condition, "edge");
     let full = |extra: &str| {

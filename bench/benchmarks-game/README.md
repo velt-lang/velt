@@ -8,9 +8,9 @@ programs. Run everything with `bench/benchmarks-game/run.sh` (see `--help`); res
 
 ```
 <program>/
-  main.vlt        idiomatic Velt, written the way a TypeScript developer would
-  main_mt.vlt     multi-threaded Velt (spawn + Promise.all), where the official fastest are parallel
-  main_opt.vlt    optimized Velt, only when it teaches something about the compiler
+  main.velt        idiomatic Velt, written the way a TypeScript developer would
+  main_mt.velt     multi-threaded Velt (spawn + Promise.all), where the official fastest are parallel
+  main_opt.velt    optimized Velt, only when it teaches something about the compiler
   main.go          fastest single-file published Go (credited in its header)
   main.js          fastest single-file published Node program (Bun runs the same source)
   main_st.go/.js   fastest published single-threaded Go / Node, when main.go / main.js is parallel

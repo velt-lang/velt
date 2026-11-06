@@ -1,4 +1,4 @@
-//! `process.memoryUsage()` (std/prelude/process.vlt): the resident set size the OS reports for
+//! `process.memoryUsage()` (std/prelude/process.velt): the resident set size the OS reports for
 //! the process, and the memory the allocator has committed for the heap.
 //!
 //! The release runtime does not count live bytes (that would cost every allocation an atomic

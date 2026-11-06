@@ -1,4 +1,4 @@
-// A closure created per iteration and only called (same workload as closures_borrowed.vlt).
+// A closure created per iteration and only called (same workload as closures_borrowed.velt).
 fn score(name: &str, base: f64, scale: f64) -> f64 {
     let weigh = |k: f64| -> f64 {
         let n = name.len() as f64 + k;

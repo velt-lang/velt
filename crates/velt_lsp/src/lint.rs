@@ -10,7 +10,7 @@
 //! (the rules only see valid Velt). For ts-compat, the files in scope are the loaded ones the
 //! command would find under the folders ([`vpm::sources::in_folder`]: not under `node_modules/`,
 //! `target/`, hidden or symlinked directories or nested packages): an import of any other file
-//! leaves the set. The folders and levels come from the package's `package.vlt`, its unsaved
+//! leaves the set. The folders and levels come from the package's `package.velt`, its unsaved
 //! text when it is open, so editing it updates the open documents; they are cached
 //! ([`FolderCache`]) by the manifest's text or modification time.
 //!
@@ -102,7 +102,7 @@ pub struct PackageLint {
 }
 
 /// The lint settings of the packages seen so far, by manifest path, so an analysis does not
-/// read and parse `package.vlt` again. An entry holds while the manifest's text (when it is
+/// read and parse `package.velt` again. An entry holds while the manifest's text (when it is
 /// open) or modification time (when it is not) is the same; the server clears the cache when
 /// folders appear or disappear on disk, which changes what the folders' paths resolve to.
 #[derive(Default)]

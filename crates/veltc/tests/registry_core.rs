@@ -415,10 +415,10 @@ fn archive(files: &[(&str, &[u8])]) -> Vec<u8> {
 fn archives() -> Vec<Case> {
     let manifest: &[u8] = b"export const pkg: Package = { name: \"p\", version: \"1.0.0\" };\n";
     let valid = archive(&[
-        ("package.vlt", manifest),
-        ("src/lib.vlt", b"export function f(): i64 { return 1; }\n"),
-        ("src/sub/\u{e9}.vlt", b""),
-        ("src/b.vlt", &[0, 255, 10, 13]),
+        ("package.velt", manifest),
+        ("src/lib.velt", b"export function f(): i64 { return 1; }\n"),
+        ("src/sub/\u{e9}.velt", b""),
+        ("src/b.velt", &[0, 255, 10, 13]),
     ]);
     let mut all = vec![valid.clone()];
     // Every prefix of a valid archive: truncated files, missing newlines, bad lengths.
@@ -439,10 +439,10 @@ fn archives() -> Vec<Case> {
         "native/x",
         "velt.toml",
         "src",
-        "package.vlt/x",
+        "package.velt/x",
         "",
     ] {
-        all.push(archive(&[("package.vlt", manifest), (path, b"x")]));
+        all.push(archive(&[("package.velt", manifest), (path, b"x")]));
     }
     for length in [
         "+3",
@@ -454,12 +454,12 @@ fn archives() -> Vec<Case> {
         "",
         "99999999999999999999999",
     ] {
-        let mut a = b"VELTPKG1\npackage.vlt\n".to_vec();
+        let mut a = b"VELTPKG1\npackage.velt\n".to_vec();
         a.extend_from_slice(format!("{length}\nabc").as_bytes());
         all.push(a);
     }
     for length in ["+0", "+", "-0", "0000000000000000000000001"] {
-        let mut a = b"VELTPKG1\npackage.vlt\n".to_vec();
+        let mut a = b"VELTPKG1\npackage.velt\n".to_vec();
         a.extend_from_slice(format!("{length}\na").as_bytes());
         all.push(a);
     }
@@ -467,9 +467,9 @@ fn archives() -> Vec<Case> {
     all.push([&b"VELTPKG1\nsrc/a\n"[..], &[0xff], b"\n"].concat());
     // Paths whose UTF-16 order differs from their byte order, a NUL in a path, an empty last file.
     all.push(archive(&[
-        ("package.vlt", manifest),
-        ("src/\u{1f600}.vlt", b"a"),
-        ("src/\u{ff61}.vlt", b"b"),
+        ("package.velt", manifest),
+        ("src/\u{1f600}.velt", b"a"),
+        ("src/\u{ff61}.velt", b"b"),
         ("src/\u{e000}", b"c"),
         ("src/a\u{0}b", b"d"),
         ("src/z", b""),
@@ -479,21 +479,21 @@ fn archives() -> Vec<Case> {
         b"export const pkg: Package = { name: \"p\", version: \"1.0.0\", native: { path: \"crate\" } };";
     all.push(archive(&[
         ("crate/Cargo.toml", b""),
-        ("package.vlt", native),
+        ("package.velt", native),
     ]));
     all.push(archive(&[
         ("native/Cargo.toml", b""),
-        ("package.vlt", native),
+        ("package.velt", native),
     ]));
     all.push(archive(&[
         ("native/Cargo.toml", b""),
         (
-            "package.vlt",
+            "package.velt",
             b"export const pkg: Package = { name: \"p\", version: \"1.0.0\", native: {} };",
         ),
     ]));
     // Every prefix cutting a 4-byte character.
-    let wide = archive(&[("package.vlt", manifest), ("src/\u{1f600}", b"x")]);
+    let wide = archive(&[("package.velt", manifest), ("src/\u{1f600}", b"x")]);
     for end in wide.len() - 8..wide.len() {
         all.push(wide[..end].to_vec());
     }
@@ -504,9 +504,9 @@ fn archives() -> Vec<Case> {
     all.push(b"VELTPKG1".to_vec());
     // The same path twice, and files out of order: both are read as they come.
     all.push(archive(&[
-        ("src/a.vlt", b"1"),
-        ("src/a.vlt", b"2"),
-        ("package.vlt", manifest),
+        ("src/a.velt", b"1"),
+        ("src/a.velt", b"2"),
+        ("package.velt", manifest),
     ]));
     all.iter().map(|a| archive_case(a)).collect()
 }
@@ -530,7 +530,7 @@ fn run(work: &Path, cases: &[Case]) -> Vec<String> {
     let text: String = cases.iter().map(|c| format!("{}\n", c.line)).collect();
     std::fs::write(&file, text).expect("write the cases");
     let o = no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["run", "src/main.vlt"])
+        .args(["run", "src/main.velt"])
         .arg(&file)
         .current_dir(work.join("driver"))
         .output()

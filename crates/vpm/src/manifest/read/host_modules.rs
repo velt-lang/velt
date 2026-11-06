@@ -1,4 +1,4 @@
-//! Decoding `hostModules` of `package.vlt` ([`crate::host_modules`]), with each check located at
+//! Decoding `hostModules` of `package.velt` ([`crate::host_modules`]), with each check located at
 //! the key or value it rejects.
 
 use super::{Reader, Value};

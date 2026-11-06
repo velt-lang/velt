@@ -11,11 +11,11 @@ use super::*;
 #[test]
 fn an_import_must_match_the_file_name_in_case() {
     let t = Tree::new();
-    t.write("app/util.vlt", "export function util() {}\n");
-    t.write("app/lib/math.vlt", "export function math() {}\n");
+    t.write("app/util.velt", "export function util() {}\n");
+    t.write("app/lib/math.velt", "export function math() {}\n");
     t.write("app/ui/Index.ts", "export function ui() {}\n");
     let root = t.write(
-        "app/main.vlt",
+        "app/main.velt",
         "import \"./util\";\nimport \"./Util\";\nimport \"./Lib/math\";\nimport \"./ui\";\n",
     );
     let (l, diags, _) = load(&root, LoadOptions::default());
@@ -23,8 +23,8 @@ fn an_import_must_match_the_file_name_in_case() {
     assert_eq!(
         messages(&diags),
         [
-            "module `./Util` names `Util.vlt`, but the file is `util.vlt`: file names must match in case",
-            "module `./Lib/math` names `Lib/math.vlt`, but the file is `lib/math.vlt`: file names must match in case",
+            "module `./Util` names `Util.velt`, but the file is `util.velt`: file names must match in case",
+            "module `./Lib/math` names `Lib/math.velt`, but the file is `lib/math.velt`: file names must match in case",
             "module `./ui` names `ui/index.ts`, but the file is `ui/Index.ts`: file names must match in case",
         ]
     );
@@ -41,11 +41,11 @@ fn an_import_must_match_the_file_name_in_case() {
 
 #[test]
 fn files_differing_only_in_case_are_different_modules() {
-    // On a file system that ignores case, `./Util` would find both `Util.ts` and `util.vlt`.
+    // On a file system that ignores case, `./Util` would find both `Util.ts` and `util.velt`.
     let t = Tree::new();
-    t.write("app/util.vlt", "export function lower() {}\n");
+    t.write("app/util.velt", "export function lower() {}\n");
     t.write("app/Util.ts", "export function upper() {}\n");
-    let root = t.write("app/main.vlt", "import { upper } from \"./Util\";\n");
+    let root = t.write("app/main.velt", "import { upper } from \"./Util\";\n");
     let (l, diags, sm) = load(&root, LoadOptions::default());
     assert!(diags.is_empty(), "{:?}", messages(&diags));
     assert!(sm.get(l.modules[1].file).path.ends_with("Util.ts"));
@@ -55,18 +55,18 @@ fn files_differing_only_in_case_are_different_modules() {
 fn a_file_module_hiding_a_folder_module_of_another_extension_is_a_warning() {
     let t = Tree::new();
     t.write("app/ui.ts", "export function ui() {}\n");
-    t.write("app/ui/index.vlt", "export function ui() {}\n");
-    t.write("app/same.vlt", "");
-    t.write("app/same/index.vlt", "");
+    t.write("app/ui/index.velt", "export function ui() {}\n");
+    t.write("app/same.velt", "");
+    t.write("app/same/index.velt", "");
     let root = t.write(
-        "app/main.vlt",
+        "app/main.velt",
         "import { ui } from \"./ui\";\nimport \"./same\";\n",
     );
     let (l, diags, sm) = load(&root, LoadOptions::default());
     assert!(sm.get(l.modules[1].file).path.ends_with("ui.ts"));
     assert_eq!(
         messages(&diags),
-        ["module `./ui` is the file `ui.ts`, which hides the folder module `ui/index.vlt`"]
+        ["module `./ui` is the file `ui.ts`, which hides the folder module `ui/index.velt`"]
     );
     assert_eq!(diags[0].severity, Severity::Warning);
     assert!(
@@ -81,9 +81,9 @@ fn package_modules_may_be_typescript_files() {
     let t = Tree::new();
     t.write("json/src/lib.ts", "export function parse() {}\n");
     t.write("json/src/lexer/index.tsx", "export function lex() {}\n");
-    t.write("json/src/value.vlt", "export function value() {}\n");
+    t.write("json/src/value.velt", "export function value() {}\n");
     let root = t.write(
-        "app/main.vlt",
+        "app/main.velt",
         "import \"json\";\nimport \"json/lexer\";\nimport \"json/value\";\nimport \"json/Value\";\n",
     );
     let resolver = MapResolver(BTreeMap::from([("json".to_string(), t.path("json"))]));

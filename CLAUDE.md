@@ -1,6 +1,6 @@
 # Velt — TypeScript syntax, native code, Rust-level performance
 
-Compiler written in Rust: `.vlt` → AST → HIR (typed, ownership-checked) → VIR (MIR-like) →
+Compiler written in Rust: `.velt` → AST → HIR (typed, ownership-checked) → VIR (MIR-like) →
 Cranelift (debug, JIT) or LLVM (release) → object → system linker + `velt_rt` (Rust staticlib
 runtime; tokio-based async). Architecture: `docs/internals/README.md`. Language and std docs for
 users: https://veltlang.com/docs/ (the website repository, `velt-lang/velt-lang.github.io`).
@@ -26,7 +26,7 @@ follow it. The essentials for agents:
   the file-size rule and clippy on the changed files only, the mechanical failures behind about
   half of all red pull request runs. `cargo xtask install-hooks` once per clone makes every
   `git push` run it (from any worktree; `git push --no-verify` skips it).
-- Try a program: `cargo run -p veltc --bin velt -- run tests/golden/m1/hello.vlt`
+- Try a program: `cargo run -p veltc --bin velt -- run tests/golden/m1/hello.velt`
 
 ## Rules for agents
 0. Work in your own git worktree, never in the main checkout: `velt/main` stays on `main`, and each
@@ -59,7 +59,7 @@ follow it. The essentials for agents:
    requests on the website from here.
 6. Never commit secrets, tokens or personal data.
 7. Standard library code follows CONTRIBUTING.md "The standard library": a module is a folder whose
-   `index.vlt` only re-exports; one exported class per file, at most 400 lines; std code imports
+   `index.velt` only re-exports; one exported class per file, at most 400 lines; std code imports
    from the defining file, user code from `velt/<module>`. `scripts/std-lint` (run by precheck)
    checks it; its allow list only shrinks: fix files, never add them to it.
 

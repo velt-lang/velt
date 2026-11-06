@@ -21,7 +21,7 @@ use crate::vir::{
     StaticId, Terminator, Ty,
 };
 
-/// Qualified names of the prelude's generator classes (std/prelude/iter.vlt).
+/// Qualified names of the prelude's generator classes (std/prelude/iter.velt).
 const PRELUDE_GENERATOR: &str = velt_common::std_item!(prelude_iter, "Generator");
 const PRELUDE_ASYNC_GENERATOR: &str =
     velt_common::std_item!(prelude_async_generator, "AsyncGenerator");
@@ -87,7 +87,7 @@ impl Cx<'_> {
     }
 
     /// Byte offset of the state in an object of generator class `gty`: after the class's
-    /// fields (the table pointer; an async generator's call queue, std/prelude/iter.vlt).
+    /// fields (the table pointer; an async generator's call queue, std/prelude/iter.velt).
     pub(in crate::lower) fn gen_state_off(&mut self, gty: TyId) -> i128 {
         let oa = self.obj_agg(gty);
         i128::from(self.aggs[oa.0 as usize].size.next_multiple_of(8))

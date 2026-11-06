@@ -1,0 +1,42 @@
+// half_dot.velt's kernels out of line, as half_dot_rust/'s `#[inline(never)]` ones are: each is
+// called through a table, at an index found at run time. (User code cannot import `noInline`, std's
+// own.) The kernel knows nothing about its arrays, so it gets one exit test only from velt_opt's
+// `fits_pair`, as Rust's loop has one length; this is the fair comparison with Rust.
+//   velt run half_dot_far.velt <kernel> <passes>
+import { dotBf16, dotF16 } from "velt/half";
+import {
+  bf16FastFour,
+  bf16FastOne,
+  bf16Four,
+  bf16One,
+  bf16Weights,
+  f16Four,
+  f16One,
+  f16Weights,
+} from "./_half_dot_kernels";
+
+function run<T>(passes: usize, at: usize, kernels: ((a: T[], b: T[]) => number)[], a: T[], b: T[]) {
+  let sink: number = 0;
+  for (let p: usize = 0; p < passes; p++) {
+    sink += kernels[at](a, b);
+  }
+  console.log(sink);
+}
+
+function main() {
+  const kernel = process.argv[2];
+  const passes = Number(process.argv[3]) as usize;
+  const n: usize = 1000000;
+  if (kernel.startsWith("f16")) {
+    const a = f16Weights(n);
+    const b = f16Weights(n);
+    const at = ["f16_one", "f16_four", "f16_bulk"].indexOf(kernel) as usize;
+    run(passes, at, [f16One, f16Four, dotF16], a, b);
+  } else {
+    const a = bf16Weights(n);
+    const b = bf16Weights(n);
+    const names = ["bf16_one", "bf16_four", "bf16_fast_one", "bf16_fast_four", "bf16_bulk"];
+    const at = names.indexOf(kernel) as usize;
+    run(passes, at, [bf16One, bf16Four, bf16FastOne, bf16FastFour, dotBf16], a, b);
+  }
+}

@@ -1,0 +1,396 @@
+// Prelude: JS-style methods on every array `T[]` (implicitly imported into every module).
+//
+// Conventions (see std/README.md):
+// - Callbacks are non-escaping function params; elements are passed to them as borrows, so
+//   iterating never copies non-Copy elements. Like JS, they also get the element's index (a
+//   callback may take fewer parameters: `xs.map((x) => …)`). A callback may throw: the method throws what its
+//   callback throws (`E`, inferred per call; `never` when the callback cannot throw).
+// - A callback may change the array through another reference (an alias, or an object holding
+//   it). Lowering passes a share of the element instead of a borrow when the array is one
+//   other references may reach (velt_vir stabilize.rs), so the argument stays valid when a
+//   push moves the buffer or a `pop` drops the element. The methods visit the indices below
+//   the length they started with, and stop at the length the callback leaves when it is
+//   shorter: `forEach`, `filter`, `reduce`, `some` and `every` skip the missing indices as JS
+//   does; JS's `find` family visits them with `undefined`, which a `T` cannot be; `map`, whose
+//   JS result would have holes, panics. `mayAlias(this)` is a constant, false when
+//   no other reference to an array of this type can exist: the length cannot change then, and
+//   the plain loop on `this.length` is all that is compiled. Otherwise the loop compares the
+//   index with one bound `n`, lowered after a callback shortened the array.
+// - Methods that return elements *out of* the array (`find`, `filter`, `slice`, `concat`) return
+//   the elements themselves, like JS: objects are shared (another reference to the same object,
+//   a count increment), numbers, bool and strings are copied.
+// - Indices are `usize` internally; positions reported to users (`indexOf`, `findIndex`) are
+//   `i64` with -1 for "absent", like JS.
+// - Sorting (`sort()`, `sort(cmp)`) lives in sort.velt, the methods that edit an array in place or
+//   copy it edited in array_edit.velt, `join` of typed arrays in array_join.velt. `clone()` (a deep
+//   copy) is compiler-provided.
+
+import { arrayWithCapacity, includesEq, mayAlias, share } from "velt/lang/intrinsics";
+import { floatPosition } from "velt/lang/hooks/number";
+import { ARRAY_GET } from "velt/lang/hooks/keys";
+import { clampPosition } from "velt/lang/array/range";
+
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
+extend<T> Array<T> {
+  /**
+   * Performs the specified action for each element in an array.
+   * @param f - A function that accepts up to two arguments, the element and its index. forEach
+   * calls `f` one time for each element in the array, in order. Elements pushed meanwhile are
+   * not visited, and elements removed meanwhile are skipped, as in JS.
+   * @throws what `f` throws.
+   */
+  forEach<E>(f: (x: T, i: i64) => void throws E) throws E {
+    if (!mayAlias(this)) {
+      for (let i: usize = 0; i < this.length; i++) {
+        f(this[i], i as i64);
+      }
+      return;
+    }
+    let n = this.length;
+    for (let i: usize = 0; i < n; i++) {
+      f(this[i], i as i64);
+      if (this.length < n) {
+        n = this.length;
+      }
+    }
+  }
+
+  /**
+   * Calls a defined callback function on each element of an array, and returns an array that
+   * contains the results.
+   * @param f - A function that accepts up to two arguments, the element and its index. The map
+   * method calls `f` one time for each element in the array. If `f` shortens the array (through
+   * another reference to it), `map` panics, where JS would return an array with holes.
+   * @throws what `f` throws.
+   */
+  map<U, E>(f: (x: T, i: i64) => U throws E): U[] throws E {
+    const out: U[] = arrayWithCapacity(this.length);
+    if (!mayAlias(this)) {
+      for (let i: usize = 0; i < this.length; i++) {
+        out.push(f(this[i], i as i64));
+      }
+      return out;
+    }
+    const n = this.length;
+    let end = n;
+    for (let i: usize = 0; i < end; i++) {
+      out.push(f(this[i], i as i64));
+      if (this.length < end) {
+        end = this.length;
+      }
+    }
+    if (out.length < n) {
+      // JS leaves holes for the missing elements, which a `U[]` cannot hold.
+      panic("the array shrank while `map` ran");
+    }
+    return out;
+  }
+
+  /**
+   * Returns the elements of an array that meet the condition specified in a callback function.
+   * The elements themselves are returned, like JS: objects are shared, not copied.
+   * @param keep - A function that accepts up to two arguments, the element and its index. The
+   * filter method calls `keep` one time for each element in the array.
+   * @throws what `keep` throws.
+   */
+  filter<E>(keep: (x: T, i: i64) => bool throws E): T[] throws E {
+    const out: T[] = [];
+    if (!mayAlias(this)) {
+      for (let i: usize = 0; i < this.length; i++) {
+        if (keep(this[i], i as i64)) {
+          out.push(share(this[i]));
+        }
+      }
+      return out;
+    }
+    let n = this.length;
+    for (let i: usize = 0; i < n; i++) {
+      if (keep(this[i], i as i64) && i < this.length) {
+        out.push(share(this[i]));
+      }
+      if (this.length < n) {
+        n = this.length;
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Calls the specified callback function for all the elements in an array. The return value of
+   * the callback function is the accumulated result, and is provided as an argument in the next
+   * call to the callback function.
+   * @param f - A function that accepts up to three arguments: the accumulated value, the element
+   * and its index. The reduce method calls `f` one time for each element in the array.
+   * @param init - The initial value of the accumulation, passed to the first call of `f`.
+   * Unlike JS, it is required.
+   * @returns the accumulated value: `init` for an empty array.
+   * @throws what `f` throws.
+   */
+  reduce<A, E>(f: (acc: A, x: T, i: i64) => A throws E, init: A): A throws E {
+    let acc = init;
+    if (!mayAlias(this)) {
+      for (let i: usize = 0; i < this.length; i++) {
+        acc = f(acc, this[i], i as i64);
+      }
+      return acc;
+    }
+    let n = this.length;
+    for (let i: usize = 0; i < n; i++) {
+      acc = f(acc, this[i], i as i64);
+      if (this.length < n) {
+        n = this.length;
+      }
+    }
+    return acc;
+  }
+
+  /** First element matching `pred` (see header), or `undefined`. */
+  find<E>(pred: (x: T, i: i64) => bool throws E): T | undefined throws E {
+    if (!mayAlias(this)) {
+      for (let i: usize = 0; i < this.length; i++) {
+        if (pred(this[i], i as i64)) {
+          return share(this[i]);
+        }
+      }
+      return undefined;
+    }
+    let n = this.length;
+    for (let i: usize = 0; i < n; i++) {
+      if (pred(this[i], i as i64) && i < this.length) {
+        return share(this[i]);
+      }
+      if (this.length < n) {
+        n = this.length;
+      }
+    }
+    return undefined;
+  }
+
+  /** Index of the first element matching `pred`, or -1. */
+  findIndex<E>(pred: (x: T, i: i64) => bool throws E): i64 throws E {
+    if (!mayAlias(this)) {
+      for (let i: usize = 0; i < this.length; i++) {
+        if (pred(this[i], i as i64)) {
+          return i as i64;
+        }
+      }
+      return -1;
+    }
+    let n = this.length;
+    for (let i: usize = 0; i < n; i++) {
+      if (pred(this[i], i as i64)) {
+        return i as i64;
+      }
+      if (this.length < n) {
+        n = this.length;
+      }
+    }
+    return -1;
+  }
+
+  /** Last element matching `pred` (see header), or `undefined`. */
+  findLast<E>(pred: (x: T, i: i64) => bool throws E): T | undefined throws E {
+    // Calls `pred` itself, as `find` does: handing it to another method beside `this` would
+    // count as a call that may change `this` (an `RwLock.read` callback could not use it).
+    let i = this.length;
+    while (i > 0) {
+      i--;
+      if ((!mayAlias(this) || i < this.length) && pred(this[i], i as i64)) {
+        return share(this[i]);
+      }
+    }
+    return undefined;
+  }
+
+  /** Index of the last element matching `pred`, or -1. */
+  findLastIndex<E>(pred: (x: T, i: i64) => bool throws E): i64 throws E {
+    let i = this.length;
+    while (i > 0) {
+      i--;
+      if ((!mayAlias(this) || i < this.length) && pred(this[i], i as i64)) {
+        return i as i64;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * The element at `index` (negative counts from the end; see header), or `undefined` when
+   * out of range.
+   */
+  at(index: i64): T | undefined {
+    const i = index < 0 ? index + (this.length as i64) : index;
+    if (i < 0 || i >= (this.length as i64)) {
+      return undefined;
+    }
+    return share(this[i as usize]);
+  }
+
+  /**
+   * Sets the elements in [start, end) to `value` (positions as in `slice`). JS also returns
+   * the array; here the result is `void`, like `reverse` and `sort`: returning the array would
+   * share it, which makes every array of its type reference counted in the whole program.
+   * `new Array<T>(n).fill(v)` still works (the compiler builds the array in one step).
+   */
+  fill(value: T, start: i64 = 0, end: i64 = 9223372036854775807) {
+    const hi = clampPosition(end, this.length);
+    for (let i = clampPosition(start, this.length); i < hi; i++) {
+      this[i] = share(value);
+    }
+  }
+
+  /**
+   * Determines whether the specified callback function returns true for any element of an array.
+   * @param pred - A function that accepts up to two arguments, the element and its index. The
+   * some method calls `pred` for each element in the array until it returns true, or until the
+   * end of the array.
+   * @throws what `pred` throws.
+   */
+  some<E>(pred: (x: T, i: i64) => bool throws E): bool throws E {
+    if (!mayAlias(this)) {
+      for (let i: usize = 0; i < this.length; i++) {
+        if (pred(this[i], i as i64)) {
+          return true;
+        }
+      }
+      return false;
+    }
+    let n = this.length;
+    for (let i: usize = 0; i < n; i++) {
+      if (pred(this[i], i as i64)) {
+        return true;
+      }
+      if (this.length < n) {
+        n = this.length;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Determines whether all the members of an array satisfy the specified test.
+   * @param pred - A function that accepts up to two arguments, the element and its index. The
+   * every method calls `pred` for each element in the array until it returns false, or until the
+   * end of the array.
+   * @throws what `pred` throws.
+   */
+  every<E>(pred: (x: T, i: i64) => bool throws E): bool throws E {
+    if (!mayAlias(this)) {
+      for (let i: usize = 0; i < this.length; i++) {
+        if (!pred(this[i], i as i64)) {
+          return false;
+        }
+      }
+      return true;
+    }
+    let n = this.length;
+    for (let i: usize = 0; i < n; i++) {
+      if (!pred(this[i], i as i64)) {
+        return false;
+      }
+      if (this.length < n) {
+        n = this.length;
+      }
+    }
+    return true;
+  }
+
+  /**
+   * Position of the first element `===` `x`, or -1: objects by identity, numbers by value, so
+   * `NaN` is never found and `null` does not find `undefined` (JS `indexOf` semantics).
+   */
+  indexOf(x: T): i64 {
+    for (let i: usize = 0; i < this.length; i++) {
+      if (this[i] === x) {
+        return i as i64;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Returns the index of the last occurrence of a specified value in an array, or -1 if it is not
+   * present. Compares like `indexOf`.
+   * @param x - The value to locate in the array.
+   */
+  lastIndexOf(x: T): i64 {
+    let i = this.length;
+    while (i > 0) {
+      i--;
+      if (this[i] === x) {
+        return i as i64;
+      }
+    }
+    return -1;
+  }
+
+  /**
+   * Determines whether an array includes a certain element, returning true or false as
+   * appropriate. Compares like `indexOf` (objects by identity, tuples part by part), except
+   * that the number `NaN` finds `NaN` (JS's SameValueZero).
+   * @param x - The element to search for.
+   */
+  includes(x: T): bool {
+    if (this.indexOf(x) >= 0) {
+      return true;
+    }
+    // Only a value that is not `===` itself can compare otherwise: the number `NaN`.
+    if (x === x) {
+      return false;
+    }
+    for (let i: usize = 0; i < this.length; i++) {
+      if (includesEq(this[i], x)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * The elements in [start, end), themselves (objects are shared, as in JS). JS semantics:
+   * negative positions count from the end, out-of-range positions are clamped, and `end`
+   * defaults to the length.
+   */
+  slice(start: i64 = 0, end: i64 = 9223372036854775807): T[] {
+    const lo = clampPosition(start, this.length);
+    const hi = clampPosition(end, this.length);
+    if (hi <= lo) {
+      return [];
+    }
+    const out: T[] = arrayWithCapacity(hi - lo);
+    for (let i = lo; i < hi; i++) {
+      out.push(share(this[i]));
+    }
+    return out;
+  }
+
+  /** New array with this array's elements followed by `other`'s. */
+  concat(other: T[]): T[] {
+    const out: T[] = arrayWithCapacity(this.length + other.length);
+    for (let i: usize = 0; i < this.length; i++) {
+      out.push(share(this[i]));
+    }
+    for (let i: usize = 0; i < other.length; i++) {
+      out.push(share(other[i]));
+    }
+    return out;
+  }
+}
+
+extend<T> Array<T> {
+  // Kept last, so the lines above keep their numbers in panic locations.
+
+  /**
+   * `this[index]` read where the program expects `T | undefined` (the compiler calls it, sema
+   * `indexers.rs`): the element, or `undefined` when `index` is not a position in the array (out
+   * of range, negative or not a whole number), as in JS.
+   */
+  [ARRAY_GET](index: number): T | undefined {
+    const i = floatPosition(index);
+    if (i >= this.length) {
+      return undefined;
+    }
+    return share(this[i]);
+  }
+}

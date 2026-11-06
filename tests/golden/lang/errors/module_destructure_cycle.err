@@ -1,1 +1,1 @@
-self_cycle.vlt:7:14: error: this destructuring declaration depends on itself through `bv`
+self_cycle.velt:7:14: error: this destructuring declaration depends on itself through `bv`

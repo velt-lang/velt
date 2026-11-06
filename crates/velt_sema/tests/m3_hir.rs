@@ -51,7 +51,7 @@ fn closures<'p>(p: &'p Program, f: &FnDef) -> Vec<&'p FnDef> {
 
 #[test]
 fn async_basic_shapes() {
-    let p = golden("m3/async_basic.vlt");
+    let p = golden("m3/async_basic.velt");
     let delayed = func(&p, "delayed");
     assert!(delayed.is_async);
     assert_eq!(
@@ -84,7 +84,7 @@ fn async_basic_shapes() {
 
 #[test]
 fn tasks_shapes() {
-    let p = golden("m3/tasks.vlt");
+    let p = golden("m3/tasks.velt");
     let worker = func(&p, "worker");
     assert_eq!(worker.params[0].mode, PassMode::Copy);
     assert_eq!(worker.params[1].mode, PassMode::Owned);
@@ -119,7 +119,7 @@ fn tasks_shapes() {
 
 #[test]
 fn spawned_closures_may_throw() {
-    let p = golden("m3/tcp_echo.vlt");
+    let p = golden("m3/tcp_echo.velt");
     let main = func(&p, "main");
     let task = closures(&p, main)
         .into_iter()
@@ -139,7 +139,7 @@ fn spawned_closures_may_throw() {
 
 #[test]
 fn async_call_arguments_used_again_are_cloned() {
-    let p = golden("m3/fs.vlt");
+    let p = golden("m3/fs.velt");
     let main = func(&p, "main");
     let modes = uses_of(main, "dir");
     let moves = modes.iter().filter(|m| **m == UseMode::Move).count();
@@ -193,7 +193,7 @@ fn spawned_handler_shapes() {
 
 #[test]
 fn json_shapes() {
-    let p = golden("m4/json.vlt");
+    let p = golden("m4/json.velt");
     let parse = func(&p, "std/prelude/json/json::JSON.parse");
     // Decoded by the code velt/encoding/json's generator writes per type.
     let generated = calls(parse).into_iter().any(|(c, _)| {

@@ -1,4 +1,4 @@
-// Strings (same workload as strings.vlt): `format!` for the template literal, `join`, and a
+// Strings (same workload as strings.velt): `format!` for the template literal, `join`, and a
 // byte scan (`charCodeAt` in the Velt/JS versions); then appends with `push_str` and `write!`.
 use std::fmt::Write;
 

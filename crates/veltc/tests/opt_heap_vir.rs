@@ -1,4 +1,4 @@
-//! `tests/golden/lang/opt_heap_objects_aliases.vlt` checks that every name of an object sees
+//! `tests/golden/lang/opt_heap_objects_aliases.velt` checks that every name of an object sees
 //! every write; this checks that its objects really leave the heap in a release build, so the
 //! golden exercises `heap_sroa`'s copies between names (#558) rather than heap objects.
 
@@ -44,7 +44,7 @@ fn allocations(vir: &str) -> Vec<(String, usize)> {
 
 #[test]
 fn objects_under_several_names_leave_the_heap() {
-    let vir = release_vir("lang/opt_heap_objects_aliases.vlt");
+    let vir = release_vir("lang/opt_heap_objects_aliases.velt");
     // `built`, `accumulated` and `renamed` (inlined into `main` or not) allocate nothing: their
     // objects are written through one name and read through another. Only `partial`'s two
     // objects stay, because `q` holds `a` on one path only.
@@ -60,7 +60,7 @@ fn objects_under_several_names_leave_the_heap() {
 
 #[test]
 fn objects_with_counted_fields_leave_the_heap() {
-    let vir = release_vir("lang/opt_heap_counted_field_loop.vlt");
+    let vir = release_vir("lang/opt_heap_counted_field_loop.velt");
     // The loop's `Holder` has a counted field (`res`): its drop reads the field through a copy,
     // so the object's address doesn't escape and the holder never reaches the heap. The one
     // allocation left is the shared `Res`, made once outside the loop. Passing the field's

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Run-time cost of codegen units (Linux / macOS). Builds composites large enough to split: the
 # units_1000 program of run.sh (unit.tmpl, called once from `main`, so it is compiled) plus one
-# benchmark (bench/*.vlt, and the benchmarks-game programs at the reduced sizes of RESULTS.md
+# benchmark (bench/*.velt, and the benchmarks-game programs at the reduced sizes of RESULTS.md
 # "Codegen round"), each with two configurations of `velt build --release --backend llvm`:
 # the baseline (default: one unit) and the candidate (default: VELT_CODEGEN_UNITS=4). Both must
 # print the same output; then ROUNDS interleaved rounds alternate which runs first, and the table
@@ -90,29 +90,29 @@ def fasta(n):
     path = f"{out}/fasta-{n}.txt"
     if not os.path.exists(path) or os.path.getsize(path) == 0:
         exe = f"{out}/fasta-gen"
-        build(velt, None, f"{game}/fasta/main.vlt", exe)
+        build(velt, None, f"{game}/fasta/main.velt", exe)
         with open(path, "wb") as f:
             subprocess.run([exe, str(n)], stdout=f, check=True)
     return path
 
 # name: (source, arguments, stdin size)
 programs = {os.path.basename(p)[:-4]: (f"{root}/bench/{p}", [], None)
-            for p in sorted(os.listdir(f"{root}/bench")) if p.endswith(".vlt")}
+            for p in sorted(os.listdir(f"{root}/bench")) if p.endswith(".velt")}
 programs.update({
-    "binary-trees": (f"{game}/binary-trees/main.vlt", ["18"], None),
-    "binary-trees arena": (f"{game}/binary-trees/main_arena.vlt", ["18"], None),
-    "fannkuch-redux": (f"{game}/fannkuch-redux/main.vlt", ["10"], None),
-    "fasta": (f"{game}/fasta/main.vlt", ["5000000"], None),
-    "k-nucleotide": (f"{game}/k-nucleotide/main.vlt", [], 2000000),
-    "mandelbrot": (f"{game}/mandelbrot/main.vlt", ["4000"], None),
-    "mandelbrot opt": (f"{game}/mandelbrot/main_opt.vlt", ["4000"], None),
-    "n-body": (f"{game}/n-body/main.vlt", ["10000000"], None),
-    "n-body opt": (f"{game}/n-body/main_opt.vlt", ["10000000"], None),
-    "pidigits": (f"{game}/pidigits/main.vlt", ["3000"], None),
-    "pidigits limbs": (f"{game}/pidigits/main_limbs.vlt", ["5000"], None),
-    "regex-redux": (f"{game}/regex-redux/main.vlt", [], 500000),
-    "reverse-complement": (f"{game}/reverse-complement/main.vlt", [], 2000000),
-    "spectral-norm": (f"{game}/spectral-norm/main.vlt", ["3000"], None),
+    "binary-trees": (f"{game}/binary-trees/main.velt", ["18"], None),
+    "binary-trees arena": (f"{game}/binary-trees/main_arena.velt", ["18"], None),
+    "fannkuch-redux": (f"{game}/fannkuch-redux/main.velt", ["10"], None),
+    "fasta": (f"{game}/fasta/main.velt", ["5000000"], None),
+    "k-nucleotide": (f"{game}/k-nucleotide/main.velt", [], 2000000),
+    "mandelbrot": (f"{game}/mandelbrot/main.velt", ["4000"], None),
+    "mandelbrot opt": (f"{game}/mandelbrot/main_opt.velt", ["4000"], None),
+    "n-body": (f"{game}/n-body/main.velt", ["10000000"], None),
+    "n-body opt": (f"{game}/n-body/main_opt.velt", ["10000000"], None),
+    "pidigits": (f"{game}/pidigits/main.velt", ["3000"], None),
+    "pidigits limbs": (f"{game}/pidigits/main_limbs.velt", ["5000"], None),
+    "regex-redux": (f"{game}/regex-redux/main.velt", [], 500000),
+    "reverse-complement": (f"{game}/reverse-complement/main.velt", [], 2000000),
+    "spectral-norm": (f"{game}/spectral-norm/main.velt", ["3000"], None),
 })
 if only:
     programs = {k: v for k, v in programs.items() if any(o in k for o in only)}
@@ -150,7 +150,7 @@ print("|---|---|---:|---:|---:|---:|---:|---:|---|")
 flagged = []
 for name, (source, args, stdin_size) in programs.items():
     slug = name.replace(" ", "_")
-    src = f"{out}/{slug}.vlt"
+    src = f"{out}/{slug}.velt"
     open(src, "w").write(composite(source))
     stdin = fasta(stdin_size) if stdin_size else None
     exes = [f"{out}/{slug}_base", f"{out}/{slug}_cand"]

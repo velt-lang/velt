@@ -17,7 +17,7 @@ fn tokens(result: &Value) -> Vec<u32> {
 #[test]
 fn semantic_tokens_come_as_ranges_and_deltas() {
     let mut client = Client::start();
-    let doc = uri("tokens_delta.vlt");
+    let doc = uri("tokens_delta.velt");
     client.open(&doc, APP);
     client.diagnostics(&doc);
     let full = client.request(
@@ -87,7 +87,7 @@ fn workspace(name: &str) -> (std::path::PathBuf, Url) {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
-        dir.join("shapes.vlt"),
+        dir.join("shapes.velt"),
         "export function squareArea(): i64 {\n  return 1;\n}\n",
     )
     .unwrap();
@@ -107,10 +107,10 @@ fn workspace_symbols_rescan_changed_files_without_a_watcher() {
     let mut client = Client::start_with(json!({ "capabilities": {}, "rootUri": root }));
     assert_eq!(symbol_names(&mut client, "area"), ["squareArea"]);
     rewrite(
-        &dir.join("shapes.vlt"),
+        &dir.join("shapes.velt"),
         "export function circleArea(): i64 {\n  return 2;\n}\n",
     );
-    std::fs::write(dir.join("more.vlt"), "function cubeArea() {}\n").unwrap();
+    std::fs::write(dir.join("more.velt"), "function cubeArea() {}\n").unwrap();
     assert_eq!(
         symbol_names(&mut client, "area"),
         ["circleArea", "cubeArea"]
@@ -128,7 +128,7 @@ fn workspace_symbols_follow_watched_file_events() {
     assert_eq!(symbol_names(&mut client, "area"), ["squareArea"]);
     assert_eq!(client.server_requests, ["client/registerCapability"]);
     // Without an event the index is not reread.
-    let file = dir.join("shapes.vlt");
+    let file = dir.join("shapes.velt");
     rewrite(
         &file,
         "export function circleArea(): i64 {\n  return 2;\n}\n",
@@ -136,7 +136,7 @@ fn workspace_symbols_follow_watched_file_events() {
     assert_eq!(symbol_names(&mut client, "area"), ["squareArea"]);
     let event =
         |path: &Path, typ: u32| json!({ "uri": Url::from_file_path(path).unwrap(), "type": typ });
-    let skipped = dir.join("target").join("built.vlt");
+    let skipped = dir.join("target").join("built.velt");
     std::fs::create_dir_all(skipped.parent().unwrap()).unwrap();
     std::fs::write(&skipped, "function builtArea() {}\n").unwrap();
     client.notify(
@@ -156,7 +156,7 @@ fn workspace_symbols_follow_watched_file_events() {
     let sub = dir.join("sub");
     std::fs::create_dir_all(sub.join("deep")).unwrap();
     std::fs::write(
-        sub.join("deep/cube.vlt"),
+        sub.join("deep/cube.velt"),
         "function cubeArea() {}
 ",
     )
@@ -170,7 +170,7 @@ fn workspace_symbols_follow_watched_file_events() {
     client.notify("workspace/didChangeWatchedFiles", changes);
     let result = client.request("workspace/symbol", json!({ "query": "cube" }));
     let found = result[0]["location"]["uri"].as_str().unwrap_or_default();
-    assert!(found.ends_with("moved/deep/cube.vlt"), "{result}");
+    assert!(found.ends_with("moved/deep/cube.velt"), "{result}");
     assert_eq!(result.as_array().map(Vec::len), Some(1), "{result}");
     std::fs::remove_dir_all(&moved).unwrap();
     let changes = json!({ "changes": [event(&moved, 3)] });
@@ -190,7 +190,7 @@ fn a_refused_watcher_falls_back_to_rescans() {
     assert_eq!(symbol_names(&mut client, "area"), ["squareArea"]);
     assert_eq!(client.server_requests, ["client/registerCapability"]);
     rewrite(
-        &dir.join("shapes.vlt"),
+        &dir.join("shapes.velt"),
         "export function circleArea(): i64 {
   return 2;
 }
@@ -204,7 +204,7 @@ fn a_refused_watcher_falls_back_to_rescans() {
 #[test]
 fn a_token_range_ending_inside_a_name_keeps_the_whole_name() {
     let mut client = Client::start();
-    let doc = uri("tokens_range_cut.vlt");
+    let doc = uri("tokens_range_cut.velt");
     client.open(&doc, APP);
     client.diagnostics(&doc);
     // The range ends after `ar` of `area(2.0)`.
@@ -225,7 +225,7 @@ fn a_token_range_ending_inside_a_name_keeps_the_whole_name() {
 fn fixes_apply_to_the_whole_file() {
     let text = "function add(mut a: i64, mut b: i64): i64 {\n  return a + b;\n}\n\nfunction main() {\n  add(1, 2);\n}\n";
     let mut client = Client::start();
-    let doc = uri("fix_all.vlt");
+    let doc = uri("fix_all.velt");
     client.open(&doc, text);
     let diags = client.diagnostics(&doc)["diagnostics"].clone();
     let (line, character) = pos_of(text, "mut", 0);

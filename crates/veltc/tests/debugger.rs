@@ -1,6 +1,6 @@
 //! Debugger support: the VS Code templates in `editors/vscode/templates` use the extension's
 //! `velt` debug type and existing tasks, and with LLDB installed an executable of the default
-//! (Cranelift) build, and with clang one of `--backend llvm`, resolves breakpoints on `.vlt` lines
+//! (Cranelift) build, and with clang one of `--backend llvm`, resolves breakpoints on `.velt` lines
 //! in the right functions (checked without running the program, so no debugger permission is
 //! needed). On macOS the debug info stays in the object, which the executable's debug map names.
 //! Where LLDB may run programs, a default build also shows local variables with their source
@@ -103,7 +103,7 @@ fn lldb_runs() -> bool {
     runs
 }
 
-/// Build `source` as `app.vlt` with `args` in a fresh work dir: the dir, the executable, and
+/// Build `source` as `app.velt` with `args` in a fresh work dir: the dir, the executable, and
 /// whether the build reports line information (`velt build --json`'s
 /// `debugInfo`: false on Windows for a Cranelift build that MSVC's `link.exe` links).
 fn build_reporting(work_name: &str, source: &str, args: &[&str]) -> (PathBuf, PathBuf, bool) {
@@ -111,9 +111,9 @@ fn build_reporting(work_name: &str, source: &str, args: &[&str]) -> (PathBuf, Pa
     runtime_support::build_native_runtime(&root);
     let work = work_dir::work_dir(&root, work_name);
     std::fs::create_dir_all(&work).expect("work dir");
-    std::fs::write(work.join("app.vlt"), source).expect("write source");
+    std::fs::write(work.join("app.velt"), source).expect("write source");
     let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["build", "app.vlt"])
+        .args(["build", "app.velt"])
         .args(args)
         .arg("--json")
         .current_dir(&work)
@@ -154,7 +154,7 @@ fn lldb(exe: &Path, commands: &[&str]) -> String {
     output_within(cmd.arg(exe), Duration::from_secs(60)).expect("lldb finished")
 }
 
-/// Build `PROGRAM` as `app.vlt` with `args`, then set breakpoints on lines 2 (in `add`) and 7
+/// Build `PROGRAM` as `app.velt` with `args`, then set breakpoints on lines 2 (in `add`) and 7
 /// (in `main`) with LLDB; its output. `None` when the build reports no line information (on
 /// Windows, a Cranelift build that MSVC's `link.exe` links).
 fn breakpoints(work_name: &str, args: &[&str]) -> Option<String> {
@@ -184,8 +184,8 @@ fn breakpoints(work_name: &str, args: &[&str]) -> Option<String> {
     let out = lldb(
         &exe,
         &[
-            "breakpoint set -f app.vlt -l 2",
-            "breakpoint set -f app.vlt -l 7",
+            "breakpoint set -f app.velt -l 2",
+            "breakpoint set -f app.velt -l 7",
         ],
     );
     let _ = std::fs::remove_dir_all(&work);
@@ -237,8 +237,8 @@ fn lldb_shows_locals_in_the_default_build() {
     let out = lldb(
         &exe,
         &[
-            "breakpoint set -f app.vlt -l 29",
-            "breakpoint set -f app.vlt -l 17",
+            "breakpoint set -f app.velt -l 29",
+            "breakpoint set -f app.velt -l 17",
             "run",
             "frame variable",
             "frame variable -P 1 p",
@@ -287,10 +287,10 @@ fn lldb_resolves_breakpoints_in_the_default_build() {
     // rows of `main`).
     let first = out.lines().find(|l| l.starts_with("Breakpoint 1:"));
     assert!(
-        first.is_some_and(|l| l.contains("add") && l.contains("at app.vlt:2")),
+        first.is_some_and(|l| l.contains("add") && l.contains("at app.velt:2")),
         "{out}"
     );
-    assert!(out.contains("at app.vlt:7"), "{out}");
+    assert!(out.contains("at app.velt:7"), "{out}");
 }
 
 #[test]
@@ -303,8 +303,8 @@ fn lldb_resolves_breakpoints_in_llvm_builds() {
         return;
     }
     let out = breakpoints("golden-work-debugger", &["--backend", "llvm"]).expect("line info");
-    assert!(out.contains("at app.vlt:2"), "{out}");
-    assert!(out.contains("at app.vlt:7"), "{out}");
+    assert!(out.contains("at app.velt:2"), "{out}");
+    assert!(out.contains("at app.velt:7"), "{out}");
 }
 
 const VALUES: &str = r#"type Shape = { kind: "circle"; r: number } | { kind: "square"; side: number };
@@ -348,7 +348,7 @@ fn lldb_formats_velt_values() {
         &exe,
         &[
             &import,
-            "breakpoint set -f app.vlt -l 12",
+            "breakpoint set -f app.velt -l 12",
             // At the entry of `points`, `ps` is not initialized: whatever its words hold, the
             // formatters must neither hang nor read a huge array.
             "breakpoint set -n _V6points",
@@ -475,9 +475,9 @@ fn lldb_shows_variables_in_their_scope() {
     let out = lldb(
         &exe,
         &[
-            "breakpoint set -f app.vlt -l 3",
-            "breakpoint set -f app.vlt -l 6",
-            "breakpoint set -f app.vlt -l 9",
+            "breakpoint set -f app.velt -l 3",
+            "breakpoint set -f app.velt -l 6",
+            "breakpoint set -f app.velt -l 9",
             "run",
             "frame variable",
             "continue",
@@ -545,7 +545,7 @@ fn lldb_shows_closure_captures() {
         &exe,
         &[
             &import,
-            "breakpoint set -f app.vlt -l 6",
+            "breakpoint set -f app.velt -l 6",
             "run",
             "frame variable",
             "kill",

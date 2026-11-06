@@ -4,7 +4,7 @@
 #   scripts/cross.sh build <velt> <dist dir> <out dir>
 #       Install every target pack in <dist dir> (velt-<v>-target-<triple>.tar.gz) other than this
 #       machine's into the toolchain of <velt> (`velt target add --from`), then build hello and
-#       examples/http_hello.vlt for each of those targets, debug and release, into
+#       examples/http_hello.velt for each of those targets, debug and release, into
 #       <out dir>/<triple>/.
 #   scripts/cross.sh run <dir> <triple>...
 #       Run what `build` made for each <triple> (found in <dir>/*/<triple>/: one directory per
@@ -50,8 +50,8 @@ build)
             flag=
             [ "$mode" = release ] && flag=--release
             echo "== $t $mode"
-            "$velt" build $flag --target "$t" "$repo/tests/golden/m1/hello.vlt" -o "$out/$t/hello-$mode$ext"
-            "$velt" build $flag --target "$t" "$repo/examples/http_hello.vlt" -o "$out/$t/http-$mode$ext"
+            "$velt" build $flag --target "$t" "$repo/tests/golden/m1/hello.velt" -o "$out/$t/hello-$mode$ext"
+            "$velt" build $flag --target "$t" "$repo/examples/http_hello.velt" -o "$out/$t/http-$mode$ext"
         done
         # Only the executables travel to the target's machine.
         find "$out/$t" -type f ! -name "*-debug$ext" ! -name "*-release$ext" -delete

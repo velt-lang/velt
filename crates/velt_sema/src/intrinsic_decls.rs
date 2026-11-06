@@ -1,5 +1,5 @@
 //! The compiler's intrinsics as std declares them (docs/internals/design/std-layout.md §10):
-//! `std/lang/intrinsics/*.vlt` writes each one as `export declare intrinsic function
+//! `std/lang/intrinsics/*.velt` writes each one as `export declare intrinsic function
 //! arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;`, and [`TABLE`] maps the declared name
 //! to what the compiler does for a call. The declaration is the signature calls are checked
 //! against (`body::expr::intrinsic_call`); this table holds no types. std imports the functions
@@ -31,12 +31,12 @@ use Intrinsic as I;
 
 /// Every declared intrinsic: its name in `std/lang/intrinsics` and what a call of it is.
 pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
-    // any.vlt
+    // any.velt
     ("anyDelete", Op(I::AnyDelete)),
     ("anyToPrimitive", AnyToPrimitive),
     ("proxyArrayCall", Op(I::ProxyArrayCall)),
     ("proxyArrayHole", Op(I::ProxyArrayHole)),
-    // array.vlt
+    // array.velt
     ("arrayCopyBytes", Op(I::ArrayCopyBytes)),
     ("arrayMove", Op(I::ArrayMove)),
     ("arrayPrefetch", Op(I::ArrayPrefetch)),
@@ -49,7 +49,7 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("arraySwapNested", Op(I::ArraySwapNested)),
     ("arrayTruncate", Op(I::ArrayTruncate)),
     ("arrayWithCapacity", Op(I::ArrayWithCapacity)),
-    // atomic.vlt
+    // atomic.velt
     ("atomicCas", Op(I::AtomicCas)),
     ("atomicCasWeak", Op(I::AtomicCasWeak)),
     ("atomicFence", Op(I::AtomicFence)),
@@ -57,16 +57,16 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("atomicRmw", Op(I::AtomicRmw)),
     ("atomicSpinHint", Op(I::AtomicSpinHint)),
     ("atomicStore", Op(I::AtomicStore)),
-    // channel.vlt
+    // channel.velt
     ("chanReceive", Op(I::ChanReceive)),
     ("chanSend", Op(I::ChanSend)),
     ("chanTryReceive", Op(I::ChanTryReceive)),
     ("chanTrySend", Op(I::ChanTrySend)),
-    // compare.vlt
+    // compare.velt
     ("hash", Op(I::Hash)),
     ("includesEq", Op(I::IncludesEq)),
     ("keyEq", Op(I::KeyEq)),
-    // generator.vlt
+    // generator.velt
     ("asyncGeneratorDispose", Op(I::AsyncGeneratorDispose)),
     ("asyncGeneratorResume", Op(I::AsyncGeneratorResume)),
     ("asyncGeneratorReturn", Op(I::AsyncGeneratorReturn)),
@@ -76,17 +76,17 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("generatorReturn", Op(I::GeneratorReturn)),
     ("generatorThrow", Op(I::GeneratorThrow)),
     ("generatorValue", Op(I::GeneratorValue)),
-    // math.vlt
+    // math.velt
     ("abs", Op(I::FAbs)),
     ("ceil", Op(I::Ceil)),
     ("floor", Op(I::Floor)),
     ("round", Op(I::Round)),
     ("sqrt", Op(I::Sqrt)),
     ("trunc", Op(I::Trunc)),
-    // ownership.vlt
+    // ownership.velt
     ("share", Op(I::Share)),
     ("transfer", Op(I::Transfer)),
-    // reflect.vlt
+    // reflect.velt
     ("anyReflectCount", Op(I::AnyReflectCount)),
     ("anyReflectHook", Op(I::AnyReflectHook)),
     ("anyReflectInfo", Op(I::AnyReflectInfo)),
@@ -95,20 +95,20 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("identity", Op(I::Identity)),
     ("isTypedProxy", Op(I::IsTypedProxy)),
     ("toAny", Op(I::ToAny)),
-    // inline.vlt
+    // inline.velt
     ("inline", Op(I::Inline)),
     ("noInline", Op(I::NoInline)),
-    // report.vlt
+    // report.velt
     ("errorText", Op(I::ErrorText)),
     ("inspect", Op(I::Inspect)),
     ("throwLoc", Op(I::ThrowLoc)),
-    // simd.vlt
+    // simd.velt
     ("strLoadPartialU8x16", Op(I::StrLoadPartialU8x16)),
     ("strLoadU8x16", Op(I::StrLoadU8x16)),
     ("targetFeature", TargetFeature),
-    // address.vlt
+    // address.velt
     ("addressLoad", Op(I::AddressLoad)),
-    // string.vlt
+    // string.velt
     ("strAsciiWords", Op(I::StrAsciiWords)),
     ("strByteAt", Op(I::StrByteAt)),
     ("strByteLen", Op(I::StrByteLen)),
@@ -116,23 +116,23 @@ pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     ("strLen", Op(I::StrLen)),
     ("strbufPushAsciiWord", Op(I::StrbufPushAsciiWord)),
     ("strbufPushAsciiWords", Op(I::StrbufPushAsciiWords)),
-    // symbol.vlt
+    // symbol.velt
     ("symbolRegistry", Op(I::SymbolRegistry)),
     ("symbolStatic", Op(I::SymbolStatic)),
-    // task.vlt
+    // task.velt
     ("firstFulfilled", Op(I::PromiseAny)),
     ("spawnHandled", Op(I::SpawnHandled)),
-    // thread_local.vlt
+    // thread_local.velt
     ("threadLocalGet", Op(I::ThreadLocalGet)),
     ("threadLocalSet", Op(I::ThreadLocalSet)),
-    // types.vlt
+    // types.velt
     ("fnCapturesNothing", Op(I::FnCapturesNothing)),
     ("holdsNull", Op(I::HoldsNull)),
     ("mayAlias", Op(I::MayAlias)),
     ("needsDrop", Op(I::NeedsDrop)),
     ("needsTransfer", Op(I::NeedsTransfer)),
     ("nullAs", Op(I::NullAs)),
-    // weak.vlt
+    // weak.velt
     ("weakMapDelete", Op(I::WeakMapDelete)),
     ("weakMapGet", Op(I::WeakMapGet)),
     ("weakMapHas", Op(I::WeakMapHas)),
@@ -192,7 +192,7 @@ pub(crate) fn name_of(i: Intrinsic) -> Option<&'static str> {
 }
 
 /// The modes of a declared intrinsic's parameters `ps`: a parameter whose written type is
-/// `Mut<T>`, `Owned<T>` or `Copied<T>` (std/lang/intrinsics/modes.vlt, aliases of `T` that
+/// `Mut<T>`, `Owned<T>` or `Copied<T>` (std/lang/intrinsics/modes.velt, aliases of `T` that
 /// module `m` imports from there) is a mutable borrow, taken over or copied; the others keep the
 /// mode of their type (copied for numbers, `bool` and `symbol`, else borrowed).
 pub(crate) fn param_modes(
@@ -242,12 +242,12 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std")
     }
 
-    fn vlt_files(dir: &Path, out: &mut Vec<PathBuf>) {
+    fn velt_files(dir: &Path, out: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).expect("std is readable").flatten() {
             let path = entry.path();
             if path.is_dir() {
-                vlt_files(&path, out);
-            } else if path.extension().is_some_and(|e| e == "vlt") {
+                velt_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "velt") {
                 out.push(path);
             }
         }
@@ -257,7 +257,7 @@ mod tests {
     fn declarations() -> Vec<(String, String, bool)> {
         let root = std_root();
         let mut files = vec![];
-        vlt_files(&root, &mut files);
+        velt_files(&root, &mut files);
         let mut out = vec![];
         for path in files {
             let src = std::fs::read_to_string(&path).expect("std file is readable");

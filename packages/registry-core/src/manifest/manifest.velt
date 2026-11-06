@@ -1,0 +1,155 @@
+// registry-core (internal): a package's manifest as `package.velt` declares it (vpm's `Manifest`),
+// and its JSON in the shape of `velt manifest --json` (vpm's `Manifest::to_json`), defaults
+// filled in.
+
+import { Dependency } from "./dependency";
+import { HostConfig } from "./host_config";
+import { NativeConfig } from "./native_config";
+import { Variant } from "./variant";
+
+/** A JSON string, as `serde_json` writes one. */
+function quote(s: string): string {
+  let out = "\"";
+  for (const c of s) {
+    const cp = c.codePointAt(0) ?? 0;
+    if (c == "\"") {
+      out += "\\\"";
+    } else if (c == "\\") {
+      out += "\\\\";
+    } else if (cp == 10) {
+      out += "\\n";
+    } else if (cp == 13) {
+      out += "\\r";
+    } else if (cp == 9) {
+      out += "\\t";
+    } else if (cp == 8) {
+      out += "\\b";
+    } else if (cp == 12) {
+      out += "\\f";
+    } else if (cp < 0x20) {
+      out += `\\u${cp.toString(16).padStart(4, "0")}`;
+    } else {
+      out += c;
+    }
+  }
+  return `${out}"`;
+}
+
+function strings(items: string[]): string {
+  return `[${items.map(quote).join(",")}]`;
+}
+
+function stringMap(m: Map<string, string>): string {
+  const parts: string[] = [];
+  for (const [k, v] of m) {
+    parts.push(`${quote(k)}:${quote(v)}`);
+  }
+  return `{${parts.join(",")}}`;
+}
+
+/** A package's manifest. */
+export class Manifest {
+  name: string = "";
+  version: string = "";
+  toolchain: string | null = null;
+  description: string | null = null;
+  keywords: string[] = [];
+  entry: string = "src/main.velt";
+  registry: string | null = null;
+  dependencies: Map<string, Dependency> = new Map();
+  paths: Map<string, string> = new Map();
+  imports: Map<string, Variant[]> = new Map();
+  hostModules: Map<string, string> = new Map();
+  host: HostConfig | null = null;
+  /** `jsx` was given; `importSource` is its one field. */
+  jsx: bool = false;
+  importSource: string | null = null;
+  define: Map<string, string> = new Map();
+  native: NativeConfig | null = null;
+  tsCompat: string[] = [];
+  /** `build` was given; `cpu` is its one field. */
+  build: bool = false;
+  cpu: string | null = null;
+
+  /** The JSON of `velt manifest --json`. */
+  toJson(): string {
+    const out: string[] = [`"name":${quote(this.name)}`, `"version":${quote(this.version)}`];
+    if (this.toolchain != null) {
+      out.push(`"velt":${quote(this.toolchain)}`);
+    }
+    if (this.description != null) {
+      out.push(`"description":${quote(this.description)}`);
+    }
+    if (this.keywords.length > 0) {
+      out.push(`"keywords":${strings(this.keywords)}`);
+    }
+    out.push(`"entry":${quote(this.entry)}`);
+    if (this.registry != null) {
+      out.push(`"registry":${quote(this.registry)}`);
+    }
+    const deps: string[] = [];
+    for (const [name, d] of this.dependencies) {
+      if (d.simple != null) {
+        deps.push(`${quote(name)}:${quote(d.simple)}`);
+        continue;
+      }
+      const fields: string[] = [];
+      const pairs: [string, string | null][] = [
+        ["version", d.version],
+        ["path", d.path],
+        ["git", d.git],
+        ["branch", d.branch],
+        ["tag", d.tag],
+        ["rev", d.rev],
+      ];
+      for (const [k, v] of pairs) {
+        if (v != null) {
+          fields.push(`${quote(k)}:${quote(v)}`);
+        }
+      }
+      deps.push(`${quote(name)}:{${fields.join(",")}}`);
+    }
+    out.push(`"dependencies":{${deps.join(",")}}`);
+    out.push(`"paths":${stringMap(this.paths)}`);
+    if (this.imports.size > 0) {
+      const imports: string[] = [];
+      for (const [name, variants] of this.imports) {
+        const pairs = variants.map(
+          (v: Variant): string => `[${quote(v.condition)},${quote(v.target)}]`,
+        );
+        imports.push(`${quote(name)}:[${pairs.join(",")}]`);
+      }
+      out.push(`"imports":{${imports.join(",")}}`);
+    }
+    if (this.hostModules.size > 0) {
+      out.push(`"hostModules":${stringMap(this.hostModules)}`);
+    }
+    const host = this.host;
+    if (host != null) {
+      out.push(
+        `"host":{"target":${quote(host.target)},"condition":${quote(host.condition)},"entry":${quote(host.entry)},"scaffold":${stringMap(host.scaffold)}}`,
+      );
+    }
+    if (this.jsx) {
+      const source = this.importSource;
+      out.push(source != null ? `"jsx":{"importSource":${quote(source)}}` : `"jsx":{}`);
+    }
+    if (this.define.size > 0) {
+      out.push(`"define":${stringMap(this.define)}`);
+    }
+    const native = this.native;
+    if (native != null) {
+      out.push(
+        `"native":{"path":${quote(native.path)},"targets":${strings(native.targets)},"wasm":${native.wasm}}`,
+      );
+    }
+    if (this.tsCompat.length > 0) {
+      out.push(`"tsCompat":${strings(this.tsCompat)}`);
+    }
+    if (this.build) {
+      const cpu = this.cpu;
+      out.push(cpu != null ? `"build":{"cpu":${quote(cpu)}}` : `"build":{}`);
+    }
+    return `{${out.join(",")}}`;
+  }
+}

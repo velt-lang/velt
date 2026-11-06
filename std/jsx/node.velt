@@ -1,0 +1,66 @@
+// velt/jsx (internal): the value every JSX expression evaluates to (internal; std/jsx and
+// std/jsx/jsx-runtime export it).
+//
+// std/jsx renders eagerly: building an element renders it, so a tree without async components
+// is its markup by the time it is complete. Text and attributes are escaped as they arrive. A
+// complete node is either one string (`html`), or the strings and child nodes of a template
+// (`tree`: `strings[0] slots[0] strings[1] … strings[n]`): a template, fragment or element keeps the
+// arrays its children came in, as JSX moves them there, instead of copying their markup. The
+// markup is copied once, when the tree is rendered into one string or written into a response
+// (`markupOf`, `writeMarkup`).
+//
+// Only an async component cannot be rendered up front: its node holds the component's started
+// promise, and every node above it keeps its finished markup in `html` plus the rest, in order,
+// in `rest.parts` (a component that threw is kept the same way, as a node that fails when
+// rendered). The renderer (render.velt) writes `html`, then awaits `rest.pending`, then renders
+// `rest.parts`, so markup before a pending component can be sent while it still loads.
+
+import { Deferred } from "velt/jsx/deferred";
+import { Tree } from "velt/jsx/tree";
+
+/**
+ * An inline style object: CSS properties in camelCase (`fontSize`) or custom ones (`--accent`)
+ * with their values (std/jsx/style.velt renders it as React does).
+ */
+export type Style = Record<string, string | f64>;
+
+/**
+ * What an intrinsic attribute may hold: `true` renders the bare name, `false` and `null` omit
+ * the attribute, numbers render like `${n}`, a `Style` renders its declarations.
+ */
+export type AttrValue = string | i64 | f64 | bool | Style | null;
+
+/** A dynamic text child that a precompiled template folds into its strings (`jsxEscape`). */
+export type Text = string | i64 | f64 | bool | null;
+
+/**
+ * What may appear as a child: text is escaped, numbers render like `${n}`, `true`, `false` and
+ * `null` render nothing, and an array renders its elements in order.
+ */
+export type Child = Element | Element[] | string | i64 | f64 | bool | null;
+
+/**
+ * A rendered or partly rendered JSX node (see the module comment). Its fields are std/jsx's
+ * internals (render.velt and factory.velt use them): read the markup with `renderToString`, as a
+ * template node keeps it in `tree` and its `html` is "".
+ */
+export class Element {
+  /** Markup rendered so far: everything when `rest` is null. Unused ("") in a template node. */
+  html: string;
+  /** A template node's strings and child nodes (null for a node of one string, almost all). */
+  tree: Tree | null = null;
+  /** What follows `html` when the node contains an async component or a component that threw. */
+  rest: Deferred | null = null;
+
+  constructor(html: string) {
+    this.html = html;
+  }
+
+  /**
+   * True when the node is rendered completely (no async or failed component inside): its
+   * markup is `html`, or `tree` in a template node.
+   */
+  get isComplete(): bool {
+    return this.rest == null;
+  }
+}

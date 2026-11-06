@@ -45,7 +45,7 @@ fn allows(entry: &AllowNative, source: &Source) -> Result<bool, String> {
     }
 }
 
-/// The entry that would allow `name` from `source`, as package.vlt writes it.
+/// The entry that would allow `name` from `source`, as package.velt writes it.
 fn suggested(name: &str, source: &Source) -> AllowNative {
     match source {
         Source::Git { spec, .. } => AllowNative {
@@ -73,7 +73,7 @@ pub(crate) fn check<'r>(
     let mut refused: Vec<(&ResolvedPackage, String)> = vec![];
     let mut elsewhere = vec![];
     for p in packages.clone() {
-        // A git target with no `package.vlt` is npm packages: JavaScript, nothing to read here.
+        // A git target with no `package.velt` is npm packages: JavaScript, nothing to read here.
         if matches!(&p.source, Source::Git { npm, .. } if !npm.is_empty()) {
             continue;
         }
@@ -167,7 +167,7 @@ pub(crate) fn check<'r>(
         .collect();
     lines.extend(elsewhere);
     Err(format!(
-        "{}\nallow it in package.vlt, if you trust it: allowNative: [{}]",
+        "{}\nallow it in package.velt, if you trust it: allowNative: [{}]",
         lines.join("\n"),
         list.join(", ")
     ))

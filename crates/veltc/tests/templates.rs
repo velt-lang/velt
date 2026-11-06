@@ -85,7 +85,7 @@ fn check_template(template: &str, has_main: bool) {
         // Their projects depend on `http-server` from the Velt repository on GitHub (at the
         // release's tag, or `main` for a toolchain built from another commit); here the
         // dependency points at this checkout's copy instead, so the test needs no network.
-        let manifest = s.path(&name).join("package.vlt");
+        let manifest = s.path(&name).join("package.velt");
         let text = std::fs::read_to_string(&manifest).unwrap();
         let tag = env!("VELT_RELEASE_TAG");
         let at = if tag.is_empty() {
@@ -121,7 +121,7 @@ fn check_template(template: &str, has_main: bool) {
     assert!(out.contains(&format!("({template} template)")), "{out}");
     let root = s.path(&name);
     for file in [
-        "package.vlt",
+        "package.velt",
         ".gitignore",
         ".gitattributes",
         "README.md",
@@ -132,7 +132,7 @@ fn check_template(template: &str, has_main: bool) {
     }
     let readme = std::fs::read_to_string(root.join("README.md")).unwrap();
     assert!(readme.starts_with(&format!("# {name}\n")), "{readme}");
-    assert_eq!(root.join("src/main.vlt").is_file(), has_main, "{template}");
+    assert_eq!(root.join("src/main.velt").is_file(), has_main, "{template}");
     if has_main {
         s.ok(&name, &["build"]);
         assert!(exe(&root.join("target/velt"), &name).is_file());
@@ -143,7 +143,7 @@ fn check_template(template: &str, has_main: bool) {
         "{template}: {tested}"
     );
     s.ok(&name, &["fmt", "--check", "src", "tests"]);
-    // The generated package.vlt is formatted too (`velt fmt` includes it by default).
+    // The generated package.velt is formatted too (`velt fmt` includes it by default).
     s.ok(&name, &["fmt", "--check"]);
 }
 
@@ -177,7 +177,7 @@ fn template_lib() {
     // A library starts with a description to edit (it is shown by `velt search`).
     let s = sandbox();
     s.ok("", &["new", "textkit", "--template", "lib"]);
-    let manifest = std::fs::read_to_string(s.path("textkit").join("package.vlt")).unwrap();
+    let manifest = std::fs::read_to_string(s.path("textkit").join("package.velt")).unwrap();
     assert!(
         manifest.contains("description: \"What textkit does, in one sentence.\""),
         "{manifest}"
@@ -189,7 +189,7 @@ fn new_packages_pin_this_toolchain() {
     // `velt: "<major>.<minor>"`, so a newer velt installed later does not build them (#948).
     let s = sandbox();
     s.ok("", &["new", "pinned"]);
-    let manifest = std::fs::read_to_string(s.path("pinned").join("package.vlt")).unwrap();
+    let manifest = std::fs::read_to_string(s.path("pinned").join("package.velt")).unwrap();
     let version = env!("CARGO_PKG_VERSION");
     let minor = version.rsplit_once('.').unwrap().0;
     assert!(
@@ -220,37 +220,37 @@ fn init_refuses_to_overwrite_unless_forced() {
     let s = sandbox();
     let dir = s.path("My Tool");
     std::fs::create_dir_all(dir.join("src")).unwrap();
-    std::fs::write(dir.join("src/main.vlt"), "// mine\n").unwrap();
+    std::fs::write(dir.join("src/main.velt"), "// mine\n").unwrap();
     std::fs::write(dir.join("README.md"), "my readme\n").unwrap();
     std::fs::write(dir.join(".gitignore"), "*.log\n").unwrap();
     std::fs::write(dir.join(".gitattributes"), "* text=auto\n").unwrap();
 
     let err = s.fail("My Tool", &["init", "--template", "cli"]);
     assert!(
-        err.contains("src/main.vlt") && err.contains("--force"),
+        err.contains("src/main.velt") && err.contains("--force"),
         "{err}"
     );
     assert!(
-        !dir.join("package.vlt").exists(),
+        !dir.join("package.velt").exists(),
         "nothing written on conflict"
     );
 
     let out = s.ok("My Tool", &["init", "--template", "cli", "--force"]);
     assert!(out.contains("package `my-tool`"), "{out}");
-    let manifest = std::fs::read_to_string(dir.join("package.vlt")).unwrap();
+    let manifest = std::fs::read_to_string(dir.join("package.velt")).unwrap();
     assert!(manifest.contains("name: \"my-tool\""), "{manifest}");
-    assert!(std::fs::read_to_string(dir.join("src/main.vlt"))
+    assert!(std::fs::read_to_string(dir.join("src/main.velt"))
         .unwrap()
         .contains("execute(args())"));
     // --force overwrites sources; the README is kept, the .gitignore gets `target/` appended and
-    // the .gitattributes the line that makes GitHub highlight `.vlt` files.
+    // the .gitattributes the line that makes GitHub highlight `.velt` files.
     assert_eq!(
         std::fs::read_to_string(dir.join(".gitignore")).unwrap(),
         "*.log\ntarget/\n"
     );
     assert_eq!(
         std::fs::read_to_string(dir.join(".gitattributes")).unwrap(),
-        "* text=auto\n*.vlt linguist-language=TypeScript\n"
+        "* text=auto\n*.velt linguist-language=TypeScript\n"
     );
     assert_eq!(
         std::fs::read_to_string(dir.join("README.md")).unwrap(),
@@ -258,8 +258,8 @@ fn init_refuses_to_overwrite_unless_forced() {
     );
     s.ok("My Tool", &["test"]);
 
-    // A second init without --force: package.vlt and the sources conflict.
-    assert!(s.fail("My Tool", &["init"]).contains("package.vlt"));
+    // A second init without --force: package.velt and the sources conflict.
+    assert!(s.fail("My Tool", &["init"]).contains("package.velt"));
 }
 
 #[test]
@@ -273,7 +273,7 @@ fn init_keeps_readme_and_takes_a_name() {
         std::fs::read_to_string(s.path("w/README.md")).unwrap(),
         "mine\n"
     );
-    assert!(s.path("w/src/lib.vlt").is_file());
+    assert!(s.path("w/src/lib.velt").is_file());
     // Inside that package, init refuses to nest one.
     std::fs::create_dir_all(s.path("w/sub")).unwrap();
     assert!(s
@@ -308,7 +308,7 @@ fn init_editor_adds_only_missing_vscode_files() {
         "written at the package root"
     );
     // Nothing else of a package is (re)written.
-    assert!(!s.path("app/src/deep/package.vlt").exists());
+    assert!(!s.path("app/src/deep/package.velt").exists());
 
     // With --dir (VS Code names its workspace folder, e.g. `app/src`): exactly there.
     s.ok("app", &["init", "--editor", "vscode", "--dir", "src"]);
@@ -321,7 +321,7 @@ fn init_editor_adds_only_missing_vscode_files() {
     std::fs::create_dir_all(s.path("loose")).unwrap();
     s.ok("loose", &["init", "--editor", "vscode"]);
     assert!(s.path("loose/.vscode/launch.json").is_file());
-    assert!(!s.path("loose/package.vlt").exists());
+    assert!(!s.path("loose/package.velt").exists());
 }
 
 /// `velt build --json` (what VS Code's F5 runs): the program's path on success; on failure exit
@@ -332,8 +332,8 @@ fn build_json_reports_the_program_or_the_errors() {
     let json = |o: &Output| -> serde_json::Value {
         serde_json::from_slice(&o.stdout).unwrap_or_else(|e| panic!("{e}: {}", text(o)))
     };
-    std::fs::write(s.path("ok.vlt"), "function main() {}\n").unwrap();
-    let o = s.velt("", &["build", "ok.vlt", "--json"]);
+    std::fs::write(s.path("ok.velt"), "function main() {}\n").unwrap();
+    let o = s.velt("", &["build", "ok.velt", "--json"]);
     assert!(o.status.success(), "{}", text(&o));
     let out = json(&o);
     assert_eq!(out["errors"], 0, "{out}");
@@ -345,11 +345,11 @@ fn build_json_reports_the_program_or_the_errors() {
     assert!(exe.is_absolute() && exe.is_file(), "{out}");
 
     std::fs::write(
-        s.path("bad.vlt"),
+        s.path("bad.velt"),
         "function main() {\n  const x: string = 1;\n}\n",
     )
     .unwrap();
-    let o = s.velt("", &["build", "bad.vlt", "--json"]);
+    let o = s.velt("", &["build", "bad.velt", "--json"]);
     assert_eq!(o.status.code(), Some(1), "{}", text(&o));
     let out = json(&o);
     assert_eq!(out["executable"], serde_json::Value::Null, "{out}");
@@ -357,19 +357,19 @@ fn build_json_reports_the_program_or_the_errors() {
     let loc = &out["diagnostics"][0]["location"];
     assert_eq!(
         (loc["file"].as_str(), loc["line"].as_u64()),
-        (Some("bad.vlt"), Some(2)),
+        (Some("bad.velt"), Some(2)),
         "{out}"
     );
     assert!(loc["column"].as_u64().is_some(), "{out}");
 
-    let o = s.velt("", &["build", "missing.vlt", "--json"]);
+    let o = s.velt("", &["build", "missing.velt", "--json"]);
     assert_eq!(o.status.code(), Some(1), "{}", text(&o));
     let out = json(&o);
     assert_eq!(out["executable"], serde_json::Value::Null, "{out}");
     let d = &out["diagnostics"][0];
     assert_eq!(d["location"], serde_json::Value::Null, "{out}");
     assert!(
-        d["message"].as_str().unwrap().contains("missing.vlt"),
+        d["message"].as_str().unwrap().contains("missing.velt"),
         "{out}"
     );
 }
@@ -383,27 +383,27 @@ fn clean_removes_target_and_reports_bytes() {
     let out = s.ok("app/src", &["clean"]);
     assert!(out.contains("Removed") && out.contains("iB)"), "{out}");
     assert!(!s.path("app/target").exists());
-    assert!(s.fail("", &["clean"]).contains("no `package.vlt`"));
+    assert!(s.fail("", &["clean"]).contains("no `package.velt`"));
 }
 
 #[test]
 fn common_mistakes_get_clear_errors() {
     let s = sandbox();
-    std::fs::write(s.path("hello.vlt"), "function main() {}\n").unwrap();
+    std::fs::write(s.path("hello.velt"), "function main() {}\n").unwrap();
     let err = s.fail("", &["run"]);
-    assert!(err.contains("no `package.vlt`"), "{err}");
+    assert!(err.contains("no `package.velt`"), "{err}");
     assert!(
-        err.contains("`velt run hello.vlt`") && err.contains("velt init"),
+        err.contains("`velt run hello.velt`") && err.contains("velt init"),
         "{err}"
     );
     let err = s.fail("", &["run", "hello"]);
     assert!(
-        err.contains("did you mean") && err.contains("hello.vlt"),
+        err.contains("did you mean") && err.contains("hello.velt"),
         "{err}"
     );
     let err = s.fail("", &["biuld"]);
     assert!(err.contains("did you mean `velt build`?"), "{err}");
-    let err = s.fail("", &["run", "--relase", "hello.vlt"]);
+    let err = s.fail("", &["run", "--relase", "hello.velt"]);
     assert!(err.contains("did you mean `--release`?"), "{err}");
     assert!(err.contains("velt run --help"), "{err}");
 }

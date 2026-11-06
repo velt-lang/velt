@@ -102,7 +102,7 @@ impl<'a> Parser<'a> {
     }
 
     /// The build-time constant the identifier at the cursor stands for (`define` in
-    /// package.vlt, as Vite's `define`): a reference that nothing in its scope declares
+    /// package.velt, as Vite's `define`): a reference that nothing in its scope declares
     /// (`crate::scope::free_values`, found by a first parse).
     pub(super) fn define_at_cursor(&mut self) -> Option<Lit> {
         let t = self.tok(self.pos);

@@ -13,8 +13,8 @@
 | `main_st.go` | [Go #1](https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/binarytrees-go-1.html) — the Go Authors, Kevin Carson, Isaac Gouy | fastest single-threaded Go; gofmt only |
 | `main.js` | [Node #6](https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/binarytrees-node-6.html) — Léo Sarrazin, Andrey Filatkin | `worker_threads`, one worker per depth; unchanged |
 | `main_st.js` | [Node #7](https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/binarytrees-node-7.html) — Léo Sarrazin, Andrey Filatkin, Isaac Gouy | sequential version of #6; unchanged |
-| `main.vlt` | port of Node #7 | `class TreeNode` with `TreeNode \| null` children, per-node allocation |
-| `main_mt.vlt` | port of Node #6 / Go #2 | one `spawn`ed task per depth + `Promise.all`, printed in order |
+| `main.velt` | port of Node #7 | `class TreeNode` with `TreeNode \| null` children, per-node allocation |
+| `main_mt.velt` | port of Node #6 / Go #2 | one `spawn`ed task per depth + `Promise.all`, printed in order |
 
 Every published Rust binary-trees uses an arena crate (bumpalo, typed_arena or toolshed), which
 the rules accept as "a library memory pool"; the idiomatic Velt port allocates per node. Hence the
@@ -85,7 +85,7 @@ Multi-threaded:
    pool, allowed by the rules) for an optimized variant; long term, escape analysis could give a
    tree that never leaves a function one region instead of per-node frees.
 3. **Multi-threaded Velt vs Rust `Box` + mimalloc + rayon (ref, not in the tree): 1.48× wall, 1.4× CPU.** Part is (1).
-   The structure differs too: `main_mt.vlt` has one task per depth (9 equal tasks, like Node #6 /
+   The structure differs too: `main_mt.velt` has one task per depth (9 equal tasks, like Node #6 /
    Go #2) while Rust #5 also splits each depth's iterations with rayon. Splitting each depth into 64
    `spawn`ed chunks (scratch experiment) didn't help (2.50 s wall, 10.29 s CPU), so it isn't task
    granularity. The extra CPU over the single-thread ratio is not root-caused: measured under heavy
@@ -98,16 +98,16 @@ Cranelift is 2.4× slower than LLVM (not investigated; LLVM is the `--release` d
   fails with `expected TreeNode, found TreeNode | null`, and the documented workaround (narrow a
   local copy) fails too: `const left = node.left;` → `cannot move a field out of a class instance`.
   The port uses `this.left?.check() ?? 0`. Pending golden:
-  `tests/golden/bugs/sema_narrow_nullable_field.vlt`.
+  `tests/golden/bugs/sema_narrow_nullable_field.velt`.
 - **Constructor parameter properties** (`constructor(public left: TreeNode | null, …) {}`, planned
   in docs/internals/design/ts-alignment.md §5) don't parse yet (`expected ':'`), so fields are declared and
   assigned by hand.
 - `Math.max(6, n)` is `f64`-only, so an `i64` max is a ternary; `parseInt` returns `f64`
   (`parseInt(argv[0]) as i64`).
-- `main_mt.vlt` was straightforward: `spawn(work(...))` + `await Promise.all(tasks)` reads like
+- `main_mt.velt` was straightforward: `spawn(work(...))` + `await Promise.all(tasks)` reads like
   the TS version, with no worker-thread boilerplate or message passing.
 
 ## Std and runtime round
-`main_arena.vlt` is the shape of Rust #5 (bumpalo): each tree's nodes are Copy structs in a
+`main_arena.velt` is the shape of Rust #5 (bumpalo): each tree's nodes are Copy structs in a
 `std/arena` pool, linked by `u32` index and reset between trees. It runs at 0.94× the CPU of
 the single-threaded Rust, against 3.43× for the per-node-allocation `main`.

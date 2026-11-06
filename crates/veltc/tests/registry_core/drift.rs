@@ -1,4 +1,4 @@
-//! The `package.vlt` cases that keep registry-core's reader from drifting from vpm's: every Velt
+//! The `package.velt` cases that keep registry-core's reader from drifting from vpm's: every Velt
 //! keyword where a manifest can hold a word (read from the Velt lexer's own list, so a keyword
 //! added there is tested without anyone writing a case), seeded random mutations of a few valid
 //! manifests (several edits at once, splices, escapes in odd places), the `tsCompat` overlap
@@ -14,8 +14,8 @@ fn keywords(root: &Path) -> Vec<String> {
     let token = std::fs::read_to_string(root.join("crates/velt_syntax/src/lexer/token.rs"))
         .expect("read token.rs");
     let ours =
-        std::fs::read_to_string(root.join("packages/registry-core/src/manifest/symbol_names.vlt"))
-            .expect("read symbol_names.vlt");
+        std::fs::read_to_string(root.join("packages/registry-core/src/manifest/symbol_names.velt"))
+            .expect("read symbol_names.velt");
     let mut words = vec![];
     for piece in token.split("(\"").skip(1) {
         if let Some((word, rest)) = piece.split_once('"') {

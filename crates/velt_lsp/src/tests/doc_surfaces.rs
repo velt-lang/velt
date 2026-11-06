@@ -94,7 +94,7 @@ function main() {
 
 fn open(text: &str) -> (Client, Url) {
     let mut client = Client::start();
-    let doc = uri("doc_surfaces.vlt");
+    let doc = uri("doc_surfaces.velt");
     client.open(&doc, text);
     (client, doc)
 }
@@ -188,7 +188,7 @@ fn item<'a>(items: &'a Value, label: &str) -> &'a Value {
 
 /// The resolved documentation of the completion `label` offered at `needle` + `delta` in `text`.
 fn resolved(client: &mut Client, text: &str, needle: &str, delta: usize, label: &str) -> Value {
-    let doc = uri("doc_surfaces_completion.vlt");
+    let doc = uri("doc_surfaces_completion.velt");
     client.open(&doc, text);
     let (line, col) = pos_of(text, needle, delta);
     let items = client.request("textDocument/completion", at(&doc, line, col));
@@ -297,7 +297,7 @@ function main() {
 #[test]
 fn interface_members_are_documented_through_an_interface_typed_value() {
     let mut client = Client::start();
-    let doc = uri("doc_shapes.vlt");
+    let doc = uri("doc_shapes.velt");
     client.open(&doc, SHAPES);
     let text = hover_text(&mut client, &doc, SHAPES, "area(), s", 0);
     assert!(
@@ -339,9 +339,9 @@ function main() {
 #[test]
 fn re_exported_names_show_the_original_doc() {
     let mut client = Client::start();
-    client.open(&uri("doc_re_lib.vlt"), RE_LIB);
-    client.open(&uri("doc_re_mid.vlt"), RE_MID);
-    let app = uri("doc_re_app.vlt");
+    client.open(&uri("doc_re_lib.velt"), RE_LIB);
+    client.open(&uri("doc_re_mid.velt"), RE_MID);
+    let app = uri("doc_re_app.velt");
     client.open(&app, RE_APP);
     let doc = "Triples `x`.\n\n**Parameters**\n\n- `x`: the number";
     for needle in ["triple(1)", "thrice(2)", "thrice }"] {

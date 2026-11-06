@@ -22,7 +22,7 @@ fn entries_name_a_package_and_where_it_is_allowed_from() {
             },
         ]
     );
-    let text = m.to_vlt();
+    let text = m.to_velt();
     for entry in [
         "\"sqlite\"",
         "{ name: \"llama\", git: \"https://github.com/o/llama\" }",

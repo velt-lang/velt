@@ -1,6 +1,6 @@
 //! Borrowed params that module state can reach get neither `frozen` nor `noalias`
 //! (velt_vir param_attrs.rs "Module state"): a callee may write the argument through the module
-//! variable or static field holding it. `tests/golden/lang/frozen_module_state.vlt` checks that
+//! variable or static field holding it. `tests/golden/lang/frozen_module_state.velt` checks that
 //! such programs print what Node prints; this checks the attributes themselves, including the
 //! `noalias` case whose wrong answer LLVM does not produce today (#1631), and that params of
 //! types only locals reach keep them.
@@ -12,7 +12,7 @@ use veltc::driver::{self, BuildOptions, Session};
 fn vir(name: &str, src: &str) -> String {
     let dir = std::env::temp_dir().join(format!("velt-module-state-attrs-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
-    let input = dir.join(format!("{name}.vlt"));
+    let input = dir.join(format!("{name}.velt"));
     std::fs::write(&input, src).unwrap();
     let opts = BuildOptions {
         input,

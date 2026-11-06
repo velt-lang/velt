@@ -1,8 +1,8 @@
-shared_fn_captures_nested.vlt:28:17: error: this function captures `h`, and it is in `shared(...)`, so each call would run `K`'s `clone()` on the same object, from several threads at once
-shared_fn_captures_nested.vlt:33:17: error: this function captures `ks`, and it is in `shared(...)`, so each call would run `K`'s `clone()` on the same object, from several threads at once
-shared_fn_captures_nested.vlt:38:17: error: this function captures `k`, and it is in `shared(...)`, so each call would run `K`'s `clone()` on the same object, from several threads at once
-shared_fn_captures_nested.vlt:43:17: error: this function captures `ks`, and it is in `shared(...)`, so each call would run `K`'s `clone()` on the same object, from several threads at once
-shared_fn_captures_nested.vlt:48:17: error: this function captures `l`, which holds a `Mutex<i64[]>` by value, and it is in `shared(...)`, so each call would have a lock of its own
-shared_fn_captures_nested.vlt:53:17: error: this function captures `ms`, which holds a `Mutex<i64[]>` by value, and it is in `shared(...)`, so each call would have a lock of its own
-shared_fn_captures_nested.vlt:58:17: error: this function captures `a`, which holds an `Atomic<i64>` by value, and it is in `shared(...)`, so each call would change an `Atomic` of its own
-shared_fn_captures_nested.vlt:63:17: error: this function captures `t`, which holds an `Atomic<i64>` by value, and it is in `shared(...)`, so each call would change an `Atomic` of its own
+shared_fn_captures_nested.velt:28:17: error: this function captures `h`, and it is in `shared(...)`, so each call would run `K`'s `clone()` on the same object, from several threads at once
+shared_fn_captures_nested.velt:33:17: error: this function captures `ks`, and it is in `shared(...)`, so each call would run `K`'s `clone()` on the same object, from several threads at once
+shared_fn_captures_nested.velt:38:17: error: this function captures `k`, and it is in `shared(...)`, so each call would run `K`'s `clone()` on the same object, from several threads at once
+shared_fn_captures_nested.velt:43:17: error: this function captures `ks`, and it is in `shared(...)`, so each call would run `K`'s `clone()` on the same object, from several threads at once
+shared_fn_captures_nested.velt:48:17: error: this function captures `l`, which holds a `Mutex<i64[]>` by value, and it is in `shared(...)`, so each call would have a lock of its own
+shared_fn_captures_nested.velt:53:17: error: this function captures `ms`, which holds a `Mutex<i64[]>` by value, and it is in `shared(...)`, so each call would have a lock of its own
+shared_fn_captures_nested.velt:58:17: error: this function captures `a`, which holds an `Atomic<i64>` by value, and it is in `shared(...)`, so each call would change an `Atomic` of its own
+shared_fn_captures_nested.velt:63:17: error: this function captures `t`, which holds an `Atomic<i64>` by value, and it is in `shared(...)`, so each call would change an `Atomic` of its own

@@ -70,7 +70,7 @@ fn slow_diagnostics_follow_the_document_s_own() {
         started: Mutex::new(started_tx),
     };
     let mut client = Client::start_on(json!({ "capabilities": {} }), loader);
-    let doc = uri("slow.vlt");
+    let doc = uri("slow.velt");
     client.open(&doc, "function main() {\n  const slow = 1;\n}\n");
     // The document's own diagnostics come at once; then its job starts.
     let first = client.diagnostics(&doc);

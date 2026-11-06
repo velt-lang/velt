@@ -14,7 +14,7 @@ It is a standalone crate (its own `[workspace]`), not a member of the compiler w
 tests/difftest/run.sh run tests/difftest/corpus          # check programs (files or directories)
 tests/difftest/run.sh fuzz --seeds 0..1000 -j 8          # generate, check, group, shrink
 tests/difftest/run.sh gen 42                             # print the program for seed 42
-tests/difftest/run.sh shrink path/to/failing.vlt        # minimize a failing program
+tests/difftest/run.sh shrink path/to/failing.velt        # minimize a failing program
 tests/difftest/run.sh fuzz --wild --seeds 0..1000        # backends against each other (below)
 tests/difftest/run.sh fuzz --std --seeds 0..500          # std modules against Node (below)
 ```
@@ -53,7 +53,7 @@ Verdicts:
 | `node-rejected` | not TypeScript Node can run: nothing to conclude |
 
 Failing programs are saved under `out/cases/<signature>/` with a `.txt` describing the difference;
-`fuzz` also writes `seed-N.min.vlt`, shrunk while the signature stays the same (only the failing
+`fuzz` also writes `seed-N.min.velt`, shrunk while the signature stays the same (only the failing
 mode is re-checked). Shrunk repros go to `tests/golden/bugs/` (with Node's output as `.out`) and
 into an issue.
 
@@ -67,7 +67,7 @@ finds its output file locked. `run` reports rejections but doesn't fail on them.
 
 ## The normalizer (`src/tsify.rs`)
 
-The TypeScript twin is the `.vlt` source plus:
+The TypeScript twin is the `.velt` source plus:
 
 1. a call of `main()`; a numeric return becomes `process.exitCode`;
 2. a `panic(msg)` shim when the program calls Velt's `panic` builtin (`panic: msg` on stderr, exit 101);

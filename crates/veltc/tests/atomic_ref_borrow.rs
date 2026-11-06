@@ -5,12 +5,12 @@
 mod no_window;
 mod test_dir;
 
-/// The VIR of function `name` in `src`, compiled as `main.vlt`.
+/// The VIR of function `name` in `src`, compiled as `main.velt`.
 fn vir_of(src: &str, name: &str) -> String {
     let dir = test_dir::TestDir::new();
-    std::fs::write(dir.path().join("main.vlt"), src).unwrap();
+    std::fs::write(dir.path().join("main.velt"), src).unwrap();
     let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["build", "main.vlt", "--emit", "vir"])
+        .args(["build", "main.velt", "--emit", "vir"])
         .current_dir(dir.path())
         .output()
         .unwrap();

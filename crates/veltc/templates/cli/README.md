@@ -15,9 +15,9 @@ Usage errors print `{{name}}: <message>` and exit with code 2.
 
 | File | What |
 |---|---|
-| `src/commands.vlt` | the parser and the commands: argv → output lines (throws `CliError`) |
-| `src/main.vlt` | process glue: `args()`, printing, exit code |
-| `tests/commands.test.vlt` | `velt test` |
+| `src/commands.velt` | the parser and the commands: argv → output lines (throws `CliError`) |
+| `src/main.velt` | process glue: `args()`, printing, exit code |
+| `tests/commands.test.velt` | `velt test` |
 
-To add a command: add a `case` to `execute` in `src/commands.vlt`, describe it in `parser()`, and
-test it in `tests/commands.test.vlt`.
+To add a command: add a `case` to `execute` in `src/commands.velt`, describe it in `parser()`, and
+test it in `tests/commands.test.velt`.

@@ -110,8 +110,8 @@ fn machine_paths_are_flagged_even_in_code() {
             "/home/bob/velt/target/debug/velt",
         ),
         (
-            r"at C:\Users\carol\velt\x.vlt:3",
-            r"C:\Users\carol\velt\x.vlt:3",
+            r"at C:\Users\carol\velt\x.velt:3",
+            r"C:\Users\carol\velt\x.velt:3",
         ),
         ("c:/users/dave/x", "c:/users/dave/x"),
         (

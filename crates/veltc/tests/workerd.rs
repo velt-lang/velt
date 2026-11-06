@@ -79,10 +79,10 @@ fn fixtures(name: &str) -> Option<(PathBuf, PathBuf)> {
     let server = root.join("packages/http-server");
     std::fs::create_dir_all(work.join("http-server")).expect("http-server dir");
     std::fs::copy(
-        server.join("package.vlt"),
-        work.join("http-server/package.vlt"),
+        server.join("package.velt"),
+        work.join("http-server/package.velt"),
     )
-    .expect("http-server package.vlt");
+    .expect("http-server package.velt");
     copy_dir(&server.join("src"), &work.join("http-server/src"));
     Some((work, modules))
 }

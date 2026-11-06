@@ -1,1 +1,1 @@
-jsx_contract_both_shapes.vlt:2:11: error: the JSX provider '_jsx_both_shapes' does not export `Fragment`, `Element`, `Child`, `AttrValue`, `IntrinsicElements`
+jsx_contract_both_shapes.velt:2:11: error: the JSX provider '_jsx_both_shapes' does not export `Fragment`, `Element`, `Child`, `AttrValue`, `IntrinsicElements`

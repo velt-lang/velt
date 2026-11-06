@@ -1,0 +1,88 @@
+// Semver versions (src/semver/version.velt). crates/veltc/tests/registry_core.rs compares them
+// with the Rust `semver` crate over many more strings.
+import { describe, expect, it } from "velt/test";
+import { SemverError } from "../src/semver/semver_error";
+import { Version } from "../src/semver/version";
+
+describe("Version.parse", () => {
+  it("reads the parts", () => {
+    const v = Version.parse("1.22.333-rc.1+build.5");
+    expect(v.major).toBe(1);
+    expect(v.minor).toBe(22);
+    expect(v.patch).toBe(333);
+    expect(v.pre).toBe("rc.1");
+    expect(v.build).toBe("build.5");
+    expect(v.toString()).toBe("1.22.333-rc.1+build.5");
+    expect(v.isPrerelease()).toBe(true);
+  });
+
+  it("accepts u64's largest and build metadata with leading zeros", () => {
+    expect(Version.parse("18446744073709551615.0.0").toString()).toBe("18446744073709551615.0.0");
+    expect(Version.isValid("1.0.0+001")).toBe(true);
+    expect(Version.isValid("1.0.0-alpha-1.x")).toBe(true);
+  });
+
+  it("refuses what isn't a version", () => {
+    for (const text of [
+      "",
+      "1",
+      "1.0",
+      "v1.0.0",
+      " 1.0.0",
+      "1.0.0 ",
+      "01.0.0",
+      "1.00.0",
+      "1.0.0-01",
+      "1.0.0-",
+      "1.0.0+",
+      "1.0.0-a..b",
+      "1.0.0-a.",
+      "1.0.0+a_b",
+      "18446744073709551616.0.0",
+      "1.0.0-é",
+    ]) {
+      expect(Version.isValid(text)).toBe(false);
+    }
+  });
+
+  it("throws SemverError", () => {
+    let thrown = false;
+    try {
+      Version.parse("1.0");
+    } catch (e) {
+      thrown = e instanceof SemverError;
+    }
+    expect(thrown).toBe(true);
+  });
+});
+
+describe("Version.compare", () => {
+  it("orders as semver does", () => {
+    const ordered = [
+      "1.0.0-1",
+      "1.0.0-2",
+      "1.0.0-10",
+      "1.0.0-alpha",
+      "1.0.0-alpha.1",
+      "1.0.0-alpha.beta",
+      "1.0.0-beta",
+      "1.0.0",
+      "1.0.0+0",
+      "1.0.0+00",
+      "1.0.0+1",
+      "1.0.0+1.a",
+      "1.0.0+a",
+      "1.0.1",
+      "1.2.0",
+      "2.0.0",
+      "10.0.0",
+    ];
+    for (let i = 0; i < ordered.length; i++) {
+      for (let j = 0; j < ordered.length; j++) {
+        const c = Version.parse(ordered[i]).compare(Version.parse(ordered[j]));
+        const want = i < j ? -1 : i > j ? 1 : 0;
+        expect(c < 0 ? -1 : c > 0 ? 1 : 0).toBe(want);
+      }
+    }
+  });
+});

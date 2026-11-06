@@ -1,6 +1,6 @@
 //! Lint rules with profiles (docs/internals/design/lint-profiles.md): every source file has a
 //! [`Profile`] (portable, native, dependency), every rule a code and a level (`lint` in
-//! `package.vlt`), and every fix says whether it stays valid TypeScript, so a portable file is
+//! `package.velt`), and every fix says whether it stays valid TypeScript, so a portable file is
 //! only given fixes that keep it in the common subset, and a dependency none.
 //!
 //! Two families of rules report through here:

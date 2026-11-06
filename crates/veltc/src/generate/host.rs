@@ -87,7 +87,7 @@ fn executable(
     };
     // What the host's build read, from its stamp (also when the stamp made the build a no-op):
     // the files, and what resolving the generators' imports looked at, so a generator module
-    // that now resolves to another file (`./gen` to a new `gen.vlt` over `gen/index.vlt`) is
+    // that now resolves to another file (`./gen` to a new `gen.velt` over `gen/index.velt`) is
     // a change. The host's own objects and link inputs are not the generators' inputs.
     let text = std::fs::read_to_string(stamp::path(&exe)).unwrap_or_default();
     let files = stamp::entry_lines(&text)

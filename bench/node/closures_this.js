@@ -1,4 +1,4 @@
-// Closures capturing `this` in constructors and methods (same workload as closures_this.vlt).
+// Closures capturing `this` in constructors and methods (same workload as closures_this.velt).
 class Particle {
   constructor(x, v) {
     this.hits = 0;

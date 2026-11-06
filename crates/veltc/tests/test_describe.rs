@@ -144,31 +144,31 @@ fn describe_it_and_expect() {
     runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    write(dir, "t/math.test.vlt", MATH);
-    write(dir, "t/vitest.test.vlt", VITEST);
-    write(dir, "t/collect.test.vlt", COLLECT);
+    write(dir, "t/math.test.velt", MATH);
+    write(dir, "t/vitest.test.velt", VITEST);
+    write(dir, "t/collect.test.velt", COLLECT);
 
     let o = velt_test(dir, &["t"]);
-    // Paths are printed as given, `t\math.test.vlt` on Windows.
+    // Paths are printed as given, `t\math.test.velt` on Windows.
     let stdout = String::from_utf8_lossy(&o.stdout).replace('\\', "/");
     assert_eq!(o.status.code(), Some(1), "{stdout}");
     assert_eq!(
-        block(&stdout, "math.test.vlt")[1..],
+        block(&stdout, "math.test.velt")[1..],
         [
             "ok test_function",
             "math setup",
             "ok math > adds",
             "FAILED math > fails",
-            "    AssertionError: expected 2 to be 3 // Object.is equality at t/math.test.vlt:26:5",
+            "    AssertionError: expected 2 to be 3 // Object.is equality at t/math.test.velt:26:5",
             "ok math > async > awaits",
             "FAILED math > async > rejects",
-            "    Error: nope at t/math.test.vlt:34:7",
+            "    Error: nope at t/math.test.velt:34:7",
             "math teardown",
             "ok hooks ran in order",
         ],
         "{stdout}"
     );
-    let crash = block(&stdout, "vitest.test.vlt");
+    let crash = block(&stdout, "vitest.test.velt");
     assert_eq!(
         crash[1..4],
         [
@@ -188,10 +188,10 @@ fn describe_it_and_expect() {
         "{stdout}"
     );
     assert_eq!(
-        block(&stdout, "collect.test.vlt")[1..],
+        block(&stdout, "collect.test.velt")[1..],
         [
             "FAILED setup",
-            "    Error: cannot set up at t/collect.test.vlt:5:3",
+            "    Error: cannot set up at t/collect.test.velt:5:3",
         ],
         "{stdout}"
     );
@@ -203,12 +203,12 @@ fn describe_it_and_expect() {
     let o = velt_test(dir, &["t", "--filter", "math > async"]);
     let stdout = String::from_utf8_lossy(&o.stdout).replace('\\', "/");
     assert_eq!(
-        block(&stdout, "math.test.vlt")[1..],
+        block(&stdout, "math.test.velt")[1..],
         [
             "math setup",
             "ok math > async > awaits",
             "FAILED math > async > rejects",
-            "    Error: nope at t/math.test.vlt:34:7",
+            "    Error: nope at t/math.test.velt:34:7",
             "math teardown",
         ],
         "{stdout}"
@@ -260,17 +260,17 @@ fn custom_matchers() {
     runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    write(dir, "t/matchers.test.vlt", MATCHERS);
+    write(dir, "t/matchers.test.velt", MATCHERS);
     let o = velt_test(dir, &["t"]);
     let stdout = String::from_utf8_lossy(&o.stdout).replace('\\', "/");
     assert_eq!(
-        block(&stdout, "matchers.test.vlt")[1..],
+        block(&stdout, "matchers.test.velt")[1..],
         [
             "ok within",
             "FAILED not within",
-            "    AssertionError: expected 5 not to be within 1..9 at t/matchers.test.vlt:5:5",
+            "    AssertionError: expected 5 not to be within 1..9 at t/matchers.test.velt:5:5",
             "FAILED status",
-            "    AssertionError: expected status 200, got 204 at t/matchers.test.vlt:15:5",
+            "    AssertionError: expected status 200, got 204 at t/matchers.test.velt:15:5",
         ],
         "{stdout}"
     );
@@ -393,10 +393,10 @@ fn every_matcher_passes_and_fails_as_in_vitest() {
     runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    write(dir, "t/matchers.test.vlt", EVERY_MATCHER);
+    write(dir, "t/matchers.test.velt", EVERY_MATCHER);
     let o = velt_test(dir, &["t"]);
     let stdout = String::from_utf8_lossy(&o.stdout).replace('\\', "/");
-    let block = block(&stdout, "matchers.test.vlt");
+    let block = block(&stdout, "matchers.test.velt");
     assert_eq!(
         block[1..3],
         ["ok pass > each matcher", "ok pass > not on each block"],
@@ -406,7 +406,7 @@ fn every_matcher_passes_and_fails_as_in_vitest() {
     let messages: Vec<&str> = block
         .iter()
         .filter_map(|l| l.strip_prefix("    "))
-        .map(|l| l.split(" at t/matchers.test.vlt:").next().unwrap())
+        .map(|l| l.split(" at t/matchers.test.velt:").next().unwrap())
         .collect();
     assert_eq!(
         messages,
@@ -456,7 +456,7 @@ fn every_matcher_passes_and_fails_as_in_vitest() {
         "{stdout}"
     );
     assert!(
-        block.contains(&"    AssertionError: expected 1 to be null at t/matchers.test.vlt:56:24"),
+        block.contains(&"    AssertionError: expected 1 to be null at t/matchers.test.velt:56:24"),
         "{stdout}"
     );
     assert!(stdout.contains("2 passed; 41 failed"), "{stdout}");
@@ -549,14 +549,14 @@ fn hooks_and_groups_as_in_vitest() {
     runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    write(dir, "t/semantics.test.vlt", SEMANTICS);
+    write(dir, "t/semantics.test.velt", SEMANTICS);
     let o = velt_test(dir, &["t"]);
-    // Paths are printed as given (`t\semantics.test.vlt` on Windows); the name `multi\nline`
+    // Paths are printed as given (`t\semantics.test.velt` on Windows); the name `multi\nline`
     // keeps its backslash.
     let stdout = String::from_utf8_lossy(&o.stdout).replace("t\\semantics", "t/semantics");
     assert_eq!(o.status.code(), Some(1), "{stdout}");
     assert_eq!(
-        block(&stdout, "semantics.test.vlt")[1..],
+        block(&stdout, "semantics.test.velt")[1..],
         [
             r#"inner ae2"#,
             r#"inner ae1"#,
@@ -568,7 +568,7 @@ fn hooks_and_groups_as_in_vitest() {
             r#"outer aa2"#,
             r#"outer aa1"#,
             r#"FAILED outer setup fails > inner > x"#,
-            r#"    Error: outer ba at t/semantics.test.vlt:19:5"#,
+            r#"    Error: outer ba at t/semantics.test.velt:19:5"#,
             r#"outer aa"#,
             r#"FAILED async"#,
             r#"    Error: a `describe` callback can't be `async` yet (Vitest awaits it): register the group's tests without awaiting, and await in a `beforeAll`"#,
@@ -576,13 +576,13 @@ fn hooks_and_groups_as_in_vitest() {
             r#"    Error: a hook returned a function: Vitest runs it as the hook's teardown, Velt doesn't yet; clean up in `afterEach` or `afterAll`"#,
             r#"ae after a failed be"#,
             r#"FAILED failing hooks > beforeEach > t"#,
-            r#"    Error: be at t/semantics.test.vlt:42:7"#,
+            r#"    Error: be at t/semantics.test.velt:42:7"#,
             r#"FAILED failing hooks > afterEach > t"#,
-            r#"    Error: ae at t/semantics.test.vlt:49:7"#,
+            r#"    Error: ae at t/semantics.test.velt:49:7"#,
             r#"FAILED failing hooks > async beforeAll > t"#,
-            r#"    Error: ba rejected at t/semantics.test.vlt:56:7"#,
+            r#"    Error: ba rejected at t/semantics.test.velt:56:7"#,
             r#"ok failing hooks > afterAll > t"#,
-            r#"afterAll of `failing hooks > afterAll` failed: Error: aa at t/semantics.test.vlt:62:7"#,
+            r#"afterAll of `failing hooks > afterAll` failed: Error: aa at t/semantics.test.velt:62:7"#,
             r#"ok multi\nline"#,
             r#"FAILED (test harness exited with code 1 after all tests ran)"#,
         ],
@@ -709,12 +709,12 @@ fn to_equal_compares_as_vitest_does() {
     runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    write(dir, "t/eq.test.vlt", TO_EQUAL);
+    write(dir, "t/eq.test.velt", TO_EQUAL);
     let o = velt_test(dir, &["t"]);
     let stdout = String::from_utf8_lossy(&o.stdout).replace("t\\eq", "t/eq");
-    let lines: Vec<&str> = block(&stdout, "eq.test.vlt")[1..]
+    let lines: Vec<&str> = block(&stdout, "eq.test.velt")[1..]
         .iter()
-        .map(|l| l.split(" at t/eq.test.vlt:").next().unwrap())
+        .map(|l| l.split(" at t/eq.test.velt:").next().unwrap())
         .collect();
     assert_eq!(
         lines,

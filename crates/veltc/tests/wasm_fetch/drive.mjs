@@ -1,4 +1,4 @@
-// Runs src/main.vlt's build against a local HTTP server and prints its output and exit code:
+// Runs src/main.velt's build against a local HTTP server and prints its output and exit code:
 // `node drive.mjs <velt_web.mjs> <main.wasm>` on a JS host (the glue's `velt:fetch` over node's
 // `fetch`, with the server's URL as the host function `test.base`), or `node drive.mjs - <exe>`
 // natively (the URL in `FETCH_BASE`). No external network: the server listens on 127.0.0.1.

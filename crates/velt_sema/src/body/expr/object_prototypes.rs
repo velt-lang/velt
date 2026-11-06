@@ -1,5 +1,5 @@
 //! Prototypes as values (object_builtins.rs): `Object.getPrototypeOf(v)`, `Object.prototype` and
-//! `C.prototype` are `ObjectPrototype`s (std/prelude/object_prototype.vlt) naming the prototype by a tag,
+//! `C.prototype` are `ObjectPrototype`s (std/prelude/object_prototype.velt) naming the prototype by a tag,
 //! which `===` compares (`prototypeSame`, called from `binary`), and which print, convert to a
 //! string and to JSON as Node does. A record made by `Object.create(null)` has none (`null`,
 //! tested at run time), a class with subclasses the one of the class it holds.

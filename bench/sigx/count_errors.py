@@ -10,7 +10,7 @@ code base Velt accepts as is (standard library only, Python 3.8+).
 line and column (a module's errors are reported again by every file importing it). It prints
 the counts and writes every error to <out.json>, so two runs can be compared with a diff.
 
-The packages import one another by their npm names; the checkout needs a `package.vlt` that
+The packages import one another by their npm names; the checkout needs a `package.velt` that
 maps them to sources. The script writes the one below when the checkout has none.
 """
 
@@ -22,7 +22,7 @@ from collections import Counter
 
 PACKAGES = ["reactivity", "runtime-core", "server-renderer", "serialize", "sigx", "runtime-dom"]
 
-PACKAGE_VLT = """import type { Package } from "velt/package";
+PACKAGE_VELT = """import type { Package } from "velt/package";
 
 export const pkg: Package = {
   name: "sigx-audit",
@@ -55,10 +55,10 @@ def main():
     if len(sys.argv) != 4:
         sys.exit(__doc__)
     velt, root, out = sys.argv[1], os.path.abspath(sys.argv[2]), sys.argv[3]
-    manifest = os.path.join(root, "package.vlt")
+    manifest = os.path.join(root, "package.velt")
     if not os.path.exists(manifest):
         with open(manifest, "w", encoding="utf-8") as f:
-            f.write(PACKAGE_VLT)
+            f.write(PACKAGE_VELT)
     seen = {}
     for p in PACKAGES:
         src = os.path.join(root, "packages", p, "src")

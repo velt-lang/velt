@@ -18,7 +18,7 @@ use super::operand::proj;
 use super::{cint, ice, unit, FnLower};
 use crate::vir::{self, BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
-/// The stable sort every `sort(cmp)` runs (std/lang/sort/stable.vlt).
+/// The stable sort every `sort(cmp)` runs (std/lang/sort/stable.velt).
 const STABLE_SORT: &str = velt_common::std_item!(lang_sort_stable, "stableSort");
 
 impl FnLower<'_, '_> {

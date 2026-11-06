@@ -141,7 +141,7 @@ fn manifests_check_the_git_fields() {
         assert!(err.contains(message), "{dep}: {err}");
     }
     // Written back as read, for `velt add` and `velt manifest --json`.
-    let text = ok.to_vlt();
+    let text = ok.to_velt();
     assert!(
         text.contains(r#"x: { git: "https://h/r", branch: "main", path: "packages/x" }"#),
         "{text}"
@@ -196,17 +196,17 @@ impl Repo {
         String::from_utf8_lossy(&out.stdout).trim().to_string()
     }
 
-    /// Commit a package `name` at `subdir` whose `src/lib.vlt` says `says`; returns the commit.
+    /// Commit a package `name` at `subdir` whose `src/lib.velt` says `says`; returns the commit.
     fn commit_package(&self, subdir: &str, name: &str, says: &str) -> String {
         let pkg = self.dir.join(subdir);
         std::fs::create_dir_all(pkg.join("src")).unwrap();
         std::fs::write(
-            pkg.join("package.vlt"),
+            pkg.join("package.velt"),
             format!("export const pkg: Package = {{ name: \"{name}\", version: \"0.1.0\" }};"),
         )
         .unwrap();
         std::fs::write(
-            pkg.join("src/lib.vlt"),
+            pkg.join("src/lib.velt"),
             format!("export const says = \"{says}\";\n"),
         )
         .unwrap();
@@ -247,7 +247,7 @@ impl Env {
         let app = self.root.join("app");
         std::fs::create_dir_all(app.join("src")).unwrap();
         std::fs::write(
-            app.join("package.vlt"),
+            app.join("package.velt"),
             format!("export const pkg: Package = {{ name: \"app\", version: \"0.1.0\", dependencies: {{ {dep} }} }};"),
         )
         .unwrap();
@@ -265,7 +265,7 @@ impl Env {
     /// What the installed `lib` says, from its checkout.
     fn says(&self, installed: &crate::Installed) -> String {
         let lib = &installed.graph.packages()[0].dependencies["lib"];
-        std::fs::read_to_string(lib.join("src/lib.vlt")).unwrap()
+        std::fs::read_to_string(lib.join("src/lib.velt")).unwrap()
     }
 }
 
@@ -356,7 +356,7 @@ fn wrong_packages_refs_and_checkouts_are_errors() {
 fn a_git_dependency_needs_a_version_to_be_published() {
     let e = env();
     let app = e.app(&format!("lib: {{ git: \"{}\" }}", e.upstream.url()));
-    std::fs::write(app.join("src/lib.vlt"), "\n").unwrap();
+    std::fs::write(app.join("src/lib.velt"), "\n").unwrap();
     let err = crate::registry::publish(&app, &e.loc).unwrap_err();
     assert!(
         err.contains("dependency `lib` has only a `git` repository"),
@@ -371,11 +371,11 @@ fn a_path_dependency_of_a_git_package_is_locked_with_it() {
     let lib = e.upstream.dir.join("lib");
     std::fs::create_dir_all(lib.join("src")).unwrap();
     std::fs::write(
-        lib.join("package.vlt"),
+        lib.join("package.velt"),
         "export const pkg: Package = { name: \"lib\", version: \"0.1.0\", dependencies: { sib: { path: \"../sib\" } } };",
     )
     .unwrap();
-    std::fs::write(lib.join("src/lib.vlt"), "\n").unwrap();
+    std::fs::write(lib.join("src/lib.velt"), "\n").unwrap();
     e.upstream.git(&["add", "-A"]);
     e.upstream.git(&["commit", "-q", "-m", "lib"]);
     let commit = e.upstream.git(&["rev-parse", "HEAD"]);
@@ -401,16 +401,16 @@ fn native_code_from_a_repository_is_not_built_unasked() {
     std::fs::create_dir_all(sib.join("src")).unwrap();
     std::fs::create_dir_all(sib.join("native/src")).unwrap();
     std::fs::write(
-        sib.join("package.vlt"),
+        sib.join("package.velt"),
         "export const pkg: Package = { name: \"sib\", version: \"0.1.0\", native: {} };",
     )
     .unwrap();
-    std::fs::write(sib.join("src/lib.vlt"), "\n").unwrap();
+    std::fs::write(sib.join("src/lib.velt"), "\n").unwrap();
     // Never run: the install must refuse before cargo would.
     std::fs::write(sib.join("native/build.rs"), "fn main() {}").unwrap();
     e.upstream.commit_package("lib", "lib", "x");
     std::fs::write(
-        e.upstream.dir.join("lib/package.vlt"),
+        e.upstream.dir.join("lib/package.velt"),
         "export const pkg: Package = { name: \"lib\", version: \"0.1.0\", dependencies: { sib: { path: \"../sib\" } } };",
     )
     .unwrap();
@@ -433,14 +433,14 @@ fn native_code_from_a_repository_is_not_built_unasked() {
             && err.contains(&format!("allowNative: [{entry}]")),
         "{err}"
     );
-    let manifest = std::fs::read_to_string(app.join("package.vlt")).unwrap();
+    let manifest = std::fs::read_to_string(app.join("package.velt")).unwrap();
     let allow = |list: &str| {
         let text = manifest.replacen(
             "version: \"0.1.0\",",
             &format!("version: \"0.1.0\", allowNative: [{list}],"),
             1,
         );
-        std::fs::write(app.join("package.vlt"), text).unwrap();
+        std::fs::write(app.join("package.velt"), text).unwrap();
     };
     // A bare name is the registry's: a repository's package of that name isn't it. Its path
     // sibling comes from the repository too, not from a local path.
@@ -473,7 +473,7 @@ fn paths_never_lead_out_of_the_repository() {
     let e = env();
     e.upstream.commit_package("lib", "lib", "x");
     std::fs::write(
-        e.upstream.dir.join("lib/package.vlt"),
+        e.upstream.dir.join("lib/package.velt"),
         "export const pkg: Package = { name: \"lib\", version: \"0.1.0\", dependencies: { out: { path: \"../../outside\" } } };",
     )
     .unwrap();
@@ -493,7 +493,7 @@ fn paths_never_lead_out_of_the_repository() {
         let elsewhere = e.root.join("elsewhere");
         std::fs::create_dir_all(elsewhere.join("src")).unwrap();
         std::fs::write(
-            elsewhere.join("package.vlt"),
+            elsewhere.join("package.velt"),
             "export const pkg: Package = { name: \"link\", version: \"0.1.0\" };",
         )
         .unwrap();
@@ -519,9 +519,9 @@ fn links_must_resolve_inside_the_checkout() {
     let tree = tmp.path().join("tree");
     std::fs::create_dir_all(tree.join("lib/src")).unwrap();
     std::fs::create_dir_all(tree.join("d")).unwrap();
-    std::fs::write(tree.join("lib/src/real.vlt"), "\n").unwrap();
+    std::fs::write(tree.join("lib/src/real.velt"), "\n").unwrap();
     // Inside: a sibling, a parent's child, a link to a directory link, one that dangles inside.
-    symlink("real.vlt", tree.join("lib/src/same.vlt")).unwrap();
+    symlink("real.velt", tree.join("lib/src/same.velt")).unwrap();
     symlink("../lib", tree.join("d/lib")).unwrap();
     symlink("d/lib/src", tree.join("srclink")).unwrap();
     symlink("not-yet", tree.join("lib/dangling")).unwrap();
@@ -537,8 +537,8 @@ fn links_must_resolve_inside_the_checkout() {
             "{err}"
         );
     };
-    refused("lib/src/leak.vlt", "/etc/passwd");
-    refused("lib/src/up.vlt", "../../../outside/lib.vlt");
+    refused("lib/src/leak.velt", "/etc/passwd");
+    refused("lib/src/up.velt", "../../../outside/lib.velt");
     // `d/up` is the checkout's root, so `../x` through it leaves the checkout, though its text
     // alone (`d/up/../x`) looks as if it stays inside.
     symlink("..", tree.join("d/up")).unwrap();
@@ -555,9 +555,9 @@ fn links_must_resolve_inside_the_checkout() {
 fn a_repository_with_a_link_out_of_it_is_refused() {
     let e = env();
     e.upstream.commit_package("lib", "lib", "x");
-    let outside = e.root.join("outside.vlt");
+    let outside = e.root.join("outside.velt");
     std::fs::write(&outside, "export const says = \"secret\";\n").unwrap();
-    std::os::unix::fs::symlink(&outside, e.upstream.dir.join("lib/src/leak.vlt")).unwrap();
+    std::os::unix::fs::symlink(&outside, e.upstream.dir.join("lib/src/leak.velt")).unwrap();
     e.upstream.git(&["add", "-A"]);
     e.upstream.git(&["commit", "-q", "-m", "leak"]);
     let app = e.app(&format!(
@@ -566,7 +566,7 @@ fn a_repository_with_a_link_out_of_it_is_refused() {
     ));
     let err = e.install(&app, false).unwrap_err();
     assert!(
-        err.contains("has a symbolic link `lib/src/leak.vlt` that points out of the repository"),
+        err.contains("has a symbolic link `lib/src/leak.velt` that points out of the repository"),
         "{err}"
     );
     // Nothing was put in the cache.
@@ -632,11 +632,11 @@ fn a_package_with_links_is_told_about_them_on_windows() {
     let e = env();
     e.upstream.commit_package("lib", "lib", "x");
     let text = e.root.join("link-text");
-    std::fs::write(&text, "lib.vlt").unwrap();
+    std::fs::write(&text, "lib.velt").unwrap();
     let blob = e
         .upstream
         .git(&["hash-object", "-w", &text.to_string_lossy()]);
-    for path in ["lib/src/alias.vlt", "other/alias.vlt"] {
+    for path in ["lib/src/alias.velt", "other/alias.velt"] {
         let entry = format!("120000,{blob},{path}");
         e.upstream
             .git(&["update-index", "--add", "--cacheinfo", &entry]);
@@ -647,12 +647,12 @@ fn a_package_with_links_is_told_about_them_on_windows() {
     let app = e.app(&format!("lib: {{ git: \"{url}\", path: \"lib\" }}"));
     let installed = e.install(&app, false).unwrap();
     let checkout = repository_dir(&e.loc, &url).join(&commit);
-    assert_eq!(links(&checkout), ["lib/src/alias.vlt", "other/alias.vlt"]);
+    assert_eq!(links(&checkout), ["lib/src/alias.velt", "other/alias.velt"]);
     let warnings = link_warnings(&checkout, &url, Some("lib"), true);
     assert_eq!(warnings.len(), 1, "{warnings:?}");
     assert!(
-        warnings[0].starts_with("`lib/src/alias.vlt` is a symbolic link in")
-            && warnings[0].contains("holding their target (`lib.vlt`)"),
+        warnings[0].starts_with("`lib/src/alias.velt` is a symbolic link in")
+            && warnings[0].contains("holding their target (`lib.velt`)"),
         "{}",
         warnings[0]
     );

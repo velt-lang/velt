@@ -19,7 +19,7 @@ $server = $null
 try {
   $env:CARGO_TARGET_DIR = $target
   cargo build --release --quiet --manifest-path (Join-Path $here "rust/Cargo.toml")
-  & $Velt build --release (Join-Path $here "client.vlt") -o (Join-Path $work "client-velt.exe")
+  & $Velt build --release (Join-Path $here "client.velt") -o (Join-Path $work "client-velt.exe")
   $server = Start-Process (Join-Path $target "release/server.exe") -ArgumentList "18080" -PassThru -NoNewWindow
   Start-Sleep -Seconds 1
   $base = "http://127.0.0.1:18080"

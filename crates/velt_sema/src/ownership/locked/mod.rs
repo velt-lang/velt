@@ -21,7 +21,7 @@
 //! The callbacks are found by [`callbacks`]; one whose body is not found ([`opaque`]) is
 //! accepted when no function it may be crosses the lock ([`candidates`]). The standard
 //! library's own callbacks keep identity through stores: they move values out of the lock
-//! deliberately (std/prelude/promise.vlt `takeSettlement`).
+//! deliberately (std/prelude/promise.velt `takeSettlement`).
 
 mod callbacks;
 mod candidates;

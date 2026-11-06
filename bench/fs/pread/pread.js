@@ -1,4 +1,4 @@
-// pread.vlt's workloads in Node: fs.readSync / writeSync with a position, fsyncSync.
+// pread.velt's workloads in Node: fs.readSync / writeSync with a position, fsyncSync.
 const fs = require("node:fs");
 
 const PAGE = 4096;

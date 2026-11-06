@@ -1,1 +1,1 @@
-class_field_uninferred.vlt:8:7: error: cannot infer the type of field `n` from its initializer; write `n: T = ...`
+class_field_uninferred.velt:8:7: error: cannot infer the type of field `n` from its initializer; write `n: T = ...`

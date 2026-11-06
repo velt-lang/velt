@@ -165,7 +165,7 @@ pub fn select(ctx: &Context) -> Result<Selection, String> {
             reason: Reason::Default,
         }),
         None => Err(format!(
-            "no velt toolchain is selected: there is no `velt` field in a package.vlt here and no \
+            "no velt toolchain is selected: there is no `velt` field in a package.velt here and no \
              default; run `velt toolchain install <version>` (the first one installed becomes \
              the default) or `velt toolchain default <version>` ({} has the toolchains)",
             ctx.root.toolchains_dir().display()
@@ -192,7 +192,7 @@ pub struct Resolved {
 }
 
 impl Resolved {
-    /// `0.1.4 (velt: "0.1" in /p/package.vlt:4)`, for `$VELT_TOOLCHAIN_SELECTED` and `which`.
+    /// `0.1.4 (velt: "0.1" in /p/package.velt:4)`, for `$VELT_TOOLCHAIN_SELECTED` and `which`.
     pub fn describe(&self) -> String {
         format!("{} ({})", self.toolchain, self.reason)
     }

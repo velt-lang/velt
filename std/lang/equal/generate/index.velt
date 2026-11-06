@@ -1,0 +1,396 @@
+// velt/lang/equal/generate: the generator of `equalByContent<T>` and `equalByFields<T>`
+// (velt/lang/equal/generated), run at compile time (docs/internals/design/source-generators.md):
+// one function per type that tells whether two values are deeply equal, as `deepEqual` (Node's
+// `util.isDeepStrictEqual`) and `toEqual` (Vitest's) compare them. It uses nothing a package
+// could not: the model of `velt/generate`, `__arm` for a union's members, and in the code it
+// writes `===`, `Object.is`, velt/reflect and the helpers of generated.velt.
+//
+// What it compares: numbers (SameValueZero; `toEqual`: `Object.is`), booleans, strings, enums
+// and literal types by value; arrays, tuples, options, object values and structs by content;
+// a union by its active member (two number members by their numbers, exactly); `Map` and
+// `Record` by their entries in any order (`Map`'s private `deepEquals`, with the access of the
+// collection's type); a `JsonValue` by its JSON content (an object's members in any order);
+// class instances, `Set`, `Date`, `shared` cells, interface, function and promise values by
+// identity. An optional field left out differs from one set to `undefined`. `toEqual` compares class instances by the fields of their own
+// class (an `instanceof` chain, most derived first: objects of two classes differ), a `Set` by
+// its members, a `Date` by its time, and an interface value or a std type whose state is
+// private by what its dynamic type lists (`equalDynamic`). A type whose values can hold
+// themselves is compared under the cycle guard (`beginPair`): the same pair met again is equal,
+// an object met again with another partner is not.
+
+import { InstanceRequest, Model, Output, Type } from "velt/generate";
+import {
+  byFields,
+  canHoldItself,
+  extendsClass,
+  member,
+  numberClass,
+  numbersEqual,
+  presence,
+  unreadable,
+} from "velt/lang/equal/generate/facts";
+
+/** Lines of code, written apart from the `Output` that names the instances they call. */
+class Lines {
+  parts: string[] = [];
+
+  line(code: string): void {
+    this.parts.push(code);
+    this.parts.push("\n");
+  }
+
+  text(): string {
+    return this.parts.join("");
+  }
+}
+
+/** The generated function a comparison calls (`deep`: `toEqual`'s). */
+function fnOf(deep: bool): string {
+  return deep ? "equalByFields" : "equalByContent";
+}
+
+/** An expression telling whether `x` and `y`, of model type `id`, are equal. */
+function compare(out: Output, model: Model, id: i64, x: string, y: string, deep: bool): string {
+  const t = model.type(id);
+  const k = t.kind;
+  const d = deep ? "true" : "false";
+  if (k == "number") {
+    if (!t.repr.startsWith("f")) {
+      return `${x} == ${y}`;
+    }
+    return deep ? `Object.is(${x}, ${y})` : `(${x} == ${y} || (${x} != ${x} && ${y} != ${y}))`;
+  }
+  if (k == "string" || k == "boolean" || k == "enum") {
+    return `${x} == ${y}`;
+  }
+  if (k == "literal" || k == "void" || k == "never") {
+    return "true";
+  }
+  if (k == "symbol" || k == "function" || k == "promise" || k == "shared") {
+    return `${x} === ${y}`;
+  }
+  if (k == "any" || k == "unknown") {
+    return deep ? `${x} === ${y}` : `sameValueZeroAny(${x}, ${y})`;
+  }
+  if (k == "interface") {
+    return deep ? `equalDynamic(${x} as any, ${y} as any, true)` : `${x} === ${y}`;
+  }
+  if (!deep && (k == "class" || k == "set" || k == "date")) {
+    return `${x} === ${y}`;
+  }
+  if (k == "opaque" && t.qualifiedName == "std/prelude/json/json_value::JsonValue") {
+    // Its private `deepEquals`, with the access of its type.
+    return `${x}.deepEquals(${y}, ${d})`;
+  }
+  if (k == "opaque") {
+    return `equalOpaque(${x}, ${y}, ${d})`;
+  }
+  // A small object or struct of plain values is compared in place, field by field, as the glue
+  // did: no call per value, so the optimizer sees the loads (and the bounds an array loop
+  // checked).
+  if (inlineable(model, t)) {
+    const parts: string[] = [];
+    for (const fld of t.fields) {
+      parts.push(
+        compare(out, model, fld.type, member(out, model, fld, x), member(out, model, fld, y), deep),
+      );
+    }
+    return parts.length == 0 ? "true" : `(${parts.join(" && ")})`;
+  }
+  const f = out.instance(fnOf(deep), [id]);
+  return `${f}(${x}, ${y})`;
+}
+
+/**
+ * The fields of `t` (an object, a struct or, in `toEqual`, a class) compared as one expression,
+ * or "" when a field is optional (its comparison needs statements) or `t` has none of them.
+ */
+function fieldsExpr(out: Output, model: Model, t: Type, a: string, b: string, deep: bool): string {
+  if (!byFields(t, deep)) {
+    return "";
+  }
+  const parts: string[] = [];
+  for (const fld of t.fields) {
+    if (unreadable(fld)) {
+      continue;
+    }
+    if (fld.optional) {
+      return "";
+    }
+    const xa = member(out, model, fld, a);
+    const xb = member(out, model, fld, b);
+    parts.push(compare(out, model, fld.type, xa, xb, deep));
+  }
+  return parts.length == 0 ? "true" : `(${parts.join(" && ")})`;
+}
+
+/** Is `t` an object or struct of a few plain fields (numbers, strings, booleans, enums)? */
+function inlineable(model: Model, t: Type): bool {
+  if (!(t.kind == "object" || t.kind == "struct") || t.fields.length > 8) {
+    return false;
+  }
+  for (const fld of t.fields) {
+    const ft = model.type(fld.type);
+    const plain =
+      ft.kind == "number" || ft.kind == "string" || ft.kind == "boolean" || ft.kind == "enum";
+    if (!plain || fld.optional || unreadable(fld) || fld.isGetter) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Ask for the instances `Map`'s `deepEquals` calls for a map or record `t` (both comparisons
+ * of its keys and of its values), so they are generated with `t`'s: else the code calling it
+ * would need another round (docs/internals/design/source-generators.md §6).
+ */
+function entryInstances(out: Output, t: Type): void {
+  for (const arg of t.args) {
+    out.instance("equalByContent", [arg]);
+    out.instance("equalByFields", [arg]);
+  }
+}
+
+/** Writes `if (!(cond)) { return false; }`. */
+function require(w: Lines, cond: string): void {
+  if (cond != "true") {
+    w.line(`if (!(${cond})) { return false; }`);
+  }
+}
+
+/** The fields of `t` (an object, a struct or, in `toEqual`, a class) compared one by one. */
+function fields(
+  w: Lines,
+  out: Output,
+  model: Model,
+  t: Type,
+  a: string,
+  b: string,
+  deep: bool,
+): void {
+  for (const f of t.fields) {
+    if (unreadable(f)) {
+      continue;
+    }
+    const ft = model.type(f.type);
+    const xa = member(out, model, f, a);
+    const xb = member(out, model, f, b);
+    if (f.optional) {
+      require(w, presence(out, f.name, a, b));
+    }
+    if (f.optional) {
+      // Read, an optional field is its type or `undefined`: compared as its type once both are
+      // set (`null` too, when its type holds one: then only `undefined` means unset).
+      const empty = ft.kind == "option" ? "=== undefined" : "== null";
+      const set = ft.kind == "option" ? "!== undefined" : "!= null";
+      const fa = out.fresh("fa");
+      const fb = out.fresh("fb");
+      w.line(`const ${fa} = ${xa};`);
+      w.line(`const ${fb} = ${xb};`);
+      w.line(`if (${fa} ${empty}) {`);
+      w.line(`if (${fb} ${set}) { return false; }`);
+      w.line(`} else {`);
+      w.line(`if (${fb} ${empty}) { return false; }`);
+      require(w, compare(out, model, f.type, fa, fb, deep));
+      w.line(`}`);
+    } else {
+      require(w, compare(out, model, f.type, xa, xb, deep));
+    }
+  }
+}
+
+/** The members of union `t`: the same member with equal values (number members by number). */
+function union(
+  w: Lines,
+  out: Output,
+  model: Model,
+  t: Type,
+  a: string,
+  b: string,
+  deep: bool,
+): void {
+  const n = t.arms.length as i64;
+  const classes: string[] = [];
+  let numbers = 0;
+  for (const arm of t.arms) {
+    const c = numberClass(model.type(arm));
+    classes.push(c);
+    if (c.length > 0) {
+      numbers++;
+    }
+  }
+  for (let i: i64 = 0; i < n; i++) {
+    w.line(`if (__arm(${a}, ${i})) {`);
+    const same = compare(out, model, t.arms[i], a, b, deep);
+    w.line(`if (__arm(${b}, ${i})) { return ${same}; }`);
+    if (numbers >= 2 && classes[i].length > 0) {
+      const ti = model.type(t.arms[i]);
+      const x = ti.kind == "literal" ? ti.literal : a;
+      for (let j: i64 = 0; j < n; j++) {
+        if (j == i || classes[j].length == 0) {
+          continue;
+        }
+        const tj = model.type(t.arms[j]);
+        if (ti.kind == "literal" && tj.kind == "literal") {
+          continue;
+        }
+        const y = tj.kind == "literal" ? tj.literal : b;
+        const eq = numbersEqual(classes[i], x, classes[j], y, deep);
+        w.line(`if (__arm(${b}, ${j})) { return ${eq}; }`);
+      }
+    }
+    w.line(`return false;`);
+    w.line(`}`);
+  }
+  w.line(`return false;`);
+}
+
+/** The comparison of two values of `t` that are not the same object, without the cycle guard. */
+function content(
+  w: Lines,
+  out: Output,
+  model: Model,
+  t: Type,
+  a: string,
+  b: string,
+  deep: bool,
+): void {
+  const k = t.kind;
+  const d = deep ? "true" : "false";
+  if (k == "array") {
+    w.line(`const n = ${a}.length;`);
+    w.line(`if (n != ${b}.length) { return false; }`);
+    w.line(`for (let i: usize = 0; i < n; i++) {`);
+    require(w, compare(out, model, t.args[0], `${a}[i]`, `${b}[i]`, deep));
+    w.line(`}`);
+    w.line(`return true;`);
+  } else if (k == "tuple") {
+    for (let i: i64 = 0; i < (t.args.length as i64); i++) {
+      require(w, compare(out, model, t.args[i], `${a}[${i}]`, `${b}[${i}]`, deep));
+    }
+    w.line(`return true;`);
+  } else if (k == "map") {
+    // `Map`'s private `deepEquals`, with the access of the collection's type.
+    entryInstances(out, t);
+    w.line(`return ${a}.deepEquals(${b}, ${d});`);
+  } else if (k == "record") {
+    entryInstances(out, t);
+    w.line(`return recordEntriesOf(${a}).deepEquals(recordEntriesOf(${b}), ${d});`);
+  } else if (k == "set") {
+    w.line(`return ${a}.items.deepEquals(${b}.items, ${d});`);
+  } else if (k == "date") {
+    w.line(`return Object.is(${a}.getTime(), ${b}.getTime());`);
+  } else {
+    fields(w, out, model, t, a, b, deep);
+    w.line(`return true;`);
+  }
+}
+
+/**
+ * In `toEqual`, a class value is compared as its own class: an `instanceof` chain over the
+ * classes that extend `t`, most derived first; objects of two classes differ.
+ */
+function dispatch(w: Lines, out: Output, model: Model, t: Type, a: string, b: string): void {
+  const chain: i64[] = [];
+  for (let i = (t.subclasses.length as i64) - 1; i >= 0; i--) {
+    chain.push(t.subclasses[i]);
+  }
+  for (let p: i64 = 0; p < (chain.length as i64); p++) {
+    const s = model.type(chain[p]);
+    let test = `${b} instanceof ${s.spelling}`;
+    for (let q: i64 = 0; q < p; q++) {
+      if (extendsClass(model, chain[q], s.id)) {
+        test += ` && !(${b} instanceof ${model.type(chain[q]).spelling})`;
+      }
+    }
+    const f = out.instance("equalByFields", [s.id]);
+    const call = `${f}(${a}, ${b})`;
+    w.line(`if (${a} instanceof ${s.spelling}) { return ${test} && ${call}; }`);
+  }
+  for (const s of chain) {
+    w.line(`if (${b} instanceof ${model.type(s).spelling}) { return false; }`);
+  }
+}
+
+/** The body of `equalByContent` (`deep`: of `equalByFields`). */
+function body(req: InstanceRequest, out: Output, deep: bool): void {
+  const model = req.model;
+  const id = req.args[0];
+  const t = model.type(id);
+  const a = req.params[0];
+  const b = req.params[1];
+  const k = t.kind;
+  const w = new Lines();
+  if (k == "option") {
+    const c = compare(out, model, t.args[0], a, b, deep);
+    w.line(`if (${a} == null) { return ${b} == null; }`);
+    w.line(`if (${b} == null) { return false; }`);
+    w.line(`return ${c};`);
+  } else if (k == "union") {
+    union(w, out, model, t, a, b, deep);
+  } else if (
+    !(
+      k == "array" ||
+      k == "tuple" ||
+      k == "map" ||
+      k == "record" ||
+      byFields(t, deep) ||
+      (deep && (k == "set" || k == "date"))
+    )
+  ) {
+    const c = compare(out, model, id, a, b, deep);
+    w.line(`return ${c};`);
+  } else {
+    if (deep && k == "class") {
+      w.line(`if (${a} === ${b}) { return true; }`);
+      dispatch(w, out, model, t, a, b);
+    }
+    if (!canHoldItself(model, t, deep)) {
+      content(w, out, model, t, a, b, deep);
+    } else {
+      // Under the cycle guard. Fields compare as one expression in place (a helper would be
+      // recursive through the field types, and LLVM inlines no recursive function); other
+      // kinds compare in a helper.
+      const inPlace = fieldsExpr(out, model, t, a, b, deep);
+      let call = "";
+      if (inPlace.length == 0) {
+        const name = out.fresh("content");
+        const ty = out.typeName(id);
+        const h = new Lines();
+        content(h, out, model, t, "x", "y", deep);
+        const code = h.text();
+        out.helper(`function ${name}(x: ${ty}, y: ${ty}): bool {\n${code}}\n`);
+        call = `${name}(${a}, ${b})`;
+      }
+      const cmp = inPlace.length > 0 ? inPlace : call;
+      if (k == "array") {
+        // Arrays of other lengths, and empty ones, are told apart without the guard.
+        w.line(`const len = ${a}.length;`);
+        w.line(`if (len != ${b}.length) { return false; }`);
+        w.line(`if (len == 0) { return true; }`);
+      }
+      w.line(`const ia = identity(${a});`);
+      w.line(`const ib = identity(${b});`);
+      w.line(`if (ia == 0 || ib == 0) { return ${cmp}; }`);
+      w.line(`if (ia == ib) { return true; }`);
+      w.line(`const seen = beginPair(ia, ib);`);
+      w.line(`if (seen != 0) { return seen == 1; }`);
+      w.line(`const r = ${cmp};`);
+      w.line(`endPair();`);
+      w.line(`return r;`);
+    }
+  }
+  const text = w.text();
+  out.body(text);
+}
+
+/** The generator of `equalByContent<T>(a: T, b: T): bool` (`deepEqual`, `assertEq`). */
+export function equalByContent(req: InstanceRequest, out: Output): void {
+  body(req, out, false);
+}
+
+/** The generator of `equalByFields<T>(a: T, b: T): bool` (`toEqual`). */
+export function equalByFields(req: InstanceRequest, out: Output): void {
+  body(req, out, true);
+}

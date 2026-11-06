@@ -1,0 +1,251 @@
+// Prelude: checked, saturating and wrapping arithmetic on the 64-bit integer types (int_arith.velt
+// has the narrower ones and what the methods mean). There is no wider type to compute in: an
+// unsigned sum or difference is checked by its carry, a signed one by the signs of the operands
+// and the result, an unsigned product by the high half of the 128-bit product (`Math.umulh`'s
+// runtime function, one instruction) and a signed product by dividing it back.
+
+declare function velt_rt_math_umulh(a: u64, b: u64): u64;
+
+extend u64 {
+  /** `this + b`, or null when it leaves the range of `u64`. */
+  checkedAdd(b: u64): u64 | null {
+    const r = this + b;
+    if (r < this) {
+      return null;
+    }
+    return r;
+  }
+  /** `this + b`, clamped to the range of `u64`. */
+  saturatingAdd(b: u64): u64 {
+    const r = this + b;
+    return r < this ? 18446744073709551615 : r;
+  }
+  /** `this + b` wrapped to `u64` (as `this + b` on `u64` is). */
+  wrappingAdd(b: u64): u64 {
+    return this + b;
+  }
+  /** `this - b`, or null when it leaves the range of `u64`. */
+  checkedSub(b: u64): u64 | null {
+    if (this < b) {
+      return null;
+    }
+    return this - b;
+  }
+  /** `this - b`, clamped to the range of `u64`. */
+  saturatingSub(b: u64): u64 {
+    return this < b ? 0 : this - b;
+  }
+  /** `this - b` wrapped to `u64` (as `this - b` on `u64` is). */
+  wrappingSub(b: u64): u64 {
+    return this - b;
+  }
+  /** `this * b`, or null when it leaves the range of `u64`. */
+  checkedMul(b: u64): u64 | null {
+    if (velt_rt_math_umulh(this as u64, b as u64) != 0) {
+      return null;
+    }
+    return this * b;
+  }
+  /** `this * b`, clamped to the range of `u64`. */
+  saturatingMul(b: u64): u64 {
+    return velt_rt_math_umulh(this as u64, b as u64) != 0 ? 18446744073709551615 : this * b;
+  }
+  /** `this * b` wrapped to `u64` (as `this * b` on `u64` is). */
+  wrappingMul(b: u64): u64 {
+    return this * b;
+  }
+}
+
+extend i64 {
+  /** `this + b`, or null when it leaves the range of `i64`. */
+  checkedAdd(b: i64): i64 | null {
+    const r = this + b;
+    if (((this ^ r) & (b ^ r)) < 0) {
+      return null;
+    }
+    return r;
+  }
+  /** `this + b`, clamped to the range of `i64`. */
+  saturatingAdd(b: i64): i64 {
+    const r = this.checkedAdd(b);
+    if (r == null) {
+      return b < 0 ? (-9223372036854775807 - 1) : 9223372036854775807;
+    }
+    return r;
+  }
+  /** `this + b` wrapped to `i64` (as `this + b` on `i64` is). */
+  wrappingAdd(b: i64): i64 {
+    return this + b;
+  }
+  /** `this - b`, or null when it leaves the range of `i64`. */
+  checkedSub(b: i64): i64 | null {
+    const r = this - b;
+    if (((this ^ b) & (this ^ r)) < 0) {
+      return null;
+    }
+    return r;
+  }
+  /** `this - b`, clamped to the range of `i64`. */
+  saturatingSub(b: i64): i64 {
+    const r = this.checkedSub(b);
+    if (r == null) {
+      return b > 0 ? (-9223372036854775807 - 1) : 9223372036854775807;
+    }
+    return r;
+  }
+  /** `this - b` wrapped to `i64` (as `this - b` on `i64` is). */
+  wrappingSub(b: i64): i64 {
+    return this - b;
+  }
+  /** `this * b`, or null when it leaves the range of `i64`. */
+  checkedMul(b: i64): i64 | null {
+    if (this == 0 || b == 0) {
+      return 0;
+    }
+    if (
+      (this == -1 && b == (-9223372036854775807 - 1)) ||
+      (b == -1 && this == (-9223372036854775807 - 1))
+    ) {
+      return null;
+    }
+    const r = this * b;
+    if (r / b != this) {
+      return null;
+    }
+    return r;
+  }
+  /** `this * b`, clamped to the range of `i64`. */
+  saturatingMul(b: i64): i64 {
+    const r = this.checkedMul(b);
+    if (r == null) {
+      return (this < 0) != (b < 0) ? (-9223372036854775807 - 1) : 9223372036854775807;
+    }
+    return r;
+  }
+  /** `this * b` wrapped to `i64` (as `this * b` on `i64` is). */
+  wrappingMul(b: i64): i64 {
+    return this * b;
+  }
+}
+
+extend usize {
+  /** `this + b`, or null when it leaves the range of `usize`. */
+  checkedAdd(b: usize): usize | null {
+    const r = this + b;
+    if (r < this) {
+      return null;
+    }
+    return r;
+  }
+  /** `this + b`, clamped to the range of `usize`. */
+  saturatingAdd(b: usize): usize {
+    const r = this + b;
+    return r < this ? 18446744073709551615 : r;
+  }
+  /** `this + b` wrapped to `usize` (as `this + b` on `usize` is). */
+  wrappingAdd(b: usize): usize {
+    return this + b;
+  }
+  /** `this - b`, or null when it leaves the range of `usize`. */
+  checkedSub(b: usize): usize | null {
+    if (this < b) {
+      return null;
+    }
+    return this - b;
+  }
+  /** `this - b`, clamped to the range of `usize`. */
+  saturatingSub(b: usize): usize {
+    return this < b ? 0 : this - b;
+  }
+  /** `this - b` wrapped to `usize` (as `this - b` on `usize` is). */
+  wrappingSub(b: usize): usize {
+    return this - b;
+  }
+  /** `this * b`, or null when it leaves the range of `usize`. */
+  checkedMul(b: usize): usize | null {
+    if (velt_rt_math_umulh(this as u64, b as u64) != 0) {
+      return null;
+    }
+    return this * b;
+  }
+  /** `this * b`, clamped to the range of `usize`. */
+  saturatingMul(b: usize): usize {
+    return velt_rt_math_umulh(this as u64, b as u64) != 0 ? 18446744073709551615 : this * b;
+  }
+  /** `this * b` wrapped to `usize` (as `this * b` on `usize` is). */
+  wrappingMul(b: usize): usize {
+    return this * b;
+  }
+}
+
+extend isize {
+  /** `this + b`, or null when it leaves the range of `isize`. */
+  checkedAdd(b: isize): isize | null {
+    const r = this + b;
+    if (((this ^ r) & (b ^ r)) < 0) {
+      return null;
+    }
+    return r;
+  }
+  /** `this + b`, clamped to the range of `isize`. */
+  saturatingAdd(b: isize): isize {
+    const r = this.checkedAdd(b);
+    if (r == null) {
+      return b < 0 ? (-9223372036854775807 - 1) : 9223372036854775807;
+    }
+    return r;
+  }
+  /** `this + b` wrapped to `isize` (as `this + b` on `isize` is). */
+  wrappingAdd(b: isize): isize {
+    return this + b;
+  }
+  /** `this - b`, or null when it leaves the range of `isize`. */
+  checkedSub(b: isize): isize | null {
+    const r = this - b;
+    if (((this ^ b) & (this ^ r)) < 0) {
+      return null;
+    }
+    return r;
+  }
+  /** `this - b`, clamped to the range of `isize`. */
+  saturatingSub(b: isize): isize {
+    const r = this.checkedSub(b);
+    if (r == null) {
+      return b > 0 ? (-9223372036854775807 - 1) : 9223372036854775807;
+    }
+    return r;
+  }
+  /** `this - b` wrapped to `isize` (as `this - b` on `isize` is). */
+  wrappingSub(b: isize): isize {
+    return this - b;
+  }
+  /** `this * b`, or null when it leaves the range of `isize`. */
+  checkedMul(b: isize): isize | null {
+    if (this == 0 || b == 0) {
+      return 0;
+    }
+    if (
+      (this == -1 && b == (-9223372036854775807 - 1)) ||
+      (b == -1 && this == (-9223372036854775807 - 1))
+    ) {
+      return null;
+    }
+    const r = this * b;
+    if (r / b != this) {
+      return null;
+    }
+    return r;
+  }
+  /** `this * b`, clamped to the range of `isize`. */
+  saturatingMul(b: isize): isize {
+    const r = this.checkedMul(b);
+    if (r == null) {
+      return (this < 0) != (b < 0) ? (-9223372036854775807 - 1) : 9223372036854775807;
+    }
+    return r;
+  }
+  /** `this * b` wrapped to `isize` (as `this * b` on `isize` is). */
+  wrappingMul(b: isize): isize {
+    return this * b;
+  }
+}

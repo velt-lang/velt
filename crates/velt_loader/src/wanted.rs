@@ -1,9 +1,9 @@
 //! Which re-exports of a std module the program needs (docs/internals/design/std-layout.md §2).
 //!
-//! A module's `index.vlt` is its public API: named re-exports of the files that implement it
+//! A module's `index.velt` is its public API: named re-exports of the files that implement it
 //! (`export { Deque } from "velt/collections/deque";`). A re-export binds nothing in the module
 //! itself, so it only has to be loaded when some module imports one of its names: a program
-//! that imports `Deque` from `velt/collections` loads `collections/deque.vlt`, not the B+ tree
+//! that imports `Deque` from `velt/collections` loads `collections/deque.velt`, not the B+ tree
 //! and the concurrent map next to it. The loader records what each importer asks of a std
 //! module ([`Wanted`]) and follows a std module's re-exports only for those names; the module's
 //! own imports, and `export * from`, are always followed. A re-export that is followed asks its

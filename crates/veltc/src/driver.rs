@@ -73,7 +73,7 @@ pub struct BuildOptions {
     pub check_variants: bool,
 }
 
-/// The host package of a `--host` build (`vpm::host`): what its `package.vlt`'s `host` says, and
+/// The host package of a `--host` build (`vpm::host`): what its `package.velt`'s `host` says, and
 /// where its files are. The compiler knows no platform: this is everything about one.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HostBuild {

@@ -1,7 +1,7 @@
 //! Checking `declare c` functions against their library's C headers
 //! (docs/internals/design/c-ffi.md "Checking declarations against C headers"): for a package
 //! built here (the program's own, a path dependency, a workspace member) whose C library lists
-//! `headers` in package.vlt, the pinned zig's clang parses them for the build's target, and
+//! `headers` in package.velt, the pinned zig's clang parses them for the build's target, and
 //! each declaration must name a function they declare, with parameters and a result that
 //! match. A mismatch is an error naming the header line. A result that passed is remembered
 //! (`$VELT_HOME/cache/headers/`), so clang runs again only when a header, a declaration, the
@@ -155,7 +155,7 @@ fn no_headers(package: &str, library: &str, at: Span) -> Diagnostic {
     };
     Diagnostic::error(
         format!(
-            "package `{package}` declares functions of C library `{library}`, but its package.vlt lists no headers to check them against"
+            "package `{package}` declares functions of C library `{library}`, but its package.velt lists no headers to check them against"
         ),
         at,
     )
@@ -208,7 +208,7 @@ fn check_library(
                     first,
                 )
                 .with_note(
-                    "a library without headers says so in package.vlt with `unchecked: true`",
+                    "a library without headers says so in package.velt with `unchecked: true`",
                 ),
             );
             return None;

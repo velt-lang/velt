@@ -1,5 +1,5 @@
 //! Uploads whose manifest is wrong: read as data, with the limits of every manifest, and
-//! reported as `package.vlt` (never the server's staging directory).
+//! reported as `package.velt` (never the server's staging directory).
 
 use super::*;
 
@@ -23,7 +23,7 @@ fn upload_files(url: &str, files: &[(&str, &[u8])]) -> velt_http::Response {
 }
 
 #[test]
-fn uploaded_manifests_are_read_as_data_and_named_package_vlt() {
+fn uploaded_manifests_are_read_as_data_and_named_package_velt() {
     let tmp = tempfile::tempdir().unwrap();
     let (server, _) = start(&tmp.path().join("server"), None);
     let url = format!("http://{}", server.addr());
@@ -35,26 +35,26 @@ fn uploaded_manifests_are_read_as_data_and_named_package_vlt() {
         assert!(!body.contains(".staging"), "the staging path leaks: {body}");
     };
     rejected(
-        &[("velt.toml", b"[package]\n"), ("src/lib.vlt", b"")],
+        &[("velt.toml", b"[package]\n"), ("src/lib.velt", b"")],
         "published with a `velt.toml`",
     );
-    rejected(&[("src/lib.vlt", b"")], "the archive has no package.vlt");
+    rejected(&[("src/lib.velt", b"")], "the archive has no package.velt");
     let code = b"import { readFile } from \"velt/fs\";\nexport const pkg: Package = { name: \"p\", version: \"1.0.0\" };\n";
     rejected(
-        &[("package.vlt", code)],
-        "package.vlt:1:1: error: `package.vlt` may only import types from `velt/package`",
+        &[("package.velt", code)],
+        "package.velt:1:1: error: `package.velt` may only import types from `velt/package`",
     );
     let huge = format!("// {}\n", "x".repeat(vpm::manifest::read::MAX_BYTES));
     rejected(
-        &[("package.vlt", huge.as_bytes())],
-        "package.vlt: the manifest is larger than 64 KiB",
+        &[("package.velt", huge.as_bytes())],
+        "package.velt: the manifest is larger than 64 KiB",
     );
     rejected(
-        &[("package.vlt", b"// \xff\n")],
-        "package.vlt: the manifest is not valid UTF-8",
+        &[("package.velt", b"// \xff\n")],
+        "package.velt: the manifest is not valid UTF-8",
     );
     let ok = b"export const pkg: Package = { name: \"p\", version: \"1.0.0\" };\n";
-    assert_eq!(upload_files(&url, &[("package.vlt", ok)]).status, 201);
+    assert_eq!(upload_files(&url, &[("package.velt", ok)]).status, 201);
     assert!(!tmp
         .path()
         .join("server/.staging")

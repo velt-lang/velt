@@ -1,5 +1,5 @@
 //! The lint rules of `velt check` through the `velt` binary (docs/internals/design/lint-profiles.md):
-//! `--perf` hints, the levels `lint` in package.vlt sets, `velt-allow` comments, `--fix` and
+//! `--perf` hints, the levels `lint` in package.velt sets, `velt-allow` comments, `--fix` and
 //! `--fix=review` (which undoes a fix after which the program no longer checks), the profiles
 //! (a `tsCompat` folder gets only fixes that stay TypeScript), the evidence rule on the optimized
 //! program, and the JSON form.
@@ -38,7 +38,7 @@ fn read(dir: &Path, rel: &str) -> String {
 fn package(dir: &Path, fields: &str) {
     write(
         dir,
-        "package.vlt",
+        "package.velt",
         &format!(
             "import type {{ Package }} from \"velt/package\";\n\n\
              export const pkg: Package = {{ name: \"app\", version: \"0.1.0\"{fields} }};\n"
@@ -72,7 +72,7 @@ fn perf_hints_show_with_perf_only() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     package(dir, "");
-    write(dir, "src/main.vlt", SUM);
+    write(dir, "src/main.velt", SUM);
     let o = velt(dir, &["check"]);
     assert!(o.status.success(), "{}", stderr(&o));
     assert!(!stderr(&o).contains("perf("), "{}", stderr(&o));
@@ -80,7 +80,7 @@ fn perf_hints_show_with_perf_only() {
     assert!(o.status.success(), "{}", stderr(&o));
     let err = stderr(&o);
     assert!(
-        err.contains("main.vlt:3:3: note: this `forEach` callback assigns `total`"),
+        err.contains("main.velt:3:3: note: this `forEach` callback assigns `total`"),
         "{err}"
     );
     assert!(
@@ -98,7 +98,7 @@ fn levels_from_the_manifest() {
         dir,
         ", lint: { perf: \"deny\", rules: { \"perf/nope\": \"off\" } }",
     );
-    write(dir, "src/main.vlt", SUM);
+    write(dir, "src/main.velt", SUM);
     // `deny`: plain `velt check` runs the rule and fails.
     let o = velt(dir, &["check"]);
     assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
@@ -132,7 +132,7 @@ fn allow_comments_need_a_reason_and_a_use() {
         "  xs.forEach",
         "  // velt-allow(perf/foreach-capture): the order of calls matters here\n  xs.forEach",
     );
-    write(dir, "src/main.vlt", &allowed);
+    write(dir, "src/main.velt", &allowed);
     let o = velt(dir, &["check"]);
     assert!(o.status.success(), "{}", stderr(&o));
     assert_eq!(stderr(&o), "", "suppressed");
@@ -140,7 +140,7 @@ fn allow_comments_need_a_reason_and_a_use() {
         "  xs.forEach",
         "  // velt-allow(perf/foreach-capture)\n  xs.forEach",
     );
-    write(dir, "src/main.vlt", &bare);
+    write(dir, "src/main.velt", &bare);
     let err = stderr(&velt(dir, &["check"]));
     assert!(
         err.contains("warning: this `velt-allow` comment gives no reason"),
@@ -150,7 +150,7 @@ fn allow_comments_need_a_reason_and_a_use() {
         "  return total;",
         "  // velt-allow(perf/class-as-data): x\n  return total;",
     );
-    write(dir, "src/main.vlt", &unused);
+    write(dir, "src/main.velt", &unused);
     let err = stderr(&velt(dir, &["check"]));
     assert!(
         err.contains("`velt-allow(perf/class-as-data)` suppresses nothing"),
@@ -187,7 +187,7 @@ fn review_fixes_need_fix_review() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     package(dir, "");
-    write(dir, "src/main.vlt", SHAPES);
+    write(dir, "src/main.velt", SHAPES);
     let o = velt(dir, &["check", "--fix"]);
     assert!(o.status.success(), "{}", stderr(&o));
     assert!(
@@ -195,7 +195,7 @@ fn review_fixes_need_fix_review() {
         "{}",
         stderr(&o)
     );
-    assert_eq!(read(dir, "src/main.vlt"), SHAPES);
+    assert_eq!(read(dir, "src/main.velt"), SHAPES);
     let o = velt(dir, &["check", "--fix=review"]);
     assert!(o.status.success(), "{}", stderr(&o));
     assert!(
@@ -203,7 +203,7 @@ fn review_fixes_need_fix_review() {
         "{}",
         stderr(&o)
     );
-    let after = read(dir, "src/main.vlt");
+    let after = read(dir, "src/main.velt");
     assert!(
         after.starts_with("type Point = { x: number; y: number };\n"),
         "{after}"
@@ -237,8 +237,8 @@ fn a_foreach_rewrite_is_a_review_fix() {
     for src in programs {
         let tmp = test_dir::TestDir::new();
         let dir = tmp.path();
-        write(dir, "main.vlt", src);
-        let o = velt(dir, &["check", "main.vlt", "--perf", "--json"]);
+        write(dir, "main.velt", src);
+        let o = velt(dir, &["check", "main.velt", "--perf", "--json"]);
         let report: Value = serde_json::from_slice(&o.stdout).unwrap();
         let d = report["diagnostics"]
             .as_array()
@@ -247,13 +247,13 @@ fn a_foreach_rewrite_is_a_review_fix() {
             .find(|d| d["code"] == "perf/foreach-capture")
             .unwrap_or_else(|| panic!("no finding: {report:#}"));
         assert_eq!(d["fixes"][0]["applicability"], "review", "{src}");
-        let o = velt(dir, &["check", "main.vlt", "--fix"]);
+        let o = velt(dir, &["check", "main.velt", "--fix"]);
         assert_eq!(
             stderr(&o).lines().next(),
             Some("velt: nothing to fix"),
             "{src}"
         );
-        assert_eq!(read(dir, "main.vlt"), src);
+        assert_eq!(read(dir, "main.velt"), src);
     }
 }
 
@@ -275,7 +275,7 @@ function main() {
   console.log(area(r));
 }
 ";
-    write(dir, "src/main.vlt", src);
+    write(dir, "src/main.velt", src);
     let o = velt(dir, &["check", "--fix=review"]);
     assert!(o.status.success(), "{}", stderr(&o));
     let err = stderr(&o);
@@ -287,7 +287,7 @@ function main() {
         err.contains("velt: not applied, the program did not check after it: type `p` as `{ w: number; h: number }`"),
         "{err}"
     );
-    assert_eq!(read(dir, "src/main.vlt"), src);
+    assert_eq!(read(dir, "src/main.velt"), src);
 }
 
 /// The loop counter stays a double; in the package's own file the fix declares it `i64`, in a
@@ -308,7 +308,7 @@ fn evidence_and_profiles() {
     write(dir, "src/shared/count.ts", &counter("shared"));
     write(
         dir,
-        "src/main.vlt",
+        "src/main.velt",
         &format!(
             "import {{ shared }} from \"./shared/count\";\n\n{}\nfunction main() {{\n  own();\n  shared();\n}}\n",
             counter("own")
@@ -329,7 +329,7 @@ fn evidence_and_profiles() {
             .find(|d| d["location"]["file"].as_str().unwrap().ends_with(f))
             .unwrap_or_else(|| panic!("no finding in {f}: {report:#}"))
     };
-    let own = by_file("main.vlt");
+    let own = by_file("main.velt");
     assert_eq!(own["severity"], "warning");
     assert!(
         own["message"]
@@ -347,7 +347,7 @@ fn evidence_and_profiles() {
     // Applied, the counter is an integer and the finding is gone.
     let o = velt(dir, &["check", "--perf", "--fix=review"]);
     assert!(o.status.success(), "{}", stderr(&o));
-    assert!(read(dir, "src/main.vlt").contains("let k: i64 = 0;"));
+    assert!(read(dir, "src/main.velt").contains("let k: i64 = 0;"));
     assert!(read(dir, "src/shared/count.ts").contains("let k = 0;"));
 }
 
@@ -356,7 +356,7 @@ fn json_has_codes_and_fixes() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     package(dir, "");
-    write(dir, "src/main.vlt", SUM);
+    write(dir, "src/main.velt", SUM);
     let o = velt(dir, &["check", "--perf", "--json"]);
     assert!(o.status.success(), "{}", stderr(&o));
     let report: Value = serde_json::from_slice(&o.stdout).unwrap();
@@ -382,13 +382,13 @@ fn ts_compat_findings_are_fixed() {
     let dir = tmp.path();
     write(
         dir,
-        "a.vlt",
+        "a.velt",
         "export function f(x: f64): bool {\n  return x > 1;\n}\n",
     );
-    let o = velt(dir, &["check", "--ts-compat", "a.vlt", "--fix"]);
+    let o = velt(dir, &["check", "--ts-compat", "a.velt", "--fix"]);
     assert!(o.status.success(), "{}", stderr(&o));
     assert_eq!(
-        read(dir, "a.vlt"),
+        read(dir, "a.velt"),
         "export function f(x: number): boolean {\n  return x > 1;\n}\n"
     );
 }

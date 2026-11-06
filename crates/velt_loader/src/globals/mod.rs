@@ -1,4 +1,4 @@
-//! Globals loaded on demand (`std/prelude/global/*.vlt`): names that are in scope everywhere
+//! Globals loaded on demand (`std/prelude/global/*.velt`): names that are in scope everywhere
 //! without an import, like the prelude's, but whose modules a program loads only when it
 //! mentions one of them. Node's web globals (`fetch`, `Response`, `URL`, `AbortController`, …)
 //! sit on top of large parts of std (the HTTP client, the URL parser, cancellation), which a
@@ -48,7 +48,7 @@ pub(super) fn global_modules(std_root: &Path, parser: &StdParser) -> Vec<Global>
     let mut files: Vec<PathBuf> = entries
         .into_iter()
         .map(|e| e.path())
-        .filter(|p| vpm::probe::is_file(p) && p.extension().is_some_and(|e| e == "vlt"))
+        .filter(|p| vpm::probe::is_file(p) && p.extension().is_some_and(|e| e == "velt"))
         .collect();
     files.sort();
     files
@@ -173,7 +173,7 @@ fn may_print(src: &str) -> bool {
     src.contains("${") || src.contains("String") || src.contains('+')
 }
 
-/// The trigger of the global an async host function loads (std/prelude/global/host_async.vlt:
+/// The trigger of the global an async host function loads (std/prelude/global/host_async.velt:
 /// the hooks that await its call's promise). No source can mention it as a word.
 const ASYNC_HOST: &str = "<async host function>";
 
@@ -188,7 +188,7 @@ fn has_async_host(module: &ast::Module) -> bool {
 }
 
 /// The trigger of the global a function expression with a `this` parameter loads
-/// (std/prelude/global/this_fn.vlt, which re-exports nothing: its value's class and calls are
+/// (std/prelude/global/this_fn.velt, which re-exports nothing: its value's class and calls are
 /// compiler hooks, velt_common `std_hooks.rs`). No source can mention it as a word.
 const THIS_FN: &str = "<function with this>";
 
@@ -344,7 +344,7 @@ mod tests {
     fn a_dot_word_is_a_property_read() {
         let uses = |src: &str, word: &str| {
             let mut sm = SourceMap::new();
-            let file = sm.add(Path::new("m.vlt"), src.to_string());
+            let file = sm.add(Path::new("m.velt"), src.to_string());
             let (module, _) = velt_syntax::parse_file(file, &sm.get(file).src);
             mentions_word(src, &module, word)
         };
@@ -373,7 +373,7 @@ mod tests {
     fn a_regex_literal_names_regexp() {
         let names = |src: &str| {
             let mut sm = SourceMap::new();
-            let file = sm.add(Path::new("m.vlt"), src.to_string());
+            let file = sm.add(Path::new("m.velt"), src.to_string());
             let (module, _) = velt_syntax::parse_file(file, &sm.get(file).src);
             names_global(src, &module, "RegExp")
         };
@@ -414,12 +414,12 @@ mod tests {
         assert!(global_modules(tmp.path(), &StdParser::default()).is_empty());
         let dir = tmp.path().join("prelude/global");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("b.vlt"), "export { B } from \"velt/b\";\n").unwrap();
-        std::fs::write(dir.join("a.vlt"), "export { A } from \"velt/a\";\n").unwrap();
+        std::fs::write(dir.join("b.velt"), "export { B } from \"velt/b\";\n").unwrap();
+        std::fs::write(dir.join("a.velt"), "export { A } from \"velt/a\";\n").unwrap();
         let g = global_modules(tmp.path(), &StdParser::default());
         assert_eq!(g.len(), 2);
         assert_eq!(g[0].names, ["A"]);
-        assert_eq!(g[1].file, dir.join("b.vlt"));
+        assert_eq!(g[1].file, dir.join("b.velt"));
     }
 
     #[test]
@@ -428,12 +428,12 @@ mod tests {
         let dir = tmp.path().join("prelude/global");
         std::fs::create_dir_all(&dir).unwrap();
         let src = format!("{THIS_FN_LINE}\nimport \"velt/lang/this_fn\";\n");
-        std::fs::write(dir.join("this_fn.vlt"), src).unwrap();
+        std::fs::write(dir.join("this_fn.velt"), src).unwrap();
         let g = global_modules(tmp.path(), &StdParser::default());
         assert_eq!(g[0].names, [THIS_FN]);
         let parse = |src: &str| {
             let mut sm = SourceMap::new();
-            let file = sm.add(Path::new("main.vlt"), src.to_string());
+            let file = sm.add(Path::new("main.velt"), src.to_string());
             velt_syntax::parse_file(file, &sm.get(file).src).0
         };
         let with = "const f = function (this: any) { return this; };\n";
@@ -449,14 +449,14 @@ mod tests {
         let dir = tmp.path().join("prelude/global");
         std::fs::create_dir_all(&dir).unwrap();
         let src = format!("{ASYNC_HOST_LINE}\nimport \"velt/host/promise\";\n");
-        std::fs::write(dir.join("host_async.vlt"), src).unwrap();
+        std::fs::write(dir.join("host_async.velt"), src).unwrap();
         assert_eq!(
             global_modules(tmp.path(), &StdParser::default())[0].names,
             [ASYNC_HOST]
         );
         let parse = |src: &str| {
             let mut sm = SourceMap::new();
-            let file = sm.add(Path::new("main.vlt"), src.to_string());
+            let file = sm.add(Path::new("main.velt"), src.to_string());
             velt_syntax::parse_file(file, &sm.get(file).src).0
         };
         let with = "declare host(\"m\") async function f(): Promise<u32>;\n";

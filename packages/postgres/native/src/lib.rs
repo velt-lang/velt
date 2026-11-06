@@ -1,6 +1,6 @@
 //! The `postgres` package's native library: a PostgreSQL client over `tokio-postgres` (TLS: rustls
 //! with the `ring` provider, `velt_tls`), on the native-package SDK. Its `#[export]` functions are
-//! the `velt_postgres__*` declarations of `src/native.vlt`; the ABI is docs/native_abi.md.
+//! the `velt_postgres__*` declarations of `src/native.velt`; the ABI is docs/native_abi.md.
 //!
 //! Every server round trip is an async leaf future. Parameters arrive through a parameter sink
 //! ([`sink`], filled by velt/db's `bindParams`) or as JSON text (`JSON.stringify` of the user's

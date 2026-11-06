@@ -15,7 +15,7 @@ use super::method_value::strip_parens;
 use crate::body::{FnCx, Want};
 use crate::hir::{self, ExprKind as H, IntTy, Intrinsic, TyId, TyKind};
 
-/// The class every typed array and `DataView` extends (std/lang/typed_array/buffer_view.vlt).
+/// The class every typed array and `DataView` extends (std/lang/typed_array/buffer_view.velt).
 const BUFFER_VIEW: &str = velt_common::std_item!(lang_typed_array_buffer_view, "BufferView");
 
 impl FnCx<'_, '_> {

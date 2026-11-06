@@ -48,7 +48,7 @@ const OS_SPECIFIC_PATHS: &[&str] = &[
     "std/net/",
     "std/os/",
     "std/process/",
-    "std/prelude/timers.vlt",
+    "std/prelude/timers.velt",
     "std/task/",
     "std/test/",
     "std/time/",
@@ -115,7 +115,7 @@ pub(crate) const MACOS_PATHS: &[&str] = &[
     "std/net/",
     "std/os/",
     "std/process/",
-    "std/prelude/timers.vlt",
+    "std/prelude/timers.velt",
     "std/task/",
     "std/time/",
     "tests/std/",
@@ -124,8 +124,8 @@ pub(crate) const MACOS_PATHS: &[&str] = &[
     // Packages with a macOS branch, or tests of file paths: `/tmp` and `/var` are symbolic links
     // on macOS, so `realpath` answers differently from Linux there.
     "packages/http-server/src/files/",
-    "packages/http-server/tests/files.test.vlt",
-    "packages/http-server/tests/connections.test.vlt",
+    "packages/http-server/tests/files.test.velt",
+    "packages/http-server/tests/connections.test.velt",
 ];
 
 /// Why macOS must be checked too, or `None` when it can wait for the scheduled run. Unlike
@@ -149,7 +149,7 @@ pub fn macos_reason(paths: &[String]) -> Option<String> {
 const WINDOWS_PACKAGE_TESTS: &[&str] = &[
     "std/net/",
     "std/test/",
-    "std/prelude/timers.vlt",
+    "std/prelude/timers.velt",
     "crates/velt_rt/src/net/",
     "crates/velt_rt/src/tls.rs",
     "crates/velt_rt/src/timer.rs",
@@ -271,21 +271,21 @@ mod tests {
         assert_eq!(p(&["packages/http-server/README.md"]), "");
         assert_eq!(
             p(&[
-                "packages/sqlite/src/db.vlt",
-                "packages/http-server/tests/h2.test.vlt"
+                "packages/sqlite/src/db.velt",
+                "packages/http-server/tests/h2.test.velt"
             ]),
             "http-server,sqlite"
         );
         for every in [
-            "std/net/tcp_stream.vlt",
-            "std/test/run.vlt",
+            "std/net/tcp_stream.velt",
+            "std/test/run.velt",
             "crates/velt_rt/src/net/tcp.rs",
             "crates/veltc/src/commands/test/mod.rs",
         ] {
-            assert_eq!(p(&["packages/sqlite/src/db.vlt", every]), "all", "{every}");
+            assert_eq!(p(&["packages/sqlite/src/db.velt", every]), "all", "{every}");
         }
-        let skip = std::collections::BTreeSet::from(["std/net/listen.vlt".to_string()]);
-        assert_eq!(windows_packages(&["std/net/listen.vlt".into()], &skip), "");
+        let skip = std::collections::BTreeSet::from(["std/net/listen.velt".to_string()]);
+        assert_eq!(windows_packages(&["std/net/listen.velt".into()], &skip), "");
     }
 
     #[test]

@@ -1,4 +1,4 @@
-//! `tests/golden/m2/closures.vlt` hand-lowered to HIR: stack environments (borrowed captures),
+//! `tests/golden/m2/closures.velt` hand-lowered to HIR: stack environments (borrowed captures),
 //! heap environments (moved captures), named functions as values, generic higher-order
 //! functions (the prelude's `forEach`/`map`/`filter`/`reduce`, written here as generic fns).
 

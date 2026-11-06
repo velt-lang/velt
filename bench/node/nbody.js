@@ -1,4 +1,4 @@
-// N-body simulation (same algorithm and operation order as nbody.vlt).
+// N-body simulation (same algorithm and operation order as nbody.velt).
 const SOLAR_MASS = 4.0 * Math.PI * Math.PI;
 const DAYS_PER_YEAR = 365.24;
 

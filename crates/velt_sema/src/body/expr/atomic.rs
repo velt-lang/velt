@@ -1,4 +1,4 @@
-//! `Atomic<T>` (std/prelude/atomic.vlt, docs/internals/design/atomics.md): `new Atomic<T>(x)`
+//! `Atomic<T>` (std/prelude/atomic.velt, docs/internals/design/atomics.md): `new Atomic<T>(x)`
 //! is the struct holding `x`, and a call of one of its methods is an `Atomic*` intrinsic whose
 //! orderings are integer literals (hir/intrinsic.rs), so lowering emits the one instruction
 //! with the ordering the call site names. The methods' declarations give the signatures, their

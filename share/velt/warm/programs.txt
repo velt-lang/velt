@@ -6,23 +6,23 @@
 # ones before it did not cover. A program listed here must build on its own (no relative imports)
 # and use std alone: the HTTP server and the database drivers are packages (packages/), which
 # the cache warms for a program that depends on them when it is built.
-../../../tests/std/fetch/server_api.test.vlt
-../../../tests/golden/std/number_parse.vlt
-../../../tests/golden/std/simd_partial.vlt
-../../../tests/golden/std/simd_sha.vlt
-../../../tests/std/websocket/over.test.vlt
-../../../tests/golden/std/streams_basic.vlt
-../../../tests/golden/std/object_create_null_dict.vlt
-../../../tests/golden/std/datetime.vlt
-../../../tests/std/h2/hpack.test.vlt
-../../../tests/golden/std/typed_arrays_basic.vlt
-../../../tests/golden/std/collections.vlt
-../../../tests/golden/std/compress_brotli.vlt
-../../../tests/golden/std/btree_map.vlt
-../../../tests/golden/std/concurrent_map_strings.vlt
-../../../tests/golden/std/streams_body.vlt
-../../../tests/golden/std/typed_arrays_edges.vlt
-../../../tests/golden/std/typed_arrays_buffers.vlt
-../../../tests/golden/std/url.vlt
-../../../tests/golden/std/map_null_values.vlt
-../../../tests/golden/std/concurrent_map.vlt
+../../../tests/std/fetch/server_api.test.velt
+../../../tests/golden/std/number_parse.velt
+../../../tests/golden/std/simd_partial.velt
+../../../tests/golden/std/simd_sha.velt
+../../../tests/std/websocket/over.test.velt
+../../../tests/golden/std/streams_basic.velt
+../../../tests/golden/std/object_create_null_dict.velt
+../../../tests/golden/std/datetime.velt
+../../../tests/std/h2/hpack.test.velt
+../../../tests/golden/std/typed_arrays_basic.velt
+../../../tests/golden/std/collections.velt
+../../../tests/golden/std/compress_brotli.velt
+../../../tests/golden/std/btree_map.velt
+../../../tests/golden/std/concurrent_map_strings.velt
+../../../tests/golden/std/streams_body.velt
+../../../tests/golden/std/typed_arrays_edges.velt
+../../../tests/golden/std/typed_arrays_buffers.velt
+../../../tests/golden/std/url.velt
+../../../tests/golden/std/map_null_values.velt
+../../../tests/golden/std/concurrent_map.velt

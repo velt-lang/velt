@@ -2,7 +2,7 @@
 //!
 //! Installed as `<root>/bin/velt`, it picks a toolchain ([`select`]): a first argument
 //! `+<toolchain>` (`velt +0.2 build`), else `$VELT_TOOLCHAIN`, else the `velt` field of the
-//! nearest `package.vlt`, else `<root>/default`. It installs a missing
+//! nearest `package.velt`, else `<root>/default`. It installs a missing
 //! version from the release (unless `VELT_TOOLCHAIN_AUTO_INSTALL=0`) and runs that toolchain's
 //! `bin/velt` with the same arguments ([`exec`]), so every command behaves as the toolchain's
 //! own. `velt toolchain …` is the launcher's own command ([`commands`]), the same for every

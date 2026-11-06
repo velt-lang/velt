@@ -1,0 +1,76 @@
+// velt/net/http (internal): `fetch`'s transport on JS hosts (`#http-transport` under `js`,
+// std/imports.velt): the host's own `fetch` (node, Deno, browsers, Workers) through the host
+// functions of js_host.velt, so the module carries no TCP, TLS or HTTP/2 client.
+//
+// The request is checked as the Velt client checks it (the URL, header names and values), so
+// what the Velt client refuses fails with the same `IoError`; the host may refuse more (undici's
+// `keep-alive`, `upgrade` and `expect` headers, `CONNECT`, credentials in the URL, ports the
+// Fetch standard blocks) or drop forbidden headers (browsers). The host follows redirects as
+// `redirect` says and decodes compressed bodies. A wait for the host races the request's `AbortSignal`
+// (js_fetched.velt `settled`): when it aborts, the host's call is aborted (its
+// `AbortController`), and `fetch` or the body read throws the signal's `AbortError`
+// (`TimeoutError` for `AbortSignal.timeout`). A custom `ca` is an error: the host verifies
+// certificates itself.
+
+import { IoError } from "velt/io/error";
+import { AbortError } from "velt/task";
+import { ClientRequest, ERROR, MANUAL } from "velt/net/http/fetch/client/client_request";
+import { target } from "velt/net/http/fetch/client/target";
+import { validName, validValue } from "velt/net/http/fetch/client/wire";
+import { Fetched, settled } from "velt/net/http/fetch/client/transport/js_fetched";
+import {
+  requestSend,
+  requestStart,
+  responseStatus,
+} from "velt/net/http/fetch/client/transport/js_host";
+
+export { Fetched } from "./js_fetched";
+
+/** Sends `o` with the host's `fetch` and resolves with the response once its head arrived. */
+export async function send(o: ClientRequest): Promise<Fetched, IoError | AbortError> {
+  if (o.ca != "") {
+    throw new IoError(
+      "ENOTSUP",
+      "fetch failed: `ca` is not supported on JS hosts, which verify certificates themselves",
+    );
+  }
+  // The errors of a URL the Velt client can't send (`EINVAL`, `ENOTSUP` for its scheme).
+  target(o.url);
+  const headers = joined(o.headers);
+  const call = requestStart();
+  const sending = requestSend(
+    call,
+    o.method,
+    o.url,
+    headers,
+    redirectName(o.redirect),
+    o.kind,
+    o.text,
+    o.bytes,
+  );
+  await settled(sending, call, o.signal);
+  const status = responseStatus(call) as i64;
+  return new Fetched(call, status, o.signal);
+}
+
+/** `headers` (`[name, value, …]`) as `name\nvalue\n…`, checked as the Velt client checks them. */
+function joined(headers: string[]): string throws IoError {
+  const n = headers.length as i64;
+  for (let i: i64 = 0; i + 1 < n; i += 2) {
+    if (!validName(headers[i])) {
+      throw new IoError("EINVAL", `invalid header name "${headers[i]}"`);
+    }
+    if (!validValue(headers[i + 1])) {
+      throw new IoError("EINVAL", `invalid value of header ${headers[i]}`);
+    }
+  }
+  return headers.join("\n");
+}
+
+/** The `redirect` option of the host's `fetch`. */
+function redirectName(r: i64): string {
+  if (r == ERROR) {
+    return "error";
+  }
+  return r == MANUAL ? "manual" : "follow";
+}

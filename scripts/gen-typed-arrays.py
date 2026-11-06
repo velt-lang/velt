@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# Generates the typed arrays of `velt/lang/typed_array`: std/lang/typed_array/base.vlt (what they
-# share), layout.vlt (a new array's layout) and one module per array class
-# (std/lang/typed_array/uint8_array.vlt, …), and their two globals
-# (std/prelude/global/typed_array.vlt: `ArrayBuffer`, `DataView`, `Uint8Array`; and
-# typed_array_kinds.vlt: the other eight), so a program loads the classes it names or that the
+# Generates the typed arrays of `velt/lang/typed_array`: std/lang/typed_array/base.velt (what they
+# share), layout.velt (a new array's layout) and one module per array class
+# (std/lang/typed_array/uint8_array.velt, …), and their two globals
+# (std/prelude/global/typed_array.velt: `ArrayBuffer`, `DataView`, `Uint8Array`; and
+# typed_array_kinds.velt: the other eight), so a program loads the classes it names or that the
 # std modules it uses import (`TextEncoder` and `fetch` take `Uint8Array` only). The same
 # API for nine element types, which Velt cannot write once (no generics over element types, and
 # each class prints and tests with `instanceof` under its own name). To change the API, change
@@ -11,8 +11,8 @@
 #
 #   python3 scripts/gen-typed-arrays.py && velt fmt std/lang/typed_array std/prelude/global
 #
-# `ArrayBuffer` and the element conversions are in std/lang/typed_array/buffer.vlt, `DataView` in
-# std/lang/typed_array/data_view.vlt.
+# `ArrayBuffer` and the element conversions are in std/lang/typed_array/buffer.velt, `DataView` in
+# std/lang/typed_array/data_view.velt.
 import os
 import re
 import textwrap
@@ -225,7 +225,7 @@ export function localeNumber(x: number): string {
 
 # The first paragraph of a class's header, wrapped to 100 columns once the names are in.
 CLASS_HEAD = ("velt/lang/typed_array (internal): `@C@` (ES2024 §23.2), a view of a byte range of an "
-              "`ArrayBuffer` (std/lang/typed_array/buffer.vlt) as @WHAT@. Programs use the global.")
+              "`ArrayBuffer` (std/lang/typed_array/buffer.velt) as @WHAT@. Programs use the global.")
 
 CLASS_DOC = """\
 //
@@ -860,7 +860,7 @@ BUFFER_NAMES = ["ArrayBuffer", "element8", "element16", "element32", "elementF32
                 "toIndex", "toInteger", "toUint32", "toUint8", "toUint8Clamp"]
 BASE_NAMES = ["TypedArray", "ascending", "elementsOf", "localeNumber"]
 LAYOUT_NAMES = ["Layout", "layout"]
-# The keys of the methods the compiler and std call (std/lang/hooks/keys.vlt).
+# The keys of the methods the compiler and std call (std/lang/hooks/keys.velt).
 KEY_NAMES = ["INDEX", "INSPECT", "SET_INDEX", "TYPED_ARRAY_GET", "TYPED_ARRAY_KIND", "TYPED_ARRAY_PUT",
              "VIEW_EMPTY_TEXT", "VIEW_SIZE"]
 
@@ -883,12 +883,12 @@ def write(path, text):
 
 def main():
     base = BASE_BODY
-    write(os.path.join(DIR, "base.vlt"),
+    write(os.path.join(DIR, "base.velt"),
           BASE_DOC + GENERATED + "\n" + imports(base, BUFFER_NAMES, "velt/lang/typed_array/buffer")
           + 'import { BufferView } from "velt/lang/typed_array/buffer_view";\n'
           + imports(base, KEY_NAMES, "velt/lang/hooks/keys") + "\n" + base)
     lay = LAYOUT_BODY
-    write(os.path.join(DIR, "layout.vlt"),
+    write(os.path.join(DIR, "layout.velt"),
           LAYOUT_DOC + GENERATED + "\n" + imports(lay, BUFFER_NAMES, "velt/lang/typed_array/buffer")
           + imports(lay, BASE_NAMES, "velt/lang/typed_array/base")
           + imports(lay, KEY_NAMES, "velt/lang/hooks/keys") + "\n" + lay)
@@ -919,21 +919,21 @@ def main():
                 + imports(t, BASE_NAMES, "velt/lang/typed_array/base")
                 + imports(t, LAYOUT_NAMES, "velt/lang/typed_array/layout")
                 + imports(t, KEY_NAMES, "velt/lang/hooks/keys"))
-        write(os.path.join(DIR, snake(c) + ".vlt"), doc + GENERATED + "\n" + head + t)
+        write(os.path.join(DIR, snake(c) + ".velt"), doc + GENERATED + "\n" + head + t)
 
     # Two globals: `Uint8Array` with `ArrayBuffer` and `DataView` (what `TextEncoder` and `fetch`
     # users meet), and the other eight classes. Each global file costs every compile a little
     # (the loader reads them all), so not one per class.
     others = [c for c, *_ in KINDS if c != "Uint8Array"]
-    write(os.path.join(GLOBAL, "typed_array.vlt"),
+    write(os.path.join(GLOBAL, "typed_array.velt"),
           "// Global (loaded when a module names one of these): `ArrayBuffer`, `DataView` and `Uint8Array`,\n"
-          "// as in Node (https://veltlang.com/docs/std/prelude/typed_array/); the other typed arrays are in typed_array_kinds.vlt.\n"
+          "// as in Node (https://veltlang.com/docs/std/prelude/typed_array/); the other typed arrays are in typed_array_kinds.velt.\n"
           + GENERATED
           + "export { ArrayBuffer } from \"velt/lang/typed_array/core\";\n"
           + "export { ArrayBufferView } from \"velt/lang/typed_array/buffer_view\";\n"
           + "export { DataView } from \"velt/lang/typed_array/data_view\";\n"
           + "export { Uint8Array } from \"velt/lang/typed_array/uint8_array\";\n")
-    write(os.path.join(GLOBAL, "typed_array_kinds.vlt"),
+    write(os.path.join(GLOBAL, "typed_array_kinds.velt"),
           "// Global (loaded when a module names one of these): the typed arrays other than `Uint8Array`,\n"
           "// as in Node (https://veltlang.com/docs/std/prelude/typed_array/).\n"
           + GENERATED

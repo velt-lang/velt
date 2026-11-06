@@ -1,6 +1,6 @@
-// Runs a program built from main.vlt (or another program of this directory) with async host
+// Runs a program built from main.velt (or another program of this directory) with async host
 // functions, and prints its exit code: `node host.mjs <velt_web.mjs> <program.wasm> [how]` (what
-// `how()` returns to ends.vlt). A host interval counts the ticks of node's event loop, which
+// `how()` returns to ends.velt). A host interval counts the ticks of node's event loop, which
 // runs while the program waits.
 
 import { readFile } from "node:fs/promises";

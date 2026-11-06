@@ -67,18 +67,18 @@ fn check(archive: &[u8]) {
 
 fn seeds() -> (Vec<u8>, Vec<u8>) {
     let tar = TarBuilder::default()
-        .pax(b'x', &[("path", "pkg/long/name.vlt")])
+        .pax(b'x', &[("path", "pkg/long/name.velt")])
         .file("ignored", b"pax named")
         .dir("pkg/")
-        .file("pkg/a.vlt", b"export const a = 1")
-        .symlink("pkg/l", "a.vlt")
-        .hardlink("pkg/h", "pkg/a.vlt")
+        .file("pkg/a.velt", b"export const a = 1")
+        .symlink("pkg/l", "a.velt")
+        .hardlink("pkg/h", "pkg/a.velt")
         .tar();
     let zip = zip(
         &[
             ZipEntry::file("pkg/", b""),
-            ZipEntry::file("pkg/a.vlt", &b"export const a = 1;\n".repeat(20)),
-            ZipEntry::symlink("pkg/l", "a.vlt"),
+            ZipEntry::file("pkg/a.velt", &b"export const a = 1;\n".repeat(20)),
+            ZipEntry::symlink("pkg/l", "a.velt"),
         ],
         true,
     );

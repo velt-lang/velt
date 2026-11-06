@@ -108,7 +108,7 @@ never which std module that loads; the header's imports say that.
     (scopes are not told apart);
   - an array literal with such an element, and a `for … of` variable over one.
 
-  `std/prelude/global/number_float.vlt` uses it to load std's float printer (the shortest
+  `std/prelude/global/number_float.velt` uses it to load std's float printer (the shortest
   digits, `velt/lang/hooks/number_float`), which lowering prefers to the runtime's.
 
 std's integer printing (`velt/lang/hooks/number_text`) is loaded with the other hooks (the
@@ -124,7 +124,7 @@ runtime fallback for them (#2197), and asserts that sema demanded each one it ca
 
 A predicate only decides what is loaded: a program it misses still compiles and prints the same,
 by a slower path (a float the float-operand test misses is printed by the runtime's printer:
-`tests/golden/lang/float_text_miss.vlt`, and `crates/veltc/tests/number_format_vir.rs` checks
+`tests/golden/lang/float_text_miss.velt`, and `crates/veltc/tests/number_format_vir.rs` checks
 which path runs), and one it wrongly matches only costs loading time. The principled fix is
 loading after sema finds the use (std modules loaded lazily), which would retire the syntactic
 test.

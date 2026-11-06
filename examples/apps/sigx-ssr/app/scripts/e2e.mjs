@@ -17,7 +17,7 @@ import { chromium } from "playwright";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const counterFile = `${root}/src/shared/Counter.tsx`;
-const serverFile = `${root}/src/server.vlt`;
+const serverFile = `${root}/src/server.velt`;
 const counterSrc = readFileSync(counterFile, "utf8");
 const serverSrc = readFileSync(serverFile, "utf8");
 const PAGES = ["/", "/about", "/islands"];

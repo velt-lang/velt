@@ -42,7 +42,7 @@ Then hold it to what every registry must do, with two users:
 
 ```sh
 cd packages/registry-conformance   # in the repository
-velt run src/main.vlt <url> --alice <token> --bob <token>
+velt run src/main.velt <url> --alice <token> --bob <token>
 ```
 
 ## Settings

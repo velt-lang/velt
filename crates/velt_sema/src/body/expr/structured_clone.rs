@@ -1,4 +1,4 @@
-//! `structuredClone(x)` (std/prelude/clone.vlt) copies with `x.clone()`, which copies anything.
+//! `structuredClone(x)` (std/prelude/clone.velt) copies with `x.clone()`, which copies anything.
 //! JS's structured clone does not: it throws a `DataCloneError` for a function or a promise, and
 //! copies a class instance as a plain object (its prototype is dropped). Such a value, at any
 //! depth of the argument's type, is a compile error here, with what JS does and what to write

@@ -1,4 +1,4 @@
-//! Git dependencies on npm packages: a target with a `package.json` and no `package.vlt`.
+//! Git dependencies on npm packages: a target with a `package.json` and no `package.velt`.
 
 use super::*;
 
@@ -106,7 +106,7 @@ fn a_directory_with_no_package_is_an_error() {
     ));
     let err = e.install(&app, false).unwrap_err();
     assert!(
-        err.contains("has neither a package.vlt nor an npm package"),
+        err.contains("has neither a package.velt nor an npm package"),
         "{err}"
     );
 }

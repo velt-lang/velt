@@ -1,5 +1,5 @@
 //! JSX in the editor: completion of tags and attributes, go to definition and hover on
-//! component tags and attributes, through a small JSX runtime (`jsx_ui/jsx-runtime.vlt`).
+//! component tags and attributes, through a small JSX runtime (`jsx_ui/jsx-runtime.velt`).
 
 use lsp_types::Url;
 use serde_json::Value;
@@ -64,12 +64,12 @@ export function Card(props: CardProps): Element {
 }
 "#;
 
-/// A client with the runtime, `jsx_cards.vlt` and `page.vlt` (returned URI) open.
+/// A client with the runtime, `jsx_cards.velt` and `page.velt` (returned URI) open.
 pub(super) fn open(page: &str) -> (Client, Url) {
     let mut client = Client::start();
-    client.open(&uri("jsx_ui/jsx-runtime.vlt"), RUNTIME);
-    client.open(&uri("jsx_cards.vlt"), CARDS);
-    let doc = uri("jsx_page.vlt");
+    client.open(&uri("jsx_ui/jsx-runtime.velt"), RUNTIME);
+    client.open(&uri("jsx_cards.velt"), CARDS);
+    let doc = uri("jsx_page.velt");
     client.open(&doc, page);
     client.diagnostics(&doc);
     (client, doc)
@@ -166,11 +166,11 @@ fn the_scope_walker_descends_into_elements() {
 fn the_ast_fallback_sees_names_inside_elements() {
     use crate::index::scope::{self, Reference};
     let dir = std::env::temp_dir().join("velt_lsp_tests");
-    let path = dir.join("jsx_walk.vlt");
+    let path = dir.join("jsx_walk.velt");
     let text = "// @jsxImportSource ./jsx_ui\nfunction Card(props: { t: string }): Element {\n  return <div>{props.t}</div>;\n}\nfunction page(items: string[]): Element {\n  return <div>{items.map((item) => <Card t={item} />)}</div>;\n}\n";
     let overlay = std::collections::HashMap::from([
         (path.clone(), text.to_string()),
-        (dir.join("jsx_ui/jsx-runtime.vlt"), RUNTIME.to_string()),
+        (dir.join("jsx_ui/jsx-runtime.velt"), RUNTIME.to_string()),
     ]);
     let analysis = crate::analysis::analyze(
         &super::loader::TestLoader,

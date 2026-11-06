@@ -50,7 +50,7 @@ fn full_manifest_matches_the_toml_one() {
         export const pkg: Package = {
           name: "hello",
           version: "0.1.0",
-          entry: 'src/app.vlt',
+          entry: 'src/app.velt',
           registry: "https://registry.example.com",
           dependencies: {
             json: "1.2",
@@ -70,7 +70,7 @@ fn full_manifest_matches_the_toml_one() {
         [package]
         name = "hello"
         version = "0.1.0"
-        entry = "src/app.vlt"
+        entry = "src/app.velt"
 
         [dependencies]
         json = "1.2"
@@ -98,7 +98,7 @@ fn full_manifest_matches_the_toml_one() {
 #[test]
 fn minimal_manifest_uses_defaults() {
     let m = read("export const pkg: Package = { name: \"app\", version: \"1.0.0\" };");
-    assert_eq!(m.package.entry, "src/main.vlt");
+    assert_eq!(m.package.entry, "src/main.velt");
     assert_eq!(m.registry, None);
     assert!(m.dependencies.is_empty() && m.paths.is_empty());
     assert_eq!(m.jsx, None);
@@ -267,12 +267,12 @@ fn the_toolchain_requirement() {
         assert_eq!(m.toolchain.as_deref(), Some(req));
         assert_eq!(m.to_json()["velt"], req);
         assert_eq!(
-            Manifest::read(FILE, &m.to_vlt()).unwrap(),
+            Manifest::read(FILE, &m.to_velt()).unwrap(),
             m,
             "round trip of {req}"
         );
     }
-    let without = read(&with("entry: \"src/a.vlt\""));
+    let without = read(&with("entry: \"src/a.velt\""));
     assert_eq!(without.toolchain, None);
     assert!(without.to_json().get("velt").is_none());
     let (message, covered) = error(&with("velt: \"latest\""));
@@ -354,7 +354,7 @@ fn imports_name_at_least_one_type() {
     }
     let second = "import type { Package } from \"velt/package\";";
     let (message, covered) = error(&format!("{HEAD}{second}\n{body}"));
-    assert_eq!(message, "`package.vlt` may have at most one import");
+    assert_eq!(message, "`package.velt` may have at most one import");
     assert_eq!(covered, second);
 }
 
@@ -492,7 +492,7 @@ fn description_and_keywords() {
     assert_eq!(m.package.description.as_deref(), Some("Fast JSON for Velt"));
     assert_eq!(m.package.keywords, ["json", "parser", "x86-64"]);
     // Round trip through the writer, which puts them after `version`.
-    let text = m.to_vlt();
+    let text = m.to_velt();
     assert!(text.contains("version: \"1.0.0\",\n  description: \"Fast JSON for Velt\",\n  keywords: [\"json\", \"parser\", \"x86-64\"],"), "{text}");
     assert_eq!(read(&text), m);
     let json = m.to_json();
@@ -540,7 +540,7 @@ fn ts_compat_folders() {
         "tsCompat: [\"src/components\", \"src/models\", \"shared\"]",
     ));
     assert_eq!(m.ts_compat, ["src/components", "src/models", "shared"]);
-    let text = m.to_vlt();
+    let text = m.to_velt();
     assert!(
         text.contains("tsCompat: [\"src/components\", \"src/models\", \"shared\"]"),
         "{text}"
@@ -657,18 +657,18 @@ fn missing_ts_compat_folders_are_warnings_at_their_string() {
 #[test]
 fn imports_keep_their_variants_in_order() {
     let m = read(&with(
-        r##"imports: { "#io": { js: "./src/io/js.vlt", wasm: "./src/io/wasm.vlt", default: "./src/io/native.vlt" }, "#config": "./src/config.ts" }"##,
+        r##"imports: { "#io": { js: "./src/io/js.velt", wasm: "./src/io/wasm.velt", default: "./src/io/native.velt" }, "#config": "./src/config.ts" }"##,
     ));
     let conditions: Vec<&str> = m.imports["#io"]
         .iter()
         .map(|v| v.condition.as_str())
         .collect();
     assert_eq!(conditions, ["js", "wasm", "default"]);
-    assert_eq!(m.imports["#io"][0].target, "./src/io/js.vlt");
+    assert_eq!(m.imports["#io"][0].target, "./src/io/js.velt");
     assert_eq!(m.imports["#config"][0].condition, "default");
     assert_eq!(m.imports["#config"][0].target, "./src/config.ts");
     // Written back as it was read.
-    let again = Manifest::read(FILE, &m.to_vlt()).unwrap();
+    let again = Manifest::read(FILE, &m.to_velt()).unwrap();
     assert_eq!(again.imports, m.imports);
 }
 
@@ -676,24 +676,24 @@ fn imports_keep_their_variants_in_order() {
 fn imports_are_checked_where_written() {
     for (fields, message, at) in [
         (
-            r#"imports: { io: "./src/io.vlt" }"#,
+            r#"imports: { io: "./src/io.velt" }"#,
             "`io` is not a conditional import",
             "io",
         ),
         (
-            r##"imports: { "#io": { default: "./src/a.vlt", js: "./src/b.vlt" } }"##,
+            r##"imports: { "#io": { default: "./src/a.velt", js: "./src/b.velt" } }"##,
             "`js` comes after `default`",
             "js",
         ),
         (
-            r##"imports: { "#io": { Node: "./src/a.vlt" } }"##,
+            r##"imports: { "#io": { Node: "./src/a.velt" } }"##,
             "`Node` is not a condition",
             "Node",
         ),
         (
-            r##"imports: { "#io": { js: "./lib/a.vlt" } }"##,
+            r##"imports: { "#io": { js: "./lib/a.velt" } }"##,
             "a variant is one of the package's modules, below `./src/`",
-            "\"./lib/a.vlt\"",
+            "\"./lib/a.velt\"",
         ),
         (r##"imports: { "#io": {} }"##, "`#io` has no variants", "{}"),
         (
@@ -715,7 +715,7 @@ fn host_modules_are_read_checked_and_written_back() {
     ));
     assert_eq!(m.host_modules["kv"], "./src/kv.mjs");
     assert_eq!(m.host_modules["my:cache"], "./src/js/cache.js");
-    let again = Manifest::read(FILE, &m.to_vlt()).unwrap();
+    let again = Manifest::read(FILE, &m.to_velt()).unwrap();
     assert_eq!(again.host_modules, m.host_modules);
     assert_eq!(m.to_json()["hostModules"]["kv"], "./src/kv.mjs");
     for (fields, message, at) in [
@@ -749,13 +749,13 @@ fn host_modules_are_read_checked_and_written_back() {
 
 #[test]
 fn std_imports_file() {
-    let src = "import type { Imports } from \"velt/package\";\n\nexport const imports: Imports = { \"#t\": { js: \"./net/js.vlt\", default: \"./net/native.vlt\" } };\n";
+    let src = "import type { Imports } from \"velt/package\";\n\nexport const imports: Imports = { \"#t\": { js: \"./net/js.velt\", default: \"./net/native.velt\" } };\n";
     let map = read_std_imports(FILE, src).unwrap();
-    assert_eq!(map["#t"][1].target, "./net/native.vlt");
+    assert_eq!(map["#t"][1].target, "./net/native.velt");
     // Not below `src/`: relative to the std root.
     let err = read_std_imports(
         FILE,
-        "export const imports: Imports = { \"#t\": \"net/x.vlt\" };\n",
+        "export const imports: Imports = { \"#t\": \"net/x.velt\" };\n",
     )
     .unwrap_err();
     assert!(
@@ -764,7 +764,7 @@ fn std_imports_file() {
         err[0].message
     );
     // The repository's own.
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/imports.vlt");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/imports.velt");
     read_std_imports(FILE, &std::fs::read_to_string(path).unwrap()).unwrap();
 }
 

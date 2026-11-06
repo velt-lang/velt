@@ -6,8 +6,8 @@ variant in its own process (issue #77):
 | variant | what |
 |---|---|
 | `hand` | template literals, a row per literal, joined once: bench/web's Velt server |
-| `precompiled` | the page in TSX ([_page.vlt](_page.vlt)), std/jsx's precompiled templates, `renderToStringSync` |
-| `generic` | the same TSX through the generic lowering ([_page_generic.vlt](_page_generic.vlt)) |
+| `precompiled` | the page in TSX ([_page.velt](_page.velt)), std/jsx's precompiled templates, `renderToStringSync` |
+| `generic` | the same TSX through the generic lowering ([_page_generic.velt](_page_generic.velt)) |
 | `rows-strings` | only the 13 rows, as strings (`hand`'s rows) |
 | `rows` | only the 13 rows, as TSX elements |
 | `rows-render` | the rows in a fragment, rendered to a string |

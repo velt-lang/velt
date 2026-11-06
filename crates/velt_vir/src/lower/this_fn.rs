@@ -1,4 +1,4 @@
-//! Calls of a function whose `this` is bound at the call: std/lang/this_fn/index.vlt's `ThisFn`, the
+//! Calls of a function whose `this` is bound at the call: std/lang/this_fn/index.velt's `ThisFn`, the
 //! value of a function expression with a `this: any` parameter (sema `this_fn_expr.rs`). Held
 //! as an `any` (a `Function`), it is a function: `typeof` is `"function"` (`Cx::is_function_object`),
 //! a plain call `f(x)` (its `AnyApply` slot, any_glue.rs) is `[THIS_FN_APPLY](undefined, [x])`, and a method call
@@ -14,11 +14,11 @@ use super::glue::VtableKey;
 use super::{cint, FnLower};
 use crate::vir::{self, BinOp, Operand, Place, Rvalue, Ty};
 
-/// The qualified name of std/lang/this_fn/index.vlt's class.
+/// The qualified name of std/lang/this_fn/index.velt's class.
 pub(super) const STD_THIS_FN: &str = velt_common::std_hook!(this_fn);
 
 impl super::Cx<'_> {
-    /// Is `t` std/lang/this_fn/index.vlt's `ThisFn` (module docs)?
+    /// Is `t` std/lang/this_fn/index.velt's `ThisFn` (module docs)?
     pub(super) fn is_this_fn(&self, t: TyId) -> bool {
         let TyKind::Adt(d, _) = self.raw_kind(t) else {
             return false;

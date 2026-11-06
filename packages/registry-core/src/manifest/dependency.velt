@@ -1,0 +1,12 @@
+// registry-core (internal): part of a package's manifest (./manifest.velt).
+
+/** One `dependencies` entry: a requirement (`simple`), or an object of its fields. */
+export struct Dependency {
+  simple: string | null;
+  version: string | null;
+  path: string | null;
+  git: string | null;
+  branch: string | null;
+  tag: string | null;
+  rev: string | null;
+}

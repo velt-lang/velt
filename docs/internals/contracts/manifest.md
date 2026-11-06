@@ -1,6 +1,6 @@
-# package.vlt — CONTRACT (M5)
+# package.velt — CONTRACT (M5)
 
-The package manifest is `package.vlt` at the package root, written in Velt and read without
+The package manifest is `package.velt` at the package root, written in Velt and read without
 compiling or running anything (design: [package-manifest.md](../design/package-manifest.md)).
 
 ```ts ignore
@@ -10,14 +10,14 @@ export const pkg: Package = {
   name: "hello",                // [a-z][a-z0-9]* words joined by single - or _; not std, rt…, sig…, native…
   version: "0.1.0",             // semver, required
   velt: "0.1",                  // optional: the toolchain versions that build it (additive)
-  entry: "src/main.vlt",        // optional, the default (relative to package.vlt, inside the package)
+  entry: "src/main.velt",        // optional, the default (relative to package.velt, inside the package)
   dependencies: {
     json: "1.2",                // registry package, semver requirement
     http: { version: "0.3" },   // object form
     util: { path: "../util" },  // local package (version optional)
   },
   paths: {                      // optional import aliases (additive)
-    "@app/*": "src/*",          // import { x } from "@app/util"  →  src/util.vlt (or src/util/index.vlt)
+    "@app/*": "src/*",          // import { x } from "@app/util"  →  src/util.velt (or src/util/index.velt)
     "@config": "src/config",    // exact alias
   },
   native: {                     // optional: a Rust crate, or C libraries (`c`), built into a native library (additive)
@@ -27,7 +27,7 @@ export const pkg: Package = {
   tsCompat: ["src/models"],     // optional: folders kept TypeScript-compatible (additive)
   lint: { perf: "warn" },       // optional: how loud the lint rules are (additive)
   imports: {                    // optional conditional imports (additive)
-    "#io": { js: "./src/io/js.vlt", default: "./src/io/native.vlt" },
+    "#io": { js: "./src/io/js.velt", default: "./src/io/native.velt" },
   },
   hostModules: { kv: "./src/kv.mjs" },  // optional: JS of `declare host("kv")` (additive)
   host: {                       // optional: a host package's platform (additive)
@@ -39,10 +39,10 @@ export const pkg: Package = {
 };
 ```
 
-`velt/package` (`std/package/manifest.vlt` and `workspace.vlt`, re-exported by its index.vlt) declares the `Package` type (documentation, and the import
+`velt/package` (`std/package/manifest.velt` and `workspace.velt`, re-exported by its index.velt) declares the `Package` type (documentation, and the import
 resolves). The reader below is the definition of a valid manifest; its fields are one table,
-`vpm::manifest::schema`, which a test checks against `std/package/index.vlt`. The language server
-does not analyze a file named `package.vlt` as a program: its diagnostics are the reader's, and
+`vpm::manifest::schema`, which a test checks against `std/package/index.velt`. The language server
+does not analyze a file named `package.velt` as a program: its diagnostics are the reader's, and
 completion and hover come from the schema (`vpm::manifest::ide`). With the package's registry
 (`$VELT_REGISTRY` when it is a URL, else `registry`, else the local one, as `velt install` picks
 it) it also completes versions and package names, explains dependencies and checks requirements
@@ -64,10 +64,10 @@ talk to hosts the checkout names); `$VELT_REGISTRY` is always asked.
   is an error.
 - Limits, for untrusted input (the registry server reads uploaded manifests): at most 64 KiB
   (checked before reading further), the parser's nesting limit, at most 10,000 values.
-- Errors are `velt_common::Diagnostic`s rendered as `package.vlt:<line>:<col>: error: …`.
-- A directory with a `velt.toml` and no `package.vlt` is still found as a package root, and
+- Errors are `velt_common::Diagnostic`s rendered as `package.velt:<line>:<col>: error: …`.
+- A directory with a `velt.toml` and no `package.velt` is still found as a package root, and
   every command reading it fails with "`velt.toml` is no longer read; the manifest is
-  `package.vlt`" plus the converted file (`vpm::manifest::legacy`).
+  `package.velt`" plus the converted file (`vpm::manifest::legacy`).
 - No backward compatibility for published packages: a registry or cache copy, or an archive,
   that has a `velt.toml` cannot be installed or served, and the error says its author must
   publish a new version (`vpm::manifest::legacy::REPUBLISH`).
@@ -102,7 +102,7 @@ talk to hosts the checkout names); `$VELT_REGISTRY` is always asked.
   `export`: the others of such a module are its own, and those of a declaration file that is a
   module are not read. The loader also reads them
   from the `.d.ts` files of each package it loads a module of (the nearest directory with a
-  `package.json` or `package.vlt`: its own `.d.ts` files and those below `src/`, skipping
+  `package.json` or `package.velt`: its own `.d.ts` files and those below `src/`, skipping
   `node_modules`, `target`, `dist`, hidden and symlinked directories and nested packages),
   ignoring those files' syntax errors. A name a module refers to (`free_values`; any module for
   a global declaration, its own module otherwise) without a `define` is an error at its first
@@ -132,14 +132,14 @@ target of `.` under any condition (`exports::root_targets_any_condition`) has a 
 exported, an `exports` mixing subpaths and conditions, a target without a source.
 
 ## Workspaces (additive, #1855)
-`vpm::workspace` (docs/internals/design/workspaces.md). `velt.workspace.vlt` (`WORKSPACE_FILE`) at
+`vpm::workspace` (docs/internals/design/workspaces.md). `velt.workspace.velt` (`WORKSPACE_FILE`) at
 a workspace root is read by the manifest reader (`manifest::read::read_workspace`: the same data
 subset and bounds; one `export const workspace: Workspace = { … }` with `members` (required,
 non-empty `/`-separated relative globs: `*`, `**` as a whole segment, `!` to exclude, `"."` for
 the root; no `..`, `./`, `\`, duplicates), `velt`, `registry`, `dependencies` (no `"workspace"`
 values; no key naming a member)). `Workspace::find` takes the nearest workspace file at or above a
 directory; `Workspace::load` lists members with `npm::workspace::dirs_with` (marker
-`package.vlt`, never entering `target`; literal segments match entry names exactly, as `*` ones do,
+`package.velt`, never entering `target`; literal segments match entry names exactly, as `*` ones do,
 on every OS; each positive glob must list a package) and checks: distinct member names; no `velt`
 or `registry` in a member; a dependency named like a member is `"workspace"`; every
 `"workspace"` names a member or a workspace dependency; no cycle of `"workspace"` dependencies
@@ -147,7 +147,7 @@ between members. Each error is located (`file:line:col: error: …`, via `manife
 and the globs' spans, `WorkspaceFile::member_spans`). Membership of a package below a workspace
 file is decided by its globs alone (`velt_toolchain::members::lists`, also the launcher's): a
 package they don't list installs on its own (`Installed::notes` says so) and keeps its own `velt`. `Dependency::Version("workspace")`
-(`manifest::WORKSPACE_REQUIREMENT`, `Dependency::is_workspace`) is valid in any `package.vlt`;
+(`manifest::WORKSPACE_REQUIREMENT`, `Dependency::is_workspace`) is valid in any `package.velt`;
 resolving it outside a workspace is an error. `Workspace::effective_manifest` replaces it with the
 member's directory (an absolute `path`) or the workspace's requirement (a `path` made absolute),
 and sets the workspace's `velt` and `registry`. `vpm::install` of a member (and
@@ -192,7 +192,7 @@ commit into a scratch bare repository, checked out into a staging directory, ren
 checkout (every file, path order, `contents::checksum`'s encoding; symbolic links by target),
 verified on every use. Native code of a git package builds only with `VELT_NATIVE_FROM_SOURCE=1`,
 from a copy of the package in `<cache>/git-native/<name>/<commit>/`. `registry::publish` refuses a dependency with only
-`git` (a `version` beside it is published as the requirement). A target without `package.vlt` is
+`git` (a `version` beside it is published as the requirement). A target without `package.velt` is
 an npm source (`npm::provided::packages_at`): the `package.json` there, plus a workspace root's
 packages (its globs, each a `package.json`; one without a `name` is named after its directory, as
 npm's `map-workspaces` does: `@scope/name` under a scope directory); a `package.json` that can't
@@ -263,7 +263,7 @@ directory (`NpmResolver::resolve_in`) before Node's search.
   `./src/`, with a source extension. A build's conditions come from its target and, for
   `velt build --host <package>`, the host package's `condition` (`vpm::imports::conditions`);
   the first variant whose condition it has is the module a `#name` import of the package's own
-  modules loads (`loader::conditional`). The standard library's map is `std/imports.vlt`
+  modules loads (`loader::conditional`). The standard library's map is `std/imports.velt`
   (`export const imports: Imports = { … }`, read by `vpm::manifest::read::read_std_imports`,
   files relative to `std/`). Not supported, each a manifest error: `#x/*` patterns, nested
   condition objects, arrays, `null` and bare-package targets, misspelled conditions. An npm
@@ -288,7 +288,7 @@ directory (`NpmResolver::resolve_in`) before Node's search.
   ([workers.md](workers.md)). Used by `velt build --host <package>`, which copies the files of
   the modules the program calls into its directory; a package provides only modules its own
   modules declare, and each module comes from one package (checked by the build, not the
-  reader). `to_vlt` writes it after `imports`; `velt manifest --json` prints it when present.
+  reader). `to_velt` writes it after `imports`; `velt manifest --json` prints it when present.
 - `host` (additive, #1736): makes the package a host package, which `velt build --host
   <package>` builds for (`Manifest::host`, `GraphPackage::host`, `vpm::host::HostConfig`). The
   compiler knows no platform; this object is all a platform is: `target` (a triple; the build
@@ -301,14 +301,14 @@ directory (`NpmResolver::resolve_in`) before Node's search.
   whose first component is neither one the build writes nor the entry's name (both compared
   without ASCII case), → a file below `./src/`; `{{name}}` in it
   becomes the program's name). Missing `target`, `condition` or `entry`, or an unknown key, is
-  an error. `to_vlt` writes it after `hostModules`; `velt manifest --json` prints it.
+  an error. `to_velt` writes it after `hostModules`; `velt manifest --json` prints it.
 - `entry` is a `/`-separated path inside the package (not empty, not absolute, no `..`).
 - `description` (additive, #184): one line of at most 300 characters (Unicode scalar values), no
   control characters, no leading or trailing whitespace, not empty. `keywords`: at most 10
   distinct entries, each `[a-z0-9][a-z0-9-]{0,31}`, order kept, not empty. Both optional; an empty
-  string or array is an error saying to remove the field. `to_vlt` writes them after `version`,
+  string or array is an error saying to remove the field. `to_velt` writes them after `version`,
   and `velt manifest --json` prints them when present.
-- A library package exposes `src/lib.vlt` (entry for importers); `src/main.vlt` makes it runnable.
+- A library package exposes `src/lib.velt` (entry for importers); `src/main.velt` makes it runnable.
 - `velt.lock.json` (generated JSON: `{ "version": 1, "velt": "<version>", "packages": [...] }`,
   pretty-printed, stable key order, trailing newline) pins exact versions + content hashes, and
   (additive, #960; optional, so still format 1) the toolchain version that builds the package:
@@ -366,9 +366,9 @@ registry: "https://registry.example.com",
   `velt add` picks (newest stable not yanked, else newest pre-release not yanked), with that
   version's `description` and `keywords`; packages with only yanked versions are left out.
 - Index entries (additive, #184) carry the version's `"description"` and `"keywords"` after
-  `"checksum"` (omitted when absent), taken from the published `package.vlt`, also by the server
+  `"checksum"` (omitted when absent), taken from the published `package.velt`, also by the server
   from the uploaded archive (never from request headers).
-- Archives (`vpm::archive`) carry `package.vlt` + `src/**` (+ `c-headers.json`, + the `native`
+- Archives (`vpm::archive`) carry `package.velt` + `src/**` (+ `c-headers.json`, + the `native`
   crate directory or, for C `sources`, `native/`, without `target/` and `.git/`); an archive with any other path, such as a `velt.toml`, is
   rejected. Their checksum is the same content hash `velt.lock.json` records, and every download is
   verified against it before it enters the cache.
@@ -409,8 +409,8 @@ tsCompat: ["src/components", "src/models"],
   overlap on a case-insensitive file system is one on every OS).
 - The reader doesn't look at the disk. `vpm::manifest::read::missing_ts_compat_dirs(file, src,
   root)` returns a warning, at its string, for each entry that is not a directory under `root`
-  (the language server shows them in `package.vlt`); `velt check --ts-compat` fails on one.
-- `to_vlt` writes `tsCompat` after the other fields but `lint` and `build`; `velt manifest
+  (the language server shows them in `package.velt`); `velt check --ts-compat` fails on one.
+- `to_velt` writes `tsCompat` after the other fields but `lint` and `build`; `velt manifest
   --json` prints it when present.
 
 ## Lint levels (additive)
@@ -424,7 +424,7 @@ lint: { perf: "warn", rules: { "perf/number-double": "off", "ts-compat/default-s
 - The reader's errors, at the value: `lint`, or `rules`, not an object; a level that is not a
   string or not one of the four; an unknown key in `lint`. It doesn't check that a code names a
   rule (`velt check` warns about one that doesn't).
-- `to_vlt` writes `lint` before `build`; `velt manifest --json` prints `{"perf", "rules"}`, each
+- `to_velt` writes `lint` before `build`; `velt manifest --json` prints `{"perf", "rules"}`, each
   only when set.
 
 ## Native libraries (additive)
@@ -464,12 +464,12 @@ velt: "0.1",
 - `velt new` / `velt init` write `velt: "<major>.<minor>"` of the toolchain that runs them, or
   its whole `<major>.<minor>.<patch>-<pre>` when it is a pre-release
   (`velt_toolchain::requirement::pin_for`, `vpm::scaffold::this_toolchain_pin`): the pin always
-  accepts the toolchain that wrote it. `to_vlt` writes the field after `version`, and
+  accepts the toolchain that wrote it. `to_velt` writes the field after `version`, and
   `velt manifest --json` prints it as `"velt"` when present.
 - Every command that reads the package (`Project::open`, `velt manifest`) warns on stderr,
-  `package.vlt asks for velt "<req>", but this is velt <version>; it may not build the package`,
+  `package.velt asks for velt "<req>", but this is velt <version>; it may not build the package`,
   when the requirement doesn't accept the running velt's version and `$VELT_LAUNCHER` is unset.
 - The reader only checks the syntax. Choosing the toolchain is the launcher's job (#948), which
-  reads this one field with `velt_toolchain::pin::find_pin` (the nearest `package.vlt` above the
+  reads this one field with `velt_toolchain::pin::find_pin` (the nearest `package.velt` above the
   working directory; a manifest that does not parse counts as no pin, and the toolchain then
   reports it).

@@ -47,7 +47,7 @@ fn initialize_advertises_capabilities() {
 #[test]
 fn diagnostics_on_open_use_utf16_columns() {
     let mut client = Client::start();
-    let doc = uri("diag.vlt");
+    let doc = uri("diag.velt");
     // `é` is two bytes but one UTF-16 unit; `😀` is four bytes and two units.
     client.open(
         &doc,
@@ -72,7 +72,7 @@ fn diagnostics_on_open_use_utf16_columns() {
 #[test]
 fn parse_errors_are_reported_and_fixed_after_debounced_edits() {
     let mut client = Client::start();
-    let doc = uri("edit.vlt");
+    let doc = uri("edit.velt");
     client.open(&doc, "function main() {\n  let x = ;\n}\n");
     let first = client.diagnostics(&doc);
     let msg = first["diagnostics"][0]["message"].as_str().unwrap();
@@ -95,8 +95,8 @@ fn parse_errors_are_reported_and_fixed_after_debounced_edits() {
 #[test]
 fn errors_in_imported_files_stay_in_their_file() {
     let mut client = Client::start();
-    let main = uri("imp_main.vlt");
-    let util = uri("imp_util.vlt");
+    let main = uri("imp_main.velt");
+    let util = uri("imp_util.velt");
     client.open(&util, "export function f(): i64 {\n  return \"s\";\n}\n");
     client.open(
         &main,
@@ -112,7 +112,7 @@ fn errors_in_imported_files_stay_in_their_file() {
 #[test]
 fn library_files_do_not_need_main() {
     let mut client = Client::start();
-    let doc = uri("lib.vlt");
+    let doc = uri("lib.velt");
     client.open(
         &doc,
         "export function twice(x: i64): i64 {\n  return x * 2;\n}\n",
@@ -124,7 +124,7 @@ fn library_files_do_not_need_main() {
 #[test]
 fn close_clears_diagnostics() {
     let mut client = Client::start();
-    let doc = uri("close.vlt");
+    let doc = uri("close.velt");
     client.open(&doc, "function main( {");
     assert!(!client.diagnostics(&doc)["diagnostics"]
         .as_array()
@@ -141,7 +141,7 @@ fn close_clears_diagnostics() {
 #[test]
 fn formatting_replaces_the_document() {
     let mut client = Client::start();
-    let doc = uri("fmt.vlt");
+    let doc = uri("fmt.velt");
     client.open(&doc, "function main(){let x=1;\nconsole.log(x)  ;}\n");
     let params = json!({ "textDocument": { "uri": doc }, "options": { "tabSize": 2, "insertSpaces": true } });
     let edits = client.request("textDocument/formatting", params.clone());
@@ -174,7 +174,7 @@ fn formatting_replaces_the_document() {
 #[test]
 fn early_uses_are_semantic_errors() {
     let mut client = Client::start();
-    let doc = uri("early.vlt");
+    let doc = uri("early.velt");
     client.open(
         &doc,
         "console.log(  K );\nconst K = 1;\nconst s: number = \"no\";\n",
@@ -213,7 +213,7 @@ fn bad_requests_get_errors_not_crashes() {
         ErrorCode::InvalidParams as i32
     );
     // A document that was never opened: no answer, but no error either.
-    let closed = uri("never_opened.vlt");
+    let closed = uri("never_opened.velt");
     assert_eq!(
         client.request("textDocument/hover", at(&closed, 0, 0)),
         Value::Null
@@ -224,7 +224,7 @@ fn bad_requests_get_errors_not_crashes() {
 #[test]
 fn garbage_input_never_breaks_the_server() {
     let mut client = Client::start();
-    let doc = uri("garbage.vlt");
+    let doc = uri("garbage.velt");
     let text = "class { x: .. } function (( => ${ `unterminated ${ 😀\n enum E { A( }\n match (\n this.\n import { from \"\n";
     client.open(&doc, text);
     client.diagnostics(&doc);

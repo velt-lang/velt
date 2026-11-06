@@ -2,10 +2,10 @@
 # What `Proxy` / `Reflect` cost the compiler (Linux, valgrind): instructions of `velt check` and
 # `velt build --emit vir` at two git refs (cachegrind, VELT_THREADS=1, release builds), counted
 # as bench/nightly.sh counts them, for a program that never names `Proxy` (tests/golden/m1/hello,
-# examples/http_hello), for bench/compile/all_std.vlt (with its code lines of std/, the nightly
-# rule's per-line comparison), and at HEAD_REF for all_std.vlt without the lines naming `Proxy`
+# examples/http_hello), for bench/compile/all_std.velt (with its code lines of std/, the nightly
+# rule's per-line comparison), and at HEAD_REF for all_std.velt without the lines naming `Proxy`
 # and `Reflect` (so their modules are not loaded) and with only a comment naming `Proxy` (loaded,
-# not used): the difference is what checking std/proxy*.vlt costs.
+# not used): the difference is what checking std/proxy*.velt costs.
 #
 #   bench/proxy/load_cost.sh WORKDIR BASE_REF HEAD_REF
 #
@@ -40,7 +40,7 @@ count() {
     grep -oP 'I\s+refs:\s+\K[\d,]+' | tr -d ,)
 }
 lines() {
-  find "$W/src-$1/std" -name '*.vlt' -exec cat {} + | awk '
+  find "$W/src-$1/std" -name '*.velt' -exec cat {} + | awk '
     block { if (/\*\//) block = 0; next }
     /^[ \t]*(\/\/|$)/ { next }
     /^[ \t]*\/\*/ { if (!/\*\//) block = 1; next }
@@ -49,15 +49,15 @@ lines() {
 }
 for s in "${shas[@]}"; do
   echo "$s std code lines $(lines "$s")"
-  echo "$s check all_std $(count "$s" check bench/compile/all_std.vlt)"
-  echo "$s check m1/hello $(count "$s" check tests/golden/m1/hello.vlt)"
-  echo "$s check http_hello $(count "$s" check examples/http_hello.vlt)"
-  echo "$s vir http_hello $(count "$s" build --release --emit vir examples/http_hello.vlt)"
+  echo "$s check all_std $(count "$s" check bench/compile/all_std.velt)"
+  echo "$s check m1/hello $(count "$s" check tests/golden/m1/hello.velt)"
+  echo "$s check http_hello $(count "$s" check examples/http_hello.velt)"
+  echo "$s vir http_hello $(count "$s" build --release --emit vir examples/http_hello.velt)"
 done
 h=${shas[1]}
 c="$W/src-$h/bench/compile"
-grep -v "Proxy\|Reflect" "$c/all_std.vlt" > "$c/all_std_no_proxy.vlt"
-{ grep -v "new Proxy\|Reflect\." "$c/all_std.vlt"; echo "// Proxy"; } > "$c/all_std_proxy_named.vlt"
+grep -v "Proxy\|Reflect" "$c/all_std.velt" > "$c/all_std_no_proxy.velt"
+{ grep -v "new Proxy\|Reflect\." "$c/all_std.velt"; echo "// Proxy"; } > "$c/all_std_proxy_named.velt"
 for v in all_std_no_proxy all_std_proxy_named; do
-  echo "$h check $v $(count "$h" check "bench/compile/$v.vlt")"
+  echo "$h check $v $(count "$h" check "bench/compile/$v.velt")"
 done

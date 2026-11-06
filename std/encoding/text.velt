@@ -1,0 +1,92 @@
+// velt/encoding (internal): the WHATWG `TextDecoder` (a global, as in Node: https://veltlang.com/docs/std/encoding/),
+// apart from the rest of velt/encoding so that a program using only Base64 or hex does not load
+// the typed arrays it takes. The globals' module (std/prelude/global/encoding.velt) imports
+// `TextEncoder` and `TextDecoderOptions` from here too.
+
+import { ArrayBuffer } from "velt/lang/typed_array/core";
+import { BufferView } from "velt/lang/typed_array/buffer_view";
+import { EncodingError } from "velt/encoding/errors";
+import { TextDecoderOptions } from "velt/encoding/text_decoder_options";
+import { firstInvalid, utf8DecodeLossy, validToString } from "velt/encoding/utf8";
+import { VIEW_SIZE } from "velt/lang/hooks/keys";
+
+// For the globals' module (std/prelude/global/encoding.velt), which imports them from here.
+
+// Whether `label` names UTF-8 in the WHATWG Encoding standard (ASCII case-insensitive, with
+// surrounding whitespace ignored).
+function isUtf8Label(label: string): bool {
+  const l = label.trim().toLowerCase();
+  return (
+    l == "utf-8" ||
+    l == "utf8" ||
+    l == "unicode-1-1-utf-8" ||
+    l == "unicode11utf8" ||
+    l == "unicode20utf8" ||
+    l == "x-unicode20utf8"
+  );
+}
+
+/**
+ * The WHATWG `TextDecoder` (a global, as in Node) for UTF-8, the only encoding it takes: a
+ * leading byte order mark is dropped (unless `ignoreBOM`), and invalid input becomes U+FFFD
+ * (or throws `EncodingError` with `fatal`). One `decode` call decodes one whole input.
+ */
+export class TextDecoder {
+  /** Always `"utf-8"`. */
+  readonly encoding: string = "utf-8";
+  /** Whether invalid input throws. */
+  readonly fatal: bool;
+  /** Whether a leading byte order mark is kept. */
+  readonly ignoreBOM: bool;
+
+  /** Throws `EncodingError` for a `label` that does not name UTF-8, as Node's RangeError. */
+  constructor(label: string = "utf-8", options: TextDecoderOptions = {}) {
+    if (!isUtf8Label(label)) {
+      throw new EncodingError(`The "${label}" encoding is not supported`);
+    }
+    this.fatal = options.fatal ?? false;
+    this.ignoreBOM = options.ignoreBOM ?? false;
+  }
+
+  /**
+   * The text `input` encodes: a typed array (its bytes), an `ArrayBuffer`, a `DataView`, or
+   * Velt's byte array `u8[]`.
+   */
+  decode(input: BufferView | ArrayBuffer | u8[] = []): string {
+    if (input instanceof ArrayBuffer) {
+      return this.decodeBytes(input.bytes);
+    }
+    if (input instanceof BufferView) {
+      return this.decodeRange(input.buf.bytes, input.off, input.len * input[VIEW_SIZE]());
+    }
+    return this.decodeBytes(input);
+  }
+
+  // The text of the `len` bytes of `bytes` from `off`.
+  private decodeRange(bytes: u8[], off: usize, len: usize): string {
+    if (off == 0 && len == (bytes.length as usize)) {
+      return this.decodeBytes(bytes);
+    }
+    return this.decodeBytes(bytes.slice(off as i64, (off + len) as i64));
+  }
+
+  private decodeBytes(input: u8[]): string {
+    let data = input;
+    if (
+      !this.ignoreBOM &&
+      input.length >= 3 &&
+      input[0] == 0xef &&
+      input[1] == 0xbb &&
+      input[2] == 0xbf
+    ) {
+      data = input.slice(3);
+    }
+    if (!this.fatal) {
+      return utf8DecodeLossy(data);
+    }
+    if (firstInvalid(data) >= 0) {
+      throw new EncodingError("The encoded data was not valid for encoding utf-8");
+    }
+    return validToString(data);
+  }
+}

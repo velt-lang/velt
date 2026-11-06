@@ -39,7 +39,7 @@ fn closing_tags_name_their_component() {
         loc["uri"]
             .as_str()
             .unwrap_or_default()
-            .ends_with("jsx_cards.vlt"),
+            .ends_with("jsx_cards.velt"),
         "{loc}"
     );
     let hover = client.request("textDocument/hover", at(&doc, line, col));
@@ -81,7 +81,7 @@ fn closing_tags_of_namespaced_components() {
         loc["uri"]
             .as_str()
             .unwrap_or_default()
-            .ends_with("jsx_cards.vlt"),
+            .ends_with("jsx_cards.velt"),
         "{loc}"
     );
     let mut params = at(&doc, line, col);
@@ -161,9 +161,9 @@ fn positions_after_non_ascii_text_count_utf16_units() {
 #[test]
 fn the_page_compiles() {
     let mut client = Client::start();
-    client.open(&uri("jsx_ui/jsx-runtime.vlt"), super::jsx::RUNTIME);
-    client.open(&uri("jsx_cards.vlt"), super::jsx::CARDS);
-    let doc = uri("jsx_tags_page.vlt");
+    client.open(&uri("jsx_ui/jsx-runtime.velt"), super::jsx::RUNTIME);
+    client.open(&uri("jsx_cards.velt"), super::jsx::CARDS);
+    let doc = uri("jsx_tags_page.velt");
     client.open(&doc, PAGE);
     assert_eq!(client.diagnostics(&doc)["diagnostics"], json!([]));
     client.shutdown();

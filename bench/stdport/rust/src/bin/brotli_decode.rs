@@ -1,4 +1,4 @@
-//! `brotli_decode.vlt` on `brotli-decompressor`, which the runtime's `fetch` decodes `br` bodies
+//! `brotli_decode.velt` on `brotli-decompressor`, which the runtime's `fetch` decodes `br` bodies
 //! with today: the 1 MB JSON of `json.q5.br` and `json.q11.br`, each decoded 50 times.
 
 use std::io::Read;

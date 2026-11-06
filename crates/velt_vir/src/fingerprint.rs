@@ -36,7 +36,7 @@
 //!   build inlined into its copy). And statics compared or written by address: statics are
 //!   equal by contents, but a copy of a static in another object is another address than the
 //!   program's, so a static atomic (`StaticData::mutable`, such as the words of
-//!   std/sync/epoch/reclaim.vlt) or a table compared by address would be two words or two
+//!   std/sync/epoch/reclaim.velt) or a table compared by address would be two words or two
 //!   tables. The std cache doesn't copy them: it names them (vir.rs invariant 13), and linked
 //!   code uses the program's one copy (std-object.md "Identity of statics").
 //!   [`Canon::reaches_mutable_static`] tells whether code reaches such a word, for a cache that

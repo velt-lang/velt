@@ -18,7 +18,7 @@ fn body<'v>(vir: &'v str, name: &str) -> &'v str {
 #[test]
 fn every_fresh_part_can_be_adopted() {
     let dir = test_dir::TestDir::new();
-    let src = dir.path().join("main.vlt");
+    let src = dir.path().join("main.velt");
     std::fs::write(
         &src,
         "function page(n: number): string { return \"<p>x</p>\".repeat(n); }\n\
@@ -29,7 +29,7 @@ fn every_fresh_part_can_be_adopted() {
     )
     .unwrap();
     let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["build", "main.vlt", "--emit", "vir"])
+        .args(["build", "main.velt", "--emit", "vir"])
         .current_dir(dir.path())
         .output()
         .unwrap();

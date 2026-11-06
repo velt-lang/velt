@@ -1,1 +1,1 @@
-rwlock_read_stored_then_written_stops.vlt:27:18: error: this puts what may be the caller's object into an object the `read` callback made, after storing that object into the caller's containers
+rwlock_read_stored_then_written_stops.velt:27:18: error: this puts what may be the caller's object into an object the `read` callback made, after storing that object into the caller's containers

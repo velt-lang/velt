@@ -1,4 +1,4 @@
-// A TypeScript module imported by `simd_names.vlt`: it declares types named like Velt's SIMD
+// A TypeScript module imported by `simd_names.velt`: it declares types named like Velt's SIMD
 // types, which TypeScript code could do before they existed. Its own declarations win.
 
 export type f32x4 = [number, number, number, number];

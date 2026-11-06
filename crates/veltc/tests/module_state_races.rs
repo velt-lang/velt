@@ -57,7 +57,7 @@ fn a_mutex_wait_keeps_the_module_lock() {
 fn runs_the_same_every_time(golden: &str, runs: u32) {
     runtime_support::build_native_runtime(manifest());
     let dir = test_dir::TestDir::new();
-    let src = manifest().join(format!("{golden}.vlt"));
+    let src = manifest().join(format!("{golden}.velt"));
     let exe = dir
         .path()
         .join(if cfg!(windows) { "prog.exe" } else { "prog" });
@@ -93,7 +93,7 @@ const yieldNow = (): Promise<void> => new Promise((r) => setImmediate(r));
 
 #[test]
 fn node_prints_the_same_totals() {
-    let src = std::fs::read_to_string(manifest().join(format!("{GOLDEN}.vlt"))).unwrap();
+    let src = std::fs::read_to_string(manifest().join(format!("{GOLDEN}.velt"))).unwrap();
     // The shim stands for the `velt/` imports.
     let src: String = src
         .lines()

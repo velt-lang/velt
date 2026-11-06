@@ -1,5 +1,5 @@
 //! Writes failing cases to the output directory, grouped by verdict signature so each directory is
-//! one presumed bug: `<out>/cases/<slug>/<name>.vlt` plus `<name>.txt` with the details.
+//! one presumed bug: `<out>/cases/<slug>/<name>.velt` plus `<name>.txt` with the details.
 
 use crate::check::Verdict;
 use std::fs;
@@ -22,7 +22,7 @@ pub fn save(
 ) -> Result<std::path::PathBuf, String> {
     let dir = out.join("cases").join(slug(&verdict.signature()));
     fs::create_dir_all(&dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
-    let prog = dir.join(format!("{name}.vlt"));
+    let prog = dir.join(format!("{name}.velt"));
     fs::write(&prog, text).map_err(|e| format!("cannot write {}: {e}", prog.display()))?;
     fs::write(dir.join(format!("{name}.txt")), describe(verdict))
         .map_err(|e| format!("cannot write details: {e}"))?;

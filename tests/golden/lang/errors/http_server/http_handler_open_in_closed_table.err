@@ -1,1 +1,1 @@
-http_handler_open_in_closed_table.vlt:17:5: error: this async closure changes `plugins` of captured `a` (`…(a.plugins)` changes `a.plugins`), so it must stay on the task that created it
+http_handler_open_in_closed_table.velt:17:5: error: this async closure changes `plugins` of captured `a` (`…(a.plugins)` changes `a.plugins`), so it must stay on the task that created it

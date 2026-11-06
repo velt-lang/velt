@@ -121,7 +121,7 @@ pub fn package_dirs_limited(root: &Path, patterns: &[String], max_dirs: usize) -
 }
 
 /// The directories below `root` that `patterns` select, as [`package_dirs`] walks them, that hold
-/// a file named `marker` (`package.json`; `package.vlt` for Velt workspaces, `crate::workspace`),
+/// a file named `marker` (`package.json`; `package.velt` for Velt workspaces, `crate::workspace`),
 /// never entering directories named in `skip` besides `node_modules` (`target` for Velt).
 pub fn dirs_with(
     root: &Path,
@@ -309,11 +309,11 @@ mod tests {
         let root = tmp.path();
         for dir in ["libs/a", "libs/a/target/velt/x"] {
             std::fs::create_dir_all(root.join(dir)).unwrap();
-            std::fs::write(root.join(dir).join("package.vlt"), "").unwrap();
+            std::fs::write(root.join(dir).join("package.velt"), "").unwrap();
         }
         let patterns = ["libs/**".to_string()];
         let found = |skip| {
-            dirs_with(root, &patterns, ("package.vlt", skip), MAX_DIRS)
+            dirs_with(root, &patterns, ("package.velt", skip), MAX_DIRS)
                 .dirs
                 .len()
         };

@@ -4,7 +4,7 @@ values, as `crates/velt_sema/tests/scaling.rs` generates them, with the HTTP ser
 crossing. Compile with `velt check` from a directory whose package depends on `http-server`
 (tests/golden/lang/errors/http_server has one).
 
-    gen.py <shape> <n> <c> > program.vlt
+    gen.py <shape> <n> <c> > program.velt
 
 Shapes (`crates/velt_sema/src/ownership/local_async/keyed`), each compiling without an error:
     A   every class stores by one open key, and calls a hook with what it holds

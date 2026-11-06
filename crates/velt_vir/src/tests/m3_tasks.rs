@@ -1,4 +1,4 @@
-//! `tests/golden/m3/tasks.vlt` hand-lowered to HIR: spawned compiled calls sharing an atomic
+//! `tests/golden/m3/tasks.velt` hand-lowered to HIR: spawned compiled calls sharing an atomic
 //! counter, `Promise.all` over join handles, `shared(new Mutex(...))` with `with`, and spawned
 //! async closure literals that own a cloned `shared` value. Plus `with` on a scalar value.
 

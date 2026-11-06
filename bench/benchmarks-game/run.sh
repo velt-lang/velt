@@ -89,9 +89,9 @@ impls() {
   for f in "$RUST_BIN/$1" "$RUST_BIN/$1"_*; do
     [[ -x "$f" && ! -d "$f" && $f != *.d ]] && echo "Rust ${f##*/}|rust|$f"
   done
-  for f in "$dir"/main*.vlt; do
+  for f in "$dir"/main*.velt; do
     [[ -e "$f" ]] || continue
-    stem=$(basename "$f" .vlt)
+    stem=$(basename "$f" .velt)
     echo "Velt LLVM $stem|velt-llvm|$f"
     echo "Velt Cranelift $stem|velt-cranelift|$f"
   done

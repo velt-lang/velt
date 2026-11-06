@@ -261,7 +261,7 @@ export { default } from \"./m\";
         "{errs:?}"
     );
 
-    // TypeScript has no `export default enum` (a `.vlt` file may, as for a struct).
+    // TypeScript has no `export default enum` (a `.velt` file may, as for a struct).
     let (_, diags) = velt_syntax::parse_ts_file(
         FileId(0),
         "export default enum E { A }

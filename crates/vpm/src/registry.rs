@@ -1,7 +1,7 @@
 //! The registry: a local directory, or a remote one over HTTP ([`crate::remote`]) when
 //! [`Locations::remote`] is set. The local layout is also what the registry server stores.
 //!
-//! Layout: `<registry>/<name>/<version>/` holds a copy of the published package (package.vlt +
+//! Layout: `<registry>/<name>/<version>/` holds a copy of the published package (package.velt +
 //! src/**) and `<registry>/<name>/index.json` lists every published version with its content
 //! checksum and dependency requirements, so resolution only reads index files (generated JSON,
 //! [`crate::json_file`]; `native_abi` and `native` only for packages with native code):
@@ -56,7 +56,7 @@ pub struct IndexEntry {
     pub version: String,
     /// `sha256:<hex>` of the package contents (see [`contents::checksum`]).
     pub checksum: String,
-    /// The version's `description` from its `package.vlt` (search and listings use the newest
+    /// The version's `description` from its `package.velt` (search and listings use the newest
     /// version's).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
@@ -245,7 +245,7 @@ pub fn add_native(
     let loc = &loc.clone().with_manifest(&manifest);
     if !manifest.has_bundles() {
         return Err(format!(
-            "package `{}` has no `native` in package.vlt",
+            "package `{}` has no `native` in package.velt",
             manifest.package.name
         ));
     }
@@ -266,7 +266,7 @@ fn check_bundles(manifest: &Manifest, bundles: &BTreeMap<String, PathBuf>) -> Re
     let name = &manifest.package.name;
     if !manifest.has_bundles() && !bundles.is_empty() {
         return Err(format!(
-            "package `{name}` has no `native` in package.vlt but native libraries were given"
+            "package `{name}` has no `native` in package.velt but native libraries were given"
         ));
     }
     for (target, dir) in bundles {
@@ -420,7 +420,7 @@ fn publish_to(root: &Path, loc: &Locations, manifest: &Manifest) -> Result<Index
     let mut index = read_index(loc, name)?.unwrap_or_default();
     if index.versions.iter().any(|v| v.semver() == version) {
         return Err(format!(
-            "`{name}` {version} is already published (bump `version` in package.vlt)"
+            "`{name}` {version} is already published (bump `version` in package.velt)"
         ));
     }
     if let Some(url) = &loc.remote {
@@ -466,7 +466,7 @@ mod tests {
         std::fs::create_dir_all(dir.join("src")).unwrap();
         std::fs::write(dir.join(crate::manifest::MANIFEST_FILE), manifest).unwrap();
         std::fs::write(
-            dir.join("src/lib.vlt"),
+            dir.join("src/lib.velt"),
             "export function f(): i64 { return 1; }\n",
         )
         .unwrap();
@@ -527,7 +527,7 @@ mod tests {
         package(&pkg, "export const pkg: Package = { name: \"lib\", version: \"1.0.0\", dependencies: { u: { version: \"0.2\", path: \"../u\" } } };");
         let entry = publish(&pkg, &loc).unwrap();
         assert_eq!(entry.dependencies["u"], "0.2");
-        assert!(loc.registry.join("lib/1.0.0/src/lib.vlt").is_file());
+        assert!(loc.registry.join("lib/1.0.0/src/lib.velt").is_file());
         let index = read_index(&loc, "lib").unwrap().unwrap();
         assert_eq!(index.versions, vec![entry]);
         assert!(publish(&pkg, &loc)

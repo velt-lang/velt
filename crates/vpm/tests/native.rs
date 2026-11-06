@@ -68,7 +68,7 @@ fn native_packages_end_to_end() {
     vpm::scaffold::new_package(&dir, "db", true).unwrap();
     let lib = dir.join("db");
     std::fs::write(
-        lib.join("package.vlt"),
+        lib.join("package.velt"),
         format!("export const pkg: Package = {{ name: \"db\", version: \"1.0.0\", native: {{ targets: [\"{LINUX}\", \"{MAC}\"] }} }};"),
     )
     .unwrap();
@@ -129,9 +129,9 @@ fn native_packages_end_to_end() {
             && e.contains("allowNative: [\"db\"]"),
         "{e}"
     );
-    let manifest = std::fs::read_to_string(app.join("package.vlt")).unwrap();
+    let manifest = std::fs::read_to_string(app.join("package.velt")).unwrap();
     std::fs::write(
-        app.join("package.vlt"),
+        app.join("package.velt"),
         manifest.replacen("name: \"app\",", "name: \"app\", allowNative: [\"db\"],", 1),
     )
     .unwrap();
@@ -250,7 +250,7 @@ fn native_packages_end_to_end() {
     );
 
     // A path dependency with native code needs cargo to build it.
-    std::fs::write(app.join("package.vlt"), "export const pkg: Package = { name: \"app\", version: \"0.1.0\", allowNative: [\"db\"], dependencies: { db: { path: \"../db\" } } };").unwrap();
+    std::fs::write(app.join("package.velt"), "export const pkg: Package = { name: \"app\", version: \"0.1.0\", allowNative: [\"db\"], dependencies: { db: { path: \"../db\" } } };").unwrap();
     let e = install(
         &app,
         &loc,

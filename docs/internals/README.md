@@ -6,7 +6,7 @@ and the test tiers, see [CONTRIBUTING.md](../../CONTRIBUTING.md).
 ## Pipeline
 
 ```
-.vlt ─▶ velt_syntax (lexer, parser) ─▶ AST
+.velt ─▶ velt_syntax (lexer, parser) ─▶ AST
       ─▶ velt_sema (resolve, types, ownership and mutation inference, typed errors) ─▶ HIR
       ─▶ velt_vir (monomorphize, layouts, drops, async state machines) ─▶ VIR
       ─▶ velt_opt (inline, constant folding, SROA, DCE, numrep, …)  [all of it in release builds]
@@ -147,7 +147,7 @@ SQLite, PostgreSQL, Redis). `velt_rt_wasm` is its single-threaded WebAssembly co
 | `velt_native`, `velt_native_macros` | the Rust side of a package's native library, and its `#[export]` attribute |
 | `vpm`, `velt_registry` | package manager, registry server |
 | `velt_http` | a minimal HTTP/1.1 server and client for the developer tools |
-| `velt_toolchain` | side-by-side toolchain versions: the `velt` pin of `package.vlt`, installed versions, downloading a release |
+| `velt_toolchain` | side-by-side toolchain versions: the `velt` pin of `package.velt`, installed versions, downloading a release |
 | `veltc` | the `velt` CLI: driver, dev supervisor and host, test runner, playground |
 | `xtask` | repository tooling: the quality gate and its check selection (`cargo xtask`) |
 
@@ -182,7 +182,7 @@ Decisions and their rationale, including what is still planned:
   library, scripts, callback indexes, arrow defaults, rest parameters, `x!`, `??=`, destructuring
   defaults, `Date`.
 - [Standard library layout](design/std-layout.md): `velt/<area>` imports, one folder per module
-  with `index.vlt` as its API, the rules `precheck` enforces, and the scripted move (proposed).
+  with `index.velt` as its API, the rules `precheck` enforces, and the scripted move (proposed).
 - [Hot reload](design/hot-reload.md): `velt dev`'s supervisor, JIT host and hot swap.
 - [Variables in the debugger](design/debug-variables.md): describing source variables in VIR,
   their DWARF in debug builds, and the LLDB formatters (#958).
@@ -208,7 +208,7 @@ Decisions and their rationale, including what is still planned:
 - [Data models shared with TypeScript](design/shared-models.md): field-only interfaces as object
   types, `readonly` fields in object types, `Partial`/`Required`/`Readonly`/`Pick`/`Omit`
   (implemented, issue #326).
-- [A package manifest written in Velt](design/package-manifest.md): `package.vlt`, data-only and
+- [A package manifest written in Velt](design/package-manifest.md): `package.velt`, data-only and
   typed, replacing `velt.toml` (implemented, issue #128).
 - [Iteration, generators and `for await`](design/iteration.md): the iterator protocol with typed
   errors, `for...of` over iterables, generators, async generators and `for await`
@@ -248,10 +248,10 @@ Decisions and their rationale, including what is still planned:
 ## Testing
 
 - Unit tests next to the code; cross-module tests in each crate's `tests/`.
-- **End-to-end tests** (`tests/golden/**`): every `.vlt` file with a `.out` (optionally a
+- **End-to-end tests** (`tests/golden/**`): every `.velt` file with a `.out` (optionally a
   `.code` exit code and a `.stderr` the run's stderr must contain) is compiled and run in debug
   and release modes, and its output compared; one with a `.err` must fail to build with those
-  messages. `examples/*.vlt` with a `.out` are included.
+  messages. `examples/*.velt` with a `.out` are included.
   Directories marked `.pending` (such as `tests/golden/bugs/`, known bugs) are reported but
   don't fail the run.
 - **Documentation tests**: every `ts` code block in the user documentation is compiled

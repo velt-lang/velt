@@ -51,7 +51,7 @@ pub struct Dev {
 }
 
 impl Dev {
-    /// `velt dev <mode flags> main.vlt` in `dir`.
+    /// `velt dev <mode flags> main.velt` in `dir`.
     pub fn start(dir: &Path, mode: &[&str]) -> Dev {
         Dev::start_with_env(dir, mode, &[])
     }
@@ -62,7 +62,7 @@ impl Dev {
         cmd.envs(env.iter().copied());
         cmd.arg("dev")
             .args(mode)
-            .arg("main.vlt")
+            .arg("main.velt")
             .current_dir(dir)
             .stdin(Stdio::null())
             .stdout(Stdio::piped())

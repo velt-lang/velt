@@ -1,5 +1,5 @@
 // TechEmpower-style benchmark server on plain node:http (same routes and fortunes as
-// server.vlt). Usage: node server.mjs <port>. With CLUSTER=1, forks one worker per core
+// server.velt). Usage: node server.mjs <port>. With CLUSTER=1, forks one worker per core
 // (node:cluster, shared listening socket).
 import http from "node:http";
 import cluster from "node:cluster";

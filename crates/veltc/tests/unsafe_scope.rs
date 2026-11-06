@@ -17,17 +17,17 @@ fn project(dir: &Path, lib: &str, native: &str, main: &str, allow: &str) {
     std::fs::create_dir_all(pkg.join("src")).unwrap();
     std::fs::create_dir_all(app.join("src")).unwrap();
     std::fs::write(
-        pkg.join("package.vlt"),
+        pkg.join("package.velt"),
         format!("import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{ name: \"bind\", version: \"0.1.0\"{native} }};\n"),
     )
     .unwrap();
-    std::fs::write(pkg.join("src/lib.vlt"), lib).unwrap();
+    std::fs::write(pkg.join("src/lib.velt"), lib).unwrap();
     std::fs::write(
-        app.join("package.vlt"),
+        app.join("package.velt"),
         format!("import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"app\",\n  version: \"0.1.0\",\n  {allow}dependencies: {{ bind: {{ path: \"../bind\" }} }},\n}};\n"),
     )
     .unwrap();
-    std::fs::write(app.join("src/main.vlt"), main).unwrap();
+    std::fs::write(app.join("src/main.velt"), main).unwrap();
 }
 
 const NATIVE: &str = ", native: { c: { c: { unchecked: true } } }";
@@ -61,7 +61,7 @@ fn passes(dir: &Path, args: &[&str]) -> String {
     String::from_utf8_lossy(&o.stdout).into_owned()
 }
 
-/// Unsafe blocks, expressions, functions and methods (tests/golden/lang/unsafe_code.vlt before
+/// Unsafe blocks, expressions, functions and methods (tests/golden/lang/unsafe_code.velt before
 /// they needed a package), wrapped in a safe `demo()`.
 const UNSAFE_CODE: &str = r#"// SAFETY: callers pass a non-negative `n`.
 unsafe function raw(n: i64): i64 {
@@ -150,11 +150,11 @@ fn unsafe_code_needs_an_allowed_native_package() {
     project(dir.path(), UNSAFE_CODE, NATIVE, main, ALLOW);
     let out = errors(dir.path());
     assert!(
-        out.contains("main.vlt:2:17: error: unsafe function `mine` needs a native package"),
+        out.contains("main.velt:2:17: error: unsafe function `mine` needs a native package"),
         "{out}"
     );
     assert!(
-        out.contains("main.vlt:6:21: error: `unsafe` code needs a native package"),
+        out.contains("main.velt:6:21: error: `unsafe` code needs a native package"),
         "{out}"
     );
     assert!(out.contains("package `app` has no native code"), "{out}");
@@ -186,13 +186,13 @@ fn raw_api_is_imported_only_by_allowed_native_packages() {
     project(dir.path(), RAW_LIB, NATIVE, main, ALLOW);
     let out = errors(dir.path());
     for raw in [
-        "main.vlt:1:19: error: `Ptr` of `velt/ffi` is raw native API",
-        "main.vlt:1:24: error: `readCString` of `velt/ffi` is raw native API",
-        "main.vlt:3:10: error: `FILE` of `bind` is raw native API",
-        "main.vlt:3:16: error: `nothing` of `bind` is raw native API",
-        "main.vlt:3:31: error: `Ptr` of `bind` is raw native API",
-        "main.vlt:5:19: error: `ffi.Ptr` is raw native API",
-        "main.vlt:10:17: error: `ffi.readUtf8` is raw native API",
+        "main.velt:1:19: error: `Ptr` of `velt/ffi` is raw native API",
+        "main.velt:1:24: error: `readCString` of `velt/ffi` is raw native API",
+        "main.velt:3:10: error: `FILE` of `bind` is raw native API",
+        "main.velt:3:16: error: `nothing` of `bind` is raw native API",
+        "main.velt:3:31: error: `Ptr` of `bind` is raw native API",
+        "main.velt:5:19: error: `ffi.Ptr` is raw native API",
+        "main.velt:10:17: error: `ffi.readUtf8` is raw native API",
     ] {
         assert!(out.contains(raw), "{raw}:\n{out}");
     }
@@ -210,18 +210,18 @@ fn unsafe_code_in_a_package_needs_a_safety_comment() {
     let out = errors(dir.path());
     assert!(
         out.contains(
-            "lib.vlt:1:17: error: unsafe function `raw` needs a safety comment directly before it"
+            "lib.velt:1:17: error: unsafe function `raw` needs a safety comment directly before it"
         ),
         "{out}"
     );
     assert!(
         out.contains(
-            "lib.vlt:7:3: error: `unsafe` code needs a `// SAFETY:` comment directly before it"
+            "lib.velt:7:3: error: `unsafe` code needs a `// SAFETY:` comment directly before it"
         ),
         "{out}"
     );
     assert!(
-        out.contains("lib.vlt:13:15: error: `unsafe` code needs a `// SAFETY:`"),
+        out.contains("lib.velt:13:15: error: `unsafe` code needs a `// SAFETY:`"),
         "{out}"
     );
     assert_eq!(out.matches("needs a").count(), 3, "{out}");
@@ -238,12 +238,12 @@ fn velt_check_lists_the_allowed_native_code() {
         passes(dir.path(), &["check"]),
         "Native code the program allows (allowNative):\n  \
          bind: C libraries m (m; no headers); 6 places of unsafe code\n    \
-         src/lib.vlt:2   unsafe function `raw`\n    \
-         src/lib.vlt:10  unsafe function `at`\n    \
-         src/lib.vlt:18  unsafe block\n    \
-         src/lib.vlt:28  unsafe expression\n    \
-         src/lib.vlt:30  unsafe block\n    \
-         src/lib.vlt:34  unsafe expression\n"
+         src/lib.velt:2   unsafe function `raw`\n    \
+         src/lib.velt:10  unsafe function `at`\n    \
+         src/lib.velt:18  unsafe block\n    \
+         src/lib.velt:28  unsafe expression\n    \
+         src/lib.velt:30  unsafe block\n    \
+         src/lib.velt:34  unsafe expression\n"
     );
     let json: serde_json::Value =
         serde_json::from_str(&passes(dir.path(), &["check", "--json"])).unwrap();
@@ -312,7 +312,7 @@ fn only_a_check_that_passes_lists_the_native_code() {
     assert!(!native && errors > 0);
 }
 
-/// `--locked` refuses a lock whose `allowNative` differs from package.vlt's, wider or narrower,
+/// `--locked` refuses a lock whose `allowNative` differs from package.velt's, wider or narrower,
 /// so a change of what the program trusts is never installed unseen.
 #[test]
 fn locked_refuses_a_changed_allow_native() {

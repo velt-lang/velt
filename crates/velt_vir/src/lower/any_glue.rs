@@ -650,7 +650,7 @@ impl FnLower<'_, '_> {
         }
         self.this_fn_call_keys((data, key, argv, argc, out), ty);
         if self.prelude_record(ty).is_some() {
-            // The prelude's `__anyRec_` functions (std/lang/record/reflect.vlt: what
+            // The prelude's `__anyRec_` functions (std/lang/record/reflect.velt: what
             // `Reflect` does to a record's symbol keys); a record's function values come later.
             return self.any_record_call((data, key, argv, argc, out), ty);
         }
@@ -767,7 +767,7 @@ impl FnLower<'_, '_> {
                 self.ret_status(ST_UNSUPPORTED);
             }
             // An array method (`Reflect.get(array, "push")`, `Array.prototype[k]`) called plainly
-            // runs as a `ThisFn` does, with `undefined` as `this` (std/lang/proxy/array.vlt).
+            // runs as a `ThisFn` does, with `undefined` as `this` (std/lang/proxy/array.velt).
             TyKind::Adt(..) if self.cx.is_this_fn(ty) || self.cx.is_array_method(ty) => {
                 self.this_fn_apply_body((data, argv, argc, out), ty)
             }

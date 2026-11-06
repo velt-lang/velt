@@ -1,4 +1,4 @@
-// Tagged unions (same workload as shapes.vlt): a Rust enum and `match`.
+// Tagged unions (same workload as shapes.velt): a Rust enum and `match`.
 #[derive(Clone, Copy)]
 enum Shape {
     Circle { r: f64 },

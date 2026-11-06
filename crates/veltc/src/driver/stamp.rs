@@ -13,7 +13,7 @@
 //!   may have changed within the time's granularity after it was read;
 //! - what module resolution looked at ([`vpm::probe`]): every path it probed (still a file, a
 //!   directory or missing as it was) and every directory it listed (the same entries), so a file
-//!   an import would now resolve to (a `.ts` beside a `.vlt`, a `node_modules` package nearer
+//!   an import would now resolve to (a `.ts` beside a `.velt`, a `node_modules` package nearer
 //!   the importer) is a change, and where each symbolic link to an npm package led; and the
 //!   manifests and lockfile the package graph came from, with the workspace's file, member
 //!   listings and lockfile when the package is in one;

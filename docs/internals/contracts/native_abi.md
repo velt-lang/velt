@@ -1,6 +1,6 @@
 # Native libraries of packages — CONTRACT
 
-How a package's Rust crate (`native` in [`package.vlt`](manifest.md)) talks to Velt code and to
+How a package's Rust crate (`native` in [`package.velt`](manifest.md)) talks to Velt code and to
 the runtime, how its library is built, published, installed, linked and loaded. Design and
 rationale: [native-packages.md](../design/native-packages.md). Implemented by `crates/velt_rt`
 (`native.rs`), `crates/velt_native` (the SDK), `crates/vpm` (`native/`), `crates/velt_link`
@@ -311,7 +311,7 @@ is read with a JSON reader over its text.
 
 When the row type is an object of plain fields (numbers, bools, strings, `T | null` of those,
 `u8[]`), the generated decoder reads the rows by column instead of through the JSON reader
-(`velt_rt_rows_*`, rt_abi_async.md; velt/db/generate/columns.vlt), with the same results and
+(`velt_rt_rows_*`, rt_abi_async.md; velt/db/generate/columns.velt), with the same results and
 messages. packages/sqlite and
 packages/postgres use cursors. A driver written in Velt offers its rows as std/db' `RowSource`
 instead ([velt/db](https://veltlang.com/docs/std/db/)), read the same way through its own methods.
@@ -325,7 +325,7 @@ object's members), `name(bytes)` (the next value is the member of that name) and
 library takes it back with `close_sink::<S>(handle)`). velt/db's `bindParams<P>(sink, params)`
 looks the handle up (`velt_rt_db_sink`; false, binding nothing, when it names no open sink)
 and fills the sink: it
-calls them from code generated for `P` (velt/db/generate/bind.vlt): values in order for an array, a tuple
+calls them from code generated for `P` (velt/db/generate/bind.velt): values in order for an array, a tuple
 or a lone value, `object()` and then names and values for an object, each value as its JSON
 text would read back (an integral number below 1e21 an int, NaN null, a `u8[]` member a blob).
 It does so for numbers, bools, strings, `T | null` of those, `u8[]` members and objects of such

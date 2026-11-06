@@ -166,7 +166,7 @@ def suite_percore():
 
 
 def suite_topics():
-    # Rooms as std/websocket topics (velt/server-topics.vlt) against the plain send loop.
+    # Rooms as std/websocket topics (velt/server-topics.velt) against the plain send loop.
     for rate in [4000, 8000, 16000]:
         for s in ["velt", "velt-topics"]:
             run("topics", s, CORES, ["steady", 10000, 100, rate, 10])

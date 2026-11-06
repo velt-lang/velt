@@ -1,0 +1,40 @@
+// How a program ends in a later turn than its first (crates/veltc/tests/wasm_goldens.rs
+// `async_host_functions_under_node`), chosen by the host function `how`: `main` returns a code,
+// `process.exit` in a timer's callback, an `await` in `main` nothing can settle (exit code 0, as
+// in Node; stuck.velt's top-level `await` gives 13), a task `spawn` started that waits for a host
+// promise after `main` returned, or an uncaught error while a host promise that never settles is
+// pending (reported at once).
+
+declare host("test") async function how(): Promise<string>;
+declare host("test") async function gate(id: u32): Promise<u32>;
+declare host("test") async function num(n: i32): Promise<i32>;
+
+async function background(): Promise<void> {
+  console.log(`background got ${await num(21)}`);
+}
+
+async function fails(): Promise<u32> {
+  await sleep(1);
+  throw new Error("bad");
+}
+
+async function main(): Promise<i32> {
+  const way = await how();
+  await sleep(1);
+  console.log(`ending by ${way}`);
+  if (way == "exit") {
+    setTimeout(() => process.exit(3), 1);
+    await sleep(50);
+  }
+  if (way == "stuck") {
+    await new Promise<void>((resolve) => {});
+  }
+  if (way == "spawn") {
+    spawn(background());
+    return 0;
+  }
+  if (way == "uncaught") {
+    console.log(await Promise.race([gate(99), fails()]));
+  }
+  return 7;
+}

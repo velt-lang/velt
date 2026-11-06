@@ -1,7 +1,7 @@
 import type { Plugin } from "vite";
 
 export interface VeltOptions {
-  /** The Velt program to run and build; default: the package entry in package.vlt. */
+  /** The Velt program to run and build; default: the package entry in package.velt. */
   entry?: string;
   /** The `velt` executable; default `$VELT`, else `velt` on PATH. */
   bin?: string;

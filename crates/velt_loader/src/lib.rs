@@ -9,22 +9,22 @@
 //! [`module_path`]), and the std index ([`std_index`]: what demand loading needs to know of each
 //! std module, kept in the build cache); docs/internals/contracts/README.md "Program loader".
 //!
-//! Order of the result: the prelude (`std/prelude/*.vlt` in the order `std/prelude/index.vlt`
+//! Order of the result: the prelude (`std/prelude/*.velt` in the order `std/prelude/index.velt`
 //! lists them, canonical `"std/prelude/<name>"`), then the root (`"main"`), then imported modules
 //! in breadth-first discovery order, then any extra roots ([`LoadOptions::extra_roots`]) not
 //! loaded yet, each followed by what it imports. A global loaded on demand
-//! (`std/prelude/global/*.vlt`, [`globals`]) joins that order where a module first mentions one
+//! (`std/prelude/global/*.velt`, [`globals`]) joins that order where a module first mentions one
 //! of its names. Specifiers resolve as
-//! - `"./x"`, `"../x"` → `x.vlt`, `x.ts` or `x.tsx`, else the folder module `x/index.vlt`,
+//! - `"./x"`, `"../x"` → `x.velt`, `x.ts` or `x.tsx`, else the folder module `x/index.velt`,
 //!   `x/index.ts` or `x/index.tsx`, relative to the importing file (two of a kind existing at once
 //!   is an ambiguity error); `"./x.ts"` (any source extension) names exactly that file, and
 //!   `"./x.js"` / `"./x.jsx"` the `.ts` / `.tsx` file, as in TypeScript ([`spec`], [`locate`]);
-//! - `"std/x"` → `<std root>/x.vlt` or `<std root>/x/index.vlt` ([`std_root`]);
-//! - a `paths` alias of the importing package (`"@app/*": "src/*"` in `package.vlt`) → the
+//! - `"std/x"` → `<std root>/x.velt` or `<std root>/x/index.velt` ([`std_root`]);
+//! - a `paths` alias of the importing package (`"@app/*": "src/*"` in `package.velt`) → the
 //!   aliased file, like a relative import ([`PackageResolver::path_alias`]);
 //! - `"#name"` → the variant of the importing package's (or std's) conditional import `#name`
 //!   that the build's conditions select ([`conditional`]);
-//! - `"pkg"` / `"pkg/sub"` → `src/lib.vlt` / `src/sub.vlt` (or `src/sub/index.vlt`; `.ts` and
+//! - `"pkg"` / `"pkg/sub"` → `src/lib.velt` / `src/sub.velt` (or `src/sub/index.velt`; `.ts` and
 //!   `.tsx` as for relative imports) of a dependency of the importing package, found through a
 //!   [`PackageResolver`] (vpm's installed package graph);
 //! - any other bare specifier (`"@sigx/reactivity"`, `"sigx/internals"`) → the TypeScript source
@@ -276,7 +276,7 @@ struct Loader<'a, 'o> {
     harness: Option<usize>,
     /// The build's conditions ([`LoadOptions::target`]).
     conditions: Vec<String>,
-    /// std's conditional imports (`std/imports.vlt`), read when a std module first imports a
+    /// std's conditional imports (`std/imports.velt`), read when a std module first imports a
     /// `#name`.
     std_imports: Option<vpm::imports::ImportMap>,
     /// The `#name` imports resolved, once each, whose variants [`variants`] compares.

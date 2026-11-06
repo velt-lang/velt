@@ -3,7 +3,7 @@
 The same tiny WebSocket server three times, driven by one Rust load generator:
 
 ```
-velt/server.vlt   std/http + std/websocket (Velt's own codec in the runtime; multi-threaded)
+velt/server.velt   std/http + std/websocket (Velt's own codec in the runtime; multi-threaded)
 velt-raw/         the same server written in Velt on std/net, codec included
 node/server.mjs   node:http + ws 8 (the usual Node library; single-threaded)
 bun/server.ts     Bun.serve websockets (uWebSockets; single-threaded), server.publish for /bcast
@@ -28,7 +28,7 @@ outcome are in [PLAN.md](PLAN.md); the work continues in #1023.
 
 ```sh
 cargo build --release -p veltc -p velt_rt
-VELT_STD=std target/release/velt build --release bench/websocket/velt/server.vlt \
+VELT_STD=std target/release/velt build --release bench/websocket/velt/server.velt \
   -o bench/websocket/.work/velt-server
 (cd bench/websocket/node && npm ci)
 (cd bench/websocket/load && cargo build --release)
@@ -143,7 +143,7 @@ the stack (tokio + tungstenite as the runtime uses them), not from compiled Velt
 
 ## velt-raw: a WebSocket server written in Velt
 
-`velt-raw/server.vlt` does the HTTP/1.1 handshake and RFC 6455 framing itself, on `std/net`
+`velt-raw/server.velt` does the HTTP/1.1 handshake and RFC 6455 framing itself, on `std/net`
 (no tungstenite). Broadcast encodes each frame once and queues it for every member; each
 connection's writer task sends everything queued in one write (`Channel.tryReceive`), which is how
 uWebSockets corks. It needed three std/runtime changes that every Velt program gets:

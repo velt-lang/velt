@@ -1,0 +1,30 @@
+// velt/lang/hooks (internal): the compiler's hooks for a float in a template or `String()` on
+// std's float printing (velt/lang/number/format: the shortest digits, in Velt). Loaded only for a
+// program that converts to text an operand that may be a float (std/prelude/global/
+// number_float.velt: `// load for: a conversion operand may be a float`); lowering then prefers
+// these to `numberText`/`numberPush` (velt/lang/hooks/number_text), which send such a float to the
+// runtime's printer. Checked only once the program converts a value that may hold a float
+// (velt_common `std_hooks::ON_DEMAND_FLOAT`).
+
+import { f64Text, pushF64 } from "velt/lang/number/format";
+import { intPush, intText, whole } from "velt/lang/hooks/number_text";
+
+/**
+ * `String(x)` of a float: a whole number below 2^53 is its integer's digits (`intText`, which
+ * `velt_opt` numrep calls directly when it knows `x` is one), anything else std's shortest digits.
+ */
+export function floatText(x: f64): string {
+  if (whole(x)) {
+    return intText(x as i64);
+  }
+  return f64Text(x);
+}
+
+/** Appends `String(x)` of a float to the builder `buf` (a template's `${x}`), as `floatText`. */
+export function floatPush(buf: string, x: f64): void {
+  if (whole(x)) {
+    intPush(buf, x as i64);
+    return;
+  }
+  pushF64(buf, x);
+}

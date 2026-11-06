@@ -1,4 +1,4 @@
-//! Builtin `Iterable<T, E>` and `AsyncIterable<T, E>` (std/prelude/iter.vlt). Without an
+//! Builtin `Iterable<T, E>` and `AsyncIterable<T, E>` (std/prelude/iter.velt). Without an
 //! `implements` list (`ext_impls.rs`), an `extend X { [Symbol.iterator](): Iterator<T, E> { … } }`
 //! block makes `X` implement the prelude's `Iterable<T, E>` (an entry in `Program::impls`,
 //! generic when the block is), like `compareTo` makes it `Comparable` (`comparable.rs`), and

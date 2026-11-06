@@ -1,4 +1,4 @@
-//! A TLS round trip against a throwaway CA (the test material of tests/golden/std/_tls.vlt:
+//! A TLS round trip against a throwaway CA (the test material of tests/golden/std/_tls.velt:
 //! "Velt Test CA (do not trust)" and a localhost / 127.0.0.1 certificate it signed).
 
 use std::io::{BufReader, Write};

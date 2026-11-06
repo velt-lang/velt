@@ -1,4 +1,4 @@
-//! `ThreadLocal<T>` (std/prelude/thread_local.vlt): the `ThreadLocal*` intrinsics as `velt_tls_*` externs
+//! `ThreadLocal<T>` (std/prelude/thread_local.velt): the `ThreadLocal*` intrinsics as `velt_tls_*` externs
 //! (crate::tls), which backends emit inline on thread-local storage they define. The receiver is
 //! the module constant holding the value (sema `thread_locals`): it is never evaluated; its
 //! qualified name names the storage and its initializer's literal is the starting value.

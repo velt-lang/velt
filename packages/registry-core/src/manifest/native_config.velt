@@ -1,0 +1,8 @@
+// registry-core (internal): part of a package's manifest (./manifest.velt).
+
+/** `native`: the package's native crate. */
+export struct NativeConfig {
+  path: string;
+  targets: string[];
+  wasm: bool;
+}

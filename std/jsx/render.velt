@@ -1,0 +1,126 @@
+// velt/jsx (internal): turns an Element into HTML, as one string or as a streamed response body.
+//
+// A complete element already is its HTML, as a string or a tree of template strings (node.velt)
+// joined or written once. Otherwise the renderer walks the node's
+// pieces in document order with an explicit stack (no async recursion): `html`, then the
+// awaited async component, then the other parts. Every async component started when its node was
+// created, so awaiting them one after the other still lets them load concurrently.
+
+import { Element } from "velt/jsx/node";
+import { RenderError } from "velt/jsx/errors";
+import { markupOf, pushMarkup } from "velt/jsx/tree";
+import { utf8Encode } from "velt/encoding/utf8";
+import { BodyStream } from "velt/net/http/fetch/body_stream";
+
+/**
+ * The HTML of `el`, after awaiting its async components. Throws the `RenderError` of the
+ * first (in document order) component that threw or rejected.
+ */
+export async function renderToString(el: Element): Promise<string> throws RenderError {
+  if (el.isComplete) {
+    return markupOf(el);
+  }
+  const pieces: string[] = [];
+  const stack: Element[] = [el];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node == null) {
+      break;
+    }
+    pushMarkup(node, pieces);
+    const pending = pushParts(node, stack);
+    if (pending != null) {
+      stack.push(await pending);
+    }
+  }
+  return pieces.join("");
+}
+
+/**
+ * The HTML of `el` when it has no async component (no await needed). Throws the `RenderError`
+ * of the first component that threw, or one saying the tree has an async component.
+ */
+export function renderToStringSync(el: Element): string throws RenderError {
+  if (el.isComplete) {
+    return markupOf(el);
+  }
+  const pieces: string[] = [];
+  collect(el, pieces);
+  return pieces.join("");
+}
+
+// `renderToStringSync` for an incomplete node, depth first.
+function collect(node: Element, pieces: string[]) throws RenderError {
+  pushMarkup(node, pieces);
+  if (node.rest == null) {
+    return;
+  }
+  if (node.rest.failure != null) {
+    throw node.rest.failure.clone();
+  }
+  if (node.rest.pending.length > 0) {
+    throw new RenderError("", "The element has an async component: use `await renderToString`");
+  }
+  for (const part of node.rest.parts) {
+    collect(part, pieces);
+  }
+}
+
+/**
+ * The HTML of `el` as a streamed `Response` body (like React's `renderToReadableStream`):
+ * `new Response(renderToStream(el), ...)`. The markup above each pending async component is sent
+ * before the component is awaited, so it reaches the client while the component loads. Once
+ * the client has gone away, rendering stops. A component that throws cuts the response off (its
+ * `RenderError` is printed to stderr).
+ */
+export function renderToStream(el: Element): BodyStream {
+  return BodyStream.from(chunks(el));
+}
+
+// `renderToStream`'s chunks: the markup up to each pending async component, then the rest.
+async function* chunks(el: Element): AsyncGenerator<u8[], RenderError> {
+  let pieces: string[] = [];
+  const stack: Element[] = [el];
+  while (stack.length > 0) {
+    const node = stack.pop();
+    if (node == null) {
+      break;
+    }
+    pushMarkup(node, pieces);
+    const pending = pushParts(node, stack);
+    if (pending != null) {
+      const out = pieces.join("");
+      if (out != "") {
+        yield utf8Encode(out);
+      }
+      pieces = [];
+      stack.push(await pending);
+    }
+  }
+  const out = pieces.join("");
+  if (out != "") {
+    yield utf8Encode(out);
+  }
+}
+
+// Pushes the node's parts onto the stack so that they pop in document order, and returns its
+// async component's promise, whose element goes on top once awaited. Throws the error of a
+// component that threw.
+function pushParts(
+  node: Element,
+  stack: Element[],
+): Promise<Element, RenderError> | undefined throws RenderError {
+  if (node.rest == null) {
+    return undefined;
+  }
+  if (node.rest.failure != null) {
+    throw node.rest.failure.clone();
+  }
+  while (node.rest.parts.length > 0) {
+    const part = node.rest.parts.pop();
+    if (part != null) {
+      stack.push(part);
+    }
+  }
+  return node.rest.pending.pop();
+}

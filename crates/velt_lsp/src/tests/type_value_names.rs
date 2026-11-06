@@ -46,8 +46,8 @@ fn definition(
 #[test]
 fn type_and_value_of_one_name() {
     let mut client = Client::start();
-    let app = uri("tvn_app.vlt");
-    client.open(&uri("tvn_lib.vlt"), LIB);
+    let app = uri("tvn_app.velt");
+    client.open(&uri("tvn_lib.velt"), LIB);
     client.open(&app, APP);
     let diags = client.diagnostics(&app);
     assert_eq!(
@@ -55,14 +55,14 @@ fn type_and_value_of_one_name() {
         json!([]),
         "the test program must check"
     );
-    let lib = "tvn_lib.vlt".to_string();
+    let lib = "tvn_lib.velt".to_string();
     // The type position goes to the type alias, the call to the constant.
     assert_eq!(
         definition(&mut client, &app, "guid = guid", 0),
         (lib.clone(), 4, 12)
     );
     assert_eq!(definition(&mut client, &app, "guid();", 0), (lib, 5, 13));
-    let here = "tvn_app.vlt".to_string();
+    let here = "tvn_app.velt".to_string();
     let (l, c) = pos_of(APP, "Point {", 0);
     assert_eq!(
         definition(&mut client, &app, "Point = Point", 0),
@@ -108,9 +108,9 @@ fn labels(result: &serde_json::Value) -> Vec<String> {
 #[test]
 fn completion_lists_each_name_once() {
     let mut client = Client::start();
-    let doc = uri("tvn_user.vlt");
-    client.open(&uri("tvn_lib.vlt"), LIB);
-    client.open(&uri("tvn_re.vlt"), RE);
+    let doc = uri("tvn_user.velt");
+    client.open(&uri("tvn_lib.velt"), LIB);
+    client.open(&uri("tvn_re.velt"), RE);
     client.open(&doc, USER);
     let diags = client.diagnostics(&doc);
     assert_eq!(

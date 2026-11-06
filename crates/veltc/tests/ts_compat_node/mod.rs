@@ -199,7 +199,7 @@ fn ssr_blog_shared_components_render_the_same_under_node() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     for part in [
-        "package.vlt",
+        "package.velt",
         "tsconfig.json",
         "jsx",
         "client",
@@ -213,7 +213,7 @@ fn ssr_blog_shared_components_render_the_same_under_node() {
 
     // The server side.
     std::fs::write(
-        dir.join("samples_main.vlt"),
+        dir.join("samples_main.velt"),
         r#"import { renderToStringSync } from "velt/jsx";
 import { samples } from "./src/shared/samples";
 
@@ -230,7 +230,7 @@ function main() {
 "#,
     )
     .unwrap();
-    let in_velt = run_velt(dir, "samples_main.vlt");
+    let in_velt = run_velt(dir, "samples_main.velt");
 
     // The client side: emitted by tsc, with the provider and relative imports made Node paths.
     std::fs::write(

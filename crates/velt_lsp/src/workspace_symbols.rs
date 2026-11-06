@@ -1,7 +1,7 @@
 //! Workspace symbols: top-level declarations (and the members of types) whose name fuzzy-matches the
 //! query, from every file of the analyzed programs (open documents and what they import, without
 //! the standard library) and from the source files under the workspace folders (indexed once and
-//! kept up to date by [`crate::disk_index`]): `.vlt` files anywhere, `.ts` and `.tsx` files in a
+//! kept up to date by [`crate::disk_index`]): `.velt` files anywhere, `.ts` and `.tsx` files in a
 //! package's `src/` and `tests/` (open documents are searched whatever their folder).
 
 use std::collections::HashSet;
@@ -168,7 +168,7 @@ fn fuzzy_match(query: &str, name: &str) -> bool {
 }
 
 /// Source files under the workspace folder `dir` (skipping hidden, `target` and `node_modules`
-/// directories): `.vlt` files anywhere, `.ts` and `.tsx` files only in a package's `src/` and
+/// directories): `.velt` files anywhere, `.ts` and `.tsx` files only in a package's `src/` and
 /// `tests/`, so the TypeScript frontend of a monorepo is not indexed.
 pub fn collect_files(dir: &Path, out: &mut Vec<PathBuf>) {
     collect(dir, in_package_sources(dir), out);
@@ -209,7 +209,7 @@ fn collect(dir: &Path, typescript: bool, out: &mut Vec<PathBuf>) {
 /// The directories of a package whose `.ts` and `.tsx` files the index takes.
 const PACKAGE_SOURCE_DIRS: [&str; 2] = ["src", "tests"];
 
-/// Whether the workspace index takes the source file `path` (a `.vlt` file, or a `.ts` or
+/// Whether the workspace index takes the source file `path` (a `.velt` file, or a `.ts` or
 /// `.tsx` file in a package's `src/` or `tests/`), as [`collect_files`] decides.
 pub fn indexes(path: &Path) -> bool {
     !is_typescript(path) || path.parent().is_some_and(in_package_sources)
@@ -257,7 +257,7 @@ mod tests {
         let (ast, _) = velt_syntax::parse_file(velt_common::FileId(0), text);
         let mut search = Search::new("pkg");
         let dir = std::env::temp_dir();
-        for path in [dir.join("a/package.vlt"), dir.join("a/src/pkg.vlt")] {
+        for path in [dir.join("a/package.velt"), dir.join("a/src/pkg.velt")] {
             search.add(&SourceFile {
                 path: &path,
                 text,
@@ -267,7 +267,7 @@ mod tests {
         let names: Vec<_> = search.symbols.iter().map(|s| s.name.as_str()).collect();
         assert_eq!(names, ["pkg", "pkgHelper"]);
         assert!(search.symbols.iter().all(|s| match &s.location {
-            OneOf::Left(l) => l.uri.path().ends_with("/src/pkg.vlt"),
+            OneOf::Left(l) => l.uri.path().ends_with("/src/pkg.velt"),
             OneOf::Right(_) => false,
         }));
     }
@@ -277,14 +277,14 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
         for f in [
-            "package.vlt",
+            "package.velt",
             "src/a.ts",
             "src/ui/b.tsx",
             "tests/c.test.ts",
-            "script.vlt",
+            "script.velt",
             "web/src/d.ts",
-            "web/e.vlt",
-            "src/nested/package.vlt",
+            "web/e.velt",
+            "src/nested/package.velt",
             "src/nested/f.ts",
             "src/nested/src/g.ts",
         ] {
@@ -299,12 +299,12 @@ mod tests {
             .map(|p| vpm::relpath::relative(p, root))
             .collect();
         let expected = [
-            "script.vlt",
+            "script.velt",
             "src/a.ts",
             "src/nested/src/g.ts",
             "src/ui/b.tsx",
             "tests/c.test.ts",
-            "web/e.vlt",
+            "web/e.velt",
         ];
         assert_eq!(found, expected);
         for f in expected {

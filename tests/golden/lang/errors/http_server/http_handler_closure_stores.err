@@ -1,2 +1,2 @@
-http_handler_closure_stores.vlt:41:5: error: this async closure changes `c.out`, which may be a value reached from captured `a`: `(…) => …` in `ClosureNow.constructor` stores one there by key, so it must stay on the task that created it
-http_handler_closure_stores.vlt:48:5: error: this async closure changes `c.out`, which may be a value reached from captured `b`: `(…) => …` in `ClosureKept.constructor` stores one there by key, so it must stay on the task that created it
+http_handler_closure_stores.velt:41:5: error: this async closure changes `c.out`, which may be a value reached from captured `a`: `(…) => …` in `ClosureNow.constructor` stores one there by key, so it must stay on the task that created it
+http_handler_closure_stores.velt:48:5: error: this async closure changes `c.out`, which may be a value reached from captured `b`: `(…) => …` in `ClosureKept.constructor` stores one there by key, so it must stay on the task that created it

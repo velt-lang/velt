@@ -17,8 +17,8 @@ official 10 KB `revcomp-input.txt`, and `expected-quick.txt` is the official
 | `main.go` | [Go #6](https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/revcomp-go-6.html) (fastest Go) | Dirk Moerenhout | all cores |
 | `main_st.go` | [Go #2](https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/revcomp-go-2.html) (fastest single-threaded Go) | K P anonymous, Andrew Martin | 1 |
 | `main.js` | [Node #2](https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/revcomp-node-2.html) (fastest Node with correct output) | Joe Farro, Jos Hirth, 10iii | 1 |
-| `main.vlt` | idiomatic Velt: `openRead("/dev/stdin")` byte chunks (like Node's `stdin.read()` Buffers), per-sequence `u8[]`, a 256-entry complement table, `openWrite("/dev/stdout")` | | 1 |
-| `main_mt.vlt` | `main.vlt` with each sequence's output in 16384-line blocks, each block a spawned task over its own slice of the sequence | | all cores |
+| `main.velt` | idiomatic Velt: `openRead("/dev/stdin")` byte chunks (like Node's `stdin.read()` Buffers), per-sequence `u8[]`, a 256-entry complement table, `openWrite("/dev/stdout")` | | 1 |
+| `main_mt.velt` | `main.velt` with each sequence's output in 16384-line blocks, each block a spawned task over its own slice of the sequence | | all cores |
 
 Deviations: Rust #1 uses the `memchr` crate; the bench project only depends on rayon and regex,
 so `memchr(b, s)` is a local `s.iter().position(|&x| x == b)`. On aarch64 its SSSE3 path is
@@ -45,12 +45,12 @@ times are inflated and noisy; CPU seconds are the more reliable column. Versions
 | Node main (#2) | 4.693 | 4.491 | 225.1 |
 | Bun main (same source) | 3.940 | 3.767 | 330.7 |
 
-`main_mt.vlt` is not faster: the time goes into the sequential per-byte parsing loop in `main`
+`main_mt.velt` is not faster: the time goes into the sequential per-byte parsing loop in `main`
 (below), and the tasks add a copy of every slice.
 
 ## Gap: Velt main vs Rust (~4× wall, ~4.5× CPU, 3.3× memory)
 
-`sample` of `main.vlt`: the per-byte loop in `main$poll` has ~4× the samples of
+`sample` of `main.velt`: the per-byte loop in `main$poll` has ~4× the samples of
 `reverseComplement`.
 
 ### 1. Locals of an `async` function live in the state-machine frame (lowering / velt_opt)
@@ -106,16 +106,16 @@ operations above (and a sized allocation for the output) the port could reverse 
 
 ## Friction for a TypeScript developer
 - A class field needs a type annotation even with an initializer (`inHeader = false;` is a parse
-  error): filed as `tests/golden/bugs/parse_class_field_inferred_type.vlt`.
+  error): filed as `tests/golden/bugs/parse_class_field_inferred_type.velt`.
 - No `Buffer`/`Uint8Array` API (see gap 2); byte buffers are `u8[]` grown by `push`.
-- Async parameters are owned: passing the sequence to an async helper (`main_mt.vlt`) copies or
+- Async parameters are owned: passing the sequence to an async helper (`main_mt.velt`) copies or
   moves it; a slice for a task (`seq.slice(a, b)`) is always a copy.
 
 ## Std and runtime round
-`main.vlt` was rewritten on the new std building blocks (FINDINGS §8.6):
+`main.velt` was rewritten on the new std building blocks (FINDINGS §8.6):
 - stdin is read whole with `readAllBytesSync`.
 - Headers are found with `indexOf` (memchr).
 - The output goes into one `Buffer.alloc` array, sent with a single `stdout.write`.
 
 CPU fell from 4.66× to 1.54× Rust. Peak RSS is higher (581 MB) because input and output are both
-held; Rust reverses in place. `main_mt.vlt` only switched its output to `stdout.write`.
+held; Rust reverses in place. `main_mt.velt` only switched its output to `stdout.write`.

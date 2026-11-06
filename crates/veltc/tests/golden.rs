@@ -1,16 +1,16 @@
-//! End-to-end golden tests: every `tests/golden/**/*.vlt` is compiled and run with the real `velt` binary.
+//! End-to-end golden tests: every `tests/golden/**/*.velt` is compiled and run with the real `velt` binary.
 //!
-//! - `foo.vlt` + `foo.out`  → `velt run foo.vlt` must exit 0 (or the code in `foo.code`) and stdout
+//! - `foo.velt` + `foo.out`  → `velt run foo.velt` must exit 0 (or the code in `foo.code`) and stdout
 //!   must equal `foo.out` (CRLF normalized). Half of the debug runs build with `velt build` first,
 //!   which describes variables for debuggers (`with_variables`).
-//! - `foo.vlt` + `foo.err`  → `velt build foo.vlt` must fail and stderr must contain every non-empty
+//! - `foo.velt` + `foo.err`  → `velt build foo.velt` must fail and stderr must contain every non-empty
 //!   line of `foo.err`.
 //! - `foo.stderr` next to a `foo.out`: the run's stderr must contain every non-empty line of it
 //!   (for programs that report an error at run time). A `.stderr` without a `.out` fails.
 //!
-//! - `examples/*.vlt` with a sibling `.out` are included as well.
+//! - `examples/*.velt` with a sibling `.out` are included as well.
 //! - Files whose name starts with `_` are helper modules imported by other goldens; not run directly.
-//!   So are all files in a directory whose name starts with `_` (folder modules, `dir/index.vlt`).
+//!   So are all files in a directory whose name starts with `_` (folder modules, `dir/index.velt`).
 //!
 //! - Goldens under a directory containing `.pending` (milestone in progress) are run, but their
 //!   failures only fail the test with `VELT_GOLDEN_STRICT=1`.
@@ -80,8 +80,8 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) {
             .is_some_and(|n| n.to_string_lossy().starts_with('_'));
         if p.is_dir() && !helper {
             collect(&p, out);
-        } else if p.is_file() && p.extension().is_some_and(|e| e == "vlt")
-            // `_name.vlt` files are imported modules and `package.vlt` is a manifest, not programs.
+        } else if p.is_file() && p.extension().is_some_and(|e| e == "velt")
+            // `_name.velt` files are imported modules and `package.velt` is a manifest, not programs.
             && !helper
             && !p.ends_with(vpm::manifest::MANIFEST_FILE)
         {
@@ -780,7 +780,7 @@ fn killing_a_run_kills_the_program_it_started() {
         .unwrap_or_else(|| root.join("target/golden-work"))
         .join(format!("kill-tree-{}", std::process::id()));
     std::fs::create_dir_all(&work).unwrap();
-    let src = work.join("forever.vlt");
+    let src = work.join("forever.velt");
     std::fs::write(
         &src,
         "async function main() {\n  console.log(\"started\");\n  await sleep(600000);\n}\n",

@@ -1,0 +1,47 @@
+// velt/lang/proxy (internal): array methods read from `Array.prototype` through `any` and called
+// with an explicit `this` (array.velt's `ArrayMethod`), as libraries that wrap them do:
+//
+//   const original = (Array.prototype as any)[method];
+//   instrumented[method] = function (this: any) { return original.apply(this, arguments); };
+//
+// On a proxy of an array the method runs its generic algorithm through the traps
+// (`proxyArrayInvoke`); on an array it runs the same algorithm on the array.
+
+import { Proxy } from "velt/lang/proxy";
+import { ArrayMethod, proxyArrayInvoke, proxyArrayMethod } from "velt/lang/proxy/array";
+
+/**
+ * `Array.prototype[key]` read through `any` (velt_vir's `any_get_body` of a prototype): an
+ * `ArrayMethod` for an array method a proxy runs generically, else `undefined` (Velt's
+ * `Array.prototype` lists no other members yet).
+ */
+export function arrayPrototypeMember(key: string): any {
+  if (proxyArrayMethod(key)) {
+    const m: any = new ArrayMethod(key);
+    return m;
+  }
+  return undefined;
+}
+
+/**
+ * `Array.prototype[name].apply(self, args)` (and `.call(self, ...args)`): the method's generic
+ * algorithm on a proxy or an array.
+ */
+export function arrayMethodApply(name: string, self: any, args: any[]): any {
+  if (self instanceof Proxy) {
+    const p = self as Proxy;
+    return proxyArrayInvoke(p, name, args, self);
+  }
+  if (Array.isArray(self)) {
+    // The array's own method is the same generic algorithm run on the array itself: through a
+    // proxy without traps, whose reads and writes reach the array. A method returning its
+    // receiver (`reverse`, `sort`) returns the array.
+    const p = new Proxy(self, {});
+    const r: any = p;
+    const out = proxyArrayInvoke(p, name, args, r);
+    return out === r ? self : out;
+  }
+  panic(
+    `TypeError: \`Array.prototype.${name}\` called on a value that is not an array is not supported yet (#823)`,
+  );
+}

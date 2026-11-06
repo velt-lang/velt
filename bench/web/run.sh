@@ -92,9 +92,9 @@ find_velt() {
 
 build() {
   case "$1" in
-    velt | velt-stealing | velt-per-core) "$(find_velt)" build --release "$HERE/velt/server.vlt" -o "$WORK/velt-server" ;;
-    velt-tsx) "$(find_velt)" build --release "$HERE/velt-tsx/server.vlt" -o "$WORK/velt-tsx-server" ;;
-    velt-native) "$(find_velt)" build --release "$HERE/velt-native/server.vlt" -o "$WORK/velt-native-server" ;;
+    velt | velt-stealing | velt-per-core) "$(find_velt)" build --release "$HERE/velt/server.velt" -o "$WORK/velt-server" ;;
+    velt-tsx) "$(find_velt)" build --release "$HERE/velt-tsx/server.velt" -o "$WORK/velt-tsx-server" ;;
+    velt-native) "$(find_velt)" build --release "$HERE/velt-native/server.velt" -o "$WORK/velt-native-server" ;;
     node | node-cluster)
       [ -d "$HERE/node/node_modules" ] || (cd "$HERE/node" && npm ci --no-audit --no-fund) ;;
     bun) ;;

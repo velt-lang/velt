@@ -207,9 +207,9 @@ def http_servers(ctx, server_cpus):
     te = os.path.join(ctx.bench, "http", "techempower")
     out = os.path.join(ctx.out, "http")
     os.makedirs(out, exist_ok=True)
-    # The Velt server is techempower/server.vlt on the http-server package, written in Velt on std/net.
+    # The Velt server is techempower/server.velt on the http-server package, written in Velt on std/net.
     velt = os.path.join(out, "server-velt")
-    verr = velt_build(ctx, os.path.join(te, "server.vlt"), velt)
+    verr = velt_build(ctx, os.path.join(te, "server.velt"), velt)
     axum_t = os.path.join(out, "axum-target")
     aerr = cargo(ctx, "techempower axum", os.path.join(te, "axum"), axum_t)
     n = count_cpus(server_cpus)
@@ -407,9 +407,9 @@ def chat_benchmarks(ctx):
     here = os.path.join(ctx.bench, "chat")
     out = os.path.join(ctx.out, "chat")
     os.makedirs(out, exist_ok=True)
-    # bench/chat/velt/server.vlt: the http-server package and velt/net/websocket (written in Velt).
+    # bench/chat/velt/server.velt: the http-server package and velt/net/websocket (written in Velt).
     velt = os.path.join(out, "chat-velt")
-    verr = velt_build(ctx, os.path.join(here, "velt", "server.vlt"), velt)
+    verr = velt_build(ctx, os.path.join(here, "velt", "server.velt"), velt)
     load_t = os.path.join(out, "load-target")
     lerr = cargo(ctx, "chat-load (Rust load generator)", os.path.join(here, "load"), load_t)
     nerr = None if ctx.node else "node not found"
@@ -504,7 +504,7 @@ def fetch_benchmarks(ctx):
     target = os.path.join(out, "rust-target")
     rerr = cargo(ctx, "fetch: hyper server and reqwest client", os.path.join(here, "rust"), target)
     velt = os.path.join(out, "client-velt")
-    verr = velt_build(ctx, os.path.join(here, "client.vlt"), velt)
+    verr = velt_build(ctx, os.path.join(here, "client.velt"), velt)
     if rerr:
         return [{"category": "async", "name": "fetch client", "error": rerr, "impls": []}]
 

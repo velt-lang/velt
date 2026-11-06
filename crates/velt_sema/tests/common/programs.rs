@@ -1,8 +1,8 @@
-//! Load real `.vlt` programs for tests: the std prelude (`std/prelude/*.vlt`), the root file
+//! Load real `.velt` programs for tests: the std prelude (`std/prelude/*.velt`), the root file
 //! and every module it imports (`./relative` and `std/x` specifiers), parsed with the real parser.
 //! A module with a `// @jsxImportSource <source>` comment also loads `<source>/jsx-runtime` as
 //! its JSX runtime (like the driver's loader; tests always name the source), and a non-std module
-//! that mentions a global loaded on demand (`std/prelude/global/*.vlt`) loads its module.
+//! that mentions a global loaded on demand (`std/prelude/global/*.velt`) loads its module.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -86,7 +86,7 @@ impl Loader {
             specs.extend(runtime.clone());
             let dir = self.files[m].parent().unwrap().to_path_buf();
             for spec in specs {
-                // A std module's `#name`: the variant std/imports.vlt maps it to for every
+                // A std module's `#name`: the variant std/imports.velt maps it to for every
                 // build (`default`), as the driver's loader picks it for a native target.
                 let target = match spec.strip_prefix('#') {
                     Some(_) => std_default_variant(&std_dir, &spec).map(|p| format!("velt/{p}")),
@@ -94,19 +94,19 @@ impl Loader {
                 };
                 let (canonical, file) =
                     if let Some(rest) = target.as_deref().unwrap_or(&spec).strip_prefix("velt/") {
-                        let file = std_dir.join(format!("{rest}.vlt"));
-                        // A folder module: `velt/fs` is `std/fs/index.vlt`.
+                        let file = std_dir.join(format!("{rest}.velt"));
+                        // A folder module: `velt/fs` is `std/fs/index.velt`.
                         let file = if file.is_file() {
                             file
                         } else {
-                            std_dir.join(rest).join("index.vlt")
+                            std_dir.join(rest).join("index.velt")
                         };
                         (format!("std/{rest}"), file)
                     } else {
                         let file =
-                            normalize(&dir.join(format!("{}.vlt", spec.trim_start_matches("./"))));
+                            normalize(&dir.join(format!("{}.velt", spec.trim_start_matches("./"))));
                         // A std file's relative import names a std module (`./number` in
-                        // std/lang/hooks/index.vlt is `std/lang/hooks/number`).
+                        // std/lang/hooks/index.velt is `std/lang/hooks/number`).
                         let rel = match file.strip_prefix(normalize(&std_dir)) {
                             Ok(in_std) => Path::new("std").join(in_std),
                             Err(_) => file.strip_prefix(root_dir).unwrap_or(&file).to_path_buf(),
@@ -132,23 +132,23 @@ impl Loader {
 }
 
 /// The `default` variant of std's conditional import `name` (`#http-transport`) as a path below
-/// std/ without `.vlt`, read from std/imports.vlt, whose entries are written
-/// `"#name": { …, default: "./path.vlt" }`.
+/// std/ without `.velt`, read from std/imports.velt, whose entries are written
+/// `"#name": { …, default: "./path.velt" }`.
 fn std_default_variant(std_dir: &Path, name: &str) -> Option<String> {
-    let src = std::fs::read_to_string(std_dir.join("imports.vlt")).ok()?;
+    let src = std::fs::read_to_string(std_dir.join("imports.velt")).ok()?;
     let entry = &src[src.find(&format!("\"{name}\":"))?..];
     let entry = &entry[..entry.find('}')?];
     let after = &entry[entry.find("default:")? + "default:".len()..];
     let path = after.split('"').nth(1)?;
     Some(
         path.trim_start_matches("./")
-            .trim_end_matches(".vlt")
+            .trim_end_matches(".velt")
             .to_string(),
     )
 }
 
 impl Loader {
-    /// Load the global modules (`std/prelude/global/*.vlt`) whose re-exported names non-std
+    /// Load the global modules (`std/prelude/global/*.velt`) whose re-exported names non-std
     /// module `m` mentions as whole words, as the driver's loader does.
     fn globals(&mut self, m: usize, queue: &mut VecDeque<usize>) {
         if self.modules[m].is_std {
@@ -232,7 +232,7 @@ fn bound(m: &ast::Module) -> Vec<String> {
 /// The names `export { … } from "…"` items of `src` re-export.
 fn reexports(src: &str) -> Vec<String> {
     let mut sm = SourceMap::new();
-    let id = sm.add("global.vlt".to_string(), src.to_string());
+    let id = sm.add("global.velt".to_string(), src.to_string());
     let (module, _) = velt_syntax::parse_file(id, src);
     let mut names = vec![];
     for item in &module.items {
@@ -274,12 +274,12 @@ fn normalize(p: &Path) -> PathBuf {
 }
 
 fn prelude(l: &mut Loader) {
-    // In the order std/prelude/index.vlt lists the files, as veltc's loader reads them.
+    // In the order std/prelude/index.velt lists the files, as veltc's loader reads them.
     let dir = repo_root().join("std/prelude");
-    let index = std::fs::read_to_string(dir.join("index.vlt")).expect("std/prelude/index.vlt");
-    let order = velt_common::std_modules::prelude_order(&index).expect("std/prelude/index.vlt");
+    let index = std::fs::read_to_string(dir.join("index.velt")).expect("std/prelude/index.velt");
+    let order = velt_common::std_modules::prelude_order(&index).expect("std/prelude/index.velt");
     for name in order {
-        let f = dir.join(format!("{name}.vlt"));
+        let f = dir.join(format!("{name}.velt"));
         let src = std::fs::read_to_string(&f).unwrap();
         l.add(&format!("std/prelude/{name}"), &f, src);
     }
@@ -299,7 +299,7 @@ pub fn load_src_at(file: &Path, src: &str) -> Loaded {
 
 /// Like [`load_src`] but the root may have syntax errors.
 pub fn load_src_lenient(src: &str) -> Loaded {
-    load_with(&repo_root().join("tests/inline/main.vlt"), src, true)
+    load_with(&repo_root().join("tests/inline/main.velt"), src, true)
 }
 
 /// [`load_src_lenient`] for a source placed at `file` (so relative imports resolve from there).
@@ -328,7 +328,7 @@ fn load_with(file: &Path, src: &str, lenient: bool) -> Loaded {
 
 /// Load an inline test program (it may import `std/...` modules).
 pub fn load_src(src: &str) -> Loaded {
-    load_src_at(&repo_root().join("tests/inline/main.vlt"), src)
+    load_src_at(&repo_root().join("tests/inline/main.velt"), src)
 }
 
 /// Check an inline program and require success.

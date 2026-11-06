@@ -1,0 +1,372 @@
+// registry-core (internal): `package.velt` parsed as vpm reads it (crates/vpm/src/manifest/read.rs),
+// never compiled or run: at most one import, of types only, from `velt/package`, and one
+// `export const pkg: Package = <data>`, where the data is string, number and boolean literals,
+// arrays and object literals (keys written as names, strings, numbers or `[literal]`). Anything
+// else, and anything the Velt parser would refuse, is an error. At most 64 KiB and 10,000 values.
+
+import { utf8Encode } from "velt/encoding";
+import { Data, DataKind } from "./data";
+import { ManifestError } from "./manifest_error";
+import { tokens } from "./lexer";
+import { numberKey } from "./number_key";
+import { KEYWORDS, SOFT_KEYWORDS, WELL_KNOWN_SYMBOLS } from "./symbol_names";
+import { Token, TokenKind } from "./token";
+
+/** Largest manifest read, in bytes. */
+export const MAX_BYTES = 64 * 1024;
+/** Most values one manifest may contain. */
+export const MAX_VALUES = 10_000;
+/** Deepest nesting of arrays and objects read. */
+const MAX_DEPTH = 64;
+
+/** Whether `t` can be a name: an identifier, or a keyword that is only reserved in context. */
+function isIdentLike(t: Token): bool {
+  return t.kind == TokenKind.Word && (!KEYWORDS.includes(t.text) || SOFT_KEYWORDS.includes(t.text));
+}
+
+/** Walks the tokens of one manifest. */
+class Parser {
+  private toks: Token[];
+  private at = 0;
+  private values = 0;
+  private depth = 0;
+
+  constructor(toks: Token[]) {
+    this.toks = toks;
+  }
+
+  private peek(k: number = 0): Token {
+    const i = this.at + k;
+    return this.toks[i < this.toks.length ? i : this.toks.length - 1];
+  }
+
+  private fail(message: string): never {
+    throw new ManifestError(message);
+  }
+
+  private word(text: string): bool {
+    if (this.peek().is(TokenKind.Word, text)) {
+      this.at++;
+      return true;
+    }
+    return false;
+  }
+
+  private punct(text: string): bool {
+    if (this.peek().is(TokenKind.Punct, text)) {
+      this.at++;
+      return true;
+    }
+    return false;
+  }
+
+  private expectPunct(text: string): void {
+    if (!this.punct(text)) {
+      this.fail(`expected \`${text}\``);
+    }
+  }
+
+  /** The end of a statement: `;`, or a line break, `}` or the end before the next token. */
+  private statementEnd(): void {
+    if (this.punct(";")) {
+      return;
+    }
+    const t = this.peek();
+    if (t.kind == TokenKind.End || t.lineBefore) {
+      return;
+    }
+    this.fail("expected `;`");
+  }
+
+  /** The file: returns `pkg`'s data. */
+  file(): Data {
+    let seenImport = false;
+    let init: Data | null = null;
+    while (this.peek().kind != TokenKind.End) {
+      // Empty statements.
+      if (this.punct(";")) {
+        continue;
+      }
+      if (this.peek().is(TokenKind.Word, "import")) {
+        if (seenImport) {
+          this.fail("`package.velt` may have at most one import");
+        }
+        seenImport = true;
+        this.importTypes();
+        continue;
+      }
+      if (
+        init == null &&
+        this.peek().is(TokenKind.Word, "export") &&
+        this.peek(1).is(TokenKind.Word, "const")
+      ) {
+        init = this.declaration();
+        continue;
+      }
+      this.fail("the manifest must be one `export const pkg: Package = { … }`");
+    }
+    if (init == null) {
+      this.fail("the manifest must be one `export const pkg: Package = { … }`");
+    }
+    return init;
+  }
+
+  /** `import type { Package } from "velt/package"` (or `import { type Package, … }`). */
+  private importTypes(): void {
+    this.at++;
+    // `import type { … }`: `type` is the modifier when a name or `{` follows it.
+    const allTypes =
+      this.peek().is(TokenKind.Word, "type") && this.peek(1).is(TokenKind.Punct, "{")
+        ? this.word("type")
+        : false;
+    this.expectPunct("{");
+    let names = 0;
+    while (!this.punct("}")) {
+      // `type` before a name is its modifier; alone (`{ type }`) it is the name.
+      const modifier = this.peek().is(TokenKind.Word, "type") && isIdentLike(this.peek(1));
+      if (modifier) {
+        this.at++;
+      }
+      if (!(modifier || allTypes) || !isIdentLike(this.peek())) {
+        this.fail("`package.velt` may only import types from `velt/package`");
+      }
+      let bound = this.peek().text;
+      this.at++;
+      if (this.word("as")) {
+        if (!isIdentLike(this.peek())) {
+          this.fail("expected a name");
+        }
+        bound = this.peek().text;
+        this.at++;
+      }
+      if (bound == "eval" || bound == "arguments") {
+        this.fail("a declaration cannot be named `arguments` or `eval`");
+      }
+      if (bound == "default") {
+        this.fail("`default` is a reserved word and cannot be used as a name");
+      }
+      names++;
+      if (!this.punct(",")) {
+        this.expectPunct("}");
+        break;
+      }
+    }
+    if (
+      !this.word("from") ||
+      this.peek().kind != TokenKind.Str ||
+      this.peek().text != "velt/package" ||
+      names == 0
+    ) {
+      this.fail("`package.velt` may only import types from `velt/package`");
+    }
+    this.at++;
+    this.statementEnd();
+  }
+
+  /** `export const pkg: Package = <data>`. */
+  private declaration(): Data {
+    this.at += 2;
+    // `pkg!:` (a definite assignment assertion) is the same declaration.
+    const named = this.word("pkg");
+    if (named && this.peek().is(TokenKind.Other, "!")) {
+      this.at++;
+    }
+    if (!named || !this.punct(":") || !this.packageType() || !this.punct("=")) {
+      this.fail("the manifest must be one `export const pkg: Package = { … }`");
+    }
+    const value = this.value();
+    this.statementEnd();
+    return value;
+  }
+
+  /**
+   * The type `Package`, as the Velt parser reads a type: parentheses dropped, one leading `|` and
+   * one `&` before it, and empty type arguments `<>` after it on the same line.
+   */
+  private packageType(): bool {
+    if (this.peek().is(TokenKind.Other, "|")) {
+      this.at++;
+    }
+    if (this.peek().is(TokenKind.Other, "&")) {
+      this.at++;
+    }
+    if (this.punct("(")) {
+      return this.packageType() && this.punct(")");
+    }
+    if (!this.word("Package")) {
+      return false;
+    }
+    const lt = this.peek();
+    if (lt.is(TokenKind.Other, "<") && !lt.lineBefore && this.peek(1).is(TokenKind.Other, ">")) {
+      this.at += 2;
+    }
+    return true;
+  }
+
+  /** One data value, followed by `,`, `]`, `}`, `;` or the statement's end. */
+  private value(): Data {
+    this.values++;
+    if (this.values > MAX_VALUES) {
+      this.fail(`the manifest has more than ${MAX_VALUES} values`);
+    }
+    const t = this.peek();
+    let data: Data;
+    if (t.kind == TokenKind.Str) {
+      this.at++;
+      data = new Data(DataKind.Str, t.text, false, [], []);
+    } else if (t.kind == TokenKind.Num) {
+      this.at++;
+      data = new Data(DataKind.Num, t.text, false, [], []);
+    } else if (t.is(TokenKind.Word, "true") || t.is(TokenKind.Word, "false")) {
+      this.at++;
+      data = new Data(DataKind.Bool, "", t.text == "true", [], []);
+    } else if (t.is(TokenKind.Punct, "[") || t.is(TokenKind.Punct, "{")) {
+      // No field nests deeper than a few levels, so a limit far below the Velt parser's 256
+      // keeps parity, and keeps an upload from exhausting the stack.
+      this.depth++;
+      if (this.depth > MAX_DEPTH) {
+        this.fail("the manifest nests too deeply");
+      }
+      data = t.is(TokenKind.Punct, "[") ? this.array() : this.object();
+      this.depth--;
+    } else {
+      this.fail("the manifest is data only");
+    }
+    const after = this.peek();
+    const ends =
+      after.kind == TokenKind.End ||
+      after.is(TokenKind.Punct, ",") ||
+      after.is(TokenKind.Punct, "]") ||
+      after.is(TokenKind.Punct, "}") ||
+      after.is(TokenKind.Punct, ";") ||
+      (after.lineBefore && after.kind != TokenKind.Punct && after.kind != TokenKind.Other);
+    if (!ends) {
+      // An operator, a call, a member, `as`...: an expression, not data.
+      this.fail("the manifest is data only");
+    }
+    return data;
+  }
+
+  private array(): Data {
+    this.at++;
+    const items: Data[] = [];
+    while (!this.punct("]")) {
+      items.push(this.value());
+      if (!this.punct(",")) {
+        this.expectPunct("]");
+        break;
+      }
+    }
+    return new Data(DataKind.Array, "", false, items, []);
+  }
+
+  private object(): Data {
+    this.at++;
+    const keys: string[] = [];
+    const seen: Set<string> = new Set();
+    const items: Data[] = [];
+    while (!this.punct("}")) {
+      const key = this.key();
+      if (seen.has(key)) {
+        this.fail(`duplicate key \`${key}\``);
+      }
+      this.expectPunct(":");
+      seen.add(key);
+      keys.push(key);
+      items.push(this.value());
+      if (!this.punct(",")) {
+        this.expectPunct("}");
+        break;
+      }
+    }
+    return new Data(DataKind.Object, "", false, items, keys);
+  }
+
+  /** A property's key: a name, a string, a number, or `[` a string or (negative) number `]`. */
+  private key(): string {
+    const t = this.peek();
+    if (t.kind == TokenKind.Word || t.kind == TokenKind.Str) {
+      this.at++;
+      return t.text;
+    }
+    if (t.kind == TokenKind.Num) {
+      this.at++;
+      return this.numberKey(t);
+    }
+    if (t.is(TokenKind.Punct, "[")) {
+      const symbol = this.symbolKey();
+      if (symbol != null) {
+        return symbol;
+      }
+      this.at++;
+      const negative = this.punct("-");
+      const k = this.peek();
+      let key = "";
+      if (k.kind == TokenKind.Str && !negative) {
+        key = k.text;
+      } else if (k.kind == TokenKind.Num) {
+        const n = this.numberKey(k);
+        key = negative && n != "0" ? `-${n}` : n;
+      } else {
+        this.fail("the manifest is data only");
+      }
+      this.at++;
+      this.expectPunct("]");
+      return key;
+    }
+    this.fail("expected a property name");
+  }
+
+  /**
+   * A symbol key, as the Velt parser names it: `[NAME]` (a module constant) is the key "[NAME]",
+   * and `[Symbol.iterator]` (a well-known symbol) is "[Symbol.iterator]". Null when the brackets
+   * hold something else.
+   */
+  private symbolKey(): string | null {
+    const a = this.peek(1);
+    if (
+      a.is(TokenKind.Word, "Symbol") &&
+      this.peek(2).is(TokenKind.Other, ".") &&
+      this.peek(3).kind == TokenKind.Word &&
+      this.peek(4).is(TokenKind.Punct, "]")
+    ) {
+      const name = this.peek(3).text;
+      if (!WELL_KNOWN_SYMBOLS.includes(name)) {
+        this.fail(`\`Symbol.${name}\` is not a well-known symbol`);
+      }
+      this.at += 5;
+      return `[Symbol.${name}]`;
+    }
+    if (
+      a.kind == TokenKind.Word &&
+      !KEYWORDS.includes(a.text) &&
+      this.peek(2).is(TokenKind.Punct, "]")
+    ) {
+      this.at += 3;
+      return `[${a.text}]`;
+    }
+    return null;
+  }
+
+  /** A number token's key; a type suffix (`1u8`), valid or not, makes it none. */
+  private numberKey(t: Token): string {
+    const key = t.suffix.length > 0 ? null : numberKey(t.text);
+    if (key == null) {
+      this.fail("expected a property name");
+    }
+    return key;
+  }
+}
+
+/** `pkg`'s data in the manifest text `src`; throws `ManifestError` for anything else. */
+export function parseManifest(src: string): Data {
+  const bytes = utf8Encode(src);
+  if (bytes.length > MAX_BYTES) {
+    throw new ManifestError(`the manifest is larger than ${MAX_BYTES / 1024} KiB`);
+  }
+  const toks = tokens(bytes);
+  if (toks == null) {
+    throw new ManifestError("the manifest is not valid Velt");
+  }
+  return new Parser(toks).file();
+}

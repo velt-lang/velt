@@ -1,4 +1,4 @@
-// Node version of set_index_keys.vlt (plain objects).
+// Node version of set_index_keys.velt (plain objects).
 function fill(named) {
   const t0 = performance.now();
   const o = {};

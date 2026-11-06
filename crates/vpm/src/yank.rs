@@ -58,11 +58,11 @@ mod tests {
         let pkg = tmp.path().join("lib");
         std::fs::create_dir_all(pkg.join("src")).unwrap();
         std::fs::write(
-            pkg.join("package.vlt"),
+            pkg.join("package.velt"),
             r#"export const pkg: Package = { name: "lib", version: "1.0.0" };"#,
         )
         .unwrap();
-        std::fs::write(pkg.join("src/lib.vlt"), "").unwrap();
+        std::fs::write(pkg.join("src/lib.velt"), "").unwrap();
         publish(&pkg, &loc).unwrap();
         let yanked = |loc: &Locations| read_index(loc, "lib").unwrap().unwrap().versions[0].yanked;
 

@@ -1,6 +1,6 @@
 //! Change detection for `velt dev` / `velt test --watch`: the exact files the last build read
 //! (plus the manifest and lockfile), not a directory tree, so edits to std or path dependencies
-//! count and unrelated files don't. A source file (`.vlt`, `.ts`, `.tsx`) that appears next to
+//! count and unrelated files don't. A source file (`.velt`, `.ts`, `.tsx`) that appears next to
 //! one of them counts too: it may be the module a failed build was missing, which no build has
 //! read yet.
 //!

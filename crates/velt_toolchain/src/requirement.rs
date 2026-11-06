@@ -1,4 +1,4 @@
-//! The `velt` field of `package.vlt`: which toolchain versions build the package.
+//! The `velt` field of `package.velt`: which toolchain versions build the package.
 //!
 //! A bare version is "the newest patch of that minor" (.NET's `latestPatch`): `"0.1"` is any
 //! `0.1.x`, `"0.1.3"` is `0.1.3` or a later `0.1.x`, and `"1"` any `1.x`. A requirement with an

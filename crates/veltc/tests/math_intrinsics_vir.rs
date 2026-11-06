@@ -14,8 +14,8 @@ console.log(f(k + 1.5, (k as u64) * 255));
 
 fn vir(release: bool) -> String {
     let dir = test_dir::TestDir::new();
-    std::fs::write(dir.path().join("main.vlt"), SRC).unwrap();
-    let mut args = vec!["build", "main.vlt", "--emit", "vir"];
+    std::fs::write(dir.path().join("main.velt"), SRC).unwrap();
+    let mut args = vec!["build", "main.velt", "--emit", "vir"];
     if release {
         args.push("--release");
     }

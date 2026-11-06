@@ -71,10 +71,10 @@ impl Sandbox {
 
 fn set_version(s: &Sandbox, pkg: &str, version: &str) {
     let manifest = s
-        .read(&format!("{pkg}/package.vlt"))
+        .read(&format!("{pkg}/package.velt"))
         .replace("0.1.0", version)
         .replace("1.0.0", version);
-    s.write(&format!("{pkg}/package.vlt"), &manifest);
+    s.write(&format!("{pkg}/package.velt"), &manifest);
 }
 
 #[test]
@@ -92,26 +92,26 @@ fn new_publish_add_install() {
 
     s.ok("", &["new", "app"]);
     s.ok("app", &["add", "mylib@^1.0"]);
-    let manifest = s.read("app/package.vlt");
+    let manifest = s.read("app/package.velt");
     assert!(manifest.contains("mylib: \"^1.0\""), "{manifest}");
     let lock = s.read("app/velt.lock.json");
     assert!(
         lock.contains("\"name\": \"mylib\"") && lock.contains("\"version\": \"1.2.0\""),
         "{lock}"
     );
-    assert!(s.dir.join("home/cache/mylib-1.2.0/src/lib.vlt").is_file());
+    assert!(s.dir.join("home/cache/mylib-1.2.0/src/lib.velt").is_file());
     s.ok("app", &["install", "--locked"]);
 
-    // Unknown package: error, and package.vlt is left untouched.
+    // Unknown package: error, and package.velt is left untouched.
     assert!(s
         .fail("app", &["add", "nope"])
         .contains("not in the registry"));
-    assert_eq!(s.read("app/package.vlt"), manifest);
+    assert_eq!(s.read("app/package.velt"), manifest);
     // Conflict: a requirement nothing satisfies.
     assert!(s
         .fail("app", &["add", "mylib@^2"])
         .contains("no version of `mylib` matches"));
-    assert_eq!(s.read("app/package.vlt"), manifest);
+    assert_eq!(s.read("app/package.velt"), manifest);
 }
 
 #[test]
@@ -121,7 +121,7 @@ fn add_without_version_uses_latest_and_path_deps_work() {
     s.ok("util", &["publish"]);
     s.ok("", &["new", "app"]);
     s.ok("app", &["add", "util"]);
-    assert!(s.read("app/package.vlt").contains("util: \"0.1.0\""));
+    assert!(s.read("app/package.velt").contains("util: \"0.1.0\""));
     // A package with only pre-releases: `add` picks the newest, the version `search` shows.
     s.ok("", &["new", "beta", "--lib"]);
     set_version(&s, "beta", "0.2.0-beta.1");
@@ -129,12 +129,12 @@ fn add_without_version_uses_latest_and_path_deps_work() {
     let found = s.velt("app", &["search", "beta"]);
     assert!(String::from_utf8_lossy(&found.stdout).contains("beta  0.2.0-beta.1"));
     s.ok("app", &["add", "beta"]);
-    assert!(s.read("app/package.vlt").contains("beta: \"0.2.0-beta.1\""));
+    assert!(s.read("app/package.velt").contains("beta: \"0.2.0-beta.1\""));
 
     s.ok("", &["new", "local", "--lib"]);
     s.ok("app", &["add", "local", "--path", "../local"]);
     assert!(s
-        .read("app/package.vlt")
+        .read("app/package.velt")
         .contains("local: { path: \"../local\" }"));
     assert!(s
         .read("app/velt.lock.json")
@@ -144,8 +144,8 @@ fn add_without_version_uses_latest_and_path_deps_work() {
 #[test]
 fn package_commands_outside_a_package() {
     let s = sandbox();
-    assert!(s.fail("", &["install"]).contains("no `package.vlt`"));
-    assert!(s.fail("", &["build"]).contains("no `package.vlt`"));
+    assert!(s.fail("", &["install"]).contains("no `package.velt`"));
+    assert!(s.fail("", &["build"]).contains("no `package.velt`"));
     assert!(s.fail("", &["new", "Bad"]).contains("invalid package name"));
     s.ok("", &["new", "lib", "--lib"]);
     assert!(s.fail("lib", &["build"]).contains("it is a library"));
@@ -158,31 +158,31 @@ fn check_in_a_library_package_checks_src_lib() {
     let o = s.velt("util", &["check"]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     s.write(
-        "util/src/lib.vlt",
+        "util/src/lib.velt",
         "export function f(): i64 {\n  return \"x\";\n}\n",
     );
     let err = s.fail("util", &["check"]);
-    assert!(err.contains("lib.vlt:2:"), "{err}");
-    std::fs::remove_file(s.dir.join("util/src/lib.vlt")).unwrap();
+    assert!(err.contains("lib.velt:2:"), "{err}");
+    std::fs::remove_file(s.dir.join("util/src/lib.velt")).unwrap();
     let err = s.fail("util", &["check"]);
     assert!(
-        err.contains("has neither `src/main.vlt` nor `src/lib.vlt`"),
+        err.contains("has neither `src/main.velt` nor `src/lib.velt`"),
         "{err}"
     );
-    // A configured entry that is missing is an error, even when `src/lib.vlt` exists.
+    // A configured entry that is missing is an error, even when `src/lib.velt` exists.
     s.write(
-        "util/src/lib.vlt",
+        "util/src/lib.velt",
         "export function f(): i64 {\n  return 1;\n}\n",
     );
-    let manifest = std::fs::read_to_string(s.dir.join("util/package.vlt")).unwrap();
+    let manifest = std::fs::read_to_string(s.dir.join("util/package.velt")).unwrap();
     let manifest = manifest.replacen(
         "version: \"0.1.0\"",
-        "version: \"0.1.0\", entry: \"src/app.vlt\"",
+        "version: \"0.1.0\", entry: \"src/app.velt\"",
         1,
     );
-    s.write("util/package.vlt", &manifest);
+    s.write("util/package.velt", &manifest);
     let err = s.fail("util", &["check"]);
-    assert!(err.contains("has no `src/app.vlt` to check"), "{err}");
+    assert!(err.contains("has no `src/app.velt` to check"), "{err}");
 }
 
 /// `fn(): i64` returning a string: one type error at line 2 of the file.
@@ -195,11 +195,11 @@ fn check_in_a_package_checks_every_module_under_src_and_tests() {
     s.ok("app", &["check"]);
     // Nothing imports these, so only checking the whole package finds their errors.
     std::fs::create_dir_all(s.dir.join("app/src/util")).unwrap();
-    s.write("app/src/lib.vlt", BAD);
-    s.write("app/src/util/unused.vlt", BAD);
-    s.write("app/tests/lib.test.vlt", BAD);
+    s.write("app/src/lib.velt", BAD);
+    s.write("app/src/util/unused.velt", BAD);
+    s.write("app/tests/lib.test.velt", BAD);
     let err = s.fail("app", &["check"]);
-    for file in ["lib.vlt:2:", "unused.vlt:2:", "lib.test.vlt:2:"] {
+    for file in ["lib.velt:2:", "unused.velt:2:", "lib.test.velt:2:"] {
         assert!(err.contains(file), "missing `{file}` in:\n{err}");
     }
     let out = s.velt("app", &["check", "--json"]);
@@ -207,30 +207,30 @@ fn check_in_a_package_checks_every_module_under_src_and_tests() {
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(json["errors"], 3, "{json}");
     // `velt check <file>` still checks only that file and its imports.
-    s.ok("app", &["check", "src/main.vlt"]);
+    s.ok("app", &["check", "src/main.velt"]);
 
     // A module both the entry and the library import is checked, and reported, once.
-    for file in ["src/lib.vlt", "src/util/unused.vlt", "tests/lib.test.vlt"] {
+    for file in ["src/lib.velt", "src/util/unused.velt", "tests/lib.test.velt"] {
         std::fs::remove_file(s.dir.join("app").join(file)).unwrap();
     }
-    s.write("app/src/shared.vlt", BAD);
-    s.write("app/src/lib.vlt", "import { bad } from \"./shared\";\n");
-    let main = s.read("app/src/main.vlt");
+    s.write("app/src/shared.velt", BAD);
+    s.write("app/src/lib.velt", "import { bad } from \"./shared\";\n");
+    let main = s.read("app/src/main.velt");
     s.write(
-        "app/src/main.vlt",
+        "app/src/main.velt",
         &format!("import {{ bad }} from \"./shared\";\n{main}"),
     );
     let err = s.fail("app", &["check"]);
-    assert_eq!(err.matches("shared.vlt:2:").count(), 1, "{err}");
+    assert_eq!(err.matches("shared.velt:2:").count(), 1, "{err}");
 }
 
 #[test]
 fn check_validates_the_entry_main_but_not_other_modules() {
     let s = sandbox();
     s.ok("", &["new", "app"]);
-    s.write("app/src/helper.vlt", "export const main: i64 = 1;\n");
+    s.write("app/src/helper.velt", "export const main: i64 = 1;\n");
     s.ok("app", &["check"]);
-    s.write("app/src/main.vlt", "export function f() {}\n");
+    s.write("app/src/main.velt", "export function f() {}\n");
     let err = s.fail("app", &["check"]);
     assert!(err.contains("`main` function not found"), "{err}");
 }
@@ -239,21 +239,21 @@ fn check_validates_the_entry_main_but_not_other_modules() {
 fn check_accepts_an_unimported_main_next_to_a_custom_entry() {
     let s = sandbox();
     s.ok("", &["new", "app"]);
-    let manifest = s.read("app/package.vlt").replacen(
+    let manifest = s.read("app/package.velt").replacen(
         "version: \"0.1.0\"",
-        "version: \"0.1.0\", entry: \"src/app.vlt\"",
+        "version: \"0.1.0\", entry: \"src/app.velt\"",
         1,
     );
-    s.write("app/package.vlt", &manifest);
-    s.write("app/src/app.vlt", "function main() {}\n");
-    // `src/main.vlt` (from `velt new`) and `src/main/index.vlt` would both be module `main`.
+    s.write("app/package.velt", &manifest);
+    s.write("app/src/app.velt", "function main() {}\n");
+    // `src/main.velt` (from `velt new`) and `src/main/index.velt` would both be module `main`.
     std::fs::create_dir_all(s.dir.join("app/src/main")).unwrap();
-    s.write("app/src/main/index.vlt", "export function f() {}\n");
+    s.write("app/src/main/index.velt", "export function f() {}\n");
     s.ok("app", &["build"]);
     s.ok("app", &["check"]);
-    s.write("app/src/main.vlt", BAD);
+    s.write("app/src/main.velt", BAD);
     let err = s.fail("app", &["check"]);
-    let at = format!("{}:2:", Path::new("src").join("main.vlt").display());
+    let at = format!("{}:2:", Path::new("src").join("main.velt").display());
     assert!(err.contains(&at), "missing `{at}` in:\n{err}");
 }
 
@@ -263,23 +263,23 @@ fn check_accepts_a_module_named_like_a_dependency() {
     s.ok("", &["new", "app"]);
     s.ok("", &["new", "util", "--lib"]);
     s.write(
-        "util/src/lib.vlt",
+        "util/src/lib.velt",
         "export function u(): i64 {\n  return 1;\n}\n",
     );
     s.ok("app", &["add", "util", "--path", "../util"]);
-    s.write("app/src/util.vlt", "export function local() {}\n");
+    s.write("app/src/util.velt", "export function local() {}\n");
     s.write(
-        "app/tests/u.test.vlt",
+        "app/tests/u.test.velt",
         "import { u } from \"util\";\nexport function test_u() {\n  assertEq(u(), 1);\n}\n",
     );
     s.write(
-        "app/src/main.vlt",
+        "app/src/main.velt",
         "import { u } from \"util\";\nfunction main() {\n  console.log(`${u()}`);\n}\n",
     );
     s.ok("app", &["build"]);
     s.ok("app", &["check"]);
-    // Without the entry importing it, `src/util.vlt` is loaded before the test's `util`.
-    s.write("app/src/main.vlt", "function main() {}\n");
+    // Without the entry importing it, `src/util.velt` is loaded before the test's `util`.
+    s.write("app/src/main.velt", "function main() {}\n");
     s.ok("app", &["check"]);
     s.ok("app", &["test"]);
 }
@@ -289,12 +289,12 @@ fn check_checks_modules_under_a_std_directory() {
     let s = sandbox();
     s.ok("", &["new", "app"]);
     std::fs::create_dir_all(s.dir.join("app/src/std")).unwrap();
-    s.write("app/src/std/x.vlt", "export function x() {}\n");
+    s.write("app/src/std/x.velt", "export function x() {}\n");
     s.ok("app", &["build"]);
     s.ok("app", &["check"]);
-    s.write("app/src/std/x.vlt", BAD);
+    s.write("app/src/std/x.velt", BAD);
     let err = s.fail("app", &["check"]);
-    let at = format!("{}:2:", Path::new("std").join("x.vlt").display());
+    let at = format!("{}:2:", Path::new("std").join("x.velt").display());
     assert!(err.contains(&at), "missing `{at}` in:\n{err}");
 }
 
@@ -304,9 +304,9 @@ fn check_and_test_leave_nested_packages_alone() {
     s.ok("", &["new", "app"]);
     // A package inside `src/`: its manifest is not a module, and its files are its own.
     s.ok("app/src", &["new", "vendored", "--lib"]);
-    s.write("app/src/vendored/src/lib.vlt", BAD);
+    s.write("app/src/vendored/src/lib.velt", BAD);
     s.write(
-        "app/src/vendored/src/lib.test.vlt",
+        "app/src/vendored/src/lib.test.velt",
         "export function test_fails() {\n  assertEq(1, 2);\n}\n",
     );
     s.ok("app", &["check"]);
@@ -322,7 +322,7 @@ fn check_does_not_follow_symlinked_directories() {
     let s = sandbox();
     s.ok("", &["new", "app"]);
     std::os::unix::fs::symlink("..", s.dir.join("app/src/up")).unwrap();
-    s.write("app/examples.vlt", BAD);
+    s.write("app/examples.velt", BAD);
     s.ok("app", &["check"]);
 }
 
@@ -330,17 +330,17 @@ fn check_does_not_follow_symlinked_directories() {
 fn a_missing_custom_entry_is_named_without_calling_the_package_a_library() {
     let s = sandbox();
     s.ok("", &["new", "util", "--lib"]);
-    let manifest = s.read("util/package.vlt").replacen(
+    let manifest = s.read("util/package.velt").replacen(
         "version: \"0.1.0\"",
-        "version: \"0.1.0\", entry: \"src/app.vlt\"",
+        "version: \"0.1.0\", entry: \"src/app.velt\"",
         1,
     );
-    s.write("util/package.vlt", &manifest);
+    s.write("util/package.velt", &manifest);
     let err = s.fail("util", &["build"]);
-    assert!(err.contains("has no `src/app.vlt` to build"), "{err}");
+    assert!(err.contains("has no `src/app.velt` to build"), "{err}");
     assert!(!err.contains("library"), "{err}");
     let err = s.fail("util", &["check"]);
-    assert!(err.contains("has no `src/app.vlt` to check"), "{err}");
+    assert!(err.contains("has no `src/app.velt` to check"), "{err}");
     assert!(!err.contains("library"), "{err}");
 }
 
@@ -349,7 +349,7 @@ fn import_of_undeclared_package_is_reported() {
     let s = sandbox();
     s.ok("", &["new", "app"]);
     s.write(
-        "app/src/main.vlt",
+        "app/src/main.velt",
         "import { f } from \"json\";\nfunction main() {}\n",
     );
     let err = s.fail("app", &["build"]);
@@ -381,7 +381,7 @@ fn test_runner_reports_passes_and_failures() {
     let s = sandbox();
     s.ok("", &["new", "app"]);
     s.write(
-        "app/src/math.test.vlt",
+        "app/src/math.test.velt",
         "export function test_ok() { assert(1 + 1 == 2); }\n\
          export function test_bad() { assertEq(1, 2); }\n\
          export function test_after() { console.log(\"still runs\"); }\n",
@@ -394,7 +394,7 @@ fn test_runner_reports_passes_and_failures() {
         "FAILED test_bad",
         "still runs",
         "ok test_after",
-        "4 passed; 1 failed", // + the template's two tests in tests/greet.test.vlt
+        "4 passed; 1 failed", // + the template's two tests in tests/greet.test.velt
     ] {
         assert!(stdout.contains(want), "missing `{want}` in:\n{stdout}");
     }
@@ -408,7 +408,7 @@ fn test_filter_and_no_run() {
     let s = sandbox();
     s.ok("", &["new", "app"]);
     s.write(
-        "app/src/math.test.vlt",
+        "app/src/math.test.velt",
         "export function test_add() { console.log(\"add ran\"); }\n\
          export function test_add_more() { assert(1 + 1 == 2); }\n\
          export function test_bad() { assertEq(1, 2); }\n",
@@ -425,7 +425,7 @@ fn test_filter_and_no_run() {
         "app",
         &[
             "test",
-            "src/math.test.vlt",
+            "src/math.test.velt",
             "--filter",
             "test_bad",
             "--no-run",
@@ -440,7 +440,7 @@ fn test_filter_and_no_run() {
     let h = &harnesses[0];
     assert_eq!(h["tests"], serde_json::json!(["test_bad"]), "{out}");
     assert!(
-        h["file"].as_str().unwrap().ends_with("math.test.vlt"),
+        h["file"].as_str().unwrap().ends_with("math.test.velt"),
         "{out}"
     );
     // Built, not run: run by hand, it runs its tests itself and the assertion fails.
@@ -491,7 +491,7 @@ fn test_filter_and_no_run() {
     assert!(!s.dir.join("app/target/velt/test").exists());
 
     // A test file that does not parse: its errors, with their location, are in the JSON.
-    s.write("app/src/garbled.test.vlt", "export function test_y( {\n");
+    s.write("app/src/garbled.test.velt", "export function test_y( {\n");
     let o = s.velt("app", &["test", "--filter", "test_y", "--no-run", "--json"]);
     assert_eq!(o.status.code(), Some(1));
     let out: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap();
@@ -499,14 +499,14 @@ fn test_filter_and_no_run() {
     let located = out["diagnostics"].as_array().unwrap().iter().any(|d| {
         d["location"]["file"]
             .as_str()
-            .is_some_and(|f| f.ends_with("garbled.test.vlt"))
+            .is_some_and(|f| f.ends_with("garbled.test.velt"))
     });
     assert!(located, "{out}");
-    std::fs::remove_file(s.dir.join("app/src/garbled.test.vlt")).unwrap();
+    std::fs::remove_file(s.dir.join("app/src/garbled.test.velt")).unwrap();
 
     // A test that does not build is reported in the JSON.
     s.write(
-        "app/src/broken.test.vlt",
+        "app/src/broken.test.velt",
         "export function test_x() { const n: number = \"no\"; }\n",
     );
     let o = s.velt("app", &["test", "--filter", "test_x", "--no-run", "--json"]);
@@ -530,16 +530,16 @@ fn manifest_json_prints_the_validated_manifest() {
     );
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(json["name"], "app");
-    assert_eq!(json["entry"], "src/main.vlt");
+    assert_eq!(json["entry"], "src/main.velt");
     assert_eq!(json["dependencies"]["util"]["path"], "../util");
 
     s.write(
-        "app/package.vlt",
+        "app/package.velt",
         "export const pkg: Package = { name: \"app\" };\n",
     );
     let err = s.fail("app", &["manifest", "--json"]);
     assert!(
-        err.contains("package.vlt:1:29: error: the manifest is missing `version`"),
+        err.contains("package.velt:1:29: error: the manifest is missing `version`"),
         "{err}"
     );
 }
@@ -548,20 +548,20 @@ fn manifest_json_prints_the_validated_manifest() {
 fn a_velt_toml_is_reported_with_its_conversion() {
     let s = sandbox();
     s.ok("", &["new", "app"]);
-    std::fs::remove_file(s.dir.join("app/package.vlt")).unwrap();
+    std::fs::remove_file(s.dir.join("app/package.velt")).unwrap();
     s.write(
         "app/velt.toml",
         "[package]\nname = \"app\"\nversion = \"0.2.0\"\n\n[paths]\n\"@app/*\" = \"src/*\"\n",
     );
     let err = s.fail("app", &["build"]);
     assert!(
-        err.contains("is no longer read; the manifest is `package.vlt`"),
+        err.contains("is no longer read; the manifest is `package.velt`"),
         "{err}"
     );
     let converted = &err[err.find("import type").expect("the converted manifest")..];
     assert!(converted.contains("\"@app/*\": \"src/*\""), "{converted}");
     // Saving the printed file is all the migration takes.
-    s.write("app/package.vlt", converted);
+    s.write("app/package.velt", converted);
     s.ok("app", &["build"]);
 }
 
@@ -575,7 +575,7 @@ fn manifest_checks_and_every_command_reports_the_same_error() {
         "{checked}"
     );
     s.write(
-        "app/package.vlt",
+        "app/package.velt",
         "export const pkg: Package = { name: \"app\", version: \"0.1.0\", deps: {} };\n",
     );
     for args in [
@@ -586,7 +586,7 @@ fn manifest_checks_and_every_command_reports_the_same_error() {
     ] {
         let err = s.fail("app", args);
         assert!(
-            err.contains("package.vlt:1:62: error: unknown key `deps` in the manifest"),
+            err.contains("package.velt:1:62: error: unknown key `deps` in the manifest"),
             "velt {}: {err}",
             args.join(" ")
         );
@@ -597,14 +597,14 @@ fn manifest_checks_and_every_command_reports_the_same_error() {
 fn fmt_reports_a_velt_toml_like_every_command() {
     let s = sandbox();
     s.ok("", &["new", "app"]);
-    std::fs::remove_file(s.dir.join("app/package.vlt")).unwrap();
+    std::fs::remove_file(s.dir.join("app/package.velt")).unwrap();
     s.write(
         "app/velt.toml",
         "[package]\nname = \"app\"\nversion = \"0.1.0\"\n",
     );
     let err = s.fail("app", &["fmt"]);
     assert!(
-        err.contains("is no longer read; the manifest is `package.vlt`"),
+        err.contains("is no longer read; the manifest is `package.velt`"),
         "{err}"
     );
 }
@@ -614,13 +614,13 @@ fn search_matches_descriptions_and_prints_json() {
     let s = sandbox();
     s.ok("", &["new", "textkit", "--template", "lib"]);
     let manifest = s
-        .read("textkit/package.vlt")
+        .read("textkit/package.velt")
         .replace("What textkit does, in one sentence.", "Wrap and pad text")
         .replace(
             "version: \"0.1.0\",",
             "version: \"0.1.0\",\n  keywords: [\"strings\"],",
         );
-    s.write("textkit/package.vlt", &manifest);
+    s.write("textkit/package.velt", &manifest);
     s.ok("textkit", &["publish"]);
 
     let out = s.velt("", &["search", "pad"]);
@@ -635,13 +635,13 @@ fn search_matches_descriptions_and_prints_json() {
     assert_eq!(json["packages"][0]["keywords"][0], "strings");
 }
 
-/// `.ts` and `.tsx` modules next to `.vlt` ones (#354): imported, run as the root file, tested,
+/// `.ts` and `.tsx` modules next to `.velt` ones (#354): imported, run as the root file, tested,
 /// checked with the whole package and formatted. Needs the full compiler pipeline.
 #[test]
 fn ts_and_tsx_modules_in_a_package() {
     let s = sandbox();
     s.ok("", &["new", "app"]);
-    let manifest = s.read("app/package.vlt").replacen(
+    let manifest = s.read("app/package.velt").replacen(
         "{ name: \"app\", ",
         "{\n  name: \"app\",\n  jsx: { importSource: \"./ui\" },\n  ",
         1,
@@ -649,7 +649,7 @@ fn ts_and_tsx_modules_in_a_package() {
     let manifest = manifest
         .replacen(", velt:", ",\n  velt:", 1)
         .replacen(" };", ",\n};", 1);
-    s.write("app/package.vlt", &manifest);
+    s.write("app/package.velt", &manifest);
     s.write(
         "app/src/model.ts",
         "export function greet(name: string): string {\n  return `Hello, ${name}!`;\n}\n",
@@ -659,18 +659,18 @@ fn ts_and_tsx_modules_in_a_package() {
         "export function Card(props: { title: string }): JSX.Element {\n  return <h1>{props.title}</h1>;\n}\n",
     );
     s.write(
-        "app/src/main.vlt",
+        "app/src/main.velt",
         "import { renderToStringSync } from \"velt/jsx\";\nimport { Card } from \"./card\";\nimport { greet } from \"./model\";\n\nfunction main() {\n  console.log(greet(\"ts\"));\n  console.log(renderToStringSync(<Card title=\"tsx\" />));\n}\n",
     );
     // The package's JSX provider applies to `.tsx` modules.
     let err = s.fail("app", &["check"]);
     assert!(
-        err.contains("card.tsx:2:10") && err.contains("from `jsx.importSource` in package.vlt"),
+        err.contains("card.tsx:2:10") && err.contains("from `jsx.importSource` in package.velt"),
         "{err}"
     );
     std::fs::create_dir_all(s.dir.join("app/ui")).unwrap();
     s.write(
-        "app/ui/jsx-runtime.vlt",
+        "app/ui/jsx-runtime.velt",
         "export * from \"velt/jsx/jsx-runtime\";\n",
     );
     s.ok("app", &["check"]);
@@ -693,32 +693,32 @@ fn ts_and_tsx_modules_in_a_package() {
         "app/tests/model.test.ts",
         "import { greet } from \"../src/model\";\n\nexport function test_greet() {\n  assertEq(greet(\"a\"), \"Hello, a!\");\n}\n",
     );
-    // `velt test` runs `model.test.ts` and `model.test.vlt` side by side.
+    // `velt test` runs `model.test.ts` and `model.test.velt` side by side.
     s.write(
-        "app/tests/model.test.vlt",
-        "export function test_vlt() {\n  assertEq(1, 1);\n}\n",
+        "app/tests/model.test.velt",
+        "export function test_velt() {\n  assertEq(1, 1);\n}\n",
     );
     let o = s.velt("app", &["test"]);
     let stdout = String::from_utf8_lossy(&o.stdout);
     assert!(
-        o.status.success() && stdout.contains("ok test_greet") && stdout.contains("ok test_vlt"),
+        o.status.success() && stdout.contains("ok test_greet") && stdout.contains("ok test_velt"),
         "{stdout}"
     );
     s.ok("app", &["fmt", "--check"]);
     // Whole-package `velt check` reports files with the same module path, whatever imports them.
-    s.write("app/src/dup.vlt", "export function d() {}\n");
+    s.write("app/src/dup.velt", "export function d() {}\n");
     s.write("app/src/dup.ts", "export function d() {}\n");
     let err = s.fail("app", &["check"]);
     for msg in [
-        "`src/dup.ts` and `src/dup.vlt` have the same module path",
-        "`tests/model.test.ts` and `tests/model.test.vlt` have the same module path",
+        "`src/dup.ts` and `src/dup.velt` have the same module path",
+        "`tests/model.test.ts` and `tests/model.test.velt` have the same module path",
     ] {
         assert!(err.contains(msg), "missing `{msg}` in:\n{err}");
     }
     let out = s.velt("app", &["check", "--json"]);
     let json: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
     assert_eq!(json["errors"], 2, "{json}");
-    for file in ["src/dup.ts", "tests/model.test.vlt"] {
+    for file in ["src/dup.ts", "tests/model.test.velt"] {
         std::fs::remove_file(s.dir.join("app").join(file)).unwrap();
     }
     s.ok("app", &["check"]);
@@ -733,7 +733,7 @@ fn ts_and_tsx_modules_in_a_package() {
 fn a_package_written_in_typescript_needs_no_entry() {
     let s = sandbox();
     s.ok("", &["new", "textkit", "--lib"]);
-    std::fs::remove_file(s.dir.join("textkit/src/lib.vlt")).unwrap();
+    std::fs::remove_file(s.dir.join("textkit/src/lib.velt")).unwrap();
     std::fs::remove_dir_all(s.dir.join("textkit/tests")).unwrap();
     s.write("textkit/src/lib.ts", "export { shout } from \"./shout\";\n");
     s.write(
@@ -743,7 +743,7 @@ fn a_package_written_in_typescript_needs_no_entry() {
     s.ok("textkit", &["check"]);
     s.ok("", &["new", "app"]);
     s.ok("app", &["add", "textkit", "--path", "../textkit"]);
-    std::fs::remove_file(s.dir.join("app/src/main.vlt")).unwrap();
+    std::fs::remove_file(s.dir.join("app/src/main.velt")).unwrap();
     s.write(
         "app/src/main.ts",
         "import { shout } from \"textkit\";\nimport { shout as again } from \"textkit/shout\";\n\nfunction main() {\n  console.log(again(shout(\"hi\")));\n}\n",
@@ -757,10 +757,10 @@ fn a_package_written_in_typescript_needs_no_entry() {
         String::from_utf8_lossy(&o.stderr)
     );
     // Two default entries are ambiguous, as two candidates of an import are.
-    s.write("app/src/main.vlt", "function main() {}\n");
+    s.write("app/src/main.velt", "function main() {}\n");
     let err = s.fail("app", &["run"]);
     assert!(
-        err.contains("more than one `src/main` module: `src/main.vlt`, `src/main.ts`"),
+        err.contains("more than one `src/main` module: `src/main.velt`, `src/main.ts`"),
         "{err}"
     );
 }
@@ -771,14 +771,14 @@ fn a_pin_this_velt_does_not_satisfy_is_a_warning() {
     let s = sandbox();
     std::fs::create_dir_all(s.dir.join("app")).unwrap();
     s.write(
-        "app/package.vlt",
+        "app/package.velt",
         "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = { name: \"app\", version: \"0.1.0\", velt: \"9.9\" };\n",
     );
     let out = s.velt("app", &["manifest"]);
     let err = String::from_utf8_lossy(&out.stderr);
     assert!(out.status.success(), "{err}");
     assert!(
-        err.contains("package.vlt asks for velt \"9.9\", but this is velt"),
+        err.contains("package.velt asks for velt \"9.9\", but this is velt"),
         "{err}"
     );
     // Run by the launcher, the choice was made there.
@@ -873,10 +873,10 @@ fn the_lock_records_the_toolchain_and_locked_builds_refuse_another() {
 
     // A package without a `velt` pin records none (the launcher only follows a pinned lock).
     s.ok("", &["new", "unpinned"]);
-    let manifest = s.read("unpinned/package.vlt");
+    let manifest = s.read("unpinned/package.velt");
     let unpinned = manifest.replace(&format!(", velt: \"{minor}\""), "");
     assert_ne!(unpinned, manifest, "{manifest}");
-    s.write("unpinned/package.vlt", &unpinned);
+    s.write("unpinned/package.velt", &unpinned);
     s.ok("unpinned", &["install"]);
     assert!(!s.read("unpinned/velt.lock.json").contains("\"velt\""));
 

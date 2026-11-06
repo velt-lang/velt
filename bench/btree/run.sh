@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Ordered maps: btree.vlt (Velt `BTreeMap`, LLVM release) against Rust's std `BTreeMap` and
+# Ordered maps: btree.velt (Velt `BTreeMap`, LLVM release) against Rust's std `BTreeMap` and
 # bbtree's (rust/: fat LTO, built for this CPU, as bbtree's own benchmark builds). "Velt, user
 # code" is the same program with the map's sources copied out of std into its own modules, as a
 # package would have them (crates/veltc/tests/btree_as_package.rs). Checks that all print the
@@ -21,16 +21,16 @@ mkdir -p "$OUT"
 
 echo "building velt (release) and the runtime..." >&2
 cargo build --release -q -p veltc -p velt_rt --manifest-path "$ROOT/Cargo.toml"
-"$TARGET/release/velt" build --release --backend llvm "$HERE/btree.vlt" -o "$OUT/btree-velt"
+"$TARGET/release/velt" build --release --backend llvm "$HERE/btree.velt" -o "$OUT/btree-velt"
 # The user-code copy: std's map as the program's own modules, imports made relative.
 USER="$OUT/user"
 rm -rf "$USER" && mkdir -p "$USER/btree"
-sed 's#"velt/collections/btree/#"./btree/#g' "$ROOT/std/collections/btree_map.vlt" >"$USER/btree_map.vlt"
-for f in "$ROOT"/std/collections/btree/*.vlt; do
+sed 's#"velt/collections/btree/#"./btree/#g' "$ROOT/std/collections/btree_map.velt" >"$USER/btree_map.velt"
+for f in "$ROOT"/std/collections/btree/*.velt; do
   sed 's#"velt/collections/btree/#"./#g' "$f" >"$USER/btree/$(basename "$f")"
 done
-sed 's#"velt/collections"#"./btree_map"#' "$HERE/btree.vlt" >"$USER/main.vlt"
-"$TARGET/release/velt" build --release --backend llvm "$USER/main.vlt" -o "$OUT/btree-velt-user"
+sed 's#"velt/collections"#"./btree_map"#' "$HERE/btree.velt" >"$USER/main.velt"
+"$TARGET/release/velt" build --release --backend llvm "$USER/main.velt" -o "$OUT/btree-velt-user"
 (cd "$HERE/rust" && cargo build --release -q --target-dir "$OUT/rust")
 cp "$OUT/rust/release/std" "$OUT/btree-std"
 cp "$OUT/rust/release/bbtree" "$OUT/btree-bbtree"

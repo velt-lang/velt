@@ -79,7 +79,7 @@ fn first_launch_check(took: Duration) -> Check {
 
 /// Build hello world and run it once; how long the run took.
 fn build_and_run(dir: &Path, release: bool) -> Result<Duration, String> {
-    let source = dir.join("hello.vlt");
+    let source = dir.join("hello.velt");
     std::fs::write(&source, PROGRAM)
         .map_err(|e| format!("cannot write `{}`: {e}", source.display()))?;
     let stem = if release {

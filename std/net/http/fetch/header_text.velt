@@ -1,0 +1,61 @@
+// velt/net/http (internal): the text of `Headers` (headers.velt): HTTP whitespace, header names
+// compared, and the entries in iteration order.
+
+import { Headers } from "velt/net/http/fetch/headers";
+
+/** HTTP whitespace (tab, LF, CR, space) around `v` removed; other spaces (U+00A0, …) stay. */
+export function trimHttp(v: string): string {
+  const n = v.length as i64;
+  // Most values have nothing to trim: two reads tell (HTTP whitespace is below 33).
+  if (n == 0 || (v.charCodeAt(0) > 32 && v.charCodeAt(n - 1) > 32)) {
+    return v;
+  }
+  let start: i64 = 0;
+  let end: i64 = n;
+  while (start < end && isHttpSpace(v.charCodeAt(start))) {
+    start++;
+  }
+  while (end > start && isHttpSpace(v.charCodeAt(end - 1))) {
+    end--;
+  }
+  return start == 0 && end == n ? v : v.slice(start, end);
+}
+
+function isHttpSpace(c: i64): bool {
+  return c == 9 || c == 10 || c == 13 || c == 32;
+}
+
+/** Whether `name` is `content-type`, in any case. */
+export function isContentType(name: string): bool {
+  return name.length == 12 && name.toLowerCase() == "content-type";
+}
+
+/** Whether two header names are the same (names are case-insensitive). */
+export function sameName(a: string, b: string): bool {
+  return a.length == b.length && (a == b || a.toLowerCase() == b.toLowerCase());
+}
+
+/** `[name, value]` pairs of `h` as iteration yields them: sorted by name, repeats joined. */
+export function sortedHeaders(h: Headers): [string, string][] {
+  const list = h.items();
+  const names: string[] = [];
+  for (let i: usize = 0; i < list.length; i += 2) {
+    const n = list[i];
+    if (n == "set-cookie" || !names.includes(n)) {
+      names.push(n.clone());
+    }
+  }
+  names.sort();
+  const out: [string, string][] = [];
+  let cookie: usize = 0;
+  const cookies = h.getSetCookie();
+  for (const n of names) {
+    if (n == "set-cookie") {
+      out.push([n, cookies[cookie].clone()]);
+      cookie++;
+    } else {
+      out.push([n.clone(), h.get(n) ?? ""]);
+    }
+  }
+  return out;
+}

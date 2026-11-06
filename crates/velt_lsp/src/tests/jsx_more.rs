@@ -23,9 +23,9 @@ function page(): JSX.Element {
 #[test]
 fn the_page_compiles() {
     let mut client = Client::start();
-    client.open(&uri("jsx_ui/jsx-runtime.vlt"), RUNTIME);
-    client.open(&uri("jsx_cards.vlt"), super::jsx::CARDS);
-    let doc = uri("jsx_page.vlt");
+    client.open(&uri("jsx_ui/jsx-runtime.velt"), RUNTIME);
+    client.open(&uri("jsx_cards.velt"), super::jsx::CARDS);
+    let doc = uri("jsx_page.velt");
     client.open(&doc, PAGE);
     assert_eq!(client.diagnostics(&doc)["diagnostics"], json!([]));
     client.shutdown();
@@ -63,10 +63,10 @@ fn definition_and_hover_on_namespaced_components_and_intrinsic_tags() {
     };
     assert_eq!(
         definition(&mut client, "ui.Card", 4),
-        ("jsx_cards.vlt".to_string(), Some(4))
+        ("jsx_cards.velt".to_string(), Some(4))
     );
     let (file, _) = definition(&mut client, "<div", 2);
-    assert_eq!(file, "jsx-runtime.vlt");
+    assert_eq!(file, "jsx-runtime.velt");
     let (line, col) = pos_of(PAGE, "<div", 2);
     let hover = client.request("textDocument/hover", at(&doc, line, col));
     let text = hover["contents"]["value"].as_str().unwrap_or_default();
@@ -81,11 +81,11 @@ fn definition_and_hover_on_namespaced_components_and_intrinsic_tags() {
 fn the_ast_fallback_sees_spreads_and_fragments() {
     use crate::index::scope::{self, Reference};
     let dir = std::env::temp_dir().join("velt_lsp_tests");
-    let path = dir.join("jsx_walk_spread.vlt");
+    let path = dir.join("jsx_walk_spread.velt");
     let text = "// @jsxImportSource ./jsx_ui\nfunction page(rest: { id: string }, items: string[]): JSX.Element {\n  return <><div {...rest}>{...items}</div></>;\n}\n";
     let overlay = std::collections::HashMap::from([
         (path.clone(), text.to_string()),
-        (dir.join("jsx_ui/jsx-runtime.vlt"), RUNTIME.to_string()),
+        (dir.join("jsx_ui/jsx-runtime.velt"), RUNTIME.to_string()),
     ]);
     let analysis = crate::analysis::analyze(
         &super::loader::TestLoader,
@@ -133,7 +133,7 @@ fn the_less_than_trigger_only_completes_tags() {
     // After a closed block, `<` still compares.
     let text = "function main() {\n  const a = 1;\n  if (a > 0) {\n    console.log(a);\n  }\n  if (a <\n}\n";
     let mut client = Client::start();
-    let doc = uri("jsx_trigger.vlt");
+    let doc = uri("jsx_trigger.velt");
     client.open(&doc, text);
     client.diagnostics(&doc);
     let (line, col) = pos_of(text, "a <", 3);

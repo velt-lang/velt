@@ -73,16 +73,16 @@ fn diagnostics() -> String {
     let tmp = tempfile::tempdir().unwrap();
     let (app, demo) = (tmp.path().join("app"), tmp.path().join("demo"));
     write(
-        &app.join("package.vlt"),
+        &app.join("package.velt"),
         "export const pkg: Package = { name: \"app\", version: \"0.1.0\" };",
     );
-    write(&app.join("src/main.vlt"), MAIN);
+    write(&app.join("src/main.velt"), MAIN);
     write(
-        &demo.join("package.vlt"),
+        &demo.join("package.velt"),
         "export const pkg: Package = { name: \"demo\", version: \"0.1.0\" };",
     );
-    write(&demo.join("src/lib.vlt"), LIB);
-    write(&demo.join("src/real.vlt"), REAL);
+    write(&demo.join("src/lib.velt"), LIB);
+    write(&demo.join("src/real.velt"), REAL);
 
     let exports = [
         ("velt_demo__ok", "()->u64"),
@@ -123,7 +123,7 @@ fn diagnostics() -> String {
         origin: NativeOrigin::Prebuilt,
     });
     let opts = BuildOptions {
-        input: app.join("src/main.vlt"),
+        input: app.join("src/main.velt"),
         packages: Some(graph),
         ..Default::default()
     };
@@ -169,7 +169,7 @@ fn declares_must_match_their_library_exactly() {
 /// Diagnostics of checking `src` as a program without packages.
 fn check_alone(src: &str) -> String {
     let tmp = tempfile::tempdir().unwrap();
-    let main = tmp.path().join("main.vlt");
+    let main = tmp.path().join("main.velt");
     write(&main, src);
     let opts = BuildOptions {
         input: main,
@@ -213,7 +213,7 @@ fn a_program_without_packages_declares_nothing() {
 /// `velt build --target` reports before code generation.
 fn lower_for(src: &str, target: &str) -> String {
     let tmp = tempfile::tempdir().unwrap();
-    let main = tmp.path().join("main.vlt");
+    let main = tmp.path().join("main.velt");
     write(&main, src);
     let opts = BuildOptions {
         input: main,
@@ -284,9 +284,9 @@ fn system_functions_are_bound_per_target() {
         let d = lower_for(fd, t);
         assert!(
             d.contains(&format!(
-                "main.vlt:3:14: error: `openSync` (velt/fs) is not available on {t}"
+                "main.velt:3:14: error: `openSync` (velt/fs) is not available on {t}"
             )) && d.contains(&format!(
-                "main.vlt:4:3: error: `closeSync` (velt/fs) is not available on {t}"
+                "main.velt:4:3: error: `closeSync` (velt/fs) is not available on {t}"
             )) && d.contains("it calls the system function `open`")
                 && d.matches("error:").count() == 2,
             "{d}"
@@ -421,7 +421,7 @@ fn host_functions_need_a_js_host() {
 #[test]
 fn one_host_import_has_one_signature() {
     let tmp = tempfile::tempdir().unwrap();
-    let main = tmp.path().join("main.vlt");
+    let main = tmp.path().join("main.velt");
     // `other` declares `f(param): ret` and calls it; main declares `f(param2): ret2`.
     let lower = |other: &str, mine: &str, arg: &str| {
         // An async host function's promise is spawned (a floating one is an error).
@@ -434,7 +434,7 @@ fn one_host_import_has_one_signature() {
             None => format!("export declare host(\"env\") function f{sig};\n"),
         };
         write(
-            &tmp.path().join("other.vlt"),
+            &tmp.path().join("other.velt"),
             &format!(
                 "{}export function later(): void {{\n  const b: u8[] = [0];\n  {};\n}}\n",
                 decl(other),

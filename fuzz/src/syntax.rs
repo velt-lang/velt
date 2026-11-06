@@ -52,6 +52,6 @@ mod tests {
 
     #[test]
     fn jsx_seed_round_trips() {
-        super::check(include_str!("../seeds/parse/jsx.vlt"));
+        super::check(include_str!("../seeds/parse/jsx.velt"));
     }
 }

@@ -8,18 +8,18 @@ compare-and-swap, call each other with deadlock detection, and deactivate when i
 endpoint is sigx's, so one client and one load generator drive both runtimes. The `node/`
 directory holds the same actors on @sigx/actors for the comparison.
 
-`demo.vlt` is a golden (`demo.out`), so the end-to-end tests run it in debug and release mode.
-So is `cli.vlt`, which compiles the `actors` command line (`src/main.vlt` and `src/bench.vlt`).
+`demo.velt` is a golden (`demo.out`), so the end-to-end tests run it in debug and release mode.
+So is `cli.velt`, which compiles the `actors` command line (`src/main.velt` and `src/bench.velt`).
 [FINDINGS.md](FINDINGS.md) lists what the port found in Velt: what is fixed and what is still
 open.
 
 ## Running it
 
 ```sh
-velt run demo.vlt                       # the scripted walk below (golden: demo.out)
+velt run demo.velt                       # the scripted walk below (golden: demo.out)
 velt build --release
 ./target/velt/actors serve --port 5199  # POST /_sigx/actor/{Type}/{method} {"args":[key, ...]}
-./target/velt/actors bench              # in-process throughput and latency (src/bench.vlt)
+./target/velt/actors bench              # in-process throughput and latency (src/bench.velt)
 ./target/velt/actors calls --scenario warm --c 64 --n 100000   # a fixed number of calls
 bench/cpu.sh inproc && bench/cpu.sh http   # CPU time per call against @sigx/actors (Results)
 ```
@@ -32,7 +32,7 @@ also needs [oha](https://github.com/hatoo/oha) and ports 5199, 5299 and 5399 fre
 one is taken), and its `ir` mode needs valgrind.
 
 ```
-$ velt run demo.vlt
+$ velt run demo.velt
 -- calls and persistence
 POST Counter/increment {"args":["a",1]} -> 200 {"data":1}
 POST Counter/increment {"args":["a",2]} -> 200 {"data":3}
@@ -61,7 +61,7 @@ The host is **sharded, one shard per core**:
 
 | @sigx/actors | here |
 |---|---|
-| `defineActor({ type, state, methods: (ctx) => ({…}) })` | `new ActorDef<S>(type, init, methodsFactory)`. The factory returns `new Methods<S>().method1<A, R>("name", async (ctx, a) => …)`, built once per activation like sigx's. Methods take `ctx` as a parameter, as written before [#208](https://github.com/velt-lang/velt/issues/208); an async closure that stays on its shard may now change what it captured, so sigx's `methods: (ctx) => ({…})` shape works too (`tests/golden/lang/async_closure_actors.vlt`). |
+| `defineActor({ type, state, methods: (ctx) => ({…}) })` | `new ActorDef<S>(type, init, methodsFactory)`. The factory returns `new Methods<S>().method1<A, R>("name", async (ctx, a) => …)`, built once per activation like sigx's. Methods take `ctx` as a parameter, as written before [#208](https://github.com/velt-lang/velt/issues/208); an async closure that stays on its shard may now change what it captured, so sigx's `methods: (ctx) => ({…})` shape works too (`tests/golden/lang/async_closure_actors.velt`). |
 | `ctx.state`, `await ctx.save()`, `ctx.deactivate()` | Same names. `save()` persists when the turn ends, before the caller is answered. |
 | `ctx.actor(Def, key).method(…)` | `ctx.call(type, key, method, args)`, which returns JSON. It is untyped until Velt has variadic tuple generics or `Parameters<F>` ([#209](https://github.com/velt-lang/velt/issues/209)). |
 | Turn queue, single activation per id | An array of envelopes per `Slot` and a turn loop per busy actor, in the shard's directory. |
@@ -169,13 +169,13 @@ round still carried the bug workarounds, among them a JSON round trip of every c
 
 | File | What |
 |---|---|
-| `src/runtime.vlt` | The runtime: definitions, activations, storage, shards, router, host |
-| `src/app.vlt` | The actors: `Counter` (examples/counter's) and `Tiny` (the sigx benchmark actor) |
-| `src/wire.vlt` | The sigx wire endpoint on `velt/http` |
-| `src/bench.vlt` | `actors bench` (throughput and latency) and `actors calls` (fixed work) |
-| `src/main.vlt` | `actors serve` / `bench` / `calls` |
-| `demo.vlt` / `demo.out` | The scripted walk above (golden: `cargo test --workspace --test golden`) |
-| `cli.vlt` / `cli.out` | A golden that compiles `src/main.vlt` and `src/bench.vlt`, which `demo.vlt` does not import |
+| `src/runtime.velt` | The runtime: definitions, activations, storage, shards, router, host |
+| `src/app.velt` | The actors: `Counter` (examples/counter's) and `Tiny` (the sigx benchmark actor) |
+| `src/wire.velt` | The sigx wire endpoint on `velt/http` |
+| `src/bench.velt` | `actors bench` (throughput and latency) and `actors calls` (fixed work) |
+| `src/main.velt` | `actors serve` / `bench` / `calls` |
+| `demo.velt` / `demo.out` | The scripted walk above (golden: `cargo test --workspace --test golden`) |
+| `cli.velt` / `cli.out` | A golden that compiles `src/main.velt` and `src/bench.velt`, which `demo.velt` does not import |
 | `node/server.mjs` | The same actors and endpoint on @sigx/actors (`SIGX_ACTORS=…/packages/actors`) |
 | `node/calls.mjs` | `actors calls` on @sigx/actors' `host.dispatch` |
 | `node/mem.mjs` | RSS per activation on @sigx/actors |

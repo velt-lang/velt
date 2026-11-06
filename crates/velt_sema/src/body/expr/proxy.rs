@@ -1,5 +1,5 @@
-//! `new Proxy(target, handler)` and `Reflect.*` (issue #823; std/lang/proxy/index.vlt, a global loaded on
-//! demand: std/prelude/global/proxy.vlt; hir_encodings.md "Proxy and Reflect").
+//! `new Proxy(target, handler)` and `Reflect.*` (issue #823; std/lang/proxy/index.velt, a global loaded on
+//! demand: std/prelude/global/proxy.velt; hir_encodings.md "Proxy and Reflect").
 //!
 //! A program that never names `Proxy` or `Reflect` doesn't load them, and no value of it can be a
 //! proxy: its operations on `any` call the prelude's helpers (std/lang/hooks), which
@@ -26,7 +26,7 @@ use crate::hir::{self, DefId, ExprKind as H};
 use crate::hook_calls::{self as hooks, ty, Call, HookTy};
 
 impl FnCx<'_, '_> {
-    /// Has the program loaded `Proxy` (a module names it: std/prelude/global/proxy.vlt)? Only
+    /// Has the program loaded `Proxy` (a module names it: std/prelude/global/proxy.velt)? Only
     /// then can a value be a proxy.
     pub(crate) fn uses_proxy(&self) -> bool {
         self.cx.prelude_adt("Proxy").is_some()
@@ -50,7 +50,7 @@ impl FnCx<'_, '_> {
 
     /// The `Proxy` method an operation on `any` runs on a proxy, whose errors (its trap's) the
     /// operation throws: `[PROXY_GET]` for a read, `[PROXY_SET]` for a write, `[PROXY_HAS]` for
-    /// `in` and `[PROXY_KEYS]` for `Object.keys` (std/lang/hooks/keys.vlt). `None` for another
+    /// `in` and `[PROXY_KEYS]` for `Object.keys` (std/lang/hooks/keys.velt). `None` for another
     /// intrinsic.
     pub(crate) fn proxy_method_of(i: hir::Intrinsic) -> Option<&'static str> {
         use hir::Intrinsic as I;

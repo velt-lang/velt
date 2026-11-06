@@ -45,13 +45,13 @@ fn the_flag_wins_over_the_environment_and_the_package() {
     let dir = test_dir::TestDir::new();
     let root = dir.path();
     std::fs::create_dir_all(root.join("src")).unwrap();
-    std::fs::write(root.join("src/main.vlt"), PROGRAM).unwrap();
+    std::fs::write(root.join("src/main.velt"), PROGRAM).unwrap();
     let manifest = |build: &str| {
         let text = format!(
             "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = \
              {{ name: \"app\", version: \"0.1.0\"{build} }};\n"
         );
-        std::fs::write(root.join("package.vlt"), text).unwrap();
+        std::fs::write(root.join("package.velt"), text).unwrap();
     };
     manifest("");
     // x86-64-v2 by default.
@@ -63,7 +63,7 @@ fn the_flag_wins_over_the_environment_and_the_package() {
     let flag = checks_the_cpu(root, &["--cpu", "baseline"], &[("VELT_CPU", "x86-64-v3")]);
     assert!(!flag);
     // A single file in the package takes its setting too.
-    assert!(!checks_the_cpu(root, &["src/main.vlt"], &[]));
+    assert!(!checks_the_cpu(root, &["src/main.velt"], &[]));
     // An x86 CPU does not apply to an arm64 build from the package, and is an error from --cpu.
     manifest(", build: { cpu: \"x86-64-v3\" }");
     let arm = [
@@ -97,7 +97,7 @@ fn the_flag_wins_over_the_environment_and_the_package() {
 fn cpu_names_are_checked_against_the_target() {
     let dir = test_dir::TestDir::new();
     let root = dir.path();
-    std::fs::write(root.join("main.vlt"), PROGRAM).unwrap();
+    std::fs::write(root.join("main.velt"), PROGRAM).unwrap();
     let x86 = [
         "build",
         "--target",
@@ -108,7 +108,7 @@ fn cpu_names_are_checked_against_the_target() {
     for release in [&[][..], &["--release"]] {
         let o = velt(
             root,
-            &[&x86[..], release, &["--cpu", "skylkae", "main.vlt"]].concat(),
+            &[&x86[..], release, &["--cpu", "skylkae", "main.velt"]].concat(),
             &[],
         );
         let err = String::from_utf8_lossy(&o.stderr);
@@ -118,7 +118,7 @@ fn cpu_names_are_checked_against_the_target() {
         assert!(!err.contains("compiler bug"), "{err}");
         let o = velt(
             root,
-            &[&x86[..], release, &["--cpu", "neoverse-n1", "main.vlt"]].concat(),
+            &[&x86[..], release, &["--cpu", "neoverse-n1", "main.velt"]].concat(),
             &[],
         );
         let err = String::from_utf8_lossy(&o.stderr);
@@ -127,9 +127,9 @@ fn cpu_names_are_checked_against_the_target() {
             "{err}"
         );
     }
-    let o = velt(root, &["build", "--cpu", "main.vlt"], &[]);
+    let o = velt(root, &["build", "--cpu", "main.velt"], &[]);
     let err = String::from_utf8_lossy(&o.stderr);
-    assert!(err.contains("not the file `main.vlt`"), "{err}");
+    assert!(err.contains("not the file `main.velt`"), "{err}");
 }
 
 /// `--emit llvm` prints the IR clang compiles for the CPU: with the start-up check, rounding
@@ -140,7 +140,7 @@ fn printed_ir_is_for_the_cpu() {
     let root = dir.path();
     let floor = "function main() {\n  const x = Number(process.argv.length) / 3;\n  \
                  console.log(Math.floor(x));\n}\n";
-    std::fs::write(root.join("main.vlt"), floor).unwrap();
+    std::fs::write(root.join("main.velt"), floor).unwrap();
     let ir = |cpu: &[&str]| {
         let args = [
             "build",
@@ -149,7 +149,7 @@ fn printed_ir_is_for_the_cpu() {
             "--emit",
             "llvm",
         ];
-        let o = velt(root, &[&args[..], cpu, &["main.vlt"]].concat(), &[]);
+        let o = velt(root, &[&args[..], cpu, &["main.velt"]].concat(), &[]);
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         String::from_utf8(o.stdout).unwrap()
     };
@@ -188,12 +188,12 @@ fn another_cpu_relinks_the_program() {
     }
     let dir = test_dir::TestDir::new();
     let root = dir.path();
-    std::fs::write(root.join("main.vlt"), PROGRAM).unwrap();
+    std::fs::write(root.join("main.velt"), PROGRAM).unwrap();
     let exe = root.join(if cfg!(windows) { "app.exe" } else { "app" });
     let build = |cpu: &str| {
         let args = [
             "build",
-            "main.vlt",
+            "main.velt",
             "--cpu",
             cpu,
             "-o",
@@ -227,19 +227,19 @@ fn a_cpu_without_a_feature_gets_a_message_not_a_crash() {
     }
     let dir = test_dir::TestDir::new();
     let root = dir.path();
-    std::fs::write(root.join("main.vlt"), PROGRAM).unwrap();
+    std::fs::write(root.join("main.velt"), PROGRAM).unwrap();
     let no_popcnt = [("VELT_CPU_DISABLE", "popcnt")];
     for cpu in ["x86-64-v2", "native"] {
-        let o = velt(root, &["run", "--cpu", cpu, "main.vlt"], &no_popcnt);
+        let o = velt(root, &["run", "--cpu", cpu, "main.velt"], &no_popcnt);
         let err = String::from_utf8_lossy(&o.stderr);
         assert_eq!(o.status.code(), Some(1), "{cpu}: {err}");
         assert!(o.stdout.is_empty(), "{cpu}: main ran");
         assert!(err.contains("this CPU lacks POPCNT"), "{cpu}: {err}");
         assert!(err.contains("`--cpu baseline`"), "{cpu}: {err}");
     }
-    let o = velt(root, &["run", "--cpu", "x86-64-v2", "main.vlt"], &[]);
+    let o = velt(root, &["run", "--cpu", "x86-64-v2", "main.velt"], &[]);
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
-    let o = velt(root, &["run", "--cpu", "baseline", "main.vlt"], &no_popcnt);
+    let o = velt(root, &["run", "--cpu", "baseline", "main.velt"], &no_popcnt);
     assert_eq!(String::from_utf8_lossy(&o.stdout), "started\n");
 }
 
@@ -254,7 +254,7 @@ fn half_dot_products_on_this_cpu_print_the_golden() {
     let dir = test_dir::TestDir::new();
     let root = dir.path();
     let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/std");
-    let source = golden.join("simd_half_dot.vlt");
+    let source = golden.join("simd_half_dot.velt");
     let exe = root.join(if cfg!(windows) { "app.exe" } else { "app" });
     let args = [
         "build",

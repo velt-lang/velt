@@ -101,7 +101,7 @@ processes; `VmHWM`, each process's own peak).
 | category | benchmarks (suite) | Velt | Rust | Node | Bun |
 |---|---|:-:|:-:|:-:|:-:|
 | `startup` | hello world: start-up time (4 × N rounds of one run each instead of N) and executable size (`programs/hello`) | ✓ | ✓ | ✓ | ✓ |
-| `cpu` | 14 micro-benchmarks: classes, closures (4), fib, floats, hashmap, int32, loops, nbody, shapes, sort, strings (`bench/*.vlt`, `bench/rust`, `bench/node`) | ✓ | ✓ | ✓ | ✓ |
+| `cpu` | 14 micro-benchmarks: classes, closures (4), fib, floats, hashmap, int32, loops, nbody, shapes, sort, strings (`bench/*.velt`, `bench/rust`, `bench/node`) | ✓ | ✓ | ✓ | ✓ |
 | `benchmarks-game` | binary-trees, fannkuch-redux, fasta, k-nucleotide, mandelbrot, n-body, pidigits, reverse-complement, spectral-norm at the official sizes, every variant in the suite (`bench/benchmarks-game`) | ✓ | ✓ | ✓ | ✓ |
 | `regex` | regex-redux on `fasta 5000000` (`bench/benchmarks-game/regex-redux`) | ✓ | ✓ (regex crate) | ✓ | ✓ |
 | `async` | 14 async programs: await chains, fan-out, channels, spawn, timers (`bench/async`; Rust on tokio multi-thread and current-thread, Velt on all cores and on 1 thread) | ✓ | ✓ | ✓ | ✓ |
@@ -109,14 +109,14 @@ processes; `VmHWM`, each process's own peak).
 | `async` | `concurrent_map`: velt/collections ConcurrentMap against bbtree's `BBTreeMap` (`bench/concurrent_map`) | ✓ | ✓ | | |
 | `json` | parse_typed, parse_union, parse_value, stringify, edit, navigate (`bench/json`) | ✓ | ✓ (serde_json) | ✓ | ✓ |
 | `json` | canada, citm_catalog, twitter, 50 rounds each (`bench/json/corpora`): parse to a value (Velt `JSON.parseValue`), write a parsed value back (Velt `JsonValue.stringify()`) | ✓ | ✓ (serde_json, sonic-rs, simd-json) | ✓ | ✓ |
-| `json` | the same corpora typed (`json/typed.vlt`): `JSON.parse<T>` into structs with the fields a program reads, and `JSON.stringify` of the typed value | ✓ | ✓ (serde derive on serde_json, sonic-rs, simd-json: `json/rust`) | ✓ (`JSON.parse` + the same field reads) | ✓ |
-| `tsx` | server-side rendering of one component tree (`tsx/_page.vlt`, `tsx/page.mjs`): a 10-row page × 20 000 and a 1000-row page × 500, renders per second; the HTML compared byte for byte once | ✓ (velt/jsx) | n/a | ✓ (React `renderToString`, Preact `preact-render-to-string`) | ✓ (the same) |
+| `json` | the same corpora typed (`json/typed.velt`): `JSON.parse<T>` into structs with the fields a program reads, and `JSON.stringify` of the typed value | ✓ | ✓ (serde derive on serde_json, sonic-rs, simd-json: `json/rust`) | ✓ (`JSON.parse` + the same field reads) | ✓ |
+| `tsx` | server-side rendering of one component tree (`tsx/_page.velt`, `tsx/page.mjs`): a 10-row page × 20 000 and a 1000-row page × 500, renders per second; the HTML compared byte for byte once | ✓ (velt/jsx) | n/a | ✓ (React `renderToString`, Preact `preact-render-to-string`) | ✓ (the same) |
 | `core` | collections, strings, language features: `bench/typical` (19 TypeScript programs, each with a Rust port), `bench/iter`, `bench/strings_utf16`, `bench/key_order`, `bench/any_ops`, `bench/any_text`, `bench/typed_array`, `bench/structs`, `bench/btree`, `bench/atomics`, `bench/stdport` (below) | ✓ | most | most | most |
 | `sqlite` | insert in a transaction, point select, range select, autocommit insert (`bench/db`, file database, WAL) | ✓ | ✓ (rusqlite) | ✓ (better-sqlite3) | ✓ (bun:sqlite, `bun/sqlite.ts`) |
 | `sqlite` | rows to JSON: the feed and post queries of `bench/feed` (`bench/sqlite`) | ✓ | ✓ (rusqlite + serde_json) | | |
-| `compile` | hello world, nbody, the TechEmpower server (`bench/http/techempower/server.vlt` against axum): Velt debug and release (build cache off) beside `rustc` and `cargo build` (clean, with dependencies; and after touching `main.rs`) | ✓ | ✓ | | |
+| `compile` | hello world, nbody, the TechEmpower server (`bench/http/techempower/server.velt` against axum): Velt debug and release (build cache off) beside `rustc` and `cargo build` (clean, with dependencies; and after touching `main.rs`) | ✓ | ✓ | | |
 | `http` | `/plaintext`, `/json`, `/fortunes` (sorted, escaped HTML table) with oha (`bench/http/techempower`; Bun.serve in `bun/techempower.ts`) | ✓ (the http-server package, written in Velt) | ✓ (axum) | ✓ (node:http, 1 process and node:cluster) | ✓ (Bun.serve, 1 process and `reusePort` × cores) |
-| `http` | `TSX page /small`, `/large`: the `tsx` page rendered per request (`tsx/server.vlt` on the http-server package, `tsx/server.mjs`) | ✓ (http-server) | n/a | ✓ (node:http + React or Preact, 1 process and node:cluster) | ✓ (Bun.serve + React or Preact, 1 process and `reusePort` × cores) |
+| `http` | `TSX page /small`, `/large`: the `tsx` page rendered per request (`tsx/server.velt` on the http-server package, `tsx/server.mjs`) | ✓ (http-server) | n/a | ✓ (node:http + React or Preact, 1 process and node:cluster) | ✓ (Bun.serve + React or Preact, 1 process and `reusePort` × cores) |
 | `websocket` | the chat app under steady load: 2000 clients, 20 rooms, 1000 messages/s (`bench/chat`, load from `chat/load`) | ✓ (http-server + velt/net/websocket; server cores, and 1 thread) | | ✓ (ws, 1 process) | ✓ (1 process) |
 | memory | peak RSS of every benchmark above, one table (`memory.md`), a row per thread kind: each language's single-threaded implementation (its `_st` one where it has several) beside the others', and its multi-threaded one beside theirs | | | | |
 
@@ -158,8 +158,8 @@ generator's limit, not the server's); a loss line in the results' README says
 pages alike, has each JavaScript server twice: as one process (one core) and on every server
 core (`node:cluster` with one worker per core; Bun with `reusePort` and one process per core).
 The Velt servers are written in Velt: the `http-server` package (`packages/http-server`, HTTP/1.1
-and HTTP/2 on std/net) runs `bench/http/techempower/server.vlt`, the chat app
-`bench/chat/velt/server.vlt` (with `velt/net/websocket` on it), and `tsx/server.vlt`, which
+and HTTP/2 on std/net) runs `bench/http/techempower/server.velt`, the chat app
+`bench/chat/velt/server.velt` (with `velt/net/websocket` on it), and `tsx/server.velt`, which
 serves the TSX page. They use the server as a program would:
 `serve` with its defaults (one accept loop, one task per connection on the runtime's threads,
 keep-alive and pipelining as for any client), no options the other servers do not get. Velt
@@ -173,7 +173,7 @@ WSL (10 server CPUs): Velt on one thread 4–7, one node:http process 7, Velt on
 axum 11, node:cluster 77.
 Before any timing, every server is started once
 and every route fetched: status 200, and the body and content-type of the reference server's
-response (axum for the TechEmpower routes, the page `tsx/render.vlt` prints for the TSX page,
+response (axum for the TechEmpower routes, the page `tsx/render.velt` prints for the TSX page,
 which the `tsx` category compares with React's and Preact's byte for byte). A server that fails
 the check, or answers anything but 200 in a timed run, gets no req/s.
 
@@ -198,7 +198,7 @@ the harness's own size), and the wait for a quiet machine.
   `BENCH_PG_URL` / `BENCH_REDIS_URL` runs them.
 - **The feed API** (`bench/feed`): it needs the challenge repository's seed database and a Rust
   submission's binary (`bench/feed/README.md`).
-- **bench/regex** (`literal.vlt`, `units.vlt`): Velt-only instruction-count guards with no
+- **bench/regex** (`literal.velt`, `units.velt`): Velt-only instruction-count guards with no
   counterpart in the other languages; regex-redux is the cross-language regex benchmark.
 - **Go** programs exist in the Benchmarks Game and chat suites; this showcase compares with
   Rust, Node and Bun only (`bench/benchmarks-game/run.sh` includes Go).

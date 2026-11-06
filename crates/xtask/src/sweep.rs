@@ -40,7 +40,7 @@ pub const PARSER_FILES: &[&str] = &["tests/golden/"];
 pub const FORMATTER_FILES: &[&str] = &["tests/golden/", "std/", "fuzz/seeds/"];
 
 impl Sweep {
-    /// The sweep of `tool` over the `.vlt` files under `files` (the only ones these tests read:
+    /// The sweep of `tool` over the `.velt` files under `files` (the only ones these tests read:
     /// `golden_files` in velt_syntax's tests, `corpus` in velt_fmt's), for a change touching
     /// `paths` (only comments changed in `comment_only`): [`Sweep::Full`] when code of `tool` or of
     /// a crate it depends on changed, or how it is compiled ([`TOOL_BUILD`]), else the changed
@@ -56,7 +56,7 @@ impl Sweep {
         let mut changed = BTreeSet::new();
         let mut dependencies = false;
         for path in paths {
-            // Comments change neither the tool nor how it is built, but in a `.vlt` file they are
+            // Comments change neither the tool nor how it is built, but in a `.velt` file they are
             // what the tools read: the formatter keeps them, the parser's cuts go through them.
             let code = !comment_only.contains(path);
             if code && TOOL_BUILD.contains(&path.as_str()) {
@@ -73,7 +73,7 @@ impl Sweep {
                 if code && affects_tool {
                     return Sweep::Full;
                 }
-            } else if files.iter().any(|d| path.starts_with(d)) && path.ends_with(".vlt") {
+            } else if files.iter().any(|d| path.starts_with(d)) && path.ends_with(".velt") {
                 changed.insert(path.clone());
             }
         }

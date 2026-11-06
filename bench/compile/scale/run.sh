@@ -53,9 +53,9 @@ PY
 
 fresh_home() { local h; h=$(mktemp -d "$OUT/home.XXXXXX"); echo "$h"; }
 SRC="$OUT/src/velt"
-VELT_HOME=$(fresh_home) run velt-check "$SRC" "$VELT" check -v main.vlt
-VELT_HOME=$(fresh_home) run velt-debug "$SRC" "$VELT" build -v main.vlt -o "$OUT/velt-debug.bin"
-VELT_HOME=$(fresh_home) run velt-release "$SRC" "$VELT" build --release -v main.vlt -o "$OUT/velt-release.bin"
+VELT_HOME=$(fresh_home) run velt-check "$SRC" "$VELT" check -v main.velt
+VELT_HOME=$(fresh_home) run velt-debug "$SRC" "$VELT" build -v main.velt -o "$OUT/velt-debug.bin"
+VELT_HOME=$(fresh_home) run velt-release "$SRC" "$VELT" build --release -v main.velt -o "$OUT/velt-release.bin"
 
 GO=${GO:-$(command -v go || true)}
 if [ -n "$GO" ]; then

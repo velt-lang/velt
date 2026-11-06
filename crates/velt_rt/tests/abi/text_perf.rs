@@ -1,6 +1,6 @@
 //! The string builder and the JSON reader/value parser on large inputs. Timings are only printed
 //! (`cargo test -p velt_rt --release --lib text_perf -- --nocapture`): what is checked is
-//! counted, so a loaded machine can't fail it. Speed is measured by `bench/strings.vlt` and
+//! counted, so a loaded machine can't fail it. Speed is measured by `bench/strings.velt` and
 //! `bench/json/` (`parse_typed`, `parse_value`).
 
 use super::json_reader::{borrow, decode_user_object};
@@ -22,7 +22,7 @@ fn heap_capacity(b: &VeltStr) -> Option<u64> {
 /// 1M small pushes grow the builder geometrically: its capacity changes a few dozen times, not
 /// once every few pushes (which would copy the text again each time: quadratic). Counted, not
 /// timed, so a loaded machine can't fail it; the time is only printed (the speed of string
-/// building is measured by bench/strings.vlt).
+/// building is measured by bench/strings.velt).
 #[test]
 fn builder_1m_small_pushes() {
     let part = VeltStr::from_static(b"abc");

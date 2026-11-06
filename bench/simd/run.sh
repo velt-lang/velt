@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# SIMD kernels: kernels.vlt (Velt, LLVM release) against kernels.rs (rustc -O), each kernel as
+# SIMD kernels: kernels.velt (Velt, LLVM release) against kernels.rs (rustc -O), each kernel as
 # a plain loop and with SIMD vectors (Velt: `u8x16` / `f32x4`; Rust: `core::arch` intrinsics for
 # the host, NEON or SSE2). Checks that both print the same checksums, and prints a Markdown
 # table of the best time (ms) over RUNS runs, interleaved so a busy machine affects both alike.
@@ -19,7 +19,7 @@ mkdir -p "$OUT"
 
 echo "building velt (release) and the runtime..." >&2
 cargo build --release -q -p veltc -p velt_rt --manifest-path "$ROOT/Cargo.toml"
-"$TARGET/release/velt" build --release --backend llvm "$HERE/kernels.vlt" -o "$OUT/kernels-velt"
+"$TARGET/release/velt" build --release --backend llvm "$HERE/kernels.velt" -o "$OUT/kernels-velt"
 rustc -O --edition 2021 -o "$OUT/kernels-rust" "$HERE/kernels.rs"
 
 "$PYTHON" - "$RUNS" "$OUT" <<'PY'

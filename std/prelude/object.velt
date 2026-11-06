@@ -1,0 +1,56 @@
+// Prelude: TypeScript's `Object` helpers over records (`Object.keys`, `values`, `entries`,
+// `fromEntries`; record.velt).
+
+import { RECORD_ENTRIES, RECORD_KEY_NAMES, RECORD_SET, RECORD_VALUES } from "velt/lang/hooks/keys";
+
+// Doc comments adapted from TypeScript's lib.*.d.ts (Apache-2.0, © Microsoft); see NOTICE.
+
+/**
+ * TypeScript's `Object.keys` / `Object.values` / `Object.entries`, for records (JavaScript's
+ * order: array-index keys first, ascending, then insertion order).
+ * Sema checks calls of them itself: `Object.keys` also lists the fields of any object
+ * (crates/velt_sema/src/body/expr/object_keys.rs).
+ */
+export class Object {
+  /**
+   * Returns the keys of a record as strings (a string enum key as its value): array-index keys
+   * first, ascending, then the others in insertion order.
+   * On other objects it lists their fields.
+   * @param r - The record whose keys to list.
+   */
+  static keys<K, V>(r: Record<K, V>): string[] {
+    return r[RECORD_KEY_NAMES]();
+  }
+
+  /**
+   * Returns an array of the values of a record, in key order (as `keys`). An object literal works
+   * too, read as a `Record<string, V>`: `Object.values({ x: 1, y: 2 })` is `[1, 2]`.
+   * @param r - The record whose values to list.
+   */
+  static values<K, V>(r: Record<K, V>): V[] {
+    return r[RECORD_VALUES]();
+  }
+
+  /**
+   * Returns an array of the `[key, value]` pairs of a record, in key order (as `keys`). An object
+   * literal works too, read as a `Record<string, V>`.
+   * @param r - The record whose entries to list.
+   */
+  static entries<K, V>(r: Record<K, V>): [K, V][] {
+    return r[RECORD_ENTRIES]();
+  }
+
+  /**
+   * Returns an object made from `[key, value]` pairs, as a `Record<string, V>`: later pairs
+   * replace earlier ones with the same key. Sema passes any other iterable (a `Map`, a
+   * generator) through `Array.from` first.
+   * @param entries - The `[key, value]` pairs.
+   */
+  static fromEntries<V>(entries: [string, V][]): Record<string, V> {
+    const r: Record<string, V> = {};
+    for (const [k, v] of entries) {
+      r[RECORD_SET](k, v);
+    }
+    return r;
+  }
+}

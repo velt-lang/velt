@@ -1,2 +1,2 @@
-module_const_assign_stored.vlt:4:3
+module_const_assign_stored.velt:4:3
 cannot assign to `seen`, a module `const`

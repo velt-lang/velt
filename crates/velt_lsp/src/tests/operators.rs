@@ -46,7 +46,7 @@ fn definition(client: &mut Client, app: &lsp_types::Url, needle: &str, delta: us
 #[test]
 fn an_operator_leads_to_its_method() {
     let mut client = Client::start();
-    let app = uri("operators_app.vlt");
+    let app = uri("operators_app.velt");
     client.open(&app, APP);
     let decl = |needle: &str| pos_of(APP, needle, 0);
     assert_eq!(
@@ -91,7 +91,7 @@ function main() {
 #[test]
 fn rename_covers_every_key_of_an_index() {
     let mut client = Client::start();
-    let app = uri("grid_app.vlt");
+    let app = uri("grid_app.velt");
     client.open(&app, GRID);
     assert_eq!(
         client.diagnostics(&app)["diagnostics"],

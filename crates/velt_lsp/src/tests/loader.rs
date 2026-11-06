@@ -1,5 +1,5 @@
-//! A minimal [`ProgramLoader`] for protocol tests: relative imports only (`./x` → `x.vlt` next to
-//! the importer) and relative JSX runtimes (`// @jsxImportSource ./ui` → `ui/jsx-runtime.vlt`),
+//! A minimal [`ProgramLoader`] for protocol tests: relative imports only (`./x` → `x.velt` next to
+//! the importer) and relative JSX runtimes (`// @jsxImportSource ./ui` → `ui/jsx-runtime.velt`),
 //! sources from the overlay or the disk, no std or packages. [`StdLoader`] adds `velt/x` imports
 //! from a test's own std root (no prelude) and lists its modules. The real loader lives in
 //! `veltc` (which depends on this crate) and has its own LSP integration test there.
@@ -57,20 +57,20 @@ impl ProgramLoader for StdLoader {
 /// The file `spec` names from `from`, as [`load`] resolves it, if it exists.
 fn resolve(spec: &str, from: &Path, std_root: Option<&Path>) -> Option<PathBuf> {
     let file = if let Some(rel) = spec.strip_prefix("./") {
-        from.parent()?.join(format!("{rel}.vlt"))
+        from.parent()?.join(format!("{rel}.velt"))
     } else {
         std_file(std_root?, spec.strip_prefix("velt/")?)
     };
     file.is_file().then_some(file)
 }
 
-/// The file of std module `rel`: `<std>/<rel>.vlt`, else the folder module `<std>/<rel>/index.vlt`.
+/// The file of std module `rel`: `<std>/<rel>.velt`, else the folder module `<std>/<rel>/index.velt`.
 fn std_file(std: &Path, rel: &str) -> PathBuf {
-    let file = std.join(format!("{rel}.vlt"));
+    let file = std.join(format!("{rel}.velt"));
     if file.is_file() {
         file
     } else {
-        std.join(rel).join("index.vlt")
+        std.join(rel).join("index.velt")
     }
 }
 
@@ -108,7 +108,7 @@ fn load(
         }
         for (spec, span, is_runtime) in specs {
             let (file, canonical) = if let Some(rel) = spec.strip_prefix("./") {
-                (dir.join(format!("{rel}.vlt")), rel.to_string())
+                (dir.join(format!("{rel}.velt")), rel.to_string())
             } else if let (Some(rel), Some(std)) = (spec.strip_prefix("velt/"), std_root) {
                 (std_file(std, rel), format!("std/{rel}"))
             } else {

@@ -1,2 +1,2 @@
-shared_fn_captures_lock_or_clone.vlt:15:23: error: this function captures `m`, a `Mutex<i64>` held by value, and it is in `shared(...)`, so each call would have a lock of its own
-shared_fn_captures_lock_or_clone.vlt:20:25: error: this function captures `k`, and it is in `shared(...)`, so each call would run `K`'s `clone()` on the same object, from several threads at once
+shared_fn_captures_lock_or_clone.velt:15:23: error: this function captures `m`, a `Mutex<i64>` held by value, and it is in `shared(...)`, so each call would have a lock of its own
+shared_fn_captures_lock_or_clone.velt:20:25: error: this function captures `k`, and it is in `shared(...)`, so each call would run `K`'s `clone()` on the same object, from several threads at once

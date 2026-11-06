@@ -38,7 +38,7 @@ interface AsyncIterable<T, E = never> {
 }
 ```
 
-They live in `std/prelude/iter.vlt`.
+They live in `std/prelude/iter.velt`.
 
 - The done case has no `value` (an `undefined` there is a later phase of #930), and there is no `TReturn`.
   `IteratorResult<T>` is an ordinary discriminated union on a `bool` literal field; `if (r.done)`
@@ -174,7 +174,7 @@ function* range(n: i64): Generator<i64> {
   only creates the generator and never throws. `yield` is only allowed in generators (and not
   in an arrow inside one); `await` is not allowed in them; `return value` is an error (no
   `TReturn`); a bare `yield` needs `Generator<void>`.
-- `Generator<T, E>` is a prelude **class** (`std/prelude/iter.vlt`) implementing
+- `Generator<T, E>` is a prelude **class** (`std/prelude/iter.velt`) implementing
   `Iterator<T, E>` and `Iterable<T, E>`: `next()`, `return()`, `[Symbol.iterator]()` (returns
   `this` as an `Iterator<T, E>`) and `[Symbol.dispose]()` (closes it, so `using g = gen()`
   works and dropping it closes it). Its methods use the std-only intrinsics
@@ -372,7 +372,7 @@ Without it, two `next()` promises polled the same suspended `await` with differe
 values went to the wrong caller, a lost wakeup could hang the program, and `return()` during a
 pending `next()` skipped `finally` blocks.
 
-The queue lives in the prelude class (std/prelude/iter.vlt): three `u64` fields after the
+The queue lives in the prelude class (std/prelude/iter.velt): three `u64` fields after the
 table pointer — whether a call is running, `head` and `tail`, runtime latches
 (`velt_rt_latch_*`, the ones `new Promise` uses). A call that finds none running runs at once
 and allocates nothing. A call that has to wait creates the latch it will open when it finishes
@@ -430,12 +430,12 @@ caller (section 4): no allocation per item, the same runtime calls as the pull l
 
 | Source | How | Yields | `E` |
 |---|---|---|---|
-| `Channel<T>` (std/sync/channel.vlt) | `implements AsyncIterable<T>`, `async *[Symbol.asyncIterator]()` | values until closed and drained | `never` |
-| `FileReader` (std/fs/file_reader.vlt) | `async *lines(): AsyncGenerator<string, IoError>` | remaining lines | `IoError` |
+| `Channel<T>` (std/sync/channel.velt) | `implements AsyncIterable<T>`, `async *[Symbol.asyncIterator]()` | values until closed and drained | `never` |
+| `FileReader` (std/fs/file_reader.velt) | `async *lines(): AsyncGenerator<string, IoError>` | remaining lines | `IoError` |
 | velt/process | `export async function* lines()` | remaining lines | `IoError` |
-| `WebSocket` (std/net/websocket/index.vlt) | `implements AsyncIterable<WsMessage, IoError>` | messages until the peer closed | `IoError` |
-| `RedisSubscriber` (packages/redis/src/subscriber.vlt) | `implements AsyncIterable<RedisMessage, RedisError>` | messages until `close()` | `RedisError` |
-| `Ticker` (std/time/ticker.vlt) | `implements AsyncIterable<i64>` | tick numbers 1, 2, … per loop, until stopped | `never` |
+| `WebSocket` (std/net/websocket/index.velt) | `implements AsyncIterable<WsMessage, IoError>` | messages until the peer closed | `IoError` |
+| `RedisSubscriber` (packages/redis/src/subscriber.velt) | `implements AsyncIterable<RedisMessage, RedisError>` | messages until `close()` | `RedisError` |
+| `Ticker` (std/time/ticker.velt) | `implements AsyncIterable<i64>` | tick numbers 1, 2, … per loop, until stopped | `never` |
 | postgres `CopyReader` | `implements AsyncIterable<string, PgError>` | `read()` chunks to the end | `PgError` |
 
 `FileReader` and stdin get a `lines()` method rather than being iterable themselves: a reader
@@ -495,14 +495,14 @@ returns the generator as an `Iterator<T, E>` (`ToDyn` through `Generator`'s impl
 method implementing an interface method (here or in a class) whose error type is inferred must
 turn out not to throw (`throws/checks.rs` `iface_generator`): the impl's `E` comes from the
 result as written, before bodies are checked; a throwing one is an error asking to write `E`
-(before, it silently stopped at the error). The prelude (std/prelude/iter.vlt) has the blocks:
+(before, it silently stopped at the error). The prelude (std/prelude/iter.velt) has the blocks:
 
 | Type | `[Symbol.iterator]()` returns | Iterates |
 |---|---|---|
 | `T[]` | `new ArrayIterator<T>(this)` | a live view: the iterator holds the array (a share, not a copy) and reads the length at each step; once done it stays done (JS) |
 | `string` | `new StringIterator(this)` | characters (code points) as strings, by code-unit position (a surrogate pair is one) |
 | `Map<K, V>` | `new ArrayIterator(this.entries())` | the entries as of the call |
-| `Set<T>` (std/collections/set.vlt) | `new ArrayIterator(this.values())` | the elements as of the call (a class method: `Set` declares `implements Iterable<T>`) |
+| `Set<T>` (std/collections/set.velt) | `new ArrayIterator(this.values())` | the elements as of the call (a class method: `Set` declares `implements Iterable<T>`) |
 
 So `[1, 2, 3]` converts to an `Iterable<i64>` value (`ToDyn` with the impl; the array's header
 is boxed unless the array is already counted, and no element is copied), satisfies an
@@ -559,7 +559,7 @@ interface AsyncIterableIterator<T, E = never> extends AsyncIterator<T, E>, Async
   `values()` / `entries()` stay arrays. `forEach` and `for...of` over a map (a place, a
   getter, an element or a call result; or its `keys()`, `values()`, `entries()`) are live: they walk the entry positions with a cursor that
   finds its place again by sequence number when a compaction, a pop or a clear renumbers them
-  (std/lang/map/layout.vlt, "Live iteration"; `velt_sema`'s `for_map.rs`). The loop
+  (std/lang/map/layout.velt, "Live iteration"; `velt_sema`'s `for_map.rs`). The loop
   holds the map in a hidden local from its start, so reassigning the source does not redirect it.
 - `IterableIterator<T>` / `IteratorObject<T>` declare `[Symbol.iterator]()` as returning
   `Iterator<T, E>` (no covariant returns), and are two separate interfaces: a value of one does
@@ -646,7 +646,7 @@ array and summing it.
 The generator's state is embedded in the filling loop, so the only allocation is the array
 (grown by doubling, like the hand loop's pushes). Destructuring allocates the small array of the
 values it takes. Every other bench/ program compiles to the same object file as before this
-work, with the std at the same path, except `bench/async/all_small_stored.vlt`, whose code is
+work, with the std at the same path, except `bench/async/all_small_stored.velt`, whose code is
 the same but one internal glue symbol is numbered by a type id (`_Gunclaimed_171`, was `_167`):
 the prelude's two new classes intern a few types first.
 
@@ -692,7 +692,7 @@ return ... }`, or `async *[Symbol.asyncIterator]()`): object literal methods par
 closest workable form is a literal whose *one* member is the iterator method: sema
 (`expr/object_method.rs`) makes the method a function value (a generator expression returning
 `Iterator<T, E>`, or an arrow) and the object `new IterableObject(f)`, a compiler hook
-(`std/lang/hooks/iter.vlt`) implementing `Iterable<T, E>` by calling `f`
+(`std/lang/hooks/iter.velt`) implementing `Iterable<T, E>` by calling `f`
 (`AsyncIterableObject` for `AsyncIterable`). Each loop calls the method again, as in JS.
 
 ### Deviations

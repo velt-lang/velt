@@ -61,7 +61,7 @@ fn every_rule_fixture_passes_velt_check() {
         .map(|e| e.unwrap().path())
         .filter(|p| {
             p.extension()
-                .is_some_and(|e| e == "vlt" || e == "ts" || e == "tsx")
+                .is_some_and(|e| e == "velt" || e == "ts" || e == "tsx")
         })
         .collect();
     files.sort();
@@ -97,7 +97,7 @@ fn every_fixed_case_passes_velt_check() {
     fixed.sort();
     assert!(fixed.len() > 3, "{fixed:?}");
     for file in fixed {
-        let ext = ["vlt", "ts", "tsx"]
+        let ext = ["velt", "ts", "tsx"]
             .into_iter()
             .find(|ext| file.with_extension(ext).is_file())
             .unwrap_or_else(|| panic!("{}: no case for it", file.display()));
@@ -137,7 +137,7 @@ fn every_rejected_sample_passes_velt_check() {
     let native = test_dir::TestDir::new();
     std::fs::create_dir_all(native.path().join("src")).unwrap();
     std::fs::write(
-        native.path().join("package.vlt"),
+        native.path().join("package.velt"),
         "import type { Package } from \"velt/package\";\n\nexport const pkg: Package = { name: \"sample\", version: \"0.1.0\", native: { c: {} } };\n",
     )
     .unwrap();
@@ -159,19 +159,19 @@ fn findings_print_as_diagnostics_with_their_code_and_fail() {
     let dir = tmp.path();
     write(
         dir,
-        "a.vlt",
+        "a.velt",
         "export function f(x: f64): number {\n  return x;\n}\n",
     );
-    let o = velt(dir, &["check", "--ts-compat", "a.vlt"]);
+    let o = velt(dir, &["check", "--ts-compat", "a.velt"]);
     let err = stderr(&o);
     assert_eq!(o.status.code(), Some(1), "{err}");
     assert!(
-        err.contains("a.vlt:1:22: error: `f64` is not a TypeScript type"),
+        err.contains("a.velt:1:22: error: `f64` is not a TypeScript type"),
         "{err}"
     );
     assert!(err.contains("= note: ts-compat(velt-number-type)"), "{err}");
     // A plain check doesn't lint.
-    assert!(velt(dir, &["check", "a.vlt"]).status.success());
+    assert!(velt(dir, &["check", "a.velt"]).status.success());
 }
 
 /// The rules on types run in the command too; a library result that is `undefined` in Velt as
@@ -212,10 +212,10 @@ fn json_adds_code_and_fix() {
     let dir = tmp.path();
     write(
         dir,
-        "a.vlt",
+        "a.velt",
         "export function f(x: f64): bool {\n  return x > 1;\n}\n",
     );
-    let o = velt(dir, &["check", "--ts-compat", "a.vlt", "--json"]);
+    let o = velt(dir, &["check", "--ts-compat", "a.velt", "--json"]);
     assert_eq!(o.status.code(), Some(1), "{}", stderr(&o));
     let report = json(&o);
     assert_eq!(codes(&report), ["velt-number-type", "bool-type"]);
@@ -234,8 +234,8 @@ fn json_adds_code_and_fix() {
         "ts-compat(bool-type)"
     );
     // The check's own diagnostics have both fields, as `null`.
-    write(dir, "b.vlt", "export const x: number = \"a\";\n");
-    let report = json(&velt(dir, &["check", "b.vlt", "--json"]));
+    write(dir, "b.velt", "export const x: number = \"a\";\n");
+    let report = json(&velt(dir, &["check", "b.velt", "--json"]));
     let d = &report["diagnostics"][0];
     assert!(d["code"].is_null() && d["fix"].is_null(), "{d}");
 }
@@ -292,8 +292,8 @@ fn relative_imports_must_stay_among_the_linted_files() {
 fn a_file_failing_the_check_is_not_linted() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    write(dir, "bad.vlt", "export const x: f64 = \"a\";\n");
-    write(dir, "good.vlt", "export const y: f64 = 1.5;\n");
+    write(dir, "bad.velt", "export const x: f64 = \"a\";\n");
+    write(dir, "good.velt", "export const y: f64 = 1.5;\n");
     let o = velt(dir, &["check", "--ts-compat", ".", "--json"]);
     assert_eq!(o.status.code(), Some(1));
     let report = json(&o);
@@ -310,8 +310,8 @@ fn a_file_failing_the_check_is_not_linted() {
     assert_eq!(
         files,
         [
-            ("bad.vlt".to_string(), "-".to_string()),
-            ("good.vlt".to_string(), "velt-number-type".to_string())
+            ("bad.velt".to_string(), "-".to_string()),
+            ("good.velt".to_string(), "velt-number-type".to_string())
         ]
     );
 }
@@ -324,7 +324,7 @@ fn paths_must_hold_sources() {
     let o = velt(dir, &["check", "--ts-compat", "empty"]);
     assert_eq!(o.status.code(), Some(1));
     assert!(
-        stderr(&o).contains("has no `.vlt`, `.ts` or `.tsx` files"),
+        stderr(&o).contains("has no `.velt`, `.ts` or `.tsx` files"),
         "{}",
         stderr(&o)
     );
@@ -352,7 +352,7 @@ fn a_line_comment_pragma_is_fixed_to_a_block_comment_with_the_same_provider() {
     let dir = tmp.path();
     write(
         dir,
-        "ui/jsx-runtime.vlt",
+        "ui/jsx-runtime.velt",
         "export * from \"velt/jsx/jsx-runtime\";\n",
     );
     let body =
@@ -389,10 +389,10 @@ fn manifest(name: &str) -> String {
 fn the_files_must_share_one_package() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    write(dir, "a/package.vlt", &manifest("alpha"));
+    write(dir, "a/package.velt", &manifest("alpha"));
     write(dir, "a/src/m.ts", "export const x: number = 1;\n");
     write(dir, "a/src/n.ts", "export const y: number = 2;\n");
-    write(dir, "b/package.vlt", &manifest("beta"));
+    write(dir, "b/package.velt", &manifest("beta"));
     write(dir, "b/src/m.ts", "export const x: number = 1;\n");
     write(dir, "loose.ts", "export const z: number = 3;\n");
     let o = velt(dir, &["check", "--ts-compat", "a/src/m.ts", "b/src/m.ts"]);
@@ -430,7 +430,7 @@ fn declaration_files_are_not_modules() {
 fn files_with_the_same_module_path_are_reported() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    write(dir, "src/dup.vlt", "export function d() {}\n");
+    write(dir, "src/dup.velt", "export function d() {}\n");
     write(dir, "src/dup.ts", "export function e() {}\n");
     let o = velt(dir, &["check", "--ts-compat", "src"]);
     assert_eq!(o.status.code(), Some(1));
@@ -445,10 +445,10 @@ fn files_with_the_same_module_path_are_reported() {
 fn findings_follow_the_check_after_a_blank_line() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    write(dir, "bad.vlt", "export const x: number = \"a\";\n");
-    write(dir, "good.vlt", "export const y: f64 = 1.5;\n");
-    let err = stderr(&velt(dir, &["check", "--ts-compat", "bad.vlt", "good.vlt"]));
-    let (check, lint) = err.split_once("good.vlt:1:").expect(&err);
+    write(dir, "bad.velt", "export const x: number = \"a\";\n");
+    write(dir, "good.velt", "export const y: f64 = 1.5;\n");
+    let err = stderr(&velt(dir, &["check", "--ts-compat", "bad.velt", "good.velt"]));
+    let (check, lint) = err.split_once("good.velt:1:").expect(&err);
     assert!(
         check.ends_with("\n\n") && !check.ends_with("\n\n\n"),
         "{err}"
@@ -484,13 +484,13 @@ fn without_paths_the_packages_ts_compat_folders_are_linted() {
     let dir = tmp.path();
     write(
         dir,
-        "package.vlt",
+        "package.velt",
         &manifest_with_ts_compat("[\"src/models\", \"src/ui\"]"),
     );
-    write(dir, "src/main.vlt", "export function main() {}\n");
-    write(dir, "src/server.vlt", "export const port: number = 8080;\n");
+    write(dir, "src/main.velt", "export function main() {}\n");
+    write(dir, "src/server.velt", "export const port: number = 8080;\n");
     // Outside the folders: not linted.
-    write(dir, "src/jobs.vlt", "export const big: i64 = 1;\n");
+    write(dir, "src/jobs.velt", "export const big: i64 = 1;\n");
     write(dir, "src/models/user.ts", "export const age: i32 = 1;\n");
     write(
         dir,
@@ -539,10 +539,10 @@ fn without_paths_the_packages_ts_compat_folders_are_linted() {
 fn a_package_nested_in_a_folder_is_left_out() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    write(dir, "package.vlt", &manifest_with_ts_compat("[\"shared\"]"));
+    write(dir, "package.velt", &manifest_with_ts_compat("[\"shared\"]"));
     write(dir, "shared/user.ts", "export const age: number = 1;\n");
     // Another package's files, with findings of their own, and its manifest are not linted.
-    write(dir, "shared/inner/package.vlt", &manifest("inner"));
+    write(dir, "shared/inner/package.velt", &manifest("inner"));
     write(
         dir,
         "shared/inner/item.ts",
@@ -573,7 +573,7 @@ fn without_paths_a_package_must_list_existing_folders() {
     let err = stderr(&o);
     assert!(
         err.contains(
-            "lints the folders a package's `tsCompat` lists, but there is no `package.vlt`"
+            "lints the folders a package's `tsCompat` lists, but there is no `package.velt`"
         ),
         "{err}"
     );
@@ -582,17 +582,17 @@ fn without_paths_a_package_must_list_existing_folders() {
         "{err}"
     );
     // A package without `tsCompat`.
-    write(dir, "package.vlt", &manifest("app"));
-    write(dir, "src/main.vlt", "export function main() {}\n");
+    write(dir, "package.velt", &manifest("app"));
+    write(dir, "src/main.velt", "export function main() {}\n");
     let err = stderr(&velt(dir, &["check", "--ts-compat"]));
     assert!(
-        err.contains("package `app` has no `tsCompat` folders to lint: list them in package.vlt"),
+        err.contains("package `app` has no `tsCompat` folders to lint: list them in package.velt"),
         "{err}"
     );
     // A folder that isn't there; then one without sources.
     write(
         dir,
-        "package.vlt",
+        "package.velt",
         &manifest_with_ts_compat("[\"src/models\"]"),
     );
     let o = velt(dir, &["check", "--ts-compat", "--json"]);
@@ -604,7 +604,7 @@ fn without_paths_a_package_must_list_existing_folders() {
     std::fs::create_dir_all(dir.join("src/models")).unwrap();
     let err = stderr(&velt(dir, &["check", "--ts-compat"]));
     assert!(
-        err.contains("the `tsCompat` folders have no `.vlt`, `.ts` or `.tsx` files to lint"),
+        err.contains("the `tsCompat` folders have no `.velt`, `.ts` or `.tsx` files to lint"),
         "{err}"
     );
     // Explicit paths ignore `tsCompat`.

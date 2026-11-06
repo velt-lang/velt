@@ -22,9 +22,9 @@ function main() {
 
 fn open_app() -> (Client, lsp_types::Url) {
     let mut client = Client::start();
-    let app = uri("nsm_app.vlt");
-    client.open(&uri("nsm_lib.vlt"), LIB);
-    client.open(&uri("nsm_barrel.vlt"), BARREL);
+    let app = uri("nsm_app.velt");
+    client.open(&uri("nsm_lib.velt"), LIB);
+    client.open(&uri("nsm_barrel.velt"), BARREL);
     client.open(&app, APP);
     let diags = client.diagnostics(&app);
     assert_eq!(
@@ -63,8 +63,8 @@ fn definition(
 #[test]
 fn definition_through_namespaces_and_re_exports() {
     let (mut client, app) = open_app();
-    let helper = ("nsm_lib.vlt".to_string(), 0, 16);
-    let point = ("nsm_lib.vlt".to_string(), 4, 13);
+    let helper = ("nsm_lib.velt".to_string(), 0, 16);
+    let point = ("nsm_lib.velt".to_string(), 4, 13);
     assert_eq!(definition(&mut client, &app, "helper(1)", 0), helper);
     assert_eq!(definition(&mut client, &app, "twice(2)", 0), helper);
     assert_eq!(definition(&mut client, &app, "Point = ", 0), point);
@@ -104,8 +104,8 @@ fn completion_lists_namespace_exports() {
 #[test]
 fn completion_lists_namespace_exports_while_typing() {
     let mut client = Client::start();
-    let doc = uri("nsm_typing.vlt");
-    client.open(&uri("nsm_lib.vlt"), LIB);
+    let doc = uri("nsm_typing.velt");
+    client.open(&uri("nsm_lib.velt"), LIB);
     let text = "import * as lib from \"./nsm_lib\";\n\nfunction main() {\n  lib.\n}\n";
     client.open(&doc, text);
     client.diagnostics(&doc);

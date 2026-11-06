@@ -1,4 +1,4 @@
-// Integer loops: Collatz chain lengths and a nested multiply/modulo loop (same as loops.vlt).
+// Integer loops: Collatz chain lengths and a nested multiply/modulo loop (same as loops.velt).
 fn collatz_steps(start: i64) -> i64 {
     let mut n = start;
     let mut steps = 0i64;

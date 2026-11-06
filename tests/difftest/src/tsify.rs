@@ -1,4 +1,4 @@
-//! The normalizer: turns a `.vlt` program of the shared subset into the TypeScript file Node runs.
+//! The normalizer: turns a `.velt` program of the shared subset into the TypeScript file Node runs.
 //!
 //! Node's `--experimental-transform-types` already erases every annotation (`i64`, `usize`,
 //! `x as f64` are just types to it) and compiles `enum`s, so the transform is deliberately tiny —

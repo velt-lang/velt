@@ -1,6 +1,6 @@
 //! Case-exact file names, like TypeScript's `forceConsistentCasingInFileNames`: the part of a
 //! module's path an import spells must match the names on disk exactly, so `"./Util"` does not
-//! load `util.vlt` on Windows or macOS (whose file systems ignore case) when it would fail on
+//! load `util.velt` on Windows or macOS (whose file systems ignore case) when it would fail on
 //! Linux. Names come from directory listings, read once per directory for the whole load.
 
 use std::cell::RefCell;
@@ -139,7 +139,7 @@ pub(super) fn respell(spec: &str, candidate: &Path, real: &Path) -> Option<Strin
 }
 
 /// Specifier segment `segment`, which names the file or directory `candidate` (`Util` for
-/// `Util.vlt`, `Util.js` for `Util.ts`), spelled like `real`.
+/// `Util.velt`, `Util.js` for `Util.ts`), spelled like `real`.
 fn respell_segment(segment: &str, candidate: &str, real: &str) -> Option<String> {
     if segment == candidate {
         return Some(real.to_string());
@@ -159,24 +159,24 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let base = tmp.path();
         std::fs::create_dir_all(base.join("Lib")).unwrap();
-        std::fs::write(base.join("Lib/util.vlt"), "").unwrap();
+        std::fs::write(base.join("Lib/util.velt"), "").unwrap();
         let names = DirNames::default();
-        assert_eq!(names.case_of(&base.join("Lib/util.vlt"), base), Case::Exact);
+        assert_eq!(names.case_of(&base.join("Lib/util.velt"), base), Case::Exact);
         assert_eq!(
-            names.case_of(&base.join("lib/Util.vlt"), base),
-            Case::Differs(base.join("Lib").join("util.vlt"))
+            names.case_of(&base.join("lib/Util.velt"), base),
+            Case::Differs(base.join("Lib").join("util.velt"))
         );
-        assert_eq!(names.case_of(&base.join("Lib/x.vlt"), base), Case::Unknown);
+        assert_eq!(names.case_of(&base.join("Lib/x.velt"), base), Case::Unknown);
         // Only the part below the base is compared.
         let sub = base.join("Lib");
-        assert_eq!(names.case_of(&sub.join("util.vlt"), &sub), Case::Exact);
+        assert_eq!(names.case_of(&sub.join("util.velt"), &sub), Case::Exact);
     }
 
     #[test]
     fn specifiers_are_respelled_as_on_disk() {
         let p = |s: &str| PathBuf::from(s);
         let cases = [
-            ("./Util", "app/Util.vlt", "app/util.vlt", Some("./util")),
+            ("./Util", "app/Util.velt", "app/util.velt", Some("./util")),
             ("./Util.js", "app/Util.ts", "app/util.ts", Some("./util.js")),
             (
                 "./Util.tsx",
@@ -184,7 +184,7 @@ mod tests {
                 "app/util.tsx",
                 Some("./util.tsx"),
             ),
-            ("../Lib/x", "Lib/x.vlt", "lib/x.vlt", Some("../lib/x")),
+            ("../Lib/x", "Lib/x.velt", "lib/x.velt", Some("../lib/x")),
             ("./Ui", "app/Ui/index.ts", "app/ui/index.ts", Some("./ui")),
             (
                 "./ui/Index",
@@ -195,8 +195,8 @@ mod tests {
             // The index file itself is misspelled on disk: no specifier can fix that.
             ("./ui", "app/ui/index.ts", "app/ui/Index.ts", None),
             // A path alias mapping to a misspelled directory.
-            ("@app/x", "SRC/x.vlt", "src/x.vlt", None),
-            ("@app/X", "src/X.vlt", "src/x.vlt", Some("@app/x")),
+            ("@app/x", "SRC/x.velt", "src/x.velt", None),
+            ("@app/X", "src/X.velt", "src/x.velt", Some("@app/x")),
             (
                 "pkg/Sub",
                 "pkg/src/Sub.ts",

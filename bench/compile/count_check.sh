@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
-# Instructions `velt check bench/compile/all_std.vlt` executes at each given git ref, counted the
+# Instructions `velt check bench/compile/all_std.velt` executes at each given git ref, counted the
 # way bench/nightly.sh counts compile/check_all_std (cachegrind, VELT_THREADS=1, VELT_EAGER_STD=1
 # so that every std definition is checked, release build).
 # For bisecting a compile-time change between commits. Linux only (valgrind).
 #
 #   bench/compile/count_check.sh [--prepend LINE] WORKDIR REF...
 #
-# --prepend LINE checks all_std.vlt with LINE added at the top (written next to it as
-# all_std_variant.vlt), to measure what one more import costs at a ref, e.g.
+# --prepend LINE checks all_std.velt with LINE added at the top (written next to it as
+# all_std_variant.velt), to measure what one more import costs at a ref, e.g.
 # --prepend 'import * as m from "velt/net/url";'.
 #
 # Each ref is exported to WORKDIR/src-<sha> (git archive) and built there, with that tree's
@@ -39,10 +39,10 @@ for ref in "$@"; do
     (cd "$src" && cargo build --release -q -p veltc) >&2
     cp "$CARGO_TARGET_DIR/release/velt" "$bin"
   fi
-  input=bench/compile/all_std.vlt
+  input=bench/compile/all_std.velt
   if [ -n "$PREPEND" ]; then
-    input=bench/compile/all_std_variant.vlt
-    { printf '%s\n' "$PREPEND"; cat "$src/bench/compile/all_std.vlt"; } > "$src/$input"
+    input=bench/compile/all_std_variant.velt
+    { printf '%s\n' "$PREPEND"; cat "$src/bench/compile/all_std.velt"; } > "$src/$input"
   fi
   # velt check must succeed (as in bench/nightly.sh), or the count measures an error path.
   (cd "$src" && VELT_EAGER_STD=1 VELT_STD="$src/std" "$bin" check "$input" >/dev/null 2>&1) \

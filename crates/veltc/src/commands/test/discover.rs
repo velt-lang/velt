@@ -1,4 +1,4 @@
-//! Finding test files (`*.test.vlt`, `*.test.ts`, `*.test.tsx`) and the test functions inside
+//! Finding test files (`*.test.velt`, `*.test.ts`, `*.test.tsx`) and the test functions inside
 //! them.
 //!
 //! A test is a top-level `export function test_*()` (or `export async function test_*()`) with no
@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use velt_syntax::ast;
 
 /// How test files are named, for messages.
-pub const TEST_FILES: &str = "*.test.vlt, *.test.ts, *.test.tsx";
+pub const TEST_FILES: &str = "*.test.velt, *.test.ts, *.test.tsx";
 
 /// Whether a file named `name` is a test file (the rule lives with the other source-file rules,
 /// where the loader finds it too).
@@ -30,7 +30,7 @@ pub fn find_test_files(path: &Path) -> Result<Vec<PathBuf>, String> {
     files_where(path, &is_test_file)
 }
 
-/// Source modules under `dir` (`.vlt`, `.ts`, `.tsx`, not `package.vlt`; recursively, skipping
+/// Source modules under `dir` (`.velt`, `.ts`, `.tsx`, not `package.velt`; recursively, skipping
 /// `target/`, `node_modules/`, hidden and symlinked directories and nested packages), sorted.
 pub fn source_files(dir: &Path) -> Result<Vec<PathBuf>, String> {
     files_where(dir, &vpm::sources::walk_keeps)
@@ -204,7 +204,7 @@ pub fn imports_run_code(file: &Path, module: &ast::Module, scanned: &mut Scanned
         let dir = from.parent().unwrap_or(Path::new(""));
         for spec in specs {
             // Lexically normal: a cycle through `../` would otherwise reach the same file under
-            // ever longer paths (`a/../b/../a.vlt`), each one walked again.
+            // ever longer paths (`a/../b/../a.velt`), each one walked again.
             let Some(path) = resolve(&lexical(&dir.join(&spec))) else {
                 // Not a source file (JSON, an asset) or missing: the build says which.
                 continue;
@@ -288,7 +288,7 @@ fn resolve(base: &Path) -> Option<PathBuf> {
     let source = |p: &Path| {
         matches!(
             p.extension().and_then(|e| e.to_str()),
-            Some("vlt" | "ts" | "tsx")
+            Some("velt" | "ts" | "tsx")
         ) && p.is_file()
     };
     if source(base) {
@@ -296,17 +296,17 @@ fn resolve(base: &Path) -> Option<PathBuf> {
     }
     // `./m.js` names `./m.ts`, as in TypeScript.
     if base.extension().is_some_and(|e| e == "js") {
-        return ["ts", "tsx", "vlt"]
+        return ["ts", "tsx", "velt"]
             .iter()
             .map(|ext| base.with_extension(ext))
             .find(|p| p.is_file());
     }
     let name = base.file_name()?.to_string_lossy().into_owned();
-    ["vlt", "ts", "tsx"]
+    ["velt", "ts", "tsx"]
         .iter()
         .map(|ext| base.with_file_name(format!("{name}.{ext}")))
         .chain(
-            ["vlt", "ts", "tsx"]
+            ["velt", "ts", "tsx"]
                 .iter()
                 .map(|ext| base.join(format!("index.{ext}"))),
         )
@@ -373,14 +373,14 @@ mod tests {
     fn finds_test_files_recursively() {
         let tmp = tempfile::tempdir().unwrap();
         for f in [
-            "a.test.vlt",
-            "sub/b.test.vlt",
+            "a.test.velt",
+            "sub/b.test.velt",
             "sub/c.test.ts",
             "sub/d.test.tsx",
             "sub/e.test.d.ts",
-            "main.vlt",
-            "target/c.test.vlt",
-            ".git/d.test.vlt",
+            "main.velt",
+            "target/c.test.velt",
+            ".git/d.test.velt",
         ] {
             let p = tmp.path().join(f);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -390,14 +390,14 @@ mod tests {
         assert_eq!(
             found,
             [
-                tmp.path().join("a.test.vlt"),
-                tmp.path().join("sub/b.test.vlt"),
+                tmp.path().join("a.test.velt"),
+                tmp.path().join("sub/b.test.velt"),
                 tmp.path().join("sub/c.test.ts"),
                 tmp.path().join("sub/d.test.tsx"),
             ]
         );
         assert_eq!(
-            find_test_files(&tmp.path().join("main.vlt")).unwrap().len(),
+            find_test_files(&tmp.path().join("main.velt")).unwrap().len(),
             1
         );
         assert!(find_test_files(&tmp.path().join("nope")).is_err());
@@ -409,18 +409,18 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let sub = tmp.path().join("sub");
         std::fs::create_dir(&sub).unwrap();
-        std::fs::write(sub.join("a.test.vlt"), "").unwrap();
-        std::fs::write(tmp.path().join("b.vlt"), "").unwrap();
+        std::fs::write(sub.join("a.test.velt"), "").unwrap();
+        std::fs::write(tmp.path().join("b.velt"), "").unwrap();
         std::os::unix::fs::symlink("..", sub.join("up")).unwrap();
-        std::os::unix::fs::symlink("b.vlt", tmp.path().join("link.vlt")).unwrap();
+        std::os::unix::fs::symlink("b.velt", tmp.path().join("link.velt")).unwrap();
         let found = source_files(&sub).unwrap();
-        assert_eq!(found, [sub.join("a.test.vlt")]);
+        assert_eq!(found, [sub.join("a.test.velt")]);
         // A symlinked file is still a file.
         let found = source_files(tmp.path()).unwrap();
-        let link = tmp.path().join("link.vlt");
+        let link = tmp.path().join("link.velt");
         assert_eq!(
             found,
-            [tmp.path().join("b.vlt"), link, sub.join("a.test.vlt")]
+            [tmp.path().join("b.velt"), link, sub.join("a.test.velt")]
         );
     }
 
@@ -428,12 +428,12 @@ mod tests {
     fn nested_packages_and_manifests_are_not_sources() {
         let tmp = tempfile::tempdir().unwrap();
         for f in [
-            "package.vlt",
-            "src/a.vlt",
-            "src/a.test.vlt",
-            "src/inner/package.vlt",
-            "src/inner/b.vlt",
-            "src/inner/b.test.vlt",
+            "package.velt",
+            "src/a.velt",
+            "src/a.test.velt",
+            "src/inner/package.velt",
+            "src/inner/b.velt",
+            "src/inner/b.test.velt",
         ] {
             let p = tmp.path().join(f);
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
@@ -442,19 +442,19 @@ mod tests {
         assert_eq!(
             source_files(tmp.path()).unwrap(),
             [
-                tmp.path().join("src/a.test.vlt"),
-                tmp.path().join("src/a.vlt")
+                tmp.path().join("src/a.test.velt"),
+                tmp.path().join("src/a.velt")
             ]
         );
         assert_eq!(
             find_test_files(tmp.path()).unwrap(),
-            [tmp.path().join("src/a.test.vlt")]
+            [tmp.path().join("src/a.test.velt")]
         );
         // Named directly, the nested package's folder is walked (without its manifest).
         let inner = tmp.path().join("src/inner");
         assert_eq!(
             source_files(&inner).unwrap(),
-            [inner.join("b.test.vlt"), inner.join("b.vlt")]
+            [inner.join("b.test.velt"), inner.join("b.velt")]
         );
     }
 
@@ -559,19 +559,19 @@ mod tests {
             std::fs::create_dir_all(p.parent().unwrap()).unwrap();
             std::fs::write(p, src).unwrap();
         };
-        write("lib/pure.vlt", "export function f(): i64 { return 1; }\n");
-        write("lib/index.ts", "export * from \"./pure.vlt\";\n");
+        write("lib/pure.velt", "export function f(): i64 { return 1; }\n");
+        write("lib/index.ts", "export * from \"./pure.velt\";\n");
         write(
             "lib/init.ts",
             "export const DATA = load();\nfunction load(): i64 { return 1; }\n",
         );
         write(
-            "lib/via.vlt",
+            "lib/via.velt",
             "import { DATA } from \"./init.js\";\nexport const D2 = 2;\n",
         );
         let imports = |src: &str| {
-            let file = d.join("t/a.test.vlt");
-            write("t/a.test.vlt", src);
+            let file = d.join("t/a.test.velt");
+            write("t/a.test.velt", src);
             let (module, diags) = velt_syntax::parse_file(FileId(0), src);
             assert!(diags.is_empty(), "{diags:?}");
             imports_run_code(&file, &module, &mut Scanned::default())
@@ -584,16 +584,16 @@ mod tests {
         assert!(imports("import { D2 } from \"../lib/via\";\n"));
         // An import cycle ends.
         write(
-            "lib/c1.vlt",
+            "lib/c1.velt",
             "import { b } from \"./c2\";\nexport const a = 1;\n",
         );
         write(
-            "lib/c2.vlt",
+            "lib/c2.velt",
             "import { a } from \"./c1\";\nexport const b = 2;\n",
         );
         assert!(!imports("import { a } from \"../lib/c1\";\n"));
         // Another test file: its top-level registrations would be taken for this file's.
-        write("t/other.test.vlt", "export function test_o() {}\n");
+        write("t/other.test.velt", "export function test_o() {}\n");
         assert!(imports("import { x } from \"./other.test\";\n"));
 
         // One scan for a run's test files: a module they share is read once (here, before it
@@ -602,47 +602,47 @@ mod tests {
         let src = "import { a } from \"../lib/c1\";\n";
         let (module, _) = velt_syntax::parse_file(FileId(0), src);
         assert!(!imports_run_code(
-            &d.join("t/a.test.vlt"),
+            &d.join("t/a.test.velt"),
             &module,
             &mut scanned
         ));
         write(
-            "lib/c1.vlt",
+            "lib/c1.velt",
             "export const a = load();\nfunction load(): i64 { return 1; }\n",
         );
         assert!(!imports_run_code(
-            &d.join("t/b.test.vlt"),
+            &d.join("t/b.test.velt"),
             &module,
             &mut scanned
         ));
         assert!(imports_run_code(
-            &d.join("t/b.test.vlt"),
+            &d.join("t/b.test.velt"),
             &module,
             &mut Scanned::default()
         ));
         write(
-            "lib/c2.vlt",
+            "lib/c2.velt",
             "export const b = load();\nfunction load(): i64 { return 1; }\n",
         );
         write(
-            "lib/c1.vlt",
+            "lib/c1.velt",
             "import { b } from \"./c2\";\nexport const a = 1;\n",
         );
         let mut scanned = Scanned::default();
         assert!(imports_run_code(
-            &d.join("t/a.test.vlt"),
+            &d.join("t/a.test.velt"),
             &module,
             &mut scanned
         ));
         assert!(imports_run_code(
-            &d.join("t/b.test.vlt"),
+            &d.join("t/b.test.velt"),
             &module,
             &mut scanned
         ));
     }
 
     /// A cycle across folders reads each module once: its paths are normal, not
-    /// `x/../y/../x/m.vlt` (which walked a package's engine tens of thousands of times).
+    /// `x/../y/../x/m.velt` (which walked a package's engine tens of thousands of times).
     #[test]
     fn a_cycle_through_parent_folders_reads_each_module_once() {
         let tmp = tempfile::tempdir().unwrap();
@@ -653,23 +653,23 @@ mod tests {
             std::fs::write(p, src).unwrap();
         };
         write(
-            "x/a.vlt",
+            "x/a.velt",
             "import { b } from \"../y/b\";\nexport const a = 1;\n",
         );
         write(
-            "y/b.vlt",
+            "y/b.velt",
             "import { c } from \"../z/c\";\nexport const b = 2;\n",
         );
         write(
-            "z/c.vlt",
+            "z/c.velt",
             "import { a } from \"../x/a\";\nexport const c = 3;\n",
         );
         let src = "import { a } from \"../x/a\";\n";
-        write("t/a.test.vlt", src);
+        write("t/a.test.velt", src);
         let (module, _) = velt_syntax::parse_file(FileId(0), src);
         let mut scanned = Scanned::default();
         assert!(!imports_run_code(
-            &d.join("t/a.test.vlt"),
+            &d.join("t/a.test.velt"),
             &module,
             &mut scanned
         ));

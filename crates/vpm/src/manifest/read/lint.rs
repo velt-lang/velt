@@ -1,4 +1,4 @@
-//! Decoding `lint` of `package.vlt` ([`crate::manifest::LintConfig`]).
+//! Decoding `lint` of `package.velt` ([`crate::manifest::LintConfig`]).
 
 use super::{Reader, Value, ValueKind};
 use crate::manifest::schema;

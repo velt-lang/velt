@@ -532,7 +532,7 @@ per-type instance. The difference is only how the code is reached.
 | drop order, `dispose`, weak references | the same drop and trace glue, called at the same points of the same body |
 | function identity | one thunk per `(def, targs)`, so as today (section 2) |
 | threads (`transfer`, `shared`) | `Transfer` and `ManyCheck` per type |
-| `e.stack` | Velt keeps no call frames, only the first line (`tests/golden/lang/error_stack.vlt`), so this is unchanged |
+| `e.stack` | Velt keeps no call frames, only the first line (`tests/golden/lang/error_stack.velt`), so this is unchanged |
 | stack traces in debuggers, profilers and crash dumps | see below |
 
 **Stack traces.** A shared instance's symbol names its shape: `arrayViewSync_T` followed by a
@@ -635,7 +635,7 @@ The programs:
   `JSXChild` is a union;
 - **scale 10k:** `bench/compile/scale/gen.py 10000`.
 
-The helpers are the `arrayView*` functions of `std/lang/hooks/array_view.vlt`. The counts are
+The helpers are the `arrayView*` functions of `std/lang/hooks/array_view.velt`. The counts are
 non-empty lines inside their function bodies in `--emit vir` (debug) and `--emit llvm`
 (release), summed per element type.
 

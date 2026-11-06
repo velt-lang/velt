@@ -46,8 +46,8 @@ function page(): JSX.Element {
 
 fn open(page: &str) -> (Client, lsp_types::Url) {
     let mut client = Client::start();
-    client.open(&uri("jsx_attrs_ui/jsx-runtime.vlt"), &runtime());
-    let doc = uri("jsx_attrs_page.vlt");
+    client.open(&uri("jsx_attrs_ui/jsx-runtime.velt"), &runtime());
+    let doc = uri("jsx_attrs_page.velt");
     client.open(&doc, page);
     (client, doc)
 }

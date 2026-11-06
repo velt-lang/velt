@@ -10,7 +10,7 @@ gold = os.path.join(repo, "tests/golden")
 files = []
 for cat in ["lang", "std", "m1", "m2", "m3", "async_dispatch", "bugs"]:
     d = os.path.join(gold, cat)
-    files += [os.path.join(d, n) for n in sorted(os.listdir(d)) if n.endswith(".vlt") and not n.startswith("_") and os.path.exists(os.path.join(d, n[:-4] + ".out"))]
+    files += [os.path.join(d, n) for n in sorted(os.listdir(d)) if n.endswith(".velt") and not n.startswith("_") and os.path.exists(os.path.join(d, n[:-4] + ".out"))]
 sample = files[::step]
 def timed(cmd, env):
     p = subprocess.Popen(cmd, cwd=work, env=env, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)

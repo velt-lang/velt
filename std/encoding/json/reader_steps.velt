@@ -1,0 +1,313 @@
+// velt/encoding/json (internal): the steps a `Reader` (reader.velt) takes between tokens (opening a
+// container, the separator after a member, a scalar or a key and its colon, where a value starts),
+// walking past a value it does not decode, and the detail of a syntax error.
+
+import {
+  EXPECTED_COLON,
+  EXPECTED_COMMA_BRACE,
+  EXPECTED_COMMA_BRACKET,
+  EXPECTED_KEY,
+  TOO_DEEP,
+  UNEXPECTED_CHAR,
+} from "velt/encoding/json/scan";
+import { strByteAt, strByteLen } from "velt/lang/intrinsics";
+import {
+  MISMATCH,
+  NONE,
+  Reader,
+  ROWS,
+  STEP_END,
+  STEP_ERROR,
+  STEP_MORE,
+  SYNTAX,
+} from "velt/encoding/json/reader";
+import { utf8Substring } from "velt/encoding";
+
+declare function velt_rt_json_reader_next_key(r: u64, out: string): u8;
+
+/** Whether bytes `start` to `end` of the source are `s`'s. */
+export function readerRangeIs(r: Reader, start: usize, end: usize, s: string): bool {
+  const n = strByteLen(s);
+  if (end - start != n) {
+    return false;
+  }
+  for (let i: usize = 0; i < n; i++) {
+    if (strByteAt(r.src, (start + i) as u64) != strByteAt(s, i as u64)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * The start of the next value if its first byte is `a` or `b` (0: any); otherwise records a
+ * mismatch (another valid value starts here) or a syntax error.
+ */
+export function readerValueStart(r: Reader, a: u8, b: u8): bool {
+  if (r.failed != NONE) {
+    return false;
+  }
+  r.afterOpen = false;
+  const c = r.peekNonWs();
+  if (c >= 0 && (a == 0 || c == a as i32 || c == b as i32)) {
+    return true;
+  }
+  if (
+    c == 123 ||
+    c == 91 ||
+    c == 34 ||
+    c == 116 ||
+    c == 102 ||
+    c == 110 ||
+    c == 45 ||
+    (c >= 48 && c <= 57)
+  ) {
+    r.failed = MISMATCH;
+  } else {
+    r.unexpected();
+    readerSyntaxFailed(r);
+  }
+  return false;
+}
+
+export function readerNumberStart(r: Reader): bool {
+  if (r.failed != NONE) {
+    return false;
+  }
+  r.afterOpen = false;
+  const c = r.peekNonWs();
+  if (c == 45 || (c >= 48 && c <= 57)) {
+    return (r.number() || readerSyntaxFailed(r));
+  }
+  if (c == 123 || c == 91 || c == 34 || c == 116 || c == 102 || c == 110) {
+    r.failed = MISMATCH;
+  } else {
+    r.unexpected();
+    readerSyntaxFailed(r);
+  }
+  return false;
+}
+
+export function readerOpen(r: Reader): bool {
+  if (r.depth >= r.maxDepth) {
+    r.fail(TOO_DEEP);
+    return readerSyntaxFailed(r);
+  }
+  r.pos++;
+  r.afterOpen = true;
+  r.depth++;
+  return true;
+}
+
+/** Before the next member or element: consumes the comma or the closing bracket `close`. */
+export function readerStep(r: Reader, close: i32, expected: u8): u8 {
+  const first = r.afterOpen;
+  r.afterOpen = false;
+  const b = r.peekNonWs();
+  if (b == close) {
+    r.pos++;
+    if (r.depth > 0) {
+      r.depth--;
+    }
+    return STEP_END;
+  }
+  if (b == 44 && !first) {
+    r.pos++;
+    if (r.trailingCommas && r.peekNonWs() == close) {
+      // JSONC: a comma before the closing bracket.
+      r.pos++;
+      if (r.depth > 0) {
+        r.depth--;
+      }
+      return STEP_END;
+    }
+    return STEP_MORE;
+  }
+  if (first) {
+    return STEP_MORE;
+  }
+  r.fail(expected);
+  readerSyntaxFailed(r);
+  return STEP_ERROR;
+}
+
+/**
+ * Records a syntax error (the scanner's `what` and `at`) unless the reader failed already;
+ * false.
+ */
+export function readerSyntaxFailed(r: Reader): bool {
+  if (r.failed == NONE) {
+    r.failed = SYNTAX;
+  }
+  return false;
+}
+
+export function readerDepthLeft(r: Reader): usize {
+  return r.maxDepth > r.depth ? r.maxDepth - r.depth : 0;
+}
+
+/** `"key" :` inside an object being walked. */
+export function readerKeyColon(r: Reader): bool {
+  if (r.peekNonWs() != 34) {
+    return r.fail(EXPECTED_KEY);
+  }
+  if (!r.string(false)) {
+    return false;
+  }
+  if (r.peekNonWs() != 58) {
+    return r.fail(EXPECTED_COLON);
+  }
+  r.pos++;
+  return true;
+}
+
+/** One scalar whose first byte is `c`. */
+export function readerScalar(r: Reader, c: i32): bool {
+  if (c == 34) {
+    return r.string(false);
+  }
+  if (c == 116) {
+    return r.literal("true");
+  }
+  if (c == 102) {
+    return r.literal("false");
+  }
+  if (c == 110) {
+    return r.literal("null");
+  }
+  if (c == 45 || (c >= 48 && c <= 57)) {
+    return r.number();
+  }
+  return r.unexpected();
+}
+
+export function readerRowsNextKey(r: Reader): u8 {
+  if (r.rows == 0 || r.failed != ROWS) {
+    return STEP_ERROR;
+  }
+  let key = "";
+  const step = velt_rt_json_reader_next_key(r.rows, key);
+  r.keyLen = strByteLen(key);
+  r.keyEscaped = true;
+  r.keyDecoded = key;
+  return step;
+}
+
+export function readerEndsMap(r: Reader): Map<usize, usize> {
+  if (r.ends == null) {
+    r.ends = new Map<usize, usize>();
+  }
+  return r.ends!;
+}
+
+/**
+ * Walks exactly one value at the current position, failing with `TOO_DEEP` at an array or
+ * object nested more than `limit` deep. With `memo`, remembers where each container ends.
+ */
+export function readerWalk(r: Reader, limit: usize, memo: bool): bool {
+  // The open containers (1 = object): one word, spilling past 64.
+  let inline: u64 = 0;
+  const spill: bool[] = [];
+  let depth: usize = 0;
+  const open: usize[] = [];
+  while (true) {
+    // At a value position.
+    const c = r.peekNonWs();
+    if (c == 123 || c == 91) {
+      if (depth >= limit) {
+        return r.fail(TOO_DEEP);
+      }
+      const at = r.pos;
+      r.pos++;
+      const object = c == 123;
+      if (memo) {
+        open.push(at);
+      }
+      if (r.peekNonWs() == (object ? 125 : 93)) {
+        r.pos++;
+        if (memo) {
+          readerEndsMap(r).set(open.pop()!, r.pos);
+        }
+      } else {
+        if (depth < 64) {
+          const bit: u64 = 1 << (depth as u64);
+          inline = object ? inline | bit : inline & ~bit;
+        } else {
+          spill.push(object);
+        }
+        depth++;
+        if (object && !readerKeyColon(r)) {
+          return false;
+        }
+        continue;
+      }
+    } else if (!readerScalar(r, c)) {
+      return false;
+    }
+    // A value just completed: close containers until one expects another element.
+    while (true) {
+      if (depth == 0) {
+        return true;
+      }
+      const d = depth - 1;
+      const object = d < 64 ? ((inline >> (d as u64)) & 1) == 1 : spill[d - 64];
+      const b = r.peekNonWs();
+      if (b == 44) {
+        r.pos++;
+        if (r.trailingCommas && r.peekNonWs() == (object ? 125 : 93)) {
+          // JSONC: the comma before the closing bracket; it closes below.
+          continue;
+        }
+        if (object && !readerKeyColon(r)) {
+          return false;
+        }
+        break;
+      }
+      if (b == (object ? 125 : 93)) {
+        r.pos++;
+        depth--;
+        if (depth >= 64) {
+          spill.pop();
+        }
+        if (memo) {
+          readerEndsMap(r).set(open.pop()!, r.pos);
+        }
+        continue;
+      }
+      return r.fail(object ? EXPECTED_COMMA_BRACE : EXPECTED_COMMA_BRACKET);
+    }
+  }
+  return false;
+}
+
+/**
+ * The detail of a syntax error: the offending character for `UNEXPECTED_CHAR` (`U+XXXX` if
+ * it is a control character).
+ */
+export function readerDetail(r: Reader): string {
+  if (r.code != UNEXPECTED_CHAR || r.at >= r.len) {
+    return r.what;
+  }
+  const lead = strByteAt(r.src, r.at as u64);
+  // A lone surrogate is no character to show.
+  if (lead == 0xed && r.at + 1 < r.len && strByteAt(r.src, (r.at + 1) as u64) >= 0xa0) {
+    return r.what;
+  }
+  let end = r.at + 1;
+  while (end < r.len && (strByteAt(r.src, end as u64) & 0xc0) == 0x80) {
+    end++;
+  }
+  const ch = utf8Substring(r.src, r.at, end);
+  // The character's code point, from its UTF-8.
+  let code: u32 = lead as u32;
+  if (end - r.at > 1) {
+    code = (lead as u32) & (0xff >> (end - r.at + 1) as u32);
+    for (let i = r.at + 1; i < end; i++) {
+      code = (code << 6) | ((strByteAt(r.src, i as u64) & 0x3f) as u32);
+    }
+  }
+  if (code < 0x20 || (code >= 0x7f && code < 0xa0)) {
+    return `${r.what} U+${code.toString(16).toUpperCase().padStart(4, "0")}`;
+  }
+  return `${r.what} '${ch}'`;
+}

@@ -28,7 +28,7 @@ impl FnCx<'_, '_> {
             Err(recv) => recv,
         };
         // `xs.reduce(f)` without an initial value: TypeScript's other overload, std's
-        // `[ARRAY_REDUCE_FIRST]` (array_nested.vlt), and the same for `reduceRight`.
+        // `[ARRAY_REDUCE_FIRST]` (array_nested.velt), and the same for `reduceRight`.
         let first = match prop.name.as_str() {
             "reduce" => Some(velt_common::std_key!(array_reduce_first)),
             "reduceRight" => Some(velt_common::std_key!(array_reduce_right_first)),

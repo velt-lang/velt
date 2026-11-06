@@ -1,4 +1,4 @@
-//! Decoding `velt.workspace.vlt` ([`crate::workspace`]) with the manifest's reader: the same data
+//! Decoding `velt.workspace.velt` ([`crate::workspace`]) with the manifest's reader: the same data
 //! subset and bounds, and each check located at the value it rejects.
 
 use std::collections::BTreeMap;
@@ -17,7 +17,7 @@ const WORKSPACE_SHAPE: Shape = Shape {
     message: "the workspace file must be one `export const workspace: Workspace = { … }`",
 };
 
-/// Read and validate the text of a `velt.workspace.vlt`. Every problem is a diagnostic in `file`.
+/// Read and validate the text of a `velt.workspace.velt`. Every problem is a diagnostic in `file`.
 pub fn read_workspace(file: FileId, src: &str) -> Result<WorkspaceFile, Diagnostics> {
     read_data(file, src, &WORKSPACE_SHAPE, |r, v| r.workspace(v)).map(|(ws, _)| ws)
 }

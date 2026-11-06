@@ -1,4 +1,4 @@
-// pidigits without GMP: a line-by-line transliteration of bench/benchmarks-game/pidigits/main.vlt
+// pidigits without GMP: a line-by-line transliteration of bench/benchmarks-game/pidigits/main.velt
 // (the Node #2 spigot by Isaac Gouy after Alexander Fyodorov, on a minimal sign + base-2^32 limb
 // integer). Not a Benchmarks Game program: it separates "Velt codegen vs Rust codegen" (this vs
 // the Velt port) from "hand-written limb loops vs GMP" (this vs pidigits.rs).

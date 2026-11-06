@@ -6,7 +6,7 @@ use super::type_package;
 use crate::Input;
 
 fn input(file: &str, source: &str) -> Input {
-    let module = file.trim_end_matches(".vlt").trim_end_matches("/index");
+    let module = file.trim_end_matches(".velt").trim_end_matches("/index");
     Input {
         module: format!("std/{module}"),
         source: source.to_string(),
@@ -18,29 +18,29 @@ fn input(file: &str, source: &str) -> Input {
 fn package() -> BTreeMap<String, String> {
     let inputs = [
         input(
-            "prelude/sync.vlt",
+            "prelude/sync.velt",
             "/** A lock. */\nexport class Mutex<T> {\n  lock(): T { panic(\"\"); }\n}\n\n\
              export extend<T> Mutex<T> {\n  /** The count. */\n  count(): i64 { return 0; }\n}\n\n\
              export extend Mutex<string> {\n  joined(): string { return \"\"; }\n}\n\n\
              export extend<T> Array<T> {\n  total(): i64 { return 0; }\n}\n",
         ),
-        input("io/index.vlt", "export class IoError {\n  code: string;\n}\n"),
+        input("io/index.velt", "export class IoError {\n  code: string;\n}\n"),
         // The intrinsics are `lang/`, but no globals: only std imports them.
-        input("lang/intrinsics/modes.vlt", "export type Mut<T> = T;\n"),
+        input("lang/intrinsics/modes.velt", "export type Mut<T> = T;\n"),
         input(
-            "lang/intrinsics/array.vlt",
+            "lang/intrinsics/array.velt",
             "import type { Mut } from \"./modes\";\n\
              export declare intrinsic function arraySwap<T>(xs: Mut<T[]>, i: usize, j: usize): void;\n",
         ),
         input(
-            "box/index.vlt",
+            "box/index.velt",
             "export { Box, make } from \"./box\";\n\
              export { Opts as BoxOptions } from \"velt/box/opts\";\n",
         ),
-        input("box/opts.vlt", "export struct Opts {\n  flag?: bool;\n}\n"),
-        input("box/hidden.vlt", "export class Hidden {\n  n: u8;\n}\n"),
+        input("box/opts.velt", "export struct Opts {\n  flag?: bool;\n}\n"),
+        input("box/hidden.velt", "export class Hidden {\n  n: u8;\n}\n"),
         input(
-            "box/box.vlt",
+            "box/box.velt",
             "import { IoError } from \"velt/io\";\nimport { Hidden } from \"./hidden\";\n\
              import { Opts } from \"./opts\";\n\n\
              /** Holds a value. */\nexport class Box<T> {\n  value: T;\n  private secret: i64 = 0;\n\
@@ -133,26 +133,26 @@ fn globals_and_extensions() {
 fn symbol_keyed_members_have_their_keys() {
     let inputs = [
         input(
-            "lang/keys.vlt",
+            "lang/keys.velt",
             "export const INSPECT = Symbol.for(\"nodejs.util.inspect.custom\");\n",
         ),
         // The compiler's hooks: no program names them, so they are no globals.
         input(
-            "lang/hooks/keys.vlt",
+            "lang/hooks/keys.velt",
             "export const INDEX = Symbol(\"index\");\n\
              export function recordOf<K, V>(m: Map<K, V>): Record<K, V> { panic(\"\"); }\n",
         ),
-        input("io/index.vlt", "export { Source, CHUNKS } from \"./source\";\n"),
+        input("io/index.velt", "export { Source, CHUNKS } from \"./source\";\n"),
         input(
-            "io/source.vlt",
+            "io/source.velt",
             "export const CHUNKS = Symbol(\"chunks\");\n\
              export const LIMIT = \"limit\";\n\
              export class Source {\n  [CHUNKS](): i64 { return 0; }\n  [LIMIT]: i64 = 0;\n\
              \x20 [Symbol.iterator](): Iterator<i64> { panic(\"\"); }\n}\n",
         ),
-        input("net/index.vlt", "export { Body } from \"./body\";\n"),
+        input("net/index.velt", "export { Body } from \"./body\";\n"),
         input(
-            "net/body.vlt",
+            "net/body.velt",
             "import { Source, CHUNKS } from \"velt/io\";\n\
              import { INDEX } from \"velt/lang/hooks/keys\";\n\
              const SETTLE = Symbol(\"settle\");\n\
@@ -203,21 +203,21 @@ fn symbol_keyed_members_have_their_keys() {
 #[test]
 fn operator_keys_come_from_the_globals_file() {
     let inputs = [
-        input("ops/index.vlt", "export { Add } from \"./add\";\n"),
+        input("ops/index.velt", "export { Add } from \"./add\";\n"),
         input(
-            "ops/add.vlt",
+            "ops/add.velt",
             "export interface Add<R, O = R> {\n  [Symbol.add](other: R): O;\n}\n",
         ),
-        input("math/index.vlt", "export { Big } from \"./big\";\n"),
+        input("math/index.velt", "export { Big } from \"./big\";\n"),
         input(
-            "math/big.vlt",
+            "math/big.velt",
             "export class Big {\n  [Symbol.neg](): Big { panic(\"\"); }\n\
              \x20 static [Symbol.mul](l: f64, r: Big): Big { panic(\"\"); }\n\
              \x20 [Symbol.iterator](): Iterator<i64> { panic(\"\"); }\n}\n",
         ),
-        input("io/index.vlt", "export { Source } from \"./source\";\n"),
+        input("io/index.velt", "export { Source } from \"./source\";\n"),
         input(
-            "io/source.vlt",
+            "io/source.velt",
             "export class Source {\n  [Symbol.iterator](): Iterator<i64> { panic(\"\"); }\n}\n",
         ),
     ];

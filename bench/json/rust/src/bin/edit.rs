@@ -1,4 +1,4 @@
-//! Editing (see edit.vlt): an order-preserving `serde_json::Map` (`shift_remove` keeps the order,
+//! Editing (see edit.velt): an order-preserving `serde_json::Map` (`shift_remove` keeps the order,
 //! like `delete` in JavaScript and Velt).
 use serde_json::{Map, Value};
 

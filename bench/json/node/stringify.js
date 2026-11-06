@@ -1,4 +1,4 @@
-// Stringify (see stringify.vlt).
+// Stringify (see stringify.velt).
 const items = [];
 for (let i = 0; i < 100000; i++) {
   items.push({ id: i, name: `user ${i}`, score: (i % 1000) + 0.5, active: i % 2 == 0, tags: [`t${i % 7}`, "x"] });

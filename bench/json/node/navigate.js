@@ -1,4 +1,4 @@
-// Navigation (see navigate.vlt): property and index access on parsed objects.
+// Navigation (see navigate.velt): property and index access on parsed objects.
 const { doc } = require("./doc.js");
 const v = JSON.parse(doc(100000));
 const n = v.length;

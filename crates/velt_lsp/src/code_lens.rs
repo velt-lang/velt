@@ -3,7 +3,7 @@
 //!   Code extension, with the document's URI as their argument);
 //! - "▶ Run test" and "Debug test" above each test of a test file (`velt.runTest` /
 //!   `velt.debugTest`, with the URI and the test's name): an exported `test_*` function without
-//!   parameters or generics in a `*.test.vlt` (`.ts`, `.tsx`) file, as `velt test` finds them.
+//!   parameters or generics in a `*.test.velt` (`.ts`, `.tsx`) file, as `velt test` finds them.
 
 use lsp_types::{CodeLens, Command, Range, Url};
 use serde_json::{json, Value};

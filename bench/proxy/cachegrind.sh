@@ -2,7 +2,7 @@
 # Cost of an access through a proxy (Linux, valgrind): instruction counts of
 # bench/proxy/proxy_get.ts built by the compilers of two git refs, for N reads and writes
 # through `get` / `set` traps and for N plain reads, at two sizes (the difference per 100000
-# iterations is the cost of the loop body, without start-up), and of bench/proxy/proxy_signal.vlt
+# iterations is the cost of the loop body, without start-up), and of bench/proxy/proxy_signal.velt
 # (a sigx-style reactive state behind a typed proxy).
 #
 #   bench/proxy/cachegrind.sh BASE_REF HEAD_REF WORK_DIR
@@ -33,7 +33,7 @@ for side in base head; do
       echo "$side $mode $n $ir"
     done
   done
-  "$W/target-$side/release/velt" build "$W/head/bench/proxy/proxy_signal.vlt" -o "$W/proxy_signal-$side" --release || exit 1
+  "$W/target-$side/release/velt" build "$W/head/bench/proxy/proxy_signal.velt" -o "$W/proxy_signal-$side" --release || exit 1
   ir=$(VELT_THREADS=1 valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null "$W/proxy_signal-$side" 2>&1 >/dev/null | grep -E "I\s+refs" | tr -d ',' | awk '{print $NF}')
   echo "$side proxy_signal - $ir"
 done

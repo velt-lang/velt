@@ -134,7 +134,7 @@ pub fn owner_command(action: &OwnerAction, package: &str) -> Result<(), String> 
     let loc = locations()?;
     let Some(url) = &loc.remote else {
         return Err(format!(
-            "packages have owners only on a registry server; `{}` is a local registry (set `registry` in package.vlt or $VELT_REGISTRY to a URL)",
+            "packages have owners only on a registry server; `{}` is a local registry (set `registry` in package.velt or $VELT_REGISTRY to a URL)",
             loc.describe()
         ));
     };

@@ -11,7 +11,7 @@ use super::{cint, ice, unit, FnLower};
 use crate::system;
 use crate::vir::{self, BinOp, Operand, Place, Rvalue, Ty, STR_AGG};
 
-/// std's hooks that turn a `Ptr` into its address and back (std/ffi/ptr.vlt).
+/// std's hooks that turn a `Ptr` into its address and back (std/ffi/ptr.velt).
 const PTR_OF: &str = velt_common::std_hook!(ffi_ptr_of);
 const PTR_OR_NULL: &str = velt_common::std_hook!(ffi_ptr_or_null);
 const PTR_ADDRESS: &str = velt_common::std_hook!(ffi_ptr_address);

@@ -1,4 +1,4 @@
-// 32-bit integer mixing (same as int32.vlt). `mul_js` is JavaScript's `(a * b) | 0` on int32
+// 32-bit integer mixing (same as int32.velt). `mul_js` is JavaScript's `(a * b) | 0` on int32
 // numbers: the exact product (it fits an i64) rounded to a double like JS's multiply, then its low
 // 32 bits. `mix32imul` is `Math.imul`, Rust's `wrapping_mul`.
 fn mul_js(a: i32, b: i32) -> i32 {

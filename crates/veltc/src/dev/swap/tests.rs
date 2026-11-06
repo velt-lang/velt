@@ -10,7 +10,7 @@ use crate::driver::{self, BuildOptions, Session};
 
 fn compile(source: &str) -> velt_vir::vir::Program {
     let opts = BuildOptions {
-        input: PathBuf::from("main.vlt"),
+        input: PathBuf::from("main.velt"),
         root_source: Some(source.to_string()),
         ..BuildOptions::default()
     };

@@ -284,9 +284,9 @@ mod tests {
     #[test]
     fn restoring_skips_unchanged_files() {
         let dir = tempfile::tempdir().unwrap();
-        let a = dir.path().join("a.vlt");
+        let a = dir.path().join("a.velt");
         std::fs::write(&a, "changed").unwrap();
-        let missing = dir.path().join("no-such-dir").join("b.vlt");
+        let missing = dir.path().join("no-such-dir").join("b.velt");
         // `missing` can't be written, so restoring it fails: it is reported.
         assert_eq!(
             restore_all(&[(a.clone(), "before"), (missing.clone(), "x")]),
@@ -301,9 +301,9 @@ mod tests {
     #[test]
     fn a_failed_write_changes_no_file() {
         let dir = tempfile::tempdir().unwrap();
-        let a = dir.path().join("a.vlt");
+        let a = dir.path().join("a.velt");
         std::fs::write(&a, "before").unwrap();
-        let missing = dir.path().join("no-such-dir").join("b.vlt");
+        let missing = dir.path().join("no-such-dir").join("b.velt");
         let texts = [(a.clone(), "after".to_string()), (missing, "x".to_string())];
         let err = write_all(&texts, &[(a.clone(), "before")]).unwrap_err();
         assert!(err.contains("no file was changed"), "{err}");

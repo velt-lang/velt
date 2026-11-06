@@ -1,4 +1,4 @@
-//! Typed JSON on the standard corpora: the structs of ../typed.vlt with serde derive, decoded
+//! Typed JSON on the standard corpora: the structs of ../typed.velt with serde derive, decoded
 //! by serde_json, sonic-rs or simd-json (unknown members skipped, serde's default), and written
 //! back. Usage: showcase_json_typed <serde|sonic|simd> <canada|citm|twitter> <file> <rounds> <parse|write>
 use indexmap::IndexMap;

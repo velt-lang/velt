@@ -5,8 +5,8 @@ message and a history query per join, written once per platform to one contract
 ([SPEC.md](SPEC.md)) and checked by one smoke test (`smoke.py`, 56 checks; all four pass).
 
 ```
-velt/server.vlt   std/http + std/websocket + the sqlite package, all cores, one process
-velt/server-topics.vlt  the same, with rooms as std/websocket topics (subscribe, publish)
+velt/server.velt   std/http + std/websocket + the sqlite package, all cores, one process
+velt/server-topics.velt  the same, with rooms as std/websocket topics (subscribe, publish)
 go/main.go        net/http + gorilla/websocket + mattn/go-sqlite3, all cores
 bun/server.ts     Bun.serve websockets + bun:sqlite, pub/sub for rooms, one process
 node/server.js    node:http + ws + better-sqlite3, one process
@@ -21,7 +21,7 @@ Build the servers and the load generator (from this directory; `velt` is a built
 `../../target/release/velt` with `VELT_STD=../../std`):
 
 ```sh
-velt build --release velt/server.vlt -o .work/chat-velt
+velt build --release velt/server.velt -o .work/chat-velt
 (cd go && go build -o chat-go .)
 (cd node && npm ci)
 (cd load && cargo build --release)
@@ -153,7 +153,7 @@ pinning. Raw rows: `vm/results-20261010-r4-localssd-ckpt.jsonl` and `-r4-topics.
 Mixed: better at 2 000 and 16 000/s, worse at 8 000/s, and 20 % more CPU at 16 000/s (4.6 vs 3.8
 cores). Not a uniform win, so it stays parked; a candidate for an opt-in.
 
-**Topics against the send loop, p99 (`velt/server-topics.vlt` against `velt/server.vlt`):**
+**Topics against the send loop, p99 (`velt/server-topics.velt` against `velt/server.velt`):**
 
 | rate | 4 000 | 8 000 | 16 000 |
 |---|---:|---:|---:|

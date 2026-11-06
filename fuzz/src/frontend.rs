@@ -14,7 +14,7 @@ pub fn check(src: &str) {
         std::env::set_var("VELT_STD", std);
     });
     let opts = BuildOptions {
-        input: PathBuf::from("/virtual/fuzz.vlt"),
+        input: PathBuf::from("/virtual/fuzz.velt"),
         root_source: Some(src.to_string()),
         ..Default::default()
     };

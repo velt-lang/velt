@@ -39,7 +39,7 @@ fn goldens_split_into_codegen_units() {
         "lang/narrow_nullable_field",
     ]
     .iter()
-    .map(|name| root.join("tests/golden").join(format!("{name}.vlt")))
+    .map(|name| root.join("tests/golden").join(format!("{name}.velt")))
     .filter_map(|f| {
         let unit = |i: usize| {
             let stem = f.file_stem().expect("stem").to_string_lossy();
@@ -93,7 +93,7 @@ fn inline_helpers_with_llvm() {
         "lang/int_compare_bounds",
     ]
     .iter()
-    .map(|name| root.join("tests/golden").join(format!("{name}.vlt")))
+    .map(|name| root.join("tests/golden").join(format!("{name}.velt")))
     .filter_map(|f| run_golden(&f, &work, 2))
     .collect();
     assert!(
@@ -140,7 +140,7 @@ fn emit_llvm_prints_ir() {
     let root = root();
     let o = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["build", "--emit", "llvm"])
-        .arg(root.join("tests/golden/m1/functions.vlt"))
+        .arg(root.join("tests/golden/m1/functions.velt"))
         .output()
         .expect("run velt");
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));

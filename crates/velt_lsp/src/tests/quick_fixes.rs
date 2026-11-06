@@ -89,7 +89,7 @@ fn errors_after(client: &mut Client, doc: &Url, text: &str) -> Vec<Value> {
 fn removes_mut_and_links_the_diagnostic() {
     let text =
         "function add(mut a: i64): i64 {\n  return a;\n}\n\nfunction main() {\n  add(1);\n}\n";
-    let (mut client, doc, diags) = open("fix_mut.vlt", text);
+    let (mut client, doc, diags) = open("fix_mut.velt", text);
     assert_eq!(diags.len(), 1, "{diags:?}");
     let offered = actions(&mut client, &doc, text, "mut", &diags);
     let fix = find(&offered, "Remove `mut`");
@@ -127,7 +127,7 @@ async function main() {
   }
 }
 ";
-    let (mut client, doc, diags) = open("fix_async.vlt", text);
+    let (mut client, doc, diags) = open("fix_async.velt", text);
     let offered = actions(
         &mut client,
         &doc,
@@ -168,7 +168,7 @@ async function main() {
   console.log(await r.ready);
 }
 ";
-    let (mut client, doc, diags) = open("fix_async_getter.vlt", text);
+    let (mut client, doc, diags) = open("fix_async_getter.velt", text);
     assert_eq!(diags.len(), 1, "{diags:?}");
     let offered = actions(&mut client, &doc, text, "ready(): Promise<bool> {", &diags);
     assert!(
@@ -181,7 +181,7 @@ async function main() {
 #[test]
 fn floating_promise_can_be_awaited_or_spawned() {
     let text = "async function load(): Promise<i64> {\n  return 1;\n}\n\nasync function main() {\n  load();\n}\n";
-    let (mut client, doc, _) = open("fix_promise.vlt", text);
+    let (mut client, doc, _) = open("fix_promise.velt", text);
     let offered = actions(&mut client, &doc, text, "load();", &[]);
     let awaited = apply(text, find(&offered, "Add `await`"), &doc);
     assert!(awaited.contains("  await load();"), "{awaited}");
@@ -223,7 +223,7 @@ async function main() {
   scope.spawn(work());
 }
 ";
-    let (mut client, doc, diags) = open("fix_scope_spawn.vlt", text);
+    let (mut client, doc, diags) = open("fix_scope_spawn.velt", text);
     let offered = actions(&mut client, &doc, text, "scope.spawn(work())", &diags);
     find(&offered, "Add `await`");
     assert!(
@@ -238,7 +238,7 @@ async function main() {
 #[test]
 fn export_default_converts_to_a_named_export() {
     let text = "export default function main() {}\n";
-    let (mut client, doc, diags) = open("fix_default.vlt", text);
+    let (mut client, doc, diags) = open("fix_default.velt", text);
     assert_eq!(
         diags,
         [] as [Value; 0],

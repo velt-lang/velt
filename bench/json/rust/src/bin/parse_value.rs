@@ -1,4 +1,4 @@
-//! Dynamic parse (see parse_value.vlt): `serde_json::Value`.
+//! Dynamic parse (see parse_value.velt): `serde_json::Value`.
 use serde_json::Value;
 
 fn main() {

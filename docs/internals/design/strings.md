@@ -339,14 +339,14 @@ examples, so the docs test covers the new rule.
 
 ### Code in the repository that assumes byte offsets
 
-- `std/encoding/csv/index.vlt` scans a `u8[]` and slices the string with those byte positions. It changes to
+- `std/encoding/csv/index.velt` scans a `u8[]` and slices the string with those byte positions. It changes to
   scan with `charCodeAt` (the delimiter is ASCII, so the ASCII fast path applies).
-- `std/text/regex/regexp.vlt` forwards the runtime's offsets. The runtime translates them.
-- `std/cli/index.vlt`: help column widths now count code units, which aligns better. Short-flag
+- `std/text/regex/regexp.velt` forwards the runtime's offsets. The runtime translates them.
+- `std/cli/index.velt`: help column widths now count code units, which aligns better. Short-flag
   clusters split per code unit, as in Node.
 - `std/url`: byte work moves to `u8[]` (`utf8Encode`), string positions stay positions, and
   surrogate bytes are refused.
-- `std/random/uuid/index.vlt`, `std/path/index.vlt` and `std/datetime`: ASCII positions are unchanged.
+- `std/random/uuid/index.velt`, `std/path/index.velt` and `std/datetime`: ASCII positions are unchanged.
 - Runtime functions that take or return positions (`str_ops/*`, the regex and the JSON value
   length) convert at their entry and exit.
 - Golden tests:

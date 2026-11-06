@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-# Generates the SIMD API, `velt/simd` (std/simd/index.vlt and std/simd/*.vlt): the same methods for ten vector types
+# Generates the SIMD API, `velt/simd` (std/simd/index.velt and std/simd/*.velt): the same methods for ten vector types
 # and four mask types, which Velt cannot write once (no generics over lane types). To change
 # the API, change this script and run it from the repository root, then `velt fmt` the files:
 #
-#   python3 scripts/gen-simd-api.py && velt fmt std/simd/index.vlt std/simd/*.vlt
+#   python3 scripts/gen-simd-api.py && velt fmt std/simd/index.velt std/simd/*.velt
 #
 # The operations themselves are in crates/velt_vir/src/simd.rs (one table for both backends);
 # a test there checks every declaration written here against it.
@@ -350,14 +350,14 @@ files = {
 }
 for part,(what,ts) in files.items():
     head = HEAD.format(part=part, what=what)+"\n"+exports(name(l,n) for l,n in ts)+"\n"
-    open(f"{OUT}/{part}.vlt","w",encoding="utf-8",newline="\n").write(head+"\n".join(vector(l,n) for l,n in ts))
+    open(f"{OUT}/{part}.velt","w",encoding="utf-8",newline="\n").write(head+"\n".join(vector(l,n) for l,n in ts))
 MASKS = [f"mask{b}x{128//b}" for b in (8,16,32,64)]
 head = HEAD.format(part="masks", what="masks")+"\n"+exports(MASKS)+"\n"
-open(f"{OUT}/masks.vlt","w",encoding="utf-8",newline="\n").write(head+"\n".join(maskty(b,128//b) for b in (8,16,32,64)))
+open(f"{OUT}/masks.velt","w",encoding="utf-8",newline="\n").write(head+"\n".join(maskty(b,128//b) for b in (8,16,32,64)))
 reexports = "".join(
     f"export {{ {', '.join(name(l,n) for l,n in ts)} }} from \"velt/simd/{part}\";\n"
     for part,(_,ts) in files.items())
-open(f"{STD}/simd.vlt","w",encoding="utf-8",newline="\n").write(f"""// velt/simd: the 128-bit SIMD vector types and their masks (https://veltlang.com/docs/std/simd/).
+open(f"{STD}/simd.velt","w",encoding="utf-8",newline="\n").write(f"""// velt/simd: the 128-bit SIMD vector types and their masks (https://veltlang.com/docs/std/simd/).
 //
 //   import {{ u8x16, mask8x16 }} from "velt/simd";
 //

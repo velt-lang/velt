@@ -3,7 +3,7 @@
 A Velt library: text helpers (`slugify`, `truncate`, `WordCounter`).
 
 ```sh
-velt test                # run tests/*.test.vlt
+velt test                # run tests/*.test.velt
 velt doc                 # HTML API docs from the /** */ comments -> target/doc/index.html
 velt fmt
 velt publish             # to the registry ($VELT_REGISTRY, default ~/.velt/registry)
@@ -22,5 +22,5 @@ import { slugify } from "{{name}}";
 
 | File | What |
 |---|---|
-| `src/lib.vlt` | the public API: every `export` |
-| `tests/lib.test.vlt` | `velt test` |
+| `src/lib.velt` | the public API: every `export` |
+| `tests/lib.test.velt` | `velt test` |

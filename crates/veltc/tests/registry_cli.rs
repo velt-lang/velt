@@ -136,7 +136,7 @@ fn share_a_package_through_the_registry_server() {
         .success());
     let mut manifest = vpm::Manifest::from_dir(&lib).expect("manifest");
     manifest.registry = Some(url.clone());
-    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).expect("write");
+    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_velt()).expect("write");
     let denied = velt(&lib, &home_a, &["publish"]);
     assert!(!denied.status.success());
     assert!(String::from_utf8_lossy(&denied.stderr).contains("VELT_REGISTRY_TOKEN"));
@@ -149,7 +149,7 @@ fn share_a_package_through_the_registry_server() {
     let port = url.rsplit(':').next().expect("port");
     let mut manifest = vpm::Manifest::from_dir(&lib).expect("manifest");
     manifest.registry = Some(format!("http://localhost:{port}"));
-    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).expect("write");
+    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_velt()).expect("write");
     let elsewhere = velt(&lib, &home_a, &["publish"]);
     assert!(
         text(&elsewhere).contains("refused the request"),
@@ -157,7 +157,7 @@ fn share_a_package_through_the_registry_server() {
         text(&elsewhere)
     );
     manifest.registry = Some(url.clone());
-    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).expect("write");
+    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_velt()).expect("write");
     let published = velt(&lib, &home_a, &["publish"]);
     assert!(published.status.success(), "{}", text(&published));
     let owners = velt(&lib, &home_a, &["owner", "list", "greet"]);
@@ -173,7 +173,7 @@ fn share_a_package_through_the_registry_server() {
     assert!(velt(tmp.path(), &home_b, &["new", "app"]).status.success());
     let mut manifest = vpm::Manifest::from_dir(&app).expect("manifest");
     manifest.registry = Some(url.clone());
-    std::fs::write(app.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).expect("write");
+    std::fs::write(app.join(vpm::manifest::MANIFEST_FILE), manifest.to_velt()).expect("write");
     let added = velt(&app, &home_b, &["add", "greet"]);
     assert!(
         added.status.success(),
@@ -209,7 +209,7 @@ fn share_a_package_through_the_registry_server() {
         .success());
     let mut manifest = vpm::Manifest::from_dir(&other).expect("manifest");
     manifest.registry = Some(url.clone());
-    std::fs::write(other.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).expect("write");
+    std::fs::write(other.join(vpm::manifest::MANIFEST_FILE), manifest.to_velt()).expect("write");
     let refused = velt(&other, &home_b, &["add", "greet@0.1"]);
     assert!(
         text(&refused).contains("0.1.0 (yanked)"),
@@ -254,7 +254,7 @@ fn tokens_never_travel_over_plain_http_to_another_machine() {
         .success());
     let mut manifest = vpm::Manifest::from_dir(&lib).expect("manifest");
     manifest.registry = Some("http://192.0.2.1:9".into());
-    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_vlt()).expect("write");
+    std::fs::write(lib.join(vpm::manifest::MANIFEST_FILE), manifest.to_velt()).expect("write");
     let out = velt_as("secret", &lib, &home, &["yank", "lib@0.1.0"]);
     assert!(
         text(&out).contains("refusing to send $VELT_REGISTRY_TOKEN to http://192.0.2.1:9"),

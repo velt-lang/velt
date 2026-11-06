@@ -32,7 +32,7 @@ It is not sound, and these shapes stay silent:
    only a cache or a cursor. Neither source is a contract. A change to a std body can turn a
    user's compile error on or off, and the list is std knowledge hardcoded in Rust.
 2. **Stores by key are not seen.** The acceptance tests on #854 are D6, E2, F2, G1 and G4
-   (`tests/golden/std/http_server/handler_known_gap_store_by_key.vlt`). In each, a store
+   (`tests/golden/std/http_server/handler_known_gap_store_by_key.velt`). In each, a store
    through `any`, `Reflect.set`, a helper or a generic converter puts the captured
    `app.plugins` into a field of a new object, and the handler then pushes onto it. Rounds 4–6
    of #2024 tried a whole-program analysis of which classes are converted to `any`. Each round
@@ -322,7 +322,7 @@ extern, and one from a package without bodies. A call that may run one is checke
 
 ```text
 error: `plugin.setup` may be a function from outside the program (taken from `any` at
-       a.vlt:8:15), and it is given `ctx`, which holds `app`: every request has its own copy
+       a.velt:8:15), and it is given `ctx`, which holds `app`: every request has its own copy
   help: make `app` `shared(...)`, or keep the state it changes in an `Atomic` or a `Mutex`
 ```
 
@@ -436,7 +436,7 @@ Reasons for doc tags over the alternatives:
   decorators on functions, on interface members or on `declare` functions. #1664's compile-time
   decorators are limited to classes, structs and their fields, so a std file would stop parsing
   as TypeScript.
-- **Body markers** like `inline()` (std/lang/intrinsics/inline.vlt) need a body. Externs and
+- **Body markers** like `inline()` (std/lang/intrinsics/inline.velt) need a body. Externs and
   interface methods have none.
 - **`Readonly<T>` and `readonly T[]` parameters** are shallow, and they cannot express a store
   or a call.
@@ -505,7 +505,7 @@ an `Atomic` or a `Mutex`. The new forms are:
 - **A call that may run unknown code.** This is the message under
   [Function values](#function-values). It names where the value came from.
 - **A write that runs a trap or a setter.** "`state.count++` runs the proxy's `set` trap
-  (a.vlt:4:3), which writes `app.state`".
+  (a.velt:4:3), which writes `app.state`".
 
 ## Spawn (#2014)
 
@@ -527,7 +527,7 @@ argument is **not a fresh value and not moved into the call**.
   and it switches to the summaries.
 
 **The goldens that rely on the copy.** Their copying and leak coverage is kept, and the lost
-writes move to a new error golden `tests/golden/lang/errors/spawn_writes_copy.vlt`. That golden
+writes move to a new error golden `tests/golden/lang/errors/spawn_writes_copy.velt`. That golden
 collects the forms: a direct argument, an alias, two spawns, a closure, a conditional
 (`pick(i) ? bump(b) : bump(b)`), a receiver through a vtable and through an interface, a view,
 and an array `push`.

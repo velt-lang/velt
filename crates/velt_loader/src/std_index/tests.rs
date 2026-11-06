@@ -61,11 +61,11 @@ extend Addr { text(): string { return this.host; } }
 #[test]
 fn packages_modules_exports_imports_and_extends() {
     let tmp = std_with(&[
-        ("net/index.vlt", NET),
-        ("net/tcp.vlt", "export class Tcp {}\n"),
-        ("net/impl/socket.vlt", "export class Socket {}\n"),
-        ("net/http/index.vlt", "export const X = 1;\n"),
-        ("imports.vlt", "export const imports = 1;\n"),
+        ("net/index.velt", NET),
+        ("net/tcp.velt", "export class Tcp {}\n"),
+        ("net/impl/socket.velt", "export class Socket {}\n"),
+        ("net/http/index.velt", "export const X = 1;\n"),
+        ("imports.velt", "export const imports = 1;\n"),
     ]);
     let index = load(tmp.path(), None);
     let paths: Vec<(&str, Vec<&str>)> = index
@@ -78,7 +78,7 @@ fn packages_modules_exports_imports_and_extends() {
             )
         })
         .collect();
-    // An implementation folder (`impl/`) belongs to its package; a folder with an `index.vlt`
+    // An implementation folder (`impl/`) belongs to its package; a folder with an `index.velt`
     // is a package of its own; files in no package are `std`'s.
     assert_eq!(
         paths,
@@ -219,9 +219,9 @@ fn cache_of(dir: &Path) -> Cache {
     Cache::new(dir, u64::MAX)
 }
 
-/// The files of std package `rel` (one `index.vlt`) under `root`, as the index keys them.
+/// The files of std package `rel` (one `index.velt`) under `root`, as the index keys them.
 fn files_of(root: &Path, rel: &str) -> Vec<store::StdFile> {
-    let path = root.join(rel).join("index.vlt");
+    let path = root.join(rel).join("index.velt");
     let src = std::fs::read_to_string(&path).unwrap();
     vec![store::StdFile {
         canonical: crate::locate::Origin::Std(root.to_path_buf()).canonical(&path),
@@ -237,8 +237,8 @@ fn with(cache: &Cache, compiler: Key) -> Option<StdAstCache<'_>> {
 #[test]
 fn a_package_is_built_on_a_miss_and_read_on_a_hit() {
     let tmp = std_with(&[
-        ("a/index.vlt", "export function f(): void {}\n"),
-        ("b/index.vlt", "export function g(): void {}\n"),
+        ("a/index.velt", "export function f(): void {}\n"),
+        ("b/index.velt", "export function g(): void {}\n"),
     ]);
     let c1 = Key::of(&[b"c1"]);
     let prefix = store::prefix(&c1);
@@ -266,7 +266,7 @@ fn a_package_is_built_on_a_miss_and_read_on_a_hit() {
         package(&fresh, "std/a")
     );
     std::fs::write(
-        tmp.path().join("a/index.vlt"),
+        tmp.path().join("a/index.velt"),
         "export function h(): void {}\n",
     )
     .unwrap();
@@ -276,7 +276,7 @@ fn a_package_is_built_on_a_miss_and_read_on_a_hit() {
 
 #[test]
 fn an_entry_that_does_not_decode_is_a_miss() {
-    let tmp = std_with(&[("a/index.vlt", "export function f(): void {}\n")]);
+    let tmp = std_with(&[("a/index.velt", "export function f(): void {}\n")]);
     let c1 = Key::of(&[b"c1"]);
     let prefix = store::prefix(&c1);
     let a = files_of(tmp.path(), "a");
@@ -304,7 +304,7 @@ fn an_entry_that_does_not_decode_is_a_miss() {
 
 #[test]
 fn a_package_that_does_not_parse_is_not_stored() {
-    let tmp = std_with(&[("a/index.vlt", "export function f( {\n")]);
+    let tmp = std_with(&[("a/index.velt", "export function f( {\n")]);
     let dir = tempfile::tempdir().unwrap();
     let cache = cache_of(dir.path());
     let c1 = Key::of(&[b"c1"]);
@@ -353,16 +353,16 @@ fn export_names(m: &ModuleIndex) -> Vec<&str> {
 fn a_renamed_file_with_the_same_contents_is_another_entry() {
     let (before, after) = through_one_cache(
         &[
-            ("a/index.vlt", "export const A = 1;\n"),
-            ("a/x.vlt", "export const X = 1;\n"),
+            ("a/index.velt", "export const A = 1;\n"),
+            ("a/x.velt", "export const X = 1;\n"),
         ],
-        |root| std::fs::rename(root.join("a/x.vlt"), root.join("a/y.vlt")).unwrap(),
+        |root| std::fs::rename(root.join("a/x.velt"), root.join("a/y.velt")).unwrap(),
     );
     assert_eq!(module_paths(&before), ["std/a", "std/a/x"]);
     assert_eq!(module_paths(&after), ["std/a", "std/a/y"]);
 }
 
-/// An element in a `.vlt` file, whose text looks like an item; in a `.ts` file, the assertion
+/// An element in a `.velt` file, whose text looks like an item; in a `.ts` file, the assertion
 /// `<a>b` and then that item (`</ a>`: a `</a` would make it an element there too). The canonical
 /// path is the same: only the plain-TypeScript flag tells the two files apart.
 const JSX_OR_ASSERTION: &str = "export const el = <a>b\nexport const k = 1;\n</ a>;\n";
@@ -371,10 +371,10 @@ const JSX_OR_ASSERTION: &str = "export const el = <a>b\nexport const k = 1;\n</ 
 fn a_file_that_changes_only_its_extension_to_ts_is_another_entry() {
     let (before, after) = through_one_cache(
         &[
-            ("a/index.vlt", "export const A = 1;\n"),
-            ("a/x.vlt", JSX_OR_ASSERTION),
+            ("a/index.velt", "export const A = 1;\n"),
+            ("a/x.velt", JSX_OR_ASSERTION),
         ],
-        |root| std::fs::rename(root.join("a/x.vlt"), root.join("a/x.ts")).unwrap(),
+        |root| std::fs::rename(root.join("a/x.velt"), root.join("a/x.ts")).unwrap(),
     );
     assert_eq!(module_paths(&before), module_paths(&after));
     assert_eq!(export_names(module(&before, "std/a/x")), ["el"]);
@@ -387,8 +387,8 @@ fn a_file_that_changes_only_its_extension_to_ts_is_another_entry() {
 
 #[test]
 fn a_file_added_to_a_package_is_another_entry() {
-    let (before, after) = through_one_cache(&[("a/index.vlt", "export const A = 1;\n")], |root| {
-        std::fs::write(root.join("a/z.vlt"), "export const Z = 1;\n").unwrap()
+    let (before, after) = through_one_cache(&[("a/index.velt", "export const A = 1;\n")], |root| {
+        std::fs::write(root.join("a/z.velt"), "export const Z = 1;\n").unwrap()
     });
     assert_eq!(module_paths(&before), ["std/a"]);
     assert_eq!(module_paths(&after), ["std/a", "std/a/z"]);

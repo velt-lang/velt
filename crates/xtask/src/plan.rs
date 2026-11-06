@@ -199,7 +199,7 @@ pub struct Plan {
     pub veltc: Veltc,
     pub goldens: Goldens,
     /// `velt fmt --check std examples packages`, and std-lint.
-    pub vlt_fmt: bool,
+    pub velt_fmt: bool,
     /// The native crates of the repository's packages (`packages/<name>/native`, outside the
     /// workspace): `cargo fmt` and clippy. (`veltc::packages` runs their tests.)
     pub native_crates: bool,
@@ -252,7 +252,7 @@ impl Plan {
             all_tests: true,
             veltc: Veltc::All,
             goldens: Goldens::All,
-            vlt_fmt: true,
+            velt_fmt: true,
             native_crates: true,
             difftest: true,
             vscode: true,
@@ -289,7 +289,7 @@ impl Plan {
             all_tests: false,
             veltc: Veltc::None,
             goldens: Goldens::None,
-            vlt_fmt: false,
+            velt_fmt: false,
             native_crates: false,
             difftest: false,
             vscode: false,
@@ -367,7 +367,7 @@ impl Plan {
                     ));
                     plan.all_tests(graph);
                     plan.goldens = Goldens::All;
-                    plan.vlt_fmt = true;
+                    plan.velt_fmt = true;
                 }
                 Effect::ReadByTests(packages, binaries) => {
                     plan.reasons.push(format!("{path}: read by tests"));
@@ -381,7 +381,7 @@ impl Plan {
                         .iter()
                         .any(|d| path.starts_with(d))
                     {
-                        plan.vlt_fmt = true;
+                        plan.velt_fmt = true;
                     }
                     if path.starts_with("packages/") && path.contains("/native/") {
                         plan.native_crates = true;
@@ -454,7 +454,7 @@ impl Plan {
             }
         }
         if affected.contains("velt_fmt") {
-            self.vlt_fmt = true;
+            self.velt_fmt = true;
         }
         let tooling = |name: &str| TOOLING.iter().find(|(t, _)| *t == name);
         // A pipeline crate (or one the rules don't know) changes compiled programs.
@@ -464,7 +464,7 @@ impl Plan {
         if pipeline {
             self.veltc = Veltc::All;
             self.goldens = Goldens::All;
-            self.vlt_fmt = true;
+            self.velt_fmt = true;
             return;
         }
         for name in &affected {
@@ -518,7 +518,7 @@ impl Plan {
     }
 
     pub fn needs_build(&self) -> bool {
-        self.has_tests() || self.goldens != Goldens::None || self.vlt_fmt
+        self.has_tests() || self.goldens != Goldens::None || self.velt_fmt
     }
 
     /// The nextest filterset of the tests to run (never the goldens, which run on their own).
@@ -643,7 +643,7 @@ impl Plan {
         ));
         out.push_str(&format!(
             "  velt fmt --check std examples packages: {}\n",
-            yes(self.vlt_fmt)
+            yes(self.velt_fmt)
         ));
         out.push_str(&format!(
             "  packages/*/native (fmt, clippy): {}\n",
@@ -704,9 +704,9 @@ fn classify(graph: &Graph, path: &str) -> Effect {
             _ => Effect::Everything,
         };
     }
-    // std's white-box tests (`std/<module>/<name>.test.vlt`) change no program but their own:
+    // std's white-box tests (`std/<module>/<name>.test.velt`) change no program but their own:
     // `std_tests` runs them (`velt test std/`).
-    if path.starts_with("std/") && path.ends_with(".test.vlt") {
+    if path.starts_with("std/") && path.ends_with(".test.velt") {
         return Effect::ReadByTests(&[], &["std_tests"]);
     }
     if path.starts_with("std/") {
@@ -748,7 +748,7 @@ fn is_wasm(path: &str) -> bool {
 ///
 /// A program sits directly in a category directory (`tests/golden/lang/`) or in its `errors/`:
 /// `tests/golden/lang/foo.out` → `tests/golden/lang/foo.` (that program). Anything else is
-/// shared (a `_helper.vlt`, a `_dir/` module, a package directory, a `.pending` marker) and may
+/// shared (a `_helper.velt`, a `_dir/` module, a package directory, a `.pending` marker) and may
 /// be imported from anywhere in the category: → `tests/golden/lang/`.
 fn golden_filter(path: &str) -> Option<String> {
     if let Some(rest) = path.strip_prefix("examples/") {
@@ -770,7 +770,7 @@ fn golden_filter(path: &str) -> Option<String> {
     Some(format!("tests/golden/{dir}/{}", program_prefix(file)))
 }
 
-/// `foo.vlt`, `foo.out`, `foo.err`... → `foo.` (matches `foo.vlt`, not `foo_bar.vlt`).
+/// `foo.velt`, `foo.out`, `foo.err`... → `foo.` (matches `foo.velt`, not `foo_bar.velt`).
 fn program_prefix(file: &str) -> String {
     match file.split_once('.') {
         Some((stem, _)) => format!("{stem}."),

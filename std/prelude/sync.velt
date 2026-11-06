@@ -1,0 +1,18 @@
+// Prelude: `Mutex<T>` for `shared(new Mutex<T>(x))` (https://veltlang.com/docs/reference/async/; `RwLock<T>` is in
+// rw_lock.velt, `Atomic<T>` in atomic.velt, `ThreadLocal<T>` in thread_local.velt).
+//
+// The compiler implements `new Mutex<T>(x)` (initializes the lock word) and `m.with((v) => ...)`
+// (lock, run the callback on the value, unlock) on a `Mutex<T>` or `shared<Mutex<T>>`; this
+// declaration only fixes the layout they use: the runtime's 8-byte lock word, then the value.
+// It is never Copy (copying it would duplicate the lock). Its methods are the only way to reach
+// the value.
+
+/**
+ * A lock around a value of type `T`, for sharing it between tasks and threads:
+ * `shared(new Mutex<T>(x))`. `m.with((v) => …)` locks, runs the callback on the value, then
+ * unlocks; it is the only way to reach the value.
+ */
+export struct Mutex<T> {
+  private lock: u64;
+  private value: T;
+}

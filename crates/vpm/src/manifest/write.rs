@@ -1,4 +1,4 @@
-//! Writing a [`Manifest`] as `package.vlt` text (scaffolding, the `velt.toml` migration) and as
+//! Writing a [`Manifest`] as `package.velt` text (scaffolding, the `velt.toml` migration) and as
 //! JSON (`velt manifest --json`).
 
 use serde_json::{json, Map, Value};
@@ -8,7 +8,7 @@ use super::{Dependency, Manifest, DEFAULT_ENTRY, DEFAULT_NATIVE_PATH};
 /// The first line of every generated manifest.
 pub(crate) const TYPES_IMPORT: &str = "import type { Package } from \"velt/package\";";
 
-pub(super) fn to_vlt(m: &Manifest) -> String {
+pub(super) fn to_velt(m: &Manifest) -> String {
     let mut fields = vec![
         format!("name: {}", string_lit(&m.package.name)),
         format!("version: {}", string_lit(&m.package.version)),
@@ -149,7 +149,7 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
         fields.push(format!("tsCompat: [{}]", dirs.join(", ")));
     }
     if let Some(lint) = &m.lint {
-        fields.push(format!("lint: {}", lint_vlt(lint)));
+        fields.push(format!("lint: {}", lint_velt(lint)));
     }
     if let Some(build) = &m.build {
         let cpu = build.cpu.iter().map(|c| format!("cpu: {}", string_lit(c)));
@@ -402,8 +402,8 @@ pub(crate) fn string_lit(s: &str) -> String {
     out
 }
 
-/// `lint` as `package.vlt` writes it: `{ perf: "warn", rules: { "perf/x": "off" } }`.
-fn lint_vlt(lint: &super::LintConfig) -> String {
+/// `lint` as `package.velt` writes it: `{ perf: "warn", rules: { "perf/x": "off" } }`.
+fn lint_velt(lint: &super::LintConfig) -> String {
     let mut parts = vec![];
     if let Some(perf) = lint.perf {
         parts.push(format!("perf: {}", string_lit(perf.name())));

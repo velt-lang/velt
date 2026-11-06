@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Instructions per phase of phases.vlt under cachegrind, the fill subtracted, for a standard
+# Instructions per phase of phases.velt under cachegrind, the fill subtracted, for a standard
 # library against another with one compiler (a std-only change):
 #
 #   bench/concurrent_map/phases.sh <velt> <base std dir> <head std dir> [kinds...]
@@ -17,8 +17,8 @@ if [ ${#KINDS[@]} -eq 0 ]; then
 fi
 HERE=$(cd "$(dirname "$0")" && pwd)
 OUT=${OUT:-$(mktemp -d)}
-VELT_STD=$BASE_STD "$VELT" build --release --backend llvm "$HERE/phases.vlt" -o "$OUT/base"
-VELT_STD=$HEAD_STD "$VELT" build --release --backend llvm "$HERE/phases.vlt" -o "$OUT/head"
+VELT_STD=$BASE_STD "$VELT" build --release --backend llvm "$HERE/phases.velt" -o "$OUT/base"
+VELT_STD=$HEAD_STD "$VELT" build --release --backend llvm "$HERE/phases.velt" -o "$OUT/head"
 
 instr() {
   valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null "$@" 2>&1 >/dev/null |

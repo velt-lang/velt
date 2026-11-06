@@ -1,1 +1,1 @@
-jsx_refused_runtime_in_closure.vlt:4:9: error: `jsx` of the JSX provider '_jsx_auto_value' is not a function (it has type `string`)
+jsx_refused_runtime_in_closure.velt:4:9: error: `jsx` of the JSX provider '_jsx_auto_value' is not a function (it has type `string`)

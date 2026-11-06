@@ -35,14 +35,14 @@ pub struct Input {
     pub module: String,
     /// Its source text.
     pub source: String,
-    /// Its source file as the JSON output shows it (`std/fs/index.vlt`, `src/util.vlt`), with `/`
+    /// Its source file as the JSON output shows it (`std/fs/index.velt`, `src/util.velt`), with `/`
     /// separators.
     pub file: String,
 }
 
-/// Every source file under `dir` (`.vlt`, `.ts`, `.tsx` but not `.d.ts`; sorted; hidden
+/// Every source file under `dir` (`.velt`, `.ts`, `.tsx` but not `.d.ts`; sorted; hidden
 /// directories, `target/` and `node_modules/` skipped) as a module named
-/// `<prefix>/<relative path without the extension>` (`x/index.vlt` → `<prefix>/x`), with its
+/// `<prefix>/<relative path without the extension>` (`x/index.velt` → `<prefix>/x`), with its
 /// path relative to `dir` as its [`Input::file`].
 pub fn inputs_from_dir(dir: &Path, prefix: &str) -> Result<Vec<Input>, String> {
     let mut files = vec![];
@@ -97,11 +97,11 @@ fn collect(dir: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     Ok(())
 }
 
-/// A Velt source module's file name: `.vlt`, `.ts` or `.tsx`, but not a `.d.ts` declaration
+/// A Velt source module's file name: `.velt`, `.ts` or `.tsx`, but not a `.d.ts` declaration
 /// file. A copy of `vpm::sources::is_source_name` (crates/vpm/src/sources.rs), which this crate
 /// does not depend on: keep the two in step.
 fn is_source_name(name: &str) -> bool {
-    [".vlt", ".ts", ".tsx"]
+    [".velt", ".ts", ".tsx"]
         .iter()
         .any(|ext| name.len() > ext.len() && name.ends_with(ext))
         && !name.ends_with(".d.ts")
@@ -207,15 +207,15 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let src = tmp.path().join("src");
         std::fs::create_dir_all(src.join("util")).unwrap();
-        std::fs::write(src.join("lib.vlt"), "// Lib.\n\nexport function f() {}\n").unwrap();
-        std::fs::write(src.join("util/index.vlt"), "export const X: i64 = 1;\n").unwrap();
+        std::fs::write(src.join("lib.velt"), "// Lib.\n\nexport function f() {}\n").unwrap();
+        std::fs::write(src.join("util/index.velt"), "export const X: i64 = 1;\n").unwrap();
         std::fs::write(src.join("card.tsx"), "export function Card() {}\n").unwrap();
         std::fs::write(src.join("model.ts"), "export const Y: i64 = 2;\n").unwrap();
         std::fs::write(src.join("globals.d.ts"), "declare const Z: number;\n").unwrap();
         let inputs = inputs_from_dir(&src, "pkg").unwrap();
         let names: Vec<&str> = inputs.iter().map(|i| i.module.as_str()).collect();
         assert_eq!(names, ["pkg/card", "pkg/lib", "pkg/model", "pkg/util"]);
-        assert_eq!(inputs[3].file, "util/index.vlt");
+        assert_eq!(inputs[3].file, "util/index.velt");
         let out = tmp.path().join("doc");
         let index = write_api_docs("pkg", "API", &inputs, &out).unwrap();
         let html = std::fs::read_to_string(index).unwrap();

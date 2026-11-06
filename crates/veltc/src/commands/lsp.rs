@@ -27,7 +27,7 @@ pub fn lsp_command() -> Result<(), String> {
 }
 
 /// [`ProgramLoader`] over [`loader::load_program`]. A package's dependency graph is installed like
-/// the first `velt build` does, and again whenever its saved `package.vlt` changes (so editing the
+/// the first `velt build` does, and again whenever its saved `package.velt` changes (so editing the
 /// dependencies needs no server restart).
 #[derive(Default)]
 pub struct CliLoader {
@@ -47,7 +47,7 @@ struct Installed {
     dependency_modules: Option<Arc<Vec<ModuleEntry>>>,
 }
 
-/// When `package.vlt` was last written, and its size: what tells a saved change apart.
+/// When `package.velt` was last written, and its size: what tells a saved change apart.
 type ManifestStamp = Option<(std::time::SystemTime, u64)>;
 
 fn manifest_stamp(root: &Path) -> ManifestStamp {
@@ -144,7 +144,7 @@ impl ProgramLoader for CliLoader {
     ) -> Result<LoadedProgram, String> {
         let std_root = loader::std_root();
         // A std file is checked as the std module it is, without a package: the std root's
-        // `package.vlt` is the manifest's type declarations, not a manifest to install.
+        // `package.velt` is the manifest's type declarations, not a manifest to install.
         let in_std = std_root.as_deref().is_some_and(|s| loader::in_std(root, s));
         let graph = if in_std { None } else { self.graph(root) };
         let opts = LoadOptions {
@@ -155,7 +155,7 @@ impl ProgramLoader for CliLoader {
             std_root_as_std: true,
             test_harness: false,
             // For the default target, unless the document is a `#name` variant only another
-            // target uses (`js.vlt`): then for that one. The variants of each `#name` are
+            // target uses (`js.velt`): then for that one. The variants of each `#name` are
             // compared as `velt check` does.
             target: graph.as_deref().and_then(|g| variant_target(g, root)),
             host_condition: None,
@@ -244,7 +244,7 @@ mod tests {
         conn.sender.send(n.into()).unwrap();
     }
 
-    /// Saving a changed `package.vlt` reinstalls the package's graph: a new dependency resolves
+    /// Saving a changed `package.velt` reinstalls the package's graph: a new dependency resolves
     /// without restarting the server.
     #[test]
     fn a_saved_manifest_change_reinstalls_the_graph() {
@@ -256,8 +256,8 @@ mod tests {
                 format!("export const pkg: Package = {{ name: \"{name}\", version: \"0.1.0\" }};");
             std::fs::write(root.join(vpm::manifest::MANIFEST_FILE), manifest).unwrap();
         }
-        std::fs::write(util.join("src/lib.vlt"), "export const X: i64 = 1;\n").unwrap();
-        let main = app.join("src/main.vlt");
+        std::fs::write(util.join("src/lib.velt"), "export const X: i64 = 1;\n").unwrap();
+        let main = app.join("src/main.velt");
         std::fs::write(&main, "function main() {}\n").unwrap();
 
         let loader = CliLoader::default();
@@ -295,14 +295,14 @@ mod tests {
                 format!("export const pkg: Package = {{ name: \"{name}\", version: \"0.1.0\" }};");
             std::fs::write(root.join(vpm::manifest::MANIFEST_FILE), manifest).unwrap();
         }
-        std::fs::write(util.join("src/lib.vlt"), "export const X: i64 = 1;\n").unwrap();
-        std::fs::write(util.join("src/extra.vlt"), "export const Y: i64 = 1;\n").unwrap();
+        std::fs::write(util.join("src/lib.velt"), "export const X: i64 = 1;\n").unwrap();
+        std::fs::write(util.join("src/extra.velt"), "export const Y: i64 = 1;\n").unwrap();
         let spec = vpm::edit::DependencySpec {
             version: None,
             path: Some("../util".into()),
         };
         vpm::edit::add_dependency(&app, "util", &spec).unwrap();
-        let main = app.join("src/main.vlt");
+        let main = app.join("src/main.velt");
         std::fs::write(&main, "function main() {}\n").unwrap();
 
         let specs: Vec<String> = CliLoader::default()
@@ -338,7 +338,7 @@ mod tests {
     #[test]
     fn import_help_uses_the_std_modules() {
         let dir = tempfile::tempdir().unwrap();
-        let main = dir.path().join("main.vlt");
+        let main = dir.path().join("main.velt");
         std::fs::write(&main, "function main() {}\n").unwrap();
         let main_uri = lsp_types::Url::from_file_path(&main).unwrap();
         let (server_conn, conn) = Connection::memory();
@@ -402,16 +402,16 @@ mod tests {
                 format!("export const pkg: Package = {{ name: \"{name}\", version: \"0.1.0\" }};");
             std::fs::write(pkg.join(vpm::manifest::MANIFEST_FILE), manifest).unwrap();
         }
-        std::fs::write(dep.join("src/lib.vlt"), "export * from \"dep2\";\n").unwrap();
+        std::fs::write(dep.join("src/lib.velt"), "export * from \"dep2\";\n").unwrap();
         let lib2 = "export function fromDepTwo(): i64 {\n  return 2;\n}\n";
-        std::fs::write(dep2.join("src/lib.vlt"), lib2).unwrap();
+        std::fs::write(dep2.join("src/lib.velt"), lib2).unwrap();
         let path_dep = |path: &str| vpm::edit::DependencySpec {
             version: None,
             path: Some(path.into()),
         };
         vpm::edit::add_dependency(&app, "dep", &path_dep("../dep")).unwrap();
         vpm::edit::add_dependency(&dep, "dep2", &path_dep("../dep2")).unwrap();
-        let main = app.join("src/main.vlt");
+        let main = app.join("src/main.velt");
         let text = "function main() {\n  fromDep\n}\n";
         std::fs::write(&main, text).unwrap();
         let main_uri = lsp_types::Url::from_file_path(&main).unwrap();
@@ -460,8 +460,8 @@ mod tests {
     #[test]
     fn server_uses_the_cli_loader_with_open_buffers() {
         let dir = tempfile::tempdir().unwrap();
-        let main = dir.path().join("main.vlt");
-        let util = dir.path().join("util.vlt");
+        let main = dir.path().join("main.velt");
+        let util = dir.path().join("util.velt");
         std::fs::write(&main, "function main() {}\n").unwrap();
         std::fs::write(&util, "export function helper(): i64 {\n  return 1;\n}\n").unwrap();
         let main_uri = lsp_types::Url::from_file_path(&main).unwrap();
@@ -516,7 +516,7 @@ mod tests {
     #[test]
     fn jsx_completion_uses_the_std_runtime() {
         let dir = tempfile::tempdir().unwrap();
-        let main = dir.path().join("main.vlt");
+        let main = dir.path().join("main.velt");
         std::fs::write(
             &main,
             "function main() {}
@@ -561,7 +561,7 @@ mod tests {
     #[test]
     fn hover_shows_std_doc_comments() {
         let dir = tempfile::tempdir().unwrap();
-        let main = dir.path().join("main.vlt");
+        let main = dir.path().join("main.velt");
         let text = "import { normalize } from \"velt/path\";\nfunction main() {\n  console.log(normalize(\"a//b\"));\n}\n";
         std::fs::write(&main, text).unwrap();
         let main_uri = lsp_types::Url::from_file_path(&main).unwrap();
@@ -607,7 +607,7 @@ mod tests {
     #[test]
     fn std_globals_and_prelude_methods_show_their_docs() {
         let dir = tempfile::tempdir().unwrap();
-        let main = dir.path().join("main.vlt");
+        let main = dir.path().join("main.velt");
         std::fs::write(&main, STD_DOCS).unwrap();
         let main_uri = lsp_types::Url::from_file_path(&main).unwrap();
         let (server_conn, conn) = Connection::memory();
@@ -697,7 +697,7 @@ async function main() {
     #[test]
     fn hover_and_definition_in_generators() {
         let dir = tempfile::tempdir().unwrap();
-        let main = dir.path().join("main.vlt");
+        let main = dir.path().join("main.velt");
         std::fs::write(&main, GENERATORS).unwrap();
         let main_uri = lsp_types::Url::from_file_path(&main).unwrap();
         let (server_conn, conn) = Connection::memory();

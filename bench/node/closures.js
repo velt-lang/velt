@@ -1,4 +1,4 @@
-// Closures (same workload as closures.vlt).
+// Closures (same workload as closures.velt).
 function makeScaler(k) {
   return (x) => x * k + 1;
 }

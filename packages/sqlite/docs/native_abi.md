@@ -3,7 +3,7 @@
 The package's native library (`native/`, crate `velt_sqlite_native`, library `velt_native_sqlite`)
 over `rusqlite` (SQLite compiled in: `bundled`; also `column_decltype`), built on the
 native-package SDK ([native_abi.md](../../../docs/internals/contracts/native_abi.md)): its
-functions are `velt_sqlite__*` exports with the signatures below, declared in `src/native.vlt`
+functions are `velt_sqlite__*` exports with the signatures below, declared in `src/native.velt`
 (the compiler checks each declaration against the library's signature records).
 **Synchronous**: a typical statement takes microseconds, less than a blocking-pool round trip. A database is a registry key of `Mutex<Option<Connection>>` plus a
 failure counter and the last error; a statement is a key of `{ Arc<db>, sql }` that re-finds

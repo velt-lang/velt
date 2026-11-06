@@ -1,7 +1,7 @@
 //! Calls a release build keeps out of hot loops, checked on the optimized VIR: `Math.min` /
 //! `Math.max` with plain arguments build no rest array (#1570), and module-level `let`s ask the
 //! runtime for the module state once per function call (#1571). The goldens
-//! `std/math_min_max_args.vlt` and `lang/module_let_loops.vlt` check the results.
+//! `std/math_min_max_args.velt` and `lang/module_let_loops.velt` check the results.
 
 use std::path::PathBuf;
 
@@ -11,7 +11,7 @@ use veltc::driver::{self, BuildOptions, Session};
 /// The release VIR of the program `source`.
 fn release_vir(source: &str) -> String {
     let opts = BuildOptions {
-        input: PathBuf::from("hot_loops.vlt"),
+        input: PathBuf::from("hot_loops.velt"),
         root_source: Some(source.to_string()),
         release: true,
         emit: Emit::Vir,

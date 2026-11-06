@@ -64,8 +64,8 @@ fn repo_root() -> PathBuf {
     }
 }
 
-/// Every `.vlt` file under `dir`, recursively, in a stable order.
-fn vlt_files(dir: &Path, out: &mut Vec<PathBuf>) {
+/// Every `.velt` file under `dir`, recursively, in a stable order.
+fn velt_files(dir: &Path, out: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };
@@ -73,8 +73,8 @@ fn vlt_files(dir: &Path, out: &mut Vec<PathBuf>) {
     paths.sort();
     for path in paths {
         if path.is_dir() {
-            vlt_files(&path, out);
-        } else if path.extension().is_some_and(|e| e == "vlt") {
+            velt_files(&path, out);
+        } else if path.extension().is_some_and(|e| e == "velt") {
             out.push(path);
         }
     }
@@ -94,15 +94,15 @@ fn synthetic(unit: &str, lines: usize) -> Vec<String> {
 
 fn std_and_examples() -> Vec<String> {
     let mut paths = Vec::new();
-    vlt_files(&repo_root().join("std"), &mut paths);
-    vlt_files(&repo_root().join("examples"), &mut paths);
+    velt_files(&repo_root().join("std"), &mut paths);
+    velt_files(&repo_root().join("examples"), &mut paths);
     read_all(&paths)
 }
 
 fn jsx_goldens() -> Vec<String> {
     let mut paths = Vec::new();
-    vlt_files(&repo_root().join("tests/golden"), &mut paths);
-    vlt_files(&repo_root().join("std/jsx"), &mut paths);
+    velt_files(&repo_root().join("tests/golden"), &mut paths);
+    velt_files(&repo_root().join("std/jsx"), &mut paths);
     let mut files = read_all(&paths);
     files.retain(|src| src.contains("</") || src.contains("/>"));
     files

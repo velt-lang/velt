@@ -1,3 +1,3 @@
-jsx_automatic_exports.vlt:5:17: error: the JSX provider '_jsx_auto_min' does not export `jsxs`
-jsx_automatic_exports.vlt:6:18: error: the JSX provider '_jsx_auto_min' does not export `Fragment`
-jsx_automatic_exports.vlt:7:14: error: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.
+jsx_automatic_exports.velt:5:17: error: the JSX provider '_jsx_auto_min' does not export `jsxs`
+jsx_automatic_exports.velt:6:18: error: the JSX provider '_jsx_auto_min' does not export `Fragment`
+jsx_automatic_exports.velt:7:14: error: JSX element implicitly has type 'any' because no interface 'JSX.IntrinsicElements' exists.

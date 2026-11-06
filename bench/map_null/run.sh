@@ -13,7 +13,7 @@ mkdir -p "$OUT"
 for prog in bulk_plain bulk_nullable bulk_half_null live_plain live_nullable live_half_null; do
   for velt in "$@"; do
     exe="$OUT/$prog-$(echo "$velt" | md5sum | cut -c1-8)"
-    "$velt" build --release --backend llvm "$HERE/$prog.vlt" -o "$exe" > /dev/null
+    "$velt" build --release --backend llvm "$HERE/$prog.velt" -o "$exe" > /dev/null
     refs=$(VELT_THREADS=1 valgrind --tool=cachegrind --cache-sim=no \
       --cachegrind-out-file=/dev/null "$exe" 2>&1 >/dev/null | sed -n 's/.*I *refs: *//p')
     echo "$prog	$velt	$refs	$("$exe")"

@@ -1,4 +1,4 @@
-//! The workloads of `bench/btree/btree.vlt` over an ordered map from Rust: the same keys, in the
+//! The workloads of `bench/btree/btree.velt` over an ordered map from Rust: the same keys, in the
 //! same order, and the same output (name, milliseconds, checksum), for `run.sh` to compare.
 use std::time::Instant;
 
@@ -111,7 +111,7 @@ pub fn strings<M: Map<String>>(n: usize) {
     report("str_delete", t, gone + m.len() as u64);
 }
 
-/// `walk`'s fold of the entries in key order, as btree.vlt's `forEach` computes it.
+/// `walk`'s fold of the entries in key order, as btree.velt's `forEach` computes it.
 pub fn fold<'a, K: 'a + Copy + Into<u64>>(entries: impl Iterator<Item = (&'a K, &'a u64)>) -> u64 {
     let mut walk = 0u64;
     for (k, v) in entries {

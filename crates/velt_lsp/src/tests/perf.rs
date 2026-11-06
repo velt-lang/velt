@@ -16,7 +16,7 @@ fn package(fields: &str) -> tempfile::TempDir {
         "import type {{ Package }} from \"velt/package\";\n\n\
          export const pkg: Package = {{ name: \"app\", version: \"0.1.0\"{fields} }};\n"
     );
-    std::fs::write(tmp.path().join("package.vlt"), manifest).unwrap();
+    std::fs::write(tmp.path().join("package.velt"), manifest).unwrap();
     std::fs::create_dir(tmp.path().join("shared")).unwrap();
     tmp
 }
@@ -56,7 +56,7 @@ const PAIR: &str = "class Pair {\n  a: number;\n  b: string = \"x\";\n  construc
 fn a_hint_whose_fix_may_change_the_behaviour_is_not_preferred() {
     let tmp = package("");
     let mut client = Client::start();
-    let doc = uri_in(&tmp, "pair.vlt");
+    let doc = uri_in(&tmp, "pair.velt");
     client.open(&doc, PAIR);
     let diags = published(&mut client, &doc);
     assert_eq!(kinds(&diags), [perf("class-as-data", 4)]);
@@ -78,7 +78,7 @@ fn a_hint_whose_fix_may_change_the_behaviour_is_not_preferred() {
 fn levels_and_allow_comments() {
     let tmp = package(", lint: { perf: \"warn\", rules: { \"perf/dynamic-record\": \"off\" } }");
     let mut client = Client::start();
-    let doc = uri_in(&tmp, "pair.vlt");
+    let doc = uri_in(&tmp, "pair.velt");
     let text = PAIR;
     client.open(&doc, text);
     assert_eq!(
@@ -99,7 +99,7 @@ fn levels_and_allow_comments() {
 fn exported_classes_are_fixed_by_the_package_check() {
     let tmp = package(", tsCompat: [\"shared\"]");
     let mut client = Client::start();
-    let doc = uri_in(&tmp, "shared/point.vlt");
+    let doc = uri_in(&tmp, "shared/point.velt");
     let model = "export class Point {\n  x: number;\n  y: number;\n  constructor(x: number, y: number) {\n    this.x = x;\n    this.y = y;\n  }\n}\n";
     client.open(&doc, model);
     let diags = published(&mut client, &doc);
@@ -113,7 +113,7 @@ fn exported_classes_are_fixed_by_the_package_check() {
     assert!(offered
         .iter()
         .all(|a| a["title"] != json!("make `Point` an object type")));
-    let shared = uri_in(&tmp, "shared/pair.vlt");
+    let shared = uri_in(&tmp, "shared/pair.velt");
     client.open(&shared, PAIR);
     let diags = published(&mut client, &shared);
     let offered = actions(&mut client, &shared, PAIR, "Pair", &diags);

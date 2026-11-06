@@ -1,7 +1,7 @@
 //! Chaining on the in-place array methods: `xs.sort().join(",")`, `xs.reverse().length`,
 //! `s.split(",").sort().map(f)`. In JS `sort`, `reverse` and `fill` return the array itself; in
 //! Velt they return nothing, since returning the array would share it, which makes every array
-//! of its type reference counted (std/prelude/array.vlt). Used as the receiver of a member
+//! of its type reference counted (std/prelude/array.velt). Used as the receiver of a member
 //! access, though, the result is only borrowed, so the chain reads the array they changed:
 //! - on a place (`xs`, `this.items`, `rows[i]`) the place is read again after the call;
 //! - on a temporary (`s.split(",")`) the temporary is kept in a local of a block expression,

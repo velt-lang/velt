@@ -1,4 +1,4 @@
-// A `HashMap` keyed by a small `Copy` struct (the default SipHash hasher): mapkey_*.vlt in Rust.
+// A `HashMap` keyed by a small `Copy` struct (the default SipHash hasher): mapkey_*.velt in Rust.
 use std::collections::HashMap;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]

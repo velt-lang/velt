@@ -1,0 +1,177 @@
+// Who may write to the registry (src/server/access.velt, owners.velt, memory/token_auth.velt), as
+// crates/velt_registry's tests check it: tokens, owners, an open registry, and names that would
+// leave a registry directory.
+import { describe, expect, it } from "velt/test";
+import { Caller, MemoryPublishLock, TokenAuth, tokenHash } from "../src/lib";
+import { TestRegistry } from "./_registry";
+
+// A registry with users alice (owner of the published `lib`) and bob; returns their tokens.
+async function withLib(r: TestRegistry): Promise<[string, string]> {
+  const alice = r.user("alice");
+  const bob = r.user("bob");
+  expect((await r.publish("lib", "1.0.0", alice)).status).toBe(201);
+  return [alice, bob];
+}
+
+describe("tokens", () => {
+  it("names the caller by the token's hash, the scheme in any case", async () => {
+    const auth = new TokenAuth();
+    expect((await auth.caller(null)).isAnyone()).toBe(true);
+    auth.setUser("alice", tokenHash("secret"));
+    expect((await auth.caller("Bearer secret")).user).toBe("alice");
+    expect((await auth.caller("bearer  secret ")).user).toBe("alice");
+    for (const bad of [null, "", "Bearer ", "Bearer nope", "secret", "Basic secret"]) {
+      const c: Caller = await auth.caller(bad);
+      expect(c.refused).toBe(true);
+    }
+    expect(tokenHash("secret")).toBe(
+      "sha256:2bb80d537b1da3e38bd30361aa855686bde0eacd7162fef6a25fe97bf527a25b",
+    );
+  });
+
+  it("keeps a registry whose users were all removed closed", async () => {
+    const auth = new TokenAuth();
+    auth.setUser("alice", tokenHash("secret"));
+    auth.removeUser("alice");
+    expect((await auth.caller(null)).refused).toBe(true);
+    expect(await auth.isUser("alice")).toBe(false);
+  });
+});
+
+describe("owners", () => {
+  it("lets only owners publish, yank and change owners; the last one stays", async () => {
+    const r = new TestRegistry();
+    const [alice, bob] = await withLib(r);
+    expect((await r.call("GET", "lib/owners")).text).toBe("alice\n");
+    expect((await r.publish("lib", "1.0.1")).status).toBe(401);
+    const denied = await r.publish("lib", "1.0.1", bob);
+    expect(denied.status).toBe(403);
+    expect(denied.text).toBe("`bob` is not an owner of `lib` (owners: alice)");
+
+    expect((await r.call("PUT", "lib/owners/bob", bob)).status).toBe(403);
+    expect((await r.call("PUT", "lib/owners/carol", alice)).text).toBe("no user `carol`");
+    expect((await r.call("PUT", "lib/owners/bob", alice)).text).toBe(
+      "owners of `lib`: alice, bob\n",
+    );
+    expect((await r.publish("lib", "1.0.1", bob)).status).toBe(201);
+    expect((await r.call("DELETE", "lib/owners/alice", bob)).status).toBe(200);
+    const last = await r.call("DELETE", "lib/owners/bob", bob);
+    expect(last.status).toBe(409);
+    expect(last.text).toBe("`bob` is the last owner of `lib`; add another owner first");
+    expect((await r.call("DELETE", "lib/owners/alice", bob)).status).toBe(404);
+    expect((await r.call("GET", "lib/owners")).text).toBe("bob\n");
+    expect((await r.call("GET", "nope/owners")).status).toBe(404);
+    expect((await r.call("PUT", "nope/owners/bob", bob)).status).toBe(404);
+
+    expect((await r.call("PUT", "lib/1.0.0/yank", alice)).status).toBe(403);
+    expect((await r.call("PUT", "lib/1.0.0/yank")).status).toBe(401);
+    expect((await r.call("PUT", "lib/1.0.0/yank", bob)).status).toBe(200);
+  });
+
+  it("needs a valid token for owner changes", async () => {
+    const r = new TestRegistry();
+    const [alice, _] = await withLib(r);
+    for (const method of ["PUT", "DELETE"]) {
+      for (const token of ["", "not-a-token"]) {
+        expect((await r.call(method, "lib/owners/bob", token)).status).toBe(401);
+      }
+    }
+    expect((await r.call("DELETE", "lib/owners/bob", alice)).status).toBe(404);
+    expect((await r.call("GET", "lib/owners")).text).toBe("alice\n");
+  });
+
+  it("gives an open registry's packages no owners until an administrator assigns one", async () => {
+    const r = new TestRegistry();
+    expect((await r.publish("lib", "1.0.0")).status).toBe(201);
+    expect((await r.call("PUT", "lib/1.0.0/yank")).status).toBe(200);
+    expect((await r.call("GET", "lib/owners")).text).toBe("");
+    const refused = await r.call("PUT", "lib/owners/alice");
+    expect(refused.status).toBe(400);
+    expect(refused.text).toBe("this registry has no users, so packages have no owners");
+
+    // Once it has users, nobody takes over the unowned package...
+    const alice = r.user("alice");
+    expect((await r.call("DELETE", "lib/1.0.0/yank")).status).toBe(401);
+    const taken = await r.call("PUT", "lib/owners/alice", alice);
+    expect(taken.status).toBe(403);
+    expect(taken.text).toContain("velt registry owner add");
+    expect((await r.publish("lib", "1.1.0", alice)).status).toBe(403);
+    // ...until an administrator assigns an owner; a new package is still its first publisher's.
+    await r.db.putOwners("lib", ["alice"]);
+    expect((await r.call("DELETE", "lib/1.0.0/yank", alice)).status).toBe(200);
+    expect((await r.publish("lib", "1.1.0", alice)).status).toBe(201);
+    expect((await r.publish("fresh", "1.0.0", alice)).status).toBe(201);
+    expect((await r.call("GET", "fresh/owners")).text).toBe("alice\n");
+  });
+
+  it("leaves no owner behind when a publish is refused", async () => {
+    const r = new TestRegistry();
+    const [alice, bob] = await withLib(r);
+    const refused = await r.publish(
+      "taken",
+      "1.0.0",
+      alice,
+      `dependencies: { lib: { path: "../lib" } }`,
+    );
+    expect(refused.status).toBe(400);
+    expect(await r.db.owners("taken")).toEqual([]);
+    expect((await r.publish("taken", "1.0.0", bob)).status).toBe(201);
+    expect(await r.db.owners("taken")).toEqual(["bob"]);
+  });
+});
+
+describe("names", () => {
+  it("never reach outside the registry's packages", async () => {
+    const r = new TestRegistry();
+    const [alice, _] = await withLib(r);
+    for (const name of [
+      "..",
+      "..%5Cother",
+      "..\\other",
+      ".auth",
+      ".staging",
+      "Lib",
+      "con",
+      "com1",
+    ]) {
+      expect((await r.call("GET", `${name}/owners`)).status).toBe(400);
+      expect((await r.call("PUT", `${name}/owners/bob`, alice)).status).toBe(400);
+      expect((await r.call("GET", `${name}/index`)).status).toBe(400);
+      expect((await r.call("PUT", `${name}/1.0.0`, alice)).status).toBe(400);
+    }
+    for (const user of ["..", ".auth", "Bob", "..%5Cx", "con"]) {
+      expect((await r.call("PUT", `lib/owners/${user}`, alice)).status).toBe(400);
+    }
+    const device = await r.call("PUT", "lib/owners/nul", alice);
+    expect(device.text).toContain("device name on Windows");
+  });
+
+  it("refuses a native library until the registry takes them", async () => {
+    const r = new TestRegistry();
+    const [alice, _] = await withLib(r);
+    const target = "x86_64-unknown-linux-gnu";
+    expect((await r.call("PUT", `lib/1.0.0/native/${target}`, alice)).status).toBe(501);
+    expect((await r.call("GET", `lib/1.0.0/native/${target}`)).status).toBe(501);
+    expect((await r.call("GET", "lib/1.0.0/native/sparc-sun-solaris")).status).toBe(400);
+  });
+});
+
+describe("the publish lock", () => {
+  it("holds a key until it is released, and other keys meanwhile", async () => {
+    const lock = new MemoryPublishLock();
+    const order: string[] = [];
+    const first = await lock.acquire("my_pkg");
+    const second = (async (): Promise<void> => {
+      const held = await lock.acquire("my_pkg");
+      order.push("second");
+      await held.release();
+    })();
+    const other = await lock.acquire("other");
+    order.push("other");
+    await other.release();
+    order.push("first released");
+    await first.release();
+    await second;
+    expect(order).toEqual(["other", "first released", "second"]);
+  });
+});

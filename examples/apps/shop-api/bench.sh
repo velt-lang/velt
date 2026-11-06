@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Velt vs Node under load: starts both servers (fresh, same seed), checks that their responses
-# are identical (parity.vlt), then runs each scenario against each with oha and prints
+# are identical (parity.velt), then runs each scenario against each with oha and prints
 # requests/s, p50/p99 latency and the server's RSS afterwards. The Velt server uses every core
 # (the default runtime); Node runs its JavaScript on one thread.
 #   ./bench.sh [seconds per scenario] [connections]     (default 5 s, 64)
@@ -53,7 +53,7 @@ stop_all() {
 
 start velt
 start node
-"$velt" run parity.vlt -- "http://127.0.0.1:$vport" "http://127.0.0.1:$nport"
+"$velt" run parity.velt -- "http://127.0.0.1:$vport" "http://127.0.0.1:$nport"
 stop_all
 
 # LOAD-1 (created before each run, stock 1000000) never runs out during a run. The bulk body's

@@ -1,8 +1,8 @@
 # The `perf/…` lint rules' measurements
 
 Each rule of `velt check --perf` (docs/internals/design/lint-profiles.md, "Rules") comes with a
-pair of programs here: the TypeScript form the rule finds (`*_ts.vlt`) and the Velt form its fix
-writes (`*_velt.vlt`), same output. Instructions retired, release builds with the release
+pair of programs here: the TypeScript form the rule finds (`*_ts.velt`) and the Velt form its fix
+writes (`*_velt.velt`), same output. Instructions retired, release builds with the release
 runtime, Linux x86-64 (2026-11-03):
 
 | Rule | TypeScript form | Velt form |
@@ -15,7 +15,7 @@ runtime, Linux x86-64 (2026-11-03):
 To measure one (a release `velt`, or `VELT_RT_LIB` pointing at a release `libvelt_rt.a`):
 
 ```sh
-velt build --release bench/perf_lint/foreach_capture_ts.vlt -o /tmp/ts
+velt build --release bench/perf_lint/foreach_capture_ts.velt -o /tmp/ts
 valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null /tmp/ts
 ```
 

@@ -1,5 +1,5 @@
 //! `p.then(f)`, `p.then(f, g)`, `p.catch(g)` and `p.finally(h)` on a promise: calls of the
-//! prelude's `promiseThen` family (std/prelude/promise.vlt), which take the promise. A callback
+//! prelude's `promiseThen` family (std/prelude/promise.velt), which take the promise. A callback
 //! that returns a promise selects the `…Async` form, which awaits it (flattening, as in JS).
 
 use velt_common::Span;

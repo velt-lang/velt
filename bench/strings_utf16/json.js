@@ -1,4 +1,4 @@
-// JSON (same workload as json.vlt): `JSON.stringify` and `JSON.parse` of 50k objects whose
+// JSON (same workload as json.velt): `JSON.stringify` and `JSON.parse` of 50k objects whose
 // string fields hold accents, CJK and emoji, 3 rounds.
 class Rng {
   seed = 42;

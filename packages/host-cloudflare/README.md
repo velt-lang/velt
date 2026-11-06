@@ -17,7 +17,7 @@ JS-host variant, chosen by the built-in condition `js`, does this for `serve`). 
 imports may also choose a variant for this host alone with its condition, `workers`.
 Host modules see each request's `env` and `ctx` as `host.env` and `host.ctx`.
 
-This package is all Velt knows about Cloudflare: its `package.vlt`'s `host` gives the target, the
+This package is all Velt knows about Cloudflare: its `package.velt`'s `host` gives the target, the
 condition, the entry (`src/worker.mjs`) and the files to scaffold (`src/wrangler.toml`). Another
 platform is another package like it, with no change to the compiler
 (docs/internals/contracts/workers.md in the Velt repository).

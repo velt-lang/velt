@@ -1,0 +1,11 @@
+// A `Response` and a `Request` keep their state in fields of their own: they have no JSON form
+// and no `any` form, and `Object.keys` does not list them (../fetch_private_state.velt shows what
+// a program sees of them).
+function main() {
+  const res = new Response("hello");
+  const req = new Request("http://example.com/a");
+  console.log(JSON.stringify(res), JSON.stringify(req));
+  const a: any = res;
+  const b: any = req;
+  console.log(Object.keys(res), Object.keys(req), a, b);
+}

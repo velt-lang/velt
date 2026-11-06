@@ -259,7 +259,7 @@ fn compile(root: &Path, program: &str) -> Result<(), (bool, String)> {
         packages: Some(graph),
         // Virtual root module path, in the package that depends on the repository's packages
         // (a snippet with a relative import is `ts ignore`).
-        input: dir.join("__doc_snippet.vlt"),
+        input: dir.join("__doc_snippet.velt"),
         root_source: Some(program.to_string()),
         emit: Emit::Vir,
         // An example that calls system functions calls POSIX ones (`declare system function`),
@@ -286,7 +286,7 @@ fn check(root: &Path, s: &Snippet) -> Option<String> {
     // `VELT_DOCS_DUMP=<dir>`: also write each completed program there (to run them by hand and
     // compare with the outputs the docs claim).
     if let Some(dir) = std::env::var_os("VELT_DOCS_DUMP") {
-        let name = s.origin.replace(['/', '.', ':'], "_") + ".vlt";
+        let name = s.origin.replace(['/', '.', ':'], "_") + ".velt";
         let _ = std::fs::create_dir_all(&dir);
         let _ = std::fs::write(Path::new(&dir).join(name), &program);
     }

@@ -40,7 +40,7 @@ pub const BUILD_FILES: &[&str] = &[
 /// lists and the host's scaffolded files.
 pub const MARKER: &str = ".velt-host";
 
-/// What `host` of a host package's `package.vlt` says.
+/// What `host` of a host package's `package.velt` says.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct HostConfig {
     /// The target triple the package's builds are for.
@@ -229,7 +229,7 @@ mod tests {
         use crate::imports::Variant;
         let variant = |c: &str| Variant {
             condition: c.into(),
-            target: "./src/a.vlt".into(),
+            target: "./src/a.velt".into(),
         };
         let mut graph = crate::PackageGraph::default();
         graph.add("app", Path::new("/app"), BTreeMap::new()).imports = BTreeMap::from([(

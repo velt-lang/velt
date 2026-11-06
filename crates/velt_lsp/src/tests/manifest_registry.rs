@@ -1,4 +1,4 @@
-//! `package.vlt` with a live registry (a `velt_registry` server on localhost): requirement
+//! `package.velt` with a live registry (a `velt_registry` server on localhost): requirement
 //! diagnostics, version and package-name completion, dependency hover and the update fix.
 
 use std::net::TcpListener;
@@ -19,7 +19,7 @@ fn publish(loc: &Locations, work: &Path, name: &str, version: &str) {
     let manifest =
         format!("export const pkg: Package = {{ name: \"{name}\", version: \"{version}\" }};");
     std::fs::write(dir.join(vpm::manifest::MANIFEST_FILE), manifest).unwrap();
-    std::fs::write(dir.join("src/lib.vlt"), "export const V: i64 = 1;\n").unwrap();
+    std::fs::write(dir.join("src/lib.velt"), "export const V: i64 = 1;\n").unwrap();
     vpm::registry::publish(&dir, loc).unwrap();
 }
 
@@ -79,7 +79,7 @@ fn requirements_are_checked_against_the_registry() {
         return;
     };
     let mut client = Client::start();
-    let doc = uri("live_diags/package.vlt");
+    let doc = uri("live_diags/package.velt");
     let text = manifest(&url, "sqlite: \"^0.1\", nope: \"1\"");
     client.open(&doc, &text);
     let messages = eventually("registry diagnostics", || {
@@ -120,7 +120,7 @@ fn versions_names_and_hover_come_from_the_registry() {
         return;
     };
     let mut client = Client::start();
-    let doc: Url = uri("live_complete/package.vlt");
+    let doc: Url = uri("live_complete/package.velt");
     let text = manifest(&url, "sqlite: \"\", sq");
     client.open(&doc, &text);
 

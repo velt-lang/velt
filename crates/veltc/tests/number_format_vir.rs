@@ -1,4 +1,4 @@
-//! Numbers as text in std's Velt code (#1982): `tests/golden/std/number_format.vlt` checks that
+//! Numbers as text in std's Velt code (#1982): `tests/golden/std/number_format.velt` checks that
 //! the output stays Node's; this checks the release build's shape: no call into the runtime's
 //! formatters, and the float path is one function marked `noInline()` (#1884) that every `${x}`
 //! calls instead of a copy at each site.
@@ -28,7 +28,7 @@ fn release_vir(golden: &str) -> String {
 
 #[test]
 fn numbers_print_without_the_runtime_and_floats_through_one_function() {
-    let vir = release_vir("std/number_format.vlt");
+    let vir = release_vir("std/number_format.velt");
     // The bodies of the functions that may run often: cold functions are left as they are.
     // (The runtime prints no integer for a template or `String()` at all: its integer
     // formatters were deleted, #2197.)
@@ -65,7 +65,7 @@ fn a_builder_param_that_is_appended_to_is_not_readonly() {
     // `pushF64(buf, x)` appends to `buf` through `strbufPushAsciiWords`, whose `buf` is
     // `Mut<string>`: the parameter is written, so it must not be `readonly` (LLVM would let the
     // caller keep the builder's length from before the call) or `frozen`.
-    let vir = release_vir("std/number_format.vlt");
+    let vir = release_vir("std/number_format.velt");
     let mut lines = vir.lines();
     let mut seen = 0;
     while let Some(line) = lines.next() {
@@ -84,12 +84,12 @@ fn a_builder_param_that_is_appended_to_is_not_readonly() {
 
 #[test]
 fn a_float_the_trigger_misses_takes_the_runtime_printer() {
-    // `tests/golden/lang/float_text_miss.vlt`: its floats reach `${x}` and `String(x)` in a
+    // `tests/golden/lang/float_text_miss.velt`: its floats reach `${x}` and `String(x)` in a
     // module whose conversions nothing marks as floats, so std's float printer
     // (velt/lang/hooks/number_float) is not loaded, and the golden checks Node's output. Here: the
     // float hooks are absent, and the conversions go through `numberPush`/`numberText` to the
     // runtime's printer (whole numbers to std's integer printing).
-    let vir = release_vir("lang/float_text_miss.vlt");
+    let vir = release_vir("lang/float_text_miss.velt");
     let header = |l: &&str| l.starts_with("fn#");
     assert!(
         !vir.lines()

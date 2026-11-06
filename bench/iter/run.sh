@@ -1,20 +1,20 @@
 #!/usr/bin/env bash
-# Iteration benchmark harness (Linux / macOS): same as run.ps1. Builds every bench/iter/*.vlt
+# Iteration benchmark harness (Linux / macOS): same as run.ps1. Builds every bench/iter/*.velt
 # (LLVM release), checks that each prints what its Node version (node/<name>.js) prints, and
 # prints a Markdown table of the best wall-clock time (ms) over RUNS interleaved rounds, with
 # each program's time relative to hand_loop.
 #
 #   bench/iter/run.sh [runs]
 #
-# The programs compute the same sum over 0..N: hand_loop.vlt with a while loop, gen_loop.vlt with
-# `for...of` over a generator call (the state embedded in the loop), gen_value.vlt with a
-# generator passed as an `Iterable<i64>`, iterable_class.vlt with an iterator class. The async
-# pair sums 20 × 3M values awaiting an async call per value: async_hand.vlt in a while loop,
-# async_gen.vlt with `for await` over an async generator call; they are compared with
-# async_hand. The array pair sums a 3M-element array 200 times: array_loop.vlt with `for...of`
-# over the array, array_iterable.vlt through an `Iterable<i64>` parameter; they are compared with
-# array_loop. The spread pair builds 20 arrays of 5M values and sums them: spread_gen.vlt with
-# `[...range(n)]`, spread_hand.vlt pushing in a while loop; they are compared with spread_hand.
+# The programs compute the same sum over 0..N: hand_loop.velt with a while loop, gen_loop.velt with
+# `for...of` over a generator call (the state embedded in the loop), gen_value.velt with a
+# generator passed as an `Iterable<i64>`, iterable_class.velt with an iterator class. The async
+# pair sums 20 × 3M values awaiting an async call per value: async_hand.velt in a while loop,
+# async_gen.velt with `for await` over an async generator call; they are compared with
+# async_hand. The array pair sums a 3M-element array 200 times: array_loop.velt with `for...of`
+# over the array, array_iterable.velt through an `Iterable<i64>` parameter; they are compared with
+# array_loop. The spread pair builds 20 arrays of 5M values and sums them: spread_gen.velt with
+# `[...range(n)]`, spread_hand.velt pushing in a while loop; they are compared with spread_hand.
 # Node runs once per program (its generators take tens of seconds here).
 # Needs: cargo, node, python3 on PATH; clang for the LLVM backend.
 set -euo pipefail
@@ -32,8 +32,8 @@ cargo build --release -q -p veltc -p velt_rt --manifest-path "$ROOT/Cargo.toml"
 VELT="$TARGET/release/velt"
 
 names=()
-for src in "$HERE"/*.vlt; do
-  name=$(basename "$src" .vlt)
+for src in "$HERE"/*.velt; do
+  name=$(basename "$src" .velt)
   names+=("$name")
   "$VELT" build --release --backend llvm "$src" -o "$OUT/$name"
 done

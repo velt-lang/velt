@@ -155,17 +155,17 @@ fn to_equal_compares_interface_values_by_their_objects() {
     runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    let path = dir.join("t/iface.test.vlt");
+    let path = dir.join("t/iface.test.velt");
     std::fs::create_dir_all(path.parent().unwrap()).unwrap();
     std::fs::write(&path, INTERFACES).unwrap();
     let o = velt_test(dir, &["t"]);
     let stdout = String::from_utf8_lossy(&o.stdout).replace("t\\iface", "t/iface");
     let lines: Vec<&str> = stdout
         .lines()
-        .skip_while(|l| !l.ends_with("iface.test.vlt"))
+        .skip_while(|l| !l.ends_with("iface.test.velt"))
         .skip(1)
         .take_while(|l| !l.is_empty())
-        .map(|l| l.split(" at t/iface.test.vlt:").next().unwrap())
+        .map(|l| l.split(" at t/iface.test.velt:").next().unwrap())
         .collect();
     assert_eq!(
         lines,

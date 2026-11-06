@@ -3,7 +3,7 @@
 # runtimes, e.g. a copy of <target>/debug/velt_rt.lib built from the base and one from the branch.
 # Each program is built once per runtime (debug), then the two binaries run alternately <reps>
 # times; prints the total wall milliseconds per program and runtime.
-# Usage: bench/debug_alloc_runs.sh <base-runtime-lib> <branch-runtime-lib> <reps> <program.vlt>...
+# Usage: bench/debug_alloc_runs.sh <base-runtime-lib> <branch-runtime-lib> <reps> <program.velt>...
 base=${1:?usage: debug_alloc_runs.sh <base-lib> <branch-lib> <reps> <program>...}
 branch=${2:?}
 reps=${3:?}
@@ -12,7 +12,7 @@ work=${TMP:-/tmp}/debug-alloc-runs
 mkdir -p "$work"
 ms() { date +%s%3N; }
 for prog in "$@"; do
-  name=$(basename "$prog" .vlt)
+  name=$(basename "$prog" .velt)
   VELT_RT_LIB=$base cargo run -q -p veltc --bin velt -- build "$prog" -o "$work/$name-base.exe" || exit 1
   VELT_RT_LIB=$branch cargo run -q -p veltc --bin velt -- build "$prog" -o "$work/$name-branch.exe" || exit 1
   tb=0

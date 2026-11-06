@@ -1,5 +1,5 @@
 //! Gated functions (#1330): a std function whose first statement is
-//! `targetFeature("sha-x86")` (the intrinsic of std/lang/intrinsics/simd.vlt) is compiled for that
+//! `targetFeature("sha-x86")` (the intrinsic of std/lang/intrinsics/simd.velt) is compiled for that
 //! CPU extension (backends may use it
 //! anywhere in the function), so it must only run where the CPU has it. Sema checks every call:
 //! it sits in the `then` branch of `if (u32x4.hasShaX86())` (velt/simd's method, resolved by

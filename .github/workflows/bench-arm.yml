@@ -61,7 +61,7 @@ jobs:
           sparse-checkout-cone-mode: false
       - name: bench/jsx/run.sh from this workflow
         run: |
-          [ -f bench/jsx/main.vlt ] || { echo "::error::$REF has no bench/jsx"; exit 1; }
+          [ -f bench/jsx/main.velt ] || { echo "::error::$REF has no bench/jsx"; exit 1; }
           cp .bench-arm/bench/jsx/run.sh bench/jsx/run.sh
       - uses: ./.bench-arm/.github/actions/setup
         with:

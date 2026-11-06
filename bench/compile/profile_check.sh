@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Where `velt check bench/compile/all_std.vlt` spends its instructions at two git refs: runs it
+# Where `velt check bench/compile/all_std.velt` spends its instructions at two git refs: runs it
 # under callgrind for each (VELT_THREADS=1, release build with line tables) and prints the
 # functions whose inclusive and exclusive counts changed most. For finding which sema pass a
 # change to std/ or to the compiler makes slower; bench/compile/count_check.sh gives the plain
@@ -7,14 +7,14 @@
 #
 #   bench/compile/profile_check.sh WORKDIR BASE_REF HEAD_REF [FILE]
 #
-# FILE (default bench/compile/all_std.vlt, from each ref's tree) is what `velt check` checks.
+# FILE (default bench/compile/all_std.velt, from each ref's tree) is what `velt check` checks.
 # Each ref is exported to WORKDIR/src-<sha> and built into WORKDIR/target-<sha>. The callgrind
 # outputs stay in WORKDIR/cg-<sha>.out for callgrind_annotate. Keep WORKDIR on a Linux file
 # system (not /mnt/*). Linux only. Needs: git, tar, cargo, valgrind, python3.
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../.." && pwd)
 [ $# -ge 3 ] || { echo "usage: bench/compile/profile_check.sh WORKDIR BASE_REF HEAD_REF [FILE]" >&2; exit 2; }
-WORK=$1; BASE=$2; HEAD_REF=$3; FILE=${4:-bench/compile/all_std.vlt}
+WORK=$1; BASE=$2; HEAD_REF=$3; FILE=${4:-bench/compile/all_std.velt}
 mkdir -p "$WORK"
 WORK=$(cd "$WORK" && pwd)
 shas=()
@@ -34,7 +34,7 @@ for ref in "$BASE" "$HEAD_REF"; do
     --callgrind-out-file="$WORK/cg-$sha.out" "$WORK/target-$sha/release/velt" check "$src/$FILE" \
     > /dev/null 2> "$WORK/cg-$sha.log")
   # Code lines of std/, counted as bench/nightly.sh counts them.
-  lines=$(find "$src/std" -name '*.vlt' -exec cat {} + | awk '
+  lines=$(find "$src/std" -name '*.velt' -exec cat {} + | awk '
     block { if (/\*\//) block = 0; next }
     /^[ 	]*(\/\/|$)/ { next }
     /^[ 	]*\/\*/ { if (!/\*\//) block = 1; next }

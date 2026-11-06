@@ -155,7 +155,7 @@ fn std_files(dir: &Path, out: &mut Vec<PathBuf>) {
             std_files(&path, out);
         } else if path
             .extension()
-            .is_some_and(|x| x == "vlt" || x == "ts" || x == "tsx")
+            .is_some_and(|x| x == "velt" || x == "ts" || x == "tsx")
         {
             out.push(path);
         }

@@ -1,4 +1,4 @@
-// Vector math in a loop, n-body style, with a `Copy` struct: the algorithm of vecmath_*.vlt.
+// Vector math in a loop, n-body style, with a `Copy` struct: the algorithm of vecmath_*.velt.
 #[derive(Clone, Copy)]
 struct Vec3 {
     x: f64,

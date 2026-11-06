@@ -1,1 +1,1 @@
-rwlock_read_probe_m3.vlt:6:11: error: `read` needs a function literal or a named function
+rwlock_read_probe_m3.velt:6:11: error: `read` needs a function literal or a named function

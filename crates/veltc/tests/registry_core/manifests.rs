@@ -1,4 +1,4 @@
-//! The `package.vlt` cases of tests/registry_core.rs: hand-written manifests (every field, valid
+//! The `package.velt` cases of tests/registry_core.rs: hand-written manifests (every field, valid
 //! and not, and every form the Velt parser takes) and mutations of a valid one, token by token.
 
 /// The opening every case starts from unless it replaces it.
@@ -12,7 +12,7 @@ pub const FULL: &str = r##"{
   velt: "0.5",
   description: "Says hello, in Ünïcode",
   keywords: ["greeting", "demo-2"],
-  entry: "src/lib.vlt",
+  entry: "src/lib.velt",
   registry: "https://registry.example",
   dependencies: {
     json: "^1.2",
@@ -23,9 +23,9 @@ pub const FULL: &str = r##"{
     pinned: { git: "git@github.com:a/b.git", rev: "0123456789abcdef0123456789abcdef01234567" },
     ws: "workspace",
   },
-  paths: { "@app/*": "src/*", "~lib": "./src/lib.vlt" },
+  paths: { "@app/*": "src/*", "~lib": "./src/lib.velt" },
   imports: {
-    "#io": { js: "./src/io/js.vlt", darwin: "./src/io/mac.ts", default: "./src/io/native.vlt" },
+    "#io": { js: "./src/io/js.velt", darwin: "./src/io/mac.ts", default: "./src/io/native.velt" },
     "#one/two": "./src/two.tsx",
   },
   hostModules: { kv: "./src/kv.mjs", "my mod": "./src/m.js" },
@@ -311,7 +311,7 @@ fn fields() -> Vec<String> {
         "description: \"\"", "description: \" x\"", "description: \"a\\tb\"", "description: \"a\\u200Bb\"",
         "description: \"a\\u00A0\"", "keywords: []", "keywords: [\"a\", \"a\"]", "keywords: [\"A\"]",
         "keywords: [\"-a\"]", "keywords: [\"1\", \"2\", \"3\", \"4\", \"5\", \"6\", \"7\", \"8\", \"9\", \"10\", \"11\"]",
-        "keywords: \"a\"", "keywords: [1]", "entry: \"../x.vlt\"", "entry: \"./x.vlt\"", "entry: \".\"", "entry: \"c:/x\"",
+        "keywords: \"a\"", "keywords: [1]", "entry: \"../x.velt\"", "entry: \"./x.velt\"", "entry: \".\"", "entry: \"c:/x\"",
         "registry: \"ftp://x\"", "registry: \"http://x\"",
         "dependencies: { b: \"1\" }", "dependencies: { b: \">=1 <2\" }", "dependencies: { b: \"1.2.*\" }",
         "dependencies: { b: \"*\" }", "dependencies: { b: \"x, 1\" }", "dependencies: { b: \"1.*.3\" }",
@@ -324,10 +324,10 @@ fn fields() -> Vec<String> {
         "dependencies: { b: { url: \"x\" } }", "dependencies: { b: 1 }", "dependencies: { B: \"1\" }",
         "paths: { \"*\": \"src/*\" }", "paths: { \"@a/*\": \"src\" }", "paths: { \"@a\": \"../src\" }",
         "paths: { \"velt/x\": \"src/x\" }", "paths: { \"@a/**\": \"src/*\" }", "paths: { \"@a\": \"/abs\" }",
-        "imports: { io: \"./src/a.vlt\" }", "imports: { \"#a/*\": \"./src/a.vlt\" }", "imports: { \"#a\": \"src/a.vlt\" }",
-        "imports: { \"#a\": \"./lib/a.vlt\" }", "imports: { \"#a\": \"./src/a.d.ts\" }", "imports: { \"#a\": {} }",
-        "imports: { \"#a\": { default: \"./src/a.vlt\", js: \"./src/b.vlt\" } }", "imports: { \"#a\": { Edge: \"./src/a.vlt\" } }",
-        "imports: { \"#a\": { edge: \"./src/./a.vlt\" } }", "imports: { \"#a\": { edge: \"./src//a.vlt\" } }",
+        "imports: { io: \"./src/a.velt\" }", "imports: { \"#a/*\": \"./src/a.velt\" }", "imports: { \"#a\": \"src/a.velt\" }",
+        "imports: { \"#a\": \"./lib/a.velt\" }", "imports: { \"#a\": \"./src/a.d.ts\" }", "imports: { \"#a\": {} }",
+        "imports: { \"#a\": { default: \"./src/a.velt\", js: \"./src/b.velt\" } }", "imports: { \"#a\": { Edge: \"./src/a.velt\" } }",
+        "imports: { \"#a\": { edge: \"./src/./a.velt\" } }", "imports: { \"#a\": { edge: \"./src//a.velt\" } }",
         "hostModules: { velt: \"./src/a.mjs\" }", "hostModules: { \"velt:x\": \"./src/a.mjs\" }", "hostModules: { __proto__: \"./src/a.mjs\" }",
         "hostModules: { \"\": \"./src/a.mjs\" }", "hostModules: { a: \"./src/a.ts\" }", "hostModules: { a: \"./lib/a.mjs\" }",
         "host: { target: \"wasm32\", condition: \"edge\", entry: \"./src/e.mjs\" }",

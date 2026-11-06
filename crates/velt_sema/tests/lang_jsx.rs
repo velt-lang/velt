@@ -20,7 +20,7 @@ const SOLE_PLAIN: &str = "// @jsxImportSource ./_jsx_sole_plain\n";
 const SOLE: &str = "// @jsxImportSource ./_jsx_sole_precompile\n";
 
 fn load(src: &str) -> Loaded {
-    load_src_at(&repo_root().join("tests/golden/lang/main.vlt"), src)
+    load_src_at(&repo_root().join("tests/golden/lang/main.velt"), src)
 }
 
 fn ok(src: &str) -> Program {

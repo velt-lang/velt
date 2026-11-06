@@ -3,10 +3,10 @@
 //! of someone else's pull request.
 //!
 //! The changed files (crates/xtask/src/changes.rs) select:
-//! - `velt test` files (`*.test.vlt`, `.test.ts`, `.test.tsx`) under `packages/`, `std/`,
-//!   `tests/std/` and `examples/`; a changed helper next to them (a `.vlt` file in the same
+//! - `velt test` files (`*.test.velt`, `.test.ts`, `.test.tsx`) under `packages/`, `std/`,
+//!   `tests/std/` and `examples/`; a changed helper next to them (a `.velt` file in the same
 //!   directory of a `tests/` tree) selects the test files of its directory;
-//! - goldens: a changed `tests/golden/**/<name>.vlt` with a `<name>.out`, or a changed `.out`,
+//! - goldens: a changed `tests/golden/**/<name>.velt` with a `<name>.out`, or a changed `.out`,
 //!   `.stderr` or `.code` of one (programs that must not compile, `.err`, are deterministic).
 //!
 //! A file whose change is only whole-line comments is skipped (a `// timing:` marker added),
@@ -45,7 +45,7 @@ const TAIL_LINES: usize = 60;
 
 /// Where `velt test` files live.
 const VELT_TEST_DIRS: &[&str] = &["packages/", "std/", "tests/std/", "examples/"];
-const TEST_SUFFIXES: &[&str] = &[".test.vlt", ".test.ts", ".test.tsx"];
+const TEST_SUFFIXES: &[&str] = &[".test.velt", ".test.ts", ".test.tsx"];
 
 /// The files to repeat, relative to the repository root, `/`-separated.
 #[derive(Debug, Default, PartialEq, Eq)]
@@ -84,11 +84,11 @@ pub fn select(
                 sel.velt_tests.insert(path.clone());
             }
         } else if let Some(golden) = golden_program(path) {
-            let out = format!("{}.out", golden.strip_suffix(".vlt").unwrap_or(&golden));
+            let out = format!("{}.out", golden.strip_suffix(".velt").unwrap_or(&golden));
             if exists(&golden) && exists(&out) {
                 sel.goldens.insert(golden);
             }
-        } else if path.ends_with(".vlt")
+        } else if path.ends_with(".velt")
             && VELT_TEST_DIRS.iter().any(|d| path.starts_with(d))
             && (path.starts_with("tests/std/") || path.contains("/tests/"))
         {
@@ -101,8 +101,8 @@ pub fn select(
     sel
 }
 
-/// The golden program a changed file belongs to: `tests/golden/<dir>/<name>.vlt` for its
-/// `.vlt`, `.out`, `.stderr` or `.code`, if it is a program (not a `_helper`, not in a `_dir`,
+/// The golden program a changed file belongs to: `tests/golden/<dir>/<name>.velt` for its
+/// `.velt`, `.out`, `.stderr` or `.code`, if it is a program (not a `_helper`, not in a `_dir`,
 /// not a manifest).
 fn golden_program(path: &str) -> Option<String> {
     let rest = path.strip_prefix("tests/golden/")?;
@@ -110,15 +110,15 @@ fn golden_program(path: &str) -> Option<String> {
         return None;
     }
     let (stem, ext) = path.rsplit_once('.')?;
-    if !["vlt", "out", "stderr", "code"].contains(&ext) || stem.ends_with("/package") {
+    if !["velt", "out", "stderr", "code"].contains(&ext) || stem.ends_with("/package") {
         return None;
     }
-    Some(format!("{stem}.vlt"))
+    Some(format!("{stem}.velt"))
 }
 
 /// Whether two versions of a Velt file differ only in whole-line `//` comments (and blank
 /// lines). A golden's `// check:` and `// requires` lines are directives, not comments.
-pub fn same_vlt_code(old: &str, new: &str) -> bool {
+pub fn same_velt_code(old: &str, new: &str) -> bool {
     let code = |text: &str| -> Vec<String> {
         text.lines()
             .map(str::trim)
@@ -314,7 +314,7 @@ fn prepare(root: &Path, sel: &Selection, dry_run: bool) -> Result<Vec<Target>, S
 }
 
 /// The directory `velt test` runs a file's tests in: its package (the nearest directory above it
-/// with a `package.vlt`, within the repository), else its own directory.
+/// with a `package.velt`, within the repository), else its own directory.
 fn package_dir(root: &Path, file: &str) -> PathBuf {
     let path = root.join(file);
     let mut dir = path.parent();
@@ -322,7 +322,7 @@ fn package_dir(root: &Path, file: &str) -> PathBuf {
         if !d.starts_with(root) || d == root {
             break;
         }
-        if d.join("package.vlt").is_file() {
+        if d.join("package.velt").is_file() {
             return d.to_path_buf();
         }
         dir = d.parent();
@@ -604,10 +604,10 @@ mod tests {
     #[test]
     fn changed_test_files_are_selected() {
         let files = [
-            "packages/http-server/tests/h2.test.vlt",
-            "packages/http-server/src/h2.vlt",
-            "std/text/format.test.vlt",
-            "tests/std/fs/read.test.vlt",
+            "packages/http-server/tests/h2.test.velt",
+            "packages/http-server/src/h2.velt",
+            "std/text/format.test.velt",
+            "tests/std/fs/read.test.velt",
             "examples/apps/chat/tests/room.test.ts",
         ];
         let s = sel(&files, &files);
@@ -615,41 +615,41 @@ mod tests {
             s.velt_tests.iter().map(String::as_str).collect::<Vec<_>>(),
             [
                 "examples/apps/chat/tests/room.test.ts",
-                "packages/http-server/tests/h2.test.vlt",
-                "std/text/format.test.vlt",
-                "tests/std/fs/read.test.vlt",
+                "packages/http-server/tests/h2.test.velt",
+                "std/text/format.test.velt",
+                "tests/std/fs/read.test.velt",
             ]
         );
         assert!(s.goldens.is_empty());
         // A deleted test file has nothing to run.
-        assert!(sel(&["std/text/gone.test.vlt"], &[]).is_empty());
+        assert!(sel(&["std/text/gone.test.velt"], &[]).is_empty());
         // Library code is not a test file.
-        assert!(sel(&["packages/http-server/src/h2.vlt"], &files).is_empty());
+        assert!(sel(&["packages/http-server/src/h2.velt"], &files).is_empty());
     }
 
     #[test]
     fn a_changed_helper_selects_the_tests_beside_it() {
         let files = [
-            "tests/std/net/_server.vlt",
-            "tests/std/net/a.test.vlt",
-            "tests/std/net/b.test.vlt",
-            "tests/std/fs/c.test.vlt",
-            "packages/redis/tests/support.vlt",
-            "packages/redis/tests/x.test.vlt",
+            "tests/std/net/_server.velt",
+            "tests/std/net/a.test.velt",
+            "tests/std/net/b.test.velt",
+            "tests/std/fs/c.test.velt",
+            "packages/redis/tests/support.velt",
+            "packages/redis/tests/x.test.velt",
         ];
         let s = sel(
             &[
-                "tests/std/net/_server.vlt",
-                "packages/redis/tests/support.vlt",
+                "tests/std/net/_server.velt",
+                "packages/redis/tests/support.velt",
             ],
             &files,
         );
         assert_eq!(
             s.velt_tests.iter().map(String::as_str).collect::<Vec<_>>(),
             [
-                "packages/redis/tests/x.test.vlt",
-                "tests/std/net/a.test.vlt",
-                "tests/std/net/b.test.vlt",
+                "packages/redis/tests/x.test.velt",
+                "tests/std/net/a.test.velt",
+                "tests/std/net/b.test.velt",
             ]
         );
     }
@@ -657,42 +657,42 @@ mod tests {
     #[test]
     fn goldens_that_run_are_selected_by_any_of_their_files() {
         let files = [
-            "tests/golden/lang/a.vlt",
+            "tests/golden/lang/a.velt",
             "tests/golden/lang/a.out",
-            "tests/golden/lang/b.vlt",
+            "tests/golden/lang/b.velt",
             "tests/golden/lang/b.out",
-            "tests/golden/lang/errors/c.vlt",
+            "tests/golden/lang/errors/c.velt",
             "tests/golden/lang/errors/c.err",
-            "tests/golden/lang/_helper.vlt",
-            "tests/golden/std/_dir/index.vlt",
-            "tests/golden/std/pkg/package.vlt",
+            "tests/golden/lang/_helper.velt",
+            "tests/golden/std/_dir/index.velt",
+            "tests/golden/std/pkg/package.velt",
         ];
         let s = sel(
             &[
-                "tests/golden/lang/a.vlt",
+                "tests/golden/lang/a.velt",
                 "tests/golden/lang/b.out",
-                "tests/golden/lang/errors/c.vlt",
-                "tests/golden/lang/_helper.vlt",
-                "tests/golden/std/_dir/index.vlt",
-                "tests/golden/std/pkg/package.vlt",
+                "tests/golden/lang/errors/c.velt",
+                "tests/golden/lang/_helper.velt",
+                "tests/golden/std/_dir/index.velt",
+                "tests/golden/std/pkg/package.velt",
             ],
             &files,
         );
         assert_eq!(
             s.goldens.iter().map(String::as_str).collect::<Vec<_>>(),
-            ["tests/golden/lang/a.vlt", "tests/golden/lang/b.vlt"]
+            ["tests/golden/lang/a.velt", "tests/golden/lang/b.velt"]
         );
         assert!(s.velt_tests.is_empty());
     }
 
     #[test]
     fn comment_only_changes_are_skipped() {
-        let changed = paths(&["std/a.test.vlt", "std/b.test.vlt"]);
-        let comment_only = BTreeSet::from(["std/a.test.vlt".to_string()]);
+        let changed = paths(&["std/a.test.velt", "std/b.test.velt"]);
+        let comment_only = BTreeSet::from(["std/a.test.velt".to_string()]);
         let s = select(&changed, &comment_only, |_| true, |_| vec![]);
         assert_eq!(
             s.velt_tests.into_iter().collect::<Vec<_>>(),
-            ["std/b.test.vlt"]
+            ["std/b.test.velt"]
         );
     }
 
@@ -701,15 +701,15 @@ mod tests {
         let old = "import { x } from \"y\";\n\nawait sleep(5);\n";
         let marked = "import { x } from \"y\";\n// timing: the idle timeout is the subject\n\
                       await sleep(5);\n";
-        assert!(same_vlt_code(old, marked));
-        assert!(!same_vlt_code(old, "await sleep(6);\n"));
-        assert!(!same_vlt_code(
+        assert!(same_velt_code(old, marked));
+        assert!(!same_velt_code(old, "await sleep(6);\n"));
+        assert!(!same_velt_code(
             old,
             &old.replace("sleep(5);", "sleep(5); // x")
         ));
         // A golden's directives change how it runs.
-        assert!(!same_vlt_code(old, &format!("// check: no leaks\n{old}")));
-        assert!(!same_vlt_code(old, &format!("// requires: unix\n{old}")));
+        assert!(!same_velt_code(old, &format!("// check: no leaks\n{old}")));
+        assert!(!same_velt_code(old, &format!("// requires: unix\n{old}")));
     }
 
     #[test]
@@ -722,7 +722,7 @@ mod tests {
             dry_run: false,
         };
         let targets = [Target {
-            file: "x.test.vlt".into(),
+            file: "x.test.velt".into(),
             kind: Kind::Harness {
                 exe: PathBuf::from("does-not-exist"),
                 dir: PathBuf::from("."),
@@ -735,7 +735,7 @@ mod tests {
     #[test]
     fn a_failed_run_names_the_file_and_the_repetition() {
         let targets = [Target {
-            file: "packages/p/tests/x.test.vlt".into(),
+            file: "packages/p/tests/x.test.velt".into(),
             kind: Kind::Harness {
                 exe: PathBuf::from("x"),
                 dir: PathBuf::from("."),
@@ -760,10 +760,10 @@ mod tests {
         };
         let err = report(&targets, &outcomes, &logs, &opts, 0.0, 0.0).unwrap_err();
         assert!(
-            err.contains("packages/p/tests/x.test.vlt failed in repetition 2 of 3"),
+            err.contains("packages/p/tests/x.test.velt failed in repetition 2 of 3"),
             "{err}"
         );
-        assert!(logs.join("packages_p_tests_x_test_vlt-2.log").is_file());
+        assert!(logs.join("packages_p_tests_x_test_velt-2.log").is_file());
         let _ = std::fs::remove_dir_all(&logs);
         assert!(report(&targets, &outcomes[..1], &logs, &opts, 0.0, 0.0).is_ok());
     }

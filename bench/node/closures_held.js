@@ -1,4 +1,4 @@
-// Closures held in locals (same workload as closures_held.vlt).
+// Closures held in locals (same workload as closures_held.velt).
 const words = ["alpha", "beta", "gamma", "delta"];
 let total = 0;
 for (let i = 0; i < 3000000; i++) {

@@ -237,7 +237,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `Promise.allSettled(ps)` / `Promise.any(ps)`: calls of the prelude's `promiseAllSettled` /
-    /// `promiseAny` (std/prelude/promise.vlt), so a directly awaited `Promise.any` throws like
+    /// `promiseAny` (std/prelude/promise.velt), so a directly awaited `Promise.any` throws like
     /// any async call.
     pub(crate) fn prelude_call(
         &mut self,

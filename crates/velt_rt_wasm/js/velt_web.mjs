@@ -23,7 +23,7 @@
 // custom section "velt.host" lists each one, a line "m<TAB>f<TAB>params<TAB>result" (velt_vir's
 // vir/host.rs), and the glue wraps the embedder's function to convert what crosses. An async one
 // (result "async:<type>") returns the id of its promise, whose outcome the glue writes as
-// `HostSettled<T>` (std/host/promise.vlt) when the program takes it. The glue itself provides
+// `HostSettled<T>` (std/host/promise.velt) when the program takes it. The glue itself provides
 // the module `velt:fetch`, std's `fetch` over the host's own (`fetchHost` below).
 //
 // Browser:  import { runVelt } from "./velt_web.mjs";
@@ -492,7 +492,7 @@ const fromByteString = (bytes) =>
 
 /**
  * The import module `velt:fetch`: std's `fetch` on JS hosts over `hostFetch`
- * (std/net/http/fetch/client/transport/js_host.vlt). A call is an object holding the request's
+ * (std/net/http/fetch/client/transport/js_host.velt). A call is an object holding the request's
  * AbortController, then its Response, the reader of its body and the piece last read. What a
  * call rejects with is named as native `fetch` names the failure (the program's `IoError.code`):
  * `AbortError` once the call was aborted, else the code of the error's `cause` (`fetchCode`).

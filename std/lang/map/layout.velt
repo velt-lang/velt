@@ -1,0 +1,72 @@
+// velt/lang/map (internal): the layout of the prelude's `Map` (std/prelude/map.velt): its
+// constants (table sizes, the hash multiplier, the position mask and the null-prototype mark), and
+// how the map is laid out:
+//
+// Layout (like CPython's dict / indexmap):
+// - Entries live in two dense parallel arrays (`entryKeys`, `entryValues`) in insertion order,
+//   so iteration is a linear scan and order matches JS. A deleted entry's value is dropped at
+//   once (set to null); its key stays as a tombstone until the next compaction. (One array of
+//   `{ key, value }` entries measured ~20% slower on k-nucleotide: probing reads only keys, and
+//   they pack densest on their own. Values stay `V | null` so a delete drops the value at once.)
+// - A null value marks a deleted entry only where `V` excludes null. When `V` includes null
+//   (`Map<string, number | null>`, a `Record<string, T | null>`), `V | null` is `V` and a live
+//   entry may hold null too: such an entry is live when the map has no tombstones (`dead == 0`,
+//   the common case) or a slot of the index points at it (a delete removes the entry's slot at
+//   once, its key stays). `holdsNull` is a constant per instantiation, so maps
+//   whose `V` excludes null keep this layout and code unchanged (no extra field, no per-entry
+//   flag). Maps whose `V` includes null pay only while they have tombstones: `keys()`,
+//   `values()`, `entries()`, `compact` and the other bulk readers then mark the live positions
+//   from the slot words in one pass (`liveBits`), and `forEach`, `for...of` and the formatting
+//   and JSON glue probe the index for each null-valued entry, deleted ones included (`liveNull`).
+// - `slots` is an open-addressing index (power-of-two capacity) of packed `u64` words:
+//   the top 32 bits of the entry's scrambled hash `p = hash * 2^64/phi` (Fibonacci hashing,
+//   which spreads even weak hashes such as sequential integers), and in the low 32 bits the
+//   entry position + 1 (0 = empty slot). The home slot of `p` is its top bits, so the stored
+//   tag also gives every slot's home: probing rejects most non-matching slots without loading
+//   the key, and growing or deleting never rehashes keys.
+// - Collisions use Robin Hood linear probing: every probe cluster is kept sorted by home slot,
+//   so a lookup stops at the first slot whose resident is closer to its own home than the key
+//   would be (misses are short even at high load), inserts shift the rest of the cluster one
+//   slot right, and deletes shift it back (no tombstones in the index). The index grows at 3/4
+//   load (as fast as plain linear probing grown at 5/8 in bench/hashmap.velt, with half the
+//   index memory at some sizes; bench/RESULTS.md).
+//
+// Ownership: `set` takes ownership of the key and value. `get` returns the stored value like JS
+// (an object is shared — another reference to it — and numbers or strings are copied); `upsert`
+// / `update` change a value in place. `keys()`, `values()` and `entries()` return the stored
+// keys and values the same way; `forEach` borrows. A map holds at most 2^31 entries.
+//
+// Live iteration (JS order: entries added while a loop runs are visited, deleted ones are not):
+// `forEach` and `for...of` over a map (or its `keys()`, `values()`, `entries()`, through a
+// `MapCursor`) walk the entry positions. A compaction, the pop of the newest entry and clearing
+// renumber positions; they alone bump `renumbers`, and a loop that sees it changed finds its
+// place again by *sequence number*: every entry has one, increasing in insertion order and never
+// reused. The sequence number of the entry at position `p` is `p + off`, with `off` from the
+// last breakpoint at or before `p` in (`seqPos`, `seqOff`); a map that never renumbered has no
+// breakpoints (`off` is 0). Renumbering rebuilds the breakpoints (at most one per run of
+// removed entries), so set, get and append never touch them.
+
+/** First index capacity once a map receives its first entry. */
+export const INITIAL_SLOTS: usize = 8;
+
+/** Dead entries tolerated before `delete` considers compacting. */
+export const COMPACT_MIN_DEAD: usize = 8;
+
+/** 2^64 / golden ratio. */
+export const FIB: u64 = 0x9e3779b97f4a7c15;
+
+/** Low half of a slot word: entry position + 1. */
+export const POS_MASK: u64 = 0xffffffff;
+
+/**
+ * Entries (tombstones included) a map may hold: keeps positions within `POS_MASK` and the index
+ * at most 2^32 slots, so home slots (`shift` >= 32) come from the tag half of a slot word.
+ */
+export const MAX_ENTRIES: usize = 0x80000000;
+
+/**
+ * The top bit of `edits` marks the entries of a record made by `Object.create(null)`, which has
+ * no prototype (`[MAP_MARK_NULL_PROTO]`). `edits` is only ever compared for equality and incremented,
+ * which keeps the bit; no map reaches 2^63 edits.
+ */
+export const NULL_PROTO: u64 = 0x8000000000000000;

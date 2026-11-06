@@ -506,7 +506,7 @@ fn generator_covers_memory_statements_and_vtables() {
 
 /// Give every statement and terminator of `p` a distinct source location.
 fn with_unique_locs(mut p: Program) -> Program {
-    p.files = vec!["gen.vlt".into()];
+    p.files = vec!["gen.velt".into()];
     let mut line = 0;
     for (fi, f) in p.funcs.iter_mut().enumerate() {
         f.locs = f

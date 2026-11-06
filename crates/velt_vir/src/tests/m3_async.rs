@@ -1,4 +1,4 @@
-//! `tests/golden/m3/async_basic.vlt`: embedded awaits, `sleep`, `Promise.all` over compiled
+//! `tests/golden/m3/async_basic.velt`: embedded awaits, `sleep`, `Promise.all` over compiled
 //! calls and over leaf futures, `spawn` + join, awaits in loops. It prints numbers through std's
 //! hooks (#2197), so it is loaded from source with the real std (std_src.rs).
 

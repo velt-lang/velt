@@ -21,18 +21,18 @@ fn repo() -> Repo {
     let dir = tmp.path().to_path_buf();
     let repo = Repo { _tmp: tmp, dir };
     repo.write(
-        "velt.workspace.vlt",
+        "velt.workspace.velt",
         "export const workspace: Workspace = { members: [\"packages/*\", \"apps/*\"] };\n",
     );
     repo.package("packages/core", "core", "");
     repo.write(
-        "packages/core/src/lib.vlt",
+        "packages/core/src/lib.velt",
         "export function greet(who: string): string {\n  return `hello ${who}`;\n}\n",
     );
     for app in ["a", "b"] {
         repo.package(&format!("apps/{app}"), app, "core: \"workspace\"");
         repo.write(
-            &format!("apps/{app}/src/main.vlt"),
+            &format!("apps/{app}/src/main.velt"),
             &format!("import {{ greet }} from \"core\";\n\nconsole.log(greet(\"{app}\"));\n"),
         );
     }
@@ -48,7 +48,7 @@ impl Repo {
 
     fn package(&self, rel: &str, name: &str, deps: &str) {
         self.write(
-            &format!("{rel}/package.vlt"),
+            &format!("{rel}/package.velt"),
             &format!(
                 "export const pkg: Package = {{ name: \"{name}\", version: \"0.1.0\", dependencies: {{ {deps} }} }};\n"
             ),
@@ -104,43 +104,43 @@ fn members_share_a_lock_and_keep_their_build_stamps_apart() {
     assert!(r.dir.join("velt.lock.json").is_file());
     assert!(!r.dir.join("apps/a/velt.lock.json").exists());
 
-    // Each member's program is in its own `target/`, so the two `src/main.vlt` never share a
+    // Each member's program is in its own `target/`, so the two `src/main.velt` never share a
     // stamp: building one leaves the other up to date.
-    assert!(!r.up_to_date("apps/a", "src/main.vlt"));
-    assert!(r.up_to_date("apps/a", "src/main.vlt"));
-    assert!(!r.up_to_date("apps/b", "src/main.vlt"));
-    assert!(r.up_to_date("apps/a", "src/main.vlt"));
+    assert!(!r.up_to_date("apps/a", "src/main.velt"));
+    assert!(r.up_to_date("apps/a", "src/main.velt"));
+    assert!(!r.up_to_date("apps/b", "src/main.velt"));
+    assert!(r.up_to_date("apps/a", "src/main.velt"));
     assert!(r.dir.join("apps/b/target/velt").join(exe("main")).is_file());
 
     // From the workspace root, a member builds into its own `target/` and hits its stamp.
-    assert!(r.up_to_date(".", "apps/b/src/main.vlt"));
+    assert!(r.up_to_date(".", "apps/b/src/main.velt"));
     assert!(!r.dir.join("target").exists());
 
     // A member another one uses is an input of both.
     r.write(
-        "packages/core/src/lib.vlt",
+        "packages/core/src/lib.velt",
         "export function greet(who: string): string {\n  return `hi ${who}`;\n}\n",
     );
-    assert!(!r.up_to_date("apps/a", "src/main.vlt"));
+    assert!(!r.up_to_date("apps/a", "src/main.velt"));
     assert_eq!(r.ok("apps/b", &["run"]).0, "hi b\n");
 }
 
 #[test]
 fn the_workspace_s_files_are_inputs_of_every_member_s_stamp() {
     let r = repo();
-    assert!(!r.up_to_date("apps/a", "src/main.vlt"));
-    assert!(r.up_to_date("apps/a", "src/main.vlt"));
+    assert!(!r.up_to_date("apps/a", "src/main.velt"));
+    assert!(r.up_to_date("apps/a", "src/main.velt"));
     // A new member that a glob lists changes the workspace's resolution and lock.
     r.package("packages/extra", "extra", "");
-    r.write("packages/extra/src/lib.vlt", "export const x = 1;\n");
-    assert!(!r.up_to_date("apps/a", "src/main.vlt"));
-    assert!(r.up_to_date("apps/a", "src/main.vlt"));
+    r.write("packages/extra/src/lib.velt", "export const x = 1;\n");
+    assert!(!r.up_to_date("apps/a", "src/main.velt"));
+    assert!(r.up_to_date("apps/a", "src/main.velt"));
     // So does the workspace file.
     r.write(
-        "velt.workspace.vlt",
+        "velt.workspace.velt",
         "export const workspace: Workspace = { members: [\"packages/*\", \"apps/a\"] };\n",
     );
-    assert!(!r.up_to_date("apps/a", "src/main.vlt"));
+    assert!(!r.up_to_date("apps/a", "src/main.velt"));
 }
 
 #[test]
@@ -160,7 +160,7 @@ fn install_at_the_root_installs_every_member() {
     assert!(!o.status.success());
     let err = text(&o.stderr);
     assert!(
-        err.contains("apps/b/package.vlt:1:")
+        err.contains("apps/b/package.velt:1:")
             && err.contains(
                 "error: `core` is a member of this workspace; write `core: \"workspace\"`"
             ),

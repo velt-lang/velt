@@ -26,7 +26,7 @@ function f(h: Headers, m: Headers | null, bag: Bag): string {
 /// The completion items at the end of `needle` in `PAGE`.
 fn items_after(needle: &str) -> Vec<Value> {
     let mut client = Client::start();
-    let doc = uri("quoted_keys.vlt");
+    let doc = uri("quoted_keys.velt");
     client.open(&doc, PAGE);
     client.diagnostics(&doc);
     let (line, col) = pos_of(PAGE, needle, needle.len());

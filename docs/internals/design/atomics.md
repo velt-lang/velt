@@ -113,7 +113,7 @@ word's address first; `velt_vir::atomic::AtomicCall` says what each symbol means
 rejects one that means nothing, and both backends emit every call inline. **No runtime function
 exists behind them.**
 
-The methods are declared in the prelude (`std/prelude/atomic.vlt`), so a call is checked as any
+The methods are declared in the prelude (`std/prelude/atomic.velt`), so a call is checked as any
 method call: the orderings are parameters of string literal union types, which makes
 `load("release")` a type error, and defaults are placed at the call. Sema then rewrites a call
 that resolves to one of `Atomic`'s methods (`body/expr/atomic.rs`) into an `Atomic*` intrinsic
@@ -214,7 +214,7 @@ reason to spin. `max` and `min` are the prelude's `max2` and `min2` (`Math.max`,
 1. **`Atomic<T>`** (implemented): the type, the sema rules, the inline code in both backends,
    `shared<int>`'s atomics through the same path (their runtime functions are gone),
    `velt/sync`'s `Backoff` and `VersionLatch`, docs (https://veltlang.com/docs/std/sync/, reference async.md),
-   goldens (`tests/golden/std/atomic*.vlt`, `sync_latch.vlt`: every operation at every width,
+   goldens (`tests/golden/std/atomic*.velt`, `sync_latch.velt`: every operation at every width,
    the errors, a counter, a spin lock and latch-checked reads on worker threads), and
    `bench/atomics` against Rust (results below).
 2. **`Once<T>`**: a slot set once with a `shared<T>` (CAS from empty), read by a frozen borrow
@@ -367,7 +367,7 @@ to the 15 ms timer tick, where `thread::sleep` takes about 0.6 ms for 50 µs and
 0.56 ms for a 50 µs one, against 15.4 ms with the condition variable; a hurry from another
 thread ends a nap in 49 µs, so the stall rescue takes about 2–3 ms there).
 
-`bench/async/scheduler/spawn_start.vlt` is the start probe below; `spawn_burst.vlt` is 100k
+`bench/async/scheduler/spawn_start.velt` is the start probe below; `spawn_burst.velt` is 100k
 rounds of 2 tiny spawned tasks awaited together, whose first polls are all watched. Apple M4,
 a loaded machine (load average 10–30 from another build), medians of interleaved runs:
 
@@ -519,7 +519,7 @@ on the pointer's bits, so backends see nothing new.
 
 ## Reclamation (#1696 step 2d)
 
-`velt/sync/epoch` (std/sync/epoch/reclaim.vlt) is epoch-based reclamation in Velt.
+`velt/sync/epoch` (std/sync/epoch/reclaim.velt) is epoch-based reclamation in Velt.
 - **State:** a global epoch, a static `Atomic<u64>` moving in steps of 2. Per thread, a slot:
   an `Atomic<u64>` state (the epoch it saw, bit 0 set while in a section) and a
   `shared<Mutex<Garbage>>` of retired values with their epochs, which the slot's thread makes
@@ -620,7 +620,7 @@ and a `VersionLatch` for writers.
 ## Generic `Atomic<T>` (#1696 step 4.1)
 
 `Atomic<T>` with `T` a type parameter is allowed when `T` is bounded by the prelude's marker
-interface `AtomicValue` (std/prelude/atomic.vlt). The compiler knows its implementations (no
+interface `AtomicValue` (std/prelude/atomic.velt). The compiler knows its implementations (no
 `extend` declares them): `Ctx::satisfies` takes the integer types, `f32`, `f64`, `bool`,
 `string`, `shared<U>` and `shared<U> | null`. The bound is checked where the generic is
 instantiated, as any interface bound is; lowering instantiates per type already, so `atomic_word` and

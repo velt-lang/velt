@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 pub struct GraphPackage {
     /// Package name.
     pub name: String,
-    /// Package root directory (contains package.vlt).
+    /// Package root directory (contains package.velt).
     pub root: PathBuf,
     /// Dependency name → that dependency's package root.
     pub dependencies: BTreeMap<String, PathBuf>,
@@ -91,8 +91,8 @@ fn canonical(p: &Path) -> PathBuf {
 }
 
 /// Whether `file`, under the package root `root` (both canonical), is in another package below
-/// it: under a `node_modules`, or under a directory with its own `package.json` or package.vlt.
-/// A directory with a package.vlt that is a package of the graph is the innermost root, so it
+/// it: under a `node_modules`, or under a directory with its own `package.json` or package.velt.
+/// A directory with a package.velt that is a package of the graph is the innermost root, so it
 /// never comes up here.
 fn past_package_boundary(root: &Path, file: &Path) -> bool {
     let Ok(below) = file.strip_prefix(root) else {
@@ -164,7 +164,7 @@ impl PackageGraph {
         self.packages.last_mut().expect("ICE: no package added yet")
     }
 
-    /// The module path (absolute, no `.vlt` extension) that a `paths` alias of the package
+    /// The module path (absolute, no `.velt` extension) that a `paths` alias of the package
     /// containing `importer` maps `spec` to.
     pub fn path_alias(&self, importer: &Path, spec: &str) -> Option<PathBuf> {
         let package = self.enclosing_package(importer)?;
@@ -286,22 +286,22 @@ mod tests {
         g.add("inner", &nested, BTreeMap::new());
 
         assert_eq!(
-            g.dependency_root(&app.join("src/main.vlt"), "inner")
+            g.dependency_root(&app.join("src/main.velt"), "inner")
                 .unwrap(),
             nested
         );
         let err = g
-            .dependency_root(&nested.join("src/lib.vlt"), "inner")
+            .dependency_root(&nested.join("src/lib.velt"), "inner")
             .unwrap_err();
         assert_eq!(
             err,
             "package `inner` is not a dependency (add it with `velt add inner`)"
         );
         assert!(g
-            .dependency_root(&tmp.path().join("elsewhere.vlt"), "inner")
+            .dependency_root(&tmp.path().join("elsewhere.velt"), "inner")
             .is_err());
         assert_eq!(
-            g.package_of(&nested.join("src/lib.vlt")).unwrap().name,
+            g.package_of(&nested.join("src/lib.velt")).unwrap().name,
             "inner"
         );
     }
@@ -318,18 +318,18 @@ mod tests {
             path
         };
         write("package.json");
-        let own = write("src/lib.vlt");
+        let own = write("src/lib.velt");
         let installed = write("node_modules/x/src/index.ts");
         let bare = write("node_modules/y.ts");
         write("js/package.json");
         let beside = write("js/src/index.ts");
         write("both/package.json");
-        write("both/package.vlt");
+        write("both/package.velt");
         let both = write("both/index.ts");
-        write("sub/package.vlt");
-        let other = write("sub/index.vlt");
-        write("listed/package.vlt");
-        let listed = write("listed/src/lib.vlt");
+        write("sub/package.velt");
+        let other = write("sub/index.velt");
+        write("listed/package.velt");
+        let listed = write("listed/src/lib.velt");
         let mut graph = PackageGraph::default();
         graph.add("good", &root, BTreeMap::new());
         graph.add("listed", &root.join("listed"), BTreeMap::new());
@@ -352,7 +352,7 @@ mod tests {
         let mut graph = PackageGraph::default();
         graph.add("good", &root, BTreeMap::new());
         assert_eq!(
-            graph.package_of(&root.join("src/lib.vlt")).unwrap().name,
+            graph.package_of(&root.join("src/lib.velt")).unwrap().name,
             "good"
         );
     }
@@ -389,22 +389,22 @@ mod tests {
         let mut g = PackageGraph::default();
         g.add("app", &app, BTreeMap::new()).jsx_import_source = Some("./ui".into());
         assert_eq!(
-            g.jsx_import_source(&app.join("main.vlt")).as_deref(),
+            g.jsx_import_source(&app.join("main.velt")).as_deref(),
             Some("./ui")
         );
         assert_eq!(
-            g.jsx_import_source(&app.join("src/pages/home.vlt"))
+            g.jsx_import_source(&app.join("src/pages/home.velt"))
                 .as_deref(),
             Some("../../ui")
         );
         g.add("lib", &tmp.path().join("lib"), BTreeMap::new())
             .jsx_import_source = Some("sigx".into());
         assert_eq!(
-            g.jsx_import_source(&tmp.path().join("lib/src/lib.vlt"))
+            g.jsx_import_source(&tmp.path().join("lib/src/lib.velt"))
                 .as_deref(),
             Some("sigx")
         );
-        assert_eq!(g.jsx_import_source(&tmp.path().join("x.vlt")), None);
+        assert_eq!(g.jsx_import_source(&tmp.path().join("x.velt")), None);
     }
 
     #[test]
@@ -416,12 +416,12 @@ mod tests {
         g.add("app", &app, BTreeMap::new()).paths =
             BTreeMap::from([("@app/*".to_string(), "src/*".to_string())]);
         assert_eq!(
-            g.path_alias(&app.join("src/main.vlt"), "@app/util/strings"),
+            g.path_alias(&app.join("src/main.velt"), "@app/util/strings"),
             Some(app.join("src/util/strings"))
         );
-        assert_eq!(g.path_alias(&app.join("src/main.vlt"), "@other/x"), None);
+        assert_eq!(g.path_alias(&app.join("src/main.velt"), "@other/x"), None);
         assert_eq!(
-            g.path_alias(&tmp.path().join("elsewhere.vlt"), "@app/x"),
+            g.path_alias(&tmp.path().join("elsewhere.velt"), "@app/x"),
             None
         );
     }

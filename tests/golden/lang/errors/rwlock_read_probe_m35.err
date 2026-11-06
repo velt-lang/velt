@@ -1,1 +1,1 @@
-rwlock_read_probe_m35.vlt:6:12: error: the function passed to `read` modifies the locked value
+rwlock_read_probe_m35.velt:6:12: error: the function passed to `read` modifies the locked value

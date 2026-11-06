@@ -559,7 +559,7 @@ mod tests {
     #[test]
     fn rejects_paths_outside_the_layout() {
         assert!(allowed("shared/libx.so") && allowed("static/x.o") && allowed(META_FILE));
-        assert!(!allowed("shared/") && !allowed("shared/a/b") && !allowed("src/x.vlt"));
+        assert!(!allowed("shared/") && !allowed("shared/a/b") && !allowed("src/x.velt"));
     }
 
     /// A bundle of C libraries for `target`, as `c_build` writes it.

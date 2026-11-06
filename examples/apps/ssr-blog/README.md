@@ -23,10 +23,10 @@ open http://127.0.0.1:8080/
 | `src/shared/model.ts` | the `Post` and `Comment` types and pure helpers (reading time, excerpt) |
 | `src/shared/samples.tsx` | the components with tricky data (quotes, `<`, `&`), for comparing the server's and the client's HTML |
 | `src/shared/components.tsx` | the components: `page` (the layout), `PostList`, `PostCard`, `PostBody`, `CommentList`, `Tags`, `NotFound` |
-| `src/store.vlt` | an in-memory stand-in for a database, with a delay on every load |
+| `src/store.velt` | an in-memory stand-in for a database, with a delay on every load |
 | `src/pages.tsx` | async components (`Posts`, `Comments`) that load data, and the router |
-| `src/server.vlt` | the HTTP server: a streamed response per page |
-| `jsx/jsx-runtime.vlt` | the package's JSX provider on the server: std/jsx (`jsx.importSource` in package.vlt) |
+| `src/server.velt` | the HTTP server: a streamed response per page |
+| `jsx/jsx-runtime.velt` | the package's JSX provider on the server: std/jsx (`jsx.importSource` in package.velt) |
 | `client/jsx-runtime.ts` | the same provider for TypeScript, rendering the same HTML |
 
 **Async loading and streaming.** `Posts` and `Comments` are async components: each starts its
@@ -35,7 +35,7 @@ pending one, then waits for it. The status code is decided before the stream sta
 (`statusOf`), since the headers go out first.
 
 **Shared with TypeScript.** `src/shared` is in the common subset of TypeScript and Velt
-(`tsCompat` in package.vlt): plain types, `number` and `boolean`, typed props, no `velt/`
+(`tsCompat` in package.velt): plain types, `number` and `boolean`, typed props, no `velt/`
 imports, and the server-only parts (the store, async loading) stay outside it. Check both sides:
 
 ```sh
@@ -50,6 +50,6 @@ The nightly oracle job also renders `src/shared/samples.tsx` with `velt run` and
 The layout is a component, `<Page title=...>`, whose children hold the async components: they
 start loading as the page is created, and streaming sends the layout's top before they finish.
 
-`demo.vlt` runs a scripted session against the real server (golden: `demo.out`), and reads one
+`demo.velt` runs a scripted session against the real server (golden: `demo.out`), and reads one
 page chunk by chunk from a server whose comments wait until it has read the post
 (`startServer(port, gate)`): the post arrives before its comments, whatever the timing.

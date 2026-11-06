@@ -124,7 +124,7 @@ fn probe_check(
         false => "export { Gadget, SpecialError, Base, Special } from \"velt/zzprobe/impl\";\n",
     };
     for (path, text) in [("std/zzprobe", reexport), ("std/zzprobe/impl", impl_src)] {
-        let file = l.sm.add(format!("{path}.vlt"), text.to_string());
+        let file = l.sm.add(format!("{path}.velt"), text.to_string());
         let (ast, diags) = velt_syntax::parse_file(file, text);
         assert!(diags.is_empty(), "parse errors in {path}");
         l.modules.push(velt_sema::SourceModule {
@@ -277,7 +277,7 @@ fn a_decoder_checks_the_tape_only_for_a_type_with_a_json_value() {
 
 #[test]
 fn the_tuple_elements_methods_are_checked_only_for_a_tuple_method_call() {
-    // Both programs mention `.map`, which loads the module (std/prelude/global/tuple_elements.vlt).
+    // Both programs mention `.map`, which loads the module (std/prelude/global/tuple_elements.velt).
     let map = "std/lang/hooks/tuple_elements::TupleElements.map";
     let array = "function main() {\n  console.log([1].map((x) => x + 1));\n}\n";
     assert!(unchecked(&ok_src(array)).contains(&map.to_string()));
@@ -362,7 +362,7 @@ fn an_error_in_an_unreached_extend_method_is_reported_only_when_std_is_checked_w
     let (l, (_, d)) = probe_check(PROBE_EXTEND, hello, true);
     let all = l.render(&d);
     assert!(
-        d.iter().any(|d| d.is_error()) && all.contains("impl.vlt"),
+        d.iter().any(|d| d.is_error()) && all.contains("impl.velt"),
         "{all}"
     );
 }

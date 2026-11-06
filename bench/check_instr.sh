@@ -1,6 +1,6 @@
 #!/bin/bash
 # Instruction counts (cachegrind) of `velt check` for two refs: a sigx file and
-# bench/compile/all_std.vlt, both with one thread.
+# bench/compile/all_std.velt, both with one thread.
 #
 # usage: GIT_DIR=<repo> WORK=<dir> SIGX=<sigx checkout> bench/check_instr.sh <base-ref> <head-ref> [<sigx file>]
 #   <sigx file> is relative to SIGX (default packages/runtime-core/src/component.ts).
@@ -34,7 +34,7 @@ instr() { # <sha> <dir> <file>
 b=$(build "$base")
 h=$(build "$head")
 for what in sigx std; do
-  if [ $what = sigx ]; then dir=$SIGX; f=$file; else dir=$WORK/$b; f=bench/compile/all_std.vlt; fi
+  if [ $what = sigx ]; then dir=$SIGX; f=$file; else dir=$WORK/$b; f=bench/compile/all_std.velt; fi
   nb=$(instr "$b" "$dir" "$f")
   if [ $what = std ]; then dir=$WORK/$h; fi
   nh=$(instr "$h" "$dir" "$f")

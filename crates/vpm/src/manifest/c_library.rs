@@ -1,4 +1,4 @@
-//! `native.c.<library>` of package.vlt (docs/internals/design/c-ffi.md): where a C library
+//! `native.c.<library>` of package.velt (docs/internals/design/c-ffi.md): where a C library
 //! comes from per target, and the headers its declarations are checked against.
 
 use super::Manifest;

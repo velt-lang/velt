@@ -27,15 +27,15 @@ pub struct IoTypes {
 }
 
 impl IoTypes {
-    /// Find them: the ADTs `IoResult` in `<std_root>/native/result.vlt` and `IoStatus` in
-    /// `<std_root>/native/status.vlt`.
+    /// Find them: the ADTs `IoResult` in `<std_root>/native/result.velt` and `IoStatus` in
+    /// `<std_root>/native/status.velt`.
     pub fn find(p: &hir::Program, sm: &SourceMap, std_root: Option<&Path>) -> IoTypes {
         let mut io = IoTypes::default();
         let Some(native) = std_root.map(|r| r.join("native")) else {
             return io;
         };
-        let result = canonical(&native.join("result.vlt"));
-        let status = canonical(&native.join("status.vlt"));
+        let result = canonical(&native.join("result.velt"));
+        let status = canonical(&native.join("status.velt"));
         for (i, def) in p.defs.iter().enumerate() {
             let Def::Adt(a) = def else { continue };
             let file = canonical(&sm.get(a.span.file).path);
@@ -291,7 +291,7 @@ fn not_native(f: &hir::ExternFnDef, pkg: Option<&str>, graph: Option<&PackageGra
             f.symbol, other.name
         )),
         None => d.with_note(
-            "to call C code, give the package a native library (`native` in package.vlt; see \
+            "to call C code, give the package a native library (`native` in package.velt; see \
              Packages with native code), or use the standard library's API",
         ),
     }

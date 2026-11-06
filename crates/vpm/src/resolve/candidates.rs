@@ -27,7 +27,7 @@ pub(super) struct Provider<'a> {
     loc: &'a Locations,
     root_dir: &'a Path,
     prefer: Option<&'a Lockfile>,
-    /// Manifests to use instead of reading `package.vlt`, by package directory: a workspace's
+    /// Manifests to use instead of reading `package.velt`, by package directory: a workspace's
     /// members, with `"workspace"` replaced.
     manifests: &'a BTreeMap<PathBuf, Manifest>,
     indexes: HashMap<String, Option<Index>>,

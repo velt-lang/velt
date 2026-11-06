@@ -545,16 +545,16 @@ mod tests {
     #[test]
     fn paths() {
         assert_eq!(
-            file_and_directory("/usr/lib/a.vlt", "/w"),
-            ("a.vlt".into(), "/usr/lib".into())
+            file_and_directory("/usr/lib/a.velt", "/w"),
+            ("a.velt".into(), "/usr/lib".into())
         );
         assert_eq!(
-            file_and_directory("C:\\x\\b.vlt", "C:/w"),
-            ("b.vlt".into(), "C:/x".into())
+            file_and_directory("C:\\x\\b.velt", "C:/w"),
+            ("b.velt".into(), "C:/x".into())
         );
         assert_eq!(
-            file_and_directory("examples/foo.vlt", "/w"),
-            ("examples/foo.vlt".into(), "/w".into())
+            file_and_directory("examples/foo.velt", "/w"),
+            ("examples/foo.velt".into(), "/w".into())
         );
     }
 }

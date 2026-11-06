@@ -71,7 +71,7 @@ pub fn keep_alive_release() {
 }
 
 /// `velt_rt_keep_alive_acquire()`: take a keep-alive reference for a ref'd timer
-/// (std/prelude/timers.vlt), released with [`velt_rt_keep_alive_release`].
+/// (std/prelude/timers.velt), released with [`velt_rt_keep_alive_release`].
 #[no_mangle]
 pub extern "C-unwind" fn velt_rt_keep_alive_acquire() {
     keep_alive_acquire();
@@ -86,7 +86,7 @@ pub extern "C-unwind" fn velt_rt_keep_alive_release() {
 
 /// `velt_rt_timer_unref_due()`: a due `unref()`'d timer asks whether to drop its callback: the
 /// leaf completes with 1 once the process is ending (quiet.rs `UnrefDue`, which may wait for the
-/// last worker to park first), as Node exits without running it (std/prelude/timers.vlt).
+/// last worker to park first), as Node exits without running it (std/prelude/timers.velt).
 #[no_mangle]
 pub extern "C-unwind" fn velt_rt_timer_unref_due() -> *mut super::VeltFut {
     super::leaf::new_inner_leaf(super::quiet::UnrefDue::new(&QUIET))

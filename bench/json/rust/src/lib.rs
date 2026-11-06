@@ -1,4 +1,4 @@
-//! The document shared by the JSON benchmarks (the same text as bench/json/*.vlt build).
+//! The document shared by the JSON benchmarks (the same text as bench/json/*.velt build).
 
 /// `n` objects in one array: `{"id":i,"name":"user i","score":(i%1000).5,...}`.
 pub fn doc(n: i64) -> String {

@@ -1,7 +1,7 @@
 // The blog's JSX provider for TypeScript (`tsc`, Node, a browser bundle): the automatic runtime
 // (`jsx`, `jsxs`, `Fragment`) rendering HTML strings with std/jsx's rules, so the shared
 // components (src/shared) produce the same markup in both. tsconfig.json maps the provider to
-// this file; the server uses jsx/jsx-runtime.vlt.
+// this file; the server uses jsx/jsx-runtime.velt.
 
 export class Element {
   constructor(readonly html: string) {}

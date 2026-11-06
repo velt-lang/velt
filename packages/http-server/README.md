@@ -20,7 +20,7 @@ any server ([`RequestSource`, `responseParts`, `statusText`](https://veltlang.co
 straight into it), is in [docs/serve-http.md](docs/serve-http.md).
 
 ```ts ignore
-// package.vlt
+// package.velt
 dependencies: {
   // From the Velt repository (`velt new --template api` writes this):
   "http-server": {
@@ -350,7 +350,7 @@ is built on this.
 The same program serves on a JavaScript platform: on a `velt build --host <package>` build (the
 first host package is packages/host-cloudflare, for Cloudflare Workers), `serve` runs over the
 host's request queue (std's `velt/host/worker`) instead of a TCP listener: the JS-host variant,
-src/hosted/standard.vlt, which `imports` in package.vlt picks by the built-in condition `js`, so
+src/hosted/standard.velt, which `imports` in package.velt picks by the built-in condition `js`, so
 it serves on every host package's platform. The handler, its `Request` and
 `Response` and `ServeInfo` are the same:
 

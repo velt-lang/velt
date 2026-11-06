@@ -157,12 +157,12 @@ pub(crate) fn now(old: &str, written: &str) -> Option<String> {
         }
         Moved::Package(name, what) => format!(
             "`{written}` was removed: {what} is the `{name}` package now, imported as \
-             `\"{name}\"` once package.vlt lists it in `dependencies` ({})",
+             `\"{name}\"` once package.velt lists it in `dependencies` ({})",
             package_url(name)
         ),
         Moved::HttpServer => format!(
             "`{written}` was removed: the HTTP server is the `http-server` package now, imported \
-             as `\"http-server\"` once package.vlt lists it in `dependencies` ({}), and `fetch` \
+             as `\"http-server\"` once package.velt lists it in `dependencies` ({}), and `fetch` \
              and the HTTP types are in `velt/net/http`",
             package_url("http-server")
         ),
@@ -179,7 +179,7 @@ mod tests {
     fn the_new_modules_exist() {
         let std = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
         let exists = |rel: &str| {
-            std.join(format!("{rel}.vlt")).is_file() || std.join(rel).join("index.vlt").is_file()
+            std.join(format!("{rel}.velt")).is_file() || std.join(rel).join("index.velt").is_file()
         };
         for (old, m) in MOVED {
             if let Moved::Module(new) = m {

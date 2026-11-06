@@ -1,4 +1,4 @@
-// Union parse (see parse_union.vlt): `JSON.parse` and a switch on `kind`.
+// Union parse (see parse_union.velt): `JSON.parse` and a switch on `kind`.
 const parts = [];
 for (let i = 0; i < 200000; i++) {
   if (i % 2 == 0) {

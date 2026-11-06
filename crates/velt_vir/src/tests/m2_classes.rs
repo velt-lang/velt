@@ -1,4 +1,4 @@
-//! `tests/golden/m2/classes.vlt` (class objects, constructors with field defaults, `super(...)`,
+//! `tests/golden/m2/classes.velt` (class objects, constructors with field defaults, `super(...)`,
 //! virtual dispatch through vtables, `Animal[]` holding a `Dog`, moves and `clone()` of objects)
 //! and printing objects and arrays: their numbers are printed through std's hooks (#2197), so
 //! the programs are loaded from source with the real std (std_src.rs).

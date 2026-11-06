@@ -28,17 +28,17 @@ and p50/p95/p99 latency, the 5 busiest clients and the 3 hours with the most 5xx
 
 Parity on CPU, ~6x less memory. The first, TS-natural version read the file with
 `FileReader.readLine()` (like `for await (const line of rl)`) and took ~5x Node's CPU time: each
-`readLine` is a runtime round trip (~10 µs). `src/lines.vlt` reads 1 MiB chunks and splits them
+`readLine` is a runtime round trip (~10 µs). `src/lines.velt` reads 1 MiB chunks and splits them
 instead (46x faster reading). Of the remaining time, about 40% is regex capture extraction
 (`RegExp.exec` with 7 groups; `test` alone is 4x cheaper).
 
 | File | What |
 |---|---|
-| `src/generate.vlt` | deterministic LCG log generator |
-| `src/lines.vlt` | `LineSplitter`: chunks → lines |
-| `src/parse.vlt` | `LineParser`: regex → `Entry`, route normalization |
-| `src/stats.vlt` | `Stats`: per-route / client / hour aggregation |
-| `src/report.vlt` | percentiles, formatting, sorting |
-| `src/analyze.vlt` | the streaming loop |
-| `tests/*.test.vlt` | `velt test` |
-| `demo.vlt` / `demo.out` | 5000-line golden (`cargo test --workspace --test golden`); Node prints the same |
+| `src/generate.velt` | deterministic LCG log generator |
+| `src/lines.velt` | `LineSplitter`: chunks → lines |
+| `src/parse.velt` | `LineParser`: regex → `Entry`, route normalization |
+| `src/stats.velt` | `Stats`: per-route / client / hour aggregation |
+| `src/report.velt` | percentiles, formatting, sorting |
+| `src/analyze.velt` | the streaming loop |
+| `tests/*.test.velt` | `velt test` |
+| `demo.velt` / `demo.out` | 5000-line golden (`cargo test --workspace --test golden`); Node prints the same |

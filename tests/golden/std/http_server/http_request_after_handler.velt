@@ -1,0 +1,31 @@
+// A streamed body that reads the `Request` after its handler returned: the request is already
+// released, so this is a clear panic, never a read of freed memory. Read what the body needs
+// before returning (tests/std/http/streams.test.velt, "a BodyStream response"). The panic fails
+// that response only (its connection is cut, #2008): the server keeps serving.
+import { utf8Encode } from "velt/encoding";
+import { BodyStream } from "velt/net/http";
+import { serve } from "http-server";
+
+// Reads `req` while the response is sent, after its handler returned.
+async function* late(req: Request): AsyncGenerator<u8[]> {
+  await sleep(20);
+  yield utf8Encode(req.url);
+}
+
+async function main() {
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    return new Response(BodyStream.from(late(req)));
+  });
+  console.log("requesting");
+  try {
+    const res = await fetch(`http://127.0.0.1:${server.port}/x`);
+    console.log(await res.text());
+  } catch (e) {
+    console.log("cut off");
+  }
+  const again = await fetch(`http://127.0.0.1:${server.port}/y`);
+  console.log(again.status);
+  server.close();
+}
+
+// timing: the waits only make a body or a component pending

@@ -619,7 +619,7 @@ mod tests {
             "export const pkg: Package = { name: \"app\", version: \"0.1.0\" };\n",
         )
         .unwrap();
-        let main = root.join("main.vlt");
+        let main = root.join("main.velt");
         std::fs::write(&main, "function main() {}\n").unwrap();
         std::fs::write(root.join(vpm::lockfile::LOCK_FILE), "{}\n").unwrap();
         let input = Some(main.as_path());
@@ -654,7 +654,7 @@ mod tests {
         assert!(!fetched.is_empty(), "nothing in {}", cached.display());
 
         // `velt dev`: the first build reads the program, the package and the manifest.
-        let main = app.join("src").join("main.vlt");
+        let main = app.join("src").join("main.velt");
         let input = Some(main.as_path());
         let first_build = |watcher: &mut Watcher| {
             let snapshot = watcher.snapshot();
@@ -709,7 +709,7 @@ mod tests {
         vpm::edit::add_dependency(&app, "util", &spec).unwrap();
         let lock = app.join(vpm::lockfile::LOCK_FILE);
         let _ = std::fs::remove_file(&lock);
-        let main = app.join("src").join("main.vlt");
+        let main = app.join("src").join("main.velt");
         let input = Some(main.as_path());
         let install = || {
             vpm::install(&app, &loc, vpm::InstallOptions::default()).unwrap();

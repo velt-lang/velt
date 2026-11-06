@@ -45,8 +45,8 @@ fn files_are_told_from_flag_values() {
         None
     );
     assert_eq!(
-        positional(&os(&["--filter", "parses", "src/a.vlt"])).as_deref(),
-        Some("src/a.vlt")
+        positional(&os(&["--filter", "parses", "src/a.velt"])).as_deref(),
+        Some("src/a.velt")
     );
     assert_eq!(positional(&os(&["--", "file"])), None);
     // `-p <member> --host <package>`: the package is no file.
@@ -69,7 +69,7 @@ fn workspace(root: &Path) -> Workspace {
         let dir = root.join(name);
         std::fs::create_dir_all(dir.join("src")).unwrap();
         std::fs::write(
-            dir.join("package.vlt"),
+            dir.join("package.velt"),
             format!("export const pkg: Package = {{ name: \"{name}\", version: \"0.1.0\", dependencies: {{ {deps} }} }};"),
         )
         .unwrap();

@@ -1,4 +1,4 @@
-jsx_automatic_attributes.vlt:4:19: error: Type 'boolean' is not assignable to type 'string | undefined'.
-jsx_automatic_attributes.vlt:5:19: error: Type 'f64' is not assignable to type 'string | undefined'.
-jsx_automatic_attributes.vlt:6:14: error: Property 'nope' does not exist on type 'IntrinsicAttributes & { a?: string }'.
-jsx_automatic_attributes.vlt:7:19: error: Property 'children' does not exist on type 'JSX.IntrinsicElements["div"]'.
+jsx_automatic_attributes.velt:4:19: error: Type 'boolean' is not assignable to type 'string | undefined'.
+jsx_automatic_attributes.velt:5:19: error: Type 'f64' is not assignable to type 'string | undefined'.
+jsx_automatic_attributes.velt:6:14: error: Property 'nope' does not exist on type 'IntrinsicAttributes & { a?: string }'.
+jsx_automatic_attributes.velt:7:19: error: Property 'children' does not exist on type 'JSX.IntrinsicElements["div"]'.

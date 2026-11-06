@@ -1,4 +1,4 @@
-// Node version of record_reads.vlt.
+// Node version of record_reads.velt.
 function decoded() {
   const parts = [];
   for (let i = 0; i < 20000; i++) parts.push(`"k${i}":${i}`);

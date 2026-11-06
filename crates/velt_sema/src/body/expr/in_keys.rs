@@ -296,7 +296,7 @@ impl FnCx<'_, '_> {
     }
 
     /// `k in o` where `k` is known only at run time: on a `Record<string, V>`,
-    /// `recordIn(k, o)` (std/prelude/record.vlt; a key that may be a number as `String(k)`,
+    /// `recordIn(k, o)` (std/prelude/record.velt; a key that may be a number as `String(k)`,
     /// as JavaScript converts it); on a prototype (`k in Object.prototype`), `prototypeIn(k, o)`;
     /// elsewhere an error.
     pub(crate) fn dynamic_key_in(
@@ -322,7 +322,7 @@ impl FnCx<'_, '_> {
             );
             return hooks::prototype_in(k, proto).check(self, span);
         }
-        // A symbol or `string | symbol` key: the symbol table too (std/prelude/record.vlt).
+        // A symbol or `string | symbol` key: the symbol table too (std/prelude/record.velt).
         let symbolic = kind == KeyKind::Symbol && self.symbolic_key_type(key_ty);
         // `PropertyKey` (`string | number | symbol`): through `__propertyKey(k)`.
         let numbered = kind == KeyKind::Symbol && !symbolic && self.number_property_key(key_ty);

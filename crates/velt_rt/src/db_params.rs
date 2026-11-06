@@ -1,6 +1,6 @@
 //! A statement's parameters handed to a driver's sink (`velt_text::rows_cursor::ParamSink`) by
 //! the code velt/db's generator of `bindValues<P>` writes for the parameter type
-//! (velt/db/generate/bind.vlt): one call per member name
+//! (velt/db/generate/bind.velt): one call per member name
 //! and value, instead of JSON text the driver parses (native_abi.md "Parameter sinks"). Each
 //! value binds as its JSON text would: an integral number below 1e21 as an integer (when it
 //! fits), NaN and the infinities as null, a string as UTF-8 (a lone surrogate as U+FFFD).

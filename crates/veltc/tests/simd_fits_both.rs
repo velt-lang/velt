@@ -1,5 +1,5 @@
 //! `fits(a, j) && fits(b, j)` as one test (velt_opt `fits_pair`), on real code from both release
-//! backends: `tests/golden/lang/simd_fits_pair.vlt` compares the result with the arithmetic
+//! backends: `tests/golden/lang/simd_fits_pair.velt` compares the result with the arithmetic
 //! written out on lengths and indexes at the edges. The goldens run it with the backend a release
 //! build picks; this test runs it with each, and checks the conditions did become one test, so
 //! the backends' `fits_both` is what those runs compare. `simd_fits_pair_null_*` are the second
@@ -24,7 +24,7 @@ fn root() -> PathBuf {
 fn golden(root: &Path, name: &str) -> PathBuf {
     root.join("tests/golden/lang")
         .join(name)
-        .with_extension("vlt")
+        .with_extension("velt")
 }
 
 /// A null second array where the first test fails, one way of reaching a field for each: without

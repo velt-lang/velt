@@ -1,4 +1,0 @@
-// An anonymous default function in a `.vlt` module.
-export default function (a: number, b: number): number {
-  return a + b;
-}

@@ -17,7 +17,7 @@ pub fn doc_command(args: &DocArgs) -> Result<(), String> {
     }
     let (title, intro, inputs, default_out) = collect(args)?;
     if inputs.is_empty() {
-        return Err("no .vlt, .ts or .tsx files to document".into());
+        return Err("no .velt, .ts or .tsx files to document".into());
     }
     let plural = if inputs.len() == 1 { "" } else { "s" };
     let written = if args.format == DocFormat::Json {
@@ -122,7 +122,7 @@ fn collect(args: &DocArgs) -> Result<Collected, String> {
     let inputs = under("src", velt_doc::inputs_from_dir(&root.join("src"), &name)?)
         .into_iter()
         .map(|mut i| {
-            // `import … from "pkg"` is src/lib.vlt.
+            // `import … from "pkg"` is src/lib.velt.
             if i.module == format!("{name}/lib") {
                 i.module = name.clone();
             }
@@ -158,7 +158,7 @@ fn cwd() -> PathBuf {
 }
 
 /// How `path`, given on the command line, is shown as a source file in the docs: relative to
-/// `cwd` when it is under it (`src/lib.vlt` for `./src/lib.vlt`, or for `D:/pkg/src/lib.vlt`
+/// `cwd` when it is under it (`src/lib.velt` for `./src/lib.velt`, or for `D:/pkg/src/lib.velt`
 /// run in `D:/pkg`), so the output does not depend on the machine or on how the path was
 /// spelled; otherwise as given, normalized. `/`-separated; `""` for `cwd` itself.
 fn shown(path: &Path, cwd: &Path) -> String {
@@ -185,11 +185,11 @@ mod tests {
     #[test]
     fn documents_given_files_and_dirs() {
         let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join("one.vlt");
+        let file = tmp.path().join("one.velt");
         std::fs::write(&file, "export function f() {}\n").unwrap();
         let dir = tmp.path().join("lib");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("two.vlt"), "export const X: i64 = 1;\n").unwrap();
+        std::fs::write(dir.join("two.velt"), "export const X: i64 = 1;\n").unwrap();
         let out = tmp.path().join("doc");
         let args = DocArgs {
             paths: vec![file, dir],
@@ -206,7 +206,7 @@ mod tests {
         };
         assert!(doc_command(&empty)
             .unwrap_err()
-            .contains("no .vlt, .ts or .tsx files"));
+            .contains("no .velt, .ts or .tsx files"));
         // `--format json`: `api.json` in a directory, or the `.json` file named.
         let json = DocArgs {
             output: Some(tmp.path().join("json")),
@@ -223,7 +223,7 @@ mod tests {
             .map(|m| m["file"].as_str().unwrap())
             .collect();
         let dir = args.paths[1].to_string_lossy().replace('\\', "/");
-        assert_eq!(files[1], format!("{dir}/two.vlt"));
+        assert_eq!(files[1], format!("{dir}/two.velt"));
         let file = tmp.path().join("one.json");
         doc_command(&DocArgs {
             output: Some(file.clone()),
@@ -238,7 +238,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let cwd = tmp.path().join("pkg");
         std::fs::create_dir_all(cwd.join("src")).unwrap();
-        std::fs::write(cwd.join("src/lib.vlt"), "").unwrap();
+        std::fs::write(cwd.join("src/lib.velt"), "").unwrap();
         // Under the current directory: relative, however it is spelled.
         for given in [
             cwd.join("src"),
@@ -249,12 +249,12 @@ mod tests {
         ] {
             assert_eq!(shown(&given, &cwd), "src", "{}", given.display());
         }
-        assert_eq!(shown(&cwd.join("src/lib.vlt"), &cwd), "src/lib.vlt");
-        assert_eq!(shown(Path::new("./src/lib.vlt"), &cwd), "src/lib.vlt");
+        assert_eq!(shown(&cwd.join("src/lib.velt"), &cwd), "src/lib.velt");
+        assert_eq!(shown(Path::new("./src/lib.velt"), &cwd), "src/lib.velt");
         assert_eq!(shown(&cwd, &cwd), "");
         assert_eq!(shown(Path::new("."), &cwd), "");
         // Elsewhere: as given, normalized.
-        assert_eq!(shown(Path::new("../other/x.vlt"), &cwd), "../other/x.vlt");
+        assert_eq!(shown(Path::new("../other/x.velt"), &cwd), "../other/x.velt");
         let outside = tmp.path().join("other");
         let want = outside.to_string_lossy().replace('\\', "/");
         assert_eq!(shown(&outside, &cwd), want);

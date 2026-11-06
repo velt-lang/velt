@@ -1,7 +1,7 @@
 # The Velt standard library
 
 Written in Velt. `import { x } from "velt/<module>"` names the module whose folder is
-`std/<module>/`, and its `index.vlt` is the module's API; `prelude/` is in scope everywhere
+`std/<module>/`, and its `index.velt` is the module's API; `prelude/` is in scope everywhere
 and `lang/` implements the language, so neither is imported.
 
 - What each module does, for users: [veltlang.com/docs/std](https://veltlang.com/docs/std/), one

@@ -60,8 +60,8 @@ function main() {
 
 fn open() -> (Client, Url) {
     let mut client = Client::start();
-    client.open(&uri("doc_lib.vlt"), LIB);
-    let app = uri("doc_app.vlt");
+    client.open(&uri("doc_lib.velt"), LIB);
+    let app = uri("doc_app.velt");
     client.open(&app, APP);
     (client, app)
 }
@@ -157,7 +157,7 @@ fn completion_resolves_docs_and_tags_deprecated_items() {
 
     // Members.
     let text = APP.replace("u.greet(\"b\");", "u.");
-    let doc_uri = uri("doc_members.vlt");
+    let doc_uri = uri("doc_members.velt");
     client.open(&doc_uri, &text);
     let (line, col) = pos_of(&text, "u.\n", 2);
     let items = client.request("textDocument/completion", at(&doc_uri, line, col));

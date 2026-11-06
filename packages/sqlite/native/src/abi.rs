@@ -1,4 +1,4 @@
-//! The exports src/native.vlt declares (`velt_sqlite__*`, docs/native_abi.md): thin
+//! The exports src/native.velt declares (`velt_sqlite__*`, docs/native_abi.md): thin
 //! wrappers over [`crate::connection`] and [`crate::statement`]. A database or statement handle
 //! is a registry key (`u64`): a closed or null one fails with "SQLITE_MISUSE".
 

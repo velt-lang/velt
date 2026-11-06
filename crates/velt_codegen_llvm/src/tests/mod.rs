@@ -175,10 +175,10 @@ fn operations_follow_vir_semantics() {
     );
 }
 
-/// `sample()` with source locations: `helper` in `b.vlt`, one `velt_main` statement too.
+/// `sample()` with source locations: `helper` in `b.velt`, one `velt_main` statement too.
 fn located_sample() -> Program {
     let mut p = sample();
-    p.files = vec!["a.vlt".into(), "C:/src/b.vlt".into()];
+    p.files = vec!["a.velt".into(), "C:/src/b.velt".into()];
     let at = |file, line| Some(SrcLoc { file, line, col: 5 });
     for f in &mut p.funcs {
         let file = if f.symbol == "helper" { 1 } else { 0 };
@@ -188,7 +188,7 @@ fn located_sample() -> Program {
             .map(|b| vec![at(file, 7); b.stmts.len() + 1])
             .collect();
     }
-    // A statement inlined from `b.vlt` into `velt_main`.
+    // A statement inlined from `b.velt` into `velt_main`.
     p.funcs[1].locs[0][0] = at(1, 3);
     p
 }
@@ -201,8 +201,8 @@ fn debug_metadata_follows_source_locations() {
         "!llvm.dbg.cu = !{!2}",
         "!{i32 2, !\"Debug Info Version\", i32 3}",
         "!{i32 7, !\"Dwarf Version\", i32 4}",
-        "!0 = !DIFile(filename: \"a.vlt\", directory: ",
-        "!1 = !DIFile(filename: \"b.vlt\", directory: \"C:/src\")",
+        "!0 = !DIFile(filename: \"a.velt\", directory: ",
+        "!1 = !DIFile(filename: \"b.velt\", directory: \"C:/src\")",
         "distinct !DISubprogram(name: \"helper\", linkageName: \"helper\", scope: !1, file: !1, \
          line: 7,",
         "spFlags: DISPFlagDefinition | DISPFlagLocalToUnit",

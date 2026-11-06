@@ -94,7 +94,7 @@ fn write_native(dir: &Path, name: &str, version: &str) {
         format!("export const pkg: Package = {{ name: \"{name}\", version: \"{version}\", native: {{ c: {{}} }} }};"),
     )
     .unwrap();
-    std::fs::write(dir.join("src/lib.vlt"), "\n").unwrap();
+    std::fs::write(dir.join("src/lib.velt"), "\n").unwrap();
 }
 
 #[test]

@@ -1,0 +1,190 @@
+// What the registry refuses at publish beyond what an archive may be (#2225,
+// src/server/publish_policy.velt), and the upload's size limit.
+import { describe, expect, it } from "velt/test";
+import { utf8Encode } from "velt/encoding";
+import { ArchiveEntry, contentChecksum, packArchive, RegistryLimits } from "../src/lib";
+import { file, packageFiles, rawArchive, TestRegistry } from "./_registry";
+
+// The answer to publishing `p` 1.0.0 as the archive of `extra` and p's files, written in the
+// order given (`raw`) or sorted.
+async function publishWith(
+  r: TestRegistry,
+  extra: ArchiveEntry[],
+  raw: bool = false,
+): Promise<string> {
+  const files = [...packageFiles("p", "1.0.0"), ...extra];
+  if (!raw) {
+    files.sort(
+      (a: ArchiveEntry, b: ArchiveEntry): i32 => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
+    );
+  }
+  const answer = await r.upload("p", "1.0.0", rawArchive(files), contentChecksum(files));
+  return `${answer.status} ${answer.text}`;
+}
+
+describe("the publish policy", () => {
+  it("checks a deep path in time proportional to its length", async () => {
+    // 20,000 directories: each prefix rebuilt as a string would be some 400 MB of keys.
+    const r = new TestRegistry();
+    const deep = `src/${"a/".repeat(20000)}x.velt`;
+    expect(await publishWith(r, [file(deep, ""), file(`src/${"a/".repeat(19999)}y.velt`, "")])).toBe(
+      "201 published `p` 1.0.0\n",
+    );
+  });
+
+  it("refuses paths a client could not unpack faithfully", async () => {
+    const r = new TestRegistry();
+    const cases: [ArchiveEntry[], string][] = [
+      [
+        [file("src/a\u0000b.velt", "")],
+        "400 the archive has a path with a control character, `src/a\\x00b.velt`",
+      ],
+      [
+        [file("src/a\u007fb.velt", "")],
+        "400 the archive has a path with a control character, `src/a\\x7fb.velt`",
+      ],
+      [
+        [file("src/A.velt", ""), file("src/a.velt", "")],
+        "400 the archive has `src/A.velt` and `src/a.velt`, which differ only in case: one file on Windows and macOS",
+      ],
+      [
+        [file("src/Util/x.velt", ""), file("src/util/y.velt", "")],
+        "400 the archive has `src/Util` and `src/util`, which differ only in case: one file on Windows and macOS",
+      ],
+      [
+        [file("src/m", ""), file("src/m/x.velt", "")],
+        "400 the archive has `src/m` as a file and as a directory",
+      ],
+      [
+        [file("src/con.velt", "")],
+        "400 the archive has `src/con.velt`, whose name `con.velt` names a device on Windows (`con`, `nul`, `com1`, …)",
+      ],
+      [
+        [file("src/COM1", "")],
+        "400 the archive has `src/COM1`, whose name `COM1` names a device on Windows (`con`, `nul`, `com1`, …)",
+      ],
+      [
+        [file("src/a.", "")],
+        "400 the archive has `src/a.`, whose name `a.` ends with a dot or a space, which Windows drops from file names",
+      ],
+      [
+        [file("src/b /c.velt", "")],
+        "400 the archive has `src/b /c.velt`, whose name `b ` ends with a dot or a space, which Windows drops from file names",
+      ],
+      [
+        [file("src/COM\u00b9.velt", "")],
+        "400 the archive has `src/COM\u00b9.velt`, whose name `COM\u00b9.velt` names a device on Windows (`con`, `nul`, `com1`, …)",
+      ],
+      [
+        [file("src/conin$", "")],
+        "400 the archive has `src/conin$`, whose name `conin$` names a device on Windows (`con`, `nul`, `com1`, …)",
+      ],
+      [
+        [file("src/A/x.velt", ""), file("src/a", "")],
+        "400 the archive has `src/A` and `src/a`, which differ only in case: one file on Windows and macOS",
+      ],
+      [
+        [file("src/target/x.velt", "")],
+        "400 the archive has `src/target/x.velt`, inside a `target` directory, which `velt publish` never sends",
+      ],
+      [
+        [file("src/x/.git/HEAD", "")],
+        "400 the archive has `src/x/.git/HEAD`, whose name `.git` is git's directory, which `velt publish` never sends",
+      ],
+      [
+        [file("src/.GIT/config", "")],
+        "400 the archive has `src/.GIT/config`, whose name `.GIT` is git's directory, which `velt publish` never sends",
+      ],
+      [
+        [file("src/.Git/hooks/post-checkout", "")],
+        "400 the archive has `src/.Git/hooks/post-checkout`, whose name `.Git` is git's directory, which `velt publish` never sends",
+      ],
+      [
+        [file("src/.git", "gitdir: ../evil")],
+        "400 the archive has `src/.git`, whose name `.git` is git's directory, which `velt publish` never sends",
+      ],
+      [
+        [file("src/git~1/config", "")],
+        "400 the archive has `src/git~1/config`, whose name `git~1` is git's directory, which `velt publish` never sends",
+      ],
+      [
+        [file("src/GIT~1", "")],
+        "400 the archive has `src/GIT~1`, whose name `GIT~1` is git's directory, which `velt publish` never sends",
+      ],
+    ];
+    for (const c of ["?", "*", "<", ">", "\"", "|"]) {
+      cases.push([
+        [file(`src/a${c}b.velt`, "")],
+        `400 the archive has \`src/a${c}b.velt\`, whose name \`a${c}b.velt\` has \`${c}\`, which Windows refuses in file names`,
+      ]);
+    }
+    cases.push([
+      [file("src/d|x/y.velt", "")],
+      "400 the archive has `src/d|x/y.velt`, whose name `d|x` has `|`, which Windows refuses in file names",
+    ]);
+    for (const [extra, expected] of cases) {
+      expect(await publishWith(r, extra)).toBe(expected);
+    }
+    expect(r.blobs.size).toBe(0);
+    // What is close to them but fine.
+    const fine = [
+      file("src/a.b.velt", ""),
+      file("src/com4\u00b9.velt", ""),
+      file("src/console.velt", ""),
+      file("src/m/x.velt", ""),
+      file("src/target.velt", ""),
+      file("src/x.git", ""),
+      file("src/git~2", ""),
+      file("src/gitignore", ""),
+      file("src/x/Target/y.velt", ""),
+    ];
+    expect(await publishWith(r, fine)).toBe("201 published `p` 1.0.0\n");
+  });
+
+  it("refuses paths out of order or twice", async () => {
+    const r = new TestRegistry();
+    const twice = [file("src/x.velt", "a"), file("src/x.velt", "b")];
+    expect(await publishWith(r, twice, true)).toBe("400 the archive has `src/x.velt` twice");
+    const unsorted = [file("src/z.velt", ""), file("src/b.velt", "")];
+    expect(await publishWith(r, unsorted, true)).toBe(
+      "400 the archive's paths are not sorted: `src/b.velt` comes after `src/z.velt`",
+    );
+  });
+
+  it("shows at most the start of a long path", async () => {
+    const r = new TestRegistry();
+    const long = `src/${"a".repeat(5000)}.`;
+    const answer = await publishWith(r, [file(long, "")]);
+    expect(answer.length < 400).toBe(true);
+    expect(answer).toContain(`\`src/${"a".repeat(96)}…\``);
+    // A parity reader's refusal is cut too.
+    const outside = `${"b".repeat(5000)}.velt`;
+    const refused = await publishWith(r, [file(outside, "")]);
+    expect(refused.startsWith("400 archive contains a disallowed path `bbb")).toBe(true);
+    expect(refused.length < 420).toBe(true);
+  });
+
+  it("caps the number of files and the size of the upload", async () => {
+    const limits = new RegistryLimits();
+    limits.maxEntries = 3;
+    limits.maxArchiveBytes = 400;
+    const r = new TestRegistry(limits);
+    const four = [file("src/x.velt", ""), file("src/y.velt", "")];
+    expect(await publishWith(r, four)).toBe(
+      "400 the archive has more than 3 files; a package may have at most 3",
+    );
+    // The reader stops at the fourth entry: what follows it is never read, corrupt or not.
+    const files = [...packageFiles("p", "1.0.0"), file("src/x.velt", "")];
+    files.sort(
+      (a: ArchiveEntry, b: ArchiveEntry): i32 => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0),
+    );
+    const corrupt = [...rawArchive(files), ...utf8Encode("src/y.velt\nnot a length\n")];
+    const answer = await r.upload("p", "1.0.0", corrupt, contentChecksum(files));
+    expect(`${answer.status} ${answer.text}`).toBe(
+      "400 the archive has more than 3 files; a package may have at most 3",
+    );
+    const big = [file("src/x.velt", "x".repeat(400))];
+    expect(await publishWith(r, big)).toBe("413 the upload is larger than 400 bytes");
+    expect(await publishWith(r, [])).toBe("201 published `p` 1.0.0\n");
+  });
+});

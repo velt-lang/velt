@@ -4,7 +4,7 @@ some program of the sample fail. usage: mutants_on_sample.py <velt> <repo> <work
 import concurrent.futures as cf, json, os, subprocess, sys
 velt, repo, work, n = sys.argv[1:5]
 n = int(n)
-MUST = ["lang/array_join_enum.vlt", "lang/closure_nested_assigns_capture.vlt"]
+MUST = ["lang/array_join_enum.velt", "lang/closure_nested_assigns_capture.velt"]
 gold = os.path.join(repo, "tests/golden")
 def fnv(s):
     h = 0xcbf29ce484222325
@@ -15,7 +15,7 @@ files = []
 for cat in sorted(os.listdir(gold)):
     d = os.path.join(gold, cat)
     if os.path.isdir(d):
-        files += [f"{cat}/{x}" for x in sorted(os.listdir(d)) if x.endswith(".vlt") and not x.startswith("_")]
+        files += [f"{cat}/{x}" for x in sorted(os.listdir(d)) if x.endswith(".velt") and not x.startswith("_")]
 sample = [f for f in files if fnv(f) % n == 0 or f in MUST]
 print(f"{len(sample)} of {len(files)}", flush=True)
 def run(rel, m):

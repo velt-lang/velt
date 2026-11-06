@@ -86,7 +86,7 @@ impl PackageResolver for vpm::PackageGraph {
 pub struct PackageImports {
     /// The package's name.
     pub name: String,
-    /// Its root directory (holding `package.vlt`): the variants' paths are relative to it.
+    /// Its root directory (holding `package.velt`): the variants' paths are relative to it.
     pub root: PathBuf,
     /// `#name` → its variants.
     pub map: vpm::imports::ImportMap,
@@ -110,7 +110,7 @@ pub(crate) enum Origin {
 
 impl Origin {
     /// Canonical module path of `file` (a source file inside this origin): its path relative to
-    /// the origin, without the source extension (`.vlt`, `.ts`, `.tsx`) or a final `/index`.
+    /// the origin, without the source extension (`.velt`, `.ts`, `.tsx`) or a final `/index`.
     pub(crate) fn canonical(&self, file: &Path) -> String {
         let (base, prefix) = match self {
             Origin::Root(dir) => (dir, None),
@@ -160,7 +160,7 @@ pub(crate) fn target(
     match module {
         ModuleRef::Relative { file } if file.to_str().is_some_and(|f| f.ends_with(".d.ts")) => {
             let note = "Velt has no declaration files: write the declarations in a `.ts` (or \
-                        `.vlt`) module and import that"
+                        `.velt`) module and import that"
                 .to_string();
             Err((
                 "declaration files (`.d.ts`) are not modules".to_string(),
@@ -211,17 +211,17 @@ pub(crate) fn target(
     }
 }
 
-/// `<dir>/<rel>.vlt`, then the folder module `<dir>/<rel>/index.vlt` (standard library modules
-/// are `.vlt` files).
+/// `<dir>/<rel>.velt`, then the folder module `<dir>/<rel>/index.velt` (standard library modules
+/// are `.velt` files).
 fn std_files(dir: &Path, rel: &str) -> Vec<Vec<PathBuf>> {
     vec![
-        vec![dir.join(format!("{rel}.vlt"))],
-        vec![dir.join(rel).join("index.vlt")],
+        vec![dir.join(format!("{rel}.velt"))],
+        vec![dir.join(rel).join("index.velt")],
     ]
 }
 
-/// The files of module `rel` of a package (its `src/` is `src`): `rel.vlt`, `rel.ts` or
-/// `rel.tsx`, then the folder module `rel/index.vlt`, `rel/index.ts` or `rel/index.tsx`, as for
+/// The files of module `rel` of a package (its `src/` is `src`): `rel.velt`, `rel.ts` or
+/// `rel.tsx`, then the folder module `rel/index.velt`, `rel/index.ts` or `rel/index.tsx`, as for
 /// a relative import.
 fn package_files(src: &Path, rel: &str) -> Vec<Vec<PathBuf>> {
     vec![
@@ -230,7 +230,7 @@ fn package_files(src: &Path, rel: &str) -> Vec<Vec<PathBuf>> {
     ]
 }
 
-/// `<dir>/<stem>.vlt`, `<dir>/<stem>.ts` and `<dir>/<stem>.tsx`.
+/// `<dir>/<stem>.velt`, `<dir>/<stem>.ts` and `<dir>/<stem>.tsx`.
 fn source_files(dir: &Path, stem: &str) -> Vec<PathBuf> {
     vpm::sources::source_files(stem)
         .into_iter()
@@ -249,10 +249,10 @@ fn common_ancestor(a: &Path, b: &Path) -> PathBuf {
 }
 
 /// The files a relative import of `file` (the specifier's path, extension as written) may name:
-/// - with a source extension (`./x.ts`, `./x.tsx`, `./x.vlt`), exactly that file;
+/// - with a source extension (`./x.ts`, `./x.tsx`, `./x.velt`), exactly that file;
 /// - with `.js` or `.jsx`, the TypeScript file it is compiled to, as TypeScript resolves it
 ///   (`./x.js` → `x.ts` or `x.tsx`, `./x.jsx` → `x.tsx`);
-/// - otherwise `x.vlt`, `x.ts` or `x.tsx`, then the folder module `x/index.vlt`, `x/index.ts`
+/// - otherwise `x.velt`, `x.ts` or `x.tsx`, then the folder module `x/index.velt`, `x/index.ts`
 ///   or `x/index.tsx` (never a declaration file: `./types.d` does not name `types.d.ts`).
 pub(super) fn relative_files(file: PathBuf) -> Vec<Vec<PathBuf>> {
     let Some(name) = file.to_str() else {
@@ -319,20 +319,20 @@ mod tests {
     #[test]
     fn canonical_paths_per_origin() {
         let root = Origin::Root(PathBuf::from("/p"));
-        assert_eq!(root.canonical(Path::new("/p/util.vlt")), "util");
-        assert_eq!(root.canonical(Path::new("/p/lib/math.vlt")), "lib/math");
-        assert_eq!(root.canonical(Path::new("/q/x.vlt")), "../q/x");
+        assert_eq!(root.canonical(Path::new("/p/util.velt")), "util");
+        assert_eq!(root.canonical(Path::new("/p/lib/math.velt")), "lib/math");
+        assert_eq!(root.canonical(Path::new("/q/x.velt")), "../q/x");
         let std = Origin::Std(PathBuf::from("/std"));
-        assert_eq!(std.canonical(Path::new("/std/fs/index.vlt")), "std/fs");
-        assert_eq!(std.canonical(Path::new("/std/net/index.vlt")), "std/net");
-        assert_eq!(root.canonical(Path::new("/p/shapes/index.vlt")), "shapes");
+        assert_eq!(std.canonical(Path::new("/std/fs/index.velt")), "std/fs");
+        assert_eq!(std.canonical(Path::new("/std/net/index.velt")), "std/net");
+        assert_eq!(root.canonical(Path::new("/p/shapes/index.velt")), "shapes");
         let pkg = Origin::Package {
             name: "json".into(),
             src: PathBuf::from("/c/json/src"),
         };
-        assert_eq!(pkg.canonical(Path::new("/c/json/src/lib.vlt")), "json");
+        assert_eq!(pkg.canonical(Path::new("/c/json/src/lib.velt")), "json");
         assert_eq!(
-            pkg.canonical(Path::new("/c/json/src/parse.vlt")),
+            pkg.canonical(Path::new("/c/json/src/parse.velt")),
             "json/parse"
         );
     }
@@ -345,7 +345,7 @@ mod tests {
         };
         let err = target(
             module,
-            Path::new("main.vlt"),
+            Path::new("main.velt"),
             &Origin::Root(PathBuf::new()),
             None,
             None,

@@ -6,7 +6,7 @@ Routes (all servers produce byte-identical bodies):
 - `/fortunes` → DB-less fortunes: the 12 TechEmpower fortunes built per request (in place of the
   query), one added at request time, sorted by message, rendered to an HTML table with escaping.
 
-Servers: `server.vlt` (`velt build --release`, LLVM, std/http on hyper), `server.mjs` on Node
+Servers: `server.velt` (`velt build --release`, LLVM, std/http on hyper), `server.mjs` on Node
 24.11.1 `node:http` as one process and with `CLUSTER=1` (`node:cluster`, one worker per core),
 and an axum 0.8 baseline (`axum/`, tokio multi-thread, release + thin LTO, system allocator).
 Run with `bench/http/techempower/run.sh` (knobs in its header): `oha -z 10s -c 256`, 2 s warm-up

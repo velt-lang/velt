@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Writes std/encoding/tables.vlt: the lookup tables of velt/encoding's Base64 (RFC 4648 §4, and
+"""Writes std/encoding/tables.velt: the lookup tables of velt/encoding's Base64 (RFC 4648 §4, and
 §5 for the URL-safe alphabet) and hex codecs.
 
-    python3 scripts/gen-encoding-tables.py > std/encoding/tables.vlt
+    python3 scripts/gen-encoding-tables.py > std/encoding/tables.velt
 """
 
 STD = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/"

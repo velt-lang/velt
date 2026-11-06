@@ -1,4 +1,4 @@
-// A closure created per iteration and only called (same workload as closures_borrowed.vlt).
+// A closure created per iteration and only called (same workload as closures_borrowed.velt).
 function score(name, base, scale) {
   const weigh = (k) => {
     const n = name.length + k;

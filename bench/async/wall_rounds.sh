@@ -3,15 +3,15 @@
 # each running every build 5 times in turn, interleaved so that a change in the machine's load
 # hits all builds alike. Prints each build's best time per round and the median of those bests.
 # For a program whose wall time matters but whose instruction count does not tell (threads that
-# wait for each other, cache misses), such as bench/async/timers_fire.vlt.
+# wait for each other, cache misses), such as bench/async/timers_fire.velt.
 #
-#   ROUNDS=5 bench/async/wall_rounds.sh PROGRAM.vlt NAME=VELT [NAME=VELT ...]
+#   ROUNDS=5 bench/async/wall_rounds.sh PROGRAM.velt NAME=VELT [NAME=VELT ...]
 #
 # Each VELT is a `velt` binary (with its release runtime next to it); the program is built with
 # `velt build --release` into $TMPDIR.
 set -euo pipefail
 if [ $# -lt 2 ]; then
-  echo "usage: bench/async/wall_rounds.sh PROGRAM.vlt NAME=VELT [NAME=VELT ...]" >&2
+  echo "usage: bench/async/wall_rounds.sh PROGRAM.velt NAME=VELT [NAME=VELT ...]" >&2
   exit 2
 fi
 PROGRAM=$1

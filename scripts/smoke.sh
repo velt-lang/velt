@@ -1,6 +1,6 @@
 #!/usr/bin/env sh
 # End-to-end smoke test of a built `velt` on Linux/macOS: `velt doctor`, `velt new` + `run`
-# (debug and release), and an HTTP request against examples/http_hello.vlt (release).
+# (debug and release), and an HTTP request against examples/http_hello.velt (release).
 # Shared by scripts/test-linux.sh and scripts/check-all.sh.
 #
 # Usage: scripts/smoke.sh [<path to velt>]   (default: target/debug/velt of this checkout)
@@ -21,7 +21,7 @@ http_smoke() {
         return 0
     fi
     bin="$repo/target/smoke/http_hello"
-    "$velt" build --release "$repo/examples/http_hello.vlt" -o "$bin"
+    "$velt" build --release "$repo/examples/http_hello.velt" -o "$bin"
     VELT_HELLO_SECONDS=3 "$bin" &
     pid=$!
     i=0
@@ -41,5 +41,5 @@ step "velt new + run (debug and release)"
 tmp=$(mktemp -d)
 (cd "$tmp" && "$velt" new demo >/dev/null && cd demo && "$velt" run && "$velt" run --release)
 rm -rf "$tmp"
-step "HTTP smoke test (examples/http_hello.vlt, release)"
+step "HTTP smoke test (examples/http_hello.velt, release)"
 http_smoke

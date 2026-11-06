@@ -126,7 +126,7 @@ fn check_offered(
     for f in offer.files {
         let file = sess
             .sm
-            .add(PathBuf::from(&f.path).with_extension("vlt"), f.text.clone());
+            .add(PathBuf::from(&f.path).with_extension("velt"), f.text.clone());
         let (ast, errors) = velt_syntax::parse_file(file, &f.text);
         if !errors.is_empty() || crate::native::first_unsafe_code(&ast).is_some() {
             return None;
@@ -280,7 +280,7 @@ fn generate_now(
     let mut out = GenBatch::default();
     for g in generated.modules {
         let path = module_path(&g.declaring, batch_no);
-        let file_path = PathBuf::from(&path).with_extension("vlt");
+        let file_path = PathBuf::from(&path).with_extension("velt");
         emit(&file_path, &g.text);
         let file = sess.sm.add(file_path.clone(), g.text.clone());
         let described = (generated.described.iter())
@@ -369,7 +369,7 @@ fn generate_now(
 }
 
 /// The path of the module generated for declaring module `declaring` in round `round` (its file
-/// in the source map adds `.vlt`): `<generated>/<module>/<round>`, which no import can name.
+/// in the source map adds `.velt`): `<generated>/<module>/<round>`, which no import can name.
 fn module_path(declaring: &str, round: u32) -> String {
     format!("{GENERATED_DIR}/{declaring}/{round}")
 }

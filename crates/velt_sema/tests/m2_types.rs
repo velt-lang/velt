@@ -494,7 +494,7 @@ fn interface_values_and_default_methods() {
 
 #[test]
 fn imports_exports_and_intrinsics() {
-    let root = repo_root().join("tests/golden/m2/errors/private_import.vlt");
+    let root = repo_root().join("tests/golden/m2/errors/private_import.velt");
     let l = load_src_at(
         &root,
         "import { hidden } from \"./_private\"; function main() {}",

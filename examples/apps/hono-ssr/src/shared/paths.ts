@@ -1,4 +1,4 @@
-// The pages demo.vlt fetches from the Velt server and reference/render.tsx renders with Hono.
+// The pages demo.velt fetches from the Velt server and reference/render.tsx renders with Hono.
 
 export const PATHS: string[] = [
   "/",

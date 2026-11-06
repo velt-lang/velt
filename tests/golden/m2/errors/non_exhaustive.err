@@ -1,2 +1,2 @@
-non_exhaustive.vlt:3:10
+non_exhaustive.velt:3:10
 function `area` must return a value of type `f64` on every path

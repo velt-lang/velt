@@ -1,4 +1,4 @@
 * text=auto eol=lf
 *.lib binary
-# GitHub has no Velt language yet: highlight .vlt as TypeScript (a superset it mostly matches).
-*.vlt linguist-language=TypeScript
+# GitHub has no Velt language yet: highlight .velt as TypeScript (a superset it mostly matches).
+*.velt linguist-language=TypeScript

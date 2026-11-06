@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# This server vs a real redis-server with redis-benchmark. Runs parity.vlt first (byte-identical
+# This server vs a real redis-server with redis-benchmark. Runs parity.velt first (byte-identical
 # replies), then each test against each server in turn, three times, and prints the median
 # requests/s. The Velt server runs twice: on one worker thread and on all of them (the default).
 # Last, memory: RSS after the same million SETs. redis-server runs with one database, like
@@ -45,7 +45,7 @@ stop_all() {
 }
 
 start_all
-"$velt" run parity.vlt -- "127.0.0.1:$v1port" "127.0.0.1:$rport"
+"$velt" run parity.velt -- "127.0.0.1:$v1port" "127.0.0.1:$rport"
 
 rps() { # rps <port> <test> [extra args]: requests per second of one redis-benchmark run
     local port=$1 test=$2

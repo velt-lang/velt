@@ -28,7 +28,7 @@ cleanup() {
 trap cleanup EXIT
 
 CARGO_TARGET_DIR="$TARGET" cargo build --release --quiet --manifest-path "$HERE/rust/Cargo.toml"
-"$VELT" build --release "$HERE/client.vlt" -o "$WORK/client-velt"
+"$VELT" build --release "$HERE/client.velt" -o "$WORK/client-velt"
 "$TARGET/release/server" "$PORT" >/dev/null &
 SERVER_PID=$!
 sleep 1

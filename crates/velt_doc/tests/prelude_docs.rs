@@ -1,4 +1,4 @@
-//! Every exported global of the prelude (`std/prelude/*.vlt`) and every public member of its
+//! Every exported global of the prelude (`std/prelude/*.velt`) and every public member of its
 //! classes, interfaces and `extend` blocks has a doc comment: the editor and `velt doc` show
 //! them, and most of them are what TypeScript's lib says (`scripts/gen-prelude-docs.js`).
 
@@ -26,16 +26,16 @@ fn undocumented(file: &str, owner: Option<&str>, item: &DocItem, out: &mut Vec<S
 #[test]
 fn every_prelude_export_and_member_has_a_doc_comment() {
     let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std/prelude");
-    // The JSON module is a prelude module its global loads on use (std/prelude/global/json.vlt).
-    let vlt = |d: &Path| {
+    // The JSON module is a prelude module its global loads on use (std/prelude/global/json.velt).
+    let velt = |d: &Path| {
         std::fs::read_dir(d)
             .expect("std/prelude")
             .map(|e| e.expect("entry").path())
-            .filter(|p| p.extension().is_some_and(|e| e == "vlt"))
+            .filter(|p| p.extension().is_some_and(|e| e == "velt"))
             .collect::<Vec<_>>()
     };
-    let mut files = vlt(&dir);
-    files.extend(vlt(&dir.join("json")));
+    let mut files = velt(&dir);
+    files.extend(velt(&dir.join("json")));
     files.sort();
     assert!(!files.is_empty(), "no prelude files in {}", dir.display());
     let mut missing = Vec::new();

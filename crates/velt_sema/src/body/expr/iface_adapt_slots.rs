@@ -250,7 +250,7 @@ pub(super) fn adapter_method(
                     span,
                 )
             };
-            // The helpers for `Set` are in its own module (std/collections/set.vlt), which
+            // The helpers for `Set` are in its own module (std/collections/set.velt), which
             // the module converting the value need not import: their calls are checked as
             // if written there.
             let helpers_module = match g.cx.ty.kind(*from) {

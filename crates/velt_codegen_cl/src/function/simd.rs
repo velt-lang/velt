@@ -84,7 +84,7 @@ impl Translator<'_, '_> {
             SimdCall::Mask(bits, op) => Inlined::Value(self.simd_mask(bits, op, values)),
             SimdCall::Vector(lanes, op) => self.simd_vector(lanes, op, args, values),
             // Cranelift has none of these instructions: the CPU "lacks" them here, so every
-            // check is false and the operations sit behind it as dead code (std/simd/sha.vlt
+            // check is false and the operations sit behind it as dead code (std/simd/sha.velt
             // runs the emulation). They give a zero value, never computed at run time.
             SimdCall::Has(_) => Inlined::Value(self.builder.ins().iconst(types::I8, 0)),
             SimdCall::Inst(ExtOp::Sha1H) => {

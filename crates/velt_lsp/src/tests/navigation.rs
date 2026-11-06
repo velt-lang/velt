@@ -44,11 +44,11 @@ function main() {
 
 const UTIL: &str = "export function helper(x: i64): i64 {\n  return x * 2;\n}\n";
 
-/// A client with `nav_app.vlt` (returned URI) and `nav_util.vlt` open.
+/// A client with `nav_app.velt` (returned URI) and `nav_util.velt` open.
 fn open_app() -> (Client, Url) {
     let mut client = Client::start();
-    let app = uri("nav_app.vlt");
-    client.open(&uri("nav_util.vlt"), UTIL);
+    let app = uri("nav_app.velt");
+    client.open(&uri("nav_util.velt"), UTIL);
     client.open(&app, APP);
     let diags = client.diagnostics(&app);
     for d in diags["diagnostics"].as_array().unwrap() {
@@ -155,7 +155,7 @@ fn definition_of_locals_items_members_and_imports() {
         (here.clone(), l, c)
     );
     // Aliased import → the function in the other file.
-    let util = uri("nav_util.vlt").as_str().to_string();
+    let util = uri("nav_util.velt").as_str().to_string();
     assert_eq!(
         definition(&mut client, &app, "twice(2)", 0),
         (util.clone(), 0, 16)
@@ -216,7 +216,7 @@ fn hover_shows_signatures() {
 #[test]
 fn hover_uses_sema_types_when_the_program_checks() {
     let mut client = Client::start();
-    let doc = uri("typed.vlt");
+    let doc = uri("typed.velt");
     let text = "function add(a: i64, b: i64): i64 {\n  return a + b;\n}\n\nfunction main() {\n  const sum = add(1, 2);\n  const half = 0.5;\n  console.log(sum, half);\n}\n";
     client.open(&doc, text);
     assert_eq!(client.diagnostics(&doc)["diagnostics"], json!([]));
@@ -237,7 +237,7 @@ fn hover_uses_sema_types_when_the_program_checks() {
 #[test]
 fn host_functions_hover_and_go_to_their_declaration() {
     let mut client = Client::start();
-    let doc = uri("host.vlt");
+    let doc = uri("host.velt");
     let text = "declare host(\"env\") function now(scale: f64): f64;\n\nfunction main() {\n  console.log(now(2));\n}\n";
     client.open(&doc, text);
     assert_eq!(client.diagnostics(&doc)["diagnostics"], json!([]));
@@ -254,7 +254,7 @@ fn host_functions_hover_and_go_to_their_declaration() {
 #[test]
 fn abstract_classes_hover_and_complete() {
     let mut client = Client::start();
-    let doc = uri("shapes.vlt");
+    let doc = uri("shapes.velt");
     let text = "abstract class Shape {\n  abstract area(): f64;\n}\n\nclass Square extends Shape {\n  area(): f64 {\n    return 4;\n  }\n}\n\nfunction main() {\n  const s: Shape = new Square();\n  console.log(s.area());\n  \n}\n";
     client.open(&doc, text);
     assert_eq!(client.diagnostics(&doc)["diagnostics"], json!([]));
@@ -308,7 +308,7 @@ fn completion_offers_scope_items_and_keywords() {
 #[test]
 fn completion_after_a_dot_lists_members() {
     let mut client = Client::start();
-    let doc = uri("members.vlt");
+    let doc = uri("members.velt");
     // `this.` and `u.` are incomplete statements, as while typing.
     let text = "class User {\n  name: string;\n  greet(): string {\n    this.\n  }\n}\n\nenum Color { Red, Green }\n\nfunction main() {\n  let u = new User();\n  u.\n  Color.\n}\n";
     client.open(&doc, text);
@@ -333,8 +333,8 @@ fn code_lenses_run_and_debug_main() {
         "initializationOptions": { "runLenses": true },
     }));
     assert!(client.init["capabilities"]["codeLensProvider"].is_object());
-    let app = uri("nav_app.vlt");
-    client.open(&uri("nav_util.vlt"), UTIL);
+    let app = uri("nav_app.velt");
+    client.open(&uri("nav_util.velt"), UTIL);
     client.open(&app, APP);
     let params = json!({ "textDocument": { "uri": app } });
     let lenses = client.request("textDocument/codeLens", params);
@@ -363,7 +363,7 @@ fn code_lenses_run_and_debug_main() {
             ("Debug".into(), "velt.debugFile".into(), line)
         ]
     );
-    let util = uri("nav_util.vlt");
+    let util = uri("nav_util.velt");
     let none = client.request(
         "textDocument/codeLens",
         json!({ "textDocument": { "uri": util } }),
@@ -383,7 +383,7 @@ fn code_lenses_run_and_debug_tests() {
     const TESTS: &str = "export function test_add() {\n  assert(1 + 1 == 2);\n}\n\n\
                          function test_hidden() {}\n\n\
                          export function test_with(n: number) {}\n";
-    let file = uri("math.test.vlt");
+    let file = uri("math.test.velt");
     client.open(&file, TESTS);
     let lenses = client.request(
         "textDocument/codeLens",
@@ -431,7 +431,7 @@ fn plain_clients_get_no_code_lenses() {
 #[test]
 fn script_with_its_own_main_lists_main_once() {
     let mut client = Client::start();
-    let app = uri("script_main.vlt");
+    let app = uri("script_main.velt");
     client.open(
         &app,
         "function main(): void {\n  console.log(1);\n}\n\nmain();\n",

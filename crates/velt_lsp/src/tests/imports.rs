@@ -59,15 +59,15 @@ fn fixture() -> Fixture {
     let tmp = tempfile::tempdir().unwrap();
     let root = tmp.path().canonicalize().unwrap();
     let files = [
-        ("std/fs/index.vlt", FS),
-        ("std/collections/index.vlt", "// velt/collections: sets.\n\nexport function setOf(): i64 {\n  return 1;\n}\n"),
-        ("std/net/url/index.vlt", "// std/url: URLs.\n\nexport function parseUrl(s: string): string {\n  return s;\n}\n"),
-        ("std/net/url/encode.vlt", "// std/url/encode: helpers.\n\nexport function encodeAll(s: string): string {\n  return s;\n}\n"),
-        ("std/prelude/array.vlt", "// arrays\n"),
-        ("std/lang/import_meta/index.vlt", "// std/import_meta (std-internal): `import.meta`.\n\nexport class ImportMeta {\n  readonly url: string;\n  constructor(d: string, f: string, m: boolean, url: string) {\n    this.url = url;\n  }\n}\n"),
-        ("app/util.vlt", UTIL),
-        ("app/sub/deep.vlt", "export const DEPTH: i64 = 2;\n"),
-        ("app/main.vlt", ""),
+        ("std/fs/index.velt", FS),
+        ("std/collections/index.velt", "// velt/collections: sets.\n\nexport function setOf(): i64 {\n  return 1;\n}\n"),
+        ("std/net/url/index.velt", "// std/url: URLs.\n\nexport function parseUrl(s: string): string {\n  return s;\n}\n"),
+        ("std/net/url/encode.velt", "// std/url/encode: helpers.\n\nexport function encodeAll(s: string): string {\n  return s;\n}\n"),
+        ("std/prelude/array.velt", "// arrays\n"),
+        ("std/lang/import_meta/index.velt", "// std/import_meta (std-internal): `import.meta`.\n\nexport class ImportMeta {\n  readonly url: string;\n  constructor(d: string, f: string, m: boolean, url: string) {\n    this.url = url;\n  }\n}\n"),
+        ("app/util.velt", UTIL),
+        ("app/sub/deep.velt", "export const DEPTH: i64 = 2;\n"),
+        ("app/main.velt", ""),
     ];
     for (rel, text) in files {
         let path = root.join(rel);
@@ -82,11 +82,11 @@ fn fixture() -> Fixture {
 }
 
 /// A client on the fixture's std, with the program folder as its workspace, and `text` open
-/// as `app/main.vlt` (its diagnostics received).
+/// as `app/main.velt` (its diagnostics received).
 fn open(fx: &Fixture, text: &str) -> (Client, Url, Vec<Value>) {
     let init = json!({ "capabilities": {}, "rootUri": Url::from_file_path(&fx.app).unwrap() });
     let mut client = Client::start_on(init, StdLoader(fx.std.clone()));
-    let doc = Url::from_file_path(fx.app.join("main.vlt")).unwrap();
+    let doc = Url::from_file_path(fx.app.join("main.velt")).unwrap();
     client.open(&doc, text);
     let diags = client.diagnostics(&doc)["diagnostics"]
         .as_array()
@@ -290,7 +290,7 @@ fn auto_import_adds_an_import_to_a_file_without_imports() {
         "import { helper } from \"./util\";\n\nfunction main() {\n  hel\n}\n"
     );
     // An open file's unsaved exports count.
-    let util = Url::from_file_path(fx.app.join("util.vlt")).unwrap();
+    let util = Url::from_file_path(fx.app.join("util.velt")).unwrap();
     client.open(
         &util,
         &format!("{UTIL}\nexport function freshly(): i64 {{\n  return 2;\n}}\n"),
@@ -339,19 +339,19 @@ fn auto_import_specifiers_name_the_chosen_file() {
     let pkg = tmp.path().canonicalize().unwrap().join("pkg");
     let manifest = "export const pkg: Package = { name: \"app\", version: \"0.1.0\" };\n";
     let files = [
-        ("package.vlt", manifest),
-        ("src/feature/main.vlt", ""),
-        ("src/dup.vlt", "export const dupVlt: i64 = 1;\n"),
+        ("package.velt", manifest),
+        ("src/feature/main.velt", ""),
+        ("src/dup.velt", "export const dupVlt: i64 = 1;\n"),
         ("src/dup.ts", "export const dupTs: number = 1;\n"),
-        ("src/shapes.vlt", "export const shapeFile: i64 = 1;\n"),
+        ("src/shapes.velt", "export const shapeFile: i64 = 1;\n"),
         (
-            "src/shapes/index.vlt",
+            "src/shapes/index.velt",
             "export const shapeFolder: i64 = 1;\n",
         ),
-        ("src/index.vlt", "export const indexThing: i64 = 1;\n"),
-        ("src/nested/package.vlt", manifest),
+        ("src/index.velt", "export const indexThing: i64 = 1;\n"),
+        ("src/nested/package.velt", manifest),
         (
-            "src/nested/src/inner.vlt",
+            "src/nested/src/inner.velt",
             "export const innerThing: i64 = 1;\n",
         ),
     ];
@@ -362,7 +362,7 @@ fn auto_import_specifiers_name_the_chosen_file() {
     }
     let init = json!({ "capabilities": {}, "rootUri": Url::from_file_path(&pkg).unwrap() });
     let mut client = Client::start_on(init, StdLoader(pkg.join("no-std")));
-    let doc = Url::from_file_path(pkg.join("src/feature/main.vlt")).unwrap();
+    let doc = Url::from_file_path(pkg.join("src/feature/main.velt")).unwrap();
     let mut from = |prefix: &str| {
         let text = format!("function main() {{\n  {prefix}\n}}\n");
         client.open(&doc, &text);
@@ -390,7 +390,7 @@ fn auto_import_specifiers_name_the_chosen_file() {
     };
     assert_eq!(
         from("dup"),
-        pairs(&[("dupTs", "../dup.ts"), ("dupVlt", "../dup.vlt")])
+        pairs(&[("dupTs", "../dup.ts"), ("dupVlt", "../dup.velt")])
     );
     assert_eq!(
         from("shape"),

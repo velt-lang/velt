@@ -11,7 +11,7 @@ use super::quick_fixes::{actions, apply, find};
 /// A package on disk whose `tsCompat` lists `shared`, which exists.
 fn package() -> tempfile::TempDir {
     let tmp = tempfile::tempdir().unwrap();
-    std::fs::write(tmp.path().join("package.vlt"), manifest("[\"shared\"]")).unwrap();
+    std::fs::write(tmp.path().join("package.velt"), manifest("[\"shared\"]")).unwrap();
     std::fs::create_dir(tmp.path().join("shared")).unwrap();
     tmp
 }
@@ -56,7 +56,7 @@ fn findings_in_the_folders_come_live_with_their_fix() {
     let tmp = package();
     let mut client = Client::start();
     let text = "export const x: f64 = 1.5;\n";
-    let doc = uri_in(&tmp, "shared/model.vlt");
+    let doc = uri_in(&tmp, "shared/model.velt");
     client.open(&doc, text);
     let diags = published(&mut client, &doc);
     assert_eq!(sources(&diags), [ts_compat("velt-number-type")]);
@@ -123,25 +123,25 @@ fn typed_findings_come_live() {
 fn files_outside_the_folders_and_files_with_errors_get_no_findings() {
     let tmp = package();
     let mut client = Client::start();
-    let outside = uri_in(&tmp, "server.vlt");
+    let outside = uri_in(&tmp, "server.velt");
     client.open(&outside, "export const x: f64 = 1.5;\n");
     assert_eq!(published(&mut client, &outside), [] as [Value; 0]);
     // A folder whose name starts like a listed one is another folder.
-    let sibling = uri_in(&tmp, "shared2/model.vlt");
+    let sibling = uri_in(&tmp, "shared2/model.velt");
     client.open(&sibling, "export const x: f64 = 1.5;\n");
     assert_eq!(published(&mut client, &sibling), [] as [Value; 0]);
     // The CLI's walk skips these directories under the folders, so they are outside too.
     for rel in [
-        "shared/node_modules/m.vlt",
-        "shared/target/m.vlt",
-        "shared/.cache/m.vlt",
+        "shared/node_modules/m.velt",
+        "shared/target/m.velt",
+        "shared/.cache/m.velt",
     ] {
         let skipped = uri_in(&tmp, rel);
         client.open(&skipped, "export const x: f64 = 1.5;\n");
         assert_eq!(published(&mut client, &skipped), [] as [Value; 0], "{rel}");
     }
     // The rules see only valid Velt: the compiler's error, no finding.
-    let broken = uri_in(&tmp, "shared/broken.vlt");
+    let broken = uri_in(&tmp, "shared/broken.velt");
     client.open(&broken, "export const x: f64 = \"a\";\n");
     let diags = published(&mut client, &broken);
     assert!(!diags.is_empty());
@@ -156,24 +156,24 @@ fn files_outside_the_folders_and_files_with_errors_get_no_findings() {
 fn an_import_leaving_the_folders_is_a_finding() {
     let tmp = package();
     std::fs::write(
-        tmp.path().join("util.vlt"),
+        tmp.path().join("util.velt"),
         "export function twice(x: number): number {\n  return x * 2;\n}\n",
     )
     .unwrap();
     std::fs::write(
-        tmp.path().join("shared/inside.vlt"),
+        tmp.path().join("shared/inside.velt"),
         "export const one: number = 1;\n",
     )
     .unwrap();
     // Under the folder, but in a directory `velt check --ts-compat` doesn't walk.
     std::fs::create_dir(tmp.path().join("shared/node_modules")).unwrap();
     std::fs::write(
-        tmp.path().join("shared/node_modules/dep.vlt"),
+        tmp.path().join("shared/node_modules/dep.velt"),
         "export const three: number = 3;\n",
     )
     .unwrap();
     let mut client = Client::start();
-    let doc = uri_in(&tmp, "shared/model.vlt");
+    let doc = uri_in(&tmp, "shared/model.velt");
     let text = "import { twice } from \"./../util\";\nimport { one } from \"./inside\";\n\
                 import { three } from \"./node_modules/dep\";\n\
                 export function two(): number {\n  return twice(one) + three;\n}\n";
@@ -191,14 +191,14 @@ fn an_import_leaving_the_folders_is_a_finding() {
 fn the_open_manifest_decides_the_folders() {
     let tmp = package();
     let mut client = Client::start();
-    let doc = uri_in(&tmp, "shared/model.vlt");
+    let doc = uri_in(&tmp, "shared/model.velt");
     client.open(&doc, "export const x: f64 = 1.5;\n");
     assert_eq!(
         sources(&published(&mut client, &doc)),
         [ts_compat("velt-number-type")]
     );
     // Unsaved edits to `tsCompat` apply; a folder that isn't there is a warning in the manifest.
-    let pkg = uri_in(&tmp, "package.vlt");
+    let pkg = uri_in(&tmp, "package.velt");
     let text = manifest("[\"models\"]");
     client.open(&pkg, &text);
     let warnings = published(&mut client, &pkg);
@@ -231,11 +231,11 @@ fn published_until(client: &mut Client, doc: &Url, want: &[(String, String)]) ->
 fn closing_an_edited_manifest_restores_the_saved_folders() {
     let tmp = package();
     let mut client = Client::start();
-    let doc = uri_in(&tmp, "shared/model.vlt");
+    let doc = uri_in(&tmp, "shared/model.velt");
     client.open(&doc, "export const x: f64 = 1.5;\n");
     let finding = [ts_compat("velt-number-type")];
     published_until(&mut client, &doc, &finding);
-    let pkg = uri_in(&tmp, "package.vlt");
+    let pkg = uri_in(&tmp, "package.velt");
     client.open(&pkg, &manifest("[\"shared\"]"));
     // An unsaved edit moves the folders away from the document...
     client.change(&pkg, 2, &manifest("[\"models\"]"));
@@ -254,19 +254,19 @@ fn manifest_and_folder_changes_on_disk_refresh_open_documents() {
     let tmp = package();
     let mut client = Client::start();
     let event = |rel: &str, typ: u32| json!({ "uri": uri_in(&tmp, rel), "type": typ });
-    let doc = uri_in(&tmp, "shared/model.vlt");
+    let doc = uri_in(&tmp, "shared/model.velt");
     client.open(&doc, "export const x: f64 = 1.5;\n");
     published_until(&mut client, &doc, &[ts_compat("velt-number-type")]);
-    // `package.vlt` saved by another program: the document leaves the folders.
-    std::fs::write(tmp.path().join("package.vlt"), manifest("[\"models\"]")).unwrap();
+    // `package.velt` saved by another program: the document leaves the folders.
+    std::fs::write(tmp.path().join("package.velt"), manifest("[\"models\"]")).unwrap();
     client.notify(
         "workspace/didChangeWatchedFiles",
-        json!({ "changes": [event("package.vlt", 2)] }),
+        json!({ "changes": [event("package.velt", 2)] }),
     );
     published_until(&mut client, &doc, &[]);
 
     // The open manifest's warning for the missing folder goes once the folder is created.
-    let pkg = uri_in(&tmp, "package.vlt");
+    let pkg = uri_in(&tmp, "package.velt");
     client.open(&pkg, &manifest("[\"models\"]"));
     assert_eq!(published(&mut client, &pkg).len(), 1);
     std::fs::create_dir(tmp.path().join("models")).unwrap();
@@ -286,7 +286,7 @@ fn manifest_and_folder_changes_on_disk_refresh_open_documents() {
 fn ranges_and_fixes_count_utf16_columns() {
     let tmp = package();
     let mut client = Client::start();
-    let doc = uri_in(&tmp, "shared/model.vlt");
+    let doc = uri_in(&tmp, "shared/model.velt");
     // The emoji is two UTF-16 code units (four UTF-8 bytes) before `f64` on the same line.
     let text = "export const s: string = \"😀\"; export const x: f64 = 1.5;\n";
     client.open(&doc, text);
@@ -313,7 +313,7 @@ fn ranges_and_fixes_count_utf16_columns() {
 fn fix_all_includes_ts_compat_fixes() {
     let tmp = package();
     let mut client = Client::start();
-    let doc = uri_in(&tmp, "shared/model.vlt");
+    let doc = uri_in(&tmp, "shared/model.velt");
     // Two `f64`s with a fix, and an `i64`, whose fix is the author's call (none offered).
     let text = "export const x: f64 = 1.5;\nexport const y: f64 = 2.5;\nexport const z: i64 = 2;\n";
     client.open(&doc, text);
@@ -350,11 +350,11 @@ fn only_package_changes_refresh_open_documents() {
     std::fs::create_dir_all(at(".git/refs")).unwrap();
     std::fs::create_dir_all(at("node_modules/x")).unwrap();
     std::fs::create_dir_all(at("shared/sub")).unwrap();
-    assert!(affects_packages(&at("package.vlt"), false, false));
+    assert!(affects_packages(&at("package.velt"), false, false));
     assert!(affects_packages(&at("shared/sub"), true, false));
     assert!(affects_packages(&at("gone"), false, true));
     // Source files, and what the walk never enters, don't.
-    assert!(!affects_packages(&at("shared/a.vlt"), false, true));
+    assert!(!affects_packages(&at("shared/a.velt"), false, true));
     assert!(!affects_packages(&at(".git/refs"), true, false));
     assert!(!affects_packages(&at(".git/index.lock"), false, true));
     assert!(!affects_packages(&at("node_modules/x"), true, false));

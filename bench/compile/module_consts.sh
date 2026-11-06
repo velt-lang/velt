@@ -32,14 +32,14 @@ EOF
 for spec in consts:3000 consts:6000 consts:12000 fns:6000 chain:1500 chain:6000; do
   kind=${spec%:*}
   n=${spec#*:}
-  gen "$kind" "$n" "$work/$kind$n.vlt"
+  gen "$kind" "$n" "$work/$kind$n.velt"
   i=0
   args=("$@")
   while [ $i -lt ${#args[@]} ]; do
     velt=${args[$i]}
     std=${args[$((i + 1))]}
     VELT_STD=$std valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null \
-      "$velt" check "$work/$kind$n.vlt" >"$work/log" 2>&1 || true
+      "$velt" check "$work/$kind$n.velt" >"$work/log" 2>&1 || true
     echo "$kind N=$n $velt $(grep -E 'I\s+refs' "$work/log" | awk '{print $NF}')"
     i=$((i + 2))
   done

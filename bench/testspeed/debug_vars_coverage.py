@@ -15,7 +15,7 @@ for cat in sorted(os.listdir(gold)):
     if not os.path.isdir(d):
         continue
     for n in sorted(os.listdir(d)):
-        if n.endswith(".vlt") and not n.startswith("_"):
+        if n.endswith(".velt") and not n.startswith("_"):
             files.append(f"{cat}/{n}")
 sample = files[::step]
 print(f"{len(files)} goldens as the test finds them, running {len(sample)}", flush=True)
@@ -50,7 +50,7 @@ for r in rows:
 print("programs reaching each branch:", dict(sorted(counts.items())), flush=True)
 print("branches no program reaches:", [m for m in range(1, 63) if m not in counts], flush=True)
 print("least reached:", sorted(counts.items(), key=lambda kv: kv[1])[:20], flush=True)
-print("any branch only std reaches? hello:", rows.get("m1/hello.vlt", {}).get("marks"), flush=True)
+print("any branch only std reaches? hello:", rows.get("m1/hello.velt", {}).get("marks"), flush=True)
 for m in mutants:
     caught = []
     with cf.ThreadPoolExecutor(workers) as pool:

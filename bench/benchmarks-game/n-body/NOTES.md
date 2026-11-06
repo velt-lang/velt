@@ -13,8 +13,8 @@ Official description: https://benchmarksgame-team.pages.debian.net/benchmarksgam
 | `rust/src/bin/n-body.rs` | Rust #3, Ilia Schelokov: the fastest published Rust without `std::arch::x86_64` intrinsics (#9, #7, #5, #6 are x86-only and do not build on the M4) |
 | `main.go` | Go #3, The Go Authors / Christoph Bauer / Isaac Gouy / Antonio Petri (fastest Go) |
 | `main.js` | Node.js #6, Isaac Gouy / Andrey Filatkin (fastest Node); Bun runs the same file |
-| `main.vlt` | idiomatic Velt: a `Body` class, `Body[]`, the Node #6 loop shape |
-| `main_opt.vlt` | the Rust #3 loop shape with Copy structs (`Vec3`, `Body`) stored inline, see "Gaps" |
+| `main.velt` | idiomatic Velt: a `Body` class, `Body[]`, the Node #6 loop shape |
+| `main_opt.velt` | the Rust #3 loop shape with Copy structs (`Vec3`, `Body`) stored inline, see "Gaps" |
 
 All published n-body programs are single-threaded, so there is no `_mt` variant. The reference
 files are unchanged apart from a first `// Source:` line.
@@ -22,7 +22,7 @@ files are unchanged apart from a first `// Source:` line.
 ## Deviations
 - Velt has no `Number.prototype.toFixed`; each Velt file declares it with `extend f64 { toFixed }`
   (rounds `|x| * 10^9` to an integer: exact for the magnitudes printed here).
-- `main.vlt` computes `dx * (mass * mag)` (the Rust #3 order) where Node #6 has
+- `main.velt` computes `dx * (mass * mag)` (the Rust #3 order) where Node #6 has
   `dx * mass * mag`; the printed energies are identical at QUICK_N and N.
 
 ## Correctness
@@ -39,30 +39,30 @@ shared with other agents' builds and benchmarks (load average 10–33), so wall 
 | implementation | threads | wall s | CPU s | peak RSS MB | wall × Rust | CPU × Rust |
 |---|---|---:|---:|---:|---:|---:|
 | Rust `n-body.rs` | 1 | 1.66 | 1.64 | 1.4 | 1.00 | 1.00 |
-| Velt LLVM `main.vlt` | 1 | 2.46 | 2.44 | 2.0 | 1.48 | 1.49 |
-| Velt LLVM `main_opt.vlt` | 1 | 2.89 | 2.87 | 2.1 | 1.74 | 1.75 |
-| Velt Cranelift `main.vlt` | 1 | 5.77 | 5.59 | 2.0 | 3.48 | 3.41 |
-| Velt Cranelift `main_opt.vlt` | 1 | 6.65 | 6.50 | 2.1 | 4.01 | 3.96 |
+| Velt LLVM `main.velt` | 1 | 2.46 | 2.44 | 2.0 | 1.48 | 1.49 |
+| Velt LLVM `main_opt.velt` | 1 | 2.89 | 2.87 | 2.1 | 1.74 | 1.75 |
+| Velt Cranelift `main.velt` | 1 | 5.77 | 5.59 | 2.0 | 3.48 | 3.41 |
+| Velt Cranelift `main_opt.velt` | 1 | 6.65 | 6.50 | 2.1 | 4.01 | 3.96 |
 | Go `main.go` | 1 | 2.60 | 2.56 | 3.9 | 1.57 | 1.56 |
 | Node `main.js` | 1 | 3.18 | 3.17 | 50.5 | 1.92 | 1.93 |
 | Bun `main.js` | 1 | 4.03 | 4.00 | 25.0 | 2.43 | 2.44 |
 
 ## Gaps (Velt LLVM > 1.2× Rust)
 
-### `main.vlt` 1.49×: the loop shape, not the compiler
-Node #6 (and `main.vlt`) handles one pair at a time: distance → `sqrt` → divide → velocity
+### `main.velt` 1.49×: the loop shape, not the compiler
+Node #6 (and `main.velt`) handles one pair at a time: distance → `sqrt` → divide → velocity
 update, one scalar `sqrt` + `fdiv` per pair on the critical path. Rust #3 first computes all 10
 distance vectors, then all 10 magnitudes (independent, so LLVM emits 2-wide `fsqrt.2d` /
 `fdiv.2d`), then the updates. To separate the two, a scratch Rust program with exactly the
-`main.vlt` shape (`Vec<Box<Body>>`, the same loops) took 4.2–4.4 s CPU against 3.4–3.5 s for
-`main.vlt` in the same session: for this shape Velt is faster than Rust. In the optimized IR the
+`main.velt` shape (`Vec<Box<Body>>`, the same loops) took 4.2–4.4 s CPU against 3.4–3.5 s for
+`main.velt` in the same session: for this shape Velt is faster than Rust. In the optimized IR the
 inner pair loop keeps 9 loads and 2 stores per pair (the `bodies[j]` fields); there are no bounds
 checks left.
 
-No compiler fix needed; `main_opt.vlt` shows what the Rust #3 shape gets.
+No compiler fix needed; `main_opt.velt` shows what the Rust #3 shape gets.
 
-### `main_opt.vlt` 1.75×: arrays built with `push` in a loop stay in memory
-`main_opt.vlt` uses the Rust #3 shape with `dPos: Vec3[]` and `mags: f64[]` created by
+### `main_opt.velt` 1.75×: arrays built with `push` in a loop stay in memory
+`main_opt.velt` uses the Rust #3 shape with `dPos: Vec3[]` and `mags: f64[]` created by
 `push`ing 10 elements in a loop. After LLVM fully unrolls the step loop, every step does
 **169 loads and 80 stores** and 10 scalar `sqrt` + 10 `fdiv` (counted in the optimized IR of the
 step loop). Rust #3 (stack arrays) keeps everything in registers: 0 loads, 0 stores, most
@@ -79,7 +79,7 @@ loop phi of `velt_rt_alloc` / `velt_rt_realloc` results:
     (*_88 as agg#2) = agg#2 { _199, _200, _201 }
 ```
 
-Experiments (scratch copies of `main_opt.vlt`):
+Experiments (scratch copies of `main_opt.velt`):
 - the same arrays written as literals (`[Vec3 {…}, … ×10]`, one `velt_rt_alloc`) or as 10
   straight-line `push` calls: the step loop drops to **33 loads / 17 stores**, 8 of the 10 `sqrt`/`fdiv` vectorized (two `<4 x double>` ops each),
   the same load/store counts as the Rust `Vec` version, and 13–27 % less time (two sessions);
@@ -102,9 +102,9 @@ Proposed fixes:
 
 ### Cranelift 3.4–4×
 The known Cranelift limits (bench/RESULTS.md): no auto-vectorization and no loop-invariant code
-motion; `main_opt.vlt`'s 10-wide unrolled step loop does not get unrolled or vectorized at all.
+motion; `main_opt.velt`'s 10-wide unrolled step loop does not get unrolled or vectorized at all.
 
-## Friction for a TypeScript developer (all hit while writing `main.vlt`)
+## Friction for a TypeScript developer (all hit while writing `main.velt`)
 - `toFixed` is missing (worked around with `extend f64`, which is pleasant).
 - Constructor parameter properties (`constructor(public x: f64, …) {}`) are a parse error
   (``expected `:`, found `x` ``): the class needs 7 field declarations plus 7 assignments.

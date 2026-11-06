@@ -260,7 +260,7 @@ pub struct Function {
     /// lowering; `velt_opt` keeps it on clones. False promises nothing.
     pub cold: bool,
     /// Whether optimizers and backends must inline it, must not, or decide for themselves: the
-    /// std markers `inline()` and `noInline()` (std/lang/intrinsics/inline.vlt). Set by
+    /// std markers `inline()` and `noInline()` (std/lang/intrinsics/inline.velt). Set by
     /// lowering; `velt_opt` keeps it on clones.
     pub inline: Inline,
 }

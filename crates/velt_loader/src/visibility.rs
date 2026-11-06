@@ -1,12 +1,12 @@
 //! Which std files a module may load (docs/internals/design/std-layout.md §2, §5, §9).
 //!
 //! User code (any module not loaded from std, packages included) imports only std's modules: a
-//! folder's `index.vlt` outside `prelude/` and `lang/` ([`std_modules::importable`]). Any other
+//! folder's `index.velt` outside `prelude/` and `lang/` ([`std_modules::importable`]). Any other
 //! std file is internal to the module whose folder holds it, and importing it is an error that
 //! names that module. std code imports any std file. The import the parser adds for
 //! `import.meta` is the compiler's, not the user's.
 //!
-//! std's own test files (`std/<module>/<name>.test.vlt`, the white-box tests `velt test std/`
+//! std's own test files (`std/<module>/<name>.test.velt`, the white-box tests `velt test std/`
 //! runs) are std code when the generated harness of `velt test` imports them (relatively): they
 //! import the internals they test. No other module outside std may import them.
 
@@ -76,7 +76,7 @@ impl Loader<'_, '_> {
             &shown
         };
         Err(internal(&rel, shown, &|dir| {
-            vpm::probe::is_file(&std.join(dir).join("index.vlt"))
+            vpm::probe::is_file(&std.join(dir).join("index.velt"))
         }))
     }
 
@@ -109,7 +109,7 @@ impl Loader<'_, '_> {
                 }
                 // An internal file: name what a program imports instead, not the file.
                 let std = self.opts.std_root.as_deref().unwrap_or(std_key);
-                let has_index = |dir: &str| vpm::probe::is_file(&std.join(dir).join("index.vlt"));
+                let has_index = |dir: &str| vpm::probe::is_file(&std.join(dir).join("index.velt"));
                 let (what, notes) = internal(&rel, &format!("velt/{module}"), &has_index);
                 Err(format!(
                     "module `{spec}` is a file of the standard library: {what}; {}",
@@ -161,7 +161,7 @@ fn internal(rel: &str, spec: &str, has_index: &dyn Fn(&str) -> bool) -> (String,
             None => (
                 format!("`{spec}` is internal to the standard library"),
                 vec![format!(
-                    "user code imports a module's `index.vlt` (the modules: {})",
+                    "user code imports a module's `index.velt` (the modules: {})",
                     super::moved::STD_DOCS_URL
                 )],
             ),

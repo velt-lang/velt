@@ -61,7 +61,7 @@ const EXPECTED: &str = "2 b \n1 a x+y\n3 7\n0 p \n1 q t0\n2 p t0+t1\n0 k \n1 k t
 
 fn run(app: &Path, scheduler: &str) -> Output {
     no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["run", "src/main.vlt"])
+        .args(["run", "src/main.velt"])
         .current_dir(app)
         .env("VELT_SCHEDULER", scheduler)
         .env("VELT_RT_DEBUG_ALLOC", "1")
@@ -82,13 +82,13 @@ fn arrays_and_structs_cross_with_counted_types_on_both_schedulers() {
     std::fs::create_dir_all(app.join("src")).unwrap();
     let dep = package().to_string_lossy().replace('\\', "/");
     std::fs::write(
-        app.join("package.vlt"),
+        app.join("package.velt"),
         format!(
             "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"app\",\n  version: \"0.1.0\",\n  allowNative: [\"vals\"],\n  dependencies: {{ vals: {{ path: \"{dep}\" }} }},\n}};\n"
         ),
     )
     .unwrap();
-    std::fs::write(app.join("src/main.vlt"), PROGRAM).unwrap();
+    std::fs::write(app.join("src/main.velt"), PROGRAM).unwrap();
     for scheduler in ["stealing", "velt"] {
         let out = run(&app, scheduler);
         let (stdout, stderr) = (

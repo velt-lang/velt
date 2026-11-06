@@ -1,6 +1,6 @@
 //! Built-in methods of strings, arrays, numbers and booleans called through `any` (#924): the
 //! `AnyCall` slot of such a type (any_glue.rs) compares the key with the names of the prelude's
-//! functions for its kind (std/lang/hooks/any_methods.vlt: `anyStr_<name>(s, args)`,
+//! functions for its kind (std/lang/hooks/any_methods.velt: `anyStr_<name>(s, args)`,
 //! `anyArr_<name><T>(a, args)` instantiated at the element type, `anyNum_<name>(n, args)`,
 //! `anyBool_<name>(b, args)`) and calls the one named, with the value borrowed and the
 //! arguments packed into an `any[]`; its `any` result is the call's. Another JavaScript
@@ -132,8 +132,8 @@ impl FnLower<'_, '_> {
 
 impl FnLower<'_, '_> {
     /// The `AnyCall` slot body of a `Record<string, V>`: std's functions named `anyRec_<name>`
-    /// (std/lang/record/reflect.vlt), each called for the key of std's symbol `record<Name>`
-    /// (std/lang/hooks/keys.vlt: `r[RECORD_SYM_GET](s)`, which no program's key reaches), given
+    /// (std/lang/record/reflect.velt), each called for the key of std's symbol `record<Name>`
+    /// (std/lang/hooks/keys.velt: `r[RECORD_SYM_GET](s)`, which no program's key reaches), given
     /// the record and the arguments; any other name is not supported yet, as before.
     pub(super) fn any_record_call(
         &mut self,
@@ -284,7 +284,7 @@ impl FnLower<'_, '_> {
     }
 }
 
-/// The member name of std's symbol `record<Name>` (std/lang/hooks/keys.vlt) that std calls a
+/// The member name of std's symbol `record<Name>` (std/lang/hooks/keys.velt) that std calls a
 /// record's `anyRec_<name>` function by (`std_key!(record_sym_get)` for `symGet`).
 fn record_key(name: &str) -> String {
     let mut c = name.chars();

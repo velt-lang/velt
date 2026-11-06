@@ -1,5 +1,5 @@
-//! Arrays and structs: the array parts of `tests/golden/m2/arrays_maps.vlt` (Map is a prelude
-//! class), `tests/golden/m2/structs.vlt`, destructuring, bounds checks and array intrinsics. The
+//! Arrays and structs: the array parts of `tests/golden/m2/arrays_maps.velt` (Map is a prelude
+//! class), `tests/golden/m2/structs.velt`, destructuring, bounds checks and array intrinsics. The
 //! programs that index an array are Velt source loaded with the real std (std_src.rs): the
 //! out-of-bounds report prints the index through std's hooks (#2197).
 
@@ -9,7 +9,7 @@ use super::builder::*;
 use super::builder_m2::*;
 use super::{run, run_src};
 
-/// The array part of `tests/golden/m2/arrays_maps.vlt` (pushes, a sum over `for … of`, indexing,
+/// The array part of `tests/golden/m2/arrays_maps.velt` (pushes, a sum over `for … of`, indexing,
 /// assignment through an index, `pop`, array and object destructuring, nested arrays). Indexing
 /// builds the out-of-bounds report, which prints the index through std's hooks (#2197): loaded
 /// with the real std (std_src.rs).

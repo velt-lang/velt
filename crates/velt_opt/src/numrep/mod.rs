@@ -61,10 +61,10 @@ pub(crate) use print::declare as declare_formatters;
 pub use report::{Unnarrowed, Why};
 pub(crate) use simplify::self_comparisons;
 
-/// The prelude's `xs[i]` with a float `i` (`std/prelude/math.vlt`).
+/// The prelude's `xs[i]` with a float `i` (`std/prelude/math.velt`).
 const FLOAT_INDEX: &str = velt_common::std_hook!(float_index);
 
-/// The prelude's int32 helpers (`std/prelude/math.vlt`), inlined in debug builds too so that
+/// The prelude's int32 helpers (`std/prelude/math.velt`), inlined in debug builds too so that
 /// `numrep` sees their integer paths.
 const INT32_HELPERS: [&str; 1] = [velt_common::std_hook!(mul_to_int32)];
 

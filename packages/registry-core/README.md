@@ -42,24 +42,24 @@ isValidPackageName("my-pkg"); // true; checkName("std") says why a name is refus
 Version.parse("1.2.3-rc.1").compare(Version.parse("1.2.3")); // negative: a pre-release orders first
 
 const entries = readArchive(body, (path: string): bool => true); // ArchiveError when malformed
-checkPackagePaths(entries, null); // only package.vlt, src/ and the native crate's directory
+checkPackagePaths(entries, null); // only package.velt, src/ and the native crate's directory
 const sum = contentChecksum(entries); // "sha256:…", as `velt` records it
 const manifest = readManifest(text); // ManifestError when vpm would refuse it
 ```
 
-- **Names** (`src/names.vlt`): package names (lowercase words joined by single `-` or `_`; not
+- **Names** (`src/names.velt`): package names (lowercase words joined by single `-` or `_`; not
   `std`, `velt`, a native prefix such as `rt-…`, or a Windows device name), scoped dependency
   names (`@scope/name`) and registry user names.
-- **Versions** (`src/semver/version.vlt`): semver 2.0 versions, parsed and ordered exactly as the
+- **Versions** (`src/semver/version.velt`): semver 2.0 versions, parsed and ordered exactly as the
   Rust `semver` crate does for `velt` (numbers up to `u64`'s largest; build metadata ordered
   too).
-- **Requirements** (`src/semver/requirement.vlt`): which strings are version requirements
+- **Requirements** (`src/semver/requirement.velt`): which strings are version requirements
   (`^1.2`, `>=1, <2`, `1.*`), as the `semver` crate parses them.
-- **Manifests** (`src/manifest/`): `package.vlt` read as vpm reads it, never compiled or run:
+- **Manifests** (`src/manifest/`): `package.velt` read as vpm reads it, never compiled or run:
   one `export const pkg: Package = { … }` of data (strings, booleans, arrays, objects), every
   field checked; `readManifest(text)` gives a `Manifest` or throws `ManifestError` with every
   problem, and `Manifest.toJson()` is `velt manifest --json`.
-- **Archives** (`src/archive.vlt`, `src/package_archive.vlt`): the `VELTPKG1` archive `velt
+- **Archives** (`src/archive.velt`, `src/package_archive.velt`): the `VELTPKG1` archive `velt
   publish` uploads, its path rules (`readPackageArchive` allows the native crate's directory its
   manifest declares), and the content checksum of its files.
 

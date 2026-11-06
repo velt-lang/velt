@@ -31,7 +31,7 @@ random_port() {
 
 build() {
   echo "building velt server (release)..." >&2
-  "$ROOT/target/debug/velt" build --release "$HERE/server.vlt" -o "$WORK/velt-server" >&2
+  "$ROOT/target/debug/velt" build --release "$HERE/server.velt" -o "$WORK/velt-server" >&2
   if [[ " $SERVERS " == *" axum "* ]]; then
     echo "building axum baseline (release)..." >&2
     (cd "$HERE/axum" && CARGO_TARGET_DIR="$AXUM_TARGET_DIR" cargo build --release -q) >&2

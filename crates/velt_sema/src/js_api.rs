@@ -76,7 +76,7 @@ impl<'m> Ctx<'m> {
             }
             let mut out = FxHashMap::default();
             for (i, m) in modules.iter().enumerate() {
-                if !m.is_std || VELT_GLOBAL_MODULES.contains(&m.path.trim_end_matches(".vlt")) {
+                if !m.is_std || VELT_GLOBAL_MODULES.contains(&m.path.trim_end_matches(".velt")) {
                     continue;
                 }
                 // The compiler's hooks were prelude functions, and calls of them in a program's
@@ -84,7 +84,7 @@ impl<'m> Ctx<'m> {
                 if m.path.starts_with(velt_common::std_dir!(prelude))
                     || m.path.starts_with(velt_common::std_dir!(lang_hooks))
                 {
-                    if !VELT_PRELUDE.contains(&m.path.trim_end_matches(".vlt")) {
+                    if !VELT_PRELUDE.contains(&m.path.trim_end_matches(".velt")) {
                         out.insert(i, None);
                     }
                     continue;

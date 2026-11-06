@@ -142,40 +142,40 @@ fn shared_harness_parallel_files_and_failures() {
     runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    write(dir, "t/a.test.vlt", A);
-    write(dir, "t/sub/b.test.vlt", B);
-    write(dir, "t/c.test.vlt", C);
-    write(dir, "t/e.test.vlt", E);
+    write(dir, "t/a.test.velt", A);
+    write(dir, "t/sub/b.test.velt", B);
+    write(dir, "t/c.test.velt", C);
+    write(dir, "t/e.test.velt", E);
 
     let o = velt_test(dir, &["t"]);
     let stdout = String::from_utf8_lossy(&o.stdout).into_owned();
     assert_eq!(o.status.code(), Some(1), "{stdout}");
     assert_eq!(
-        block(&stdout, "a.test.vlt")[1..12],
+        block(&stdout, "a.test.velt")[1..12],
         [
             "a same",
             "ok test_same",
             "FAILED test_panics",
             "    AssertionError: assertEq failed",
             "      left: 1",
-            "     right: 2 at t/a.test.vlt:6:3",
+            "     right: 2 at t/a.test.velt:6:3",
             "a after",
             "ok test_after_panic",
             "FAILED test_throws",
-            "    Error: boom at t/a.test.vlt:14:3",
+            "    Error: boom at t/a.test.velt:14:3",
             "FAILED test_out_of_bounds (exit code 101)",
         ],
         "{stdout}"
     );
     // A panic ends the process: the runner starts the file again after the test.
-    let a = block(&stdout, "a.test.vlt");
+    let a = block(&stdout, "a.test.velt");
     assert!(a[1..].len() >= 12, "{stdout}");
     assert!(
-        a[12].starts_with("    panic: ") && a[12].contains("t/a.test.vlt:19:"),
+        a[12].starts_with("    panic: ") && a[12].contains("t/a.test.velt:19:"),
         "{stdout}"
     );
     assert_eq!(a[a.len() - 2..], ["a last", "ok test_last"], "{stdout}");
-    let b = block(&stdout, "b.test.vlt");
+    let b = block(&stdout, "b.test.velt");
     for want in [
         "b same",
         "ok test_same",
@@ -190,12 +190,12 @@ fn shared_harness_parallel_files_and_failures() {
     }
     // Its top-level line is in its own block alone, before its test's.
     assert_eq!(
-        block(&stdout, "c.test.vlt")[1..],
+        block(&stdout, "c.test.velt")[1..],
         ["c top", "c ran", "ok test_c"],
         "{stdout}"
     );
     assert_eq!(stdout.matches("c top").count(), 1, "{stdout}");
-    let e = block(&stdout, "e.test.vlt");
+    let e = block(&stdout, "e.test.velt");
     assert_eq!(
         e[1..],
         [
@@ -203,7 +203,7 @@ fn shared_harness_parallel_files_and_failures() {
             "e after",
             "ok test_e_after",
             "FAILED test_custom_error",
-            "    ParseError: bad port at t/e.test.vlt:12:3",
+            "    ParseError: bad port at t/e.test.velt:12:3",
         ],
         "{stdout}"
     );
@@ -220,7 +220,7 @@ fn shared_harness_parallel_files_and_failures() {
     // A file that does not build fails its own tests; the others still run.
     write(
         dir,
-        "t/d.test.vlt",
+        "t/d.test.velt",
         "export function test_d() { const n: number = \"no\"; }\n",
     );
     std::fs::remove_dir_all(dir.join("target/velt/test")).unwrap();
@@ -230,13 +230,13 @@ fn shared_harness_parallel_files_and_failures() {
     assert_eq!(built(dir), ["c_test", "harness", "runner"]);
     let stdout = String::from_utf8_lossy(&o.stdout);
     assert_eq!(
-        block(&stdout, "d.test.vlt")[1..],
+        block(&stdout, "d.test.velt")[1..],
         ["FAILED test_d (build failed)"],
         "{stdout}"
     );
     assert!(stdout.contains("7 passed; 7 failed"), "{stdout}");
     let stderr = String::from_utf8_lossy(&o.stderr);
-    assert_eq!(stderr.matches("d.test.vlt:1:").count(), 1, "{stderr}");
+    assert_eq!(stderr.matches("d.test.velt:1:").count(), 1, "{stderr}");
 }
 
 /// Imports a module whose top-level code fails: its own harness, and only its tests fail.
@@ -311,30 +311,30 @@ fn what_a_test_does_cannot_break_the_run() {
     runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    write(dir, "t/f.test.vlt", F);
-    write(dir, "t/fixtures.vlt", FIXTURES);
-    write(dir, "t/g.test.vlt", G);
-    write(dir, "t/h.test.vlt", "export function test_h() {}\n");
+    write(dir, "t/f.test.velt", F);
+    write(dir, "t/fixtures.velt", FIXTURES);
+    write(dir, "t/g.test.velt", G);
+    write(dir, "t/h.test.velt", "export function test_h() {}\n");
 
-    write(dir, "t/s.test.vlt", S);
+    write(dir, "t/s.test.velt", S);
 
     let o = velt_test(dir, &["t"]);
-    // Paths are printed as given, `t\f.test.vlt` on Windows.
+    // Paths are printed as given, `t\f.test.velt` on Windows.
     let stdout = String::from_utf8_lossy(&o.stdout).replace('\\', "/");
     assert_eq!(o.status.code(), Some(1), "{stdout}");
-    let f = block(&stdout, "f.test.vlt");
+    let f = block(&stdout, "f.test.velt");
     assert_eq!(
-        f[1], "FAILED t/f.test.vlt (exit code 1 before its tests ran)",
+        f[1], "FAILED t/f.test.velt (exit code 1 before its tests ran)",
         "{stdout}"
     );
     assert!(f[2].contains("missing.json"), "{stdout}");
-    assert_eq!(block(&stdout, "h.test.vlt")[1..], ["ok test_h"], "{stdout}");
+    assert_eq!(block(&stdout, "h.test.velt")[1..], ["ok test_h"], "{stdout}");
     assert_eq!(
-        block(&stdout, "g.test.vlt")[1..],
+        block(&stdout, "g.test.velt")[1..],
         [
             // The timer it left behind doesn't keep the process (and the run) going.
             "FAILED test_leaks_a_timer",
-            "    AssertionError: leaked at t/g.test.vlt:3:3",
+            "    AssertionError: leaked at t/g.test.velt:3:3",
             // Output without a newline, and output that looks like the runner's.
             "partial",
             "ok test_partial_line",
@@ -345,11 +345,11 @@ fn what_a_test_does_cannot_break_the_run() {
             "ok test_expects_a_throw",
             // Where the `await` threw it, not where `parse` threw in the test before.
             "FAILED test_rejected",
-            "    Error: rejected at t/g.test.vlt:31:3",
+            "    Error: rejected at t/g.test.velt:31:3",
         ],
         "{stdout}"
     );
-    let s = block(&stdout, "s.test.vlt");
+    let s = block(&stdout, "s.test.velt");
     assert_eq!(s[1..3], ["before", "ok test_before"], "{stdout}");
     assert!(
         s[3].starts_with("FAILED test_overflows (exit code "),
@@ -370,12 +370,12 @@ fn a_leak_check_without_block_counts_fails_the_file() {
     let dir = tmp.path();
     write(
         dir,
-        "t/counted.test.vlt",
+        "t/counted.test.velt",
         "export function test_counted() {}\n",
     );
     write(
         dir,
-        "t/silent.test.vlt",
+        "t/silent.test.velt",
         "declare system function close(fd: i32): i32;\n\n\
          export function test_closes_stderr() {\n  close(2);\n}\n",
     );
@@ -390,15 +390,15 @@ fn a_leak_check_without_block_counts_fails_the_file() {
     let stdout = String::from_utf8_lossy(&o.stdout);
     assert_eq!(o.status.code(), Some(1), "{stdout}");
     assert_eq!(
-        block(&stdout, "counted.test.vlt")[1..],
+        block(&stdout, "counted.test.velt")[1..],
         ["ok test_counted"],
         "{stdout}"
     );
     assert_eq!(
-        block(&stdout, "silent.test.vlt")[1..],
+        block(&stdout, "silent.test.velt")[1..],
         [
             "ok test_closes_stderr",
-            "FAILED t/silent.test.vlt (no block counts on its stderr; VELT_RC_STATS=1 counts \
+            "FAILED t/silent.test.velt (no block counts on its stderr; VELT_RC_STATS=1 counts \
              blocks in debug builds)",
         ],
         "{stdout}"
@@ -418,13 +418,13 @@ fn the_wait_for_a_process_to_end_starts_after_its_tests() {
     // Busy for twice the wait, then done: the process ends as soon as the tests are.
     write(
         dir,
-        "t/slow.test.vlt",
+        "t/slow.test.velt",
         "export function test_slow() {\n  const end = Date.now() + 4000;\n  \
          while (Date.now() < end) {}\n}\n\nexport function test_after() {}\n",
     );
     write(
         dir,
-        "t/open.test.vlt",
+        "t/open.test.velt",
         "export function test_leaves_a_timer() {\n  setInterval(async () => {}, 1000);\n}\n",
     );
     let mut command = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
@@ -438,15 +438,15 @@ fn the_wait_for_a_process_to_end_starts_after_its_tests() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&o.stdout);
     assert_eq!(
-        block(&stdout, "slow.test.vlt")[1..],
+        block(&stdout, "slow.test.velt")[1..],
         ["ok test_slow", "ok test_after"],
         "{stdout}"
     );
     assert_eq!(
-        block(&stdout, "open.test.vlt")[1..],
+        block(&stdout, "open.test.velt")[1..],
         [
             "ok test_leaves_a_timer",
-            "FAILED t/open.test.vlt (still running 2 s after its tests: a server, a connection \
+            "FAILED t/open.test.velt (still running 2 s after its tests: a server, a connection \
              or a timer left open)",
         ],
         "{stdout}"
@@ -462,11 +462,11 @@ fn a_test_that_never_ends_times_out() {
     let dir = tmp.path();
     write(
         dir,
-        "t/loops.test.vlt",
+        "t/loops.test.velt",
         "export function test_before() {}\n\nexport function test_loops() {\n  let i = 0;\n  \
          while (i >= 0) {\n    i = (i + 1) % 10;\n  }\n}\n\nexport function test_after() {}\n",
     );
-    write(dir, "t/other.test.vlt", "export function test_other() {}\n");
+    write(dir, "t/other.test.velt", "export function test_other() {}\n");
     let mut command = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
     let o = command
         .args(["test", "--no-cache", "t"])
@@ -477,7 +477,7 @@ fn a_test_that_never_ends_times_out() {
         .unwrap();
     let stdout = String::from_utf8_lossy(&o.stdout);
     assert_eq!(
-        block(&stdout, "loops.test.vlt")[1..],
+        block(&stdout, "loops.test.velt")[1..],
         [
             "ok test_before",
             "FAILED test_loops (timed out after 3 s with this test running)",
@@ -486,7 +486,7 @@ fn a_test_that_never_ends_times_out() {
         "{stdout}"
     );
     assert_eq!(
-        block(&stdout, "other.test.vlt")[1..],
+        block(&stdout, "other.test.velt")[1..],
         ["ok test_other"],
         "{stdout}"
     );
@@ -517,12 +517,12 @@ fn the_location_follows_a_multi_line_message() {
     runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
-    write(dir, "t/m.test.vlt", MULTI_LINE);
+    write(dir, "t/m.test.velt", MULTI_LINE);
     let o = velt_test(dir, &["t"]);
     let stdout = String::from_utf8_lossy(&o.stdout).replace('\\', "/");
     assert_eq!(o.status.code(), Some(1), "{stdout}");
     assert_eq!(
-        block(&stdout, "m.test.vlt")[1..],
+        block(&stdout, "m.test.velt")[1..],
         [
             "FAILED test_to_equal",
             "    AssertionError: expected {",
@@ -533,10 +533,10 @@ fn the_location_follows_a_multi_line_message() {
             "      name: 'first value',",
             "      items: [ 'one', 'two', 'three' ],",
             "      nested: { deep: true, n: 2 }",
-            "    } at t/m.test.vlt:7:3",
+            "    } at t/m.test.velt:7:3",
             "FAILED test_error",
             "    Error: first line",
-            "    second line at t/m.test.vlt:11:3",
+            "    second line at t/m.test.velt:11:3",
         ],
         "{stdout}"
     );
@@ -554,7 +554,7 @@ fn runs_of_different_tests_build_harnesses_of_their_own() {
     for folder in ["a", "b"] {
         for file in ["x", "y"] {
             let test = format!("export function test_{folder}{file}() {{}}\n");
-            write(dir, &format!("t/{folder}/{file}.test.vlt"), &test);
+            write(dir, &format!("t/{folder}/{file}.test.velt"), &test);
         }
     }
     for folder in ["t/a", "t/b"] {
@@ -584,22 +584,22 @@ fn concurrent_runs_never_start_a_program_being_linked() {
     // A package: every run builds into its `target/velt/test`, wherever it runs from.
     let manifest = "import type { Package } from \"velt/package\";\n\n\
                     export const pkg: Package = { name: \"p\", version: \"0.0.0\" };\n";
-    write(dir, "package.vlt", manifest);
+    write(dir, "package.velt", manifest);
     // Versions of `a` that compile to different code, each written whole (renamed into place).
     let write_a = |version: usize, by: usize| {
         let text = format!("export function test_a() {{\n  assertEq({version}, {version});\n}}\n");
         let part = dir.join(format!("a-{by}.part"));
         std::fs::write(&part, text).unwrap();
-        std::fs::rename(&part, dir.join("t/a.test.vlt")).unwrap();
+        std::fs::rename(&part, dir.join("t/a.test.velt")).unwrap();
     };
     std::fs::create_dir_all(dir.join("t")).unwrap();
     write_a(0, 0);
     // More files in the shared harness: each runs in a process of its own, started from it.
     for k in 0..8 {
         let test = format!("export function test_b{k}() {{}}\n");
-        write(dir, &format!("t/b{k}.test.vlt"), &test);
+        write(dir, &format!("t/b{k}.test.velt"), &test);
     }
-    write(dir, "t/c.test.vlt", C);
+    write(dir, "t/c.test.velt", C);
     let runs: usize = std::env::var("VELT_CONCURRENT_RUNS")
         .ok()
         .and_then(|n| n.parse().ok())

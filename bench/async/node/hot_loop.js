@@ -1,4 +1,4 @@
-// An await-free hot loop inside an async function (see hot_loop.vlt).
+// An await-free hot loop inside an async function (see hot_loop.velt).
 async function seed(round) {
   return (round * 7919 + 17) % 65537;
 }

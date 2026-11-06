@@ -1,28 +1,28 @@
-record_open_errors.vlt:3:3: error: cannot use `+=` on a key of a `Record<K, i64>`: the key may be missing, so `r[k]` is `i64 | null`
+record_open_errors.velt:3:3: error: cannot use `+=` on a key of a `Record<K, i64>`: the key may be missing, so `r[k]` is `i64 | null`
 say what a missing key starts from: `r[k] = (r[k] ?? 0) + 1`
-record_open_errors.vlt:8:3: error: cannot use `+=` on a key of a `Record<string, i64>`: the key may be missing, so `counts["a"]` is `i64 | null`
+record_open_errors.velt:8:3: error: cannot use `+=` on a key of a `Record<string, i64>`: the key may be missing, so `counts["a"]` is `i64 | null`
 say what a missing key starts from: `counts["a"] = (counts["a"] ?? 0) + 1`
-record_open_errors.vlt:9:3: error: cannot use `++` on a key of a `Record<string, i64>`: the key may be missing, so `counts["a"]` is `i64 | null`
+record_open_errors.velt:9:3: error: cannot use `++` on a key of a `Record<string, i64>`: the key may be missing, so `counts["a"]` is `i64 | null`
 say what a missing key starts from: `counts["a"] = (counts["a"] ?? 0) + 1`
-record_open_errors.vlt:10:5: error: cannot use `++` on a key of a `Record<string, i64>`: the key may be missing, so `counts.b` is `i64 | null`
+record_open_errors.velt:10:5: error: cannot use `++` on a key of a `Record<string, i64>`: the key may be missing, so `counts.b` is `i64 | null`
 say what a missing key starts from: `counts.b = (counts.b ?? 0) + 1`
-record_open_errors.vlt:11:3: error: cannot use `-=` on a key of a `Record<string, i64>`: the key may be missing, so `counts["a"]` is `i64 | null`
+record_open_errors.velt:11:3: error: cannot use `-=` on a key of a `Record<string, i64>`: the key may be missing, so `counts["a"]` is `i64 | null`
 say what a missing key starts from: `counts["a"] = (counts["a"] ?? 0) - 2`
-record_open_errors.vlt:13:3: error: cannot use `*=` on a key of a `Record<string, i64>`: the key may be missing, so `counts[k]` is `i64 | null`
+record_open_errors.velt:13:3: error: cannot use `*=` on a key of a `Record<string, i64>`: the key may be missing, so `counts[k]` is `i64 | null`
 say what a missing key starts from: `counts[k] = (counts[k] ?? 0) * 3`
-record_open_errors.vlt:14:3: error: cannot use `**=` on a key of a `Record<string, i64>`: the key may be missing, so `counts[k]` is `i64 | null`
+record_open_errors.velt:14:3: error: cannot use `**=` on a key of a `Record<string, i64>`: the key may be missing, so `counts[k]` is `i64 | null`
 say what a missing key starts from: `counts[k] = (counts[k] ?? 0) ** 2`
-record_open_errors.vlt:16:3: error: cannot use `+=` on a key of a `Record<string, string>`: the key may be missing, so `names["x"]` is `string | null`
+record_open_errors.velt:16:3: error: cannot use `+=` on a key of a `Record<string, string>`: the key may be missing, so `names["x"]` is `string | null`
 say what a missing key starts from: `names["x"] = (names["x"] ?? "") + "!"`
-record_open_errors.vlt:17:21: error: cannot iterate over a `Record<string, i64>` with `for...of`
+record_open_errors.velt:17:21: error: cannot iterate over a `Record<string, i64>` with `for...of`
 iterate its keys with `for (const k of Object.keys(counts))` or its entries with `for (const [k, v] of Object.entries(counts))`
-record_open_errors.vlt:20:15: error: cannot infer type parameters `K` and `V` of `Object.values`
+record_open_errors.velt:20:15: error: cannot infer type parameters `K` and `V` of `Object.values`
 add explicit type arguments, e.g. `f<i64>(...)`, or annotate the result
-record_open_errors.vlt:23:14: error: cannot use `+=` on a key of a `Record<string, string>`: the key may be missing, so `r[k]` is `string | null`
+record_open_errors.velt:23:14: error: cannot use `+=` on a key of a `Record<string, string>`: the key may be missing, so `r[k]` is `string | null`
 say what a missing key starts from: `r[k] = (r[k] ?? "") + "2"`
-record_open_errors.vlt:24:14: error: cannot use `+=` on a key of a `Record<string, i64>`: the key may be missing, so `counts[k]` is `i64 | null`
+record_open_errors.velt:24:14: error: cannot use `+=` on a key of a `Record<string, i64>`: the key may be missing, so `counts[k]` is `i64 | null`
 say what a missing key starts from: `counts[k] = (counts[k] ?? 0) + 1`
-record_open_errors.vlt:28:3: error: cannot use `+=` on a key of a `Record<string, string | null>`: the key may be missing, so `maybe["m"]` is `string | null`
+record_open_errors.velt:28:3: error: cannot use `+=` on a key of a `Record<string, string | null>`: the key may be missing, so `maybe["m"]` is `string | null`
 read `maybe["m"]` into a variable, check it for `null`, then assign the new value
-record_open_errors.vlt:30:15: error: cannot infer type parameters `K` and `V` of `Object.entries`
+record_open_errors.velt:30:15: error: cannot infer type parameters `K` and `V` of `Object.entries`
 add explicit type arguments, e.g. `f<i64>(...)`, or annotate the result

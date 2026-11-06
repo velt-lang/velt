@@ -13,13 +13,13 @@
 //! - `Object.freeze(o)` of a fresh object literal: the object, typed with every field readonly.
 //!   Its type is a definition of its own (`Ctx::frozen_defs`) that doesn't convert to a type
 //!   whose fields can be written, so no write reaches it (Node throws a `TypeError` on one).
-//! - `Object.fromEntries(pairs)`: a `Record<string, V>` (std/prelude/record.vlt); an iterable
+//! - `Object.fromEntries(pairs)`: a `Record<string, V>` (std/prelude/record.velt); an iterable
 //!   that is not an array goes through `Array.from` first.
 //! - `Object.hasOwn(o, k)` and `Object.prototype.hasOwnProperty.call(o, k)`: a record's entry
 //!   test, or for other objects whether `Object.keys(o)` lists `k`.
 //! - `Object.prototype.toString.call(v)`: the `[object Tag]` string of each member type.
 //! - `Object.getPrototypeOf(v)`, `Object.prototype`, `C.prototype`: an `ObjectPrototype` value
-//!   naming the prototype (std/prelude/object_prototype.vlt), which `===` compares by what it names
+//!   naming the prototype (std/prelude/object_prototype.velt), which `===` compares by what it names
 //!   (`prototypeSame`, from `binary`).
 //!
 //! What Velt's fixed object layouts can't do exactly is an error saying it is not supported yet,

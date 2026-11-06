@@ -1,4 +1,4 @@
-// Recursive Fibonacci (same algorithm as fib.vlt).
+// Recursive Fibonacci (same algorithm as fib.velt).
 function fib(n) {
   if (n < 2) return n;
   return fib(n - 1) + fib(n - 2);

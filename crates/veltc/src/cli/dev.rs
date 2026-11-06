@@ -46,17 +46,17 @@ mod tests {
 
     #[test]
     fn modes_and_program_args() {
-        let d = dev(&["dev", "app.vlt", "--", "--exe", "x"]);
+        let d = dev(&["dev", "app.velt", "--", "--exe", "x"]);
         assert_eq!(d.mode, DevMode::Jit);
-        assert_eq!(d.build.input, Some(PathBuf::from("app.vlt")));
+        assert_eq!(d.build.input, Some(PathBuf::from("app.velt")));
         assert_eq!(d.args, ["--exe", "x"].map(OsString::from));
         assert_eq!(dev(&["dev", "--exe"]).mode, DevMode::Exe);
-        assert_eq!(dev(&["dev", "--host", "a.vlt"]).mode, DevMode::Host);
+        assert_eq!(dev(&["dev", "--host", "a.velt"]).mode, DevMode::Host);
         assert!(dev(&["dev", "--exe", "--release"]).build.release);
         assert!(p(&["dev", "--release"]).unwrap_err().contains("--exe"));
         let cpu = dev(&["dev", "--exe", "--cpu", "x86-64-v3"]).build.cpu;
         assert_eq!(cpu.as_deref(), Some("x86-64-v3"));
-        let jit = p(&["dev", "--cpu", "x86-64-v3", "a.vlt"]).unwrap_err();
+        let jit = p(&["dev", "--cpu", "x86-64-v3", "a.velt"]).unwrap_err();
         assert!(jit.contains("`--cpu` need `velt dev --exe`"), "{jit}");
         assert!(p(&["dev", "-o", "x"])
             .unwrap_err()
@@ -65,7 +65,7 @@ mod tests {
 
     #[test]
     fn unknown_option_names_dev() {
-        let err = p(&["dev", "--exee", "a.vlt"]).unwrap_err();
+        let err = p(&["dev", "--exee", "a.velt"]).unwrap_err();
         assert!(err.contains("for `velt dev`"), "{err}");
         assert!(err.contains("--exe"), "{err}");
     }

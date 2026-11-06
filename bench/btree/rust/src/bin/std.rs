@@ -1,4 +1,4 @@
-//! Rust's std `BTreeMap` on btree.vlt's workloads (no batch lookup: `get16` is 16 `get`s).
+//! Rust's std `BTreeMap` on btree.velt's workloads (no batch lookup: `get16` is 16 `get`s).
 use btree_bench::{fold, ints, strings, Map};
 use std::collections::BTreeMap;
 

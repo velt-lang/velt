@@ -15,7 +15,7 @@ set -uo pipefail
 W=$1
 shift
 mkdir -p "$W"
-cat > "$W/q3_perf.vlt" <<'V'
+cat > "$W/q3_perf.velt" <<'V'
 interface Props { a: number; b: number; c: number; d: number; e: number }
 const mk = (): any => new Proxy({}, {});
 mk();
@@ -31,8 +31,8 @@ function run(): number {
 }
 console.log(run());
 V
-sed 's/^mk();$//; s/^const mk.*$//' "$W/q3_perf.vlt" > "$W/q3_noproxy.vlt"
-cat > "$W/q4_any.vlt" <<'V'
+sed 's/^mk();$//; s/^const mk.*$//' "$W/q3_perf.velt" > "$W/q3_noproxy.velt"
+cat > "$W/q4_any.velt" <<'V'
 const mk = (): any => new Proxy({}, {});
 mk();
 function run(): number {
@@ -47,7 +47,7 @@ function run(): number {
 }
 console.log(run());
 V
-cat > "$W/q5_many.vlt" <<'V'
+cat > "$W/q5_many.velt" <<'V'
 interface Props { a: number; b: number; c: number; d: number; e: number }
 const mk = (): any => new Proxy({}, {});
 mk();
@@ -71,12 +71,12 @@ function run(): number {
 console.log(run());
 V
 for prog in q3_perf q3_noproxy q4_any; do
-  sed 's/LOOPS/2000/' "$W/$prog.vlt" > "$W/${prog}_2k.vlt"
-  sed 's/LOOPS/22000/' "$W/$prog.vlt" > "$W/${prog}_22k.vlt"
+  sed 's/LOOPS/2000/' "$W/$prog.velt" > "$W/${prog}_2k.velt"
+  sed 's/LOOPS/22000/' "$W/$prog.velt" > "$W/${prog}_22k.velt"
 done
 # Instructions of the program `$1` built by `$2`.
 count() {
-  VELT_STD="$W/$2/std" "$W/bin-$2/velt" build --release --backend llvm "$W/$1.vlt" \
+  VELT_STD="$W/$2/std" "$W/bin-$2/velt" build --release --backend llvm "$W/$1.velt" \
     -o "$W/$2-$1" >/dev/null 2>&1 || { echo "build failed: $2 $1" >&2; return; }
   valgrind --tool=cachegrind --cache-sim=no --cachegrind-out-file=/dev/null "$W/$2-$1" 2>&1 \
     >/dev/null | sed -n 's/.*I *refs: *//p' | tr -d ,

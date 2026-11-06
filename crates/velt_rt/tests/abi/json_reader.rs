@@ -1,5 +1,5 @@
 //! The JSON pull reader driven the way a generated `JSON.parse<User>` decoder would drive it
-//! (tests/golden/m4/json.vlt), plus token-level checks on valid and invalid documents.
+//! (tests/golden/m4/json.velt), plus token-level checks on valid and invalid documents.
 
 use crate::json::reader::*;
 use crate::json::reader_abi::*;

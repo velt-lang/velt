@@ -75,7 +75,7 @@ impls() {
     label="Velt LLVM"
     [[ $kind == cranelift ]] && label="Velt Cranelift"
     exe="$OUT/bin/$b-$kind"
-    if "$VELT" build --release --backend "$kind" "$HERE/velt/$b.vlt" -o "$exe" >&2; then
+    if "$VELT" build --release --backend "$kind" "$HERE/velt/$b.velt" -o "$exe" >&2; then
       echo "$label|$exe"
     else
       echo "$label|n/a: velt build failed"

@@ -1,6 +1,6 @@
 //! Server-free tests: placeholder rewriting, parameter conversion, value decoding, connection
 //! strings and TLS configuration. Everything that needs a server is covered by the
-//! package's tests (tests/*.test.vlt) (run with `VELT_TEST_PG_URL`).
+//! package's tests (tests/*.test.velt) (run with `VELT_TEST_PG_URL`).
 
 use super::bind::{bind_all, convert, PgParam};
 use super::config::{parse, Verify};

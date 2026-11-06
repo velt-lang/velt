@@ -1,4 +1,4 @@
-// Dynamic parse (see parse_value.vlt): `JSON.parse` into plain objects.
+// Dynamic parse (see parse_value.velt): `JSON.parse` into plain objects.
 const { doc } = require("./doc.js");
 const text = doc(100000);
 let sum = 0;

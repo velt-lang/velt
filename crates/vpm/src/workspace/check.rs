@@ -1,5 +1,5 @@
 //! The checks of [`Workspace::load`] that need the workspace file and every member, each reported
-//! where it is written: `velt.workspace.vlt:4:5: error: …`, `apps/b/package.vlt:6:11: error: …`.
+//! where it is written: `velt.workspace.velt:4:5: error: …`, `apps/b/package.velt:6:11: error: …`.
 
 use std::collections::btree_map::Entry;
 use std::collections::BTreeMap;

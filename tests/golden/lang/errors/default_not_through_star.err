@@ -1,2 +1,2 @@
-default_not_through_star.vlt:6:18: error: namespace `star` has no exported member `default`
+default_not_through_star.velt:6:18: error: namespace `star` has no exported member `default`
 _default_not_through_star_c.ts:1:10: error:

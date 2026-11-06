@@ -1,4 +1,4 @@
-// Editing (see edit.vlt): add 10k keys to an object, then `delete` them from the front.
+// Editing (see edit.velt): add 10k keys to an object, then `delete` them from the front.
 const n = 10000;
 const keys = [];
 for (let i = 0; i < n; i++) {

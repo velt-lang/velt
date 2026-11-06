@@ -9,7 +9,7 @@ use veltc::driver::{self, BuildOptions, Session};
 
 #[test]
 fn simd_loads_read_the_header_in_place() {
-    let input = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/simd_in_place/main.vlt");
+    let input = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/simd_in_place/main.velt");
     let opts = BuildOptions {
         input,
         release: false,

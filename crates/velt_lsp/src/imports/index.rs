@@ -3,7 +3,7 @@
 //! tests' loader, so both list the same modules.
 //!
 //! The std modules offered are those user code may import (docs/internals/design/std-layout.md
-//! §2, the loader's rule: [`velt_common::std_modules::importable`]): a folder's `index.vlt`
+//! §2, the loader's rule: [`velt_common::std_modules::importable`]): a folder's `index.velt`
 //! outside `prelude/` and `lang/`. Every other std file is internal to a module and is not
 //! offered.
 
@@ -19,15 +19,15 @@ const MAX_DOC_CHARS: usize = 160;
 /// The public modules of the standard library at `std_root`, sorted by specifier.
 pub fn std_module_entries(std_root: &Path) -> Vec<ModuleEntry> {
     let mut files = vec![];
-    // std modules are `.vlt` files; its `package.vlt` is the module `velt/package`.
-    source_files(std_root, &|name| name.ends_with(".vlt"), &mut files);
+    // std modules are `.velt` files; its `package.velt` is the module `velt/package`.
+    source_files(std_root, &|name| name.ends_with(".velt"), &mut files);
     let mut out: Vec<ModuleEntry> = files
         .into_iter()
         .filter_map(|path| {
             let file = std_file_rel(std_root, &path)?;
-            // A module in the old form (`sqlite.vlt`) is offered until it moves to `packages/`,
+            // A module in the old form (`sqlite.velt`) is offered until it moves to `packages/`,
             // but not its files.
-            let module = file.ends_with("/index.vlt") || !file.contains('/');
+            let module = file.ends_with("/index.velt") || !file.contains('/');
             if !module || !velt_common::std_modules::importable(&file) {
                 return None;
             }
@@ -49,7 +49,7 @@ pub fn std_module_entries(std_root: &Path) -> Vec<ModuleEntry> {
 }
 
 /// The modules of dependency `name` whose package root is `root`: its default module (`name`,
-/// `src/lib.vlt`) and the other modules of its `src/` (`name/sub`), sorted by specifier.
+/// `src/lib.velt`) and the other modules of its `src/` (`name/sub`), sorted by specifier.
 pub fn package_module_entries(name: &str, root: &Path) -> Vec<ModuleEntry> {
     let src = root.join(vpm::manifest::SRC_DIR);
     let mut files = vec![];
@@ -118,7 +118,7 @@ fn is_std_rel(rel: &str) -> bool {
     })
 }
 
-/// The path of `file` below `std_root`, `/`-separated (`net/http/index.vlt`).
+/// The path of `file` below `std_root`, `/`-separated (`net/http/index.velt`).
 fn std_file_rel(std_root: &Path, file: &Path) -> Option<String> {
     let rel = file.strip_prefix(std_root).ok()?;
     let parts: Option<Vec<&str>> = rel.components().map(|c| c.as_os_str().to_str()).collect();
@@ -181,43 +181,43 @@ mod tests {
         let root = tmp.path();
         write(
             root,
-            "fs/index.vlt",
+            "fs/index.velt",
             "// velt/fs: file system access (docs/internals/x.md).\n//\n// More.\n",
         );
-        write(root, "fs/stream.vlt", "// velt/fs (internal): streams.\n");
-        write(root, "net/url/index.vlt", "// velt/net/url: URLs.\n");
+        write(root, "fs/stream.velt", "// velt/fs (internal): streams.\n");
+        write(root, "net/url/index.velt", "// velt/net/url: URLs.\n");
         write(
             root,
-            "net/url/encode.vlt",
+            "net/url/encode.velt",
             "// velt/net/url (internal): helpers.\n",
         );
         write(
             root,
-            "net/bytes.vlt",
+            "net/bytes.velt",
             "// bytes, in no module's folder of its own\n",
         );
-        write(root, "net/index.vlt", "// velt/net: TCP.\n");
+        write(root, "net/index.velt", "// velt/net: TCP.\n");
         write(
             root,
-            "collections/index.vlt",
+            "collections/index.velt",
             "// velt/collections: containers.\n",
         );
-        write(root, "collections/set.vlt", "// `Set<T>`.\n");
-        write(root, "jsx/index.vlt", "// velt/jsx: rendering.\n");
+        write(root, "collections/set.velt", "// `Set<T>`.\n");
+        write(root, "jsx/index.velt", "// velt/jsx: rendering.\n");
         write(
             root,
-            "jsx/jsx-runtime/index.vlt",
+            "jsx/jsx-runtime/index.velt",
             "// velt/jsx/jsx-runtime: runtime.\n",
         );
         write(
             root,
-            "package/index.vlt",
+            "package/index.velt",
             "// velt/package: manifest types.\n",
         );
-        write(root, "lang/symbol/index.vlt", "// `Symbol`.\n");
-        write(root, "prelude/array.vlt", "// arrays\n");
+        write(root, "lang/symbol/index.velt", "// `Symbol`.\n");
+        write(root, "prelude/array.velt", "// arrays\n");
         write(root, "README.md", "# std\n");
-        write(root, "Bad.vlt", "");
+        write(root, "Bad.velt", "");
         let entries = std_module_entries(root);
         let specs: Vec<&str> = entries.iter().map(|e| e.spec.as_str()).collect();
         assert_eq!(
@@ -233,7 +233,7 @@ mod tests {
             ]
         );
         assert_eq!(entries[1].doc, "file system access (docs/internals/x.md).");
-        assert_eq!(entries[1].path, root.join("fs/index.vlt"));
+        assert_eq!(entries[1].path, root.join("fs/index.velt"));
     }
 
     /// The real std: modules marked internal, such as the one the parser imports for
@@ -253,9 +253,9 @@ mod tests {
     fn lists_dependency_modules() {
         let tmp = tempfile::tempdir().unwrap();
         let root = tmp.path();
-        write(root, "src/lib.vlt", "");
+        write(root, "src/lib.velt", "");
         write(root, "src/parse.ts", "");
-        write(root, "src/shapes/index.vlt", "");
+        write(root, "src/shapes/index.velt", "");
         write(root, "src/types.d.ts", "");
         let specs: Vec<String> = package_module_entries("json", root)
             .into_iter()

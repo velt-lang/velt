@@ -25,7 +25,7 @@ if [ -z "$VELT" ]; then
   VELT="$TARGET/release/velt"
 fi
 export VELT_STD=${VELT_STD:-$ROOT/std} VELT_BUILD_CACHE=off VELT_BUILD_STAMP=off
-python3 "$HERE/gen.py" "$N" "$OUT/shapes.vlt" "$SITES"
+python3 "$HERE/gen.py" "$N" "$OUT/shapes.velt" "$SITES"
 
 # body_lines <vir file> <pattern>: non-empty lines inside the bodies of functions whose symbol
 # matches the pattern (all functions for "").
@@ -54,7 +54,7 @@ measure() {
   env "$@" VELT_HOME="$(mktemp -d)" python3 - "$VELT" "$OUT" <<'PY'
 import resource, subprocess, sys
 velt, out = sys.argv[1], sys.argv[2]
-rc = subprocess.call([velt, "build", "shapes.vlt", "-o", "shapes.bin"], cwd=out,
+rc = subprocess.call([velt, "build", "shapes.velt", "-o", "shapes.bin"], cwd=out,
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 r = resource.getrusage(resource.RUSAGE_CHILDREN)
 print(f"cpu {r.ru_utime + r.ru_stime:.2f} s, peak {r.ru_maxrss // 1024} MB" + ("" if rc == 0 else f" (exit {rc})"))
@@ -63,7 +63,7 @@ PY
 
 for mode in off on; do
   if [ "$mode" = off ]; then set -- VELT_SHAPES=off; else set -- VELT_SHAPES=; fi
-  (cd "$OUT" && env "$@" VELT_LOWER_PROFILE=1 "$VELT" build shapes.vlt --emit vir \
+  (cd "$OUT" && env "$@" VELT_LOWER_PROFILE=1 "$VELT" build shapes.velt --emit vir \
     >"vir-$mode.txt" 2>"profile-$mode.txt")
   total=$(body_lines "$OUT/vir-$mode.txt" "")
   helpers=$(body_lines "$OUT/vir-$mode.txt" "array__viewN")

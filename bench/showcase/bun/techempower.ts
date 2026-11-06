@@ -1,5 +1,5 @@
 // The TechEmpower-style server of bench/http/techempower on Bun.serve: the same routes, bodies
-// and headers as server.mjs (node:http), server.vlt and the axum baseline.
+// and headers as server.mjs (node:http), server.velt and the axum baseline.
 // Usage: bun techempower.ts <port>. With REUSE_PORT=1 the socket is opened with SO_REUSEPORT, so
 // several processes can share the port (bench/showcase starts one per server core).
 const port = Number(process.argv[2] ?? 8080);

@@ -3,16 +3,16 @@
 use super::tests::{load, messages, paths, Tree};
 use super::*;
 
-/// A std root with the module `velt/x` (`x/index.vlt`), its internal file `x/inner.vlt` and a
+/// A std root with the module `velt/x` (`x/index.velt`), its internal file `x/inner.velt` and a
 /// white-box test of it next to them.
 fn std_with_a_test(t: &Tree) -> PathBuf {
-    t.write("std/x/index.vlt", "export { one } from \"velt/x/inner\";\n");
+    t.write("std/x/index.velt", "export { one } from \"velt/x/inner\";\n");
     t.write(
-        "std/x/inner.vlt",
+        "std/x/inner.velt",
         "export function one(): i64 { return 1; }\n",
     );
     t.write(
-        "std/x/inner.test.vlt",
+        "std/x/inner.test.velt",
         "import { one } from \"velt/x/inner\";\nexport function test_one() { one(); }\n",
     );
     t.path("std")
@@ -24,13 +24,13 @@ fn std_test_files_are_std_code_wherever_they_are_imported_from() {
     // relatively, and they import the internals they test.
     let t = Tree::new();
     let std = std_with_a_test(&t);
-    let harness = std.join("harness.vlt");
+    let harness = std.join("harness.velt");
     let (l, d, _) = load(
         &harness,
         LoadOptions {
             std_root: Some(std.clone()),
             root_source: Some(
-                "import * as t from \"./x/inner.test.vlt\";\nfunction main() { t.test_one(); }\n"
+                "import * as t from \"./x/inner.test.velt\";\nfunction main() { t.test_one(); }\n"
                     .into(),
             ),
             test_harness: true,
@@ -66,10 +66,10 @@ fn std_test_files_are_std_code_wherever_they_are_imported_from() {
 fn std_test_files_are_not_importable_by_programs() {
     let t = Tree::new();
     let std = std_with_a_test(&t);
-    let main = t.path("main.vlt");
+    let main = t.path("main.velt");
     // A written root.
     t.write(
-        "main.vlt",
+        "main.velt",
         "import * as t from \"velt/x/inner.test\";\nfunction main() {}\n",
     );
     let (l, d, _) = load(
@@ -86,8 +86,8 @@ fn std_test_files_are_not_importable_by_programs() {
         paths(&l)
     );
     t.write(
-        "main.vlt",
-        "import * as t from \"./std/x/inner.test.vlt\";\nfunction main() {}\n",
+        "main.velt",
+        "import * as t from \"./std/x/inner.test.velt\";\nfunction main() {}\n",
     );
     let (_, d, _) = load(
         &main,
@@ -99,15 +99,15 @@ fn std_test_files_are_not_importable_by_programs() {
     assert!(!d.is_empty());
     // A user test file the harness imports, which imports std's test file.
     t.write(
-        "mine.test.vlt",
+        "mine.test.velt",
         "import * as t from \"velt/x/inner.test\";\nexport function f() {}\n",
     );
     let (l, d, _) = load(
-        &t.path("harness.vlt"),
+        &t.path("harness.velt"),
         LoadOptions {
             std_root: Some(std),
             root_source: Some(
-                "import * as m from \"./mine.test.vlt\";\nfunction main() {}\n".into(),
+                "import * as m from \"./mine.test.velt\";\nfunction main() {}\n".into(),
             ),
             test_harness: true,
             ..Default::default()
@@ -119,45 +119,45 @@ fn std_test_files_are_not_importable_by_programs() {
 /// A std root with modules, their internal files, the prelude and `lang/`.
 fn std_tree(t: &Tree) -> PathBuf {
     t.write(
-        "std/encoding/index.vlt",
+        "std/encoding/index.velt",
         "export { hex } from \"velt/encoding/hex\";\n",
     );
     t.write(
-        "std/encoding/hex.vlt",
+        "std/encoding/hex.velt",
         "export function hex(): i64 { return 1; }\n",
     );
     t.write(
-        "std/encoding/json/index.vlt",
+        "std/encoding/json/index.velt",
         "export { scan } from \"velt/encoding/json/scan\";\n",
     );
     t.write(
-        "std/encoding/json/scan.vlt",
+        "std/encoding/json/scan.velt",
         "import { hex } from \"velt/encoding/hex\";\nexport function scan(): i64 { return hex(); }\n",
     );
     t.write(
-        "std/encoding/json/tape/cells.vlt",
+        "std/encoding/json/tape/cells.velt",
         "export const CELLS: i64 = 2;\n",
     );
-    t.write("std/stray/loose.vlt", "export const LOOSE: i64 = 3;\n");
-    t.write("std/prelude/index.vlt", "import \"./core\";\n");
+    t.write("std/stray/loose.velt", "export const LOOSE: i64 = 3;\n");
+    t.write("std/prelude/index.velt", "import \"./core\";\n");
     t.write(
-        "std/prelude/core.vlt",
+        "std/prelude/core.velt",
         "export function id(): i64 { return 0; }\n",
     );
-    t.write("std/lang/symbol/index.vlt", "export class Symbol {}\n");
+    t.write("std/lang/symbol/index.velt", "export class Symbol {}\n");
     t.write(
-        "std/lang/intrinsics/index.vlt",
+        "std/lang/intrinsics/index.velt",
         "export { strLen } from \"velt/lang/intrinsics/string\";\n",
     );
     t.write(
-        "std/lang/intrinsics/string.vlt",
+        "std/lang/intrinsics/string.velt",
         "export declare intrinsic function strLen(s: string): usize;\n",
     );
     t.path("std")
 }
 
 fn errors(t: &Tree, std: &Path, main: &str) -> Vec<String> {
-    let root = t.write("p/main.vlt", main);
+    let root = t.write("p/main.velt", main);
     let opts = LoadOptions {
         std_root: Some(std.to_path_buf()),
         ..Default::default()
@@ -200,7 +200,7 @@ fn user_code_imports_only_public_std_modules() {
     assert_eq!(
         errors(&t, &std, "import { LOOSE } from \"velt/stray/loose\";\n"),
         ["`velt/stray/loose` is internal to the standard library / user code imports a module's \
-          `index.vlt` (the modules: https://veltlang.com/docs/std/)"]
+          `index.velt` (the modules: https://veltlang.com/docs/std/)"]
     );
     assert_eq!(
         errors(&t, &std, "import { Symbol } from \"velt/lang/symbol\";\n"),
@@ -240,11 +240,11 @@ fn a_package_is_user_code() {
     let t = Tree::new();
     let std = std_tree(&t);
     t.write(
-        "deps/json/src/lib.vlt",
+        "deps/json/src/lib.velt",
         "import { scan } from \"velt/encoding/json/scan\";\nexport const X: i64 = 1;\n",
     );
     let root = t.write(
-        "p/main.vlt",
+        "p/main.velt",
         "import { X } from \"json\";\nfunction main() {}\n",
     );
     let resolver = super::tests::MapResolver([("json".to_string(), t.path("deps/json"))].into());
@@ -267,7 +267,7 @@ fn the_import_the_parser_adds_for_import_meta_is_not_the_users() {
     let t = Tree::new();
     let std = std_tree(&t);
     t.write(
-        "std/lang/import_meta/index.vlt",
+        "std/lang/import_meta/index.velt",
         "export class ImportMeta {\n  url: string;\n  constructor(d: string, f: string, m: bool, url: string) {\n    this.url = url;\n  }\n}\n",
     );
     let main = "function main() {\n  console.log(import.meta.url);\n}\n";
@@ -284,12 +284,12 @@ fn the_import_the_parser_adds_for_import_meta_is_not_the_users() {
 fn only_the_test_harness_imports_the_runners_hooks() {
     let t = Tree::new();
     t.write(
-        "std/test/index.vlt",
+        "std/test/index.velt",
         "export { it } from \"velt/test/suite\";\n",
     );
-    t.write("std/test/suite.vlt", "export function it() {}\n");
+    t.write("std/test/suite.velt", "export function it() {}\n");
     t.write(
-        "std/test/run.vlt",
+        "std/test/run.velt",
         "export async function runRegistered() {}\n",
     );
     let main = "import { runRegistered } from \"velt/test/run\";\n\
@@ -300,7 +300,7 @@ fn only_the_test_harness_imports_the_runners_hooks() {
         test_harness: harness,
         ..Default::default()
     };
-    let root = t.path("main.vlt");
+    let root = t.path("main.velt");
     let (_, d, _) = load(&root, opts(true));
     assert!(d.is_empty(), "{:?}", messages(&d));
     let (_, d, _) = load(&root, opts(false));
@@ -314,7 +314,7 @@ fn only_the_test_harness_imports_the_runners_hooks() {
 /// to its target, where the plain absolute path of the virtual file matched neither.
 fn host_in_std(std_root: PathBuf, host_dir: &Path) -> Vec<String> {
     let (l, d, _) = load(
-        &host_dir.join("__velt_generate_host.vlt"),
+        &host_dir.join("__velt_generate_host.velt"),
         LoadOptions {
             std_root: Some(std_root),
             std_root_as_std: true,
@@ -337,7 +337,7 @@ fn a_virtual_root_in_std_is_std() {
     let t = Tree::new();
     let std = std_with_a_test(&t);
     // The key of the virtual root agrees with its directory's, as std's own key does.
-    let virtual_file = std.join("__velt_generate_host.vlt");
+    let virtual_file = std.join("__velt_generate_host.velt");
     assert!(file_key(&virtual_file).starts_with(file_key(&std)));
     assert_eq!(host_in_std(std.clone(), &std), Vec::<String>::new());
 }

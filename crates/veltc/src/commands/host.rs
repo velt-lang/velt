@@ -1,6 +1,6 @@
 //! `velt build --host <package>`: a build for the JavaScript platform of a host package
 //! (docs/internals/contracts/workers.md). The compiler knows no platform: the host package's
-//! `package.vlt` (`vpm::host`) gives the target, the condition, the platform's entry and the
+//! `package.velt` (`vpm::host`) gives the target, the condition, the platform's entry and the
 //! configuration files to scaffold. The build writes a directory holding the module
 //! (`program.wasm`), the runtime glue (velt_web.mjs, as every browser build gets, and its
 //! host-neutral server core velt_serve.mjs), `velt_modules.mjs` (the package host modules the
@@ -52,7 +52,7 @@ pub fn resolve(
     };
     let Some(config) = &package.host else {
         return Err(format!(
-            "`--host {name}`: package `{name}` is not a host package (its package.vlt has no \
+            "`--host {name}`: package `{name}` is not a host package (its package.velt has no \
              `host`)"
         ));
     };

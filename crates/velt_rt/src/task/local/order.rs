@@ -1,6 +1,6 @@
 //! The order of `setTimeout` / `setInterval` / `setImmediate` callbacks, as in Node
 //! (lib/internal/timers.js), each callback followed by its microtask checkpoint before the next
-//! one starts (std/prelude/timers.vlt).
+//! one starts (std/prelude/timers.velt).
 //!
 //! Node keeps one list of timers per delay (in whole milliseconds), in the order they were
 //! inserted, and runs the lists by (expiry, list id): a new list's expiry is its first timer's

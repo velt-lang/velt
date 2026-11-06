@@ -1,4 +1,4 @@
-//! The Rust twin of the Velt variants (dataview.vlt, ...): the same pages, decoded from `&[u8]` with `u16::from_be_bytes`
+//! The Rust twin of the Velt variants (dataview.velt, ...): the same pages, decoded from `&[u8]` with `u16::from_be_bytes`
 //! and `u32::from_be_bytes` (bounds-checked slices, as safe Rust writes it).
 
 const PAGE: usize = 4096;

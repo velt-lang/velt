@@ -135,7 +135,7 @@ fn program(ty: &str) -> String {
 #[test]
 fn generator_errors_are_shown_and_cleared() {
     let tmp = tempfile::tempdir().expect("temp dir");
-    let main = tmp.path().join("main.vlt");
+    let main = tmp.path().join("main.velt");
     let bad = program("{ a: number | undefined }");
     std::fs::write(&main, &bad).expect("main");
     let uri = url(&main);
@@ -196,7 +196,7 @@ fn url(path: &Path) -> String {
     }
 }
 
-/// A generator that never returns, for `hello<User>()` in `main.vlt`.
+/// A generator that never returns, for `hello<User>()` in `main.velt`.
 const ENDLESS: &str = "import { InstanceRequest, Output } from \"velt/generate\";\n\
      export function hello(req: InstanceRequest, out: Output): void {\n\
      \x20 let n: i64 = 0;\n\
@@ -245,9 +245,9 @@ fn eventually(limit: Duration, what: &str, done: impl Fn() -> bool) {
 /// once the server runs its host.
 fn endless_host() -> (tempfile::TempDir, Server) {
     let tmp = tempfile::tempdir().expect("temp dir");
-    let main = tmp.path().join("main.vlt");
+    let main = tmp.path().join("main.velt");
     std::fs::write(&main, HELLO).expect("main");
-    std::fs::write(tmp.path().join("gen.vlt"), ENDLESS).expect("gen");
+    std::fs::write(tmp.path().join("gen.velt"), ENDLESS).expect("gen");
     let mut server = Server::start_with(tmp.path(), &[("VELT_GENERATOR_TIMEOUT", "0")]);
     server.request(1, "initialize", json!({ "capabilities": {} }));
     server.notify("initialized", json!({}));

@@ -20,24 +20,24 @@ fn repo() -> Repo {
     let dir = tmp.path().to_path_buf();
     let repo = Repo { _tmp: tmp, dir };
     repo.write(
-        "velt.workspace.vlt",
+        "velt.workspace.velt",
         "export const workspace: Workspace = { members: [\"packages/*\", \"apps/*\"] };\n",
     );
     repo.write(
-        "packages/core/package.vlt",
+        "packages/core/package.velt",
         "export const pkg: Package = { name: \"core\", version: \"0.1.0\" };\n",
     );
     repo.write(
-        "packages/core/src/lib.vlt",
+        "packages/core/src/lib.velt",
         "export function greet(who: string): string {\n  return `hello ${who}`;\n}\n",
     );
     for app in ["a", "b"] {
         repo.write(
-            &format!("apps/{app}/package.vlt"),
+            &format!("apps/{app}/package.velt"),
             &format!("export const pkg: Package = {{ name: \"{app}\", version: \"0.1.0\", dependencies: {{ core: \"workspace\" }} }};\n"),
         );
         repo.write(
-            &format!("apps/{app}/src/main.vlt"),
+            &format!("apps/{app}/src/main.velt"),
             &format!("import {{ greet }} from \"core\";\n\nconsole.log(greet(\"{app}\"));\n"),
         );
     }
@@ -126,7 +126,7 @@ fn every_member_runs_from_the_workspace_root() {
     assert!(err.contains("`velt check` on 3 members: 3 passed"), "{err}");
 
     // One broken member: the others still run, the summary names it, the exit code is its.
-    r.write("apps/b/src/main.vlt", "const x: number = \"s\";\n");
+    r.write("apps/b/src/main.velt", "const x: number = \"s\";\n");
     let o = r.velt(".", &["check", "--workspace"], &[]);
     let err = text(&o.stderr);
     assert_eq!(o.status.code(), Some(1), "{err}");
@@ -187,11 +187,11 @@ fn programs_build_and_run_by_member() {
     }
     // `velt run <file> <program args>`: the program's `-p` and `--workspace` are its own.
     r.write(
-        "loose/s.vlt",
+        "loose/s.velt",
         "console.log(process.argv.slice(2).join(\",\"));\n",
     );
-    std::fs::remove_file(r.dir.join("velt.workspace.vlt")).unwrap();
-    let (out, _) = r.ok("loose", &["run", "s.vlt", "-p", "8080", "--workspace"]);
+    std::fs::remove_file(r.dir.join("velt.workspace.velt")).unwrap();
+    let (out, _) = r.ok("loose", &["run", "s.velt", "-p", "8080", "--workspace"]);
     assert_eq!(out, "-p,8080,--workspace\n");
 }
 
@@ -210,14 +210,14 @@ fn affected_members_are_the_changed_ones_and_their_dependents() {
     assert!(err.contains("no selected member to check"), "{err}");
     // A library: it and every member that uses it.
     r.write(
-        "packages/core/src/lib.vlt",
+        "packages/core/src/lib.velt",
         "export function greet(who: string): string {\n  return `hi ${who}`;\n}\n",
     );
     let (_, err) = r.ok(".", &["check", "--affected", "HEAD"]);
     assert_eq!(members(&err).len(), 3, "{err}");
     r.git(&["commit", "-q", "-am", "core"]);
     // A program: that member alone, untracked files included.
-    r.write("apps/a/src/extra.vlt", "export const x = 1;\n");
+    r.write("apps/a/src/extra.velt", "export const x = 1;\n");
     let (_, err) = r.ok(".", &["check", "--affected=HEAD"]);
     assert_eq!(members(&err), ["a"], "{err}");
     // In CI the base must be named.
@@ -232,7 +232,7 @@ fn affected_members_are_the_changed_ones_and_their_dependents() {
 #[test]
 fn a_selection_outside_a_workspace_or_with_a_file_is_an_error() {
     let r = repo();
-    std::fs::remove_file(r.dir.join("velt.workspace.vlt")).unwrap();
+    std::fs::remove_file(r.dir.join("velt.workspace.velt")).unwrap();
     let o = r.velt("apps/a", &["check", "--workspace"], &[]);
     assert!(
         text(&o.stderr).contains("select members of a workspace"),
@@ -240,9 +240,9 @@ fn a_selection_outside_a_workspace_or_with_a_file_is_an_error() {
         text(&o.stderr)
     );
     let r = repo();
-    let o = r.velt(".", &["check", "-p", "a", "apps/a/src/main.vlt"], &[]);
+    let o = r.velt(".", &["check", "-p", "a", "apps/a/src/main.velt"], &[]);
     assert!(
-        text(&o.stderr).contains("leave out `apps/a/src/main.vlt`"),
+        text(&o.stderr).contains("leave out `apps/a/src/main.velt`"),
         "{}",
         text(&o.stderr)
     );
@@ -252,7 +252,7 @@ fn a_selection_outside_a_workspace_or_with_a_file_is_an_error() {
 fn formatting_members_needs_no_registry() {
     let r = repo();
     r.write(
-        "apps/b/package.vlt",
+        "apps/b/package.velt",
         "export const pkg: Package = { name: \"b\", version: \"0.1.0\", dependencies: { core: \"workspace\", nosuchpkg: \"1\" } };\n",
     );
     let o = r.velt(".", &["fmt"], &[("VELT_REGISTRY", "http://127.0.0.1:9")]);
@@ -265,7 +265,7 @@ fn formatting_members_needs_no_registry() {
 fn a_scoped_member_is_selected_by_its_name_without_the_scope() {
     let r = repo();
     r.write(
-        "apps/a/package.vlt",
+        "apps/a/package.velt",
         "export const pkg: Package = { name: \"@org/server\", version: \"0.1.0\", dependencies: { core: \"workspace\" } };\n",
     );
     let (_, err) = r.ok(".", &["check", "-p", "serv*"]);
@@ -292,15 +292,15 @@ fn ran_and_unchanged(err: &str) -> (Vec<String>, Vec<String>) {
 fn members_whose_tests_cannot_have_changed_are_not_started() {
     let r = repo();
     r.write(
-        "packages/core/tests/add.test.vlt",
+        "packages/core/tests/add.test.velt",
         "import { greet } from \"../src/lib\";\nimport { expect } from \"velt/test\";\n\nexport function test_greet() {\n  expect(greet(\"x\")).toBe(\"hello x\");\n}\n",
     );
     r.write(
-        "apps/a/tests/a.test.vlt",
+        "apps/a/tests/a.test.velt",
         "import { greet } from \"core\";\nimport { expect } from \"velt/test\";\n\nexport function test_a() {\n  expect(greet(\"a\")).toBe(\"hello a\");\n}\n",
     );
     r.write(
-        "apps/b/tests/b.test.vlt",
+        "apps/b/tests/b.test.velt",
         "import { expect } from \"velt/test\";\n\nexport function test_clock() {\n  expect(Date.now() > 0).toBe(true);\n}\n",
     );
     r.write("packages/core/tests/fixtures/README.md", "data\n");
@@ -323,14 +323,14 @@ fn members_whose_tests_cannot_have_changed_are_not_started() {
     assert_eq!(sorted(unchanged), ["a", "core"]);
     // A change in `core` runs it and `a`, which imports it.
     r.write(
-        "packages/core/src/lib.vlt",
+        "packages/core/src/lib.velt",
         "export function greet(who: string): string {\n  return \"hello \" + who;\n}\n",
     );
     let (ran, _) = ran_and_unchanged(&r.ok(".", &["test"]).1);
     assert_eq!(sorted(ran), ["a", "b", "core"]);
     // A new test file is a change too.
     r.write(
-        "apps/a/tests/more.test.vlt",
+        "apps/a/tests/more.test.velt",
         "import { expect } from \"velt/test\";\n\nexport function test_more() {\n  expect(1).toBe(1);\n}\n",
     );
     let (ran, unchanged) = ran_and_unchanged(&r.ok(".", &["test"]).1);
@@ -338,7 +338,7 @@ fn members_whose_tests_cannot_have_changed_are_not_started() {
     assert_eq!(unchanged, ["core"]);
     // So is one in a directory no test file was in, which only discovery lists.
     r.write(
-        "packages/core/tests/fixtures/deep.test.vlt",
+        "packages/core/tests/fixtures/deep.test.velt",
         "import { expect } from \"velt/test\";\n\nexport function test_deep() {\n  expect(1).toBe(1);\n}\n",
     );
     let (ran, _) = ran_and_unchanged(&r.ok(".", &["test"]).1);
@@ -346,7 +346,7 @@ fn members_whose_tests_cannot_have_changed_are_not_started() {
     // `velt test -p core` runs as `velt test` in `core` and keys its stamp so: the workspace
     // run, and `-p core` again, find it unchanged.
     r.write(
-        "packages/core/tests/fixtures/deep.test.vlt",
+        "packages/core/tests/fixtures/deep.test.velt",
         "import { expect } from \"velt/test\";\n\nexport function test_deep() {\n  expect(2).toBe(2);\n}\n",
     );
     let (ran, _) = ran_and_unchanged(&r.ok(".", &["test", "-p", "core"]).1);
@@ -360,7 +360,7 @@ fn members_whose_tests_cannot_have_changed_are_not_started() {
     );
     // A failing member always runs.
     r.write(
-        "apps/a/tests/more.test.vlt",
+        "apps/a/tests/more.test.velt",
         "import { expect } from \"velt/test\";\n\nexport function test_more() {\n  expect(1).toBe(2);\n}\n",
     );
     for _ in 0..2 {

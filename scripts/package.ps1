@@ -6,7 +6,7 @@
 #   lib/velt_rt.lib  lib/velt_rt_shared.dll(.lib)  lib/NATIVE_LIBS.md
 #   lib/velt/lld.exe  lib/targets/<triple>/ (link kit)
 # and the target pack dist/velt-<version>-target-<triple>.tar.gz (`velt target add`).
-#   std/** (without its *.test.vlt files)  share/velt/lldb/velt_lldb.py  share/velt/warm/*.vlt  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
+#   std/** (without its *.test.velt files)  share/velt/lldb/velt_lldb.py  share/velt/warm/*.velt  README.md  LICENSE-MIT  LICENSE-APACHE  NOTICE
 #
 # With the bundled linker, velt.exe, velt-launcher.exe and velt_rt_shared.dll are linked with it
 # too (lld-link, the kit's startup object and the Universal CRT), so none needs the Visual C++ runtime
@@ -115,7 +115,7 @@ if (Test-Path $StdDir -PathType Container) {
     Copy-Item -Recurse (Join-Path $StdDir "*") (Join-Path $Out "std")
     # std's white-box tests (`velt test std/`, docs/internals/design/std-layout.md §9) are not
     # part of the toolchain.
-    Get-ChildItem -Path (Join-Path $Out "std") -Recurse -File -Filter "*.test.vlt" | Remove-Item -Force
+    Get-ChildItem -Path (Join-Path $Out "std") -Recurse -File -Filter "*.test.velt" | Remove-Item -Force
 } else {
     Write-Warning "no std sources at $StdDir; shipping an empty std/ (pass -StdDir)"
 }
@@ -130,7 +130,7 @@ Install:  get-velt.ps1 -Archive <this .zip> (an asset of every release), or
           this directory as it is.
 Then add ``%LOCALAPPDATA%\velt\bin`` to PATH and run ``velt doctor``.
 
-    velt run hello.vlt
+    velt run hello.velt
     velt new app; cd app; velt run
 
 Layout: bin/ (the velt CLI, and the launcher), lib/ (runtime library linked into every program),

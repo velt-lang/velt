@@ -159,7 +159,7 @@ pub struct Program {
     /// Object types lowering counts from its first pass (hir_encodings.md "Sharing").
     pub counted_objects: Vec<TyId>,
     /// The program calls `Object.create(null)`: a record may have no prototype (its map is
-    /// marked, std/prelude/map.vlt `[RECORD_MARK_NULL_PROTO]`), which printing and cloning look at.
+    /// marked, std/prelude/map.velt `[RECORD_MARK_NULL_PROTO]`), which printing and cloning look at.
     pub null_proto_records: bool,
     /// The program builds an object type known per instantiation with `{} as D` (a record of
     /// `any` values, hir_encodings.md "Spreads and conversions in generic bodies"): lowering's

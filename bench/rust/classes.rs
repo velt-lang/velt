@@ -1,4 +1,4 @@
-// Dynamic dispatch (same workload as classes.vlt): `Box<dyn Shape>` for the class hierarchy
+// Dynamic dispatch (same workload as classes.velt): `Box<dyn Shape>` for the class hierarchy
 // (heap object + virtual `area`), `Box<dyn Scorer>` for the interface values.
 trait Shape {
     fn id(&self) -> i64;

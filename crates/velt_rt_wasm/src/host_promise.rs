@@ -3,7 +3,7 @@
 //! the id under which the glue keeps the JS promise, and `velt_rt_host_promise(id)` makes the
 //! leaf. When the promise settles, the glue calls `velt_settle(id)` (host_turn.rs), which wakes
 //! the leaf's task. Polled then, the leaf has the glue write the outcome into its result
-//! (`velt.host_take`): std's `HostSettled<W>` (std/host/promise.vlt) in its foreign layout, the
+//! (`velt.host_take`): std's `HostSettled<W>` (std/host/promise.velt) in its foreign layout, the
 //! error's code and message (empty strings when the promise fulfilled) and the value. A leaf
 //! dropped before that tells the glue to forget the promise (`velt.host_forget`), so nothing it
 //! settles with is converted or kept.

@@ -1,8 +1,8 @@
-sealed_extends.vlt:4:24: error: `Record` cannot be extended
+sealed_extends.velt:4:24: error: `Record` cannot be extended
 use composition instead: a class with a `Record` field
-sealed_extends.vlt:6:27: error: `Record` cannot be extended
+sealed_extends.velt:6:27: error: `Record` cannot be extended
 use composition instead: a class with a `Record` field
-sealed_extends.vlt:7:22: error: cannot extend `JsonValue`: its constructor is private
+sealed_extends.velt:7:22: error: cannot extend `JsonValue`: its constructor is private
 use composition: a class with a `JsonValue` field
-sealed_extends.vlt:9:25: error: cannot extend `JsonValue`: its constructor is private
+sealed_extends.velt:9:25: error: cannot extend `JsonValue`: its constructor is private
 use composition: a class with a `JsonValue` field

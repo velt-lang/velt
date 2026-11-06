@@ -5,7 +5,7 @@ Phase 0 of the JavaScript string semantics change (#377, design:
 non-ASCII text, with a Node baseline, recorded before the representation changes so later phases
 can be measured against them.
 
-Each part is a Velt program (`<part>.vlt`) and the same program for Node (`<part>.js`). Text is
+Each part is a Velt program (`<part>.velt`) and the same program for Node (`<part>.js`). Text is
 generated with the same LCG in both, so runs are deterministic; each prints one checksum line
 (lengths, counts, a hash, a sample).
 

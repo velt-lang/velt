@@ -15,7 +15,7 @@
 //!
 //! Also the per-thread "where was the last error thrown" slot (`velt_rt_set_throw_loc` /
 //! `velt_rt_throw_loc`) that compiled code fills at each `throw` and reads when it reports an
-//! uncaught error (`Uncaught E: msg at file.vlt:3:5`). A task's error can be read on another
+//! uncaught error (`Uncaught E: msg at file.velt:3:5`). A task's error can be read on another
 //! thread than the one that threw it (`async main` runs on a worker, a spawned task's handle is
 //! awaited anywhere), so finished tasks carry the slot to whoever takes their result
 //! ([`ThrowLoc`]). Each poll of a task starts with an empty slot, so a task that threw nothing in

@@ -1,4 +1,4 @@
-// CSV split/join (same workload as csv.vlt): 100k generated lines with non-ASCII fields,
+// CSV split/join (same workload as csv.velt): 100k generated lines with non-ASCII fields,
 // `join("\n")`, `split("\n")`, `split(",")` per line, then re-joined with ";" and "\n".
 class Rng {
   seed = 42;

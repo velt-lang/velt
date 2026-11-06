@@ -11,7 +11,7 @@ fn main_adds_no_windows_or_macos_gate_after_a_queue_run() {
         "crates/velt_loader/src/lib.rs",
         "crates/velt_rt/src/http.rs",
         "crates/veltc/src/main.rs",
-        "std/fs/index.vlt",
+        "std/fs/index.velt",
         ".github/workflows/ci.yml",
         "scripts/check-all.sh",
         "crates/xtask/src/plan.rs",
@@ -84,11 +84,11 @@ fn os_specific_changes_check_windows_in_the_queue() {
         "crates/veltc/src/commands/registry.rs",
         "crates/vpm/src/credentials.rs",
         "crates/vpm/src/json_file.rs",
-        "std/fs/index.vlt",
-        "std/net/tcp_stream.vlt",
-        "std/prelude/timers.vlt",
+        "std/fs/index.velt",
+        "std/net/tcp_stream.velt",
+        "std/prelude/timers.velt",
         // The standard library's `velt test` suites run servers, sockets and files (#1892).
-        "tests/std/http/responses.test.vlt",
+        "tests/std/http/responses.test.velt",
         "Cargo.lock",
         ".github/workflows/ci.yml",
     ] {
@@ -114,10 +114,10 @@ fn portable_changes_check_linux_only() {
         // Goldens, std code that doesn't talk to the OS, examples and packages: the full gate on
         // Windows and macOS in the scheduled run catches the exception.
         "tests/golden/lang/foo.out",
-        "std/collections/map.vlt",
-        "std/half/index.vlt",
-        "examples/apps/shop-api/src/main.vlt",
-        "packages/sqlite/src/db.vlt",
+        "std/collections/map.velt",
+        "std/half/index.velt",
+        "examples/apps/shop-api/src/main.velt",
+        "packages/sqlite/src/db.velt",
     ] {
         assert_eq!(plan(&[path]).other_os, None, "{path}");
     }
@@ -137,7 +137,7 @@ fn most_os_specific_changes_check_windows_but_not_macos() {
         ".github/workflows/ci.yml",
         ".github/actions/setup/action.yml",
         "scripts/check.sh",
-        "std/test/run.vlt",
+        "std/test/run.velt",
     ] {
         let p = plan(&[path]);
         assert!(p.other_os.is_some(), "{path}");
@@ -169,20 +169,20 @@ fn code_that_can_differ_on_macos_checks_it() {
         "crates/velt_text/src/json_escape.rs",
         "crates/vpm/src/native/build.rs",
         "crates/veltc/src/dev/supervisor.rs",
-        "std/fs/index.vlt",
-        "std/net/tcp_stream.vlt",
-        "std/os/machine.vlt",
-        "std/process/child/exec.vlt",
-        "std/native/index.vlt",
-        "std/host/index.vlt",
-        "std/task/index.vlt",
-        "std/time/index.vlt",
-        "std/simd/bytes.vlt",
-        "std/prelude/timers.vlt",
-        "tests/std/net/x.test.vlt",
-        "tests/golden/lang/system_functions.vlt",
-        "packages/http-server/src/files/resolve.vlt",
-        "packages/http-server/tests/files.test.vlt",
+        "std/fs/index.velt",
+        "std/net/tcp_stream.velt",
+        "std/os/machine.velt",
+        "std/process/child/exec.velt",
+        "std/native/index.velt",
+        "std/host/index.velt",
+        "std/task/index.velt",
+        "std/time/index.velt",
+        "std/simd/bytes.velt",
+        "std/prelude/timers.velt",
+        "tests/std/net/x.test.velt",
+        "tests/golden/lang/system_functions.velt",
+        "packages/http-server/src/files/resolve.velt",
+        "packages/http-server/tests/files.test.velt",
     ] {
         let reason = plan(&[path]).macos.unwrap_or_default();
         assert!(reason.contains(path), "{path}: {reason}");
@@ -192,7 +192,7 @@ fn code_that_can_differ_on_macos_checks_it() {
 #[test]
 fn macos_is_decided_apart_from_windows_and_from_everything() {
     // Code in a package: macOS, not Windows.
-    let p = plan(&["packages/http-server/src/files/resolve.vlt"]);
+    let p = plan(&["packages/http-server/src/files/resolve.velt"]);
     assert!(p.macos.is_some());
     assert_eq!(p.other_os, None);
     // Runtime code next to a path that selects everything, in either order.
@@ -217,9 +217,9 @@ fn what_does_not_change_such_code_checks_no_macos() {
         "docs/internals/maintaining.md",
         "CONTRIBUTING.md",
         "tests/golden/lang/foo.out",
-        "std/collections/map.vlt",
-        "packages/sqlite/src/db.vlt",
-        "packages/http-server/src/serve.vlt",
+        "std/collections/map.velt",
+        "packages/sqlite/src/db.velt",
+        "packages/http-server/src/serve.velt",
     ] {
         assert_eq!(plan(&[path]).macos, None, "{path}");
     }
@@ -265,7 +265,7 @@ fn the_macos_paths_exist() {
             continue;
         }
         let path = match path.strip_suffix("system_function") {
-            Some(dir) => format!("{dir}system_functions.vlt"),
+            Some(dir) => format!("{dir}system_functions.velt"),
             None => path.to_string(),
         };
         assert!(root.join(&path).exists(), "no {path}");

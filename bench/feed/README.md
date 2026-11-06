@@ -5,7 +5,7 @@ on a fixed SQLite schema, HS256 auth, byte-exact JSON) as a Velt program, to com
 request costs with other implementations of the same API. The challenge scores how many users
 one vCPU serves, so CPU per request is the number that decides it.
 
-- `velt/server.vlt`: the server on `std/http` + the `sqlite` package, written the way an application
+- `velt/server.velt`: the server on `std/http` + the `sqlite` package, written the way an application
   would be. It passes the challenge's `test/test.sh` (42 checks).
 - `measure.py`: runs each server with one worker on a fresh copy of the seed database, loads it
   with wrk per endpoint and for the load test's mix, and reports server CPU per request.
@@ -13,7 +13,7 @@ one vCPU serves, so CPU per request is the number that decides it.
 ```sh
 git clone https://github.com/arjaythedev/twelve-dollar-server-challenge challenge
 bash challenge/seed/make-seed.sh                     # feed.db and tokens.json; needs node, sqlite3
-velt build --release bench/feed/velt/server.vlt -o feed-velt
+velt build --release bench/feed/velt/server.velt -o feed-velt
 bench/feed/measure.py --seed challenge/seed rust=<a Rust submission's binary> velt=./feed-velt
 ```
 

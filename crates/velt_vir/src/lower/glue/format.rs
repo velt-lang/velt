@@ -495,7 +495,7 @@ impl FnLower<'_, '_> {
         self.call_rt(Rt::StrbufInspectAtom, vec![buf.clone(), start], None);
     }
 
-    /// Is `ty` std's `NativeInspect` (std/lang/typed_array/native_inspect.vlt), the result of an `[INSPECT]()`
+    /// Is `ty` std's `NativeInspect` (std/lang/typed_array/native_inspect.velt), the result of an `[INSPECT]()`
     /// that prints one of Node's own objects?
     fn is_native_inspect(&self, ty: TyId) -> bool {
         matches!(self.cx.kind(ty), TyKind::Adt(d, _)
@@ -535,7 +535,7 @@ impl FnLower<'_, '_> {
 
 impl FnLower<'_, '_> {
     /// The tag of a class object's function type (velt_sema's `ctor_objects.rs`): its rest
-    /// parameter is `ClassMarker<T>[]`, `T` the tag (std/lang/hooks/class_object.vlt).
+    /// parameter is `ClassMarker<T>[]`, `T` the tag (std/lang/hooks/class_object.velt).
     fn class_object_tag(&self, ty: TyId) -> Option<TyId> {
         let TyKind::FnPtr {
             params, rest: true, ..

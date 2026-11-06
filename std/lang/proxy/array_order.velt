@@ -1,0 +1,74 @@
+// velt/lang/proxy (internal): `reverse` and `sort` called on a proxy of an array (array.velt), in
+// Node's order of trap calls.
+
+import { Proxy } from "velt/lang/proxy";
+import { anyString } from "velt/lang/hooks/any_text";
+import { arraySet, trapDelete, trapGet, trapHas } from "velt/lang/proxy/array";
+
+/** `reverse` of the proxy `p`: each pair of elements from the ends, through the traps. */
+export function proxyReverse(p: Proxy, o: any, len: number): void {
+  const middle = Math.floor(len / 2);
+  for (let lower = 0; lower < middle; lower++) {
+    const lk = `${lower}`;
+    const uk = `${len - lower - 1}`;
+    const lowerExists = trapHas(p, lk);
+    const lowerValue = lowerExists ? trapGet(p, lk, o) : undefined;
+    const upperExists = trapHas(p, uk);
+    const upperValue = upperExists ? trapGet(p, uk, o) : undefined;
+    if (upperExists) {
+      arraySet(p, o, lk, upperValue);
+    } else if (lowerExists) {
+      trapDelete(p, lk);
+    }
+    if (lowerExists) {
+      arraySet(p, o, uk, lowerValue);
+    } else if (upperExists) {
+      trapDelete(p, uk);
+    }
+  }
+}
+
+/**
+ * `sort` of the proxy `p`: reads the elements it has, sorts them (`undefined` last; by the
+ * comparison function, else by their strings), writes them back and deletes the rest.
+ */
+export function proxySort(p: Proxy, o: any, len: number, cmp: any): any {
+  if (cmp !== undefined && typeof cmp !== "function") {
+    panic("TypeError: The comparison function must be either a function or undefined");
+  }
+  const items: any[] = [];
+  let undefs = 0;
+  for (let k = 0; k < len; k++) {
+    const key = `${k}`;
+    if (trapHas(p, key)) {
+      const v = trapGet(p, key, o);
+      if (v === undefined) {
+        undefs++;
+      } else {
+        items.push(v);
+      }
+    }
+  }
+  items.sort((a: any, b: any): number => {
+    if (cmp === undefined) {
+      // `ToString` as user code writes it (`String(o)` of an object is `[object Object]`).
+      const x = anyString(a, "");
+      const y = anyString(b, "");
+      return x < y ? -1 : x > y ? 1 : 0;
+    }
+    // The comparator's result is `ToNumber`ed; `NaN` counts as equal.
+    const n: number = +cmp(a, b);
+    return n !== n ? 0 : n;
+  });
+  const n = items.length as number;
+  for (let j = 0; j < n; j++) {
+    arraySet(p, o, `${j}`, items[j]);
+  }
+  for (let j = n; j < n + undefs; j++) {
+    arraySet(p, o, `${j}`, undefined);
+  }
+  for (let j = n + undefs; j < len; j++) {
+    trapDelete(p, `${j}`);
+  }
+  return o;
+}

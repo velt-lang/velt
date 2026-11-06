@@ -149,7 +149,7 @@ impl Registry {
         caller: &Caller,
     ) -> Result<vpm::registry::IndexEntry, (u16, String)> {
         archive::unpack(body, staging).map_err(|e| (400, e))?;
-        // Read with the limits of every manifest; messages name `package.vlt`, never the
+        // Read with the limits of every manifest; messages name `package.velt`, never the
         // server's staging directory.
         let file = vpm::manifest::MANIFEST_FILE;
         let path = staging.join(file);

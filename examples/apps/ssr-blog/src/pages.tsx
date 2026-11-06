@@ -12,7 +12,7 @@ async function Posts(props: { tag: string | null }): Promise<JSX.Element> {
   return <PostList posts={posts} tag={props.tag} />;
 }
 
-// `gate`: when given, the comments load only once a value arrives on it (demo.vlt uses it to
+// `gate`: when given, the comments load only once a value arrives on it (demo.velt uses it to
 // read the top of a streamed page before the comments exist, whatever the timing).
 async function Comments(props: { slug: string; gate: Channel<i64> | null }): Promise<JSX.Element> {
   const gate = props.gate;

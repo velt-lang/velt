@@ -33,7 +33,7 @@ Commands:
   unlink <name>                remove a link (the prefix stays)
   --version                    the launcher's own version (`velt --version` is the toolchain's)
 
-A package selects versions with `velt: \"0.1\"` in package.vlt; `velt +<toolchain> <command>` or
+A package selects versions with `velt: \"0.1\"` in package.velt; `velt +<toolchain> <command>` or
 $VELT_TOOLCHAIN (a version or a link) overrides it for one command. Missing versions are installed on first use unless
 $VELT_TOOLCHAIN_AUTO_INSTALL=0; $VELT_INSTALL_BASE_URL names a mirror.
 ";

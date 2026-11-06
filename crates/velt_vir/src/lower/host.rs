@@ -2,13 +2,13 @@
 //! the call of the WebAssembly import the declaration names, with each argument in the form
 //! the JS glue converts (`vir::HostImport`'s module docs). A byte buffer gives its data pointer
 //! and length (an array's or a view's, as for system functions: system_views.rs), a string the
-//! address of its value, a `HostRef` its slot (std's hooks in std/host/host_ref.vlt read and
+//! address of its value, a `HostRef` its slot (std's hooks in std/host/host_ref.velt read and
 //! make them). On a target without a JS host a call is an error, reported once lowering is done
 //! (system.rs `unavailable_diagnostics`).
 //!
 //! The call of an async host function is the import, which calls the JS function and returns the
 //! id of its promise, then the promise leaf of that id (`velt_rt_host_promise`), which yields
-//! std's `HostSettled<W>` (std/host/promise.vlt), and the promise of std's hook awaiting it: it
+//! std's `HostSettled<W>` (std/host/promise.velt), and the promise of std's hook awaiting it: it
 //! throws an `IoError` for a rejection and makes the value (a `HostRef` of a slot).
 
 use velt_sema::hir::{self, DefId, HostTy, IntTy, TyId, TyKind};

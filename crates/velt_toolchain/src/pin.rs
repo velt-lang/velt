@@ -1,4 +1,4 @@
-//! The `velt` field of the nearest `package.vlt`, or of the `velt.workspace.vlt` of its workspace,
+//! The `velt` field of the nearest `package.velt`, or of the `velt.workspace.velt` of its workspace,
 //! read on its own: the launcher reads it before every command, so it does not decode (or check)
 //! the rest of the file. vpm's reader checks the whole file, this field included, when the
 //! selected toolchain runs.
@@ -11,9 +11,9 @@ use velt_syntax::ast::{ExprKind, ItemKind, Lit, ObjectProp, PatternKind};
 use crate::requirement::Requirement;
 
 /// The manifest's file name (`vpm::manifest::MANIFEST_FILE`).
-pub const MANIFEST_FILE: &str = "package.vlt";
+pub const MANIFEST_FILE: &str = "package.velt";
 /// The workspace file's name (`vpm::workspace::WORKSPACE_FILE`).
-pub const WORKSPACE_FILE: &str = "velt.workspace.vlt";
+pub const WORKSPACE_FILE: &str = "velt.workspace.velt";
 /// The pinning field.
 pub const FIELD: &str = "velt";
 
@@ -21,13 +21,13 @@ pub const FIELD: &str = "velt";
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Pin {
     pub requirement: Requirement,
-    /// The `package.vlt` or `velt.workspace.vlt` it is in.
+    /// The `package.velt` or `velt.workspace.velt` it is in.
     pub manifest: PathBuf,
     /// 1-based line of the value.
     pub line: usize,
 }
 
-/// The package's lockfile, beside its `package.vlt` (`vpm::lockfile::LOCK_FILE`).
+/// The package's lockfile, beside its `package.velt` (`vpm::lockfile::LOCK_FILE`).
 pub const LOCK_FILE: &str = "velt.lock.json";
 
 /// The toolchain version the lockfile beside `manifest` records (its `velt` field, #960), if
@@ -39,7 +39,7 @@ pub fn locked_version(manifest: &Path) -> Option<semver::Version> {
     semver::Version::parse(value.get("velt")?.as_str()?).ok()
 }
 
-/// The nearest directory at or above `start` holding a `package.vlt`.
+/// The nearest directory at or above `start` holding a `package.velt`.
 pub fn find_package_root(start: &Path) -> Option<PathBuf> {
     start
         .ancestors()
@@ -48,7 +48,7 @@ pub fn find_package_root(start: &Path) -> Option<PathBuf> {
 }
 
 /// The pin of the package enclosing `dir` (an absolute path): its own `velt` field, or its
-/// workspace's when the workspace's `members` list it (members leave it to `velt.workspace.vlt`),
+/// workspace's when the workspace's `members` list it (members leave it to `velt.workspace.velt`),
 /// or the workspace's when `dir` is in a workspace but no package of it. A package below a
 /// workspace that the globs don't list keeps to itself. `None` outside both, without a `velt` field, or when the file
 /// does not parse (the toolchain then reports why); an error when the field is there but is not
@@ -148,8 +148,8 @@ pub fn read_pin(src: &str) -> Result<Option<(Requirement, usize)>, (String, usiz
     read_pin_of(src, "pkg")
 }
 
-/// The `velt` field of the object `export const <binding>` in `src` (`pkg` in a `package.vlt`,
-/// `workspace` in a `velt.workspace.vlt`).
+/// The `velt` field of the object `export const <binding>` in `src` (`pkg` in a `package.velt`,
+/// `workspace` in a `velt.workspace.velt`).
 fn read_pin_of(src: &str, binding: &str) -> Result<Option<(Requirement, usize)>, (String, usize)> {
     let (module, diags) = velt_syntax::parse_file(FileId(0), src);
     if diags.iter().any(velt_common::Diagnostic::is_error) {
@@ -244,7 +244,7 @@ mod tests {
         )
         .unwrap();
         let err = find_pin(&pkg).unwrap_err();
-        assert!(err.contains("package.vlt:1: `velt`"), "{err}");
+        assert!(err.contains("package.velt:1: `velt`"), "{err}");
     }
 
     #[test]

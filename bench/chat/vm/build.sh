@@ -7,8 +7,8 @@ cd ~/velt
 export VELT_STD=$PWD/std
 cargo build --release -q -p veltc -p velt_rt
 mkdir -p bench/chat/.work
-target/release/velt build --release bench/chat/velt/server.vlt -o bench/chat/.work/chat-velt
-target/release/velt build --release bench/chat/velt/server-topics.vlt -o bench/chat/.work/chat-velt-topics
+target/release/velt build --release bench/chat/velt/server.velt -o bench/chat/.work/chat-velt
+target/release/velt build --release bench/chat/velt/server-topics.velt -o bench/chat/.work/chat-velt-topics
 (cd bench/chat/go && go build -o chat-go .)
 (cd bench/chat/node && npm ci --silent)
 (cd bench/chat/load && cargo build --release -q)

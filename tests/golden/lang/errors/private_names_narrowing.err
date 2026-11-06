@@ -1,1 +1,1 @@
-private_names_narrowing.vlt:13:22: error: no method named `bark` found for type `Animal`
+private_names_narrowing.velt:13:22: error: no method named `bark` found for type `Animal`

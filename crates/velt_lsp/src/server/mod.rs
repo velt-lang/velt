@@ -3,7 +3,7 @@
 //! Diagnostics are debounced: an edit schedules its document (and every other open document, which
 //! may import it) for analysis [`DEBOUNCE`] later; further edits push the deadline back. A request
 //! on a document with a pending analysis runs it first, so answers always match the latest text.
-//! Closing a `package.vlt`, a manifest changing on disk and a folder appearing or disappearing
+//! Closing a `package.velt`, a manifest changing on disk and a folder appearing or disappearing
 //! schedule every open document too: they decide which files are in `tsCompat` folders.
 //! Diagnostics too slow for every edit (the source generators') follow each analysis on a thread
 //! of their own ([`slow`]).
@@ -97,7 +97,7 @@ struct Server<'a> {
     next_result_id: u64,
     /// Symbols of the workspace folders' files.
     disk_symbols: DiskIndex,
-    /// Package indexes and searches for `package.vlt`, fetched in the background.
+    /// Package indexes and searches for `package.velt`, fetched in the background.
     registry: RegistryData,
     /// The packages' `tsCompat` folders (cleared when folders appear or disappear on disk).
     ts_folders: lint::FolderCache,
@@ -112,7 +112,7 @@ struct Server<'a> {
 /// Id of the request registering the file watcher.
 const WATCH_REQUEST: &str = "velt-watch";
 
-/// Ask the client to report changes of source files (`.vlt`, `.ts`, `.tsx`) if it can (dynamic
+/// Ask the client to report changes of source files (`.velt`, `.ts`, `.tsx`) if it can (dynamic
 /// registration of `workspace/didChangeWatchedFiles`). The index relies on the events once the
 /// client answers the request successfully.
 fn watch_files(connection: &Connection, init: &serde_json::Value) {
@@ -127,7 +127,7 @@ fn watch_files(connection: &Connection, init: &serde_json::Value) {
             // Source files, and creations and deletions of anything (folders are reported by
             // their own path: kind 5 = create + delete).
             "registerOptions": { "watchers": [
-                { "globPattern": "**/*.{vlt,ts,tsx}" },
+                { "globPattern": "**/*.{velt,ts,tsx}" },
                 { "globPattern": "**/*", "kind": 5 },
             ] },
         }] });

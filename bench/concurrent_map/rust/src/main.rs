@@ -1,4 +1,4 @@
-//! bbtree's concurrent `BBTreeMap` on map.vlt's workloads: the same keys, the same lookups,
+//! bbtree's concurrent `BBTreeMap` on map.velt's workloads: the same keys, the same lookups,
 //! the same start barrier, so both print the same checksums.
 use bbtree::BBTreeMap;
 use std::sync::atomic::{AtomicBool, AtomicU32, Ordering::*};

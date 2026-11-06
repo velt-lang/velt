@@ -1,0 +1,16 @@
+// The driver's handles have no JSON form: decoding would forge a connection, and encoding
+// would hand one out.
+import { RedisClient, RedisPipeline, RedisSubscriber } from "../../src/lib";
+
+function main() {
+  const c = JSON.parse<RedisClient>('{"handle":1}');
+  const s = JSON.parse<RedisSubscriber>('{"handle":1}');
+  const p = JSON.parse<RedisPipeline>('{"handle":1}');
+}
+
+// Encoding: both hold std types' private state, which has no JSON form. (A pipeline's fields are
+// `#` fields, which JSON never writes, as in Node: client_edges.test.velt.)
+function encode(c: RedisClient, s: RedisSubscriber) {
+  console.log(JSON.stringify(c));
+  console.log(JSON.stringify(s));
+}

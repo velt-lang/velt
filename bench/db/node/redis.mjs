@@ -1,6 +1,6 @@
 // Redis workloads with ioredis (bench/db/README.md) against $BENCH_REDIS_URL, on one client
 // (ioredis multiplexes one connection, like std/redis). Same commands and sizes as
-// bench/db/velt/redis.vlt.
+// bench/db/velt/redis.velt.
 import Redis from "ioredis";
 import { randomUUID } from "node:crypto";
 import { now, scale, report } from "./common.mjs";

@@ -15,13 +15,13 @@ use veltc::driver::{self, BuildOptions, Session};
 
 /// The programs checked, relative to the repository root.
 const PROGRAMS: &[&str] = &[
-    "tests/golden/lang/shared_frozen_calls.vlt",
-    "tests/golden/lang/shared_reads.vlt",
-    "tests/golden/lang/shared_reads_counted.vlt",
-    "tests/golden/lang/shared_reads_replaced.vlt",
-    "tests/golden/lang/shared_reads_through.vlt",
-    "tests/golden/lang/shared_frozen_loops.vlt",
-    "bench/shared/store_reads.vlt",
+    "tests/golden/lang/shared_frozen_calls.velt",
+    "tests/golden/lang/shared_reads.velt",
+    "tests/golden/lang/shared_reads_counted.velt",
+    "tests/golden/lang/shared_reads_replaced.velt",
+    "tests/golden/lang/shared_reads_through.velt",
+    "tests/golden/lang/shared_frozen_loops.velt",
+    "bench/shared/store_reads.velt",
 ];
 
 fn vir(path: &str, release: bool) -> String {

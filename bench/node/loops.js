@@ -1,4 +1,4 @@
-// Integer loops: Collatz chain lengths and a nested multiply/modulo loop (same as loops.vlt).
+// Integer loops: Collatz chain lengths and a nested multiply/modulo loop (same as loops.velt).
 // All intermediate values stay below 2^53, so doubles compute the same integers.
 function collatzSteps(start) {
   let n = start;

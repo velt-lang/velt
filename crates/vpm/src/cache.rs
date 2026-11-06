@@ -109,19 +109,19 @@ mod tests {
             "export const pkg: Package = { name: \"p\", version: \"1.0.0\" };",
         )
         .unwrap();
-        std::fs::write(pkg.join("src/lib.vlt"), "export const X: i64 = 1;\n").unwrap();
+        std::fs::write(pkg.join("src/lib.velt"), "export const X: i64 = 1;\n").unwrap();
         let entry = crate::registry::publish(&pkg, &loc).unwrap();
         let v = Version::new(1, 0, 0);
 
         let dir = fetch(&loc, "p", &v, &entry.checksum).unwrap();
         assert_eq!(dir, loc.cache.join("p-1.0.0"));
-        assert!(dir.join("src/lib.vlt").is_file());
+        assert!(dir.join("src/lib.velt").is_file());
 
         // A corrupted cache entry is replaced.
-        std::fs::write(dir.join("src/lib.vlt"), "tampered").unwrap();
+        std::fs::write(dir.join("src/lib.velt"), "tampered").unwrap();
         fetch(&loc, "p", &v, &entry.checksum).unwrap();
         assert_eq!(
-            std::fs::read_to_string(dir.join("src/lib.vlt")).unwrap(),
+            std::fs::read_to_string(dir.join("src/lib.velt")).unwrap(),
             "export const X: i64 = 1;\n"
         );
 
@@ -131,7 +131,7 @@ mod tests {
             .unwrap_err()
             .contains("missing"));
 
-        // A version published before `package.vlt` cannot be installed, and the error says why.
+        // A version published before `package.velt` cannot be installed, and the error says why.
         let old = loc.registry_package("p", &v);
         std::fs::rename(
             old.join(crate::manifest::MANIFEST_FILE),

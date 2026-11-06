@@ -1,3 +1,3 @@
-index_signatures.vlt:5:22: error: an integer index signature is not supported yet (#937)
-index_signatures.vlt:6:15: error: a named member (`name`) next to an index signature is not supported yet (#937)
-index_signatures.vlt:7:20: error: an index signature's key must be `string` or `number`; found `boolean`
+index_signatures.velt:5:22: error: an integer index signature is not supported yet (#937)
+index_signatures.velt:6:15: error: a named member (`name`) next to an index signature is not supported yet (#937)
+index_signatures.velt:7:20: error: an index signature's key must be `string` or `number`; found `boolean`

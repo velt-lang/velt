@@ -1,5 +1,5 @@
 //! SQLite workloads with rusqlite (bench/db/README.md): a file database in the temp directory
-//! with WAL and synchronous = NORMAL. Same SQL and sizes as bench/db/velt/sqlite.vlt.
+//! with WAL and synchronous = NORMAL. Same SQL and sizes as bench/db/velt/sqlite.velt.
 
 use db_bench::{report, scale, unique_suffix, Row};
 use rusqlite::{named_params, Connection, OptionalExtension, Statement};

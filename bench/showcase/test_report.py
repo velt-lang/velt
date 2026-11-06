@@ -252,7 +252,7 @@ class Definitions(unittest.TestCase):
         self.assertTrue(programs)
         for p in programs:
             table = suites.GAME_THREADS.get(p, {})
-            files = [("velt", f[:-4]) for f in os.listdir(os.path.join(here, p)) if f.endswith(".vlt")]
+            files = [("velt", f[:-4]) for f in os.listdir(os.path.join(here, p)) if f.endswith(".velt")]
             files += [("js", f[:-3]) for f in os.listdir(os.path.join(here, p)) if f.endswith(".js")]
             files += [("rust", f[:-3]) for f in bins if f == f"{p}.rs" or f.startswith(f"{p}_")]
             for f in files:
@@ -284,7 +284,7 @@ class Definitions(unittest.TestCase):
                 if lang == "rust":
                     path = os.path.join(here, "rust", "src", "bin", f"{stem}.rs")
                 else:
-                    path = os.path.join(here, program, f"{stem}.{'vlt' if lang == 'velt' else 'js'}")
+                    path = os.path.join(here, program, f"{stem}.{'velt' if lang == 'velt' else 'js'}")
                 if not os.path.isfile(path):
                     continue
                 src = open(path, encoding="utf-8").read()

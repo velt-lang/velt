@@ -11,8 +11,8 @@ set -e
 dir=$(cd "$(dirname "$0")" && pwd)
 out=${OUT:-$(mktemp -d)}
 for f in vd vd_full vd_same iface undef if1 pick pick_hand; do
-  "$BASE" build --release "$dir/$f.vlt" -o "$out/$f.base" > /dev/null
-  "$HEAD" build --release "$dir/$f.vlt" -o "$out/$f.head" > /dev/null
+  "$BASE" build --release "$dir/$f.velt" -o "$out/$f.base" > /dev/null
+  "$HEAD" build --release "$dir/$f.velt" -o "$out/$f.head" > /dev/null
 done
 for r in $(seq "${1:-8}"); do
   for f in vd vd_full vd_same iface undef if1 pick pick_hand; do

@@ -196,16 +196,16 @@ mod tests {
     fn quoting_and_paths() {
         assert_eq!(quote("a\"b\\c\u{e9}"), "\"a\\22b\\5Cc\\C3\\A9\"");
         assert_eq!(
-            file_and_directory("C:/x/std/prelude/result.vlt", "C:/w"),
-            ("result.vlt".into(), "C:/x/std/prelude".into())
+            file_and_directory("C:/x/std/prelude/result.velt", "C:/w"),
+            ("result.velt".into(), "C:/x/std/prelude".into())
         );
         assert_eq!(
-            file_and_directory("/usr/lib/a.vlt", "/w"),
-            ("a.vlt".into(), "/usr/lib".into())
+            file_and_directory("/usr/lib/a.velt", "/w"),
+            ("a.velt".into(), "/usr/lib".into())
         );
         assert_eq!(
-            file_and_directory("examples/foo.vlt", "C:/w"),
-            ("examples/foo.vlt".into(), "C:/w".into())
+            file_and_directory("examples/foo.velt", "C:/w"),
+            ("examples/foo.velt".into(), "C:/w".into())
         );
     }
 }

@@ -1,4 +1,4 @@
-// A particle update over `Vec<Vec2>` with a `Copy` struct: the algorithm of particles_*.vlt.
+// A particle update over `Vec<Vec2>` with a `Copy` struct: the algorithm of particles_*.velt.
 #[derive(Clone, Copy)]
 struct Vec2 {
     x: f64,

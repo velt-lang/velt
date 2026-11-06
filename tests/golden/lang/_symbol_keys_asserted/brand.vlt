@@ -1,3 +1,0 @@
-// Symbol constants (symbol_keys_asserted_modules.vlt).
-export const VNODE: unique symbol = Symbol("sigx:vnode");
-export const CELL: unique symbol = Symbol.for("sigx.cell");

@@ -1,4 +1,4 @@
-// render.vlt on React (react-dom/server renderToString) or Preact (preact-render-to-string):
+// render.velt on React (react-dom/server renderToString) or Preact (preact-render-to-string):
 // the same tree (page.mjs), data, sizes and RESULT lines.
 //
 //   node render.mjs <react|preact> [both|small|large] [scale]

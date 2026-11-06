@@ -1,0 +1,30 @@
+// check: no leaks
+// A handler whose state changes from request to request (#854): requests run on other threads,
+// each with its own copy of what the handler captured, so changing a captured object is a
+// compile error (lang/errors/http_server/http_handler_changes_through_call.velt). Shared in a
+// `Mutex`, every request changes the one object, and the program sees the count, as in Node.
+import { serve } from "http-server";
+
+class C {
+  count: number = 0;
+  handle(path: string): string {
+    this.count++;
+    return `${this.count}`;
+  }
+}
+
+async function main() {
+  const c = shared(new Mutex(new C()));
+  const mine = c.clone();
+  const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+    const path = new URL(req.url).pathname;
+    return new Response(mine.with((v) => v.handle(path)));
+  });
+  let seen = "";
+  for (let i = 0; i < 5; i++) {
+    const r = await fetch(`http://127.0.0.1:${server.port}/`);
+    seen = `${seen}${await r.text()} `;
+  }
+  console.log(seen.trim(), c.with((v) => v.count));
+  await server.shutdown();
+}

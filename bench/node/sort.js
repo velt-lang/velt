@@ -1,4 +1,4 @@
-// Sorting (same workload as sort.vlt). Numbers need a comparator (the default sort is textual).
+// Sorting (same workload as sort.velt). Numbers need a comparator (the default sort is textual).
 function checksum(xs) {
   let h = 0;
   for (let i = 0; i < xs.length; i++) {

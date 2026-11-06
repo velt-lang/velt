@@ -79,7 +79,7 @@ fn compile_with(release: bool, debug_vars: bool) -> Program {
 
 fn compile_source(src: &str, release: bool, debug_vars: bool) -> Program {
     let opts = BuildOptions {
-        input: PathBuf::from("main.vlt"),
+        input: PathBuf::from("main.velt"),
         root_source: Some(src.to_string()),
         release,
         debug_vars,
@@ -304,8 +304,8 @@ const SAMPLE_ONE_IN: u64 = 16;
 /// Goldens the sample keeps by name: the one a bug was found through (#1760), and one that reaches
 /// the branch the sample would otherwise miss (a string enum's members, in `debug_kind`).
 const ALWAYS_SAMPLED: &[&str] = &[
-    "lang/closure_nested_assigns_capture.vlt",
-    "lang/array_join_enum.vlt",
+    "lang/closure_nested_assigns_capture.velt",
+    "lang/array_join_enum.velt",
 ];
 
 /// Whether the golden at `rel` (relative to `tests/golden`, with `/`) is in the sample: chosen by
@@ -319,10 +319,10 @@ fn in_sample(rel: &str) -> bool {
 
 #[test]
 fn the_sample_is_a_fixed_fraction_by_name() {
-    assert!(in_sample("lang/array_join_enum.vlt"));
-    assert!(in_sample("lang/closure_nested_assigns_capture.vlt"));
+    assert!(in_sample("lang/array_join_enum.velt"));
+    assert!(in_sample("lang/closure_nested_assigns_capture.velt"));
     let sampled = (0..16_000)
-        .filter(|i| in_sample(&format!("lang/g{i}.vlt")))
+        .filter(|i| in_sample(&format!("lang/g{i}.velt")))
         .count();
     assert!((800..1200).contains(&sampled), "{sampled} of 16,000");
 }
@@ -352,7 +352,7 @@ fn every_golden_compiles_with_variables() {
         for e in entries.flatten() {
             let path = e.path();
             let name = e.file_name().to_string_lossy().into_owned();
-            if path.extension().is_some_and(|x| x == "vlt") && !name.starts_with('_') {
+            if path.extension().is_some_and(|x| x == "velt") && !name.starts_with('_') {
                 programs.push(path);
             }
         }
@@ -484,7 +484,7 @@ fn dwarf_of_handlers_and_cases_verifies() {
     let mut programs: Vec<(String, BuildOptions)> = vec![(
         "handlers".into(),
         BuildOptions {
-            input: dir.path().join("handlers.vlt"),
+            input: dir.path().join("handlers.velt"),
             root_source: Some(HANDLERS.to_string()),
             ..BuildOptions::default()
         },
@@ -495,7 +495,7 @@ fn dwarf_of_handlers_and_cases_verifies() {
         "std/jsx_async",
         "std/jsx_render",
     ] {
-        let input = goldens.join(format!("{golden}.vlt"));
+        let input = goldens.join(format!("{golden}.velt"));
         programs.push((
             golden.replace('/', "_"),
             BuildOptions {
@@ -585,7 +585,7 @@ fn debug_info_of_a_long_function_grows_with_it() {
     let size = |n: usize| {
         let object = dir.path().join(format!("long_main_{n}.o"));
         let opts = BuildOptions {
-            input: dir.path().join(format!("long_main_{n}.vlt")),
+            input: dir.path().join(format!("long_main_{n}.velt")),
             root_source: Some(long_main(n)),
             output: Some(object.clone()),
             emit: veltc::cli::Emit::Obj,
@@ -615,7 +615,7 @@ fn debug_info_of_a_long_function_grows_with_it() {
 #[test]
 fn a_build_without_line_information_describes_no_variables() {
     let opts = BuildOptions {
-        input: PathBuf::from("main.vlt"),
+        input: PathBuf::from("main.velt"),
         root_source: Some(SRC.to_string()),
         target: Some("x86_64-pc-windows-msvc".into()),
         debug_vars: true,

@@ -284,7 +284,7 @@ impl FnLower<'_, '_> {
     }
 
     /// `let pat = <map>.[MAP_KEY_AT](cursor)` (or `[MAP_VALUE_AT]`, `[MAP_ENTRY_AT]`) in a loop over a frozen
-    /// map (sema for_map.rs; std map.vlt "live `for...of`"), whose bindings nothing changes:
+    /// map (sema for_map.rs; std map.velt "live `for...of`"), whose bindings nothing changes:
     /// bound into the key and value the map stores, frozen, as a loop over an array binds its
     /// elements, instead of to the copies the methods' frozen instances return. True when done.
     pub(super) fn frozen_map_entry(&mut self, pat: &Pat, init: &hir::Expr) -> bool {

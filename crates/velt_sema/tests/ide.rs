@@ -295,7 +295,7 @@ function main() { console.log(Token.make().id); }
 fn jsx_tags_and_attributes() {
     let src = "// @jsxImportSource ./_jsx_test_provider
 function main() { const e = <a href=\"/x\">x</a>; }";
-    let l = load_src_at(&repo_root().join("tests/golden/lang/main.vlt"), src);
+    let l = load_src_at(&repo_root().join("tests/golden/lang/main.velt"), src);
     let file = l.modules[l.root].file;
     let a = check_for_ide(&l.modules, l.root);
     let tags = a.jsx_intrinsics(file);
@@ -390,7 +390,7 @@ fn closing_tags_name_what_their_opening_tags_do() {
     let src = "// @jsxImportSource ./_jsx_test_provider
 function Card(props: { title: string; children: JSX.Element }): JSX.Element { return <div>{props.title}</div>; }
 function main() { const e = <Card title=\"t\"><p>x</p></Card>; }";
-    let l = load_src_at(&repo_root().join("tests/golden/lang/main.vlt"), src);
+    let l = load_src_at(&repo_root().join("tests/golden/lang/main.velt"), src);
     let file = l.modules[l.root].file;
     let a = check_for_ide(&l.modules, l.root);
     let card = a
@@ -411,7 +411,7 @@ fn a_mismatched_closing_tag_names_nothing() {
     let src = "// @jsxImportSource ./_jsx_test_provider
 function Card(props: { title: string }): JSX.Element { return <div>{props.title}</div>; }
 function main() { const e = <Card title=\"t\"></Other>; }";
-    let l = load_src_lenient_at(&repo_root().join("tests/golden/lang/main.vlt"), src);
+    let l = load_src_lenient_at(&repo_root().join("tests/golden/lang/main.velt"), src);
     let file = l.modules[l.root].file;
     let a = check_for_ide(&l.modules, l.root);
     let card = a.def_at(file, at(src, "<Card", 0, 1)).expect("opening tag");

@@ -97,10 +97,10 @@ fn m3_golden(name: &str) -> String {
     golden_out("m3", name)
 }
 
-/// The source of golden program `tests/golden/<dir>/<name>.vlt`, for [`run_src`].
+/// The source of golden program `tests/golden/<dir>/<name>.velt`, for [`run_src`].
 fn golden_src(dir: &str, name: &str) -> String {
     let path = format!(
-        "{}/../../tests/golden/{dir}/{name}.vlt",
+        "{}/../../tests/golden/{dir}/{name}.velt",
         env!("CARGO_MANIFEST_DIR")
     );
     std::fs::read_to_string(&path).unwrap_or_else(|e| panic!("{path}: {e}"))

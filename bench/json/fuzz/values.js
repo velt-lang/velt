@@ -1,4 +1,4 @@
-// Node's side of bench/json/fuzz/values.vlt.
+// Node's side of bench/json/fuzz/values.velt.
 const fs = require("fs");
 function keysOf(v, out) {
   if (v !== null && typeof v === "object") {

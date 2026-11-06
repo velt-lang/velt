@@ -42,7 +42,7 @@ const MAX_JOBS: usize = 16;
 /// What to build.
 #[derive(Clone, Debug)]
 pub struct CBuildRequest<'a> {
-    /// Package root (contains package.vlt and `native/`).
+    /// Package root (contains package.velt and `native/`).
     pub root: &'a Path,
     /// Its manifest (with `sources` libraries).
     pub manifest: &'a Manifest,
@@ -64,7 +64,7 @@ pub fn check_has_libraries(
     for (lib, _) in manifest.c_source_libraries() {
         if !meta.c.contains_key(lib) {
             return Err(format!(
-                "{what}: the bundle has no C library `{lib}`, which package.vlt builds from `sources`"
+                "{what}: the bundle has no C library `{lib}`, which package.velt builds from `sources`"
             ));
         }
     }
@@ -458,7 +458,7 @@ mod tests {
         let root = tmp.path();
         std::fs::create_dir_all(root.join("native/target")).unwrap();
         std::fs::create_dir_all(root.join("src")).unwrap();
-        std::fs::write(root.join("package.vlt"), MANIFEST).unwrap();
+        std::fs::write(root.join("package.velt"), MANIFEST).unwrap();
         std::fs::write(root.join("native/a.c"), "int a;\n").unwrap();
         std::fs::write(root.join("native/a.inc"), "int b;\n").unwrap();
         let key_of = |text: &str, target: &str| {
@@ -483,7 +483,7 @@ mod tests {
 
         // Not built from these.
         std::fs::write(root.join("native/target/a.o"), "built").unwrap();
-        std::fs::write(root.join("src/lib.vlt"), "changed").unwrap();
+        std::fs::write(root.join("src/lib.velt"), "changed").unwrap();
         assert_eq!(base, key_of(MANIFEST, linux));
 
         // Any file under `native/`, which a source can include, by its bytes.

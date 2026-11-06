@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Writes std/compress/inflate/crc_table.vlt: gzip's CRC-32 (RFC 1952 §8, the reflected polynomial
+"""Writes std/compress/inflate/crc_table.velt: gzip's CRC-32 (RFC 1952 §8, the reflected polynomial
 0xEDB88320) as slicing-by-8 tables, table `k` at `k * 256`: table 0 is the byte-at-a-time table,
 and table `k` advances table `k - 1`'s value by one more zero byte.
 
-    python3 scripts/gen-crc32-table.py > std/compress/inflate/crc_table.vlt
+    python3 scripts/gen-crc32-table.py > std/compress/inflate/crc_table.velt
 """
 
 POLY = 0xEDB88320

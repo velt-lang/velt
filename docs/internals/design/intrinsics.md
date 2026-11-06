@@ -10,7 +10,7 @@ compiles: `Math.sqrt`, `x.countOnes()`, a SIMD lane add, an atomic compare-and-s
 SHA-256 round. Knowing it is what lets the compiler emit one instruction, fold it on constants,
 move it out of a loop, or pick the instruction a CPU has.
 
-Velt's front end treats them that way. `std/lang/intrinsics/*.vlt` declares each one
+Velt's front end treats them that way. `std/lang/intrinsics/*.velt` declares each one
 (`declare intrinsic function`), `velt_sema::intrinsic_decls` is the one table from name to
 `hir::Intrinsic`, and a test fails on a missing or an extra one (std-layout.md §10). Below HIR
 they were not: lowering turned every intrinsic into the call of an extern whose *name* each
@@ -75,7 +75,7 @@ The families are internal: programs use `Math`, `velt/simd`, `Atomic` and the in
 
 ## Adding an intrinsic
 
-1. **Declare it** in `std/lang/intrinsics/<family>.vlt` with a doc comment, or, for one that
+1. **Declare it** in `std/lang/intrinsics/<family>.velt` with a doc comment, or, for one that
    std reaches through a runtime function, `declare function velt_rt_<family>_<name>` in the
    std module that uses it.
 2. **Register it** in its family's enum in `velt_vir` with its symbol and signature; give it

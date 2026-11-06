@@ -15,15 +15,15 @@ const ALLOWED: &str = "integers (`i8` … `u64`, `isize`, `usize`), `f32`, `f64`
                        `Ptr<T>` and `Ptr<T> | null` (velt/ffi), and for a parameter `null`, \
                        `StrBytes`, `CString`, `Out<T>` of a number and `OutPtr<T>` (velt/ffi), and arrays of numbers (`u8[]`, `readonly f64[]`)";
 
-/// The module of std's `StrBytes` (std/ffi/str_bytes.vlt).
+/// The module of std's `StrBytes` (std/ffi/str_bytes.velt).
 const STR_BYTES_MODULE: &str = velt_common::std_module!(ffi_str_bytes);
 
-/// velt/ffi's classes a C function takes by address (std/ffi/{c_string,out,out_ptr}.vlt).
+/// velt/ffi's classes a C function takes by address (std/ffi/{c_string,out,out_ptr}.velt).
 const C_STRING: &str = velt_common::std_item!(ffi_c_string, "CString");
 const OUT: &str = velt_common::std_item!(ffi_out, "Out");
 const OUT_PTR: &str = velt_common::std_item!(ffi_out_ptr, "OutPtr");
 
-/// std's pointer into C memory (std/ffi/ptr.vlt).
+/// std's pointer into C memory (std/ffi/ptr.velt).
 const PTR: &str = velt_common::std_item!(ffi_ptr, "Ptr");
 
 /// The imports of extern function `d` (`kind`, declared in `module`) with signature `sig`:

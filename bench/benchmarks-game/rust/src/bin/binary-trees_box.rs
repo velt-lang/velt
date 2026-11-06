@@ -1,6 +1,6 @@
 // binary-trees with `Box` nodes on mimalloc, single-threaded. NOT a published Benchmarks Game
 // program: every published Rust binary-trees uses an arena crate. It exists for a same-allocator
-// comparison with the idiomatic Velt port (bench/benchmarks-game/binary-trees/main.vlt), which
+// comparison with the idiomatic Velt port (bench/benchmarks-game/binary-trees/main.velt), which
 // allocates and frees every node individually through the Velt runtime's mimalloc.
 // Derived from Rust #5 (the Rust Project Developers, TeXitoi, Cristi Cobzarenco, Matt Brubeck;
 // modified by Tom Kaitchuck, Volodymyr M. Lisivka and Ryohei Machida): bumpalo → `Box`, rayon →

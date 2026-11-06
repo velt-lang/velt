@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# JSON benchmark harness (Linux / macOS). Builds every bench/json/*.vlt (LLVM release) plus the
+# JSON benchmark harness (Linux / macOS). Builds every bench/json/*.velt (LLVM release) plus the
 # Rust (serde_json) and Node versions, checks that all print the same output, and prints a
 # Markdown table of the best wall-clock time (ms) over RUNS runs.
 #
@@ -47,8 +47,8 @@ PY
 
 echo "| benchmark | Velt (LLVM release) | Rust serde_json | Node |"
 echo "|---|---|---|---|"
-for src in "$HERE"/*.vlt; do
-  name=$(basename "$src" .vlt)
+for src in "$HERE"/*.velt; do
+  name=$(basename "$src" .velt)
   [[ -n "$ONLY" && "$name" != "$ONLY" ]] && continue
   echo "$name..." >&2
   "$VELT" build --release "$src" -o "$OUT/$name"

@@ -1,4 +1,4 @@
-//! The registry of lint rules, and how loud each is in a package (`lint` in `package.vlt`).
+//! The registry of lint rules, and how loud each is in a package (`lint` in `package.velt`).
 
 use std::collections::BTreeMap;
 

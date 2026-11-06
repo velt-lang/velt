@@ -34,7 +34,7 @@ compiles.
 | program | off | cache, cold | cache, edit | std cache, cold | std cache, again | std cache, edit |
 |---|---:|---:|---:|---:|---:|---:|
 | hello | 581M | 595M | 541M | 597M | 496M | 542M |
-| `bench/json/parse_typed.vlt` | 9,320M | 10,176M | 7,196M | 10,459M | 1,123M | 3,917M |
+| `bench/json/parse_typed.velt` | 9,320M | 10,176M | 7,196M | 10,459M | 1,123M | 3,917M |
 | scale benchmark, 10k lines | 89,238M | 91,733M | 91,721M | 91,782M | 16,304M | 91,782M |
 
 Debug builds (Cranelift; the std cache serves release builds only):
@@ -42,7 +42,7 @@ Debug builds (Cranelift; the std cache serves release builds only):
 | program | off | cache, cold | cache, again | cache, edit |
 |---|---:|---:|---:|---:|
 | hello | 704M | 718M | 662M | 661M |
-| `bench/json/parse_typed.vlt` | 3,520M | 4,196M | 980M | 986M |
+| `bench/json/parse_typed.velt` | 3,520M | 4,196M | 980M | 986M |
 | scale benchmark, 10k lines | 6,134M | 4,295M | 4,042M | 4,053M |
 
 - Debug, warm: the link is the floor. `ld.lld` takes 357-362M of hello's 660M and 390M of the
@@ -180,7 +180,7 @@ fact read around it is a silent miscompile in some programs only. Two guards:
 A served object is not inlined into its callers across the package boundary. Layer 2 keeps
 `inline()` and `SMALL_COST` bodies inlinable, but a hot mid-size std function called in a loop
 loses the inlining LLVM gives it today. That is measured, not assumed: today's std cache already
-shows it. `bench/json/parse_typed.vlt` built with `VELT_STD_OBJECT=1` runs 3,295M instructions
+shows it. `bench/json/parse_typed.velt` built with `VELT_STD_OBJECT=1` runs 3,295M instructions
 against 2,520M without it (+31%): the reader's functions are linked instead of inlined into
 the loop.
 

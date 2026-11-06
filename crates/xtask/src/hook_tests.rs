@@ -86,12 +86,12 @@ mod tests {
         };
         assert_eq!(of(&["crates/velt_common/src/std_hooks.rs"]), both);
         assert_eq!(of(&["crates/velt_common/src/hook_sig.rs"]), both);
-        let std = of(&["std/lang/hooks/number_text.vlt"]);
+        let std = of(&["std/lang/hooks/number_text.velt"]);
         assert_eq!((std.signatures, std.guard), (true, false));
         for path in [
             "crates/velt_vir/src/lower/strbuf.rs",
             "crates/velt_rt/src/strbuf.rs",
-            "bench/stdport/int_to_string.vlt",
+            "bench/stdport/int_to_string.velt",
         ] {
             assert_eq!(
                 of(&[path]),
@@ -110,7 +110,7 @@ mod tests {
             assert_eq!(of(&[path]), HookTests::default(), "{path}");
         }
         assert_eq!(
-            of(&["std/a.vlt", "crates/velt_opt/src/lib.rs"])
+            of(&["std/a.velt", "crates/velt_opt/src/lib.rs"])
                 .commands()
                 .len(),
             2
@@ -149,7 +149,7 @@ mod tests {
             "crates/velt_codegen_llvm/src/lib.rs",
             "crates/velt_codegen_cl/src/lib.rs",
             "crates/velt_rt/src/strbuf.rs",
-            "bench/stdport/int_to_string.vlt",
+            "bench/stdport/int_to_string.velt",
         ] {
             let paths = vec![path.to_string()];
             let p = Plan::for_paths(&g, &paths);

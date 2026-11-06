@@ -1,4 +1,4 @@
-//! `package.vlt`, the package manifest, is not analyzed as a program: `velt` reads it as data and
+//! `package.velt`, the package manifest, is not analyzed as a program: `velt` reads it as data and
 //! never compiles it (docs/internals/design/package-manifest.md "Editors"). Its diagnostics are
 //! the reader's own (`vpm::manifest::read`, what every `velt` command reports), and completion and
 //! hover come from the manifest's field schema (`vpm::manifest::ide`). The registry adds versions

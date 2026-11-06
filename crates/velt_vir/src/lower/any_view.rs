@@ -2,7 +2,7 @@
 //! program with typed proxies, an `any` holding an object of another type converted to a
 //! proxiable object type `P` (`x as VNode` of a class instance, or of an object literal with
 //! more fields) is a *view* of that object, where Node keeps the one object. The view is
-//! `Proxy[PROXY_VIEW](x)` (std/lang/proxy/index.vlt), a `Proxy` without traps, tagged as a typed proxy
+//! `Proxy[PROXY_VIEW](x)` (std/lang/proxy/index.velt), a `Proxy` without traps, tagged as a typed proxy
 //! (proxy_typed.rs): each field read and write goes to the object (`[PROXY_GET]` / `[PROXY_SET]`, the
 //! value checked as the field's type, so a missing or mistyped member is a `TypeError` where
 //! it is read), and nothing is copied. Converting the view back to `any` gives the object

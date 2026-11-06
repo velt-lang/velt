@@ -7,12 +7,12 @@
 mod no_window;
 mod test_dir;
 
-/// The `fence seq_cst` instructions in the release LLVM IR of `src`, compiled as `main.vlt`.
+/// The `fence seq_cst` instructions in the release LLVM IR of `src`, compiled as `main.velt`.
 fn seqcst_fences(src: &str) -> usize {
     let dir = test_dir::TestDir::new();
-    std::fs::write(dir.path().join("main.vlt"), src).unwrap();
+    std::fs::write(dir.path().join("main.velt"), src).unwrap();
     let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["build", "main.vlt", "--release", "--emit", "llvm"])
+        .args(["build", "main.velt", "--release", "--emit", "llvm"])
         .current_dir(dir.path())
         .output()
         .unwrap();

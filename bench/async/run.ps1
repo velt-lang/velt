@@ -1,4 +1,4 @@
-# Async benchmark harness (Windows / PowerShell 7): builds every bench/async/*.vlt (LLVM release)
+# Async benchmark harness (Windows / PowerShell 7): builds every bench/async/*.velt (LLVM release)
 # plus the Rust/tokio (bench/async/rust) and Node (bench/async/node) versions, checks that all of
 # them print the same output, and prints two Markdown tables: best wall-clock time over -Runs runs,
 # and peak working set (max over the runs).
@@ -83,7 +83,7 @@ function Measure-Best([string]$exe, [string[]]$arguments = @(), [hashtable]$envV
 $rustDir = Join-Path $target "release"
 $columns = @("Velt (all cores)", "Velt (1 thread)", "Rust tokio multi-thread", "Rust tokio current-thread", "Node")
 $rows = @()
-foreach ($src in Get-ChildItem $PSScriptRoot -Filter *.vlt | Sort-Object Name) {
+foreach ($src in Get-ChildItem $PSScriptRoot -Filter *.velt | Sort-Object Name) {
     $name = $src.BaseName
     if ($Only -and $name -ne $Only) { continue }
     Write-Host "$name..."

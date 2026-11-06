@@ -1,4 +1,4 @@
-// server.vlt on React or Preact: `/small` and `/large` render page.mjs's tree per request.
+// server.velt on React or Preact: `/small` and `/large` render page.mjs's tree per request.
 // Under Node it serves with node:http, under Bun with Bun.serve.
 //   node server.mjs <react|preact> <port>      bun server.mjs <react|preact> <port>
 // With CLUSTER=1 Node forks one worker per core (node:cluster, a shared listening socket), as

@@ -8,7 +8,7 @@
 //!   configuration changed);
 //! - the gate's own `velt fmt --check std examples packages` when anything under them
 //!   changed, or when the formatter (`velt_fmt`) or a crate it depends on did (it takes about a
-//!   second, and it picks the `.vlt` files and the `.ts`/`.tsx` files of packages exactly as the
+//!   second, and it picks the `.velt` files and the `.ts`/`.tsx` files of packages exactly as the
 //!   gate does);
 //! - the file-size rule (crates/xtask/src/file_size.rs) on the changed Rust files;
 //! - `cargo clippy -p <changed crates and their dependents> --all-targets -- -D warnings`, or
@@ -171,7 +171,7 @@ pub fn select(graph: &Graph, paths: &[String], exists: impl Fn(&str) -> bool) ->
         if !exists(path) {
             continue;
         }
-        if (path.starts_with("std/") || path.starts_with("packages/")) && path.ends_with(".vlt") {
+        if (path.starts_with("std/") || path.starts_with("packages/")) && path.ends_with(".velt") {
             if let StdLint::None = sel.std_lint {
                 sel.std_lint = StdLint::Files(vec![]);
             }
@@ -330,7 +330,7 @@ fn std_lint(r: &mut Runner, which: &StdLint) {
     let velt = target_dir(r.root).join("debug").join(exe("velt"));
     let mut lint = Command::new(velt);
     lint.current_dir(r.root)
-        .args(["run", "scripts/std-lint/main.vlt", "--"]);
+        .args(["run", "scripts/std-lint/main.velt", "--"]);
     // The lists' base: origin/main, else main (std-lint fails on a revision git lacks).
     if let Some(base) = crate::changes::default_base(r.root) {
         lint.args(["--base", &base]);
@@ -341,7 +341,7 @@ fn std_lint(r: &mut Runner, which: &StdLint) {
     r.step(
         "std-lint (docs/internals/design/std-layout.md §2, §6)",
         &mut lint,
-        "follow the message of each problem: std files live in module folders, an index.vlt only \
+        "follow the message of each problem: std files live in module folders, an index.velt only \
          re-exports, one exported class per file, at most 400 lines",
     );
 }
@@ -471,17 +471,17 @@ mod tests {
     #[test]
     fn changed_tests_get_the_timing_lint() {
         let s = sel(&[
-            "packages/redis/tests/basic.test.vlt",
-            "tests/golden/std/timers.vlt",
-            "tests/golden/lang/timer_order.vlt",
-            "std/net/listen.vlt",
-            "tests/std/deleted.test.vlt",
+            "packages/redis/tests/basic.test.velt",
+            "tests/golden/std/timers.velt",
+            "tests/golden/lang/timer_order.velt",
+            "std/net/listen.velt",
+            "tests/std/deleted.test.velt",
         ]);
         assert_eq!(
             s.timed,
             [
-                "packages/redis/tests/basic.test.vlt",
-                "tests/golden/std/timers.vlt"
+                "packages/redis/tests/basic.test.velt",
+                "tests/golden/std/timers.velt"
             ]
         );
     }
@@ -521,18 +521,18 @@ mod tests {
 
     #[test]
     fn std_changes_lint_their_files_and_a_lint_change_lints_all_of_std() {
-        let s = sel(&["std/fs/index.vlt", "std/deleted.vlt", "docs/README.md"]);
-        assert_eq!(s.std_lint, StdLint::Files(vec!["std/fs/index.vlt".into()]));
+        let s = sel(&["std/fs/index.velt", "std/deleted.velt", "docs/README.md"]);
+        assert_eq!(s.std_lint, StdLint::Files(vec!["std/fs/index.velt".into()]));
         assert_eq!(sel(&["crates/xtask/src/main.rs"]).std_lint, StdLint::None);
         assert_eq!(
-            sel(&["std/fs/index.vlt", "scripts/std-lint/allow.vlt"]).std_lint,
+            sel(&["std/fs/index.velt", "scripts/std-lint/allow.velt"]).std_lint,
             StdLint::All
         );
     }
 
     #[test]
     fn deleted_files_select_their_crate_but_nothing_to_read() {
-        let s = sel(&["crates/velt_fmt/src/deleted.rs", "std/deleted.vlt"]);
+        let s = sel(&["crates/velt_fmt/src/deleted.rs", "std/deleted.velt"]);
         assert_eq!(s.clippy, packages(&["velt_fmt"]));
         assert!(s.sized.is_empty());
     }
@@ -540,9 +540,9 @@ mod tests {
     #[test]
     fn a_change_under_std_or_examples_runs_the_gates_velt_fmt() {
         for path in [
-            "std/encoding/json/index.vlt",
+            "std/encoding/json/index.velt",
             "std/README.md",
-            "examples/apps/chat/src/main.vlt",
+            "examples/apps/chat/src/main.velt",
             // `velt fmt` formats a package's .ts/.tsx sources too.
             "examples/apps/sigx-ssr/app/src/view.tsx",
             "examples/apps/sigx-ssr/app/src/deleted.ts",
@@ -553,11 +553,11 @@ mod tests {
             assert!(s.sized.is_empty());
         }
         for path in [
-            "tests/golden/m1/hello.vlt",
-            "tests/golden/errors/bad.vlt",
+            "tests/golden/m1/hello.velt",
+            "tests/golden/errors/bad.velt",
             "docs/internals/README.md",
             "stdlib.md",
-            "crates/velt_fmt/examples/x.vlt",
+            "crates/velt_fmt/examples/x.velt",
         ] {
             assert!(!sel(&[path]).velt_fmt, "{path}");
         }

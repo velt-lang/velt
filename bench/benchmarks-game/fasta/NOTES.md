@@ -16,8 +16,8 @@ Official size `25000000` (254,166,745 bytes of output); quick size `1000` = the 
 | `main.go` | [Go #2](https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/fasta-go-2.html) | The Go Authors, Joern Inge Vestgaarden, Jorge Peixoto de Morais Neto, Isaac Gouy, INADA Naoki | all cores |
 | `main_st.go` | [Go #1](https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/fasta-go-1.html) | The Go Authors et al. | 1 |
 | `main.js` | [Node #5](https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/fasta-node-5.html) | Roman Pletnev, Andrey Filatkin (based on Petr Prokhorenkov / Jos Hirth et al.) | 4 workers |
-| `main.vlt` | idiomatic Velt: `Random`, `Repeat`, `Alphabet` classes, `u8[]` blocks, `openWrite("/dev/stdout")` | | 1 |
-| `main_mt.vlt` | `main.vlt` + main draws each block's random numbers, a spawned task picks the letters; one block per core per round, `Promise.all` keeps the order | | all cores |
+| `main.velt` | idiomatic Velt: `Random`, `Repeat`, `Alphabet` classes, `u8[]` blocks, `openWrite("/dev/stdout")` | | 1 |
+| `main_mt.velt` | `main.velt` + main draws each block's random numbers, a spawned task picks the letters; one block per core per round, `Promise.all` keeps the order | | all cores |
 
 Deviations: Rust #7 uses `spin::Mutex` and `num_cpus`; the bench project only depends on rayon and
 regex, so it uses `std::sync::Mutex` and `std::thread::available_parallelism()` (the busy-retry
@@ -52,16 +52,16 @@ times are inflated and noisy; CPU seconds are the more reliable column. Versions
 
 ## Gap: Velt main vs Rust #3 (single thread), ~1.3–1.7× CPU
 
-Three separate causes, measured with variants of `main.vlt` (hyperfine, 5 runs, CPU):
+Three separate causes, measured with variants of `main.velt` (hyperfine, 5 runs, CPU):
 
 | Variant | CPU s |
 |---|---:|
-| `main.vlt` as is | 4.24 |
+| `main.velt` as is | 4.24 |
 | + LCG seed in a local instead of `rng.seed` | 3.66 |
 | + integer thresholds instead of `seed / IM` compared with f64 cumulative probabilities | 2.49 |
 | Rust #3 | 2.23 |
 
-1. **Algorithm (not a compiler issue).** `main.vlt` does what JS and Go #1 do: `seed / IM` as a
+1. **Algorithm (not a compiler issue).** `main.velt` does what JS and Go #1 do: `seed / IM` as a
    float and a linear search over f64 cumulative probabilities. Rust #3 precomputes
    `floor(p * IM)` as integers and compares the seed directly. Go #1 (same float algorithm) is
    slower than Velt. With Rust #3's integer thresholds Velt is within 1.1× of it.

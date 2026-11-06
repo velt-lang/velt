@@ -1,4 +1,4 @@
-//! pread.vlt's workloads in Rust: `FileExt::read_at` / `write_at`, `File::sync_all`.
+//! pread.velt's workloads in Rust: `FileExt::read_at` / `write_at`, `File::sync_all`.
 use std::fs::{File, OpenOptions};
 use std::os::unix::fs::FileExt;
 use std::time::Instant;

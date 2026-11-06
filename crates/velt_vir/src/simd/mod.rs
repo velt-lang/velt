@@ -1,7 +1,7 @@
 //! The SIMD operations: what each `velt_simd_*` extern means (rt_abi.md "SIMD").
 //!
 //! A vector value is a [`Ty::V128`]; its lanes are given by the operation. The SIMD API
-//! (`std/simd/*.vlt`, `velt/simd`) declares one extern per vector type and operation,
+//! (`std/simd/*.velt`, `velt/simd`) declares one extern per vector type and operation,
 //! `velt_simd_<type>_<op>`, and backends emit each call inline from the [`SimdCall`] its symbol
 //! parses to. No runtime function exists behind these symbols.
 
@@ -306,7 +306,7 @@ pub enum SimdCall {
     /// An operation on the mask type with lanes of the given width in bits.
     Mask(u32, MaskOp),
     /// An instruction of a CPU extension (`velt_simd_u32x4_<op>`, `velt_simd_u64x2_<op>`), which
-    /// the caller runs only where the CPU has the extension (std/simd/sha.vlt and clmul.vlt check
+    /// the caller runs only where the CPU has the extension (std/simd/sha.velt and clmul.velt check
     /// `Has` first).
     Inst(ExtOp),
     /// `velt_simd_has_<ext>() -> bool`: whether the CPU has the extension (the runtime's flag;

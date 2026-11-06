@@ -1,4 +1,4 @@
-// Building and summing a `Vec` of 1M `Copy` points, five times over: points_*.vlt in Rust.
+// Building and summing a `Vec` of 1M `Copy` points, five times over: points_*.velt in Rust.
 #[derive(Clone, Copy)]
 struct Point {
     x: f64,

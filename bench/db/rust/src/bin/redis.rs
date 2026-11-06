@@ -1,6 +1,6 @@
 //! Redis workloads with the `redis` crate (bench/db/README.md) against $BENCH_REDIS_URL, on one
 //! `MultiplexedConnection` (shared by the concurrent tasks, like std/redis and ioredis). Same
-//! commands and sizes as bench/db/velt/redis.vlt.
+//! commands and sizes as bench/db/velt/redis.velt.
 
 use db_bench::{report, scale, unique_suffix};
 use redis::aio::MultiplexedConnection;

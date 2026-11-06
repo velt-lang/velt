@@ -11,7 +11,7 @@ pub(super) const TARGET: (&str, &str) = (
 );
 pub(super) const CPU: (&str, &str) = (
     "--cpu <name>",
-    "baseline | x86-64-v2 (the x86_64 default) | x86-64-v3 | x86-64-v4 | native | a CPU name such as znver4 or neoverse-n1 (else $VELT_CPU, then build.cpu in package.vlt)",
+    "baseline | x86-64-v2 (the x86_64 default) | x86-64-v3 | x86-64-v4 | native | a CPU name such as znver4 or neoverse-n1 (else $VELT_CPU, then build.cpu in package.velt)",
 );
 pub(super) const BACKEND: (&str, &str) = (
     "--backend <name>",

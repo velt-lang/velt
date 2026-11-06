@@ -37,7 +37,7 @@ fn write_package(dir: &Path, name: &str, fields: &str) {
         ),
     )
     .unwrap();
-    std::fs::write(dir.join("src/lib.vlt"), format!("// {name}\n")).unwrap();
+    std::fs::write(dir.join("src/lib.velt"), format!("// {name}\n")).unwrap();
 }
 
 impl Env {
@@ -58,7 +58,7 @@ impl Env {
             format!("export const pkg: Package = {{ name: \"{name}\", version: \"{version}\" }};"),
         )
         .unwrap();
-        std::fs::write(dir.join("src/lib.vlt"), "\n").unwrap();
+        std::fs::write(dir.join("src/lib.velt"), "\n").unwrap();
         crate::registry::publish(&dir, &self.loc).unwrap();
     }
 
@@ -210,13 +210,13 @@ fn load_checks_members_and_their_manifests() {
     assert_eq!(
         lines,
         [
-            "velt.workspace.vlt:2:27: error: `apps/*` matches no package (no directory it names has a package.vlt)",
-            "packages/b2/package.vlt:1:38: error: two members are named `b`: packages/b and this one",
-            "packages/a/package.vlt:1:80: error: `b` is a member of this workspace; write `b: \"workspace\"`",
-            "packages/a/package.vlt:1:112: error: `jsno: \"workspace\"`, but no member and no workspace dependency is named `jsno`",
-            "packages/a/package.vlt:1:93: error: `json: \"workspace\"`, but no member and no workspace dependency is named `json`",
-            "packages/b/package.vlt:1:67: error: `velt` is set by the workspace (velt.workspace.vlt:3); remove it here",
-            "packages/b/package.vlt:1:84: error: `registry` of a member is the workspace's: move it to velt.workspace.vlt",
+            "velt.workspace.velt:2:27: error: `apps/*` matches no package (no directory it names has a package.velt)",
+            "packages/b2/package.velt:1:38: error: two members are named `b`: packages/b and this one",
+            "packages/a/package.velt:1:80: error: `b` is a member of this workspace; write `b: \"workspace\"`",
+            "packages/a/package.velt:1:112: error: `jsno: \"workspace\"`, but no member and no workspace dependency is named `jsno`",
+            "packages/a/package.velt:1:93: error: `json: \"workspace\"`, but no member and no workspace dependency is named `json`",
+            "packages/b/package.velt:1:67: error: `velt` is set by the workspace (velt.workspace.velt:3); remove it here",
+            "packages/b/package.velt:1:84: error: `registry` of a member is the workspace's: move it to velt.workspace.velt",
         ]
     );
 }
@@ -239,7 +239,7 @@ fn a_cycle_between_members_is_an_error() {
     let err = Workspace::load(&e.root).unwrap_err();
     assert_eq!(
         err,
-        "a/package.vlt:1:83: error: members depend on each other in a cycle: a → core → b → a"
+        "a/package.velt:1:83: error: members depend on each other in a cycle: a → core → b → a"
     );
 }
 
@@ -249,7 +249,7 @@ fn a_glob_of_another_case_matches_no_member() {
     e.member("apps/a", "a", "");
     let err = Workspace::load(&e.root).unwrap_err();
     assert!(
-        err.ends_with("`Apps/*` matches no package (no directory it names has a package.vlt)"),
+        err.ends_with("`Apps/*` matches no package (no directory it names has a package.velt)"),
         "{err}"
     );
 }
@@ -261,9 +261,9 @@ fn a_non_member_is_told_it_installs_on_its_own() {
     let other = e.member("other/x", "x", "");
     let installed = e.install(&other).unwrap();
     assert_eq!(installed.notes.len(), 1);
-    assert!(installed.notes[0].ends_with("velt.workspace.vlt does not list this package, so it is installed on its own, with its own velt.lock.json"), "{:?}", installed.notes);
+    assert!(installed.notes[0].ends_with("velt.workspace.velt does not list this package, so it is installed on its own, with its own velt.lock.json"), "{:?}", installed.notes);
     // A broken member does not stop a package the workspace doesn't list.
-    std::fs::write(e.root.join("a/package.vlt"), "broken").unwrap();
+    std::fs::write(e.root.join("a/package.velt"), "broken").unwrap();
     assert!(e.install(&other).is_ok());
 }
 
@@ -326,7 +326,7 @@ fn a_workspace_install_prints_override_and_native_notes() {
             format!("export const pkg: Package = {{ name: \"util\", version: \"{version}\", native: {{ c: {{}} }} }};"),
         )
         .unwrap();
-        std::fs::write(dir.join("src/lib.vlt"), "\n").unwrap();
+        std::fs::write(dir.join("src/lib.velt"), "\n").unwrap();
     };
     // `mid`, from the registry, asks for the registry's `util`; the member `util` wins.
     e.publish("util", "0.1.0");

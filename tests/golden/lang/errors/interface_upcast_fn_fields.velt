@@ -1,0 +1,23 @@
+// What does not convert to an interface with methods yet (#941): a literal property holding
+// a function that may throw. (A plain object literal stored in a variable first converts since
+// #1886: tests/golden/lang/any_object_iface_fn_fields.velt.)
+
+interface V {
+  readonly value: number;
+  show(k: number): string;
+}
+
+function main(): void {
+  const o = {
+    get value() {
+      return 1;
+    },
+    show(k: number) {
+      if (k < 0) {
+        throw new Error("negative");
+      }
+      return "x" + k;
+    },
+  };
+  const v: V = o;
+}

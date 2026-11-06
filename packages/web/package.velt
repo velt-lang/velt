@@ -1,0 +1,9 @@
+import type { Package } from "velt/package";
+
+export const pkg: Package = {
+  name: "web",
+  version: "0.1.0",
+  description: "A small router and middleware on http-server: the guide to building a framework",
+  entry: "src/lib.velt",
+  dependencies: { "http-server": { path: "../http-server" } },
+};

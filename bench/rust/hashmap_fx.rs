@@ -1,6 +1,6 @@
-// Hash maps (same workload as hashmap.vlt), with std's HashMap and an FxHash-style hasher (as
+// Hash maps (same workload as hashmap.velt), with std's HashMap and an FxHash-style hasher (as
 // in rustc-hash: rotate / xor / multiply per 8-byte word) instead of SipHash. Not part of the
-// harness table (run.ps1 pairs each .vlt with bench/rust/<name>.rs); RESULTS.md reports it as a
+// harness table (run.ps1 pairs each .velt with bench/rust/<name>.rs); RESULTS.md reports it as a
 // second Rust reference for the hashmap benchmark.
 use std::collections::HashMap;
 use std::hash::{BuildHasherDefault, Hasher};

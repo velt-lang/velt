@@ -1,4 +1,4 @@
-//! `<T>x`, TypeScript's older type assertion syntax. In a `.tsx` or `.vlt` file a `<` there
+//! `<T>x`, TypeScript's older type assertion syntax. In a `.tsx` or `.velt` file a `<` there
 //! starts JSX, as in TypeScript's `.tsx`; in a plain `.ts` file it is a type assertion, which
 //! Velt does not have: it is reported with a fix, and the operand is parsed on so the rest of the
 //! file still parses.

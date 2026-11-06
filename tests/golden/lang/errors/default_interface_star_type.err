@@ -1,1 +1,1 @@
-default_interface_star_type.vlt:4:15: error: `d.v` is imported with `import type` and cannot be used as a value
+default_interface_star_type.velt:4:15: error: `d.v` is imported with `import type` and cannot be used as a value

@@ -1,4 +1,4 @@
-//! axum 0.8 baseline for the TechEmpower-style benchmark (same routes as server.vlt).
+//! axum 0.8 baseline for the TechEmpower-style benchmark (same routes as server.velt).
 //! Usage: techempower-axum <port>.
 
 use axum::http::header;

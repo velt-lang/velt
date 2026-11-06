@@ -1,1 +1,1 @@
-jsx_automatic_not_callable.vlt:3:11: error: `jsx` of the JSX provider '_jsx_auto_value' is not a function (it has type `string`)
+jsx_automatic_not_callable.velt:3:11: error: `jsx` of the JSX provider '_jsx_auto_value' is not a function (it has type `string`)

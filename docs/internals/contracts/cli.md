@@ -1,11 +1,11 @@
 # `velt` CLI — CONTRACT
 
 ```
-velt build [<file.vlt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple> | --host <package>] [--cpu <name>] [--emit vir|llvm|obj|exe] [--locked] [--no-generators] [--json] [-v] [--timings]
-velt run   [<file.vlt>] [--release] [-g] [--target <triple>] [--cpu <name>] [--backend cranelift|llvm] [--locked] [--no-generators] [-- <program args>...]
-velt check [<file.vlt>] [--target <triple>] [--perf [--deps]] [--fix[=safe|review]] [--json] [--locked] [--no-generators] [-v]
+velt build [<file.velt>] [-o <out>] [--release] [-g] [--backend cranelift|llvm] [--target <triple> | --host <package>] [--cpu <name>] [--emit vir|llvm|obj|exe] [--locked] [--no-generators] [--json] [-v] [--timings]
+velt run   [<file.velt>] [--release] [-g] [--target <triple>] [--cpu <name>] [--backend cranelift|llvm] [--locked] [--no-generators] [-- <program args>...]
+velt check [<file.velt>] [--target <triple>] [--perf [--deps]] [--fix[=safe|review]] [--json] [--locked] [--no-generators] [-v]
 velt check --ts-compat [<file|dir>...] [--fix[=safe|review]] [--json] [--locked] [-v]
-velt dev   [<file.vlt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]
+velt dev   [<file.velt>] [--exe [--release] [-g] [--cpu <name>] [--backend <name>]] [--locked] [-v] [--timings] [-- <program args>...]
 velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] [--jobs <n>] [--watch]
 velt test  [<file|dir>] [--filter <text> [--exact]] [--release] [--locked] --no-run [--json]
 velt new   <name> [--template app|cli|api|websocket|lib] [--lib]
@@ -31,7 +31,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 ```
 - **Single file**: `build <file>` writes `./target/velt/<stem>` (`.exe` on Windows) relative to the
   current dir, object file next to it. If the file lives inside a package, its deps are installed first.
-- **Package mode** (no file argument): finds `package.vlt` upward from the cwd, builds its entry, output
+- **Package mode** (no file argument): finds `package.velt` upward from the cwd, builds its entry, output
   `<pkg>/target/velt/<name>[.exe]`. Library-only packages can't be run.
 - `build --json` (additive): instead of diagnostics on stderr, one JSON document on stdout:
   `{"executable": string|null, "debugInfo": bool|null, "lldbScript": string|null, "diagnostics",
@@ -158,7 +158,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   No TCP, HTTP server or child processes on WebAssembly (link error with a note); `fetch` links
   but rejects with `IoError` `ENOTSUP` (no network), so code that only builds `Response`s runs.
 - **`--host <package>`** (additive, #1736; `velt build` only): a build for the JavaScript
-  platform of host package `<package>`, one of the build's packages whose `package.vlt` has
+  platform of host package `<package>`, one of the build's packages whose `package.velt` has
   `host` (manifest.md, [workers.md](workers.md)). The compiler names no platform: the package
   gives the target (`--target` with another triple: "`--host <p>` builds for `<t>`: leave out
   `--target <t2>`"), the condition added to the target's, the entry and the files to scaffold.
@@ -173,7 +173,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   takes `<p>` as the option's value.
 - `playground` (additive): serves a page where programs are edited, compiled
   on the server to `wasm32-unknown-unknown` (`POST /api/compile[?release=1]`, body = source →
-  `200 application/wasm` or `422` diagnostics text with paths as `main.vlt`) and run in the
+  `200 application/wasm` or `422` diagnostics text with paths as `main.velt`) and run in the
   browser (Web Worker + `velt_web.mjs`). Only `std/…` imports are accepted. Needs the browser
   runtime (`cargo build -p velt_rt_wasm --target wasm32-unknown-unknown`).
 - `doc` (additive): HTML API docs from exported items, their public members,
@@ -182,7 +182,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `@throws`, `@example`, `@deprecated`, `@see`, `{@link}`); plain `//` is not a doc comment
   (`docs/internals/design/doc-comments.md`). A comment block at the top of a file, followed by a
   blank line, documents the module. No paths: the package's `src/`
-  (its `.vlt`, `.ts` and `.tsx` files, not `.d.ts`; `src/lib.vlt` is named after the package) into `<pkg>/target/doc`; paths: those files and
+  (its `.velt`, `.ts` and `.tsx` files, not `.d.ts`; `src/lib.velt` is named after the package) into `<pkg>/target/doc`; paths: those files and
   directories into `./target/doc`; `--std`: the standard library. `-o` overrides the output
   directory. Writes `index.html`, one page per module, and a client-side search index.
   `--format json` (additive): the same documentation as one JSON document, `api.json` in the
@@ -235,16 +235,16 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   that file and its imports (the file's package, if any, supplies dependencies); the root module
   need not define `main` (a library module; every function body is still checked), a `main` that
   is there is validated as for `build`, which, like `run`, still requires one. Without a file, in
-  a package: every source module (`.vlt`, `.ts`, `.tsx`; not `.d.ts`) under `src/` and `tests/`
+  a package: every source module (`.velt`, `.ts`, `.tsx`; not `.d.ts`) under `src/` and `tests/`
   (recursively, skipping `target/`, `node_modules/`, hidden and symlinked directories and nested
-  packages, i.e. directories with their own manifest, whose `package.vlt` is never a module; no
+  packages, i.e. directories with their own manifest, whose `package.velt` is never a module; no
   other directory; `vpm::sources::walks_into`), loaded together in one front-end run with the package's root module: the entry
-  (`package.entry`, default `src/main.vlt`), which must define a valid `main`, or, when there is
-  no configured entry and no `src/main.vlt`, `src/lib.vlt` as a library module. Every other
-  module is a library module; one whose module path is taken or reserved (`src/std/x.vlt`, a
-  `src/util.vlt` next to a dependency `util`) gets a name no import can write instead of an
+  (`package.entry`, default `src/main.velt`), which must define a valid `main`, or, when there is
+  no configured entry and no `src/main.velt`, `src/lib.velt` as a library module. Every other
+  module is a library module; one whose module path is taken or reserved (`src/std/x.velt`, a
+  `src/util.velt` next to a dependency `util`) gets a name no import can write instead of an
   error (`build` does not load it). Files in one directory whose names differ only in the
-  source extension (`src/dup.vlt`, `src/dup.ts`) are an error per group, located in the first
+  source extension (`src/dup.velt`, `src/dup.ts`) are an error per group, located in the first
   file and naming all of them relative to the package root. A configured entry that is missing is an error naming it (as
   for `build`). Package dependencies are installed. Every diagnostic the front end reports
   appears once, even for a module several roots import: all files' syntax errors, then the type
@@ -283,14 +283,14 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `tsCompat` folders (`manifest.md`) of the package around the current directory, named relative
   to it, and their source modules are checked and linted as above (an empty folder adds none).
   It fails (exit 1, a `location: null` diagnostic with `--json`) outside a package ("… there is
-  no `package.vlt` …"), when the manifest has no `tsCompat` ("package `<name>` has no `tsCompat`
+  no `package.velt` …"), when the manifest has no `tsCompat` ("package `<name>` has no `tsCompat`
   folders to lint …"), when a listed folder is not a directory ("package `<name>`: `tsCompat`
   folder `<dir>` does not exist" / "is not a folder"), or when the folders hold no source
   module. Plain `velt check` never runs the ts-compat rules, `tsCompat` or not.
 - Lint rules (additive; docs/internals/design/lint-profiles.md). Each source file has a profile:
   portable (in a `tsCompat` folder), native (the package's other files, or every user file
   outside a package) or dependency (other packages', std's: never reported or fixed). The
-  `perf/…` rules (`velt_lint::PERF_RULES`) have the level `lint` in `package.vlt` sets
+  `perf/…` rules (`velt_lint::PERF_RULES`) have the level `lint` in `package.velt` sets
   ([manifest.md](manifest.md)), `hint` by default. Plain `velt check` runs the rules on the
   syntax tree and types only when one of them is at `warn` or `deny`; `--perf` runs them at any
   level but `off`, and the rules on the optimized program too, which build the program up to
@@ -457,7 +457,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   a toolchain's own `velt` given one exits 1 saying it is the launcher's. For every command but
   `toolchain` it selects `+<toolchain>`, else `$VELT_TOOLCHAIN` (both: a full version is that
   version, a `[a-z]…` name a link, anything else a requirement read like a pin),
-  else the `velt` requirement of the nearest `package.vlt` above the cwd
+  else the `velt` requirement of the nearest `package.velt` above the cwd
   (`velt_toolchain::pin::find_pin`; a manifest that does not parse counts as no pin): the
   version the `velt` field of the `velt.lock.json` beside it records, as an exact toolchain
   (reason `velt.lock.json, with velt: "<req>" in <manifest>:<line>`), when the requirement
@@ -544,7 +544,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   time over the threads; the object is the same bytes on any number of threads.
 - Debug info: debug builds always carry it; `-g` keeps it in a `--release` build (and links with
   debug settings: PDB on Windows, no `-s` strip on Linux). With the LLVM backend it is full line
-  info (`.vlt` file:line in debuggers and symbolizers); with Cranelift, DWARF line tables in ELF,
+  info (`.velt` file:line in debuggers and symbolizers); with Cranelift, DWARF line tables in ELF,
   Mach-O and COFF objects (the bundled `lld-link` keeps them in the `.exe`, beside the PDB; a
   build that `link.exe` links emits none, leaving function symbols).
 - Panics print `panic: <msg> at <path>:<line>:<col>` (path as given to the compiler; a
@@ -555,7 +555,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - Diagnostics go to stderr as `Diagnostic::render` output.
 - `dev` (docs/internals/design/hot-reload.md, phases 1–2): builds and runs like `run`, then stays up as a
   supervisor. It watches every file the build read (std and path dependencies included) plus
-  `package.vlt`/`velt.lock.json`, and new source files (`.vlt`, `.ts`, `.tsx`) in their directories (OS file notifications,
+  `package.velt`/`velt.lock.json`, and new source files (`.velt`, `.ts`, `.tsx`) in their directories (OS file notifications,
   checked against mtime and length; polling every 10 ms where notifications fail or with
   `VELT_DEV_POLL=1`; 30 ms settle). On a change it builds the new version
   while the old one keeps running: a failed build prints its diagnostics and
@@ -600,20 +600,20 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
 - `test --watch`: runs the tests, then again after every change to a file the test builds read,
   a test file or the manifest/lockfile (each run discovers test files anew). Runs until
   interrupted.
-- `test`: finds `*.test.vlt`, `*.test.ts` and `*.test.tsx` (recursively, skipping `target/`,
+- `test`: finds `*.test.velt`, `*.test.ts` and `*.test.tsx` (recursively, skipping `target/`,
   `node_modules/`, hidden and symlinked directories and nested packages below the searched
   directory); every `export function test_*()` (no
   params) is a test (additive: `export async function test_*()` too; the harness awaits it).
   Prints `ok <name>` / `FAILED <name>` and a summary; exit 1 on any failure. Test binaries in
   `<pkg or cwd>/target/velt/test/`.
-- `new` creates `<name>/package.vlt`, `src/main.vlt` (or `src/lib.vlt` with `--lib`), `.gitignore`.
+- `new` creates `<name>/package.velt`, `src/main.velt` (or `src/lib.velt` with `--lib`), `.gitignore`.
 - **Templates** (additive, tooling): `new --template <t>` (default `app`; `--lib` = `--template
-  lib`) also writes `README.md` and `tests/*.test.vlt`; every template builds, passes `velt test`
+  lib`) also writes `README.md` and `tests/*.test.velt`; every template builds, passes `velt test`
   and is `velt fmt`-clean. `app`: hello world with a module and a test. `cli`: std/cli argument
   parsing, subcommands, `--help`, usage errors → exit 2. `api`: JSON HTTP API (routes,
   validation, `ApiError` subclasses → status codes, `shared<Mutex<…>>` state), tests with `fetch`
   against a server on port 0. `websocket`: chat server + terminal client (`serve`/`connect`).
-  `lib`: `src/lib.vlt` exports with `/** */` doc comments for `velt doc`. Templates are embedded in the
+  `lib`: `src/lib.velt` exports with `/** */` doc comments for `velt doc`. Templates are embedded in the
   binary (`crates/veltc/templates/`); `{{name}}` in them becomes the package name.
 - `init` (additive): the same files in the current directory; the package is named after the
   directory (lower-cased, other characters → `-`) unless `--name`. Files the template would
@@ -625,7 +625,7 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `clean --cache` removes the build cache's directory instead (same output; the cache turned off
   → `Clean nothing to remove (the build cache is off: $VELT_BUILD_CACHE)`).
 - `cache warm [--background]` (additive, #1612): with the build cache on, builds each
-  `*.vlt` of the warm-up directory (`$VELT_SHARE/warm`, else `share/velt/warm` beside the std
+  `*.velt` of the warm-up directory (`$VELT_SHARE/warm`, else `share/velt/warm` beside the std
   root's directory: `<prefix>/share/velt/warm`, or the checkout's) with a child `velt build
   <file> -o <tmp>/warm[.exe]` (an executable; `VELT_BUILD_STAMP=off`, no `VELT_CPU`), once with `--cpu native` and once without, then
   writes the marker `<cache>/warm/<hex>` (BLAKE3 of the version line and the executable's size
@@ -649,10 +649,10 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   colored when the stream is a terminal, unless `NO_COLOR` is set (non-empty) or `TERM=dumb`;
   `CLICOLOR_FORCE=1` forces colors.
 - Errors for common mistakes (additive): a package command outside any package names the
-  `.vlt` files in the cwd (`velt run <file>`) and `velt init`; a missing input file suggests
-  `<name>.vlt` or a similarly named file; a directory input says to build the package inside it.
-- `add` edits `dependencies` in `package.vlt`, keeping comments, then formats the file (latest published version if no req) and installs.
-- `manifest [--json]` (additive) reads and validates `package.vlt` (manifest.md). Without flags
+  `.velt` files in the cwd (`velt run <file>`) and `velt init`; a missing input file suggests
+  `<name>.velt` or a similarly named file; a directory input says to build the package inside it.
+- `add` edits `dependencies` in `package.velt`, keeping comments, then formats the file (latest published version if no req) and installs.
+- `manifest [--json]` (additive) reads and validates `package.velt` (manifest.md). Without flags
   it prints one `Checked <path> (<name> <version>)` status line on stderr; `--json` prints the
   manifest as pretty JSON on stdout with defaults filled in. A manifest error exits 1.
 - `fmt` without paths in a package that has only a `velt.toml` reports the migration error
@@ -668,25 +668,25 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   `native.targets` entry, from `--native-artifacts <dir>/<triple>/` or
   `target/velt-native/<triple>/` (the host's is (re)built), and fails if one is missing;
   `--native-only` adds bundles for targets not yet published to the published version.
-- `fmt` formats in place (no paths: the package's `package.vlt` and the `.vlt`/`.ts`/`.tsx`
-  files of `src/`, or all `.vlt` under cwd outside a package; a directory path: its `.vlt`
+- `fmt` formats in place (no paths: the package's `package.velt` and the `.velt`/`.ts`/`.tsx`
+  files of `src/`, or all `.velt` under cwd outside a package; a directory path: its `.velt`
   files, plus `.ts`/`.tsx` (not `.d.ts`) under a package's `src/` and `tests/`; skips
   `target/`, `node_modules/`, hidden dirs). `--check` writes nothing, lists unformatted files,
   exit 1 if any. Unparsable files → exit 1.
-- Imports: `velt/x` → `<std root>/x.vlt` or `x/index.vlt`; `./x`, `../x` → relative `x.vlt`,
-  `x.ts` or `x.tsx`, else folder module `x/index.vlt`, `x/index.ts` or `x/index.tsx` (two
-  existing files among one of these triples: an error at the specifier naming them); `./x.vlt`,
+- Imports: `velt/x` → `<std root>/x.velt` or `x/index.velt`; `./x`, `../x` → relative `x.velt`,
+  `x.ts` or `x.tsx`, else folder module `x/index.velt`, `x/index.ts` or `x/index.tsx` (two
+  existing files among one of these triples: an error at the specifier naming them); `./x.velt`,
   `./x.ts`, `./x.tsx` → exactly that file; `./x.js` → `x.ts` or `x.tsx`, `./x.jsx` → `x.tsx`
   (TypeScript's resolution). Module paths drop the extension (`x.ts` → `x`). JSX in a `.ts`
   module is an error (jsx.md). Bare names → `paths` aliases of the importing package first
-  (the target resolved like a relative path), then packages via `package.vlt` (`pkg` →
-  `src/lib.vlt`, `.ts` or `.tsx`; `pkg/sub` → `src/sub.*` or `src/sub/index.*` with the same
+  (the target resolved like a relative path), then packages via `package.velt` (`pkg` →
+  `src/lib.velt`, `.ts` or `.tsx`; `pkg/sub` → `src/sub.*` or `src/sub/index.*` with the same
   three extensions; a bare specifier with a source extension is an error). The names a
   specifier spells must match the disk in case on every OS (else an error naming the file on
   disk and the corrected specifier); a file module that hides a folder module whose `index` has
   another extension gets a warning. Root files may be `.ts` or `.tsx` too; a package without
-  `entry` uses `src/main.vlt`, `.ts` or `.tsx` (`src/lib.*` for a library). `std/prelude/*.vlt` is loaded implicitly before everything else.
-  Global modules in `std/prelude/global/*.vlt` (`fetch`, `Response`, `URL`, `JSON`, …) join the prelude
+  `entry` uses `src/main.velt`, `.ts` or `.tsx` (`src/lib.*` for a library). `std/prelude/*.velt` is loaded implicitly before everything else.
+  Global modules in `std/prelude/global/*.velt` (`fetch`, `Response`, `URL`, `JSON`, …) join the prelude
   only when a non-std module mentions one of their names as a whole word, unless that module
   binds the name itself at the top level.
 - Environment: `VELT_STD` (std root), `VELT_HOME` (default `~/.velt`), `VELT_REGISTRY`

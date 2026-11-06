@@ -6,7 +6,7 @@ better-sqlite3. The package also holds a SQLite engine written in Velt, `sqlite/
 (read-only for now: [docs/engine.md](docs/engine.md)).
 
 ```ts ignore
-// package.vlt
+// package.velt
 dependencies: {
   // From the Velt repository (there is no public registry yet):
   sqlite: {
@@ -105,8 +105,8 @@ can't be used there).
 
 ## Layout
 
-- `src/lib.vlt`: the API (re-exports); `src/database.vlt`, `statement.vlt`, `transaction.vlt`,
-  `run_result.vlt`, `errors.vlt`: one type each; `src/native.vlt`: the native library's
+- `src/lib.velt`: the API (re-exports); `src/database.velt`, `statement.velt`, `transaction.velt`,
+  `run_result.velt`, `errors.velt`: one type each; `src/native.velt`: the native library's
   functions, the only `declare`s.
 - `native/`: the Rust crate (`velt_native_sqlite`), on the native SDK (`velt_native`) and
   `velt_text` (row cursors and parameter sinks); its ABI is [docs/native_abi.md](docs/native_abi.md).

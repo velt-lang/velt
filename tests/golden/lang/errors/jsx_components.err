@@ -1,12 +1,12 @@
-jsx_components.vlt:20:20: error: Property 'title' is missing in type '{ count: i64; children: Element }' but required in type 'CardProps'.
-jsx_components.vlt:21:35: error: Property 'titel' does not exist on type 'CardProps'. Did you mean 'title'?
-jsx_components.vlt:22:34: error: Type 'f64' is not assignable to type 'string'.
+jsx_components.velt:20:20: error: Property 'title' is missing in type '{ count: i64; children: Element }' but required in type 'CardProps'.
+jsx_components.velt:21:35: error: Property 'titel' does not exist on type 'CardProps'. Did you mean 'title'?
+jsx_components.velt:22:34: error: Type 'f64' is not assignable to type 'string'.
 in the props of type 'CardProps'
-jsx_components.vlt:23:39: error: Property 'children' does not exist on type '{ tone: string }'.
+jsx_components.velt:23:39: error: Property 'children' does not exist on type '{ tone: string }'.
 <Badge> does not accept children: its props type has no `children` field
-jsx_components.vlt:24:39: error: This JSX tag's 'children' prop expects a single child of type 'Element', but multiple children were provided.
-jsx_components.vlt:25:25: error: 'Count' cannot be used as a JSX component.
-jsx_components.vlt:26:29: error: cannot find `Missing` in this scope
-jsx_components.vlt:27:33: error: JSX elements cannot have multiple attributes with the same name.
-jsx_components.vlt:28:20: error: Property 'items' is missing in type '{ label: string | null }' but required in type '{ items: number[]; label: string | null }'.
-jsx_components.vlt:29:51: error: Property 'extra' does not exist on type '{ items: T[]; label: string | null }'.
+jsx_components.velt:24:39: error: This JSX tag's 'children' prop expects a single child of type 'Element', but multiple children were provided.
+jsx_components.velt:25:25: error: 'Count' cannot be used as a JSX component.
+jsx_components.velt:26:29: error: cannot find `Missing` in this scope
+jsx_components.velt:27:33: error: JSX elements cannot have multiple attributes with the same name.
+jsx_components.velt:28:20: error: Property 'items' is missing in type '{ label: string | null }' but required in type '{ items: number[]; label: string | null }'.
+jsx_components.velt:29:51: error: Property 'extra' does not exist on type '{ items: T[]; label: string | null }'.

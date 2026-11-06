@@ -1,4 +1,4 @@
-// Append loop (same workload as append.vlt): 20 strings of about 190k characters, each built by
+// Append loop (same workload as append.velt): 20 strings of about 190k characters, each built by
 // 100k `s += piece` appends of non-ASCII pieces, with a strided charCodeAt checksum over each.
 class Rng {
   seed = 42;

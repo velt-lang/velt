@@ -11,7 +11,7 @@ that serves through `velt:worker` (packages/http-server's JS-host variant, condi
 
 ## The build
 
-- `--host <package>` names a package of the build's dependency graph whose `package.vlt` has
+- `--host <package>` names a package of the build's dependency graph whose `package.velt` has
   `host: { target, condition, entry, scaffold? }`. The build is for its `target` (one the
   JavaScript glue runs: `wasm32-unknown-unknown`; a `--target` naming another is an error) and
   adds its `condition` to the target's (`wasm`, `js`): a `#name` variant of any package under
@@ -41,7 +41,7 @@ that serves through `velt:worker` (packages/http-server's JS-host variant, condi
   are the runtime glue's (`velt:worker` below, `velt:fetch` of velt_web.mjs): only std declares
   their functions (sema: "the import modules `velt:…` are the runtime glue's"), so their types
   are the glue's and the compiler keeps no table of them. Any other comes from the package whose
-  `package.vlt` lists it under `hostModules` (manifest.md), which must be a package whose own
+  `package.velt` lists it under `hostModules` (manifest.md), which must be a package whose own
   modules declare it; exactly one such package. Otherwise the build fails at a declaration of
   the module (`driver/host_modules.rs`): "the `--host <p>` build has no JavaScript for host
   module `m`" (with where to list it), "package `q` provides host module `m`, which none of its
@@ -131,7 +131,7 @@ export default {
 Requests arrive like connections on a listener. `serve(request, platform)` puts the request in
 a queue; the program takes requests with `accept()`, in the order they came, and answers each.
 `main` may await anything before it accepts; a request waits in the queue until then. Std
-declares the functions, in `velt/host/worker` (std/host/worker/requests.vlt), and programs
+declares the functions, in `velt/host/worker` (std/host/worker/requests.velt), and programs
 import them from there (packages/http-server's JS-host variant does, condition `js`):
 
 ```ts ignore

@@ -28,11 +28,11 @@ function count(v: VNode): number {
 const root = build(19, 1);'
 cast='(root as InternalVNode)._ns = true;'
 tail='console.log(count(root));'
-printf '%s\n%s\n%s\n' "$head" "$body" "$tail" > "$work/none.vlt"
-printf '%s\n%s\n%s\n%s\n' "$head" "$ext" "$body" "$tail" > "$work/declared.vlt"
-printf '%s\n%s\n%s\n%s\n%s\n' "$head" "$ext" "$body" "$cast" "$tail" > "$work/cast.vlt"
+printf '%s\n%s\n%s\n' "$head" "$body" "$tail" > "$work/none.velt"
+printf '%s\n%s\n%s\n%s\n' "$head" "$ext" "$body" "$tail" > "$work/declared.velt"
+printf '%s\n%s\n%s\n%s\n%s\n' "$head" "$ext" "$body" "$cast" "$tail" > "$work/cast.velt"
 for v in none declared cast; do
-  "$velt" build --release "$work/$v.vlt" -o "$work/$v" > /dev/null
+  "$velt" build --release "$work/$v.velt" -o "$work/$v" > /dev/null
   for i in 1 2 3; do
     python3 -c 'import resource,subprocess,sys
 subprocess.run([sys.argv[1]],stdout=subprocess.DEVNULL,check=True)

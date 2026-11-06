@@ -1,15 +1,15 @@
-operator_decls.vlt:5:3: error: `[Symbol.add]` takes one parameter, the right operand
-operator_decls.vlt:7:10: error: `V * f64` is an instance method: `[Symbol.mul](other: f64)` (the static form is for a left operand of another type)
-operator_decls.vlt:9:3: error: `[Symbol.neg]` takes no parameters
-operator_decls.vlt:10:10: error: `[Symbol.bitNot]` is an instance method: only the binary operators have a static form
-operator_decls.vlt:11:3: error: `[Symbol.mulAssign]` changes `this` and returns `void`
-operator_decls.vlt:12:9: error: an operator method has plain parameters and runs synchronously: `[Symbol.rem]` cannot be async, a generator or an accessor
-operator_decls.vlt:13:3: error: an operator method has plain parameters: `[Symbol.pow]` takes no optional, default or rest parameter
-operator_decls.vlt:14:3: error: `[Symbol.index]` takes the index (one or more parameters)
-operator_decls.vlt:18:3: error: unreachable operator method: `+` with a `string` operand is always concatenation
-operator_decls.vlt:23:3: error: `[Symbol.setIndex]`'s value must be a `f64`, what `[Symbol.index]` returns
-operator_decls.vlt:27:3: error: an operator method cannot be added to `f64`, whose operators are built in
-operator_decls.vlt:31:3: error: unreachable operator method: `+` with a `string` operand is always concatenation
-operator_decls.vlt:35:10: error: a static `[Symbol.add]` is found on the type of its right operand, `Nums`: its second parameter has that type, not `f64` (`static [Symbol.add](a: f64, b: Nums)`)
-operator_decls.vlt:39:3: error: `[Symbol.mul]` names an operator method: it cannot be a field
-operator_decls.vlt:40:7: error: `[Symbol.sub]` names an operator method: it cannot be an accessor
+operator_decls.velt:5:3: error: `[Symbol.add]` takes one parameter, the right operand
+operator_decls.velt:7:10: error: `V * f64` is an instance method: `[Symbol.mul](other: f64)` (the static form is for a left operand of another type)
+operator_decls.velt:9:3: error: `[Symbol.neg]` takes no parameters
+operator_decls.velt:10:10: error: `[Symbol.bitNot]` is an instance method: only the binary operators have a static form
+operator_decls.velt:11:3: error: `[Symbol.mulAssign]` changes `this` and returns `void`
+operator_decls.velt:12:9: error: an operator method has plain parameters and runs synchronously: `[Symbol.rem]` cannot be async, a generator or an accessor
+operator_decls.velt:13:3: error: an operator method has plain parameters: `[Symbol.pow]` takes no optional, default or rest parameter
+operator_decls.velt:14:3: error: `[Symbol.index]` takes the index (one or more parameters)
+operator_decls.velt:18:3: error: unreachable operator method: `+` with a `string` operand is always concatenation
+operator_decls.velt:23:3: error: `[Symbol.setIndex]`'s value must be a `f64`, what `[Symbol.index]` returns
+operator_decls.velt:27:3: error: an operator method cannot be added to `f64`, whose operators are built in
+operator_decls.velt:31:3: error: unreachable operator method: `+` with a `string` operand is always concatenation
+operator_decls.velt:35:10: error: a static `[Symbol.add]` is found on the type of its right operand, `Nums`: its second parameter has that type, not `f64` (`static [Symbol.add](a: f64, b: Nums)`)
+operator_decls.velt:39:3: error: `[Symbol.mul]` names an operator method: it cannot be a field
+operator_decls.velt:40:7: error: `[Symbol.sub]` names an operator method: it cannot be an accessor

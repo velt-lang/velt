@@ -17,9 +17,9 @@ PBM).
 | `main_st.go` | Go #8 (The Go Authors, after Greg Buchholz's C program): fastest single-threaded Go |
 | `main.js` | Node.js #3, Andrey Filatkin (after Go #4): worker threads |
 | `main_st.js` | Node.js #2 (Greg Buchholz's C #2, buffered by Isaac Gouy): fastest single-threaded Node |
-| `main.vlt` | idiomatic single-threaded Velt: one pixel at a time with early exit, bits packed into a `u8[]`, written with `std/fs_stream` |
-| `main_mt.vlt` | `main.vlt` with blocks of 16 rows rendered by spawned tasks, collected with `Promise.all` |
-| `main_opt.vlt` | the Rust #4 shape on one thread: 8 pixels at a time in a Copy struct `F64x8` |
+| `main.velt` | idiomatic single-threaded Velt: one pixel at a time with early exit, bits packed into a `u8[]`, written with `std/fs_stream` |
+| `main_mt.velt` | `main.velt` with blocks of 16 rows rendered by spawned tasks, collected with `Promise.all` |
+| `main_opt.velt` | the Rust #4 shape on one thread: 8 pixels at a time in a Copy struct `F64x8` |
 
 The official files are unchanged apart from a first `// Source:` line (`_st.rs` and `main.go`:
 see below). Naming as in spectral-norm: `main.*` fastest published, `main_st.*` fastest
@@ -50,12 +50,12 @@ per round; loaded, shared machine: wall times of the long single-threaded runs v
 |---|---|---:|---:|---:|---:|---:|
 | Rust `mandelbrot.rs` | all | 0.79 | 3.67 | 32.5 | 1.00 | 1.00 |
 | Rust `mandelbrot_st.rs` | 1 | 3.08 | 3.02 | 32.3 | 1.00 | 1.00 |
-| Velt LLVM `main.vlt` | 1 | 13.08 | 12.80 | 72.2 | 4.25 | 4.24 |
-| Velt LLVM `main_mt.vlt` | all | 3.14 | 16.74 | 36.7 | 3.97 | 4.56 |
-| Velt LLVM `main_opt.vlt` | 1 | 3.52 | 3.44 | 72.3 | 1.14 | 1.14 |
-| Velt Cranelift `main.vlt` | 1 | 25.05 | 23.51 | 72.2 | 8.13 | 7.78 |
-| Velt Cranelift `main_mt.vlt` | all | 5.68 | 24.75 | 36.7 | 7.19 | 6.74 |
-| Velt Cranelift `main_opt.vlt` | 1 | 10.43 | 7.66 | 72.3 | 3.39 | 2.54 |
+| Velt LLVM `main.velt` | 1 | 13.08 | 12.80 | 72.2 | 4.25 | 4.24 |
+| Velt LLVM `main_mt.velt` | all | 3.14 | 16.74 | 36.7 | 3.97 | 4.56 |
+| Velt LLVM `main_opt.velt` | 1 | 3.52 | 3.44 | 72.3 | 1.14 | 1.14 |
+| Velt Cranelift `main.velt` | 1 | 25.05 | 23.51 | 72.2 | 8.13 | 7.78 |
+| Velt Cranelift `main_mt.velt` | all | 5.68 | 24.75 | 36.7 | 7.19 | 6.74 |
+| Velt Cranelift `main_opt.velt` | 1 | 10.43 | 7.66 | 72.3 | 3.39 | 2.54 |
 | Go `main.go` | 2 × CPUs | 2.64 | 13.85 | 39.3 | 3.34 | 3.77 |
 | Go `main_st.go` | 1 | 20.79 | 16.50 | 3.9 | 6.75 | 5.46 |
 | Node `main.js` | all | 3.83 | 14.63 | 184.0 | 4.85 | 3.99 |
@@ -65,26 +65,26 @@ per round; loaded, shared machine: wall times of the long single-threaded runs v
 
 ## Gaps (Velt LLVM > 1.2× Rust)
 
-### `main.vlt` 4.2× and `main_mt.vlt` 4.0×: scalar per-pixel loop, not the compiler
-`main.vlt` iterates one pixel at a time and leaves the loop as soon as it escapes; that is the
+### `main.velt` 4.2× and `main_mt.velt` 4.0×: scalar per-pixel loop, not the compiler
+`main.velt` iterates one pixel at a time and leaves the loop as soon as it escapes; that is the
 shape of the simple published programs (Go #8, Node #2). Rust #4 iterates 8 pixels in
 lock-step (4 × `fmul.2d` per multiply on NEON), tests for escape only every 4 iterations and only
-when the previous byte was all-escaped. A scratch Rust program with exactly the `main.vlt` loops
-took 14.99 s CPU against 15.39 s for `main.vlt` in the same session: parity for the same shape.
+when the previous byte was all-escaped. A scratch Rust program with exactly the `main.velt` loops
+took 14.99 s CPU against 15.39 s for `main.velt` in the same session: parity for the same shape.
 
-`main_opt.vlt` writes the Rust #4 shape in Velt with a Copy struct of eight `f64` lanes
+`main_opt.velt` writes the Rust #4 shape in Velt with a Copy struct of eight `f64` lanes
 (`F64x8 { l0 … l7 }` with `add`/`sub`/`mul` methods). LLVM vectorizes it like Rust's `[f64; 8]`
 (68 `fmul.2d` in the binary against 76 for Rust) and it runs within 1.14× of Rust
 single-threaded: Copy structs of lanes are a usable SIMD idiom in Velt today.
 
-`main_mt.vlt` uses 31 % more CPU than `main.vlt` (Rust: 21 % more for mt than st): with all 10
+`main_mt.velt` uses 31 % more CPU than `main.velt` (Rust: 21 % more for mt than st): with all 10
 cores busy, the 6 efficiency cores run the same rows more slowly.
 
-### Peak RSS 72 MB for `main.vlt` / `main_opt.vlt` (Rust 32 MB): `writeBytes` copies the array
+### Peak RSS 72 MB for `main.velt` / `main_opt.velt` (Rust 32 MB): `writeBytes` copies the array
 The bitmap is 32 MB. `FileWriter.writeBytes(data: u8[])` hands the array to
 `velt_rt_fs_writer_write_bytes`, which copies it before moving the write to the blocking pool
 (`crates/velt_rt/src/fs/ops.rs`: `data_arg` = `(*s).as_bytes().to_vec()`), so the whole image
-exists twice. `main_mt.vlt` writes 1000 blocks of 32 KB and peaks at 36.7 MB.
+exists twice. `main_mt.velt` writes 1000 blocks of 32 KB and peaks at 36.7 MB.
 
 Proposed fix (runtime + std): the async `writeBytes` already owns its argument (async params are
 owned), so it can pass ownership instead of a borrow: a `velt_rt_fs_writer_write_bytes_owned`
@@ -92,14 +92,14 @@ that takes the array's buffer (pointer, length, capacity) and frees it with the 
 after the write. Same for `write(string)` of large strings.
 
 ### Cranelift
-`main.vlt` 1.8× LLVM, `main_opt.vlt` 2.2× LLVM: Cranelift does not vectorize the 8 lanes
+`main.velt` 1.8× LLVM, `main_opt.velt` 2.2× LLVM: Cranelift does not vectorize the 8 lanes
 (bench/RESULTS.md: no auto-vectorization).
 
 ## Friction for a TypeScript developer
 - Binary stdout needs `openWrite("/dev/stdout")` and an `async main` (no
   `process.stdout.write(Uint8Array)`), and `/dev/stdout` does not exist on Windows.
 - `Math.min` / `Math.max` are `f64`-only: `Math.min(y + 16, size)` on `i64` needs casts or a
-  ternary (used in `main_mt.vlt`).
+  ternary (used in `main_mt.velt`).
 - `as` binds looser than `*` and `/` (as in TypeScript), so `2.0 * y as f64` does not type-check;
   the conversions need parentheses: `(2.0 * (y as f64)) / (size as f64)`.
 - No `Uint8Array(n)`: the bitmap is a `u8[]` grown by `push`.

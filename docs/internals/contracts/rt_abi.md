@@ -250,7 +250,7 @@ calls and the cell layout is the same; the release runtime keeps the symbols as 
 
 ## Weak references
 `velt_rt` exports these functions (`src/weak/`); the compiler lowers `WeakMap`, `WeakSet` and
-`WeakRef` (std/prelude/weak.vlt, `velt_vir` lower/weak.rs) to them, and `weak T` fields (#11)
+`WeakRef` (std/prelude/weak.velt, `velt_vir` lower/weak.rs) to them, and `weak T` fields (#11)
 will use them too. Design: [weak-refs.md](../design/weak-refs.md).
 
 - **Count word.** Bit 63 (`RC_WEAK`) of a counted object's count is set while the object is weakly
@@ -323,7 +323,7 @@ registry's records of module constants `const R = Symbol.for("r")` too (`key` 1,
 description being the key, in the static string form), and lists them in a read-only table
 (`Intrinsic::SymbolRegistry`): their addresses, one per 8-byte slot, then a null slot. Records are
 never freed; one made at run time is one allocation. On wasm32 each table address takes the
-first half of its 8-byte slot. Functions (`std/lang/symbol/index.vlt`; `string` parameters by pointer, a
+first half of its 8-byte slot. Functions (`std/lang/symbol/index.velt`; `string` parameters by pointer, a
 `string` result through an out pointer):
 - `velt_rt_symbol_new(desc: *const VeltStr, described: u8) -> *const SymbolRec`: `Symbol(desc)`
   (`described` = 0: `Symbol()`, `desc` unread); keeps a reference to `desc`.
@@ -404,7 +404,7 @@ Velt functions. Lanes are in memory order: lane 0 is the lowest-addressed bytes,
 A mask lane is all ones or all zeros.
 
 The operations are externs `velt_simd_<type>_<op>` (`velt_simd_u8x16_add`,
-`velt_simd_mask8x16_any`) declared by `std/simd/*.vlt` (`velt/simd`). **No runtime defines
+`velt_simd_mask8x16_any`) declared by `std/simd/*.velt` (`velt/simd`). **No runtime defines
 them**: `velt_vir::simd` gives each symbol's operation and VIR signature (`SimdCall`), the
 verifier rejects a `velt_simd_*` extern that is not one, and both backends emit every call
 inline. They never cross the C ABI, so no target's vector calling convention is involved.
@@ -508,7 +508,7 @@ uint8_t velt_cpu_clmul_arm;  /* 1: aarch64 with PMULL (64-bit polynomial multipl
 bytes. Their extensions `aes-x86` (AES-NI with PCLMULQDQ, SSSE3 and SSE4.1) and `aes-arm`
 (FEAT_AES with FEAT_PMULL) have **no runtime flag**: `velt_simd_has_aes_x86()` /
 `velt_simd_has_aes_arm()` is `1` only in a function gated on the extension (and `velt_opt`'s
-clones for it) and `0` everywhere else. std/simd/aes.vlt computes the run-time answer in Velt,
+clones for it) and `0` everywhere else. std/simd/aes.velt computes the run-time answer in Velt,
 once: the carry-less flag of the architecture, plus CPUID leaf 1 ECX bit 25 on x86-64 (FEAT_PMULL
 implies FEAT_AES on aarch64), and not with `VELT_SIMD_DISABLE=aes`. `velt_simd_cpuid(leaf,
 subleaf) -> u32x4` [additive] is x86's `CPUID` (EAX, EBX, ECX, EDX in lanes 0 to 3), emitted
@@ -534,7 +534,7 @@ inlined into a gated function.
 
 The atomic operations (docs/internals/design/atomics.md) are externs
 `velt_atomic_<op>_<bits>_<order>` on the address of a naturally aligned word, which lowering
-calls for `Atomic<T>` (std/prelude/sync.vlt) and for `shared<int>`'s `add`, `get` and `set`
+calls for `Atomic<T>` (std/prelude/sync.velt) and for `shared<int>`'s `add`, `get` and `set`
 (rt_abi_async.md §9): `load`, `store`, the read-modify-writes `xchg add sub and or xor max min umax
 umin` (`max`/`min` compare signed, `umax`/`umin` unsigned; `add`/`sub` wrap), and
 `cas`/`casweak` with a failure ordering after the ordering (`velt_atomic_cas_64_acqrel_acq`),
@@ -569,7 +569,7 @@ threads they are plain loads and stores. `velt_rt_thread_yield()`
 
 ## Thread-local values [additive]
 
-A module constant `new ThreadLocal<T>(init)` (std/prelude/sync.vlt; `T` a number type or `bool`,
+A module constant `new ThreadLocal<T>(init)` (std/prelude/sync.velt; `T` a number type or `bool`,
 `init` a literal) is one value per thread. Lowering calls `velt_tls_get_<id>_<bits>_<init>`
 (`() -> uN`, this thread's value) and `velt_tls_set_<id>_<bits>_<init>` (`(uN)`): `id` is the
 64-bit FNV-1a hash of the constant's qualified name (decimal; `velt_vir::tls::stable_id`, so it
@@ -695,7 +695,7 @@ trap calls (`has`, `get`, `set`, `deleteProperty` on the proxy), -2 ends it. Bet
 `op` 0 answers whether element `index` is one (1 or 0); 1 records it, only during a trap call of
 a method on `array` (answering whether it was one), else answers -1 and records nothing; 2
 forgets it (whether it was one); 3 forgets the holes from `index` on (a shorter length; 0); 4
-answers the first hole below `index`, or -1. std/lang/proxy/index.vlt's `Reflect` records them (a delete,
+answers the first hole below `index`, or -1. std/lang/proxy/index.velt's `Reflect` records them (a delete,
 the gap before an element written past the end) and reports them as absent; elsewhere both are
 `TypeError`s. Both runtimes provide them (`velt_rt/src/proxy_array.rs`, compiled into
 velt_rt_wasm too).
@@ -713,7 +713,7 @@ void velt_host_str_new(VeltStr *out, uint8_t *buf, size_t len);
 void velt_host_bytes_new(VeltBytes *out, uint8_t *buf, size_t len);
 ```
 
-What host functions (https://veltlang.com/docs/reference/host-functions/) need. A `HostRef` (std/host/host_ref.vlt)
+What host functions (https://veltlang.com/docs/reference/host-functions/) need. A `HostRef` (std/host/host_ref.velt)
 holds a slot of the JS glue's table of values (`velt_web.mjs`), 0 once released (and natively); its drop calls
 `velt_rt_host_release` and `clone()` `velt_rt_host_clone`, which on `wasm32-unknown-unknown`
 call the glue's imports `velt.host_release` / `velt.host_clone`. Natively and under WASI no
@@ -727,7 +727,7 @@ velt_link exports the five from every browser module.
 
 std declares host functions of its own, whose module the glue provides itself, before (and
 overridable by) the embedder's `imports`: `velt:fetch` (std/net/http/fetch/client/transport/
-js_host.vlt), `fetch`'s transport on JS hosts over the host's `fetch` (`fetchHost` in
+js_host.velt), `fetch`'s transport on JS hosts over the host's `fetch` (`fetchHost` in
 velt_web.mjs, which a host such as the Workers glue can call with a `fetch` of its own). A call
 is a JS object (a `HostRef`) holding the request's `AbortController`, then its `Response`, the
 body's reader and the piece last read; its async functions fulfill with nothing and reject with
@@ -894,7 +894,7 @@ message). Allocation sites are not recorded. The first violation prints `velt de
 
 Division by zero: lowering emits a check that calls `velt_rt_panic` with message `division by zero`.
 With source locations (`lower_with`), compiler-emitted panic messages end in
-` at <path>:<line>:<col>` (e.g. `division by zero at examples/foo.vlt:12:7`).
+` at <path>:<line>:<col>` (e.g. `division by zero at examples/foo.velt:12:7`).
 
 ## Async, I/O, HTTP, sync helpers [M3/M4 — frozen]
 See `docs/internals/contracts/rt_abi_async.md` (state-machine poll/drop protocol, `VeltFut`, spawn/join,
@@ -904,7 +904,7 @@ hashing, math).
 ## Byte arrays, BigInt, number formatting, binary stdio [perf-std, additive]
 Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.md, handles are
 `u64`), checked against the runtime by `crates/velt_rt/tests/std_externs.rs`:
-- `u8[]` (`std/prelude/bytes.vlt`): `velt_rt_bytes_zeroed(n: u64): u8[]`,
+- `u8[]` (`std/prelude/bytes.velt`): `velt_rt_bytes_zeroed(n: u64): u8[]`,
   `velt_rt_bytes_uninit(n: u64): u8[]` (contents not set: `Buffer.allocUnsafe`),
   `velt_rt_bytes_index_of(b: u8[], byte: u8, from: i64): i64`,
   `velt_rt_bytes_last_index_of(b: u8[], byte: u8, from: i64): i64` (−1 if absent),
@@ -916,18 +916,18 @@ Declared in std (Velt signatures; `u8[]`/`string` are passed as in rt_abi_async.
   `velt_rt_bytes_slice(b: u8[], start: i64, end: i64): u8[]`,
   `velt_rt_bytes_concat(a: u8[], b: u8[]): u8[]`. XOR masking (`xorMask`) is Velt code on SIMD
   vectors there, and UTF-8 validation (`utf8Valid`, the WebSocket reader) in
-  `std/encoding/utf8.vlt`.
-- For protocols written in Velt (`u8[]`'s `utf8Slice` in `std/prelude/bytes.vlt`;
-  `std/net/websocket/text.vlt`), on a range `[start, end)` (relative indices) so no slice is made:
+  `std/encoding/utf8.velt`.
+- For protocols written in Velt (`u8[]`'s `utf8Slice` in `std/prelude/bytes.velt`;
+  `std/net/websocket/text.velt`), on a range `[start, end)` (relative indices) so no slice is made:
   `velt_rt_bytes_range_to_str(b: u8[], start: i64, end: i64): IoResult<string>` (`INVALID_DATA` if
   not UTF-8) and `velt_rt_bytes_range_to_str_lossy(b: u8[], start: i64, end: i64): string` (an
   invalid sequence as U+FFFD, one per maximal invalid subpart): making a string is the runtime's.
   Writing a string's bytes and comparing them (`write`, `utf8Equals`) is Velt code that reads the
   string's bytes in place (intrinsics `StrByteAt`, `StrLoadU8x16`, `StrLoadPartialU8x16`).
-- BigInt (`std/math/bigint.vlt`, handle `u64`, freed by `velt_rt_bigint_free`): `from_i64`, `from_f64`,
+- BigInt (`std/math/bigint.velt`, handle `u64`, freed by `velt_rt_bigint_free`): `from_i64`, `from_f64`,
   `parse(s, radix)`, `clone`, `assign(dst, a)`, `neg(dst, a)`, `op(dst, a, b, op: u32): bool` and
   `op_i64(dst, a, k: i64, op: u32): bool` (false: division by zero or a negative or huge shift; `dst` unchanged), `cmp`/`cmp_i64` (−1/0/1),
-  `to_i64`, `to_f64`, `to_string(a, radix)`. `op` codes are defined in `std/math/bigint.vlt`.
+  `to_i64`, `to_f64`, `to_string(a, radix)`. `op` codes are defined in `std/math/bigint.velt`.
 - Numbers: `velt_rt_f64_to_fixed(x: f64, digits: i64): string` (JS `toFixed` rounding; std's
   `toFixed` (velt/lang/number/fixed) calls it only for more than 19 digits, a result past 64
   bits, and 1e21 and up),

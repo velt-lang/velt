@@ -1,5 +1,5 @@
-rwlock_read_part_a3.vlt:17:16: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it
-rwlock_read_part_a3.vlt:18:17: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it
-rwlock_read_part_a3.vlt:19:16: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it
-rwlock_read_part_a3.vlt:20:17: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it
-rwlock_read_part_a3.vlt:25:14: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it
+rwlock_read_part_a3.velt:17:16: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it
+rwlock_read_part_a3.velt:18:17: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it
+rwlock_read_part_a3.velt:19:16: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it
+rwlock_read_part_a3.velt:20:17: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it
+rwlock_read_part_a3.velt:25:14: error: this stores a part of the value an `RwLock` holds outside the `read` callback, where JavaScript would share it

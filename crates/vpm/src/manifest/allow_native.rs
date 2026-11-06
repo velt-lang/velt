@@ -45,7 +45,7 @@ impl AllowNative {
         }
     }
 
-    /// The entry as package.vlt writes it: `"sqlite"`, `{ name: "llama", git: "…" }`.
+    /// The entry as package.velt writes it: `"sqlite"`, `{ name: "llama", git: "…" }`.
     pub fn to_source(&self) -> String {
         let quoted = super::write::string_lit;
         match &self.from {
@@ -149,7 +149,7 @@ impl<'de> Deserialize<'de> for AllowNative {
     }
 }
 
-/// Check an entry's source as package.vlt writes it: a git URL that compares safely, or an https
+/// Check an entry's source as package.velt writes it: a git URL that compares safely, or an https
 /// prefix with a path under its host.
 pub(crate) fn check_from(from: &AllowedFrom) -> Result<(), String> {
     match from {

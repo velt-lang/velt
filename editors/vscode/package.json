@@ -36,7 +36,7 @@
     "onDebugResolve:velt",
     "onDebugDynamicConfigurations:velt",
     "onDebugInitialConfigurations",
-    "workspaceContains:package.vlt"
+    "workspaceContains:package.velt"
   ],
   "capabilities": {
     "untrustedWorkspaces": {
@@ -53,7 +53,7 @@
           "velt"
         ],
         "extensions": [
-          ".vlt"
+          ".velt"
         ],
         "configuration": "./language-configuration.json",
         "icon": {

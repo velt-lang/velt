@@ -192,12 +192,12 @@ function f(x: i64 = unsafe { raw() }) {
 mod std_tests {
     use super::*;
 
-    fn vlt_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
+    fn velt_files(dir: &std::path::Path, out: &mut Vec<std::path::PathBuf>) {
         for entry in std::fs::read_dir(dir).expect("std is readable") {
             let path = entry.expect("std entry").path();
             if path.is_dir() {
-                vlt_files(&path, out);
-            } else if path.extension().is_some_and(|e| e == "vlt") {
+                velt_files(&path, out);
+            } else if path.extension().is_some_and(|e| e == "velt") {
                 out.push(path);
             }
         }
@@ -209,7 +209,7 @@ mod std_tests {
     fn std_s_unsafe_code_has_safety_comments() {
         let std_root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../std");
         let mut files = Vec::new();
-        vlt_files(&std_root, &mut files);
+        velt_files(&std_root, &mut files);
         files.sort();
         let mut missing = Vec::new();
         for path in &files {

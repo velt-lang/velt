@@ -1,7 +1,7 @@
 //! The `sqlite` package's native library: embedded SQLite through `rusqlite` (SQLite compiled in:
 //! the `bundled` feature, no system library), on the native-package SDK (`velt_native`,
 //! `velt_text`). Its `#[export]` functions are the `velt_sqlite__*` declarations of
-//! `src/native.vlt`; the ABI is docs/native_abi.md.
+//! `src/native.velt`; the ABI is docs/native_abi.md.
 //!
 //! The API is **synchronous**, like better-sqlite3: a typical query takes microseconds, less
 //! than a hop to a blocking thread pool and back would cost, and SQLite serializes writers

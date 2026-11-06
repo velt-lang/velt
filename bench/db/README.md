@@ -1,7 +1,7 @@
 # Database clients — Velt vs Node and Rust
 
 Inserts and queries per second through Velt's `sqlite`, `redis` and `postgres` packages
-(`packages/`, path dependencies of `velt/package.vlt`; std's `velt/sqlite` … until 2026-10),
+(`packages/`, path dependencies of `velt/package.velt`; std's `velt/sqlite` … until 2026-10),
 against the usual Node drivers (`better-sqlite3`, `ioredis`, `pg`) and Rust crates (`rusqlite`,
 `redis`, `tokio-postgres` + `deadpool-postgres`). Run everything with `bench/db/run.sh` (see
 `--help`); results are in `RESULTS.md`.
@@ -9,7 +9,7 @@ against the usual Node drivers (`better-sqlite3`, `ioredis`, `pg`) and Rust crat
 ```
 run.sh            builds everything, validates, runs best-of-N and prints the Markdown tables
 measure.py        the part of run.sh that runs the programs and compares/tabulates their output
-velt/<backend>.vlt        sqlite, redis, postgres
+velt/<backend>.velt        sqlite, redis, postgres
 node/<backend>.mjs         + common.mjs, package.json / package-lock.json (`npm ci` by run.sh)
 rust/src/bin/<backend>.rs  + src/lib.rs; standalone Cargo project (not a workspace member)
 ```

@@ -9,9 +9,9 @@
 //! own Rust tests run too (`cargo test`, outside the compiler's workspace). A package where no test
 //! ran fails too.
 //!
-//! Programs that must not compile are `tests/errors/<name>.vlt` with a `<name>.err` beside them,
+//! Programs that must not compile are `tests/errors/<name>.velt` with a `<name>.err` beside them,
 //! as in the goldens: `velt check` of the program, in the package, must fail, and its output must
-//! contain every non-empty line of the `.err` (`velt test` runs only `*.test.vlt` files).
+//! contain every non-empty line of the `.err` (`velt test` runs only `*.test.velt` files).
 //!
 //! Tests that need a database server read its URL from the environment and do nothing without it:
 //! `VELT_TEST_PG_URL` (packages/postgres), `VELT_TEST_REDIS_URL`, `VELT_TEST_REDISS_URL` and
@@ -36,7 +36,7 @@ fn root() -> PathBuf {
         .expect("repo root")
 }
 
-/// The packages (`packages/<name>/package.vlt`), sorted, after the `VELT_PACKAGES` filter.
+/// The packages (`packages/<name>/package.velt`), sorted, after the `VELT_PACKAGES` filter.
 fn packages(root: &Path) -> Vec<PathBuf> {
     let filter = std::env::var("VELT_PACKAGES").unwrap_or_default();
     let wanted = |name: &str| filter.is_empty() || filter.split(',').any(|f| f.trim() == name);
@@ -44,7 +44,7 @@ fn packages(root: &Path) -> Vec<PathBuf> {
         .expect("packages")
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.join("package.vlt").is_file())
+        .filter(|p| p.join("package.velt").is_file())
         .filter(|p| wanted(&p.file_name().unwrap().to_string_lossy()))
         .collect();
     packages.sort();
@@ -118,7 +118,7 @@ fn native_unit_tests(package: &Path) -> Option<String> {
     ))
 }
 
-/// `velt check` of each `tests/errors/<name>.vlt` in `package`: the reports of those that
+/// `velt check` of each `tests/errors/<name>.velt` in `package`: the reports of those that
 /// compiled, or whose errors miss a line of their `<name>.err`.
 fn compile_errors(package: &Path) -> Vec<String> {
     let Ok(entries) = std::fs::read_dir(package.join("tests/errors")) else {
@@ -127,7 +127,7 @@ fn compile_errors(package: &Path) -> Vec<String> {
     let mut programs: Vec<PathBuf> = entries
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|e| e == "vlt"))
+        .filter(|p| p.extension().is_some_and(|e| e == "velt"))
         .collect();
     programs.sort();
     let name = package.file_name().unwrap().to_string_lossy().into_owned();
@@ -302,14 +302,14 @@ fn a_closed_redis_client_lets_the_program_end() {
         .to_string_lossy()
         .replace('\\', "/");
     std::fs::write(
-        app.join("package.vlt"),
+        app.join("package.velt"),
         format!(
             "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"app\",\n  version: \"0.1.0\",\n  allowNative: [\"redis\"],\n  dependencies: {{ redis: {{ path: \"{dep}\" }} }},\n}};\n"
         ),
     )
     .unwrap();
     std::fs::write(
-        app.join("src/main.vlt"),
+        app.join("src/main.velt"),
         format!(
             "import {{ connect }} from \"redis\";\n\nasync function main() {{\n  const c = await connect(\"redis://127.0.0.1:{port}\");\n  console.log(await c.ping());\n  c.close();\n  console.log(\"closed\");\n}}\n"
         ),
@@ -320,7 +320,7 @@ fn a_closed_redis_client_lets_the_program_end() {
     let built = no_window::command(env!("CARGO_BIN_EXE_velt"))
         .args(["build", "-o"])
         .arg(&exe)
-        .arg("src/main.vlt")
+        .arg("src/main.velt")
         .current_dir(&app)
         .output()
         .expect("run velt build");

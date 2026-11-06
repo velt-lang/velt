@@ -12,7 +12,7 @@
 #                                       also builds that ref's compiler and runtime (in a
 #                                       temporary worktree and $OUT/base-target), for an A/B of
 #                                       compiler, runtime and std changes together; the base
-#                                       must have what main.vlt uses (std/jsx as of #676)
+#                                       must have what main.velt uses (std/jsx as of #676)
 # Knobs (environment):
 #   VELT=<path>     use this (release) compiler instead of building this checkout's; with
 #                   VELT_STD, another checkout's compiler and std build this checkout's programs
@@ -85,9 +85,9 @@ build() {
   local exe="$OUT/fortunes-$1" velt="${3:-$VELT}"
   rm -f "$exe"
   if [[ -n "${2:-}" ]]; then
-    VELT_STD="$2" "$velt" build --release "$HERE/main.vlt" -o "$exe" >&2 || return 1
+    VELT_STD="$2" "$velt" build --release "$HERE/main.velt" -o "$exe" >&2 || return 1
   else
-    "$velt" build --release "$HERE/main.vlt" -o "$exe" >&2 || return 1
+    "$velt" build --release "$HERE/main.velt" -o "$exe" >&2 || return 1
   fi
   "$exe" check >&2 || return 1
   echo "$exe"

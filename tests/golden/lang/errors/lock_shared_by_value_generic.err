@@ -1,1 +1,1 @@
-lock_shared_by_value_generic.vlt:6:15: error: this shares a `Mutex` held by value, which would make it a second lock
+lock_shared_by_value_generic.velt:6:15: error: this shares a `Mutex` held by value, which would make it a second lock

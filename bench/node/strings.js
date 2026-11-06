@@ -1,4 +1,4 @@
-// Strings (same workload as strings.vlt).
+// Strings (same workload as strings.velt).
 const lines = [];
 for (let i = 0; i < 1000000; i++) {
   const kind = i % 3 === 0 ? "fizz" : "buzz";

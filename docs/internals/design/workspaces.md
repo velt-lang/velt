@@ -8,7 +8,7 @@ Status: proposed (issue #1855). The contract changes land in
 A repository with several Velt packages (an app, its libraries, a CLI sharing them) is wired by
 hand today: every package has its own `velt.lock.json` and its own resolution, a library is a
 `{ path: "../core" }` in each package that uses it, and the `velt` pin and `registry` are
-repeated in every `package.vlt`. Two packages can lock different versions of the same
+repeated in every `package.velt`. Two packages can lock different versions of the same
 dependency without anyone noticing, and there is no way to check, test or build all of them,
 or only those a change touched: CI scripts loop over directories and start `velt` once per
 package.
@@ -37,7 +37,7 @@ pnpm does is work Velt does not need:
 
 ### The workspace file
 
-`velt.workspace.vlt` at the repository root, data only and read like `package.vlt` (no code
+`velt.workspace.velt` at the repository root, data only and read like `package.velt` (no code
 runs; the same reader, errors with locations, completions and hovers in the editor):
 
 ```ts ignore
@@ -55,24 +55,24 @@ export const workspace: Workspace = {
 ```
 
 - `members`: `/`-separated globs relative to the workspace root, matching directories that hold
-  a `package.vlt`. `*` matches one path segment, `**` any number (not entering symbolic links,
+  a `package.velt`. `*` matches one path segment, `**` any number (not entering symbolic links,
   as the npm workspace walk does); a `!` prefix excludes (`"!packages/legacy"`). A glob that
-  matches no package is an error, so a typo does not silently drop a member. A `package.vlt`
+  matches no package is an error, so a typo does not silently drop a member. A `package.velt`
   in the workspace root itself is a member when `"."` is listed.
-- `velt`, `registry`: as in `package.vlt`, for every member. In a member of a workspace they are
+- `velt`, `registry`: as in `package.velt`, for every member. In a member of a workspace they are
   an error that points at the workspace file: one toolchain and one registry per resolution
   is what makes one lock possible.
 - `dependencies`: requirements (the same forms as a package's `dependencies`) that members
   refer to with `"workspace"`. A key that names a member is an error.
 
-The separate file, rather than a `workspace` field in a root `package.vlt` (Cargo's way), keeps
-`package.vlt` meaning "a package" with its `name` and `version` required, and lets the
+The separate file, rather than a `workspace` field in a root `package.velt` (Cargo's way), keeps
+`package.velt` meaning "a package" with its `name` and `version` required, and lets the
 root be just a directory, as `pnpm-workspace.yaml` does.
 
 ### Members depend on each other with `"workspace"`
 
 ```ts ignore
-// packages/server/package.vlt
+// packages/server/package.velt
 export const pkg: Package = {
   name: "server",
   version: "0.4.0",
@@ -150,12 +150,12 @@ The workspace adds no cache of its own. Velt has two, and a workspace must feed 
    workspaces:
    - **Outputs per member.** `velt build`/`velt run` put the program at `target/velt/<entry
      stem>` relative to the current directory today. From a workspace root, every member with a
-     `src/main.vlt` would write `target/velt/main` and overwrite each other's stamp, so nothing
+     `src/main.velt` would write `target/velt/main` and overwrite each other's stamp, so nothing
      would ever be up to date. A member's outputs go to `<member>/target/velt/`, wherever `velt`
      runs from, so `velt test` at the root and in the member hit the same stamp. (`velt test`
      already writes to `<package>/target/velt/test`.)
-   - **The workspace's files are inputs.** `note_project` records each package's `package.vlt`
-     and lockfile. It must also record `velt.workspace.vlt` and the root's `velt.lock.json`, and
+   - **The workspace's files are inputs.** `note_project` records each package's `package.velt`
+     and lockfile. It must also record `velt.workspace.velt` and the root's `velt.lock.json`, and
      that no workspace file appeared above a package that had none, so changing a shared
      requirement rebuilds.
 2. **The machine's build cache** (`build_cache.rs`): compiled functions by content, shared by
@@ -184,7 +184,7 @@ parsed and checked std between members of one process, which #1612 already track
 ### Publishing
 
 `velt publish -p <glob>` / `--workspace` publishes members in dependency order. The archive's
-`package.vlt` gets `"workspace"` replaced by a requirement: the member's version (`"0.4.0"`,
+`package.velt` gets `"workspace"` replaced by a requirement: the member's version (`"0.4.0"`,
 which accepts compatible versions) or the workspace's requirement. The workspace's `velt` and
 `registry` are written into it too, so the published package builds on its own. A member whose
 version is already published is skipped with a note, which makes `velt publish --workspace` safe
@@ -192,9 +192,9 @@ to rerun after a partial failure.
 
 ### Editors
 
-The language server finds `velt.workspace.vlt` above a package and loads one graph for the
+The language server finds `velt.workspace.velt` above a package and loads one graph for the
 workspace: go to definition crosses members, and the workspace file gets the same completions,
-hovers and errors as `package.vlt` (member names in `"workspace"`, glob matches on hover).
+hovers and errors as `package.velt` (member names in `"workspace"`, glob matches on hover).
 
 ## Costs and measurements
 
@@ -214,11 +214,11 @@ promise is speed of the tools, and these numbers come with the steps that make t
 ## Diagnostics
 
 ```text
-velt.workspace.vlt:4:5: error: `apps/*` matches no package (no directory below `apps` has a package.vlt)
-packages/server/package.vlt:6:11: error: `core` is a member of this workspace; write `core: "workspace"`
-packages/server/package.vlt:3:3: error: `velt` is set by the workspace (velt.workspace.vlt:5); remove it here
-packages/server/package.vlt:7:11: error: `jsno: "workspace"`, but no member and no workspace dependency is named `jsno` (did you mean `json`?)
-packages/app/package.vlt:5:11: error: members depend on each other in a cycle: app → core → app
+velt.workspace.velt:4:5: error: `apps/*` matches no package (no directory below `apps` has a package.velt)
+packages/server/package.velt:6:11: error: `core` is a member of this workspace; write `core: "workspace"`
+packages/server/package.velt:3:3: error: `velt` is set by the workspace (velt.workspace.velt:5); remove it here
+packages/server/package.velt:7:11: error: `jsno: "workspace"`, but no member and no workspace dependency is named `jsno` (did you mean `json`?)
+packages/app/package.velt:5:11: error: members depend on each other in a cycle: app → core → app
 error: `json` has no version that every member accepts:
   server 0.4.0 requires json 1.2
   cli 0.1.0 requires json 2.0

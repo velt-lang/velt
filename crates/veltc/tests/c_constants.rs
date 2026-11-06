@@ -26,22 +26,22 @@ fn project(dir: &Path, native: &str, lib: &str, files: &[(&str, &str)], main: &s
     std::fs::create_dir_all(pkg.join("src")).unwrap();
     std::fs::create_dir_all(app.join("src")).unwrap();
     std::fs::write(
-        pkg.join("package.vlt"),
+        pkg.join("package.velt"),
         format!("import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{ name: \"bind\", version: \"0.1.0\"{native} }};\n"),
     )
     .unwrap();
-    std::fs::write(pkg.join("src/lib.vlt"), lib).unwrap();
+    std::fs::write(pkg.join("src/lib.velt"), lib).unwrap();
     for (path, text) in files {
         let path = pkg.join(path);
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
     }
     std::fs::write(
-        app.join("package.vlt"),
+        app.join("package.velt"),
         format!("import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"app\",\n  version: \"0.1.0\",\n  {allow}dependencies: {{ bind: {{ path: \"../bind\" }} }},\n}};\n"),
     )
     .unwrap();
-    std::fs::write(app.join("src/main.vlt"), main).unwrap();
+    std::fs::write(app.join("src/main.velt"), main).unwrap();
 }
 
 fn velt_in(dir: &Path, home: &Path, args: &[&str]) -> Output {
@@ -178,7 +178,7 @@ fn a_constant_s_value_comes_from_the_headers() {
         assert_eq!(String::from_utf8_lossy(&o.stdout), PRINTED, "velt {args:?}");
     }
     reload_support::build_runtime();
-    std::fs::write(dir.path().join("app/main.vlt"), MAIN).unwrap();
+    std::fs::write(dir.path().join("app/main.velt"), MAIN).unwrap();
     let dev = reload_support::Dev::start(&dir.path().join("app"), &[]);
     dev.wait_stdout(
         reload_support::Mark::default(),
@@ -323,7 +323,7 @@ fn values_are_recorded_per_target_and_a_fetched_package_uses_them() {
     assert_eq!(String::from_utf8_lossy(&o.stdout), "1234\n");
     // The declaration changed after the check.
     std::fs::write(
-        bind.join("src/lib.vlt"),
+        bind.join("src/lib.velt"),
         "export declare c const O_CREAT: i64;\n",
     )
     .unwrap();
@@ -336,7 +336,7 @@ fn values_are_recorded_per_target_and_a_fetched_package_uses_them() {
     assert!(out.contains("c-headers.json records `i32`"), "{out}");
     // The declaration is as recorded, but the value isn't one it can hold: refused, where it
     // was compiled in and crashed lowering.
-    std::fs::write(bind.join("src/lib.vlt"), lib).unwrap();
+    std::fs::write(bind.join("src/lib.velt"), lib).unwrap();
     let mut wrong = changed.clone();
     wrong
         .constants
@@ -397,7 +397,7 @@ fn commit_and_depend_by_git(dir: &Path) {
         true => format!("file://{url}"),
         false => format!("file:///{url}"),
     };
-    let manifest = dir.join("app/package.vlt");
+    let manifest = dir.join("app/package.velt");
     let text = std::fs::read_to_string(&manifest).unwrap();
     let text = text.replace(
         "path: \"../bind\"",
@@ -523,7 +523,7 @@ fn a_constant_needs_a_native_package_the_program_allows() {
     project(dir.path(), "", SEVEN, &[], USE_SEVEN, "");
     let out = output(&velt(dir.path(), &home, &["check"]));
     assert!(
-        out.contains("error: package `bind` declares C constant `SEVEN`, but its package.vlt doesn't say it has native code"),
+        out.contains("error: package `bind` declares C constant `SEVEN`, but its package.velt doesn't say it has native code"),
         "{out}"
     );
     // Not allowed.
@@ -540,16 +540,16 @@ fn a_constant_needs_a_native_package_the_program_allows() {
         "{out}"
     );
     // A file without a package.
-    let lone = dir.path().join("lone.vlt");
+    let lone = dir.path().join("lone.velt");
     std::fs::write(
         &lone,
         "declare c const SEVEN: i32;\n\nfunction main() {\n  console.log(SEVEN);\n}\n",
     )
     .unwrap();
-    let o = velt_in(dir.path(), &home, &["check", "lone.vlt"]);
+    let o = velt_in(dir.path(), &home, &["check", "lone.velt"]);
     let out = output(&o);
     assert!(
-        out.contains("error: `declare c const SEVEN` is only allowed in a package: this file has no package.vlt"),
+        out.contains("error: `declare c const SEVEN` is only allowed in a package: this file has no package.velt"),
         "{out}"
     );
     // A type no constant has.

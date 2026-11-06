@@ -21,13 +21,13 @@ fn package() -> Package {
     let dir = tmp.path().to_path_buf();
     let p = Package { _tmp: tmp, dir };
     p.write(
-        "package.vlt",
+        "package.velt",
         "export const pkg: Package = { name: \"app\", version: \"0.1.0\" };\n",
     );
-    p.write("src/lib.vlt", &lib("a + b"));
-    p.write("tests/pure.test.vlt", &pure_test(5));
+    p.write("src/lib.velt", &lib("a + b"));
+    p.write("tests/pure.test.velt", &pure_test(5));
     p.write(
-        "tests/clock.test.vlt",
+        "tests/clock.test.velt",
         "import { expect } from \"velt/test\";\n\nexport function test_clock() {\n  expect(Date.now() > 0).toBe(true);\n}\n",
     );
     p
@@ -85,30 +85,30 @@ impl Package {
     }
 }
 
-const CLOCK: &str = "tests/clock.test.vlt (ran: not cacheable, it uses the clock)";
+const CLOCK: &str = "tests/clock.test.velt (ran: not cacheable, it uses the clock)";
 
 #[test]
 fn pure_test_files_are_not_run_again_until_their_program_changes() {
     let p = package();
-    assert_eq!(p.running(&[]), [CLOCK, "tests/pure.test.vlt"]);
-    assert_eq!(p.running(&[]), [CLOCK, "tests/pure.test.vlt (cached)"]);
+    assert_eq!(p.running(&[]), [CLOCK, "tests/pure.test.velt"]);
+    assert_eq!(p.running(&[]), [CLOCK, "tests/pure.test.velt (cached)"]);
 
     // A change in what the pure test's program imports runs it again, and keeps the new result.
-    p.write("src/lib.vlt", &lib("b + a"));
-    assert_eq!(p.running(&[]), [CLOCK, "tests/pure.test.vlt"]);
-    assert_eq!(p.running(&[]), [CLOCK, "tests/pure.test.vlt (cached)"]);
+    p.write("src/lib.velt", &lib("b + a"));
+    assert_eq!(p.running(&[]), [CLOCK, "tests/pure.test.velt"]);
+    assert_eq!(p.running(&[]), [CLOCK, "tests/pure.test.velt (cached)"]);
 
     // `--no-cache` runs and says nothing of either.
     assert_eq!(
         p.running(&["--no-cache"]),
-        ["tests/clock.test.vlt", "tests/pure.test.vlt"]
+        ["tests/clock.test.velt", "tests/pure.test.velt"]
     );
 }
 
 #[test]
 fn a_failure_is_never_kept() {
     let p = package();
-    p.write("tests/pure.test.vlt", &pure_test(6));
+    p.write("tests/pure.test.velt", &pure_test(6));
     for _ in 0..2 {
         let o = p.test(&[]);
         let out = String::from_utf8_lossy(&o.stdout);
@@ -125,10 +125,10 @@ fn a_failure_is_never_kept() {
 fn the_leak_check_runs_what_an_ordinary_run_kept() {
     let p = package();
     assert!(p.test(&[]).status.success());
-    assert!(String::from_utf8_lossy(&p.test(&[]).stdout).contains("pure.test.vlt (cached)"));
+    assert!(String::from_utf8_lossy(&p.test(&[]).stdout).contains("pure.test.velt (cached)"));
     let o = p.test_with(&[], &[("VELT_RC_STATS", "1")]);
     let out = String::from_utf8_lossy(&o.stdout);
-    assert!(!out.contains("pure.test.vlt (cached)"), "{out}");
+    assert!(!out.contains("pure.test.velt (cached)"), "{out}");
 }
 
 /// A system function is outside the program: what it reads isn't covered by the program's bytes.
@@ -137,13 +137,13 @@ fn the_leak_check_runs_what_an_ordinary_run_kept() {
 fn a_test_calling_a_system_function_runs_every_time() {
     let p = package();
     p.write(
-        "tests/sys.test.vlt",
+        "tests/sys.test.velt",
         "import { expect } from \"velt/test\";\n\ndeclare system function close(fd: i32): i32;\n\nexport function test_pid() {\n  expect(close(-1)).toBe(-1);\n}\n",
     );
     for _ in 0..2 {
         let running = p.running(&[]);
         // Also `__error` on macOS, where errno is read through it.
-        let sys = running.iter().find(|l| l.starts_with("tests/sys.test.vlt"));
+        let sys = running.iter().find(|l| l.starts_with("tests/sys.test.velt"));
         assert!(
             sys.is_some_and(
                 |l| l.contains("not cacheable") && l.contains("a system function `close`")
@@ -160,14 +160,14 @@ fn a_function_named_like_a_registration_is_the_files_own_code() {
     let p = package();
     p.write("data.txt", "a");
     p.write(
-        "tests/s.test.vlt",
+        "tests/s.test.velt",
         "import { expect } from \"velt/test\";\nimport { readFileSync } from \"velt/fs\";\n\nfunction __velt_r7(): string {\n  return readFileSync(\"data.txt\");\n}\n\nexport function test_s() {\n  expect(__velt_r7()).toBe(\"a\");\n}\n",
     );
     for _ in 0..2 {
         let running = p.running(&[]);
         assert!(
             running.contains(
-                &"tests/s.test.vlt (ran: not cacheable, it uses the file system)".to_string()
+                &"tests/s.test.velt (ran: not cacheable, it uses the file system)".to_string()
             ),
             "{running:?}"
         );

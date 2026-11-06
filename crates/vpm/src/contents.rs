@@ -1,4 +1,4 @@
-//! The contents of a package as distributed: `package.vlt`, everything under `src/`, the record
+//! The contents of a package as distributed: `package.velt`, everything under `src/`, the record
 //! of its C declarations' header check (`c-headers.json`, [`crate::c_headers`]), and for a
 //! package with a `native` object the sources of its crate, or of its C libraries (without
 //! `target/` and `.git/`).
@@ -129,18 +129,18 @@ mod tests {
     fn lists_hashes_and_copies() {
         let tmp = tempfile::tempdir().unwrap();
         let a = tmp.path().join("a");
-        write(&a, "package.vlt", "");
-        write(&a, "src/lib.vlt", "export function f() {}");
-        write(&a, "src/sub/x.vlt", "");
+        write(&a, "package.velt", "");
+        write(&a, "src/lib.velt", "export function f() {}");
+        write(&a, "src/sub/x.velt", "");
         write(&a, "target/junk", "ignored");
         write(&a, "c-headers.json", "{}");
         assert_eq!(
             list_files(&a).unwrap(),
             [
                 "c-headers.json",
-                "package.vlt",
-                "src/lib.vlt",
-                "src/sub/x.vlt"
+                "package.velt",
+                "src/lib.velt",
+                "src/sub/x.velt"
             ]
         );
 
@@ -151,7 +151,7 @@ mod tests {
         assert!(sum.starts_with("sha256:") && sum.len() == 7 + 64);
         assert_eq!(checksum(&b).unwrap(), sum);
 
-        write(&b, "src/lib.vlt", "export function g() {}");
+        write(&b, "src/lib.velt", "export function g() {}");
         assert_ne!(checksum(&b).unwrap(), sum);
     }
 
@@ -161,10 +161,10 @@ mod tests {
         let a = tmp.path();
         write(
             a,
-            "package.vlt",
+            "package.velt",
             "export const pkg: Package = { name: \"a\", version: \"1.0.0\", native: { path: \"rs\" } };",
         );
-        write(a, "src/lib.vlt", "");
+        write(a, "src/lib.velt", "");
         write(a, "rs/Cargo.toml", "");
         write(a, "rs/src/lib.rs", "");
         write(a, "rs/target/release/libx.so", "");
@@ -172,10 +172,10 @@ mod tests {
         assert_eq!(
             list_files(a).unwrap(),
             [
-                "package.vlt",
+                "package.velt",
                 "rs/Cargo.toml",
                 "rs/src/lib.rs",
-                "src/lib.vlt"
+                "src/lib.velt"
             ]
         );
     }
@@ -183,8 +183,8 @@ mod tests {
     #[test]
     fn missing_manifest_is_an_error() {
         let tmp = tempfile::tempdir().unwrap();
-        assert!(list_files(tmp.path()).unwrap_err().contains("package.vlt"));
-        // A package copy from before `package.vlt` (in a registry or the cache).
+        assert!(list_files(tmp.path()).unwrap_err().contains("package.velt"));
+        // A package copy from before `package.velt` (in a registry or the cache).
         write(tmp.path(), "velt.toml", "");
         let err = list_files(tmp.path()).unwrap_err();
         assert!(err.contains("must publish a new version"), "{err}");

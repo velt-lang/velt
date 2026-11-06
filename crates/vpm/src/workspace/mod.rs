@@ -1,4 +1,4 @@
-//! Workspaces (docs/internals/design/workspaces.md): a `velt.workspace.vlt` at a repository's root
+//! Workspaces (docs/internals/design/workspaces.md): a `velt.workspace.velt` at a repository's root
 //! lists member packages by glob. The members share one resolution and one `velt.lock.json` at the
 //! workspace root, one `velt` pin and one `registry`, and refer to each other, and to the
 //! requirements the workspace writes for them, with `"workspace"`:
@@ -30,12 +30,12 @@ mod check;
 mod tests;
 
 /// File name of the workspace file at a workspace root.
-pub const WORKSPACE_FILE: &str = "velt.workspace.vlt";
+pub const WORKSPACE_FILE: &str = "velt.workspace.velt";
 
-/// How member globs are walked: directories with a `package.vlt`, never entering build output.
+/// How member globs are walked: directories with a `package.velt`, never entering build output.
 const MEMBER_WALK: (&str, &[&str]) = (MANIFEST_FILE, &["target"]);
 
-/// The decoded `velt.workspace.vlt` ([`crate::manifest::read::read_workspace`]).
+/// The decoded `velt.workspace.velt` ([`crate::manifest::read::read_workspace`]).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WorkspaceFile {
     /// `members`: globs relative to the workspace root, `!` in front to exclude.
@@ -55,9 +55,9 @@ pub struct WorkspaceFile {
 pub struct Member {
     /// Its root directory (absolute, normalized).
     pub dir: PathBuf,
-    /// Its `package.vlt`, as written.
+    /// Its `package.velt`, as written.
     pub manifest: Manifest,
-    /// The text of its `package.vlt`, for messages that point into it.
+    /// The text of its `package.velt`, for messages that point into it.
     pub src: String,
 }
 
@@ -71,16 +71,16 @@ impl Member {
 /// A loaded and checked workspace.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Workspace {
-    /// The directory holding `velt.workspace.vlt` (absolute, normalized), and the lockfile.
+    /// The directory holding `velt.workspace.velt` (absolute, normalized), and the lockfile.
     pub root: PathBuf,
     pub file: WorkspaceFile,
-    /// The text of `velt.workspace.vlt`, for messages that point into it.
+    /// The text of `velt.workspace.velt`, for messages that point into it.
     pub src: String,
     /// The members, sorted by directory.
     pub members: Vec<Member>,
 }
 
-/// The nearest directory at or above `start` (absolute) holding a `velt.workspace.vlt`.
+/// The nearest directory at or above `start` (absolute) holding a `velt.workspace.velt`.
 pub fn find_root(start: &Path) -> Option<PathBuf> {
     start
         .ancestors()

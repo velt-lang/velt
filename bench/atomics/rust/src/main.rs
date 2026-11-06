@@ -1,7 +1,7 @@
-//! The workloads of bench/atomics/atomics.vlt on `std::sync::atomic` and `std::thread`, with
+//! The workloads of bench/atomics/atomics.velt on `std::sync::atomic` and `std::thread`, with
 //! the same latch word and backoff as velt/sync (bbtree's `NodeLatch`). Each line is
 //! `name ms checksum`; a threaded workload's time runs from when every worker is ready to when
-//! the last one finishes, as in atomics.vlt.
+//! the last one finishes, as in atomics.velt.
 
 use std::hint::spin_loop;
 use std::sync::atomic::{fence, AtomicBool, AtomicU32, AtomicU64, Ordering::*};

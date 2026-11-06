@@ -1,5 +1,5 @@
 //! Rows read straight into typed values: what the code velt/db's generators write
-//! (velt/db/generate/columns.vlt) calls for `decodeRows<T>` / `decodeRow<T>` when the row type is
+//! (velt/db/generate/columns.velt) calls for `decodeRows<T>` / `decodeRow<T>` when the row type is
 //! an object of plain fields. Each column is matched to its field once per result
 //! ([`velt_rt_rows_begin_named`]), and each value is read by column, typed, without the JSON
 //! reader's keys. The results, and the messages of a row that does not fit, are those of the

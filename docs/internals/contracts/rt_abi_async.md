@@ -94,11 +94,11 @@ typedef struct VeltFut {                             // every runtime-owned futu
 | `velt_rt_yield_now_fut` | `() -> VeltFut*` | `yieldNow()` as a value; result: none |
 | `velt_rt_await_tick` | `(void* cx) -> u64` | the step of an `await` when the word is not 0: 0 to go on now (nothing else can run first, or the waiter's step was queued by `velt_rt_latch_open` already), else the ticket of an entry queued at the back of the task's microtask queue for `cx`'s waker. No allocation. (additive) |
 | `velt_rt_await_ready` | `(u64 ticket, void* cx) -> u32` | 1 once the queue reached `ticket` (or for a ticket of another queue); 0 while it waits, and the entry then resumes whoever polls with `cx` now. (additive) |
-| `velt_rt_microtask` | `() -> VeltFut*` | waits for its turn in the microtask queue of the task that polls it (`then` / `catch` / `finally` callbacks and `queueMicrotask`, std/prelude/promise.vlt); result: none. The queue is first in, first out and is drained at every job boundary of the task: after the root's poll and after each local promise the task runs from its ready queue (entries queued meanwhile run in the same drain). An entry runs its waiter directly: a local promise of the task is run, the root is polled, any other waker is woken; an entry whose promise is driven by its owner by then is skipped (the owner's own entry resumes it). Outside a task it is ready at once. WebAssembly keeps one queue that runs before the ready tasks. `await` steps (`velt_rt_await_tick`) use the same queue. No code pointers are stored (§13.5). (additive) |
+| `velt_rt_microtask` | `() -> VeltFut*` | waits for its turn in the microtask queue of the task that polls it (`then` / `catch` / `finally` callbacks and `queueMicrotask`, std/prelude/promise.velt); result: none. The queue is first in, first out and is drained at every job boundary of the task: after the root's poll and after each local promise the task runs from its ready queue (entries queued meanwhile run in the same drain). An entry runs its waiter directly: a local promise of the task is run, the root is polled, any other waker is woken; an entry whose promise is driven by its owner by then is skipped (the owner's own entry resumes it). Outside a task it is ready at once. WebAssembly keeps one queue that runs before the ready tasks. `await` steps (`velt_rt_await_tick`) use the same queue. No code pointers are stored (§13.5). (additive) |
 | `velt_rt_unhandled_defer` | `() -> u8` | called by the function that disposes of an unclaimed rejecting promise's result (`velt_rt_fut_start`'s `result_drop`) before it reports an `Err`: 1 when the runtime keeps the promise to report it once the task's microtask queue is drained, as Node does (the function then returns without reporting or dropping; the runtime calls it again then, and it gets 0); 0 to report now (outside a runtime drop of a started promise in a task). (additive) |
-| `velt_rt_task_gate` | `() -> u64` | a counted handle to the gate of the task being polled (0 outside a task): a callback that runs on another task can wait with it for the end of its creator's poll (std/prelude/timers.vlt no longer needs it: its callbacks run on the creating task). Released with `velt_rt_task_gate_free`. WebAssembly: always 0. (additive) |
+| `velt_rt_task_gate` | `() -> u64` | a counted handle to the gate of the task being polled (0 outside a task): a callback that runs on another task can wait with it for the end of its creator's poll (std/prelude/timers.velt no longer needs it: its callbacks run on the creating task). Released with `velt_rt_task_gate_free`. WebAssembly: always 0. (additive) |
 | `velt_rt_task_gate_wait` | `(u64 gate) -> VeltFut*` | completes once the poll the gate's task was in when the wait was first polled has ended (each poll ends with the task's microtask queue drained), at once when the task is not in a poll or for gate 0; so a timer's callback never runs before the callbacks its creator queued. Result: none. (additive) |
-| `velt_rt_timer_new` | `(i64 ms) -> u64` | a place in the process-wide order of timer callbacks (`setTimeout`, `setInterval`, `setImmediate`; std/prelude/timers.vlt) for a timer of the task being polled, as Node orders timers: at the end of the task's list for delay `ms` (negative = 0); a new list's expiry is the monotonic clock read now in whole milliseconds plus `ms`. The lists of all tasks run by (expiry, creation of the list); a pass over the due timers reads the clock once and runs each due list's timers due by then in creation order, and a list whose next timer is not due by then waits for it with a new place (Node's `listOnTimeout`). `ms` 0 (or less) is an immediate (`setImmediate`): the task's immediates are not in a list; once a pass finds nothing more due, the immediates created by then run, in creation order, before the next pass reads the clock (Node's check phase). The turn waits at least `ms`. Insert, removal and finding the next timer take logarithmic time. Freed with `velt_rt_timer_free`. (additive) |
+| `velt_rt_timer_new` | `(i64 ms) -> u64` | a place in the process-wide order of timer callbacks (`setTimeout`, `setInterval`, `setImmediate`; std/prelude/timers.velt) for a timer of the task being polled, as Node orders timers: at the end of the task's list for delay `ms` (negative = 0); a new list's expiry is the monotonic clock read now in whole milliseconds plus `ms`. The lists of all tasks run by (expiry, creation of the list); a pass over the due timers reads the clock once and runs each due list's timers due by then in creation order, and a list whose next timer is not due by then waits for it with a new place (Node's `listOnTimeout`). `ms` 0 (or less) is an immediate (`setImmediate`): the task's immediates are not in a list; once a pass finds nothing more due, the immediates created by then run, in creation order, before the next pass reads the clock (Node's check phase). The turn waits at least `ms`. Insert, removal and finding the next timer take logarithmic time. Freed with `velt_rt_timer_free`. (additive) |
 | `velt_rt_timer_turn` | `(u64 timer, u64 gate) -> VeltFut*` | completes once the timer is due, the poll `gate`'s task (0: none; the prelude passes 0, its callbacks run on the creating task) was in when it came due has ended (as `velt_rt_task_gate_wait`), it comes next in the order among the timers whose task is not busy in a poll of another task (a busy task's lists are passed over as a whole), and the poll of the task that took the previous turn has ended (each poll ends with its microtask queue drained); the timer then leaves the order. So callbacks run in Node's order, each followed by its microtasks, across tasks. Ready at once for a timer that is no longer queued (`velt_rt_timer_clear`). Called in the first run of a started promise (the prelude's), it marks that promise as a timer's: it does not keep an orphaned set alive (§1.1; a ref'd timer holds a keep-alive reference itself). WebAssembly: the same lists, fired by the executor, and `block_on` does not wait for such promises. Result: none. (additive) |
 | `velt_rt_timer_again` | `(u64 timer, i64 ms)` | queues the timer again at the end of its list, due `ms` after the clock read when it last took its turn (an interval's next run, as Node's: called after the callback's synchronous part). (additive) |
 | `velt_rt_timer_clear` | `(u64 timer)` | takes the timer out of the order (`clearTimeout`; a no-op once it took its turn or was cleared); its turn completes at once. May be called from any task while the handle is live (the prelude calls it under the timer state's lock, which also covers `velt_rt_timer_free`). (additive) |
@@ -251,7 +251,7 @@ The call of an async host function (`declare host("m") async function f(…): Pr
 https://veltlang.com/docs/reference/host-functions/) is the import `m.f`, which calls the JS function and returns a
 `u32` id under which the glue keeps its JS promise, then a promise leaf over that id
 (velt_rt_wasm `host_promise.rs`), and the promise of a std hook awaiting the leaf (velt_vir
-`lower/host.rs`). The leaf's result is std's `HostSettled<W>` (std/host/promise.vlt) in its
+`lower/host.rs`). The leaf's result is std's `HostSettled<W>` (std/host/promise.velt) in its
 foreign layout, `{ VeltStr code; VeltStr message; W value; }` (offsets 0, 24, 48): `W` is `T`,
 `u32` (a `HostRef` slot, 0 for `null`) for `HostRef` and `HostRef | null`, and `bool` (unused)
 for `void`. The hook throws `IoError(code, message)` when `code` is not empty, else makes the
@@ -297,7 +297,7 @@ a panic always ends the program (velt_rt_wasm defines the functions below as no-
 | `velt_rt_catch_message` | `(u64 h, VeltStr* out) -> void` | the panic message of `h` (empty if it did not panic) |
 | `velt_rt_catch_free` | `(u64 h) -> void` | releases `h` (0 is ignored) |
 
-std's `catchPanic(body)` (std/task/panic.vlt) arms, calls `body` and stores its promise (which
+std's `catchPanic(body)` (std/task/panic.velt) arms, calls `body` and stores its promise (which
 starts it and takes the arming before its first poll; the first promise started after arming
 takes it), takes the handle, awaits `settled`, and
 throws `PanicError(message)` or awaits the promise. Arming and taking happen in one poll with no
@@ -308,13 +308,13 @@ throws `PanicError(message)` or awaits the promise. Arming and taking happen in 
 | Symbol | Signature | Notes |
 |---|---|---|
 | `velt_rt_block_on` | `(PollFn poll, void* state)` | `async main`, and a synchronous `main` of a program that starts promises or tasks (§1.1; its root calls `main`): `velt_main` builds the state on its stack, calls this, then reads the result at `state+0`. Runs the root as a task on the runtime's workers; returns when READY. Tasks still running afterwards are abandoned when the process exits. Must not be called from inside a task. |
-| `velt_rt_tla_at` | `(const VeltStr* site)` | a top-level `await` (std/prelude/process.vlt `topLevelAwaitAt`) at `site` (`path:line:col`, a string literal) suspends: called on the suspending path only (an `await` that goes on at once calls nothing), two atomic stores of the literal's bytes, no lock, no allocation. When the root can never finish, the site stored last makes the program write `Warning: Detected unsettled top-level await at <path>:<line>` and exit with 13, as Node does; with none stored it exits with 0 (`top_level_await.rs`, both runtimes) |
+| `velt_rt_tla_at` | `(const VeltStr* site)` | a top-level `await` (std/prelude/process.velt `topLevelAwaitAt`) at `site` (`path:line:col`, a string literal) suspends: called on the suspending path only (an `await` that goes on at once calls nothing), two atomic stores of the literal's bytes, no lock, no allocation. When the root can never finish, the site stored last makes the program write `Warning: Detected unsettled top-level await at <path>:<line>` and exit with 13, as Node does; with none stored it exits with 0 (`top_level_await.rs`, both runtimes) |
 | `velt_rt_spawn` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(f(...))`: copies the initial state into the task (caller gives up ownership of its contents), starts it now. Returns the join handle; its result slot (+16) receives `result_size` bytes (≤ 256; box larger results). Dropping the handle **detaches** (task keeps running); a result the handle never claims (dropped before or after the task finished) is dropped with `result_drop` (null: nothing to drop). |
 | `velt_rt_spawn_transfer` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align, u64 result_size, void (*result_drop)(void* slot), void (*result_transfer)(void* slot)) -> VeltFut*` | `velt_rt_spawn` for a result that can reach counted objects: `result_transfer` (compiled transfer glue, in place) runs on the result as the task's state finishes, on the task and inside its local set (so promises the task started, which may still use the result's objects, are on the same thread, and a promise the glue starts joins the set), before the join handle can see it. Null: as `velt_rt_spawn`. |
 | `velt_rt_spawn_detached` | `(PollFn, DropFn, const void* state, u64 state_size, u64 state_align)` | spawn whose result is unused: no handle, one allocation |
-| `velt_rt_keep_alive_acquire` | `()` | takes a keep-alive reference (§7): a ref'd timer is pending (std/prelude/timers.vlt). Additive. |
+| `velt_rt_keep_alive_acquire` | `()` | takes a keep-alive reference (§7): a ref'd timer is pending (std/prelude/timers.velt). Additive. |
 | `velt_rt_keep_alive_release` | `()` | releases one reference taken with `velt_rt_keep_alive_acquire`; the caller keeps them balanced. On WebAssembly, `velt_rt_block_on` returns only once none is held. |
-| `velt_rt_timer_unref_due` | `() -> VeltFut*` (result `bool`) | a due `unref()`'d timer asks whether to drop its callback: true once the process was seen with nothing left that can happen (quiet.rs), as Node exits without running it (std/prelude/timers.vlt). While nothing but running code may be left (a thread waits for the end, no keep-alive reference, no timer or I/O pending, nothing queued), it waits until the last worker parks, which records the end or wakes it. Ready at once with false on WebAssembly, whose one thread runs the timers and decides the end. |
+| `velt_rt_timer_unref_due` | `() -> VeltFut*` (result `bool`) | a due `unref()`'d timer asks whether to drop its callback: true once the process was seen with nothing left that can happen (quiet.rs), as Node exits without running it (std/prelude/timers.velt). While nothing but running code may be left (a thread waits for the end, no keep-alive reference, no timer or I/O pending, nothing queued), it waits until the last worker parks, which records the end or wakes it. Ready at once with false on WebAssembly, whose one thread runs the timers and decides the end. |
 | `velt_rt_spawn_fut` | `(VeltFut* f, u64 result_size, void (*result_drop)(void* slot)) -> VeltFut*` | `spawn(p)` where `p` is already a heap future (boxed promise, leaf); takes ownership of `f`; `result_drop` as for `velt_rt_spawn` |
 | `velt_rt_spawn_target` | `(i64 worker)` | `spawn(p, { worker })` (#211): the next spawn on this thread pins its task to `worker`. Called right after the task's arguments are evaluated, immediately before `velt_rt_spawn` / `_transfer` / `_detached` / `_fut`. Out of range (`worker < 0` or `≥ velt_rt_worker_count()`): panic `spawn: worker <w> is out of range (the runtime has <n> workers)`. With the stealing scheduler the task is spawned as usual. Additive. |
 | `velt_rt_worker_count` | `() -> u64` | `workerCount()`: the per-core workers, or the stealing runtime's worker threads (1 on WebAssembly). Additive. |
@@ -377,7 +377,7 @@ Panics inside tasks print `panic: <msg>` and exit 101 (same hook as sync code).
 
 ### 2.1 Latches (`new Promise`)
 
-A one-shot latch (`u64` handle, §3.2): the waking half of `new Promise` (std/prelude/promise.vlt
+A one-shot latch (`u64` handle, §3.2): the waking half of `new Promise` (std/prelude/promise.velt
 keeps the settled value in Velt code). Thread-safe; no callbacks are stored (§13.5).
 
 | Symbol | Signature | Notes |
@@ -390,7 +390,7 @@ keeps the settled value in Velt code). Thread-safe; no callbacks are stored (§1
 
 ### 2.2 Channels (`velt/sync`)
 
-`Channel<T>` (std/sync/channel.vlt) is a Copy struct around a `u64` handle, a key into a runtime table
+`Channel<T>` (std/sync/channel.velt) is a Copy struct around a `u64` handle, a key into a runtime table
 like the socket handles (§3.2): a channel leaves the table once it is closed and drained, and any
 later use of a copy sees a closed, empty channel. The runtime never sees a `T`, only its bytes:
 every call passes the item size (align <= 16). `receive` results are a `T | null` in the
@@ -435,7 +435,7 @@ ends. No suspension point may lie between lock and unlock.
 
 ### 2.3 Abort signals (`velt/task`)
 
-Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task/signal.vlt and
+Each signal's `u64` handle (an `Arc`) is owned by a private `shared` cell in std/task/signal.velt and
 released once, at the cell's last reference; no handle is public. Aborting sets a flag, stores
 the reason and wakes the waiters; it never cancels anything itself. No code pointers are
 stored: `AbortSignal.timeout` is a runtime timer task holding a weak reference, aborted (freed with
@@ -457,7 +457,7 @@ by `any` holds strong references to its sources until it is aborted (they hold w
 
 ### 2.4 Task groups (`taskScope`)
 
-The live-children count of a `taskScope` (std/task/scope.vlt), behind a registry key (a `TaskScope`
+The live-children count of a `taskScope` (std/task/scope.velt), behind a registry key (a `TaskScope`
 copy used after its scope ended finds no group). No code pointers are stored.
 
 | Symbol | Signature | Notes |
@@ -518,7 +518,7 @@ typedef struct { int32_t code; uint32_t _pad; VeltStr message; } VeltErr;   // 3
   owned string (drop with `velt_rt_str_drop`).
 - Sync functions write an `IoResult` (or a bare `VeltErr` status) to a trailing out-pointer and
   **return nothing** (§3.1); callers read `err.code` from the slot.
-- `IoError.code` (a string in Velt): std's `errorCodeName` (std/native/error.vlt) names a code.
+- `IoError.code` (a string in Velt): std's `errorCodeName` (std/native/error.velt) names a code.
 
 | code | name | code | name |
 |---|---|---|---|
@@ -534,7 +534,7 @@ typedef struct { int32_t code; uint32_t _pad; VeltStr message; } VeltErr;   // 3
 
 ### 3.1 Extern declarations must match exactly
 
-`std/*.vlt` binds runtime functions with `declare function`, which the compiler lowers like a
+`std/*.velt` binds runtime functions with `declare function`, which the compiler lowers like a
 Velt function: scalars (`bool` = `u8`, `number` = `f64`, the sized integers) stay scalars; every
 other value (string, array, struct, tuple, closure) is passed as a pointer to it; `Promise<T>`
 is a `VeltFut*`; a non-scalar result becomes a **trailing out-pointer and a `void` return**. The
@@ -721,7 +721,7 @@ object compiled against them no longer links.
 | `velt_rt_mutex_init` | `(u64* lock)` | the `Mutex<T>` lock word: 8 bytes, align 8, inside the shared object; no destroy needed |
 | `velt_rt_mutex_lock` / `velt_rt_mutex_unlock` | `(u64* lock)` | `m.with(f)` = lock; call f; unlock. Blocks the thread; bodies must not await. |
 | `velt_rt_mutex_lock_checked` | `(u64* lock)` | `velt_rt_mutex_lock` from code that may run in read mode (§9.1): there it stops the program before locking [additive, #708] |
-| `velt_rt_rwlock_init` | `(u64* lock)` | the `RwLock<T>` lock words: 19 words (152 bytes), align 8, at the start of the `RwLock<T>`, then the value (std `prelude/sync.vlt`; §9.2) [additive, #708] |
+| `velt_rt_rwlock_init` | `(u64* lock)` | the `RwLock<T>` lock words: 19 words (152 bytes), align 8, at the start of the `RwLock<T>`, then the value (std `prelude/sync.velt`; §9.2) [additive, #708] |
 | `velt_rt_rwlock_read` | `(u64* lock, u64 reader) -> u64 how` | `rw.read(f)`: the lock shared with other readers; the thread is in read mode (§9.1) until the unlock, which takes `how` back. `reader` is `how & ~7` of an earlier `read` or `write` in the same call of the calling function (never across an `await`: the task may continue on another thread), else 0 [additive, #708] |
 | `velt_rt_rwlock_read_unlock` | `(u64* lock, u64 how)` | the end of the read that returned `how`, on the same thread (callbacks never await) [additive, #708] |
 | `velt_rt_rwlock_write` | `(u64* lock, u64 reader) -> u64` | `rw.write(f)`: the lock exclusively; in read mode it stops the program before locking (§9.1). `reader` as for `read`; the result is this thread's reader state, for the unlock and later calls [additive, #708] |
@@ -944,8 +944,8 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_push_str` | `(VeltStrBuf* b, const VeltStr* s)` | `s` may be `b` itself or lie in its buffer |
 | `velt_rt_strbuf_push_bytes` | `(VeltStrBuf* b, const u8* p, u64 len)` | static text chunks of a template; `len == 0` ⇒ `p` unused. The low 32 bits of `len` are the byte count; the high 32 bits may carry the UTF-16 unit count (as a string's `w1`): equal to the byte count, the text is ASCII and is not scanned; 0 means unknown (counted) |
 | `velt_rt_strbuf_push_words` | `(VeltStrBuf* b, u64 w0, u64 w1, u64 w2, u64 n)` | the first `n` (at most 24) bytes of the three words, ASCII, byte `i` in bits `8 * (i % 8)` of word `i / 8`: the slow path of `strbufPushAsciiWords`, by value so the caller needs no stack for the words (#1982) |
-| `velt_rt_strbuf_push_u8s` | `(VeltStrBuf* b, const VeltBytes* bytes, u64 len, u64 units)` | the first `len` bytes of a `u8[]` (canonical WTF-8 Velt code built, e.g. std/encoding/json/writer.vlt); `units == len`: ASCII, not scanned; otherwise counted |
-| `velt_rt_bytes_put_f64` | `(VeltBytes* bytes, u64 at, f64 v) -> u64` | writes finite `v` as JS `String(v)` (`-0` is `0`) into the `u8[]`'s bytes from `at` and returns the position after it; needs 32 bytes of the array's length from `at`, else writes nothing and returns `at`. A writer that gathers text in a byte array (std/encoding/json/tape.vlt) prints a double there |
+| `velt_rt_strbuf_push_u8s` | `(VeltStrBuf* b, const VeltBytes* bytes, u64 len, u64 units)` | the first `len` bytes of a `u8[]` (canonical WTF-8 Velt code built, e.g. std/encoding/json/writer.velt); `units == len`: ASCII, not scanned; otherwise counted |
+| `velt_rt_bytes_put_f64` | `(VeltBytes* bytes, u64 at, f64 v) -> u64` | writes finite `v` as JS `String(v)` (`-0` is `0`) into the `u8[]`'s bytes from `at` and returns the position after it; needs 32 bytes of the array's length from `at`, else writes nothing and returns `at`. A writer that gathers text in a byte array (std/encoding/json/tape.velt) prints a double there |
 | `velt_rt_strbuf_push_f64` | `(VeltStrBuf* b, f64 v)` | JS `String(v)` (`-0` is `0`). (The integer forms (`strbuf_push_i64` / `_u64`) are gone: an integer is appended by std's `intPush` / `uintPush`, velt/lang/hooks/number_text, #2197.) A float that is not a whole number: `StringBuilder.appendNumber` and the JSON writer (`writeF64`) call it (a whole number goes through std's `pushI64`, a short decimal in JSON through `writeDecimal`); so do std's `numberPush` where std's float printer is not loaded (velt/lang/hooks/number_text), generated glue (float literals), and lowering where std's float hooks are unchecked. Templates with the float printer loaded take std's `floatPush` |
 | `velt_rt_strbuf_push_inspect_f64` | `(VeltStrBuf* b, f64 v)` | what `console.log` prints, as `velt_rt_write_f64` (`-0` is `-0`) [additive, #525] |
 | `velt_rt_strbuf_push_json_f64` | `(VeltStrBuf* b, f64 v)` | like `JSON.stringify`: JS format, `null` for NaN/±Infinity |
@@ -967,13 +967,13 @@ buffer grows. An adopted string's head must not lie in its buffer.
 | `velt_rt_strbuf_finish` | `(VeltStrBuf* b, VeltStr* out)` | moves the text to `*out`; `*b` becomes empty (reusable, nothing to free) |
 | `velt_rt_strbuf_drop` | `(VeltStrBuf* b)` | abandon an unfinished builder (exception path); zeroes it |
 | `velt_rt_json_enter` | `(const void* p) -> u8` | `JSON.stringify` glue starts writing the object at `p`: 1, or 0 if it is already being written (a cycle; the caller panics with `JSON.stringify: converting circular structure to JSON`). Per thread |
-| `velt_rt_rows_begin_named` / `velt_rt_rows_end` | `(u64 cursor, const VeltStr* names) -> u64` / `(u64 st)` | velt/db's `decodeRows<T>` / `decodeRow<T>` of a row of plain fields read a driver's row cursor (its address) by column, in the code velt/encoding/json's generator of `parseJsonCursor<T>` writes (velt/db/generate/columns.vlt): `names` gives the row type's fields, each name with its length in UTF-8 bytes in front (`2:id4:name`); each column is matched to its field once (the map is kept per thread for the next result with the same header and names). The rows state is a `u64` (its address) |
+| `velt_rt_rows_begin_named` / `velt_rt_rows_end` | `(u64 cursor, const VeltStr* names) -> u64` / `(u64 st)` | velt/db's `decodeRows<T>` / `decodeRow<T>` of a row of plain fields read a driver's row cursor (its address) by column, in the code velt/encoding/json's generator of `parseJsonCursor<T>` writes (velt/db/generate/columns.velt): `names` gives the row type's fields, each name with its length in UTF-8 bytes in front (`2:id4:name`); each column is matched to its field once (the map is kept per thread for the next result with the same header and names). The rows state is a `u64` (its address) |
 | `velt_rt_rows_next` / `_columns` / `_field` / `_field_map` | `(st) -> u8` / `(st) -> u64` / `(st, u64 col) -> i64` / `(st) -> u64` | step to the next row (1, or 0 at the end); the column count; the field column `col` fills (-1: none); the fields of the first 16 columns, 4 bits each (column `c` at bit `4c`: the field's index plus one, 0 for none and for an index of 15 or more) |
 | `velt_rt_rows_i64` / `_f64` / `_bool` / `_str` | `(st, u64 col, T* out) -> u8` | column `col` of the current row typed: 1 = written, 2 = NULL, 0 = another kind (an integer accepts an exact float, a float an integer, a string's invalid UTF-8 becomes U+FFFD) |
 | `velt_rt_rows_kind` / `_blob` | `(st, u64 col) -> u8` / `(st, u64 col, VeltBytes* out)` | what column `col` of the current row holds, numbered as std/db's `CellKind` (0 NULL, 1 boolean, 2 integer, 3 float, 4 text, 5 blob, 6 JSON); a blob's bytes (empty for another kind) |
 | `velt_rt_rows_exact_i64` | `(f64 v, i64* out) -> u8` | 1 and the integer when `v` is one exactly (an integer field from a float cell of a `RowSource`), else 0 |
 | `velt_rt_rows_fail` | `(const VeltStr* expected, i64 row, const VeltStr* field, VeltStr* out)` | the JSON decoder's message for a row that does not fit: `expected <expected> at $[row].field` (`row` -1: the single row; `field` empty: the row itself) |
-| `velt_rt_param_object` / `velt_rt_param_name` | `(u64 sink)` / `(u64 sink, const VeltStr* name)` | velt/db's `bindParams<P>` (the code velt/db/generate/bind.vlt writes for `P`) hands a driver's parameter sink (its address; native_abi.md "Parameter sinks") an object's members: `object` first, then each member's name before its value |
+| `velt_rt_param_object` / `velt_rt_param_name` | `(u64 sink)` / `(u64 sink, const VeltStr* name)` | velt/db's `bindParams<P>` (the code velt/db/generate/bind.velt writes for `P`) hands a driver's parameter sink (its address; native_abi.md "Parameter sinks") an object's members: `object` first, then each member's name before its value |
 | `velt_rt_param_i64` / `_u64` / `_f64` / `_bool` / `_null` / `_str` / `_bytes` | `(u64 sink, v)` (`_bool`: `u8`, `_str`: `const VeltStr*`, `_bytes`: `const VeltBytes*`, `_null`: no value) | one value, as its JSON text would bind: a `u64` beyond `i64` and a non-integral `f64` (or one of 1e21 or more) a REAL, an integral `f64` an INTEGER, NaN/±Infinity NULL, a string UTF-8 (lone surrogates U+FFFD), a `u8[]` a BLOB |
 | `velt_rt_json_leave` | `()` | done with the innermost object entered |
 | `velt_rt_visit_enter` | `(u64 id) -> u8` | velt/reflect `beginVisit`: starts visiting the value with identity `id`: 1, or 0 if it is being visited already (it contains itself). The same per-thread stack as `velt_rt_json_enter` |
@@ -1004,7 +1004,7 @@ U+FFFD. "Omitted" JS arguments are passed as the value given in Notes.
 | `velt_rt_str_eq` | `(const VeltStr* a, const VeltStr* b) -> u8` | `==` fast path: length check + one memcmp |
 | `velt_rt_str_join` | `(const VeltStrArray* parts, const VeltStr* sep, VeltStr* out)` | `parts.join(sep)`: sums the pieces' lengths and unit counts, then writes the result once (inline, or a heap buffer of exactly its size) |
 | `velt_rt_str_split` | `(const VeltStr* s, const VeltStr* sep, VeltStrArray* out)` | JS semantics: `"a,b,".split(",")` = `["a","b",""]`, `"".split(",")` = `[""]`, `"".split("")` = `[]`, `split("")` = code units (a pair gives its two halves). Drop with `velt_rt_str_array_drop` (§4). |
-| `velt_rt_str_code_points` | `(const VeltStr* s, VeltStrArray* out)` | the characters (code points; a pair is one, a lone surrogate one): what `for (const c of s)` and `[...s]` iterate (the hook `stringCodePoints`, std/lang/hooks/string.vlt) |
+| `velt_rt_str_code_points` | `(const VeltStr* s, VeltStrArray* out)` | the characters (code points; a pair is one, a lone surrogate one): what `for (const c of s)` and `[...s]` iterate (the hook `stringCodePoints`, std/lang/hooks/string.velt) |
 | `velt_rt_str_is_well_formed` | `(const VeltStr* s) -> u8` | 1 when `s` has no lone surrogates (std's `encodeURIComponent`) |
 | `velt_rt_str_trim` / `_trim_start` / `_trim_end` | `(const VeltStr* s, VeltStr* out)` | JS WhiteSpace + LineTerminator set (includes U+FEFF, U+00A0, U+2028/9, Zs; not U+0085) |
 | `velt_rt_str_to_upper` / `_to_lower` | `(const VeltStr* s, VeltStr* out)` | full Unicode default case mapping (`ß` → `SS`, final sigma), like JS; ASCII fast path |
@@ -1050,12 +1050,12 @@ typedef struct VeltJsonReader VeltJsonReader;   // opaque
 | `velt_rt_json_reader_skip_unknown` | `(r) -> u8` | the value of an object key the target type has no field for: `skip_value`, or a failure when the reader rejects unknown keys |
 | `velt_rt_json_reader_skip_value` | `(r) -> u8` | skips (and validates) any value — unknown keys; iterative (no recursion), but nesting past the reader's `max_depth` fails like `expect_*_start` |
 | `velt_rt_json_reader_skip_lookahead` | `(r) -> u8` | `skip_value` for a union decoder looking ahead for its discriminant: also remembers where each array/object it passes ends (by the offset of its opening bracket), and jumps over one already passed. So the lookahead of unions nested in the skipped value does not scan it again: nested unions stay linear in the input size. Memory: one entry per container skipped this way, freed with the reader |
-| `velt_rt_json_reader_read_value` | `(r, VeltJson* out) -> u8` | any one value as a `json.Value` tree (§12.5), an owned handle. Iterative (no recursion); nesting past the reader's `max_depth` fails like `expect_*_start`. Only the rows of a database driver read through it now (`std/encoding/json/reader.vlt` `readValue`); a typed decoder's `JsonValue` field from text is a tape the Velt reader builds |
+| `velt_rt_json_reader_read_value` | `(r, VeltJson* out) -> u8` | any one value as a `json.Value` tree (§12.5), an owned handle. Iterative (no recursion); nesting past the reader's `max_depth` fails like `expect_*_start`. Only the rows of a database driver read through it now (`std/encoding/json/reader.velt` `readValue`); a typed decoder's `JsonValue` field from text is a tape the Velt reader builds |
 | `velt_rt_json_reader_mark` | `(const VeltJsonReader* r) -> u64` | the current position (opaque), for `reset` |
 | `velt_rt_json_reader_reset` | `(r, u64 mark)` | go back to a `mark` of the same reader and clear any error since: union decoders look ahead (for a discriminant key, or a number against literal members) and then decode from the start of the value |
 | `velt_rt_json_reader_end` | `(r) -> u8` | after the top-level value: 1 if only whitespace remains |
 | `velt_rt_json_error` | `(const VeltJsonReader* r, const VeltStr* expected, const VeltStr* path, VeltStr* out)` | builds the owned `JsonError.message` (§12.4) |
-| `velt_rt_json_node_syntax` | `(const VeltStr* src, VeltStr* out) -> u8` | Node's `SyntaxError` message for `src` if it is not JSON (1), else 0 and `out` untouched; the Velt reader (`std/encoding/json/reader.vlt`) asks after a failure |
+| `velt_rt_json_node_syntax` | `(const VeltStr* src, VeltStr* out) -> u8` | Node's `SyntaxError` message for `src` if it is not JSON (1), else 0 and `out` untouched; the Velt reader (`std/encoding/json/reader.velt`) asks after a failure |
 
 Except where stated, `u8` results are 1 = ok, 0 = failed (outputs untouched). **The first failure
 is sticky**: every later call fails (`peek` returns 10), so a decoder can bail out on the first 0
@@ -1179,7 +1179,7 @@ its port. Without the variable the runtime binds as before.
 In dev mode (`VELT_DEV_SOCKET` set, once the program listens) the runtime handles a stop request:
 HTTP servers stop accepting (the supervisor still holds the socket), in-flight requests get up to
 1 s to finish, stdout is flushed and the process exits with status 0. A server written in Velt
-joins through velt/dev's `joinStop` and `drained` (std/dev/stop.vlt), on:
+joins through velt/dev's `joinStop` and `drained` (std/dev/stop.velt), on:
 
 | Symbol | Signature | Notes |
 |---|---|---|
@@ -1285,7 +1285,7 @@ pair, and the offsets of a match are translated once per match.
 ### 14.3 Child processes (`velt/process/child`)
 
 ```c
-typedef struct {                 // std/process/child/spec.vlt `CommandSpec` (104 bytes)
+typedef struct {                 // std/process/child/spec.velt `CommandSpec` (104 bytes)
     VeltStr program;             // looked up in PATH when it has no separator
     VeltStrArray args;           // after the program name
     VeltStr cwd;                 // "" = the parent's

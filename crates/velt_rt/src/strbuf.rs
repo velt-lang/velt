@@ -126,7 +126,7 @@ pub unsafe extern "C" fn velt_rt_strbuf_push_words(
 }
 
 /// Append the first `len` bytes of the `u8[]` `bytes`: canonical WTF-8 text that Velt code
-/// built in a byte array (std/encoding/json/writer.vlt's escaped string literals). `units` is their
+/// built in a byte array (std/encoding/json/writer.velt's escaped string literals). `units` is their
 /// UTF-16 length: equal to `len` for ASCII text, any other count for text with no lone
 /// surrogates (escaped JSON strings: the escaper knows the count, so nothing is scanned), and
 /// `u64::MAX` when unknown (counted).
@@ -157,7 +157,7 @@ pub const PUT_F64_ROOM: u64 = 32;
 
 /// Write finite `v` as `JSON.stringify` writes it (JavaScript's shortest round-trip text) into
 /// the `u8[]` `bytes` at byte `at`, and return the position after it: a writer that gathers
-/// its text in a byte array (std/encoding/json/tape.vlt's `ByteOut`) prints a double in place, without
+/// its text in a byte array (std/encoding/json/tape.velt's `ByteOut`) prints a double in place, without
 /// handing its bytes to a builder first. Writes nothing and returns `at` unless the array has
 /// [`PUT_F64_ROOM`] bytes from `at` (callers make room first).
 #[no_mangle]
@@ -304,7 +304,7 @@ pub unsafe extern "C" fn velt_rt_strbuf_inspect_more(buf: *mut VeltStrBuf, remai
 /// Append `JSON.stringify(value)` for a `json.Value` handle (a null handle appends `null`).
 #[no_mangle]
 pub unsafe extern "C" fn velt_rt_strbuf_push_json_value(buf: *mut VeltStrBuf, h: u64) {
-    // The value's handle is its address, a `u64` in Velt (std/prelude/json/json_value.vlt).
+    // The value's handle is its address, a `u64` in Velt (std/prelude/json/json_value.velt).
     let h = h as usize as *const Value;
     match h.as_ref() {
         Some(v) => (*buf).push_with(|b| stringify_into(b, v)),

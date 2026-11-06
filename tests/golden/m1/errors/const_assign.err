@@ -1,2 +1,2 @@
-const_assign.vlt:3:3
+const_assign.velt:3:3
 cannot assign twice to const `x`

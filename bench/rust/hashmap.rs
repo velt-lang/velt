@@ -1,4 +1,4 @@
-// Hash maps (same workload as hashmap.vlt), with std's HashMap (SipHash, the default hasher).
+// Hash maps (same workload as hashmap.velt), with std's HashMap (SipHash, the default hasher).
 use std::collections::HashMap;
 
 fn int_map(n: i64) -> i64 {

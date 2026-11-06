@@ -1,4 +1,4 @@
-//! Typed parse (see parse_typed.vlt): serde derive into a struct.
+//! Typed parse (see parse_typed.velt): serde derive into a struct.
 use serde::Deserialize;
 
 #[derive(Deserialize)]

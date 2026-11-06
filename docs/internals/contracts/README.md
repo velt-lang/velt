@@ -25,9 +25,9 @@ helper), and explain it in your final report.
 
 ## Pipeline
 ```
-velt build main.vlt
+velt build main.velt
   └─ driver (veltc)
-      ├─ velt_loader::load_program     main.vlt + imports → SourceModules, SourceMap
+      ├─ velt_loader::load_program     main.velt + imports → SourceModules, SourceMap
       │   └─ velt_syntax::parse_with   per file      → ast::Module (+ ambient declarations;
       │                                                 parse_file for std and the formatter;
       │                                                 std's parses come from the build cache)
@@ -152,12 +152,12 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
   the `u32` id of the JS promise (manifest result `async:<type>`). Its call is the import, the
   leaf `velt_rt_host_promise` and std's hook awaiting it (rt_abi_async.md §1.4), whose
   `HostSettled<W>`, `hostAwait<T>`, `hostAwaitVoid`, `hostAwaitRef` and `hostAwaitRefOrNull`
-  (std/host/promise.vlt) are `std_hooks` entries; the global std/prelude/global/host_async.vlt
+  (std/host/promise.velt) are `std_hooks` entries; the global std/prelude/global/host_async.velt
   loads them for a module declaring one. On JS hosts `velt_main` hands `main`'s root to
   `velt_rt_host_main` with the code after it (VIR `Work::MainFinish`) instead of calling
   `velt_rt_block_on` (rt_abi_async.md §2.5).
 - std's own host functions (#1785): the import module `velt:fetch`
-  (std/net/http/fetch/client/transport/js_host.vlt), `fetch`'s transport on JS hosts, which the
+  (std/net/http/fetch/client/transport/js_host.velt), `fetch`'s transport on JS hosts, which the
   glue provides itself (rt_abi.md "Host values").
 
 ## Who owns what
@@ -244,7 +244,7 @@ the crate. The same inputs give the same modules, diagnostics and order for ever
 ## Inlining markers (additive VIR extension)
 - `vir::Function::inline: vir::Inline` (`Default`, `Always`, `Never`): a std function's own
   statement `inline()` (`Always`) or `noInline()` (`Never`, #1884), declared in
-  `std/lang/intrinsics/inline.vlt` (`hir::Intrinsic::Inline` / `NoInline`, which lower to no
+  `std/lang/intrinsics/inline.velt` (`hir::Intrinsic::Inline` / `NoInline`, which lower to no
   code). One field, so "both" cannot be represented. Sema rejects a marker that is not the first
   statement of a declared function's or method's body, or is in a closure, a generator or an
   async function (whose body lowering compiles into a resume function), so a function has at

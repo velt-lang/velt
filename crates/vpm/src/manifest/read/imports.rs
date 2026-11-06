@@ -1,5 +1,5 @@
 //! Decoding conditional imports ([`crate::imports`]): a package's `imports` field, and the
-//! standard library's own map, `std/imports.vlt` (`export const imports: Imports = { … }`), with
+//! standard library's own map, `std/imports.velt` (`export const imports: Imports = { … }`), with
 //! the manifest's reader: the same data subset, bounds and checks.
 
 use std::collections::BTreeMap;
@@ -18,7 +18,7 @@ const STD_IMPORTS_SHAPE: Shape = Shape {
     message: "std's imports file must be one `export const imports: Imports = { … }`",
 };
 
-/// Read and validate the text of `std/imports.vlt`. Every problem is a diagnostic in `file`.
+/// Read and validate the text of `std/imports.velt`. Every problem is a diagnostic in `file`.
 pub fn read_std_imports(file: FileId, src: &str) -> Result<ImportMap, Diagnostics> {
     read_data(file, src, &STD_IMPORTS_SHAPE, |r, v| r.imports(v, false)).map(|(map, _)| map)
 }

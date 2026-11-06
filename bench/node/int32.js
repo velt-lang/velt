@@ -1,4 +1,4 @@
-// 32-bit integer mixing on numbers (same as int32.vlt): the issue #521 loop as written, then with
+// 32-bit integer mixing on numbers (same as int32.velt): the issue #521 loop as written, then with
 // Math.imul.
 function mix32(x, i) {
   let y = (x ^ (x >>> 15)) | 0;

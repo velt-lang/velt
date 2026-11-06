@@ -84,16 +84,16 @@ fn a_second_build_links_what_the_first_compiled() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     let cache = dir.join("cache");
-    std::fs::write(dir.join("a.vlt"), PROGRAM).unwrap();
-    std::fs::write(dir.join("b.vlt"), format!("// another program\n{PROGRAM}")).unwrap();
-    let off = build(dir, "a.vlt", "off", &cache, &[("VELT_STD_OBJECT", "0")]);
+    std::fs::write(dir.join("a.velt"), PROGRAM).unwrap();
+    std::fs::write(dir.join("b.velt"), format!("// another program\n{PROGRAM}")).unwrap();
+    let off = build(dir, "a.velt", "off", &cache, &[("VELT_STD_OBJECT", "0")]);
     assert!(!text(&off.stderr).contains("found,"));
     assert_eq!(run(dir, "off"), OUTPUT);
-    let cold = build(dir, "a.vlt", "a", &cache, &[]);
+    let cold = build(dir, "a.velt", "a", &cache, &[]);
     let (found, compiled) = counts(&cold);
     assert!(found == 0 && compiled > 0, "{}", text(&cold.stderr));
     assert_eq!(run(dir, "a"), OUTPUT);
-    let warm = build(dir, "b.vlt", "b", &cache, &[]);
+    let warm = build(dir, "b.velt", "b", &cache, &[]);
     assert_eq!(counts(&warm), (compiled, 0), "{}", text(&warm.stderr));
     assert_eq!(run(dir, "b"), OUTPUT);
 }
@@ -105,12 +105,12 @@ fn concurrent_and_damaged_entries_are_misses_not_failures() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     let cache = dir.join("cache");
-    std::fs::write(dir.join("a.vlt"), PROGRAM).unwrap();
+    std::fs::write(dir.join("a.velt"), PROGRAM).unwrap();
     let outs: Vec<Output> = std::thread::scope(|s| {
         let builds: Vec<_> = ["x", "y"]
             .map(|out| {
                 let (dir, cache) = (dir, &cache);
-                s.spawn(move || build(dir, "a.vlt", out, cache, &[]))
+                s.spawn(move || build(dir, "a.velt", out, cache, &[]))
             })
             .into_iter()
             .collect();
@@ -127,7 +127,7 @@ fn concurrent_and_damaged_entries_are_misses_not_failures() {
     for e in &stored {
         std::fs::write(e, b"truncated").unwrap();
     }
-    let again = build(dir, "a.vlt", "z", &cache, &[]);
+    let again = build(dir, "a.velt", "z", &cache, &[]);
     assert_eq!(counts(&again), (0, compiled), "{}", text(&again.stderr));
     assert_eq!(run(dir, "z"), OUTPUT);
 }
@@ -139,11 +139,11 @@ fn the_stamp_records_the_std_objects() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     let cache = dir.join("cache");
-    std::fs::write(dir.join("a.vlt"), PROGRAM).unwrap();
+    std::fs::write(dir.join("a.velt"), PROGRAM).unwrap();
     // One environment for every build: the stamp's key includes `VELT_*` variables.
     let stamped = || {
         let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
-        let o = (cmd.args(["build", "a.vlt", "--release", "-o", "a", "-v"]))
+        let o = (cmd.args(["build", "a.velt", "--release", "-o", "a", "-v"]))
             .current_dir(dir)
             .env("VELT_STD_OBJECT", "1")
             .env("VELT_BUILD_CACHE", &cache)
@@ -178,21 +178,21 @@ fn a_build_with_few_misses_leaves_them_in_the_program() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     let cache = dir.join("cache");
-    std::fs::write(dir.join("a.vlt"), PROGRAM).unwrap();
+    std::fs::write(dir.join("a.velt"), PROGRAM).unwrap();
     let high = [("VELT_STD_OBJECT_MIN_MISSES", "100000000")];
-    let cold = build(dir, "a.vlt", "a1", &cache, &high);
+    let cold = build(dir, "a.velt", "a1", &cache, &high);
     assert_eq!(counts(&cold), (0, 0), "{}", text(&cold.stderr));
     assert_eq!(run(dir, "a1"), OUTPUT);
     let filled = build(
         dir,
-        "a.vlt",
+        "a.velt",
         "a2",
         &cache,
         &[("VELT_STD_OBJECT_MIN_MISSES", "1")],
     );
     let compiled = counts(&filled).1;
     assert!(compiled > 0, "{}", text(&filled.stderr));
-    let warm = build(dir, "a.vlt", "a3", &cache, &high);
+    let warm = build(dir, "a.velt", "a3", &cache, &high);
     assert_eq!(counts(&warm), (compiled, 0), "{}", text(&warm.stderr));
     assert_eq!(run(dir, "a3"), OUTPUT);
 }
@@ -205,7 +205,7 @@ fn only_release_executables_use_the_std_cache() {
     let tmp = test_dir::TestDir::new();
     let dir = tmp.path();
     let cache = dir.join("cache");
-    std::fs::write(dir.join("a.vlt"), PROGRAM).unwrap();
+    std::fs::write(dir.join("a.velt"), PROGRAM).unwrap();
     runtime_support::build_native_runtime(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../.."));
     for extra in [
         &["--emit", "obj", "-o", "a.o"][..],
@@ -213,7 +213,7 @@ fn only_release_executables_use_the_std_cache() {
         &["--backend", "cranelift", "-o", "c"][..],
     ] {
         let mut cmd = crate::no_window::command(env!("CARGO_BIN_EXE_velt"));
-        let o = (cmd.args(["build", "a.vlt", "--release"]).args(extra))
+        let o = (cmd.args(["build", "a.velt", "--release"]).args(extra))
             .current_dir(dir)
             .env("VELT_STD_OBJECT", "1")
             .env("VELT_STD_OBJECT_STATS", "1")
@@ -254,8 +254,8 @@ fn an_edited_program_compiles_no_std_code_again() {
     let dir = tmp.path();
     let cache = dir.join("cache");
     let all = [("VELT_STD_OBJECT_MIN_MISSES", "1")];
-    std::fs::write(dir.join("a.vlt"), JSON_PROGRAM).unwrap();
-    let cold = build(dir, "a.vlt", "a1", &cache, &all);
+    std::fs::write(dir.join("a.velt"), JSON_PROGRAM).unwrap();
+    let cold = build(dir, "a.velt", "a1", &cache, &all);
     let (found, compiled) = counts(&cold);
     assert!(found == 0 && compiled > 0, "{}", text(&cold.stderr));
     // Mangled `<generated>`: a function std's generator wrote is served.
@@ -269,8 +269,8 @@ fn an_edited_program_compiles_no_std_code_again() {
         "function main() {\n",
         "function main() {\n  console.log(\"edited\");\n",
     );
-    std::fs::write(dir.join("a.vlt"), edited).unwrap();
-    let warm = build(dir, "a.vlt", "a2", &cache, &all);
+    std::fs::write(dir.join("a.velt"), edited).unwrap();
+    let warm = build(dir, "a.velt", "a2", &cache, &all);
     assert_eq!(counts(&warm), (compiled, 0), "{}", text(&warm.stderr));
     assert!(generated(&warm), "{}", text(&warm.stderr));
     assert_eq!(run(dir, "a2"), "edited\n2 5 a\n");
@@ -285,8 +285,8 @@ fn code_reaching_statics_with_identity_is_served() {
     let dir = tmp.path();
     let cache = dir.join("cache");
     let all = [("VELT_STD_OBJECT_MIN_MISSES", "1")];
-    std::fs::write(dir.join("a.vlt"), JSON_PROGRAM).unwrap();
-    let cold = build(dir, "a.vlt", "a1", &cache, &all);
+    std::fs::write(dir.join("a.velt"), JSON_PROGRAM).unwrap();
+    let cold = build(dir, "a.velt", "a1", &cache, &all);
     let err = text(&cold.stderr);
     let named: usize = (err.lines())
         .find_map(|l| {
@@ -301,7 +301,7 @@ fn code_reaching_statics_with_identity_is_served() {
         .unwrap_or_else(|| panic!("{err}"));
     assert!(!by_reason.contains("statics with identity"), "{by_reason}");
     assert_eq!(run(dir, "a1"), "2 5 a\n");
-    let warm = build(dir, "a.vlt", "a2", &cache, &all);
+    let warm = build(dir, "a.velt", "a2", &cache, &all);
     assert_eq!(
         counts(&warm),
         (counts(&cold).1, 0),
@@ -324,11 +324,11 @@ fn named_statics_are_defined_in_a_build_of_several_units() {
         ("VELT_STD_OBJECT_MIN_MISSES", "1"),
         ("VELT_CODEGEN_UNITS", "4"),
     ];
-    std::fs::write(dir.join("a.vlt"), JSON_PROGRAM).unwrap();
-    let cold = build(dir, "a.vlt", "a1", &cache, &units);
+    std::fs::write(dir.join("a.velt"), JSON_PROGRAM).unwrap();
+    let cold = build(dir, "a.velt", "a1", &cache, &units);
     assert!(counts(&cold).1 > 0, "{}", text(&cold.stderr));
     assert_eq!(run(dir, "a1"), "2 5 a\n");
-    let warm = build(dir, "a.vlt", "a2", &cache, &units);
+    let warm = build(dir, "a.velt", "a2", &cache, &units);
     assert_eq!(
         counts(&warm),
         (counts(&cold).1, 0),

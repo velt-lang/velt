@@ -2,7 +2,7 @@
 """Writes a Velt program whose `any` arrays are converted to N element types (array views,
 #1485), for generic instances shared by shape (docs/internals/design/shape-sharing.md).
 
-    gen.py [object types = 40] [out file = shapes.vlt] [sites = 0]
+    gen.py [object types = 40] [out file = shapes.velt] [sites = 0]
 
 The object types come in three layouts (two numbers; a number and a string; two strings and
 a number), with field names of their own, so each is a type of its own; a union and `string`
@@ -15,7 +15,7 @@ sharing gains nothing and what it costs per call of a shared helper shows.
 import sys
 
 n = int(sys.argv[1]) if len(sys.argv) > 1 else 40
-out = sys.argv[2] if len(sys.argv) > 2 else "shapes.vlt"
+out = sys.argv[2] if len(sys.argv) > 2 else "shapes.velt"
 sites = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 
 layouts = [

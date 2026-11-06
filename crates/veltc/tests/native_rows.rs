@@ -132,15 +132,15 @@ fn native_rows_and_parameters_go_through_velt_db() {
     std::fs::create_dir_all(app.join("src")).unwrap();
     let dep = package().to_string_lossy().replace('\\', "/");
     std::fs::write(
-        app.join("package.vlt"),
+        app.join("package.velt"),
         format!(
             "import type {{ Package }} from \"velt/package\";\n\nexport const pkg: Package = {{\n  name: \"app\",\n  version: \"0.1.0\",\n  allowNative: [\"rows\"],\n  dependencies: {{ rows: {{ path: \"{dep}\" }} }},\n}};\n"
         ),
     )
     .unwrap();
-    std::fs::write(app.join("src/main.vlt"), PROGRAM).unwrap();
+    std::fs::write(app.join("src/main.velt"), PROGRAM).unwrap();
     let out = no_window::command(env!("CARGO_BIN_EXE_velt"))
-        .args(["run", "src/main.vlt"])
+        .args(["run", "src/main.velt"])
         .current_dir(&app)
         .output()
         .expect("run velt");

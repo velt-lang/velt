@@ -38,7 +38,7 @@ EXE=
 case "$(uname -s)" in MINGW* | MSYS* | CYGWIN*) EXE=.exe ;; esac
 
 for name in make_tree list_names list_typed; do
-  "$VELT" build --release --backend llvm "$HERE/$name.vlt" -o "$OUT/$name$EXE" >&2
+  "$VELT" build --release --backend llvm "$HERE/$name.velt" -o "$OUT/$name$EXE" >&2
 done
 mkdir -p "$TREE"
 "$OUT/make_tree$EXE" "$TREE"

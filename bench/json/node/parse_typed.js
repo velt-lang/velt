@@ -1,4 +1,4 @@
-// Typed parse (see parse_typed.vlt): JavaScript has no typed parse, so `JSON.parse`.
+// Typed parse (see parse_typed.velt): JavaScript has no typed parse, so `JSON.parse`.
 const { doc } = require("./doc.js");
 const text = doc(100000);
 let sum = 0;
