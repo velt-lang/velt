@@ -165,3 +165,9 @@ fn a_chain_of_calls_takes_no_pass_per_link() {
         .filter(|l| l.contains("grew") && l.contains("any_call_keys"));
     assert_eq!(grew.count(), 0, "{log}");
 }
+
+#[test]
+fn a_list_read_makes_no_typed_array_tables() {
+    let src = "const u = new Uint8Array(1);\nfunction one(this: any, a: any): any {\n  return this;\n}\nconst f: any = one;\nconsole.log(u.length, f.apply(null, [1]));\n";
+    assert!(!release_ir(src).contains("Float32Array"));
+}
