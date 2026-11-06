@@ -1,5 +1,5 @@
-// Every power of ten std's float printing rebuilds (std/lang/number/shortest.velt `pow10`): a double
-// at each binary exponent, with four mantissas, subnormals included, printed three ways and summed.
+// Every power of ten std's float printing looks up (std/lang/number/pow10.velt `G`): a double at
+// each binary exponent, with four mantissas, subnormals included, printed three ways and summed.
 // A wrong power changes some digits, and the sum. Plus the special values, whose words are written
 // by hand (std/lang/number/format.velt).
 
