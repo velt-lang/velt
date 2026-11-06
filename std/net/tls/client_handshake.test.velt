@@ -315,11 +315,11 @@ describe("what a ServerHello must say", () => {
     );
     const other = `00330024` + `00170020${SHARE}`;
     expect(refusal(serverHello(random, "1301", VERSION + other))).toBe(
-      "47 TLS: the server's key share is not a X25519 key",
+      "47 TLS: the server's key share is not for X25519",
     );
     const short = `00330023` + `001d001f${SHARE.slice(0, 62)}`;
     expect(refusal(serverHello(random, "1301", VERSION + short))).toBe(
-      "47 TLS: the server's key share is not a X25519 key",
+      "47 TLS: the server's key share is not for X25519",
     );
   });
 

@@ -151,7 +151,7 @@ export function parseServerHello(
     if (group != offered || keyShare.length != (group == X25519 ? 32 : 65)) {
       throw new TlsFailure(
         ILLEGAL_PARAMETER,
-        `the server's key share is not a ${groupName(offered)} key`,
+        `the server's key share is not for ${groupName(offered)}`,
       );
     }
   } else if (group == offered) {

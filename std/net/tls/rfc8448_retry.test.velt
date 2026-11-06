@@ -210,7 +210,7 @@ describe("TLS 1.3 client, RFC 8448 §5", () => {
     const at = sh.indexOf("00170041");
     const x = sh.slice(0, at) + "00180041" + sh.slice(at + 8);
     expect(await failure(HRR_RECORD + x + HRR_SERVER_FLIGHT_RECORD)).toBe(
-      "EPROTO TLS: the server's key share is not a secp256r1 key",
+      "EPROTO TLS: the server's key share is not for secp256r1",
     );
   });
 
