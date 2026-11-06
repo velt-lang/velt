@@ -69,7 +69,8 @@ impl Cx<'_> {
     /// the call keys under the prefix U+0001, and grows from pass to pass like them. A method a
     /// program itself names with that prefix could only turn a guard on, which is safe.
     pub(super) fn std_used(&self, name: &str) -> bool {
-        self.boxing.any_call_keys.contains(&format!("\u{1}{name}"))
+        let keys = &self.boxing.any_call_keys;
+        keys.contains(&format!("\u{1}{name}"))
     }
 
     /// Records `Intrinsic::NoteStdUse`.
