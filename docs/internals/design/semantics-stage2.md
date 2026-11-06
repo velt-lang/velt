@@ -260,7 +260,7 @@ the closures it calls (`ownership/local_async`); a closure that only has the sam
 something in `shared(...)` isn't refused, as it may never get there. For those closures sema also
 refuses captures holding, at any depth of their static type, a lock or an `Atomic` by value (each
 call would have its own) or a class whose `clone()` may change its object (each call would run it
-on one object at once; a standard library `clone()` that changes nothing, as `RegExp`'s, is fine)
+on one object at once; `RegExp`'s only reads strings, and is exempt by name)
 (`ownership/many.rs`). Where sema didn't follow it, `shared(x)` runs the many-threads check's strict
 walk (glue/many.rs), which goes through arrays, classes, interface values and captured functions,
 and panics on all of these, on a captured variable's cell, on a closure that changes what it

@@ -137,31 +137,6 @@ impl Cx<'_> {
                 && (a.name.ends_with("::Mutex") || a.name.ends_with("::RwLock")))
     }
 
-    /// Is `t` a class with its own `clone()` that a deep copy runs, or does it hold one?
-    pub(super) fn holds_own_clone(&mut self, t: TyId) -> bool {
-        self.holds_own_clone_in(t, &mut FxHashSet::default())
-    }
-
-    fn holds_own_clone_in(&mut self, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
-        if !seen.insert(t) {
-            return false;
-        }
-        if self.own_clone(t).is_some() {
-            return true;
-        }
-        let parts = match self.kind(t) {
-            TyKind::Shared(_)
-            | TyKind::Promise(..)
-            | TyKind::Dyn(..)
-            | TyKind::FnPtr { .. }
-            | TyKind::Closure(_) => return false,
-            TyKind::Array(e) => vec![e],
-            TyKind::Adt(..) if self.is_class(t) => self.adt_field_tys(t),
-            _ => self.part_types(t),
-        };
-        parts.into_iter().any(|p| self.holds_own_clone_in(p, seen))
-    }
-
     /// Is `t` the standard library's `RegExp`?
     pub(super) fn is_regexp(&self, t: TyId) -> bool {
         let TyKind::Adt(d, _) = self.kind(t) else {
@@ -184,14 +159,12 @@ impl Cx<'_> {
         }
     }
 
-    /// A deep copy of a `t` runs a class's own `clone()`, which may change the object
-    /// (`FnDef::changes_held`). A standard library `clone()` that changes nothing doesn't, unless
-    /// the program converts such a class to an interface value or an `any`: calls from several
-    /// threads then break memory, a use after free (`Boxing::own_clone_in_dyn`).
+    /// A deep copy of a `t` runs a class's own `clone()`, on one object from every thread calling a
+    /// function in `shared(...)`. `RegExp`'s only reads strings, whose counts are atomic.
     pub(super) fn clone_may_change(&mut self, t: TyId) -> bool {
-        let unsafe_copy = self.boxing.own_clone_in_dyn;
+        let exempt = self.is_regexp(t);
         self.own_clone(t)
-            .is_some_and(|m| unsafe_copy || self.fn_def(m).changes_held)
+            .is_some_and(|m| !exempt || self.fn_def(m).changes_held)
     }
 
     /// Can a deep copy of a `t` call a class's own `clone()` (`own_clone`), or hold a promise?

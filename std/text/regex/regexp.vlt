@@ -273,8 +273,12 @@ export class RegExp implements Pattern {
    * once already. So a deep copy for another task (`spawn`, a channel) can call it.
    */
   clone(): RegExp {
+    // Read first: a deep copy runs this on one object from several threads at once, and passing a
+    // field to a call would update `this`'s count, when `RegExp` is a counted class.
+    const source = this.source;
+    const flags = this.flags;
     try {
-      return new RegExp(this.source, this.flags);
+      return new RegExp(source, flags);
     } catch (e) {
       panic(`ICE: RegExp.clone: the pattern no longer compiles: ${e.message}`);
     }

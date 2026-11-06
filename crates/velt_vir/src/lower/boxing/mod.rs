@@ -65,9 +65,6 @@ pub(super) struct Boxing {
     /// answer for a call's copy and the check's entries have a strict walk (glue/transfer_env.rs,
     /// glue/many.rs).
     pub(super) shared_fns: bool,
-    /// A class with its own `clone()` is converted to an interface value or an `any`, or held by one
-    /// that is: a function capturing such a class can't go in `shared(...)` (`clone_may_change`).
-    pub(super) own_clone_in_dyn: bool,
     /// The prelude deletes a property of an `any` that is not a proxy (`AnyDelete`): the `any`
     /// tables have the delete slot (any_delete.rs).
     pub(super) any_delete: bool,
@@ -555,16 +552,6 @@ impl Cx<'_> {
         next.any_writes |= self.facts.any_set;
         next.any_has |= self.facts.any_has;
         next.shared_fns |= self.facts.shared_fns;
-        // A class's own table isn't enough for this (`RegExp`, as a `Pattern`): one holding it is.
-        let mut dyns: Vec<TyId> = self.facts.dyn_types.iter().copied().collect();
-        let tables = self.facts.vtable_types.iter().copied();
-        let tables: Vec<TyId> = tables.collect();
-        for t in tables {
-            if self.own_clone(t).is_none() {
-                dyns.push(t);
-            }
-        }
-        next.own_clone_in_dyn |= dyns.into_iter().any(|t| self.holds_own_clone(t));
         next.any_delete |= self.facts.any_delete;
         next.any_keys |= self.facts.any_keys;
         next.any_reflect |= self.facts.any_reflect;
