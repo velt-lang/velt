@@ -492,6 +492,8 @@ fn check_all(
     let (dirs, first) = dir_table(&mut lines);
     let mut std = vec![];
     let mut rest = first.into_iter().chain(lines.by_ref());
+    // One buffer for every expanded path: this loop runs over every entry of every no-op build.
+    let mut buf = String::new();
     for (entries, line) in rest.by_ref().enumerate() {
         if let Some(n) = line.strip_prefix("end ") {
             // Whole: as many entries as it says, and nothing after.
@@ -499,8 +501,17 @@ fn check_all(
             return rest.next().is_none().then_some((objects, std, c_libs));
         }
         let (head, path) = line.split_once('\t')?;
-        let path = expand(path, &dirs)?;
-        let path = Path::new(path.as_ref());
+        let path = match path.strip_prefix('~') {
+            Some(short) => {
+                let (n, name) = short.split_once('/')?;
+                buf.clear();
+                buf.push_str(dirs.get(n.parse::<usize>().ok()?)?);
+                buf.push(std::path::MAIN_SEPARATOR);
+                buf.push_str(name);
+                Path::new(buf.as_str())
+            }
+            None => Path::new(path),
+        };
         let mut fields = head.split(' ');
         let kind = fields.next()?;
         let unchanged = match kind {
