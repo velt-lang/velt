@@ -1,5 +1,5 @@
-//! How an expression's places are used and converted: `Conversion` of an object literal and
-//! the `UseMode` sema's ownership analysis gives a place read.
+//! How values are passed, used and converted: the `PassMode` of a parameter, `Conversion` of an
+//! object literal and the `UseMode` sema's ownership analysis gives a place read.
 
 /// Whether an `AdtLit` converts an object to another object type (hir_encodings.md "Object
 /// conversions"): its fields are then each absent or a read of one source place, and a
@@ -24,4 +24,18 @@ pub enum UseMode {
     Move,
     Borrow,
     BorrowMut,
+}
+
+/// How an argument is passed / a parameter is received. Decided by sema, part of the fn ABI.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum PassMode {
+    /// Bitwise copy (Copy types: ints, floats, bool, Copy structs).
+    Copy,
+    /// Callee receives a read-only pointer; caller keeps ownership. Default for non-Copy params.
+    Borrow,
+    /// Callee receives a mutable pointer: sema inferred that it may modify the value (a param
+    /// whose contents the body mutates, a method that mutates `this`; see hir_encodings.md).
+    BorrowMut,
+    /// Ownership moves into the callee (callee drops it).
+    Owned,
 }

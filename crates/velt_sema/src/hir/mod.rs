@@ -51,7 +51,7 @@ pub use fields::{DynMember, DynMemberKind, FieldDef, FieldInit};
 pub use fresh::FreshClosure;
 pub use impl_bound::{ImplBound, ImplDef};
 pub use intrinsic::Intrinsic;
-pub use modes::{Conversion, UseMode};
+pub use modes::{Conversion, PassMode, UseMode};
 pub use module_state::{CConst, CValue, GlobalDef, ModuleState};
 pub use nothing::Nothing;
 pub use numeric::{CpuTarget, FloatTy, IntTy, SimdTy};
@@ -266,20 +266,6 @@ pub enum Def {
     Enum(EnumDef),
     Global(GlobalDef),
     Interface(InterfaceDef),
-}
-
-/// How an argument is passed / a parameter is received. Decided by sema, part of the fn ABI.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum PassMode {
-    /// Bitwise copy (Copy types: ints, floats, bool, Copy structs).
-    Copy,
-    /// Callee receives a read-only pointer; caller keeps ownership. Default for non-Copy params.
-    Borrow,
-    /// Callee receives a mutable pointer: sema inferred that it may modify the value (a param
-    /// whose contents the body mutates, a method that mutates `this`; see hir_encodings.md).
-    BorrowMut,
-    /// Ownership moves into the callee (callee drops it).
-    Owned,
 }
 
 #[derive(Clone, Debug)]
