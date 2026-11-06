@@ -2,8 +2,8 @@
 
 use super::*;
 
-/// The storage-float vectors: what they have, what they do not, and narrowing from
-/// `f32x4`.
+/// The storage-float vectors: what they have, what they do not, and the operations on
+/// `f32x4` that take them.
 #[test]
 fn half_lanes() {
     use Ty::{Ptr, U16, U64, V128};
@@ -30,6 +30,18 @@ fn half_lanes() {
     assert_eq!(
         of("velt_simd_f32x4_narrow_f16x8"),
         Some(SimdCall::Vector(Lanes::F32, Op::NarrowTo(Lanes::F16)))
+    );
+    assert_eq!(
+        of("velt_simd_f32x4_dot_add_f16x8"),
+        Some(SimdCall::Vector(Lanes::F32, Op::DotAddHalf(Lanes::F16)))
+    );
+    assert_eq!(
+        of("velt_simd_f32x4_dot_add_fast_bf16x8"),
+        Some(SimdCall::Vector(Lanes::F32, Op::DotAddFast(Lanes::BF16)))
+    );
+    assert_eq!(
+        sig("velt_simd_f32x4_dot_add_bf16x8"),
+        Some((vec![V128, V128, V128], V128))
     );
     assert_eq!(
         sig("velt_simd_f32x4_narrow_bf16x8"),
@@ -85,6 +97,8 @@ fn half_lanes() {
             "sum",
             "sum_wide",
             "dot_add",
+            "dot_add_f16x8",
+            "dot_add_fast_bf16x8",
             "mul_add",
             "mul_add_fast",
             "zip_low",
@@ -98,9 +112,13 @@ fn half_lanes() {
         }
     }
     for missing in [
-        // `f32x4` only, of storage floats only.
+        // `f32x4` only, of storage floats only; no fast f16 form, `fmlal` is exact.
         "velt_simd_f64x2_narrow_f16x8",
         "velt_simd_f32x4_narrow_u16x8",
+        "velt_simd_f32x4_dot_add_i8x16",
+        "velt_simd_f64x2_dot_add_f16x8",
+        "velt_simd_f32x4_dot_add_fast_f16x8",
+        "velt_simd_i32x4_dot_add_f16x8",
     ] {
         assert_eq!(of(missing), None, "{missing}");
     }

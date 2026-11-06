@@ -344,8 +344,8 @@ a mask of features, by bit: 0 SSE3, 1 SSSE3, 2 SSE4.1, 3 SSE4.2, 4 POPCNT, 5 CMP
 7 AVX2, 8 BMI1, 9 BMI2, 10 FMA, 11 LZCNT, 12 MOVBE, 13 F16C, 14 AVX512F, 15 AVX512BW,
 16 AVX512CD, 17 AVX512DQ, 18 AVX512VL, 19 AVX512VBMI, 20 AVX512BITALG, 21 SHA [additive],
 22 PCLMULQDQ (`velt_codegen_cl::X86_FEATURES`; x86-64-v2 is bits 0–5, v3 0–13, v4 0–18). A
-feature joins the list when generated code uses it: a feature in the mask that the CPU (or a
-VM) hides stops the program at start-up. On arm64 [additive] the mask is over
+feature joins the list when generated code uses it (not yet FEAT_FHM, FEAT_BF16 or AVX512-BF16:
+"SIMD"): a feature in the mask that the CPU (or a VM) hides stops the program at start-up. On arm64 [additive] the mask is over
 `velt_codegen_cl::ARM_FEATURES` instead: bit 0 DOTPROD (`sdot`/`udot`), set by `--cpu native` on a
 CPU with it or `--cpu <name>` naming one (`neoverse-n1`), and then `i32x4.dotAdd` is one `sdot`
 (as on every Apple arm64 target, whose CPUs all have it without a check). The message names
@@ -463,8 +463,21 @@ extended vector); Cranelift adds the lanes one by one.
 `load`, `store`, `load_partial`, `store_partial`, `fits`, `lane`, `with_lane`, shuffles and
 `as_<type>` (and `velt_simd_u16x8_as_f16x8`, `_as_bf16x8`) move their bits. `_widen_low` and
 `_widen_high` give `f32x4`, exactly, a NaN quieted. `velt_simd_f32x4_narrow_f16x8` and
-`_narrow_bf16x8` `(a, b)` give the lanes of `a` then `b` rounded once to nearest even. Cranelift converts lane by
-lane with the scalar sequences.
+`_narrow_bf16x8` `(a, b)` give the lanes of `a` then `b` rounded once to nearest even.
+`velt_simd_f32x4_dot_add_f16x8` and `_dot_add_bf16x8` `(acc, a, b)` give lane `k` as
+`fma(a[k + 4], b[k + 4], fma(a[k], b[k], acc[k]))`: `llvm.aarch64.neon.fmlal` then `fmlal2` for f16
+where the CPU has FEAT_FHM (Apple arm64 with no `--cpu` or `baseline`, or a `--cpu` for which clang
+defines `__ARM_FEATURE_FP16_FML`), and otherwise both operands widened and `llvm.fma` twice. A lane
+is the same bits on every target unless it is a NaN from more than one NaN operand or from an
+invalid operation, where the NaN depends on the CPU and the path (`fmlal` lets a signalling f16 NaN
+win over a NaN accumulator, widening first does not), or a signalling NaN, which may or may not
+come out quiet (LLVM folds `llvm.fma(1, -0, x)` to `x`, as in `f32x4.mulAdd`).
+`velt_simd_f32x4_dot_add_fast_bf16x8` is
+`llvm.aarch64.neon.bfdot` where clang defines `__ARM_FEATURE_BF16_VECTOR_ARITHMETIC` for `--cpu`,
+`llvm.x86.avx512bf16.dpbf16ps.128` where it defines `__AVX512BF16__` and `__AVX512VL__`, and
+otherwise `_dot_add_bf16x8`. The start-up check ("CPU check") does not know FEAT_FHM, FEAT_BF16 or
+AVX512-BF16: code built for a `--cpu` that has them stops with an illegal instruction on a CPU that
+has not. Cranelift always widens and uses `fma`.
 
 **CPU extensions (#1330).** `velt_simd_u32x4_<op>` for the SHA instructions (`sha1c`, `sha1p`,
 `sha1m`, `sha1h`, `sha1su0`, `sha1su1`, `sha256h`, `sha256h2`, `sha256su0`, `sha256su1` on

@@ -543,6 +543,77 @@ fn the_dot_product_is_sdot_where_every_cpu_has_it() {
     }
 }
 
+/// `velt_main` returning 0 after calling the SIMD extern `symbol`, of three vectors.
+fn half_dot_sample(symbol: &str) -> Program {
+    let mut pb = ProgramBuilder::new();
+    let dot = pb.ext(symbol, &[V128, V128, V128], V128, false);
+    let mut fb = FuncBuilder::export("velt_main", &[], I32);
+    let v = fb.local(V128);
+    let b = fb.block();
+    let zero = Operand::Const(Const::Int(0), V128);
+    let b = fb.call(
+        b,
+        Callee::Extern(dot),
+        vec![zero.clone(), zero.clone(), zero],
+        Some(v),
+    );
+    fb.ret(b, int(0, I32));
+    pb.add(fb.finish());
+    pb.finish()
+}
+
+/// `fmlal` on Apple arm64 and where `--cpu` has FEAT_FHM, `bfdot` and `vdpbf16ps` only where
+/// `--cpu` has them; the CPU's word comes from clang.
+#[test]
+fn half_dot_products_follow_the_cpu() {
+    if !crate::available() {
+        return;
+    }
+    let ir = |symbol: &str, triple: &str, cpu: Option<&str>| {
+        let t = crate::target::normalize(triple)
+            .unwrap()
+            .with_cpu(cpu)
+            .unwrap();
+        crate::checked_ir(&half_dot_sample(symbol), &t, false).unwrap()
+    };
+    let f16 = "velt_simd_f32x4_dot_add_f16x8";
+    let fast = "velt_simd_f32x4_dot_add_fast_bf16x8";
+    let (apple, linux) = ("aarch64-apple-darwin", "aarch64-unknown-linux-gnu");
+    let x86 = "x86_64-unknown-linux-gnu";
+    // Every Apple arm64 CPU has FEAT_FHM, not every one FEAT_BF16 (the M1 has not).
+    for cpu in [None, Some("baseline"), Some("apple-m1")] {
+        assert!(ir(f16, apple, cpu).contains("neon.fmlal2"), "{cpu:?}");
+        assert!(!ir(fast, apple, cpu).contains("bfdot"), "{cpu:?}");
+    }
+    assert!(ir(fast, apple, Some("apple-m2")).contains("neon.bfdot"));
+    // An ARMv8.0 CPU has neither, on Apple's target too; Linux with no `--cpu` neither.
+    for (triple, cpu) in [
+        (apple, Some("cortex-a53")),
+        (linux, None),
+        (linux, Some("baseline")),
+    ] {
+        let text = ir(f16, triple, cpu);
+        assert!(
+            !text.contains("fmlal") && text.contains("@llvm.fma"),
+            "{triple} {cpu:?}"
+        );
+        assert!(!ir(fast, triple, cpu).contains("bfdot"), "{triple} {cpu:?}");
+    }
+    assert!(ir(f16, linux, Some("neoverse-v1")).contains("neon.fmlal2"));
+    assert!(ir(fast, linux, Some("neoverse-v1")).contains("neon.bfdot"));
+    // x86: only a CPU with AVX512-BF16; no level has it.
+    for cpu in [
+        None,
+        Some("x86-64-v3"),
+        Some("x86-64-v4"),
+        Some("skylake-avx512"),
+    ] {
+        assert!(!ir(fast, x86, cpu).contains("dpbf16ps"), "{cpu:?}");
+    }
+    assert!(ir(fast, x86, Some("sapphirerapids")).contains("avx512bf16.dpbf16ps.128"));
+    assert!(ir(fast, x86, Some("cooperlake")).contains("avx512bf16.dpbf16ps.128"));
+}
+
 #[test]
 fn an_arm64_cpu_with_the_dot_product_gets_sdot_anywhere() {
     if !crate::available() {

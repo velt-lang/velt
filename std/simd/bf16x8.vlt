@@ -1,6 +1,7 @@
 // velt/simd (internal): `bf16x8`, eight `bf16` lanes: a storage type like `bf16`, for moving 16-bit weights
 // into and out of `f32x4` arithmetic. It has no arithmetic of its own: `widenLow` and `widenHigh`
-// give `f32x4`, and `bf16x8.narrow` takes them back. The `velt_simd_*` functions below have no runtime implementation, the
+// give `f32x4`, `bf16x8.narrow` takes them back, and `dotAdd` and `dotAddFast` multiply two of them into an
+// `f32x4` accumulator. The `velt_simd_*` functions below have no runtime implementation, the
 // compiler emits them inline (rt_abi.md "SIMD").
 
 export type bf16x8 = bf16x8;
@@ -18,6 +19,8 @@ declare function velt_simd_u16x8_as_bf16x8(v: u16x8): bf16x8;
 declare function velt_simd_bf16x8_widen_low(v: bf16x8): f32x4;
 declare function velt_simd_bf16x8_widen_high(v: bf16x8): f32x4;
 declare function velt_simd_f32x4_narrow_bf16x8(lo: f32x4, hi: f32x4): bf16x8;
+declare function velt_simd_f32x4_dot_add_bf16x8(acc: f32x4, a: bf16x8, b: bf16x8): f32x4;
+declare function velt_simd_f32x4_dot_add_fast_bf16x8(acc: f32x4, a: bf16x8, b: bf16x8): f32x4;
 
 extend bf16x8 {
   /** A vector with every lane `x`. */
@@ -129,5 +132,33 @@ extend bf16x8 {
    */
   static narrow(lo: f32x4, hi: f32x4): bf16x8 {
     return velt_simd_f32x4_narrow_bf16x8(lo, hi);
+  }
+
+  /**
+   * `acc` plus the products of this and `b`, in `f32`, as `a.mulAdd(b, c)` is `a * b + c`: lane
+   * `k` is `fma(this[k + 4], b[k + 4], fma(this[k], b[k], acc[k]))`, in that order, so each lane
+   * takes lanes `k` and `k + 4` (not adjacent ones) and rounds twice. Every number comes out the
+   * same on every CPU: the widened lanes and two fused additions (one library call per lane on
+   * a CPU with no FMA, as `f32x4.mulAdd`). A lane with one NaN among its operands gives that
+   * NaN, and a signalling one may or may not come out quiet (an optimizer can drop a step that
+   * adds nothing, as it can in `f32x4.mulAdd`); with several, or from an invalid operation
+   * (`Infinity * 0`), a NaN, which one depends on the CPU and the build. `dotAddFast` is faster
+   * where the CPU has a bf16 dot product.
+   */
+  dotAdd(b: bf16x8, acc: f32x4): f32x4 {
+    return velt_simd_f32x4_dot_add_bf16x8(acc, this, b);
+  }
+
+  /**
+   * `acc` plus the eight products of this and `b`, in `f32`, by the CPU's own bf16 dot product
+   * where `--cpu` has one: Arm's `bfdot` (FEAT_BF16; `--cpu apple-m2` and later, not an M1) or
+   * x86's `vdpbf16ps` (AVX512-BF16); elsewhere it is `dotAdd`. The sum of the lanes is the dot
+   * product to some rounding, but lanes differ between CPUs: those instructions add lanes
+   * `2k` and `2k + 1` into lane `k`, and `dotAdd` adds `k` and `k + 4`; they round the two
+   * products together, and they may flush subnormal operands and results to zero. So add up
+   * the lanes, and use `dotAdd` where the bits must be the same everywhere.
+   */
+  dotAddFast(b: bf16x8, acc: f32x4): f32x4 {
+    return velt_simd_f32x4_dot_add_fast_bf16x8(acc, this, b);
   }
 }

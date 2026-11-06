@@ -187,6 +187,8 @@ impl Translator<'_, '_> {
             Op::Shuffle(mask) => self.simd_shuffle(&mask, values[0], values[1]),
             Op::Narrow => self.simd_narrow(lanes, values),
             Op::DotAdd => self.simd_dot_add(values),
+            // The fast form may be the exact one, which is all this backend has.
+            Op::DotAddHalf(of) | Op::DotAddFast(of) => self.simd_half_dot_add(of, values),
             Op::NarrowTo(to) => self.simd_half_narrow(to, values),
             Op::WidenLow | Op::WidenHigh if lanes.is_half() => {
                 self.simd_half_widen(lanes, op == Op::WidenHigh, values[0])

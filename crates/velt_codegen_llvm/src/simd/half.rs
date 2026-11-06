@@ -1,10 +1,10 @@
 //! The helpers of `f16x8` and `bf16x8`: widening to and narrowing from `f32x4`, one instruction
 //! per half where the target has it (`fcvtl`, `vcvtph2ps`) and otherwise the sequences of
-//! `crate::half` applied to four lanes at a time.
+//! `crate::half` applied to four lanes at a time, and the dot products into `f32x4`.
 
 use velt_vir::simd::Lanes;
 
-use super::Body;
+use super::{Arch, Body, Caps};
 use crate::half::{HalfNative, BF16_TO_F32, F16_TO_F32_SOFT, F32_TO_BF16, F32_TO_F16_SOFT};
 
 const FLOATS: &str = "<4 x float>";
@@ -104,6 +104,64 @@ fn quiet_f16(b: &mut Body, x: &str) -> String {
     b.inst(format!("or <8 x i16> {x}, {bit}"))
 }
 
+/// `Op::DotAddHalf`: `fmlal` then `fmlal2` for f16 where the CPU has them (the same two fused
+/// operations in the same order), otherwise both operands widened and two `llvm.fma`.
+pub(super) fn dot_add(b: &mut Body, of: Lanes, caps: Caps) -> String {
+    if of == Lanes::F16 && caps.fhm {
+        return fmlal(b);
+    }
+    chain(b, of, caps.half)
+}
+
+/// `Op::DotAddFast`: the CPU's bf16 dot product where `--cpu` has one, else `Op::DotAddHalf`.
+pub(super) fn dot_add_fast(b: &mut Body, of: Lanes, arch: Arch, caps: Caps) -> String {
+    let intrinsic = match arch {
+        Arch::Neon if caps.bf16_dot => "llvm.aarch64.neon.bfdot.v4f32.v8bf16",
+        Arch::Sse2 if caps.bf16_dot => "llvm.x86.avx512bf16.dpbf16ps.128",
+        _ => return dot_add(b, of, caps),
+    };
+    let acc = b.arg(0, FLOATS);
+    let x = b.arg(1, "<8 x bfloat>");
+    let y = b.arg(2, "<8 x bfloat>");
+    b.declarations.push(format!(
+        "declare {FLOATS} @{intrinsic}({FLOATS}, <8 x bfloat>, <8 x bfloat>)"
+    ));
+    let r = b.inst(format!(
+        "call {FLOATS} @{intrinsic}({FLOATS} {acc}, <8 x bfloat> {x}, <8 x bfloat> {y})"
+    ));
+    b.bytes(&r, FLOATS)
+}
+
+fn fmlal(b: &mut Body) -> String {
+    let acc = b.arg(0, FLOATS);
+    let x = b.arg(1, "<8 x half>");
+    let y = b.arg(2, "<8 x half>");
+    let mut r = acc;
+    for name in ["fmlal", "fmlal2"] {
+        let intrinsic = format!("llvm.aarch64.neon.{name}.v4f32.v8f16");
+        b.declarations.push(format!(
+            "declare {FLOATS} @{intrinsic}({FLOATS}, <8 x half>, <8 x half>)"
+        ));
+        r = b.inst(format!(
+            "call {FLOATS} @{intrinsic}({FLOATS} {r}, <8 x half> {x}, <8 x half> {y})"
+        ));
+    }
+    b.bytes(&r, FLOATS)
+}
+
+fn chain(b: &mut Body, of: Lanes, half: HalfNative) -> String {
+    let acc = b.arg(0, FLOATS);
+    let x = b.arg(1, "<8 x i16>");
+    let y = b.arg(2, "<8 x i16>");
+    let mut r = acc;
+    for high in [false, true] {
+        let p = widened(b, &x, of, high, half);
+        let q = widened(b, &y, of, high, half);
+        r = b.intrinsic("fma", "v4f32", FLOATS, &[&p, &q, &r], "");
+    }
+    b.bytes(&r, FLOATS)
+}
+
 /// The scalar helper `definition` (one of `crate::half`'s sequences, whose lines are plain
 /// instructions on `i1`, `i16`, `i32` and `float`) on four lanes: every type four of it, every
 /// constant operand a vector of it, `.v4` after its name. Its name and definition. So the
@@ -160,7 +218,6 @@ fn is_constant(word: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::simd::{Arch, Caps};
 
     fn lines(definition: &str) -> String {
         four_lanes(definition).1
@@ -201,6 +258,89 @@ mod tests {
             .unwrap()
             .1
             .join("\n")
+    }
+
+    /// Which instructions each target gets.
+    #[test]
+    fn the_target_picks_the_instructions() {
+        let f16 = "velt_simd_f32x4_dot_add_f16x8";
+        let bf16 = "velt_simd_f32x4_dot_add_bf16x8";
+        let fast = "velt_simd_f32x4_dot_add_fast_bf16x8";
+        let arm = Caps {
+            half: HalfNative::All,
+            ..Caps::NONE
+        };
+        let m1 = Caps { fhm: true, ..arm };
+        let m2 = Caps {
+            bf16_dot: true,
+            ..m1
+        };
+        let v3 = Caps {
+            half: HalfNative::F32,
+            ..Caps::NONE
+        };
+        let bf16_cpu = Caps {
+            bf16_dot: true,
+            ..v3
+        };
+
+        let text = body(f16, Arch::Neon, m1);
+        assert!(
+            text.contains("@llvm.aarch64.neon.fmlal.v4f32.v8f16"),
+            "{text}"
+        );
+        assert!(
+            text.contains("@llvm.aarch64.neon.fmlal2.v4f32.v8f16"),
+            "{text}"
+        );
+        assert!(!text.contains("llvm.fma"), "{text}");
+        // The low lanes first, as `dotAdd` documents: the order shows in the rounding.
+        let low = text.find("call <4 x float> @llvm.aarch64.neon.fmlal.v4f32.v8f16");
+        let high = text.find("call <4 x float> @llvm.aarch64.neon.fmlal2.v4f32.v8f16");
+        assert!(matches!((low, high), (Some(l), Some(h)) if l < h), "{text}");
+        // No FEAT_FHM: the conversion instruction and two FMAs.
+        let text = body(f16, Arch::Neon, arm);
+        assert!(
+            !text.contains("fmlal") && text.contains("fpext <4 x half>"),
+            "{text}"
+        );
+        assert_eq!(
+            text.matches("call <4 x float> @llvm.fma.v4f32").count(),
+            2,
+            "{text}"
+        );
+        let text = body(f16, Arch::Sse2, v3);
+        assert!(
+            text.contains("fpext <4 x half>") && text.contains("@llvm.fma"),
+            "{text}"
+        );
+        let text = body(f16, Arch::Sse2, Caps::NONE);
+        assert!(
+            text.contains("@velt.f16_to_f32.soft.v4") && text.contains("@llvm.fma"),
+            "{text}"
+        );
+        let text = body(f16, Arch::Wasm, Caps::NONE);
+        assert!(text.contains("@velt.f16_to_f32.soft.v4"), "{text}");
+        // bf16's exact form has no instruction anywhere, whatever the CPU.
+        for caps in [m2, bf16_cpu, Caps::NONE] {
+            let text = body(bf16, Arch::Neon, caps);
+            assert!(
+                text.contains("@velt.bf16_to_f32.v4") && text.contains("@llvm.fma"),
+                "{text}"
+            );
+            assert!(!text.contains("bfdot") && !text.contains("fmlal"), "{text}");
+        }
+        // The fast form uses the CPU's dot product only where it has one.
+        assert!(body(fast, Arch::Neon, m2).contains("@llvm.aarch64.neon.bfdot.v4f32.v8bf16"));
+        assert!(body(fast, Arch::Sse2, bf16_cpu).contains("@llvm.x86.avx512bf16.dpbf16ps.128"));
+        for (arch, caps) in [(Arch::Neon, m1), (Arch::Sse2, v3), (Arch::Wasm, Caps::NONE)] {
+            let text = body(fast, arch, caps);
+            assert!(
+                text.contains("@llvm.fma") && !text.contains("bfdot"),
+                "{text}"
+            );
+            assert!(!text.contains("dpbf16ps"), "{text}");
+        }
     }
 
     #[test]

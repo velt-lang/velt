@@ -1,5 +1,5 @@
 //! `f16x8` and `bf16x8`: Cranelift has no half-precision instruction, so each lane converts by
-//! the scalar sequence (`half.rs`).
+//! the scalar sequence (`half.rs`), and a dot product is both operands widened and two `fma`s.
 //! This is the debug backend: it spends instructions, not code, on these.
 
 use cranelift_codegen::ir::{self, types, InstBuilder};
@@ -50,5 +50,24 @@ impl Translator<'_, '_> {
             }
         }
         out
+    }
+
+    /// `Op::DotAddHalf(of)` of `(acc, a, b)`: `F32X4`.
+    pub(super) fn simd_half_dot_add(&mut self, of: Lanes, values: &[ir::Value]) -> ir::Value {
+        let mut acc = self.lanes_of(values[0], types::F32X4);
+        for high in [false, true] {
+            let x = self.simd_half_widen(of, high, values[1]);
+            let y = self.simd_half_widen(of, high, values[2]);
+            let mut next = acc;
+            for k in 0..4u8 {
+                let a = self.builder.ins().extractlane(x, k);
+                let b = self.builder.ins().extractlane(y, k);
+                let c = self.builder.ins().extractlane(acc, k);
+                let r = self.builder.ins().fma(a, b, c);
+                next = self.builder.ins().insertlane(next, r, k);
+            }
+            acc = next;
+        }
+        acc
     }
 }

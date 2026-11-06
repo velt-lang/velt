@@ -11,9 +11,9 @@ export { i8x16, u8x16, i16x8, u16x8 } from "velt/simd/bytes";
 export { i32x4, u32x4, i64x2, u64x2 } from "velt/simd/words";
 export { f32x4, f64x2 } from "velt/simd/floats";
 export { mask8x16, mask16x8, mask32x4, mask64x2 } from "velt/simd/masks";
-/** Eight `f16` lanes: 16-bit weights, widened to and narrowed from `f32x4`. */
+/** Eight `f16` lanes: 16-bit weights, widened to and narrowed from `f32x4`, with a dot product. */
 export { f16x8 } from "velt/simd/f16x8";
-/** Eight `bf16` lanes: 16-bit weights, widened to and narrowed from `f32x4`. */
+/** Eight `bf16` lanes: 16-bit weights, widened to and narrowed from `f32x4`, with a dot product. */
 export { bf16x8 } from "velt/simd/bf16x8";
 // The CPU's SHA instructions on `u32x4` (hand-written, not generated).
 import "velt/simd/sha";

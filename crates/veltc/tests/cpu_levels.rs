@@ -242,3 +242,35 @@ fn a_cpu_without_a_feature_gets_a_message_not_a_crash() {
     let o = velt(root, &["run", "--cpu", "baseline", "main.vlt"], &no_popcnt);
     assert_eq!(String::from_utf8_lossy(&o.stdout), "started\n");
 }
+
+/// `f16x8.dotAdd` and `bf16x8.dotAdd` give the golden's bits with `--cpu native`, where the CPU's
+/// own instructions come in (on Apple arm64, `fmlal` always and `bfdot` for `dotAddFast` from the
+/// M2), and `dotAddFast`'s lanes still add up to the dot product.
+#[test]
+fn half_dot_products_on_this_cpu_print_the_golden() {
+    if !velt_codegen_llvm::available() {
+        return;
+    }
+    let dir = test_dir::TestDir::new();
+    let root = dir.path();
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/golden/std");
+    let source = golden.join("simd_half_dot.vlt");
+    let exe = root.join(if cfg!(windows) { "app.exe" } else { "app" });
+    let args = [
+        "build",
+        "--release",
+        "--backend",
+        "llvm",
+        "--cpu",
+        "native",
+        source.to_str().unwrap(),
+        "-o",
+        exe.to_str().unwrap(),
+    ];
+    let o = velt(root, &args, &[]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let o = no_window::command(exe.to_str().unwrap()).output().unwrap();
+    let want = std::fs::read_to_string(golden.join("simd_half_dot.out")).unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    assert_eq!(String::from_utf8_lossy(&o.stdout), want);
+}
