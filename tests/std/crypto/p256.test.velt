@@ -76,6 +76,34 @@ describe("P-256", () => {
     ).toContain("not an uncompressed point on the curve");
   });
 
+  it("refuses a y that is not below p", () => {
+    // (x, 5) is on the curve; written with y + p instead of y, it must be refused.
+    const k = "11".repeat(32);
+    const x = "d7325d7646cd60d80a92738ceb345f844cffaf35841022cab176f692de8de1d7";
+    const point = "04" + x + "00".repeat(31) + "05";
+    expect(hexEncode(p256Ecdh(hexDecode(k), hexDecode(point)))).toBe(
+      "104dbdbcbe0a4e444d86f405244514db314b0e39ea14e915b743b76c6c83bd31",
+    );
+    expect(
+      refusal(k, "04" + x + "ffffffff00000001000000000000000000000001000000000000000000000004"),
+    ).toContain("not an uncompressed point on the curve");
+  });
+
+  it("refuses points whose curve equation is off in one limb alone", () => {
+    // x = 1, and y^2 - (x^3 - 3x + b) in the Montgomery domain has only limb 0, 1, 2 or 3 non-zero.
+    const k = "11".repeat(32);
+    const x = "00".repeat(31) + "01";
+    const ys: string[] = [
+      "2a9d587ae2fdd6dafc2d787a2ea3387b36855cb8d426522725fd30e1eaee3213",
+      "d8de26d8a693693758990a962fe6cb03d5b8fc56d91a0e62d47aefab60db4dad",
+      "56d735532677ac5c3b536d35cdee3c8b15ed363b652a90059981d13f282f596f",
+      "2147722f24df0a2b0c20a95b17d256d40fc0245f02c108444dc22f9bb565d024",
+    ];
+    for (const y of ys) {
+      expect(refusal(k, "04" + x + y)).toContain("not an uncompressed point on the curve");
+    }
+  });
+
   it("agrees on where the scalars stop being valid", () => {
     const g =
       "046b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296" +
