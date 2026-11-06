@@ -125,7 +125,18 @@ What this package had to get right, in the order you will meet it:
    a captured context. So `around`'s `next` takes `c`, and the plain middleware, which can't take it,
    runs before the context exists.
 5. **State between requests needs an explicit home.** A rate limiter's `Map` in a closure would be
-   per-request. The compiler reports most such changes (`http-server`'s README). Use
-   `shared(new Mutex(…))`, an `Atomic` or a `ConcurrentMap`.
-6. **Scan by index on the request path.** `pathOf` and the router copy only what they keep. Measure
+   per-request. The compiler reports most such changes (`http-server`'s README), but not one in a
+   plain middleware a function returns, which it doesn't follow to `serve`: a count kept that way
+   stays at 1, silently. Share what changes: `shared(new Mutex(…))`, `shared(0 as i64)` or
+   `shared(ConcurrentMap.create(n))`. A `Mutex`, an `Atomic` or a `ConcurrentMap` captured by value
+   is refused, or panics in `handler()`: each call would have its own.
+6. **Routes are in `shared(...)`, and so is what they capture.** A regex a route captures is compiled
+   on each request: prefer a module `const`, or a check on `c.path` without a regex. The tree holds
+   no regex, so a pattern costs a walk of its segments. A `g` or `y` regex a route or an `around`
+   middleware captures panics in `handler()`, even one used only for `replace` or `split`: write the
+   literal inside the function. A buffer a route captures may be viewed only from a local of the
+   function; a view of a copy (`b.slice(0)`) can go anywhere. A handler a plain middleware made
+   panics there too (`const h = bodyLimit(5)(ok)`, then `(c) => h(c.req)`), so apply one to part of
+   an app with a prefix: `app.use(bodyLimit(5), "/upload")`.
+7. **Scan by index on the request path.** `pathOf` and the router copy only what they keep. Measure
    instructions retired, and compare with the same compiler.
