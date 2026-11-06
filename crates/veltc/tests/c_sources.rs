@@ -14,6 +14,7 @@ mod no_window;
 mod reload_support;
 mod runtime_support;
 mod test_dir;
+mod zig_env;
 
 const HEADER: &str = "#include <stddef.h>\n\nint tiny_answer(void);\nsize_t tiny_len(const char *s);\ndouble tiny_root(double x);\nconst char *tiny_built(void);\n";
 
@@ -101,15 +102,9 @@ fn ok(o: Output) -> Output {
     o
 }
 
-/// The zig to build with, or `None` (and a note) when `VELT_ZIG` names none.
+/// The zig to build with: [`zig_env::zig`].
 fn zig() -> Option<PathBuf> {
-    match std::env::var_os("VELT_ZIG") {
-        Some(z) => Some(PathBuf::from(z)),
-        None => {
-            eprintln!("skipped: set VELT_ZIG to a zig 0.17.1 to build C sources");
-            None
-        }
-    }
+    zig_env::zig("build C sources")
 }
 
 /// A shared cache for zig across tests: each target's C library stubs take it a while once.

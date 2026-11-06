@@ -12,6 +12,7 @@ mod reload_support;
 #[allow(dead_code)]
 mod runtime_support;
 mod test_dir;
+mod zig_env;
 
 const ALLOW: &str = "allowNative: [\"bind\"], ";
 
@@ -65,15 +66,9 @@ fn output(o: &Output) -> String {
     )
 }
 
-/// The zig to read headers with, or `None` (and a note) when `VELT_ZIG` names none.
+/// The zig to read headers with: [`zig_env::zig`].
 fn zig() -> Option<PathBuf> {
-    match std::env::var_os("VELT_ZIG") {
-        Some(z) => Some(PathBuf::from(z)),
-        None => {
-            eprintln!("skipped: set VELT_ZIG to a zig 0.17.1 to run clang");
-            None
-        }
-    }
+    zig_env::zig("run clang")
 }
 
 const OWN_H: &str = r#"#include "more/values.h"

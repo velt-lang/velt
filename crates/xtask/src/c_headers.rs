@@ -8,14 +8,19 @@
 /// runs the `c-headers` job, which runs them; every other test run leaves them out unless
 /// `VELT_ZIG` is set ([`without_zig_tests`]), since in CI they fail without zig rather than skip.
 /// The job's `cargo test` in `.github/workflows/ci.yml` and `nightly.yml` names the same files.
-pub const TESTS: &[&str] = &["c_headers"];
+pub const TESTS: &[&str] = &["c_headers", "c_constants", "c_sources"];
 
 const PATHS: &[&str] = &[
     "crates/veltc/src/native/",
     "crates/veltc/src/commands/native_headers.rs",
+    // The zig the TESTS run, and their guard that fails in CI without it.
+    "crates/veltc/tests/zig_env/",
     "crates/velt_toolchain/src/zig.rs",
     "crates/velt_toolchain/examples/zig.rs",
     "crates/vpm/src/c_headers.rs",
+    // A package's C `sources`: built with zig, and found at install (tests/c_sources.rs).
+    "crates/vpm/src/native/c_build.rs",
+    "crates/vpm/src/install/c_sources.rs",
     // Which package may declare C functions, and from which source (#2379): the fetched-package
     // tests here depend on it.
     "crates/vpm/src/install/allow_native.rs",
@@ -54,7 +59,8 @@ mod tests {
     fn a_test_run_without_zig_leaves_out_the_tests_that_need_it() {
         assert_eq!(
             without_zig_tests("all() - binary_id(veltc::golden)"),
-            "(all() - binary_id(veltc::golden)) - (binary_id(veltc::c_headers))"
+            "(all() - binary_id(veltc::golden)) - (binary_id(veltc::c_headers) \
+             | binary_id(veltc::c_constants) | binary_id(veltc::c_sources))"
         );
     }
 }
