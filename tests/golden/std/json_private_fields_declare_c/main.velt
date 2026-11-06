@@ -1,0 +1,11 @@
+// A program's own `declare c` function (a C library's) makes it no package with a native
+// library: only a dependency that declares one keeps its classes' handles out of JSON
+// (tests/errors/json_handles). Its classes' `private` fields are written by `JSON.stringify`,
+// as Node writes them.
+declare c("c") function abs(n: i32): i32;
+
+class P {
+  private x: number = 1;
+}
+
+console.log(JSON.stringify(new P()));

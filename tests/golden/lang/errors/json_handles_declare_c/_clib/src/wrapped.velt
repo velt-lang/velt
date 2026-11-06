@@ -1,0 +1,4 @@
+// A class of a package that declares C functions, in a file that declares none of them.
+export class Wrapped {
+  private handle: u64 = 0;
+}

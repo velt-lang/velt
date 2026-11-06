@@ -29,20 +29,35 @@ impl Ctx<'_> {
     /// Is module `m` part of a package with a native library? A package has one when one of
     /// its modules declares a function of it: outside std, a `declare function` may only name
     /// an export of the package's own native library (the driver checks that), and a `declare c`
-    /// function is one of a C library's, whose handles it keeps just the same. Either marks the
-    /// package. A `declare system function` (the C library's, through the compiler's table) or
-    /// `declare host` function (the JS host's) does not.
+    /// function is one of a C library's, whose handles it keeps just the same. Either marks a
+    /// dependency. The program itself is marked only by a `declare function`: `declare c` is the
+    /// general FFI, and one in a program must not change what `JSON.stringify` does with all its
+    /// classes (Node writes their `private` fields). A `declare system function` (the C
+    /// library's, through the compiler's table) or `declare host` function (the JS host's) marks
+    /// nothing.
     fn in_native_library(&self, m: usize) -> bool {
         let libs = self.native_libraries.get_or_init(|| {
             let mut libs = NativeLibraries::default();
             for module in self.modules.iter().filter(|m| !m.is_std) {
-                let declares = module.ast.items.iter().any(
-                    |i| matches!(&i.kind, ItemKind::ExternFn(s) if !s.is_system && !s.is_intrinsic && s.host.is_none()),
-                );
+                // Some(true): a `declare function` of the package's own library; Some(false):
+                // only `declare c` functions.
+                let declares = module
+                    .ast
+                    .items
+                    .iter()
+                    .filter_map(|i| match &i.kind {
+                        ItemKind::ExternFn(s)
+                            if !s.is_system && !s.is_intrinsic && s.host.is_none() =>
+                        {
+                            Some(s.c.is_none())
+                        }
+                        _ => None,
+                    })
+                    .reduce(|a, b| a || b);
                 match (declares, module.is_dependency) {
-                    (false, _) => {}
-                    (true, false) => libs.program = true,
-                    (true, true) => {
+                    (None, _) | (Some(false), false) => {}
+                    (Some(true), false) => libs.program = true,
+                    (Some(_), true) => {
                         let name = package_of(&module.path).to_string();
                         if !libs.dependencies.contains(&name) {
                             libs.dependencies.push(name);
