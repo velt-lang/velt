@@ -11,10 +11,10 @@ class Rec {
   t: [string, number] = ["tuple-string-on-the-heap-".repeat(2), 1];
   inner: Inner = new Inner();
   n: number = 0;
-  plainM(v: string): boolean { this.n = this.n + 1; return check(v); }
+  plainM(v: string): boolean { return check(v) && this.n >= 0; }
   run(): number {
     let c = 0;
-    for (let i = 0; i < N; i++) { if (check(this.s)) c++; }
+    for (let i = 0; i < N; i++) { if (checkAt(this.s, i)) c++; }
     return c;
   }
 }
@@ -22,7 +22,8 @@ const N = 300000;
 function check(v: string): boolean { return v.startsWith("lab"); }
 function checkU(v: string | number): boolean { return typeof v === "string" && v.startsWith("uni"); }
 function checkOpt(v: string | null): boolean { return v !== null && v.startsWith("opt"); }
-function readT(v: [string, number]): boolean { return v[1] === 1; }
+function readT(v: [string, number], i: number): boolean { return v[0].charCodeAt(i % 3) > 0; }
+function checkAt(v: string, i: number): boolean { return v.startsWith("lab") && v.charCodeAt(i % 3) > 0; }
 
 function rec(): Rec {
   const o = new Rec();
@@ -84,7 +85,7 @@ function slice() {
 }
 function tuple() {
   const o = rec(); let c = 0;
-  for (let i = 0; i < N; i++) { if (readT(o.t)) c++; }
+  for (let i = 0; i < N; i++) { if (readT(o.t, i)) c++; }
   return c;
 }
 function includes() {
@@ -95,7 +96,7 @@ function includes() {
 }
 function forOf() {
   const xs = [rec(), rec(), rec()]; let c = 0;
-  for (let i = 0; i < N / 3; i++) { for (const it of xs) { if (check(it.s)) c++; } }
+  for (let i = 0; i < N / 3; i++) { for (const it of xs) { if (checkAt(it.s, i)) c++; } }
   return c;
 }
 function all() {
