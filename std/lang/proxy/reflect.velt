@@ -2,7 +2,7 @@
 // plain value, which pass the receiver on to a proxy target.
 
 import { ArrayMethod, proxyArrayMethod } from "velt/lang/proxy/array";
-import { proxyArrayHole } from "velt/lang/intrinsics";
+import { proxyArrayHole, stdUsed } from "velt/lang/intrinsics";
 import { anyDeletePlain } from "velt/lang/hooks/any_object";
 import {
   PROXY_ARRAY_CALL,
@@ -49,7 +49,8 @@ export class Reflect {
         return target[PROXY_GET](key, receiver);
       }
       if (receiver instanceof Proxy) {
-        if (receiver[PROXY_READS_GETTER](key)) {
+        // Only `brandGetterRead` (`[PROXY_GET_GETTER]`) marks such a read.
+        if (stdUsed("brandGetter") && receiver[PROXY_READS_GETTER](key)) {
           // A brand's getter read (`Proxy[PROXY_GET_GETTER]`) forwarded with its receiver.
           const value = Reflect.get(target, key);
           if (classGetterValue(target, key, value)) {

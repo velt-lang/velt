@@ -33,9 +33,12 @@ use Intrinsic as I;
 pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     // any.velt
     ("anyDelete", Op(I::AnyDelete)),
+    ("anyMethodCalled", Op(I::AnyMethodCalled)),
     ("anyToPrimitive", AnyToPrimitive),
+    ("noteStdUse", Op(I::NoteStdUse)),
     ("proxyArrayCall", Op(I::ProxyArrayCall)),
     ("proxyArrayHole", Op(I::ProxyArrayHole)),
+    ("stdUsed", Op(I::StdUsed)),
     // array.velt
     ("arrayCopyBytes", Op(I::ArrayCopyBytes)),
     ("arrayMove", Op(I::ArrayMove)),

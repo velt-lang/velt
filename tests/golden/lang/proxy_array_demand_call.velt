@@ -1,0 +1,9 @@
+// An array method read as a value and run by `call`: no call in the program names the method.
+const p: any = new Proxy([3, 1, 2] as any, {});
+const push = p.push;
+console.log(push.call(p, 4));
+const proto: any = Array.prototype;
+const sort = proto.sort;
+console.log(JSON.stringify(sort.call(p)));
+const reverse = p["reverse"];
+console.log(JSON.stringify(reverse.call(p)));

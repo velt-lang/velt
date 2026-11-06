@@ -1,0 +1,20 @@
+// `apply` reads `length` and each element of its argument list.
+const log: string[] = [];
+const list: any = new Proxy([1, 2] as any, {
+  get(t: any, k: any, r: any) {
+    log.push(String(k));
+    return Reflect.get(t, k, r);
+  },
+});
+function sum(this: any, a: any, b: any): any {
+  return this.base + a + b;
+}
+const f: any = sum;
+console.log(f.apply({ base: 10 }, [1, 2]));
+console.log(f.apply({ base: 20 }, list));
+console.log(log.join(" "));
+const arr: any = [5, 6];
+const proto: any = Array.prototype;
+const push = proto.push;
+console.log(push.apply(arr, list));
+console.log(JSON.stringify(arr));

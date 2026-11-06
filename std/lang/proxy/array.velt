@@ -10,7 +10,7 @@
 // element, every write, `in` test and delete goes through the traps, in Node's order.
 
 import { Proxy } from "velt/lang/proxy";
-import { proxyArrayCall, proxyArrayHole } from "velt/lang/intrinsics";
+import { anyMethodCalled, proxyArrayCall, proxyArrayHole } from "velt/lang/intrinsics";
 import {
   PROXY_DELETE,
   PROXY_GET,
@@ -20,11 +20,13 @@ import {
   THIS_FN_APPLY,
   THIS_FN_BIND,
 } from "velt/lang/hooks/keys";
+import { anyArgList } from "velt/lang/hooks/any_ops";
 import { anyString } from "velt/lang/hooks/any_text";
 import { proxyReverse, proxySort } from "velt/lang/proxy/array_order";
 import { arrayMethodApply } from "velt/lang/proxy/array_apply";
 import { arrayMethodName, concatArgs } from "velt/lang/proxy/array_names";
 import { proxySearch } from "velt/lang/proxy/array_search";
+import { proxyArrayVisit } from "velt/lang/proxy/array_visit";
 
 /**
  * An array method read through a proxy (`Reflect.get(array, "push")`) or from `Array.prototype`
@@ -51,8 +53,7 @@ export class ArrayMethod {
     if (args == null) {
       return this[THIS_FN_APPLY](self, []);
     }
-    const list: any[] = args;
-    return this[THIS_FN_APPLY](self, list);
+    return this[THIS_FN_APPLY](self, anyArgList(args));
   }
 
   /**
@@ -200,17 +201,22 @@ function callArrayMethod(p: Proxy, name: string, args: any[], o: any): any {
   const n = arrayInt(trapGet(p, "length", o));
   const len = n < 0 ? 0 : n;
   const none: any[] = [];
-  if (name === "push") {
+  // A program pays only for the algorithms of the methods it can call (`anyMethodCalled`).
+  if (anyMethodCalled("push") && name === "push") {
     proxySplice(p, o, len, len, 0, args, 0, false);
     return len + (args.length as number);
   }
-  if (name === "unshift") {
+  if (anyMethodCalled("unshift") && name === "unshift") {
     proxySplice(p, o, len, 0, 0, args, 0, false);
     return len + (args.length as number);
   }
-  if (name === "pop" || name === "shift") {
-    const at = name === "pop" && len > 0 ? len - 1 : 0;
+  if (anyMethodCalled("pop") && name === "pop") {
+    const at = len > 0 ? len - 1 : 0;
     const removed = proxySplice(p, o, len, at, len > 0 ? 1 : 0, none, 0, false);
+    return len > 0 ? removed[0] : undefined;
+  }
+  if (anyMethodCalled("shift") && name === "shift") {
+    const removed = proxySplice(p, o, len, 0, len > 0 ? 1 : 0, none, 0, false);
     return len > 0 ? removed[0] : undefined;
   }
   if (name === "Array") {
@@ -218,17 +224,17 @@ function callArrayMethod(p: Proxy, name: string, args: any[], o: any): any {
       "TypeError: calling an array's `constructor` through a proxy is not supported yet (#823)",
     );
   }
-  if (name !== "splice") {
-    return proxyArrayRead(p, name, args, o, len);
+  if (anyMethodCalled("splice") && name === "splice") {
+    const argc = args.length as number;
+    const rel = argc > 0 ? arrayInt(args[0]) : 0;
+    const start = rel < 0 ? Math.max(len + rel, 0) : Math.min(rel, len);
+    let count = argc == 1 ? len - start : 0;
+    if (argc > 1) {
+      count = Math.min(Math.max(arrayInt(args[1]), 0), len - start);
+    }
+    return proxySplice(p, o, len, start, count, args, 2, true);
   }
-  const argc = args.length as number;
-  const rel = argc > 0 ? arrayInt(args[0]) : 0;
-  const start = rel < 0 ? Math.max(len + rel, 0) : Math.min(rel, len);
-  let count = argc == 1 ? len - start : 0;
-  if (argc > 1) {
-    count = Math.min(Math.max(arrayInt(args[1]), 0), len - start);
-  }
-  return proxySplice(p, o, len, start, count, args, 2, true);
+  return proxyArrayRead(p, name, args, o, len);
 }
 
 /**
@@ -288,7 +294,7 @@ export function arrayRel(v: any, len: number, dflt: number): number {
 }
 
 /** A callback argument, or Node's `TypeError`. */
-function arrayCallback(f: any): any {
+export function arrayCallback(f: any): any {
   if (typeof f !== "function") {
     panic(`TypeError: ${String(f)} is not a function`);
   }
@@ -303,7 +309,7 @@ function arrayCallback(f: any): any {
  */
 function proxyArrayRead(p: Proxy, name: string, args: any[], o: any, len: number): any {
   const a0 = arrayArg(args, 0);
-  if (name === "find") {
+  if (anyMethodCalled("find") && name === "find") {
     const f = arrayCallback(a0);
     for (let k = 0; k < len; k++) {
       const v = trapGet(p, `${k}`, o);
@@ -313,10 +319,16 @@ function proxyArrayRead(p: Proxy, name: string, args: any[], o: any, len: number
     }
     return undefined;
   }
-  if (name === "includes" || name === "indexOf" || name === "lastIndexOf") {
+  if (anyMethodCalled("includes") && name === "includes") {
     return proxySearch(p, name, args, o, len);
   }
-  if (name === "join") {
+  if (anyMethodCalled("indexOf") && name === "indexOf") {
+    return proxySearch(p, name, args, o, len);
+  }
+  if (anyMethodCalled("lastIndexOf") && name === "lastIndexOf") {
+    return proxySearch(p, name, args, o, len);
+  }
+  if (anyMethodCalled("join") && name === "join") {
     const sep = a0 === undefined ? "," : anyString(a0, "");
     let out = "";
     for (let k = 0; k < len; k++) {
@@ -325,56 +337,22 @@ function proxyArrayRead(p: Proxy, name: string, args: any[], o: any, len: number
     }
     return out;
   }
-  if (name === "reverse") {
+  if (anyMethodCalled("reverse") && name === "reverse") {
     proxyReverse(p, o, len);
     return o;
   }
-  if (name === "sort") {
+  if (anyMethodCalled("sort") && name === "sort") {
     return proxySort(p, o, len, a0);
   }
-  const out: any[] = [];
-  let from = 0;
-  let to = len;
-  if (name === "slice") {
-    from = arrayRel(a0, len, 0);
-    to = Math.max(arrayRel(arrayArg(args, 1), len, len), from);
+  if (
+    anyMethodCalled("map") ||
+    anyMethodCalled("filter") ||
+    anyMethodCalled("forEach") ||
+    anyMethodCalled("some") ||
+    anyMethodCalled("every") ||
+    anyMethodCalled("slice")
+  ) {
+    return proxyArrayVisit(p, name, args, o, len, a0);
   }
-  const f = name === "slice" ? undefined : arrayCallback(a0);
-  if (name === "map" || name === "filter" || name === "slice") {
-    trapGet(p, "constructor", o);
-  }
-  for (let k = from; k < to; k++) {
-    const key = `${k}`;
-    if (!trapHas(p, key)) {
-      if (name === "map" || name === "slice") {
-        // Node keeps the hole in the new array, which Velt's arrays cannot have.
-        panic(
-          `TypeError: \`${name}\` of a proxy of an array whose element ${k} is absent is not supported yet (#823): Velt's arrays have no holes`,
-        );
-      }
-      continue;
-    }
-    const v = trapGet(p, key, o);
-    if (name === "slice") {
-      out.push(v);
-      continue;
-    }
-    const r = f(v, k, o);
-    if (name === "map") {
-      out.push(r);
-    } else if (name === "filter" && (r ? true : false)) {
-      out.push(v);
-    } else if (name === "some" && (r ? true : false)) {
-      return true;
-    } else if (name === "every" && !(r ? true : false)) {
-      return false;
-    }
-  }
-  if (name === "some" || name === "every") {
-    return name === "every";
-  }
-  if (name === "forEach") {
-    return undefined;
-  }
-  return out;
+  panic(`ICE: the array method ${name} runs on a proxy in a program that doesn't call it`);
 }

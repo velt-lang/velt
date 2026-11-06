@@ -17,6 +17,24 @@ export declare intrinsic function anyDelete(value: any, key: string): bool;
 export declare intrinsic function anyToPrimitive(value: any, hint: string, at: string): any;
 
 /**
+ * A constant, and an `if` lowers only the branch it takes: can the program call the array method
+ * `name`, a string literal, through `any`? True when it is called by name, when a method is called
+ * by a computed name, or when `call`, `apply` or `bind` is called, which run a method read as a
+ * value. A program pays for an algorithm of velt/lang/proxy/array only if it can run.
+ */
+export declare intrinsic function anyMethodCalled(name: string): bool;
+
+/** Nothing runs. Where this is compiled, the program can reach it: `stdUsed(name)` is then true. */
+export declare intrinsic function noteStdUse(name: string): void;
+
+/**
+ * A constant, and an `if` lowers only the branch it takes: is a `noteStdUse(name)` reachable, with
+ * `name` a string literal? So code that only matters after some other code has run isn't compiled
+ * without it.
+ */
+export declare intrinsic function stdUsed(name: string): bool;
+
+/**
  * An array method running on a proxy of the array `array` holds (identified by its data
  * pointer): `op` 1 starts it, -1 ends it and answers the first hole it leaves (or -1), 2 and -2
  * start and end a trap call of it (`velt_rt_proxy_array_call`).

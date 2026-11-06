@@ -1,0 +1,9 @@
+// An array method read as a value and run by `bind`: no call in the program names the method.
+const p: any = new Proxy([3, 1, 2] as any, {});
+const shift = p.shift;
+const first = shift.bind(p);
+console.log(first());
+const splice = p.splice;
+const cut = splice.bind(p, 0);
+console.log(JSON.stringify(cut(1)));
+console.log(p.length);

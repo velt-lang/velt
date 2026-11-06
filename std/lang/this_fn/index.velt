@@ -7,6 +7,7 @@
 // `callOn`, and `call` (`[THIS_FN_APPLY]`), `apply` and `bind` (`[THIS_FN_BIND]`) below; a plain call `f(x)`
 // passes `undefined`. `typeof` is `"function"`.
 
+import { anyArgList } from "velt/lang/hooks/any_ops";
 import { THIS_FN_APPLY, THIS_FN_BIND } from "velt/lang/hooks/keys";
 
 // The values of the declared functions with a `this: any` parameter read as values, by the
@@ -50,8 +51,7 @@ export class ThisFn {
     if (args == null) {
       return this[THIS_FN_APPLY](self, []);
     }
-    const list: any[] = args;
-    return this[THIS_FN_APPLY](self, list);
+    return this[THIS_FN_APPLY](self, anyArgList(args));
   }
 
   /**

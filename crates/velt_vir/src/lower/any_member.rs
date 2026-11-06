@@ -50,6 +50,32 @@ impl Cx<'_> {
         self.intern(TyKind::Dyn(iface, vec![]))
     }
 
+    /// Can the program call a member named `name` through `any`: is that name called, or a
+    /// computed one (`""`)? Every key that reaches an `AnyCall` slot has been noted
+    /// (`FnLower::any_call`), so a slot compares only these.
+    pub(super) fn any_called(&self, name: &str) -> bool {
+        let keys = &self.boxing.any_call_keys;
+        keys.contains(name) || keys.contains("")
+    }
+
+    /// `Intrinsic::AnyMethodCalled`: can the array method `name` run on a proxy? Called by name,
+    /// or read as a value and run by `call`, `apply` or `bind` (velt/lang/proxy/array's
+    /// `ArrayMethod`). A plain call of one read as a value runs nothing unless `bind` made it.
+    pub(super) fn any_method_called(&self, name: &str) -> bool {
+        self.any_called(name) || ["call", "apply", "bind"].iter().any(|k| self.any_called(k))
+    }
+
+    /// `Intrinsic::StdUsed`: is `NoteStdUse(name)` in code the program reaches? It is kept with
+    /// the call keys, under a name no key can have, and grows from pass to pass like them.
+    pub(super) fn std_used(&self, name: &str) -> bool {
+        self.boxing.any_call_keys.contains(&format!("\u{1}{name}"))
+    }
+
+    /// Records `Intrinsic::NoteStdUse`.
+    pub(super) fn note_std_use(&mut self, name: &str) {
+        self.note_any_call_key(&format!("\u{1}{name}"));
+    }
+
     /// The member slots of the `any` table of `ty` (module docs), when the program has them.
     pub(super) fn any_member_entries(&mut self, ty: TyId) -> Vec<(i128, Const)> {
         if self.hir.dyn_members.is_none() {

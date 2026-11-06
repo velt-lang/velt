@@ -7,6 +7,26 @@ import { anyToPrimitive } from "velt/lang/intrinsics";
 import { anyJoin, anyOwnFn, anyPrimText, anyText } from "./any_text";
 
 /**
+ * The arguments `f.apply(self, args)` passes (JavaScript's `CreateListFromArrayLike`): `length`
+ * and each element of `args`, read as a program reads them, so an array of any element type and
+ * an array-like both work, and a proxy's traps run.
+ */
+export function anyArgList(args: any): any[] {
+  if (typeof args !== "object") {
+    panic("TypeError: CreateListFromArrayLike called on non-object");
+  }
+  const n: any = args.length;
+  const list: any[] = [];
+  if (typeof n === "number") {
+    const len = n as number;
+    for (let i = 0; i < len; i++) {
+      list.push(args[i]);
+    }
+  }
+  return list;
+}
+
+/**
  * JavaScript's `ToPrimitive(v, hint)` of an `any` holding an object or a function (`hint` is
  * `"string"`, `"default"` or `"number"`; a primitive is its own, which the callers keep, so
  * this only borrows `v`): an object's `[Symbol.toPrimitive](hint)`, else its
