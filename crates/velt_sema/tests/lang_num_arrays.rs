@@ -272,6 +272,11 @@ fn every_other_context_checks_the_array_literal_as_before() {
         format!("function main() {{ console.log({a}.map((x) => x * 2).length); }}"),
         format!("class C {{ static readonly T: u8[] = {a}; }}\nfunction main() {{ console.log(C.T[3]); }}"),
         format!("const T: number[] = {neg};\nfunction main() {{ console.log(T.indexOf(4)); }}"),
+        // An argument of a tuple's method, which runs nothing (`tuple_text`).
+        format!("function main() {{ const t: [number, number] = [1, 2]; const c = t.concat({a}); console.log(c.length); }}"),
+        // A literal passed for a type parameter an annotated arrow parameter names (`arrow_defaults`).
+        format!("function g<T>(x: T, f: (v: T) => T): T {{ return f(x); }}\nfunction main() {{ const r = g({a}, (v: u8[]) => v); console.log(r.length); }}"),
+        format!("function main() {{ const t = {a} as number[]; console.log(t.length); }}"),
     ];
     for src in &contexts {
         same(src);
