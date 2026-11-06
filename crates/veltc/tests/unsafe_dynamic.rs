@@ -52,7 +52,12 @@ fn errors(cwd: &Path) -> String {
 /// `good`, allowed, with a class with unsafe members; `evil`, no native code, with source
 /// `evil`; `app`, calling `evil`'s `e()`.
 fn project(root: &Path, good: &str, evil: &str) {
-    manifest(root, "good", "good", "native: { c: {} },");
+    manifest(
+        root,
+        "good",
+        "good",
+        "native: { c: { c: { unchecked: true } } },",
+    );
     write(root, "good/src/lib.vlt", good);
     manifest(
         root,

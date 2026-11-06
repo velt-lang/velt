@@ -443,10 +443,10 @@ pub const NATIVE: &[Field] = &[
         ty: "Record<string, CLibrary>",
         required: false,
         doc: "The C libraries the package's `declare c(\"<library>\")` functions name, by that \
-              name: where each comes from on each target. `\"c\"`, the platform's C library, \
-              needs no entry (one lists only its `headers`), but a package declaring C \
-              functions has this object (`c: {}` for the C library's only), so programs see \
-              it has native code.",
+              name: where each comes from on each target, and its headers. `\"c\"`, the \
+              platform's C library, needs no `system` (`c: { c: { headers: \
+              [\"<string.h>\"] } }`). A package with this object has native code, which \
+              programs allow.",
     },
 ];
 
@@ -470,7 +470,10 @@ pub const C_LIBRARY: &[Field] = &[
         doc: "The C headers the library's declarations are checked against when the package \
               builds, once per target: a path in the package (`\"native/sqlite3.h\"`), or \
               `\"<string.h>\"` for a C library header. Other libraries' headers aren't there \
-              to find (`\"<sqlite3.h>\"`): the package ships its copy.",
+              to find (`\"<sqlite3.h>\"`): the package ships its copy. A library the package \
+              declares functions of lists them or says `unchecked`. `velt native headers` (run \
+              by `velt publish`) records the check in c-headers.json for those who install it. A registry archive \
+              ships no `native/`, so only a git dependency's headers are compared with it.",
     },
     Field {
         key: "unchecked",

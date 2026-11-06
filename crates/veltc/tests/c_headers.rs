@@ -411,6 +411,51 @@ fn a_changed_header_checks_the_next_build_again() {
     }
 }
 
+/// A registry package's archive has its record but not its headers: what the check didn't
+/// read is no stamp input, so a second build of a program using it compiles nothing.
+#[test]
+fn an_unchanged_build_with_a_registry_package_is_not_compiled_again() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let header = "#include <stddef.h>\nsize_t strlen(const char *s);\n";
+    let files = [("native/t.h", header)];
+    let native = ", native: { c: { c: { headers: [\"native/t.h\"] } } }";
+    let lib = format!("import {{ CString }} from \"velt/ffi\";\n\ndeclare c(\"c\") function strlen(s: CString): usize;\n\n{LEN}");
+    project(dir.path(), native, &lib, &files, ALLOW);
+    let bind = dir.path().join("bind");
+    for args in [&["native", "headers"][..], &["publish"][..]] {
+        let o = no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(args)
+            .current_dir(&bind)
+            .env("NO_COLOR", "1")
+            .env("VELT_HOME", &home)
+            .env_remove("VELT_REGISTRY")
+            .output()
+            .unwrap();
+        assert!(o.status.success(), "{args:?}: {}", output(&o));
+    }
+    let manifest = dir.path().join("app/package.vlt");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    std::fs::write(
+        &manifest,
+        text.replace("{ path: \"../bind\" }", "\"0.1.0\""),
+    )
+    .unwrap();
+    // Built outside `app`, whose listing the stamp records.
+    std::fs::create_dir(dir.path().join("out")).unwrap();
+    let stamp = dir.path().join("out/app.build-stamp");
+    let mut seen = Vec::new();
+    for _ in 0..2 {
+        let o = velt(dir.path(), &home, &["build", "-o", "../out/app"]);
+        assert!(o.status.success(), "{}", output(&o));
+        let written = std::fs::metadata(&stamp).unwrap().modified().unwrap();
+        seen.push((written, std::fs::read_to_string(&stamp).unwrap()));
+    }
+    assert!(!seen[0].1.contains("native/t.h"), "{}", seen[0].1);
+    assert_eq!(seen[0], seen[1], "the second build wrote the stamp again");
+}
+
 /// `const char **` is a pointer C writes (sqlite's `pzTail`); `char *const *` isn't.
 #[test]
 fn an_out_pointer_is_the_pointer_c_can_write() {
@@ -485,54 +530,6 @@ fn the_listing_says_checked_only_for_what_was() {
     );
 }
 
-/// A fetched package's headers aren't compared at this layer, so they aren't called checked.
-#[test]
-fn a_fetched_package_s_headers_are_only_listed() {
-    let dir = test_dir::TestDir::new();
-    let home = dir.path().join("home");
-    let files = [("native/own.h", OWN_H)];
-    let native = ", native: { c: { c: { headers: [\"<string.h>\"] }, own: { system: { default: \"own\" }, headers: [\"native/own.h\"] } } }";
-    project(
-        dir.path(),
-        native,
-        &format!("{DECLS_STRLEN}{LEN}"),
-        &files,
-        ALLOW,
-    );
-    let bind = dir.path().join("bind");
-    git(&bind, &["init", "-q", "-b", "main"]);
-    git(&bind, &["add", "-A"]);
-    git(&bind, &["commit", "-q", "-m", "first"]);
-    let url = bind.display().to_string().replace('\\', "/");
-    let url = match url.starts_with('/') {
-        true => format!("file://{url}"),
-        false => format!("file:///{url}"),
-    };
-    let manifest = dir.path().join("app/package.vlt");
-    let text = std::fs::read_to_string(&manifest).unwrap();
-    let text = text.replace(
-        "path: \"../bind\"",
-        &format!("git: \"{url}\", branch: \"main\""),
-    );
-    let text = text.replace(
-        ALLOW,
-        &format!("allowNative: [{{ name: \"bind\", git: \"{url}\" }}], "),
-    );
-    std::fs::write(&manifest, text).unwrap();
-    let o = check_without_zig(dir.path(), &home, "x86_64-unknown-linux-gnu");
-    assert!(o.status.success(), "{}", output(&o));
-    assert!(
-        output(&o).contains("own (own; headers listed)"),
-        "{}",
-        output(&o)
-    );
-    assert!(
-        output(&o).contains("c (the platform's; headers listed)"),
-        "{}",
-        output(&o)
-    );
-}
-
 fn git(dir: &Path, args: &[&str]) {
     let o = std::process::Command::new("git")
         .arg("-C")
@@ -549,4 +546,274 @@ fn git(dir: &Path, args: &[&str]) {
         .output()
         .unwrap();
     assert!(o.status.success(), "git {args:?}: {}", output(&o));
+}
+
+/// `velt check` of `app`, which depends on `bind` by git (its lockfile removed first, so the
+/// latest commit is fetched), with a `VELT_ZIG` that doesn't exist: a fetched package's
+/// declarations are compared with its record, and clang never runs.
+fn check_from_git(dir: &Path, home: &Path) -> Output {
+    let _ = std::fs::remove_file(dir.join("app/velt.lock.json"));
+    no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["check", "--target", "x86_64-unknown-linux-gnu"])
+        .current_dir(dir.join("app"))
+        .env("NO_COLOR", "1")
+        .env("VELT_HOME", home)
+        .env("VELT_ZIG", dir.join("no-zig"))
+        .output()
+        .unwrap()
+}
+
+/// `velt native headers` records what passed on every target in `c-headers.json`; a build
+/// that fetches the package (here by git) compares its declarations with that record.
+#[test]
+fn a_fetched_package_s_declarations_are_compared_with_its_record() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let files = [("native/own.h", OWN_H)];
+    // `labs` is right on 64-bit Linux and macOS only (see above).
+    let decls = DECLS.replace("declare c(\"c\") function labs(x: i64): i64;\n", "");
+    project(dir.path(), NATIVE, &format!("{decls}{LEN}"), &files, ALLOW);
+    let bind = dir.path().join("bind");
+    let o = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["native", "headers"])
+        .current_dir(&bind)
+        .env("NO_COLOR", "1")
+        .env("VELT_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", output(&o));
+    assert!(
+        output(&o).contains("2 C libraries against its headers on 8 targets"),
+        "{}",
+        output(&o)
+    );
+    let record = vpm::c_headers::CHeaders::read(&bind).unwrap().unwrap();
+    assert_eq!(record.checked.len(), 8);
+    let own = record.library("x86_64-windows-gnu", "own").unwrap();
+    assert_eq!(own.declarations.len(), 2);
+    assert_eq!(own.headers.keys().collect::<Vec<_>>(), ["native/own.h"]);
+    git(&bind, &["init", "-q", "-b", "main"]);
+    git(&bind, &["add", "-A"]);
+    git(&bind, &["commit", "-q", "-m", "checked"]);
+    depend_by_git(dir.path());
+    let o = check_from_git(dir.path(), &home);
+    assert!(o.status.success(), "{}", output(&o));
+    // A declaration changed after the check.
+    let lib = std::fs::read_to_string(bind.join("src/lib.vlt")).unwrap();
+    let changed = lib.replace("thing_free(t: Ptr<thing>)", "thing_free(t: Ptr<u8>)");
+    std::fs::write(bind.join("src/lib.vlt"), changed).unwrap();
+    git(&bind, &["commit", "-q", "-am", "changed"]);
+    let out = output(&check_from_git(dir.path(), &home));
+    assert!(
+        out.contains("C function `thing_free` in package `bind` is not declared as its author checked against C library `own`'s headers for x86_64-linux-gnu"),
+        "{out}"
+    );
+    assert_eq!(out.matches("error:").count(), 1, "{out}");
+    // No record.
+    git(&bind, &["rm", "-q", "c-headers.json"]);
+    git(&bind, &["commit", "-q", "-m", "unrecorded"]);
+    let out = output(&check_from_git(dir.path(), &home));
+    assert!(
+        out.contains("package `bind` declares C functions, but was published without a record"),
+        "{out}"
+    );
+}
+
+/// Make `app`'s dependency on `bind` a git dependency, on `bind`'s branch `main`.
+fn depend_by_git(dir: &Path) {
+    let url = dir.join("bind").display().to_string().replace('\\', "/");
+    let url = match url.starts_with('/') {
+        true => format!("file://{url}"),
+        false => format!("file:///{url}"),
+    };
+    let manifest = dir.join("app/package.vlt");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+    let text = text.replace(
+        "path: \"../bind\"",
+        &format!("git: \"{url}\", branch: \"main\""),
+    );
+    let text = text.replace(
+        ALLOW,
+        &format!("allowNative: [{{ name: \"bind\", git: \"{url}\" }}], "),
+    );
+    std::fs::write(&manifest, text).unwrap();
+}
+
+/// `velt native headers` in `bind`, and its first commit.
+fn record_and_commit(dir: &Path, home: &Path) {
+    let bind = dir.join("bind");
+    let o = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["native", "headers"])
+        .current_dir(&bind)
+        .env("NO_COLOR", "1")
+        .env("VELT_HOME", home)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", output(&o));
+    git(&bind, &["init", "-q", "-b", "main"]);
+    git(&bind, &["add", "-A"]);
+    git(&bind, &["commit", "-q", "-m", "checked"]);
+}
+
+/// A program loads what it imports of a package: however it imports it, each declaration it
+/// compiles was checked, whichever others it leaves out.
+#[test]
+fn a_consumer_of_some_modules_is_compared_with_the_record() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let module = |name: &str, c: &str, body: &str| {
+        format!("import {{ CString }} from \"velt/ffi\";\n\ndeclare c(\"c\") function {c};\n\nexport function {name}(s: string): i64 {{\n  // SAFETY: a CString is NUL-terminated.\n  return unsafe {{ {body} }} as i64;\n}}\n")
+    };
+    let a = module("al", "strlen(s: CString): usize", "strlen(new CString(s))");
+    let b = module(
+        "bl",
+        "strcmp(a: CString, b: CString): i32",
+        "strcmp(new CString(s), new CString(s))",
+    );
+    let extra = module(
+        "xl",
+        "strspn(a: CString, b: CString): usize",
+        "strspn(new CString(s), new CString(s))",
+    );
+    let files = [
+        ("src/a.vlt", a.as_str()),
+        ("src/b.vlt", b.as_str()),
+        ("src/extra.vlt", extra.as_str()),
+    ];
+    let native = ", native: { c: { c: { headers: [\"<string.h>\"] } } }";
+    let lib = "export { al } from \"./a\";\nexport { bl } from \"./b\";\n";
+    project(dir.path(), native, lib, &files, ALLOW);
+    record_and_commit(dir.path(), &home);
+    depend_by_git(dir.path());
+    let main = dir.path().join("app/src/main.vlt");
+    let program = |imports: &str, uses: &str| {
+        format!("{imports}\n\nfunction main() {{\n  console.log({uses});\n}}\n")
+    };
+    let ways = [
+        ("import { al } from \"bind/a\";", "al(\"x\")"),
+        (
+            "import { bl } from \"bind/b\";\nimport { al } from \"bind/a\";",
+            "al(\"x\") + bl(\"x\")",
+        ),
+        (
+            "import { bl } from \"bind/b\";\nimport { al } from \"bind\";",
+            "al(\"x\") + bl(\"x\")",
+        ),
+        ("import { al, bl } from \"bind\";", "al(\"x\") + bl(\"x\")"),
+        // A module the package's root doesn't import.
+        ("import { xl } from \"bind/extra\";", "xl(\"x\")"),
+    ];
+    for (imports, uses) in ways {
+        std::fs::write(&main, program(imports, uses)).unwrap();
+        let o = check_from_git(dir.path(), &home);
+        assert!(o.status.success(), "{imports}: {}", output(&o));
+    }
+    // A declaration changed after the check is refused where it is loaded, not where it isn't.
+    let changed = b.replace(
+        "strcmp(a: CString, b: CString): i32",
+        "strcmp(a: CString, b: CString): i64",
+    );
+    let bind = dir.path().join("bind");
+    std::fs::write(bind.join("src/b.vlt"), changed).unwrap();
+    git(&bind, &["commit", "-q", "-am", "changed"]);
+    std::fs::write(&main, program(ways[0].0, ways[0].1)).unwrap();
+    let o = check_from_git(dir.path(), &home);
+    assert!(o.status.success(), "{}", output(&o));
+    std::fs::write(&main, program(ways[1].0, ways[1].1)).unwrap();
+    let out = output(&check_from_git(dir.path(), &home));
+    assert!(
+        out.contains("C function `strcmp` in package `bind` is not declared as its author checked"),
+        "{out}"
+    );
+    assert_eq!(out.matches("error:").count(), 1, "{out}");
+}
+
+/// A git dependency has its headers: the declarations being as checked isn't enough when a
+/// header, or what it includes, isn't.
+#[test]
+fn a_changed_header_of_a_git_dependency_is_refused() {
+    let Some(_zig) = zig() else { return };
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let files = [
+        (
+            "native/own.h",
+            "#include \"inner.h\"\ndouble cbrt(double x);\n",
+        ),
+        ("native/inner.h", "int inner(int a);\n"),
+    ];
+    let native = ", native: { c: { c: { headers: [\"<string.h>\"] }, own: { system: { default: \"own\" }, headers: [\"native/own.h\"] } } }";
+    let lib = format!("declare c(\"own\") function cbrt(x: f64): f64;\ndeclare c(\"own\") function inner(a: i32): i32;\n{DECLS_STRLEN}{LEN}");
+    project(dir.path(), native, &lib, &files, ALLOW);
+    record_and_commit(dir.path(), &home);
+    depend_by_git(dir.path());
+    let bind = dir.path().join("bind");
+    let o = check_from_git(dir.path(), &home);
+    assert!(o.status.success(), "{}", output(&o));
+    assert!(
+        output(&o).contains("own (own; headers checked)"),
+        "{}",
+        output(&o)
+    );
+    // The listing is about this target: on one without C headers nothing was compared.
+    let o = check_without_zig(dir.path(), &home, "wasm32-wasip1");
+    assert!(o.status.success(), "{}", output(&o));
+    assert!(
+        output(&o).contains("own (own; headers listed)"),
+        "{}",
+        output(&o)
+    );
+    assert!(!output(&o).contains("headers checked"), "{}", output(&o));
+    // The listed header changes; then, that restored, one it includes; then it is gone. The
+    // declarations and the record stay as they are.
+    let cases = [
+        ("native/own.h", Some("#include \"inner.h\"\nlong cbrt(long x);\n"), "`native/own.h` of C library `own` in package `bind` is not the one its author checked"),
+        ("native/inner.h", Some("int inner(long a);\n"), "`native/inner.h` of C library `own` in package `bind` is not the one its author checked"),
+        ("native/own.h", None, "`native/own.h` of C library `own` in package `bind` is gone"),
+    ];
+    for (path, text, refusal) in cases {
+        let before = std::fs::read_to_string(bind.join(path)).unwrap();
+        match text {
+            Some(text) => std::fs::write(bind.join(path), text).unwrap(),
+            None => std::fs::remove_file(bind.join(path)).unwrap(),
+        }
+        git(&bind, &["add", "-A"]);
+        git(&bind, &["commit", "-q", "-m", "changed"]);
+        let o = check_from_git(dir.path(), &home);
+        assert!(!o.status.success(), "{path}: {}", output(&o));
+        assert!(output(&o).contains(refusal), "{refusal}:\n{}", output(&o));
+        assert!(!output(&o).contains("headers checked"), "{}", output(&o));
+        std::fs::write(bind.join(path), before).unwrap();
+        git(&bind, &["add", "-A"]);
+        git(&bind, &["commit", "-q", "-m", "restored"]);
+    }
+    let o = check_from_git(dir.path(), &home);
+    assert!(o.status.success(), "{}", output(&o));
+}
+
+/// With no C functions there is nothing to record, and no empty file saying so.
+#[test]
+fn a_package_without_c_functions_has_no_record() {
+    let dir = test_dir::TestDir::new();
+    let home = dir.path().join("home");
+    let lib = "export function len(s: string): i32 {\n  return 1;\n}\n";
+    project(dir.path(), "", lib, &[], "");
+    let bind = dir.path().join("bind");
+    std::fs::write(bind.join(vpm::c_headers::FILE), "{ \"checked\": {} }").unwrap();
+    let o = no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["native", "headers"])
+        .current_dir(&bind)
+        .env("NO_COLOR", "1")
+        .env("VELT_HOME", &home)
+        .output()
+        .unwrap();
+    assert!(o.status.success(), "{}", output(&o));
+    assert!(
+        output(&o).contains("the package declares no C functions"),
+        "{}",
+        output(&o)
+    );
+    assert!(!bind.join(vpm::c_headers::FILE).exists());
 }

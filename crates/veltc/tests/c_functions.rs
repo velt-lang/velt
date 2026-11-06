@@ -15,14 +15,15 @@ mod runtime_support;
 mod test_dir;
 
 /// A package `cmath` with C declarations (`decls`) and the safe functions around them (`api`),
-/// which says it has native code (`native: { c: {} }`), and a program depending on it, which
+/// which says it has native code and calls the platform's C library unchecked (the header check
+/// needs zig: tests/c_headers.rs), and a program depending on it, which
 /// allows that code, whose `main` is `main`.
 fn project(dir: &Path, lib: &str, main: &str) {
     project_with(dir, lib, main, NATIVE_C, "allowNative: [\"cmath\"], ");
 }
 
 /// `cmath`'s manifest fields of a package calling only the platform's C library.
-const NATIVE_C: &str = ", native: { c: {} }";
+const NATIVE_C: &str = ", native: { c: { c: { unchecked: true } } }";
 
 /// [`project`] with `native` (`cmath`'s manifest fields after its version) and `allow` (the
 /// app's).
@@ -294,7 +295,9 @@ fn what_cant_cross_and_unknown_libraries_are_errors() {
     );
     let out = check(dir.path());
     assert!(
-        out.contains("C library `sqlite3` is not in package.vlt's `native.c`: package `cmath` lists no C libraries"),
+        out.contains(
+            "C library `sqlite3` is not in package.vlt's `native.c`: package `cmath` lists `c`"
+        ),
         "{out}"
     );
 }
@@ -313,7 +316,10 @@ fn a_program_allows_a_package_s_c_declarations() {
         1,
         "{out}"
     );
-    assert!(out.contains("`native: { c: {} }`"), "{out}");
+    assert!(
+        out.contains("`native: { c: { c: { headers: [\"<string.h>\"] } } }`"),
+        "{out}"
+    );
     project_with(dir.path(), LIB, MAIN, NATIVE_C, "");
     let out = check(dir.path());
     let refusal = "package `cmath` has native code, which runs with no safety net";
@@ -340,7 +346,8 @@ fn a_package_s_c_library_is_linked_per_target() {
     let dir = test_dir::TestDir::new();
     // Rounded: glibc's `cbrt(27)` is 3.0000000000000004. What's tested is that libm links.
     let main = "import { cubeRoot } from \"cmath\";\n\nfunction main() {\n  console.log(Math.round(cubeRoot(27)));\n}\n";
-    let native = ", native: { c: { m: { system: { linux: \"m\", darwin: \"m\" } } } }";
+    let native =
+        ", native: { c: { m: { system: { linux: \"m\", darwin: \"m\" }, unchecked: true } } }";
     project_with(dir.path(), LIBM, main, native, "allowNative: [\"cmath\"], ");
     for args in [&["run"][..], &["run", "--release"][..]] {
         let o = velt(dir.path(), args);
@@ -363,7 +370,8 @@ fn a_package_s_c_library_is_linked_per_target() {
 fn an_unchanged_build_keeps_its_c_libraries() {
     let dir = test_dir::TestDir::new();
     let main = "import { cubeRoot } from \"cmath\";\n\nfunction main() {\n  console.log(Math.round(cubeRoot(27)));\n}\n";
-    let native = ", native: { c: { m: { system: { linux: \"m\", darwin: \"m\" } } } }";
+    let native =
+        ", native: { c: { m: { system: { linux: \"m\", darwin: \"m\" }, unchecked: true } } }";
     project_with(dir.path(), LIBM, main, native, "allowNative: [\"cmath\"], ");
     for round in ["first", "unchanged"] {
         let o = velt(dir.path(), &["run"]);
@@ -371,6 +379,39 @@ fn an_unchanged_build_keeps_its_c_libraries() {
         assert!(o.status.success(), "{round} build failed:\n{stderr}");
         assert_eq!(String::from_utf8_lossy(&o.stdout), "3\n", "{round}");
     }
+}
+
+/// A C library a package declares functions of lists its headers (tests/c_headers.rs checks
+/// them; that needs zig) or says `unchecked: true`; one doing neither is an error, the platform's
+/// `c` without an entry too.
+#[test]
+fn a_c_library_lists_its_headers_or_says_it_has_none() {
+    let dir = test_dir::TestDir::new();
+    let main = "import { cubeRoot } from \"cmath\";\n\nfunction main() {\n  console.log(cubeRoot(27));\n}\n";
+    let allow = "allowNative: [\"cmath\"], ";
+    let native = ", native: { c: { m: { system: { default: \"m\" } } } }";
+    project_with(dir.path(), LIBM, main, native, allow);
+    let out = check(dir.path());
+    assert!(
+        out.contains("error: package `cmath` declares functions of C library `m`, but its package.vlt lists no headers to check them against"),
+        "{out}"
+    );
+    assert!(
+        out.contains("note: list them: `native: { c: { m: { headers: [\"native/<library>.h\"] } } }`; a library without headers (a binary-only SDK) says `unchecked: true` instead"),
+        "{out}"
+    );
+    assert_eq!(out.matches("error:").count(), 1, "{out}");
+    project_with(dir.path(), LIB, MAIN, ", native: { c: {} }", allow);
+    let out = check(dir.path());
+    assert!(
+        out.contains("declares functions of C library `c`, but its package.vlt lists no headers")
+            && out.contains("headers: [\"<string.h>\"]"),
+        "{out}"
+    );
+    let native = ", native: { c: { m: { system: { default: \"m\" }, unchecked: true } } }";
+    project_with(dir.path(), LIBM, main, native, allow);
+    let o = velt(dir.path(), &["check"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
 }
 
 /// A library a package lists without an entry for the build's target, and system library names

@@ -187,8 +187,8 @@ fn ty_name(p: &hir::Program, t: TyId) -> String {
 /// Check every `declare function` outside the standard library (`std_files`: the files of std
 /// modules) against the native library of its own package (`graph`, `None` for a program without
 /// packages), and every `declare system function` against the table of system functions of
-/// `target` (system.rs); see the module docs. Reports errors into `diags`, and returns which C
-/// libraries were checked against their headers, for [`note_checked`].
+/// `target` (system.rs); see the module docs. Reports errors into `diags`, and returns the C
+/// libraries that passed the header check with their records, for [`note_checked`].
 pub fn check_declares(
     p: &hir::Program,
     sm: &SourceMap,
@@ -341,7 +341,7 @@ pub fn links(graph: Option<&PackageGraph>, release: bool) -> Vec<velt_link::Nati
 mod c_decls;
 mod headers;
 pub use c_decls::{link_args as c_link_args, links as c_links};
-pub use headers::{stamp_inputs as c_stamp_inputs, Checked as CChecked};
+pub use headers::{stamp_inputs as c_stamp_inputs, zig_target, Checked as CChecked};
 pub use report::note_checked;
 mod report;
 mod system;

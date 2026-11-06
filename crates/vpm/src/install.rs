@@ -708,6 +708,7 @@ fn build_graph<'r>(
         }
         added.native = natives.remove(&pkg.name);
         added.fetched = matches!(pkg.source, Source::Registry { .. } | Source::Git { .. });
+        added.checkout = matches!(pkg.source, Source::Git { .. });
     }
     graph
 }

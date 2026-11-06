@@ -57,6 +57,7 @@ pub fn entries(archive: &[u8]) -> Result<Vec<Entry>, String> {
         .and_then(contents::native_dir_of);
     for e in &entries {
         let allowed = e.path == MANIFEST_FILE
+            || e.path == crate::c_headers::FILE
             || e.path.starts_with(&format!("{SRC_DIR}/"))
             || native
                 .as_ref()
@@ -184,6 +185,38 @@ mod tests {
         assert_eq!(
             contents::checksum(&out).unwrap(),
             contents::checksum(&pkg).unwrap()
+        );
+    }
+
+    /// A package with C functions distributes its record of the header check, and a remote
+    /// publish or fetch reads the archive through this check: the record goes through it. The
+    /// headers themselves, under no `native/` crate, aren't distributed.
+    #[test]
+    fn a_package_with_a_header_record_packs_and_unpacks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("p");
+        let source = "export const pkg: Package = { name: \"p\", version: \"1.0.0\", native: { c: { x: { system: { default: \"x\" }, headers: [\"native/a.h\"] } } } };\n";
+        let write = |rel: &str, text: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(
+            MANIFEST_FILE,
+            &format!("import type {{ Package }} from \"velt/package\";\n{source}"),
+        );
+        write("src/lib.vlt", "");
+        write("native/a.h", "int x;\n");
+        write(crate::c_headers::FILE, "{}");
+        write("notes.txt", "not distributed");
+        let names: Vec<String> = entries(&pack(&root).unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|e| e.path)
+            .collect();
+        assert_eq!(
+            names,
+            [crate::c_headers::FILE, MANIFEST_FILE, "src/lib.vlt"]
         );
     }
 

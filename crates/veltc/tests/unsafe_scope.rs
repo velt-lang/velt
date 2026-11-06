@@ -30,7 +30,7 @@ fn project(dir: &Path, lib: &str, native: &str, main: &str, allow: &str) {
     std::fs::write(app.join("src/main.vlt"), main).unwrap();
 }
 
-const NATIVE: &str = ", native: { c: {} }";
+const NATIVE: &str = ", native: { c: { c: { unchecked: true } } }";
 const ALLOW: &str = "allowNative: [\"bind\"], ";
 
 fn velt(dir: &Path, args: &[&str]) -> Output {

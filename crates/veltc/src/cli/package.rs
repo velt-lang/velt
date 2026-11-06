@@ -174,10 +174,11 @@ fn build_command(name: &str, positional: Vec<String>, flags: Flags) -> Result<Co
             Some("build") => Ok(Command::NativeBuild {
                 target: flags.target,
             }),
+            Some("headers") => Ok(Command::NativeHeaders),
             Some(other) => Err(format!(
-                "unknown `velt native` command `{other}` (usage: velt native build [--target <triple>])"
+                "unknown `velt native` command `{other}` (usage: velt native build [--target <triple>] | velt native headers)"
             )),
-            None => Err("usage: velt native build [--target <triple>]".into()),
+            None => Err("usage: velt native build [--target <triple>] | velt native headers".into()),
         },
         "test" if flags.json && !flags.no_run => {
             Err("`--json` goes with `--no-run` (`velt test --no-run --json`)".into())
@@ -325,6 +326,7 @@ mod tests {
             p(&["native", "build"]).unwrap(),
             Command::NativeBuild { target: None }
         );
+        assert_eq!(p(&["native", "headers"]).unwrap(), Command::NativeHeaders);
         assert!(p(&["native"])
             .unwrap_err()
             .contains("usage: velt native build"));

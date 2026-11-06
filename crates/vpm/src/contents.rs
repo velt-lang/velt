@@ -1,4 +1,5 @@
-//! The contents of a package as distributed: `package.vlt`, everything under `src/`, and for a
+//! The contents of a package as distributed: `package.vlt`, everything under `src/`, the record
+//! of its C declarations' header check (`c-headers.json`, [`crate::c_headers`]), and for a
 //! package with a `native` object the sources of its crate (without `target/` and `.git/`).
 //! Listing, copying and content-hashing all use the same file set so a checksum computed on a
 //! source tree matches the one computed on its registry or cache copy.
@@ -19,6 +20,9 @@ pub fn list_files(root: &Path) -> Result<Vec<String>, String> {
         return Err(format!("`{}` has no {MANIFEST_FILE}", root.display()));
     }
     let mut files = vec![MANIFEST_FILE.to_string()];
+    if root.join(crate::c_headers::FILE).is_file() {
+        files.push(crate::c_headers::FILE.to_string());
+    }
     let src = root.join(SRC_DIR);
     if src.is_dir() {
         collect(&src, SRC_DIR, &mut files)?;
@@ -126,9 +130,15 @@ mod tests {
         write(&a, "src/lib.vlt", "export function f() {}");
         write(&a, "src/sub/x.vlt", "");
         write(&a, "target/junk", "ignored");
+        write(&a, "c-headers.json", "{}");
         assert_eq!(
             list_files(&a).unwrap(),
-            ["package.vlt", "src/lib.vlt", "src/sub/x.vlt"]
+            [
+                "c-headers.json",
+                "package.vlt",
+                "src/lib.vlt",
+                "src/sub/x.vlt"
+            ]
         );
 
         let b = tmp.path().join("b");

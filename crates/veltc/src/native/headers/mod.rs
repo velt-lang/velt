@@ -5,10 +5,15 @@
 //! each declaration must name a function they declare, with parameters and a result that
 //! match. A mismatch is an error naming the header line. A result that passed is remembered
 //! (`$VELT_HOME/cache/headers/`), so clang runs again only when a header, a declaration, the
-//! target or zig changes. Registry and git packages were checked where they were published.
+//! target or zig changes. Registry and git packages were checked by their authors: their
+//! `c-headers.json` records, per target, a digest of each declaration that passed and of each
+//! of the package's own headers read. A build requires each declaration it compiles to be
+//! recorded, and compares the headers it has: a git checkout has them, a registry archive
+//! doesn't. A library lists its headers or says `unchecked: true`.
 
 mod compare;
 mod ctype;
+mod record;
 mod shape;
 
 use std::collections::{BTreeMap, HashSet};
@@ -18,11 +23,13 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use sha2::{Digest, Sha256};
 use velt_common::{Diagnostic, Diagnostics, FileId, SourceMap, Span};
 use velt_sema::hir::{self, Def};
+use vpm::c_headers::LibraryRecord;
 use vpm::graph::GraphPackage;
 use vpm::PackageGraph;
 
 use compare::Shape;
 use ctype::Headers;
+use record::{compare_record, library_record};
 use shape::shape;
 
 /// One `declare c` function to check: its name in C, what it passes, where it is.
@@ -33,25 +40,34 @@ struct Decl {
     span: Span,
 }
 
-/// The C libraries whose declarations passed the check on this target, per package root, with
-/// the files of the package that check read (its headers, with what they include).
-pub type Checked = BTreeMap<PathBuf, BTreeMap<String, Vec<PathBuf>>>;
+/// The C libraries that passed on this target, per package root, with what `c-headers.json`
+/// records of them: a package built here passed the check, one fetched matched its record.
+pub type Checked = BTreeMap<PathBuf, BTreeMap<String, LibraryRecord>>;
 
-/// Build-stamp `file` entries for the package files the checks in `checked` read: a build with
-/// nothing changed isn't checked again, so a changed header has to change the stamp.
+/// Build-stamp `file` entries for the package headers the checks in `checked` read, with what
+/// they include: a build with nothing changed isn't checked again, so a changed header has to
+/// change the stamp. A header the package doesn't have (a registry archive ships none) is no
+/// input: an entry for it would never hold, and every build would compile again.
 pub fn stamp_inputs(checked: &Checked, inputs: &mut Vec<String>) {
-    for file in checked.values().flat_map(|l| l.values()).flatten() {
-        let bytes = std::fs::read(file).unwrap_or_default();
-        inputs.push(format!(
-            "file {}\t{}",
-            vpm::probe::content_hash(&bytes),
-            vpm::relpath::absolute(file).display()
-        ));
+    for (root, libraries) in checked {
+        for header in libraries.values().flat_map(|l| l.headers.keys()) {
+            let file = root.join(header);
+            let Ok(bytes) = std::fs::read(&file) else {
+                continue;
+            };
+            inputs.push(format!(
+                "file {}\t{}",
+                vpm::probe::content_hash(&bytes),
+                vpm::relpath::absolute(&file).display()
+            ));
+        }
     }
 }
 
 /// Check the C declarations of `p` (std's, in `std_files`, aside) against their libraries'
-/// headers for `target`. Errors go to `diags`; the libraries that passed are returned.
+/// headers for `target`: a package built here runs clang, one fetched has its record
+/// (`c-headers.json`) compared. Every library a package declares functions of lists its
+/// headers or says `unchecked: true`. Errors go to `diags`; what passed is returned.
 pub fn check(
     p: &hir::Program,
     sm: &SourceMap,
@@ -62,9 +78,6 @@ pub fn check(
 ) -> Checked {
     let mut checked = Checked::new();
     let Some(graph) = graph else { return checked };
-    let Some(zig_target) = zig_target(target) else {
-        return checked;
-    };
     // (package root, library) → its declarations.
     let mut groups: BTreeMap<(PathBuf, String), (&GraphPackage, Vec<Decl>)> = BTreeMap::new();
     for def in &p.defs {
@@ -76,10 +89,8 @@ pub fn check(
         let Some(package) = graph.package_of(&sm.get(f.span.file).path) else {
             continue;
         };
-        let Some(lib) = package.c_libraries.get(&c.library) else {
-            continue;
-        };
-        if package.fetched || lib.unchecked || lib.headers.is_empty() {
+        // A library other than `c` without an entry is `c_decls`' error.
+        if c.library != "c" && !package.c_libraries.contains_key(&c.library) {
             continue;
         }
         let decl = Decl {
@@ -100,24 +111,49 @@ pub fn check(
             .push(decl);
     }
     for ((root, library), (package, decls)) in groups {
-        let headers = &package.c_libraries[&library].headers;
-        if let Some(read) =
-            check_library(&root, &library, headers, &decls, zig_target, target, diags)
-        {
-            let own = read.into_iter().filter(|f| in_package(f, &root)).collect();
-            checked.entry(root).or_default().insert(library, own);
+        let (headers, unchecked) = match package.c_libraries.get(&library) {
+            Some(lib) => (lib.headers.as_slice(), lib.unchecked),
+            None => (&[][..], false),
+        };
+        if unchecked {
+            continue;
+        }
+        if headers.is_empty() {
+            diags.push(no_headers(&package.name, &library, decls[0].span));
+            continue;
+        }
+        let Some(zig_target) = zig_target(target) else {
+            continue;
+        };
+        let record = match package.fetched {
+            true => compare_record(package, &library, &decls, headers, zig_target, diags),
+            false => check_library(&root, &library, headers, &decls, zig_target, target, diags),
+        };
+        if let Some(record) = record {
+            checked.entry(root).or_default().insert(library, record);
         }
     }
     checked
 }
 
-/// Whether `file`, a path clang read, is in the package at `root`.
-fn in_package(file: &Path, root: &Path) -> bool {
-    file.starts_with(root) || root.canonicalize().is_ok_and(|r| file.starts_with(r))
+/// The error for a C library that lists no headers and doesn't say it has none.
+fn no_headers(package: &str, library: &str, at: Span) -> Diagnostic {
+    let example = if library == "c" {
+        "<string.h>"
+    } else {
+        "native/<library>.h"
+    };
+    Diagnostic::error(
+        format!(
+            "package `{package}` declares functions of C library `{library}`, but its package.vlt lists no headers to check them against"
+        ),
+        at,
+    )
+    .with_note(format!(
+        "list them: `native: {{ c: {{ {library}: {{ headers: [\"{example}\"] }} }} }}`; a library without headers (a binary-only SDK) says `unchecked: true` instead"
+    ))
 }
 
-/// Check `decls` of `library` against its `headers`, or find a check of them remembered: when
-/// they pass, the files the check read.
 #[allow(clippy::too_many_arguments)]
 fn check_library(
     root: &Path,
@@ -127,7 +163,7 @@ fn check_library(
     zig_target: &str,
     target: &str,
     diags: &mut Diagnostics,
-) -> Option<Vec<PathBuf>> {
+) -> Option<LibraryRecord> {
     let first = decls[0].span;
     let home = match vpm::locations::velt_home() {
         Ok(home) => home,
@@ -139,7 +175,7 @@ fn check_library(
     let key = cache_key(root, headers, decls, target);
     let remembered = home.join("cache").join("headers").join(&key);
     if let Some(read) = still_holds(&remembered) {
-        return Some(read);
+        return Some(library_record(root, decls, &read));
     }
     let parsed = velt_toolchain::zig::zig(&home)
         .and_then(|zig| parse(&zig, &home, root, headers, zig_target));
@@ -168,15 +204,26 @@ fn check_library(
     if diags.len() != before {
         return None;
     }
+    let Some(read) = read
+        .iter()
+        .map(|file| Some((file.clone(), file_digest(file)?)))
+        .collect::<Option<Vec<_>>>()
+    else {
+        diags.push(Diagnostic::error(
+            format!("the headers of C library `{library}` changed during the check"),
+            first,
+        ));
+        return None;
+    };
     // Remembered only when it passed; a failure to write it costs a check next time.
     remember(&remembered, &read);
-    Some(read)
+    Some(library_record(root, decls, &read))
 }
 
 /// Remember at `remembered` that a check which read `read` passed. The file is replaced whole
 /// (written beside it and renamed), so a torn write can't leave a list of fewer files, which
 /// would still hold.
-fn remember(remembered: &Path, read: &[PathBuf]) {
+fn remember(remembered: &Path, read: &[(PathBuf, String)]) {
     if let Some(dir) = remembered.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
@@ -186,34 +233,42 @@ fn remember(remembered: &Path, read: &[PathBuf]) {
 }
 
 /// What a remembered check holds: a digest and the path of each file its parse read, one per
-/// line. `None` when one can't be read any more.
-fn remembered_text(read: &[PathBuf]) -> Option<String> {
+/// line. `None` for a path a line can't hold.
+fn remembered_text(read: &[(PathBuf, String)]) -> Option<String> {
     let mut text = String::new();
-    for file in read {
-        let path = file.to_str()?;
-        text.push_str(&format!("{}\t{path}\n", file_digest(file)?));
+    for (file, digest) in read {
+        text.push_str(&format!("{digest}\t{}\n", file.to_str()?));
     }
     Some(text)
 }
 
-/// The files a check remembered at `remembered` read, when there is one and every one of them
-/// is unchanged.
-fn still_holds(remembered: &Path) -> Option<Vec<PathBuf>> {
+/// The files of the check remembered at `remembered`, with their digests, when there is one and
+/// every file is unchanged.
+fn still_holds(remembered: &Path) -> Option<Vec<(PathBuf, String)>> {
     let text = std::fs::read_to_string(remembered).ok()?;
-    let read: Option<Vec<PathBuf>> = (text.lines())
+    if text.is_empty() {
+        return None;
+    }
+    text.lines()
         .map(|line| {
             let (digest, file) = line.split_once('\t')?;
-            (file_digest(Path::new(file)).as_deref() == Some(digest)).then(|| PathBuf::from(file))
+            let file = PathBuf::from(file);
+            (file_digest(&file).as_deref() == Some(digest)).then(|| (file, digest.to_string()))
         })
-        .collect();
-    read.filter(|read| !read.is_empty())
+        .collect()
 }
 
-/// The SHA-256 of a file's bytes, hex.
+/// The SHA-256 of a file's text, hex, in `\n` line endings: a checkout may have changed them,
+/// so an author's record still matches on another machine.
 fn file_digest(file: &Path) -> Option<String> {
     let bytes = std::fs::read(file).ok()?;
-    let digest = Sha256::digest(bytes);
-    Some(digest.iter().map(|b| format!("{b:02x}")).collect())
+    let mut h = Sha256::new();
+    for (i, b) in bytes.iter().enumerate() {
+        if *b != b'\r' || bytes.get(i + 1) != Some(&b'\n') {
+            h.update([*b]);
+        }
+    }
+    Some(h.finalize().iter().map(|b| format!("{b:02x}")).collect())
 }
 
 fn check_decl(d: &Decl, h: &Headers, headers: &[String], windows: bool, diags: &mut Diagnostics) {
@@ -321,7 +376,7 @@ fn cache_key(root: &Path, headers: &[String], decls: &[Decl], target: &str) -> S
 
 /// The target as zig names it; `None` for one without C headers (WebAssembly). Windows
 /// targets read zig's MinGW headers, which have the MSVC targets' type sizes.
-fn zig_target(triple: &str) -> Option<&'static str> {
+pub fn zig_target(triple: &str) -> Option<&'static str> {
     Some(match triple {
         "aarch64-apple-darwin" => "aarch64-macos",
         "x86_64-apple-darwin" => "x86_64-macos",
@@ -562,18 +617,21 @@ mod tests {
         std::fs::write(&outer, "#include \"inner.h\"\n").unwrap();
         std::fs::write(&inner, "int f(int a);\n").unwrap();
         let remembered = dir.path().join("remembered");
-        assert_eq!(still_holds(&remembered), None);
-        let read = [outer, inner.clone()];
-        remember(&remembered, &read);
-        assert_eq!(still_holds(&remembered).as_deref(), Some(&read[..]));
+        assert!(still_holds(&remembered).is_none());
+        let read = [outer, inner.clone()].map(|f| {
+            let digest = file_digest(&f).unwrap();
+            (f, digest)
+        });
+        std::fs::write(&remembered, remembered_text(&read).unwrap()).unwrap();
+        assert_eq!(still_holds(&remembered).unwrap(), read);
         std::fs::write(&inner, "int f(long a);\n").unwrap();
-        assert_eq!(still_holds(&remembered), None);
+        assert!(still_holds(&remembered).is_none());
         std::fs::remove_file(&inner).unwrap();
-        assert_eq!(still_holds(&remembered), None);
+        assert!(still_holds(&remembered).is_none());
         std::fs::write(&remembered, "checked\n").unwrap();
-        assert_eq!(still_holds(&remembered), None);
+        assert!(still_holds(&remembered).is_none());
         std::fs::write(&remembered, "").unwrap();
-        assert_eq!(still_holds(&remembered), None);
+        assert!(still_holds(&remembered).is_none());
     }
 
     /// Remembering replaces the file rather than writing into it: what another name of the old
@@ -587,29 +645,37 @@ mod tests {
         std::fs::write(&remembered, "old\n").unwrap();
         let other_name = dir.path().join("other");
         std::fs::hard_link(&remembered, &other_name).unwrap();
-        remember(&remembered, std::slice::from_ref(&header));
+        let read = [(header.clone(), file_digest(&header).unwrap())];
+        remember(&remembered, &read);
         assert_eq!(std::fs::read_to_string(&other_name).unwrap(), "old\n");
-        assert_eq!(still_holds(&remembered), Some(vec![header]));
+        assert_eq!(still_holds(&remembered).unwrap(), read);
     }
 
-    /// What the stamp gets: the package files each check read, by digest.
+    /// What the stamp gets: the package headers each check read, by digest; not one the
+    /// package doesn't have.
     #[test]
     fn the_stamp_has_the_package_files_a_check_read() {
         let dir = tempfile::tempdir().unwrap();
-        let header = dir.path().join("own.h");
+        let header = dir.path().join("native/own.h");
+        std::fs::create_dir(dir.path().join("native")).unwrap();
         std::fs::write(&header, "int f(int a);\n").unwrap();
         let mut checked = Checked::new();
+        let record = LibraryRecord {
+            declarations: Default::default(),
+            headers: BTreeMap::from([
+                ("native/own.h".to_string(), String::new()),
+                ("native/gone.h".to_string(), String::new()),
+            ]),
+        };
         checked
             .entry(dir.path().to_path_buf())
             .or_default()
-            .insert("own".into(), vec![header.clone()]);
+            .insert("own".into(), record);
         let mut inputs = Vec::new();
         stamp_inputs(&checked, &mut inputs);
         let hash = vpm::probe::content_hash(b"int f(int a);\n");
         let path = vpm::relpath::absolute(&header);
         assert_eq!(inputs, [format!("file {hash}\t{}", path.display())]);
-        assert!(in_package(&header, dir.path()));
-        assert!(!in_package(Path::new("/z/lib/stdio.h"), dir.path()));
     }
 
     #[test]
