@@ -201,6 +201,52 @@ pub fn optimize_timed(program: &mut vir::Program, level: OptLevel, t: &mut PassT
             if helpers.contains(&true) {
                 t.time("inline", || inline::run_helpers(program, &helpers));
             }
+            let di: u64 = std::env::var("VELT_DI").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+            let widen: u64 = std::env::var("VELT_DI_WIDEN").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+            let inlined = if di & 1 != 0 {
+                t.time("inline", || inline::run_marked(program, widen))
+            } else {
+                vec![false; program.funcs.len()]
+            };
+            if di & 2 != 0 {
+                let signatures = callgraph::signatures(program);
+                let fold = constfold::Program::of(&signatures);
+                for (func, _) in program.funcs.iter_mut().zip(&inlined).filter(|(_, c)| **c) {
+                    if di & 4 != 0 {
+                        for _ in 0..3 {
+                            let mut ch = constfold::run(&fold, func);
+                            ch |= copyprop::run(func);
+                            ch |= addr_forward::run(&program.aggs, func);
+                            ch |= enum_sroa::run(&program.aggs, func);
+                            ch |= sroa::run(&program.aggs, func);
+                            ch |= dce::run(&program.aggs, func);
+                            ch |= simplify_cfg::run(func);
+                            if !ch { break; }
+                        }
+                    } else {
+                        copyprop::run(func);
+                        dce::run(&program.aggs, func);
+                    }
+                }
+            }
+            if di & 8 != 0 {
+                // bound: the scalar passes on every std function, inlined into or not.
+                let signatures = callgraph::signatures(program);
+                let fold = constfold::Program::of(&signatures);
+                for func in with_bodies(&mut program.funcs) {
+                    if !func.symbol.starts_with("_V3std") { continue; }
+                    for _ in 0..3 {
+                        let mut ch = constfold::run(&fold, func);
+                        ch |= copyprop::run(func);
+                        ch |= addr_forward::run(&program.aggs, func);
+                        ch |= enum_sroa::run(&program.aggs, func);
+                        ch |= sroa::run(&program.aggs, func);
+                        ch |= dce::run(&program.aggs, func);
+                        ch |= simplify_cfg::run(func);
+                        if !ch { break; }
+                    }
+                }
+            }
             let env = numrep::Env::of(
                 &program.externs,
                 &program.funcs,

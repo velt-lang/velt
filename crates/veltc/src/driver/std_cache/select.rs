@@ -57,7 +57,8 @@ fn reason(program: &vir::Program, names: &Names, i: usize) -> Option<&'static st
     if !is_std(f) || f.linkage != Linkage::Internal || f.blocks.is_empty() {
         return Some("not internal");
     }
-    if small(f) {
+    let limit = std::env::var("VELT_DI_SMALL").ok().and_then(|v| v.parse().ok()).unwrap_or(SMALL);
+    if size(f) < limit {
         return Some("small");
     }
     if f.symbol.contains("$dup") {

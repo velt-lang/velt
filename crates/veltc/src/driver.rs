@@ -444,7 +444,7 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
     // objects linked after. The program as lowered is kept to fall back on.
     let cg = velt_codegen_cl::CodegenOptions {
         target: opts.target(),
-        optimize: opts.release,
+        optimize: opts.release || std::env::var_os("VELT_DI_CL").is_some(),
         cpu: opts.cpu.clone(),
     };
     let std_plan = std_cache::wanted(opts).then(|| {
@@ -636,7 +636,7 @@ fn build_on_current_thread(
     }
     let cg = velt_codegen_cl::CodegenOptions {
         target: target.clone(),
-        optimize: opts.release,
+        optimize: opts.release || std::env::var_os("VELT_DI_CL").is_some(),
         cpu: opts.cpu.clone(),
     };
     // `--emit llvm` prints what the LLVM backend compiles.

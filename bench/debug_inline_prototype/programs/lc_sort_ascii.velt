@@ -1,0 +1,18 @@
+function main(): void {
+  const letters = ["a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","w","x","y","z"];
+  let s: u32 = 12345;
+  const a: string[] = [];
+  for (let i = 0; i < 20000; i++) {
+    s = s * 1103515245 + 12345;
+    const n = 3 + ((s >> 16) as i64) % 8;
+    let w = "";
+    for (let j = 0; j < n; j++) {
+      s = s * 1103515245 + 12345;
+      w += letters[(((s >> 16) as i64) % letters.length) as i32];
+    }
+    a.push(w);
+  }
+  a.sort((x, y) => x.localeCompare(y));
+  console.log(a[0], a[19999]);
+}
+main();

@@ -1,0 +1,9 @@
+function main(): void {
+  const p = "résumé déjà vu ".repeat(50000);
+  const a = p + "b";
+  const b = p + "c";
+  let t = 0;
+  for (let i = 0; i < 3; i++) { t += a.localeCompare(b); }
+  console.log(t);
+}
+main();

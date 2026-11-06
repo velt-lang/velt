@@ -193,6 +193,12 @@ fn remap(
 
 /// A function's program of its own, optimized with unknown callers and compiled to an object.
 fn alone(mut alone: vir::Program, cg: &velt_codegen_cl::CodegenOptions) -> Result<Vec<u8>, String> {
+    if std::env::var_os("VELT_DI_STDOBJ").is_some() {
+        alone.files.clear();
+        alone.funcs.iter_mut().for_each(|f| f.locs.clear());
+        alone.funcs.iter_mut().flat_map(|f| f.locals.iter_mut()).for_each(|l| l.debug = None);
+        alone.debug_types.clear();
+    }
     velt_opt::optimize(&mut alone, velt_opt::OptLevel::Speed);
     // The entry stays declared (`dead_funcs` drops a declaration nothing calls).
     if !alone.funcs.iter().any(|f| f.symbol == "velt_main") {
@@ -202,8 +208,12 @@ fn alone(mut alone: vir::Program, cg: &velt_codegen_cl::CodegenOptions) -> Resul
     velt_vir::verify(&alone).map_err(|errs| errs.join("; "))?;
     // Not through the unit cache: the object is stored once, as the `stdfn` entry.
     let mut steps = vec![];
+    let mut cg = cg.clone();
+    if std::env::var_os("VELT_DI_STDOBJ").is_some() {
+        cg.optimize = true;
+    }
     let (objects, _) =
-        velt_codegen_llvm::emit_objects_cached(&alone, cg, Some(1), &mut steps, None)?;
+        velt_codegen_llvm::emit_objects_cached(&alone, &cg, Some(1), &mut steps, None)?;
     objects.into_iter().next().ok_or_else(|| "no object".into())
 }
 

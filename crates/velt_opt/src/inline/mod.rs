@@ -177,6 +177,66 @@ pub(crate) fn run_helpers(program: &mut Program, helpers: &[bool]) -> bool {
     changed
 }
 
+/// Debug builds: inline every direct call of a function marked `inline()`; the marked functions'
+/// own marked callees first, so each body that moves is complete. Returns the functions that
+/// changed.
+pub(crate) fn run_marked(program: &mut Program, widen: u64) -> Vec<bool> {
+    let n = program.funcs.len();
+    let marked: Vec<bool> = program.funcs.iter().map(|f| {
+        !f.blocks.is_empty() && !never_returns(f) && f.inline != Inline::Never
+            && (f.inline == Inline::Always
+                || (widen > 0 && f.symbol.starts_with("_V3std") && cost(f) <= widen && direct_calls(f).next().is_none()))
+    }).collect();
+    let mut changed = vec![false; n];
+    if !marked.contains(&true) {
+        return changed;
+    }
+    // Post-order over the marked functions (sema rejects a cycle of marked functions).
+    let mut state = vec![0u8; n];
+    let mut order = Vec::new();
+    for i in 0..n {
+        if marked[i] && state[i] == 0 {
+            let mut stack = vec![(i, direct_calls(&program.funcs[i]).map(|c| c.0 as usize).collect::<Vec<_>>())];
+            state[i] = 1;
+            while let Some((f, callees)) = stack.last_mut() {
+                let f = *f;
+                match callees.pop() {
+                    Some(c) if marked.get(c) == Some(&true) && state[c] == 0 => {
+                        state[c] = 1;
+                        let cs = direct_calls(&program.funcs[c]).map(|c| c.0 as usize).collect();
+                        stack.push((c, cs));
+                    }
+                    Some(_) => {}
+                    None => {
+                        order.push(f);
+                        stack.pop();
+                    }
+                }
+            }
+        }
+    }
+    let unmarked = (0..n).filter(|&i| !marked[i]);
+    for fi in order.iter().copied().chain(unmarked).collect::<Vec<_>>() {
+        let original = program.funcs[fi].blocks.len();
+        for bi in 0..original {
+            let Terminator::Call { callee: Callee::Func(callee), args, .. } = &program.funcs[fi].blocks[bi].term else {
+                continue;
+            };
+            let ci = callee.0 as usize;
+            if ci == fi || marked.get(ci) != Some(&true) || !splice::arity_matches(args, &program.funcs[ci]) {
+                continue;
+            }
+            if program.funcs[ci].target.is_some() && program.funcs[ci].target != program.funcs[fi].target {
+                continue;
+            }
+            let body = program.funcs[ci].clone();
+            splice::inline_call(&program.aggs, &mut program.funcs[fi], bi, &body);
+            changed[fi] = true;
+        }
+    }
+    changed
+}
+
 /// Add to `helpers` (debug builds, [`run_helpers`]) the standard library's trivial functions
 /// (cost at most `TRIVIAL_COST`: a forwarder such as `appendJsonString(out, s)` or a builder's
 /// one-call method, and the forwarders generated code for std writes): each is a function the

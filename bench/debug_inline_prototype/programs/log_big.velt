@@ -1,0 +1,6 @@
+function main(): void {
+  for (let i: i64 = 0; i < 500000; i++) {
+    console.log(4000000000000000000 + i);
+  }
+}
+main();

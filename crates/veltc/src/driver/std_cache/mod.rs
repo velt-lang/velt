@@ -54,6 +54,9 @@ fn min_misses() -> usize {
 pub(super) fn wanted(opts: &BuildOptions) -> bool {
     let llvm = crate::backend::Backend::resolve(opts.backend, opts.release).0
         == crate::backend::Backend::Llvm;
+    if std::env::var_os("VELT_DI_STDOBJ").is_some() && !opts.release && opts.emit == super::Emit::Exe {
+        return true;
+    }
     opts.release
         && opts.emit == super::Emit::Exe
         && !opts.debug_info

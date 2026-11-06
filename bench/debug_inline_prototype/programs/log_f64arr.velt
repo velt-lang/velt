@@ -1,0 +1,10 @@
+function main(): void {
+  const a: number[] = [];
+  for (let i = 0; i < 500000; i++) {
+    a.push(i);
+  }
+  for (let i = 0; i < a.length; i++) {
+    console.log(a[i]);
+  }
+}
+main();

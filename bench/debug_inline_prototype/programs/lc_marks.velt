@@ -1,0 +1,8 @@
+function main(): void {
+  const a = "̣́".repeat(4000000);
+  const b = "̣́".repeat(4000000);
+  let t = 0;
+  for (let i = 0; i < 3; i++) { t += a.localeCompare(b); }
+  console.log(t);
+}
+main();
