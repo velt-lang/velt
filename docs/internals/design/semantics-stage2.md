@@ -94,17 +94,15 @@ pointer instead of the inline bytes, and content accesses go through `FnLower::c
 
 ### 3.3 Borrows through counted objects (stabilize.rs)
 In unique code the exclusivity rule guarantees that a value borrowed by a call stays put. A
-place reached through a counted object has other owners: the callee may reach the same object
-another way and replace or free what the borrow points to. Such borrows are **stabilized**: a
-counted value is shared into a statement temporary; anything else is read through containers
-retained for the statement (`retained_hop`). This applies to call arguments and receivers (not
-runtime externs), by-reference `const`s, `switch`/`match` scrutinees, compound assignments
-(the place is formed again after the right-hand side) and assignments (the new value is stored
-before the old one is dropped). Retaining does not keep an array element in place (a push
-through another reference moves the buffer; `pop`, `truncate` and stores drop the element), so
-a value that lies in the buffer of such an array, not behind a counted object inside it, is
-shared into the temporary (a string clone, a copy for plain values; #564). A share would copy
-the parts a callee can change in place (tuples, object types stored inline), so those types are
+place reached through a counted object or a cell has other owners: the callee may reach the same
+object another way and replace or free what the borrow points to. Such borrows are
+**stabilized**. A call's argument or receiver is shared into a statement temporary (a count
+increment, a string clone, a copy for plain values; #564, #2480), so the callee keeps what it was
+passed, as in JavaScript; only a promise, which has one owner, is read through containers retained
+for the statement (`retained_hop`). By-reference `const`s and `switch`/`match` scrutinees read
+through retained containers too, compound assignments form the place again after the right-hand
+side, and assignments store the new value before the old one is dropped. A share would copy the
+parts a callee can change in place (tuples, object types stored inline), so those types are
 counted when they are borrowed this way, and the share is the same counted object. When the
 array is a boxed local or param that no cell holds, its count is read after the last argument
 is evaluated: 1 means nothing else reaches it, and the element is borrowed in place.
