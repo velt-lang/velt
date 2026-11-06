@@ -1,9 +1,11 @@
 // velt/lang/number (internal): integers as text, in Velt (#1982). The digits are built in
-// registers (two lookups below 10^4, eight lanes of one multiply per split above) and handed to
-// the string as words (`strAsciiWords`, `strbufPushAsciiWords`), so `${n}` and `String(n)` make
-// no runtime call: an integer's text is at most 20 digits and a sign, which a string holds
-// inline. The entry points are out of line (`noInline()`): inlined at every `${n}`, they would
-// take the program's inlining budget from hotter code.
+// registers (one multiply per split over all lanes at once, `digits4` and `digits8`) and handed
+// to the string as words (`strAsciiWords`, `strbufPushAsciiWords`), so `${n}` and `String(n)`
+// make no runtime call: an integer's text is at most 20 digits and a sign, which a string holds
+// inline. The leading zeros are counted from the digits (`leadingZeroBits`): no table is read,
+// so no bounds check, whose message would bring in the unsigned printer. The entry points are
+// out of line (`noInline()`): inlined at every `${n}`, they would take the program's inlining
+// budget from hotter code.
 
 import {
   inline,
@@ -19,6 +21,7 @@ import {
 const MINUS: u64 = 0x2d;
 
 declare function velt_rt_math_clz64(x: u64): u64;
+declare function velt_rt_math_ctz64(x: u64): u64;
 
 /**
  * Up to 24 ASCII bytes in three words, byte `i` in bits `8 * (i % 8)` of word `i / 8`, every
@@ -55,139 +58,6 @@ const BOUNDS: u64[] = [
   10000000000000000000,
 ];
 
-// "00" to "99", each as two ASCII bytes (the first in the low byte), then zeros to 128 entries:
-// a number below 10^4 is two lookups, indexed `& 127` so that no bounds check is left.
-const PAIRS: u64[] = [
-  0x3030,
-  0x3130,
-  0x3230,
-  0x3330,
-  0x3430,
-  0x3530,
-  0x3630,
-  0x3730,
-  0x3830,
-  0x3930,
-  0x3031,
-  0x3131,
-  0x3231,
-  0x3331,
-  0x3431,
-  0x3531,
-  0x3631,
-  0x3731,
-  0x3831,
-  0x3931,
-  0x3032,
-  0x3132,
-  0x3232,
-  0x3332,
-  0x3432,
-  0x3532,
-  0x3632,
-  0x3732,
-  0x3832,
-  0x3932,
-  0x3033,
-  0x3133,
-  0x3233,
-  0x3333,
-  0x3433,
-  0x3533,
-  0x3633,
-  0x3733,
-  0x3833,
-  0x3933,
-  0x3034,
-  0x3134,
-  0x3234,
-  0x3334,
-  0x3434,
-  0x3534,
-  0x3634,
-  0x3734,
-  0x3834,
-  0x3934,
-  0x3035,
-  0x3135,
-  0x3235,
-  0x3335,
-  0x3435,
-  0x3535,
-  0x3635,
-  0x3735,
-  0x3835,
-  0x3935,
-  0x3036,
-  0x3136,
-  0x3236,
-  0x3336,
-  0x3436,
-  0x3536,
-  0x3636,
-  0x3736,
-  0x3836,
-  0x3936,
-  0x3037,
-  0x3137,
-  0x3237,
-  0x3337,
-  0x3437,
-  0x3537,
-  0x3637,
-  0x3737,
-  0x3837,
-  0x3937,
-  0x3038,
-  0x3138,
-  0x3238,
-  0x3338,
-  0x3438,
-  0x3538,
-  0x3638,
-  0x3738,
-  0x3838,
-  0x3938,
-  0x3039,
-  0x3139,
-  0x3239,
-  0x3339,
-  0x3439,
-  0x3539,
-  0x3639,
-  0x3739,
-  0x3839,
-  0x3939,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-  0,
-];
-
 /** The number of decimal digits of `v` (1 for 0). */
 export function digitCount(v: u64): u64 {
   // floor(bits * log10(2)), from the bit length: the count, or one less.
@@ -209,63 +79,91 @@ export function digits8(x: u64): u64 {
   return digits | 0x3030303030303030;
 }
 
+/**
+ * The four ASCII digits of `x` (below 10^4), leading zeros included, the first in the low byte:
+ * `x` split into two halves of two digits, each into two digits, as `digits8` does.
+ */
+function digits4(x: u64): u64 {
+  inline();
+  const hi = (x * 5243) >> 19;
+  const tens = ((x - hi * 100) << 16) | hi;
+  const tenHigh = ((tens * 103) >> 10) & 0x000f000f;
+  return (((tens - tenHigh * 10) << 8) | tenHigh) | 0x30303030;
+}
+
+// The leading zeros of the ASCII digits `d` (first digit in the low byte) as bits: 8 for each
+// byte before the first that isn't "0". `stop` is a bit in the byte of the last digit, which is
+// never dropped: a zero keeps its last digit, and the count needs no test for no bits at all.
+function leadingZeroBits(d: u64, stop: u64): u64 {
+  inline();
+  return velt_rt_math_ctz64((d ^ 0x3030303030303030) | stop) & 56;
+}
+
 /** The decimal digits of `v`, after a `-` when `neg`. */
 export function intWords(v: u64, neg: bool): Words {
   if (v < 100000000) {
-    return shortWords(v, neg);
+    return neg ? eightWords(v, true) : shortWords(v);
   }
-  return longWords(v, neg);
-}
-
-/** The number of digits of `v`, below 10^4. */
-function smallCount(v: u64): u64 {
-  return v < 10 ? 1 : v < 100 ? 2 : v < 1000 ? 3 : 4;
-}
-
-/** The `n` digits of `v` (below 10^4) as one word, the first in the low byte: two lookups. */
-function smallDigits(v: u64, n: u64): u64 {
-  const hi = (v * 5243) >> 19;
-  const all = PAIRS[(hi & 127) as usize] | (PAIRS[((v - hi * 100) & 127) as usize] << 16);
-  return all >> (8 * (4 - n));
+  return neg ? longNegative(v) : longPositive(v);
 }
 
 /**
- * `intWords` of a `v` below 10^8: one group of digits, its leading zeros shifted out. Inlined
- * into every caller (`inline()`): the entry points' common case, whose three-word result would
- * otherwise go through memory.
+ * The digits of a `v` below 10^8: one group, its leading zeros shifted out, the four-digit split
+ * for the smallest numbers (counters, coordinates, indexes). Inlined into every caller
+ * (`inline()`): the entry points' common case, whose three-word result would otherwise go through
+ * memory. A negative number's text is `eightWords`'.
  */
-function shortWords(v: u64, neg: bool): Words {
+function shortWords(v: u64): Words {
   inline();
-  if (v < 10000) {
-    // Up to four digits (counters, coordinates, indexes).
-    const n = smallCount(v);
-    const d = smallDigits(v, n);
-    if (!neg) {
-      return Words { w0: d, w1: 0, w2: 0, len: n as usize };
-    }
-    return Words { w0: (d << 8) | MINUS, w1: 0, w2: 0, len: (n + 1) as usize };
+  if (v >= 10000) {
+    return eightWords(v, false);
   }
-  const n = digitCount(v);
-  const d = digits8(v) >> (8 * (8 - n));
+  // Up to four digits: four with their leading zeros, then the zeros shifted out.
+  const all = digits4(v);
+  const z = leadingZeroBits(all, 0x01000000);
+  return Words { w0: all >> z, w1: 0, w2: 0, len: (4 - (z >> 3)) as usize };
+}
+
+/**
+ * The digits of a `v` below 10^8, after a `-` when `neg`, by eight at a time alone: their leading
+ * zeros shifted out. Inlined (`inline()`): `console.log`'s writer
+ * (velt/lang/number/integer_write) and negative text use it for every number below 10^8,
+ * `shortWords` from 10^4 up.
+ */
+export function eightWords(v: u64, neg: bool): Words {
+  inline();
+  const all = digits8(v);
+  const z = leadingZeroBits(all, 0x0100000000000000);
+  const d = all >> z;
+  const n = 8 - (z >> 3);
   if (!neg) {
     return Words { w0: d, w1: 0, w2: 0, len: n as usize };
   }
   return Words { w0: (d << 8) | MINUS, w1: d >> 56, w2: 0, len: (n + 1) as usize };
 }
 
-// `intWords` of a `v` from 10^8 up: three groups of eight digits (the first below 1845), 24
-// digits with leading zeros, of which the first `24 - len` are dropped. At least three are: with
-// a minus, the last one dropped becomes it.
-function longWords(v: u64, neg: bool): Words {
-  // Rare (10^8 and up), and three callers would each get a copy of it.
-  noInline();
-  const n = digitCount(v);
-  const len = neg ? n + 1 : n;
+/**
+ * `intWords` of a `v` from 10^8 up: three groups of eight digits, 24 digits with leading zeros,
+ * of which the first `24 - len` are dropped. At least four are (the text is at most 20 bytes):
+ * with a minus, the last one dropped becomes it. The first group is below 1845, so at most four
+ * digits (`digits4`), in the upper half of its word, and its lower half is never read. Inlined
+ * (`inline()`) into `longPositive`, `longNegative` and `console.log`'s writer (velt/lang/number/integer_write),
+ * each out of line, whose three-word result would otherwise come back through memory.
+ */
+export function longWords(v: u64, neg: bool): Words {
+  inline();
   const lo = v % 100000000;
   const rest = v / 100000000;
-  let a0 = digits8(rest / 100000000);
+  let a0 = digits4(rest / 100000000) << 32;
   let a1 = digits8(rest % 100000000);
   let a2 = digits8(lo);
+  // The leading zeros: in the first group, or, when it is 0, in the second, which isn't then (`v`
+  // is at least 10^8). The first group's lower half is 0, not "0", and is dropped either way.
+  const first = a0 ^ 0x3030303000000000;
+  const z =
+    first != 0 ? velt_rt_math_ctz64(first) & 56 : 64 + leadingZeroBits(a1, 0x0100000000000000);
+  const n = 24 - (z >> 3);
+  const len = neg ? n + 1 : n;
   const k = 24 - len;
   if (k >= 8) {
     a0 = a1;
@@ -284,84 +182,133 @@ function longWords(v: u64, neg: bool): Words {
   return Words { w0, w1, w2, len: len as usize };
 }
 
+// `longWords` without a minus, and with one: out of their callers (rare, 10^8 and up, and each
+// caller would otherwise get a copy), two functions so that neither tests the sign.
+function longPositive(v: u64): Words {
+  noInline();
+  return longWords(v, false);
+}
+
+function longNegative(v: u64): Words {
+  noInline();
+  return longWords(v, true);
+}
+
 /**
- * `String(v)`. Out of its callers, as the other integer entry points: inlined at every `${n}`,
- * the formatter took the program-wide inlining budget from hotter code (`bench/json/navigate`).
+ * `String(v)`. Each sign's short path is its own, so neither pays for the other's sign, and each
+ * is one unsigned range test: no stack frame on either. The long text is out of line, one
+ * function per sign. Out of its callers, as the other integer entry points: inlined at every
+ * `${n}`, the formatter took the program-wide inlining budget from hotter code
+ * (`bench/json/navigate`).
  */
 export function i64Text(v: i64): string {
   noInline();
-  const neg = v < 0;
-  const a = neg ? ~(v as u64) + 1 : v as u64;
-  return text(a, neg);
+  const u = v as u64;
+  const a = ~u + 1;
+  if (u + 9999999 < 9999999) {
+    // -9999999 to -1: eight digits at a time, as negative numbers are rarely short.
+    const w = eightWords(a, true);
+    return strAsciiWords(w.w0, 0, 0, w.len);
+  }
+  if (u < 100000000) {
+    const w = shortWords(u);
+    return strAsciiWords(w.w0, 0, 0, w.len);
+  }
+  if (v < 0) {
+    return longNegativeText(a);
+  }
+  return longText(u);
 }
 
 /** `String(v)`. */
 export function u64Text(v: u64): string {
   noInline();
-  return text(v, false);
-}
-
-// The text of `a`, after a `-` when `neg`: up to 8 bytes as one word here (the entry points'
-// common case, inlined into each), longer text by `longText`.
-function text(a: u64, neg: bool): string {
-  inline();
-  if (oneWord(a, neg)) {
-    const w = shortWords(a, neg);
+  if (v < 100000000) {
+    const w = shortWords(v);
     return strAsciiWords(w.w0, 0, 0, w.len);
   }
-  return longText(a, neg);
+  return longText(v);
 }
 
-// Whether the text of `a`, after a `-` when `neg`, is at most 8 bytes: one word.
-function oneWord(a: u64, neg: bool): bool {
-  return a < 10000000 || (a < 100000000 && !neg);
-}
-
-// The text of `a` past one word (9 bytes and more), after a `-` when `neg`: out of the entry
-// points, so that their short path needs no stack frame.
-function longText(a: u64, neg: bool): string {
+// The text of `a`, from 10^8 up: out of the entry points, so that their short path needs no
+// stack frame.
+function longText(a: u64): string {
   noInline();
-  const w = a < 100000000 ? shortWords(a, neg) : longWords(a, neg);
+  const w = longPositive(a);
+  return strAsciiWords(w.w0, w.w1, w.w2, w.len);
+}
+
+// The text of `-a`, past one word (`a` from 10^7 up).
+function longNegativeText(a: u64): string {
+  noInline();
+  const w = a < 100000000 ? eightWords(a, true) : longNegative(a);
   return strAsciiWords(w.w0, w.w1, w.w2, w.len);
 }
 
 /**
- * Appends `String(v)` to the builder `buf`. Text of up to 8 bytes (below 10^7, or 10^8 without a
- * minus) is one word, appended with `strbufPushAsciiWord`; longer numbers are `pushLong`'s.
+ * Appends `String(v)` to the builder `buf`. A number that isn't negative is `pushU64`'s path:
+ * up to 8 digits are one word, appended with `strbufPushAsciiWord`; longer numbers are
+ * `pushLong`'s. A negative number is `pushNegative`'s.
  */
 export function pushI64(buf: string, v: i64): void {
   noInline();
-  const neg = v < 0;
-  const a = neg ? ~(v as u64) + 1 : v as u64;
-  push(buf, a, neg);
+  if (v < 0) {
+    const a = ~(v as u64) + 1;
+    pushNegative(buf, a);
+    return;
+  }
+  push(buf, v as u64);
 }
 
 /** Appends `String(v)` to the builder `buf`, as `pushI64`. */
 export function pushU64(buf: string, v: u64): void {
   noInline();
-  push(buf, v, false);
+  push(buf, v);
 }
 
-// Appends the text of `a`, after a `-` when `neg`, as `text` makes it (inlined into each entry
-// point). The builder is passed on with locals only after it (CLAUDE.md "the string builder
-// passed as a `string`").
-function push(buf: string, a: u64, neg: bool): void {
+// Appends the text of `a`, as `u64Text` makes it (inlined into each entry point). The builder
+// is passed on with locals only after it (CLAUDE.md "the string builder passed as a `string`").
+function push(buf: string, a: u64): void {
   inline();
-  if (oneWord(a, neg)) {
-    const w = shortWords(a, neg);
+  if (a < 100000000) {
+    const w = shortWords(a);
     const w0 = w.w0;
     const len = w.len;
     strbufPushAsciiWord(buf, w0, len);
     return;
   }
-  pushLong(buf, a, neg);
+  pushLong(buf, a);
 }
 
-// Appends `a` past one word (9 bytes and more), after a `-` when `neg`: out of the entry points,
-// so that their short path needs no stack frame.
-function pushLong(buf: string, a: u64, neg: bool): void {
+// Appends `-a`, as `push` appends `a`: up to 8 bytes as one word here.
+function pushNegative(buf: string, a: u64): void {
+  inline();
+  if (a < 10000000) {
+    const w = eightWords(a, true);
+    const w0 = w.w0;
+    const len = w.len;
+    strbufPushAsciiWord(buf, w0, len);
+    return;
+  }
+  pushLongNegative(buf, a);
+}
+
+// Appends `a`, from 10^8 up: out of the entry points, so that their short path needs no stack
+// frame.
+function pushLong(buf: string, a: u64): void {
   noInline();
-  const w = a < 100000000 ? shortWords(a, neg) : longWords(a, neg);
+  const w = longPositive(a);
+  const w0 = w.w0;
+  const w1 = w.w1;
+  const w2 = w.w2;
+  const len = w.len;
+  strbufPushAsciiWords(buf, w0, w1, w2, len);
+}
+
+// Appends `-a`, past one word (`a` from 10^7 up).
+function pushLongNegative(buf: string, a: u64): void {
+  noInline();
+  const w = a < 100000000 ? eightWords(a, true) : longNegative(a);
   const w0 = w.w0;
   const w1 = w.w1;
   const w2 = w.w2;

@@ -57,7 +57,6 @@ use crate::locals::Usage;
 use crate::visit::rvalue_operands;
 use flow::Flow;
 
-pub(crate) use print::declare as declare_formatters;
 pub use report::{Unnarrowed, Why};
 pub(crate) use simplify::self_comparisons;
 
@@ -129,7 +128,7 @@ impl<'p> Env<'p> {
             array,
             field_tys,
             params: params::of(funcs, statics),
-            formatters: print::pairs(externs, funcs),
+            formatters: print::pairs(funcs),
         }
     }
 

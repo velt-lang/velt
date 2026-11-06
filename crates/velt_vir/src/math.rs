@@ -567,7 +567,7 @@ mod tests {
         assert_eq!(effects("velt_rt_str_cmp"), Effects::ReadOnly);
         assert_eq!(effects("velt_rt_str_index_of"), Effects::ReadCaching);
         assert_eq!(effects("velt_rt_array_view_cold"), Effects::Cold);
-        assert_eq!(effects("velt_rt_write_i64"), Effects::Any);
+        assert_eq!(effects("velt_rt_write_str"), Effects::Any);
         assert!(!Effects::Cold.writes_nothing_visible());
         assert!(Effects::ReadCaching.writes_nothing_visible());
     }

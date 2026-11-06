@@ -1,19 +1,24 @@
-// velt/lang/hooks (internal): the compiler's hooks for a number in a template or `String()`
-// (std-layout.md §10b), on std's integer printing (velt/lang/number/integer). The prelude loads
-// them with the other hooks (velt/lang/hooks/index.velt). Lowering converts every integer to text
-// through the integer ones, with no runtime fallback (#2197): sema checks them where live code has
-// a construct whose lowering calls them (velt_common `hook_demand.rs`). The float ones are checked
-// once the program's own code converts a value that may hold a float (`ON_DEMAND_FLOAT`). A float
-// that is not a whole number goes to the runtime's printer here: std's float printer
-// (velt/lang/hooks/number_float, which lowering prefers) is loaded only for a program that
-// converts an operand that may be a float (std/prelude/global/number_float.velt). Where lowering
-// needs a float hook the program lacks, it calls the runtime.
+// velt/lang/hooks (internal): the compiler's hooks for a number in a template, `String()` or
+// `console.log` (std-layout.md §10b), on std's integer printing (velt/lang/number/integer). The
+// prelude loads them with the other hooks (velt/lang/hooks/index.velt). Lowering converts and
+// writes every integer through the integer ones, with no runtime fallback (#2197): sema checks
+// them where live code has a construct whose lowering calls them (velt_common `hook_demand.rs`).
+// The other float ones are checked once the program's own code converts a value that may hold a
+// float (`ON_DEMAND_FLOAT`). A float that is not a whole number goes to the runtime's printer
+// here: std's float printer (velt/lang/hooks/number_float, which lowering prefers) is loaded only
+// for a program that converts an operand that may be a float
+// (std/prelude/global/number_float.velt). Where lowering needs a float hook the program lacks, it
+// calls the runtime.
 
 import { trunc } from "velt/lang/intrinsics";
 import { i64Text, pushI64, pushU64, u64Text } from "velt/lang/number/integer";
+import { i64Ended, u64Ended } from "velt/lang/number/integer_write";
 
 declare function velt_rt_str_from_f64(x: f64): string;
 declare function velt_rt_strbuf_push_f64(buf: string, x: f64);
+declare function velt_rt_write_str(stream: u32, s: string);
+declare function velt_rt_write_f64(stream: u32, x: f64);
+declare function velt_rt_write_byte(stream: u32, b: u8);
 
 /** `String(v)` of a signed integer (a template's `${v}`, `v.toString()`): lowering calls it. */
 export function intText(v: i64): string {
@@ -33,6 +38,35 @@ export function intPush(buf: string, v: i64): void {
 /** Appends `String(v)` of an unsigned integer to the builder `buf`. */
 export function uintPush(buf: string, v: u64): void {
   pushU64(buf, v);
+}
+
+/**
+ * Writes `String(v)` of a signed integer and the byte `end` (the space or newline after a
+ * `console.log` argument) to standard output (`stream` 1) or standard error (2), in one write. The
+ * text is at most 21 bytes (20 digits, or a minus and 19, then that byte), held inline: no
+ * allocation.
+ */
+export function intWrite(stream: u32, v: i64, end: u8): void {
+  velt_rt_write_str(stream, i64Ended(v, end));
+}
+
+/** Writes `String(v)` of an unsigned integer and `end` to `stream`, as `intWrite`. */
+export function uintWrite(stream: u32, v: u64, end: u8): void {
+  velt_rt_write_str(stream, u64Ended(v, end));
+}
+
+/**
+ * Writes a float as `console.log` prints it and `end` to `stream`: a whole number below 2^53 other
+ * than `-0` by `intWrite` (which `velt_opt` numrep calls directly when it knows `x` is one),
+ * anything else (`-0`, `0.5`, `1e+21`, `NaN`) by the runtime's printer.
+ */
+export function numberWrite(stream: u32, x: f64, end: u8): void {
+  if (whole(x) && (x != 0.0 || 1.0 / x > 0.0)) {
+    intWrite(stream, x as i64, end);
+    return;
+  }
+  velt_rt_write_f64(stream, x);
+  velt_rt_write_byte(stream, end);
 }
 
 /** Is `x` a whole number below 2^53 in magnitude (`-0` included)? Its text is the integer's. */

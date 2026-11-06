@@ -1,0 +1,49 @@
+// velt/lang/number (internal): an integer and the byte after it as one text: `console.log`'s
+// argument and the space or newline that follows it (velt/lang/hooks/number_text), so that they
+// are one write to the stream and not two. The text is at most 21 bytes: 20 digits, or a minus
+// and 19, then the byte. Its short path is inlined into the hook: no call and no stack frame
+// between the hook and the write. The digits are built by eight at a time only (`eightWords`),
+// and the long path is one function for both signs: every copy of the digit code is compiled in
+// each program that prints an integer, so there are few of them.
+
+import { inline, noInline, strAsciiWords } from "velt/lang/intrinsics";
+import { eightWords, longWords } from "velt/lang/number/integer";
+
+/** `String(v)`, then the ASCII byte `end`. */
+export function i64Ended(v: i64, end: u8): string {
+  inline();
+  const neg = v < 0;
+  return ended(neg ? ~(v as u64) + 1 : v as u64, neg, end);
+}
+
+/** `String(v)`, then the ASCII byte `end`. */
+export function u64Ended(v: u64, end: u8): string {
+  inline();
+  return ended(v, false, end);
+}
+
+// The text of `a`, after a minus when `neg`, and `end`: up to 7 bytes and `end` as one word here,
+// longer text by `longEnded`.
+function ended(a: u64, neg: bool, end: u8): string {
+  inline();
+  if (a >= 1000000 && (a >= 10000000 || neg)) {
+    return longEnded(a, neg, end);
+  }
+  const w = eightWords(a, neg);
+  return strAsciiWords(w.w0 | ((end as u64) << ((w.len as u64) * 8)), 0, 0, w.len + 1);
+}
+
+// The text of `a`, after a minus when `neg`, and `end`, where that is more than one word (from
+// 10^7 up, or 10^6 with the minus): out of the hook, so that the hook's short path needs no stack
+// frame.
+function longEnded(a: u64, neg: bool, end: u8): string {
+  noInline();
+  const w = a < 100000000 ? eightWords(a, neg) : longWords(a, neg);
+  // `w`, of 8 to 20 bytes, and `end`: in the word after the last byte.
+  const len = w.len as u64;
+  const e = (end as u64) << ((len & 7) * 8);
+  const j = len >> 3;
+  const w1 = j == 1 ? w.w1 | e : w.w1;
+  const w2 = j == 2 ? w.w2 | e : w.w2;
+  return strAsciiWords(w.w0, w1, w2, w.len + 1);
+}

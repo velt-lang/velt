@@ -99,7 +99,8 @@ fn division_by_nonzero_constant_has_no_check() {
     let v = lower_ok(&pb.finish());
     let main = v.funcs.iter().find(|f| f.symbol == "_V4main").unwrap();
     assert!(!contains_panic_call(main, &v), "{v}");
-    assert_eq!(main.blocks.len(), 3, "{v}");
+    // The division, then one call that writes the number and the newline after it.
+    assert_eq!(main.blocks.len(), 2, "{v}");
 }
 
 #[test]
