@@ -26,6 +26,39 @@ impl Ctx<'_> {
     pub(crate) fn is_c_struct_ty(&self, t: TyId) -> bool {
         matches!(self.ty.kind(t), TyKind::Adt(d, _) if self.is_c_struct(*d))
     }
+
+    /// Why `==` can't compare values of `t`, when they are or hold a C struct.
+    pub(crate) fn c_struct_eq_note(&self, t: TyId) -> Option<&'static str> {
+        if self.is_c_struct_ty(t) {
+            Some("a C struct is a value without an identity: compare its fields")
+        } else if self.holds_c_struct(t) {
+            Some("it holds a C struct, a value without an identity: compare the C struct's fields")
+        } else {
+            None
+        }
+    }
+
+    /// Does a value of `t` hold a C struct inline: is it one, or an option, tuple or result of
+    /// one? An array holds its elements behind its own identity.
+    pub(crate) fn holds_c_struct(&self, t: TyId) -> bool {
+        self.holds_c_struct_depth(t, 0)
+    }
+
+    fn holds_c_struct_depth(&self, t: TyId, depth: u32) -> bool {
+        if depth > 32 {
+            return false;
+        }
+        let parts: Vec<TyId> = match self.ty.kind(t) {
+            _ if self.is_c_struct_ty(t) => return true,
+            TyKind::Option(x, _) => vec![*x],
+            TyKind::Tuple(ts) => ts.clone(),
+            TyKind::Result(a, b) => vec![*a, *b],
+            _ => return false,
+        };
+        parts
+            .iter()
+            .any(|&p| self.holds_c_struct_depth(p, depth + 1))
+    }
 }
 
 /// Reports what each C struct among `items` can't have (fields resolved).

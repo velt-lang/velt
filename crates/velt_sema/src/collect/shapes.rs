@@ -98,8 +98,8 @@ pub(super) fn check_finite(cx: &mut Ctx, d: DefId) {
     };
     let start = self_type(cx, d, n);
     if contains_by_value(cx, start, d, &mut vec![], 0) {
-        let note = match cx.is_c_struct(d) {
-            true => format!("a C struct holds its fields by value, as in C: point at a `{name}` with a `Ptr<{name}>` field"),
+        let note: String = match cx.is_c_struct(d) {
+            true => "a C struct can't hold itself: C holds fields by value; a pointer field to it comes in a later layer of #2187".into(),
             false => "recursive data needs indirection: make it a `class` (heap-allocated) or use an array".into(),
         };
         cx.error(

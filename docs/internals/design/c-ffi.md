@@ -925,8 +925,8 @@ Step 1 lands in layers, each its own pull request:
    - In Velt it is a value: Copy (so never counted or boxed, and lowering holds it inline, in
      declaration order at natural alignment, which is C's layout for these fields on every 64-bit
      target), built from a literal of its type, with read-only fields (a changed copy is
-     `{ ...v, x: … }`) and no identity, so `==` on it is an error until value structs (#641)
-     compare contents. This needs nothing of #641: main already holds unshared object types
+     `{ ...v, x: … }`) and no identity, so `==` on it, or on an option or tuple holding one, is an
+     error until value structs (#641) compare contents (an array of them compares by identity). This needs nothing of #641: main already holds unshared object types
      inline.
    - `Ptr<S>` is a C pointer, like `Ptr` to a `declare c type`. A C struct isn't raw API: a
      package's users can import it.

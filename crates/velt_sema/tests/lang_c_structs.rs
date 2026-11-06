@@ -127,7 +127,11 @@ fn a_c_struct_is_never_empty_or_recursive() {
     assert!(e.contains("`declare c type`"), "{e}");
     let e = err_src("declare c struct Rec { r: Rec; } function main() {}");
     assert!(e.contains("recursive type `Rec` has infinite size"), "{e}");
-    assert!(e.contains("`Ptr<Rec>` field"), "{e}");
+    assert!(e.contains("a C struct can't hold itself"), "{e}");
+    assert!(
+        !e.contains("Ptr<Rec>"),
+        "pointer fields aren't there yet: {e}"
+    );
 }
 
 #[test]
@@ -154,6 +158,46 @@ fn c_structs_have_no_identity_to_compare() {
         "{e}"
     );
     assert!(e.contains("compare its fields"), "{e}");
+}
+
+/// A value holding a C struct inline (an option, a tuple) would compare it too, so `==` on one
+/// is the same error. Comparing with `null` stays a test for nothing, and an array of C structs
+/// is an object, compared by identity as every array is.
+#[test]
+fn values_holding_c_structs_have_nothing_to_compare_either() {
+    for (decl, shown) in [
+        (
+            "const a: CGPoint | null = pick(p); const b: CGPoint | null = pick(p);",
+            "CGPoint | null",
+        ),
+        (
+            "const a: [CGPoint, i32] = [p, 1]; const b: [CGPoint, i32] = [p, 2];",
+            "[CGPoint, i32]",
+        ),
+    ] {
+        let e = err_src(&format!(
+            "{GEOMETRY}
+             function pick(p: CGPoint): CGPoint | null {{ return p.x > 0 ? p : null; }}
+             function main() {{ const p: CGPoint = {{ x: 1, y: 2 }}; {decl} console.log(a == b, a != b); }}"
+        ));
+        assert!(
+            e.contains(&format!(
+                "cannot apply binary operator `==` to type `{shown}`"
+            )),
+            "`{shown}`: {e}"
+        );
+        assert!(e.contains("holds a C struct"), "`{shown}`: {e}");
+    }
+    ok_src(&format!(
+        "{GEOMETRY}
+         function main() {{
+           const a: CGPoint | null = null;
+           const p: CGPoint = {{ x: 1, y: 2 }};
+           const xs: CGPoint[] = [p];
+           const ys = xs;
+           console.log(a == null, a !== null, xs == ys);
+         }}"
+    ));
 }
 
 #[test]
