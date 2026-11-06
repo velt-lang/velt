@@ -40,7 +40,6 @@ const PURE_RUNTIME: &[&str] = &[
     "group",
     "i64",
     "json",
-    "jsx",
     "keep",
     "latch",
     "lk",
