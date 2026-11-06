@@ -1,0 +1,163 @@
+// velt/crypto (internal): arithmetic mod the P-256 group order n, for ECDSA: four 64-bit limbs
+// in the Montgomery domain, with the textbook interleaved reduction (CIOS, the multiplier from
+// -n^-1 mod 2^64, since n has no special form). Carries are `(a < b) as u64` and the final
+// subtraction of n is a masked select, so multiplication is constant time; `invert` runs a
+// fixed square-and-multiply over the public exponent n - 2.
+//
+// Registers of four limbs in one array, like `FeP256` (#2403).
+
+// n, little-endian limbs, and -n^-1 mod 2^64.
+const N0: u64 = 0xf3b9cac2fc632551;
+const N1: u64 = 0xbce6faada7179e84;
+const N2: u64 = 0xffffffffffffffff;
+const N3: u64 = 0xffffffff00000000;
+const NINV: u64 = 0xccd1c8aaee00bc4f;
+
+/** 2^512 mod n: multiplying by it enters the Montgomery domain. */
+const R2: u64[] = [0x83244c95be79eea2, 0x4699799c49bd6fa6, 0x2845b2392b6bec59, 0x66e12d94f3d95620];
+
+// n - 2, little-endian limbs: the inversion's exponent.
+const NM2: u64[] = [0xf3b9cac2fc63254f, 0xbce6faada7179e84, 0xffffffffffffffff, 0xffffffff00000000];
+
+// `t + a * b + c` as 128 bits (it cannot overflow).
+function mac(t: u64, a: u64, b: u64, c: u64): [u64, u64] {
+  const lo = a * b;
+  const s = lo + t;
+  const s2 = s + c;
+  return [s2, Math.umulh(a, b) + ((s < lo) as u64) + ((s2 < c) as u64)];
+}
+
+// `a - b - c` (c is 0 or 1) and its borrow.
+function sbb(a: u64, b: u64, c: u64): [u64, u64] {
+  const d = a - b;
+  return [d - c, ((a < b) as u64) | ((d < c) as u64)];
+}
+
+/** `n` registers of scalars mod the P-256 order, all zero. */
+export class ScalarP256 {
+  r: u64[];
+
+  /** `n` registers, each zero. */
+  constructor(n: usize) {
+    this.r = [];
+    for (let i: usize = 0; i < 4 * n; i++) {
+      this.r.push(0);
+    }
+  }
+
+  // Stores `t` (with the carry `t4`, below 2n) minus n when that is not negative.
+  private store(d: usize, t0: u64, t1: u64, t2: u64, t3: u64, t4: u64) {
+    const [d0, b0] = sbb(t0, N0, 0);
+    const [d1, b1] = sbb(t1, N1, b0);
+    const [d2, b2] = sbb(t2, N2, b1);
+    const [d3, b3] = sbb(t3, N3, b2);
+    const [_, b4] = sbb(t4, 0, b3);
+    const keep = 0 - b4;
+    const o = 4 * d;
+    this.r[o + 3] = (t3 & keep) | (d3 & ~keep);
+    this.r[o] = (t0 & keep) | (d0 & ~keep);
+    this.r[o + 1] = (t1 & keep) | (d1 & ~keep);
+    this.r[o + 2] = (t2 & keep) | (d2 & ~keep);
+  }
+
+  /** `d = a * b / 2^256` mod n (the Montgomery product); `d` may be `a` or `b`. */
+  mul(d: usize, a: usize, b: usize) {
+    const r = this.r;
+    const oa = 4 * a;
+    const ob = 4 * b;
+    const b3 = r[ob + 3];
+    const b0 = r[ob];
+    const b1 = r[ob + 1];
+    const b2 = r[ob + 2];
+    // The highest indexes first: their bounds checks cover the others.
+    const a3 = r[oa + 3];
+    let t0: u64 = 0;
+    let t1: u64 = 0;
+    let t2: u64 = 0;
+    let t3: u64 = 0;
+    let t4: u64 = 0;
+    let t5: u64 = 0;
+    let c: u64 = 0;
+    for (let i: usize = 0; i < 4; i++) {
+      const ai = r[oa + i];
+      [t0, c] = mac(t0, ai, b0, 0);
+      [t1, c] = mac(t1, ai, b1, c);
+      [t2, c] = mac(t2, ai, b2, c);
+      [t3, c] = mac(t3, ai, b3, c);
+      const s = t4 + c;
+      t5 = (s < c) as u64;
+      t4 = s;
+      // t = (t + m n) / 2^64, with m making the low limb zero.
+      const m = t0 * NINV;
+      [t0, c] = mac(t0, m, N0, 0);
+      [t0, c] = mac(t1, m, N1, c);
+      [t1, c] = mac(t2, m, N2, c);
+      [t2, c] = mac(t3, m, N3, c);
+      const s2 = t4 + c;
+      t3 = s2;
+      t4 = t5 + ((s2 < c) as u64);
+    }
+    this.store(d, t0, t1, t2, t3, t4);
+  }
+
+  /**
+   * Register `d` = the big-endian bytes `b[at..at + len]` (at most 32) as a number reduced
+   * mod n, in the Montgomery domain; `tmp` is scratch. Returns whether the number was below n
+   * (so a caller can refuse an out-of-range r or s).
+   */
+  decode(d: usize, b: u8[], at: usize, len: usize, tmp: usize): bool {
+    const w: u64[] = [0, 0, 0, 0];
+    for (let i: usize = 0; i < len; i++) {
+      const k = len - 1 - i;
+      w[k >> 3] |= (b[at + i] as u64) << ((8 * (k & 7)) as u64);
+    }
+    const [_0, b0] = sbb(w[0], N0, 0);
+    const [_1, b1] = sbb(w[1], N1, b0);
+    const [_2, b2] = sbb(w[2], N2, b1);
+    const [_3, b3] = sbb(w[3], N3, b2);
+    // Below 2^256 < 2n: one conditional subtraction reduces (store does it).
+    this.store(tmp, w[0], w[1], w[2], w[3], 0);
+    for (let i: usize = 0; i < 4; i++) {
+      this.r[4 * d + i] = R2[i];
+    }
+    this.mul(d, tmp, d);
+    return b3 == 1;
+  }
+
+  /** Whether register `a` is zero (public data: variable time). */
+  isZero(a: usize): bool {
+    const o = 4 * a;
+    return (this.r[o] | this.r[o + 1] | this.r[o + 2] | this.r[o + 3]) == 0;
+  }
+
+  /** Register `a` out of the Montgomery domain, as four little-endian limbs. */
+  limbs(a: usize, tmp: usize): u64[] {
+    for (let i: usize = 0; i < 4; i++) {
+      this.r[4 * tmp + i] = i == 0 ? 1 : 0;
+    }
+    this.mul(tmp, a, tmp);
+    return [this.r[4 * tmp], this.r[4 * tmp + 1], this.r[4 * tmp + 2], this.r[4 * tmp + 3]];
+  }
+
+  /** `d = 1 / a` as a^(n - 2) (`d` not `a`); the exponent is public, so this branches on it. */
+  invert(d: usize, a: usize) {
+    // d = 1 in the domain: R mod n is the Montgomery form of 1, which a * R2 * 1 gives.
+    let started = false;
+    for (let i: usize = 0; i < 256; i++) {
+      const bit = 255 - i;
+      if (started) {
+        this.mul(d, d, d);
+      }
+      if (((NM2[bit >> 6] >> ((bit & 63) as u64)) & 1) == 1) {
+        if (started) {
+          this.mul(d, d, a);
+        } else {
+          for (let k: usize = 0; k < 4; k++) {
+            this.r[4 * d + k] = this.r[4 * a + k];
+          }
+          started = true;
+        }
+      }
+    }
+  }
+}
