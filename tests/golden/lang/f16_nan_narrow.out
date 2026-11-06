@@ -1,0 +1,5 @@
+f16 round trip, quiet bit set: 7e01/7e01 7e03/7e03 ff01/ff01 7fff/7fff 7e00/7e00 fe03/fe03 7fff/7fff ffff/ffff
+f32 NaNs to f16: 7e00/7e00 fe00/fe00 7f00/7f00 ff89/ff89 7e09/7e09 7e00/7e00
+bf16 back: 7fc1 7fc3 ffe1 7fff 7fc0 ffc3
+bulk 512 mismatches 0
+mismatches 0
