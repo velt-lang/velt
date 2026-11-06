@@ -1,6 +1,8 @@
 # std calls WASI through `declare c("c")` on wasm32-wasip1
 
-Status: **accepted** (design review on #2461, 2026-11-06) (#2408, part of #2196). Owner: `velt_vir` (`crates/velt_vir/src/lower/c_call.rs`, `crates/velt_vir/src/lower/system.rs`). Unblocks #2406.
+Status: **implemented** (#2408, part of #2196; design review on #2461, 2026-11-06). Owner:
+`velt_vir` (`crates/velt_vir/src/lower/c_call.rs`, `crates/velt_vir/src/lower/system.rs`).
+Unblocks #2406.
 
 ## Problem
 
@@ -63,17 +65,22 @@ export function seedWord(): u64 {
 1. **Lowering.** In `c_call` (and `c_const`), the target gate stops being
    `target_os(target).is_none()`. A C call is available when the target is native, or when the
    target is `wasm32-wasip1` and the library is `c`.
-2. **ABI on wasm32.** Lowering C types needs pointer, `usize` and `isize` to be 32 bits wide on
-   wasm32 (`long` is 32 bits there too). The C-call path already gets these sizes from the
-   target. The implementation checks that every `CType` used by `std` declarations lowers
-   correctly for wasm32 and that `capture_errno` works with wasi-libc's `errno`, which is a
-   plain global (no TLS model under `wasm32-wasip1`).
+2. **ABI on wasm32.** Pointers are 32 bits there, and so are C's `size_t` and `ssize_t`, while
+   Velt's `usize` and `isize` are 64 bits on every target. A `usize`/`isize` parameter therefore
+   crosses as a 32-bit integer on wasm32: the argument is truncated at the call, and a result is
+   widened back (`c_vir`, `narrow`). Every other C type crosses unchanged. `errno` isn't
+   captured on WebAssembly: `lastOsError()` has no wasm overload, so `capture_errno` does
+   nothing there, as before. A declaration that asks for `errno` still compiles.
 3. **Diagnostics.**
-   - Another library on wasip1 gets the error the FFI design already specifies: "`sqlite3_open_v2`
-     has no library on `wasm32-wasip1`". It is reported at the user's call when std is the caller,
-     as now.
-   - `wasm32-unknown-unknown` (browser, workers) keeps the refusal, with a new note: "the JS host
-     has no C library; std reaches the host through `declare host`".
+   The error stays "C function `x` is not available on `<target>`" (at the user's call when std
+   is the caller, as now). Its note says why:
+   - another library on wasip1: "`sqlite3` has no library on wasm32-wasip1: only the C library
+     `c` (wasi-libc) is linked there";
+   - a package's call of `c` on wasip1: "C functions in packages need a native target on
+     wasm32-wasip1 until their headers can be checked";
+   - `wasm32-unknown-unknown` (browser, workers): "C functions need a native target or
+     wasm32-wasip1: the JS host has no C library, and std reaches the host through
+     `declare host`".
 4. **Header check.** Unchanged. std declarations are not checked against headers on any target
    (`crates/veltc/src/native/headers/mod.rs:91`). The gate opens by target and library, not by
    std, so a package's `declare c("c")` on wasip1 becomes reachable too. Its declarations can't be
@@ -115,16 +122,24 @@ with #2406.
 
 ## Tests
 
-- **Unit (`velt_vir`):** a std `declare c("c")` call lowers to a C call on wasm32-wasip1, and a
-  package's is refused. A
-  `declare c("z")` call there gives "has no library on `wasm32-wasip1`". On wasm32-unknown-unknown,
-  the call gives the JS-host note. Replaces the `pread`/`wasm32-wasip1` expectation in
-  `crates/veltc/src/native/tests.rs` where it covers `declare c`.
-- **wasm golden (`wasm_goldens`, wasip1 under wasmtime):** a std function calling libc's
-  `getentropy` and `clock_gettime` runs and prints plausible results. In #2406, the
-  `std/random_runs` golden joins `WASI_STD`.
-- **Deliberate breaks:** leaving the gate as it was fails the unit test and the golden. Allowing
-  any library on wasip1 fails the "no library" test.
+- **Unit (`crates/velt_vir/src/tests/c_wasi.rs`, real std):**
+  - std's `readCString` (libc's `strlen` and `memcpy`) lowers on wasm32-wasip1 with `size_t` as
+    `u32`, and on aarch64-apple-darwin as `u64`;
+  - on wasm32-unknown-unknown it is refused with the JS-host note;
+  - a program's own `declare c("c")` and `declare c("z")` are refused on wasip1 with their notes.
+- **Integration (`crates/veltc/tests/c_functions.rs`):** a package's C call is refused on both
+  WebAssembly targets with the right note.
+- **End to end:** a std function calling `strlen` and `memcpy` was linked against wasi-libc and
+  run under wasmtime, debug and `--release`, from a scratch copy of std (no std code calls C on
+  wasip1 yet). The wasm golden comes with the first caller: in #2406, the `std/random_runs`
+  golden joins `WASI_STD`.
+- **Deliberate breaks:**
+  - leaving the gate as it was fails the std unit test;
+  - dropping the 32-bit `size_t` fails it too;
+  - opening the gate to every file fails the package test.
+  - Opening it to every library fails nothing, as expected: std may only name `c`
+    (`crates/veltc/src/native/c_decls.rs` stops on any other library), and a non-std call is
+    refused before the library matters.
 
 ## Afterwards
 
