@@ -8,6 +8,7 @@ use velt_sema::hir::{self, DefId, PassMode, TyId, TyKind, UseMode};
 use super::foreign::ForeignBuf;
 use super::operand::proj;
 use super::sequence::{root_local, Later};
+use super::stabilize::ArgReach;
 use super::view_unswitch_plain::FLOAT_INDEX;
 use super::{ice, unit, FnLower, LkMode, Work};
 use crate::vir::{self, Operand, Place, Proj, Rvalue, Ty};
@@ -149,7 +150,7 @@ impl FnLower<'_, '_> {
             || self.cx.quiet_for_borrows(def) && !args.iter().any(|a| self.in_array_buffer(a))
         {
             true => Stabilize::Facts,
-            false => Stabilize::Share,
+            false => Stabilize::Direct(def),
         };
         // An index's conversion (`xs[i]` with a number `i`) reads only the number it is given.
         if quiet || f.name == FLOAT_INDEX {
@@ -394,7 +395,10 @@ impl FnLower<'_, '_> {
                 }
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
                     let v = match how {
-                        Stabilize::Share => self.stable_borrow(a, &args[i + 1..]),
+                        Stabilize::Share | Stabilize::Direct(_) => {
+                            let reach = Self::arg_reach(how);
+                            self.stable_borrow_in(a, &args[i + 1..], true, reach)
+                        }
                         Stabilize::Facts => self.stable_borrow_as(a, &args[i + 1..], false),
                         Stabilize::No => self.borrowed_arg(a),
                     };
@@ -432,8 +436,9 @@ impl FnLower<'_, '_> {
                 (_, m) => {
                     let v = match m {
                         PassMode::Borrow | PassMode::BorrowMut if how != Stabilize::No => {
-                            let share = how == Stabilize::Share;
-                            let v = self.stable_borrow_as(a, &args[i + 1..], share);
+                            let share = how != Stabilize::Facts;
+                            let reach = Self::arg_reach(how);
+                            let v = self.stable_borrow_in(a, &args[i + 1..], share, reach);
                             // A frozen one changes for nobody, and is not counted (frozen.rs);
                             // a number read out of one is still read now, before a later
                             // argument may free its box (a copy counts nothing).
@@ -563,7 +568,8 @@ impl FnLower<'_, '_> {
                 Ty::Unit => {}
                 Ty::Agg(_) => {
                     // A closure the callee runs may also give the place another value.
-                    let copy = any_mut || self.changes_during_call(a);
+                    let copy = any_mut
+                        || self.changes_during_call(a);
                     let v = if copy && mode != Some(PassMode::BorrowMut) && is_copy_read(a) {
                         let tmp = self.copy_to_temp(v, t);
                         Operand::Copy(Place::local(tmp))
@@ -700,8 +706,12 @@ fn is_copy_read(a: &hir::Expr) -> bool {
 /// How a direct call's borrowed arguments are kept alive (stabilize.rs).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Stabilize {
-    /// The callee may run user code: borrows through counted objects are shared or retained.
+    /// A function value or a method chosen at run time, which may run any user code: borrows
+    /// through counted objects are shared or retained.
     Share,
+    /// A direct call of a function: `Share`, with what the function can write known
+    /// (replaceable.rs).
+    Direct(DefId),
     /// A quiet callee (quiet.rs): the same facts recorded, no shares.
     Facts,
     /// A runtime extern: plain borrows.
@@ -741,6 +751,16 @@ impl FnLower<'_, '_> {
 }
 
 impl FnLower<'_, '_> {
+    /// What is known about the call `how` says (stabilize.rs).
+    fn arg_reach(how: Stabilize) -> ArgReach {
+        ArgReach {
+            callee: match how {
+                Stabilize::Direct(d) => Some(d),
+                _ => None,
+            },
+        }
+    }
+
     /// Can the place `a` starts from get another value while a call through a function value runs,
     /// so an argument passed by pointer must not still point at it? A variable a closure assigns
     /// by reference (in a cell it is shared, stabilize.rs), or anything this function only reaches

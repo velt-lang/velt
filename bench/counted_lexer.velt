@@ -1,0 +1,60 @@
+// A lexer written the ordinary way: a class holding its source and position, held twice so it is
+// counted, reading the source through `startsWith` and `indexOf` and passing its fields on. The
+// source is never replaced, so none of these calls needs a count update (#2480).
+class Lexer {
+  src: string;
+  pos: number = 0;
+  line: number = 1;
+  tokens: number = 0;
+  sep: string = "\n";
+  constructor(src: string) {
+    this.src = src;
+  }
+  at(prefix: string): boolean {
+    return this.src.startsWith(prefix, this.pos);
+  }
+  skipLine() {
+    const end = this.src.indexOf(this.sep, this.pos);
+    this.pos = end < 0 ? this.src.length : end + 1;
+    this.line++;
+  }
+  word() {
+    let p = this.pos;
+    while (p < this.src.length && isWord(this.src, p)) p++;
+    this.pos = p;
+    this.tokens++;
+  }
+  next(): boolean {
+    if (this.pos >= this.src.length) return false;
+    if (this.at("//")) {
+      this.skipLine();
+    } else if (this.at("function") || this.at("return") || this.at("const")) {
+      this.pos += 5;
+      this.tokens++;
+    } else if (isWord(this.src, this.pos)) {
+      this.word();
+    } else {
+      this.pos++;
+    }
+    return true;
+  }
+}
+function isWord(s: string, p: number): boolean {
+  const c = s.charCodeAt(p);
+  return (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57);
+}
+function main() {
+  const piece = "// a comment line\nfunction add(a, b) { const c = a + b; return c; }\n";
+  const src = piece.repeat(200);
+  let tokens = 0;
+  let lines = 0;
+  for (let round = 0; round < 40; round++) {
+    const lexer = new Lexer(src);
+    const held = lexer;
+    while (held.next()) {}
+    tokens += lexer.tokens;
+    lines += lexer.line;
+  }
+  console.log(tokens, lines);
+}
+main();

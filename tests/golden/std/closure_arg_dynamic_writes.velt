@@ -1,0 +1,40 @@
+// Writes a scan of the source cannot name: through Object.assign, Reflect, a proxy, a computed key
+// and a generic. The callee keeps what it was passed (#2480). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxx").length; }
+class A { s: string = heap("old"); }
+class B { s: string = heap("old"); }
+class C { s: string = heap("old"); }
+class D { s: string | null = heap("old"); }
+class E { s: string = heap("old"); }
+class F { s: string = heap("old"); }
+function assign_() {
+  const o = new A(); const alias = o;
+  const f = (v: string) => { Object.assign(alias, { s: heap("new") }); junk(); return v; };
+  console.log("Object.assign", f(o.s), o.s);
+}
+function reflect() {
+  const o = new B(); const alias = o;
+  const f = (v: string) => { Reflect.set(alias, "s", heap("new")); junk(); return v; };
+  console.log("Reflect.set", f(o.s), o.s);
+}
+function proxied() {
+  const o = new C();
+  const p = new Proxy(o, {});
+  const f = (v: string) => { p.s = heap("new"); junk(); return v; };
+  console.log("proxy", f(o.s), o.s);
+}
+type O = { s: string };
+function setKey<T, K extends keyof T>(o: T, k: K, v: T[K]) { o[k] = v; }
+function key() {
+  const o: O = { s: heap("old") }; const alias = o;
+  const f = (v: string) => { setKey(alias, "s", heap("new")); junk(); return v; };
+  console.log("computed key", f(o.s), o.s);
+}
+function generic<T extends { s: string }>(t: T) { t.s = heap("new"); }
+function genericWrite() {
+  const o = new F(); const alias = o;
+  const f = (v: string) => { generic(alias); junk(); return v; };
+  console.log("generic", f(o.s), o.s);
+}
+assign_(); reflect(); proxied(); key(); genericWrite();

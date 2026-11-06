@@ -1,0 +1,53 @@
+// Records in an array and a map, counted because both hold them, with string and optional fields
+// passed to plain functions. One string field is assigned, by a function these calls don't reach,
+// so the callee decides (#2480).
+class Record_ {
+  id: string;
+  name: string;
+  city: string | null;
+  note: string = "";
+  score: number = 0;
+  constructor(id: string, name: string, city: string | null) {
+    this.id = id;
+    this.name = name;
+    this.city = city;
+  }
+}
+function matches(s: string, prefix: string): boolean {
+  return s.startsWith(prefix);
+}
+function cityLength(c: string | null): number {
+  return c === null ? 0 : c.length;
+}
+function noteLength(n: string): number {
+  return n.length + (n.startsWith("x") ? 1 : 0);
+}
+function annotate(r: Record_, text: string) {
+  r.note = text;
+}
+function main() {
+  const all: Record_[] = [];
+  const byId = new Map<string, Record_>();
+  for (let i = 0; i < 2000; i++) {
+    const id = "record-identifier-" + i;
+    const r = new Record_(id, "name-on-the-heap-long-enough-" + (i % 17), i % 3 === 0 ? null : "a-city-with-a-long-name-" + (i % 5));
+    all.push(r);
+    byId.set(id, r);
+    annotate(r, "x-note-on-the-heap-long-enough-" + i);
+  }
+  let total = 0;
+  for (let round = 0; round < 60; round++) {
+    for (const r of all) {
+      if (matches(r.name, "name")) total += r.name.length;
+      total += cityLength(r.city);
+      total += noteLength(r.note);
+      r.score += 1;
+    }
+    for (let i = 0; i < all.length; i += 7) {
+      const r = byId.get(all[i].id);
+      if (r !== undefined && matches(r.id, "record")) total += r.score;
+    }
+  }
+  console.log(total);
+}
+main();

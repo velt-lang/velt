@@ -134,6 +134,7 @@ mod proxy_write;
 mod quiet;
 mod rc;
 mod receiver;
+mod replaceable;
 mod rt;
 mod same;
 mod sequence;
@@ -443,6 +444,10 @@ struct Cx<'h> {
     tracked_size: FxHashMap<DefId, usize>,
     /// Memoized `quiet` answers, per level (quiet.rs).
     quiet: FxHashMap<(DefId, quiet::Quiet), bool>,
+    /// The fields written after their object was made, once asked (replaceable.rs).
+    field_writes: Option<std::rc::Rc<replaceable::FieldWrites>>,
+    /// What direct callees write, once asked (replaceable.rs).
+    callee_stores: FxHashMap<DefId, Option<std::rc::Rc<replaceable::Stores>>>,
     /// Interned static `VeltStr` objects (`static_str_object`).
     str_objects: FxHashMap<String, StaticId>,
     /// The records of the compiler's symbols (`Intrinsic::SymbolStatic`, symbols.rs).

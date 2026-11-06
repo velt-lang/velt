@@ -1,0 +1,117 @@
+// Fields of a counted object passed to calls that can't assign them: no count update per call
+// (#2480). Each row is one way of writing such a call; bench/counted_field_args.sh counts them one
+// at a time, and with no argument the program runs them all, which the nightly list guards.
+class Inner { s: string = "inner-string-on-the-heap-".repeat(2); }
+class Rec {
+  s: string = "label-string-on-the-heap-".repeat(2);
+  prefix: string = "lab";
+  sep: string = "-";
+  u: string | number = "union-string-on-the-heap-".repeat(2);
+  opt: string | null = "optional-string-on-the-heap-".repeat(2);
+  t: [string, number] = ["tuple-string-on-the-heap-".repeat(2), 1];
+  inner: Inner = new Inner();
+  n: number = 0;
+  plainM(v: string): boolean { this.n = this.n + 1; return check(v); }
+  run(): number {
+    let c = 0;
+    for (let i = 0; i < N; i++) { if (check(this.s)) c++; }
+    return c;
+  }
+}
+const N = 300000;
+function check(v: string): boolean { return v.startsWith("lab"); }
+function checkU(v: string | number): boolean { return typeof v === "string" && v.startsWith("uni"); }
+function checkOpt(v: string | null): boolean { return v !== null && v.startsWith("opt"); }
+function readT(v: [string, number]): boolean { return v[1] === 1; }
+
+function rec(): Rec {
+  const o = new Rec();
+  const alias = o;
+  alias.n = 2;
+  return o;
+}
+function thisPlain() { return rec().run(); }
+function recvStartsWithField() {
+  const o = rec(); let c = 0;
+  for (let i = 0; i < N; i++) { if (o.s.startsWith(o.prefix)) c++; }
+  return c;
+}
+function union() {
+  const o = rec(); let c = 0;
+  for (let i = 0; i < N; i++) { if (checkU(o.u)) c++; }
+  return c;
+}
+function optional() {
+  const o = rec(); let c = 0;
+  for (let i = 0; i < N; i++) { if (checkOpt(o.opt)) c++; }
+  return c;
+}
+function recvStartsWithLit() {
+  const o = rec(); let c = 0;
+  for (let i = 0; i < N; i++) { if (o.s.startsWith("lab")) c++; }
+  return c;
+}
+function plain() {
+  const o = rec(); let c = 0;
+  for (let i = 0; i < N; i++) { if (check(o.s)) c++; }
+  return c;
+}
+function fnValue() {
+  const o = rec(); let c = 0;
+  const g: (v: string) => boolean = check;
+  for (let i = 0; i < N; i++) { if (g(o.s)) c++; }
+  return c;
+}
+function method() {
+  const o = rec(); let c = 0;
+  for (let i = 0; i < N; i++) { if (o.plainM(o.s)) c++; }
+  return c;
+}
+function twoObjects() {
+  const o = rec(); let c = 0;
+  for (let i = 0; i < N; i++) { if (check(o.inner.s)) c++; }
+  return c;
+}
+function indexOf() {
+  const o = rec(); let c = 0;
+  for (let i = 0; i < N; i++) { c += o.s.indexOf(o.sep); }
+  return c;
+}
+function slice() {
+  const o = rec(); let c = 0;
+  for (let i = 0; i < N; i++) { c += o.s.slice(1, 3).length; }
+  return c;
+}
+function tuple() {
+  const o = rec(); let c = 0;
+  for (let i = 0; i < N; i++) { if (readT(o.t)) c++; }
+  return c;
+}
+function includes() {
+  const o = rec(); let c = 0;
+  const xs = ["a", "b", "c", o.s];
+  for (let i = 0; i < N; i++) { if (xs.includes(o.s)) c++; }
+  return c;
+}
+function forOf() {
+  const xs = [rec(), rec(), rec()]; let c = 0;
+  for (let i = 0; i < N / 3; i++) { for (const it of xs) { if (check(it.s)) c++; } }
+  return c;
+}
+function all() {
+  console.log(thisPlain());
+  console.log(recvStartsWithField());
+  console.log(union());
+  console.log(optional());
+  console.log(recvStartsWithLit());
+  console.log(plain());
+  console.log(fnValue());
+  console.log(method());
+  console.log(twoObjects());
+  console.log(indexOf());
+  console.log(slice());
+  console.log(tuple());
+  console.log(includes());
+  console.log(forOf());
+}
+all();

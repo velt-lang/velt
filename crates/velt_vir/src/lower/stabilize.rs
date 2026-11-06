@@ -2,9 +2,10 @@
 //! code the exclusivity rule guarantees that a value borrowed by a call stays put while the
 //! call runs. A place reached through a *counted* object has other owners, and the callee may
 //! reach the same object through one of them and replace or free what the borrow points to.
-//! Such borrows are kept alive for the statement: the value is shared into a temporary, which
-//! the callee gets instead of a pointer into the place. A promise has one owner: it is read through
-//! containers that are retained ([`FnLower::retained_hop`]).
+//! Such borrows are kept alive for the statement: where the callee, or code it can reach, can assign
+//! the place (replaceable.rs), the value is shared into a temporary the callee gets instead of a
+//! pointer into the place; a counted value always is. Anything else is read through containers that
+//! are retained ([`FnLower::retained_hop`]).
 //! Every borrow examined here is recorded (`Cx::note_projection`), so a container that becomes
 //! counted makes the values borrowed through it counted too. A variable held in a shared cell
 //! (a closure assigns it) is like a counted container: the value borrowed from it is counted
@@ -36,6 +37,18 @@ impl FnLower<'_, '_> {
         later: &[hir::Expr],
         share: bool,
     ) -> Operand {
+        self.stable_borrow_in(a, later, share, ArgReach::default())
+    }
+
+    /// [`stable_borrow_as`](Self::stable_borrow_as) of an argument of a call `reach` says more
+    /// about.
+    pub(super) fn stable_borrow_in(
+        &mut self,
+        a: &hir::Expr,
+        later: &[hir::Expr],
+        share: bool,
+        reach: ArgReach,
+    ) -> Operand {
         // A frozen value (frozen.rs): nothing changes it, its box is retained where something
         // could replace its handle (async_fn/sync.rs `shared_value`), and its counts must not
         // change.
@@ -44,7 +57,10 @@ impl FnLower<'_, '_> {
         }
         let ty = self.sub(a.ty);
         let by_value = self.cx.ty(ty).is_scalar() && self.cx.share_kind(ty) == ShareKind::Plain;
-        if by_value || !(self.through_counted(a, ty) || self.in_shared_cell(a)) {
+        if by_value
+            || !(self.through_counted(a, ty)
+                || self.in_shared_cell(a))
+        {
             return self.borrowed_arg(a);
         }
         // An `any` holds a counted box (or a plain value its share copies): the callee may
@@ -58,11 +74,14 @@ impl FnLower<'_, '_> {
             let s = self.share_value(v, ty);
             return self.own_value(s, ty);
         }
-        // Retaining the containers keeps them, not what they hold: the callee may replace the value
-        // through another reference and drop it (`relabel(REG.label)` setting `REG.label`, a
-        // closure assigning the variable it was called with, `f(o.name)` where `f` sets `o.name`),
-        // and it may read the parameter after that. JavaScript's callee keeps what it was passed.
-        if self.cx.share_kind(ty) != ShareKind::Promise {
+        // Retaining the containers keeps them, not what they hold. A value in an array's buffer
+        // or a module state slot may be replaced by any callee and dropped, one in a variable's
+        // cell by a closure the callee runs, one in a field by a callee that may write the field
+        // (replaceable.rs), and the callee may read its parameter after that. JavaScript's callee
+        // keeps what it was passed.
+        let replaceable =
+            self.in_array_buffer(a) || self.in_module_slot(a) || self.may_replace(a, reach);
+        if replaceable && self.cx.share_kind(ty) != ShareKind::Promise {
             // Retaining the containers does not keep an element in place: a push through
             // another reference to the array moves its buffer, and `pop`, `truncate` or a store
             // drops the element. The callee gets a share of it instead (a copy for elements
@@ -95,6 +114,27 @@ impl FnLower<'_, '_> {
         let v = self.borrowed_arg(a);
         self.retain_hops = prev;
         v
+    }
+
+    /// Can the call assign the place `e`, or a part stored inline on the way to it? A counted
+    /// object on the way is retained, so what lies outside it no longer matters.
+    fn may_replace(&mut self, e: &hir::Expr, reach: ArgReach) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Local(l, _) => {
+                self.info[l.0 as usize].in_cell && self.cx.callee_runs_closures(reach.callee)
+            }
+            K::Field { base, index, .. } => {
+                let bty = self.sub(base.ty);
+                let written = self.cx.field_written(bty, *index)
+                    && self.cx.callee_may_write(reach.callee, bty, *index);
+                written || !self.cx.counted(bty) && self.may_replace(base, reach)
+            }
+            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
+                self.may_replace(base, reach)
+            }
+            _ => false,
+        }
     }
 
     /// Does the place `e` (of final type `value`) go through a counted object? Records every
@@ -201,6 +241,24 @@ impl FnLower<'_, '_> {
         }
     }
 
+    /// Does the place `e` lie in a module state slot, or inside what one holds? Every function
+    /// reaches the slot, so a callee may replace the value there, even behind a counted object
+    /// (retaining keeps the object, not what its field holds: `relabel(REG.label)` where
+    /// `relabel` sets `REG.label` still sees the old string, as in JavaScript). Called only for
+    /// places `in_shared_cell` accepted (the slot itself when a call may change it, or a place
+    /// inside a slot).
+    fn in_module_slot(&mut self, e: &hir::Expr) -> bool {
+        use hir::ExprKind as K;
+        match &e.kind {
+            K::Global(d) => self.slot_of(*d).is_some(),
+            K::Field { base, .. } | K::Index { base, .. } => self.in_module_slot(base),
+            K::UnwrapSome(base, _) | K::UnwrapVariant { expr: base, .. } | K::Downcast(base) => {
+                self.in_module_slot(base)
+            }
+            _ => false,
+        }
+    }
+
     /// An element `xs[i]` of a boxed array held by a local (or param) that no cell holds:
     /// when the array's count is 1 just before the call, nothing else reaches it (borrows
     /// through counted objects and cells share it for the call), so the element is borrowed in
@@ -302,6 +360,13 @@ impl FnLower<'_, '_> {
         self.own_temp(t, ty);
         Place::local(t)
     }
+}
+
+/// What is known about the call an argument is passed to.
+#[derive(Clone, Copy, Default)]
+pub(super) struct ArgReach {
+    /// The function called, when it is a direct call (replaceable.rs).
+    pub(super) callee: Option<hir::DefId>,
 }
 
 /// An element borrowed by an argument whose borrow-or-share choice waits for the call

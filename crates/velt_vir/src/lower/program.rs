@@ -91,6 +91,8 @@ impl<'h> Cx<'h> {
             tracked: FxHashMap::default(),
             tracked_size: FxHashMap::default(),
             quiet: FxHashMap::default(),
+            field_writes: None,
+            callee_stores: FxHashMap::default(),
             str_objects: FxHashMap::default(),
             symbol_records: Default::default(),
             boxing,
