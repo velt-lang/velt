@@ -1,0 +1,23 @@
+// A `Mutex` copied or shared by value would be a second lock.
+type F = (x: i64) => i64;
+
+function hold(): F {
+  const m = new Mutex<i64>(0);
+  return (x: i64): i64 => {
+    const q = m;
+    return x;
+  };
+}
+
+function plain(): i64 {
+  const m = new Mutex<i64>(0);
+  const f = (x: i64): i64 => {
+    const q = m;
+    return x;
+  };
+  return f(1);
+}
+
+async function main() {
+  console.log(hold()(1), plain());
+}

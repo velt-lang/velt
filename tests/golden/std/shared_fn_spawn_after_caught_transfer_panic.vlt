@@ -1,0 +1,15 @@
+import { catchPanic } from "velt/task";
+class B { n: i64 = 1; }
+async function bump(b: B): Promise<i64> { b.n += 1; return b.n; }
+interface Rd { get(): i64; }
+class RI implements Rd { v: i64 = 1; get(): i64 { return this.v; } [Symbol.dispose]() {} }
+async function use(r: Rd): Promise<i64> { return r.get(); }
+async function main() {
+  const r: Rd = new RI();
+  try {
+    await catchPanic(async () => { const p = spawn(use(r)); return await p; });
+  } catch (e) { console.log("caught"); }
+  console.log(r.get());
+  const b = new B();
+  console.log(await spawn(bump(b)), await spawn(bump(b)), b.n);
+}

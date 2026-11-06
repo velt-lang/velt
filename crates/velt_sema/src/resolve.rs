@@ -622,7 +622,7 @@ impl Ctx<'_> {
     }
 
     /// Is `d` a class of the standard library named one of `names`?
-    fn std_class(&self, d: crate::hir::DefId, names: &[&str]) -> bool {
+    pub(crate) fn std_class(&self, d: crate::hir::DefId, names: &[&str]) -> bool {
         match &self.info[d.0 as usize] {
             DefInfo::Adt(a) => self.scopes[a.module].is_std && names.contains(&a.name.as_str()),
             _ => false,

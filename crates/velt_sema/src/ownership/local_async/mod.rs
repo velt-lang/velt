@@ -41,9 +41,11 @@ mod fed;
 mod graph;
 mod keyed;
 mod reach;
+mod record;
 mod targets;
 mod types;
 mod values;
+mod views;
 
 use rustc_hash::FxHashMap;
 
@@ -55,11 +57,13 @@ use crate::hir::{Def, DefId, TyId, TyKind};
 use graph::{Boundary, Graph, Node, Why, CROSSES, INDIRECT, STORED};
 
 pub(crate) use changes::{check_crossing_changes, Crossing};
+pub(crate) use record::record_changed_captures;
 
 /// Decide which async closures are local, mark them (`FnDef::shares_captures`), and report the
 /// non-local ones that modify a captured variable.
 pub(crate) fn infer_local_async(cx: &mut Ctx) {
     cx.crossing_callbacks.clear();
+    cx.in_shared.clear();
     let g = graph::build(cx);
     let mut p = Propagation::new(&g);
     for &(n, f, why) in &g.seeds {
@@ -122,6 +126,25 @@ pub(crate) fn infer_local_async(cx: &mut Ctx) {
             .filter(|w| p.flags[n] & CROSSES != 0 && w.in_library && w.boundary == Boundary::Spawn);
         if let (Some(w), false) = (to_std, reported.contains(&c)) {
             crossing_sync(cx, c, Some(w));
+        }
+        // Followed to `shared(...)` by flow: every thread holding it calls it, each call on a copy of
+        // what it captured, so a change would be lost. A match by function type alone isn't enough
+        // to refuse a closure that may never get there: the many-threads check's strict walk panics
+        // on the exact closure if it does. A `Mutex` around it runs the calls one at a time.
+        let in_shared = p.shared[n].filter(|_| p.flags[n] & CROSSES != 0);
+        if let Some(w) = in_shared {
+            cx.in_shared.push(c);
+            crossing_sync(cx, c, Some(w));
+            if !cx.callback_wrappers.contains_key(&c)
+                && !cx.try_fn(c).is_some_and(|i| cx.scopes[i.module].is_library)
+            {
+                let label = reaches(cx, &w);
+                cx.crossing_callbacks.push(Crossing {
+                    closure: c,
+                    at: w.span,
+                    label,
+                });
+            }
         }
         if let Some(w) = to_std {
             let copied = crate::ownership::Copied::Crossing(w.span, reaches(cx, &w));
@@ -281,7 +304,19 @@ fn crossing_sync(cx: &mut Ctx, c: DefId, why: Option<Why>) {
     {
         return;
     }
+    count_through(cx, c, why);
     report_mutated(cx, c, why, "closure");
+}
+
+/// Counts what closure `c` changes through the closures it captured with what it changes itself,
+/// at a boundary in the program. What a library runs on other threads has its own check, which
+/// names the call (`callbacks`).
+fn count_through(cx: &mut Ctx, c: DefId, why: Option<Why>) {
+    if why.is_some_and(|w| !w.in_library) {
+        let info = cx.fn_info_mut(c);
+        let through = std::mem::take(&mut info.mutated_through);
+        info.mutated_captures.extend(through);
+    }
 }
 
 /// Record what was decided for async closure `c`.
@@ -302,6 +337,7 @@ fn finish(cx: &mut Ctx, c: DefId, local: bool, why: Option<Why>) {
         f.shares_captures = true;
         return;
     }
+    count_through(cx, c, why);
     report_mutated(cx, c, why, "async closure");
     report_generators(cx, c, why);
     report_atomics(cx, c, why, false);
@@ -415,11 +451,17 @@ pub(in crate::ownership::local_async) fn reaches(cx: &Ctx, w: &Why) -> String {
     }
 }
 
+/// In [`Propagation::work`]: a node that crosses already reaches `shared(...)` too.
+const SHARED_WALK: u8 = 8;
+
 /// Flags of every node, with why each was set (`CROSSES`, `INDIRECT`), propagated from a
 /// node to the nodes its values come from.
 struct Propagation {
     flags: Vec<u8>,
     why: Vec<[Option<Why>; 2]>,
+    /// How a crossing node is followed by flow to a function in `shared(...)`, if it is, whichever
+    /// boundary came first: a sync closure may change its copy when spawned, and not there.
+    shared: Vec<Option<Why>>,
     work: Vec<(usize, u8)>,
     roots: Vec<(TyId, Why)>,
 }
@@ -429,12 +471,21 @@ impl Propagation {
         Propagation {
             flags: vec![0; g.nodes.len()],
             why: vec![[None, None]; g.nodes.len()],
+            shared: vec![None; g.nodes.len()],
             work: vec![],
             roots: g.roots.clone(),
         }
     }
 
     fn set(&mut self, n: usize, f: u8, why: Option<Why>) {
+        if let (CROSSES, Some(w), None) = (f, why, self.shared[n]) {
+            if w.boundary == Boundary::Shared && w.via.is_none() && !w.in_value {
+                self.shared[n] = Some(w);
+                if self.flags[n] & CROSSES != 0 {
+                    self.work.push((n, SHARED_WALK));
+                }
+            }
+        }
         if self.flags[n] & f != 0 {
             // A path fewer calls deep inside a library replaces a deeper one: only a path at the
             // library's own level may leave it for the program (`Why::step`).
@@ -465,7 +516,13 @@ impl Propagation {
             let why = match f {
                 CROSSES => self.why[n][0],
                 INDIRECT => self.why[n][1],
+                SHARED_WALK => self.shared[n],
                 _ => None,
+            };
+            // The walk for `shared(...)` goes where a crossing goes, with that reason.
+            let f = match f {
+                SHARED_WALK => CROSSES,
+                f => f,
             };
             if let Some(w) = why {
                 self.root(cx, g, n, f, w);
@@ -525,6 +582,11 @@ fn report_mutated(cx: &mut Ctx, c: DefId, why: Option<Why>, what: &str) {
     let mutated = std::mem::take(&mut cx.fn_info_mut(c).mutated_captures);
     let closure = cx.def_spans.get(c.0 as usize).copied();
     for (name, at) in mutated {
+        // Also through the closures that call `c` (`mutated_captures`): one change, one error.
+        if cx.reported_mutations.contains(&(name.clone(), at)) {
+            continue;
+        }
+        cx.reported_mutations.push((name.clone(), at));
         // The capture is then moved into the closure: no second error for a later use of it.
         if let Some(span) = closure {
             cx.reported_captures.push((name.clone(), span));

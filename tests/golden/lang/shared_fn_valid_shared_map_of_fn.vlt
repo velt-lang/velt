@@ -1,0 +1,10 @@
+// Valid: a closure of the same function type as one in `shared(...)` isn't refused for that.
+type Handler = (req: string) => string;
+async function main() {
+  const routes = new Map<string, Handler>();
+  routes.set("/", (r: string): string => r);
+  const table = shared(routes);
+  let hits: i64 = 0;
+  const middleware: Handler[] = [(r: string): string => { hits += 1; return r; }];
+  console.log(middleware[0]("a"), hits, table == null);
+}

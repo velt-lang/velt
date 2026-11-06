@@ -73,6 +73,8 @@ pub(super) struct Why {
     /// boundary is in functions it entered through their results (`Node::Ret`), whose callers are
     /// that many calls up the path ([`Why::step`]).
     pub depth: u8,
+    /// `shared(...)` of a value holding the function, not of the function itself.
+    pub in_value: bool,
 }
 
 impl Why {
@@ -270,6 +272,7 @@ impl Walk<'_, '_> {
             in_library: false,
             via: None,
             depth: 0,
+            in_value: false,
         })
     }
 
@@ -637,6 +640,12 @@ impl Walk<'_, '_> {
             None => STORE,
         };
         for a in args {
+            let in_value = boundary == Some(Boundary::Shared)
+                && !matches!(self.cx.ty.kind(a.ty), crate::hir::TyKind::FnPtr { .. });
+            let sink = match sink {
+                To::Flag(f, Some(w)) => To::Flag(f, Some(Why { in_value, ..w })),
+                other => other,
+            };
             self.value(a, sink);
         }
         self.unknown(e, to);

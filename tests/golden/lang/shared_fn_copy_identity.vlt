@@ -1,0 +1,131 @@
+// Each call of a sync function in `shared(...)` runs on a copy of what it captured, made like a
+// copy for another thread: a cycle stays a cycle, an object reached twice is copied once, and a
+// class without a resource is copied field by field, so its `clone()` doesn't run.
+type F = (x: i64) => i64;
+
+class N {
+  v: i64 = 1;
+  next: N | null = null;
+  prev: N | null = null;
+}
+
+class It {
+  v: i64 = 1;
+}
+
+class D {
+  l: D | null = null;
+  r: D | null = null;
+  v: i64 = 1;
+}
+
+class V {
+  x: i64 = 1;
+  clone(): V {
+    const v = new V();
+    v.x = this.x;
+    return v;
+  }
+}
+
+function selfCycle(): F {
+  const a = new N();
+  a.next = a;
+  return (x: i64): i64 => a.v + (a.next === a ? 10 : 20);
+}
+
+function twoNodes(): F {
+  const a = new N();
+  const b = new N();
+  a.next = b;
+  b.prev = a;
+  return (x: i64): i64 => a.v + (a.next?.prev === a ? 10 : 20);
+}
+
+// A function reached from its own captures: its copy holds itself.
+function holdsItself(): F {
+  const fs: F[] = [];
+  const g = (x: i64): i64 => fs.length as i64;
+  fs.push(g);
+  return g;
+}
+
+// The check at `shared(...)` walks an object holding a function once, through its own cycle.
+class Holder {
+  f: F | null = null;
+  me: Holder | null = null;
+  v: i64 = 1;
+}
+
+function walked(): F {
+  const h = new Holder();
+  h.me = h;
+  h.f = (x: i64): i64 => x;
+  return (x: i64): i64 => h.v + x;
+}
+
+function plainClone(): F {
+  const v = new V();
+  return (x: i64): i64 => v.x + x;
+}
+
+// 24 levels with each level reached twice: 25 objects, not 2^25.
+function dag(): D {
+  let d = new D();
+  for (let i = 0; i < 24; i++) {
+    const n = new D();
+    n.l = d;
+    n.r = d;
+    d = n;
+  }
+  return d;
+}
+
+async function work(f: shared<F>, rounds: i64): Promise<i64> {
+  let t: i64 = 0;
+  for (let i: i64 = 0; i < rounds; i++) {
+    t += f(i);
+  }
+  return t;
+}
+
+async function all(f: shared<F>): Promise<i64> {
+  const ts: Promise<i64>[] = [];
+  for (let t = 0; t < 8; t++) {
+    ts.push(spawn(work(f.clone(), 2000)));
+  }
+  let sum: i64 = 0;
+  for (const t of ts) {
+    sum += await t;
+  }
+  return sum;
+}
+
+async function main() {
+  const one = shared(selfCycle());
+  console.log(one(1), await all(one));
+  const two = shared(twoNodes());
+  console.log(two(1), await all(two));
+
+  const three = shared(holdsItself());
+  console.log(three(1), await all(three));
+
+  const it = new It();
+  const pair = [it, it];
+  const same = shared((x: i64): boolean => pair[0] === pair[1]);
+  console.log(same(1));
+  const alias = it;
+  const held = [it];
+  const across = shared((x: i64): boolean => held[0] === alias);
+  console.log(across(1));
+
+  const d = dag();
+  const deep = shared((x: i64): i64 => d.v + x);
+  console.log(deep(1));
+
+  const v = new V();
+  const direct = shared((x: i64): i64 => v.x + x);
+  console.log(direct(1), shared(plainClone())(1));
+
+  console.log(shared(walked())(1));
+}

@@ -1,0 +1,17 @@
+// A panic caught inside a class's own `clone()`, in a cycle: the transfer around it still ends it.
+import { catchPanic } from "velt/task";
+async function boom(): Promise<i64> { panic("in clone"); return 1 as i64; }
+async function safe(): Promise<i64> { try { return await catchPanic(async (): Promise<i64> => boom()); } catch (e) { return 0 as i64; } }
+class K {
+  n: i64 = 0;
+  clone(): K { const k = new K(); const q = safe(); return k; }
+  [Symbol.dispose]() {}
+}
+class N { v: i64 = 1; k: K = new K(); next: N | null = null; other: N | null = null; }
+async function look(n: N): Promise<boolean> { return n.next?.next === n && n.other === n; }
+async function main() {
+  const a = new N(); const b = new N();
+  a.next = b; b.next = a; a.other = a; b.other = b;
+  const keep = a;
+  console.log(await spawn(look(a)), keep.v);
+}

@@ -1,0 +1,103 @@
+// check: no leaks
+// A function value in `shared(...)` is called directly, from many tasks at once, without a lock;
+// each call, sync or async, runs on its own copy of what the function captured. A table of them is
+// read in place. Calls running on one environment corrupt its objects' counts here (the aliases in
+// `aliases` free a capture twice), so the allocator's checks stop the program without the copy.
+type F = (n: i64) => Promise<i64>;
+
+class Box {
+  label: string = "b";
+  rows: string[] = ["x", "yy", "zzz"];
+}
+
+function make(k: i64): shared<F> {
+  const box = new Box();
+  return shared(async (n: i64): Promise<i64> => {
+    let sum = n + k;
+    for (const r of box.rows) {
+      sum += r.length;
+    }
+    return sum + box.label.length;
+  });
+}
+
+async function worker(table: shared<shared<F>[]>, rounds: i64): Promise<i64> {
+  let total: i64 = 0;
+  for (let i: i64 = 0; i < rounds; i++) {
+    const f = table[(i % 3) as number];
+    total += await f(i);
+  }
+  return total;
+}
+
+class Item {
+  v: i64 = 1;
+}
+
+type S = (n: i64) => i64;
+
+async function syncWorker(f: shared<S>, rounds: i64): Promise<i64> {
+  let total: i64 = 0;
+  for (let i: i64 = 0; i < rounds; i++) {
+    total += f(i);
+  }
+  return total;
+}
+
+async function together(f: shared<S>): Promise<i64> {
+  const tasks: Promise<i64>[] = [];
+  for (let t = 0; t < 8; t++) {
+    tasks.push(spawn(syncWorker(f.clone(), 5000)));
+  }
+  let all: i64 = 0;
+  for (const t of tasks) {
+    all += await t;
+  }
+  return all;
+}
+
+function aliases(): shared<S> {
+  const it = new Item();
+  const its = [new Item(), new Item()];
+  return shared((n: i64): i64 => {
+    const a = it;
+    const l = [its[0], it];
+    return a.v + (l.length as i64);
+  });
+}
+
+function throughClosure(): shared<S> {
+  const one = new Item();
+  const g = (y: i64): Item => one;
+  return shared((x: i64): i64 => g(x).v);
+}
+
+function ownLocals(): shared<S> {
+  const rows = ["a", "bb"];
+  return shared((x: i64): i64 => {
+    const made: i64[] = [];
+    made.push(x);
+    return made[0] + (rows.length as i64);
+  });
+}
+
+async function main() {
+  console.log(await together(aliases()));
+  console.log(await together(throughClosure()));
+  console.log(await together(ownLocals()));
+  const fs: shared<F>[] = [make(1), make(2), make(3)];
+  const table = shared(fs);
+  const one = table[0];
+  console.log(await one(10));
+  const tasks: Promise<i64>[] = [];
+  for (let t = 0; t < 8; t++) {
+    tasks.push(spawn(worker(table.clone(), 20000)));
+  }
+  let all: i64 = 0;
+  for (const t of tasks) {
+    all += await t;
+  }
+  console.log(all);
+  const plain = shared((a: string, b: string): string => a + b);
+  console.log(plain("sync ", "too"));
+}

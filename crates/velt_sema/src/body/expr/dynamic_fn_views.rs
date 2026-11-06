@@ -197,6 +197,7 @@ fn make_view(cx: &mut Ctx, t: TyId, module: usize, span: Span) -> Option<DefId> 
         self_ty: None,
         captures: vec![],
         shares_captures: false,
+        changes_held: false,
         body: hir::Body {
             locals: frame.locals,
             block: hir::Block {

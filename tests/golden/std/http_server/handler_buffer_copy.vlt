@@ -1,0 +1,24 @@
+// A handler that writes through a view of a copy of what it captured: nothing is lost, so it isn't
+// refused. Valid TypeScript; prints what Node prints for the same handler.
+import { serve } from "http-server";
+
+async function main() {
+  const b = new ArrayBuffer(4);
+  const u = new Uint8Array(4);
+  const server = await serve({ port: 0 }, async (req: Request) => {
+    const c = b.slice(0);
+    const v = new Uint8Array(c);
+    v[0] = v[0] + 1;
+    const d = u.slice();
+    const w = new Uint8Array(d.buffer);
+    w[0] = w[0] + 2;
+    return new Response(`${v[0]} ${w[0]}`);
+  });
+  for (let i = 0; i < 2; i++) {
+    const res = await fetch(`http://127.0.0.1:${server.port}/`);
+    console.log(await res.text());
+  }
+  await server.shutdown();
+}
+
+await main();

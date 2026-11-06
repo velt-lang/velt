@@ -1,0 +1,1 @@
+panic: a function that captured an `Atomic` by value is in `shared(...)`: each call would change an `Atomic` of its own, so the change would be lost; keep the value in a `shared(...)`

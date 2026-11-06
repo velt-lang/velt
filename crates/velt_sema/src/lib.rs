@@ -663,6 +663,9 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
         ownership::check_boundaries(cx)
     });
     let weak = timings::pass("ownership::check_locked", || ownership::check_locked(cx));
+    timings::pass("ownership::record_changed_captures", || {
+        ownership::record_changed_captures(cx)
+    });
     timings::pass("ownership::check_many_threads", || {
         ownership::check_many_threads(cx)
     });

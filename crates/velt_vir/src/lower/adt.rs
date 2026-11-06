@@ -337,7 +337,8 @@ impl FnLower<'_, '_> {
             true => {
                 let vt = self.cx.ty(inner);
                 let t = Place::local(self.copy_to_temp(v, vt));
-                self.many_check(t.clone(), inner);
+                let strict = matches!(self.cx.kind(inner), TyKind::FnPtr { .. });
+                self.many_walk(strict, t.clone(), inner);
                 Operand::Copy(t)
             }
             false => v,

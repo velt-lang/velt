@@ -1,0 +1,13 @@
+// Valid: a closure of the same function type as one in `shared(...)` isn't refused for that.
+type F = (x: i64) => i64;
+interface Fi { make(): F; }
+class Fa implements Fi { make(): F { return (x: i64): i64 => x + 1; } }
+async function main() {
+  const m: Fi = new Fa();
+  const s = shared(m.make());
+  let hits: i64 = 0;
+  const local: F[] = [];
+  local.push((x: i64): i64 => { hits += 1; return hits; });
+  console.log(local[0](1), local[0](1), hits);
+  console.log(s == null);
+}

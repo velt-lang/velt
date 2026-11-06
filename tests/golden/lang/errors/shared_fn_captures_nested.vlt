@@ -1,0 +1,66 @@
+// What a function in `shared(...)` can't hold, deeper than the capture itself.
+type F = (x: i64) => i64;
+type A = (x: i64) => Promise<i64>;
+
+class K {
+  n: i64 = 0;
+  clone(): K {
+    this.n += 1;
+    return new K();
+  }
+  [Symbol.dispose]() {}
+}
+
+class H {
+  k: K = new K();
+}
+
+class L {
+  m: Mutex<i64[]> = new Mutex<i64[]>([]);
+}
+
+class T {
+  a: Atomic<i64> = new Atomic<i64>(0);
+}
+
+function inClass(): shared<F> {
+  const h = new H();
+  return shared((x: i64): i64 => h.k.n);
+}
+
+function inArray(): shared<F> {
+  const ks = [new K()];
+  return shared((x: i64): i64 => ks[0].n);
+}
+
+function nullable(): shared<F> {
+  const k: K | null = new K();
+  return shared((x: i64): i64 => k?.n ?? 0);
+}
+
+function inAsync(): shared<A> {
+  const ks = [new K()];
+  return shared(async (x: i64): Promise<i64> => ks[0].n);
+}
+
+function lockInClass(): shared<F> {
+  const l = new L();
+  return shared((x: i64): i64 => l.m.with((v) => v.length as i64));
+}
+
+function lockInArray(): shared<F> {
+  const ms = [new Mutex<i64[]>([])];
+  return shared((x: i64): i64 => ms[0].with((v) => v.length as i64));
+}
+
+function atomicDirect(): shared<F> {
+  const a = new Atomic<i64>(0);
+  return shared((x: i64): i64 => a.load());
+}
+
+function atomicInClass(): shared<F> {
+  const t = new T();
+  return shared((x: i64): i64 => t.a.load());
+}
+
+async function main() {}

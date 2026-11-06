@@ -1,0 +1,47 @@
+// A route table whose handlers capture a regex: `RegExp`'s `clone()` only reads, so a function in
+// `shared(...)` may hold one, directly, in a class or through a function the compiler can't follow.
+type Route = (path: string) => boolean;
+
+class Named {
+  re: RegExp;
+  constructor(p: string) {
+    this.re = new RegExp(p);
+  }
+}
+
+function route(p: string): Route {
+  const re = new RegExp(p);
+  return (path: string): boolean => re.test(path);
+}
+
+async function work(table: shared<shared<Route>[]>, rounds: i64): Promise<i64> {
+  let hits: i64 = 0;
+  for (let i: i64 = 0; i < rounds; i++) {
+    const r = table[(i % 2) as number];
+    if (r("/users/42")) {
+      hits += 1;
+    }
+  }
+  return hits;
+}
+
+async function main() {
+  const table = shared([shared(route("^/users/[0-9]+$")), shared(route("^/none$"))]);
+  const ts: Promise<i64>[] = [];
+  for (let t = 0; t < 8; t++) {
+    ts.push(spawn(work(table.clone(), 200)));
+  }
+  let hits: i64 = 0;
+  for (const t of ts) {
+    hits += await t;
+  }
+  console.log(hits);
+
+  const re = /a+/;
+  const direct = shared((s: string): boolean => re.test(s));
+  console.log(direct("baa"), direct("xyz"));
+
+  const named = [new Named("^a"), new Named("^b")];
+  const nested = shared(async (s: string): Promise<boolean> => named[0].re.test(s) || named[1].re.test(s));
+  console.log(await nested("abc"), await nested("xyz"));
+}

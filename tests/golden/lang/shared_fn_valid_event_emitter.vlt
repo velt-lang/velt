@@ -1,0 +1,12 @@
+// Valid: a closure of the same function type as one in `shared(...)` isn't refused for that.
+type L = (e: string) => void;
+class Emitter { ls: L[] = []; on(l: L): void { this.ls.push(l); } emit(e: string): void { for (const l of this.ls) { l(e); } } }
+function share(f: L): shared<L> { return shared(f); }
+async function main() {
+  const logger = share((e: string): void => {});
+  let count: i64 = 0;
+  const em = new Emitter();
+  em.on((e: string): void => { count += 1; });
+  em.emit("a"); em.emit("b");
+  console.log(count, logger == null);
+}

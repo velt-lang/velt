@@ -1,0 +1,1 @@
+panic: a function that captured a `Mutex` by value is in `shared(...)`: each call would have a lock of its own; share the lock: `shared(new Mutex(…))`

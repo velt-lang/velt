@@ -1,0 +1,9 @@
+// Valid: A value in `shared(...)` of type `any` holds a function that changes what it captured: it isn't a `shared` function value, whose calls run on a copy.
+type F = (x: i64) => i64;
+async function main() {
+  let hits: i64 = 0;
+  const g: F = (x: i64): i64 => { hits += 1; return hits; };
+  const a: any = g;
+  const s = shared(a);
+  console.log(g(1), hits, s == null);
+}

@@ -46,8 +46,7 @@ pub(crate) fn check_bodies(cx: &mut Ctx) {
     super::inline_markers::check(cx);
 }
 
-/// The errors of copies of static methods (`Ctx::copy_diags`) whose copy the program uses: one
-/// named by a function that is no copy, or by a used copy. Each is reported once.
+/// The errors of copies of static methods (`Ctx::copy_diags`) that the program uses, each once.
 fn static_copy_uses(cx: &mut Ctx) {
     if cx.copy_diags.is_empty() {
         return;
@@ -652,6 +651,7 @@ fn check_fn(cx: &mut Ctx, def: DefId, src: FnSource) -> hir::FnDef {
             .map(|t| t.ty),
         captures: vec![],
         shares_captures: false,
+        changes_held: false,
         body: hir::Body {
             locals: frame.locals,
             block,

@@ -99,6 +99,7 @@ pub(super) fn adapter_stub(cx: &mut Ctx, p: &AdapterParts, s: &SlotSig, own: u32
         self_ty: Some(p.self_ty),
         captures: vec![],
         shares_captures: false,
+        changes_held: false,
         body: hir::Body {
             locals: vec![hir::LocalDef {
                 name: "this".into(),
@@ -354,6 +355,7 @@ pub(super) fn adapter_method(
         self_ty: Some(p.self_ty),
         captures: vec![],
         shares_captures: false,
+        changes_held: false,
         body: hir::Body {
             locals: frame.locals,
             block: hir::Block {

@@ -18,7 +18,7 @@ use crate::lower::{cfunc, cint, unit, FnLower, Work};
 use crate::vir::{self, BinOp, Operand, Place, Proj, Rvalue, Terminator, Ty};
 
 /// What velt_rt's `velt_rt_xfer_find` returns outside a transfer.
-const NO_TRANSFER: i128 = 1;
+pub(super) const NO_TRANSFER: i128 = 1;
 
 impl<'c, 'h> FnLower<'c, 'h> {
     /// A whole value's transfer (a `spawn` argument, a channel message, a task's result): one
@@ -142,13 +142,15 @@ impl<'c, 'h> FnLower<'c, 'h> {
         if self.cx.is_generator_obj(ty) {
             // Its state may share objects with this thread, and cannot be walked or copied.
             // Sema rejects the visible cases; this is one behind an interface value.
-            self.panic_msg(
-                "a generator cannot go to another thread (`spawn`, a channel, or `shared(...)`)",
-            );
+            let msg =
+                "a generator cannot go to another thread (`spawn`, a channel, or `shared(...)`)";
+            self.check_if_tagged(obj, |lw, _| lw.walk_panic(msg));
+            self.panic_msg(msg);
             return;
         }
         self.check_if_tagged(obj, |lw, o| {
             let op = lw.operand_place(o, Ty::Ptr);
+            lw.panic_if_strict_object(&op, ty);
             for (i, t) in lw.cx.adt_field_tys(ty).into_iter().enumerate() {
                 let fp = lw.field_place(&op, ty, i as u32);
                 lw.many_check(fp, t);

@@ -1,0 +1,11 @@
+// Valid: a closure of the same function type as one in `shared(...)` isn't refused for that.
+type F = () => void;
+async function main() {
+  let n: i64 = 0;
+  const hs: F[] = [];
+  hs.push(() => { n += 1; });
+  hs[0]();
+  const t = setInterval(() => { clearInterval(t); }, 1);
+  await new Promise<void>((r) => setTimeout(() => r(), 5));
+  console.log(n);
+}

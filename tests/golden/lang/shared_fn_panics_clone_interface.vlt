@@ -1,0 +1,24 @@
+// A class with its own `clone()` behind an interface value.
+type F = (x: i64) => i64;
+
+interface R {
+  get(): i64;
+}
+
+class K implements R {
+  n: i64 = 0;
+  get(): i64 {
+    return this.n;
+  }
+  clone(): K {
+    this.n += 1;
+    return new K();
+  }
+  [Symbol.dispose]() {}
+}
+
+async function main() {
+  const k: R = new K();
+  const f = shared((x: i64): i64 => k.get());
+  console.log(f(1));
+}

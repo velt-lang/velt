@@ -1,0 +1,10 @@
+// Valid: a closure of the same function type as one in `shared(...)` isn't refused for that.
+type Route = (n: i64) => i64;
+function table(rs: Route[]): shared<Route>[] { const o: shared<Route>[] = []; for (const r of rs) { o.push(shared(r.clone())); } return o; }
+async function main() {
+  const t = shared(table([(n: i64): i64 => n + 1]));
+  let seen: i64 = 0;
+  const mw: Route[] = [(n: i64): i64 => { seen += 1; return seen; }];
+  const r = t[0];
+  console.log(r(1), mw[0](1), mw[0](1), seen);
+}

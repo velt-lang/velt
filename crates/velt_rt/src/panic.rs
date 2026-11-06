@@ -185,10 +185,15 @@ pub(crate) fn may_catch() -> bool {
 /// Run `poll`, stopping a Velt panic that unwinds out of it: `Err(message)`. Any other panic
 /// (a runtime bug, which ends the process in the hook before it unwinds) keeps unwinding.
 pub(crate) fn catch<R>(poll: impl FnOnce() -> R) -> Result<R, Box<[u8]>> {
+    let open = crate::transfer_map::open_mark();
     match std::panic::catch_unwind(std::panic::AssertUnwindSafe(poll)) {
         Ok(r) => Ok(r),
         Err(payload) => match payload.downcast::<VeltPanic>() {
-            Ok(p) => Err(p.0),
+            Ok(p) => {
+                // The panic may have left a transfer of this poll's open on this thread.
+                crate::transfer_map::forget_since(open);
+                Err(p.0)
+            }
             Err(other) => std::panic::resume_unwind(other),
         },
     }

@@ -1,0 +1,10 @@
+// `JsonValue`'s `clone()` holds a counted tape, so it would run on one object from several threads
+// at once. Only `RegExp` is exempt.
+async function main() {
+  const h = JSON.parse<JsonValue>("[1]");
+  const f = shared((x: i64): i64 => {
+    const q = h;
+    return x;
+  });
+  console.log(f(1));
+}

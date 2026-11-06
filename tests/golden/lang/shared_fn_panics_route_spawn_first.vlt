@@ -1,0 +1,22 @@
+// The function reaches `spawn` before the compiler sees it reach `shared(...)`.
+type F = (x: i64) => i64;
+
+function mk(): F {
+  let n: i64 = 0;
+  const g = (x: i64): i64 => {
+    n += 1;
+    return n;
+  };
+  n = 0;
+  return g;
+}
+
+async function work(f: shared<F>): Promise<i64> {
+  return f(1);
+}
+
+async function main() {
+  const fs = [mk()];
+  const f = shared((x: i64): i64 => fs[0](x));
+  console.log(await spawn(work(f.clone())));
+}

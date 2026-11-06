@@ -102,6 +102,7 @@ impl<'h> Cx<'h> {
             user_site: velt_common::Span::DUMMY,
             fn_sites: Default::default(),
             share_sites: Default::default(),
+            shared_locks: Default::default(),
             share_from: Default::default(),
             map_fields: 0,
         }

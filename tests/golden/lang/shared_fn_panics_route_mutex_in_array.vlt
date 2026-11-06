@@ -1,0 +1,16 @@
+// A function holding a `Mutex` by value, in a captured array.
+type F = (x: i64) => i64;
+
+function mk(): F {
+  const m = new Mutex<i64[]>([]);
+  return (x: i64): i64 => m.with((v) => {
+    v.push(1);
+    return v.length as i64;
+  });
+}
+
+async function main() {
+  const fs = [mk()];
+  const f = shared((x: i64): i64 => fs[0](x));
+  console.log(f(1));
+}

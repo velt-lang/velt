@@ -286,6 +286,13 @@ impl FnLower<'_, '_> {
                 return v;
             }
         }
+        if !transfer && is_shared_read(f) {
+            let fv = self.expr(f);
+            let fp = self.place_of(fv, fty);
+            let (code, env) = self.shared_call_env(&fp, fty);
+            let ret = self.sub(ty);
+            return self.call_ptr(code, env, args, None, (ret, throws, false));
+        }
         let fv = match transfer {
             // A spawned call: the callee's state takes its captures from the environment (an
             // async closure copies them, or shares a resource that cannot be copied,
@@ -322,6 +329,58 @@ impl FnLower<'_, '_> {
         self.call_ptr(code, env, args, None, (ret, throws, transfer))
     }
 
+    /// The code and environment for a call of the function in a `shared` box at `fp`. Every thread
+    /// reads that one environment, so a call runs on a copy of its own, which the environment's
+    /// transfer entry makes when the code won't copy for itself (glue/transfer_env.rs); an async
+    /// closure does, for each call. The copy is dropped after the statement.
+    fn shared_call_env(&mut self, fp: &Place, fty: TyId) -> (Operand, Operand) {
+        self.cx.note_shared_fn();
+        let code = self.rvalue_temp(
+            Ty::Ptr,
+            Rvalue::Use(Operand::Copy(proj(fp, Proj::Field(0)))),
+        );
+        let held = self.rvalue_temp(
+            Ty::Ptr,
+            Rvalue::Use(Operand::Copy(proj(fp, Proj::Field(1)))),
+        );
+        let own = self.temp(Ty::Ptr);
+        let null = cint(0, Ty::Ptr);
+        self.assign(Place::local(own), Rvalue::Use(null));
+        let done = self.new_block();
+        let has = self.non_null(held.clone());
+        self.when(has, done);
+        let entry = self.env_transfer_entry(held.clone());
+        let has = self.non_null(entry.clone());
+        self.when(has, done);
+        let copy = self.env_call_copy(entry, held.clone());
+        self.assign(Place::local(own), Rvalue::Use(copy));
+        self.goto(done);
+        self.switch_to(done);
+        let fvt = self.cx.ty(fty);
+        let value = self.temp(fvt);
+        self.assign(
+            proj(&Place::local(value), Proj::Field(0)),
+            Rvalue::Use(code.clone()),
+        );
+        self.assign(
+            proj(&Place::local(value), Proj::Field(1)),
+            Rvalue::Use(Operand::Copy(Place::local(own))),
+        );
+        self.own_value(Operand::Copy(Place::local(value)), fty);
+        let env = self.temp(Ty::Ptr);
+        self.assign(Place::local(env), Rvalue::Use(held));
+        let done = self.new_block();
+        let has = self.non_null(Operand::Copy(Place::local(own)));
+        self.when(has, done);
+        self.assign(
+            Place::local(env),
+            Rvalue::Use(Operand::Copy(Place::local(own))),
+        );
+        self.goto(done);
+        self.switch_to(done);
+        (code, Operand::Copy(Place::local(env)))
+    }
+
     /// Is the function value `e` read from a place the call may replace: one reached through a
     /// counted object (a field, an element), or rooted in a variable held in a shared cell or a
     /// module `let`'s slot? A variable of this function or a parameter, and anything inside them
@@ -351,4 +410,15 @@ impl FnLower<'_, '_> {
         let hdr = proj(&proj(&op, Proj::Deref(Ty::Agg(oa))), Proj::Field(0));
         self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(hdr)))
     }
+}
+
+/// Is `f` a function read out of a `shared` box?
+fn is_shared_read(f: &hir::Expr) -> bool {
+    matches!(
+        f.kind,
+        hir::ExprKind::Call {
+            callee: hir::Callee::Intrinsic(hir::Intrinsic::SharedRead),
+            ..
+        }
+    )
 }

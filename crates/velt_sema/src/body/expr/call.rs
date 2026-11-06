@@ -354,6 +354,21 @@ impl FnCx<'_, '_> {
             };
             return self.iface_call(f, s, &[], args, None, span);
         }
+        // A function in `shared(...)`: every thread may call it without a lock, each call on its
+        // own copy of what the function captured, sync or async (velt_vir callee.rs
+        // `shared_call_env`). What would change a capture is refused (`ownership::local_async`).
+        if let TyKind::Shared(inner) = *self.cx.ty.kind(f.ty) {
+            if matches!(self.cx.ty.kind(inner), TyKind::FnPtr { .. }) {
+                let mut held = f;
+                set_place_mode(&mut held, UseMode::Borrow);
+                let read = H::Call {
+                    callee: Callee::Intrinsic(hir::Intrinsic::SharedRead),
+                    args: vec![held],
+                };
+                let view = self.mk(read, inner, span);
+                return self.call_value(view, args, span);
+            }
+        }
         // A function with properties (#921): a call of the function it holds.
         if self.cx.is_callable_object(f.ty) {
             return match self.call_of_callable(f, span) {

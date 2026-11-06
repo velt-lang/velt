@@ -1,0 +1,81 @@
+// Valid: a view that only reads a captured buffer, and a copy of a captured typed array, which it
+// writes to, change nothing the function captured.
+async function main() {
+  const u = new Uint8Array(4);
+  u[0] = 5;
+  const read = shared((x: number): number => {
+    const v = new Uint8Array(u.buffer);
+    return v[0] + x;
+  });
+  const w = new Uint8Array(4);
+  w[0] = 5;
+  const copy = shared((x: number): number => {
+    const v = new Uint8Array(w);
+    v[0] = v[0] + x;
+    return v[0];
+  });
+  console.log(read(1), read(1), copy(1), copy(1));
+
+  // A copy held in a local: what's written goes to the copy.
+  const b1 = new ArrayBuffer(4);
+  const sliceLocal = shared((x: number): number => {
+    const c = b1.slice(0);
+    const v = new Uint8Array(c);
+    v[0] = v[0] + x;
+    return v[0];
+  });
+  const b2 = new ArrayBuffer(4);
+  const sliceAlias = shared((x: number): number => {
+    const c = b2.slice(0);
+    const d = c;
+    const v = new Uint8Array(d);
+    v[0] = v[0] + x;
+    return v[0];
+  });
+  const u3 = new Uint8Array(4);
+  const bufferSlice = shared((x: number): number => {
+    const c = u3.buffer.slice(0);
+    const v = new Uint8Array(c);
+    v[0] = v[0] + x;
+    return v[0];
+  });
+  const u4 = new Uint8Array(4);
+  const arraySlice = shared((x: number): number => {
+    const c = u4.slice();
+    const v = new Uint8Array(c.buffer);
+    v[0] = v[0] + x;
+    return v[0];
+  });
+  const u5 = new Uint8Array(4);
+  const arrayMap = shared((x: number): number => {
+    const v = new Uint8Array(u5.map((e) => e).buffer);
+    v[0] = v[0] + x;
+    return v[0];
+  });
+  const u6 = new Uint8Array(4);
+  const lengths = shared((x: number): number => {
+    const c = u6.slice();
+    return c.byteLength + c.byteOffset + x;
+  });
+  console.log(lengths(1));
+
+  // A view over a copy may go anywhere, and a closure may read through a local view of its own.
+  const b7 = new ArrayBuffer(4);
+  const copyInObject = shared((x: number): number => {
+    const c = b7.slice(0);
+    const o = { v: new Uint8Array(c) };
+    o.v[0] = o.v[0] + x;
+    return o.v[0];
+  });
+  const b8 = new ArrayBuffer(4);
+  const nestedRead = shared((x: number): number => {
+    const read = (): number => {
+      const v = new Uint8Array(b8);
+      return v[0] + x;
+    };
+    return read();
+  });
+  console.log(copyInObject(1), copyInObject(1), nestedRead(1));
+  console.log(sliceLocal(1), sliceLocal(1), sliceAlias(1), sliceAlias(1));
+  console.log(bufferSlice(1), bufferSlice(1), arraySlice(1), arraySlice(1), arrayMap(1), arrayMap(1));
+}

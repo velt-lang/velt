@@ -1,0 +1,6 @@
+type N = (x: number) => number;
+async function main() {
+  const re = /a/g;
+  const f = shared((x: number): number => { re.exec("aaa"); return re.lastIndex; });
+  console.log(f(1), f(1));
+}

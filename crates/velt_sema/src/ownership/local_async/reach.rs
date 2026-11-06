@@ -169,6 +169,9 @@ pub(super) fn reaches(
     if plain(cx, e.ty) || sharing(cx, e.ty) {
         return None;
     }
+    if let Some(x) = viewed_buffer(cx, e).or_else(|| buffer_of(cx, e)) {
+        return reaches(cx, &x, taint, memo);
+    }
     match &e.kind {
         E::Local(l, _) => taint.get(l).copied(),
         E::Closure(_) | E::Lit(_) | E::Global(_) | E::FnRef(..) => None,
@@ -231,6 +234,97 @@ pub(super) fn reaches(
             Some((r, !fresh(cx, e, memo)))
         }
     }
+}
+
+const VIEWS: &[&str] = &[
+    "Int8Array",
+    "Uint8Array",
+    "Uint8ClampedArray",
+    "Int16Array",
+    "Uint16Array",
+    "Int32Array",
+    "Uint32Array",
+    "Float16Array",
+    "Float32Array",
+    "Float64Array",
+    "BigInt64Array",
+    "BigUint64Array",
+    "DataView",
+];
+
+pub(super) fn is_view(cx: &Ctx, t: TyId) -> bool {
+    matches!(cx.ty.kind(t), TyKind::Adt(d, _) if cx.std_class(*d, VIEWS))
+}
+
+pub(super) fn is_buffer(cx: &Ctx, t: TyId) -> bool {
+    matches!(cx.ty.kind(t), TyKind::Adt(d, _) if cx.std_class(*d, &["ArrayBuffer"]))
+}
+
+/// The `ArrayBuffer` a typed array or `DataView` is made over (`new Uint8Array(b)`): the view writes
+/// to it, so the view reaches what the buffer does. Over an array or another typed array it copies.
+fn viewed_buffer(cx: &Ctx, e: &Expr) -> Option<Expr> {
+    let E::New { def, args, .. } = &e.kind else {
+        return None;
+    };
+    if !cx.std_class(*def, VIEWS) {
+        return None;
+    }
+    args.first().and_then(|a| buffer_in(cx, a))
+}
+
+/// `e`, through conversions, if it is an `ArrayBuffer`.
+fn buffer_in(cx: &Ctx, e: &Expr) -> Option<Expr> {
+    if is_buffer(cx, e.ty) {
+        return Some(e.clone());
+    }
+    match &e.kind {
+        E::New { .. }
+        | E::Call {
+            callee: Callee::Def(..),
+            ..
+        } => None,
+        E::Upcast(x) | E::WrapSome(x) | E::ToDyn { expr: x, .. } => buffer_in(cx, x),
+        _ => {
+            let mut found = None;
+            walk::children(e, &mut |x| {
+                found = found.take().or_else(|| buffer_in(cx, x))
+            });
+            found
+        }
+    }
+}
+
+/// The view whose `.buffer` `e` reads: that buffer is new exactly when the view is.
+fn buffer_of(cx: &Ctx, e: &Expr) -> Option<Expr> {
+    if !is_buffer(cx, e.ty) {
+        return None;
+    }
+    match &e.kind {
+        E::Field { base, .. } if is_view(cx, base.ty) => Some((**base).clone()),
+        E::Call { callee, args } if reads_buffer(cx, callee, args) => args.first().cloned(),
+        _ => None,
+    }
+}
+
+/// Is this call a view's `buffer`, `byteLength` or `byteOffset`, which change nothing (the base class's
+/// getters, called through its table)?
+pub(super) fn reads_buffer(cx: &Ctx, callee: &Callee, args: &[Expr]) -> bool {
+    let Some(TyKind::Adt(class, _)) = (args.first()).map(|a| cx.ty.kind(a.ty)) else {
+        return false;
+    };
+    if args.len() != 1 || !cx.std_class(*class, VIEWS) {
+        return false;
+    }
+    let method = match callee {
+        Callee::Def(d, _) => Some(*d),
+        Callee::Virtual { slot } => cx
+            .adt(*class)
+            .and_then(|a| a.vtable.get(*slot as usize).copied()),
+        _ => None,
+    };
+    method
+        .and_then(|d| callee_name(cx, d))
+        .is_some_and(|(n, _)| matches!(n.as_str(), "buffer" | "byteLength" | "byteOffset"))
 }
 
 /// Is `e` a new value: `new`, a literal, a builtin copy, a call of a function that returns new

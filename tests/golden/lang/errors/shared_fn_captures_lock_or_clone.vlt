@@ -1,0 +1,26 @@
+// A lock held by value would be copied with a function in `shared(...)`, and a class's own
+// `clone()` would run on one object from several threads at once for the calls' copies. A `Mutex`
+// around the function runs the calls one at a time, so there the `clone()` is fine.
+class K {
+  n: i64 = 0;
+  clone(): K {
+    this.n += 1;
+    return new K();
+  }
+  [Symbol.dispose]() {}
+}
+
+async function main() {
+  const m = new Mutex<i64>(0);
+  const lock = shared((x: i64): i64 => {
+    const q = m;
+    return x;
+  });
+  const k = new K();
+  const cloned = shared(async (x: i64): Promise<i64> => k.n);
+  console.log(lock(1), await cloned(1));
+  const j = new K();
+  const g = async (x: i64): Promise<i64> => j.n;
+  const fine = shared(new Mutex<(x: i64) => Promise<i64>>(g));
+  console.log(await fine.with((f) => f(1)));
+}

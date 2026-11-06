@@ -95,6 +95,31 @@ pub extern "C" fn velt_rt_xfer_resume(depth: u32) {
     DEPTH.with(|d| d.set(depth));
 }
 
+/// What is open on this thread now, for `forget_since` when a poll that catches panics starts.
+pub fn open_mark() -> (u32, usize) {
+    (DEPTH.with(Cell::get), SUSPENDED.with(|s| s.borrow().len()))
+}
+
+/// A panic was caught by the poll that took `mark`: the transfers that poll opened are over, and
+/// those open when it started go on (a class's own `clone()` may run such a poll, with a transfer
+/// suspended around it). Their copies are forgotten, and what they deferred leaks with the rest of
+/// what the panicked code held.
+pub fn forget_since((depth, suspended): (u32, usize)) {
+    let outer = SUSPENDED.with(|s| {
+        let mut s = s.borrow_mut();
+        let outer = (s.len() > suspended).then(|| std::mem::take(&mut s[suspended]));
+        s.truncate(suspended);
+        outer
+    });
+    if depth == 0 {
+        TRANSFER.with(|t| *t.borrow_mut() = Transfer::default());
+    } else if let Some(outer) = outer {
+        // The transfer open at the start was suspended since, and is the current one again.
+        TRANSFER.with(|t| *t.borrow_mut() = outer);
+    }
+    DEPTH.with(|d| d.set(depth));
+}
+
 /// Start transferring a value (nested calls nest).
 #[no_mangle]
 pub extern "C" fn velt_rt_xfer_begin() {

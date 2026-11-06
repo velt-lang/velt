@@ -1,0 +1,12 @@
+// A function that reaches `shared(...)` through a value the compiler doesn't follow, and reads a
+// variable that something changes: a call's copy wouldn't see it, so the program stops.
+type F = (x: i64) => i64;
+
+async function main() {
+  let n: i64 = 5;
+  const read = (x: i64): i64 => x + n;
+  n = 6;
+  const held: F = read;
+  const f = shared(held);
+  console.log(f(1));
+}

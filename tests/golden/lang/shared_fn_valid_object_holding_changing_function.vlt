@@ -1,0 +1,19 @@
+// Valid: a function held by an object in `shared(...)`, which changes what it captured. It isn't a
+// `shared` function value, whose calls run on a copy.
+type F = (x: i64) => i64;
+
+class Store {
+  cb: F;
+  constructor(cb: F) {
+    this.cb = cb;
+  }
+}
+
+async function main() {
+  let hits: i64 = 0;
+  const s = shared(new Store((x: i64): i64 => {
+    hits += 1;
+    return hits;
+  }));
+  console.log(hits, s == null);
+}

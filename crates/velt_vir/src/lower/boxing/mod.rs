@@ -61,6 +61,10 @@ pub(super) struct Boxing {
     /// The program tests `key in x` on an `any` (`AnyHas`): the `any` tables have the `has`
     /// slot (any_has.rs).
     pub(super) any_has: bool,
+    /// A function in `shared(...)` is made or called: only then do environments' transfer entries
+    /// answer for a call's copy and the check's entries have a strict walk (glue/transfer_env.rs,
+    /// glue/many.rs).
+    pub(super) shared_fns: bool,
     /// The prelude deletes a property of an `any` that is not a proxy (`AnyDelete`): the `any`
     /// tables have the delete slot (any_delete.rs).
     pub(super) any_delete: bool,
@@ -254,6 +258,10 @@ pub(super) struct Facts {
     any_set: bool,
     /// `key in x` is tested on an `any`.
     any_has: bool,
+    /// A function in `shared(...)` is made or called: only then do environments' transfer entries
+    /// answer for a call's copy and the check's entries have a strict walk (glue/transfer_env.rs,
+    /// glue/many.rs).
+    shared_fns: bool,
     /// A property of an `any` is deleted.
     any_delete: bool,
     /// `Object.keys` of an `any` is listed.
@@ -300,6 +308,11 @@ pub(super) struct Facts {
 }
 
 impl Cx<'_> {
+    /// Record that the program makes or calls a function in `shared(...)`.
+    pub(super) fn note_shared_fn(&mut self) {
+        self.facts.shared_fns = true;
+    }
+
     /// Record that a value of type `t` is shared.
     pub(super) fn note_share(&mut self, t: TyId) {
         self.facts.shares.insert(t);
@@ -456,6 +469,36 @@ impl Cx<'_> {
         }).collect()
     }
 
+    /// A `Mutex` or an `RwLock` the program shares by value (`const q = m`, a copy for a generic
+    /// function), which would make it a second lock. Each is reported at the user code that first
+    /// shared it, or the value holding it.
+    pub(super) fn counted_lock_diagnostics(&self) -> Vec<velt_common::Diagnostic> {
+        let mut found: Vec<(velt_common::Span, String)> = (self.shared_locks.iter())
+            .map(|&t| {
+                let from = self.share_from.get(&t).copied().unwrap_or(t);
+                let site = (self.share_sites.get(&from))
+                    .or_else(|| self.share_sites.get(&t))
+                    .copied()
+                    .unwrap_or_default();
+                (site, self.type_name(t))
+            })
+            .collect();
+        found.sort_by(|a, b| (a.0.file, a.0.lo, &a.1).cmp(&(b.0.file, b.0.lo, &b.1)));
+        found.dedup();
+        found
+            .into_iter()
+            .map(|(site, n)| {
+                velt_common::Diagnostic::error(
+                    format!("this shares a `{n}` held by value, which would make it a second lock"),
+                    site,
+                )
+                .with_note(format!(
+                    "use the variable holding it in place, or share the lock itself: `shared(new {n}(…))`"
+                ))
+            })
+            .collect()
+    }
+
     /// `Atomic<u64>` for the type `t` of an `Atomic`.
     fn atomic_name(&self, t: TyId) -> String {
         let arg = match self.kind(t) {
@@ -496,6 +539,7 @@ impl Cx<'_> {
     pub(super) fn close_boxing(&mut self) -> Boxing {
         let mut next = self.boxing.clone();
         self.share_from.clear();
+        self.shared_locks.clear();
         // A function that may get properties through `any` needs an identity to carry them
         // (any_fn_props.rs): in a program that writes through `any` and holds functions there.
         let fn_props = self.facts.any_set
@@ -507,6 +551,7 @@ impl Cx<'_> {
         next.any_identity |= self.facts.any_identity;
         next.any_writes |= self.facts.any_set;
         next.any_has |= self.facts.any_has;
+        next.shared_fns |= self.facts.shared_fns;
         next.any_delete |= self.facts.any_delete;
         next.any_keys |= self.facts.any_keys;
         next.any_reflect |= self.facts.any_reflect;
@@ -590,6 +635,11 @@ impl Cx<'_> {
             ShareKind::Object => match self.kind(t) {
                 TyKind::Adt(d, _) if self.is_class(t) => {
                     next.roots.insert(self.class_root(d));
+                }
+                // One thread at a time has its value, and a copy would be a second lock:
+                // `counted_lock_diagnostics`.
+                _ if self.is_lock(t) => {
+                    self.shared_locks.insert(t);
                 }
                 _ => {
                     next.boxes.insert(t);

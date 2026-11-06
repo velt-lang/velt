@@ -289,6 +289,10 @@ pub(crate) struct FnInfo<'m> {
     /// when the closure stays on its task, an error when it may reach a thread boundary
     /// (`crate::ownership::local_async`).
     pub mutated_captures: Vec<(String, Span)>,
+    /// What it changes through the closures it captured (`ownership::local_async`).
+    pub mutated_through: Vec<(String, Span)>,
+    /// `mutated_captures` was not empty when the closure was checked (`changes_held`).
+    pub assigns_capture: bool,
 }
 
 impl FnInfo<'_> {

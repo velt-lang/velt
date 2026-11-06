@@ -1,0 +1,1 @@
+panic: a function that captured a `g` or `y` `RegExp` is in `shared(...)`: each call runs on a copy of what it captured, so the change to its `lastIndex` would be lost; make the regex inside the function, or put the function in a `Mutex`

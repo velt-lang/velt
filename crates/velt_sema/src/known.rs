@@ -21,7 +21,7 @@ const ASYNC_RESULTS: [&str; 3] = ["AsyncIterator", "AsyncIterable", "AsyncIterab
 
 /// How many levels of fields, elements and payloads the searches for a resource look through: a
 /// generic type that grows as it recurses (`class A<T> { next: A<T[]> }`) has no end.
-const MAX_LEVELS: u32 = 32;
+pub(crate) const MAX_LEVELS: u32 = 32;
 
 impl Ctx<'_> {
     /// `interface Comparable<T> { compareTo(other: T): i64 }` from the prelude.
@@ -710,7 +710,7 @@ impl Ctx<'_> {
 
     /// The field types of an object type of kind `k`, the payload types of an enum, the element
     /// types of any other type.
-    fn parts_of(&mut self, k: TyKind) -> Vec<TyId> {
+    pub(crate) fn parts_of(&mut self, k: TyKind) -> Vec<TyId> {
         let TyKind::Adt(d, args) = k else {
             return crate::types::children(&k);
         };

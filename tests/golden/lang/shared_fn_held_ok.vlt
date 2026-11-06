@@ -1,0 +1,61 @@
+// What the checks at `shared(...)` must not refuse: a closure that changes only what it made, and a
+// `Mutex` around a function, which runs the calls one at a time on the function's own captures.
+type F = (x: i64) => i64;
+
+class C {
+  n: i64 = 0;
+}
+
+class K {
+  n: i64 = 0;
+  clone(): K {
+    this.n += 1;
+    return new K();
+  }
+  [Symbol.dispose]() {}
+}
+
+function own(): F {
+  const k: i64 = 3;
+  return (x: i64): i64 => {
+    const b = new C();
+    b.n += k;
+    return b.n;
+  };
+}
+
+function counter(): F {
+  let n: i64 = 0;
+  const g = (x: i64): i64 => {
+    n += 1;
+    return n;
+  };
+  n = 0;
+  return g;
+}
+
+function holdsClone(): F {
+  const k = new K();
+  return (x: i64): i64 => k.n + x;
+}
+
+async function main() {
+  const m = new Map<string, F>();
+  m.set("a", own());
+  const f = shared(m.get("a")!);
+  console.log(f(1), f(1));
+
+  const locked = shared(new Mutex<F>(counter()));
+  console.log(locked.with((g) => g(1)), locked.with((g) => g(1)));
+
+  const holding = shared(new Mutex<F>(holdsClone()));
+  console.log(holding.with((g) => g(1)));
+
+  // A closure that changes a capture is fine anywhere else, whatever its type is.
+  let n: i64 = 0;
+  const here = (x: i64): i64 => {
+    n += x;
+    return n;
+  };
+  console.log(here(1), here(2), n);
+}

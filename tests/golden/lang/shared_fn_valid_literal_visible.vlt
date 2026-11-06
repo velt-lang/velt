@@ -1,0 +1,10 @@
+// Valid: a closure of the same function type as one in `shared(...)` isn't refused for that.
+type F = () => void;
+async function main() {
+  const s = shared(() => {});
+  let n: i64 = 0;
+  const hs: F[] = [];
+  hs.push(() => { n += 1; });
+  hs[0](); hs[0]();
+  console.log(n, s == null);
+}

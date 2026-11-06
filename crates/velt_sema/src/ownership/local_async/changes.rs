@@ -45,6 +45,7 @@ use crate::hir::{
 use crate::ownership::local_closures::walk::{self, Visit};
 
 use super::reach::{constructor, plain, reached_locals, reaches};
+use super::record::writer;
 use super::targets::Read;
 
 /// A callback that a library runs on other threads: the closure, and where (with the label) the
@@ -55,7 +56,7 @@ pub(crate) struct Crossing {
     pub label: String,
 }
 
-/// Bodies deeper than this are not followed (a change found deeper is not reported).
+/// Bodies deeper than this are not followed.
 const MAX_DEPTH: u32 = 48;
 
 /// Library methods that take their receiver mutably without changing what a program reads of
@@ -242,7 +243,7 @@ pub(super) struct Root {
 /// whether the argument may be the captured value itself), and whether one returns new values.
 #[derive(Default)]
 pub(super) struct Memo {
-    calls: FxHashMap<(DefId, usize, bool, TyId), Option<String>>,
+    pub(super) calls: FxHashMap<(DefId, usize, bool, TyId), Option<String>>,
     pub fresh: FxHashMap<DefId, bool>,
     /// The types a value of a type may hold (itself, its fields, elements, …).
     pub holds: FxHashMap<TyId, FxHashSet<TyId>>,
@@ -257,9 +258,8 @@ pub(super) struct Memo {
     pub via_site: Option<super::keyed::Site>,
 }
 
-/// One change found in a body: (root, where, the place written, the call it goes through).
-/// The last part: where a field fed by key on the way got the captured value (keyed.rs).
-type Found = (
+/// One change in a body: (root, where, the place written, the call, where a field fed by key got it).
+pub(super) type Found = (
     LocalId,
     Span,
     String,
@@ -270,7 +270,7 @@ type Found = (
 /// The changes body `f` makes to what the locals of `roots` (each standing for a root of the
 /// callback being checked) reach, first one per root. `params`: closures whose parameters stand
 /// for a root (a closure passed to a call with a reached argument).
-fn changes(
+pub(super) fn changes(
     cx: &mut Ctx,
     f: &FnDef,
     roots: &Roots,
@@ -283,6 +283,7 @@ fn changes(
         return;
     }
     let taint = reached_locals(cx, f, roots, memo);
+    super::views::held_views(cx, f, &taint, depth == 0, memo, out);
     let mut events = vec![];
     walk::block(&f.body.block, &mut Events(&mut events));
     let names: Vec<String> = f.body.locals.iter().map(|l| l.name.clone()).collect();
@@ -415,6 +416,9 @@ fn call_changes(
     depth: u32,
     memo: &mut Memo,
 ) -> Option<(String, String)> {
+    if super::reach::reads_buffer(cx, callee, args) {
+        return None;
+    }
     let a = &args[i];
     let mutable = top_mode(a) == Some(UseMode::BorrowMut);
     match callee {
@@ -437,7 +441,7 @@ fn call_changes(
                     Some(Def::Fn(f)) => f.params.get(f.captures.len() + i).map(|p| p.mode),
                     _ => None,
                 };
-                let changes = mutable || param == Some(PassMode::BorrowMut);
+                let changes = mutable || param == Some(PassMode::BorrowMut) || writer(cx, d);
                 if !changes || reader(cx, d) {
                     return None;
                 }
@@ -615,7 +619,7 @@ fn reader(cx: &Ctx, d: DefId) -> bool {
 /// Does the function `d` change what its parameter `i` (`this` first) reaches, given an argument
 /// reached from a root of type `root_ty` (`direct`: the argument may be the captured value
 /// itself)? The place it writes, as written there (`this.count`).
-fn callee_changes(
+pub(super) fn callee_changes(
     cx: &mut Ctx,
     d: DefId,
     i: usize,

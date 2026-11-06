@@ -1,0 +1,80 @@
+// Writes through a view made inside a closure reach the captured buffer, as in Node. The same
+// functions in `shared(...)` are refused (errors/shared_fn_changes_buffer_view).
+const u = new Uint8Array(4);
+const overBuffer = (): number => {
+  const v = new Uint8Array(u.buffer);
+  v[0] = v[0] + 1;
+  return u[0];
+};
+console.log(overBuffer(), overBuffer());
+
+const w = new Uint8Array(4);
+const dataView = (): number => {
+  const d = new DataView(w.buffer);
+  d.setUint8(0, d.getUint8(0) + 1);
+  return w[0];
+};
+console.log(dataView(), dataView());
+
+const b = new ArrayBuffer(4);
+const overCaptured = (): number => {
+  const v = new Uint8Array(b);
+  v[0] = v[0] + 1;
+  return v[0];
+};
+console.log(overCaptured(), overCaptured());
+
+// Over a typed array it copies: the write stays in the copy.
+const c = new Uint8Array(4);
+const copy = (): number => {
+  const v = new Uint8Array(c);
+  v[0] = v[0] + 1;
+  return v[0] + c[0];
+};
+console.log(copy(), copy());
+
+// A view or the buffer handed out by a closure inside the closure: the same buffer.
+const g = new ArrayBuffer(4);
+const madeInside = (): number => {
+  const mk = (): Uint8Array => new Uint8Array(g);
+  const v = mk();
+  v[0] = v[0] + 1;
+  return v[0];
+};
+console.log(madeInside(), madeInside());
+
+const h = new ArrayBuffer(4);
+const bufferInside = (): number => {
+  const gb = (): ArrayBuffer => h;
+  const v = new Uint8Array(gb());
+  v[0] = v[0] + 1;
+  return v[0];
+};
+console.log(bufferInside(), bufferInside());
+
+const i = new ArrayBuffer(4);
+const madeInline = (): number => {
+  const mk = (): Uint8Array => new Uint8Array(i);
+  mk()[0] = mk()[0] + 1;
+  return mk()[0];
+};
+console.log(madeInline(), madeInline());
+
+// A copy held in a local: the write stays in the copy.
+const j = new ArrayBuffer(4);
+const sliceLocal = (): number => {
+  const c = j.slice(0);
+  const v = new Uint8Array(c);
+  v[0] = v[0] + 1;
+  return v[0];
+};
+console.log(sliceLocal(), sliceLocal());
+
+const k = new Uint8Array(4);
+const arraySlice = (): number => {
+  const c = k.slice();
+  const v = new Uint8Array(c.buffer);
+  v[0] = v[0] + 1;
+  return v[0];
+};
+console.log(arraySlice(), arraySlice());

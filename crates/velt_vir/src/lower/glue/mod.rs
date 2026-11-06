@@ -21,7 +21,7 @@
 //! | Transfer  | `(p: ptr)`                         | make `*p` safe for another thread, in place (transfer.rs) |
 //! | TransferRoot | `(p: ptr)`                      | Transfer of a whole value: one copy per object reached twice (velt_rt `transfer_map`) |
 //! | ObjTransfer/DynTransfer | `(obj: ptr) -> ptr`  | the same for a class object / interface data (a tagged pointer: check for many threads, many.rs) |
-//! | ManyCheck | `(p: ptr)`                         | panic if `*p` holds a function value that cannot be called from several threads (many.rs) |
+//! | ManyCheck | `(p: ptr)`                         | panic if `*p` holds a function value that cannot be called from several threads, and in the strict walk what a call's copy would break (many.rs) |
 //! | Trace     | `(obj: ptr, visit: ptr, ctx: ptr)` | weak maps: visit the counted objects `obj` refers to (trace.rs) |
 //! | TraceIn   | `(p: ptr, visit: ptr, ctx: ptr)`   | the same for an inline value at `p`      |
 //! | WeakRetain / WeakRelease | `(word: u64)`       | retain / release a weak map value word   |
@@ -97,6 +97,8 @@ pub(crate) enum Glue {
     ObjTransfer,
     DynTransfer,
     ManyCheck,
+    /// `ManyCheck`'s strict walk, for a function in `shared(...)` (many.rs).
+    ManyCheckStrict,
     Trace,
     TraceIn,
     WeakRetain,
@@ -182,6 +184,7 @@ impl Glue {
             Glue::ObjTransfer => "objtransfer",
             Glue::DynTransfer => "dyntransfer",
             Glue::ManyCheck => "manycheck",
+            Glue::ManyCheckStrict => "manycheckstrict",
             Glue::Trace => "trace",
             Glue::TraceIn => "tracein",
             Glue::WeakRetain => "weakretain",
@@ -228,6 +231,7 @@ impl Glue {
             | Glue::Transfer
             | Glue::TransferRoot
             | Glue::ManyCheck
+            | Glue::ManyCheckStrict
             | Glue::ViewDrop
             | Glue::MirrorDrop => (vec![Ptr], Unit),
             Glue::Clone | Glue::Share | Glue::ShareSlot => (vec![Ptr, Ptr], Unit),
@@ -294,6 +298,10 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::ObjTransfer => lw.obj_transfer_body(args[0], ty),
             Glue::DynTransfer => lw.dyn_transfer_body(args[0], ty),
             Glue::ManyCheck => lw.many_check_body(args[0], ty),
+            Glue::ManyCheckStrict => {
+                lw.many_strict = true;
+                lw.many_check_body(args[0], ty);
+            }
             Glue::Trace => lw.trace_body(args[0], args[1], args[2], ty),
             Glue::TraceIn => lw.trace_in_body(args[0], args[1], args[2], ty),
             Glue::WeakBoxTrace => lw.weak_box_trace_body(args[0], args[1], args[2], ty),
