@@ -273,8 +273,11 @@ impl FnLower<'_, '_> {
             }
             TyKind::Adt(..) if self.is_enum(ty) => self.format_variant(buf, place, ty, depth),
             TyKind::Adt(d, _) => {
-                // An object literal's struct (with accessors) prints as the literal it is.
-                let anon = self.cx.adt_def(d).kind == AdtKind::Anon || self.has_accessor_fields(d);
+                // An object literal's struct (with accessors, or an interface literal's, reached
+                // through `any`) prints as the literal it is.
+                let def = self.cx.adt_def(d);
+                let literal = def.kind == AdtKind::Struct && !def.declared_struct;
+                let anon = def.kind == AdtKind::Anon || literal || self.has_accessor_fields(d);
                 let name = (!anon).then(|| self.cx.type_name(ty));
                 // A recursive object is a box (its pointer is the value) and may be part of a
                 // cycle.
