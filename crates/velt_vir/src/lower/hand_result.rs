@@ -50,6 +50,7 @@ impl FnLower<'_, '_> {
         match &a.kind {
             K::Lit(_) => true,
             K::ArrayLit(xs) => xs.iter().all(|x| self.lent_fresh(x)),
+            K::ConstArray(c) => c.elem_exprs(a.span.file).all(|x| self.lent_fresh(&x)),
             K::Call {
                 callee: hir::Callee::Intrinsic(Intrinsic::Transfer),
                 ..

@@ -375,7 +375,7 @@ fn fresh_object(e: &Expr) -> bool {
     match &e.kind {
         ExprKind::New { class, .. } => !matches!(&class.kind,
             TypeExprKind::Named { path, .. } if matches!(path.as_slice(), [c] if c.name == "Promise")),
-        ExprKind::Array(_) => true,
+        ExprKind::Array(_) | ExprKind::NumArray(_) => true,
         ExprKind::Paren(e) | ExprKind::Cast { expr: e, .. } => fresh_object(e),
         _ => false,
     }

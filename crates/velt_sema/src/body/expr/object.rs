@@ -21,14 +21,29 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        let exp = self.array_expected(exp);
+        self.array_lit_in(elems, exp, span)
+    }
+
+    /// The type an array literal is checked against when `exp` is expected.
+    pub(super) fn array_expected(&mut self, exp: Option<TyId>) -> Option<TyId> {
         let exp = self.hint(exp);
         // A union expected (`string | i64[]`): its one array or tuple member types the literal.
-        let exp = exp.map(|t| {
+        exp.map(|t| {
             self.union_member(t, |s, m| {
                 s.cx.ty.array_elem(m).is_some() || matches!(s.cx.ty.kind(m), TyKind::Tuple(_))
             })
             .unwrap_or(t)
-        });
+        })
+    }
+
+    /// [`Self::array_lit`] against `exp` from [`Self::array_expected`].
+    pub(super) fn array_lit_in(
+        &mut self,
+        elems: &[ast::Expr],
+        exp: Option<TyId>,
+        span: Span,
+    ) -> hir::Expr {
         if let Some(TyKind::Tuple(ts)) = exp.map(|t| self.cx.ty.kind(t).clone()) {
             return self.tuple_lit(elems, &ts, exp.expect("ICE: tuple"), span);
         }

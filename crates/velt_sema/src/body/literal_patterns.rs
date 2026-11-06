@@ -21,6 +21,8 @@
 //! each property the same way: `r[k]` for a key naming a variable, the member a `[KEY]` naming
 //! a module constant (a string or a symbol) stands for.
 
+use std::borrow::Cow;
+
 use velt_syntax::ast::{self, Expr, ExprKind as E, PatternKind as P, VarDecl, VarKind};
 
 use super::pattern_defaults::{ident, mk, pat};
@@ -29,7 +31,7 @@ use crate::hir;
 
 /// The elements of the array literal `e` (in parentheses, or `as const`), if it has neither a
 /// spread nor a hole.
-fn literal_elems(e: &Expr) -> Option<&[Expr]> {
+fn literal_elems(e: &Expr) -> Option<Cow<'_, [Expr]>> {
     match &e.kind {
         E::Paren(inner) => literal_elems(inner),
         E::Cast { expr, ty } if super::expr::member::is_as_const(ty) => literal_elems(expr),
@@ -39,8 +41,10 @@ fn literal_elems(e: &Expr) -> Option<&[Expr]> {
                     || matches!(&x.kind, E::Ident(i) if i.name == velt_syntax::ARRAY_HOLE)
             }) =>
         {
-            Some(items)
+            Some(Cow::Borrowed(items))
         }
+        // A packed array of numbers: its elements as the expressions they stand for.
+        E::NumArray(n) => Some(Cow::Owned(n.exprs(e.span.file))),
         _ => None,
     }
 }
@@ -84,7 +88,7 @@ impl FnCx<'_, '_> {
             }) = p
             {
                 if let Some(nested) = literal_elems(x).filter(|n| n.len() >= inner.len()) {
-                    self.literal_temps(inner, nested, binds, out);
+                    self.literal_temps(inner, &nested, binds, out);
                     continue;
                 }
             }
@@ -120,16 +124,16 @@ impl FnCx<'_, '_> {
             None => match self.as_const_reads(init, elems) {
                 Some(reads) if reads.len() >= elems.len() => {
                     tuple_reads = reads;
-                    &tuple_reads[..elems.len()]
+                    Cow::Borrowed(&tuple_reads[..elems.len()])
                 }
                 _ => return false,
             },
         };
-        if items.len() < elems.len() || same_kind_literals(items) {
+        if items.len() < elems.len() || same_kind_literals(&items) {
             return false;
         }
         let mut binds = vec![];
-        self.literal_temps(elems, items, &mut binds, out);
+        self.literal_temps(elems, &items, &mut binds, out);
         for (p, t) in binds {
             // An element that cannot be `undefined` never takes its default (`[a, b = "d"] =
             // [1, "s"]`), which is then not evaluated.

@@ -122,6 +122,8 @@ impl FnCx<'_, '_> {
                 };
                 (c.max(t).max(f), prim)
             }
+            // Number literals, each `Constant` (also negated).
+            K::NumArray(_) => (Constant, Prim::No),
             // A new array of such elements (`[1, x]`): making it has no effect.
             K::Array(xs) => {
                 let mut fx = Constant;
@@ -179,6 +181,8 @@ impl FnCx<'_, '_> {
                 let c = self.hir_effects(cond);
                 c.max(self.hir_effects(then)).max(self.hir_effects(els))
             }
+            // Number literals, each `Constant`.
+            H::ConstArray(_) => Constant,
             // A new array or tuple of such values: making it has no effect.
             H::ArrayLit(xs) | H::Tuple(xs) => {
                 let mut fx = Constant;

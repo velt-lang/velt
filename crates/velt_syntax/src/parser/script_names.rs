@@ -347,7 +347,7 @@ impl Names {
 
     fn expr(&mut self, e: &Expr) {
         match &e.kind {
-            ExprKind::Lit(_) | ExprKind::This | ExprKind::Super => {}
+            ExprKind::Lit(_) | ExprKind::NumArray(_) | ExprKind::This | ExprKind::Super => {}
             ExprKind::Ident(id) => self.use_name(&id.name, id.span),
             ExprKind::Template { exprs, .. } | ExprKind::Array(exprs) => {
                 exprs.iter().for_each(|e| self.expr(e))

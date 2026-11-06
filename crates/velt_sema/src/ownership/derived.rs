@@ -153,7 +153,12 @@ fn leaf(cx: &Ctx, t: crate::hir::TyId) -> bool {
 /// changes nothing anything else holds?
 pub(super) fn fresh(cx: &Ctx, e: &Expr) -> bool {
     match &e.kind {
-        E::ArrayLit(_) | E::Tuple(_) | E::AdtLit { .. } | E::Variant { .. } | E::New { .. } => true,
+        E::ArrayLit(_)
+        | E::ConstArray(_)
+        | E::Tuple(_)
+        | E::AdtLit { .. }
+        | E::Variant { .. }
+        | E::New { .. } => true,
         E::Call {
             callee: Callee::Def(d, _),
             ..

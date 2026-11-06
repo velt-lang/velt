@@ -10,12 +10,14 @@ use velt_common::Span;
 mod blocks;
 mod decls;
 mod jsx;
+mod num_array;
 mod type_level;
 mod type_parts;
 
 pub use blocks::*;
 pub use decls::*;
 pub use jsx::*;
+pub use num_array::*;
 pub use type_level::*;
 pub use type_parts::*;
 
@@ -688,6 +690,11 @@ pub enum ExprKind {
     Function(Box<FnDecl>),
     /// `[a, b, ...c]` (spread elements are `Spread`).
     Array(Vec<Expr>),
+    /// `[0x4, 0x13, -2, …]`: an [`ExprKind::Array`] of many number literals, packed (see
+    /// [`NumArray`]). A leaf for passes that look for names, calls or closures; passes that take
+    /// array literals apart see the `Array` it stands for through [`Expr::unpacked`]. Additive
+    /// (#2421).
+    NumArray(Box<NumArray>),
     /// `{ a: 1, b }` — anonymous struct literal, or struct literal when typed by context.
     Object(Vec<ObjectProp>),
     /// `Point { x: 1, y: 2 }` — explicitly named struct literal.

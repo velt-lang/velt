@@ -158,6 +158,9 @@ impl FnCx<'_, '_> {
         if let ast::ExprKind::Array(xs) = &e.kind {
             return Ok((!xs.iter().any(is_spread)).then(|| xs.clone()));
         }
+        if let ast::ExprKind::NumArray(n) = &e.kind {
+            return Ok(Some(n.exprs(e.span.file)));
+        }
         if !is_member_chain(e) {
             if !self.tuple_by_trial(e) {
                 return Ok(None);

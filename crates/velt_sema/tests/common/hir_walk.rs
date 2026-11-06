@@ -167,7 +167,12 @@ fn expr<'a>(e: &'a Expr, out: &mut Vec<&'a Expr>, ps: &mut Vec<&'a Pat>) {
                 sub(&a.body, out, ps);
             }
         }
-        E::Lit(_) | E::Local(..) | E::Global(_) | E::FnRef(..) | E::Closure(_) => {}
+        E::Lit(_)
+        | E::ConstArray(_)
+        | E::Local(..)
+        | E::Global(_)
+        | E::FnRef(..)
+        | E::Closure(_) => {}
     }
 }
 

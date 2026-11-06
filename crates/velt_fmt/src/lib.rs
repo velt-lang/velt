@@ -32,7 +32,8 @@ pub const NO_THIS_PARAMS: &str = "`velt fmt` does not format files with `this` p
 /// or a [`NO_THIS_PARAMS`] error if it has a `this: T` parameter (diagnostic spans refer to
 /// `FileId(0)`).
 pub fn format_source(src: &str) -> Result<String, Diagnostics> {
-    let (module, diags) = velt_syntax::parse_file(FileId(0), src);
+    // Unpacked: every element of an array literal is printed as written.
+    let (module, diags) = velt_syntax::parse_file_unpacked(FileId(0), src);
     if diags.iter().any(|d| d.is_error()) {
         return Err(diags);
     }

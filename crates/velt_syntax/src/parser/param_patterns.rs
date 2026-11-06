@@ -277,6 +277,7 @@ fn is_constant(e: &Expr) -> bool {
         ExprKind::Ident(id) => matches!(id.name.as_str(), "undefined" | "NaN" | "Infinity"),
         ExprKind::Unary { expr, .. } | ExprKind::Paren(expr) => is_constant(expr),
         ExprKind::Array(items) => items.iter().all(is_constant),
+        ExprKind::NumArray(_) => true,
         ExprKind::Object(props) => props
             .iter()
             .all(|p| matches!(p, ObjectProp::KeyValue(_, v) if is_constant(v))),

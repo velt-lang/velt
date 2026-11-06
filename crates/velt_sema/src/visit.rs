@@ -91,7 +91,7 @@ pub(crate) fn stmt<V: VisitMut + ?Sized>(s: &mut Stmt, v: &mut V) {
 pub(crate) fn expr<V: VisitMut + ?Sized>(e: &mut Expr, v: &mut V) {
     v.expr(e);
     match &mut e.kind {
-        E::Lit(_) | E::Global(_) | E::FnRef(..) | E::Closure(_) => {}
+        E::Lit(_) | E::ConstArray(_) | E::Global(_) | E::FnRef(..) | E::Closure(_) => {}
         E::Local(l, _) => v.local(l),
         E::Unary { expr: x, .. }
         | E::Cast(x)
@@ -197,6 +197,8 @@ impl VisitMut for TypeMap<'_> {
                 },
                 ..
             } => method_type_args.iter_mut().for_each(|t| *t = (self.0)(*t)),
+            // The type of each element (the elements an `ArrayLit` would visit).
+            E::ConstArray(c) => c.elem = (self.0)(c.elem),
             _ => {}
         }
     }

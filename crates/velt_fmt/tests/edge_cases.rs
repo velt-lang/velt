@@ -441,3 +441,31 @@ fn intrinsic_function_declarations() {
 export declare intrinsic function throwLoc(): string;",
     );
 }
+
+#[test]
+fn large_arrays_of_numbers_keep_every_element_as_written() {
+    // Packed by the compiler's parse (#2421), printed by the formatter element by element.
+    let elems: Vec<String> = (0..40)
+        .map(|i| match i % 4 {
+            0 => format!("0x{i:X}"),
+            1 => format!("- {i}"),
+            2 => format!("{i}.50"),
+            _ => format!("1_{i:03}"),
+        })
+        .collect();
+    let src = format!(
+        "const T: f64[] = [{}, /* last */ 7];\nconst U = [\n  1, // one\n  2,\n{}\n];\n",
+        elems.join(", "),
+        (3..30)
+            .map(|i| format!("  {i},"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    holds(&src);
+    let out = velt_fmt::format_source(&src).expect("formats");
+    assert!(
+        out.contains("[\n  0x0,\n  -1,\n  2.50,\n  1_003,\n  0x4,\n"),
+        "{out}"
+    );
+    assert!(out.contains("1, // one\n  2,\n  3,\n"), "{out}");
+}

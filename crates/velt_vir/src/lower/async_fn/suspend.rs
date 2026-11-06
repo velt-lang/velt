@@ -53,11 +53,11 @@ impl FnLower<'_, '_> {
                     return self.agen_close(&args[0]);
                 }
                 hir::Callee::Intrinsic(Intrinsic::PromiseAll) => {
-                    if let [hir::Expr {
-                        kind: hir::ExprKind::ArrayLit(es),
-                        ..
-                    }] = args.as_slice()
-                    {
+                    let arg = match args.as_slice() {
+                        [a] => Some(a.unpacked()),
+                        _ => None,
+                    };
+                    if let Some(hir::ExprKind::ArrayLit(es)) = arg.as_ref().map(|a| &a.kind) {
                         if !es.is_empty() {
                             let pty = self.sub(inner.ty);
                             return self.await_all_inline(es, pty);

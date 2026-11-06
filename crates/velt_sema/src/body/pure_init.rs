@@ -75,6 +75,11 @@ pub(crate) fn check_init(
         table_ok(cx, name, init, xs, out);
         return;
     }
+    // Number literals, each a table element: only the element type is checked.
+    if let H::ConstArray(_) = &init.kind {
+        table_ok(cx, name, init, &[], out);
+        return;
+    }
     if !init_ok(cx, name, init, out) || !has_call(init) {
         return;
     }
@@ -134,7 +139,7 @@ pub(crate) fn is_table(cx: &Ctx, d: DefId) -> bool {
     cx.global(d)
         .filter(|g| !g.stored)
         .and_then(|g| g.init.as_ref())
-        .is_some_and(|init| matches!(init.kind, H::ArrayLit(_)))
+        .is_some_and(|init| matches!(init.kind, H::ArrayLit(_) | H::ConstArray(_)))
 }
 
 /// The error `msg` for table `name` used where the compiler cannot follow what is done with

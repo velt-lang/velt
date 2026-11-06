@@ -323,6 +323,7 @@ fn through_call(e: &Expr) -> bool {
         | E::Logical { .. }
         | E::Block(_)
         | E::ArrayLit(_)
+        | E::ConstArray(_)
         | E::Tuple(_)
         | E::AdtLit { .. }
         | E::New { .. } => true,

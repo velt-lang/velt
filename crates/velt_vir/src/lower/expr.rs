@@ -231,6 +231,9 @@ impl FnLower<'_, '_> {
             K::AdtLit { fields, .. } => self.adt_lit(e.ty, fields),
             K::Variant { variant, args, .. } => self.variant(e.ty, *variant, args),
             K::ArrayLit(es) => self.array_lit(es, e.ty),
+            // Evaluated as the `ArrayLit` it stands for (a module constant read where it is not
+            // a table read, a local array): the same code.
+            K::ConstArray(c) => self.array_lit(&c.exprs(e.span.file), e.ty),
             K::Tuple(es) => self.tuple(es, e.ty),
             K::Closure(d) => self.closure(*d, e.ty),
             K::Match { scrutinee, arms } => self.match_expr(scrutinee, arms, e.ty),
@@ -380,7 +383,8 @@ impl FnLower<'_, '_> {
     /// The elements of table `g` as static data, with their number; `None` when `g` is not a
     /// table lowering stores (`table_read`).
     fn store_table(&mut self, g: &hir::GlobalDef) -> Option<(vir::StaticId, usize)> {
-        let hir::ExprKind::ArrayLit(es) = &g.init.kind else {
+        let unpacked = g.init.unpacked();
+        let hir::ExprKind::ArrayLit(es) = &unpacked.kind else {
             return None;
         };
         if es.is_empty() {

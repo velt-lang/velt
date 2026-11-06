@@ -11,7 +11,7 @@ use crate::hir::{self, Callee, ExprKind as E, StmtKind as S};
 pub(super) fn reads(e: &hir::Expr, f: &mut dyn FnMut(hir::DefId, Span)) {
     match &e.kind {
         E::Global(d) => f(*d, e.span),
-        E::Lit(_) | E::FnRef(..) | E::Closure(_) | E::Local(..) => {}
+        E::Lit(_) | E::ConstArray(_) | E::FnRef(..) | E::Closure(_) | E::Local(..) => {}
         E::Unary { expr: x, .. }
         | E::Cast(x)
         | E::Await(x)

@@ -82,7 +82,7 @@ fn tuple_elements(t: &ast::Expr, n: usize, array: ast::Expr, span: Span) -> ast:
 /// Is `e` made of literals, names and operators, which can't write to a tuple?
 fn runs_nothing(e: &ast::Expr) -> bool {
     match &e.kind {
-        ast::ExprKind::Lit(_) | ast::ExprKind::Ident(_) => true,
+        ast::ExprKind::Lit(_) | ast::ExprKind::NumArray(_) | ast::ExprKind::Ident(_) => true,
         ast::ExprKind::Paren(x) | ast::ExprKind::Unary { expr: x, .. } => runs_nothing(x),
         ast::ExprKind::Binary { lhs, rhs, .. } => runs_nothing(lhs) && runs_nothing(rhs),
         ast::ExprKind::Array(xs) => xs.iter().all(runs_nothing),

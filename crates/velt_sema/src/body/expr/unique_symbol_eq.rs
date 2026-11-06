@@ -394,7 +394,9 @@ impl FnCx<'_, '_> {
     /// (`[Symbol("z")] as S[]`), then retyped.
     pub(super) fn assertion_hint(&mut self, e: &ast::Expr, target: TyId) -> TyId {
         match e.kind {
-            ast::ExprKind::Array(..) | ast::ExprKind::Object(..) => self.cx.erase_unique(target),
+            ast::ExprKind::Array(..) | ast::ExprKind::NumArray(..) | ast::ExprKind::Object(..) => {
+                self.cx.erase_unique(target)
+            }
             _ => target,
         }
     }

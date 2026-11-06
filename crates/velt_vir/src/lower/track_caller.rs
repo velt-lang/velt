@@ -216,6 +216,11 @@ fn expr_panics(e: &hir::Expr, callees: &mut Scan) -> bool {
             f
         }
         K::Lit(_) | K::Local(..) | K::Global(_) | K::FnRef(..) | K::Closure(_) => false,
+        // Its elements count as the literal nodes of the `ArrayLit` it stands for.
+        K::ConstArray(c) => {
+            callees.nodes += c.values.len();
+            false
+        }
     }
 }
 

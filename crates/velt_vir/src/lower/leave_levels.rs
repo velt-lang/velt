@@ -428,6 +428,8 @@ fn transfers_in(xs: &[hir::Expr]) -> Vec<usize> {
                 out.extend(transfers_in(args));
             }
             K::ArrayLit(es) => out.extend(transfers_in(es)),
+            // Number literals: no transfer in them.
+            K::ConstArray(_) => {}
             _ => {}
         }
     }

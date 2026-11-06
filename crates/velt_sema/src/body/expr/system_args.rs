@@ -85,7 +85,10 @@ impl FnCx<'_, '_> {
             }
         }
         // A literal takes its element type from the parameter.
-        if matches!(inner.kind, ast::ExprKind::Array(_)) {
+        if matches!(
+            inner.kind,
+            ast::ExprKind::Array(_) | ast::ExprKind::NumArray(_)
+        ) {
             return None;
         }
         let h = self.expr(e, None, want);

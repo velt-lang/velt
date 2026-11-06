@@ -83,7 +83,8 @@ pub fn parses(src: &str) -> bool {
 /// neighbouring text and `{" "}` string children are joined (the formatter moves spaces next to
 /// tags between the two, like prettier). A component's children must stay exactly as written.
 pub fn ast_shape(src: &str) -> String {
-    let (module, _) = velt_syntax::parse_file(FileId(0), src);
+    // Unpacked, as the formatter parses: each element of an array literal is a node.
+    let (module, _) = velt_syntax::parse_file_unpacked(FileId(0), src);
     let dump = velt_syntax::dump(&module);
     let mut out = String::with_capacity(dump.len());
     let mut skip_number = false;

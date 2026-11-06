@@ -538,7 +538,10 @@ impl OpenSlots {
 /// Is `e` a literal, which takes its type from what it is passed for when it can?
 fn literal_arg(e: &ast::Expr) -> bool {
     match &strip_parens(e).kind {
-        ast::ExprKind::Lit(_) | ast::ExprKind::Array(_) | ast::ExprKind::Object(_) => true,
+        ast::ExprKind::Lit(_)
+        | ast::ExprKind::Array(_)
+        | ast::ExprKind::NumArray(_)
+        | ast::ExprKind::Object(_) => true,
         ast::ExprKind::New { class, .. } => {
             matches!(&class.kind, ast::TypeExprKind::Named { args, .. } if args.is_empty())
         }

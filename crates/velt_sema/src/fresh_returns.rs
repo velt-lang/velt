@@ -38,7 +38,7 @@ pub(crate) fn fresh_callees(h: &Expr) -> Option<Vec<DefId>> {
         },
         // A new object is fresh when its constructor keeps `this` to itself (`ctor_fresh`).
         E::New { def, .. } => Some(vec![*def]),
-        E::ArrayLit(_) | E::AdtLit { .. } => Some(vec![]),
+        E::ArrayLit(_) | E::ConstArray(_) | E::AdtLit { .. } => Some(vec![]),
         E::Await(x) => fresh_callees(x),
         E::Block(b) => b.value.as_deref().and_then(fresh_callees),
         _ => None,

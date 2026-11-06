@@ -491,7 +491,8 @@ impl Walk<'_, '_> {
                 self.unknown(e, to);
             }
             E::Throw(x) => self.value(x, STORE),
-            E::Lit(_) | E::Global(_) | E::FnRef(..) => self.unknown(e, to),
+            // A `ConstArray`'s elements are literals, which flow nowhere (as an `ArrayLit`'s).
+            E::Lit(_) | E::ConstArray(_) | E::Global(_) | E::FnRef(..) => self.unknown(e, to),
         }
     }
 

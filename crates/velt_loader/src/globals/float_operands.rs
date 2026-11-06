@@ -133,6 +133,7 @@ fn floaty(e: &ast::Expr, names: &HashSet<String>) -> bool {
         ast::ExprKind::Cond { then, els, .. } => floaty(then, names) || floaty(els, names),
         // An array holding one (`const xs = [1.5, 2]`, iterated by `for … of`).
         ast::ExprKind::Array(elems) => elems.iter().any(|x| floaty(x, names)),
+        ast::ExprKind::NumArray(n) => n.elems.iter().any(|x| x.float),
         ast::ExprKind::Cast { expr, ty } => is_float_type(ty) || floaty(expr, names),
         ast::ExprKind::Member { object, .. } => is_math(object),
         ast::ExprKind::Call { callee, .. } => match &callee.kind {
