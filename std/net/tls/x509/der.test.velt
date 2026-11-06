@@ -1,0 +1,219 @@
+// velt/net (tests): the DER reader's rules, on hand-made elements.
+import { hexDecode } from "velt/encoding/hex";
+import { TlsFailure } from "velt/net/tls/alert";
+import { DerReader, OCTET_STRING, SEQUENCE } from "velt/net/tls/x509/der";
+import { el } from "./parts.test";
+import { describe, expect, it } from "velt/test";
+
+// An element inside a SEQUENCE, read with tag `tag`: "" or the failure.
+function derFailure(bytes: u8[], tag: u8): string {
+  try {
+    const r = new DerReader(bytes);
+    const s = r.enter(SEQUENCE, bytes.length);
+    r.next(tag, s.end);
+    r.done(s.end);
+    return "";
+  } catch (e) {
+    return e instanceof TlsFailure ? e.message : `not a TlsFailure: ${e}`;
+  }
+}
+
+// The header of the only element of `hex`: its contents' range, or the failure.
+function headerOf(hex: string): string {
+  const b = hexDecode(hex);
+  try {
+    const t = new DerReader(b).any(b.length);
+    return `${t.start}..${t.end}`;
+  } catch (e) {
+    return e instanceof TlsFailure ? e.message : `not a TlsFailure: ${e}`;
+  }
+}
+
+function smallInt(contents: string): string {
+  const b = hexDecode(el("02", contents));
+  try {
+    const r = new DerReader(b);
+    const t = r.any(b.length);
+    return `${r.smallInt(t)}`;
+  } catch (e) {
+    return e instanceof TlsFailure ? e.message : `not a TlsFailure: ${e}`;
+  }
+}
+
+function integer(contents: string): string {
+  const b = hexDecode(el("02", contents));
+  try {
+    const r = new DerReader(b);
+    const t = r.any(b.length);
+    r.integer(t);
+    return "ok";
+  } catch (e) {
+    return e instanceof TlsFailure ? e.message : `not a TlsFailure: ${e}`;
+  }
+}
+
+// Only the element's own header counts: a byte may follow it.
+function boolean(hex: string): string {
+  const b = hexDecode(hex);
+  try {
+    const r = new DerReader(b);
+    const t = r.any((b[1] as usize) + 2);
+    return `${r.boolean(t)}`;
+  } catch (e) {
+    return e instanceof TlsFailure ? e.message : `not a TlsFailure: ${e}`;
+  }
+}
+
+function bitBytes(hex: string): string {
+  const b = hexDecode(hex);
+  try {
+    const r = new DerReader(b);
+    const whole = r.any((b[1] as usize) + 2);
+    const t = r.bitBytes(whole);
+    return `${t.start}..${t.end}`;
+  } catch (e) {
+    return e instanceof TlsFailure ? e.message : `not a TlsFailure: ${e}`;
+  }
+}
+
+describe("DerReader lengths", () => {
+  it("reads long and short lengths", () => {
+    expect(derFailure([0x30, 0x03, 0x04, 0x01, 0xaa], OCTET_STRING)).toBe("");
+    const long: u8[] = [0x30, 0x81, 0x83, 0x04, 0x81, 0x80];
+    for (let i = 0; i < 128; i++) {
+      long.push(7);
+    }
+    expect(derFailure(long, OCTET_STRING)).toBe("");
+  });
+
+  it("refuses lengths not in their shortest form", () => {
+    expect(derFailure([0x30, 0x04, 0x04, 0x81, 0x01, 0xaa], OCTET_STRING)).toContain(
+      "shortest form",
+    );
+    expect(derFailure([0x30, 0x05, 0x04, 0x82, 0x00, 0x01, 0xaa], OCTET_STRING)).toContain(
+      "shortest form",
+    );
+  });
+
+  it("refuses more than 4 length bytes, whatever they hold", () => {
+    expect(headerOf("048501000000000000")).toContain("bad length");
+    expect(headerOf("0488ffffffffffffffff")).toContain("bad length");
+    expect(headerOf("04ff" + "01".repeat(127))).toContain("bad length");
+  });
+
+  it("reads 4 length bytes", () => {
+    const b: u8[] = [0x04, 0x84, 0x01, 0x00, 0x00, 0x00];
+    for (let i = 0; i < 0x1000000; i++) {
+      b.push(0);
+    }
+    const t = new DerReader(b).any(b.length);
+    expect(t.start).toBe(6);
+    expect(t.end).toBe(6 + 0x1000000);
+  });
+
+  it("refuses indefinite lengths and length bytes past the end", () => {
+    expect(headerOf("0480aa")).toContain("bad length");
+    expect(headerOf("0482aa")).toContain("bad length");
+  });
+
+  it("refuses an element that runs past its parent", () => {
+    expect(derFailure([0x30, 0x03, 0x04, 0x02, 0xaa, 0xbb], OCTET_STRING)).toContain(
+      "past its parent",
+    );
+    expect(derFailure([0x30, 0x04, 0x04, 0x01, 0xaa, 0xbb], OCTET_STRING)).toContain("stray bytes");
+  });
+
+  it("refuses an end past the input", () => {
+    const b: u8[] = [0x04, 0x00];
+    let message = "";
+    try {
+      new DerReader(b).any(5);
+    } catch (e) {
+      message = e instanceof TlsFailure ? e.message : "not a TlsFailure";
+    }
+    expect(message).toContain("truncated");
+  });
+});
+
+describe("DerReader tags", () => {
+  it("refuses multi-byte tags and a wrong tag", () => {
+    expect(derFailure([0x30, 0x03, 0x1f, 0x01, 0xaa], OCTET_STRING)).toContain("multi-byte tag");
+    expect(derFailure([0x30, 0x03, 0x02, 0x01, 0xaa], OCTET_STRING)).toContain("expected tag 4");
+  });
+
+  it("peeks -1 at the end given, even with bytes after it", () => {
+    const r = new DerReader([0x30, 0x00, 0x05, 0x00]);
+    r.pos = 2;
+    expect(r.peek(2)).toBe(-1);
+    expect(r.peek(3)).toBe(5);
+    r.pos = 4;
+    expect(r.peek(4)).toBe(-1);
+  });
+});
+
+describe("DerReader contents", () => {
+  it("compares contents by length as well as bytes", () => {
+    const want: u8[] = [0x2b, 0x65, 0x70];
+    const same = hexDecode("06032b6570");
+    expect(new DerReader(same).equals(new DerReader(same).any(5), want)).toBe(true);
+    const longer = hexDecode("06042b657000");
+    expect(new DerReader(longer).equals(new DerReader(longer).any(6), want)).toBe(false);
+    const shorter = hexDecode("06022b65");
+    expect(new DerReader(shorter).equals(new DerReader(shorter).any(4), want)).toBe(false);
+    const other = hexDecode("06032b6571");
+    expect(new DerReader(other).equals(new DerReader(other).any(5), want)).toBe(false);
+  });
+
+  it("reads a BOOLEAN only as one byte, 00 or ff", () => {
+    expect(boolean("0101ff")).toBe("true");
+    expect(boolean("010100")).toBe("false");
+    expect(boolean("010101")).toContain("bad BOOLEAN");
+    expect(boolean("01017f")).toContain("bad BOOLEAN");
+    expect(boolean("0102ffff")).toContain("bad BOOLEAN");
+    // Empty, with the byte after it a valid value.
+    expect(boolean("0100ff")).toContain("bad BOOLEAN");
+  });
+
+  it("reads a small INTEGER", () => {
+    expect(smallInt("00")).toBe("0");
+    expect(smallInt("7f")).toBe("127");
+    expect(smallInt("0080")).toBe("128");
+    expect(smallInt("3fffffffffffffff")).toBe("4611686018427387903");
+  });
+
+  it("refuses a small INTEGER that is empty, long, negative, not minimal or too large", () => {
+    expect(smallInt("")).toContain("empty INTEGER");
+    expect(smallInt("010000000000000000")).toContain("bad small INTEGER");
+    expect(smallInt("00ffffffffffffffff")).toContain("bad small INTEGER");
+    expect(smallInt("ff")).toContain("bad small INTEGER");
+    expect(smallInt("80")).toContain("bad small INTEGER");
+    expect(smallInt("0001")).toContain("shortest form");
+    expect(smallInt("4000000000000000")).toContain("too large");
+    expect(smallInt("7fffffffffffffff")).toContain("too large");
+  });
+
+  it("takes any minimal INTEGER, of any sign and length", () => {
+    for (const ok of ["00", "01", "7f", "80", "ff", "0080", "00ff", "ff00", "ff7f", "8000"]) {
+      expect(integer(ok)).toBe("ok");
+    }
+    expect(integer("7f" + "ee".repeat(200))).toBe("ok");
+  });
+
+  it("refuses an empty INTEGER and a leading byte that only repeats the sign", () => {
+    expect(integer("")).toContain("empty INTEGER");
+    for (const bad of ["0000", "0001", "007f", "ff80", "ffff", "000000"]) {
+      expect(integer(bad)).toContain("shortest form");
+    }
+  });
+
+  it("reads a BIT STRING of whole bytes as their range", () => {
+    expect(bitBytes("030100")).toBe("3..3");
+    expect(bitBytes("030200aa")).toBe("3..4");
+  });
+
+  it("refuses a BIT STRING with unused bits or without its unused-bits byte", () => {
+    expect(bitBytes("030201ff")).toContain("unused bits");
+    // Empty, with the byte after it a valid unused-bits byte.
+    expect(bitBytes("030000")).toContain("unused bits");
+  });
+});

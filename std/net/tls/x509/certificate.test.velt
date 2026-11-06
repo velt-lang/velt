@@ -18,7 +18,6 @@ import {
 } from "velt/net/tls/x509/algorithms";
 import { TlsFailure } from "velt/net/tls/alert";
 import { Certificate } from "velt/net/tls/x509/certificate";
-import { DerReader, OCTET_STRING, SEQUENCE } from "velt/net/tls/x509/der";
 import { Tlv } from "velt/net/tls/x509/tlv";
 import { describe, expect, it } from "velt/test";
 
@@ -271,50 +270,5 @@ describe("Certificate", () => {
     const hex = LEAF_DER.replace("0603551d25040c", "0603551d24040c");
     const c = new Certificate(hexDecode(hex));
     expect(c.extKeyUsage.tag).toBe(0);
-  });
-});
-
-// The DER reader's rules on hand-made elements.
-function derFailure(bytes: u8[], tag: u8): string {
-  try {
-    const r = new DerReader(bytes);
-    const s = r.enter(SEQUENCE, bytes.length);
-    r.next(tag, s.end);
-    r.done(s.end);
-    return "";
-  } catch (e) {
-    return e instanceof TlsFailure ? e.message : `not a TlsFailure: ${e}`;
-  }
-}
-
-describe("DerReader", () => {
-  it("reads long and short lengths", () => {
-    expect(derFailure([0x30, 0x03, 0x04, 0x01, 0xaa], OCTET_STRING)).toBe("");
-    const long: u8[] = [0x30, 0x81, 0x83, 0x04, 0x81, 0x80];
-    for (let i = 0; i < 128; i++) {
-      long.push(7);
-    }
-    expect(derFailure(long, OCTET_STRING)).toBe("");
-  });
-
-  it("refuses lengths not in their shortest form", () => {
-    expect(derFailure([0x30, 0x04, 0x04, 0x81, 0x01, 0xaa], OCTET_STRING)).toContain(
-      "shortest form",
-    );
-    expect(derFailure([0x30, 0x05, 0x04, 0x82, 0x00, 0x01, 0xaa], OCTET_STRING)).toContain(
-      "shortest form",
-    );
-  });
-
-  it("refuses an element that runs past its parent", () => {
-    expect(derFailure([0x30, 0x03, 0x04, 0x02, 0xaa, 0xbb], OCTET_STRING)).toContain(
-      "past its parent",
-    );
-    expect(derFailure([0x30, 0x04, 0x04, 0x01, 0xaa, 0xbb], OCTET_STRING)).toContain("stray bytes");
-  });
-
-  it("refuses multi-byte tags and a wrong tag", () => {
-    expect(derFailure([0x30, 0x03, 0x1f, 0x01, 0xaa], OCTET_STRING)).toContain("multi-byte tag");
-    expect(derFailure([0x30, 0x03, 0x02, 0x01, 0xaa], OCTET_STRING)).toContain("expected tag 4");
   });
 });

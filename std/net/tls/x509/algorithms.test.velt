@@ -1,0 +1,345 @@
+// velt/net (tests): signature and public key algorithms: real certificates from OpenSSL for each
+// mapping, hand-built AlgorithmIdentifiers for the rules.
+import { hexDecode } from "velt/encoding/hex";
+import {
+  KEY_ED25519,
+  KEY_P256,
+  KEY_P384,
+  KEY_RSA,
+  KEY_UNKNOWN,
+  SIG_ECDSA_SHA256,
+  SIG_ECDSA_SHA384,
+  SIG_ECDSA_SHA512,
+  SIG_ED25519,
+  SIG_RSA_PKCS1_SHA256,
+  SIG_RSA_PKCS1_SHA384,
+  SIG_RSA_PKCS1_SHA512,
+  SIG_RSA_PSS_SHA256,
+  SIG_RSA_PSS_SHA384,
+  SIG_RSA_PSS_SHA512,
+  SIG_UNKNOWN,
+} from "velt/net/tls/x509/algorithms";
+import { Certificate } from "velt/net/tls/x509/certificate";
+import { ED25519_ALG, el, KEY_BITS, Parts } from "./parts.test";
+import { describe, expect, it } from "velt/test";
+
+// Self-signed by OpenSSL 3.6.5: `-sha384`, RSA-1024.
+const RSA_SHA384_DER =
+  "308201dd30820146a00302010202142897cef412f464e9b0bcabed409b378dc4cec134300d06092a864886f70d01" +
+  "010c05003011310f300d06035504030c06727361333834301e170d3236313130363133353830355a170d33363131" +
+  "30333133353830355a3011310f300d06035504030c0672736133383430819f300d06092a864886f70d0101010500" +
+  "03818d0030818902818100e039499618cee727f7d7179036131ba4adfd6c9c61cd85fa2522d43dd652d8c086bead" +
+  "f83156fa60b779d97388fe6999779c8b88827126ebb87a1f663ee9ee133c435aa27f9636e7de3606e952d14d3671" +
+  "8c1af8e60133c05624cda74260fc0ea162692ef1e9117b0dfc7482fe7fde87084f7fa28a17fcbfca5401fa949448" +
+  "3f0203010001a3323030300f0603551d130101ff040530030101ff301d0603551d0e04160414ae05ea7a9644a16f" +
+  "a8999b04be7f9b67db80df67300d06092a864886f70d01010c050003818100667c8aae8711d8d1041685ce1a92dc" +
+  "ad7e20520c651e8d3aa45b44609db639dcffebf793dd2eaa45d9bd2e7ff96c1c8510a7ed00ca462372ecbedd257a" +
+  "ffbea0ef522415677473c6291f7cf8ea9e673bc1330cef7a1c0a1188f6c985848630f0f90d750d769a7d541222a2" +
+  "5e1911e7f61edf437abb7386e41656009ab3d92368";
+// `-sha512`, the same key.
+const RSA_SHA512_DER =
+  "308201dd30820146a00302010202145c0869bd79c4ad9585bb97417b1a52894840fe24300d06092a864886f70d01" +
+  "010d05003011310f300d06035504030c06727361353132301e170d3236313130363133353830355a170d33363131" +
+  "30333133353830355a3011310f300d06035504030c0672736135313230819f300d06092a864886f70d0101010500" +
+  "03818d0030818902818100e039499618cee727f7d7179036131ba4adfd6c9c61cd85fa2522d43dd652d8c086bead" +
+  "f83156fa60b779d97388fe6999779c8b88827126ebb87a1f663ee9ee133c435aa27f9636e7de3606e952d14d3671" +
+  "8c1af8e60133c05624cda74260fc0ea162692ef1e9117b0dfc7482fe7fde87084f7fa28a17fcbfca5401fa949448" +
+  "3f0203010001a3323030300f0603551d130101ff040530030101ff301d0603551d0e04160414ae05ea7a9644a16f" +
+  "a8999b04be7f9b67db80df67300d06092a864886f70d01010d05000381810036a42c94f9c5451b2e39f52f3a83be" +
+  "7d817ec54e3e65015a78814f91e7a4be7e3693508f2685d915a9d4093afb65d10ffc91288eb682f16c6dc6e45ae7" +
+  "146cd5a13aa979f6581f44755409b3de4b65bdd6bd56849ee9a0164e3b12120a761f4e2b92aead4d5f6c11993a0d" +
+  "eb69055e3d8fff8dbf1df011876a08a5eb3a92a8c2";
+// `-sha512`, P-256.
+const ECDSA_SHA512_DER =
+  "308201523081faa00302010202145fce56a511d50a683df3827c80408713e915aefd300a06082a8648ce3d040304" +
+  "3010310e300c06035504030c056563353132301e170d3236313130363133353830355a170d333631313033313335" +
+  "3830355a3010310e300c06035504030c0565633531323059301306072a8648ce3d020106082a8648ce3d03010703" +
+  "42000416691610c71f71a3b50d7a5acdd66ca55aa33b74eeb39f7680d81fcc57502a0c31708f9baefa0e6090ac93" +
+  "537fb86b8139463853e336b635342da920a3982be9a3323030300f0603551d130101ff040530030101ff301d0603" +
+  "551d0e041604140d75cadb1fce5071ef45365d74daa5de9b4d1307300a06082a8648ce3d04030403470030440220" +
+  "6bfe3703d90fe9d623cd9a7d41904075750727c044e075accfdfaa233e6f8fe00220769039257becf581b4150ac6" +
+  "6c9292eddf6f11fdb33526acfd88e7cc9405bdf2";
+// `-sha384 -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:48`, RSA-1536.
+const PSS_SHA384_DER =
+  "308202c5308201baa00302010202142dc247ed941d517aebe30a6ffc9909a63021a9ff304106092a864886f70d01" +
+  "010a3034a00f300d06096086480165030402020500a11c301a06092a864886f70d010108300d0609608648016503" +
+  "0402020500a2030201303011310f300d06035504030c06707373333834301e170d3236313130363133353830355a" +
+  "170d3336313130333133353830355a3011310f300d06035504030c067073733338343081df300d06092a864886f7" +
+  "0d01010105000381cd003081c90281c100d41f5d9fa398214789ac8ef6e5f2fd0e8ec5f5c924295bbf50fc0050d5" +
+  "bc59802a7e116531e4d65feed2deceeb095c74ad18a4ce66f12c49700546ae74059e27451dd12259b274cc829998" +
+  "f945c126ae60996112feb913d5588693f3d8eabb63292008c0e33e3dbbd5809fb10e847d5b13c1d94fda8f473425" +
+  "643f776ff8b61854d660df86934e0ea34728679bf6cbf941f05192e8e20135768ce16b1d79359d4936f80c14448d" +
+  "1b99bd9d41425b00d9edb30350a91a876061d9571a5c5478670203010001a3323030300f0603551d130101ff0405" +
+  "30030101ff301d0603551d0e04160414e3ea3fa3c2176efe8e8fe4ecd6d652a38e511c52304106092a864886f70d" +
+  "01010a3034a00f300d06096086480165030402020500a11c301a06092a864886f70d010108300d06096086480165" +
+  "030402020500a2030201300381c100bafe73c452f093b06f429438f02efcb2ac9b540a5e54b6d38fc3ff13f8633f" +
+  "99817663f5f25f8a7ca835e4a3e58f10bd8c3bcf0f880d39021c34e86f55c0e79c47bef150a10eb27b3270231e53" +
+  "83f7885e9da005f0cda701fabcae32f8b119ff55de4eb9069068fe6c6b439f7eb808d43ddbd28b3b72f6e3ab4500" +
+  "887ae23e5153c19640ecfd7ac6768218451842ce3585c0eacd8eda8cf24f60af90c13d4f299855093b35c549ceaa" +
+  "f30159e6e6022552e61886228d459a379d2ee82fd0717f";
+// `-sha512 -sigopt rsa_padding_mode:pss -sigopt rsa_pss_saltlen:64`, the same key.
+const PSS_SHA512_DER =
+  "308202c5308201baa00302010202146a2a049fc76c97cbc07622b0bb94d11c0eb6bafd304106092a864886f70d01" +
+  "010a3034a00f300d06096086480165030402030500a11c301a06092a864886f70d010108300d0609608648016503" +
+  "0402030500a2030201403011310f300d06035504030c06707373353132301e170d3236313130363133353830355a" +
+  "170d3336313130333133353830355a3011310f300d06035504030c067073733531323081df300d06092a864886f7" +
+  "0d01010105000381cd003081c90281c100d41f5d9fa398214789ac8ef6e5f2fd0e8ec5f5c924295bbf50fc0050d5" +
+  "bc59802a7e116531e4d65feed2deceeb095c74ad18a4ce66f12c49700546ae74059e27451dd12259b274cc829998" +
+  "f945c126ae60996112feb913d5588693f3d8eabb63292008c0e33e3dbbd5809fb10e847d5b13c1d94fda8f473425" +
+  "643f776ff8b61854d660df86934e0ea34728679bf6cbf941f05192e8e20135768ce16b1d79359d4936f80c14448d" +
+  "1b99bd9d41425b00d9edb30350a91a876061d9571a5c5478670203010001a3323030300f0603551d130101ff0405" +
+  "30030101ff301d0603551d0e04160414e3ea3fa3c2176efe8e8fe4ecd6d652a38e511c52304106092a864886f70d" +
+  "01010a3034a00f300d06096086480165030402030500a11c301a06092a864886f70d010108300d06096086480165" +
+  "030402030500a2030201400381c100b67b3738b1abf7edd06be473a5973b28329f1664bf784ad4eb24beaa28f072" +
+  "b0f831400f435b1a8d0d9b8e9d0738e35d444e936a275f9ac4f1ff814429c0fbe214e96b2f641b7d36a0cb678216" +
+  "3d901525f02262529b352e9c4c93526cc215b1e8da34d747331e6cca922b82810b8e3330a4938c4f53dd0f773dfc" +
+  "2cf416364afc6f0492698ca5508c32b430523d42905da7924ff1cb399c365a4e4dca791692e4f23fb2928f7c7008" +
+  "4f559f1da49b77d12b44bb98c2c4a6b0127c4726054c70";
+
+// OIDs, as `openssl asn1parse` shows them in the certificates above.
+const RSA_SHA256 = "06092a864886f70d01010b";
+const ECDSA_SHA256 = "06082a8648ce3d040302";
+const ECDSA_SHA384 = "06082a8648ce3d040303";
+const ECDSA_SHA512 = "06082a8648ce3d040304";
+const ED25519 = "06032b6570";
+const PSS = "06092a864886f70d01010a";
+const MGF1 = "06092a864886f70d010108";
+const SHA224 = "0609608648016503040204";
+const SHA256 = "0609608648016503040201";
+const SHA384 = "0609608648016503040202";
+const SHA512 = "0609608648016503040203";
+const RSA_KEY = "06092a864886f70d010101";
+const EC_KEY = "06072a8648ce3d0201";
+const P256 = "06082a8648ce3d030107";
+const P384 = "06052b81040022";
+const SECP256K1 = "06052b8104000a";
+
+// A certificate signed with the AlgorithmIdentifier whose contents are `body`, in both places.
+function signedWith(body: string): Parts {
+  const p = new Parts();
+  p.innerAlg = el("30", body);
+  p.outerAlg = el("30", body);
+  return p;
+}
+
+function sigOf(body: string): i32 {
+  return signedWith(body).parsed().signatureAlgorithm;
+}
+
+function sigFailure(body: string): string {
+  return signedWith(body).failure();
+}
+
+// A key's algorithm for the AlgorithmIdentifier contents `body`.
+function keyOf(body: string): i32 {
+  const p = new Parts();
+  p.spki = el("30", el("30", body) + KEY_BITS);
+  return p.parsed().keyAlgorithm;
+}
+
+// A hash AlgorithmIdentifier with NULL parameters.
+function hash(oid: string): string {
+  return el("30", oid + "0500");
+}
+
+// RSASSA-PSS-params' fields.
+function hashField(h: string): string {
+  return el("a0", h);
+}
+
+function mgfField(h: string): string {
+  return el("a1", el("30", MGF1 + h));
+}
+
+function saltField(n: string): string {
+  return el("a2", "0201" + n);
+}
+
+// The contents of an RSASSA-PSS AlgorithmIdentifier whose parameters' contents are `params`.
+function pss(params: string): string {
+  return PSS + el("30", params);
+}
+
+const SHA256_PARAMS = hashField(hash(SHA256)) + mgfField(hash(SHA256)) + saltField("20");
+
+describe("signature algorithms of real certificates", () => {
+  it("reads RSA PKCS#1 with SHA-384 and SHA-512", () => {
+    const a = new Certificate(hexDecode(RSA_SHA384_DER));
+    expect(a.signatureAlgorithm).toBe(SIG_RSA_PKCS1_SHA384);
+    expect(a.keyAlgorithm).toBe(KEY_RSA);
+    const b = new Certificate(hexDecode(RSA_SHA512_DER));
+    expect(b.signatureAlgorithm).toBe(SIG_RSA_PKCS1_SHA512);
+  });
+
+  it("reads ECDSA with SHA-512", () => {
+    const c = new Certificate(hexDecode(ECDSA_SHA512_DER));
+    expect(c.signatureAlgorithm).toBe(SIG_ECDSA_SHA512);
+    expect(c.keyAlgorithm).toBe(KEY_P256);
+  });
+
+  it("reads RSA-PSS with SHA-384 and SHA-512", () => {
+    const a = new Certificate(hexDecode(PSS_SHA384_DER));
+    expect(a.signatureAlgorithm).toBe(SIG_RSA_PSS_SHA384);
+    const b = new Certificate(hexDecode(PSS_SHA512_DER));
+    expect(b.signatureAlgorithm).toBe(SIG_RSA_PSS_SHA512);
+  });
+});
+
+describe("signature algorithm parameters", () => {
+  it("takes NULL or none for RSA PKCS#1", () => {
+    expect(sigOf(RSA_SHA256 + "0500")).toBe(SIG_RSA_PKCS1_SHA256);
+    expect(sigOf(RSA_SHA256)).toBe(SIG_RSA_PKCS1_SHA256);
+  });
+
+  it("refuses a NULL with contents", () => {
+    expect(sigFailure(RSA_SHA256 + "050100")).toContain("NULL with contents");
+  });
+
+  it("reads anything after NULL as unknown", () => {
+    expect(sigOf(RSA_SHA256 + "0500" + "0500")).toBe(SIG_UNKNOWN);
+    expect(sigOf(RSA_SHA256 + "020101")).toBe(SIG_UNKNOWN);
+  });
+
+  it("takes none for ECDSA and Ed25519", () => {
+    expect(sigOf(ECDSA_SHA256)).toBe(SIG_ECDSA_SHA256);
+    expect(sigOf(ECDSA_SHA384)).toBe(SIG_ECDSA_SHA384);
+    expect(sigOf(ECDSA_SHA512)).toBe(SIG_ECDSA_SHA512);
+    expect(sigOf(ED25519)).toBe(SIG_ED25519);
+    for (const oid of [ECDSA_SHA256, ECDSA_SHA384, ECDSA_SHA512, ED25519]) {
+      expect(sigOf(oid + "0500")).toBe(SIG_UNKNOWN);
+      expect(sigOf(oid + "020101")).toBe(SIG_UNKNOWN);
+    }
+  });
+
+  it("reads an OID with the same prefix as unknown", () => {
+    expect(sigOf(el("06", RSA_SHA256.slice(4) + "01") + "0500")).toBe(SIG_UNKNOWN);
+    expect(sigOf(el("06", ECDSA_SHA256.slice(4) + "01"))).toBe(SIG_UNKNOWN);
+  });
+
+  it("refuses an algorithm that does not start with an OID", () => {
+    expect(sigFailure("0500")).toContain("expected tag 6, found 5");
+  });
+});
+
+describe("RSA-PSS parameters", () => {
+  it("reads those TLS 1.3 allows", () => {
+    expect(sigOf(pss(SHA256_PARAMS))).toBe(SIG_RSA_PSS_SHA256);
+    const h384 = hash(SHA384);
+    expect(sigOf(pss(hashField(h384) + mgfField(h384) + saltField("30")))).toBe(SIG_RSA_PSS_SHA384);
+    const h512 = hash(SHA512);
+    expect(sigOf(pss(hashField(h512) + mgfField(h512) + saltField("40")))).toBe(SIG_RSA_PSS_SHA512);
+  });
+
+  it("takes a hash without its NULL", () => {
+    const bare = el("30", SHA256);
+    expect(sigOf(pss(hashField(bare) + mgfField(bare) + saltField("20")))).toBe(SIG_RSA_PSS_SHA256);
+  });
+
+  it("reads parameters that are absent as unknown", () => {
+    expect(sigOf(PSS)).toBe(SIG_UNKNOWN);
+    expect(sigOf(PSS + "0500")).toBe(SIG_UNKNOWN);
+    expect(sigOf(pss(""))).toBe(SIG_UNKNOWN);
+    const h = hash(SHA256);
+    expect(sigOf(pss(mgfField(h) + saltField("20")))).toBe(SIG_UNKNOWN);
+    expect(sigOf(pss(hashField(h) + saltField("20")))).toBe(SIG_UNKNOWN);
+    expect(sigOf(pss(hashField(h) + mgfField(h)))).toBe(SIG_UNKNOWN);
+  });
+
+  it("reads bytes after the parameters as unknown", () => {
+    expect(sigOf(pss(SHA256_PARAMS) + "ffffff")).toBe(SIG_UNKNOWN);
+    expect(sigOf(pss(SHA256_PARAMS) + "0500")).toBe(SIG_UNKNOWN);
+  });
+
+  it("reads a trailer, even the default one, as unknown", () => {
+    expect(sigOf(pss(SHA256_PARAMS + el("a3", "020101")))).toBe(SIG_UNKNOWN);
+    expect(sigOf(pss(SHA256_PARAMS + "0500"))).toBe(SIG_UNKNOWN);
+  });
+
+  it("refuses stray bytes at each level", () => {
+    const h = hash(SHA256);
+    const salt = saltField("20");
+    const inHash = el("a0", h + "0500") + mgfField(h) + salt;
+    expect(sigFailure(pss(inHash))).toContain("stray bytes");
+    const inMgf = hashField(h) + el("a1", el("30", MGF1 + h + "0500")) + salt;
+    expect(sigFailure(pss(inMgf))).toContain("stray bytes");
+    const inMgfField = hashField(h) + el("a1", el("30", MGF1 + h) + "0500") + salt;
+    expect(sigFailure(pss(inMgfField))).toContain("stray bytes");
+    const inSalt = hashField(h) + mgfField(h) + el("a2", "020120" + "0500");
+    expect(sigFailure(pss(inSalt))).toContain("stray bytes");
+  });
+
+  it("reads another mask function as unknown", () => {
+    const h = hash(SHA256);
+    const other = el("a1", el("30", "06092a864886f70d010109" + h));
+    expect(sigOf(pss(hashField(h) + other + saltField("20")))).toBe(SIG_UNKNOWN);
+  });
+
+  it("reads a mask hash that differs as unknown", () => {
+    const params = hashField(hash(SHA384)) + mgfField(hash(SHA256)) + saltField("30");
+    expect(sigOf(pss(params))).toBe(SIG_UNKNOWN);
+  });
+
+  it("reads an unknown hash as unknown, whatever the salt", () => {
+    const h = hash(SHA224);
+    expect(sigOf(pss(hashField(h) + mgfField(h) + saltField("1c")))).toBe(SIG_UNKNOWN);
+    expect(sigOf(pss(hashField(h) + mgfField(h) + saltField("00")))).toBe(SIG_UNKNOWN);
+  });
+
+  it("reads a salt that is not the hash's length as unknown", () => {
+    const h = hash(SHA256);
+    expect(sigOf(pss(hashField(h) + mgfField(h) + saltField("21")))).toBe(SIG_UNKNOWN);
+    expect(sigOf(pss(hashField(h) + mgfField(h) + saltField("00")))).toBe(SIG_UNKNOWN);
+  });
+
+  it("refuses a salt that is not a small INTEGER", () => {
+    const h = hash(SHA256);
+    const params = hashField(h) + mgfField(h) + el("a2", "02020020");
+    expect(sigFailure(pss(params))).toContain("shortest form");
+  });
+
+  it("reads a hash NULL with contents as unknown, in the hash and in the mask", () => {
+    const h = hash(SHA256);
+    const bad = el("30", SHA256 + "050100");
+    expect(sigOf(pss(hashField(bad) + mgfField(h) + saltField("20")))).toBe(SIG_UNKNOWN);
+    expect(sigOf(pss(hashField(h) + mgfField(bad) + saltField("20")))).toBe(SIG_UNKNOWN);
+    expect(sigOf(pss(hashField(bad) + mgfField(bad) + saltField("20")))).toBe(SIG_UNKNOWN);
+  });
+
+  it("reads other hash parameters as unknown", () => {
+    const h = hash(SHA256);
+    for (const bad of [el("30", SHA256 + "020101"), el("30", SHA256 + "0500" + "0500")]) {
+      expect(sigOf(pss(hashField(bad) + mgfField(h) + saltField("20")))).toBe(SIG_UNKNOWN);
+      expect(sigOf(pss(hashField(h) + mgfField(bad) + saltField("20")))).toBe(SIG_UNKNOWN);
+    }
+  });
+});
+
+describe("public key algorithms", () => {
+  it("reads RSA with an empty NULL only", () => {
+    expect(keyOf(RSA_KEY + "0500")).toBe(KEY_RSA);
+    expect(keyOf(RSA_KEY)).toBe(KEY_UNKNOWN);
+    expect(keyOf(RSA_KEY + "050100")).toBe(KEY_UNKNOWN);
+    expect(keyOf(RSA_KEY + "0500" + "0500")).toBe(KEY_UNKNOWN);
+    expect(keyOf(RSA_KEY + "020101")).toBe(KEY_UNKNOWN);
+  });
+
+  it("reads EC keys on a named P-256 or P-384 curve", () => {
+    expect(keyOf(EC_KEY + P256)).toBe(KEY_P256);
+    expect(keyOf(EC_KEY + P384)).toBe(KEY_P384);
+    expect(keyOf(EC_KEY + SECP256K1)).toBe(KEY_UNKNOWN);
+    expect(keyOf(EC_KEY)).toBe(KEY_UNKNOWN);
+    expect(keyOf(EC_KEY + "0500")).toBe(KEY_UNKNOWN);
+    expect(keyOf(EC_KEY + P256 + "0500")).toBe(KEY_UNKNOWN);
+  });
+
+  it("reads Ed25519 without parameters", () => {
+    expect(keyOf(ED25519)).toBe(KEY_ED25519);
+    expect(keyOf(ED25519 + "0500")).toBe(KEY_UNKNOWN);
+  });
+
+  it("reads another key as unknown", () => {
+    expect(keyOf("06032b6571")).toBe(KEY_UNKNOWN);
+    expect(new Parts().parsed().keyAlgorithm).toBe(KEY_ED25519);
+    expect(ED25519_ALG).toBe(el("30", ED25519));
+  });
+});

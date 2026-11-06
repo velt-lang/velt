@@ -1,0 +1,333 @@
+// velt/net (tests): the X.509 extensions the parser reads. Expected values of the real certificate
+// are what `openssl asn1parse` and `openssl x509 -text` print for it.
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import { Certificate } from "velt/net/tls/x509/certificate";
+import { Tlv } from "velt/net/tls/x509/tlv";
+import { CRITICAL, el, ext, Parts, partsWith, withExtensions } from "./parts.test";
+import { describe, expect, it } from "velt/test";
+
+// Self-signed by OpenSSL 3.6.5, Ed25519: GeneralizedTime validity, basicConstraints critical with
+// pathlen:7, keyUsage critical keyCertSign, encipherOnly, decipherOnly, extKeyUsage, the key
+// identifiers with an authority issuer and serial, seven kinds of alternative name, critical
+// nameConstraints and cRLDistributionPoints.
+const RICH_DER =
+  "30820228308201daa00302010202145a267b6779f2f309713d107ca44882d012c4ad6a300506032b6570300f310d" +
+  "300b06035504030c04726963683022180f32303530303130323033303430355a180f323039393132333132333539" +
+  "35385a300f310d300b06035504030c0472696368302a300506032b6570032100a2cb4ada150841712248f462763a" +
+  "36fc80aeb1eca0e0d125943a7cf3d81a5cb4a38201423082013e30120603551d130101ff040830060101ff020107" +
+  "300f0603551d0f0101ff04050303070580301d0603551d250416301406082b0601050507030106082b0601050507" +
+  "0302301d0603551d0e0416041479f80b4beb44e722aaffd3d3bd483366781c4847304a0603551d23044330418014" +
+  "79f80b4beb44e722aaffd3d3bd483366781c4847a113a411300f310d300b06035504030c047269636882145a267b" +
+  "6779f2f309713d107ca44882d012c4ad6a30510603551d11044a30488206612e746573748704c000020181086140" +
+  "612e74657374860f68747470733a2f2f612e746573742f88022a03a40e300c310a300806035504030c0164a00906" +
+  "022a03a0030c017830180603551d1e0101ff040e300ca00a30088206612e7465737430200603551d1f0419301730" +
+  "15a013a011860f687474703a2f2f612e746573742f63300506032b6570034100a84889da93639c8e47edbaea6b29" +
+  "f6b630c7d62002318c403d56bcc8ad38b4ff631336fdf8f423a6193891ee919e4cf494a55ca1f16cac40d049951d" +
+  "0a39bb0e";
+
+const SKI = "551d0e";
+const KU = "551d0f";
+const SAN = "551d11";
+const BC = "551d13";
+const NC = "551d1e";
+const CRLDP = "551d1f";
+const AKI = "551d23";
+const EKU = "551d25";
+
+function hexOf(c: Certificate, t: Tlv): string {
+  return hexEncode(c.der.slice(t.start as i64, t.end as i64));
+}
+
+// The certificate with the extension `oid` holding `value`.
+function one(oid: string, value: string): Parts {
+  return partsWith(ext(oid, "", value));
+}
+
+// The certificate with a subjectAltName of the names `names`.
+function san(names: string): Parts {
+  return one(SAN, el("30", names));
+}
+
+// keyUsage's bits for the BIT STRING's contents `contents`.
+function ku(contents: string): i64 {
+  return one(KU, el("03", contents)).parsed().keyUsage;
+}
+
+function kuFailure(contents: string): string {
+  return one(KU, el("03", contents)).failure();
+}
+
+describe("a real certificate's extensions", () => {
+  const c = new Certificate(hexDecode(RICH_DER));
+
+  it("has the validity OpenSSL prints", () => {
+    expect(c.notBefore).toBe(2524705445);
+    expect(c.notAfter).toBe(4102444798);
+  });
+
+  it("has basicConstraints and keyUsage", () => {
+    expect(c.isCa).toBe(true);
+    expect(c.pathLen).toBe(7);
+    // keyCertSign (5), encipherOnly (7), decipherOnly (8).
+    expect(c.keyUsage).toBe(32 + 128 + 256);
+  });
+
+  it("has extKeyUsage, alternative names and name constraints", () => {
+    expect(hexOf(c, c.extKeyUsage)).toBe("06082b0601050507030106082b06010505070302");
+    expect(hexOf(c, c.subjectAltName)).toBe(
+      "8206612e746573748704c000020181086140612e74657374860f68747470733a2f2f612e746573742f88022a03" +
+        "a40e300c310a300806035504030c0164a00906022a03a0030c0178",
+    );
+    expect(c.nameConstraints.tag).toBe(0x30);
+    expect(hexOf(c, c.nameConstraints)).toBe("a00a30088206612e74657374");
+  });
+
+  it("has the key identifiers", () => {
+    expect(hexOf(c, c.subjectKeyId)).toBe("79f80b4beb44e722aaffd3d3bd483366781c4847");
+    expect(hexOf(c, c.authorityKeyId)).toBe("79f80b4beb44e722aaffd3d3bd483366781c4847");
+  });
+});
+
+describe("which extensions are read", () => {
+  it("takes only id-ce's three bytes for an id-ce extension", () => {
+    const value = "03020780";
+    expect(partsWith(ext("551d0f01", CRITICAL, value)).failure()).toContain("critical");
+    expect(partsWith(ext("551e0f", CRITICAL, value)).failure()).toContain("critical");
+    expect(partsWith(ext("541d0f", CRITICAL, value)).failure()).toContain("critical");
+    expect(partsWith(ext("551d", CRITICAL, value)).failure()).toContain("critical");
+    const notKu = partsWith(ext("551d0f01", "", value)).parsed();
+    expect(notKu.keyUsage).toBe(-1);
+  });
+
+  it("refuses unknown critical extensions, and skips them when not critical", () => {
+    for (const id of ["551d09", "551d20", "551d40", "551d7f", "2a0304"]) {
+      expect(partsWith(ext(id, CRITICAL, "ffff")).failure()).toContain("critical");
+      expect(partsWith(ext(id, "", "ffff")).failure()).toBe("");
+    }
+  });
+
+  it("takes an extension it reads once, and one it does not read any number of times", () => {
+    const twice = ext(KU, "", "03020780") + ext(KU, "", "03020780");
+    expect(partsWith(twice).failure()).toContain("2.5.29.15 twice");
+    const apart = ext(BC, "", "3000") + ext(KU, "", "03020780") + ext(BC, "", "3000");
+    expect(partsWith(apart).failure()).toContain("2.5.29.19 twice");
+    const aia = ext("2b06010505070101", "", "3000");
+    expect(partsWith(aia + aia).failure()).toBe("");
+    const ce9 = ext("551d09", "", "3000");
+    expect(partsWith(ce9 + ce9).failure()).toBe("");
+  });
+});
+
+describe("tags and stray bytes in extension values", () => {
+  it("checks the tag of each value", () => {
+    expect(one(SKI, "020101").failure()).toContain("expected tag 4, found 2");
+    expect(one(AKI, "3100").failure()).toContain("expected tag 48, found 49");
+    expect(one(KU, "04020780").failure()).toContain("expected tag 3, found 4");
+    expect(one(SAN, "3100").failure()).toContain("expected tag 48, found 49");
+    expect(one(BC, "3100").failure()).toContain("expected tag 48, found 49");
+    expect(one(NC, "3100").failure()).toContain("expected tag 48, found 49");
+    expect(one(CRLDP, "3100").failure()).toContain("expected tag 48, found 49");
+    expect(one(EKU, "3100").failure()).toContain("expected tag 48, found 49");
+  });
+
+  it("refuses bytes after each value", () => {
+    for (const [id, value] of [
+      [SKI, "0401aa"],
+      [AKI, "3000"],
+      [KU, "03020780"],
+      [SAN, "30028200"],
+      [BC, "3000"],
+      [NC, "3000"],
+      [CRLDP, "3000"],
+      [EKU, "300406022a03"],
+    ]) {
+      expect(one(id, value + "0500").failure()).toContain("stray bytes");
+    }
+  });
+
+  it("refuses an empty value", () => {
+    for (const id of [SKI, AKI, KU, SAN, BC, NC, CRLDP, EKU]) {
+      expect(one(id, "").failure()).toContain("truncated");
+    }
+  });
+});
+
+describe("authorityKeyIdentifier", () => {
+  it("takes its three fields, each optional", () => {
+    expect(one(AKI, "3000").parsed().authorityKeyId.tag).toBe(0);
+    const c = one(AKI, el("30", "8001aa" + "a100" + "820101")).parsed();
+    expect(hexOf(c, c.authorityKeyId)).toBe("aa");
+    expect(one(AKI, el("30", "a100")).failure()).toBe("");
+    expect(one(AKI, el("30", "820101")).failure()).toBe("");
+  });
+
+  it("refuses them out of order or twice, and anything else", () => {
+    expect(one(AKI, el("30", "820101" + "8001aa")).failure()).toContain("stray bytes");
+    expect(one(AKI, el("30", "a100" + "8001aa")).failure()).toContain("stray bytes");
+    expect(one(AKI, el("30", "8001aa" + "8001aa")).failure()).toContain("stray bytes");
+    expect(one(AKI, el("30", "8001aa" + "0500")).failure()).toContain("stray bytes");
+  });
+});
+
+describe("keyUsage", () => {
+  it("reads bits in the RFC's order", () => {
+    expect(ku("0780")).toBe(1);
+    expect(ku("0520")).toBe(4);
+    expect(ku("0104")).toBe(32);
+    expect(ku("0180")).toBe(1);
+    expect(ku("070080")).toBe(256);
+    expect(ku("07ff80")).toBe(511);
+  });
+
+  it("refuses too few or too many bytes", () => {
+    expect(kuFailure("00")).toContain("bad keyUsage");
+    expect(kuFailure("")).toContain("bad keyUsage");
+    expect(kuFailure("00808080")).toContain("bad keyUsage");
+  });
+
+  it("refuses more than 7 unused bits", () => {
+    expect(kuFailure("0880")).toContain("bad keyUsage");
+    expect(kuFailure("4080")).toContain("bad keyUsage");
+    expect(kuFailure("ff80")).toContain("bad keyUsage");
+  });
+
+  it("refuses a last byte with nothing set, or with an unused bit set", () => {
+    expect(kuFailure("0000")).toContain("bad keyUsage");
+    expect(kuFailure("078000")).toContain("bad keyUsage");
+    expect(kuFailure("0181")).toContain("bad keyUsage");
+    expect(kuFailure("07c0")).toContain("bad keyUsage");
+  });
+});
+
+describe("basicConstraints", () => {
+  it("reads cA and pathLenConstraint, each optional", () => {
+    const none = one(BC, "3000").parsed();
+    expect(none.isCa).toBe(false);
+    expect(none.pathLen).toBe(-1);
+    const ca = one(BC, el("30", CRITICAL)).parsed();
+    expect(ca.isCa).toBe(true);
+    const notCa = one(BC, el("30", "010100")).parsed();
+    expect(notCa.isCa).toBe(false);
+    const path = one(BC, el("30", "020105")).parsed();
+    expect(path.isCa).toBe(false);
+    expect(path.pathLen).toBe(5);
+    expect(one(BC, el("30", CRITICAL + "020100")).parsed().pathLen).toBe(0);
+  });
+
+  it("refuses stray bytes, and a pathLen that is not a small INTEGER", () => {
+    expect(one(BC, el("30", CRITICAL + "020101" + "0500")).failure()).toContain("stray bytes");
+    expect(one(BC, el("30", "020101" + CRITICAL)).failure()).toContain("stray bytes");
+    expect(one(BC, el("30", CRITICAL + "0201ff")).failure()).toContain("bad small INTEGER");
+    expect(one(BC, el("30", CRITICAL + "02020001")).failure()).toContain("shortest form");
+  });
+});
+
+describe("nameConstraints and cRLDistributionPoints", () => {
+  it("keeps nameConstraints' contents unread, for verification", () => {
+    const c = one(NC, el("30", "ffff")).parsed();
+    expect(c.nameConstraints.tag).toBe(0x30);
+    expect(hexOf(c, c.nameConstraints)).toBe("ffff");
+    expect(one(NC, "3000").parsed().nameConstraints.tag).toBe(0x30);
+    expect(new Parts().parsed().nameConstraints.tag).toBe(0);
+  });
+
+  it("understands each when critical", () => {
+    expect(partsWith(ext(NC, CRITICAL, "3000")).failure()).toBe("");
+    expect(partsWith(ext(CRLDP, CRITICAL, "3000")).failure()).toBe("");
+  });
+
+  it("refuses cRLDistributionPoints that is not a SEQUENCE", () => {
+    expect(one(CRLDP, "0400").failure()).toContain("expected tag 48, found 4");
+  });
+});
+
+describe("extKeyUsage", () => {
+  it("keeps its OIDs", () => {
+    const c = one(EKU, el("30", "06022a03" + "06022a04")).parsed();
+    expect(c.extKeyUsage.tag).toBe(0x30);
+    expect(hexOf(c, c.extKeyUsage)).toBe("06022a0306022a04");
+  });
+
+  it("refuses an empty list and anything but OIDs", () => {
+    expect(one(EKU, "3000").failure()).toContain("empty extKeyUsage");
+    expect(one(EKU, el("30", "020101")).failure()).toContain("expected tag 6, found 2");
+    expect(one(EKU, el("30", "06022a03" + "0500")).failure()).toContain("expected tag 6, found 5");
+  });
+});
+
+describe("subjectAltName", () => {
+  it("takes each of GeneralName's nine tags", () => {
+    for (const name of [
+      "a000",
+      "810161",
+      "820161",
+      "a300",
+      "a400",
+      "a500",
+      "860161",
+      "8704c0000201",
+      "880161",
+    ]) {
+      const c = san(name).parsed();
+      expect(hexOf(c, c.subjectAltName)).toBe(name);
+    }
+  });
+
+  it("refuses any other tag, and the wrong form of a known one", () => {
+    // Universal, application and private tags; context tags past [8].
+    for (const name of ["020101", "0c0161", "0500", "3000", "420101", "c00101", "890101", "a900"]) {
+      expect(san(name).failure()).toContain("bad GeneralName tag");
+    }
+    // Constructed where the RFC's type is primitive, and the other way round.
+    for (const name of [
+      "a100",
+      "a200",
+      "a60161",
+      "a703010203",
+      "a800",
+      "800101",
+      "830101",
+      "840101",
+      "850101",
+    ]) {
+      expect(san(name).failure()).toContain("bad GeneralName tag");
+    }
+  });
+
+  it("refuses a bad tag after good names", () => {
+    expect(san("820161" + "810161" + "020101").failure()).toContain("bad GeneralName tag 2");
+  });
+
+  it("refuses an empty list", () => {
+    expect(one(SAN, "3000").failure()).toContain("empty subjectAltName");
+  });
+
+  it("takes 4 or 16 bytes for an iPAddress", () => {
+    expect(san("8704c0000201").failure()).toBe("");
+    expect(san(el("87", "20010db8000000000000000000000001")).failure()).toBe("");
+    const lengths: i64[] = [0, 1, 3, 5, 8, 15, 17, 32];
+    for (const n of lengths) {
+      expect(san(el("87", "aa".repeat(n))).failure()).toContain("bad iPAddress");
+    }
+  });
+
+  it("leaves a name's contents to verification", () => {
+    expect(san("8200").failure()).toBe("");
+    expect(san(el("82", "612e636f6d00")).failure()).toBe("");
+  });
+
+  it("keeps an element inside the list", () => {
+    expect(one(SAN, "300282ff").failure()).not.toBe("");
+    expect(partsWith(ext(SAN, "", "30048205" + "6162")).failure()).toContain("past its parent");
+  });
+});
+
+describe("extensions in a list", () => {
+  it("reads several", () => {
+    const list = ext(BC, CRITICAL, el("30", CRITICAL)) + ext(KU, CRITICAL, "03020106");
+    const c = new Parts();
+    c.exts = withExtensions(list);
+    expect(c.parsed().isCa).toBe(true);
+    expect(c.parsed().keyUsage).toBe(96);
+  });
+});
