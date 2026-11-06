@@ -251,7 +251,7 @@ pub(super) fn is_view(cx: &Ctx, t: TyId) -> bool {
     matches!(cx.ty.kind(t), TyKind::Adt(d, _) if cx.std_class(*d, VIEWS))
 }
 
-fn is_buffer(cx: &Ctx, t: TyId) -> bool {
+pub(super) fn is_buffer(cx: &Ctx, t: TyId) -> bool {
     matches!(cx.ty.kind(t), TyKind::Adt(d, _) if cx.std_class(*d, &["ArrayBuffer"]))
 }
 

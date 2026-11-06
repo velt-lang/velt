@@ -15,7 +15,7 @@ use crate::hir::{
 use crate::ownership::local_closures::walk::{self, Visit};
 
 use super::changes::{in_library, Found, Memo, Roots};
-use super::reach::{is_view, reached_locals, reaches};
+use super::reach::{is_buffer, is_view, reached_locals, reaches};
 
 /// Add to `out` the views over what `taint` reaches that body `f` holds outside a local (module docs).
 pub(super) fn held_views(
@@ -80,9 +80,10 @@ struct Views<'a, 'm> {
 }
 
 impl Views<'_, '_> {
-    /// `x` goes somewhere other than a local: report it if it's a view over what is reached.
+    /// `x` goes somewhere other than a local: report it if it's a view over what is reached, or a
+    /// buffer that is, which a view can be made over there.
     fn store(&mut self, x: &Expr) {
-        if !is_view(self.cx, x.ty) {
+        if !is_view(self.cx, x.ty) && !is_buffer(self.cx, x.ty) {
             return;
         }
         // The capture itself isn't a view made here.
