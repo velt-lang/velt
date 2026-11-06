@@ -15,7 +15,7 @@ import {
   KEEP_READING,
   SEND_RETRY,
 } from "velt/net/tls/client_handshake";
-import { clientHello, HelloInput } from "velt/net/tls/client_hello";
+import { clientHello, HelloInput, X25519 } from "velt/net/tls/client_hello";
 import { HandshakeBuffer } from "velt/net/tls/handshake_buffer";
 import { finishedMac } from "velt/net/tls/key_schedule";
 import { describe, expect, it } from "velt/test";
@@ -67,12 +67,12 @@ const RETRY_CERT =
 const RETRY_CV =
   "0f00004a0403004655555555555555555555555555555555555555555555555555555555555555555555555555" +
   "555555555555555555555555555555555555555555555555555555555555555555";
-const RETRY_SF = "14000020b426f8cf149f5b4f8a577bba105fe13779656537fe8e5671b2b833825b1e269a";
-const RETRY_CF = "1400002017da5f7766594e4645ffcef0bb42858b868d426bf67f033dc6f86b089045bad9";
-const RETRY_CHS = "baa4dc7996ddb221a4312e217265898319bfb5c60a3dff9b83a7b4352591c274";
-const RETRY_SHS = "7e3e1875007dc95601e18099d4b323900293dae42bd02c6b46206588b1fc00ea";
-const RETRY_CAP = "e902cca309c1dbab74abd23dd40e06e1b9cb72772b8690a8913665274e848ca3";
-const RETRY_SAP = "be66ce153a5755e4fc49b51776ab7bddac7888a6ba35ee7ac3005ece70bde6d8";
+const RETRY_SF = "140000201b638597a3946d47198edb1bc2b92225afdf26a9d62e5aaaf214bc8803806e16";
+const RETRY_CF = "1400002011fda5f8896d2ce692fd8d3f7a8394175b1b55f0fdbbb4aa4c01712bfc5e7ce9";
+const RETRY_CHS = "813a6ba81f995ebc6206e8d56b107c16037ecbe485e86ca87356de88d1966a12";
+const RETRY_SHS = "2ddcf4b38d30f6e8399055eb7739ad55aa16c5954059c308f1c381e8aba273f4";
+const RETRY_CAP = "1e66959a3627749e9ae5e0de1994a16693c677623e95397a92eaad0432869984";
+const RETRY_SAP = "18e580be62b122ada1556a4d8026e093c3d38762d299a44b55bab176b1f3c114";
 
 const HRR_RANDOM = "cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c";
 const SHARE = "c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f";
@@ -243,7 +243,8 @@ describe("a HelloRetryRequest with a cookie, over X25519", () => {
 
   it("restarts the transcript and reaches the trace's secrets and Finished", () => {
     const h = retried();
-    const first = hexEncode(clientHello(input("example.com", []), null));
+    const sent = input("example.com", []);
+    const first = hexEncode(clientHello(sent, false, null, X25519, sent.publicKey));
     const cookie = "002c00070005aaaaaaaaaa";
     expect(hexEncode(h.retryHello).endsWith(cookie)).toBe(true);
     expect(hexEncode(h.retryHello).length).toBe(first.length + cookie.length);
@@ -294,11 +295,11 @@ describe("what a ServerHello must say", () => {
     );
     const other = `00330024` + `00170020${SHARE}`;
     expect(refusal(serverHello(random, "1301", VERSION + other))).toBe(
-      "47 TLS: the server's key share is not an X25519 key",
+      "47 TLS: the server's key share is not a X25519 key",
     );
     const short = `00330023` + `001d001f${SHARE.slice(0, 62)}`;
     expect(refusal(serverHello(random, "1301", VERSION + short))).toBe(
-      "47 TLS: the server's key share is not an X25519 key",
+      "47 TLS: the server's key share is not a X25519 key",
     );
   });
 
@@ -390,7 +391,8 @@ describe("a KeyUpdate", () => {
 
 describe("a generated ClientHello", () => {
   function hello(serverName: string): string {
-    return hexEncode(clientHello(input(serverName, []), null));
+    const sent = input(serverName, []);
+    return hexEncode(clientHello(sent, false, null, X25519, sent.publicKey));
   }
 
   it("says legacy_version 0x0303, its random and session id, and both suites", () => {
