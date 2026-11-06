@@ -10,6 +10,20 @@ thread_local! {
     static PASSES: RefCell<Option<Vec<(&'static str, Duration)>>> = const { RefCell::new(None) };
 }
 
+/// The rounds of the whole program checked by this process (`crate::check_rounds`).
+static ROUNDS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
+/// One more round of the whole program.
+pub(crate) fn note_round() {
+    ROUNDS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// How many times this process has checked a whole program so far (a new `Ctx` per round, each
+/// (a2) round, generator round or sharing retry included): what `--timings` reports.
+pub fn check_rounds() -> usize {
+    ROUNDS.load(std::sync::atomic::Ordering::Relaxed)
+}
+
 /// Start timing the passes of a check on this thread, when `VELT_SEMA_TIMINGS` is set.
 pub(crate) fn start() {
     let on = std::env::var_os("VELT_SEMA_TIMINGS").is_some();

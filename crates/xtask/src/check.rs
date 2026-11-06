@@ -201,6 +201,19 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
     if part.has(Part::Test) && plan.vscode {
         gate.vscode()?;
     }
+    if part.has(Part::Test) && plan.vir_identity {
+        let mut identity = Command::new("cargo");
+        identity.current_dir(root).args([
+            "test",
+            "--workspace",
+            "--test",
+            "eager_std_identity",
+            "--",
+            "--ignored",
+            "--nocapture",
+        ]);
+        gate.step("VIR identity (std up front, std on demand)", &mut identity)?;
+    }
     if part.has(Part::Test) && plan.velt_fmt {
         let velt = target_dir(root).join("debug").join(exe("velt"));
         let mut fmt = Command::new(&velt);

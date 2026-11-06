@@ -4,6 +4,7 @@
 mod assists;
 mod client;
 mod default_exports;
+mod demand;
 mod doc_comments;
 mod doc_surfaces;
 mod effects;

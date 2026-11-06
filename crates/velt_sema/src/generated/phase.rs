@@ -29,8 +29,21 @@ pub(crate) fn keys(
 ) -> Vec<Key> {
     let mut sigs: FxHashMap<DefId, String> = FxHashMap::default();
     let mut seen: FxHashMap<String, u32> = FxHashMap::default();
-    let mut out = vec![];
-    for (g, targs, _) in found {
+    // Instances of one fingerprint are numbered by what they are, not by the order the walk met
+    // them, which follows `DefId`s: that depends on when std modules were added (`std_load`).
+    let mut order: Vec<usize> = (0..found.len()).collect();
+    let rank: Vec<(String, Option<(u32, u32)>)> = (found.iter())
+        .map(|(g, targs, _)| {
+            let shown: Vec<String> = targs.iter().map(|t| cx.display(*t)).collect();
+            let sites = cx.gen.binding.walked.sites.get(&(*g, targs.clone()));
+            let first = sites.and_then(|s| s.iter().map(|s| (s.lo, s.hi)).min());
+            (shown.join(", "), first)
+        })
+        .collect();
+    order.sort_by(|a, b| rank[*a].cmp(&rank[*b]).then(a.cmp(b)));
+    let mut out: Vec<Option<Key>> = (0..found.len()).map(|_| None).collect();
+    for i in order {
+        let (g, targs, _) = &found[i];
         let sig = match sigs.get(g) {
             Some(s) => s.clone(),
             None => {
@@ -48,9 +61,9 @@ pub(crate) fn keys(
             n => format!("{fp}-{n}"),
         };
         *n += 1;
-        out.push((key, roots, tys));
+        out[i] = Some((key, roots, tys));
     }
-    out
+    out.into_iter().flatten().collect()
 }
 
 /// Collect, check and bind the generated modules of `cx.gen.input`, and, when the driver generates

@@ -12,10 +12,10 @@ use crate::ctx::Ctx;
 use crate::defs::key_member_name;
 use crate::hir::{AdtKind, DefId};
 
-pub(super) fn check(cx: &mut Ctx) {
+pub(super) fn check(cx: &mut Ctx, from: super::Added) {
     // The instance members of `extend` blocks, by the class they extend: name, definition.
     let mut extended: FxHashMap<DefId, Vec<(String, DefId)>> = FxHashMap::default();
-    for e in &cx.extensions {
+    for e in &cx.extensions[from.extensions..] {
         let Some((d, _)) = cx.class_of(e.target) else {
             continue;
         };
@@ -29,7 +29,7 @@ pub(super) fn check(cx: &mut Ctx) {
     if extended.is_empty() {
         return;
     }
-    let classes: Vec<DefId> = (0..cx.info.len() as u32)
+    let classes: Vec<DefId> = (from.defs..cx.info.len() as u32)
         .map(DefId)
         .filter(|d| {
             cx.adt(*d)

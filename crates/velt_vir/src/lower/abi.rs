@@ -275,7 +275,12 @@ impl<'c, 'h> FnLower<'c, 'h> {
         match caller {
             // `_L` never follows a mangled name or `_T` list, so instances stay distinct.
             Some(super::srcloc::ARG_LOC) => symbol.push_str("_LA"),
-            Some(at) => symbol.push_str(&format!("_L{}_{}_{}", at.file, at.line, at.col)),
+            // The file by the order lowering meets it, not its `FileId`: what else is loaded, and
+            // when (lazy-std.md "Loading on demand"), does not change the symbol.
+            Some(at) => {
+                let file = lw.cx.number_of(super::program::Numbered::File, at.file);
+                symbol.push_str(&format!("_L{}_{}_{}", file, at.line, at.col))
+            }
             None => {}
         }
         if frozen != 0 {
@@ -285,7 +290,8 @@ impl<'c, 'h> FnLower<'c, 'h> {
         for k in fns {
             // `_K` neither: the param, the closure and its instance.
             let c = lw.cx.instance_symbol("", &k.targs);
-            symbol.push_str(&format!("_K{}_{}_{:x}{c}", k.param, k.def.0, k.captures));
+            let def = lw.cx.number_of(super::program::Numbered::Def, k.def.0);
+            symbol.push_str(&format!("_K{}_{def}_{:x}{c}", k.param, k.captures));
         }
         lw.cx.declared_unique = unique;
         // A `never` function (a throw helper such as `corrupt(what): never`) returns only

@@ -18,7 +18,7 @@ impl Typed {
     fn new(src: &str) -> Typed {
         let l = load_src(src);
         let file = l.modules[l.root].file;
-        let analysis = check_for_ide(&l.modules, l.root);
+        let analysis = check_for_ide(&l.modules, l.root, None);
         let errors: Vec<_> = analysis
             .diagnostics()
             .iter()

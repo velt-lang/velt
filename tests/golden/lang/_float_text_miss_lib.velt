@@ -1,6 +1,6 @@
 // The other half of float_text_miss.velt: conversions of `number` values that nothing here marks
-// as floats (no float literal, `/`, `**`, `Math`, `as f64` or `f64` declaration), so this module
-// does not load std's float printer (docs/internals/design/lazy-std.md "Float operands").
+// as floats (no float literal, `/`, `**`, `Math`, `as f64` or `f64` declaration): only their types
+// say that they may hold one.
 
 /** `v=` and `x`'s text. */
 export function show(x: number): string {

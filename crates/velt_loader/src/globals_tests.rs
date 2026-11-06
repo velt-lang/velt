@@ -159,49 +159,6 @@ fn a_program_that_names_no_json_loads_no_json_modules() {
     assert!(json_modules(csv).contains(&"std/prelude/json/json".to_string()));
 }
 
-/// Std's integer printing (velt/lang/number/integer) comes with the prelude's hooks
-/// (velt/lang/hooks/number_text, #2197): lowering converts every integer to text through it. Its
-/// float printing (velt/lang/number/format) is loaded only for a program that may convert a float
-/// to text; hello world, and a program that prints only integers, parse none of it.
-#[test]
-fn a_program_that_prints_no_float_loads_no_float_printing() {
-    let loads = |main: &str, module: &str| {
-        std_modules(main, &["std/lang/hooks/number_", "std/lang/number/"])
-            .contains(&module.to_string())
-    };
-    let (integers, floats) = ("std/lang/number/integer", "std/lang/number/format");
-    // Integers, and numbers nothing marks as floats (std's float printer stays out: such a
-    // float would take the runtime's printer).
-    for main in [
-        "console.log(\"hello, world\");\n",
-        "const n = 7;\nconsole.log(n, n + 1);\n",
-        "const n = 7;\nconsole.log(`n=${n}`);\n",
-        "const n = 7;\nconsole.log(String(n));\n",
-        "const n = 7;\nconsole.log(n.toString());\n",
-        "const n = 7;\nconsole.log(\"n=\" + n);\n",
-        "let s = \"\";\ns += `${1}`;\nconsole.log(s);\n",
-        "class R {\n  score: f64 = 0.5;\n}\nfor (let i = 0; i < 3; i++) {\n  console.log(`${i}`, new R().score);\n}\n",
-        "function f(x: number): string {\n  return `${x}`;\n}\nconsole.log(f(1.5));\n",
-    ] {
-        assert!(loads(main, integers) && !loads(main, floats), "{main}");
-    }
-    // An operand that may be a float (docs/internals/design/lazy-std.md "Float operands").
-    for main in [
-        "console.log(`${1.5}`);\n",
-        "const n = 7;\nconsole.log(`${n / 2}`);\n",
-        "const n = 7;\nconsole.log(`${n ** 0.5}`);\n",
-        "console.log(String(Math.sqrt(2)));\n",
-        "const n = 7;\nconsole.log((n as f64).toString());\n",
-        "const x: f64 = 1;\nconsole.log(`x=${x}`);\n",
-        "const y = 3 / 4;\nconsole.log(\"y=\" + y);\n",
-        "function f(x: f64): string {\n  return `${x}`;\n}\nconsole.log(f(1));\n",
-        "const xs = [1, 2.5];\nfor (const x of xs) {\n  console.log(`${x}`);\n}\n",
-        "const h: f16 = 1;\nconsole.log(`h=${h}`);\n",
-    ] {
-        assert!(loads(main, floats), "{main}");
-    }
-}
-
 /// `expect`'s pattern matchers take a `Pattern` (std/text/regex/pattern), so a test file compiles the
 /// regex engine only when it has a regex (#1889).
 #[test]

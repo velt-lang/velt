@@ -69,6 +69,9 @@ pub struct LoadedProgram {
     pub modules: Vec<SourceModule>,
     /// Index of the document's module in `modules`.
     pub root: usize,
+    /// What [`ProgramLoader::load_more`] goes on from; `None`: the load took everything the check
+    /// may need, and nothing more is asked of it.
+    pub more: Option<Box<dyn std::any::Any + Send>>,
 }
 
 /// Loads a document and everything it imports, like `velt build` would.
@@ -83,6 +86,26 @@ pub trait ProgramLoader: Send + Sync {
         sm: &mut SourceMap,
         diags: &mut Diagnostics,
     ) -> Result<LoadedProgram, String>;
+
+    /// The std modules `demanded` (canonical paths) that the check of the document at `root` found
+    /// it needs, and what they import that the load has not loaded yet: what `velt check` does in
+    /// the middle of its check, so that the editor and the command line run one demand set
+    /// (`velt_sema::std_load`). `state` is [`LoadedProgram::more`] of the load, `base` its
+    /// modules. The default loads nothing, for a loader that takes everything up front.
+    #[allow(clippy::too_many_arguments)]
+    fn load_more(
+        &self,
+        root: &Path,
+        overlay: &HashMap<PathBuf, String>,
+        state: &mut (dyn std::any::Any + Send),
+        base: &[SourceModule],
+        demanded: &[String],
+        sm: &mut SourceMap,
+        diags: &mut Diagnostics,
+    ) -> Option<velt_sema::StdBatch> {
+        let _ = (root, overlay, state, base, demanded, sm, diags);
+        None
+    }
 
     /// The modules a file at `from` can import by a non-relative specifier: the standard
     /// library's public modules (`velt/fs`) and the modules of the dependencies of the package

@@ -15,7 +15,7 @@ impl Ctx<'_> {
             return;
         }
         for &d in fns {
-            if d.0 as usize >= self.collected_defs {
+            if !self.collected(d) {
                 continue;
             }
             let Some(t) = self.fn_info(d).throws else {
@@ -48,7 +48,7 @@ impl Ctx<'_> {
             let crate::defs::ThrowSrc::Call(d, ..) = s else {
                 continue;
             };
-            if d.0 as usize >= self.collected_defs || seen.contains(&d) {
+            if !self.collected(d) || seen.contains(&d) {
                 continue;
             }
             seen.push(d);
@@ -106,7 +106,7 @@ impl Ctx<'_> {
     /// Keep `t`, what slot `slot` of `iface` throws in the final inference, for the next check
     /// (see [`FnTypeSeeds::slots`]); true when the program is checked again for it.
     pub(crate) fn record_slot_hint(&mut self, iface: DefId, slot: u32, t: TyId) -> bool {
-        if self.fn_sites.last || iface.0 as usize >= self.collected_defs {
+        if self.fn_sites.last || !self.collected(iface) {
             return false;
         }
         let ms: Option<Vec<Portable>> = (self.error_members(t).into_iter())

@@ -7,9 +7,11 @@ use velt_common::{Diagnostic, Diagnostics, Span};
 use crate::defs::{
     AdtInfo, AliasInfo, DefInfo, EnumInfo, Extension, FnInfo, GlobalInfo, IfaceInfo,
 };
-use crate::hir::{AdtKind, Def, DefId, ImplDef, LocalId, TyId, TyKind};
+use crate::hir::{Def, DefId, ImplDef, LocalId, TyId};
 use crate::types::Types;
 use crate::SourceModule;
+
+mod classes;
 
 /// A name visible at module level.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -443,6 +445,14 @@ pub(crate) struct Ctx<'m> {
     /// For each module, the module each of its import specifiers resolved to
     /// (`exports::import_target`).
     pub import_targets: Vec<FxHashMap<&'m str, usize>>,
+    /// The driver's load callback and what it served in this check (`std_load`).
+    pub loads: Option<crate::std_load::Loads<'m>>,
+    /// How many of those batches this `Ctx` holds.
+    pub loads_added: usize,
+    /// How many instances of generic recursive unions have a definition (`recursive_unions`).
+    pub recursive_union_instances: usize,
+    /// The ranges of definitions added with them, which count as collected (`Ctx::collected`).
+    pub added_defs: Vec<(u32, u32)>,
 }
 
 impl<'m> Ctx<'m> {
@@ -453,6 +463,10 @@ impl<'m> Ctx<'m> {
             gen: Default::default(),
             export_memo: Default::default(),
             import_targets: crate::collect::exports::import_targets(modules),
+            loads: None,
+            loads_added: 0,
+            recursive_union_instances: 0,
+            added_defs: vec![],
             ty: Types::new(),
             defs: vec![],
             info: vec![],
@@ -729,42 +743,6 @@ impl<'m> Ctx<'m> {
             DefInfo::Global(g) => Some(g),
             _ => None,
         }
-    }
-
-    /// Is `t` a class instance type? Returns (class def, type args).
-    pub fn class_of(&self, t: TyId) -> Option<(DefId, Vec<TyId>)> {
-        match self.ty.kind(t) {
-            TyKind::Adt(d, args) if self.adt(*d).is_some_and(|a| a.kind == AdtKind::Class) => {
-                Some((*d, args.clone()))
-            }
-            _ => None,
-        }
-    }
-
-    /// Base class type of class instance type `t` (with `t`'s type args substituted).
-    pub fn base_of(&mut self, t: TyId) -> Option<TyId> {
-        let (d, args) = self.class_of(t)?;
-        let base = self.adt(d)?.base?;
-        Some(self.subst(base, &args))
-    }
-
-    /// Is class `sub` class `sup` or one of its (transitive) subclasses?
-    pub fn class_extends(&self, sub: DefId, sup: DefId) -> bool {
-        let mut cur = Some(sub);
-        for _ in 0..64 {
-            match cur {
-                Some(d) if d == sup => return true,
-                Some(d) => {
-                    cur = self
-                        .adt(d)
-                        .and_then(|a| a.base)
-                        .and_then(|b| self.class_of(b))
-                        .map(|(d, _)| d)
-                }
-                None => return false,
-            }
-        }
-        false
     }
 
     /// A string or `string | null`: a value whose copy is a refcount increment at most, so moves

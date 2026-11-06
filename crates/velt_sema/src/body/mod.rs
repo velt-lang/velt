@@ -33,6 +33,7 @@
 //!   `Lit(true)`. **`do body while (c)`** → see the hir.rs header (two forms).
 //! - **Ternary** → `ExprKind::If`. Statement `if` without braces is a one-statement block.
 
+mod added_bodies;
 mod arrow_scans;
 mod assign_ends;
 mod assign_narrow;
@@ -109,6 +110,7 @@ use crate::defs::{Bound, FnKind, ThrowSrc};
 use crate::hir::{self, DefId, LocalDef, LocalId, TyId, UseMode};
 use crate::resolve::TyEnv;
 
+pub(crate) use added_bodies::check_added;
 pub(crate) use defaults::param_defaults;
 pub(crate) use driver::{
     check_bodies, ensure_body, ensure_global, field_defaults, holds_promise_by_value, printable,

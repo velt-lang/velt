@@ -17,8 +17,17 @@ thread_local! {
     pub(super) static PRESENT: Cell<(ConstructSet, usize)> = const { Cell::new((0, 0)) };
     /// Work the set out in full, as a debug compiler outside these tests does.
     pub(super) static EXACT: Cell<bool> = const { Cell::new(false) };
+    /// Have [`finish`] demand this std module, as no program does yet.
+    static LATE_DEMAND: Cell<Option<&'static str>> = const { Cell::new(None) };
     /// The names of the functions live when the last check asked for the demand set.
     static NAMES: RefCell<Vec<String>> = const { RefCell::new(vec![]) };
+}
+
+/// In [`finish`], what its tests ask of it.
+pub(super) fn note_finish(cx: &mut crate::ctx::Ctx) {
+    if let Some(path) = LATE_DEMAND.get() {
+        cx.demand_std(path);
+    }
 }
 
 /// What the live set holds where a check asks for the demand set.
@@ -54,7 +63,7 @@ fn checked(src: &str, exact: bool) -> ((ConstructSet, usize), Vec<String>) {
                 EXACT.set(exact);
                 let opts = CheckOptions::default();
                 let budget = SEMA_STACK_BUDGET;
-                let (out, _) = crate::check_timed(modules, root, opts, &[], None, budget);
+                let (out, _) = crate::check_timed(modules, root, opts, &[], None, None, budget);
                 let diags = out.1;
                 assert!(
                     !diags.iter().any(|d| d.is_error()),
@@ -190,4 +199,38 @@ fn what_sema_makes_after_the_bodies_are_checked_is_live_before_ownership() {
     for name in ["<any as () => string>", "R.<toString>"] {
         assert!(names.iter().any(|n| n == name), "no {name}");
     }
+}
+
+/// The diagnostics of a check of `src`, on a thread with sema's stack.
+fn check_diags(src: &str, set: impl Fn() + Send + Sync) -> Vec<String> {
+    let l = programs::load_src(src);
+    let (modules, root) = (&l.modules, l.root);
+    std::thread::scope(|s| {
+        std::thread::Builder::new()
+            .stack_size(crate::SEMA_STACK_BUDGET)
+            .spawn_scoped(s, || {
+                set();
+                let opts = CheckOptions::default();
+                let budget = SEMA_STACK_BUDGET;
+                let (out, _) = crate::check_timed(modules, root, opts, &[], None, None, budget);
+                out.1.iter().map(|d| d.message.clone()).collect()
+            })
+            .unwrap()
+            .join()
+            .unwrap()
+    })
+}
+
+#[test]
+fn a_module_demanded_after_the_passes_is_an_internal_error() {
+    let src = "function main() {\n  const n: i64 = 7;\n  console.log(`${n}`);\n}\n";
+    let late = check_diags(src, || {
+        EXACT.set(true);
+        LATE_DEMAND.set(Some("std/lang/hooks/no_such_module"));
+    });
+    assert!(
+        late.iter()
+            .any(|m| m.starts_with("ICE: std module `std/lang/hooks/no_such_module`")),
+        "{late:?}"
+    );
 }

@@ -40,6 +40,17 @@ impl Session {
                 ));
             }
         }
+        // Nothing loaded (a stamp said the build is unchanged): nothing to say about it.
+        if !self.std_files.is_empty() {
+            let std_lines: usize = (self.std_files.iter())
+                .map(|f| self.sm.get(*f).src.lines().count())
+                .sum();
+            s.push_str(&format!("velt: {std_lines} std lines loaded\n"));
+            s.push_str(&format!(
+                "velt: {} sema rounds\n",
+                velt_sema::check_rounds()
+            ));
+        }
         s
     }
 }

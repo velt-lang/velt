@@ -12,7 +12,7 @@ use velt_vir::vir;
 
 use crate::backend::Backend;
 use crate::cli::Emit;
-use velt_loader::{self as loader, LoadOptions};
+use velt_loader as loader;
 
 mod cpu_check;
 mod host_modules;
@@ -21,6 +21,9 @@ mod output;
 pub(crate) mod outside;
 mod pipeline;
 mod recover;
+mod std_load;
+use std_load::load_options;
+pub(crate) use std_load::StdLoad;
 pub(crate) mod stamp;
 mod std_cache;
 mod timings;
@@ -169,6 +172,8 @@ pub enum BuildError {
 /// State of one compiler invocation: sources, accumulated diagnostics (errors and warnings), timings.
 #[derive(Default)]
 pub struct Session {
+    /// The files of the std modules the program loaded, those loaded during the check included.
+    pub std_files: Vec<velt_common::FileId>,
     /// All loaded source files.
     pub sm: SourceMap,
     /// Diagnostics from every stage so far.
@@ -271,8 +276,8 @@ fn check_program(
     opts: &BuildOptions,
     scope: &CheckScope,
 ) -> Result<hir::Program, BuildError> {
-    let loaded = load_stage(sess, opts, scope)?;
-    sema_stage(sess, opts, scope, &loaded)
+    let mut loaded = load_stage(sess, opts, scope)?;
+    sema_stage(sess, opts, scope, &mut loaded)
 }
 
 /// Load and parse the program; stops if that reported errors.
@@ -293,24 +298,7 @@ fn load_modules(
     scope: &CheckScope,
 ) -> Result<loader::Loaded, BuildError> {
     let t = Instant::now();
-    let load = LoadOptions {
-        std_root: loader::std_root(),
-        packages: opts
-            .packages
-            .as_ref()
-            .map(|g| g as &dyn loader::PackageResolver),
-        root_source: opts.root_source.clone(),
-        test_harness: opts.test_harness,
-        overlay: None,
-        // A source generator host for std's generators sits in the std root and imports their
-        // internal files: it is std code (docs/internals/design/source-generators.md §5).
-        std_root_as_std: sess.generator_build,
-        target: Some(opts.target()),
-        host_condition: opts.host.as_ref().map(|h| h.config.condition.clone()),
-        check_variants: opts.check_variants,
-        extra_roots: &scope.extra_roots,
-        std_ast_cache: crate::build_cache::std_ast_cache(),
-    };
+    let load = load_options(sess.generator_build, opts, scope);
     let loaded = loader::load_program(&mut sess.sm, &opts.input, load, &mut sess.diagnostics)
         .map_err(BuildError::Failed)?;
     sess.record("parse", t);
@@ -322,7 +310,7 @@ fn sema_stage(
     sess: &mut Session,
     opts: &BuildOptions,
     scope: &CheckScope,
-    loaded: &loader::Loaded,
+    loaded: &mut loader::Loaded,
 ) -> Result<hir::Program, BuildError> {
     let t = Instant::now();
     let sema_opts = velt_sema::CheckOptions {
@@ -331,7 +319,25 @@ fn sema_stage(
     };
     let packages = opts.packages.as_ref();
     sess.no_generators |= opts.no_generators;
-    let mut hir = crate::generate::check(sess, &loaded.modules, loaded.root, sema_opts, packages);
+    let demands = !scope.eager_std && loader::demand_std_on();
+    let generator_build = sess.generator_build;
+    let mut more = demands.then(|| {
+        StdLoad::new(
+            (&mut loaded.state, &loaded.modules),
+            generator_build,
+            opts,
+            scope,
+        )
+    });
+    let mut hir = crate::generate::check(
+        sess,
+        &loaded.modules,
+        loaded.root,
+        sema_opts,
+        packages,
+        more.as_mut(),
+    );
+    sess.std_files = StdLoad::std_files(more, &loaded.modules);
     sess.native = crate::native::check_trust(
         &loaded.modules,
         &sess.sm,
@@ -341,12 +347,7 @@ fn sema_stage(
     );
     if let Some(hir) = &mut hir {
         let std_root = loader::std_root();
-        let std_files = loaded
-            .modules
-            .iter()
-            .filter(|m| m.is_std)
-            .map(|m| m.file)
-            .collect();
+        let std_files = sess.std_files.iter().copied().collect();
         sess.c_constants = crate::native::read_c_constants(
             hir,
             &sess.sm,
@@ -564,8 +565,8 @@ pub fn check_for_lint(
     scope: &CheckScope,
 ) -> Result<(loader::Loaded, Result<(), BuildError>), BuildError> {
     on_pipeline_thread(|| {
-        let loaded = load_stage(sess, opts, scope)?;
-        let checked = sema_stage(sess, opts, scope, &loaded).map(drop);
+        let mut loaded = load_stage(sess, opts, scope)?;
+        let checked = sema_stage(sess, opts, scope, &mut loaded).map(drop);
         Ok((loaded, checked))
     })
 }

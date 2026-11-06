@@ -49,13 +49,10 @@ impl FnLower<'_, '_> {
             }
         };
         let id = word(self, SLOT_GENERIC_TYPE, Ty::U64);
+        let key = self.cx.number_of(super::program::Numbered::Type, ty.0);
         let same = self.rvalue_temp(
             Ty::Bool,
-            Rvalue::Binary(
-                BinOp::Eq,
-                Operand::Copy(id),
-                cint(ty.0 as i128 + 1, Ty::U64),
-            ),
+            Rvalue::Binary(BinOp::Eq, Operand::Copy(id), cint(key as i128, Ty::U64)),
         );
         self.branch(same, yes, no);
         self.switch_to(yes);

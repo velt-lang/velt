@@ -9,11 +9,11 @@ use crate::defs::RetSource;
 use crate::hir::ImplDef;
 use crate::known::COMPARE_TO;
 
-pub(super) fn extension_impls(cx: &mut Ctx) {
+pub(super) fn extension_impls(cx: &mut Ctx, from: usize) {
     let Some(iface) = cx.comparable_iface() else {
         return;
     };
-    for i in 0..cx.extensions.len() {
+    for i in from..cx.extensions.len() {
         let ext = &cx.extensions[i];
         let Some(m) = ext.methods.get(COMPARE_TO).copied() else {
             continue;

@@ -401,7 +401,7 @@ const RECORD_HOOKS: [&str; 2] = [
 
 #[test]
 fn the_record_hooks_are_checked_only_for_a_program_that_may_convert_to_a_record() {
-    let load = "import \"velt/prelude/global/record_any\";\n";
+    let load = "";
     // A record, and no `any` in the program's code: nothing converts to it.
     let p = ok_src(&format!(
         "{load}function main() {{\n  const r: Record<string, number> = {{ a: 1 }};\n  console.log(r.a);\n}}\n"
@@ -470,22 +470,81 @@ fn number_printing_is_checked_once_the_program_prints_a_number() {
     for f in [number_hook, float_hook, float_body] {
         assert!(!checked(&ints, f), "{f} is checked for an integer");
     }
-    // A float through a `number` parameter, which nothing in the source marks as one: the float
-    // printer is not loaded (velt/lang/hooks/number_float), and `numberPush` prints it.
+    // A float through a `number` parameter, which nothing in the source marks as one: its type
+    // says that it may hold one, and the float printer is checked.
     let unmarked = ok_src(
         "function show(x: number): string {\n  return `x=${x}`;\n}\nfunction main() {\n  console.log(show(7));\n}\n",
     );
-    for f in [int_hook, int_body, number_hook] {
+    for f in all {
         assert!(checked(&unmarked, f), "{f} is not checked");
-    }
-    for f in [float_hook, float_body] {
-        assert!(
-            !checked(&unmarked, f),
-            "{f} is checked without a float operand"
-        );
     }
     let floats = ok_src("function main() {\n  const x = 0.5;\n  console.log(`x=${x}`);\n}\n");
     for f in all {
         assert!(checked(&floats, f), "{f} is not checked");
     }
+}
+
+#[test]
+fn a_value_that_cannot_hold_a_float_does_not_check_the_float_printer() {
+    let float_hook = "std/lang/hooks/number_float::floatPush";
+    let checked = |p: &Program| {
+        p.defs
+            .iter()
+            .any(|d| matches!(d, Def::Fn(x) if x.name == float_hook))
+            && !unchecked(p).contains(&float_hook.to_string())
+    };
+    // Declarations, and the type of the `v` converted.
+    let cases = |decls: &str, ty: &str| {
+        let src = format!(
+            "{decls}\nfunction text(v: {ty}): string {{\n  return `v=${{v}}`;\n}}\nfunction main() {{}}\n"
+        );
+        ok_src(&src)
+    };
+    let enums = "enum Dir { Up = \"UP\", Down = \"DOWN\" }\nenum Plain { A, B }\ntype Nest = string | Nest[];\nclass Shape { w: number = 1.5; }";
+    let mut wrong = vec![];
+    for ty in [
+        "string",
+        "string | null",
+        "string | undefined",
+        "string | boolean",
+        "string | i64",
+        "string[]",
+        "(string | null)[]",
+        "string[][]",
+        "[string, i64]",
+        "[string, boolean] | null",
+        "\"a\" | \"b\"",
+        "Dir",
+        "Dir | null",
+        "Dir[]",
+        "Plain",
+        "Nest",
+    ] {
+        if checked(&cases(enums, ty)) {
+            wrong.push(format!("checked for `{ty}`"));
+        }
+    }
+    for ty in [
+        "number",
+        "f32",
+        "number | null",
+        "string | number",
+        "number[]",
+        "(string | number)[]",
+        "[string, number]",
+        "[string, number] | null",
+        "Shape",
+        "Shape | null",
+        "Shape[]",
+    ] {
+        if !checked(&cases(enums, ty)) {
+            wrong.push(format!("not checked for `{ty}`"));
+        }
+    }
+    assert!(wrong.is_empty(), "the float printer is {wrong:?}");
+    // A type parameter may be instantiated with a float.
+    let p = ok_src(
+        "function text<T>(v: T): string {\n  return `v=${v}`;\n}\nfunction main() {\n  console.log(text(\"a\"));\n}\n",
+    );
+    assert!(checked(&p), "the float printer is not checked for `T`");
 }

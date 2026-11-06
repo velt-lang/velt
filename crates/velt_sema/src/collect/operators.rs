@@ -34,9 +34,9 @@ struct Owner {
     extend: bool,
 }
 
-pub(super) fn check(cx: &mut Ctx) {
-    misplaced_keys(cx);
-    let owners = owners(cx);
+pub(super) fn check(cx: &mut Ctx, from: super::Added) {
+    misplaced_keys(cx, from.defs);
+    let owners = owners(cx, from);
     for o in &owners {
         check_owner(cx, o);
     }
@@ -44,9 +44,9 @@ pub(super) fn check(cx: &mut Ctx) {
 }
 
 /// Every class, struct and `extend` block that declares operator methods.
-fn owners(cx: &mut Ctx) -> Vec<Owner> {
+fn owners(cx: &mut Ctx, from: super::Added) -> Vec<Owner> {
     let mut owners = vec![];
-    for i in 0..cx.info.len() {
+    for i in from.defs as usize..cx.info.len() {
         let d = DefId(i as u32);
         let Some(a) = cx.adt(d) else {
             continue;
@@ -61,7 +61,7 @@ fn owners(cx: &mut Ctx) -> Vec<Owner> {
             });
         }
     }
-    for x in &cx.extensions {
+    for x in &cx.extensions[from.extensions..] {
         let ms = operator_methods(x.methods.iter());
         if !ms.is_empty() {
             owners.push(Owner {
@@ -77,9 +77,9 @@ fn owners(cx: &mut Ctx) -> Vec<Owner> {
 
 /// A setter or a field keyed by an operator's symbol (`set [Symbol.add](v)`,
 /// `[Symbol.mul]: number = 3`): never what the operator calls.
-fn misplaced_keys(cx: &mut Ctx) {
+fn misplaced_keys(cx: &mut Ctx, from: u32) {
     let mut errs = vec![];
-    for i in 0..cx.info.len() {
+    for i in from as usize..cx.info.len() {
         let Some(a) = cx.adt(DefId(i as u32)) else {
             continue;
         };

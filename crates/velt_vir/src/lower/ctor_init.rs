@@ -251,7 +251,9 @@ impl FnLower<'_, '_> {
         lw.init_fields(&Place::local(this), ty, ctor, false);
         lw.emit_return(None);
         lw.pop_scope();
-        let tag = err.map_or(String::new(), |e| format!("E{}_", e.0));
+        let tag = err.map_or(String::new(), |e| {
+            format!("E{}_", lw.cx.number_of(super::program::Numbered::Type, e.0))
+        });
         let sym = format!("_Ginit_{tag}{}", lw.cx.type_symbol(ty));
         lw.finish(sym, params, abi.ret)
     }

@@ -183,10 +183,7 @@ pub(crate) fn erase(
         *t = e(*t);
     }
     // The instances of generated functions, by the type arguments lowering sees.
-    *generated = std::mem::take(generated)
-        .into_iter()
-        .map(|((g, targs), body)| ((g, targs.into_iter().map(&mut e).collect()), body))
-        .collect();
+    *generated = erase_instances(std::mem::take(generated), &mut e);
     type_level.reduced = std::mem::take(&mut type_level.reduced)
         .into_iter()
         .map(|(k, v)| (e(k), e(v)))
@@ -214,6 +211,21 @@ fn unique_names(named: Vec<(TyId, String)>) -> HashMap<TyId, String> {
             .or_insert(Some(short));
     }
     out.into_iter().filter_map(|(t, n)| Some((t, n?))).collect()
+}
+
+/// The instances of generated functions under erased type arguments. Instances that erase to one
+/// (`Record<string, any>` and `Record<string, unknown>`) have the same code: the first generated
+/// is kept, whatever the map's order, which depends on `TyId`s.
+fn erase_instances(
+    generated: crate::generated::bind::Bound,
+    mut e: impl FnMut(TyId) -> TyId,
+) -> crate::generated::bind::Bound {
+    let mut erased = crate::generated::bind::Bound::default();
+    for ((g, targs), body) in generated {
+        let kept = (erased.entry((g, targs.into_iter().map(&mut e).collect()))).or_insert(body);
+        *kept = (*kept).min(body);
+    }
+    erased
 }
 
 /// `t` with every readonly object type replaced by its twin, at any depth.
@@ -280,4 +292,27 @@ pub(crate) fn erase_ty(
     };
     cache.insert(t, r);
     r
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// Whichever instance the map's order gives last, the first generated stays: both orders of
+    /// the bodies are tried, since a map's order can't be chosen.
+    #[test]
+    fn instances_that_erase_to_one_keep_the_first_generated() {
+        let (g, any, unknown, plain) = (DefId(1), TyId(10), TyId(11), TyId(12));
+        let (first, later) = (DefId(100), DefId(200));
+        for (a, b) in [(first, later), (later, first)] {
+            let bound = crate::generated::bind::Bound::from_iter([
+                ((g, vec![any]), a),
+                ((g, vec![unknown]), b),
+            ]);
+            let erased =
+                erase_instances(bound, |t| if t == any || t == unknown { plain } else { t });
+            assert_eq!(erased.len(), 1);
+            assert_eq!(erased[&(g, vec![plain])], first);
+        }
+    }
 }

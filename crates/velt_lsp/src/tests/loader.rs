@@ -138,7 +138,11 @@ fn load(
         }
         next += 1;
     }
-    Ok(LoadedProgram { modules, root: 0 })
+    Ok(LoadedProgram {
+        modules,
+        root: 0,
+        more: None,
+    })
 }
 
 fn parse(

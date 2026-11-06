@@ -17,8 +17,8 @@ use crate::ctx::Ctx;
 use crate::defs::{DefInfo, FnSource};
 use crate::hir::{AdtKind, DefId, TyKind};
 
-pub(crate) fn copy_statics(cx: &mut Ctx) {
-    let classes: Vec<DefId> = (0..cx.info.len() as u32)
+pub(crate) fn copy_statics(cx: &mut Ctx, from: u32) {
+    let classes: Vec<DefId> = (from..cx.info.len() as u32)
         .map(DefId)
         .filter(|&d| cx.adt(d).is_some_and(|a| a.kind == AdtKind::Class))
         .collect();

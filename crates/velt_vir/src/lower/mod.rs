@@ -449,6 +449,8 @@ struct Cx<'h> {
     symbol_records: symbols::SymbolRecords,
     /// Types whose values carry a reference count in this pass (boxing/).
     boxing: boxing::Boxing,
+    /// What [`Cx::number_of`] numbered so far.
+    numbered: rustc_hash::FxHashMap<(program::Numbered, u32), u32>,
     /// Sharing facts observed in this pass (boxing/).
     facts: boxing::Facts,
     /// Generic instances shared by shape in this pass (shape/).

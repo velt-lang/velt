@@ -1713,6 +1713,7 @@ dependencies = [
  "velt_fmt",
  "velt_http",
  "velt_lint",
+ "velt_loader",
  "velt_registry",
  "velt_sema",
  "velt_syntax",

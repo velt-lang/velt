@@ -20,8 +20,8 @@ use crate::ctx::Ctx;
 use crate::defs::{MethodRef, RetSource};
 use crate::hir::{AdtKind, DefId, TyId};
 
-pub(super) fn check_classes(cx: &mut Ctx) {
-    let adts: Vec<DefId> = (0..cx.info.len() as u32)
+pub(super) fn check_classes(cx: &mut Ctx, from: u32) {
+    let adts: Vec<DefId> = (from..cx.info.len() as u32)
         .map(DefId)
         .filter(|d| cx.adt(*d).is_some_and(|a| a.decl.is_some()))
         .collect();

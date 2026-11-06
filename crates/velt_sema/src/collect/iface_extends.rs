@@ -16,8 +16,8 @@ use crate::ctx::Ctx;
 use crate::defs::{Bound, FieldInfo, IfaceMethod};
 use crate::hir::{DefId, TyId};
 
-pub(super) fn flatten_all(cx: &mut Ctx) {
-    let ifaces: Vec<DefId> = (0..cx.info.len() as u32)
+pub(super) fn flatten_from(cx: &mut Ctx, from: u32) {
+    let ifaces: Vec<DefId> = (from..cx.info.len() as u32)
         .map(DefId)
         .filter(|d| cx.iface(*d).is_some_and(|i| i.decl.is_some()))
         .collect();
@@ -25,7 +25,7 @@ pub(super) fn flatten_all(cx: &mut Ctx) {
     for &d in &ifaces {
         flatten(cx, d, &mut done, &mut vec![]);
     }
-    inherit_implements(cx);
+    inherit_implements(cx, from);
 }
 
 /// Flatten `d` after its parents (depth-first; `stack` detects cycles).
@@ -231,8 +231,8 @@ fn forwarder(
 }
 
 /// A type implementing `B` implements every ancestor of `B` too.
-fn inherit_implements(cx: &mut Ctx) {
-    let adts: Vec<DefId> = (0..cx.info.len() as u32)
+fn inherit_implements(cx: &mut Ctx, from: u32) {
+    let adts: Vec<DefId> = (from..cx.info.len() as u32)
         .map(DefId)
         .filter(|d| cx.adt(*d).is_some_and(|a| !a.implements.is_empty()))
         .collect();

@@ -257,7 +257,7 @@ pub fn lint_any(path: &Path, src: &str) -> Vec<Finding> {
 /// The findings, or the check's errors.
 fn lint_checked(path: &Path, src: &str) -> Result<Vec<Finding>, String> {
     let loaded = load(path, src);
-    let analysis = velt_sema::ide::check_for_ide(&loaded.modules, loaded.root);
+    let analysis = velt_sema::ide::check_for_ide(&loaded.modules, loaded.root, None);
     let root_file = loaded.modules[loaded.root].file;
     let errors: Vec<String> = analysis
         .diagnostics()

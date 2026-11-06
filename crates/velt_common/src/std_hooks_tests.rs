@@ -60,3 +60,10 @@ fn every_hook_is_in_lang() {
     assert!(!is_lowered(f64_to_string));
     assert!(find("std/lang/hooks/number::nothing").is_none());
 }
+
+#[test]
+fn each_module_loaded_on_demand_holds_a_hook() {
+    for m in ON_DEMAND_MODULES {
+        assert!(HOOKS.iter().any(|h| h.module() == *m), "{m}");
+    }
+}

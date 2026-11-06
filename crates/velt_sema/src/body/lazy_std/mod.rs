@@ -28,7 +28,7 @@
 //!
 //! A user module's code is always checked, and so is a std module it imports: `velt check`
 //! reports everything in what a program imports, except the prelude's unreached free functions,
-//! statics and extension methods. All of std is checked with laziness off (`VELT_EAGER_STD=1`),
+//! statics and extension methods. All of std is checked with laziness off (`VELT_CHECK_ALL_STD=1`),
 //! as veltc's `all_of_std_checks_without_diagnostics` does for bench/compile/all_std.velt. The
 //! editor's analysis checks everything.
 
@@ -40,6 +40,9 @@ use crate::hir::{self, Callee, DefId, ExprKind as E, TyId, TyKind};
 
 mod live;
 mod number_text;
+mod record_conversions;
+
+use record_conversions::{holds_string_record, note_user_conversions};
 
 pub(crate) use live::{demanded as hooks_demanded, finish as finish_live, live_defs};
 
@@ -166,8 +169,15 @@ enum Mode {
 
 /// What is checked on demand in one check.
 pub(crate) struct Lazy {
-    /// Off for the editor's analysis (`ide`), which checks everything.
+    /// Off for the editor's analysis (`ide`), which checks everything, unless it has a load
+    /// callback: then `check_all`.
     pub on: bool,
+    /// Check every body (the editor's analysis), and work out what is reached as if they were
+    /// deferred, for one demand set with `velt check` (`std_load`): [`deferred`] is false, while
+    /// [`defers`] tells what [`reach`] would check.
+    pub check_all: bool,
+    /// With `check_all`: the definitions [`reach`] would have checked.
+    reached: FxHashSet<DefId>,
     /// Per module: how it is checked (empty while off).
     modules: Vec<Mode>,
     /// The definitions [`reach`] has scanned.
@@ -205,10 +215,17 @@ pub(crate) struct Lazy {
 }
 
 impl Lazy {
-    /// On, unless `VELT_EAGER_STD` is set (to compare); the editor's analysis turns it off.
+    /// The passes after the bodies' check have run: no std module can be added any more.
+    pub(crate) fn finishing(&self) -> bool {
+        self.live.finishing
+    }
+
+    /// On, unless `VELT_CHECK_ALL_STD` is set; the editor's analysis turns it off.
     pub(crate) fn new() -> Lazy {
         Lazy {
-            on: std::env::var_os("VELT_EAGER_STD").is_none(),
+            on: std::env::var_os("VELT_CHECK_ALL_STD").is_none(),
+            check_all: false,
+            reached: FxHashSet::default(),
             modules: vec![],
             scanned: FxHashSet::default(),
             types: FxHashSet::default(),
@@ -226,8 +243,8 @@ impl Lazy {
         }
     }
 
-    /// A module added during the check (a generated one, `Ctx::add_module`): checked eagerly,
-    /// as any non-std module.
+    /// A generated module added during the check (`Ctx::add_module`): checked eagerly, as any
+    /// non-std module.
     pub(crate) fn add_module(&mut self) {
         if !self.modules.is_empty() {
             self.modules.push(Mode::Eager);
@@ -255,30 +272,52 @@ pub(crate) fn plan(cx: &mut Ctx) {
         direct.extend(m.jsx_runtime.as_deref());
     }
     cx.lazy.modules = (mods.iter().enumerate())
-        .map(|(i, m)| {
-            let lazy = m.is_std
-                && i != cx.root
-                && !direct.contains(m.path.as_str())
-                && !EAGER.iter().any(|p| m.path.starts_with(p))
-                && crate::module_scripts::script_fns(m).is_empty();
-            match lazy {
-                false => Mode::Eager,
-                true if HELPERS.iter().any(|p| m.path.starts_with(p)) => Mode::Helpers,
-                true => Mode::Lazy,
-            }
-        })
+        .map(|(i, m)| mode_of(m, i != cx.root && !direct.contains(m.path.as_str())))
         .collect();
-    cx.lazy.fn_deferred = (0..cx.info.len())
-        .map(|i| matches!(cx.info[i], DefInfo::Fn(_)).then(|| decide(cx, DefId(i as u32))))
-        .collect();
-    for i in 0..cx.info.len() {
+    plan_defs(cx, 0);
+}
+
+/// How module `m` is checked; `lazy`: the program does not ask for it whole.
+fn mode_of(m: &crate::SourceModule, lazy: bool) -> Mode {
+    let lazy = lazy
+        && m.is_std
+        && !EAGER.iter().any(|p| m.path.starts_with(p))
+        && crate::module_scripts::script_fns(m).is_empty();
+    match lazy {
+        false => Mode::Eager,
+        true if HELPERS.iter().any(|p| m.path.starts_with(p)) => Mode::Helpers,
+        true => Mode::Lazy,
+    }
+}
+
+/// [`plan`] for std modules `ms`, added during the check (`crate::std_load`), whose definitions
+/// start at `from`. No user module imports them (it would have loaded them).
+pub(crate) fn plan_added(cx: &mut Ctx, ms: &[usize], from: u32) {
+    if cx.lazy.modules.is_empty() {
+        return;
+    }
+    let modes: Vec<Mode> = ms.iter().map(|&m| mode_of(cx.modules[m], true)).collect();
+    // A generated module added meanwhile is one module more, eager.
+    cx.lazy.modules.resize(ms[0], Mode::Eager);
+    cx.lazy.modules.extend(modes);
+    plan_defs(cx, from);
+}
+
+/// What [`plan`] works out per definition, for those from `from` on.
+fn plan_defs(cx: &mut Ctx, from: u32) {
+    cx.lazy.fn_deferred.resize(from as usize, None);
+    for i in from as usize..cx.info.len() {
+        let known = matches!(cx.info[i], DefInfo::Fn(_)).then(|| decide(cx, DefId(i as u32)));
+        cx.lazy.fn_deferred.push(known);
+    }
+    for i in from as usize..cx.info.len() {
         let d = DefId(i as u32);
         if let DefInfo::Adt(a) = &cx.info[i] {
             if let Some(TyKind::Adt(base, _)) = a.base.map(|b| cx.ty.kind(b)) {
                 cx.lazy.subclasses.entry(*base).or_default().push(d);
             }
         }
-        if let (DefInfo::Fn(f), true) = (&cx.info[i], deferred(cx, d)) {
+        if let (DefInfo::Fn(f), true) = (&cx.info[i], defers(cx, d)) {
             let with_type = matches!(f.kind, FnKind::Method | FnKind::Ctor)
                 || LAZY_PRELUDE_STATICS.contains(&f.name.as_str());
             if let (Some(o), true) = (f.owner, with_type) {
@@ -290,6 +329,12 @@ pub(crate) fn plan(cx: &mut Ctx) {
 
 /// Is `d` a function or module constant checked only once checked code reaches it?
 pub(crate) fn deferred(cx: &Ctx, d: DefId) -> bool {
+    !cx.lazy.check_all && defers(cx, d)
+}
+
+/// [`deferred`], as far as [`reach`] is concerned: with `Lazy::check_all` the body is checked
+/// anyway, and [`reach`] works out as before whether it would have been.
+pub(super) fn defers(cx: &Ctx, d: DefId) -> bool {
     match cx.lazy.fn_deferred.get(d.0 as usize) {
         Some(Some(known)) => *known,
         _ => decide(cx, d),
@@ -359,7 +404,7 @@ fn impl_methods(cx: &Ctx, found: &mut Vec<DefId>) {
     for imp in &cx.impls {
         // Not a class's methods: those wait for the class to be used.
         let extension = |d: DefId| {
-            matches!(&cx.info[d.0 as usize], DefInfo::Fn(f) if f.owner.is_none()) && deferred(cx, d)
+            matches!(&cx.info[d.0 as usize], DefInfo::Fn(f) if f.owner.is_none()) && defers(cx, d)
         };
         found.extend(imp.methods.iter().copied().filter(|&d| extension(d)));
     }
@@ -379,30 +424,29 @@ pub(crate) fn reach(cx: &mut Ctx) {
     // found with the rest in the first round below.
     live::step(cx, &mut sc.found);
     for d in std::mem::take(&mut sc.found) {
-        if deferred(cx, d)
-            && matches!(&cx.info[d.0 as usize], DefInfo::Fn(f) if f.state == BodyState::Unchecked)
-        {
-            super::ensure_body(cx, d);
-        }
-    }
-    // Those of the definitions made since the last time (generated code checked later,
-    // `generated::phase`).
-    let from = std::mem::replace(&mut cx.lazy.defaults_scanned, cx.info.len());
-    for i in from..cx.info.len() {
-        let lazy_class = cx.lazy.methods.contains_key(&DefId(i as u32));
-        // A deferred function's parameter defaults are scanned with its body, once reached.
-        let deferred_fn = deferred(cx, DefId(i as u32));
-        match &mut cx.info[i] {
-            DefInfo::Fn(f) if !deferred_fn => {
-                for e in f.params.iter_mut().filter_map(|p| p.default.as_mut()) {
-                    scan_expr(e, &mut sc);
-                }
-            }
-            DefInfo::Adt(a) if !lazy_class => scan_defaults(a, &mut sc),
-            _ => {}
+        if defers(cx, d) {
+            check_found(cx, d);
         }
     }
     loop {
+        let defs_before = cx.info.len();
+        // Those of the definitions made since the last time (generated code checked later,
+        // `generated::phase`; std modules added below, `std_load`).
+        let from = std::mem::replace(&mut cx.lazy.defaults_scanned, cx.info.len());
+        for i in from..cx.info.len() {
+            let lazy_class = cx.lazy.methods.contains_key(&DefId(i as u32));
+            // A deferred function's parameter defaults are scanned with its body, once reached.
+            let deferred_fn = defers(cx, DefId(i as u32));
+            match &mut cx.info[i] {
+                DefInfo::Fn(f) if !deferred_fn => {
+                    for e in f.params.iter_mut().filter_map(|p| p.default.as_mut()) {
+                        scan_expr(e, &mut sc);
+                    }
+                }
+                DefInfo::Adt(a) if !lazy_class => scan_defaults(a, &mut sc),
+                _ => {}
+            }
+        }
         let used: Vec<DefId> = (cx.lazy.used.iter())
             .filter(|d| cx.lazy.methods.contains_key(d) && !cx.lazy.scanned.contains(d))
             .copied()
@@ -420,10 +464,12 @@ pub(crate) fn reach(cx: &mut Ctx) {
                 DefInfo::Global(g) => g.state == BodyState::Done,
                 _ => false,
             };
+            let deferred_fn = defers(cx, d);
+            // With `check_all`, what would not have been checked yet is not scanned yet.
+            let done = done && !(cx.lazy.check_all && deferred_fn && !cx.lazy.reached.contains(&d));
             if !done || !cx.lazy.scanned.insert(d) {
                 continue;
             }
-            let deferred_fn = deferred(cx, d);
             let module = match &cx.info[i] {
                 DefInfo::Fn(f) => f.module,
                 DefInfo::Global(g) => g.module,
@@ -478,48 +524,50 @@ pub(crate) fn reach(cx: &mut Ctx) {
             }
         }
         used_types(cx, std::mem::take(&mut sc.types), &mut sc.found);
-        // Loaded (std/prelude/global/record_any.velt) for a program that mentions `Record`.
-        let hooks: Vec<DefId> = match cx.lazy.record_hooks {
-            true => vec![],
-            false => RECORD_HOOKS
+        if !cx.lazy.record_hooks && record_hooks_needed(cx) {
+            cx.demand_std(velt_common::std_module!(lang_hooks_any_record));
+            let hooks: Vec<DefId> = RECORD_HOOKS
                 .iter()
                 .filter_map(|h| cx.prelude_fn(h))
-                .collect(),
-        };
-        if !hooks.is_empty() && record_hooks_needed(cx) {
-            cx.lazy.record_hooks = true;
-            sc.found.extend(hooks);
-            // They read the members of the object through `any` (std's own dynamic reads
-            // don't add the member slots, `FnCx::note_dyn_members`).
-            cx.note_dyn_members();
+                .collect();
+            if !hooks.is_empty() {
+                cx.lazy.record_hooks = true;
+                sc.found.extend(hooks);
+                // They read the members of the object through `any` (std's own dynamic reads
+                // don't add the member slots, `FnCx::note_dyn_members`).
+                cx.note_dyn_members();
+            }
         }
         impl_methods(cx, &mut sc.found);
         number_text::reach_hooks(cx, std::mem::take(&mut sc.texts), &mut sc.found);
         live::step(cx, &mut sc.found);
         let mut checked = false;
         for d in std::mem::take(&mut sc.found) {
-            if !deferred(cx, d) {
-                continue;
-            }
-            match &cx.info[d.0 as usize] {
-                DefInfo::Fn(f) if f.state == BodyState::Unchecked => {
-                    super::ensure_body(cx, d);
-                    checked = true;
-                }
-                DefInfo::Global(g) if g.state == BodyState::Unchecked => {
-                    super::ensure_global(cx, d);
-                    checked = true;
-                }
-                _ => {}
+            if defers(cx, d) {
+                checked |= check_found(cx, d);
             }
         }
         // A class first used just now has its field defaults still to scan.
         let pending = (cx.lazy.used.iter())
             .any(|d| cx.lazy.methods.contains_key(d) && !cx.lazy.scanned.contains(d));
-        if !checked && !pending {
+        // Modules added just now have their defaults and eager bodies still to scan.
+        if !checked && !pending && cx.info.len() == defs_before {
             break;
         }
     }
+}
+
+/// Check the deferred definition `d`, which [`reach`] found, unless it is: whether it did.
+fn check_found(cx: &mut Ctx, d: DefId) -> bool {
+    if cx.lazy.check_all {
+        return cx.lazy.reached.insert(d);
+    }
+    match &cx.info[d.0 as usize] {
+        DefInfo::Fn(f) if f.state == BodyState::Unchecked => super::ensure_body(cx, d),
+        DefInfo::Global(g) if g.state == BodyState::Unchecked => super::ensure_global(cx, d),
+        _ => return false,
+    }
+    true
 }
 
 /// Record the types `todo` and their parts as met; each class or struct met for the first time
@@ -565,65 +613,6 @@ fn used_types(cx: &mut Ctx, mut todo: Vec<TyId>, found: &mut Vec<DefId>) {
 /// them, whatever `any` values and records it has.
 fn record_hooks_needed(cx: &Ctx) -> bool {
     cx.lazy.record_conversion || (cx.lazy.generic_any && cx.lazy.user_record)
-}
-
-/// What one definition of a non-std module tells [`record_hooks_needed`]: the types in its
-/// code, its `AnyTo` targets and the `(value, any)` types of its `ToDyn`s.
-fn note_user_conversions(cx: &mut Ctx, types: &[TyId], to: &[TyId], into: &[(TyId, TyId)]) {
-    if !cx.lazy.user_record {
-        let mut seen = FxHashSet::default();
-        cx.lazy.user_record = types.iter().any(|&t| holds_string_record(cx, t, &mut seen));
-    }
-    let held: Vec<TyId> = (into.iter())
-        .filter(|(_, d)| cx.dynamic(*d).is_some())
-        .map(|(v, _)| *v)
-        .collect();
-    if !cx.lazy.generic_any {
-        cx.lazy.generic_any = to.iter().chain(&held).any(|&t| has_param(cx, t));
-    }
-    if !cx.lazy.record_conversion {
-        cx.lazy.record_conversion = held.iter().any(|&t| holds_record_inside(cx, t));
-    }
-}
-
-/// Does a value of type `t` held in an `any` have a member, element or value of a type holding a
-/// record with string keys, which a write through the `any` converts to? (A record of numbers
-/// put into an `any` does not.)
-fn holds_record_inside(cx: &Ctx, t: TyId) -> bool {
-    let mut seen = FxHashSet::default();
-    match cx.record_type_args(t) {
-        Some((k, v)) if k == cx.ty.str_ => holds_string_record(cx, v, &mut seen),
-        _ => holds_string_record(cx, t, &mut seen),
-    }
-}
-
-/// Does `t` mention a type parameter?
-fn has_param(cx: &Ctx, t: TyId) -> bool {
-    let kind = cx.ty.kind(t);
-    matches!(kind, TyKind::Param(_))
-        || (crate::types::children(kind).into_iter()).any(|c| has_param(cx, c))
-}
-
-/// Does `t` hold a record with string keys: itself, a part of it, or a field of a class or struct
-/// in it (the type an `any` converts to)?
-fn holds_string_record(cx: &Ctx, t: TyId, seen: &mut FxHashSet<TyId>) -> bool {
-    if !seen.insert(t) {
-        return false;
-    }
-    if cx.record_type_args(t).is_some_and(|(k, _)| k == cx.ty.str_) {
-        return true;
-    }
-    let kind = cx.ty.kind(t).clone();
-    if let TyKind::Adt(d, _) = kind {
-        let fields: Vec<TyId> = cx
-            .adt(d)
-            .map(|a| a.fields.iter().map(|f| f.ty).collect())
-            .unwrap_or_default();
-        if fields.into_iter().any(|f| holds_string_record(cx, f, seen)) {
-            return true;
-        }
-    }
-    (crate::types::children(&kind).into_iter()).any(|c| holds_string_record(cx, c, seen))
 }
 
 /// The field defaults and redefined initializers of class or struct `a`.

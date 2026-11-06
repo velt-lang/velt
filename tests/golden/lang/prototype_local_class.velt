@@ -1,0 +1,55 @@
+// Prototypes of local classes, class expressions and same-named classes, as in Node. Each class's
+// identity must not depend on how sema numbers definitions (#2161 step 3): the VIR is the same
+// whether std modules load up front or during the check.
+
+import { make as makeA, Same as SameA } from "./_prototype_local_class_a";
+import { make as makeB, Same as SameB } from "./_prototype_local_class_b";
+
+class Top {
+  v: number = 0;
+}
+
+function first(): boolean {
+  class L {
+    v: number = 1;
+  }
+  return Object.getPrototypeOf(new L()) === L.prototype;
+}
+
+// Another `L`, in another function.
+function second(): boolean {
+  class L {
+    v: number = 2;
+  }
+  class M {
+    v: number = 3;
+  }
+  console.log(Object.getPrototypeOf(new L()) === Object.getPrototypeOf(new M()));
+  return Object.getPrototypeOf(new L()) === L.prototype;
+}
+
+function expressions(): void {
+  const C = class {
+    v: number = 4;
+  };
+  const D = class {
+    v: number = 5;
+  };
+  console.log(Object.getPrototypeOf(new C()) === C.prototype);
+  console.log(Object.getPrototypeOf(new D()) === D.prototype);
+  console.log(Object.getPrototypeOf(new C()) === Object.getPrototypeOf(new D()));
+  console.log(Object.getPrototypeOf(new C()) === Top.prototype);
+  console.log(`${new C().v} ${new D().v}`);
+}
+
+function main(): void {
+  console.log(first());
+  console.log(second());
+  expressions();
+  console.log(Object.getPrototypeOf(new Top()) === Top.prototype);
+  // One name at one place in two modules: two classes.
+  console.log(SameA.prototype === SameB.prototype);
+  console.log(Object.getPrototypeOf(makeA()) === SameA.prototype);
+  console.log(Object.getPrototypeOf(makeB()) === SameB.prototype);
+  console.log(Object.getPrototypeOf(makeA()) === Object.getPrototypeOf(makeB()));
+}

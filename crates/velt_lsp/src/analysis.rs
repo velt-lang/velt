@@ -88,7 +88,11 @@ pub fn analyze(
         Ok(Err(msg)) => return standalone(path, overlay, msg),
         Err(_) => return standalone(path, overlay, "internal error while loading".into()),
     };
-    let LoadedProgram { modules, root } = loaded;
+    let LoadedProgram {
+        modules,
+        root,
+        more,
+    } = loaded;
     let loaded_cleanly = !diagnostics.iter().any(Diagnostic::is_error);
     let mut analysis = Analysis {
         sm,
@@ -100,7 +104,10 @@ pub fn analyze(
         lint: vec![],
         docs: Default::default(),
     };
-    run_sema(&mut analysis);
+    run_sema(
+        &mut analysis,
+        more.map(|state| (loader, path, overlay, state)),
+    );
     let linted = catch_unwind(AssertUnwindSafe(|| {
         crate::lint::findings(&analysis, path, overlay, ts_folders)
     }));
@@ -109,11 +116,44 @@ pub fn analyze(
     analysis
 }
 
-fn run_sema(analysis: &mut Analysis) {
+/// A loader that goes on during the check ([`ProgramLoader::load_more`]), with the document, the
+/// open files and what its load left.
+type MoreLoads<'a> = (
+    &'a dyn ProgramLoader,
+    &'a Path,
+    &'a HashMap<PathBuf, String>,
+    Box<dyn std::any::Any + Send>,
+);
+
+fn run_sema(analysis: &mut Analysis, more: Option<MoreLoads>) {
     let loaded_cleanly = analysis.loaded_cleanly;
+    let has_more = more.is_some();
+    let base = std::mem::take(&mut analysis.modules);
+    let shared = std::sync::Mutex::new((&mut analysis.sm, more, vec![], vec![]));
+    let serve = |demanded: &[String]| {
+        let mut guard = shared.lock().ok()?;
+        let (sm, more, added, diags) = &mut *guard;
+        let (loader, path, overlay, state) = more.as_mut()?;
+        let batch = loader.load_more(path, overlay, &mut **state, &base, demanded, sm, diags)?;
+        added.extend(batch.modules.iter().map(copy_module));
+        Some(batch)
+    };
+    let root = analysis.root;
     let checked = catch_unwind(AssertUnwindSafe(|| {
-        ide::check_for_ide(&analysis.modules, analysis.root)
+        let load: Option<&velt_sema::LoadFn> = has_more.then_some(&serve);
+        ide::check_for_ide(&base, root, load)
     }));
+    let (added, load_diags) = match shared.into_inner() {
+        Ok((_, _, added, diags)) => (added, diags),
+        Err(poisoned) => {
+            let (_, _, added, diags) = poisoned.into_inner();
+            (added, diags)
+        }
+    };
+    analysis.modules = base;
+    // The check's module indices count them, after the rest.
+    analysis.modules.extend(added);
+    analysis.diagnostics.extend::<Diagnostics>(load_diags);
     match checked {
         Ok(ide) => {
             if loaded_cleanly {
@@ -129,6 +169,18 @@ fn run_sema(analysis: &mut Analysis) {
             let msg = "internal compiler error in semantic analysis (please report it)";
             analysis.diagnostics.push(Diagnostic::error(msg, span));
         }
+    }
+}
+
+fn copy_module(m: &SourceModule) -> SourceModule {
+    SourceModule {
+        path: m.path.clone(),
+        is_std: m.is_std,
+        is_dependency: m.is_dependency,
+        file: m.file,
+        ast: m.ast.clone(),
+        imports: m.imports.clone(),
+        jsx_runtime: m.jsx_runtime.clone(),
     }
 }
 

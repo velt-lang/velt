@@ -5,7 +5,7 @@ editor tooling). Public items below are the contract; everything else in the mod
 
 ## Entry point
 ```rust
-pub fn check_for_ide(modules: &[SourceModule], root: usize) -> ide::Analysis
+pub fn check_for_ide(modules: &[SourceModule], root: usize, load: Option<&LoadFn>) -> ide::Analysis
 ```
 - Same inputs as `velt_sema::check` (the driver's loader output; the AST may come from a parser that
   recovered from syntax errors).
@@ -14,6 +14,8 @@ pub fn check_for_ide(modules: &[SourceModule], root: usize) -> ide::Analysis
   HIR is built. Never panics on user input (same guarantee as `check`).
 - While checking it records side tables (name → definition, expression → type, local scopes); the
   returned `Analysis` owns everything, so it does not borrow `modules`.
+- `load`: with it, the std modules the program needs but did not load are added as in `velt check`
+  (`velt_sema::std_load`); with `None`, they stay out and their hooks are not checked.
 - Cost: one extra branch per hook when compiling (`check` records nothing); `check_for_ide` stores a
   few words per name use and per checked expression.
 

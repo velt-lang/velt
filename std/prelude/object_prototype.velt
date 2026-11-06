@@ -11,7 +11,7 @@ import { objectPrototypeKey } from "velt/lang/hooks/record";
  * string or JSON as Node does, and nothing else. Sema writes each one's texts.
  */
 export class ObjectPrototype {
-  // Which prototype this is (`"Object"`, `"Map"`, `"class#12"`).
+  // Which prototype this is (`"Object"`, `"Map"`, `"class#0:12:Point"`).
   private tag: string;
   // What `console.log` shows.
   private shown: string;

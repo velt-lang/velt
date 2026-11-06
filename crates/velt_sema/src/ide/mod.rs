@@ -67,27 +67,44 @@ pub struct Analysis {
 
 /// Check `modules` for an editor: like [`crate::check`], but errors never stop other items from
 /// being checked, `modules[root]` need not define `main`, and no HIR is built.
-pub fn check_for_ide(modules: &[SourceModule], root: usize) -> Analysis {
+///
+/// With `load` (`crate::LoadFn`), the std modules the program's code needs but the program did not
+/// load are added as they are in `velt check`. Without, such a module stays out, as with a std root
+/// that lacks it: its hooks are not checked, and the program's own code is analysed as with them.
+/// `velt check`'s lint rules and `--ts-compat` call it so, on a program loaded with std on demand,
+/// since they read only the program's own code.
+pub fn check_for_ide(
+    modules: &[SourceModule],
+    root: usize,
+    load: Option<&crate::LoadFn>,
+) -> Analysis {
     std::thread::scope(|s| {
         let spawned = std::thread::Builder::new()
             .name("velt-sema-ide".into())
             .stack_size(crate::SEMA_STACK_BYTES)
             .spawn_scoped(s, || {
-                check_on_current_thread(modules, root, crate::SEMA_STACK_BUDGET)
+                check_on_current_thread(modules, root, load, crate::SEMA_STACK_BUDGET)
             });
         match spawned {
             Ok(handle) => handle
                 .join()
                 .unwrap_or_else(|panic| std::panic::resume_unwind(panic)),
-            Err(_) => check_on_current_thread(modules, root, crate::FALLBACK_STACK_BUDGET),
+            Err(_) => check_on_current_thread(modules, root, load, crate::FALLBACK_STACK_BUDGET),
         }
     })
 }
 
-fn check_on_current_thread(modules: &[SourceModule], root: usize, stack_budget: usize) -> Analysis {
+fn check_on_current_thread(
+    modules: &[SourceModule],
+    root: usize,
+    load: Option<&crate::LoadFn>,
+    stack_budget: usize,
+) -> Analysis {
+    let kept = crate::StdLoads::default();
+    let loads = load.map(|run| crate::Loads { run, kept: &kept });
     // As in `crate::check_with`: script variables module state refused move into `main`.
     crate::script_locals::check(modules, root, |m| {
-        let (analysis, _, refused) = analyze(m, root, stack_budget);
+        let (analysis, _, refused) = analyze(m, root, loads, stack_budget);
         (analysis, refused)
     })
 }
@@ -97,6 +114,7 @@ fn check_on_current_thread(modules: &[SourceModule], root: usize, stack_budget: 
 fn analyze(
     modules: &[SourceModule],
     root: usize,
+    loads: Option<crate::Loads>,
     stack_budget: usize,
 ) -> (Analysis, bool, crate::script_locals::Refused) {
     let lifted = crate::generic_arrows::lift(modules);
@@ -110,7 +128,11 @@ fn analyze(
         cx.fn_sites = crate::throws::FnSites::new(seeds.clone(), last);
         cx.stack_budget = stack_budget;
         cx.held_borrows = held_borrows;
-        cx.lazy.on = false;
+        // Everything is checked. With a load callback, what is reached is still worked out, for
+        // one demand set with `velt check`.
+        cx.lazy.on = loads.is_some() && cx.lazy.on;
+        cx.lazy.check_all = true;
+        cx.loads = loads;
         if let Some(l) = &lifted {
             cx.generic_arrow_fns = l.local_fns.clone();
             cx.generic_arrow_all = l.all_fns.clone();
@@ -133,6 +155,7 @@ fn analyze(
         if let Some(o) = &overloaded {
             crate::overloads::report_misfits(&mut cx.diags, &o.sig_spans);
         }
+        crate::std_load::report_added(&mut cx);
         cx
     };
     // As in `crate::check_with`: the error types of function types written without `throws`.
@@ -372,7 +395,7 @@ mod tests {
             imports: vec![],
             jsx_runtime: None,
         };
-        let (a, retried, _) = analyze(&[m], 0, crate::SEMA_STACK_BUDGET);
+        let (a, retried, _) = analyze(&[m], 0, None, crate::SEMA_STACK_BUDGET);
         let errors = a.diagnostics().iter().filter(|d| d.is_error()).count();
         (errors, retried)
     }

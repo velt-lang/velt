@@ -25,7 +25,7 @@ use velt_sema::generated::{needs_rewrite, GenBatch, GenInput, GenInstance, GenMo
 use velt_sema::{hir, CheckOptions, Checked, SourceModule};
 use velt_syntax::ast::ItemKind;
 
-use crate::driver::Session;
+use crate::driver::{Session, StdLoad};
 
 pub use host::host_main;
 pub(crate) use process::stop_all;
@@ -47,9 +47,13 @@ pub(crate) fn check(
     root: usize,
     opts: CheckOptions,
     packages: Option<&vpm::PackageGraph>,
+    mut more: Option<&mut StdLoad>,
 ) -> Option<hir::Program> {
+    // The std modules sema demands, kept for every check below.
+    let kept = velt_sema::StdLoads::default();
+    let more = (&mut more, &kept);
     if sess.no_generators {
-        return check_without_generators(sess, modules, root, opts);
+        return check_without_generators(sess, modules, root, opts, more);
     }
     let declares = modules.iter().any(declares_generated);
     // Absolute: the offer is the program's, not that of whichever program has the same path
@@ -60,7 +64,7 @@ pub(crate) fn check(
     if let Some(offer) = offer_key.as_ref().and_then(cache::load_offer) {
         let mark = sess.diagnostics.len();
         let files = offer.generator_files.clone();
-        if let Some(p) = check_offered(sess, modules, root, opts, offer) {
+        if let Some(p) = check_offered(sess, modules, root, opts, offer, (more.0, more.1)) {
             sess.generator_inputs.extend(files);
             return Some(p);
         }
@@ -68,7 +72,7 @@ pub(crate) fn check(
         sess.diagnostics.truncate(mark);
     }
     let mut st = Rounds::default();
-    let program = rounds(sess, modules, root, (opts, packages), &mut st)?;
+    let program = rounds(sess, modules, root, (opts, packages), &mut st, more)?;
     if let Some(key) = offer_key.filter(|_| !st.offer.instances.is_empty()) {
         cache::store_offer(&key, &st.offer);
     }
@@ -85,10 +89,20 @@ fn check_without_generators(
     modules: &[SourceModule],
     root: usize,
     opts: CheckOptions,
+    (more, kept): MoreStd,
 ) -> Option<hir::Program> {
     let t = Instant::now();
+    let has_more = more.is_some();
+    let shared = std::sync::Mutex::new((&mut *sess, more));
+    let serve = |demanded: &[String]| {
+        let mut guard = shared.lock().ok()?;
+        let (sess, more) = &mut *guard;
+        Some(more.as_mut()?.serve(sess, demanded))
+    };
+    let loads = has_more.then_some(velt_sema::Loads { run: &serve, kept });
     let (out, diags) =
-        velt_sema::check_generating(modules, root, opts, &GenInput::default(), &[], None);
+        velt_sema::check_generating(modules, root, opts, &GenInput::default(), &[], None, loads);
+    let (sess, _) = shared.into_inner().ok()?;
     sess.record_time("sema", t.elapsed());
     sess.diagnostics.extend(diags);
     let demand = match out {
@@ -120,6 +134,7 @@ fn check_offered(
     root: usize,
     opts: CheckOptions,
     offer: cache::Offer,
+    (more, kept): MoreStd,
 ) -> Option<hir::Program> {
     let mut sources: Vec<SourceModule> = vec![];
     let mut input = GenInput::default();
@@ -151,7 +166,16 @@ fn check_offered(
         false => (modules, &sources[..]),
     };
     let t = Instant::now();
-    let (out, diags) = velt_sema::check_generating(all, root, opts, &input, sources, None);
+    let has_more = more.is_some();
+    let shared = std::sync::Mutex::new((&mut *sess, more));
+    let serve = |demanded: &[String]| {
+        let mut guard = shared.lock().ok()?;
+        let (sess, more) = &mut *guard;
+        Some(more.as_mut()?.serve(sess, demanded))
+    };
+    let loads = has_more.then_some(velt_sema::Loads { run: &serve, kept });
+    let (out, diags) = velt_sema::check_generating(all, root, opts, &input, sources, None, loads);
+    let (sess, _) = shared.into_inner().ok()?;
     sess.record_time("sema", t.elapsed());
     match out {
         Some(Checked::Program(p)) if !diags.iter().any(Diagnostic::is_error) => {
@@ -161,6 +185,9 @@ fn check_offered(
         _ => None,
     }
 }
+
+/// The driver's loader for what sema demands, and the modules it served so far.
+type MoreStd<'a, 'b, 'c> = (&'a mut Option<&'b mut StdLoad<'c>>, &'a velt_sema::StdLoads);
 
 /// The state of [`rounds`]: what was generated so far.
 #[derive(Default)]
@@ -184,7 +211,9 @@ fn rounds(
     root: usize,
     (opts, packages): (CheckOptions, Option<&vpm::PackageGraph>),
     st: &mut Rounds,
+    (more, kept): MoreStd,
 ) -> Option<hir::Program> {
+    let has_more = more.is_some();
     let mut owned: Option<Vec<SourceModule>> = None;
     for round in 1..=MAX_ROUNDS + 1 {
         let current = owned.as_deref().unwrap_or(modules);
@@ -192,19 +221,32 @@ fn rounds(
         let input = st.input.clone();
         // The check asks for the code it misses and adds it to itself (one check in all, as a
         // program without generators has), unless that code needs a check of its own.
-        let shared = std::sync::Mutex::new((&mut *sess, &mut *st, Duration::ZERO));
+        let shared = std::sync::Mutex::new((&mut *sess, &mut *st, Duration::ZERO, &mut *more));
         let generate = |demand: &velt_sema::generated::Demand| {
             let mut guard = shared.lock().ok()?;
-            let (sess, st, spent) = &mut *guard;
+            let (sess, st, spent, _) = &mut *guard;
             let t = Instant::now();
             let batch = generate_now(sess, st, current, demand, packages);
             *spent += t.elapsed();
             batch
         };
         let sources = std::mem::take(&mut shared.lock().ok()?.1.sources);
-        let (out, diags) =
-            velt_sema::check_generating(current, root, opts, &input, &sources, Some(&generate));
-        let (_, st, spent) = shared.into_inner().ok()?;
+        let serve = |demanded: &[String]| {
+            let mut guard = shared.lock().ok()?;
+            let (sess, _, _, more) = &mut *guard;
+            Some(more.as_mut()?.serve(sess, demanded))
+        };
+        let loads = has_more.then_some(velt_sema::Loads { run: &serve, kept });
+        let (out, diags) = velt_sema::check_generating(
+            current,
+            root,
+            opts,
+            &input,
+            &sources,
+            Some(&generate),
+            loads,
+        );
+        let (_, st, spent, _) = shared.into_inner().ok()?;
         let mut sources = sources;
         sources.append(&mut st.sources);
         st.sources = sources;

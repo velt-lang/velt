@@ -303,7 +303,7 @@ fn the_editor_sees_every_element_of_a_packed_array() {
     );
     let l = load_src(&src);
     let file = l.modules[l.root].file;
-    let a = velt_sema::ide::check_for_ide(&l.modules, l.root);
+    let a = velt_sema::ide::check_for_ide(&l.modules, l.root, None);
     let at = src.find("113").expect("element") as u32;
     assert_eq!(a.type_at(file, at).as_deref(), Some("u8"));
 }

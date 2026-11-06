@@ -37,9 +37,9 @@ pub(crate) struct LiteralHosts {
 }
 
 /// Records the function bodies that may hold such literals (before bodies are checked).
-pub(crate) fn find(cx: &mut Ctx) {
+pub(crate) fn find(cx: &mut Ctx, from: u32) {
     let mut pending = vec![];
-    for &d in &cx.fn_defs {
+    for &d in cx.fn_defs.iter().filter(|d| d.0 >= from) {
         let Some(DefInfo::Fn(f)) = cx.info.get(d.0 as usize) else {
             continue;
         };
@@ -51,7 +51,7 @@ pub(crate) fn find(cx: &mut Ctx) {
             }
         }
     }
-    cx.literal_hosts.pending = pending;
+    cx.literal_hosts.pending.extend(pending);
 }
 
 /// Checks every recorded body not checked yet, in order.

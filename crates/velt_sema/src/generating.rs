@@ -23,7 +23,9 @@ pub enum Checked {
 /// for them so far (`gen`). With `generate`, the check asks the driver for the code of the
 /// instances that have none and adds it to itself (docs/internals/design/source-generators.md
 /// §6); without, or when that code needs a check of its own, it returns a [`Checked::Demand`]
-/// (or [`Checked::Again`]) and the driver checks again with the code added.
+/// (or [`Checked::Again`]) and the driver checks again with the code added. With `load`, std modules
+/// the program did not load are added when the check finds them needed (`std_load`); without,
+/// those stay out and their hooks are not checked.
 pub fn check_generating(
     modules: &[SourceModule],
     root: usize,
@@ -31,13 +33,16 @@ pub fn check_generating(
     gen: &generated::GenInput,
     sources: &[SourceModule],
     generate: Option<&generated::GenerateFn>,
+    load: Option<crate::Loads>,
 ) -> (Option<Checked>, Diagnostics) {
     let args = generated::GenArgs {
         input: gen,
         sources,
         generate,
     };
-    on_sema_thread(|budget| check_on_current_thread(modules, root, opts, &[], Some(args), budget))
+    on_sema_thread(|budget| {
+        check_on_current_thread(modules, root, opts, &[], Some(args), load, budget)
+    })
 }
 
 /// Give a new `Ctx` of a check the code generated so far (`gen`), and the driver's generator:

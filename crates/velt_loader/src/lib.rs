@@ -57,6 +57,7 @@ mod globals;
 mod import_meta;
 mod jsx;
 mod locate;
+mod more;
 mod moved;
 mod old_extension;
 mod paths;
@@ -80,6 +81,7 @@ use velt_syntax::ast;
 
 use locate::Origin;
 pub use locate::{module_path, PackageImports, PackageResolver};
+pub use more::{demand_std_on, load_more, LoadState};
 use paths::{file_key, is_std_path, shown_in_package, shown_path};
 pub use resolve::resolve_module;
 pub use spec::{resolve_spec, ModuleRef};
@@ -123,6 +125,10 @@ pub struct LoadOptions<'a> {
     /// Check that the variants of each `#name` import the program resolves export the same API
     /// ([`variants`]): `velt check`, `velt test` and the language server ask for it.
     pub check_variants: bool,
+    /// Leave the std modules sema demands during the check (`velt_common::std_hooks::
+    /// ON_DEMAND_MODULES`) to [`load_more`]. Without it (a caller that gives the check no load
+    /// callback, and `VELT_EAGER_STD=1`) they are loaded up front, after everything else.
+    pub demand_std: bool,
 }
 
 /// Result of loading a program: the modules and the index of the root (`main`).
@@ -131,6 +137,8 @@ pub struct Loaded {
     pub modules: Vec<SourceModule>,
     /// Index of the root module in `modules`.
     pub root: usize,
+    /// What [`load_more`] goes on from.
+    pub state: LoadState,
 }
 
 /// Read and parse the root file, the extra roots ([`LoadOptions::extra_roots`]) and everything
@@ -146,38 +154,7 @@ pub fn load_program(
         .overlay
         .map(|o| o.iter().map(|(p, s)| (file_key(p), s.clone())).collect())
         .unwrap_or_default();
-    let mut loader = Loader {
-        sm,
-        diags,
-        opts: &opts,
-        std_parser: std_ast::StdParser::new(opts.std_ast_cache),
-        overlay,
-        modules: vec![],
-        origins: vec![],
-        by_file: HashMap::new(),
-        std_key: opts.std_root.as_deref().map(file_key),
-        extra_phase: false,
-        dir_names: case::DirNames::default(),
-        globals: vec![],
-        warned_old_extension: Default::default(),
-        npm: vpm::npm::NpmResolver::default(),
-        ambient: ambient::Ambients::new(opts.packages),
-        global_vars: vec![],
-        wanted: wanted::WantedByModule::default(),
-        resolved: std::collections::HashSet::new(),
-        effects: HashMap::new(),
-        skipped: HashMap::new(),
-        harness: None,
-        conditions: conditional::load_conditions(&opts),
-        std_imports: None,
-        variant_checks: vec![],
-        variant_tables: HashMap::new(),
-        variant_sigs: HashMap::new(),
-        variant_stars: HashMap::new(),
-        variant_busy: Default::default(),
-        variant_star_busy: Default::default(),
-        variant_cut: false,
-    };
+    let mut loader = Loader::new(sm, diags, &opts, overlay, LoadState::default());
     if let Some(std) = &opts.std_root {
         match prelude_files(std) {
             Ok(files) => {
@@ -223,16 +200,24 @@ pub fn load_program(
         loader.add_extra_root(file, &origin, &mut queue);
         loader.resolve_all(&mut queue);
     }
+    if !opts.demand_std {
+        more::load_up_front(&mut loader, &mut queue);
+    }
     loader.check_variants();
     loader.check_ambients();
     loader.declare_global_types();
+    let modules = std::mem::take(&mut loader.modules);
     Ok(Loaded {
-        modules: loader.modules,
+        modules,
         root: root_index,
+        state: loader.into_state(),
     })
 }
 
 struct Loader<'a, 'o> {
+    /// The modules of the load [`load_more`] goes on from: `modules` holds only their paths,
+    /// imports and files, these their syntax (empty in [`load_program`]).
+    base: &'a [SourceModule],
     sm: &'a mut SourceMap,
     diags: &'a mut Diagnostics,
     opts: &'a LoadOptions<'o>,
@@ -559,7 +544,8 @@ impl Loader<'_, '_> {
     /// A std module's re-exports are followed only for the names asked of it ([`wanted`]).
     fn resolve_imports(&mut self, index: usize, queue: &mut VecDeque<usize>) {
         let is_std = self.modules[index].is_std;
-        let items: Vec<(ast::Import, bool)> = (self.modules[index].ast.items.iter())
+        let syntax = self.base.get(index).unwrap_or(&self.modules[index]);
+        let items: Vec<(ast::Import, bool)> = (syntax.ast.items.iter())
             .filter_map(|item| match &item.kind {
                 ast::ItemKind::Import(imp) if !imp.from.is_empty() => {
                     Some((imp.clone(), item.exported))

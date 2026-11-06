@@ -125,6 +125,8 @@ mod resolve;
 mod script_locals;
 mod script_tdz;
 mod source_module;
+mod source_scans;
+mod std_load;
 mod suggest;
 mod symbols;
 mod synth_ifaces;
@@ -158,6 +160,8 @@ pub use check_work::{check_work, CheckWork};
 pub use dispatch::{instantiation_work, InstantiationWork};
 pub use generating::{check_generating, Checked};
 pub use source_module::SourceModule;
+pub use std_load::{LoadFn, Loads, StdBatch, StdLoads};
+pub use timings::check_rounds;
 pub use visit::rebase_detached_locals;
 
 /// Stack for the checking thread: the passes recurse over the AST/HIR (bounded by the parser's
@@ -214,7 +218,7 @@ pub fn check_with(
     opts: CheckOptions,
 ) -> (Option<hir::Program>, Diagnostics) {
     let (out, diags) = generating::on_sema_thread(|budget| {
-        check_on_current_thread(modules, root, opts, &[], None, budget)
+        check_on_current_thread(modules, root, opts, &[], None, None, budget)
     });
     generating::program_or_demand_error(out, diags)
 }
@@ -232,7 +236,7 @@ pub fn check_recovered(
     recovered: &[(usize, &str)],
 ) -> Diagnostics {
     generating::on_sema_thread(|budget| {
-        check_on_current_thread(modules, root, opts, recovered, None, budget).1
+        check_on_current_thread(modules, root, opts, recovered, None, None, budget).1
     })
 }
 
@@ -242,12 +246,13 @@ fn check_on_current_thread(
     opts: CheckOptions,
     recovered: &[(usize, &str)],
     gen: Option<generated::GenArgs>,
+    loads: Option<Loads>,
     stack_budget: usize,
 ) -> (Option<Checked>, Diagnostics) {
     timings::start();
     let out = timings::pass("check", || {
         script_locals::check(modules, root, |m| {
-            check_timed(m, root, opts, recovered, gen, stack_budget)
+            check_timed(m, root, opts, recovered, gen, loads, stack_budget)
         })
     });
     timings::finish();
@@ -261,6 +266,7 @@ fn check_timed(
     opts: CheckOptions,
     recovered: &[(usize, &str)],
     gen: Option<generated::GenArgs>,
+    loads: Option<Loads>,
     stack_budget: usize,
 ) -> script_locals::Checked {
     // Outlives every `Ctx` below, with the modules the driver generates during the check.
@@ -307,10 +313,10 @@ fn check_timed(
     timings::record("source rewrites", rewrite_start.elapsed());
     let null_proto = modules
         .iter()
-        .any(|m| !m.is_std && calls_object_create_null(&m.ast));
+        .any(|m| !m.is_std && source_scans::calls_object_create_null(&m.ast));
     let ctor_reads = modules
         .iter()
-        .any(|m| !m.is_std && reads_constructor(&m.ast));
+        .any(|m| !m.is_std && source_scans::reads_constructor(&m.ast));
     let record_accessors = modules
         .iter()
         .any(|m| !m.is_std && defined_accessors::defines_accessors(&m.ast));
@@ -319,10 +325,12 @@ fn check_timed(
                   seeds: &throws::FnTypeSeeds,
                   last: bool,
                   views: &union_views::Families| {
+        timings::note_round();
         let mut cx = ctx::Ctx::new(modules, root);
         if opts.eager_std {
             cx.lazy.on = false;
         }
+        cx.loads = loads;
         generating::install(&mut cx, gen, generator.as_ref());
         cx.union_views.assumed = views.clone();
         cx.fn_sites = throws::FnSites::new(seeds.clone(), last);
@@ -363,6 +371,7 @@ fn check_timed(
             overloads::report_misfits(&mut cx.diags, &o.sig_spans);
             overload_adapter::check_identity(&mut cx, &o.adapted);
         }
+        std_load::report_added(&mut cx);
         (cx, entry)
     };
     // Function types written without `throws` throw what the closures stored into them throw
@@ -557,7 +566,7 @@ fn analyze_bodies(cx: &mut ctx::Ctx) {
     cx.collected_defs = cx.defs.len();
     timings::pass("global_this::declare", || global_this::declare(cx));
     timings::pass("build_fill_bodies", || {
-        body::expr::virtual_defaults::build_fill_bodies(cx)
+        body::expr::virtual_defaults::build_fill_bodies(cx, 0)
     });
     timings::pass("body::check_bodies", || body::check_bodies(cx));
     timings::pass("generated::phase", || generated::phase::run(cx));
@@ -744,54 +753,4 @@ fn check_main(
         ok = false;
     }
     ok.then_some(id)
-}
-
-/// Does `module` call `Object.create(null)`? Then records may have no prototype, which `in`,
-/// printing and cloning test at run time (`hir::Program::null_proto_records`); other programs
-/// get none of that code.
-fn calls_object_create_null(module: &velt_syntax::ast::Module) -> bool {
-    use velt_syntax::ast::{self, ExprKind as E};
-    struct Find(bool);
-    impl<'a> velt_syntax::visit::Visit<'a> for Find {
-        fn expr(&mut self, e: &'a ast::Expr) {
-            let E::Call { callee, args, .. } = &e.kind else {
-                return;
-            };
-            let (E::Member { object, prop, .. }, [arg]) = (&callee.kind, args.as_slice()) else {
-                return;
-            };
-            // As `object_create` accepts it: `null` in any parentheses.
-            let mut arg = arg;
-            while let E::Paren(inner) = &arg.kind {
-                arg = inner;
-            }
-            if prop.name == "create"
-                && matches!(&object.kind, E::Ident(o) if o.name == "Object")
-                && matches!(arg.kind, E::Lit(ast::Lit::Null))
-            {
-                self.0 = true;
-            }
-        }
-    }
-    let mut f = Find(false);
-    velt_syntax::visit::walk_module(module, &mut f);
-    f.0
-}
-
-/// Does `module` read a `constructor` property (`x.constructor`)? Only then does the prelude's
-/// `anyConstructor` hold the dispatch over the program's classes, whose objects are module
-/// state (`body::expr::ctor_objects`); other programs get none of it.
-fn reads_constructor(module: &velt_syntax::ast::Module) -> bool {
-    use velt_syntax::ast::{self, ExprKind as E};
-    struct Find(bool);
-    impl<'a> velt_syntax::visit::Visit<'a> for Find {
-        fn expr(&mut self, e: &'a ast::Expr) {
-            if matches!(&e.kind, E::Member { prop, .. } if prop.name == "constructor") {
-                self.0 = true;
-            }
-        }
-    }
-    let mut f = Find(false);
-    velt_syntax::visit::walk_module(module, &mut f);
-    f.0
 }

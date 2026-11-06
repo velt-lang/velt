@@ -1,0 +1,6 @@
+export class Same {
+  v: number = 2;
+}
+export function make(): Same {
+  return new Same();
+}

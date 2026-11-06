@@ -1,7 +1,6 @@
 // velt/lang/hooks (internal): `x as Record<string, V>` of an `any` holding an object that is not
-// such a record (#1219; velt_vir `any_to_record.rs`). Loaded with the conditional global
-// std/prelude/global/record_any.velt, for a program that mentions `Record`, so that other
-// programs don't check these hooks.
+// such a record (#1219; velt_vir `any_to_record.rs`). Loaded when the check finds such a conversion
+// (velt_common `ON_DEMAND_MODULES`), so that other programs don't load these hooks.
 
 /**
  * `x as Record<string, any>` of an `any` holding an object that is not such a record (an object

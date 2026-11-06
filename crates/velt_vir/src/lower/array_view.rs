@@ -74,12 +74,17 @@ pub(super) enum ViewFlush {
     Slots(Vec<Operand>),
 }
 
-/// The number the runtime's table of array views keys the view type `t` by.
-fn view_key(t: TyId) -> Operand {
-    cint(t.0 as i128, Ty::U64)
-}
-
 impl Cx<'_> {
+    /// The number the runtime's table of array views keys the view type `t` by: one per type, in
+    /// the order lowering meets them, so that the VIR does not depend on how sema numbers types
+    /// (std modules loaded up front or during the check: lazy-std.md "Loading on demand").
+    fn view_key(&mut self, t: TyId) -> Operand {
+        cint(
+            self.number_of(super::program::Numbered::Type, t.0) as i128,
+            Ty::U64,
+        )
+    }
+
     /// May a value of the array type `t` be a view?
     pub(super) fn array_view(&self, t: TyId) -> bool {
         !self.boxing.array_views.is_empty() && self.boxing.array_views.contains(&self.ph_rep(t))
@@ -244,7 +249,7 @@ impl FnLower<'_, '_> {
         let data = self.rvalue_temp(Ty::Ptr, Rvalue::Use(Operand::Copy(proj(p, Proj::Field(0)))));
         let out = Place::local(self.temp(Ty::Ptr));
         let live = Place::local(self.temp(Ty::Ptr));
-        let key = view_key(ty);
+        let key = self.cx.view_key(ty);
         self.call_rt(
             Rt::ArrayViewGet,
             vec![data.clone(), key.clone()],
@@ -284,11 +289,8 @@ impl FnLower<'_, '_> {
         let t = self.cx.intern(TyKind::Array(e));
         let target = self.view_field(v, e, "target");
         let data = Operand::Copy(proj(&target, Proj::Field(0)));
-        self.call_rt(
-            Rt::ArrayViewRemove,
-            vec![data, view_key(t), v.clone()],
-            None,
-        );
+        let key = self.cx.view_key(t);
+        self.call_rt(Rt::ArrayViewRemove, vec![data, key, v.clone()], None);
     }
 
     /// The header to operate on for the inline value `hdr` of the view type `t`: the header

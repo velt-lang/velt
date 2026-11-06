@@ -26,8 +26,8 @@ use crate::ctx::Ctx;
 use crate::defs::Bound;
 use crate::hir::{DefId, ImplBound, ImplDef, TyId, TyKind};
 
-pub(super) fn build(cx: &mut Ctx) {
-    for e in 0..cx.extensions.len() {
+pub(super) fn build(cx: &mut Ctx, from: usize) {
+    for e in from..cx.extensions.len() {
         let implements = cx.extensions[e].implements.clone();
         if implements
             .first()

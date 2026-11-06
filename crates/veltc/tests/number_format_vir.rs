@@ -83,28 +83,34 @@ fn a_builder_param_that_is_appended_to_is_not_readonly() {
 }
 
 #[test]
-fn a_float_the_trigger_misses_takes_the_runtime_printer() {
-    // `tests/golden/lang/float_text_miss.velt`: its floats reach `${x}` and `String(x)` in a
-    // module whose conversions nothing marks as floats, so std's float printer
-    // (velt/lang/hooks/number_float) is not loaded, and the golden checks Node's output. Here: the
-    // float hooks are absent, and the conversions go through `numberPush`/`numberText` to the
-    // runtime's printer (whole numbers to std's integer printing).
+fn a_float_no_syntax_marks_takes_std_printer() {
+    // `tests/golden/lang/float_text_miss.velt`: its floats reach `${x}` and `String(x)` in a module
+    // whose syntax marks none of them as floats. Sema sees their types and demands std's float
+    // printer during the check (velt/lang/hooks/number_float, #2161 step 3), so the conversions
+    // call it, and no template or `String()` of the program goes to the runtime's printer.
     let vir = release_vir("lang/float_text_miss.velt");
     let header = |l: &&str| l.starts_with("fn#");
     assert!(
-        !vir.lines()
+        vir.lines()
             .filter(header)
-            .any(|l| l.contains("number_float")
-                || l.contains("N9floatPush")
-                || l.contains("N9floatText")
-                || l.contains("N7f64Text")),
-        "std's float printer is compiled in\n{vir}"
+            .any(|l| l.contains("N7f64Text") || l.contains("N7pushF64")),
+        "std's float printer is not compiled in\n{vir}"
     );
-    for runtime in ["velt_rt_strbuf_push_f64", "velt_rt_str_from_f64"] {
-        assert!(
-            vir.lines()
-                .any(|l| !l.starts_with("fn#") && l.contains(runtime)),
-            "no call of `{runtime}`\n{vir}"
-        );
-    }
+    assert!(
+        !vir.lines()
+            .any(|l| !l.starts_with("fn#") && l.contains("velt_rt_str_from_f64")),
+        "a call of the runtime's printer\n{vir}"
+    );
+}
+
+#[test]
+fn std_printer_is_left_out_of_a_program_that_converts_no_float() {
+    // An integer in a template demands the integer hooks, not the float ones: no float printer in
+    // the program, whichever way it is loaded.
+    let vir = release_vir("m1/hello.velt");
+    assert!(
+        !vir.lines()
+            .any(|l| l.starts_with("fn#") && (l.contains("N7f64Text") || l.contains("N7pushF64"))),
+        "{vir}"
+    );
 }
