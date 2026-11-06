@@ -9,13 +9,21 @@ const MAX_MESSAGE: usize = 1 << 17;
 /** Handshake bytes read but not yet taken as whole messages. */
 export class HandshakeBuffer {
   private bytes: u8[];
+  // Where the next message starts: taking a message only moves it, so a record full of small
+  // messages costs what its bytes cost, not a copy of the rest per message.
+  private pos: usize;
 
   constructor() {
     this.bytes = [];
+    this.pos = 0;
   }
 
   /** Appends `buf[start..end]`. */
   append(buf: u8[], start: usize, end: usize) {
+    if (this.pos > 0) {
+      this.bytes = this.bytes.slice(this.pos as i64);
+      this.pos = 0;
+    }
     for (let i = start; i < end; i++) {
       this.bytes.push(buf[i]);
     }
@@ -23,35 +31,38 @@ export class HandshakeBuffer {
 
   /** Whether a whole message is buffered (throws for one too large to accept). */
   hasMessage(): bool {
-    if (this.bytes.length < 4) {
+    if (this.bytes.length - this.pos < 4) {
       return false;
     }
-    const n =
-      ((this.bytes[1] as usize) << 16) | ((this.bytes[2] as usize) << 8) | (this.bytes[3] as usize);
+    const n = this.bodyLength();
     if (n > MAX_MESSAGE) {
       throw new TlsFailure(DECODE_ERROR, `a handshake message of ${n} bytes`);
     }
-    return this.bytes.length >= 4 + n;
+    return this.bytes.length - this.pos >= 4 + n;
   }
 
   /** The next whole message with its 4-byte header (after `hasMessage`). */
   take(): u8[] {
-    const n =
-      4 +
-      (
-        ((this.bytes[1] as usize) << 16) |
-        ((this.bytes[2] as usize) << 8) |
-        (this.bytes[3] as usize)
-      );
-    const m = this.bytes.slice(0, n as i64);
-    this.bytes = this.bytes.slice(n as i64);
+    const end = this.pos + 4 + this.bodyLength();
+    const m = this.bytes.slice(this.pos as i64, end as i64);
+    this.pos = end;
     return m;
   }
 
   /** Throws `unexpected_message` when bytes are left: keys change only at a record boundary. */
   checkEmpty() {
-    if (this.bytes.length != 0) {
+    if (this.bytes.length != this.pos) {
       throw new TlsFailure(UNEXPECTED_MESSAGE, "handshake data across a key change");
     }
+  }
+
+  // The body length in the header of the next message.
+  private bodyLength(): usize {
+    const at = this.pos;
+    return (
+      ((this.bytes[at + 1] as usize) << 16) |
+      ((this.bytes[at + 2] as usize) << 8) |
+      (this.bytes[at + 3] as usize)
+    );
   }
 }

@@ -164,6 +164,8 @@ class Playback implements ByteStream {
     }
   }
 
+  async halfClose(): Promise<void> {}
+
   close() {
     this.closed = true;
   }

@@ -1,0 +1,58 @@
+// velt/net (internal): `startTls`, which runs a TLS 1.3 client handshake over an open stream
+// (#2392): start-TLS after a protocol's own upgrade request (PostgreSQL's SSLRequest, SMTP's
+// STARTTLS), or TLS over a fresh `connect`.
+
+import { randomBytes } from "velt/crypto/random";
+import { x25519PublicKey } from "velt/crypto/x25519";
+import { IoError } from "velt/io/error";
+import { ByteStream } from "velt/net/byte_stream";
+import { TlsEngine } from "velt/net/tls/tls_engine";
+import { TlsStream } from "velt/net/tls/tls_stream";
+
+export struct TlsStartOptions {
+  /**
+   * The server's name, sent with SNI (none for an IP address or ""). It is only sent: with
+   * `verify: false` nothing checks that the server is this name.
+   */
+  serverName?: string;
+  /**
+   * Whether to check the server's certificate. Must be `false` for now: nothing is checked.
+   * This protects against passive observers only; anyone who can intercept the connection can
+   * impersonate the server, and read and change everything sent. Verification is #2392 step 3;
+   * until then `true` (the default) is refused.
+   */
+  verify?: bool;
+  /** The protocols to offer with ALPN, most preferred first (default: none). */
+  alpn?: string[];
+}
+
+/**
+ * Runs a TLS 1.3 client handshake over `stream` and resolves to the encrypted stream; `stream`
+ * belongs to it from then on. Cipher suites TLS_CHACHA20_POLY1305_SHA256 and
+ * TLS_AES_128_GCM_SHA256, key exchange X25519. Throws `IoError` (`EPROTO`, "TLS: …") when the
+ * handshake fails, and `EINVAL` unless `opts.verify` is `false`. With `verify: false` the server
+ * is not authenticated: this protects against passive observers only, and anyone who can
+ * intercept the connection can impersonate the server.
+ */
+export async function startTls(stream: ByteStream, opts: TlsStartOptions = {}): Promise<TlsStream> {
+  if (opts.verify !== false) {
+    throw new IoError(
+      "EINVAL",
+      "startTls: certificate verification is not implemented yet (#2392); pass `verify: false` to encrypt without checking the certificate, or use connectTls",
+    );
+  }
+  const key = randomBytes(32);
+  const engine = new TlsEngine(stream);
+  await engine.handshake(
+    {
+      random: randomBytes(32),
+      sessionId: randomBytes(32),
+      publicKey: x25519PublicKey(key),
+      serverName: opts.serverName ?? "",
+      alpn: opts.alpn ?? [],
+      fixed: null,
+    },
+    key,
+  );
+  return new TlsStream(engine);
+}

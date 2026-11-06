@@ -12,6 +12,11 @@ export interface ByteStream {
   readInto(buf: Uint8Array): Promise<number | null>;
   /** Resolves once `data[start..end]` is written. */
   writeBytes(data: u8[] | Uint8Array, start: number, end?: number): Promise<void>;
-  /** Closes the stream at once. */
+  /**
+   * Half-closes: ends what this side sends, once what was written before has gone. Reading stays
+   * open until `close()`, so the peer's answer still arrives.
+   */
+  halfClose(): Promise<void>;
+  /** Closes the stream at once, both ways. */
   close(): void;
 }

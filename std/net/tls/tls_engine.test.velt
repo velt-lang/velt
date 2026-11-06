@@ -1,0 +1,599 @@
+// velt/net (tests): what `TlsEngine` does with what `RecordReader` passes up (records the
+// protocol forbids, each with the alert it answers), a connection cut without close_notify, and
+// the write key's record limit, after the handshake of RFC 8448's trace. Run by `velt test std/`.
+import { CryptoError } from "velt/crypto/errors";
+import { hkdfExpandSha256 } from "velt/crypto/hkdf";
+import { x25519PublicKey } from "velt/crypto/x25519";
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import { IoError } from "velt/io/error";
+import { Uint8Array } from "velt/lang/typed_array/uint8_array";
+import { ByteStream } from "velt/net/byte_stream";
+import { RecordCipher } from "velt/net/tls/record_cipher";
+import { startTls } from "velt/net/tls/start_tls";
+import { TlsEngine } from "velt/net/tls/tls_engine";
+import { TlsStream } from "velt/net/tls/tls_stream";
+import { describe, expect, it } from "velt/test";
+
+// 32 bytes.
+const CLIENT_PRIVATE = "49af42ba7f7994852d713ef2784bcbcaa7911de26adc5642cb634540e7ea5005";
+// 196 bytes.
+const CLIENT_HELLO =
+  "010000c00303cb34ecb1e78163ba1c38c6dacb196a6dffa21a8d9912ec18a2ef6283024dece70000061301130313" +
+  "02010000910000000b0009000006736572766572ff01000100000a00140012001d00170018001901000101010201" +
+  "03010400230000003300260024001d002099381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e52" +
+  "9aaf2c002b0003020304000d0020001e040305030603020308040805080604010501060102010402050206020202" +
+  "002d00020101001c00024001";
+// 95 bytes.
+const SERVER_HELLO_RECORD =
+  "160303005a020000560303a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3e26928001301" +
+  "00002e00330024001d0020c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f002b00" +
+  "020304";
+// 679 bytes.
+const SERVER_FLIGHT_RECORD =
+  "17030302a2d1ff334a56f5bff6594a07cc87b580233f500f45e489e7f33af35edf7869fcf40aa40aa2b8ea73f848" +
+  "a7ca07612ef9f945cb960b4068905123ea78b111b429ba9191cd05d2a389280f526134aadc7fc78c4b729df828b5" +
+  "ecf7b13bd9aefb0e57f271585b8ea9bb355c7c79020716cfb9b1183ef3ab20e37d57a6b9d7477609aee6e122a4cf" +
+  "51427325250c7d0e509289444c9b3a648f1d71035d2ed65b0e3cdd0cbae8bf2d0b227812cbb360987255cc744110" +
+  "c453baa4fcd610928d809810e4b7ed1a8fd991f06aa6248204797e36a6a73b70a2559c09ead686945ba246ab66e5" +
+  "edd8044b4c6de3fcf2a89441ac66272fd8fb330ef8190579b3684596c960bd596eea520a56a8d650f563aad27409" +
+  "960dca63d3e688611ea5e22f4415cf9538d51a200c27034272968a264ed6540c84838d89f72c24461aad6d26f59e" +
+  "caba9acbbb317b66d902f4f292a36ac1b639c637ce343117b659622245317b49eeda0c6258f100d7d961ffb13864" +
+  "7e92ea330faeea6dfa31c7a84dc3bd7e1b7a6c7178af36879018e3f252107f243d243dc7339d5684c8b0378bf302" +
+  "44da8c87c843f5e56eb4c5e8280a2b48052cf93b16499a66db7cca71e4599426f7d461e66f99882bd89fc50800be" +
+  "cca62d6c74116dbd2972fda1fa80f85df881edbe5a37668936b335583b599186dc5c6918a396fa48a181d6b6fa4f" +
+  "9d62d513afbb992f2b992f67f8afe67f76913fa388cb5630c8ca01e0c65d11c66a1e2ac4c85977b7c7a6999bbf10" +
+  "dc35ae69f5515614636c0b9b68c19ed2e31c0b3b66763038ebba42f3b38edc0399f3a9f23faa63978c317fc9fa66" +
+  "a73f60f0504de93b5b845e275592c12335ee340bbc4fddd502784016e4b3be7ef04dda49f4b440a30cb5d2af9398" +
+  "28fd4ae3794e44f94df5a631ede42c1719bfdabf0253fe5175be898e750edc53370d2b";
+// 227 bytes.
+const TICKET_RECORD =
+  "17030300de3a6b8f90414a97d6959c3487680de5134a2b240e6cffac116e95d41d6af8f6b580dcf3d11d63c758db" +
+  "289a015940252f55713e061dc13e078891a38efbcf5753ad8ef170ad3c7353d16d9da773b9ca7f2b9fa1b6c0d4a3" +
+  "d03f75e09c30ba1e62972ac46f75f7b981be63439b2999ce13064615139891d5e4c5b406f16e3fc181a77ca47584" +
+  "0025db2f0a77f81b5ab05b94c01346755f69232c86519d86cbeeac87aac347d143f9605d64f650db4d023e70e952" +
+  "ca49fe5137121c74bc2697687e248746d6df353005f3bce18696129c8153556b3b6c6779b37bf15985684f";
+// 72 bytes.
+const SERVER_DATA_RECORD =
+  "17030300432e937e11ef4ac740e538ad36005fc4a46932fc3225d05f82aa1b36e30efaf97d90e6dffc602dcb501a" +
+  "59a8fcc49c4bf2e5f0a21c0047c2abf332540dd032e167c2955d";
+// 24 bytes.
+const SERVER_ALERT_RECORD = "1703030013b58fd67166ebf599d24720cfbe7efa7a8864a9";
+// 32 bytes.
+const SERVER_HS_SECRET = "b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38";
+// The trace's client handshake traffic secret.
+const CLIENT_HS_SECRET = "b3eddb126e067f35a780b3abf45e2d8f3b1a950738f52e9600746a0e27a55a21";
+// The trace's application traffic secrets.
+const SERVER_AP_SECRET = "a11af9f05531f856ad47116b45a950328204b4f44bfb6b3a4b4f1f3fcb631643";
+const CLIENT_AP_SECRET = "9e40646ce79a7f9dc05af8889bce6552875afa0b06df0087f792ebb7c17504a5";
+// 657 bytes.
+const SERVER_FLIGHT =
+  "080000240022000a00140012001d00170018001901000101010201030104001c00024001000000000b0001b90000" +
+  "01b50001b0308201ac30820115a003020102020102300d06092a864886f70d01010b0500300e310c300a06035504" +
+  "031303727361301e170d3136303733303031323335395a170d3236303733303031323335395a300e310c300a0603" +
+  "550403130372736130819f300d06092a864886f70d010101050003818d0030818902818100b4bb498f8279303d98" +
+  "0836399b36c6988c0c68de55e1bdb826d3901a2461eafd2de49a91d015abbc9a95137ace6c1af19eaa6af98c7ced" +
+  "43120998e187a80ee0ccb0524b1b018c3e0b63264d449a6d38e22a5fda430846748030530ef0461c8ca9d9efbfae" +
+  "8ea6d1d03e2bd193eff0ab9a8002c47428a6d35a8d88d79f7f1e3f0203010001a31a301830090603551d13040230" +
+  "00300b0603551d0f0404030205a0300d06092a864886f70d01010b05000381810085aad2a0e5b9276b908c65f73a" +
+  "7267170618a54c5f8a7b337d2df7a594365417f2eae8f8a58c8f8172f9319cf36b7fd6c55b80f21a030151567260" +
+  "96fd335e5e67f2dbf102702e608ccae6bec1fc63a42a99be5c3eb7107c3c54e9b9eb2bd5203b1c3b84e0a8b2f759" +
+  "409ba3eac9d91d402dcc0cc8f8961229ac9187b42b4de100000f000084080400805a747c5d88fa9bd2e55ab085a6" +
+  "1015b7211f824cd484145ab3ff52f1fda8477b0b7abc90db78e2d33a5c141a078653fa6bef780c5ea248eeaaa785" +
+  "c4f394cab6d30bbe8d4859ee511f602957b15411ac027671459e46445c9ea58c181e818e95b8c3fb0bf3278409d3" +
+  "be152a3da5043e063dda65cdf5aea20d53dfacd42f74f3140000209b9b141d906337fbd2cbdce71df4deda4ab42c" +
+  "309572cb7fffee5454b78f0718";
+// A cookie retry over X25519, generated from the server's side with Node's crypto.
+const RETRY_HRR =
+  "020000590303cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c20000102030405" +
+  "060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f1301000011002b00020304002c00070005aaaa" +
+  "aaaaaa";
+const RETRY_SH =
+  "020000760303222222222222222222222222222222222222222222222222222222222222222220000102030405" +
+  "060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f130100002e002b0002030400330024001d0020" +
+  "7b4e909bbe7ffe44c465a220037d608ee35897d31ef972f07f74892cb0f73f13";
+const RETRY_EE = "080000020000";
+const RETRY_CERT =
+  "0b0000310000002d00002830303030303030303030303030303030303030303030303030303030303030303030" +
+  "3030303030300000";
+const RETRY_CV =
+  "0f00004a0403004655555555555555555555555555555555555555555555555555555555555555555555555555" +
+  "555555555555555555555555555555555555555555555555555555555555555555";
+const RETRY_SF = "14000020b426f8cf149f5b4f8a577bba105fe13779656537fe8e5671b2b833825b1e269a";
+const RETRY_CF = "1400002017da5f7766594e4645ffcef0bb42858b868d426bf67f033dc6f86b089045bad9";
+const RETRY_CHS = "baa4dc7996ddb221a4312e217265898319bfb5c60a3dff9b83a7b4352591c274";
+const RETRY_SHS = "7e3e1875007dc95601e18099d4b323900293dae42bd02c6b46206588b1fc00ea";
+
+// A transport that plays back `input` and records what is written.
+class Playback implements ByteStream {
+  private input: u8[];
+  private pos: usize;
+  /** The most one read hands back. */
+  chunk: usize;
+  written: u8[];
+  closed: bool;
+  shutdowns: usize;
+  // What the write after `writesBeforeFailing` more writes throws, if anything.
+  failure: Error | null;
+  writesBeforeFailing: usize;
+
+  constructor(input: u8[]) {
+    this.input = input;
+    this.pos = 0;
+    this.chunk = 1000000;
+    this.written = [];
+    this.closed = false;
+    this.shutdowns = 0;
+    this.failure = null;
+    this.writesBeforeFailing = 0;
+  }
+
+  async readInto(buf: Uint8Array): Promise<number | null> {
+    if (this.pos == this.input.length) {
+      return null;
+    }
+    let n = this.input.length - this.pos;
+    if (n > buf.len) {
+      n = buf.len;
+    }
+    if (n > this.chunk) {
+      n = this.chunk;
+    }
+    for (let i: usize = 0; i < n; i++) {
+      buf.buf.bytes[buf.off + i] = this.input[this.pos + i];
+    }
+    this.pos += n;
+    return n as number;
+  }
+
+  async writeBytes(data: u8[] | Uint8Array, start: number = 0, end?: number): Promise<void> {
+    const failure = this.failure;
+    if (failure != null) {
+      if (this.writesBeforeFailing == 0) {
+        throw failure;
+      }
+      this.writesBeforeFailing--;
+    }
+    if (data instanceof Uint8Array) {
+      return;
+    }
+    const to = end ?? (data.length as number);
+    for (let i = start as usize; i < (to as usize); i++) {
+      this.written.push(data[i]);
+    }
+  }
+
+  close() {
+    this.closed = true;
+  }
+
+  async halfClose(): Promise<void> {
+    this.shutdowns++;
+  }
+}
+
+// The client's handshake as in the trace, against the server's bytes in `t`.
+async function handshaken(t: Playback): Promise<TlsEngine> {
+  const e = new TlsEngine(t);
+  await e.handshake(
+    {
+      random: [],
+      sessionId: [],
+      publicKey: [],
+      serverName: "",
+      alpn: [],
+      fixed: hexDecode(CLIENT_HELLO),
+    },
+    hexDecode(CLIENT_PRIVATE),
+  );
+  return e;
+}
+
+function payload(n: usize): u8[] {
+  const out: u8[] = [];
+  for (let i: usize = 0; i < n; i++) {
+    out.push(i as u8);
+  }
+  return out;
+}
+
+// The secret after a KeyUpdate, written out independently of the code under test:
+// HKDF-Expand(secret, length 32 | "tls13 traffic upd" | empty context, 32).
+function updated(secret: string): u8[] {
+  return hkdfExpandSha256(
+    hexDecode(secret),
+    hexDecode("002011746c73313320747261666669632075706400"),
+    32,
+  );
+}
+
+// `inner` (content, then the content type) sealed as a record under `cipher`.
+function seal(cipher: RecordCipher, inner: u8[]): string {
+  const buf = Buffer.alloc(inner.length + 21);
+  for (let i: usize = 0; i < inner.length; i++) {
+    buf[5 + i] = inner[i];
+  }
+  const n = cipher.seal(buf, 0, inner.length);
+  return hexEncode(buf.slice(0, n as i64));
+}
+
+// The inner plaintext of the record at `rec[at..]` under `cipher`, and where the next starts.
+function openAt(cipher: RecordCipher, rec: u8[], at: usize): [string, usize] {
+  const len = ((rec[at + 3] as usize) << 8) | (rec[at + 4] as usize);
+  const n = cipher.open(rec, at, at + 5 + len);
+  return [hexEncode(rec.slice((at + 5) as i64, (at + 5 + n) as i64)), at + 5 + len];
+}
+
+// The server's side of the trace, up to its first record of application data.
+function flight(): string {
+  return SERVER_HELLO_RECORD + SERVER_FLIGHT_RECORD + TICKET_RECORD;
+}
+
+// What the client says about the server's bytes `input` in a handshake and a read, and what it
+// wrote after `skip` bytes: the first record opened under `secret`, or raw when `secret` is "".
+async function refusal(input: string, skip: usize, secret: string): Promise<[string, string]> {
+  const t = new Playback(hexDecode(input));
+  let message = "";
+  try {
+    await new TlsStream(await handshaken(t)).read();
+  } catch (e) {
+    message = e instanceof IoError ? e.message : `${e}`;
+  }
+  const out = t.written.slice(skip as i64);
+  if (secret == "" || out.length == 0) {
+    return [message, hexEncode(out)];
+  }
+  const [inner, next] = openAt(new RecordCipher(0x1301, hexDecode(secret)), out, 0);
+  return [message, inner];
+}
+
+// `inner` sealed as the record after `before` others under `secret`.
+function sealedAfter(secret: string, before: usize, inner: u8[]): string {
+  const c = new RecordCipher(0x1301, hexDecode(secret));
+  for (let i: usize = 0; i < before; i++) {
+    seal(c, [0]);
+  }
+  return seal(c, inner);
+}
+
+// `[what, the record, the message, the alert the client sends]`, for records that are refused.
+function refused(hs: bool): [string, string, string, string][] {
+  const secret = hs ? SERVER_HS_SECRET : SERVER_AP_SECRET;
+  const before: usize = hs ? 0 : 1;
+  const bad = "020a15";
+  const inner99 =
+    hs ? "unexpected record type 99 during the handshake" : "unexpected record type 99";
+  const plain = "an unprotected record of type";
+  const ccs = hs ? "a malformed ChangeCipherSpec" : `${plain} 20`;
+  return [
+    ["an unknown outer type", "630303000100", `TLS: ${plain} 99 after encryption started`, bad],
+    ["outer type 0", "000303000100", `TLS: ${plain} 0 after encryption started`, bad],
+    ["a ChangeCipherSpec of the wrong value", "140303000102", `TLS: ${ccs}`, bad],
+    ["a ChangeCipherSpec of two bytes", "14030300020101", `TLS: ${ccs}`, bad],
+    ["an empty ChangeCipherSpec", "1403030000", `TLS: ${ccs}`, bad],
+    ["an unknown inner type", sealedAfter(secret, before, [1, 99]), `TLS: ${inner99}`, bad],
+    [
+      "an empty handshake record",
+      sealedAfter(secret, before, [22]),
+      "TLS: an empty handshake record",
+      bad,
+    ],
+    ["an empty alert", sealedAfter(secret, before, [21]), "TLS: a malformed alert", "023215"],
+    [
+      "a protected ChangeCipherSpec",
+      sealedAfter(secret, before, [1, 20]),
+      "TLS: a protected change_cipher_spec",
+      bad,
+    ],
+  ];
+}
+
+describe("what the record reader passes up", () => {
+  const plaintext: [string, string, string][] = [
+    [
+      "an unknown outer type",
+      "630303000100",
+      "TLS: unexpected record type 99 during the handshake",
+    ],
+    ["outer type 0", "000303000100", "TLS: unexpected record type 0 during the handshake"],
+    ["a ChangeCipherSpec of the wrong value", "140303000102", "TLS: a malformed ChangeCipherSpec"],
+    ["a ChangeCipherSpec of two bytes", "14030300020101", "TLS: a malformed ChangeCipherSpec"],
+    ["an empty ChangeCipherSpec", "1403030000", "TLS: a malformed ChangeCipherSpec"],
+    ["an empty handshake record", "1603030000", "TLS: an empty handshake record"],
+  ];
+  for (const [name, record, want] of plaintext) {
+    it(`refuses ${name} before the keys, with unexpected_message`, async () => {
+      expect(await refusal(record, 201, "")).toEqual([want, "15030300020" + "20a"]);
+    });
+  }
+  for (const [name, record, want, alert] of refused(true)) {
+    it(`refuses ${name} under the handshake keys`, async () => {
+      const got = await refusal(SERVER_HELLO_RECORD + record, 201, CLIENT_HS_SECRET);
+      expect(got).toEqual([want, alert]);
+    });
+  }
+  for (const [name, record, want, alert] of refused(false)) {
+    it(`refuses ${name} after the handshake`, async () => {
+      expect(await refusal(flight() + record, 259, CLIENT_AP_SECRET)).toEqual([want, alert]);
+    });
+  }
+
+  it("takes a connection cut without close_notify for a failure, and sends no alert", async () => {
+    expect(await refusal(flight(), 259, CLIENT_AP_SECRET)).toEqual([
+      "TLS: the connection closed without close_notify",
+      "",
+    ]);
+    expect(await refusal(flight() + "170303", 259, CLIENT_AP_SECRET)).toEqual([
+      "TLS: the connection closed in the middle of a record",
+      "",
+    ]);
+    const t = new Playback(hexDecode(flight() + SERVER_DATA_RECORD));
+    const s = new TlsStream(await handshaken(t));
+    expect((await s.read()).length).toBe(50);
+    await expect(s.read()).rejects.toThrow("TLS: the connection closed without close_notify");
+  });
+});
+
+describe("the write key's record limit", () => {
+  it("starts a KeyUpdate at the limit, in the middle of a write and again after it", async () => {
+    const t = new Playback(hexDecode(flight() + SERVER_DATA_RECORD + SERVER_ALERT_RECORD));
+    const e = await handshaken(t);
+    expect(e.writeLimit).toBe(16777216);
+    e.writeLimit = 3;
+    const big = payload(8 * 16384);
+    await e.write(big, 0, big.length);
+    const out = t.written;
+    let pos: usize = 259;
+    let sent = "";
+    let secret = CLIENT_AP_SECRET;
+    const rounds: usize[] = [3, 3, 2];
+    for (const records of rounds) {
+      const c = new RecordCipher(0x1301, hexDecode(secret));
+      for (let r: usize = 0; r < records; r++) {
+        const [inner, next] = openAt(c, out, pos);
+        expect(inner.endsWith("17")).toBe(true);
+        sent += inner.slice(0, (inner.length - 2) as i64);
+        pos = next;
+      }
+      if (records == 3) {
+        const [update, next] = openAt(c, out, pos);
+        expect(update).toBe("180000010016");
+        pos = next;
+        secret = hexEncode(updated(secret));
+      }
+    }
+    expect(pos).toBe(out.length);
+    expect(sent == hexEncode(big)).toBe(true);
+  });
+
+  it("turns a failure that is no IoError during a KeyUpdate into the stream's EPROTO", async () => {
+    const t = new Playback(hexDecode(flight() + SERVER_DATA_RECORD + SERVER_ALERT_RECORD));
+    const e = await handshaken(t);
+    e.writeLimit = 1;
+    t.failure = new CryptoError("no new key");
+    t.writesBeforeFailing = 1;
+    let code = "";
+    let message = "";
+    try {
+      await e.write(payload(2 * 16384), 0, 2 * 16384);
+    } catch (err) {
+      code = err.code;
+      message = err.message;
+    }
+    expect(code).toBe("EPROTO");
+    expect(message.startsWith("TLS: ")).toBe(true);
+    expect(message.includes("no new key")).toBe(true);
+    // The connection is over: the transport is closed, and every later call says why.
+    expect(t.closed).toBe(true);
+    await expect(e.write(payload(1), 0, 1)).rejects.toThrow("no new key");
+    await expect(e.fill()).rejects.toThrow("no new key");
+  });
+
+  it("ends the connection when the transport's write fails, with its error", async () => {
+    const t = new Playback(hexDecode(flight() + SERVER_DATA_RECORD + SERVER_ALERT_RECORD));
+    const e = await handshaken(t);
+    e.writeLimit = 1;
+    t.failure = new IoError("EPIPE", "the pipe broke");
+    t.writesBeforeFailing = 1;
+    let code = "";
+    try {
+      await e.write(payload(2 * 16384), 0, 2 * 16384);
+    } catch (err) {
+      code = err.code;
+    }
+    expect(code).toBe("EPIPE");
+    expect(t.closed).toBe(true);
+    await expect(e.write(payload(1), 0, 1)).rejects.toThrow("the pipe broke");
+    await expect(e.fill()).rejects.toThrow("the pipe broke");
+  });
+
+  it("waits for the next record: a write that ends at the limit sends no KeyUpdate", async () => {
+    const t = new Playback(hexDecode(flight() + SERVER_DATA_RECORD + SERVER_ALERT_RECORD));
+    const e = await handshaken(t);
+    e.writeLimit = 2;
+    await e.write(payload(5), 0, 5);
+    await e.write(payload(6), 0, 6);
+    const first = t.written.length;
+    const c = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
+    let [inner, pos] = openAt(c, t.written, 259);
+    expect(inner).toBe(hexEncode(payload(5)) + "17");
+    [inner, pos] = openAt(c, t.written, pos);
+    expect(inner).toBe(hexEncode(payload(6)) + "17");
+    expect(pos).toBe(first);
+    await e.write(payload(7), 0, 7);
+    [inner, pos] = openAt(c, t.written, pos);
+    expect(inner).toBe("180000010016");
+    const n = new RecordCipher(0x1301, updated(CLIENT_AP_SECRET));
+    [inner, pos] = openAt(n, t.written, pos);
+    expect(inner).toBe(hexEncode(payload(7)) + "17");
+  });
+});
+
+describe("records across a key change", () => {
+  const key = "handshake data across a key change";
+  it("refuses data after the ServerHello in its record", async () => {
+    // The ServerHello record's length grows by the one extra byte, the start of a message.
+    const sh = hexDecode(SERVER_HELLO_RECORD);
+    sh[4] += 1;
+    sh.push(8);
+    const [message, wrote] = await refusal(hexEncode(sh), 201, "");
+    expect(message).toBe(`TLS: ${key}`);
+    expect(wrote).toBe("150303000202" + "0a");
+  });
+
+  it("refuses data after the server's Finished in its record", async () => {
+    const flight: u8[] = hexDecode(SERVER_FLIGHT);
+    flight.push(4);
+    flight.push(22);
+    const sealed = seal(new RecordCipher(0x1301, hexDecode(SERVER_HS_SECRET)), flight);
+    const [message, wrote] = await refusal(SERVER_HELLO_RECORD + sealed, 201, CLIENT_HS_SECRET);
+    expect(message).toBe(`TLS: ${key}`);
+    expect(wrote).toBe("020a15");
+  });
+
+  it("refuses data after a KeyUpdate in its record", async () => {
+    const ku = sealedAfter(SERVER_AP_SECRET, 1, [24, 0, 0, 1, 0, 4, 22]);
+    const [message, wrote] = await refusal(flight() + ku, 259, CLIENT_AP_SECRET);
+    expect(message).toBe(`TLS: ${key}`);
+    expect(wrote).toBe("020a15");
+  });
+});
+
+describe("a KeyUpdate's fields, on the connection", () => {
+  it("answers illegal_parameter for its value and decode_error for its length", async () => {
+    const bad = sealedAfter(SERVER_AP_SECRET, 1, [24, 0, 0, 1, 2, 22]);
+    expect(await refusal(flight() + bad, 259, CLIENT_AP_SECRET)).toEqual([
+      "TLS: a KeyUpdate with request_update 2",
+      "022f15",
+    ]);
+    const long = sealedAfter(SERVER_AP_SECRET, 1, [24, 0, 0, 2, 0, 0, 22]);
+    expect(await refusal(flight() + long, 259, CLIENT_AP_SECRET)).toEqual([
+      "TLS: a KeyUpdate of 6 bytes",
+      "023215",
+    ]);
+  });
+});
+
+describe("failures, shutdown and reads", () => {
+  it("keeps a failure, closes the transport, and says the same every time", async () => {
+    const t = new Playback(hexDecode(flight() + "630303000100"));
+    const s = new TlsStream(await handshaken(t));
+    const want = "TLS: an unprotected record of type 99 after encryption started";
+    await expect(s.read()).rejects.toThrow(want);
+    expect(t.closed).toBe(true);
+    await expect(s.read()).rejects.toThrow(want);
+    await expect(s.writeBytes(payload(1))).rejects.toThrow(want);
+  });
+
+  it("half-closes on shutdown: close_notify, reading stays open, and no more writes", async () => {
+    const data = sealedAfter(SERVER_AP_SECRET, 1, [1, 2, 3, 23]);
+    const t = new Playback(hexDecode(flight() + data));
+    const s = new TlsStream(await handshaken(t));
+    await s.shutdown();
+    expect(t.shutdowns).toBe(1);
+    expect(t.closed).toBe(false);
+    const [alert, _] = openAt(
+      new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET)),
+      t.written,
+      259,
+    );
+    expect(alert).toBe("010015");
+    // A second shutdown sends nothing more.
+    const length = t.written.length;
+    await s.shutdown();
+    expect(t.written.length).toBe(length);
+    expect(t.shutdowns).toBe(1);
+    await expect(s.writeBytes(payload(1))).rejects.toThrow("write after shutdown()");
+    expect(hexEncode(await s.read())).toBe("010203");
+    s.close();
+    expect(t.closed).toBe(true);
+  });
+
+  it("gives concurrent reads the records in the order they were called", async () => {
+    const c = new RecordCipher(0x1301, hexDecode(SERVER_AP_SECRET));
+    seal(c, [0]);
+    const records = seal(c, [65, 65, 23]) + seal(c, [66, 66, 23]) + seal(c, [67, 67, 23]);
+    const t = new Playback(hexDecode(flight() + records));
+    t.chunk = 7;
+    const s = new TlsStream(await handshaken(t));
+    const a = s.read();
+    const b = s.read();
+    const third = s.read();
+    expect(hexEncode(await a)).toBe("4141");
+    expect(hexEncode(await b)).toBe("4242");
+    expect(hexEncode(await third)).toBe("4343");
+  });
+
+  it("opens at the next sequence number from local closures", async () => {
+    const t = new Playback(hexDecode(flight() + SERVER_DATA_RECORD));
+    const s = new TlsStream(await handshaken(t));
+    await s.write("a");
+    const say = async (f: () => Promise<void, IoError>) => {
+      await f();
+    };
+    await say(async () => {
+      await s.write("b");
+    });
+    await say(async () => {
+      await s.write("c");
+    });
+    const c = new RecordCipher(0x1301, hexDecode(CLIENT_AP_SECRET));
+    let pos: usize = 259;
+    let sent = "";
+    while (pos < t.written.length) {
+      const [inner, next] = openAt(c, t.written, pos);
+      sent += inner;
+      pos = next;
+    }
+    // Each opens at the next sequence number: a repeat would fail its tag.
+    expect(sent).toBe("6117" + "6217" + "6317");
+    expect(c.seq).toBe(3);
+  });
+});
+
+describe("a retry on the connection, in compatibility mode", () => {
+  it("sends its one ChangeCipherSpec before the second ClientHello, and none after", async () => {
+    const sid: u8[] = [];
+    for (let i: usize = 0; i < 32; i++) {
+      sid.push(i as u8);
+    }
+    const record = (type: u8, m: string): string => {
+      const n = (m.length / 2).toString(16).padStart(4, "0");
+      return `${hexEncode([type])}0303${n}${m}`;
+    };
+    const flight2 = hexDecode(RETRY_EE + RETRY_CERT + RETRY_CV + RETRY_SF);
+    flight2.push(22);
+    const sealed = seal(new RecordCipher(0x1301, hexDecode(RETRY_SHS)), flight2);
+    const t = new Playback(hexDecode(record(22, RETRY_HRR) + record(22, RETRY_SH) + sealed));
+    const e = new TlsEngine(t);
+    await e.handshake(
+      {
+        random: sid,
+        sessionId: sid,
+        publicKey: x25519PublicKey(hexDecode(CLIENT_PRIVATE)),
+        serverName: "example.com",
+        alpn: [],
+        fixed: null,
+      },
+      hexDecode(CLIENT_PRIVATE),
+    );
+    const out = t.written;
+    let pos: usize = 0;
+    const types: u8[] = [];
+    while (pos < out.length) {
+      types.push(out[pos]);
+      pos += 5 + (((out[pos + 3] as usize) << 8) | (out[pos + 4] as usize));
+    }
+    expect(hexEncode(types)).toBe("16" + "14" + "16" + "17");
+    const at = out.length - (5 + 36 + 1 + 16);
+    const [inner, _] = openAt(new RecordCipher(0x1301, hexDecode(RETRY_CHS)), out, at);
+    expect(inner).toBe(RETRY_CF + "16");
+  });
+});
+
+describe("startTls", () => {
+  it("offers a session id of 32 bytes: compatibility mode", async () => {
+    const t = new Playback([]);
+    await expect(startTls(t, { verify: false })).rejects.toThrow("TLS: ");
+    expect(t.written[5 + 4 + 2 + 32]).toBe(32);
+  });
+});

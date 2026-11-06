@@ -1,0 +1,4 @@
+net_tls_stream_spawn_copy.velt:16:15: error: `s` is still used after `spawn`, so the task would get a copy, but `TlsStream` owns a resource (`[Symbol.dispose]`) and has no `clone()`
+net_tls_stream_spawn_copy.velt:23:19: error: `s` is still used after `spawn`, so the task would get a copy, but `TlsStream` owns a resource (`[Symbol.dispose]`) and has no `clone()`
+net_tls_stream_spawn_copy.velt:35:15: error: `h` is still used after `spawn`, so the task would get a copy, but `Holder` holds a `TlsStream`, which owns a resource (`[Symbol.dispose]`) and has no `clone()`
+net_tls_stream_spawn_copy.velt:42:15: error: `s` is still used after `spawn`, so the task would get a copy, but `TlsStream` owns a resource (`[Symbol.dispose]`) and has no `clone()`

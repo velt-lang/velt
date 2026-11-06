@@ -1,0 +1,28 @@
+// A `TlsStream` behind an interface, still referenced when it enters another task: the compiler
+// cannot see that it is a resource, so the transfer stops the program instead of copying the keys
+// and sequence numbers, which would repeat a nonce on the wire.
+import { ByteStream, connect, listenTls, startTls, TcpStream } from "velt/net";
+import { TEST_CERT, TEST_KEY } from "./_tls";
+
+async function use(b: ByteStream) {
+  await b.writeBytes([1], 0);
+}
+
+async function main() {
+  const l = await listenTls("127.0.0.1:0", { cert: TEST_CERT, key: TEST_KEY });
+  const accepting = l;
+  const server = spawn(async () => {
+    const conn: TcpStream = await accepting.accept();
+    await conn.read();
+    conn.close();
+  });
+  const s = await startTls(await connect(`127.0.0.1:${l.port}`), { verify: false });
+  const b: ByteStream = s;
+  const pool = [b];
+  console.log("pool", pool.length);
+  await spawn(use(b));
+  console.log("not reached");
+  await server;
+}
+
+await main();

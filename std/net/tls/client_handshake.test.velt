@@ -1,0 +1,435 @@
+// velt/net (tests): `ClientHandshake`, `clientHello` and `parseServerHello` as pure logic, run by
+// `velt test std/`: the order of the server's messages, what a retry does to the transcript,
+// Finished, and what a ServerHello and a generated ClientHello must say. The RETRY_ trace is a
+// handshake with a cookie HelloRetryRequest over X25519, generated from the server's side with
+// Node's crypto, independently of this code.
+import { sha256 } from "velt/crypto/sha256";
+import { x25519PublicKey } from "velt/crypto/x25519";
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import { TlsFailure } from "velt/net/tls/alert";
+import {
+  checkKeyUpdate,
+  ClientHandshake,
+  FINISHED_DONE,
+  HANDSHAKE_KEYS,
+  KEEP_READING,
+  SEND_RETRY,
+} from "velt/net/tls/client_handshake";
+import { clientHello, HelloInput } from "velt/net/tls/client_hello";
+import { HandshakeBuffer } from "velt/net/tls/handshake_buffer";
+import { finishedMac } from "velt/net/tls/key_schedule";
+import { describe, expect, it } from "velt/test";
+
+// 32 bytes.
+const CLIENT_PRIVATE = "49af42ba7f7994852d713ef2784bcbcaa7911de26adc5642cb634540e7ea5005";
+// 196 bytes.
+const CLIENT_HELLO =
+  "010000c00303cb34ecb1e78163ba1c38c6dacb196a6dffa21a8d9912ec18a2ef6283024dece70000061301130313" +
+  "02010000910000000b0009000006736572766572ff01000100000a00140012001d00170018001901000101010201" +
+  "03010400230000003300260024001d002099381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e52" +
+  "9aaf2c002b0003020304000d0020001e040305030603020308040805080604010501060102010402050206020202" +
+  "002d00020101001c00024001";
+// 657 bytes.
+const SERVER_FLIGHT =
+  "080000240022000a00140012001d00170018001901000101010201030104001c00024001000000000b0001b90000" +
+  "01b50001b0308201ac30820115a003020102020102300d06092a864886f70d01010b0500300e310c300a06035504" +
+  "031303727361301e170d3136303733303031323335395a170d3236303733303031323335395a300e310c300a0603" +
+  "550403130372736130819f300d06092a864886f70d010101050003818d0030818902818100b4bb498f8279303d98" +
+  "0836399b36c6988c0c68de55e1bdb826d3901a2461eafd2de49a91d015abbc9a95137ace6c1af19eaa6af98c7ced" +
+  "43120998e187a80ee0ccb0524b1b018c3e0b63264d449a6d38e22a5fda430846748030530ef0461c8ca9d9efbfae" +
+  "8ea6d1d03e2bd193eff0ab9a8002c47428a6d35a8d88d79f7f1e3f0203010001a31a301830090603551d13040230" +
+  "00300b0603551d0f0404030205a0300d06092a864886f70d01010b05000381810085aad2a0e5b9276b908c65f73a" +
+  "7267170618a54c5f8a7b337d2df7a594365417f2eae8f8a58c8f8172f9319cf36b7fd6c55b80f21a030151567260" +
+  "96fd335e5e67f2dbf102702e608ccae6bec1fc63a42a99be5c3eb7107c3c54e9b9eb2bd5203b1c3b84e0a8b2f759" +
+  "409ba3eac9d91d402dcc0cc8f8961229ac9187b42b4de100000f000084080400805a747c5d88fa9bd2e55ab085a6" +
+  "1015b7211f824cd484145ab3ff52f1fda8477b0b7abc90db78e2d33a5c141a078653fa6bef780c5ea248eeaaa785" +
+  "c4f394cab6d30bbe8d4859ee511f602957b15411ac027671459e46445c9ea58c181e818e95b8c3fb0bf3278409d3" +
+  "be152a3da5043e063dda65cdf5aea20d53dfacd42f74f3140000209b9b141d906337fbd2cbdce71df4deda4ab42c" +
+  "309572cb7fffee5454b78f0718";
+// 32 bytes.
+const SERVER_HS_SECRET = "b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38";
+// ServerHello.
+const SERVER_HELLO =
+  "020000560303a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3e2692800130100002e00" +
+  "330024001d0020c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f002b00020304";
+const RETRY_HRR =
+  "020000590303cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c20000102030405" +
+  "060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f1301000011002b00020304002c00070005aaaa" +
+  "aaaaaa";
+const RETRY_SH =
+  "020000760303222222222222222222222222222222222222222222222222222222222222222220000102030405" +
+  "060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f130100002e002b0002030400330024001d0020" +
+  "7b4e909bbe7ffe44c465a220037d608ee35897d31ef972f07f74892cb0f73f13";
+const RETRY_EE = "080000020000";
+const RETRY_CERT =
+  "0b0000310000002d00002830303030303030303030303030303030303030303030303030303030303030303030" +
+  "3030303030300000";
+const RETRY_CV =
+  "0f00004a0403004655555555555555555555555555555555555555555555555555555555555555555555555555" +
+  "555555555555555555555555555555555555555555555555555555555555555555";
+const RETRY_SF = "14000020b426f8cf149f5b4f8a577bba105fe13779656537fe8e5671b2b833825b1e269a";
+const RETRY_CF = "1400002017da5f7766594e4645ffcef0bb42858b868d426bf67f033dc6f86b089045bad9";
+const RETRY_CHS = "baa4dc7996ddb221a4312e217265898319bfb5c60a3dff9b83a7b4352591c274";
+const RETRY_SHS = "7e3e1875007dc95601e18099d4b323900293dae42bd02c6b46206588b1fc00ea";
+const RETRY_CAP = "e902cca309c1dbab74abd23dd40e06e1b9cb72772b8690a8913665274e848ca3";
+const RETRY_SAP = "be66ce153a5755e4fc49b51776ab7bddac7888a6ba35ee7ac3005ece70bde6d8";
+
+const HRR_RANDOM = "cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c";
+const SHARE = "c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f";
+
+// The alert and message of what `f` throws, "" if nothing.
+function failure(f: () => void throws Error): string {
+  try {
+    f();
+    return "";
+  } catch (e) {
+    return e instanceof TlsFailure ? `${e.alert} ${e.message}` : `${e}`;
+  }
+}
+
+function bytes32(): u8[] {
+  const out: u8[] = [];
+  for (let i: usize = 0; i < 32; i++) {
+    out.push(i as u8);
+  }
+  return out;
+}
+
+function input(serverName: string, alpn: string[]): HelloInput {
+  return {
+    random: bytes32(),
+    sessionId: bytes32(),
+    publicKey: x25519PublicKey(hexDecode(CLIENT_PRIVATE)),
+    serverName: serverName,
+    alpn: alpn,
+    fixed: null,
+  };
+}
+
+// The trace's handshake, with `alpn` offered, past its first `steps` server messages.
+function traced(steps: usize, alpn: string[] = []): ClientHandshake {
+  const h = new ClientHandshake(
+    {
+      random: [],
+      sessionId: [],
+      publicKey: [],
+      serverName: "",
+      alpn: alpn,
+      fixed: hexDecode(CLIENT_HELLO),
+    },
+    hexDecode(CLIENT_PRIVATE),
+  );
+  h.hello();
+  const all = trace();
+  for (let i: usize = 0; i < steps; i++) {
+    h.onMessage(all[i]);
+  }
+  return h;
+}
+
+// RFC 8448's server messages: ServerHello, EncryptedExtensions, Certificate, CertificateVerify,
+// Finished.
+function trace(): u8[][] {
+  const flight = hexDecode(SERVER_FLIGHT);
+  return [
+    hexDecode(SERVER_HELLO),
+    flight.slice(0, 40),
+    flight.slice(40, 485),
+    flight.slice(485, 621),
+    flight.slice(621),
+  ];
+}
+
+// A ServerHello message: `random` and the extensions (hex), its other fields as `sessionId` empty,
+// `suite`, no compression; `tail` (hex) after them.
+function serverHello(random: string, suite: string, exts: string, tail: string = ""): u8[] {
+  const n = 2 + 32 + 1 + 2 + 1 + 2 + exts.length / 2 + tail.length / 2;
+  const len = n.toString(16).padStart(4, "0");
+  const extLen = (exts.length / 2).toString(16).padStart(4, "0");
+  return hexDecode(`0200${len}0303${random}00${suite}00${extLen}${exts}${tail}`);
+}
+
+const VERSION = "002b00020304";
+const KEY_SHARE = `003300240` + `01d0020${SHARE}`;
+
+describe("the order of the server's messages", () => {
+  const names = [
+    "ServerHello",
+    "EncryptedExtensions",
+    "Certificate",
+    "CertificateVerify",
+    "Finished",
+  ];
+  // Which message comes next after `steps` messages; every other one is refused.
+  for (let steps: usize = 0; steps < 5; steps++) {
+    for (let m: usize = 0; m < 5; m++) {
+      if (m == steps) {
+        continue;
+      }
+      it(`refuses ${names[m]} after ${steps} messages`, () => {
+        const h = traced(steps);
+        const type = trace()[m][0];
+        expect(failure(() => h.onMessage(trace()[m]))).toBe(
+          `10 TLS: unexpected handshake message ${type} during the handshake`,
+        );
+      });
+    }
+  }
+
+  it("refuses a second CertificateRequest, and one after the Certificate", () => {
+    const request = [13, 0, 0, 3, 0, 0, 0] as u8[];
+    const h = traced(2);
+    expect(h.onMessage(request)).toBe(KEEP_READING);
+    expect(failure(() => h.onMessage(request))).toBe(
+      "10 TLS: unexpected handshake message 13 during the handshake",
+    );
+    const after = traced(3);
+    expect(failure(() => after.onMessage(request))).toBe(
+      "10 TLS: unexpected handshake message 13 during the handshake",
+    );
+  });
+
+  it("follows the trace to the end, with the trace's secrets", () => {
+    const h = traced(0);
+    const all = trace();
+    expect(h.onMessage(all[0])).toBe(HANDSHAKE_KEYS);
+    expect(hexEncode(h.serverHandshake)).toBe(SERVER_HS_SECRET);
+    expect(h.onMessage(all[1])).toBe(KEEP_READING);
+    expect(h.onMessage(all[2])).toBe(KEEP_READING);
+    expect(h.onMessage(all[3])).toBe(KEEP_READING);
+    expect(h.onMessage(all[4])).toBe(FINISHED_DONE);
+    expect(h.done()).toBe(true);
+  });
+});
+
+describe("Finished", () => {
+  const cases: [string, usize, u8, string][] = [
+    ["one byte short", 31, 0, "50 TLS: "],
+    ["one byte long", 33, 0, ""],
+    ["the top bit of its first byte flipped", 32, 0x80, ""],
+    ["the top bit of its last byte flipped", 32, 1, ""],
+  ];
+  for (const [name, length, flip, _] of cases) {
+    it(`refuses one with ${name}, with decrypt_error`, () => {
+      const h = traced(4);
+      const f = trace()[4].slice(0, (4 + (length < 32 ? length : 32)) as i64);
+      if (length > 32) {
+        f.push(0);
+      }
+      if (flip == 0x80) {
+        f[4] ^= 0x80;
+      } else if (flip == 1) {
+        f[35] ^= 0x80;
+      }
+      expect(failure(() => h.onMessage(f))).toBe(
+        "51 TLS: the server's Finished does not match the handshake",
+      );
+      expect(h.done()).toBe(false);
+    });
+  }
+});
+
+describe("a HelloRetryRequest with a cookie, over X25519", () => {
+  function retried(): ClientHandshake {
+    const h = new ClientHandshake(input("example.com", []), hexDecode(CLIENT_PRIVATE));
+    h.hello();
+    expect(h.onMessage(hexDecode(RETRY_HRR))).toBe(SEND_RETRY);
+    return h;
+  }
+
+  it("restarts the transcript and reaches the trace's secrets and Finished", () => {
+    const h = retried();
+    const first = hexEncode(clientHello(input("example.com", []), null));
+    const cookie = "002c00070005aaaaaaaaaa";
+    expect(hexEncode(h.retryHello).endsWith(cookie)).toBe(true);
+    expect(hexEncode(h.retryHello).length).toBe(first.length + cookie.length);
+    expect(h.onMessage(hexDecode(RETRY_SH))).toBe(HANDSHAKE_KEYS);
+    expect(hexEncode(h.clientHandshake)).toBe(RETRY_CHS);
+    expect(hexEncode(h.serverHandshake)).toBe(RETRY_SHS);
+    h.onMessage(hexDecode(RETRY_EE));
+    h.onMessage(hexDecode(RETRY_CERT));
+    h.onMessage(hexDecode(RETRY_CV));
+    expect(h.onMessage(hexDecode(RETRY_SF))).toBe(FINISHED_DONE);
+    expect(hexEncode(h.clientApplication)).toBe(RETRY_CAP);
+    expect(hexEncode(h.serverApplication)).toBe(RETRY_SAP);
+    expect(hexEncode(h.lastFlight)).toBe(RETRY_CF);
+  });
+
+  it("refuses a ServerHello whose suite differs from the retry's, and a second retry", () => {
+    const changed = hexDecode(RETRY_SH);
+    // The suite follows the version, random, and session id of 32 bytes.
+    changed[4 + 2 + 32 + 1 + 32 + 1] = 0x03;
+    expect(failure(() => retried().onMessage(changed))).toBe(
+      "47 TLS: the ServerHello's suite differs from the HelloRetryRequest's",
+    );
+    expect(failure(() => retried().onMessage(hexDecode(RETRY_HRR)))).toBe(
+      "10 TLS: a second HelloRetryRequest",
+    );
+  });
+});
+
+describe("what a ServerHello must say", () => {
+  const random = "00".repeat(32);
+  function refusal(m: u8[]): string {
+    return failure(() => traced(0).onMessage(m));
+  }
+
+  it("names the suite it offered", () => {
+    const m = serverHello(random, "1302", VERSION + KEY_SHARE);
+    expect(refusal(m).startsWith("47 TLS: ")).toBe(true);
+  });
+
+  it("has nothing after its extensions", () => {
+    const m = serverHello(random, "1301", VERSION + KEY_SHARE, "00");
+    expect(refusal(m).startsWith("50 TLS: ")).toBe(true);
+  });
+
+  it("has a key share, of X25519 and of 32 bytes", () => {
+    expect(refusal(serverHello(random, "1301", VERSION))).toBe(
+      "109 TLS: the ServerHello has no key share",
+    );
+    const other = `00330024` + `00170020${SHARE}`;
+    expect(refusal(serverHello(random, "1301", VERSION + other))).toBe(
+      "47 TLS: the server's key share is not an X25519 key",
+    );
+    const short = `00330023` + `001d001f${SHARE.slice(0, 62)}`;
+    expect(refusal(serverHello(random, "1301", VERSION + short))).toBe(
+      "47 TLS: the server's key share is not an X25519 key",
+    );
+  });
+
+  it("refuses a small-order share", () => {
+    const zero = `00330024` + `001d0020${"00".repeat(32)}`;
+    expect(refusal(serverHello(random, "1301", VERSION + zero))).toBe(
+      "47 TLS: the server's X25519 share is a small-order point",
+    );
+  });
+
+  it("is a retry only with the whole special random", () => {
+    const cookie = "002c00070005aaaaaaaaaa";
+    const nearly = HRR_RANDOM.slice(0, 62) + "9d";
+    expect(refusal(serverHello(nearly, "1301", VERSION + cookie))).toBe(
+      "109 TLS: the ServerHello has no key share",
+    );
+  });
+
+  it("asks a retry only for a group it can have: anything else is illegal_parameter", () => {
+    const group = "003300020017";
+    const m = serverHello(HRR_RANDOM, "1301", VERSION + group);
+    expect(refusal(m).startsWith("47 TLS: the server requires key exchange group 0x17")).toBe(true);
+  });
+});
+
+describe("EncryptedExtensions and the client's Certificate", () => {
+  // An ALPN extension with the names (hex, each with its length).
+  function ee(names: string): u8[] {
+    const list = names.length / 2;
+    const l = list.toString(16).padStart(4, "0");
+    const e = (list + 2).toString(16).padStart(4, "0");
+    const all = (list + 6).toString(16).padStart(4, "0");
+    const n = (list + 8).toString(16).padStart(6, "0");
+    return hexDecode(`08${n}${all}0010${e}${l}${names}`);
+  }
+
+  it("takes the ALPN protocol it offered, and refuses another", () => {
+    const h = traced(1, ["h2"]);
+    expect(h.onMessage(ee("026832"))).toBe(KEEP_READING);
+    expect(h.alpn).toBe("h2");
+    expect(failure(() => traced(1, ["h2"]).onMessage(ee("026833")))).toBe(
+      `120 TLS: the server chose ALPN protocol "h3", which was not offered`,
+    );
+  });
+
+  it("refuses an ALPN list of two names", () => {
+    expect(
+      failure(() => traced(1, ["h2"]).onMessage(ee("026832026832"))).startsWith("50 TLS: "),
+    ).toBe(true);
+  });
+
+  it("repeats a CertificateRequest's context in its empty Certificate", () => {
+    const h = traced(2);
+    const request = [13, 0, 0, 5, 2, 7, 9, 0, 0] as u8[];
+    h.onMessage(request);
+    const all = trace();
+    h.onMessage(all[2]);
+    h.onMessage(all[3]);
+    const transcript = hexDecode(CLIENT_HELLO);
+    for (const m of [all[0], all[1], request, all[2], all[3]]) {
+      for (const b of m) {
+        transcript.push(b);
+      }
+    }
+    const fin: u8[] = [20, 0, 0, 32];
+    for (const b of finishedMac(hexDecode(SERVER_HS_SECRET), sha256(transcript))) {
+      fin.push(b);
+    }
+    expect(h.onMessage(fin)).toBe(FINISHED_DONE);
+    expect(hexEncode(h.lastFlight).startsWith("0b00000602" + "0709" + "000000")).toBe(true);
+  });
+});
+
+describe("a KeyUpdate", () => {
+  it("has one byte of request_update, 0 or 1", () => {
+    checkKeyUpdate([24, 0, 0, 1, 0]);
+    checkKeyUpdate([24, 0, 0, 1, 1]);
+    expect(failure(() => checkKeyUpdate([24, 0, 0, 1, 2]))).toBe(
+      "47 TLS: a KeyUpdate with request_update 2",
+    );
+    expect(failure(() => checkKeyUpdate([24, 0, 0, 2, 0, 0]))).toBe(
+      "50 TLS: a KeyUpdate of 6 bytes",
+    );
+    expect(failure(() => checkKeyUpdate([24, 0, 0, 0]))).toBe("50 TLS: a KeyUpdate of 4 bytes");
+  });
+});
+
+describe("a generated ClientHello", () => {
+  function hello(serverName: string): string {
+    return hexEncode(clientHello(input(serverName, []), null));
+  }
+
+  it("says legacy_version 0x0303, its random and session id, and both suites", () => {
+    const random = hexEncode(bytes32());
+    const start = `0303${random}20${random}000413031301` + "0100";
+    expect(hello("example.com").slice(8, (8 + start.length) as i64)).toBe(start);
+  });
+
+  it("names a DNS server with SNI, and an IP address not at all", () => {
+    const sni =
+      "0000" + "0010000e00000b" + hexEncode([101, 120, 97, 109, 112, 108, 101, 46, 99, 111, 109]);
+    expect(hello("example.com").includes(sni)).toBe(true);
+    expect(hello("192.0.2.1").includes("00000")).toBe(hello("").includes("00000"));
+    expect(hello("192.0.2.1")).toBe(hello(""));
+    expect(hello("2001:db8::1")).toBe(hello(""));
+  });
+});
+
+describe("HandshakeBuffer", () => {
+  it("takes many messages out of one append and keeps a split one", () => {
+    const hs = new HandshakeBuffer();
+    const bytes: u8[] = [];
+    for (let i: usize = 0; i < 300; i++) {
+      bytes.push(i as u8);
+      bytes.push(0);
+      bytes.push(0);
+      bytes.push(1);
+      bytes.push((i + 1) as u8);
+    }
+    bytes.push(7);
+    bytes.push(0);
+    bytes.push(0);
+    bytes.push(2);
+    bytes.push(1);
+    hs.append(bytes, 0, bytes.length);
+    for (let i: usize = 0; i < 300; i++) {
+      expect(hs.hasMessage()).toBe(true);
+      expect(hexEncode(hs.take())).toBe(hexEncode([i as u8, 0, 0, 1, (i + 1) as u8]));
+    }
+    expect(hs.hasMessage()).toBe(false);
+    expect(() => hs.checkEmpty()).toThrow("TLS: handshake data across a key change");
+    hs.append([2, 9, 0, 0, 0], 0, 5);
+    expect(hexEncode(hs.take())).toBe("070000020102");
+    expect(hs.hasMessage()).toBe(true);
+    expect(hexEncode(hs.take())).toBe("09000000");
+    hs.checkEmpty();
+  });
+});
