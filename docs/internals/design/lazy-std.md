@@ -171,3 +171,13 @@ requires no diagnostics, and nightly's `compile/check_all_std` measures it the s
 
 One more walk over the checked HIR, in exchange for not checking the unreached bodies; see the
 pull request for the numbers.
+
+**Accepted over the rule (#2345).** A program that converts a `number` no syntax marks as a float
+to text loads and checks std's float printer (`number_float`, `format`, `shortest`, `text`,
+`pow10`): about 14M instructions, `check` +4.59 % and `--emit vir` +7.98 % on a small program
+(`class P { x: number = 3; }` printed in a template). That is the worst case of a change that
+helps overall: hello and programs with no float text get cheaper, `all_std` stays within the
+rule, and such a program's fractional field prints 54.7 % cheaper at run time. The cost was
+profiled and has no hot spot, so it was accepted, with the decision on #2345
+(https://github.com/velt-lang/velt/pull/2345#issuecomment-6695101845). Checking the printer once,
+not in every program, is #2501.
