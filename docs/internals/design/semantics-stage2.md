@@ -265,7 +265,8 @@ on one object at once; a standard library `clone()` that changes nothing, as `Re
 walk (glue/many.rs), which goes through arrays, classes, interface values and captured functions,
 and panics on all of these, on a captured variable's cell, on a closure that changes what it
 captured (`FnDef::changes_held`, `ownership/local_async/record.rs`), on a resource no copy can be
-made of, and on a `g` or `y` `RegExp`, whose `lastIndex` would be lost. What it can't see is a change
+made of, and on a `g` or `y` `RegExp`, whose `lastIndex` would be lost. A view over a captured
+buffer may be held only directly in a local of the function (`local_async/views.rs`). What it can't see is a change
 in a function it never walks: one that goes into a value in `shared(...)` by another route later. A
 `Mutex` around the function runs the calls one at a time on the function's own captures, so it
 allows changes and `clone()`. A captured cycle is copied per call as a cycle, and reference counting

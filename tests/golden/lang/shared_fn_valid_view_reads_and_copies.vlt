@@ -58,6 +58,24 @@ async function main() {
     return c.byteLength + c.byteOffset + x;
   });
   console.log(lengths(1));
+
+  // A view over a copy may go anywhere, and a closure may read through a local view of its own.
+  const b7 = new ArrayBuffer(4);
+  const copyInObject = shared((x: number): number => {
+    const c = b7.slice(0);
+    const o = { v: new Uint8Array(c) };
+    o.v[0] = o.v[0] + x;
+    return o.v[0];
+  });
+  const b8 = new ArrayBuffer(4);
+  const nestedRead = shared((x: number): number => {
+    const read = (): number => {
+      const v = new Uint8Array(b8);
+      return v[0] + x;
+    };
+    return read();
+  });
+  console.log(copyInObject(1), copyInObject(1), nestedRead(1));
   console.log(sliceLocal(1), sliceLocal(1), sliceAlias(1), sliceAlias(1));
   console.log(bufferSlice(1), bufferSlice(1), arraySlice(1), arraySlice(1), arrayMap(1), arrayMap(1));
 }

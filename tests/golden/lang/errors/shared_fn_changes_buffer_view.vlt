@@ -55,5 +55,82 @@ async function main() {
     o.v[0] = o.v[0] + 1;
     return o.v[0];
   });
+  // The rule: a view is held only directly in a local of the function.
+  const l = new ArrayBuffer(4);
+  const objectFromClosure = shared((x: number): number => {
+    const mk = () => ({ v: new Uint8Array(l) });
+    const o = mk();
+    o.v[0] = o.v[0] + 1;
+    return o.v[0];
+  });
+  const m = new ArrayBuffer(4);
+  const arrayFromClosure = shared((x: number): number => {
+    const mk = (): Uint8Array[] => [new Uint8Array(m)];
+    const a = mk();
+    a[0][0] = a[0][0] + 1;
+    return a[0][0];
+  });
+  const n = new ArrayBuffer(4);
+  const anyFromClosure = shared((x: number): number => {
+    const mk = (): any => new Uint8Array(n);
+    const v = mk() as Uint8Array;
+    v[0] = v[0] + 1;
+    return v[0];
+  });
+  const p = new ArrayBuffer(4);
+  const nullableFromClosure = shared((x: number): number => {
+    const mk = (): Uint8Array | null => new Uint8Array(p);
+    const v = mk() ?? new Uint8Array(2);
+    v[0] = v[0] + 1;
+    return v[0];
+  });
+  const q = new ArrayBuffer(4);
+  const generatorClosure = shared((x: number): number => {
+    const g = function* (): Generator<Uint8Array> {
+      yield new Uint8Array(q);
+    };
+    let t = 0;
+    for (const v of g()) {
+      v[0] = v[0] + 1;
+      t = v[0];
+    }
+    return t;
+  });
+  const r = new ArrayBuffer(4);
+  const generatorDeclared = shared((x: number): number => {
+    function* g(): Generator<Uint8Array> {
+      yield new Uint8Array(r);
+    }
+    let t = 0;
+    for (const v of g()) {
+      v[0] = v[0] + 1;
+      t = v[0];
+    }
+    return t;
+  });
+  const s = new ArrayBuffer(4);
+  const pushed = shared((x: number): number => {
+    const a: Uint8Array[] = [];
+    a.push(new Uint8Array(s));
+    a[0][0] = a[0][0] + 1;
+    return a[0][0];
+  });
+  const t = new ArrayBuffer(4);
+  const inMap = shared((x: number): number => {
+    const a = new Map<string, Uint8Array>();
+    a.set("a", new Uint8Array(t));
+    const v = a.get("a")!;
+    v[0] = v[0] + 1;
+    return v[0];
+  });
+  // Refused without a write: the view leaves the local.
+  const w = new ArrayBuffer(4);
+  const readOnlyInArray = shared((x: number): number => {
+    const a = [new Uint8Array(w)];
+    return a[0][0];
+  });
+  const y = new ArrayBuffer(4);
+  const returned = shared((x: number): Uint8Array => new Uint8Array(y));
   console.log(overBuffer(1), dataView(1), overCaptured(1), madeInside(1), bufferInside(1), madeInline(1), declaredInside(1), inObject(1));
+  console.log(objectFromClosure(1), arrayFromClosure(1), anyFromClosure(1), nullableFromClosure(1), generatorClosure(1), generatorDeclared(1), pushed(1), inMap(1), readOnlyInArray(1), returned(1)[0]);
 }
