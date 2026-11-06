@@ -1,0 +1,10 @@
+// `dotI8` needs arrays of one length.
+
+import { dotI8 } from "velt/simd";
+
+function main() {
+  const a: i8[] = [1, 2, 3];
+  const b: i8[] = [1, 2];
+  console.log(dotI8(a, a));
+  console.log(dotI8(a, b));
+}

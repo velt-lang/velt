@@ -1,0 +1,13 @@
+[package]
+name = "half_dot"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[dependencies]
+half = "2"
+
+[profile.release]
+opt-level = 3
+
+[workspace]

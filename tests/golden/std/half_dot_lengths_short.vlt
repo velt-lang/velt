@@ -1,0 +1,10 @@
+// `dotF16` needs arrays of one length: `a` the shorter, so a check of only `a` longer lets it by.
+
+import { dotF16 } from "velt/half";
+
+function main() {
+  const a: f16[] = [1, 2];
+  const b: f16[] = [1, 2, 3];
+  console.log(dotF16(a, a));
+  console.log(dotF16(a, b));
+}

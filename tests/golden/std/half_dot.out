@@ -1,0 +1,12 @@
+f16 lengths 0 to 100: mismatches 0 last 0.21706568077206612
+bf16 lengths 0 to 100: mismatches 0 last -0.00002758787013590336
+f16 accumulator 0 16777216
+bf16 accumulator 0 16777216
+f16 accumulator 1 apart 16777217
+bf16 accumulator 1 apart 16777217
+bf16 length 32 16777217
+bf16 tail 58
+f16 special Infinity NaN NaN
+empty 0 0 0
+i8 lengths 0 to 200: mismatches 0 last -123220
+i8 wraps -2147483648

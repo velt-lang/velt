@@ -1,0 +1,157 @@
+// velt/half (internal): the dot product of two `f16[]` or two `bf16[]`, accumulating in `f32`: the
+// inner loop of inference with 16-bit weights.
+//
+// Four accumulators take 32 weights a round, so the CPU's fused additions overlap instead of each
+// waiting for the one before (about 2.5 times the speed of one accumulator on an Apple M4, for
+// about half the instructions per weight, the loads being paired); then one accumulator takes what is left, eight weights at a time.
+// Every step is `dotAdd`, whose bits are the same on every CPU, so the result is too: on arm64
+// `fmlal` for f16 where the CPU has it, on x86 `vcvtph2ps` and `vfmadd` with `--cpu x86-64-v3`.
+//
+// The loops read with the unchecked load: their condition is the check.
+
+import { noInline } from "velt/lang/intrinsics";
+
+declare function velt_simd_f32x4_splat(x: f32): f32x4;
+declare function velt_simd_f32x4_lane(v: f32x4, index: u64): f32;
+declare function velt_simd_f16x8_load(from: f16[], at: u64): f16x8;
+declare function velt_simd_f16x8_load_partial(from: f16[], at: u64, count: u64): f16x8;
+declare function velt_simd_bf16x8_load(from: bf16[], at: u64): bf16x8;
+declare function velt_simd_bf16x8_load_partial(from: bf16[], at: u64, count: u64): bf16x8;
+declare function velt_simd_f32x4_dot_add_f16x8(acc: f32x4, a: f16x8, b: f16x8): f32x4;
+declare function velt_simd_f32x4_dot_add_bf16x8(acc: f32x4, a: bf16x8, b: bf16x8): f32x4;
+
+/** A RangeError unless the two arrays have one length; the length. */
+function sameLength(na: usize, nb: usize, what: string): usize {
+  if (na != nb) {
+    panic(`RangeError: ${what}: the arrays have lengths ${na} and ${nb}`);
+  }
+  return na;
+}
+
+/** The sum of the lanes of the four accumulators, in `number`, after the loop. */
+function total(a: f32x4, b: f32x4, c: f32x4, d: f32x4): number {
+  let sum: number = 0;
+  for (let k: u64 = 0; k < 4; k++) {
+    sum += velt_simd_f32x4_lane(a, k) as number;
+    sum += velt_simd_f32x4_lane(b, k) as number;
+    sum += velt_simd_f32x4_lane(c, k) as number;
+    sum += velt_simd_f32x4_lane(d, k) as number;
+  }
+  return sum;
+}
+
+/**
+ * The dot product of `a` and `b`: `a[0] * b[0] + a[1] * b[1] + …`, each product exact in `f32`,
+ * accumulated in `f32` lanes by `f16x8.dotAdd` and summed in `number` at the end, the same number
+ * on every CPU. Panics with a RangeError when the lengths differ.
+ */
+export function dotF16(a: f16[], b: f16[]): number {
+  noInline();
+  const n = sameLength(a.length, b.length, "dotF16");
+  let s0 = velt_simd_f32x4_splat(0);
+  let s1 = s0;
+  let s2 = s0;
+  let s3 = s0;
+  let i: usize = 0;
+  while (n - i >= 32) {
+    const at = i as u64;
+    s0 = velt_simd_f32x4_dot_add_f16x8(
+      s0,
+      velt_simd_f16x8_load(a, at),
+      velt_simd_f16x8_load(b, at),
+    );
+    s1 = velt_simd_f32x4_dot_add_f16x8(
+      s1,
+      velt_simd_f16x8_load(a, at + 8),
+      velt_simd_f16x8_load(b, at + 8),
+    );
+    s2 = velt_simd_f32x4_dot_add_f16x8(
+      s2,
+      velt_simd_f16x8_load(a, at + 16),
+      velt_simd_f16x8_load(b, at + 16),
+    );
+    s3 = velt_simd_f32x4_dot_add_f16x8(
+      s3,
+      velt_simd_f16x8_load(a, at + 24),
+      velt_simd_f16x8_load(b, at + 24),
+    );
+    i += 32;
+  }
+  while (n - i >= 8) {
+    const at = i as u64;
+    s0 = velt_simd_f32x4_dot_add_f16x8(
+      s0,
+      velt_simd_f16x8_load(a, at),
+      velt_simd_f16x8_load(b, at),
+    );
+    i += 8;
+  }
+  if (i < n) {
+    const at = i as u64;
+    const left = (n - i) as u64;
+    s0 = velt_simd_f32x4_dot_add_f16x8(
+      s0,
+      velt_simd_f16x8_load_partial(a, at, left),
+      velt_simd_f16x8_load_partial(b, at, left),
+    );
+  }
+  return total(s0, s1, s2, s3);
+}
+
+/**
+ * The dot product of `a` and `b`, as `dotF16`: accumulated in `f32` lanes by `bf16x8.dotAdd`, the
+ * same number on every CPU, with no use of a CPU's bf16 dot product, whose rounding differs (a loop
+ * over `bf16x8.dotAddFast` has it). Panics with a RangeError when the lengths differ.
+ */
+export function dotBf16(a: bf16[], b: bf16[]): number {
+  noInline();
+  const n = sameLength(a.length, b.length, "dotBf16");
+  let s0 = velt_simd_f32x4_splat(0);
+  let s1 = s0;
+  let s2 = s0;
+  let s3 = s0;
+  let i: usize = 0;
+  while (n - i >= 32) {
+    const at = i as u64;
+    s0 = velt_simd_f32x4_dot_add_bf16x8(
+      s0,
+      velt_simd_bf16x8_load(a, at),
+      velt_simd_bf16x8_load(b, at),
+    );
+    s1 = velt_simd_f32x4_dot_add_bf16x8(
+      s1,
+      velt_simd_bf16x8_load(a, at + 8),
+      velt_simd_bf16x8_load(b, at + 8),
+    );
+    s2 = velt_simd_f32x4_dot_add_bf16x8(
+      s2,
+      velt_simd_bf16x8_load(a, at + 16),
+      velt_simd_bf16x8_load(b, at + 16),
+    );
+    s3 = velt_simd_f32x4_dot_add_bf16x8(
+      s3,
+      velt_simd_bf16x8_load(a, at + 24),
+      velt_simd_bf16x8_load(b, at + 24),
+    );
+    i += 32;
+  }
+  while (n - i >= 8) {
+    const at = i as u64;
+    s0 = velt_simd_f32x4_dot_add_bf16x8(
+      s0,
+      velt_simd_bf16x8_load(a, at),
+      velt_simd_bf16x8_load(b, at),
+    );
+    i += 8;
+  }
+  if (i < n) {
+    const at = i as u64;
+    const left = (n - i) as u64;
+    s0 = velt_simd_f32x4_dot_add_bf16x8(
+      s0,
+      velt_simd_bf16x8_load_partial(a, at, left),
+      velt_simd_bf16x8_load_partial(b, at, left),
+    );
+  }
+  return total(s0, s1, s2, s3);
+}
