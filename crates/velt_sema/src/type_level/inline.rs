@@ -62,6 +62,28 @@ impl Ctx<'_> {
         )
     }
 
+    /// The alias a deferred application of alias `a` is known by: two aliases with one parameter
+    /// list and one body that names only its own parameters and built-in types are one type
+    /// while deferred (a helper type declared in two modules), as TypeScript relates generic
+    /// mapped and conditional types by what they are, not by their alias.
+    pub(crate) fn canonical_alias(&mut self, a: u32) -> u32 {
+        if let Some(&c) = self.type_level.alias_canon.get(&a) {
+            return c;
+        }
+        let info = &self.aliases[a as usize];
+        let decl = info.decl;
+        let c = match info.outer.is_empty() && self_contained(decl) {
+            true => {
+                let names = decl.generics.iter().map(|g| g.name.name.clone()).collect();
+                let key = (names, shape_key(&decl.ty));
+                *self.type_level.alias_shapes.entry(key).or_insert(a)
+            }
+            false => a,
+        };
+        self.type_level.alias_canon.insert(a, c);
+        c
+    }
+
     /// Does `t` hold a deferred type (`TyKind::Op`)?
     pub(crate) fn mentions_op(&self, t: TyId) -> bool {
         let mut found = false;
@@ -261,6 +283,55 @@ impl Ctx<'_> {
         );
         self.ty.error
     }
+}
+
+/// Does alias `decl`'s body name only its parameters, what it binds itself (a mapped type's key,
+/// `infer`) and built-in types, so that it means the same in every module?
+fn self_contained(decl: &ast::TypeAlias) -> bool {
+    use velt_syntax::visit::{walk_type_expr, Visit};
+    struct Names<'t> {
+        bound: Vec<&'t str>,
+        used: Vec<&'t str>,
+        qualified: bool,
+    }
+    impl<'a> Visit<'a> for Names<'a> {
+        fn ty(&mut self, t: &'a ast::TypeExpr) {
+            match &t.kind {
+                ast::TypeExprKind::Named { path, .. } => match &path[..] {
+                    [one] => self.used.push(&one.name),
+                    _ => self.qualified = true,
+                },
+                ast::TypeExprKind::Mapped(m) => self.bound.push(&m.param.name),
+                ast::TypeExprKind::Infer(n) => self.bound.push(&n.name),
+                ast::TypeExprKind::Query(_) | ast::TypeExprKind::Callable { .. } => {
+                    self.qualified = true
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut n = Names {
+        bound: decl.generics.iter().map(|g| g.name.name.as_str()).collect(),
+        used: vec![],
+        qualified: false,
+    };
+    walk_type_expr(&decl.ty, &mut n);
+    !n.qualified
+        && n.used.iter().all(|u| {
+            n.bound.contains(u)
+                || matches!(
+                    *u,
+                    "string"
+                        | "number"
+                        | "boolean"
+                        | "bigint"
+                        | "symbol"
+                        | "any"
+                        | "unknown"
+                        | "never"
+                        | "object"
+                )
+        })
 }
 
 /// The single names `t` mentions (type parameters among them, perhaps shadowed).

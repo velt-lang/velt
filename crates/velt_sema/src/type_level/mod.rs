@@ -90,6 +90,10 @@ pub(crate) struct State {
     pub(crate) inline: inline::Forms,
 }
 
+    /// The alias each deferred alias is known by (`Ctx::canonical_alias`).
+    pub(crate) alias_canon: rustc_hash::FxHashMap<u32, u32>,
+    /// Per alias body that means the same in every module: the first alias with it.
+    pub(crate) alias_shapes: rustc_hash::FxHashMap<(Vec<String>, String), u32>,
 /// The deferred types lowering may meet, with what they reduce to (`hir::Program::type_ops`):
 /// every reduction sema made, after readonly erasure. [`instances::reach`] has reduced each one
 /// an instantiation of a generic definition reaches.
@@ -153,6 +157,7 @@ impl Ctx<'_> {
     pub(crate) fn deferred_alias(&mut self, a: u32, args: Vec<TyId>, span: Span) -> TyId {
         let op = self.ty.intern(TyKind::Op(TyOp::Alias(a), args));
         self.type_level.op_sites.entry(op).or_insert(span);
+        let a = self.canonical_alias(a);
         op
     }
 
