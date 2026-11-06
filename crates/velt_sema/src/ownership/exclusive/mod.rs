@@ -12,6 +12,10 @@
 //!   reference, except change the inside of a class instance or an array passed so (the callee
 //!   sees the change as JavaScript's would: `this.set(this.src.get(1))`).
 //!
+//! An argument that only reads a value JavaScript does not hold by reference (a string, a union,
+//! an object type, `any`) gets a reference of its own instead of a conflict
+//! ([`share_value_reads`]): the callee keeps what was read, as in JavaScript.
+//!
 //! Places overlap when one is a prefix of the other (`a` / `a.f`, `xs` / `xs[i]`; `xs[i]` and
 //! `xs[j]` always overlap, `a.f` and `a.g` never do); borrowing pattern bindings count as
 //! the part of the place they borrow from (`t[0]` for `a` in `const [a, b] = t`). The non-Copy params of closures and of named functions used as
@@ -25,6 +29,7 @@
 mod conflict;
 mod iteration;
 mod let_borrow;
+mod share_value_reads;
 mod this_alias;
 mod uses;
 
@@ -517,6 +522,13 @@ impl Checker<'_, '_> {
         if key_only && held.is_none() && uses.len() == 2 {
             drop_key_through_receiver(&mut uses);
         }
+        share_value_reads::share_value_reads(
+            &col,
+            args,
+            &mut uses,
+            usize::from(held.is_some()),
+            false,
+        );
         let shared = share_borrowed_captures(&mut uses);
         // Two whole params passed on to a callee checked with its params as one place
         // (`relaxed_callee`) are what it was checked for. Only such a pair of direct uses: a
@@ -728,6 +740,13 @@ impl VisitMut for Checker<'_, '_> {
                     callee,
                     Callee::Intrinsic(Intrinsic::MutexWith | Intrinsic::LockRead)
                 );
+                // `((v) => { s = v; })(s)`: nothing else reads the closure's captures.
+                if let Callee::Indirect(c) = &*callee {
+                    if let E::Closure(def) = c.kind {
+                        let col = self.collector();
+                        share_value_reads::immediately_called(&col, def, e.span, args);
+                    }
+                }
                 let held = self.collector().held_call(callee).map(|c| (c, e.span));
                 let key_only = args.len() == 2
                     && by_identity(self.cx, args[1].ty)

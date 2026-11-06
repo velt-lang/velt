@@ -434,3 +434,31 @@ fn destructured_parts_still_alias_what_they_came_from() {
     let r = err_main("const rows: i64[][] = [[1], [2]]; const [e] = rows; fill(rows[1], e);");
     assert!(r.contains("cannot use `e` here"), "{r}");
 }
+
+#[test]
+fn a_value_read_next_to_a_change_of_its_place_gets_its_own_reference() {
+    const RENAME: &str = "class Named { name: string = \"a\"; rename(v: string): string { \
+                          this.name = \"b\"; return v; } }";
+    ok_src(&format!(
+        "{RENAME} function main() {{ const n = new Named(); console.log(n.rename(n.name)); }}"
+    ));
+    ok_main(
+        "let s = \"a\"; const f = (a: string, b: string) => a + b; console.log(f(s, (s = \"b\")));
+         let o: { x: i64 } = { x: 1 }; const g = (a: { x: i64 }, c: () => void) => { c(); return a.x; };
+         console.log(g(o, () => { o = { x: 2 }; }));
+         let u: string | null = null; const h = (a: string | null, b: string | null) => a ?? b;
+         console.log(h(u, (u = \"c\")));",
+    );
+}
+
+#[test]
+fn a_read_of_what_javascript_holds_by_reference_keeps_the_rule() {
+    let r = err_main("let xs: i64[] = [1]; const n = xs.map((x) => { xs = []; return x; });");
+    assert!(r.contains(MSG), "{r}");
+    let r = err_main(
+        "const t: { items: i64[] } = { items: [1] }; const y = t;
+         const f = (a: { items: i64[] }, c: () => void) => { c(); return a.items.length; };
+         f(y, () => { y.items.push(1); });",
+    );
+    assert!(r.contains("cannot use `y` here"), "{r}");
+}

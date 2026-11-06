@@ -1,0 +1,61 @@
+// An argument read next to a change of the same variable or field: the callee keeps what was read
+// when the argument was evaluated, as in JavaScript (#2480). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+type P = { x: number };
+class Holder {
+  s: string = heap("one");
+  m(v: string) { this.s = heap("nine"); const j = heap("mmmmmm"); return v + j; }
+}
+function iife() {
+  let s = heap("one");
+  console.log("iife", ((v: string) => { s = heap("nine"); return v; })(s), s);
+  let t = heap("one");
+  console.log("iife fn", (function (v: string) { t = heap("nine"); return v; })(t), t);
+  let c = [heap("a")];
+  const r = ((v: string[]) => { c = [heap("b")]; const j = heap("jjjjjj"); return v.join() + j; })(c);
+  console.log("iife array", r, c.join());
+}
+function cb() {
+  let u = heap("one");
+  const apply = (c: (x: string) => string, a: string) => c(a);
+  console.log("cb", apply((v) => { u = heap("nine"); return v; }, u), u);
+}
+function method() {
+  const r = new Holder();
+  console.log("method", r.m(r.s), r.s);
+}
+function order() {
+  let s = heap("one");
+  const f = (a: string, b: string) => a + "/" + b;
+  console.log("order", f(s, (s = heap("x"))), s);
+  let t = heap("one");
+  const g = (a: string, b: string) => { t = heap("z"); return a + "/" + b; };
+  console.log("order2", g(t, (t = heap("x"))), t);
+  let n = 1;
+  const h = (a: number, b: number, c: number) => { n = 100; return [a, b, c].join(); };
+  console.log("order3", h(n, n++, n), n);
+  let u = heap("a");
+  const i = (a: string, b: string, c: string) => { u = heap("q"); return a + b + c; };
+  console.log("order4", i(u, (u = u + "b"), u), u);
+  let w = heap("a");
+  const k = (a: string, b: string) => a + "/" + b;
+  console.log("assignment first", k((w = heap("b")), w), w);
+  let o: P = { x: 1 };
+  const l = (a: P, b: P) => a.x + "/" + b.x;
+  console.log("object", l(o, (o = { x: 2 })), o.x);
+}
+function run(v: string, cb: () => void) { cb(); const j = heap("kkkkkkk"); return v + j; }
+function runObj(v: P, cb: () => void) { cb(); return v.x; }
+function runAny(v: any, cb: () => void) { cb(); return String(v); }
+function callbacks() {
+  let s = heap("one");
+  const r = run(s, () => { s = heap("nine"); });
+  console.log("callback", r);
+  let o: P = { x: 1 };
+  const r2 = runObj(o, () => { o = { x: 9 }; });
+  console.log("callback obj", r2);
+  let a: any = heap("any");
+  const r3 = runAny(a, () => { a = 9; });
+  console.log("callback any", r3);
+}
+iife(); cb(); method(); order(); callbacks();

@@ -1,0 +1,11 @@
+// A string method's receiver held in a variable its callback assigns: the method keeps working on
+// what it was called on, as in JavaScript (#2480). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+let s = heap("abc");
+console.log(s.replace(/b/, () => { s = heap("zzz"); return "Q"; }), s);
+function inFunction() {
+  let t = heap("abcabc");
+  const out = t.replace(/b/g, () => { t = heap("yyy") + heap("www"); return "Q"; });
+  console.log(out, t);
+}
+inFunction();
