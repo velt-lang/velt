@@ -230,6 +230,51 @@ function g_${id}(v: ${k.t}) { s_${id} = ${k.a}; ${junk}return ${k.show("v")}; }`
   s = ${k.a};
   console.log("${id}", [...it].join(","), ${k.show("s")});`,
   },
+  {
+    name: "container-class",
+    top: (k, id) => `class H_${id} { v: ${k.t} = ${k.a}; }`,
+    body: (k, id) => `const h = new H_${id}();
+  const f = (q: H_${id}, v: ${k.t}) => { q.v = ${k.b}; ${junk}return ${k.show("v")}; };
+  console.log("${id}", f(h, h.v), ${k.show("h.v")});`,
+  },
+  {
+    name: "container-object",
+    body: (k, id) => `const h: { v: ${k.t} } = { v: ${k.a} };
+  const f = (q: { v: ${k.t} }, v: ${k.t}) => { q.v = ${k.b}; ${junk}return ${k.show("v")}; };
+  console.log("${id}", f(h, h.v), ${k.show("h.v")});`,
+  },
+  {
+    name: "container-array",
+    body: (k, id) => `const h: ${k.t.includes("|") ? `(${k.t})` : k.t}[] = [${k.a}];
+  const f = (q: ${k.t.includes("|") ? `(${k.t})` : k.t}[], v: ${k.t}) => { q[0] = ${k.b}; ${junk}return ${k.show("v")}; };
+  const r = f(h, h[0]);
+  const e = h[0];
+  console.log("${id}", r, ${k.show("e")});`,
+  },
+  {
+    name: "container-forwarded",
+    top: (k, id) => `class H_${id} { v: ${k.t} = ${k.a}; }`,
+    body: (k, id) => `const h = new H_${id}();
+  const f = (q: H_${id}, v: ${k.t}) => { q.v = ${k.b}; ${junk}return ${k.show("v")}; };
+  const app = (g: (q: H_${id}, v: ${k.t}) => string, q: H_${id}) => g(q, q.v);
+  console.log("${id}", app(f, h), ${k.show("h.v")});`,
+  },
+  {
+    name: "counted-field",
+    top: (k, id) => `class H_${id} { v: ${k.t} = ${k.a}; }`,
+    body: (k, id) => `const h = new H_${id}();
+  const alias = h;
+  const f = (v: ${k.t}) => { alias.v = ${k.b}; ${junk}return ${k.show("v")}; };
+  console.log("${id}", f(h.v), ${k.show("h.v")});`,
+  },
+  {
+    name: "counted-field-direct",
+    top: (k, id) => `class H_${id} { v: ${k.t} = ${k.a}; }
+const held_${id} = new H_${id}();
+function w_${id}() { held_${id}.v = ${k.b}; }
+function g_${id}(v: ${k.t}) { w_${id}(); ${junk}return ${k.show("v")}; }`,
+    body: (k, id) => `console.log("${id}", g_${id}(held_${id}.v), ${k.show(`held_${id}.v`)});`,
+  },
 ];
 
 const wanted = (name, opt) => !opt || name.includes(opt);

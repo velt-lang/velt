@@ -396,7 +396,7 @@ impl FnLower<'_, '_> {
                 (t @ Ty::Agg(_), PassMode::Borrow | PassMode::BorrowMut) => {
                     let v = match how {
                         Stabilize::Share | Stabilize::Direct(_) => {
-                            let reach = Self::arg_reach(how);
+                            let reach = self.arg_reach(how, args, i, changed);
                             self.stable_borrow_in(a, &args[i + 1..], true, reach)
                         }
                         Stabilize::Facts => self.stable_borrow_as(a, &args[i + 1..], false),
@@ -437,7 +437,7 @@ impl FnLower<'_, '_> {
                     let v = match m {
                         PassMode::Borrow | PassMode::BorrowMut if how != Stabilize::No => {
                             let share = how != Stabilize::Facts;
-                            let reach = Self::arg_reach(how);
+                            let reach = self.arg_reach(how, args, i, changed);
                             let v = self.stable_borrow_in(a, &args[i + 1..], share, reach);
                             // A frozen one changes for nobody, and is not counted (frozen.rs);
                             // a number read out of one is still read now, before a later
@@ -539,7 +539,12 @@ impl FnLower<'_, '_> {
             } else {
                 // A spawned call's borrows are settled right away, before the later arguments.
                 let rest = if transfer { &[][..] } else { &args[i + 1..] };
-                let v = self.stable_borrow(a, rest);
+                let sibling = args.len() > 1 && self.sibling_container(args, i);
+                let reach = ArgReach {
+                    callee: None,
+                    sibling,
+                };
+                let v = self.stable_borrow_in(a, rest, true, reach);
                 if transfer {
                     // The copy for the task reads the argument now.
                     self.finish_borrows(Vec::new());
@@ -569,7 +574,8 @@ impl FnLower<'_, '_> {
                 Ty::Agg(_) => {
                     // A closure the callee runs may also give the place another value.
                     let copy = any_mut
-                        || self.changes_during_call(a);
+                        || self.changes_during_call(a)
+                        || args.len() > 1 && self.sibling_container(args, i);
                     let v = if copy && mode != Some(PassMode::BorrowMut) && is_copy_read(a) {
                         let tmp = self.copy_to_temp(v, t);
                         Operand::Copy(Place::local(tmp))
@@ -751,14 +757,35 @@ impl FnLower<'_, '_> {
 }
 
 impl FnLower<'_, '_> {
-    /// What is known about the call `how` says (stabilize.rs).
-    fn arg_reach(how: Stabilize) -> ArgReach {
+    /// What argument `i` of a direct call may have changed under it (stabilize.rs): `changed`
+    /// says which params the callee modifies though they are `Borrow` (call_def).
+    fn arg_reach(
+        &mut self,
+        how: Stabilize,
+        args: &[hir::Expr],
+        i: usize,
+        changed: u64,
+    ) -> ArgReach {
+        let others = if i < 64 { changed & !(1 << i) } else { changed };
         ArgReach {
             callee: match how {
                 Stabilize::Direct(d) => Some(d),
                 _ => None,
             },
+            sibling: others != 0 && self.sibling_container(args, i),
         }
+    }
+
+    /// Does an argument beside `args[i]` hold something a part of `args[i]` could lie in: `r` in
+    /// `f(r, r.s)`, or a param that may be the same object as the one `w.s` is read from? A callee
+    /// that changes its params' insides then replaces what this argument points at.
+    fn sibling_container(&mut self, args: &[hir::Expr], i: usize) -> bool {
+        (args.iter().enumerate()).any(|(j, o)| {
+            let ty = self.sub(o.ty);
+            j != i
+                && !self.plain_value(ty)
+                && !matches!(self.cx.kind(ty), TyKind::FnPtr { .. } | TyKind::Closure(_))
+        })
     }
 
     /// Can the place `a` starts from get another value while a call through a function value runs,

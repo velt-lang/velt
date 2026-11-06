@@ -59,7 +59,8 @@ impl FnLower<'_, '_> {
         let by_value = self.cx.ty(ty).is_scalar() && self.cx.share_kind(ty) == ShareKind::Plain;
         if by_value
             || !(self.through_counted(a, ty)
-                || self.in_shared_cell(a))
+                || self.in_shared_cell(a)
+                || reach.sibling && is_part(a))
         {
             return self.borrowed_arg(a);
         }
@@ -100,7 +101,7 @@ impl FnLower<'_, '_> {
                 if !share {
                     return self.borrowed_arg(a);
                 }
-                if later.iter().all(|x| self.runs_no_code(x)) {
+                if !reach.sibling && later.iter().all(|x| self.runs_no_code(x)) {
                     if let Some(v) = self.unique_array_elem(a, ty) {
                         return v;
                     }
@@ -367,6 +368,22 @@ impl FnLower<'_, '_> {
 pub(super) struct ArgReach {
     /// The function called, when it is a direct call (replaceable.rs).
     pub(super) callee: Option<hir::DefId>,
+    /// Another argument may hold the container of this one, and the callee may write through
+    /// that param: `f(r, r.s)` with `(q, v) => { q.s = "x"; return v; }`.
+    pub(super) sibling: bool,
+}
+
+/// Is `e` a part of a place, not the place itself?
+fn is_part(e: &hir::Expr) -> bool {
+    use hir::ExprKind as K;
+    matches!(
+        e.kind,
+        K::Field { .. }
+            | K::Index { .. }
+            | K::UnwrapSome(..)
+            | K::UnwrapVariant { .. }
+            | K::Downcast(_)
+    )
 }
 
 /// An element borrowed by an argument whose borrow-or-share choice waits for the call
