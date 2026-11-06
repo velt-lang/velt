@@ -186,3 +186,31 @@ fn a_packed_array_round_trips_through_the_ast_encoding() {
     let back = velt_syntax::decode_module(&bytes, FileId(3)).expect("decodes");
     assert_eq!(format!("{m:?}"), format!("{back:?}"));
 }
+
+/// A class field with no annotation takes its type from a packed initializer exactly as from the
+/// `Array` it stands for (`stated_type`): `number[]`, named at the first literal, same spans.
+#[test]
+fn a_field_initialized_with_a_packed_array_states_its_type() {
+    let src = format!("class C {{\n  x = {};\n}}\n", array(16, |i| i.to_string()));
+    let field_ty = |m: &Module| -> String {
+        match &m.items[0].kind {
+            ItemKind::Class(c) => format!("{:?}", c.fields[0].ty),
+            k => panic!("expected a class, got {k:?}"),
+        }
+    };
+    let (m, d) = parse_file(FileId(0), &src);
+    assert!(d.is_empty(), "{d:?}");
+    let (plain, d) = parse_file_unpacked(FileId(0), &src);
+    assert!(d.is_empty(), "{d:?}");
+    let ItemKind::Class(c) = &m.items[0].kind else {
+        panic!("expected a class")
+    };
+    assert!(
+        matches!(
+            c.fields[0].default.as_ref().map(|e| &e.kind),
+            Some(ExprKind::NumArray(_))
+        ),
+        "the initializer is packed"
+    );
+    assert_eq!(field_ty(&m), field_ty(&plain));
+}
