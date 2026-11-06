@@ -1,0 +1,200 @@
+// velt/net (internal): the signature and public key algorithms of X.509 certificates that a TLS
+// 1.3 client verifies (those of RFC 8446 §4.2.3 and what webpki accepts), read from their DER
+// AlgorithmIdentifier. Anything else reads as `SIG_UNKNOWN` / `KEY_UNKNOWN`, which verification
+// refuses; only malformed DER throws.
+
+import { DerReader, NULL, OID, SEQUENCE } from "velt/net/tls/x509/der";
+import { Tlv } from "velt/net/tls/x509/tlv";
+import {
+  OID_EC_PUBLIC_KEY,
+  OID_ECDSA_SHA256,
+  OID_ECDSA_SHA384,
+  OID_ECDSA_SHA512,
+  OID_ED25519,
+  OID_MGF1,
+  OID_P256,
+  OID_P384,
+  OID_RSA_ENCRYPTION,
+  OID_RSA_PSS,
+  OID_SHA256,
+  OID_SHA256_RSA,
+  OID_SHA384,
+  OID_SHA384_RSA,
+  OID_SHA512,
+  OID_SHA512_RSA,
+} from "velt/net/tls/x509/oids";
+
+/** Signature algorithms. */
+export const SIG_UNKNOWN: i32 = 0;
+export const SIG_RSA_PKCS1_SHA256: i32 = 1;
+export const SIG_RSA_PKCS1_SHA384: i32 = 2;
+export const SIG_RSA_PKCS1_SHA512: i32 = 3;
+export const SIG_RSA_PSS_SHA256: i32 = 4;
+export const SIG_RSA_PSS_SHA384: i32 = 5;
+export const SIG_RSA_PSS_SHA512: i32 = 6;
+export const SIG_ECDSA_SHA256: i32 = 7;
+export const SIG_ECDSA_SHA384: i32 = 8;
+export const SIG_ECDSA_SHA512: i32 = 9;
+export const SIG_ED25519: i32 = 10;
+
+/** Public key algorithms (with the curve for EC keys). */
+export const KEY_UNKNOWN: i32 = 0;
+export const KEY_RSA: i32 = 1;
+export const KEY_P256: i32 = 2;
+export const KEY_P384: i32 = 3;
+export const KEY_ED25519: i32 = 4;
+
+/**
+ * The signature algorithm of the AlgorithmIdentifier `t` (a SEQUENCE). RSA PKCS#1 takes NULL
+ * parameters (RFC 4055 §5, or none, as some signers write), ECDSA and Ed25519 none (RFC 5758
+ * §3.2, RFC 8410 §3), RSA-PSS those of `pssHash`.
+ */
+export function signatureAlgorithm(r: DerReader, t: Tlv): i32 {
+  r.pos = t.start;
+  const oid = r.next(OID, t.end);
+  let alg = SIG_UNKNOWN;
+  let pkcs1 = false;
+  if (r.equals(oid, OID_SHA256_RSA)) {
+    alg = SIG_RSA_PKCS1_SHA256;
+    pkcs1 = true;
+  } else if (r.equals(oid, OID_SHA384_RSA)) {
+    alg = SIG_RSA_PKCS1_SHA384;
+    pkcs1 = true;
+  } else if (r.equals(oid, OID_SHA512_RSA)) {
+    alg = SIG_RSA_PKCS1_SHA512;
+    pkcs1 = true;
+  } else if (r.equals(oid, OID_ECDSA_SHA256)) {
+    alg = SIG_ECDSA_SHA256;
+  } else if (r.equals(oid, OID_ECDSA_SHA384)) {
+    alg = SIG_ECDSA_SHA384;
+  } else if (r.equals(oid, OID_ECDSA_SHA512)) {
+    alg = SIG_ECDSA_SHA512;
+  } else if (r.equals(oid, OID_ED25519)) {
+    alg = SIG_ED25519;
+  } else if (r.equals(oid, OID_RSA_PSS)) {
+    return pssAlgorithm(r, t.end);
+  } else {
+    r.pos = t.end;
+    return SIG_UNKNOWN;
+  }
+  if (pkcs1 && r.peek(t.end) == (NULL as i32)) {
+    const n = r.next(NULL, t.end);
+    if (n.end != n.start) {
+      r.fail("NULL with contents");
+    }
+  }
+  if (r.pos != t.end) {
+    // Parameters where the algorithm has none: not an encoding verification accepts.
+    r.pos = t.end;
+    return SIG_UNKNOWN;
+  }
+  return alg;
+}
+
+// RSASSA-PSS-params (RFC 4055 §3.1) as TLS 1.3 uses them (RFC 8446 §4.2.3): SHA-256, SHA-384
+// or SHA-512, MGF1 with the same hash, a salt as long as the hash, the default trailer.
+function pssAlgorithm(r: DerReader, end: usize): i32 {
+  if (r.peek(end) != (SEQUENCE as i32)) {
+    r.pos = end;
+    return SIG_UNKNOWN;
+  }
+  const p = r.enter(SEQUENCE, end);
+  // [0] hashAlgorithm.
+  if (r.peek(p.end) != 0xa0) {
+    r.pos = end;
+    return SIG_UNKNOWN;
+  }
+  const h0 = r.enter(0xa0, p.end);
+  const hashAlg = r.next(SEQUENCE, h0.end);
+  const hash = hashOf(r, hashAlg);
+  r.done(h0.end);
+  // [1] maskGenAlgorithm: MGF1 with the same hash.
+  if (r.peek(p.end) != 0xa1) {
+    r.pos = end;
+    return SIG_UNKNOWN;
+  }
+  const m0 = r.enter(0xa1, p.end);
+  const mgf = r.enter(SEQUENCE, m0.end);
+  const mgfOid = r.next(OID, mgf.end);
+  const mgfHashAlg = r.next(SEQUENCE, mgf.end);
+  const mgfHash = hashOf(r, mgfHashAlg);
+  r.done(mgf.end);
+  r.done(m0.end);
+  // [2] saltLength.
+  if (r.peek(p.end) != 0xa2) {
+    r.pos = end;
+    return SIG_UNKNOWN;
+  }
+  const s0 = r.enter(0xa2, p.end);
+  const saltInt = r.next(0x02, s0.end);
+  const salt = r.smallInt(saltInt);
+  r.done(s0.end);
+  // A trailerField, even the default one, is not DER (defaults are omitted), and nothing follows
+  // the parameters.
+  const rest = r.pos != p.end || p.end != end;
+  r.pos = end;
+  if (rest || !r.equals(mgfOid, OID_MGF1) || hash == 0 || mgfHash != hash || salt != hash) {
+    return SIG_UNKNOWN;
+  }
+  return hash == 32 ? SIG_RSA_PSS_SHA256 : hash == 48 ? SIG_RSA_PSS_SHA384 : SIG_RSA_PSS_SHA512;
+}
+
+// The output length of the hash AlgorithmIdentifier `t` (SHA-256/384/512, with an empty NULL or
+// no parameters), or 0 for another.
+function hashOf(r: DerReader, t: Tlv): i64 {
+  r.pos = t.start;
+  const oid = r.next(OID, t.end);
+  let nullBody = false;
+  if (r.peek(t.end) == (NULL as i32)) {
+    const n = r.next(NULL, t.end);
+    nullBody = n.end != n.start;
+  }
+  const extra = nullBody || r.pos != t.end;
+  r.pos = t.end;
+  if (extra) {
+    return 0;
+  }
+  if (r.equals(oid, OID_SHA256)) {
+    return 32;
+  }
+  if (r.equals(oid, OID_SHA384)) {
+    return 48;
+  }
+  if (r.equals(oid, OID_SHA512)) {
+    return 64;
+  }
+  return 0;
+}
+
+/**
+ * The key algorithm of the SubjectPublicKeyInfo's AlgorithmIdentifier `t`: RSA with NULL
+ * parameters (RFC 3279 §2.3.1), an EC key on a named P-256 or P-384 curve (RFC 5480 §2.1.1),
+ * Ed25519 without parameters (RFC 8410 §3).
+ */
+export function keyAlgorithm(r: DerReader, t: Tlv): i32 {
+  r.pos = t.start;
+  const oid = r.next(OID, t.end);
+  let alg = KEY_UNKNOWN;
+  if (r.equals(oid, OID_RSA_ENCRYPTION)) {
+    if (r.peek(t.end) == (NULL as i32)) {
+      const n = r.next(NULL, t.end);
+      alg = n.end == n.start ? KEY_RSA : KEY_UNKNOWN;
+    }
+  } else if (r.equals(oid, OID_EC_PUBLIC_KEY)) {
+    if (r.peek(t.end) == (OID as i32)) {
+      const curve = r.next(OID, t.end);
+      if (r.equals(curve, OID_P256)) {
+        alg = KEY_P256;
+      } else if (r.equals(curve, OID_P384)) {
+        alg = KEY_P384;
+      }
+    }
+  } else if (r.equals(oid, OID_ED25519)) {
+    alg = KEY_ED25519;
+  }
+  if (r.pos != t.end) {
+    alg = KEY_UNKNOWN;
+  }
+  r.pos = t.end;
+  return alg;
+}

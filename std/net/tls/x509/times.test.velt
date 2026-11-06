@@ -1,0 +1,139 @@
+// velt/net (tests): UTCTime and GeneralizedTime in a certificate's validity. Expected seconds come
+// from `date -u -d <time> +%s`.
+import { ascii, el, Parts, TIME } from "./parts.test";
+import { describe, expect, it } from "velt/test";
+
+const UTC = "17";
+const GENERALIZED = "18";
+
+function withNotBefore(tag: string, text: string): Parts {
+  const p = new Parts();
+  p.validity = el("30", el(tag, ascii(text)) + TIME);
+  return p;
+}
+
+function withNotAfter(tag: string, text: string): Parts {
+  const p = new Parts();
+  p.validity = el("30", TIME + el(tag, ascii(text)));
+  return p;
+}
+
+function refusedBoth(tag: string, text: string) {
+  expect(withNotBefore(tag, text).failure()).toContain("bad time");
+  expect(withNotAfter(tag, text).failure()).toContain("bad time");
+}
+
+describe("UTCTime", () => {
+  it("reads seconds since the epoch", () => {
+    expect(withNotBefore(UTC, "260101000000Z").parsed().notBefore).toBe(1767225600);
+    expect(withNotAfter(UTC, "000229123456Z").parsed().notAfter).toBe(951827696);
+  });
+
+  it("reads 1950 to 2049", () => {
+    expect(withNotBefore(UTC, "500101000000Z").parsed().notBefore).toBe(-631152000);
+    expect(withNotBefore(UTC, "491231235959Z").parsed().notBefore).toBe(2524607999);
+  });
+
+  it("refuses another length", () => {
+    refusedBoth(UTC, "2601010000Z");
+    refusedBoth(UTC, "26010100000Z");
+    refusedBoth(UTC, "260101000000Z0");
+    refusedBoth(UTC, "260101000000ZZ");
+    refusedBoth(UTC, "260101000000.5Z");
+    refusedBoth(UTC, "260101000000+0100");
+  });
+
+  it("refuses a time that is not Z", () => {
+    refusedBoth(UTC, "260101000000z");
+    refusedBoth(UTC, "2601010000000");
+  });
+
+  it("refuses values out of range", () => {
+    refusedBoth(UTC, "260001000000Z");
+    refusedBoth(UTC, "261301000000Z");
+    refusedBoth(UTC, "260100000000Z");
+    refusedBoth(UTC, "260132000000Z");
+    refusedBoth(UTC, "260431000000Z");
+    refusedBoth(UTC, "260101240000Z");
+    refusedBoth(UTC, "260101006000Z");
+    refusedBoth(UTC, "260101000060Z");
+  });
+
+  it("knows leap years", () => {
+    expect(withNotBefore(UTC, "240229000000Z").parsed().notBefore).toBe(1709164800);
+    refusedBoth(UTC, "250229000000Z");
+    refusedBoth(UTC, "260230000000Z");
+  });
+
+  it("refuses characters just below 0 and just above 9, in each field", () => {
+    // '/' and ':' are next to the digits. Each sits in the low digit, where a missed check on it
+    // would make a value in range.
+    for (const c of ["/", ":"]) {
+      refusedBoth(UTC, `2${c}0101000000Z`);
+      refusedBoth(UTC, `26${"1" + c}01000000Z`);
+      refusedBoth(UTC, `2601${"1" + c}000000Z`);
+      refusedBoth(UTC, `260101${"1" + c}0000Z`);
+      refusedBoth(UTC, `26010100${"1" + c}00Z`);
+      refusedBoth(UTC, `2601010000${"1" + c}Z`);
+      // And in the high digit.
+      refusedBoth(UTC, `26010100${c}000Z`);
+    }
+  });
+
+  it("refuses letters in each field", () => {
+    refusedBoth(UTC, "aa0101000000Z");
+    refusedBoth(UTC, "26aa01000000Z");
+    refusedBoth(UTC, "2601aa000000Z");
+    refusedBoth(UTC, "260101aa0000Z");
+    refusedBoth(UTC, "26010100aa00Z");
+    refusedBoth(UTC, "2601010000aaZ");
+  });
+});
+
+describe("GeneralizedTime", () => {
+  it("reads seconds since the epoch", () => {
+    expect(withNotBefore(GENERALIZED, "20500102030405Z").parsed().notBefore).toBe(2524705445);
+    expect(withNotAfter(GENERALIZED, "19500101000000Z").parsed().notAfter).toBe(-631152000);
+    expect(withNotBefore(GENERALIZED, "20000229123456Z").parsed().notBefore).toBe(951827696);
+  });
+
+  it("refuses fractions and another length", () => {
+    refusedBoth(GENERALIZED, "20260101000000.5Z");
+    refusedBoth(GENERALIZED, "20260101000000Z0");
+    refusedBoth(GENERALIZED, "202601010000Z");
+    refusedBoth(GENERALIZED, "260101000000Z");
+  });
+
+  it("refuses a bad year, in either pair of digits", () => {
+    refusedBoth(GENERALIZED, "2a260101000000Z");
+    refusedBoth(GENERALIZED, "202a0101000000Z");
+    refusedBoth(GENERALIZED, "2/260101000000Z");
+    refusedBoth(GENERALIZED, "202/0101000000Z");
+  });
+
+  it("knows leap years", () => {
+    refusedBoth(GENERALIZED, "21000229000000Z");
+    refusedBoth(GENERALIZED, "19000229000000Z");
+    refusedBoth(GENERALIZED, "20250229000000Z");
+  });
+
+  it("refuses values out of range", () => {
+    refusedBoth(GENERALIZED, "20261301000000Z");
+    refusedBoth(GENERALIZED, "20260101240000Z");
+    refusedBoth(GENERALIZED, "20260101006000Z");
+    refusedBoth(GENERALIZED, "20260101000060Z");
+  });
+});
+
+describe("a time's tag", () => {
+  it("must match its length", () => {
+    refusedBoth(GENERALIZED, "260101000000Z");
+    refusedBoth(UTC, "20260101000000Z");
+  });
+
+  it("must be a time", () => {
+    refusedBoth("0c", "260101000000Z");
+    refusedBoth("0c", "20260101000000Z");
+    refusedBoth("13", "260101000000Z");
+  });
+});

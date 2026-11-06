@@ -1,0 +1,134 @@
+// velt/net (tests): hand-built certificates for the X.509 parser's tests, written as hex.
+//
+// `Parts` starts as a small, well-formed Ed25519 certificate that `openssl x509` reads; a test
+// replaces the one part it breaks and the lengths around it stay right.
+import { hexDecode } from "velt/encoding/hex";
+import { TlsFailure } from "velt/net/tls/alert";
+import { Certificate } from "velt/net/tls/x509/certificate";
+
+/** The DER element with tag `tag` and contents `body`, all in hex. */
+export function el(tag: string, body: string): string {
+  const n: i64 = (body.length as i64) / 2;
+  if (n < 0x80) {
+    return tag + n.toString(16).padStart(2, "0") + body;
+  }
+  if (n < 0x100) {
+    return tag + "81" + n.toString(16).padStart(2, "0") + body;
+  }
+  return tag + "82" + n.toString(16).padStart(4, "0") + body;
+}
+
+/** The hex of an ASCII string. */
+export function ascii(s: string): string {
+  let out = "";
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    out += s.charCodeAt(i).toString(16).padStart(2, "0");
+  }
+  return out;
+}
+
+/** "" when `der` parses, else the failure's message. */
+export function failure(der: u8[]): string {
+  try {
+    new Certificate(der);
+    return "";
+  } catch (e) {
+    return e instanceof TlsFailure ? e.message : `not a TlsFailure: ${e}`;
+  }
+}
+
+/** Ed25519's AlgorithmIdentifier. */
+export const ED25519_ALG = "300506032b6570";
+/** A Name: CN=ed. */
+export const NAME = "300d310b300906035504030c026564";
+/** A UTCTime, 2026-01-01T00:00:00Z. */
+export const TIME = "170d3236303130313030303030305a";
+/** An Ed25519 key's BIT STRING. */
+export const KEY_BITS = "032100e714d737768ad5d22790a7fa7afb70c2c9137127fe1d2bb7abffe0d8470d558c";
+/** The critical flag of an extension. */
+export const CRITICAL = "0101ff";
+
+/** One extension, with `flag` empty or a BOOLEAN. */
+export function ext(oid: string, flag: string, value: string): string {
+  return el("30", el("06", oid) + flag + el("04", value));
+}
+
+/** A certificate, part by part (each a whole element, in hex). */
+export class Parts {
+  outerTag: string;
+  tbsTag: string;
+  version: string;
+  serial: string;
+  innerAlg: string;
+  issuer: string;
+  validity: string;
+  subject: string;
+  spki: string;
+  /** Between the key and the extensions. */
+  afterSpki: string;
+  exts: string;
+  /** After the extensions, inside the signed part. */
+  tbsExtra: string;
+  outerAlg: string;
+  signature: string;
+  /** After the signature, inside the outer SEQUENCE. */
+  outerExtra: string;
+
+  /** The well-formed certificate, with a subjectKeyIdentifier. */
+  constructor() {
+    this.outerTag = "30";
+    this.tbsTag = "30";
+    this.version = el("a0", "020102");
+    this.serial = "020101";
+    this.innerAlg = ED25519_ALG;
+    this.issuer = NAME;
+    this.validity = el("30", TIME + TIME);
+    this.subject = NAME;
+    this.spki = el("30", ED25519_ALG + KEY_BITS);
+    this.afterSpki = "";
+    this.exts = withExtensions(ext("551d0e", "", "0401aa"));
+    this.tbsExtra = "";
+    this.outerAlg = ED25519_ALG;
+    this.signature = "0303000102";
+    this.outerExtra = "";
+  }
+
+  /** The DER encoding. */
+  der(): u8[] {
+    const tbs =
+      this.version +
+      this.serial +
+      this.innerAlg +
+      this.issuer +
+      this.validity +
+      this.subject +
+      this.spki +
+      this.afterSpki +
+      this.exts +
+      this.tbsExtra;
+    const body = el(this.tbsTag, tbs) + this.outerAlg + this.signature + this.outerExtra;
+    return hexDecode(el(this.outerTag, body));
+  }
+
+  /** "" when it parses, else the failure's message. */
+  failure(): string {
+    return failure(this.der());
+  }
+
+  /** It parsed. */
+  parsed(): Certificate {
+    return new Certificate(this.der());
+  }
+}
+
+/** The [3] extensions element holding the extensions `list`. */
+export function withExtensions(list: string): string {
+  return el("a3", el("30", list));
+}
+
+/** A certificate whose only extension is `one`. */
+export function partsWith(one: string): Parts {
+  const p = new Parts();
+  p.exts = withExtensions(one);
+  return p;
+}

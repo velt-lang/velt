@@ -1,0 +1,274 @@
+// velt/net (tests): the X.509 certificate parser, run by `velt test std/`.
+//
+// Real certificates (RFC 8448's, and OpenSSL's with P-256, P-384, Ed25519 and RSA-PSS keys)
+// parse to the fields OpenSSL prints for them; malformed ones (truncated, with a byte flipped,
+// or with one DER or X.509 rule broken) throw `bad_certificate`, never panic.
+import { hexDecode, hexEncode } from "velt/encoding/hex";
+import {
+  KEY_ED25519,
+  KEY_P256,
+  KEY_P384,
+  KEY_RSA,
+  SIG_ECDSA_SHA256,
+  SIG_ECDSA_SHA384,
+  SIG_ED25519,
+  SIG_RSA_PKCS1_SHA256,
+  SIG_RSA_PSS_SHA256,
+  SIG_UNKNOWN,
+} from "velt/net/tls/x509/algorithms";
+import { TlsFailure } from "velt/net/tls/alert";
+import { Certificate } from "velt/net/tls/x509/certificate";
+import { Tlv } from "velt/net/tls/x509/tlv";
+import { describe, expect, it } from "velt/test";
+
+// RFC 8448's server certificate (RSA-1024, sha256WithRSAEncryption).
+const RFC8448_DER =
+  "308201ac30820115a003020102020102300d06092a864886f70d01010b0500300e310c300a060355040313037273" +
+  "61301e170d3136303733303031323335395a170d3236303733303031323335395a300e310c300a06035504031303" +
+  "72736130819f300d06092a864886f70d010101050003818d0030818902818100b4bb498f8279303d980836399b36" +
+  "c6988c0c68de55e1bdb826d3901a2461eafd2de49a91d015abbc9a95137ace6c1af19eaa6af98c7ced43120998e1" +
+  "87a80ee0ccb0524b1b018c3e0b63264d449a6d38e22a5fda430846748030530ef0461c8ca9d9efbfae8ea6d1d03e" +
+  "2bd193eff0ab9a8002c47428a6d35a8d88d79f7f1e3f0203010001a31a301830090603551d1304023000300b0603" +
+  "551d0f0404030205a0300d06092a864886f70d01010b05000381810085aad2a0e5b9276b908c65f73a7267170618" +
+  "a54c5f8a7b337d2df7a594365417f2eae8f8a58c8f8172f9319cf36b7fd6c55b80f21a03015156726096fd335e5e" +
+  "67f2dbf102702e608ccae6bec1fc63a42a99be5c3eb7107c3c54e9b9eb2bd5203b1c3b84e0a8b2f759409ba3eac9" +
+  "d91d402dcc0cc8f8961229ac9187b42b4de1";
+// A P-384 CA (OpenSSL 4.0.3, self-signed with ECDSA-SHA256): basicConstraints critical
+// CA:TRUE, pathlen:1; keyUsage critical keyCertSign, cRLSign; a subjectKeyIdentifier.
+const CA_DER =
+  "308201b230820138a00302010202143179e25b4a5d67cb4c11e1e12596a5d7c593bb11300a06082a8648ce3d0403" +
+  "0230173115301306035504030c0c56656c742054657374204341301e170d3236313130353136303931385a170d33" +
+  "36313130323136303931385a30173115301306035504030c0c56656c7420546573742043413076301006072a8648" +
+  "ce3d020106052b81040022036200042bccad41205e73dbdb258e90df689f19fd060b98f7ac5eea35aa1c77939a4d" +
+  "e31953014b933ebc77f82fb616bb7b00d29482dd63098e1654a0b6c12a609f020b583f0c29e7a12db299814e0748" +
+  "5a0f09bc945344169dfd2c1ade3f1f59efe402a3453043301d0603551d0e0416041402a11f9b75bc74000b4387c2" +
+  "bf1879a7d531d95830120603551d130101ff040830060101ff020101300e0603551d0f0101ff040403020106300a" +
+  "06082a8648ce3d0403020368003065023100a8e94acddaa7bfd1b69b493e534f28a890d9e8289028ff6dfe85a4e2" +
+  "a8559fec45370c6f6879cceb45a36d76365b1c9602302e4f0c207abd7ab5f5707057b9d13a5b74ab9e8e3688c900" +
+  "6ceb9e998e4eacec0f59e707afe62ade5fe49b72c3aa043e";
+// A P-256 leaf signed by the CA with ECDSA-SHA384: DNS and IP alternative names, serverAuth,
+// keyUsage critical digitalSignature, basicConstraints critical CA:FALSE.
+const LEAF_DER =
+  "308201c330820149a003020102021452652d7a51edbf90ae524ee6e47b058b5c5f01cb300a06082a8648ce3d0403" +
+  "0330173115301306035504030c0c56656c742054657374204341301e170d3236313130353136303931395a170d32" +
+  "39303230373136303931395a30163114301206035504030c0b6578616d706c652e636f6d3059301306072a8648ce" +
+  "3d020106082a8648ce3d030107034200044135d2a1dc67a663dba01fecfbad4da41e1f43373d3b7af0d8c4bdd23f" +
+  "df4efa7f7c3b8f1a2ea9a5ae03a9d1d9f0751504ac975b28930b9dd31ea3d10e779bbba3743072303d0603551d11" +
+  "04363034820b6578616d706c652e636f6d820d2a2e6578616d706c652e636f6d8704c0000201871020010db80000" +
+  "0000000000000000000130130603551d25040c300a06082b06010505070301300e0603551d0f0101ff0404030207" +
+  "80300c0603551d130101ff04023000300a06082a8648ce3d040303036800306502300c54be38bb054dd48cb349c0" +
+  "f94a8938d95a113628515e5da2add467c8201713b762175fd7c08037d02d3dbbca5269fc023100a5ee21e4255c54" +
+  "6d2c0e9ebb9ec7948f6565cc9d08b92d116795d53728e6fd5479f932290dde61dd187a5a1e60995d84";
+// A self-signed Ed25519 certificate with a DNS name.
+const ED_DER =
+  "308201213081d4a00302010202142d56f1510491c9621b166d6da72ff4df1e835843300506032b6570300d310b30" +
+  "0906035504030c026564301e170d3236313130353136303931395a170d3237313130353136303931395a300d310b" +
+  "300906035504030c026564302a300506032b6570032100e714d737768ad5d22790a7fa7afb70c2c9137127fe1d2b" +
+  "b7abffe0d8470d558ca3463044301d0603551d0e0416041465c8a855a06a7873125566a2d3cdf835ed75775b300f" +
+  "0603551d130101ff040530030101ff30120603551d11040b3009820765642e74657374300506032b6570034100d5" +
+  "96bb065c24c6bf07bb3ff48031f1088e62e59f231c9b2b7faf10f3c18e7ae5e7553718e281912cb75a27fc85c933" +
+  "63a712c8133b3325539a6f38aadd66d30e";
+// A self-signed RSA-2048 certificate signed with RSASSA-PSS (SHA-256, MGF1-SHA-256, salt 32).
+const PSS_DER =
+  "30820344308201f8a00302010202140af908504c8ccb643c2651fe3e2f56372da15c06304106092a864886f70d01" +
+  "010a3034a00f300d06096086480165030402010500a11c301a06092a864886f70d010108300d0609608648016503" +
+  "0402010500a203020120300e310c300a06035504030c03707373301e170d3236313130353136303931395a170d32" +
+  "37313130353136303931395a300e310c300a06035504030c0370737330820122300d06092a864886f70d01010105" +
+  "000382010f003082010a0282010100a246d48a7fc3506495700d1f7a5c1420e21e4863a973852bfe8b3862b56091" +
+  "78ecc754032d63721e4e5860fb4cc3fa012d941d7e5bf6d57c8c776f87e6ef0081b090122280f4c04bed92373532" +
+  "4257a7d939002bb33858fb0628ce9fe3b7a48749cfda749bcc07651200569e443c63b37ca9e016b3373da006477c" +
+  "b88a642a9c7e86421cd2bbeaaa420b379c65eac053645e9316e90168bd627e3d888b762016edd6b490499dcadcb0" +
+  "5cf4a5efc02eaeb5f8b18025974463f6f911431dc8e464a4b823441d908d91538318fbc107f0d6f936f85641aee1" +
+  "f720d33765151e45aa1f52fcc640e5bd392e9c74a37b23c79fa28d418d81f37a8b4cbba1ec5ed0edc10203010001" +
+  "a3323030301d0603551d0e04160414a652b3478b574da81f2d93a3a73a56b41012742d300f0603551d130101ff04" +
+  "0530030101ff304106092a864886f70d01010a3034a00f300d06096086480165030402010500a11c301a06092a86" +
+  "4886f70d010108300d06096086480165030402010500a203020120038201010088be05c808c00a0827793748759f" +
+  "4fd0a7f924235792b814521ada1e23441324448a652253a3c687e80b1be2f43801284e927dbc56c19eefdc1fd882" +
+  "251bae60c1ea9c30eb7592d536307f89ff6b4c227cc37fd7ff88a0d8077e86866510e6701bd5c0f726c619b59e16" +
+  "b7f77a476e18e11c02ca49d565510233559c64b9e997bf082c11a399ec03e1f1f29a76a1b7ea37746b59cc9165e1" +
+  "d7a6f8ed22cfcf33bc1e4fd053d702df1dbeb4212769a9b0ccbb4c331f741485ea3f7c899df1c5ac67bc7f192e9a" +
+  "ecb008749486f8784e05ee767578fb406807a6f472c024b71d78b4b00908fe937d4d0c4cbc3330a79ce8f66fe782" +
+  "a81847dcad22151207f83fe2";
+
+function hexOf(c: Certificate, t: Tlv): string {
+  return hexEncode(c.der.slice(t.start as i64, t.end as i64));
+}
+
+// "" when `der` parses, else the failure: its alert and message.
+function failure(der: u8[]): string {
+  try {
+    new Certificate(der);
+    return "";
+  } catch (e) {
+    return e instanceof TlsFailure ? `${e.alert} ${e.message}` : `not a TlsFailure: ${e}`;
+  }
+}
+
+// The failure of the certificate `hex` with `from` replaced by `to` (once, and it must occur).
+function broken(hex: string, from: string, to: string): string {
+  if (!hex.includes(from)) {
+    return `${from} is not in the certificate`;
+  }
+  return failure(hexDecode(hex.replace(from, to)));
+}
+
+describe("Certificate", () => {
+  it("reads RFC 8448's RSA certificate", () => {
+    const c = new Certificate(hexDecode(RFC8448_DER));
+    expect(c.signatureAlgorithm).toBe(SIG_RSA_PKCS1_SHA256);
+    expect(c.keyAlgorithm).toBe(KEY_RSA);
+    expect(hexOf(c, c.publicKey).slice(0, 20)).toBe("30818902818100b4bb49");
+    expect(c.publicKey.end - c.publicKey.start).toBe(140);
+    expect(hexOf(c, c.serial)).toBe("02");
+    expect(hexEncode(c.der.slice(c.subject.head as i64, c.subject.end as i64))).toBe(
+      "300e310c300a06035504031303727361",
+    );
+    expect(c.notBefore).toBe(1469841839);
+    expect(c.notAfter).toBe(1785374639);
+    expect(c.isCa).toBe(false);
+    expect(c.pathLen).toBe(-1);
+    // digitalSignature (0) and keyEncipherment (2).
+    expect(c.keyUsage).toBe(5);
+    expect(c.subjectAltName.tag).toBe(0);
+    expect(c.signature.end - c.signature.start).toBe(128);
+    expect(c.tbs.head).toBe(4);
+    expect(c.tbs.end).toBe(4 + 4 + 0x115);
+  });
+
+  it("reads a P-384 CA", () => {
+    const c = new Certificate(hexDecode(CA_DER));
+    expect(c.signatureAlgorithm).toBe(SIG_ECDSA_SHA256);
+    expect(c.keyAlgorithm).toBe(KEY_P384);
+    expect(c.publicKey.end - c.publicKey.start).toBe(97);
+    expect(c.der[c.publicKey.start]).toBe(4);
+    expect(c.isCa).toBe(true);
+    expect(c.pathLen).toBe(1);
+    // keyCertSign (5) and cRLSign (6).
+    expect(c.keyUsage).toBe(96);
+    expect(hexOf(c, c.subjectKeyId)).toBe("02a11f9b75bc74000b4387c2bf1879a7d531d958");
+    expect(hexOf(c, c.serial)).toBe("3179e25b4a5d67cb4c11e1e12596a5d7c593bb11");
+    expect(c.notBefore).toBe(1793894958);
+    expect(c.notAfter).toBe(2109254958);
+  });
+
+  it("reads a P-256 leaf with alternative names and an extended key usage", () => {
+    const ca = new Certificate(hexDecode(CA_DER));
+    const c = new Certificate(hexDecode(LEAF_DER));
+    expect(c.signatureAlgorithm).toBe(SIG_ECDSA_SHA384);
+    expect(c.keyAlgorithm).toBe(KEY_P256);
+    expect(c.publicKey.end - c.publicKey.start).toBe(65);
+    expect(c.isCa).toBe(false);
+    expect(c.keyUsage).toBe(1);
+    expect(hexOf(c, c.extKeyUsage)).toBe("06082b06010505070301");
+    expect(hexOf(c, c.subjectAltName)).toBe(
+      "820b6578616d706c652e636f6d820d2a2e6578616d706c652e636f6d8704c0000201871020010db8000000000000" +
+        "000000000001",
+    );
+    expect(hexEncode(c.der.slice(c.issuer.head as i64, c.issuer.end as i64))).toBe(
+      hexEncode(ca.der.slice(ca.subject.head as i64, ca.subject.end as i64)),
+    );
+    expect(c.notAfter).toBe(1865174959);
+  });
+
+  it("reads Ed25519 and RSA-PSS certificates", () => {
+    const ed = new Certificate(hexDecode(ED_DER));
+    expect(ed.signatureAlgorithm).toBe(SIG_ED25519);
+    expect(ed.keyAlgorithm).toBe(KEY_ED25519);
+    expect(hexOf(ed, ed.publicKey)).toBe(
+      "e714d737768ad5d22790a7fa7afb70c2c9137127fe1d2bb7abffe0d8470d558c",
+    );
+    expect(ed.isCa).toBe(true);
+    expect(ed.pathLen).toBe(-1);
+    const pss = new Certificate(hexDecode(PSS_DER));
+    expect(pss.signatureAlgorithm).toBe(SIG_RSA_PSS_SHA256);
+    expect(pss.keyAlgorithm).toBe(KEY_RSA);
+    expect(pss.signature.end - pss.signature.start).toBe(256);
+  });
+
+  it("refuses every truncation and trailing bytes", () => {
+    const der = hexDecode(LEAF_DER);
+    for (let n: usize = 0; n < der.length; n++) {
+      expect(failure(der.slice(0, n as i64)).slice(0, 3)).toBe("42 ");
+    }
+    const longer = der.slice();
+    longer.push(0);
+    expect(failure(longer)).toContain("stray bytes");
+  });
+
+  it("never panics on a flipped byte", () => {
+    const der = hexDecode(LEAF_DER);
+    let refused = 0;
+    for (let i: usize = 0; i < der.length; i++) {
+      for (const x of [0x01, 0x80, 0xff]) {
+        const d = der.slice();
+        d[i] ^= x as u8;
+        const f = failure(d);
+        expect(f.startsWith("not a")).toBe(false);
+        if (f != "") {
+          refused += 1;
+        }
+      }
+    }
+    // Most of the headers, OIDs and times are checked; key, signature and name bytes are not.
+    expect(refused > 400).toBe(true);
+  });
+
+  it("refuses broken DER", () => {
+    // BER's indefinite length, and a length longer than it needs to be.
+    expect(broken(LEAF_DER, "308201c3", "3080")).toContain("bad length");
+    expect(broken(LEAF_DER, "308201c3308201", "30830001c3308201")).toContain("shortest form");
+    // A BOOLEAN that is neither 0x00 nor 0xff, and a key with unused bits.
+    expect(broken(CA_DER, "0101ff020101", "01017f020101")).toContain("bad BOOLEAN");
+    expect(broken(LEAF_DER, "034200044135", "034201044135")).toContain("unused bits");
+  });
+
+  it("refuses certificates X.509 rules out", () => {
+    expect(broken(LEAF_DER, "a003020102", "a003020100")).toContain("not a v3 certificate");
+    // The outer signature algorithm (ECDSA-SHA384) changed to ECDSA-SHA256.
+    expect(broken(LEAF_DER, "0403030368", "0403020368")).toContain("differs inside and outside");
+    // Month 13, day 31 of November, hour 24.
+    expect(broken(LEAF_DER, "170d323631313035", "170d323631333035")).toContain("bad time");
+    expect(broken(LEAF_DER, "170d32363131303531", "170d32363131333131")).toContain("bad time");
+    expect(broken(LEAF_DER, "170d3236313130353136", "170d3236313130353234")).toContain("bad time");
+    // keyUsage (critical) renamed to subjectDirectoryAttributes (2.5.29.9), which nobody reads.
+    expect(broken(LEAF_DER, "0603551d0f0101ff", "0603551d090101ff")).toContain(
+      "unsupported critical extension",
+    );
+    // The CA's keyUsage renamed to a second basicConstraints.
+    expect(broken(CA_DER, "0603551d0f0101ff", "0603551d130101ff")).toContain("2.5.29.19 twice");
+  });
+
+  it("reads UTCTime years up to 2049 and from 1950", () => {
+    const y2049 = new Certificate(hexDecode(CA_DER.replace("170d3336", "170d3439")));
+    expect(y2049.notAfter).toBe(2109254958 + 13 * 365 * 86400 + 3 * 86400);
+    const y1950 = new Certificate(hexDecode(CA_DER.replace("170d3236", "170d3530")));
+    expect(y1950.notBefore).toBe(1793894958 - 76 * 365 * 86400 - 19 * 86400);
+  });
+
+  it("reads RSA-PSS parameters only with a salt as long as the hash", () => {
+    const pss = new Certificate(hexDecode(PSS_DER.replaceAll("a203020120", "a203020121")));
+    expect(pss.signatureAlgorithm).toBe(SIG_UNKNOWN);
+  });
+
+  it("reads an authorityKeyIdentifier and refuses stray bytes inside it", () => {
+    // The CA's subjectKeyIdentifier rewritten as an authorityKeyIdentifier of the same length:
+    // a [0] keyIdentifier, then (bad) an element AuthorityKeyIdentifier has no field for.
+    const ski = "0603551d0e0416041402a11f9b75bc74000b4387c2bf1879a7d531d958";
+    const aki = "0603551d230416301480" + "1202a11f9b75bc74000b4387c2bf1879a7d531";
+    const c = new Certificate(hexDecode(CA_DER.replace(ski, aki)));
+    expect(hexOf(c, c.authorityKeyId)).toBe("02a11f9b75bc74000b4387c2bf1879a7d531");
+    const serial = "0603551d230416301480" + "0f02a11f9b75bc74000b4387c2bf1879" + "820101";
+    expect(failure(hexDecode(CA_DER.replace(ski, serial)))).toBe("");
+    const stray = "0603551d230416301480" + "1002a11f9b75bc74000b4387c2bf1879a7" + "0500";
+    expect(broken(CA_DER, ski, stray)).toContain("stray bytes");
+    const garbage = "0603551d230416301480" + "1002a11f9b75bc74000b4387c2bf1879a7" + "ffff";
+    expect(broken(CA_DER, ski, garbage)).toContain("malformed certificate");
+  });
+
+  it("skips an unknown extension that is not critical", () => {
+    // extKeyUsage renamed to policyConstraints (2.5.29.36), which nobody reads.
+    const hex = LEAF_DER.replace("0603551d25040c", "0603551d24040c");
+    const c = new Certificate(hexDecode(hex));
+    expect(c.extKeyUsage.tag).toBe(0);
+  });
+});
