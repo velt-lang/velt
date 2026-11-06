@@ -388,6 +388,12 @@ fn self_typed(fcx: &mut FnCx, d: DefId, e: &velt_syntax::ast::Expr) {
     if !crate::ast_walk::reads_in_fn_value(e, &name) {
         return;
     }
+    if let Some(t) = fcx.written_call_type(e) {
+        if let DefInfo::Global(g) = &mut fcx.cx.info[d.0 as usize] {
+            g.ty = t;
+        }
+        return;
+    }
     let kept = fcx.cx.global(d).is_some_and(|g| g.stored);
     let defs = fcx.cx.info.len() as u32;
     fcx.cx.typing_globals.push(d);
