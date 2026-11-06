@@ -14,7 +14,8 @@ use crate::lockfile::Lockfile;
 
 mod trust;
 
-/// A local server of `files` (path → bytes, or `Redirect` to a URL), logging each request.
+/// A local server of `files` (path → bytes, or `Redirect` to a URL), logging each request's
+/// target (path and query).
 struct Serve {
     server: Option<Server>,
     files: Arc<Mutex<HashMap<String, Body>>>,
@@ -33,7 +34,11 @@ impl Serve {
         let log: Arc<Mutex<Vec<String>>> = Arc::default();
         let (f, l) = (files.clone(), log.clone());
         let handler = Arc::new(move |req: Request| {
-            l.lock().unwrap().push(req.path.clone());
+            let query = match req.query.is_empty() {
+                true => String::new(),
+                false => format!("?{}", req.query),
+            };
+            l.lock().unwrap().push(format!("{}{query}", req.path));
             match f.lock().unwrap().get(&req.path).cloned() {
                 Some(Body::Bytes(b)) => Response::bytes(200, "application/octet-stream", b),
                 Some(Body::Redirect(to)) => Response::text(302, "").with_header("Location", &to),

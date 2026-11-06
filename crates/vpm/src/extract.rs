@@ -138,19 +138,59 @@ pub(crate) fn extract_within(
 
 /// Write `tree` into a staging directory beside `dest`, then rename it to `dest`.
 pub(crate) fn write(tree: &Tree, dest: &Path, links: Links) -> Result<(), String> {
-    if dest.symlink_metadata().is_ok() {
+    write_then(tree, (dest, Place::New), links, |_| Ok(()))
+}
+
+/// Whether [`write_then`] may take the place of a `dest` already there.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Place {
+    /// `dest` must not exist.
+    New,
+    /// A `dest` already there is moved aside in one rename, the new tree renamed in, and the old
+    /// one removed: a reader sees the old tree or the new one, never none.
+    Replace,
+}
+
+/// [`write`], running `ready` on the staging directory once the tree is written, before it is
+/// renamed to `dest`: what is recorded about the tree is there before anyone can see it.
+pub(crate) fn write_then(
+    tree: &Tree,
+    (dest, place): (&Path, Place),
+    links: Links,
+    ready: impl FnOnce(&Path) -> Result<(), String>,
+) -> Result<(), String> {
+    let exists = dest.symlink_metadata().is_ok();
+    if exists && place == Place::New {
         return Err(format!("`{}` already exists", dest.display()));
     }
     let staging = staging(dest)?;
-    let result = write_into(tree, &staging, links).and_then(|()| {
-        std::fs::rename(&staging, dest).map_err(|e| {
+    let moved = |from: &Path, to: &Path| {
+        std::fs::rename(from, to).map_err(|e| {
             format!(
                 "cannot move `{}` to `{}`: {e}",
-                staging.display(),
-                dest.display()
+                from.display(),
+                to.display()
             )
         })
-    });
+    };
+    let result = write_into(tree, &staging, links)
+        .and_then(|()| ready(&staging))
+        .and_then(|()| match exists {
+            false => moved(&staging, dest),
+            true => {
+                let mut aside = staging.clone().into_os_string();
+                aside.push(".old");
+                let aside = PathBuf::from(aside);
+                moved(dest, &aside)?;
+                let result = moved(&staging, dest);
+                match &result {
+                    Ok(()) => drop(std::fs::remove_dir_all(&aside)),
+                    // Put back what was there.
+                    Err(_) => drop(std::fs::rename(&aside, dest)),
+                }
+                result
+            }
+        });
     if result.is_err() {
         let _ = std::fs::remove_dir_all(&staging);
     }

@@ -200,7 +200,7 @@ fn is_inner_path(path: &str) -> bool {
 }
 
 /// `<cache>/url/<sha256>`: the archive's raw tree.
-fn raw_dir(loc: &Locations, sha256: &str) -> PathBuf {
+pub(crate) fn raw_dir(loc: &Locations, sha256: &str) -> PathBuf {
     loc.cache.join(URL_SOURCE).join(sha256)
 }
 
@@ -224,13 +224,10 @@ pub fn checkout(
         (true, Some(record)) if checksum.is_none() => record.check_tree(&raw, spec)?,
         (true, Some(_)) => {}
         (had_raw, _) => {
-            if had_raw {
-                // A raw tree with no record: not known to be what any URL served.
-                remove_raw(&raw)?;
-            }
+            // A raw tree with no record (from before records, or the record removed) isn't known
+            // to be what any URL served: replaced once this URL's bytes are checked and extracted.
             let bytes = download_checked(spec)?;
-            let links = unpack(&bytes, &raw, &spec.url)?;
-            Verified::new(&raw, &spec.url, links)?.add_and_write(&spec.url)?;
+            unpack(&bytes, &raw, &spec.url, had_raw)?;
         }
     }
     let dir = choose(&raw, spec)?;
@@ -305,11 +302,6 @@ pub fn check_replace(
     }
 }
 
-/// Remove a raw tree the cache can't vouch for.
-fn remove_raw(raw: &Path) -> Result<(), String> {
-    std::fs::remove_dir_all(raw).map_err(|e| format!("cannot remove `{}`: {e}", raw.display()))
-}
-
 /// The entry `velt add <url>` writes: the archive is downloaded once, its SHA-256 computed and
 /// the archive extracted into the cache, and the package found in it: at `path` (inside the
 /// archive's one top directory when the archive has one and its root has no `package.velt`,
@@ -341,13 +333,7 @@ pub fn entry_for(
             record.check_tree(&raw, &spec)?;
             record.add_and_write(url)?;
         }
-        (had_raw, _) => {
-            if had_raw {
-                remove_raw(&raw)?;
-            }
-            let links = unpack(&bytes, &raw, url)?;
-            Verified::new(&raw, url, links)?.add_and_write(url)?;
-        }
+        (had_raw, _) => unpack(&bytes, &raw, url, had_raw)?,
     }
     let has_manifest = |spec: &UrlSpec| {
         choose(&raw, spec).is_ok_and(|d| d.join(crate::manifest::MANIFEST_FILE).is_file())
@@ -366,19 +352,24 @@ pub fn entry_for(
     Ok((manifest.package.name, spec))
 }
 
-/// Extract `bytes` (from `url`) into `raw`; a concurrent install's equal tree is taken. Returns
-/// the archive's symbolic links, as the extractor read them (on Windows they are written as
-/// files, so the tree on disk can't tell).
-fn unpack(bytes: &[u8], raw: &Path, url: &str) -> Result<Vec<String>, String> {
+/// Extract `bytes` (from `url`) into `raw`, with its record written before the tree is renamed
+/// there: a raw tree with no record is never seen, so one found is replaced (`replace`) rather
+/// than trusted, and only once the new tree is ready. A concurrent install's equal tree is taken.
+fn unpack(bytes: &[u8], raw: &Path, url: &str, replace: bool) -> Result<(), String> {
+    use crate::extract::{Links, Place};
     let failed = |e: String| format!("the archive at {url} can't be used: {e}");
     let tree = crate::extract::read(bytes, crate::extract::Limits::DEFAULT).map_err(failed)?;
+    // The archive's symbolic links, as the extractor read them: on Windows they are written as
+    // files, so the tree on disk can't tell.
     let links = (tree.nodes())
         .filter(|(_, n)| matches!(n, crate::extract::Node::Link(_)))
         .map(|(p, _)| p.to_string())
         .collect();
-    match crate::extract::write(&tree, raw, crate::extract::Links::NATIVE) {
-        Err(_) if raw.is_dir() => Ok(links),
-        result => result.map(|()| links).map_err(failed),
+    let place = if replace { Place::Replace } else { Place::New };
+    let record = |staged: &Path| Verified::new(raw, staged, url, links)?.add_and_write(url);
+    match crate::extract::write_then(&tree, (raw, place), Links::NATIVE, record) {
+        Err(_) if raw.is_dir() && Verified::read(raw).is_some() => Ok(()),
+        result => result.map_err(failed),
     }
 }
 

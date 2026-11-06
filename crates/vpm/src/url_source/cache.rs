@@ -54,12 +54,18 @@ impl Verified {
         })
     }
 
-    /// A new record for the raw tree just extracted at `raw` from `url`, with the archive's
+    /// A new record for the raw tree `raw` from `url`, extracted at `staged` (which is renamed to
+    /// `raw` once the record is written, so a raw tree never lacks one), with the archive's
     /// symbolic links `links` (from the extractor: on Windows they are written as files).
-    pub fn new(raw: &Path, url: &str, links: Vec<String>) -> Result<Verified, String> {
+    pub fn new(
+        raw: &Path,
+        staged: &Path,
+        url: &str,
+        links: Vec<String>,
+    ) -> Result<Verified, String> {
         Ok(Verified {
             path: Verified::path_for(raw),
-            tree: crate::git::tree_checksum(raw)?,
+            tree: crate::git::tree_checksum(staged)?,
             urls: vec![url.to_string()],
             links,
         })

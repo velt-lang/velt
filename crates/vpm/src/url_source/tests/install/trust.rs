@@ -131,21 +131,48 @@ fn redirects_stay_on_https_and_relative_locations_resolve() {
         );
     }
     assert_eq!(fetch::resolve(from, "?q"), None);
+    // A scheme only at the start makes a `Location` absolute.
+    assert_eq!(
+        fetch::resolve(from, "/y.tgz?u=https://x.example/z").as_deref(),
+        Some("https://h.example/y.tgz?u=https://x.example/z")
+    );
+    assert_eq!(
+        fetch::resolve(from, "y?u=https://x").as_deref(),
+        Some("https://h.example/a/b/y?u=https://x")
+    );
+    // GitHub's release asset redirect: a signed query with escapes that a manifest's URL may
+    // not hold is the server's, and followed; its path and host are still checked.
+    let asset = "https://release-assets.githubusercontent.com/github-production-release-asset/50805212/1f0fe4d4-8d6b-4e3b-a1a6-0b4f5f2f0f0f?sp=r&sv=2018-11-09&sr=b&spr=https&se=2026-11-06T20%3A47%3A07Z&rscd=attachment%3B+filename%3Dripgrep-14.1.1-x86_64-unknown-linux-musl.tar.gz.sha256&rsct=application%2Foctet-stream&skoid=96c2d410-5711-43a1-aedd-ab1947aa7ab0&sktid=398a6654-997b-47e9-b12b-9515b896b4de&skt=2026-11-06T19%3A46%3A26Z&ske=2026-11-06T20%3A47%3A07Z&sks=b&skv=2018-11-09&sig=Wz6%2FXq%2BmR8e1Zt0vU3k%3D&jwt=eyJhbGciOiJIUzI1NiJ9.e30.x&response-content-disposition=attachment%3B%20filename%3Dripgrep.tar.gz&response-content-type=application%2Foctet-stream";
+    fetch::check_hop(
+        "https://github.com/BurntSushi/ripgrep/releases/download/14.1.1/ripgrep.tar.gz",
+        asset,
+    )
+    .unwrap();
+    for path in ["/a%2Fb/x", "/a%3Bb/x", "/../x"] {
+        let e = fetch::check_hop(from, &format!("https://cdn.example{path}?q=1"));
+        assert!(e.is_err(), "{path}");
+    }
     // A host-relative `Location` from a real server.
     let env = env();
     let s = Serve::new();
     let archive = vue();
     s.put("/real/vue.tar.gz", Body::Bytes(archive.clone()));
-    s.put("/latest", Body::Redirect("/real/vue.tar.gz".into()));
+    s.put(
+        "/latest",
+        Body::Redirect("/real/vue.tar.gz?x=a%3Bb%2Fc#part".into()),
+    );
     let app = env.app(
         &dep(
-            &s.url("/latest"),
+            &s.url("/latest#first"),
             &archive,
             ", strip: 1, path: \"packages/vue\"",
         ),
         "",
     );
     env.install(&app).unwrap();
+    // No fragment went on the wire, from the manifest's URL or the hop's.
+    let log = s.log.lock().unwrap().clone();
+    assert!(log.iter().all(|p| !p.contains('#')), "{log:?}");
 }
 
 #[test]
@@ -192,12 +219,78 @@ fn extracting_where_an_equal_tree_already_is_takes_it() {
     let tmp = tempfile::tempdir().unwrap();
     let raw = tmp.path().join("raw");
     let archive = tar_gz(&[("a/x", "1"), ("a/l", "-> x")]);
-    let first = super::super::super::unpack(&archive, &raw, "u").unwrap();
-    let again = super::super::super::unpack(&archive, &raw, "u").unwrap();
-    assert_eq!(
-        (first.clone(), again),
-        (vec!["a/l".to_string()], vec!["a/l".to_string()])
-    );
+    super::super::super::unpack(&archive, &raw, "u", false).unwrap();
+    super::super::super::unpack(&archive, &raw, "u", false).unwrap();
+    assert_eq!(Verified::read(&raw).unwrap().links, vec!["a/l".to_string()]);
+}
+
+#[test]
+fn a_raw_tree_is_never_seen_without_its_record() {
+    // A second install that found the raw tree before its record would take it for one no URL
+    // vouches for. A thread watches while the tree is extracted and hashed.
+    let tmp = tempfile::tempdir().unwrap();
+    let raw = tmp.path().join("raw");
+    let files: Vec<(String, String)> = (0..2000)
+        .map(|i| {
+            (
+                format!("a/src/f{i}.velt"),
+                format!("export const v{i} = {i};\n"),
+            )
+        })
+        .collect();
+    let refs: Vec<(&str, &str)> = files
+        .iter()
+        .map(|(p, c)| (p.as_str(), c.as_str()))
+        .collect();
+    let archive = tar_gz(&refs);
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let watcher = {
+        let (raw, done) = (raw.clone(), done.clone());
+        std::thread::spawn(move || {
+            let mut seen = 0;
+            while !done.load(std::sync::atomic::Ordering::Relaxed) || seen == 0 {
+                if raw.is_dir() {
+                    assert!(Verified::read(&raw).is_some(), "a raw tree with no record");
+                    seen += 1;
+                }
+            }
+        })
+    };
+    super::super::super::unpack(&archive, &raw, "u", false).unwrap();
+    done.store(true, std::sync::atomic::Ordering::Relaxed);
+    watcher.join().unwrap();
+}
+
+#[test]
+fn a_raw_tree_without_a_record_is_replaced_only_once_its_url_serves_it() {
+    let e = env();
+    let s = Serve::new();
+    let archive = vue();
+    s.put("/vue.tar.gz", Body::Bytes(archive.clone()));
+    let from = |url: &str| {
+        e.app(
+            &dep(url, &archive, ", strip: 1, path: \"packages/vue\""),
+            "",
+        )
+    };
+    e.install(&from(&s.url("/vue.tar.gz"))).unwrap();
+    let raw = raw(&e, &archive);
+    std::fs::remove_file(Verified::path_for(&raw)).unwrap();
+    let kept = raw.join("vue-3.6.0/packages/vue/package.velt");
+    // Its URL is gone, or serves other bytes: the error, and the tree still there.
+    let elsewhere = from(&s.url("/moved.tar.gz"));
+    let err = e.install(&elsewhere).unwrap_err();
+    assert!(err.contains("doesn't exist"), "{err}");
+    assert!(kept.is_file());
+    s.put("/moved.tar.gz", Body::Bytes(tar_gz(&[("x", "y")])));
+    let err = e.install(&elsewhere).unwrap_err();
+    assert!(err.contains("has SHA-256"), "{err}");
+    assert!(kept.is_file());
+    // It serves the archive: replaced, and recorded.
+    s.put("/moved.tar.gz", Body::Bytes(archive.clone()));
+    e.install(&elsewhere).unwrap();
+    assert!(kept.is_file());
+    assert!(Verified::read(&raw).unwrap().knows(&s.url("/moved.tar.gz")));
 }
 
 #[test]
@@ -362,4 +455,13 @@ fn a_build_that_is_no_longer_a_no_op_checks_fetched_files() {
     std::fs::write(&lib, "export const v = 6;\n").unwrap();
     let err = installed.graph.verify_fetched().unwrap_err();
     assert!(err.contains("changed since it was fetched"), "{err}");
+    // What it says to delete is the raw tree, which the archive's record vouches for: deleting
+    // only the package directory inside it would leave the project unable to build.
+    let raw = raw(&e, &archive);
+    assert!(
+        err.contains(&format!("delete `{}` to fetch it again", raw.display())),
+        "{err}"
+    );
+    std::fs::remove_dir_all(&raw).unwrap();
+    e.install(&app).unwrap().graph.verify_fetched().unwrap();
 }

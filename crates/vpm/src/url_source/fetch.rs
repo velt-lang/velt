@@ -1,7 +1,7 @@
 //! Downloading an archive: redirects followed with each hop checked as the first URL is, plain
 //! `http` (to this machine) only from a hop that was plain `http` already, so a public `https`
 //! URL can't send the developer's machine to a local service; at most [`super::MAX_ARCHIVE`]
-//! read; a relative `Location` resolved against the hop it came from.
+//! read; a relative `Location` resolved against the hop it came from. A fragment is never sent.
 
 use super::{check_url, MAX_ARCHIVE};
 
@@ -20,7 +20,7 @@ pub(super) fn fetch_within(url: &str, max: usize) -> Result<Vec<u8>, String> {
         max_body: max,
         ..velt_http::Limits::DEFAULT
     };
-    let mut at = url.to_string();
+    let mut at = without_fragment(url).to_string();
     for _ in 0..=MAX_REDIRECTS {
         let response = velt_http::fetch_within("GET", &at, &[("User-Agent", "velt")], &[], limits)
             .map_err(|e| format!("cannot download {at}: {e}"))?;
@@ -33,6 +33,7 @@ pub(super) fn fetch_within(url: &str, max: usize) -> Result<Vec<u8>, String> {
                 let next = resolve(&at, location).ok_or_else(|| {
                     format!("{at}: a redirect to `{location}`, which isn't a URL")
                 })?;
+                let next = without_fragment(&next).to_string();
                 check_hop(&at, &next)?;
                 at = next;
             }
@@ -43,15 +44,34 @@ pub(super) fn fetch_within(url: &str, max: usize) -> Result<Vec<u8>, String> {
     Err(format!("{url}: more than {MAX_REDIRECTS} redirects"))
 }
 
-/// `Err` unless a redirect from `at` to `next` may be followed: `next` passes [`check_url`],
-/// and is plain `http` only if `at` was (a download that started on https stays on https).
+/// `Err` unless a redirect from `at` to `next` may be followed: `next`'s scheme, host,
+/// credentials and path pass [`check_url`], and it is plain `http` only if `at` was (a download
+/// that started on https stays on https). Its query isn't checked: a hop's URL is the server's,
+/// not one a manifest wrote, and a storage service's signed query holds escapes (`%3B`, `%2F`)
+/// that a manifest's URL may not.
 pub(super) fn check_hop(at: &str, next: &str) -> Result<(), String> {
     if is_plain_http(next) && !is_plain_http(at) {
         return Err(format!(
             "{at} redirects to plain http ({next}): a download that started on https stays on https"
         ));
     }
-    check_url(next).map_err(|e| format!("{at} redirects to {next}: {e}"))
+    let checked = next.split(['?', '#']).next().unwrap_or(next);
+    check_url(checked).map_err(|e| format!("{at} redirects to {next}: {e}"))
+}
+
+/// `url` without its fragment, which names a part of the response and isn't sent.
+fn without_fragment(url: &str) -> &str {
+    url.split('#').next().unwrap_or(url)
+}
+
+/// Whether `location` begins with a scheme and `://` (`scheme = ALPHA *( ALPHA / DIGIT / "+" /
+/// "-" / "." )`): only then is it absolute, so `/y?u=https://x` is a path.
+fn is_absolute(location: &str) -> bool {
+    location.split_once("://").is_some_and(|(scheme, _)| {
+        let mut chars = scheme.chars();
+        chars.next().is_some_and(|c| c.is_ascii_alphabetic())
+            && chars.all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '.'))
+    })
 }
 
 /// Whether `url` is plain `http` (any case of the scheme).
@@ -64,7 +84,7 @@ pub(super) fn is_plain_http(url: &str) -> bool {
 /// `//host/…`, a host-relative `/path`, or a path relative to `base`'s directory. `None` for
 /// anything else.
 pub(super) fn resolve(base: &str, location: &str) -> Option<String> {
-    if location.contains("://") {
+    if is_absolute(location) {
         return Some(location.to_string());
     }
     let (scheme, rest) = base.split_once("://")?;

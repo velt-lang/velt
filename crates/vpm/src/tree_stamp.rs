@@ -15,9 +15,12 @@
 //! A build looks only at the tree's directories ([`TreeCheck::Directories`]): their times change
 //! when a file is added, removed or renamed, and checking them costs a few `stat` calls where
 //! every file's costs one per file (+39% on a no-op build with a Vue-sized dependency, against a
-//! ±3% budget). An edit in place is then caught by the next `velt install`, `update` or `add`,
-//! which look at every file. Stamps live outside the trees (`<cache>/stamps/`), so they are never
-//! part of what they describe.
+//! ±3% budget). An edit in place is then caught once the build is no longer a no-op, before it
+//! compiles anything ([`crate::PackageGraph::verify_fetched`], every file), and by `velt install`,
+//! `update` and `add`, which look at every file; `velt install --locked` reads every byte
+//! ([`TreeCheck::Bytes`]). An edit to a file the program never reads leaves a no-op build a
+//! no-op. Stamps live outside the trees (`<cache>/stamps/`), so they are never part of what they
+//! describe.
 
 use std::path::{Path, PathBuf};
 
@@ -195,6 +198,9 @@ fn stamp_path_in(cache: &Path, dir: &Path) -> PathBuf {
 pub struct Fetched {
     pub dir: PathBuf,
     pub checksum: String,
+    /// What to delete to fetch the tree again: the git checkout, or the archive's raw tree
+    /// (`dir` is a directory inside it, which the archive's record would still vouch for).
+    pub fetched_at: PathBuf,
     /// `Locations::cache`, where the stamps are.
     pub cache: PathBuf,
 }
@@ -213,13 +219,25 @@ pub(crate) fn fetched<'r>(
                 commit,
                 checksum,
                 ..
-            } => Some((crate::git::checkout_dir(loc, &spec.url, commit), checksum)),
-            Source::Url { dir, checksum, .. } => Some((dir.clone(), checksum)),
+            } => {
+                let dir = crate::git::checkout_dir(loc, &spec.url, commit);
+                Some((dir.clone(), dir, checksum))
+            }
+            Source::Url {
+                spec,
+                dir,
+                checksum,
+            } => Some((
+                dir.clone(),
+                crate::url_source::raw_dir(loc, &spec.sha256),
+                checksum,
+            )),
             Source::Registry { .. } | Source::Path { .. } => None,
         })
-        .map(|(dir, checksum)| Fetched {
+        .map(|(dir, fetched_at, checksum)| Fetched {
             dir,
             checksum: checksum.clone(),
+            fetched_at,
             cache: loc.cache.clone(),
         })
         .collect();
@@ -234,8 +252,9 @@ impl Fetched {
     pub fn verify(&self) -> Result<(), String> {
         let mismatch = |expected: &str, actual: &str| {
             format!(
-                "`{}` changed since it was fetched: velt.lock.json has {expected}, it hashes to {actual} (delete it to fetch it again)",
-                self.dir.display()
+                "`{}` changed since it was fetched: velt.lock.json has {expected}, it hashes to {actual} (delete `{}` to fetch it again)",
+                self.dir.display(),
+                self.fetched_at.display()
             )
         };
         let links = || crate::git::check_links(&self.dir);
