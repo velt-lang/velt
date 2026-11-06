@@ -151,17 +151,19 @@ instructions before.
 `gzip_fast` and `gzip_default` are `velt/compress`'s `gzip` at levels 1 and 6 against `flate2`
 (its default `miniz_oxide` backend) at the same levels: the 1 MB JSON of `gen_inputs.rs`,
 compressed 20 times. The runtime had no encoder, so these rows measure a new component, not a
-port. Instructions retired (`/usr/bin/time -l`, Apple M4, macOS, `VELT_THREADS=1`, load about
-150), and the size of one stream (Node's zlib for comparison):
+port. Instructions retired (`/usr/bin/time -l`, Apple M4, macOS, `VELT_THREADS=1`), and the size
+of one stream against stock zlib 1.3.2 and Node's bundled zlib:
 
-| benchmark | Velt | Rust | Velt / Rust | Velt bytes | flate2 bytes | zlib bytes |
-|---|---:|---:|---:|---:|---:|---:|
-| gzip_fast | 654 M | 337 M | 1.94 | 148,814 | | 141,166 |
-| gzip_default | 1,780 M | 2,176 M | 0.82 | 127,698 | 126,411 | 127,619 |
+| benchmark | Velt | Rust | Velt / Rust | Velt bytes | flate2 bytes | stock zlib bytes | Node bytes |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| gzip_fast | 673 M | 337 M | 2.00 | 148,814 | 134,091 | 148,818 | 141,166 |
+| gzip_default | 1,644 M | 2,170 M | 0.76 | 127,698 | 126,411 | 127,698 | 127,619 |
 
 The match finder follows zlib (hash chains, lazy matching from level 4, zlib's parameters per
-level), so the sizes track zlib's. Level 1 takes zlib's `deflate_fast` path, where `miniz_oxide`
-probes a single candidate per position: that is the gap in the first row.
+level, a candidate tried only when the two bytes at the end of the best match so far agree), so
+the sizes track stock zlib's: at level 9 both give 126,039 bytes. Level 1 takes zlib's
+`deflate_fast` path, where `miniz_oxide` checks a single candidate per position: that is the gap
+in the first row.
 
 ## Brotli
 

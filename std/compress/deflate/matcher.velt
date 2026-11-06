@@ -266,10 +266,13 @@ export class Matcher extends BlockWriter {
     const limit = pos > MAX_DIST ? pos - MAX_DIST : 0;
     const first = w[pos];
     const second = w[pos + 1];
+    // The byte that would make a match longer than `best`, and the one before it: most
+    // candidates differ in one of them, as zlib checks first.
     let tail = w[pos + best];
+    let tail1 = w[pos + best - 1];
     let m = candidate;
     while (true) {
-      if (w[m + best] == tail && w[m] == first && w[m + 1] == second) {
+      if (w[m + best] == tail && w[m + best - 1] == tail1 && w[m] == first && w[m + 1] == second) {
         let len: i64 = 2;
         while (len < maxLen && w[m + len] == w[pos + len]) {
           len++;
@@ -281,6 +284,7 @@ export class Matcher extends BlockWriter {
             return best;
           }
           tail = w[pos + best];
+          tail1 = w[pos + best - 1];
         }
       }
       m = prev[m & W_MASK] as i64;
