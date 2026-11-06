@@ -158,7 +158,9 @@ async function* relay<T, E>(src: AsyncIterable<T, E>): AsyncGenerator<T, Error> 
 
 // The chunks of `stream`, read once the body is, as bytes: a `Uint8Array` chunk's range is
 // copied, anything else fails as Node fails it; a stream another reader holds, or an error the
-// stream gives, reaches the body's reader as an `IoError`.
+// stream gives, reaches the body's reader as an `IoError`. When the body's reader stops early
+// (a client gone, a `for await` left), the stream is cancelled, so its source's `cancel` runs,
+// as when a JS `Response` body is cancelled.
 async function* bodyBytes<R>(
   stream: ReadableStream<R>,
 ): AsyncGenerator<u8[], IoError | AbortError> {
@@ -168,21 +170,35 @@ async function* bodyBytes<R>(
   } catch (e) {
     throw new IoError("EINVAL", e.message);
   }
-  while (true) {
-    let r: IteratorResult<R>;
-    try {
-      r = await reader.read();
-    } catch (e) {
-      throw new IoError("EIO", `${e}`);
+  let ended = false;
+  try {
+    while (true) {
+      let r: IteratorResult<R>;
+      try {
+        r = await reader.read();
+      } catch (e) {
+        ended = true;
+        throw new IoError("EIO", `${e}`);
+      }
+      if (r.done) {
+        ended = true;
+        return;
+      }
+      const chunk: unknown = r.value;
+      if (!(chunk instanceof Uint8Array)) {
+        ended = true;
+        throw new IoError("EINVAL", "Received non-Uint8Array chunk");
+      }
+      const at = chunk.off as i64;
+      yield chunk.buf.bytes.slice(at, at + (chunk.len as i64));
     }
-    if (r.done) {
-      return;
+  } finally {
+    if (!ended) {
+      try {
+        await reader.cancel(null);
+      } catch (e) {
+        // The body's reader has gone: there is no one to tell.
+      }
     }
-    const chunk: unknown = r.value;
-    if (!(chunk instanceof Uint8Array)) {
-      throw new IoError("EINVAL", "Received non-Uint8Array chunk");
-    }
-    const at = chunk.off as i64;
-    yield chunk.buf.bytes.slice(at, at + (chunk.len as i64));
   }
 }

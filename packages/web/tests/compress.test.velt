@@ -1,0 +1,316 @@
+// `compress()`: which responses it compresses and with what, and what a client reads, bare and
+// over `serve`.
+import { serve } from "http-server";
+import {
+  BrotliDecoder,
+  brotliDecompress,
+  DeflateEncoding,
+  gunzip,
+  InflateDecoder,
+} from "velt/compress";
+import { BodyStream } from "velt/net/http";
+import { describe, expect, it } from "velt/test";
+import { App, compress, Handler } from "../src/lib";
+import { choose, compressible, quality } from "../src/middleware/compress";
+
+const TEXT = "the window slides and a match is found or not. ".repeat(200);
+
+function bytesOf(s: string): u8[] {
+  const out: u8[] = [];
+  for (let i: i64 = 0; i < (s.length as i64); i++) {
+    out.push(s.charCodeAt(i) as u8);
+  }
+  return out;
+}
+
+function textOf(b: u8[]): string {
+  let s = "";
+  for (const c of b) {
+    s += String.fromCharCode(c as number);
+  }
+  return s;
+}
+
+function respond(
+  body: string,
+  headers: [string, string][] = [["content-type", "text/plain"]],
+): Handler {
+  return async (req: Request): Promise<Response> => new Response(body, { headers });
+}
+
+function get(accepts: string | null, method: string = "GET"): Request {
+  const headers = new Headers();
+  if (accepts != null) {
+    headers.set("accept-encoding", accepts);
+  }
+  return new Request("http://t/", { method, headers });
+}
+
+async function bytes(res: Response): Promise<u8[]> {
+  return Array.from(new Uint8Array(await res.arrayBuffer())) as u8[];
+}
+
+describe("compress", () => {
+  it("prefers Brotli, then gzip, by the request's q-values", async () => {
+    const h = compress()(respond(TEXT));
+    const cases: [string | null, string | null][] = [
+      ["gzip, deflate, br", "br"],
+      ["gzip", "gzip"],
+      ["br;q=0.5, gzip", "gzip"],
+      ["br;q=0, gzip;q=0.1", "gzip"],
+      ["*", "br"],
+      ["*;q=0.2, br;q=0.1", "gzip"],
+      ["identity", null],
+      ["gzip;q=0, br;q=0", null],
+      [null, null],
+      ["GZip ; Q=1", "gzip"],
+    ];
+    for (const [accepts, want] of cases) {
+      const res = await h(get(accepts));
+      expect(`${accepts}: ${res.headers.get("content-encoding")}`).toBe(`${accepts}: ${want}`);
+      expect(res.headers.get("vary")).toBe("Accept-Encoding");
+      const body = await bytes(res);
+      const back = want == "br" ? brotliDecompress(body) : want == "gzip" ? gunzip(body) : body;
+      expect(textOf(back) == TEXT ? "" : `${accepts}: wrong body`).toBe("");
+    }
+  });
+
+  it("leaves short, encoded, incompressible and HEAD responses as they are", async () => {
+    const short = await compress()(respond("short"))(get("br"));
+    expect(short.headers.get("content-encoding")).toBe(null);
+    expect(await short.text()).toBe("short");
+    const image = await compress()(respond(TEXT, [["content-type", "image/png"]]))(get("br"));
+    expect(image.headers.get("content-encoding")).toBe(null);
+    expect(image.headers.get("vary")).toBe(null);
+    const encoded = await compress()(
+      respond(TEXT, [
+        ["content-type", "text/plain"],
+        ["content-encoding", "gzip"],
+      ]),
+    )(get("br"));
+    expect(encoded.headers.get("content-encoding")).toBe("gzip");
+    const kept = await compress()(
+      respond(TEXT, [
+        ["content-type", "text/plain"],
+        ["cache-control", "no-transform"],
+      ]),
+    )(get("br"));
+    expect(kept.headers.get("content-encoding")).toBe(null);
+    const head = await compress()(respond(TEXT))(get("br", "HEAD"));
+    expect(head.headers.get("content-encoding")).toBe(null);
+    expect(head.headers.get("vary")).toBe("Accept-Encoding");
+    const none: Handler = async (req: Request) => new Response(null, {
+      status: 304,
+      headers: { "content-type": "text/plain" },
+    });
+    expect((await compress()(none)(get("br"))).headers.get("content-encoding")).toBe(null);
+  });
+
+  it(
+    "drops the length and ranges of what it compresses, weakens the ETag, and adds to Vary",
+    async () => {
+      const h = compress()(
+        respond(TEXT, [
+          ["content-type", "application/json"],
+          ["content-length", `${TEXT.length}`],
+          ["accept-ranges", "bytes"],
+          ["etag", '"abc"'],
+          ["vary", "Origin"],
+        ]),
+      );
+      const res = await h(get("gzip"));
+      expect(res.headers.get("content-encoding")).toBe("gzip");
+      expect(res.headers.get("content-length")).toBe(null);
+      expect(res.headers.get("accept-ranges")).toBe(null);
+      expect(res.headers.get("etag")).toBe('W/"abc"');
+      expect(res.headers.get("vary")).toBe("Origin, Accept-Encoding");
+      expect(textOf(gunzip(await bytes(res)))).toBe(TEXT);
+    },
+  );
+
+  it("adds to Vary by whole names", async () => {
+    const cases: [string, string][] = [
+      ["X-Accept-Encoding", "X-Accept-Encoding, Accept-Encoding"],
+      ["Origin, accept-encoding", "Origin, accept-encoding"],
+      ["*", "*"],
+    ];
+    for (const [vary, want] of cases) {
+      const res = await compress()(
+        respond(TEXT, [
+          ["content-type", "text/plain"],
+          ["vary", vary],
+        ]),
+      )(get("gzip"));
+      expect(res.headers.get("vary")).toBe(want);
+    }
+  });
+
+  it("takes other encodings and a threshold", async () => {
+    const h = compress({ encodings: [new DeflateEncoding("deflate")], threshold: 10 })(
+      respond("0123456789ab"),
+    );
+    const res = await h(get("br, deflate"));
+    expect(res.headers.get("content-encoding")).toBe("deflate");
+  });
+
+  it("sends each event of an event stream as it comes", async () => {
+    let made = 0;
+    async function* events(): AsyncGenerator<u8[]> {
+      for (let i = 0; i < 20; i++) {
+        made = i + 1;
+        yield bytesOf(`data: event ${i} ${"x".repeat(200)}\n\n`);
+      }
+    }
+    const h: Handler = async (req: Request) => new Response(BodyStream.from(events()), {
+      headers: { "content-type": "text/event-stream" },
+    });
+    for (const accepts of ["br", "gzip"]) {
+      const res = await compress()(h)(get(accepts));
+      expect(res.headers.get("content-encoding")).toBe(accepts);
+      const br = new BrotliDecoder();
+      const gz = new InflateDecoder("gzip");
+      let decoded = "";
+      let ok = true;
+      let pieces = 0;
+      for await (const chunk of res.body!) {
+        pieces++;
+        const piece = Array.from(chunk) as u8[];
+        let out: u8[] = [];
+        if (accepts == "br") {
+          br.feed(piece);
+          out = br.read(1 << 20);
+        } else {
+          gz.feed(piece);
+          out = gz.read(1 << 20);
+        }
+        decoded += textOf(out);
+        // Every event made so far, but the one the generator is about to hand over, is out.
+        const whole = decoded.split("\n\n").length - 1;
+        ok = ok && whole >= made - 1;
+      }
+      expect(ok ? "" : `${accepts}: an event was held back`).toBe("");
+      // A piece per event, each decodable to its end, then the stream's end.
+      expect(pieces >= 20 ? "" : `${accepts}: ${pieces} pieces for 20 events`).toBe("");
+      expect(decoded.split("\n\n").length - 1).toBe(20);
+    }
+  });
+
+  it("cancels the handler's body when the client stops reading", async () => {
+    // [compressed, sent as it is]: a first chunk past the threshold, then one under it.
+    const firsts = [TEXT, "short"];
+    for (const first of firsts) {
+      const cancelled = shared(0 as i64);
+      const pulls = shared(0 as i64);
+      const h: Handler = async (req: Request) => new Response(
+        new ReadableStream<Uint8Array>({
+          pull: (ctl) => {
+            pulls.add(1);
+            ctl.enqueue(Uint8Array.fromBytes(bytesOf(pulls.get() == 1 ? first : TEXT)));
+          },
+          cancel: (reason) => {
+            cancelled.set(1);
+          },
+        }),
+        { headers: { "content-type": "text/plain" } },
+      );
+      const res = await compress()(h)(get("gzip"));
+      const reader = res.body!.getReader();
+      await reader.read();
+      await reader.cancel();
+      expect(
+        cancelled.get() == 1
+          ? ""
+          : `${first.length}-byte first chunk: the body was never cancelled`,
+      ).toBe("");
+    }
+  });
+
+  it("compresses over HTTP, through an App, and the client reads it back", async () => {
+    const app = new App<number>(() => 0);
+    app.use(compress());
+    app.get("/", async (c) => c.text(TEXT));
+    app.get("/json", async (c) => c.json({ text: TEXT }));
+    const server = await serve({ port: 0 }, app.handler());
+    try {
+      const base = `http://127.0.0.1:${server.port}`;
+      const res = await fetch(`${base}/`, { headers: { "accept-encoding": "br" } });
+      expect(res.headers.get("content-encoding")).toBe("br");
+      expect(await res.text()).toBe(TEXT);
+      const json = await fetch(`${base}/json`, { headers: { "accept-encoding": "gzip" } });
+      expect(json.headers.get("content-encoding")).toBe("gzip");
+      const parsed: { text: string } = await json.json();
+      expect(parsed.text).toBe(TEXT);
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("streams a large body through, as the client reads it", async () => {
+    const chunk = bytesOf(TEXT);
+    async function* big(): AsyncGenerator<u8[]> {
+      for (let i = 0; i < 600; i++) {
+        yield chunk;
+      }
+    }
+    const server = await serve(
+      { port: 0 },
+      compress()(
+        async (req: Request) => new Response(BodyStream.from(big()), {
+          headers: { "content-type": "text/plain" },
+        }),
+      ),
+    );
+    try {
+      for (const accepts of ["br", "gzip"]) {
+        const res = await fetch(`http://127.0.0.1:${server.port}/`, {
+          headers: { "accept-encoding": accepts },
+        });
+        expect(res.headers.get("content-encoding")).toBe(accepts);
+        const text = await res.text();
+        expect(text.length).toBe(TEXT.length * 600);
+        expect(text.slice(text.length - TEXT.length)).toBe(TEXT);
+      }
+    } finally {
+      await server.shutdown();
+    }
+  });
+});
+
+describe("Accept-Encoding and types", () => {
+  it("reads q-values in one pass", () => {
+    expect(quality("gzip, br;q=0.8", "br")).toBe(0.8);
+    expect(quality("gzip, br;q=0.8", "gzip")).toBe(1);
+    expect(quality("gzip", "br")).toBe(-1);
+    expect(quality(" br ;  q=0 ", "br")).toBe(0);
+    expect(quality("br;level=1;q=0.3", "br")).toBe(0.3);
+    expect(quality("br;q=2", "br")).toBe(0);
+    expect(quality("", "br")).toBe(-1);
+    expect(quality(",,br", "br")).toBe(1);
+    expect(quality("brotli", "br")).toBe(-1);
+    expect(choose("deflate", [new DeflateEncoding("gzip")])).toBe(null);
+  });
+
+  it("knows what compresses", () => {
+    for (const t of [
+      "text/html; charset=utf-8",
+      "application/json",
+      "Application/JSON",
+      "image/svg+xml",
+      "application/ld+json",
+      "application/javascript",
+    ]) {
+      expect(compressible(t) ? "" : t).toBe("");
+    }
+    for (const t of [
+      "image/png",
+      "image/jpeg",
+      "video/mp4",
+      "application/zip",
+      "application/gzip",
+      "font/woff2",
+      "application/octet-stream",
+    ]) {
+      expect(compressible(t) ? t : "").toBe("");
+    }
+  });
+});

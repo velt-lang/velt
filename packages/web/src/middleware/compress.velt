@@ -1,0 +1,367 @@
+// web (internal): `compress()`, response bodies compressed with an encoding the client accepts.
+
+import { BrotliEncoding, DeflateEncoding, Encoder, Encoding } from "velt/compress";
+import { BodyStream } from "velt/net/http";
+import { Handler, Middleware } from "../types";
+
+/** The options of `compress`. */
+export interface CompressOptions {
+  /**
+   * The encodings offered, preferred first when the client accepts several equally. Default:
+   * Brotli at `"optimal"` (quality 4), then gzip at `"optimal"` (level 6). Another coding is
+   * an `Encoding` from a package: its `name` is the `Content-Encoding` it writes.
+   */
+  encodings?: Encoding[];
+  /**
+   * A body shorter than this many bytes is sent as it is (default 1024): by its
+   * `Content-Length`, or without one by its first chunk. An event stream is never held back.
+   */
+  threshold?: number;
+}
+
+/** Input after which a body that isn't an event stream is flushed, so output keeps coming. */
+const FLUSH_EVERY: i64 = 65536;
+
+/**
+ * Compresses a response body with the encoding the request's `Accept-Encoding` prefers (its
+ * q-values; a tie goes to the order of `encodings`), streaming, with backpressure. A body is
+ * left as it is when it is short (see `threshold`), already encoded, of a type that doesn't compress (images,
+ * video, archives: see `compressible`), marked `Cache-Control: no-transform`, or the answer to
+ * a HEAD request; or for a 204, 206 or 304. A compressed body loses its `Content-Length` and
+ * `Accept-Ranges`, and a strong `ETag` becomes weak; `Vary: Accept-Encoding` is set on every
+ * response of a type that compresses. An event stream (`text/event-stream`) is flushed after
+ * each chunk, so each event goes out when it is sent.
+ */
+export function compress(options: CompressOptions = {}): Middleware {
+  const encodings = options.encodings ?? [new BrotliEncoding(), new DeflateEncoding("gzip")];
+  const threshold = (options.threshold ?? 1024) as i64;
+  return (next: Handler): Handler => async (req: Request): Promise<Response> => {
+    const res = await next(req);
+    const type = res.headers.get("content-type");
+    if (type == null || !compressible(type)) {
+      return res;
+    }
+    const encoded = res.headers.get("content-encoding");
+    const control = res.headers.get("cache-control");
+    const status = res.status;
+    const body = res.body;
+    if (
+      req.method == "HEAD" ||
+      body == null ||
+      status == 204 ||
+      status == 206 ||
+      status == 304 ||
+      (encoded != null && encoded != "identity") ||
+      (control != null && control.toLowerCase().includes("no-transform"))
+    ) {
+      return withVary(res);
+    }
+    const length = res.headers.get("content-length");
+    if (length != null && parseInt(length) < threshold) {
+      return withVary(res);
+    }
+    const accepts = req.headers.get("accept-encoding");
+    const chosen = accepts == null ? null : choose(accepts, encodings);
+    if (chosen == null) {
+      return withVary(res);
+    }
+    // The encoder takes Velt's byte arrays: a copy of each chunk (cheap next to compressing it).
+    // Without a length, the first chunk decides, as in Express: a body made in one piece is
+    // short or not, and a stream is never held back waiting for more. An event stream has no
+    // threshold, and nothing is read before it starts.
+    const reader = body.getReader();
+    const events = type.toLowerCase().startsWith("text/event-stream");
+    const head: u8[][] = [];
+    if (!events && length == null) {
+      const r = await reader.read();
+      if (r.done) {
+        return withVary(
+          new Response(null, { status, statusText: res.statusText, headers: res.headers }),
+        );
+      }
+      const first = r.value.toBytes();
+      head.push(first);
+      if ((first.length as i64) < threshold) {
+        const plain = new Headers(res.headers);
+        addVary(plain);
+        const init: ResponseInit = { status, statusText: res.statusText, headers: plain };
+        return new Response(BodyStream.from(relay(head, reader)), init);
+      }
+    }
+    const headers = new Headers(res.headers);
+    addVary(headers);
+    const init: ResponseInit = { status, statusText: res.statusText, headers };
+    headers.set("content-encoding", chosen.name);
+    headers.delete("content-length");
+    headers.delete("accept-ranges");
+    const etag = headers.get("etag");
+    if (etag != null && !etag.startsWith("W/")) {
+      headers.set("etag", `W/${etag}`);
+    }
+    const stream = encode(chosen.encoder(), head, reader, events);
+    return new Response(BodyStream.from(stream), init);
+  };
+}
+
+// The chunks of `head`, then the rest of `rest`, as they are. If the client stops reading (the
+// generator ends at a `yield`), the handler's body is cancelled, as it would be without
+// `compress()`, so what feeds it (an event stream's subscription, a cursor) stops too.
+async function* relay(
+  head: u8[][],
+  rest: ReadableStreamDefaultReader<Uint8Array>,
+): AsyncGenerator<u8[]> {
+  let ended = false;
+  try {
+    for (const chunk of head) {
+      yield chunk;
+    }
+    while (true) {
+      const r = await rest.read();
+      if (r.done) {
+        ended = true;
+        return;
+      }
+      yield r.value.toBytes();
+    }
+  } finally {
+    if (!ended) {
+      await cancelQuietly(rest);
+    }
+  }
+}
+
+// The chunks of `head`, then the rest from `rest`, through `e`: an event stream flushed after
+// each chunk, anything else after every `FLUSH_EVERY` bytes, the flush in the same piece as the
+// chunk's output so a piece the client gets is decodable to its end. If the client stops reading,
+// or the encoder throws, the handler's body is cancelled (see `relay`).
+async function* encode(
+  e: Encoder,
+  head: u8[][],
+  rest: ReadableStreamDefaultReader<Uint8Array>,
+  events: bool,
+): AsyncGenerator<u8[]> {
+  let ended = false;
+  try {
+    yield* encodeAll(e, head, rest, events);
+    ended = true;
+  } finally {
+    if (!ended) {
+      await cancelQuietly(rest);
+    }
+  }
+}
+
+// Cancels the handler's body; an error from that has no one to go to (the client has gone, or
+// the encoder's error is on its way), so it is dropped.
+async function cancelQuietly(rest: ReadableStreamDefaultReader<Uint8Array>): Promise<void> {
+  try {
+    await rest.cancel();
+  } catch (e) {
+    // Nothing to tell: see above.
+  }
+}
+
+async function* encodeAll(
+  e: Encoder,
+  head: u8[][],
+  rest: ReadableStreamDefaultReader<Uint8Array>,
+  events: bool,
+): AsyncGenerator<u8[]> {
+  let unflushed: i64 = 0;
+  let i: usize = 0;
+  while (true) {
+    let chunk: u8[];
+    if (i < head.length) {
+      chunk = head[i];
+      i++;
+    } else {
+      const r = await rest.read();
+      if (r.done) {
+        break;
+      }
+      chunk = r.value.toBytes();
+    }
+    let out = e.write(chunk, 0, chunk.length as i64);
+    unflushed += chunk.length as i64;
+    if (events || unflushed >= FLUSH_EVERY) {
+      const flushed = e.flush();
+      out = out.length == 0 ? flushed : out.concat(flushed);
+      unflushed = 0;
+    }
+    if (out.length > 0) {
+      yield out;
+    }
+  }
+  const last = e.finish();
+  if (last.length > 0) {
+    yield last;
+  }
+}
+
+function withVary(res: Response): Response {
+  const headers = new Headers(res.headers);
+  addVary(headers);
+  const init: ResponseInit = { status: res.status, statusText: res.statusText, headers };
+  return new Response(res.body, init);
+}
+
+// Adds `Accept-Encoding` to `Vary` unless it is there or `Vary` is `*`.
+function addVary(headers: Headers) {
+  const vary = headers.get("vary");
+  if (vary == null) {
+    headers.set("vary", "Accept-Encoding");
+    return;
+  }
+  // By whole names: `X-Accept-Encoding` is another header.
+  for (const item of vary.split(",")) {
+    const name = item.trim().toLowerCase();
+    if (name == "*" || name == "accept-encoding") {
+      return;
+    }
+  }
+  headers.set("vary", `${vary}, Accept-Encoding`);
+}
+
+/**
+ * The encoding of `encodings` the `Accept-Encoding` value gives the highest q above 0 (one it
+ * doesn't name takes the q of `*`, if any); the first of them on a tie.
+ */
+export function choose(accepts: string, encodings: Encoding[]): Encoding | null {
+  let best: Encoding | null = null;
+  let bestQ = 0.0;
+  for (const e of encodings) {
+    let q = quality(accepts, e.name);
+    if (q < 0) {
+      q = quality(accepts, "*");
+    }
+    if (q > bestQ) {
+      best = e;
+      bestQ = q;
+    }
+  }
+  return best;
+}
+
+/**
+ * The q `name` has in an `Accept-Encoding` value (1 when it names no q), or -1 when it isn't
+ * named. One pass by index: this runs on every request.
+ */
+export function quality(header: string, name: string): number {
+  const n = header.length as i64;
+  let i: i64 = 0;
+  while (i < n) {
+    // Spaces and commas before a coding.
+    while (
+      i < n &&
+      (header.charCodeAt(i) == 32 || header.charCodeAt(i) == 44 || header.charCodeAt(i) == 9)
+    ) {
+      i++;
+    }
+    const start = i;
+    while (
+      i < n &&
+      header.charCodeAt(i) != 44 &&
+      header.charCodeAt(i) != 59 &&
+      header.charCodeAt(i) != 32 &&
+      header.charCodeAt(i) != 9
+    ) {
+      i++;
+    }
+    const same = sameName(header, start, i, name);
+    let q = 1.0;
+    // Parameters up to the next comma: only `q` counts.
+    while (i < n && header.charCodeAt(i) != 44) {
+      const c = header.charCodeAt(i);
+      if (c == 59 || c == 32 || c == 9) {
+        i++;
+        continue;
+      }
+      const p = i;
+      while (i < n && header.charCodeAt(i) != 44 && header.charCodeAt(i) != 59) {
+        i++;
+      }
+      const c0 = header.charCodeAt(p);
+      if ((c0 == 113 || c0 == 81) && p + 1 < i && header.charCodeAt(p + 1) == 61) {
+        const v = parseFloat(header.slice(p + 2, i));
+        q = v >= 0 && v <= 1 ? v : 0;
+      }
+    }
+    if (same && i > start) {
+      return q;
+    }
+  }
+  return -1;
+}
+
+// Whether `header[start..end]` is `name`, ignoring ASCII case.
+function sameName(header: string, start: i64, end: i64, name: string): bool {
+  if (end - start != (name.length as i64)) {
+    return false;
+  }
+  for (let k: i64 = 0; k < (name.length as i64); k++) {
+    let a = header.charCodeAt(start + k);
+    let b = name.charCodeAt(k);
+    if (a >= 65 && a <= 90) {
+      a += 32;
+    }
+    if (b >= 65 && b <= 90) {
+      b += 32;
+    }
+    if (a != b) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Whether a `Content-Type` compresses: text, JSON, XML, JavaScript and the like, `+json`,
+ * `+xml`, `+text` and `+yaml` types, SVG and a few binary formats that aren't compressed
+ * already (as Hono's list has them). Images, audio, video, archives and fonts in WOFF are not.
+ */
+export function compressible(type: string): bool {
+  // The common cases without a copy.
+  if (type.startsWith("text/") || type.startsWith("application/json")) {
+    return true;
+  }
+  const semi = type.indexOf(";");
+  const essence = (semi < 0 ? type : type.slice(0, semi)).trim().toLowerCase();
+  if (essence.startsWith("text/")) {
+    return true;
+  }
+  if (
+    essence.endsWith("+json") ||
+    essence.endsWith("+xml") ||
+    essence.endsWith("+text") ||
+    essence.endsWith("+yaml")
+  ) {
+    return true;
+  }
+  switch (essence) {
+    case "application/javascript":
+    case "application/ecmascript":
+    case "application/json":
+    case "application/xml":
+    case "application/xml-dtd":
+    case "application/x-javascript":
+    case "application/x-www-form-urlencoded":
+    case "application/wasm":
+    case "application/rtf":
+    case "application/postscript":
+    case "application/toml":
+    case "application/x-sh":
+    case "application/x-tar":
+    case "application/vnd.ms-fontobject":
+    case "application/vnd.ms-opentype":
+    case "font/otf":
+    case "font/ttf":
+    case "image/bmp":
+    case "image/x-icon":
+    case "image/vnd.microsoft.icon":
+    case "message/rfc822":
+    case "model/gltf-binary":
+      return true;
+    default:
+      return false;
+  }
+}
