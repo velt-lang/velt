@@ -802,3 +802,28 @@ fn type_arguments_on_tags_are_kept() {
 ",
     );
 }
+
+/// Whitespace inside the braces around a template is layout: only a line break in the template's
+/// own text breaks the element.
+#[test]
+fn a_line_break_next_to_a_template_in_braces_is_only_layout() {
+    for container in ["{\n`x`}", "{`x`\n}", "{\t\n\t`x`\n}"] {
+        assert_fmt(
+            &format!("const a = <p>{container}</p>;\n"),
+            "const a = <p>{`x`}</p>;\n",
+        );
+        assert_fmt(
+            &format!("const a = <p>y{container}</p>;\n"),
+            "const a = <p>y{`x`}</p>;\n",
+        );
+        assert_fmt(
+            &format!("function f() {{\n  return <A>{container}</A>;\n}}\n"),
+            "function f() {\n  return <A>{`x`}</A>;\n}\n",
+        );
+    }
+    // The template's own line break still does, with or without one next to it.
+    assert_fmt(
+        "const a = <p>{\n`x\ny`}</p>;\n",
+        "const a = (\n  <p>{`x\ny`}</p>\n);\n",
+    );
+}
