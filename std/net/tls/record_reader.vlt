@@ -97,12 +97,16 @@ export class RecordReader {
 
   /**
    * Reads the next record and decrypts it in place: its content type, the content at
-   * `buf[cstart..cend]`. END at close_notify. Throws a `TlsFailure` for a record the protocol
+   * `buf[cstart..cend]`. END at close_notify and at every call after it: what follows is ignored
+   * (RFC 8446 §6.1). Throws a `TlsFailure` for a record the protocol
    * forbids, an alert other than close_notify, and a transport that ends without close_notify,
    * which may be a truncation (`after`: once the handshake is done). After a failure every call
    * throws it again.
    */
   async next(after: bool): Promise<u8> {
+    if (this.ended) {
+      return END;
+    }
     const failed = this.failure;
     if (failed != null) {
       throw failed;

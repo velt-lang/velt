@@ -467,6 +467,17 @@ describe("RecordReader", () => {
     expect(none.ended).toBe(false);
   });
 
+  it("ignores what comes after close_notify", async () => {
+    // close_notify at sequence number 0, then a valid record from Node at sequence number 1.
+    const r = keyed(sealed(inner([1, 0], 21)).concat(hexDecode(AES_SEQ1)));
+    expect(await r.next(true)).toBe(END);
+    expect(r.ended).toBe(true);
+    expect(await r.next(true)).toBe(END);
+    expect(await r.next(true)).toBe(END);
+    expect(r.cend - r.cstart).toBe(2);
+    expect(r.available()).toBe(0);
+  });
+
   it("names where the transport ended", async () => {
     expect(await failure(plainReader("16030300"))).toBe(
       "0 quiet TLS: the connection closed in the middle of a record",
