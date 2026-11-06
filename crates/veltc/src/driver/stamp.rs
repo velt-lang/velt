@@ -294,13 +294,16 @@ pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
 }
 
 /// Append `lines` (head, path) to stamp text `s`: the directory table, the entries naming their
-/// directory by its number, and `end`. A path or head holding a line break (`\n`, or `\r`,
-/// which `str::lines` drops before one) would read as more lines than it is, and a `d ` line
-/// in it as another directory of the table: then the stamp says only that, and never matches,
-/// so such a build is never a no-op.
+/// directory by its number, and `end`. A path holding a line break (`\n`, or `\r`, which
+/// `str::lines` drops before one) would read as more lines than it is, and a `d ` line in it as
+/// another directory of the table: then the stamp says only that, and never matches, so such a
+/// build is never a no-op. A head never holds one: heads are hashes, numbers and letters, or
+/// taken from a line already (a generator's lookups, [`compose`]'s entries), where a `\r`
+/// before the tab is inside the line.
 fn write_entries(s: &mut String, lines: &[(String, String)]) {
-    let breaks = |t: &str| t.bytes().any(|b| matches!(b, b'\n' | b'\r'));
-    if (lines.iter()).any(|(head, path)| breaks(head) || breaks(path)) {
+    // One character each: `str::contains` searches a word at a time (`memchr`).
+    let breaks = |t: &str| t.contains('\n') || t.contains('\r');
+    if (lines.iter()).any(|(_, path)| breaks(path)) {
         s.push_str("unusable: a path holds a line break\n");
         return;
     }
@@ -310,14 +313,20 @@ fn write_entries(s: &mut String, lines: &[(String, String)]) {
     // path.
     type Named<'a> = (&'a str, Option<(usize, &'a str)>, &'a str);
     let mut named: Vec<Named> = Vec::with_capacity(lines.len());
+    // Entries come in runs from one directory: the last one's number is taken without a lookup.
+    let mut last: Option<(&str, usize)> = None;
     for (head, path) in lines {
         let split = path.rfind(std::path::is_separator).filter(|&i| i > 0);
         let short = split.map(|i| {
             let dir = &path[..i];
-            let n = *index.entry(dir).or_insert_with(|| {
-                dirs.push(dir);
-                dirs.len() - 1
-            });
+            let n = match last {
+                Some((d, n)) if d == dir => n,
+                _ => *index.entry(dir).or_insert_with(|| {
+                    dirs.push(dir);
+                    dirs.len() - 1
+                }),
+            };
+            last = Some((dir, n));
             (n, &path[i + 1..])
         });
         named.push((head, short, path));
@@ -402,6 +411,12 @@ pub(crate) fn compose(key: &Key, objects: usize, entries: &[String]) -> String {
         .collect();
     write_entries(&mut s, &lines);
     s
+}
+
+/// An entry that never matches, standing for inputs of `what` that aren't known: a stamp
+/// holding it is never valid ([`check_all`] knows no `unknown` kind).
+pub(crate) fn unknown_entry(what: &Path) -> String {
+    format!("unknown\t{}", what.display())
 }
 
 /// The entry of a directory listed with names hashing to `hash` ([`vpm::probe::Seen::listed`]).

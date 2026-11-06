@@ -90,14 +90,19 @@ fn executable(
     // that now resolves to another file (`./gen` to a new `gen.velt` over `gen/index.velt`) is
     // a change. The host's own objects and link inputs are not the generators' inputs.
     let text = std::fs::read_to_string(stamp::path(&exe)).unwrap_or_default();
-    // A stamp whose entries aren't known gives none, and an empty list is never cached.
-    let files = (stamp::entry_lines(&text).unwrap_or_default().into_iter())
-        .filter(|l| {
-            ["file ", "dir ", "probe ", "real "]
-                .iter()
-                .any(|k| l.starts_with(k))
-        })
-        .collect();
+    // A stamp whose entries aren't known (none, or a path with a line break) can't say what the
+    // generators read: one entry that never matches stands for them, so the program's stamp and
+    // the caches built on these files never match either. An empty list would say "nothing".
+    let files = match stamp::entry_lines(&text) {
+        Some(lines) => (lines.into_iter())
+            .filter(|l| {
+                ["file ", "dir ", "probe ", "real "]
+                    .iter()
+                    .any(|k| l.starts_with(k))
+            })
+            .collect(),
+        None => vec![stamp::unknown_entry(&exe)],
+    };
     if let Some(l) = &lock {
         let _ = l.unlock();
         let _ = l.lock_shared();

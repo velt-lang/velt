@@ -504,3 +504,41 @@ fn a_generator_that_prints_too_much_is_stopped() {
         "{err}"
     );
 }
+
+/// A generator whose imports reach a path with a line break: its host's build stamp never
+/// matches, and what it read isn't known. The program's stamp must then never match either, or
+/// an edited generator leaves the program it made.
+#[cfg(unix)]
+#[test]
+fn a_generator_whose_inputs_are_not_known_is_run_every_time() {
+    let tmp = tempfile::tempdir().expect("temp dir");
+    let dir = tmp.path().join("prog");
+    let cache = tmp.path().join("cache");
+    std::fs::create_dir_all(dir.join("h\ni")).expect("dir");
+    std::fs::write(
+        dir.join("main.velt"),
+        "declare generated(\"./gen\") function hello<T>(): string;\n\
+         class User {}\n\
+         function main() { console.log(hello<User>()); }\n",
+    )
+    .expect("main");
+    let gen = |extra: &str| {
+        format!(
+            "import {{ InstanceRequest, Output }} from \"velt/generate\";\n\
+             import {{ word }} from \"./h\\ni/text\";\n\
+             export function hello(req: InstanceRequest, out: Output): void {{\n\
+             \x20 out.line(`return ${{out.literal(word + \"{extra} \" + req.model.type(req.args[0]).display)}};`);\n\
+             }}\n"
+        )
+    };
+    let text = dir.join("h\ni").join("text.velt");
+    std::fs::write(&text, "export const word = \"one\";\n").expect("text");
+    std::fs::write(dir.join("gen.velt"), gen("")).expect("gen");
+    assert_eq!(run(&dir, &cache), "one User\n");
+    assert_eq!(run(&dir, &cache), "one User\n");
+    // An edit behind the line break, and one to the generator itself.
+    std::fs::write(&text, "export const word = \"two\";\n").expect("text");
+    assert_eq!(run(&dir, &cache), "two User\n");
+    std::fs::write(dir.join("gen.velt"), gen("three")).expect("gen");
+    assert_eq!(run(&dir, &cache), "twothree User\n");
+}
