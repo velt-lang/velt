@@ -371,7 +371,8 @@ velt --version                         # velt <ver> (<git hash> <host triple>)
   of the package graph, and by size and time the unit objects and the executable it wrote (so
   an output another build or tool rewrote is a change), extra link inputs, and the std cache's
   objects the link read (`std` lines; stamp format `velt-build-stamp 6`, whose paths name their
-  directory from a table after the header, `d <dir>` and `~<n>/<name>`). The objects it names
+  directory from a table after the header, `d <dir>` and `~<n>/<name>`; a path holding a line
+break makes a stamp that never matches). The objects it names
   must exist; the link step then runs on the unit objects and the `std` objects (and checks its
   own stamp). The stamp ends with `end <entries>`
   and is renamed into place whole. Only builds without diagnostics write a stamp; a build that

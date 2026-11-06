@@ -216,14 +216,21 @@ the `UrlSpec { url, sha256, strip, subdir }` (`subdir` is `path`). `url_source::
 `allowNative` prefix comparison would refuse) and `https`, or plain `http` to this machine, which
 only a manifest the root controls may name (`dependency_requirements` refuses it in a fetched
 one). The resolver's `Want::Url`/`Source::Url { spec, checksum, dir }`: `url_source::checkout`
-downloads the archive (`url_source::fetch`: each redirect hop checked as the first URL, plain
-`http` only after `http`, a relative `Location` resolved; at most `MAX_ARCHIVE` = 512 MiB read)
-unless `<cache>/url/<sha256>/` holds it for this URL, checks the SHA-256 of the bytes, extracts it
-there with `vpm::extract` (a concurrent install's equal tree is taken), and records beside it in
-`<sha256>.verified` the raw tree's checksum, each URL whose bytes hashed to it, and its links. A
-cache hit from a URL not recorded downloads and checks once (the raw tree is keyed by hash alone,
-and `allowNative` matches the URL as written); without a lock, a cached raw tree is read in full
-against the recorded checksum, so a changed tree never reaches a new lock. Then it goes
+downloads the archive (`url_source::fetch`: each redirect hop's scheme, host, credentials and
+path checked as the first URL, not its query, which is the server's, such as a storage service's
+signed one; plain `http` only after `http`; a `Location` absolute only when it starts with a
+scheme, otherwise resolved; no fragment sent; at most `MAX_ARCHIVE` = 512 MiB read) unless
+`<cache>/url/<sha256>/` holds it for this URL, checks the SHA-256 of the bytes, extracts it there
+with `vpm::extract` (`extract::write_then`; a concurrent install's equal tree is taken), and
+records in `<sha256>.verified` the raw tree's checksum, each URL whose bytes hashed to it, and its
+links, before the tree is renamed into place, so a raw tree never lacks its record. One found
+without (from before records, or the record removed) is replaced only once this URL's bytes are
+downloaded, checked and extracted (`extract::Place::Replace`: the old tree moved aside in one
+rename). A cache hit from a URL not recorded downloads and checks once (the raw tree is keyed by
+hash alone, and `allowNative` matches the URL as written); without a lock, a cached raw tree is
+read in full against the recorded checksum, so a changed tree never reaches a new lock. The
+extractor refuses `.git` in any spelling, and a directory git would take for a repository by its
+contents (`HEAD` with `objects` and `refs`, or with `commondir`) under any name. Then it goes
 `strip` levels down (each the only entry at its level) and into `path`, which must stay inside;
 `git::check_links` checks that directory's links again from it. The lock's `source` is
 `url+<url>[?strip=n][&path=…]#sha256:<hex>` (`UrlSpec::source`/`parse_source`, `&=#?%` escaped),
@@ -247,6 +254,10 @@ of now. `InstallOptions::tree_check` says how much is looked at:
   added, removed or renamed is seen but an edit in place is not. When the build is no longer a
   no-op, the driver runs `PackageGraph::verify_fetched` (every file) before compiling.
 - `TreeCheck::Bytes` (`velt install --locked`): every byte, whatever a stamp says.
+
+A changed tree's error names what to delete to fetch it again: the git checkout, or for an
+archive its raw tree `<cache>/url/<sha256>/` (`tree_stamp::Fetched::fetched_at`), never only the
+package directory inside it, which the record would still vouch for.
 
 ## One source per package, and `allowNative` by source (additive, #2367)
 `vpm::resolve`, `vpm::install::allow_native`, `vpm::manifest::allow_native`, `vpm::source_url`.
