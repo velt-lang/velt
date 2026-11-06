@@ -1,0 +1,54 @@
+// check: no leaks
+// check: also with VELT_THREADS=1
+// Workers started while every worker is busy (#2371) don't change `workerCount()`, and
+// `currentWorker()` on them stays in `0..workerCount() - 1`, so an array sized by the count read
+// at start-up has a slot for every task. Here one task per worker runs on without a pause until a
+// task that waits behind them has run; only a worker the runtime starts for it can run that one.
+import { currentWorker, workerCount } from "velt/task";
+
+class Gate {
+  spinning: Atomic<i64> = new Atomic<i64>(0);
+  released: Atomic<i64> = new Atomic<i64>(0);
+}
+
+// Holds its worker until the gate opens: it never returns from its poll.
+async function hold(gate: shared<Gate>): Promise<void> {
+  gate.spinning.add(1);
+  while (gate.released.load() == 0) {}
+}
+
+// Waits for every worker to be held, then reads where it runs and opens the gate.
+async function check(gate: shared<Gate>, n: i64): Promise<i64[]> {
+  while (gate.spinning.load() < n) {
+    await yieldNow();
+  }
+  const out = [currentWorker(), workerCount()];
+  gate.released.store(1);
+  return out;
+}
+
+async function main() {
+  const n = workerCount();
+  const perWorker: i64[] = [];
+  for (let i = 0; i < n; i++) {
+    perWorker.push(0);
+  }
+  const gate = shared(new Gate());
+  const held: Promise<void>[] = [];
+  for (let w = 0; w < n; w++) {
+    held.push(spawn(hold(gate), { worker: w }));
+  }
+  const seen = await spawn(check(gate, n));
+  await Promise.all(held);
+  const w = seen[0];
+  console.log("count unchanged:", seen[1] == n, workerCount() == n);
+  console.log("worker in range:", w >= 0 && w < n);
+  if (w >= 0 && w < n) {
+    perWorker[w] += 1;
+  }
+  let total = 0;
+  for (const c of perWorker) {
+    total += c;
+  }
+  console.log("counted:", total);
+}

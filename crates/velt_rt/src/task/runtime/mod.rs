@@ -209,11 +209,15 @@ pub extern "C-unwind" fn velt_rt_worker_count() -> u64 {
     }
 }
 
-/// `currentWorker()`: the per-core worker running this task. With the stealing scheduler, an
-/// index for this worker thread, which a task may leave at any `await`.
+/// `currentWorker()`: the worker running this task, below `workerCount()`. On the Velt backend a
+/// spare worker reports a configured one; with the stealing scheduler, an index for this worker
+/// thread, which a task may leave at any `await`.
 #[no_mangle]
 pub extern "C-unwind" fn velt_rt_current_worker() -> u64 {
     if let Some(i) = current_worker() {
+        if backend() == Backend::Velt {
+            return velt::reported_worker(i) as u64;
+        }
         return i as u64;
     }
     if is_per_core() {
