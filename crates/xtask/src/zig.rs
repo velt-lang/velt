@@ -113,6 +113,22 @@ mod tests {
         assert_eq!(found, PACKAGES, "update zig::PACKAGES");
     }
 
+    /// The zig action restores each package's C bundle, built from what its key hashes.
+    #[test]
+    fn the_zig_action_caches_each_package_s_c_bundle() {
+        let action = std::fs::read_to_string(root().join(".github/actions/zig/action.yml"))
+            .expect("the zig action");
+        for p in PACKAGES {
+            for named in [
+                format!("packages/{p}/target/velt-native"),
+                format!("'packages/{p}/package.velt'"),
+                format!("'packages/{p}/native/**'"),
+            ] {
+                assert!(action.contains(&named), "the zig action names no {named}");
+            }
+        }
+    }
+
     /// Each program outside `packages/` that depends on a package with C `sources` is a
     /// benchmark (`bench_programs`) or one of the [`DEPENDENTS`].
     #[test]
