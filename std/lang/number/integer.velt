@@ -210,8 +210,8 @@ export function i64Text(v: i64): string {
   const u = v as u64;
   const a = ~u + 1;
   if (u + 9999999 < 9999999) {
-    // -9999999 to -1.
-    const w = shortWords(a, true);
+    // -9999999 to -1: eight digits at a time, as negative numbers are rarely short.
+    const w = eightWords(a, true);
     return strAsciiWords(w.w0, 0, 0, w.len);
   }
   if (u < 100000000) {
@@ -245,7 +245,7 @@ function longText(a: u64): string {
 // The text of `-a`, past one word (`a` from 10^7 up).
 function longNegativeText(a: u64): string {
   noInline();
-  const w = a < 100000000 ? shortWords(a, true) : longNegative(a);
+  const w = a < 100000000 ? eightWords(a, true) : longNegative(a);
   return strAsciiWords(w.w0, w.w1, w.w2, w.len);
 }
 
@@ -288,7 +288,7 @@ function push(buf: string, a: u64): void {
 function pushNegative(buf: string, a: u64): void {
   inline();
   if (a < 10000000) {
-    const w = shortWords(a, true);
+    const w = eightWords(a, true);
     const w0 = w.w0;
     const len = w.len;
     strbufPushAsciiWord(buf, w0, len);
@@ -312,7 +312,7 @@ function pushLong(buf: string, a: u64): void {
 // Appends `-a`, past one word (`a` from 10^7 up).
 function pushLongNegative(buf: string, a: u64): void {
   noInline();
-  const w = a < 100000000 ? shortWords(a, true) : longNegative(a);
+  const w = a < 100000000 ? eightWords(a, true) : longNegative(a);
   const w0 = w.w0;
   const w1 = w.w1;
   const w2 = w.w2;
