@@ -10,7 +10,7 @@
 // (std/prelude/global/number_float.velt). Where lowering needs a float hook the program lacks, it
 // calls the runtime.
 
-import { noInline, trunc } from "velt/lang/intrinsics";
+import { trunc } from "velt/lang/intrinsics";
 import { i64Text, pushI64, pushU64, u64Text } from "velt/lang/number/integer";
 import { i64Ended, u64Ended } from "velt/lang/number/integer_write";
 
@@ -44,17 +44,14 @@ export function uintPush(buf: string, v: u64): void {
  * Writes `String(v)` of a signed integer and the byte `end` (the space or newline after a
  * `console.log` argument) to standard output (`stream` 1) or standard error (2), in one write. The
  * text is at most 21 bytes (20 digits, or a minus and 19, then that byte), held inline: no
- * allocation. Out of its callers (`noInline()`): inlined at every `console.log`, its digits would
- * be compiled once per call site.
+ * allocation.
  */
 export function intWrite(stream: u32, v: i64, end: u8): void {
-  noInline();
   velt_rt_write_str(stream, i64Ended(v, end));
 }
 
 /** Writes `String(v)` of an unsigned integer and `end` to `stream`, as `intWrite`. */
 export function uintWrite(stream: u32, v: u64, end: u8): void {
-  noInline();
   velt_rt_write_str(stream, u64Ended(v, end));
 }
 
