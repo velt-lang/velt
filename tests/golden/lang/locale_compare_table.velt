@@ -3,11 +3,25 @@
 // Node's order (`Intl.Collator("und")`, ICU 77.1). For each neighbouring pair x, y it prints three
 // signs: x vs y; x + "b" vs y + "a", which is ">" only when x and y have the same base letters
 // (primary weights); and x + "á" vs y + "a", ">" only when their accents (secondary weights) are
-// equal too. So a wrong rank at any level in the table changes a sign. The expected output is
-// Node's where Node and the Rust that velt_rt had agree, which is on all 4113 comparisons
-// but 12: the suffixed pairs of `‥` and `…` and of the primes `′` `″` `‴` `⁗` and `‵` `‶`
-// `‷`, which ICU reads as two or more of one element. There it is the old Rust's, which the
-// port follows.
+// equal too. Then, for each character x, with r its accent rank in the table (RANKS, as "0" + r),
+// the sign of m + x vs x + m for the combining mark m = U+0300 + r and, when r > 0, for
+// U+0300 + r - 1. A combining mark weighs only at the accent level, by code point, one above the
+// table's rank r, so these put each character's accent against a fixed scale: ">" for the first
+// and "=" for the second (the case level then decides: "=" for case rank 0, else "<").
+//
+// What that shows: a wrong order or primary, and a wrong accent or case rank between characters
+// that share their base letters (or their base letters and accent), from the pairs. From the
+// marks: any change of a character's accent rank, but on one that stands for two (`æ`, `‼`),
+// where only a raise shows and not one from 0 to 1; and a case rank changed to or from 0 on a
+// one-element character whose accent rank is above 0. No sign here shows another change of a
+// case rank: on a character that no other shares its base letters and accent with (`¡`, `ȡ`),
+// or a raise of the highest case rank of its group.
+//
+// The expected output is Node's where Node and the Rust that velt_rt had agree, which is on all
+// 4113 pair comparisons but 12: the suffixed pairs of `‥` and `…` and of the primes `′` `″` `‴`
+// `⁗` and `‵` `‶` `‷`, which ICU reads as two or more of one element. There it is the old
+// Rust's, which the port follows. They differ on 597 of the 1979 mark comparisons, as ICU
+// weighs the marks by its own table.
 
 const ORDER: string =
   "\u007F\u0080\u0081\u0082\u0083\u0084\u0086\u0087\u0088\u0089\u008A\u008B\u008C\u008D" +
@@ -105,6 +119,23 @@ const ORDER: string =
   "\u0380\u0381\u0382\u0383\u038B\u038D\u03A2\u2065\u20C1\u20C2\u20C3\u20C4\u20C5\u20C6" +
   "\u20C7\u20C8\u20C9\u20CA\u20CB\u20CC\u20CD\u20CE\u20CF";
 
+const RANKS: string =
+  "00000000000000000000000000000000000000000000000000000000000012334000000000000000000000000000" +
+  "00000000000000000000000000000000123400012340000000000000000000000000000000000000000000000000" +
+  "00000010000000000000000000000000000000000000000000000000000000000000000000000000112233445566" +
+  "778899::;;<<==>>??@@AABBCCDDEEFFGGHHIIJJKKLLMM1122330000112233000000011223344556600000011223" +
+  "34455667788000011100000000112233445566778899::;;<<==>>??@@AABBCCDDEEFFGGHHII0000000011000011" +
+  "2233445566770000000011223344556677889000011223344556677889::;;<<==>>??@@00000001120000011223" +
+  "34455000011223344556677889900000000000112233001122334455667788990000000000001122334455667788" +
+  "99::;;<<==>>??@@AABBCCDDEEFFGGHHIIJJKKLLMMNNOOPPQQRRSSTT110000001122000000000001122334455667" +
+  "78899000000112233445566778899::;<11000000011233445566778800000000000112233445566778899::;;<<" +
+  "==>>??@@AABBCCDDEEFFGGHHIIJJKKLLMMNN00000112200000011223345566770011220011223345566778899::0" +
+  "00000000011223344556600000001100000000000000000000000110000000000110000000000001100000001122" +
+  "30000000000000000011000000000000000000000000000001112223000000000110000000000000000000000112" +
+  "20011000000001122000000000000000011223300001122000011000000112233000011000000110000000000000" +
+  "00000000000000000000011001100000000000000000000001122334400000000000000000000000000000000110" +
+  "000000000000000000011000000001100000000000000000000001100000000000000000000000000000";
+
 function sign(order: i64): string {
   return order < 0 ? "<" : order > 0 ? ">" : "=";
 }
@@ -121,6 +152,22 @@ function main() {
     if (line.length == 72) {
       console.log(line);
       line = "";
+    }
+  }
+  console.log(line);
+  line = "";
+  for (let i = 0; i < chars.length; i++) {
+    const x = chars[i];
+    const rank = RANKS.charCodeAt(i) - 48;
+    const above = String.fromCharCode(0x300 + rank);
+    line += sign((above + x).localeCompare(x + above));
+    if (rank > 0) {
+      const same = String.fromCharCode(0x2ff + rank);
+      line += sign((same + x).localeCompare(x + same));
+    }
+    if (line.length >= 72) {
+      console.log(line.slice(0, 72));
+      line = line.slice(72);
     }
   }
   console.log(line);
