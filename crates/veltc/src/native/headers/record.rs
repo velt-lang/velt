@@ -10,7 +10,7 @@ use velt_common::{Diagnostic, Diagnostics, Span};
 use vpm::c_headers::{CHeaders, LibraryRecord, FILE as RECORD};
 use vpm::graph::GraphPackage;
 
-use super::{compare, file_digest, Decl};
+use super::{compare, file_digest, Decl, LibraryHeaders};
 
 /// Compare what a fetched package's `library` declares (`decls`, those this program compiles)
 /// and the headers it has with what its author checked on `zig_target`, as its `c-headers.json`
@@ -19,7 +19,7 @@ pub(super) fn compare_record(
     package: &GraphPackage,
     library: &str,
     decls: &[Decl],
-    listed: &[String],
+    read: LibraryHeaders,
     zig_target: &str,
     diags: &mut Diagnostics,
 ) -> Option<LibraryRecord> {
@@ -78,15 +78,29 @@ pub(super) fn compare_record(
             );
         }
     }
+    if recorded.defines != vpm::c_headers::defines_digest(read.defines) {
+        diags.push(
+            Diagnostic::error(
+                format!(
+                    "C library `{library}` in package `{name}` has other `defines` than its author checked its headers with for {zig_target}"
+                ),
+                at,
+            )
+            .with_note(format!(
+                "{RECORD} records other `defines`: the package changed after the check"
+            )),
+        );
+    }
     let of = format!("of C library `{library}` in package `{name}`");
     let headers = &recorded.headers;
-    compare_headers(package, &of, headers, listed, zig_target, at, diags);
+    compare_headers(package, &of, headers, read.headers, zig_target, at, diags);
     (diags.len() == before).then(|| recorded.clone())
 }
 
 /// Compare the headers of a fetched package with those its author's check read (`recorded`,
 /// the headers `of` a library or the constants, as messages say). A git checkout has them all,
-/// so one missing is an error; a registry archive doesn't ship `native/`, so there only what is
+/// so one missing is an error. A registry archive ships `native/` only for a package that
+/// builds C `sources`: one missing from there is an error too, and elsewhere only what is
 /// present can be compared (docs/internals/design/c-ffi.md).
 pub(super) fn compare_headers(
     package: &GraphPackage,
@@ -97,6 +111,14 @@ pub(super) fn compare_headers(
     at: Span,
     diags: &mut Diagnostics,
 ) {
+    let ships_sources = package.c_libraries.values().any(|l| !l.sources.is_empty());
+    let shipped = |header: &str| {
+        package.checkout
+            || (ships_sources
+                && header
+                    .strip_prefix(vpm::manifest::C_SOURCES_DIR)
+                    .is_some_and(|rest| rest.starts_with('/')))
+    };
     let mut refuse = |header: &str, what: &str| {
         diags.push(
             Diagnostic::error(
@@ -119,14 +141,14 @@ pub(super) fn compare_headers(
         match found {
             Some(found) if found == *digest => {}
             Some(_) => refuse(header, "is not the one its author checked"),
-            None if package.checkout || !inside => {
+            None if shipped(header) || !inside => {
                 refuse(header, "is gone, though its author checked it")
             }
             None => {}
         }
     }
     for header in listed.iter().filter(|h| !h.starts_with('<')) {
-        let here = package.checkout || package.root.join(header).is_file();
+        let here = shipped(header) || package.root.join(header).is_file();
         if here && !recorded.contains_key(header) {
             refuse(header, "is listed, but its author didn't check it");
         }
@@ -152,11 +174,13 @@ fn declaration_digest(d: &Decl) -> String {
 pub(super) fn library_record(
     root: &Path,
     decls: &[Decl],
+    defines: &[(String, String)],
     read: &[(PathBuf, String)],
 ) -> LibraryRecord {
     LibraryRecord {
         declarations: decls.iter().map(declaration_digest).collect(),
         headers: package_headers(root, read),
+        defines: vpm::c_headers::defines_digest(defines),
     }
 }
 
@@ -225,7 +249,11 @@ mod tests {
     fn compared(package: &GraphPackage, decls: &[Decl], listed: &[&str]) -> (Vec<String>, bool) {
         let listed: Vec<String> = listed.iter().map(|h| h.to_string()).collect();
         let mut diags = Diagnostics::default();
-        let record = compare_record(package, "own", decls, &listed, TARGET, &mut diags);
+        let read = LibraryHeaders {
+            headers: &listed,
+            defines: &[],
+        };
+        let record = compare_record(package, "own", decls, read, TARGET, &mut diags);
         let messages = diags.iter().map(|d| d.message.clone()).collect();
         (messages, record.is_some())
     }
@@ -252,6 +280,7 @@ mod tests {
             LibraryRecord {
                 declarations: [&f, &g].map(declaration_digest).into(),
                 headers: BTreeMap::new(),
+                defines: String::new(),
             },
         );
         record.write(tmp.path()).unwrap();
@@ -270,7 +299,10 @@ mod tests {
             package,
             "own",
             &[decl("g", vec![])],
-            &[],
+            LibraryHeaders {
+                headers: &[],
+                defines: &[],
+            },
             "aarch64-macos",
             &mut diags,
         );
@@ -296,6 +328,7 @@ mod tests {
             library_record(
                 root,
                 std::slice::from_ref(&g),
+                &[],
                 &[(header.clone(), file_digest(&header).unwrap())],
             ),
         );
@@ -334,6 +367,20 @@ mod tests {
         );
         let (e, _) = compared(&checkout.packages()[0], std::slice::from_ref(&g), &listed);
         assert!(e[0].contains("is gone"), "{e:?}");
+        // A registry archive of a package that builds C `sources` ships all of `native/`.
+        let mut bundled = PackageGraph::default();
+        let added = bundled.add("bind", root, BTreeMap::new());
+        added.fetched = true;
+        let own = vpm::manifest::CLibraryConfig {
+            sources: vec!["native/own.c".into()],
+            ..Default::default()
+        };
+        added.c_libraries.insert("own".into(), own);
+        let (e, _) = compared(&bundled.packages()[0], std::slice::from_ref(&g), &listed);
+        assert!(
+            e[0].contains("`native/own.h`") && e[0].contains("is gone"),
+            "{e:?}"
+        );
         // A header listed since the check, and a path out of the package in the record.
         let (e, _) = compared(
             &checkout.packages()[0],
@@ -354,5 +401,49 @@ mod tests {
             e[0].contains("`../x.h`") && e[0].contains("is gone"),
             "{e:?}"
         );
+    }
+
+    /// `defines` change what a library's headers declare: a record holds whose they were.
+    #[test]
+    fn a_fetched_package_s_defines_are_compared() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut graph = PackageGraph::default();
+        graph.add("bind", tmp.path(), BTreeMap::new()).fetched = true;
+        let package = &graph.packages()[0];
+        let g = decl("g", vec![]);
+        let answer = [("ANSWER".to_string(), "40".to_string())];
+        let mut record = CHeaders::default();
+        let checked = library_record(tmp.path(), std::slice::from_ref(&g), &answer, &[]);
+        record
+            .checked
+            .entry(TARGET.into())
+            .or_default()
+            .insert("own".into(), checked);
+        record.write(tmp.path()).unwrap();
+        let wide = [answer[0].clone(), ("WIDE".to_string(), "1".to_string())];
+        for (defines, refused) in [(&answer[..], false), (&wide[..], true), (&[][..], true)] {
+            let mut diags = Diagnostics::default();
+            let read = LibraryHeaders {
+                headers: &[],
+                defines,
+            };
+            let passed = compare_record(
+                package,
+                "own",
+                std::slice::from_ref(&g),
+                read,
+                TARGET,
+                &mut diags,
+            );
+            assert_eq!(passed.is_none(), refused, "{defines:?}");
+            if refused {
+                assert!(
+                    diags.iter().any(|d| d
+                        .message
+                        .contains("has other `defines` than its author checked")),
+                    "{defines:?}"
+                );
+            }
+        }
     }
 }

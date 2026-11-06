@@ -139,11 +139,12 @@ fn native_bundle(dir: &Path, content: &str) -> std::path::PathBuf {
         version: "1.0.0".into(),
         target: target.into(),
         abi: 1,
-        shared: "shared/libvelt_native_n.so".into(),
+        shared: Some("shared/libvelt_native_n.so".into()),
         import_lib: None,
         static_obj: None,
         system_libs: None,
         exports,
+        c: Default::default(),
     };
     std::fs::write(b.join("native.json"), meta.to_json()).unwrap();
     b

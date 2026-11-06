@@ -102,6 +102,10 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
                 parts.push("wasm: true".into());
             }
         }
+        if !m.c_targets.is_empty() {
+            let targets: Vec<String> = m.c_targets.iter().map(|t| string_lit(t)).collect();
+            parts.push(format!("targets: [{}]", targets.join(", ")));
+        }
         if let Some(libraries) = &m.c_libraries {
             let libs = libraries.iter().map(|(name, lib)| {
                 let system = lib
@@ -118,6 +122,17 @@ pub(super) fn to_vlt(m: &Manifest) -> String {
                 }
                 if lib.unchecked {
                     fields.push("unchecked: true".into());
+                }
+                if !lib.sources.is_empty() {
+                    let sources: Vec<String> = lib.sources.iter().map(|s| string_lit(s)).collect();
+                    fields.push(format!("sources: [{}]", sources.join(", ")));
+                }
+                if !lib.defines.is_empty() {
+                    let defines = lib
+                        .defines
+                        .iter()
+                        .map(|(name, value)| format!("{}: {}", key(name), string_lit(value)));
+                    fields.push(format!("defines: {}", inline_object(defines)));
                 }
                 format!("{}: {}", key(name), inline_object(fields.into_iter()))
             });
@@ -243,6 +258,9 @@ pub(super) fn to_json(m: &Manifest) -> Value {
             }
             None => Map::new(),
         };
+        if !m.c_targets.is_empty() {
+            o.insert("targets".into(), json!(m.c_targets));
+        }
         if let Some(libraries) = &m.c_libraries {
             let libs: Map<String, Value> = libraries
                 .iter()
@@ -261,6 +279,17 @@ pub(super) fn to_json(m: &Manifest) -> Value {
                     }
                     if lib.unchecked {
                         entry["unchecked"] = json!(true);
+                    }
+                    if !lib.sources.is_empty() {
+                        entry["sources"] = json!(lib.sources);
+                    }
+                    if !lib.defines.is_empty() {
+                        let defines: Map<String, Value> = lib
+                            .defines
+                            .iter()
+                            .map(|(name, value)| (name.clone(), json!(value)))
+                            .collect();
+                        entry["defines"] = json!(defines);
                     }
                     (name.clone(), entry)
                 })

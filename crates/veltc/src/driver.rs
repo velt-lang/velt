@@ -754,6 +754,8 @@ fn link_stage(
     paths: &OutputPaths,
 ) -> Result<(), BuildError> {
     let t = Instant::now();
+    let (packages, crates) = (opts.packages.as_ref(), !sess.generator_build);
+    let native = crate::native::program_links(packages, &sess.c_libs, crates, opts.release, target);
     let linked = crate::link::link_executable(
         target,
         objects,
@@ -761,10 +763,7 @@ fn link_stage(
         opts.release,
         // Release settings strip debug info (and PDB generation on Windows).
         opts.release && !opts.debug_info,
-        &match sess.generator_build {
-            true => vec![],
-            false => crate::native::links(opts.packages.as_ref(), opts.release),
-        },
+        &native.map_err(BuildError::Failed)?,
         &crate::native::c_link_args(&sess.c_libs, target),
     )
     .map_err(BuildError::Failed)?;

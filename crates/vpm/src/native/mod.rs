@@ -10,13 +10,25 @@
 //! static/<pkg>.o                    # Linux/macOS: one prelinked object (only exports global)
 //! ```
 //!
+//! A package whose libraries are C `sources` (docs/internals/design/c-ffi.md "Where libraries
+//! come from") has a bundle of the same form with its libraries instead of a crate's:
+//!
+//! ```text
+//! native.json                       # NativeMeta, with `c` in place of `shared` and `exports`
+//! shared/libvelt_c_<pkg>__<lib>.so  # .dylib on macOS; velt_c_<pkg>__<lib>.dll + .dll.lib on Windows
+//! static/libvelt_c_<pkg>__<lib>.a   # Linux/macOS
+//! ```
+//!
 //! - [`bundle`]: the files, checksums, packing and verified unpacking.
 //! - [`build`]: `cargo` + prelinking into a bundle (package authors; the fallback for users on a
 //!   target nobody published).
+//! - [`c_build`]: `zig cc` from C sources into a bundle (package authors; a target nobody
+//!   published, when the user asks).
 //! - [`exports`]: the export list and signature records read from a built library.
 
 pub mod build;
 pub mod bundle;
+pub mod c_build;
 pub mod exports;
 #[doc(hidden)]
 pub mod samples;
@@ -78,6 +90,35 @@ pub fn library_files(package: &str, target: &str) -> (String, Option<String>) {
     }
 }
 
+/// `velt_c_<pkg>__<lib>`: the name of C library `lib` of `package` built from its `sources`.
+/// Package names never contain `__`, so no two packages' libraries share one.
+pub fn c_library_name(package: &str, lib: &str) -> String {
+    format!("velt_c_{}__{lib}", package.replace('-', "_"))
+}
+
+/// The files of a C library built from `sources`: its shared library, on Windows its import
+/// library, and elsewhere its static library for release builds.
+pub fn c_library_files(package: &str, lib: &str, target: &str) -> CLibraryFiles {
+    let name = c_library_name(package, lib);
+    if target.contains("windows") {
+        return CLibraryFiles {
+            shared: format!("shared/{name}.dll"),
+            import_lib: Some(format!("shared/{name}.dll.lib")),
+            static_lib: None,
+        };
+    }
+    let ext = if target.contains("apple") {
+        "dylib"
+    } else {
+        "so"
+    };
+    CLibraryFiles {
+        shared: format!("shared/lib{name}.{ext}"),
+        import_lib: None,
+        static_lib: Some(format!("static/lib{name}.a")),
+    }
+}
+
 /// `velt_native_init_<pkg>`: the library's start-up function.
 pub fn init_symbol(package: &str) -> String {
     format!("velt_native_init_{}", package.replace('-', "_"))
@@ -94,8 +135,10 @@ pub struct NativeMeta {
     pub target: String,
     /// The runtime table version the library needs (at most [`NATIVE_ABI`] to be usable).
     pub abi: u32,
-    /// The shared library, relative to the bundle (`shared/...`).
-    pub shared: String,
+    /// The Rust crate's shared library, relative to the bundle (`shared/...`); `None` in the
+    /// bundle of a package whose libraries are C `sources` (`c`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared: Option<String>,
     /// Windows: the import library for `shared`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub import_lib: Option<String>,
@@ -110,6 +153,22 @@ pub struct NativeMeta {
     pub system_libs: Option<Vec<String>>,
     /// Every export except the init function: name → signature (`(string,u32)->IoResult<u64>`).
     pub exports: BTreeMap<String, String>,
+    /// The C libraries built from the package's `sources`, by the name its declarations give.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub c: BTreeMap<String, CLibraryFiles>,
+}
+
+/// The files of a C library in a bundle, relative to it ([`c_library_files`]).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CLibraryFiles {
+    /// The shared library: debug builds link it, `velt dev` loads it.
+    pub shared: String,
+    /// Windows: the import library for `shared`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub import_lib: Option<String>,
+    /// Linux/macOS: the static library release builds link.
+    #[serde(default, skip_serializing_if = "Option::is_none", rename = "static")]
+    pub static_lib: Option<String>,
 }
 
 impl NativeMeta {
@@ -184,9 +243,16 @@ impl NativeLib {
         })
     }
 
-    /// The shared library (`dlopen` in `velt dev`, linked by debug builds).
+    /// Whether this is a Rust crate's library, not a bundle of C libraries ([`NativeMeta::c`]).
+    pub fn has_crate(&self) -> bool {
+        self.meta.shared.is_some()
+    }
+
+    /// The Rust crate's shared library (`dlopen` in `velt dev`, linked by debug builds).
     pub fn shared_lib(&self) -> PathBuf {
-        self.dir.join(&self.meta.shared)
+        let shared = self.meta.shared.as_ref();
+        self.dir
+            .join(shared.expect("ICE: a C bundle reached a Rust crate's use"))
     }
 
     /// Windows: the import library of [`NativeLib::shared_lib`].
@@ -239,6 +305,27 @@ pub fn missing_target_message(
     )
 }
 
+/// [`missing_target_message`] for a package whose libraries are C `sources`: zig builds them, once
+/// the user asks.
+pub fn missing_c_target_message(
+    name: &str,
+    version: &str,
+    target: &str,
+    published: &BTreeMap<String, String>,
+) -> String {
+    let list = if published.is_empty() {
+        "none".to_string()
+    } else {
+        published.keys().cloned().collect::<Vec<_>>().join(", ")
+    };
+    format!(
+        "`{name} {version}` has no prebuilt native library for {target} (published: {list}).\n\
+         Set {}=1 to build its C sources here with the pinned zig, or ask the package author to \
+         publish this target.",
+        crate::install::FROM_SOURCE_VAR
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,7 +358,7 @@ mod tests {
             version: "0.1.0".into(),
             target: "x86_64-unknown-linux-gnu".into(),
             abi: 1,
-            shared: "shared/libvelt_native_sqlite.so".into(),
+            shared: Some("shared/libvelt_native_sqlite.so".into()),
             import_lib: None,
             static_obj: Some("static/sqlite.o".into()),
             system_libs: None,
@@ -279,6 +366,7 @@ mod tests {
                 "velt_sqlite__open".into(),
                 "(string)->IoResult<u64>".into(),
             )]),
+            c: BTreeMap::new(),
         };
         let text = meta.to_json();
         assert!(text.contains("\"static\": \"static/sqlite.o\""), "{text}");

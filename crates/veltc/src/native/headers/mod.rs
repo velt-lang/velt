@@ -116,9 +116,13 @@ pub fn check(
             .push(decl);
     }
     for ((root, library), (package, decls)) in groups {
-        let (headers, unchecked) = match package.c_libraries.get(&library) {
-            Some(lib) => (lib.headers.as_slice(), lib.unchecked),
-            None => (&[][..], false),
+        let (headers, unchecked, defines) = match package.c_libraries.get(&library) {
+            Some(lib) => (
+                lib.headers.as_slice(),
+                lib.unchecked,
+                lib.defines.as_slice(),
+            ),
+            None => (&[][..], false, &[][..]),
         };
         if unchecked {
             continue;
@@ -130,9 +134,10 @@ pub fn check(
         let Some(zig_target) = zig_target(target) else {
             continue;
         };
+        let read = LibraryHeaders { headers, defines };
         let record = match package.fetched {
-            true => compare_record(package, &library, &decls, headers, zig_target, diags),
-            false => check_library(&root, &library, headers, &decls, zig_target, target, diags),
+            true => compare_record(package, &library, &decls, read, zig_target, diags),
+            false => check_library(&root, &library, read, &decls, (zig_target, target), diags),
         };
         if let Some(record) = record {
             checked.entry(root).or_default().insert(library, record);
@@ -159,16 +164,24 @@ fn no_headers(package: &str, library: &str, at: Span) -> Diagnostic {
     ))
 }
 
-#[allow(clippy::too_many_arguments)]
+/// What a library's headers are read with.
+#[derive(Clone, Copy)]
+struct LibraryHeaders<'a> {
+    headers: &'a [String],
+    /// `defines`: the package's own sources see their headers as these make them, and so does
+    /// the check.
+    defines: &'a [(String, String)],
+}
+
 fn check_library(
     root: &Path,
     library: &str,
-    headers: &[String],
+    read: LibraryHeaders,
     decls: &[Decl],
-    zig_target: &str,
-    target: &str,
+    (zig_target, target): (&str, &str),
     diags: &mut Diagnostics,
 ) -> Option<LibraryRecord> {
+    let (headers, defines) = (read.headers, read.defines);
     let first = decls[0].span;
     let home = match vpm::locations::velt_home() {
         Ok(home) => home,
@@ -177,13 +190,13 @@ fn check_library(
             return None;
         }
     };
-    let key = cache_key(root, headers, decls, target);
+    let key = cache_key(root, read, decls, target);
     let remembered = home.join("cache").join("headers").join(&key);
     if let Some(read) = still_holds(&remembered) {
-        return Some(library_record(root, decls, &read));
+        return Some(library_record(root, decls, defines, &read));
     }
-    let parsed = velt_toolchain::zig::zig(&home)
-        .and_then(|zig| parse(&zig, &home, root, headers, zig_target));
+    let parsed =
+        velt_toolchain::zig::zig(&home).and_then(|zig| parse(&zig, &home, root, read, zig_target));
     let (parsed, read) = match parsed {
         Ok(parsed) => parsed,
         Err(e) => {
@@ -222,7 +235,7 @@ fn check_library(
     };
     // Remembered only when it passed; a failure to write it costs a check next time.
     remember(&remembered, &read);
-    Some(library_record(root, decls, &read))
+    Some(library_record(root, decls, defines, &read))
 }
 
 /// Remember at `remembered` that a check which read `read` passed. The file is replaced whole
@@ -359,11 +372,15 @@ fn check_decl(d: &Decl, h: &Headers, headers: &[String], windows: bool, diags: &
     }
 }
 
-/// What the result remembered for these declarations and headers is filed under: zig's
-/// version, the target, the package's root, the headers' names and the declarations. What it
-/// holds says whether the files parsed have changed ([`still_holds`]).
-fn cache_key(root: &Path, headers: &[String], decls: &[Decl], target: &str) -> String {
+/// What the result remembered for these declarations and headers is filed under: the library's
+/// definitions, zig's version, the target, the package's root, the headers' names and the
+/// declarations. What it holds says whether the files parsed have changed ([`still_holds`]).
+fn cache_key(root: &Path, read: LibraryHeaders, decls: &[Decl], target: &str) -> String {
+    let headers = read.headers;
     let mut h = Sha256::new();
+    for (name, value) in read.defines {
+        h.update(format!("{name}={value}\0"));
+    }
     h.update(velt_toolchain::zig::VERSION);
     h.update([0]);
     h.update(target);
@@ -379,21 +396,7 @@ fn cache_key(root: &Path, headers: &[String], decls: &[Decl], target: &str) -> S
     h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
-/// The target as zig names it; `None` for one without C headers (WebAssembly). Windows
-/// targets read zig's MinGW headers, which have the MSVC targets' type sizes.
-pub fn zig_target(triple: &str) -> Option<&'static str> {
-    Some(match triple {
-        "aarch64-apple-darwin" => "aarch64-macos",
-        "x86_64-apple-darwin" => "x86_64-macos",
-        "x86_64-unknown-linux-gnu" => "x86_64-linux-gnu",
-        "aarch64-unknown-linux-gnu" => "aarch64-linux-gnu",
-        "x86_64-unknown-linux-musl" => "x86_64-linux-musl",
-        "aarch64-unknown-linux-musl" => "aarch64-linux-musl",
-        t if t.starts_with("x86_64-pc-windows") => "x86_64-windows-gnu",
-        t if t.starts_with("aarch64-pc-windows") => "aarch64-windows-gnu",
-        _ => return None,
-    })
-}
+pub use velt_toolchain::zig::target as zig_target;
 
 /// Parse `headers` (of the package at `root`) with zig's clang for `zig_target`: what they
 /// declare, and every file the parse read.
@@ -401,12 +404,12 @@ fn parse(
     zig: &Path,
     home: &Path,
     root: &Path,
-    headers: &[String],
+    read: LibraryHeaders,
     zig_target: &str,
 ) -> Result<(Headers, Vec<PathBuf>), String> {
     let dir = work_dir(home);
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let result = parse_in(zig, &dir, root, headers, zig_target);
+    let result = parse_in(zig, &dir, root, read, zig_target);
     let _ = std::fs::remove_dir_all(&dir);
     result
 }
@@ -440,13 +443,13 @@ fn parse_in(
     zig: &Path,
     dir: &Path,
     root: &Path,
-    headers: &[String],
+    read: LibraryHeaders,
     zig_target: &str,
 ) -> Result<(Headers, Vec<PathBuf>), String> {
-    let source = includes(root, headers)?;
+    let source = includes(root, read.headers)?;
     let file = dir.join("headers.c");
     std::fs::write(&file, source).map_err(|e| e.to_string())?;
-    let mut full = cc1_command(zig, dir, root, "headers.c", zig_target)?;
+    let mut full = cc1_command(zig, dir, root, "headers.c", read.defines, zig_target)?;
     full.push("-ast-dump=json".into());
     full.extend(
         [
@@ -489,22 +492,25 @@ fn zig_command(zig: &Path, dir: &Path) -> std::process::Command {
 }
 
 /// zig's arguments for clang to read `file` (in `dir`, including from the package at `root`)
-/// for `zig_target`, producing nothing yet: the caller says what it wants out.
+/// with `defines` for `zig_target`, producing nothing yet: the caller says what it wants out.
 fn cc1_command(
     zig: &Path,
     dir: &Path,
     root: &Path,
     file: &str,
+    defines: &[(String, String)],
     zig_target: &str,
 ) -> Result<Vec<String>, String> {
     // `zig cc -###` prints the clang command it would run; that command with the AST dump in
     // place of the object is what clang parses the headers with (zig's own `-fsyntax-only`
     // still renames an object it never made).
     let include = format!("-I{}", root.display());
+    let defines = vpm::native::c_build::defines_args(defines);
+    let mut plan_args = vec!["cc", "-target", zig_target, &include];
+    plan_args.extend(defines.iter().map(String::as_str));
+    plan_args.extend(["-c", file, "-o", "probe.o", "-###"]);
     let plan = zig_command(zig, dir)
-        .args([
-            "cc", "-target", zig_target, &include, "-c", file, "-o", "probe.o", "-###",
-        ])
+        .args(&plan_args)
         .output()
         .map_err(|e| format!("running {}: {e}", zig.display()))?;
     let plan = String::from_utf8_lossy(&plan.stderr);
@@ -533,37 +539,11 @@ const DEPENDENCIES: &str = "deps.d";
 /// The files a parse in `dir` read, from clang's dependency list: its own `headers.c` aside.
 fn files_read(dir: &Path, dependencies: &str) -> Vec<PathBuf> {
     let canonical = dir.canonicalize().unwrap_or_else(|_| dir.to_path_buf());
-    dependency_paths(dependencies)
+    vpm::native::c_build::dependency_paths(dependencies)
         .into_iter()
         .map(|file| dir.join(file))
         .filter(|file| !file.starts_with(dir) && !file.starts_with(&canonical))
         .collect()
-}
-
-/// The paths of clang's dependency list `deps: a.h b\\ c.h \\\n d.h`: separated by white space,
-/// with `\\ `, `\\#` and `$$` for what make would read otherwise. Other backslashes are a Windows
-/// path's.
-fn dependency_paths(list: &str) -> Vec<String> {
-    let list = list.strip_prefix("deps:").unwrap_or(list);
-    let mut paths = Vec::new();
-    let mut path = String::new();
-    let mut chars = list.chars().peekable();
-    while let Some(c) = chars.next() {
-        match (c, chars.peek()) {
-            ('\\', Some(' ' | '#')) | ('$', Some('$')) => path.extend(chars.next()),
-            ('\\', Some('\n' | '\r')) => {}
-            (c, _) if c.is_whitespace() => {
-                if !path.is_empty() {
-                    paths.push(std::mem::take(&mut path));
-                }
-            }
-            (c, _) => path.push(c),
-        }
-    }
-    if !path.is_empty() {
-        paths.push(path);
-    }
-    paths
 }
 
 /// The words of a command line clang printed: each in double quotes, with `\"` and `\\`.
@@ -605,10 +585,6 @@ mod tests {
 
     #[test]
     fn clang_s_dependency_list_gives_the_files_read() {
-        assert_eq!(
-            dependency_paths("deps: headers.c /p/a\\ b.h \\\n  /p/c\\#d.h \\\r\n C:\\z\\e$$.h\n"),
-            ["headers.c", "/p/a b.h", "/p/c#d.h", "C:\\z\\e$.h"]
-        );
         // A file outside the parse's directory, as an absolute path of this host (a drive
         // letter on Windows), with spaces escaped as clang does.
         let dir = tempfile::tempdir().unwrap();
@@ -678,6 +654,7 @@ mod tests {
                 ("native/own.h".to_string(), String::new()),
                 ("native/gone.h".to_string(), String::new()),
             ]),
+            defines: String::new(),
         };
         checked
             .entry(dir.path().to_path_buf())

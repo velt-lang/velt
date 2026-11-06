@@ -45,6 +45,27 @@ pub struct LibraryRecord {
     /// The package's own headers the check read, with what they include: `/`-separated path in
     /// the package → digest.
     pub headers: BTreeMap<String, String>,
+    /// A digest of the library's `defines`, which change what its headers declare
+    /// ([`defines_digest`]); empty, and left out, for a library without any.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub defines: String,
+}
+
+/// The digest of a library's `defines` as a record holds it: empty when it has none, so the record
+/// of a library without them is the same as before they were recorded.
+pub fn defines_digest(defines: &[(String, String)]) -> String {
+    use sha2::{Digest, Sha256};
+    if defines.is_empty() {
+        return String::new();
+    }
+    let mut h = Sha256::new();
+    for (name, value) in defines {
+        for part in [name, value] {
+            h.update((part.len() as u64).to_le_bytes());
+            h.update(part);
+        }
+    }
+    h.finalize().iter().map(|b| format!("{b:02x}")).collect()
 }
 
 /// A `declare c const` as its author's check saw it on one target.
@@ -152,6 +173,7 @@ mod tests {
         let library = LibraryRecord {
             declarations: BTreeSet::from(["ab12".to_string()]),
             headers: BTreeMap::from([("native/sqlite3.h".to_string(), "cd34".to_string())]),
+            defines: defines_digest(&[("X".into(), "1".into())]),
         };
         r.checked
             .entry("x86_64-linux-gnu".into())
@@ -163,5 +185,22 @@ mod tests {
         assert_eq!(back.library("x86_64-windows-gnu", "sqlite3"), None);
         std::fs::write(dir.join(FILE), "{").unwrap();
         assert!(CHeaders::read(dir).unwrap_err().contains(FILE));
+    }
+
+    /// A library's `defines` digest differs with any name or value; none at all is empty.
+    #[test]
+    fn defines_have_a_digest() {
+        let d = |pairs: &[(&str, &str)]| {
+            let pairs: Vec<(String, String)> = (pairs.iter())
+                .map(|(n, v)| (n.to_string(), v.to_string()))
+                .collect();
+            defines_digest(&pairs)
+        };
+        assert_eq!(d(&[]), "");
+        let answer = d(&[("ANSWER", "40")]);
+        assert_eq!(answer.len(), 64);
+        assert_ne!(answer, d(&[("ANSWER", "41")]));
+        assert_ne!(answer, d(&[("ANSWER", "40"), ("WIDE", "1")]));
+        assert_ne!(d(&[("AB", "C")]), d(&[("A", "BC")]));
     }
 }

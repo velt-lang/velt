@@ -105,7 +105,7 @@ fn diagnostics() -> String {
         version: "0.1.0".into(),
         target: velt_codegen_cl::host_triple(),
         abi: 1,
-        shared: "shared/libvelt_native_demo.so".into(),
+        shared: Some("shared/libvelt_native_demo.so".into()),
         import_lib: None,
         static_obj: None,
         system_libs: None,
@@ -113,6 +113,7 @@ fn diagnostics() -> String {
             .iter()
             .map(|(n, s)| (n.to_string(), s.to_string()))
             .collect(),
+        c: Default::default(),
     };
     let mut graph = PackageGraph::default();
     graph.add("app", &app, BTreeMap::from([("demo".into(), demo.clone())]));

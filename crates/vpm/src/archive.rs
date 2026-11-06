@@ -220,6 +220,48 @@ mod tests {
         );
     }
 
+    /// What a package with C `sources` distributes: its record of the header check and its C
+    /// files, and a remote publish sends it through this check. An archive of one with no native
+    /// sources has no `native/`.
+    #[test]
+    fn a_package_with_c_sources_packs_and_unpacks() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path().join("p");
+        let source = "export const pkg: Package = { name: \"p\", version: \"1.0.0\", native: { c: { x: { sources: [\"native/a.c\"], headers: [\"native/a.h\"] } } } };\n";
+        let write = |rel: &str, text: &str| {
+            let path = root.join(rel);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        };
+        write(
+            MANIFEST_FILE,
+            &format!("import type {{ Package }} from \"velt/package\";\n{source}"),
+        );
+        write("src/lib.vlt", "");
+        write("native/a.c", "int x;\n");
+        write("native/a.h", "int x;\n");
+        write("native/inc/more.inc", "\n");
+        write("native/target/a.o", "built");
+        write(crate::c_headers::FILE, "{}");
+        write("notes.txt", "not distributed");
+        let names: Vec<String> = entries(&pack(&root).unwrap())
+            .unwrap()
+            .into_iter()
+            .map(|e| e.path)
+            .collect();
+        assert_eq!(
+            names,
+            [
+                crate::c_headers::FILE,
+                "native/a.c",
+                "native/a.h",
+                "native/inc/more.inc",
+                MANIFEST_FILE,
+                "src/lib.vlt"
+            ]
+        );
+    }
+
     #[test]
     fn rejects_bad_archives() {
         assert!(entries(b"nope").is_err());

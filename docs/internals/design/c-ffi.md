@@ -462,7 +462,8 @@ native: {
 }
 ```
 
-- **`sources`** (C, C++, Zig): built by `velt native build` with the pinned `zig cc`/`zig c++`,
+- **`sources`** (C, C++, Zig; C for now, "As built"): built by `velt native build` with the
+  pinned `zig cc`/`zig c++`,
   which cross-compiles every target from one machine, reproducibly (fixed flags, paths and
   timestamps), so the registry or any CI can rebuild a bundle and check its checksum. Apple
   frameworks are the exception: linking them needs the macOS SDK, which can't be redistributed,
@@ -730,7 +731,7 @@ Step 1 lands in layers, each its own pull request:
        `LoadLibraryA`).
      - The bundled linker's kits have only the platform's own libraries, so another system
        library links with the system linker (`VELT_LINKER=system`).
-     - `sources`/`crate` entries come with the bundle builds (step 3).
+     - `sources` entries came with step 3 (layer 7); `crate` entries come with step 7.
    - 5b: the code that needs trust stays in allowed packages and std.
      - `unsafe` blocks, expressions, functions and methods are errors outside std and the
        packages with native code that the program allows (a program's own files included, unless
@@ -825,7 +826,9 @@ Step 1 lands in layers, each its own pull request:
      - Each recorded header the package has must have its digest (line endings aside, which a
        checkout may change). A git dependency has the commit's whole tree, so a recorded or
        listed header it lacks is an error too.
-     - **Limits.** A registry archive doesn't ship `native/`, so there the headers can't be
+     - A registry archive ships `native/` only for a package that builds C `sources`; there a
+       recorded or listed header under `native/` it lacks is an error too.
+     - **Limits.** Other registry archives don't ship `native/`, so there the headers can't be
        compared: a registry package is trusted to have run the check on the headers it
        published. And the record isn't a signature: an author can write any digest, so it catches
        mistakes, not a hostile package, which is what `allowNative` is for.
@@ -864,6 +867,55 @@ Step 1 lands in layers, each its own pull request:
        instead of the initializer, in tables too. On a target without C headers (WebAssembly) a
        reachable read is an error, as a C function's call is.
      - Not yet: strings. A macro of a string literal is an error.
+
+7. Step 3's first part, C `sources`.
+   - `native.c.<library>.sources` (`.c` files under `native/`) with optional `defines`: one source
+     per library, so not with `system`; C++ and Zig sources, a system library a source needs beyond
+     what every program links, and a crate beside `sources` come later. A package with `sources`
+     ships all of `native/`, says `targets` beside `c`, and has a scoped name no more than a crate
+     does.
+   - `velt native build [--target]` compiles with the pinned `zig cc`, for any target from any
+     machine (macOS 11 on arm64 and 10.12 on x86_64, glibc 2.17, so a library neither raises what a
+     program needs nor depends on the builder; glibc 2.17 is an assumption, as nothing states the
+     runtime's floor) into a bundle: `-O2 -g0 -fPIC`, `-ffunction-sections`,
+     no sanitizer, run in the package's root with relative paths and `SOURCE_DATE_EPOCH=0`. Two
+     builds, in other directories, give the same bytes; a test compares them per target. On
+     Windows clang records zig's random temporary path in each object whatever `-g0` says, so
+     what is reproducible there is what ships: the DLL, linked with `-s`, and its import library.
+   - The bundle is reused while a hash of what it's built from is the same (`<out>.key` beside
+     it): zig's version, the flags, target, package name and version, each library's sources and
+     definitions, and every file under `native/` (a change to an included file rebuilds), never
+     their times. A source may read only `native/` and zig's own headers: clang's dependency list
+     says what it read, and anything else (`-I.`'s package root, `../`) is refused, since the key
+     wouldn't cover it and the package doesn't ship it. zig runs without `CPATH` and
+     `C_INCLUDE_PATH`. An unchanged build runs no zig. A library is built when a program links or
+     loads it (`native::c_sources`), not at install: `velt check`, `velt native headers` and the
+     editor never compile C. Every `sources` library of a package is built, and a package's
+     libraries its program doesn't call aren't linked.
+   - Linked as the design says: debug the shared library (by `-l`, with an rpath), release the
+     static one (`static/lib….a`, as an archive so unreferenced objects stay out), and a musl
+     program always the static one. **Windows links the DLL in both modes**, as a Rust crate does:
+     zig's objects for Windows are MinGW's (the headers `headers` reads too), and a DLL has its own
+     C runtime behind its import library; a static library for MSVC's linker needs more. `velt dev`
+     loads the shared library with `RTLD_GLOBAL`, so `dlsym` finds its functions; a change under
+     `native/` restarts the host, as for a crate.
+   - `velt publish` builds every `targets` entry (`--native-artifacts` still wins) and refuses a
+     missing one or none; the bundle goes through the registry's paths, checksums and lock
+     entries like a crate's. Those who install it fetch and verify it and never run zig. A
+     registry package with no bundle for the target, and a git package (which has none), build
+     here with the pinned zig only with `VELT_NATIVE_FROM_SOURCE=1`: compiling C runs no code of
+     the package's, but it downloads zig and trusts a build no checksum pins, so it is asked for
+     as for a crate. `--macos-sdk` waits for sources that link frameworks.
+   - `velt check` lists the sources (`tiny (built from native/tiny.c; headers checked)`, `sources`
+     in `--json`); `allowNative` asks for such a package as for any with native code; the header
+     check, and the clang runs that read a `declare c const`'s value, read a library's own
+     `headers` with its `defines` (which key the remembered values too), and `c-headers.json` records a
+     digest of them per library (none for a library without), so a fetched package whose
+     `defines` changed after its author's check is refused.
+   - Not yet: the registry or CI rebuilding a bundle and comparing checksums (what reproducibility
+     is for); `packages/sqlite` on `sources`. Sources fetched from `git` or a `url` with a pinned
+     hash are #2367's: its `fetch` is a key beside these fields, and only changes where `sources`
+     are read from.
 
 ## Decisions
 

@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 use vpm::c_headers::{CConstantValue, Probe};
 
 use super::ctype::{CType, Headers};
+use super::LibraryHeaders;
 
 const SOURCE: &str = "constants.c";
 
@@ -25,22 +26,23 @@ fn probe_source(includes: &str, names: &[&str]) -> String {
     source
 }
 
-/// What clang says about `names` in `headers` (of the package at `root`) on `zig_target`, run
-/// in `dir`, and every file it read.
+/// What clang says about `names` in a library's headers (of the package at `root`), with its
+/// `defines`, on `zig_target`, run in `dir`, and every file it read.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_clang(
     zig: &Path,
     dir: &Path,
     root: &Path,
-    headers: &[String],
+    read_with: LibraryHeaders,
     names: &[&str],
     zig_target: &str,
     long_bits: u32,
 ) -> Result<(BTreeMap<String, Probe>, Vec<PathBuf>), String> {
+    let (headers, defines) = (read_with.headers, read_with.defines);
     let includes = super::includes(root, headers)?;
     let file = dir.join(SOURCE);
     std::fs::write(&file, probe_source(&includes, names)).map_err(|e| e.to_string())?;
-    let mut cc1 = super::cc1_command(zig, dir, root, SOURCE, zig_target)?;
+    let mut cc1 = super::cc1_command(zig, dir, root, SOURCE, defines, zig_target)?;
     cc1.extend(["-ferror-limit".into(), "0".into(), "-ast-dump=json".into()]);
     cc1.extend(
         [
@@ -98,7 +100,7 @@ pub(super) fn run_clang(
             ));
         }
         std::fs::write(&file, source).map_err(|e| e.to_string())?;
-        let mut cc1 = super::cc1_command(zig, dir, root, SOURCE, zig_target)?;
+        let mut cc1 = super::cc1_command(zig, dir, root, SOURCE, defines, zig_target)?;
         cc1.extend(["-emit-llvm".into(), "-o".into(), "-".into()]);
         let out = super::zig_command(zig, dir)
             .args(&cc1)

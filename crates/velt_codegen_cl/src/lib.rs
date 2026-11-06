@@ -50,7 +50,7 @@ mod win_symbols;
 #[cfg(test)]
 mod tests;
 
-pub use c_libraries::load_c_libraries;
+pub use c_libraries::{load_c_libraries, load_c_library_files};
 pub use cache::{CacheStats, CodeCache};
 pub use cpu::{
     arm_features_from_macros, check_cpu, ext_x86_features, is_for_another_arch, level_features,

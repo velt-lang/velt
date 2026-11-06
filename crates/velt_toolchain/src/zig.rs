@@ -1,16 +1,18 @@
 //! The pinned zig toolchain (docs/internals/design/c-ffi.md "Checking declarations against C
-//! headers"): its clang parses C headers for every target, with zig's own libc headers, so a
-//! package author's build can check `declare c` functions against them. It is downloaded on
-//! first use into `$VELT_HOME/cache/zig/<version>/`, verified against the checksum below, and
-//! kept; `$VELT_ZIG` names a zig of the same version to use instead (offline machines, CI).
-//! Users installing a package never run it.
+//! headers", "Where libraries come from"): its clang parses C headers for every target, with
+//! zig's own libc headers, so a package author's build can check `declare c` functions against
+//! them, and `zig cc` builds a package's C `sources` for every target from one machine. It is
+//! downloaded on first use into `$VELT_HOME/cache/zig/<version>/`, verified against the checksum
+//! below, and kept; `$VELT_ZIG` names a zig of the same version to use instead (offline machines,
+//! CI). Users installing a published package never run it.
 
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
 use sha2::{Digest, Sha256};
 
-/// The zig release whose clang checks headers. A new one changes [`ARCHIVES`] too.
+/// The zig release whose clang checks headers and builds C sources. A new one changes
+/// [`ARCHIVES`] too.
 pub const VERSION: &str = "0.17.1";
 
 /// zig's archive per host (`<arch>-<os>`, as zig names them), and its SHA-256
@@ -75,7 +77,7 @@ pub fn zig(home: &Path) -> Result<PathBuf, String> {
     }
     let Some(host) = host() else {
         return Err(format!(
-            "checking C headers needs zig {VERSION}, which has no release for this machine ({}-{}): set VELT_ZIG to a zig {VERSION}",
+            "C headers and sources need zig {VERSION}, which has no release for this machine ({}-{}): set VELT_ZIG to a zig {VERSION}",
             std::env::consts::ARCH,
             std::env::consts::OS
         ));
@@ -95,7 +97,7 @@ pub fn zig(home: &Path) -> Result<PathBuf, String> {
         "tar.xz"
     };
     let url = format!("https://ziglang.org/download/{VERSION}/zig-{host}-{VERSION}.{ext}");
-    eprintln!("Downloading zig {VERSION} to check C headers (once): {url}");
+    eprintln!("Downloading zig {VERSION} for C headers and sources (once): {url}");
     let bytes = crate::install::download(&url, MAX_ARCHIVE)?
         .ok_or_else(|| format!("{url} does not exist"))?;
     verify(&bytes, sha, &url)?;
@@ -123,6 +125,36 @@ pub fn zig(home: &Path) -> Result<PathBuf, String> {
         return Err(format!("{url} has no {top}/{}", exe_name()));
     }
     Ok(exe)
+}
+
+/// The target as zig names it, for reading its C headers; `None` for one without them
+/// (WebAssembly). Windows targets read zig's MinGW headers, which have the MSVC targets' type
+/// sizes.
+pub fn target(triple: &str) -> Option<&'static str> {
+    Some(match triple {
+        "aarch64-apple-darwin" => "aarch64-macos",
+        "x86_64-apple-darwin" => "x86_64-macos",
+        "x86_64-unknown-linux-gnu" => "x86_64-linux-gnu",
+        "aarch64-unknown-linux-gnu" => "aarch64-linux-gnu",
+        "x86_64-unknown-linux-musl" => "x86_64-linux-musl",
+        "aarch64-unknown-linux-musl" => "aarch64-linux-musl",
+        t if t.starts_with("x86_64-pc-windows") => "x86_64-windows-gnu",
+        t if t.starts_with("aarch64-pc-windows") => "aarch64-windows-gnu",
+        _ => return None,
+    })
+}
+
+/// The target as zig names it, for building C sources: [`target`], with the oldest system the
+/// runtime supports where the name says one, so a library neither raises what a program needs nor
+/// depends on the machine it was built on. `None` for one without a C library (WebAssembly).
+pub fn build_target(triple: &str) -> Option<&'static str> {
+    Some(match triple {
+        "aarch64-apple-darwin" => "aarch64-macos.11.0",
+        "x86_64-apple-darwin" => "x86_64-macos.10.12",
+        "x86_64-unknown-linux-gnu" => "x86_64-linux-gnu.2.17",
+        "aarch64-unknown-linux-gnu" => "aarch64-linux-gnu.2.17",
+        _ => return target(triple),
+    })
 }
 
 /// `Err` unless `bytes` hash to `sha` (hex).
@@ -202,6 +234,31 @@ fn unzip(bytes: &[u8], into: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn build_targets_name_the_oldest_system_the_runtime_supports() {
+        assert_eq!(
+            build_target("aarch64-apple-darwin"),
+            Some("aarch64-macos.11.0")
+        );
+        assert_eq!(
+            build_target("x86_64-apple-darwin"),
+            Some("x86_64-macos.10.12")
+        );
+        assert_eq!(
+            build_target("x86_64-unknown-linux-gnu"),
+            Some("x86_64-linux-gnu.2.17")
+        );
+        assert_eq!(
+            build_target("x86_64-unknown-linux-musl"),
+            Some("x86_64-linux-musl")
+        );
+        assert_eq!(
+            build_target("x86_64-pc-windows-msvc"),
+            Some("x86_64-windows-gnu")
+        );
+        assert_eq!(build_target("wasm32-wasip1"), None);
+    }
 
     #[test]
     fn every_host_has_a_checksum() {

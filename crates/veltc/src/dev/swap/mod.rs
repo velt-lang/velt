@@ -78,7 +78,7 @@ fn reload(session: &mut DevSession, opts: &BuildOptions, flags: Report) -> Reloa
     let mut files: Vec<_> = sess.sm.files().map(|(_, f)| f.path.clone()).collect();
     files.extend(source_files(opts.packages.as_ref()));
     let program = program.and_then(|p| {
-        velt_codegen_cl::load_c_libraries(&sess.c_libs)
+        super::native::load_c_libraries(opts, &sess.c_libs)
             .map_err(crate::driver::BuildError::Failed)?;
         Ok(p)
     });

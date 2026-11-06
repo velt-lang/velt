@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use crate::manifest::{
     check_native_path, check_native_target, check_native_wasm, default_native_path, CLibraryConfig,
-    NativeConfig,
+    NativeConfig, C_SOURCES_DIR,
 };
 
 /// The longest C library key and system library name: well inside every linker's limits. A name
@@ -27,13 +27,15 @@ fn check_name_length(name: &str) -> Result<(), String> {
 
 impl Reader<'_> {
     /// `native: { path?: string; targets?: string[]; wasm?: boolean; c?: … }`: the Rust crate
-    /// (`None` when the object has only `c`) and the C libraries.
+    /// (`None` when the object has only `c`, or C `sources` with `targets`), the C libraries, and
+    /// the `targets` of a package whose libraries are `sources`.
     pub(super) fn native(
         &mut self,
         value: &Value,
     ) -> (
         Option<NativeConfig>,
         Option<BTreeMap<String, CLibraryConfig>>,
+        Vec<String>,
     ) {
         let mut config = NativeConfig {
             path: default_native_path(),
@@ -42,7 +44,7 @@ impl Reader<'_> {
         };
         let mut libraries = None;
         let Some(fields) = self.object(value, "`native`") else {
-            return (None, libraries);
+            return (None, libraries, Vec::new());
         };
         let only_c = !fields.is_empty() && fields.iter().all(|(k, _)| k.name == "c");
         for (key, v) in fields {
@@ -59,7 +61,27 @@ impl Reader<'_> {
                 _ => self.unknown_key(key, crate::manifest::schema::NATIVE),
             }
         }
-        ((!only_c).then_some(config), libraries)
+        let sources = libraries
+            .iter()
+            .flatten()
+            .any(|(_, lib): (&String, &CLibraryConfig)| !lib.sources.is_empty());
+        if sources {
+            // `path` and `wasm` are the crate's; `targets` is also what `sources` publish.
+            for (key, _) in fields
+                .iter()
+                .filter(|(k, _)| k.name == "path" || k.name == "wasm")
+            {
+                self.error(
+                    format!(
+                        "`{}` is a Rust crate's, and a package with C `sources` has no crate yet: move the crate to a package of its own",
+                        key.name
+                    ),
+                    key.span,
+                );
+            }
+            return (None, libraries, config.targets);
+        }
+        ((!only_c).then_some(config), libraries, Vec::new())
     }
 
     /// `c: { <library>: { system?: Record<string, string>, headers?: string[], unchecked?:
@@ -97,6 +119,41 @@ impl Reader<'_> {
                             "`c` is the platform's C library, which every target links: it has no `system`",
                             key.span,
                         ),
+                        "sources" if name.name == "c" => self.error(
+                            "`c` is the platform's C library, which every target links: it has no `sources`",
+                            key.span,
+                        ),
+                        "sources" => {
+                            let ValueKind::Array(elems) = &f.kind else {
+                                self.error(
+                                    format!("`sources` must be an array, not {}", f.kind.describe()),
+                                    f.span,
+                                );
+                                continue;
+                            };
+                            if elems.is_empty() {
+                                self.error("`sources` is empty; remove the field instead", f.span);
+                            }
+                            for elem in elems {
+                                if let Some(text) = self.string(elem, "a source file") {
+                                    let checked = check_source(text);
+                                    if checked.is_ok() {
+                                        lib.sources.push(text.to_string());
+                                    }
+                                    self.check(checked, elem.span);
+                                }
+                            }
+                        }
+                        "defines" => {
+                            if let Some(defines) = self.object(f, "`defines`") {
+                                for (define, s) in defines {
+                                    self.check(check_define(&define.name), define.span);
+                                    if let Some(text) = self.string(s, "a definition's value") {
+                                        lib.defines.push((define.name.clone(), text.to_string()));
+                                    }
+                                }
+                            }
+                        }
                         "headers" => {
                             let ValueKind::Array(elems) = &f.kind else {
                                 self.error(
@@ -150,10 +207,57 @@ impl Reader<'_> {
                         name.span,
                     );
                 }
+                if !lib.sources.is_empty() && !lib.system.is_empty() {
+                    self.error(
+                        format!(
+                            "C library `{}` lists `sources` and `system`: a library comes from one of them",
+                            name.name
+                        ),
+                        name.span,
+                    );
+                }
+                if lib.sources.is_empty() && !lib.defines.is_empty() {
+                    self.error(
+                        format!(
+                            "C library `{}` has `defines` but no `sources`: they are what the package's sources are compiled with",
+                            name.name
+                        ),
+                        name.span,
+                    );
+                }
+                self.check_shipped(&name.name, &lib, name.span);
             }
             out.insert(name.name.clone(), lib);
         }
         out
+    }
+
+    /// A library's `sources`, and its own headers, are what the package ships: under `native/`.
+    /// A rule on the whole library, whatever order its fields are in: a source form other than
+    /// the package's own (#2367's `fetch`, whose paths are inside the fetched tree) is the one
+    /// thing that changes it.
+    fn check_shipped(&mut self, library: &str, lib: &CLibraryConfig, at: velt_common::Span) {
+        if lib.sources.is_empty() {
+            return;
+        }
+        let under = |path: &String| path.starts_with(&format!("{C_SOURCES_DIR}/"));
+        for source in lib.sources.iter().filter(|s| !under(s)) {
+            self.error(
+                format!(
+                    "`{source}` is not a source of the package: a `/`-separated path under `{C_SOURCES_DIR}/` (`{C_SOURCES_DIR}/lib.c`)"
+                ),
+                at,
+            );
+        }
+        let own = |h: &&String| !h.starts_with('<') && !under(h);
+        if let Some(header) = lib.headers.iter().find(own) {
+            self.error(
+                format!(
+                    "header `{header}` of C library `{library}` is not under `{C_SOURCES_DIR}/`, which is what the package ships of a library with `sources`"
+                ),
+                at,
+            );
+        }
     }
 
     fn native_targets(&mut self, value: &Value) -> Vec<String> {
@@ -297,6 +401,40 @@ fn is_header_path(path: &str) -> bool {
                 .chars()
                 .all(|c| c.is_ascii_alphanumeric() || "_-+.".contains(c))
     })
+}
+
+/// `Ok` for a `sources` entry: a `/`-separated relative path of a C file. Where it may be is
+/// [`Reader::check_shipped`]'s. C++ and Zig need a C++ standard library per target and `zig
+/// build`: they aren't here yet.
+fn check_source(text: &str) -> Result<(), String> {
+    let inside = !text.is_empty()
+        && !text.starts_with('/')
+        && !text.contains('\\')
+        && !text.contains(':')
+        && !text
+            .split('/')
+            .any(|p| p == ".." || p == "." || p.is_empty());
+    if !inside {
+        return Err(format!(
+            "`{text}` is not a source of the package: a `/`-separated path under `{C_SOURCES_DIR}/` (`{C_SOURCES_DIR}/lib.c`)"
+        ));
+    }
+    if !text.ends_with(".c") {
+        return Err(format!(
+            "`{text}` is not a C file: `sources` builds `.c` files for now"
+        ));
+    }
+    Ok(())
+}
+
+/// `Ok` for a `defines` key: a C identifier, so it stays one argument's name.
+fn check_define(name: &str) -> Result<(), String> {
+    let ok = name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_')
+        && name.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_');
+    match ok {
+        true => Ok(()),
+        false => Err(format!("`{name}` is not a C macro name")),
+    }
 }
 
 /// `Ok` for a header entry: `<name.h>`, or a `/`-separated path inside the package.

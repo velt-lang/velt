@@ -206,14 +206,16 @@ pub fn publish_with_native(
                 lock.display()
             ));
         }
-        let missing: Vec<&String> = native
-            .targets
+    }
+    if manifest.has_bundles() {
+        let targets = manifest.bundle_targets();
+        let missing: Vec<&String> = targets
             .iter()
             .filter(|t| !bundles.contains_key(*t))
             .collect();
-        if !missing.is_empty() || native.targets.is_empty() {
+        if !missing.is_empty() || targets.is_empty() {
             let list: Vec<&str> = missing.iter().map(|s| s.as_str()).collect();
-            return Err(if native.targets.is_empty() {
+            return Err(if targets.is_empty() {
                 format!("cannot publish `{}`: `native.targets` is empty (list the targets to publish prebuilt libraries for)", manifest.package.name)
             } else {
                 format!(
@@ -241,7 +243,7 @@ pub fn add_native(
 ) -> Result<IndexEntry, String> {
     let manifest = Manifest::from_dir(root)?;
     let loc = &loc.clone().with_manifest(&manifest);
-    if manifest.native.is_none() {
+    if !manifest.has_bundles() {
         return Err(format!(
             "package `{}` has no `native` in package.vlt",
             manifest.package.name
@@ -262,7 +264,7 @@ pub fn add_native(
 /// this `velt` provides.
 fn check_bundles(manifest: &Manifest, bundles: &BTreeMap<String, PathBuf>) -> Result<(), String> {
     let name = &manifest.package.name;
-    if manifest.native.is_none() && !bundles.is_empty() {
+    if !manifest.has_bundles() && !bundles.is_empty() {
         return Err(format!(
             "package `{name}` has no `native` in package.vlt but native libraries were given"
         ));
@@ -276,6 +278,7 @@ fn check_bundles(manifest: &Manifest, bundles: &BTreeMap<String, PathBuf>) -> Re
             target.as_str(),
         );
         bundle::check_meta(&meta, id, &bundle::list_files(dir)?, &what)?;
+        crate::native::c_build::check_has_libraries(manifest, &meta, &what)?;
         if meta.abi > NATIVE_ABI {
             return Err(format!(
                 "{what} needs native ABI {}; this velt provides {NATIVE_ABI}",

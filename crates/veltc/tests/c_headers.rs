@@ -9,6 +9,7 @@ use std::process::Output;
 
 mod no_window;
 mod test_dir;
+mod zig_env;
 
 /// A package `bind` (manifest fields `native` after its version; `lib`, its source; `files`,
 /// more files) and a program `app` that depends on it and allows its native code.
@@ -62,22 +63,9 @@ const ALLOW: &str = "allowNative: [\"bind\"], ";
 
 const LEN: &str = "export function len(s: string): usize {\n  // SAFETY: a CString is NUL-terminated.\n  return unsafe { strlen(new CString(s)) };\n}\n";
 
-/// The zig to check with, or `None` (and a note) when `VELT_ZIG` names none. In CI that fails
-/// instead, so a job that loses its zig goes red rather than passing with nothing checked (the
-/// other test runs leave this file out: crates/xtask/src/c_headers.rs).
+/// The zig to check with: [`zig_env::zig`].
 fn zig() -> Option<PathBuf> {
-    match std::env::var_os("VELT_ZIG") {
-        Some(z) => Some(PathBuf::from(z)),
-        None if std::env::var_os("CI").is_some() => {
-            panic!(
-                "CI is set but VELT_ZIG isn't: these checks need zig 0.17.1 (.github/actions/zig)"
-            )
-        }
-        None => {
-            eprintln!("skipped: set VELT_ZIG to a zig 0.17.1 to run clang");
-            None
-        }
-    }
+    zig_env::zig("run clang")
 }
 
 const DECLS: &str = r#"import { CString, OutPtr, Ptr } from "velt/ffi";

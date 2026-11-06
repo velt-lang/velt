@@ -20,7 +20,7 @@ export const pkg: Package = {
     "@app/*": "src/*",          // import { x } from "@app/util"  →  src/util.vlt (or src/util/index.vlt)
     "@config": "src/config",    // exact alias
   },
-  native: {                     // optional: a Rust crate built into a native library (additive)
+  native: {                     // optional: a Rust crate, or C libraries (`c`), built into a native library (additive)
     path: "native",             // the crate's directory, one name in the package root (default)
     targets: ["x86_64-unknown-linux-gnu", "aarch64-apple-darwin"],  // published prebuilt
   },
@@ -368,8 +368,8 @@ registry: "https://registry.example.com",
 - Index entries (additive, #184) carry the version's `"description"` and `"keywords"` after
   `"checksum"` (omitted when absent), taken from the published `package.vlt`, also by the server
   from the uploaded archive (never from request headers).
-- Archives (`vpm::archive`) carry `package.vlt` + `src/**` (+ the `native` crate directory,
-  without `target/` and `.git/`); an archive with any other path, such as a `velt.toml`, is
+- Archives (`vpm::archive`) carry `package.vlt` + `src/**` (+ `c-headers.json`, + the `native`
+  crate directory or, for C `sources`, `native/`, without `target/` and `.git/`); an archive with any other path, such as a `velt.toml`, is
   rejected. Their checksum is the same content hash `velt.lock.json` records, and every download is
   verified against it before it enters the cache.
 - `https://` uses rustls (`velt_http::tls`) with Mozilla's roots (`webpki-roots`) plus the PEM
@@ -432,6 +432,11 @@ Contract: [native_abi.md](native_abi.md).
 - `native`: `path` (default `"native"`, a directory name in the package root, not `src` or
   `target`), `targets` (triples from `vpm::manifest::NATIVE_TARGETS`: x86_64/aarch64 Linux GNU,
   macOS and Windows MSVC), `wasm` (must be `false`: not supported yet).
+- `native.c.<library>` (c-ffi.md "Where libraries come from"): `system`, `headers`, `unchecked`,
+  and `sources` (`.c` files under `native/`; not with `system`) with `defines` (macro → value).
+  With `sources`, `native` has only `c` and `targets`, which is what `velt publish` builds with
+  the pinned zig; `path` and `wasm` are a crate's, an error next to them. A library's own headers
+  are then under `native/`, all of which the package ships.
 - Index entries gain `"native_abi": <n>` and `"native": { "<triple>": "sha256:…" }`. A published
   target is never replaced; a target may be **added** to a published version
   (`velt publish --native-only`). `velt publish` requires a bundle for every listed target.

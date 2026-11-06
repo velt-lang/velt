@@ -74,6 +74,7 @@ pub fn manifest_text_depending(
     dependencies: &[(&str, crate::manifest::Dependency)],
 ) -> String {
     Manifest {
+        c_targets: Vec::new(),
         registry: None,
         package: Package {
             name: name.to_string(),

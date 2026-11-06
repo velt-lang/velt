@@ -430,6 +430,17 @@ For the build target (`InstallOptions::target`):
 - The result is `vpm::GraphPackage::native: Option<NativeLib>`; `velt add`/`velt install` list
   every package that runs native code and whether it was prebuilt or built from source.
 
+## C libraries from `sources`
+
+A package's C `sources` (c-ffi.md "Where libraries come from") make a bundle of the same form and
+the same registry paths, checksums and lock entries as a crate's, whose `native.json` has no
+`shared` and no `exports` but `c`: library name → `{ shared, import_lib?, static? }`, under exactly
+the names `shared/libvelt_c_<pkg>__<lib>.so` or `.dylib` and `static/libvelt_c_<pkg>__<lib>.a`, or
+`shared/velt_c_<pkg>__<lib>.dll` and `.dll.lib`. Its `abi` is 0: such code calls no runtime
+function, has no init and isn't held to an export list. A bundle has a crate's library or C
+libraries, not both. Only the libraries a program's declarations name are linked (`NativeLink`, as
+below, with no `system_libs`); `velt dev` loads their shared libraries with `RTLD_GLOBAL`.
+
 ## Linking (`velt_link::NativeLink`)
 
 | Build | Linux / macOS | Windows |
