@@ -2,7 +2,8 @@
 
 A small router and middleware on [`http-server`](../http-server/README.md), over the Fetch types:
 method routes with path parameters and wildcards, sub-apps, onion middleware, typed per-request
-variables, error and not-found handlers, and `cors`, `logger`, `requestId` and `serveStatic`.
+variables, error and not-found handlers, and `cors`, `logger`, `requestId`, `rateLimit`, `bodyLimit`
+and `serveStatic`.
 
 This is a reference package, held to full quality: read it as the guide to building a framework on
 `http-server`. Its API may change until it is promoted to a supported framework.
@@ -116,6 +117,8 @@ proxy handler that wants middleware to mark its response wraps it:
 | `cors(options?)` | Answers preflights (204) and marks responses for the origins allowed. Never sends credentials with `*` |
 | `logger(write?)` | A line per request when its head is ready: `GET /a 200 3ms`, with the canonical path. No query, which may hold secrets |
 | `requestId(options?)` | An identifier on the request and response headers. A client's is kept only if it is safe to log |
+| `rateLimit({ limit, windowMs, key, maxKeys? })` | Requests per key per fixed window, shared by all requests; 429 with `Retry-After` and `RateLimit-*` headers. Holds at most `maxKeys` keys |
+| `bodyLimit(maxBytes)` | 413 for a request body over the limit, without holding more than the limit |
 | `serveStatic(root, options?)` | Files under `root`, with `serveFile`'s validators, 304 and `Range`; passes on what it has no file for |
 
 `serveStatic` keeps requests inside `root` (`resolveUnder`) and refuses dotfiles by default. A
@@ -139,6 +142,49 @@ app.use(
   }),
 );
 ```
+
+### `rateLimit`'s key and table
+
+`key` takes only the `Request`, which doesn't hold the client's address. To count by address, set a
+header from it in `serve`'s handler, where `info.remoteAddr` is, overwriting whatever the client sent
+under that name:
+
+```ts
+import { serve, ServeInfo } from "http-server";
+import { App, rateLimit } from "web";
+
+const app = new App<number>(() => 0);
+app.use(
+  rateLimit({
+    limit: 100,
+    windowMs: 60000,
+    key: (req) => req.headers.get("x-client-address") ?? "unknown",
+  }),
+);
+const handler = app.handler();
+await serve({ port: 8080 }, (req: Request, info: ServeInfo) => {
+  const headers = new Headers(req.headers);
+  headers.set("x-client-address", info.remoteAddr.hostname);
+  return handler(new Request(req, { headers }));
+});
+```
+
+Don't key on `x-forwarded-for` or `forwarded` unless a proxy you control sets them, replacing what
+the client sent: otherwise a client can send a new value with each request, and each one gets a new
+allowance. Behind such a proxy, `info.remoteAddr` is the proxy, and that header is the one to read.
+
+The table holds at most `maxKeys` keys (default 100,000), and a key longer than 256 characters is
+kept as its hash, so a client can't grow it past that. When it is full, the windows that ended are
+removed, and if there is still no room a new key gets a 429 until a window ends. The keys in the
+table go on being counted as before. It fails closed because dropping a live window would hand a
+client its allowance back: anyone able to send many keys could reset any count.
+
+The cost is a lockout. One client who can vary the key can fill the table in about a second and hold
+new keys out for the rest of the window, and do it again each window. A long window makes that worse,
+as the lockout lasts as long as the window. Keys already in the table and routes without the limiter
+are not affected. So choose `maxKeys` above the clients you expect in a window, and a key a client
+can't vary at will: the address, and for an IPv6 address its /64, not the whole address, as one client
+commonly holds a whole /64.
 
 ## Errors
 
@@ -180,6 +226,9 @@ What this package had to get right, in the order you will meet it:
    literal inside the function. A buffer a route captures may be viewed only from a local of the
    function; a view of a copy (`b.slice(0)`) can go anywhere. A handler a plain middleware made
    panics there too (`const h = bodyLimit(5)(ok)`, then `(c) => h(c.req)`), so apply one to part of
-   an app with a prefix: `app.use(bodyLimit(5), "/upload")`.
+   an app with a prefix: `app.use(bodyLimit(5), "/upload")`. Don't build one inside a route to get
+   around that: `await rateLimit({ … })(ok)(c.req)` answers, but makes a new table on each request,
+   so it never limits. `rateLimit`'s `key` and `now` are callbacks as `logger`'s `write` is: a change
+   to what they capture is lost, silently (rule 5).
 7. **Scan by index on the request path.** `pathOf` and the router copy only what they keep. Measure
    instructions retired, and compare with the same compiler.

@@ -173,6 +173,49 @@ describe("a new request made from a received one", () => {
     }
   });
 
+  it(
+    "takes a new body after the received one was read, and keeps the method and headers",
+    async () => {
+      const server = await serve({ port: 0 }, async (req: Request) => {
+        let read = 0;
+        for await (const chunk of req.body!) {
+          read += chunk.length;
+        }
+        const copy = new Request(req, { body: `${read}` });
+        const text = await copy.text();
+        return new Response(`${copy.method} ${copy.headers.get("x-a")} ${text}`);
+      });
+      try {
+        const res = await fetch(`http://127.0.0.1:${server.port}/`, {
+          method: "PUT",
+          body: "hello",
+          headers: { "x-a": "1" },
+        });
+        expect(await res.text()).toBe("PUT 1 5");
+      } finally {
+        await server.shutdown();
+      }
+    },
+  );
+
+  it("can't be made without a new body once the received one was read", async () => {
+    const server = await serve({ port: 0 }, async (req: Request) => {
+      await req.text();
+      try {
+        new Request(req);
+        return new Response("made");
+      } catch (e) {
+        return new Response("refused");
+      }
+    });
+    try {
+      const res = await fetch(`http://127.0.0.1:${server.port}/`, { method: "POST", body: "hi" });
+      expect(await res.text()).toBe("refused");
+    } finally {
+      await server.shutdown();
+    }
+  });
+
   it("works without a body", async () => {
     const server = await serve({ port: 0 }, async (req: Request) => {
       const copy = new Request(req);

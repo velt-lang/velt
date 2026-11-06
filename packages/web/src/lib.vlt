@@ -8,3 +8,5 @@ export { cors, CorsOptions } from "./middleware/cors";
 export { logger } from "./middleware/logger";
 export { requestId, RequestIdOptions } from "./middleware/request_id";
 export { serveStatic, ServeStaticOptions } from "./middleware/serve_static";
+export { bodyLimit } from "./middleware/body_limit";
+export { rateLimit, RateLimitOptions } from "./middleware/rate_limit";
