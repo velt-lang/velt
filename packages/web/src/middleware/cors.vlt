@@ -34,7 +34,12 @@ export function cors(options: CorsOptions = {}): Middleware {
   return (next: Handler): Handler => async (req: Request): Promise<Response> => {
     const origin = req.headers.get("origin");
     if (origin == null) {
-      return await next(req);
+      const plain = await next(req);
+      // A shared cache must not give this copy, without the CORS headers, to a page with an origin.
+      if (!anyOrigin) {
+        plain.headers.append("vary", "Origin");
+      }
+      return plain;
     }
     const allowed = anyOrigin || origins.includes(origin);
     const preflight =

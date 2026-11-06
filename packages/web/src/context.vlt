@@ -7,9 +7,9 @@ export class Context<V> {
   req: Request;
   /** The variables of this request, from the app's `vars` function. */
   vars: V;
-  /** The request's pathname. */
+  /** The request's pathname in its canonical form (`pathOf`): decide on this, not on `req.url`. */
   path: string;
-  /** The route's parameter names, and what the path had for them (still percent-encoded). */
+  /** The route's parameter names, and what the path had for them (escapes not yet decoded). */
   names: string[] = [];
   values: string[] = [];
   /** The methods the path has, when the request's method isn't one of them. */
@@ -21,7 +21,10 @@ export class Context<V> {
     this.path = path;
   }
 
-  /** The path parameter `name`, percent-decoded (`*` for a wildcard), or null. */
+  /**
+   * The path parameter `name`, percent-decoded (`*` for a wildcard), or null. It is data the client
+   * chose, and can hold `/` and `..` once decoded: don't join it to a file path.
+   */
   param(name: string): string | null {
     for (let i = 0; i < this.names.length; i++) {
       if (this.names[i] == name) {

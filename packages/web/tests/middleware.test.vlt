@@ -34,6 +34,14 @@ describe("cors", () => {
     expect(no.headers.get("access-control-allow-origin")).toBe(null);
     expect(no.headers.get("access-control-allow-credentials")).toBe(null);
     expect(no.headers.get("vary")).toBe("Origin");
+    const none = await h(request("/"));
+    expect(none.headers.get("access-control-allow-origin")).toBe(null);
+    expect(none.headers.get("vary")).toBe("Origin");
+  });
+
+  it("varies on nothing with any origin, as its answer doesn't change", async () => {
+    const h = cors()(ok);
+    expect((await h(request("/"))).headers.get("vary")).toBe(null);
   });
 
   it("never sends credentials with *", async () => {

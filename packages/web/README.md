@@ -45,10 +45,27 @@ between slashes:
 A literal beats a parameter, which beats a wildcard, and a lookup goes back to the next choice when
 the first leads nowhere. HEAD takes GET's route when it has none of its own. A path with no route
 gets the `notFound` answer (404 by default). A path with routes for other methods gets 405 with
-`Allow`. `/a` and `/a/` are different paths.
+`Allow`. `/a` and `/a/` are different paths. `on` takes a method in any case.
 
 `app.route("/api", sub)` mounts another `App` with the same variables on a prefix, its middleware
-inside this app's.
+inside this app's. A `/` ending the prefix doesn't count, and the sub-app's `/` is the prefix alone:
+`/api`, not `/api/`. `app.route("/", sub)` puts the sub-app's `/y` at `/y`. The sub-app's layer
+prefixes join the same way.
+
+### The path
+
+Routes, prefixes, `c.path` and `serveStatic` read one canonical path (`pathOf(req.url)`, exported for
+a plain middleware that decides by path), so no spelling of a path gets past a check made on
+another. As a URL parser does, `\` is `/` and `.` and `..` segments are removed, `%2e` included. Each
+character has one spelling: an escape of a character that can stand for itself in a path is decoded
+(`/%61dmin` is `/admin`), the others stay escaped, in capitals (`%2F` stays inside its segment). The
+same goes for the literals and prefixes you write. An empty segment stays, so `//admin` isn't under
+`/admin`: it matches no literal or parameter, and `serveStatic` passes it on. Decide on `c.path`, not
+on `c.req.url`, which is what the client sent.
+
+**A parameter is data the client chose.** Once decoded it can hold what the path can't:
+`/files/a%2Fb/..%2F..%2Fetc` gives `*` as `a/b/../../etc`. Don't join one to a file path; use
+`resolveUnder` or `serveStatic`.
 
 A handler gets a `Context`: `c.req`, `c.path`, `c.vars`, `c.param(name)`, `c.query(name)`, and
 `c.text`, `c.html`, `c.json` and `c.redirect` for a response.
@@ -92,13 +109,31 @@ proxy handler that wants middleware to mark its response wraps it:
 | Middleware | Does |
 |---|---|
 | `cors(options?)` | Answers preflights (204) and marks responses for the origins allowed. Never sends credentials with `*` |
-| `logger(write?)` | A line per request when its head is ready: `GET /a 200 3ms`. No query, which may hold secrets |
+| `logger(write?)` | A line per request when its head is ready: `GET /a 200 3ms`, with the canonical path. No query, which may hold secrets |
 | `requestId(options?)` | An identifier on the request and response headers. A client's is kept only if it is safe to log |
 | `serveStatic(root, options?)` | Files under `root`, with `serveFile`'s validators, 304 and `Range`; passes on what it has no file for |
 
 `serveStatic` keeps requests inside `root` (`resolveUnder`) and refuses dotfiles by default. A
 directory redirects to its path with a `/`, which answers with `index.html`. A client accepting `br`
 or `gzip` gets a `file.br` or `file.gz` next to the file when there is one.
+
+`logger`'s `write` gets its own copy of what it captures on each call, like a handler, and the
+compiler doesn't report a change to a copy: `logger((l) => { lines.push(l); })` leaves `lines` empty.
+To keep the lines, write to something shared:
+
+```ts
+import { App, logger } from "web";
+
+const lines = shared(new Mutex<string[]>([]));
+const app = new App<number>(() => 0);
+app.use(
+  logger((line: string) => {
+    lines.with((all) => {
+      all.push(line);
+    });
+  }),
+);
+```
 
 ## Errors
 
@@ -126,10 +161,13 @@ What this package had to get right, in the order you will meet it:
    runs before the context exists.
 5. **State between requests needs an explicit home.** A rate limiter's `Map` in a closure would be
    per-request. The compiler reports most such changes (`http-server`'s README), but not one in a
-   plain middleware a function returns, which it doesn't follow to `serve`: a count kept that way
-   stays at 1, silently. Share what changes: `shared(new Mutex(…))`, `shared(0 as i64)` or
-   `shared(ConcurrentMap.create(n))`. A `Mutex`, an `Atomic` or a `ConcurrentMap` captured by value
-   is refused, or panics in `handler()`: each call would have its own.
+   plain middleware a function returns, or in a callback handed to one (`logger`'s `write`), which
+   it doesn't follow to `serve`. A count in a `Map`, an array or a class field kept that way stays at
+   1, silently. So does a `ConcurrentMap` captured by value: it compiles, and answers 1, 1, 1. A `let`
+   written there (`n++`) currently stops the compiler with an internal error (#2450). Share what
+   changes: `shared(new Mutex(…))`, `shared(0 as i64)` or `shared(ConcurrentMap.create(n))`
+   (`ConcurrentMap` is in `velt/collections`, with `u64` keys and values by default). A `Mutex` or an
+   `Atomic` captured by value is refused at compile time: each call would have its own.
 6. **Routes are in `shared(...)`, and so is what they capture.** A regex a route captures is compiled
    on each request: prefer a module `const`, or a check on `c.path` without a regex. The tree holds
    no regex, so a pattern costs a walk of its segments. A `g` or `y` regex a route or an `around`

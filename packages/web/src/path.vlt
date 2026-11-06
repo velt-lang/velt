@@ -1,19 +1,163 @@
-// web (internal): the path of a request's URL.
+// web (internal): the path of a request's URL, in the one form the router, prefixes, `c.path` and
+// `serveStatic` all read, so that no spelling of a path reaches a file or a route past a check
+// made on another spelling.
 
-/** The pathname of an absolute URL, without parsing the rest of it. */
+const PERCENT = 37;
+const DOT = 46;
+const SLASH = 47;
+const QUESTION = 63;
+const HASH = 35;
+const BACKSLASH = 92;
+
+/**
+ * The canonical pathname of an absolute URL, without parsing the rest of it. As a URL parser reads
+ * a path: `\` is `/`, `.` and `..` segments are gone (`%2e` is a dot), and a raw character a path
+ * can't hold is escaped. Further, each character has one spelling: an escape of one that can stand
+ * for itself is decoded (`%61` is `a`), and the others stay escaped in capitals (`%2f` is `%2F`,
+ * which doesn't end a segment). A `%` that starts no escape becomes `%25`. Empty segments stay.
+ */
 export function pathOf(url: string): string {
   const scheme = url.indexOf("://");
-  const start = url.indexOf("/", scheme < 0 ? 0 : scheme + 3);
-  if (start < 0) {
+  let start = scheme < 0 ? 0 : scheme + 3;
+  while (start < url.length) {
+    const code = url.charCodeAt(start);
+    if (code == SLASH || code == BACKSLASH) {
+      break;
+    }
+    if (code == QUESTION || code == HASH) {
+      return "/";
+    }
+    start++;
+  }
+  if (start >= url.length) {
     return "/";
   }
   let end = start;
+  let plain = true;
+  let before = 0;
   while (end < url.length) {
     const code = url.charCodeAt(end);
-    if (code == 63 || code == 35) {
+    if (code == QUESTION || code == HASH) {
       break;
     }
+    // Lowercase letters first, the usual case. A segment starting with a dot goes the long way,
+    // as do `\`, `%` and what gets escaped.
+    if ((code < 97 || code > 122) && code != SLASH) {
+      if (!standsForItself(code) || (code == DOT && before == SLASH)) {
+        plain = false;
+      }
+    }
+    before = code;
     end++;
   }
-  return url.slice(start, end);
+  const path = url.slice(start, end);
+  return plain ? path : withoutDots(spelled(path));
+}
+
+/** A path prefix a layer was given, in the form of `pathOf`; empty stays empty (every path). */
+export function canonicalPrefix(prefix: string): string {
+  return prefix.length == 0 ? "" : withoutDots(spelled(prefix));
+}
+
+/** Whether a character is itself in a canonical path, rather than an escape or a separator. */
+function standsForItself(c: number): bool {
+  return c > 32 &&
+    c < 127 &&
+    c != 34 &&
+    // "
+    c != HASH &&
+    c != PERCENT &&
+    c != SLASH &&
+    c != 60 &&
+    // <
+    c != 62 &&
+    // >
+    c != QUESTION &&
+    c != BACKSLASH &&
+    c != 96 &&
+    // `
+    c != 123 &&
+    // {
+    c != 125; // }
+}
+
+/** The value of a hexadecimal digit, or -1. */
+function hexDigit(c: number): number {
+  if (c >= 48 && c <= 57) {
+    return c - 48;
+  }
+  const lower = c | 32;
+  return lower >= 97 && lower <= 102 ? lower - 87 : -1;
+}
+
+/** `%XX` in capitals. */
+function escaped(c: number): string {
+  const digits = "0123456789ABCDEF";
+  return `%${digits[c >> 4]}${digits[c & 15]}`;
+}
+
+/** `path` with each character in its one spelling (`pathOf`), and `\` as `/`. */
+export function spelled(path: string): string {
+  let out = "";
+  let i = 0;
+  const n = path.length;
+  while (i < n) {
+    const c = path.charCodeAt(i);
+    if (c == BACKSLASH) {
+      out += "/";
+      i++;
+    } else if (c == PERCENT) {
+      const high = i + 2 < n ? hexDigit(path.charCodeAt(i + 1)) : -1;
+      const low = i + 2 < n ? hexDigit(path.charCodeAt(i + 2)) : -1;
+      if (high < 0 || low < 0) {
+        // Not left as it is: what follows could turn it into an escape (`%%32e`).
+        out += "%25";
+        i++;
+      } else {
+        const value = high * 16 + low;
+        out += standsForItself(value) ? String.fromCharCode(value) : escaped(value);
+        i += 3;
+      }
+    } else if (c > 126) {
+      let j = i + 1;
+      while (j < n && path.charCodeAt(j) > 126) {
+        j++;
+      }
+      out += encodedRun(path.slice(i, j));
+      i = j;
+    } else {
+      out += c == SLASH || standsForItself(c) ? path[i] : escaped(c);
+      i++;
+    }
+  }
+  return out;
+}
+
+/** Characters past ASCII as the escapes of their UTF-8 bytes. */
+function encodedRun(run: string): string {
+  try {
+    return encodeURIComponent(run);
+  } catch (e) {
+    return run;
+  }
+}
+
+/** `path` without its `.` and `..` segments. */
+function withoutDots(path: string): string {
+  const parts = path.split("/");
+  const kept: string[] = [];
+  for (let i = 1; i < parts.length; i++) {
+    const part = parts[i];
+    if (part == "." || part == "..") {
+      if (part == ".." && kept.length > 0) {
+        kept.pop();
+      }
+      if (i == parts.length - 1) {
+        kept.push("");
+      }
+    } else {
+      kept.push(part);
+    }
+  }
+  return `/${kept.join("/")}`;
 }

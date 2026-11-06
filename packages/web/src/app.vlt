@@ -2,7 +2,7 @@
 // each route's layers once, so a request allocates no closure per layer.
 
 import { Context } from "./context";
-import { pathOf } from "./path";
+import { canonicalPrefix, pathOf } from "./path";
 import { Router } from "./router";
 import { Handler, Middleware } from "./types";
 
@@ -51,9 +51,10 @@ export class App<V> {
     this.vars = vars;
   }
 
-  /** Adds a route for `method`, inside the `around` middleware added so far. */
+  /** Adds a route for `method` (in any case), inside the `around` middleware added so far. */
   on(method: string, pattern: string, route: Route<V>): App<V> {
-    this.added.push({ method, pattern, route, layers: this.arounds.length });
+    const name = method.toUpperCase();
+    this.added.push({ method: name, pattern, route, layers: this.arounds.length });
     return this;
   }
 
@@ -93,19 +94,22 @@ export class App<V> {
     return this;
   }
 
-  /** Mounts `sub`'s routes and middleware on `prefix`, inside this app's middleware. */
+  /**
+   * Mounts `sub`'s routes and middleware on `prefix`, inside this app's middleware. A `/` ending the
+   * prefix doesn't count, and a sub-app's `/` is the prefix alone: `/api`, not `/api/`.
+   */
   route(prefix: string, sub: App<V>): App<V> {
     const base = this.arounds.length;
     for (const layer of sub.plains) {
-      this.plains.push({ middleware: layer.middleware, prefix: prefix + layer.prefix });
+      this.plains.push({ middleware: layer.middleware, prefix: joined(prefix, layer.prefix) });
     }
     for (const layer of sub.arounds) {
-      this.arounds.push({ middleware: layer.middleware, prefix: prefix + layer.prefix });
+      this.arounds.push({ middleware: layer.middleware, prefix: joined(prefix, layer.prefix) });
     }
     for (const a of sub.added) {
       this.added.push({
         method: a.method,
-        pattern: prefix + a.pattern,
+        pattern: joined(prefix, a.pattern),
         route: a.route,
         layers: base + a.layers,
       });
@@ -209,7 +213,7 @@ function compose<V>(
 
 function wrapAround<V>(layer: AroundLayer<V>, next: Route<V>, failed: OnError<V>): Route<V> {
   const middleware = layer.middleware;
-  const prefix = layer.prefix;
+  const prefix = canonicalPrefix(layer.prefix);
   return async (c: Context<V>): Promise<Response> => {
     if (!under(prefix, c.path)) {
       return await next(c);
@@ -229,7 +233,7 @@ function wrapPlain<V>(
   failed: OnError<V>,
 ): Handler {
   const wrapped = layer.middleware(next);
-  const prefix = layer.prefix;
+  const prefix = canonicalPrefix(layer.prefix);
   return async (req: Request): Promise<Response> => {
     // No prefix, the usual case, needs no path.
     if (prefix.length > 0 && !under(prefix, pathOf(req.url))) {
@@ -243,7 +247,22 @@ function wrapPlain<V>(
   };
 }
 
-/** Whether `path` is `prefix` or below it. */
+/** `pattern`, a path or a layer's prefix ("": all of it), below the mount point `prefix`. */
+function joined(prefix: string, pattern: string): string {
+  let base = prefix;
+  while (base.endsWith("/")) {
+    base = base.slice(0, (base.length as i64) - 1);
+  }
+  if (pattern.length == 0) {
+    return base;
+  }
+  if (pattern == "/") {
+    return base.length == 0 ? "/" : base;
+  }
+  return pattern.startsWith("/") ? `${base}${pattern}` : `${base}/${pattern}`;
+}
+
+/** Whether `path` is `prefix` or below it, both canonical. */
 function under(prefix: string, path: string): boolean {
   if (prefix.length == 0) {
     return true;

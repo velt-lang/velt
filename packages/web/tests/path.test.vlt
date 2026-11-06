@@ -1,0 +1,268 @@
+// The canonical path: what a client sends over a raw socket (a fetch client may rewrite a path
+// first) reaches the same prefix check, route and file however it is spelled.
+import { serve } from "http-server";
+import { mkdir, remove, writeFile } from "velt/fs";
+import { connect } from "velt/net";
+import { tmpdir } from "velt/os";
+import { uuidv4 } from "velt/random/uuid";
+import { afterAll, beforeAll, describe, expect, it } from "velt/test";
+import { App, Handler, Middleware, pathOf, serveStatic } from "../src/lib";
+
+/** Answers 401 without going on. */
+function deny(): Middleware {
+  return (next: Handler): Handler => async (req: Request): Promise<Response> => {
+    return new Response("denied", { status: 401 });
+  };
+}
+
+function noVars(): number {
+  return 0;
+}
+
+/** The whole answer to a raw request, as the client's bytes went. */
+async function raw(port: number, target: string, host: string = "x"): Promise<string> {
+  const c = await connect(`127.0.0.1:${port}`);
+  await c.write(`GET ${target} HTTP/1.1\r\nHost: ${host}\r\nConnection: close\r\n\r\n`);
+  let all = "";
+  while (true) {
+    const chunk = await c.readString();
+    if (chunk == "") {
+      break;
+    }
+    all += chunk;
+  }
+  c.close();
+  return all;
+}
+
+/** The status of an answer. */
+function statusOf(answer: string): string {
+  return answer.slice(9, 12);
+}
+
+/** The body of an answer. */
+function bodyOf(answer: string): string {
+  return answer.slice(answer.indexOf("\r\n\r\n") + 4);
+}
+
+describe("pathOf", () => {
+  it("reads the path out of a URL", () => {
+    expect(pathOf("http://x/a/b?c=/d#e")).toBe("/a/b");
+    expect(pathOf("http://x/a#b/c")).toBe("/a");
+    expect(pathOf("http://x")).toBe("/");
+    expect(pathOf("http://x?a=/b")).toBe("/");
+    expect(pathOf("http://x#/b")).toBe("/");
+    expect(pathOf("/a")).toBe("/a");
+  });
+
+  it("removes dot segments as a URL parser does", () => {
+    // Each row's result is `new URL(...).pathname` on Node.
+    const rows: string[][] = [
+      ["/a/./b", "/a/b"],
+      ["/a/../b", "/b"],
+      ["/../a", "/a"],
+      ["/../../a", "/a"],
+      ["/a/b/..", "/a/"],
+      ["/a/b/.", "/a/b/"],
+      ["/a/..", "/"],
+      ["/.", "/"],
+      ["/..", "/"],
+      ["/%2e/a", "/a"],
+      ["/%2E%2e/a", "/a"],
+      ["/.%2e/a", "/a"],
+      ["/a/%2e%2E/b", "/b"],
+      ["/a//../b", "/a/b"],
+      ["//..", "/"],
+      ["/...", "/..."],
+      ["/.a/..b/c..", "/.a/..b/c.."],
+      ["/a\\b", "/a/b"],
+      ["/a\\..\\b", "/b"],
+      ["/\\a", "//a"],
+      ["//a//b/", "//a//b/"],
+    ];
+    for (const [path, canonical] of rows) {
+      expect(pathOf(`http://x${path}`)).toBe(canonical);
+    }
+  });
+
+  it("gives each character one spelling", () => {
+    const rows: string[][] = [
+      // Decoded: it can stand for itself.
+      ["/%70rivate", "/private"],
+      ["/%61%7A%41%5A%30%39", "/azAZ09"],
+      ["/%2D%2e%5F%7E", "/-._~"],
+      ["/%21%24%26%27%28%29%2A%2B%2C%3B%3D%3A%40", "/!$&'()*+,;=:@"],
+      // Not decoded: it would end a segment, start a query, or be an escape; capitals only.
+      ["/a%2Fb", "/a%2Fb"],
+      ["/a%2fb", "/a%2Fb"],
+      ["/a%5cb", "/a%5Cb"],
+      ["/a%3fb%23c", "/a%3Fb%23c"],
+      ["/a%20b%00", "/a%20b%00"],
+      ["/%c3%a9", "/%C3%A9"],
+      ["/%ff", "/%FF"],
+      // Once only.
+      ["/%2570rivate", "/%2570rivate"],
+      ["/%252e%252e/a", "/%252e%252e/a"],
+      ["/..%2F..%2Fetc", "/..%2F..%2Fetc"],
+      // A `%` that starts no escape can't become one.
+      ["/%zz", "/%25zz"],
+      ["/a%", "/a%25"],
+      ["/a%2", "/a%252"],
+      ["/%%32e", "/%252e"],
+      // A raw character a path can't hold is escaped.
+      ["/a b", "/a%20b"],
+      ['/a"b<c>d`e{f}', "/a%22b%3Cc%3Ed%60e%7Bf%7D"],
+      ["/é", "/%C3%A9"],
+    ];
+    for (const [path, canonical] of rows) {
+      expect(pathOf(`http://x${path}`)).toBe(canonical);
+    }
+  });
+
+  it("leaves what is already canonical as it is, and finds the same form again", () => {
+    const rows = ["/", "/a/b", "/A-b_c~d.e/f", "/a%2Fb/", "//a", "/%C3%A9", "/%25zz"];
+    for (const path of rows) {
+      expect(pathOf(`http://x${path}`)).toBe(path);
+      expect(pathOf(`http://x${pathOf(`http://x${path}`)}`)).toBe(path);
+    }
+  });
+});
+
+describe("a path's spellings over a socket", () => {
+  const root = `${tmpdir()}/velt-web-path-${uuidv4()}`;
+
+  beforeAll(async () => {
+    await mkdir(`${root}/private`, { recursive: true });
+    await mkdir(`${root}/public`, { recursive: true });
+    await writeFile(`${root}/private/s.txt`, "secret");
+    await writeFile(`${root}/public/a.txt`, "open");
+  });
+
+  afterAll(async () => {
+    await remove(root, { recursive: true });
+  });
+
+  it("no spelling walks around a plain middleware's prefix to a file", async () => {
+    const app = new App<number>(noVars);
+    app.use(deny(), "/private");
+    app.use(serveStatic(root));
+    const h = app.handler();
+    const server = await serve({ port: 0 }, (req: Request) => h(req));
+    try {
+      const rows: string[][] = [
+        ["/private/s.txt", "401"],
+        ["/%70rivate/s.txt", "401"],
+        ["//private/s.txt", "404"],
+        ["/./private/s.txt", "401"],
+        ["/%2e/private/s.txt", "401"],
+        ["/public/../private/s.txt", "401"],
+        ["/public/%2E%2E/private/s.txt", "401"],
+        ["/public/.%2e/private/s.txt", "401"],
+        ["/x\\..\\private/s.txt", "401"],
+        ["/\\private/s.txt", "404"],
+        ["/public//../../private/s.txt", "401"],
+        ["/private/./s.txt", "401"],
+        ["/private//s.txt", "401"],
+        ["/public/..%2Fprivate/s.txt", "404"],
+        ["/public/%2e%2e%2Fprivate/s.txt", "404"],
+        ["/%2570rivate/s.txt", "404"],
+        ["/public/a.txt", "200"],
+        ["/%70ublic/a.txt", "200"],
+        ["/x/../public/a.txt", "200"],
+        ["//public/a.txt", "404"],
+        ["/public//a.txt", "404"],
+        ["/public/a.txt//", "404"],
+      ];
+      for (const [target, want] of rows) {
+        const answer = await raw(server.port, target);
+        expect(`${target} ${statusOf(answer)}`).toBe(`${target} ${want}`);
+        expect(bodyOf(answer).includes("secret")).toBe(false);
+      }
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("no spelling walks around a prefix to a route, and a route reads one path", async () => {
+    const app = new App<number>(noVars);
+    app.use(deny(), "/admin");
+    app.around(async (c, next) => {
+      if (c.path.startsWith("/staff")) {
+        return c.text("staff only", 403);
+      }
+      return await next(c);
+    });
+    app.get("/:section/open", async (c) => c.text(`${c.path} [${c.param("section")}]`));
+    app.get("/files/*", async (c) => c.text(`[${c.param("*")}]`));
+    const h = app.handler();
+    const server = await serve({ port: 0 }, (req: Request) => h(req));
+    try {
+      const statuses: string[][] = [
+        ["/admin/open", "401"],
+        ["/%61dmin/open", "401"],
+        ["/./admin/open", "401"],
+        ["/x/../admin/open", "401"],
+        ["/%73taff/open", "403"],
+        ["/other/%2E/open", "200"],
+        ["//admin/open", "404"],
+      ];
+      for (const [target, want] of statuses) {
+        const answer = await raw(server.port, target);
+        expect(`${target} ${statusOf(answer)}`).toBe(`${target} ${want}`);
+      }
+      expect(bodyOf(await raw(server.port, "/%6Fther/open?q=1"))).toBe("/other/open [other]");
+      // A parameter is data: an encoded `/` stays inside it, and is decoded when read.
+      expect(bodyOf(await raw(server.port, "/a%2Fb/open"))).toBe("/a%2Fb/open [a/b]");
+      expect(bodyOf(await raw(server.port, "/files/a%2Fb/..%2F..%2Fetc"))).toBe("[a/b/../../etc]");
+      // A dot segment is gone before routing, so it can't climb out of a wildcard.
+      expect(statusOf(await raw(server.port, "/files/../../etc/passwd"))).toBe("404");
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("a literal and a prefix in the app's code read as the request's path does", async () => {
+    const app = new App<number>(noVars);
+    app.use(deny(), "/caf%c3%a9");
+    app.use(deny(), "/é");
+    app.use(deny(), "/a!b");
+    app.get("/ok/é/%70", async (c) => c.text("literal"));
+    const h = app.handler();
+    const server = await serve({ port: 0 }, (req: Request) => h(req));
+    try {
+      const rows: string[][] = [
+        ["/caf%C3%A9/x", "401"],
+        ["/caf%c3%a9/x", "401"],
+        ["/%C3%A9/x", "401"],
+        ["/é/x", "401"],
+        ["/a!b/x", "401"],
+        ["/a%21b/x", "401"],
+        ["/ok/%C3%A9/p", "200"],
+        ["/ok/%c3%a9/%70", "200"],
+      ];
+      for (const [target, want] of rows) {
+        const answer = await raw(server.port, target);
+        expect(`${target} ${statusOf(answer)}`).toBe(`${target} ${want}`);
+      }
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("the Host header can't choose the route", async () => {
+    const app = new App<number>(noVars);
+    app.get("/users/:id", async (c) => c.text(`user ${c.param("id")}`));
+    app.get("/admin/secret", async (c) => c.text("secret"));
+    const h = app.handler();
+    const server = await serve({ port: 0 }, (req: Request) => h(req));
+    try {
+      for (const host of ["x/users/9?", "x/users/9#", "x\\users", "u@x", "x?/users/9"]) {
+        const answer = await raw(server.port, "/admin/secret", host);
+        expect(`${host} ${statusOf(answer)}`).toBe(`${host} 400`);
+      }
+      expect(bodyOf(await raw(server.port, "/admin/secret"))).toBe("secret");
+    } finally {
+      await server.shutdown();
+    }
+  });
+});

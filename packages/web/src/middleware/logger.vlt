@@ -5,7 +5,10 @@ import { pathOf } from "../path";
 
 /**
  * Writes a line for each request when its head is ready: `GET /a 200 3ms`. `write` takes the line
- * (default: `console.log`). The time doesn't include a streamed body's.
+ * (default: `console.log`). The time doesn't include a streamed body's. Like a handler, `write` gets
+ * its own copy of what it captures on each call, and the compiler doesn't report a change to a copy:
+ * `logger((l) => { lines.push(l); })` leaves `lines` empty. To keep lines, write to something shared:
+ * `const lines = shared(new Mutex<string[]>([]));`, then `lines.with((all) => all.push(l))`.
  */
 export function logger(write: (line: string) => void = defaultWrite): Middleware {
   return (next: Handler): Handler => async (req: Request): Promise<Response> => {

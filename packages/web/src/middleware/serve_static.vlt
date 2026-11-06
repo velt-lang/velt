@@ -23,6 +23,7 @@ export struct ServeStaticOptions {
  * 304, Range), and passes on the requests it has no file for. A directory redirects to its path with
  * a `/`, which answers with its index file. A client accepting `br` or `gzip` gets a `file.br` or
  * `file.gz` next to the file when there is one, brotli first, with the type of the file itself.
+ * A path with an empty segment names no file.
  */
 export function serveStatic(root: string, options: ServeStaticOptions = {}): Middleware {
   const index = options.index ?? "index.html";
@@ -34,6 +35,10 @@ export function serveStatic(root: string, options: ServeStaticOptions = {}): Mid
       return await next(req);
     }
     const urlPath = pathOf(req.url);
+    // `resolveUnder` strips leading slashes, so this would be a file a prefix doesn't see as one.
+    if (urlPath.includes("//")) {
+      return await next(req);
+    }
     let file = await resolveUnder(root, urlPath, { dotfiles });
     if (file == null) {
       return await next(req);
@@ -83,9 +88,8 @@ async function regularOrDirectory(path: string): Promise<string> {
 function redirectToDirectory(url: string, urlPath: string): Response {
   const at = url.indexOf("?");
   const query = at < 0 ? "" : url.slice(at);
-  // `//evil.example` as a path would be another host in a Location.
-  const location = urlPath.startsWith("//") ? `/${urlPath.replace(/^\/+/, "")}/` : `${urlPath}/`;
-  return new Response(null, { status: 301, headers: { location: `${location}${query}` } });
+  // `urlPath` has no empty segment, so it can't be another host in a Location (`//evil.example`).
+  return new Response(null, { status: 301, headers: { location: `${urlPath}/${query}` } });
 }
 
 /** The encoding of the best precompressed sibling of `file` the `Accept-Encoding` value takes. */

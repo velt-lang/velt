@@ -238,6 +238,123 @@ describe("App", () => {
     expect(await (await get(two, "/")).text()).toBe("anon!");
   });
 
+  it("mounts on the root and with a trailing slash, as a path of the prefix alone", async () => {
+    const sub = new App<Vars>(vars);
+    sub.get("/", async (c) => c.text("sub root"));
+    sub.get("/y", async (c) => c.text("y"));
+    const root = new App<Vars>(vars);
+    root.route("/", sub);
+    const atRoot = root.handler();
+    expect(await (await get(atRoot, "/y")).text()).toBe("y");
+    expect(await (await get(atRoot, "/")).text()).toBe("sub root");
+    expect((await get(atRoot, "//y")).status).toBe(404);
+    for (const prefix of ["/api", "/api/"]) {
+      const app = new App<Vars>(vars);
+      app.route(prefix, sub);
+      const h = app.handler();
+      expect(await (await get(h, "/api")).text()).toBe("sub root");
+      expect((await get(h, "/api/")).status).toBe(404);
+      expect(await (await get(h, "/api/y")).text()).toBe("y");
+      expect((await get(h, "/api//y")).status).toBe(404);
+    }
+  });
+
+  it("mounts a sub-app's layer prefixes as its routes", async () => {
+    const sub = new App<Vars>(vars);
+    sub.use(tag("all"));
+    sub.use(tag("root"), "/");
+    sub.use(tag("x"), "/x");
+    sub.get("/", async (c) => c.text("sub"));
+    sub.get("/x", async (c) => c.text("x"));
+    sub.get("/y", async (c) => c.text("y"));
+    const app = new App<Vars>(vars);
+    app.route("/api/", sub);
+    app.get("/x", async (c) => c.text("outside"));
+    const h = app.handler();
+    expect((await get(h, "/api")).headers.get("x-tag")).toBe("root, all");
+    expect((await get(h, "/api/y")).headers.get("x-tag")).toBe("root, all");
+    expect((await get(h, "/api/x")).headers.get("x-tag")).toBe("x, root, all");
+    expect((await get(h, "/x")).headers.get("x-tag")).toBe(null);
+  });
+
+  it("takes a method in any case", async () => {
+    const app = new App<Vars>(vars);
+    app.on("get", "/lower", async (c) => c.text("lower"));
+    const h = app.handler();
+    expect(await (await get(h, "/lower")).text()).toBe("lower");
+    const res = await get(h, "/lower", "POST");
+    expect(res.status).toBe(405);
+    expect(res.headers.get("allow")).toBe("GET, HEAD");
+  });
+
+  it("scopes an around to its prefix", async () => {
+    const app = new App<Vars>(vars);
+    app.around(
+      async (c, next) => {
+        const res = await next(c);
+        res.headers.set("x-around", "1");
+        return res;
+      },
+      "/api",
+    );
+    app.get("/api/x", async (c) => c.text("x"));
+    app.get("/apix", async (c) => c.text("y"));
+    app.get("/other", async (c) => c.text("z"));
+    const h = app.handler();
+    expect((await get(h, "/api/x")).headers.get("x-around")).toBe("1");
+    expect((await get(h, "/apix")).headers.get("x-around")).toBe(null);
+    expect((await get(h, "/other")).headers.get("x-around")).toBe(null);
+  });
+
+  it("scopes a mounted sub-app's around to the mount", async () => {
+    const sub = new App<Vars>(vars);
+    sub.around(async (c, next) => {
+      const res = await next(c);
+      res.headers.set("x-around", "sub");
+      return res;
+    });
+    sub.get("/x", async (c) => c.text("x"));
+    const app = new App<Vars>(vars);
+    app.route("/api", sub);
+    app.get("/other", async (c) => c.text("z"));
+    const h = app.handler();
+    expect((await get(h, "/api/x")).headers.get("x-around")).toBe("sub");
+    expect((await get(h, "/other")).headers.get("x-around")).toBe(null);
+    expect((await get(h, "/nope")).headers.get("x-around")).toBe(null);
+  });
+
+  it("an error in an around reaches onError with no plain middleware around it", async () => {
+    const app = new App<Vars>(vars);
+    app.onError(async (e, c) => c.text("handled", 503));
+    app.around(async (c, next) => {
+      throw new Error("around");
+    });
+    app.get("/x", async (c) => c.text("no"));
+    const res = await get(app.handler(), "/x");
+    expect(res.status).toBe(503);
+    expect(await res.text()).toBe("handled");
+  });
+
+  it("a wildcard also matches nothing, without its slash", async () => {
+    const app = new App<Vars>(vars);
+    app.get("/files/*", async (c) => c.text(`[${c.param("*")}]`));
+    const h = app.handler();
+    expect(await (await get(h, "/files")).text()).toBe("[]");
+    expect(await (await get(h, "/files/")).text()).toBe("[]");
+    expect(await (await get(h, "/files/a")).text()).toBe("[a]");
+    expect((await get(h, "/filesx")).status).toBe(404);
+  });
+
+  it("a later route replaces an earlier one for the same method and pattern", async () => {
+    const app = new App<Vars>(vars);
+    app.get("/x", async (c) => c.text("first"));
+    app.get("/x", async (c) => c.text("second"));
+    app.post("/x", async (c) => c.text("post"));
+    const h = app.handler();
+    expect(await (await get(h, "/x")).text()).toBe("second");
+    expect(await (await get(h, "/x", "POST")).text()).toBe("post");
+  });
+
   it("serves over HTTP, keeping each request's variables apart", async () => {
     const app = new App<Vars>(vars);
     app.around(async (c, next) => {

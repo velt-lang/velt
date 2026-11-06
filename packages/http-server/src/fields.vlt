@@ -17,6 +17,27 @@ export function isTchar(c: u8): bool {
   return i < 64 ? ((TCHAR_LO >> i) & 1) == 1 : i < 128 && ((TCHAR_HI >> (i - 64)) & 1) == 1;
 }
 
+/// Whether `c` may be in a request's host and port, the `Host` header or `:authority`: a name or
+/// an IP literal in brackets, as RFC 3986 §3.2 has them (unreserved, `%`, sub-delims, `:`, `[`,
+/// `]`). No `/`, `?`, `#` or `\`, which would end the authority of the URL a handler reads, and no
+/// userinfo (`@`).
+export function isAuthorityByte(c: u8): bool {
+  return (c >= 0x30 && c <= 0x3a) ||
+    (c >= 0x41 && c <= 0x5b) ||
+    (c >= 0x61 && c <= 0x7a) ||
+    c == 0x5d ||
+    c == 0x5f ||
+    c == 0x7e ||
+    c == 0x2d ||
+    c == 0x2e ||
+    c == 0x25 ||
+    c == 0x21 ||
+    c == 0x24 ||
+    (c >= 0x26 && c <= 0x2c) ||
+    c == 0x3b ||
+    c == 0x3d;
+}
+
 /// Throws `TypeError` unless `b[nameStart..nameEnd)` is a token and `b[valueStart..valueEnd)` has
 /// no control character other than TAB (Node's `ERR_INVALID_HTTP_TOKEN`, `ERR_INVALID_CHAR`).
 export function checkField(b: u8[], nameStart: i64, nameEnd: i64, valueStart: i64, valueEnd: i64) {

@@ -2,6 +2,7 @@
 
 export { App, Around, OnError, Route } from "./app";
 export { Context } from "./context";
+export { pathOf } from "./path";
 export { Handler, Middleware } from "./types";
 export { cors, CorsOptions } from "./middleware/cors";
 export { logger } from "./middleware/logger";

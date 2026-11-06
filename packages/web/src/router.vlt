@@ -1,6 +1,8 @@
 // web (internal): `Router`, a tree of path segments. A request walks it once, by index, and only
 // the values of parameters and wildcards are copied out of the path.
 
+import { spelled } from "./path";
+
 /** A pattern's segments, by index: `/users/:id/*`. */
 class Node {
   /** The children for literal segments. */
@@ -27,7 +29,8 @@ export class Router {
   /**
    * Adds a route; a later one for the same method and pattern replaces the earlier. A pattern is
    * segments between slashes: literal, `:name`, or a last `*`, which matches the rest of the path,
-   * also nothing. Returns its parameter names in path order, the value of a `*` being named `*`.
+   * also nothing. A literal is compared in the form `pathOf` gives a path. Returns its parameter
+   * names in path order, the value of a `*` being named `*`.
    */
   add(method: string, pattern: string, route: number): string[] {
     let node = this.root;
@@ -52,10 +55,11 @@ export class Router {
         }
         node = next;
       } else {
-        let next = node.literals.get(part);
+        const literal = spelled(part);
+        let next = node.literals.get(literal);
         if (next == null) {
           next = new Node();
-          node.literals.set(part, next);
+          node.literals.set(literal, next);
         }
         node = next;
       }
@@ -65,7 +69,7 @@ export class Router {
   }
 
   /**
-   * The number of the route for `method` and `path` (a pathname starting with `/`), its parameters'
+   * The number of the route for `method` and `path` (from `pathOf`), its parameters'
    * raw values added to `values`; or -1, with the methods the path has added to `allowed` (none:
    * no such path).
    */
