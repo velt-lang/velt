@@ -197,7 +197,7 @@ fn raw_dir(loc: &Locations, sha256: &str) -> PathBuf {
 pub fn checkout(
     loc: &Locations,
     spec: &UrlSpec,
-    checksum: Option<&str>,
+    (checksum, depth): (Option<&str>, crate::tree_stamp::TreeCheck),
 ) -> Result<(PathBuf, String), String> {
     let raw = raw_dir(loc, &spec.sha256);
     if !raw.is_dir() {
@@ -214,7 +214,7 @@ pub fn checkout(
         )
     };
     let links = || check_chosen_links(&dir, spec);
-    let actual = crate::tree_stamp::checksum_checked(loc, &dir, checksum, mismatch, links)?;
+    let actual = crate::tree_stamp::checksum(loc, &dir, (checksum, depth), mismatch, links)?;
     Ok((dir, actual))
 }
 

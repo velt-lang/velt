@@ -143,6 +143,7 @@ fn install(ws: &Workspace, locked: bool) -> Result<(), String> {
         locked,
         update: false,
         target: None,
+        ..Default::default()
     };
     vpm::install::workspace::install(ws, None, &vpm::Locations::from_env()?, opts).map(|_| ())
 }

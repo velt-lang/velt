@@ -23,9 +23,12 @@ fn tree() -> Tree {
 }
 
 fn sum(t: &Tree, expected: Option<&str>) -> Result<String, String> {
-    checksum(&t.loc, &t.dir, expected, |e, a| {
-        format!("mismatch: {e} vs {a}")
-    })
+    sum_by(t, expected, TreeCheck::Files)
+}
+
+fn sum_by(t: &Tree, expected: Option<&str>, depth: TreeCheck) -> Result<String, String> {
+    let mismatch = |e: &str, a: &str| format!("mismatch: {e} vs {a}");
+    checksum(&t.loc, &t.dir, (expected, depth), mismatch, || Ok(()))
 }
 
 #[test]
@@ -91,4 +94,46 @@ fn a_checksum_the_lock_disagrees_with_is_not_stamped() {
     let t = tree();
     assert!(sum(&t, Some("sha256:other")).is_err());
     assert!(!stamp_path(&t.loc, &t.dir).exists());
+}
+
+/// A build looks only at the directories: a file added, removed or renamed is caught; an edit in
+/// place is left to the next check of every file (`velt install`, `update`, `add`).
+#[test]
+fn a_build_looks_only_at_directories() {
+    let t = tree();
+    let real = sum(&t, None).unwrap();
+    // Proof only the directories are looked at: a forged stamp is believed while they are
+    // unchanged, though a file's metadata changed.
+    let stamp = stamp_path(&t.loc, &t.dir);
+    let text = std::fs::read_to_string(&stamp).unwrap();
+    std::fs::write(&stamp, text.replacen(&real, "sha256:stamped", 1)).unwrap();
+    // A file's own times change (as an edit in place can leave its directory's alone).
+    let file = t.dir.join("src/lib.velt");
+    let earlier = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
+    std::fs::File::options()
+        .write(true)
+        .open(&file)
+        .unwrap()
+        .set_modified(earlier)
+        .unwrap();
+    assert_eq!(
+        sum_by(&t, None, TreeCheck::Directories).unwrap(),
+        "sha256:stamped"
+    );
+    // Every file's check sees it, reads the tree, and finds it unchanged.
+    assert_eq!(sum_by(&t, Some(&real), TreeCheck::Files).unwrap(), real);
+    // A file added, removed or renamed changes a directory's times.
+    for change in ["add", "remove", "rename"] {
+        let t = tree();
+        let real = sum(&t, None).unwrap();
+        match change {
+            "add" => std::fs::write(t.dir.join("src/new.velt"), "").unwrap(),
+            "remove" => std::fs::remove_file(t.dir.join("src/lib.velt")).unwrap(),
+            _ => std::fs::rename(t.dir.join("src/lib.velt"), t.dir.join("src/moved.velt")).unwrap(),
+        }
+        assert!(
+            sum_by(&t, Some(&real), TreeCheck::Directories).is_err(),
+            "{change}"
+        );
+    }
 }

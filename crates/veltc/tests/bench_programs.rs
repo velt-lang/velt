@@ -76,6 +76,7 @@ fn package_graph(path: &Path) -> Result<Option<vpm::PackageGraph>, String> {
         locked: true,
         update: false,
         target: Some(velt_codegen_cl::host_triple().to_string()),
+        ..Default::default()
     };
     vpm::install(&root, &vpm::Locations::from_env()?, opts).map(|i| Some(i.graph))
 }

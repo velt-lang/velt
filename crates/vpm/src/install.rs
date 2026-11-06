@@ -13,7 +13,7 @@ use crate::manifest::Manifest;
 use crate::native::build::{build, cargo_available, BuildRequest};
 use crate::native::{missing_target_message, NativeLib, NativeOrigin, NATIVE_ABI};
 use crate::relpath;
-use crate::resolve::{resolve, Resolution, ResolvedPackage, Source};
+use crate::resolve::{Resolution, ResolvedPackage, Source};
 use crate::workspace::{Workspace, WorkspaceFile};
 
 mod allow_native;
@@ -32,6 +32,9 @@ pub struct InstallOptions {
     /// The target triple to provide native libraries for (`None`: none are fetched or built, and
     /// the graph carries no native libraries).
     pub target: Option<String>,
+    /// How much of each fetched tree (git, url) is looked at against its stamp: every file by
+    /// default; a build asks for its directories only ([`crate::tree_stamp::TreeCheck`]).
+    pub tree_check: crate::tree_stamp::TreeCheck,
 }
 
 /// The outcome of an install.
@@ -150,7 +153,7 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
     let loc = &loc.clone().with_manifest(&manifest);
     let existing = Lockfile::read(&root)?;
     let prefer = if opts.update { None } else { existing.as_ref() };
-    let resolution = resolve(&root, &manifest, loc, prefer)?;
+    let resolution = crate::resolve::resolve_with(&root, &manifest, loc, prefer, opts.tree_check)?;
     let mut lockfile = to_lockfile(&resolution, &root, &[]);
     lockfile.allow_native = manifest.allow_native.clone();
     lockfile.allow_native.sort();

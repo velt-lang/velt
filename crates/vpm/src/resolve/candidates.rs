@@ -35,6 +35,8 @@ pub(super) struct Provider<'a> {
     indexes: HashMap<String, Option<Index>>,
     /// Warnings for the user, as candidates were made (`git::link_warnings`).
     pub warnings: BTreeSet<String>,
+    /// How much of a fetched tree is looked at against its stamp (`crate::tree_stamp`).
+    pub check: crate::tree_stamp::TreeCheck,
 }
 
 impl<'a> Provider<'a> {
@@ -51,6 +53,7 @@ impl<'a> Provider<'a> {
             manifests,
             indexes: HashMap::new(),
             warnings: BTreeSet::new(),
+            check: crate::tree_stamp::TreeCheck::Files,
         }
     }
 
@@ -219,8 +222,13 @@ impl Provider<'_> {
             Some((commit, checksum)) => (commit, checksum),
             None => (crate::git::resolve_ref(spec).map_err(named)?, None),
         };
-        let checkout = crate::git::checkout(self.loc, &spec.url, &commit, checksum.as_deref())
-            .map_err(named)?;
+        let checkout = crate::git::checkout(
+            self.loc,
+            &spec.url,
+            &commit,
+            (checksum.as_deref(), self.check),
+        )
+        .map_err(named)?;
         let sub = spec.subdir.as_deref().unwrap_or(".");
         let dir = match &spec.subdir {
             Some(sub) => checkout.join(sub),

@@ -228,7 +228,7 @@ pub fn checkout(
     loc: &Locations,
     url: &str,
     commit: &str,
-    checksum: Option<&str>,
+    (checksum, depth): (Option<&str>, crate::tree_stamp::TreeCheck),
 ) -> Result<PathBuf, String> {
     let dir = repository_dir(loc, url).join(commit);
     if !dir.is_dir() {
@@ -236,12 +236,13 @@ pub fn checkout(
     }
     if checksum.is_some() {
         // From its stamp while the checkout is unchanged (`crate::tree_stamp`).
-        crate::tree_stamp::checksum(loc, &dir, checksum, |expected, actual| {
+        let mismatch = |expected: &str, actual: &str| {
             format!(
                 "checksum mismatch for commit {commit} of {url}: velt.lock.json has {expected}, the checkout hashes to {actual} (delete `{}` to fetch it again)",
                 dir.display()
             )
-        })?;
+        };
+        crate::tree_stamp::checksum(loc, &dir, (checksum, depth), mismatch, || Ok(()))?;
     }
     Ok(dir)
 }

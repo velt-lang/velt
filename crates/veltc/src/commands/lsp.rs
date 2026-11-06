@@ -68,6 +68,7 @@ impl CliLoader {
                 locked: false,
                 update: false,
                 target: Some(velt_codegen_cl::host_triple()),
+                ..Default::default()
             };
             let graph = super::project::Project::open(&root, opts)
                 .map_err(|e| eprintln!("velt-lsp: cannot install `{}`: {e}", root.display()))

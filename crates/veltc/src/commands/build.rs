@@ -314,6 +314,7 @@ pub fn build_options(args: &BuildArgs) -> Result<BuildOptions, String> {
                     locked: args.locked,
                     update: false,
                     target: Some(target),
+                    ..Default::default()
                 })
             };
             let mut project = install(opts.target())?;

@@ -18,7 +18,8 @@ impl Provider<'_> {
             .filter(|p| UrlSpec::parse_source(&p.source).is_some_and(|l| same(&l, spec)))
             .and_then(|p| p.checksum.clone());
         let (dir, checksum) =
-            crate::url_source::checkout(self.loc, spec, locked.as_deref()).map_err(named)?;
+            crate::url_source::checkout(self.loc, spec, (locked.as_deref(), self.check))
+                .map_err(named)?;
         if !crate::probe::is_file(&dir.join(crate::manifest::MANIFEST_FILE)) {
             return Err(named(format!(
                 "{} has no `package.velt`{}",

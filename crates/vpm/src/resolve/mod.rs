@@ -25,6 +25,7 @@ use semver::{Version, VersionReq};
 use crate::locations::Locations;
 use crate::lockfile::Lockfile;
 use crate::manifest::Manifest;
+pub use crate::tree_stamp::TreeCheck;
 use candidates::{Candidate, Provider};
 
 /// Where a resolved package comes from.
@@ -157,9 +158,20 @@ pub fn resolve(
     loc: &Locations,
     prefer: Option<&Lockfile>,
 ) -> Result<Resolution, String> {
+    resolve_with(root_dir, manifest, loc, prefer, TreeCheck::Files)
+}
+
+/// [`resolve`], looking at fetched trees as `check` says (`crate::tree_stamp`).
+pub fn resolve_with(
+    root_dir: &Path,
+    manifest: &Manifest,
+    loc: &Locations,
+    prefer: Option<&Lockfile>,
+    check: TreeCheck,
+) -> Result<Resolution, String> {
     let root_label = format!("{} {}", manifest.package.name, manifest.package.version);
     let root_reqs = dependency_requirements(manifest, root_dir, &[root_label], true)?;
-    let resolution = solve_root(root_dir, root_reqs, loc, prefer, &BTreeMap::new())?;
+    let resolution = solve_root(root_dir, root_reqs, (loc, check), prefer, &BTreeMap::new())?;
     refuse_root_name(root_dir, &manifest.package.name, &resolution)?;
     Ok(resolution)
 }
@@ -209,6 +221,17 @@ pub fn resolve_members(
     loc: &Locations,
     prefer: Option<&Lockfile>,
 ) -> Result<Resolution, String> {
+    resolve_members_with(root_dir, members, loc, prefer, TreeCheck::Files)
+}
+
+/// [`resolve_members`], looking at fetched trees as `check` says (`crate::tree_stamp`).
+pub fn resolve_members_with(
+    root_dir: &Path,
+    members: &BTreeMap<PathBuf, Manifest>,
+    loc: &Locations,
+    prefer: Option<&Lockfile>,
+    check: TreeCheck,
+) -> Result<Resolution, String> {
     let root_reqs = members
         .iter()
         .map(|(dir, m)| Requirement {
@@ -222,18 +245,19 @@ pub fn resolve_members(
             root: true,
         })
         .collect();
-    solve_root(root_dir, root_reqs, loc, prefer, members)
+    solve_root(root_dir, root_reqs, (loc, check), prefer, members)
 }
 
 fn solve_root(
     root_dir: &Path,
     root_reqs: Vec<Requirement>,
-    loc: &Locations,
+    (loc, check): (&Locations, TreeCheck),
     prefer: Option<&Lockfile>,
     manifests: &BTreeMap<PathBuf, Manifest>,
 ) -> Result<Resolution, String> {
     let root_dependencies = root_reqs.iter().map(|r| r.name.clone()).collect();
     let mut provider = Provider::new(loc, root_dir, prefer, manifests);
+    provider.check = check;
     let state = State {
         selected: BTreeMap::new(),
         pending: root_reqs.into(),

@@ -117,11 +117,13 @@ pub fn execute(cmd: Command) -> ExitCode {
             locked,
             update: false,
             target: Some(velt_codegen_cl::host_triple()),
+            ..Default::default()
         }),
         Command::Update => package::install(vpm::InstallOptions {
             locked: false,
             update: true,
             target: Some(velt_codegen_cl::host_triple()),
+            ..Default::default()
         }),
         Command::Publish {
             native_artifacts,
