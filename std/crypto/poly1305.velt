@@ -7,7 +7,12 @@
 
 import { load32le, store32le } from "velt/crypto/chacha20";
 import { CryptoError } from "velt/crypto/errors";
-import { u8x16 } from "velt/simd";
+
+// Declared directly: `velt/simd` is the API, and loading all of it costs a program that only needs
+// this file's AEAD a fifth more compile time. The load is unchecked: `blocks` checks the range.
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
 
 // r's clamp (RFC 8439 §2.5.1) on its two little-endian 64-bit halves.
 const CLAMP0: u64 = 0x0ffffffc0fffffff;
@@ -49,6 +54,9 @@ export class Poly1305 {
 
   // The 16-byte blocks of `m[start..end]` (a whole number of them), each with the 2^128 marker.
   private blocks(m: u8[], start: usize, end: usize) {
+    if (end > m.length) {
+      throw new CryptoError(`Poly1305 range is out of bounds: end ${end}, length ${m.length}`);
+    }
     const r0 = this.r[0];
     const r1 = this.r[1];
     // r1's low two bits are clear, so 2^128 r1 = 5 r1 / 4 (mod 2^130 - 5) is r1 + r1 / 4.
@@ -58,10 +66,10 @@ export class Poly1305 {
     let h2 = this.h[2];
     let off = start;
     while (off < end) {
-      const w = u8x16.load(m, off).asU64x2();
+      const w = velt_simd_u8x16_as_u64x2(velt_simd_u8x16_load(m, off as u64));
       // h += the block, 2^128 included.
-      const m0 = w.lane(0);
-      const m1 = w.lane(1);
+      const m0 = velt_simd_u64x2_lane(w, 0);
+      const m1 = velt_simd_u64x2_lane(w, 1);
       h0 = h0 + m0;
       const c0 = (h0 < m0) as u64;
       const t1 = h1 + m1;

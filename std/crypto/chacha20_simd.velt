@@ -1,17 +1,40 @@
 // velt/crypto (internal): ChaCha20's keystream XORed into data four blocks at a time, one block
 // per lane of a `u32x4` (the vertical layout: vector i holds word i of the four blocks), with
-// the state words in vectors for the whole run. Constant time as the scalar rounds are: adds,
-// XORs and rotations by constants, with branches on the data's length only.
+// the state words in vectors for the whole run. A message shorter than a block takes one scalar
+// block instead, which costs less than four in vectors. Constant time as the scalar rounds are:
+// adds, XORs and rotations by constants, with branches on the data's length only.
 
-import { u32x4, u8x16 } from "velt/simd";
+import { chachaBlock } from "velt/crypto/chacha20";
+import { CryptoError } from "velt/crypto/errors";
 
+// The vector operations used here, declared directly: `velt/simd` is the API, and loading all of
+// it costs a program that only needs ChaCha20 a fifth more compile time. The loads and stores
+// are unchecked: `chachaXorInPlace` checks the range and `x` once, before the first.
+declare function velt_simd_u32x4_splat(x: u32): u32x4;
+declare function velt_simd_u32x4_index(): u32x4;
+declare function velt_simd_u32x4_add(a: u32x4, b: u32x4): u32x4;
+declare function velt_simd_u32x4_xor(a: u32x4, b: u32x4): u32x4;
+declare function velt_simd_u32x4_or(a: u32x4, b: u32x4): u32x4;
+declare function velt_simd_u32x4_shl(v: u32x4, count: u32): u32x4;
+declare function velt_simd_u32x4_shr(v: u32x4, count: u32): u32x4;
+declare function velt_simd_u32x4_zip_low(a: u32x4, b: u32x4): u32x4;
+declare function velt_simd_u32x4_zip_high(a: u32x4, b: u32x4): u32x4;
+declare function velt_simd_u32x4_as_u8x16(v: u32x4): u8x16;
+declare function velt_simd_u32x4_store(v: u32x4, to: u32[], at: u64);
+declare function velt_simd_u64x2_zip_low(a: u64x2, b: u64x2): u64x2;
+declare function velt_simd_u64x2_zip_high(a: u64x2, b: u64x2): u64x2;
+declare function velt_simd_u64x2_as_u8x16(v: u64x2): u8x16;
+declare function velt_simd_u8x16_as_u32x4(v: u8x16): u32x4;
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+declare function velt_simd_u8x16_xor(a: u8x16, b: u8x16): u8x16;
 declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
 declare function velt_simd_u8x16_store(v: u8x16, to: u8[], at: u64);
 
 /**
  * XORs `buf[start..end]` in place with the keystream of `state` from block `counter` on
  * (encryption and decryption are the same operation); `x` is 16 words of scratch. Four blocks
- * at a time, turned into the blocks' bytes by 4x4 transposes.
+ * at a time, turned into the blocks' bytes by 4x4 transposes. Throws `CryptoError`, before
+ * writing anything, when `end` is past `buf` or `x` is too short.
  */
 export function chachaXorInPlace(
   state: u32[],
@@ -21,25 +44,38 @@ export function chachaXorInPlace(
   start: usize,
   end: usize,
 ) {
-  const s0 = u32x4.splat(state[0]);
-  const s1 = u32x4.splat(state[1]);
-  const s2 = u32x4.splat(state[2]);
-  const s3 = u32x4.splat(state[3]);
-  const s4 = u32x4.splat(state[4]);
-  const s5 = u32x4.splat(state[5]);
-  const s6 = u32x4.splat(state[6]);
-  const s7 = u32x4.splat(state[7]);
-  const s8 = u32x4.splat(state[8]);
-  const s9 = u32x4.splat(state[9]);
-  const s10 = u32x4.splat(state[10]);
-  const s11 = u32x4.splat(state[11]);
-  const s13 = u32x4.splat(state[13]);
-  const s14 = u32x4.splat(state[14]);
-  const s15 = u32x4.splat(state[15]);
+  if (end > buf.length || x.length < 16) {
+    throw new CryptoError(
+      `ChaCha20 range is out of bounds: end ${end}, length ${buf.length}, scratch ${x.length}`,
+    );
+  }
+  if (end - start < 64) {
+    if (start < end) {
+      state[12] = counter;
+      chachaBlock(state, x);
+      xorWords(buf, start, end, x);
+    }
+    return;
+  }
+  const s0 = velt_simd_u32x4_splat(state[0]);
+  const s1 = velt_simd_u32x4_splat(state[1]);
+  const s2 = velt_simd_u32x4_splat(state[2]);
+  const s3 = velt_simd_u32x4_splat(state[3]);
+  const s4 = velt_simd_u32x4_splat(state[4]);
+  const s5 = velt_simd_u32x4_splat(state[5]);
+  const s6 = velt_simd_u32x4_splat(state[6]);
+  const s7 = velt_simd_u32x4_splat(state[7]);
+  const s8 = velt_simd_u32x4_splat(state[8]);
+  const s9 = velt_simd_u32x4_splat(state[9]);
+  const s10 = velt_simd_u32x4_splat(state[10]);
+  const s11 = velt_simd_u32x4_splat(state[11]);
+  const s13 = velt_simd_u32x4_splat(state[13]);
+  const s14 = velt_simd_u32x4_splat(state[14]);
+  const s15 = velt_simd_u32x4_splat(state[15]);
   let block = counter;
   let off = start;
   while (off < end) {
-    const s12 = u32x4.splat(block) + u32x4.index();
+    const s12 = add(velt_simd_u32x4_splat(block), velt_simd_u32x4_index());
     let x0 = s0;
     let x1 = s1;
     let x2 = s2;
@@ -58,91 +94,90 @@ export function chachaXorInPlace(
     let x15 = s15;
     for (let r = 0; r < 10; r++) {
       // The column round: quarter rounds on (0, 4, 8, 12), (1, 5, 9, 13), …, a step at a time.
-      x0 = x0 + x4;
-      x1 = x1 + x5;
-      x2 = x2 + x6;
-      x3 = x3 + x7;
-      x12 = rotl16(x12 ^ x0);
-      x13 = rotl16(x13 ^ x1);
-      x14 = rotl16(x14 ^ x2);
-      x15 = rotl16(x15 ^ x3);
-      x8 = x8 + x12;
-      x9 = x9 + x13;
-      x10 = x10 + x14;
-      x11 = x11 + x15;
-      x4 = rotl(x4 ^ x8, 12);
-      x5 = rotl(x5 ^ x9, 12);
-      x6 = rotl(x6 ^ x10, 12);
-      x7 = rotl(x7 ^ x11, 12);
-      x0 = x0 + x4;
-      x1 = x1 + x5;
-      x2 = x2 + x6;
-      x3 = x3 + x7;
-      x12 = rotl(x12 ^ x0, 8);
-      x13 = rotl(x13 ^ x1, 8);
-      x14 = rotl(x14 ^ x2, 8);
-      x15 = rotl(x15 ^ x3, 8);
-      x8 = x8 + x12;
-      x9 = x9 + x13;
-      x10 = x10 + x14;
-      x11 = x11 + x15;
-      x4 = rotl(x4 ^ x8, 7);
-      x5 = rotl(x5 ^ x9, 7);
-      x6 = rotl(x6 ^ x10, 7);
-      x7 = rotl(x7 ^ x11, 7);
+      x0 = add(x0, x4);
+      x1 = add(x1, x5);
+      x2 = add(x2, x6);
+      x3 = add(x3, x7);
+      x12 = rotl16(xor(x12, x0));
+      x13 = rotl16(xor(x13, x1));
+      x14 = rotl16(xor(x14, x2));
+      x15 = rotl16(xor(x15, x3));
+      x8 = add(x8, x12);
+      x9 = add(x9, x13);
+      x10 = add(x10, x14);
+      x11 = add(x11, x15);
+      x4 = rotl(xor(x4, x8), 12);
+      x5 = rotl(xor(x5, x9), 12);
+      x6 = rotl(xor(x6, x10), 12);
+      x7 = rotl(xor(x7, x11), 12);
+      x0 = add(x0, x4);
+      x1 = add(x1, x5);
+      x2 = add(x2, x6);
+      x3 = add(x3, x7);
+      x12 = rotl(xor(x12, x0), 8);
+      x13 = rotl(xor(x13, x1), 8);
+      x14 = rotl(xor(x14, x2), 8);
+      x15 = rotl(xor(x15, x3), 8);
+      x8 = add(x8, x12);
+      x9 = add(x9, x13);
+      x10 = add(x10, x14);
+      x11 = add(x11, x15);
+      x4 = rotl(xor(x4, x8), 7);
+      x5 = rotl(xor(x5, x9), 7);
+      x6 = rotl(xor(x6, x10), 7);
+      x7 = rotl(xor(x7, x11), 7);
       // The diagonal round: (0, 5, 10, 15), (1, 6, 11, 12), (2, 7, 8, 13), (3, 4, 9, 14).
-      x0 = x0 + x5;
-      x1 = x1 + x6;
-      x2 = x2 + x7;
-      x3 = x3 + x4;
-      x15 = rotl16(x15 ^ x0);
-      x12 = rotl16(x12 ^ x1);
-      x13 = rotl16(x13 ^ x2);
-      x14 = rotl16(x14 ^ x3);
-      x10 = x10 + x15;
-      x11 = x11 + x12;
-      x8 = x8 + x13;
-      x9 = x9 + x14;
-      x5 = rotl(x5 ^ x10, 12);
-      x6 = rotl(x6 ^ x11, 12);
-      x7 = rotl(x7 ^ x8, 12);
-      x4 = rotl(x4 ^ x9, 12);
-      x0 = x0 + x5;
-      x1 = x1 + x6;
-      x2 = x2 + x7;
-      x3 = x3 + x4;
-      x15 = rotl(x15 ^ x0, 8);
-      x12 = rotl(x12 ^ x1, 8);
-      x13 = rotl(x13 ^ x2, 8);
-      x14 = rotl(x14 ^ x3, 8);
-      x10 = x10 + x15;
-      x11 = x11 + x12;
-      x8 = x8 + x13;
-      x9 = x9 + x14;
-      x5 = rotl(x5 ^ x10, 7);
-      x6 = rotl(x6 ^ x11, 7);
-      x7 = rotl(x7 ^ x8, 7);
-      x4 = rotl(x4 ^ x9, 7);
+      x0 = add(x0, x5);
+      x1 = add(x1, x6);
+      x2 = add(x2, x7);
+      x3 = add(x3, x4);
+      x15 = rotl16(xor(x15, x0));
+      x12 = rotl16(xor(x12, x1));
+      x13 = rotl16(xor(x13, x2));
+      x14 = rotl16(xor(x14, x3));
+      x10 = add(x10, x15);
+      x11 = add(x11, x12);
+      x8 = add(x8, x13);
+      x9 = add(x9, x14);
+      x5 = rotl(xor(x5, x10), 12);
+      x6 = rotl(xor(x6, x11), 12);
+      x7 = rotl(xor(x7, x8), 12);
+      x4 = rotl(xor(x4, x9), 12);
+      x0 = add(x0, x5);
+      x1 = add(x1, x6);
+      x2 = add(x2, x7);
+      x3 = add(x3, x4);
+      x15 = rotl(xor(x15, x0), 8);
+      x12 = rotl(xor(x12, x1), 8);
+      x13 = rotl(xor(x13, x2), 8);
+      x14 = rotl(xor(x14, x3), 8);
+      x10 = add(x10, x15);
+      x11 = add(x11, x12);
+      x8 = add(x8, x13);
+      x9 = add(x9, x14);
+      x5 = rotl(xor(x5, x10), 7);
+      x6 = rotl(xor(x6, x11), 7);
+      x7 = rotl(xor(x7, x8), 7);
+      x4 = rotl(xor(x4, x9), 7);
     }
-    x0 = x0 + s0;
-    x1 = x1 + s1;
-    x2 = x2 + s2;
-    x3 = x3 + s3;
-    x4 = x4 + s4;
-    x5 = x5 + s5;
-    x6 = x6 + s6;
-    x7 = x7 + s7;
-    x8 = x8 + s8;
-    x9 = x9 + s9;
-    x10 = x10 + s10;
-    x11 = x11 + s11;
-    x12 = x12 + s12;
-    x13 = x13 + s13;
-    x14 = x14 + s14;
-    x15 = x15 + s15;
+    x0 = add(x0, s0);
+    x1 = add(x1, s1);
+    x2 = add(x2, s2);
+    x3 = add(x3, s3);
+    x4 = add(x4, s4);
+    x5 = add(x5, s5);
+    x6 = add(x6, s6);
+    x7 = add(x7, s7);
+    x8 = add(x8, s8);
+    x9 = add(x9, s9);
+    x10 = add(x10, s10);
+    x11 = add(x11, s11);
+    x12 = add(x12, s12);
+    x13 = add(x13, s13);
+    x14 = add(x14, s14);
+    x15 = add(x15, s15);
     // Block j is lane j of every vector: row j of the transpose of each group of four.
-    if (end - off >= 256 && u8x16.fits(buf, off + 240)) {
-      // A whole chunk, inside `buf` by the one check.
+    if (end - off >= 256) {
       xorAt(buf, off, row0(x0, x1, x2, x3));
       xorAt(buf, off + 16, row0(x4, x5, x6, x7));
       xorAt(buf, off + 32, row0(x8, x9, x10, x11));
@@ -214,47 +249,58 @@ export function chachaXorInPlace(
 
 // `buf[at..at + 16] ^= v`, unchecked: the caller checked the range.
 function xorAt(buf: u8[], at: usize, v: u8x16) {
-  velt_simd_u8x16_store(velt_simd_u8x16_load(buf, at as u64).xor(v), buf, at as u64);
+  velt_simd_u8x16_store(
+    velt_simd_u8x16_xor(velt_simd_u8x16_load(buf, at as u64), v),
+    buf,
+    at as u64,
+  );
 }
 
-// `buf[at..at + 16] ^= v`, checked.
-function xorChecked(buf: u8[], at: usize, v: u8x16) {
-  u8x16.load(buf, at).xor(v).store(buf, at);
+function add(a: u32x4, b: u32x4): u32x4 {
+  return velt_simd_u32x4_add(a, b);
+}
+
+function xor(a: u32x4, b: u32x4): u32x4 {
+  return velt_simd_u32x4_xor(a, b);
 }
 
 function rotl(v: u32x4, n: u32): u32x4 {
-  return (v << n) | (v >> (32 - n));
+  return velt_simd_u32x4_or(velt_simd_u32x4_shl(v, n), velt_simd_u32x4_shr(v, 32 - n));
 }
 
 function rotl16(v: u32x4): u32x4 {
-  return (v << 16) | (v >> 16);
+  return velt_simd_u32x4_or(velt_simd_u32x4_shl(v, 16), velt_simd_u32x4_shr(v, 16));
 }
 
 // The 64-bit halves of `a` and `b`: the low ones (`zipLow`) or the high ones.
 function low64(a: u32x4, b: u32x4): u8x16 {
-  return a.asU8x16().asU64x2().zipLow(b.asU8x16().asU64x2()).asU8x16();
+  return velt_simd_u64x2_as_u8x16(velt_simd_u64x2_zip_low(halves(a), halves(b)));
 }
 
 function high64(a: u32x4, b: u32x4): u8x16 {
-  return a.asU8x16().asU64x2().zipHigh(b.asU8x16().asU64x2()).asU8x16();
+  return velt_simd_u64x2_as_u8x16(velt_simd_u64x2_zip_high(halves(a), halves(b)));
+}
+
+function halves(v: u32x4): u64x2 {
+  return velt_simd_u8x16_as_u64x2(velt_simd_u32x4_as_u8x16(v));
 }
 
 // Row j of the transpose of the 4x4 words a, b, c, d (as rows): lane j of each, in turn. The
 // zips the four rows share are computed once after inlining.
 function row0(a: u32x4, b: u32x4, c: u32x4, d: u32x4): u8x16 {
-  return low64(a.zipLow(b), c.zipLow(d));
+  return low64(velt_simd_u32x4_zip_low(a, b), velt_simd_u32x4_zip_low(c, d));
 }
 
 function row1(a: u32x4, b: u32x4, c: u32x4, d: u32x4): u8x16 {
-  return high64(a.zipLow(b), c.zipLow(d));
+  return high64(velt_simd_u32x4_zip_low(a, b), velt_simd_u32x4_zip_low(c, d));
 }
 
 function row2(a: u32x4, b: u32x4, c: u32x4, d: u32x4): u8x16 {
-  return low64(a.zipHigh(b), c.zipHigh(d));
+  return low64(velt_simd_u32x4_zip_high(a, b), velt_simd_u32x4_zip_high(c, d));
 }
 
 function row3(a: u32x4, b: u32x4, c: u32x4, d: u32x4): u8x16 {
-  return high64(a.zipHigh(b), c.zipHigh(d));
+  return high64(velt_simd_u32x4_zip_high(a, b), velt_simd_u32x4_zip_high(c, d));
 }
 
 // XORs the keystream block a | b | c | d into `buf[at..]` up to `end` (`at < end`): whole
@@ -270,16 +316,21 @@ function xorBlock(
   d: u8x16,
 ) {
   if (end - at >= 64) {
-    xorChecked(buf, at, a);
-    xorChecked(buf, at + 16, b);
-    xorChecked(buf, at + 32, c);
-    xorChecked(buf, at + 48, d);
+    xorAt(buf, at, a);
+    xorAt(buf, at + 16, b);
+    xorAt(buf, at + 32, c);
+    xorAt(buf, at + 48, d);
     return;
   }
-  a.asU32x4().store(x, 0);
-  b.asU32x4().store(x, 4);
-  c.asU32x4().store(x, 8);
-  d.asU32x4().store(x, 12);
+  velt_simd_u32x4_store(velt_simd_u8x16_as_u32x4(a), x, 0);
+  velt_simd_u32x4_store(velt_simd_u8x16_as_u32x4(b), x, 4);
+  velt_simd_u32x4_store(velt_simd_u8x16_as_u32x4(c), x, 8);
+  velt_simd_u32x4_store(velt_simd_u8x16_as_u32x4(d), x, 12);
+  xorWords(buf, at, end, x);
+}
+
+// `buf[at..end] ^=` the bytes of the keystream words `x`, a partial block.
+function xorWords(buf: u8[], at: usize, end: usize, x: u32[]) {
   for (let i: usize = 0; i < end - at; i++) {
     buf[at + i] ^= ((x[i >> 2] >>> (8 * ((i & 3) as u32))) & 0xff) as u8;
   }

@@ -4,10 +4,11 @@
 // limbs against a five-limb 26-bit reference (the representation it replaced), over every
 // length up to 1000 and at odd offsets, so every tail and carry path is taken.
 import { describe, expect, it } from "velt/test";
+import { tagMatches } from "velt/crypto/aead_tag";
 import { chachaBlock, chachaSetNonce, chachaState } from "velt/crypto/chacha20";
 import { chachaXorInPlace } from "velt/crypto/chacha20_simd";
 import { Poly1305 } from "velt/crypto/poly1305";
-import { hexEncode } from "velt/encoding/hex";
+import { hexDecode, hexEncode } from "velt/encoding/hex";
 
 // Deterministic bytes (xorshift), so a failure reproduces.
 function noise(n: usize, seed: u32): u8[] {
@@ -149,6 +150,50 @@ describe("ChaCha20's four-block path", () => {
   });
 });
 
+describe("The checks before the unchecked loads", () => {
+  it("throws before ChaCha20 writes anything for a range or scratch that does not fit", () => {
+    const state = chachaState(noise(32, 7));
+    chachaSetNonce(state, noise(12, 9));
+    const x: u32[] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    const bad = "ChaCha20 range is out of bounds";
+    for (const size of [10 as usize, 63, 64, 255, 256, 300]) {
+      const buf = noise(size, 5);
+      const before = hexEncode(buf);
+      expect(() => chachaXorInPlace(state, x, 1, buf, 0, size + 1)).toThrow(bad);
+      expect(() => chachaXorInPlace(state, x, 1, buf, 0, size + 256)).toThrow(bad);
+      expect(() => chachaXorInPlace(state, [0, 0, 0], 1, buf, 0, size)).toThrow(bad);
+      expect(hexEncode(buf)).toBe(before);
+    }
+  });
+
+  it("throws before Poly1305 reads past the message", () => {
+    const p = new Poly1305(noise(32, 3));
+    expect(() => p.updatePadded(noise(16, 4), 0, 32)).toThrow("Poly1305 range is out of bounds");
+    expect(() => p.updatePadded(noise(40, 4), 32, 48)).toThrow("Poly1305 range is out of bounds");
+  });
+
+  it("compares a tag in all 16 bytes, at its offset, and refuses one past the buffer", () => {
+    const tag = noise(16, 21);
+    const buf: u8[] = Buffer.alloc(16 + 40);
+    for (let at: usize = 0; at <= 40; at += 5) {
+      for (let i: usize = 0; i < buf.length; i++) {
+        buf[i] = (tag[i % 16] ^ 0xff) as u8;
+      }
+      for (let i: usize = 0; i < 16; i++) {
+        buf[at + i] = tag[i];
+      }
+      expect(tagMatches(tag, buf, at)).toBe(true);
+      for (let i: usize = 0; i < 16; i++) {
+        buf[at + i] ^= 0x10;
+        expect(tagMatches(tag, buf, at)).toBe(false);
+        buf[at + i] ^= 0x10;
+      }
+    }
+    expect(() => tagMatches(tag, buf, 41)).toThrow("tag range is out of bounds");
+    expect(() => tagMatches(tag, noise(15, 1), 0)).toThrow("tag range is out of bounds");
+  });
+});
+
 describe("Poly1305 in 64-bit limbs", () => {
   it("matches the 26-bit reference for every length up to 1000", () => {
     let failures = 0;
@@ -177,6 +222,25 @@ describe("Poly1305 in 64-bit limbs", () => {
       }
     }
     expect(failures).toBe(0);
+  });
+
+  it("reduces an accumulator at 2^130 and above, reached with the largest r", () => {
+    // Each message makes the reduction leave h = 2^130 + d (top limb 4, its largest), checked
+    // against BigInt and OpenSSL's POLY1305: d = 0, 4 and 2, the last with s = all kinds of bits.
+    const r = "ffffff0ffcffff0ffcffff0ffcffff0f";
+    const zero = "00000000000000000000000000000000";
+    const s = "bb83212779c4c7038579dfb56e40cbf5";
+    const m0 = "14f582a4e368487ab873b2432a9076b38647e892cb214172d8bccd8d6d3f22dd";
+    const m4 = "2ec4d194b33cca819ce1eebfbeea2130d3c3c9c05c06af9ce5dd6382f77c1e60";
+    const m2 = "c166c0135042fdb2f978112e79b970f9b77faebb97469c3cf164e9e7d87352f7";
+    expect(poly64(hexDecode(r + zero), hexDecode(m0))).toBe("05000000000000000000000000000000");
+    expect(poly64(hexDecode(r + zero), hexDecode(m4))).toBe("09000000000000000000000000000000");
+    expect(poly64(hexDecode(r + s), hexDecode(m2))).toBe("c283212779c4c7038579dfb56e40cbf5");
+    // An all-ones block on top carries out of both limbs: the top limb is 6 before the product,
+    // the largest the products ever see.
+    const ones = "ffffffffffffffffffffffffffffffff";
+    expect(poly64(hexDecode(r + s), hexDecode(m2 + ones))).toBe("b08321af57c4c78b6379df3d4d40cb7d");
+    expect(poly26(hexDecode(r + s), hexDecode(m2 + ones))).toBe("b08321af57c4c78b6379df3d4d40cb7d");
   });
 
   it("carries into the top limb when the reduction wraps both 64-bit limbs", () => {
