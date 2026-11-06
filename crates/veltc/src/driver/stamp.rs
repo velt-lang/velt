@@ -294,8 +294,16 @@ pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
 }
 
 /// Append `lines` (head, path) to stamp text `s`: the directory table, the entries naming their
-/// directory by its number, and `end`.
+/// directory by its number, and `end`. A path or head holding a line break (`\n`, or `\r`,
+/// which `str::lines` drops before one) would read as more lines than it is, and a `d ` line
+/// in it as another directory of the table: then the stamp says only that, and never matches,
+/// so such a build is never a no-op.
 fn write_entries(s: &mut String, lines: &[(String, String)]) {
+    let breaks = |t: &str| t.contains(['\n', '\r']);
+    if (lines.iter()).any(|(head, path)| breaks(head) || breaks(path)) {
+        s.push_str("unusable: a path holds a line break\n");
+        return;
+    }
     let mut dirs: Vec<&str> = vec![];
     let mut index: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     // Each line's head, its directory's number and name when the path has a directory, and the
@@ -493,7 +501,10 @@ fn check_all(
     let mut std = vec![];
     let mut rest = first.into_iter().chain(lines.by_ref());
     // One buffer for every expanded path: this loop runs over every entry of every no-op build.
+    // Entries come in runs from one directory, so its text stays in `buf` while the next entry
+    // names the same number (`last`: that number, and where the name starts in `buf`).
     let mut buf = String::new();
+    let mut last: Option<(&str, usize)> = None;
     for (entries, line) in rest.by_ref().enumerate() {
         if let Some(n) = line.strip_prefix("end ") {
             // Whole: as many entries as it says, and nothing after.
@@ -504,9 +515,15 @@ fn check_all(
         let path = match path.strip_prefix('~') {
             Some(short) => {
                 let (n, name) = short.split_once('/')?;
-                buf.clear();
-                buf.push_str(dirs.get(n.parse::<usize>().ok()?)?);
-                buf.push(std::path::MAIN_SEPARATOR);
+                match last {
+                    Some((at, len)) if at == n => buf.truncate(len),
+                    _ => {
+                        buf.clear();
+                        buf.push_str(dirs.get(n.parse::<usize>().ok()?)?);
+                        buf.push(std::path::MAIN_SEPARATOR);
+                        last = Some((n, buf.len()));
+                    }
+                }
                 buf.push_str(name);
                 Path::new(buf.as_str())
             }
