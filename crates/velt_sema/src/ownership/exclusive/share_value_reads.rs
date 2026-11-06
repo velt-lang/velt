@@ -107,8 +107,7 @@ fn share_reads(
 ) -> bool {
     if let Some((p, mode)) = col.place_of(e) {
         let take = mode == UseMode::Borrow && clash(&p);
-        let promise = matches!(col.cx.ty.kind(e.ty), TyKind::Promise(..));
-        if take && !promise && (identity || read_by_value(col.cx, e.ty)) {
+        if take && (identity || read_by_value(col.cx, e.ty)) {
             make_share(e);
             return true;
         }
@@ -148,6 +147,8 @@ fn holds_values(cx: &Ctx, t: TyId, depth: u32) -> bool {
         | TyKind::Literal(_) => true,
         TyKind::Dyn(..) => matches!(cx.dynamic(t), Some(Dynamic::Any | Dynamic::Unknown)),
         TyKind::Option(x, _) => holds_values(cx, *x, depth + 1),
+        // One promise, shared: replacing the place leaves it as it is.
+        TyKind::Promise(..) => true,
         TyKind::Tuple(xs) => all(Box::new(xs.iter().copied())),
         TyKind::Adt(d, _) => match (cx.adt(*d), cx.enum_info(*d)) {
             (Some(a), _) => {

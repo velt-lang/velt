@@ -80,9 +80,7 @@ impl FnLower<'_, '_> {
         // cell by a closure the callee runs, one in a field by a callee that may write the field
         // (replaceable.rs), and the callee may read its parameter after that. JavaScript's callee
         // keeps what it was passed.
-        let replaceable =
-            self.in_array_buffer(a) || self.in_module_slot(a) || self.may_replace(a, reach);
-        if replaceable && self.cx.share_kind(ty) != ShareKind::Promise {
+        if self.in_array_buffer(a) || self.in_module_slot(a) || self.may_replace(a, reach) {
             // Retaining the containers does not keep an element in place: a push through
             // another reference to the array moves its buffer, and `pop`, `truncate` or a store
             // drops the element. The callee gets a share of it instead (a copy for elements
