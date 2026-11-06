@@ -291,40 +291,6 @@ fn syntax_errors_are_reported_as_is() {
     assert!(!diags.is_empty());
 }
 
-// Hostile input: manifests also come from uploaded archives (the registry server).
-
-#[test]
-fn oversized_manifest_is_refused_before_parsing() {
-    let src = with(&format!("/*{}*/", "x".repeat(MAX_BYTES)));
-    let (message, _) = error(&src);
-    assert_eq!(message, "the manifest is larger than 64 KiB");
-}
-
-#[test]
-fn deep_nesting_is_an_error_not_a_crash() {
-    for depth in [300, 30_000] {
-        let src = with(&format!(
-            "paths: {}{}",
-            "[".repeat(depth),
-            "]".repeat(depth)
-        ));
-        assert!(src.len() <= MAX_BYTES);
-        assert!(Manifest::read(FILE, &src).is_err());
-    }
-}
-
-#[test]
-fn too_many_values_are_refused() {
-    let array = with(&format!("paths: [{}]", "0,".repeat(MAX_VALUES)));
-    let many_keys: String = (0..MAX_VALUES / 2).map(|i| format!("k{i}:[0],")).collect();
-    let keys = with(&format!("paths: {{ {many_keys} }}"));
-    for src in [array, keys] {
-        assert!(src.len() <= MAX_BYTES, "{}", src.len());
-        let (message, _) = error(&src);
-        assert_eq!(message, "the manifest has more than 10000 values");
-    }
-}
-
 #[test]
 fn edit_distance_counts_edits() {
     assert_eq!(edit_distance("dependencies", "dependecies"), 1);
@@ -770,4 +736,5 @@ fn std_imports_file() {
 
 mod allow_native;
 mod host;
+mod limits;
 mod native_c;

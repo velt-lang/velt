@@ -213,6 +213,9 @@ impl Reader<'_> {
             );
             return None;
         }
+        // A packed array of numbers is the `Array` of its literals: each one counts as a value.
+        let unpacked = expr.unpacked();
+        let expr: &ast::Expr = &unpacked;
         let kind = match &expr.kind {
             ExprKind::Lit(Lit::Str(s)) => ValueKind::Str(s.clone()),
             ExprKind::Lit(Lit::Int { .. } | Lit::Float { .. }) => ValueKind::Num,
