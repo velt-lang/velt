@@ -916,6 +916,24 @@ Step 1 lands in layers, each its own pull request:
      is for); `packages/sqlite` on `sources`. Sources fetched from `git` or a `url` with a pinned
      hash are #2367's: its `fetch` is a key beside these fields, and only changes where `sources`
      are read from.
+8. C structs, in layers (plan on #2187). Layer 1, the language:
+   - `declare c struct S { x: f64; y: f64; }` is a struct (`TypeDecl::c_struct`) of fields only:
+     no methods, constructor, type parameters, defaults, optional, private or static fields,
+     `implements`, and at least one field. Fields are integers, `f32`, `f64`, `bool`, other C
+     structs and tuples of one such type as C arrays (`[f32, f32, f32]` for `float[3]`); a struct
+     can't hold itself by value.
+   - In Velt it is a value: Copy (so never counted or boxed, and lowering holds it inline, in
+     declaration order at natural alignment, which is C's layout for these fields on every 64-bit
+     target), built from a literal of its type, with read-only fields (a changed copy is
+     `{ ...v, x: … }`) and no identity, so `==` on it is an error until value structs (#641)
+     compare contents. This needs nothing of #641: main already holds unshared object types
+     inline.
+   - `Ptr<S>` is a C pointer, like `Ptr` to a `declare c type`. A C struct isn't raw API: a
+     package's users can import it.
+   - Not yet: pointer fields (`Ptr<T> | null` is an option of the address in Velt, larger than
+     C's pointer, so they get their own storage, the address with `NULL` as `null`); structs by
+     value in `declare c` signatures, `Out<S>` and `Ref<S>` (the shared classifier, both backends);
+     the header check of structs; the differential ABI test.
 
 ## Decisions
 

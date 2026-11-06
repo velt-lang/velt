@@ -10,6 +10,15 @@ use crate::Fix;
 /// Check one item (its members and nested items are visited separately).
 pub(super) fn item(item: &ast::Item, cx: &mut Cx) {
     match &item.kind {
+        I::Struct(s) if s.c_struct => cx.error(
+            "declare-fn",
+            cx.keyword(item.span, "declare"),
+            format!(
+                "`declare c struct {}` declares a C struct, which JavaScript doesn't have",
+                s.name.name
+            ),
+            &["keep native bindings out of code shared with TypeScript"],
+        ),
         I::Struct(t) => cx.error(
             "struct",
             cx.keyword(item.span, "struct"),

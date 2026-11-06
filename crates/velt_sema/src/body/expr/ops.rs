@@ -676,9 +676,10 @@ impl FnCx<'_, '_> {
 
     /// Can `==` compare values of `t`? Interface and function values compare by identity
     /// (#365): the object behind an interface value, and the function value itself (each
-    /// evaluation of an arrow is a new one, as in JS).
+    /// evaluation of an arrow is a new one, as in JS). A C struct is a value with no identity,
+    /// and comparing its contents waits for value structs (#641).
     fn equatable(&self, t: TyId) -> bool {
-        !matches!(self.cx.ty.kind(t), TyKind::Unit | TyKind::Simd(_))
+        !matches!(self.cx.ty.kind(t), TyKind::Unit | TyKind::Simd(_)) && !self.cx.is_c_struct_ty(t)
     }
 
     /// Validate `lhs op rhs`; returns the (common) operand type, or None after reporting an error.
@@ -767,6 +768,9 @@ impl FnCx<'_, '_> {
             let mut d = Diagnostic::error(message, span);
             if matches!(self.cx.ty.kind(t), TyKind::Simd(_)) {
                 d = d.with_note(simd_method_note(op));
+            }
+            if self.cx.is_c_struct_ty(t) {
+                d = d.with_note("a C struct is a value without an identity: compare its fields");
             }
             self.cx.error(d);
             return None;

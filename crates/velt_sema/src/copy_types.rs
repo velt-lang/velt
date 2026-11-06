@@ -43,8 +43,12 @@ impl Ctx<'_> {
             // Copying a lock would duplicate its lock word.
             TyKind::Adt(d, _) if Some(d) == self.mutex_ty() || Some(d) == self.rwlock_ty() => false,
             TyKind::Adt(d, args) => {
-                // Objects (structs included, semantics stage 2) are references: never Copy.
+                // Objects (structs included, semantics stage 2) are references: never Copy. A
+                // C struct is a value (collect/c_struct.rs), whose fields all are Copy.
                 let tys: Vec<TyId> = match &self.info[d.0 as usize] {
+                    DefInfo::Adt(a) if a.decl.is_some_and(|t| t.c_struct) => {
+                        a.fields.iter().map(|f| f.ty).collect()
+                    }
                     DefInfo::Enum(e) => e
                         .variants
                         .iter()

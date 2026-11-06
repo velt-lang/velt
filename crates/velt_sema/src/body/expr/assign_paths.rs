@@ -42,10 +42,17 @@ impl FnCx<'_, '_> {
         let generated_build =
             matches!(base.kind, H::Local(l, _) if self.f.built_locals.contains(&l));
         if readonly && !in_ctor && !generated_build {
-            self.cx.err(
+            let mut diag = velt_common::Diagnostic::error(
                 format!("cannot assign to `{}`: it is a readonly field", prop.name),
                 prop.span,
             );
+            if self.cx.is_c_struct(d) {
+                diag = diag.with_note(format!(
+                    "a C struct is a value: make a changed copy (`{{ ...v, {}: … }}`)",
+                    prop.name
+                ));
+            }
+            self.cx.error(diag);
         }
     }
 

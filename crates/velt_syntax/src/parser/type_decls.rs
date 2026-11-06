@@ -104,6 +104,7 @@ impl<'a> Parser<'a> {
             methods: vec![],
             is_abstract,
             c_type: false,
+            c_struct: false,
         };
         self.parse_members(|p| {
             let member = p.parse_member()?;

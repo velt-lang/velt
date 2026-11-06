@@ -23,6 +23,7 @@
 mod abstract_fields;
 mod abstracts;
 pub(crate) mod c_sig;
+mod c_struct;
 mod classes;
 mod comparable;
 mod constants;
@@ -107,6 +108,7 @@ fn collect_items(cx: &mut Ctx, items: &ItemDefs, from: Added) {
     field_only::declare(cx, from.defs);
     crate::type_defaults::check_from(cx, from);
     shapes::resolve_shapes(cx, items);
+    c_struct::check_all(cx, items);
     cx.shapes_done = true;
     cx.check_deferred_ts_returns();
     sigs::resolve_sigs(cx, items, from.modules);

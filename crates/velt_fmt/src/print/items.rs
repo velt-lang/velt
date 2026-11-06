@@ -55,6 +55,7 @@ impl<'a> Printer<'a> {
             ItemKind::Import(import) => self.import(import, item.exported),
             ItemKind::Function(f) if f.sig.generator.is_some() => self.generated_fn(f),
             ItemKind::Function(f) => return self.fn_decl_with(f, "function ", export),
+            ItemKind::Struct(decl) if decl.c_struct => self.type_decl("declare c struct ", decl),
             ItemKind::Struct(decl) => self.type_decl("struct ", decl),
             ItemKind::Class(decl) if decl.c_type => {
                 cat!["declare c type ", decl.name.name.clone(), ";"]

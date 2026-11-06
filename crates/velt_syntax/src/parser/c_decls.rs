@@ -1,6 +1,6 @@
 //! C declarations (docs/internals/design/c-ffi.md): `declare c("<library>") function name(…): R;`,
-//! a function of a native library, called through the C ABI from `unsafe` code; `declare c type`
-//! and `declare c const`. `c` is a word only there.
+//! a function of a native library, called through the C ABI from `unsafe` code; `declare c type`,
+//! `declare c struct` and `declare c const`. `c` is a word only there.
 
 use super::{Fail, PResult, Parser};
 use crate::ast::*;
@@ -15,6 +15,21 @@ impl<'a> Parser<'a> {
     /// At `declare c type`.
     pub(super) fn at_c_type(&mut self) -> bool {
         self.at_kw(Kw::Declare) && self.nth_word(1, "c") && self.nth(2) == Tok::Kw(Kw::Type)
+    }
+
+    /// At `declare c struct`.
+    pub(super) fn at_c_struct(&mut self) -> bool {
+        self.at_kw(Kw::Declare) && self.nth_word(1, "c") && self.nth(2) == Tok::Kw(Kw::Struct)
+    }
+
+    /// `declare c struct S { fields }` (the caller checked [`Self::at_c_struct`]): a struct with
+    /// C's layout. It parses as any struct does; sema says what a C struct can't have.
+    pub(super) fn parse_c_struct(&mut self) -> PResult<TypeDecl> {
+        self.bump(); // declare
+        self.bump(); // c
+        let mut decl = self.parse_type_decl(false)?;
+        decl.c_struct = true;
+        Ok(decl)
     }
 
     /// At `declare c const`.
@@ -82,6 +97,7 @@ impl<'a> Parser<'a> {
             methods: vec![],
             is_abstract: false,
             c_type: true,
+            c_struct: false,
         })
     }
 
