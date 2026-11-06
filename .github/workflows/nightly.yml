@@ -210,6 +210,9 @@ jobs:
         with:
           tools: false
       - uses: ./.github/actions/zig
+      # The tests that link a program need the runtime, which `cargo test` doesn't build.
+      - name: the runtime
+        run: cargo build -p velt_rt
       - name: declarations against headers, every target
         run: cargo test --workspace --test c_headers -- --nocapture
       # The pin itself: the release still downloads and matches its SHA-256.
