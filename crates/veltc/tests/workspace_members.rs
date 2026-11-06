@@ -369,3 +369,56 @@ fn members_whose_tests_cannot_have_changed_are_not_started() {
         assert!(ran.contains(&"a".to_string()), "{}", text(&o.stderr));
     }
 }
+
+/// A member whose build stamp never matches (a dependency at a path with a line break) has no
+/// member stamp: an empty list of what it read must not report a stale pass.
+#[cfg(unix)]
+#[test]
+fn a_member_whose_build_stamp_never_matches_always_runs() {
+    let tmp = test_dir::TestDir::new();
+    let r = Repo {
+        dir: tmp.path().to_path_buf(),
+        _tmp: tmp,
+    };
+    r.write(
+        "velt.workspace.velt",
+        "export const workspace: Workspace = { members: [\"app\"] };\n",
+    );
+    r.write(
+        "app/package.velt",
+        "export const pkg: Package = { name: \"app\", version: \"0.1.0\", dependencies: { lib: { path: \"../li\\nb\" } } };\n",
+    );
+    r.write(
+        "li\nb/package.velt",
+        "export const pkg: Package = { name: \"lib\", version: \"0.1.0\" };\n",
+    );
+    r.write("li\nb/src/lib.velt", "export const v = 1;\n");
+    r.write("app/src/n.velt", "export const n = 1;\n");
+    r.write(
+        "app/tests/x.test.velt",
+        "import { v } from \"lib\";\nimport { n } from \"../src/n\";\nimport { expect } from \"velt/test\";\n\nexport function test_x() {\n  expect(v + n).toBe(2);\n}\n",
+    );
+    for _ in 0..3 {
+        let (ran, unchanged) = ran_and_unchanged(&r.ok(".", &["test"]).1);
+        assert_eq!((ran, unchanged.len()), (vec!["app".to_string()], 0));
+    }
+    // Each edit that makes the test fail is seen: in the member, and behind the line break.
+    for (file, broken, fixed) in [
+        (
+            "app/src/n.velt",
+            "export const n = 2;\n",
+            "export const n = 1;\n",
+        ),
+        (
+            "li\nb/src/lib.velt",
+            "export const v = 2;\n",
+            "export const v = 1;\n",
+        ),
+    ] {
+        r.write(file, broken);
+        let o = r.velt(".", &["test"], &[]);
+        assert!(!o.status.success(), "{file:?}: {}", text(&o.stderr));
+        r.write(file, fixed);
+        r.ok(".", &["test"]);
+    }
+}

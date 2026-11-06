@@ -365,7 +365,7 @@ fn directories_are_written_once_and_read_back_whole() {
         !text.contains(&format!("\t{shown}{}", std::path::MAIN_SEPARATOR)),
         "{text}"
     );
-    let whole = entry_lines(&text);
+    let whole = entry_lines(&text).unwrap();
     assert!(
         whole.contains(&format!("probe f\t{}", dir.join("a.velt").display()))
             || whole
@@ -376,7 +376,13 @@ fn directories_are_written_once_and_read_back_whole() {
     assert_eq!(check(&text, &Key::of(&[b"opts"]), LATER), Some(2));
     // `compose` of the whole lines gives the same entries back.
     let again = compose(&Key::of(&[b"opts"]), 2, &whole);
-    assert_eq!(entry_lines(&again), whole);
+    assert_eq!(entry_lines(&again), Some(whole));
+    // An entry dropped, or the end cut off: the entries aren't known.
+    let mut lines: Vec<&str> = text.lines().collect();
+    let entry = lines.iter().position(|l| l.starts_with("probe ")).unwrap();
+    lines.remove(entry);
+    assert_eq!(entry_lines(&(lines.join("\n") + "\n")), None);
+    assert_eq!(entry_lines(text.rsplit_once("end ").unwrap().0), None);
 }
 
 #[test]

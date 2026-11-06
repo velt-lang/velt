@@ -90,8 +90,8 @@ fn executable(
     // that now resolves to another file (`./gen` to a new `gen.velt` over `gen/index.velt`) is
     // a change. The host's own objects and link inputs are not the generators' inputs.
     let text = std::fs::read_to_string(stamp::path(&exe)).unwrap_or_default();
-    let files = stamp::entry_lines(&text)
-        .into_iter()
+    // A stamp whose entries aren't known gives none, and an empty list is never cached.
+    let files = (stamp::entry_lines(&text).unwrap_or_default().into_iter())
         .filter(|l| {
             ["file ", "dir ", "probe ", "real "]
                 .iter()

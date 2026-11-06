@@ -79,7 +79,7 @@ fn read_files<'a>(entry: &'a [u8], key: &Key) -> Option<(Vec<String>, &'a [u8])>
     let len: usize = line()?.parse().ok()?;
     let text = std::str::from_utf8(entry.get(pos..pos + len)?).ok()?;
     stamp::check(text, key, Some(written))?;
-    let files = stamp::entry_lines(text);
+    let files = stamp::entry_lines(text)?;
     Some((files, &entry[pos + len..]))
 }
 

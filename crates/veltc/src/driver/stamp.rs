@@ -299,7 +299,7 @@ pub(super) fn render(key: &Key, sm: &SourceMap, built: &Built) -> String {
 /// in it as another directory of the table: then the stamp says only that, and never matches,
 /// so such a build is never a no-op.
 fn write_entries(s: &mut String, lines: &[(String, String)]) {
-    let breaks = |t: &str| t.contains(['\n', '\r']);
+    let breaks = |t: &str| t.bytes().any(|b| matches!(b, b'\n' | b'\r'));
     if (lines.iter()).any(|(head, path)| breaks(head) || breaks(path)) {
         s.push_str("unusable: a path holds a line break\n");
         return;
@@ -371,20 +371,22 @@ pub(crate) fn outside(exe: &Path) -> Option<String> {
 }
 
 /// The entries of stamp `text`: its lines between the header and `end`, with each path whole
-/// (as [`compose`] takes them).
-pub(crate) fn entry_lines(text: &str) -> Vec<String> {
+/// (as [`compose`] takes them). `None` for a stamp that isn't whole (no `end`, or another count)
+/// or never matches (a path with a line break): what it records isn't known, so whoever builds
+/// on its entries must not take an empty list for "nothing to check".
+pub(crate) fn entry_lines(text: &str) -> Option<Vec<String>> {
     let mut lines = text.lines();
     let _header: Vec<&str> = lines.by_ref().take(5).collect();
     let (dirs, first) = dir_table(&mut lines);
-    first
-        .into_iter()
-        .chain(lines)
-        .take_while(|l| !l.starts_with("end "))
-        .filter_map(|l| {
-            let (head, path) = l.split_once('\t')?;
-            Some(format!("{head}\t{}", expand(path, &dirs)?))
-        })
-        .collect()
+    let mut out = vec![];
+    for line in first.into_iter().chain(lines) {
+        if let Some(n) = line.strip_prefix("end ") {
+            return (n.parse() == Ok(out.len())).then_some(out);
+        }
+        let (head, path) = line.split_once('\t')?;
+        out.push(format!("{head}\t{}", expand(path, &dirs)?));
+    }
+    None
 }
 
 /// A stamp of `key` with `objects` (a count its maker gives meaning to) and `entries` (lines as
