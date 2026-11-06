@@ -94,7 +94,7 @@ fn call_compares(src: &str) -> usize {
         .find(|f| {
             f.lines()
                 .next()
-                .is_some_and(|l| l.contains("_Ganycall_") && l.contains("3a_3aC"))
+                .is_some_and(|l| l.contains("@\"_Ganycall_1C\""))
         })
         .unwrap_or_else(|| panic!("no `AnyCall` glue of `C`"));
     body.lines()
