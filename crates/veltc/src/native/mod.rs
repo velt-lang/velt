@@ -187,7 +187,8 @@ fn ty_name(p: &hir::Program, t: TyId) -> String {
 /// Check every `declare function` outside the standard library (`std_files`: the files of std
 /// modules) against the native library of its own package (`graph`, `None` for a program without
 /// packages), and every `declare system function` against the table of system functions of
-/// `target` (system.rs); see the module docs. Reports errors into `diags`.
+/// `target` (system.rs); see the module docs. Reports errors into `diags`, and returns which C
+/// libraries were checked against their headers, for [`note_checked`].
 pub fn check_declares(
     p: &hir::Program,
     sm: &SourceMap,
@@ -196,7 +197,7 @@ pub fn check_declares(
     std_files: &HashSet<FileId>,
     target: &str,
     diags: &mut Diagnostics,
-) {
+) -> CChecked {
     let io = IoTypes::find(p, sm, std_root);
     let mut checked = c_decls::Checked::default();
     for def in &p.defs {
@@ -257,6 +258,7 @@ pub fn check_declares(
             Err(why) => diags.push(Diagnostic::error(why, f.span)),
         }
     }
+    headers::check(p, sm, graph, std_files, target, diags)
 }
 
 /// The error for a `declare function` in a module whose package (`pkg`; `None`: a program
@@ -337,7 +339,10 @@ pub fn links(graph: Option<&PackageGraph>, release: bool) -> Vec<velt_link::Nati
 }
 
 mod c_decls;
+mod headers;
 pub use c_decls::{link_args as c_link_args, links as c_links};
+pub use headers::{stamp_inputs as c_stamp_inputs, Checked as CChecked};
+pub use report::note_checked;
 mod report;
 mod system;
 pub use report::{json as native_json, render as render_native, NativePackage};

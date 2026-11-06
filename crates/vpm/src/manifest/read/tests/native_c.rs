@@ -229,6 +229,18 @@ fn headers_and_unchecked_are_read_checked_and_written_back() {
         "<a//b.h>",
         "<a/>",
         "",
+        // Written into a `#include` or read as a flag.
+        "./x.h",
+        "native/./x.h",
+        "<./x.h>",
+        "-Dx",
+        "native/-Dx",
+        "<-Dx>",
+        "native/x\n.h",
+        "<x\n.h>",
+        "native/x y.h",
+        "native/x\".h",
+        "<x",
     ] {
         let (message, _) = error(&with(&format!(
             "native: {{ c: {{ x: {{ headers: [{bad:?}] }} }} }}"

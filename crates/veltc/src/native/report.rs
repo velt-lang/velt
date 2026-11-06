@@ -28,8 +28,11 @@ pub struct NativePackage {
 /// declarations against C headers").
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Checked {
-    /// It lists headers (checked against them comes with the header check).
+    /// Against the headers package.vlt lists, on the build's target.
     Headers,
+    /// It lists headers, but no check looked here: the target has no C headers (WebAssembly),
+    /// or nothing of the library is declared, or the package was fetched.
+    Listed,
     /// `unchecked: true`: the library has no headers.
     Unchecked,
     /// It lists no headers (yet).
@@ -40,14 +43,15 @@ impl Checked {
     fn of(lib: &vpm::manifest::CLibraryConfig) -> Checked {
         match (lib.unchecked, lib.headers.is_empty()) {
             (true, _) => Checked::Unchecked,
-            (false, false) => Checked::Headers,
+            (false, false) => Checked::Listed,
             (false, true) => Checked::NoHeaders,
         }
     }
 
     fn word(self) -> &'static str {
         match self {
-            Checked::Headers => "headers listed",
+            Checked::Headers => "headers checked",
+            Checked::Listed => "headers listed",
             Checked::Unchecked => "unchecked",
             Checked::NoHeaders => "no headers",
         }
@@ -120,6 +124,27 @@ pub(super) fn native_packages(
         }
     }
     out
+}
+
+/// Say which of `packages`' C libraries were checked against their headers (`checked`, by the
+/// roots in `graph`): only those may be listed as checked.
+pub fn note_checked(
+    packages: &mut [NativePackage],
+    graph: Option<&PackageGraph>,
+    checked: &super::CChecked,
+) {
+    let Some(graph) = graph else { return };
+    for package in graph.packages() {
+        let Some(libraries) = checked.get(&package.root) else {
+            continue;
+        };
+        let listed = packages.iter_mut().find(|p| p.name == package.name);
+        for (name, _, state) in listed.into_iter().flat_map(|p| &mut p.c_libraries) {
+            if libraries.contains_key(name) {
+                *state = Checked::Headers;
+            }
+        }
+    }
 }
 
 fn relative(path: &Path, root: &Path) -> String {
@@ -208,6 +233,40 @@ pub fn json(packages: &[NativePackage]) -> Value {
 mod tests {
     use super::*;
 
+    /// Only what the check reports is "headers checked"; a list of headers alone isn't.
+    #[test]
+    fn a_library_is_checked_only_when_the_check_says_so() {
+        let lib = |headers: &[&str], unchecked| vpm::manifest::CLibraryConfig {
+            headers: headers.iter().map(|h| h.to_string()).collect(),
+            unchecked,
+            ..Default::default()
+        };
+        assert_eq!(Checked::of(&lib(&["<a.h>"], false)), Checked::Listed);
+        assert_eq!(Checked::of(&lib(&[], true)), Checked::Unchecked);
+        assert_eq!(Checked::of(&lib(&[], false)), Checked::NoHeaders);
+        let mut graph = PackageGraph::default();
+        graph.add("bind", Path::new("/p/bind"), Default::default());
+        let package = |name: &str| NativePackage {
+            name: name.into(),
+            c_libraries: vec![
+                ("own".into(), None, Checked::Listed),
+                ("other".into(), None, Checked::Listed),
+            ],
+            rust_crate: false,
+            unsafe_code: vec![],
+        };
+        let mut packages = vec![package("bind"), package("else")];
+        let mut checked = crate::native::headers::Checked::new();
+        checked
+            .entry("/p/bind".into())
+            .or_default()
+            .insert("own".to_string(), vec![]);
+        note_checked(&mut packages, Some(&graph), &checked);
+        assert_eq!(packages[0].c_libraries[0].2, Checked::Headers);
+        assert_eq!(packages[0].c_libraries[1].2, Checked::Listed);
+        assert_eq!(packages[1].c_libraries[0].2, Checked::Listed);
+    }
+
     #[test]
     fn the_listing_names_libraries_and_places() {
         let packages = vec![
@@ -241,7 +300,7 @@ mod tests {
         assert_eq!(
             render(&packages),
             "Native code the program allows (allowNative):\n  \
-             sqlite: C libraries sqlite3 (sqlite3; headers listed), blas (none on this target; unchecked); 2 places of unsafe code\n    \
+             sqlite: C libraries sqlite3 (sqlite3; headers checked), blas (none on this target; unchecked); 2 places of unsafe code\n    \
              src/db.vlt:12   unsafe block\n    \
              src/stmt.vlt:7  unsafe function `step`\n  \
              pg: a Rust crate; no unsafe code\n"

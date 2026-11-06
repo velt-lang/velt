@@ -270,7 +270,7 @@ mod tests {
     }
 }
 
-/// The real download (network, about 55 MB): `cargo test -p velt_toolchain zig -- --ignored`.
+/// The real download (network, about 55 MB; 100 MB on Windows): `cargo test -p velt_toolchain zig -- --ignored`.
 #[cfg(test)]
 #[test]
 #[ignore = "downloads zig from ziglang.org"]
