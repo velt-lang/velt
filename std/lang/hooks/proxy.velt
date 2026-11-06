@@ -309,14 +309,24 @@ export function proxyKeysOf(o: any): string[] {
 }
 
 /**
- * `{ ...x }` of a class instance or an object `x` in a program that makes proxies: a typed
- * proxy's keys are what its traps list, which a value of a fixed shape cannot follow yet.
+ * `{ ...x }` of a typed proxy or view `x` in a program that makes proxies, with the fields of
+ * `x`'s type, one per line: a typed proxy's keys are what its traps list, and a view's those of
+ * its object, which a value of a fixed shape cannot follow yet when they are others. `o` is the
+ * object of a view (the view converted to `any`).
  */
-export function proxySpreadCheck(o: any): void {
+export function proxySpreadCheck(o: any, fields: string): void {
   if (o instanceof Proxy) {
     panic(
       "TypeError: spreading a proxy typed as a class or object type is not supported yet (#823)",
     );
+  }
+  const known = fields.split("\n");
+  for (const k of Object.keys(o)) {
+    if (!known.includes(k)) {
+      panic(
+        "TypeError: spreading a view of an object with keys its type lacks is not supported yet (#823)",
+      );
+    }
   }
 }
 

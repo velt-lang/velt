@@ -470,8 +470,10 @@ hooks! {
     proxy_keys_of => lang_hooks_proxy, "proxyKeysOf", sig((&any) -> [string]);
     /// `new Proxy(target, handler)` with a handler typed `any` (`velt_sema` `proxy.rs`).
     proxy_new_any => lang_hooks_proxy, "proxyNewAny", sig((move any, move any) -> any);
-    /// `{ ...x }` of an object in a program that makes proxies: a typed proxy is not supported.
-    proxy_spread_check => lang_hooks_proxy, "proxySpreadCheck", sig((&any) -> void);
+    /// `{ ...x }` of a typed proxy or view in a program that makes proxies, with the fields of
+    /// `x`'s type, one per line: a typed proxy, or a view of an object with other keys, is not
+    /// supported.
+    proxy_spread_check => lang_hooks_proxy, "proxySpreadCheck", sig((&any, &string) -> void);
     /// `{ ...o }` of an `any` that may be a proxy: its enumerable own entries.
     spread_any_proxy => lang_hooks_proxy, "spreadAnyProxy", sig((&mut Record(string, any), move any) -> void);
 

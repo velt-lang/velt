@@ -1,0 +1,9 @@
+// A spread or a rest of a view whose object has only its type's keys copies them, as in Node.
+const made = new Proxy({}, {});
+function viewed<T>(x: T) { return x as { a?: number; b?: string } | null; }
+const v = viewed({ a: 1, b: "s" });
+if (v) {
+  console.log({ ...v });
+  const { a, ...r } = v;
+  console.log(a, r);
+}

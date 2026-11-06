@@ -1,0 +1,1 @@
+TypeError: spreading a view of an object with keys its type lacks is not supported yet (#823)

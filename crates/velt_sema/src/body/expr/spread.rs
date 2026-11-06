@@ -262,14 +262,10 @@ impl FnCx<'_, '_> {
         }
         let seen = crate::object_copies::Seen::Spread;
         self.cx.object_copies.observe(h.ty, e.span, seen);
-        if super::object_keys::reevaluable(e) && self.may_be_typed_proxy(h.ty) {
-            // A typed proxy's keys are what its traps list (`proxySpreadCheck`).
-            let check = self.proxy_spread_check(e, h.ty);
-            lets.push(hir::Stmt {
-                kind: hir::StmtKind::Expr(check),
-                span: e.span,
-            });
-        }
+        let h = match self.may_be_typed_proxy(h.ty) {
+            true => self.spread_view_check(h, lets),
+            false => h,
+        };
         let h = match self.optional_source(h, e.span, lets) {
             Ok(fields) => return fields,
             Err(h) => h,
