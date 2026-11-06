@@ -77,24 +77,23 @@ const SEL: usize = 11; // the selected table entry
 const TABLE: usize = 14; // 16 points
 const REGS: usize = TABLE + 48;
 
-/** Whether the 32 big-endian bytes `k` are a valid scalar: 0 < k < n (public: variable time). */
+/**
+ * Whether `k` is a valid scalar, 32 big-endian bytes with 0 < k < n. Callers pass private keys, so
+ * only its length and the answer are public: nothing branches on or indexes by a byte's value.
+ */
 export function p256ScalarOk(k: u8[]): bool {
   if (k.length != 32) {
     return false;
   }
-  let any: u8 = 0;
+  // k - n from the low byte up: the last borrow says k < n. `any` is non-zero unless k is 0.
+  let any: u64 = 0;
+  let borrow: u64 = 0;
   for (let i: usize = 0; i < 32; i++) {
-    any |= k[i];
+    const d = (k[31 - i] as u64) - (N[31 - i] as u64) - borrow;
+    borrow = d >> 63;
+    any |= k[31 - i] as u64;
   }
-  if (any == 0) {
-    return false;
-  }
-  for (let i: usize = 0; i < 32; i++) {
-    if (k[i] != N[i]) {
-      return k[i] < N[i];
-    }
-  }
-  return false;
+  return (((any + 0xff) >> 8) & borrow) == 1;
 }
 
 /** A new random P-256 private key: 32 big-endian bytes in [1, n - 1]. */
