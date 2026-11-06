@@ -1,0 +1,6 @@
+// TypeScript accepts a function declaration's rest parameter that its type parameters decide; Velt
+// has it only for a value of a generic function type, and says so.
+function decl<N extends string>(n: N, ...args: N extends "x" ? [] : [number]): number {
+  return args.length;
+}
+console.log(decl("x"));

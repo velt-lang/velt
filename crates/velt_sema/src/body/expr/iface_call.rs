@@ -12,7 +12,7 @@ use velt_syntax::ast;
 use super::args::Callable;
 use crate::body::FnCx;
 use crate::defs::{IfaceMethod, ThrowSrc};
-use crate::hir::{self, Callee, DefId, ExprKind as H, PassMode, TyId};
+use crate::hir::{self, Callee, DefId, ExprKind as H, PassMode, TyId, TyKind};
 use crate::throws::ThrowCheck;
 
 /// A resolved interface method slot.
@@ -126,24 +126,37 @@ impl FnCx<'_, '_> {
         slot_names.extend(s.method.generics.names.iter().cloned());
         let mut bounds = vec![vec![]; n + 1];
         bounds.extend(s.method.generics.bounds.iter().cloned());
+        let mut params = s.method.params.clone();
+        let rest_form = self.cx.generic_fn_rest_form(s.iface);
+        if let (Some(form), Some(last)) = (rest_form, params.last_mut()) {
+            last.ty = form;
+        }
+        let mut constraints = vec![];
+        if s.method.generics.constraints.iter().any(Option::is_some) {
+            constraints.resize(n + 1, None);
+            constraints.extend(s.method.generics.constraints.iter().copied());
+        }
         let c = Callable {
             what: match s.method.name == crate::generic_fns::CALL {
                 // A generic function value's call (`crate::generic_fns`).
                 true => "this function".into(),
                 false => format!("method `{}`", s.method.name),
             },
-            params: s.method.params.clone(),
+            params,
             ret: s.method.ret,
             slot_names,
             bounds,
-            constraints: vec![],
+            constraints,
             js_numbers: false,
             positions: false,
             js_api: false,
             rest: s.rest,
             defaults: vec![],
         };
-        let ck = self.check_call(&c, slots, args, exp.filter(|_| own > 0), span);
+        let mut ck = self.check_call(&c, slots, args, exp.filter(|_| own > 0), span);
+        if let Some(form) = rest_form {
+            self.rest_form_args(&c, form, &mut ck, args.len(), span);
+        }
         let mode = if s.method.mut_this {
             PassMode::BorrowMut
         } else {
@@ -177,6 +190,58 @@ impl FnCx<'_, '_> {
         };
         let kind = H::Call { callee, args: all };
         self.mk(kind, ret, span)
+    }
+
+    /// The checked arguments `ck` of a call of a generic function type whose rest parameter is
+    /// `form` at the call's type arguments (`GenericFns::rest_forms`): what the arguments were
+    /// checked against is that array or tuple type, and the method takes them as an `any[]`,
+    /// which is what the function's `...args` is in JavaScript too. `given` arguments were written.
+    fn rest_form_args(
+        &mut self,
+        c: &Callable,
+        form: TyId,
+        ck: &mut super::args::Checked,
+        given: usize,
+        span: Span,
+    ) {
+        let at = c.params.len() - 1;
+        if ck.args.len() != c.params.len() {
+            return; // Reported.
+        }
+        let want = self.cx.subst(form, &ck.type_args);
+        let tuple = match self.cx.ty.kind(want).clone() {
+            TyKind::Tuple(ts) => Some(ts.len()),
+            TyKind::Array(_) => None,
+            TyKind::Error => return,
+            _ => {
+                let shown = self.cx.display(want);
+                self.cx.err(
+                    format!("a rest parameter must have an array or tuple type; at this call it is `{shown}`"),
+                    span,
+                );
+                return;
+            }
+        };
+        if given <= at {
+            // No rest argument: the empty array is the parameter's default.
+            if let Some(n) = tuple.filter(|n| *n > 0) {
+                self.arg_count_error(&c.what, at + n, at + n, given, span);
+            }
+            return;
+        }
+        let (Some(any), Some(last)) = (self.any_ty(), ck.args.pop()) else {
+            return;
+        };
+        let ty = self.cx.ty.array(any);
+        let span = last.span;
+        let value = match last.kind {
+            H::Tuple(items) => {
+                let items = items.into_iter().map(|e| self.coerce(e, any)).collect();
+                self.mk(H::ArrayLit(items), ty, span)
+            }
+            _ => self.coerce(last, ty),
+        };
+        ck.args.push(value);
     }
 
     /// A call through interface slot `src` (result type `ret`) may throw here; the result type.

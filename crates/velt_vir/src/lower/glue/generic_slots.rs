@@ -37,6 +37,15 @@ pub(in crate::lower) struct GenericSlot {
 pub(in crate::lower) type SlotKey = (DefId, Vec<TyId>, u32);
 
 impl Cx<'_> {
+    /// The key of the lists of generic slot `key`: the instances of a generic function type whose
+    /// method doesn't mention its arguments are one value (`Program::arg_free_generic_fns`).
+    fn slot_key(&self, key: SlotKey) -> SlotKey {
+        match self.hir.arg_free_generic_fns.contains(&key.0) {
+            true => (key.0, vec![], key.2),
+            false => key,
+        }
+    }
+
     /// The instantiation table of generic slot `key` in the table of `owner` (an impl and its
     /// concrete type, or a generic closure's impl and its instance), whose entries call
     /// `entry` (built once, then grown with the slot's lists).
@@ -46,6 +55,7 @@ impl Cx<'_> {
         owner: (u32, TyId),
         entry: Entry,
     ) -> StaticId {
+        let key = self.slot_key(key);
         let memo = (owner.0, owner.1, key.2);
         if let Some(&s) = self.lay.slot_tables.get(&memo) {
             return s;
@@ -78,6 +88,7 @@ impl Cx<'_> {
     /// The index of type arguments `margs` in the tables of generic slot `key`, added to every
     /// table of the slot when new.
     pub(in crate::lower) fn generic_slot_index(&mut self, key: SlotKey, margs: Vec<TyId>) -> u32 {
+        let key = self.slot_key(key);
         let g = self.lay.generic_slots.entry(key.clone()).or_default();
         if let Some(&i) = g.index.get(&margs) {
             return i;

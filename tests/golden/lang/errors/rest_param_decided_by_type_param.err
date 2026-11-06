@@ -1,0 +1,1 @@
+rest_param_decided_by_type_param.velt:3:48: error: a function's rest parameter whose type its type parameters decide (`...args: T extends X ? [] : [Y]`) is not supported yet (#943)

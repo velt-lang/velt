@@ -266,6 +266,7 @@ impl FnCx<'_, '_> {
             ret: sub(self.cx, ret),
             throws,
             rest,
+            rest_form: None,
             bounds: bounds
                 .into_iter()
                 .map(|bs| {
@@ -449,6 +450,7 @@ impl FnCx<'_, '_> {
             ret: sub(self.cx, ret),
             throws: throws.map(|t| sub(self.cx, t)),
             rest: false,
+            rest_form: None,
             bounds: (generics.bounds.iter())
                 .map(|bs| {
                     bs.iter()
@@ -626,6 +628,7 @@ impl FnCx<'_, '_> {
             ret: self.cx.subst(m.ret, &map),
             throws: (m.throws.and_then(|t| t.ty)).map(|t| self.cx.subst(t, &map)),
             rest: false,
+            rest_form: None,
             bounds: (m.generics.bounds.iter())
                 .map(|bs| {
                     bs.iter()

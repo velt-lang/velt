@@ -335,7 +335,7 @@ fn self_contained(decl: &ast::TypeAlias) -> bool {
 }
 
 /// The single names `t` mentions (type parameters among them, perhaps shadowed).
-fn names_in<'t>(t: &'t ast::TypeExpr, out: &mut Vec<&'t str>) {
+pub(crate) fn names_in<'t>(t: &'t ast::TypeExpr, out: &mut Vec<&'t str>) {
     let mut add = |x: &'t ast::TypeExpr| names_in(x, out);
     use ast::TypeExprKind as K;
     match &t.kind {

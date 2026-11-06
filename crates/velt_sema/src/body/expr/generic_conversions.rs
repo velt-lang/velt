@@ -251,6 +251,48 @@ impl FnCx<'_, '_> {
         Err(h)
     }
 
+    /// Function value `h` of fixed types as a value of generic function type `exp`, as
+    /// TypeScript assigns it where it takes what every instantiation passes
+    /// (`(name: string, ...args: any[]) => void` as `<N extends string>(name: N, ...args: A<N>) =>
+    /// void`): the generic closure `(a0, …) => g(a0, …)` over `g`, a local holding `h`. `Err` when
+    /// it doesn't take them.
+    pub(super) fn fn_value_as_generic(
+        &mut self,
+        h: hir::Expr,
+        exp: TyId,
+    ) -> Result<hir::Expr, hir::Expr> {
+        let (TyKind::FnPtr { params, .. }, Some(to)) =
+            (self.cx.ty.kind(h.ty).clone(), self.cx.generic_sig(exp))
+        else {
+            return Err(h);
+        };
+        let n = to.method.params.len();
+        // A function value may take fewer parameters than its type gives.
+        let shape = (n.min(params.len()), to.rest && params.len() >= n);
+        let mark = crate::body::recheck::Mark::here(self.cx);
+        let frames = self.trial_frames();
+        let diags = self.cx.diags.len();
+        let mut g = self.forwarding(h.clone(), exp, shape, |s, arrow, exp| {
+            s.generic_closure(arrow, Some(exp))
+        });
+        if self.cx.diags.len() == diags {
+            self.mark_fresh(&mut g, exp);
+            return Ok(g);
+        }
+        self.cx.diags.truncate(diags);
+        mark.rollback(self.cx);
+        self.restore_trial_frames(frames);
+        Err(h)
+    }
+
+    /// `h`, an instance of a generic function type whose call doesn't depend on its arguments
+    /// (they are only in what a call checks), as the instance `exp`: the same value and table.
+    pub(super) fn same_generic_fn(&mut self, mut h: hir::Expr, exp: TyId) -> hir::Expr {
+        self.force_move(&mut h);
+        let span = h.span;
+        self.mk(H::Upcast(Box::new(h)), exp, span)
+    }
+
     /// Records the closure `h` makes as a fresh one, its values of type `ty`: each evaluation is
     /// a new function where JavaScript has one (`hir::Program::fresh_closures`).
     pub(super) fn mark_fresh(&mut self, h: &mut hir::Expr, ty: TyId) {

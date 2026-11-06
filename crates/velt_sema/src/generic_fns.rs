@@ -37,6 +37,8 @@ struct Shape {
     ret: TyId,
     throws: Option<TyId>,
     rest: bool,
+    /// The type a rest parameter is written with when it is known only per instantiation.
+    rest_form: Option<TyId>,
     bounds: Vec<Vec<(DefId, Vec<TyId>)>>,
     constraints: Vec<Option<TyId>>,
     outer: usize,
@@ -49,6 +51,16 @@ pub(crate) struct GenericFns {
     by_plain: FxHashMap<Shape, DefId>,
     /// Per interface made here: whether its last parameter is a rest parameter.
     made: FxHashMap<DefId, bool>,
+    /// Per interface whose rest parameter's type depends on the call's type arguments
+    /// (`...args: E<N> extends void ? [] : [E<N>]`): that type, over the interface's numbering.
+    /// The method takes an `any[]`, the same for every instantiation; a call checks its arguments
+    /// against this type at its type arguments (`FnCx::rest_form_args`).
+    rest_forms: FxHashMap<DefId, TyId>,
+    /// The interfaces with type parameters that their method's parameters and result don't
+    /// mention: they are only in what a call is checked against (`rest_forms`, the type
+    /// parameters' bounds), so its instances are one value with one table
+    /// (`hir::Program::arg_free_generic_fns`).
+    pub free_of_args: FxHashSet<DefId>,
     /// The type parameter names each was first written with, for showing it.
     names: FxHashMap<DefId, Vec<String>>,
     /// The site of each one's error type: its first spelling, when in a user module.
@@ -64,6 +76,8 @@ pub(crate) struct FnParts {
     pub ret: TyId,
     pub throws: Option<TyId>,
     pub rest: bool,
+    /// See `GenericFns::rest_forms`; the rest parameter in `params` is then an `any[]`.
+    pub rest_form: Option<TyId>,
     pub bounds: Vec<Vec<Bound>>,
     pub constraints: Vec<Option<TyId>>,
     /// Where it is written, in a user module (`Ctx::generic_fn_type`).
@@ -110,11 +124,21 @@ impl Ctx<'_> {
             params: names,
             ..env.clone()
         };
-        let pts: Vec<TyId> = params
+        let mut pts: Vec<TyId> = params
             .iter()
-            .map(|t| self.resolve_type(t, &inner_env))
+            .map(|t| self.generic_fn_form(t, &inner_env))
             .collect();
-        let ret = self.resolve_type(ret, &inner_env);
+        let ret = self.generic_fn_form(ret, &inner_env);
+        let rest_form = match (*rest, pts.last().copied()) {
+            (true, Some(t)) if matches!(self.ty.kind(t), TyKind::Op(..)) => Some(t),
+            _ => None,
+        };
+        if let (Some(_), Some(any)) = (rest_form, self.any_type()) {
+            let array = self.ty.array(any);
+            if let Some(last) = pts.last_mut() {
+                *last = array;
+            }
+        }
         let written = throws.as_ref().map(|t| {
             let e = self.resolve_type(t, &inner_env);
             self.no_void_error(e, t.span);
@@ -125,7 +149,7 @@ impl Ctx<'_> {
         // the first spelling (`Ctx::generic_fn_type`).
         let user = self.scopes.get(env.module).is_some_and(|s| !s.is_std);
         let site = (user && span != Span::DUMMY).then_some(span);
-        let b = crate::collect::shapes::resolve_bounds(self, type_params, &inner_env);
+        let b = self.generic_fn_bounds(type_params, &inner_env);
         if [ret]
             .iter()
             .chain(&pts)
@@ -139,12 +163,58 @@ impl Ctx<'_> {
             ret,
             throws,
             rest: *rest,
+            rest_form,
             bounds: b.bounds,
             constraints: b.constraints,
             site,
         };
         let own_names: Vec<String> = type_params.iter().map(|g| g.name.name.clone()).collect();
         self.generic_fn_type(parts, m, own_names, env.module, span)
+    }
+
+    /// The bounds of a generic function type's own type parameters, in `env`: over the type
+    /// parameters in scope, not their arguments, so `<N extends Names<E>>(…)` is one type at
+    /// every `E`, its instances one interface. A form that can't be deferred as an alias is
+    /// evaluated at the arguments.
+    fn generic_fn_bounds(
+        &mut self,
+        type_params: &[ast::GenericParam],
+        env: &TyEnv,
+    ) -> crate::collect::shapes::ParamBounds {
+        use crate::collect::shapes::resolve_bounds;
+        if env.args.is_empty() || !env.locals.is_empty() || !env.unknowns.is_empty() {
+            return resolve_bounds(self, type_params, env);
+        }
+        let over_params = TyEnv {
+            args: vec![],
+            ..env.clone()
+        };
+        self.type_level.deferring += 1;
+        let outer = std::mem::replace(&mut self.type_level.stuck, false);
+        let reported = self.diags.len();
+        let b = resolve_bounds(self, type_params, &over_params);
+        let stuck = std::mem::replace(&mut self.type_level.stuck, outer);
+        self.type_level.deferring -= 1;
+        if !stuck {
+            return b;
+        }
+        self.diags.truncate(reported);
+        resolve_bounds(self, type_params, env)
+    }
+
+    /// Type `t` in the signature of a generic function type, in `env` (the type parameters in
+    /// scope, the implementor and its own): a form that needs a type parameter is deferred on its
+    /// own (`TyOp::Inline`), evaluated at each call with its type arguments known, so the function
+    /// type itself is known (`EmitFn<E>` holds `E extends … ? [] : [D]`).
+    fn generic_fn_form(&mut self, t: &ast::TypeExpr, env: &TyEnv) -> TyId {
+        // What a mapped type or `infer` binds isn't in a form's parameters.
+        if !env.locals.is_empty() || !env.unknowns.is_empty() {
+            return self.resolve_type(t, env);
+        }
+        self.type_level.deferring += 1;
+        let r = self.resolve_param_form(t, env);
+        self.type_level.deferring -= 1;
+        r
     }
 
     /// The generic function type of `parts`, written over the `m` type parameters in scope,
@@ -161,7 +231,10 @@ impl Ctx<'_> {
         // The type parameters in scope it mentions become the interface's.
         let mut mentioned = vec![];
         let mut walk = |cx: &Ctx, t: TyId| crate::types::collect_params(&cx.ty, t, &mut mentioned);
-        for t in parts.params.iter().chain([&parts.ret]).chain(&parts.throws) {
+        for t in (parts.params.iter().chain([&parts.ret]))
+            .chain(&parts.throws)
+            .chain(&parts.rest_form)
+        {
             walk(self, *t);
         }
         for bs in &parts.bounds {
@@ -220,6 +293,7 @@ impl Ctx<'_> {
             // Not part of the type (below).
             throws: None,
             rest: parts.rest,
+            rest_form: parts.rest_form.map(|t| renumber(self, t)),
             bounds,
             constraints,
             outer: n,
@@ -358,6 +432,16 @@ impl Ctx<'_> {
             })),
         );
         self.generic_fns.made.insert(d, s.rest);
+        let mut used = vec![];
+        for t in s.params.iter().chain([&s.ret]) {
+            crate::types::collect_params(&self.ty, *t, &mut used);
+        }
+        if s.outer > 0 && used.iter().all(|p| *p as usize >= s.outer) {
+            self.generic_fns.free_of_args.insert(d);
+        }
+        if let Some(form) = s.rest_form {
+            self.generic_fns.rest_forms.insert(d, form);
+        }
         self.generic_fns.names.insert(d, own_names);
         d
     }
@@ -451,9 +535,35 @@ impl Ctx<'_> {
         let mut shown: Vec<String> = args.iter().map(|a| self.display_in(*a, names)).collect();
         shown.push("<Self>".into());
         shown.extend(own.iter().cloned());
-        let pts: Vec<TyId> = m.params.iter().map(|p| p.ty).collect();
+        let mut pts: Vec<TyId> = m.params.iter().map(|p| p.ty).collect();
+        if let (Some(form), Some(last)) = (self.generic_fns.rest_forms.get(d), pts.last_mut()) {
+            *last = *form;
+        }
         let rest = self.generic_fn_rest(*d);
         Some(self.sig_text(&pts, m.ret, rest, own, &shown))
+    }
+
+    /// A function declaration's rest parameter that its type parameters decide, at `at`.
+    pub(crate) fn decided_rest_error(&mut self, at: Span) {
+        self.error(
+            Diagnostic::error(
+                "a function's rest parameter whose type its type parameters decide (`...args: T extends X ? [] : [Y]`) is not supported yet (#943)",
+                at,
+            )
+            .with_note("a value of a generic function type can have one: `const f: <T>(x: T, ...args: T extends X ? [] : [Y]) => void = (x, ...args) => { … }`"),
+        );
+    }
+
+    /// The type generic function type interface `d`'s rest parameter is written with, when a
+    /// call's type arguments decide it (`GenericFns::rest_forms`).
+    pub(crate) fn generic_fn_rest_form(&self, d: DefId) -> Option<TyId> {
+        self.generic_fns.rest_forms.get(&d).copied()
+    }
+
+    /// Is `d` a generic function type's interface whose method's parameters and result don't
+    /// mention the interface's type parameters (`GenericFns::free_of_args`)?
+    pub(crate) fn generic_fn_free_of_args(&self, d: DefId) -> bool {
+        self.generic_fns.free_of_args.contains(&d)
     }
 
     /// Does generic function type interface `d` take a rest parameter?

@@ -418,6 +418,13 @@ constants) is not one of these where a function type of fixed types is expected:
 function itself there, instantiated (`FnRef`), so the values compare equal to each other and to
 `id`.
 
+A form over the type's own parameters in its signature is `TyOp::Inline`, reduced at each call. A
+rest parameter so typed (`...args: N extends K ? [] : [D]`) is an `any[]` in the method: the call
+is checked against the reduced form and passes its arguments as that array. An interface whose
+method mentions none of its type parameters is listed in `Program::arg_free_generic_fns`: its
+instances are one value (`Upcast` between them), and lowering keeps one list of a slot's type
+arguments for all of them.
+
 ## Union types
 - `A | B | C` (two or more distinct non-null members) is `TyKind::Adt(d, args)` where `d` is a
   compiler-generated `Def::Enum` with `EnumDef::is_union = true`: one variant per member, in

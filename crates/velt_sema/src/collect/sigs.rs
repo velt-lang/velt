@@ -168,6 +168,7 @@ pub(crate) fn rest_param_type(cx: &mut Ctx, at: Span, ty: TyId) -> bool {
             )
             .with_note("Velt passes the rest arguments as an array: type the parameter as one (`...args: unknown[]`)"),
         ),
+        TyKind::Op(..) => cx.decided_rest_error(at),
         _ => cx.err(
             "a rest parameter must have an array type (`...xs: T[]`)",
             at,

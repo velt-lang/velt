@@ -214,6 +214,11 @@ pub struct Program {
     /// The generic interface methods called with type arguments of their own through tables:
     /// only their vtable slots hold instantiation tables (hir_encodings.md). Additive.
     pub generic_dyn_methods: HashSet<String>,
+    /// The generic function types' interfaces whose method doesn't mention the interface's type
+    /// parameters: all their instances share one list of a call's type arguments, and an
+    /// instance converts to another as the same value (hir_encodings.md "Generic function
+    /// values"). Additive.
+    pub arg_free_generic_fns: HashSet<DefId>,
     /// Closures each evaluation of which is a new function value where JavaScript has one
     /// function, and the conversions of function values to other function types (#943,
     /// [`FreshClosure`], hir_encodings.md "Generic function values"). Additive.

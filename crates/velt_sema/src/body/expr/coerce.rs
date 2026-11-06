@@ -88,6 +88,14 @@ impl FnCx<'_, '_> {
             Ok(s) => return Ok(s),
             Err(h) => h,
         };
+        let fixed = matches!(self.cx.ty.kind(h.ty), TyKind::FnPtr { .. });
+        let h = match fixed && self.cx.is_generic_fn(exp) {
+            true => match self.fn_value_as_generic(h, exp) {
+                Ok(g) => return Ok(g),
+                Err(h) => h,
+            },
+            false => h,
+        };
         let h = match self.fn_bound_value(h) {
             Ok(f) if f.ty == exp || matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. }) => {
                 return self.try_coerce_value(f, exp)
