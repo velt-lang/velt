@@ -337,12 +337,7 @@ fn sema_stage(
         packages,
         more.as_mut(),
     );
-    let served = more.map_or(vec![], |m| m.files);
-    let std_loaded = (loaded.modules.iter())
-        .filter(|m| m.is_std)
-        .map(|m| m.file)
-        .chain(served);
-    sess.std_files = std_loaded.collect();
+    sess.std_files = StdLoad::std_files(more, &loaded.modules);
     sess.native = crate::native::check_trust(
         &loaded.modules,
         &sess.sm,

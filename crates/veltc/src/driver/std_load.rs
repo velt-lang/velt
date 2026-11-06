@@ -60,6 +60,17 @@ impl<'a> StdLoad<'a> {
         }
     }
 
+    /// The files of the std modules in `modules` and of those `more` served
+    /// ([`Session::std_files`]).
+    pub(super) fn std_files(
+        more: Option<Self>,
+        modules: &[velt_sema::SourceModule],
+    ) -> Vec<velt_common::FileId> {
+        let served = more.map_or(vec![], |m| m.files);
+        let std = modules.iter().filter(|m| m.is_std).map(|m| m.file);
+        std.chain(served).collect()
+    }
+
     pub(crate) fn serve(&mut self, sess: &mut Session, demanded: &[String]) -> velt_sema::StdBatch {
         let load = load_options(self.generator_build, self.opts, self.scope);
         let (sm, diags) = (&mut sess.sm, &mut sess.diagnostics);
