@@ -359,10 +359,15 @@ impl FnCx<'_, '_> {
                 return Some(self.error_expr(span));
             }
             let h = self.unbrand(h);
-            let h = if matches!(self.cx.dynamic(h.ty), Some(Dynamic::Any | Dynamic::Unknown)) {
-                self.share_if_place(h)
-            } else {
-                self.coerce(h, any)
+            // Both operands become `any`, so what they hold compares by SameValue below (an
+            // `unknown` is an `any` with nothing to read).
+            let h = match self.cx.dynamic(h.ty) {
+                Some(Dynamic::Any) => self.share_if_place(h),
+                Some(Dynamic::Unknown) => {
+                    let h = self.share_if_place(h);
+                    self.coerce(h, any)
+                }
+                _ => self.coerce(h, any),
             };
             let ty = h.ty;
             let tmp = self.new_local("<any>", ty, false, e.span, LocalKind::Temp);
@@ -390,8 +395,8 @@ impl FnCx<'_, '_> {
         let numbers = self.intrinsic(Intrinsic::SameValue, vec![vx, vy], bool_, span);
         let rx = self.mk(H::Local(x, UseMode::Borrow), xt, span);
         let ry = self.mk(H::Local(y, UseMode::Borrow), yt, span);
-        // Values of one dynamic type: SameValue of what they hold, so a C struct held compares
-        // its numbers by SameValue too (velt_vir any_eq.rs); otherwise `===`.
+        // SameValue of what they hold, so a C struct held compares its numbers by SameValue too
+        // (velt_vir any_eq.rs).
         let other = match xt == yt {
             true => self.intrinsic(Intrinsic::SameValue, vec![rx, ry], bool_, span),
             false => self.intrinsic(Intrinsic::AnyStrictEq, vec![rx, ry], bool_, span),

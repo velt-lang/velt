@@ -231,8 +231,8 @@ impl FnLower<'_, '_> {
             lw.assign(out.clone(), Rvalue::Use(v));
             lw.goto(done);
         };
-        if cmp == AnyCmp::Key {
-            // Two numbers (of any widths): SameValueZero.
+        if matches!(cmp, AnyCmp::Key | AnyCmp::Value) {
+            // Two numbers (of any widths): SameValueZero, or SameValue (`Object.is`).
             let ta = self.any_tag_of(xa.clone());
             let tb = self.any_tag_of(xb.clone());
             let num = cint(TAG_NUMBER as i128, Ty::U64);
@@ -244,7 +244,10 @@ impl FnLower<'_, '_> {
             self.switch_to(nums_bb);
             let x = self.any_slot_call(xa.clone(), SLOT_NUMBER, vec![da.clone()], Ty::F64);
             let y = self.any_slot_call(xb.clone(), SLOT_NUMBER, vec![db.clone()], Ty::F64);
-            let r = self.same_value_zero(x, y);
+            let r = match cmp {
+                AnyCmp::Value => self.same_value(x, y, Ty::F64),
+                _ => self.same_value_zero(x, y),
+            };
             set(self, r);
             self.switch_to(rest_bb);
         }

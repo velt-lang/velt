@@ -348,3 +348,56 @@ function main() {
         );
     }
 }
+
+/// `Object.is` on dynamic values is SameValue whatever route it takes: an `any` against an
+/// `unknown` (both orders), and generic code over `any` or `unknown`, for numbers (`0` is not
+/// `-0`, `NaN` is itself) and C structs alike. The number lines print what Node prints for the
+/// same program.
+#[test]
+fn object_is_on_dynamic_values_is_same_value() {
+    let dir = test_dir::TestDir::new();
+    let main = r#"declare c struct P { x: f64; y: f64; }
+function mk(x: f64, y: f64): P { return { x, y }; }
+function is<T>(a: T, b: T): boolean { return Object.is(a, b); }
+function main() {
+  const z = 0;
+  const nz = -z;
+  const nan = 0 / z;
+  const a0: any = 0;
+  const an: any = 0 / z;
+  const uz: unknown = 0;
+  const uz2: unknown = nz;
+  const un: unknown = 0 / z;
+  const un2: unknown = 0 / z;
+  console.log(is<any>(0, -z), is<any>(0 / z, 0 / z), is<unknown>(uz, uz2), is<unknown>(un, un2));
+  console.log(Object.is(a0, uz2), Object.is(uz2, a0), Object.is(an, un), Object.is(un, an), Object.is(a0, uz), is<any>(1, 1), is<unknown>("a", "a"));
+  const n: any = mk(nan, 1);
+  const sn: unknown = mk(nan, 1);
+  const sz: any = mk(0, 1);
+  const snz: unknown = mk(nz, 1);
+  console.log(Object.is(n, sn), Object.is(sn, n), Object.is(sz, snz), Object.is(snz, sz));
+  console.log(is<any>(n, mk(nan, 1) as any), is<any>(sz, mk(nz, 1) as any), is<unknown>(sn, mk(nan, 1) as unknown), is<unknown>(snz, mk(0, 1) as unknown));
+}
+"#;
+    std::fs::create_dir_all(dir.path()).unwrap();
+    std::fs::write(dir.path().join("main.velt"), main).unwrap();
+    for args in [
+        &["run", "main.velt"][..],
+        &["run", "--release", "main.velt"][..],
+    ] {
+        let o = no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(args)
+            .current_dir(dir.path())
+            .env("NO_COLOR", "1")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "velt {args:?} failed:\n{stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            // The first two lines: Node 26's output for the program's numbers.
+            "false true false true\nfalse false true true true true true\ntrue true false false\ntrue false true false\n",
+            "velt {args:?}:\n{stderr}"
+        );
+    }
+}

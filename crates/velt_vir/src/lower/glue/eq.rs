@@ -49,7 +49,7 @@ impl FnLower<'_, '_> {
 
     /// SameValue of two floats (`Object.is`): `x == y && (x != 0 || bits(x) == bits(y))`, or
     /// both `NaN`.
-    pub(super) fn same_value(&mut self, x: Operand, y: Operand, vt: Ty) -> Operand {
+    pub(in crate::lower) fn same_value(&mut self, x: Operand, y: Operand, vt: Ty) -> Operand {
         let eq = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, x.clone(), y.clone()));
         let zero = Operand::Const(Const::Float(0.0), vt);
         let nonzero = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, x.clone(), zero));
