@@ -597,3 +597,90 @@ fn aes_gated_functions_are_the_bare_instructions() {
         }
     }
 }
+
+/// The carry-less target's functions, and the AES target's, per architecture.
+const COVER_GATES: &str = r#"
+import { u8x16, u64x2 } from "velt/simd";
+
+function clmulX86(): i64 {
+  targetFeature("clmul-x86");
+  return 1;
+}
+
+function clmulArm(): i64 {
+  targetFeature("clmul-arm");
+  return 2;
+}
+
+function aesX86(): i64 {
+  targetFeature("aes-x86");
+  return 3;
+}
+
+function aesArm(): i64 {
+  targetFeature("aes-arm");
+  return 4;
+}
+"#;
+
+#[test]
+fn the_aes_target_covers_the_carry_less_one() {
+    // Behind the AES check, and from a function gated on the AES target (#2401): every CPU with
+    // the instructions has the carry-less multiplication of its architecture.
+    let probe = format!(
+        r#"{COVER_GATES}
+function fromAesX86(): i64 {{
+  targetFeature("aes-x86");
+  return clmulX86();
+}}
+
+function fromAesArm(): i64 {{
+  targetFeature("aes-arm");
+  return clmulArm();
+}}
+
+export function probe(): i64 {{
+  if (u8x16.hasAesX86()) {{
+    return clmulX86() + fromAesX86() + aesX86();
+  }}
+  if (u8x16.hasAesArm()) {{
+    return clmulArm() + fromAesArm() + aesArm();
+  }}
+  return u64x2.hasClmul() ? 1 : 0;
+}}
+"#
+    );
+    let dir = test_dir::TestDir::new();
+    let out = velt(&dir, &probe, MAIN_PROBE, &["check"]);
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{err}");
+}
+
+#[test]
+fn the_carry_less_target_does_not_cover_the_aes_one() {
+    // A CPU can have the carry-less multiplication without AES, and each target exists on one
+    // architecture only.
+    for (gate, target, check) in [
+        ("aesX86", "aes-x86", "u64x2.hasClmulX86()"),
+        ("aesArm", "aes-arm", "u64x2.hasClmulArm()"),
+        ("clmulArm", "clmul-arm", "u8x16.hasAesX86()"),
+        ("clmulX86", "clmul-x86", "u8x16.hasAesArm()"),
+    ] {
+        let probe = format!(
+            "{COVER_GATES}\nexport function probe(): i64 {{\n  if ({check}) {{\n    return {gate}();\n  }}\n  return u8x16.hasAes() && u64x2.hasClmul() ? 1 : 0;\n}}\n"
+        );
+        let message = format!("`{gate}` runs only where the CPU has `{target}`");
+        check_fails(&probe, MAIN_PROBE, &[&message]);
+    }
+    for (gate, target, from) in [
+        ("aesX86", "aes-x86", "clmul-x86"),
+        ("aesArm", "aes-arm", "clmul-arm"),
+        ("clmulArm", "clmul-arm", "aes-x86"),
+    ] {
+        let probe = format!(
+            "{COVER_GATES}\nfunction caller(): i64 {{\n  targetFeature(\"{from}\");\n  return {gate}();\n}}\n\nexport function probe(): i64 {{\n  return u8x16.hasAes() && u64x2.hasClmul() ? 1 : 0;\n}}\n"
+        );
+        let message = format!("`{gate}` runs only where the CPU has `{target}`");
+        check_fails(&probe, MAIN_PROBE, &[&message]);
+    }
+}

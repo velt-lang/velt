@@ -186,4 +186,7 @@ function main() {
   }
   console.log(hex(sum));
   console.log(typeof u8x16.hasAes(), typeof u8x16.hasAesX86(), typeof u8x16.hasAesArm());
+  // The same line either way only if the switch reaches the check (the plain run's answer depends
+  // on the CPU: crates/veltc/tests/aes_checks.rs looks at that).
+  console.log(process.env.VELT_SIMD_DISABLE === undefined ? false : u8x16.hasAes());
 }

@@ -1,0 +1,16 @@
+// velt/simd (tests): white-box tests of the AES check's reading of CPUID, run by `velt test std/`.
+// The end-to-end checks against the CPU are in crates/veltc/tests/aes_checks.rs, but a machine
+// whose CPU has AES-NI and XSAVE cannot tell bit 25 from bit 26 there.
+import { describe, expect, it } from "velt/test";
+import { cpuidHasAes } from "velt/simd/aes";
+
+describe("the AES check", () => {
+  it("reads ECX bit 25 and no other", () => {
+    expect(cpuidHasAes(0)).toBe(false);
+    expect(cpuidHasAes(0xffffffff)).toBe(true);
+    expect(cpuidHasAes(0xffffffff ^ (1 << 25))).toBe(false);
+    for (let bit: u32 = 0; bit < 32; bit++) {
+      expect(cpuidHasAes(1 << bit)).toBe(bit == 25);
+    }
+  });
+});
