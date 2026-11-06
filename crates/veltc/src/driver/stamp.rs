@@ -169,6 +169,16 @@ pub(super) fn note_project(opts: &BuildOptions) {
     }
 }
 
+/// Before a build that is no longer a no-op compiles anything: the fetched dependencies (git,
+/// url) of `opts`'s package graph checked file by file against their locks. A no-op build only
+/// looked at their directories (`vpm::tree_stamp`), and an edit in place must not reach a build
+/// that compiles again.
+pub(super) fn check_fetched(opts: &BuildOptions) -> Result<(), String> {
+    opts.packages
+        .as_ref()
+        .map_or(Ok(()), vpm::PackageGraph::verify_fetched)
+}
+
 /// What a finished build read and made, besides its source map.
 pub(super) struct Built<'a> {
     /// What module resolution looked at.
