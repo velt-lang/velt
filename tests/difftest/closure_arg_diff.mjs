@@ -3,7 +3,7 @@
 // kind of value through every way of calling a closure or nested function, compared with Node's
 // output, debug and release, with the debug allocator's checks on.
 //
-//   node scripts/closure-arg-diff.mjs <velt binary> [--form <substring>] [--kind <substring>] [--debug-only]
+//   node tests/difftest/closure_arg_diff.mjs <velt binary> [--form <substring>] [--kind <substring>] [--debug-only]
 //
 // One program per call form. Exits 1 on the first run that differs, after printing all of them.
 import { mkdtempSync, writeFileSync } from "node:fs";
