@@ -394,8 +394,13 @@ fn code_only(src: &str) -> Vec<u8> {
                 blank(&mut out, i, j, b' ');
                 i = j;
             }
-            b'r' if matches!(b.get(i + 1), Some(b'#' | b'"')) && (i == 0 || !ident(b[i - 1])) => {
-                // A raw string `r#"…"#`; a raw identifier `r#name` has no quote.
+            // A raw string `r#"…"#`, or a raw byte or C string (`br#"…"#`, `cr#"…"#`); a raw
+            // identifier `r#name` has no quote.
+            b'r' if matches!(b.get(i + 1), Some(b'#' | b'"'))
+                && (i == 0
+                    || !ident(b[i - 1])
+                    || (matches!(b[i - 1], b'b' | b'c') && (i == 1 || !ident(b[i - 2])))) =>
+            {
                 let hashes = b[i + 1..].iter().take_while(|&&c| c == b'#').count();
                 if b.get(i + 1 + hashes) != Some(&b'"') {
                     i += 1;
@@ -430,9 +435,16 @@ fn code_only(src: &str) -> Vec<u8> {
                 blank(&mut out, i + 1, close, b'x');
                 i = close + 1;
             }
-            b'\'' if b.get(i + 2) == Some(&b'\'') => {
-                out[i + 1] = b'x';
-                i += 3;
+            // An unescaped character literal, whose character may take up to 4 bytes (`'é'`).
+            b'\''
+                if src
+                    .get(i + 1..)
+                    .and_then(|rest| rest.chars().next())
+                    .is_some_and(|c| b.get(i + 1 + c.len_utf8()) == Some(&b'\'')) =>
+            {
+                let len = src[i + 1..].chars().next().map_or(1, char::len_utf8);
+                blank(&mut out, i + 1, i + 1 + len, b'x');
+                i += 2 + len;
             }
             _ => i += 1,
         }
@@ -557,6 +569,20 @@ fn no_mangle_names_skips_comments_and_literals() {
                const S: &str = \"#[no_mangle] fn s\";\n\
                const R: &str = r#\"#[export_name = \"r\"]\"#;\n\
                const Q: char = '\"'; const E: char = '\\''; #[inline] fn plain() {}\n";
+    assert!(
+        no_mangle_names(src).is_empty(),
+        "{:?}",
+        no_mangle_names(src)
+    );
+    // A byte or C raw string with an odd number of quotes inside, and a non-ASCII character
+    // literal before a quote literal: read wrongly, each turns the code after it into text.
+    let src = "const X: &[u8] = br#\"a\"b\"#;\n#[no_mangle]\npub extern \"C\" fn hidden() {}\n";
+    assert_eq!(no_mangle_names(src), ["hidden"]);
+    let src = "const X: &CStr = cr#\"a\"b\"#;\n#[no_mangle]\npub extern \"C\" fn hidden() {}\n";
+    assert_eq!(no_mangle_names(src), ["hidden"]);
+    let src = "const X: [char; 2] = ['é','\"'];\n#[no_mangle]\npub extern \"C\" fn hidden() {}\n";
+    assert_eq!(no_mangle_names(src), ["hidden"]);
+    let src = "const X: [char; 2] = ['é','\"'];\nconst S: &str = \"#[no_mangle] fn s\";\n";
     assert!(
         no_mangle_names(src).is_empty(),
         "{:?}",
