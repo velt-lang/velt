@@ -41,6 +41,7 @@ impl<'h> Cx<'h> {
             uses_placement: false,
             cell_checks: false,
             target: String::new(),
+            cpu_checks: Default::default(),
             unavailable: vec![],
             c_clashes: vec![],
             c_symbols: Default::default(),

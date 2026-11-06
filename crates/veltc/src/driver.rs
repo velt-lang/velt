@@ -413,6 +413,7 @@ pub fn compile_to_vir(sess: &mut Session, opts: &BuildOptions) -> Result<vir::Pr
         target: Some(&target),
         // Generic instances shared by shape: debug builds only, for now (shape-sharing.md).
         shapes: !opts.release,
+        no_cpu_extensions: Backend::of_build(opts) == Backend::Cranelift,
     };
     let mut program = match velt_vir::lower_checked(&hir, &lower_opts) {
         Ok(p) => p,
@@ -642,11 +643,7 @@ fn build_on_current_thread(
         optimize: opts.release,
         cpu: opts.cpu.clone(),
     };
-    // `--emit llvm` prints what the LLVM backend compiles.
-    let backend = match opts.emit {
-        Emit::Llvm => Backend::Llvm,
-        _ => Backend::resolve(opts.backend, opts.release).0,
-    };
+    let backend = Backend::of_build(opts);
     let required = backend
         .required_features(&target, opts.cpu.as_deref())
         .map_err(BuildError::Failed)?;

@@ -543,8 +543,9 @@ impl FnLower<'_, '_> {
     }
 
     /// The value of a condition known per instantiation without running it: built from
-    /// `holdsNull` with `!`, `&&` and `||` (std/prelude/map.velt). Other constant
-    /// conditions are left to velt_opt, so their code keeps its shape.
+    /// `holdsNull` and from CPU checks this build answers (cpu_checks.rs) with `!`, `&&` and
+    /// `||` (std/prelude/map.velt). Other constant conditions are left to velt_opt, so their
+    /// code keeps its shape.
     pub(super) fn const_cond(&mut self, e: &hir::Expr) -> Option<bool> {
         match &e.kind {
             hir::ExprKind::Call {
@@ -589,6 +590,10 @@ impl FnLower<'_, '_> {
                     _ => self.const_cond(rhs),
                 }
             }
+            hir::ExprKind::Call {
+                callee: hir::Callee::Def(d, targs),
+                args,
+            } if args.is_empty() && targs.is_empty() => self.cx.cpu_check(*d),
             _ => None,
         }
     }

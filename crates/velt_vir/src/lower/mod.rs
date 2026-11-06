@@ -77,6 +77,7 @@ mod cfg;
 mod class_test;
 mod closure;
 mod console;
+mod cpu_checks;
 mod ctor_init;
 mod debug_vars;
 mod deferred_versions;
@@ -230,6 +231,7 @@ pub(crate) fn lower_program(
         cx.target = opts
             .target
             .map_or_else(crate::system::host_triple, str::to_string);
+        cx.cpu_checks.no_extensions = opts.no_cpu_extensions;
         cx.no_await_steps = no_await_steps;
         cx.facts_only = facts_only;
         cx.shapes.wanted = shape::wanted(opts.shapes);
@@ -352,6 +354,8 @@ struct Cx<'h> {
     cell_checks: bool,
     /// The target triple, for system and host functions (`LowerOptions::target`).
     target: String,
+    /// CPU checks known while lowering (cpu_checks.rs).
+    cpu_checks: cpu_checks::CpuChecks,
     /// Calls of system and host functions the target lacks: (the declaration, the calling function, the
     /// user code being lowered then, `user_site`).
     unavailable: Vec<(DefId, Option<DefId>, velt_common::Span)>,

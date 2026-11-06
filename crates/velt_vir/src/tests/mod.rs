@@ -8,6 +8,7 @@ mod builder_m3;
 mod builder_prelude;
 mod const_arrays;
 mod control;
+mod cpu_checks;
 mod drop_chain;
 mod drops;
 mod fingerprint;
