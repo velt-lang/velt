@@ -1,0 +1,1 @@
+panic: a function that captured a `RegExp` is in `shared(...)`: calls from several threads would run its `clone()` on the same object at once; put the function in a `Mutex`
