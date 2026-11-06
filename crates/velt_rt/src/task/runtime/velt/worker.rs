@@ -104,6 +104,11 @@ pub(super) fn workers() -> &'static [Shared] {
     WORKERS.get().map_or(&[], Vec::as_slice)
 }
 
+/// The configured workers: [`workers`] without the spare ones.
+pub(super) fn configured() -> usize {
+    workers().len().saturating_sub(SPARES)
+}
+
 /// The workers whose threads have started: the first [`started`] of [`workers`].
 static STARTED: AtomicUsize = AtomicUsize::new(0);
 pub(super) fn started() -> usize {

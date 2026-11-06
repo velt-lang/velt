@@ -40,10 +40,17 @@ where
     handle
 }
 
-/// The workers running: the configured ones, and the spare ones started so far.
+/// `workerCount()`: the configured workers, fixed for the process. Spare workers that start
+/// later are not counted (#2371): programs size per-worker arrays by this count.
 pub(super) fn worker_count() -> usize {
     start();
-    worker::started()
+    worker::configured()
+}
+
+/// `currentWorker()` on worker `i`: a spare worker reports one of the configured ones, so the
+/// index stays below [`worker_count`].
+pub(super) fn reported_worker(i: usize) -> usize {
+    i % worker_count().max(1)
 }
 
 /// Tasks queued for a worker by other threads and not taken yet (quiet.rs).
