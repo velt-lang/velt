@@ -84,3 +84,13 @@ function both(x: string) {
 }
 
 console.log(both("a"));
+
+function coalesced(x: typeof K) {
+  const q: S = x;
+  if (q !== K) {
+    const y = q;
+    return y ?? 1;
+  }
+  return 2;
+}
+console.log(coalesced(K));
