@@ -1,0 +1,257 @@
+// velt/compress (internal): prefix codes of the Brotli encoder (RFC 7932 section 3): Huffman code
+// lengths for an alphabet's frequencies, and their description in the stream, simple (up to four
+// symbols, lengths implied) or complex (the lengths run-length coded with the code length code).
+//
+// The run-length coding of the lengths follows the reference encoder: repeated codes 16 and 17
+// compound (each one more multiplies the count by 4 or 8), so a long run is written as digits,
+// most significant first.
+
+import { CodeBuilder } from "velt/compress/deflate/code_builder";
+import { CODE_LENGTH_ORDER } from "velt/compress/brotli/tables";
+import { BitSink } from "velt/compress/brotli/bit_sink";
+
+const MAX_LENGTH: i64 = 15;
+const CL_SYMBOLS: i64 = 18;
+const CL_MAX_LENGTH: i64 = 5;
+const REPEAT: u16 = 16;
+const ZEROS: u16 = 17;
+/** The length the decoder repeats before any other has been read (section 3.5). */
+const INITIAL_REPEATED: u8 = 8;
+/** The fixed code of the code length code's lengths 0 to 5: its bits and their number. */
+const LENGTH_CODE_BITS: u64[] = [0, 7, 3, 2, 1, 15];
+const LENGTH_CODE_COUNT: u64[] = [2, 4, 3, 2, 2, 4];
+
+/** Builds and writes prefix codes; its scratch arrays are reused. */
+export class PrefixWriter {
+  private builder: CodeBuilder = new CodeBuilder();
+  /** Run-length coded lengths: `symbol | (extra << 8)`. */
+  private rle: u16[] = new Array<u16>(704).fill(0);
+  private rleCount: i64 = 0;
+  private clFreq: u32[] = new Array<u32>(CL_SYMBOLS as usize).fill(0);
+  private clLens: u8[] = new Array<u8>(CL_SYMBOLS as usize).fill(0);
+  private clCodes: u32[] = new Array<u32>(CL_SYMBOLS as usize).fill(0);
+  private used: i64[] = [0, 0, 0, 0];
+
+  constructor() {}
+
+  /**
+   * Sets `lens[0..n]` and `codes[0..n]` for `freq[0..n]`. A single symbol (or none) gets a code
+   * of no bits, as a simple prefix code of one symbol has, and is returned, for `store`; -1
+   * otherwise.
+   */
+  build(freq: u32[], n: i64, lens: u8[], codes: u32[]): i64 {
+    let count = 0;
+    let only: i64 = 0;
+    for (let s: i64 = 0; s < n; s++) {
+      if (freq[s] != 0) {
+        count++;
+        only = s;
+      }
+    }
+    if (count <= 1) {
+      lens.fill(0, 0, n);
+      codes.fill(0, 0, n);
+      return only;
+    }
+    this.builder.build(freq, n, MAX_LENGTH, lens, codes);
+    return -1;
+  }
+
+  /** The bits `freq[0..n]` take in codes of the lengths `lens`. */
+  static cost(freq: u32[], lens: u8[], n: i64): i64 {
+    let bits: i64 = 0;
+    for (let i: i64 = 0; i < n; i++) {
+      bits += (freq[i] as i64) * (lens[i] as i64);
+    }
+    return bits;
+  }
+
+  /**
+   * Writes the description of the code with lengths `lens[0..n]`, `width` bits a symbol;
+   * `single` is what `build` returned.
+   */
+  store(sink: BitSink, lens: u8[], n: i64, width: u64, single: i64) {
+    sink.room(1024);
+    if (single >= 0) {
+      sink.put(1, 2);
+      sink.put(0, 2);
+      sink.put(single as u64, width);
+      return;
+    }
+    let count = 0;
+    const used = this.used;
+    for (let s: i64 = 0; s < n && count <= 4; s++) {
+      if (lens[s] != 0) {
+        if (count < 4) {
+          used[count] = s;
+        }
+        count++;
+      }
+    }
+    if (count <= 4) {
+      this.storeSimple(sink, lens, count, width);
+      return;
+    }
+    this.storeComplex(sink, lens, n);
+  }
+
+  // Two to four symbols, shortest code first; with four, a bit says 2,2,2,2 or 1,2,3,3.
+  private storeSimple(sink: BitSink, lens: u8[], count: i64, width: u64) {
+    const used = this.used;
+    // Insertion sort of at most four, by length: the canonical codes don't depend on the order.
+    for (let i: i64 = 1; i < count; i++) {
+      const s = used[i];
+      let j = i;
+      while (j > 0 && lens[used[j - 1]] > lens[s]) {
+        used[j] = used[j - 1];
+        j--;
+      }
+      used[j] = s;
+    }
+    sink.put(1, 2);
+    sink.put((count - 1) as u64, 2);
+    for (let i: i64 = 0; i < count; i++) {
+      sink.put(used[i] as u64, width);
+    }
+    if (count == 4) {
+      sink.put(lens[used[0]] == 1 ? 1 : 0, 1);
+    }
+  }
+
+  // The code length code and then the lengths in it (section 3.5).
+  private storeComplex(sink: BitSink, lens: u8[], n: i64) {
+    let end = n;
+    while (end > 0 && lens[end - 1] == 0) {
+      end--;
+    }
+    this.runLengths(lens, end);
+    const clLens = this.clLens;
+    this.builder.build(this.clFreq, CL_SYMBOLS, CL_MAX_LENGTH, clLens, this.clCodes);
+    let stored = CL_SYMBOLS;
+    while (stored > 0 && clLens[CODE_LENGTH_ORDER[stored - 1] as i64] == 0) {
+      stored--;
+    }
+    let skip: i64 = 0;
+    if (clLens[CODE_LENGTH_ORDER[0] as i64] == 0 && clLens[CODE_LENGTH_ORDER[1] as i64] == 0) {
+      skip = clLens[CODE_LENGTH_ORDER[2] as i64] == 0 ? 3 : 2;
+    }
+    sink.put(skip as u64, 2);
+    for (let i = skip; i < stored; i++) {
+      const v = clLens[CODE_LENGTH_ORDER[i] as i64] as i64;
+      sink.put(LENGTH_CODE_BITS[v], LENGTH_CODE_COUNT[v]);
+    }
+    const rle = this.rle;
+    const codes = this.clCodes;
+    for (let i: i64 = 0; i < this.rleCount; i++) {
+      if (i % 64 == 0) {
+        sink.room(64);
+      }
+      const v = rle[i];
+      const symbol = (v & 255) as i64;
+      sink.code(codes[symbol]);
+      if (symbol == (REPEAT as i64)) {
+        sink.put((v >> 8) as u64, 2);
+      } else if (symbol == (ZEROS as i64)) {
+        sink.put((v >> 8) as u64, 3);
+      }
+    }
+  }
+
+  private emit(symbol: u16, extra: u64) {
+    this.rle[this.rleCount] = symbol | ((extra as u16) << 8);
+    this.rleCount++;
+    this.clFreq[symbol as i64] += 1;
+  }
+
+  // Run-length codes `lens[0..end]` into `rle`, counting the symbols in `clFreq`.
+  private runLengths(lens: u8[], end: i64) {
+    this.rleCount = 0;
+    this.clFreq.fill(0);
+    let previous = INITIAL_REPEATED;
+    let i: i64 = 0;
+    while (i < end) {
+      const value = lens[i];
+      let reps: i64 = 1;
+      while (i + reps < end && lens[i + reps] == value) {
+        reps++;
+      }
+      i += reps;
+      if (value == 0) {
+        this.zeros(reps);
+      } else {
+        this.repeats(previous, value, reps);
+        previous = value;
+      }
+    }
+  }
+
+  // A run of `reps` lengths `value`, the last non-zero length before it `previous`.
+  private repeats(previous: u8, value: u8, count: i64) {
+    let reps = count;
+    if (previous != value) {
+      this.emit(value as u16, 0);
+      reps--;
+    }
+    if (reps == 7) {
+      this.emit(value as u16, 0);
+      reps--;
+    }
+    if (reps < 3) {
+      for (let k: i64 = 0; k < reps; k++) {
+        this.emit(value as u16, 0);
+      }
+      return;
+    }
+    const start = this.rleCount;
+    let r = (reps - 3) as u64;
+    while (true) {
+      this.emit(REPEAT, r & 3);
+      r >>= 2;
+      if (r == 0) {
+        break;
+      }
+      r--;
+    }
+    this.reverse(start);
+  }
+
+  // A run of `count` zero lengths.
+  private zeros(count: i64) {
+    let reps = count;
+    if (reps == 11) {
+      this.emit(0, 0);
+      reps--;
+    }
+    if (reps < 3) {
+      for (let k: i64 = 0; k < reps; k++) {
+        this.emit(0, 0);
+      }
+      return;
+    }
+    const start = this.rleCount;
+    let r = (reps - 3) as u64;
+    while (true) {
+      this.emit(ZEROS, r & 7);
+      r >>= 3;
+      if (r == 0) {
+        break;
+      }
+      r--;
+    }
+    this.reverse(start);
+  }
+
+  // The digits of a run, least significant first so far, put most significant first.
+  private reverse(start: i64) {
+    const rle = this.rle;
+    let a = start;
+    let b = this.rleCount - 1;
+    while (a < b) {
+      const t = rle[a];
+      rle[a] = rle[b];
+      rle[b] = t;
+      a++;
+      b--;
+    }
+  }
+}

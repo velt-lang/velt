@@ -1,0 +1,113 @@
+// velt/compress (internal): the output of the Brotli encoder, bits first-bit-lowest (RFC 7932
+// section 2), into a growing byte array handed out as it is asked for.
+
+import { copyBytes } from "velt/lang/bytes/copy";
+
+const MIN_OUTPUT: i64 = 16384;
+/** Below this share of the output buffer, a piece is copied and the buffer kept. */
+const HAND_OVER_DIVISOR: i64 = 4;
+
+/** Bits to bytes: whole bytes go to `out[0..op]`, up to 31 bits wait in `bb`. */
+export class BitSink {
+  out: u8[] = [];
+  op: i64 = 0;
+  private bb: u64 = 0;
+  private bc: u64 = 0;
+
+  constructor() {}
+
+  /** Makes sure `n` more bytes fit in `out`. */
+  room(n: i64) {
+    const need = this.op + n + 8;
+    if ((this.out.length as i64) >= need) {
+      return;
+    }
+    let size = (this.out.length as i64) * 2;
+    if (size < need) {
+      size = need;
+    }
+    if (size < MIN_OUTPUT) {
+      size = MIN_OUTPUT;
+    }
+    const bigger: u8[] = Buffer.allocUnsafe(size as usize);
+    if (this.op > 0) {
+      copyBytes(this.out, bigger, 0, 0, this.op);
+    }
+    this.out = bigger;
+  }
+
+  /** Writes the low `n` (at most 32) bits of `value`; `room` must cover them. */
+  put(value: u64, n: u64) {
+    this.bb |= value << this.bc;
+    this.bc += n;
+    if (this.bc >= 32) {
+      const op = this.op;
+      const b = this.bb;
+      const out = this.out;
+      out[op] = (b & 255) as u8;
+      out[op + 1] = ((b >> 8) & 255) as u8;
+      out[op + 2] = ((b >> 16) & 255) as u8;
+      out[op + 3] = ((b >> 24) & 255) as u8;
+      this.op = op + 4;
+      this.bb = b >> 32;
+      this.bc -= 32;
+    }
+  }
+
+  /** The number of bits written so far, including those waiting. */
+  get bits(): i64 {
+    return this.op * 8 + (this.bc as i64);
+  }
+
+  /** The output position, to `rewind` to: `[op, waiting bits, their number]`. */
+  mark(): u64[] {
+    return [this.op as u64, this.bb, this.bc];
+  }
+
+  /** Drops what was written since `mark` returned `at`. */
+  rewind(at: u64[]) {
+    this.op = at[0] as i64;
+    this.bb = at[1];
+    this.bc = at[2];
+  }
+
+  /** Writes a code entry of a `CodeBuilder`: the code in bits 0-15, its length from bit 16. */
+  code(entry: u32) {
+    this.put((entry & 0xffff) as u64, (entry >> 16) as u64);
+  }
+
+  /** Pads to a byte boundary with zero bits and writes the bits waiting. */
+  align() {
+    this.room(8);
+    while (this.bc > 0) {
+      this.out[this.op] = (this.bb & 255) as u8;
+      this.op++;
+      this.bb >>= 8;
+      this.bc = this.bc >= 8 ? this.bc - 8 : 0;
+    }
+    this.bb = 0;
+  }
+
+  /** Copies `bytes[start..end]` to the output, which must be on a byte boundary. */
+  bytes(bytes: u8[], start: i64, end: i64) {
+    this.room(end - start);
+    copyBytes(bytes, this.out, this.op, start, end);
+    this.op += end - start;
+  }
+
+  /** The output so far: the buffer itself when it is mostly full, else a copy of the part. */
+  take(): u8[] {
+    const n = this.op;
+    if (n == 0) {
+      return [];
+    }
+    this.op = 0;
+    if (n * HAND_OVER_DIVISOR < (this.out.length as i64)) {
+      return this.out.slice(0, n);
+    }
+    const piece = this.out;
+    piece.truncate(n);
+    this.out = [];
+    return piece;
+  }
+}

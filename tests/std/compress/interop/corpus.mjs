@@ -1,6 +1,7 @@
 // Writes the interop corpus to the directory in argv[2]: the edges of a stream (empty, one byte),
-// random bytes, repetitive bytes, text and JSON-like text, at sizes around the window (32 KiB),
-// a stored block's limit (64 KiB) and a block's symbol limit. Deterministic (a fixed xorshift),
+// random bytes, repetitive bytes, text and JSON-like text, at sizes around DEFLATE's window
+// (32 KiB), a stored block's limit (64 KiB) and a block's symbol limit, and past Brotli's
+// meta-block (1 MiB), its longest match (1 MiB) and near its window (4 MiB). Deterministic (a fixed xorshift),
 // so ratios compare between runs.
 import { mkdirSync, writeFileSync } from "node:fs";
 
@@ -58,3 +59,9 @@ put("mixed-300000", Buffer.concat([text(100000), random(100000), text(100000)]))
 // Matches at the far end of the window: a block of random bytes repeated.
 const far = random(32000);
 put("far-96000", Buffer.concat([far, far, far]));
+// Brotli's limits: several meta-blocks of text, a run longer than the longest match, and a block
+// repeated 4 MiB later, just inside the window, then again just outside it.
+put("text-3145728", text(3 * 1024 * K));
+put("zeros-3145728", Buffer.alloc(3 * 1024 * K));
+const block = random(64 * K);
+put("far4m", Buffer.concat([block, text(4 * 1024 * K - 64 * K - 16), block, text(64 * K), block]));

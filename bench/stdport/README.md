@@ -165,6 +165,24 @@ the sizes track stock zlib's: at level 9 both give 126,039 bytes. Level 1 takes 
 `deflate_fast` path, where `miniz_oxide` checks a single candidate per position: that is the gap
 in the first row.
 
+## Brotli compression
+
+`brotli_fast` and `brotli_default` are `velt/compress`'s `brotliCompress` at qualities 1 and 4
+(`"fastest"` and `"optimal"`) against the `brotli` crate at the same qualities (window 2^22): the
+1 MB JSON of `gen_inputs.rs`, compressed 20 times. A new component, not a port. Instructions
+retired (`/usr/bin/time -l`, Apple M4, macOS, `VELT_THREADS=1`, load about 100), and the size of
+one stream against Node's encoder (the reference encoder, as the crate is):
+
+| benchmark | Velt | Rust | Velt / Rust | Velt bytes | Node bytes |
+|---|---:|---:|---:|---:|---:|
+| brotli_fast | 1,972 M | 1,227 M | 1.61 | 112,887 | 96,467 |
+| brotli_default | 2,797 M | 1,264 M | 2.21 | 53,534 | 47,346 |
+
+The encoder writes one prefix code per category in each meta-block, with no block splitting,
+context modeling or static dictionary: what the reference encoder does only at its fastest
+qualities. On the interop corpus (tests/std/compress/interop) its sizes are within 1 to 5 % of
+Node's at qualities 1 to 9, and 11 % above at quality 11, which searches as 9 does for now.
+
 ## Brotli
 
 `brotli_decode` is `velt/compress`'s `brotliDecompress` against `brotli-decompressor`

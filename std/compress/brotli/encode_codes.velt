@@ -1,0 +1,237 @@
+// velt/compress (internal): the codes the Brotli encoder writes for a command (RFC 7932 sections 4
+// and 5): insert and copy length codes with their extra bits, the insert-and-copy symbol that
+// combines them, and distance codes with no postfix bits and no direct codes.
+
+/** The first insert length of each insert length code (section 5). */
+const INSERT_BASE: u32[] = [
+  0,
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  8,
+  10,
+  14,
+  18,
+  26,
+  34,
+  50,
+  66,
+  98,
+  130,
+  194,
+  322,
+  578,
+  1090,
+  2114,
+  6210,
+  22594,
+];
+/** The extra bits of each insert length code. */
+const INSERT_EXTRA: u32[] = [
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  1,
+  1,
+  2,
+  2,
+  3,
+  3,
+  4,
+  4,
+  5,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  12,
+  14,
+  24,
+];
+/** The first copy length of each copy length code. */
+const COPY_BASE: u32[] = [
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  12,
+  14,
+  18,
+  22,
+  30,
+  38,
+  54,
+  70,
+  102,
+  134,
+  198,
+  326,
+  582,
+  1094,
+  2118,
+];
+/** The extra bits of each copy length code. */
+const COPY_EXTRA: u32[] = [
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  0,
+  1,
+  1,
+  2,
+  2,
+  3,
+  3,
+  4,
+  4,
+  5,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  24,
+];
+
+/** The distance codes that stand for the last distances (section 4), by their index. */
+export const SHORT_CODES: i64 = 16;
+
+function log2Floor(x: u64): u64 {
+  return 63 - (x.leadingZeros() as u64);
+}
+
+/** The insert length code of `n` bytes. */
+export function insertCode(n: u64): u64 {
+  if (n < 6) {
+    return n;
+  }
+  if (n < 130) {
+    const bits = log2Floor(n - 2) - 1;
+    return (bits << 1) + ((n - 2) >> bits) + 2;
+  }
+  if (n < 2114) {
+    return log2Floor(n - 66) + 10;
+  }
+  return n < 6210 ? 21 : n < 22594 ? 22 : 23;
+}
+
+/** The copy length code of `n` bytes (2 or more). */
+export function copyCode(n: u64): u64 {
+  if (n < 10) {
+    return n - 2;
+  }
+  if (n < 134) {
+    const bits = log2Floor(n - 6) - 1;
+    return (bits << 1) + ((n - 6) >> bits) + 4;
+  }
+  if (n < 2118) {
+    return log2Floor(n - 70) + 12;
+  }
+  return 23;
+}
+
+/** The extra bits of insert length code `code`, and their value for `n` bytes. */
+export function insertExtraBits(code: u64): u64 {
+  return INSERT_EXTRA[code as i64] as u64;
+}
+
+export function insertExtraValue(code: u64, n: u64): u64 {
+  return n - (INSERT_BASE[code as i64] as u64);
+}
+
+/** The extra bits of copy length code `code`, and their value for `n` bytes. */
+export function copyExtraBits(code: u64): u64 {
+  return COPY_EXTRA[code as i64] as u64;
+}
+
+export function copyExtraValue(code: u64, n: u64): u64 {
+  return n - (COPY_BASE[code as i64] as u64);
+}
+
+/**
+ * The insert-and-copy symbol of the two length codes. With `lastDistance` (the command reuses
+ * the last distance), the symbol says so where one can, below 128, and no distance follows.
+ */
+export function commandSymbol(ins: u64, copy: u64, lastDistance: bool): u64 {
+  const low = (copy & 7) | ((ins & 7) << 3);
+  if (lastDistance && ins < 8 && copy < 16) {
+    return copy < 8 ? low : low | 64;
+  }
+  // The 64-symbol cells of section 5's last table, in the reference encoder's arithmetic: cell
+  // K * 64 for K in [2, 3, 6, 4, 5, 8, 7, 9, 10] by (insert code / 8, copy code / 8).
+  let offset = 2 * ((copy >> 3) + 3 * (ins >> 3));
+  offset = (offset << 5) + 0x40 + ((0x520d40 >> offset) & 0xc0);
+  return offset | low;
+}
+
+/** Whether a command symbol says that the last distance is reused, with no distance code. */
+export function impliesLastDistance(symbol: u64): bool {
+  return symbol < 128;
+}
+
+/**
+ * The distance code of `distance` given the last four distances (`cache[0]` the last), with no
+ * postfix bits and no direct codes: a short code when one gives the distance, else 16 or more.
+ */
+export function distanceCode(distance: i64, cache: i64[]): i64 {
+  const plus3 = distance + 3;
+  const offset0 = plus3 - cache[0];
+  const offset1 = plus3 - cache[1];
+  if (distance == cache[0]) {
+    return 0;
+  }
+  if (distance == cache[1]) {
+    return 1;
+  }
+  if (offset0 >= 0 && offset0 < 7) {
+    return (0x9750468 >> (4 * offset0)) & 15;
+  }
+  if (offset1 >= 0 && offset1 < 7) {
+    return (0xfdb1ace >> (4 * offset1)) & 15;
+  }
+  if (distance == cache[2]) {
+    return 2;
+  }
+  if (distance == cache[3]) {
+    return 3;
+  }
+  return distance + SHORT_CODES - 1;
+}
+
+/**
+ * The symbol of a distance code (16 or more: `distance + 15`), with its extra bits' number
+ * (bits 16 and up) and value (bits 0-23 of the result's second half): `[symbol, nbits, value]`.
+ */
+export function distanceSymbol(code: i64, out: u64[]) {
+  if (code < SHORT_CODES) {
+    out[0] = code as u64;
+    out[1] = 0;
+    out[2] = 0;
+    return;
+  }
+  const dist = (4 + (code - SHORT_CODES)) as u64;
+  const bucket = log2Floor(dist) - 1;
+  const prefix = (dist >> bucket) & 1;
+  const offset = (2 + prefix) << bucket;
+  out[0] = (SHORT_CODES as u64) + 2 * (bucket - 1) + prefix;
+  out[1] = bucket;
+  out[2] = dist - offset;
+}

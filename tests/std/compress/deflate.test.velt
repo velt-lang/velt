@@ -179,6 +179,17 @@ describe("deflate encoder", () => {
     }
   });
 
+  it("gives the same bytes for the same input, whatever ran before it", () => {
+    const t = text(50000).concat(noise(40000, 5, 14)).concat(farPeriod());
+    for (const level of [1, 6, 9]) {
+      const first = gzip(t, level);
+      // Other encoders' buffers, freed, are the memory the next one may get.
+      gzip(noise(90000, 7, 15), level);
+      gzip(skewedDistances(), level);
+      expect(same(gzip(t, level), first) ? "" : `level ${level}`).toBe("");
+    }
+  });
+
   it("writes an empty stream as zlib does", () => {
     expect(deflate([], 6)).toEqual([0x78, 0x9c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x01]);
     expect(deflateRaw([], 6)).toEqual([0x03, 0x00]);
