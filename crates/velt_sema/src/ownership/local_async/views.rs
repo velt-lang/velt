@@ -18,21 +18,26 @@ use super::changes::{in_library, Found, Memo, Roots};
 use super::reach::{is_buffer, is_view, reached_locals, reaches};
 
 /// Add to `out` the views over what `taint` reaches that body `f` holds outside a local (module docs).
+///
+/// `top`: `f` is the function itself, whose captures aren't views it made. In what it calls, a value
+/// it hands out is handed on.
 pub(super) fn held_views(
     cx: &mut Ctx,
     f: &FnDef,
     taint: &Roots,
+    top: bool,
     memo: &mut Memo,
     out: &mut Vec<Found>,
 ) {
     let mut seen = FxHashSet::default();
-    scan(cx, f, taint, memo, &mut seen, out);
+    scan(cx, f, taint, top, memo, &mut seen, out);
 }
 
 fn scan(
     cx: &mut Ctx,
     f: &FnDef,
     taint: &Roots,
+    top: bool,
     memo: &mut Memo,
     seen: &mut FxHashSet<DefId>,
     out: &mut Vec<Found>,
@@ -40,6 +45,7 @@ fn scan(
     let mut v = Views {
         cx: &mut *cx,
         taint,
+        top,
         memo: &mut *memo,
         out: &mut *out,
         args: FxHashSet::default(),
@@ -63,7 +69,7 @@ fn scan(
             .collect();
         if !roots.is_empty() {
             let inner = reached_locals(cx, &k, &roots, memo);
-            scan(cx, &k, &inner, memo, seen, out);
+            scan(cx, &k, &inner, false, memo, seen, out);
         }
         cx.defs[d.0 as usize] = Some(Def::Fn(k));
     }
@@ -72,6 +78,7 @@ fn scan(
 struct Views<'a, 'm> {
     cx: &'a mut Ctx<'m>,
     taint: &'a Roots,
+    top: bool,
     memo: &'a mut Memo,
     out: &'a mut Vec<Found>,
     /// Arguments of calls, with their conversions: a call may read a view it is given.
@@ -87,9 +94,9 @@ impl Views<'_, '_> {
             return;
         }
         // The capture itself isn't a view made here.
-        let root =
-            matches!(x.kind, E::Local(l, _) if self.taint.get(&l).is_some_and(|r| r.0.local == l));
-        if root {
+        if self.top
+            && matches!(x.kind, E::Local(l, _) if self.taint.get(&l).is_some_and(|r| r.0.local == l))
+        {
             return;
         }
         let Some((r, true)) = reaches(self.cx, x, self.taint, self.memo) else {

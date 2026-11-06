@@ -283,7 +283,7 @@ pub(super) fn changes(
         return;
     }
     let taint = reached_locals(cx, f, roots, memo);
-    super::views::held_views(cx, f, &taint, memo, out);
+    super::views::held_views(cx, f, &taint, depth == 0, memo, out);
     let mut events = vec![];
     walk::block(&f.body.block, &mut Events(&mut events));
     let names: Vec<String> = f.body.locals.iter().map(|l| l.name.clone()).collect();
