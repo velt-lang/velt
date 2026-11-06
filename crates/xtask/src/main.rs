@@ -38,6 +38,7 @@ mod repeat;
 mod requeue_tests;
 mod sweep;
 mod timing_lint;
+mod zig;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -392,7 +393,8 @@ fn precheck_paths(root: &Path, args: &Args) -> Result<(Vec<String>, String), Str
 /// the WebAssembly goldens run in shards per OS (`golden_shards`, `wasm_shards`). After a push to
 /// `main`, `main_os` lists the OSes of the `main` job: Linux (it saves the build cache) and,
 /// when [`Plan::after_merge`] says so, Windows and macOS for the whole gate. `c_headers` says
-/// whether the `c-headers` job runs ([`Plan::c_headers`]).
+/// whether the `c-headers` job runs ([`Plan::c_headers`]); `zig_tests` and `zig_goldens` whether
+/// the `test` and `golden` parts build C `sources` and so get the cached zig ([`zig`]).
 fn github_output_text(plan: &Plan) -> String {
     let flag = |b: bool| if b { "true" } else { "false" };
     // Linux, always, stays first.
@@ -438,6 +440,11 @@ fn github_output_text(plan: &Plan) -> String {
         text.push_str(&format!("{output}={value}\n"));
     }
     text.push_str(&format!("c_headers={}\n", flag(plan.c_headers)));
+    text.push_str(&format!(
+        "zig_tests={}\nzig_goldens={}\n",
+        flag(zig::tests(plan)),
+        flag(zig::goldens(plan))
+    ));
     let wasm = if plan.wasm { "" } else { "skip" };
     text.push_str(&format!("wasm_goldens={wasm}\n"));
     text
@@ -467,8 +474,9 @@ fn github_outputs(plan: &Plan, flake: &FlakeGuards) -> Result<(), String> {
     append(
         "GITHUB_OUTPUT",
         &format!(
-            "repeat={repeat}\nwindows_packages={}\n",
-            flake.windows_packages
+            "repeat={repeat}\nwindows_packages={}\nwindows_zig={}\n",
+            flake.windows_packages,
+            zig::windows(&flake.windows_packages, &flake.repeat)
         ),
     )?;
     append(
@@ -693,6 +701,29 @@ name = \"a\"
         assert!(github_output_text(&plan).contains("\nc_headers=false\n"));
         plan.c_headers = true;
         assert!(github_output_text(&plan).contains("\nc_headers=true\n"));
+    }
+
+    #[test]
+    fn ci_learns_which_parts_build_c_sources() {
+        let mut plan = Plan::everything("test");
+        let text = github_output_text(&plan);
+        assert!(
+            text.contains("\nzig_tests=true\nzig_goldens=true\n"),
+            "{text}"
+        );
+        plan.veltc = plan::Veltc::Some(["lint".to_string()].into());
+        plan.goldens = plan::Goldens::Matching(["tests/golden/std/".to_string()].into());
+        let text = github_output_text(&plan);
+        assert!(
+            text.contains("\nzig_tests=false\nzig_goldens=false\n"),
+            "{text}"
+        );
+        plan.veltc = plan::Veltc::Some(["packages".to_string()].into());
+        let text = github_output_text(&plan);
+        assert!(
+            text.contains("\nzig_tests=true\nzig_goldens=false\n"),
+            "{text}"
+        );
     }
 
     #[test]

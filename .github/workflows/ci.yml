@@ -68,6 +68,21 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           tools: ${{ matrix.part != 'lint' }}
+      # The pinned zig, from the Actions cache, only when this part's tests build a package's C
+      # `sources` (packages/sqlite and what uses it: crates/xtask/src/zig.rs). Lint builds none.
+      - name: does this part build C sources?
+        id: plan
+        if: matrix.part != 'lint'
+        run: |
+          if ${{ contains(github.event.pull_request.labels.*.name, 'ci:full') }}; then
+            cargo xtask affected --full --github
+          else
+            cargo xtask affected --base HEAD^1 --github
+          fi
+      - uses: ./.github/actions/zig
+        if: >-
+          (matrix.part == 'test' && steps.plan.outputs.zig_tests == 'true')
+          || (matrix.part == 'golden' && steps.plan.outputs.zig_goldens == 'true')
       - name: cargo xtask check --part ${{ matrix.part }}
         env:
           # `--full` knows no changes, so it leaves the robustness sweep to the environment.
@@ -98,6 +113,8 @@ jobs:
       repeat: ${{ steps.plan.outputs.repeat }}
       # The packages whose tests run on Windows (`all`, names, or empty; os.rs).
       windows_packages: ${{ steps.plan.outputs.windows_packages }}
+      # `true` when those tests or the repeated files build C `sources` (crates/xtask/src/zig.rs).
+      windows_zig: ${{ steps.plan.outputs.windows_zig }}
       # `true` when the change touches what the header check checks (`c-headers`).
       c_headers: ${{ steps.plan.outputs.c_headers }}
     steps:
@@ -156,6 +173,10 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           tools: false
+      - uses: ./.github/actions/zig
+        if: needs.pr-plan.outputs.windows_zig == 'true'
+        with:
+          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
       # What both steps run, resolved as the gate's `--all-targets` build (a test target resolves
       # the dev-dependencies' features), so neither builds again.
       - name: build
@@ -276,6 +297,12 @@ jobs:
         with:
           fetch-depth: 2
       - uses: ./.github/actions/setup
+      # `--full` runs every package's tests, the example apps' and the benchmarks', and those
+      # build packages/sqlite's C sources: the plan selects zig for every such run
+      # (crates/xtask/src/zig.rs).
+      - uses: ./.github/actions/zig
+        with:
+          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
       # The pinned Miniflare and workerd, so the Worker test (crates/veltc/tests/workerd.rs) runs
       # under workerd here (VELT_WORKERD below); its timings run nightly.
       - name: npm ci (tests/workerd, Linux)
@@ -313,6 +340,8 @@ jobs:
     with:
       os: ${{ matrix.os }}
       shards: ${{ toJSON(fromJSON(needs.queue-plan.outputs.golden_shards)[matrix.os]) }}
+      # Every golden, the example apps' that build packages/sqlite's C sources among them.
+      zig: true
       wasm_shards: >-
         ${{ needs.queue-plan.outputs.wasm_goldens == 'skip' && '[]'
         || toJSON(fromJSON(needs.queue-plan.outputs.wasm_shards)[matrix.os]) }}
@@ -391,6 +420,12 @@ jobs:
           cargo build -p velt_rt_wasm --target wasm32-wasip1
           cargo build -p velt_rt_wasm --target wasm32-unknown-unknown
           cargo build -p xtask
+      # The whole gate builds packages/sqlite's C sources (crates/xtask/src/zig.rs); Linux's
+      # build above doesn't.
+      - uses: ./.github/actions/zig
+        if: runner.os != 'Linux'
+        with:
+          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
       - name: cargo xtask check --full
         if: runner.os != 'Linux'
         shell: bash
@@ -425,8 +460,8 @@ jobs:
 
   # `declare c` against C headers, C constants and C `sources` through the pinned zig, for every
   # target from this one Linux job (crates/veltc/tests/c_headers.rs, c_constants.rs and
-  # c_sources.rs, which fail in CI without VELT_ZIG; the other jobs' tests leave them out,
-  # crates/xtask/src/c_headers.rs's TESTS). It runs only when the
+  # c_sources.rs, which VELT_ZIG_TESTS turns on and makes fail without VELT_ZIG; the other jobs'
+  # tests leave them out, crates/xtask/src/c_headers.rs's TESTS). It runs only when the
   # change touches what it checks (crates/xtask/src/c_headers.rs), in pull requests and in
   # the queue: anything else doesn't download zig. The nightly runs it whatever changed.
   c-headers:
@@ -444,6 +479,8 @@ jobs:
       - name: the runtime
         run: cargo build -p velt_rt
       - name: declarations against headers, C constants and sources, every target
+        env:
+          VELT_ZIG_TESTS: "1"
         run: cargo test --workspace --test c_headers --test c_constants --test c_sources -- --nocapture
 
   ci:

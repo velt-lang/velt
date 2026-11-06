@@ -1,19 +1,45 @@
 name: zig
 description: >-
   The pinned zig (crates/velt_toolchain/src/zig.rs), checked against its SHA-256, as VELT_ZIG for
-  the later steps. Only jobs that check C headers use it: everything else never downloads zig.
+  the later steps, from the Actions cache. Two kinds of job use it: the `c-headers` job, whose
+  tests check C headers through it (with VELT_ZIG_TESTS=1, crates/xtask/src/c_headers.rs), and
+  the jobs whose tests build a package's C `sources`, selected by the plan
+  (crates/xtask/src/zig.rs: `zig_tests`, `zig_goldens`, `windows_zig`, and every `--full` run).
+  VELT_ZIG alone runs none of the header tests. A job without it that builds C sources still
+  works: velt downloads the pinned zig from ziglang.org on first use.
+inputs:
+  working-directory:
+    description: >-
+      Where to run cargo: the Dev Drive copy on Windows (`DEV_DRIVE_WORKSPACE`), so the build
+      shares the job's target directory.
+    default: .
 runs:
   using: composite
   steps:
     # Caches saved by pull request and merge queue runs can't be restored by other branches: the
     # nightly's, from main, is the one they find, which keeps them off ziglang.org.
     - uses: actions/cache@v4
+      id: cache
       with:
         path: ~/.velt-zig
         key: zig-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('crates/velt_toolchain/src/zig.rs') }}
+    # From the cache (its key is zig.rs, which pins the version) without building anything, as
+    # the golden shards build nothing else; otherwise downloaded and checked by velt_toolchain.
     - name: the pinned zig
       shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        HIT: ${{ steps.cache.outputs.cache-hit }}
       run: |
-        zig=$(cargo run --quiet -p velt_toolchain --example zig -- "$HOME/.velt-zig")
+        zig=
+        if [ "$HIT" = true ]; then
+          for f in "$HOME"/.velt-zig/cache/zig/*/zig-*/zig "$HOME"/.velt-zig/cache/zig/*/zig-*/zig.exe; do
+            if [ -f "$f" ]; then zig=$f; break; fi
+          done
+          if [ -n "$zig" ] && [ "$RUNNER_OS" = Windows ]; then zig=$(cygpath -m "$zig"); fi
+        fi
+        if [ -z "$zig" ]; then
+          zig=$(cargo run --quiet -p velt_toolchain --example zig -- "$HOME/.velt-zig")
+        fi
         "$zig" version
         echo "VELT_ZIG=$zig" >> "$GITHUB_ENV"

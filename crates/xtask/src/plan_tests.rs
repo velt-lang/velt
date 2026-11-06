@@ -667,3 +667,57 @@ fn the_vir_identity_runs_when_sema_the_loader_lowering_or_std_change() {
         assert!(!plan(&[path]).vir_identity, "{path}");
     }
 }
+
+#[test]
+fn zig_is_selected_for_the_tests_that_build_c_sources() {
+    for path in [
+        "packages/sqlite/src/connection.velt",
+        "packages/sqlite/native/sqlite3.c",
+        "packages/sqlite/tests/driver.test.velt",
+        "examples/apps/todo-api/src/sqlite_store.velt",
+        "bench/sqlite/engine.velt",
+        "bench/chat/velt/server.velt",
+        // Every package's tests run, sqlite's among them.
+        "packages/redis/src/client.velt",
+        // Everything.
+        "std/fs/index.velt",
+        "Cargo.lock",
+    ] {
+        assert!(crate::zig::tests(&plan(&[path])), "{path}");
+    }
+    assert!(crate::zig::tests(&Plan::everything("--full")));
+    for path in [
+        "examples/apps/todo-api/demo.velt",
+        "examples/apps/todo-api/demo_sqlite.out",
+        "examples/apps/todo-api/src/server.velt",
+    ] {
+        assert!(crate::zig::goldens(&plan(&[path])), "{path}");
+    }
+    // A change to any example app runs every example app's goldens.
+    assert!(crate::zig::goldens(&plan(&[
+        "examples/apps/chat/demo.velt"
+    ])));
+    assert!(crate::zig::goldens(&Plan::everything("--full")));
+}
+
+#[test]
+fn zig_is_not_selected_for_unrelated_changes() {
+    for path in [
+        "crates/velt_lsp/src/lib.rs",
+        "tests/golden/lang/errors/std_moved_modules.velt",
+        "docs/internals/design/c-ffi.md",
+        "editors/vscode/package.json",
+        "tests/difftest/src/main.rs",
+    ] {
+        assert!(!crate::zig::tests(&plan(&[path])), "{path}");
+    }
+    for path in [
+        "packages/sqlite/src/connection.velt",
+        "bench/sqlite/engine.velt",
+        "examples/wordfreq.velt",
+        "examples/wordfreq.out",
+        "tests/golden/lang/errors/std_moved_modules.velt",
+    ] {
+        assert!(!crate::zig::goldens(&plan(&[path])), "{path}");
+    }
+}
