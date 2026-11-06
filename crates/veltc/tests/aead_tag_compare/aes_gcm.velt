@@ -1,0 +1,7 @@
+// One AEAD, so the tag comparison has one caller, as in a program that uses only this one.
+import { AesGcm } from "velt/crypto";
+
+const nonce: u8[] = Buffer.alloc(12);
+const aead = new AesGcm(Buffer.alloc(16));
+const sealed = aead.seal(nonce, Buffer.alloc(100), []);
+console.log(aead.openInPlace(nonce, [], sealed, 0, sealed.length));
