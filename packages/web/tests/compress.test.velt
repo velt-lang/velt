@@ -128,6 +128,23 @@ describe("compress", () => {
     },
   );
 
+  it("adds to Vary by whole names", async () => {
+    const cases: [string, string][] = [
+      ["X-Accept-Encoding", "X-Accept-Encoding, Accept-Encoding"],
+      ["Origin, accept-encoding", "Origin, accept-encoding"],
+      ["*", "*"],
+    ];
+    for (const [vary, want] of cases) {
+      const res = await compress()(
+        respond(TEXT, [
+          ["content-type", "text/plain"],
+          ["vary", vary],
+        ]),
+      )(get("gzip"));
+      expect(res.headers.get("vary")).toBe(want);
+    }
+  });
+
   it("takes other encodings and a threshold", async () => {
     const h = compress({ encodings: [new DeflateEncoding("deflate")], threshold: 10 })(
       respond("0123456789ab"),

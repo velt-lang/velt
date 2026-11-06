@@ -174,9 +174,12 @@ function addVary(headers: Headers) {
     headers.set("vary", "Accept-Encoding");
     return;
   }
-  const lower = vary.toLowerCase();
-  if (lower.trim() == "*" || lower.includes("accept-encoding")) {
-    return;
+  // By whole names: `X-Accept-Encoding` is another header.
+  for (const item of vary.split(",")) {
+    const name = item.trim().toLowerCase();
+    if (name == "*" || name == "accept-encoding") {
+      return;
+    }
   }
   headers.set("vary", `${vary}, Accept-Encoding`);
 }
