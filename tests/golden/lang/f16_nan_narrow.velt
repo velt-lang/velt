@@ -1,0 +1,88 @@
+// What narrowing to `f16` promises for a NaN (#2049, #2459). A direct narrow of an f32 or f64
+// NaN, signalling ones included, gives a quiet NaN with the sign and the top of the payload, on
+// every backend. A round trip, `(w as f32) as f16` or `(w as number) as f16`, gives a NaN with
+// `w`'s sign and payload, but a signalling one may stay signalling: LLVM folds
+// `fptrunc (fpext x)` to `x` in release builds, where Cranelift quiets it. So the round trips
+// print and check their bits with the quiet bit set, and the direct narrows exactly. velt/half's
+// bulk loops narrow from memory, never a round trip LLVM can see, so they are exact too; an
+// element-at-a-time round trip loop, which LLVM vectorizes, is checked like a round trip.
+// bf16's narrowing is integer code LLVM doesn't fold away: its round trip is exact.
+
+import { narrowF16, widenF16 } from "velt/half";
+
+const F16_NANS: u16[] = [0x7c01, 0x7c03, 0xfd01, 0x7dff, 0x7e00, 0xfe03, 0x7fff, 0xffff];
+const BF16_NANS: u16[] = [0x7f81, 0x7f83, 0xffa1, 0x7fbf, 0x7fc0, 0xffc3];
+const F32_NANS: u32[] = [0x7f800001, 0xff800001, 0x7fa00000, 0xffb12345, 0x7f812345, 0x7fc00001];
+
+function hex(x: number): string {
+  return x.toString(16);
+}
+
+// The f16 pattern `h` with its quiet bit set if it is a NaN.
+function quietF16(h: u32): u32 {
+  return (h & 0x7fff) > 0x7c00 ? h | 0x200 : h;
+}
+
+// Whether `r` is a NaN with the f16 NaN `p`'s sign and payload, quiet or not: what a round trip
+// promises.
+function sameNaN(r: u32, p: u32): bool {
+  return (r & 0x7fff) > 0x7c00 && (r | 0x200) == quietF16(p);
+}
+
+// The f16 an f32 NaN with bits `x` narrows to.
+function f16OfF32Nan(x: u32): u32 {
+  return ((x >> 16) & 0x8000) | 0x7e00 | ((x >> 13) & 0x3ff);
+}
+
+function main() {
+  let wrong = 0;
+  let line = "f16 round trip, quiet bit set:";
+  for (const p of F16_NANS) {
+    const w = f16.fromBits(p);
+    const viaF32 = ((w as f32) as f16).toBits() as u32;
+    const viaNumber = ((w as number) as f16).toBits() as u32;
+    wrong += sameNaN(viaF32, p as u32) ? 0 : 1;
+    wrong += sameNaN(viaNumber, p as u32) ? 0 : 1;
+    line += ` ${hex(viaF32 | 0x200)}/${hex(viaNumber | 0x200)}`;
+  }
+  console.log(line);
+  line = "f32 NaNs to f16:";
+  for (const x of F32_NANS) {
+    const h = (f32.fromBits(x) as f16).toBits() as u32;
+    const d = ((f32.fromBits(x) as number) as f16).toBits() as u32;
+    wrong += h == f16OfF32Nan(x) ? 0 : 1;
+    wrong += d == f16OfF32Nan(x) ? 0 : 1;
+    line += ` ${hex(h)}/${hex(d)}`;
+  }
+  console.log(line);
+  line = "bf16 back:";
+  for (const p of BF16_NANS) {
+    const b = bf16.fromBits(p);
+    const back = ((b as f32) as bf16).toBits() as u32;
+    wrong += back == ((p | 0x40) as u32) ? 0 : 1;
+    line += ` ${hex(back)}`;
+  }
+  console.log(line);
+  // Bulk: 64 copies of each pattern, widened into an `f32[]` and narrowed back from it.
+  const ws: f16[] = [];
+  for (let k = 0; k < 64; k++) {
+    for (const p of F16_NANS) {
+      ws.push(f16.fromBits(p));
+    }
+  }
+  const back = narrowF16(widenF16(ws));
+  let bulk = 0;
+  for (let i: usize = 0; i < ws.length; i++) {
+    bulk += back[i].toBits() as u32 == quietF16(ws[i].toBits() as u32) ? 0 : 1;
+  }
+  // And an element at a time, a round trip in a loop LLVM vectorizes here.
+  const out: f16[] = new Array<f16>(ws.length).fill(0);
+  for (let i: usize = 0; i < ws.length; i++) {
+    out[i] = (ws[i] as f32) as f16;
+  }
+  for (let i: usize = 0; i < ws.length; i++) {
+    bulk += sameNaN(out[i].toBits() as u32, ws[i].toBits() as u32) ? 0 : 1;
+  }
+  console.log("bulk", ws.length, "mismatches", bulk);
+  console.log("mismatches", wrong);
+}

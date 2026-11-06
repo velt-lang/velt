@@ -65,7 +65,10 @@ pub(crate) fn helper(op: MathOp, native: HalfNative) -> Option<InlineHelper> {
     })
 }
 
-// One instruction each where the target has it.
+// One instruction each where the target has it. Narrowing quiets a NaN (`fcvt`, `vcvtps2ph`), but
+// LLVM folds `fptrunc (fpext x)` to `x`, so a signalling NaN may stay signalling through a round
+// trip. That is allowed (#2459): quieting after `fptrunc` here would cost bulk narrowing 25% to
+// 107% for data that never takes such a round trip. `f16x8.narrow` quiets explicitly.
 const F16_TO_F32: &str = "define internal float @velt.f16_to_f32(i16 %h) alwaysinline nounwind {
   %x = bitcast i16 %h to half
   %r = fpext half %x to float
