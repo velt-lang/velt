@@ -2,7 +2,7 @@
 import { serve } from "http-server";
 import { BodyStream } from "velt/net/http";
 import { describe, expect, it } from "velt/test";
-import { bodyLimit, Handler, rateLimit } from "../src/lib";
+import { App, bodyLimit, Handler, rateLimit } from "../src/lib";
 
 const ok: Handler = async (req: Request): Promise<Response> => new Response("ok");
 const echo: Handler = async (req: Request): Promise<Response> => new Response(await req.text());
@@ -16,6 +16,26 @@ async function* parts(n: i64): AsyncGenerator<u8[]> {
     const chunk: u8[] = [49, 50, 51];
     yield chunk;
   }
+}
+
+/** `n` requests at once for one key: how many passed, and how many were refused. */
+async function burst(url: string, n: number): Promise<[number, number]> {
+  const all: Promise<Response>[] = [];
+  for (let i = 0; i < n; i++) {
+    all.push(spawn(fetch(url, { headers: { "x-key": "a" } })));
+  }
+  let passed = 0;
+  let refused = 0;
+  for (const p of all) {
+    const res = await p;
+    await res.text();
+    if (res.status == 200) {
+      passed++;
+    } else if (res.status == 429) {
+      refused++;
+    }
+  }
+  return [passed, refused];
 }
 
 function request(key: string): Request {
@@ -45,6 +65,40 @@ describe("rateLimit", () => {
       }
       expect(passed).toBe(5);
       expect(refused).toBe(3);
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("counts in an app, past the limit, with many requests at once", async () => {
+    const app = new App<number>(() => 0);
+    app.use(rateLimit({ limit: 50, windowMs: 3600000, key: byHeader }));
+    app.get("/", async (c) => c.text("ok"));
+    const h = app.handler();
+    const server = await serve({ port: 0 }, (req: Request) => h(req));
+    try {
+      const [passed, refused] = await burst(`http://127.0.0.1:${server.port}/`, 200);
+      expect(passed).toBe(50);
+      expect(refused).toBe(150);
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("counts under a prefix only, with many requests at once", async () => {
+    const app = new App<number>(() => 0);
+    app.use(rateLimit({ limit: 50, windowMs: 3600000, key: byHeader }), "/api");
+    app.get("/api/a", async (c) => c.text("ok"));
+    app.get("/free", async (c) => c.text("ok"));
+    const h = app.handler();
+    const server = await serve({ port: 0 }, (req: Request) => h(req));
+    try {
+      const [passed, refused] = await burst(`http://127.0.0.1:${server.port}/api/a`, 200);
+      expect(passed).toBe(50);
+      expect(refused).toBe(150);
+      const [free, none] = await burst(`http://127.0.0.1:${server.port}/free`, 100);
+      expect(free).toBe(100);
+      expect(none).toBe(0);
     } finally {
       await server.shutdown();
     }
