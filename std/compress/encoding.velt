@@ -1,0 +1,33 @@
+// velt/compress (internal): what a compression provider implements: `Encoding`, a named coding
+// that makes streaming `Encoder`s, so a new coding (zstd in a package) needs no change where
+// encodings are chosen. Levels are named, or a number the provider defines.
+
+import { CompressError } from "velt/compress/errors";
+
+/**
+ * How hard a provider compresses: `"fastest"`, `"optimal"` (for dynamic responses) or
+ * `"smallest"` (for files compressed ahead of time), or a number in the provider's own range.
+ */
+export type CompressionLevel = "fastest" | "optimal" | "smallest" | number;
+
+/** One stream being compressed: its output comes back in pieces, from each call. */
+export interface Encoder {
+  /**
+   * Compresses `bytes[start..end]` (not kept after the call) and returns the output ready so far,
+   * often `[]`: an encoder buffers what it has not decided how to code yet. Throws `RangeError`
+   * unless `0 <= start <= end <= bytes.length`.
+   */
+  write(bytes: u8[], start: i64, end: i64): u8[] throws CompressError | RangeError;
+  /** Everything written so far, in a form a decoder can output now; the stream goes on. */
+  flush(): u8[] throws CompressError;
+  /** The rest of the stream, with its trailer. `[]` when called again; a `write` then throws. */
+  finish(): u8[] throws CompressError;
+}
+
+/** A compression coding: its name, and the encoders it makes. */
+export interface Encoding {
+  /** The coding's name: an HTTP content coding (`"gzip"`) or a `CompressionStream` format. */
+  name: string;
+  /** A new stream in this coding at the provider's level. */
+  encoder(): Encoder;
+}

@@ -1,0 +1,405 @@
+// velt/compress (internal): the block layer of the DEFLATE encoder (RFC 1951 §3.2): the symbols of
+// the current block with their frequencies, the choice between a stored, a fixed and a dynamic
+// block by their exact sizes, and the bits of the chosen one.
+//
+// Length and distance codes come from arithmetic on the value, no tables: past the first few, the
+// codes step twice (distances) or four times (lengths) per power of two.
+
+import { CODE_ORDER, DIST_EXTRA, LENGTH_EXTRA } from "velt/compress/inflate/tables";
+import { CodeBuilder, entryLength } from "velt/compress/deflate/code_builder";
+import { copyBytes, setBytes } from "velt/lang/bytes/copy";
+
+const LIT_SYMBOLS: i64 = 286;
+const DIST_SYMBOLS: i64 = 30;
+const FIXED_LIT_SYMBOLS: i64 = 288;
+const CL_SYMBOLS: i64 = 19;
+const END_OF_BLOCK: i64 = 256;
+const FIRST_LENGTH_SYMBOL: i64 = 257;
+/** A symbol is `(distance << 16) | length - 3`, or a literal byte with distance 0. */
+const BLOCK_SYMBOLS: i64 = 16383;
+const MAX_STORED: i64 = 65535;
+/** The code-length alphabet's repeat symbols (RFC 1951 §3.2.7). */
+const REPEAT: u16 = 16;
+const ZEROS: u16 = 17;
+const LONG_ZEROS: u16 = 18;
+const MIN_OUTPUT: usize = 16384;
+
+/** Zeroed frequencies or codes for `n` symbols. */
+function counters(n: i64): u32[] {
+  return new Array<u32>(n as usize).fill(0);
+}
+
+function lengths(n: i64): u8[] {
+  return new Array<u8>(n as usize).fill(0);
+}
+
+/** The lengths of the fixed literal and length code (RFC 1951 §3.2.6). */
+function fixedLitLengths(): u8[] {
+  const lens = lengths(FIXED_LIT_SYMBOLS);
+  lens.fill(8);
+  lens.fill(9, 144, 256);
+  lens.fill(7, 256, 280);
+  return lens;
+}
+
+/**
+ * The output of a DEFLATE stream and its current block: `tally` adds symbols, `flushBlock` writes
+ * them. Whole bytes go to `out[0..op]` at once, up to 31 bits wait in `bb`.
+ */
+export class BlockWriter {
+  out: u8[] = [];
+  op: i64 = 0;
+  private bb: u64 = 0;
+  private bc: u64 = 0;
+  /** The current block's symbols: `syms[0..count]`. */
+  syms: u32[] = counters(BLOCK_SYMBOLS);
+  count: i64 = 0;
+  /** The input being compressed, which stored blocks copy from. */
+  window: u8[] = lengths(65536);
+  litFreq: u32[] = counters(LIT_SYMBOLS);
+  distFreq: u32[] = counters(DIST_SYMBOLS);
+  private clFreq: u32[] = counters(CL_SYMBOLS);
+  private litLens: u8[] = lengths(LIT_SYMBOLS);
+  private distLens: u8[] = lengths(DIST_SYMBOLS);
+  private clLens: u8[] = lengths(CL_SYMBOLS);
+  private litCodes: u32[] = counters(LIT_SYMBOLS);
+  private distCodes: u32[] = counters(DIST_SYMBOLS);
+  private clCodes: u32[] = counters(CL_SYMBOLS);
+  /** The code-length alphabet's symbols of a block's header: `symbol | (extra bits << 8)`. */
+  private clSyms: u16[] = new Array<u16>((LIT_SYMBOLS + DIST_SYMBOLS) as usize).fill(0);
+  private clCount: i64 = 0;
+  private clExtra: i64 = 0;
+  private allLens: u8[] = lengths(LIT_SYMBOLS + DIST_SYMBOLS);
+  private fixedLens: u8[] = fixedLitLengths();
+  private fixedLit: u32[] = counters(FIXED_LIT_SYMBOLS);
+  private fixedDist: u32[] = counters(DIST_SYMBOLS);
+  private builder: CodeBuilder = new CodeBuilder();
+
+  constructor() {
+    this.builder.fixed(this.fixedLens, FIXED_LIT_SYMBOLS, this.fixedLit);
+    this.builder.fixed(lengths5(), DIST_SYMBOLS, this.fixedDist);
+    this.litFreq[END_OF_BLOCK] = 1;
+  }
+
+  /** Makes sure `n` more bytes fit in `out`. */
+  room(n: i64) {
+    const need = (this.op + n) as usize;
+    if (this.out.length >= need) {
+      return;
+    }
+    let size = this.out.length * 2;
+    if (size < need) {
+      size = need;
+    }
+    if (size < MIN_OUTPUT) {
+      size = MIN_OUTPUT;
+    }
+    const bigger: u8[] = Buffer.allocUnsafe(size);
+    if (this.op > 0) {
+      copyBytes(this.out, bigger, 0, 0, this.op);
+    }
+    this.out = bigger;
+  }
+
+  /** Writes a byte; the bit buffer must be empty (the framing around the DEFLATE stream). */
+  byte(b: u8) {
+    this.room(1);
+    this.out[this.op] = b;
+    this.op++;
+  }
+
+  /** Writes the low `n` (at most 16) bits of `value`. */
+  private put(value: u64, n: u64) {
+    this.bb |= value << this.bc;
+    this.bc += n;
+    if (this.bc >= 32) {
+      const op = this.op;
+      const b = this.bb;
+      const out = this.out;
+      out[op] = (b & 255) as u8;
+      out[op + 1] = ((b >> 8) & 255) as u8;
+      out[op + 2] = ((b >> 16) & 255) as u8;
+      out[op + 3] = ((b >> 24) & 255) as u8;
+      this.op = op + 4;
+      this.bb = b >> 32;
+      this.bc -= 32;
+    }
+  }
+
+  /** Pads to a byte boundary with zero bits and writes the bits waiting. */
+  align() {
+    this.room(8);
+    while (this.bc > 0) {
+      this.out[this.op] = (this.bb & 255) as u8;
+      this.op++;
+      this.bb >>= 8;
+      this.bc = this.bc >= 8 ? this.bc - 8 : 0;
+    }
+    this.bb = 0;
+  }
+
+  /** An empty stored block: the marker of a flush, which leaves the output on a byte boundary. */
+  emptyStored() {
+    this.room(16);
+    this.put(0, 3);
+    this.align();
+    this.storedHeader(0);
+  }
+
+  private storedHeader(n: i64) {
+    const out = this.out;
+    const op = this.op;
+    out[op] = (n & 255) as u8;
+    out[op + 1] = (n >> 8) as u8;
+    out[op + 2] = (~n & 255) as u8;
+    out[op + 3] = ((~n >> 8) & 255) as u8;
+    this.op = op + 4;
+  }
+
+  /**
+   * Writes the current block, which is `window[start..end]` (a `start` below 0: those bytes are
+   * gone, so it cannot be a stored block), in the smallest form, and starts the next one.
+   */
+  flushBlock(start: i64, end: i64, last: bool) {
+    const extra = this.extraBits();
+    const b = this.builder;
+    const hlit = b.build(this.litFreq, LIT_SYMBOLS, 15, this.litLens, this.litCodes);
+    const hdist = b.build(this.distFreq, DIST_SYMBOLS, 15, this.distLens, this.distCodes);
+    this.scanLengths(hlit, hdist);
+    b.build(this.clFreq, CL_SYMBOLS, 7, this.clLens, this.clCodes);
+    let hclen: i64 = CL_SYMBOLS;
+    while (hclen > 4 && this.clLens[CODE_ORDER[hclen - 1] as i64] == 0) {
+      hclen--;
+    }
+    const dynamic =
+      14 +
+      3 * hclen +
+      this.clExtra +
+      cost(this.clFreq, this.clLens, CL_SYMBOLS) +
+      cost(this.litFreq, this.litLens, LIT_SYMBOLS) +
+      cost(this.distFreq, this.distLens, DIST_SYMBOLS) +
+      extra;
+    const fixed = cost(this.litFreq, this.fixedLens, LIT_SYMBOLS) + 5 * sum(this.distFreq) + extra;
+    const best = dynamic < fixed ? dynamic : fixed;
+    const size = end - start;
+    this.room(best / 8 + 32);
+    if (start >= 0 && size + 4 <= (best + 3 + 7) >> 3) {
+      this.stored(start, end, last);
+    } else if (dynamic < fixed) {
+      this.put(last ? 5 : 4, 3);
+      this.dynamicHeader(hlit, hdist, hclen);
+      this.symbols(true);
+    } else {
+      this.put(last ? 3 : 2, 3);
+      this.symbols(false);
+    }
+    this.count = 0;
+    this.litFreq.fill(0);
+    this.distFreq.fill(0);
+    this.litFreq[END_OF_BLOCK] = 1;
+  }
+
+  /** `window[start..end]` as stored blocks: more than one above a stored block's limit. */
+  private stored(start: i64, end: i64, last: bool) {
+    let at = start;
+    while (true) {
+      const n = end - at > MAX_STORED ? MAX_STORED : end - at;
+      const final = last && at + n == end;
+      this.room(n + 16);
+      this.put(final ? 1 : 0, 3);
+      this.align();
+      this.storedHeader(n);
+      const out = this.out;
+      copyBytes(this.window, out, this.op, at, at + n);
+      this.op += n;
+      at += n;
+      if (at == end) {
+        return;
+      }
+    }
+  }
+
+  /** The bits the extra bits of the block's symbols take in any code. */
+  private extraBits(): i64 {
+    let bits: i64 = 0;
+    for (let i: i64 = 0; i < 29; i++) {
+      bits += (this.litFreq[FIRST_LENGTH_SYMBOL + i] * LENGTH_EXTRA[i]) as i64;
+    }
+    for (let i: i64 = 0; i < DIST_SYMBOLS; i++) {
+      bits += (this.distFreq[i] * DIST_EXTRA[i]) as i64;
+    }
+    return bits;
+  }
+
+  /**
+   * Run-length codes the code lengths of both trees (RFC 1951 §3.2.7) into `clSyms`, counting
+   * the symbols in `clFreq` and their extra bits in `clExtra`.
+   */
+  private scanLengths(hlit: i64, hdist: i64) {
+    const all = this.allLens;
+    setBytes(all, this.litLens.slice(0, hlit), 0);
+    setBytes(all, this.distLens.slice(0, hdist), hlit as usize);
+    const total = hlit + hdist;
+    this.clFreq.fill(0);
+    this.clCount = 0;
+    this.clExtra = 0;
+    let i: i64 = 0;
+    while (i < total) {
+      const v = all[i];
+      let run: i64 = 1;
+      while (i + run < total && all[i + run] == v) {
+        run++;
+      }
+      i += run;
+      if (v == 0) {
+        while (run >= 11) {
+          const n = run > 138 ? 138 : run;
+          this.clSymbol(LONG_ZEROS, n - 11, 7);
+          run -= n;
+        }
+        if (run >= 3) {
+          this.clSymbol(ZEROS, run - 3, 3);
+          run = 0;
+        }
+      } else {
+        this.clSymbol(v as u16, 0, 0);
+        run--;
+        while (run >= 3) {
+          const n = run > 6 ? 6 : run;
+          this.clSymbol(REPEAT, n - 3, 2);
+          run -= n;
+        }
+      }
+      while (run > 0) {
+        this.clSymbol(v as u16, 0, 0);
+        run--;
+      }
+    }
+  }
+
+  private clSymbol(symbol: u16, value: i64, bits: i64) {
+    this.clSyms[this.clCount] = symbol | ((value as u16) << 8);
+    this.clCount++;
+    this.clFreq[symbol as i64] += 1;
+    this.clExtra += bits;
+  }
+
+  /** The tree description of a dynamic block (RFC 1951 §3.2.7). */
+  private dynamicHeader(hlit: i64, hdist: i64, hclen: i64) {
+    this.put((hlit - FIRST_LENGTH_SYMBOL) as u64, 5);
+    this.put((hdist - 1) as u64, 5);
+    this.put((hclen - 4) as u64, 4);
+    for (let i: i64 = 0; i < hclen; i++) {
+      this.put(this.clLens[CODE_ORDER[i] as i64] as u64, 3);
+    }
+    for (let i: i64 = 0; i < this.clCount; i++) {
+      const v = this.clSyms[i];
+      const symbol = (v & 255) as i64;
+      const e = this.clCodes[symbol];
+      this.put((e & 0xffff) as u64, entryLength(e) as u64);
+      if (v as i64 >= (REPEAT as i64)) {
+        this.put((v >> 8) as u64, symbol == 16 ? 2 : symbol == 17 ? 3 : 7);
+      }
+    }
+  }
+
+  /** The block's symbols in its dynamic codes or the fixed ones, then its end. */
+  private symbols(dynamic: bool) {
+    const lit = dynamic ? this.litCodes : this.fixedLit;
+    const dist = dynamic ? this.distCodes : this.fixedDist;
+    const syms = this.syms;
+    const out = this.out;
+    const n = this.count;
+    let bb = this.bb;
+    let bc = this.bc;
+    let op = this.op;
+    for (let i: i64 = 0; i < n; i++) {
+      const v = syms[i];
+      const d = (v >> 16) as u64;
+      let e: u32;
+      if (d == 0) {
+        e = lit[v as i64];
+        bb |= ((e & 0xffff) as u64) << bc;
+        bc += (e >> 16) as u64;
+      } else {
+        // The length's symbol and extra bits, at most 20 bits.
+        const x = (v & 255) as u64;
+        let symbol: i64;
+        let extra: u64 = 0;
+        if (x < 8) {
+          symbol = FIRST_LENGTH_SYMBOL + (x as i64);
+        } else if (x == 255) {
+          symbol = 285;
+        } else {
+          extra = 61 - (x.leadingZeros() as u64);
+          symbol = FIRST_LENGTH_SYMBOL + ((((extra + 1) << 2) | ((x >> extra) & 3)) as i64);
+        }
+        e = lit[symbol];
+        bb |= ((e & 0xffff) as u64) << bc;
+        bc += (e >> 16) as u64;
+        bb |= (x & ((1 << extra) - 1)) << bc;
+        bc += extra;
+        if (bc >= 32) {
+          out[op] = (bb & 255) as u8;
+          out[op + 1] = ((bb >> 8) & 255) as u8;
+          out[op + 2] = ((bb >> 16) & 255) as u8;
+          out[op + 3] = ((bb >> 24) & 255) as u8;
+          op += 4;
+          bb >>= 32;
+          bc -= 32;
+        }
+        // The distance's symbol and extra bits, at most 28 bits.
+        const y = d - 1;
+        let code: i64;
+        let more: u64 = 0;
+        if (y < 4) {
+          code = y as i64;
+        } else {
+          more = 62 - (y.leadingZeros() as u64);
+          code = (((more + 1) << 1) | ((y >> more) & 1)) as i64;
+        }
+        e = dist[code];
+        bb |= ((e & 0xffff) as u64) << bc;
+        bc += (e >> 16) as u64;
+        bb |= (y & ((1 << more) - 1)) << bc;
+        bc += more;
+      }
+      if (bc >= 32) {
+        out[op] = (bb & 255) as u8;
+        out[op + 1] = ((bb >> 8) & 255) as u8;
+        out[op + 2] = ((bb >> 16) & 255) as u8;
+        out[op + 3] = ((bb >> 24) & 255) as u8;
+        op += 4;
+        bb >>= 32;
+        bc -= 32;
+      }
+    }
+    this.bb = bb;
+    this.bc = bc;
+    this.op = op;
+    const end = lit[END_OF_BLOCK];
+    this.put((end & 0xffff) as u64, entryLength(end) as u64);
+  }
+}
+
+/** The fixed distance code's lengths (5 bits each). */
+function lengths5(): u8[] {
+  return new Array<u8>(DIST_SYMBOLS as usize).fill(5);
+}
+
+/** The bits `freq[0..n]` take in codes of the lengths `lens`. */
+function cost(freq: u32[], lens: u8[], n: i64): i64 {
+  let bits: i64 = 0;
+  for (let i: i64 = 0; i < n; i++) {
+    bits += (freq[i] as i64) * (lens[i] as i64);
+  }
+  return bits;
+}
+
+function sum(freq: u32[]): i64 {
+  let total: i64 = 0;
+  for (const f of freq) {
+    total += f as i64;
+  }
+  return total;
+}

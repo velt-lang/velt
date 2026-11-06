@@ -1,0 +1,90 @@
+// Compresses every file of the directory in args[0] into the directory in args[1], at levels 1, 6
+// and 9 in the three formats and in pieces with flushes, as `<file>.<level>.<format>`, and checks
+// that std's own decoders give the input back. run.sh runs it and has Node and gzip read the output.
+import {
+  deflate,
+  deflateRaw,
+  DeflateEncoding,
+  gunzip,
+  gzip,
+  inflate,
+  inflateRaw,
+} from "velt/compress";
+import { openWrite, readDirSync, readFileBytesSync } from "velt/fs";
+import { args, exit } from "velt/process";
+
+function same(a: u8[], b: u8[]): bool {
+  if (a.length != b.length) {
+    return false;
+  }
+  for (let i: usize = 0; i < a.length; i++) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+/** `input` written in pieces of `step` bytes, flushing every `every` of them. */
+function pieces(input: u8[], step: i64, every: i64, level: number): u8[] {
+  const e = new DeflateEncoding("gzip", level).encoder();
+  let out: u8[] = [];
+  let at: i64 = 0;
+  let n: i64 = 0;
+  const end = input.length as i64;
+  while (at < end) {
+    const to = at + step < end ? at + step : end;
+    out = out.concat(e.write(input, at, to));
+    at = to;
+    n++;
+    if (every > 0 && n % every == 0) {
+      out = out.concat(e.flush());
+    }
+  }
+  return out.concat(e.finish());
+}
+
+async function save(path: string, bytes: u8[]): Promise<void> {
+  const w = await openWrite(path);
+  await w.writeBytes(bytes);
+  await w.close();
+}
+
+async function main(): Promise<void> {
+  const inDir = args()[0];
+  const outDir = args()[1];
+  let failed = 0;
+  let streams = 0;
+  for (const name of readDirSync(inDir)) {
+    const input = readFileBytesSync(`${inDir}/${name}`);
+    for (const level of [1, 6, 9]) {
+      const z = gzip(input, level);
+      const d = deflate(input, level);
+      const r = deflateRaw(input, level);
+      const p = pieces(input, 4099, 0, level);
+      const f = pieces(input, 4099, 7, level);
+      if (
+        !same(gunzip(z), input) ||
+        !same(inflate(d), input) ||
+        !same(inflateRaw(r), input) ||
+        !same(gunzip(p), input) ||
+        !same(gunzip(f), input)
+      ) {
+        console.log(`std inflate differs: ${name} level ${level}`);
+        failed++;
+      }
+      await save(`${outDir}/${name}.${level}.gzip`, z);
+      await save(`${outDir}/${name}.${level}.zlib`, d);
+      await save(`${outDir}/${name}.${level}.raw`, r);
+      await save(`${outDir}/${name}.${level}.pieces`, p);
+      await save(`${outDir}/${name}.${level}.flushed`, f);
+      streams += 5;
+    }
+  }
+  console.log(`std inflate: ${streams} streams, ${failed} wrong`);
+  if (failed > 0) {
+    exit(1);
+  }
+}
+
+await main();

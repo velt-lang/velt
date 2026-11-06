@@ -1,0 +1,66 @@
+// velt/compress (internal): the `Encoding` provider of DEFLATE and its frames, its levels, and the
+// one-shot functions.
+
+import { DeflateEncoder, DeflateFormat } from "velt/compress/deflate/deflate_encoder";
+import { CompressionLevel, Encoder, Encoding } from "velt/compress/encoding";
+
+/** `fastest`, `optimal` and `smallest` are zlib's levels 1, 6 and 9; a number from 1 to 9 is itself. */
+function levelNumber(level: CompressionLevel): i64 throws RangeError {
+  if (typeof level == "number") {
+    if (!(level >= 1 && level <= 9) || level != Math.floor(level)) {
+      throw new RangeError(`The compression level must be 1 to 9. Received ${level}`);
+    }
+    return level as i64;
+  }
+  if (level == "fastest") {
+    return 1;
+  }
+  if (level == "optimal") {
+    return 6;
+  }
+  if (level == "smallest") {
+    return 9;
+  }
+  // Not reached: a cast to `CompressionLevel` checks the value (a TypeError otherwise).
+  throw new RangeError(`The compression level must be a name or 1 to 9. Received ${level}`);
+}
+
+/**
+ * The provider of gzip, zlib (`"deflate"`) and raw DEFLATE (`"deflate-raw"`) at a level:
+ * `"fastest"` is 1, `"optimal"` 6 and `"smallest"` 9, or a whole number from 1 to 9; another
+ * number is a `RangeError`. `name` is the format.
+ */
+export class DeflateEncoding implements Encoding {
+  name: string;
+  private format: DeflateFormat;
+  private level: i64;
+
+  constructor(format: DeflateFormat, level: CompressionLevel = "optimal") throws RangeError {
+    this.name = format;
+    this.format = format;
+    this.level = levelNumber(level);
+  }
+
+  /** A new stream in this format at this level. */
+  encoder(): Encoder {
+    return new DeflateEncoder(this.format, this.level);
+  }
+}
+
+/** `input` as a gzip stream (RFC 1952); see `DeflateEncoding` for the level. */
+export function gzip(input: u8[], level: CompressionLevel = "optimal"): u8[] throws RangeError {
+  return new DeflateEncoder("gzip", levelNumber(level)).all(input);
+}
+
+/** `input` as a zlib stream (RFC 1950), what `inflate` reads; see `DeflateEncoding` for the level. */
+export function deflate(input: u8[], level: CompressionLevel = "optimal"): u8[] throws RangeError {
+  return new DeflateEncoder("deflate", levelNumber(level)).all(input);
+}
+
+/** `input` as raw DEFLATE (RFC 1951), what `inflateRaw` reads; see `DeflateEncoding` for the level. */
+export function deflateRaw(
+  input: u8[],
+  level: CompressionLevel = "optimal",
+): u8[] throws RangeError {
+  return new DeflateEncoder("deflate-raw", levelNumber(level)).all(input);
+}
