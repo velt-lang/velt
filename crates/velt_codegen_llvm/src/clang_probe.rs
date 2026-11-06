@@ -13,14 +13,16 @@
 //! [`HUNG_HOLD`] (see [`Waits`]).
 
 use std::ffi::OsStr;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, ExitStatus, Stdio};
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, OnceLock};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::OnceLock;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use velt_codegen_cl::CodeCache;
+
+pub(crate) use crate::clang_run::{run_limited, Ran};
 
 /// Oldest LLVM major version whose IR parser accepts what the backend emits.
 pub(crate) const MIN_LLVM_MAJOR: u32 = 16;
@@ -34,11 +36,8 @@ pub(crate) const PROBE_LIMIT: Duration = Duration::from_secs(30);
 /// How long, in seconds, a build's search leaves alone a candidate that hung, and how long one
 /// timeout waits for a second. A hung shim then costs two waits an hour rather than one a build.
 pub(crate) const HUNG_HOLD: u64 = 3600;
-/// How much of a candidate's output is kept: its first line is all that is wanted. The rest is read
-/// and dropped, so that it isn't killed by a closed pipe, whatever it writes.
-const MOST_OUTPUT: u64 = 64 * 1024;
 /// What the target check compiles. Its name is also how tests tell it from a real compile.
-const SMALLEST_IR: &[u8] = b"define void @velt_clang_check() {\n  ret void\n}\n";
+pub(crate) const SMALLEST_IR: &[u8] = b"define void @velt_clang_check() {\n  ret void\n}\n";
 /// The memo's value for a check that passed; anything else is why it failed.
 const COMPILES: &[u8] = b"ok";
 
@@ -138,7 +137,7 @@ impl Waits<'_> {
     /// Whether `clang` compiles for this machine, as [`compiles_with`].
     pub(crate) fn check(&self, clang: &Path, banner: &str) -> Result<(), String> {
         let note = self.hung_note(clang, Asked::Check);
-        let result = check_with(clang, banner, self.memo, self.limit);
+        let result = check_with(clang, banner, self.memo, self.limit, self.now);
         match result {
             Err(Failure::TimedOut(_)) => self.hung(clang, Asked::Check),
             _ if note.seen => self.answered(clang, Asked::Check),
@@ -252,10 +251,7 @@ fn waits() -> Waits<'static> {
     Waits {
         memo: memo(),
         limit: probe_limit(),
-        now: SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .ok()
-            .map(|t| t.as_secs()),
+        now: now(),
         tell: if quiet {
             &|_| {}
         } else {
@@ -308,7 +304,7 @@ pub(crate) fn probe_with(clang: &Path, memo: Option<&dyn CodeCache>, limit: Dura
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     match run_limited(cmd, limit) {
-        Ran::Exited(status, stdout) if status.success() => {
+        Ran::Exited(status, stdout, _) if status.success() => {
             if let Some((k, m)) = key.as_ref().zip(memo) {
                 m.put(k, &stdout);
             }
@@ -333,22 +329,42 @@ pub(crate) fn compiles_with(
     memo: Option<&dyn CodeCache>,
     limit: Duration,
 ) -> Result<(), String> {
-    check_with(clang, banner, memo, limit).map_err(Failure::into_text)
+    check_with(clang, banner, memo, limit, now()).map_err(Failure::into_text)
 }
 
-fn check_with(
+/// Seconds since 1970, if the clock says.
+fn now() -> Option<u64> {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .ok()
+        .map(|t| t.as_secs())
+}
+
+/// Whether `clang` compiles for this machine, `now` seconds since 1970. A pass is kept as long as
+/// the file and banner; a refusal for [`REFUSAL_HOLD`], as what clang said no to can be passing
+/// (a full disk, a missing file it reads), and then it is asked again.
+pub(crate) fn check_with(
     clang: &Path,
     banner: &str,
     memo: Option<&dyn CodeCache>,
     limit: Duration,
+    now: Option<u64>,
 ) -> Result<(), Failure> {
-    let key = check_key(clang, banner)
-        .zip(memo)
-        .map(|(k, m)| current(k, m));
+    let base = check_key(clang, banner).zip(memo);
+    let mut key = base.as_ref().map(|(k, m)| current(k.clone(), *m));
     let cached = (key.as_ref().zip(memo)).and_then(|(k, m)| m.get(k));
     match cached.as_deref() {
         Some(COMPILES) => return Ok(()),
-        Some(why) => return Err(Failure::Refused(String::from_utf8_lossy(why).into_owned())),
+        Some(value) => match (refusal(value, now), &base) {
+            (Some(why), _) => return Err(Failure::Refused(why)),
+            // Too old to go by, or from before refusals had a time: ask again, and keep the new
+            // answer under the next key.
+            (None, Some((base, memo))) => {
+                take_back(base, *memo);
+                key = Some(current(base.clone(), *memo));
+            }
+            (None, None) => {}
+        },
         None => {}
     }
     let target = format!("--target={}", velt_codegen_cl::host_triple());
@@ -366,13 +382,33 @@ fn check_with(
     if let Some((k, m)) = key.as_ref().zip(memo) {
         match &result {
             Ok(()) => m.put(k, COMPILES),
-            // Only clang's own verdict lasts: a crash, a file that couldn't be started because it
-            // was being written, or a timeout may not happen next time.
-            Err(Failure::Refused(why)) => m.put(k, why.as_bytes()),
+            // Only clang's own verdict lasts, and only for a while: a crash, a file that couldn't
+            // be started because it was being written, or a timeout may not happen next time.
+            Err(Failure::Refused(why)) => {
+                if let Some(now) = now {
+                    let mut value = REFUSED.to_vec();
+                    value.extend_from_slice(&now.to_le_bytes());
+                    value.extend_from_slice(why.as_bytes());
+                    m.put(k, &value);
+                }
+            }
             Err(Failure::Other(_) | Failure::TimedOut(_)) => {}
         }
     }
     result
+}
+
+/// How long, in seconds, a clang's refusal of the target check is gone by: a day.
+pub(crate) const REFUSAL_HOLD: u64 = 24 * 3600;
+/// What a kept refusal starts with, before the time it was given and what clang said.
+const REFUSED: &[u8] = b"refused ";
+
+/// What a kept refusal `value` said, if it was given less than [`REFUSAL_HOLD`] before `now`.
+fn refusal(value: &[u8], now: Option<u64>) -> Option<String> {
+    let rest = value.strip_prefix(REFUSED)?;
+    let (time, why) = rest.split_first_chunk::<8>()?;
+    let age = now?.checked_sub(u64::from_le_bytes(*time))?;
+    (age < REFUSAL_HOLD).then(|| String::from_utf8_lossy(why).into_owned())
 }
 
 /// Why a small compile failed.
@@ -402,8 +438,8 @@ pub(crate) fn try_compile(clang: &Path, args: &[&str], limit: Duration) -> Resul
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     match run_limited(cmd, limit) {
-        Ran::Exited(status, _) if status.success() => Ok(()),
-        Ran::Exited(status, stderr) => {
+        Ran::Exited(status, ..) if status.success() => Ok(()),
+        Ran::Exited(status, _, stderr) => {
             let text = String::from_utf8_lossy(&stderr);
             let line = text.lines().find(|l| !l.trim().is_empty());
             let why = line.map_or_else(|| status.to_string(), |l| l.trim().to_string());
@@ -467,64 +503,6 @@ fn taken_back(key: &[u8], times: u32) -> Vec<u8> {
     key
 }
 
-/// What came of running a program with a limit.
-enum Ran {
-    /// Its status, and what it wrote to the one pipe asked for (stdout, else stderr).
-    Exited(ExitStatus, Vec<u8>),
-    NotStarted(String),
-    TimedOut,
-}
-
-/// Run `cmd`, which has stdout or stderr piped, and give it [`SMALLEST_IR`] if stdin is piped too.
-/// A child that is still running at `limit` is killed; a process it started may live on, and the
-/// thread reading their pipe with it, until this process exits.
-fn run_limited(mut cmd: Command, limit: Duration) -> Ran {
-    let mut child = match cmd.spawn() {
-        Ok(child) => child,
-        Err(e) => return Ran::NotStarted(e.to_string()),
-    };
-    if let Some(mut stdin) = child.stdin.take() {
-        // It fits a pipe's buffer, so this doesn't block. One that exits unread is judged by that.
-        let _ = stdin.write_all(SMALLEST_IR);
-    }
-    let pipe: Option<Box<dyn Read + Send>> = match (child.stdout.take(), child.stderr.take()) {
-        (Some(out), _) => Some(Box::new(out)),
-        (None, Some(err)) => Some(Box::new(err)),
-        (None, None) => None,
-    };
-    let (send, receive) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut text = vec![];
-        if let Some(mut pipe) = pipe {
-            let _ = pipe.by_ref().take(MOST_OUTPUT).read_to_end(&mut text);
-            let _ = std::io::copy(&mut pipe, &mut std::io::sink());
-        }
-        let _ = send.send(text);
-    });
-    let deadline = Instant::now() + limit;
-    let finished = receive.recv_timeout(limit).ok().and_then(|text| {
-        // The pipe is closed, so the child is done or nearly: `wait` could still block on one that
-        // closed it and hangs.
-        loop {
-            match child.try_wait() {
-                Ok(Some(status)) => return Some((status, text)),
-                Ok(None) if Instant::now() < deadline => {
-                    std::thread::sleep(Duration::from_millis(1));
-                }
-                _ => return None,
-            }
-        }
-    });
-    match finished {
-        Some((status, text)) => Ran::Exited(status, text),
-        None => {
-            let _ = child.kill();
-            let _ = child.wait();
-            Ran::TimedOut
-        }
-    }
-}
-
 /// The memo key of `--version`'s answer for candidate `clang`: its resolved path (a bare name is
 /// looked up on `PATH`), size and modification time. `None` when it can't be found or read, or
 /// isn't the clang itself, so it is asked.
@@ -548,7 +526,8 @@ fn check_key(clang: &Path, banner: &str) -> Option<Vec<u8>> {
     Some(key)
 }
 
-fn real_file(clang: &Path) -> Option<PathBuf> {
+/// The file starting `clang` starts, with links followed.
+pub(crate) fn real_file(clang: &Path) -> Option<PathBuf> {
     let path = resolve(clang)?;
     Some(path.canonicalize().unwrap_or(path))
 }
