@@ -123,6 +123,9 @@ caller-tracking instance's symbol).
 
 The editor runs the same demand set: `ide::check_for_ide` takes the callback, and with it works out
 what `reach` would check as if bodies were deferred (`Lazy::check_all`), though it checks them all.
+Without the callback, a module the program did not load stays out and its hooks are not checked,
+as with a std root that lacks it: `velt check`'s lint rules and `--ts-compat` analyse a program
+loaded on demand that way, since they read only the program's own code.
 `velt_lsp`'s `tests/demand.rs` requires the errors and the modules of `velt check`. `velt check
 --std` and the editor's workspace index load everything, and demand nothing.
 

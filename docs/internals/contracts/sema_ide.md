@@ -14,6 +14,8 @@ pub fn check_for_ide(modules: &[SourceModule], root: usize, load: Option<&LoadFn
   HIR is built. Never panics on user input (same guarantee as `check`).
 - While checking it records side tables (name → definition, expression → type, local scopes); the
   returned `Analysis` owns everything, so it does not borrow `modules`.
+- `load`: with it, the std modules the program needs but did not load are added as in `velt check`
+  (`velt_sema::std_load`); with `None`, they stay out and their hooks are not checked.
 - Cost: one extra branch per hook when compiling (`check` records nothing); `check_for_ide` stores a
   few words per name use and per checked expression.
 

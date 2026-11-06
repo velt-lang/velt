@@ -24,8 +24,8 @@ pub enum Checked {
 /// instances that have none and adds it to itself (docs/internals/design/source-generators.md
 /// §6); without, or when that code needs a check of its own, it returns a [`Checked::Demand`]
 /// (or [`Checked::Again`]) and the driver checks again with the code added. With `load`, std modules
-/// the program did not load are added when the check finds them needed (`std_load`); without, the
-/// program must have loaded them.
+/// the program did not load are added when the check finds them needed (`std_load`); without,
+/// those stay out and their hooks are not checked.
 pub fn check_generating(
     modules: &[SourceModule],
     root: usize,

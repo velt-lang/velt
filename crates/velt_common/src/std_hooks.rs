@@ -733,8 +733,9 @@ pub const ON_DEMAND_FLOAT: &[&str] = &["number_text", "number_push", "float_text
 
 /// The std modules of hooks no program needs by default: not loaded with the prelude. Sema demands
 /// each when it finds the hook needed, during the check (#2161 (a1): `velt_sema` `std_load`), so
-/// each follows the rule of `velt_loader::std_index`. `VELT_EAGER_STD=1`, and a caller that gives
-/// the check no load callback, load them all up front, in this order.
+/// each follows the rule of `velt_loader::std_index`. `VELT_EAGER_STD=1` loads them all up front,
+/// in this order. A check given no load callback adds none of them: those its program did not load
+/// stay out, and their hooks are not checked (`velt_sema::ide::check_for_ide`).
 pub const ON_DEMAND_MODULES: &[&str] = &[
     "std/lang/hooks/number_text",
     "std/lang/hooks/number_float",

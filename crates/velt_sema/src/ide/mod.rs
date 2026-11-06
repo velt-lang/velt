@@ -69,7 +69,10 @@ pub struct Analysis {
 /// being checked, `modules[root]` need not define `main`, and no HIR is built.
 ///
 /// With `load` (`crate::LoadFn`), the std modules the program's code needs but the program did not
-/// load are added as they are in `velt check`; without, the program must have loaded them.
+/// load are added as they are in `velt check`. Without, such a module stays out, as with a std root
+/// that lacks it: its hooks are not checked, and the program's own code is analysed as with them.
+/// `velt check`'s lint rules and `--ts-compat` call it so, on a program loaded with std on demand,
+/// since they read only the program's own code.
 pub fn check_for_ide(
     modules: &[SourceModule],
     root: usize,
