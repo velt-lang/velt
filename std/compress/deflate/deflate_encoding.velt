@@ -12,7 +12,17 @@ function levelNumber(level: CompressionLevel): i64 throws RangeError {
     }
     return level as i64;
   }
-  return level == "fastest" ? 1 : level == "optimal" ? 6 : 9;
+  if (level == "fastest") {
+    return 1;
+  }
+  if (level == "optimal") {
+    return 6;
+  }
+  if (level == "smallest") {
+    return 9;
+  }
+  // Not reached: a cast to `CompressionLevel` checks the value (a TypeError otherwise).
+  throw new RangeError(`The compression level must be a name or 1 to 9. Received ${level}`);
 }
 
 /**
