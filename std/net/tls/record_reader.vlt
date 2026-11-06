@@ -1,26 +1,30 @@
 // velt/net (internal): `RecordReader`, the reading half of the TLS record layer (RFC 8446 §5):
 // records read with `readInto` into one reused buffer, framed, decrypted in place, alerts
-// handled, and application data handed out from where it was decrypted. Nothing is allocated
-// per record.
+// handled, and application data handed out from where it was decrypted. Framing and opening a
+// record allocate nothing; each transport read allocates its view of the buffer (3 blocks, all
+// freed).
 
 import "velt/lang/typed_array/bytes_view";
 import { ByteStream } from "velt/net/byte_stream";
 import {
   alertName,
   CLOSE_NOTIFY,
-  ILLEGAL_PARAMETER,
+  DECODE_ERROR,
   RECORD_OVERFLOW,
   TlsFailure,
   UNEXPECTED_MESSAGE,
 } from "velt/net/tls/alert";
-import { HEADER, RecordCipher, TAG } from "velt/net/tls/record_cipher";
+import { HEADER, RecordCipher } from "velt/net/tls/record_cipher";
 
-// Content types.
+/** The content type change_cipher_spec. */
 export const CHANGE_CIPHER_SPEC: u8 = 20;
+/** The content type alert. */
 export const ALERT: u8 = 21;
+/** The content type handshake. */
 export const HANDSHAKE: u8 = 22;
+/** The content type application_data. */
 export const APPLICATION_DATA: u8 = 23;
-/** Not a content type: the stream ended (close_notify, or the transport at a record boundary). */
+/** Not a content type: the stream ended with close_notify. */
 export const END: u8 = 0;
 
 /** The most content a record carries. */
@@ -45,8 +49,10 @@ export class RecordReader {
   cipher: RecordCipher | null;
   /** Whether ChangeCipherSpec records are still allowed (until the handshake is done). */
   handshaking: bool;
-  /** Whether the stream has ended. */
+  /** Whether the stream ended with close_notify. */
   ended: bool;
+  // The first failure: nothing is read past it, and `next` throws it again.
+  private failure: TlsFailure | null;
 
   constructor(t: ByteStream) {
     this.t = t;
@@ -60,6 +66,7 @@ export class RecordReader {
     this.cipher = null;
     this.handshaking = true;
     this.ended = false;
+    this.failure = null;
   }
 
   /** Application data not yet handed out. */
@@ -90,44 +97,54 @@ export class RecordReader {
 
   /**
    * Reads the next record and decrypts it in place: its content type, the content at
-   * `buf[cstart..cend]`. END when the stream ended: close_notify, or the transport closing at a
-   * record boundary once the handshake is done (`after`; an error during it). Alerts other than
-   * close_notify throw.
+   * `buf[cstart..cend]`. END at close_notify. Throws a `TlsFailure` for a record the protocol
+   * forbids, an alert other than close_notify, and a transport that ends without close_notify,
+   * which may be a truncation (`after`: once the handshake is done). After a failure every call
+   * throws it again.
    */
   async next(after: bool): Promise<u8> {
-    while (true) {
-      const avail = this.rend - this.rstart;
-      if (avail >= HEADER) {
-        const at = this.rstart;
-        const len = ((this.buf[at + 3] as usize) << 8) | (this.buf[at + 4] as usize);
-        if (len > MAX_CIPHER) {
-          throw new TlsFailure(RECORD_OVERFLOW, `a record of ${len} bytes`);
+    const failed = this.failure;
+    if (failed != null) {
+      throw failed;
+    }
+    try {
+      while (true) {
+        const avail = this.rend - this.rstart;
+        if (avail >= HEADER) {
+          const at = this.rstart;
+          const len = ((this.buf[at + 3] as usize) << 8) | (this.buf[at + 4] as usize);
+          if (len > MAX_CIPHER) {
+            throw new TlsFailure(RECORD_OVERFLOW, `a record of ${len} bytes`);
+          }
+          if (avail >= HEADER + len) {
+            this.rstart = at + HEADER + len;
+            const type = this.open(at, len);
+            if (type != ALERT) {
+              return type;
+            }
+            if (this.alert()) {
+              return END;
+            }
+            continue;
+          }
         }
-        if (avail >= HEADER + len) {
-          this.rstart = at + HEADER + len;
-          const type = this.open(at, len);
-          if (type != ALERT) {
-            return type;
-          }
-          if (this.alert()) {
-            return END;
-          }
-          continue;
+        if (!(await this.readMore())) {
+          throw new TlsFailure(
+            CLOSE_NOTIFY,
+            !after
+              ? "the connection closed during the handshake"
+              : avail > 0
+                ? "the connection closed in the middle of a record"
+                : "the connection closed without close_notify",
+            false,
+          );
         }
       }
-      if (!(await this.readMore())) {
-        if (after && avail == 0) {
-          this.ended = true;
-          return END;
-        }
-        throw new TlsFailure(
-          CLOSE_NOTIFY,
-          after
-            ? "the connection closed in the middle of a record"
-            : "the connection closed during the handshake",
-          false,
-        );
+    } catch (e) {
+      if (e instanceof TlsFailure) {
+        this.failure = e;
       }
+      throw e;
     }
   }
 
@@ -139,6 +156,9 @@ export class RecordReader {
       if (type == APPLICATION_DATA || (type == CHANGE_CIPHER_SPEC && !this.handshaking)) {
         throw new TlsFailure(UNEXPECTED_MESSAGE, `an unprotected record of type ${type}`);
       }
+      if (len > MAX_PLAIN) {
+        throw new TlsFailure(RECORD_OVERFLOW, `an unprotected record of ${len} bytes`);
+      }
       this.cstart = at + HEADER;
       this.cend = at + HEADER + len;
       return type;
@@ -149,10 +169,10 @@ export class RecordReader {
         `an unprotected record of type ${type} after encryption started`,
       );
     }
-    if (len < TAG + 1) {
-      throw new TlsFailure(UNEXPECTED_MESSAGE, "a protected record too short for its tag");
-    }
     const n = cipher.open(this.buf, at, at + HEADER + len);
+    if (n > MAX_PLAIN + 1) {
+      throw new TlsFailure(RECORD_OVERFLOW, `an inner plaintext of ${n} bytes`);
+    }
     // The content type is the last non-zero byte; zeros after it are padding.
     let end = at + HEADER + n;
     while (end > at + HEADER && this.buf[end - 1] == 0) {
@@ -161,18 +181,19 @@ export class RecordReader {
     if (end == at + HEADER) {
       throw new TlsFailure(UNEXPECTED_MESSAGE, "a protected record without a content type");
     }
-    if (end - 1 - (at + HEADER) > MAX_PLAIN) {
-      throw new TlsFailure(RECORD_OVERFLOW, "a record with more than 2^14 bytes of content");
+    const inner = this.buf[end - 1];
+    if (inner == CHANGE_CIPHER_SPEC) {
+      throw new TlsFailure(UNEXPECTED_MESSAGE, "a protected change_cipher_spec");
     }
     this.cstart = at + HEADER;
     this.cend = end - 1;
-    return this.buf[end - 1];
+    return inner;
   }
 
   // Handles the alert just read: true for close_notify (the end of the stream).
   private alert(): bool {
     if (this.cend - this.cstart != 2) {
-      throw new TlsFailure(ILLEGAL_PARAMETER, "a malformed alert");
+      throw new TlsFailure(DECODE_ERROR, "a malformed alert");
     }
     const d = this.buf[this.cstart + 1];
     if (d == CLOSE_NOTIFY) {

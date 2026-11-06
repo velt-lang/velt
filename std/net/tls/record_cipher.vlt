@@ -5,7 +5,7 @@
 import { Aead } from "velt/crypto/aead";
 import { AesGcm } from "velt/crypto/aes_gcm";
 import { ChaCha20Poly1305 } from "velt/crypto/chacha20_poly1305";
-import { BAD_RECORD_MAC, TlsFailure } from "velt/net/tls/alert";
+import { BAD_RECORD_MAC, INTERNAL_ERROR, TlsFailure } from "velt/net/tls/alert";
 import { expandLabel } from "velt/net/tls/key_schedule";
 
 /** TLS_AES_128_GCM_SHA256. */
@@ -17,6 +17,10 @@ export const CHACHA20_POLY1305_SHA256: usize = 0x1303;
 export const HEADER: usize = 5;
 /** Bytes an AEAD tag adds. */
 export const TAG: usize = 16;
+
+// The last sequence number, never used: the next one would wrap and repeat the nonce (RFC 8446
+// §5.3).
+const LAST_SEQUENCE: u64 = 0xffffffffffffffff;
 
 /** The AEAD of `suite` under the `secret`'s traffic key. */
 function aeadOf(suite: usize, secret: u8[]): Aead {
@@ -32,7 +36,8 @@ export class RecordCipher {
   private iv: u8[];
   private nonce: u8[];
   private aad: u8[];
-  private seq: u64;
+  /** The next record's sequence number. */
+  seq: u64;
 
   /** The protection of `suite` for the traffic `secret`, sequence number 0. */
   constructor(suite: usize, secret: u8[]) {
@@ -45,6 +50,9 @@ export class RecordCipher {
 
   // The nonce of the next record: the IV with the sequence number XORed into its last 8 bytes.
   private next() {
+    if (this.seq == LAST_SEQUENCE) {
+      throw new TlsFailure(INTERNAL_ERROR, "the record sequence number ran out");
+    }
     for (let i: usize = 0; i < 12; i++) {
       this.nonce[i] = this.iv[i];
     }
@@ -58,6 +66,7 @@ export class RecordCipher {
    * Seals the record at `buf[at..]` whose inner plaintext (content, then the content type
    * byte) is the `n` bytes at `buf[at + 5..]`: writes the header (application_data, 0x0303,
    * the length) in front and the tag after. The record's length, `5 + n + 16`.
+   * Throws `internal_error` at the last sequence number, here and in `open`.
    */
   seal(buf: u8[], at: usize, n: usize): usize {
     const len = n + TAG;

@@ -2,18 +2,29 @@
 //
 // Against RFC 8448's "Simple 1-RTT Handshake" trace: the key schedule derives the trace's
 // secrets, `RecordCipher` opens the server's records and seals the client's byte for byte, and
-// `RecordReader` frames, opens and rejects records from a played-back transport.
+// `RecordReader` frames, opens and rejects records from a played-back transport. The records
+// that are not in the trace were sealed by Node (`createCipheriv`, keys from HKDF-Expand-Label
+// over `createHmac`), or are built with `seal` where only the outcome is compared; `seal` itself
+// is compared with Node and the trace byte for byte.
 import { hkdfExpandSha256 } from "velt/crypto/hkdf";
+import { sha256 } from "velt/crypto/sha256";
 import { hexDecode, hexEncode } from "velt/encoding/hex";
 import { IoError } from "velt/io/error";
 import { Uint8Array } from "velt/lang/typed_array/uint8_array";
 import { ByteStream } from "velt/net/byte_stream";
+import { TlsFailure } from "velt/net/tls/alert";
 import { ByteReader } from "velt/net/tls/byte_reader";
 import { ByteWriter } from "velt/net/tls/byte_writer";
 import { HandshakeBuffer } from "velt/net/tls/handshake_buffer";
-import { expandLabel, handshakeSecret, nextSecret } from "velt/net/tls/key_schedule";
+import {
+  expandLabel,
+  finishedMac,
+  handshakeSecret,
+  masterSecret,
+  nextSecret,
+} from "velt/net/tls/key_schedule";
 import { RecordCipher } from "velt/net/tls/record_cipher";
-import { END, HANDSHAKE, RecordReader } from "velt/net/tls/record_reader";
+import { APPLICATION_DATA, END, HANDSHAKE, RecordReader } from "velt/net/tls/record_reader";
 import { describe, expect, it } from "velt/test";
 
 // 95 bytes.
@@ -75,6 +86,36 @@ const HELLO_HASH = "860c06edc07858ee8e78f0e7428c58edd6b43f2ca3e6e95f02ed063cf0e1
 const CLIENT_HS_SECRET = "b3eddb126e067f35a780b3abf45e2d8f3b1a950738f52e9600746a0e27a55a21";
 const CLIENT_AP_SECRET = "9e40646ce79a7f9dc05af8889bce6552875afa0b06df0087f792ebb7c17504a5";
 const CLIENT_FINISHED = "14000020a8ec436d677634ae525ac1fcebe11a039ec17694fac6e98527b642f2edd5ce61";
+// The trace's hashes of ClientHello..server Finished and ClientHello..client Finished, and the
+// values derived from them.
+const FINISHED_HASH = "9608102a0f1ccc6db6250b7b7e417b1a000eaada3daae4777a7686c9ff83df13";
+const CLIENT_FINISHED_HASH = "209145a96ee8e2a122ff810047cc952684658d6049e86429426db87c54ad143d";
+const MASTER_SECRET = "18df06843d13a08bf2a449844c5f8a478001bc4d4c627984d5a41da8d0402919";
+const SERVER_AP_SECRET = "a11af9f05531f856ad47116b45a950328204b4f44bfb6b3a4b4f1f3fcb631643";
+const EXPORTER_MASTER = "fe22f881176eda18eb8f44529e6792c50c9a3f89452f68d8ae311b4309d3cf50";
+const RESUMPTION_MASTER = "7df235f2031d2a051287d02b0241b0bfdaf86cc856231f2d5aba46c434ec196c";
+
+const AES: usize = 0x1301;
+const CHACHA: usize = 0x1303;
+// The secret of the records sealed by Node. Their inner plaintext is HI: "hi", then type 23.
+const SECRET = "5e0da4f260315cc6597ca8ec622fd8142fee036e048ab41559094f70f0033638";
+const HI = "686917";
+const AES_SEQ0 = "1703030013e0855174a59e1dd87fcddc8be07183be47f8f5";
+const AES_SEQ1 = "1703030013da091a233bb48c8fd7595af19d74e3f0b0e1bb";
+const AES_HIGH = "1703030013d5d3ff48a9dcc925e0702cdefaf0cdeee07ae4";
+const AES_NEXT_TO_LAST = "1703030013c8110f641d97770a288ab70f2afb534d0c231d";
+const AES_VERSION_0301 = "1703010013e085513616ad0c6047cb4ce016a3a44cf94056";
+const AES_EMPTY_INNER = "1703030010389642159a224aa4aafb08c89bb0174b";
+const CHACHA_SEQ0 = "170303001300223dfcb4418c5fcdff85774546d7b5225b44";
+const CHACHA_SEQ1 = "1703030013136cfa49372802bdbf16084cb08ce39822700a";
+const CHACHA_HIGH = "1703030013e394aea73c4d91a05e3a1459691d05286d57d8";
+const CHACHA_NEXT_TO_LAST = "170303001307bf53c3eee808a2dfef7f52e66a9524559a63";
+const CHACHA_EMPTY_INNER = "17030300109d2bb627d22c3ef9c79567a69ebdfdbd";
+// SHA-256 of five records (sequence numbers 0 to 4), each `pattern(16384)` then type 23, and of
+// the content of one.
+const AES_FULL_STREAM = "7b2a98061a9de65542070aaf95ae9c66ba3d57d6d05ab91e37149c9f5637f796";
+const CHACHA_FULL_STREAM = "4a64cd127ca0c52f1e59e5c971f98e45099379652aaa5fed6ac888435b5f4ada";
+const FULL_CONTENT = "f4811604dd04209eacc2647751e7d1a104746ff00acabf4cf9cc7777f0646d73";
 
 // A transport that plays back `input` in pieces of `chunk` bytes and records what is written.
 class Playback implements ByteStream {
@@ -93,6 +134,9 @@ class Playback implements ByteStream {
   }
 
   async readInto(buf: Uint8Array): Promise<number | null> {
+    if (buf.len == 0) {
+      throw new Error("a read with no room");
+    }
     if (this.pos == this.input.length) {
       return null;
     }
@@ -125,14 +169,88 @@ class Playback implements ByteStream {
   }
 }
 
-// The message of what reading the next record from `r` throws, "" when it returns.
-async function thrown(r: RecordReader, after: bool): Promise<string> {
+// What reading the next record from `r` throws, "" when it returns: the alert, whether it is for
+// the peer ("send") or not ("quiet"), and the message.
+async function failure(r: RecordReader, after: bool = true): Promise<string> {
   try {
     await r.next(after);
     return "";
   } catch (e) {
-    return e instanceof IoError ? e.message : `${e}`;
+    if (e instanceof TlsFailure) {
+      return `${e.alert} ${e.sendAlert ? "send" : "quiet"} ${e.message}`;
+    }
+    return `not a TlsFailure: ${e}`;
   }
+}
+
+// The alert and message of the `TlsFailure` that `f` throws, "" when it returns.
+function failureOf(f: () => void throws Error): string {
+  try {
+    f();
+    return "";
+  } catch (e) {
+    return e instanceof TlsFailure ? `${e.alert} ${e.message}` : `not a TlsFailure: ${e}`;
+  }
+}
+
+// `n` bytes, none of them zero.
+function pattern(n: usize): u8[] {
+  const out: u8[] = Buffer.alloc(n);
+  for (let i: usize = 0; i < n; i++) {
+    out[i] = (((i * 7 + 1) & 0xff) | 1) as u8;
+  }
+  return out;
+}
+
+// An inner plaintext: `content`, the content type, `pad` zeros.
+function inner(content: u8[], type: u8, pad: usize = 0): u8[] {
+  const out: u8[] = Buffer.alloc(content.length + 1 + pad);
+  for (let i: usize = 0; i < content.length; i++) {
+    out[i] = content[i];
+  }
+  out[content.length] = type;
+  return out;
+}
+
+// The record `cipher` seals around `plain`.
+function sealWith(cipher: RecordCipher, plain: u8[]): u8[] {
+  const buf: u8[] = Buffer.alloc(5 + plain.length + 16);
+  for (let i: usize = 0; i < plain.length; i++) {
+    buf[5 + i] = plain[i];
+  }
+  cipher.seal(buf, 0, plain.length);
+  return buf;
+}
+
+// The record at sequence number 0 around `plain`.
+function sealed(plain: u8[], suite: usize = AES): u8[] {
+  return sealWith(new RecordCipher(suite, hexDecode(SECRET)), plain);
+}
+
+// A reader of `stream` with the keys of `sealed`.
+function keyed(stream: u8[], suite: usize = AES, chunk: usize = 100000): RecordReader {
+  const r = new RecordReader(new Playback(stream, chunk));
+  r.cipher = new RecordCipher(suite, hexDecode(SECRET));
+  return r;
+}
+
+// A reader of `hex`, without keys.
+function plainReader(hex: string): RecordReader {
+  return new RecordReader(new Playback(hexDecode(hex), 1000));
+}
+
+// An unprotected record of `type` with `n` bytes of `pattern`.
+function plainRecord(type: u8, n: usize): u8[] {
+  const body = pattern(n);
+  const out: u8[] = [type, 3, 3, ((n >> 8) & 0xff) as u8, (n & 0xff) as u8];
+  for (let i: usize = 0; i < n; i++) {
+    out.push(body[i]);
+  }
+  return out;
+}
+
+function content(r: RecordReader): string {
+  return hexEncode(r.buf.slice(r.cstart as i64, r.cend as i64));
 }
 
 // The inner plaintext of the record `rec` under `cipher`.
@@ -148,6 +266,34 @@ describe("TLS key schedule", () => {
     expect(hexEncode(hs)).toBe(HANDSHAKE_SECRET);
     expect(hexEncode(expandLabel(hs, "c hs traffic", hexDecode(HELLO_HASH), 32))).toBe(
       CLIENT_HS_SECRET,
+    );
+  });
+
+  it("derives the rest of RFC 8448's schedule", () => {
+    const hs = hexDecode(HANDSHAKE_SECRET);
+    const ms = masterSecret(hs);
+    expect(hexEncode(ms)).toBe(MASTER_SECRET);
+    const hello = hexDecode(HELLO_HASH);
+    const fin = hexDecode(FINISHED_HASH);
+    const s = (secret: u8[], label: string, hash: u8[]): string => hexEncode(
+      expandLabel(secret, label, hash, 32),
+    );
+    expect(s(hs, "s hs traffic", hello)).toBe(SERVER_HS_SECRET);
+    expect(s(ms, "c ap traffic", fin)).toBe(CLIENT_AP_SECRET);
+    expect(s(ms, "s ap traffic", fin)).toBe(SERVER_AP_SECRET);
+    expect(s(ms, "exp master", fin)).toBe(EXPORTER_MASTER);
+    expect(s(ms, "res master", hexDecode(CLIENT_FINISHED_HASH))).toBe(RESUMPTION_MASTER);
+    const chs = hexDecode(CLIENT_HS_SECRET);
+    const shs = hexDecode(SERVER_HS_SECRET);
+    expect(hexEncode(expandLabel(shs, "key", [], 16))).toBe("3fce516009c21727d0f2e4e86ee403bc");
+    expect(hexEncode(expandLabel(shs, "iv", [], 12))).toBe("5d313eb2671276ee13000b30");
+    expect(hexEncode(expandLabel(chs, "key", [], 16))).toBe("dbfaa693d1762c5b666af5d950258d01");
+    expect(hexEncode(expandLabel(chs, "iv", [], 12))).toBe("5bd3c71b836e0b76bb73265f");
+  });
+
+  it("computes the client's Finished in RFC 8448", () => {
+    expect(hexEncode(finishedMac(hexDecode(CLIENT_HS_SECRET), hexDecode(FINISHED_HASH)))).toBe(
+      CLIENT_FINISHED.slice(8),
     );
   });
 
@@ -203,6 +349,80 @@ describe("RecordCipher", () => {
     }
     expect(message).toBe("TLS: a record failed authentication (bad_record_mac)");
   });
+
+  it("seals the server's flight as the trace does, with a length past one byte", () => {
+    const plain = inner(hexDecode(SERVER_FLIGHT), 22);
+    const rec = sealWith(new RecordCipher(AES, hexDecode(SERVER_HS_SECRET)), plain);
+    expect(hexEncode(rec)).toBe(SERVER_FLIGHT_RECORD);
+  });
+
+  const fromNode: [usize, string, string, string, string][] = [
+    [AES, AES_SEQ0, AES_SEQ1, AES_HIGH, AES_NEXT_TO_LAST],
+    [CHACHA, CHACHA_SEQ0, CHACHA_SEQ1, CHACHA_HIGH, CHACHA_NEXT_TO_LAST],
+  ];
+  for (const v of fromNode) {
+    const suite = v[0];
+    it(`matches Node at sequence numbers 0, 1, high and next to last (suite ${suite})`, () => {
+      const secret = hexDecode(SECRET);
+      const a = new RecordCipher(suite, secret);
+      expect(hexEncode(sealWith(a, hexDecode(HI)))).toBe(v[1]);
+      expect(hexEncode(sealWith(a, hexDecode(HI)))).toBe(v[2]);
+      const high = new RecordCipher(suite, secret);
+      high.seq = 0x0102030405060708;
+      expect(hexEncode(sealWith(high, hexDecode(HI)))).toBe(v[3]);
+      const last = new RecordCipher(suite, secret);
+      last.seq = 0xfffffffffffffffe;
+      expect(hexEncode(sealWith(last, hexDecode(HI)))).toBe(v[4]);
+      const b = new RecordCipher(suite, secret);
+      expect(opened(b, v[1])).toBe(HI);
+      expect(opened(b, v[2])).toBe(HI);
+      const openHigh = new RecordCipher(suite, secret);
+      openHigh.seq = 0x0102030405060708;
+      expect(opened(openHigh, v[3])).toBe(HI);
+      const openLast = new RecordCipher(suite, secret);
+      openLast.seq = 0xfffffffffffffffe;
+      expect(opened(openLast, v[4])).toBe(HI);
+    });
+  }
+
+  it("takes the AAD from the record's header", () => {
+    expect(opened(new RecordCipher(AES, hexDecode(SECRET)), AES_VERSION_0301)).toBe(HI);
+    // AES_SEQ0 with its version changed, its tag still the one for 0x0303.
+    const changed = hexDecode(AES_SEQ0);
+    changed[2] = 1;
+    expect(
+      failureOf(() => {
+        new RecordCipher(AES, hexDecode(SECRET)).open(changed, 0, changed.length);
+      }),
+    ).toBe("20 TLS: a record failed authentication (bad_record_mac)");
+  });
+
+  const suites: usize[] = [AES, CHACHA];
+  for (const suite of suites) {
+    it(`stops at the last sequence number rather than wrap (suite ${suite})`, () => {
+      const c = new RecordCipher(suite, hexDecode(SECRET));
+      c.seq = 0xfffffffffffffffe;
+      sealWith(c, hexDecode(HI));
+      const ranOut = "80 TLS: the record sequence number ran out";
+      expect(
+        failureOf(() => {
+          sealWith(c, hexDecode(HI));
+        }),
+      ).toBe(ranOut);
+      expect(
+        failureOf(() => {
+          sealWith(c, hexDecode(HI));
+        }),
+      ).toBe(ranOut);
+      const o = new RecordCipher(suite, hexDecode(SECRET));
+      o.seq = 0xffffffffffffffff;
+      expect(
+        failureOf(() => {
+          opened(o, AES_SEQ0);
+        }),
+      ).toBe(ranOut);
+    });
+  }
 });
 
 describe("RecordReader", () => {
@@ -233,38 +453,206 @@ describe("RecordReader", () => {
     expect(hexEncode(r.buf.slice(r.cstart as i64, r.cend as i64))).toBe("0708");
   });
 
-  it("ends at close_notify and at the transport's end after the handshake", async () => {
-    expect(await new RecordReader(new Playback(hexDecode("15030300020100"), 3)).next(true)).toBe(
-      END,
+  it("ends at close_notify, and only there", async () => {
+    const closed = plainReader("15030300020100");
+    expect(closed.ended).toBe(false);
+    expect(await closed.next(true)).toBe(END);
+    expect(closed.ended).toBe(true);
+    const r = keyed(hexDecode(AES_SEQ0));
+    expect(await r.next(true)).toBe(APPLICATION_DATA);
+    expect(await failure(r)).toBe("0 quiet TLS: the connection closed without close_notify");
+    expect(r.ended).toBe(false);
+    const none = plainReader("");
+    expect(await failure(none)).toBe("0 quiet TLS: the connection closed without close_notify");
+    expect(none.ended).toBe(false);
+  });
+
+  it("names where the transport ended", async () => {
+    expect(await failure(plainReader("16030300"))).toBe(
+      "0 quiet TLS: the connection closed in the middle of a record",
     );
-    expect(await new RecordReader(new Playback([], 3)).next(true)).toBe(END);
+    expect(await failure(plainReader(""), false)).toBe(
+      "0 quiet TLS: the connection closed during the handshake",
+    );
+    expect(await failure(plainReader("16030300"), false)).toBe(
+      "0 quiet TLS: the connection closed during the handshake",
+    );
+  });
+
+  it("throws its first failure again and releases nothing after it", async () => {
+    // A forged record A at sequence number 0, then B, valid at sequence number 1.
+    const forged = hexDecode(CLIENT_DATA_RECORD);
+    forged[20] ^= 1;
+    const r = new RecordReader(new Playback(forged.concat(hexDecode(CLIENT_ALERT_RECORD)), 1000));
+    r.cipher = new RecordCipher(AES, hexDecode(CLIENT_AP_SECRET));
+    const mac = "20 send TLS: a record failed authentication (bad_record_mac)";
+    expect(await failure(r)).toBe(mac);
+    expect(await failure(r)).toBe(mac);
+    expect(await failure(r)).toBe(mac);
+    expect(r.ended).toBe(false);
+    // Any other failure stays as well: an alert from the peer, then a valid record.
+    const alert = plainReader("15030300020228" + SERVER_HELLO_RECORD);
+    const peer = "40 quiet TLS: the server sent the alert handshake_failure (40)";
+    expect(await failure(alert)).toBe(peer);
+    expect(await failure(alert)).toBe(peer);
   });
 
   it("rejects what a record layer must reject", async () => {
-    const reader = (hex: string): RecordReader => new RecordReader(
-      new Playback(hexDecode(hex), 1000),
+    const wrongType = "10 send TLS: an unprotected record of type";
+    expect(await failure(plainReader("15030300020228"), false)).toBe(
+      "40 quiet TLS: the server sent the alert handshake_failure (40)",
     );
-    expect(await thrown(reader("15030300020228"), false)).toBe(
-      "TLS: the server sent the alert handshake_failure (40)",
-    );
-    expect(await thrown(reader("1603034101"), false)).toBe("TLS: a record of 16641 bytes");
-    expect(await thrown(reader("16030300"), true)).toBe(
-      "TLS: the connection closed in the middle of a record",
-    );
-    expect(await thrown(reader(""), false)).toBe("TLS: the connection closed during the handshake");
-    expect(await thrown(reader("170303000100"), false)).toBe(
-      "TLS: an unprotected record of type 23",
-    );
-    expect(await thrown(reader("15030300030100ff"), false)).toBe("TLS: a malformed alert");
-    const done = reader("140303000101");
+    expect(await failure(plainReader("170303000100"), false)).toBe(`${wrongType} 23`);
+    const done = plainReader("140303000101");
     done.handshaking = false;
-    expect(await thrown(done, true)).toBe("TLS: an unprotected record of type 20");
-    const keyed = reader("1603030001ff");
-    keyed.cipher = new RecordCipher(0x1301, hexDecode(SERVER_HS_SECRET));
-    expect(await thrown(keyed, false)).toBe(
-      "TLS: an unprotected record of type 22 after encryption started",
+    expect(await failure(done)).toBe(`${wrongType} 20`);
+    const k = plainReader("1603030001ff");
+    k.cipher = new RecordCipher(AES, hexDecode(SERVER_HS_SECRET));
+    expect(await failure(k, false)).toBe(`${wrongType} 22 after encryption started`);
+  });
+
+  it("gives a forged record of any length bad_record_mac", async () => {
+    const mac = "20 send TLS: a record failed authentication (bad_record_mac)";
+    const lengths: usize[] = [0, 1, 15, 16, 17];
+    for (const n of lengths) {
+      expect(await failure(keyed(plainRecord(23, n)))).toBe(mac);
+    }
+  });
+
+  it("limits a record's length, its inner plaintext and an unprotected record", async () => {
+    const overflow = "22 send TLS: ";
+    // The framing's limit: past 2^14 + 256 the header is enough.
+    expect(await failure(plainReader("1603034101"), false)).toBe(
+      `${overflow}a record of 16641 bytes`,
+    );
+    // Unprotected: 2^14 passes.
+    const atLimit = new RecordReader(new Playback(plainRecord(22, 16384), 100000));
+    expect(await atLimit.next(false)).toBe(HANDSHAKE);
+    expect(atLimit.cend - atLimit.cstart).toBe(16384);
+    const lengths: usize[] = [16385, 16640];
+    for (const n of lengths) {
+      const r = new RecordReader(new Playback(plainRecord(22, n), 100000));
+      expect(await failure(r, false)).toBe(`${overflow}an unprotected record of ${n} bytes`);
+    }
+    // Protected: 2^14 of content, and 2^14 + 1 of inner plaintext however it is made up.
+    const full = keyed(sealed(inner(pattern(16384), 23)));
+    expect(await full.next(true)).toBe(APPLICATION_DATA);
+    expect(full.cend - full.cstart).toBe(16384);
+    const padded = keyed(sealed(inner(pattern(100), 23, 16384 - 100)));
+    expect(await padded.next(true)).toBe(APPLICATION_DATA);
+    expect(padded.cend - padded.cstart).toBe(100);
+    const past = "an inner plaintext of";
+    expect(await failure(keyed(sealed(inner(pattern(16384), 23, 1))))).toBe(
+      `${overflow}${past} 16386 bytes`,
+    );
+    expect(await failure(keyed(sealed(inner(pattern(100), 23, 16385 - 100))))).toBe(
+      `${overflow}${past} 16386 bytes`,
+    );
+    // The most the framing lets through, with content and all zeros: the limit, before the scan.
+    expect(await failure(keyed(sealed(inner(pattern(100), 23, 16624 - 101))))).toBe(
+      `${overflow}${past} 16624 bytes`,
+    );
+    expect(await failure(keyed(sealed(Buffer.alloc(16624))))).toBe(
+      `${overflow}${past} 16624 bytes`,
     );
   });
+
+  it("rejects a protected record that is all zeros", async () => {
+    const noType = "10 send TLS: a protected record without a content type";
+    // No inner plaintext at all: a 16-byte record with a valid tag.
+    expect(await failure(keyed(hexDecode(AES_EMPTY_INNER)))).toBe(noType);
+    expect(await failure(keyed(hexDecode(CHACHA_EMPTY_INNER), CHACHA))).toBe(noType);
+    // 240 zeros: the record's length is 0x0100, a zero just in front of the plaintext.
+    const sizes: usize[] = [1, 10, 240];
+    for (const n of sizes) {
+      expect(await failure(keyed(sealed(Buffer.alloc(n))))).toBe(noType);
+    }
+  });
+
+  it("rejects a protected change_cipher_spec", async () => {
+    expect(await failure(keyed(sealed(inner([1], 20))), false)).toBe(
+      "10 send TLS: a protected change_cipher_spec",
+    );
+    // An unprotected one still passes during the handshake, with the keys in place.
+    const r = plainReader("140303000101");
+    r.cipher = new RecordCipher(AES, hexDecode(SECRET));
+    expect(await r.next(false)).toBe(20);
+  });
+
+  it("handles alerts as RFC 8446 §6 says", async () => {
+    const malformed = "50 send TLS: a malformed alert";
+    expect(await failure(plainReader("1503030000"))).toBe(malformed);
+    expect(await failure(plainReader("150303000101"))).toBe(malformed);
+    expect(await failure(plainReader("15030300030100ff"))).toBe(malformed);
+    expect(await failure(keyed(sealed(inner([1], 21))))).toBe(malformed);
+    expect(await failure(keyed(sealed(inner([], 21))))).toBe(malformed);
+    // Only 0 ends the stream, and only 90 is ignored.
+    const one = plainReader("15030300020201");
+    expect(await failure(one)).toBe("1 quiet TLS: the server sent the alert unknown alert (1)");
+    expect(one.ended).toBe(false);
+    const canceled = plainReader("1503030002015a" + SERVER_HELLO_RECORD);
+    expect(await canceled.next(false)).toBe(HANDSHAKE);
+    expect(content(canceled)).toBe(SERVER_HELLO_RECORD.slice(10));
+    expect(canceled.ended).toBe(false);
+    // Protected, the same.
+    const close = keyed(sealed(inner([1, 0], 21)));
+    expect(await close.next(true)).toBe(END);
+    expect(close.ended).toBe(true);
+    expect(await failure(keyed(sealed(inner([2, 40], 21))))).toBe(
+      "40 quiet TLS: the server sent the alert handshake_failure (40)",
+    );
+  });
+
+  it("hands out application data with keepContent, takeInto and take", async () => {
+    const data = pattern(100);
+    const r = keyed(sealed(inner(data, 23)));
+    expect(await r.next(true)).toBe(APPLICATION_DATA);
+    expect(r.available()).toBe(0);
+    r.keepContent();
+    expect(r.available()).toBe(100);
+    const out: u8[] = Buffer.alloc(60);
+    r.takeInto(out, 10, 40);
+    expect(hexEncode(out.slice(10, 50))).toBe(hexEncode(data.slice(0, 40)));
+    expect(out[9]).toBe(0);
+    expect(out[50]).toBe(0);
+    expect(r.available()).toBe(60);
+    expect(hexEncode(r.take(20))).toBe(hexEncode(data.slice(40, 60)));
+    expect(r.available()).toBe(40);
+    r.takeInto(out, 0, 40);
+    expect(hexEncode(out.slice(0, 40))).toBe(hexEncode(data.slice(60)));
+    expect(r.available()).toBe(0);
+  });
+
+  // Five records of 2^14 bytes, past the size of the buffer, whole and in pieces.
+  const streams: [usize, string][] = [
+    [AES, AES_FULL_STREAM],
+    [CHACHA, CHACHA_FULL_STREAM],
+  ];
+  for (const v of streams) {
+    const suite = v[0];
+    it(`reads a stream of full-size records (suite ${suite})`, async () => {
+      const w = new RecordCipher(suite, hexDecode(SECRET));
+      const plain = inner(pattern(16384), 23);
+      let stream: u8[] = [];
+      for (let i = 0; i < 5; i++) {
+        stream = stream.concat(sealWith(w, plain));
+      }
+      expect(hexEncode(sha256(stream))).toBe(v[1]);
+      const chunks: usize[] = [100000, 16406, 16407, 4096];
+      for (const chunk of chunks) {
+        const r = keyed(stream, suite, chunk);
+        const out: u8[] = Buffer.alloc(16384);
+        for (let i = 0; i < 5; i++) {
+          expect(await r.next(true)).toBe(APPLICATION_DATA);
+          r.keepContent();
+          expect(r.available()).toBe(16384);
+          r.takeInto(out, 0, 16384);
+          expect(hexEncode(sha256(out))).toBe(FULL_CONTENT);
+        }
+        expect(await failure(r)).toBe("0 quiet TLS: the connection closed without close_notify");
+      }
+    });
+  }
 });
 
 describe("TLS codec", () => {
@@ -295,6 +683,39 @@ describe("TLS codec", () => {
     stray.u8();
     expect(() => stray.finish()).toThrow("TLS: 1 stray bytes after test message");
   });
+
+  it("checks every read, with decode_error", () => {
+    const truncated = "50 TLS: truncated test message";
+    const two = (): ByteReader => new ByteReader([1, 2], 0, 2, "test message");
+    expect(
+      failureOf(() => {
+        two().u24();
+      }),
+    ).toBe(truncated);
+    expect(
+      failureOf(() => {
+        two().bytes(3);
+      }),
+    ).toBe(truncated);
+    expect(
+      failureOf(() => {
+        new ByteReader([1, 2], 0, 1, "test message").bytes(2);
+      }),
+    ).toBe(truncated);
+    expect(
+      failureOf(() => {
+        new ByteReader([1], 0, 1, "test message").u16();
+      }),
+    ).toBe(truncated);
+    expect(
+      failureOf(() => {
+        new ByteReader([], 0, 0, "test message").u8();
+      }),
+    ).toBe(truncated);
+    const r = new ByteReader([1, 2, 3, 4], 0, 4, "test message");
+    expect(r.u24()).toBe(0x010203);
+    expect(r.left()).toBe(1);
+  });
 });
 
 describe("HandshakeBuffer", () => {
@@ -313,6 +734,26 @@ describe("HandshakeBuffer", () => {
     hs.take();
     hs.checkEmpty();
     hs.append([4, 2, 0, 1], 0, 4);
-    expect(() => hs.hasMessage()).toThrow("TLS: a handshake message of 131073 bytes");
+    expect(
+      failureOf(() => {
+        hs.hasMessage();
+      }),
+    ).toBe("50 TLS: a handshake message of 131073 bytes");
+  });
+
+  it("accepts a message of exactly the cap", () => {
+    const hs = new HandshakeBuffer();
+    hs.append([4, 2, 0, 0], 0, 4);
+    expect(hs.hasMessage()).toBe(false);
+  });
+
+  it("refuses a key change inside a message, with unexpected_message", () => {
+    const hs = new HandshakeBuffer();
+    hs.append([4], 0, 1);
+    expect(
+      failureOf(() => {
+        hs.checkEmpty();
+      }),
+    ).toBe("10 TLS: handshake data across a key change");
   });
 });
