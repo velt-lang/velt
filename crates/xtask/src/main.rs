@@ -12,6 +12,7 @@
 //!
 //! Run `cargo xtask help` for every option.
 
+mod c_headers;
 #[cfg(all(test, unix))]
 mod cache_key_tests;
 mod changes;
@@ -389,7 +390,8 @@ fn precheck_paths(root: &Path, args: &Args) -> Result<(Vec<String>, String), Str
 /// whether the WebAssembly goldens run (`wasm_goldens`: `skip` when they don't). The goldens and
 /// the WebAssembly goldens run in shards per OS (`golden_shards`, `wasm_shards`). After a push to
 /// `main`, `main_os` lists the OSes of the `main` job: Linux (it saves the build cache) and,
-/// when [`Plan::after_merge`] says so, Windows and macOS for the whole gate.
+/// when [`Plan::after_merge`] says so, Windows and macOS for the whole gate. `c_headers` says
+/// whether the `c-headers` job runs ([`Plan::c_headers`]).
 fn github_output_text(plan: &Plan) -> String {
     let flag = |b: bool| if b { "true" } else { "false" };
     // Linux, always, stays first.
@@ -434,6 +436,7 @@ fn github_output_text(plan: &Plan) -> String {
         let value = sweep.iter().find(|(v, _)| *v == var).map_or("", |(_, x)| x);
         text.push_str(&format!("{output}={value}\n"));
     }
+    text.push_str(&format!("c_headers={}\n", flag(plan.c_headers)));
     let wasm = if plan.wasm { "" } else { "skip" };
     text.push_str(&format!("wasm_goldens={wasm}\n"));
     text
@@ -681,6 +684,14 @@ name = \"a\"
             text.contains("\nrobustness=full\nrobustness_files=\nfmt_corpus=\nfmt_corpus_files=\ndebug_vars=\n"),
             "{text}"
         );
+    }
+
+    #[test]
+    fn ci_learns_whether_the_header_check_runs() {
+        let mut plan = Plan::everything("test");
+        assert!(github_output_text(&plan).contains("\nc_headers=false\n"));
+        plan.c_headers = true;
+        assert!(github_output_text(&plan).contains("\nc_headers=true\n"));
     }
 
     #[test]

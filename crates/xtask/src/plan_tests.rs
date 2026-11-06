@@ -58,6 +58,52 @@ fn build_configuration_ci_and_unknown_paths_select_everything() {
 }
 
 #[test]
+fn the_header_check_runs_only_when_a_change_touches_what_it_checks() {
+    for path in [
+        "crates/veltc/src/native/headers/ctype.rs",
+        "crates/veltc/src/native/c_decls.rs",
+        "crates/veltc/src/native/mod.rs",
+        "crates/veltc/tests/c_headers.rs",
+        "crates/velt_toolchain/src/zig.rs",
+        "crates/vpm/src/manifest/read/native.rs",
+        "crates/vpm/src/install/allow_native.rs",
+        "crates/vpm/src/manifest/allow_native.rs",
+        "std/ffi/out.vlt",
+        ".github/actions/zig/action.yml",
+    ] {
+        assert!(plan(&[path]).c_headers, "{path}");
+    }
+    // Unrelated changes never download zig, even those that select everything else.
+    for path in [
+        "crates/velt_sema/src/check.rs",
+        "crates/veltc/src/main.rs",
+        "crates/veltc/src/commands/mod.rs",
+        "crates/veltc/tests/c_functions.rs",
+        "crates/veltc/tests/c_headers.rs.orig",
+        "crates/velt_toolchain/src/lib.rs",
+        "crates/vpm/src/manifest/read.rs",
+        "std/fs/index.vlt",
+        "docs/internals/design/c-ffi.md",
+        "Cargo.lock",
+        "scripts/check.sh",
+        ".github/workflows/ci.yml",
+        ".github/actions/setup/action.yml",
+        "something/new.txt",
+    ] {
+        assert!(!plan(&[path]).c_headers, "{path}");
+    }
+    assert!(!Plan::everything("--full").c_headers);
+    // A change that selects everything still runs it when it touches the check too, whichever
+    // file comes first.
+    assert!(plan(&["Cargo.lock", "std/ffi/out.vlt"]).c_headers);
+    assert!(plan(&["std/ffi/out.vlt", "Cargo.lock"]).c_headers);
+    // Comments change nothing it checks.
+    let paths = vec!["crates/veltc/src/native/headers/ctype.rs".to_string()];
+    let comments = Plan::for_changes(&graph(), &paths, &paths.iter().cloned().collect());
+    assert!(!comments.c_headers);
+}
+
+#[test]
 fn prose_and_editor_files_select_nothing() {
     let p = plan(&[
         "CONTRIBUTING.md",
