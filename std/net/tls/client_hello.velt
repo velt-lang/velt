@@ -10,6 +10,7 @@ import { AES_128_GCM_SHA256, CHACHA20_POLY1305_SHA256 } from "velt/net/tls/recor
 export const X25519: usize = 0x001d;
 
 // Extension numbers (RFC 8446 §4.2).
+
 export const EXT_SERVER_NAME: usize = 0;
 export const EXT_SUPPORTED_GROUPS: usize = 10;
 export const EXT_SIGNATURE_ALGORITHMS: usize = 13;

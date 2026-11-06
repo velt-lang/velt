@@ -4,11 +4,16 @@
 //
 // Built for throughput: `RecordReader` reads and decrypts records in place in one reused
 // buffer, and writes seal up to four records in place in a second reused buffer and go out in
-// one transport write. Only the handshake allocates.
+// one transport write. Opening and sealing a record allocate nothing; each transport read
+// allocates its view of the buffer (3 blocks, all freed), and the handshake and each
+// post-handshake message allocate.
 //
-// Writes take turns (`turn`, `done`): records carry implicit sequence numbers, so each write
+// Writes take turns (`WriteTurns`): records carry implicit sequence numbers, so each write
 // seals and sends its records while no other does, in the order the writes were called; a
 // KeyUpdate and close_notify wait their turn the same way.
+//
+// One key seals at most `KEY_RECORDS` records of application data, then a KeyUpdate starts
+// (RFC 8446 §5.5). The peer's records are for the peer to count.
 
 import { IoError } from "velt/io/error";
 import { ByteStream } from "velt/net/byte_stream";
@@ -34,10 +39,16 @@ import {
   MAX_PLAIN,
   RecordReader,
 } from "velt/net/tls/record_reader";
+import { WriteTurns } from "velt/net/tls/write_turns";
 
 // Records sealed per transport write, and the room each takes.
 const BATCH: usize = 4;
 const RECORD: usize = 5 + 16384 + 1 + 16;
+// Records one write key seals before a KeyUpdate: AES-GCM is good for about 2^24.5 full-size
+// records (RFC 8446 §5.5), which leaves room for the alerts and KeyUpdates sent besides them.
+// ChaCha20-Poly1305 could go on, and updating its key this rarely costs nothing, so both suites
+// follow one rule.
+const KEY_RECORDS: u64 = 16777216;
 
 /** One TLS 1.3 client connection. */
 export class TlsEngine {
@@ -45,9 +56,10 @@ export class TlsEngine {
   private r: RecordReader;
   private hs: HandshakeBuffer;
   private writer: RecordCipher | null;
+  /** Records one write key seals before a KeyUpdate. */
+  writeLimit: u64;
   private wbuf: u8[];
-  private writing: bool;
-  private waiting: (() => void)[];
+  private turns: WriteTurns;
   private suite: usize;
   private readSecret: u8[];
   private writeSecret: u8[];
@@ -64,9 +76,9 @@ export class TlsEngine {
     this.r = new RecordReader(t);
     this.hs = new HandshakeBuffer();
     this.writer = null;
+    this.writeLimit = KEY_RECORDS;
     this.wbuf = Buffer.alloc(BATCH * RECORD);
-    this.writing = false;
-    this.waiting = [];
+    this.turns = new WriteTurns();
     this.suite = 0;
     this.readSecret = [];
     this.writeSecret = [];
@@ -133,7 +145,7 @@ export class TlsEngine {
         if (type == APPLICATION_DATA) {
           r.keepContent();
         } else if (type == HANDSHAKE) {
-          this.hs.append(r.buf, r.cstart, r.cend);
+          this.addHandshake();
           while (this.hs.hasMessage()) {
             await this.postHandshake(this.hs.take());
           }
@@ -165,7 +177,7 @@ export class TlsEngine {
   /** Writes `bytes[from..to]` as application data, after the writes called before. */
   async write(bytes: u8[], from: usize, to: usize): Promise<void> {
     this.checkWritable();
-    await this.turn();
+    await this.turns.turn();
     try {
       // The connection may have failed while this write waited (a shutdown since lets the
       // writes called before it finish first).
@@ -173,15 +185,20 @@ export class TlsEngine {
       if (f != null) {
         throw f;
       }
-      const writer = this.writer;
-      if (writer == null) {
+      const current = this.writer;
+      if (current == null) {
         throw new IoError("ENOTCONN", "TLS stream: no handshake");
       }
+      let writer: RecordCipher = current;
+      const limit = this.writeLimit;
       const buf = this.wbuf;
       let off = from;
       while (off < to) {
+        if (writer.seq >= limit) {
+          writer = await this.updateWriteKey();
+        }
         let n: usize = 0;
-        for (let r: usize = 0; r < BATCH && off < to; r++) {
+        for (let r: usize = 0; r < BATCH && off < to && writer.seq < limit; r++) {
           const len = to - off < MAX_PLAIN ? to - off : MAX_PLAIN;
           for (let i: usize = 0; i < len; i++) {
             buf[n + HEADER + i] = bytes[off + i];
@@ -193,7 +210,7 @@ export class TlsEngine {
         await this.t.writeBytes(buf, 0, n as number);
       }
     } finally {
-      this.done();
+      this.turns.done();
     }
   }
 
@@ -202,11 +219,11 @@ export class TlsEngine {
     if (!this.shutDown && this.writer != null && this.failure == null) {
       this.shutDown = true;
       try {
-        await this.turn();
+        await this.turns.turn();
         try {
           await this.sendProtected(ALERT, [1, CLOSE_NOTIFY]);
         } finally {
-          this.done();
+          this.turns.done();
         }
       } finally {
         this.t.close();
@@ -228,7 +245,7 @@ export class TlsEngine {
       const r = this.r;
       const type = await r.next(after);
       if (type == HANDSHAKE) {
-        this.hs.append(r.buf, r.cstart, r.cend);
+        this.addHandshake();
       } else if (type == CHANGE_CIPHER_SPEC) {
         // Middlebox compatibility (RFC 8446 §5): one byte, 1, and nothing else.
         if (r.cend - r.cstart != 1 || r.buf[r.cstart] != 1) {
@@ -242,6 +259,16 @@ export class TlsEngine {
       }
     }
     return this.hs.take();
+  }
+
+  // Adds the last record's content to the handshake messages. A handshake record is never empty
+  // (RFC 8446 §5.1).
+  private addHandshake() {
+    const r = this.r;
+    if (r.cstart == r.cend) {
+      throw new TlsFailure(UNEXPECTED_MESSAGE, "an empty handshake record");
+    }
+    this.hs.append(r.buf, r.cstart, r.cend);
   }
 
   private async postHandshake(m: u8[]): Promise<void> {
@@ -261,15 +288,23 @@ export class TlsEngine {
     this.r.cipher = new RecordCipher(this.suite, this.readSecret);
     if (m[4] == 1 && !this.shutDown) {
       // After the writes in progress, which keep the old keys; the ones after it use the next.
-      await this.turn();
+      await this.turns.turn();
       try {
-        await this.sendProtected(HANDSHAKE, [KEY_UPDATE, 0, 0, 1, 0]);
-        this.writeSecret = nextSecret(this.writeSecret);
-        this.writer = new RecordCipher(this.suite, this.writeSecret);
+        await this.updateWriteKey();
       } finally {
-        this.done();
+        this.turns.done();
       }
     }
+  }
+
+  // Sends KeyUpdate(update_not_requested) under the current write key and moves to the next,
+  // which it returns. Only during a write's turn.
+  private async updateWriteKey(): Promise<RecordCipher> {
+    await this.sendProtected(HANDSHAKE, [KEY_UPDATE, 0, 0, 1, 0]);
+    this.writeSecret = nextSecret(this.writeSecret);
+    const next = new RecordCipher(this.suite, this.writeSecret);
+    this.writer = next;
+    return next;
   }
 
   // Throws the connection's failure, or EPIPE after `shutdown` or `close`.
@@ -280,29 +315,6 @@ export class TlsEngine {
     }
     if (this.shutDown) {
       throw new IoError("EPIPE", "TLS stream: write after shutdown()");
-    }
-  }
-
-  // Waits until no other write is sealing or sending (writes go in the order they call it).
-  private async turn(): Promise<void> {
-    if (!this.writing) {
-      this.writing = true;
-      return;
-    }
-    const w = Promise.withResolvers<void>();
-    this.waiting.push(w.resolve);
-    await w.promise;
-  }
-
-  // Ends a write's turn: the next waiting write's starts (`writing` stays true for it).
-  private done() {
-    if (this.waiting.length == 0) {
-      this.writing = false;
-      return;
-    }
-    const next = this.waiting.shift();
-    if (next != null) {
-      next();
     }
   }
 
@@ -365,7 +377,7 @@ export class TlsEngine {
     if (this.failure == null) {
       this.failure = err;
       // The alert only when no write is in progress: it may wait on the transport for good.
-      if (e instanceof TlsFailure && e.sendAlert && !this.shutDown && !this.writing) {
+      if (e instanceof TlsFailure && e.sendAlert && !this.shutDown && !this.turns.writing) {
         try {
           if (this.writer != null) {
             await this.sendProtected(ALERT, [2, e.alert]);
