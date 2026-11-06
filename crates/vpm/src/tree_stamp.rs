@@ -94,11 +94,22 @@ impl Stamp {
 pub(crate) fn checksum(
     loc: &Locations,
     dir: &Path,
+    expected: (Option<&str>, TreeCheck),
+    mismatch: impl FnOnce(&str, &str) -> String,
+    check: impl FnOnce() -> Result<(), String>,
+) -> Result<String, String> {
+    checksum_in(&loc.cache, dir, expected, mismatch, check)
+}
+
+/// [`checksum`] with stamps under `cache` (`Locations::cache`).
+fn checksum_in(
+    cache: &Path,
+    dir: &Path,
     (expected, depth): (Option<&str>, TreeCheck),
     mismatch: impl FnOnce(&str, &str) -> String,
     check: impl FnOnce() -> Result<(), String>,
 ) -> Result<String, String> {
-    let path = stamp_path(loc, dir);
+    let path = stamp_path_in(cache, dir);
     let stamp = match depth {
         TreeCheck::Bytes => None,
         _ => Stamp::read(&path),
@@ -165,10 +176,72 @@ fn compare(
 }
 
 /// `<cache>/stamps/<sha256 of the tree's path>`.
+#[cfg(test)]
 fn stamp_path(loc: &Locations, dir: &Path) -> PathBuf {
+    stamp_path_in(&loc.cache, dir)
+}
+
+fn stamp_path_in(cache: &Path, dir: &Path) -> PathBuf {
     let hash = Sha256::digest(dir.to_string_lossy().as_bytes());
     let name: String = hash.iter().map(|b| format!("{b:02x}")).collect();
-    loc.cache.join("stamps").join(name)
+    cache.join("stamps").join(name)
+}
+
+/// A fetched tree (a git checkout, an archive's package directory) with the checksum its lock
+/// holds, which a build checks file by file once it is no longer a no-op ([`Fetched::verify`]):
+/// a build that isn't one reads files again anyway, and then an edit in place must not reach
+/// it. A no-op build looks only at directories ([`TreeCheck::Directories`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Fetched {
+    pub dir: PathBuf,
+    pub checksum: String,
+    /// `Locations::cache`, where the stamps are.
+    pub cache: PathBuf,
+}
+
+/// The fetched trees of `packages`: each git checkout (its checksum covers the whole checkout,
+/// whichever package of it is used) and each archive's package directory.
+pub(crate) fn fetched<'r>(
+    loc: &Locations,
+    packages: impl Iterator<Item = &'r crate::resolve::ResolvedPackage>,
+) -> Vec<Fetched> {
+    use crate::resolve::Source;
+    let mut out: Vec<Fetched> = packages
+        .filter_map(|p| match &p.source {
+            Source::Git {
+                spec,
+                commit,
+                checksum,
+                ..
+            } => Some((crate::git::checkout_dir(loc, &spec.url, commit), checksum)),
+            Source::Url { dir, checksum, .. } => Some((dir.clone(), checksum)),
+            Source::Registry { .. } | Source::Path { .. } => None,
+        })
+        .map(|(dir, checksum)| Fetched {
+            dir,
+            checksum: checksum.clone(),
+            cache: loc.cache.clone(),
+        })
+        .collect();
+    out.sort_by(|a, b| a.dir.cmp(&b.dir));
+    out.dedup();
+    out
+}
+
+impl Fetched {
+    /// `Err` unless the tree still has its locked checksum, every file's metadata compared
+    /// with the stamp (and the bytes read when it differs).
+    pub fn verify(&self) -> Result<(), String> {
+        let mismatch = |expected: &str, actual: &str| {
+            format!(
+                "`{}` changed since it was fetched: velt.lock.json has {expected}, it hashes to {actual} (delete it to fetch it again)",
+                self.dir.display()
+            )
+        };
+        let links = || crate::git::check_links(&self.dir);
+        let expected = (Some(self.checksum.as_str()), TreeCheck::Files);
+        checksum_in(&self.cache, &self.dir, expected, mismatch, links).map(drop)
+    }
 }
 
 /// A hash of every entry's name, type, size and times, in the order the directories list them:

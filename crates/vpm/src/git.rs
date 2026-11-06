@@ -300,6 +300,11 @@ pub fn link_warnings(
 }
 
 /// `<cache>/git/<repository>`: named by a hash of the URL, so two URLs never share checkouts.
+/// Where commit `commit` of `url` is checked out in the cache.
+pub fn checkout_dir(loc: &Locations, url: &str, commit: &str) -> PathBuf {
+    repository_dir(loc, url).join(commit)
+}
+
 fn repository_dir(loc: &Locations, url: &str) -> PathBuf {
     let hash = Sha256::digest(url.as_bytes());
     let name: String = hash[..10].iter().map(|b| format!("{b:02x}")).collect();

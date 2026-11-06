@@ -619,6 +619,12 @@ fn build_on_current_thread(
         link_stage(sess, opts, &target, objects, paths)?;
         return Ok(Artifact::Executable(paths.executable.clone()));
     }
+    // No longer a no-op: before anything is compiled from them, the fetched dependencies (git,
+    // url) are checked file by file against their locks; a no-op build only looked at their
+    // directories (`vpm::tree_stamp`).
+    if let Some(graph) = &opts.packages {
+        graph.verify_fetched().map_err(BuildError::Failed)?;
+    }
     // What module resolution looked at, for the stamp.
     let (program, seen) = match &stamped {
         Some(_) => vpm::probe::record_reusing(known, || {

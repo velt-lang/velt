@@ -108,7 +108,8 @@ pub fn install(
         lockfile.write(&ws.root)?;
     }
     super::check_npm_overlap(packages.iter().copied())?;
-    let graph = build_graph(root, packages.iter().copied(), &dirs, natives);
+    let mut graph = build_graph(root, packages.iter().copied(), &dirs, natives);
+    graph.set_fetched(crate::tree_stamp::fetched(&loc, packages.iter().copied()));
     Ok(Installed {
         graph,
         lockfile,

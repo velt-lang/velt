@@ -97,7 +97,6 @@ fn executable(
                 .iter()
                 .any(|k| l.starts_with(k))
         })
-        .map(String::from)
         .collect();
     if let Some(l) = &lock {
         let _ = l.unlock();

@@ -339,3 +339,27 @@ fn an_archive_announced_past_512_mib_is_refused_before_it_is_read() {
     );
     server.join().unwrap();
 }
+
+#[test]
+fn a_build_that_is_no_longer_a_no_op_checks_fetched_files() {
+    // What the driver runs before compiling: an edit in place, which a no-op build's directory
+    // check doesn't see, is caught here.
+    let e = env();
+    let s = Serve::new();
+    let archive = vue();
+    s.put("/vue.tar.gz", Body::Bytes(archive.clone()));
+    let app = e.app(
+        &dep(
+            &s.url("/vue.tar.gz"),
+            &archive,
+            ", strip: 1, path: \"packages/vue\"",
+        ),
+        "",
+    );
+    let installed = e.install(&app).unwrap();
+    installed.graph.verify_fetched().unwrap();
+    let lib = raw(&e, &archive).join("vue-3.6.0/packages/vue/src/lib.velt");
+    std::fs::write(&lib, "export const v = 6;\n").unwrap();
+    let err = installed.graph.verify_fetched().unwrap_err();
+    assert!(err.contains("changed since it was fetched"), "{err}");
+}

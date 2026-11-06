@@ -79,7 +79,7 @@ pub(super) fn write(
             remove(root);
             return;
         };
-        entries.extend(stamp::entry_lines(text).into_iter().map(str::to_string));
+        entries.extend(stamp::entry_lines(text));
     }
     entries.extend(listed.iter().map(|(dir, hash)| stamp::dir_entry(dir, hash)));
     entries.sort();

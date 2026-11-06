@@ -189,12 +189,16 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
         lockfile.write(&root)?;
     }
     check_npm_overlap(resolution.packages.values())?;
-    let graph = build_graph(
+    let mut graph = build_graph(
         Some((&manifest, &root, &resolution.root_dependencies)),
         resolution.packages.values(),
         &dirs,
         natives,
     );
+    graph.set_fetched(crate::tree_stamp::fetched(
+        loc,
+        resolution.packages.values(),
+    ));
     Ok(Installed {
         graph,
         lockfile,

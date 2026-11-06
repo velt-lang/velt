@@ -346,3 +346,35 @@ fn the_c_libraries_are_handed_back() {
         assert_eq!(read(&path, &key).unwrap().2, libs);
     }
 }
+
+/// A directory is written once, in the table, and its entries name it by number; reading the
+/// stamp gives every path whole again.
+#[test]
+fn directories_are_written_once_and_read_back_whole() {
+    let tmp = tempfile::tempdir().unwrap();
+    let dir = vpm::relpath::absolute(tmp.path());
+    let (sm, seen) = build(&dir, &[("a.velt", "1"), ("b.velt", "2"), ("c.velt", "3")]);
+    let text = render_of(&sm, &seen, &[]);
+    let shown = dir.display().to_string();
+    let table: Vec<&str> = text
+        .lines()
+        .filter(|l| *l == format!("d {shown}"))
+        .collect();
+    assert_eq!(table.len(), 1, "{text}");
+    assert!(
+        !text.contains(&format!("\t{shown}{}", std::path::MAIN_SEPARATOR)),
+        "{text}"
+    );
+    let whole = entry_lines(&text);
+    assert!(
+        whole.contains(&format!("probe f\t{}", dir.join("a.velt").display()))
+            || whole
+                .iter()
+                .any(|l| l.ends_with(&dir.join("a.velt").display().to_string())),
+        "{whole:?}"
+    );
+    assert_eq!(check(&text, &Key::of(&[b"opts"]), LATER), Some(2));
+    // `compose` of the whole lines gives the same entries back.
+    let again = compose(&Key::of(&[b"opts"]), 2, &whole);
+    assert_eq!(entry_lines(&again), whole);
+}
