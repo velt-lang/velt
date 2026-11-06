@@ -390,7 +390,12 @@ impl FnCx<'_, '_> {
         let numbers = self.intrinsic(Intrinsic::SameValue, vec![vx, vy], bool_, span);
         let rx = self.mk(H::Local(x, UseMode::Borrow), xt, span);
         let ry = self.mk(H::Local(y, UseMode::Borrow), yt, span);
-        let other = self.intrinsic(Intrinsic::AnyStrictEq, vec![rx, ry], bool_, span);
+        // Values of one dynamic type: SameValue of what they hold, so a C struct held compares
+        // its numbers by SameValue too (velt_vir any_eq.rs); otherwise `===`.
+        let other = match xt == yt {
+            true => self.intrinsic(Intrinsic::SameValue, vec![rx, ry], bool_, span),
+            false => self.intrinsic(Intrinsic::AnyStrictEq, vec![rx, ry], bool_, span),
+        };
         let result = self.rel_choose(both, numbers, other, bool_, span);
         let block = hir::Block {
             stmts,

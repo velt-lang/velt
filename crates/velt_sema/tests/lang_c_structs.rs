@@ -96,7 +96,8 @@ fn a_c_struct_has_fields_of_types_c_has() {
 /// A tuple's storage isn't fixed to C's: lowering counts a tuple type that the program writes
 /// in place and copies (boxing/tuples.rs), anywhere in the program, which would make the field
 /// a pointer, and an element write would get past the read-only fields. C arrays wait for
-/// `T[N]`; the review's programs on #2475 are refused at the field.
+/// `T[N]`: a C array field, one written through an element after a copy, and arrays of
+/// structs and of arrays are refused at the field.
 #[test]
 fn c_arrays_wait_for_fixed_size_arrays() {
     let e = err_src(&format!(
@@ -123,7 +124,9 @@ fn c_arrays_wait_for_fixed_size_arrays() {
 /// A field whose type is already an error, or holds one, is reported once.
 #[test]
 fn an_unknown_field_type_is_reported_once() {
-    let e = err_src("declare c struct X { a: [Nope, Nope]; b: Nope; } function main() {}");
+    let e = err_src(
+        "declare c struct X { a: [Nope, Nope]; b: Nope; d: Map<Nope, i32>; e: Nope[] | null; } function main() {}",
+    );
     assert!(!e.contains("which C doesn't have"), "{e}");
     assert!(!e.contains("is a C array"), "{e}");
     assert!(e.contains("Nope"), "{e}");

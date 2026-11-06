@@ -157,8 +157,8 @@ const h0: H = { a: 4, p: p0 };
 /// Nothing elsewhere in the program changes a C struct's layout: not a conversion to `object`
 /// or `any` (which count object types compared by identity), not `==` on `any` values, and not
 /// an unrelated tuple written in place and copied (boxing/tuples.rs counts that tuple type).
-/// Each would otherwise put a pointer where C has `p` inline. The programs of the review on
-/// #2475.
+/// Each would otherwise put a pointer where C has `p` inline: program 0 converts a struct to
+/// `object`, program 1 compares two `any`s holding C structs, program 2 writes a copied tuple.
 #[test]
 fn nothing_else_in_the_program_boxes_a_c_struct() {
     let dir = test_dir::TestDir::new();
@@ -254,5 +254,97 @@ fn a_c_struct_crosses_to_c_by_value_only_in_a_later_layer() {
         "C function `give` can't take or return C struct `P` by value yet",
     ] {
         assert!(out.contains(want), "missing `{want}` in:\n{out}");
+    }
+}
+
+/// `any`, `Set<any>`, `Map<any>` and `includes` compare a C struct's content as the struct's
+/// own type does: `===` by IEEE (`NaN` unequal, `-0` equal to `0`), `Object.is` by SameValue,
+/// keys and `includes` by SameValueZero (`NaN` equal to every `NaN`, of either sign), for `f64`
+/// and `f32` fields and nested structs alike. `indexOf` and `lastIndexOf` use `===`.
+#[test]
+fn any_keys_and_includes_compare_c_structs_by_their_number_rules() {
+    let dir = test_dir::TestDir::new();
+    let main = r#"declare c struct P { x: f64; y: f64; }
+declare c struct F { x: f32; y: f32; }
+declare c struct H { a: u8; p: P; }
+function mk(x: f64, y: f64): P { return { x, y }; }
+function mf(x: f32, y: f32): F { return { x, y }; }
+function mh(x: f64): H { return { a: 1, p: mk(x, 1) }; }
+function main() {
+  const nan = 0 / 0;
+  const nz = -0.0;
+  const n: any = mk(nan, 1);
+  const m: any = mk(nan, 1);
+  const z: any = mk(0, 1);
+  const w: any = mk(nz, 1);
+  console.log(Object.is(n, m), Object.is(z, w), n === m, z === w, n == m);
+  const st = new Set<any>();
+  st.add(n);
+  st.add(m);
+  st.add(z);
+  st.add(w);
+  console.log(st.size, st.has(n), st.has(mk(nan, 1) as any), st.has(mk(nz, 1) as any));
+  st.add(mk(-nan, 1) as any);
+  console.log(st.size);
+  const sp = new Set<P>();
+  sp.add(mk(nan, 1));
+  sp.add(mk(-nan, 1));
+  sp.add(mk(0, 1));
+  sp.add(mk(nz, 1));
+  console.log(sp.size, sp.has(mk(nan, 1)));
+  const mp = new Map<any, i32>();
+  mp.set(n, 3);
+  console.log(mp.get(mk(nan, 1) as any), mp.get(mk(-nan, 1) as any));
+  const sf = new Set<any>();
+  const f32nan = nan as f32;
+  sf.add(mf(f32nan, 1) as any);
+  sf.add(mf(f32nan, 1) as any);
+  sf.add(mf(0, 1) as any);
+  sf.add(mf(-0.0 as f32, 1) as any);
+  const tf = new Set<F>();
+  tf.add(mf(f32nan, 1));
+  tf.add(mf(f32nan, 1));
+  tf.add(mf(0, 1));
+  tf.add(mf(-0.0 as f32, 1));
+  console.log(sf.size, tf.size, Object.is(mf(f32nan, 1) as any, mf(f32nan, 1) as any));
+  const sh = new Set<any>();
+  sh.add(mh(nan) as any);
+  sh.add(mh(nan) as any);
+  sh.add(mh(0) as any);
+  sh.add(mh(nz) as any);
+  const th = new Set<H>();
+  th.add(mh(nan));
+  th.add(mh(nan));
+  th.add(mh(0));
+  th.add(mh(nz));
+  console.log(sh.size, th.size, Object.is(mh(nz) as any, mh(0) as any));
+  const ps: P[] = [mk(nan, 1), mk(0, 1)];
+  console.log(ps.includes(mk(nan, 1)), ps.indexOf(mk(nan, 1)), ps.lastIndexOf(mk(nan, 1)));
+  console.log(ps.includes(mk(nz, 1)), ps.indexOf(mk(nz, 1)));
+  const xs: any[] = [n, z];
+  console.log(xs.includes(m), xs.indexOf(m), xs.includes(w), xs.indexOf(w));
+  const os: (P | null)[] = [mk(nan, 1), null];
+  console.log(os.includes(mk(nan, 1)), os.includes(null), os.indexOf(mk(nan, 1)));
+}
+"#;
+    std::fs::create_dir_all(dir.path()).unwrap();
+    std::fs::write(dir.path().join("main.velt"), main).unwrap();
+    for args in [
+        &["run", "main.velt"][..],
+        &["run", "--release", "main.velt"][..],
+    ] {
+        let o = no_window::command(env!("CARGO_BIN_EXE_velt"))
+            .args(args)
+            .current_dir(dir.path())
+            .env("NO_COLOR", "1")
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&o.stderr);
+        assert!(o.status.success(), "velt {args:?} failed:\n{stderr}");
+        assert_eq!(
+            String::from_utf8_lossy(&o.stdout),
+            "true false false true false\n2 true true true\n2\n2 true\n3 3\n2 2 true\n2 2 false\ntrue -1 -1\ntrue 1\ntrue -1 true 1\ntrue true -1\n",
+            "velt {args:?}:\n{stderr}"
+        );
     }
 }

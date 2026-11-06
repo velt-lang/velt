@@ -7,7 +7,7 @@
 //! |---|---|
 //! | 0 | the `typeof` tag (`TAG_*`, an integer, not an address) |
 //! | 1 | `AnyTruthy`: `(data: ptr) -> bool` |
-//! | 2 | `AnySame`: `(a: ptr, b: ptr) -> bool`, `===` of two data pointers of this type |
+//! | 2 | `AnySame`: `(a: ptr, b: ptr, mode: u8) -> bool`, `===` of two data pointers of this type; `mode` (`ANY_SAME_*`, any_eq.rs) asks for SameValueZero or SameValue, which only a C struct's content needs here |
 //! | 3 | `AnyNumber`: `(data: ptr) -> f64`, JavaScript's `ToNumber` (booleans, numbers and strings; every type in a program with operators on `any`, any_number.rs) |
 //! | 4 | `AnyHash`: `(data: ptr) -> u64`, a hash agreeing with SameValueZero (`Set` / `Map` keys: any_eq.rs) |
 //! | 5..8 | member reads and calls (any_member.rs), when the program has them |
@@ -214,8 +214,16 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(Operand::Copy(out)));
     }
 
-    pub(super) fn any_same_body(&mut self, a: vir::Local, b: vir::Local, ty: TyId) {
-        let r = if self.cx.is_class(ty) || self.cx.boxed(ty) {
+    pub(super) fn any_same_body(
+        &mut self,
+        a: vir::Local,
+        b: vir::Local,
+        mode: vir::Local,
+        ty: TyId,
+    ) {
+        let r = if self.cx.c_struct(ty) {
+            self.any_c_struct_same(a, b, mode, ty)
+        } else if self.cx.is_class(ty) || self.cx.boxed(ty) {
             let (x, y) = (
                 Operand::Copy(Place::local(a)),
                 Operand::Copy(Place::local(b)),
@@ -252,9 +260,8 @@ impl FnLower<'_, '_> {
             // A function value boxed twice is the same function: its code and environment.
             let (pa, pb) = (self.deref_param(a, ty), self.deref_param(b, ty));
             self.ref_identity(&pa, &pb, ty)
-        } else if self.cx.is_object(ty) && !self.cx.c_struct(ty) {
-            // An object stored in the box itself: the same box. A C struct compares its content
-            // (same.rs), below.
+        } else if self.cx.is_object(ty) {
+            // An object stored in the box itself: the same box.
             let (x, y) = (
                 Operand::Copy(Place::local(a)),
                 Operand::Copy(Place::local(b)),

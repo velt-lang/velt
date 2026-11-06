@@ -247,7 +247,7 @@ impl Glue {
             Glue::Trace | Glue::TraceIn | Glue::WeakBoxTrace => (vec![Ptr, Ptr, Ptr], Unit),
             Glue::WeakRetain | Glue::WeakRelease => (vec![U64], Unit),
             Glue::AnyTruthy => (vec![Ptr], Bool),
-            Glue::AnySame => (vec![Ptr, Ptr], Bool),
+            Glue::AnySame => (vec![Ptr, Ptr, U8], Bool),
             Glue::AnyNumber => (vec![Ptr], F64),
             Glue::AnyHash => (vec![Ptr], U64),
             Glue::AnyGet => (vec![Ptr, Ptr, Ptr], U8),
@@ -308,7 +308,7 @@ impl<'c, 'h> FnLower<'c, 'h> {
             Glue::WeakRetain => lw.weak_retain_body(args[0], ty),
             Glue::WeakRelease => lw.weak_release_body(args[0], ty),
             Glue::AnyTruthy => lw.any_truthy_body(args[0], ty),
-            Glue::AnySame => lw.any_same_body(args[0], args[1], ty),
+            Glue::AnySame => lw.any_same_body(args[0], args[1], args[2], ty),
             Glue::AnyNumber => lw.any_number_body(args[0], ty),
             Glue::AnyHash => lw.any_hash_body(args[0], ty),
             Glue::AnyGet | Glue::AnyIndex | Glue::AnyCall | Glue::AnyApply => {

@@ -928,9 +928,11 @@ Step 1 lands in layers, each its own pull request:
      (`note_identity`, `note_identity_borrow`, `note_dyn_identity`). So it stays inline, in
      declaration order at natural alignment, which is C's layout for these fields on the 64-bit
      targets (on wasm32 `isize` and `usize` are 8 bytes in Velt and 4 in C).
-   - It has no identity, so every comparison compares its content (same.rs): `===`, `==`,
-     `Object.is`, `includes`, `indexOf`, generic code and `any`, as `Map` and `Set` keys already
-     did; its numbers compare as each operation compares numbers.
+   - It has no identity, so every comparison compares its content (same.rs), with the numbers
+     in it compared as the operation compares numbers: `===`, `==`, `indexOf` and generic code
+     by IEEE (`NaN` unequal, `-0` equal to `0`), `Object.is` by SameValue, `Map` and `Set` keys
+     and `includes` by SameValueZero. An `any` holding one does the same: descriptor slot
+     `AnySame` takes the mode (any_eq.rs).
    - `Ptr<S>` is a C pointer, like `Ptr` to a `declare c type`. A C struct isn't raw API: a
      package's users can import it.
    - Not yet:

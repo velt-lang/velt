@@ -87,7 +87,8 @@ fn check(cx: &mut Ctx, d: DefId, decl: &ast::TypeDecl) {
         })
         .unwrap_or_default();
     for (field, ty, at) in fields {
-        if has_error(cx, ty) {
+        // An unknown type anywhere in it (`[Nope, Nope]`, `Map<Nope, i32>`) is reported already.
+        if cx.ty.has_error(ty) {
             continue;
         }
         let shown = cx.display(ty);
@@ -127,16 +128,6 @@ fn check(cx: &mut Ctx, d: DefId, decl: &ast::TypeDecl) {
             .with_note(note),
         );
     }
-}
-
-/// Is `ty`, or a part of it written in a field type, an error already reported?
-fn has_error(cx: &Ctx, ty: TyId) -> bool {
-    ty == cx.ty.error
-        || match cx.ty.kind(ty) {
-            TyKind::Tuple(es) => es.iter().any(|&e| has_error(cx, e)),
-            TyKind::Option(x, _) | TyKind::Array(x) => has_error(cx, *x),
-            _ => false,
-        }
 }
 
 /// Whether a C struct's field can be a `ty`.

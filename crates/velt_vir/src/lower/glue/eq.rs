@@ -81,7 +81,7 @@ impl FnLower<'_, '_> {
                 Operand::Const(Const::Bool(true), Ty::Bool)
             }
             // `any` / `unknown` (generic code over them): by value, as `===` (keys: SameValueZero).
-            TyKind::Dyn(..) if self.cx.is_dynamic(ty) => self.any_same_places(a, b, self.key_mode),
+            TyKind::Dyn(..) if self.cx.is_dynamic(ty) => self.any_same_places(a, b, self.any_cmp()),
             TyKind::FnPtr { .. } | TyKind::Closure(_) | TyKind::Dyn(..) => {
                 self.ref_identity(a, b, ty)
             }

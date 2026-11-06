@@ -20,7 +20,7 @@ impl FnLower<'_, '_> {
     pub(super) fn same_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         // `any` / `unknown` in generic code: `===` of the values they hold (any_eq.rs).
         if self.cx.is_dynamic(ty) {
-            return self.any_same_places(a, b, self.key_mode);
+            return self.any_same_places(a, b, self.any_cmp());
         }
         // A `struct` key (`KeyEq`, not `===`) compares by content, field by field.
         if self.key_mode && !self.value_mode && self.cx.content_key(ty) {
@@ -59,16 +59,23 @@ impl FnLower<'_, '_> {
     }
 
     /// `Intrinsic::IncludesEq` (JS `includes`): `same_values`, with a number (also one an `any`
-    /// or an option holds) compared by SameValueZero, so `NaN` finds `NaN`; tuples and the other
-    /// types compare their parts as `===` does; so does a union, whose `NaN`s are equal
-    /// (Bool operand).
+    /// or an option holds) compared by SameValueZero, so `NaN` finds `NaN`; so is a C struct's
+    /// content (also an option's), which is the struct's value; tuples and the other types
+    /// compare their parts as `===` does; so does a union, whose `NaN`s are equal (Bool operand).
     pub(super) fn includes_values(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
         // An `f16`/`bf16` (a `u16` in VIR) is a number too: its NaN finds NaN.
         let keyed = match self.cx.kind(ty) {
             TyKind::Option(inner, _) => {
-                self.cx.ty(inner).is_float() || self.half_of(inner).is_some()
+                self.cx.ty(inner).is_float()
+                    || self.half_of(inner).is_some()
+                    || self.cx.c_struct(inner)
             }
-            _ => self.cx.ty(ty).is_float() || self.half_of(ty).is_some() || self.cx.is_dynamic(ty),
+            _ => {
+                self.cx.ty(ty).is_float()
+                    || self.half_of(ty).is_some()
+                    || self.cx.is_dynamic(ty)
+                    || self.cx.c_struct(ty)
+            }
         };
         if keyed {
             return self.key_same_values(a, b, ty);
@@ -130,6 +137,16 @@ impl FnLower<'_, '_> {
         let r = self.same_values(a, b, ty);
         self.value_mode = outer;
         r
+    }
+
+    /// How the current mode compares two `any`s (any_eq.rs).
+    pub(super) fn any_cmp(&self) -> super::any_eq::AnyCmp {
+        use super::any_eq::AnyCmp;
+        match (self.value_mode, self.key_mode) {
+            (true, _) => AnyCmp::Value,
+            (false, true) => AnyCmp::Key,
+            (false, false) => AnyCmp::Strict,
+        }
     }
 
     fn same_glue(&mut self, a: &Place, b: &Place, ty: TyId) -> Operand {
