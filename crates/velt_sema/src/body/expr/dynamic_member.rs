@@ -273,6 +273,7 @@ impl FnCx<'_, '_> {
             return Ok(call.emit(self, any, span));
         }
         let k = self.expr(index, None, Want::Borrow);
+        self.note_forward_key(index, span);
         let Some(any) = any else {
             return Ok(self.error_expr(span));
         };
@@ -300,9 +301,7 @@ impl FnCx<'_, '_> {
             let k = self.coerce(k, any);
             if self.uses_proxy() {
                 // A proxy's `get` trap and a record's symbol table see the symbol.
-                if !self.cx.scopes[self.module].is_std {
-                    self.cx.method_facts.reads.push(span);
-                }
+                self.note_computed_read(span);
                 let call = hooks::any_get_key(ty::Any::of(obj), ty::Any::of(k));
                 return Ok(call.emit(self, any, span));
             }
@@ -376,6 +375,12 @@ impl FnCx<'_, '_> {
                 };
                 let (Some(list), Some(first)) = (boxed.pop(), boxed.pop()) else {
                     return lw.error_expr(span);
+                };
+                // A typed array's elements (`any` reads none yet), in a program that has them.
+                let list = if lw.cx.prelude_adt("TypedArray").is_some() {
+                    hooks::typed_apply_list(ty::Any::of(list)).emit(lw, any, span)
+                } else {
+                    list
                 };
                 let held = lw.expr(f, None, Want::Borrow);
                 let call = if lw.uses_proxy() {

@@ -580,19 +580,12 @@ impl FnLower<'_, '_> {
                 Some(self.cx.holds_dynamic_or_class(t))
             }
             hir::ExprKind::Call {
-                callee: hir::Callee::Intrinsic(hir::Intrinsic::AnyMethodCalled),
+                callee:
+                    hir::Callee::Intrinsic(
+                        i @ (hir::Intrinsic::AnyMethodCalled | hir::Intrinsic::StdUsed),
+                    ),
                 args,
-            } => match &args.first()?.kind {
-                hir::ExprKind::Lit(hir::Lit::Str(name)) => Some(self.cx.any_method_called(name)),
-                _ => Some(true),
-            },
-            hir::ExprKind::Call {
-                callee: hir::Callee::Intrinsic(hir::Intrinsic::StdUsed),
-                args,
-            } => match &args.first()?.kind {
-                hir::ExprKind::Lit(hir::Lit::Str(name)) => Some(self.cx.std_used(name)),
-                _ => Some(true),
-            },
+            } => Some(self.cx.std_fact(*i, args.first()?)),
             hir::ExprKind::Unary {
                 op: hir::UnOp::Not,
                 expr,

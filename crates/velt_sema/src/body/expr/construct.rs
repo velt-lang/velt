@@ -18,6 +18,7 @@ impl FnCx<'_, '_> {
         exp: Option<TyId>,
         span: Span,
     ) -> hir::Expr {
+        self.note_direct_handler(class, args);
         if let Some(h) = self.new_through_value(class, args, span) {
             return h;
         }

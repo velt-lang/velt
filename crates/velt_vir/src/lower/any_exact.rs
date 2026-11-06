@@ -10,6 +10,21 @@ use super::FnLower;
 use crate::vir::{BinOp, Const, Operand, Place, Proj, Rvalue, Ty};
 
 impl FnLower<'_, '_> {
+    /// `AnyIsList(a)`: `a`'s table is that of `any[]`.
+    pub(super) fn any_is_list(&mut self, a: &hir::Expr) -> Operand {
+        let t = self.sub(a.ty);
+        let v = self.expr(a);
+        if self.dead() {
+            return Operand::Const(Const::Bool(false), Ty::Bool);
+        }
+        let (_, desc) = self.any_parts(v, t);
+        let any = self.cx.any_ty();
+        let list = self.cx.intern(TyKind::Array(any));
+        let imp = self.cx.hir.any_impl.unwrap_or(0);
+        let want = self.vtable_addr(VtableKey::Impl(imp, list));
+        self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, desc, want))
+    }
+
     /// `AnyToExact(a)` of type `ty` (an option of a function type): a new reference to the
     /// function `a` holds when its table is that type's, else the nothing.
     pub(super) fn any_to_exact(&mut self, a: &hir::Expr, ty: TyId) -> Operand {

@@ -1,0 +1,17 @@
+// An array-like shaped like a typed array is read as an array-like.
+function args(this: any, a: any, b: any): any {
+  return `${this.tag}:${a},${b}`;
+}
+const f: any = args;
+const self = { tag: "x" };
+const like: any = { length: 1, byteLength: 1, buffer: {}, 0: "x" };
+console.log(f.apply(self, like));
+class Shape {
+  length: number = 2;
+  byteLength: number = 2;
+  buffer: any = {};
+}
+const shape: any = new Shape();
+console.log(f.apply(self, shape));
+const real: any = new Uint8Array([4, 5]);
+console.log(f.apply(self, real));

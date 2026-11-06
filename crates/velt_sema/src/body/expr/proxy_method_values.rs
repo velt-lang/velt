@@ -5,25 +5,30 @@
 //! `any` or `Reflect.get` whose key names the method. So the names called cover what can run unless
 //! the program's own code
 //!
-//! - reads a member through `any` by a computed key, or by a literal key naming an array method;
-//! - calls `Reflect.get` likewise, or uses `Reflect` as a value;
-//! - reads a property descriptor, whose `value` is such a read;
-//! - reads a member named `get` as a value, or calls one with two or more arguments: it may be a
-//!   trap of the next rule, called with a key that isn't the one read.
+//! - reads a member through `any` or `Reflect.get` by a computed key, or by a literal key naming an
+//!   array method or `get`;
+//! - calls a member `get` through `any`, which may be `Reflect.get` held as a value;
+//! - reads a property descriptor, whose `value` is such a read.
 //!
-//! The exception is what a forwarding `get` trap does: inside an object literal's `get` member,
-//! `Reflect.get(t, k, r)` and `t[k]` with `k` its key parameter, never assigned or shadowed there.
-//! The proxy calls the trap with the key that was read, which the rules above already account for.
+//! The one exception is a forwarding `get` trap: an object literal written directly as the second
+//! argument of `new Proxy(...)`, nothing else can reach it, so its `get` runs only with the key that
+//! was read, which the rules above account for. In such a `get`, which doesn't use `this` and whose
+//! key parameter has no default, a read by that parameter doesn't count, if nothing assigns the
+//! name (`body::assigned`: destructuring targets, closures and their defaults included).
 //!
 //! Any other program has every algorithm compiled.
 
-use std::collections::HashSet;
+use std::collections::BTreeSet;
 
+use rustc_hash::FxHashSet;
 use velt_common::Span;
 use velt_syntax::ast;
-use velt_syntax::visit::{walk_block, walk_expr, walk_module, Visit};
 
-use crate::ctx::Ctx;
+use super::literal_this::takes_this;
+use crate::body::assigned::{assigned_in_expr, assigned_in_stmt, Assigned};
+use crate::body::frame::Frame;
+use crate::body::FnCx;
+use crate::ctx::{Ctx, Item};
 
 /// The methods a proxy of an array runs generically (std/lang/proxy/array_names.velt).
 pub(crate) const ARRAY_METHODS: [&str; 18] = [
@@ -47,211 +52,147 @@ pub(crate) const ARRAY_METHODS: [&str; 18] = [
     "sort",
 ];
 
-fn is_ident(e: &ast::Expr, name: &str) -> bool {
-    matches!(&e.kind, ast::ExprKind::Ident(i) if i.name == name)
-}
-
-/// `Reflect.get(...)`'s arguments, when `e` is such a call.
-fn reflect_get(e: &ast::Expr) -> Option<&[ast::Expr]> {
-    let ast::ExprKind::Call { callee, args, .. } = &e.kind else {
-        return None;
-    };
-    let ast::ExprKind::Member { object, prop, .. } = &callee.kind else {
-        return None;
-    };
-    (is_ident(object, "Reflect") && prop.name == "get").then_some(args.as_slice())
-}
-
-/// The forwarding reads in one trap's body, and whether its key parameter is rebound there.
-struct TrapBody<'k> {
-    key: &'k str,
-    rebound: bool,
-    forwards: Vec<Span>,
-}
-
-impl<'a> Visit<'a> for TrapBody<'_> {
-    fn var_decl(&mut self, v: &'a ast::VarDecl) {
-        self.binds(&v.pattern);
-    }
-
-    fn stmt(&mut self, s: &'a ast::Stmt) {
-        if let ast::StmtKind::Try {
-            catch: Some((Some(p), _)),
-            ..
-        } = &s.kind
-        {
-            self.binds(p);
-        }
-    }
-
-    fn function(&mut self, sig: &'a ast::FnSig, _: &'a ast::Block) {
-        self.rebound |= sig.params.iter().any(|p| p.name.name == self.key);
-    }
-
-    fn expr(&mut self, e: &'a ast::Expr) {
-        match &e.kind {
-            ast::ExprKind::Assign { target, .. } | ast::ExprKind::Update { target, .. } => {
-                self.rebound |= is_ident(target, self.key);
-            }
-            ast::ExprKind::Arrow { params, .. } => {
-                self.rebound |= params.iter().any(|p| p.name.name == self.key);
-            }
-            ast::ExprKind::Index { index, more, .. } => {
-                if more.is_empty() && is_ident(index, self.key) {
-                    self.forwards.push(e.span);
-                }
-            }
-            _ => {
-                if reflect_get(e).is_some_and(|a| a.get(1).is_some_and(|k| is_ident(k, self.key))) {
-                    self.forwards.push(e.span);
-                }
-            }
-        }
-    }
-}
-
-impl TrapBody<'_> {
-    fn binds(&mut self, p: &ast::Pattern) {
-        // Any name in the pattern, bound or not: conservative, and only inside a trap.
-        self.rebound |= format!("{p:?}").contains(self.key);
-    }
-}
-
-/// What the program's own modules do (module docs).
-#[derive(Default)]
-struct Scan {
-    open: bool,
-    /// Forwarding reads of `get` traps.
-    forwards: HashSet<Span>,
-    /// Calls of a member `get` with at most one argument (`map.get(k)`).
-    get_calls: HashSet<Span>,
-    /// Members named `get`.
-    gets: Vec<Span>,
-    /// `Reflect.get` calls other than with a literal key that names no array method.
-    reflect_reads: Vec<Span>,
-    /// `Reflect` as written, and those with a member read from them.
-    reflect_uses: Vec<Span>,
-    reflect_members: HashSet<Span>,
-}
-
-impl Scan {
-    /// The `get` member of an object literal, with key parameter `key`: its forwarding reads.
-    fn trap(&mut self, key: Option<&str>, body: &mut dyn FnMut(&mut TrapBody)) {
-        let Some(key) = key else {
-            return;
-        };
-        let mut t = TrapBody {
-            key,
-            rebound: false,
-            forwards: vec![],
-        };
-        body(&mut t);
-        if !t.rebound {
-            self.forwards.extend(t.forwards);
-        }
-    }
-}
-
-impl<'a> Visit<'a> for Scan {
-    fn expr(&mut self, e: &'a ast::Expr) {
-        if is_ident(e, "Reflect") {
-            self.reflect_uses.push(e.span);
-        }
-        if let Some(args) = reflect_get(e) {
-            match args.get(1).map(|k| &k.kind) {
-                Some(ast::ExprKind::Lit(ast::Lit::Str(k)))
-                    if !ARRAY_METHODS.contains(&k.as_str()) => {}
-                _ => self.reflect_reads.push(e.span),
-            }
-        }
-        match &e.kind {
-            ast::ExprKind::Call { callee, args, .. } => {
-                if let ast::ExprKind::Member { prop, .. } = &callee.kind {
-                    if prop.name == "get" && (args.len() <= 1 || reflect_get(e).is_some()) {
-                        self.get_calls.insert(callee.span);
-                    }
-                }
-            }
-            ast::ExprKind::Member { object, prop, .. } => {
-                if prop.name == "get" {
-                    self.gets.push(e.span);
-                }
-                if prop.name == "getOwnPropertyDescriptor" {
-                    self.open = true;
-                }
-                if is_ident(object, "Reflect") {
-                    self.reflect_members.insert(object.span);
-                }
-            }
-            ast::ExprKind::Object(props) => {
-                for p in props {
-                    match p {
-                        ast::ObjectProp::KeyValue(name, value) if name.name == "get" => {
-                            if let ast::ExprKind::Arrow { params, body, .. } = &value.kind {
-                                let key = params
-                                    .get(1)
-                                    .filter(|k| k.pattern.is_none() && !k.rest)
-                                    .map(|k| k.name.name.as_str());
-                                self.trap(key, &mut |t| match body {
-                                    ast::ArrowBody::Expr(b) => walk_expr(b, t),
-                                    ast::ArrowBody::Block(b) => walk_block(b, t),
-                                });
-                            }
-                        }
-                        ast::ObjectProp::Method(f) if f.sig.name.name == "get" => {
-                            let key = f
-                                .sig
-                                .params
-                                .get(1)
-                                .filter(|k| k.pattern.is_none() && !k.rest)
-                                .map(|k| k.name.name.as_str());
-                            self.trap(key, &mut |t| walk_block(&f.body, t));
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
 /// What sema saw while checking bodies.
 #[derive(Default)]
 pub(crate) struct MethodFacts {
-    /// The program's reads through `any` by a computed key.
-    pub(crate) reads: Vec<Span>,
-    /// One of its reads has a literal key naming an array method.
-    pub(crate) named: bool,
+    /// The program's reads by a computed key.
+    reads: Vec<Span>,
+    /// The ones a forwarding trap makes with its own key.
+    forwards: FxHashSet<Span>,
+    /// One of its reads has a literal key naming an array method or `get`.
+    named: bool,
+    /// The `get` members of handlers written directly in `new Proxy(...)`.
+    traps: FxHashSet<Span>,
     /// The literal names its own code calls through `any` (`Program::any_call_names`).
-    pub(crate) call_names: std::collections::BTreeSet<String>,
+    pub(crate) call_names: BTreeSet<String>,
 }
 
-/// `Program::array_methods_open` (module docs).
-fn array_methods_open(cx: &Ctx) -> bool {
-    if cx.prelude_adt("Proxy").is_none() {
-        return false;
+fn names_a_method(name: &str) -> bool {
+    name == "get" || ARRAY_METHODS.contains(&name)
+}
+
+impl FnCx<'_, '_> {
+    fn in_user_module(&self) -> bool {
+        !self.cx.scopes[self.module].is_std
     }
-    let (reads, named) = (&cx.method_facts.reads, cx.method_facts.named);
-    if named {
-        return true;
+
+    /// A read through `any` with the literal key `name`, in the program's own code.
+    pub(crate) fn note_named_read(&mut self, name: &str) {
+        if self.in_user_module() && names_a_method(name) {
+            self.cx.method_facts.named = true;
+        }
     }
-    let mut s = Scan::default();
-    for m in cx.modules.iter().filter(|m| !m.is_std) {
-        walk_module(&m.ast, &mut s);
+
+    /// A read through `any` by a computed key, at `span`.
+    pub(crate) fn note_computed_read(&mut self, span: Span) {
+        if self.in_user_module() {
+            self.cx.method_facts.reads.push(span);
+        }
     }
-    s.open
-        || s.reflect_uses
+
+    /// The computed key `key` of the read at `span`: a forwarding read, when it is the key
+    /// parameter of the trap being checked (`note_computed_read` counts the read itself).
+    pub(crate) fn note_forward_key(&mut self, key: &ast::Expr, span: Span) {
+        let (Some(param), ast::ExprKind::Ident(id)) = (self.f.trap_key, &key.kind) else {
+            return;
+        };
+        let local = self.declared_local(&id.name);
+        if local.is_some_and(|l| self.f.locals[l.0 as usize].span == param) {
+            self.f.forward_reads.push(span);
+        }
+    }
+
+    /// `Reflect.get(args)` at `span`.
+    pub(crate) fn note_reflect_get(&mut self, args: &[ast::Expr], span: Span) {
+        let spread = args
             .iter()
-            .any(|r| !s.reflect_members.contains(r))
-        || s.gets.iter().any(|g| !s.get_calls.contains(g))
-        || s.reflect_reads.iter().any(|r| !s.forwards.contains(r))
-        || reads.iter().any(|r| !s.forwards.contains(r))
+            .any(|a| matches!(a.kind, ast::ExprKind::Spread(_)));
+        match args.get(1).map(|k| &k.kind) {
+            Some(ast::ExprKind::Lit(ast::Lit::Str(k))) if !spread => self.note_named_read(k),
+            _ => {
+                self.note_computed_read(span);
+                if let (Some(k), false) = (args.get(1), spread) {
+                    self.note_forward_key(k, span);
+                }
+            }
+        }
+    }
+
+    /// A property descriptor is read: its `value` is a read of that key.
+    pub(crate) fn note_descriptor_read(&mut self) {
+        if self.in_user_module() {
+            self.cx.method_facts.named = true;
+        }
+    }
+
+    /// `new class(args)`: a handler written directly in `new Proxy(...)` has its `get` noted.
+    pub(crate) fn note_direct_handler(&mut self, class: &ast::TypeExpr, args: &[ast::Expr]) {
+        let ast::TypeExprKind::Named { path, .. } = &class.kind else {
+            return;
+        };
+        if !self.in_user_module() || path.len() != 1 || path[0].name != "Proxy" {
+            return;
+        }
+        let proxy = self.cx.prelude_adt("Proxy");
+        if !matches!(self.lookup_type_path(path), Some(Item::Def(d)) if Some(d) == proxy) {
+            return;
+        }
+        let Some(ast::ExprKind::Object(props)) = args.get(1).map(|h| &h.kind) else {
+            return;
+        };
+        for p in props {
+            if let ast::ObjectProp::KeyValue(name, value) = p {
+                if name.name == "get" && matches!(value.kind, ast::ExprKind::Arrow { .. }) {
+                    self.cx.method_facts.traps.insert(value.span);
+                }
+            }
+        }
+    }
+
+    /// The closure `e` is being checked: the span of its key parameter when it is a `get` trap
+    /// that can only be called with the key that was read (module docs).
+    pub(crate) fn trap_key_of(&self, e: &ast::Expr) -> Option<Span> {
+        let ast::ExprKind::Arrow { params, body, .. } = &e.kind else {
+            return None;
+        };
+        if !self.cx.method_facts.traps.contains(&e.span) || takes_this(e) {
+            return None;
+        }
+        let k = params.get(1)?;
+        if k.pattern.is_some() || k.default.is_some() || k.optional || k.rest {
+            return None;
+        }
+        let mut written = Assigned::default();
+        for d in params.iter().filter_map(|p| p.default.as_ref()) {
+            assigned_in_expr(d, &mut written);
+        }
+        match body {
+            ast::ArrowBody::Expr(b) => assigned_in_expr(b, &mut written),
+            ast::ArrowBody::Block(b) => {
+                for s in &b.stmts {
+                    assigned_in_stmt(s, &mut written);
+                }
+            }
+        }
+        (!written.contains_key(k.name.name.as_str())).then_some(k.name.span)
+    }
+
+    /// The closure with `frame` has been checked: its forwarding reads count.
+    pub(crate) fn finish_trap(&mut self, frame: &Frame) {
+        self.cx
+            .method_facts
+            .forwards
+            .extend(frame.forward_reads.iter().copied());
+    }
 }
 
 /// `Program::array_methods_open` and `Program::any_call_names`.
 pub(crate) fn finish(cx: &mut Ctx) -> (bool, Vec<String>) {
-    let open = array_methods_open(cx);
+    let f = &cx.method_facts;
+    let open = cx.prelude_adt("Proxy").is_some()
+        && (f.named
+            || f.call_names.contains("get")
+            || f.reads.iter().any(|r| !f.forwards.contains(r)));
     let names = std::mem::take(&mut cx.method_facts.call_names);
     (open, names.into_iter().collect())
 }

@@ -121,21 +121,30 @@ fn a_slot_compares_only_the_names_called() {
 
 #[test]
 fn a_forwarding_trap_keeps_the_algorithms_out() {
+    let program = |handler: &str| {
+        format!("const log: any[] = [];\nconst p: any = new Proxy([1] as any, {handler});\nconsole.log(p.length, p[0]);\n")
+    };
     for trap in [
         "get(t: any, k: any, r: any) {\n    log.push(k);\n    return Reflect.get(t, k, r);\n  }",
+        "get(t: any, k: any, r: any) {\n    const v = Reflect.get(t, k, r);\n    return v;\n  }",
         "get: (t: any, k: any) => t[k]",
     ] {
-        let src = format!("const log: any[] = [];\nconst p: any = new Proxy([1] as any, {{\n  {trap},\n}});\nconsole.log(p.length, p[0]);\n");
+        let src = program(&format!("{{\n  {trap},\n}}"));
         assert!(!release_ir(&src).contains("proxySort"), "{trap}");
     }
     for trap in [
         "get(t: any, k: any, r: any) {\n    return Reflect.get(t, k.slice(1), r);\n  }",
         "get(t: any, k: any, r: any) {\n    k = \"sort\";\n    return Reflect.get(t, k, r);\n  }",
         "get(t: any, k: any, r: any) {\n    const n = k + \"\";\n    return Reflect.get(t, n, r);\n  }",
+        "get(t: any, k: any = \"sort\", r?: any) {\n    return Reflect.get(t, k, r);\n  }",
+        "get(t: any, k: any, r: any) {\n    const f = () => Reflect.get(t, k, r);\n    return f();\n  }",
     ] {
-        let src = format!("const p: any = new Proxy([1] as any, {{\n  {trap},\n}});\nconsole.log(p.length);\n");
+        let src = program(&format!("{{\n  {trap},\n}}"));
         assert!(release_ir(&src).contains("proxySort"), "{trap}");
     }
+    // Written elsewhere, a handler can be reached by more than the proxy.
+    let held = "const h = {\n  get(t: any, k: any, r: any) {\n    return Reflect.get(t, k, r);\n  },\n};\n";
+    assert!(release_ir(&format!("{held}{}", program("h"))).contains("proxySort"));
 }
 
 #[test]

@@ -24,6 +24,9 @@ export declare intrinsic function anyToPrimitive(value: any, hint: string, at: s
  */
 export declare intrinsic function anyMethodCalled(name: string): bool;
 
+/** Does `value` hold an `any[]` itself (not a view, a proxy or another array)? */
+export declare intrinsic function anyIsList(value: any): bool;
+
 /** Nothing runs. Where this is compiled, the program can reach it: `stdUsed(name)` is then true. */
 export declare intrinsic function noteStdUse(name: string): void;
 

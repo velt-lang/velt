@@ -1,0 +1,17 @@
+// velt/lang/typed_array (internal): a typed array as the list of `f.apply(self, list)`.
+
+import { TypedArray } from "velt/lang/typed_array/base";
+
+/** The elements of the typed array `list` as an `any[]` (`any` reads none yet); another list as it is. */
+export function typedApplyList(list: any): any {
+  if (!(list instanceof TypedArray)) {
+    return list;
+  }
+  const held: any = list;
+  const out: any[] = [];
+  const n: number = held.length;
+  for (let i = 0; i < n; i++) {
+    out.push(held.at(i));
+  }
+  return out;
+}

@@ -3,7 +3,7 @@
 // goes through JavaScript's `ToPrimitive` here first (`anyToPrimitive`), and the operator then
 // runs on the primitive it gives.
 
-import { anyToPrimitive } from "velt/lang/intrinsics";
+import { anyIsList, anyToPrimitive } from "velt/lang/intrinsics";
 import { anyJoin, anyOwnFn, anyPrimText, anyText } from "./any_text";
 
 // Past this many arguments Node's stack is out, and past `ANY_LIST_MAX` its array is.
@@ -28,34 +28,30 @@ export function anyListLength(n: any): number {
 
 /**
  * The arguments `f.apply(self, args)` passes (JavaScript's `CreateListFromArrayLike`): `length`
- * and each element of `args`, read as a program reads them, so an array of any element type, a
- * typed array and an array-like work, and a proxy's traps run.
+ * and each element of `args`, read as a program reads them, so an array of any element type and an
+ * array-like work, and a proxy's traps run. An `any[]` itself is the list, with nothing to read.
  */
 export function anyArgList(args: any): any[] {
+  if (anyIsList(args)) {
+    const held: any[] = args;
+    return held;
+  }
   const t = typeof args;
   if (t !== "object" && t !== "function") {
     throw new TypeError("CreateListFromArrayLike called on non-object");
   }
   const len = anyListLength(args.length);
-  const typed = typeof args.byteLength === "number" && typeof args.buffer === "object";
   const list: any[] = [];
   for (let i = 0; i < len; i++) {
-    // An array's element by number, a typed array's through `at` (`any` reads no element of one
-    // yet), and an array-like's by its name.
-    if (Array.isArray(args)) {
-      list.push(args[i]);
-    } else if (typed) {
-      list.push(args.at(i));
-    } else {
-      list.push(args[`${i}`]);
-    }
+    // An array's element by number, an array-like's by its name.
+    list.push(Array.isArray(args) ? args[i] : args[`${i}`]);
   }
   return list;
 }
 
 /** The list of `f.apply(self, list)`, read before the call. Another `apply` keeps its argument. */
 export function anyApplyList(f: any, list: any): any {
-  if (typeof f !== "function" || list == null) {
+  if (anyIsList(list) || typeof f !== "function" || list == null) {
     return list;
   }
   return anyArgList(list);

@@ -651,6 +651,7 @@ pub(super) fn glue_args(i: Intrinsic) -> bool {
         | I::LooseEq
         | I::MayHoldPrimitive
         | I::AnyMethodCalled
+        | I::AnyIsList
         | I::NoteStdUse
         | I::StdUsed
         | I::HoldsDynamic

@@ -67,6 +67,17 @@ impl Cx<'_> {
             || ["call", "apply", "bind"].iter().any(|k| self.any_called(k))
     }
 
+    /// `Intrinsic::AnyMethodCalled` or `StdUsed` of `name`: a non-literal argument counts as used.
+    pub(super) fn std_fact(&self, i: hir::Intrinsic, name: &hir::Expr) -> bool {
+        let hir::ExprKind::Lit(hir::Lit::Str(n)) = &name.kind else {
+            return true;
+        };
+        match i {
+            hir::Intrinsic::StdUsed => self.std_used(n),
+            _ => self.any_method_called(n),
+        }
+    }
+
     /// `Intrinsic::StdUsed`: is `NoteStdUse(name)` in code the program reaches? It is kept with
     /// the call keys under the prefix U+0001, and grows from pass to pass like them. A method a
     /// program itself names with that prefix could only turn a guard on, which is safe.

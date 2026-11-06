@@ -272,20 +272,11 @@ impl FnLower<'_, '_> {
                 let t = self.sub(a.ty);
                 Operand::Const(crate::vir::Const::Bool(!self.cx.object_only(t)), Ty::Bool)
             }
-            (I::AnyMethodCalled, [name]) => {
-                let called = match &name.kind {
-                    hir::ExprKind::Lit(hir::Lit::Str(n)) => self.cx.any_method_called(n),
-                    _ => true,
-                };
-                Operand::Const(crate::vir::Const::Bool(called), Ty::Bool)
+            (I::AnyMethodCalled | I::StdUsed, [name]) => {
+                let fact = self.cx.std_fact(i.clone(), name);
+                Operand::Const(crate::vir::Const::Bool(fact), Ty::Bool)
             }
-            (I::StdUsed, [name]) => {
-                let used = match &name.kind {
-                    hir::ExprKind::Lit(hir::Lit::Str(n)) => self.cx.std_used(n),
-                    _ => true,
-                };
-                Operand::Const(crate::vir::Const::Bool(used), Ty::Bool)
-            }
+            (I::AnyIsList, [a]) => self.any_is_list(a),
             (I::NoteStdUse, [name]) => {
                 if let hir::ExprKind::Lit(hir::Lit::Str(n)) = &name.kind {
                     self.cx.note_std_use(n);

@@ -33,6 +33,7 @@ use Intrinsic as I;
 pub(crate) const TABLE: &[(&str, DeclaredIntrinsic)] = &[
     // any.velt
     ("anyDelete", Op(I::AnyDelete)),
+    ("anyIsList", Op(I::AnyIsList)),
     ("anyMethodCalled", Op(I::AnyMethodCalled)),
     ("anyToPrimitive", AnyToPrimitive),
     ("noteStdUse", Op(I::NoteStdUse)),

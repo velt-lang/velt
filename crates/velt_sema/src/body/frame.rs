@@ -57,6 +57,9 @@ pub(crate) struct Frame {
     /// Body of a `Generator<T, E, N>`: `N`, the type of a `yield`'s value (`None`: it has
     /// none).
     pub next_ty: Option<TyId>,
+    /// A forwarding `get` trap: its key parameter (`proxy_method_values.rs`), and its reads by it.
+    pub trap_key: Option<Span>,
+    pub forward_reads: Vec<Span>,
     /// Nesting depth of the `try` blocks with a `catch` being checked: in a program that calls
     /// a generator's `throw()`, a `yield` in one may throw (`generators.rs`).
     pub catch_depth: u32,
@@ -212,6 +215,8 @@ pub(crate) struct Frame {
 impl Frame {
     pub fn new(kind: FnKind, ret: Option<TyId>) -> Self {
         Frame {
+            trap_key: None,
+            forward_reads: vec![],
             kind,
             target: None,
             cpu_guards: vec![],
