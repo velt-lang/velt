@@ -219,3 +219,56 @@ fn dot_git_is_refused_in_every_spelling() {
         assert!(read(&tar, Limits::DEFAULT).is_ok(), "{name}");
     }
 }
+
+#[test]
+fn a_repository_under_any_name_is_refused() {
+    // Git takes a directory holding these for a repository, whatever its name, and a `git`
+    // command run there runs its `config`'s `core.fsmonitor`.
+    let repo = |dir: &str, names: &[&str]| {
+        let mut tar = TarBuilder::default();
+        for name in names {
+            tar = match name.strip_suffix('/') {
+                Some(d) => tar.dir(&format!("{dir}{d}")),
+                None => tar.file(&format!("{dir}{name}"), b"x"),
+            };
+        }
+        tar.file(
+            &format!("{dir}config"),
+            b"[core]\n\tfsmonitor = touch marker\n",
+        )
+        .gz()
+    };
+    for (dir, names) in [
+        ("evil/", &["HEAD", "objects/", "refs/"][..]),
+        ("", &["HEAD", "objects/", "refs/"]),
+        ("a/b/", &["head", "OBJECTS/", "Refs/"]),
+        ("evil/", &["HE\u{200c}AD", "objects/", "ref\u{17f}/"]),
+        ("evil/", &["HEAD", "commondir"]),
+        // Files named `objects` and `refs` too: refused, as git might take a link or a file
+        // for them some day, and no package needs that layout.
+        ("evil/", &["HEAD", "objects", "refs"]),
+    ] {
+        let e = refusal(&repo(dir, names));
+        assert!(
+            e.contains("take it for a repository"),
+            "{dir}{names:?}: {e}"
+        );
+    }
+    // Part of the layout is a tree like any other, and so is each part in another directory.
+    for (dir, names) in [
+        ("evil/", &["HEAD", "objects/"][..]),
+        ("evil/", &["objects/", "refs/"]),
+        ("evil/", &["commondir", "refs/"]),
+    ] {
+        assert!(
+            read(&repo(dir, names), Limits::DEFAULT).is_ok(),
+            "{names:?}"
+        );
+    }
+    let apart = TarBuilder::default()
+        .file("a/HEAD", b"x")
+        .dir("b/objects")
+        .dir("c/refs")
+        .gz();
+    assert!(read(&apart, Limits::DEFAULT).is_ok());
+}

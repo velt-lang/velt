@@ -89,8 +89,60 @@ fn check_segment(name: &str) -> Result<(), String> {
 /// `.git` there), as git itself checks a tree's names. Its 8.3 form `GIT~1` is a short name, and
 /// `.git.` and `.git ` end in a dot or a space: refused as those.
 fn is_dot_git(name: &str) -> bool {
+    git_key(name) == ".git"
+}
+
+/// `name` as git compares it on HFS+, NTFS and APFS: the code points HFS+ ignores removed, then
+/// [`clash_key`].
+fn git_key(name: &str) -> String {
     let kept: String = name.chars().filter(|c| !is_hfs_ignorable(*c)).collect();
-    clash_key(&kept) == ".git"
+    clash_key(&kept)
+}
+
+/// `Err` if a directory among `paths` (and the archive's root) would be a git repository by its
+/// contents, whatever its name: git takes a directory holding `HEAD` with `objects` and `refs`,
+/// or `HEAD` with `commondir`, for one, and a `git` command run there runs what its `config`
+/// says (`core.fsmonitor`). Names compare as [`git_key`] folds them.
+pub(super) fn check_no_repository<'a>(paths: impl Iterator<Item = &'a str>) -> Result<(), String> {
+    const HEAD: u8 = 1;
+    const OBJECTS: u8 = 2;
+    const REFS: u8 = 4;
+    const COMMONDIR: u8 = 8;
+    let mut dirs: std::collections::HashMap<String, (u8, &str)> = Default::default();
+    for path in paths {
+        let (dir, name) = path.rsplit_once('/').unwrap_or(("", path));
+        // Each of these names is ASCII, and a character folding to ASCII takes at most 3 bytes:
+        // a longer name (ignorable code points apart) folds to none of them.
+        let kept_len: usize = (name.chars())
+            .filter(|c| !is_hfs_ignorable(*c))
+            .map(char::len_utf8)
+            .sum();
+        if kept_len > 3 * "commondir".len() {
+            continue;
+        }
+        let bit = match git_key(name).as_str() {
+            "head" => HEAD,
+            "objects" => OBJECTS,
+            "refs" => REFS,
+            "commondir" => COMMONDIR,
+            _ => continue,
+        };
+        let key = dir.split('/').map(git_key).collect::<Vec<_>>().join("/");
+        dirs.entry(key).or_insert((0, dir)).0 |= bit;
+    }
+    for (bits, dir) in dirs.values() {
+        let has = |b: u8| bits & b == b;
+        if has(HEAD) && (has(OBJECTS | REFS) || has(COMMONDIR)) {
+            let at = match dir.is_empty() {
+                true => "the archive's root".to_string(),
+                false => format!("`{}`", dir.escape_debug()),
+            };
+            return Err(format!(
+                "{at} holds `HEAD` with `objects` and `refs` (or `commondir`): git would take it for a repository and run what its `config` says"
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The code points HFS+ drops when it compares names (git's `is_hfs_dotgit` list).
