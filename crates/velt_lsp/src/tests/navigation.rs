@@ -233,6 +233,28 @@ fn hover_uses_sema_types_when_the_program_checks() {
     client.shutdown();
 }
 
+/// An element of a large array of numbers, which the parser packs into one node (#2421), hovers
+/// with its type as an element of a small one does.
+#[test]
+fn hover_shows_the_type_of_an_element_of_a_packed_array() {
+    let mut client = Client::start();
+    let doc = uri("table.velt");
+    let big: Vec<String> = (100..120).map(|i| i.to_string()).collect();
+    let text = format!(
+        "const BIG: u8[] = [{}];\nconst SMALL: u8[] = [7, 8];\n\nfunction main() {{\n  const total = BIG[0] + SMALL[0];\n  console.log(total);\n}}\n",
+        big.join(", ")
+    );
+    client.open(&doc, &text);
+    assert_eq!(client.diagnostics(&doc)["diagnostics"], json!([]));
+    assert_eq!(hover_text(&mut client, &doc, &text, "113", 0), "u8");
+    assert_eq!(hover_text(&mut client, &doc, &text, "8]", 0), "u8");
+    assert_eq!(
+        hover_text(&mut client, &doc, &text, "total)", 0),
+        "const total: u8"
+    );
+    client.shutdown();
+}
+
 /// A host function's call hovers as its declaration and goes to it.
 #[test]
 fn host_functions_hover_and_go_to_their_declaration() {

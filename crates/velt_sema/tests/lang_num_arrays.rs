@@ -277,6 +277,17 @@ fn every_other_context_checks_the_array_literal_as_before() {
         // A literal passed for a type parameter an annotated arrow parameter names (`arrow_defaults`).
         format!("function g<T>(x: T, f: (v: T) => T): T {{ return f(x); }}\nfunction main() {{ const r = g({a}, (v: u8[]) => v); console.log(r.length); }}"),
         format!("function main() {{ const t = {a} as number[]; console.log(t.length); }}"),
+        // An argument a generic parameter takes its type from (`args::deferred`).
+        format!("function first<T>(xs: T[]): T {{ return xs[0]; }}\nfunction main() {{ console.log(first({a})); }}"),
+        // A parameter's default (`arrow_defaults::has_no_type_of_its_own`).
+        format!("function d(xs: number[] = {a}): number {{ return xs.length; }}\nfunction main() {{ console.log(d()); }}"),
+        // An assignment (`stmt::is_empty_array`), and an assignment target (`assigned`).
+        format!("function main() {{ let t: number[] = []; t = {neg}; console.log(t.length); }}"),
+        format!("function main() {{ let x: number[] = [1]; {a} = x; console.log(x); }}"),
+        // A field of an object literal converted to `any` (`lit::holds_join`, `dynamic_hinted`).
+        format!("function main() {{ const o: any = {{ xs: {a} }}; console.log(o); }}"),
+        // String keys a constrained type parameter takes (`constraints`).
+        format!("function pick<K extends \"a\" | \"b\">(ks: K[]): number {{ return ks.length; }}\nfunction main() {{ console.log(pick({a})); }}"),
     ];
     for src in &contexts {
         same(src);
