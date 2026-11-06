@@ -1430,8 +1430,9 @@ batches (§14.18), are documented there (`packages/postgres/docs/native_abi.md`)
 ### 14.16 Fast random numbers
 
 `Math.random()` and `velt/random` are Velt code (`std/lang/random/wyrand.velt`, #2196), seeded with
-`velt_rt_random_u64` (§14.1). On WebAssembly: `velt_rt_prng_seed`, `() -> u64`, in `velt_rt_wasm`;
-not for secrets.
+`velt_rt_random_u64` (§14.1) natively. Under WASI, std calls wasi-libc's `getentropy`
+(docs/internals/design/wasi-libc.md); under a JS host, the glue's `velt:random`.`fill`
+(`crypto.getRandomValues`). No runtime function is involved on WebAssembly. Not for secrets.
 
 ### 14.17 (removed: the hyper HTTP server's runtime functions; the HTTP server is Velt code, §7)
 
