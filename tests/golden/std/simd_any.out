@@ -1,0 +1,9 @@
+[f32x4] object true
+true false true true
+NaN lanes true true
+-0 lanes false true
+two types, same bits false
+[f16x8] [bf16x8] [i8x16] [u64x2] true false
+1 1.5 7
+1 undefined 2 2
+true 1

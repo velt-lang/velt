@@ -1,0 +1,35 @@
+// A SIMD vector in `any` or `unknown` (#2440): it boxes, prints as its type name, comes back with
+// `as`, and compares by its bits, as a vector field of an object does: a vector of NaN lanes is
+// equal to itself, `-0` lanes differ from `0` lanes, and vectors of two types are never equal,
+// even with the same bits. Map keys go by the same rule. Typed code can't print a vector (it has
+// no lane-free form), so printing through `any` shows only the type.
+
+import { bf16x8, f16x8, f32x4, i32x4, i8x16, u64x2 } from "velt/simd";
+
+const top: any = f32x4.splat(1);
+
+function main() {
+  const v = f32x4.splat(1);
+  const x: any = v;
+  const u: unknown = v;
+  console.log(x, typeof x, top === x);
+  console.log(x === v, x === f32x4.splat(2), u === x, x !== f32x4.splat(2));
+  const nan: any = f32x4.splat(NaN as f32);
+  console.log("NaN lanes", nan === nan, nan === f32x4.splat(NaN as f32));
+  const zero: any = f32x4.splat(0);
+  console.log("-0 lanes", zero === f32x4.splat(-0), zero === f32x4.splat(0));
+  const bits: any = i32x4.splat(0);
+  console.log("two types, same bits", zero === bits);
+  const h: any = f16x8.splat(1.5);
+  const b: any = bf16x8.splat(2);
+  const c: any = i8x16.splat(-3);
+  const d: any = u64x2.splat(7);
+  console.log(h, b, c, d, h === f16x8.splat(1.5), c === i8x16.splat(3));
+  console.log((x as f32x4).lane(3), (h as f16x8).lane(7), (d as u64x2).lane(1));
+  const m = new Map<any, number>();
+  m.set(x, 1);
+  m.set(bits, 2);
+  console.log(m.get(f32x4.splat(1)), m.get(f32x4.splat(0)), m.get(i32x4.splat(0)), m.size);
+  const xs: any[] = [v, h, c];
+  console.log(xs.includes(i8x16.splat(-3)), xs.indexOf(f16x8.splat(1.5)));
+}
