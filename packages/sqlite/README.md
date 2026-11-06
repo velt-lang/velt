@@ -18,8 +18,12 @@ dependencies: {
 ```
 
 The package binds the real SQLite engine through `declare c` (`src/sqlite3.velt`): list it in
-`allowNative`. For now it links the system's SQLite (`libsqlite3`), which must be installed;
-building SQLite's own source with the package comes with the FFI's bundled sources.
+`allowNative`. SQLite 3.53.2's amalgamation is in `native/` (`sqlite3.c` and `sqlite3.h` as
+released; the version and checksums are in `package.velt`), built with the package by the pinned
+zig, with the compile options rusqlite's bundled build had: FTS3/FTS5, R-Tree, STAT4, DBSTAT,
+column metadata, foreign keys on by default. No system library is needed, and every platform gets
+the same SQLite. `c-headers.json` records the check of `src/sqlite3.velt` against `sqlite3.h` on
+every target (`velt native headers`, run with `tests/errors/` moved aside for now).
 
 ([Packages with native code](https://veltlang.com/docs/book/native-packages/).) The driver is
 **synchronous**: a typical query takes microseconds, which is less than handing it to a thread
@@ -108,6 +112,8 @@ can't be used there).
   as a `RowSource`) and `src/binder.velt` (a `ParamSink`).
 - `src/engine/`: the SQLite engine in Velt ([docs/engine.md](docs/engine.md); the design is
   [sqlite-engine.md](../../docs/internals/design/sqlite-engine.md)).
+- `native/`: SQLite's amalgamation, unchanged; to update it, replace both files with a release's,
+  update the version and checksums in `package.velt`, and run `velt native headers`.
 - `tests/`: `velt test` in this directory runs them (the repository runs it for every package,
   `crates/veltc/tests/packages.rs`).
 

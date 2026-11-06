@@ -60,14 +60,14 @@ export declare c("sqlite3") function sqlite3_bind_text(
   i: i32,
   v: StrBytes,
   n: i32,
-  destructor: Ptr<u8>,
+  destructor: Ptr<void>,
 ): i32;
 export declare c("sqlite3") function sqlite3_bind_blob64(
   s: Ptr<sqlite3_stmt>,
   i: i32,
-  v: u8[],
+  v: readonly u8[],
   n: u64,
-  destructor: Ptr<u8>,
+  destructor: Ptr<void>,
 ): i32;
 export declare c("sqlite3") function sqlite3_errstr(code: i32): Ptr<u8>;
 
@@ -94,32 +94,27 @@ export declare c("c") function memcpy(dst: u8[], src: Ptr<u8>, n: usize): Ptr<u8
 
 export declare c("sqlite3") function sqlite3_limit(db: Ptr<sqlite3>, id: i32, value: i32): i32;
 
-export const SQLITE_OK: i32 = 0;
-export const SQLITE_LIMIT_LENGTH: i32 = 0;
-export const SQLITE_ROW: i32 = 100;
-export const SQLITE_DONE: i32 = 101;
+export declare c const SQLITE_OK: i32;
+export declare c const SQLITE_CANTOPEN: i32;
+export declare c const SQLITE_LIMIT_LENGTH: i32;
+export declare c const SQLITE_ROW: i32;
+export declare c const SQLITE_DONE: i32;
 
-export const SQLITE_OPEN_READONLY: i32 = 0x1;
-export const SQLITE_OPEN_READWRITE: i32 = 0x2;
-export const SQLITE_OPEN_CREATE: i32 = 0x4;
-export const SQLITE_OPEN_URI: i32 = 0x40;
+export declare c const SQLITE_OPEN_READONLY: i32;
+export declare c const SQLITE_OPEN_READWRITE: i32;
+export declare c const SQLITE_OPEN_CREATE: i32;
+export declare c const SQLITE_OPEN_URI: i32;
 // One thread at a time holds a connection: the client's lock (connection.velt) sees to that, so
 // SQLite need not lock around every call, which was about a fifth of a query's instructions.
-export const SQLITE_OPEN_NOMUTEX: i32 = 0x8000;
+export declare c const SQLITE_OPEN_NOMUTEX: i32;
 
-export const SQLITE_PREPARE_PERSISTENT: u32 = 0x1;
-export const SQLITE_STMTSTATUS_REPREPARE: i32 = 5;
+export declare c const SQLITE_PREPARE_PERSISTENT: u32;
+export declare c const SQLITE_STMTSTATUS_REPREPARE: i32;
 
-export const SQLITE_INTEGER: i32 = 1;
-export const SQLITE_FLOAT: i32 = 2;
-export const SQLITE_TEXT: i32 = 3;
-export const SQLITE_BLOB: i32 = 4;
+export declare c const SQLITE_INTEGER: i32;
+export declare c const SQLITE_FLOAT: i32;
+export declare c const SQLITE_TEXT: i32;
+export declare c const SQLITE_BLOB: i32;
 
-/**
- * `SQLITE_TRANSIENT`, `(void *)-1`: SQLite copies what is bound before the call returns. (What
- * `declare c const` will read from sqlite3.h.)
- */
-export function transient(): Ptr<u8> {
-  // SAFETY: SQLite compares this value and never reads through it.
-  return unsafe { Ptr.at<u8>(18446744073709551615u64 as usize) };
-}
+/** `(sqlite3_destructor_type)-1`: SQLite copies what is bound before the call returns. */
+export declare c const SQLITE_TRANSIENT: Ptr<void>;

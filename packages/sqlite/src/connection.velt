@@ -18,6 +18,7 @@ import { codeName, SQLITE_MISMATCH, SQLITE_MISUSE, SqliteError } from "./errors"
 import { Book } from "./book";
 import { Info } from "./info";
 import {
+  SQLITE_CANTOPEN,
   SQLITE_DONE,
   SQLITE_FLOAT,
   SQLITE_INTEGER,
@@ -53,14 +54,12 @@ import {
   sqlite3_stmt,
 } from "./sqlite3";
 
-// The longest cell, in bytes: SQLite's default, which a string can hold. Some builds of the library
-// allow more (Apple's), and a longer cell could only stop the program.
+// The longest cell, in bytes: SQLite's default, which a string can hold. The package's build has
+// it already; set at open all the same, since a longer cell could only stop the program.
 const MAX_CELL: i32 = 1000000000;
 
 // The longest busy timeout SQLite can take, in milliseconds.
 const LONGEST_WAIT: i64 = 2147483647;
-
-const SQLITE_CANTOPEN: i32 = 14;
 
 /** What every copy of a `Database` and its statements share (see the module header). */
 export class State {
@@ -230,14 +229,6 @@ export function openState(path: string, readonly: bool, create: bool, timeoutMs:
   unsafe {
     sqlite3_busy_timeout(db, timeoutMs > LONGEST_WAIT ? LONGEST_WAIT as i32 : timeoutMs as i32);
     sqlite3_limit(db, SQLITE_LIMIT_LENGTH, MAX_CELL);
-  }
-  // On, as the SQLite this package used to bundle had it by default; many builds have it off.
-  const foreignKeys = cString("PRAGMA foreign_keys = ON");
-  if (!(foreignKeys instanceof SqliteError)) {
-    // SAFETY: `db` is open; the SQL is NUL-terminated and borrowed for the call.
-    unsafe {
-      sqlite3_exec(db, foreignKeys, null, null, null);
-    }
   }
   return new State(db, shared(new Mutex<Book>(new Book())));
 }

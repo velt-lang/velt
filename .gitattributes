@@ -2,3 +2,5 @@
 *.lib binary
 # GitHub has no Velt language yet: highlight .velt as TypeScript (a superset it mostly matches).
 *.velt linguist-language=TypeScript
+# SQLite's amalgamation, as released (packages/sqlite/package.velt has its version and checksums).
+packages/sqlite/native/sqlite3.* linguist-vendored

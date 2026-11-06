@@ -12,6 +12,7 @@ import { codeName, SqliteError } from "./errors";
 import { Info } from "./info";
 import {
   SQLITE_OK,
+  SQLITE_TRANSIENT,
   sqlite3_bind_blob64,
   sqlite3_bind_double,
   sqlite3_bind_int64,
@@ -19,7 +20,6 @@ import {
   sqlite3_bind_text,
   sqlite3_errstr,
   sqlite3_stmt,
-  transient,
 } from "./sqlite3";
 
 // 2^63, where integers stop fitting in an `i64`.
@@ -123,7 +123,7 @@ export class Binder implements ParamSink {
     this.large = this.large || (n as usize) > LARGE;
     for (let at = this.place(); at > 0; at = this.again(at)) {
       // SAFETY: SQLITE_TRANSIENT makes SQLite copy the text before the call returns.
-      this.note(unsafe { sqlite3_bind_text(this.stmt, at, v, n, transient()) });
+      this.note(unsafe { sqlite3_bind_text(this.stmt, at, v, n, SQLITE_TRANSIENT) });
     }
   }
 
@@ -132,7 +132,7 @@ export class Binder implements ParamSink {
     this.large = this.large || v.length > LARGE;
     for (let at = this.place(); at > 0; at = this.again(at)) {
       // SAFETY: SQLITE_TRANSIENT makes SQLite copy the bytes before the call returns.
-      this.note(unsafe { sqlite3_bind_blob64(this.stmt, at, v, n, transient()) });
+      this.note(unsafe { sqlite3_bind_blob64(this.stmt, at, v, n, SQLITE_TRANSIENT) });
     }
   }
 

@@ -454,7 +454,7 @@ Every library is a logical name in `native.c`, with one source per target:
 native: {
   c: {
     sqlite3: { sources: ["native/sqlite3.c"], headers: ["native/sqlite3.h"],
-               defines: { SQLITE_THREADSAFE: "2" } },
+               defines: { SQLITE_THREADSAFE: "1" } },
     pgwire: { crate: "native/" },                                  // Rust, built with cargo
     cblas: { system: { darwin: "framework:Accelerate", linux: "openblas", win32: "mkl_rt" } },
   },
@@ -920,9 +920,13 @@ Step 1 lands in layers, each its own pull request:
      digest of them per library (none for a library without), so a fetched package whose
      `defines` changed after its author's check is refused.
    - Not yet: the registry or CI rebuilding a bundle and comparing checksums (what reproducibility
-     is for); `packages/sqlite` on `sources`. Sources fetched from `git` or a `url` with a pinned
+     is for). Sources fetched from `git` or a `url` with a pinned
      hash are #2367's: its `fetch` is a key beside these fields, and only changes where `sources`
      are read from.
+   - `packages/sqlite` builds SQLite's amalgamation (`native/sqlite3.c`, 3.53.2 as released) with
+     rusqlite's `bundled` options as `defines`; `SQLITE_THREADSAFE=1` with each connection opened
+     `SQLITE_OPEN_NOMUTEX`, since the driver's gate keeps one thread in a connection. Its
+     `SQLITE_*` constants and `SQLITE_TRANSIENT` are `declare c const`s.
 8. C structs, in layers (plan on #2187). Layer 1, the language:
    - `declare c struct S { x: f64; y: f64; }` is a struct (`TypeDecl::c_struct`) of fields only:
      no methods, constructor, type parameters, defaults, optional, private or static fields,
