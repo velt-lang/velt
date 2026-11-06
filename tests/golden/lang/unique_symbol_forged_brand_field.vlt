@@ -1,0 +1,22 @@
+// A union narrowed by `x === K` reads the other members without looking at the value's slot, so a
+// symbol that is not `K` must not get past the test. Here it arrives through an `any` converted to
+// an object with a `typeof K` field. Node reads `undefined` from it and prints `p=undefined`; a
+// stop with a TypeError is the accepted difference.
+const K = Symbol("k");
+
+type S = { p: number } | typeof K;
+
+function use(x: S): string {
+  if (x === K) {
+    return "k";
+  }
+  return "p=" + x.p;
+}
+
+const good: any = { v: K };
+const g: { v: typeof K } = good;
+console.log(use(g.v));
+const a: any = { v: Symbol("z") };
+const t: { v: typeof K } = a;
+const u: S = t.v;
+console.log(use(u));

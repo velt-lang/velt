@@ -1,0 +1,17 @@
+// `l as S[]` of an array that may hold plain symbols is the one array as TypeScript has it; a
+// symbol that is not `K` stops at the test (#923). Node reads `undefined` from it and gives a
+// TypeError; a thrown TypeError with another message is the accepted difference.
+const K = Symbol("k");
+
+type S = { p: string } | typeof K;
+type L = { p: string } | symbol;
+
+function use(x: S): string {
+  return x === K ? "k" : x.p.toUpperCase() + x.p.length;
+}
+
+const l: L[] = [K, { p: "a" }, Symbol("z")];
+const s = l as S[];
+console.log(use(s[0]), use(s[1]));
+console.log(s.length === l.length);
+console.log(use(s[2]));

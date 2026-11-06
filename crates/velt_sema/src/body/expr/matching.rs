@@ -412,6 +412,11 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let s = self.test_operand(lhs, None, Want::Borrow);
+        // A read narrowed to no member stops before the right side.
+        if s.ty == self.cx.ty.never {
+            self.expr(rhs, exp, Want::Move);
+            return s;
+        }
         if self.param_shaped(s.ty) {
             return self.param_nullish(s, rhs, span);
         }

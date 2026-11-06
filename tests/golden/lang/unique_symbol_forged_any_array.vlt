@@ -1,0 +1,17 @@
+// A union narrowed by `x === K` reads the other members without looking at the value's slot, so a
+// symbol that is not `K` must not get past the test. Here it arrives through an `any` converted to
+// an array of the union. Node stops here too, with a TypeError on `undefined`; a thrown TypeError
+// with another message is the accepted difference.
+const K = Symbol("k");
+
+type S = { p: string } | typeof K;
+
+function use(x: S): string {
+  return x === K ? "k" : x.p.toUpperCase() + x.p.length;
+}
+
+const a: any = [K, { p: "ok" }, Symbol("z")];
+const t: S[] = a;
+for (const x of t) {
+  console.log(use(x));
+}

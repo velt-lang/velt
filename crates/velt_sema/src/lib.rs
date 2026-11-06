@@ -142,6 +142,7 @@ mod undefined_args;
 mod union_layouts;
 mod union_views;
 mod unions;
+mod unique_symbols;
 mod utility_types;
 mod visit;
 mod void_fields;

@@ -1,0 +1,8 @@
+// An object literal cast to a discriminated union whose discriminant names no member stops
+// with a TypeError (#2146): building a member would change the discriminant Node keeps.
+type Shape = { kind: "circle"; size: number } | { kind: "square"; size: number };
+function make(kind: string, size: number): Shape { return { kind, size } as Shape; }
+const c = make("circle", 2);
+console.log(c.kind, JSON.stringify(c));
+const t = make("triangle", 2);
+console.log(t.kind, JSON.stringify(t));

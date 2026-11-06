@@ -1,0 +1,21 @@
+// Arrays with symbols and `unique symbol`s in their element types, asserted as TypeScript allows:
+// the same type, or one a value of it fits. Node's output (#923).
+const K = Symbol("k");
+
+type S = { p: string } | typeof K;
+type L = { p: string } | symbol;
+type A = { id: symbol; k: typeof K };
+type U = typeof K;
+type Tup = [symbol, typeof K];
+const as: A[] = [{ id: Symbol("i"), k: K }];
+console.log((as as A[]).length, (as as readonly A[]).length, (as as A[] | null) === null);
+const ts: Tup[] = [[Symbol("i"), K]];
+console.log((ts as Tup[]).length);
+const truth: L[] = [K, { p: "a" }];
+console.log((truth as S[]).map((x) => (x === K ? "k" : x.p)).join());
+const syms: symbol[] = [K];
+console.log((syms as U[])[0] === K);
+const ids: { p: string; id: symbol }[] = [{ p: "a", id: Symbol("i") }];
+console.log((ids as S[]).length);
+const opt: { id: symbol }[] = [{ id: Symbol("i") }];
+console.log((opt as { id: symbol; k?: typeof K }[]).length);

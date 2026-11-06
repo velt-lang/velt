@@ -1,0 +1,29 @@
+// A member made from a type parameter has room for a symbol where its instance does: `T[F]` at a
+// `symbol` field is that symbol, and nothing stops. The same as Node (#923).
+const K = Symbol("k");
+
+function h<T, F extends keyof T>(x: T[F] | typeof K): string {
+  return x === K ? "k" : typeof x;
+}
+
+function sw<T, F extends keyof T>(x: T[F] | typeof K): string {
+  switch (x) {
+    case K:
+      return "k";
+    default:
+      return typeof x;
+  }
+}
+
+type A = { a: symbol };
+console.log(h<A, "a">(Symbol("z")), h<A, "a">(K), sw<A, "a">(Symbol("y")), sw<A, "a">(K));
+
+type Both = { a: symbol | { o: number } };
+console.log(h<Both, "a">(Symbol("z")), h<Both, "a">({ o: 1 }), h<Both, "a">(K));
+
+function n<T>(x: (T & { n: string }) | typeof K): string {
+  return x !== K ? x.n : "k";
+}
+
+const v: { q: number } & { n: string } = { q: 1, n: "real" };
+console.log(n<{ q: number }>(v), n<{ q: number }>(K));

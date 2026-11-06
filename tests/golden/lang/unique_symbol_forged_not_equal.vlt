@@ -1,0 +1,22 @@
+// A union narrowed by `x === K` reads the other members without looking at the value's slot, so a
+// symbol that is not `K` must not get past the test. Here the test is `x !== K`, and the union has
+// a second constant and a `null`. Node reads `undefined` from it and prints that; a stop with a
+// TypeError is the accepted difference.
+const K = Symbol("k");
+const L = Symbol("l");
+
+type S = { p: string } | typeof K | typeof L | null;
+
+function c<T>(x: any): T {
+  return x as T;
+}
+
+function use(x: S): string {
+  if (x !== K && x !== L) {
+    return x === null ? "null" : x.p;
+  }
+  return x === K ? "k" : "l";
+}
+
+console.log(use(K), use(L), use(null), use({ p: "a" }));
+console.log(use(c<S>(Symbol("z"))));

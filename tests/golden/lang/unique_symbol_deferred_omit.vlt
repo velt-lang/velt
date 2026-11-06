@@ -1,0 +1,16 @@
+// A union with a member made from a type parameter: the member's slot is decided per instance, so
+// a symbol that is not `K` stops at the test (#923). Here `Omit<T, "q">`. Node prints `symbol`; a stop with a TypeError
+// is the accepted difference: the value is in no slot of this instance.
+const K = Symbol("k");
+
+function c<T>(x: any): T {
+  return x as T;
+}
+
+function h<T>(x: Omit<T, "q"> | typeof K): string {
+  return x === K ? "k" : typeof x;
+}
+
+type A = { q: number; r: number };
+console.log(h<A>({ r: 1 }), h<A>(K));
+console.log(h<A>(c<Omit<A, "q"> | typeof K>(Symbol("z"))));

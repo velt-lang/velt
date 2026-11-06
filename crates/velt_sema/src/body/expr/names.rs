@@ -200,7 +200,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Has flow narrowing ruled out every member of union local `l` (and `null`)?
-    fn narrowed_to_nothing(&self, l: LocalId) -> bool {
+    pub(super) fn narrowed_to_nothing(&self, l: LocalId) -> bool {
         let nullable = self.cx.ty.opt_payload(self.local_ty(l)).is_some();
         self.allowed_members(l).is_some_and(|vs| vs.is_empty())
             && (!nullable || self.is_narrowed(l))

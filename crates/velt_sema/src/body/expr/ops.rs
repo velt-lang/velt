@@ -343,7 +343,10 @@ impl FnCx<'_, '_> {
                 .filter(|t| self.cx.ty.is_numeric(*t) || *t == self.cx.ty.str_)
         };
         let lit_eq = matches!(op, B::Eq | B::NotEq)
-            .then(|| self.literal_eq(lhs, rhs, op == B::NotEq, span))
+            .then(|| {
+                (self.unique_symbol_eq(lhs, rhs, op == B::NotEq, span))
+                    .or_else(|| self.literal_eq(lhs, rhs, op == B::NotEq, span))
+            })
             .flatten();
         let (l, r) = match lit_eq {
             Some(LitEq::Done(h)) => return h,
@@ -359,7 +362,15 @@ impl FnCx<'_, '_> {
                 self.cast_member_numbers.truncate(mark);
                 lr
             }
-            None => self.operands(lhs, rhs, hint, Want::Borrow),
+            None => {
+                let (l, r) = self.operands(lhs, rhs, hint, Want::Borrow);
+                self.erased_operands(l, r)
+            }
+        };
+        // An operand narrowed to no member stops there.
+        let (l, r) = match self.never_operands(l, r) {
+            Ok(h) => return h,
+            Err(lr) => *lr,
         };
         // An `any` or `unknown` operand, by its checked type (a variable, a field, an element,
         // a call, a capture).

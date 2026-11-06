@@ -1,0 +1,64 @@
+// An object literal asserted to a discriminated union whose discriminant it gives as a value
+// (`hasValue: view.hasValue`): the member is chosen at run time by that value (#2146).
+type ValuePresence<T> =
+  | { readonly value: T; readonly hasValue: true }
+  | { readonly value: null; readonly hasValue: false };
+type ErrorArmContext<T> = { readonly retry: () => void } & ValuePresence<T>;
+
+interface View<T> {
+  value: T | null;
+  hasValue: boolean;
+  retry: () => void;
+}
+
+const order: string[] = [];
+
+function at<V>(tag: string, v: V): V {
+  order.push(tag);
+  return v;
+}
+
+function arm<T>(view: View<T>, f: (ctx: ErrorArmContext<T>) => string): string {
+  return f(
+    {
+      retry: at("retry", view.retry),
+      value: at("value", view.value),
+      hasValue: at("hasValue", view.hasValue),
+    } as ErrorArmContext<T>,
+  );
+}
+
+const show = (c: ErrorArmContext<number>) =>
+  (c.hasValue ? `value ${c.value + 1}` : `none ${c.value}`);
+console.log(arm<number>({ value: 41, hasValue: true, retry: () => {} }, show));
+console.log(arm<number>({ value: null, hasValue: false, retry: () => {} }, show));
+
+// A nullable `T`: a value that is `null` is still a value.
+const showNullable = (c: ErrorArmContext<string | null>) =>
+  (c.hasValue ? `value ${c.value}` : "none");
+console.log(arm<string | null>({ value: null, hasValue: true, retry: () => {} }, showNullable));
+console.log(order.join(","));
+
+// A string discriminant, and a shorthand property.
+type Shape = { kind: "circle"; size: number } | { kind: "square"; size: number };
+
+function make(kind: string, size: number): Shape {
+  return { kind, size } as Shape;
+}
+
+for (const k of ["circle", "square"]) {
+  const s = make(k, 2);
+  if (s.kind === "circle") {
+    console.log("circle", s.size * 3);
+  } else {
+    console.log("square", s.size * s.size);
+  }
+}
+
+// A discriminant of a narrower literal type names only that member.
+function square(): "square" {
+  return "square";
+}
+
+const narrow = { kind: square(), size: 1 } as Shape;
+console.log(JSON.stringify(narrow), narrow.kind === "square" ? narrow.size + 1 : 0);

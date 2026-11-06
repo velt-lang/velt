@@ -47,6 +47,12 @@ impl FnCx<'_, '_> {
         if from.is_some() && self.cx.ty.is_storage_float(exp) {
             return Ok(self.any_as_storage(exp, h.span));
         }
+        // `typeof K` (a `unique symbol`): a symbol that is `K`.
+        if let (Some(_), Some(d)) = (from, self.unique_symbol_of(exp)) {
+            let symbol = self.cx.ty.intern(TyKind::Symbol);
+            let v = self.coerce_dynamic(h, symbol, checked_from_unknown)?;
+            return Ok(self.checked_unique(v, d, exp));
+        }
         match (from, to) {
             (None, None) => Err(h),
             (None, Some(d)) if !self.takes_static(d, h.ty) => Err(h),
@@ -492,87 +498,6 @@ impl FnCx<'_, '_> {
         let (ty, span) = (h.ty, h.span);
         set_place_mode(&mut h, UseMode::Borrow);
         self.intrinsic(Intrinsic::Share, vec![h], ty, span)
-    }
-
-    /// A dynamic value as the union or literal type `exp` (`members`: its members, or `exp`
-    /// itself): the first member whose test the value passes (`typeof` for a primitive,
-    /// `instanceof` for a class, `===` for a literal, `Array.isArray` for the one array
-    /// member), converted; else a `TypeError`, the member that is `any` / `unknown` itself
-    /// (dynamic_whole.rs), or the one interface or object type member, converted with its own
-    /// run-time check.
-    fn dynamic_to_members(&mut self, h: hir::Expr, exp: TyId, members: Vec<TyId>) -> hir::Expr {
-        let span = h.span;
-        let dty = h.ty;
-        let init = self.share_if_place(h);
-        let tmp = self.new_local("<any>", dty, false, span, LocalKind::Temp);
-        let name = self.cx.display(exp);
-        let msg = self.str_lit(&format!("TypeError: the value is not a {name}"), span);
-        let never = self.cx.ty.never;
-        let mut result = self.intrinsic(Intrinsic::Panic, vec![msg], never, span);
-        let catch_all = self.dynamic_member(&members, dty);
-        if let Some(c) = catch_all {
-            result = self.whole_as_member(tmp, dty, c, exp, span);
-        }
-        // One member with no test of its own (an interface or object type: `VNode` in
-        // `VNode | string | number`): a value that passes no other member's test converts to
-        // it, checked at run time as `x as VNode` is.
-        let rest = match catch_all {
-            None => self.untested_member(&members),
-            Some(_) => None,
-        };
-        if let Some(r) = rest {
-            let x = self.mk(H::Local(tmp, UseMode::Borrow), dty, span);
-            let share = self.intrinsic(Intrinsic::Share, vec![x], dty, span);
-            self.note_dynamic_iface(r, span);
-            let value = self.intrinsic(Intrinsic::AnyTo, vec![share], r, span);
-            result = self.coerce(value, exp);
-        }
-        let skip = |m: &TyId| Some(*m) != catch_all && Some(*m) != rest;
-        let arrays = self.array_members(&members);
-        for &m in members.iter().rev().filter(|m| skip(m)) {
-            // `Array.isArray` tells one array member from the others, not two arrays apart.
-            let tested = match self.cx.ty.kind(m) {
-                TyKind::Array(_) if arrays > 1 => None,
-                TyKind::FnPtr { .. } if self.fn_members(&members) > 1 => None,
-                // A promise is never held as `any` (it has one owner): no value is one.
-                TyKind::Promise(..) => continue,
-                _ => self.member_test(tmp, dty, m, span),
-            };
-            let Some((test, value)) = tested else {
-                if catch_all.is_some() {
-                    continue;
-                }
-                let d = Diagnostic::error(
-                    format!(
-                        "converting an `any` to `{name}` is not supported yet (#924): no run-time test for `{}`",
-                        self.cx.display(m)
-                    ),
-                    span,
-                )
-                .with_note("test the value first (`typeof`, `instanceof`) and convert it to that member");
-                self.cx.error(d);
-                return self.error_expr(span);
-            };
-            let value = self.coerce(value, exp);
-            let kind = H::If {
-                cond: Box::new(test),
-                then: Box::new(value),
-                els: Box::new(result),
-            };
-            result = self.mk(kind, exp, span);
-        }
-        let block = hir::Block {
-            stmts: vec![hir::Stmt {
-                kind: hir::StmtKind::Let {
-                    local: tmp,
-                    init: Some(init),
-                },
-                span,
-            }],
-            value: Some(Box::new(result)),
-            span,
-        };
-        self.mk(H::Block(block), exp, span)
     }
 
     /// The test that the dynamic value in `tmp` (type `dty`) holds a `m`, and the value as `m`.

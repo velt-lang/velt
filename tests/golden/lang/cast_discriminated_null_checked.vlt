@@ -1,0 +1,6 @@
+// The member whose field is `value: null` takes a value that is null; another value is a
+// TypeError (#2146), as a null where the other member needs a value is.
+type VP<T> = { value: T; hasValue: true } | { value: null; hasValue: false };
+const wrap = (v: number | null, flag: boolean) => ({ value: v, hasValue: flag }) as VP<number>;
+console.log(JSON.stringify(wrap(5, true)), JSON.stringify(wrap(null, false)));
+console.log(JSON.stringify(wrap(5, false)));

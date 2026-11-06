@@ -1,0 +1,37 @@
+// An explicit `as` between types of one erased form is the same value, in both directions, nested
+// or fresh; a test of `K` stops on a symbol that is not. Node's output (#923).
+const K = Symbol("k");
+
+type S = { p: string } | typeof K;
+type L = { p: string } | symbol;
+const fresh = [Symbol("z")] as S[];
+console.log(fresh.length);
+const inObject: { v: L } = { v: K };
+console.log((inObject as { v: S }).v === K);
+const inTuple: [L, number] = [K, 1];
+console.log((inTuple as [S, number])[1]);
+const nested: L[][] = [[K]];
+console.log((nested as S[][]).length);
+type Plain = { v: symbol };
+type Branded = { v: typeof K };
+const plain: Plain[] = [{ v: K }];
+const branded = plain as Branded[];
+console.log(branded.length, branded[0].v === K);
+type Marked = { id: number; k: typeof K };
+type Unmarked = { id: number; k: symbol };
+const marked: Marked[] = [{ id: 1, k: K }];
+const unmarked = marked as Unmarked[];
+console.log(unmarked.length, unmarked[0].k === K);
+const inMap = new Map<string, L>([["a", K]]);
+console.log((inMap as Map<string, S>).size);
+
+interface PlainI {
+  v: symbol;
+}
+
+interface BrandedI {
+  v: typeof K;
+}
+
+const plainI: PlainI[] = [{ v: K }];
+console.log((plainI as BrandedI[])[0].v === K);

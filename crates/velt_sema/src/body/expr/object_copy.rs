@@ -25,9 +25,9 @@ enum Slot {
     /// Field `index` of the source, of type `from`, converted to `to`.
     Field { index: u32, from: TyId, to: TyId },
     /// Optional field `index` of the source (of type `ty`, kept apart from absent by its presence
-    /// flag) into an optional field of the same type: absent in the literal, then set when the
-    /// source has it.
-    Optional { index: u32, ty: TyId },
+    /// flag) into an optional field of the same type (or of a type an `any` converts to, #2145):
+    /// absent in the literal, then set when the source has it.
+    Optional { index: u32, from: TyId, ty: TyId },
     /// An optional field the source doesn't have: absent (with its presence flag clear when
     /// the field keeps one).
     Absent(TyId, bool),
@@ -83,8 +83,8 @@ impl FnCx<'_, '_> {
                     let v = self.copied_field(&base, index, from);
                     self.coerce(v, to)
                 }
-                Slot::Optional { index, ty } => {
-                    posts.push((k as u32, index, ty));
+                Slot::Optional { index, from, ty } => {
+                    posts.push((k as u32, index, from, ty));
                     self.intrinsic(Intrinsic::FieldAbsent, vec![], ty, span)
                 }
                 Slot::Absent(ty, true) => self.intrinsic(Intrinsic::FieldAbsent, vec![], ty, span),
@@ -114,7 +114,7 @@ impl FnCx<'_, '_> {
             },
             span,
         });
-        for (k, index, ty) in posts {
+        for (k, index, from, ty) in posts {
             let src = self.mk(
                 H::Field {
                     base: Box::new(base.clone()),
@@ -126,7 +126,8 @@ impl FnCx<'_, '_> {
             );
             let b = self.cx.ty.bool_;
             let cond = self.intrinsic(Intrinsic::FieldPresent, vec![src], b, span);
-            let value = self.copied_field(&base, index, ty);
+            let value = self.copied_field(&base, index, from);
+            let value = self.coerce(value, ty);
             let target = self.mk(H::Local(tmp, UseMode::Borrow), exp, span);
             let place = H::Field {
                 base: Box::new(target),
@@ -274,12 +275,15 @@ impl FnCx<'_, '_> {
             if crate::anon::has_presence(&self.cx.ty, fkind, f) {
                 // Kept as is only into an optional field of the same type that keeps a flag too.
                 let flag = crate::anon::has_presence(&self.cx.ty, tkind, g);
-                let same = fty == gty || self.cx.canon(fty) == self.cx.canon(gty);
+                let same = fty == gty
+                    || self.cx.canon(fty) == self.cx.canon(gty)
+                    || self.optional_converts(fty, gty, depth);
                 if !flag || !same {
                     return None;
                 }
                 slots.push(Slot::Optional {
                     index: i as u32,
+                    from: fty,
                     ty: gty,
                 });
                 continue;
@@ -294,6 +298,17 @@ impl FnCx<'_, '_> {
             });
         }
         Some(slots)
+    }
+
+    /// Does an optional field of type `from` (`T | undefined`) convert to one of type `to` for
+    /// a copy, as its value would (`oldValue?: any` into `oldValue?: number`, #2145)?
+    fn optional_converts(&mut self, from: TyId, to: TyId, depth: u32) -> bool {
+        match (self.cx.ty.kind(from).clone(), self.cx.ty.kind(to).clone()) {
+            (TyKind::Option(f, n), TyKind::Option(t, m)) if n == m => {
+                self.field_converts(f, t, false, depth)
+            }
+            _ => false,
+        }
     }
 
     /// Does a field value of type `from` convert to `to` for a copy (the same type, up to
@@ -324,8 +339,18 @@ impl FnCx<'_, '_> {
                 // In an interface adapter, a method's result converted as the call returns it
                 // (an iterator's `IteratorResult<[any, any]>` as `IteratorResult<any>`).
                 && (self.adapting || boxes_shared(self.cx, from, 0)))
+            || any_converts(self.cx, from, to)
             || self.copy_plan(from, to, depth + 1).is_some()
     }
+}
+
+/// Does an `any` field of type `from` go into a typed one of type `to` (`Binding<any>` as
+/// `Binding<number>`, as TypeScript assigns it), converted as an `any` converts to that type
+/// (#2145)?
+fn any_converts(cx: &crate::ctx::Ctx, from: TyId, to: TyId) -> bool {
+    matches!(cx.dynamic(from), Some(crate::any::Dynamic::Any))
+        && cx.dynamic(to).is_none()
+        && !matches!(cx.ty.kind(to), TyKind::Never | TyKind::Unit)
 }
 
 /// Is a value of type `t` boxed as an `any` the same value, or one the program cannot tell from

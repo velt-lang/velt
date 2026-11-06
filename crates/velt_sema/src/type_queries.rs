@@ -137,6 +137,10 @@ impl Ctx<'_> {
             DefInfo::Fn(_) => self.query_fn(d, name, span),
             DefInfo::Global(g) => {
                 let (module, ann, init) = (g.module, g.src.ann, g.src.init);
+                // `const K = Symbol("k")`: the `unique symbol` type only `K` has.
+                if let Some(t) = self.unique_symbol_type(d) {
+                    return t;
+                }
                 if let Some(ann) = ann {
                     return self.resolve_type(ann, &TyEnv::new(module, &[]));
                 }
@@ -635,7 +639,7 @@ impl Ctx<'_> {
 
 /// The literal a constant's initializer is (`"a"`, `4`, `-1`, `true`), as a literal type.
 /// Is `e` a call of `Symbol(…)` or `Symbol.for(…)`?
-fn symbol_init(e: &ast::Expr) -> bool {
+pub(crate) fn symbol_init(e: &ast::Expr) -> bool {
     let ast::ExprKind::Call { callee, .. } = &e.kind else {
         return false;
     };

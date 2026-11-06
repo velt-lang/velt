@@ -1,0 +1,17 @@
+// `x as Suspend` for `x: { p } | symbol`: a symbol that is not `FLUSH` is a TypeError, where
+// TypeScript does not check the assertion (#923).
+const FLUSH = Symbol("flush");
+type Suspend = { p: number } | typeof FLUSH;
+type Loose = { p: number } | symbol;
+const one: Suspend = FLUSH;
+const wide: Loose = one;
+const sus: Suspend[] = [FLUSH, { p: 1 }];
+const loose: Loose[] = [...sus];
+const fresh: Loose[] = sus.map((s) => s);
+console.log(loose.length, typeof loose[0], fresh.length, typeof wide);
+function g(x: Loose): string {
+  const u = x as Suspend;
+  return u === FLUSH ? "flush" : `p ${u.p}`;
+}
+console.log(g(FLUSH), g({ p: 1 }));
+console.log(g(Symbol("other")));

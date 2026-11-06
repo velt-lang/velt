@@ -1,0 +1,1 @@
+TypeError: type assertion failed: `kind` names no member of `Shape`

@@ -1,0 +1,28 @@
+// A union narrowed by `x === K` reads the other members without looking at the value's slot, so a
+// symbol that is not `K` must not get past the test. Here the test and the read are in an async
+// function, and the read in a closure. Node stops here too, with a TypeError on `undefined`; a
+// thrown TypeError with another message is the accepted difference.
+const K = Symbol("k");
+
+type S = { p: string } | typeof K;
+
+function c<T>(x: any): T {
+  return x as T;
+}
+
+async function use(x: S): Promise<string> {
+  await null;
+  if (x === K) {
+    return "k";
+  }
+  await null;
+  const read = () => x.p.toUpperCase();
+  return read();
+}
+
+async function main() {
+  console.log(await use(K), await use({ p: "a" }));
+  console.log(await use(c<S>(Symbol("z"))));
+}
+
+main();

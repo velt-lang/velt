@@ -1,0 +1,18 @@
+// A union narrowed by `x === K` reads the other members without looking at the value's slot, so a
+// symbol that is not `K` must not get past the test. Here the union's other member is a type
+// parameter, at an object type. Node stops here too, with a TypeError on `undefined`; a thrown
+// TypeError with another message is the accepted difference.
+const K = Symbol("k");
+
+type O = { p: string };
+
+function c<T>(x: any): T {
+  return x as T;
+}
+
+function pick<T>(x: T | typeof K, d: T): T {
+  return x === K ? d : x;
+}
+
+console.log(pick<O>({ p: "a" }, { p: "d" }).p, pick<O>(K, { p: "d" }).p);
+console.log(pick<O>(c<O | typeof K>(Symbol("z")), { p: "d" }).p.length);

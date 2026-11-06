@@ -1,0 +1,26 @@
+// `readonly` doesn't count in `as` between types of one erased form: it is a type-level mark on
+// the one object (#923). Node's output.
+const K = Symbol("k");
+
+type J = { v: typeof K; readonly s: string };
+const j: J = { v: K, s: "x" };
+const b = j as { v: symbol; s: string };
+console.log(b.s, b.v === K);
+
+interface I {
+  v: typeof K;
+  readonly s: string;
+}
+
+const i: I = { v: K, s: "y" };
+const c = i as { v: symbol; s: string };
+console.log(c.s, c.v === K);
+const list: J[] = [j];
+const d = list as { v: symbol; s: string }[];
+console.log(d[0].s, d[0].v === K);
+type Nested = { o: J };
+const n: Nested = { o: j };
+console.log((n as { o: { v: symbol; s: string } }).o.s);
+console.log((j as { v: symbol; s: string } | null) === null);
+b.s = "z";
+console.log(j.s);

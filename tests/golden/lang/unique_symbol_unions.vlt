@@ -1,0 +1,17 @@
+// A union with `typeof K` (a `unique symbol`) is the same union with `symbol` once lowered:
+// it converts as it is, also a fresh array of it; the other way, `x as Suspend` checks that a
+// symbol it holds is `K` (#923).
+const FLUSH = Symbol("flush");
+type Suspend = { p: number } | typeof FLUSH;
+type Loose = { p: number } | symbol;
+const one: Suspend = FLUSH;
+const wide: Loose = one;
+const sus: Suspend[] = [FLUSH, { p: 1 }];
+const loose: Loose[] = [...sus];
+const fresh: Loose[] = sus.map((s) => s);
+console.log(loose.length, typeof loose[0], fresh.length, typeof wide);
+function g(x: Loose): string {
+  const u = x as Suspend;
+  return u === FLUSH ? "flush" : `p ${u.p}`;
+}
+console.log(g(FLUSH), g({ p: 1 }));

@@ -1,0 +1,10 @@
+// A discriminant of a literal type no member has: an error naming it, as tsc refuses the
+// assertion (TS2352) (#2146).
+type Shape = { kind: "circle"; size: number } | { kind: "square"; size: number };
+
+function p(): "triangle" {
+  return "triangle";
+}
+
+const t = { kind: p(), size: 1 } as Shape;
+console.log(JSON.stringify(t));

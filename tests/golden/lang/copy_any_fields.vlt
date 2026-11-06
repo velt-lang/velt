@@ -1,0 +1,54 @@
+// An object type at an `any` type argument converts to the same object type at other type
+// arguments field by field, as TypeScript assigns it (#2145): `Binding<any>` as
+// `Binding<number>`, also through the adapter a generic interface value gets.
+interface Binding<T = any> {
+  value: T;
+  oldValue?: T;
+}
+
+const loose: Binding<any> = { value: 3 };
+const typed: Binding<number> = loose;
+console.log(typed.value + 1, typed.oldValue);
+const both: Binding<any> = { value: 1, oldValue: 2 };
+const typedBoth: Binding<number> = both;
+console.log(typedBoth.value + typedBoth.oldValue!);
+
+function view<T>(b: Binding<any>): Binding<T> {
+  const t: Binding<T> = b;
+  return t;
+}
+console.log(view<string>({ value: "s" }).value.length);
+
+interface Extensions<T = any> {}
+interface Directive<T = any, El = any> extends Extensions<T> {
+  created?(el: El, b: Binding<T>): void;
+  ssr?(b: Binding<T>): Record<string, any> | void;
+  marked?: boolean;
+}
+
+function define<T = any, El = any>(d: Directive<T, El>): Directive<T, El> {
+  d.marked = true;
+  return d;
+}
+function isDirective(v: any): v is Directive {
+  return v != null && typeof v === "object" && v.marked === true;
+}
+function find(p: any): Directive | undefined {
+  let d: Directive | undefined;
+  if (isDirective(p)) {
+    d = p;
+  }
+  return d;
+}
+
+const show = define<boolean, string>({
+  ssr(b) {
+    return b.value ? {} : { style: "display:none" };
+  },
+});
+const props: Record<string, any> = { "use:show": show, other: 3 };
+for (const k in props) {
+  const d = find(props[k]);
+  const r = d?.ssr?.({ value: false });
+  console.log(k, d === undefined, r ? JSON.stringify(r) : "none");
+}

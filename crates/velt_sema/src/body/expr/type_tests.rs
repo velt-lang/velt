@@ -36,6 +36,10 @@ impl FnCx<'_, '_> {
         let s = self.param_as_any(s);
         let str_ = self.cx.ty.str_;
         let sty = s.ty;
+        // A read narrowed to no member (`never`) stops before it has a type to name.
+        if sty == self.cx.ty.never {
+            return s;
+        }
         if self.cx.ty.is_bottom(sty) {
             return self.error_expr(span);
         }

@@ -129,6 +129,8 @@ pub(crate) struct Ctx<'m> {
     /// Brands whose object part mentions type parameters (`symbol & { __t?: T }`): substitution
     /// brands the substituted object part (`Ctx::subst`). Empty in most programs.
     pub generic_brands: FxHashSet<DefId>,
+    /// Constants holding a fresh symbol → their `unique symbol` type (`crate::unique_symbols`).
+    pub unique_symbols: FxHashMap<DefId, TyId>,
     /// Brands of a `Record<string, any>` (or `unknown`) by the named members written next to
     /// its index signature → that object type of the named members (`crate::index_signatures`).
     pub record_views: FxHashMap<DefId, TyId>,
@@ -491,6 +493,7 @@ impl<'m> Ctx<'m> {
             brands: FxHashMap::default(),
             brand_keys: FxHashMap::default(),
             generic_brands: FxHashSet::default(),
+            unique_symbols: FxHashMap::default(),
             record_views: FxHashMap::default(),
             field_only: FxHashMap::default(),
             field_only_of: FxHashMap::default(),

@@ -329,7 +329,8 @@ impl FnCx<'_, '_> {
             .unwrap_or_default()
             .into_iter()
             .filter(|m| {
-                self.adt_of(*m).is_some_and(|(d, _)| !self.is_class_def(d))
+                self.adt_of(*m)
+                    .is_some_and(|(d, _)| !self.is_class_def(d) && !self.cx.brands.contains_key(&d))
                     || self.cx.iface_member(*m).is_some()
             })
             .collect();
