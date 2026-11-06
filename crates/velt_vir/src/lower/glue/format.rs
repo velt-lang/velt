@@ -276,7 +276,8 @@ impl FnLower<'_, '_> {
                 // An object literal's struct (with accessors, or an interface literal's, reached
                 // through `any`) prints as the literal it is.
                 let def = self.cx.adt_def(d);
-                let literal = def.kind == AdtKind::Struct && !def.declared_struct;
+                // No declared name has a space: `Ctx::hidden_struct_def`'s `<interface> literal`.
+                let literal = def.kind == AdtKind::Struct && def.name.ends_with(" literal");
                 let anon = def.kind == AdtKind::Anon || literal || self.has_accessor_fields(d);
                 let name = (!anon).then(|| self.cx.type_name(ty));
                 // A recursive object is a box (its pointer is the value) and may be part of a

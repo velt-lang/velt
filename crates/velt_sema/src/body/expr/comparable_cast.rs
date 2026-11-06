@@ -126,7 +126,8 @@ impl FnCx<'_, '_> {
 
     /// Is the brand `from` assignable to the brand `to`: `symbol & { t?: X[] }` to `symbol & { t?:
     /// unknown }`, a token of one type where a token of any type is expected? Brands are erased,
-    /// so the value is the same.
+    /// so the value is the same. Each member must assign as it is: `"A"` is no `"B"`, which is
+    /// what tells two brands of one primitive apart.
     pub(super) fn brand_assignable(&mut self, from: TyId, to: TyId, span: Span) -> bool {
         if from == to
             || self.cx.brand_base(from).is_none()
@@ -140,7 +141,29 @@ impl FnCx<'_, '_> {
         let (Some(have), Some(want)) = (self.object_members(a), self.object_members(b)) else {
             return false;
         };
-        self.has_members(&have, &want, span, 0)
+        for (name, ty, optional) in &want {
+            match (have.iter().find(|m| m.0 == *name), ty) {
+                (None, _) if !*optional => return false,
+                (Some((_, Some(x), _)), Some(y)) if !self.member_assigns(*x, *y, span) => {
+                    return false;
+                }
+                _ => {}
+            }
+        }
+        true
+    }
+
+    /// Does a value of type `from` convert to a `to`, as it is?
+    fn member_assigns(&mut self, from: TyId, to: TyId, span: Span) -> bool {
+        if from == to {
+            return true;
+        }
+        let mark = self.cx.object_copies.mark();
+        let mut probe = self.error_expr(span);
+        probe.ty = from;
+        let converts = self.try_coerce(probe, to).is_ok();
+        self.cx.object_copies.rollback(mark);
+        converts
     }
 
     /// May a value of the object type `core` be a view of another object?
