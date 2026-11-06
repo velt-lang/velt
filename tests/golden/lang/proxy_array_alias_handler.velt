@@ -1,0 +1,8 @@
+// A handler kept in a variable.
+const h: any = {
+  get(t: any, k: any, r: any) {
+    return Reflect.get(t, k === "last" ? "pop" : k, r);
+  },
+};
+const p: any = new Proxy([3, 1, 2] as any, h);
+console.log(p.last(), p.length);

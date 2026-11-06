@@ -1,6 +1,7 @@
 // velt/lang/proxy (internal): the larger operations of a `Proxy` (velt/lang/proxy): own keys and
 // descriptors, definitions, deletes, the receiver of a write, and JSON.
 
+import { anyArgList, anyListLength } from "velt/lang/hooks/any_ops";
 import {
   PROXY_DEFINE_PROPERTY,
   PROXY_GET,
@@ -239,6 +240,26 @@ export function proxyKeys(p: Proxy): string[] {
         out.push(k);
       }
     }
+  }
+  return out;
+}
+
+/**
+ * `anyApplyList` in a program with `Proxy`: this module's reads throw what a trap throws, so a
+ * proxy as the list of `f.apply(self, list)` runs its traps at the call, once per key.
+ */
+export function proxyApplyList(f: any, list: any): any {
+  if (typeof f !== "function" || list == null) {
+    return list;
+  }
+  if (!(list instanceof Proxy)) {
+    return anyArgList(list);
+  }
+  const p: any = list;
+  const len = anyListLength(p.length);
+  const out: any[] = [];
+  for (let i = 0; i < len; i++) {
+    out.push(p[`${i}`]);
   }
   return out;
 }

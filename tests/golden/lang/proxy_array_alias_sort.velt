@@ -1,0 +1,9 @@
+// The alias of `sort` next to a call of `map`, whose algorithm is compiled: the sort, not `map`.
+const p: any = new Proxy([3, 1, 2] as any, {
+  get(t: any, k: any, r: any) {
+    return Reflect.get(t, k === "order" ? "sort" : k, r);
+  },
+});
+p.map((x: number) => x + 1);
+const s = p.order((a: number, b: number) => a - b);
+console.log(s[0], s[1], s[2], p[0]);

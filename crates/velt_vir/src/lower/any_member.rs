@@ -62,7 +62,9 @@ impl Cx<'_> {
     /// or read as a value and run by `call`, `apply` or `bind` (velt/lang/proxy/array's
     /// `ArrayMethod`). A plain call of one read as a value runs nothing unless `bind` made it.
     pub(super) fn any_method_called(&self, name: &str) -> bool {
-        self.any_called(name) || ["call", "apply", "bind"].iter().any(|k| self.any_called(k))
+        self.hir.array_methods_open
+            || self.any_called(name)
+            || ["call", "apply", "bind"].iter().any(|k| self.any_called(k))
     }
 
     /// `Intrinsic::StdUsed`: is `NoteStdUse(name)` in code the program reaches? It is kept with

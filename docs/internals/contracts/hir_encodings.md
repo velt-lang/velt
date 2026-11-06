@@ -173,8 +173,10 @@ declaration's `ExternFnDef` is never called. Its name maps to the `Intrinsic` in
 - Array methods on a proxy (issue #2424): `Call { Intrinsic(AnyMethodCalled), [Lit(Str(name))] }`,
   std only, is a constant of the program, taken like the tests above: can the array method `name`
   be called through `any`? True when a call through `any` names it, names a computed key, or names
-  `call`, `apply` or `bind`, which run a method read as a value. An `AnyCall` slot likewise compares
-  only the names the program calls. `Call { Intrinsic(StdUsed), [Lit(Str(name))] }`, std only, is the
+  `call`, `apply` or `bind`, which run a method read as a value, or when the program can hold a method under
+  another name (`Program::array_methods_open`, velt_sema's `proxy_method_values.rs`). An `AnyCall`
+  slot likewise compares only the names the program calls; lowering starts from
+  `Program::any_call_names`, those in its own code. `Call { Intrinsic(StdUsed), [Lit(Str(name))] }`, std only, is the
   same kind of constant: is a `Call { Intrinsic(NoteStdUse), [Lit(Str(name))] }` in code the program
   reaches?
 - Type predicates on a type parameter (issue #1251): `if (g(x)) A else B`, where `g` is a type

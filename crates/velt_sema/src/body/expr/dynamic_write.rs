@@ -291,6 +291,9 @@ impl FnCx<'_, '_> {
                 call.emit(self, any, span)
             }
             WriteKey::Keyed(k) => {
+                if !self.cx.scopes[self.module].is_std {
+                    self.cx.method_facts.reads.push(span);
+                }
                 let call = hooks::any_get_key(ty::Any::of(obj.clone()), ty::Any::of(k.clone()));
                 call.emit(self, any, span)
             }

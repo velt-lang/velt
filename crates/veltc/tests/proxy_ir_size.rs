@@ -49,7 +49,13 @@ fn one_proxy_stays_within_its_budget() {
 #[test]
 fn array_algorithms_only_when_a_method_can_be_called() {
     let ir = release_ir(READ);
-    for name in ["proxySplice", "proxySort", "proxySearch", "proxyReverse"] {
+    for name in [
+        "proxySplice",
+        "proxySort",
+        "proxySearch",
+        "proxyReverse",
+        "proxyFind",
+    ] {
         assert!(!ir.contains(name), "`{name}` in a program that calls none");
     }
     let ir = release_ir("const p = new Proxy([2, 1] as any, {});\np.sort();\n");
@@ -78,4 +84,76 @@ fn a_member_only_when_its_name_is_called() {
     };
     assert!(defined("usedOne"), "the called method is compiled");
     assert!(!defined("otherOne"), "the other one isn't");
+}
+
+/// The string comparisons in the `AnyCall` glue of class `C` of `src`, in debug IR.
+fn call_compares(src: &str) -> usize {
+    let ir = ir_of(src, &[]);
+    let body = ir
+        .split("\ndefine ")
+        .find(|f| {
+            f.lines()
+                .next()
+                .is_some_and(|l| l.contains("_Ganycall_") && l.contains("3a_3aC"))
+        })
+        .unwrap_or_else(|| panic!("no `AnyCall` glue of `C`"));
+    body.lines()
+        .take_while(|l| !l.starts_with('}'))
+        .filter(|l| l.contains("str_eq"))
+        .count()
+}
+
+#[test]
+fn a_slot_compares_only_the_names_called() {
+    let class = "class C {\n  f: () => number = () => 1;\n  g: () => number = () => 2;\n  m(): number {\n    return 3;\n  }\n  n(): number {\n    return 4;\n  }\n}\nconst c: any = new C();\n";
+    let one = call_compares(&format!("{class}c.m();\n"));
+    assert_eq!(
+        one, 1,
+        "only `m`: no other member or `Object.prototype` name"
+    );
+    // Each of a field, a method and an `Object.prototype` name is compared once it is called.
+    let field = call_compares(&format!("{class}c.m();\nc.f();\n"));
+    assert_eq!(field, 2);
+    let method = call_compares(&format!("{class}c.m();\nc.n();\n"));
+    assert_eq!(method, 2);
+    let proto = call_compares(&format!("{class}c.m();\nc.hasOwnProperty(\"m\");\n"));
+    assert_eq!(proto, 2);
+}
+
+#[test]
+fn a_forwarding_trap_keeps_the_algorithms_out() {
+    for trap in [
+        "get(t: any, k: any, r: any) {\n    log.push(k);\n    return Reflect.get(t, k, r);\n  }",
+        "get: (t: any, k: any) => t[k]",
+    ] {
+        let src = format!("const log: any[] = [];\nconst p: any = new Proxy([1] as any, {{\n  {trap},\n}});\nconsole.log(p.length, p[0]);\n");
+        assert!(!release_ir(&src).contains("proxySort"), "{trap}");
+    }
+    for trap in [
+        "get(t: any, k: any, r: any) {\n    return Reflect.get(t, k.slice(1), r);\n  }",
+        "get(t: any, k: any, r: any) {\n    k = \"sort\";\n    return Reflect.get(t, k, r);\n  }",
+        "get(t: any, k: any, r: any) {\n    const n = k + \"\";\n    return Reflect.get(t, n, r);\n  }",
+    ] {
+        let src = format!("const p: any = new Proxy([1] as any, {{\n  {trap},\n}});\nconsole.log(p.length);\n");
+        assert!(release_ir(&src).contains("proxySort"), "{trap}");
+    }
+}
+
+#[test]
+fn a_chain_of_calls_takes_no_pass_per_link() {
+    let dir = test_dir::TestDir::new();
+    let src = include_str!("../../../tests/golden/lang/any_call_chain_long.velt");
+    std::fs::write(dir.path().join("main.velt"), src).unwrap();
+    let out = crate::no_window::command(env!("CARGO_BIN_EXE_velt"))
+        .args(["build", "main.velt", "--emit", "llvm"])
+        .env("VELT_LOWER_PROFILE", "1")
+        .current_dir(dir.path())
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let log = String::from_utf8_lossy(&out.stderr);
+    let grew = log
+        .lines()
+        .filter(|l| l.contains("grew") && l.contains("any_call_keys"));
+    assert_eq!(grew.count(), 0, "{log}");
 }

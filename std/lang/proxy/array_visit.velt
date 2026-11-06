@@ -59,3 +59,15 @@ export function proxyArrayVisit(
   }
   return out;
 }
+
+/** `find` of the proxy `p` (length `len`, receiver `o`), `a0` its callback. */
+export function proxyFind(p: Proxy, a0: any, o: any, len: number): any {
+  const f = arrayCallback(a0);
+  for (let k = 0; k < len; k++) {
+    const v = trapGet(p, `${k}`, o);
+    if (f(v, k, o) ? true : false) {
+      return v;
+    }
+  }
+  return undefined;
+}

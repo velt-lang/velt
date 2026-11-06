@@ -453,6 +453,7 @@ fn check_timed(
     let anon_shapes = anon::concrete_shapes(&cx);
     let union_shapes = anon::concrete_unions(&cx);
     let dyn_members = any::dyn_members(&mut cx);
+    let (array_methods_open, any_call_names) = body::expr::proxy_method_values::finish(&mut cx);
     let (upcasts, upcast_impls) = cx.upcast_tables();
     let extension_impls = collect::ext_impls::hir_bounds(&cx);
     let dyn_bounds = collect::ext_impls::dyn_bounds(&mut cx);
@@ -495,6 +496,8 @@ fn check_timed(
         object: any.and_then(|a| a.imp.map(|_| a.object)),
         function: any.and_then(|a| a.imp.map(|_| a.function)),
         dyn_members: dyn_members.map(|m| m.into_iter().collect()),
+        array_methods_open,
+        any_call_names,
         generator_throw: gen_throw,
         super_calls: super_calls.into_iter().collect(),
         upcasts,

@@ -174,6 +174,7 @@ mod promise_then;
 mod promise_union;
 mod prop_values;
 pub(crate) mod proxy;
+pub(crate) mod proxy_method_values;
 mod push_items;
 mod record;
 mod record_call;

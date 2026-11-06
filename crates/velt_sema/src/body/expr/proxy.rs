@@ -79,6 +79,15 @@ impl FnCx<'_, '_> {
         span: Span,
     ) -> hir::Expr {
         let std = self.cx.scopes[self.module].is_std;
+        if !std && i == hir::Intrinsic::AnyGet {
+            match args.get(1).map(|k| &k.kind) {
+                Some(H::Lit(hir::Lit::Str(name))) => {
+                    let named = super::proxy_method_values::ARRAY_METHODS.contains(&name.as_str());
+                    self.cx.method_facts.named |= named;
+                }
+                _ => self.cx.method_facts.reads.push(span),
+            }
+        }
         if !std || PROXY_MODULES.contains(&self.cx.modules[self.module].path.as_str()) {
             let m = Self::proxy_method_of(i).and_then(|name| {
                 let p = self.cx.prelude_adt("Proxy")?;

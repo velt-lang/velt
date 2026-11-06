@@ -26,7 +26,7 @@ import { proxyReverse, proxySort } from "velt/lang/proxy/array_order";
 import { arrayMethodApply } from "velt/lang/proxy/array_apply";
 import { arrayMethodName, concatArgs } from "velt/lang/proxy/array_names";
 import { proxySearch } from "velt/lang/proxy/array_search";
-import { proxyArrayVisit } from "velt/lang/proxy/array_visit";
+import { proxyArrayVisit, proxyFind } from "velt/lang/proxy/array_visit";
 
 /**
  * An array method read through a proxy (`Reflect.get(array, "push")`) or from `Array.prototype`
@@ -310,14 +310,7 @@ export function arrayCallback(f: any): any {
 function proxyArrayRead(p: Proxy, name: string, args: any[], o: any, len: number): any {
   const a0 = arrayArg(args, 0);
   if (anyMethodCalled("find") && name === "find") {
-    const f = arrayCallback(a0);
-    for (let k = 0; k < len; k++) {
-      const v = trapGet(p, `${k}`, o);
-      if (f(v, k, o) ? true : false) {
-        return v;
-      }
-    }
-    return undefined;
+    return proxyFind(p, a0, o, len);
   }
   if (anyMethodCalled("includes") && name === "includes") {
     return proxySearch(p, name, args, o, len);
@@ -352,7 +345,16 @@ function proxyArrayRead(p: Proxy, name: string, args: any[], o: any, len: number
     anyMethodCalled("every") ||
     anyMethodCalled("slice")
   ) {
-    return proxyArrayVisit(p, name, args, o, len, a0);
+    if (
+      name === "map" ||
+      name === "filter" ||
+      name === "forEach" ||
+      name === "some" ||
+      name === "every" ||
+      name === "slice"
+    ) {
+      return proxyArrayVisit(p, name, args, o, len, a0);
+    }
   }
   panic(`ICE: the array method ${name} runs on a proxy in a program that doesn't call it`);
 }

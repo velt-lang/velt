@@ -6,24 +6,59 @@
 import { anyToPrimitive } from "velt/lang/intrinsics";
 import { anyJoin, anyOwnFn, anyPrimText, anyText } from "./any_text";
 
+// Past this many arguments Node's stack is out, and past `ANY_LIST_MAX` its array is.
+const ANY_LIST_STACK = 150000;
+const ANY_LIST_MAX = 268435456;
+
+/** `ToLength` of a list's `length`, with the `RangeError` Node gives for one too long to pass. */
+export function anyListLength(n: any): number {
+  const v = Number(n);
+  if (!(v > 0)) {
+    return 0;
+  }
+  const len = Math.floor(v);
+  if (len >= ANY_LIST_MAX) {
+    throw new RangeError("Invalid array length");
+  }
+  if (len > ANY_LIST_STACK) {
+    throw new RangeError("Maximum call stack size exceeded");
+  }
+  return len;
+}
+
 /**
  * The arguments `f.apply(self, args)` passes (JavaScript's `CreateListFromArrayLike`): `length`
- * and each element of `args`, read as a program reads them, so an array of any element type and
- * an array-like both work, and a proxy's traps run.
+ * and each element of `args`, read as a program reads them, so an array of any element type, a
+ * typed array and an array-like work, and a proxy's traps run.
  */
 export function anyArgList(args: any): any[] {
   const t = typeof args;
   if (t !== "object" && t !== "function") {
-    panic("TypeError: CreateListFromArrayLike called on non-object");
+    throw new TypeError("CreateListFromArrayLike called on non-object");
   }
-  // `ToLength`: `NaN` and a negative length are 0.
-  const n = Number(args.length);
-  const len = n > 0 ? Math.floor(n) : 0;
+  const len = anyListLength(args.length);
+  const typed = typeof args.byteLength === "number" && typeof args.buffer === "object";
   const list: any[] = [];
   for (let i = 0; i < len; i++) {
-    list.push(Array.isArray(args) ? args[i] : args[`${i}`]);
+    // An array's element by number, a typed array's through `at` (`any` reads no element of one
+    // yet), and an array-like's by its name.
+    if (Array.isArray(args)) {
+      list.push(args[i]);
+    } else if (typed) {
+      list.push(args.at(i));
+    } else {
+      list.push(args[`${i}`]);
+    }
   }
   return list;
+}
+
+/** The list of `f.apply(self, list)`, read before the call. Another `apply` keeps its argument. */
+export function anyApplyList(f: any, list: any): any {
+  if (typeof f !== "function" || list == null) {
+    return list;
+  }
+  return anyArgList(list);
 }
 
 /**

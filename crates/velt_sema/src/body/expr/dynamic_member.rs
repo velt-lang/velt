@@ -300,6 +300,9 @@ impl FnCx<'_, '_> {
             let k = self.coerce(k, any);
             if self.uses_proxy() {
                 // A proxy's `get` trap and a record's symbol table see the symbol.
+                if !self.cx.scopes[self.module].is_std {
+                    self.cx.method_facts.reads.push(span);
+                }
                 let call = hooks::any_get_key(ty::Any::of(obj), ty::Any::of(k));
                 return Ok(call.emit(self, any, span));
             }
@@ -352,9 +355,41 @@ impl FnCx<'_, '_> {
                 lw.text_helper_call(call, span)
             }));
         }
+        let user = !self.cx.scopes[self.module].is_std;
+        if user {
+            let names = &mut self.cx.method_facts.call_names;
+            names.insert(prop.name.clone());
+        }
         let key = self.key_lit(&prop.name, prop.span);
         let text = format!("{}.{}", self.callee_text(&recv), prop.name);
         let text = self.key_lit(&text, span);
+        let spread = args
+            .iter()
+            .any(|a| matches!(a.kind, ast::ExprKind::Spread(_)));
+        if user && prop.name == "apply" && args.len() == 2 && !spread {
+            // `f.apply(self, list)`: the list is read here, where an error can be caught, not in
+            // the slot, which ends the process on one (`anyApplyList`).
+            let recv = self.share_if_place(recv);
+            return Ok(self.with_temp("<apply>", recv, span, span, |lw, f| {
+                let Some(mut boxed) = lw.dynamic_args(args, any, false) else {
+                    return lw.error_expr(span);
+                };
+                let (Some(list), Some(first)) = (boxed.pop(), boxed.pop()) else {
+                    return lw.error_expr(span);
+                };
+                let held = lw.expr(f, None, Want::Borrow);
+                let call = if lw.uses_proxy() {
+                    hooks::proxy_apply_list(ty::Any::of(held), ty::Any::of(list))
+                } else {
+                    hooks::any_apply_list(ty::Any::of(held), ty::Any::of(list))
+                };
+                let list = call.emit(lw, any, span);
+                lw.note_any_call();
+                let recv = lw.expr(f, None, Want::Borrow);
+                let all = vec![recv, key, text, first, list];
+                lw.intrinsic(Intrinsic::AnyCall, all, any, span)
+            }));
+        }
         let mut all = vec![recv, key, text];
         let outer = self.any_callback;
         let boxed = self.dynamic_args(args, any, typed_callbacks);
