@@ -21,7 +21,6 @@
 //! other sub-strings are owned copies (inline when short).
 
 pub mod case;
-pub mod collate;
 pub mod exponential;
 pub mod fixed;
 pub mod number;

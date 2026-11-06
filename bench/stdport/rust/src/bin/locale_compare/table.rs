@@ -11,11 +11,11 @@
 //! (https://www.unicode.org/license.txt).
 
 /// The highest primary rank in the table.
-pub(super) const LAST_PRIMARY: u32 = 442;
+pub const LAST_PRIMARY: u32 = 442;
 /// `(first code point, weights)` per block.
 // Six words per line (rustfmt would put one per line).
 #[rustfmt::skip]
-pub(super) const BLOCKS: [(u32, &[u64]); 6] = [
+pub const BLOCKS: [(u32, &[u64]); 6] = [
     (0x20, &[
         0x000000004, 0x000000013, 0x000000027, 0x00000003e, 0x000000075, 0x00000003f,
         0x00000003c, 0x000000024, 0x00000002a, 0x00000002b, 0x000000037, 0x000000066,
