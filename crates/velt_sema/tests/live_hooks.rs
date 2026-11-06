@@ -112,10 +112,10 @@ fn a_conversion_in_std_code_that_live_code_reaches_counts() {
 
 #[test]
 fn a_hook_lowering_calls_where_sema_checked_it_is_live() {
-    // A number printed through the float hooks, checked on demand (`numberPush`): its whole
-    // numbers take the integer printing (`intPush`, called by name in std's code), whose
-    // index checks lowering builds too.
-    let p = main_of("  const x: number = 7;\n  console.log(`x=${x}`);");
+    // A number printed through the float hooks, checked on demand: std's float printer
+    // (velt/lang/number/format) counts digits with a table, whose index checks lowering builds
+    // too.
+    let p = main_of("  const x: number = 7.5;\n  console.log(`x=${x}`);");
     let got = demanded(&p);
     for w in ["int_text", "uint_text"] {
         assert!(got.contains(&w), "{w} not demanded: {got:?}");
@@ -142,11 +142,11 @@ fn a_class_with_a_number_in_it_demands_its_format_slot() {
     }
 }
 
-/// The integer hooks and `console.log`'s writers act as one bit, which is what makes the demand sound (velt_common
-/// `hook_demand.rs`): any one construct in a program demands and checks all of them, through the std
-/// code of the first. If this fails, live code must first cover what lowering builds (#2161).
+/// Every integer hook a program demands is checked, whichever construct demanded it, through the
+/// std code of the first (velt_common `hook_demand.rs`). If this fails, live code must first
+/// cover what lowering builds (#2161).
 #[test]
-fn any_one_construct_demands_and_checks_all_the_integer_hooks() {
+fn any_one_construct_checks_the_integer_hooks_it_demands() {
     for src in [
         // TextInt, alone in the program's code.
         "function main() {\n  const n: i64 = 7;\n  const s = `n=${n}`;\n}\n",
@@ -164,9 +164,30 @@ fn any_one_construct_demands_and_checks_all_the_integer_hooks() {
         "function main() {\n  const x: f64 = 0.5;\n  console.log(x);\n}\n",
     ] {
         let p = ok_src(src);
-        assert_eq!(demanded(&p), INT_NAMES, "{src}");
-        for i in INT {
-            assert!(checked(&p, i), "{} is not checked:\n{src}", HOOKS[i].name);
+        let got = demanded(&p);
+        assert!(!got.is_empty(), "nothing demanded:\n{src}");
+        for (i, name) in INT.iter().zip(INT_NAMES) {
+            if got.contains(&name) {
+                assert!(checked(&p, *i), "{name} is not checked:\n{src}");
+            }
         }
+    }
+}
+
+/// std's integer printer reads no table (velt/lang/number/integer), so printing an integer has no
+/// index check whose message would demand the text hooks: `console.log(n)` doesn't build
+/// `uintText`. An index in the program's own code still demands both.
+#[test]
+fn printing_an_integer_does_not_demand_the_text_hooks() {
+    let p = ok_src("function main() {\n  const n: i32 = 7;\n  console.log(n);\n}\n");
+    let got = demanded(&p);
+    assert!(got.contains(&"int_write"), "{got:?}");
+    for w in ["int_text", "uint_text"] {
+        assert!(!got.contains(&w), "{w} demanded: {got:?}");
+    }
+    let p = ok_src("function main() {\n  const xs = [\"a\"];\n  const s = xs[0];\n}\n");
+    let got = demanded(&p);
+    for w in ["int_text", "uint_text"] {
+        assert!(got.contains(&w), "{w} not demanded: {got:?}");
     }
 }

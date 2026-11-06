@@ -19,11 +19,12 @@
 //! function it builds was live (`hir::Program::live`), and the goldens run such a compiler; the
 //! exception a release compiler doesn't walk is in `live.rs`'s `live_defs`. Glue is lowered per
 //! type, not per function: its call site's construct must be listed in the table and found on
-//! the type, which the builder's assertion above checks. Today's table doesn't exercise this:
-//! once one integer hook is live its std code has arrays, integers and so on, which demand the
-//! other three, so a program demands none of them or all of them (`velt_sema`'s `live_hooks` test).
-//! `console.log`'s number writers (`int_write`, `uint_write`, `number_write`) list `Format` alone,
-//! which every program with a construct has; a float printed alone sets `Format` too.
+//! the type, which the builder's assertion above checks. The integer hooks exercise it: std's
+//! integer printer reads no table, so it has no index check, and `console.log` of an integer
+//! demands the writers and the builder hooks but not `int_text` or `uint_text`, which an index's
+//! message prints with (`velt_sema`'s `live_hooks` test). `console.log`'s number writers
+//! (`int_write`, `uint_write`, `number_write`) list `Format` alone; a float printed alone sets
+//! `Format` too, since `number_write`'s code holds the integer writer.
 //!
 //! ```
 //! use velt_common::std_hooks::{hook_index, Construct, HookSet, HOOKS};
