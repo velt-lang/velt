@@ -158,7 +158,11 @@ export async function loadVelt(source, host = {}) {
   };
   const module = await compile(await source);
   const contexts = { context: host.context, within: host.within };
-  const provided = { "velt:fetch": fetchHost(undefined, contexts), ...host.imports };
+  const provided = {
+    "velt:fetch": fetchHost(undefined, contexts),
+    "velt:random": randomHost(),
+    ...host.imports,
+  };
   Object.assign(imports, hostImports(module, provided, rt));
   const instance = await WebAssembly.instantiate(module, imports);
   rt.exports = instance.exports;
@@ -500,6 +504,18 @@ const fromByteString = (bytes) =>
  * context it started in (`contexts.context()`, `loadVelt`'s `host.context`), and its body is
  * read and cancelled there (`contexts.within`), wherever the program asks.
  */
+/**
+ * The `velt:random` host module: the seed of `Math.random()`'s generator
+ * (std/lang/random/seed_js.velt). `buf` is a view of the program's memory.
+ */
+export function randomHost() {
+  return {
+    fill(buf) {
+      globalThis.crypto.getRandomValues(buf);
+    },
+  };
+}
+
 export function fetchHost(hostFetch = (url, init) => globalThis.fetch(url, init), contexts = {}) {
   const within = (call, job) =>
     call.owner !== undefined && contexts.within ? contexts.within(call.owner, job) : job();

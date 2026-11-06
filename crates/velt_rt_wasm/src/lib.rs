@@ -15,7 +15,7 @@
 //! - **own**: `platform` (host services per target), `host` (what host functions and `HostRef`
 //!   need of the JS glue), `host_promise` and `host_turn` (async host functions, and the turns a
 //!   JS host drives), `entry`, `io`, `localtime` (UTC),
-//!   `memory_usage`, `panic`, `prng`, `process`, `shared`, `net` and the current-thread executor in
+//!   `memory_usage`, `panic`, `process`, `shared`, `net` and the current-thread executor in
 //!   `task` (no tokio, no threads). Every
 //!   function has exactly the signature `std/*.velt` declares (WebAssembly links only exact
 //!   matches; crates/velt_rt/tests/std_externs.rs checks both runtimes).
@@ -74,7 +74,6 @@ pub mod memory_usage;
 pub mod net;
 pub mod panic;
 pub mod platform;
-pub mod prng;
 pub mod process;
 #[path = "../../velt_rt/src/proxy_array.rs"]
 pub mod proxy_array;
