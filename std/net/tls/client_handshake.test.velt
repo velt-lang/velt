@@ -103,6 +103,8 @@ function input(serverName: string, alpn: string[]): HelloInput {
     serverName: serverName,
     alpn: alpn,
     fixed: null,
+    fixedRetry: null,
+    retryKey: null,
   };
 }
 
@@ -116,6 +118,8 @@ function traced(steps: usize, alpn: string[] = []): ClientHandshake {
       serverName: "",
       alpn: alpn,
       fixed: hexDecode(CLIENT_HELLO),
+      fixedRetry: null,
+      retryKey: null,
     },
     hexDecode(CLIENT_PRIVATE),
   );
@@ -314,9 +318,11 @@ describe("what a ServerHello must say", () => {
   });
 
   it("asks a retry only for a group it can have: anything else is illegal_parameter", () => {
-    const group = "003300020017";
+    const group = "003300020018";
     const m = serverHello(HRR_RANDOM, "1301", VERSION + group);
-    expect(refusal(m).startsWith("47 TLS: the server requires key exchange group 0x17")).toBe(true);
+    expect(refusal(m)).toBe(
+      "47 TLS: the HelloRetryRequest asks for key exchange group 0x18, which was not offered",
+    );
   });
 });
 

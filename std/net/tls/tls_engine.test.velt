@@ -182,6 +182,8 @@ async function handshaken(t: Playback): Promise<TlsEngine> {
       serverName: "",
       alpn: [],
       fixed: hexDecode(CLIENT_HELLO),
+      fixedRetry: null,
+      retryKey: null,
     },
     hexDecode(CLIENT_PRIVATE),
   );
@@ -573,6 +575,8 @@ describe("a retry on the connection, in compatibility mode", () => {
         serverName: "example.com",
         alpn: [],
         fixed: null,
+        fixedRetry: null,
+        retryKey: null,
       },
       hexDecode(CLIENT_PRIVATE),
     );

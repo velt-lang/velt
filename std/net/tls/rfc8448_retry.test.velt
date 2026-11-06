@@ -127,6 +127,8 @@ class Playback implements ByteStream {
   close() {
     this.closed = true;
   }
+
+  async halfClose(): Promise<void> {}
 }
 
 // The server's side of the trace. (A function: a constant built from constants fails to
