@@ -150,6 +150,24 @@ impl Ctx<'_> {
         f.generics.constraints.get(n as usize).copied().flatten()
     }
 
+    /// Is every value of bound `b` a string: `string`, string literal types and unions of them,
+    /// or a deferred alias whose body is an intersection with `string` (`… & string`)?
+    pub(crate) fn string_bound(&mut self, b: TyId) -> bool {
+        use velt_syntax::ast::TypeExprKind as K;
+        match self.ty.kind(b) {
+            TyKind::Str | TyKind::Literal(crate::hir::LitValue::Str(_)) => true,
+            TyKind::Op(crate::hir::TyOp::Alias(a), _) => {
+                let body = &self.aliases[*a as usize].decl.ty.kind;
+                matches!(body, K::Intersection(parts) if parts.iter().any(|p| matches!(&p.kind,
+                    K::Named { path, args } if args.is_empty() && path.len() == 1 && path[0].name == "string")))
+            }
+            _ => match self.union_members(b) {
+                Some(ms) => ms.into_iter().all(|m| self.string_bound(m)),
+                None => false,
+            },
+        }
+    }
+
     /// Is `t` a deferred intersection with a type parameter part whose other parts hold no
     /// deferred type (`T & { $set: (v: T) => void }`): an argument fixes `T` through it
     /// (`Ctx::match_ty`).

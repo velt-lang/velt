@@ -84,6 +84,10 @@ impl FnCx<'_, '_> {
             },
             false => h,
         };
+        let h = match self.string_bound_value(h, exp) {
+            Ok(s) => return Ok(s),
+            Err(h) => h,
+        };
         let h = match self.fn_bound_value(h) {
             Ok(f) if f.ty == exp || matches!(self.cx.ty.kind(exp), TyKind::FnPtr { .. }) => {
                 return self.try_coerce_value(f, exp)

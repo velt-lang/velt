@@ -1,0 +1,18 @@
+// check: no leaks
+// A value of a type parameter bounded by a string type is a string in the generic body (#934). Expected output from `node`; `tsc --strict` accepts it.
+function takes(s: string): number { return s.length; }
+function open<K extends string>(k: K): number { return takes(k) + k.length; }
+function pick<K extends "a" | "bb">(k: K): string { const s: string = k; return s + "!"; }
+type Keys<T> = { [K in keyof T]: K }[keyof T] & string;
+function named<T, K extends Keys<T>>(k: K): number { return takes(k); }
+console.log(open("abc"), pick("bb"), named<{ one: 1 }, "one">("one"));
+function maybe<K extends "on" | "off">(k: K, on: boolean): string | undefined {
+  const s: string | undefined = on ? k : undefined;
+  return s;
+}
+console.log(maybe("on", true), maybe("off", false));
+const g: <K extends string>(k: K) => string = (k) => k + "?";
+console.log(g("x"));
+type IdxOf<T> = T[keyof T];
+const n: IdxOf<Record<string, number>> = 4;
+console.log(n);

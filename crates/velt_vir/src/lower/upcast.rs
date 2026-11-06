@@ -4,13 +4,31 @@
 //! targets after its method slots (`Program::upcasts`, in that order), so the conversion is a
 //! load: no copy, and the value stays the same object (`===`).
 
-use velt_sema::hir::{TyId, TyKind};
+use velt_sema::hir::{self, TyId, TyKind};
 
 use super::operand::proj;
 use super::FnLower;
 use crate::vir::{Operand, Proj};
 
 impl FnLower<'_, '_> {
+    /// A value `inner` of a string literal type as a `string` (a type parameter bounded by a
+    /// string type, at a literal; sema's `string_bound_value`): a literal type has no value of
+    /// its own, the type is the value, so this is its text.
+    pub(super) fn literal_upcast(
+        &mut self,
+        inner: &hir::Expr,
+        from: TyId,
+        to: TyId,
+    ) -> Option<Operand> {
+        let (hir::TyKind::Literal(hir::LitValue::Str(s)), hir::TyKind::Str) =
+            (self.cx.kind(from), self.cx.kind(to))
+        else {
+            return None;
+        };
+        self.expr(inner);
+        Some(self.str_lit(&s))
+    }
+
     /// The table slot holding the `to` table of an `A` table, when `from` and `to` are values
     /// of two interfaces and `A` converts to `B`.
     pub(super) fn upcast_slot(&mut self, from: TyId, to: TyId) -> Option<i128> {
