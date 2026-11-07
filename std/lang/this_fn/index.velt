@@ -7,7 +7,7 @@
 // `callOn`, and `call` (`[THIS_FN_APPLY]`), `apply` and `bind` (`[THIS_FN_BIND]`) below; a plain call `f(x)`
 // passes `undefined`. `typeof` is `"function"`.
 
-import { anyIsList } from "velt/lang/intrinsics";
+import { anyIsList, noInline } from "velt/lang/intrinsics";
 import { anyArgList } from "velt/lang/hooks/any_ops";
 import { THIS_FN_APPLY, THIS_FN_BIND } from "velt/lang/hooks/keys";
 
@@ -66,6 +66,7 @@ export class ThisFn {
 
   // A list to read, or to copy for a body that uses `arguments`.
   #listOf(args: any): any[] {
+    noInline();
     const list = anyArgList(args);
     return this.#ownsArguments ? list.slice() : list;
   }
