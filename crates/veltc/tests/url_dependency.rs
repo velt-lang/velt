@@ -70,6 +70,37 @@ fn sha256_hex(bytes: &[u8]) -> String {
 }
 
 #[test]
+fn velt_add_warns_of_a_credential_in_the_url_and_later_commands_do_not() {
+    let tmp = test_dir::TestDir::new();
+    let (app, home) = (tmp.path().join("app"), tmp.path().join("home"));
+    let archive = tar_gz(&[
+        (
+            "lib/package.velt",
+            "export const pkg: Package = { name: \"lib\", version: \"1.0.0\" };\n",
+        ),
+        ("lib/src/lib.velt", "export const v = 1;\n"),
+    ]);
+    let url = format!("{}?token=abc", serve(archive));
+    std::fs::create_dir_all(app.join("src")).expect("app");
+    std::fs::write(
+        app.join("package.velt"),
+        "export const pkg: Package = { name: \"app\", version: \"0.1.0\" };\n",
+    )
+    .expect("manifest");
+    std::fs::write(app.join("src/main.velt"), "console.log(1);\n").expect("main");
+    let o = velt(&app, &home, &["add", &url]);
+    let out = text(&o);
+    assert!(o.status.success(), "{out}");
+    assert!(out.contains("looks like a credential"), "{out}");
+    for command in ["check", "install"] {
+        let o = velt(&app, &home, &[command]);
+        let out = text(&o);
+        assert!(o.status.success(), "{out}");
+        assert!(!out.contains("looks like a credential"), "{command}: {out}");
+    }
+}
+
+#[test]
 fn velt_check_sees_a_fetched_file_edited_in_place() {
     let tmp = test_dir::TestDir::new();
     let (app, home) = (tmp.path().join("app"), tmp.path().join("home"));
@@ -97,14 +128,22 @@ fn velt_check_sees_a_fetched_file_edited_in_place() {
     .expect("main");
     let o = velt(&app, &home, &["install"]);
     assert!(o.status.success(), "{}", text(&o));
-    // timing: a tree's stamp is trusted only once the tree is 3 s old (`vpm::tree_stamp`'s rule
-    // for times too close to now), and only a trusted stamp lets opening the project skip the
-    // files, which is the case this test is about. Waited for, then the stamp checked.
-    std::thread::sleep(std::time::Duration::from_millis(3200));
-    let o = velt(&app, &home, &["check"]);
-    assert!(o.status.success(), "{}", text(&o));
-    let stamps = std::fs::read_dir(home.join("cache/stamps")).map_or(0, Iterator::count);
-    assert!(stamps > 0, "no tree stamp was written");
+    // A tree's stamp is written only once the tree is 3 s old (`vpm::tree_stamp`'s rule for times
+    // too close to now), and only a stamp lets opening the project skip the files, which is the
+    // case this test is about: check until there is one.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    loop {
+        let o = velt(&app, &home, &["check"]);
+        assert!(o.status.success(), "{}", text(&o));
+        let stamps = std::fs::read_dir(home.join("cache/stamps")).map_or(0, Iterator::count);
+        if stamps > 0 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "no tree stamp was written"
+        );
+    }
     // An edit in place, with the file's size kept: its directory's time doesn't change, so
     // opening the project trusts the stamp, and `velt check`'s own check must see the file.
     let cached = home

@@ -7,6 +7,18 @@ fn tar_with(name: &str) -> Vec<u8> {
 }
 
 #[test]
+fn a_name_of_only_ignorable_code_points_is_refused() {
+    // Its clash key is empty, so the raw name and an ordinary one would share keys, and a link
+    // through it would be missed: `\u{200c}/a/l` -> `../..`, then `x` -> `\u{200c}/a/l/../..`.
+    let tar = TarBuilder::default()
+        .file("\u{200c}/a/f", b"x")
+        .symlink("\u{200c}/a/l", "../..")
+        .symlink("x", "\u{200c}/a/l/../..")
+        .gz();
+    refused(&tar, "code points macOS ignores");
+}
+
+#[test]
 fn paths_outside_the_tree_are_refused() {
     refused(&tar_with("/etc/passwd"), "an absolute path");
     refused(&tar_with("../evil"), "a `..` segment");

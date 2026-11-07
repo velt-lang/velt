@@ -71,7 +71,9 @@ fn nothing_is_written_over_what_is_already_on_disk_on_every_os() {
     // error, and what was there is unchanged.
     let dir = tempfile::tempdir().unwrap();
     let mut cases = vec![("f", "f"), ("d", "d/x")];
-    if cfg!(any(windows, target_os = "macos")) {
+    // Case folding is the filesystem's, not the OS's: APFS and NTFS can be either.
+    std::fs::write(dir.path().join("probe"), b"").unwrap();
+    if dir.path().join("PROBE").exists() {
         cases.extend([("F", "f"), ("D", "d/x")]);
     }
     for (i, (there, written)) in cases.into_iter().enumerate() {

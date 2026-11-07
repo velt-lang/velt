@@ -72,6 +72,11 @@ fn check_segment(name: &str) -> Result<(), String> {
                 .to_string(),
         );
     }
+    if name.chars().all(is_hfs_ignorable) {
+        return Err(
+            "a name of only code points macOS ignores (it is an empty name there)".to_string(),
+        );
+    }
     if is_dot_git(name) {
         return Err(
             "a `.git` directory or file (a git command run in the tree would read it: its config \

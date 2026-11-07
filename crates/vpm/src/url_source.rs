@@ -263,10 +263,10 @@ pub fn is_plain_http(url: &str) -> bool {
     fetch::is_plain_http(url)
 }
 
-/// Query parameters whose names say they carry a credential (compared without case): a token, a
-/// key or a signature in a URL goes into package.velt and velt.lock.json, where everyone with
-/// the project reads it. Userinfo (`user:pass@`) is refused outright ([`check_url`]); a query
-/// isn't, as a release asset's URL may be signed on purpose.
+/// Query parameters whose names say they carry a credential, as [`credential_key`] spells them:
+/// a token, a key or a signature in a URL goes into package.velt and velt.lock.json, where
+/// everyone with the project reads it. Userinfo (`user:pass@`) is refused outright
+/// ([`check_url`]); a query isn't, as a release asset's URL may be signed on purpose.
 const CREDENTIAL_PARAMS: &[&str] = &[
     "token",
     "access_token",
@@ -279,22 +279,53 @@ const CREDENTIAL_PARAMS: &[&str] = &[
     "password",
     "sig",
     "signature",
-    "x-amz-signature",
-    "x-amz-credential",
-    "x-amz-security-token",
-    "x-goog-signature",
-    "x-goog-credential",
+    "access_key",
+    "pwd",
+    "jwt",
 ];
+
+/// The ends of a parameter's name that say the same: `deploy_token`, `x_amz_signature`.
+const CREDENTIAL_SUFFIXES: &[&str] = &[
+    "_token",
+    "_secret",
+    "_password",
+    "_signature",
+    "_credential",
+];
+
+/// A query parameter's name with its escapes decoded (`%74oken`), in lower case, with `_` for
+/// `-` (`api-key`).
+fn credential_key(key: &str) -> String {
+    let bytes = key.as_bytes();
+    let hex = |at: usize| Some(char::from(*bytes.get(at)?).to_digit(16)? as u8);
+    let (mut out, mut i) = (Vec::with_capacity(bytes.len()), 0);
+    while i < bytes.len() {
+        match (bytes[i], hex(i + 1), hex(i + 2)) {
+            (b'%', Some(high), Some(low)) => {
+                out.push(high << 4 | low);
+                i += 3;
+            }
+            (byte, ..) => {
+                out.push(byte);
+                i += 1;
+            }
+        }
+    }
+    String::from_utf8_lossy(&out)
+        .to_ascii_lowercase()
+        .replace('-', "_")
+}
 
 /// A warning when the URL of dependency `name` holds a query parameter named like a credential
 /// ([`CREDENTIAL_PARAMS`]).
 pub fn credential_warning(name: &str, url: &str) -> Option<String> {
     let query = url.split('#').next()?.split_once('?')?.1;
-    let found = query.split('&').find_map(|pair| {
+    let found = query.split(['&', ';']).find_map(|pair| {
         let key = pair.split('=').next().unwrap_or(pair);
-        (CREDENTIAL_PARAMS.iter())
-            .any(|c| key.eq_ignore_ascii_case(c))
-            .then_some(key)
+        let name = credential_key(key);
+        (CREDENTIAL_PARAMS.contains(&name.as_str())
+            || CREDENTIAL_SUFFIXES.iter().any(|s| name.ends_with(s)))
+        .then_some(key)
     })?;
     Some(format!(
         "the URL of `{name}` has `{found}` in its query, which looks like a credential: it is written to package.velt and velt.lock.json, where anyone with the project can read it"
@@ -418,14 +449,15 @@ fn lock_raw(raw: &Path) -> Result<std::fs::File, String> {
         .write(true)
         .open(&path)
         .map_err(|e| format!("cannot open `{}`: {e}", path.display()))?;
-    file.lock()
-        .map_err(|e| format!("cannot lock `{}`: {e}", path.display()))?;
+    // A filesystem with no locks (some network mounts) still installs: two installs that meet
+    // there fail in the extractor's rename, and neither leaves a wrong tree.
+    let _ = file.lock();
     Ok(file)
 }
 
 /// Extract `bytes` (from `url`) into `raw`, with its record written before the tree is renamed
 /// there: a raw tree with no record is never seen, so one found is replaced (`replace`) rather
-/// than trusted, and only once the new tree is ready. A concurrent install's equal tree is taken.
+/// than trusted, and only once the new tree is ready. The caller holds the archive's lock.
 fn unpack(bytes: &[u8], raw: &Path, url: &str, replace: bool) -> Result<(), String> {
     use crate::extract::{Links, Place};
     let failed = |e: String| format!("the archive at {url} can't be used: {e}");
@@ -438,10 +470,7 @@ fn unpack(bytes: &[u8], raw: &Path, url: &str, replace: bool) -> Result<(), Stri
         .collect();
     let place = if replace { Place::Replace } else { Place::New };
     let record = |staged: &Path| Verified::new(raw, staged, url, links)?.add_and_write(url);
-    match crate::extract::write_then(&tree, (raw, place), Links::NATIVE, record) {
-        Err(_) if raw.is_dir() && Verified::read(raw).is_some() => Ok(()),
-        result => result.map_err(failed),
-    }
+    crate::extract::write_then(&tree, (raw, place), Links::NATIVE, record).map_err(failed)
 }
 
 /// Download `spec`'s archive and check its hash; the bytes.

@@ -18,6 +18,7 @@ use crate::workspace::{Workspace, WorkspaceFile};
 
 mod allow_native;
 mod c_sources;
+mod warnings;
 pub mod workspace;
 
 use c_sources::Natives;
@@ -56,7 +57,7 @@ pub struct Installed {
 
 impl Installed {
     /// One `<name> <version> is yanked (pinned by velt.lock.json)` line per yanked version, then
-    /// the resolution's other warnings (a git package's links on Windows).
+    /// the resolution's other warnings (links on Windows, a credential in a new URL).
     pub fn yank_warnings(&self) -> Vec<String> {
         self.yanked
             .iter()
@@ -204,7 +205,7 @@ pub fn install(root: &Path, loc: &Locations, opts: InstallOptions) -> Result<Ins
         lockfile,
         lock_changed,
         yanked: resolution.yanked.clone(),
-        warnings: resolution.warnings.clone(),
+        warnings: warnings::of(&resolution, existing.as_ref()),
         notes,
     })
 }
