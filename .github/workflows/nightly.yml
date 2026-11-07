@@ -607,8 +607,8 @@ jobs:
           done < "$RUNNER_TEMP/caches.tsv"
           # Clang's objects: the two newest stay, as after a push to main (ci.yml); each is a whole
           # copy.
-          gh cache list --key velt-clang-objects-Linux-X64- --sort created_at --order desc \
-            --limit 100 --json id,key --jq '.[2:][] | "\(.id)\t\(.key)"' |
+          gh cache list --ref refs/heads/main --key velt-clang-objects-Linux-X64- \
+            --sort created_at --order desc --limit 100 --json id,key --jq '.[2:][] | "\(.id)\t\(.key)"' |
             while IFS=$'\t' read -r id key; do
               echo "delete  $key"
               [ -n "$dry" ] || gh cache delete "$id"

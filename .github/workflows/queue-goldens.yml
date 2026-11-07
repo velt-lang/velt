@@ -160,10 +160,12 @@ jobs:
       - name: the objects clang compiled (Linux)
         if: runner.os == 'Linux' && github.event_name == 'merge_group'
         continue-on-error: true
+        timeout-minutes: 5
         run: bash .github/actions/setup/clang-objects.sh pack clang-objects.tar
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Linux' && github.event_name == 'merge_group'
         continue-on-error: true
+        timeout-minutes: 5
         with:
           name: clang-objects-shard-${{ strategy.job-index }}
           path: clang-objects.tar

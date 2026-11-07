@@ -355,10 +355,12 @@ jobs:
       - name: the objects clang compiled (Linux)
         if: runner.os == 'Linux'
         continue-on-error: true
+        timeout-minutes: 5
         run: bash .github/actions/setup/clang-objects.sh pack clang-objects.tar
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Linux'
         continue-on-error: true
+        timeout-minutes: 5
         with:
           name: clang-objects-check
           path: clang-objects.tar
@@ -509,7 +511,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          gh cache list --key "velt-clang-objects-$RUNNER_OS-$RUNNER_ARCH-" \
+          gh cache list --ref refs/heads/main --key "velt-clang-objects-$RUNNER_OS-$RUNNER_ARCH-" \
             --sort created_at --order desc --limit 100 --json id --jq '.[2:][].id' |
             while read -r id; do gh cache delete "$id"; done
       - name: cargo xtask check --full
