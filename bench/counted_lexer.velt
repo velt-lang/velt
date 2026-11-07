@@ -1,12 +1,17 @@
 // A lexer written the ordinary way: a class holding its source and position, held twice so it is
 // counted, reading the source through `startsWith` and `indexOf` and passing its fields on. The
-// source is never replaced, so none of these calls needs a count update (#2480).
+// source is replaced only by `reset`, which none of these calls reach, so none needs a count update
+// (#2480).
 class Lexer {
   src: string;
   pos: number = 0;
   line: number = 1;
   tokens: number = 0;
   sep: string = "\n";
+  reset(src: string) {
+    this.src = src;
+    this.pos = 0;
+  }
   constructor(src: string) {
     this.src = src;
   }
@@ -51,6 +56,7 @@ function main() {
   for (let round = 0; round < 40; round++) {
     const lexer = new Lexer(src);
     const held = lexer;
+    held.reset(src);
     while (held.next()) {}
     tokens += lexer.tokens;
     lines += lexer.line;

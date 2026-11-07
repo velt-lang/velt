@@ -446,6 +446,8 @@ struct Cx<'h> {
     quiet: FxHashMap<(DefId, quiet::Quiet), bool>,
     /// The fields written after their object was made, once asked (replaceable.rs).
     field_writes: Option<std::rc::Rc<replaceable::FieldWrites>>,
+    /// Whether dropping a value of each type can run a `dispose` (replaceable.rs).
+    dispose_types: FxHashMap<TyId, bool>,
     /// What direct callees write, once asked (replaceable.rs).
     callee_stores: FxHashMap<DefId, Option<std::rc::Rc<replaceable::Stores>>>,
     /// Interned static `VeltStr` objects (`static_str_object`).

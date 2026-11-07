@@ -25,6 +25,9 @@ function noteLength(n: string): number {
 function annotate(r: Record_, text: string) {
   r.note = text;
 }
+function rename(r: Record_, name: string) {
+  r.name = name;
+}
 function main() {
   const all: Record_[] = [];
   const byId = new Map<string, Record_>();
@@ -34,6 +37,7 @@ function main() {
     all.push(r);
     byId.set(id, r);
     annotate(r, "x-note-on-the-heap-long-enough-" + i);
+    rename(r, r.name + "!");
   }
   let total = 0;
   for (let round = 0; round < 60; round++) {

@@ -99,6 +99,70 @@ function forOf() {
   for (let i = 0; i < N / 3; i++) { for (const it of xs) { if (checkAt(it.s, i)) c++; } }
   return c;
 }
+// Fields one function writes, and none of these calls reach: the callee decides. Only `written`
+// and `renamed` are assigned, so these rows catch a callee fact that stops working.
+class Kept {
+  written: string = "written-string-on-the-heap-".repeat(2);
+  inner: KeptInner = new KeptInner();
+  n: number = 0;
+}
+class KeptInner { renamed: string = "inner-written-on-the-heap-".repeat(2); }
+function rename(k: Kept) {
+  k.written = k.written + "x";
+  k.inner.renamed = k.inner.renamed + "x";
+}
+function kept(): Kept {
+  const o = new Kept();
+  const alias = o;
+  rename(alias);
+  return o;
+}
+function startsWithZ(v: string): boolean { return v.startsWith("z"); }
+function dashAt(v: string): number { return v.indexOf("-"); }
+function middle(v: string): number { return v.slice(1, 3).length; }
+function joined(v: string): number { return (v + "x").length; }
+function makes(v: string): number { return new KeptInner().renamed.length + v.length; }
+function writtenPlain() {
+  const o = kept(); let c = 0;
+  for (let i = 0; i < N; i++) { if (check(o.written)) c++; }
+  return c;
+}
+function writtenInner() {
+  const o = kept(); let c = 0;
+  for (let i = 0; i < N; i++) { if (check(o.inner.renamed)) c++; }
+  return c;
+}
+function writtenStartsWith() {
+  const o = kept(); let c = 0;
+  for (let i = 0; i < N; i++) { if (startsWithZ(o.written)) c++; }
+  return c;
+}
+function writtenIndexOf() {
+  const o = kept(); let c = 0;
+  for (let i = 0; i < N; i++) { c += dashAt(o.written); }
+  return c;
+}
+function writtenSlice() {
+  const o = kept(); let c = 0;
+  for (let i = 0; i < N; i++) { c += middle(o.written); }
+  return c;
+}
+function writtenConcat() {
+  const o = kept(); let c = 0;
+  for (let i = 0; i < N; i++) { c += joined(o.written); }
+  return c;
+}
+function writtenFnValue() {
+  const o = kept(); let c = 0;
+  const g: (v: string) => boolean = check;
+  for (let i = 0; i < N; i++) { if (g(o.written)) c++; }
+  return c;
+}
+function writtenNew() {
+  const o = kept(); let c = 0;
+  for (let i = 0; i < N; i++) { c += makes(o.written); }
+  return c;
+}
 function all() {
   console.log(thisPlain());
   console.log(recvStartsWithField());
@@ -114,5 +178,13 @@ function all() {
   console.log(tuple());
   console.log(includes());
   console.log(forOf());
+  console.log(writtenPlain());
+  console.log(writtenInner());
+  console.log(writtenStartsWith());
+  console.log(writtenIndexOf());
+  console.log(writtenSlice());
+  console.log(writtenConcat());
+  console.log(writtenFnValue());
+  console.log(writtenNew());
 }
 all();

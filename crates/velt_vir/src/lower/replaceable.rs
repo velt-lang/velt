@@ -9,8 +9,8 @@
 //!   can reach any field, so a program with one has no such fields.
 //! - a direct callee writes only the fields its body names, in itself and in what it calls
 //!   directly. One that runs code it can't see (a function value, a virtual or interface method,
-//!   a `new`, an intrinsic not known to run none) may write anything. A `dispose` runs on drops
-//!   no body names, so a program with one has no such callees.
+//!   a `new`, an intrinsic not known to run none) may write anything, and so may one with a value
+//!   whose drop can run a `dispose`, which no body names.
 
 use std::rc::Rc;
 
@@ -33,8 +33,8 @@ pub(super) struct FieldWrites {
     tuples: bool,
     /// A write the scan cannot name: any field of a type with an assigned field may change.
     keyed: bool,
-    /// Some type has a `dispose`, which drops run.
-    dispose: bool,
+    /// The direct subclasses of each class.
+    subclasses: rustc_hash::FxHashMap<DefId, Vec<DefId>>,
 }
 
 /// What a direct callee writes, with what it calls directly (module docs).
@@ -55,6 +55,8 @@ struct Scan {
     /// It runs code the scan can't see.
     opaque: bool,
     calls: Vec<DefId>,
+    /// Asked of a callee: is a value it may drop one whose drop can run a `dispose`?
+    drops: bool,
     /// `this` in a constructor: a write of a field of it is the field's first value.
     ctor_this: Option<hir::LocalId>,
 }
@@ -140,11 +142,14 @@ impl<'h> Cx<'h> {
     fn scan_field_writes(&mut self) -> FieldWrites {
         let mut out = FieldWrites::default();
         let hir = self.hir;
-        for def in &hir.defs {
+        for (i, def) in hir.defs.iter().enumerate() {
             let mut s = Scan::default();
             match def {
                 hir::Def::Adt(a) => {
-                    out.dispose |= a.dispose.is_some();
+                    if let Some(TyKind::Adt(b, _)) = a.base.map(|t| self.raw_kind(t)) {
+                        let sub = DefId(i as u32);
+                        out.subclasses.entry(*b).or_default().push(sub);
+                    }
                     for f in &a.fields {
                         f.default.iter().for_each(|e| self.scan_expr(e, &mut s));
                     }
@@ -181,7 +186,7 @@ impl<'h> Cx<'h> {
         if self.field_writes.is_none() {
             self.field_writes = Some(Rc::new(self.scan_field_writes()));
         }
-        if self.field_writes.as_ref().is_none_or(|w| w.dispose) || self.has_proxies() {
+        if self.has_proxies() {
             return None;
         }
         let f = match self.hir.def(def) {
@@ -194,7 +199,11 @@ impl<'h> Cx<'h> {
             }
             _ => return None,
         };
-        let mut s = Scan::default();
+        let mut s = Scan {
+            drops: true,
+            ..Scan::default()
+        };
+        s.opaque = f.body.locals.iter().any(|l| self.drops_dispose(l.ty));
         self.scan_block(&f.body.block, &mut s);
         if s.opaque || s.keyed {
             return None;
@@ -209,6 +218,71 @@ impl<'h> Cx<'h> {
             out.tuples |= inner.tuples;
         }
         Some(out)
+    }
+
+    /// Can dropping a value of type `t` run a `dispose`? A class counts with its subclasses, as a
+    /// value of it may be one. An interface or `any` value, a function value's environment, a
+    /// promise's task and a type parameter may hold anything; inside a generic type, the type
+    /// arguments stand for its parameters.
+    fn drops_dispose(&mut self, t: TyId) -> bool {
+        if let Some(&d) = self.dispose_types.get(&t) {
+            return d;
+        }
+        let d = self.drops_dispose_in(t, false, &mut Vec::new());
+        self.dispose_types.insert(t, d);
+        d
+    }
+
+    fn drops_dispose_in(&mut self, t: TyId, in_adt: bool, seen: &mut Vec<TyId>) -> bool {
+        if seen.contains(&t) {
+            return false;
+        }
+        seen.push(t);
+        match self.raw_kind(t).clone() {
+            TyKind::Param(_) => !in_adt,
+            TyKind::Array(x) | TyKind::Option(x, _) | TyKind::Shared(x) => {
+                self.drops_dispose_in(x, in_adt, seen)
+            }
+            TyKind::Map(a, b) | TyKind::Result(a, b) => {
+                self.drops_dispose_in(a, in_adt, seen) || self.drops_dispose_in(b, in_adt, seen)
+            }
+            TyKind::Tuple(xs) => xs.iter().any(|&x| self.drops_dispose_in(x, in_adt, seen)),
+            TyKind::Adt(d, args) => {
+                args.iter().any(|&x| self.drops_dispose_in(x, in_adt, seen))
+                    || self.def_drops_dispose(d, seen)
+            }
+            TyKind::Dyn(..)
+            | TyKind::FnPtr { .. }
+            | TyKind::Closure(_)
+            | TyKind::Promise(..)
+            | TyKind::Op(..) => true,
+            _ => false,
+        }
+    }
+
+    /// [`drops_dispose_in`](Self::drops_dispose_in) for what definition `d` holds.
+    fn def_drops_dispose(&mut self, d: DefId, seen: &mut Vec<TyId>) -> bool {
+        let hir = self.hir;
+        match hir.def(d) {
+            hir::Def::Adt(a) => {
+                let subclasses = self
+                    .field_writes
+                    .clone()
+                    .and_then(|w| w.subclasses.get(&d).cloned());
+                a.dispose.is_some()
+                    || a.fields
+                        .iter()
+                        .any(|f| self.drops_dispose_in(f.ty, true, seen))
+                    || subclasses
+                        .iter()
+                        .flatten()
+                        .any(|&c| self.def_drops_dispose(c, seen))
+            }
+            hir::Def::Enum(e) => (e.variants.iter())
+                .flat_map(|v| v.payload.iter())
+                .any(|&p| self.drops_dispose_in(p, true, seen)),
+            _ => true,
+        }
     }
 
     fn scan_block(&mut self, b: &hir::Block, s: &mut Scan) {
@@ -259,6 +333,9 @@ impl<'h> Cx<'h> {
     }
 
     fn scan_expr(&mut self, e: &hir::Expr, s: &mut Scan) {
+        if s.drops && !s.opaque {
+            s.opaque = self.drops_dispose(e.ty);
+        }
         match &e.kind {
             K::Assign { place, value } | K::CompoundAssign { place, value, .. } => {
                 self.scan_place(place, s);

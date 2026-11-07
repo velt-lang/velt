@@ -92,6 +92,7 @@ impl<'h> Cx<'h> {
             tracked_size: FxHashMap::default(),
             quiet: FxHashMap::default(),
             field_writes: None,
+            dispose_types: FxHashMap::default(),
             callee_stores: FxHashMap::default(),
             str_objects: FxHashMap::default(),
             symbol_records: Default::default(),

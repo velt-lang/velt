@@ -1,0 +1,33 @@
+// A `dispose` writes a field while a direct callee borrows it: the callee's body names no such
+// write and calls nothing, it only ends a `using` (replaceable.rs). The parameter keeps what it was
+// passed (#2480). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxx").length; }
+class Target { s: string = heap("old"); u: string = heap("old"); }
+class Closer {
+  t: Target;
+  constructor(t: Target) { this.t = t; }
+  [Symbol.dispose]() { this.t.s = heap("new"); junk(); }
+}
+class SubCloser extends Closer {
+  override [Symbol.dispose]() { this.t.u = heap("new"); junk(); }
+}
+function scoped(c: Closer, v: string) {
+  {
+    using d = c;
+  }
+  return v.length > 0 ? v : "";
+}
+function direct() {
+  const t = new Target();
+  const alias = t;
+  const c = new Closer(alias);
+  console.log("using in a direct callee", scoped(c, t.s), t.s);
+}
+function subclass() {
+  const t = new Target();
+  const alias = t;
+  const c = new SubCloser(alias);
+  console.log("through a subclass", scoped(c, t.u), t.u);
+}
+direct(); subclass();
