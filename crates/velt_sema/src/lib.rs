@@ -648,7 +648,7 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
         return;
     }
     timings::pass("hooks::check_throws", || hooks::check_throws(cx));
-    timings::pass("record_keys::check_instantiations", || {
+    let uses = timings::pass("record_keys::check_instantiations", || {
         record_keys::check_instantiations(cx)
     });
     timings::pass("json::check_json_types", || json::check_json_types(cx));
@@ -657,7 +657,7 @@ fn ownership_passes(cx: &mut ctx::Ctx) {
     });
     timings::pass("struct_tuples::check_instantiations", || {
         struct_tuples::check_instantiations(cx);
-        struct_tuples::check_generic_bodies(cx)
+        struct_tuples::check_generic_bodies(cx, &uses)
     });
     timings::pass("undefined_args::check_instantiations", || {
         undefined_args::check_instantiations(cx)

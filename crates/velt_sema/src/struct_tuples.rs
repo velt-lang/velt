@@ -140,10 +140,10 @@ fn field_params(cx: &mut Ctx, ty: TyId, out: &mut FxHashSet<u32>, depth: u32) {
 
 /// A tuple given for a type parameter that a generic body stores in a struct field, through any
 /// chain of generic calls, is an error at the call that gives it.
-pub(crate) fn check_generic_bodies(cx: &mut Ctx) {
-    let uses = crate::inst_sites::collect(cx, false);
+/// `uses`: the instantiation sites `record_keys` collected (`inst_sites::collect`).
+pub(crate) fn check_generic_bodies(cx: &mut Ctx, uses: &[(DefId, crate::inst_sites::Uses)]) {
     let mut needs: FxHashMap<DefId, FxHashSet<u32>> = FxHashMap::default();
-    for (f, u) in &uses {
+    for (f, u) in uses {
         let mut set = FxHashSet::default();
         for (t, _) in &u.types {
             params_in_fields(cx, *t, &mut set, 0);
@@ -155,7 +155,7 @@ pub(crate) fn check_generic_bodies(cx: &mut Ctx) {
     let mut reported: FxHashSet<(DefId, Span)> = FxHashSet::default();
     loop {
         let mut changed = false;
-        for (f, u) in &uses {
+        for (f, u) in uses {
             let mut add: FxHashSet<u32> = FxHashSet::default();
             for c in &u.closures {
                 if let Some(n) = needs.get(c) {
