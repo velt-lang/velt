@@ -228,9 +228,10 @@ pub(crate) enum Pass {
     RecordKeys,
     Json,
     PromiseCopies,
+    StructTuples,
 }
 
-static WORK: [AtomicU64; 3] = [const { AtomicU64::new(0) }; 3];
+static WORK: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
 
 /// Adds `n` units of work to `pass`'s counter.
 pub(crate) fn add_work(pass: Pass, n: u64) {
@@ -246,6 +247,7 @@ pub struct InstantiationWork {
     pub record_keys: u64,
     pub json: u64,
     pub promise_copies: u64,
+    pub struct_tuples: u64,
 }
 
 /// See [`InstantiationWork`].
@@ -255,5 +257,6 @@ pub fn instantiation_work() -> InstantiationWork {
         record_keys: get(Pass::RecordKeys),
         json: get(Pass::Json),
         promise_copies: get(Pass::PromiseCopies),
+        struct_tuples: get(Pass::StructTuples),
     }
 }

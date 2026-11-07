@@ -5,7 +5,7 @@
 //! definitions, impls of one interface, vtables and call chains that modification inference
 //! must propagate through. The fast test runs in CI; `cargo test -p velt_sema --release --test
 //! scaling -- --ignored --nocapture` runs the N = 100 / 1000 / 5000 sizes. The instantiation
-//! checks (record keys, JSON, promise copies), the type searches, the checks of arrows and of
+//! checks (record keys, JSON, promise copies, struct tuples), the type searches, the checks of arrows and of
 //! expressions and the resolution of exports count their work (`check_work`), which these tests
 //! compare between sizes exactly instead of by CPU time, which load on the machine tilts (#1502).
 //! Only `sema_time_grows_linearly`, which guards every pass at once, measures CPU time.
@@ -47,9 +47,10 @@ fn generated_program(n: usize, chain: usize) -> String {
 /// `n` generic functions, each calling the next one, so a requirement found in the last one
 /// travels up the whole chain against definition order: a round over every function per call
 /// level would be quadratic. The record-key and JSON requirements come from `JSON.parse` of a
-/// `Record<K, i64>`, the promise-copy one from `xs.at(0)`, which copies a `T`.
+/// `Record<K, i64>`, the promise-copy one from `xs.at(0)`, which copies a `T`, the struct-tuple
+/// one from a `Held<T>`.
 fn generic_chains(n: usize) -> String {
-    let mut out = String::new();
+    let mut out = String::from("struct Held<T> {\n  v: T;\n  n: number;\n}\n");
     for i in 0..n {
         let (keys, first) = match i + 1 < n {
             true => (format!("k{}<K>(s)", i + 1), format!("p{}<T>(xs)", i + 1)),
@@ -58,12 +59,17 @@ fn generic_chains(n: usize) -> String {
                 "xs.at(0)".to_string(),
             ),
         };
+        let held = match i + 1 < n {
+            true => format!("return h{}<T>(x);", i + 1),
+            false => "const h: Held<T> = { v: x, n: 1 };\n  return h.n;".to_string(),
+        };
         out += &format!(
             "function k{i}<K>(s: string): number {{\n  return {keys};\n}}\n\
-             function p{i}<T>(xs: T[]): T | undefined {{\n  return {first};\n}}\n"
+             function p{i}<T>(xs: T[]): T | undefined {{\n  return {first};\n}}\n\
+             function h{i}<T>(x: T): number {{\n  {held}\n}}\n"
         );
     }
-    out + "function main() {\n  k0<string>(\"{}\");\n  p0<i64>([1]);\n}\n"
+    out + "function main() {\n  k0<string>(\"{}\");\n  p0<i64>([1]);\n  h0<i64>(1);\n}\n"
 }
 
 /// A type graph whose types share parts: `N{k}` holds two `N{k-1}`, so `N{n-1}` has 2^n paths
@@ -244,13 +250,14 @@ fn counted_work<const K: usize>(loaded: &Loaded, counters: &impl Fn() -> [u64; K
 }
 
 /// The instantiation checks' counters.
-fn instantiation_counters() -> [u64; 3] {
+fn instantiation_counters() -> [u64; 4] {
     let InstantiationWork {
         record_keys,
         json,
         promise_copies,
+        struct_tuples,
     } = instantiation_work();
-    [record_keys, json, promise_copies]
+    [record_keys, json, promise_copies, struct_tuples]
 }
 
 /// Each instantiation check's work per unit (above an empty program's) must not grow by more
@@ -258,7 +265,7 @@ fn instantiation_counters() -> [u64; 3] {
 /// exact: a check that revisits every function per round of its fixed point, or scans every
 /// impl per class type, grows by the size ratio per unit and fails.
 fn assert_linear_work(sizes: &[usize], program: impl Fn(usize) -> String, slack: f64) {
-    let names = ["record_keys", "json", "promise_copies"];
+    let names = ["record_keys", "json", "promise_copies", "struct_tuples"];
     let load = |n| load_src(&program(n));
     assert_linear_counted(sizes, load, names, instantiation_counters, slack);
 }

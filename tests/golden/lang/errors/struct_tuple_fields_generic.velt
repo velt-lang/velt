@@ -52,3 +52,205 @@ function main() {
   console.log(r[0], viaH(p), viaN(p), chain(p)[0]);
   console.log(outer(5, (q: number) => {}), viaH("ok"));
 }
+
+// The same through what no direct call shows: a method that dispatch runs, a method called
+// through a type parameter, a deferred type, and an `extend` on an array.
+type P3 = [number, number, number];
+
+interface Generic {
+  f<T>(x: T): T;
+}
+
+class GenericImpl implements Generic {
+  f<T>(x: T): T {
+    const g: G<T> = { v: x, n: 1 };
+    return g.v;
+  }
+}
+
+function genericMethod(p: P3): number {
+  const i: Generic = new GenericImpl();
+  return i.f(p)[0];
+}
+
+interface Holds<X> {
+  f(x: X): X;
+}
+
+class Holder<T> implements Holds<T> {
+  f(x: T): T {
+    const g: G<T> = { v: x, n: 1 };
+    return g.v;
+  }
+}
+
+function genericInterface(p: P3): number {
+  const j: Holds<P3> = new Holder<P3>();
+  return j.f(p)[0];
+}
+
+class Base<T> {
+  f(x: T): T {
+    return x;
+  }
+}
+
+class Derived<T> extends Base<T> {
+  override f(x: T): T {
+    const g: G<T> = { v: x, n: 1 };
+    return g.v;
+  }
+}
+
+function overridden(p: P3): number {
+  const b: Base<P3> = new Derived<P3>();
+  return b.f(p)[0];
+}
+
+abstract class Abstract<T> {
+  abstract f(x: T): T;
+}
+
+class Concrete<T> extends Abstract<T> {
+  override f(x: T): T {
+    const g: G<T> = { v: x, n: 1 };
+    return g.v;
+  }
+}
+
+function abstractMethod(p: P3): number {
+  const b: Abstract<P3> = new Concrete<P3>();
+  return b.f(p)[0];
+}
+
+function viaParam<S extends Holds<P3>>(s: S, q: P3): P3 {
+  return s.f(q);
+}
+
+function throughTypeParameter(p: P3): number {
+  return viaParam(new Holder<P3>(), p)[0];
+}
+
+type TT<T> = T extends number ? [number, number, number] : string;
+
+function deferred<T>(x: TT<T>): number {
+  const g: G<TT<T>> = { v: x, n: 1 };
+  return g.n;
+}
+
+function conditional(p: P3): number {
+  return deferred<number>(p);
+}
+
+function makes<T>(): Holds<T> {
+  return new Holder<T>();
+}
+
+function constructedInGeneric(p: P3): number {
+  return makes<P3>().f(p)[0];
+}
+
+interface Extended<X> {
+  e(x: X): X;
+}
+
+extend<T> Array<T> implements Extended<T> {
+  e(x: T): T {
+    const g: G<T> = { v: x, n: 1 };
+    return g.v;
+  }
+}
+
+function extendedValue(p: P3): number {
+  const a: P3[] = [p];
+  const h: Extended<P3> = a;
+  return h.e(p)[0];
+}
+
+function viaExtended<S extends Extended<P3>>(s: S, q: P3): P3 {
+  return s.e(q);
+}
+
+function extendedParam(p: P3): number {
+  const a: P3[] = [p];
+  return viaExtended(a, p)[0];
+}
+
+class Box<T> {
+  v: T | null = null;
+}
+
+extend<T> Box<T> implements Extended<T> {
+  e(x: T): T {
+    const g: G<T> = { v: x, n: 1 };
+    return g.v;
+  }
+}
+
+function extendedClass(p: P3): number {
+  const h: Extended<P3> = new Box<P3>();
+  return h.e(p)[0];
+}
+
+function extendedClassParam(p: P3): number {
+  return viaExtended(new Box<P3>(), p)[0];
+}
+
+interface Defaulted<X> {
+  d(x: X): X {
+    const g: G<X> = { v: x, n: 1 };
+    return g.v;
+  }
+}
+
+extend string implements Defaulted<P3> {}
+
+function defaultMethod(p: P3): number {
+  const h: Defaulted<P3> = "a";
+  return h.d(p)[0];
+}
+
+interface Everywhere {
+  w(): number;
+}
+
+extend<T> T implements Everywhere {
+  w(): number {
+    const g: G<T> = { v: this, n: 1 };
+    return g.n;
+  }
+}
+
+function blanket(p: P3): number {
+  const h: Everywhere = p;
+  return h.w();
+}
+
+struct N1<T> {
+  a: N<T> | null;
+}
+
+struct N2<T> {
+  a: N1<T> | null;
+}
+
+struct N3<T> {
+  a: N2<T> | null;
+}
+
+struct N4<T> {
+  a: N3<T> | null;
+}
+
+struct N5<T> {
+  a: N4<T> | null;
+}
+
+function nested<T>(): number {
+  const s: N5<T> = { a: null };
+  return s.a == null ? 1 : 0;
+}
+
+function deeplyNested(): number {
+  return nested<P3>();
+}
