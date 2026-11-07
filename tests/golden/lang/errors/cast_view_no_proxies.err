@@ -1,0 +1,1 @@
+cast_view_no_proxies.velt:4:11: error: cannot cast `Cx` as `{ name?: string; provides?: f64 }`

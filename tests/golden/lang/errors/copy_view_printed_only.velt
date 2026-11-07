@@ -1,0 +1,8 @@
+// A conversion only printed stays a copy, as the rule for what prints says: refused (`!shown`).
+const made = new Proxy({}, {});
+type W = { a: number; b: string };
+type N = { a: number };
+function mk(): W { return { a: 1, b: "x" }; }
+const w = mk();
+const v: N = w;
+console.log(v);
