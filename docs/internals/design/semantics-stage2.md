@@ -94,20 +94,24 @@ pointer instead of the inline bytes, and content accesses go through `FnLower::c
 
 ### 3.3 Borrows through counted objects (stabilize.rs)
 In unique code the exclusivity rule guarantees that a value borrowed by a call stays put. A
-place reached through a counted object has other owners: the callee may reach the same object
-another way and replace or free what the borrow points to. Such borrows are **stabilized**: a
-counted value is shared into a statement temporary; anything else is read through containers
-retained for the statement (`retained_hop`). This applies to call arguments and receivers (not
-runtime externs), by-reference `const`s, `switch`/`match` scrutinees, compound assignments
-(the place is formed again after the right-hand side) and assignments (the new value is stored
-before the old one is dropped). Retaining does not keep an array element in place (a push
-through another reference moves the buffer; `pop`, `truncate` and stores drop the element), so
-a value that lies in the buffer of such an array, not behind a counted object inside it, is
-shared into the temporary (a string clone, a copy for plain values; #564). A share would copy
-the parts a callee can change in place (tuples, object types stored inline), so those types are
-counted when they are borrowed this way, and the share is the same counted object. When the
-array is a boxed local or param that no cell holds, its count is read after the last argument
-is evaluated: 1 means nothing else reaches it, and the element is borrowed in place.
+place reached through a counted object or a cell has other owners: the callee may reach the same
+object another way and replace or free what the borrow points to. Such borrows are
+**stabilized**. A counted value is shared into a statement temporary. Any other value, a promise
+too, is shared (a string clone, a copy for plain values; #564, #2480) only where the call can
+replace it, so the callee keeps what it was passed, as in JavaScript: any callee for a value in an
+array's buffer or a module slot, a callee that can run a closure for one in a cell, and for one in a
+field, a callee that can write the field (replaceable.rs: a field written only by its own
+constructor can't be replaced, and a direct callee writes only what its body and what it calls
+directly name). A call through a function value treats a part of another argument the same way:
+`f(r, r.s)` where the callee sets `q.s`. Otherwise the value is read through containers retained
+for the statement (`retained_hop`), which costs no count update on the value. By-reference `const`s
+and `switch`/`match` scrutinees read through retained containers too, compound assignments form the
+place again after the right-hand side, and assignments store the new value before the old one is
+dropped. A share would copy the parts a callee can change in place (tuples, object types stored
+inline), so those types are counted when they are borrowed this way, and the share is the same
+counted object. When the array is a boxed local or param that no cell holds, its count is read after
+the last argument is evaluated: 1 means nothing else reaches it, and the element is borrowed in
+place.
 `for...of` over a boxed array, or one reached through a counted
 object, works like JS's array iterator (for_of_shared.rs): the loop holds a reference to the
 array, re-reads the length every iteration and shares each element into the binding. Moving a

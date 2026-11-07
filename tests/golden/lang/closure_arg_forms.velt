@@ -1,0 +1,83 @@
+// A closure called with a part of what it assigns, a closure called by another, narrowed variables,
+// updates and a thrown error (#2480). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function opt<T>(x: T): T | null { return x; }
+type P = { x: number };
+function iife() {
+  let s = heap("one");
+  const r = ((v: string) => { s = heap("nine"); const j = heap("jjjjjj"); return v + j; })(s);
+  console.log("iife", r);
+  let o: P = { x: 1 };
+  const r2 = ((v: P) => { o = { x: 9 }; return v.x; })(o);
+  console.log("iife obj", r2);
+  let u: string | null = opt(heap("u"));
+  const r3 = ((v: string | null) => { u = null; const j = heap("jjjjjj"); return (v === null ? "null" : v) + j; })(u);
+  console.log("iife opt", r3);
+}
+function chained() {
+  let s = heap("one");
+  const writer = () => { s = heap("nine"); };
+  const reader = (v: string) => { writer(); const j = heap("jjjjjj"); return v + j; };
+  const r = reader(s);
+  console.log("chained", r);
+  let t = heap("one");
+  const w2 = (v: string) => { t = heap("two"); return v; };
+  const w1 = (v: string) => w2(v) + "|" + v + "|" + t;
+  const r2 = w1(t);
+  console.log("forwarded", r2);
+  let m = heap("one");
+  const w3 = (a: string, b: string) => { m = heap("three"); return a + b; };
+  const r3 = w3(m, m);
+  console.log("two args", r3);
+}
+function narrowed() {
+  let s: string | null = opt(heap("one"));
+  const f = (v: string) => { s = null; const j = heap("jjjjjj"); return v + j; };
+  if (s !== null) {
+    console.log("narrowed", f(s));
+  }
+  let o: { n: string } | null = opt<{ n: string }>({ n: heap("o") });
+  const g = (v: { n: string }) => { o = null; const j = heap("jjjjjj"); return v.n + j; };
+  if (o !== null) {
+    console.log("narrowed obj", g(o));
+  }
+}
+function viaPart() {
+  let p = { name: heap("pn"), age: 1 };
+  const f = (v: string) => { p = { name: heap("zz"), age: 2 }; const j = heap("jjjjjj"); return v + j; };
+  console.log("part", f(p.name));
+  let t: [string, string] = [heap("a"), heap("b")];
+  const g = (v: string) => { t = [heap("c"), heap("d")]; const j = heap("jjjjjj"); return v + j; };
+  console.log("tuple part", g(t[1]));
+  const r = { p: { name: heap("deep") } };
+  const h = (v: string) => { r.p = { name: heap("deep2") }; const j = heap("jjjjjj"); return v + j; };
+  console.log("deep", h(r.p.name));
+}
+function compound() {
+  let s = heap("a");
+  const f = (v: string) => { s += "b"; s += "c"; const j = heap("jjjjjj"); return v + j; };
+  console.log("compound", f(s), s);
+  let n = 1;
+  const g = (v: number) => { n++; n += 1; return v; };
+  console.log("num update", g(n), n);
+  let arr = [heap("x")];
+  const h = (v: string[]) => { arr.push(heap("y")); arr = [heap("z")]; v.push(heap("w")); return v.join(); };
+  console.log("array replaced", h(arr), arr.join());
+}
+function loopCounter() {
+  let c = 0;
+  const inc = (d: number) => { c = c + d; return d; };
+  for (let i = 0; i < 5; i++) inc(c + 1);
+  console.log("counter", c);
+  let log = heap("");
+  const add = (x: string) => { log = log + x; return x.length; };
+  let tot = 0;
+  for (let i = 0; i < 4; i++) tot += add(log);
+  console.log("log", log.length, tot);
+}
+function thrown() {
+  let s = heap("one");
+  const f = (v: string) => { s = heap("nine"); if (v.length > 0) throw new Error(v); return v; };
+  try { f(s); } catch (e) { console.log("thrown", (e as Error).message, s); }
+}
+iife(); chained(); narrowed(); viaPart(); compound(); loopCounter(); thrown();

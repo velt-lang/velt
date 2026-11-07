@@ -1,0 +1,231 @@
+// A closure or function value given a container and its part: the part keeps what was read when
+// the argument was evaluated, whatever the callee does through the container (#2480). Output
+// checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxx").length; }
+type N = { x: number };
+class I { s: string; constructor(s: string) { this.s = s; } }
+class R {
+  s: string = heap("old");
+  o: string | null = heap("old");
+  u: string | number = heap("old");
+  a: any = heap("old");
+  ob: N = { x: 1 };
+  t: [number, string] = [1, heap("old")];
+  n: number | null = 1;
+  i: I = new I(heap("old"));
+  run(k: (q: R, v: string) => string): string { return k(this, this.s); }
+}
+function string_() {
+  const r = new R();
+  const f = (q: R, v: string) => { q.s = heap("new"); junk(); return v; };
+  console.log("string", f(r, r.s), r.s);
+}
+function optional() {
+  const r = new R();
+  const f = (q: R, v: string | null) => { q.o = null; junk(); return v; };
+  console.log("optional", f(r, r.o), r.o);
+}
+function union() {
+  const r = new R();
+  const f = (q: R, v: string | number) => { q.u = 9; junk(); return v; };
+  console.log("union", f(r, r.u), r.u);
+}
+function any_() {
+  const r = new R();
+  const f = (q: R, v: any) => { q.a = 9; junk(); return String(v); };
+  console.log("any", f(r, r.a), r.a);
+}
+function object_() {
+  const r = new R();
+  const f = (q: R, v: N) => { q.ob = { x: 9 }; junk(); v.x = 77; return v.x; };
+  console.log("object", f(r, r.ob), r.ob.x);
+}
+function tuple() {
+  const r = new R();
+  const f = (q: R, v: [number, string]) => { q.t = [9, heap("new")]; junk(); return v[0] + v[1]; };
+  console.log("tuple", f(r, r.t), r.t[0]);
+}
+function copyAggregate() {
+  const r = new R();
+  const f = (q: R, v: number | null) => { q.n = null; return v; };
+  console.log("number or null", f(r, r.n), r.n);
+}
+function classField() {
+  const r = new R();
+  const f = (q: R, v: I) => { q.i = new I(heap("new")); junk(); return v.s; };
+  console.log("class field", f(r, r.i), r.i.s);
+}
+function throughClass() {
+  const r = new R();
+  const f = (q: R, v: string) => { q.i = new I(heap("new")); junk(); return v; };
+  console.log("through a class", f(r, r.i.s), r.i.s);
+}
+function arrayPop() {
+  const xs = [heap("old")];
+  const f = (q: string[], v: string) => { q.pop(); junk(); return v; };
+  console.log("array pop", f(xs, xs[0]), xs.length);
+}
+function arrayStore() {
+  const xs = [heap("old")];
+  const f = (q: string[], v: string) => { q[0] = heap("new"); junk(); return v; };
+  console.log("array store", f(xs, xs[0]), xs[0]);
+}
+function tupleStore() {
+  const t: [string, string] = [heap("old"), heap("other")];
+  const f = (q: [string, string], v: string) => { q[0] = heap("new"); junk(); return v; };
+  console.log("tuple store", f(t, t[0]), t[0]);
+}
+function objectType() {
+  const o = { s: heap("old") };
+  const f = (q: { s: string }, v: string) => { q.s = heap("new"); junk(); return v; };
+  console.log("object type", f(o, o.s), o.s);
+}
+function forwarded() {
+  const r = new R();
+  const k = (q: R, v: string) => { q.s = heap("new"); junk(); return v; };
+  const app = (g: (q: R, v: string) => string, q: R) => g(q, q.s);
+  console.log("forwarded", app(k, r), r.s);
+  const r2 = new R();
+  console.log("from a method", r2.run(k), r2.s);
+}
+function held() {
+  const r = new R();
+  const h = { f: (q: R, v: string) => { q.s = heap("new"); junk(); return v; } };
+  console.log("in a field", h.f(r, r.s), r.s);
+  const r2 = new R();
+  function named(q: R, v: string) { q.s = heap("new"); junk(); return v; }
+  const asValue = named;
+  console.log("named as a value", asValue(r2, r2.s), r2.s);
+  const r3 = new R();
+  let seen = 0;
+  function nested(q: R, v: string) { seen++; q.s = heap("new"); junk(); return v; }
+  console.log("nested with a capture", nested(r3, r3.s), r3.s, seen);
+}
+function converted() {
+  const r = new R();
+  const f = (q: R, v: string | null) => { q.s = heap("new"); junk(); return v; };
+  console.log("to optional", f(r, r.s), r.s);
+  const r2 = new R();
+  const g = (q: R, v: any) => { q.s = heap("new"); junk(); return String(v); };
+  console.log("to any", g(r2, r2.s), r2.s);
+}
+function twoParts() {
+  const r = new R();
+  const f = (q: R, v: string, w: string | null) => { q.s = heap("new"); q.o = null; junk(); return v + String(w); };
+  console.log("two parts", f(r, r.s, r.o), r.s, r.o);
+}
+class K1 { s: string = heap("old"); }
+function arrayHoldsContainer() {
+  const rs = [new K1()];
+  const r0 = rs[0];
+  const g = (q: K1[], v: string) => { q[0].s = heap("new"); junk(); return v; };
+  console.log("array of the container", g(rs, r0.s), rs[0].s);
+}
+function arrayHoldsArray() {
+  const outer = [[heap("old")]];
+  const inner = outer[0];
+  const h = (q: string[][], v: string) => { q[0] = []; junk(); return v; };
+  console.log("array replaced in an array", h(outer, inner[0]), outer[0].length);
+  const outer2 = [[heap("old")]];
+  const inner2 = outer2[0];
+  const j = (q: string[][], v: string) => { q[0][0] = heap("new"); junk(); return v; };
+  console.log("element of an element", j(outer2, inner2[0]), outer2[0][0]);
+  const outer3 = [[heap("old")]];
+  const inner3 = outer3[0];
+  const k = (q: string[][], v: string) => { q[0].pop(); junk(); return v; };
+  console.log("popped from an element", k(outer3, inner3[0]), outer3[0].length);
+}
+function arrayOfObjects() {
+  const os: { s: string }[] = [{ s: heap("old") }];
+  const o0 = os[0];
+  const f = (q: { s: string }[], v: string) => { q[0].s = heap("new"); junk(); return v; };
+  console.log("array of object types", f(os, o0.s), os[0].s);
+  const os2: { s: string }[] = [{ s: heap("old") }];
+  const o1 = os2[0];
+  const g = (q: { s: string }[], v: string) => { q[0] = { s: heap("new") }; junk(); return v; };
+  console.log("object type replaced", g(os2, o1.s), os2[0].s);
+}
+function tupleHolds() {
+  const k = new K1();
+  const t: [K1, number] = [k, 1];
+  const f = (q: [K1, number], v: string) => { q[0].s = heap("new"); junk(); return v; };
+  console.log("tuple of the container", f(t, k.s), k.s);
+}
+function objectHoldsArray() {
+  const xs = [heap("old")];
+  const o = { xs };
+  const f = (q: { xs: string[] }, v: string) => { q.xs[0] = heap("new"); junk(); return v; };
+  console.log("object holding the array", f(o, xs[0]), xs[0]);
+}
+class I2 { s: string = heap("a"); }
+class A2 { c: I2 = new I2(); b: I2 | null = new I2(); }
+class Ln { s: string = heap("a"); next: Ln | null = null; }
+function throughLocal() {
+  const a = new A2();
+  const x = a.c;
+  const g = (q: A2, v: string) => { q.c = new I2(); const j = junk(); return v + j; };
+  console.log("part read through a local", g(a, x.s));
+  const a2 = new A2();
+  const y = a2.b;
+  const h = (q: A2, v: string) => { q.b = null; const j = junk(); return v + j; };
+  if (y !== null) console.log("through an optional local", h(a2, y.s));
+  const xs: (I2 | null)[] = [new I2()];
+  const z = xs[0];
+  const k = (q: (I2 | null)[], v: string) => { q[0] = null; const j = junk(); return v + j; };
+  if (z !== null) console.log("through an element", k(xs, z.s));
+  const a3 = new A2();
+  const w = a3.c;
+  const inner = (q: A2, v: string) => { q.c = new I2(); const j = junk(); return v + j; };
+  function named(q: A2, v: string) { return inner(q, v); }
+  console.log("a named function passing it on", named(a3, w.s));
+  const head = new Ln();
+  head.next = new Ln();
+  const n = head.next;
+  const m = (q: Ln, v: string) => { q.next = null; const j = junk(); return v + j; };
+  console.log("recursive", m(head, n.s));
+}
+function localNoPart() {
+  const a = new A2();
+  const x = a.b;
+  const g = (q: A2) => { q.b = null; junk(); };
+  g(a);
+  junk();
+  console.log("the local after the call", x === null ? -1 : x.s.length);
+  const a2 = new A2();
+  const y = a2.c;
+  const h = (q: A2) => { q.c = new I2(); q.c.s = heap("zzzzzzzzzz"); junk(); };
+  h(a2);
+  junk();
+  console.log("the local after a replacement", y.s.length, a2.c.s.length);
+  const o: { p: { s: string } } = { p: { s: heap("a") } };
+  const z = o.p;
+  const k = (q: { p: { s: string } }) => { q.p = { s: heap("zzzzzzzzzz") }; junk(); };
+  k(o);
+  junk();
+  console.log("an object type", z.s.length, o.p.s.length);
+}
+function unionBeside() {
+  const r = new R();
+  const u: string | number = heap("u");
+  const f = (a: string | number, v: string) => { r.s = heap("new"); junk(); return String(a).length + v; };
+  console.log("a union beside a part", f(u, r.s), r.s);
+  const xs = [heap("old")];
+  const g = (a: string | number, v: string) => { xs[0] = heap("new"); junk(); return String(a).length + v; };
+  console.log("a union beside an element", g(u, xs[0]), xs[0]);
+}
+function asyncAndGenerator() {
+  const r = new R();
+  const g = function* (q: R, v: string) { q.s = heap("new"); yield v; yield q.s; };
+  console.log("generator", [...g(r, r.s)].join());
+}
+async function asyncClosure() {
+  const r = new R();
+  const f = async (q: R, v: string) => { q.s = heap("new"); await new Promise<void>((d) => setTimeout(() => d(), 0)); return v; };
+  console.log("async", await f(r, r.s), r.s);
+}
+string_(); optional(); union(); any_(); object_(); tuple(); copyAggregate(); classField();
+throughClass(); arrayPop(); arrayStore(); tupleStore(); objectType(); forwarded(); held();
+converted(); twoParts(); arrayHoldsContainer(); arrayHoldsArray(); arrayOfObjects(); tupleHolds();
+objectHoldsArray(); unionBeside(); throughLocal(); localNoPart(); asyncAndGenerator();
+asyncClosure().then(() => console.log("done"));

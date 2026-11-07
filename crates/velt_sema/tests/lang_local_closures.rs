@@ -225,10 +225,10 @@ fn borrowing_never_rejects_a_program() {
            clear(): void { const wipe = () => { this.items = [2]; }; wipe(); } }
          function main() { const p = new Pile(); let s: number = 0;
            for (const it of p.items) { p.clear(); s += it; } console.log(s); }",
-        "class Tags { items: string[] = [];
-           add(tag: string): void { const put = () => { this.items.push(tag); }; put(); put(); } }
-         function main() { const a = new Tags(); a.items.push(\"x\"); a.add(a.items[0]);
-           console.log(a.items.join(\",\")); }",
+        "class Tags { items: string[][] = [];
+           add(tag: string[]): void { const put = () => { this.items.push(tag); }; put(); put(); } }
+         function main() { const a = new Tags(); a.items.push([\"x\"]); a.add(a.items[0]);
+           console.log(a.items.length); }",
     ];
     for src in programs {
         let p = ok_src(src);

@@ -1,0 +1,37 @@
+// A direct callee writes the field an argument was read from, and calls nothing the analysis can't
+// see: only what its body names, or what the functions it calls name, tells the call to share. The
+// callees use no `heap`, as a call of one would make them opaque (replaceable.rs) (#2480). Output
+// checked against Node.
+let NEW = "";
+class S { s: string = "old".repeat(20); set t(v: string) { this.s = v; } }
+class C2 { s2: string = "old".repeat(20); own(): C2 { return this; } put(v: string) { this.s2 = v; } }
+class C3 { s3: string = "old".repeat(20); }
+class C4 { s4: string = "old".repeat(20); }
+let HOLD = new S();
+let HC2 = new C2();
+let HC3 = new C3();
+let HC4 = new C4();
+function f(v: string): string { HOLD.t = NEW; return v + "!"; }
+function g(v: string): string { HC2.own().own().put(NEW); return v + "!"; }
+function write3() { HC3.s3 = NEW; }
+function h(v: string): string { write3(); return v + "!"; }
+function deep3() { deep2(); }
+function deep2() { deep1(); }
+function deep1() { HC4.s4 = NEW; }
+function k(v: string): string { deep3(); return v + "!"; }
+function main_() {
+  NEW = "new".repeat(30);
+  const r = new S();
+  HOLD = r;
+  console.log("setter", f(r.s), r.s);
+  const r2 = new C2();
+  HC2 = r2;
+  console.log("method chain", g(r2.s2), r2.s2);
+  const r3 = new C3();
+  HC3 = r3;
+  console.log("a function it calls", h(r3.s3), r3.s3);
+  const r4 = new C4();
+  HC4 = r4;
+  console.log("three calls down", k(r4.s4), r4.s4);
+}
+main_();

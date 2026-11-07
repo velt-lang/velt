@@ -1,0 +1,19 @@
+// `check(o.s)` in a program that writes through `any` once: such a write can reach any field, so
+// every field of a counted object is shared at every call that could run one (#2480).
+class Rec { s: string = "label-string-on-the-heap-".repeat(2); n: number = 0; }
+class Other { unrelated: number = 1; }
+function check(v: string): boolean { return v.startsWith("lab"); }
+function poke(x: any) { x.unrelated = 2; }
+function main() {
+  const o = new Rec();
+  const alias = o;
+  const other = new Other();
+  poke(other);
+  alias.n = 2;
+  let c = 0;
+  for (let i = 0; i < 300000; i++) {
+    if (check(o.s)) c++;
+  }
+  console.log(c, other.unrelated);
+}
+main();

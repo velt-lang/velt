@@ -1,0 +1,105 @@
+// Async closures and generators called with a variable they assign, and the same in values with
+// parts on the heap (#2480). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function opt<T>(x: T): T | null { return x; }
+async function tick() { await new Promise<void>((r) => setTimeout(() => r(), 0)); }
+async function g2(v: string) { await tick(); return v; }
+async function asyncs() {
+  let s = heap("one");
+  const f = async (v: string) => { s = heap("nine"); await tick(); return v; };
+  console.log("async", await f(s), s);
+  let t = heap("one");
+  const g = async (v: string) => { await tick(); t = heap("nine"); await tick(); return v + "|" + t; };
+  console.log("async2", await g(t), t);
+  let o = { x: 1, n: heap("a") };
+  const h = async (v: { x: number; n: string }) => { o = { x: 9, n: heap("z") }; await tick(); return v.x + v.n; };
+  console.log("async obj", await h(o), o.x);
+  let u = heap("one");
+  const pr = g2(u);
+  u = heap("two");
+  console.log("async later", await pr);
+  let w = heap("one");
+  const i = async (v: string) => { await tick(); return v; };
+  const p2 = i(w);
+  w = heap("two");
+  console.log("async caller assigns", await p2, w);
+  async function nestedAsync(v: string) { w = heap("three"); await tick(); return v; }
+  console.log("async nested", await nestedAsync(w), w);
+}
+function gens() {
+  let s = heap("one");
+  const g = function* (v: string) { s = heap("nine"); yield v; yield s; yield v; };
+  console.log("gen", [...g(s)].join(","), s);
+  let t = heap("one");
+  function* h(v: string) { yield v; t = heap("nine"); yield v; yield t; }
+  const it = h(t);
+  t = heap("two");
+  console.log("gen caller", [...it].join(","), t);
+  let o = { x: 1 };
+  const k = function* (v: { x: number }) { o = { x: 9 }; yield v.x; };
+  console.log("gen obj", [...k(o)].join(","), o.x);
+}
+function memory() {
+  for (let i = 0; i < 200; i++) {
+    let s = heap("str" + i);
+    const f = (v: string) => { s = heap("over"); s = heap("again"); const junk = heap("xxxxxxxxxxxxxxxxxxxxxxxx"); return v + junk.length; };
+    const r = f(s);
+    if (i % 100 === 0) console.log("mem", r, s);
+  }
+  let optv: string | null = opt(heap("opt"));
+  const g = (v: string | null) => { optv = null; const j = heap("yyyyyyyyyyyyyyyyyyyyyyy"); return (v ?? "") + j.length; };
+  console.log("mem opt", g(optv), optv);
+  let o = { n: heap("objname") };
+  const h = (v: { n: string }) => { o = { n: heap("zzzzzzz") }; const j = heap("kkkkkkk"); return v.n + j; };
+  console.log("mem obj", h(o), o.n);
+  let a: any = heap("anyval");
+  const i2 = (v: any) => { a = 9; const j = heap("ppppppp"); return String(v) + j; };
+  console.log("mem any", i2(a), a);
+  let u: string | number = heap("u");
+  const k = (v: string | number) => { u = 9; const j = heap("qqqq"); return String(v) + j; };
+  console.log("mem union", k(u), u);
+  let cbs = [heap("cb")];
+  const m = (v: string[]) => { cbs = []; const j = heap("rrr"); return v.join() + j; };
+  console.log("mem arr", m(cbs), cbs.length);
+  let fnv = () => heap("fnval");
+  const n = (v: () => string) => { fnv = () => "new"; return v(); };
+  console.log("mem fn", n(fnv), fnv());
+}
+function fields() {
+  const o = { name: heap("oname"), n: 1 };
+  const f = (v: string) => { o.name = heap("changed"); const j = heap("nnnnn"); return v + j; };
+  console.log("obj field arg", f(o.name), o.name);
+  const f2 = (v: number) => { o.n = 9; return v; };
+  console.log("obj num arg", f2(o.n), o.n);
+  const arr = [heap("e0")];
+  const g = (v: string) => { arr[0] = heap("e9"); const j = heap("oooo"); return v + j; };
+  console.log("elem arg", g(arr[0]), arr[0]);
+  const m = new Map<string, string>([["k", heap("mv")]]);
+  const h = (v: string) => { m.set("k", heap("mz")); const j = heap("zzzz"); return v + j; };
+  console.log("map arg", h(m.get("k")!), m.get("k"));
+  let nest = { i: { s: heap("deep") } };
+  const d = (v: string) => { nest.i = { s: heap("deep2") }; const j = heap("aaaa"); return v + j; };
+  console.log("nested field", d(nest.i.s), nest.i.s);
+  let nest2 = { i: { s: heap("deep") } };
+  const d2 = (v: { s: string }) => { nest2 = { i: { s: heap("deep2") } }; const j = heap("aaaa"); return v.s + j; };
+  console.log("nested obj var", d2(nest2.i), nest2.i.s);
+  let tup: [string, number] = [heap("t0"), 1];
+  const e = (v: string) => { tup = [heap("t9"), 2]; const j = heap("bbbb"); return v + j; };
+  console.log("tuple part", e(tup[0]), tup[0]);
+}
+class Rec { name: string; constructor() { this.name = heap("rec"); } }
+function classFields() {
+  const r = new Rec();
+  const f = (v: string) => { r.name = heap("changed"); const j = heap("nnnnn"); return v + j; };
+  console.log("class field arg", f(r.name), r.name);
+  let r2 = new Rec();
+  const g = (v: string) => { r2 = new Rec(); r2.name = heap("zzz"); const j = heap("nnnnn"); return v + j; };
+  console.log("class var field arg", g(r2.name), r2.name);
+}
+function methods() {
+  let t = heap("one");
+  const o = { go(v: string) { t = heap("nine"); return v; } };
+  console.log("obj method", o.go(t), t);
+}
+memory(); fields(); classFields(); gens(); methods();
+asyncs().then(() => console.log("done"));

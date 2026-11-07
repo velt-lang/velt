@@ -1,0 +1,77 @@
+// A field read as an argument while the callee replaces it through another reference, and names
+// bound to a captured variable (#2480). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function bindings() {
+  let s = heap("a");
+  const f = () => { s = heap("b"); };
+  const t = s;
+  f();
+  const j = heap("jjjj");
+  console.log("const copy", t, s, j);
+  let o = { n: heap("o"), x: 1 };
+  const g = () => { o = { n: heap("p"), x: 2 }; };
+  const c = o;
+  const { n, x } = o;
+  g();
+  const k = heap("kkkk");
+  console.log("destructure", c.n, c.x, n, x, o.n, k);
+  let p: [string, number] = [heap("t"), 1];
+  const h = () => { p = [heap("u"), 2]; };
+  const [a, b] = p;
+  h();
+  const m = heap("mmmm");
+  console.log("tuple", a, b, p[0], m);
+}
+class Node2 {
+  name: string;
+  next: Node2 | null = null;
+  cb: (v: string) => string;
+  constructor(name: string) {
+    this.name = name;
+    this.cb = (v) => v;
+  }
+  callCb() { return this.cb(this.name); }
+}
+function classFields() {
+  const r = new Node2(heap("rec"));
+  r.cb = (v) => { r.name = heap("changed"); const j = heap("nnnnnnn"); return v + j; };
+  console.log("this field arg", r.callCb(), r.name);
+  const r2 = new Node2(heap("rec2"));
+  const shared = r2;
+  const f = (v: string) => { shared.name = heap("zzz"); const j = heap("nnnnnnn"); return v + j; };
+  console.log("alias field arg", f(r2.name), r2.name);
+  const r3 = new Node2(heap("rec3"));
+  r3.next = new Node2(heap("next"));
+  const g = (v: string) => { r3.next = null; const j = heap("nnnnnnn"); return v + j; };
+  console.log("next field arg", g(r3.next.name), r3.next === null);
+}
+function maps() {
+  const m = new Map<string, string>();
+  m.set("k", heap("v"));
+  const get = () => m.get("k");
+  const f = (v: string | undefined) => { m.delete("k"); const j = heap("yyyyy"); return String(v) + j; };
+  console.log("map val", f(get()), m.size);
+}
+function objField() {
+  const o = { s: heap("orig"), t: { u: heap("inner") } };
+  const f = (v: string) => { o.s = heap("over"); const j = heap("yyyyyyyy"); return v + j; };
+  console.log("obj field", f(o.s), o.s);
+  const g = (v: { u: string }) => { o.t = { u: heap("inner2") }; const j = heap("yyyyyyyy"); return v.u + j; };
+  console.log("obj part", g(o.t), o.t.u);
+  const h = (v: string) => { o.t.u = heap("inner3"); const j = heap("yyyyyyyy"); return v + j; };
+  console.log("obj deep", h(o.t.u), o.t.u);
+}
+function arr() {
+  let xs = [heap("a")];
+  const f = (v: string) => { xs = []; const j = heap("yyyyyyyy"); return v + j; };
+  console.log("elem of replaced array", f(xs[0]), xs.length);
+  const ys = [heap("a")];
+  const g = (v: string) => { ys.length = 0; const j = heap("yyyyyyyy"); return v + j; };
+  console.log("elem of emptied array", g(ys[0]), ys.length);
+}
+let modR = { s: heap("mod") };
+function modReplace(v: string) { modR = { s: heap("new") }; const j = heap("yyyyyyyy"); return v + j; }
+function modField(v: string) { modR.s = heap("newer"); const j = heap("yyyyyyyy"); return v + j; }
+bindings(); classFields(); maps(); objField(); arr();
+console.log("module part", modReplace(modR.s), modR.s);
+console.log("module part 2", modField(modR.s), modR.s);

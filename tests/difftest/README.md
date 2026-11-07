@@ -128,3 +128,7 @@ Differences between the languages that a program must avoid (the generator does 
   runtime: only `await` calls directly, never store a promise, and pass to `Promise.all` only
   calls that neither print nor await. Async parameters are moved into the future, so an async
   function must not modify its arguments (the caller would see it in JS only).
+
+**Closure arguments.** `closure_arg_diff.mjs` is a script of its own: each kind of value through each
+way of calling a closure or nested function with a variable or field it assigns, debug and release
+with the debug allocator's checks on (`node tests/difftest/closure_arg_diff.mjs <velt binary>`).

@@ -1,0 +1,44 @@
+// A promise read from a place a sync callee replaces: the parameter keeps the promise it was
+// passed. Velt printed nothing and exited 0 (#2480). Output checked against Node.
+async function tick() { await new Promise<void>((r) => setTimeout(() => r(), 0)); }
+async function later(s: string) { await tick(); return s; }
+class Box { p: Promise<string> = later("field one"); }
+async function variable() {
+  let p = later("one");
+  const h = (q: Promise<string>) => { p = later("two"); return q.then((v) => v + "!"); };
+  console.log("variable", await h(p));
+  console.log("then", await p);
+}
+async function field() {
+  const b = new Box();
+  const alias = b;
+  const h = (q: Promise<string>) => { alias.p = later("field two"); return q.then((v) => v + "!"); };
+  console.log("field", await h(b.p));
+  console.log("then", await b.p);
+}
+async function all() {
+  let p = later("a");
+  const h = (q: Promise<string>) => { p = later("b"); return Promise.all([q, p]); };
+  console.log("all", (await h(p)).join());
+}
+async function kept() {
+  let p = later("kept");
+  const out: Promise<string>[] = [];
+  const h = (q: Promise<string>) => { p = later("next"); out.push(q); };
+  h(p);
+  console.log("kept", await out[0], await p);
+}
+async function order() {
+  let p = later("first");
+  const f = (a: Promise<string>, b: Promise<string>) => Promise.all([a, b]);
+  console.log("order", (await f(p, (p = later("second")))).join());
+}
+async function main_() {
+  await variable();
+  await field();
+  await all();
+  await kept();
+  await order();
+  console.log("done");
+}
+main_();

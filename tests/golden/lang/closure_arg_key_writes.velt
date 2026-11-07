@@ -1,0 +1,27 @@
+// Writes by a computed key in a generic body, with no write through `any` in the program: only the
+// key write tells the call that this field can change, from a closure or a direct named callee
+// (#2480). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxx").length; }
+type KC = { kc: string };
+type KD = { kd: string; n: number };
+type KE = { ke: string };
+function setKey<T, K extends keyof T>(o: T, k: K, v: T[K]) { o[k] = v; }
+const HD: KD[] = [{ kd: heap("old"), n: 1 }];
+const HE: KE[] = [{ ke: heap("old") }];
+function byKey(v: string) { setKey(HD[0], "kd", heap("new")); junk(); return v + "!"; }
+function byKeyHeld(v: string) { setKey(HE[0], "ke", heap("new")); junk(); return v + "!"; }
+function closure_() {
+  const o: KC = { kc: heap("old") }; const alias = o;
+  const f = (v: string) => { setKey(alias, "kc", heap("new")); junk(); return v; };
+  console.log("closure", f(o.kc), o.kc);
+}
+function direct() {
+  const o = HD[0];
+  console.log("direct", byKey(o.kd), o.kd);
+}
+function inArray() {
+  const e = HE[0];
+  console.log("in an array", byKeyHeld(e.ke), e.ke);
+}
+closure_(); direct(); inArray();

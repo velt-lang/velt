@@ -1,0 +1,125 @@
+// A parameter stays what it was passed while the closure overwrites its variable (#2480): the text
+// in use is not freed under it. Strings are long enough to live on the heap.
+function heap(a: string) { return a + "-".repeat(40); }
+function opt<T>(x: T): T | null { return x; }
+function sumCodes(s: string) { let n = 0; for (let i = 0; i < s.length; i++) n += s.charCodeAt(i); return n; }
+function walk() {
+  let s = heap("first");
+  const f = (v: string) => {
+    let n = 0;
+    for (let i = 0; i < v.length; i++) {
+      n += v.charCodeAt(i);
+      s = heap("zzzzzzzzzzzz" + i);
+      const junk = heap("yyyyyyyyyyyy" + i);
+      n += junk.length - junk.length;
+    }
+    return n + "/" + v.length;
+  };
+  const want = sumCodes(s) + "/" + s.length;
+  console.log("walk", f(s) === want, s.length);
+}
+function binding() {
+  let s = heap("first");
+  const f = (v: string) => {
+    const w = v;
+    const u = v.slice(0, 5);
+    s = heap("second");
+    s = heap("third");
+    const junk = heap("xxxxxxxxxxxxxxxxx");
+    return w + "|" + u + "|" + v + "|" + junk.length;
+  };
+  console.log("binding", f(s));
+}
+function iterate() {
+  let s = heap("abc");
+  const f = (v: string) => {
+    let out = "";
+    for (const c of v) {
+      out += c;
+      s = heap("q" + out);
+      const junk = heap("xxxxxxxxxxxxxxxxx");
+      if (junk.length === 0) break;
+    }
+    return out;
+  };
+  console.log("for of text", f(s).length, s.length);
+}
+function objects() {
+  let o = { a: heap("a"), b: heap("b") };
+  const f = (v: { a: string; b: string }) => {
+    const a = v.a;
+    o = { a: heap("c"), b: heap("d") };
+    o = { a: heap("e"), b: heap("f") };
+    const junk = heap("xxxxxxxxxxxxxxxxx");
+    return a + v.b + junk.length;
+  };
+  console.log("object", f(o));
+  let u: string | null = opt(heap("u"));
+  const g = (v: string | null) => {
+    const a = v;
+    u = null;
+    const junk = heap("xxxxxxxxxxxxxxxxx");
+    return String(a) + String(v) + junk.length;
+  };
+  console.log("optional", g(u));
+  let t: [string, string] = [heap("t0"), heap("t1")];
+  const h = (v: [string, string]) => {
+    t = [heap("t2"), heap("t3")];
+    const junk = heap("xxxxxxxxxxxxxxxxx");
+    return v[0] + v[1] + junk.length;
+  };
+  console.log("tuple", h(t));
+  let x: any = heap("any");
+  const i = (v: any) => {
+    x = heap("other");
+    x = 9;
+    const junk = heap("xxxxxxxxxxxxxxxxx");
+    return String(v) + junk.length;
+  };
+  console.log("any", i(x));
+}
+function loopFree() {
+  let s = heap("start");
+  let total = 0;
+  const f = (v: string) => { s = heap("n" + total); const junk = heap("xxxxxxxxxxxxxxxxx"); total += v.length + junk.length - junk.length; return v; };
+  for (let i = 0; i < 2000; i++) {
+    const r = f(s);
+    if (r.length === 0) break;
+  }
+  console.log("loop", total, s.length);
+}
+class Named { name: string; constructor(n: string) { this.name = n; } }
+function fieldFree() {
+  const a = new Named(heap("field"));
+  const alias = a;
+  const f = (v: string) => {
+    let n = 0;
+    for (let i = 0; i < v.length; i++) {
+      n += v.charCodeAt(i);
+      alias.name = heap("zzzzzzzzzzzz" + i);
+      const junk = heap("yyyyyyyyyyyy" + i);
+      n += junk.length - junk.length;
+    }
+    return n + "/" + v.length;
+  };
+  const want = sumCodes(a.name) + "/" + a.name.length;
+  console.log("class field walk", f(a.name) === want);
+}
+// The parameter's text stays alive under the debug allocator.
+function freedByMethod() {
+  let s = heap("one");
+  const o = { go(v: string) { s = heap("nine"); const junk = heap("xxxxxxxxxxxxxxxxxxxx"); return v + junk.length; } };
+  console.log("object method", o.go(s), s);
+}
+function freedByImmediateCall() {
+  let s = heap("one");
+  const r = ((v: string) => { s = heap("nine"); const junk = heap("xxxxxxxxxxxxxxxxxxxx"); return v + junk.length; })(s);
+  console.log("immediate call", r, s);
+}
+function freedWithDefault() {
+  let s = heap("one");
+  const f = (v: string, w: string = "dflt") => { s = heap("nine"); const junk = heap("xxxxxxxxxxxxxxxxxxxx"); return v + w + junk.length; };
+  console.log("default parameter", f(s), s);
+}
+walk(); binding(); iterate(); objects(); loopFree(); fieldFree();
+freedByMethod(); freedByImmediateCall(); freedWithDefault();

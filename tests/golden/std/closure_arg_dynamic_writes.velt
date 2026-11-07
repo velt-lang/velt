@@ -1,0 +1,47 @@
+// Writes a scan of the source cannot name: through `any`, Reflect, Object.assign and a key, from a
+// closure or a direct named callee, each on a field nothing else names. The callee keeps what it
+// was passed (#2480). Output checked against Node.
+function heap(a: string) { return a + "-".repeat(40); }
+function junk() { return heap("xxxxxxxxxxxxxxxxxxxx").length; }
+class CA { ca: string = heap("old"); }
+class CR { cr: string = heap("old"); }
+class CO { co: string = heap("old"); }
+class DA { da: string = heap("old"); }
+class DR { dr: string = heap("old"); }
+class DK { dk: string = heap("old"); }
+class DF { df: string = heap("old"); }
+class DO { dob: string = heap("old"); }
+function closures() {
+  const a = new CA(); const aa: any = a;
+  const f = (v: string) => { aa.ca = heap("new"); junk(); return v; };
+  console.log("closure any", f(a.ca), a.ca);
+  const r = new CR(); const ra = r;
+  const g = (v: string) => { Reflect.set(ra, "cr", heap("new")); junk(); return v; };
+  console.log("closure Reflect.set", g(r.cr), r.cr);
+  const o = new CO(); const oa = o;
+  const h = (v: string) => { Object.assign(oa, { co: heap("new") }); junk(); return v; };
+  console.log("closure Object.assign", h(o.co), o.co);
+}
+const HA = [new DA()];
+const HR = [new DR()];
+const HK = [new DK()];
+const HF = [new DF()];
+const HO = [new DO()];
+function byAny(v: string) { const o: any = HA[0]; o.da = heap("new"); junk(); return v + "!"; }
+function byReflect(v: string) { Reflect.set(HR[0], "dr", heap("new")); junk(); return v + "!"; }
+function byKey(v: string, k: string) { const o: any = HK[0]; o[k] = heap("new"); junk(); return v + "!"; }
+function byForIn(v: string) { const o: any = HF[0]; for (const k in o) { o[k] = heap("new"); } junk(); return v + "!"; }
+function byAssign(v: string) { Object.assign(HO[0], { dob: heap("new") }); junk(); return v + "!"; }
+function directCallees() {
+  const a = HA[0];
+  console.log("direct any", byAny(a.da), a.da);
+  const r = HR[0];
+  console.log("direct Reflect.set", byReflect(r.dr), r.dr);
+  const k = HK[0];
+  console.log("direct any key", byKey(k.dk, "dk"), k.dk);
+  const f = HF[0];
+  console.log("direct for in", byForIn(f.df), f.df);
+  const o = HO[0];
+  console.log("direct Object.assign", byAssign(o.dob), o.dob);
+}
+closures(); directCallees();

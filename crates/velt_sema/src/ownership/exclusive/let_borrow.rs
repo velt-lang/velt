@@ -10,12 +10,14 @@
 
 use velt_common::{Diagnostic, Span};
 
-use crate::hir::{Block, Expr, ExprKind as E, LocalDef, PatKind, Stmt, StmtKind as S, UseMode};
+use crate::hir::{
+    Block, Callee, Expr, ExprKind as E, LocalDef, PatKind, Stmt, StmtKind as S, UseMode,
+};
 use crate::visit::{self, VisitMut};
 
 use super::iteration::contains;
 use super::this_alias;
-use super::uses::{Access, Collector};
+use super::uses::{Access, Collector, Place, Use};
 
 /// Check every by-reference `const` in function body `body` (nested blocks included).
 pub(super) fn check_body(
@@ -121,7 +123,11 @@ fn check_let(
             changed_while_borrowed("this", Access::Unique, span, name, "this", at)
         });
     }
-    col.nested_stmts(rest, value, &mut uses);
+    let mut value = value;
+    col.nested_stmts(rest, value.as_deref_mut(), &mut uses);
+    if let Some(u) = changed_by_function_value(col, rest, value, &place) {
+        uses.push(u);
+    }
     let hit = uses
         .into_iter()
         .find(|u| u.access != Access::Shared && contains(&u.place, &place))?;
@@ -194,4 +200,62 @@ fn changed_while_borrowed(
     .with_note(format!(
         "`{name}` is the value stored in `{text}`, not a copy; declare `{name}` after the change, or copy the value with `.clone()`"
     ))
+}
+
+/// A call through a function value given what owns `place` (`const x = a.b; g(a)`): its params read
+/// as borrows however the function value changes them, as it may replace `a.b`.
+fn changed_by_function_value(
+    col: &Collector,
+    rest: &mut [Stmt],
+    value: Option<&mut Expr>,
+    place: &Place,
+) -> Option<Use> {
+    let mut v = ValueCalls {
+        col,
+        place,
+        hit: None,
+    };
+    for s in rest {
+        visit::stmt(s, &mut v);
+    }
+    if let Some(e) = value {
+        visit::expr(e, &mut v);
+    }
+    v.hit
+}
+
+struct ValueCalls<'c, 'a, 'm> {
+    col: &'c Collector<'a, 'm>,
+    place: &'c Place,
+    hit: Option<Use>,
+}
+
+impl VisitMut for ValueCalls<'_, '_, '_> {
+    fn expr(&mut self, e: &mut Expr) {
+        let E::Call {
+            callee: Callee::Indirect(_),
+            args,
+        } = &e.kind
+        else {
+            return;
+        };
+        for a in args {
+            let Some((p, _)) = self.col.place_of(a) else {
+                continue;
+            };
+            let owner = p.proj.len() < self.place.proj.len() && contains(&p, self.place);
+            if owner && self.hit.is_none() {
+                self.hit = Some(Use {
+                    place: p,
+                    access: Access::Unique,
+                    span: a.span,
+                    text: self.col.text(a),
+                    captured: false,
+                    capture: None,
+                    identity: false,
+                    inside: false,
+                });
+            }
+        }
+    }
 }
