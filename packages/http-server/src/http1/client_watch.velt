@@ -15,6 +15,7 @@
 
 import { TcpStream } from "velt/net";
 import { AbortController, AbortSignal } from "velt/task";
+import { delay } from "velt/time";
 import { BodyReader } from "./body_reader";
 import { BODY_CHUNKED, BODY_LENGTH, Head } from "./head";
 import { Parser } from "./parser";
@@ -231,11 +232,7 @@ export class ClientWatch {
         if (n == null) {
           // In Node the end of the input is an event of its own, after the promises that were
           // ready: what the handler does without really waiting comes first.
-          await new Promise<void>((resolve) => {
-            setImmediate(() => {
-              resolve();
-            });
-          });
+          await delay(0);
           if (target.stillAnswering()) {
             this.over = true;
             await target.closedEarly(!this.body.arrived());
@@ -246,11 +243,7 @@ export class ClientWatch {
           // A wake with nothing to read, again: the poll ends, or what the handler wrote in it
           // would never be sent while this goes round.
           if (woken) {
-            await new Promise<void>((resolve) => {
-              setImmediate(() => {
-                resolve();
-              });
-            });
+            await delay(0);
           }
           if (!(await this.conn.readableWithin(-1, stop))) {
             return;
