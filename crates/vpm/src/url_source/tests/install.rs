@@ -293,8 +293,20 @@ fn strip_and_path_choose_a_directory_whose_links_stay_inside_it() {
     ]);
     s.put("/leaky.tar.gz", Body::Bytes(leaky.clone()));
     let app = e.app(&dep(&s.url("/leaky.tar.gz"), &leaky, ", path: \"pkg\""), "");
-    let err = e.install(&app).unwrap_err();
-    assert!(err.contains("points out of that part"), "{err}");
+    if cfg!(windows) {
+        // An archive's links are written as files holding their target there: reading through
+        // one gives its text, never the file outside, and the install says so of each.
+        let installed = e.install(&app).unwrap();
+        assert!(
+            (installed.warnings.iter())
+                .any(|w| w.contains("`pkg/src/secret.velt` is a symbolic link")),
+            "{:?}",
+            installed.warnings
+        );
+    } else {
+        let err = e.install(&app).unwrap_err();
+        assert!(err.contains("points out of that part"), "{err}");
+    }
 }
 
 #[test]

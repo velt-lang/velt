@@ -164,6 +164,8 @@ fn is_racy(newest: u128) -> bool {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_or(0, |d| d.as_nanos());
+    #[cfg(test)]
+    let now = now + tests::CLOCK_AHEAD.with(std::cell::Cell::get).as_nanos();
     newest + RACY.as_nanos() > now
 }
 

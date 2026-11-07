@@ -6,6 +6,10 @@ thread_local! {
     /// Stamp trees made just now, which [`is_racy`] otherwise leaves unstamped: these tests make
     /// a tree and stamp it at once, with no sleep.
     pub(super) static NO_RACY_WINDOW: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+    /// How far ahead of the system clock [`is_racy`] takes now to be, to see a tree as it is
+    /// later without setting its times back.
+    pub(super) static CLOCK_AHEAD: std::cell::Cell<std::time::Duration> =
+        const { std::cell::Cell::new(std::time::Duration::ZERO) };
 }
 
 struct Tree {
@@ -153,21 +157,12 @@ fn a_tree_changed_just_now_is_not_stamped() {
     NO_RACY_WINDOW.with(|c| c.set(false));
     sum(&t, None).unwrap();
     assert!(!stamp_path(&t.loc, &t.dir).exists());
-    // The same tree, its times an hour old, is.
-    let earlier = std::time::SystemTime::now() - std::time::Duration::from_secs(3600);
-    for f in ["package.velt", "src/lib.velt"] {
-        std::fs::File::options()
-            .write(true)
-            .open(t.dir.join(f))
-            .unwrap()
-            .set_modified(earlier)
-            .unwrap();
-    }
-    // Inode change times can't be set back, so only where they don't count.
-    if cfg!(not(unix)) {
-        sum(&t, None).unwrap();
-        assert!(stamp_path(&t.loc, &t.dir).exists());
-    }
+    // The same tree an hour later is. The clock moves rather than the tree's times: inode change
+    // times can't be set back, and on Windows the directories' times would still be now.
+    CLOCK_AHEAD.with(|c| c.set(std::time::Duration::from_secs(3600)));
+    sum(&t, None).unwrap();
+    CLOCK_AHEAD.with(|c| c.set(std::time::Duration::ZERO));
+    assert!(stamp_path(&t.loc, &t.dir).exists());
 }
 
 /// `velt install --locked` reads every byte: a forged stamp is not believed.
