@@ -125,5 +125,16 @@ fn main() {
             }
         }
     }
+    // Combining marks, each call with a string of its own, as in the Velt program.
+    let marks = "\u{301}\u{323}".repeat(50000);
+    for k in 1..=3i64 {
+        let other = "\u{323}\u{301}".repeat(50000);
+        let order = match collate(&marks, &other) {
+            Ordering::Less => -1,
+            Ordering::Equal => 0,
+            Ordering::Greater => 1,
+        };
+        sum = sum * 3 % 1000003 + order * k;
+    }
     println!("{sum}");
 }
