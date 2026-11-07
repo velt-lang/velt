@@ -194,6 +194,14 @@ jobs:
         run: >-
           cargo build --workspace --exclude xtask --lib --bins --test golden --test packages
           --test example_apps
+      # The C bundles the tests below link, each built once before them, as `cargo xtask check`
+      # does before the goldens (`bundle_builds` in crates/xtask/src/zig.rs): a cold build of
+      # SQLite takes longer than the 120 s the golden harness gives a build (#2347).
+      - name: C bundles
+        if: needs.pr-plan.outputs.windows_zig == 'true'
+        shell: bash
+        working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+        run: (cd packages/sqlite && ../../target/debug/velt native build)
       - name: package tests (${{ needs.pr-plan.outputs.windows_packages }})
         if: needs.pr-plan.outputs.windows_packages != ''
         shell: bash

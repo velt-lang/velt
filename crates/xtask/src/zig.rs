@@ -9,6 +9,10 @@
 //! they run. The tests that check through zig for every target are another matter: the
 //! `c-headers` job runs them (crates/xtask/src/c_headers.rs, `VELT_ZIG_TESTS`).
 
+use std::path::Path;
+use std::process::Command;
+
+use crate::check::{exe, target_dir};
 use crate::plan::{Goldens, Plan, Veltc};
 
 /// The repository's packages with C `sources` (`packages/<name>/`).
@@ -45,6 +49,32 @@ pub fn goldens(plan: &Plan) -> bool {
         }),
         Goldens::None => false,
     }
+}
+
+/// The steps that build the C bundles the plan's goldens link, before the goldens start: in each
+/// of [`PACKAGES`], `velt native build` writes `target/velt-native/<host>`, where a dependent's
+/// build looks for it and finds it current. Its key covers neither the package's path nor the
+/// profile, so the debug and release builds of a golden use it, and so does a build that reached
+/// the package by its canonical path. A step has no time limit, while the golden harness gives
+/// each build 120 s to catch hangs, and a cold build of SQLite on a Windows shard takes longer
+/// (#2347). With the bundle cache warm, a step only hashes the sources.
+pub fn bundle_builds(root: &Path, plan: &Plan) -> Vec<(String, Command)> {
+    if !goldens(plan) {
+        return vec![];
+    }
+    let velt = target_dir(root).join("debug").join(exe("velt"));
+    (PACKAGES.iter())
+        .map(|p| {
+            let mut build = Command::new(&velt);
+            build
+                .args(["native", "build"])
+                .current_dir(root.join("packages").join(p));
+            (
+                format!("C bundle of packages/{p}, before the goldens"),
+                build,
+            )
+        })
+        .collect()
 }
 
 /// Whether the test file or golden `path` builds C `sources`: a test of one of [`PACKAGES`] or
@@ -153,6 +183,17 @@ mod tests {
             ] {
                 assert!(action.contains(&named), "the zig action names no {named}");
             }
+        }
+    }
+
+    /// The pull request's Windows job builds each package's C bundle before its tests, as the
+    /// gate does before the goldens ([`bundle_builds`]).
+    #[test]
+    fn the_windows_pull_request_job_builds_each_c_bundle_first() {
+        let ci = std::fs::read_to_string(root().join(".github/workflows/ci.yml")).expect("ci.yml");
+        for p in PACKAGES {
+            let step = format!("(cd packages/{p} && ../../target/debug/velt native build)");
+            assert!(ci.contains(&step), "ci.yml has no `{step}`");
         }
     }
 

@@ -721,3 +721,36 @@ fn zig_is_not_selected_for_unrelated_changes() {
         assert!(!crate::zig::goldens(&plan(&[path])), "{path}");
     }
 }
+
+/// The goldens that build C `sources` find each bundle built by a step before them, in the
+/// package's directory, where their builds look; other goldens build none.
+#[test]
+fn the_c_bundles_are_built_before_the_goldens_that_link_them() {
+    let root = std::path::Path::new("/repo");
+    let velt = crate::check::target_dir(root)
+        .join("debug")
+        .join(crate::check::exe("velt"));
+    for plan in [
+        Plan::everything("--full"),
+        plan(&["examples/apps/todo-api/demo_sqlite.velt"]),
+    ] {
+        let builds = crate::zig::bundle_builds(root, &plan);
+        assert_eq!(builds.len(), crate::zig::PACKAGES.len());
+        for ((_, build), p) in builds.iter().zip(crate::zig::PACKAGES) {
+            assert_eq!(build.get_program(), velt.as_os_str());
+            let args: Vec<_> = build.get_args().collect();
+            assert_eq!(args, ["native", "build"]);
+            let dir = root.join("packages").join(p);
+            assert_eq!(build.get_current_dir(), Some(dir.as_path()));
+        }
+    }
+    for path in [
+        "tests/golden/lang/errors/std_moved_modules.velt",
+        "bench/sqlite/engine.velt",
+    ] {
+        assert!(
+            crate::zig::bundle_builds(root, &plan(&[path])).is_empty(),
+            "{path}"
+        );
+    }
+}
