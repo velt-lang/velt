@@ -103,8 +103,30 @@ fn each_construct_is_found_where_live_code_has_it() {
             &[IndexCheck],
         ),
         (
-            "a class: the format slot of its table",
-            "class P { x = 1; }\nfunction main() { const p = new P(); if (p.x == 2) { return; } }",
+            "a class converted to any: the format slot of its table",
+            "class P { x = 1; }\nfunction main() { const a: any = new P(); if (a == 2) { return; } }",
+            &[Format],
+        ),
+        (
+            "a struct converted to any: the format slot of its table",
+            "struct P { v: u32; }\nfunction main() { const p: P = { v: 1 }; const a: any = p; \
+             if (a == 2) { return; } }",
+            &[Format],
+        ),
+        (
+            "a class converted to an interface: the format slot of its table",
+            "interface I { f(): void; }\nclass P implements I { x = 1; f() { } }\n\
+             function main() { const i: I = new P(); i.f(); }",
+            &[Format],
+        ),
+        (
+            "a class thrown and not caught",
+            "class P { x = 1; }\nfunction main() { throw new P(); }",
+            &[Format],
+        ),
+        (
+            "a class printed",
+            "class P { x = 1; }\nfunction main() { console.log(new P()); }",
             &[Format],
         ),
         (
@@ -170,6 +192,21 @@ fn each_construct_is_found_where_live_code_has_it() {
 fn a_program_with_no_integer_has_no_construct() {
     let (present, _) = live("function main() { console.log(\"hi\"); }");
     assert_eq!(present, 0);
+}
+
+/// A class's or struct's table is built only where something can format it (`velt_vir`
+/// `Cx::format_demanded`), so the type alone demands nothing (#2513).
+#[test]
+fn a_class_or_struct_nothing_formats_has_no_construct() {
+    for src in [
+        "struct P { v: u32; }\n\
+         function main() { const p: P = { v: 1 }; console.log(p.v > 0); }",
+        "class P { v: u32 = 1; }\nfunction main() { const p = new P(); console.log(p.v > 0); }",
+        "class P { v: u32 = 1; }\nclass Q extends P { w: i64 = 2; }\n\
+         function main() { const p: P = new Q(); console.log(p.v > 0); }",
+    ] {
+        assert_eq!(live(src).0, 0, "{src}");
+    }
 }
 
 /// The program's own code is live anyway, so a construct can't show this: the row asserts that

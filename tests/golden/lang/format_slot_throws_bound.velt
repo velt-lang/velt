@@ -1,0 +1,16 @@
+// `C.f` throws what its interface declares, known only once inference has run: the report of it
+// thrown and not caught needs integer printing, in a program that prints no integer.
+class Code {
+  value: u32 = 1;
+}
+interface Task {
+  run(): void throws Code;
+}
+class Quiet implements Task {
+  run(): void {}
+}
+
+function main() {
+  new Quiet().run();
+  console.log("done");
+}

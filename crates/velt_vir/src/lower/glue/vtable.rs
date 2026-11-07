@@ -203,7 +203,11 @@ impl Cx<'_> {
         }
         entries.push((SLOT_DROP, self.func(Work::Glue(Glue::ObjDrop, cls))));
         entries.push((SLOT_CLONE, self.func(Work::Glue(Glue::ObjClone, cls))));
-        entries.push((SLOT_FORMAT, self.func(Work::Glue(Glue::ObjFormat, cls))));
+        // Nothing dispatches it in a program that formats no object, and its glue may need hooks
+        // that program doesn't have.
+        if self.format_demanded() {
+            entries.push((SLOT_FORMAT, self.func(Work::Glue(Glue::ObjFormat, cls))));
+        }
         entries.push((SLOT_TRANSFER, self.func(Work::Glue(Glue::ObjTransfer, cls))));
         let name = self.type_name(cls);
         let mut entries: Vec<(i128, Const)> = entries

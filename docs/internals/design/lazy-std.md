@@ -136,8 +136,12 @@ reaches yet; a float hook found there is left to the runtime's printer, as in st
 
 std's integer hooks are checked only where *live* code has a construct whose lowering calls them
 (#2161 step 2; velt_common `hook_demand.rs`): a template or `String()` of an integer, the formatting
-glue of a type that may print one (`console.log`, a class's table), an array index (its
-out-of-bounds message) or an `any`. Live code is a superset of what lowering builds: the program's
+glue of a type that may print one (`console.log`, a conversion to an interface, whose table holds
+that glue), an array index (its out-of-bounds message) or an `any`. A class's own table has its
+`format` slot only where the program formats (`Cx::format_demanded`), so a class or struct alone
+demands nothing. A function may get a `throws` that needs formatting from what it implements
+declares, which is known only after the passes, too late to load a hook: the check then runs once
+more with `Format` assumed (`thrown_needs_format`). Live code is a superset of what lowering builds: the program's
 own and the std code it reaches (`velt_sema` `body/lazy_std/live.rs`), std's own conversions
 included, which a debug compiler or `VELT_LIVE_CHECK=1` has lowering assert, so hello world checks
 none of std's integer printing.
