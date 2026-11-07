@@ -103,9 +103,8 @@ array's buffer or a module slot, a callee that can run a closure for one in a ce
 field, a callee that can write the field (replaceable.rs: a field written only by its own
 constructor can't be replaced, and a direct callee writes only what its body and what it calls
 directly name). A call through a function value treats a part of another argument the same way:
-`f(r, r.s)` where the callee sets `q.s`. So does a direct call of a function that may change the
-param holding `r` (it is `Owned`, `BorrowMut` or modified), or passes it on to a function value, in
-any expression that names it (`velt_sema::value_params`), itself, through the functions it
+`f(r, r.s)` where the callee sets `q.s`. So does a direct call of a function that passes the param
+holding `r` on to a function value (`velt_sema::value_params`), itself, through the functions it
 calls or closures it makes, or through a method chosen at run time, whose modes are fixed like a
 function value's and which counts as every method of its name, or a constructor `new` runs. A path
 with no field on the way written anywhere, from a variable no closure assigns, is left alone:
