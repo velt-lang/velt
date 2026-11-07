@@ -99,6 +99,7 @@ pub(crate) fn decl_of<'m>(f: &FnInfo<'m>) -> Option<&'m ast::FnSig> {
 /// Check every declaration of a decorator, and every use.
 pub(crate) fn check<'m>(cx: &mut Ctx<'m>) {
     let mut seen = FxHashSet::default();
+    let mut properties = AbstractProperties::default();
     for i in 0..cx.info.len() {
         let d = DefId(i as u32);
         match &cx.info[i] {
@@ -115,7 +116,8 @@ pub(crate) fn check<'m>(cx: &mut Ctx<'m>) {
                     check_declaration(cx, d, module, sig);
                 }
                 if decorated && seen.insert(sig as *const ast::FnSig as usize) {
-                    function_uses(cx, d, module, kind, sig);
+                    let property = properties.has(cx, d, sig);
+                    function_uses(cx, d, module, kind, property, sig);
                 }
             }
             DefInfo::Adt(a) => {
@@ -144,9 +146,17 @@ pub(crate) fn check<'m>(cx: &mut Ctx<'m>) {
     }
 }
 
-fn function_uses<'m>(cx: &mut Ctx<'m>, d: DefId, m: usize, kind: FnKind, sig: &'m ast::FnSig) {
+/// `property`: `sig` is an abstract property's getter ([`AbstractProperties`]).
+fn function_uses<'m>(
+    cx: &mut Ctx<'m>,
+    d: DefId,
+    m: usize,
+    kind: FnKind,
+    property: bool,
+    sig: &'m ast::FnSig,
+) {
     let bit = match kind {
-        _ if abstract_property(cx, d, sig) => FIELD,
+        _ if property => FIELD,
         FnKind::Method | FnKind::Static => METHOD,
         _ => FUNCTION,
     };
@@ -157,21 +167,49 @@ fn function_uses<'m>(cx: &mut Ctx<'m>, d: DefId, m: usize, kind: FnKind, sig: &'
     }
 }
 
-/// Is method `d`, of signature `sig`, the getter of an abstract property (`abstract x: i64;`),
-/// whose decorators are a field's?
-fn abstract_property(cx: &Ctx, d: DefId, sig: &ast::FnSig) -> bool {
-    let decl = cx
-        .fn_info(d)
-        .owner
-        .and_then(|o| cx.adt(o))
-        .and_then(|a| a.decl);
-    decl.is_some_and(|t| {
-        (t.methods.iter()).any(|m| m.is_property && std::ptr::eq(&m.decl.sig, sig))
-    })
+/// The getters of abstract properties (`abstract x: i64;`), whose decorators are a field's: found
+/// for a class the first time one of its decorated methods asks, so a class of many decorated
+/// methods is looked through once.
+#[derive(Default)]
+struct AbstractProperties {
+    /// The classes looked through.
+    owners: FxHashSet<DefId>,
+    /// Their abstract properties' getters' signatures.
+    getters: FxHashSet<usize>,
+}
+
+impl AbstractProperties {
+    /// Is method `d`, of signature `sig`, such a getter?
+    fn has(&mut self, cx: &Ctx, d: DefId, sig: &ast::FnSig) -> bool {
+        let Some(owner) = cx.fn_info(d).owner else {
+            return false;
+        };
+        if self.owners.insert(owner) {
+            let methods = cx
+                .adt(owner)
+                .and_then(|a| a.decl)
+                .map_or(&[][..], |t| &t.methods);
+            let getters = methods.iter().filter(|m| m.is_property);
+            (self.getters).extend(getters.map(|m| &m.decl.sig as *const ast::FnSig as usize));
+        }
+        self.getters.contains(&(sig as *const ast::FnSig as usize))
+    }
 }
 
 fn type_uses<'m>(cx: &mut Ctx<'m>, d: DefId, m: usize, decl: &'m ast::TypeDecl) {
     uses(cx, m, &decl.decorators, TYPE, Some(DecoratorTarget::Def(d)));
+    // Each field's index by name, the last of a name (a base class's fields come first).
+    let index: rustc_hash::FxHashMap<String, u32> =
+        match decl.fields.iter().any(|f| !f.decorators.is_empty()) {
+            false => Default::default(),
+            true => (cx
+                .adt(d)
+                .map_or(&[][..], |a| &a.fields[..])
+                .iter()
+                .enumerate())
+            .map(|(i, f)| (f.name.clone(), i as u32))
+            .collect(),
+        };
     for f in decl.fields.iter().filter(|f| !f.decorators.is_empty()) {
         // A field named by a computed key (`[k]`) has the name the key resolves to.
         let name = cx
@@ -179,10 +217,7 @@ fn type_uses<'m>(cx: &mut Ctx<'m>, d: DefId, m: usize, decl: &'m ast::TypeDecl) 
             .unwrap_or_else(|_| f.name.name.clone());
         let target = cx.adt(d).and_then(|a| match a.statics.get(&name) {
             Some(g) if f.is_static => Some(DecoratorTarget::Def(*g)),
-            _ => {
-                let i = a.fields.iter().rposition(|x| x.name == name)?;
-                Some(DecoratorTarget::Field(d, i as u32))
-            }
+            _ => Some(DecoratorTarget::Field(d, *index.get(&name)?)),
         });
         // Checked even when an erroneous declaration left the field out (which is reported
         // already): only the record needs it.
