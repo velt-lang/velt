@@ -216,9 +216,7 @@ fn has_nothing_slot(module: &ast::Module) -> bool {
     fn names_nothing(t: &ast::TypeExpr) -> bool {
         match &t.kind {
             ast::TypeExprKind::Union(parts) => parts.iter().any(names_nothing),
-            ast::TypeExprKind::Named { path, .. } => {
-                matches!(path.as_slice(), [id] if id.name == "null" || id.name == "undefined")
-            }
+            ast::TypeExprKind::Null | ast::TypeExprKind::Undefined => true,
             _ => false,
         }
     }
