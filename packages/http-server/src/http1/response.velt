@@ -145,6 +145,7 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
 
   async stream(type?: string): Promise<HttpStream> {
     writeHead(this, -1, type ?? "text/plain; charset=utf-8", -1);
+    this.watch.listen();
     await this.queue();
     return new HttpStream(this);
   }
@@ -156,6 +157,7 @@ export class Http1Response extends HttpResponse implements BodySink, ClientEnd {
   async sse(): Promise<EventStream> {
     this.header("Cache-Control", "no-cache");
     writeHead(this, TYPE_SSE, null, -1);
+    this.watch.listen();
     await this.queue();
     return new EventStream(new HttpStream(this));
   }
