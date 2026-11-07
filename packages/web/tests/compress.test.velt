@@ -9,6 +9,9 @@ import {
   InflateDecoder,
 } from "velt/compress";
 import { BodyStream } from "velt/net/http";
+import { connect } from "velt/net";
+import { channel } from "velt/sync";
+import { timeout } from "velt/task";
 import { describe, expect, it } from "velt/test";
 import { App, compress, Handler } from "../src/lib";
 import { choose, compressible, quality } from "../src/middleware/compress";
@@ -222,6 +225,31 @@ describe("compress", () => {
           ? ""
           : `${first.length}-byte first chunk: the body was never cancelled`,
       ).toBe("");
+    }
+  });
+
+  it("cancels the handler's body when the client goes away over HTTP", async () => {
+    const cancelled = channel<i64>();
+    const h: Handler = async (req: Request) => new Response(
+      new ReadableStream<Uint8Array>({
+        pull: (ctl) => {
+          ctl.enqueue(Uint8Array.fromBytes(bytesOf(TEXT)));
+        },
+        cancel: (reason) => {
+          cancelled.trySend(1);
+        },
+      }),
+      { headers: { "content-type": "text/event-stream" } },
+    );
+    const server = await serve({ port: 0 }, compress()(h));
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write("GET / HTTP/1.1\r\nHost: x\r\nAccept-Encoding: gzip\r\n\r\n");
+      await c.read();
+      c.close();
+      expect(await timeout(cancelled.receive(), 10000)).toBe(1);
+    } finally {
+      await server.shutdown();
     }
   });
 
