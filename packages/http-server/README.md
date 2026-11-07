@@ -225,7 +225,8 @@ request lazily: a handler pays only for what it reads.
   aborts `req.signal`: a source that never ends should listen to it.
 - A `Request` is valid until its handler settles: what the handler read stays readable, but
   reading something new afterwards (in a streamed body or a spawned task) stops the program
-  with a clear error. Read what outlives the handler first (`const url = req.url`).
+  with a clear error. Read what outlives the handler first (`const url = req.url`). Its body stays
+  readable until the response was written, so `new Response(req.body)` echoes it.
 
 `info: ServeInfo` holds what the server knows beyond the request (Deno's `ServeHandlerInfo`):
 `info.remoteAddr` is the client's `NetAddr { transport: "tcp", hostname, port: number }`.
