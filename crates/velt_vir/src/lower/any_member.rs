@@ -67,6 +67,19 @@ impl Cx<'_> {
             || ["call", "apply", "bind"].iter().any(|k| self.any_called(k))
     }
 
+    /// `e`, when it is a call of `Intrinsic::AnyMethodCalled` or `StdUsed`: its value.
+    pub(super) fn std_fact_of(&self, e: &hir::Expr) -> Option<bool> {
+        let hir::ExprKind::Call {
+            callee:
+                hir::Callee::Intrinsic(i @ (hir::Intrinsic::AnyMethodCalled | hir::Intrinsic::StdUsed)),
+            args,
+        } = &e.kind
+        else {
+            return None;
+        };
+        Some(self.std_fact(*i, args.first()?))
+    }
+
     /// `Intrinsic::AnyMethodCalled` or `StdUsed` of `name`: a non-literal argument counts as used.
     pub(super) fn std_fact(&self, i: hir::Intrinsic, name: &hir::Expr) -> bool {
         let hir::ExprKind::Lit(hir::Lit::Str(n)) = &name.kind else {

@@ -84,7 +84,7 @@ impl FnCx<'_, '_> {
                 self.with_temp("<list>", list, span, span, |lw, v| {
                     let held = lw.expr(v, None, Want::Borrow);
                     let inner = hooks::proxy_innermost(ty::Any::of(held)).emit(lw, any, span);
-                    let held = lw.expr(v, None, Want::Borrow);
+                    let held = lw.expr(v, None, Want::Move);
                     hooks::typed_proxy_list(ty::Any::of(inner), ty::Any::of(held))
                         .emit(lw, any, span)
                 })
