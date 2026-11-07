@@ -1,0 +1,17 @@
+// registry-core: a package name kept back for whoever is approved to publish it.
+
+/**
+ * The reserved name or scope `key` (a package's `normalizedName`, or `@scope` for every name in
+ * it), why it is reserved, and the user approved to publish it (null until someone is).
+ */
+export class Reservation {
+  key: string;
+  reason: string;
+  holder: string | null;
+
+  constructor(key: string, reason: string, holder: string | null = null) {
+    this.key = key;
+    this.reason = reason;
+    this.holder = holder;
+  }
+}

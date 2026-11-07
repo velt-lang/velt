@@ -31,6 +31,7 @@ import { publishPathProblem } from "./publish_policy";
 import { Refusal } from "./refusal";
 import { RegistryLimits } from "./registry_limits";
 import { RegistryStores } from "./registry_stores";
+import { checkNotReserved } from "./reserved";
 import { declaredLength, tooLarge, uploadBody } from "./upload_body";
 
 // The archive's entries and checksum, after the checks of its format, checksum and the publish
@@ -164,6 +165,7 @@ async function publishChange(
   authorize(record, name, caller);
   if (record == null) {
     await checkNameIsFree(stores, name);
+    await checkNotReserved(stores, name, caller);
   }
   const index = record?.index.copy() ?? new PackageIndex(name);
   const version = Version.parse(entry.version);
@@ -206,10 +208,11 @@ export async function publish(
     throw tooLarge(limits.maxArchiveBytes);
   }
   // Only a caller who may publish gets a body read: an owner, or for a new name, any user whose
-  // name doesn't collide with a published one's.
-  await ownerOf(stores, req, name);
+  // name doesn't collide with a published one's and isn't reserved for someone else.
+  const caller = await ownerOf(stores, req, name);
   if (!(await isPublished(stores, name))) {
     await checkNameIsFree(stores, name);
+    await checkNotReserved(stores, name, caller);
   }
   const body = await uploadBody(req, limits.maxArchiveBytes);
   const [entries, sum, m] = checkedUpload(limits, req, name, version, body);

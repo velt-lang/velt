@@ -1,0 +1,28 @@
+// registry-core: `NameReservations` in memory, for tests and for trying a registry out.
+
+import { NameReservations } from "../stores/name_reservations";
+import { Reservation } from "../stores/reservation";
+
+/** Reservations in a map, each asked for at `request` with `?name=<name>`. */
+export class MemoryNameReservations implements NameReservations {
+  private reservations: Map<string, Reservation> = new Map();
+  private request: string;
+
+  constructor(request: string) {
+    this.request = request;
+  }
+
+  /** Reserves `key` for `reason`, approved for `holder` when given. */
+  reserve(key: string, reason: string, holder: string | null = null): void {
+    this.reservations.set(key, new Reservation(key, reason, holder));
+  }
+
+  async reservation(key: string): Promise<Reservation | null> {
+    const found = this.reservations.get(key);
+    return found == null ? null : new Reservation(found.key, found.reason, found.holder);
+  }
+
+  howToRequest(name: string): string {
+    return `${this.request}?name=${name}`;
+  }
+}

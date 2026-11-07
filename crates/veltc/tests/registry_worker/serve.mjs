@@ -77,6 +77,13 @@ for (const user of users) {
     .run();
 }
 
+// A reserved name an administrator approved alice for (`vue` and the rest are approved for nobody).
+if (users.some((u) => u.startsWith("alice="))) {
+  await db
+    .prepare("INSERT INTO reserved_names (key, reason, holder) VALUES ('alices_lib', 'a test', 'alice')")
+    .run();
+}
+
 console.log(url.href);
 // Until stdin closes, which also happens when the test is killed: stopping Miniflare stops workerd,
 // which a killed process would leave running.

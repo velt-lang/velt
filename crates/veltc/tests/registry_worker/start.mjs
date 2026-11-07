@@ -1,5 +1,5 @@
 // Starts the registry's Worker under workerd with its real bindings and the migrations its build
-// scaffolded applied (crates/veltc/tests/registry_worker.rs).
+// scaffolded applied, the reserved names among them (crates/veltc/tests/registry_worker.rs).
 
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
@@ -46,9 +46,13 @@ export async function start(modules, dir, vars = {}, outbound = undefined) {
   }));
   const url = await mf.ready;
 
+  // Every migration, in order, as `wrangler d1 migrations apply` does.
   const db = await mf.getD1Database("DB");
-  const schema = readFileSync(join(dir, "migrations/0001_init.sql"), "utf8");
-  const statements = schema.replace(/--.*$/gm, "").split(";").map((s) => s.trim()).filter(Boolean);
-  for (const statement of statements) await db.prepare(statement).run();
+  const migrations = readdirSync(join(dir, "migrations")).filter((f) => f.endsWith(".sql")).sort();
+  for (const file of migrations) {
+    const sql = readFileSync(join(dir, "migrations", file), "utf8");
+    const statements = sql.replace(/--.*$/gm, "").split(";").map((s) => s.trim()).filter(Boolean);
+    for (const statement of statements) await db.prepare(statement).run();
+  }
   return { mf, url };
 }

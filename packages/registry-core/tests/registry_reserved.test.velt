@@ -1,0 +1,73 @@
+// Reserved names (src/server/reserved.velt): a new package whose name or scope the registry keeps
+// back is published only by the user approved for it.
+import { describe, expect, it } from "velt/test";
+import {
+  MemoryBlobStore,
+  MemoryMetadataDb,
+  MemoryNameReservations,
+  RecordingCachePurge,
+  RegistryLimits,
+  reservationKeys,
+} from "../src/lib";
+import { TestRegistry } from "./_registry";
+
+const REQUEST = "https://example.test/request-a-name";
+
+// A registry keeping back `vue` (approved for nobody yet) and `my_lib` (for `holder`).
+function registry(holder: string | null = null): [TestRegistry, MemoryNameReservations] {
+  const reserved = new MemoryNameReservations(REQUEST);
+  reserved.reserve("vue", "a well-known npm package");
+  reserved.reserve("my_lib", "a well-known npm package", holder);
+  const r = new TestRegistry(
+    new RegistryLimits(),
+    new MemoryMetadataDb(),
+    new MemoryBlobStore(),
+    new RecordingCachePurge(),
+    reserved,
+  );
+  return [r, reserved];
+}
+
+describe("reserved names", () => {
+  it("are refused to every user until one is approved, saying how to ask", async () => {
+    const [r, _] = registry();
+    const answer = await r.publish("vue", "1.0.0", r.user("mallory"));
+    expect(answer.status).toBe(403);
+    expect(answer.text).toBe(
+      `cannot publish \`vue\`: \`vue\` is reserved (a well-known npm package); to ask for it: ${REQUEST}?name=vue`,
+    );
+    expect(await r.db.record("vue")).toBeNull();
+    expect(r.blobs.size).toBe(0);
+  });
+
+  it("are published by the approved user, then by the package's owners", async () => {
+    const [r, _] = registry("alice");
+    const alice = r.user("alice");
+    const bob = r.user("bob");
+    // Both spellings are the reservation's.
+    expect((await r.publish("my-lib", "1.0.0", bob)).status).toBe(403);
+    expect((await r.publish("my-lib", "1.0.0", alice)).status).toBe(201);
+    expect((await r.call("PUT", "my-lib/owners/bob", alice)).status).toBe(200);
+    expect((await r.publish("my-lib", "1.1.0", bob)).status).toBe(201);
+  });
+
+  it("are refused on an open registry, where nobody can be the approved user", async () => {
+    const [r, _] = registry("alice");
+    expect((await r.publish("my_lib", "1.0.0")).status).toBe(403);
+    // A name approved for nobody isn't the anonymous caller's either.
+    expect((await r.publish("vue", "1.0.0")).status).toBe(403);
+  });
+
+  it("leave other names, and registries without reservations, alone", async () => {
+    const [r, _] = registry();
+    expect((await r.publish("vuex-ish", "1.0.0", r.user("mallory"))).status).toBe(201);
+    const open = new TestRegistry();
+    expect((await open.publish("vue", "1.0.0", open.user("mallory"))).status).toBe(201);
+  });
+
+  it("are looked up by the normalized name, and by the scope of a scoped one", () => {
+    expect(reservationKeys("my-lib")).toEqual(["my_lib"]);
+    expect(reservationKeys("@vue/core-x")).toEqual(["@vue/core_x", "@vue"]);
+    expect(reservationKeys("@my-org/x")).toEqual(["@my_org/x", "@my_org"]);
+  });
+});

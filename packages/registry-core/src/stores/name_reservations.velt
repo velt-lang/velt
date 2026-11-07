@@ -1,0 +1,13 @@
+// registry-core: names a public registry keeps back (well-known packages elsewhere, its own
+// names), so nobody publishes `vue` or `react` but whoever is approved for it. Optional: a private
+// registry has none. A table on Cloudflare (D1).
+
+import { Reservation } from "./reservation";
+
+/** The registry's reserved names and scopes, and how to ask for one. */
+export interface NameReservations {
+  /** The reservation of `key` (a `normalizedName`, or `@scope`), or null when it is free. */
+  reservation(key: string): Promise<Reservation | null>;
+  /** How to ask for the reserved name `name`, said in the refusal (a URL, or who to write to). */
+  howToRequest(name: string): string;
+}

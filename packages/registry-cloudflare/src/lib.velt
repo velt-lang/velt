@@ -2,5 +2,6 @@
 
 export { CloudflareCachePurge } from "./cloudflare_cache_purge";
 export { D1MetadataDb } from "./d1_metadata_db";
+export { D1NameReservations } from "./d1_name_reservations";
 export { D1TokenAuth } from "./d1_token_auth";
 export { R2BlobStore } from "./r2_blob_store";
