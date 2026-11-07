@@ -1,0 +1,14 @@
+struct_source_view.velt:26:13: error: cannot cast `P | null` as `HasX | null`
+
+struct_source_view.velt:27:35: error: mismatched types
+  = note: expected HasX | null, found P | null
+
+struct_source_view.velt:35:13: error: cannot cast `P` as `HasX`
+
+struct_source_view.velt:36:26: error: mismatched types
+  = note: expected HasX, found P
+
+struct_source_view.velt:38:13: error: cannot cast `CP` as `HasX`
+
+struct_source_view.velt:39:26: error: mismatched types
+  = note: expected HasX, found CP

@@ -11,7 +11,9 @@
 //! read: a required member the object lacks is a `TypeError` there, and a member its layout has
 //! no room for (a marker written through the view) a `TypeError` at the write, where Node goes on.
 //! Without typed proxies an object type holds only its own layout, and the cast stays an
-//! error. A class target stays one too: its methods would run on another type's layout.
+//! error. A class target stays one too: its methods would run on another type's layout. So does
+//! a `struct` source, C structs included (#641): it is a value, so a view would hold a copy, and
+//! a write through the view wouldn't reach it.
 //!
 //! `x as Record<K, V>` has no view: the record holds a copy of the fields, one
 //! `crate::object_copies` reports once the program could tell it from the object.
@@ -46,7 +48,7 @@ impl FnCx<'_, '_> {
             && self.cx.class_of(h.ty).is_none()
             && self.object_members(h.ty).is_some();
         let viewable = record || self.viewable(core);
-        if !viewable || self.cx.ty.has_error(h.ty) {
+        if !viewable || self.cx.ty.has_error(h.ty) || (!record && self.struct_value(h.ty)) {
             return Err(h);
         }
         if !record && !self.objects_overlap(h.ty, core, span, 0) {
@@ -63,6 +65,11 @@ impl FnCx<'_, '_> {
             false => self.cx.object_copies.view_casts.push((span, core)),
         }
         Ok(view)
+    }
+
+    /// Is `t` a declared `struct`, or that one or `null` / `undefined`?
+    fn struct_value(&self, t: TyId) -> bool {
+        self.cx.declared_struct(self.cx.ty.core(t).unwrap_or(t))
     }
 
     /// The record `to` holds a copy of the fields of a `from` (`Copy::record`).
@@ -98,6 +105,9 @@ impl FnCx<'_, '_> {
         exp: TyId,
         span: Span,
     ) -> Result<hir::Expr, hir::Expr> {
+        if self.struct_value(h.ty) {
+            return Err(h);
+        }
         let core = self.cx.ty.core(exp).unwrap_or(exp);
         let from = self.cx.ty.core(h.ty).unwrap_or(h.ty);
         let nullable = self.cx.ty.core(h.ty).is_some();

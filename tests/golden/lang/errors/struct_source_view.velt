@@ -1,0 +1,41 @@
+// A struct is a value, so a view of one would hold a copy, and a write through the view wouldn't
+// reach it: no view has a struct as its source, in a program with typed proxies too (#641).
+
+struct P {
+  x: number;
+  y: number;
+}
+
+declare c struct CP {
+  x: f64;
+  y: f64;
+}
+
+type HasX = { x: number };
+
+class Box {
+  x = 1;
+}
+
+function write(t: HasX): number {
+  t.x = 5;
+  return t.x;
+}
+
+function nullable(n: P | null): number {
+  const o = n as { x: number } | null;
+  const t: { x: number } | null = n;
+  return o == null || t == null ? 0 : o.x + t.x;
+}
+
+function main() {
+  const q = new Proxy<Box>(new Box(), {});
+  console.log(q.x);
+  const p: P = { x: 1, y: 2 };
+  const v = p as { x: number };
+  console.log(v.x, write(p));
+  const c: CP = { x: 1, y: 2 };
+  const w = c as { x: number };
+  console.log(w.x, write(c));
+  console.log(nullable(p));
+}
