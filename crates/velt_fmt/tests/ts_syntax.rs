@@ -541,6 +541,36 @@ fn a_comment_after_a_decorator_stays_before_the_declaration() {
         formats_stably("class E { @a /* x */ @a(1) p() {} }\n"),
         "class E {\n  @a /* x */\n  @a(1)\n  p() {}\n}\n"
     );
+    // Between `export` and the decorator, which moves before `export`: before the decorator.
+    for (written, want) in [
+        (
+            "export /* c */ @a class C {}\n",
+            "/* c */\n@a\nexport class C {}\n",
+        ),
+        (
+            "export default /* c */ @a class C {}\n",
+            "/* c */\n@a\nexport default class C {}\n",
+        ),
+        (
+            "export // c\n@a class C {}\n",
+            "// c\n@a\nexport class C {}\n",
+        ),
+    ] {
+        assert_eq!(formats_stably(written), want, "{written}");
+    }
+    // On an overload signature's decorator, which moves to the implementation: with it.
+    let want = "class C {\n  m(a: i64): void;\n  @a // c\n  m(a: any) {}\n}\n";
+    assert_eq!(
+        formats_stably("class C {\n  @a // c\n  m(a: i64): void;\n  m(a: any) {}\n}\n"),
+        want
+    );
+    round_trips(want);
+    let want = "function f(a: i64): void;\n@a /* c */\nfunction f(a: any) {}\n";
+    assert_eq!(
+        formats_stably("@a /* c */ function f(a: i64): void;\nfunction f(a: any) {}\n"),
+        want
+    );
+    round_trips(want);
 }
 
 #[test]

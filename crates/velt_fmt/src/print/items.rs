@@ -97,10 +97,16 @@ impl<'a> Printer<'a> {
 
     /// `@x` / `@ns.x(args)`, each on its own line. Written after `export`, they move before it:
     /// TC39 allows both places, and one form is enough. A comment after a decorator stays there:
-    /// on its line, or on lines of its own before the next decorator or the declaration.
+    /// on its line, or on lines of its own before the next decorator or the declaration. One
+    /// before a decorator that the item's start doesn't precede (`export /* c */ @a class C
+    /// {}`) stays before it, on lines of its own.
     pub(super) fn decorators(&mut self, decorators: &[Decorator]) -> Doc {
         let mut docs = vec![];
         for (i, d) in decorators.iter().enumerate() {
+            for c in self.comments.take_before(d.span.lo) {
+                docs.push(text(c.text));
+                docs.push(hardline());
+            }
             docs.push(cat!["@", self.expr(&d.expr)]);
             let next = after_decorator(self.src, decorators, i);
             for c in self.comments.take_trailing(self.src, d.span.hi, next, true) {

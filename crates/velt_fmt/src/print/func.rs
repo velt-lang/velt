@@ -41,6 +41,11 @@ impl<'a> Printer<'a> {
         decorators: &[Decorator],
     ) -> Doc {
         let mut out = vec![];
+        // Written on the first signature, they take the comments after them along (`@a // c`),
+        // which would otherwise go to that signature.
+        let on_first = (decorators.last().zip(f.overloads.first()))
+            .is_some_and(|(d, o)| d.span.hi <= o.name.span.lo);
+        let mut early = on_first.then(|| self.decorators(decorators));
         for (k, o) in f.overloads.iter().enumerate() {
             let sig = self.fn_sig(o, keyword, o.span.hi);
             let asyncness = fn_mods(o, own_unsafe);
@@ -56,7 +61,10 @@ impl<'a> Printer<'a> {
                 out.push(hardline());
             }
         }
-        let decorators = self.decorators(decorators);
+        let decorators = match early.take() {
+            Some(doc) => doc,
+            None => self.decorators(decorators),
+        };
         let asyncness = fn_mods(&f.sig, own_unsafe);
         let sig = self.fn_sig(&f.sig, keyword, f.body.span.lo);
         out.push(cat![
