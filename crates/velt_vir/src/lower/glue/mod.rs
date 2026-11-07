@@ -134,7 +134,7 @@ pub(crate) enum Glue {
     /// `AnyNumericOrError` (any_number.rs).
     AnyNumberError,
     /// `(data, desc, out)`: as `AnyNumericOrError`, for a write through `any`: a number the
-    /// type can't hold stops too (any_number.rs).
+    /// integer type can't hold stops too (any_number.rs).
     AnyNumericExact,
     /// `(data, desc, out)`: the slow path of an `any` converted to the type, taking the `any`
     /// and writing the value or stopping with the `TypeError` (any_unbox_slow.rs).

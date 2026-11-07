@@ -14,10 +14,10 @@
 //! (`NaN` is 0), an integer wraps (`300 as u8` is 44), and a 64-bit integer is read as itself,
 //! exact past 2^53.
 //!
-//! A write through `any` keeps the value it was given or stops: `x.a = 1.5` on an `i32` field,
-//! `x.b = 300` on a `u8` one, and `0.1` on an `f32` one, whose field would hold another number
-//! than the program reads back through `x` (`Glue::AnyNumericExact`). A value of the field's
-//! own type never gets here.
+//! A write through `any` to an integer type keeps the value it was given or stops: `x.a = 1.5`
+//! on an `i32` field, `x.b = 300` on a `u8` one (`Glue::AnyNumericExact`). A float narrowed
+//! rounds, as a typed write does: `0.1` on an `f32` field. A value of the field's own type never
+//! gets here.
 
 use velt_sema::hir::{self, FloatTy, IntTy, TyId, TyKind};
 
@@ -35,7 +35,7 @@ pub(super) enum Numeric {
     Asks,
     /// A value that isn't a number stops with the `TypeError`.
     Stops,
-    /// So does a number the type can't hold (module docs).
+    /// So does a number the integer type can't hold (module docs).
     Exact,
 }
 
@@ -244,7 +244,7 @@ impl FnLower<'_, '_> {
                 self.rvalue_temp(vt, Rvalue::Cast(f.clone(), vt))
             }
         };
-        if exact && vt != Ty::F64 {
+        if exact {
             self.any_write_keeps_float(&f, &v, ty);
         }
         self.assign(dest, Rvalue::Use(v));
@@ -259,49 +259,37 @@ impl FnLower<'_, '_> {
         self.terminate(Terminator::Return(r));
     }
 
-    /// Stops unless `kept`, the `f64` number `f` as the numeric type `ty` (written by a
-    /// `Glue::AnyNumericExact`), is `f`. A `NaN` is a float's own; past the top a 64-bit
-    /// integer saturates to a value that reads back as `f`, and an integer has no `-0`.
+    /// Stops unless `kept`, the `f64` number `f` as the integer type `ty`, is `f`. Past the top
+    /// a 64-bit integer saturates to a value that reads back as `f`, and an integer has no `-0`.
     fn any_write_keeps_float(&mut self, f: &Operand, kept: &Operand, ty: TyId) {
         let vt = self.cx.ty(ty);
-        let back = self.any_kept_as(kept, ty, Ty::F64);
+        let back = self.rvalue_temp(Ty::F64, Rvalue::Cast(kept.clone(), Ty::F64));
         let same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, back, f.clone()));
-        let float = matches!(self.cx.kind(ty), TyKind::Float(_));
         let limit = match vt {
             Ty::I64 => Some(9_223_372_036_854_775_808.0),
             Ty::U64 => Some(18_446_744_073_709_551_616.0),
             _ => None,
         };
-        let ok = match (float, limit) {
-            (true, _) => {
-                let nan =
-                    self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, f.clone(), f.clone()));
-                self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitOr, same, nan))
-            }
-            (_, Some(top)) => {
+        let ok = match limit {
+            Some(top) => {
                 let top = Operand::Const(Const::Float(top), Ty::F64);
                 let under = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Lt, f.clone(), top));
                 self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, same, under))
             }
-            _ => same,
+            None => same,
         };
-        let ok = match float {
-            true => ok,
-            false => {
-                let one = Operand::Const(Const::Float(1.0), Ty::F64);
-                let inv = self.rvalue_temp(Ty::F64, Rvalue::Binary(BinOp::Div, one, f.clone()));
-                let down = Operand::Const(Const::Float(f64::NEG_INFINITY), Ty::F64);
-                let signed = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, inv, down));
-                self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, ok, signed))
-            }
-        };
+        let one = Operand::Const(Const::Float(1.0), Ty::F64);
+        let inv = self.rvalue_temp(Ty::F64, Rvalue::Binary(BinOp::Div, one, f.clone()));
+        let down = Operand::Const(Const::Float(f64::NEG_INFINITY), Ty::F64);
+        let signed = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Ne, inv, down));
+        let ok = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::BitAnd, ok, signed));
         self.any_write_fits(ok, ty);
     }
 
-    /// Stops unless `kept`, the integer `i` of the type `st` as the numeric type `ty`, is `i`.
+    /// Stops unless `kept`, the integer `i` of the type `st` as the integer type `ty`, is `i`.
     fn any_write_keeps_int(&mut self, i: &Operand, kept: &Operand, st: Ty, ty: TyId) {
         let vt = self.cx.ty(ty);
-        let back = self.any_kept_as(kept, ty, st);
+        let back = self.rvalue_temp(st, Rvalue::Cast(kept.clone(), st));
         let same = self.rvalue_temp(Ty::Bool, Rvalue::Binary(BinOp::Eq, back, i.clone()));
         // `i64` and `u64` hold each other's top half as other values with the same bits.
         let ok = if matches!((st, vt), (Ty::I64, Ty::U64) | (Ty::U64, Ty::I64)) {
@@ -315,15 +303,6 @@ impl FnLower<'_, '_> {
         self.any_write_fits(ok, ty);
     }
 
-    /// The value `kept` of the numeric type `ty` as a `to`.
-    fn any_kept_as(&mut self, kept: &Operand, ty: TyId, to: Ty) -> Operand {
-        let v = match self.half_of(ty) {
-            Some(h) => self.widen_half(kept.clone(), h),
-            None => kept.clone(),
-        };
-        self.rvalue_temp(to, Rvalue::Cast(v, to))
-    }
-
     /// The `TypeError` of a number that doesn't fit `ty`, unless `ok`.
     fn any_write_fits(&mut self, ok: Operand, ty: TyId) {
         let (good, bad) = (self.new_block(), self.new_block());
@@ -331,8 +310,7 @@ impl FnLower<'_, '_> {
         self.switch_to(bad);
         let name = match self.cx.kind(ty) {
             TyKind::Int(k) => format!("{k:?}"),
-            TyKind::Float(k) => format!("{k:?}"),
-            _ => "number".to_string(),
+            _ => "integer".to_string(),
         };
         self.panic_msg(&format!(
             "TypeError: the number written through `any` doesn't fit the type {}",

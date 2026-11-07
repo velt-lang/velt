@@ -1,8 +1,11 @@
-// An `f16` field keeps the value, not its bits, and stops on a number it would round.
-class C { a: f16 = 1; }
+// An `f16` or `bf16` field keeps the value, not its bits, and rounds as a typed write does.
+class C { a: f16 = 1; b: bf16 = 1; }
 const c = new C();
 const x: any = c;
 x.a = 1.5;
 console.log(c.a);
 x.a = 0.1;
+x.b = 0.1;
+console.log(c.a, c.b);
+x.a = 100000;
 console.log(c.a);

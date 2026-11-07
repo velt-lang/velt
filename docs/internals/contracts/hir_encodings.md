@@ -1357,8 +1357,9 @@ one; an error type that was only variables solved empty is no error type (`FnDef
   `Def::Adt`), which a write refuses. The `any` tables get slots 9 `AnySet (data, key, v) -> u8`
   and 10 `AnySetIndex (data, f64, v) -> u8` (velt_vir `lower/any_set.rs`; the slot owns `*v`),
   returning 0, 1 (not supported yet) or 3 (the fixed shape has no such member: Node would add
-  it). A number stored in a Velt-only numeric type (a field, an element, a record value, a
-  setter parameter) is kept exactly or stops with a `TypeError` (`lower/any_number.rs`). A program with a write makes `any` an identity interface in lowering, so an object type
+  it). A number stored in an integer type (a field, an element, a record value, a setter
+  parameter) is kept exactly or stops with a `TypeError`; a float narrowed rounds
+  (`lower/any_number.rs`). A program with a write makes `any` an identity interface in lowering, so an object type
   converted to `any` is one counted object, never a copy. A write through `any` counts as a
   write of the field it names (or, for a computed key, of every field) for `object_copies`.
 - `Intrinsic::AnyIsArray(x)` is `Array.isArray(x)` on a dynamic `x`: the class id word of an
