@@ -2,9 +2,10 @@
 // come next: it reads, in its own task, until its reply is whole, decodes the rows right out of the
 // read buffer, and hands the `Input` to the next request in line (connection.velt).
 //
-// A value that crosses tasks moves, so handing it over copies nothing. A holder that is cancelled
-// (its promise lost a race, say) drops its `Input`; `[Symbol.dispose]` then starts a task to read what
-// the server still owes that request, so the next one finds the connection in step.
+// A value that crosses tasks moves, so handing it over copies nothing. A holder whose task is dropped
+// drops its `Input` (one given up on with `timeout` isn't dropped: it reads its reply);
+// `[Symbol.dispose]` then starts a task to read what the server still owes that request, so the next
+// one finds the connection in step.
 
 import { CellKind, RowSource } from "velt/db";
 import { PgStream } from "./transport";

@@ -163,9 +163,15 @@ export class PoolState {
     return w.ch;
   }
 
-  /** A connection comes back: to the waiter returned, or to the idle stack if that's null. */
+  /**
+   * A connection comes back: to the waiter returned, or to the idle stack if that's null. If the pool
+   * has ended, it is closed here, under the same lock as `end()`, so it can't be left neither idle
+   * nor closed.
+   */
   arrived(conn: Conn): Channel<Grant> | null {
     if (this.ended) {
+      this.open--;
+      conn.with((l) => l.shutDownWhenIdle());
       return null;
     }
     const w = this.nextWaiter();

@@ -3,7 +3,7 @@
 // VELT_TEST_PG_TLS_URL (direct TLS, with `sslmode` and `sslrootcert` in it),
 // VELT_TEST_PG_TLS_UNTRUSTED_URL (a server with TLS whose certificate nothing verifies, without
 // `sslmode`), VELT_TEST_PG_PLAIN_URL (a server without TLS, without `sslmode`).
-import { connect } from "../src/lib";
+import { connect, createPool } from "../src/lib";
 
 class One {
   n: i64;
@@ -108,16 +108,16 @@ async function outcome(url: string): Promise<string> {
   }
 }
 
-// Every mode but `disable` refuses a server whose certificate nothing verifies: `prefer` doesn't go
-// on in plain text with a server that offers TLS. (libpq's `prefer` and `require` use TLS there with
-// the certificate unchecked, which velt/net can't do yet: README.md, "TLS".)
+// A server whose certificate nothing verifies (a self-signed one, as Debian and Ubuntu install, or
+// a server before PostgreSQL 17): `prefer` and `require` upgrade the socket after `SSLRequest` and
+// encrypt without checking the certificate, as libpq does; the checked modes refuse it.
 export async function test_a_certificate_nothing_verifies() {
   const url = urlFrom(process.env.VELT_TEST_PG_TLS_UNTRUSTED_URL);
   if (url != null) {
-    assertEq(await outcome(url), "ETLS");
-    assertEq(await outcome(withMode(url, "prefer")), "ETLS");
+    assertEq(await outcome(url), "tls");
+    assertEq(await outcome(withMode(url, "prefer")), "tls");
     assertEq(await outcome(withMode(url, "disable")), "plain");
-    assertEq(await outcome(withMode(url, "require")), "ETLS");
+    assertEq(await outcome(withMode(url, "require")), "tls");
     assertEq(await outcome(withMode(url, "verify-ca")), "ETLS");
     assertEq(await outcome(withMode(url, "verify-full")), "ETLS");
   }
@@ -136,10 +136,37 @@ export async function test_a_server_without_tls() {
   }
 }
 
-// With a root that verifies it, `prefer` does use TLS.
+// `prefer` and `require` use TLS on a server with a certificate that verifies too.
 export async function test_prefer_uses_tls_when_it_can() {
   const url = urlFrom(process.env.VELT_TEST_PG_TLS_URL);
   if (url != null) {
     assertEq(await outcome(url.replace("sslmode=verify-full", "sslmode=prefer")), "tls");
+    assertEq(await outcome(url.replace("sslmode=verify-full", "sslmode=require")), "tls");
+  }
+}
+
+// A whole session over the unchecked TLS: replies larger than a TLS record, a pool, and close.
+export async function test_a_session_over_tls_without_the_check() {
+  const url = urlFrom(process.env.VELT_TEST_PG_TLS_UNTRUSTED_URL);
+  if (url != null) {
+    const pool = createPool({ url: withMode(url, "require"), max: 2 });
+    class Long {
+      s: string;
+      constructor(s: string) {
+        this.s = s;
+      }
+    }
+    const big: Long | null = await pool.selectOne("SELECT repeat('x', 200000) AS s");
+    assertEq(big?.s.length, 200000);
+    const echoed: Long | null = await pool.queryOne("SELECT $1::text AS s", ["y".repeat(100000)]);
+    assertEq(echoed?.s.length, 100000);
+    const tasks: Promise<i64>[] = [];
+    for (let i: i64 = 0; i < 8; i++) {
+      tasks.push(spawn(pool.run("SELECT pg_sleep(0.01)")));
+    }
+    for (const t of tasks) {
+      assertEq(await t, 1);
+    }
+    pool.end();
   }
 }

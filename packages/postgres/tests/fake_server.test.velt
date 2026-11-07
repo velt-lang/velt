@@ -162,9 +162,12 @@ export async function test_every_cut_of_a_described_statement_is_safe() {
   assert(whole.length > 0, "the script");
 }
 
+// The server closes with the request's `Bind` unread, so the client may see its end of stream or the
+// reset TCP sends then: either way the connection is gone.
 export async function test_the_connection_ending_fails_the_request() {
   const c = await connect(fakeUrl(await serveThenClose([describedItem()])));
-  assertEq(await outcome(c), "ECONNRESET connection closed");
+  const first = await outcome(c);
+  assert(first.startsWith("ECONNRESET "), first);
   assertEq(await outcome(c), "ECONNRESET connection closed");
   c.close();
 }
@@ -375,11 +378,11 @@ function seenBy(probes: shared<Mutex<TlsProbes>>): string {
   return probes.with((p) => p.seen.join(","));
 }
 
-// A server before PostgreSQL 17 says it has TLS, and then closes on a direct ClientHello. A server
-// that offers TLS never gets plain text: the failure is "ETLS", and nothing is sent unencrypted.
+// A server says it has TLS, and then closes on the ClientHello. A server that offers TLS never gets
+// plain text: the failure is "ETLS", and nothing is sent unencrypted.
 export async function test_prefer_never_goes_on_in_plain_text_when_tls_fails() {
   const probes = shared(new Mutex<TlsProbes>(new TlsProbes()));
-  const port = await serveTlsProbes(probes, "S", 2);
+  const port = await serveTlsProbes(probes, "S", 1);
   let code = "connected";
   let message = "";
   try {
@@ -402,12 +405,13 @@ export async function test_prefer_stays_on_the_socket_when_the_server_has_no_tls
   assertEq(seenBy(probes), "ssl,startup");
 }
 
+// `require` asks with `SSLRequest` as `prefer` does; the checked modes use direct TLS.
 export async function test_stricter_modes_never_fall_back() {
   for (const mode of ["require", "verify-ca", "verify-full"]) {
     const probes = shared(new Mutex<TlsProbes>(new TlsProbes()));
     const port = await serveTlsProbes(probes, "S", 1);
     assertEq(await connectAs(port, mode), "ETLS");
-    assertEq(seenBy(probes), "tls");
+    assertEq(seenBy(probes), mode == "require" ? "ssl,tls" : "tls");
   }
 }
 
@@ -463,4 +467,21 @@ export async function test_keepalive_options_are_accepted() {
     ),
     "connected",
   );
+}
+
+// `ParameterDescription`'s count is unsigned: 40000 parameters is a statement a server takes.
+export async function test_a_statement_with_40000_parameters_is_described() {
+  const n: i64 = 40000;
+  const types: i64[] = [];
+  const marks: string[] = [];
+  const values: i64[] = [];
+  for (let i: i64 = 1; i <= n; i++) {
+    types.push(INT4);
+    marks.push(`($${i})`);
+    values.push(i);
+  }
+  const inserted = join([msg("2"), complete("INSERT 0 40000"), ready()]);
+  const c = await connect(fakeUrl(await serve([prepared(types, [], []), inserted])));
+  assertEq(await c.execute(`INSERT INTO t (v) VALUES ${marks.join(",")}`, values), 40000);
+  c.close();
 }

@@ -102,9 +102,12 @@ function scanned(input: Input): bool {
   }
 }
 
-// The server waits for COPY data nobody will send: a script's `COPY … FROM STDIN`, or a `copyFrom`
-// whose caller is gone. The reply then ends with the error this makes.
-function refuseCopy(input: Input) {
+/**
+ * The server waits for COPY data nobody will send: a script's `COPY … FROM STDIN`, a `copyFrom`
+ * whose caller is gone, or a `copyTo` of a statement that copies in. The reply then ends with the
+ * error this makes.
+ */
+export function refuseCopy(input: Input) {
   const o = new Out(64);
   copyFail(o, "no COPY data will be sent");
   try {

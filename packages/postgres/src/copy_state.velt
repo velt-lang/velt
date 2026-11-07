@@ -20,6 +20,7 @@ import { errorOf, PgError } from "./errors";
 import { closed, connectionClosed, failure, ioFailure, protocol } from "./failure";
 import { copyDone, copyFail, Out } from "./frontend";
 import { Input } from "./input";
+import { refuseCopy } from "./reply";
 import { FAILED } from "./builder";
 import { Conn } from "./line";
 
@@ -120,6 +121,11 @@ export class CopyState {
   release(): bool {
     const was = this.open;
     this.open = false;
+    if (was) {
+      this.conn.with((l) => {
+        l.copyOpen = false;
+      });
+    }
     return was;
   }
 }
@@ -142,14 +148,20 @@ async function start(
   input.stopAtCopy = true;
   await readWhole(conn, input);
   if (input.copyStarted) {
+    input.stopAtCopy = false;
     if (input.copyFromStream != from) {
-      // The statement copies the other way: the `Input` dropped here says no to the server.
-      input.stopAtCopy = false;
+      // The statement copies the other way. A server waiting for data is told none will come; one
+      // sending data has the rest read by the `Input` dropped here, which then reads the reply.
+      if (input.copyFromStream) {
+        refuseCopy(input);
+      }
       throw noted(conn, failure("UNKNOWN", "unexpected message from server"));
     }
-    input.stopAtCopy = false;
     const stream = input.stream;
-    const home = conn.with((l) => l.homeChannel);
+    const home = conn.with((l) => {
+      l.copyOpen = true;
+      return l.homeChannel;
+    });
     park(home, input);
     return shared(new Mutex<CopyState>(new CopyState(conn, stream, home)));
   }

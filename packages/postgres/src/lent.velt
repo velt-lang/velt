@@ -1,0 +1,34 @@
+// postgres (internal): `Lent`, a pool's connection lent to `pool.transaction` (pool.velt).
+
+import { Conn } from "./line";
+import { connectionGone, PoolHandle } from "./pool_state";
+
+/**
+ * A connection lent for a transaction. If its task goes away inside the transaction (its values are
+ * dropped, and neither `catch` nor `finally` runs), the connection may hold locks in an open
+ * transaction: it is closed, so the server rolls back, and the pool may open another in its place.
+ */
+export class Lent {
+  private pool: PoolHandle;
+  private conn: Conn;
+  private generation: i64;
+  released: bool = false;
+
+  constructor(pool: PoolHandle, conn: Conn, generation: i64) {
+    this.pool = pool;
+    this.conn = conn;
+    this.generation = generation;
+  }
+
+  [Symbol.dispose]() {
+    if (this.released) {
+      return;
+    }
+    const generation = this.generation;
+    this.conn.with((l) => {
+      l.endClient(generation);
+      l.lost();
+    });
+    connectionGone(this.pool);
+  }
+}

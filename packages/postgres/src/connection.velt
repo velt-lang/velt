@@ -8,9 +8,9 @@
 // With nobody else in line, a query so waits for its socket and nothing else, no channel, no wake-up
 // of another task.
 //
-// A task that goes away while waiting (a timeout around a query) does not leave the line stuck:
-// what it held is dropped, and `Input`'s `[Symbol.dispose]` starts a task that reads what it was owed
-// (drain.velt).
+// A task dropped while waiting does not leave the line stuck: what it held is dropped, and `Input`'s
+// `[Symbol.dispose]` starts a task that reads what it was owed (drain.velt). A task given up on with
+// `timeout` isn't dropped, and reads its own reply.
 //
 // When the connection fails the request reading sees it; the others in line fail too (their requests
 // may have run), and later ones throw "ECONNRESET".
@@ -58,7 +58,11 @@ export class Waiting {
 }
 
 async function dropNext(home: Channel<Input>) {
-  await home.receive();
+  const input = await home.receive();
+  if (input != null) {
+    // `finish` parked it on its way here; dropped unparked, it reads what this request was owed.
+    input.parked = false;
+  }
 }
 
 // `first`: the one before this request has given the line up, and hasn't sent the `Input` yet.
@@ -205,6 +209,8 @@ export function stillAlive(conn: Conn): bool {
   const home = conn.with((l) => l.homeChannel);
   const input = home.tryReceive();
   if (input == null) {
+    // Something holds the reading end of a connection that should be idle: it can't be trusted.
+    conn.with((l) => l.lost());
     return false;
   }
   if (!quiet(input)) {

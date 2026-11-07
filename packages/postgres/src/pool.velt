@@ -33,6 +33,7 @@ import {
 } from "./pool_state";
 import { simple } from "./connection";
 import { openConnection } from "./startup";
+import { Lent } from "./lent";
 import { Opening } from "./opening";
 import { WaitingForPool } from "./waiting_for_pool";
 
@@ -241,14 +242,23 @@ export struct Pool {
     return Client.of(conn, conn.with((l) => l.lease()));
   }
 
-  /** `Client.transaction` on a dedicated connection, returned to the pool afterwards. */
+  /**
+   * `Client.transaction` on a dedicated connection, returned to the pool afterwards. If the task
+   * goes away inside it, the connection is closed (the server rolls back) and not returned.
+   */
   async transaction<T, E>(fn: (tx: Client) => Promise<T, E>): Promise<T> throws PgError | E {
-    const client = await this.connect();
+    const pool = this.handle;
+    const conn = await borrow(pool);
+    const generation = conn.with((l) => l.lease());
+    const lent = new Lent(pool, conn, generation);
+    const client = Client.of(conn, generation);
     try {
       const result = await client.transaction(fn);
+      lent.released = true;
       client.close();
       return result;
     } catch (e) {
+      lent.released = true;
       client.close();
       throw e;
     }

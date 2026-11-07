@@ -179,9 +179,8 @@ export class TlsProbes {
 }
 
 /**
- * A server on a free port for a TLS negotiation: it answers `SSLRequest` with `answer` ("S" or "N"),
- * closes on a TLS ClientHello as a server before PostgreSQL 17 does, and lets a startup in. It
- * serves `connections` connections. Its port.
+ * A server on a free port for a TLS negotiation: it answers `SSLRequest` with `answer` (one byte),
+ * closes on a TLS ClientHello, and lets a startup in. It serves `connections` connections. Its port.
  */
 export async function serveTlsProbes(
   probes: shared<Mutex<TlsProbes>>,
