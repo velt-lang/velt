@@ -597,6 +597,14 @@ fn c_constants() {
 }
 
 #[test]
+fn c_structs() {
+    assert_fmt(
+        "declare  c  struct CGPoint {x:f64;y:f64}\nexport declare c struct CGRect { origin: CGPoint; size: [f64, f64] }\n",
+        "declare c struct CGPoint {\n  x: f64;\n  y: f64;\n}\n\nexport declare c struct CGRect {\n  origin: CGPoint;\n  size: [f64, f64];\n}\n",
+    );
+}
+
+#[test]
 fn c_types() {
     assert_fmt(
         "declare  c  type sqlite3\nexport declare c type sqlite3_stmt;\n",

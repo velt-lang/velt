@@ -916,6 +916,32 @@ Step 1 lands in layers, each its own pull request:
      is for); `packages/sqlite` on `sources`. Sources fetched from `git` or a `url` with a pinned
      hash are #2367's: its `fetch` is a key beside these fields, and only changes where `sources`
      are read from.
+8. C structs, in layers (plan on #2187). Layer 1, the language:
+   - `declare c struct S { x: f64; y: f64; }` is a struct (`TypeDecl::c_struct`) of fields only:
+     no methods, constructor, type parameters, defaults, optional, private or static fields,
+     `implements`, and at least one field. Fields are integers, `f32`, `f64`, `bool` and other C
+     structs; a struct can't hold itself by value. A Velt enum (an `i64`, where C's is usually
+     an `int`) and a `declare c type` by value are refused with what to declare instead.
+   - In Velt it is a value: Copy, built from a literal of its type, with read-only fields (a
+     changed copy is `{ ...v, x: … }`). HIR marks it (`AdtDef::c_struct`), and lowering never
+     counts or boxes it: an `object`, `any` or interface conversion records no identity for it
+     (`note_identity`, `note_identity_borrow`, `note_dyn_identity`). So it stays inline, in
+     declaration order at natural alignment, which is C's layout for these fields on the 64-bit
+     targets (on wasm32 `isize` and `usize` are 8 bytes in Velt and 4 in C).
+   - It has no identity, so every comparison compares its content (same.rs), with the numbers
+     in it compared as the operation compares numbers: `===`, `==`, `indexOf` and generic code
+     by IEEE (`NaN` unequal, `-0` equal to `0`), `Object.is` by SameValue, `Map` and `Set` keys
+     and `includes` by SameValueZero. An `any` holding one does the same: descriptor slot
+     `AnySame` takes the mode (any_eq.rs).
+   - `Ptr<S>` is a C pointer, like `Ptr` to a `declare c type`. A C struct isn't raw API: a
+     package's users can import it.
+   - Not yet:
+     - C arrays: a tuple type's storage isn't fixed (boxing/tuples.rs counts one the program
+       writes in place and copies, anywhere), so they wait for `T[N]`.
+     - Pointer fields: `Ptr<T> | null` is an option of the address in Velt, larger than C's
+       pointer, so they get their own storage, the address with `NULL` as `null`.
+     - Structs by value in `declare c` signatures, `Out<S>` and `Ref<S>` (the shared
+       classifier, both backends); the header check of structs; the differential ABI test.
 
 ## Decisions
 

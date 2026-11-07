@@ -252,3 +252,30 @@ fn c_types() {
     assert_eq!(c.ctor_visibility, CtorVisibility::Private);
     assert!(c.fields.is_empty() && c.methods.is_empty());
 }
+
+#[test]
+fn c_structs() {
+    let m = parse_ok(
+        "declare c struct CGPoint { x: f64; y: f64; }\nexport declare c struct CGRect { origin: CGPoint; size: [f64, f64] }\nstruct Plain { x: f64 }",
+    );
+    let shapes: Vec<(String, bool, usize)> = m
+        .items
+        .iter()
+        .filter_map(|i| match &i.kind {
+            ItemKind::Struct(s) => Some((s.name.name.clone(), s.c_struct, s.fields.len())),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        shapes,
+        [
+            ("CGPoint".into(), true, 2),
+            ("CGRect".into(), true, 2),
+            ("Plain".into(), false, 1)
+        ]
+    );
+    assert!(m.items[1].exported && !m.items[0].exported);
+    // `c` is a word only after `declare`: a struct named `c` is still a struct.
+    let m = parse_ok("struct c { x: f64 }");
+    assert!(matches!(&m.items[0].kind, ItemKind::Struct(s) if !s.c_struct));
+}

@@ -98,9 +98,16 @@ pub(super) fn check_finite(cx: &mut Ctx, d: DefId) {
     };
     let start = self_type(cx, d, n);
     if contains_by_value(cx, start, d, &mut vec![], 0) {
+        let note: String = match cx.is_c_struct(d) {
+            true => "a C struct can't hold itself: C holds fields by value; a pointer field to it comes in a later layer of #2187".into(),
+            false => "recursive data needs indirection: make it a `class` (heap-allocated) or use an array".into(),
+        };
         cx.error(
-            velt_common::Diagnostic::error(format!("recursive type `{name}` has infinite size"), span)
-                .with_note("recursive data needs indirection: make it a `class` (heap-allocated) or use an array"),
+            velt_common::Diagnostic::error(
+                format!("recursive type `{name}` has infinite size"),
+                span,
+            )
+            .with_note(note),
         );
     }
 }
@@ -296,7 +303,9 @@ fn adt_shape(cx: &mut Ctx, d: DefId) {
     let bounds = resolve_bounds(cx, &decl.generics, &env);
     let mut fields = vec![];
     for f in decl.fields.iter().filter(|f| !f.is_static) {
-        let fi = field_info(cx, d, f, &env);
+        let mut fi = field_info(cx, d, f, &env);
+        // A C struct is a value: changing one makes a new one (c_struct.rs).
+        fi.readonly |= decl.c_struct;
         push_field(cx, &mut fields, fi);
     }
     let base = decl

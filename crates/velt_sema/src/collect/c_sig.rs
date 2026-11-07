@@ -101,6 +101,10 @@ fn c_import(
     let ret = ret_ty.unwrap_or_else(|| {
         let shown = cx.display(ret);
         let span = sig.ret.as_ref().map_or(sig.name.span, |t| t.span);
+        if cx.is_c_struct_ty(ret) {
+            struct_by_value(cx, name, &shown, span);
+            return CTy::Void;
+        }
         cx.error(
             Diagnostic::error(
                 format!("C function `{name}` returns `{shown}`, which cannot cross from C"),
@@ -168,6 +172,10 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
         _ => {}
     }
     let shown = cx.display(ty);
+    if cx.is_c_struct_ty(ty) {
+        struct_by_value(cx, name, &shown, p.ty.span);
+        return CTy::Void;
+    }
     cx.error(
         Diagnostic::error(
             format!(
@@ -179,6 +187,18 @@ fn param(cx: &mut Ctx, module: usize, name: &str, p: &ast::Param, ty: TyId) -> C
         .with_note(format!("a C function takes {ALLOWED}")),
     );
     CTy::Void
+}
+
+/// The error for C struct `shown` passed to or returned from C function `name` by value, which
+/// waits for the target's C calling convention in both backends (#2187, layer 3 of C structs).
+fn struct_by_value(cx: &mut Ctx, name: &str, shown: &str, at: velt_common::Span) {
+    cx.error(
+        Diagnostic::error(
+            format!("C function `{name}` can't take or return C struct `{shown}` by value yet"),
+            at,
+        )
+        .with_note("passing C structs by value, in each target's C calling convention, comes in a later layer of #2187; a `Ptr<S>` crosses now"),
+    );
 }
 
 impl Ctx<'_> {
@@ -313,9 +333,10 @@ fn by_address(cx: &Ctx, ty: TyId) -> Option<CTy> {
     }
 }
 
-/// Is `ty` a `Ptr<T>` C can hold: one to a C type (`declare c type`), a number, `bool`, `void`
-/// or another such pointer (`Ptr<Ptr<u8>>` for `char **`)? `Ptr<string>` means nothing in C.
-fn is_c_ptr(cx: &Ctx, ty: TyId) -> bool {
+/// Is `ty` a `Ptr<T>` C can hold: one to a C type (`declare c type`, `declare c struct`), a
+/// number, `bool`, `void` or another such pointer (`Ptr<Ptr<u8>>` for `char **`)? `Ptr<string>`
+/// means nothing in C.
+pub(super) fn is_c_ptr(cx: &Ctx, ty: TyId) -> bool {
     match cx.ty.kind(ty) {
         TyKind::Adt(_, args) if is_ptr(cx, ty) => args.first().is_some_and(|t| c_pointee(cx, *t)),
         _ => false,
@@ -327,7 +348,9 @@ fn c_pointee(cx: &Ctx, ty: TyId) -> bool {
     match cx.ty.kind(ty) {
         TyKind::Int(_) | TyKind::Float(_) | TyKind::Bool | TyKind::Unit => true,
         TyKind::Adt(d, _) => {
-            cx.adt(*d).is_some_and(|a| a.decl.is_some_and(|t| t.c_type)) || is_c_ptr(cx, ty)
+            cx.adt(*d)
+                .is_some_and(|a| a.decl.is_some_and(|t| t.c_type || t.c_struct))
+                || is_c_ptr(cx, ty)
         }
         _ => false,
     }

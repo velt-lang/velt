@@ -59,6 +59,10 @@ pub struct TypeDecl {
     /// docs/internals/design/c-ffi.md), a class with no members that nothing can construct.
     /// Additive.
     pub c_type: bool,
+    /// `declare c struct S { x: f64; y: f64; }`: a C struct (docs/internals/design/c-ffi.md "C
+    /// structs"), an `ItemKind::Struct` whose fields are in C's order, with the target's C
+    /// layout; in Velt a value that is copied, never counted. Additive.
+    pub c_struct: bool,
 }
 
 /// Who may call a class's constructor (TypeScript's rules, https://veltlang.com/docs/reference/classes/): anyone;

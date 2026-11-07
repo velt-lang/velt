@@ -32,14 +32,22 @@ fn nothing_lit(e: &hir::Expr) -> bool {
 
 /// How two `any`s compare.
 #[derive(Clone, Copy, PartialEq, Eq)]
-enum AnyCmp {
+pub(super) enum AnyCmp {
     /// `===`.
     Strict,
     /// `==`.
     Loose,
     /// SameValueZero (`Set` / `Map` keys, `includes`-style lookups).
     Key,
+    /// SameValue (`Object.is`).
+    Value,
 }
+
+/// The `mode` argument of descriptor slot `AnySame` (any.rs): how a type whose `===` compares
+/// numbers inside it (a C struct's content) compares them.
+const ANY_SAME_STRICT: i128 = 0;
+const ANY_SAME_KEY: i128 = 1;
+const ANY_SAME_VALUE: i128 = 2;
 
 impl FnLower<'_, '_> {
     /// `a === b` (`loose`: `a == b`) of two `any`s.
@@ -81,14 +89,14 @@ impl FnLower<'_, '_> {
         }
     }
 
-    /// `===` (`key`: SameValueZero) of the `any`s at two places: generic code over `any`.
-    pub(super) fn any_same_places(&mut self, a: &Place, b: &Place, key: bool) -> Operand {
+    /// `===` (or SameValueZero, SameValue: `cmp`) of the `any`s at two places: generic code over
+    /// `any`.
+    pub(super) fn any_same_places(&mut self, a: &Place, b: &Place, cmp: AnyCmp) -> Operand {
         self.cx.note_any_identity();
         let da = Operand::Copy(proj(a, Proj::Field(0)));
         let xa = Operand::Copy(proj(a, Proj::Field(1)));
         let db = Operand::Copy(proj(b, Proj::Field(0)));
         let xb = Operand::Copy(proj(b, Proj::Field(1)));
-        let cmp = if key { AnyCmp::Key } else { AnyCmp::Strict };
         self.any_compare(&da, &xa, &db, &xb, cmp, false)
     }
 
@@ -145,6 +153,11 @@ impl FnLower<'_, '_> {
                 let p = self.deref_param(data, ty);
                 self.hash_value(&p, ty)
             }
+            // A C struct: its content, agreeing with `AnySame` (any.rs).
+            _ if self.cx.c_struct(ty) => {
+                let p = self.deref_param(data, ty);
+                self.hash_value(&p, ty)
+            }
             // An object: its pointer (a class object, a counted box, or the `any`'s own box).
             _ if self.cx.is_class(ty) || self.cx.boxed(ty) || self.cx.is_object(ty) => {
                 let x = self.cast_to(Operand::Copy(Place::local(data)), Ty::Ptr, Ty::U64);
@@ -156,6 +169,49 @@ impl FnLower<'_, '_> {
             }
         };
         self.terminate(Terminator::Return(h));
+    }
+
+    /// `AnySame` of two C structs (data pointers `a`, `b`): their content, with the numbers in it
+    /// compared as `mode` asks (`Glue::Same`, `Glue::KeySame` or `Glue::SameValue`, as same.rs
+    /// `same_glue` picks them), so `Set<any>` and `Object.is` agree with the struct's own type.
+    pub(super) fn any_c_struct_same(
+        &mut self,
+        a: vir::Local,
+        b: vir::Local,
+        mode: vir::Local,
+        ty: TyId,
+    ) -> Operand {
+        let out = Place::local(self.temp(Ty::Bool));
+        let done = self.new_block();
+        let args = vec![
+            Operand::Copy(Place::local(a)),
+            Operand::Copy(Place::local(b)),
+        ];
+        for (m, g) in [
+            (ANY_SAME_KEY, super::Glue::KeySame),
+            (ANY_SAME_VALUE, super::Glue::SameValue),
+        ] {
+            let is = self.rvalue_temp(
+                Ty::Bool,
+                Rvalue::Binary(
+                    BinOp::Eq,
+                    Operand::Copy(Place::local(mode)),
+                    cint(m, Ty::U8),
+                ),
+            );
+            let (yes, no) = (self.new_block(), self.new_block());
+            self.branch(is, yes, no);
+            self.switch_to(yes);
+            let r = self.call_glue(g, ty, args.clone());
+            self.assign(out.clone(), Rvalue::Use(r));
+            self.goto(done);
+            self.switch_to(no);
+        }
+        let r = self.call_glue(super::Glue::Same, ty, args);
+        self.assign(out.clone(), Rvalue::Use(r));
+        self.goto(done);
+        self.switch_to(done);
+        Operand::Copy(out)
     }
 
     fn any_compare(
@@ -175,8 +231,8 @@ impl FnLower<'_, '_> {
             lw.assign(out.clone(), Rvalue::Use(v));
             lw.goto(done);
         };
-        if cmp == AnyCmp::Key {
-            // Two numbers (of any widths): SameValueZero.
+        if matches!(cmp, AnyCmp::Key | AnyCmp::Value) {
+            // Two numbers (of any widths): SameValueZero, or SameValue (`Object.is`).
             let ta = self.any_tag_of(xa.clone());
             let tb = self.any_tag_of(xb.clone());
             let num = cint(TAG_NUMBER as i128, Ty::U64);
@@ -188,7 +244,10 @@ impl FnLower<'_, '_> {
             self.switch_to(nums_bb);
             let x = self.any_slot_call(xa.clone(), SLOT_NUMBER, vec![da.clone()], Ty::F64);
             let y = self.any_slot_call(xb.clone(), SLOT_NUMBER, vec![db.clone()], Ty::F64);
-            let r = self.same_value_zero(x, y);
+            let r = match cmp {
+                AnyCmp::Value => self.same_value(x, y, Ty::F64),
+                _ => self.same_value_zero(x, y),
+            };
             set(self, r);
             self.switch_to(rest_bb);
         }
@@ -197,12 +256,23 @@ impl FnLower<'_, '_> {
         let (same_bb, other_bb) = (self.new_block(), self.new_block());
         self.branch(same_ty, same_bb, other_bb);
         self.switch_to(same_bb);
-        let r = self.any_slot_call(
-            xa.clone(),
-            SLOT_SAME,
-            vec![da.clone(), db.clone()],
-            Ty::Bool,
-        );
+        let mode = match cmp {
+            AnyCmp::Key => ANY_SAME_KEY,
+            AnyCmp::Value => ANY_SAME_VALUE,
+            AnyCmp::Strict | AnyCmp::Loose => ANY_SAME_STRICT,
+        };
+        let r = {
+            let target = self.dispatch(xa.clone(), SLOT_SAME);
+            let out = Place::local(self.temp(Ty::Bool));
+            let callee = vir::Callee::Ptr {
+                target,
+                params: vec![Ty::Ptr, Ty::Ptr, Ty::U8],
+                ret: Ty::Bool,
+            };
+            let args = vec![da.clone(), db.clone(), cint(mode, Ty::U8)];
+            self.call(callee, args, Some(out.clone()), false);
+            Operand::Copy(out)
+        };
         set(self, r);
         // Different types: one object seen through two static types (a class and its base,
         // an interface value) is itself; numbers of two widths compare by value; `==` also

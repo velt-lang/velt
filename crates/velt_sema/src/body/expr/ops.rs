@@ -676,7 +676,8 @@ impl FnCx<'_, '_> {
 
     /// Can `==` compare values of `t`? Interface and function values compare by identity
     /// (#365): the object behind an interface value, and the function value itself (each
-    /// evaluation of an arrow is a new one, as in JS).
+    /// evaluation of an arrow is a new one, as in JS). A C struct has no identity: lowering
+    /// compares its content (velt_vir same.rs).
     fn equatable(&self, t: TyId) -> bool {
         !matches!(self.cx.ty.kind(t), TyKind::Unit | TyKind::Simd(_))
     }

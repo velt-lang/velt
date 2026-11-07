@@ -678,7 +678,15 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
 - `AdtDef::declared_struct` (additive): the type is declared with `struct` (kind `Struct`,
   but not a field-only interface or a struct sema made for an interface literal or a brand).
   `Map` and `Set` keys of such a type compare (`Intrinsic::KeyEq`) and hash
-  (`Intrinsic::Hash`) by content, field by field; `===` still compares it by identity.
+  (`Intrinsic::Hash`) by content, field by field; `===` still compares it by identity, except
+  for a C struct (below).
+- `AdtDef::c_struct` (additive): the type is declared with `declare c struct`
+  (design/c-ffi.md "C structs"), so `declared_struct` is set too. Its value has C's layout and
+  no identity: lowering never counts or boxes it, and it compares by content in every mode,
+  field by field, with each mode's number rule: `Intrinsic::Same` (`===`, `==`) by IEEE,
+  `Intrinsic::SameValue` (`Object.is`) by SameValue, and `Intrinsic::KeyEq`,
+  `Intrinsic::IncludesEq` and `Intrinsic::Hash` by SameValueZero, also when an `any` holds it.
+  It is Copy when its fields are (they always are).
 - `AdtDef::to_string`, `to_json`, `inspect` (additive): a class's `toString()`, `toJSON()` and
   `[util.inspect.custom]()` methods, own or inherited (sema's `hooks.rs`), as functions glue can call:
   instance methods with no type parameters of their own, neither async nor generators, that
@@ -708,8 +716,9 @@ function itself there, instantiated (`FnRef`), so the values compare equal to ea
   and `0` to `-0`) and hash with `Intrinsic::Hash`, which agrees with it (objects hash their
   identity; a type declared with `struct`, `AdtDef::declared_struct`, compares and hashes by
   content, field by field). `Array.includes` compares with `Intrinsic::IncludesEq` (`Same`, with a
-  number `NaN` equal to `NaN`). Structs are never Copy
-  (`AdtDef::is_copy` is false for every struct and object type).
+  number `NaN` equal to `NaN`). A C struct (`AdtDef::c_struct`) is the exception to identity:
+  it compares by content in every one of these, `Same` included. Structs are never Copy
+  (`AdtDef::is_copy` is false for every struct and object type) except C structs.
 
 ## ES private names
 
