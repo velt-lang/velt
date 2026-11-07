@@ -23,6 +23,12 @@ pub struct FreeUse {
 
 /// The free names of `item`.
 pub fn free_names(item: &Item) -> FxHashSet<String> {
+    item_names(item).0
+}
+
+/// The free names of `item`, and those of them a decorator in it names, however deep
+/// (`@t(K)` on a class in a function's body): constants the compiler reads.
+pub(super) fn item_names(item: &Item) -> (FxHashSet<String>, FxHashSet<String>) {
     let mut n = Names::default();
     match &item.kind {
         // A top-level variable's initializer runs at once; the rest is the item's own code.
@@ -33,17 +39,25 @@ pub fn free_names(item: &Item) -> FxHashSet<String> {
         }
         _ => n.item(item),
     }
+    let decorated = std::mem::take(&mut n.decorated);
     let mut out = n.finish();
     // `typeof x` in any type the item writes refers to `x` too.
     out.extend(query_heads(item));
-    out
+    (out, decorated)
+}
+
+/// The free names of the top-level statement `s`, and those of them a decorator in it names
+/// ([`item_names`]).
+pub(super) fn stmt_names(s: &Stmt) -> (FxHashSet<String>, FxHashSet<String>) {
+    let mut n = Names::default();
+    n.stmts(std::slice::from_ref(s));
+    let decorated = std::mem::take(&mut n.decorated);
+    (n.finish(), decorated)
 }
 
 /// The free names of the top-level statement `s`.
 pub(super) fn stmt_free_names(s: &Stmt) -> FxHashSet<String> {
-    let mut n = Names::default();
-    n.stmts(std::slice::from_ref(s));
-    n.finish()
+    stmt_names(s).0
 }
 
 /// The names top-level statement `s` reads without declaring them, in source order.
@@ -134,6 +148,10 @@ struct Names {
     scopes: Vec<FxHashSet<String>>,
     /// The functions entered.
     depth: u32,
+    /// In a decorator's arguments or a decorator's parameter default.
+    in_decorator: bool,
+    /// The free names read there.
+    decorated: FxHashSet<String>,
 }
 
 impl Names {
@@ -143,6 +161,9 @@ impl Names {
 
     fn use_name(&mut self, name: &str, span: Span) {
         if !self.scopes.iter().any(|s| s.contains(name)) {
+            if self.in_decorator {
+                self.decorated.insert(name.to_string());
+            }
             self.uses.push(FreeUse {
                 name: name.to_string(),
                 span,
@@ -236,8 +257,9 @@ impl Names {
         }
     }
 
-    /// The names `item`'s decorators and its members' decorators name (`@json.naming(POLICY)`): constants
-    /// the compiler reads, so not when the code runs.
+    /// The names `item`'s decorators and its members' decorators name (`@json.naming(POLICY)`),
+    /// and a `declare decorator function`'s defaults: constants the compiler reads, so not when
+    /// the code runs.
     fn decorators_of(&mut self, item: &Item) {
         fn sig_decorators(sig: &FnSig) -> impl Iterator<Item = &Decorator> {
             (sig.decorators.iter()).chain(sig.params.iter().flat_map(|p| &p.decorators))
@@ -250,12 +272,25 @@ impl Names {
                 .chain(d.methods.iter().flat_map(|m| sig_decorators(&m.decl.sig)))
                 .chain(d.constructor.iter().flat_map(|c| sig_decorators(&c.sig)))
                 .collect(),
+            ItemKind::Extend(d) => (d.methods.iter())
+                .flat_map(|m| sig_decorators(&m.decl.sig))
+                .collect(),
             ItemKind::Enum(e) => e.decorators.iter().collect(),
             _ => return,
         };
+        let defaults = match &item.kind {
+            ItemKind::ExternFn(sig) if sig.is_decorator => &sig.params[..],
+            _ => &[],
+        };
+        if all.is_empty() && defaults.is_empty() {
+            return;
+        }
+        let was = std::mem::replace(&mut self.in_decorator, true);
         self.depth += 1;
         all.into_iter().for_each(|d| self.expr(&d.expr));
+        (defaults.iter().filter_map(|p| p.default.as_ref())).for_each(|e| self.expr(e));
         self.depth -= 1;
+        self.in_decorator = was;
     }
 
     fn stmt(&mut self, s: &Stmt) {

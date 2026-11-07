@@ -450,13 +450,37 @@ fn a_script_variable_a_decorator_names_stays_at_module_level() {
         "const K = \"a\"; console.log(K); @p(K) class C {} console.log(2);",
         "console.log(1); const K = \"a\"; class C { @q(K) m() {} } console.log(K);",
         "console.log(1); const K = \"a\"; function f(@r(K) a: i64) {} console.log(K);",
+        // A member or parameter of an `extend` block, and a decorator's default.
+        "const K = \"a\"; console.log(1); extend i64 { @q(K) m(): i64 { return 1; } }",
+        "const K = \"a\"; console.log(1); extend i64 { m(@r(K) a: i64): i64 { return a; } }",
+        "const K = \"a\"; console.log(1);
+         declare decorator function e(a: string = K): TypeDecorator; @e class C {}",
+        // However deep in the statements: an arrow's body, an `if`, a bare block, a `for…of`.
+        "const K = \"a\"; console.log(1); const g = () => { @p(K) class C {} };",
+        "const K = \"a\"; console.log(1); if (1 > 0) { @p(K) class C {} }",
+        "const K = \"a\"; console.log(1); { @p(K) class C {} }",
+        "const K = \"a\"; console.log(1); for (const x of [1]) { class C { @s(K) f = 1; } }",
     ] {
         let src = format!(
             "{decl}declare decorator function q(k: string): MethodDecorator;\n\
-             declare decorator function r(k: string): ParamDecorator;\n{src}"
+             declare decorator function r(k: string): ParamDecorator;\n\
+             declare decorator function s(k: string): FieldDecorator;\n{src}"
         );
         let p = ok_src(&src);
         assert_eq!(p.decorators.len(), 1, "{src}");
+    }
+    // Nothing else stays: a `let`, a `var`, a call and a destructured `const` are no constants.
+    for init in [
+        "let K = \"a\";",
+        "var K = \"a\";",
+        "function k(): string { return \"a\"; } const K = k();",
+        "const [K] = [\"a\"];",
+    ] {
+        for at in ["@p(K) class C {}", "if (1 > 0) { @p(K) class C {} }"] {
+            let src = format!("{decl}{init} console.log(1); {at} console.log(K);");
+            let e = err_src(&src);
+            assert!(e.contains("must be a constant"), "{src}: {e}");
+        }
     }
     let src =
         format!("{decl}const p: any = 1; console.log(p); @p(\"a\") class C {{}} console.log(2);");

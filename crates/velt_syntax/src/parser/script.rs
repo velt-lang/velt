@@ -158,8 +158,9 @@ impl Parser<'_> {
     /// an export list, `export { x };`), a [`rest_arrow`] constant, a `const` a computed key
     /// `[NAME]` names anywhere in the file (sema resolves the key to the symbol or string the
     /// module constant holds), and those a staying declaration refers to (to a fixed point),
-    /// those code above them names (a statement in `stmts` or another variable's initializer)
-    /// and those a function the code makes names ([`captured_names`]; module docs).
+    /// those code above them names (a statement in `stmts` or another variable's initializer),
+    /// those a function the code makes names ([`captured_names`]; module docs) and a `const` a
+    /// decorator names anywhere in the file, however deep (`@t(K)` in an `if` block).
     fn kept_vars(&self, items: &[Item], stmts: &[Stmt]) -> Vec<bool> {
         let listed = export_listed(items);
         let mut keep: Vec<bool> = items
@@ -179,10 +180,21 @@ impl Parser<'_> {
                 _ => true,
             })
             .collect();
-        let free: Vec<_> = items.iter().map(super::script_names::free_names).collect();
-        let stmt_free: Vec<_> = stmts
-            .iter()
-            .map(|s| (s.span.lo, super::script_names::stmt_free_names(s)))
+        // The names a decorator reads anywhere in the file (with a declaration's own, a
+        // statement's, however deep), as constants.
+        let mut decorated = rustc_hash::FxHashSet::default();
+        let free: Vec<_> = (items.iter().map(super::script_names::item_names))
+            .map(|(free, d)| {
+                decorated.extend(d);
+                free
+            })
+            .collect();
+        let stmt_free: Vec<_> = (stmts.iter())
+            .map(|s| {
+                let (free, d) = super::script_names::stmt_names(s);
+                decorated.extend(d);
+                (s.span.lo, free)
+            })
             .collect();
         let captured = captured_names(items, stmts);
         let assigned = assigned_names(items, stmts);
@@ -225,7 +237,11 @@ impl Parser<'_> {
             let changes =
                 fresh || (v.kind == VarKind::Let && names.iter().any(|n| assigned.contains(n)));
             let by_closure = changes && captured.iter().any(|n| names.contains(n));
-            keep[i] |= above || by_closure;
+            // A `const` a decorator names is a constant the compiler reads, which a local of
+            // `main` is not (also in a statement's block or an arrow's body).
+            let by_decorator =
+                v.kind == VarKind::Const && names.iter().any(|n| decorated.contains(n));
+            keep[i] |= above || by_closure || by_decorator;
         }
         loop {
             let mut changed = false;
