@@ -65,9 +65,6 @@ pub(crate) struct Copy {
     /// `Upcast`): [`CopyFlow`] does not follow it, so any value converted to a dynamic type
     /// whose type holds `to` may be it.
     pub generic: bool,
-    /// The object the fields are read from, in a program with typed proxies: a view's source
-    /// (module docs). `None` when the conversion can't become a view.
-    pub view_of: Option<crate::hir::Expr>,
     /// `x as Record<K, V>` of an object with fields: the record holds a copy of the fields, and
     /// has no view (`FnCx::comparable_cast`).
     pub record: bool,
@@ -219,11 +216,7 @@ pub(crate) fn check(cx: &mut Ctx) {
     // Conversions that keep the one object, as views (module docs); a type with its own
     // methods (a class) has no view, nor has a copy with no conversion in the source to rewrite.
     let views = |cx: &Ctx, c: &Copy| {
-        proxies
-            && !c.generic
-            && c.view_of.is_some()
-            && c.span != Span::DUMMY
-            && cx.class_of(c.to).is_none()
+        proxies && !c.generic && !c.record && c.span != Span::DUMMY && cx.class_of(c.to).is_none()
     };
     let built = match proxies {
         true => built_types(cx),
@@ -255,7 +248,7 @@ pub(crate) fn check(cx: &mut Ctx) {
         if let Some(w) = assigned(cx, (c, ci), &writes, &looks) {
             match views(cx, c) {
                 true => viewed.push((c, Why::Write(w))),
-                false if proxy_only => strict.push((c.span, c.to)),
+                false if proxy_only && !c.generic => strict.push((c.span, c.to)),
                 false => report_write(cx, c, w),
             }
         } else if let Some(&(t, span, how)) = seen
@@ -268,7 +261,7 @@ pub(crate) fn check(cx: &mut Ctx) {
             );
             match views(cx, c) && !shown {
                 true => viewed.push((c, Why::Seen(t, span, how))),
-                false if proxy_only => strict.push((c.span, c.to)),
+                false if proxy_only && !c.generic => strict.push((c.span, c.to)),
                 false => report_seen(cx, c, t, span, how, &in_keys),
             }
         }

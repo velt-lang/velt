@@ -7,10 +7,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
-use crate::hir::{Callee, Def, DefId, Expr, ExprKind, Intrinsic, LocalId, Stmt, StmtKind, TyId};
 use crate::hir::TyKind;
-use crate::visit::{self, VisitMut};
+use crate::hir::{Callee, Def, DefId, Expr, ExprKind, Intrinsic, LocalId, Stmt, StmtKind, TyId};
 use crate::object_copies::{each_body, holds_by, related, Copy, Seen, Write};
+use crate::visit::{self, VisitMut};
 
 /// Why a conversion can't stay a copy (`check`).
 #[derive(Clone, Copy)]
@@ -28,9 +28,25 @@ pub(crate) fn convert_to_views(cx: &mut Ctx, viewed: &[(&Copy, Why)]) -> FxHashS
         any: TyId,
         imp: u32,
         done: FxHashSet<(Span, TyId)>,
+        /// The source of the literal this block makes, read by the fields it sets after it.
+        block_source: Option<Expr>,
+    }
+    /// The first `base.f` in `e` with `base` of type `from`: where the literal reads its fields.
+    struct FieldOf {
+        from: TyId,
+        base: Option<Expr>,
+    }
+    impl VisitMut for FieldOf {
+        fn expr(&mut self, e: &mut Expr) {
+            if let E::Field { base, .. } = &e.kind {
+                if base.ty == self.from && self.base.is_none() {
+                    self.base = Some((**base).clone());
+                }
+            }
+        }
     }
     impl Mark<'_> {
-        fn source(&self, e: &Expr) -> Option<Expr> {
+        fn copy_at(&self, e: &Expr) -> Option<&Copy> {
             let E::AdtLit {
                 converted: Conversion::Copy,
                 ..
@@ -39,7 +55,7 @@ pub(crate) fn convert_to_views(cx: &mut Ctx, viewed: &[(&Copy, Why)]) -> FxHashS
                 return None;
             };
             let at = |v: &&(&Copy, Why)| v.0.span == e.span && v.0.to == e.ty;
-            self.viewed.iter().find(at)?.0.view_of.clone()
+            self.viewed.iter().find(at).map(|v| v.0)
         }
     }
     impl VisitMut for Mark<'_> {
@@ -50,23 +66,51 @@ pub(crate) fn convert_to_views(cx: &mut Ctx, viewed: &[(&Copy, Why)]) -> FxHashS
                     StmtKind::Let {
                         local,
                         init: Some(i),
-                    } if self.source(i).is_some() => Some(*local),
+                    } => self.copy_at(i).map(|c| (*local, c.from)),
                     _ => None,
                 });
-                if let Some(l) = made {
-                    b.stmts.retain(|s| !sets_field_of(s, l));
+                if let Some((l, from)) = made {
+                    let mut find = FieldOf { from, base: None };
+                    for s in b.stmts.iter_mut().filter(|s| sets_field_of(s, l)) {
+                        visit::stmt(s, &mut find);
+                    }
+                    if find.base.is_some() || !b.stmts.iter().any(|s| sets_field_of(s, l)) {
+                        b.stmts.retain(|s| !sets_field_of(s, l));
+                    }
+                    self.block_source = find.base;
+                }
+                // A literal that reads no field says so before it (`copy_object`).
+                if let Some(from) = b
+                    .value
+                    .as_ref()
+                    .and_then(|v| self.copy_at(v))
+                    .map(|c| c.from)
+                {
+                    self.block_source = b.stmts.iter().find_map(|s| match &s.kind {
+                        StmtKind::Expr(x) if x.ty == from => Some(x.clone()),
+                        _ => None,
+                    });
                 }
                 return;
             }
-            let Some(mut src) = self.source(e) else {
+            let Some(from) = self.copy_at(e).map(|c| c.from) else {
+                return;
+            };
+            let E::AdtLit { fields, .. } = &mut e.kind else {
+                return;
+            };
+            let mut find = FieldOf { from, base: None };
+            for f in fields.iter_mut() {
+                visit::expr(f, &mut find);
+            }
+            let Some(mut src) = find.base.or_else(|| self.block_source.take()) else {
+                // No field of the source is read: it stays a copy, and the error it was.
                 return;
             };
             self.done.insert((e.span, e.ty));
             // A conversion nested in this one's fields goes with it.
-            if let E::AdtLit { fields, .. } = &mut e.kind {
-                for f in fields.iter_mut() {
-                    visit::expr(f, self);
-                }
+            for f in fields.iter_mut() {
+                visit::expr(f, self);
             }
             crate::body::places::set_place_mode(&mut src, UseMode::Borrow);
             let (span, ty) = (src.span, src.ty);
@@ -121,6 +165,7 @@ pub(crate) fn convert_to_views(cx: &mut Ctx, viewed: &[(&Copy, Why)]) -> FxHashS
         any,
         imp,
         done: FxHashSet::default(),
+        block_source: None,
     };
     each_body(cx, &mut mark);
     mark.done

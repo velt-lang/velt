@@ -83,7 +83,6 @@ impl FnCx<'_, '_> {
             fresh: false,
             in_order: true,
             generic: false,
-            view_of: None,
             record: true,
         });
     }
@@ -197,7 +196,8 @@ impl FnCx<'_, '_> {
             return false;
         };
         if let TyKind::Dyn(d, _) = self.cx.ty.kind(from) {
-            if self.cx.literal_ifaces.contains(d) && matches!(self.cx.ty.kind(to), TyKind::Dyn(..)) {
+            if self.cx.literal_ifaces.contains(d) && matches!(self.cx.ty.kind(to), TyKind::Dyn(..))
+            {
                 return want.iter().any(|m| m.1.is_none());
             }
         }
@@ -208,7 +208,10 @@ impl FnCx<'_, '_> {
             have.iter().any(|m| m.0 == *name && m.1.is_none())
                 && ty.is_some_and(|t| {
                     let t = self.cx.ty.core(t).unwrap_or(t);
-                    matches!(self.cx.ty.kind(t), TyKind::FnPtr { .. } | TyKind::Closure(_))
+                    matches!(
+                        self.cx.ty.kind(t),
+                        TyKind::FnPtr { .. } | TyKind::Closure(_)
+                    )
                 })
         })
     }

@@ -109,10 +109,7 @@ impl FnLower<'_, '_> {
             .func(Work::Thunk(ThunkKind::Unbound, r.def, r.targs.clone()));
         let ca = self.cx.closure_agg();
         let env = self.unbound_env();
-        let v = self.rvalue_temp(
-            Ty::Agg(ca),
-            Rvalue::Aggregate(ca, vec![cfunc(code), env]),
-        );
+        let v = self.rvalue_temp(Ty::Agg(ca), Rvalue::Aggregate(ca, vec![cfunc(code), env]));
         self.any_box_into(v, fty, out);
         true
     }

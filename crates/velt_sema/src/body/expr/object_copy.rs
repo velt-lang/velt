@@ -64,7 +64,6 @@ impl FnCx<'_, '_> {
             false => self.temp("<copy>", h, &mut lets),
         };
         set_place_mode(&mut base, UseMode::Borrow);
-        let view_of = self.program_makes_proxies().then(|| base.clone());
         self.cx.object_copies.copies.push(Copy {
             from,
             to: exp,
@@ -75,9 +74,16 @@ impl FnCx<'_, '_> {
             fresh,
             in_order,
             generic: false,
-            view_of,
             record: false,
         });
+        // A literal that reads no field of its source says what it is a copy of, for a view of it
+        // (`crate::object_views`).
+        if slots.iter().all(|s| matches!(s, Slot::Absent(..))) && self.program_makes_proxies() {
+            lets.push(hir::Stmt {
+                kind: hir::StmtKind::Expr(base.clone()),
+                span,
+            });
+        }
         let mut values = vec![];
         let mut posts = vec![];
         for (k, slot) in slots.into_iter().enumerate() {
