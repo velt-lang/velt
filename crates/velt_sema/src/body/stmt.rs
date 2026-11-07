@@ -627,7 +627,6 @@ impl FnCx<'_, '_> {
             self.narrow_to_assigned(local, ty, h);
         }
         self.note_checked_copy(local, v.ty.is_none(), v.init.as_ref());
-        self.note_fresh_object(local, kind, v.init.as_ref(), span);
         Self::push(out, S::Let { local, init }, span);
     }
 

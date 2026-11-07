@@ -88,7 +88,6 @@ impl FnCx<'_, '_> {
                 as_value,
             );
         }
-        let noted = self.cx.object_copies.writes.len();
         let key = match &strip(target).kind {
             ast::ExprKind::Member { prop, .. } => {
                 self.note_dynamic_write(&prop.name, prop.span);
@@ -104,16 +103,6 @@ impl FnCx<'_, '_> {
             },
             _ => return (self.error_expr(span), false),
         };
-        // `const slots: any = Object.create(null); slots[k] = v`: until the local's value goes
-        // anywhere, the object it made is no object a conversion copied, so the write shows no
-        // copy (`crate::object_views::fresh_writes_seen`).
-        if let H::Local(l, _) = &obj.kind {
-            if let Some(&decl) = self.f.fresh_objects.get(l) {
-                let written = self.cx.object_copies.writes.split_off(noted);
-                let at = written.into_iter().map(|w| (*l, decl, w));
-                self.cx.object_copies.fresh_writes.extend(at);
-            }
-        }
         // Used as a value, the receiver and key are bound first: JavaScript evaluates them
         // before the right-hand side, which may replace the object the receiver names.
         let mut stmts = vec![];
@@ -424,19 +413,6 @@ impl FnCx<'_, '_> {
         None
     }
 
-    /// A `const` whose initializer makes the object it holds (`FnFrame::fresh_objects`).
-    pub(crate) fn note_fresh_object(
-        &mut self,
-        local: hir::LocalId,
-        kind: LocalKind,
-        init: Option<&ast::Expr>,
-        span: Span,
-    ) {
-        if kind == LocalKind::Const && init.is_some_and(makes_object) {
-            self.f.fresh_objects.insert(local, span);
-        }
-    }
-
     /// A write through `any` to field `name` (empty: a key known only at run time, which may
     /// be any field) of whatever object it holds, for the copies of `crate::object_copies`.
     pub(super) fn note_dynamic_write(&mut self, name: &str, span: Span) {
@@ -514,22 +490,5 @@ impl FnCx<'_, '_> {
         };
         let t = self.cx.widened(t);
         self.cx.ty.is_numeric(t) || self.cx.ty.is_bottom(t) || self.cx.dynamic(t).is_some()
-    }
-}
-
-/// Does `e` make a new object, with nothing else referring to it yet: `Object.create(p)` or an
-/// object literal, as written or asserted to a type?
-fn makes_object(e: &ast::Expr) -> bool {
-    match &e.kind {
-        ast::ExprKind::Paren(x) | ast::ExprKind::Cast { expr: x, .. } => makes_object(x),
-        ast::ExprKind::Object(_) => true,
-        ast::ExprKind::Call { callee, .. } => match &callee.kind {
-            ast::ExprKind::Member { object, prop, .. } => {
-                prop.name == "create"
-                    && matches!(&object.kind, ast::ExprKind::Ident(i) if i.name == "Object")
-            }
-            _ => false,
-        },
-        _ => false,
     }
 }

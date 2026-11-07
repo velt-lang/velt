@@ -3,12 +3,11 @@
 //! lower/any_view.rs), which keeps the one object as Node does. And dynamic values holding an
 //! `Object.freeze` result, which have no view of being frozen.
 
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashSet;
 use velt_common::{Diagnostic, Span};
 
 use crate::ctx::Ctx;
-use crate::hir::TyKind;
-use crate::hir::{Callee, Def, DefId, Expr, ExprKind, Intrinsic, LocalId, Stmt, StmtKind, TyId};
+use crate::hir::{Expr, TyId, TyKind};
 use crate::object_copies::{each_body, holds_by, related, Copy, Seen, Write};
 use crate::visit::{self, VisitMut};
 
@@ -22,7 +21,9 @@ pub(crate) enum Why<'w> {
 /// Make the conversions `viewed` conversions through `any`, each of the object its fields were
 /// read from (`AnyTo(to, ToDyn(Share(source)))`), and return those it found.
 pub(crate) fn convert_to_views(cx: &mut Ctx, viewed: &[(&Copy, Why)]) -> FxHashSet<(Span, TyId)> {
-    use crate::hir::{Conversion, ExprKind as E, UseMode};
+    use crate::hir::{
+        Callee, Conversion, ExprKind as E, Intrinsic, LocalId, Stmt, StmtKind, UseMode,
+    };
     struct Mark<'a> {
         viewed: &'a [(&'a Copy, Why<'a>)],
         any: TyId,
@@ -270,171 +271,4 @@ pub(crate) fn check_record_sources(cx: &mut Ctx, copies: &[Copy], view_casts: &[
             );
         }
     }
-}
-
-/// A write through `any` to the object a `const` made itself reaches no object a conversion copied
-/// while the local's value has gone nowhere: as the receiver of a member read or write it stays
-/// the local's, and a copy made after the write has what it wrote. So such writes count (go to
-/// `writes`) only for a local whose value was used in another way before one of them, or in a
-/// loop that has both.
-pub(crate) fn fresh_writes_seen(
-    cx: &mut Ctx,
-    fresh: Vec<(LocalId, Span, Write)>,
-    writes: &mut Vec<Write>,
-) {
-    if fresh.is_empty() {
-        return;
-    }
-    let closures: FxHashMap<DefId, Vec<LocalId>> = (cx.defs.iter().enumerate())
-        .filter_map(|(i, d)| match d {
-            Some(Def::Fn(f)) => Some((
-                DefId(i as u32),
-                f.captures.iter().map(|c| c.outer).collect(),
-            )),
-            _ => None,
-        })
-        .collect();
-    let mut seen: FxHashMap<(LocalId, Span), bool> = FxHashMap::default();
-    for (local, decl, write) in fresh {
-        let counts = *seen
-            .entry((local, decl))
-            .or_insert_with(|| fresh_local_shared(cx, local, decl, &closures));
-        if counts {
-            writes.push(write);
-        }
-    }
-}
-
-/// Was the value of `local`, declared at `decl`, used in another way before a write through it?
-/// A local not found counts as shared.
-fn fresh_local_shared(
-    cx: &mut Ctx,
-    local: LocalId,
-    decl: Span,
-    closures: &FxHashMap<DefId, Vec<LocalId>>,
-) -> bool {
-    for d in cx.defs.iter_mut().flatten() {
-        let Def::Fn(f) = d else { continue };
-        let mut uses = FreshUses::new(local, Some(decl), closures);
-        visit::block(&mut f.body.block, &mut uses);
-        if uses.declared {
-            return uses.shared;
-        }
-    }
-    true
-}
-
-/// The uses of a local, in source order (`fresh_writes_seen`).
-struct FreshUses<'a> {
-    local: LocalId,
-    decl: Option<Span>,
-    declared: bool,
-    closures: &'a FxHashMap<DefId, Vec<LocalId>>,
-    /// Receivers just seen, whose `Local` comes next in the walk.
-    receivers: u32,
-    gone: bool,
-    wrote: bool,
-    shared: bool,
-}
-
-impl<'a> FreshUses<'a> {
-    fn new(
-        local: LocalId,
-        decl: Option<Span>,
-        closures: &'a FxHashMap<DefId, Vec<LocalId>>,
-    ) -> Self {
-        FreshUses {
-            local,
-            decl,
-            declared: false,
-            closures,
-            receivers: 0,
-            gone: false,
-            wrote: false,
-            shared: false,
-        }
-    }
-}
-
-impl VisitMut for FreshUses<'_> {
-    fn stmt(&mut self, s: &mut Stmt) {
-        match &mut s.kind {
-            StmtKind::Let { local, .. } if *local == self.local && self.decl == Some(s.span) => {
-                self.declared = true;
-            }
-            // Each round runs after the last: the loop's condition and step too.
-            StmtKind::While {
-                cond, body, step, ..
-            } => {
-                let mut inner = FreshUses::new(self.local, None, self.closures);
-                visit::expr(cond, &mut inner);
-                visit::block(body, &mut inner);
-                if let Some(step) = step {
-                    visit::expr(step, &mut inner);
-                }
-                self.shared |= inner.gone && inner.wrote;
-            }
-            StmtKind::ForOf { body, .. } => {
-                let mut inner = FreshUses::new(self.local, None, self.closures);
-                visit::block(body, &mut inner);
-                self.shared |= inner.gone && inner.wrote;
-            }
-            _ => {}
-        }
-    }
-
-    fn expr(&mut self, e: &mut Expr) {
-        match &e.kind {
-            ExprKind::Call {
-                callee: Callee::Intrinsic(i),
-                args,
-            } if reads_receiver(*i) => {
-                let receiver = match args.first().map(|a| &a.kind) {
-                    Some(ExprKind::Call {
-                        callee: Callee::Intrinsic(Intrinsic::Share),
-                        args,
-                    }) => args.first().map(|a| &a.kind),
-                    k => k,
-                };
-                if matches!(receiver, Some(ExprKind::Local(l, _)) if *l == self.local) {
-                    self.receivers += 1;
-                    if matches!(i, Intrinsic::AnySet | Intrinsic::AnySetIndex) {
-                        // The key and the value are evaluated before the write.
-                        let mut before = FreshUses::new(self.local, None, self.closures);
-                        for a in args.iter().skip(1) {
-                            let mut a = a.clone();
-                            visit::expr(&mut a, &mut before);
-                        }
-                        self.gone |= before.gone;
-                        self.wrote = true;
-                        self.shared |= self.gone || before.shared;
-                    }
-                }
-            }
-            ExprKind::Local(l, _) if *l == self.local => match self.receivers {
-                0 => self.gone = true,
-                _ => self.receivers -= 1,
-            },
-            ExprKind::Closure(c) => {
-                self.gone |= (self.closures.get(c)).is_some_and(|o| o.contains(&self.local));
-            }
-            _ => {}
-        }
-    }
-}
-
-/// Does this intrinsic read or write through its first argument, and keep it nowhere?
-fn reads_receiver(i: Intrinsic) -> bool {
-    matches!(
-        i,
-        Intrinsic::AnyGet
-            | Intrinsic::AnyIndex
-            | Intrinsic::AnySet
-            | Intrinsic::AnySetIndex
-            | Intrinsic::AnyDelete
-            | Intrinsic::AnyKeys
-            | Intrinsic::AnyTruthy
-            | Intrinsic::AnyTypeof
-            | Intrinsic::AnyTag
-    )
 }

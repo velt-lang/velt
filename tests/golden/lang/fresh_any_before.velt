@@ -1,6 +1,0 @@
-// Writes before the object goes anywhere: a copy made after them has them, as in Node.
-function seen(x: { a: number; b: number }): { a: number } { return x; }
-const p: any = { a: 1, b: 2 };
-p.a = 5;
-const q = seen(p);
-console.log(q.a, p.a);

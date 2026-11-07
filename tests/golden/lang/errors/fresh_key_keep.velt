@@ -1,0 +1,10 @@
+// As `fresh_rhs_call`, for a key.
+function seen(x: { a: number; b: number }): { a: number } { return x; }
+let q: { a: number } = { a: 0 };
+function key(x: any): string { q = seen(x); return "a"; }
+function main() {
+  const p: any = { a: 1, b: 2 };
+  p[key(p)] = 5;
+  console.log(q.a, p.a);
+}
+main();

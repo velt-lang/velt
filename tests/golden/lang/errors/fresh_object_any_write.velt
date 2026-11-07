@@ -1,5 +1,5 @@
-// A write through `any` to the object a local just made shows no copy: another object's conversion
-// by copying its fields stays allowed.
+// A write through `any` to an object the local just made, and a conversion by copying of another
+// object, in a program with no proxies: a dynamic key may reach any object, so it is refused.
 interface Options { mode: string; extra: number; }
 interface Part { mode: string; }
 function read(p: Part): string { return p.mode; }
@@ -12,7 +12,3 @@ for (const name of ["x", "y"]) {
   slots[name] = name + "!";
 }
 console.log(slots.x, slots.y, Object.keys(slots));
-const made = Object.create(null) as any;
-const k = "z";
-made[k] = 1;
-console.log(made.z);

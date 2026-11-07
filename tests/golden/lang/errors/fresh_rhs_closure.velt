@@ -1,0 +1,9 @@
+// As `fresh_rhs_call`, through a closure called on the right-hand side.
+function seen(x: { a: number; b: number }): { a: number } { return x; }
+let q: { a: number } = { a: 0 };
+function main() {
+  const p: any = { a: 1, b: 2 };
+  p.a = (() => { q = seen(p); return 5; })();
+  console.log(q.a, p.a);
+}
+main();

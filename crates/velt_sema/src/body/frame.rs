@@ -100,10 +100,6 @@ pub(crate) struct Frame {
     pub assign_hint: Option<TyId>,
     /// Where this function reads an open record's key (`record_value_as`).
     pub record_reads: rustc_hash::FxHashSet<velt_common::Span>,
-    /// `const` locals holding an object made by their own initializer (`Object.create(null)`,
-    /// `{}`): a write through `any` to one reaches no object an object conversion copied
-    /// (`dynamic_assign`, `crate::object_copies`).
-    pub fresh_objects: rustc_hash::FxHashMap<LocalId, velt_common::Span>,
     /// The read-only local a method call written `(x as T).m()` may change (`T` not read-only;
     /// `readonly_arrays.rs`).
     pub readonly_exempt: Option<LocalId>,
@@ -259,7 +255,6 @@ impl Frame {
             local_marks: Default::default(),
             assign_hint: None,
             record_reads: Default::default(),
-            fresh_objects: Default::default(),
             readonly_exempt: None,
             readonly_cast_recv: false,
             as_const_tuples: Default::default(),

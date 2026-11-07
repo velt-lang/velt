@@ -1,0 +1,10 @@
+// As `fresh_create_null`, of a literal, in a program with proxies: one object, as in Node.
+const made = new Proxy({}, {});
+function seen(x: { a: number; b: number }): { a: number } { return x; }
+function main() {
+  const p: any = { a: 1, b: 2 };
+  const q = seen(p);
+  p.a = 5;
+  console.log(q.a, p.a);
+}
+main();

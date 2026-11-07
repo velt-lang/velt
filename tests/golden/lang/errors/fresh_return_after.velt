@@ -1,0 +1,14 @@
+// As `fresh_create_null`, of an object made in one function and written at its caller.
+function seen(x: { a: number; b: number }): { a: number } { return x; }
+function make(): any {
+  const p: any = { a: 1, b: 2 };
+  return p;
+}
+function main() {
+  const p = make();
+  const q = seen(p);
+  const k = "a";
+  p[k] = 5;
+  console.log(q.a, p.a);
+}
+main();
