@@ -79,7 +79,7 @@ async function nextMessage(input: Input, deadline: f64): Promise<i64> throws PgE
     const left = deadline - performance.now();
     let n: number | null = 0;
     try {
-      if (left <= 0 || !(await s.readableWithin(left))) {
+      if (left <= 0 || (!s.buffered() && !(await s.tcp.readableWithin(left)))) {
         throw new PgError(
           "ETIMEDOUT",
           "the server did not finish the connection's startup in time",

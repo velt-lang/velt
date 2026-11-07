@@ -198,7 +198,7 @@ async function pace(h: CopyHandle, stream: PgStream, conn: Conn) {
   }
   if (late == 1) {
     try {
-      await stream.drained(MAX_QUEUED as number);
+      await stream.tcp.drained(MAX_QUEUED as number);
     } catch (e) {
       throw noted(conn, e instanceof IoError ? ioFailure(e.code, e.message) : connectionClosed());
     }

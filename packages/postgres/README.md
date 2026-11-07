@@ -211,7 +211,7 @@ reads its own reply.
   `connection.velt` (requests), `ops.velt` (what `Client` and `Pool` share), `builder.velt` and
   `encoder.velt` (a request's bytes), `input.velt`, `read_buffer.velt` and `reply.velt` (a reply, and
   rows through velt/db's `readRows`), `drain.velt` (after a task went away), `startup.velt`,
-  `socket.velt`, `tls_relay.velt` (TLS without a certificate check), `transport.velt` (the stream
+  `socket.velt`, `unchecked_tls.velt` (TLS without a certificate check), `transport.velt` (the stream
   under it), `config.velt`, `describe.velt`, `prepared.velt`
   and `statement_cache.velt` (statements), `copy_state.velt`.
 - The pool: `pool_state.velt` (the state behind its lock), `grant.velt`, `taken.velt`,
