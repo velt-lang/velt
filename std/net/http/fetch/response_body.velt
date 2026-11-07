@@ -118,8 +118,49 @@ export async function responseBytes(r: Response): Promise<u8[], IoError | AbortE
 }
 
 /** The body of `r` chunk by chunk, for `BodyStream`; reading them uses the body up. */
-export async function* responseChunks(r: Response): AsyncIterator<u8[], IoError | AbortError> {
-  r.claim();
+export function responseChunks(r: Response): AsyncIterator<u8[], IoError | AbortError> {
+  return new ResponseChunks(r);
+}
+
+// `responseChunks`. A stream body's chunks are its own, so that ending them reaches its source
+// also while a `next` waits: a `ReadableStream`'s `cancel` runs at once.
+class ResponseChunks implements AsyncIterator<u8[], IoError | AbortError> {
+  private response: Response;
+  private chunks: AsyncIterator<u8[], IoError | AbortError> | null = null;
+
+  constructor(response: Response) {
+    this.response = response;
+  }
+
+  private open(): AsyncIterator<u8[], IoError | AbortError> throws IoError {
+    const made = this.chunks;
+    if (made != null) {
+      return made;
+    }
+    const r = this.response;
+    r.claim();
+    const s = r.bodySource == STREAM ? r.bodyStream : null;
+    r.bodyStream = s == null ? r.bodyStream : null;
+    const opened = s != null ? s[Symbol.asyncIterator]() : otherChunks(r);
+    this.chunks = opened;
+    return opened;
+  }
+
+  async next(): Promise<IteratorResult<u8[]>, IoError | AbortError> {
+    return await this.open().next();
+  }
+
+  async return(): Promise<IteratorResult<u8[]>> {
+    try {
+      await this.open().return();
+    } catch (e) {
+      // Already read: nothing to end.
+    }
+    return { done: true };
+  }
+}
+
+async function* otherChunks(r: Response): AsyncGenerator<u8[], IoError | AbortError> {
   const f = r.bodyFetched;
   if (r.bodySource == RUNTIME && f != null) {
     while (true) {
@@ -135,10 +176,6 @@ export async function* responseChunks(r: Response): AsyncIterator<u8[], IoError 
   r.bodyStream = null;
   if (r.bodySource == TEXT) {
     yield utf8Encode(r.bodyText);
-  } else if (r.bodySource == STREAM && s != null) {
-    for await (const chunk of s) {
-      yield chunk;
-    }
   } else {
     const d = r.bodyBytes;
     if (d != null && d.length > 0) {

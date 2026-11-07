@@ -253,6 +253,58 @@ describe("compress", () => {
     }
   });
 
+  it("cancels a quiet event stream when the client goes away", async () => {
+    const cancelled = channel<i64>();
+    const h: Handler = async (req: Request) => new Response(
+      new ReadableStream<Uint8Array>({
+        start: (ctl) => {
+          ctl.enqueue(Uint8Array.fromBytes(bytesOf("data: first")));
+        },
+        cancel: (reason) => {
+          cancelled.trySend(1);
+        },
+      }),
+      { headers: { "content-type": "text/event-stream" } },
+    );
+    const server = await serve({ port: 0 }, compress()(h));
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write("GET / HTTP/1.1\r\nHost: x\r\nAccept-Encoding: gzip\r\n\r\n");
+      await timeout(c.read(), 10000);
+      // The body is waiting for its next chunk, and none comes.
+      c.close();
+      expect(await timeout(cancelled.receive(), 10000)).toBe(1);
+    } finally {
+      await server.shutdown();
+    }
+  });
+
+  it("cancels a body with no first chunk when the client goes away", async () => {
+    const cancelled = channel<i64>();
+    const started = channel<i64>();
+    const h: Handler = async (req: Request) => new Response(
+      new ReadableStream<Uint8Array>({
+        start: (ctl) => {
+          started.trySend(1);
+        },
+        cancel: (reason) => {
+          cancelled.trySend(1);
+        },
+      }),
+      { headers: { "content-type": "text/plain" } },
+    );
+    const server = await serve({ port: 0 }, compress()(h));
+    try {
+      const c = await connect(`127.0.0.1:${server.port}`);
+      await c.write("GET / HTTP/1.1\r\nHost: x\r\nAccept-Encoding: gzip\r\n\r\n");
+      await timeout(started.receive(), 10000);
+      c.close();
+      expect(await timeout(cancelled.receive(), 10000)).toBe(1);
+    } finally {
+      await server.shutdown();
+    }
+  });
+
   it("compresses over HTTP, through an App, and the client reads it back", async () => {
     const app = new App<number>(() => 0);
     app.use(compress());
