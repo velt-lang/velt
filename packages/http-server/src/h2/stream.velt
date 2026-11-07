@@ -10,6 +10,7 @@
 import { TcpStream } from "velt/net";
 import { AbortController, AbortSignal } from "velt/task";
 import { FieldList } from "velt/net/http/h2";
+import { SourceHold } from "../http_stream";
 import { RequestFields } from "./validate";
 import { copyBytes } from "../bytes";
 
@@ -86,6 +87,8 @@ export class H2Stream {
   /// The tunnel's directions that have ended.
   tunnelOut: bool = false;
   tunnelIn: bool = false;
+  /// The source of a streamed body being written.
+  source: SourceHold | null = null;
   private aborter: AbortController | null = null;
 
   /// Prepares a pooled stream for request `id`.
@@ -117,6 +120,7 @@ export class H2Stream {
     this.tunnelOut = false;
     this.tunnelIn = false;
     this.aborter = null;
+    this.source = null;
   }
 
   /// The END_STREAM of the request arrived.
@@ -134,6 +138,12 @@ export class H2Stream {
   /// The stream was reset (either way): aborts its signal and wakes its handler.
   resetNow() {
     this.reset = true;
+    const hold = this.source;
+    if (hold != null) {
+      this.source = null;
+      // Runs beside the wait for the source's next chunk, which it may end.
+      const ending = hold.end();
+    }
     this.state = CLOSED;
     this.outStart = 0;
     this.outEnd = 0;

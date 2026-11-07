@@ -2,12 +2,70 @@
 // `BodySink`, what it writes into: the response of either protocol (`Http1Response`,
 // `H2Response`), so the stream itself is one class for both.
 
+import { IoError } from "velt/io";
+import { AbortError } from "velt/task";
+
 /// Where a streamed body goes: a response that started one (internal).
 export interface BodySink {
   /// One piece of the body (not empty).
   piece(data: string | u8[] | Uint8Array): Promise<void>;
   /// Ends the body.
   finishStream(): Promise<void>;
+}
+
+/// The source of a streamed body while it is written, so that a client going away reaches it
+/// also while it has nothing to write (an async generator hears at its next `yield`: calls to it
+/// queue, as in JS).
+export class SourceHold {
+  private source: AsyncIterator<u8[], IoError | AbortError> | null = null;
+
+  constructor(source: AsyncIterator<u8[], IoError | AbortError>) {
+    this.source = source;
+  }
+
+  /// The source ended by itself.
+  drop() {
+    this.source = null;
+  }
+
+  /// Ends the source, once: its `cancel` or `finally` runs.
+  async end() {
+    const s = this.source;
+    if (s != null) {
+      this.source = null;
+      await s.return();
+    }
+  }
+}
+
+/**
+ * Writes the chunks of `source` into `sink`. A write that throws (the client went away) ends the
+ * source, then rethrows; so does nothing else, as the source's own end or error is its end.
+ */
+export async function sendBody(
+  source: AsyncIterator<u8[], IoError | AbortError>,
+  hold: SourceHold,
+  sink: BodySink,
+) {
+  while (true) {
+    let r: IteratorResult<u8[]>;
+    try {
+      r = await source.next();
+    } catch (e) {
+      hold.drop();
+      throw e;
+    }
+    if (r.done) {
+      hold.drop();
+      return;
+    }
+    try {
+      await sink.piece(r.value);
+    } catch (e) {
+      await hold.end();
+      throw e;
+    }
+  }
 }
 
 /** A streamed response body (`HttpResponse.stream`). */

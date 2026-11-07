@@ -95,6 +95,104 @@ describe("serve over HTTP/2", () => {
   });
 });
 
+describe("a client that resets a streamed Response over HTTP/2", () => {
+  it("cancels the ReadableStream, and the connection's other streams go on", async () => {
+    const seen = channel<string>();
+    const pulled = channel<string>(1);
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      if (new URL(req.url).pathname == "/other") {
+        return new Response("other");
+      }
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          // One chunk, so that the window of the connection has room for the other stream.
+          pull: (ctl) => {
+            if (pulled.trySend("pulled")) {
+              ctl.enqueue(new Uint8Array(1024));
+            }
+          },
+          cancel: (reason) => {
+            seen.trySend("cancelled");
+          },
+        }),
+      );
+    });
+    const c = await Client.open(server.port);
+    try {
+      c.get(1, "/stream");
+      await c.flush();
+      await timeout(pulled.receive(), 5000);
+      // RST_STREAM (type 3) with CANCEL (8).
+      c.frame(3, 0, 1, [0, 0, 0, 8]);
+      await c.flush();
+      expect(await timeout(seen.receive(), 5000)).toBe("cancelled");
+      c.get(3, "/other");
+      await c.flush();
+      const frames = await c.until(endOf(3));
+      expect(frames.includes("DATA 3 es 5:other")).toBe(true);
+    } finally {
+      c.close();
+      await server.shutdown();
+    }
+  });
+
+  it("cancels a ReadableStream with nothing to send", async () => {
+    const seen = channel<string>();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          start: (ctl) => {
+            seen.trySend("started");
+          },
+          cancel: (reason) => {
+            seen.trySend("cancelled");
+          },
+        }),
+      );
+    });
+    const c = await Client.open(server.port);
+    try {
+      c.get(1, "/quiet");
+      await c.flush();
+      expect(await timeout(seen.receive(), 5000)).toBe("started");
+      c.frame(3, 0, 1, [0, 0, 0, 8]);
+      await c.flush();
+      expect(await timeout(seen.receive(), 5000)).toBe("cancelled");
+    } finally {
+      c.close();
+      await server.shutdown();
+    }
+  });
+
+  it("ends an async generator when the connection closes", async () => {
+    const seen = channel<string>();
+    const started = channel<string>();
+    async function* rows(): AsyncGenerator<u8[], never> {
+      try {
+        while (true) {
+          started.trySend("started");
+          yield utf8Encode("row");
+        }
+      } finally {
+        seen.trySend("ended");
+      }
+    }
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      return new Response(BodyStream.from(rows()));
+    });
+    const c = await Client.open(server.port);
+    try {
+      c.get(1, "/stream");
+      await c.flush();
+      await timeout(started.receive(), 5000);
+      c.close();
+      expect(await timeout(seen.receive(), 5000)).toBe("ended");
+    } finally {
+      await server.shutdown();
+    }
+  });
+});
+
 describe("a streamed Response with a Content-Length over HTTP/2", () => {
   // #2077: the head carries the handler's content-length; a body that ends short of it resets
   // the stream, so the client doesn't take the bytes so far for the whole body.

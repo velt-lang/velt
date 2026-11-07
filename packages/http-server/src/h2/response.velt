@@ -11,7 +11,7 @@ import { AbortSignal } from "velt/task";
 import { TcpStream } from "velt/net";
 import { EventStream } from "../event_stream";
 import { checkName, checkValue, lengthValue } from "../fields";
-import { BodySink, HttpStream } from "../http_stream";
+import { BodySink, HttpStream, sendBody, SourceHold } from "../http_stream";
 import { HttpResponse } from "../response";
 import { H2Connection } from "./connection";
 import { endBody, sendBytes, sendText, writeHead } from "./outbound";
@@ -212,9 +212,14 @@ export class H2Response extends HttpResponse implements BodySink {
     } else {
       await this.startStream(t);
     }
+    const source = body[Symbol.asyncIterator]();
+    const hold = new SourceHold(source);
+    this.s.source = hold;
     try {
-      for await (const chunk of body) {
-        await this.piece(chunk);
+      await sendBody(source, hold, this);
+      this.s.source = null;
+      if (this.s.reset) {
+        return;
       }
       if (this.left > 0) {
         throw new Error(`the body ended ${this.left} bytes short of its Content-Length`);
