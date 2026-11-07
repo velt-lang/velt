@@ -3,7 +3,7 @@
 import { NameReservations } from "../stores/name_reservations";
 import { Reservation } from "../stores/reservation";
 
-/** Reservations in a map, each asked for at `request` with `?name=<name>`. */
+/** Reservations in a map, each asked for at `request` with the query `name=<name>` added. */
 export class MemoryNameReservations implements NameReservations {
   private reservations: Map<string, Reservation> = new Map();
   private request: string;
@@ -23,6 +23,7 @@ export class MemoryNameReservations implements NameReservations {
   }
 
   howToRequest(name: string): string {
-    return `${this.request}?name=${name}`;
+    const join = this.request.includes("?") ? "&" : "?";
+    return `${this.request}${join}name=${encodeURIComponent(name)}`;
   }
 }

@@ -9,6 +9,8 @@ import {
   RegistryLimits,
   reservationKeys,
 } from "../src/lib";
+import { checkNotReserved } from "../src/server/reserved";
+import { Caller, RegistryStores } from "../src/lib";
 import { TestRegistry } from "./_registry";
 
 const REQUEST = "https://example.test/request-a-name";
@@ -69,5 +71,28 @@ describe("reserved names", () => {
     expect(reservationKeys("my-lib")).toEqual(["my_lib"]);
     expect(reservationKeys("@vue/core-x")).toEqual(["@vue/core_x", "@vue"]);
     expect(reservationKeys("@my-org/x")).toEqual(["@my_org/x", "@my_org"]);
+  });
+
+  it("need every reservation a scoped name falls under to be the caller's", async () => {
+    // Scoped names can't be published yet, so the check is called directly.
+    const [r, reserved] = registry();
+    reserved.reserve("@acme", "a well-known npm scope", "carol");
+    reserved.reserve("@acme/tool", "a well-known npm package", "dave");
+    const stores: RegistryStores = {
+      blobs: r.blobs,
+      db: r.db,
+      purge: r.purge,
+      auth: r.auth,
+      reserved,
+    };
+    let refusal = "";
+    try {
+      await checkNotReserved(stores, "@acme/tool", Caller.ofUser("dave"));
+    } catch (e) {
+      refusal = e.message;
+    }
+    expect(refusal).toContain("the scope `@acme` is reserved");
+    expect(refusal).toContain("?name=%40acme%2Ftool");
+    await checkNotReserved(stores, "@acme/other", Caller.ofUser("carol"));
   });
 });
