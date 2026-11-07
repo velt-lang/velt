@@ -1,0 +1,5 @@
+// `Exclude` and `Extract` of `any` are `any`. Expected output from `node`; `tsc --strict` accepts it.
+const x: Exclude<any, string> = 1;
+const y: Exclude<any, never> = "s";
+const z: Extract<any, string> = "t";
+console.log(x, y, z);
