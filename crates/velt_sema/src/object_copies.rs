@@ -97,6 +97,9 @@ pub(crate) enum Seen {
     Spread,
     /// `"k" in x` for a key `x`'s type lacks: `Copies::in_keys[i]`.
     In(u32),
+    /// A dynamic value converted to this type (`AnyTo`): it may be any object a write through
+    /// `any` reaches.
+    FromDynamic,
     /// A value converted to a dynamic type (`ToDyn` of `Program::any_impl`), from where
     /// `Copies::dyn_sources[i]` says.
     Dynamic(u32),
@@ -377,7 +380,7 @@ fn sees(
             }
             members.into_iter().any(|m| related(cx, m, c.to))
         }
-        Seen::Dynamic(_) => false,
+        Seen::Dynamic(_) | Seen::FromDynamic => false,
         // A copy of an object type's value (which has exactly its type's fields) with every
         // field in order shows what the original would, as one of a fresh source does.
         Seen::Spread | Seen::Printed | Seen::Serialized | Seen::Keys
@@ -453,11 +456,13 @@ fn dynamic_holds(cx: &mut Ctx, c: &Copy, ci: usize, looks: &Dynamic) -> bool {
 }
 
 /// Does the program convert the copy `c` (number `ci`), or a value that may hold its source, to
-/// a dynamic type? Only then can a write through `any` reach either object.
+/// a dynamic type, or a dynamic value to a type that may hold its source? Only then can a write
+/// through `any` reach either object.
 fn dynamic_reaches(cx: &mut Ctx, (c, ci): (&Copy, usize), looks: &Dynamic) -> bool {
     dynamic_holds(cx, c, ci, looks)
         || looks.seen.iter().any(|&(t, _, how)| {
-            matches!(how, Seen::Dynamic(_)) && holds(cx, t, c.from, &mut FxHashSet::default())
+            matches!(how, Seen::Dynamic(_) | Seen::FromDynamic)
+                && holds(cx, t, c.from, &mut FxHashSet::default())
         })
 }
 
@@ -602,6 +607,7 @@ fn report_seen(cx: &mut Ctx, c: &Copy, t: TyId, span: Span, how: Seen, in_keys: 
         Seen::Identity => format!("compares `{shown}` values with `===` or `!==`"),
         Seen::Key => format!("uses `{shown}` values as keys compared by identity"),
         // Never reported itself (`sees`).
+        Seen::FromDynamic => format!("converts a dynamic value to {a} `{shown}`"),
         Seen::Dynamic(_) => format!("converts {a} `{shown}` to a dynamic type"),
         Seen::Spread => format!("spreads {a} `{shown}`"),
         Seen::In(i) => format!(
