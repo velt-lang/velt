@@ -394,7 +394,11 @@ impl Source<'_> {
                 ..self.leaf(Kind::Function, &s.name.name, &s.generics, doc, item.span.lo)
             },
             ItemKind::ExternFn(s) if s.is_decorator => DocItem {
-                signature: format!("declare decorator function {}", p.fn_sig(s)),
+                signature: format!(
+                    "{}declare decorator function {}",
+                    p.decorators(&s.decorators),
+                    p.fn_sig(s)
+                ),
                 ..self.leaf(Kind::Function, &s.name.name, &s.generics, doc, item.span.lo)
             },
             ItemKind::ExternFn(s @ ast::FnSig { host: Some(h), .. }) => DocItem {
@@ -408,6 +412,7 @@ impl Source<'_> {
                     true => std::slice::from_ref(&f.sig),
                     false => &f.overloads[..],
                 };
+                // Its decorators, the implementation's, lead the first signature.
                 let signature = sigs
                     .iter()
                     .map(|s| {
@@ -416,6 +421,7 @@ impl Source<'_> {
                     })
                     .collect::<Vec<_>>()
                     .join("\n");
+                let signature = format!("{}{signature}", p.decorators(&f.sig.decorators));
                 DocItem {
                     signature,
                     ..self.leaf(
@@ -488,14 +494,15 @@ impl Source<'_> {
         } else {
             "class"
         };
+        let header = self.printer.type_header(
+            keyword,
+            &t.name.name,
+            &t.generics,
+            t.extends.as_slice(),
+            &t.implements,
+        );
         DocItem {
-            signature: self.printer.type_header(
-                keyword,
-                &t.name.name,
-                &t.generics,
-                t.extends.as_slice(),
-                &t.implements,
-            ),
+            signature: format!("{}{header}", self.printer.decorators(&t.decorators)),
             members,
             ..self.leaf(kind, &t.name.name, &t.generics, doc, lo)
         }
@@ -507,9 +514,12 @@ impl Source<'_> {
             .filter(|m| !m.is_private)
             .map(|m| match m.decl.overloads.split_first() {
                 None => self.member_fn(Kind::Method, &m.decl.sig),
-                // Overloads: the signatures, one per line, with the first one's doc comment.
+                // Overloads: the signatures, one per line, with the first one's doc comment, and
+                // the implementation's decorators before them.
                 Some((first, rest)) => {
                     let mut item = self.member_fn(Kind::Method, first);
+                    let decorators = self.printer.decorators(&m.decl.sig.decorators);
+                    item.signature.insert_str(0, &decorators);
                     for s in rest {
                         item.signature.push('\n');
                         item.signature += &self.member_fn(Kind::Method, s).signature;
@@ -562,7 +572,11 @@ impl Source<'_> {
             })
             .collect();
         DocItem {
-            signature: format!("enum {}", e.name.name),
+            signature: format!(
+                "{}enum {}",
+                self.printer.decorators(&e.decorators),
+                e.name.name
+            ),
             members,
             ..self.leaf(Kind::Enum, &e.name.name, &[], doc, lo)
         }
@@ -607,17 +621,22 @@ impl Source<'_> {
     /// A method, accessor or constructor: its modifiers as written (`static`, `async`, `get`,
     /// `mut`, …), then the signature.
     fn member_fn(&self, kind: Kind, sig: &ast::FnSig) -> DocItem {
+        let lo = crate::sig::Printer::after_decorators(&sig.decorators, sig.span.lo);
         let mods: String = self
             .printer
             .src
-            .get(sig.span.lo as usize..sig.name.span.lo.max(sig.span.lo) as usize)
+            .get(lo as usize..sig.name.span.lo.max(lo) as usize)
             .unwrap_or("")
             .split_whitespace()
             .filter(|w| !matches!(*w, "export" | "function" | "override"))
             .map(|w| format!("{w} "))
             .collect();
         DocItem {
-            signature: format!("{mods}{}", self.printer.fn_sig(sig)),
+            signature: format!(
+                "{}{mods}{}",
+                self.printer.decorators(&sig.decorators),
+                self.printer.fn_sig(sig)
+            ),
             ..self.leaf(
                 kind,
                 &sig.name.name,
@@ -702,6 +721,71 @@ mod tests {
             ["m(a: f64): f64\nm(a: f64, b: f64): f64", "static m2(): C"]
         );
         assert_eq!(m.items[1].members[0].doc, "Scales.");
+    }
+
+    /// Decorators are part of the API: every target shows its own, as written, before its
+    /// modifiers, and a doc comment above them documents the declaration.
+    #[test]
+    fn every_target_shows_its_decorators() {
+        let src = r#"export declare decorator function dd(k: string = "a"): Repeatable<TypeDecorator>;
+/** A class. */
+@dd @dd("c")
+export class C {
+  /** A field. */
+  @dd("x") x: i64 = 0;
+  @dd static readonly s: i64 = 1;
+  constructor(@dd public p: i64) {}
+  /** A method. */
+  @dd("m") static m(@dd("p") a: i64): i64 {
+    return a;
+  }
+  o(a: string): void;
+  @dd("o") o(a: any) {}
+}
+/** A function. */
+@dd
+export function f(@dd a: i64) {}
+@dd("e")
+export enum E {
+  A,
+}
+export function g(a: string): void;
+@dd("g")
+export function g(a: any) {}
+"#;
+        let m = extract("demo", src);
+        let sigs: Vec<&str> = m.items.iter().map(|i| i.signature.as_str()).collect();
+        assert_eq!(
+            sigs,
+            [
+                "declare decorator function dd(k: string = \"a\"): Repeatable<TypeDecorator>",
+                "@dd @dd(\"c\") class C",
+                "@dd function f(@dd a: i64)",
+                "@dd(\"e\") enum E",
+                "@dd(\"g\") function g(a: string): void",
+            ]
+        );
+        let members: Vec<&str> = m.items[1]
+            .members
+            .iter()
+            .map(|m| m.signature.as_str())
+            .collect();
+        assert_eq!(
+            members,
+            [
+                // A parameter property's decorator is the parameter's, shown on the constructor.
+                "p: i64",
+                "@dd(\"x\") x: i64 = 0",
+                "@dd static readonly s: i64 = 1",
+                "constructor(@dd public p: i64)",
+                "@dd(\"m\") static m(@dd(\"p\") a: i64): i64",
+                "@dd(\"o\") o(a: string): void",
+            ]
+        );
+        let docs: Vec<&str> = m.items.iter().map(|i| i.doc.as_str()).collect();
+        assert_eq!(docs[1..3], ["A class.", "A function."]);
+        let member_docs: Vec<&str> = m.items[1].members.iter().map(|i| i.doc.as_str()).collect();
+        assert_eq!((member_docs[1], member_docs[4]), ("A field.", "A method."));
     }
 
     /// std's intrinsics and host functions are documented as functions; other `declare`s are not.
