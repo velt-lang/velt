@@ -105,7 +105,7 @@ describe("a client that goes away during a streamed response", () => {
     }
   });
 
-  it("cancels an event stream when a fetch is aborted while reading", async () => {
+  it("cancels an event stream when a fetch is aborted and read", async () => {
     const cancelled = gate();
     const pulls = shared<i64>(0);
     const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
@@ -131,11 +131,11 @@ describe("a client that goes away during a streamed response", () => {
       const res = await fetch(`http://127.0.0.1:${server.port}/`, { signal: abort.signal });
       const reader = res.body!.getReader();
       await reader.read();
-      // Aborted while a read waits: that wait is what closes the connection of a fetch.
-      const waiting = reader.read();
       abort.abort();
+      // A read that waits is what closes the connection of an aborted fetch (#2515); one that
+      // finds a chunk there doesn't wait, so this reads until one does.
       try {
-        await waiting;
+        while (!(await reader.read()).done) {}
       } catch (e) {
         // The abort.
       }
