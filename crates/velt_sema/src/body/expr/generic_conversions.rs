@@ -238,9 +238,13 @@ impl FnCx<'_, '_> {
         let frames = self.trial_frames();
         let diags = self.cx.diags.len();
         let shape = (to.method.params.len(), to.rest);
+        // The closure's call passes the target's type parameters on: the two types' bounds are
+        // related by their shapes (`Ky<A>` as `Ky<any>`), not at this call.
+        self.forward_unbounded.set(true);
         let mut g = self.forwarding(h.clone(), exp, shape, |s, arrow, exp| {
             s.generic_closure(arrow, Some(exp))
         });
+        self.forward_unbounded.set(false);
         if self.cx.diags.len() == diags {
             self.mark_fresh(&mut g, exp);
             return Ok(g);
@@ -266,6 +270,9 @@ impl FnCx<'_, '_> {
         else {
             return Err(h);
         };
+        if !self.fixed_takes_rest(&to, &params, rest) {
+            return Err(h);
+        }
         let n = to.method.params.len();
         // A function value may take fewer parameters than its type gives.
         let shape = (n.min(params.len()), to.rest && params.len() >= n);
@@ -292,17 +299,58 @@ impl FnCx<'_, '_> {
         Err(h)
     }
 
-    /// May an instance at `from` be seen as one at `to`: at each position one is `any` or
-    /// `unknown`, or `to` has no members, so a call can't name what the function wasn't checked
-    /// for?
-    pub(super) fn generic_fn_opens(&mut self, from: &[TyId], to: &[TyId]) -> bool {
-        from.iter().zip(to).all(|(f, t)| {
+    /// May an instance of `iface` at `from` be seen as one at `to`: at each position one is `any`
+    /// or `unknown`, or `to` has no members, or the target's bound lies within the source's? A
+    /// call then can't name what the function wasn't checked for.
+    pub(super) fn generic_fn_opens(&mut self, iface: DefId, from: &[TyId], to: &[TyId]) -> bool {
+        let open = from.iter().zip(to).all(|(f, t)| {
             f == t
                 || self.cx.dynamic(*f).is_some()
                 || self.cx.dynamic(*t).is_some()
                 || (matches!(self.cx.ty.kind(*t), TyKind::Adt(..))
                     && self.cx.public_fields(*t).is_empty())
-        })
+        });
+        open || self.bound_within(iface, from, to)
+    }
+
+    /// Does the bound of `iface`'s one own type parameter at `to`, string literals, lie within
+    /// its bound at `from`, its rest form being one type at each of them? A function checked at
+    /// the wider bound runs at the narrower one.
+    fn bound_within(&mut self, iface: DefId, from: &[TyId], to: &[TyId]) -> bool {
+        let Some(m) = self
+            .cx
+            .iface(iface)
+            .and_then(|i| i.methods.first())
+            .cloned()
+        else {
+            return false;
+        };
+        let ([Some(bound)], Some(from_all)) = (&m.generics.constraints[..], Some(from)) else {
+            return false;
+        };
+        let wide = self.cx.subst(*bound, from_all);
+        let narrow = self.cx.subst(*bound, to);
+        let Some(names) = self.string_literals(narrow) else {
+            return false;
+        };
+        let whole = *self.cx.ty.kind(wide) == TyKind::Str;
+        let held = self.string_literals(wide).unwrap_or_default();
+        if !whole && !names.iter().all(|n| held.contains(n)) {
+            return false;
+        }
+        let Some(form) = self.cx.generic_fn_rest_form(iface) else {
+            return true;
+        };
+        for n in names {
+            let lit = self.cx.lit_type(hir::LitValue::Str(n));
+            let unit = self.cx.ty.unit;
+            let at = |args: &[TyId]| [args, &[unit, lit]].concat();
+            let (a, b) = (at(from), at(to));
+            if self.cx.subst(form, &a) != self.cx.subst(form, &b) {
+                return false;
+            }
+        }
+        true
     }
 
     /// `h`, an instance of a generic function type whose call doesn't depend on its arguments

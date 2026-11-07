@@ -1,0 +1,4 @@
+// `N extends number` keeps a number literal where a form in the signature is over `N`. Expected
+// output from `node`; `tsc --strict` accepts it.
+const n2: <N extends number>(n: N, e: N extends 1 ? 1 : 2) => number = (n, e) => 3;
+console.log(n2(1, 1), n2(2, 2));

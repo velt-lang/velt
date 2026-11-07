@@ -82,14 +82,16 @@ impl FnCx<'_, '_> {
             return t;
         }
         let (n, spread) = rest_count(arg);
-        self.rest_member(t, n, spread)
+        self.rest_member(t, n, spread, Some(arg))
     }
 
     /// The type a literal of `n` rest arguments is checked as, form `t` being at the call's type
     /// arguments: the tuple itself, a union's member with `n` elements or its array, an `any[]`
     /// for an array (its elements are checked in [`Self::rest_form_args`]), `any`, or a form the
-    /// enclosing function's type parameters still decide. `t` when nothing fits.
-    fn rest_member(&mut self, t: TyId, n: usize, spread: bool) -> TyId {
+    /// enclosing function's type parameters still decide. Several members with `n` elements: the
+    /// `any[]`, when `arg` fits one of them (an `any` fits each, so none is checked at run time).
+    /// `t` when nothing fits.
+    fn rest_member(&mut self, t: TyId, n: usize, spread: bool, arg: Option<&ast::Expr>) -> TyId {
         let Some(any) = self.any_ty() else {
             return t;
         };
@@ -105,14 +107,29 @@ impl FnCx<'_, '_> {
             TyKind::Tuple(_) => return t,
             _ => {}
         }
+        let mut same = vec![];
         for m in self.cx.union_members(t).unwrap_or_default() {
             match self.cx.ty.kind(m) {
-                TyKind::Tuple(ts) if ts.len() == n && !spread => return m,
+                TyKind::Tuple(ts) if ts.len() == n && !spread => same.push(m),
                 TyKind::Array(_) => return array,
                 _ => {}
             }
         }
-        t
+        match (&same[..], arg) {
+            ([], _) => t,
+            ([one], _) | ([one, ..], None) => *one,
+            (_, Some(arg)) => {
+                for m in same {
+                    if self
+                        .trial_with(|s| s.expr_coerce(arg, m, Want::Move).ty)
+                        .is_some()
+                    {
+                        return array;
+                    }
+                }
+                t
+            }
+        }
     }
 
     /// The checked arguments `ck` of a call whose rest parameter is `form` at the call's type
@@ -137,7 +154,7 @@ impl FnCx<'_, '_> {
         let spread = rest
             .iter()
             .any(|x| matches!(x.kind, ast::ExprKind::Spread(_)));
-        let member = self.rest_member(want, rest.len(), spread);
+        let member = self.rest_member(want, rest.len(), spread, None);
         if self.cx.has_type_params(want) {
             if rest
                 .iter()
@@ -209,6 +226,20 @@ impl FnCx<'_, '_> {
                 ast::ExprKind::Spread(inner) => (&**inner, array),
                 _ => (x, e),
             };
+            // A tuple spread gives its elements.
+            let spread_of = matches!(x.kind, ast::ExprKind::Spread(_))
+                .then(|| self.trial_type(item))
+                .flatten();
+            if let Some(TyKind::Tuple(ts)) = spread_of.map(|s| self.cx.ty.kind(s).clone()) {
+                for m in ts {
+                    if !self.cx.form_assignable(m, e) {
+                        let (m, e) = (self.cx.display(m), self.cx.display(e));
+                        self.cx
+                            .err(format!("mismatched types: expected {e}, found {m}"), x.span);
+                    }
+                }
+                continue;
+            }
             let fits = self
                 .trial_with(|s| s.expr_coerce(item, t, Want::Move).ty)
                 .is_some();
@@ -216,6 +247,82 @@ impl FnCx<'_, '_> {
                 self.expr_coerce(item, t, Want::Move);
             }
         }
+    }
+
+    /// Does a function of fixed parameter types `params` (the last a rest parameter if `rest`)
+    /// take what every call of `g` passes at the rest position? A parameter there must allow
+    /// `undefined` (a call may pass nothing), and, where the bound is a finite union of literals,
+    /// each element of the form at each of them must fit it.
+    pub(super) fn fixed_takes_rest(&mut self, g: &GenericSig, params: &[TyId], rest: bool) -> bool {
+        let Some(form) = self.cx.generic_fn_rest_form(g.iface) else {
+            return true;
+        };
+        let at = g.method.params.len() - 1;
+        for (k, t) in params.iter().enumerate().skip(at) {
+            let last = rest && k + 1 == params.len();
+            if !last && !self.cx.ty.nothing_of(*t).is_some_and(|n| n.has_undefined()) {
+                return false;
+            }
+        }
+        let [Some(bound)] = g.method.generics.constraints[..] else {
+            return true;
+        };
+        let bound = self.cx.subst(bound, &g.args);
+        let Some(names) = self.string_literals(bound) else {
+            return true;
+        };
+        for n in names {
+            let lit = self.cx.lit_type(crate::hir::LitValue::Str(n));
+            let args = [g.args.as_slice(), &[self.cx.ty.unit, lit]].concat();
+            let f = self.cx.subst(form, &args);
+            let forms = self.cx.union_members(f).unwrap_or_else(|| vec![f]);
+            for f in forms {
+                let elems: Vec<(usize, TyId)> = match self.cx.ty.kind(f).clone() {
+                    TyKind::Tuple(ts) => ts.into_iter().enumerate().collect(),
+                    TyKind::Array(e) => (0..params.len().max(1)).map(|k| (k, e)).collect(),
+                    _ => vec![],
+                };
+                for (j, e) in elems {
+                    let p = match params.get(at + j) {
+                        Some(p) if rest && at + j + 1 == params.len() => {
+                            self.cx.ty.array_elem(*p).unwrap_or(*p)
+                        }
+                        Some(p) => *p,
+                        None if rest => {
+                            let last = params[params.len() - 1];
+                            self.cx.ty.array_elem(last).unwrap_or(last)
+                        }
+                        None => continue,
+                    };
+                    if !self.cx.form_assignable(e, p) {
+                        return false;
+                    }
+                }
+            }
+        }
+        true
+    }
+
+    /// A spread among `rest` of a value whose type is a form the enclosing function's type
+    /// parameters still decide: reported, as not supported yet. True when reported.
+    pub(super) fn spreads_deferred_form(&mut self, rest: &[ast::Expr]) -> bool {
+        for x in rest {
+            let ast::ExprKind::Spread(inner) = &x.kind else {
+                continue;
+            };
+            let Some(t) = self.trial_type(inner) else {
+                continue;
+            };
+            if matches!(self.cx.ty.kind(t), TyKind::Op(..)) {
+                let shown = self.cx.display(t);
+                self.cx.err(
+                    format!("a spread of a value of type `{shown}`, which the type parameters of this function still decide, is not supported yet (#943)"),
+                    x.span,
+                );
+                return true;
+            }
+        }
+        false
     }
 
     /// Arrow `e` as a function of generic function type `g`, whose rest parameter a call's type

@@ -62,7 +62,7 @@ impl FnCx<'_, '_> {
         }
     }
 
-    /// String literal `arg` for a parameter `N` still open, bounded by `string`, with a form over
+    /// String or number literal `arg` for a parameter `N` still open, bounded by that type, with a form over
     /// `N` in the signature (`n: N, ...a: N extends "x" ? [] : [number]`): its literal type, what
     /// the form is evaluated at, as in TypeScript.
     fn literal_for_form(
@@ -75,16 +75,29 @@ impl FnCx<'_, '_> {
         let TyKind::Param(k) = *self.cx.ty.kind(pty) else {
             return None;
         };
-        let ast::ExprKind::Lit(ast::Lit::Str(s)) = &super::object_builtins::strip_parens(arg).kind
-        else {
-            return None;
-        };
         let bound = c.constraints.get(k as usize).copied().flatten()?;
-        if *self.cx.ty.kind(bound) != TyKind::Str
-            || slots.get(k as usize).is_none_or(Option::is_some)
-        {
+        if slots.get(k as usize).is_none_or(Option::is_some) {
             return None;
         }
+        let lit = match (
+            &super::object_builtins::strip_parens(arg).kind,
+            self.cx.ty.kind(bound),
+        ) {
+            (ast::ExprKind::Lit(ast::Lit::Str(s)), TyKind::Str) => {
+                crate::hir::LitValue::Str(s.clone())
+            }
+            (
+                ast::ExprKind::Lit(l @ (ast::Lit::Int { .. } | ast::Lit::Float { .. })),
+                TyKind::Float(_),
+            ) => {
+                let written = ast::SignedLit {
+                    lit: l.clone(),
+                    negative: false,
+                };
+                self.cx.lit_value_of(&written, arg.span)?
+            }
+            _ => return None,
+        };
         let mut form = false;
         for t in c.params.iter().map(|p| p.ty).chain([c.ret]) {
             self.cx.ty.visit(t, &mut |x| {
@@ -93,7 +106,7 @@ impl FnCx<'_, '_> {
                 }
             });
         }
-        form.then(|| self.cx.lit_type(crate::hir::LitValue::Str(s.clone())))
+        form.then(|| self.cx.lit_type(lit))
     }
 
     /// An array literal of string literals (`["id", "name"]`) for a parameter `K[]` whose `K`

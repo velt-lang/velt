@@ -32,6 +32,11 @@ impl Slots {
 }
 
 impl Ctx<'_> {
+    /// Is `s` assignable to `p`, as a conditional type relates them?
+    pub(crate) fn form_assignable(&mut self, s: TyId, p: TyId) -> bool {
+        self.relate(s, p, &mut Slots::new(0))
+    }
+
     /// Does `null` / `undefined` extend `p`?
     pub(super) fn relate_nothing(&self, n: Nothing, p: TyId) -> bool {
         if matches!(self.dynamic(p), Some(Dynamic::Any | Dynamic::Unknown)) {

@@ -131,6 +131,13 @@ impl Ctx<'_> {
             .map(|t| self.generic_fn_form(t, &inner_env))
             .collect();
         let ret = self.generic_fn_form(ret, &inner_env);
+        // `<A extends any[]>(...args: A) => A`: reported, as for a function.
+        if let (true, Some(t)) = (*rest, pts.last().copied()) {
+            if matches!(self.ty.kind(t), TyKind::Param(_)) {
+                crate::collect::sigs::rest_param_type(self, span, t);
+                return self.ty.error;
+            }
+        }
         let rest_form = match (*rest, pts.last().copied()) {
             (true, Some(t)) if !matches!(self.ty.kind(t), TyKind::Array(_) | TyKind::Error) => {
                 Some(t)

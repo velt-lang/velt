@@ -1,0 +1,12 @@
+generic_fn_value_rest_fixed.velt:6:14: error: mismatched types
+  = note: expected <N>(N, ...N extends "a" ? … : …) => void, found (string, f64) => void
+  = note: a value of `<N>(N, ...N extends "a" ? … : …) => void` takes any type arguments at each call; a function of fixed types (`(string, f64) => void`) is not one: pass a generic function, or a closure that works for every type
+generic_fn_value_rest_fixed.velt:8:14: error: mismatched types
+  = note: expected <N>(N, ...N extends "a" ? … : …) => void, found (string, string | undefined) => void
+  = note: a value of `<N>(N, ...N extends "a" ? … : …) => void` takes any type arguments at each call; a function of fixed types (`(string, string | undefined) => void`) is not one: pass a generic function, or a closure that works for every type
+generic_fn_value_rest_fixed.velt:10:14: error: mismatched types
+  = note: expected <N>(N, ...N extends "a" ? … : …) => void, found (string, f64, f64, f64) => void
+  = note: a value of `<N>(N, ...N extends "a" ? … : …) => void` takes any type arguments at each call; a function of fixed types (`(string, f64, f64, f64) => void`) is not one: pass a generic function, or a closure that works for every type
+generic_fn_value_rest_fixed.velt:12:14: error: mismatched types
+  = note: expected <N>(N, ...N extends "a" ? … : …) => void, found (string, f64) => void
+  = note: a value of `<N>(N, ...N extends "a" ? … : …) => void` takes any type arguments at each call; a function of fixed types (`(string, f64) => void`) is not one: pass a generic function, or a closure that works for every type

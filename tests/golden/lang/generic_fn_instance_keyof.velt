@@ -1,0 +1,19 @@
+// A generic function value at the type with a `keyof` bound of `any`, `unknown` and `{}`: a closure
+// over the value, also in a body and a field. Expected output from `node`; `tsc --strict` accepts it.
+type Ky<E> = <N extends keyof E>(n: N) => void;
+const k1: Ky<{ a: 1; b: 2 }> = (n) => { console.log(n); };
+const k2: Ky<any> = k1;
+console.log("made");
+k2("a");
+function inner(): void {
+  const k3: Ky<{ c: 1 }> = (n) => { console.log("k3", n); };
+  const k4: Ky<any> = k3;
+  k4("c");
+}
+inner();
+interface Holder { on: Ky<any> }
+const h: Holder = { on: k1 };
+h.on("b");
+const k5: Ky<unknown> = k1;
+const k6: Ky<{}> = k1;
+console.log(typeof k5, typeof k6);

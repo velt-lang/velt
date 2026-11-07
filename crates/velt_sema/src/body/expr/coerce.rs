@@ -479,8 +479,10 @@ impl FnCx<'_, '_> {
             // An interface value where an interface whose members it has is expected (a part
             // of an intersection, a `Pick` of it, an interface it extends): the same object
             // (`crate::synth_ifaces`).
+            // (Not a generic function type's: a generic closure's table holds no other tables.)
             if self.cx.dynamic(h.ty).is_none()
                 && self.cx.dynamic(exp).is_none()
+                && !self.cx.is_generic_fn(exp)
                 && self.cx.iface_upcast((have, &from), (iface, args))
             {
                 let mut h = h;

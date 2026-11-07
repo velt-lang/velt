@@ -1,0 +1,6 @@
+// A tuple spread into a rest parameter whose form is an array. Expected output from `node`; `tsc
+// --strict` accepts it.
+type M = <N extends "nums" | "strs">(n: N, ...x: N extends "nums" ? number[] : string[]) => number;
+const m: M = (n, ...x) => { console.log(n, x); return x.length; };
+const fx: [number, number] = [1, 2];
+console.log(m("nums", ...fx), m("nums", 0, ...fx, 9));

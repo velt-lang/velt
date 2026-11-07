@@ -1,0 +1,5 @@
+generic_fn_rest_not_supported.velt:8:110: error: a spread of a value of type `Form<E, N>`, which the type parameters of this function still decide, is not supported yet (#943)
+generic_fn_rest_not_supported.velt:9:10: error: a rest parameter typed by a type parameter (`...args: A`) is not supported yet (#943)
+  = note: Velt passes the rest arguments as an array: type the parameter as one (`...args: unknown[]`)
+generic_fn_rest_not_supported.velt:9:51: error: type annotations needed for parameter `args`
+  = note: annotate it (`(x: i64) => ...`) or pass the function where a function type is expected

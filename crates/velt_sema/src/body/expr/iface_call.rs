@@ -132,7 +132,9 @@ impl FnCx<'_, '_> {
             last.ty = form;
         }
         let mut constraints = vec![];
-        if s.method.generics.constraints.iter().any(Option::is_some) {
+        if !self.forward_unbounded.take()
+            && s.method.generics.constraints.iter().any(Option::is_some)
+        {
             constraints.resize(n + 1, None);
             constraints.extend(s.method.generics.constraints.iter().copied());
         }
@@ -153,6 +155,9 @@ impl FnCx<'_, '_> {
             rest: s.rest,
             defaults: vec![],
         };
+        if rest_form.is_some() && self.spreads_deferred_form(args) {
+            return self.error_expr(span);
+        }
         let mut ck = self.check_call(&c, slots, args, exp.filter(|_| own > 0), span);
         if let Some(form) = rest_form {
             self.rest_form_args(&c, form, &mut ck, args, span);

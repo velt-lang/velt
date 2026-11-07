@@ -386,6 +386,8 @@ pub(crate) struct FnCx<'a, 'm> {
     pub asserted_fn: Option<Span>,
     /// The fixed parameters at a rest position the next `forwarding` passes (`fn_value_as_generic`).
     pub forwarding_items: std::cell::Cell<usize>,
+    /// The next generic function value's call is `generic_as_generic`'s forwarding one.
+    pub forward_unbounded: std::cell::Cell<bool>,
     /// The operand of a type assertion: a narrowed `any` / `unknown` there reads as it is.
     pub dynamic_raw: Option<Span>,
     /// The types of variables declared before their declaration, by name (`forward_consts`).
@@ -429,6 +431,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             this_fn_forwarding: vec![],
             asserted_fn: None,
             forwarding_items: Default::default(),
+            forward_unbounded: Default::default(),
             dynamic_raw: None,
             forward_tys: Default::default(),
             f: frame,
