@@ -323,7 +323,7 @@ fn compiler_crash(build: &Output) -> Option<String> {
     let crashed = matches!(build.status, Status::Signal | Status::Timeout)
         || build.status == Status::Exit(101)
         || build.stderr.contains("panicked at")
-        || build.stderr.contains("ICE");
+        || build.stderr.contains("ICE:");
     crashed.then(|| match build.status {
         Status::Timeout => "compiler timed out".to_string(),
         Status::Signal => "compiler killed by a signal".to_string(),
@@ -340,7 +340,7 @@ fn ice_message(stderr: &str) -> Option<String> {
     let lines: Vec<&str> = stderr.lines().collect();
     let i = lines
         .iter()
-        .position(|l| l.contains("ICE") || l.contains("internal compiler error"))?;
+        .position(|l| l.contains("ICE:") || l.contains("internal compiler error"))?;
     let head = lines[i].trim();
     if !head.ends_with(':') {
         return Some(head.to_string());

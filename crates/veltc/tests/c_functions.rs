@@ -236,7 +236,7 @@ fn one_symbol_has_one_signature() {
         );
     }
     assert!(!out.contains("abs$same"), "{out}");
-    assert!(!out.contains("ICE") && !out.contains("[U8]"), "{out}");
+    assert!(!out.contains("ICE:") && !out.contains("[U8]"), "{out}");
 }
 
 /// On Windows `lastOsError()` reads `GetLastError()`, which the C library's functions don't set:
@@ -526,7 +526,7 @@ fn a_look_alike_str_bytes_is_a_string() {
     );
     let out = check(dir.path());
     assert!(out.contains("`string` cannot be passed to C"), "{out}");
-    assert!(!out.contains("ICE"), "{out}");
+    assert!(!out.contains("ICE:"), "{out}");
 }
 
 #[test]

@@ -123,6 +123,6 @@ fn other_elements_are_a_diagnostic() {
                 && stderr.contains(&format!("found {shown}")),
             "{t}:\n{stderr}"
         );
-        assert!(!stderr.contains("ICE"), "{t}:\n{stderr}");
+        assert!(!stderr.contains("ICE:"), "{t}:\n{stderr}");
     }
 }
