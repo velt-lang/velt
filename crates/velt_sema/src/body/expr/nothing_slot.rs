@@ -68,6 +68,99 @@ impl FnCx<'_, '_> {
         Some(self.asserted_nothing(e, Some(target), span))
     }
 
+    /// `object?.rest` (`f` makes `rest`) where `exp` is expected: when `exp` takes `undefined`, a
+    /// view of a nothing in `object` gives `undefined`, as `null` does in JavaScript.
+    pub(super) fn chain_with(
+        &mut self,
+        exp: Option<TyId>,
+        object: &ast::Expr,
+        span: Span,
+        f: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
+    ) -> hir::Expr {
+        self.chain_nothing = self.undefined_fits(exp);
+        self.optional_chain(object, span, f)
+    }
+
+    /// Does a value expected as `exp` take `undefined` (nothing expected, a dynamic type, or a
+    /// type with `undefined`)?
+    pub(super) fn undefined_fits(&self, exp: Option<TyId>) -> bool {
+        exp.is_none_or(|t| {
+            self.cx.dynamic(t).is_some()
+                || self.cx.ty.nothing_of(t).is_some_and(|n| n.has_undefined())
+        })
+    }
+
+    /// `s?.rest` (`f` makes `rest`) of an `s` whose type has no nothing but may hold a view of
+    /// one (`null!`): `undefined` for the view, as JavaScript gives for `null`, else `rest`.
+    pub(super) fn nothing_chain(
+        &mut self,
+        mut s: hir::Expr,
+        span: Span,
+        f: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
+    ) -> hir::Expr {
+        let ty = s.ty;
+        let (l, mode) = self.option_binding(&s, ty, "<chain>", false);
+        if mode == hir::UseMode::Move {
+            self.force_move(&mut s);
+        }
+        let read = match mode {
+            hir::UseMode::Move => hir::UseMode::Borrow,
+            m => m,
+        };
+        let v = self.mk(hir::ExprKind::Local(l, read), ty, span);
+        let r = f(self, v);
+        self.nothing_chain_match(s, (l, mode), r, span)
+    }
+
+    /// The chain `s?.rest` of `nothing_chain` once `rest` (`r`) is checked on `s` bound to `l`
+    /// (also for a chain continued past its link, chain.rs `short_circuit`).
+    pub(super) fn nothing_chain_match(
+        &mut self,
+        s: hir::Expr,
+        (l, mode): (hir::LocalId, hir::UseMode),
+        r: hir::Expr,
+        span: Span,
+    ) -> hir::Expr {
+        let (ty, b) = (s.ty, self.cx.ty.bool_);
+        if self.cx.ty.is_bottom(r.ty) {
+            return r;
+        }
+        let keeps = r.ty == self.cx.ty.unit
+            || self
+                .cx
+                .ty
+                .nothing_of(r.ty)
+                .is_some_and(|n| n.has_undefined());
+        let (rty, body) = match keeps {
+            true => (r.ty, r),
+            false => {
+                let t = self.cx.ty.option_of(r.ty, Nothing::Undefined);
+                (t, self.mk(hir::ExprKind::WrapSome(Box::new(r)), t, span))
+            }
+        };
+        let none = match rty == self.cx.ty.unit {
+            true => self.unit_expr(span),
+            false => self.mk(hir::ExprKind::Lit(hir::Lit::Null), rty, span),
+        };
+        let bound = self.mk(hir::ExprKind::Local(l, hir::UseMode::Borrow), ty, span);
+        let test = self.intrinsic(hir::Intrinsic::IsNullish, vec![bound], b, span);
+        let kind = hir::ExprKind::If {
+            cond: Box::new(test),
+            then: Box::new(none),
+            els: Box::new(body),
+        };
+        let arms = vec![hir::Arm {
+            pat: self.pat(hir::PatKind::Binding(l, mode), ty, span),
+            guard: None,
+            body: self.mk(kind, rty, span),
+        }];
+        let kind = hir::ExprKind::Match {
+            scrutinee: Box::new(s),
+            arms,
+        };
+        self.mk(kind, rty, span)
+    }
+
     /// `typeof s` of a value that may be a view of a nothing: `"undefined"` for one of
     /// `undefined`, else `"object"`.
     pub(super) fn nothing_typeof(&mut self, s: hir::Expr, span: Span) -> hir::Expr {

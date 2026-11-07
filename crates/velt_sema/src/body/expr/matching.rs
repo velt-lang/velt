@@ -664,6 +664,7 @@ impl FnCx<'_, '_> {
         span: Span,
         f: impl FnOnce(&mut Self, hir::Expr) -> hir::Expr,
     ) -> hir::Expr {
+        let nothing = std::mem::take(&mut self.chain_nothing);
         let s = self.test_operand(object, None, Want::Borrow);
         let s = self.flatten_chain(s);
         // `any`, and `object` / `Function`, which hold `null` / `undefined` too (issue #926).
@@ -683,7 +684,16 @@ impl FnCx<'_, '_> {
             let r = f(self, v);
             return self.dynamic_chain_match(s, l, mode, r, span);
         }
+        // A `T | null` narrowed to its `T`, which may hold a view of a nothing (`null!`): the
+        // option itself, whose pattern sees that nothing (velt_vir `option_present`).
+        let s = match s.kind {
+            H::UnwrapSome(base, _) if nothing && self.may_hold_nothing(s.ty) => *base,
+            _ => s,
+        };
         let Some(payload) = self.present_payload(s.ty) else {
+            if nothing && self.may_hold_nothing(s.ty) {
+                return self.nothing_chain(s, span, f);
+            }
             return f(self, s);
         };
         let (l, mode) = self.option_binding(&s, payload, "<chain>", false);

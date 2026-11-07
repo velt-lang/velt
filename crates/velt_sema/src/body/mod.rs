@@ -361,6 +361,9 @@ pub(crate) struct FnCx<'a, 'm> {
     /// A variable read that a null or truthiness test makes (`if (x)`, `x == null`): it reads
     /// the variable as it is, without the check `checked_narrowed_read` adds.
     pub raw_read: Option<Span>,
+    /// The optional chain being checked may give `undefined` for a view of a nothing in a slot
+    /// whose type has none (`nothing_slot.rs`): its value is expected where `undefined` fits.
+    pub chain_nothing: bool,
     /// A member read of an assertion, `(u as M).f`, that is only tested (a condition, a
     /// nullish or `typeof` test): the value read is tested as it is (`expr/cast_member.rs`).
     pub cast_member_test: Option<(Span, expr::CastTest)>,
@@ -469,6 +472,7 @@ impl<'a, 'm> FnCx<'a, 'm> {
             optional_slots: vec![],
             refused_reads: vec![],
             raw_read: None,
+            chain_nothing: false,
             cast_member_test: None,
             cast_member_numbers: vec![],
             payload_spans: vec![],

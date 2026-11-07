@@ -1,0 +1,24 @@
+// `?.` on a slot that holds `null` through `null!`: `undefined`, as in Node.
+type Title = { title: string };
+class Foo {
+  v = 1;
+  m(): number {
+    return this.v;
+  }
+}
+const a: Title = null as any;
+const f: Foo = null!;
+console.log(a?.title, f?.v, f?.m());
+const asOpt: Title | null = a;
+console.log(asOpt?.title);
+const real: Title = { title: "t" };
+const realOpt: Title | null = real;
+console.log(real?.title, realOpt?.title, new Foo()?.m());
+function get(t: Title): string | undefined {
+  return t?.title;
+}
+console.log(get(a), get(real));
+function t(f: Foo): number | undefined {
+  return f?.m();
+}
+console.log(t(new Foo()), t(null!));
