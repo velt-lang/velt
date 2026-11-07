@@ -1,0 +1,20 @@
+// check: no leaks
+// `a as Src` of an object held in an `any`: the adapter sema makes for `get` converts the `any` it
+// returns to `Record<string, string>`, and is the program's only conversion to a record, found
+// once the bodies are checked. The record hooks are demanded for it, so `get` gives the object's
+// members rather than a `TypeError`. Identical to Node.
+interface Src {
+  get(): Record<string, string>;
+}
+
+const o = {
+  get(): any {
+    const p: any = { k: "v", l: "w" };
+    return p;
+  },
+};
+const a: any = o;
+const s = a as Src;
+const g = s.get();
+console.log(g["k"], g["l"]);
+console.log(Object.keys(g).length);

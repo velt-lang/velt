@@ -745,7 +745,7 @@ goldens:
   implementation's or default method) needs instances (only then do they matter, through
   `Dispatch`; `expect(x).toEqual` and `Map`'s comparison are only called directly), and the end of the check reuses the phase's result while no
   definition was added since. Generated modules do not make the std modules their declaring
-  module imports checked whole (`lazy_std::plan`), and lazy std's reach scans each
+  module imports checked whole (`lazy_std::plan`), and the live set walks each
   definition's defaults once. The demand walks nothing when no checked code calls or names a
   generated function (`demand::names_any`: a program that loads velt/encoding/json's
   generated.velt through the JSON prelude for `JSON.parse` only).

@@ -40,7 +40,7 @@
 //! assert_eq!(std_hook_name!(f64_to_string), "f64ToString");
 //! ```
 
-pub use crate::hook_demand::{all_demanded, Construct, ConstructSet, HookSet};
+pub use crate::hook_demand::{Construct, ConstructSet, HookSet};
 pub use crate::hook_sig::{FnSig, Mode, Param, Sig, T};
 
 /// One hook: its entry name, its module's canonical path, its name there, its signature, whether

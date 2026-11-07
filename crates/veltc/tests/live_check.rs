@@ -1,7 +1,7 @@
 //! `VELT_LIVE_CHECK` works the live set out in full for lowering to check against (velt_sema
 //! `body/lazy_std/live.rs`) and changes nothing else: a compiler with it on, and one with it off,
-//! as a release compiler is by default, give the same bytes. Off, the walk stops once every hook
-//! is demanded, so this also says that going on demands nothing more.
+//! as a release compiler is by default, give the same bytes. The walk runs to the end either way;
+//! on, it also walks the forwarders lowering makes, so this says that they reach nothing more.
 
 mod no_window;
 mod test_dir;
@@ -45,6 +45,10 @@ fn the_check_changes_no_vir() {
         "tests/golden/lang/iface_any_args_optional_array_field.velt",
         "tests/golden/lang/hook_shapes.velt",
         "tests/golden/lang/interface_upcast_write.velt",
+        // The record hooks, found needed with no `Record` value in live code: without them live,
+        // what they call stays a stub. A unit test can't show it: its loader loads their module
+        // up front.
+        "tests/golden/lang/string_of_object_union.velt",
     ] {
         assert!(vir(golden, "0") == vir(golden, "1"), "{golden}");
     }

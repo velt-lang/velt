@@ -32,6 +32,40 @@ fn an_any_converted_to_an_array_is_an_array_view() {
     assert!(is_live(&p, "std/prelude/array_edit::T[].truncate"));
 }
 
+/// `gate` kept lowering's helpers for function values closed here: this program has no `any`.
+#[test]
+fn a_function_value_that_throws_lowers() {
+    lowers(
+        "function f(): void throws string { }\n\
+         function main() { const h = f; if (h == null) { return; } }\n",
+    );
+}
+
+/// Lowering converts `get`'s result to the interface's in the adapter `make_dynamic_impls` makes
+/// for the object in the `any`, which is the first mention of `Set`, after the bodies' check. So
+/// the check runs again with `Set`'s methods live from the start.
+#[test]
+fn what_an_adapter_made_after_the_check_reaches_is_checked_in_time() {
+    let src = "interface Src { get(): Set<string>; }\n\
+               function main() {\n  const o = { get(): any { return \"a\"; } };\n  \
+               const a: any = o;\n  const s = a as Src;\n  console.log(\"x\");\n}\n";
+    lowers(src);
+    let p = std_src::check_src(src);
+    assert!(is_live(&p, "std/collections/set::Set.from"));
+}
+
+/// The same for a conversion to a record, whose hooks' module wasn't loaded.
+#[test]
+fn a_record_conversion_an_adapter_makes_demands_the_record_hooks() {
+    let src = "interface Src { get(): Record<string, string>; }\n\
+               function main() {\n  const r: Record<string, string> = { a: \"b\" };\n  \
+               console.log(r[\"a\"]);\n  const o = { get(): any { return r; } };\n  \
+               const a: any = o;\n  const s = a as Src;\n  console.log(s.get());\n}\n";
+    lowers(src);
+    let p = std_src::check_src(src);
+    assert!(is_live(&p, "std/lang/hooks/any_record::anyToRecord"));
+}
+
 #[test]
 fn the_text_of_an_any_may_be_an_error() {
     lowers("function main() {\n  const a: any = 1;\n  console.log(String(a));\n}\n");

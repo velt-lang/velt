@@ -250,9 +250,9 @@ pub struct Program {
     /// code demand, and those no construct lists (hir_encodings.md "Unchecked definitions").
     /// Additive.
     pub hooks_demanded: velt_common::std_hooks::HookSet,
-    /// The live definitions, when sema worked them out in full (a debug compiler, or
-    /// `VELT_LIVE_CHECK=1`): lowering asserts that each function it builds is one
-    /// (hir_encodings.md "Unchecked definitions"). `None` otherwise. Additive.
+    /// The live definitions, in a debug compiler or with `VELT_LIVE_CHECK=1`: lowering asserts
+    /// that each function it builds is one (hir_encodings.md "Unchecked definitions"). `None`
+    /// otherwise. Additive.
     pub live: Option<HashSet<DefId>>,
     /// The functions `(f: any) => T` converting a function held as `any` to the function type
     /// `T` (their result type) inside a conversion lowering makes (hir_encodings.md). Additive.

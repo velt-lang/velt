@@ -7,8 +7,11 @@
 //!
 //! The modules outlive every `Ctx` ([`StdLoads`]), and every check of the program: the driver's
 //! rounds keep it too. A later round starts as the first did and demands again: it takes
-//! the kept batches, in the order they were served, without asking the driver, so a round's
-//! `DefId`s are the first round's (a next round's hints are keyed by them).
+//! the kept batches, in the order they were served, without asking the driver. A collected
+//! definition keeps its `DefId` while the modules come in at the same points; a round that assumes
+//! definitions demands some earlier, before closures that took numbers the last time, so there a
+//! definition is found again by name (`Assumed::defs`), and a hint by `DefId` holds only where its
+//! span matches (`throws/hints.rs`).
 //!
 //! The velt_loader rule (`std_index`) keeps what such a module adds local to it, so the rewrites
 //! see the batch alone. `asserted_targets`, `global_this`, `defined_accessors` and `defined_props`
@@ -186,7 +189,7 @@ fn rewrite(b: StdBatch) -> Batch {
 
 impl Ctx<'_> {
     /// Was `d` made by a collection, the program's or that of added modules, rather than by a
-    /// body's check? A next round finds such a definition again by its `DefId`.
+    /// body's check? A next round can find such a definition again (`Assumed::defs`).
     pub(crate) fn collected(&self, d: crate::hir::DefId) -> bool {
         (d.0 as usize) < self.collected_defs
             || self.added_defs.iter().any(|&(a, b)| (a..b).contains(&d.0))

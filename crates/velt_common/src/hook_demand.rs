@@ -20,8 +20,8 @@
 //! exception a release compiler doesn't walk is in `live.rs`'s `live_defs`. Glue is lowered per
 //! type, not per function: its call site's construct must be listed in the table and found on
 //! the type, which the builder's assertion above checks. Today's table doesn't exercise this:
-//! once one integer hook is live its std code has arrays, integers and so on, which demand the
-//! other three, so a program demands none of them or all four (`velt_sema`'s `live_hooks` test).
+//! sema takes one construct present as all of them, so a program demands none of the integer
+//! hooks or all four (`velt_sema`'s `live_hooks` test).
 //!
 //! ```
 //! use velt_common::std_hooks::{hook_index, Construct, HookSet, HOOKS};
@@ -31,13 +31,6 @@
 //! set.insert(hook_index::int_push);
 //! assert!(set.contains(hook_index::int_push) && !set.contains(hook_index::int_text));
 //! ```
-
-/// Does `present` demand every hook that lists constructs (so that more live code can demand
-/// nothing new)?
-pub fn all_demanded(present: ConstructSet) -> bool {
-    (crate::std_hooks::HOOKS.iter())
-        .all(|h| h.constructs.is_empty() || h.constructs.iter().any(|c| present & c.bit() != 0))
-}
 
 /// A HIR construct whose lowering calls a hook, as sema evaluates it on live code.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

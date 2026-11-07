@@ -209,7 +209,8 @@ fn set_bound(cx: &mut Ctx, g: &mut Group, b: GroupBound) {
             }
             return;
         }
-        cx.error(
+        report(
+            cx,
             Diagnostic::error(
                 "the `throws` clause of an overridden method cannot mention type parameters",
                 b.decl.span,
@@ -224,7 +225,8 @@ fn set_bound(cx: &mut Ctx, g: &mut Group, b: GroupBound) {
         Some(old) => {
             let (a, c) = (cx.canon_error(old.decl.ty), cx.canon_error(b.decl.ty));
             if a != c {
-                cx.error(
+                report(
+                    cx,
                     Diagnostic::error(
                         format!(
                             "`{}` and `{}` declare different `throws` for methods dispatched together",
@@ -236,6 +238,16 @@ fn set_bound(cx: &mut Ctx, g: &mut Group, b: GroupBound) {
                 );
             }
         }
+    }
+}
+
+/// Report `d` unless an earlier build of the groups did: they are built again with what checking
+/// made (`throws::infer_all`), and a first build may already have seen the same bounds.
+fn report(cx: &mut Ctx, d: Diagnostic) {
+    let at = |d: &Diagnostic| d.labels.first().map(|l| l.span);
+    let seen = (cx.diags.iter()).any(|e| e.message == d.message && at(e) == at(&d));
+    if !seen {
+        cx.error(d);
     }
 }
 

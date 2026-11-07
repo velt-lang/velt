@@ -36,17 +36,18 @@ fn what_no_code_reaches_stays_unchecked() {
     ] {
         assert!(names.contains(&f.to_string()), "{f}: {names:?}");
     }
-    // Modules lowering looks into by name are checked whole, and so are the prelude's helpers
-    // and its types' methods.
-    let eager = ["std/lang/sort", "std/lang/proxy", "std/lang/typed_array"];
+    // Modules lowering looks into by name, and the prelude's helpers, are checked only for a
+    // program with the values lowering calls them for: hello world sorts no array and holds no
+    // `any`.
+    for f in [
+        "std/lang/sort/stable::stableSort",
+        "std/lang/hooks/any_ops::anyLooseEq",
+    ] {
+        assert!(names.contains(&f.to_string()), "{f}: {names:?}");
+    }
     for n in &names {
         assert!(n.starts_with("std/"), "{n}");
-        assert!(!eager.iter().any(|e| n.starts_with(e)), "{n}");
     }
-    assert!(
-        !names.iter().any(|n| n.ends_with("::anyLooseEq")),
-        "a helper"
-    );
     // `Number` of the prelude is a function nothing in hello world calls.
     assert!(
         names.contains(&"std/prelude/string::Number".to_string()),
@@ -54,13 +55,40 @@ fn what_no_code_reaches_stays_unchecked() {
     );
 }
 
+/// A field default is the program's code whichever class holds it: it converts `1`, a `number`.
+#[test]
+fn the_text_of_a_number_in_a_field_default_checks_the_float_printer() {
+    let p = ok_src(
+        "class K {\n  label: string = \"k\" + String(1);\n}\n\
+         function main() {\n  console.log(new K().label);\n}\n",
+    );
+    let names = unchecked(&p);
+    let float = "std/lang/hooks/number_float::floatPush".to_string();
+    assert!(!names.contains(&float), "{names:?}");
+}
+
+#[test]
+fn a_root_lowering_calls_for_a_value_is_checked_with_the_value() {
+    let p = ok_src(
+        "function main() {\n  const xs = [\"b\", \"a\"];\n  xs.sort();\n  \
+         const a: any = xs[0];\n  console.log(a == \"a\");\n}\n",
+    );
+    let names = unchecked(&p);
+    for f in [
+        "std/lang/sort/stable::stableSort",
+        "std/lang/hooks/any_ops::anyLooseEq",
+    ] {
+        assert!(!names.contains(&f.to_string()), "{f}: {names:?}");
+    }
+}
+
 #[test]
 fn what_checked_code_calls_is_checked_with_what_it_calls() {
-    // `velt/time`, imported, is checked whole; its methods call `formatPattern`, which calls
-    // the module's private `token`, which calls `monthLong` of another lazy module.
+    // `format` calls `formatPattern`, which calls the module's private `token`, which calls
+    // `monthLong` of another module.
     let p = ok_src(
-        "import * as dt from \"velt/time\";\n\
-         function main() {\n  console.log(\"hi\");\n}\n",
+        "import { DateTime } from \"velt/time\";\n\
+         function main() {\n  console.log(DateTime.fromEpochMs(0).format(\"MMMM\"));\n}\n",
     );
     let names = unchecked(&p);
     for f in [

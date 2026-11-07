@@ -1,4 +1,4 @@
-//! The compiler's helpers that lowering looks up by name stay checked ([`is_helper`]).
+//! The definitions lowering looks up by name are roots of the live set ([`is_helper`]).
 
 use super::*;
 
@@ -49,7 +49,7 @@ fn helper_literals(dir: &std::path::Path, out: &mut Vec<String>) {
                 continue;
             }
             // A definition of a std module outside the prelude (`"std/lang/proxy::Proxy.from"`):
-            // `every_std_definition_lowering_names_stays_checked` checks those.
+            // `every_std_definition_lowering_names_is_a_root` checks those.
             let item = items
                 .iter()
                 .find(|(at, _, item)| (*at..at + item.len()).contains(&i));
@@ -119,12 +119,12 @@ fn std_literals(dir: &std::path::Path, out: &mut Vec<(String, String)>) {
     }
 }
 
-/// A definition lowering, the optimizer or a backend looks up by name must stay checked: its
-/// module is checked whole ([`EAGER`]), or it is
-/// a prelude helper or a prelude type (whose methods stay checked), or an interface (no bodies;
-/// the methods lowering calls through it are those of a type checked code uses).
+/// A definition lowering, the optimizer or a backend looks up by name must be live with it: it is
+/// a root of the live set: its module's free functions are ([`BY_NAME`]), or it is a prelude
+/// helper, or it is a prelude type (live with a value of it) or an interface (no bodies; the
+/// methods lowering calls through it are those of a live type).
 #[test]
-fn every_std_definition_lowering_names_stays_checked() {
+fn every_std_definition_lowering_names_is_a_root() {
     let crates = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
     let mut names = vec![];
     for c in [
@@ -147,7 +147,7 @@ fn every_std_definition_lowering_names_stays_checked() {
         .filter(|(m, name)| !INTERFACES.contains(&(m.as_str(), name.as_str())))
         .filter(|(m, name)| !RECOGNIZED.contains(&(m.as_str(), name.as_str())))
         .filter(|(m, name)| {
-            let eager = EAGER.iter().any(|p| m.starts_with(p));
+            let eager = BY_NAME.iter().any(|p| m.starts_with(p));
             let prelude = HELPERS.iter().any(|p| m.starts_with(p))
                 && (name.is_empty()
                     || is_helper(name)
@@ -157,7 +157,7 @@ fn every_std_definition_lowering_names_stays_checked() {
         .collect();
     assert!(
         missing.is_empty(),
-        "add to EAGER (or to HELPER_NAMES): {missing:?}"
+        "add to BY_NAME (or to HELPER_NAMES): {missing:?}"
     );
 }
 

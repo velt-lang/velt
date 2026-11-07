@@ -1,8 +1,7 @@
 //! Each construct of `hook_demand::Construct` is found where live code has it. Once one integer
 //! hook is live its std code brings the others, so what a program demands can't tell these apart
-//! (#2312's review). Each row asserts the constructs found, in a program where the construct
-//! named is gone if the code that finds it is: the walk stops as soon as every hook is demanded,
-//! so a construct std's code would also bring is not found later.
+//! (#2312's review). The constructs of a program that demands one hook are those of the hook's
+//! code too, so each row looks at what was found before the first hook was demanded.
 
 use std::cell::{Cell, RefCell};
 
@@ -15,9 +14,9 @@ thread_local! {
     /// What the live set held when the last check on this thread asked for the demand set: its
     /// constructs and how many implementations it opened.
     pub(super) static PRESENT: Cell<(ConstructSet, usize)> = const { Cell::new((0, 0)) };
-    /// Work the set out in full, as a debug compiler outside these tests does.
-    pub(super) static EXACT: Cell<bool> = const { Cell::new(false) };
-    /// Have [`finish`] demand this std module, as no program does yet.
+    /// The constructs found before the first hook was demanded in the last check on this thread.
+    static BEFORE_HOOKS: Cell<ConstructSet> = const { Cell::new(0) };
+    /// Have [`finish`] demand this std module, as no program does.
     static LATE_DEMAND: Cell<Option<&'static str>> = const { Cell::new(None) };
     /// The names of the functions live when the last check asked for the demand set.
     static NAMES: RefCell<Vec<String>> = const { RefCell::new(vec![]) };
@@ -28,6 +27,11 @@ pub(super) fn note_finish(cx: &mut crate::ctx::Ctx) {
     if let Some(path) = LATE_DEMAND.get() {
         cx.demand_std(path);
     }
+}
+
+/// Constructs `present` are about to demand their hooks.
+pub(super) fn note_first_demand(present: ConstructSet) {
+    BEFORE_HOOKS.set(present);
 }
 
 /// What the live set holds where a check asks for the demand set.
@@ -49,18 +53,22 @@ pub(super) fn note_demanded(cx: &crate::ctx::Ctx) {
 
 /// [`PRESENT`] after a check of `src`, on a thread with sema's stack.
 fn live(src: &str) -> (ConstructSet, usize) {
-    checked(src, false).0
+    checked(src).0
 }
 
 /// [`PRESENT`] and [`NAMES`] after a check of `src`, on a thread with sema's stack.
-fn checked(src: &str, exact: bool) -> ((ConstructSet, usize), Vec<String>) {
+fn checked(src: &str) -> ((ConstructSet, usize), Vec<String>) {
+    after_check(src, || (PRESENT.get(), NAMES.with_borrow(Vec::clone)))
+}
+
+/// `read` of the thread that checked `src`, which has sema's stack.
+fn after_check<T: Send>(src: &str, read: impl Fn() -> T + Send + Sync) -> T {
     let l = programs::load_src(src);
     let (modules, root) = (&l.modules, l.root);
     std::thread::scope(|s| {
         let spawned = std::thread::Builder::new()
             .stack_size(SEMA_STACK_BYTES)
             .spawn_scoped(s, || {
-                EXACT.set(exact);
                 let opts = CheckOptions::default();
                 let budget = SEMA_STACK_BUDGET;
                 let (out, _) = crate::check_timed(modules, root, opts, &[], None, None, budget);
@@ -70,7 +78,7 @@ fn checked(src: &str, exact: bool) -> ((ConstructSet, usize), Vec<String>) {
                     "{src}\n{}",
                     l.render(&diags)
                 );
-                (PRESENT.get(), NAMES.with_borrow(Vec::clone))
+                read()
             });
         spawned.expect("sema thread").join().expect("sema thread")
     })
@@ -146,6 +154,13 @@ fn each_construct_is_found_where_live_code_has_it() {
             &[TextInt, TextUint, Format],
         ),
         (
+            "text of a type parameter's member type: an operation on it, which only the \
+             conversion marks (a `T` itself is also converted to an `any`, which formats)",
+            "function t<T extends { x: i64 }>(v: T[\"x\"]): string { return `${v}`; }\n\
+             function main() { const s = t<{ x: i64 }>(1); if (s == \"\") { return; } }",
+            &[TextInt, TextUint, Format],
+        ),
+        (
             "a promise that may reject with an integer, with no `throws` written on a function",
             "function f(p: Promise<string, i32>) { }\nfunction main() { }",
             &[Format],
@@ -170,14 +185,8 @@ fn each_construct_is_found_where_live_code_has_it() {
             "function main(): void throws i32 {}",
             &[Format],
         ),
-        (
-            "a function value: lowering's helpers that take one open, and they format",
-            "function f(): void throws string { }\n\
-             function main() { const h = f; if (h == null) { return; } }",
-            &[Format],
-        ),
     ] {
-        let (present, _) = live(src);
+        let present = after_check(src, || BEFORE_HOOKS.get());
         for c in want {
             assert!(
                 present & c.bit() != 0,
@@ -231,7 +240,6 @@ fn what_sema_makes_after_the_bodies_are_checked_is_live_before_ownership() {
          class R {\n  toString(radix: i64 = 10): string {\n    return \"r\";\n  }\n}\n\
          function main() {\n  const s: any = Object.create(null);\n  \
          s.get = (): any => \"a\";\n  console.log((s as Src).get(), `${new R()}`);\n}\n",
-        true,
     );
     for name in ["<any as () => string>", "R.<toString>"] {
         assert!(names.iter().any(|n| n == name), "no {name}");
@@ -258,11 +266,22 @@ fn check_diags(src: &str, set: impl Fn() + Send + Sync) -> Vec<String> {
     })
 }
 
+/// Lowering calls a root that mentions an `any` for an `any`. Printing an integer has an array
+/// (a table of powers of ten), which must not open the `any` methods that take one, and with
+/// them `Date` and the rest of what an `any` may hold.
+#[test]
+fn printing_an_integer_holds_no_any() {
+    let (_, names) = checked("function main() {\n  const n: i64 = 7;\n  console.log(n);\n}\n");
+    assert!(names.iter().any(|n| n.ends_with("::pushI64")), "{names:?}");
+    for name in ["anyArr_push", "anyPrimitive", "Date.parse"] {
+        assert!(!names.iter().any(|n| n.ends_with(name)), "{name} is live");
+    }
+}
+
 #[test]
 fn a_module_demanded_after_the_passes_is_an_internal_error() {
     let src = "function main() {\n  const n: i64 = 7;\n  console.log(`${n}`);\n}\n";
     let late = check_diags(src, || {
-        EXACT.set(true);
         LATE_DEMAND.set(Some("std/lang/hooks/no_such_module"));
     });
     assert!(

@@ -5,7 +5,7 @@ use velt_common::std_hooks::{Construct, ConstructSet};
 use super::Walk;
 use crate::ctx::Ctx;
 use crate::defs::DefInfo;
-use crate::hir::{self, TyId, TyKind};
+use crate::hir::{self, DefId, TyId, TyKind};
 
 /// The constructs of `w`'s conversions and formatted values.
 pub(super) fn evaluate(cx: &mut Ctx, w: &Walk) {
@@ -29,19 +29,45 @@ pub(super) fn evaluate(cx: &mut Ctx, w: &Walk) {
     cx.lazy.live.present |= present;
 }
 
-/// Is `Construct::Format` missing for what lowering reports with the inferred `throws` of a live
-/// function, when thrown and not caught? [`super::live`] sees what code throws, but inference also
-/// gives a function what a call of a function value throws, and what the interface or the base
-/// class it implements declares (`throws::infer`, the method groups), whatever its body does. That
-/// is known only after the passes, too late to load a hook, so the check runs again with it
-/// assumed (`check_program`). A type parameter stands for what its callers' `throws` show. A
-/// module constant's initializer has no caller, and reports what it runs: any type argument in it
-/// may be what a generic `throws` stands for, by whatever expression the instance is reached.
-pub(crate) fn thrown_needs_format(cx: &mut Ctx) -> bool {
-    let bit = Construct::Format.bit();
-    if cx.lazy.modules.is_empty() || cx.lazy.live.present & bit != 0 {
+/// What a round starts with, for what the round before learned too late to act on: what only
+/// the passes after the bodies' check tell ([`too_late`], [`super::finish`]).
+#[derive(Clone, Default)]
+pub(crate) struct Assumed {
+    pub(in super::super) constructs: ConstructSet,
+    /// Live from the start: classes of values reported when thrown and not caught, and bodies
+    /// that the code those passes make reaches, by `DefId` and name. Each is a collected
+    /// definition, but in a module added during the check it may have another `DefId` next
+    /// round: closures of bodies checked before the module was added take numbers too.
+    pub(in super::super) defs: Vec<(DefId, String)>,
+    /// A conversion to a record that those passes made ([`super::super::RECORD_HOOKS`]).
+    pub(in super::super) record_conversion: bool,
+}
+
+/// What lowering reports with the inferred `throws` of a live function, when thrown and not caught
+/// and not yet accounted for, added to `assumed`: `Construct::Format`, and the classes of those
+/// values, with whatever takes one (`uncaughtHeader`). [`super::live`] sees what code throws, but
+/// inference also gives a function what a call of a function value throws, and what the interface
+/// or the base class it implements declares (`throws::infer`, the method groups), whatever its
+/// body does. That is known only after the passes, too late to load a hook or to check a body, so
+/// the check runs again with it assumed (`check_program`), and with what [`super::finish`] found.
+/// A type parameter stands for what its callers' `throws` show. A module constant's initializer
+/// has no caller, and reports what it runs: any type argument in it may be what a generic `throws`
+/// stands for, by whatever expression the instance is reached. Whether anything was added.
+pub(crate) fn too_late(cx: &mut Ctx, assumed: &mut Assumed) -> bool {
+    if cx.lazy.modules.is_empty() {
         return false;
     }
+    let late = std::mem::take(&mut cx.lazy.live.late);
+    let new_defs: Vec<_> = (late.defs.into_iter())
+        .filter(|(_, name)| !assumed.defs.iter().any(|(_, n)| n == name))
+        .collect();
+    // One assumed already and late again stays a stub, which lowering refuses: no further round.
+    let mut added = !new_defs.is_empty()
+        || assumed.constructs | late.constructs != assumed.constructs
+        || late.record_conversion && !assumed.record_conversion;
+    assumed.constructs |= late.constructs;
+    assumed.record_conversion |= late.record_conversion;
+    assumed.defs.extend(new_defs);
     let live: Vec<_> = cx.lazy.live.live.iter().copied().collect();
     let mut thrown: Vec<TyId> = (live.iter())
         .filter_map(|d| match &cx.info[d.0 as usize] {
@@ -59,9 +85,61 @@ pub(crate) fn thrown_needs_format(cx: &mut Ctx) -> bool {
             }
         }
     }
-    thrown
+    let thrown: Vec<TyId> = thrown.into_iter().filter(|&t| !is_param(cx, t)).collect();
+    let bit = Construct::Format.bit();
+    let format = !demanded_for(cx.lazy.live.present) & bit != 0
+        && thrown.iter().any(|&t| format_bit(cx, t) != 0);
+    if format {
+        assumed.constructs |= bit;
+    }
+    let (mut classes, mut seen) = (vec![], rustc_hash::FxHashSet::default());
+    let mut todo = thrown;
+    while let Some(t) = todo.pop() {
+        if seen.insert(t) {
+            let kind = cx.ty.kind(t);
+            match kind {
+                // Not an object type's or a body's: those have no stable `DefId`, and no
+                // deferred methods.
+                TyKind::Adt(d, _)
+                    if !cx.lazy.live.adts.contains(d)
+                        && !assumed.defs.iter().any(|(a, _)| a == d)
+                        && cx.collected(*d) =>
+                {
+                    classes.push(*d)
+                }
+                _ => {}
+            }
+            todo.extend(crate::types::children(kind));
+        }
+    }
+    classes.sort();
+    classes.dedup();
+    added |= format || !classes.is_empty();
+    let named = classes
         .into_iter()
-        .any(|t| !is_param(cx, t) && format_bit(cx, t) != 0)
+        .filter_map(|d| Some((d, def_name(cx, d)?)));
+    assumed.defs.extend(named);
+    added
+}
+
+/// The constructs `present` demands the hooks of. The integer hooks act as one bit: a construct
+/// present demands them all, so that glue, which lowering makes per type, doesn't depend on each
+/// of its call sites being listed for the right construct (velt_common `hook_demand.rs`).
+pub(super) fn demanded_for(present: ConstructSet) -> ConstructSet {
+    match present {
+        0 => 0,
+        _ => Construct::ALL.iter().fold(0, |set, c| set | c.bit()),
+    }
+}
+
+/// The name that finds function, class or constant `d` again next round.
+pub(in super::super) fn def_name(cx: &Ctx, d: DefId) -> Option<String> {
+    match &cx.info[d.0 as usize] {
+        DefInfo::Fn(f) => Some(f.name.clone()),
+        DefInfo::Adt(a) => Some(a.qual_name.clone()),
+        DefInfo::Global(g) => Some(g.name.clone()),
+        _ => None,
+    }
 }
 
 /// The type arguments `e` names or has in its type.
