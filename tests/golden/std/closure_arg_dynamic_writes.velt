@@ -38,3 +38,40 @@ function genericWrite() {
   console.log("generic", f(o.s), o.s);
 }
 assign_(); reflect(); proxied(); key(); genericWrite();
+// Direct named callees, each writing its own field by name: nothing else names these fields, so
+// only knowing the program writes through `any`, a proxy or a key tells the call to share.
+class DR { dr: string = heap("old"); }
+class DA { da: string = heap("old"); }
+class DK { dk: string = heap("old"); }
+class DP { dp: string = heap("old"); }
+class DF { df: string = heap("old"); }
+class DO { dob: string = heap("old"); }
+type KO = { dko: string };
+type KT = { dkt: string; n: number };
+function byReflect(o: DR, v: string) { Reflect.set(o, "dr", heap("new")); junk(); return v; }
+function byAny(o: any, v: string) { o.da = heap("new"); junk(); return v; }
+function byKey(o: any, k: string, v: string) { o[k] = heap("new"); junk(); return v; }
+function byProxy(o: DP, v: string) { const p = new Proxy(o, {}); p.dp = heap("new"); junk(); return v; }
+function byForIn(o: any, v: string) { for (const k in o) { o[k] = heap("new"); } junk(); return v; }
+function byAssign(o: DO, v: string) { Object.assign(o, { dob: heap("new") }); junk(); return v; }
+function byGenericKey(o: KO, v: string) { setKey(o, "dko", heap("new")); junk(); return v; }
+function byGenericKey2(o: KT, v: string) { setKey(o, "dkt", heap("new")); junk(); return v; }
+function directCallees() {
+  const r = new DR(); const ra = r;
+  console.log("direct Reflect.set", byReflect(ra, r.dr), r.dr);
+  const a = new DA(); const aa = a;
+  console.log("direct any", byAny(aa, a.da), a.da);
+  const k = new DK(); const ka = k;
+  console.log("direct any key", byKey(ka, "dk", k.dk), k.dk);
+  const p = new DP(); const pa = p;
+  console.log("direct proxy", byProxy(pa, p.dp), p.dp);
+  const f = new DF(); const fa = f;
+  console.log("direct for in", byForIn(fa, f.df), f.df);
+  const o = new DO(); const oa = o;
+  console.log("direct Object.assign", byAssign(oa, o.dob), o.dob);
+  const g: KO = { dko: heap("old") }; const ga = g;
+  console.log("direct generic key", byGenericKey(ga, g.dko), g.dko);
+  const h: KT[] = [{ dkt: heap("old"), n: 1 }];
+  console.log("direct generic key in an array", byGenericKey2(h[0], h[0].dkt), h[0].dkt);
+}
+directCallees();
