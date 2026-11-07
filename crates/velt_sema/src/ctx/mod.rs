@@ -417,6 +417,9 @@ pub(crate) struct Ctx<'m> {
     /// The functions that write a field of a type parameter, and that parameter
     /// (`struct_tuples::check_field_writes`).
     pub param_field_writes: Vec<(DefId, TyId)>,
+    /// The functions that make a `Proxy` of a type parameter, and that parameter
+    /// (`struct_tuples::check_proxy_targets`).
+    pub param_proxy_targets: Vec<(DefId, TyId)>,
     /// The spans of the `super.m(args)` calls (`hir::Program::super_calls`).
     pub super_calls: rustc_hash::FxHashSet<velt_common::Span>,
     /// Resolved type-parameter defaults (`crate::type_defaults`).
@@ -647,6 +650,7 @@ impl<'m> Ctx<'m> {
             object_copies: Default::default(),
             method_facts: Default::default(),
             param_field_writes: vec![],
+            param_proxy_targets: vec![],
             super_calls: Default::default(),
             type_defaults: Default::default(),
             deferred_ts_returns: vec![],

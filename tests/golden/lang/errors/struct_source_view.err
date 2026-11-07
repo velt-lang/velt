@@ -1,14 +1,26 @@
-struct_source_view.velt:26:13: error: cannot cast `P | null` as `HasX | null`
+struct_source_view.velt:27:13: error: cannot cast `P | null` as `HasX | null`
 
-struct_source_view.velt:27:35: error: mismatched types
+struct_source_view.velt:28:35: error: mismatched types
   = note: expected HasX | null, found P | null
 
-struct_source_view.velt:35:13: error: cannot cast `P` as `HasX`
+struct_source_view.velt:37:13: error: a struct can't be the target of a `Proxy`
+  = note: a struct is a value, with no identity for a proxy to stand for; make the type a class
 
-struct_source_view.velt:36:26: error: mismatched types
+struct_source_view.velt:38:13: error: a struct can't be the target of a `Proxy`
+  = note: a struct is a value, with no identity for a proxy to stand for; make the type a class
+
+struct_source_view.velt:40:13: error: a struct can't be the target of a `Proxy`
+  = note: a struct is a value, with no identity for a proxy to stand for; make the type a class
+
+struct_source_view.velt:41:13: error: a struct can't be the target of a `Proxy`
+  = note: a struct is a value, with no identity for a proxy to stand for; make the type a class
+
+struct_source_view.velt:49:13: error: cannot cast `P` as `HasX`
+
+struct_source_view.velt:50:26: error: mismatched types
   = note: expected HasX, found P
 
-struct_source_view.velt:38:13: error: cannot cast `CP` as `HasX`
+struct_source_view.velt:52:13: error: cannot cast `CP` as `HasX`
 
-struct_source_view.velt:39:26: error: mismatched types
+struct_source_view.velt:53:26: error: mismatched types
   = note: expected HasX, found CP

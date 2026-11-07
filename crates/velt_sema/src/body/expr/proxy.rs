@@ -129,6 +129,18 @@ impl FnCx<'_, '_> {
         })
     }
 
+    /// Does `new Proxy<A>(...)` name a struct as `A`? A literal target needn't have its type.
+    pub(crate) fn proxy_of_written_struct(&mut self, class: &ast::TypeExpr) -> bool {
+        let ast::TypeExprKind::Named { args, .. } = &class.kind else {
+            return false;
+        };
+        let Some(a) = args.first() else {
+            return false;
+        };
+        let t = self.resolve(a);
+        self.proxy_target(t)
+    }
+
     /// `new Proxy(target, handler)` with a handler typed `any` (`handler as any`): the prelude's
     /// `proxyNewAny(target, handler)`, which reads the traps the handler has through `any`.
     /// `None` for another `new`.
@@ -156,6 +168,11 @@ impl FnCx<'_, '_> {
         if self.cx.dynamic(t) != Some(crate::any::Dynamic::Any) {
             return None;
         }
+        if let Some(t) = self.trial_type(&args[0]) {
+            if self.proxy_target(t) {
+                return Some(self.proxy_of_struct(span));
+            }
+        }
         self.cx.any_impl();
         self.cx.note_dyn_members();
         self.cx.object_copies.proxies = true;
@@ -164,11 +181,41 @@ impl FnCx<'_, '_> {
         Some(call.check(self, span))
     }
 
+    /// Is `t`, the type of a `Proxy`'s target, a struct? A type parameter may be one: that is
+    /// refused where a struct is given for it (`struct_tuples::check_proxy_targets`).
+    fn proxy_target(&mut self, t: hir::TyId) -> bool {
+        if let (hir::TyKind::Param(_), Some(f)) = (self.cx.ty.kind(t), self.body_def) {
+            self.cx.param_proxy_targets.push((f, t));
+        }
+        self.struct_value(t)
+    }
+
+    /// A struct, C structs included, is a value: it has no identity for a proxy to stand for,
+    /// and a proxy isn't a struct wherever one is expected (#641).
+    pub(crate) fn proxy_of_struct(&mut self, span: Span) -> hir::Expr {
+        self.cx.error(
+            Diagnostic::error("a struct can't be the target of a `Proxy`", span)
+                .with_note("a struct is a value, with no identity for a proxy to stand for; make the type a class"),
+        );
+        self.error_expr(span)
+    }
+
     /// The `Proxy` object `h` (`new Proxy(...)` of class `d`) as an `any`; `h` itself for
     /// another class.
     pub(crate) fn proxy_new(&mut self, d: DefId, h: hir::Expr, span: Span) -> hir::Expr {
         if !self.user_proxy(d) {
             return h;
+        }
+        // The target is an argument, an `any` by then.
+        let target = match &h.kind {
+            H::New { args, .. } => args.first().map(|a| match &a.kind {
+                H::ToDyn { expr, .. } => expr.ty,
+                _ => a.ty,
+            }),
+            _ => None,
+        };
+        if target.is_some_and(|t| self.proxy_target(t)) {
+            return self.proxy_of_struct(span);
         }
         let Some(defs) = self.cx.any else {
             return h;

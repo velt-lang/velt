@@ -24,6 +24,10 @@ impl FnCx<'_, '_> {
             return h;
         }
         if let Some(c) = self.proxy_class_name(class) {
+            if self.proxy_of_written_struct(class) {
+                self.check_args_loose(args);
+                return self.proxy_of_struct(span);
+            }
             return self.new_expr(&c, args, exp, span);
         }
         if let Some(h) = self.proxy_new_any(class, args, span) {

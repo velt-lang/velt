@@ -68,7 +68,7 @@ impl FnCx<'_, '_> {
     }
 
     /// Is `t` a declared `struct`, or that one or `null` / `undefined`?
-    fn struct_value(&self, t: TyId) -> bool {
+    pub(super) fn struct_value(&self, t: TyId) -> bool {
         self.cx.declared_struct(self.cx.ty.core(t).unwrap_or(t))
     }
 

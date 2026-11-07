@@ -373,3 +373,44 @@ fn a_struct_can_be_cast_to_a_record() {
           console.log(r[\"x\"]);
         }");
 }
+
+/// A `Proxy` of a type parameter is fine for what has identity: the check is at the struct.
+#[test]
+fn a_proxy_of_a_type_parameter_is_legal_for_a_class() {
+    ok("class C {
+          x = 1;
+        }
+        function logged<T extends object>(x: T): T {
+          return new Proxy<T>(x, {});
+        }
+        function main() {
+          const c = new C();
+          console.log(logged(c).x, new Proxy<C>(c, {}).x, new Proxy(c, {}).x);
+        }");
+}
+
+/// The usual way to write a `Proxy`: it would hand the caller a proxy where a struct is expected.
+#[test]
+fn a_struct_cant_be_given_to_a_function_that_makes_a_proxy_of_it() {
+    let e = err_src(
+        "struct P {
+           x: number;
+           y: number;
+         }
+         function logged<T extends object>(x: T): T {
+           return new Proxy<T>(x, {});
+         }
+         function viaChain<U extends object>(x: U): U {
+           return logged(x);
+         }
+         function take(p: P): number {
+           return p.x;
+         }
+         function main() {
+           const p: P = { x: 1, y: 2 };
+           console.log(take(logged(p)), take(viaChain(p)));
+         }",
+    );
+    assert!(e.contains("makes a `Proxy` of a struct (`P`)"), "{e}");
+    assert_eq!(e.matches("error:").count(), 2, "{e}");
+}

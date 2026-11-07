@@ -488,11 +488,37 @@ fn is_tuple(cx: &mut Ctx, t: TyId) -> bool {
 /// reach the caller's value, as a struct argument may be passed by address.
 pub(crate) fn check_field_writes(cx: &mut Ctx, uses: &[(DefId, Uses)]) {
     let writes = std::mem::take(&mut cx.param_field_writes);
-    if writes.is_empty() {
+    let what =
+        "the function called here writes a field of a struct (`{}`), and struct fields are readonly";
+    let note = "a struct value never changes: return a new value from the function, or make the type a class";
+    check_struct_given(cx, uses, writes, what, note);
+}
+
+/// A struct given for a type parameter a generic body makes a `Proxy` of (`new Proxy<T>(x, h)`):
+/// a struct can't be one's target (`proxy_of_struct`), as the caller's struct type would then
+/// hold something that is no struct.
+pub(crate) fn check_proxy_targets(cx: &mut Ctx, uses: &[(DefId, Uses)]) {
+    let targets = std::mem::take(&mut cx.param_proxy_targets);
+    let what = "the function called here makes a `Proxy` of a struct (`{}`)";
+    let note =
+        "a struct is a value, with no identity for a proxy to stand for; make the type a class";
+    check_struct_given(cx, uses, targets, what, note);
+}
+
+/// Carries `sites`, (function, type parameter), and reports where a struct is given for one
+/// (`what`: the message, with `{}` for the struct).
+fn check_struct_given(
+    cx: &mut Ctx,
+    uses: &[(DefId, Uses)],
+    sites: Vec<(DefId, TyId)>,
+    what: &str,
+    note: &str,
+) {
+    if sites.is_empty() {
         return;
     }
     let mut s = Found::default();
-    for (f, t) in writes {
+    for (f, t) in sites {
         let n = s.needs.entry(f).or_default();
         if !n.contains(&(t, 0)) {
             n.push((t, 0));
@@ -506,13 +532,7 @@ pub(crate) fn check_field_writes(cx: &mut Ctx, uses: &[(DefId, Uses)]) {
     for (span, t, _) in s.bad {
         if reported.insert(span) {
             let shown = cx.display(t);
-            cx.error(
-                Diagnostic::error(
-                    format!("the function called here writes a field of a struct (`{shown}`), and struct fields are readonly"),
-                    span,
-                )
-                .with_note("a struct value never changes: return a new value from the function, or make the type a class"),
-            );
+            cx.error(Diagnostic::error(what.replace("{}", &shown), span).with_note(note));
         }
     }
 }
