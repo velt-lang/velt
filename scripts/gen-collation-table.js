@@ -93,6 +93,11 @@ const word = (c) => {
   const e = info.get(c);
   if (e.ignorable) return "0x0";
   if (e.mark) return "0x" + (BigInt(e.sec) << 24n).toString(16);
+  // collate.velt's orderAt reads a character whose first primary is 0 as ignorable at the first
+  // level, second element included.
+  if (!e.ps[0] && e.ps[1]) {
+    throw new Error(`${hex(c.codePointAt(0))}: a second primary without a first`);
+  }
   const v = BigInt(e.ps[0]) | (BigInt(e.ps[1] ?? 0) << 12n) | (BigInt(e.sec) << 24n) | (BigInt(e.ter) << 32n);
   return "0x" + v.toString(16);
 };
@@ -218,8 +223,8 @@ for (let c = 0x20; c <= 0x10ffff; c++) {
 constant("/** How many runs `CLASSES` holds. */", "CLASS_RUNS", "u64", runs.length);
 console.log();
 constant(`/**
- * The classes of the code points outside the table, as runs, 4 bytes each: a run's first code
+ * The classes of the code points outside the table, as runs, 3 bytes each: a run's first code
  * point times 8 plus its class, which holds up to the next run's: 0 for a symbol, 1 for a letter
  * or digit (Unicode ${alnumUnicode}), then the scripts the root collation orders last, 2 for Hangul,
  * 3 for kana and 4 for Han.
- */`, "CLASSES", "string", literal(septets(runs, 4)));
+ */`, "CLASSES", "string", literal(septets(runs, 3)));

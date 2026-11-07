@@ -49,12 +49,11 @@ function classOf(cp: u64): u64 {
   let found: u64 = 0;
   while (lo < hi) {
     const mid = (lo + hi) / 2;
-    const at = mid * 4;
+    const at = mid * 3;
     const run =
       (strByteAt(t, at) as u64) |
       ((strByteAt(t, at + 1) as u64) << 7) |
-      ((strByteAt(t, at + 2) as u64) << 14) |
-      ((strByteAt(t, at + 3) as u64) << 21);
+      ((strByteAt(t, at + 2) as u64) << 14);
     if (run >> 3 <= cp) {
       found = run & 7;
       lo = mid + 1;
@@ -137,6 +136,25 @@ function elementsAt(s: string, i: u64, level: i64): u64 {
   return (size << 62) | first | (p2 == 0 ? 0 : 1 << 30);
 }
 
+/**
+ * At the first level (`level` 0), the byte after the combining marks U+0300..U+033F (UTF-8 lead
+ * byte 0xCC) that start at byte `i` of `s`, else `i`. Marks weigh nothing at the first level, so
+ * after an ignorable character `orderAt` skips the marks that follow with this loop instead of a
+ * call to `elementsAt` per mark. It tests `level` itself: a test in `orderAt`'s loop would have
+ * LLVM copy that loop per level, which costs every release build that uses `localeCompare`.
+ */
+function afterMarks(s: string, i: u64, end: u64, level: i64): u64 {
+  noInline();
+  if (level != 0) {
+    return i;
+  }
+  let k = i;
+  while (k < end && strByteAt(s, k) == 0xcc) {
+    k += 2;
+  }
+  return k;
+}
+
 /** The order of `a` and `b` at `level`, both read from byte `from`. */
 function orderAt(a: string, b: string, from: u64, level: i64): i64 {
   noInline();
@@ -156,8 +174,9 @@ function orderAt(a: string, b: string, from: u64, level: i64): i64 {
       x = e & WEIGHT_MASK;
       aNext = (e >> 30) & WEIGHT_MASK;
       if (x == 0) {
-        x = aNext;
-        aNext = 0;
+        // Ignorable here, and so is its second element (the table has no character whose first
+        // primary is 0 and second isn't; scripts/gen-collation-table.js checks).
+        i = afterMarks(a, i, aEnd, level);
       }
     }
     let y = bNext;
@@ -168,8 +187,7 @@ function orderAt(a: string, b: string, from: u64, level: i64): i64 {
       y = e & WEIGHT_MASK;
       bNext = (e >> 30) & WEIGHT_MASK;
       if (y == 0) {
-        y = bNext;
-        bNext = 0;
+        j = afterMarks(b, j, bEnd, level);
       }
     }
     if (x != y) {
@@ -202,13 +220,12 @@ export function localeOrder(a: string, b: string): i64 {
   if (from == aEnd && from == bEnd) {
     return 0;
   }
-  for (let level: i64 = 0; level < 3; level++) {
-    const order = orderAt(a, b, from, level);
-    if (order != 0) {
-      return order;
-    }
+  const primary = orderAt(a, b, from, 0);
+  if (primary != 0) {
+    return primary;
   }
-  return 0;
+  const secondary = orderAt(a, b, from, 1);
+  return secondary != 0 ? secondary : orderAt(a, b, from, 2);
 }
 
 extend string {
