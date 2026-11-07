@@ -169,5 +169,11 @@ fn a_chain_of_calls_takes_no_pass_per_link() {
 #[test]
 fn a_list_read_makes_no_typed_array_tables() {
     let src = "const u = new Uint8Array(1);\nfunction one(this: any, a: any): any {\n  return this;\n}\nconst f: any = one;\nconsole.log(u.length, f.apply(null, [1]));\n";
-    assert!(!release_ir(src).contains("Float32Array"));
+    // Debug IR: a table's glue keeps its name, the class is `TypedArray`, and each subclass's
+    // members come with it.
+    let ir = ir_of(src, &[]);
+    let tables = ir
+        .lines()
+        .filter(|l| l.starts_with("define ") && l.contains("_Gany") && l.contains("TypedArray"));
+    assert_eq!(tables.count(), 0, "`any` tables of `TypedArray`");
 }
