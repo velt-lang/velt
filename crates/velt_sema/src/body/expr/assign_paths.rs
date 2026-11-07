@@ -50,7 +50,7 @@ impl FnCx<'_, '_> {
                     false => format!("a struct value never changes: replace it with a new one (`p = {{ ...p, {}: v }}`), or make the type a class", prop.name),
                 };
                 self.cx.error(
-                    velt_common::Diagnostic::error(
+                    Diagnostic::error(
                         format!(
                             "cannot assign to `{}`: struct fields are readonly",
                             prop.name

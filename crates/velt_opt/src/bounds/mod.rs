@@ -173,10 +173,10 @@ fn thread_bool_copies(func: &mut Function) -> bool {
     changed
 }
 
-/// The branches whose comparison is decided, and to what.
 /// Most blocks times tracked locals the analysis takes on.
 const MAX_WORK: usize = 50_000;
 
+/// The branches whose comparison is decided, and to what.
 fn analyse(aggs: &[AggLayout], func: &Function) -> Vec<(usize, bool)> {
     let n = func.blocks.len();
     let tracked = tracked_locals(func);
