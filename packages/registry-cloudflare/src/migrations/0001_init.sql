@@ -5,16 +5,18 @@ CREATE TABLE packages (
   index_json TEXT NOT NULL
 );
 
--- `position` keeps owners in the order they were added.
+-- `position` keeps owners in the order they were added. An owner is a user, so a user who owns
+-- packages can't be deleted: a name is never given to someone else with the packages it owns.
 CREATE TABLE owners (
   package TEXT NOT NULL,
   position INTEGER NOT NULL,
-  user TEXT NOT NULL,
+  user TEXT NOT NULL REFERENCES users (name),
   PRIMARY KEY (package, position)
 );
 
 -- `github_id` is the GitHub account a user signs in with (null for one an administrator added):
--- a user keeps their name when they rename the account.
+-- a user keeps their name when they rename the account. A user is never deleted, so a name is
+-- never reused; taking someone's access away deletes their tokens.
 CREATE TABLE users (
   name TEXT PRIMARY KEY,
   github_id INTEGER UNIQUE

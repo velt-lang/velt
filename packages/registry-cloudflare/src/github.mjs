@@ -19,7 +19,7 @@ function client(env) {
   return { id, secret };
 }
 
-/** A JSON answer from GitHub, or an error naming what answered `status`. */
+/** A JSON answer from GitHub, or an error naming what answered `status` (a redirect too). */
 async function json(res, what) {
   if (!res.ok) throw new Error(`${what} answered ${res.status}`);
   return await res.json();
@@ -54,6 +54,8 @@ export default (host) => ({
         code,
         redirect_uri: `${origin(host.env)}/login/callback`,
       }),
+      // The secret and the code go to github.com only: a redirect is a failure, never followed.
+      redirect: "manual",
       signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
     });
     const grant = await json(exchange, "GitHub's token exchange");
@@ -66,10 +68,11 @@ export default (host) => ({
         authorization: `Bearer ${grant.access_token}`,
         "user-agent": "velt-registry",
       },
+      redirect: "manual",
       signal: AbortSignal.timeout(GITHUB_TIMEOUT_MS),
     });
     const user = await json(res, "GitHub's user API");
-    if (!Number.isSafeInteger(user.id) || typeof user.login !== "string") {
+    if (!Number.isSafeInteger(user.id) || user.id <= 0 || typeof user.login !== "string") {
       throw new Error("GitHub's user API answered no account");
     }
     return JSON.stringify({ id: user.id, login: user.login });

@@ -25,13 +25,19 @@ const ACCOUNTS = {
   "code-carol-renamed": { id: 101, login: "Caroline" },
   "code-digit": { id: 102, login: "9lives" },
   "code-alice": { id: 103, login: "alice" },
+  "code-angle": { id: 104, login: "<b>x" },
 };
 
 /** GitHub's answer to `request`, or null when it isn't GitHub's. */
 async function github(request) {
   const url = new URL(request.url);
+  // Anything the Worker sends to `evil.test` would sign carol in: it must never get there.
+  if (url.hostname === "evil.test") return Response.json({ access_token: "gho-code-carol" });
   if (url.href === "https://github.com/login/oauth/access_token") {
     const { client_id, client_secret, code, redirect_uri } = await request.json();
+    if (code === "code-redirect") {
+      return new Response(null, { status: 307, headers: { location: "https://evil.test/steal" } });
+    }
     const ok =
       client_id === "the-client" &&
       client_secret === "the-secret" &&

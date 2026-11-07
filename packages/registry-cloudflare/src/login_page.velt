@@ -40,7 +40,7 @@ export function page(
   headers.set("content-type", "text/html; charset=utf-8");
   headers.set("cache-control", "no-store");
   headers.set("referrer-policy", "no-referrer");
-  headers.set("content-security-policy", "default-src 'none'");
+  headers.set("content-security-policy", "default-src 'none'; frame-ancestors 'none'");
   if (cookie != null) {
     headers.set("set-cookie", cookie);
   }

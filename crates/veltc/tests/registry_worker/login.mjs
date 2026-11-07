@@ -36,6 +36,8 @@ async function signIn(code) {
   const { state, cookie } = await start();
   const res = await get(`/login/callback?code=${code}&state=${state}`, cookie);
   assert.equal(res.headers.get("cache-control"), "no-store");
+  assert.equal(res.headers.get("content-security-policy"), "default-src 'none'; frame-ancestors 'none'");
+  assert.equal(res.headers.get("referrer-policy"), "no-referrer");
   // Every answer ends the sign-in.
   assert.ok(res.headers.get("set-cookie").startsWith(`${COOKIE}=; Path=/; Max-Age=0;`));
   return { status: res.status, page: await res.text() };
@@ -61,8 +63,15 @@ assert.ok(digit.page.includes("9lives"), digit.page);
 const taken = await signIn("code-alice");
 assert.equal(taken.status, 403);
 assert.ok(taken.page.includes("belongs to someone else"), taken.page);
-// A code GitHub doesn't know.
+// A login the page shows is escaped.
+const angle = await signIn("code-angle");
+assert.equal(angle.status, 403);
+assert.ok(angle.page.includes("&lt;b&gt;x"), angle.page);
+assert.ok(!angle.page.includes("<b>x"), angle.page);
+// A code GitHub doesn't know, and a token exchange that redirects (never followed: the stub would
+// sign carol in at the other end).
 assert.equal((await signIn("code-nobody")).status, 502);
+assert.equal((await signIn("code-redirect")).status, 502);
 
 // A callback that didn't start here, or with another state, or cancelled on GitHub.
 const { state, cookie } = await start();
@@ -73,10 +82,15 @@ for (const [path, sent] of [
   ["/login/callback?code=code-carol", cookie],
   [`/login/callback?error=access_denied&state=${state}`, cookie],
   [`/login/callback?state=${state}`, cookie],
+  ["/login/callback?error=call-555-0100", null],
+  [`/login/callback?error=call-555-0100&state=${state}`, cookie],
 ]) {
   const res = await get(path, sent);
   assert.equal(res.status, 400, `${path} with ${sent}`);
-  assert.ok(!(await res.text()).includes("velt_"));
+  const page = await res.text();
+  assert.ok(!page.includes("velt_"));
+  // GitHub's `error` is never shown: another site could write it.
+  assert.ok(!page.includes("555"), page);
 }
 // Only GET signs in.
 assert.notEqual((await fetch(`${base}/login`, { method: "POST", redirect: "manual" })).status, 302);

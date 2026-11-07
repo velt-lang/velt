@@ -176,6 +176,7 @@ fn the_conformance_suite_passes() {
     );
     uploads_are_limited_to_10_mib(&base, &url, alice);
     signing_in_gives_tokens_that_publish(&base, &url);
+    signing_in_fails_closed(&base, &modules, &worker);
     drop(server);
     let _ = std::fs::remove_dir_all(&base);
 }
@@ -269,6 +270,24 @@ fn publish(
         .current_dir(&dir)
         .output()
         .expect("run velt")
+}
+
+/// A Worker without its GitHub secret starts no sign-in, and a user who owns packages can't be
+/// deleted (registry_worker/accounts.mjs, on a Worker of its own).
+fn signing_in_fails_closed(base: &Path, modules: &Path, worker: &Path) {
+    let out = no_window::command("node")
+        .current_dir(base)
+        .arg(script(base, "accounts.mjs"))
+        .arg(for_node(modules))
+        .arg(for_node(worker))
+        .output()
+        .expect("run node");
+    assert!(
+        out.status.success(),
+        "{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
 }
 
 /// Signing in with GitHub (registry_worker/login.mjs, against serve.mjs's stub of GitHub) gives

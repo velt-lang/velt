@@ -41,6 +41,9 @@ another user holds, is refused. Each sign-in shows a new token once, for `velt l
 registry keeps only its hash, and earlier tokens keep working. Listing and revoking tokens isn't
 there yet.
 
+A user is never deleted, so a name never goes to someone else (the database refuses to delete a
+user who owns packages). To take someone's access away, delete their rows in `tokens`.
+
 Create a GitHub OAuth app (GitHub's settings, Developer settings, OAuth Apps) with the callback
 URL `<PUBLIC_URL>/login/callback`, and give the Worker its id and secret (below).
 

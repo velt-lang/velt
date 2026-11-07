@@ -100,10 +100,8 @@ export class GitHubLogin {
   private async callback(req: Request, url: URL): Promise<Response> {
     const end = stateCookie("");
     const q = url.searchParams;
-    const error = q.get("error");
-    if (error != null) {
-      return failed(400, `GitHub didn't sign you in (${error}).`, end);
-    }
+    // The state first: only a sign-in that started here is answered about, so no other site can
+    // put its words on this page (GitHub sends the state with its errors too).
     const expected = cookieValue(req.headers.get("cookie"), STATE_COOKIE);
     const state = q.get("state");
     if (expected == null || expected.length == 0 || state == null || !sameText(state, expected)) {
@@ -112,6 +110,15 @@ export class GitHubLogin {
         "This sign-in didn't start here, or took longer than 10 minutes. Start again.",
         end,
       );
+    }
+    const error = q.get("error");
+    if (error != null) {
+      // Not GitHub's text, which the URL carries: a fixed message.
+      const why =
+        error == "access_denied"
+          ? "You cancelled signing in on GitHub."
+          : "GitHub didn't sign you in.";
+      return failed(400, why, end);
     }
     const code = q.get("code");
     if (code == null || code.length == 0) {
