@@ -108,6 +108,7 @@ impl PB {
                 system: None,
                 host: None,
                 c: None,
+                is_decorator: false,
                 span: SP,
             }));
             let mut f = FB::new(hook, self.t.unit);
