@@ -149,6 +149,10 @@ export class D1MetadataDb implements MetadataDb {
         ),
     );
     // Last, so the guards above saw the revision as it was: one row changed means the write won.
+    // D1 runs a batch as one transaction, and a database one transaction at a time, so the guards
+    // and this statement see the same state: when the guards held, nothing can have taken the name
+    // or the revision before this statement, and it changes its row; when they didn't, every
+    // statement above changed nothing either, and so does this one.
     statements.push(
       isNew
         ? this.db

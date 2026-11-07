@@ -46,6 +46,13 @@ class LosingDb extends MemoryMetadataDb {
   }
 }
 
+// A database whose revision has always moved on by the time it is read again.
+class MovingDb extends MemoryMetadataDb {
+  override async revision(name: string): Promise<i64> {
+    return (await super.revision(name)) + 1;
+  }
+}
+
 // A database whose commits fail.
 class FailingDb extends MemoryMetadataDb {
   override async commit(change: PackageChange): Promise<bool> {
@@ -310,6 +317,14 @@ describe("the index file", () => {
     const file = (await r.call("GET", "lib/index")).text;
     expect(file).toContain(`"1.1.0"`);
     expect(file).toContain(`"1.0.0"`);
+  });
+
+  it("fails the write when the record keeps moving while it is written", async () => {
+    const r = new TestRegistry(new RegistryLimits(), new MovingDb());
+    const answer = await r.publish("lib", "1.0.0");
+    expect(`${answer.status} ${answer.text}`).toBe(
+      "500 the index of `lib` couldn't be written; try again",
+    );
   });
 
   it("is mended by trying a write again after it failed", async () => {

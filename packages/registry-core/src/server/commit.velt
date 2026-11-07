@@ -7,6 +7,7 @@ import { utf8Encode } from "velt/encoding";
 import { PackageChange } from "../stores/package_change";
 import { PackageRecord } from "../stores/package_record";
 import { indexKey } from "../stores/static_files";
+import { StoreError } from "../stores/store_error";
 import { purgeAfterWrite } from "./purge_after_write";
 import { Refusal } from "./refusal";
 import { RegistryStores } from "./registry_stores";
@@ -32,7 +33,9 @@ export function indexPaths(name: string): string[] {
 /**
  * Writes package `name`'s index file from its record, and again while the record has moved on
  * meanwhile: of two writes whose files land out of order, the one that lands last sees the newer
- * revision and writes again, so an older index never stays.
+ * revision and writes again, so an older index never stays. Throws a `StoreError` when the record
+ * kept moving for `MAX_ATTEMPTS` writes, so the caller hears its file may be behind and tries
+ * again (which writes it).
  */
 export async function writeIndexFile(stores: RegistryStores, name: string): Promise<void> {
   for (let i: i64 = 0; i < MAX_ATTEMPTS; i++) {
@@ -45,6 +48,7 @@ export async function writeIndexFile(stores: RegistryStores, name: string): Prom
       return;
     }
   }
+  throw new StoreError(`the index of \`${name}\` couldn't be written; try again`);
 }
 
 /**
