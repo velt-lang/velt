@@ -27,11 +27,11 @@ const HR = [new DR()];
 const HK = [new DK()];
 const HF = [new DF()];
 const HO = [new DO()];
-function byAny(v: string) { const o: any = HA[0]; o.da = heap("new"); junk(); return v; }
-function byReflect(v: string) { Reflect.set(HR[0], "dr", heap("new")); junk(); return v; }
-function byKey(v: string, k: string) { const o: any = HK[0]; o[k] = heap("new"); junk(); return v; }
-function byForIn(v: string) { const o: any = HF[0]; for (const k in o) { o[k] = heap("new"); } junk(); return v; }
-function byAssign(v: string) { Object.assign(HO[0], { dob: heap("new") }); junk(); return v; }
+function byAny(v: string) { const o: any = HA[0]; o.da = heap("new"); junk(); return v + "!"; }
+function byReflect(v: string) { Reflect.set(HR[0], "dr", heap("new")); junk(); return v + "!"; }
+function byKey(v: string, k: string) { const o: any = HK[0]; o[k] = heap("new"); junk(); return v + "!"; }
+function byForIn(v: string) { const o: any = HF[0]; for (const k in o) { o[k] = heap("new"); } junk(); return v + "!"; }
+function byAssign(v: string) { Object.assign(HO[0], { dob: heap("new") }); junk(); return v + "!"; }
 function directCallees() {
   const a = HA[0];
   console.log("direct any", byAny(a.da), a.da);

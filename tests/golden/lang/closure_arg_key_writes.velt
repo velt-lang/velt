@@ -9,8 +9,8 @@ type KE = { ke: string };
 function setKey<T, K extends keyof T>(o: T, k: K, v: T[K]) { o[k] = v; }
 const HD: KD[] = [{ kd: heap("old"), n: 1 }];
 const HE: KE[] = [{ ke: heap("old") }];
-function byKey(v: string) { setKey(HD[0], "kd", heap("new")); junk(); return v; }
-function byKeyHeld(v: string) { setKey(HE[0], "ke", heap("new")); junk(); return v; }
+function byKey(v: string) { setKey(HD[0], "kd", heap("new")); junk(); return v + "!"; }
+function byKeyHeld(v: string) { setKey(HE[0], "ke", heap("new")); junk(); return v + "!"; }
 function closure_() {
   const o: KC = { kc: heap("old") }; const alias = o;
   const f = (v: string) => { setKey(alias, "kc", heap("new")); junk(); return v; };

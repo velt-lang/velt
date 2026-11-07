@@ -5,7 +5,7 @@ function junk() { return heap("xxxxxxxxxxxxxxxxxxxx").length; }
 class C { pc: string = heap("old"); }
 class D { pd: string = heap("old"); }
 const HP = [new D()];
-function byProxy(v: string) { const p = new Proxy(HP[0], {}); p.pd = heap("new"); junk(); return v; }
+function byProxy(v: string) { const p = new Proxy(HP[0], {}); p.pd = heap("new"); junk(); return v + "!"; }
 function closure_() {
   const o = new C();
   const p = new Proxy(o, {});
