@@ -1,0 +1,17 @@
+[package]
+name = "half_arith"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[features]
+# Nightly: `vfmaq_f16` and the rest of `stdarch_neon_f16`. Without it, stable Rust and `half`.
+native = []
+
+[dependencies]
+half = "2"
+
+[profile.release]
+opt-level = 3
+
+[workspace]
