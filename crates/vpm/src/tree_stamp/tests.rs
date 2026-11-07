@@ -46,7 +46,10 @@ fn sum_by(t: &Tree, expected: Option<&str>, depth: TreeCheck) -> Result<String, 
 /// every 15 ms, so one made within the tick leaves the directory's time as it was. In use,
 /// [`is_racy`] leaves such a tree unstamped; these tests turn that off.
 fn past_the_clocks_tick(dir: &Path) {
-    let made = std::fs::metadata(dir.join("src")).unwrap().modified().unwrap();
+    let made = std::fs::metadata(dir.join("src"))
+        .unwrap()
+        .modified()
+        .unwrap();
     let later = made + std::time::Duration::from_millis(50);
     while std::time::SystemTime::now() < later {
         std::thread::yield_now();
