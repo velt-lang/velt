@@ -8,7 +8,7 @@ publish = false
 [workspace]
 
 [dependencies]
-# Same rusqlite (and so the same bundled SQLite) as the Velt runtime.
+# Its bundled SQLite is what to link the Velt driver against, so that both run one version.
 rusqlite = { version = "0.40.2", features = ["bundled"] }
 tokio = { version = "1", features = ["rt-multi-thread"] }
 tokio-postgres = "0.7"

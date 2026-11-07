@@ -1,0 +1,8 @@
+import type { Package } from "velt/package";
+
+export const pkg: Package = {
+  name: "json-handles-declare-c",
+  version: "0.1.0",
+  dependencies: { clib: { path: "_clib" } },
+  allowNative: ["clib"],
+};

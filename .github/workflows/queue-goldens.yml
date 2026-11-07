@@ -44,6 +44,12 @@ on:
         description: Run the goldens (false runs only the WebAssembly goldens).
         type: boolean
         default: true
+      zig:
+        description: >-
+          The shards get the pinned zig from the Actions cache (.github/actions/zig): the goldens
+          include programs that build a package's C `sources` (crates/xtask/src/zig.rs).
+        type: boolean
+        default: false
       fail-fast:
         description: >-
           A failed job cancels the caller's whole run (the merge queue; the nightly's jobs are
@@ -140,6 +146,10 @@ jobs:
         with:
           name: goldens-${{ inputs.os }}
           path: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
+      - uses: ./.github/actions/zig
+        if: inputs.zig
+        with:
+          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
       - name: cargo xtask check --full --part golden --archive golden.tar
         shell: bash
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}

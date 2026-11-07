@@ -1,0 +1,1 @@
+main.velt:8:15: error: cannot convert to or from JSON: `Wrapped` has a private field `handle`, so it has no JSON form

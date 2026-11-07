@@ -1,0 +1,9 @@
+// A dependency that declares C functions (`declare c`) keeps its handles out of JSON: every class
+// of it with a private field has no JSON form, also one in a file that declares no C function.
+// A program's own `declare c` doesn't do this (tests/golden/std/json_private_fields_declare_c).
+import { Wrapped, magnitude } from "clib";
+
+function main() {
+  console.log(magnitude(-3));
+  console.log(JSON.stringify(new Wrapped()));
+}

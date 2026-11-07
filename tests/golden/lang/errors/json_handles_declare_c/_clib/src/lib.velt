@@ -1,0 +1,9 @@
+declare c("c") function abs(n: i32): i32;
+
+export { Wrapped } from "./wrapped";
+
+/** `n` without its sign. */
+export function magnitude(n: i32): i32 {
+  // SAFETY: abs of any i32 but INT_MIN, which is clamped first.
+  return unsafe { abs(n == -2147483648 ? -2147483647 : n) };
+}

@@ -6,8 +6,7 @@ Tracking: #1726, with one sub-issue per step and per language feature.
 ## Where we are
 
 The `sqlite` package (`packages/sqlite`, [docs](../../../packages/sqlite/README.md); until
-2026-10 std's `velt/sqlite`) wraps C SQLite through its native library (`packages/sqlite/native`,
-rusqlite, bundled). The engine below is `sqlite/engine` in the same package (`src/engine/`). Rows decode into typed values through `readRowsByColumn`, which
+2026-10 std's `velt/sqlite`) wraps C SQLite through `declare c` (`packages/sqlite/src/sqlite3.velt`). The engine below is `sqlite/engine` in the same package (`src/engine/`). Rows decode into typed values through `readRowsByColumn`, which
 calls `sqlite3_column_*` once per value across the FFI. That is fast, but it can't get faster:
 every statement runs SQLite's bytecode interpreter (VDBE) behind an opaque call that LLVM can't
 inline, and one connection runs on one thread.

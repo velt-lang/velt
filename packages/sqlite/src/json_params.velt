@@ -1,0 +1,168 @@
+// sqlite (internal): parameters as JSON text, for the types `writeParams` can't hand over value by
+// value (a union, an optional member): `JSON.stringify(params)` read into the same `Binder`, so
+// the values bind alike either way.
+
+import { Binder } from "./binder";
+
+// A value is a scalar or a byte array; nested objects can't be bound.
+class Scanner {
+  text: string;
+  at: usize = 0;
+
+  constructor(text: string) {
+    this.text = text;
+  }
+
+  peek(): string {
+    return this.at < this.text.length ? this.text.charAt(this.at as i64) : "";
+  }
+
+  // The end of the string starting at `at`, past its closing quote.
+  stringEnd(): usize {
+    let i = this.at + 1;
+    while (i < this.text.length) {
+      const c = this.text.charAt(i as i64);
+      if (c == '"') {
+        return i + 1;
+      }
+      i += c == "\\" ? 2 : 1;
+    }
+    return i;
+  }
+
+  // The end of the number or word starting at `at`.
+  tokenEnd(): usize {
+    let i = this.at;
+    while (i < this.text.length) {
+      const c = this.text.charAt(i as i64);
+      if (c == "," || c == "}" || c == "]") {
+        return i;
+      }
+      i++;
+    }
+    return i;
+  }
+
+  // The string at `at`, decoded.
+  string(): string {
+    const end = this.stringEnd();
+    const s: string = JSON.parse<string>(this.text.slice(this.at as i64, end as i64));
+    this.at = end;
+    return s;
+  }
+}
+
+// An array of integers 0-255 (what `JSON.stringify` makes of a `u8[]`) at `at`; an error otherwise.
+function bytes(sc: Scanner, to: Binder): string | null {
+  const start = sc.at;
+  sc.at++;
+  const out: u8[] = [];
+  while (sc.peek() != "]") {
+    const end = sc.tokenEnd();
+    const n = Number(sc.text.slice(sc.at as i64, end as i64));
+    if (!(n >= 0 && n <= 255 && Math.trunc(n) == n)) {
+      sc.at = start;
+      return "nested arrays can only be bound as byte arrays";
+    }
+    out.push(n as u8);
+    sc.at = end;
+    if (sc.peek() == ",") {
+      sc.at++;
+    }
+  }
+  sc.at++;
+  to.blob(out);
+  return null;
+}
+
+// The integer `word` spells, if it fits an `i64`: built as a negative number, whose range holds
+// i64's minimum.
+function integer(word: string): i64 | null {
+  const negative = word.startsWith("-");
+  let n: i64 = 0;
+  for (let i: i64 = negative ? 1 : 0; i < (word.length as i64); i++) {
+    const d = (word.charCodeAt(i) as i64) - 48;
+    if (n < (-9223372036854775807 - 1 + d) / 10) {
+      return null;
+    }
+    n = n * 10 - d;
+  }
+  if (negative) {
+    return n;
+  }
+  return n == -9223372036854775807 - 1 ? null : -n;
+}
+
+// Binds the value at `at`; what's wrong with it, or null.
+function value(sc: Scanner, to: Binder): string | null {
+  const c = sc.peek();
+  if (c == '"') {
+    to.text(sc.string());
+    return null;
+  }
+  if (c == "[") {
+    return bytes(sc, to);
+  }
+  if (c == "{") {
+    return "nested objects cannot be bound as parameters";
+  }
+  const end = sc.tokenEnd();
+  const word = sc.text.slice(sc.at as i64, end as i64);
+  sc.at = end;
+  if (word == "true" || word == "false") {
+    to.bool(word == "true");
+  } else if (word == "null") {
+    to.null();
+  } else if (word.includes(".") || word.includes("e") || word.includes("E")) {
+    to.float(Number(word));
+  } else {
+    const exact = integer(word);
+    if (exact != null) {
+      to.int(exact);
+    } else {
+      to.float(Number(word));
+    }
+  }
+  return null;
+}
+
+/**
+ * Binds the JSON text of a statement's parameters: an object by name, an array or a lone value by
+ * position. What's wrong with them, or null. (`JSON.stringify` wrote the text, so it is well formed.)
+ */
+export function bindJson(text: string, to: Binder): string | null {
+  const sc = new Scanner(text);
+  if (sc.peek() == "{") {
+    to.object();
+    sc.at++;
+    while (sc.peek() != "}") {
+      const key = sc.string();
+      sc.at++;
+      to.name(key);
+      const wrong = value(sc, to);
+      if (wrong != null) {
+        return `parameter "${key}": ${wrong}`;
+      }
+      if (sc.peek() == ",") {
+        sc.at++;
+      }
+    }
+    return null;
+  }
+  if (sc.peek() == "[") {
+    sc.at++;
+    let i: usize = 0;
+    while (sc.peek() != "]") {
+      i++;
+      const wrong = value(sc, to);
+      if (wrong != null) {
+        return `parameter ${i}: ${wrong}`;
+      }
+      if (sc.peek() == ",") {
+        sc.at++;
+      }
+    }
+    return null;
+  }
+  return value(sc, to);
+}

@@ -667,3 +667,90 @@ fn the_vir_identity_runs_when_sema_the_loader_lowering_or_std_change() {
         assert!(!plan(&[path]).vir_identity, "{path}");
     }
 }
+
+#[test]
+fn zig_is_selected_for_the_tests_that_build_c_sources() {
+    for path in [
+        "packages/sqlite/src/connection.velt",
+        "packages/sqlite/native/sqlite3.c",
+        "packages/sqlite/tests/driver.test.velt",
+        "examples/apps/todo-api/src/sqlite_store.velt",
+        "bench/sqlite/engine.velt",
+        "bench/chat/velt/server.velt",
+        // Every package's tests run, sqlite's among them.
+        "packages/redis/src/client.velt",
+        // Everything.
+        "std/fs/index.velt",
+        "Cargo.lock",
+    ] {
+        assert!(crate::zig::tests(&plan(&[path])), "{path}");
+    }
+    assert!(crate::zig::tests(&Plan::everything("--full")));
+    for path in [
+        "examples/apps/todo-api/demo.velt",
+        "examples/apps/todo-api/demo_sqlite.out",
+        "examples/apps/todo-api/src/server.velt",
+    ] {
+        assert!(crate::zig::goldens(&plan(&[path])), "{path}");
+    }
+    // A change to any example app runs every example app's goldens.
+    assert!(crate::zig::goldens(&plan(&[
+        "examples/apps/chat/demo.velt"
+    ])));
+    assert!(crate::zig::goldens(&Plan::everything("--full")));
+}
+
+#[test]
+fn zig_is_not_selected_for_unrelated_changes() {
+    for path in [
+        "crates/velt_lsp/src/lib.rs",
+        "tests/golden/lang/errors/std_moved_modules.velt",
+        "docs/internals/design/c-ffi.md",
+        "editors/vscode/package.json",
+        "tests/difftest/src/main.rs",
+    ] {
+        assert!(!crate::zig::tests(&plan(&[path])), "{path}");
+    }
+    for path in [
+        "packages/sqlite/src/connection.velt",
+        "bench/sqlite/engine.velt",
+        "examples/wordfreq.velt",
+        "examples/wordfreq.out",
+        "tests/golden/lang/errors/std_moved_modules.velt",
+    ] {
+        assert!(!crate::zig::goldens(&plan(&[path])), "{path}");
+    }
+}
+
+/// The goldens that build C `sources` find each bundle built by a step before them, in the
+/// package's directory, where their builds look; other goldens build none.
+#[test]
+fn the_c_bundles_are_built_before_the_goldens_that_link_them() {
+    let root = std::path::Path::new("/repo");
+    let velt = crate::check::target_dir(root)
+        .join("debug")
+        .join(crate::check::exe("velt"));
+    for plan in [
+        Plan::everything("--full"),
+        plan(&["examples/apps/todo-api/demo_sqlite.velt"]),
+    ] {
+        let builds = crate::zig::bundle_builds(root, &plan);
+        assert_eq!(builds.len(), crate::zig::PACKAGES.len());
+        for ((_, build), p) in builds.iter().zip(crate::zig::PACKAGES) {
+            assert_eq!(build.get_program(), velt.as_os_str());
+            let args: Vec<_> = build.get_args().collect();
+            assert_eq!(args, ["native", "build"]);
+            let dir = root.join("packages").join(p);
+            assert_eq!(build.get_current_dir(), Some(dir.as_path()));
+        }
+    }
+    for path in [
+        "tests/golden/lang/errors/std_moved_modules.velt",
+        "bench/sqlite/engine.velt",
+    ] {
+        assert!(
+            crate::zig::bundle_builds(root, &plan(&[path])).is_empty(),
+            "{path}"
+        );
+    }
+}

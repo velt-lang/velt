@@ -1,40 +1,38 @@
 // sqlite (internal): `Database`, an open connection, and `open`, which makes one.
 //
-// `Database` is a Copy handle like velt/net's sockets: pass and capture it freely and release it
-// with `close()`; then every copy throws "SQLITE_MISUSE" (closing again does nothing). Closing
-// the database while statements exist is safe: they then throw "SQLITE_MISUSE".
+// `Database` is a handle like velt/net's sockets: pass and capture it freely and release it with
+// `close()`; then every copy throws "SQLITE_MISUSE" (closing again does nothing). Closing the
+// database while statements exist is safe: they then throw "SQLITE_MISUSE".
 
 import {
-  velt_sqlite__close,
-  velt_sqlite__error_count,
-  velt_sqlite__exec,
-  velt_sqlite__in_transaction,
-  velt_sqlite__last_error,
-  velt_sqlite__open,
-  velt_sqlite__pragma,
-  velt_sqlite__prepare,
-  velt_sqlite__reset_error_count,
-} from "./native";
-import { check, SqliteError, sqliteError, unwrap } from "./errors";
+  close as closeState,
+  exec as execOn,
+  inTransaction as inTransactionOn,
+  openState,
+  pragma as pragmaOn,
+  prepare as prepareOn,
+  State,
+} from "./connection";
+import { SqliteError } from "./errors";
 import { Statement } from "./statement";
 import { Transaction } from "./transaction";
 import { OpenOptions } from "./open_options";
 
 /** An open connection (see the header for handle rules). */
 export struct Database {
-  private handle: u64;
+  private handle: shared<State>;
 
   /**
    * Opens (by default creating) the database file at `path`: what `open(path, opts)` does.
    */
   static open(path: string, opts: OpenOptions = {}): Database {
-    const r = velt_sqlite__open(
+    const state = openState(
       path,
       opts.readonly ?? false,
       !(opts.fileMustExist ?? false),
-      (opts.timeout ?? 5000) as u32,
+      opts.timeout ?? 5000,
     );
-    const db = Database { handle: unwrap(r) };
+    const db = Database { handle: shared(state) };
     if (opts.wal ?? false) {
       db.pragma("journal_mode = WAL");
     }
@@ -43,12 +41,20 @@ export struct Database {
 
   /** Runs one or more `;`-separated statements without parameters (schema scripts). */
   exec(sql: string) {
-    check(velt_sqlite__exec(this.handle, sql));
+    const e = execOn(this.handle, sql);
+    if (e != null) {
+      throw e;
+    }
   }
 
   /** Compiles one statement (throws for bad SQL). */
   prepare(sql: string): Statement {
-    return new Statement(unwrap(velt_sqlite__prepare(this.handle, sql)));
+    const text = sql.trim();
+    const r = prepareOn(this.handle, text);
+    if (r instanceof SqliteError) {
+      throw r;
+    }
+    return new Statement(this.handle, text, r);
   }
 
   /**
@@ -56,12 +62,16 @@ export struct Database {
    * `pragma("journal_mode = WAL")` is "wal", `pragma("user_version")` "0".
    */
   pragma(source: string): string {
-    return unwrap(velt_sqlite__pragma(this.handle, source));
+    const r = pragmaOn(this.handle, source);
+    if (r instanceof SqliteError) {
+      throw r;
+    }
+    return r;
   }
 
   /** Whether a transaction is open. */
   get inTransaction(): bool {
-    return velt_sqlite__in_transaction(this.handle);
+    return inTransactionOn(this.handle);
   }
 
   /**
@@ -81,12 +91,11 @@ export struct Database {
    */
   transaction<T, E>(fn: () => T throws E): T throws SqliteError | E {
     const tx = this.begin();
-    const failures = velt_sqlite__error_count(this.handle);
+    const failures = this.handle.errorCount;
     try {
       const result = fn();
-      if (velt_sqlite__error_count(this.handle) != failures) {
-        const s = velt_sqlite__last_error(this.handle);
-        throw sqliteError(s.code, s.message);
+      if (this.handle.errorCount != failures) {
+        throw this.handle.last();
       }
       tx.commit();
       return result;
@@ -94,16 +103,17 @@ export struct Database {
       if (this.inTransaction) {
         tx.rollback();
       }
-      velt_sqlite__reset_error_count(this.handle, failures);
+      this.handle.setErrorCount(failures);
       throw e;
     }
   }
 
   /** Closes the connection and releases the handle (later calls throw "SQLITE_MISUSE"). */
   close() {
-    const s = velt_sqlite__close(this.handle);
-    this.handle = 0;
-    check(s);
+    const e = closeState(this.handle);
+    if (e != null) {
+      throw e;
+    }
   }
 }
 

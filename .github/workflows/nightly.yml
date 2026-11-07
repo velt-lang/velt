@@ -83,6 +83,10 @@ jobs:
         with:
           fast-linker: "false"
           code-cache: "false"
+      # The whole gate builds packages/sqlite's C sources (crates/xtask/src/zig.rs).
+      - uses: ./.github/actions/zig
+        with:
+          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
       # Every golden's release object, for the merge queue and pull requests (only a run on `main`
       # saves what other branches can restore). From an empty cache, so entries no program uses
       # any more go with it; the limit keeps them all (.cargo/config.toml has 500M for local builds).
@@ -210,10 +214,14 @@ jobs:
         with:
           tools: false
       - uses: ./.github/actions/zig
+        with:
+          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
       # The tests that link a program need the runtime, which `cargo test` doesn't build.
       - name: the runtime
         run: cargo build -p velt_rt
       - name: declarations against headers, C constants and sources, every target
+        env:
+          VELT_ZIG_TESTS: "1"
         run: cargo test --workspace --test c_headers --test c_constants --test c_sources -- --nocapture
       # The pin itself: the release still downloads and matches its SHA-256.
       - name: the pinned zig downloads
@@ -412,6 +420,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
+      # The packages' tests build packages/sqlite's C sources (crates/xtask/src/zig.rs).
+      - uses: ./.github/actions/zig
+        if: matrix.suite == 'packages'
+        with:
+          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
       - name: build the tests
         shell: bash
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}

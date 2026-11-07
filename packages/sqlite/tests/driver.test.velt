@@ -1,0 +1,368 @@
+// What the driver itself does around SQLite: one connection shared by many tasks, its statement
+// cache, a statement after a schema change, and the parameters that go as JSON text.
+import { open, Database, SqliteError } from "../src/lib";
+
+struct N {
+  n: i64;
+}
+
+struct Two {
+  a: i64;
+  b: i64;
+}
+
+struct Only {
+  a: i64;
+}
+
+struct Flag {
+  flag: bool;
+}
+
+struct Stored {
+  kind: string;
+  shown: string;
+}
+
+// `SQLITE_...` and the message of what `f` throws.
+function failure(f: () => void throws Error): string {
+  try {
+    f();
+  } catch (e) {
+    return e instanceof SqliteError
+      ? `${e.code} | ${e.message}`
+      : `not a SqliteError: ${e.message}`;
+  }
+  return "no error";
+}
+
+async function insertAndRead(db: Database, task: i64, rows: i64): Promise<i64> {
+  const put = db.prepare("INSERT INTO t (task, v) VALUES (:task, :v)");
+  const count = db.prepare("SELECT count(*) AS n FROM t WHERE task = :task");
+  let seen: i64 = 0;
+  for (let i: i64 = 0; i < rows; i++) {
+    put.runWith({ task: task, v: i });
+    const r = count.getWith<N, { task: i64 }>({ task: task });
+    if (r != null) {
+      seen = r.n;
+    }
+  }
+  return seen;
+}
+
+// One connection, used from many tasks on any thread: every operation is exclusive.
+export async function test_tasks_share_one_connection() {
+  const db = open(":memory:");
+  db.exec("CREATE TABLE t (task INTEGER, v INTEGER)");
+  const tasks: Promise<i64>[] = [];
+  for (let t: i64 = 0; t < 8; t++) {
+    tasks.push(spawn(insertAndRead(db, t, 200)));
+  }
+  const seen = await Promise.all(tasks);
+  for (const s of seen) {
+    assertEq(s, 200);
+  }
+  assertEq(db.prepare("SELECT count(*) AS n FROM t").get<N>()?.n, 1600);
+  db.close();
+}
+
+export function test_the_same_sql_shares_one_compiled_statement() {
+  const db = open(":memory:");
+  db.exec("CREATE TABLE t (n INTEGER); INSERT INTO t VALUES (1), (2)");
+  const a = db.prepare("SELECT n FROM t ORDER BY n");
+  const b = db.prepare("  SELECT n FROM t ORDER BY n ");
+  assertEq(a.all<N>().length, 2);
+  a.close();
+  // Closing one handle leaves the other working.
+  assertEq(b.get<N>()?.n, 1);
+  assertEq(
+    failure(() => {
+      a.run();
+    }),
+    "SQLITE_MISUSE | The statement is not open",
+  );
+  a.close();
+  b.close();
+  db.close();
+}
+
+// Past the cache's size, SQL no handle uses is forgotten and compiled again when it comes back; what
+// a handle uses stays.
+export function test_the_cache_forgets_only_what_no_handle_uses() {
+  const db = open(":memory:");
+  const kept = db.prepare("SELECT 1 AS n");
+  for (let i: i64 = 0; i < 600; i++) {
+    const s = db.prepare(`SELECT ${i + 2} AS n`);
+    assertEq(s.get<N>()?.n, i + 2);
+    s.close();
+  }
+  assertEq(kept.get<N>()?.n, 1);
+  const again = db.prepare("SELECT 2 AS n");
+  assertEq(again.get<N>()?.n, 2);
+  db.close();
+}
+
+// SQLite compiles a statement anew after a schema change: its columns are read again.
+export function test_a_statement_follows_a_schema_change() {
+  const db = open(":memory:");
+  db.exec("CREATE TABLE t (a INTEGER); INSERT INTO t VALUES (1)");
+  const all = db.prepare("SELECT * FROM t");
+  assertEq(all.get<Only>()?.a, 1);
+  db.exec("ALTER TABLE t ADD COLUMN b INTEGER DEFAULT 2");
+  const r = all.get<Two>();
+  assertEq(`${r?.a} ${r?.b}`, "1 2");
+  db.exec("DROP TABLE t; CREATE TABLE t (flag BOOLEAN); INSERT INTO t VALUES (1)");
+  assertEq(all.get<Flag>()?.flag, true);
+  db.close();
+}
+
+export function test_a_nul_in_sql_is_an_error() {
+  const db = open(":memory:");
+  const prepared = failure(() => {
+    db.prepare("SELECT 1\u{0}");
+  });
+  assert(prepared.startsWith("SQLITE_MISMATCH"), prepared);
+  const executed = failure(() => {
+    db.exec("SELECT 1\u{0}");
+  });
+  assert(executed.startsWith("SQLITE_MISMATCH"), executed);
+  const opened = failure(() => {
+    open("a\u{0}b");
+  });
+  assert(opened.startsWith("SQLITE_MISMATCH"), opened);
+  // The connection is still usable, and handed back after each failure.
+  assertEq(db.prepare("SELECT 3 AS n").get<N>()?.n, 3);
+  db.close();
+}
+
+export function test_only_blanks_and_comments_may_follow_a_statement() {
+  const db = open(":memory:");
+  assertEq(db.prepare("SELECT 1 AS n; -- done\n  /* really */ ").get<N>()?.n, 1);
+  assertEq(
+    failure(() => {
+      db.prepare("SELECT 1 AS n; SELECT 2");
+    }),
+    "SQLITE_MISUSE | The supplied SQL string contains more than one statement",
+  );
+  db.close();
+}
+
+// A union can't go value by value: it goes as JSON text, and binds the same.
+export function test_parameters_as_json_text() {
+  const db = open(":memory:");
+  const show = db.prepare("SELECT typeof(:v) AS kind, quote(:v) AS shown");
+  const shown = (v: i64 | string | null): string => {
+    const r = show.getWith<Stored, { v: i64 | string | null }>({ v: v });
+    return `${r?.kind} ${r?.shown}`;
+  };
+  const most: i64 = 9223372036854775807;
+  const least: i64 = -most - 1;
+  assertEq(shown(most), "integer 9223372036854775807");
+  assertEq(shown(least), "integer -9223372036854775808");
+  assertEq(shown('a"\n'), "text 'a\"\n'");
+  assertEq(shown(null), "null NULL");
+  db.close();
+}
+
+// A value nested past what binds fails naming it, and the statement is still usable.
+export function test_nested_parameters_fail() {
+  const db = open(":memory:");
+  const s = db.prepare("SELECT :a AS n");
+  assertEq(
+    failure(() => {
+      s.runWith({ a: { b: 1 as i64 } });
+    }),
+    'SQLITE_RANGE | parameter "a": nested objects cannot be bound as parameters',
+  );
+  assertEq(s.getWith<N, { a: i64 }>({ a: 4 })?.n, 4);
+  db.close();
+}
+
+// A failure to bind counts against the connection, so an enclosing `transaction` rolls back.
+export function test_a_failed_bind_rolls_a_transaction_back() {
+  const db = open(":memory:");
+  db.exec("CREATE TABLE t (n INTEGER)");
+  const put = db.prepare("INSERT INTO t VALUES (:n)");
+  const outcome = failure(() => {
+    db.transaction(() => {
+      put.runWith({ n: 1 as i64 });
+      try {
+        put.runWith({ wrong: 1 as i64 });
+      } catch (e) {}
+    });
+  });
+  assertEq(outcome, 'SQLITE_RANGE | missing named parameter "n"');
+  assertEq(db.prepare("SELECT count(*) AS n FROM t").get<N>()?.n, 0);
+  db.close();
+}
+
+class Asks {
+  db: Database;
+
+  constructor(db: Database) {
+    this.db = db;
+  }
+
+  toJSON(): Only {
+    try {
+      return { a: this.db.prepare("SELECT 7 AS n").get<N>()?.n ?? 0 };
+    } catch (e) {
+      return { a: 0 };
+    }
+  }
+}
+
+class Closes {
+  db: Database;
+
+  constructor(db: Database) {
+    this.db = db;
+  }
+
+  toJSON(): Only {
+    try {
+      this.db.close();
+    } catch (e) {}
+    return { a: 1 };
+  }
+}
+
+// A parameter's `toJSON` is the program's code: it may use the connection it is being bound for.
+export function test_a_parameters_to_json_can_use_the_connection() {
+  const db = open(":memory:");
+  const s = db.prepare("SELECT :a AS n");
+  assertEq(s.getWith<N, Asks>(new Asks(db))?.n, 7);
+  // The same statement, while it was being bound for this very call.
+  const again = db.prepare("SELECT :a AS n");
+  assertEq(again.getWith<N, Only>({ a: 3 })?.n, 3);
+  db.close();
+}
+
+// And close it: the statement it was bound for is gone, and nothing touches it.
+export function test_a_parameters_to_json_can_close_the_connection() {
+  const db = open(":memory:");
+  const s = db.prepare("SELECT :a AS n");
+  assertEq(
+    failure(() => {
+      s.runWith<Closes>(new Closes(db));
+    }).startsWith("SQLITE_MISUSE"),
+    true,
+  );
+}
+
+struct Shown {
+  s: string;
+}
+
+// SQLite doesn't check text: what isn't UTF-8 reads as U+FFFD, and a long cell grows the scratch.
+export function test_text_cells_that_are_broken_or_long() {
+  const db = open(":memory:");
+  assertEq(db.prepare("SELECT CAST(x'ff41' AS TEXT) AS s").get<Shown>()?.s, "\u{FFFD}A");
+  assertEq(db.prepare("SELECT '' AS s").get<Shown>()?.s, "");
+  const long = "é".repeat(5000);
+  const row = db.prepare("SELECT :v AS s").getWith<Shown, { v: string }>({ v: long });
+  assertEq(row?.s, long);
+  const huge = "é".repeat(50000);
+  const big = db.prepare("SELECT :v AS s").getWith<Shown, { v: string }>({ v: huge });
+  assertEq(big?.s, huge);
+  assertEq(
+    db
+      .prepare("SELECT CAST(zeroblob(70000) AS TEXT) || x'ff' AS s")
+      .get<Shown>()
+      ?.s.endsWith("\u{FFFD}"),
+    true,
+  );
+  db.close();
+}
+
+// Every SQLite build holds cells to what a string can hold, whatever its own limit: a longer one
+// could only stop the program.
+export function test_a_value_too_long_for_a_string_is_an_error() {
+  const db = open(":memory:");
+  const outcome = failure(() => {
+    db.prepare("SELECT zeroblob(1000000001) AS s").get<Shown>();
+  });
+  assertEq(outcome.startsWith("SQLITE_TOOBIG"), true);
+  db.close();
+}
+
+struct Kind {
+  k: string;
+}
+
+// As the bundled SQLite had them, whatever the library's own default.
+export function test_foreign_keys_are_on() {
+  const db = open(":memory:");
+  db.exec("CREATE TABLE p (id INTEGER PRIMARY KEY)");
+  db.exec("CREATE TABLE c (p INTEGER REFERENCES p (id))");
+  const outcome = failure(() => {
+    db.exec("INSERT INTO c VALUES (1)");
+  });
+  assertEq(outcome.startsWith("SQLITE_CONSTRAINT_FOREIGNKEY"), true);
+  db.close();
+}
+
+// `:a` and `$a` are two parameters with one name, and a member binds both.
+export function test_a_member_binds_every_parameter_of_its_name() {
+  const db = open(":memory:");
+  const s = db.prepare("SELECT :a + $a + :b AS n");
+  assertEq(s.getWith<N, { b: i64; a: i64 }>({ b: 1, a: 10 })?.n, 21);
+  assertEq(s.getWith<N, { a: i64; b: i64 }>({ a: 20, b: 2 })?.n, 42);
+  // The search for `a` must start over: it has a parameter before where `c` was found.
+  const around = db.prepare("SELECT :a + :c + $a AS n");
+  assertEq(around.getWith<N, { c: i64; a: i64 }>({ c: 1, a: 10 })?.n, 21);
+  db.close();
+}
+
+export function test_sql_without_a_statement_does_nothing() {
+  const db = open(":memory:");
+  for (const sql of ["", "  ", "-- only a comment", "/* and this */ ;"]) {
+    db.prepare(sql).run();
+    assertEq(db.prepare(sql).get<N>() == null, true);
+    assertEq(db.prepare(sql).all<N>().length, 0);
+  }
+  db.close();
+}
+
+export function test_where_a_failure_is_reported() {
+  const db = open(":memory:");
+  assertEq(
+    failure(() => {
+      db.prepare("SELECT 1; SELEC");
+    }).startsWith("SQLITE_ERROR"),
+    true,
+  );
+  assertEq(
+    failure(() => {
+      db.exec("SELEC 1");
+    }).endsWith("in SELEC 1 at offset 0"),
+    true,
+  );
+  db.close();
+  assertEq(
+    failure(() => {
+      open("/no/such/directory/x.db");
+    }),
+    "SQLITE_CANTOPEN | unable to open database file: /no/such/directory/x.db",
+  );
+}
+
+// A value SQLite refuses to bind fails the statement: it doesn't run with NULL in its place.
+export function test_a_refused_bind_fails_the_statement() {
+  const db = open(":memory:");
+  db.exec("CREATE TABLE t (v BLOB)");
+  const outcome = failure(() => {
+    db.prepare("INSERT INTO t VALUES (:v)").runWith({ v: Buffer.alloc(1000000001) });
+  });
+  assertEq(outcome.startsWith("SQLITE_TOOBIG"), true);
+  assertEq(db.prepare("SELECT count(*) AS n FROM t").get<N>()?.n, 0);
+  db.close();
+}
+
+export function test_an_empty_blob_is_a_blob() {
+  const db = open(":memory:");
+  const empty: u8[] = [];
+  const row = db.prepare("SELECT typeof(:v) AS k").getWith<Kind, { v: u8[] }>({ v: empty });
+  assertEq(row?.k, "blob");
+  db.close();
+}

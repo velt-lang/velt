@@ -1,0 +1,11 @@
+// counter: a number kept in the package's native library, which outlives a hot swap of the Velt
+// code that asks for it.
+
+import { IoResult, unwrapIo } from "velt/native";
+
+declare function velt_counter__add(by: i64): IoResult<i64>;
+
+/** Adds to the count and returns it; throws `IoError` (EINVAL) for a negative amount. */
+export function add(by: i64): i64 {
+  return unwrapIo(velt_counter__add(by));
+}

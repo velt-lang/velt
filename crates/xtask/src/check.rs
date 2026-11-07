@@ -176,6 +176,8 @@ pub fn run(root: &Path, graph: &Graph, plan: &Plan, opts: &Options) -> Result<()
             None => None,
         };
         if goldens {
+            let mut bundles = crate::zig::bundle_builds(root, plan).into_iter();
+            bundles.try_for_each(|(name, mut build)| gate.step(&name, &mut build))?;
             let test = archived(&manifest, |m| m.test.clone(), "golden")?;
             let golden = || golden_test(root, &ws, test.as_deref());
             let mut goldens = golden();
@@ -478,11 +480,12 @@ impl Gate<'_> {
         let Some(filterset) = plan.filterset() else {
             return Ok(());
         };
-        // The tests that check through zig fail in CI without it, so only the `c-headers` job
-        // (or a machine with `VELT_ZIG`) runs them.
-        let filterset = match std::env::var_os("VELT_ZIG") {
-            Some(_) => filterset,
-            None => crate::c_headers::without_zig_tests(&filterset),
+        // The tests that check through zig for every target run only where asked for: the
+        // `c-headers` job, or a machine with `VELT_ZIG_TESTS=1`. `VELT_ZIG` alone (a job whose
+        // tests build C sources) doesn't run them.
+        let filterset = match crate::c_headers::zig_tests_on() {
+            true => filterset,
+            false => crate::c_headers::without_zig_tests(&filterset),
         };
         // In CI, nextest's `ci` profile writes a JUnit report (.config/nextest.toml).
         let mut junit = None;
@@ -633,10 +636,10 @@ impl Gate<'_> {
             return Ok(());
         }
         let start = Instant::now();
-        let status = cmd
-            .current_dir(self.root)
-            .status()
-            .map_err(|e| format!("{name}: cannot run `{shown}`: {e}"))?;
+        if cmd.get_current_dir().is_none() {
+            cmd.current_dir(self.root);
+        }
+        let status = (cmd.status()).map_err(|e| format!("{name}: cannot run `{shown}`: {e}"))?;
         let secs = start.elapsed().as_secs();
         self.timings.push((name.to_string(), secs));
         if !status.success() {
@@ -682,8 +685,7 @@ pub(crate) fn workspace_args(root: &Path) -> Vec<String> {
     args
 }
 
-/// The native crates of the repository's packages (`packages/*/native` with a `Cargo.toml`),
-/// sorted.
+/// The native crates of the packages (`packages/*/native` with a `Cargo.toml`), sorted.
 fn native_crates(root: &Path) -> Vec<PathBuf> {
     let mut out: Vec<PathBuf> = std::fs::read_dir(root.join("packages"))
         .into_iter()
@@ -726,7 +728,6 @@ pub fn target_dir(root: &Path) -> PathBuf {
     }
 }
 
-/// `rustc -vV`'s host triple.
 /// Linux: `PATH` with the Rust toolchain's `ld.lld` in front (`<sysroot>/lib/rustlib/<host>/
 /// bin/gcc-ld`, rustc's own wrapper around `rust-lld`), so the goldens link static runtimes the
 /// way `velt` does wherever lld is installed (`cc -fuse-ld=lld`, `velt_link`'s `fast_ld`)

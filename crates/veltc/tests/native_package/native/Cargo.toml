@@ -1,0 +1,20 @@
+[package]
+name = "velt_counter_native"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "The native library of the package crates/veltc/tests/native_packages.rs publishes."
+
+[lib]
+# velt_native_<package>: the library's file name (one per package next to an executable).
+name = "velt_native_counter"
+crate-type = ["cdylib", "staticlib"]
+
+[dependencies]
+velt_native = { path = "../../../../velt_native" }
+
+[profile.release]
+panic = "unwind"
+
+# Not part of the compiler's workspace.
+[workspace]

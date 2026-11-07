@@ -1,0 +1,76 @@
+// sqlite (internal): `Info`, what the driver remembers of a compiled statement. Asking SQLite for
+// a statement's columns and parameters costs a call each and a copy of the name, and programs
+// prepare the same SQL per request, so the connection keeps this next to the statement, immutable,
+// and every `Statement` of that SQL reads the same one.
+
+import { Ptr, readCString } from "velt/ffi";
+import {
+  sqlite3_bind_parameter_count,
+  sqlite3_bind_parameter_name,
+  sqlite3_column_count,
+  sqlite3_column_decltype,
+  sqlite3_column_name,
+  sqlite3_stmt,
+} from "./sqlite3";
+
+function parametersOf(stmt: Ptr<sqlite3_stmt>): (string | null)[] {
+  const parameters: (string | null)[] = [];
+  // SAFETY: the statement is open.
+  const n = unsafe { sqlite3_bind_parameter_count(stmt) };
+  for (let i: i32 = 1; i <= n; i++) {
+    // SAFETY: the statement is open.
+    const name = unsafe { sqlite3_bind_parameter_name(stmt, i) };
+    if (name === null) {
+      parameters.push(null);
+    } else {
+      // SAFETY: SQLite's name is NUL-terminated and valid until the statement is finalized.
+      const text = unsafe { readCString(name) };
+      parameters.push(text.startsWith("?") ? null : text.slice(1));
+    }
+  }
+  return parameters;
+}
+
+/** A compiled statement's parameters, and its columns as of its compilation number `compiled`. */
+export class Info {
+  stmt: Ptr<sqlite3_stmt>;
+  /** Each parameter's name without its `:`, `@` or `$`; `null` for a positional one. */
+  parameters: (string | null)[];
+  /** Whether two parameters have one name: `:a` and `$a` are two parameters, both named `a`. */
+  repeats: bool = false;
+  /** How many times SQLite had compiled the statement anew when this was read; -1 before a step. */
+  compiled: i32;
+  columns: string[] = [];
+  /** Which columns are declared `BOOL` or `BOOLEAN`, and whether any is. */
+  bools: bool[] = [];
+  anyBool: bool = false;
+
+  constructor(stmt: Ptr<sqlite3_stmt>, compiled: i32) {
+    this.stmt = stmt;
+    this.compiled = compiled;
+    this.parameters = parametersOf(stmt);
+    for (let i: usize = 0; i < this.parameters.length; i++) {
+      for (let j: usize = i + 1; j < this.parameters.length; j++) {
+        if (this.parameters[i] != null && this.parameters[i] == this.parameters[j]) {
+          this.repeats = true;
+        }
+      }
+    }
+    if (compiled < 0) {
+      return;
+    }
+    // SAFETY: the statement is open.
+    const n = unsafe { sqlite3_column_count(stmt) };
+    for (let i: i32 = 0; i < n; i++) {
+      // SAFETY: SQLite's name is NUL-terminated and valid until the statement is finalized.
+      this.columns.push(unsafe { readCString(sqlite3_column_name(stmt, i)) });
+      // SAFETY: the statement is open.
+      const declared = unsafe { sqlite3_column_decltype(stmt, i) };
+      // SAFETY: SQLite's type is NUL-terminated and valid until the statement is finalized.
+      const type = declared === null ? "" : unsafe { readCString(declared) }.toUpperCase();
+      const isBool = type == "BOOL" || type == "BOOLEAN";
+      this.bools.push(isBool);
+      this.anyBool = this.anyBool || isBool;
+    }
+  }
+}

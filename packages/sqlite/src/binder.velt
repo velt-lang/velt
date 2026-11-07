@@ -1,0 +1,208 @@
+// sqlite (internal): `Binder`, a statement's parameters as `writeParams` hands them over.
+//
+// An object binds by name: each `:name`, `@name` or `$name` in the SQL takes the member `name`, a
+// parameter without a member is an error (like better-sqlite3), and extra members are ignored, so
+// one object can serve several statements. Anything else binds by position, one value per
+// parameter. A number binds as its JSON text would read back: an integral one is an INTEGER, NaN
+// and the infinities NULL.
+
+import { byteLength, Ptr, readCString } from "velt/ffi";
+import { ParamSink } from "velt/db";
+import { codeName, SqliteError } from "./errors";
+import { Info } from "./info";
+import {
+  SQLITE_OK,
+  SQLITE_TRANSIENT,
+  sqlite3_bind_blob64,
+  sqlite3_bind_double,
+  sqlite3_bind_int64,
+  sqlite3_bind_null,
+  sqlite3_bind_text,
+  sqlite3_errstr,
+  sqlite3_stmt,
+} from "./sqlite3";
+
+// 2^63, where integers stop fitting in an `i64`.
+const TWO_63: f64 = 9223372036854775808.0;
+
+// Text or bytes longer than this aren't left bound to a statement between runs.
+const LARGE: usize = 4096;
+
+/** Binds a statement's parameters, and says what is missing or extra afterwards. */
+export class Binder implements ParamSink {
+  private stmt: Ptr<sqlite3_stmt>;
+  private info: shared<Info>;
+  private named: bool = false;
+  private count: usize;
+  private hint: usize = 0;
+  private values: usize = 0;
+  private pending: string = "";
+  private bound: bool[] = [];
+  /** The result code of the first bind SQLite refused, or 0. */
+  failed: i32 = 0;
+  /** Whether a value of this run is too large to stay bound after it. */
+  large: bool = false;
+
+  constructor(info: shared<Info>) {
+    this.stmt = info.stmt;
+    this.info = info;
+    this.count = info.parameters.length;
+  }
+
+  /** Before a run's parameters are handed over. */
+  begin() {
+    this.named = false;
+    this.values = 0;
+    this.failed = 0;
+    this.large = false;
+  }
+
+  object(): void {
+    this.named = true;
+    this.hint = 0;
+    if (this.bound.length == 0) {
+      for (let i: usize = 0; i < this.count; i++) {
+        this.bound.push(false);
+      }
+    } else {
+      for (let i: usize = 0; i < this.bound.length; i++) {
+        this.bound[i] = false;
+      }
+    }
+  }
+
+  name(name: string): void {
+    this.pending = name;
+  }
+
+  int(v: i64): void {
+    for (let at = this.place(); at > 0; at = this.again(at)) {
+      // SAFETY: the statement is open, under the connection's lock.
+      this.note(unsafe { sqlite3_bind_int64(this.stmt, at, v) });
+    }
+  }
+
+  uint(v: u64): void {
+    if (v <= 9223372036854775807u64) {
+      this.int(v as i64);
+    } else {
+      this.real(v as f64);
+    }
+  }
+
+  float(v: f64): void {
+    if (v !== v || v == Infinity || v == -Infinity) {
+      this.null();
+    } else if (Math.trunc(v) == v && v >= -TWO_63 && v < TWO_63) {
+      this.int(v as i64);
+    } else {
+      this.real(v);
+    }
+  }
+
+  private real(v: f64) {
+    for (let at = this.place(); at > 0; at = this.again(at)) {
+      // SAFETY: the statement is open, under the connection's lock.
+      this.note(unsafe { sqlite3_bind_double(this.stmt, at, v) });
+    }
+  }
+
+  bool(v: bool): void {
+    this.int(v ? 1 : 0);
+  }
+
+  null(): void {
+    for (let at = this.place(); at > 0; at = this.again(at)) {
+      // SAFETY: the statement is open, under the connection's lock.
+      this.note(unsafe { sqlite3_bind_null(this.stmt, at) });
+    }
+  }
+
+  text(v: string): void {
+    const n = byteLength(v) as i32;
+    this.large = this.large || (n as usize) > LARGE;
+    for (let at = this.place(); at > 0; at = this.again(at)) {
+      // SAFETY: SQLITE_TRANSIENT makes SQLite copy the text before the call returns.
+      this.note(unsafe { sqlite3_bind_text(this.stmt, at, v, n, SQLITE_TRANSIENT) });
+    }
+  }
+
+  blob(v: u8[]): void {
+    const n = v.length as u64;
+    this.large = this.large || v.length > LARGE;
+    for (let at = this.place(); at > 0; at = this.again(at)) {
+      // SAFETY: SQLITE_TRANSIENT makes SQLite copy the bytes before the call returns.
+      this.note(unsafe { sqlite3_bind_blob64(this.stmt, at, v, n, SQLITE_TRANSIENT) });
+    }
+  }
+
+  // The 1-based parameter the next value goes to, or 0 for none. An object's members mostly come in
+  // the order of the SQL's parameters, so the search starts after the last match, unless a name has
+  // several parameters (`again`), which it must find from the first.
+  private place(): i32 {
+    if (!this.named) {
+      this.values++;
+      // Too many values are for `problem` to report, not a place for SQLite to refuse.
+      return this.values <= this.count ? this.values as i32 : 0;
+    }
+    if (this.info.repeats) {
+      this.hint = 0;
+    }
+    for (let tried: usize = 0; tried < this.count; tried++) {
+      const i = this.hint < this.count ? this.hint : 0;
+      this.hint = i + 1;
+      if (this.info.parameters[i] == this.pending) {
+        this.bound[i] = true;
+        return (i + 1) as i32;
+      }
+    }
+    return 0;
+  }
+
+  // The next parameter after `at` the same value goes to, or 0 for none.
+  private again(at: i32): i32 {
+    if (!this.named || !this.info.repeats) {
+      return 0;
+    }
+    for (let i = at as usize; i < this.count; i++) {
+      if (this.info.parameters[i] == this.pending) {
+        this.bound[i] = true;
+        return (i + 1) as i32;
+      }
+    }
+    return 0;
+  }
+
+  private note(rc: i32) {
+    if (rc != SQLITE_OK && this.failed == 0) {
+      this.failed = rc;
+    }
+  }
+
+  /** The bind SQLite refused, for when `failed` isn't 0. */
+  failure(): SqliteError {
+    // SAFETY: SQLite's text for a result code is NUL-terminated and static.
+    const text = unsafe { readCString(sqlite3_errstr(this.failed)) };
+    return new SqliteError(codeName(this.failed), text);
+  }
+
+  /** What is missing or extra, as a message; null when every parameter has its value. */
+  problem(): string | null {
+    const count = this.count;
+    if (!this.named) {
+      return this.values == count
+        ? null
+        : `the statement has ${count} parameter(s) but ${this.values} value(s) were given`;
+    }
+    for (let i: usize = 0; i < count; i++) {
+      const name = this.info.parameters[i];
+      if (name == null) {
+        return `parameter ${i + 1} is positional (\`?\`); pass an array to bind it`;
+      }
+      if (!this.bound[i]) {
+        return `missing named parameter "${name}"`;
+      }
+    }
+    return null;
+  }
+}

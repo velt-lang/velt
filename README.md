@@ -195,9 +195,9 @@ example, are already Velt code. A young language can't have a library for everyt
 though, so until one exists in Velt you don't have to wait: **any Velt package can include a Rust crate**,
 which puts all of crates.io within reach. Need image processing, compression, PDF generation or
 ML inference today? Wrap the crate that already does it, typically in a few dozen lines, and
-replace it with a Velt version whenever one arrives; your users' code doesn't change. The SQLite driver in
-[`packages/sqlite`](packages/sqlite) is a complete example: Rust around `rusqlite` in
-`native/`, and an API close to better-sqlite3 in Velt.
+replace it with a Velt version whenever one arrives; your users' code doesn't change. The Postgres driver in
+[`packages/postgres`](packages/postgres) is a complete example: Rust around `tokio-postgres` in
+`native/`, and the client's API in Velt.
 
 Here is zstd compression as a package, end to end. Add the crate to the package's
 `native/Cargo.toml`, next to `velt_native`:

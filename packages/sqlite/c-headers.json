@@ -1,0 +1,1422 @@
+{
+  "checked": {
+    "aarch64-linux-gnu": {
+      "c": {
+        "declarations": [
+          "574fc6215ae475741460696b8957ab1443c9ecffad507da17bb728004047edcb"
+        ],
+        "headers": {}
+      },
+      "sqlite3": {
+        "declarations": [
+          "069fe9ad6a1ef37e7fa91ceff7e3d2aa4859a3f5c36ab05a59f7ee00a8d19496",
+          "12408d73718226dc7a3a48b0622af32e22dbb549a746d8ece59acb63745d72b7",
+          "1251eae0bf6c431f5278ec4914f7a5abf3ec6933d1356ad61c20e02af247f9d9",
+          "15718c7bbf715c5f8e0c351284c7243679ea28820c86e9d9f20b8044c2369620",
+          "192abde00cbc3d65e6a4560982ae967dbfa618ca188b04edef9c6f9e810b58cc",
+          "1c142a7fb798b1e5c18140aa736c2ccfc64eac3112743ab7fbfb24d58aaa91e5",
+          "1da173fc7392b16755eee70f417062dc023477ecdb30b76e2d6839ba74a58a13",
+          "21739f91bbb13007b08573bcb78139ffd03d1e168eeced900033ca9961f465b7",
+          "23f0c8b3b28f416271ec4caf911424e025d64210ff939da16c5465e3e54af047",
+          "28d974055306dc251e46b926ae8f58410b185b40ec8f30f5e6b57abfdfc4b881",
+          "2d3660aa0ce03a1a4bde69b5faf25d8a3144939fda1b42956e8b01e8df2d872e",
+          "30e7c2a5237f4b039da23ef21d6323aa67d7f367e25215d6a9dbbb4caf67f6c0",
+          "3786fd58f0a18b471455e59439a1cd98bae6e0a6c39e890a0d5b66fccee282a9",
+          "39d2c89d2e19d52edf9d7383c41fb2be1e58365c6329c8a1c528049c2944b9d3",
+          "3b3d319a86ffd177127ed7d1302a0639f001a1146969bf8f62db97f72a764497",
+          "3b6c587dea35c282a299f3e348f7110d16612ffb7f1f55772441b0f199a88118",
+          "3f84018a8f6fce23b75eca2a31f56940b5b71f9cec651642d1126956cf2c397f",
+          "482a36ab84f9396178e750105951535d778ffbfa65be5159e43f05474427e9c8",
+          "4cf16fbb6fe2baea3761ba2185bb87d5d417aa994f5e10683d2724f1e8f62af4",
+          "57dc5a1b83d983593e67bd62cd2f0be43f56610398c4931711a8fcc3706f8ff6",
+          "6db05bc3c44337b12823f46a15e66ed70f630dabd57b1ac34f68c6a003951ae1",
+          "6db289ee2baf6e13aaa0931d1623d96223931da74c66a4516ab08c93c36c2a61",
+          "79fa4fcd2e9a5b56ffa78214e39b810c3722b4435582e5f9db4ff2a014f35096",
+          "810b921544db6f23ba3e9afb756b960f6beb85d6e28f21eb91465b3957b87a2b",
+          "86961f5664ed690cf5b71ad475a0d7902a0ff1fd3628df87edd69af483846663",
+          "880db08b953745ebc97accc48e55d24505b51d6658484c2f6775bd8f9b6af9d7",
+          "9baa8ebcac83bdf1ae484b9d6b63d3355dcc5b4036d8f5f7cdcec88a522244c7",
+          "9d0fadce1d452b7edcfe19c0628653125f7491fdd5a3a9d8b01a9092d45ba624",
+          "c2d79422ba427f49298b5fc4726250a5e97c1aac46835d9275670f2c95c04385",
+          "d6070ea67753a215ea860bfc1bc010eab4cae0f7e6a148eb30c55623118bdb72",
+          "d7f6af80d95033a4e0ee3f7e455d2289812e6017cc251fe5016c606f7cfef721",
+          "d9c9525f45c54a0c7f061f3a526afe3aa9a10c3f496a7f458f45724d6022af98",
+          "f22ac9ac17e5a884f8475e43efaa2c844c4310f8c069cbaea66ec18e6eb7b3f8",
+          "f7bca807ed21de97a6331e5bc041984269963618239be6329aa2b36937a19c88",
+          "fa44e557b1faa0451e592c4c551656c739dbb8d76057305aea07677a02e2fcb8"
+        ],
+        "headers": {
+          "native/sqlite3.h": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e"
+        },
+        "defines": "042856c0454e4cd876cb412cadfa7a1920142d2fcacc9a34bfc22c4b7efd3733"
+      }
+    },
+    "aarch64-linux-musl": {
+      "c": {
+        "declarations": [
+          "574fc6215ae475741460696b8957ab1443c9ecffad507da17bb728004047edcb"
+        ],
+        "headers": {}
+      },
+      "sqlite3": {
+        "declarations": [
+          "069fe9ad6a1ef37e7fa91ceff7e3d2aa4859a3f5c36ab05a59f7ee00a8d19496",
+          "12408d73718226dc7a3a48b0622af32e22dbb549a746d8ece59acb63745d72b7",
+          "1251eae0bf6c431f5278ec4914f7a5abf3ec6933d1356ad61c20e02af247f9d9",
+          "15718c7bbf715c5f8e0c351284c7243679ea28820c86e9d9f20b8044c2369620",
+          "192abde00cbc3d65e6a4560982ae967dbfa618ca188b04edef9c6f9e810b58cc",
+          "1c142a7fb798b1e5c18140aa736c2ccfc64eac3112743ab7fbfb24d58aaa91e5",
+          "1da173fc7392b16755eee70f417062dc023477ecdb30b76e2d6839ba74a58a13",
+          "21739f91bbb13007b08573bcb78139ffd03d1e168eeced900033ca9961f465b7",
+          "23f0c8b3b28f416271ec4caf911424e025d64210ff939da16c5465e3e54af047",
+          "28d974055306dc251e46b926ae8f58410b185b40ec8f30f5e6b57abfdfc4b881",
+          "2d3660aa0ce03a1a4bde69b5faf25d8a3144939fda1b42956e8b01e8df2d872e",
+          "30e7c2a5237f4b039da23ef21d6323aa67d7f367e25215d6a9dbbb4caf67f6c0",
+          "3786fd58f0a18b471455e59439a1cd98bae6e0a6c39e890a0d5b66fccee282a9",
+          "39d2c89d2e19d52edf9d7383c41fb2be1e58365c6329c8a1c528049c2944b9d3",
+          "3b3d319a86ffd177127ed7d1302a0639f001a1146969bf8f62db97f72a764497",
+          "3b6c587dea35c282a299f3e348f7110d16612ffb7f1f55772441b0f199a88118",
+          "3f84018a8f6fce23b75eca2a31f56940b5b71f9cec651642d1126956cf2c397f",
+          "482a36ab84f9396178e750105951535d778ffbfa65be5159e43f05474427e9c8",
+          "4cf16fbb6fe2baea3761ba2185bb87d5d417aa994f5e10683d2724f1e8f62af4",
+          "57dc5a1b83d983593e67bd62cd2f0be43f56610398c4931711a8fcc3706f8ff6",
+          "6db05bc3c44337b12823f46a15e66ed70f630dabd57b1ac34f68c6a003951ae1",
+          "6db289ee2baf6e13aaa0931d1623d96223931da74c66a4516ab08c93c36c2a61",
+          "79fa4fcd2e9a5b56ffa78214e39b810c3722b4435582e5f9db4ff2a014f35096",
+          "810b921544db6f23ba3e9afb756b960f6beb85d6e28f21eb91465b3957b87a2b",
+          "86961f5664ed690cf5b71ad475a0d7902a0ff1fd3628df87edd69af483846663",
+          "880db08b953745ebc97accc48e55d24505b51d6658484c2f6775bd8f9b6af9d7",
+          "9baa8ebcac83bdf1ae484b9d6b63d3355dcc5b4036d8f5f7cdcec88a522244c7",
+          "9d0fadce1d452b7edcfe19c0628653125f7491fdd5a3a9d8b01a9092d45ba624",
+          "c2d79422ba427f49298b5fc4726250a5e97c1aac46835d9275670f2c95c04385",
+          "d6070ea67753a215ea860bfc1bc010eab4cae0f7e6a148eb30c55623118bdb72",
+          "d7f6af80d95033a4e0ee3f7e455d2289812e6017cc251fe5016c606f7cfef721",
+          "d9c9525f45c54a0c7f061f3a526afe3aa9a10c3f496a7f458f45724d6022af98",
+          "f22ac9ac17e5a884f8475e43efaa2c844c4310f8c069cbaea66ec18e6eb7b3f8",
+          "f7bca807ed21de97a6331e5bc041984269963618239be6329aa2b36937a19c88",
+          "fa44e557b1faa0451e592c4c551656c739dbb8d76057305aea07677a02e2fcb8"
+        ],
+        "headers": {
+          "native/sqlite3.h": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e"
+        },
+        "defines": "042856c0454e4cd876cb412cadfa7a1920142d2fcacc9a34bfc22c4b7efd3733"
+      }
+    },
+    "aarch64-macos": {
+      "c": {
+        "declarations": [
+          "574fc6215ae475741460696b8957ab1443c9ecffad507da17bb728004047edcb"
+        ],
+        "headers": {}
+      },
+      "sqlite3": {
+        "declarations": [
+          "069fe9ad6a1ef37e7fa91ceff7e3d2aa4859a3f5c36ab05a59f7ee00a8d19496",
+          "12408d73718226dc7a3a48b0622af32e22dbb549a746d8ece59acb63745d72b7",
+          "1251eae0bf6c431f5278ec4914f7a5abf3ec6933d1356ad61c20e02af247f9d9",
+          "15718c7bbf715c5f8e0c351284c7243679ea28820c86e9d9f20b8044c2369620",
+          "192abde00cbc3d65e6a4560982ae967dbfa618ca188b04edef9c6f9e810b58cc",
+          "1c142a7fb798b1e5c18140aa736c2ccfc64eac3112743ab7fbfb24d58aaa91e5",
+          "1da173fc7392b16755eee70f417062dc023477ecdb30b76e2d6839ba74a58a13",
+          "21739f91bbb13007b08573bcb78139ffd03d1e168eeced900033ca9961f465b7",
+          "23f0c8b3b28f416271ec4caf911424e025d64210ff939da16c5465e3e54af047",
+          "28d974055306dc251e46b926ae8f58410b185b40ec8f30f5e6b57abfdfc4b881",
+          "2d3660aa0ce03a1a4bde69b5faf25d8a3144939fda1b42956e8b01e8df2d872e",
+          "30e7c2a5237f4b039da23ef21d6323aa67d7f367e25215d6a9dbbb4caf67f6c0",
+          "3786fd58f0a18b471455e59439a1cd98bae6e0a6c39e890a0d5b66fccee282a9",
+          "39d2c89d2e19d52edf9d7383c41fb2be1e58365c6329c8a1c528049c2944b9d3",
+          "3b3d319a86ffd177127ed7d1302a0639f001a1146969bf8f62db97f72a764497",
+          "3b6c587dea35c282a299f3e348f7110d16612ffb7f1f55772441b0f199a88118",
+          "3f84018a8f6fce23b75eca2a31f56940b5b71f9cec651642d1126956cf2c397f",
+          "482a36ab84f9396178e750105951535d778ffbfa65be5159e43f05474427e9c8",
+          "4cf16fbb6fe2baea3761ba2185bb87d5d417aa994f5e10683d2724f1e8f62af4",
+          "57dc5a1b83d983593e67bd62cd2f0be43f56610398c4931711a8fcc3706f8ff6",
+          "6db05bc3c44337b12823f46a15e66ed70f630dabd57b1ac34f68c6a003951ae1",
+          "6db289ee2baf6e13aaa0931d1623d96223931da74c66a4516ab08c93c36c2a61",
+          "79fa4fcd2e9a5b56ffa78214e39b810c3722b4435582e5f9db4ff2a014f35096",
+          "810b921544db6f23ba3e9afb756b960f6beb85d6e28f21eb91465b3957b87a2b",
+          "86961f5664ed690cf5b71ad475a0d7902a0ff1fd3628df87edd69af483846663",
+          "880db08b953745ebc97accc48e55d24505b51d6658484c2f6775bd8f9b6af9d7",
+          "9baa8ebcac83bdf1ae484b9d6b63d3355dcc5b4036d8f5f7cdcec88a522244c7",
+          "9d0fadce1d452b7edcfe19c0628653125f7491fdd5a3a9d8b01a9092d45ba624",
+          "c2d79422ba427f49298b5fc4726250a5e97c1aac46835d9275670f2c95c04385",
+          "d6070ea67753a215ea860bfc1bc010eab4cae0f7e6a148eb30c55623118bdb72",
+          "d7f6af80d95033a4e0ee3f7e455d2289812e6017cc251fe5016c606f7cfef721",
+          "d9c9525f45c54a0c7f061f3a526afe3aa9a10c3f496a7f458f45724d6022af98",
+          "f22ac9ac17e5a884f8475e43efaa2c844c4310f8c069cbaea66ec18e6eb7b3f8",
+          "f7bca807ed21de97a6331e5bc041984269963618239be6329aa2b36937a19c88",
+          "fa44e557b1faa0451e592c4c551656c739dbb8d76057305aea07677a02e2fcb8"
+        ],
+        "headers": {
+          "native/sqlite3.h": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e"
+        },
+        "defines": "042856c0454e4cd876cb412cadfa7a1920142d2fcacc9a34bfc22c4b7efd3733"
+      }
+    },
+    "aarch64-windows-gnu": {
+      "c": {
+        "declarations": [
+          "574fc6215ae475741460696b8957ab1443c9ecffad507da17bb728004047edcb"
+        ],
+        "headers": {}
+      },
+      "sqlite3": {
+        "declarations": [
+          "069fe9ad6a1ef37e7fa91ceff7e3d2aa4859a3f5c36ab05a59f7ee00a8d19496",
+          "12408d73718226dc7a3a48b0622af32e22dbb549a746d8ece59acb63745d72b7",
+          "1251eae0bf6c431f5278ec4914f7a5abf3ec6933d1356ad61c20e02af247f9d9",
+          "15718c7bbf715c5f8e0c351284c7243679ea28820c86e9d9f20b8044c2369620",
+          "192abde00cbc3d65e6a4560982ae967dbfa618ca188b04edef9c6f9e810b58cc",
+          "1c142a7fb798b1e5c18140aa736c2ccfc64eac3112743ab7fbfb24d58aaa91e5",
+          "1da173fc7392b16755eee70f417062dc023477ecdb30b76e2d6839ba74a58a13",
+          "21739f91bbb13007b08573bcb78139ffd03d1e168eeced900033ca9961f465b7",
+          "23f0c8b3b28f416271ec4caf911424e025d64210ff939da16c5465e3e54af047",
+          "28d974055306dc251e46b926ae8f58410b185b40ec8f30f5e6b57abfdfc4b881",
+          "2d3660aa0ce03a1a4bde69b5faf25d8a3144939fda1b42956e8b01e8df2d872e",
+          "30e7c2a5237f4b039da23ef21d6323aa67d7f367e25215d6a9dbbb4caf67f6c0",
+          "3786fd58f0a18b471455e59439a1cd98bae6e0a6c39e890a0d5b66fccee282a9",
+          "39d2c89d2e19d52edf9d7383c41fb2be1e58365c6329c8a1c528049c2944b9d3",
+          "3b3d319a86ffd177127ed7d1302a0639f001a1146969bf8f62db97f72a764497",
+          "3b6c587dea35c282a299f3e348f7110d16612ffb7f1f55772441b0f199a88118",
+          "3f84018a8f6fce23b75eca2a31f56940b5b71f9cec651642d1126956cf2c397f",
+          "482a36ab84f9396178e750105951535d778ffbfa65be5159e43f05474427e9c8",
+          "4cf16fbb6fe2baea3761ba2185bb87d5d417aa994f5e10683d2724f1e8f62af4",
+          "57dc5a1b83d983593e67bd62cd2f0be43f56610398c4931711a8fcc3706f8ff6",
+          "6db05bc3c44337b12823f46a15e66ed70f630dabd57b1ac34f68c6a003951ae1",
+          "6db289ee2baf6e13aaa0931d1623d96223931da74c66a4516ab08c93c36c2a61",
+          "79fa4fcd2e9a5b56ffa78214e39b810c3722b4435582e5f9db4ff2a014f35096",
+          "810b921544db6f23ba3e9afb756b960f6beb85d6e28f21eb91465b3957b87a2b",
+          "86961f5664ed690cf5b71ad475a0d7902a0ff1fd3628df87edd69af483846663",
+          "880db08b953745ebc97accc48e55d24505b51d6658484c2f6775bd8f9b6af9d7",
+          "9baa8ebcac83bdf1ae484b9d6b63d3355dcc5b4036d8f5f7cdcec88a522244c7",
+          "9d0fadce1d452b7edcfe19c0628653125f7491fdd5a3a9d8b01a9092d45ba624",
+          "c2d79422ba427f49298b5fc4726250a5e97c1aac46835d9275670f2c95c04385",
+          "d6070ea67753a215ea860bfc1bc010eab4cae0f7e6a148eb30c55623118bdb72",
+          "d7f6af80d95033a4e0ee3f7e455d2289812e6017cc251fe5016c606f7cfef721",
+          "d9c9525f45c54a0c7f061f3a526afe3aa9a10c3f496a7f458f45724d6022af98",
+          "f22ac9ac17e5a884f8475e43efaa2c844c4310f8c069cbaea66ec18e6eb7b3f8",
+          "f7bca807ed21de97a6331e5bc041984269963618239be6329aa2b36937a19c88",
+          "fa44e557b1faa0451e592c4c551656c739dbb8d76057305aea07677a02e2fcb8"
+        ],
+        "headers": {
+          "native/sqlite3.h": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e"
+        },
+        "defines": "042856c0454e4cd876cb412cadfa7a1920142d2fcacc9a34bfc22c4b7efd3733"
+      }
+    },
+    "x86_64-linux-gnu": {
+      "c": {
+        "declarations": [
+          "574fc6215ae475741460696b8957ab1443c9ecffad507da17bb728004047edcb"
+        ],
+        "headers": {}
+      },
+      "sqlite3": {
+        "declarations": [
+          "069fe9ad6a1ef37e7fa91ceff7e3d2aa4859a3f5c36ab05a59f7ee00a8d19496",
+          "12408d73718226dc7a3a48b0622af32e22dbb549a746d8ece59acb63745d72b7",
+          "1251eae0bf6c431f5278ec4914f7a5abf3ec6933d1356ad61c20e02af247f9d9",
+          "15718c7bbf715c5f8e0c351284c7243679ea28820c86e9d9f20b8044c2369620",
+          "192abde00cbc3d65e6a4560982ae967dbfa618ca188b04edef9c6f9e810b58cc",
+          "1c142a7fb798b1e5c18140aa736c2ccfc64eac3112743ab7fbfb24d58aaa91e5",
+          "1da173fc7392b16755eee70f417062dc023477ecdb30b76e2d6839ba74a58a13",
+          "21739f91bbb13007b08573bcb78139ffd03d1e168eeced900033ca9961f465b7",
+          "23f0c8b3b28f416271ec4caf911424e025d64210ff939da16c5465e3e54af047",
+          "28d974055306dc251e46b926ae8f58410b185b40ec8f30f5e6b57abfdfc4b881",
+          "2d3660aa0ce03a1a4bde69b5faf25d8a3144939fda1b42956e8b01e8df2d872e",
+          "30e7c2a5237f4b039da23ef21d6323aa67d7f367e25215d6a9dbbb4caf67f6c0",
+          "3786fd58f0a18b471455e59439a1cd98bae6e0a6c39e890a0d5b66fccee282a9",
+          "39d2c89d2e19d52edf9d7383c41fb2be1e58365c6329c8a1c528049c2944b9d3",
+          "3b3d319a86ffd177127ed7d1302a0639f001a1146969bf8f62db97f72a764497",
+          "3b6c587dea35c282a299f3e348f7110d16612ffb7f1f55772441b0f199a88118",
+          "3f84018a8f6fce23b75eca2a31f56940b5b71f9cec651642d1126956cf2c397f",
+          "482a36ab84f9396178e750105951535d778ffbfa65be5159e43f05474427e9c8",
+          "4cf16fbb6fe2baea3761ba2185bb87d5d417aa994f5e10683d2724f1e8f62af4",
+          "57dc5a1b83d983593e67bd62cd2f0be43f56610398c4931711a8fcc3706f8ff6",
+          "6db05bc3c44337b12823f46a15e66ed70f630dabd57b1ac34f68c6a003951ae1",
+          "6db289ee2baf6e13aaa0931d1623d96223931da74c66a4516ab08c93c36c2a61",
+          "79fa4fcd2e9a5b56ffa78214e39b810c3722b4435582e5f9db4ff2a014f35096",
+          "810b921544db6f23ba3e9afb756b960f6beb85d6e28f21eb91465b3957b87a2b",
+          "86961f5664ed690cf5b71ad475a0d7902a0ff1fd3628df87edd69af483846663",
+          "880db08b953745ebc97accc48e55d24505b51d6658484c2f6775bd8f9b6af9d7",
+          "9baa8ebcac83bdf1ae484b9d6b63d3355dcc5b4036d8f5f7cdcec88a522244c7",
+          "9d0fadce1d452b7edcfe19c0628653125f7491fdd5a3a9d8b01a9092d45ba624",
+          "c2d79422ba427f49298b5fc4726250a5e97c1aac46835d9275670f2c95c04385",
+          "d6070ea67753a215ea860bfc1bc010eab4cae0f7e6a148eb30c55623118bdb72",
+          "d7f6af80d95033a4e0ee3f7e455d2289812e6017cc251fe5016c606f7cfef721",
+          "d9c9525f45c54a0c7f061f3a526afe3aa9a10c3f496a7f458f45724d6022af98",
+          "f22ac9ac17e5a884f8475e43efaa2c844c4310f8c069cbaea66ec18e6eb7b3f8",
+          "f7bca807ed21de97a6331e5bc041984269963618239be6329aa2b36937a19c88",
+          "fa44e557b1faa0451e592c4c551656c739dbb8d76057305aea07677a02e2fcb8"
+        ],
+        "headers": {
+          "native/sqlite3.h": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e"
+        },
+        "defines": "042856c0454e4cd876cb412cadfa7a1920142d2fcacc9a34bfc22c4b7efd3733"
+      }
+    },
+    "x86_64-linux-musl": {
+      "c": {
+        "declarations": [
+          "574fc6215ae475741460696b8957ab1443c9ecffad507da17bb728004047edcb"
+        ],
+        "headers": {}
+      },
+      "sqlite3": {
+        "declarations": [
+          "069fe9ad6a1ef37e7fa91ceff7e3d2aa4859a3f5c36ab05a59f7ee00a8d19496",
+          "12408d73718226dc7a3a48b0622af32e22dbb549a746d8ece59acb63745d72b7",
+          "1251eae0bf6c431f5278ec4914f7a5abf3ec6933d1356ad61c20e02af247f9d9",
+          "15718c7bbf715c5f8e0c351284c7243679ea28820c86e9d9f20b8044c2369620",
+          "192abde00cbc3d65e6a4560982ae967dbfa618ca188b04edef9c6f9e810b58cc",
+          "1c142a7fb798b1e5c18140aa736c2ccfc64eac3112743ab7fbfb24d58aaa91e5",
+          "1da173fc7392b16755eee70f417062dc023477ecdb30b76e2d6839ba74a58a13",
+          "21739f91bbb13007b08573bcb78139ffd03d1e168eeced900033ca9961f465b7",
+          "23f0c8b3b28f416271ec4caf911424e025d64210ff939da16c5465e3e54af047",
+          "28d974055306dc251e46b926ae8f58410b185b40ec8f30f5e6b57abfdfc4b881",
+          "2d3660aa0ce03a1a4bde69b5faf25d8a3144939fda1b42956e8b01e8df2d872e",
+          "30e7c2a5237f4b039da23ef21d6323aa67d7f367e25215d6a9dbbb4caf67f6c0",
+          "3786fd58f0a18b471455e59439a1cd98bae6e0a6c39e890a0d5b66fccee282a9",
+          "39d2c89d2e19d52edf9d7383c41fb2be1e58365c6329c8a1c528049c2944b9d3",
+          "3b3d319a86ffd177127ed7d1302a0639f001a1146969bf8f62db97f72a764497",
+          "3b6c587dea35c282a299f3e348f7110d16612ffb7f1f55772441b0f199a88118",
+          "3f84018a8f6fce23b75eca2a31f56940b5b71f9cec651642d1126956cf2c397f",
+          "482a36ab84f9396178e750105951535d778ffbfa65be5159e43f05474427e9c8",
+          "4cf16fbb6fe2baea3761ba2185bb87d5d417aa994f5e10683d2724f1e8f62af4",
+          "57dc5a1b83d983593e67bd62cd2f0be43f56610398c4931711a8fcc3706f8ff6",
+          "6db05bc3c44337b12823f46a15e66ed70f630dabd57b1ac34f68c6a003951ae1",
+          "6db289ee2baf6e13aaa0931d1623d96223931da74c66a4516ab08c93c36c2a61",
+          "79fa4fcd2e9a5b56ffa78214e39b810c3722b4435582e5f9db4ff2a014f35096",
+          "810b921544db6f23ba3e9afb756b960f6beb85d6e28f21eb91465b3957b87a2b",
+          "86961f5664ed690cf5b71ad475a0d7902a0ff1fd3628df87edd69af483846663",
+          "880db08b953745ebc97accc48e55d24505b51d6658484c2f6775bd8f9b6af9d7",
+          "9baa8ebcac83bdf1ae484b9d6b63d3355dcc5b4036d8f5f7cdcec88a522244c7",
+          "9d0fadce1d452b7edcfe19c0628653125f7491fdd5a3a9d8b01a9092d45ba624",
+          "c2d79422ba427f49298b5fc4726250a5e97c1aac46835d9275670f2c95c04385",
+          "d6070ea67753a215ea860bfc1bc010eab4cae0f7e6a148eb30c55623118bdb72",
+          "d7f6af80d95033a4e0ee3f7e455d2289812e6017cc251fe5016c606f7cfef721",
+          "d9c9525f45c54a0c7f061f3a526afe3aa9a10c3f496a7f458f45724d6022af98",
+          "f22ac9ac17e5a884f8475e43efaa2c844c4310f8c069cbaea66ec18e6eb7b3f8",
+          "f7bca807ed21de97a6331e5bc041984269963618239be6329aa2b36937a19c88",
+          "fa44e557b1faa0451e592c4c551656c739dbb8d76057305aea07677a02e2fcb8"
+        ],
+        "headers": {
+          "native/sqlite3.h": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e"
+        },
+        "defines": "042856c0454e4cd876cb412cadfa7a1920142d2fcacc9a34bfc22c4b7efd3733"
+      }
+    },
+    "x86_64-macos": {
+      "c": {
+        "declarations": [
+          "574fc6215ae475741460696b8957ab1443c9ecffad507da17bb728004047edcb"
+        ],
+        "headers": {}
+      },
+      "sqlite3": {
+        "declarations": [
+          "069fe9ad6a1ef37e7fa91ceff7e3d2aa4859a3f5c36ab05a59f7ee00a8d19496",
+          "12408d73718226dc7a3a48b0622af32e22dbb549a746d8ece59acb63745d72b7",
+          "1251eae0bf6c431f5278ec4914f7a5abf3ec6933d1356ad61c20e02af247f9d9",
+          "15718c7bbf715c5f8e0c351284c7243679ea28820c86e9d9f20b8044c2369620",
+          "192abde00cbc3d65e6a4560982ae967dbfa618ca188b04edef9c6f9e810b58cc",
+          "1c142a7fb798b1e5c18140aa736c2ccfc64eac3112743ab7fbfb24d58aaa91e5",
+          "1da173fc7392b16755eee70f417062dc023477ecdb30b76e2d6839ba74a58a13",
+          "21739f91bbb13007b08573bcb78139ffd03d1e168eeced900033ca9961f465b7",
+          "23f0c8b3b28f416271ec4caf911424e025d64210ff939da16c5465e3e54af047",
+          "28d974055306dc251e46b926ae8f58410b185b40ec8f30f5e6b57abfdfc4b881",
+          "2d3660aa0ce03a1a4bde69b5faf25d8a3144939fda1b42956e8b01e8df2d872e",
+          "30e7c2a5237f4b039da23ef21d6323aa67d7f367e25215d6a9dbbb4caf67f6c0",
+          "3786fd58f0a18b471455e59439a1cd98bae6e0a6c39e890a0d5b66fccee282a9",
+          "39d2c89d2e19d52edf9d7383c41fb2be1e58365c6329c8a1c528049c2944b9d3",
+          "3b3d319a86ffd177127ed7d1302a0639f001a1146969bf8f62db97f72a764497",
+          "3b6c587dea35c282a299f3e348f7110d16612ffb7f1f55772441b0f199a88118",
+          "3f84018a8f6fce23b75eca2a31f56940b5b71f9cec651642d1126956cf2c397f",
+          "482a36ab84f9396178e750105951535d778ffbfa65be5159e43f05474427e9c8",
+          "4cf16fbb6fe2baea3761ba2185bb87d5d417aa994f5e10683d2724f1e8f62af4",
+          "57dc5a1b83d983593e67bd62cd2f0be43f56610398c4931711a8fcc3706f8ff6",
+          "6db05bc3c44337b12823f46a15e66ed70f630dabd57b1ac34f68c6a003951ae1",
+          "6db289ee2baf6e13aaa0931d1623d96223931da74c66a4516ab08c93c36c2a61",
+          "79fa4fcd2e9a5b56ffa78214e39b810c3722b4435582e5f9db4ff2a014f35096",
+          "810b921544db6f23ba3e9afb756b960f6beb85d6e28f21eb91465b3957b87a2b",
+          "86961f5664ed690cf5b71ad475a0d7902a0ff1fd3628df87edd69af483846663",
+          "880db08b953745ebc97accc48e55d24505b51d6658484c2f6775bd8f9b6af9d7",
+          "9baa8ebcac83bdf1ae484b9d6b63d3355dcc5b4036d8f5f7cdcec88a522244c7",
+          "9d0fadce1d452b7edcfe19c0628653125f7491fdd5a3a9d8b01a9092d45ba624",
+          "c2d79422ba427f49298b5fc4726250a5e97c1aac46835d9275670f2c95c04385",
+          "d6070ea67753a215ea860bfc1bc010eab4cae0f7e6a148eb30c55623118bdb72",
+          "d7f6af80d95033a4e0ee3f7e455d2289812e6017cc251fe5016c606f7cfef721",
+          "d9c9525f45c54a0c7f061f3a526afe3aa9a10c3f496a7f458f45724d6022af98",
+          "f22ac9ac17e5a884f8475e43efaa2c844c4310f8c069cbaea66ec18e6eb7b3f8",
+          "f7bca807ed21de97a6331e5bc041984269963618239be6329aa2b36937a19c88",
+          "fa44e557b1faa0451e592c4c551656c739dbb8d76057305aea07677a02e2fcb8"
+        ],
+        "headers": {
+          "native/sqlite3.h": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e"
+        },
+        "defines": "042856c0454e4cd876cb412cadfa7a1920142d2fcacc9a34bfc22c4b7efd3733"
+      }
+    },
+    "x86_64-windows-gnu": {
+      "c": {
+        "declarations": [
+          "574fc6215ae475741460696b8957ab1443c9ecffad507da17bb728004047edcb"
+        ],
+        "headers": {}
+      },
+      "sqlite3": {
+        "declarations": [
+          "069fe9ad6a1ef37e7fa91ceff7e3d2aa4859a3f5c36ab05a59f7ee00a8d19496",
+          "12408d73718226dc7a3a48b0622af32e22dbb549a746d8ece59acb63745d72b7",
+          "1251eae0bf6c431f5278ec4914f7a5abf3ec6933d1356ad61c20e02af247f9d9",
+          "15718c7bbf715c5f8e0c351284c7243679ea28820c86e9d9f20b8044c2369620",
+          "192abde00cbc3d65e6a4560982ae967dbfa618ca188b04edef9c6f9e810b58cc",
+          "1c142a7fb798b1e5c18140aa736c2ccfc64eac3112743ab7fbfb24d58aaa91e5",
+          "1da173fc7392b16755eee70f417062dc023477ecdb30b76e2d6839ba74a58a13",
+          "21739f91bbb13007b08573bcb78139ffd03d1e168eeced900033ca9961f465b7",
+          "23f0c8b3b28f416271ec4caf911424e025d64210ff939da16c5465e3e54af047",
+          "28d974055306dc251e46b926ae8f58410b185b40ec8f30f5e6b57abfdfc4b881",
+          "2d3660aa0ce03a1a4bde69b5faf25d8a3144939fda1b42956e8b01e8df2d872e",
+          "30e7c2a5237f4b039da23ef21d6323aa67d7f367e25215d6a9dbbb4caf67f6c0",
+          "3786fd58f0a18b471455e59439a1cd98bae6e0a6c39e890a0d5b66fccee282a9",
+          "39d2c89d2e19d52edf9d7383c41fb2be1e58365c6329c8a1c528049c2944b9d3",
+          "3b3d319a86ffd177127ed7d1302a0639f001a1146969bf8f62db97f72a764497",
+          "3b6c587dea35c282a299f3e348f7110d16612ffb7f1f55772441b0f199a88118",
+          "3f84018a8f6fce23b75eca2a31f56940b5b71f9cec651642d1126956cf2c397f",
+          "482a36ab84f9396178e750105951535d778ffbfa65be5159e43f05474427e9c8",
+          "4cf16fbb6fe2baea3761ba2185bb87d5d417aa994f5e10683d2724f1e8f62af4",
+          "57dc5a1b83d983593e67bd62cd2f0be43f56610398c4931711a8fcc3706f8ff6",
+          "6db05bc3c44337b12823f46a15e66ed70f630dabd57b1ac34f68c6a003951ae1",
+          "6db289ee2baf6e13aaa0931d1623d96223931da74c66a4516ab08c93c36c2a61",
+          "79fa4fcd2e9a5b56ffa78214e39b810c3722b4435582e5f9db4ff2a014f35096",
+          "810b921544db6f23ba3e9afb756b960f6beb85d6e28f21eb91465b3957b87a2b",
+          "86961f5664ed690cf5b71ad475a0d7902a0ff1fd3628df87edd69af483846663",
+          "880db08b953745ebc97accc48e55d24505b51d6658484c2f6775bd8f9b6af9d7",
+          "9baa8ebcac83bdf1ae484b9d6b63d3355dcc5b4036d8f5f7cdcec88a522244c7",
+          "9d0fadce1d452b7edcfe19c0628653125f7491fdd5a3a9d8b01a9092d45ba624",
+          "c2d79422ba427f49298b5fc4726250a5e97c1aac46835d9275670f2c95c04385",
+          "d6070ea67753a215ea860bfc1bc010eab4cae0f7e6a148eb30c55623118bdb72",
+          "d7f6af80d95033a4e0ee3f7e455d2289812e6017cc251fe5016c606f7cfef721",
+          "d9c9525f45c54a0c7f061f3a526afe3aa9a10c3f496a7f458f45724d6022af98",
+          "f22ac9ac17e5a884f8475e43efaa2c844c4310f8c069cbaea66ec18e6eb7b3f8",
+          "f7bca807ed21de97a6331e5bc041984269963618239be6329aa2b36937a19c88",
+          "fa44e557b1faa0451e592c4c551656c739dbb8d76057305aea07677a02e2fcb8"
+        ],
+        "headers": {
+          "native/sqlite3.h": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e"
+        },
+        "defines": "042856c0454e4cd876cb412cadfa7a1920142d2fcacc9a34bfc22c4b7efd3733"
+      }
+    }
+  },
+  "constants": {
+    "aarch64-linux-gnu": {
+      "headers": {
+        "native/sqlite3.h": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e"
+      },
+      "values": {
+        "SQLITE_BLOB": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "4"
+          }
+        },
+        "SQLITE_CANTOPEN": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "14"
+          }
+        },
+        "SQLITE_DONE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "101"
+          }
+        },
+        "SQLITE_FLOAT": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "2"
+          }
+        },
+        "SQLITE_INTEGER": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_LIMIT_LENGTH": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "0"
+          }
+        },
+        "SQLITE_OK": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "0"
+          }
+        },
+        "SQLITE_OPEN_CREATE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "4"
+          }
+        },
+        "SQLITE_OPEN_NOMUTEX": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "32768"
+          }
+        },
+        "SQLITE_OPEN_READONLY": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_OPEN_READWRITE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "2"
+          }
+        },
+        "SQLITE_OPEN_URI": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "64"
+          }
+        },
+        "SQLITE_PREPARE_PERSISTENT": {
+          "declared": "u32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_ROW": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "100"
+          }
+        },
+        "SQLITE_STMTSTATUS_REPREPARE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "5"
+          }
+        },
+        "SQLITE_TEXT": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "3"
+          }
+        },
+        "SQLITE_TRANSIENT": {
+          "declared": "Ptr<void>",
+          "c_type": "void (*)(void *)",
+          "value": {
+            "pointer": "ffffffffffffffff"
+          }
+        }
+      }
+    },
+    "aarch64-linux-musl": {
+      "headers": {
+        "native/sqlite3.h": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e"
+      },
+      "values": {
+        "SQLITE_BLOB": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "4"
+          }
+        },
+        "SQLITE_CANTOPEN": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "14"
+          }
+        },
+        "SQLITE_DONE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "101"
+          }
+        },
+        "SQLITE_FLOAT": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "2"
+          }
+        },
+        "SQLITE_INTEGER": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_LIMIT_LENGTH": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "0"
+          }
+        },
+        "SQLITE_OK": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "0"
+          }
+        },
+        "SQLITE_OPEN_CREATE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "4"
+          }
+        },
+        "SQLITE_OPEN_NOMUTEX": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "32768"
+          }
+        },
+        "SQLITE_OPEN_READONLY": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_OPEN_READWRITE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "2"
+          }
+        },
+        "SQLITE_OPEN_URI": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "64"
+          }
+        },
+        "SQLITE_PREPARE_PERSISTENT": {
+          "declared": "u32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_ROW": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "100"
+          }
+        },
+        "SQLITE_STMTSTATUS_REPREPARE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "5"
+          }
+        },
+        "SQLITE_TEXT": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "3"
+          }
+        },
+        "SQLITE_TRANSIENT": {
+          "declared": "Ptr<void>",
+          "c_type": "void (*)(void *)",
+          "value": {
+            "pointer": "ffffffffffffffff"
+          }
+        }
+      }
+    },
+    "aarch64-macos": {
+      "headers": {
+        "native/sqlite3.h": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e"
+      },
+      "values": {
+        "SQLITE_BLOB": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "4"
+          }
+        },
+        "SQLITE_CANTOPEN": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "14"
+          }
+        },
+        "SQLITE_DONE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "101"
+          }
+        },
+        "SQLITE_FLOAT": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "2"
+          }
+        },
+        "SQLITE_INTEGER": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_LIMIT_LENGTH": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "0"
+          }
+        },
+        "SQLITE_OK": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "0"
+          }
+        },
+        "SQLITE_OPEN_CREATE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "4"
+          }
+        },
+        "SQLITE_OPEN_NOMUTEX": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "32768"
+          }
+        },
+        "SQLITE_OPEN_READONLY": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_OPEN_READWRITE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "2"
+          }
+        },
+        "SQLITE_OPEN_URI": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "64"
+          }
+        },
+        "SQLITE_PREPARE_PERSISTENT": {
+          "declared": "u32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_ROW": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "100"
+          }
+        },
+        "SQLITE_STMTSTATUS_REPREPARE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "5"
+          }
+        },
+        "SQLITE_TEXT": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "3"
+          }
+        },
+        "SQLITE_TRANSIENT": {
+          "declared": "Ptr<void>",
+          "c_type": "void (*)(void *)",
+          "value": {
+            "pointer": "ffffffffffffffff"
+          }
+        }
+      }
+    },
+    "aarch64-windows-gnu": {
+      "headers": {
+        "native/sqlite3.h": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e"
+      },
+      "values": {
+        "SQLITE_BLOB": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "4"
+          }
+        },
+        "SQLITE_CANTOPEN": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "14"
+          }
+        },
+        "SQLITE_DONE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "101"
+          }
+        },
+        "SQLITE_FLOAT": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "2"
+          }
+        },
+        "SQLITE_INTEGER": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_LIMIT_LENGTH": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "0"
+          }
+        },
+        "SQLITE_OK": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "0"
+          }
+        },
+        "SQLITE_OPEN_CREATE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "4"
+          }
+        },
+        "SQLITE_OPEN_NOMUTEX": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "32768"
+          }
+        },
+        "SQLITE_OPEN_READONLY": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_OPEN_READWRITE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "2"
+          }
+        },
+        "SQLITE_OPEN_URI": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "64"
+          }
+        },
+        "SQLITE_PREPARE_PERSISTENT": {
+          "declared": "u32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_ROW": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "100"
+          }
+        },
+        "SQLITE_STMTSTATUS_REPREPARE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "5"
+          }
+        },
+        "SQLITE_TEXT": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "3"
+          }
+        },
+        "SQLITE_TRANSIENT": {
+          "declared": "Ptr<void>",
+          "c_type": "void (*)(void *)",
+          "value": {
+            "pointer": "ffffffffffffffff"
+          }
+        }
+      }
+    },
+    "x86_64-linux-gnu": {
+      "headers": {
+        "native/sqlite3.h": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e"
+      },
+      "values": {
+        "SQLITE_BLOB": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "4"
+          }
+        },
+        "SQLITE_CANTOPEN": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "14"
+          }
+        },
+        "SQLITE_DONE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "101"
+          }
+        },
+        "SQLITE_FLOAT": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "2"
+          }
+        },
+        "SQLITE_INTEGER": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_LIMIT_LENGTH": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "0"
+          }
+        },
+        "SQLITE_OK": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "0"
+          }
+        },
+        "SQLITE_OPEN_CREATE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "4"
+          }
+        },
+        "SQLITE_OPEN_NOMUTEX": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "32768"
+          }
+        },
+        "SQLITE_OPEN_READONLY": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_OPEN_READWRITE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "2"
+          }
+        },
+        "SQLITE_OPEN_URI": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "64"
+          }
+        },
+        "SQLITE_PREPARE_PERSISTENT": {
+          "declared": "u32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_ROW": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "100"
+          }
+        },
+        "SQLITE_STMTSTATUS_REPREPARE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "5"
+          }
+        },
+        "SQLITE_TEXT": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "3"
+          }
+        },
+        "SQLITE_TRANSIENT": {
+          "declared": "Ptr<void>",
+          "c_type": "void (*)(void *)",
+          "value": {
+            "pointer": "ffffffffffffffff"
+          }
+        }
+      }
+    },
+    "x86_64-linux-musl": {
+      "headers": {
+        "native/sqlite3.h": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e"
+      },
+      "values": {
+        "SQLITE_BLOB": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "4"
+          }
+        },
+        "SQLITE_CANTOPEN": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "14"
+          }
+        },
+        "SQLITE_DONE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "101"
+          }
+        },
+        "SQLITE_FLOAT": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "2"
+          }
+        },
+        "SQLITE_INTEGER": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_LIMIT_LENGTH": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "0"
+          }
+        },
+        "SQLITE_OK": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "0"
+          }
+        },
+        "SQLITE_OPEN_CREATE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "4"
+          }
+        },
+        "SQLITE_OPEN_NOMUTEX": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "32768"
+          }
+        },
+        "SQLITE_OPEN_READONLY": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_OPEN_READWRITE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "2"
+          }
+        },
+        "SQLITE_OPEN_URI": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "64"
+          }
+        },
+        "SQLITE_PREPARE_PERSISTENT": {
+          "declared": "u32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_ROW": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "100"
+          }
+        },
+        "SQLITE_STMTSTATUS_REPREPARE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "5"
+          }
+        },
+        "SQLITE_TEXT": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "3"
+          }
+        },
+        "SQLITE_TRANSIENT": {
+          "declared": "Ptr<void>",
+          "c_type": "void (*)(void *)",
+          "value": {
+            "pointer": "ffffffffffffffff"
+          }
+        }
+      }
+    },
+    "x86_64-macos": {
+      "headers": {
+        "native/sqlite3.h": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e"
+      },
+      "values": {
+        "SQLITE_BLOB": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "4"
+          }
+        },
+        "SQLITE_CANTOPEN": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "14"
+          }
+        },
+        "SQLITE_DONE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "101"
+          }
+        },
+        "SQLITE_FLOAT": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "2"
+          }
+        },
+        "SQLITE_INTEGER": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_LIMIT_LENGTH": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "0"
+          }
+        },
+        "SQLITE_OK": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "0"
+          }
+        },
+        "SQLITE_OPEN_CREATE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "4"
+          }
+        },
+        "SQLITE_OPEN_NOMUTEX": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "32768"
+          }
+        },
+        "SQLITE_OPEN_READONLY": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_OPEN_READWRITE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "2"
+          }
+        },
+        "SQLITE_OPEN_URI": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "64"
+          }
+        },
+        "SQLITE_PREPARE_PERSISTENT": {
+          "declared": "u32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_ROW": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "100"
+          }
+        },
+        "SQLITE_STMTSTATUS_REPREPARE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "5"
+          }
+        },
+        "SQLITE_TEXT": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "3"
+          }
+        },
+        "SQLITE_TRANSIENT": {
+          "declared": "Ptr<void>",
+          "c_type": "void (*)(void *)",
+          "value": {
+            "pointer": "ffffffffffffffff"
+          }
+        }
+      }
+    },
+    "x86_64-windows-gnu": {
+      "headers": {
+        "native/sqlite3.h": "9e69a1353a4288450b0d5239ede11fc7f1f4c8e5eb07491fc8317eacb5b7de7e"
+      },
+      "values": {
+        "SQLITE_BLOB": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "4"
+          }
+        },
+        "SQLITE_CANTOPEN": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "14"
+          }
+        },
+        "SQLITE_DONE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "101"
+          }
+        },
+        "SQLITE_FLOAT": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "2"
+          }
+        },
+        "SQLITE_INTEGER": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_LIMIT_LENGTH": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "0"
+          }
+        },
+        "SQLITE_OK": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "0"
+          }
+        },
+        "SQLITE_OPEN_CREATE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "4"
+          }
+        },
+        "SQLITE_OPEN_NOMUTEX": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "32768"
+          }
+        },
+        "SQLITE_OPEN_READONLY": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_OPEN_READWRITE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "2"
+          }
+        },
+        "SQLITE_OPEN_URI": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "64"
+          }
+        },
+        "SQLITE_PREPARE_PERSISTENT": {
+          "declared": "u32",
+          "c_type": "int",
+          "value": {
+            "int": "1"
+          }
+        },
+        "SQLITE_ROW": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "100"
+          }
+        },
+        "SQLITE_STMTSTATUS_REPREPARE": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "5"
+          }
+        },
+        "SQLITE_TEXT": {
+          "declared": "i32",
+          "c_type": "int",
+          "value": {
+            "int": "3"
+          }
+        },
+        "SQLITE_TRANSIENT": {
+          "declared": "Ptr<void>",
+          "c_type": "void (*)(void *)",
+          "value": {
+            "pointer": "ffffffffffffffff"
+          }
+        }
+      }
+    }
+  }
+}

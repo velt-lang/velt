@@ -378,6 +378,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup
+      # The whole gate builds packages/sqlite's C sources (crates/xtask/src/zig.rs).
+      - uses: ./.github/actions/zig
+        with:
+          working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
       - name: cargo xtask check --full
         shell: bash
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}

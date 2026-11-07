@@ -38,6 +38,7 @@ mod repeat;
 mod requeue_tests;
 mod sweep;
 mod timing_lint;
+mod zig;
 
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -306,6 +307,9 @@ struct FlakeGuards {
     repeat: Vec<String>,
     /// `VELT_PACKAGES` for Windows: `""` none, `"all"`, or names ([`os::windows_packages`]).
     windows_packages: String,
+    /// `VELT_GOLDEN` of the apps that build C `sources`, for Windows with their `velt test`:
+    /// `""` none ([`zig::windows_apps`]).
+    windows_apps: String,
 }
 
 impl FlakeGuards {
@@ -318,9 +322,14 @@ impl FlakeGuards {
             "" => "none",
             other => other,
         };
+        let apps = match self.windows_apps.as_str() {
+            "" => "none",
+            other => other,
+        };
         format!(
             "  repeated under load (cargo xtask repeat): {repeat}\n  \
-             package tests on Windows (pull request): {packages}\n"
+             package tests on Windows (pull request): {packages}\n  \
+             apps with C sources on Windows (pull request): {apps}\n"
         )
     }
 }
@@ -331,6 +340,7 @@ fn flake_guards(root: &Path, args: &Args) -> FlakeGuards {
     let none = FlakeGuards {
         repeat: vec![],
         windows_packages: String::new(),
+        windows_apps: String::new(),
     };
     if args.full {
         return none;
@@ -354,6 +364,7 @@ fn flake_guards(root: &Path, args: &Args) -> FlakeGuards {
     FlakeGuards {
         repeat,
         windows_packages: os::windows_packages(&paths, &skip),
+        windows_apps: zig::windows_apps(&paths, &skip),
     }
 }
 
@@ -392,7 +403,8 @@ fn precheck_paths(root: &Path, args: &Args) -> Result<(Vec<String>, String), Str
 /// the WebAssembly goldens run in shards per OS (`golden_shards`, `wasm_shards`). After a push to
 /// `main`, `main_os` lists the OSes of the `main` job: Linux (it saves the build cache) and,
 /// when [`Plan::after_merge`] says so, Windows and macOS for the whole gate. `c_headers` says
-/// whether the `c-headers` job runs ([`Plan::c_headers`]).
+/// whether the `c-headers` job runs ([`Plan::c_headers`]); `zig_tests` and `zig_goldens` whether
+/// the `test` and `golden` parts build C `sources` and so get the cached zig ([`zig`]).
 fn github_output_text(plan: &Plan) -> String {
     let flag = |b: bool| if b { "true" } else { "false" };
     // Linux, always, stays first.
@@ -438,6 +450,11 @@ fn github_output_text(plan: &Plan) -> String {
         text.push_str(&format!("{output}={value}\n"));
     }
     text.push_str(&format!("c_headers={}\n", flag(plan.c_headers)));
+    text.push_str(&format!(
+        "zig_tests={}\nzig_goldens={}\n",
+        flag(zig::tests(plan)),
+        flag(zig::goldens(plan))
+    ));
     let wasm = if plan.wasm { "" } else { "skip" };
     text.push_str(&format!("wasm_goldens={wasm}\n"));
     text
@@ -467,8 +484,10 @@ fn github_outputs(plan: &Plan, flake: &FlakeGuards) -> Result<(), String> {
     append(
         "GITHUB_OUTPUT",
         &format!(
-            "repeat={repeat}\nwindows_packages={}\n",
-            flake.windows_packages
+            "repeat={repeat}\nwindows_packages={}\nwindows_apps={}\nwindows_zig={}\n",
+            flake.windows_packages,
+            flake.windows_apps,
+            zig::windows(&flake.windows_packages, &flake.repeat) || !flake.windows_apps.is_empty()
         ),
     )?;
     append(
@@ -693,6 +712,29 @@ name = \"a\"
         assert!(github_output_text(&plan).contains("\nc_headers=false\n"));
         plan.c_headers = true;
         assert!(github_output_text(&plan).contains("\nc_headers=true\n"));
+    }
+
+    #[test]
+    fn ci_learns_which_parts_build_c_sources() {
+        let mut plan = Plan::everything("test");
+        let text = github_output_text(&plan);
+        assert!(
+            text.contains("\nzig_tests=true\nzig_goldens=true\n"),
+            "{text}"
+        );
+        plan.veltc = plan::Veltc::Some(["lint".to_string()].into());
+        plan.goldens = plan::Goldens::Matching(["tests/golden/std/".to_string()].into());
+        let text = github_output_text(&plan);
+        assert!(
+            text.contains("\nzig_tests=false\nzig_goldens=false\n"),
+            "{text}"
+        );
+        plan.veltc = plan::Veltc::Some(["packages".to_string()].into());
+        let text = github_output_text(&plan);
+        assert!(
+            text.contains("\nzig_tests=true\nzig_goldens=false\n"),
+            "{text}"
+        );
     }
 
     #[test]

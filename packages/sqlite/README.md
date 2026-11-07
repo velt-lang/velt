@@ -1,8 +1,7 @@
 # sqlite
 
-`import { open, Database, Statement, SqliteError } from "sqlite"`. Embedded SQLite, compiled
-into the package's native library (Rust over rusqlite, no system library), with an API close to
-better-sqlite3. The package also holds a SQLite engine written in Velt, `sqlite/engine`
+`import { open, Database, Statement, SqliteError } from "sqlite"`. The real SQLite engine,
+called through `declare c` from plain Velt, with an API close to better-sqlite3. The package also holds a SQLite engine written in Velt, `sqlite/engine`
 (read-only for now: [docs/engine.md](docs/engine.md)).
 
 ```ts ignore
@@ -18,12 +17,22 @@ dependencies: {
 },
 ```
 
-The package has native code (a Rust crate in `native/`), which `velt` builds with cargo, so a
-Rust toolchain is needed. A git dependency builds it only when you allow that with
-`VELT_NATIVE_FROM_SOURCE=1` (it runs the crate's build scripts):
-`VELT_NATIVE_FROM_SOURCE=1 velt install`. A path dependency (this repository's examples use one)
-builds it the first time, into `packages/sqlite/target/velt-native/`, and again when it changes.
-The full guide: https://veltlang.com/docs/packages/sqlite/.
+The package binds the real SQLite engine through `declare c` (`src/sqlite3.velt`): list it in
+`allowNative`. SQLite 3.53.2's amalgamation is in `native/` (`sqlite3.c` and `sqlite3.h` as
+released; the version and checksums are in `package.velt`), built with the package by the pinned
+zig, with the compile options rusqlite's bundled build had: FTS3/FTS5, R-Tree, STAT4, DBSTAT,
+column metadata, foreign keys on by default. No system library is needed, and every platform gets
+the same SQLite. `c-headers.json` records the check of `src/sqlite3.velt` against `sqlite3.h` on
+every target (`velt native headers`, run with `tests/errors/` moved aside for now). SQLite's
+authors put the amalgamation in the public domain (the notice at the top of `sqlite3.c` and
+`sqlite3.h`), so using or shipping it carries no licence terms.
+
+A git dependency builds the package's C sources only when you allow it with
+`VELT_NATIVE_FROM_SOURCE=1` (it compiles code it fetched): `VELT_NATIVE_FROM_SOURCE=1 velt install`.
+A path dependency (this repository's examples use one) builds them the first time, into
+`packages/sqlite/target/velt-native/`, and again when they change. The first build downloads the
+pinned zig once (about 55 MB, kept for every later build) and then compiles SQLite once, about
+25 s on a loaded M-series Mac; later builds reuse the result.
 
 ([Packages with native code](https://veltlang.com/docs/book/native-packages/).) The driver is
 **synchronous**: a typical query takes microseconds, which is less than handing it to a thread
@@ -40,12 +49,12 @@ pool and back would cost. Run a long query inside `spawn(...)`.
   `all<T>(): T[]`, plus `runWith(params)`, `getWith<T>(params)` and `allWith<T>(params)`, and
   `close()`. `T` is usually inferred from the annotation (`const u: User | null = s.getWith(…)`).
   A statement releases itself when dropped, and preparing the same SQL again is a cache hit.
-- **Parameters** bind as their `JSON.stringify` text would (velt/db's `bindParams` hands
+- **Parameters** bind as their `JSON.stringify` text would (velt/db's `writeParams` hands
   numbers, strings, bools, `null` and `u8[]` to SQLite directly, without making the text). An object binds
   `:name`/`@name`/`$name` by field name (extra fields are ignored; a missing one throws
   `SQLITE_RANGE`). An array, or a single number or string, binds `?` by position. Mapping:
   integer → INTEGER, float → REAL, string → TEXT, bool → 0/1, null → NULL, `u8[]` → BLOB.
-- **Rows** are decoded by velt/db's `decodeRows` (as `JSON.parse<T>` would decode them), so a
+- **Rows** are read by velt/db's `readRows` (as `JSON.parse<T>` would decode them), so a
   column fills the field with the same name
   (rename with `AS`). INTEGER goes into integer fields exactly (all of i64) and into `f64`
   fields, REAL into `f64`, TEXT into `string`, BLOB into `u8[]`, NULL into `T | null`. A row
@@ -106,14 +115,16 @@ can't be used there).
 ## Layout
 
 - `src/lib.velt`: the API (re-exports); `src/database.velt`, `statement.velt`, `transaction.velt`,
-  `run_result.velt`, `errors.velt`: one type each; `src/native.velt`: the native library's
-  functions, the only `declare`s.
-- `native/`: the Rust crate (`velt_native_sqlite`), on the native SDK (`velt_native`) and
-  `velt_text` (row cursors and parameter sinks); its ABI is [docs/native_abi.md](docs/native_abi.md).
+  `run_result.velt`, `errors.velt`: one type each; `src/sqlite3.velt`: SQLite's C functions, the only
+  `declare c`s, with `src/connection.velt` (the handle and its gate), `src/book.velt` (its statement cache),
+  `src/info.velt` (what the cache remembers of a statement), `src/compiled.velt` (a stepped statement
+  as a `RowSource`) and `src/binder.velt` (a `ParamSink`).
 - `src/engine/`: the SQLite engine in Velt ([docs/engine.md](docs/engine.md); the design is
   [sqlite-engine.md](../../docs/internals/design/sqlite-engine.md)).
+- `native/`: SQLite's amalgamation, unchanged; to update it, replace both files with a release's,
+  update the version and checksums in `package.velt`, and run `velt native headers`.
 - `tests/`: `velt test` in this directory runs them (the repository runs it for every package,
   `crates/veltc/tests/packages.rs`).
 
-The package uses only public std APIs: velt/db (`decodeRows`, `bindParams`, `readRows`),
-velt/native (`IoResult`), velt/encoding (`utf8ByteAt`, `utf8Length`), velt/fs.
+The package uses only public std APIs: velt/db (`readRows`, `readRow`, `writeParams`),
+velt/ffi, velt/encoding (`utf8ByteAt`, `utf8Length`), velt/fs.

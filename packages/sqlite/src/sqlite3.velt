@@ -1,0 +1,120 @@
+// sqlite (internal): the functions of SQLite's C API the driver calls, and the constants it needs.
+// Every other file of the driver is plain Velt.
+
+import { CString, OutPtr, Ptr, StrBytes } from "velt/ffi";
+
+export declare c type sqlite3;
+export declare c type sqlite3_stmt;
+
+export declare c("sqlite3") function sqlite3_open_v2(
+  name: CString,
+  db: OutPtr<sqlite3>,
+  flags: i32,
+  vfs: null,
+): i32;
+export declare c("sqlite3") function sqlite3_close_v2(db: Ptr<sqlite3>): i32;
+export declare c("sqlite3") function sqlite3_busy_timeout(db: Ptr<sqlite3>, ms: i32): i32;
+export declare c("sqlite3") function sqlite3_extended_result_codes(db: Ptr<sqlite3>, on: i32): i32;
+export declare c("sqlite3") function sqlite3_extended_errcode(db: Ptr<sqlite3>): i32;
+export declare c("sqlite3") function sqlite3_errmsg(db: Ptr<sqlite3>): Ptr<u8>;
+export declare c("sqlite3") function sqlite3_changes64(db: Ptr<sqlite3>): i64;
+export declare c("sqlite3") function sqlite3_last_insert_rowid(db: Ptr<sqlite3>): i64;
+export declare c("sqlite3") function sqlite3_get_autocommit(db: Ptr<sqlite3>): i32;
+export declare c("sqlite3") function sqlite3_exec(
+  db: Ptr<sqlite3>,
+  sql: CString,
+  callback: null,
+  arg: null,
+  error: null,
+): i32;
+
+export declare c("sqlite3") function sqlite3_error_offset(db: Ptr<sqlite3>): i32;
+export declare c("sqlite3") function sqlite3_prepare_v3(
+  db: Ptr<sqlite3>,
+  sql: CString,
+  bytes: i32,
+  flags: u32,
+  stmt: OutPtr<sqlite3_stmt>,
+  tail: OutPtr<u8>,
+): i32;
+export declare c("sqlite3") function sqlite3_finalize(s: Ptr<sqlite3_stmt>): i32;
+export declare c("sqlite3") function sqlite3_step(s: Ptr<sqlite3_stmt>): i32;
+export declare c("sqlite3") function sqlite3_reset(s: Ptr<sqlite3_stmt>): i32;
+export declare c("sqlite3") function sqlite3_clear_bindings(s: Ptr<sqlite3_stmt>): i32;
+export declare c("sqlite3") function sqlite3_stmt_status(
+  s: Ptr<sqlite3_stmt>,
+  op: i32,
+  reset: i32,
+): i32;
+
+export declare c("sqlite3") function sqlite3_bind_parameter_count(s: Ptr<sqlite3_stmt>): i32;
+export declare c("sqlite3") function sqlite3_bind_parameter_name(
+  s: Ptr<sqlite3_stmt>,
+  i: i32,
+): Ptr<u8> | null;
+export declare c("sqlite3") function sqlite3_bind_null(s: Ptr<sqlite3_stmt>, i: i32): i32;
+export declare c("sqlite3") function sqlite3_bind_int64(s: Ptr<sqlite3_stmt>, i: i32, v: i64): i32;
+export declare c("sqlite3") function sqlite3_bind_double(s: Ptr<sqlite3_stmt>, i: i32, v: f64): i32;
+export declare c("sqlite3") function sqlite3_bind_text(
+  s: Ptr<sqlite3_stmt>,
+  i: i32,
+  v: StrBytes,
+  n: i32,
+  destructor: Ptr<void>,
+): i32;
+export declare c("sqlite3") function sqlite3_bind_blob64(
+  s: Ptr<sqlite3_stmt>,
+  i: i32,
+  v: readonly u8[],
+  n: u64,
+  destructor: Ptr<void>,
+): i32;
+export declare c("sqlite3") function sqlite3_errstr(code: i32): Ptr<u8>;
+
+export declare c("sqlite3") function sqlite3_column_count(s: Ptr<sqlite3_stmt>): i32;
+export declare c("sqlite3") function sqlite3_column_name(s: Ptr<sqlite3_stmt>, i: i32): Ptr<u8>;
+export declare c("sqlite3") function sqlite3_column_decltype(
+  s: Ptr<sqlite3_stmt>,
+  i: i32,
+): Ptr<u8> | null;
+export declare c("sqlite3") function sqlite3_column_type(s: Ptr<sqlite3_stmt>, i: i32): i32;
+export declare c("sqlite3") function sqlite3_column_int64(s: Ptr<sqlite3_stmt>, i: i32): i64;
+export declare c("sqlite3") function sqlite3_column_double(s: Ptr<sqlite3_stmt>, i: i32): f64;
+export declare c("sqlite3") function sqlite3_column_text(
+  s: Ptr<sqlite3_stmt>,
+  i: i32,
+): Ptr<u8> | null;
+export declare c("sqlite3") function sqlite3_column_blob(
+  s: Ptr<sqlite3_stmt>,
+  i: i32,
+): Ptr<u8> | null;
+export declare c("sqlite3") function sqlite3_column_bytes(s: Ptr<sqlite3_stmt>, i: i32): i32;
+
+export declare c("c") function memcpy(dst: u8[], src: Ptr<u8>, n: usize): Ptr<u8>;
+
+export declare c("sqlite3") function sqlite3_limit(db: Ptr<sqlite3>, id: i32, value: i32): i32;
+
+export declare c const SQLITE_OK: i32;
+export declare c const SQLITE_CANTOPEN: i32;
+export declare c const SQLITE_LIMIT_LENGTH: i32;
+export declare c const SQLITE_ROW: i32;
+export declare c const SQLITE_DONE: i32;
+
+export declare c const SQLITE_OPEN_READONLY: i32;
+export declare c const SQLITE_OPEN_READWRITE: i32;
+export declare c const SQLITE_OPEN_CREATE: i32;
+export declare c const SQLITE_OPEN_URI: i32;
+// One thread at a time holds a connection: the connection's gate (connection.velt) sees to that, so
+// SQLite need not lock around every call, which was about a fifth of a query's instructions.
+export declare c const SQLITE_OPEN_NOMUTEX: i32;
+
+export declare c const SQLITE_PREPARE_PERSISTENT: u32;
+export declare c const SQLITE_STMTSTATUS_REPREPARE: i32;
+
+export declare c const SQLITE_INTEGER: i32;
+export declare c const SQLITE_FLOAT: i32;
+export declare c const SQLITE_TEXT: i32;
+export declare c const SQLITE_BLOB: i32;
+
+/** `(sqlite3_destructor_type)-1`: SQLite copies what is bound before the call returns. */
+export declare c const SQLITE_TRANSIENT: Ptr<void>;

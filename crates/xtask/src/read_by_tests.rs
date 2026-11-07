@@ -22,7 +22,7 @@ pub(crate) const READ_BY_TESTS: &[(&str, &[&str], &[&str])] = &[
     // they select every `veltc` test).
     ("tests/std/", &[], &["std_tests"]),
     // `packages` runs `velt test` in every packages/<name>/ (building its native crate);
-    // `native_packages` publishes packages/sqlite through a local registry; example apps depend
+    // `native_packages` publishes http-server through a local registry; example apps depend
     // on packages by path. What else uses a package adds its tests
     // (crates/xtask/src/package_users.rs).
     (

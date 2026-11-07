@@ -454,7 +454,7 @@ Every library is a logical name in `native.c`, with one source per target:
 native: {
   c: {
     sqlite3: { sources: ["native/sqlite3.c"], headers: ["native/sqlite3.h"],
-               defines: { SQLITE_THREADSAFE: "2" } },
+               defines: { SQLITE_THREADSAFE: "1" } },
     pgwire: { crate: "native/" },                                  // Rust, built with cargo
     cblas: { system: { darwin: "framework:Accelerate", linux: "openblas", win32: "mkl_rt" } },
   },
@@ -682,6 +682,12 @@ no thread hops, and prove that `velt/net` and Velt's async carry real database p
   than made per command. Channel operations are what cost most in `velt_rt`; Postgres will meet the
   same.
 
+SQLite goes the other way (owner, 2026-11-04): it is a C library, so `packages/sqlite` calls the
+real engine through `declare c` and its Rust crate is gone; the engine written in Velt moves out
+later. `declare c`'s own numbers, per operation in instructions against the crate it replaced
+(rusqlite in brackets): insert in a transaction 0.53× (1.05×), point select 0.68× (1.13×), range
+select 0.94× (0.99×), autocommit insert 0.76× (1.02×).
+
 ## As built
 
 Step 1 lands in layers, each its own pull request:
@@ -779,9 +785,11 @@ Step 1 lands in layers, each its own pull request:
        `$VELT_HOME/cache/zig/` on first use (about 55 MB, 100 MB on Windows, 10 s), or `$VELT_ZIG` names one (CI,
        offline machines).
      - CI: the `c-headers` job checks every target from one Linux machine, only when a change
-       touches what it checks (`crates/xtask/src/c_headers.rs`), so nothing else
-       downloads zig; the nightly runs it whatever changed. Without `VELT_ZIG` the check
-       fails in CI instead of skipping, and the other test runs leave it out.
+       touches what it checks (`crates/xtask/src/c_headers.rs`); the nightly runs it whatever
+       changed. `VELT_ZIG_TESTS=1`, set only there, turns those tests on, and makes them fail
+       without `VELT_ZIG` instead of skipping; the other test runs leave them out. The jobs
+       whose tests build a package's C `sources` (packages/sqlite and what uses it) get the
+       cached zig as `VELT_ZIG` too, selected by the plan (`crates/xtask/src/zig.rs`).
    - 6a-2: declarations checked against headers in the packages a build has locally (the
      root, path dependencies, workspace members); registry and git packages come with 6b's
      digest.
@@ -914,9 +922,13 @@ Step 1 lands in layers, each its own pull request:
      digest of them per library (none for a library without), so a fetched package whose
      `defines` changed after its author's check is refused.
    - Not yet: the registry or CI rebuilding a bundle and comparing checksums (what reproducibility
-     is for); `packages/sqlite` on `sources`. Sources fetched from `git` or a `url` with a pinned
+     is for). Sources fetched from `git` or a `url` with a pinned
      hash are #2367's: its `fetch` is a key beside these fields, and only changes where `sources`
      are read from.
+   - `packages/sqlite` builds SQLite's amalgamation (`native/sqlite3.c`, 3.53.2 as released) with
+     rusqlite's `bundled` options as `defines`; `SQLITE_THREADSAFE=1` with each connection opened
+     `SQLITE_OPEN_NOMUTEX`, since the driver's gate keeps one thread in a connection. Its
+     `SQLITE_*` constants and `SQLITE_TRANSIENT` are `declare c const`s.
 8. C structs, in layers (plan on #2187). Layer 1, the language:
    - `declare c struct S { x: f64; y: f64; }` is a struct (`TypeDecl::c_struct`) of fields only:
      no methods, constructor, type parameters, defaults, optional, private or static fields,
