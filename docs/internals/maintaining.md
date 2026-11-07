@@ -172,15 +172,37 @@ not a reason for another round.
   steps of `.github/actions/setup`, shows up in the scheduled run after the merge, not in the
   queue. Fix it there first, as any red `main`; when a file turns out to differ on macOS, add it
   to the list.
-- `ci.yml`'s scheduled run checks the whole gate on Windows and macOS once a day, and opens or
-  updates the issue "main fails on <OS>" when that fails, with the commits since the last run that
-  passed; fix it first. A tag runs the same gate before the release publishes (`release.yml`). A
-  push to `main` (the `main` jobs in `ci.yml`) refreshes the build cache: on Linux every time, on
+- `ci.yml`'s scheduled run checks the whole gate on Windows and macOS once a day (without the
+  WebAssembly goldens, which the nightly's `wasm-goldens` runs there), and opens or updates the
+  issue "main fails on <OS>" when that fails or doesn't finish in the job's 180 minutes, with the
+  commits since the last run that passed; fix it first. A tag runs the same gate before the release
+  publishes (`release.yml`). A push to `main` (the `main` jobs in `ci.yml`) refreshes the build cache: on Linux every time, on
   Windows and macOS with the gate when the change touches the toolchain or the dependencies
   (`main-plan`: `cargo xtask affected --base HEAD^1`, the queue's own plan, since the queue tested
   the commit on its parent; rules in `crates/xtask/src/os.rs`). A commit no passing merge queue run
   tested (a direct push or an admin merge) runs every OS. Pull request and merge queue runs restore
   the cache but never save their own.
+- Clang's objects (`velt-clang-objects-<os>-<arch>-<run id>`, Linux) are a cache of their own. The
+  golden shards and the `check` job restore the newest entry; a day-old entry made shards about
+  twice as slow as a fresh one, and a `check` job 190-360 s slower. The nightly gate saves one from
+  an empty cache, which drops what no program uses any more. A queue entry saves no cache: its
+  shards and `check` job upload what they added as artifacts (`clang-objects.sh`, kept a day), and
+  the push to `main` from that entry adds them to the newest entry and saves it (the `main` job, a
+  few seconds). So a queue entry restores what the last merge compiled, and no job compiles
+  anything to refresh the cache; a push whose `main` run was replaced by a later one (only the
+  latest waiting push runs) is the exception, and the next one catches up. A build of every golden
+  on `main` would give the same cache without artifacts, but costs up to 14 minutes per push.
+  Only the two newest entries stay (the `main` job and `cache-prune` delete the rest), at about
+  115 MiB each, about 1% of the 10 GB limit. GitHub evicts what was used least recently once the
+  total passes that limit, and on 2026-11-07 that reached entries last used four hours earlier, so
+  a key that every job restores stays and one that sits idle doesn't.
+- The VIR identity (`veltc::eager_std_identity`, every golden built twice) runs whole in a pull
+  request's `test` job when the change can break it, and in the nightly gate. The queue runs all of
+  it only when the code loading std on demand changed (`VIR_IDENTITY_CODE` in
+  `crates/xtask/src/plan.rs`), one golden in 8 for the rest of what can reach it, and nothing
+  otherwise (`Plan::vir_identity_queue`, `VELT_VIR_IDENTITY`). What it can still miss there is a
+  difference that only appears against what landed after the pull request's last run, on a golden
+  outside the sample: the nightly finds that one.
 - A check the selection missed shows up in the merge queue; tighten the rule in
   `crates/xtask/src/plan.rs` (with a test in `plan_tests.rs`) rather than adding `ci:full`
   habitually.
