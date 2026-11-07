@@ -164,6 +164,84 @@ describe("a client that resets a streamed Response over HTTP/2", () => {
     }
   });
 
+  it("cancels a body that starts after the stream was reset", async () => {
+    const started = channel<string>();
+    const seen = channel<string>();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
+      await started.send("started");
+      await signal.whenAborted();
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          cancel: (reason) => {
+            seen.trySend("cancelled");
+          },
+        }),
+      );
+    });
+    const c = await Client.open(server.port);
+    try {
+      c.get(1, "/quiet");
+      await c.flush();
+      expect(await timeout(started.receive(), 5000)).toBe("started");
+      c.frame(3, 0, 1, [0, 0, 0, 8]);
+      await c.flush();
+      expect(await timeout(seen.receive(), 5000)).toBe("cancelled");
+      c.close();
+      await timeout(server.shutdown(), 5000);
+    } finally {
+      c.close();
+      server.close();
+    }
+  });
+
+  it("cancels a body with a length that starts after the connection ended", async () => {
+    const started = channel<string>();
+    const seen = channel<string>();
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      const signal = req.signal;
+      await started.send("started");
+      await signal.whenAborted();
+      return new Response(
+        new ReadableStream<Uint8Array>({
+          cancel: (reason) => {
+            seen.trySend("cancelled");
+          },
+        }),
+        { headers: { "content-length": "5" } },
+      );
+    });
+    const c = await Client.open(server.port);
+    try {
+      c.get(1, "/quiet");
+      await c.flush();
+      expect(await timeout(started.receive(), 5000)).toBe("started");
+      c.close();
+      expect(await timeout(seen.receive(), 5000)).toBe("cancelled");
+      await timeout(server.shutdown(), 5000);
+    } finally {
+      server.close();
+    }
+  });
+
+  it("echoes the request's body as the response's", async () => {
+    const server = await serve({ port: 0 }, async (req: Request): Promise<Response> => {
+      return new Response(req.body);
+    });
+    const c = await Client.open(server.port);
+    try {
+      c.headers(1, [":method", "POST", ":scheme", "http", ":path", "/", ":authority", "x"], false);
+      c.frame(0, 1, 1, utf8Encode("hello"));
+      await c.flush();
+      expect((await timeout(c.until(endOf(1)), 5000)).includes("hello")).toBe(true);
+      c.close();
+      await timeout(server.shutdown(), 5000);
+    } finally {
+      c.close();
+      server.close();
+    }
+  });
+
   it("ends an async generator when the connection closes", async () => {
     const seen = channel<string>();
     const started = channel<string>();
