@@ -5,7 +5,7 @@
 // freed).
 
 import "velt/lang/typed_array/bytes_view";
-import { ByteStream } from "velt/net/byte_stream";
+import { ByteStream, TryStream } from "velt/net/byte_stream";
 import {
   alertName,
   CLOSE_NOTIFY,
@@ -26,6 +26,8 @@ export const HANDSHAKE: u8 = 22;
 export const APPLICATION_DATA: u8 = 23;
 /** Not a content type: the stream ended with close_notify. */
 export const END: u8 = 0;
+/** Not a content type: no whole record has been read yet. */
+export const MORE: u8 = 255;
 
 /** The most content a record carries. */
 export const MAX_PLAIN: usize = 16384;
@@ -104,6 +106,19 @@ export class RecordReader {
    * throws it again.
    */
   async next(after: bool): Promise<u8> {
+    while (true) {
+      const type = this.step();
+      if (type != MORE) {
+        return type;
+      }
+      if (!(await this.readMore())) {
+        this.cut(after);
+      }
+    }
+  }
+
+  /** `next` from what has been read so far: MORE when no whole record is left in it. */
+  step(): u8 {
     if (this.ended) {
       return END;
     }
@@ -114,34 +129,24 @@ export class RecordReader {
     try {
       while (true) {
         const avail = this.rend - this.rstart;
-        if (avail >= HEADER) {
-          const at = this.rstart;
-          const len = ((this.buf[at + 3] as usize) << 8) | (this.buf[at + 4] as usize);
-          if (len > MAX_CIPHER) {
-            throw new TlsFailure(RECORD_OVERFLOW, `a record of ${len} bytes`);
-          }
-          if (avail >= HEADER + len) {
-            this.rstart = at + HEADER + len;
-            const type = this.open(at, len);
-            if (type != ALERT) {
-              return type;
-            }
-            if (this.alert()) {
-              return END;
-            }
-            continue;
-          }
+        if (avail < HEADER) {
+          return MORE;
         }
-        if (!(await this.readMore())) {
-          throw new TlsFailure(
-            CLOSE_NOTIFY,
-            !after
-              ? "the connection closed during the handshake"
-              : avail > 0
-                ? "the connection closed in the middle of a record"
-                : "the connection closed without close_notify",
-            false,
-          );
+        const at = this.rstart;
+        const len = ((this.buf[at + 3] as usize) << 8) | (this.buf[at + 4] as usize);
+        if (len > MAX_CIPHER) {
+          throw new TlsFailure(RECORD_OVERFLOW, `a record of ${len} bytes`);
+        }
+        if (avail < HEADER + len) {
+          return MORE;
+        }
+        this.rstart = at + HEADER + len;
+        const type = this.open(at, len);
+        if (type != ALERT) {
+          return type;
+        }
+        if (this.alert()) {
+          return END;
         }
       }
     } catch (e) {
@@ -150,6 +155,45 @@ export class RecordReader {
       }
       throw e;
     }
+  }
+
+  /** Whether `step` would find a whole record, or a failure in one, in what has been read. */
+  hasRecord(): bool {
+    const avail = this.rend - this.rstart;
+    if (avail < HEADER) {
+      return false;
+    }
+    const at = this.rstart;
+    const len = ((this.buf[at + 3] as usize) << 8) | (this.buf[at + 4] as usize);
+    return len > MAX_CIPHER || avail >= HEADER + len;
+  }
+
+  /** The transport ended where a record or close_notify was due: throws what that means. */
+  cut(after: bool) {
+    const failure = new TlsFailure(
+      CLOSE_NOTIFY,
+      !after
+        ? "the connection closed during the handshake"
+        : this.rend > this.rstart
+          ? "the connection closed in the middle of a record"
+          : "the connection closed without close_notify",
+      false,
+    );
+    this.failure = failure;
+    throw failure;
+  }
+
+  /**
+   * Reads what the transport has now behind the unread records: the number of bytes, or null at
+   * its end.
+   */
+  tryMore(t: TryStream): number | null {
+    this.makeRoom();
+    const got = t.tryRead(this.buf, this.rend as number, BUFFER as number);
+    if (got != null) {
+      this.rend += got as usize;
+    }
+    return got;
   }
 
   // The content type of the record at buf[at..at + 5 + len], its content decrypted in place.
@@ -211,9 +255,19 @@ export class RecordReader {
     throw new TlsFailure(d, `the server sent the alert ${alertName(d)} (${d})`, false);
   }
 
-  // Reads more of the transport behind the unread records: false at its end. Called only when
-  // no application data is waiting, so the unread records can move to the front.
+  // Reads more of the transport behind the unread records: false at its end.
   private async readMore(): Promise<bool> {
+    this.makeRoom();
+    const got = await this.t.readInto(this.buf.subarray(this.rend as number, BUFFER as number));
+    if (got == null) {
+      return false;
+    }
+    this.rend += got as usize;
+    return true;
+  }
+
+  // Moves the unread records to the front. Only when no application data is waiting.
+  private makeRoom() {
     if (this.rstart > 0 && this.pstart == this.pend) {
       const n = this.rend - this.rstart;
       for (let i: usize = 0; i < n; i++) {
@@ -224,11 +278,5 @@ export class RecordReader {
       this.pstart = 0;
       this.pend = 0;
     }
-    const got = await this.t.readInto(this.buf.subarray(this.rend as number, BUFFER as number));
-    if (got == null) {
-      return false;
-    }
-    this.rend += got as usize;
-    return true;
   }
 }
