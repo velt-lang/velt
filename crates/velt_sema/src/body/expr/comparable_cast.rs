@@ -52,6 +52,9 @@ impl FnCx<'_, '_> {
         if !record && !self.objects_overlap(h.ty, core, span, 0) {
             return Err(h);
         }
+        if !record && self.method_seen_as_value(h.ty, core) {
+            return Err(h);
+        }
         let from = h.ty;
         let source = self.place_text(&h);
         let view = self.through_any(h, target)?;
@@ -111,6 +114,9 @@ impl FnCx<'_, '_> {
         else {
             return Err(h);
         };
+        if self.method_seen_as_value(from, core) {
+            return Err(h);
+        }
         let weak = want.iter().all(|m| m.2);
         let shares = want.iter().any(|m| have.iter().any(|n| n.0 == m.0));
         if weak && !shares {
@@ -150,6 +156,8 @@ impl FnCx<'_, '_> {
         for (name, ty, optional) in &want {
             match (have.iter().find(|m| m.0 == *name), ty) {
                 (None, _) if !*optional => return false,
+                // An optional member where a required one is expected (TS2322).
+                (Some((_, _, true)), _) if !*optional => return false,
                 (Some((_, Some(x), _)), Some(y)) if !self.member_assigns(*x, *y, span) => {
                     return false;
                 }
@@ -164,12 +172,45 @@ impl FnCx<'_, '_> {
         if from == to {
             return true;
         }
+        // Types only: arrays compare by their elements, as TypeScript's do.
+        let elements = |s: &Self, t: TyId| match s.cx.ty.kind(s.cx.ty.core(t).unwrap_or(t)) {
+            TyKind::Array(e) => Some(*e),
+            _ => None,
+        };
+        if let (Some(x), Some(y)) = (elements(self, from), elements(self, to)) {
+            return self.member_assigns(x, y, span);
+        }
         let mark = self.cx.object_copies.mark();
         let mut probe = self.error_expr(span);
         probe.ty = from;
         let converts = self.try_coerce(probe, to).is_ok();
         self.cx.object_copies.rollback(mark);
         converts
+    }
+
+    /// Would a view of a `from` as a `to` read a method as a value it then calls? A method read
+    /// through `any` has no `this` yet (#823), and an object literal with methods is no value of
+    /// another interface: `from` shows that these stop at run time, so they stay refused.
+    fn method_seen_as_value(&mut self, from: TyId, to: TyId) -> bool {
+        let from = self.cx.ty.core(from).unwrap_or(from);
+        let (Some(have), Some(want)) = (self.object_members(from), self.object_members(to)) else {
+            return false;
+        };
+        if let TyKind::Dyn(d, _) = self.cx.ty.kind(from) {
+            if self.cx.literal_ifaces.contains(d) && matches!(self.cx.ty.kind(to), TyKind::Dyn(..)) {
+                return want.iter().any(|m| m.1.is_none());
+            }
+        }
+        if matches!(self.cx.ty.kind(to), TyKind::Dyn(..)) {
+            return false;
+        }
+        want.iter().any(|(name, ty, _)| {
+            have.iter().any(|m| m.0 == *name && m.1.is_none())
+                && ty.is_some_and(|t| {
+                    let t = self.cx.ty.core(t).unwrap_or(t);
+                    matches!(self.cx.ty.kind(t), TyKind::FnPtr { .. } | TyKind::Closure(_))
+                })
+        })
     }
 
     /// May a value of the object type `core` be a view of another object?

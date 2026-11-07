@@ -1,0 +1,6 @@
+// An optional tag is no required one (TS2322).
+type O = string & { __b?: "A" };
+type R = string & { __b: "A" };
+const o = "x" as O;
+const r: R = o;
+console.log(r);

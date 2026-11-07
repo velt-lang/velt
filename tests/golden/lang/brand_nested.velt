@@ -1,0 +1,6 @@
+// A brand's tag compares as its type does: arrays by their elements.
+type Tok<T> = string & { __t?: T[] };
+const n = "x" as Tok<number>;
+const u: Tok<unknown> = n;
+function take(t: Tok<unknown>) { return t.length; }
+console.log(u, take(n));

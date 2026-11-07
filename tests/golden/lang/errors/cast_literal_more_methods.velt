@@ -1,0 +1,5 @@
+// An object literal with more members than the interface it is cast to.
+const made = new Proxy({}, {});
+interface Cx { n: number; hello(): string; }
+const c = { n: 1, z: 2, hello() { return "h"; } } as Cx;
+console.log(c.hello());
