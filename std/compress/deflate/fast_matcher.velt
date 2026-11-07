@@ -1,0 +1,268 @@
+// velt/compress (internal): the window of the DEFLATE encoder and its fastest match finder, which
+// level 1 uses: no chains, the last position of each hash of six bytes, tried first, and of three.
+// A hit on six bytes finds the long match a chain would have walked to, so most positions need
+// one candidate, and the sizes stay near a search of the chains.
+//
+// A slot holds a position modulo 2^16, so the window slides without touching the table. A slot
+// left from long ago, or never written, then names some position in the window: its bytes are
+// compared as any others are, and what's in the window depends only on the input.
+
+import { BlockWriter, MATCH_SYMBOL } from "velt/compress/deflate/block_writer";
+import { u64x2, u8x16 } from "velt/simd";
+
+// Unchecked: `load` and `common` keep their 16-byte loads inside the window.
+declare function velt_simd_u8x16_load(from: u8[], at: u64): u8x16;
+declare function velt_simd_u8x16_xor(a: u8x16, b: u8x16): u8x16;
+declare function velt_simd_u8x16_as_u64x2(v: u8x16): u64x2;
+declare function velt_simd_u64x2_lane(v: u64x2, index: u64): u64;
+
+export const MIN_MATCH: i64 = 3;
+export const MAX_MATCH: i64 = 258;
+export const MAX_DIST: i64 = 32506;
+export const WINDOW: i64 = 65536;
+export const SYMBOL_LIMIT: i64 = 16383;
+/** A match of 3 bytes this far back or farther costs about what its literals do. */
+const FAR_THREE: i64 = 8192;
+const SLOT_BITS: u64 = 14;
+const SIX_BYTES: u64 = 0xffffffffffff;
+const THREE_BYTES: u64 = 0xffffff;
+const SIX_MULTIPLIER: u64 = 0x1e35a7bd1e35a7bd;
+const THREE_MULTIPLIER: u64 = 0x9e3779b1;
+/** A key is read from this many bytes of input, which `fill` must have from its position. */
+const KEY_BYTES: i64 = 6;
+
+/** The window, and the symbols of level 1. */
+export class FastMatcher extends BlockWriter {
+  /** The window holds input up to `fill`; symbols were chosen up to `pos`. */
+  fill: i64 = 0;
+  pos: i64 = 0;
+  /** Where the current block starts; below 0 once its start has slid out of the window. */
+  blockStart: i64 = 0;
+  /** What a position in the window adds to give its position in the stream, modulo 2^16. */
+  private bias: i64 = 0;
+  /** Slots of hashes of six bytes, then of three; empty above level 1. */
+  private slots: u16[];
+
+  constructor(fast: bool) {
+    super();
+    this.slots = fast ? new Array<u16>(2 << (SLOT_BITS as usize)).fill(0) : [];
+  }
+
+  /** The window moved `by` bytes down. */
+  slid(by: i64) {
+    this.fill -= by;
+    this.pos -= by;
+    this.blockStart -= by;
+    this.bias = (this.bias + by) & 0xffff;
+  }
+
+  /** Adds a literal to the block. */
+  literal(b: u8) {
+    this.syms[this.count] = b as u32;
+    this.count++;
+    this.litFreq[b as i64] += 1;
+  }
+
+  /** Adds a match of `len` bytes, `dist` back, to the block. */
+  match(len: i64, dist: i64) {
+    tally(this.syms, this.litFreq, this.distFreq, this.count, len, dist);
+    this.count++;
+  }
+
+  /**
+   * Chooses symbols up to `stop`. Only the positions a symbol starts at are entered, and the one
+   * before each match's end; the table of three bytes only where six found nothing.
+   */
+  fast(stop: i64) {
+    const w = this.window;
+    const slots = this.slots;
+    const syms = this.syms;
+    const litFreq = this.litFreq;
+    const distFreq = this.distFreq;
+    const fill = this.fill;
+    const bias = this.bias;
+    const room = fill - KEY_BYTES;
+    // Also the last position a 16-byte load can start at.
+    const tail = room < WINDOW - 16 ? room : WINDOW - 16;
+    const searched = stop <= tail ? stop : tail + 1;
+    // Below this, a longest match and a load past it stay inside what came in.
+    const clear = fill - MAX_MATCH - 16;
+    let count = this.count;
+    let pos = this.pos;
+    while (pos < searched) {
+      const x = load(w, pos);
+      const six = sixSlot(x);
+      const here = pos + bias;
+      const d6 = (here - (slots[six] as i64)) & 0xffff;
+      slots[six] = (here & 0xffff) as u16;
+      let len: i64 = 0;
+      let dist = d6;
+      if (reaches(d6) && ((load(w, pos - d6) ^ x) & SIX_BYTES) == 0) {
+        len = matchLength(w, pos - d6, pos, clear, fill);
+      } else {
+        const three = threeSlot(x);
+        dist = (here - (slots[three] as i64)) & 0xffff;
+        slots[three] = (here & 0xffff) as u16;
+        if (reaches(dist) && ((load(w, pos - dist) ^ x) & THREE_BYTES) == 0) {
+          len = matchLength(w, pos - dist, pos, clear, fill);
+          if (len == MIN_MATCH && dist >= FAR_THREE) {
+            len = 0;
+          }
+        }
+      }
+      if (len != 0) {
+        tally(syms, litFreq, distFreq, count, len, dist);
+        pos += len;
+        if (pos - 1 <= tail) {
+          const y = load(w, pos - 1);
+          const end = ((pos - 1 + bias) & 0xffff) as u16;
+          slots[sixSlot(y)] = end;
+          slots[threeSlot(y)] = end;
+        }
+      } else {
+        syms[count] = (x & 255) as u32;
+        litFreq[(x & 255) as i64] += 1;
+        pos++;
+      }
+      count++;
+      if (count == SYMBOL_LIMIT) {
+        this.count = count;
+        this.flushBlock(this.blockStart, pos, false);
+        this.blockStart = pos;
+        count = 0;
+      }
+    }
+    this.count = count;
+    while (pos < stop) {
+      this.literal(w[pos]);
+      pos++;
+      if (this.count == SYMBOL_LIMIT) {
+        this.flushBlock(this.blockStart, pos, false);
+        this.blockStart = pos;
+      }
+    }
+    this.pos = pos;
+  }
+}
+
+/**
+ * Puts a match of `len` bytes, `dist` back, at `syms[count]`, and counts its symbols. A symbol is
+ * a literal byte, or `MATCH_SYMBOL` with what the block's output needs, from bit 0: the length's
+ * code less 257 (5 bits) and the value of its extra bits (5), then the distance's code (5) and
+ * the value of its extra bits (13).
+ */
+function tally(syms: u32[], litFreq: u32[], distFreq: u32[], count: i64, len: i64, dist: i64) {
+  const x = (len - MIN_MATCH) as u64;
+  let symbol: u64;
+  let low: u64 = 0;
+  if (x < 8) {
+    symbol = x;
+  } else if (x == 255) {
+    symbol = 28;
+  } else {
+    const extra = 61 - (x.leadingZeros() as u64);
+    symbol = ((extra + 1) << 2) | ((x >> extra) & 3);
+    low = x & ((1 << extra) - 1);
+  }
+  litFreq[257 + (symbol as i64)] += 1;
+  const y = (dist - 1) as u64;
+  let code: u64 = y;
+  let far: u64 = 0;
+  if (y >= 4) {
+    const more = 62 - (y.leadingZeros() as u64);
+    code = ((more + 1) << 1) | ((y >> more) & 1);
+    far = y & ((1 << more) - 1);
+  }
+  distFreq[code as i64] += 1;
+  syms[count] = (symbol | (low << 5) | (code << 10) | (far << 15) | MATCH_SYMBOL) as u32;
+}
+
+/** Whether a distance from a slot can be used: 0 is the position itself. */
+function reaches(dist: i64): bool {
+  return ((dist - 1) as u64) < (MAX_DIST as u64);
+}
+
+/** The eight bytes at `at`, little-endian; 16 from it must be inside `w`. */
+function load(w: u8[], at: i64): u64 {
+  return velt_simd_u64x2_lane(velt_simd_u8x16_as_u64x2(velt_simd_u8x16_load(w, at as u64)), 0);
+}
+
+/** The slot of the low six bytes of `x`. */
+function sixSlot(x: u64): i64 {
+  return ((x << 16).wrappingMul(SIX_MULTIPLIER) >> (64 - SLOT_BITS)) as i64;
+}
+
+/** The slot of the low three bytes of `x`, above those of six. */
+function threeSlot(x: u64): i64 {
+  const h = (((x & THREE_BYTES) * THREE_MULTIPLIER) & 0xffffffff) >> (32 - SLOT_BITS);
+  return (h | (1 << SLOT_BITS)) as i64;
+}
+
+/** The match of `b` at `a`, with `common258` below `clear`, in input that ends at `fill`. */
+function matchLength(w: u8[], a: i64, b: i64, clear: i64, fill: i64): i64 {
+  if (b < clear) {
+    return common258(w, a, b);
+  }
+  const left = fill - b;
+  return common(w, a, b, left < MAX_MATCH ? left : MAX_MATCH);
+}
+
+/**
+ * `common` with a limit of `MAX_MATCH` and everything up to 16 bytes past it inside the input: as
+ * two bytes are known, the 16-byte steps end on the limit exactly.
+ */
+function common258(w: u8[], a: i64, b: i64): i64 {
+  let n: i64 = 2;
+  while (n < MAX_MATCH) {
+    const x = velt_simd_u8x16_as_u64x2(
+      velt_simd_u8x16_xor(
+        velt_simd_u8x16_load(w, (a + n) as u64),
+        velt_simd_u8x16_load(w, (b + n) as u64),
+      ),
+    );
+    const lo = velt_simd_u64x2_lane(x, 0);
+    if (lo != 0) {
+      return n + ((lo.trailingZeros() >> 3) as i64);
+    }
+    const hi = velt_simd_u64x2_lane(x, 1);
+    if (hi != 0) {
+      return n + 8 + ((hi.trailingZeros() >> 3) as i64);
+    }
+    n += 16;
+  }
+  return MAX_MATCH;
+}
+
+/**
+ * The bytes `w[a..]` and `w[b..]` (a < b) have in common, from the third (the first two are
+ * known to be), at most `max`: 16 at a time while the loads stay inside `w` (bytes past what
+ * came in may be compared, but the result is cut to `max`), then one at a time.
+ */
+export function common(w: u8[], a: i64, b: i64, max: i64): i64 {
+  let n: i64 = 2;
+  const wide = (w.length as i64) - 16 - b;
+  const most = max < wide ? max : wide;
+  while (n < most) {
+    const x = velt_simd_u8x16_as_u64x2(
+      velt_simd_u8x16_xor(
+        velt_simd_u8x16_load(w, (a + n) as u64),
+        velt_simd_u8x16_load(w, (b + n) as u64),
+      ),
+    );
+    const lo = velt_simd_u64x2_lane(x, 0);
+    if (lo != 0) {
+      n += (lo.trailingZeros() >> 3) as i64;
+      return n < max ? n : max;
+    }
+    const hi = velt_simd_u64x2_lane(x, 1);
+    if (hi != 0) {
+      n += 8 + (hi.trailingZeros() >> 3) as i64;
+      return n < max ? n : max;
+    }
+    n += 16;
+  }
+  while (n < max && w[a + n] == w[b + n]) {
+    n++;
+  }
+  return n < max ? n : max;
+}
