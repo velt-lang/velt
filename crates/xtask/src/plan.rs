@@ -14,158 +14,9 @@ use crate::package_users;
 use crate::read_by_tests::READ_BY_TESTS;
 use crate::sweep::{Sweep, FORMATTER_FILES, PARSER_FILES};
 
-/// Crates whose change can change what any compiled Velt program does: every end-to-end test
-/// runs. (A crate not listed here or in [`TOOLING`] is treated like these.)
-const PIPELINE: &[&str] = &[
-    "velt_common",
-    "velt_syntax",
-    "velt_sema",
-    // Which modules a program is made of (std, packages, the globals it loads).
-    "velt_loader",
-    "velt_vir",
-    "velt_codegen_cl",
-    "velt_codegen_llvm",
-    "velt_opt",
-    "velt_link",
-    "velt_rt",
-    "velt_rt_host",
-    "velt_rt_shared",
-    "velt_native",
-    "velt_native_macros",
-    "veltc",
-];
-
-/// The code that describes variables for debuggers: a change checks every golden with it.
-const DEBUG_VARS_CODE: &[&str] = &[
-    "crates/velt_vir/src/lower/debug_vars.rs",
-    "crates/velt_vir/src/verify/debug.rs",
-    "crates/velt_vir/src/vir/debug.rs",
-    "crates/veltc/tests/debug_vars.rs",
-];
-
-/// Crates that don't change compiled programs, with the `veltc` integration test binaries
-/// (crates/veltc/tests/<name>.rs) that exercise them. `veltc`'s unit tests always run with them.
-const TOOLING: &[(&str, &[&str])] = &[
-    ("velt_lsp", &[]),
-    ("velt_doc", &[]),
-    ("velt_tscompat", &["ts_compat", "lint"]),
-    ("velt_lint", &["lint", "ts_compat"]),
-    ("velt_fmt", &["templates", "cli_package"]),
-    (
-        "vpm",
-        &[
-            "cli_package",
-            "registry_cli",
-            "native_packages",
-            "templates",
-            "install_layout",
-            // `velt check --ts-compat` in a package reads `tsCompat` from the manifest.
-            "ts_compat",
-            // `velt check --perf` reads `lint` and `tsCompat` from the manifest.
-            "lint",
-            // `velt test --locked` resolves each example app as a package.
-            "example_apps",
-            // `velt test` in each of the repository's packages (path dependencies, native code).
-            "packages",
-        ],
-    ),
-    ("velt_registry", &["registry_cli", "cli_package"]),
-    ("velt_http", &["registry_cli", "cli_package"]),
-    // `velt target add`, and the `velt` field `velt new` writes and every command checks.
-    (
-        "velt_toolchain",
-        &["cli_package", "templates", "install_layout"],
-    ),
-    // A separate binary; its tests run the launcher against fake releases.
-    ("velt_launcher", &[]),
-    (
-        "velt_rt_wasm",
-        &[
-            "wasm_goldens",
-            "playground",
-            "workers",
-            "cloudflare",
-            "workerd",
-            "registry_worker",
-        ],
-    ),
-];
-
-/// Packages that compile or read a crate's sources by path, which the dependency graph doesn't
-/// show (`[lib] path`, `build = …`, `#[path]`, tests reading the sources as text): a change to
-/// the crate, comments included, runs their tests too.
-///
-/// velt_common's `hook_replaces` test reads the sources of the crates that emit code (a use of a
-/// runtime extern a std hook replaces) and velt_rt's (the externs' definitions), #2197.
-const SHARED_SOURCES: &[(&str, &[&str])] = &[
-    (
-        "velt_rt",
-        &[
-            "velt_rt_host",
-            "velt_rt_shared",
-            "velt_rt_wasm",
-            "velt_common",
-        ],
-    ),
-    // velt_rt's std_externs test reads velt_rt_wasm's `extern "C"` definitions.
-    ("velt_rt_wasm", &["velt_rt"]),
-    // velt_codegen_llvm's tests build their programs with velt_opt's test builders.
-    ("velt_opt", &["velt_codegen_llvm", "velt_common"]),
-    ("velt_sema", &["velt_common"]),
-    ("velt_vir", &["velt_common"]),
-    ("velt_codegen_llvm", &["velt_common"]),
-    ("velt_codegen_cl", &["velt_common"]),
-];
-
-/// `vpm` resolves imports and packages for every program, so it runs the goldens too.
-const GOLDENS_TOO: &[&str] = &["vpm"];
-
-/// Files that build WebAssembly besides those with `wasm` in their path (crates/velt_rt_wasm,
-/// crates/velt_link/src/wasm.rs, the `wasm_goldens` test): a change to them runs the
-/// WebAssembly goldens ([`Plan::wasm`]).
-const WASM_TOO: &[&str] = &[
-    "crates/velt_codegen_llvm/src/target.rs",
-    "crates/velt_codegen_llvm/src/llc.rs",
-];
-
-/// Changes to these select everything.
-const EVERYTHING: &[&str] = &[
-    "Cargo.toml",
-    "Cargo.lock",
-    "rust-toolchain.toml",
-    ".cargo/",
-    ".config/",
-    ".github/workflows/",
-    ".github/actions/",
-    "scripts/",
-    "crates/xtask/",
-];
-
-/// The differential tester (`tests/difftest`): a crate of its own outside the workspace, which
-/// drives the `velt` binary as a black box and depends on no workspace crate. Its changes need
-/// only its own build, lints and unit tests.
-pub(crate) const DIFFTEST: &str = "tests/difftest/";
-
-/// The VS Code extension, a Node package outside the Rust workspace.
-pub(crate) const VSCODE: &str = "editors/vscode/";
-
-/// Changes to these need no check.
-const NOTHING: &[&str] = &[
-    "LICENSE-APACHE",
-    "LICENSE-MIT",
-    "NOTICE",
-    "CODE_OF_CONDUCT.md",
-    "CONTRIBUTING.md",
-    "CLAUDE.md",
-    "ROADMAP.md",
-    "SECURITY.md",
-    ".gitignore",
-    ".gitattributes",
-    ".github/CODEOWNERS",
-    ".github/pull_request_template.md",
-    ".github/ISSUE_TEMPLATE/",
-    ".claude/",
-];
+#[path = "plan_rules.rs"]
+mod rules;
+pub(crate) use rules::*;
 
 /// Which `veltc` tests run besides the end-to-end goldens.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -201,9 +52,12 @@ pub struct Plan {
     /// `velt fmt --check std examples packages`, and std-lint.
     pub velt_fmt: bool,
     /// Every golden's VIR, std modules loaded up front and on demand, compared
-    /// (`veltc::eager_std_identity`, lazy-std.md "Loading on demand"): when sema, the loader,
-    /// lowering or std changes.
+    /// (`veltc::eager_std_identity`, lazy-std.md "Loading on demand"): when what reads the
+    /// sources, sema, the loader, lowering or std changes ([`VIR_IDENTITY_CRATES`]).
     pub vir_identity: bool,
+    /// The merge queue compares every golden too, not a sample: the code that loads std on demand
+    /// changed ([`VIR_IDENTITY_CODE`]).
+    pub vir_identity_all: bool,
     /// The native crates of the repository's packages (`packages/<name>/native`, outside the
     /// workspace): `cargo fmt` and clippy. (`veltc::packages` runs their tests.)
     pub native_crates: bool,
@@ -232,8 +86,8 @@ pub struct Plan {
     /// under wasmtime: about half of the test time) run with all of `veltc`'s tests. A change
     /// runs them only when it touches WebAssembly code ([`WASM_TOO`]); a changed golden alone
     /// still runs on WebAssembly (its `veltc` tests are selected by name). The nightly run checks
-    /// them in full on every OS, as do the checks after merging when they run. `--full` runs them
-    /// unless `VELT_WASM_GOLDENS=skip`, which the merge queue sets from the change's plan.
+    /// them in full on every OS. `--full` runs them unless `VELT_WASM_GOLDENS=skip`, which the
+    /// merge queue sets from the change's plan and the checks after merging always set.
     pub wasm: bool,
     /// `declare c` checked against C headers on every target through the pinned zig: the
     /// `c-headers` job in ci.yml (crates/xtask/src/c_headers.rs). `--full` knows no changes, so it doesn't run it.
@@ -258,6 +112,7 @@ impl Plan {
             goldens: Goldens::All,
             velt_fmt: true,
             vir_identity: true,
+            vir_identity_all: true,
             native_crates: true,
             difftest: true,
             vscode: true,
@@ -296,6 +151,7 @@ impl Plan {
             goldens: Goldens::None,
             velt_fmt: false,
             vir_identity: false,
+            vir_identity_all: false,
             native_crates: false,
             difftest: false,
             vscode: false,
@@ -322,6 +178,12 @@ impl Plan {
         plan.debug_vars_all = paths
             .iter()
             .any(|p| !comment_only.contains(p) && DEBUG_VARS_CODE.contains(&p.as_str()));
+        plan.vir_identity_all = paths.iter().any(|p| {
+            !comment_only.contains(p)
+                && (VIR_IDENTITY_CODE.iter())
+                    .any(|c| p == c || c.ends_with('/') && p.starts_with(c))
+        });
+        plan.vir_identity = plan.vir_identity_all;
         plan.wasm = paths.iter().any(|p| is_wasm(p));
         plan.c_headers = paths
             .iter()
@@ -341,6 +203,7 @@ impl Plan {
                         sweep: plan.sweep,
                         fmt_corpus: plan.fmt_corpus,
                         debug_vars_all: plan.debug_vars_all,
+                        vir_identity_all: plan.vir_identity_all,
                         macos: os::macos_reason(&code),
                         after_merge: os::after_merge_reason(paths),
                         // The WebAssembly goldens stay with the nightly unless the change builds
@@ -463,8 +326,7 @@ impl Plan {
         if affected.contains("velt_fmt") {
             self.velt_fmt = true;
         }
-        self.vir_identity |=
-            (["velt_sema", "velt_loader", "velt_vir"].iter()).any(|c| changed.contains(*c));
+        self.vir_identity |= VIR_IDENTITY_CRATES.iter().any(|c| changed.contains(*c));
         let tooling = |name: &str| TOOLING.iter().find(|(t, _)| *t == name);
         // A pipeline crate (or one the rules don't know) changes compiled programs.
         let pipeline = changed
@@ -580,6 +442,19 @@ impl Plan {
         }
     }
 
+    /// `VELT_VIR_IDENTITY` for the merge queue, which runs `--full` and so knows no changes. A
+    /// change that can break the comparison already ran it on every golden in its pull request's
+    /// `test` job, so the queue, which adds only what landed since, runs all of it for the code
+    /// loading std on demand, a sample (`sample`) for the rest of [`Self::vir_identity`], and
+    /// nothing (`skip`) otherwise. The nightly gate leaves it unset: every golden.
+    pub fn vir_identity_queue(&self) -> &'static str {
+        match (self.vir_identity_all, self.vir_identity) {
+            (true, _) => "",
+            (false, true) => "sample",
+            (false, false) => "skip",
+        }
+    }
+
     /// The environment variables that tell velt_syntax's robustness test how to cut the goldens
     /// (crates/velt_syntax/tests/robustness.rs) and velt_fmt's corpus tests what to format
     /// (crates/velt_fmt/tests/common/mod.rs); none for their defaults, so a `VELT_ROBUSTNESS` set by
@@ -655,8 +530,12 @@ impl Plan {
             yes(self.velt_fmt)
         ));
         out.push_str(&format!(
-            "  VIR identity, std loaded up front and on demand: {}\n",
-            yes(self.vir_identity)
+            "  VIR identity, std loaded up front and on demand: {}, in the merge queue {}\n",
+            yes(self.vir_identity),
+            match self.vir_identity_queue() {
+                "" => "every golden",
+                value => value,
+            }
         ));
         out.push_str(&format!(
             "  packages/*/native (fmt, clippy): {}\n",

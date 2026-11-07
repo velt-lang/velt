@@ -10,7 +10,7 @@
 # everything, the parser's robustness test cutting every golden at every character too (add it
 # before pushing, or close and reopen the pull request). The WebAssembly goldens run only when
 # the change touches WebAssembly code, in pull requests and in the queue; the nightly runs them
-# all (on Linux, Windows and macOS), and so do the checks after merging when they run.
+# all (on Linux, Windows and macOS). The checks after merging leave them to it.
 #
 # The merge queue checks everything against the pull request merged with the latest main: per OS
 # one job lints and tests, and the goldens (debug and release mode) are built once and checked in
@@ -26,8 +26,9 @@
 # fails, with the commits since the last run that passed): runners are the limit, and the runtime,
 # code generation and linking have met those OSes in the queue already. A break only macOS shows
 # in any other code first appears there, after the merge. A tag runs it again before
-# a release (release.yml). Each push to main refreshes the build cache every other run restores (a
-# cache saved on a pull request or queue branch can't be restored anywhere else), on Windows and
+# a release (release.yml). Each push to main refreshes the build cache and, on Linux, clang's objects
+# for the goldens, which every other run restores (a cache saved on a pull request or queue branch
+# can't be restored anywhere else), on Windows and
 # macOS too when the toolchain or the dependencies changed, and a commit no passing queue run
 # tested checks every OS.
 name: ci
@@ -251,6 +252,8 @@ jobs:
       debug_vars: ${{ steps.plan.outputs.debug_vars }}
       # `skip` unless the change touches WebAssembly code.
       wasm_goldens: ${{ steps.plan.outputs.wasm_goldens }}
+      # How much of the VIR identity runs: empty for all of it, `sample`, or `skip`.
+      vir_identity: ${{ steps.plan.outputs.vir_identity }}
       # `true` when the change touches what the header check checks (`c-headers`).
       c_headers: ${{ steps.plan.outputs.c_headers }}
       # The golden shards and the WebAssembly goldens' shards of each OS (crates/xtask/src/os.rs).
@@ -314,6 +317,7 @@ jobs:
       VELT_FMT_CORPUS: ${{ needs.queue-plan.outputs.fmt_corpus }}
       VELT_FMT_CORPUS_FILES: ${{ needs.queue-plan.outputs.fmt_corpus_files }}
       VELT_DEBUG_VARS: ${{ needs.queue-plan.outputs.debug_vars }}
+      VELT_VIR_IDENTITY: ${{ needs.queue-plan.outputs.vir_identity }}
       # The WebAssembly goldens run in shards of their own (`queue-golden`).
       VELT_WASM_GOLDENS: skip
     # The slowest job (Windows) took 58 to 74 minutes on 2026-11-07, and 75 on a slower runner,
@@ -347,6 +351,23 @@ jobs:
           # The Worker test fails instead of skipping when the packages are missing (Linux).
           VELT_WORKERD: ${{ runner.os == 'Linux' && '1' || '' }}
         run: cargo xtask check --full --part lint,test --base HEAD^1
+      # For the push to main that follows (`clang-objects`): a failure here must not fail the entry.
+      - name: the objects clang compiled (Linux)
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: bash .github/actions/setup/clang-objects.sh pack clang-objects.tar
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        continue-on-error: true
+        timeout-minutes: 5
+        with:
+          name: clang-objects-check
+          path: clang-objects.tar
+          compression-level: 1
+          retention-days: 1
+          overwrite: true
+          if-no-files-found: ignore
       - if: failure()
         uses: ./.github/actions/fail-fast
         with:
@@ -389,20 +410,23 @@ jobs:
       contents: read
     outputs:
       os: ${{ steps.plan.outputs.main_os }}
+      # The queue run that passed on this commit, whose artifacts hold what clang compiled.
+      queue_run: ${{ steps.queued.outputs.run }}
     steps:
       - id: queued
         env:
           GH_TOKEN: ${{ github.token }}
           SHA: ${{ github.sha }}
         run: |
-          runs=
+          runs= run=
           for _ in 1 2 3; do
-            runs=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SHA&event=merge_group&status=success" \
-              --jq .total_count) && break
+            found=$(gh api "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs?head_sha=$SHA&event=merge_group&status=success" \
+              --jq '"\(.total_count) \(.workflow_runs[0].id // "")"') && { read -r runs run <<< "$found"; break; }
             runs=; sleep 10
           done
           echo "merge queue runs that passed on $SHA: ${runs:-unknown}"
           echo "tested=$([ "${runs:-0}" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "run=$run" >> "$GITHUB_OUTPUT"
       - if: steps.queued.outputs.tested == 'true'
         uses: actions/checkout@v4
         with:
@@ -412,6 +436,58 @@ jobs:
         env:
           RUSTUP_TOOLCHAIN: stable
         run: cargo xtask affected --base HEAD^1 --github
+
+  # What clang compiled in the queue run that tested this commit, added to the newest entry and
+  # saved, so the next queue entry restores it: a queue branch can't save a cache another branch
+  # restores (maintaining.md "Merging"). What a queue job uploaded gets no more than a job with
+  # nothing else in its workspace, only this script from the commit, and no token in `.git/config`:
+  # `actions: write` to delete old entries stays out of the gate's jobs. No artifact (the commit
+  # compiled nothing new) saves nothing. Any failure stops the job before the save, which leaves the
+  # newest entry as it was and costs the queue a staler cache, not a red `main`.
+  clang-objects:
+    needs: main-plan
+    if: github.event_name == 'push' && needs.main-plan.outputs.queue_run != ''
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    timeout-minutes: 15
+    permissions:
+      contents: read
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: ci
+          sparse-checkout: .github/actions/setup/clang-objects.sh
+          sparse-checkout-cone-mode: false
+          persist-credentials: false
+      # The same `path` as setup's restore: it is part of what a cache entry is found by. A miss
+      # must save nothing: this commit's objects alone would replace the whole entry as the newest.
+      - uses: actions/cache/restore@v4
+        with:
+          path: target/velt-build-cache/v*/llvm
+          key: velt-clang-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+          restore-keys: velt-clang-objects-${{ runner.os }}-${{ runner.arch }}-
+          fail-on-cache-miss: true
+      - name: clang's objects from the queue
+        env:
+          RUN: ${{ needs.main-plan.outputs.queue_run }}
+        run: |
+          gh run download "$RUN" --pattern 'clang-objects-*' --dir "$RUNNER_TEMP/clang-objects"
+          bash ci/.github/actions/setup/clang-objects.sh unpack "$RUNNER_TEMP/clang-objects"
+      - uses: actions/cache/save@v4
+        with:
+          path: target/velt-build-cache/v*/llvm
+          key: velt-clang-objects-${{ runner.os }}-${{ runner.arch }}-${{ github.run_id }}
+      # Each is a whole copy, about 1% of the 10 GB limit. Two stay: a job may be restoring the
+      # older one.
+      - name: only the newest clang objects stay
+        run: |
+          gh cache list --ref refs/heads/main --key "velt-clang-objects-$RUNNER_OS-$RUNNER_ARCH-" \
+            --sort created_at --order desc --limit 100 --json id --jq '.[2:][].id' |
+            while read -r id; do gh cache delete "$id"; done
 
   # After each push to main: on Linux the build cache, saved even when a check fails; on Windows
   # and macOS the whole gate (and their caches) when main-plan says so. Without a plan (not a queue
@@ -428,7 +504,9 @@ jobs:
           || needs.main-plan.outputs.os
           || '["ubuntu-latest","windows-latest","macos-latest"]') }}
     runs-on: ${{ matrix.os }}
-    timeout-minutes: 120
+    # The whole gate without the WebAssembly goldens took 107 minutes on Windows (2026-11-07), and a
+    # slow runner takes half as long again.
+    timeout-minutes: 180
     permissions:
       contents: read
       issues: write
@@ -439,6 +517,7 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           save-cache: "true"
+          code-cache: "false"
       # Linux: the queue checked it in full, so only build and lint what the gate builds, plus the
       # WebAssembly runtime the tests build.
       - name: build the cache (Linux)
@@ -459,19 +538,24 @@ jobs:
         if: runner.os != 'Linux'
         shell: bash
         working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-        # nightly.yml's wasm-goldens job runs the WebAssembly goldens on these OSes every night.
+        # nightly.yml's wasm-goldens job runs the WebAssembly goldens on these OSes every night. In
+        # this job they take most of an hour: with them, 7 of 20 runs from 2026-11-04 to 2026-11-07
+        # hit the time limit before finishing the goldens.
         env:
-          VELT_WASM_GOLDENS: ${{ github.event_name == 'schedule' && 'skip' || '' }}
+          VELT_WASM_GOLDENS: skip
         run: cargo xtask check --full
+      # A job that hits its time limit ends cancelled, not failed, and checked less than it should
+      # have: that gets the issue too. Nothing else cancels these runs but a person.
       - name: report the failure
-        if: failure()
+        if: failure() || cancelled()
         uses: actions/github-script@v7
         with:
           script: |
             const os = '${{ runner.os }}';
             const title = `main fails on ${os}`;
             const run = `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
-            let body = `The gate failed on ${os} after ${context.sha.slice(0, 7)}: ${run}`;
+            const how = '${{ job.status }}' === 'cancelled' ? 'did not finish (time limit, or cancelled)' : 'failed';
+            let body = `The gate ${how} on ${os} after ${context.sha.slice(0, 7)}: ${run}`;
             if (context.eventName === 'schedule') {
               const passed = await github.rest.actions.listWorkflowRuns({ ...context.repo, workflow_id: 'ci.yml', event: 'schedule', status: 'success', per_page: 1 });
               const last = passed.data.workflow_runs[0];

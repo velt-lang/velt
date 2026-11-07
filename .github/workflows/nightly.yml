@@ -87,9 +87,10 @@ jobs:
       - uses: ./.github/actions/zig
         with:
           working-directory: ${{ env.DEV_DRIVE_WORKSPACE || github.workspace }}
-      # Every golden's release object, for the merge queue and pull requests (only a run on `main`
-      # saves what other branches can restore). From an empty cache, so entries no program uses
-      # any more go with it; the limit keeps them all (.cargo/config.toml has 500M for local builds).
+      # Every golden's release object and the other tests', for the merge queue and pull requests
+      # (only a run on `main` saves what other branches can restore; pushes to it add what changed,
+      # ci.yml). From an empty cache, so entries no program uses any more go with it; the limit
+      # keeps them all (.cargo/config.toml has 500M for local builds).
       - run: scripts/check-all.sh
         env:
           VELT_BUILD_CACHE_SIZE: 4G
@@ -604,11 +605,12 @@ jobs:
                 ;;
             esac
           done < "$RUNNER_TEMP/caches.tsv"
-          # Clang's objects: only the newest stays; each is a whole copy.
-          awk -F'\t' '$2 ~ /^velt-clang-objects-/' "$RUNNER_TEMP/caches.tsv" | sort -t$'\t' -k2,2 -k4,4r |
-            awk -F'\t' '{ prefix = $2; sub(/-[0-9]+$/, "", prefix) } seen[prefix]++' |
-            while IFS=$'\t' read -r id key size created; do
-              echo "delete  $key ($((size >> 20)) MiB)"
+          # Clang's objects: the two newest stay, as after a push to main (ci.yml); each is a whole
+          # copy.
+          gh cache list --ref refs/heads/main --key velt-clang-objects-Linux-X64- \
+            --sort created_at --order desc --limit 100 --json id,key --jq '.[2:][] | "\(.id)\t\(.key)"' |
+            while IFS=$'\t' read -r id key; do
+              echo "delete  $key"
               [ -n "$dry" ] || gh cache delete "$id"
             done
           echo "### cache-prune: $((freed >> 20)) MiB of superseded rust-cache entries${dry:+ (dry run)}" >> "$GITHUB_STEP_SUMMARY"

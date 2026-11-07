@@ -5,7 +5,9 @@
 //! rewrite an added module missed, or something in the VIR that depends on the order sema numbers
 //! things in.
 //!
-//! Long: selected by `cargo xtask affected`, which runs it with `--ignored`.
+//! Long: selected by `cargo xtask affected`, which runs it with `--ignored`. With
+//! `VELT_VIR_IDENTITY=sample` it compares one golden in [`SAMPLE_ONE_IN`] (the merge queue, unless
+//! the code loading std on demand changed: `Plan::vir_identity_queue` in crates/xtask/src/plan.rs).
 
 mod no_window;
 mod test_dir;
@@ -16,6 +18,26 @@ use std::sync::Mutex;
 
 /// Compared, and reported apart from the rest: generated function names vary between runs (#2226).
 const KNOWN: &[&str] = &["lang/union_erased_layout.velt"];
+
+/// One golden in this many, in the sample.
+const SAMPLE_ONE_IN: u64 = 8;
+
+/// Whether the golden `name` (its path under `tests/golden`, with `/`) is in the sample: chosen by
+/// a hash of its name, so a new golden moves no other in or out, and the same on every machine.
+fn in_sample(name: &str) -> bool {
+    let hash = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    });
+    hash % SAMPLE_ONE_IN == 0
+}
+
+#[test]
+fn the_sample_is_a_fixed_fraction_by_name() {
+    let sampled = (0..8_000)
+        .filter(|i| in_sample(&format!("lang/g{i}.velt")))
+        .count();
+    assert!((800..1200).contains(&sampled), "{sampled} of 8,000");
+}
 
 fn goldens(dir: &Path, out: &mut Vec<PathBuf>) {
     for entry in std::fs::read_dir(dir).unwrap().flatten() {
@@ -92,6 +114,14 @@ fn every_golden_has_the_same_vir_with_std_up_front_and_on_demand() {
         files.retain(|p| p.to_string_lossy().contains(&f));
     }
     let filtered = std::env::var_os("VELT_GOLDEN").is_some();
+    let sample = std::env::var("VELT_VIR_IDENTITY").is_ok_and(|v| v == "sample");
+    if sample {
+        files.retain(|p| {
+            let name = p.strip_prefix(&root).unwrap_or(p).to_string_lossy();
+            in_sample(&name.replace('\\', "/"))
+        });
+        eprintln!("the sample: {} goldens", files.len());
+    }
     let next = AtomicUsize::new(0);
     let built = AtomicUsize::new(0);
     let found = Mutex::new(vec![]);
@@ -115,7 +145,7 @@ fn every_golden_has_the_same_vir_with_std_up_front_and_on_demand() {
     // Two identical compile failures count as a match: a broken setup must not pass that way.
     let built = built.into_inner();
     assert!(
-        filtered || built > 1000,
+        filtered || built > if sample { 100 } else { 1000 },
         "only {built} of {} goldens built",
         files.len()
     );

@@ -156,6 +156,23 @@ jobs:
         env:
           VELT_GOLDEN_SHARD: ${{ matrix.shard }}
         run: cargo xtask check --full --part golden --archive golden.tar
+      # For the push to main that follows (ci.yml's `clang-objects`): a failure here must not fail the entry.
+      - name: the objects clang compiled (Linux)
+        if: runner.os == 'Linux' && github.event_name == 'merge_group'
+        continue-on-error: true
+        timeout-minutes: 5
+        run: bash .github/actions/setup/clang-objects.sh pack clang-objects.tar
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux' && github.event_name == 'merge_group'
+        continue-on-error: true
+        timeout-minutes: 5
+        with:
+          name: clang-objects-shard-${{ strategy.job-index }}
+          path: clang-objects.tar
+          compression-level: 1
+          retention-days: 1
+          overwrite: true
+          if-no-files-found: ignore
       - if: failure() && inputs.fail-fast
         uses: ./.github/actions/fail-fast
         with:
