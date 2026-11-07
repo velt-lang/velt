@@ -92,10 +92,9 @@ fn interface_throws_may_name_the_interface_parameters_only() {
          class Sub extends Base<i64> { override m(): void {} }
          function main() {}",
     );
-    assert!(
-        r.contains("the `throws` clause of an overridden method cannot mention type parameters"),
-        "{r}"
-    );
+    // Once, though the groups are built again after the check (`throws::infer_all`).
+    let msg = "the `throws` clause of an overridden method cannot mention type parameters";
+    assert_eq!(r.matches(msg).count(), 1, "{r}");
 }
 
 #[test]

@@ -1,8 +1,9 @@
 //! The float hooks of std's number printing, checked on demand (velt_common
 //! `std_hooks::ON_DEMAND_FLOAT`): reached once the program's own code converts to text a value
 //! that may hold a float. `texts` are the types of the values it converts (`ToString`,
-//! `TemplateToString`) in the code walked since the last call, std's own excepted: its
-//! conversions would make every program that reaches one check the hooks. The integer hooks are
+//! `TemplateToString`) in the program's code and in live classes' field defaults, walked since the
+//! last call. Std's function bodies don't count: their conversions would make every program that
+//! reaches one check the hooks. The integer hooks are
 //! demanded by the constructs of live code instead (`live.rs`).
 
 use crate::ctx::Ctx;

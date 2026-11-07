@@ -159,7 +159,9 @@ with string keys, `record_hooks_needed`), and demands the module (`Ctx::demand_s
   their eager bodies, then `reach` goes on. Existing `DefId`s do not change.
 - The batches outlive every `Ctx` and every check of the program (`StdLoads`). A later round starts
   from the program's modules and demands again: it takes the kept batches, in the order they were
-  served, so a round's `DefId`s are the first round's.
+  served. A collected definition keeps its `DefId` while the modules come in at the same points; a
+  round that assumes definitions demands some earlier, so it finds them by name, and a hint by
+  `DefId` holds only where its span matches.
 
 `VELT_EAGER_STD=1`, and any caller of `load_program` that does not ask for `demand_std`, loads all
 of these modules up front, after everything else, and gives the check no callback. Every golden's
